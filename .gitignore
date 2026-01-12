@@ -1,0 +1,10 @@
+# Environment files with secrets
+.env
+.env.local
+.env.*.local
+
+# Tailscale state (contains machine keys)
+tailscale_state/
+
+# Build artifacts
+*.log

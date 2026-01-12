@@ -1,0 +1,80 @@
+services:
+  # ============================================
+  # TAILSCALE SIDECARS
+  # ============================================
+  
+  tailscale-ollama:
+    image: tailscale/tailscale:latest
+    hostname: ollama
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=true
+    volumes:
+      - ./tailscale_state/ollama:/var/lib/tailscale
+    cap_add:
+      - net_admin
+    restart: unless-stopped
+
+  tailscale-arena:
+    image: tailscale/tailscale:latest
+    hostname: arena
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=true
+    volumes:
+      - ./tailscale_state/arena:/var/lib/tailscale
+    cap_add:
+      - net_admin
+    restart: unless-stopped
+
+  # ============================================
+  # MAIN SERVICES
+  # ============================================
+
+  ollama:
+    build:
+      context: .
+      dockerfile: ollama.dockerfile
+    container_name: agentarena-ollama
+    depends_on:
+      - tailscale-ollama
+    network_mode: service:tailscale-ollama
+    volumes:
+      - E:/LLM_models:/root/.ollama/models
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      # Restrict CORS to specific origins only
+      OLLAMA_ORIGINS: http://localhost,http://127.0.0.1,http://arena,https://arena
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  agent-arena:
+    build:
+      context: .
+      dockerfile: build1.dockerfile
+    container_name: agentarena-dev
+    depends_on:
+      - tailscale-arena
+    network_mode: service:tailscale-arena
+    volumes:
+      # Host paths - your actual Windows folders
+      - E:/Code:/code
+      - E:/Vault:/vault
+      # Named volumes - persist container config across rebuilds
+      - arena_dev_home:/home/dev
+      - arena_root_home:/root
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    restart: unless-stopped
+
+volumes:
+  arena_dev_home:
+    driver: local
+  arena_root_home:
+    driver: local
