@@ -1,0 +1,99 @@
+// Arena Dashboard Types
+
+export interface TmuxSession {
+  name: string
+  agentName: string
+  windows: number
+  attached: boolean
+  group: string
+}
+
+export interface SessionsResponse {
+  sessions: TmuxSession[]
+  grouped: Record<string, TmuxSession[]>
+  timestamp: string
+  error?: string
+}
+
+export interface TerminalWindow {
+  id: string
+  boundSessions: string[] // Session names bound to this window
+  activeSession: string | null // Currently displayed session
+  colorIndex: number // 0-3 for window color theme
+}
+
+export interface DashboardState {
+  // Session data from API
+  sessions: TmuxSession[]
+  groupedSessions: Record<string, TmuxSession[]>
+  loading: boolean
+  error: string | null
+
+  // Window configuration
+  windows: TerminalWindow[]
+  windowCount: number // 1-4
+
+  // UI state
+  sidebarCollapsed: boolean
+  floatingSession: string | null // Session shown in floating modal
+  isDragging: boolean // True when a session is being dragged
+
+  // Computed: which sessions are assigned to any window
+  assignedSessions: Set<string>
+}
+
+export interface DashboardActions {
+  // Window management
+  setWindowCount: (count: number) => void
+  addSessionToWindow: (windowId: string, sessionName: string) => void
+  removeSessionFromWindow: (windowId: string, sessionName: string) => void
+  setActiveSession: (windowId: string, sessionName: string) => void
+  cycleSession: (windowId: string, direction: 'prev' | 'next') => void
+
+  // UI actions
+  toggleSidebar: () => void
+  openFloatingModal: (sessionName: string) => void
+  closeFloatingModal: () => void
+
+  // Session click handler
+  handleSessionClick: (sessionName: string) => void
+
+  // Refresh sessions from API
+  refreshSessions: () => Promise<void>
+
+  // Drag state
+  setIsDragging: (dragging: boolean) => void
+}
+
+export type DashboardContextType = DashboardState & DashboardActions
+
+// Window color themes
+export const WINDOW_COLORS = [
+  { name: 'blue', bg: '#0a0a1a', border: '#4a9eff', accent: '#4a9eff' },
+  { name: 'purple', bg: '#0f0a1a', border: '#9966ff', accent: '#9966ff' },
+  { name: 'green', bg: '#0a1a0a', border: '#00ff41', accent: '#00ff41' },
+  { name: 'orange', bg: '#1a140a', border: '#ff9933', accent: '#ff9933' },
+] as const
+
+// Group display names and priorities
+export const GROUP_CONFIG: Record<string, { displayName: string; priority: number }> = {
+  'hq': { displayName: 'HQ', priority: 0 },
+  'main': { displayName: 'Main', priority: 1 },
+  'other': { displayName: 'Other', priority: 100 },
+}
+
+export function getGroupDisplayName(group: string): string {
+  if (GROUP_CONFIG[group]) return GROUP_CONFIG[group].displayName
+  if (group.startsWith('gt-')) {
+    // gt-gastown → Gastown
+    const rigName = group.slice(3)
+    return rigName.charAt(0).toUpperCase() + rigName.slice(1)
+  }
+  return group
+}
+
+export function getGroupPriority(group: string): number {
+  if (GROUP_CONFIG[group]) return GROUP_CONFIG[group].priority
+  if (group.startsWith('gt-')) return 2 // Rigs after main
+  return 99
+}

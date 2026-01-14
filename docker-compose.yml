@@ -71,6 +71,32 @@ services:
       - arena_root_home:/root
     environment:
       OLLAMA_HOST: http://ollama:11434
+      TTYD_PASSWORD: ${TTYD_PASSWORD}
+    restart: unless-stopped
+
+  # ============================================
+  # FILE BROWSER
+  # ============================================
+
+  filebrowser:
+    image: filebrowser/filebrowser:latest
+    container_name: arena-filebrowser
+    network_mode: service:tailscale-arena
+    user: "0:0"
+    volumes:
+      - E:/Code:/srv/code
+      - E:/Vault:/srv/vault
+      - ./filebrowser_data:/database
+      - ./filebrowser_data/branding:/branding:ro
+    command:
+      - --address=0.0.0.0
+      - --port=8081
+      - --root=/srv
+      - --database=/database/filebrowser.db
+      - --baseurl=/files
+      - --noauth
+    depends_on:
+      - tailscale-arena
     restart: unless-stopped
 
 volumes:

@@ -29,7 +29,7 @@ Each service gets its own Tailscale identity, enabling per-service ACL control.
 │  ┌──────────┴────────────────────────────┴──────────┐          │
 │  │ Volumes                                          │          │
 │  │ E:/LLM_models → /root/.ollama/models            │          │
-│  │ E:/Code       → /home/dev/code (RW)             │          │
+│  │ E:/Code       → /code (RW)                      │          │
 │  │ E:/Vault      → /vault (RO dev, RW root)        │          │
 │  └──────────────────────────────────────────────────┘          │
 └─────────────────────────────────────────────────────────────────┘
@@ -53,19 +53,20 @@ Each service gets its own Tailscale identity, enabling per-service ACL control.
 
 **Installed Tools:**
 - Claude Code (@anthropic-ai/claude-code)
-- OpenCode AI (opencode-ai)
 - Gastown & Beads (orchestrator tools)
 - beads_viewer
 - Git, tmux, Go, Node.js, Python3
 
-**Ports:**
+**Ports (via Tailscale):**
 | Port | Purpose |
 |------|---------|
-| 2222 → 22 | SSH access |
-| 3000 | Dev server |
-| 5000 | Dev server |
-| 8000 | Dev server |
-| 8080 | Dev server |
+| 22 | SSH access |
+| 8080 | Web dashboard (nginx) |
+| 7681 | ttyd web terminal (proxied via nginx) |
+| 3001 | API server (proxied via nginx) |
+| 3000, 5000, 8000 | Dev servers |
+| 5500, 6000 | Additional dev servers |
+| 9000-9900 | Monitoring & future use |
 
 **Users:**
 - `root:root` - Full access, can write to /vault
@@ -85,15 +86,14 @@ Each service gets its own Tailscale identity, enabling per-service ACL control.
 **CORS Origins (who can access):**
 - http://localhost
 - http://127.0.0.1
-- https://synsual.me
-- http://* (any HTTP origin)
-- https://* (any HTTPS origin)
+- http://arena
+- https://arena
 
 ## Volume Layout
 
 | Host Path | Container | Mount Path | Permissions | Purpose |
 |-----------|-----------|------------|-------------|---------|
-| E:/Code | agent-arena | /home/dev/code | RW (dev & root) | Active coding projects |
+| E:/Code | agent-arena | /code | RW (dev & root) | Active coding projects |
 | E:/Vault | agent-arena | /vault | RO (dev), RW (root) | Safe context files for agents |
 | E:/LLM_models | ollama | /root/.ollama/models | RW (root) | LLM model storage |
 | Named: arena_dev_home | agent-arena | /home/dev | RW | Persist dev config (.bashrc, .ssh) |
@@ -110,10 +110,26 @@ The `/vault` directory is designed for safely providing context to AI agents:
 
 | Service | Tailnet Access | Port |
 |---------|----------------|------|
+| Web Dashboard | `http://arena:8080` | 8080 |
 | SSH (agent-arena) | `ssh dev@arena` | 22 |
 | SSH (as root) | `ssh root@arena` | 22 |
 | Ollama API | `http://ollama:11434` | 11434 |
-| Dev servers | `http://arena:3000` etc. | 3000, 5000, 8000, 8080 |
+| Dev servers | `http://arena:3000` etc. | 3000, 5000, 8000 |
+
+### Web Dashboard
+
+The dashboard at `http://arena:8080` provides:
+- **Terminal view** with 1-4 panes, drag-and-drop session assignment
+- **Files view** via filebrowser
+- **Status view** with service health
+
+**Architecture:**
+- nginx serves static React dashboard and proxies:
+  - `/terminal/` → ttyd (port 7681, runs as dev)
+  - `/files/` → filebrowser (port 8081)
+  - `/api/` → Node.js API (port 3001, runs as dev)
+- ttyd accepts `?arg=session_name` to attach to tmux sessions
+- API manages tmux sessions (list/create) as dev user
 
 **Note:** No localhost port mapping. Access is exclusively via Tailscale.
 
@@ -191,19 +207,21 @@ E:\Docker\AgentArena\
 3. **/vault is read-only for dev** - agents can't corrupt context files
 4. **No localhost exposure** - services only accessible via authenticated Tailscale
 
-### Example Tailscale ACL
+### Tailscale ACL (grants syntax)
 
 ```json
 {
-  "acls": [
-    // Allow all your devices to access arena
-    {"action": "accept", "src": ["autogroup:members"], "dst": ["tag:container:*"]},
-    
-    // Or restrict ollama to specific devices
-    {"action": "accept", "src": ["user@example.com"], "dst": ["ollama:11434"]}
-  ],
   "tagOwners": {
     "tag:container": ["autogroup:admin"]
-  }
+  },
+  "grants": [
+    // Your personal devices can reach everything
+    {"src": ["autogroup:member"], "dst": ["*"], "ip": ["*"]},
+    // Containers can reach each other (arena <-> ollama)
+    {"src": ["tag:container"], "dst": ["tag:container"], "ip": ["*"]},
+    // Containers can reach internet (npm, pip, git, APIs)
+    {"src": ["tag:container"], "dst": ["autogroup:internet"], "ip": ["*"]}
+    // IMPLICIT DENY: containers cannot reach your other Tailnet devices
+  ]
 }
 ```

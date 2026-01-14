@@ -6,5 +6,19 @@
 # Tailscale state (contains machine keys)
 tailscale_state/
 
+# Filebrowser database (contains user sessions)
+filebrowser_data/
+
 # Build artifacts
 *.log
+
+# Temporary files
+tmpclaude-*
+*.tmp
+
+# Node modules (rebuild from package.json)
+dashboard/node_modules/
+
+# IDE files
+.vscode/
+.idea/
