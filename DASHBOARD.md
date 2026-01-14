@@ -66,8 +66,7 @@ Accessible at `http://arena:8080` from any device on your Tailscale network.
   - Window 4: Orange
 - Session tags show bound agents with × to remove
 - Arrow buttons cycle through multiple sessions bound to a window
-- Click unassigned session → opens floating modal terminal
-- Click assigned session → focuses that window
+- Click any session → opens floating modal for quick "peek" view
 - Layout and bindings persist to localStorage
 
 **Files** - Embedded filebrowser
@@ -75,8 +74,9 @@ Accessible at `http://arena:8080` from any device on your Tailscale network.
 - Upload, download, edit files
 - Uses the same Matrix-green hacker theme
 
-**Status** - System overview
-- Connection status
+**Status** - Live system health
+- Real-time API and tmux service status (auto-refreshes every 5 seconds)
+- Live tmux session list with window counts and attached indicators
 - Quick command reference for Gastown
 
 **Beads ↗** - External link
@@ -168,9 +168,10 @@ Open `http://arena:8080` from any Tailscale-connected device.
 - Use ← → arrows to cycle between them
 - Click a session tag to switch directly to it
 
-**Floating Modal:**
-- Click any unassigned session in the panel
+**Floating Modal (Peek):**
+- Click any session in the panel to "peek" at it
 - Opens a floating terminal window you can drag around
+- Does not affect window bindings - purely for quick viewing
 - Click × or the overlay to close
 
 **Removing Sessions:**

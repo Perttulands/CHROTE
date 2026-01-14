@@ -5,6 +5,9 @@ const express = require('express');
 const { execSync } = require('child_process');
 const app = express();
 
+// Ensure consistent tmux socket location
+const TMUX_ENV = { env: { ...process.env, TMUX_TMPDIR: '/tmp' } };
+
 // CORS for development
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
@@ -60,7 +63,7 @@ app.get('/api/tmux/sessions', (req, res) => {
     // API runs as dev user, so tmux commands access dev's sessions directly
     const output = execSync(
       'tmux list-sessions -F "#{session_name}:#{session_windows}:#{session_attached}"',
-      { encoding: 'utf-8', timeout: 5000 }
+      { encoding: 'utf-8', timeout: 5000, ...TMUX_ENV }
     );
 
     const sessions = output.trim().split('\n')
@@ -131,7 +134,7 @@ app.post('/api/tmux/sessions', (req, res) => {
     name = name.replace(/[^a-zA-Z0-9_-]/g, '-').substring(0, 50);
 
     // Create the session (detached) - API runs as dev, same user as ttyd
-    execSync(`tmux new-session -d -s "${name}"`, { encoding: 'utf-8', timeout: 5000 });
+    execSync(`tmux new-session -d -s "${name}"`, { encoding: 'utf-8', timeout: 5000, ...TMUX_ENV });
 
     res.json({
       success: true,
@@ -140,6 +143,45 @@ app.post('/api/tmux/sessions', (req, res) => {
     });
   } catch (e) {
     res.status(400).json({
+      success: false,
+      error: e.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Delete ALL tmux sessions (nuke)
+app.delete('/api/tmux/sessions/all', (req, res) => {
+  try {
+    // Get list of all sessions first
+    let sessionNames = [];
+    try {
+      const output = execSync(
+        'tmux list-sessions -F "#{session_name}"',
+        { encoding: 'utf-8', timeout: 5000, ...TMUX_ENV }
+      );
+      sessionNames = output.trim().split('\n').filter(line => line.trim());
+    } catch (e) {
+      // No sessions running - that's fine
+      return res.json({
+        success: true,
+        killed: 0,
+        message: 'No sessions to kill',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Kill the tmux server (destroys all sessions)
+    execSync('tmux kill-server', { encoding: 'utf-8', timeout: 5000, ...TMUX_ENV });
+
+    res.json({
+      success: true,
+      killed: sessionNames.length,
+      sessions: sessionNames,
+      timestamp: new Date().toISOString()
+    });
+  } catch (e) {
+    res.status(500).json({
       success: false,
       error: e.message,
       timestamp: new Date().toISOString()

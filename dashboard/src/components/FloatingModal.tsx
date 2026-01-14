@@ -1,103 +1,60 @@
-import { useEffect, useRef, useState } from 'react'
-import { Terminal } from '@xterm/xterm'
-import { FitAddon } from '@xterm/addon-fit'
-import { WebglAddon } from '@xterm/addon-webgl'
-import { AttachAddon } from '@xterm/addon-attach'
-import '@xterm/xterm/css/xterm.css'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { useSession } from '../context/SessionContext'
 
 function FloatingModal() {
-  const { floatingSession, closeFloatingModal } = useSession()
-  const terminalRef = useRef<HTMLDivElement>(null)
-  const terminalInstance = useRef<Terminal | null>(null)
-  const wsRef = useRef<WebSocket | null>(null)
-  const [connected, setConnected] = useState(false)
+  const { floatingSession, closeFloatingModal, settings } = useSession()
+  const [loaded, setLoaded] = useState(false)
   const [position, setPosition] = useState({ x: 100, y: 100 })
   const [size] = useState({ width: 600, height: 400 })
   const [isDragging, setIsDragging] = useState(false)
   const dragOffset = useRef({ x: 0, y: 0 })
+  const iframeRef = useRef<HTMLIFrameElement>(null)
 
-  // Initialize terminal when modal opens
+  // Reset loaded state when session changes
   useEffect(() => {
-    if (!floatingSession || !terminalRef.current) return
-
-    const terminal = new Terminal({
-      cursorBlink: true,
-      cursorStyle: 'block',
-      fontFamily: "'Courier Prime', 'Courier New', monospace",
-      fontSize: 13,
-      lineHeight: 1.2,
-      theme: {
-        background: '#0a0a0a',
-        foreground: '#00ff41',
-        cursor: '#00ff41',
-        cursorAccent: '#000000',
-        selectionBackground: '#00ff4140',
-        black: '#000000',
-        red: '#ff4141',
-        green: '#00ff41',
-        yellow: '#ffff41',
-        blue: '#4141ff',
-        magenta: '#ff41ff',
-        cyan: '#41ffff',
-        white: '#ffffff',
-        brightBlack: '#666666',
-        brightRed: '#ff6666',
-        brightGreen: '#66ff66',
-        brightYellow: '#ffff66',
-        brightBlue: '#6666ff',
-        brightMagenta: '#ff66ff',
-        brightCyan: '#66ffff',
-        brightWhite: '#ffffff',
-      },
-    })
-
-    terminalInstance.current = terminal
-
-    const fitAddon = new FitAddon()
-    terminal.loadAddon(fitAddon)
-
-    terminal.open(terminalRef.current)
-
-    try {
-      const webglAddon = new WebglAddon()
-      terminal.loadAddon(webglAddon)
-      webglAddon.onContextLoss(() => webglAddon.dispose())
-    } catch (e) {
-      console.warn('WebGL addon failed to load')
-    }
-
-    fitAddon.fit()
-
-    // Connect to ttyd
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsUrl = `${protocol}//${location.host}/terminal/ws`
-    const ws = new WebSocket(wsUrl)
-    wsRef.current = ws
-
-    ws.onopen = () => {
-      setConnected(true)
-      const attachAddon = new AttachAddon(ws)
-      terminal.loadAddon(attachAddon)
-
-      // Attach to the session
-      setTimeout(() => {
-        terminal.paste(`tmux attach-session -t ${floatingSession}\n`)
-      }, 100)
-    }
-
-    ws.onclose = () => setConnected(false)
-    ws.onerror = () => setConnected(false)
-
-    const handleResize = () => fitAddon.fit()
-    window.addEventListener('resize', handleResize)
-
-    return () => {
-      window.removeEventListener('resize', handleResize)
-      ws.close()
-      terminal.dispose()
-    }
+    setLoaded(false)
   }, [floatingSession])
+
+  // Apply font size to xterm instance inside iframe with polling for readiness
+  const applyFontSize = useCallback((fontSize: number) => {
+    const iframe = iframeRef.current
+    if (!iframe?.contentWindow) return
+
+    let attempts = 0
+    const maxAttempts = 20 // 20 * 50ms = 1 second max wait
+
+    const tryApply = () => {
+      try {
+        const iframeWindow = iframe.contentWindow as Window & { term?: { options: { fontSize: number } } }
+        if (iframeWindow.term) {
+          iframeWindow.term.options.fontSize = fontSize
+          return // Success - stop polling
+        }
+      } catch {
+        // Cross-origin or not ready - continue polling
+      }
+
+      attempts++
+      if (attempts < maxAttempts) {
+        setTimeout(tryApply, 50) // Poll every 50ms
+      }
+    }
+
+    tryApply()
+  }, [])
+
+  // Apply font size when iframe loads
+  const handleIframeLoad = useCallback(() => {
+    setLoaded(true)
+    applyFontSize(settings.fontSize)
+  }, [applyFontSize, settings.fontSize])
+
+  // Apply font size when setting changes
+  useEffect(() => {
+    if (loaded) {
+      applyFontSize(settings.fontSize)
+    }
+  }, [loaded, settings.fontSize, applyFontSize])
 
   // Dragging handlers
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -157,11 +114,25 @@ function FloatingModal() {
         >
           <span className="modal-title">{displayName}</span>
           <div className="modal-controls">
-            <span className={`status-dot ${connected ? '' : 'disconnected'}`} />
+            <span className={`status-dot ${loaded ? '' : 'disconnected'}`} />
             <button className="modal-close" onClick={closeFloatingModal}>×</button>
           </div>
         </div>
-        <div className="floating-modal-body" ref={terminalRef} />
+        <div className="floating-modal-body">
+          <iframe
+            ref={iframeRef}
+            key={floatingSession}
+            src={`/terminal/?arg=${encodeURIComponent(floatingSession)}`}
+            onLoad={handleIframeLoad}
+            style={{
+              width: '100%',
+              height: '100%',
+              border: 'none',
+              backgroundColor: '#0a0a0a',
+            }}
+            title={`Terminal - ${floatingSession}`}
+          />
+        </div>
       </div>
     </div>
   )

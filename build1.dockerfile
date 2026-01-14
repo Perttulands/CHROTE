@@ -1,13 +1,21 @@
 FROM ubuntu:24.04
 
-# 1. Core Tools & SSH & Healthcheck Utils
+# 1. Core Tools & SSH & Healthcheck Utils + Locales for UTF-8/emoji support
 RUN apt-get update && apt-get install -y \
     curl git tmux golang-go nodejs npm python3 python3-pip \
     sudo build-essential openssh-server netcat-openbsd ttyd nginx \
-    && rm -rf /var/lib/apt/lists/*
+    locales \
+    && rm -rf /var/lib/apt/lists/* \
+    && locale-gen en_US.UTF-8
 
-# 2. Create dev user with sudo access
-RUN useradd -m -s /bin/bash dev && \
+# Set UTF-8 locale environment
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+ENV LANGUAGE=en_US:en
+
+# 2. Create dev user with sudo access (ensure UID 1000)
+RUN userdel -r ubuntu 2>/dev/null || true && \
+    useradd -m -u 1000 -s /bin/bash dev && \
     echo 'dev:dev' | chpasswd && \
     echo 'dev ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
 
@@ -18,14 +26,16 @@ RUN mkdir /var/run/sshd && \
     sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
 
 # 4. Install AI Coding Tools
-RUN npm install -g @anthropic-ai/claude-code || true
+RUN npm install -g @anthropic-ai/claude-code
 
 # 5. Install Gastown & Beads (Orchestrator tools) & beads_viewer
 # Install to /root/go then copy to /usr/local/bin so dev user can access them
 ENV GOPATH=/root/go
 ENV PATH=$PATH:$GOPATH/bin
-RUN go install github.com/steveyegge/beads/cmd/bd@latest || true
-RUN go install github.com/steveyegge/gastown/cmd/gt@latest || true
+# Ensure consistent tmux socket location for all processes (API, ttyd, SSH)
+ENV TMUX_TMPDIR=/tmp
+RUN go install github.com/steveyegge/beads/cmd/bd@latest
+RUN go install github.com/steveyegge/gastown/cmd/gt@latest
 # FIX: Move go binaries to global path
 RUN cp /root/go/bin/* /usr/local/bin/ 2>/dev/null || true
 RUN curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh?$(date +%s)" | bash
@@ -43,9 +53,14 @@ RUN mkdir -p /code && \
     chmod 775 /code && \
     chmod 755 /vault
 
-# 6a. Setup tmux config with mouse support
-RUN printf '# Enable mouse support\n\
+# 6a. Setup tmux config with mouse support and UTF-8
+RUN printf '# Enable mouse support (tmux 3.x handles scroll automatically)\n\
 set -g mouse on\n\
+\n\
+# UTF-8 support for emojis and special characters\n\
+set -gq utf8 on\n\
+set -gq status-utf8 on\n\
+setw -gq utf8 on\n\
 \n\
 # Better scrollback\n\
 set -g history-limit 50000\n\
@@ -57,27 +72,50 @@ setw -g pane-base-index 1\n\
 # Renumber windows when one is closed\n\
 set -g renumber-windows on\n\
 \n\
-# Better colors\n\
-set -g default-terminal "screen-256color"\n\
+# Better colors and true color support\n\
+set -g default-terminal "tmux-256color"\n\
+set -ga terminal-overrides ",xterm-256color:Tc"\n\
 ' > /home/dev/.tmux.conf && chown dev:dev /home/dev/.tmux.conf
 
 # 6a2. Create tmux session launcher script for ttyd
 RUN printf '#!/bin/bash\n\
 # Terminal launcher script for ttyd\n\
-# Usage: terminal-launch.sh [session_name]\n\
+# Usage: terminal-launch.sh [session_name] [mode]\n\
+# mode: tmux (default) or shell\n\
 # Setup dev user environment (ttyd runs with -u/-g but no login shell)\n\
 export HOME=/home/dev\n\
 export USER=dev\n\
 export PATH=/usr/local/bin:/usr/bin:/bin:$HOME/.local/bin:$HOME/go/bin\n\
-cd ~\n\
+export TMUX_TMPDIR=/tmp\n\
+# UTF-8 locale for emoji and special character support\n\
+export LANG=en_US.UTF-8\n\
+export LC_ALL=en_US.UTF-8\n\
+cd "$HOME" 2>/dev/null || cd /code\n\
 \n\
 SESSION="$1"\n\
+MODE="${2:-tmux}"\n\
 \n\
-if [ -n "$SESSION" ] && tmux has-session -t "$SESSION" 2>/dev/null; then\n\
-  # Attach to existing session\n\
-  exec tmux attach-session -t "$SESSION"\n\
+# If mode is shell, just give a plain bash shell\n\
+if [ "$MODE" = "shell" ]; then\n\
+  exec bash -l\n\
+fi\n\
+\n\
+# tmux mode: attach to session if specified\n\
+if [ -n "$SESSION" ]; then\n\
+  if tmux has-session -t "$SESSION"; then\n\
+    exec tmux attach-session -t "$SESSION"\n\
+  else\n\
+    echo "Error: Session $SESSION not found."\n\
+    echo "Debug info:"\n\
+    echo "User: $(whoami)"\n\
+    echo "TMUX_TMPDIR=$TMUX_TMPDIR"\n\
+    echo "Available sessions:"\n\
+    tmux list-sessions || echo "Failed to list sessions"\n\
+    sleep 10\n\
+    exit 1\n\
+  fi\n\
 else\n\
-  # No session specified or session does not exist - just give a shell\n\
+  # No session specified - just give a shell\n\
   exec bash -l\n\
 fi\n\
 ' > /usr/local/bin/terminal-launch.sh && chmod +x /usr/local/bin/terminal-launch.sh
@@ -105,6 +143,9 @@ find /vault -type f -exec chmod 644 {} \\; 2>/dev/null || true\n\
 # Fix /code permissions: both can read/write\n\
 chown -R dev:dev /code 2>/dev/null || true\n\
 chmod -R 775 /code 2>/dev/null || true\n\
+# Fix /home/dev permissions for terminal launch\n\
+chown -R dev:dev /home/dev 2>/dev/null || true\n\
+chmod 755 /home/dev 2>/dev/null || true\n\
 # Start SSH\n\
 service ssh start\n\
 # Start nginx for dashboard\n\
@@ -112,8 +153,8 @@ nginx\n\
 # Start ttyd web terminal with URL arg support for session switching\n\
 # Usage: /terminal/?arg=session_name to attach to a tmux session\n\
 ttyd -p 7681 -W -a -u 1000 -g 1000 /usr/local/bin/terminal-launch.sh &\n\
-# Start API server for dashboard as dev user\n\
-su - dev -c "cd /srv/api && node server.js" &\n\
+# Start API server for dashboard as dev user (TMUX_TMPDIR ensures consistent socket path)\n\
+su - dev -c "export TMUX_TMPDIR=/tmp && cd /srv/api && node server.js" &\n\
 # Keep container running\n\
 tail -f /dev/null\n' > /entrypoint.sh && chmod +x /entrypoint.sh
 

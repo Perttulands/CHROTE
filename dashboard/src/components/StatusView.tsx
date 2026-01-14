@@ -1,36 +1,91 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import type { TmuxSession, SessionsResponse } from '../types'
 
-interface SessionInfo {
-  name: string
-  status: 'active' | 'idle' | 'unknown'
-  attached: boolean
+type ServiceStatus = 'online' | 'offline' | 'checking'
+
+interface ServiceHealth {
+  api: ServiceStatus
+  tmux: ServiceStatus
 }
 
 function StatusView() {
-  const [sessions, setSessions] = useState<SessionInfo[]>([])
+  const [sessions, setSessions] = useState<TmuxSession[]>([])
+  const [health, setHealth] = useState<ServiceHealth>({ api: 'checking', tmux: 'checking' })
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
-  // Placeholder - in a real implementation, this would fetch from an API
-  // that runs `tmux list-sessions` and parses the output
-  useEffect(() => {
-    // Simulated session data
-    setSessions([
-      { name: 'main', status: 'active', attached: false },
-    ])
+  const fetchStatus = useCallback(async () => {
+    try {
+      // Fetch API health
+      const healthRes = await fetch('/api/health')
+      if (healthRes.ok) {
+        setHealth(prev => ({ ...prev, api: 'online' }))
+      } else {
+        setHealth(prev => ({ ...prev, api: 'offline' }))
+      }
+    } catch (e) {
+      console.warn('API health check failed:', e)
+      setHealth(prev => ({ ...prev, api: 'offline' }))
+    }
+
+    try {
+      // Fetch tmux sessions
+      const sessionsRes = await fetch('/api/tmux/sessions')
+      if (sessionsRes.ok) {
+        const data: SessionsResponse = await sessionsRes.json()
+        setSessions(data.sessions)
+        setHealth(prev => ({ ...prev, tmux: 'online' }))
+        setError(data.error || null)
+      } else {
+        setHealth(prev => ({ ...prev, tmux: 'offline' }))
+        setSessions([])
+      }
+    } catch (e) {
+      console.warn('Tmux sessions fetch failed:', e)
+      setHealth(prev => ({ ...prev, tmux: 'offline' }))
+      setSessions([])
+    }
+
     setLastUpdated(new Date())
   }, [])
+
+  useEffect(() => {
+    fetchStatus()
+    const interval = setInterval(fetchStatus, 5000)
+    return () => clearInterval(interval)
+  }, [fetchStatus])
+
+  const getStatusColor = (status: ServiceStatus): string => {
+    switch (status) {
+      case 'online': return '#00ff41'
+      case 'offline': return '#ff4141'
+      case 'checking': return '#ffaa00'
+    }
+  }
+
+  const getStatusText = (status: ServiceStatus): string => {
+    switch (status) {
+      case 'online': return 'Online'
+      case 'offline': return 'Offline'
+      case 'checking': return 'Checking...'
+    }
+  }
 
   return (
     <div className="status-view">
       <div className="status-card">
         <h3>Gastown Status</h3>
         <div className="status-item">
-          <span className="label">Dashboard</span>
-          <span className="value" style={{ color: '#00ff41' }}>Online</span>
+          <span className="label">API Server</span>
+          <span className="value" style={{ color: getStatusColor(health.api) }}>
+            {getStatusText(health.api)}
+          </span>
         </div>
         <div className="status-item">
-          <span className="label">ttyd</span>
-          <span className="value" style={{ color: '#00ff41' }}>Running</span>
+          <span className="label">tmux</span>
+          <span className="value" style={{ color: getStatusColor(health.tmux) }}>
+            {health.tmux === 'online' ? `${sessions.length} session${sessions.length !== 1 ? 's' : ''}` : getStatusText(health.tmux)}
+          </span>
         </div>
         <div className="status-item">
           <span className="label">Last Updated</span>
@@ -38,6 +93,12 @@ function StatusView() {
             {lastUpdated ? lastUpdated.toLocaleTimeString() : 'Never'}
           </span>
         </div>
+        {error && (
+          <div className="status-item">
+            <span className="label">Error</span>
+            <span className="value" style={{ color: '#ff4141' }}>{error}</span>
+          </div>
+        )}
       </div>
 
       <div className="status-card">
@@ -49,14 +110,14 @@ function StatusView() {
         ) : (
           sessions.map((session) => (
             <div key={session.name} className="status-item">
-              <span className="label">{session.name}</span>
+              <span className="label">{session.agentName || session.name}</span>
               <span
                 className="value"
                 style={{
-                  color: session.status === 'active' ? '#00ff41' : '#00cc33',
+                  color: session.attached ? '#00ff41' : '#00cc33',
                 }}
               >
-                {session.status}
+                {session.windows} window{session.windows !== 1 ? 's' : ''}
                 {session.attached && ' (attached)'}
               </span>
             </div>

@@ -2,7 +2,7 @@ import { useSession } from '../context/SessionContext'
 import TerminalWindow from './TerminalWindow'
 
 function TerminalArea() {
-  const { windows, windowCount, setWindowCount, isDragging } = useSession()
+  const { windows, windowCount, setWindowCount, isDragging, focusedWindowIndex, setFocusedWindowIndex } = useSession()
 
   // Get grid class based on window count
   const getGridClass = () => {
@@ -32,8 +32,14 @@ function TerminalArea() {
       </div>
 
       <div className={`terminal-grid ${getGridClass()}`}>
-        {windows.slice(0, windowCount).map(window => (
-          <TerminalWindow key={window.id} window={window} isDragging={isDragging} />
+        {windows.slice(0, windowCount).map((window, index) => (
+          <TerminalWindow
+            key={window.id}
+            window={window}
+            isDragging={isDragging}
+            isFocused={index === focusedWindowIndex}
+            onFocus={() => setFocusedWindowIndex(index)}
+          />
         ))}
       </div>
     </div>

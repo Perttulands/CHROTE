@@ -16,10 +16,20 @@ The dashboard provides:
 - **Status** - Service health and quick command reference
 
 ### Session Management
-- Drag sessions from the side panel onto terminal windows to attach
-- Click session tags to switch between assigned sessions
-- Each window can have multiple sessions; click tags to switch
+- **Click sessions** in the sidebar to open them in the first window (swap view)
+- **Drag sessions** onto terminal windows to assign them
+- **Click session tags** in window headers to switch between assigned sessions
+- **Use ← → buttons** to cycle through sessions in a window
 - Sessions are actual tmux sessions running as the `dev` user
+- Switching views does NOT interrupt running agents - they continue in the background
+
+### Settings
+- **Terminal Mode**: `tmux` (persistent sessions) or `shell` (plain bash)
+- **Font Size**: Adjustable terminal font (12-20px)
+- **Theme**: Matrix (green hacker), Dark (neutral), or Gastown (warm coffee/gold)
+- **Session Prefix**: Default naming for new sessions (e.g., `Terminal-1`)
+
+Settings are automatically persisted to browser localStorage.
 
 ## Quick Reference
 
@@ -70,6 +80,32 @@ gt peek
 ```
 
 Agents run in tmux sessions. Use the web dashboard to monitor and interact with them from any device.
+
+### Session Naming Conventions
+
+Gastown creates sessions with specific prefixes that the dashboard groups automatically:
+
+| Prefix | Example | Dashboard Group |
+|--------|---------|-----------------|
+| `hq-` | `hq-mayor` | HQ |
+| `gt-rigname-` | `gt-gastown-jack` | Gastown (rig name) |
+| `main`, `shell` | `main` | Main |
+| `Terminal-` | `Terminal-1` | Other (dashboard-created) |
+| Other | `my-session` | Other |
+
+### Testing Session Display
+
+To test the dashboard without running Gastown:
+
+```bash
+# Create test sessions (run inside the container)
+bash /code/AgentArena/test-sessions.sh
+
+# Or manually:
+tmux new-session -d -s "hq-test1"
+tmux new-session -d -s "gt-myrig-agent1"
+tmux list-sessions
+```
 
 ## Running AI Agents
 

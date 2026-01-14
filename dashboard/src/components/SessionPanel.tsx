@@ -2,28 +2,48 @@ import { useMemo, useState } from 'react'
 import { useSession } from '../context/SessionContext'
 import { getGroupPriority } from '../types'
 import SessionGroup from './SessionGroup'
+import NukeConfirmModal from './NukeConfirmModal'
 
 function SessionPanel() {
-  const { groupedSessions, loading, error, sidebarCollapsed, toggleSidebar, refreshSessions } = useSession()
+  const { groupedSessions, loading, error, sidebarCollapsed, toggleSidebar, refreshSessions, settings, sessions } = useSession()
   const [creating, setCreating] = useState(false)
+  const [searchTerm, setSearchTerm] = useState('')
+  const [showNukeModal, setShowNukeModal] = useState(false)
+  const [nuking, setNuking] = useState(false)
 
-  // Sort groups by priority
+  // Sort groups by priority and filter by search
   const sortedGroups = useMemo(() => {
-    return Object.entries(groupedSessions).sort(([a], [b]) => {
+    // Determine which groups/sessions to show
+    const entries = Object.entries(groupedSessions)
+    
+    // Filter
+    const filtered = searchTerm 
+      ? entries.map(([key, sessions]) => ([
+          key, 
+          sessions.filter(s => 
+            s.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+            s.agentName.toLowerCase().includes(searchTerm.toLowerCase())
+          )
+        ] as [string, typeof sessions])).filter(([_, sessions]) => sessions.length > 0)
+      : entries
+
+    return filtered.sort(([a], [b]) => {
       const priorityA = getGroupPriority(a)
       const priorityB = getGroupPriority(b)
       if (priorityA !== priorityB) return priorityA - priorityB
       return a.localeCompare(b)
     })
-  }, [groupedSessions])
+  }, [groupedSessions, searchTerm])
 
   const createSession = async () => {
     setCreating(true)
     try {
+      // Use settings for session name prefix
+      const sessionName = `${settings.defaultSessionPrefix}-${Date.now().toString(36)}`
       const response = await fetch('/api/tmux/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
+        body: JSON.stringify({ name: sessionName })
       })
       if (response.ok) {
         refreshSessions()
@@ -32,6 +52,25 @@ function SessionPanel() {
       console.error('Failed to create session:', e)
     } finally {
       setCreating(false)
+    }
+  }
+
+  const nukeAllSessions = async () => {
+    setNuking(true)
+    try {
+      const response = await fetch('/api/tmux/sessions/all', {
+        method: 'DELETE'
+      })
+      if (response.ok) {
+        refreshSessions()
+      } else {
+        console.error('Failed to nuke sessions:', await response.text())
+      }
+    } catch (e) {
+      console.error('Failed to nuke sessions:', e)
+    } finally {
+      setNuking(false)
+      setShowNukeModal(false)
     }
   }
 
@@ -60,6 +99,18 @@ function SessionPanel() {
       </div>
 
       {!sidebarCollapsed && (
+        <div className="session-search-container">
+          <input
+            type="text"
+            className="session-search-input"
+            placeholder="Filter sessions..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </div>
+      )}
+
+      {!sidebarCollapsed && (
         <div className="session-panel-content">
           {loading && (
             <div className="panel-status">Loading...</div>
@@ -73,10 +124,31 @@ function SessionPanel() {
             <div className="panel-status">No tmux sessions</div>
           )}
 
-          {sortedGroups.map(([groupKey, sessions]) => (
-            <SessionGroup key={groupKey} groupKey={groupKey} sessions={sessions} />
+          {sortedGroups.map(([groupKey, groupSessions]) => (
+            <SessionGroup key={groupKey} groupKey={groupKey} sessions={groupSessions} />
           ))}
         </div>
+      )}
+
+      {!sidebarCollapsed && sessions.length > 0 && (
+        <div className="session-panel-footer">
+          <button
+            className="nuke-trigger-btn"
+            onClick={() => setShowNukeModal(true)}
+            disabled={nuking}
+            title="Destroy all tmux sessions"
+          >
+            ☢ {nuking ? 'Nuking...' : 'Nuke All'}
+          </button>
+        </div>
+      )}
+
+      {showNukeModal && (
+        <NukeConfirmModal
+          sessionCount={sessions.length}
+          onConfirm={nukeAllSessions}
+          onCancel={() => setShowNukeModal(false)}
+        />
       )}
     </div>
   )

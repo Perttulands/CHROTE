@@ -65,10 +65,13 @@ services:
     volumes:
       # Host paths - your actual Windows folders
       - E:/Code:/code
+      - E:/Docker/AgentArena:/code/AgentArena
       - E:/Vault:/vault
       # Named volumes - persist container config across rebuilds
       - arena_dev_home:/home/dev
       - arena_root_home:/root
+      # API server mount for hot-fixes without rebuild
+      - ./api:/srv/api
     environment:
       OLLAMA_HOST: http://ollama:11434
     restart: unless-stopped

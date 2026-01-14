@@ -1,13 +1,14 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react'
-import type { DashboardContextType, TmuxSession, TerminalWindow, SessionsResponse } from '../types'
+import type { DashboardContextType, TmuxSession, TerminalWindow, SessionsResponse, UserSettings } from '../types'
+import { DEFAULT_SETTINGS } from '../types'
 
 const STORAGE_KEY = 'arena-dashboard-state'
-const POLL_INTERVAL = 5000 // 5 seconds
 
 interface StoredState {
   windows: TerminalWindow[]
   windowCount: number
   sidebarCollapsed: boolean
+  settings: UserSettings
 }
 
 function loadStoredState(): StoredState | null {
@@ -57,18 +58,46 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(stored?.sidebarCollapsed ?? false)
   const [floatingSession, setFloatingSession] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
+  const [settings, setSettings] = useState<UserSettings>(stored?.settings ?? DEFAULT_SETTINGS)
+  const [focusedWindowIndex, setFocusedWindowIndex] = useState(0)
 
   // Computed: which sessions are assigned to any window
   const assignedSessions = useMemo(() => {
-    const assigned = new Set<string>()
-    windows.forEach(w => w.boundSessions.forEach(s => assigned.add(s)))
+    const assigned = new Map<string, { windowId: string; colorIndex: number; windowIndex: number }>()
+    windows.forEach((w, idx) => {
+      w.boundSessions.forEach(s => {
+        assigned.set(s, {
+          windowId: w.id,
+          colorIndex: w.colorIndex,
+          windowIndex: idx + 1 // 1-based index for UI badge
+        })
+      })
+    })
     return assigned
   }, [windows])
 
-  // Persist state to localStorage
+  // Clean up any stuck INIT-PENDING windows on mount (from page refresh during creation)
   useEffect(() => {
-    saveState({ windows, windowCount, sidebarCollapsed })
-  }, [windows, windowCount, sidebarCollapsed])
+    setWindows(prev => {
+      const hasStuck = prev.some(w => w.activeSession === 'INIT-PENDING')
+      if (!hasStuck) return prev
+      return prev.map(w =>
+        w.activeSession === 'INIT-PENDING'
+          ? { ...w, activeSession: null }
+          : w
+      )
+    })
+  }, [])
+
+  // Persist state to localStorage (filter out INIT-PENDING to avoid stuck state)
+  useEffect(() => {
+    const cleanWindows = windows.map(w =>
+      w.activeSession === 'INIT-PENDING'
+        ? { ...w, activeSession: null }
+        : w
+    )
+    saveState({ windows: cleanWindows, windowCount, sidebarCollapsed, settings })
+  }, [windows, windowCount, sidebarCollapsed, settings])
 
   // Fetch sessions from API
   const refreshSessions = useCallback(async () => {
@@ -84,6 +113,30 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         setError(null)
         setSessions(data.sessions)
         setGroupedSessions(data.grouped)
+
+        // Clean up orphaned session bindings (sessions that no longer exist in tmux)
+        const existingSessionNames = new Set(data.sessions.map(s => s.name))
+
+        setWindows(prev => {
+          let changed = false
+          const updated = prev.map(w => {
+            const validBound = w.boundSessions.filter(s => existingSessionNames.has(s))
+            if (validBound.length !== w.boundSessions.length) {
+              changed = true
+              const orphaned = w.boundSessions.filter(s => !existingSessionNames.has(s))
+              console.error(`Orphaned sessions removed from ${w.id}:`, orphaned)
+
+              // If activeSession was orphaned, set to first valid or null
+              const newActive = validBound.includes(w.activeSession ?? '')
+                ? w.activeSession
+                : (validBound[0] ?? null)
+
+              return { ...w, boundSessions: validBound, activeSession: newActive }
+            }
+            return w
+          })
+          return changed ? updated : prev
+        })
       }
     } catch (e) {
       setError('Failed to fetch sessions')
@@ -93,17 +146,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  // Poll for sessions
+  // Poll for sessions using settings interval
   useEffect(() => {
     refreshSessions()
-    const interval = setInterval(refreshSessions, POLL_INTERVAL)
+    const interval = setInterval(refreshSessions, settings.autoRefreshInterval)
     return () => clearInterval(interval)
-  }, [refreshSessions])
+  }, [refreshSessions, settings.autoRefreshInterval])
 
   // Actions
   const setWindowCount = useCallback((count: number) => {
     const newCount = Math.max(1, Math.min(4, count))
     setWindowCountState(newCount)
+
+    // Ensure focusedWindowIndex stays valid
+    setFocusedWindowIndex(prev => Math.min(prev, newCount - 1))
 
     setWindows(prev => {
       if (newCount > prev.length) {
@@ -127,32 +183,32 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const addSessionToWindow = useCallback((windowId: string, sessionName: string) => {
-    setWindows(prev => prev.map(w => {
-      if (w.id !== windowId) return w
-      if (w.boundSessions.includes(sessionName)) return w
+    setWindows(prev => {
+      // 1. Remove from any other window first
+      const cleaned = prev.map(w => {
+        if (w.id === windowId) return w
+        if (!w.boundSessions.includes(sessionName)) return w
 
-      const newBound = [...w.boundSessions, sessionName]
-      return {
-        ...w,
-        boundSessions: newBound,
-        activeSession: w.activeSession ?? sessionName, // Set as active if first
-      }
-    }))
+        const newBound = w.boundSessions.filter(s => s !== sessionName)
+        return {
+          ...w,
+          boundSessions: newBound,
+          activeSession: w.activeSession === sessionName ? (newBound[0] ?? null) : w.activeSession
+        }
+      })
 
-    // Also remove from any other window
-    setWindows(prev => prev.map(w => {
-      if (w.id === windowId) return w
-      if (!w.boundSessions.includes(sessionName)) return w
-
-      const newBound = w.boundSessions.filter(s => s !== sessionName)
-      return {
-        ...w,
-        boundSessions: newBound,
-        activeSession: w.activeSession === sessionName
-          ? (newBound[0] ?? null)
-          : w.activeSession,
-      }
-    }))
+      // 2. Add to target window (do NOT change activeSession - user must explicitly select)
+      return cleaned.map(w => {
+        if (w.id !== windowId) return w
+        if (w.boundSessions.includes(sessionName)) {
+          return w  // Already bound, no change needed
+        }
+        return {
+          ...w,
+          boundSessions: [...w.boundSessions, sessionName],
+        }
+      })
+    })
   }, [])
 
   const removeSessionFromWindow = useCallback((windowId: string, sessionName: string) => {
@@ -199,6 +255,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }))
   }, [])
 
+  const cycleWindow = useCallback((direction: 'prev' | 'next') => {
+    setFocusedWindowIndex(prev => {
+      if (direction === 'next') {
+        return (prev + 1) % windowCount
+      } else {
+        return (prev - 1 + windowCount) % windowCount
+      }
+    })
+  }, [windowCount])
+
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed(prev => !prev)
   }, [])
@@ -212,17 +278,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const handleSessionClick = useCallback((sessionName: string) => {
-    // Find if session is assigned to any window
-    const assignedWindow = windows.find(w => w.boundSessions.includes(sessionName))
+    // Always open floating modal for "peek" functionality
+    openFloatingModal(sessionName)
+  }, [openFloatingModal])
 
-    if (assignedWindow) {
-      // If assigned, make it active in that window
-      setActiveSession(assignedWindow.id, sessionName)
-    } else {
-      // If not assigned, open floating modal
-      openFloatingModal(sessionName)
-    }
-  }, [windows, setActiveSession, openFloatingModal])
+  const updateSettings = useCallback((newSettings: Partial<UserSettings>) => {
+    setSettings(prev => ({ ...prev, ...newSettings }))
+  }, [])
 
   const contextValue: DashboardContextType = {
     // State
@@ -232,10 +294,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     error,
     windows,
     windowCount,
+    focusedWindowIndex,
     sidebarCollapsed,
     floatingSession,
     assignedSessions,
     isDragging,
+    settings,
 
     // Actions
     setWindowCount,
@@ -243,12 +307,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     removeSessionFromWindow,
     setActiveSession,
     cycleSession,
+    cycleWindow,
+    setFocusedWindowIndex,
     toggleSidebar,
     openFloatingModal,
     closeFloatingModal,
     handleSessionClick,
     refreshSessions,
     setIsDragging,
+    updateSettings,
   }
 
   return (

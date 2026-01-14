@@ -1,6 +1,7 @@
 import { useDraggable } from '@dnd-kit/core'
 import type { TmuxSession } from '../types'
 import { useSession } from '../context/SessionContext'
+import { WINDOW_COLORS } from '../types'
 
 interface SessionItemProps {
   session: TmuxSession
@@ -8,7 +9,16 @@ interface SessionItemProps {
 
 function SessionItem({ session }: SessionItemProps) {
   const { assignedSessions, handleSessionClick } = useSession()
-  const isAssigned = assignedSessions.has(session.name)
+  const assignment = assignedSessions.get(session.name)
+  const isAssigned = !!assignment
+
+  const badgeStyle = assignment
+    ? {
+        backgroundColor: WINDOW_COLORS[assignment.colorIndex % WINDOW_COLORS.length].border,
+        color: '#000',
+        borderColor: WINDOW_COLORS[assignment.colorIndex % WINDOW_COLORS.length].border
+      }
+    : undefined
 
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: session.name,
@@ -31,8 +41,13 @@ function SessionItem({ session }: SessionItemProps) {
       {...attributes}
       onClick={() => handleSessionClick(session.name)}
     >
+      {assignment && (
+        <span className="window-badge" style={badgeStyle}>
+          {assignment.windowIndex}
+        </span>
+      )}
       <span className="session-agent-name">{session.agentName}</span>
-      {session.attached && <span className="attached-indicator" title="Attached">●</span>}
+      {session.attached && !isAssigned && <span className="attached-indicator" title="Attached elsewhere">●</span>}
     </div>
   )
 }

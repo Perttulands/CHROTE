@@ -1,5 +1,26 @@
 // Arena Dashboard Types
 
+// User settings for persistent configuration
+export interface UserSettings {
+  terminalMode: 'tmux' | 'shell'    // Default mode for new terminals
+  fontSize: number                   // Terminal font size (12-20)
+  theme: 'matrix' | 'dark' | 'gastown' // Color theme
+  autoRefreshInterval: number        // Session refresh interval in ms (1000-30000)
+  defaultSessionPrefix: string       // Prefix for new sessions (e.g., 'shell')
+  musicVolume: number                // Music volume (0-1)
+  musicEnabled: boolean              // Whether music is playing
+}
+
+export const DEFAULT_SETTINGS: UserSettings = {
+  terminalMode: 'tmux',
+  fontSize: 14,
+  theme: 'matrix',
+  autoRefreshInterval: 5000,
+  defaultSessionPrefix: 'shell',
+  musicVolume: 0.5,
+  musicEnabled: false,
+}
+
 export interface TmuxSession {
   name: string
   agentName: string
@@ -32,6 +53,7 @@ export interface DashboardState {
   // Window configuration
   windows: TerminalWindow[]
   windowCount: number // 1-4
+  focusedWindowIndex: number // 0-based index of focused window
 
   // UI state
   sidebarCollapsed: boolean
@@ -39,7 +61,10 @@ export interface DashboardState {
   isDragging: boolean // True when a session is being dragged
 
   // Computed: which sessions are assigned to any window
-  assignedSessions: Set<string>
+  assignedSessions: Map<string, { windowId: string; colorIndex: number; windowIndex: number }>
+
+  // User settings
+  settings: UserSettings
 }
 
 export interface DashboardActions {
@@ -49,6 +74,8 @@ export interface DashboardActions {
   removeSessionFromWindow: (windowId: string, sessionName: string) => void
   setActiveSession: (windowId: string, sessionName: string) => void
   cycleSession: (windowId: string, direction: 'prev' | 'next') => void
+  cycleWindow: (direction: 'prev' | 'next') => void
+  setFocusedWindowIndex: (index: number) => void
 
   // UI actions
   toggleSidebar: () => void
@@ -63,6 +90,9 @@ export interface DashboardActions {
 
   // Drag state
   setIsDragging: (dragging: boolean) => void
+
+  // Settings
+  updateSettings: (settings: Partial<UserSettings>) => void
 }
 
 export type DashboardContextType = DashboardState & DashboardActions

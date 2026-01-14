@@ -1,4 +1,6 @@
-type Tab = 'terminal' | 'files' | 'status'
+import MusicPlayer from './MusicPlayer'
+
+type Tab = 'terminal' | 'files' | 'status' | 'settings'
 
 interface InternalTab {
   id: Tab
@@ -25,6 +27,7 @@ function TabBar({ activeTab, onTabChange }: TabBarProps) {
     { id: 'terminal', label: 'Terminal' },
     { id: 'files', label: 'Files' },
     { id: 'status', label: 'Status' },
+    { id: 'settings', label: 'Settings' },
     { id: 'beads', label: 'Beads ↗', external: true, url: 'https://github.com/Dicklesworthstone/beads_viewer' },
   ]
 
@@ -38,16 +41,19 @@ function TabBar({ activeTab, onTabChange }: TabBarProps) {
 
   return (
     <div className="tab-bar">
-      {tabs.map((tab) => (
-        <button
-          key={tab.id}
-          className={`tab ${!tab.external && activeTab === tab.id ? 'active' : ''} ${tab.external ? 'external' : ''}`}
-          onClick={() => handleClick(tab)}
-          title={tab.external ? `Open ${tab.label.replace(' ↗', '')} in new tab` : undefined}
-        >
-          {tab.label}
-        </button>
-      ))}
+      <div className="tab-bar-tabs">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            className={`tab ${!tab.external && activeTab === tab.id ? 'active' : ''} ${tab.external ? 'external' : ''}`}
+            onClick={() => handleClick(tab)}
+            title={tab.external ? `Open ${tab.label.replace(' ↗', '')} in new tab` : undefined}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      <MusicPlayer />
     </div>
   )
 }

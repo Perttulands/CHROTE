@@ -24,7 +24,7 @@ src/
 │   ├── TerminalWindow   # Single terminal iframe + session tags
 │   ├── FloatingModal    # Pop-out terminal (xterm.js + WebSocket)
 │   ├── FilesView        # Filebrowser iframe
-│   └── StatusView       # Service status & commands
+│   └── StatusView       # Live service health from API
 ├── hooks/
 │   └── useTmuxSessions  # API polling hook
 └── types.ts             # TypeScript interfaces

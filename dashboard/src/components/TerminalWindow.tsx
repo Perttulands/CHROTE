@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useDroppable, useDraggable } from '@dnd-kit/core'
 import { useSession } from '../context/SessionContext'
 import { WINDOW_COLORS } from '../types'
@@ -54,15 +54,25 @@ function SessionTag({ sessionName, isActive, windowId, onRemove, onClick }: Sess
     ? sessionName.split('-').slice(-1)[0]
     : sessionName
 
+  // Handle click on the tag - only fire if not dragging
+  const handleClick = (e: React.MouseEvent) => {
+    // Don't trigger click if we're dragging
+    if (isDragging) return
+    // Don't trigger if clicking the remove button
+    if ((e.target as HTMLElement).closest('.tag-remove')) return
+    onClick()
+  }
+
   return (
     <div
       ref={setNodeRef}
       className={`session-tag ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''}`}
       style={style}
+      onClick={handleClick}
       {...listeners}
       {...attributes}
     >
-      <span className="tag-name" onClick={onClick}>{displayName}</span>
+      <span className="tag-name">{displayName}</span>
       <button className="tag-remove" onClick={(e) => { e.stopPropagation(); onRemove(); }}>×</button>
     </div>
   )
@@ -71,16 +81,66 @@ function SessionTag({ sessionName, isActive, windowId, onRemove, onClick }: Sess
 interface TerminalWindowProps {
   window: TerminalWindowType
   isDragging?: boolean
+  isFocused?: boolean
+  onFocus?: () => void
 }
 
-function TerminalWindow({ window: windowConfig, isDragging = false }: TerminalWindowProps) {
+function TerminalWindow({ window: windowConfig, isDragging = false, isFocused = false, onFocus }: TerminalWindowProps) {
   const [loaded, setLoaded] = useState(false)
+  const iframeRef = useRef<HTMLIFrameElement>(null)
+
+  // Reset loaded state when session changes (so status dot shows disconnected during switch)
+  useEffect(() => {
+    setLoaded(false)
+  }, [windowConfig.activeSession])
 
   const {
     removeSessionFromWindow,
     setActiveSession,
     cycleSession,
+    settings,
   } = useSession()
+
+  // Apply font size to xterm instance inside iframe with polling for readiness
+  const applyFontSize = useCallback((fontSize: number) => {
+    const iframe = iframeRef.current
+    if (!iframe?.contentWindow) return
+
+    let attempts = 0
+    const maxAttempts = 20 // 20 * 50ms = 1 second max wait
+
+    const tryApply = () => {
+      try {
+        const iframeWindow = iframe.contentWindow as Window & { term?: { options: { fontSize: number } } }
+        if (iframeWindow.term) {
+          iframeWindow.term.options.fontSize = fontSize
+          return // Success - stop polling
+        }
+      } catch {
+        // Cross-origin or not ready - continue polling
+      }
+
+      attempts++
+      if (attempts < maxAttempts) {
+        setTimeout(tryApply, 50) // Poll every 50ms
+      }
+    }
+
+    tryApply()
+  }, [])
+
+  // Apply font size when iframe loads
+  const handleIframeLoad = useCallback(() => {
+    setLoaded(true)
+    applyFontSize(settings.fontSize)
+  }, [applyFontSize, settings.fontSize])
+
+  // Apply font size when setting changes (for already loaded iframes)
+  useEffect(() => {
+    if (loaded) {
+      applyFontSize(settings.fontSize)
+    }
+  }, [loaded, settings.fontSize, applyFontSize])
 
   const colorTheme = WINDOW_COLORS[windowConfig.colorIndex % WINDOW_COLORS.length]
 
@@ -97,18 +157,19 @@ function TerminalWindow({ window: windowConfig, isDragging = false }: TerminalWi
 
   // ttyd serves its own terminal UI - embed via iframe
   // If a session is active, pass it as arg to attach to that tmux session
-  const terminalUrl = activeSession
+  const terminalUrl = activeSession && activeSession !== 'INIT-PENDING'
     ? `/terminal/?arg=${encodeURIComponent(activeSession)}`
-    : `/terminal/`
+    : `/terminal/?arg=&arg=${encodeURIComponent(settings.terminalMode)}`
 
   return (
     <div
-      className="terminal-window"
+      className={`terminal-window ${isFocused ? 'focused' : ''}`}
       style={{
         '--window-accent': colorTheme.accent,
         '--window-bg': colorTheme.bg,
         '--window-border': colorTheme.border,
       } as React.CSSProperties}
+      onClick={onFocus}
     >
       <div className="terminal-window-header">
         <div className="session-tags">
@@ -122,7 +183,7 @@ function TerminalWindow({ window: windowConfig, isDragging = false }: TerminalWi
               onClick={() => handleTagClick(sessionName)}
             />
           ))}
-          {!hasSessions && <span className="no-sessions">Shell ready</span>}
+          {!hasSessions && <span className="no-sessions">Drag a session here to begin</span>}
         </div>
 
         <div className="window-controls">
@@ -149,19 +210,32 @@ function TerminalWindow({ window: windowConfig, isDragging = false }: TerminalWi
       </div>
 
       <div className="terminal-window-body">
-        {/* Key forces iframe reload when session changes */}
-        <iframe
-          key={activeSession || 'shell'}
-          src={terminalUrl}
-          onLoad={() => setLoaded(true)}
-          style={{
-            width: '100%',
-            height: '100%',
-            border: 'none',
-            backgroundColor: colorTheme.bg,
-          }}
-          title={`Terminal ${windowConfig.id}${activeSession ? ` - ${activeSession}` : ''}`}
-        />
+        {activeSession === 'INIT-PENDING' ? (
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'center', 
+            alignItems: 'center', 
+            height: '100%', 
+            color: colorTheme.accent 
+          }}>
+            <span>Initializing Session...</span>
+          </div>
+        ) : (
+          /* Key forces iframe reload when session changes */
+          <iframe
+            ref={iframeRef}
+            key={activeSession || 'shell'}
+            src={terminalUrl}
+            onLoad={handleIframeLoad}
+            style={{
+              width: '100%',
+              height: '100%',
+              border: 'none',
+              backgroundColor: colorTheme.bg,
+            }}
+            title={`Terminal ${windowConfig.id}${activeSession ? ` - ${activeSession}` : ''}`}
+          />
+        )}
         <DropOverlay windowId={windowConfig.id} isVisible={isDragging} />
       </div>
     </div>
