@@ -98,10 +98,10 @@ The dashboard automatically categorizes sessions by prefix:
 | Component | Auth Method |
 |-----------|-------------|
 | Dashboard | None (Tailscale provides network security) |
-| ttyd | Basic auth: `wisqi` / password from `TTYD_PASSWORD` |
+| ttyd | None (Tailscale provides network security) |
 | filebrowser | None (`--noauth` flag) |
 
-The browser will prompt for ttyd credentials when opening terminal panes.
+All services are protected by Tailscale network access control.
 
 ## Configuration
 
@@ -111,7 +111,6 @@ In `.env`:
 
 ```env
 TS_AUTHKEY=tskey-auth-xxx      # Tailscale auth key
-TTYD_PASSWORD=your-password    # ttyd basic auth password
 ```
 
 ### Customization
@@ -222,8 +221,8 @@ gt convoy status
 
 ### Terminal won't connect
 
-1. Check ttyd is running: `docker logs agentarena-dev | grep ttyd`
-2. Verify nginx proxy: `docker logs arena-nginx`
+1. Check ttyd is running: `docker exec agentarena-dev ps aux | grep ttyd`
+2. Check nginx inside container: `docker exec agentarena-dev nginx -t`
 3. Check WebSocket path: Should be `/terminal/ws`
 
 ### Sessions not appearing in panel
@@ -237,11 +236,11 @@ gt convoy status
 1. Verify port change: filebrowser should be on 8081
 2. Check nginx proxy path: `/files/`
 
-### Authentication issues
+### Connection issues
 
-1. Verify `TTYD_PASSWORD` in `.env`
-2. Clear browser credentials and re-enter
-3. Check container has the env var: `docker exec agentarena-dev env | grep TTYD`
+1. Verify Tailscale is connected: `tailscale status`
+2. Check container is running: `docker ps | grep agentarena`
+3. Test API directly: `curl http://arena:8080/api/health`
 
 ### Layout not persisting
 

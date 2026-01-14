@@ -71,7 +71,6 @@ services:
       - arena_root_home:/root
     environment:
       OLLAMA_HOST: http://ollama:11434
-      TTYD_PASSWORD: ${TTYD_PASSWORD}
     restart: unless-stopped
 
   # ============================================
