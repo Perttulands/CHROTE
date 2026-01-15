@@ -4,8 +4,8 @@ import { useSession } from '../context/SessionContext'
 function FloatingModal() {
   const { floatingSession, closeFloatingModal, settings } = useSession()
   const [loaded, setLoaded] = useState(false)
-  const [position, setPosition] = useState({ x: 100, y: 100 })
-  const [size] = useState({ width: 600, height: 400 })
+  const [position, setPosition] = useState({ x: 80, y: 60 })
+  const [size] = useState({ width: 1000, height: 700 })
   const [isDragging, setIsDragging] = useState(false)
   const dragOffset = useRef({ x: 0, y: 0 })
   const iframeRef = useRef<HTMLIFrameElement>(null)

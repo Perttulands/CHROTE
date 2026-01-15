@@ -3,6 +3,7 @@
 
 const express = require('express');
 const { execSync } = require('child_process');
+const { getGroupPriority, categorizeSession, extractAgentName } = require('./utils');
 const app = express();
 
 // Ensure consistent tmux socket location
@@ -12,51 +13,12 @@ const TMUX_ENV = { env: { ...process.env, TMUX_TMPDIR: '/tmp' } };
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
   next();
 });
 
 // Parse JSON bodies
 app.use(express.json());
-
-// Session sorting priority
-const GROUP_PRIORITY = {
-  'hq': 0,
-  'main': 1,
-};
-
-function getGroupPriority(group) {
-  if (GROUP_PRIORITY[group] !== undefined) return GROUP_PRIORITY[group];
-  if (group.startsWith('gt-')) return 2; // Rigs after main
-  return 3; // Other
-}
-
-function categorizeSession(name) {
-  if (name.startsWith('hq-')) return 'hq';
-  if (name === 'main' || name === 'shell') return 'main';
-  if (name.startsWith('gt-')) {
-    // Extract rig name: gt-gastown-jack → gt-gastown
-    const parts = name.split('-');
-    if (parts.length >= 2) {
-      return parts.slice(0, 2).join('-');
-    }
-    return 'gt-unknown';
-  }
-  return 'other';
-}
-
-function extractAgentName(sessionName) {
-  // gt-gastown-jack → jack
-  // hq-mayor → mayor
-  const parts = sessionName.split('-');
-  if (parts.length >= 3 && sessionName.startsWith('gt-')) {
-    return parts.slice(2).join('-');
-  }
-  if (parts.length >= 2) {
-    return parts.slice(1).join('-');
-  }
-  return sessionName;
-}
 
 app.get('/api/tmux/sessions', (req, res) => {
   try {
@@ -128,10 +90,23 @@ app.post('/api/tmux/sessions', (req, res) => {
     if (!name) {
       const timestamp = Date.now().toString(36);
       name = `shell-${timestamp}`;
+    } else {
+      // Validate user-provided session name (alphanumeric, dash, underscore only)
+      if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid session name. Use only letters, numbers, dashes, and underscores.',
+          timestamp: new Date().toISOString()
+        });
+      }
+      if (name.length > 50) {
+        return res.status(400).json({
+          success: false,
+          error: 'Session name too long (max 50 characters).',
+          timestamp: new Date().toISOString()
+        });
+      }
     }
-
-    // Sanitize session name (alphanumeric, dash, underscore only)
-    name = name.replace(/[^a-zA-Z0-9_-]/g, '-').substring(0, 50);
 
     // Create the session (detached) - API runs as dev, same user as ttyd
     execSync(`tmux new-session -d -s "${name}"`, { encoding: 'utf-8', timeout: 5000, ...TMUX_ENV });
@@ -143,6 +118,83 @@ app.post('/api/tmux/sessions', (req, res) => {
     });
   } catch (e) {
     res.status(400).json({
+      success: false,
+      error: e.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Rename a tmux session
+app.patch('/api/tmux/sessions/:name', (req, res) => {
+  try {
+    const oldName = decodeURIComponent(req.params.name);
+    const { newName } = req.body;
+
+    // Validate new session name
+    if (!newName) {
+      return res.status(400).json({
+        success: false,
+        error: 'New name is required.',
+        timestamp: new Date().toISOString()
+      });
+    }
+    if (!/^[a-zA-Z0-9_-]+$/.test(newName)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid session name. Use only letters, numbers, dashes, and underscores.',
+        timestamp: new Date().toISOString()
+      });
+    }
+    if (newName.length > 50) {
+      return res.status(400).json({
+        success: false,
+        error: 'Session name too long (max 50 characters).',
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Rename the session
+    execSync(`tmux rename-session -t "${oldName}" "${newName}"`, {
+      encoding: 'utf-8',
+      timeout: 5000,
+      ...TMUX_ENV
+    });
+
+    res.json({
+      success: true,
+      oldName,
+      newName,
+      timestamp: new Date().toISOString()
+    });
+  } catch (e) {
+    res.status(500).json({
+      success: false,
+      error: e.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Delete a specific tmux session
+app.delete('/api/tmux/sessions/:name', (req, res) => {
+  try {
+    const sessionName = decodeURIComponent(req.params.name);
+
+    // Kill the specific session
+    execSync(`tmux kill-session -t "${sessionName}"`, {
+      encoding: 'utf-8',
+      timeout: 5000,
+      ...TMUX_ENV
+    });
+
+    res.json({
+      success: true,
+      killed: sessionName,
+      timestamp: new Date().toISOString()
+    });
+  } catch (e) {
+    res.status(500).json({
       success: false,
       error: e.message,
       timestamp: new Date().toISOString()
@@ -189,10 +241,84 @@ app.delete('/api/tmux/sessions/all', (req, res) => {
   }
 });
 
+// Apply tmux appearance settings (hot-reload)
+app.post('/api/tmux/appearance', (req, res) => {
+  try {
+    const { statusBg, statusFg, paneBorderActive, paneBorderInactive, modeStyleBg, modeStyleFg } = req.body;
+
+    // Validate color inputs (hex, named colors, or 'default' for transparency)
+    const validateColor = (color) => {
+      if (!color) return true; // Allow undefined/null (skip this setting)
+      // Allow hex colors (#RGB, #RRGGBB), named colors, or 'default' for transparency
+      return /^#[0-9A-Fa-f]{3,6}$/.test(color) || /^[a-zA-Z]+$/.test(color) || color === 'default';
+    };
+
+    const colors = { statusBg, statusFg, paneBorderActive, paneBorderInactive, modeStyleBg, modeStyleFg };
+    for (const [key, val] of Object.entries(colors)) {
+      if (val && !validateColor(val)) {
+        return res.status(400).json({
+          success: false,
+          error: `Invalid color for ${key}: ${val}`,
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
+
+    // Build tmux set commands - these apply globally without disrupting sessions
+    const commands = [];
+
+    if (statusBg && statusFg) {
+      commands.push(`tmux set -g status-style "bg=${statusBg},fg=${statusFg}"`);
+    }
+    if (paneBorderActive) {
+      commands.push(`tmux set -g pane-active-border-style "fg=${paneBorderActive}"`);
+    }
+    if (paneBorderInactive) {
+      commands.push(`tmux set -g pane-border-style "fg=${paneBorderInactive}"`);
+    }
+    if (modeStyleBg && modeStyleFg) {
+      commands.push(`tmux set -g mode-style "bg=${modeStyleBg},fg=${modeStyleFg}"`);
+    }
+
+    // Execute all commands
+    let applied = 0;
+    for (const cmd of commands) {
+      try {
+        execSync(cmd, { encoding: 'utf-8', timeout: 5000, ...TMUX_ENV });
+        applied++;
+      } catch (e) {
+        // tmux server might not be running - that's okay, settings apply when it starts
+        const noServerErrors = ['no server running', 'No such file'];
+        if (!noServerErrors.some(msg => e.message.includes(msg))) {
+          console.warn(`tmux command failed: ${cmd}`, e.message);
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      applied,
+      total: commands.length,
+      timestamp: new Date().toISOString()
+    });
+  } catch (e) {
+    res.status(500).json({
+      success: false,
+      error: e.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+// BEADS MODULE INTEGRATION - START
+const beadsRoutes = require('./beads-routes');
+app.use('/api/beads', beadsRoutes);
+// BEADS MODULE INTEGRATION - END
 
 const PORT = process.env.API_PORT || 3001;
 app.listen(PORT, '0.0.0.0', () => {

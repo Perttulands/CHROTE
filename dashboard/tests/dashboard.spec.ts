@@ -366,6 +366,146 @@ test.describe('Arena Dashboard', () => {
     })
   })
 
+  test.describe('Search Filter', () => {
+    test('should filter sessions by name', async ({ page }) => {
+      await page.waitForSelector('.session-item')
+
+      // Type in search box
+      await page.fill('.session-search-input', 'jack')
+
+      // Only jack should be visible
+      await expect(page.locator('.session-item:visible')).toHaveCount(1)
+      await expect(page.locator('.session-item:visible')).toContainText('jack')
+    })
+
+    test('should be case-insensitive', async ({ page }) => {
+      await page.waitForSelector('.session-item')
+
+      // Type uppercase
+      await page.fill('.session-search-input', 'JACK')
+
+      // jack should still be visible
+      await expect(page.locator('.session-item:visible')).toHaveCount(1)
+      await expect(page.locator('.session-item:visible')).toContainText('jack')
+    })
+
+    test('should hide groups with no matching sessions', async ({ page }) => {
+      await page.waitForSelector('.session-group')
+
+      // Initially 4 groups
+      await expect(page.locator('.session-group')).toHaveCount(4)
+
+      // Filter to only gt-gastown sessions
+      await page.fill('.session-search-input', 'gastown')
+
+      // Only gt-gastown group should remain (others are removed from DOM)
+      // Group display name is "Gastown" (capitalized, without gt- prefix)
+      await expect(page.locator('.session-group')).toHaveCount(1)
+      await expect(page.locator('.session-group .group-name')).toContainText('Gastown')
+    })
+
+    test('should show all sessions when search cleared', async ({ page }) => {
+      await page.waitForSelector('.session-item')
+
+      // Filter first
+      await page.fill('.session-search-input', 'jack')
+      await expect(page.locator('.session-item:visible')).toHaveCount(1)
+
+      // Clear search
+      await page.fill('.session-search-input', '')
+
+      // All sessions visible again (8 in mock data)
+      await expect(page.locator('.session-item:visible')).toHaveCount(8)
+    })
+
+    test('should filter by agent name as well', async ({ page }) => {
+      await page.waitForSelector('.session-item')
+
+      // Filter by agent name (mayor is agentName for hq-mayor)
+      await page.fill('.session-search-input', 'mayor')
+
+      await expect(page.locator('.session-item:visible')).toHaveCount(1)
+      await expect(page.locator('.session-item:visible')).toContainText('mayor')
+    })
+  })
+
+  test.describe('Keyboard Navigation', () => {
+    test('should cycle windows with Ctrl+Down', async ({ page }) => {
+      await page.waitForSelector('.session-item')
+
+      // First, we need windows with sessions to test focus
+      await page.click('.layout-btn:has-text("2")')
+      await expect(page.locator('.terminal-window')).toHaveCount(2)
+
+      // Add sessions to both windows
+      await dragAndDrop(page, '.session-item:has-text("jack")', '.terminal-window >> nth=0')
+      await dragAndDrop(page, '.session-item:has-text("joe")', '.terminal-window >> nth=1')
+
+      // Verify sessions are in windows
+      await expect(page.locator('.terminal-window').nth(0).locator('.session-tag')).toHaveCount(1)
+      await expect(page.locator('.terminal-window').nth(1).locator('.session-tag')).toHaveCount(1)
+
+      // Initially window 0 should be focused (default)
+      // Press Ctrl+Down to focus window 1
+      await page.keyboard.press('Control+ArrowDown')
+
+      // Press again to wrap to window 0
+      await page.keyboard.press('Control+ArrowDown')
+    })
+
+    test('should cycle sessions with Ctrl+Right', async ({ page }) => {
+      await page.waitForSelector('.session-item')
+
+      const targetWindow = page.locator('.terminal-window').first()
+
+      // Add multiple sessions to first window
+      await dragAndDrop(page, '.session-item:has-text("jack")', '.terminal-window')
+      await dragAndDrop(page, '.session-item:has-text("joe")', '.terminal-window')
+      await dragAndDrop(page, '.session-item:has-text("max")', '.terminal-window')
+
+      // Verify 3 sessions in window
+      await expect(targetWindow.locator('.session-tag')).toHaveCount(3)
+
+      // First session should be active
+      await expect(targetWindow.locator('.session-tag').first()).toHaveClass(/active/)
+
+      // Press Ctrl+Right to cycle to next session
+      await page.keyboard.press('Control+ArrowRight')
+      await expect(targetWindow.locator('.session-tag').nth(1)).toHaveClass(/active/)
+
+      // Press again
+      await page.keyboard.press('Control+ArrowRight')
+      await expect(targetWindow.locator('.session-tag').nth(2)).toHaveClass(/active/)
+
+      // Press again to wrap around
+      await page.keyboard.press('Control+ArrowRight')
+      await expect(targetWindow.locator('.session-tag').first()).toHaveClass(/active/)
+    })
+
+    test('should cycle sessions backwards with Ctrl+Left', async ({ page }) => {
+      await page.waitForSelector('.session-item')
+
+      const targetWindow = page.locator('.terminal-window').first()
+
+      // Add multiple sessions
+      await dragAndDrop(page, '.session-item:has-text("jack")', '.terminal-window')
+      await dragAndDrop(page, '.session-item:has-text("joe")', '.terminal-window')
+
+      await expect(targetWindow.locator('.session-tag')).toHaveCount(2)
+
+      // First is active
+      await expect(targetWindow.locator('.session-tag').first()).toHaveClass(/active/)
+
+      // Press Ctrl+Left to go to last (wrapping)
+      await page.keyboard.press('Control+ArrowLeft')
+      await expect(targetWindow.locator('.session-tag').nth(1)).toHaveClass(/active/)
+
+      // Press again to go back to first
+      await page.keyboard.press('Control+ArrowLeft')
+      await expect(targetWindow.locator('.session-tag').first()).toHaveClass(/active/)
+    })
+  })
+
   test.describe('Persistence', () => {
     test('should persist layout to localStorage', async ({ page }) => {
       // Switch to 4 windows

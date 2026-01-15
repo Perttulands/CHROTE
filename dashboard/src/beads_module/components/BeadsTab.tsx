@@ -1,13 +1,16 @@
 // Beads Tab - Main container component with sub-navigation
 // This is the entry point for the beads_module in the dashboard
 
-import { useEffect, useState, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { BeadsProvider, useBeads } from '../context';
 import { BeadsGraphView } from './BeadsGraphView';
 import { BeadsKanbanView } from './BeadsKanbanView';
 import { BeadsTriageView } from './BeadsTriageView';
 import { BeadsInsightsView } from './BeadsInsightsView';
 import type { BeadsSubTab } from '../types';
+
+// Import module styles
+import '../beads.css';
 
 // ============================================================================
 // SUB-TAB CONFIGURATION
@@ -57,6 +60,8 @@ function BeadsTabContent() {
     setActiveSubTab,
     setProjectPath,
     availableProjects,
+    refreshAll,
+    isLoading,
   } = useBeads();
 
   const [isProjectSelectorOpen, setIsProjectSelectorOpen] = useState(false);
@@ -75,6 +80,10 @@ function BeadsTabContent() {
     },
     [setProjectPath]
   );
+  
+  const handleRefresh = useCallback(() => {
+    refreshAll(viewState.projectPath);
+  }, [refreshAll, viewState.projectPath]);
 
   // Render active view
   const renderActiveView = () => {
@@ -149,6 +158,15 @@ function BeadsTabContent() {
                   {availableProjects.length === 0 && (
                     <div className="beads-project-selector-empty">
                       No projects found
+          
+          <button 
+            className="beads-btn beads-btn-icon" 
+            onClick={handleRefresh}
+            disabled={isLoading}
+            title="Refresh All Data"
+          >
+            {isLoading ? '⏳' : '🔄'}
+          </button>
                     </div>
                   )}
                 </div>

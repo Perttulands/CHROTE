@@ -61,6 +61,7 @@ services:
     container_name: agentarena-dev
     depends_on:
       - tailscale-arena
+      - filebrowser
     network_mode: service:tailscale-arena
     volumes:
       # Host paths - your actual Windows folders
@@ -93,13 +94,9 @@ services:
       - E:/Vault:/srv/vault
       - ./filebrowser_data:/database
       - ./filebrowser_data/branding:/branding:ro
+      - ./filebrowser_data/settings.json:/config/settings.json:ro
     command:
-      - --address=0.0.0.0
-      - --port=8081
-      - --root=/srv
-      - --database=/database/filebrowser.db
-      - --baseurl=/files
-      - --noauth
+      - --config=/config/settings.json
     depends_on:
       - tailscale-arena
     restart: unless-stopped

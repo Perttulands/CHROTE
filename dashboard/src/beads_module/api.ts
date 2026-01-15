@@ -4,7 +4,6 @@
 import type {
   BeadsApiResponse,
   BeadsApiError,
-  BeadsIssue,
   BeadsIssuesResponse,
   BeadsTriage,
   BeadsInsights,

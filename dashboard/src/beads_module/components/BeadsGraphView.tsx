@@ -1,12 +1,11 @@
 // Beads Graph View - Interactive dependency graph visualization
 // This component is part of the self-contained beads_module
 
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useBeads } from '../context';
 import type {
   BeadsGraphNode,
   BeadsGraphLink,
-  BeadsIssue,
   BeadsGraphViewProps,
 } from '../types';
 import {

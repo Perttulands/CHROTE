@@ -1,3 +1,4 @@
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useDraggable } from '@dnd-kit/core'
 import type { TmuxSession } from '../types'
 import { useSession } from '../context/SessionContext'
@@ -7,17 +8,37 @@ interface SessionItemProps {
   session: TmuxSession
 }
 
+interface ContextMenuState {
+  show: boolean
+  x: number
+  y: number
+}
+
 function SessionItem({ session }: SessionItemProps) {
-  const { assignedSessions, handleSessionClick } = useSession()
+  const { assignedSessions, handleSessionClick, deleteSession, renameSession, windows, addSessionToWindow, removeSessionFromWindow } = useSession()
   const assignment = assignedSessions.get(session.name)
   const isAssigned = !!assignment
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>({ show: false, x: 0, y: 0 })
+  const [isRenaming, setIsRenaming] = useState(false)
+  const [renameValue, setRenameValue] = useState('')
+  const [showAssignSubmenu, setShowAssignSubmenu] = useState(false)
+  const renameInputRef = useRef<HTMLInputElement>(null)
+
+  const windowColor = assignment
+    ? WINDOW_COLORS[assignment.colorIndex % WINDOW_COLORS.length].border
+    : undefined
 
   const badgeStyle = assignment
     ? {
-        backgroundColor: WINDOW_COLORS[assignment.colorIndex % WINDOW_COLORS.length].border,
+        backgroundColor: windowColor,
         color: '#000',
-        borderColor: WINDOW_COLORS[assignment.colorIndex % WINDOW_COLORS.length].border
+        borderColor: windowColor
       }
+    : undefined
+
+  // Color the session name text based on window assignment
+  const nameStyle = assignment
+    ? { color: windowColor }
     : undefined
 
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
@@ -32,23 +53,166 @@ function SessionItem({ session }: SessionItemProps) {
       }
     : undefined
 
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setContextMenu({ show: true, x: e.clientX, y: e.clientY })
+    setShowAssignSubmenu(false)
+  }, [])
+
+  const closeContextMenu = useCallback(() => {
+    setContextMenu({ show: false, x: 0, y: 0 })
+    setShowAssignSubmenu(false)
+  }, [])
+
+  const handleDelete = useCallback(async () => {
+    closeContextMenu()
+    await deleteSession(session.name)
+  }, [deleteSession, session.name, closeContextMenu])
+
+  const handleStartRename = useCallback(() => {
+    setRenameValue(session.name)
+    setIsRenaming(true)
+    closeContextMenu()
+  }, [session.name, closeContextMenu])
+
+  const handleRenameSubmit = useCallback(async () => {
+    if (renameValue && renameValue !== session.name) {
+      await renameSession(session.name, renameValue)
+    }
+    setIsRenaming(false)
+  }, [renameValue, session.name, renameSession])
+
+  const handleRenameKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleRenameSubmit()
+    } else if (e.key === 'Escape') {
+      setIsRenaming(false)
+    }
+  }, [handleRenameSubmit])
+
+  const handleAssignToWindow = useCallback((windowId: string) => {
+    addSessionToWindow(windowId, session.name)
+    closeContextMenu()
+  }, [addSessionToWindow, session.name, closeContextMenu])
+
+  const handleUnassign = useCallback(() => {
+    if (assignment) {
+      removeSessionFromWindow(assignment.windowId, session.name)
+    }
+    closeContextMenu()
+  }, [assignment, removeSessionFromWindow, session.name, closeContextMenu])
+
+  // Focus rename input when it appears
+  useEffect(() => {
+    if (isRenaming && renameInputRef.current) {
+      renameInputRef.current.focus()
+      renameInputRef.current.select()
+    }
+  }, [isRenaming])
+
+  // Close context menu on click outside
+  useEffect(() => {
+    if (!contextMenu.show) return
+    const handleClick = () => closeContextMenu()
+    document.addEventListener('click', handleClick)
+    return () => document.removeEventListener('click', handleClick)
+  }, [contextMenu.show, closeContextMenu])
+
+  // Rename mode
+  if (isRenaming) {
+    return (
+      <div className="session-item renaming">
+        <input
+          ref={renameInputRef}
+          type="text"
+          className="session-rename-input"
+          value={renameValue}
+          onChange={e => setRenameValue(e.target.value)}
+          onKeyDown={handleRenameKeyDown}
+          onBlur={handleRenameSubmit}
+        />
+      </div>
+    )
+  }
+
   return (
-    <div
-      ref={setNodeRef}
-      className={`session-item ${isAssigned ? 'assigned' : ''} ${isDragging ? 'dragging' : ''}`}
-      style={style}
-      {...listeners}
-      {...attributes}
-      onClick={() => handleSessionClick(session.name)}
-    >
-      {assignment && (
-        <span className="window-badge" style={badgeStyle}>
-          {assignment.windowIndex}
-        </span>
+    <>
+      <div
+        ref={setNodeRef}
+        className={`session-item ${isAssigned ? 'assigned' : ''} ${isDragging ? 'dragging' : ''}`}
+        style={style}
+        {...listeners}
+        {...attributes}
+        onClick={() => handleSessionClick(session.name)}
+        onContextMenu={handleContextMenu}
+      >
+        {assignment && (
+          <span className="window-badge" style={badgeStyle}>
+            {assignment.windowIndex}
+          </span>
+        )}
+        <span className="session-agent-name" style={nameStyle}>{session.agentName}</span>
+        {session.attached && !isAssigned && <span className="attached-indicator" title="Attached elsewhere">●</span>}
+      </div>
+
+      {contextMenu.show && (
+        <div
+          className="session-context-menu"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={e => e.stopPropagation()}
+        >
+          <button className="session-context-item" onClick={handleStartRename}>
+            <span className="session-context-icon">✎</span>
+            Rename
+          </button>
+
+          <div
+            className="session-context-item session-context-submenu-trigger"
+            onMouseEnter={() => setShowAssignSubmenu(true)}
+            onMouseLeave={() => setShowAssignSubmenu(false)}
+          >
+            <span className="session-context-icon">◫</span>
+            Assign to Window
+            <span className="session-context-arrow">▶</span>
+
+            {showAssignSubmenu && (
+              <div className="session-context-submenu">
+                {windows.map((w, idx) => {
+                  const color = WINDOW_COLORS[w.colorIndex % WINDOW_COLORS.length]
+                  const isCurrentWindow = assignment?.windowId === w.id
+                  return (
+                    <button
+                      key={w.id}
+                      className={`session-context-item ${isCurrentWindow ? 'active' : ''}`}
+                      onClick={() => handleAssignToWindow(w.id)}
+                      style={{ borderLeft: `3px solid ${color.border}` }}
+                    >
+                      Window {idx + 1}
+                      {isCurrentWindow && <span className="session-context-check">✓</span>}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          {isAssigned && (
+            <button className="session-context-item" onClick={handleUnassign}>
+              <span className="session-context-icon">⊘</span>
+              Unassign
+            </button>
+          )}
+
+          <div className="session-context-divider" />
+
+          <button className="session-context-item session-context-danger" onClick={handleDelete}>
+            <span className="session-context-icon">✕</span>
+            Delete Session
+          </button>
+        </div>
       )}
-      <span className="session-agent-name">{session.agentName}</span>
-      {session.attached && !isAssigned && <span className="attached-indicator" title="Attached elsewhere">●</span>}
-    </div>
+    </>
   )
 }
 

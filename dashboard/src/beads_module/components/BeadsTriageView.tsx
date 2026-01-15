@@ -1,7 +1,7 @@
 // Beads Triage View - AI-powered issue triage and recommendations
 // This component is part of the self-contained beads_module
 
-import { useEffect, useCallback, useMemo, useState } from 'react';
+import { useEffect, useCallback, useState } from 'react';
 import { useBeads } from '../context';
 import type {
   BeadsTriageRecommendation,
@@ -9,7 +9,6 @@ import type {
   BeadsIssue,
 } from '../types';
 import {
-  BEADS_STATUS_COLORS,
   BEADS_TYPE_ICONS,
   BEADS_PRIORITY_COLORS,
 } from '../types';

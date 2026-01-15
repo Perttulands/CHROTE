@@ -75,7 +75,12 @@ set -g renumber-windows on\n\
 # Better colors and true color support\n\
 set -g default-terminal "tmux-256color"\n\
 set -ga terminal-overrides ",xterm-256color:Tc"\n\
-' > /home/dev/.tmux.conf && chown dev:dev /home/dev/.tmux.conf
+\n\
+# Transparent background - inherit from terminal\n\
+set -g window-style "bg=default"\n\
+set -g window-active-style "bg=default"\n\
+' > /home/dev/.tmux.conf && chown dev:dev /home/dev/.tmux.conf && \
+    cp /home/dev/.tmux.conf /etc/skel/.tmux.conf
 
 # 6a2. Create tmux session launcher script for ttyd
 RUN printf '#!/bin/bash\n\
@@ -146,6 +151,11 @@ chmod -R 775 /code 2>/dev/null || true\n\
 # Fix /home/dev permissions for terminal launch\n\
 chown -R dev:dev /home/dev 2>/dev/null || true\n\
 chmod 755 /home/dev 2>/dev/null || true\n\
+# Ensure .tmux.conf exists (may be missing if volume was created before tmux config was added)\n\
+if [ ! -f /home/dev/.tmux.conf ]; then\n\
+  cp /etc/skel/.tmux.conf /home/dev/.tmux.conf 2>/dev/null || true\n\
+  chown dev:dev /home/dev/.tmux.conf 2>/dev/null || true\n\
+fi\n\
 # Start SSH\n\
 service ssh start\n\
 # Start nginx for dashboard\n\

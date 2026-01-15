@@ -1,6 +1,6 @@
 import MusicPlayer from './MusicPlayer'
 
-type Tab = 'terminal' | 'files' | 'status' | 'settings'
+type Tab = 'terminal' | 'files' | 'status' | 'settings' | 'beads' | 'help'
 
 interface InternalTab {
   id: Tab
@@ -26,9 +26,10 @@ function TabBar({ activeTab, onTabChange }: TabBarProps) {
   const tabs: TabConfig[] = [
     { id: 'terminal', label: 'Terminal' },
     { id: 'files', label: 'Files' },
+    { id: 'beads', label: 'Beads' },
     { id: 'status', label: 'Status' },
     { id: 'settings', label: 'Settings' },
-    { id: 'beads', label: 'Beads ↗', external: true, url: 'https://github.com/Dicklesworthstone/beads_viewer' },
+    { id: 'help', label: 'Help' },
   ]
 
   const handleClick = (tab: TabConfig) => {

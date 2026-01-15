@@ -24,7 +24,6 @@ The dashboard provides:
 - Switching views does NOT interrupt running agents - they continue in the background
 
 ### Settings
-- **Terminal Mode**: `tmux` (persistent sessions) or `shell` (plain bash)
 - **Font Size**: Adjustable terminal font (12-20px)
 - **Theme**: Matrix (green hacker), Dark (neutral), or Gastown (warm coffee/gold)
 - **Session Prefix**: Default naming for new sessions (e.g., `Terminal-1`)

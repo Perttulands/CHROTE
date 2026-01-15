@@ -1,162 +1,137 @@
-# Claude Code Guidelines - Docker Projects
+# CLAUDE.md
 
-## AgentArena Dashboard
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-### Critical Architecture Notes
+## Project Overview
 
-**Session Management Flow:**
+AgentArena is a Docker-based development environment for managing AI coding agents via tmux sessions, with a React web dashboard for monitoring and control. The system runs behind Tailscale for secure remote access.
+
+## Build & Run Commands
+
+**Recommended:** Use the interactive control script `AgentArena-Toggle.ps1` which provides a menu for all common operations:
+- Start/Stop/Restart
+- Rebuild (with cache) - fast, for code changes
+- Rebuild (no cache) - full rebuild, for dependency/apt changes
+- View/follow logs, shell access, status, cleanup
+
+```bash
+# Or use docker compose directly:
+
+# Start the full stack
+docker compose up -d agent-arena
+
+# Rebuild after code changes (uses cached layers, fast)
+cd dashboard && npm run build && cd ..
+docker compose build agent-arena
+docker compose up -d --force-recreate agent-arena
+
+# Full rebuild (no cache, use after dependency changes)
+cd dashboard && npm run build && cd ..
+docker compose build --no-cache agent-arena
+docker compose up -d --force-recreate agent-arena
+
+# View logs
+docker compose logs -f agent-arena
+
+# Dashboard development (localhost:5173)
+cd dashboard && npm install && npm run dev
+
+# Run tests
+cd dashboard && npm test           # Playwright E2E (38 tests)
+cd dashboard && npm run test:ui    # Playwright with UI
+cd api && npm test                 # Jest unit tests (17 tests)
 ```
-UI (React) → nginx (/terminal/) → ttyd (port 7681) → terminal-launch.sh → tmux attach
+
+## Architecture
+
+The system consists of Docker containers orchestrated via docker-compose.yml with Tailscale sidecars:
+
+- **agent-arena** (build1.dockerfile): Ubuntu 24.04 container with nginx, ttyd, Express API, SSH
+- **ollama**: Local LLM inference at `http://ollama:11434`
+- **filebrowser**: Web file manager proxied at `/files/`
+- **tailscale-arena/tailscale-ollama**: Network sidecars for secure access
+
+### Request Flow
+```
+Browser → nginx (:8080)
+         ├── /           → React dashboard (static files)
+         ├── /terminal/  → ttyd (:7681) → terminal-launch.sh → tmux attach
+         ├── /api/       → Express API (:3001) for session management
+         └── /files/     → filebrowser (:8081)
 ```
 
-**Key Environment Variable:**
-- `TMUX_TMPDIR=/tmp` must be set consistently across ALL processes (API, ttyd, SSH) for tmux socket access
+### Key Environment Variable
+`TMUX_TMPDIR=/tmp` must be consistent across API, ttyd, and SSH for tmux socket discovery.
 
-### Anti-Patterns to Avoid
+## Dashboard (React + TypeScript)
 
-1. **Silent Fallbacks in Scripts**
-   - NEVER add `else exec bash -l` as a silent fallback when tmux commands fail
-   - Always expose errors so they're visible in the terminal for debugging
-   - Use `echo "Error: ..." && exit 1` instead of silently falling back
-   - NEVER use `2>/dev/null` on tmux commands - expose socket/permission errors
-   - NEVER use `|| true` on critical tool installations (claude-code, beads, gastown)
+**Tech Stack:** React 18, TypeScript, Vite, xterm.js, @dnd-kit (drag-drop)
 
-2. **Empty Catch Blocks in TypeScript/React**
-   - NEVER use `.catch(() => {})` - always log errors with `console.warn()`
-   - NEVER use `} catch {` without logging - use `} catch (e) { console.warn(...) }`
-   - Even if gracefully degrading, log WHY the failure occurred
+**Entry Point:** `dashboard/src/App.tsx`
 
-3. **Auto-Creating Sessions**
-   - Don't auto-create tmux sessions when adding windows
-   - Windows should initialize empty (`activeSession: null`)
-   - Let users drag sessions to windows explicitly
+**State Management:** `SessionContext.tsx` manages:
+- Window count (1-4 terminal panes)
+- Window states with bound sessions
+- Sidebar visibility, theme settings
 
-4. **iframe Key Changes**
-   - The iframe `key` prop controls when the terminal reconnects
-   - Changing `activeSession` triggers iframe remount and new ttyd connection
-   - This is intentional - each session switch IS a new terminal attachment
+**Session Categorization by prefix:**
+- `hq-*` → HQ group (priority 0)
+- `main`, `shell` → Main group (priority 1)
+- `gt-{rigname}-*` → Gastown rig groups (priority 2)
+- Other → Other group (priority 3)
 
-6. **Timeout-Based Font Sizing**
-   - NEVER use fixed `setTimeout` delays to apply xterm font size
-   - Use polling approach: poll every 50ms until `term` object is available
-   - This prevents font "jerking" on session switch
+**Views:** Terminal, Files (native React), Beads (visualization), Status, Settings
 
-5. **Session Click vs Drag**
-   - Click on session → Always opens floating modal for "peek" (regardless of bound state)
-   - Drag session to window → Binds session to that window (does NOT auto-activate)
-   - These are intentionally separate interactions per PRD
+## API (Express.js)
 
-### Terminal Resize & Fit Handling
+**Entry Point:** `api/server.js`
 
-Both `TerminalWindow.tsx` and `FloatingModal.tsx` use ResizeObserver to keep xterm.js viewport in sync:
+**Key Endpoints:**
+- `GET /api/tmux/sessions` - List sessions (polled every 5s)
+- `POST /api/tmux/sessions` - Create session
+- `PATCH /api/tmux/sessions/:name` - Rename session
+- `DELETE /api/tmux/sessions/:name` - Delete specific session
+- `DELETE /api/tmux/sessions/all` - Kill all sessions
+- `GET /api/beads/*` - Beads viewer integration
 
-**How it works:**
-1. `triggerFit()` dispatches a `resize` event to the iframe - ttyd listens for this and calls xterm's `fit()`
-2. On iframe load, `triggerFit()` is called at 100ms, 300ms, and 500ms delays to handle CSS transitions
-3. ResizeObserver watches the body container and triggers fit with 100ms debounce on size changes
+## Session Panel Features
 
-**Why this matters:**
-- Session switching remounts the iframe (via `key={activeSession}`)
-- xterm.js may calculate dimensions before container layout settles
-- Without delayed fit calls, scrolling can break and content may be incorrectly positioned
+**Side Panel (260px width):**
+- Sessions grouped by category with colored text when assigned to a window
+- Search/filter sessions
+- "+" button creates sessions with auto-incrementing names (tmux1, tmux2, etc.)
+- "Nuke All" button to kill all sessions
 
-### Debugging Session Issues
+**Right-Click Context Menu:**
+- **Rename** - Inline rename with Enter to save, Escape to cancel
+- **Assign to Window →** - Submenu to assign session to Window 1-4
+- **Unassign** - Remove from window without deleting (only shows if assigned)
+- **Delete Session** - Kill the tmux session
 
-If sessions don't attach correctly:
-1. Check ttyd is running: `ps aux | grep ttyd`
-2. Check TMUX_TMPDIR: `echo $TMUX_TMPDIR` (should be `/tmp`)
-3. List sessions: `TMUX_TMPDIR=/tmp tmux ls`
-4. Check socket: `ls -la /tmp/tmux-*/`
-5. Look at terminal-launch.sh output (errors should be visible in iframe)
+**Drag-and-Drop:**
+- Drag sessions to terminal windows to assign them
+- Drag session tags between windows to move assignments
 
-### File Locations
+## Anti-Patterns to Avoid
 
-| Component | Path |
-|-----------|------|
-| Dashboard React app | `AgentArena/dashboard/src/` |
-| Session state | `dashboard/src/context/SessionContext.tsx` |
-| Floating modal | `dashboard/src/components/FloatingModal.tsx` |
-| Terminal window | `dashboard/src/components/TerminalWindow.tsx` |
-| Nuke confirm modal | `dashboard/src/components/NukeConfirmModal.tsx` |
-| Launch script | Embedded in `build1.dockerfile` (lines 73-109) |
-| ttyd startup | `build1.dockerfile` entrypoint (line ~143) |
-| nginx config | `AgentArena/nginx/nginx.conf` |
-| API server | `AgentArena/api/server.js` |
+1. **No silent fallbacks** - Never add `else exec bash -l` or `2>/dev/null` on tmux commands; expose errors
+2. **No empty catch blocks** - Always log errors even when degrading gracefully
+3. **No auto-creating sessions** - Windows initialize empty; users drag sessions explicitly
+4. **Click vs Drag behavior** - Click opens floating modal (peek), Drag binds to window
 
-### PRD Reference
+## Testing
 
-See `AgentArena/PRD-SESSION-MANAGEMENT.md` for:
-- Session binding rules
-- Sidebar indicator specs (color dots, window badges)
-- Search/filter requirements
-- Window layout specifications
+Playwright tests in `dashboard/tests/` cover: session panel, terminal layouts, drag-and-drop, search, keyboard navigation, state persistence.
 
-### Theme System
+Jest tests in `api/utils.test.js` cover: session categorization, agent name extraction, group priority.
 
-CSS variables in `dashboard/src/styles/theme.css`:
-- Three themes: matrix (default), dark, gastown
-- All UI must use `var(--text-primary)`, `var(--accent)`, etc.
-- iframes (filebrowser, ttyd) don't inherit themes
+## Volume Mounts (Windows Host)
 
-### Music Player
+- `E:/Code` → `/code` (RW)
+- `E:/Vault` → `/vault` (RO for dev, RW for root)
+- `E:/LLM_models` → Ollama models
 
-Lightweight ambient music player in the tab bar (`dashboard/src/components/MusicPlayer.tsx`).
+## Access URLs (via Tailscale)
 
-**Design principles:**
-- Minimal memory footprint (2 useState, 2 useEffect, no useCallback)
-- Track dropdown renders only when open (conditional rendering)
-- Volume slider is always visible inline (no popup)
-
-**Track list:**
-- Files in `dashboard/public/music/`
-- Tracks defined in `TRACKS` array with `{file, name}` objects
-
-**UI behavior:**
-- Track selector: Click to toggle dropdown, click track to select
-- Volume: Inline slider always visible (no popup)
-- Backdrop overlay closes dropdown on outside click
-- Dropdown opens DOWNWARD (`top: 100%`) since player is at top of screen
-
-### Session Drag-and-Drop Behavior
-
-**Critical:** Dragging a session to a window adds it to `boundSessions` but does NOT change `activeSession`. This prevents disrupting the user's current terminal view.
-
-The `addSessionToWindow` function in SessionContext.tsx:
-- Removes session from any other window
-- Adds to target window's `boundSessions` array
-- Does NOT set `activeSession` (user must click to activate)
-
-### Window Focus & Keyboard Navigation
-
-- `focusedWindowIndex` tracks which window has keyboard focus
-- `Ctrl+Up/Down` cycles between windows via `cycleWindow()`
-- `Ctrl+Left/Right` cycles sessions within focused window via `cycleSession()`
-- Focus index auto-adjusts when window count decreases
-
-### Orphan Session Cleanup
-
-When sessions are deleted from tmux, `refreshSessions()` automatically:
-1. Detects sessions in `boundSessions` that no longer exist
-2. Removes them from window bindings
-3. Updates `activeSession` if the orphaned session was active
-
-### Nuke All Sessions
-
-The "Nuke All" feature destroys all tmux sessions at once:
-
-**UI Flow:**
-1. Red "☢ Nuke All" button appears at bottom of session sidebar (only when sessions exist)
-2. Clicking opens `NukeConfirmModal` with session count warning
-3. User must type "NUKE" to enable the "Destroy All" button
-4. On confirm, calls `DELETE /api/tmux/sessions/all`
-
-**API Endpoint:** `DELETE /api/tmux/sessions/all`
-- Lists all current sessions
-- Runs `tmux kill-server` to destroy all sessions
-- Returns `{ success, killed, sessions[] }`
-
-**Files:**
-- Button & modal integration: `dashboard/src/components/SessionPanel.tsx`
-- Modal component: `dashboard/src/components/NukeConfirmModal.tsx`
-- API endpoint: `api/server.js` (DELETE /api/tmux/sessions/all)
-- Styles: `dashboard/src/styles/theme.css` (NUKE MODAL section)
+- Dashboard: `http://arena:8080`
+- SSH: `ssh dev@arena` (password: dev)

@@ -83,16 +83,6 @@ async function createFolder(path: string, name: string): Promise<void> {
   }
 }
 
-async function deleteItem(path: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/resources${path}`, {
-    method: 'DELETE',
-  })
-
-  if (!response.ok) {
-    throw new Error(`Failed to delete: ${response.status}`)
-  }
-}
-
 async function renameItem(oldPath: string, newPath: string): Promise<void> {
   const response = await fetch(`${API_BASE}/resources${oldPath}`, {
     method: 'PATCH',
@@ -692,6 +682,174 @@ function UploadZone({
   )
 }
 
+// Inbox Panel - Delightful drop zone for sending packages to town
+function InboxPanel() {
+  const [files, setFiles] = useState<File[]>([])
+  const [note, setNote] = useState('')
+  const [isDragging, setIsDragging] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle')
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const INBOX_PATH = '/code/incoming'
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(true)
+  }
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+    if (e.dataTransfer.files.length > 0) {
+      setFiles(Array.from(e.dataTransfer.files))
+      setStatus('idle')
+    }
+  }
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setFiles(Array.from(e.target.files))
+      setStatus('idle')
+    }
+  }
+
+  const removeFile = (index: number) => {
+    setFiles(prev => prev.filter((_, i) => i !== index))
+  }
+
+  const handleSend = async () => {
+    if (files.length === 0) return
+    setSending(true)
+
+    try {
+      // Ensure incoming folder exists
+      const checkFolder = await fetch(`${API_BASE}/resources${INBOX_PATH}`, { method: 'GET' })
+      if (checkFolder.status === 404) {
+        await fetch(`${API_BASE}/resources${INBOX_PATH}/`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+        })
+      }
+
+      // Upload all files
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        const fileRes = await fetch(`${API_BASE}/resources${INBOX_PATH}/${file.name}`, {
+          method: 'POST',
+          headers: { 'Content-Type': file.type || 'application/octet-stream' },
+          body: file,
+        })
+        if (!fileRes.ok) throw new Error(`Upload failed for ${file.name}`)
+
+        // Attach note to first file only
+        if (i === 0 && note.trim()) {
+          await fetch(`${API_BASE}/resources${INBOX_PATH}/${file.name}.note`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: note.trim(),
+          })
+        }
+      }
+
+      setStatus('success')
+      setFiles([])
+      setNote('')
+      if (inputRef.current) inputRef.current.value = ''
+      setTimeout(() => setStatus('idle'), 2000)
+    } catch {
+      setStatus('error')
+      setTimeout(() => setStatus('idle'), 2000)
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const totalSize = files.reduce((sum, f) => sum + f.size, 0)
+
+  return (
+    <div className={`inbox-panel ${isDragging ? 'dragging' : ''} ${status} ${files.length > 0 ? 'has-files' : ''}`}>
+      <div
+        className="inbox-dropzone"
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        onClick={() => files.length === 0 && inputRef.current?.click()}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          multiple
+          onChange={handleFileSelect}
+          style={{ display: 'none' }}
+        />
+        {files.length > 0 ? (
+          <div className="inbox-files-list">
+            {files.map((file, index) => (
+              <div key={`${file.name}-${index}`} className="inbox-file-item">
+                <span className="inbox-file-icon">📄</span>
+                <span className="inbox-file-name">{file.name}</span>
+                <span className="inbox-file-size">{formatSize(file.size)}</span>
+                <button
+                  className="inbox-file-remove"
+                  onClick={(e) => { e.stopPropagation(); removeFile(index) }}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            <button
+              className="inbox-add-more"
+              onClick={(e) => { e.stopPropagation(); inputRef.current?.click() }}
+            >
+              + Add more files
+            </button>
+          </div>
+        ) : (
+          <div className="inbox-placeholder">
+            <span className="inbox-icon">📬</span>
+            <span className="inbox-title">Send a package to town</span>
+            <span className="inbox-subtitle">Drop files here or click to browse</span>
+          </div>
+        )}
+      </div>
+
+      <div className="inbox-bottom">
+        <textarea
+          className="inbox-note"
+          placeholder="Add a note for the agent..."
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          disabled={sending}
+          rows={2}
+        />
+        <div className="inbox-actions">
+          {files.length > 0 && (
+            <span className="inbox-summary">
+              {files.length} file{files.length > 1 ? 's' : ''} · {formatSize(totalSize)}
+            </span>
+          )}
+          <button
+            className="inbox-send"
+            onClick={handleSend}
+            disabled={files.length === 0 || sending}
+          >
+            {sending ? 'Sending...' : status === 'success' ? '✓ Sent!' : `Send ${files.length > 0 ? `(${files.length})` : ''}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // Info Panel
 function InfoPanel() {
   return (
@@ -963,12 +1121,10 @@ function FilesView() {
     if (!deleteItem) return
 
     try {
-      await deleteItem.path && await (async (path: string) => {
-        const response = await fetch(`${API_BASE}/resources${path}`, {
-          method: 'DELETE',
-        })
-        if (!response.ok) throw new Error('Delete failed')
-      })(deleteItem.path)
+      const response = await fetch(`${API_BASE}/resources${deleteItem.path}`, {
+        method: 'DELETE',
+      })
+      if (!response.ok) throw new Error('Delete failed')
       loadDirectory(state.currentPath)
     } catch (error) {
       console.error('Delete failed:', error)
@@ -1101,6 +1257,9 @@ function FilesView() {
       <div className="fb-content">
         {activeTab === 'browser' ? (
           <>
+            {/* Inbox Panel */}
+            <InboxPanel />
+
             {/* Toolbar */}
             <div className="fb-toolbar">
               <div className="fb-toolbar-nav">
@@ -1257,6 +1416,7 @@ function FilesView() {
         ) : (
           <InfoPanel />
         )}
+
       </div>
 
       {/* Context Menu */}

@@ -3,7 +3,7 @@
 
 import { useEffect, useCallback, useMemo, useState } from 'react';
 import { useBeads } from '../context';
-import type { BeadsInsightsViewProps, BeadsGraphMetrics } from '../types';
+import type { BeadsInsightsViewProps } from '../types';
 
 // ============================================================================
 // METRIC CARD COMPONENT
@@ -266,7 +266,6 @@ function sortMetricEntries(
 
 export function BeadsInsightsView({ projectPath }: BeadsInsightsViewProps) {
   const {
-    issues,
     insights,
     isLoading,
     error,

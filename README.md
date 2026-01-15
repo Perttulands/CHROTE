@@ -31,13 +31,30 @@ npm run build
 cd ..
 ```
 
-### 3. Start Services
+### 3. Create Desktop Shortcut (Windows)
 
+Create a desktop shortcut for easy start/stop control:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "e:\Docker\AgentArena\Create-Shortcut.ps1"
+```
+
+This creates an **AgentArena** shortcut on your desktop that:
+- Shows current status (running/stopped)
+- Press Enter to toggle start/stop
+- Automatically starts Docker Desktop if needed
+- Shows progress and waits for services to be ready
+
+### 4. Start Services
+
+**Option A**: Double-click the desktop shortcut (recommended)
+
+**Option B**: Command line
 ```bash
 docker compose up -d agent-arena
 ```
 
-### 4. Access
+### 5. Access
 
 Once running, access via Tailscale hostname:
 
@@ -50,28 +67,72 @@ Once running, access via Tailscale hostname:
 
 ## Architecture
 
+The system runs as multiple Docker containers with Tailscale sidecars for secure networking:
+
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Tailscale Network                     │
-│                   (Google Auth protected)                │
-└─────────────────────────────┬───────────────────────────┘
-                              │
-┌─────────────────────────────▼───────────────────────────┐
-│                     nginx (:8080)                        │
-│  ┌──────────┬──────────────┬─────────────┬───────────┐  │
-│  │    /     │  /terminal/  │   /files/   │   /api/   │  │
-│  │ Dashboard│    ttyd      │ filebrowser │  Node.js  │  │
-│  └──────────┴──────────────┴─────────────┴───────────┘  │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Tailscale Network                             │
+│                      (Google Auth protected)                         │
+└───────────────────┬─────────────────────────────┬───────────────────┘
+                    │                             │
+        ┌───────────▼───────────┐     ┌───────────▼───────────┐
+        │   tailscale-arena     │     │   tailscale-ollama    │
+        │   (network sidecar)   │     │   (network sidecar)   │
+        └───────────┬───────────┘     └───────────┬───────────┘
+                    │                             │
+┌───────────────────▼───────────────────┐   ┌─────▼─────┐
+│          agent-arena (:8080)          │   │  ollama   │
+│  ┌─────────────────────────────────┐  │   │  (:11434) │
+│  │         nginx (reverse proxy)   │  │   │           │
+│  │  ┌────────┬─────────┬────────┐  │  │   │  LLM API  │
+│  │  │   /    │/terminal│ /api/  │  │  │   └───────────┘
+│  │  │  React │  ttyd   │Node.js │  │  │
+│  │  └────────┴─────────┴────────┘  │  │
+│  └─────────────────────────────────┘  │
+│  ┌─────────────────────────────────┐  │
+│  │  filebrowser (:8081 → /files/) │  │
+│  └─────────────────────────────────┘  │
+└───────────────────────────────────────┘
 ```
+
+**Containers:**
+- `agent-arena` - Main dev environment (nginx, ttyd, API, SSH)
+- `ollama` - Local LLM inference server
+- `filebrowser` - Web-based file manager
+- `tailscale-arena` / `tailscale-ollama` - Network sidecars for secure access
+
+## Ollama Integration
+
+The system includes a local LLM server accessible at `http://ollama:11434` from within containers.
+
+**From inside agent-arena:**
+```bash
+curl http://ollama:11434/api/tags          # List available models
+curl http://ollama:11434/api/generate -d '{"model":"llama3","prompt":"Hello"}'
+```
+
+**From Tailscale network:**
+```bash
+curl http://ollama:11434/api/tags          # Direct access via tailscale-ollama
+```
+
+**Model storage:** Models are persisted in `E:/LLM_models` on the host.
 
 ## Dashboard Features
 
 - **Terminal View**: 1-4 terminal panes with drag-and-drop session assignment
 - **Session Panel**: Lists all tmux sessions, drag to assign to windows
 - **Files View**: Native file browser with full theme integration
+- **Beads View**: Project dependency visualization with multiple sub-views:
+  - **Graph**: Interactive dependency DAG with zoom/pan
+  - **Kanban**: Issue board organized by status
+  - **Triage**: AI-powered prioritization recommendations
+  - **Insights**: Graph metrics, health score, and critical path analysis
 - **Status View**: Service health and quick commands
 - **Settings View**: Theme selection (Matrix/Dark/Gastown), font size, and preferences
+- **Music Player**: Ambient background music in tab bar (Gastown soundtrack)
+- **Nuke All Sessions**: Quick destroy all tmux sessions from Status view
+- **Floating Modal**: Peek at sessions without leaving current view
 
 ### Session Management
 
@@ -79,7 +140,9 @@ Once running, access via Tailscale hostname:
 2. Drag a session onto a terminal window to attach
 3. Click session tags to switch between assigned sessions
 4. Use ← → buttons to cycle through sessions in a window
-5. Ctrl+Arrow keys for keyboard navigation (Up/Down for windows, Left/Right for sessions)
+5. **Nuke All** button destroys all sessions at once (with confirmation)
+
+Layout state persists in localStorage.
 
 ### File Browser
 
@@ -108,6 +171,27 @@ The native file browser provides full access to mounted volumes with theme-adapt
 - Ctrl+Click for multi-select
 - Shift+Click for range select
 - Right-click for context menu
+
+### Beads Viewer
+
+The Beads tab integrates [beads_viewer](https://github.com/Dicklesworthstone/beads_viewer) for project issue tracking and dependency visualization:
+
+**Sub-views:**
+- **Graph**: Force-directed dependency graph showing issue relationships
+- **Kanban**: Drag-and-drop board with columns by status (Open, In Progress, Blocked, Closed)
+- **Triage**: AI-generated prioritization with quick wins and blockers identified
+- **Insights**: PageRank scores, critical path analysis, cycle detection
+
+**Data Source:**
+- Reads from `.beads/issues.jsonl` in your project directory
+- Uses `bv` CLI robot protocol for AI-powered analysis
+- Supports multiple projects via project selector
+
+**API Endpoints:**
+- `GET /api/beads/issues` - Raw issue data
+- `GET /api/beads/triage` - AI triage recommendations
+- `GET /api/beads/insights` - Graph metrics
+- `GET /api/beads/plan` - Parallel execution tracks
 
 ## Security
 
@@ -154,16 +238,30 @@ docker compose up -d agent-arena
 
 ```
 AgentArena/
-├── api/                  # Node.js API for tmux management
-├── dashboard/            # React + TypeScript web UI
+├── api/                      # Node.js API for tmux management
+│   ├── server.js             # Main API server
+│   └── beads-routes.js       # Beads API endpoints
+├── dashboard/                # React + TypeScript web UI
 │   ├── src/
-│   ├── tests/            # Playwright tests
-│   └── dist/             # Built assets (copied to container)
-├── nginx/                # nginx config
-├── sandbox_overrides/    # Empty files overlaid on secrets in sandbox
-├── build1.dockerfile     # Main container definition
-├── docker-compose.yml    # Service orchestration
-└── .env                  # Secrets (not in git, hidden from sandbox)
+│   │   ├── beads_module/     # Self-contained Beads integration
+│   │   └── components/       # Core dashboard components
+│   ├── tests/                # Playwright tests
+│   └── dist/                 # Built assets (copied to container)
+├── nginx/                    # nginx config
+├── internal/                 # Internal tmux helpers
+├── sandbox_overrides/        # Empty files overlaid on secrets in sandbox
+├── beads_viewer_integration/ # Integration analysis docs
+├── tailscale_state/          # Persisted Tailscale identity (preserves hostname)
+├── filebrowser_data/         # Filebrowser config & database
+├── build1.dockerfile         # Main container definition
+├── ollama.dockerfile         # Ollama LLM container
+├── docker-compose.yml        # Service orchestration
+├── AgentArena-Toggle.ps1     # PowerShell start/stop toggle script
+├── Create-Shortcut.ps1       # Creates desktop shortcut
+├── start-arena.bat           # Batch start script
+├── stop-arena.bat            # Batch stop script
+├── test-sessions.sh          # Creates sample tmux sessions for testing
+└── .env                      # Secrets (not in git, hidden from sandbox)
 ```
 
 ## Troubleshooting
@@ -187,6 +285,36 @@ Check ttyd logs inside container:
 ```bash
 docker exec -it agentarena-dev ps aux | grep ttyd
 ```
+
+### tmux sessions not visible between terminal and API
+
+Ensure `TMUX_TMPDIR=/tmp` is set consistently. The API, ttyd, and SSH all need the same socket path:
+```bash
+docker exec -it agentarena-dev bash -c 'echo $TMUX_TMPDIR'  # Should be /tmp
+docker exec -it agentarena-dev ls /tmp/tmux-*/              # Check socket exists
+```
+
+### Ollama not responding
+
+```bash
+curl http://ollama:11434/api/tags                           # From inside arena
+docker compose logs ollama                                  # Check ollama logs
+```
+
+### Tailscale not connecting
+
+```bash
+docker compose logs tailscale-arena
+docker exec -it tailscale-arena tailscale status
+```
+
+## See Also
+
+| Document | Description |
+|----------|-------------|
+| [PRD.md](PRD.md) | Product requirements - user needs and acceptance criteria |
+| [SPEC.md](SPEC.md) | Technical specification - architecture, implementation, anti-patterns |
+| [SECURITY.md](SECURITY.md) | Tailscale ACLs, threat model, secret protection |
 
 ## License
 

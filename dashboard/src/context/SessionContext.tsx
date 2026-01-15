@@ -1,6 +1,19 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react'
-import type { DashboardContextType, TmuxSession, TerminalWindow, SessionsResponse, UserSettings } from '../types'
-import { DEFAULT_SETTINGS } from '../types'
+import type { DashboardContextType, TmuxSession, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance } from '../types'
+import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE } from '../types'
+
+// Apply tmux appearance settings via API (hot-reload)
+async function applyTmuxAppearance(appearance: TmuxAppearance): Promise<void> {
+  try {
+    await fetch('/api/tmux/appearance', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(appearance),
+    })
+  } catch (e) {
+    console.warn('Failed to apply tmux appearance:', e)
+  }
+}
 
 const STORAGE_KEY = 'arena-dashboard-state'
 
@@ -153,6 +166,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(interval)
   }, [refreshSessions, settings.autoRefreshInterval])
 
+  // Apply tmux appearance on initial load (ensures container matches saved settings)
+  useEffect(() => {
+    // Merge saved settings with defaults to handle missing fields from older localStorage
+    const appearance = { ...DEFAULT_TMUX_APPEARANCE, ...settings.tmuxAppearance }
+    applyTmuxAppearance(appearance)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Actions
   const setWindowCount = useCallback((count: number) => {
     const newCount = Math.max(1, Math.min(4, count))
@@ -287,8 +307,56 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [openFloatingModal])
 
   const updateSettings = useCallback((newSettings: Partial<UserSettings>) => {
-    setSettings(prev => ({ ...prev, ...newSettings }))
+    setSettings(prev => {
+      const updated = { ...prev, ...newSettings }
+      // Hot-reload tmux appearance if it changed
+      if (newSettings.tmuxAppearance) {
+        applyTmuxAppearance(updated.tmuxAppearance)
+      }
+      return updated
+    })
   }, [])
+
+  const deleteSession = useCallback(async (sessionName: string) => {
+    try {
+      const response = await fetch(`/api/tmux/sessions/${encodeURIComponent(sessionName)}`, {
+        method: 'DELETE',
+      })
+      if (response.ok) {
+        refreshSessions()
+      } else {
+        console.error('Failed to delete session:', await response.text())
+      }
+    } catch (e) {
+      console.error('Failed to delete session:', e)
+    }
+  }, [refreshSessions])
+
+  const renameSession = useCallback(async (oldName: string, newName: string): Promise<boolean> => {
+    try {
+      const response = await fetch(`/api/tmux/sessions/${encodeURIComponent(oldName)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newName }),
+      })
+      if (response.ok) {
+        // Update window bindings to use the new name
+        setWindows(prev => prev.map(w => ({
+          ...w,
+          boundSessions: w.boundSessions.map(s => s === oldName ? newName : s),
+          activeSession: w.activeSession === oldName ? newName : w.activeSession,
+        })))
+        refreshSessions()
+        return true
+      } else {
+        console.error('Failed to rename session:', await response.text())
+        return false
+      }
+    } catch (e) {
+      console.error('Failed to rename session:', e)
+      return false
+    }
+  }, [refreshSessions])
 
   const contextValue: DashboardContextType = {
     // State
@@ -318,6 +386,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     closeFloatingModal,
     handleSessionClick,
     refreshSessions,
+    deleteSession,
+    renameSession,
     setIsDragging,
     updateSettings,
   }

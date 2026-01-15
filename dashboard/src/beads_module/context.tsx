@@ -7,12 +7,12 @@ import {
   useState,
   useCallback,
   useMemo,
+  useEffect,
   ReactNode,
 } from 'react';
 
 import type {
   BeadsContextType,
-  BeadsContextState,
   BeadsIssue,
   BeadsTriage,
   BeadsInsights,
@@ -26,7 +26,6 @@ import type {
 } from './types';
 
 import {
-  DEFAULT_BEADS_VIEW_STATE,
   DEFAULT_BEADS_FILTERS,
 } from './types';
 
@@ -132,6 +131,26 @@ export function BeadsProvider({ children, initialProjectPath = '/workspace' }: B
     if (issues.length === 0) return null;
     return buildGraphData(issues);
   }, [issues]);
+
+  // Discover projects on mount
+  useEffect(() => {
+    const discover = async () => {
+      try {
+        const response = await api.discoverProjects();
+        if (response.success && response.data?.projects) {
+          const newProjects = response.data.projects;
+          setAvailableProjects((prev) => {
+            const set = new Set([...prev, ...newProjects]);
+            return Array.from(set);
+          });
+        }
+      } catch (e) {
+        console.error('Failed to discover projects:', e);
+      }
+    };
+    
+    discover();
+  }, []);
 
   // ============================================================================
   // DATA FETCHING ACTIONS

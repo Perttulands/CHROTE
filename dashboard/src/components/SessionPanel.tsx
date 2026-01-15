@@ -5,7 +5,7 @@ import SessionGroup from './SessionGroup'
 import NukeConfirmModal from './NukeConfirmModal'
 
 function SessionPanel() {
-  const { groupedSessions, loading, error, sidebarCollapsed, toggleSidebar, refreshSessions, settings, sessions } = useSession()
+  const { groupedSessions, loading, error, sidebarCollapsed, toggleSidebar, refreshSessions, sessions, settings } = useSession()
   const [creating, setCreating] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [showNukeModal, setShowNukeModal] = useState(false)
@@ -38,8 +38,22 @@ function SessionPanel() {
   const createSession = async () => {
     setCreating(true)
     try {
-      // Use settings for session name prefix
-      const sessionName = `${settings.defaultSessionPrefix}-${Date.now().toString(36)}`
+      const prefix = settings.defaultSessionPrefix || 'tmux'
+      // Escape regex special chars in prefix
+      const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const regex = new RegExp(`^${escapedPrefix}(\\d+)$`)
+
+      // Find the next available number for this prefix
+      const existingNumbers = sessions
+        .map(s => s.name.match(regex))
+        .filter(Boolean)
+        .map(m => parseInt(m![1], 10))
+        
+      const nextNum = existingNumbers.length > 0
+        ? Math.max(...existingNumbers) + 1
+        : 1
+      const sessionName = `${prefix}${nextNum}`
+      
       const response = await fetch('/api/tmux/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

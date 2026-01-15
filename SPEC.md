@@ -1,47 +1,45 @@
-# Agent Arena & Ollama System Specification
+# AgentArena Technical Specification
 
-## Overview
+## System Overview
 
-A Docker system on "Landmass" (home server) with **Tailscale sidecar containers** for:
-1. Running AI coding agents (Claude Code, Gastown, Beads) with long-running tasks
-2. Serving LLM inference to authorized remote devices
-
-Each service gets its own Tailscale identity, enabling per-service ACL control.
+AgentArena is a Docker-based development environment for managing AI coding agents via tmux sessions, with a web dashboard for monitoring and control. The system runs on "Landmass" (home server) with Tailscale sidecar containers for secure remote access.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│ Landmass (Windows Host + Docker)                                │
-│                                                                 │
-│  ┌─────────────────────┐      ┌─────────────────────┐          │
-│  │ tailscale-ollama    │      │ tailscale-arena     │          │
-│  │ hostname: ollama    │      │ hostname: arena     │          │
-│  │ (Tailnet identity)  │      │ (Tailnet identity)  │          │
-│  └──────────┬──────────┘      └──────────┬──────────┘          │
-│             │ network_mode               │ network_mode        │
-│  ┌──────────┴──────────┐      ┌──────────┴──────────┐          │
-│  │ ollama              │      │ agent-arena         │          │
-│  │ :11434 (LLM API)    │      │ :22 (SSH)           │          │
-│  │                     │      │ :3000-8080 (dev)    │          │
-│  └──────────┬──────────┘      └──────────┬──────────┘          │
-│             │                            │                      │
-│  ┌──────────┴────────────────────────────┴──────────┐          │
-│  │ Volumes                                          │          │
-│  │ E:/LLM_models → /root/.ollama/models            │          │
-│  │ E:/Code       → /code (RW)                      │          │
-│  │ E:/Vault      → /vault (RO dev, RW root)        │          │
-│  └──────────────────────────────────────────────────┘          │
-└─────────────────────────────────────────────────────────────────┘
-         │                              │
-    Tailnet                        Tailnet
-  "ollama:11434"               "arena:22"
-         │                              │
-         ▼                              ▼
-   Remote Devices ──────────────────────────
-   - Access ollama API at ollama:11434
-   - SSH to arena:22
-   - Controlled via Tailscale ACLs
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          Tailscale Network                               │
+│                        (Google Auth protected)                           │
+└───────────────────┬─────────────────────────────────┬───────────────────┘
+                    │                                 │
+        ┌───────────▼───────────┐         ┌───────────▼───────────┐
+        │   tailscale-arena     │         │   tailscale-ollama    │
+        │   hostname: arena     │         │   hostname: ollama    │
+        └───────────┬───────────┘         └───────────┬───────────┘
+                    │ network_mode                    │ network_mode
+┌───────────────────▼───────────────────┐       ┌─────▼─────┐
+│          agent-arena (:8080)          │       │  ollama   │
+│  ┌─────────────────────────────────┐  │       │ (:11434)  │
+│  │     nginx (reverse proxy)       │  │       │  LLM API  │
+│  │  /           → React Dashboard  │  │       └───────────┘
+│  │  /terminal/  → ttyd (:7681)     │  │
+│  │  /files/     → filebrowser      │  │
+│  │  /api/       → Node.js (:3001)  │  │
+│  │  /api/beads/ → Beads API        │  │
+│  └─────────────────────────────────┘  │
+│  ┌─────────────────────────────────┐  │
+│  │  filebrowser (:8081 → /files/)  │  │
+│  └─────────────────────────────────┘  │
+│  ┌─────────────────────────────────┐  │
+│  │  ttyd (:7681) → tmux sessions   │  │
+│  └─────────────────────────────────┘  │
+└───────────────────────────────────────┘
+         │
+   Volumes:
+   E:/Code       → /code (RW)
+   E:/Vault      → /vault (RO dev, RW root)
+   E:/LLM_models → /root/.ollama/models
+```
 
 ## Containers
 
@@ -49,28 +47,36 @@ Each service gets its own Tailscale identity, enabling per-service ACL control.
 
 **Purpose:** Development environment for AI coding agents
 
-**Image:** Custom Ubuntu 24.04
+**Image:** Custom Ubuntu 24.04 (`build1.dockerfile`)
 
 **Installed Tools:**
 - Claude Code (@anthropic-ai/claude-code)
 - Gastown & Beads (orchestrator tools)
-- beads_viewer
+- beads_viewer (bv) - TUI for project dependency visualization
 - Git, tmux, Go, Node.js, Python3
 
-**Ports (via Tailscale):**
+**Internal Services:**
+| Service | Port | Purpose |
+|---------|------|---------|
+| nginx | 8080 | Unified entry point, reverse proxy |
+| Express API | 3001 | Tmux session management |
+| ttyd | 7681 | Terminal over WebSocket |
+| filebrowser | 8081 | Web-based file management |
+| SSH | 22 | Direct shell access |
+
+**Exposed Ports (via Tailscale):**
 | Port | Purpose |
 |------|---------|
 | 22 | SSH access |
-| 8080 | Web dashboard (nginx) |
-| 7681 | ttyd web terminal (proxied via nginx) |
-| 3001 | API server (proxied via nginx) |
+| 8080 | Web dashboard |
 | 3000, 5000, 8000 | Dev servers |
-| 5500, 6000 | Additional dev servers |
-| 9000-9900 | Monitoring & future use |
+| 5500, 6000, 9000-9900 | Additional dev/monitoring |
 
 **Users:**
-- `root:root` - Full access, can write to /vault
-- `dev:dev` - Standard user, read-only /vault, sudo access
+| User | Password | Permissions |
+|------|----------|-------------|
+| root | root | Full access, can write to /vault |
+| dev | dev | Standard user, read-only /vault, sudo access |
 
 ### 2. ollama (agentarena-ollama)
 
@@ -78,16 +84,9 @@ Each service gets its own Tailscale identity, enabling per-service ACL control.
 
 **Image:** ollama/ollama:latest
 
-**Ports:**
-| Port | Purpose |
-|------|---------|
-| 11434 | Ollama API |
+**Port:** 11434 (Ollama API)
 
-**CORS Origins (who can access):**
-- http://localhost
-- http://127.0.0.1
-- http://arena
-- https://arena
+**CORS Origins:** localhost, 127.0.0.1, arena (http/https)
 
 ## Volume Layout
 
@@ -96,132 +95,353 @@ Each service gets its own Tailscale identity, enabling per-service ACL control.
 | E:/Code | agent-arena | /code | RW (dev & root) | Active coding projects |
 | E:/Vault | agent-arena | /vault | RO (dev), RW (root) | Safe context files for agents |
 | E:/LLM_models | ollama | /root/.ollama/models | RW (root) | LLM model storage |
-| Named: arena_dev_home | agent-arena | /home/dev | RW | Persist dev config (.bashrc, .ssh) |
+| Named: arena_dev_home | agent-arena | /home/dev | RW | Persist dev config |
 | Named: arena_root_home | agent-arena | /root | RW | Persist root config |
 
 ### /vault Security Model
-
-The `/vault` directory is designed for safely providing context to AI agents:
-- **Drop files as root** (SSH as root, or from Windows at E:/Vault)
-- **Agents (running as dev) can only read** - prevents accidental corruption
+- Drop files as root (SSH as root, or from Windows at E:/Vault)
+- Agents (running as dev) can only read - prevents accidental corruption
 - Permissions enforced at container startup via entrypoint script
 
-## Access Points
+---
 
-| Service | Tailnet Access | Port |
-|---------|----------------|------|
-| Web Dashboard | `http://arena:8080` | 8080 |
-| SSH (agent-arena) | `ssh dev@arena` | 22 |
-| SSH (as root) | `ssh root@arena` | 22 |
-| Ollama API | `http://ollama:11434` | 11434 |
-| Dev servers | `http://arena:3000` etc. | 3000, 5000, 8000 |
+## Dashboard Architecture
 
-### Web Dashboard
+### Request Flow
+```
+UI (React) → nginx (/terminal/) → ttyd (port 7681) → terminal-launch.sh → tmux attach
+```
 
-The dashboard at `http://arena:8080` provides:
-- **Terminal view** with 1-4 panes, drag-and-drop session assignment
-- **Files view** via filebrowser
-- **Status view** with service health
+### Tech Stack
+
+| Layer | Technology |
+|-------|------------|
+| Frontend | React 18 + TypeScript |
+| State Management | React Context + localStorage |
+| Drag & Drop | @dnd-kit/core |
+| Terminal | xterm.js + WebGL addon |
+| Styling | CSS Variables (theming) |
+| Build | Vite |
+| Testing | Playwright (E2E), Jest (API) |
+| API | Express.js |
+| Proxy | nginx |
+| Terminal Backend | ttyd |
+| File Management | filebrowser |
+
+### Component Structure
+
+```
+dashboard/src/
+├── App.tsx                 # Main app with DnD context
+├── types.ts                # TypeScript interfaces
+├── context/
+│   └── SessionContext.tsx  # Global state management
+├── hooks/
+│   └── useTmuxSessions.ts  # Session fetching hook
+├── components/
+│   ├── TabBar.tsx          # Tab navigation + music player
+│   ├── SessionPanel.tsx    # Side panel with sessions + nuke button
+│   ├── SessionGroup.tsx    # Collapsible session group
+│   ├── SessionItem.tsx     # Draggable session item
+│   ├── TerminalArea.tsx    # Layout controls + grid
+│   ├── TerminalWindow.tsx  # Terminal with session tags
+│   ├── FloatingModal.tsx   # Popup terminal modal
+│   ├── FilesView.tsx       # Native file browser
+│   ├── StatusView.tsx      # Service health display
+│   ├── NukeConfirmModal.tsx# Destroy all sessions modal
+│   └── MusicPlayer.tsx     # Ambient music controls
+├── beads_module/           # Self-contained Beads integration
+└── styles/
+    └── theme.css           # Theme definitions
+```
+
+### State Management
+
+**SessionContext** provides global state:
+- `windowCount` - Number of terminal windows (1-4)
+- `windows[]` - Array of window state objects
+- `focusedWindowIndex` - Currently focused window
+- `sidebarCollapsed` - Sidebar visibility
+- `settings` - User preferences
+
+**Window State Object:**
+```typescript
+{
+  id: "window-0",
+  boundSessions: ["hq-mayor", "gt-rig1-jack"],
+  activeSession: "hq-mayor",
+  colorIndex: 0
+}
+```
+
+**localStorage Key:** `arena-dashboard-state`
+
+### Session Categorization
+
+Sessions are categorized by prefix for grouping:
+
+| Prefix | Group | Priority | Example |
+|--------|-------|----------|---------|
+| `hq-*` | HQ | 0 (first) | hq-mayor |
+| `main`, `shell` | Main | 1 | main |
+| `gt-{rigname}-*` | gt-{rigname} | 2 | gt-gastown-jack |
+| Other | Other | 3 | my-session |
+
+### Terminal Connection
+
+**How ttyd connects to tmux:**
+1. ttyd runs with URL argument support: `ttyd -a /usr/local/bin/terminal-launch.sh`
+2. Dashboard requests: `/terminal/?arg={session_name}`
+3. `terminal-launch.sh` receives session name, runs `tmux attach-session -t {name}`
+4. User sees tmux session in iframe
+
+**Critical Environment Variable:**
+- `TMUX_TMPDIR=/tmp` must be set consistently across ALL processes (API, ttyd, SSH)
+
+### Terminal Resize Handling
+
+Both `TerminalWindow.tsx` and `FloatingModal.tsx` use ResizeObserver:
+1. `triggerFit()` dispatches resize event to iframe - ttyd calls xterm's `fit()`
+2. On iframe load, `triggerFit()` called at 100ms, 300ms, 500ms delays
+3. ResizeObserver watches container, triggers fit with 100ms debounce
+
+---
+
+## API Endpoints
+
+### Session Management
+
+**GET /api/tmux/sessions**
+```json
+{
+  "sessions": [
+    {"name": "hq-mayor", "agentName": "mayor", "windows": 1, "attached": false, "group": "hq"},
+    {"name": "gt-rig1-jack", "agentName": "jack", "windows": 1, "attached": true, "group": "gt-rig1"}
+  ],
+  "grouped": {
+    "hq": [...],
+    "gt-rig1": [...],
+    "other": [...]
+  },
+  "timestamp": "2026-01-14T..."
+}
+```
+
+**POST /api/tmux/sessions**
+```json
+// Request
+{"name": "shell-xyz"}
+
+// Response
+{"success": true, "session": "shell-xyz", "timestamp": "..."}
+```
+
+**DELETE /api/tmux/sessions/all**
+```json
+// Response
+{"success": true, "killed": 5, "sessions": ["hq-mayor", "..."]}
+```
+
+**Polling:** Dashboard polls GET every 5 seconds.
+
+### Beads Integration
+
+| Endpoint | Purpose |
+|----------|---------|
+| GET /api/beads/issues | Raw issue data from .beads/issues.jsonl |
+| GET /api/beads/triage | AI triage recommendations |
+| GET /api/beads/insights | Graph metrics |
+| GET /api/beads/plan | Parallel execution tracks |
+
+---
+
+## Theme System
+
+**Available Themes:**
+| Theme | Description |
+|-------|-------------|
+| Matrix | Green neon on black (default) |
+| Dark | Blue accent on neutral dark |
+| Gastown | Warm cream/russet palette |
+
+**Implementation:**
+- `data-theme` attribute on document root
+- CSS custom properties define all colors
+- Components use `var(--property-name)` exclusively
+- Theme selection persists in localStorage
+
+**Window Colors:**
+| Window | Color | Hex |
+|--------|-------|-----|
+| 1 | Blue | #4a9eff |
+| 2 | Purple | #9966ff |
+| 3 | Green | #00ff41 |
+| 4 | Orange | #ff9933 |
+
+---
+
+## File Browser Implementation
 
 **Architecture:**
-- nginx serves static React dashboard and proxies:
-  - `/terminal/` → ttyd (port 7681, runs as dev)
-  - `/files/` → filebrowser (port 8081)
-  - `/api/` → Node.js API (port 3001, runs as dev)
-- ttyd accepts `?arg=session_name` to attach to tmux sessions
-- API manages tmux sessions (list/create) as dev user
+- Native React component (not iframe)
+- Uses filebrowser API backend (`/files/api/resources/...`)
+- Full CSS variable theming
 
-**Note:** No localhost port mapping. Access is exclusively via Tailscale.
+**Features:**
+- Navigation: Breadcrumbs, Back/Forward/Up, history
+- Views: List (sortable) and Grid (thumbnails)
+- Operations: Upload, Download, Rename, Delete, Create Folder
+- Selection: Single, Ctrl+multi, Shift+range
+- Search: Filter files in current directory
+- Context Menu: Right-click actions
 
-## Setup
+**Keyboard Shortcuts:**
+| Key | Action |
+|-----|--------|
+| Enter | Open folder / Download file |
+| Backspace | Parent directory |
+| F2 | Rename |
+| Delete | Delete |
+| F5 | Refresh |
+| Ctrl+A | Select all |
 
-### 1. Create .env file with Tailscale auth key
+---
 
-```bash
-cp .env.example .env
-# Edit .env and add your TS_AUTHKEY
+## Inbox / Package System
+
+**Purpose:** Send files with instructions to `/code/incoming/` for agent processing.
+
+**File Storage Pattern:**
+- User uploads `report.pdf` with message "Please analyze this"
+- Creates: `/code/incoming/report.pdf` (file)
+- Creates: `/code/incoming/report.pdf.letter` (message text)
+
+---
+
+## Security Model
+
+### Network Isolation
+
+Containers are isolated via Tailscale ACLs:
+
+```json
+{
+  "tagOwners": { "tag:container": ["autogroup:admin"] },
+  "grants": [
+    {"src": ["autogroup:member"], "dst": ["*"], "ip": ["*"]},
+    {"src": ["tag:container"], "dst": ["tag:container"], "ip": ["*"]},
+    {"src": ["tag:container"], "dst": ["autogroup:internet"], "ip": ["*"]}
+  ]
+}
 ```
 
-Generate key at: https://login.tailscale.com/admin/settings/keys
-- Use **Reusable** key, or
-- Use **OAuth client** with `tag:container` scope
+| Source | Can Reach | Cannot Reach |
+|--------|-----------|--------------|
+| Your devices | arena, ollama, all devices | - |
+| arena | ollama, internet | NAS, host, other devices |
+| ollama | arena, internet | NAS, host, other devices |
 
-### 2. Build and start
+### Sensitive File Protection
 
-```bash
-docker-compose build --no-cache
-docker-compose up -d
+Volume overlays hide secrets from sandbox:
+```yaml
+volumes:
+  - ./sandbox_overrides/empty_env:/code/AgentArena/.env:ro
 ```
 
-### 3. Verify on Tailscale
+---
 
-Check https://login.tailscale.com/admin/machines for:
-- `ollama` - LLM service
-- `arena` - Dev environment
+## File Structure
+
+```
+AgentArena/
+├── api/                      # Node.js API
+│   ├── server.js             # Main API server
+│   ├── beads-routes.js       # Beads endpoints
+│   └── utils.test.js         # Unit tests
+├── dashboard/                # React UI
+│   ├── src/                  # Source code
+│   ├── tests/                # Playwright E2E tests
+│   └── dist/                 # Built assets
+├── nginx/                    # nginx config
+├── internal/                 # tmux helpers
+├── sandbox_overrides/        # Secret overlays
+├── beads_viewer_integration/ # Integration docs
+├── tailscale_state/          # Tailscale identity
+├── filebrowser_data/         # Filebrowser config
+├── build1.dockerfile         # Main container
+├── ollama.dockerfile         # Ollama container
+├── docker-compose.yml        # Orchestration
+├── .env                      # Secrets (git-ignored)
+├── PRD.md                    # Product requirements
+└── SPEC.md                   # This file
+```
+
+---
+
+## Development Anti-Patterns
+
+### Avoid These
+
+1. **Silent Fallbacks in Scripts**
+   - Never add `else exec bash -l` as silent fallback
+   - Never use `2>/dev/null` on tmux commands
+   - Always expose errors for debugging
+
+2. **Empty Catch Blocks**
+   - Never use `.catch(() => {})` - always log errors
+   - Even if degrading gracefully, log why
+
+3. **Auto-Creating Sessions**
+   - Windows should initialize empty (`activeSession: null`)
+   - Let users drag sessions explicitly
+
+4. **Timeout-Based Font Sizing**
+   - Use polling approach, not fixed setTimeout delays
+
+5. **Session Click vs Drag Confusion**
+   - Click → Opens floating modal (peek)
+   - Drag → Binds to window (does NOT auto-activate)
+
+---
 
 ## Commands
 
 ```bash
-# Build images
-docker-compose build
-
-# Start containers
-docker-compose up -d
-
-# Stop containers
-docker-compose down
+# Build and start
+docker compose build --no-cache
+docker compose up -d
 
 # View logs
-docker-compose logs -f
+docker compose logs -f
 
-# Rebuild from scratch
-docker-compose down && docker-compose build --no-cache && docker-compose up -d
-
-# SSH into arena
-ssh dev@arena      # as dev user
+# SSH access
+ssh dev@arena      # as dev
 ssh root@arena     # as root
+
+# Test API
+curl http://arena:8080/api/tmux/sessions
 
 # Test Ollama
 curl http://ollama:11434/api/tags
+
+# Rebuild dashboard
+cd dashboard && npm run build && cd ..
+docker compose restart agent-arena
 ```
 
-## Files
+---
 
+## Tests
+
+### Backend (Jest)
+```bash
+cd api && npm test
 ```
-E:\Docker\AgentArena\
-├── build1.dockerfile      # Agent Arena image
-├── ollama.dockerfile      # Ollama image  
-├── docker-compose.yml     # Container orchestration
-├── .env                   # Tailscale auth key (git-ignored)
-├── .env.example           # Template for .env
-├── SPEC.md               # This file
-└── tailscale_state/      # Tailscale persistence
-    ├── ollama/           # Ollama's tailscale state
-    └── arena/            # Arena's tailscale state
+17 tests: session categorization, agent name extraction, group priority, sorting
+
+### Frontend (Playwright)
+```bash
+cd dashboard && npm test
 ```
-
-## Security
-
-1. **Tailscale ACLs** - Control which devices can reach ollama vs arena
-2. **SSH passwords** are defaults (dev:dev, root:root) - change for production
-3. **/vault is read-only for dev** - agents can't corrupt context files
-4. **No localhost exposure** - services only accessible via authenticated Tailscale
-
-### Tailscale ACL (grants syntax)
-
-```json
-{
-  "tagOwners": {
-    "tag:container": ["autogroup:admin"]
-  },
-  "grants": [
-    // Your personal devices can reach everything
-    {"src": ["autogroup:member"], "dst": ["*"], "ip": ["*"]},
-    // Containers can reach each other (arena <-> ollama)
-    {"src": ["tag:container"], "dst": ["tag:container"], "ip": ["*"]},
-    // Containers can reach internet (npm, pip, git, APIs)
-    {"src": ["tag:container"], "dst": ["autogroup:internet"], "ip": ["*"]}
-    // IMPLICIT DENY: containers cannot reach your other Tailnet devices
-  ]
-}
-```
+38 tests: session panel, terminal layouts, drag-and-drop, search, keyboard navigation, persistence
