@@ -51,9 +51,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const [windowCount, setWindowCountState] = useState(stored?.windowCount ?? 2)
+  const [windowCount, setWindowCountState] = useState(stored?.windowCount ?? 1)
   const [windows, setWindows] = useState<TerminalWindow[]>(
-    stored?.windows ?? createDefaultWindows(2)
+    stored?.windows ?? createDefaultWindows(1)
   )
   const [sidebarCollapsed, setSidebarCollapsed] = useState(stored?.sidebarCollapsed ?? false)
   const [floatingSession, setFloatingSession] = useState<string | null>(null)
@@ -197,15 +197,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         }
       })
 
-      // 2. Add to target window (do NOT change activeSession - user must explicitly select)
+      // 2. Add to target window
+      // If window is empty, auto-set as active (no interruption since nothing is playing)
+      // If window has sessions, do NOT change activeSession - user must explicitly select
       return cleaned.map(w => {
         if (w.id !== windowId) return w
         if (w.boundSessions.includes(sessionName)) {
           return w  // Already bound, no change needed
         }
+        const isEmpty = w.boundSessions.length === 0
         return {
           ...w,
           boundSessions: [...w.boundSessions, sessionName],
+          activeSession: isEmpty ? sessionName : w.activeSession,
         }
       })
     })

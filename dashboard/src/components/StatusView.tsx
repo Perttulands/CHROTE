@@ -55,11 +55,11 @@ function StatusView() {
     return () => clearInterval(interval)
   }, [fetchStatus])
 
-  const getStatusColor = (status: ServiceStatus): string => {
+  const getStatusClass = (status: ServiceStatus): string => {
     switch (status) {
-      case 'online': return '#00ff41'
-      case 'offline': return '#ff4141'
-      case 'checking': return '#ffaa00'
+      case 'online': return 'status-online'
+      case 'offline': return 'status-offline'
+      case 'checking': return 'status-checking'
     }
   }
 
@@ -77,13 +77,13 @@ function StatusView() {
         <h3>Gastown Status</h3>
         <div className="status-item">
           <span className="label">API Server</span>
-          <span className="value" style={{ color: getStatusColor(health.api) }}>
+          <span className={`value ${getStatusClass(health.api)}`}>
             {getStatusText(health.api)}
           </span>
         </div>
         <div className="status-item">
           <span className="label">tmux</span>
-          <span className="value" style={{ color: getStatusColor(health.tmux) }}>
+          <span className={`value ${getStatusClass(health.tmux)}`}>
             {health.tmux === 'online' ? `${sessions.length} session${sessions.length !== 1 ? 's' : ''}` : getStatusText(health.tmux)}
           </span>
         </div>
@@ -96,7 +96,7 @@ function StatusView() {
         {error && (
           <div className="status-item">
             <span className="label">Error</span>
-            <span className="value" style={{ color: '#ff4141' }}>{error}</span>
+            <span className="value status-offline">{error}</span>
           </div>
         )}
       </div>
@@ -111,12 +111,7 @@ function StatusView() {
           sessions.map((session) => (
             <div key={session.name} className="status-item">
               <span className="label">{session.agentName || session.name}</span>
-              <span
-                className="value"
-                style={{
-                  color: session.attached ? '#00ff41' : '#00cc33',
-                }}
-              >
+              <span className={`value ${session.attached ? 'status-online' : 'status-session-active'}`}>
                 {session.windows} window{session.windows !== 1 ? 's' : ''}
                 {session.attached && ' (attached)'}
               </span>

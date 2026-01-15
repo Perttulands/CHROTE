@@ -9,11 +9,23 @@ function FloatingModal() {
   const [isDragging, setIsDragging] = useState(false)
   const dragOffset = useRef({ x: 0, y: 0 })
   const iframeRef = useRef<HTMLIFrameElement>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
 
   // Reset loaded state when session changes
   useEffect(() => {
     setLoaded(false)
   }, [floatingSession])
+
+  // Trigger xterm fit() by dispatching resize event to iframe
+  const triggerFit = useCallback(() => {
+    try {
+      const iframe = iframeRef.current
+      if (!iframe?.contentWindow) return
+      iframe.contentWindow.dispatchEvent(new Event('resize'))
+    } catch {
+      // Cross-origin or not ready - ignore
+    }
+  }, [])
 
   // Apply font size to xterm instance inside iframe with polling for readiness
   const applyFontSize = useCallback((fontSize: number) => {
@@ -43,11 +55,14 @@ function FloatingModal() {
     tryApply()
   }, [])
 
-  // Apply font size when iframe loads
+  // Apply font size when iframe loads, and trigger fit after delays
   const handleIframeLoad = useCallback(() => {
     setLoaded(true)
     applyFontSize(settings.fontSize)
-  }, [applyFontSize, settings.fontSize])
+    setTimeout(triggerFit, 100)
+    setTimeout(triggerFit, 300)
+    setTimeout(triggerFit, 500)
+  }, [applyFontSize, settings.fontSize, triggerFit])
 
   // Apply font size when setting changes
   useEffect(() => {
@@ -55,6 +70,24 @@ function FloatingModal() {
       applyFontSize(settings.fontSize)
     }
   }, [loaded, settings.fontSize, applyFontSize])
+
+  // ResizeObserver to trigger fit() when container size changes
+  useEffect(() => {
+    const body = bodyRef.current
+    if (!body) return
+
+    let timeoutId: ReturnType<typeof setTimeout>
+    const observer = new ResizeObserver(() => {
+      clearTimeout(timeoutId)
+      timeoutId = setTimeout(triggerFit, 100)
+    })
+
+    observer.observe(body)
+    return () => {
+      clearTimeout(timeoutId)
+      observer.disconnect()
+    }
+  }, [triggerFit])
 
   // Dragging handlers
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -118,7 +151,7 @@ function FloatingModal() {
             <button className="modal-close" onClick={closeFloatingModal}>×</button>
           </div>
         </div>
-        <div className="floating-modal-body">
+        <div ref={bodyRef} className="floating-modal-body">
           <iframe
             ref={iframeRef}
             key={floatingSession}

@@ -1,0 +1,1 @@
+In this file we create and evaluate strategies to integrate Beadsviewer https://github.com/Dicklesworthstone/beads_viewer 

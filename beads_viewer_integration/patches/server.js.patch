@@ -1,0 +1,29 @@
+--- a/api/server.js
++++ b/api/server.js
+@@ -4,6 +4,14 @@
+ const express = require('express');
+ const { execSync } = require('child_process');
+ const app = express();
++
++// ============================================================================
++// BEADS MODULE INTEGRATION - START
++// To remove: Delete this block and api/beads-routes.js
++// ============================================================================
++const beadsRoutes = require('./beads-routes');
++// ============================================================================
+
+ // Ensure consistent tmux socket location
+ const TMUX_ENV = { env: { ...process.env, TMUX_TMPDIR: '/tmp' } };
+@@ -192,6 +200,12 @@ app.get('/api/health', (req, res) => {
+   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+ });
+
++// ============================================================================
++// BEADS MODULE INTEGRATION - ROUTES
++// ============================================================================
++app.use('/api/beads', beadsRoutes);
++// ============================================================================
++
+ const PORT = process.env.API_PORT || 3001;
+ app.listen(PORT, '0.0.0.0', () => {
+   console.log(`Arena API server listening on port ${PORT}`);

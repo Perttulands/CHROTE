@@ -46,6 +46,20 @@ UI (React) → nginx (/terminal/) → ttyd (port 7681) → terminal-launch.sh �
    - Drag session to window → Binds session to that window (does NOT auto-activate)
    - These are intentionally separate interactions per PRD
 
+### Terminal Resize & Fit Handling
+
+Both `TerminalWindow.tsx` and `FloatingModal.tsx` use ResizeObserver to keep xterm.js viewport in sync:
+
+**How it works:**
+1. `triggerFit()` dispatches a `resize` event to the iframe - ttyd listens for this and calls xterm's `fit()`
+2. On iframe load, `triggerFit()` is called at 100ms, 300ms, and 500ms delays to handle CSS transitions
+3. ResizeObserver watches the body container and triggers fit with 100ms debounce on size changes
+
+**Why this matters:**
+- Session switching remounts the iframe (via `key={activeSession}`)
+- xterm.js may calculate dimensions before container layout settles
+- Without delayed fit calls, scrolling can break and content may be incorrectly positioned
+
 ### Debugging Session Issues
 
 If sessions don't attach correctly:
@@ -63,6 +77,7 @@ If sessions don't attach correctly:
 | Session state | `dashboard/src/context/SessionContext.tsx` |
 | Floating modal | `dashboard/src/components/FloatingModal.tsx` |
 | Terminal window | `dashboard/src/components/TerminalWindow.tsx` |
+| Nuke confirm modal | `dashboard/src/components/NukeConfirmModal.tsx` |
 | Launch script | Embedded in `build1.dockerfile` (lines 73-109) |
 | ttyd startup | `build1.dockerfile` entrypoint (line ~143) |
 | nginx config | `AgentArena/nginx/nginx.conf` |
@@ -124,3 +139,24 @@ When sessions are deleted from tmux, `refreshSessions()` automatically:
 1. Detects sessions in `boundSessions` that no longer exist
 2. Removes them from window bindings
 3. Updates `activeSession` if the orphaned session was active
+
+### Nuke All Sessions
+
+The "Nuke All" feature destroys all tmux sessions at once:
+
+**UI Flow:**
+1. Red "☢ Nuke All" button appears at bottom of session sidebar (only when sessions exist)
+2. Clicking opens `NukeConfirmModal` with session count warning
+3. User must type "NUKE" to enable the "Destroy All" button
+4. On confirm, calls `DELETE /api/tmux/sessions/all`
+
+**API Endpoint:** `DELETE /api/tmux/sessions/all`
+- Lists all current sessions
+- Runs `tmux kill-server` to destroy all sessions
+- Returns `{ success, killed, sessions[] }`
+
+**Files:**
+- Button & modal integration: `dashboard/src/components/SessionPanel.tsx`
+- Modal component: `dashboard/src/components/NukeConfirmModal.tsx`
+- API endpoint: `api/server.js` (DELETE /api/tmux/sessions/all)
+- Styles: `dashboard/src/styles/theme.css` (NUKE MODAL section)

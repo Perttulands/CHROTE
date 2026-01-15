@@ -72,6 +72,9 @@ services:
       - arena_root_home:/root
       # API server mount for hot-fixes without rebuild
       - ./api:/srv/api
+      # Security: Hide sensitive files from sandbox (overlay with empty file)
+      - ./sandbox_overrides/empty_env:/code/AgentArena/.env:ro
+      - ./sandbox_overrides/empty_env:/code/AgentArena/.env.example:ro
     environment:
       OLLAMA_HOST: http://ollama:11434
     restart: unless-stopped

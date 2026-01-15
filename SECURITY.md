@@ -6,6 +6,8 @@
 
 **Secondary concern:** The sandbox itself is throw-away, so protecting it is lower priority.
 
+**Tertiary concern:** Secrets in mounted volumes (e.g., `.env` files) could be read by rogue agents inside the sandbox.
+
 ## Critical Protection: Tailscale ACL Lockdown
 
 ### The Problem
@@ -163,6 +165,30 @@ npm run dev -- -H 0.0.0.0
 
 ---
 
+## Sensitive File Protection
+
+### The Problem
+
+The AgentArena folder is mounted into the sandbox at `/code/AgentArena`. This includes the `.env` file containing the Tailscale auth key. A rogue agent could read this key and use it to register new machines on your Tailnet.
+
+### The Solution
+
+Volume overlays hide sensitive files from the sandbox. In `docker-compose.yml`:
+
+```yaml
+volumes:
+  - E:/Docker/AgentArena:/code/AgentArena
+  # Security: overlay sensitive files with empty placeholder
+  - ./sandbox_overrides/empty_env:/code/AgentArena/.env:ro
+  - ./sandbox_overrides/empty_env:/code/AgentArena/.env.example:ro
+```
+
+The `sandbox_overrides/empty_env` file contains only a comment. When mounted over the real `.env`, agents see the placeholder instead of actual secrets.
+
+**To add more protected files:** Add additional overlay lines for any file containing secrets.
+
+---
+
 ## Secondary Considerations
 
 ### Password Authentication (dev:dev, root:root)
@@ -197,6 +223,7 @@ agent-arena:
 - [ ] From arena: `curl http://ollama:11434/api/tags` succeeds
 - [ ] From arena: `curl https://google.com` succeeds
 - [ ] From arena: ping to other Tailnet device **fails**
+- [ ] From arena: `cat /code/AgentArena/.env` shows placeholder, not real secrets
 - [ ] From your laptop: `ssh dev@arena` succeeds
 - [ ] From your laptop: `curl http://arena:3000` succeeds (when dev server running)
 

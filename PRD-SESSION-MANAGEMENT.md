@@ -86,7 +86,7 @@ As a developer using Gastown (an agentic orchestration tool), I need to:
 - Everything else → "Other" group (priority 3)
 
 **Bound Session Indicators:**
-- Color-coded dot matching window color (window 1=green, 2=blue, 3=orange, 4=purple)
+- Color-coded dot matching window color (window 1=blue, 2=purple, 3=green, 4=orange)
 - Window number badge (1, 2, 3, or 4) next to the session name
 
 **Search/Filter:**
@@ -110,7 +110,7 @@ As a developer using Gastown (an agentic orchestration tool), I need to:
 **Window Anatomy:**
 ```
 ┌─────────────────────────────────────────┐
-│ [session-1] [session-2] [session-3] [←] │  <- Tab bar
+│ [session-1 ×] [session-2 ×] [+active×]  │  <- Tab bar (× to unbind)
 ├─────────────────────────────────────────┤
 │                                         │
 │           ttyd iframe                   │  <- Terminal
@@ -122,8 +122,8 @@ As a developer using Gastown (an agentic orchestration tool), I need to:
 **Tab Bar:**
 - Shows all bound sessions as clickable tabs
 - Active session tab is highlighted
-- Each tab shows full session name
-- **← button** on each tab: Unbinds session (moves back to sidebar)
+- Each tab shows session name with × button to unbind
+- **× button** on each tab: Unbinds session (moves back to sidebar)
 - **Ctrl+Left/Right Arrow:** Cycles through tabs within the focused window
 - **Ctrl+Up/Down Arrow:** Cycles focus between windows (1→2→3→4→1 or reverse)
 
@@ -134,7 +134,8 @@ As a developer using Gastown (an agentic orchestration tool), I need to:
 **Session Binding Rules:**
 - A session can only be bound to ONE window at a time
 - Dragging a bound session to another window moves it (removes from old, adds to new)
-- Dragging does NOT change the active session or interrupt anything
+- Dragging to a window with existing sessions does NOT change the active session or interrupt anything
+- **Dragging to an empty window automatically loads the session** (sets it as active) since there's nothing to interrupt
 - The active session continues displaying until user clicks a different tab
 
 ### 3. Floating Popup Modal
@@ -150,14 +151,13 @@ As a developer using Gastown (an agentic orchestration tool), I need to:
 - Fully interactive ttyd terminal (can type commands)
 - Does NOT affect window bindings
 
-**Size:** ~80% viewport width/height, centered
+**Size:** 600x400px, draggable by header
 
 ### 4. Initial State (First Load)
 
 **On first visit:**
 - Window count: 1
-- Window 1: Auto-creates a new tmux session (e.g., `shell-{timestamp}`)
-- That session is bound to window 1 and active
+- Window 1: Empty (user drags session to begin)
 - Sidebar shows all existing tmux sessions (may be empty)
 
 **On subsequent visits:**
@@ -249,10 +249,10 @@ As a developer using Gastown (an agentic orchestration tool), I need to:
 
 | Window | Color | Hex |
 |--------|-------|-----|
-| 1 | Green | #00ff00 |
-| 2 | Blue | #00bfff |
-| 3 | Orange | #ff8c00 |
-| 4 | Purple | #da70d6 |
+| 1 | Blue | #4a9eff |
+| 2 | Purple | #9966ff |
+| 3 | Green | #00ff41 |
+| 4 | Orange | #ff9933 |
 
 Used for: Window borders, sidebar dots, tab highlights
 
@@ -266,6 +266,80 @@ Used for: Window borders, sidebar dots, tab highlights
 - **Persistence:** Volume and Play/Pause state saved in user settings
 - **UI:** Minimalist icon in global header or sidebar footer
 
+### 11. Native File Browser
+
+**Purpose:** Browse and manage files in mounted volumes with full theme integration.
+
+**Architecture:**
+- Native React component (not an iframe)
+- Uses filebrowser API backend (`/files/api/resources/...`)
+- Full CSS variable theming - adapts to Matrix, Dark, and Gastown themes
+
+**UI Structure:**
+```
+┌──────────────────────────────────────────────────────────┐
+│ FILES   [Browser] [Info]          [Upload] [+📁] [↻] [↗] │
+├──────────────────────────────────────────────────────────┤
+│ [←] [→] [↑]  / srv / code / project      [Filter] [≡][⊞]│
+├──────────────────────────────────────────────────────────┤
+│ NAME ▲                     SIZE         MODIFIED         │
+├──────────────────────────────────────────────────────────┤
+│ 📁 src                      -          2 hours ago       │
+│ 📁 tests                    -          Yesterday         │
+│ 📜 index.ts               2.4 KB       3 hours ago       │
+│ 📋 package.json           1.1 KB       5 days ago        │
+├──────────────────────────────────────────────────────────┤
+│ 4 items  │  1 selected                                   │
+└──────────────────────────────────────────────────────────┘
+```
+
+**Features:**
+- **Navigation:** Breadcrumb path, Back/Forward/Up buttons, history support
+- **Views:** List view (sortable columns) and Grid view (icon thumbnails)
+- **File Operations:** Upload, Download, Rename, Delete, Create Folder
+- **Selection:** Single, Ctrl+multi, Shift+range selection
+- **Search:** Filter files in current directory
+- **Context Menu:** Right-click for file/folder actions
+
+**Keyboard Shortcuts:**
+| Key | Action |
+|-----|--------|
+| Enter | Open folder / Download file |
+| Backspace | Go to parent directory |
+| F2 | Rename selected item |
+| Delete | Delete selected item |
+| F5 | Refresh directory |
+| Ctrl+A | Select all items |
+
+**Info Tab:**
+- Mounted volumes reference (`/srv/code` → `E:/Code`, `/srv/vault` → `E:/Vault`)
+- Keyboard shortcuts reference
+- Usage tips
+
+**Theme Integration:**
+All colors use CSS variables:
+- `var(--background)`, `var(--surface-primary)`, `var(--surface-secondary)`
+- `var(--text-primary)`, `var(--text-secondary)`, `var(--text-dim)`
+- `var(--accent)`, `var(--accent-light)`, `var(--divider)`
+
+### 12. Theme System
+
+**Purpose:** Consistent visual theming across all dashboard components.
+
+**Available Themes:**
+| Theme | Description |
+|-------|-------------|
+| Matrix | Green neon on black (default) |
+| Dark | Blue accent on neutral dark |
+| Gastown | Warm cream/russet palette |
+
+**Implementation:**
+- `data-theme` attribute on document root
+- CSS custom properties define all colors
+- Components use `var(--property-name)` exclusively
+- Theme selection persists in localStorage
+
+## What This Is NOT
 
 - **Not a tmux replacement:** We don't manage tmux panes/windows, only sessions
 - **Not session creation UI:** Gastown creates sessions; we just display them
@@ -281,12 +355,29 @@ Used for: Window borders, sidebar dots, tab highlights
 
 ## Success Criteria
 
-- [ ] Can view 4 simultaneous terminals with different agent sessions
-- [ ] Can drag session to window without disrupting any sessions
-- [ ] Can cycle through 3+ sessions in a single window using tabs. Cycling through tabs does not disrupt any sessions.
-- [ ] Can cycle between windows using Ctrl+Up/Down keyboard shortcuts
-- [ ] Can peek at any session via popup without affecting window bindings. No disruption caused to sessions.
-- [ ] New Gastown sessions appear in sidebar automatically
-- [ ] State persists across page refreshes
-- [ ] 20+ sessions remain manageable via grouping and search
-- [ ] Creating or switching between sessions never disrupts the sessions in any way.
+### Terminal Management
+- [x] Can view 4 simultaneous terminals with different agent sessions
+- [x] Can drag session to window without disrupting any sessions
+- [x] Can cycle through 3+ sessions in a single window using tabs. Cycling through tabs does not disrupt any sessions.
+- [x] Can cycle between windows using Ctrl+Up/Down keyboard shortcuts
+- [x] Can peek at any session via popup without affecting window bindings. No disruption caused to sessions.
+- [x] New Gastown sessions appear in sidebar automatically
+- [x] State persists across page refreshes
+- [x] 20+ sessions remain manageable via grouping and search
+- [x] Creating or switching between sessions never disrupts the sessions in any way.
+
+### File Browser
+- [x] Native file browser loads and displays directory contents
+- [x] File browser adapts to all three themes (Matrix, Dark, Gastown)
+- [x] Can navigate directories via breadcrumbs, buttons, and double-click
+- [x] Can upload files via drag-and-drop and file picker
+- [x] Can download files via double-click or context menu
+- [x] Can create, rename, and delete files/folders
+- [x] Keyboard shortcuts work (F2 rename, Del delete, F5 refresh, etc.)
+- [x] Multi-select works (Ctrl+click, Shift+click, Ctrl+A)
+- [x] List and Grid views both function correctly
+
+### Theme System
+- [x] All components use CSS variables exclusively
+- [x] Theme changes apply instantly across entire dashboard
+- [x] Theme preference persists in localStorage

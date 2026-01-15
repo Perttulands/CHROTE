@@ -1,0 +1,15 @@
+--- a/dashboard/src/components/TabBar.tsx
++++ b/dashboard/src/components/TabBar.tsx
+@@ -24,9 +24,11 @@ function TabBar({ activeTab, onTabChange }: TabBarProps) {
+   const tabs: TabConfig[] = [
+     { id: 'terminal', label: 'Terminal' },
+     { id: 'files', label: 'Files' },
++    // BEADS MODULE INTEGRATION - START
++    { id: 'beads', label: 'Beads' },
++    // BEADS MODULE INTEGRATION - END
+     { id: 'status', label: 'Status' },
+     { id: 'settings', label: 'Settings' },
+-    { id: 'beads', label: 'Beads ↗', external: true, url: 'https://github.com/Dicklesworthstone/beads_viewer' },
+   ]
+
+   const handleClick = (tab: TabConfig) => {

@@ -2,10 +2,16 @@ import { useRef, useEffect, useState } from 'react'
 import { useSession } from '../context/SessionContext'
 
 const TRACKS = [
-  { file: '/music/Perttu_chillvibes.mp3', name: 'Chill Vibes' },
-  { file: '/music/Perttuvibe1.mp3', name: 'Vibe I' },
-  { file: '/music/Perttuvibe2.mp3', name: 'Vibe II' },
-  { file: '/music/Vibing at the spacedeck.mp3', name: 'Spacedeck' },
+  { file: '/music/Convoy_Run.mp3', name: 'Convoy Run' },
+  { file: '/music/Deacons_revenge.mp3', name: "Deacon's Revenge" },
+  { file: '/music/Design_phase.mp3', name: 'Design Phase' },
+  { file: '/music/March_of_the_Polecats.mp3', name: 'March of the Polecats' },
+  { file: '/music/Mayors_introspection.mp3', name: "Mayor's Introspection" },
+  { file: '/music/MergePush.mp3', name: 'Merge Push' },
+  { file: '/music/Polecat_Danceparty.mp3', name: 'Polecat Danceparty' },
+  { file: '/music/The_idle_Polecat.mp3', name: 'The Idle Polecat' },
+  { file: '/music/Vibes_at_the_hq.mp3', name: 'Vibes at the HQ' },
+  { file: '/music/Who_ate_my_PRD.mp3', name: 'Who Ate My PRD?' },
 ]
 
 function MusicPlayer() {

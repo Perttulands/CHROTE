@@ -44,9 +44,9 @@ function SessionTag({ sessionName, isActive, windowId, onRemove, onClick }: Sess
 
   const style = transform
     ? {
-        transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
-        zIndex: isDragging ? 1000 : undefined,
-      }
+      transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
+      zIndex: isDragging ? 1000 : undefined,
+    }
     : undefined
 
   // Extract just the agent name for display
@@ -88,6 +88,7 @@ interface TerminalWindowProps {
 function TerminalWindow({ window: windowConfig, isDragging = false, isFocused = false, onFocus }: TerminalWindowProps) {
   const [loaded, setLoaded] = useState(false)
   const iframeRef = useRef<HTMLIFrameElement>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
 
   // Reset loaded state when session changes (so status dot shows disconnected during switch)
   useEffect(() => {
@@ -100,6 +101,18 @@ function TerminalWindow({ window: windowConfig, isDragging = false, isFocused = 
     cycleSession,
     settings,
   } = useSession()
+
+  // Trigger xterm fit() by dispatching resize event to iframe
+  const triggerFit = useCallback(() => {
+    try {
+      const iframe = iframeRef.current
+      if (!iframe?.contentWindow) return
+      // Dispatch resize event - ttyd listens for this and calls fit()
+      iframe.contentWindow.dispatchEvent(new Event('resize'))
+    } catch {
+      // Cross-origin or not ready - ignore
+    }
+  }, [])
 
   // Apply font size to xterm instance inside iframe with polling for readiness
   const applyFontSize = useCallback((fontSize: number) => {
@@ -129,11 +142,15 @@ function TerminalWindow({ window: windowConfig, isDragging = false, isFocused = 
     tryApply()
   }, [])
 
-  // Apply font size when iframe loads
+  // Apply font size when iframe loads, and trigger fit after delays to handle layout settling
   const handleIframeLoad = useCallback(() => {
     setLoaded(true)
     applyFontSize(settings.fontSize)
-  }, [applyFontSize, settings.fontSize])
+    // Trigger fit after delays to ensure container has settled
+    setTimeout(triggerFit, 100)
+    setTimeout(triggerFit, 300)
+    setTimeout(triggerFit, 500)
+  }, [applyFontSize, settings.fontSize, triggerFit])
 
   // Apply font size when setting changes (for already loaded iframes)
   useEffect(() => {
@@ -141,6 +158,25 @@ function TerminalWindow({ window: windowConfig, isDragging = false, isFocused = 
       applyFontSize(settings.fontSize)
     }
   }, [loaded, settings.fontSize, applyFontSize])
+
+  // ResizeObserver to trigger fit() when container size changes
+  useEffect(() => {
+    const body = bodyRef.current
+    if (!body) return
+
+    let timeoutId: ReturnType<typeof setTimeout>
+    const observer = new ResizeObserver(() => {
+      clearTimeout(timeoutId)
+      // Debounce to wait for CSS transitions to complete
+      timeoutId = setTimeout(triggerFit, 100)
+    })
+
+    observer.observe(body)
+    return () => {
+      clearTimeout(timeoutId)
+      observer.disconnect()
+    }
+  }, [triggerFit])
 
   const colorTheme = WINDOW_COLORS[windowConfig.colorIndex % WINDOW_COLORS.length]
 
@@ -158,8 +194,8 @@ function TerminalWindow({ window: windowConfig, isDragging = false, isFocused = 
   // ttyd serves its own terminal UI - embed via iframe
   // If a session is active, pass it as arg to attach to that tmux session
   const terminalUrl = activeSession && activeSession !== 'INIT-PENDING'
-    ? `/terminal/?arg=${encodeURIComponent(activeSession)}`
-    : `/terminal/?arg=&arg=${encodeURIComponent(settings.terminalMode)}`
+    ? `/terminal/?arg=${encodeURIComponent(activeSession)}&theme=${encodeURIComponent('{"background":"rgba(0,0,0,0)"}')}`
+    : `/terminal/?arg=&arg=${encodeURIComponent(settings.terminalMode)}&theme=${encodeURIComponent('{"background":"rgba(0,0,0,0)"}')}`
 
   return (
     <div
@@ -209,14 +245,14 @@ function TerminalWindow({ window: windowConfig, isDragging = false, isFocused = 
         </div>
       </div>
 
-      <div className="terminal-window-body">
+      <div ref={bodyRef} className="terminal-window-body">
         {activeSession === 'INIT-PENDING' ? (
-          <div style={{ 
-            display: 'flex', 
-            justifyContent: 'center', 
-            alignItems: 'center', 
-            height: '100%', 
-            color: colorTheme.accent 
+          <div style={{
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            height: '100%',
+            color: colorTheme.accent
           }}>
             <span>Initializing Session...</span>
           </div>

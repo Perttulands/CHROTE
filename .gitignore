@@ -22,3 +22,4 @@ dashboard/node_modules/
 # IDE files
 .vscode/
 .idea/
+api/node_modules/
