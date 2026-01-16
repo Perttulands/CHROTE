@@ -53,26 +53,17 @@ RUN mkdir -p /code && \
     chmod 775 /code && \
     chmod 755 /vault
 
-# 6a. Setup tmux config with mouse support and UTF-8
-RUN printf '# Enable mouse support (tmux 3.x handles scroll automatically)\n\
-set -g mouse on\n\
-\n\
-# UTF-8 support for emojis and special characters\n\
+# 6a. Setup minimal tmux config
+RUN printf '# UTF-8 support for emojis and special characters\n\
 set -gq utf8 on\n\
 set -gq status-utf8 on\n\
 setw -gq utf8 on\n\
-\n\
-# Better scrollback\n\
-set -g history-limit 50000\n\
 \n\
 # Start windows and panes at 1, not 0\n\
 set -g base-index 1\n\
 setw -g pane-base-index 1\n\
 \n\
-# Renumber windows when one is closed\n\
-set -g renumber-windows on\n\
-\n\
-# Better colors and true color support\n\
+# True color support\n\
 set -g default-terminal "tmux-256color"\n\
 set -ga terminal-overrides ",xterm-256color:Tc"\n\
 \n\

@@ -152,7 +152,7 @@ function SessionItem({ session }: SessionItemProps) {
             {assignment.windowIndex}
           </span>
         )}
-        <span className="session-agent-name" style={nameStyle}>{session.agentName}</span>
+        <span className="session-name" style={nameStyle}>{session.name}</span>
         {session.attached && !isAssigned && <span className="attached-indicator" title="Attached elsewhere">●</span>}
       </div>
 

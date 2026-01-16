@@ -63,6 +63,12 @@ Browser → nginx (:8080)
 ### Key Environment Variable
 `TMUX_TMPDIR=/tmp` must be consistent across API, ttyd, and SSH for tmux socket discovery.
 
+## Gastown
+
+Agent Arena powers **Gastown**, an orchestration framework for running many AI coding agents (10-30+) in parallel. Gastown uses the "MEOW Stack" (Molecular Expression Of Work) with Beads (atomic tasks), Epics, Molecules, and Wisps. Philosophy: "Physics over Politeness" - sessions are ephemeral, throughput is king, all actions are idempotent.
+
+Session naming: `gt-{rigname}-{worker}` for rig workers, `hq-*` for coordination sessions.
+
 ## Dashboard (React + TypeScript)
 
 **Tech Stack:** React 18, TypeScript, Vite, xterm.js, @dnd-kit (drag-drop)

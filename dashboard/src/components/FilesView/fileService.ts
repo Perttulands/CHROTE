@@ -1,6 +1,45 @@
 import { FileItem, FileOperationError, DirectoryResponse, RawFileItem } from './types'
 
-const API_BASE = '/files/api'
+const API_BASE = '/api/files'
+
+// ============================================
+// FILENAME SANITIZATION (security)
+// ============================================
+
+/**
+ * Sanitize filename to prevent path traversal and other attacks
+ * SECURITY: Rejects dangerous patterns, allows only safe characters
+ */
+function sanitizeFilename(filename: string): string {
+  // Reject path separators and traversal patterns
+  if (filename.includes('/') || filename.includes('\\') || filename.includes('..')) {
+    throw new FileOperationError(
+      'Invalid filename: path separators and ".." are not allowed',
+      'INVALID'
+    )
+  }
+
+  // Reject null bytes and control characters
+  if (/[\x00-\x1f\x7f]/.test(filename)) {
+    throw new FileOperationError(
+      'Invalid filename: control characters are not allowed',
+      'INVALID'
+    )
+  }
+
+  // Reject empty or whitespace-only names
+  const trimmed = filename.trim()
+  if (!trimmed) {
+    throw new FileOperationError('Invalid filename: name cannot be empty', 'INVALID')
+  }
+
+  // Reject names that are only dots
+  if (/^\.+$/.test(trimmed)) {
+    throw new FileOperationError('Invalid filename: "." and ".." are not allowed', 'INVALID')
+  }
+
+  return trimmed
+}
 
 // ============================================
 // ERROR HANDLING
@@ -198,13 +237,16 @@ export async function deleteItem(path: string): Promise<void> {
 
 /**
  * Upload files to a directory
- * Throws on: 413 (too large), 507 (storage), 403 (permission)
+ * Throws on: 413 (too large), 507 (storage), 403 (permission), invalid filename
+ * SECURITY: Sanitizes filenames to prevent path traversal
  */
 export async function uploadFiles(path: string, files: FileList | File[]): Promise<void> {
   const fileArray = Array.isArray(files) ? files : Array.from(files)
 
   for (const file of fileArray) {
-    const fullPath = path === '/' ? `/${file.name}` : `${path}/${file.name}`
+    // SECURITY: Sanitize filename before building path
+    const safeName = sanitizeFilename(file.name)
+    const fullPath = path === '/' ? `/${safeName}` : `${path}/${safeName}`
 
     let response: Response
     try {
@@ -230,7 +272,7 @@ export async function uploadFiles(path: string, files: FileList | File[]): Promi
       throw new FileOperationError('Insufficient storage', 'STORAGE', 507)
     }
 
-    throwForStatus(response, `Failed to upload ${file.name}`)
+    throwForStatus(response, `Failed to upload ${safeName}`)
   }
 }
 

@@ -15,7 +15,7 @@
 // ============================================================================
 
 const express = require('express');
-const { execSync, exec } = require('child_process');
+const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -30,25 +30,42 @@ const BV_COMMAND = process.env.BV_COMMAND || 'bv';
 const EXEC_TIMEOUT = 60000; // 60 seconds for robot commands
 const MAX_BUFFER = 10 * 1024 * 1024; // 10MB
 
+// Allowed root paths for project selection (security: restrict path traversal)
+const ALLOWED_ROOTS = (process.env.BEADS_ALLOWED_ROOTS || '/code,/workspace')
+  .split(',')
+  .map(r => path.resolve(r.trim()));
+
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
 
 /**
  * Validate and sanitize project path
+ * SECURITY: Ensures path is within allowed roots to prevent path traversal
  */
 function validateProjectPath(inputPath) {
   const projectPath = inputPath || DEFAULT_PROJECT_PATH;
 
-  // Basic path sanitization
-  const sanitized = path.normalize(projectPath).replace(/\.\./g, '');
+  // Resolve to absolute path (handles .., ., symlinks)
+  const resolved = path.resolve(projectPath);
 
-  // Check if path exists
-  if (!fs.existsSync(sanitized)) {
-    throw new Error(`Project path does not exist: ${sanitized}`);
+  // SECURITY: Check if resolved path is within any allowed root
+  const isAllowed = ALLOWED_ROOTS.some(root => {
+    // Ensure the resolved path starts with the root and is either exact match
+    // or followed by a path separator (prevents /code-evil matching /code)
+    return resolved === root || resolved.startsWith(root + path.sep);
+  });
+
+  if (!isAllowed) {
+    throw new Error(`Project path not in allowed roots: ${resolved}. Allowed: ${ALLOWED_ROOTS.join(', ')}`);
   }
 
-  return sanitized;
+  // Check if path exists
+  if (!fs.existsSync(resolved)) {
+    throw new Error(`Project path does not exist: ${resolved}`);
+  }
+
+  return resolved;
 }
 
 /**
@@ -64,12 +81,19 @@ function checkBeadsDirectory(projectPath) {
 
 /**
  * Execute bv command and return JSON result
+ * SECURITY: Uses execFileSync to avoid shell injection
+ * @param {string} flag - Single flag like '--robot-triage' (validated)
+ * @param {string} projectPath - Already validated project path
  */
-function execBvCommand(args, projectPath, timeout = EXEC_TIMEOUT) {
-  const command = `${BV_COMMAND} ${args} "${projectPath}"`;
+function execBvCommand(flag, projectPath, timeout = EXEC_TIMEOUT) {
+  // Validate flag format (must start with -- and contain only alphanumeric/dash)
+  if (!/^--[a-zA-Z0-9-]+$/.test(flag)) {
+    throw new Error(`Invalid bv flag: ${flag}`);
+  }
 
   try {
-    const result = execSync(command, {
+    // Use execFileSync with args array to avoid shell injection
+    const result = execFileSync(BV_COMMAND, [flag, projectPath], {
       encoding: 'utf-8',
       timeout,
       maxBuffer: MAX_BUFFER,
@@ -79,7 +103,7 @@ function execBvCommand(args, projectPath, timeout = EXEC_TIMEOUT) {
     return JSON.parse(result);
   } catch (error) {
     // Check if bv is not installed
-    if (error.message.includes('not found') || error.message.includes('not recognized')) {
+    if (error.message.includes('not found') || error.message.includes('not recognized') || error.code === 'ENOENT') {
       throw new Error('bv command not found. Please install beads_viewer.');
     }
 

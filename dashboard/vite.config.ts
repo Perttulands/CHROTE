@@ -15,11 +15,6 @@ export default defineConfig({
         ws: true,
         rewrite: (path) => path.replace(/^\/terminal/, ''),
       },
-      '/files': {
-        target: 'http://localhost:8081',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/files/, ''),
-      },
       '/api': {
         target: 'http://localhost:3001',
         changeOrigin: true,

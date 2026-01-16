@@ -72,7 +72,6 @@ export const DEFAULT_SETTINGS: UserSettings = {
 
 export interface TmuxSession {
   name: string
-  agentName: string
   windows: number
   attached: boolean
   group: string

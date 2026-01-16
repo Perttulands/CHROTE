@@ -358,7 +358,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, [refreshSessions])
 
-  const contextValue: DashboardContextType = {
+  // Memoize context value to prevent unnecessary rerenders of consuming components
+  const contextValue: DashboardContextType = useMemo(() => ({
     // State
     sessions,
     groupedSessions,
@@ -390,7 +391,36 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     renameSession,
     setIsDragging,
     updateSettings,
-  }
+  }), [
+    sessions,
+    groupedSessions,
+    loading,
+    error,
+    windows,
+    windowCount,
+    focusedWindowIndex,
+    sidebarCollapsed,
+    floatingSession,
+    assignedSessions,
+    isDragging,
+    settings,
+    setWindowCount,
+    addSessionToWindow,
+    removeSessionFromWindow,
+    setActiveSession,
+    cycleSession,
+    cycleWindow,
+    setFocusedWindowIndex,
+    toggleSidebar,
+    openFloatingModal,
+    closeFloatingModal,
+    handleSessionClick,
+    refreshSessions,
+    deleteSession,
+    renameSession,
+    setIsDragging,
+    updateSettings,
+  ])
 
   return (
     <SessionContext.Provider value={contextValue}>

@@ -37,23 +37,6 @@ func CategorizeSession(name string) string {
 	return "other"
 }
 
-// ExtractAgentName extracts the display name from a session name
-func ExtractAgentName(sessionName string) string {
-	parts := strings.Split(sessionName, "-")
-
-	// gt-gastown-jack → "jack"
-	if len(parts) >= 3 && strings.HasPrefix(sessionName, "gt-") {
-		return strings.Join(parts[2:], "-")
-	}
-
-	// hq-mayor → "mayor"
-	if len(parts) >= 2 {
-		return strings.Join(parts[1:], "-")
-	}
-
-	return sessionName
-}
-
 // GetGroupPriority returns the sort priority for a group
 func GetGroupPriority(group string) int {
 	switch group {
@@ -90,7 +73,7 @@ func GetGroupDisplayName(group string) string {
 	}
 }
 
-// SortSessions sorts sessions by group priority, group name, then agent name
+// SortSessions sorts sessions by group priority, group name, then session name
 func SortSessions(sessions []Session) {
 	sort.Slice(sessions, func(i, j int) bool {
 		// First by group priority
@@ -105,8 +88,8 @@ func SortSessions(sessions []Session) {
 			return sessions[i].Group < sessions[j].Group
 		}
 
-		// Finally by agent name
-		return sessions[i].AgentName < sessions[j].AgentName
+		// Finally by session name
+		return sessions[i].Name < sessions[j].Name
 	})
 }
 

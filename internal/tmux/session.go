@@ -2,11 +2,10 @@ package tmux
 
 // Session represents a tmux session with metadata
 type Session struct {
-	Name      string `json:"name"`      // Full session name (e.g., "gt-gastown-jack")
-	AgentName string `json:"agentName"` // Display name (e.g., "jack")
-	Windows   int    `json:"windows"`   // Number of tmux windows
-	Attached  bool   `json:"attached"`  // Whether session is attached
-	Group     string `json:"group"`     // Category (hq/main/gt-*/other)
+	Name     string `json:"name"`     // Full session name (e.g., "gt-gastown-jack")
+	Windows  int    `json:"windows"`  // Number of tmux windows
+	Attached bool   `json:"attached"` // Whether session is attached
+	Group    string `json:"group"`    // Category (hq/main/gt-*/other)
 }
 
 // SessionsResponse is the API response for listing sessions

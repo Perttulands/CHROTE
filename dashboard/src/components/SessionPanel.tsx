@@ -73,7 +73,10 @@ function SessionPanel() {
     setNuking(true)
     try {
       const response = await fetch('/api/tmux/sessions/all', {
-        method: 'DELETE'
+        method: 'DELETE',
+        headers: {
+          'X-Nuke-Confirm': 'DASHBOARD-NUKE-CONFIRMED'
+        }
       })
       if (response.ok) {
         refreshSessions()

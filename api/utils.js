@@ -27,26 +27,13 @@ function categorizeSession(name) {
   return 'other';
 }
 
-function extractAgentName(sessionName) {
-  // gt-gastown-jack → jack
-  // hq-mayor → mayor
-  const parts = sessionName.split('-');
-  if (parts.length >= 3 && sessionName.startsWith('gt-')) {
-    return parts.slice(2).join('-');
-  }
-  if (parts.length >= 2) {
-    return parts.slice(1).join('-');
-  }
-  return sessionName;
-}
-
 function sortSessions(sessions) {
   return [...sessions].sort((a, b) => {
     const priorityA = getGroupPriority(a.group);
     const priorityB = getGroupPriority(b.group);
     if (priorityA !== priorityB) return priorityA - priorityB;
     if (a.group !== b.group) return a.group.localeCompare(b.group);
-    return a.agentName.localeCompare(b.agentName);
+    return a.name.localeCompare(b.name);
   });
 }
 
@@ -54,6 +41,5 @@ module.exports = {
   GROUP_PRIORITY,
   getGroupPriority,
   categorizeSession,
-  extractAgentName,
   sortSessions,
 };

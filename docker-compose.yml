@@ -61,12 +61,11 @@ services:
     container_name: agentarena-dev
     depends_on:
       - tailscale-arena
-      - filebrowser
     network_mode: service:tailscale-arena
     volumes:
       # Host paths - your actual Windows folders
       - E:/Code:/code
-      - E:/Docker/AgentArena:/code/AgentArena
+      - E:/Docker/:/code/Docker/
       - E:/Vault:/vault
       # Named volumes - persist container config across rebuilds
       - arena_dev_home:/home/dev
@@ -78,29 +77,6 @@ services:
       - ./sandbox_overrides/empty_env:/code/AgentArena/.env.example:ro
     environment:
       OLLAMA_HOST: http://ollama:11434
-    restart: unless-stopped
-
-  # ============================================
-  # FILE BROWSER
-  # ============================================
-
-  filebrowser:
-    image: filebrowser/filebrowser:latest
-    container_name: arena-filebrowser
-    network_mode: service:tailscale-arena
-    user: "0:0"
-    volumes:
-      - E:/Code:/code
-      - E:/Vault:/vault
-      - ./filebrowser_data:/database
-      - ./filebrowser_data/branding:/branding:ro
-      - ./filebrowser_data/settings.json:/config/settings.json:ro
-      - ./filebrowser_data/init.sh:/init.sh:ro
-    entrypoint: /bin/sh
-    command:
-      - /init.sh
-    depends_on:
-      - tailscale-arena
     restart: unless-stopped
 
 volumes:

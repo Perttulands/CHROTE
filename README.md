@@ -62,8 +62,21 @@ Once running, access via Tailscale hostname:
 |---------|-----|-------------|
 | Dashboard | `http://arena:8080` | Main web UI |
 | Terminal | `http://arena:8080/terminal/` | Direct ttyd access |
-| Files | `http://arena:8080/files/` | Filebrowser |
+| Files | `http://arena:8080/api/files/` | File API |
 | SSH | `ssh dev@arena` | Password: `dev` |
+
+## Gastown
+
+Agent Arena is the infrastructure that powers **Gastown**, an orchestration framework for running 10-30+ AI coding agents in parallel via tmux sessions. Gastown implements the "MEOW Stack" (Molecular Expression Of Work) - a workflow system where:
+
+- **Beads** are atomic units of work
+- **Epics** collect beads with parallel children
+- **Molecules** chain complex workflows
+- **Wisps** handle ephemeral orchestration tasks
+
+The core philosophy is "Physics over Politeness" - sessions are ephemeral and expendable, throughput is the mission. Actions are designed to be **idempotent** (safe to repeat). The "Nuke All" button embodies this: destroy everything, start fresh.
+
+Session naming follows the pattern `gt-{rigname}-{worker}` (e.g., `gt-gastown-jack`) for Gastown rig workers, with `hq-*` sessions for headquarters/coordination.
 
 ## Architecture
 
@@ -87,10 +100,10 @@ The system runs as multiple Docker containers with Tailscale sidecars for secure
 │  │  ┌────────┬─────────┬────────┐  │  │   │  LLM API  │
 │  │  │   /    │/terminal│ /api/  │  │  │   └───────────┘
 │  │  │  React │  ttyd   │Node.js │  │  │
+│  │  │        │         │(files, │  │  │
+│  │  │        │         │ tmux,  │  │  │
+│  │  │        │         │ beads) │  │  │
 │  │  └────────┴─────────┴────────┘  │  │
-│  └─────────────────────────────────┘  │
-│  ┌─────────────────────────────────┐  │
-│  │  filebrowser (:8081 → /files/) │  │
 │  └─────────────────────────────────┘  │
 └───────────────────────────────────────┘
 ```
@@ -98,7 +111,6 @@ The system runs as multiple Docker containers with Tailscale sidecars for secure
 **Containers:**
 - `agent-arena` - Main dev environment (nginx, ttyd, API, SSH)
 - `ollama` - Local LLM inference server
-- `filebrowser` - Web-based file manager
 - `tailscale-arena` / `tailscale-ollama` - Network sidecars for secure access
 
 ## Ollama Integration
@@ -279,7 +291,6 @@ AgentArena/
 ├── sandbox_overrides/        # Empty files overlaid on secrets in sandbox
 ├── beads_viewer_integration/ # Integration analysis docs
 ├── tailscale_state/          # Persisted Tailscale identity (preserves hostname)
-├── filebrowser_data/         # Filebrowser config & database
 ├── build1.dockerfile         # Main container definition
 ├── ollama.dockerfile         # Ollama LLM container
 ├── docker-compose.yml        # Service orchestration
