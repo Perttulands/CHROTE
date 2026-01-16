@@ -1,0 +1,370 @@
+import { test, expect, Page } from '@playwright/test'
+
+// Mock filebrowser API responses
+const mockDirectoryResponse = {
+  isDir: true,
+  items: [
+    { name: 'code', size: 0, modified: '2024-01-15T10:00:00Z', isDir: true, type: '' },
+    { name: 'projects', size: 0, modified: '2024-01-14T09:00:00Z', isDir: true, type: '' },
+    { name: 'readme.txt', size: 1024, modified: '2024-01-13T08:00:00Z', isDir: false, type: 'text' },
+  ],
+}
+
+const mockSubdirectoryResponse = {
+  isDir: true,
+  items: [
+    { name: 'src', size: 0, modified: '2024-01-15T10:00:00Z', isDir: true, type: '' },
+    { name: 'package.json', size: 512, modified: '2024-01-14T09:00:00Z', isDir: false, type: 'application/json' },
+  ],
+}
+
+async function mockFilebrowserApi(page: Page, options?: { failConnection?: boolean; delay?: number }) {
+  // Mock the tmux sessions API (required for dashboard to load)
+  await page.route('**/api/tmux/sessions', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ sessions: [], grouped: {}, timestamp: new Date().toISOString() }),
+    })
+  })
+
+  // Mock filebrowser API
+  await page.route('**/files/api/resources/**', async route => {
+    if (options?.failConnection) {
+      await route.abort('connectionfailed')
+      return
+    }
+
+    if (options?.delay) {
+      await new Promise(resolve => setTimeout(resolve, options.delay))
+    }
+
+    const url = route.request().url()
+
+    // Root directory
+    if (url.endsWith('/resources/') || url.endsWith('/resources')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(mockDirectoryResponse),
+      })
+      return
+    }
+
+    // /code subdirectory
+    if (url.includes('/resources/code')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(mockSubdirectoryResponse),
+      })
+      return
+    }
+
+    // Default: return empty directory
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ isDir: true, items: [] }),
+    })
+  })
+}
+
+test.describe('Filebrowser Connection', () => {
+  test('should show loading state while fetching directory', async ({ page }) => {
+    // Add delay to observe loading state
+    await mockFilebrowserApi(page, { delay: 500 })
+
+    await page.goto('/')
+    await page.waitForSelector('.dashboard')
+
+    // Switch to Files tab
+    await page.click('.tab:has-text("Files")')
+
+    // Should show loading indicator
+    await expect(page.locator('.fb-loading')).toBeVisible()
+  })
+
+  test('should load and display directory contents', async ({ page }) => {
+    await mockFilebrowserApi(page)
+
+    await page.goto('/')
+    await page.waitForSelector('.dashboard')
+
+    // Switch to Files tab
+    await page.click('.tab:has-text("Files")')
+    await page.waitForSelector('.files-view')
+
+    // Wait for loading to complete
+    await expect(page.locator('.fb-loading')).not.toBeVisible({ timeout: 5000 })
+
+    // Should display files from mock
+    await expect(page.locator('.fb-row, .fb-grid-item')).toHaveCount(3)
+    await expect(page.locator('.fb-filename:has-text("code"), .fb-grid-name:has-text("code")')).toBeVisible()
+    await expect(page.locator('.fb-filename:has-text("projects"), .fb-grid-name:has-text("projects")')).toBeVisible()
+    await expect(page.locator('.fb-filename:has-text("readme.txt"), .fb-grid-name:has-text("readme.txt")')).toBeVisible()
+  })
+
+  test('should show error state when connection fails', async ({ page }) => {
+    await mockFilebrowserApi(page, { failConnection: true })
+
+    await page.goto('/')
+    await page.waitForSelector('.dashboard')
+
+    // Switch to Files tab
+    await page.click('.tab:has-text("Files")')
+    await page.waitForSelector('.files-view')
+
+    // Should show error state
+    await expect(page.locator('.fb-error')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('.fb-retry-btn')).toBeVisible()
+  })
+
+  test('should retry loading on retry button click', async ({ page }) => {
+    let requestCount = 0
+
+    // First request fails, second succeeds
+    await page.route('**/api/tmux/sessions', async route => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ sessions: [], grouped: {}, timestamp: new Date().toISOString() }),
+      })
+    })
+
+    await page.route('**/files/api/resources/**', async route => {
+      requestCount++
+      if (requestCount === 1) {
+        await route.abort('connectionfailed')
+      } else {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(mockDirectoryResponse),
+        })
+      }
+    })
+
+    await page.goto('/')
+    await page.waitForSelector('.dashboard')
+
+    // Switch to Files tab
+    await page.click('.tab:has-text("Files")')
+
+    // Should show error first
+    await expect(page.locator('.fb-error')).toBeVisible({ timeout: 5000 })
+
+    // Click retry
+    await page.click('.fb-retry-btn')
+
+    // Should now show content
+    await expect(page.locator('.fb-error')).not.toBeVisible({ timeout: 5000 })
+    await expect(page.locator('.fb-row, .fb-grid-item')).toHaveCount(3)
+  })
+})
+
+test.describe('Filebrowser Navigation', () => {
+  test.beforeEach(async ({ page }) => {
+    await mockFilebrowserApi(page)
+    await page.goto('/')
+    await page.waitForSelector('.dashboard')
+    await page.click('.tab:has-text("Files")')
+    await page.waitForSelector('.files-view')
+    await expect(page.locator('.fb-loading')).not.toBeVisible({ timeout: 5000 })
+  })
+
+  test('should navigate into folder on double-click', async ({ page }) => {
+    // Double-click on "code" folder
+    await page.dblclick('.fb-row:has-text("code"), .fb-grid-item:has-text("code")')
+
+    // Should show breadcrumb with "code"
+    await expect(page.locator('.fb-breadcrumb-item:has-text("code")')).toBeVisible()
+
+    // Should show contents of code directory
+    await expect(page.locator('.fb-filename:has-text("src"), .fb-grid-name:has-text("src")')).toBeVisible()
+    await expect(page.locator('.fb-filename:has-text("package.json"), .fb-grid-name:has-text("package.json")')).toBeVisible()
+  })
+
+  test('should navigate back using breadcrumbs', async ({ page }) => {
+    // Navigate into code folder
+    await page.dblclick('.fb-row:has-text("code"), .fb-grid-item:has-text("code")')
+    await expect(page.locator('.fb-breadcrumb-item:has-text("code")')).toBeVisible()
+
+    // Click root breadcrumb
+    await page.click('.fb-breadcrumb-root')
+
+    // Should be back at root
+    await expect(page.locator('.fb-filename:has-text("code"), .fb-grid-name:has-text("code")')).toBeVisible()
+    await expect(page.locator('.fb-row, .fb-grid-item')).toHaveCount(3)
+  })
+
+  test('should navigate up using up button', async ({ page }) => {
+    // Navigate into code folder
+    await page.dblclick('.fb-row:has-text("code"), .fb-grid-item:has-text("code")')
+    await expect(page.locator('.fb-breadcrumb-item:has-text("code")')).toBeVisible()
+
+    // Click up button
+    await page.click('.fb-nav-btn[title="Up"]')
+
+    // Should be back at root
+    await expect(page.locator('.fb-filename:has-text("code"), .fb-grid-name:has-text("code")')).toBeVisible()
+  })
+
+  test('should refresh directory on refresh button click', async ({ page }) => {
+    let requestCount = 0
+
+    // Re-route to count requests
+    await page.route('**/files/api/resources/', async route => {
+      requestCount++
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(mockDirectoryResponse),
+      })
+    })
+
+    // Initial load already happened, requestCount should be 1
+    await page.click('.fb-btn[title="Refresh"]')
+
+    // Wait for refresh to complete
+    await page.waitForTimeout(500)
+
+    // Should have made additional request
+    expect(requestCount).toBeGreaterThanOrEqual(2)
+  })
+})
+
+test.describe('Filebrowser UI Elements', () => {
+  test.beforeEach(async ({ page }) => {
+    await mockFilebrowserApi(page)
+    await page.goto('/')
+    await page.waitForSelector('.dashboard')
+    await page.click('.tab:has-text("Files")')
+    await page.waitForSelector('.files-view')
+    await expect(page.locator('.fb-loading')).not.toBeVisible({ timeout: 5000 })
+  })
+
+  test('should switch between list and grid view', async ({ page }) => {
+    // Default is list view
+    await expect(page.locator('.fb-list')).toBeVisible()
+
+    // Switch to grid view
+    await page.click('.fb-view-btn[title="Grid view"]')
+    await expect(page.locator('.fb-grid')).toBeVisible()
+    await expect(page.locator('.fb-list')).not.toBeVisible()
+
+    // Switch back to list view
+    await page.click('.fb-view-btn[title="List view"]')
+    await expect(page.locator('.fb-list')).toBeVisible()
+  })
+
+  test('should filter files by search', async ({ page }) => {
+    // Type in filter
+    await page.fill('.fb-search', 'code')
+
+    // Should only show matching items
+    await expect(page.locator('.fb-row, .fb-grid-item')).toHaveCount(1)
+    await expect(page.locator('.fb-filename:has-text("code"), .fb-grid-name:has-text("code")')).toBeVisible()
+  })
+
+  test('should show item count in status bar', async ({ page }) => {
+    await expect(page.locator('.fb-statusbar')).toContainText('3 items')
+  })
+
+  test('should select item on click', async ({ page }) => {
+    await page.click('.fb-row:has-text("readme.txt")')
+
+    // Item should be selected
+    await expect(page.locator('.fb-row.selected')).toHaveCount(1)
+
+    // Status bar should show selection
+    await expect(page.locator('.fb-statusbar')).toContainText('1 selected')
+  })
+
+  test('should show context menu on right-click', async ({ page }) => {
+    // Right-click on a file
+    await page.click('.fb-row:has-text("readme.txt")', { button: 'right' })
+
+    // Context menu should appear
+    await expect(page.locator('.fb-context-menu')).toBeVisible()
+    await expect(page.locator('.fb-context-item:has-text("Download")')).toBeVisible()
+    await expect(page.locator('.fb-context-item:has-text("Rename")')).toBeVisible()
+    await expect(page.locator('.fb-context-item:has-text("Delete")')).toBeVisible()
+  })
+
+  test('should close context menu on click outside', async ({ page }) => {
+    // Open context menu
+    await page.click('.fb-row:has-text("readme.txt")', { button: 'right' })
+    await expect(page.locator('.fb-context-menu')).toBeVisible()
+
+    // Click outside
+    await page.click('.fb-list-container')
+
+    // Context menu should close
+    await expect(page.locator('.fb-context-menu')).not.toBeVisible()
+  })
+
+  test('should sort by column headers', async ({ page }) => {
+    // Click on Size header to sort
+    await page.click('.fb-column-header:has-text("Size")')
+
+    // Should show sort indicator
+    await expect(page.locator('.fb-column-header:has-text("Size")')).toHaveClass(/active/)
+  })
+})
+
+test.describe('Filebrowser Inbox Panel', () => {
+  test.beforeEach(async ({ page }) => {
+    await mockFilebrowserApi(page)
+    await page.goto('/')
+    await page.waitForSelector('.dashboard')
+    await page.click('.tab:has-text("Files")')
+    await page.waitForSelector('.files-view')
+  })
+
+  test('should display inbox panel', async ({ page }) => {
+    await expect(page.locator('.inbox-panel')).toBeVisible()
+    await expect(page.locator('.inbox-title')).toContainText('Send a package to town')
+  })
+
+  test('should have file input for upload', async ({ page }) => {
+    // The dropzone should be clickable
+    await expect(page.locator('.inbox-dropzone')).toBeVisible()
+  })
+})
+
+test.describe('Filebrowser Tab Navigation', () => {
+  test.beforeEach(async ({ page }) => {
+    await mockFilebrowserApi(page)
+    await page.goto('/')
+    await page.waitForSelector('.dashboard')
+  })
+
+  test('should switch to Files tab and back to Terminal', async ({ page }) => {
+    // Initially on Terminal tab
+    await expect(page.locator('.session-panel')).toBeVisible()
+
+    // Switch to Files
+    await page.click('.tab:has-text("Files")')
+    await expect(page.locator('.files-view')).toBeVisible()
+    await expect(page.locator('.session-panel')).not.toBeVisible()
+
+    // Switch back to Terminal
+    await page.click('.tab:has-text("Terminal")')
+    await expect(page.locator('.session-panel')).toBeVisible()
+    await expect(page.locator('.files-view')).not.toBeVisible()
+  })
+
+  test('should show Info tab content', async ({ page }) => {
+    // Go to Files tab
+    await page.click('.tab:has-text("Files")')
+    await page.waitForSelector('.files-view')
+
+    // Switch to Info sub-tab
+    await page.click('.fb-tab:has-text("Info")')
+
+    // Should show info panel
+    await expect(page.locator('.fb-info-panel')).toBeVisible()
+    await expect(page.locator('.fb-info-card')).toHaveCount(3)
+  })
+})

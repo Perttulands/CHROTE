@@ -90,13 +90,15 @@ services:
     network_mode: service:tailscale-arena
     user: "0:0"
     volumes:
-      - E:/Code:/srv/code
-      - E:/Vault:/srv/vault
+      - E:/Code:/code
+      - E:/Vault:/vault
       - ./filebrowser_data:/database
       - ./filebrowser_data/branding:/branding:ro
       - ./filebrowser_data/settings.json:/config/settings.json:ro
+      - ./filebrowser_data/init.sh:/init.sh:ro
+    entrypoint: /bin/sh
     command:
-      - --config=/config/settings.json
+      - /init.sh
     depends_on:
       - tailscale-arena
     restart: unless-stopped

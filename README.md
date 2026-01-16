@@ -149,7 +149,7 @@ Layout state persists in localStorage.
 The native file browser provides full access to mounted volumes with theme-adaptive styling:
 
 **Features:**
-- Browse `/srv/code` (E:/Code) and `/srv/vault` (E:/Vault) directories
+- Browse `/code` (E:/Code) and `/vault` (E:/Vault) directories
 - List view with sortable columns (Name, Size, Modified)
 - Grid view with icon thumbnails
 - Upload files via drag-and-drop or click-to-select
@@ -182,9 +182,36 @@ The Beads tab integrates [beads_viewer](https://github.com/Dicklesworthstone/bea
 - **Triage**: AI-generated prioritization with quick wins and blockers identified
 - **Insights**: PageRank scores, critical path analysis, cycle detection
 
+**Pointing to Your Beads Project:**
+
+The beads viewer can point to **any directory** accessible via the mounted volumes. To set up:
+
+1. **Using the Path Selector**: Click the folder icon in the Beads tab header and either:
+   - Enter a path directly (e.g., `/code/my-project`)
+   - Use the file browser to navigate to your project folder
+
+2. **Required Structure**: Your project needs a `.beads/` directory containing `issues.jsonl`
+
+3. **Mounted Volumes**: The following paths are available:
+   - `/code` → `E:/Code` (Read/Write)
+   - `/vault` → `E:/Vault` (Read-Only)
+
+**Installing bv (beads_viewer CLI):**
+
+For full functionality including AI-powered triage, install the `bv` CLI inside the container:
+
+```bash
+# Linux/macOS
+curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh" | bash
+
+# From source
+git clone https://github.com/Dicklesworthstone/beads_viewer.git
+cd beads_viewer && go install ./cmd/bv
+```
+
 **Data Source:**
 - Reads from `.beads/issues.jsonl` in your project directory
-- Uses `bv` CLI robot protocol for AI-powered analysis
+- Uses `bv` CLI robot protocol for AI-powered analysis (falls back to basic analysis if `bv` not installed)
 - Supports multiple projects via project selector
 
 **API Endpoints:**
