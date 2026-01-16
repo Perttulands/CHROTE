@@ -5,13 +5,12 @@ import TabBar from './components/TabBar'
 import SessionPanel from './components/SessionPanel'
 import TerminalArea from './components/TerminalArea'
 import FilesView from './components/FilesView'
-import StatusView from './components/StatusView'
 import SettingsView from './components/SettingsView'
 import FloatingModal from './components/FloatingModal'
 import HelpView from './components/HelpView'
 import { BeadsTab } from './beads_module'
 
-type Tab = 'terminal' | 'files' | 'status' | 'settings' | 'beads' | 'help'
+type Tab = 'terminal' | 'files' | 'settings' | 'beads' | 'help'
 
 // Dragged item overlay component
 function DraggedSessionOverlay({ name }: { name: string }) {
@@ -127,7 +126,6 @@ function DashboardContent() {
             </>
           )}
           {activeTab === 'files' && <FilesView />}
-          {activeTab === 'status' && <StatusView />}
           {activeTab === 'settings' && <SettingsView />}
           {activeTab === 'beads' && <BeadsTab />}
           {activeTab === 'help' && <HelpView />}

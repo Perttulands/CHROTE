@@ -64,7 +64,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   fontSize: 14,
   theme: 'matrix',
   autoRefreshInterval: 5000,
-  defaultSessionPrefix: 'tmux',
+  defaultSessionPrefix: 'shell',
   musicVolume: 0.5,
   musicEnabled: false,
   tmuxAppearance: DEFAULT_TMUX_APPEARANCE,
@@ -154,10 +154,10 @@ export type DashboardContextType = DashboardState & DashboardActions
 
 // Window color themes
 export const WINDOW_COLORS = [
-  { name: 'blue', bg: 'rgba(10, 10, 26, 0.35)', border: '#4a9eff', accent: '#4a9eff' },
-  { name: 'purple', bg: 'rgba(15, 10, 26, 0.35)', border: '#9966ff', accent: '#9966ff' },
-  { name: 'green', bg: 'rgba(10, 26, 10, 0.35)', border: '#00ff41', accent: '#00ff41' },
-  { name: 'orange', bg: 'rgba(26, 20, 10, 0.35)', border: '#ff9933', accent: '#ff9933' },
+  { name: 'blue', bg: 'rgba(10, 10, 26, 0.85)', border: '#4a9eff', accent: '#4a9eff' },
+  { name: 'purple', bg: 'rgba(15, 10, 26, 0.85)', border: '#9966ff', accent: '#9966ff' },
+  { name: 'green', bg: 'rgba(10, 26, 10, 0.85)', border: '#00ff41', accent: '#00ff41' },
+  { name: 'orange', bg: 'rgba(26, 20, 10, 0.85)', border: '#ff9933', accent: '#ff9933' },
 ] as const
 
 // Group display names and priorities

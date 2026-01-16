@@ -18,15 +18,17 @@ src/
 ├── context/
 │   └── SessionContext   # Global state (sessions, windows, drag state)
 ├── components/
-│   ├── TabBar           # Terminal | Files | Status tabs
+│   ├── TabBar           # Terminal | Files | Settings tabs
 │   ├── SessionPanel     # Left sidebar with session groups
 │   ├── TerminalArea     # 1-4 terminal windows grid
 │   ├── TerminalWindow   # Single terminal iframe + session tags
 │   ├── FloatingModal    # Pop-out terminal (xterm.js + WebSocket)
-│   ├── FilesView        # Filebrowser iframe
-│   └── StatusView       # Live service health from API
-├── hooks/
-│   └── useTmuxSessions  # API polling hook
+│   ├── FilesView/       # Native file browser with error handling
+│   │   ├── index.tsx    # Main component
+│   │   ├── types.ts     # Types, error classes, path mapping
+│   │   ├── fileService.ts # API layer (no silent fallbacks)
+│   │   └── components/  # ErrorToast, etc.
+│   └── SettingsView     # Theme and preferences
 └── types.ts             # TypeScript interfaces
 ```
 

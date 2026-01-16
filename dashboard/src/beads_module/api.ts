@@ -166,9 +166,23 @@ export async function checkHealth(): Promise<BeadsApiResponse<{ status: string }
 
 /**
  * Discover available beads projects
+ * Searches common mount points (/code, /workspace) by default
+ *
+ * @param root - Optional root path to search from
+ * @param depth - Maximum directory depth to search (default: 3)
  */
-export async function discoverProjects(): Promise<BeadsApiResponse<{ projects: string[] }>> {
-  return fetchWithTimeout<{ projects: string[] }>(`${API_BASE}/projects`);
+export async function discoverProjects(
+  root?: string,
+  depth: number = 3
+): Promise<BeadsApiResponse<{ projects: string[]; searchRoots?: string[] }>> {
+  const params = new URLSearchParams();
+  if (root) params.set('root', root);
+  params.set('depth', depth.toString());
+
+  const query = params.toString();
+  return fetchWithTimeout<{ projects: string[]; searchRoots?: string[] }>(
+    `${API_BASE}/projects${query ? `?${query}` : ''}`
+  );
 }
 
 // ============================================================================

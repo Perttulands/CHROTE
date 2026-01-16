@@ -38,8 +38,31 @@ import * as api from './api';
 const BeadsContext = createContext<BeadsContextType | null>(null);
 
 // ============================================================================
+// STORAGE KEYS
+// ============================================================================
+
+const STORAGE_KEY_PROJECT_PATH = 'beads_project_path';
+
+// ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
+
+function getStoredProjectPath(fallback: string): string {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY_PROJECT_PATH);
+    return stored || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function storeProjectPath(path: string): void {
+  try {
+    localStorage.setItem(STORAGE_KEY_PROJECT_PATH, path);
+  } catch {
+    // Ignore storage errors
+  }
+}
 
 function buildGraphData(issues: BeadsIssue[]): BeadsGraphData {
   const nodes: BeadsGraphNode[] = issues.map((issue) => ({
@@ -110,17 +133,21 @@ interface BeadsProviderProps {
   initialProjectPath?: string;
 }
 
-export function BeadsProvider({ children, initialProjectPath = '/workspace' }: BeadsProviderProps) {
+// Default to /code which maps to E:/Code on the host
+export function BeadsProvider({ children, initialProjectPath = '/code' }: BeadsProviderProps) {
+  // Get stored path or fall back to initial
+  const storedPath = getStoredProjectPath(initialProjectPath);
+
   // Data state
   const [issues, setIssues] = useState<BeadsIssue[]>([]);
   const [triage, setTriage] = useState<BeadsTriage | null>(null);
   const [insights, setInsights] = useState<BeadsInsights | null>(null);
   const [plan, setPlan] = useState<BeadsPlan | null>(null);
-  const [availableProjects, setAvailableProjects] = useState<string[]>([initialProjectPath]);
+  const [availableProjects, setAvailableProjects] = useState<string[]>([storedPath]);
 
   // UI state
   const [activeSubTab, setActiveSubTab] = useState<BeadsSubTab>('graph');
-  const [projectPath, setProjectPathState] = useState(initialProjectPath);
+  const [projectPath, setProjectPathState] = useState(storedPath);
   const [filters, setFiltersState] = useState<BeadsFilters>(DEFAULT_BEADS_FILTERS);
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -267,6 +294,8 @@ export function BeadsProvider({ children, initialProjectPath = '/workspace' }: B
 
   const setProjectPath = useCallback((path: string) => {
     setProjectPathState(path);
+    // Persist to localStorage
+    storeProjectPath(path);
     // Clear data when project changes
     setIssues([]);
     setTriage(null);

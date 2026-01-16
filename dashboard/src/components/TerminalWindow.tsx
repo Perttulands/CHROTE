@@ -275,7 +275,7 @@ function TerminalWindow({ window: windowConfig, isDragging = false, isFocused = 
 
   // Helper to generate terminal URL for a session
   const getTerminalUrl = (sessionName: string) =>
-    `/terminal/?arg=${encodeURIComponent(sessionName)}&theme=${encodeURIComponent('{"background":"rgba(0,0,0,0)"}')}`
+    `/terminal/?arg=${encodeURIComponent(sessionName)}&theme=${encodeURIComponent('{"background":"transparent"}')}`
 
   return (
     <div

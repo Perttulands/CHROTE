@@ -9,6 +9,10 @@ const app = express();
 // Ensure consistent tmux socket location
 const TMUX_ENV = { env: { ...process.env, TMUX_TMPDIR: '/tmp' } };
 
+// Simple response cache to avoid spawning tmux process on every poll
+let sessionsCache = { data: null, timestamp: 0 };
+const CACHE_TTL = 1000; // 1 second cache
+
 // CORS for development
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
@@ -21,6 +25,12 @@ app.use((req, res, next) => {
 app.use(express.json());
 
 app.get('/api/tmux/sessions', (req, res) => {
+  // Return cached response if still fresh
+  const now = Date.now();
+  if (sessionsCache.data && (now - sessionsCache.timestamp) < CACHE_TTL) {
+    return res.json(sessionsCache.data);
+  }
+
   try {
     // API runs as dev user, so tmux commands access dev's sessions directly
     const output = execSync(
@@ -61,23 +71,31 @@ app.get('/api/tmux/sessions', (req, res) => {
       grouped[session.group].push(session);
     });
 
-    res.json({
+    const response = {
       sessions,
       grouped,
       timestamp: new Date().toISOString()
-    });
+    };
+
+    // Cache the successful response
+    sessionsCache = { data: response, timestamp: now };
+    res.json(response);
   } catch (e) {
     // tmux server might not be running - various error messages possible
     const noServerErrors = ['no server running', 'No such file or directory', 'error connecting'];
     const isNoServer = noServerErrors.some(msg => e.message.includes(msg));
 
-    res.json({
+    const response = {
       sessions: [],
       grouped: {},
       // Don't expose error for expected "no sessions" case
       ...(isNoServer ? {} : { error: e.message }),
       timestamp: new Date().toISOString()
-    });
+    };
+
+    // Cache empty response too (prevents hammering tmux on errors)
+    sessionsCache = { data: response, timestamp: now };
+    res.json(response);
   }
 });
 
@@ -109,7 +127,7 @@ app.post('/api/tmux/sessions', (req, res) => {
     }
 
     // Create the session (detached) - API runs as dev, same user as ttyd
-    execSync(`tmux new-session -d -s "${name}"`, { encoding: 'utf-8', timeout: 5000, ...TMUX_ENV });
+    execSync(`tmux new-session -d -s "${name}" -c /code`, { encoding: 'utf-8', timeout: 5000, ...TMUX_ENV });
 
     res.json({
       success: true,

@@ -134,4 +134,4 @@ Jest tests in `api/utils.test.js` cover: session categorization, agent name extr
 ## Access URLs (via Tailscale)
 
 - Dashboard: `http://arena:8080`
-- SSH: `ssh dev@arena` (password: dev)
+- SSH: `ssh dev@arena`

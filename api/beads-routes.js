@@ -395,20 +395,38 @@ router.get('/plan', asyncHandler(async (req, res) => {
 /**
  * GET /api/beads/projects
  * Discover available beads projects
+ *
+ * Query params:
+ *   root - Root path to search from (default: searches common mount points)
+ *   depth - Maximum directory depth to search (default: 3)
+ *
+ * By default, searches these mount points:
+ *   - /code (E:/Code)
+ *   - /workspace
  */
 router.get('/projects', asyncHandler(async (req, res) => {
-  const searchPath = req.query.root || '/workspace';
   const maxDepth = parseInt(req.query.depth) || 3;
 
+  // Default search roots - common mount points in Arena
+  const defaultRoots = ['/code', '/workspace'];
+  const searchRoots = req.query.root ? [req.query.root] : defaultRoots;
+
   const projects = [];
+  const searched = new Set();
 
   function findBeadsProjects(dir, depth) {
     if (depth > maxDepth) return;
+    if (searched.has(dir)) return;
+    searched.add(dir);
 
     try {
       const beadsPath = path.join(dir, '.beads');
       if (fs.existsSync(beadsPath) && fs.statSync(beadsPath).isDirectory()) {
-        projects.push(dir);
+        // Check for issues.jsonl to confirm it's a valid beads project
+        const issuesPath = path.join(beadsPath, 'issues.jsonl');
+        if (fs.existsSync(issuesPath)) {
+          projects.push(dir);
+        }
       }
 
       const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -422,9 +440,17 @@ router.get('/projects', asyncHandler(async (req, res) => {
     }
   }
 
-  findBeadsProjects(searchPath, 0);
+  // Search all root paths
+  for (const root of searchRoots) {
+    if (fs.existsSync(root)) {
+      findBeadsProjects(root, 0);
+    }
+  }
 
-  res.json(createResponse(true, { projects }));
+  res.json(createResponse(true, {
+    projects,
+    searchRoots: searchRoots.filter(r => fs.existsSync(r)),
+  }));
 }));
 
 module.exports = router;

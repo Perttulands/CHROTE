@@ -1,6 +1,20 @@
 # Gas Town: The Complete Guide
 ## A Master Song Covering All Aspects of Gastown
 
+---
+
+## Location Flexibility
+
+**Gastown can be set up anywhere in your file system** that is accessible by Arena. This is by design - you're not limited to any specific directory structure. As long as:
+
+1. The path is accessible via the mounted volumes in Arena
+2. Your project contains the appropriate `.beads/` directory structure
+3. The beads viewer can read from that location
+
+You can have multiple Gastown instances, each managing different projects or workflows. The Arena dashboard's Beads tab can point to any of these locations.
+
+---
+
 ### Lyrics
 
 ```

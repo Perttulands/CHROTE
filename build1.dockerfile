@@ -3,7 +3,7 @@ FROM ubuntu:24.04
 # 1. Core Tools & SSH & Healthcheck Utils + Locales for UTF-8/emoji support
 RUN apt-get update && apt-get install -y \
     curl git tmux golang-go nodejs npm python3 python3-pip \
-    sudo build-essential openssh-server netcat-openbsd ttyd nginx \
+    sudo openssh-server ttyd nginx \
     locales \
     && rm -rf /var/lib/apt/lists/* \
     && locale-gen en_US.UTF-8

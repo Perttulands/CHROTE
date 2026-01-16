@@ -352,12 +352,6 @@ test.describe('Arena Dashboard', () => {
       await expect(page.locator('.session-panel')).not.toBeVisible()
     })
 
-    test('should switch to Status tab', async ({ page }) => {
-      await page.click('.tab:has-text("Status")')
-      await expect(page.locator('.status-view')).toBeVisible()
-      await expect(page.locator('.session-panel')).not.toBeVisible()
-    })
-
     test('should return to Terminal tab', async ({ page }) => {
       await page.click('.tab:has-text("Files")')
       await page.click('.tab:has-text("Terminal")')

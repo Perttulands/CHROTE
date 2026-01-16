@@ -762,13 +762,6 @@ body::before {
   /* Hidden iframes need proper positioning */
   top: 0;
   left: 0;
-  /* Hide scrollbars - the xterm scrollbar doesn't work properly in iframes */
-  scrollbar-width: none; /* Firefox */
-  -ms-overflow-style: none; /* IE/Edge */
-}
-
-.terminal-window-body iframe::-webkit-scrollbar {
-  display: none; /* Chrome/Safari/Opera */
 }
 
 /* ==================== EMPTY WINDOW STATE ==================== */
@@ -826,9 +819,10 @@ body::before {
 }
 
 .empty-window-hint {
-  font-size: 12px;
+  font-size: 16px;
   color: var(--text-dim);
   font-style: italic;
+  margin-top: 8px;
 }
 
 /* ==================== FLOATING MODAL ==================== */
@@ -959,65 +953,6 @@ body::before {
 
 /* ==================== FILES VIEW (LEGACY - REPLACED BY NATIVE FILE BROWSER) ==================== */
 /* Note: Old .files-* classes removed. See .fb-* classes in NATIVE FILE BROWSER section below. */
-
-/* Status view */
-.status-view {
-  flex: 1;
-  padding: 20px;
-  overflow: auto;
-}
-
-.status-card {
-  background-color: var(--surface-primary);
-  border: 1px solid var(--divider);
-  padding: 16px;
-  margin-bottom: 16px;
-}
-
-.status-card h3 {
-  color: var(--text-primary);
-  margin-bottom: 12px;
-  font-size: 14px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-}
-
-.status-item {
-  display: flex;
-  justify-content: space-between;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--divider);
-  font-size: 13px;
-}
-
-.status-item:last-child {
-  border-bottom: none;
-}
-
-.status-item .label {
-  color: var(--text-secondary);
-}
-
-.status-item .value {
-  color: var(--text-primary);
-}
-
-/* Status indicator colors - theme-aware */
-.status-online {
-  color: var(--accent) !important;
-}
-
-.status-offline {
-  color: var(--color-error) !important;
-}
-
-.status-checking {
-  color: var(--text-secondary) !important;
-}
-
-.status-session-active {
-  color: var(--text-secondary) !important;
-}
 
 /* Scrollbar */
 ::-webkit-scrollbar {
@@ -2570,6 +2505,95 @@ body::before {
   padding: 6px 12px;
 }
 
+/* Error Toast */
+.fb-error-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 1001;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background-color: var(--color-error);
+  color: var(--background);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  animation: fb-toast-slide-in 0.2s ease;
+}
+
+@keyframes fb-toast-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fb-error-toast-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  background-color: rgba(255, 255, 255, 0.2);
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.fb-error-toast-message {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.fb-error-toast-dismiss {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 8px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-size: 16px;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.15s ease;
+}
+
+.fb-error-toast-dismiss:hover {
+  opacity: 1;
+}
+
+/* Dialog Error */
+.fb-dialog-error {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background-color: rgba(var(--color-error-rgb, 220, 38, 38), 0.1);
+  border: 1px solid var(--color-error);
+  border-radius: 4px;
+  color: var(--color-error);
+  font-size: 12px;
+}
+
+/* Row/Grid disabled state */
+.fb-row.disabled,
+.fb-grid-item.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* Status bar operation indicator */
+.fb-statusbar-operation {
+  color: var(--accent);
+  font-style: italic;
+}
+
 /* Info Panel */
 .fb-info-panel {
   flex: 1;
@@ -3706,4 +3730,35 @@ body::before {
   border-radius: 3px;
   color: var(--accent);
   font-size: 12px;
+}
+
+/* Help Credits */
+.help-credits {
+  margin-top: 24px;
+  padding: 16px;
+  background: var(--surface-secondary);
+  border: 1px solid var(--divider);
+  border-radius: 8px;
+}
+
+.help-credits h3 {
+  font-size: 14px;
+  color: var(--text-primary);
+  margin: 0 0 8px 0;
+}
+
+.help-credits p {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.help-credits a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.help-credits a:hover {
+  text-decoration: underline;
 }

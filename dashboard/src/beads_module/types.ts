@@ -313,7 +313,7 @@ export const DEFAULT_BEADS_FILTERS: BeadsFilters = {
 
 export const DEFAULT_BEADS_VIEW_STATE: BeadsViewState = {
   activeSubTab: 'graph',
-  projectPath: '/workspace',
+  projectPath: '/code',
   filters: DEFAULT_BEADS_FILTERS,
   selectedIssueId: null,
 };

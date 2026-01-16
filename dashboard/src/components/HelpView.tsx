@@ -636,6 +636,17 @@ function TipsSection() {
         <h3>Need More Help?</h3>
         <p>Check the <strong>Status</strong> tab to verify system health, or visit the <strong>Settings</strong> tab to customize your experience.</p>
       </div>
+
+      <div className="help-credits">
+        <h3>Credits</h3>
+        <p>
+          The Beads task management system was created by{' '}
+          <a href="https://steve-yegge.blogspot.com/" target="_blank" rel="noopener noreferrer">
+            Steve Yegge
+          </a>
+          .
+        </p>
+      </div>
     </div>
   )
 }
