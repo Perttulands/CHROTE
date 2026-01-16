@@ -21,7 +21,6 @@ Without ACLs, your containers are full Tailnet members that can reach **all your
 ### The Solution
 
 Isolate containers using **tagged auth keys** and **ACLs** so they can only reach:
-- Each other (arena <-> ollama)
 - The internet (npm, pip, git, API calls)
 - **NOT** your personal Tailnet devices
 
@@ -54,9 +53,6 @@ If you have existing ACLs, merge these rules. If starting fresh, use this:
     // Your personal devices can reach everything (including containers)
     {"src": ["autogroup:member"], "dst": ["*"], "ip": ["*"]},
 
-    // Containers can reach each other (arena <-> ollama)
-    {"src": ["tag:container"], "dst": ["tag:container"], "ip": ["*"]},
-
     // Containers can reach the internet (npm, pip, git, APIs)
     {"src": ["tag:container"], "dst": ["autogroup:internet"], "ip": ["*"]}
 
@@ -73,10 +69,9 @@ cd E:\Docker\AgentArena
 # Edit .env - replace auth key with the new tagged one
 # TS_AUTHKEY=tskey-auth-XXXXX-YYYYYYYY
 
-# Tear down and clear old Tailscale identities
+# Tear down and clear old Tailscale identity
 docker-compose down
 Remove-Item -Recurse -Force .\tailscale_state\arena\*
-Remove-Item -Recurse -Force .\tailscale_state\ollama\*
 
 # Bring containers back up
 docker-compose up -d
@@ -88,16 +83,12 @@ Check https://login.tailscale.com/admin/machines
 
 You should see:
 - `arena` with tag `tag:container`
-- `ollama` with tag `tag:container`
 
 ### Step 5: Verify Isolation
 
 ```bash
 # SSH into arena
 ssh dev@arena
-
-# Should SUCCEED - container-to-container communication:
-curl http://ollama:11434/api/tags
 
 # Should SUCCEED - internet access:
 curl -I https://google.com
@@ -113,9 +104,8 @@ ping <ip-of-your-nas-or-other-device>
 
 | Source | Can Reach | Cannot Reach |
 |--------|-----------|--------------|
-| Your laptop/phone | arena, ollama, all your devices | - |
-| arena (even if compromised) | ollama, internet | NAS, Landmass host, other devices |
-| ollama | arena, internet | NAS, Landmass host, other devices |
+| Your laptop/phone | arena, all your devices | - |
+| arena (even if compromised) | internet | NAS, Landmass host, other devices |
 
 ---
 
@@ -144,8 +134,7 @@ From any device on your Tailnet:
 | `http://arena:3000` | Vite, React, Next.js dev servers |
 | `http://arena:5000` | Flask, Python apps |
 | `http://arena:8000` | FastAPI, Express |
-| `http://arena:8080` | General web apps |
-| `http://ollama:11434` | Ollama LLM API |
+| `http://arena:8080` | Dashboard / general web apps |
 
 Dev servers must bind to `0.0.0.0` to be accessible:
 
@@ -219,8 +208,7 @@ agent-arena:
 - [ ] ACLs configured in Tailscale admin console
 - [ ] Old `tailscale_state/` contents cleared
 - [ ] Containers recreated with `docker-compose up -d`
-- [ ] Both machines show `tag:container` in Tailscale admin
-- [ ] From arena: `curl http://ollama:11434/api/tags` succeeds
+- [ ] Machine shows `tag:container` in Tailscale admin
 - [ ] From arena: `curl https://google.com` succeeds
 - [ ] From arena: ping to other Tailnet device **fails**
 - [ ] From arena: `cat /code/AgentArena/.env` shows placeholder, not real secrets

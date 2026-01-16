@@ -17,12 +17,11 @@ function SessionPanel() {
     const entries = Object.entries(groupedSessions)
     
     // Filter
-    const filtered = searchTerm 
+    const filtered = searchTerm
       ? entries.map(([key, sessions]) => ([
-          key, 
-          sessions.filter(s => 
-            s.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-            s.agentName.toLowerCase().includes(searchTerm.toLowerCase())
+          key,
+          sessions.filter(s =>
+            s.name.toLowerCase().includes(searchTerm.toLowerCase())
           )
         ] as [string, typeof sessions])).filter(([_, sessions]) => sessions.length > 0)
       : entries

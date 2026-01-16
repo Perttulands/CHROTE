@@ -3,31 +3,31 @@ import { Page } from '@playwright/test'
 // Mock session data for testing
 export const mockSessions = {
   sessions: [
-    { name: 'hq-mayor', agentName: 'mayor', windows: 1, attached: false, group: 'hq' },
-    { name: 'hq-deacon', agentName: 'deacon', windows: 1, attached: true, group: 'hq' },
-    { name: 'main', agentName: 'main', windows: 2, attached: false, group: 'main' },
-    { name: 'gt-gastown-jack', agentName: 'jack', windows: 1, attached: false, group: 'gt-gastown' },
-    { name: 'gt-gastown-joe', agentName: 'joe', windows: 1, attached: false, group: 'gt-gastown' },
-    { name: 'gt-gastown-max', agentName: 'max', windows: 1, attached: false, group: 'gt-gastown' },
-    { name: 'gt-beads-lizzy', agentName: 'lizzy', windows: 1, attached: false, group: 'gt-beads' },
-    { name: 'gt-beads-darcy', agentName: 'darcy', windows: 1, attached: false, group: 'gt-beads' },
+    { name: 'hq-mayor', windows: 1, attached: false, group: 'hq' },
+    { name: 'hq-deacon', windows: 1, attached: true, group: 'hq' },
+    { name: 'main', windows: 2, attached: false, group: 'main' },
+    { name: 'gt-gastown-jack', windows: 1, attached: false, group: 'gt-gastown' },
+    { name: 'gt-gastown-joe', windows: 1, attached: false, group: 'gt-gastown' },
+    { name: 'gt-gastown-max', windows: 1, attached: false, group: 'gt-gastown' },
+    { name: 'gt-beads-lizzy', windows: 1, attached: false, group: 'gt-beads' },
+    { name: 'gt-beads-darcy', windows: 1, attached: false, group: 'gt-beads' },
   ],
   grouped: {
     'hq': [
-      { name: 'hq-mayor', agentName: 'mayor', windows: 1, attached: false, group: 'hq' },
-      { name: 'hq-deacon', agentName: 'deacon', windows: 1, attached: true, group: 'hq' },
+      { name: 'hq-mayor', windows: 1, attached: false, group: 'hq' },
+      { name: 'hq-deacon', windows: 1, attached: true, group: 'hq' },
     ],
     'main': [
-      { name: 'main', agentName: 'main', windows: 2, attached: false, group: 'main' },
+      { name: 'main', windows: 2, attached: false, group: 'main' },
     ],
     'gt-gastown': [
-      { name: 'gt-gastown-jack', agentName: 'jack', windows: 1, attached: false, group: 'gt-gastown' },
-      { name: 'gt-gastown-joe', agentName: 'joe', windows: 1, attached: false, group: 'gt-gastown' },
-      { name: 'gt-gastown-max', agentName: 'max', windows: 1, attached: false, group: 'gt-gastown' },
+      { name: 'gt-gastown-jack', windows: 1, attached: false, group: 'gt-gastown' },
+      { name: 'gt-gastown-joe', windows: 1, attached: false, group: 'gt-gastown' },
+      { name: 'gt-gastown-max', windows: 1, attached: false, group: 'gt-gastown' },
     ],
     'gt-beads': [
-      { name: 'gt-beads-lizzy', agentName: 'lizzy', windows: 1, attached: false, group: 'gt-beads' },
-      { name: 'gt-beads-darcy', agentName: 'darcy', windows: 1, attached: false, group: 'gt-beads' },
+      { name: 'gt-beads-lizzy', windows: 1, attached: false, group: 'gt-beads' },
+      { name: 'gt-beads-darcy', windows: 1, attached: false, group: 'gt-beads' },
     ],
   },
   timestamp: new Date().toISOString(),

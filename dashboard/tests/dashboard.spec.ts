@@ -412,14 +412,14 @@ test.describe('Arena Dashboard', () => {
       await expect(page.locator('.session-item:visible')).toHaveCount(8)
     })
 
-    test('should filter by agent name as well', async ({ page }) => {
+    test('should filter by session name', async ({ page }) => {
       await page.waitForSelector('.session-item')
 
-      // Filter by agent name (mayor is agentName for hq-mayor)
-      await page.fill('.session-search-input', 'mayor')
+      // Filter by session name
+      await page.fill('.session-search-input', 'hq-mayor')
 
       await expect(page.locator('.session-item:visible')).toHaveCount(1)
-      await expect(page.locator('.session-item:visible')).toContainText('mayor')
+      await expect(page.locator('.session-item:visible')).toContainText('hq-mayor')
     })
   })
 

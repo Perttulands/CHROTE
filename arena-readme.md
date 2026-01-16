@@ -37,7 +37,6 @@ Settings are automatically persisted to browser localStorage.
 | Dashboard | `http://arena:8080/` (from any Tailnet device) |
 | Your code | `/code` (E:/Code on host) |
 | Read-only vault | `/vault` (E:/Vault on host) |
-| Ollama API | `http://ollama:11434` |
 | Run Claude | `claude` or `claude --dangerously-skip-permissions` |
 
 ## Directory Structure
@@ -60,7 +59,11 @@ Settings are automatically persisted to browser localStorage.
 - **Claude Code** - `claude --help`
 - **Gastown** - `gt --help`
 - **Beads** - `bd --help`
-- **beads_viewer** - Visualization tool
+- **beads_viewer** - `bv --help` (TUI for issue tracking and dependency graphs)
+  - `bv` - Interactive terminal UI for browsing .beads projects
+  - `bv --robot-triage` - JSON output for AI-powered triage (used by dashboard)
+  - `bv --robot-insights` - JSON graph metrics (PageRank, cycles, health)
+  - `bv --robot-plan` - JSON execution plan with parallel tracks
 - Git, tmux, Go, Node.js, npm, Python3, pip
 
 ## Running Gastown
@@ -115,7 +118,6 @@ claude --dangerously-skip-permissions
 ```
 
 The container can only reach:
-- ollama (LLM API)
 - The internet (npm, pip, git, APIs)
 - NOT your other Tailnet devices (NAS, other machines)
 
@@ -139,25 +141,6 @@ npm run dev -- -H 0.0.0.0
 
 Access from any Tailnet device at `http://arena:3000` (or other port).
 
-## Using Ollama
-
-```bash
-# List models
-curl http://ollama:11434/api/tags
-
-# Chat
-curl http://ollama:11434/api/chat -d '{
-  "model": "llama2",
-  "messages": [{"role": "user", "content": "Hello"}]
-}'
-
-# Generate
-curl http://ollama:11434/api/generate -d '{
-  "model": "llama2",
-  "prompt": "Why is the sky blue?"
-}'
-```
-
 ## Vault Usage
 
 Drop files into `/vault` as root (or from Windows at E:/Vault) to provide read-only context to agents:
@@ -176,9 +159,6 @@ The dev user (and agents) can read but not modify vault contents.
 ```bash
 # Check Tailscale status
 tailscale status
-
-# Check if ollama is reachable
-curl http://ollama:11434/api/tags
 
 # Check internet
 curl -I https://google.com
@@ -207,30 +187,18 @@ curl -I https://google.com
 │  │  - nginx (:8080) serves dashboard + proxies          │   │
 │  │    └─ Dashboard UI    → /                            │   │
 │  │    └─ Terminal proxy  → /terminal/ → ttyd (:7681)    │   │
-│  │    └─ Files proxy     → /files/    → filebrowser     │   │
 │  │    └─ API proxy       → /api/      → node (:3001)    │   │
 │  │  - ttyd (web terminal, runs as dev)                  │   │
 │  │  - tmux sessions (dev user, managed via API)         │   │
 │  │  - API server (runs as dev, manages tmux)            │   │
 │  └─────────────────────────────────────────────────────┘   │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │  filebrowser container                               │   │
-│  │  - Browse /code and /vault (:8081)                   │   │
-│  └─────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              │ Tailscale
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│  ollama (Tailscale node)                                    │
-│  - LLM inference API at http://ollama:11434                 │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ## Network Security
 
 This container is isolated via Tailscale ACLs:
-- Can reach: ollama, internet
-- Cannot reach: Your NAS, Landmass host, other Tailnet devices
+- Can reach: internet
+- Cannot reach: Your NAS, host machine, other Tailnet devices
 
 Even if compromised, blast radius is limited to this disposable container.

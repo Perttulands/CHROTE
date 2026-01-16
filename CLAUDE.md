@@ -47,9 +47,7 @@ cd api && npm test                 # Jest unit tests (17 tests)
 The system consists of Docker containers orchestrated via docker-compose.yml with Tailscale sidecars:
 
 - **agent-arena** (build1.dockerfile): Ubuntu 24.04 container with nginx, ttyd, Express API, SSH
-- **ollama**: Local LLM inference at `http://ollama:11434`
-- **filebrowser**: Web file manager proxied at `/files/`
-- **tailscale-arena/tailscale-ollama**: Network sidecars for secure access
+- **tailscale-arena**: Network sidecar for secure Tailnet access
 
 ### Request Flow
 ```
@@ -135,7 +133,6 @@ Jest tests in `api/utils.test.js` cover: session categorization, agent name extr
 
 - `E:/Code` → `/code` (RW)
 - `E:/Vault` → `/vault` (RO for dev, RW for root)
-- `E:/LLM_models` → Ollama models
 
 ## Access URLs (via Tailscale)
 

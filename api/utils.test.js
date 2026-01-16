@@ -1,7 +1,6 @@
 const {
   getGroupPriority,
   categorizeSession,
-  extractAgentName,
   sortSessions,
 } = require('./utils');
 
@@ -34,28 +33,6 @@ describe('categorizeSession', () => {
   });
 });
 
-describe('extractAgentName', () => {
-  test('extracts agent name from gt-* sessions', () => {
-    expect(extractAgentName('gt-gastown-jack')).toBe('jack');
-    expect(extractAgentName('gt-beads-lizzy')).toBe('lizzy');
-  });
-
-  test('extracts agent name from hq-* sessions', () => {
-    expect(extractAgentName('hq-mayor')).toBe('mayor');
-    expect(extractAgentName('hq-deacon')).toBe('deacon');
-  });
-
-  test('handles multi-part agent names', () => {
-    expect(extractAgentName('gt-rig-multi-part-name')).toBe('multi-part-name');
-    expect(extractAgentName('hq-admin-extra')).toBe('admin-extra');
-  });
-
-  test('returns session name for simple names', () => {
-    expect(extractAgentName('main')).toBe('main');
-    expect(extractAgentName('shell')).toBe('shell');
-  });
-});
-
 describe('getGroupPriority', () => {
   test('hq has highest priority (0)', () => {
     expect(getGroupPriority('hq')).toBe(0);
@@ -80,10 +57,10 @@ describe('getGroupPriority', () => {
 describe('sortSessions', () => {
   test('sorts by group priority first', () => {
     const sessions = [
-      { name: 'random', agentName: 'random', group: 'other' },
-      { name: 'gt-gastown-jack', agentName: 'jack', group: 'gt-gastown' },
-      { name: 'hq-mayor', agentName: 'mayor', group: 'hq' },
-      { name: 'main', agentName: 'main', group: 'main' },
+      { name: 'random', group: 'other' },
+      { name: 'gt-gastown-jack', group: 'gt-gastown' },
+      { name: 'hq-mayor', group: 'hq' },
+      { name: 'main', group: 'main' },
     ];
 
     const sorted = sortSessions(sessions);
@@ -96,9 +73,9 @@ describe('sortSessions', () => {
 
   test('sorts alphabetically within same priority', () => {
     const sessions = [
-      { name: 'gt-beads-lizzy', agentName: 'lizzy', group: 'gt-beads' },
-      { name: 'gt-gastown-jack', agentName: 'jack', group: 'gt-gastown' },
-      { name: 'gt-alpha-worker', agentName: 'worker', group: 'gt-alpha' },
+      { name: 'gt-beads-lizzy', group: 'gt-beads' },
+      { name: 'gt-gastown-jack', group: 'gt-gastown' },
+      { name: 'gt-alpha-worker', group: 'gt-alpha' },
     ];
 
     const sorted = sortSessions(sessions);
@@ -108,24 +85,24 @@ describe('sortSessions', () => {
     expect(sorted[2].group).toBe('gt-gastown');
   });
 
-  test('sorts by agent name within same group', () => {
+  test('sorts by session name within same group', () => {
     const sessions = [
-      { name: 'gt-gastown-zack', agentName: 'zack', group: 'gt-gastown' },
-      { name: 'gt-gastown-jack', agentName: 'jack', group: 'gt-gastown' },
-      { name: 'gt-gastown-adam', agentName: 'adam', group: 'gt-gastown' },
+      { name: 'gt-gastown-zack', group: 'gt-gastown' },
+      { name: 'gt-gastown-jack', group: 'gt-gastown' },
+      { name: 'gt-gastown-adam', group: 'gt-gastown' },
     ];
 
     const sorted = sortSessions(sessions);
 
-    expect(sorted[0].agentName).toBe('adam');
-    expect(sorted[1].agentName).toBe('jack');
-    expect(sorted[2].agentName).toBe('zack');
+    expect(sorted[0].name).toBe('gt-gastown-adam');
+    expect(sorted[1].name).toBe('gt-gastown-jack');
+    expect(sorted[2].name).toBe('gt-gastown-zack');
   });
 
   test('does not mutate original array', () => {
     const sessions = [
-      { name: 'z', agentName: 'z', group: 'other' },
-      { name: 'a', agentName: 'a', group: 'hq' },
+      { name: 'z', group: 'other' },
+      { name: 'a', group: 'hq' },
     ];
     const original = [...sessions];
 

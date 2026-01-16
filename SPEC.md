@@ -2,7 +2,7 @@
 
 ## System Overview
 
-AgentArena is a Docker-based development environment for managing AI coding agents via tmux sessions, with a web dashboard for monitoring and control. The system runs on "Landmass" (home server) with Tailscale sidecar containers for secure remote access.
+AgentArena is a Docker-based development environment for managing AI coding agents via tmux sessions, with a web dashboard for monitoring and control. The system runs on "Landmass" (home server) with a Tailscale sidecar container for secure remote access.
 
 ## Architecture
 
@@ -10,35 +10,31 @@ AgentArena is a Docker-based development environment for managing AI coding agen
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                          Tailscale Network                               │
 │                        (Google Auth protected)                           │
-└───────────────────┬─────────────────────────────────┬───────────────────┘
-                    │                                 │
-        ┌───────────▼───────────┐         ┌───────────▼───────────┐
-        │   tailscale-arena     │         │   tailscale-ollama    │
-        │   hostname: arena     │         │   hostname: ollama    │
-        └───────────┬───────────┘         └───────────┬───────────┘
-                    │ network_mode                    │ network_mode
-┌───────────────────▼───────────────────┐       ┌─────▼─────┐
-│          agent-arena (:8080)          │       │  ollama   │
-│  ┌─────────────────────────────────┐  │       │ (:11434)  │
-│  │     nginx (reverse proxy)       │  │       │  LLM API  │
-│  │  /           → React Dashboard  │  │       └───────────┘
-│  │  /terminal/  → ttyd (:7681)     │  │
-│  │  /files/     → filebrowser      │  │
-│  │  /api/       → Node.js (:3001)  │  │
-│  │  /api/beads/ → Beads API        │  │
-│  └─────────────────────────────────┘  │
-│  ┌─────────────────────────────────┐  │
-│  │  filebrowser (:8081 → /files/)  │  │
-│  └─────────────────────────────────┘  │
-│  ┌─────────────────────────────────┐  │
-│  │  ttyd (:7681) → tmux sessions   │  │
-│  └─────────────────────────────────┘  │
-└───────────────────────────────────────┘
+└───────────────────────────────────────────────────────────────────────┬──┘
+                                                                        │
+                                                        ┌───────────────▼───────────┐
+                                                        │   tailscale-arena         │
+                                                        │   hostname: arena         │
+                                                        └───────────────┬───────────┘
+                                                                        │ network_mode
+                                        ┌───────────────────────────────▼───────────────────────────────┐
+                                        │          agent-arena (:8080)                                  │
+                                        │  ┌─────────────────────────────────┐                          │
+                                        │  │     nginx (reverse proxy)       │                          │
+                                        │  │  /           → React Dashboard  │                          │
+                                        │  │  /terminal/  → ttyd (:7681)     │                          │
+                                        │  │  /api/       → Node.js (:3001)  │                          │
+                                        │  │  /api/files/ → File API         │                          │
+                                        │  │  /api/beads/ → Beads API        │                          │
+                                        │  └─────────────────────────────────┘                          │
+                                        │  ┌─────────────────────────────────┐                          │
+                                        │  │  ttyd (:7681) → tmux sessions   │                          │
+                                        │  └─────────────────────────────────┘                          │
+                                        └───────────────────────────────────────────────────────────────┘
          │
    Volumes:
    E:/Code       → /code (RW)
    E:/Vault      → /vault (RO dev, RW root)
-   E:/LLM_models → /root/.ollama/models
 ```
 
 ## Containers
@@ -51,17 +47,20 @@ AgentArena is a Docker-based development environment for managing AI coding agen
 
 **Installed Tools:**
 - Claude Code (@anthropic-ai/claude-code)
-- Gastown & Beads (orchestrator tools)
-- beads_viewer (bv) - TUI for project dependency visualization
+- Gastown (`gt`) & Beads (`bd`) - orchestrator tools
+- beads_viewer (`bv`) - TUI and robot-protocol CLI for project dependency visualization
+  - `bv` - Interactive terminal UI
+  - `bv --robot-triage` - JSON triage recommendations for dashboard
+  - `bv --robot-insights` - JSON graph metrics for dashboard
+  - `bv --robot-plan` - JSON execution plan for dashboard
 - Git, tmux, Go, Node.js, Python3
 
 **Internal Services:**
 | Service | Port | Purpose |
 |---------|------|---------|
 | nginx | 8080 | Unified entry point, reverse proxy |
-| Express API | 3001 | Tmux session management |
+| Express API | 3001 | Tmux session management, file API |
 | ttyd | 7681 | Terminal over WebSocket |
-| filebrowser | 8081 | Web-based file management |
 | SSH | 22 | Direct shell access |
 
 **Exposed Ports (via Tailscale):**
@@ -78,23 +77,12 @@ AgentArena is a Docker-based development environment for managing AI coding agen
 | root | root | Full access, can write to /vault |
 | dev | dev | Standard user, read-only /vault, sudo access |
 
-### 2. ollama (agentarena-ollama)
-
-**Purpose:** LLM inference API server
-
-**Image:** ollama/ollama:latest
-
-**Port:** 11434 (Ollama API)
-
-**CORS Origins:** localhost, 127.0.0.1, arena (http/https)
-
 ## Volume Layout
 
 | Host Path | Container | Mount Path | Permissions | Purpose |
 |-----------|-----------|------------|-------------|---------|
 | E:/Code | agent-arena | /code | RW (dev & root) | Active coding projects |
 | E:/Vault | agent-arena | /vault | RO (dev), RW (root) | Safe context files for agents |
-| E:/LLM_models | ollama | /root/.ollama/models | RW (root) | LLM model storage |
 | Named: arena_dev_home | agent-arena | /home/dev | RW | Persist dev config |
 | Named: arena_root_home | agent-arena | /root | RW | Persist root config |
 
@@ -126,7 +114,6 @@ UI (React) → nginx (/terminal/) → ttyd (port 7681) → terminal-launch.sh �
 | API | Express.js |
 | Proxy | nginx |
 | Terminal Backend | ttyd |
-| File Management | filebrowser |
 
 ### Component Structure
 
@@ -187,13 +174,37 @@ Sessions are categorized by prefix for grouping:
 | `gt-{rigname}-*` | gt-{rigname} | 2 | gt-gastown-jack |
 | Other | Other | 3 | my-session |
 
+### tmux Configuration
+
+The container includes a minimal `~/.tmux.conf`:
+
+```bash
+# UTF-8 support for emojis and special characters
+set -gq utf8 on
+set -gq status-utf8 on
+setw -gq utf8 on
+
+# Start windows and panes at 1, not 0
+set -g base-index 1
+setw -g pane-base-index 1
+
+# True color support
+set -g default-terminal "tmux-256color"
+set -ga terminal-overrides ",xterm-256color:Tc"
+
+# Transparent background - inherit from terminal (enables CSS theming)
+set -g window-style "bg=default"
+set -g window-active-style "bg=default"
+```
+
 ### Terminal Connection
 
 **How ttyd connects to tmux:**
 1. ttyd runs with URL argument support: `ttyd -a /usr/local/bin/terminal-launch.sh`
-2. Dashboard requests: `/terminal/?arg={session_name}`
+2. Dashboard requests: `/terminal/?arg={session_name}&theme={"background":"transparent"}`
 3. `terminal-launch.sh` receives session name, runs `tmux attach-session -t {name}`
 4. User sees tmux session in iframe
+5. The transparent background in both tmux and xterm allows CSS theme colors to show through
 
 **Critical Environment Variable:**
 - `TMUX_TMPDIR=/tmp` must be set consistently across ALL processes (API, ttyd, SSH)
@@ -215,8 +226,8 @@ Both `TerminalWindow.tsx` and `FloatingModal.tsx` use ResizeObserver:
 ```json
 {
   "sessions": [
-    {"name": "hq-mayor", "agentName": "mayor", "windows": 1, "attached": false, "group": "hq"},
-    {"name": "gt-rig1-jack", "agentName": "jack", "windows": 1, "attached": true, "group": "gt-rig1"}
+    {"name": "hq-mayor", "windows": 1, "attached": false, "group": "hq"},
+    {"name": "gt-rig1-jack", "windows": 1, "attached": true, "group": "gt-rig1"}
   ],
   "grouped": {
     "hq": [...],
@@ -284,7 +295,7 @@ Both `TerminalWindow.tsx` and `FloatingModal.tsx` use ResizeObserver:
 
 **Architecture:**
 - Native React component (not iframe)
-- Uses filebrowser API backend (`/files/api/resources/...`)
+- Uses file API backend (`/api/files/resources/...`)
 - Full CSS variable theming
 
 **Features:**
@@ -337,9 +348,8 @@ Containers are isolated via Tailscale ACLs:
 
 | Source | Can Reach | Cannot Reach |
 |--------|-----------|--------------|
-| Your devices | arena, ollama, all devices | - |
-| arena | ollama, internet | NAS, host, other devices |
-| ollama | arena, internet | NAS, host, other devices |
+| Your devices | arena, all devices | - |
+| arena | internet | NAS, host, other devices |
 
 ### Sensitive File Protection
 
@@ -358,6 +368,7 @@ AgentArena/
 ├── api/                      # Node.js API
 │   ├── server.js             # Main API server
 │   ├── beads-routes.js       # Beads endpoints
+│   ├── file-routes.js        # File API endpoints
 │   └── utils.test.js         # Unit tests
 ├── dashboard/                # React UI
 │   ├── src/                  # Source code
@@ -368,9 +379,7 @@ AgentArena/
 ├── sandbox_overrides/        # Secret overlays
 ├── beads_viewer_integration/ # Integration docs
 ├── tailscale_state/          # Tailscale identity
-├── filebrowser_data/         # Filebrowser config
 ├── build1.dockerfile         # Main container
-├── ollama.dockerfile         # Ollama container
 ├── docker-compose.yml        # Orchestration
 ├── .env                      # Secrets (git-ignored)
 ├── PRD.md                    # Product requirements
@@ -422,9 +431,6 @@ ssh root@arena     # as root
 # Test API
 curl http://arena:8080/api/tmux/sessions
 
-# Test Ollama
-curl http://ollama:11434/api/tags
-
 # Rebuild dashboard
 cd dashboard && npm run build && cd ..
 docker compose restart agent-arena
@@ -438,7 +444,7 @@ docker compose restart agent-arena
 ```bash
 cd api && npm test
 ```
-17 tests: session categorization, agent name extraction, group priority, sorting
+13 tests: session categorization, group priority, sorting
 
 ### Frontend (Playwright)
 ```bash

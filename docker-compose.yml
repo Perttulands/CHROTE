@@ -1,20 +1,7 @@
 services:
   # ============================================
-  # TAILSCALE SIDECARS
+  # TAILSCALE SIDECAR
   # ============================================
-  
-  tailscale-ollama:
-    image: tailscale/tailscale:latest
-    hostname: ollama
-    environment:
-      - TS_AUTHKEY=${TS_AUTHKEY}
-      - TS_STATE_DIR=/var/lib/tailscale
-      - TS_USERSPACE=true
-    volumes:
-      - ./tailscale_state/ollama:/var/lib/tailscale
-    cap_add:
-      - net_admin
-    restart: unless-stopped
 
   tailscale-arena:
     image: tailscale/tailscale:latest
@@ -30,29 +17,8 @@ services:
     restart: unless-stopped
 
   # ============================================
-  # MAIN SERVICES
+  # MAIN SERVICE
   # ============================================
-
-  ollama:
-    build:
-      context: .
-      dockerfile: ollama.dockerfile
-    container_name: agentarena-ollama
-    depends_on:
-      - tailscale-ollama
-    network_mode: service:tailscale-ollama
-    volumes:
-      - E:/LLM_models:/root/.ollama/models
-    environment:
-      OLLAMA_HOST: 0.0.0.0:11434
-      # Restrict CORS to specific origins only
-      OLLAMA_ORIGINS: http://localhost,http://127.0.0.1,http://arena,https://arena
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
   agent-arena:
     build:
@@ -75,8 +41,6 @@ services:
       # Security: Hide sensitive files from sandbox (overlay with empty file)
       - ./sandbox_overrides/empty_env:/code/AgentArena/.env:ro
       - ./sandbox_overrides/empty_env:/code/AgentArena/.env.example:ro
-    environment:
-      OLLAMA_HOST: http://ollama:11434
     restart: unless-stopped
 
 volumes:

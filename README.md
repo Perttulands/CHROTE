@@ -19,7 +19,6 @@ Edit `.env` with your credentials:
 
 ```env
 TS_AUTHKEY=tskey-auth-xxxxx    # From Tailscale admin console
-TTYD_PASSWORD=your-password     # For ttyd basic auth (optional)
 ```
 
 ### 2. Build Dashboard (first time only)
@@ -80,55 +79,37 @@ Session naming follows the pattern `gt-{rigname}-{worker}` (e.g., `gt-gastown-ja
 
 ## Architecture
 
-The system runs as multiple Docker containers with Tailscale sidecars for secure networking:
+The system runs as Docker containers with a Tailscale sidecar for secure networking:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        Tailscale Network                             │
 │                      (Google Auth protected)                         │
-└───────────────────┬─────────────────────────────┬───────────────────┘
-                    │                             │
-        ┌───────────▼───────────┐     ┌───────────▼───────────┐
-        │   tailscale-arena     │     │   tailscale-ollama    │
-        │   (network sidecar)   │     │   (network sidecar)   │
-        └───────────┬───────────┘     └───────────┬───────────┘
-                    │                             │
-┌───────────────────▼───────────────────┐   ┌─────▼─────┐
-│          agent-arena (:8080)          │   │  ollama   │
-│  ┌─────────────────────────────────┐  │   │  (:11434) │
-│  │         nginx (reverse proxy)   │  │   │           │
-│  │  ┌────────┬─────────┬────────┐  │  │   │  LLM API  │
-│  │  │   /    │/terminal│ /api/  │  │  │   └───────────┘
-│  │  │  React │  ttyd   │Node.js │  │  │
-│  │  │        │         │(files, │  │  │
-│  │  │        │         │ tmux,  │  │  │
-│  │  │        │         │ beads) │  │  │
-│  │  └────────┴─────────┴────────┘  │  │
-│  └─────────────────────────────────┘  │
-└───────────────────────────────────────┘
+└───────────────────────────────────────────────────────────────────┬──┘
+                                                                    │
+                                                    ┌───────────────▼───────────┐
+                                                    │   tailscale-arena         │
+                                                    │   (network sidecar)       │
+                                                    └───────────────┬───────────┘
+                                                                    │
+                                    ┌───────────────────────────────▼───────────────────────────────┐
+                                    │          agent-arena (:8080)                                  │
+                                    │  ┌─────────────────────────────────┐                          │
+                                    │  │         nginx (reverse proxy)   │                          │
+                                    │  │  ┌────────┬─────────┬────────┐  │                          │
+                                    │  │  │   /    │/terminal│ /api/  │  │                          │
+                                    │  │  │  React │  ttyd   │Node.js │  │                          │
+                                    │  │  │        │         │(files, │  │                          │
+                                    │  │  │        │         │ tmux,  │  │                          │
+                                    │  │  │        │         │ beads) │  │                          │
+                                    │  │  └────────┴─────────┴────────┘  │                          │
+                                    │  └─────────────────────────────────┘                          │
+                                    └───────────────────────────────────────────────────────────────┘
 ```
 
 **Containers:**
 - `agent-arena` - Main dev environment (nginx, ttyd, API, SSH)
-- `ollama` - Local LLM inference server
-- `tailscale-arena` / `tailscale-ollama` - Network sidecars for secure access
-
-## Ollama Integration
-
-The system includes a local LLM server accessible at `http://ollama:11434` from within containers.
-
-**From inside agent-arena:**
-```bash
-curl http://ollama:11434/api/tags          # List available models
-curl http://ollama:11434/api/generate -d '{"model":"llama3","prompt":"Hello"}'
-```
-
-**From Tailscale network:**
-```bash
-curl http://ollama:11434/api/tags          # Direct access via tailscale-ollama
-```
-
-**Model storage:** Models are persisted in `E:/LLM_models` on the host.
+- `tailscale-arena` - Network sidecar for secure access
 
 ## Dashboard Features
 
@@ -210,21 +191,15 @@ The beads viewer can point to **any directory** accessible via the mounted volum
 
 **bv CLI (beads_viewer):**
 
-The `bv` command-line tool is **pre-installed** in the container. It provides:
+The `bv` command-line tool provides:
 - `bv` - Interactive TUI for browsing issues
 - `bv --robot-triage` - AI-powered triage recommendations (used by dashboard)
 - `bv --robot-insights` - Graph metrics and health analysis
 - `bv --robot-plan` - Parallel execution planning
 
-If `bv` is not working after a container rebuild, verify installation:
-```bash
-docker exec -it agentarena-dev which bv
-docker exec -it agentarena-dev bv --version
-```
-
 **Data Source:**
 - Reads from `.beads/issues.jsonl` in your project directory
-- Uses `bv` CLI robot protocol for AI-powered analysis (falls back to basic analysis if `bv` not installed)
+- Uses `bv` CLI robot protocol for AI-powered analysis
 - Supports multiple projects via project selector
 
 **API Endpoints:**
@@ -294,7 +269,6 @@ AgentArena/
 ├── beads_viewer_integration/ # Integration analysis docs
 ├── tailscale_state/          # Persisted Tailscale identity (preserves hostname)
 ├── build1.dockerfile         # Main container definition
-├── ollama.dockerfile         # Ollama LLM container
 ├── docker-compose.yml        # Service orchestration
 ├── AgentArena-Toggle.ps1     # PowerShell start/stop toggle script
 ├── Create-Shortcut.ps1       # Creates desktop shortcut
@@ -332,13 +306,6 @@ Ensure `TMUX_TMPDIR=/tmp` is set consistently. The API, ttyd, and SSH all need t
 ```bash
 docker exec -it agentarena-dev bash -c 'echo $TMUX_TMPDIR'  # Should be /tmp
 docker exec -it agentarena-dev ls /tmp/tmux-*/              # Check socket exists
-```
-
-### Ollama not responding
-
-```bash
-curl http://ollama:11434/api/tags                           # From inside arena
-docker compose logs ollama                                  # Check ollama logs
 ```
 
 ### Tailscale not connecting
