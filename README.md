@@ -208,17 +208,18 @@ The beads viewer can point to **any directory** accessible via the mounted volum
    - `/code` → `E:/Code` (Read/Write)
    - `/vault` → `E:/Vault` (Read-Only)
 
-**Installing bv (beads_viewer CLI):**
+**bv CLI (beads_viewer):**
 
-For full functionality including AI-powered triage, install the `bv` CLI inside the container:
+The `bv` command-line tool is **pre-installed** in the container. It provides:
+- `bv` - Interactive TUI for browsing issues
+- `bv --robot-triage` - AI-powered triage recommendations (used by dashboard)
+- `bv --robot-insights` - Graph metrics and health analysis
+- `bv --robot-plan` - Parallel execution planning
 
+If `bv` is not working after a container rebuild, verify installation:
 ```bash
-# Linux/macOS
-curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh" | bash
-
-# From source
-git clone https://github.com/Dicklesworthstone/beads_viewer.git
-cd beads_viewer && go install ./cmd/bv
+docker exec -it agentarena-dev which bv
+docker exec -it agentarena-dev bv --version
 ```
 
 **Data Source:**
@@ -239,7 +240,7 @@ This setup is designed for use behind Tailscale with Google Auth:
 - No services exposed to public internet
 - All access requires Tailscale network membership
 - SSH available only within tailnet
-- Filebrowser runs with `--noauth` (protected by Tailscale)
+- File API has no auth (protected by Tailscale)
 - Sensitive files (`.env`) are hidden from sandbox via volume overlays
 
 **Do not expose port 8080 to the public internet.**
@@ -277,9 +278,10 @@ docker compose up -d agent-arena
 
 ```
 AgentArena/
-├── api/                      # Node.js API for tmux management
-│   ├── server.js             # Main API server
-│   └── beads-routes.js       # Beads API endpoints
+├── api/                      # Node.js API server
+│   ├── server.js             # Main server (tmux, files, beads)
+│   ├── file-routes.js        # File operations API
+│   └── beads-routes.js       # Beads viewer API
 ├── dashboard/                # React + TypeScript web UI
 │   ├── src/
 │   │   ├── beads_module/     # Self-contained Beads integration
