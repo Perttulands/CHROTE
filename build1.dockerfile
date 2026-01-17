@@ -13,6 +13,10 @@ ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
 ENV LANGUAGE=en_US:en
 
+# IS_SANDBOX=1 allows Claude Code to run --dangerously-skip-permissions as root
+# This is safe because we're already in a Docker container (sandboxed)
+ENV IS_SANDBOX=1
+
 # 2. Create dev user with sudo access (ensure UID 1000)
 RUN userdel -r ubuntu 2>/dev/null || true && \
     useradd -m -u 1000 -s /bin/bash dev && \
@@ -53,7 +57,7 @@ RUN mkdir -p /code && \
     chmod 775 /code && \
     chmod 755 /vault
 
-# 6a. Setup minimal tmux config
+# 6a. Setup minimal tmux config (for root - all Gastown operations run as root)
 RUN printf '# UTF-8 support for emojis and special characters\n\
 set -gq utf8 on\n\
 set -gq status-utf8 on\n\
@@ -70,23 +74,25 @@ set -ga terminal-overrides ",xterm-256color:Tc"\n\
 # Transparent background - inherit from terminal\n\
 set -g window-style "bg=default"\n\
 set -g window-active-style "bg=default"\n\
-' > /home/dev/.tmux.conf && chown dev:dev /home/dev/.tmux.conf && \
-    cp /home/dev/.tmux.conf /etc/skel/.tmux.conf
+' > /root/.tmux.conf && \
+    cp /root/.tmux.conf /etc/skel/.tmux.conf
 
 # 6a2. Create tmux session launcher script for ttyd
+# Now runs as root - all Gastown sessions use single tmux socket at /tmp/tmux-0/
 RUN printf '#!/bin/bash\n\
 # Terminal launcher script for ttyd\n\
 # Usage: terminal-launch.sh [session_name] [mode]\n\
 # mode: tmux (default) or shell\n\
-# Setup dev user environment (ttyd runs with -u/-g but no login shell)\n\
-export HOME=/home/dev\n\
-export USER=dev\n\
+# All operations run as root with IS_SANDBOX=1 for consistent tmux socket\n\
+export HOME=/root\n\
+export USER=root\n\
 export PATH=/usr/local/bin:/usr/bin:/bin:$HOME/.local/bin:$HOME/go/bin\n\
 export TMUX_TMPDIR=/tmp\n\
+export IS_SANDBOX=1\n\
 # UTF-8 locale for emoji and special character support\n\
 export LANG=en_US.UTF-8\n\
 export LC_ALL=en_US.UTF-8\n\
-cd "$HOME" 2>/dev/null || cd /code\n\
+cd /code\n\
 \n\
 SESSION="$1"\n\
 MODE="${2:-tmux}"\n\
@@ -197,32 +203,32 @@ COPY dashboard/dist /usr/share/nginx/html
 
 WORKDIR /code
 
-# 7. Entrypoint script to fix permissions on mounted volumes
+# 7. Entrypoint script - simplified for root-only operation
+# All Gastown operations run as root with IS_SANDBOX=1 for consistent tmux socket
 RUN printf '#!/bin/bash\n\
-# Fix /vault permissions: root can write, dev can only read\n\
-chown -R root:root /vault 2>/dev/null || true\n\
-chmod -R 755 /vault 2>/dev/null || true\n\
-find /vault -type f -exec chmod 644 {} \\; 2>/dev/null || true\n\
-# Fix /code permissions: both can read/write\n\
-chown -R dev:dev /code 2>/dev/null || true\n\
+# Export IS_SANDBOX for all child processes (allows Claude --dangerously-skip-permissions as root)\n\
+export IS_SANDBOX=1\n\
+export TMUX_TMPDIR=/tmp\n\
+\n\
+# Fix /code permissions: root owns everything for Gastown operations\n\
 chmod -R 775 /code 2>/dev/null || true\n\
-# Fix /home/dev permissions for terminal launch\n\
-chown -R dev:dev /home/dev 2>/dev/null || true\n\
-chmod 755 /home/dev 2>/dev/null || true\n\
-# Ensure .tmux.conf exists (may be missing if volume was created before tmux config was added)\n\
-if [ ! -f /home/dev/.tmux.conf ]; then\n\
-  cp /etc/skel/.tmux.conf /home/dev/.tmux.conf 2>/dev/null || true\n\
-  chown dev:dev /home/dev/.tmux.conf 2>/dev/null || true\n\
+# Fix /vault permissions\n\
+chmod -R 755 /vault 2>/dev/null || true\n\
+\n\
+# Ensure .tmux.conf exists for root\n\
+if [ ! -f /root/.tmux.conf ]; then\n\
+  cp /etc/skel/.tmux.conf /root/.tmux.conf 2>/dev/null || true\n\
 fi\n\
+\n\
 # Start SSH\n\
 service ssh start\n\
 # Start nginx for dashboard\n\
 nginx\n\
-# Start ttyd web terminal with URL arg support for session switching\n\
-# Usage: /terminal/?arg=session_name to attach to a tmux session\n\
-ttyd -p 7681 -W -a -u 1000 -g 1000 /usr/local/bin/terminal-launch.sh &\n\
-# Start API server for dashboard as dev user (TMUX_TMPDIR ensures consistent socket path)\n\
-su - dev -c "export TMUX_TMPDIR=/tmp && cd /srv/api && node server.js" &\n\
+# Start ttyd web terminal as root (no -u/-g flags)\n\
+# All sessions use single tmux socket at /tmp/tmux-0/\n\
+ttyd -p 7681 -W -a /usr/local/bin/terminal-launch.sh &\n\
+# Start API server as root for consistent tmux socket access\n\
+cd /srv/api && TMUX_TMPDIR=/tmp IS_SANDBOX=1 node server.js &\n\
 # Keep container running\n\
 tail -f /dev/null\n' > /entrypoint.sh && chmod +x /entrypoint.sh
 
