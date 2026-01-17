@@ -6,6 +6,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 AgentArena is a Docker-based development environment for managing AI coding agents via tmux sessions, with a React web dashboard for monitoring and control. The system runs behind Tailscale for secure remote access.
 
+**Primary Use Case:** Agent Arena is designed to run [Gastown](https://github.com/steveyegge/gastown), an orchestration framework for running 10-30+ Claude Code instances in parallel on a home server, served via Tailscale. The system can support multiple Gastown "rigs" simultaneously.
+
+## Root-Only Architecture
+
+All operations run as **root** with `IS_SANDBOX=1` environment variable. This design choice solves the "user permission slipping" problem where tmux sessions would end up split between different users' socket directories.
+
+**Why root?**
+- Tmux creates sockets at `/tmp/tmux-{UID}/` - different UIDs = different sockets
+- Gastown spawns sessions that inherit the spawning user's context
+- With multiple users, sessions can "slip" and become invisible to the dashboard
+- Single user (root) = single socket = all sessions visible
+
+**Why IS_SANDBOX=1?**
+- Claude Code blocks `--dangerously-skip-permissions` when running as root
+- `IS_SANDBOX=1` tells Claude "I'm in a container, it's safe"
+- The container IS sandboxed (Docker + Tailscale isolation)
+
 ## Build & Run Commands
 
 **Recommended:** Use the interactive control script `AgentArena-Toggle.ps1` which provides a menu for all common operations:
@@ -58,8 +75,11 @@ Browser → nginx (:8080)
          └── /files/     → filebrowser (:8081)
 ```
 
-### Key Environment Variable
-`TMUX_TMPDIR=/tmp` must be consistent across API, ttyd, and SSH for tmux socket discovery.
+### Key Environment Variables
+- `TMUX_TMPDIR=/tmp` - Consistent tmux socket base directory
+- `IS_SANDBOX=1` - Allows Claude Code `--dangerously-skip-permissions` as root
+
+All tmux sessions use the socket at `/tmp/tmux-0/default` (root user).
 
 ## Gastown
 
@@ -132,9 +152,9 @@ Jest tests in `api/utils.test.js` cover: session categorization, agent name extr
 ## Volume Mounts (Windows Host)
 
 - `E:/Code` → `/code` (RW)
-- `E:/Vault` → `/vault` (RO for dev, RW for root)
+- `E:/Vault` → `/vault` (RW)
 
 ## Access URLs (via Tailscale)
 
 - Dashboard: `http://arena:8080`
-- SSH: `ssh dev@arena`
+- SSH: `ssh root@arena` (password: root)
