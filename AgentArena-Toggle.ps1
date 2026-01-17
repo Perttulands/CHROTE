@@ -164,13 +164,21 @@ function Show-Logs {
 }
 
 function Enter-Shell {
-    param([string]$Service = "agent-arena")
+    param(
+        [string]$Service = "agent-arena",
+        [switch]$AsRoot
+    )
 
-    Write-Status "`n  Opening shell in $Service..." "Cyan"
+    $userLabel = if ($AsRoot) { "root" } else { "dev" }
+    Write-Status "`n  Opening shell in $Service as $userLabel..." "Cyan"
     Write-Status "  (Type 'exit' to return)`n" "Gray"
 
     Set-Location $ArenaPath
-    docker compose exec $Service bash
+    if ($AsRoot) {
+        docker compose exec -u root $Service bash
+    } else {
+        docker compose exec -u dev $Service bash
+    }
 }
 
 function Show-Status {
@@ -233,10 +241,11 @@ function Show-Menu {
     Write-Status "  5. View logs"
     Write-Status "  6. Follow logs (live)"
     Write-Status "  7. Container status"
-    Write-Status "  8. Shell into container"
+    Write-Status "  8. Shell into container (dev)"
+    Write-Status "  9. Shell into container (root)"
     Write-Status ""
     Write-Status "  --- Maintenance ---" "Cyan"
-    Write-Status "  9. Pull latest images"
+    Write-Status "  10. Pull latest images"
     Write-Status "  0. Docker cleanup (prune)"
     Write-Status ""
     Write-Status "  q. Quit" "Gray"
@@ -265,7 +274,10 @@ while ($true) {
         "8" {
             if ($running) { Enter-Shell } else { Write-Status "`n  Arena is not running" "Yellow" }
         }
-        "9" { Pull-Images }
+        "9" {
+            if ($running) { Enter-Shell -AsRoot } else { Write-Status "`n  Arena is not running" "Yellow" }
+        }
+        "10" { Pull-Images }
         "0" { Prune-Docker }
         "q" {
             Write-Status "`n  Goodbye!" "Cyan"
@@ -274,7 +286,7 @@ while ($true) {
         default { Write-Status "`n  Invalid option" "Yellow" }
     }
 
-    if ($choice -ne "6" -and $choice -ne "8") {
+    if ($choice -ne "6" -and $choice -ne "8" -and $choice -ne "9") {
         Write-Status "`n  Press any key to continue..." "Gray"
         $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     }

@@ -61,9 +61,21 @@ Browser → nginx (:8080)
 ### Key Environment Variable
 `TMUX_TMPDIR=/tmp` must be consistent across API, ttyd, and SSH for tmux socket discovery.
 
+### Root vs dev tmux split (common operator pitfall)
+
+tmux runs a separate server per user (`/tmp/tmux-<uid>/...`). The Arena UI and API run as `dev` (uid 1000). If you create sessions as `root`, they won't appear in the dashboard.
+
+Use the built-in helpers (safe even from a root shell):
+
+```bash
+arena-sessions
+tmux-dev ls
+gt-dev status
+```
+
 ## Gastown
 
-Agent Arena powers **Gastown**, an orchestration framework for running many AI coding agents (10-30+) in parallel. Gastown uses the "MEOW Stack" (Molecular Expression Of Work) with Beads (atomic tasks), Epics, Molecules, and Wisps. Philosophy: "Physics over Politeness" - sessions are ephemeral, throughput is king, all actions are idempotent.
+Agent Arena powers **Gastown**, an orchestration framework for running many AI coding agents (10-30+) in parallel. Gastown uses the "MEOW Stack" (Molecular Expression Of Work) with atomic tasks, Epics, Molecules, and Wisps. Philosophy: "Physics over Politeness" - sessions are ephemeral, throughput is king, all actions are idempotent.
 
 Session naming: `gt-{rigname}-{worker}` for rig workers, `hq-*` for coordination sessions.
 
@@ -84,7 +96,7 @@ Session naming: `gt-{rigname}-{worker}` for rig workers, `hq-*` for coordination
 - `gt-{rigname}-*` → Gastown rig groups (priority 2)
 - Other → Other group (priority 3)
 
-**Views:** Terminal, Files (native React), Beads (visualization), Status, Settings
+**Views:** Terminal, Files (native React), Settings, Help
 
 ## API (Express.js)
 
@@ -96,7 +108,6 @@ Session naming: `gt-{rigname}-{worker}` for rig workers, `hq-*` for coordination
 - `PATCH /api/tmux/sessions/:name` - Rename session
 - `DELETE /api/tmux/sessions/:name` - Delete specific session
 - `DELETE /api/tmux/sessions/all` - Kill all sessions
-- `GET /api/beads/*` - Beads viewer integration
 
 ## Session Panel Features
 

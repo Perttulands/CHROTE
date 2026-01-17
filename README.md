@@ -77,6 +77,119 @@ The core philosophy is "Physics over Politeness" - sessions are ephemeral and ex
 
 Session naming follows the pattern `gt-{rigname}-{worker}` (e.g., `gt-gastown-jack`) for Gastown rig workers, with `hq-*` sessions for headquarters/coordination.
 
+## In-Container Guide (also copied to /README.md)
+
+This section is intended to be the quick reference you can read from inside the container.
+
+### Web Dashboard
+
+Access the dashboard from any Tailnet device:
+
+```text
+http://arena:8080/
+```
+
+### Quick Reference
+
+| What | How |
+|------|-----|
+| Dashboard | `http://arena:8080/` |
+| Terminal | `http://arena:8080/terminal/` |
+| Your code | `/code` (E:/Code on host) |
+| Vault | `/vault` (E:/Vault on host) |
+| SSH (dev) | `ssh dev@arena` |
+
+### Directory Structure
+
+```text
+/code     - Your projects (read/write)
+/vault    - Reference files (read-only for dev user)
+/home/dev - Your home directory (persisted across rebuilds)
+```
+
+### Users
+
+| User | Password | Notes |
+|------|----------|-------|
+| dev | dev | Standard user, sudo access |
+| root | root | Can write everywhere including /vault |
+
+### Important: tmux sessions are per-user
+
+tmux runs a separate server per user (socket lives under `/tmp/tmux-<uid>/`). The dashboard/API/ttyd run as `dev` (uid 1000).
+
+If you create sessions as `root` (uid 0), they will not show up in the dashboard and it can look like sessions “randomly disappear”.
+
+Use the built-in helpers (work even if you are logged in as root):
+
+```bash
+# Show both dev + root tmux servers + sockets
+arena-sessions
+
+# Always interact with the dev tmux server
+tmux-dev ls
+tmux-dev a -t gt-gastown-jack
+
+# Always run orchestrators as dev
+gt-dev status
+bd-dev --help
+```
+
+If you truly need root's tmux (rare), use `tmux-root`.
+
+### Running Gastown
+
+```bash
+gt-dev start gastown
+gt-dev status
+gt-dev peek
+```
+
+### Session Naming Conventions
+
+| Prefix | Example | Dashboard Group |
+|--------|---------|-----------------|
+| `hq-` | `hq-mayor` | HQ |
+| `gt-rigname-` | `gt-gastown-jack` | Rig (`gt-gastown`) |
+| `main`, `shell` | `main` | Main |
+| Other | `my-session` | Other |
+
+### Testing Session Display
+
+```bash
+# Create sample sessions (run inside the container)
+bash /code/AgentArena/test-sessions.sh
+
+# Or manually (recommended: use dev wrappers so they appear in the dashboard)
+tmux-dev new-session -d -s "hq-test1"
+tmux-dev new-session -d -s "gt-myrig-agent1"
+tmux-dev list-sessions
+```
+
+### Vault Usage
+
+Drop files into `/vault` as root (or from Windows at E:/Vault) to provide read-only context to agents:
+
+```bash
+# From arena as root:
+cp /code/important-spec.md /vault/
+```
+
+### Dev Servers
+
+Bind to `0.0.0.0` to make accessible from your other devices:
+
+```bash
+# Vite/React
+npm run dev -- --host 0.0.0.0
+
+# Flask
+flask run --host=0.0.0.0
+
+# FastAPI
+uvicorn main:app --host 0.0.0.0
+```
+
 ## Architecture
 
 The system runs as Docker containers with a Tailscale sidecar for secure networking:
@@ -100,8 +213,7 @@ The system runs as Docker containers with a Tailscale sidecar for secure network
                                     │  │  │   /    │/terminal│ /api/  │  │                          │
                                     │  │  │  React │  ttyd   │Node.js │  │                          │
                                     │  │  │        │         │(files, │  │                          │
-                                    │  │  │        │         │ tmux,  │  │                          │
-                                    │  │  │        │         │ beads) │  │                          │
+                                    │  │  │        │         │ tmux)  │  │                          │
                                     │  │  └────────┴─────────┴────────┘  │                          │
                                     │  └─────────────────────────────────┘                          │
                                     └───────────────────────────────────────────────────────────────┘
@@ -116,15 +228,9 @@ The system runs as Docker containers with a Tailscale sidecar for secure network
 - **Terminal View**: 1-4 terminal panes with drag-and-drop session assignment
 - **Session Panel**: Lists all tmux sessions, drag to assign to windows
 - **Files View**: Native file browser with full theme integration
-- **Beads View**: Project dependency visualization with multiple sub-views:
-  - **Graph**: Interactive dependency DAG with zoom/pan
-  - **Kanban**: Issue board organized by status
-  - **Triage**: AI-powered prioritization recommendations
-  - **Insights**: Graph metrics, health score, and critical path analysis
-- **Status View**: Service health and quick commands
 - **Settings View**: Theme selection (Matrix/Dark/Gastown), font size, and preferences
 - **Music Player**: Ambient background music in tab bar (Gastown soundtrack)
-- **Nuke All Sessions**: Quick destroy all tmux sessions from Status view
+- **Nuke All Sessions**: Quick destroy all tmux sessions
 - **Floating Modal**: Peek at sessions without leaving current view
 
 ### Session Management
@@ -164,49 +270,6 @@ The native file browser provides full access to mounted volumes with theme-adapt
 - Ctrl+Click for multi-select
 - Shift+Click for range select
 - Right-click for context menu
-
-### Beads Viewer
-
-The Beads tab integrates [beads_viewer](https://github.com/Dicklesworthstone/beads_viewer) for project issue tracking and dependency visualization:
-
-**Sub-views:**
-- **Graph**: Force-directed dependency graph showing issue relationships
-- **Kanban**: Drag-and-drop board with columns by status (Open, In Progress, Blocked, Closed)
-- **Triage**: AI-generated prioritization with quick wins and blockers identified
-- **Insights**: PageRank scores, critical path analysis, cycle detection
-
-**Pointing to Your Beads Project:**
-
-The beads viewer can point to **any directory** accessible via the mounted volumes. To set up:
-
-1. **Using the Path Selector**: Click the folder icon in the Beads tab header and either:
-   - Enter a path directly (e.g., `/code/my-project`)
-   - Use the file browser to navigate to your project folder
-
-2. **Required Structure**: Your project needs a `.beads/` directory containing `issues.jsonl`
-
-3. **Mounted Volumes**: The following paths are available:
-   - `/code` → `E:/Code` (Read/Write)
-   - `/vault` → `E:/Vault` (Read-Only)
-
-**bv CLI (beads_viewer):**
-
-The `bv` command-line tool provides:
-- `bv` - Interactive TUI for browsing issues
-- `bv --robot-triage` - AI-powered triage recommendations (used by dashboard)
-- `bv --robot-insights` - Graph metrics and health analysis
-- `bv --robot-plan` - Parallel execution planning
-
-**Data Source:**
-- Reads from `.beads/issues.jsonl` in your project directory
-- Uses `bv` CLI robot protocol for AI-powered analysis
-- Supports multiple projects via project selector
-
-**API Endpoints:**
-- `GET /api/beads/issues` - Raw issue data
-- `GET /api/beads/triage` - AI triage recommendations
-- `GET /api/beads/insights` - Graph metrics
-- `GET /api/beads/plan` - Parallel execution tracks
 
 ## Security
 
@@ -254,19 +317,15 @@ docker compose up -d agent-arena
 ```
 AgentArena/
 ├── api/                      # Node.js API server
-│   ├── server.js             # Main server (tmux, files, beads)
-│   ├── file-routes.js        # File operations API
-│   └── beads-routes.js       # Beads viewer API
+│   ├── server.js             # Main server (tmux, files)
+│   └── file-routes.js        # File operations API
 ├── dashboard/                # React + TypeScript web UI
 │   ├── src/
-│   │   ├── beads_module/     # Self-contained Beads integration
 │   │   └── components/       # Core dashboard components
 │   ├── tests/                # Playwright tests
 │   └── dist/                 # Built assets (copied to container)
 ├── nginx/                    # nginx config
-├── internal/                 # Internal tmux helpers
 ├── sandbox_overrides/        # Empty files overlaid on secrets in sandbox
-├── beads_viewer_integration/ # Integration analysis docs
 ├── tailscale_state/          # Persisted Tailscale identity (preserves hostname)
 ├── build1.dockerfile         # Main container definition
 ├── docker-compose.yml        # Service orchestration
@@ -279,6 +338,18 @@ AgentArena/
 ```
 
 ## Troubleshooting
+
+### Sessions "disappear" (root vs dev tmux split)
+
+tmux runs a separate server per user (socket lives under `/tmp/tmux-<uid>/`). If you create sessions as `root` (uid 0) but the Arena dashboard/API runs as `dev` (uid 1000), it will look like sessions randomly disappear.
+
+Use these commands inside the container:
+
+- Show both servers and sockets: `arena-sessions`
+- List dev sessions (recommended): `tmux-dev ls`
+- Run Gastown/Beads as dev even from a root shell: `gt-dev ...`, `bd-dev ...`
+
+Root interactive shells default to these wrappers to prevent accidental root-owned tmux servers. If you truly need root tmux (rare), use `tmux-root`.
 
 ### Container won't start
 

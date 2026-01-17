@@ -1,6 +1,11 @@
-# Arena Dev Environment
+## Deprecated
 
-A sandboxed Ubuntu container for running Gastown AI agents, accessible from any device on your Tailnet.
+The content of this file has been merged into the canonical repository README.
+
+- Read in repo: `README.md`
+- Read in container: `/README.md`
+
+This stub exists only to avoid breaking older links.
 
 ## Web Dashboard
 
@@ -54,16 +59,33 @@ Settings are automatically persisted to browser localStorage.
 | dev | dev | Standard user, sudo access, cannot write to /vault |
 | root | root | Can write everywhere including /vault |
 
+### Important: tmux sessions are per-user
+
+tmux runs a separate server per user (socket lives under `/tmp/tmux-<uid>/`).
+
+The dashboard/API/ttyd run as `dev` (uid 1000). If you create sessions as `root` (uid 0), they will *not* show up in the dashboard and it can look like Gastown sessions “randomly disappear”.
+
+Use these helpers (work even if you are logged in as root):
+
+```bash
+# Show both dev + root tmux servers + sockets
+arena-sessions
+
+# Always interact with the dev tmux server
+tmux-dev ls
+tmux-dev a -t gt-gastown-jack
+
+# Always run orchestrators as dev
+gt-dev status
+bd-dev --help
+```
+
+If you truly need root's tmux (rare), use `tmux-root`.
+
 ## Installed Tools
 
 - **Claude Code** - `claude --help`
 - **Gastown** - `gt --help`
-- **Beads** - `bd --help`
-- **beads_viewer** - `bv --help` (TUI for issue tracking and dependency graphs)
-  - `bv` - Interactive terminal UI for browsing .beads projects
-  - `bv --robot-triage` - JSON output for AI-powered triage (used by dashboard)
-  - `bv --robot-insights` - JSON graph metrics (PageRank, cycles, health)
-  - `bv --robot-plan` - JSON execution plan with parallel tracks
 - Git, tmux, Go, Node.js, npm, Python3, pip
 
 ## Running Gastown
@@ -103,10 +125,10 @@ To test the dashboard without running Gastown:
 # Create test sessions (run inside the container)
 bash /code/AgentArena/test-sessions.sh
 
-# Or manually:
-tmux new-session -d -s "hq-test1"
-tmux new-session -d -s "gt-myrig-agent1"
-tmux list-sessions
+# Or manually (recommended: use dev wrappers so they appear in the dashboard):
+tmux-dev new-session -d -s "hq-test1"
+tmux-dev new-session -d -s "gt-myrig-agent1"
+tmux-dev list-sessions
 ```
 
 ## Running AI Agents

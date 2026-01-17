@@ -1,0 +1,64 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - button "Terminal" [ref=e6] [cursor=pointer]
+        - button "Terminal 2" [ref=e7] [cursor=pointer]
+        - button "Files" [active] [ref=e8] [cursor=pointer]
+        - button "Beads" [ref=e9] [cursor=pointer]
+        - button "Settings" [ref=e10] [cursor=pointer]
+        - button "Help" [ref=e11] [cursor=pointer]
+      - generic [ref=e13]:
+        - button "|◀" [ref=e14] [cursor=pointer]
+        - button "▶" [ref=e15] [cursor=pointer]
+        - button "▶|" [ref=e16] [cursor=pointer]
+        - button "Convoy Run 1/10" [ref=e18] [cursor=pointer]:
+          - text: Convoy Run
+          - generic [ref=e19]: 1/10
+        - generic [ref=e20]:
+          - generic [ref=e21]: 🔊
+          - 'slider "Volume: 50%" [ref=e22] [cursor=pointer]': "0.5"
+    - generic [ref=e24]:
+      - generic [ref=e25]:
+        - generic [ref=e26]:
+          - heading "Files" [level=2] [ref=e27]
+          - generic [ref=e28]:
+            - button "Browser" [ref=e29] [cursor=pointer]
+            - button "Info" [ref=e30] [cursor=pointer]
+        - generic [ref=e31]:
+          - button "⬆ Upload" [ref=e33] [cursor=pointer]:
+            - generic [ref=e34]: ⬆
+            - text: Upload
+          - button "+📁" [ref=e35] [cursor=pointer]
+          - button "↻" [ref=e36] [cursor=pointer]
+          - button "↗" [ref=e37] [cursor=pointer]
+      - generic [ref=e38]:
+        - generic [ref=e39]:
+          - generic [ref=e41] [cursor=pointer]:
+            - generic [ref=e42]: 📬
+            - generic [ref=e43]: Send a package to E:/Code/incoming
+            - generic [ref=e44]: Drop files here or click to browse
+          - generic [ref=e45]:
+            - textbox "Add a note for the agent..." [ref=e46]
+            - button "Send" [disabled] [ref=e48]
+        - generic [ref=e49]:
+          - generic [ref=e50]:
+            - button "←" [disabled] [ref=e51]
+            - button "→" [disabled] [ref=e52]
+            - button "↑" [disabled] [ref=e53]
+          - navigation [ref=e54]:
+            - button / [ref=e55] [cursor=pointer]
+          - generic [ref=e56]:
+            - textbox "Filter..." [ref=e57]
+            - button "≡" [ref=e58] [cursor=pointer]
+            - button "⊞" [ref=e59] [cursor=pointer]
+        - generic [ref=e61]:
+          - generic [ref=e62]: ⚠
+          - generic [ref=e63]: Invalid directory response
+          - button "Retry" [ref=e64] [cursor=pointer]
+        - generic [ref=e66]: 0 items
+  - status [ref=e67]
+```

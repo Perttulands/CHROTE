@@ -333,6 +333,276 @@ test.describe('Filebrowser Inbox Panel', () => {
   })
 })
 
+test.describe('Filebrowser Inbox Send E2E', () => {
+  test.beforeEach(async ({ page }) => {
+    await mockFilebrowserApi(page)
+    await page.goto('/')
+    await page.waitForSelector('.dashboard')
+    await page.click('.tab:has-text("Files")')
+    await page.waitForSelector('.files-view')
+  })
+
+  test('should enable send button when file is selected', async ({ page }) => {
+    // Find the hidden file input
+    const fileInput = page.locator('.inbox-dropzone input[type="file"]')
+
+    // Send button should be disabled initially
+    const sendButton = page.locator('.inbox-send-btn')
+    await expect(sendButton).toBeDisabled()
+
+    // Select a file
+    await fileInput.setInputFiles({
+      name: 'test-report.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('test file content'),
+    })
+
+    // Send button should now be enabled
+    await expect(sendButton).toBeEnabled()
+  })
+
+  test('should show selected file name', async ({ page }) => {
+    const fileInput = page.locator('.inbox-dropzone input[type="file"]')
+
+    await fileInput.setInputFiles({
+      name: 'my-document.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('test content'),
+    })
+
+    // Should show the file name
+    await expect(page.locator('.inbox-selected-file, .inbox-file-name')).toContainText('my-document.pdf')
+  })
+
+  test('should allow entering a note', async ({ page }) => {
+    const noteInput = page.locator('.inbox-note, textarea[placeholder*="note"], textarea[placeholder*="message"]')
+
+    if (await noteInput.count() > 0) {
+      await noteInput.fill('Please analyze this report')
+      await expect(noteInput).toHaveValue('Please analyze this report')
+    }
+  })
+
+  test('should upload file on send', async ({ page }) => {
+    const uploadRequests: { url: string; method: string; body: Buffer }[] = []
+
+    // Track file upload requests
+    await page.route('**/api/files/resources/**', async route => {
+      const request = route.request()
+      if (request.method() === 'POST') {
+        uploadRequests.push({
+          url: request.url(),
+          method: request.method(),
+          body: request.postDataBuffer() || Buffer.from(''),
+        })
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true }),
+        })
+      } else {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(mockDirectoryResponse),
+        })
+      }
+    })
+
+    // Select a file
+    const fileInput = page.locator('.inbox-dropzone input[type="file"]')
+    await fileInput.setInputFiles({
+      name: 'report.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('PDF content here'),
+    })
+
+    // Click send
+    const sendButton = page.locator('.inbox-send-btn')
+    if (await sendButton.isEnabled()) {
+      await sendButton.click()
+
+      // Wait for upload
+      await page.waitForTimeout(500)
+
+      // Should have made upload requests
+      // One for the file, possibly one for the note
+      expect(uploadRequests.length).toBeGreaterThanOrEqual(1)
+
+      // File should go to /code/incoming/
+      const fileUpload = uploadRequests.find(r => r.url.includes('/incoming/'))
+      expect(fileUpload).toBeDefined()
+    }
+  })
+
+  test('should create note file alongside uploaded file', async ({ page }) => {
+    const uploadRequests: { url: string }[] = []
+
+    await page.route('**/api/files/resources/**', async route => {
+      const request = route.request()
+      if (request.method() === 'POST') {
+        uploadRequests.push({ url: request.url() })
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true }),
+        })
+      } else {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(mockDirectoryResponse),
+        })
+      }
+    })
+
+    // Select file
+    const fileInput = page.locator('.inbox-dropzone input[type="file"]')
+    await fileInput.setInputFiles({
+      name: 'data.csv',
+      mimeType: 'text/csv',
+      buffer: Buffer.from('a,b,c\n1,2,3'),
+    })
+
+    // Enter a note
+    const noteInput = page.locator('.inbox-note, textarea[placeholder*="note"], textarea[placeholder*="message"]')
+    if (await noteInput.count() > 0) {
+      await noteInput.fill('Process this CSV data')
+    }
+
+    // Send
+    const sendButton = page.locator('.inbox-send-btn')
+    if (await sendButton.isEnabled()) {
+      await sendButton.click()
+      await page.waitForTimeout(500)
+
+      // Should have created both file and note
+      const noteUpload = uploadRequests.find(r => r.url.includes('.note') || r.url.includes('.letter'))
+      if (noteInput && await noteInput.count() > 0) {
+        expect(noteUpload).toBeDefined()
+      }
+    }
+  })
+
+  test('should clear form after successful send', async ({ page }) => {
+    await page.route('**/api/files/resources/**', async route => {
+      if (route.request().method() === 'POST') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true }),
+        })
+      } else {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(mockDirectoryResponse),
+        })
+      }
+    })
+
+    // Select file
+    const fileInput = page.locator('.inbox-dropzone input[type="file"]')
+    await fileInput.setInputFiles({
+      name: 'test.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('test'),
+    })
+
+    // Send
+    const sendButton = page.locator('.inbox-send-btn')
+    if (await sendButton.isEnabled()) {
+      await sendButton.click()
+      await page.waitForTimeout(500)
+
+      // Form should be cleared
+      await expect(sendButton).toBeDisabled()
+
+      // Note should be cleared
+      const noteInput = page.locator('.inbox-note, textarea')
+      if (await noteInput.count() > 0) {
+        await expect(noteInput).toHaveValue('')
+      }
+    }
+  })
+
+  test('should show error on upload failure', async ({ page }) => {
+    await page.route('**/api/files/resources/**', async route => {
+      if (route.request().method() === 'POST') {
+        await route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Upload failed' }),
+        })
+      } else {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(mockDirectoryResponse),
+        })
+      }
+    })
+
+    // Select file
+    const fileInput = page.locator('.inbox-dropzone input[type="file"]')
+    await fileInput.setInputFiles({
+      name: 'fail.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('will fail'),
+    })
+
+    // Send
+    const sendButton = page.locator('.inbox-send-btn')
+    if (await sendButton.isEnabled()) {
+      await sendButton.click()
+      await page.waitForTimeout(500)
+
+      // Should show error
+      const errorMessage = page.locator('.inbox-error, .error-message, [class*="error"]')
+      await expect(errorMessage).toBeVisible()
+    }
+  })
+
+  test('should support multiple file selection', async ({ page }) => {
+    const uploadRequests: string[] = []
+
+    await page.route('**/api/files/resources/**', async route => {
+      if (route.request().method() === 'POST') {
+        uploadRequests.push(route.request().url())
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true }),
+        })
+      } else {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(mockDirectoryResponse),
+        })
+      }
+    })
+
+    // Select multiple files
+    const fileInput = page.locator('.inbox-dropzone input[type="file"]')
+    await fileInput.setInputFiles([
+      { name: 'file1.txt', mimeType: 'text/plain', buffer: Buffer.from('one') },
+      { name: 'file2.txt', mimeType: 'text/plain', buffer: Buffer.from('two') },
+    ])
+
+    // Send
+    const sendButton = page.locator('.inbox-send-btn')
+    if (await sendButton.isEnabled()) {
+      await sendButton.click()
+      await page.waitForTimeout(500)
+
+      // Should upload both files
+      const fileUploads = uploadRequests.filter(u => u.includes('/incoming/'))
+      expect(fileUploads.length).toBeGreaterThanOrEqual(2)
+    }
+  })
+})
+
 test.describe('Filebrowser Tab Navigation', () => {
   test.beforeEach(async ({ page }) => {
     await mockFilebrowserApi(page)

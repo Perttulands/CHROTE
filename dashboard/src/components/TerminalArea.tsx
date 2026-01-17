@@ -1,8 +1,16 @@
 import { useSession } from '../context/SessionContext'
 import TerminalWindow from './TerminalWindow'
+import type { WorkspaceId } from '../types'
 
-function TerminalArea() {
-  const { windows, windowCount, setWindowCount, isDragging, focusedWindowIndex, setFocusedWindowIndex } = useSession()
+interface TerminalAreaProps {
+  workspaceId: WorkspaceId
+}
+
+function TerminalArea({ workspaceId }: TerminalAreaProps) {
+  const { workspaces, setWindowCount, isDragging } = useSession()
+  const workspace = workspaces[workspaceId]
+  const windows = workspace.windows
+  const windowCount = workspace.windowCount
 
   // Get grid class based on window count
   const getGridClass = () => {
@@ -23,7 +31,7 @@ function TerminalArea() {
           <button
             key={count}
             className={`layout-btn ${windowCount === count ? 'active' : ''}`}
-            onClick={() => setWindowCount(count)}
+            onClick={() => setWindowCount(workspaceId, count)}
             title={`${count} window${count > 1 ? 's' : ''}`}
           >
             {count}
@@ -32,13 +40,12 @@ function TerminalArea() {
       </div>
 
       <div className={`terminal-grid ${getGridClass()}`}>
-        {windows.slice(0, windowCount).map((window, index) => (
+        {windows.slice(0, windowCount).map((window) => (
           <TerminalWindow
             key={window.id}
+            workspaceId={workspaceId}
             window={window}
             isDragging={isDragging}
-            isFocused={index === focusedWindowIndex}
-            onFocus={() => setFocusedWindowIndex(index)}
           />
         ))}
       </div>

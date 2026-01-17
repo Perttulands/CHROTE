@@ -1,0 +1,87 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - button "Terminal" [ref=e6] [cursor=pointer]
+        - button "Terminal 2" [ref=e7] [cursor=pointer]
+        - button "Files" [ref=e8] [cursor=pointer]
+        - button "Beads" [ref=e9] [cursor=pointer]
+        - button "Settings" [ref=e10] [cursor=pointer]
+        - button "Help" [ref=e11] [cursor=pointer]
+      - generic [ref=e13]:
+        - button "|◀" [ref=e14] [cursor=pointer]
+        - button "▶" [ref=e15] [cursor=pointer]
+        - button "▶|" [ref=e16] [cursor=pointer]
+        - button "Convoy Run 1/10" [ref=e18] [cursor=pointer]:
+          - text: Convoy Run
+          - generic [ref=e19]: 1/10
+        - generic [ref=e20]:
+          - generic [ref=e21]: 🔊
+          - 'slider "Volume: 50%" [ref=e22] [cursor=pointer]': "0.5"
+    - generic [ref=e23]:
+      - generic [ref=e24]:
+        - generic [ref=e25]:
+          - button "«" [ref=e26] [cursor=pointer]
+          - generic [ref=e27]: Sessions
+          - button "+" [ref=e28] [cursor=pointer]
+          - button "↻" [ref=e29] [cursor=pointer]
+        - textbox "Filter sessions..." [ref=e31]
+        - generic [ref=e32]:
+          - generic [ref=e33]:
+            - generic [ref=e34] [cursor=pointer]:
+              - generic [ref=e35]: ▼
+              - generic [ref=e36]: HQ
+              - generic [ref=e37]: "2"
+            - generic [ref=e38]:
+              - button "hq-mayor" [ref=e39]:
+                - generic [ref=e40]: hq-mayor
+              - button "hq-deacon ●" [ref=e41]:
+                - generic [ref=e42]: hq-deacon
+                - generic "Attached elsewhere" [ref=e43]: ●
+          - generic [ref=e44]:
+            - generic [ref=e45] [cursor=pointer]:
+              - generic [ref=e46]: ▼
+              - generic [ref=e47]: Main
+              - generic [ref=e48]: "1"
+            - button "main" [ref=e50]:
+              - generic [ref=e51]: main
+          - generic [ref=e52]:
+            - generic [ref=e53] [cursor=pointer]:
+              - generic [ref=e54]: ▼
+              - generic [ref=e55]: Beads
+              - generic [ref=e56]: "2"
+            - generic [ref=e57]:
+              - button "gt-beads-lizzy" [ref=e58]:
+                - generic [ref=e59]: gt-beads-lizzy
+              - button "gt-beads-darcy" [ref=e60]:
+                - generic [ref=e61]: gt-beads-darcy
+          - generic [ref=e62]:
+            - generic [ref=e63] [cursor=pointer]:
+              - generic [ref=e64]: ▼
+              - generic [ref=e65]: Gastown
+              - generic [ref=e66]: "3"
+            - generic [ref=e67]:
+              - button "gt-gastown-jack" [ref=e68]:
+                - generic [ref=e69]: gt-gastown-jack
+              - button "gt-gastown-joe" [ref=e70]:
+                - generic [ref=e71]: gt-gastown-joe
+              - button "gt-gastown-max" [ref=e72]:
+                - generic [ref=e73]: gt-gastown-max
+        - button "☢ Nuke All" [ref=e75] [cursor=pointer]
+      - generic [ref=e76]:
+        - generic [ref=e77]:
+          - generic [ref=e78]: "Layout:"
+          - button "1" [ref=e79] [cursor=pointer]
+          - button "2" [ref=e80] [cursor=pointer]
+          - button "3" [ref=e81] [cursor=pointer]
+          - button "4" [ref=e82] [cursor=pointer]
+        - generic [ref=e89]:
+          - button "+ New Session" [ref=e90] [cursor=pointer]:
+            - generic [ref=e91]: +
+            - generic [ref=e92]: New Session
+          - generic [ref=e93]: or drag a session here
+  - status [ref=e94]
+```

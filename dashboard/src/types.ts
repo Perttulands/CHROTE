@@ -91,6 +91,13 @@ export interface TerminalWindow {
   colorIndex: number // 0-3 for window color theme
 }
 
+export type WorkspaceId = 'terminal1' | 'terminal2'
+
+export interface TerminalWorkspace {
+  windows: TerminalWindow[]
+  windowCount: number // 1-4
+}
+
 export interface DashboardState {
   // Session data from API
   sessions: TmuxSession[]
@@ -99,9 +106,7 @@ export interface DashboardState {
   error: string | null
 
   // Window configuration
-  windows: TerminalWindow[]
-  windowCount: number // 1-4
-  focusedWindowIndex: number // 0-based index of focused window
+  workspaces: Record<WorkspaceId, TerminalWorkspace>
 
   // UI state
   sidebarCollapsed: boolean
@@ -109,7 +114,7 @@ export interface DashboardState {
   isDragging: boolean // True when a session is being dragged
 
   // Computed: which sessions are assigned to any window
-  assignedSessions: Map<string, { windowId: string; colorIndex: number; windowIndex: number }>
+  assignedSessions: Map<string, { workspaceId: WorkspaceId; windowId: string; colorIndex: number; windowIndex: number }>
 
   // User settings
   settings: UserSettings
@@ -117,13 +122,11 @@ export interface DashboardState {
 
 export interface DashboardActions {
   // Window management
-  setWindowCount: (count: number) => void
-  addSessionToWindow: (windowId: string, sessionName: string) => void
-  removeSessionFromWindow: (windowId: string, sessionName: string) => void
-  setActiveSession: (windowId: string, sessionName: string) => void
-  cycleSession: (windowId: string, direction: 'prev' | 'next') => void
-  cycleWindow: (direction: 'prev' | 'next') => void
-  setFocusedWindowIndex: (index: number) => void
+  setWindowCount: (workspaceId: WorkspaceId, count: number) => void
+  addSessionToWindow: (workspaceId: WorkspaceId, windowId: string, sessionName: string) => void
+  removeSessionFromWindow: (workspaceId: WorkspaceId, windowId: string, sessionName: string) => void
+  setActiveSession: (workspaceId: WorkspaceId, windowId: string, sessionName: string) => void
+  cycleSession: (workspaceId: WorkspaceId, windowId: string, direction: 'prev' | 'next') => void
 
   // UI actions
   toggleSidebar: () => void

@@ -1,6 +1,6 @@
 import MusicPlayer from './MusicPlayer'
 
-type Tab = 'terminal' | 'files' | 'settings' | 'beads' | 'help'
+type Tab = 'terminal1' | 'terminal2' | 'files' | 'beads' | 'settings' | 'help'
 
 interface InternalTab {
   id: Tab
@@ -24,7 +24,8 @@ interface TabBarProps {
 
 function TabBar({ activeTab, onTabChange }: TabBarProps) {
   const tabs: TabConfig[] = [
-    { id: 'terminal', label: 'Terminal' },
+    { id: 'terminal1', label: 'Terminal' },
+    { id: 'terminal2', label: 'Terminal 2' },
     { id: 'files', label: 'Files' },
     { id: 'beads', label: 'Beads' },
     { id: 'settings', label: 'Settings' },

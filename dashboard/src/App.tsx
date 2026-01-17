@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { DndContext, DragEndEvent, DragStartEvent, DragOverlay, useSensor, useSensors, PointerSensor } from '@dnd-kit/core'
 import { SessionProvider, useSession } from './context/SessionContext'
 import TabBar from './components/TabBar'
@@ -8,9 +8,9 @@ import FilesView from './components/FilesView'
 import SettingsView from './components/SettingsView'
 import FloatingModal from './components/FloatingModal'
 import HelpView from './components/HelpView'
-import { BeadsTab } from './beads_module'
+import BeadsView from './components/BeadsView'
 
-type Tab = 'terminal' | 'files' | 'settings' | 'beads' | 'help'
+type Tab = 'terminal1' | 'terminal2' | 'files' | 'beads' | 'settings' | 'help'
 
 // Dragged item overlay component
 function DraggedSessionOverlay({ name }: { name: string }) {
@@ -23,40 +23,9 @@ function DraggedSessionOverlay({ name }: { name: string }) {
 }
 
 function DashboardContent() {
-  const [activeTab, setActiveTab] = useState<Tab>('terminal')
+  const [activeTab, setActiveTab] = useState<Tab>('terminal1')
   const [activeDragId, setActiveDragId] = useState<string | null>(null)
-  const { addSessionToWindow, removeSessionFromWindow, setIsDragging, isDragging, settings, cycleWindow, cycleSession, windows, focusedWindowIndex } = useSession()
-
-  // Keyboard handler for Ctrl+Up/Down (cycle windows) and Ctrl+Left/Right (cycle sessions)
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (!e.ctrlKey) return
-
-    if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      cycleWindow('prev')
-    } else if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      cycleWindow('next')
-    } else if (e.key === 'ArrowLeft') {
-      e.preventDefault()
-      const focusedWindow = windows[focusedWindowIndex]
-      if (focusedWindow) {
-        cycleSession(focusedWindow.id, 'prev')
-      }
-    } else if (e.key === 'ArrowRight') {
-      e.preventDefault()
-      const focusedWindow = windows[focusedWindowIndex]
-      if (focusedWindow) {
-        cycleSession(focusedWindow.id, 'next')
-      }
-    }
-  }, [cycleWindow, cycleSession, windows, focusedWindowIndex])
-
-  // Register keyboard handler
-  useEffect(() => {
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [handleKeyDown])
+  const { addSessionToWindow, removeSessionFromWindow, setIsDragging, isDragging, settings } = useSession()
 
   // Apply theme to document
   useEffect(() => {
@@ -77,7 +46,12 @@ function DashboardContent() {
   )
 
   const handleDragStart = (event: DragStartEvent) => {
-    setActiveDragId(event.active.id as string)
+    const type = event.active.data.current?.type
+    if (type === 'tag') {
+      setActiveDragId(event.active.data.current?.sessionName ?? null)
+    } else {
+      setActiveDragId(event.active.id as string)
+    }
     setIsDragging(true)
   }
 
@@ -89,8 +63,8 @@ function DashboardContent() {
     if (!over) {
       // Dragged outside - if it's a tag, remove it from the window
       if (active.data.current?.type === 'tag') {
-        const { sessionName, sourceWindowId } = active.data.current
-        removeSessionFromWindow(sourceWindowId, sessionName)
+        const { sessionName, sourceWindowId, sourceWorkspaceId } = active.data.current
+        removeSessionFromWindow(sourceWorkspaceId, sourceWindowId, sessionName)
       }
       return
     }
@@ -98,16 +72,16 @@ function DashboardContent() {
     // Dropped on a window
     if (over.data.current?.type === 'window') {
       const targetWindowId = over.data.current.windowId
+      const targetWorkspaceId = over.data.current.workspaceId as 'terminal1' | 'terminal2'
 
       if (active.data.current?.type === 'session') {
         // Dragging from panel
-        addSessionToWindow(targetWindowId, active.id as string)
+        addSessionToWindow(targetWorkspaceId, targetWindowId, active.id as string)
       } else if (active.data.current?.type === 'tag') {
         // Dragging a tag between windows
-        const { sessionName, sourceWindowId } = active.data.current
-        if (sourceWindowId !== targetWindowId) {
-          removeSessionFromWindow(sourceWindowId, sessionName)
-          addSessionToWindow(targetWindowId, sessionName)
+        const { sessionName, sourceWindowId, sourceWorkspaceId } = active.data.current
+        if (sourceWindowId !== targetWindowId || sourceWorkspaceId !== targetWorkspaceId) {
+          addSessionToWindow(targetWorkspaceId, targetWindowId, sessionName)
         }
       }
     }
@@ -119,15 +93,15 @@ function DashboardContent() {
         <TabBar activeTab={activeTab} onTabChange={setActiveTab} />
 
         <div className="dashboard-content">
-          {activeTab === 'terminal' && (
+          {(activeTab === 'terminal1' || activeTab === 'terminal2') && (
             <>
               <SessionPanel />
-              <TerminalArea />
+              <TerminalArea workspaceId={activeTab} />
             </>
           )}
           {activeTab === 'files' && <FilesView />}
+          {activeTab === 'beads' && <BeadsView />}
           {activeTab === 'settings' && <SettingsView />}
-          {activeTab === 'beads' && <BeadsTab />}
           {activeTab === 'help' && <HelpView />}
         </div>
 

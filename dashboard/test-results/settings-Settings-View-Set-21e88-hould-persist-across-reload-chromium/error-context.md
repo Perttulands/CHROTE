@@ -1,0 +1,56 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - button "Terminal" [ref=e6] [cursor=pointer]
+        - button "Terminal 2" [ref=e7] [cursor=pointer]
+        - button "Files" [ref=e8] [cursor=pointer]
+        - button "Beads" [ref=e9] [cursor=pointer]
+        - button "Settings" [ref=e10] [cursor=pointer]
+        - button "Help" [ref=e11] [cursor=pointer]
+      - generic [ref=e13]:
+        - button "|◀" [ref=e14] [cursor=pointer]
+        - button "▶" [ref=e15] [cursor=pointer]
+        - button "▶|" [ref=e16] [cursor=pointer]
+        - button "Convoy Run 1/10" [ref=e18] [cursor=pointer]:
+          - text: Convoy Run
+          - generic [ref=e19]: 1/10
+        - generic [ref=e20]:
+          - generic [ref=e21]: 🔊
+          - 'slider "Volume: NaN%" [ref=e22] [cursor=pointer]': "0.5"
+    - generic [ref=e23]:
+      - button "»" [ref=e26] [cursor=pointer]
+      - generic [ref=e27]:
+        - generic [ref=e28]:
+          - generic [ref=e29]: "Layout:"
+          - button "1" [ref=e30] [cursor=pointer]
+          - button "2" [ref=e31] [cursor=pointer]
+          - button "3" [ref=e32] [cursor=pointer]
+          - button "4" [ref=e33] [cursor=pointer]
+        - generic [ref=e34]:
+          - generic [ref=e35]:
+            - button "mayor ×" [ref=e38]:
+              - generic [ref=e39] [cursor=pointer]: mayor
+              - button "×" [ref=e40] [cursor=pointer]
+            - iframe [ref=e44]:
+              
+          - generic [ref=e50]:
+            - button "+ New Session" [ref=e51] [cursor=pointer]:
+              - generic [ref=e52]: +
+              - generic [ref=e53]: New Session
+            - generic [ref=e54]: or drag a session here
+          - generic [ref=e60]:
+            - button "+ New Session" [ref=e61] [cursor=pointer]:
+              - generic [ref=e62]: +
+              - generic [ref=e63]: New Session
+            - generic [ref=e64]: or drag a session here
+          - generic [ref=e70]:
+            - button "+ New Session" [ref=e71] [cursor=pointer]:
+              - generic [ref=e72]: +
+              - generic [ref=e73]: New Session
+            - generic [ref=e74]: or drag a session here
+  - status [ref=e75]
+```

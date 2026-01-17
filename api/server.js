@@ -442,14 +442,13 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// BEADS MODULE INTEGRATION - START
-const beadsRoutes = require('./beads-routes');
-app.use('/api/beads', beadsRoutes);
-// BEADS MODULE INTEGRATION - END
-
 // FILE API - replaces filebrowser container
 const fileRoutes = require('./file-routes');
 app.use('/api/files', fileRoutes);
+
+// BEADS API - beads_viewer integration
+const beadsRoutes = require('./beads-routes');
+app.use('/api/beads', beadsRoutes);
 
 const PORT = process.env.API_PORT || 3001;
 app.listen(PORT, '0.0.0.0', () => {

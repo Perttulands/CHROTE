@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-type HelpSection = 'overview' | 'terminal' | 'sessions' | 'files' | 'beads' | 'shortcuts' | 'tips'
+type HelpSection = 'overview' | 'terminal' | 'sessions' | 'files' | 'shortcuts' | 'tips'
 
 interface SectionConfig {
   id: HelpSection
@@ -13,9 +13,8 @@ const sections: SectionConfig[] = [
   { id: 'terminal', label: 'Terminal', icon: '02' },
   { id: 'sessions', label: 'Sessions', icon: '03' },
   { id: 'files', label: 'Files', icon: '04' },
-  { id: 'beads', label: 'Beads', icon: '05' },
-  { id: 'shortcuts', label: 'tmux', icon: '06' },
-  { id: 'tips', label: 'Tips', icon: '07' },
+  { id: 'shortcuts', label: 'tmux', icon: '05' },
+  { id: 'tips', label: 'Tips', icon: '06' },
 ]
 
 function HelpView() {
@@ -31,8 +30,6 @@ function HelpView() {
         return <SessionsSection />
       case 'files':
         return <FilesSection />
-      case 'beads':
-        return <BeadsSection />
       case 'shortcuts':
         return <ShortcutsSection />
       case 'tips':
@@ -174,7 +171,7 @@ function TerminalSection() {
             <span className="help-control-icon">&#x21BB;</span>
             <div>
               <strong>Cycle Sessions</strong>
-              <p>When multiple sessions are assigned, cycle through them with tabs or keyboard.</p>
+              <p>When multiple sessions are assigned, cycle through them with the arrow buttons.</p>
             </div>
           </div>
         </div>
@@ -293,59 +290,6 @@ function FilesSection() {
       <div className="help-card help-card-accent">
         <h3>Workspace Path</h3>
         <p>The file browser is rooted at the configured workspace directory. All agent operations happen within this sandboxed environment.</p>
-      </div>
-    </div>
-  )
-}
-
-function BeadsSection() {
-  return (
-    <div className="help-section-content">
-      <h2>Beads - Issue Tracking</h2>
-      <p className="help-intro">Visualize and manage issues with multiple view modes for different workflows.</p>
-
-      <div className="help-card">
-        <h3>View Modes</h3>
-        <div className="help-beads-views">
-          <div className="help-beads-view-item">
-            <div className="help-beads-view-icon">&#x1F578;</div>
-            <div>
-              <strong>Graph View</strong>
-              <p>Interactive dependency graph showing relationships between issues.</p>
-            </div>
-          </div>
-          <div className="help-beads-view-item">
-            <div className="help-beads-view-icon">&#x25A6;</div>
-            <div>
-              <strong>Kanban Board</strong>
-              <p>Drag issues between columns to update their status.</p>
-            </div>
-          </div>
-          <div className="help-beads-view-item">
-            <div className="help-beads-view-icon">&#x2261;</div>
-            <div>
-              <strong>Triage View</strong>
-              <p>List view for quickly reviewing and prioritizing issues.</p>
-            </div>
-          </div>
-          <div className="help-beads-view-item">
-            <div className="help-beads-view-icon">&#x2139;</div>
-            <div>
-              <strong>Insights</strong>
-              <p>Analytics and metrics about your issue backlog.</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="help-card">
-        <h3>Issue Properties</h3>
-        <ul className="help-list">
-          <li><strong>Priority</strong> - Critical, High, Medium, Low</li>
-          <li><strong>Status</strong> - Open, In Progress, Done, Blocked</li>
-          <li><strong>Dependencies</strong> - Link issues that depend on each other</li>
-          <li><strong>Tags</strong> - Categorize with custom labels</li>
-        </ul>
       </div>
     </div>
   )
@@ -635,17 +579,6 @@ function TipsSection() {
       <div className="help-card help-card-accent">
         <h3>Need More Help?</h3>
         <p>Check the <strong>Status</strong> tab to verify system health, or visit the <strong>Settings</strong> tab to customize your experience.</p>
-      </div>
-
-      <div className="help-credits">
-        <h3>Credits</h3>
-        <p>
-          The Beads task management system was created by{' '}
-          <a href="https://steve-yegge.blogspot.com/" target="_blank" rel="noopener noreferrer">
-            Steve Yegge
-          </a>
-          .
-        </p>
       </div>
     </div>
   )

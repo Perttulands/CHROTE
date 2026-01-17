@@ -11,7 +11,6 @@ Last updated: 2026-01-16
 - **Move sessions between panes quickly** (drag-and-drop).
 - **Manage files in the mounted workspace** (browse, upload, download, rename, delete, create folders).
 - **Send "packages" to agents** via an incoming folder workflow.
-- Optionally visualize Beads projects (issues/dependencies) via a self-contained Beads module.
 
 The product exists to solve a very specific pain: once an orchestrator spawns 10–30+ agent sessions, native tmux alone becomes hard to monitor remotely and hard to "sample" without constantly detaching/attaching. AgentArena makes the tmux swarm legible, navigable, and safe to access from any device.
 
@@ -50,7 +49,6 @@ Tabs:
 
 - **Terminal**: multi-pane tmux session viewer + session sidebar
 - **Files**: native file browser UI + Inbox/package workflow
-- **Beads**: optional project visualization (graph/kanban/triage/insights)
 - **Settings**: theme, terminal font size, polling interval, session prefix, tmux appearance
 - **Help**: lightweight guidance
 
@@ -65,7 +63,6 @@ Node/Express API behind nginx under `/api/`:
 - nuke all sessions
 - apply tmux appearance settings (hot-reload)
 - file operations (`/api/files/*`)
-- optional Beads endpoints (`/api/beads/*`)
 
 ## 6) Key workflows (How users use it)
 
@@ -164,20 +161,6 @@ Node/Express API behind nginx under `/api/`:
 - Target path: `/code/incoming` (host mapped to `E:/Code/incoming`).
 - When a note is provided, write a sidecar note file next to the first file (current: `originalFilename.note`).
 
-### 7.4 Beads (optional module)
-
-Beads integration is a removable module.
-
-**Project selection**
-- Allow selecting a project path under allowed roots.
-
-**Data sources**
-- Read `.beads/issues.jsonl` from the selected project.
-
-**Robot protocol (best-effort)**
-- If `bv` is installed, call robot commands for triage/insights/plan.
-- If not installed, provide graceful fallback responses.
-
 ## 8) Non-functional requirements
 
 ### 8.1 Remote access + security posture
@@ -213,7 +196,6 @@ This section describes the intended path from "working tool" → "reliable daily
 ### Milestone C — Security hardening (optional, Tailnet-dependent)
 - Document and optionally enable API bearer token auth (`API_AUTH_TOKEN`).
 - Document restricted CORS allowlist (`CORS_ORIGINS`) when used outside strict Tailnet assumptions.
-- Re-validate file path restrictions for Beads project selection.
 
 ### Milestone D — Workflow polish
 - Decide on the canonical Inbox sidecar format (keep `.note` or switch to `.letter`) and standardize across docs + any downstream agent tooling.
@@ -236,7 +218,3 @@ This section describes the intended path from "working tool" → "reliable daily
 - Upload/download/rename/delete/create folder.
 - Multi-select and shortcuts (F2/Del/F5/Ctrl+A).
 - Inbox writes files to `/code/incoming` and writes a note sidecar.
-
-### Beads (when enabled)
-- Can load issues from `.beads/issues.jsonl` under an allowed root.
-- Triage/insights/plan endpoints return usable data (robot or fallback).

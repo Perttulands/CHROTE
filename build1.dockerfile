@@ -116,8 +116,75 @@ else\n\
 fi\n\
 ' > /usr/local/bin/terminal-launch.sh && chmod +x /usr/local/bin/terminal-launch.sh
 
+# 6a3. Robust helpers: always operate on dev's tmux server even from root
+# - as-dev: run any command as dev with consistent env
+# - tmux-dev/gt-dev/bd-dev: convenience wrappers
+# - arena-sessions: show both root and dev tmux servers for debugging
+# - root shells get safe aliases so accidental root tmux servers don't happen
+RUN set -eux; \
+  cat > /usr/local/bin/as-dev <<'EOF'
+#!/bin/bash
+set -euo pipefail
+
+# Run a command as the dev user with a stable environment.
+# This avoids the common "root vs dev tmux server" split.
+exec sudo -u dev -H env \
+  HOME=/home/dev \
+  USER=dev \
+  TMUX_TMPDIR=/tmp \
+  LANG=en_US.UTF-8 \
+  LC_ALL=en_US.UTF-8 \
+  PATH=/usr/local/bin:/usr/bin:/bin:/home/dev/.local/bin:/home/dev/go/bin \
+  "$@"
+EOF
+  chmod +x /usr/local/bin/as-dev; \
+  cat > /usr/local/bin/tmux-dev <<'EOF'
+#!/bin/bash
+exec /usr/local/bin/as-dev tmux "$@"
+EOF
+  chmod +x /usr/local/bin/tmux-dev; \
+  cat > /usr/local/bin/gt-dev <<'EOF'
+#!/bin/bash
+exec /usr/local/bin/as-dev gt "$@"
+EOF
+  chmod +x /usr/local/bin/gt-dev; \
+  cat > /usr/local/bin/bd-dev <<'EOF'
+#!/bin/bash
+exec /usr/local/bin/as-dev bd "$@"
+EOF
+  chmod +x /usr/local/bin/bd-dev; \
+  cat > /usr/local/bin/arena-sessions <<'EOF'
+#!/bin/bash
+set -euo pipefail
+
+echo "== dev sessions (uid 1000) =="
+/usr/local/bin/tmux-dev list-sessions 2>/dev/null || echo "(none)"
+
+echo
+
+echo "== root sessions (uid 0) =="
+TMUX_TMPDIR=/tmp tmux list-sessions 2>/dev/null || echo "(none)"
+
+echo
+
+echo "== sockets =="
+ls -la /tmp/tmux-* 2>/dev/null || true
+EOF
+  chmod +x /usr/local/bin/arena-sessions; \
+  cat > /etc/profile.d/arena-aliases.sh <<'EOF'
+# Root interactive shells default to dev wrappers.
+if [ "$(id -u)" -eq 0 ]; then
+  alias tmux=tmux-dev
+  alias gt=gt-dev
+  alias bd=bd-dev
+  alias arena-sessions=/usr/local/bin/arena-sessions
+  # Escape hatch for true root tmux (rarely needed):
+  alias tmux-root='command tmux'
+fi
+EOF
+
 # 6b. Add README to container root
-COPY arena-readme.md /README.md
+COPY README.md /README.md
 
 # 6c. Copy API server (owned by dev so it can run as dev)
 COPY api /srv/api

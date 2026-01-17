@@ -2,14 +2,15 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useDroppable, useDraggable } from '@dnd-kit/core'
 import { useSession } from '../context/SessionContext'
 import { WINDOW_COLORS } from '../types'
-import type { TerminalWindow as TerminalWindowType } from '../types'
+import type { TerminalWindow as TerminalWindowType, WorkspaceId } from '../types'
 
 interface CreateSessionButtonProps {
+  workspaceId: WorkspaceId
   windowId: string
   accentColor: string
 }
 
-function CreateSessionButton({ windowId, accentColor }: CreateSessionButtonProps) {
+function CreateSessionButton({ workspaceId, windowId, accentColor }: CreateSessionButtonProps) {
   const [creating, setCreating] = useState(false)
   const { settings, refreshSessions, addSessionToWindow } = useSession()
 
@@ -24,7 +25,7 @@ function CreateSessionButton({ windowId, accentColor }: CreateSessionButtonProps
       })
       if (response.ok) {
         await refreshSessions()
-        addSessionToWindow(windowId, sessionName)
+        addSessionToWindow(workspaceId, windowId, sessionName)
       }
     } catch (e) {
       console.error('Failed to create session:', e)
@@ -48,15 +49,16 @@ function CreateSessionButton({ windowId, accentColor }: CreateSessionButtonProps
 }
 
 interface DropOverlayProps {
+  workspaceId: WorkspaceId
   windowId: string
   isVisible: boolean
 }
 
 // Full-window drop overlay that appears during drag
-function DropOverlay({ windowId, isVisible }: DropOverlayProps) {
+function DropOverlay({ workspaceId, windowId, isVisible }: DropOverlayProps) {
   const { setNodeRef, isOver } = useDroppable({
-    id: `drop-${windowId}`,
-    data: { type: 'window', windowId },
+    id: `drop-${workspaceId}-${windowId}`,
+    data: { type: 'window', workspaceId, windowId },
   })
 
   if (!isVisible) return null
@@ -74,15 +76,16 @@ function DropOverlay({ windowId, isVisible }: DropOverlayProps) {
 interface SessionTagProps {
   sessionName: string
   isActive: boolean
+  workspaceId: WorkspaceId
   windowId: string
   onRemove: () => void
   onClick: () => void
 }
 
-function SessionTag({ sessionName, isActive, windowId, onRemove, onClick }: SessionTagProps) {
+function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, onClick }: SessionTagProps) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
-    id: `tag-${windowId}-${sessionName}`,
-    data: { type: 'tag', sessionName, sourceWindowId: windowId },
+    id: `tag-${workspaceId}-${windowId}-${sessionName}`,
+    data: { type: 'tag', sessionName, sourceWindowId: windowId, sourceWorkspaceId: workspaceId },
   })
 
   const style = transform
@@ -122,13 +125,12 @@ function SessionTag({ sessionName, isActive, windowId, onRemove, onClick }: Sess
 }
 
 interface TerminalWindowProps {
+  workspaceId: WorkspaceId
   window: TerminalWindowType
   isDragging?: boolean
-  isFocused?: boolean
-  onFocus?: () => void
 }
 
-function TerminalWindow({ window: windowConfig, isDragging = false, isFocused = false, onFocus }: TerminalWindowProps) {
+function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false }: TerminalWindowProps) {
   // Track loaded state per session
   const [loadedSessions, setLoadedSessions] = useState<Set<string>>(new Set())
   // Store refs for all iframes by session name
@@ -264,11 +266,11 @@ function TerminalWindow({ window: windowConfig, isDragging = false, isFocused = 
   const colorTheme = WINDOW_COLORS[windowConfig.colorIndex % WINDOW_COLORS.length]
 
   const handleRemoveSession = (sessionName: string) => {
-    removeSessionFromWindow(windowConfig.id, sessionName)
+    removeSessionFromWindow(workspaceId, windowConfig.id, sessionName)
   }
 
   const handleTagClick = (sessionName: string) => {
-    setActiveSession(windowConfig.id, sessionName)
+    setActiveSession(workspaceId, windowConfig.id, sessionName)
   }
 
   const hasSessions = windowConfig.boundSessions.length > 0
@@ -279,13 +281,12 @@ function TerminalWindow({ window: windowConfig, isDragging = false, isFocused = 
 
   return (
     <div
-      className={`terminal-window ${isFocused ? 'focused' : ''}`}
+      className="terminal-window"
       style={{
         '--window-accent': colorTheme.accent,
         '--window-bg': colorTheme.bg,
         '--window-border': colorTheme.border,
       } as React.CSSProperties}
-      onClick={onFocus}
     >
       <div className="terminal-window-header">
         <div className="session-tags">
@@ -294,6 +295,7 @@ function TerminalWindow({ window: windowConfig, isDragging = false, isFocused = 
               key={sessionName}
               sessionName={sessionName}
               isActive={sessionName === activeSession}
+              workspaceId={workspaceId}
               windowId={windowConfig.id}
               onRemove={() => handleRemoveSession(sessionName)}
               onClick={() => handleTagClick(sessionName)}
@@ -306,14 +308,14 @@ function TerminalWindow({ window: windowConfig, isDragging = false, isFocused = 
             <>
               <button
                 className="cycle-btn"
-                onClick={() => cycleSession(windowConfig.id, 'prev')}
+                onClick={() => cycleSession(workspaceId, windowConfig.id, 'prev')}
                 title="Previous session"
               >
                 ←
               </button>
               <button
                 className="cycle-btn"
-                onClick={() => cycleSession(windowConfig.id, 'next')}
+                onClick={() => cycleSession(workspaceId, windowConfig.id, 'next')}
                 title="Next session"
               >
                 →
@@ -338,7 +340,7 @@ function TerminalWindow({ window: windowConfig, isDragging = false, isFocused = 
         ) : !hasSessions ? (
           /* Empty window - show create button */
           <div className="empty-window-state">
-            <CreateSessionButton windowId={windowConfig.id} accentColor={colorTheme.accent} />
+            <CreateSessionButton workspaceId={workspaceId} windowId={windowConfig.id} accentColor={colorTheme.accent} />
             <span className="empty-window-hint">or drag a session here</span>
           </div>
         ) : (
@@ -369,7 +371,7 @@ function TerminalWindow({ window: windowConfig, isDragging = false, isFocused = 
             )
           })
         )}
-        <DropOverlay windowId={windowConfig.id} isVisible={isDragging} />
+        <DropOverlay workspaceId={workspaceId} windowId={windowConfig.id} isVisible={isDragging} />
       </div>
     </div>
   )

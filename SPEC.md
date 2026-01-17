@@ -25,7 +25,6 @@ AgentArena is a Docker-based development environment for managing AI coding agen
                                         │  │  /terminal/  → ttyd (:7681)     │                          │
                                         │  │  /api/       → Node.js (:3001)  │                          │
                                         │  │  /api/files/ → File API         │                          │
-                                        │  │  /api/beads/ → Beads API        │                          │
                                         │  └─────────────────────────────────┘                          │
                                         │  ┌─────────────────────────────────┐                          │
                                         │  │  ttyd (:7681) → tmux sessions   │                          │
@@ -47,12 +46,7 @@ AgentArena is a Docker-based development environment for managing AI coding agen
 
 **Installed Tools:**
 - Claude Code (@anthropic-ai/claude-code)
-- Gastown (`gt`) & Beads (`bd`) - orchestrator tools
-- beads_viewer (`bv`) - TUI and robot-protocol CLI for project dependency visualization
-  - `bv` - Interactive terminal UI
-  - `bv --robot-triage` - JSON triage recommendations for dashboard
-  - `bv --robot-insights` - JSON graph metrics for dashboard
-  - `bv --robot-plan` - JSON execution plan for dashboard
+- Gastown (`gt`) - orchestrator tool
 - Git, tmux, Go, Node.js, Python3
 
 **Internal Services:**
@@ -137,7 +131,6 @@ dashboard/src/
 │   ├── StatusView.tsx      # Service health display
 │   ├── NukeConfirmModal.tsx# Destroy all sessions modal
 │   └── MusicPlayer.tsx     # Ambient music controls
-├── beads_module/           # Self-contained Beads integration
 └── styles/
     └── theme.css           # Theme definitions
 ```
@@ -209,6 +202,13 @@ set -g window-active-style "bg=default"
 **Critical Environment Variable:**
 - `TMUX_TMPDIR=/tmp` must be set consistently across ALL processes (API, ttyd, SSH)
 
+**Critical Gotcha (root vs dev tmux split):**
+- tmux servers are per-user: sockets live under `/tmp/tmux-<uid>/...`.
+- The Arena dashboard/API/ttyd operate as user `dev` (uid 1000). If you create sessions as `root` (uid 0), they will not show up in the dashboard.
+- The container ships helper wrappers to make this hard to mess up:
+  - `tmux-dev`, `gt-dev`, `bd-dev` (always run against dev user)
+  - `arena-sessions` (shows both servers + sockets)
+
 ### Terminal Resize Handling
 
 Both `TerminalWindow.tsx` and `FloatingModal.tsx` use ResizeObserver:
@@ -254,17 +254,6 @@ Both `TerminalWindow.tsx` and `FloatingModal.tsx` use ResizeObserver:
 ```
 
 **Polling:** Dashboard polls GET every 5 seconds.
-
-### Beads Integration
-
-| Endpoint | Purpose |
-|----------|---------|
-| GET /api/beads/issues | Raw issue data from .beads/issues.jsonl |
-| GET /api/beads/triage | AI triage recommendations |
-| GET /api/beads/insights | Graph metrics |
-| GET /api/beads/plan | Parallel execution tracks |
-
----
 
 ## Theme System
 
@@ -367,7 +356,6 @@ volumes:
 AgentArena/
 ├── api/                      # Node.js API
 │   ├── server.js             # Main API server
-│   ├── beads-routes.js       # Beads endpoints
 │   ├── file-routes.js        # File API endpoints
 │   └── utils.test.js         # Unit tests
 ├── dashboard/                # React UI
@@ -375,9 +363,7 @@ AgentArena/
 │   ├── tests/                # Playwright E2E tests
 │   └── dist/                 # Built assets
 ├── nginx/                    # nginx config
-├── internal/                 # tmux helpers
 ├── sandbox_overrides/        # Secret overlays
-├── beads_viewer_integration/ # Integration docs
 ├── tailscale_state/          # Tailscale identity
 ├── build1.dockerfile         # Main container
 ├── docker-compose.yml        # Orchestration

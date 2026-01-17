@@ -3,6 +3,7 @@ import { useDraggable } from '@dnd-kit/core'
 import type { TmuxSession } from '../types'
 import { useSession } from '../context/SessionContext'
 import { WINDOW_COLORS } from '../types'
+import type { WorkspaceId } from '../types'
 
 interface SessionItemProps {
   session: TmuxSession
@@ -15,7 +16,7 @@ interface ContextMenuState {
 }
 
 function SessionItem({ session }: SessionItemProps) {
-  const { assignedSessions, handleSessionClick, deleteSession, renameSession, windows, addSessionToWindow, removeSessionFromWindow } = useSession()
+  const { assignedSessions, handleSessionClick, deleteSession, renameSession, workspaces, addSessionToWindow, removeSessionFromWindow } = useSession()
   const assignment = assignedSessions.get(session.name)
   const isAssigned = !!assignment
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({ show: false, x: 0, y: 0 })
@@ -92,13 +93,14 @@ function SessionItem({ session }: SessionItemProps) {
   }, [handleRenameSubmit])
 
   const handleAssignToWindow = useCallback((windowId: string) => {
-    addSessionToWindow(windowId, session.name)
+    const workspaceId = (windowId.startsWith('terminal2-') ? 'terminal2' : 'terminal1') as WorkspaceId
+    addSessionToWindow(workspaceId, windowId, session.name)
     closeContextMenu()
   }, [addSessionToWindow, session.name, closeContextMenu])
 
   const handleUnassign = useCallback(() => {
     if (assignment) {
-      removeSessionFromWindow(assignment.windowId, session.name)
+      removeSessionFromWindow(assignment.workspaceId, assignment.windowId, session.name)
     }
     closeContextMenu()
   }, [assignment, removeSessionFromWindow, session.name, closeContextMenu])
@@ -149,7 +151,9 @@ function SessionItem({ session }: SessionItemProps) {
       >
         {assignment && (
           <span className="window-badge" style={badgeStyle}>
-            {assignment.windowIndex}
+            {assignment.workspaceId === 'terminal2'
+              ? `2-${assignment.windowIndex}`
+              : assignment.windowIndex}
           </span>
         )}
         <span className="session-name" style={nameStyle}>{session.name}</span>
@@ -178,20 +182,24 @@ function SessionItem({ session }: SessionItemProps) {
 
             {showAssignSubmenu && (
               <div className="session-context-submenu">
-                {windows.map((w, idx) => {
-                  const color = WINDOW_COLORS[w.colorIndex % WINDOW_COLORS.length]
-                  const isCurrentWindow = assignment?.windowId === w.id
-                  return (
-                    <button
-                      key={w.id}
-                      className={`session-context-item ${isCurrentWindow ? 'active' : ''}`}
-                      onClick={() => handleAssignToWindow(w.id)}
-                      style={{ borderLeft: `3px solid ${color.border}` }}
-                    >
-                      Window {idx + 1}
-                      {isCurrentWindow && <span className="session-context-check">✓</span>}
-                    </button>
-                  )
+                {(['terminal1', 'terminal2'] as WorkspaceId[]).flatMap((wsId) => {
+                  const ws = workspaces[wsId]
+                  return ws.windows.slice(0, ws.windowCount).map((w, idx) => {
+                    const color = WINDOW_COLORS[w.colorIndex % WINDOW_COLORS.length]
+                    const isCurrentWindow = assignment?.windowId === w.id
+                    const labelPrefix = wsId === 'terminal2' ? 'Terminal 2 - ' : ''
+                    return (
+                      <button
+                        key={w.id}
+                        className={`session-context-item ${isCurrentWindow ? 'active' : ''}`}
+                        onClick={() => handleAssignToWindow(w.id)}
+                        style={{ borderLeft: `3px solid ${color.border}` }}
+                      >
+                        {labelPrefix}Window {idx + 1}
+                        {isCurrentWindow && <span className="session-context-check">✓</span>}
+                      </button>
+                    )
+                  })
                 })}
               </div>
             )}

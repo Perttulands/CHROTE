@@ -16,9 +16,9 @@ npm run build    # Build to dist/ (copied to container by dockerfile)
 src/
 ├── App.tsx              # Main app with DnD context
 ├── context/
-│   └── SessionContext   # Global state (sessions, windows, drag state)
+│   └── SessionContext   # Global state (sessions, workspaces, drag state)
 ├── components/
-│   ├── TabBar           # Terminal | Files | Settings tabs
+│   ├── TabBar           # Terminal | Terminal 2 | Files | Beads | Settings | Help tabs
 │   ├── SessionPanel     # Left sidebar with session groups
 │   ├── TerminalArea     # 1-4 terminal windows grid
 │   ├── TerminalWindow   # Single terminal iframe + session tags
@@ -52,6 +52,8 @@ Uses `@dnd-kit/core` for drag-and-drop:
 - **Drag from sidebar** → Drop on window to assign session
 - **Drag session tag** → Move between windows or drop outside to remove
 - **Click session tag** → Switch active session in that window
+
+Note: The dashboard intentionally has no global keyboard shortcuts for cycling windows/sessions.
 
 ## Terminal Connection
 
