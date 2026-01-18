@@ -23,3 +23,12 @@ dashboard/node_modules/
 .vscode/
 .idea/
 api/node_modules/
+
+.vendor
+vendor/
+
+# Go binaries
+AgentArena_go/arena-server
+AgentArena_go/server.exe
+AgentArena_go/*.exe
+
