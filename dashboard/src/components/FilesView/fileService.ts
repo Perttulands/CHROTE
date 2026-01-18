@@ -300,3 +300,53 @@ export async function pathExists(path: string): Promise<boolean> {
 export function getDownloadUrl(path: string): string {
   return `${API_BASE}/raw${path}?inline=false`
 }
+
+/**
+ * Represents a file with its relative path within a folder
+ */
+export interface FileWithPath {
+  file: File
+  relativePath: string
+}
+
+/**
+ * Upload files preserving directory structure
+ * Used for folder uploads where files have relative paths
+ * SECURITY: Sanitizes each path component to prevent path traversal
+ */
+export async function uploadFilesWithPaths(basePath: string, filesWithPaths: FileWithPath[]): Promise<void> {
+  for (const { file, relativePath } of filesWithPaths) {
+    // SECURITY: Sanitize each path component
+    const pathParts = relativePath.split('/').filter(p => p.length > 0)
+    const sanitizedParts = pathParts.map(part => sanitizeFilename(part))
+    const safePath = sanitizedParts.join('/')
+
+    const fullPath = basePath === '/' ? `/${safePath}` : `${basePath}/${safePath}`
+
+    let response: Response
+    try {
+      response = await fetch(`${API_BASE}/resources${fullPath}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': file.type || 'application/octet-stream',
+        },
+        body: file,
+      })
+    } catch (error) {
+      throw new FileOperationError(
+        error instanceof Error ? error.message : 'Network error',
+        'NETWORK'
+      )
+    }
+
+    if (response.status === 413) {
+      throw new FileOperationError('File too large', 'STORAGE', 413)
+    }
+
+    if (response.status === 507) {
+      throw new FileOperationError('Insufficient storage', 'STORAGE', 507)
+    }
+
+    throwForStatus(response, `Failed to upload ${safePath}`)
+  }
+}

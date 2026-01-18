@@ -1,4 +1,4 @@
-# AgentArena Go - Multi-stage Dockerfile
+# CHROTE - Multi-stage Dockerfile
 # Stage 1: Build the Go binary
 FROM golang:1.23-alpine AS builder
 
@@ -12,7 +12,7 @@ COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 
 # Build the binary
-RUN CGO_ENABLED=0 GOOS=linux go build -o arena-server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux go build -o chrote-server ./cmd/server
 
 # Stage 2: Runtime
 FROM alpine:latest
@@ -24,7 +24,7 @@ RUN apk add --no-cache tmux ttyd bash curl
 RUN mkdir -p /code /workspace
 
 # Copy binary from builder
-COPY --from=builder /app/arena-server /usr/local/bin/arena-server
+COPY --from=builder /app/chrote-server /usr/local/bin/chrote-server
 
 # Create terminal launch script
 RUN echo '#!/bin/bash' > /usr/local/bin/terminal-launch.sh && \
@@ -42,4 +42,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s \
     CMD curl -f http://localhost:8080/api/health || exit 1
 
-CMD ["/usr/local/bin/arena-server", "--port", "8080", "--ttyd-port", "7681"]
+CMD ["/usr/local/bin/chrote-server", "--port", "8080", "--ttyd-port", "7681"]

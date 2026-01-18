@@ -3,15 +3,15 @@ services:
   # TAILSCALE SIDECAR
   # ============================================
 
-  tailscale-arena:
+  tailscale-chrote:
     image: tailscale/tailscale:latest
-    hostname: arena
+    hostname: chrote
     environment:
       - TS_AUTHKEY=${TS_AUTHKEY}
       - TS_STATE_DIR=/var/lib/tailscale
       - TS_USERSPACE=true
     volumes:
-      - ./tailscale_state/arena:/var/lib/tailscale
+      - ./tailscale_state/chrote:/var/lib/tailscale
     cap_add:
       - net_admin
     restart: unless-stopped
@@ -20,31 +20,32 @@ services:
   # MAIN SERVICE
   # ============================================
 
-  agent-arena:
+  chrote:
     build:
       context: .
       dockerfile: build1.dockerfile
-    container_name: agentarena-dev
+    container_name: chrote
     depends_on:
-      - tailscale-arena
-    network_mode: service:tailscale-arena
+      - tailscale-chrote
+    network_mode: service:tailscale-chrote
     volumes:
       # Host paths - your actual Windows folders
       - E:/Code:/code
       - E:/Docker/:/code/Docker/
       - E:/Vault:/vault
       # Named volumes - persist container config across rebuilds
-      - arena_dev_home:/home/dev
-      - arena_root_home:/root
+      - chrote_root_home:/root
       # API server mount for hot-fixes without rebuild
       - ./api:/srv/api
+      # Optional: host-managed tool development (mount source repos, build inside container)
+      - ./vendor/gastown:/opt/gastown-src
+      - ./vendor/beads:/opt/beads-src
+      - ./vendor/beads_viewer:/opt/beadsviewer-src
       # Security: Hide sensitive files from sandbox (overlay with empty file)
       - ./sandbox_overrides/empty_env:/code/AgentArena/.env:ro
       - ./sandbox_overrides/empty_env:/code/AgentArena/.env.example:ro
     restart: unless-stopped
 
 volumes:
-  arena_dev_home:
-    driver: local
-  arena_root_home:
+  chrote_root_home:
     driver: local

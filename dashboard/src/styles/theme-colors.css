@@ -1,0 +1,85 @@
+/* Arena Dashboard - Theme Color Variables */
+/* Theme definitions and CSS custom properties */
+
+/* Matrix theme (default) */
+:root,
+[data-theme="matrix"] {
+  --background: #000000;
+  --surface-primary: #0a0a0a;
+  --surface-secondary: #111111;
+  --divider: #00ff4140;
+  --text-primary: #00ff41;
+  --text-secondary: #00cc33;
+  --text-dim: #00ff4180;
+  --accent: #00ff41;
+  --accent-light: #00ff4120;
+  --accent-glow: 0 0 10px #00ff41;
+
+  /* Error/danger colors */
+  --color-error: #ff4141;
+  --color-error-light: rgba(255, 65, 65, 0.15);
+  --color-error-glow: 0 0 10px rgba(255, 65, 65, 0.4);
+
+  /* Accent RGB for rgba() usage */
+  --accent-rgb: 0, 255, 65;
+
+  /* Window color themes */
+  --window-blue: #4a9eff;
+  --window-purple: #9966ff;
+  --window-green: #00ff41;
+  --window-orange: #ff9933;
+}
+
+/* Dark theme - clean neutral dark */
+[data-theme="dark"] {
+  --background: #0f0f0f;
+  --surface-primary: #1a1a1a;
+  --surface-secondary: #252525;
+  --divider: #3a3a3a;
+  --text-primary: #e5e5e5;
+  --text-secondary: #a3a3a3;
+  --text-dim: #737373;
+  --accent: #6b9fff;
+  --accent-light: #6b9fff20;
+  --accent-glow: 0 0 10px #6b9fff;
+
+  /* Error/danger colors */
+  --color-error: #f87171;
+  --color-error-light: rgba(248, 113, 113, 0.15);
+  --color-error-glow: 0 0 10px rgba(248, 113, 113, 0.4);
+
+  /* Accent RGB for rgba() usage */
+  --accent-rgb: 107, 159, 255;
+
+  --window-blue: #4a9eff;
+  --window-purple: #9966ff;
+  --window-green: #4ade80;
+  --window-orange: #fb923c;
+}
+
+/* Gastown theme - warm coffee/russet palette */
+[data-theme="gastown"] {
+  --background: #32160f;        /* Coffee Bean */
+  --surface-primary: #3d1c12;   /* Slightly lighter coffee */
+  --surface-secondary: #4a2518; /* Warm brown */
+  --divider: #81411a60;         /* Russet with transparency */
+  --text-primary: #f6cd54;      /* Cream Can */
+  --text-secondary: #fbdb7d;    /* Marigold Yellow */
+  --text-dim: #f6cd5480;        /* Cream Can dimmed */
+  --accent: #f6cd54;            /* Cream Can */
+  --accent-light: #f6cd5420;    /* Cream Can with transparency */
+  --accent-glow: 0 0 10px #f6cd54;
+
+  /* Error/danger colors - warm rust red for Gastown */
+  --color-error: #e07856;
+  --color-error-light: rgba(224, 120, 86, 0.15);
+  --color-error-glow: 0 0 10px rgba(224, 120, 86, 0.4);
+
+  /* Accent RGB for rgba() usage */
+  --accent-rgb: 246, 205, 84;
+
+  --window-blue: #fbdb7d;       /* Marigold Yellow */
+  --window-purple: #f6cd54;     /* Cream Can */
+  --window-green: #fbdb7d;      /* Marigold Yellow */
+  --window-orange: #81411a;     /* Russet */
+}

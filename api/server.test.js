@@ -857,15 +857,15 @@ describe('Security: CORS', () => {
   });
 
   test('restricts to allowed origins in prod mode', async () => {
-    const app = createTestApp({ corsOrigins: ['http://arena:8080', 'http://localhost:5173'] });
+    const app = createTestApp({ corsOrigins: ['http://chrote:8080', 'http://localhost:5173'] });
     execFileSync.mockReturnValue('');
 
     // Allowed origin
     let res = await request(app)
       .get('/api/tmux/sessions')
-      .set('Origin', 'http://arena:8080');
+      .set('Origin', 'http://chrote:8080');
 
-    expect(res.headers['access-control-allow-origin']).toBe('http://arena:8080');
+    expect(res.headers['access-control-allow-origin']).toBe('http://chrote:8080');
 
     // Disallowed origin - header not set
     res = await request(app)

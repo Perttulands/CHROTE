@@ -1,0 +1,418 @@
+/* Arena Dashboard - Terminal Styles */
+/* Terminal area, windows, and grid layouts */
+
+.terminal-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--surface-secondary);
+}
+
+.terminal-area-controls {
+  display: flex;
+  align-items: center;
+  padding: 8px;
+  gap: 8px;
+  border-bottom: 1px solid var(--divider);
+  background-color: var(--surface-primary);
+}
+
+.layout-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+}
+
+.layout-btn {
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: 1px solid var(--divider);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  transition: all 0.2s ease;
+}
+
+.layout-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.layout-btn.active {
+  color: var(--text-primary);
+  border-color: var(--accent);
+  background-color: var(--accent-light);
+}
+
+/* Terminal Grid Layouts */
+.terminal-grid {
+  flex: 1;
+  display: grid;
+  gap: 4px;
+  padding: 4px;
+  transition: all 0.2s ease;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.terminal-grid.grid-1 {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+}
+
+.terminal-grid.grid-2 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr;
+}
+
+.terminal-grid.grid-3 {
+  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-rows: 1fr;
+}
+
+.terminal-grid.grid-4 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+/* Terminal Window */
+.terminal-window {
+  display: flex;
+  flex-direction: column;
+  background-color: var(--window-bg, var(--surface-primary));
+  border: 1px solid var(--window-border, var(--divider));
+  overflow: hidden;
+  transition: all 0.2s ease;
+  min-height: 0;
+}
+
+.terminal-window:hover {
+  border-color: var(--window-accent, var(--accent));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--window-accent, var(--accent)) 20%, transparent);
+}
+
+/* Background Images for Windows - Terminal 1 */
+[data-workspace="terminal1"] .terminal-window:nth-of-type(1) {
+  background-image: url('/bg-polecat.png');
+  background-size: cover;
+  background-position: center center;
+  background-repeat: no-repeat;
+}
+
+[data-workspace="terminal1"] .terminal-window:nth-of-type(2) {
+  background-image: url('/bg_fox.png');
+  background-size: cover;
+  background-position: center center;
+  background-repeat: no-repeat;
+}
+
+[data-workspace="terminal1"] .terminal-window:nth-of-type(3) {
+  background-image: url('/bg-badger.png');
+  background-size: cover;
+  background-position: center center;
+  background-repeat: no-repeat;
+}
+
+[data-workspace="terminal1"] .terminal-window:nth-of-type(4) {
+  background-image: url('/bg_wolf.png');
+  background-size: cover;
+  background-position: center center;
+  background-repeat: no-repeat;
+}
+
+/* Background Images for Windows - Terminal 2 */
+[data-workspace="terminal2"] .terminal-window:nth-of-type(1) {
+  background-image: url('/bg_crew.png');
+  background-size: cover;
+  background-position: center center;
+  background-repeat: no-repeat;
+}
+
+[data-workspace="terminal2"] .terminal-window:nth-of-type(2) {
+  background-image: url('/bg_convoy.png');
+  background-size: cover;
+  background-position: center center;
+  background-repeat: no-repeat;
+}
+
+[data-workspace="terminal2"] .terminal-window:nth-of-type(3) {
+  background-image: url('/bg_hawk.png');
+  background-size: cover;
+  background-position: center center;
+  background-repeat: no-repeat;
+}
+
+[data-workspace="terminal2"] .terminal-window:nth-of-type(4) {
+  background-image: url('/bg_town.png');
+  background-size: cover;
+  background-position: center center;
+  background-repeat: no-repeat;
+}
+
+.terminal-window.focused {
+  border-color: var(--window-accent, var(--accent));
+  border-width: 2px;
+  box-shadow: 0 0 15px color-mix(in srgb, var(--window-accent, var(--accent)) 40%, transparent);
+}
+
+.terminal-window.drop-target {
+  border-color: var(--window-accent, var(--accent));
+  border-style: dashed;
+  box-shadow: 0 0 20px color-mix(in srgb, var(--window-accent, var(--accent)) 30%, transparent);
+}
+
+.terminal-window-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 6px 8px 0;
+  background-color: var(--surface-secondary);
+  border-bottom: 1px solid var(--divider);
+  min-height: 36px;
+  gap: 8px;
+}
+
+.session-tags {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.no-sessions {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+/* Session Tag - browser tab style */
+.session-tag {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background-color: var(--surface-primary);
+  border: 1px solid var(--divider);
+  border-radius: 6px 6px 0 0;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: grab;
+  transition: all 0.15s ease;
+  min-width: 60px;
+  max-width: 180px;
+  flex: 1 1 auto;
+}
+
+.session-tag:hover {
+  border-color: var(--window-accent, var(--accent));
+  background-color: var(--surface-secondary);
+}
+
+.session-tag.active {
+  background-color: var(--accent-light);
+  border-color: var(--window-accent, var(--accent));
+  color: var(--window-accent, var(--text-primary));
+  border-bottom-color: transparent;
+}
+
+.session-tag.dragging {
+  opacity: 0.6;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.tag-name {
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.tag-remove {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px;
+  font-size: 16px;
+  line-height: 1;
+  transition: color 0.15s ease;
+  flex-shrink: 0;
+  border-radius: 3px;
+}
+
+.tag-remove:hover {
+  color: var(--color-error);
+  background-color: rgba(255, 100, 100, 0.1);
+}
+
+.window-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cycle-btn {
+  background: transparent;
+  border: 1px solid var(--divider);
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px 6px;
+  font-size: 12px;
+  transition: all 0.15s ease;
+}
+
+.cycle-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--window-accent, var(--accent));
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+}
+
+.status-dot.disconnected {
+  background-color: var(--color-error);
+  box-shadow: 0 0 6px var(--color-error);
+}
+
+.terminal-window-body {
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+  background-color: var(--window-bg, rgba(0, 0, 0, 0.5));
+  position: relative;
+}
+
+.terminal-window-body iframe {
+  top: 0;
+  left: 0;
+}
+
+/* Empty Window State */
+.empty-window-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 16px;
+}
+
+.create-session-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px 32px;
+  background: transparent;
+  border: 2px dashed var(--btn-accent, var(--accent));
+  border-radius: 16px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: var(--btn-accent, var(--accent));
+}
+
+.create-session-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--btn-accent, var(--accent)) 15%, transparent);
+  border-style: solid;
+  transform: scale(1.05);
+}
+
+.create-session-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.create-session-btn:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.create-session-icon {
+  font-size: 48px;
+  font-weight: 300;
+  line-height: 1;
+}
+
+.create-session-label {
+  font-size: 14px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.empty-window-hint {
+  font-size: 16px;
+  color: var(--text-dim);
+  font-style: italic;
+  margin-top: 8px;
+}
+
+/* Old terminal pane styles (backward compat) */
+.terminal-pane {
+  display: flex;
+  flex-direction: column;
+  background-color: var(--surface-primary);
+  border: 1px solid var(--divider);
+  overflow: hidden;
+}
+
+.terminal-pane:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 10px var(--accent-light);
+}
+
+.terminal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 8px;
+  background-color: var(--surface-secondary);
+  border-bottom: 1px solid var(--divider);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.terminal-header .session-name {
+  font-weight: bold;
+  color: var(--text-primary);
+}
+
+.terminal-header .status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.terminal-body {
+  flex: 1;
+  overflow: hidden;
+}
+
+.terminal-pane.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-style: dashed;
+}
+
+.terminal-pane.empty:hover {
+  background-color: var(--accent-light);
+}
+
+.add-pane-icon {
+  font-size: 32px;
+  color: var(--text-dim);
+}

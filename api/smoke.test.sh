@@ -1,6 +1,6 @@
 #!/bin/bash
-# nginx routing smoke tests
-# Run this inside the container or against the running arena instance
+# Routing smoke tests
+# Run this inside WSL or against the running CHROTE instance
 # Usage: ./smoke.test.sh [BASE_URL]
 
 BASE_URL="${1:-http://localhost:8080}"
@@ -14,7 +14,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 echo "================================================================"
-echo "Arena nginx Routing Smoke Tests"
+echo "CHROTE Routing Smoke Tests"
 echo "Base URL: $BASE_URL"
 echo "================================================================"
 echo ""

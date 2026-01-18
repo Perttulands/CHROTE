@@ -5,6 +5,7 @@ import type { InsightsResponse } from './types'
 interface InsightsViewProps {
   insights: InsightsResponse | null
   loading?: boolean
+  error?: string | null
 }
 
 function HealthGauge({ score }: { score: number }) {
@@ -54,11 +55,19 @@ function StatCard({ label, value, variant }: { label: string; value: number | st
   )
 }
 
-export default function InsightsView({ insights, loading }: InsightsViewProps) {
+export default function InsightsView({ insights, loading, error }: InsightsViewProps) {
   if (loading) {
     return (
       <div className="beads-insights loading">
         <div className="loading-message">Calculating insights...</div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="beads-insights error">
+        <div className="error-message">{error}</div>
       </div>
     )
   }

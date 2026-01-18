@@ -60,7 +60,7 @@ async function setupPathTest(page: Page) {
     })
   })
 
-  await page.route('**/files/api/resources/**', async route => {
+  await page.route('**/api/files/resources/**', async route => {
     const url = route.request().url()
     apiCalls.push(url)
 

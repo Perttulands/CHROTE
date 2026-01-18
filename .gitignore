@@ -28,7 +28,7 @@ api/node_modules/
 vendor/
 
 # Go binaries
-AgentArena_go/arena-server
-AgentArena_go/server.exe
-AgentArena_go/*.exe
+chrote/chrote-server
+chrote/server.exe
+chrote/*.exe
 

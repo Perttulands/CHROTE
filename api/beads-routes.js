@@ -61,7 +61,7 @@ function checkBvInstalled() {
       timeout: 5000,
     });
   } catch (error) {
-    const err = new Error(`bv command not found. Install beads_viewer: go install github.com/Dicklesworthstone/beads_viewer@latest`);
+    const err = new Error(`bv command not found. In CHROTE, mount ./vendor/beads_viewer and run 'build-vendored-tools' inside the container to build bv.`);
     err.code = 'BV_NOT_INSTALLED';
     throw err;
   }
@@ -96,7 +96,7 @@ function execBvCommand(flag, projectPath, timeout = EXEC_TIMEOUT) {
       throw error;
     }
     if (error.message.includes('not found') || error.message.includes('ENOENT') || error.code === 'ENOENT') {
-      const err = new Error(`bv command not found. Install beads_viewer: go install github.com/Dicklesworthstone/beads_viewer@latest`);
+      const err = new Error(`bv command not found. In CHROTE, mount ./vendor/beads_viewer and run 'build-vendored-tools' inside the container to build bv.`);
       err.code = 'BV_NOT_INSTALLED';
       throw err;
     }

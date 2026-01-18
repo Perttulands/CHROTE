@@ -1,4 +1,4 @@
-// Package main is the entry point for the AgentArena server
+// Package main is the entry point for the CHROTE server
 package main
 
 import (
@@ -13,9 +13,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/agentarena/server/internal/api"
-	"github.com/agentarena/server/internal/dashboard"
-	"github.com/agentarena/server/internal/proxy"
+	"github.com/chrote/server/internal/api"
+	"github.com/chrote/server/internal/dashboard"
+	"github.com/chrote/server/internal/proxy"
 )
 
 // Config holds server configuration
@@ -60,11 +60,11 @@ func main() {
 	tmuxHandler := api.NewTmuxHandler()
 	tmuxHandler.RegisterRoutes(mux)
 
-	ralphHandler := api.NewRalphHandler()
-	ralphHandler.RegisterRoutes(mux)
-
 	beadsHandler := api.NewBeadsHandler()
 	beadsHandler.RegisterRoutes(mux)
+
+	filesHandler := api.NewFilesHandler()
+	filesHandler.RegisterRoutes(mux)
 
 	healthHandler := api.NewHealthHandler()
 	healthHandler.RegisterRoutes(mux)
@@ -104,9 +104,10 @@ func main() {
 	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		log.Printf("AgentArena server starting on port %d", config.Port)
+		log.Printf("CHROTE server starting on port %d", config.Port)
 		log.Printf("Dashboard: http://localhost:%d/", config.Port)
 		log.Printf("API: http://localhost:%d/api/", config.Port)
+		log.Printf("Files: http://localhost:%d/api/files/", config.Port)
 		log.Printf("Terminal: http://localhost:%d/terminal/", config.Port)
 
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {

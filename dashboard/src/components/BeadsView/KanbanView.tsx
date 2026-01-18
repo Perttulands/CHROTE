@@ -6,6 +6,7 @@ import IssueCard from './IssueCard'
 interface KanbanViewProps {
   issues: BeadsIssue[]
   loading?: boolean
+  error?: string | null
 }
 
 // Define column order and display names
@@ -17,11 +18,19 @@ const COLUMNS: { status: IssueStatus; label: string }[] = [
   { status: 'closed', label: 'Closed' },
 ]
 
-export default function KanbanView({ issues, loading }: KanbanViewProps) {
+export default function KanbanView({ issues, loading, error }: KanbanViewProps) {
   if (loading) {
     return (
       <div className="beads-kanban loading">
         <div className="loading-message">Loading issues...</div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="beads-kanban error">
+        <div className="error-message">{error}</div>
       </div>
     )
   }

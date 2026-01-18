@@ -55,63 +55,55 @@ test.describe('Settings View', () => {
 
     test('should show theme selector', async ({ page }) => {
       await page.click('.tab:has-text("Settings")')
-      await expect(page.locator('.theme-selector, [class*="theme"]')).toBeVisible()
+      await expect(page.locator('.settings-theme-options').first()).toBeVisible()
     })
 
     test('should change theme to Matrix', async ({ page }) => {
       await page.click('.tab:has-text("Settings")')
 
       // Find Matrix theme option and click it
-      const matrixOption = page.locator('[data-theme="matrix"], .theme-option:has-text("Matrix"), button:has-text("Matrix")')
-      if (await matrixOption.count() > 0) {
-        await matrixOption.click()
+      const matrixOption = page.locator('.theme-option.theme-matrix').first()
+      await matrixOption.click()
 
-        // Verify data-theme attribute changes on document
-        const dataTheme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'))
-        expect(dataTheme).toBe('matrix')
-      }
+      // Verify data-theme attribute changes on document
+      const dataTheme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'))
+      expect(dataTheme).toBe('matrix')
     })
 
     test('should change theme to Dark', async ({ page }) => {
       await page.click('.tab:has-text("Settings")')
 
-      const darkOption = page.locator('[data-theme="dark"], .theme-option:has-text("Dark"), button:has-text("Dark")')
-      if (await darkOption.count() > 0) {
-        await darkOption.click()
+      const darkOption = page.locator('.theme-option.theme-dark').first()
+      await darkOption.click()
 
-        const dataTheme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'))
-        expect(dataTheme).toBe('dark')
-      }
+      const dataTheme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'))
+      expect(dataTheme).toBe('dark')
     })
 
     test('should change theme to Gastown', async ({ page }) => {
       await page.click('.tab:has-text("Settings")')
 
-      const gastownOption = page.locator('[data-theme="gastown"], .theme-option:has-text("Gastown"), button:has-text("Gastown")')
-      if (await gastownOption.count() > 0) {
-        await gastownOption.click()
+      const gastownOption = page.locator('.theme-option.theme-gastown').first()
+      await gastownOption.click()
 
-        const dataTheme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'))
-        expect(dataTheme).toBe('gastown')
-      }
+      const dataTheme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'))
+      expect(dataTheme).toBe('gastown')
     })
 
     test('should persist theme to localStorage', async ({ page }) => {
       await page.click('.tab:has-text("Settings")')
 
       // Select a different theme
-      const darkOption = page.locator('[data-theme="dark"], .theme-option:has-text("Dark"), button:has-text("Dark")')
-      if (await darkOption.count() > 0) {
-        await darkOption.click()
+      const darkOption = page.locator('.theme-option.theme-dark').first()
+      await darkOption.click()
 
-        // Check localStorage
-        const stored = await page.evaluate(() => {
-          const state = localStorage.getItem('arena-dashboard-state')
-          return state ? JSON.parse(state) : null
-        })
+      // Check localStorage
+      const stored = await page.evaluate(() => {
+        const state = localStorage.getItem('arena-dashboard-state')
+        return state ? JSON.parse(state) : null
+      })
 
-        expect(stored?.settings?.theme).toBe('dark')
-      }
+      expect(stored?.settings?.theme).toBe('dark')
     })
 
     test('should restore theme on reload', async ({ page }) => {
@@ -141,7 +133,7 @@ test.describe('Settings View', () => {
   test.describe('Font Size', () => {
     test('should show font size control', async ({ page }) => {
       await page.click('.tab:has-text("Settings")')
-      await expect(page.locator('[class*="font-size"], input[type="range"], .font-size-control')).toBeVisible()
+      await expect(page.locator('.settings-slider').first()).toBeVisible()
     })
 
     test('should change font size', async ({ page }) => {
@@ -277,20 +269,18 @@ test.describe('Settings View', () => {
       await page.click('.tab:has-text("Settings")')
 
       // Select a theme
-      const matrixOption = page.locator('[data-theme="matrix"], .theme-option:has-text("Matrix"), button:has-text("Matrix")')
-      if (await matrixOption.count() > 0) {
-        await matrixOption.click()
+      const matrixOption = page.locator('.theme-option.theme-matrix').first()
+      await matrixOption.click()
 
-        // Wait for potential API call
-        await page.waitForTimeout(500)
+      // Wait for potential API call
+      await page.waitForTimeout(500)
 
-        // If the app calls appearance API on theme change, verify payload
-        if (appearanceCalls.length > 0) {
-          const lastCall = appearanceCalls[appearanceCalls.length - 1] as Record<string, unknown>
-          // Verify it has color properties
-          expect(lastCall).toHaveProperty('statusBg')
-          expect(lastCall).toHaveProperty('statusFg')
-        }
+      // If the app calls appearance API on theme change, verify payload
+      if (appearanceCalls.length > 0) {
+        const lastCall = appearanceCalls[appearanceCalls.length - 1] as Record<string, unknown>
+        // Verify it has color properties
+        expect(lastCall).toHaveProperty('statusBg')
+        expect(lastCall).toHaveProperty('statusFg')
       }
     })
   })
@@ -333,9 +323,9 @@ test.describe('Settings View', () => {
       const dataTheme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'))
       expect(dataTheme).toBe('gastown')
 
-      // 4. Session binding
+      // 4. Session binding (display shows short name "mayor" extracted from "hq-mayor")
       const firstWindow = page.locator('.terminal-window').first()
-      await expect(firstWindow.locator('.tag-name')).toContainText('hq-mayor')
+      await expect(firstWindow.locator('.tag-name')).toContainText('mayor')
     })
 
     test('should handle corrupted localStorage gracefully', async ({ page }) => {

@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agentarena/server/internal/core"
+	"github.com/chrote/server/internal/core"
 )
 
 // TmuxHandler handles tmux-related API endpoints

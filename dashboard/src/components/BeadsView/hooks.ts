@@ -1,6 +1,7 @@
 // Beads data fetching hooks
 
 import { useState, useEffect, useCallback } from 'react'
+import { useSession } from '../../context/SessionContext'
 import type {
   BeadsProject,
   BeadsIssue,
@@ -26,6 +27,7 @@ async function fetchApi<T>(endpoint: string, params?: Record<string, string>): P
 
 // Hook to fetch available projects
 export function useProjects() {
+  const { settings } = useSession()
   const [projects, setProjects] = useState<BeadsProject[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -34,10 +36,34 @@ export function useProjects() {
     setLoading(true)
     setError(null)
     try {
+      // Fetch auto-discovered projects
       const result = await fetchApi<{ projects: BeadsProject[] }>(`${API_BASE}/projects`)
+      let allProjects: BeadsProject[] = []
+
       if (result.success && result.data) {
-        setProjects(result.data.projects)
-      } else {
+        allProjects = [...result.data.projects]
+      }
+
+      // Add manually configured paths from settings
+      const manualPaths = settings.beadsProjectPaths || []
+      for (const path of manualPaths) {
+        // Check if path is already in auto-discovered list
+        if (allProjects.some(p => p.path === path)) {
+          continue
+        }
+
+        // Create a project entry for the manual path
+        const name = path.split('/').filter(Boolean).pop() || path
+        allProjects.push({
+          name,
+          path,
+          beadsPath: `${path}/.beads`
+        })
+      }
+
+      setProjects(allProjects)
+
+      if (!result.success && manualPaths.length === 0) {
         setError(result.error?.message || 'Failed to fetch projects')
       }
     } catch (e) {
@@ -45,7 +71,7 @@ export function useProjects() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [settings.beadsProjectPaths])
 
   useEffect(() => {
     refresh()

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/agentarena/server/internal/core"
+	"github.com/chrote/server/internal/core"
 )
 
 // HealthHandler handles health check endpoints

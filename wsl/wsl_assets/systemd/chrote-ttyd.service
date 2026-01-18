@@ -1,0 +1,30 @@
+[Unit]
+Description=CHROTE Web Terminal (ttyd)
+Documentation=https://github.com/tsl0922/ttyd
+After=network.target
+
+[Service]
+Type=simple
+User=chrote
+Group=chrote
+
+# CRITICAL: Must match the API server's tmux config
+Environment=TMUX_TMPDIR=/run/tmux/chrote
+Environment=LANG=en_US.UTF-8
+
+# Ensure socket directory exists (just in case tmpfiles.d missed it)
+ExecStartPre=/bin/mkdir -p /run/tmux/chrote
+# Note: chown/chmod usually requires root, but if this service runs as chrote,
+# it can only create dirs if parent perms allow.
+# Rely on tmpfiles.d for permission setup, this is just a fallback.
+
+# Start ttyd on port 7681
+# -W: writable
+# -a: command to execute (our launcher script)
+ExecStart=/usr/local/bin/ttyd -p 7681 -W -a /usr/local/bin/terminal-launch.sh
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

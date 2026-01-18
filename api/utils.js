@@ -9,8 +9,8 @@ const GROUP_PRIORITY = {
 
 function getGroupPriority(group) {
   if (GROUP_PRIORITY[group] !== undefined) return GROUP_PRIORITY[group];
-  if (group.startsWith('gt-')) return 2; // Rigs after main
-  return 3; // Other
+  if (group.startsWith('gt-')) return 3; // Rigs after main
+  return 4; // Other
 }
 
 function categorizeSession(name) {

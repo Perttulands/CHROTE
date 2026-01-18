@@ -144,8 +144,9 @@ test.describe('Arena Dashboard', () => {
       }
     })
 
-    test('should show "Shell ready" when window has no bound sessions', async ({ page }) => {
-      await expect(page.locator('.no-sessions').first()).toContainText('Shell ready')
+    test('should show "New Session" button when window has no bound sessions', async ({ page }) => {
+      await expect(page.locator('.empty-window-state').first()).toBeVisible()
+      await expect(page.locator('.create-session-btn').first()).toContainText('New Session')
     })
   })
 

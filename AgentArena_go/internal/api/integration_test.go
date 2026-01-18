@@ -18,11 +18,11 @@ func TestIntegration_FullAPIRouting(t *testing.T) {
 	healthHandler := NewHealthHandler()
 	healthHandler.RegisterRoutes(mux)
 
-	ralphHandler := NewRalphHandler()
-	ralphHandler.RegisterRoutes(mux)
-
 	beadsHandler := NewBeadsHandler()
 	beadsHandler.RegisterRoutes(mux)
+
+	filesHandler := NewFilesHandler()
+	filesHandler.RegisterRoutes(mux)
 
 	// Test health endpoint
 	t.Run("GET /api/health", func(t *testing.T) {
@@ -58,18 +58,6 @@ func TestIntegration_FullAPIRouting(t *testing.T) {
 		}
 	})
 
-	// Test ralph health endpoint
-	t.Run("GET /api/ralph/health", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/ralph/health", nil)
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
-
-		// Should return either 200 (installed) or 503 (not installed)
-		if rec.Code != http.StatusOK && rec.Code != http.StatusServiceUnavailable {
-			t.Errorf("Expected 200 or 503, got %d", rec.Code)
-		}
-	})
-
 	// Test beads health endpoint
 	t.Run("GET /api/beads/health", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/beads/health", nil)
@@ -79,6 +67,30 @@ func TestIntegration_FullAPIRouting(t *testing.T) {
 		// Should return either 200 (installed) or 503 (not installed)
 		if rec.Code != http.StatusOK && rec.Code != http.StatusServiceUnavailable {
 			t.Errorf("Expected 200 or 503, got %d", rec.Code)
+		}
+	})
+
+	// Test files root listing endpoint
+	t.Run("GET /api/files/resources/", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/files/resources/", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected 200, got %d", rec.Code)
+		}
+
+		var response DirectoryResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+			t.Errorf("Invalid JSON response: %v", err)
+		}
+
+		if !response.IsDir {
+			t.Error("Root should be a directory")
+		}
+
+		if len(response.Items) != 2 {
+			t.Errorf("Expected 2 root items (code, vault), got %d", len(response.Items))
 		}
 	})
 }

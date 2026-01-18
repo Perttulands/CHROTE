@@ -244,6 +244,25 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false 
     })
   }, [windowConfig.boundSessions])
 
+  // Keyboard navigation: Ctrl+Arrow to cycle sessions
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!e.ctrlKey) return
+      if (windowConfig.boundSessions.length <= 1) return
+
+      if (e.key === 'ArrowRight') {
+        e.preventDefault()
+        cycleSession(workspaceId, windowConfig.id, 'next')
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault()
+        cycleSession(workspaceId, windowConfig.id, 'prev')
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [workspaceId, windowConfig.id, windowConfig.boundSessions.length, cycleSession])
+
   // ResizeObserver to trigger fit() when container size changes
   useEffect(() => {
     const body = bodyRef.current

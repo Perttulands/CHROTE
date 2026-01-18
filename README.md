@@ -1,72 +1,85 @@
-# Agent Arena
+# CHROTE
 
-A Docker-based development environment with web dashboard for managing AI coding agents via tmux sessions.
+![CHROTE](CHROTE.png)
+
+**C**ontrol **H**ub for **R**emote **O**perations & **T**mux **E**xecution
+
+A web dashboard for managing AI coding agents via tmux sessions. Runs in WSL2 with native Linux performance.
 
 ## Quick Start
 
 ### Prerequisites
 
-- Docker Desktop
+- Windows 11 with WSL2
+- Ubuntu 24.04 in WSL
 - Tailscale account (for secure remote access)
 
-### 1. Create Environment File
+### Installation
 
-```bash
-cp .env.example .env
-```
-
-Edit `.env` with your credentials:
-
-```env
-TS_AUTHKEY=tskey-auth-xxxxx    # From Tailscale admin console
-```
-
-### 2. Build Dashboard (first time only)
-
-```bash
-cd dashboard
-npm install
-npm run build
-cd ..
-```
-
-### 3. Create Desktop Shortcut (Windows)
-
-Create a desktop shortcut for easy start/stop control:
+**Automated setup:**
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File "e:\Docker\AgentArena\Create-Shortcut.ps1"
+# 1. Install Ubuntu 24.04 in WSL
+wsl --install -d Ubuntu-24.04
+
+# 2. Open WSL as root and run setup script
+wsl -d Ubuntu-24.04 -u root
+curl -fsSL https://raw.githubusercontent.com/peterje/chrote/main/wsl/setup-wsl.sh | bash
+
+# 3. Restart WSL to apply changes
+wsl --shutdown
 ```
 
-This creates an **AgentArena** shortcut on your desktop that:
-- Shows current status (running/stopped)
-- Press Enter to toggle start/stop
-- Automatically starts Docker Desktop if needed
-- Shows progress and waits for services to be ready
+**Manual setup:** See [docs/WSL-migration-plan.md](docs/WSL-migration-plan.md) for step-by-step instructions.
 
-### 4. Start Services
+### Start Services
 
-**Option A**: Double-click the desktop shortcut (recommended)
+Services auto-start via systemd when WSL boots:
 
-**Option B**: Command line
+```powershell
+# Option 1: Use the PowerShell toggle script
+.\wsl\Chrote-Toggle.ps1
+
+# Option 2: Manual start
+wsl -d Ubuntu-24.04 echo "CHROTE started"
+Start-Process "http://chrote:8080"
+```
+
+**Toggle script options:**
+- `.\Chrote-Toggle.ps1` - Start and open browser (or just open if running)
+- `.\Chrote-Toggle.ps1 -Stop` - Shutdown WSL completely
+- `.\Chrote-Toggle.ps1 -Status` - Show service status
+- `.\Chrote-Toggle.ps1 -Logs` - Stream service logs
+
+### Optional: Developing Gastown / Beads locally
+
+Clone your forks into the vendor directory:
 ```bash
-docker compose up -d agent-arena
+git clone <your-fork-url> vendor/gastown
+git clone <your-fork-url> vendor/beads
+git clone <your-fork-url> vendor/beads_viewer
 ```
 
-### 5. Access
+Build inside WSL:
+```bash
+cd vendor/gastown && go build -o ~/.local/bin/gt ./cmd/gt
+cd vendor/beads && go build -o ~/.local/bin/bd ./cmd/bd
+cd vendor/beads_viewer && go build -o ~/.local/bin/bv ./cmd/bv
+```
+
+### Access
 
 Once running, access via Tailscale hostname:
 
 | Service | URL | Description |
 |---------|-----|-------------|
-| Dashboard | `http://arena:8080` | Main web UI |
-| Terminal | `http://arena:8080/terminal/` | Direct ttyd access |
-| Files | `http://arena:8080/api/files/` | File API |
-| SSH | `ssh dev@arena` | Password: `dev` |
+| Dashboard | `http://chrote:8080` | Main web UI |
+| Terminal | `http://chrote:8080/terminal/` | Direct ttyd access |
+| Files | `http://chrote:8080/api/files/` | File API |
 
 ## Gastown
 
-Agent Arena is the infrastructure that powers **Gastown**, an orchestration framework for running 10-30+ AI coding agents in parallel via tmux sessions. Gastown implements the "MEOW Stack" (Molecular Expression Of Work) - a workflow system where:
+CHROTE is the infrastructure that powers **Gastown**, an orchestration framework for running 10-30+ AI coding agents in parallel via tmux sessions. Gastown implements the "MEOW Stack" (Molecular Expression Of Work) - a workflow system where:
 
 - **Beads** are atomic units of work
 - **Epics** collect beads with parallel children
@@ -77,72 +90,54 @@ The core philosophy is "Physics over Politeness" - sessions are ephemeral and ex
 
 Session naming follows the pattern `gt-{rigname}-{worker}` (e.g., `gt-gastown-jack`) for Gastown rig workers, with `hq-*` sessions for headquarters/coordination.
 
-## In-Container Guide (also copied to /README.md)
-
-This section is intended to be the quick reference you can read from inside the container.
+## Quick Reference (inside WSL)
 
 ### Web Dashboard
 
 Access the dashboard from any Tailnet device:
 
 ```text
-http://arena:8080/
+http://chrote:8080/
 ```
 
 ### Quick Reference
 
 | What | How |
 |------|-----|
-| Dashboard | `http://arena:8080/` |
-| Terminal | `http://arena:8080/terminal/` |
-| Your code | `/code` (E:/Code on host) |
-| Vault | `/vault` (E:/Vault on host) |
-| SSH (dev) | `ssh dev@arena` |
+| Dashboard | `http://chrote:8080/` |
+| Terminal | `http://chrote:8080/terminal/` |
+| Your code | `/code` → `/home/chrote/chrote` |
+| Vault | `/vault` → `/mnt/e/Vault` (read-only) |
 
 ### Directory Structure
 
 ```text
-/code     - Your projects (read/write)
-/vault    - Reference files (read-only for dev user)
-/home/dev - Your home directory (persisted across rebuilds)
+/code     - Your projects (read/write, symlink to home)
+/vault    - Reference files (read-only, symlink to Windows)
 ```
 
-### Users
+### User
 
-| User | Password | Notes |
-|------|----------|-------|
-| dev | dev | Standard user, sudo access |
-| root | root | Can write everywhere including /vault |
+All operations run as `chrote` (non-root, no sudo). This provides proper security isolation - agents cannot escalate privileges.
 
-### Important: tmux sessions are per-user
+### tmux Sessions
 
-tmux runs a separate server per user (socket lives under `/tmp/tmux-<uid>/`). The dashboard/API/ttyd run as `dev` (uid 1000).
-
-If you create sessions as `root` (uid 0), they will not show up in the dashboard and it can look like sessions “randomly disappear”.
-
-Use the built-in helpers (work even if you are logged in as root):
+All sessions use the `/run/tmux/chrote/` socket. The dashboard, API, and ttyd all run as `chrote`, so all sessions are visible.
 
 ```bash
-# Show both dev + root tmux servers + sockets
-arena-sessions
+# List all sessions
+tmux list-sessions
 
-# Always interact with the dev tmux server
-tmux-dev ls
-tmux-dev a -t gt-gastown-jack
-
-# Always run orchestrators as dev
-gt-dev status
-bd-dev --help
+# Ensure TMUX_TMPDIR is set
+echo $TMUX_TMPDIR  # Should be /run/tmux/chrote
 ```
-
-If you truly need root's tmux (rare), use `tmux-root`.
 
 ### Running Gastown
 
 ```bash
-gt-dev start gastown
-gt-dev status
-gt-dev peek
+gt start gastown
+gt status
+gt peek
 ```
 
 ### Session Naming Conventions
@@ -161,9 +156,9 @@ gt-dev peek
 bash /code/AgentArena/test-sessions.sh
 
 # Or manually (recommended: use dev wrappers so they appear in the dashboard)
-tmux-dev new-session -d -s "hq-test1"
-tmux-dev new-session -d -s "gt-myrig-agent1"
-tmux-dev list-sessions
+tmux new-session -d -s "hq-test1"
+tmux new-session -d -s "gt-myrig-agent1"
+tmux list-sessions
 ```
 
 ### Vault Usage
@@ -192,7 +187,7 @@ uvicorn main:app --host 0.0.0.0
 
 ## Architecture
 
-The system runs as Docker containers with a Tailscale sidecar for secure networking:
+The system runs in WSL2 with systemd managing services:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -200,28 +195,28 @@ The system runs as Docker containers with a Tailscale sidecar for secure network
 │                      (Google Auth protected)                         │
 └───────────────────────────────────────────────────────────────────┬──┘
                                                                     │
-                                                    ┌───────────────▼───────────┐
-                                                    │   tailscale-arena         │
-                                                    │   (network sidecar)       │
-                                                    └───────────────┬───────────┘
-                                                                    │
                                     ┌───────────────────────────────▼───────────────────────────────┐
-                                    │          agent-arena (:8080)                                  │
-                                    │  ┌─────────────────────────────────┐                          │
-                                    │  │         nginx (reverse proxy)   │                          │
-                                    │  │  ┌────────┬─────────┬────────┐  │                          │
-                                    │  │  │   /    │/terminal│ /api/  │  │                          │
-                                    │  │  │  React │  ttyd   │Node.js │  │                          │
-                                    │  │  │        │         │(files, │  │                          │
-                                    │  │  │        │         │ tmux)  │  │                          │
-                                    │  │  └────────┴─────────┴────────┘  │                          │
-                                    │  └─────────────────────────────────┘                          │
+                                    │                    WSL2 (Ubuntu 24.04)                         │
+                                    │                   User: chrote (non-root)                      │
+                                    │                                                                │
+                                    │  ┌───────────────────────────────────────────────────────┐    │
+                                    │  │                   systemd services                     │    │
+                                    │  │  ┌─────────────────────┐  ┌─────────────────────┐     │    │
+                                    │  │  │ chrote-server :8080 │  │ chrote-ttyd :7681   │     │    │
+                                    │  │  │ (Go binary)         │  │ (web terminal)      │     │    │
+                                    │  │  │  - Dashboard        │  │  - tmux attach      │     │    │
+                                    │  │  │  - API              │  │                     │     │    │
+                                    │  │  └─────────────────────┘  └─────────────────────┘     │    │
+                                    │  └───────────────────────────────────────────────────────┘    │
+                                    │                                                                │
+                                    │  Tailscale (native) → hostname: chrote                        │
                                     └───────────────────────────────────────────────────────────────┘
 ```
 
-**Containers:**
-- `agent-arena` - Main dev environment (nginx, ttyd, API, SSH)
-- `tailscale-arena` - Network sidecar for secure access
+**Services:**
+- `chrote-server` - Go binary serving dashboard + API (port 8080)
+- `chrote-ttyd` - Web terminal for tmux access (port 7681)
+- Tailscale runs natively in WSL for network access
 
 ## Dashboard Features
 
@@ -277,9 +272,9 @@ This setup is designed for use behind Tailscale with Google Auth:
 
 - No services exposed to public internet
 - All access requires Tailscale network membership
-- SSH available only within tailnet
 - File API has no auth (protected by Tailscale)
-- Sensitive files (`.env`) are hidden from sandbox via volume overlays
+- Agents run as non-root `chrote` user (no sudo)
+- File access restricted to `/code` and `/vault` only
 
 **Do not expose port 8080 to the public internet.**
 
@@ -302,88 +297,90 @@ cd dashboard
 npm run test
 ```
 
-### Rebuild Container
+### Rebuild Server
 
 After code changes:
 
 ```bash
+# Rebuild dashboard
 cd dashboard && npm run build && cd ..
-docker compose build --no-cache agent-arena
-docker compose up -d agent-arena
+
+# Copy to Go server and rebuild
+cp -r dashboard/dist src/internal/dashboard/
+cd src && go build -o ../chrote-server ./cmd/server
+
+# Restart service
+sudo systemctl restart chrote-server
 ```
 
 ## File Structure
 
 ```
-AgentArena/
-├── api/                      # Node.js API server
-│   ├── server.js             # Main server (tmux, files)
-│   └── file-routes.js        # File operations API
+CHROTE/
+├── src/                      # Go server (single binary)
+│   ├── cmd/server/           # Entry point
+│   └── internal/             # API handlers, proxy, dashboard embed
 ├── dashboard/                # React + TypeScript web UI
 │   ├── src/
 │   │   └── components/       # Core dashboard components
 │   ├── tests/                # Playwright tests
-│   └── dist/                 # Built assets (copied to container)
-├── nginx/                    # nginx config
-├── sandbox_overrides/        # Empty files overlaid on secrets in sandbox
-├── tailscale_state/          # Persisted Tailscale identity (preserves hostname)
-├── build1.dockerfile         # Main container definition
-├── docker-compose.yml        # Service orchestration
-├── AgentArena-Toggle.ps1     # PowerShell start/stop toggle script
-├── Create-Shortcut.ps1       # Creates desktop shortcut
-├── start-arena.bat           # Batch start script
-├── stop-arena.bat            # Batch stop script
-├── test-sessions.sh          # Creates sample tmux sessions for testing
-└── .env                      # Secrets (not in git, hidden from sandbox)
+│   └── dist/                 # Built assets (embedded in Go binary)
+├── wsl/                      # WSL setup assets
+│   ├── setup-wsl.sh          # Automated WSL setup script
+│   ├── Chrote-Toggle.ps1     # Windows launcher script
+│   └── wsl_assets/           # systemd services, scripts, configs
+├── vendor/                   # Optional: gastown, beads, beads_viewer
+├── docs/                     # Documentation
+├── start-chrote.bat          # Batch start script
+├── stop-chrote.bat           # Batch stop script
+└── test-sessions.sh          # Creates sample tmux sessions for testing
 ```
 
 ## Troubleshooting
 
-### Sessions "disappear" (root vs dev tmux split)
+### Sessions "disappear"
 
-tmux runs a separate server per user (socket lives under `/tmp/tmux-<uid>/`). If you create sessions as `root` (uid 0) but the Arena dashboard/API runs as `dev` (uid 1000), it will look like sessions randomly disappear.
-
-Use these commands inside the container:
-
-- Show both servers and sockets: `arena-sessions`
-- List dev sessions (recommended): `tmux-dev ls`
-- Run Gastown/Beads as dev even from a root shell: `gt-dev ...`, `bd-dev ...`
-
-Root interactive shells default to these wrappers to prevent accidental root-owned tmux servers. If you truly need root tmux (rare), use `tmux-root`.
-
-### Container won't start
+All sessions should be visible via the shared socket at `/run/tmux/chrote/`. Verify:
 
 ```bash
-docker compose logs agent-arena
+echo $TMUX_TMPDIR  # Should be /run/tmux/chrote
+ls -la /run/tmux/chrote/  # Check socket exists
+```
+
+### Services won't start
+
+```bash
+systemctl status chrote-server chrote-ttyd
+journalctl -u chrote-server -f
 ```
 
 ### Sessions not showing in dashboard
 
 Verify API is running:
 ```bash
-curl http://arena:8080/api/tmux/sessions
+curl http://chrote:8080/api/tmux/sessions
 ```
 
 ### Terminal shows black screen
 
-Check ttyd logs inside container:
+Check ttyd service:
 ```bash
-docker exec -it agentarena-dev ps aux | grep ttyd
+systemctl status chrote-ttyd
+journalctl -u chrote-ttyd -f
 ```
 
 ### tmux sessions not visible between terminal and API
 
-Ensure `TMUX_TMPDIR=/tmp` is set consistently. The API, ttyd, and SSH all need the same socket path:
+Ensure `TMUX_TMPDIR=/run/tmux/chrote` is set in both services and your shell:
 ```bash
-docker exec -it agentarena-dev bash -c 'echo $TMUX_TMPDIR'  # Should be /tmp
-docker exec -it agentarena-dev ls /tmp/tmux-*/              # Check socket exists
+echo $TMUX_TMPDIR  # Should be /run/tmux/chrote
 ```
 
 ### Tailscale not connecting
 
 ```bash
-docker compose logs tailscale-arena
-docker exec -it tailscale-arena tailscale status
+tailscale status
+sudo tailscale up --hostname=chrote
 ```
 
 ## See Also

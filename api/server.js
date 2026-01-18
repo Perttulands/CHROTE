@@ -1,4 +1,4 @@
-// Arena Dashboard - Tmux Session API
+// CHROTE Dashboard - Tmux Session API (deprecated, use Go server)
 // Simple Express server to list tmux sessions
 
 const express = require('express');
@@ -6,8 +6,10 @@ const { execFileSync } = require('child_process');
 const { getGroupPriority, categorizeSession } = require('./utils');
 const app = express();
 
-// Ensure consistent tmux socket location
-const TMUX_ENV = { env: { ...process.env, TMUX_TMPDIR: '/tmp' } };
+// Ensure consistent tmux socket location.
+// Default remains '/tmp' (Docker), but allow WSL/systemd to override via TMUX_TMPDIR.
+const tmuxTmpdir = (process.env.TMUX_TMPDIR && process.env.TMUX_TMPDIR.trim()) ? process.env.TMUX_TMPDIR : '/tmp';
+const TMUX_ENV = { env: { ...process.env, TMUX_TMPDIR: tmuxTmpdir } };
 
 // Simple response cache to avoid spawning tmux process on every poll
 let sessionsCache = { data: null, timestamp: 0 };
@@ -109,7 +111,7 @@ app.get('/api/tmux/sessions', (req, res) => {
   }
 
   try {
-    // API runs as dev user, so tmux commands access dev's sessions directly
+    // API runs as root, accessing sessions via /tmp/tmux-0/ socket
     // Use execFileSync to avoid shell injection
     const output = execFileSync(
       'tmux',
@@ -272,46 +274,9 @@ app.patch('/api/tmux/sessions/:name', (req, res) => {
   }
 });
 
-// Delete a specific tmux session
-app.delete('/api/tmux/sessions/:name', (req, res) => {
-  try {
-    const sessionName = decodeURIComponent(req.params.name);
-
-    // Validate session name (CRITICAL: was missing before - command injection vector)
-    const validation = validateSessionName(sessionName);
-    if (!validation.valid) {
-      return res.status(400).json({
-        success: false,
-        error: validation.error,
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    // Kill the specific session - use execFileSync to avoid shell injection
-    execFileSync('tmux', ['kill-session', '-t', sessionName], {
-      encoding: 'utf-8',
-      timeout: 5000,
-      ...TMUX_ENV
-    });
-
-    // Invalidate cache so next poll reflects the deletion
-    invalidateSessionsCache();
-
-    res.json({
-      success: true,
-      killed: sessionName,
-      timestamp: new Date().toISOString()
-    });
-  } catch (e) {
-    res.status(500).json({
-      success: false,
-      error: e.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
 // Delete ALL tmux sessions (nuke) - PROTECTED
+// IMPORTANT: This route MUST be defined BEFORE /api/tmux/sessions/:name
+// so that "all" is matched literally, not as a :name parameter
 // Requires X-Nuke-Confirm header with value "DASHBOARD-NUKE-CONFIRMED"
 // This prevents agents from programmatically nuking - only the dashboard UI knows this header
 const NUKE_CONFIRM_HEADER = 'DASHBOARD-NUKE-CONFIRMED';
@@ -357,6 +322,45 @@ app.delete('/api/tmux/sessions/all', (req, res) => {
       success: true,
       killed: sessionNames.length,
       sessions: sessionNames,
+      timestamp: new Date().toISOString()
+    });
+  } catch (e) {
+    res.status(500).json({
+      success: false,
+      error: e.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Delete a specific tmux session
+app.delete('/api/tmux/sessions/:name', (req, res) => {
+  try {
+    const sessionName = decodeURIComponent(req.params.name);
+
+    // Validate session name (CRITICAL: was missing before - command injection vector)
+    const validation = validateSessionName(sessionName);
+    if (!validation.valid) {
+      return res.status(400).json({
+        success: false,
+        error: validation.error,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // Kill the specific session - use execFileSync to avoid shell injection
+    execFileSync('tmux', ['kill-session', '-t', sessionName], {
+      encoding: 'utf-8',
+      timeout: 5000,
+      ...TMUX_ENV
+    });
+
+    // Invalidate cache so next poll reflects the deletion
+    invalidateSessionsCache();
+
+    res.json({
+      success: true,
+      killed: sessionName,
       timestamp: new Date().toISOString()
     });
   } catch (e) {
@@ -452,5 +456,5 @@ app.use('/api/beads', beadsRoutes);
 
 const PORT = process.env.API_PORT || 3001;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Arena API server listening on port ${PORT}`);
+  console.log(`CHROTE API server listening on port ${PORT}`);
 });

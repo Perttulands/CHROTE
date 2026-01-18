@@ -15,7 +15,7 @@ async function applyTmuxAppearance(appearance: TmuxAppearance): Promise<void> {
   }
 }
 
-const STORAGE_KEY = 'arena-dashboard-state'
+const STORAGE_KEY = 'chrote-dashboard-state'
 
 const WORKSPACE_IDS: WorkspaceId[] = ['terminal1', 'terminal2']
 
@@ -80,7 +80,7 @@ function migrateStoredState(raw: unknown): StoredStateV2 {
 
       const toWorkspace = (workspaceId: WorkspaceId, wsRaw: unknown): TerminalWorkspace => {
         const ws = isRecord(wsRaw) ? wsRaw : {}
-        const windowCount = clampWindowCount(typeof ws.windowCount === 'number' ? ws.windowCount : 1)
+        const windowCount = clampWindowCount(typeof ws.windowCount === 'number' ? ws.windowCount : 2)
         const windowsRaw = Array.isArray(ws.windows) ? (ws.windows as TerminalWindow[]) : []
 
         const windows: TerminalWindow[] = Array.from({ length: windowCount }, (_, i) => {
@@ -132,7 +132,7 @@ function migrateStoredState(raw: unknown): StoredStateV2 {
             windows: terminal1Windows,
             windowCount,
           },
-          terminal2: createDefaultWorkspace('terminal2', 1),
+          terminal2: createDefaultWorkspace('terminal2', 2),
         },
         sidebarCollapsed,
         settings,
@@ -143,8 +143,8 @@ function migrateStoredState(raw: unknown): StoredStateV2 {
   // Default
   return {
     workspaces: {
-      terminal1: createDefaultWorkspace('terminal1', 1),
-      terminal2: createDefaultWorkspace('terminal2', 1),
+      terminal1: createDefaultWorkspace('terminal1', 2),
+      terminal2: createDefaultWorkspace('terminal2', 2),
     },
     sidebarCollapsed: false,
     settings: DEFAULT_SETTINGS,
@@ -164,8 +164,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const [workspaces, setWorkspaces] = useState<Record<WorkspaceId, TerminalWorkspace>>(
     stored?.workspaces ?? {
-      terminal1: createDefaultWorkspace('terminal1', 1),
-      terminal2: createDefaultWorkspace('terminal2', 1),
+      terminal1: createDefaultWorkspace('terminal1', 2),
+      terminal2: createDefaultWorkspace('terminal2', 2),
     }
   )
   const [sidebarCollapsed, setSidebarCollapsed] = useState(stored?.sidebarCollapsed ?? false)
@@ -476,9 +476,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const handleSessionClick = useCallback((sessionName: string) => {
-    // Always open floating modal for "peek" functionality
-    openFloatingModal(sessionName)
-  }, [openFloatingModal])
+    // Check if session is already assigned to any window
+    const assignment = assignedSessions.get(sessionName)
+    if (assignment) {
+      // Focus the session in its assigned window instead of opening modal
+      setActiveSession(assignment.workspaceId, assignment.windowId, sessionName)
+    } else {
+      // Open floating modal for "peek" functionality
+      openFloatingModal(sessionName)
+    }
+  }, [assignedSessions, setActiveSession, openFloatingModal])
 
   const updateSettings = useCallback((newSettings: Partial<UserSettings>) => {
     setSettings(prev => {

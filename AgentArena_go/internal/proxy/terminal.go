@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/agentarena/server/internal/core"
+	"github.com/chrote/server/internal/core"
 )
 
 // TerminalProxy manages ttyd process and proxies requests

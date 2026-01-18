@@ -1,19 +1,19 @@
 #!/bin/bash
-# AgentArena Go - Deployment Script
-# Deploys the arena-server binary to WSL
+# CHROTE - Deployment Script
+# Deploys the chrote-server binary to WSL
 
 set -e
 
-BINARY="arena-server"
-INSTALL_PATH="/usr/local/bin/arena-server"
-SERVICE_NAME="arena"
+BINARY="chrote-server"
+INSTALL_PATH="/usr/local/bin/chrote-server"
+SERVICE_NAME="chrote"
 
-echo "=== AgentArena Go Deployment ==="
+echo "=== CHROTE Deployment ==="
 
 # Check if binary exists
 if [ ! -f "$BINARY" ]; then
     echo "Error: Binary '$BINARY' not found. Build it first with:"
-    echo "  GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o arena-server ./cmd/server"
+    echo "  GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o chrote-server ./cmd/server"
     exit 1
 fi
 
@@ -27,12 +27,12 @@ sudo chmod +x "$INSTALL_PATH"
 echo "2. Creating systemd service..."
 sudo tee /etc/systemd/system/${SERVICE_NAME}.service > /dev/null << 'EOF'
 [Unit]
-Description=AgentArena Go Server
+Description=CHROTE Server
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/arena-server --port 8080 --ttyd-port 7681
+ExecStart=/usr/local/bin/chrote-server --port 8080 --ttyd-port 7681
 Restart=always
 RestartSec=5
 Environment=TMUX_TMPDIR=/tmp
@@ -59,6 +59,6 @@ echo "API:       http://localhost:8080/api/health"
 echo "Terminal:  http://localhost:8080/terminal/"
 echo ""
 echo "Commands:"
-echo "  sudo systemctl status arena    # Check status"
-echo "  sudo systemctl restart arena   # Restart"
-echo "  sudo journalctl -u arena -f    # View logs"
+echo "  sudo systemctl status chrote    # Check status"
+echo "  sudo systemctl restart chrote   # Restart"
+echo "  sudo journalctl -u chrote -f    # View logs"

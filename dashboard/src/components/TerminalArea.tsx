@@ -39,7 +39,7 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
         ))}
       </div>
 
-      <div className={`terminal-grid ${getGridClass()}`}>
+      <div className={`terminal-grid ${getGridClass()}`} data-workspace={workspaceId}>
         {windows.slice(0, windowCount).map((window) => (
           <TerminalWindow
             key={window.id}

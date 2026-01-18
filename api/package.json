@@ -1,7 +1,7 @@
 {
-  "name": "arena-api",
+  "name": "chrote-api",
   "version": "1.0.0",
-  "description": "Arena Dashboard API - tmux session management",
+  "description": "CHROTE Dashboard API - tmux session management (deprecated, use Go server)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

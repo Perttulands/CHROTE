@@ -1,6 +1,9 @@
+import { useState } from 'react'
 import { useSession } from '../context/SessionContext'
 import type { UserSettings, TmuxAppearance } from '../types'
 import { TMUX_PRESETS } from '../types'
+import FolderPickerModal from './FolderPickerModal'
+import { toDisplayPath } from './FilesView/types'
 
 // Color input component with picker and text field
 interface ColorInputProps {
@@ -34,6 +37,20 @@ function ColorInput({ label, value, onChange }: ColorInputProps) {
 
 function SettingsView() {
   const { settings, updateSettings } = useSession()
+  const [showFolderPicker, setShowFolderPicker] = useState(false)
+
+  const handleAddProjectPath = (path: string) => {
+    const currentPaths = settings.beadsProjectPaths || []
+    if (!currentPaths.includes(path)) {
+      updateSettings({ beadsProjectPaths: [...currentPaths, path] })
+    }
+    setShowFolderPicker(false)
+  }
+
+  const handleRemoveProjectPath = (pathToRemove: string) => {
+    const currentPaths = settings.beadsProjectPaths || []
+    updateSettings({ beadsProjectPaths: currentPaths.filter(p => p !== pathToRemove) })
+  }
 
   const handleThemeChange = (theme: UserSettings['theme']) => {
     updateSettings({ theme })
@@ -226,10 +243,53 @@ function SettingsView() {
         </div>
       </section>
 
+      {/* Beads Projects Section */}
+      <section className="settings-section">
+        <h2 className="settings-section-title">Beads Projects</h2>
+        <p className="settings-description">
+          Manually add project paths for beads discovery. Use this for projects in nested directories.
+        </p>
+
+        {/* List of saved project paths */}
+        <div className="beads-project-list">
+          {settings.beadsProjectPaths && settings.beadsProjectPaths.length > 0 ? (
+            settings.beadsProjectPaths.map(path => (
+              <div key={path} className="beads-project-item">
+                <span className="beads-project-path">{toDisplayPath(path)}</span>
+                <button
+                  className="beads-project-remove"
+                  onClick={() => handleRemoveProjectPath(path)}
+                  title="Remove project"
+                >
+                  &times;
+                </button>
+              </div>
+            ))
+          ) : (
+            <p className="settings-hint">No manual project paths configured.</p>
+          )}
+        </div>
+
+        <button
+          className="settings-btn settings-btn-add"
+          onClick={() => setShowFolderPicker(true)}
+        >
+          + Add Project
+        </button>
+      </section>
+
       {/* Info Section */}
       <section className="settings-section settings-info">
         <p>Settings are automatically saved to your browser's local storage.</p>
       </section>
+
+      {/* Folder Picker Modal */}
+      {showFolderPicker && (
+        <FolderPickerModal
+          onSelect={handleAddProjectPath}
+          onClose={() => setShowFolderPicker(false)}
+        />
+      )}
     </div>
   )
 }

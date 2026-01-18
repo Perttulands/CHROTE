@@ -11,8 +11,13 @@ const ALLOWED_ROOTS = ['/code', '/vault'];
 
 // Validate and resolve path - CRITICAL for security
 function resolveSafePath(requestPath) {
-  // Normalize and decode
-  const decoded = decodeURIComponent(requestPath || '/');
+  // Normalize and decode - handle malformed URIs gracefully
+  let decoded;
+  try {
+    decoded = decodeURIComponent(requestPath || '/');
+  } catch (e) {
+    return { error: 'Invalid path encoding' };
+  }
   const normalized = path.normalize(decoded);
 
   // Must start with allowed root

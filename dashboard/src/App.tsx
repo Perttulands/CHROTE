@@ -9,6 +9,7 @@ import SettingsView from './components/SettingsView'
 import FloatingModal from './components/FloatingModal'
 import HelpView from './components/HelpView'
 import BeadsView from './components/BeadsView'
+import ErrorBoundary from './components/ErrorBoundary'
 
 type Tab = 'terminal1' | 'terminal2' | 'files' | 'beads' | 'settings' | 'help'
 
@@ -100,7 +101,11 @@ function DashboardContent() {
             </>
           )}
           {activeTab === 'files' && <FilesView />}
-          {activeTab === 'beads' && <BeadsView />}
+          {activeTab === 'beads' && (
+            <ErrorBoundary>
+              <BeadsView />
+            </ErrorBoundary>
+          )}
           {activeTab === 'settings' && <SettingsView />}
           {activeTab === 'help' && <HelpView />}
         </div>

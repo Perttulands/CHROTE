@@ -1,3 +1,3 @@
-module github.com/agentarena/server
+module github.com/chrote/server
 
 go 1.23

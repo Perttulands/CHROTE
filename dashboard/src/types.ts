@@ -57,6 +57,7 @@ export interface UserSettings {
   musicVolume: number                // Music volume (0-1)
   musicEnabled: boolean              // Whether music is playing
   tmuxAppearance: TmuxAppearance     // tmux color customization
+  beadsProjectPaths?: string[]       // Manually added beads project paths
 }
 
 export const DEFAULT_SETTINGS: UserSettings = {
@@ -181,6 +182,6 @@ export function getGroupDisplayName(group: string): string {
 
 export function getGroupPriority(group: string): number {
   if (GROUP_CONFIG[group]) return GROUP_CONFIG[group].priority
-  if (group.startsWith('gt-')) return 2 // Rigs after main
+  if (group.startsWith('gt-')) return 3 // Rigs after main
   return 99
 }

@@ -70,11 +70,11 @@ func GetErrorStatusCode(code string) int {
 		return http.StatusNotFound
 	case "INVALID_JSONL":
 		return http.StatusUnprocessableEntity
-	case "BV_NOT_INSTALLED", "RALPH_NOT_INSTALLED":
+	case "BV_NOT_INSTALLED":
 		return http.StatusServiceUnavailable
 	case "BV_TIMEOUT":
 		return http.StatusGatewayTimeout
-	case "BV_ERROR", "BV_INVALID_OUTPUT", "RALPH_ERROR":
+	case "BV_ERROR", "BV_INVALID_OUTPUT":
 		return http.StatusBadGateway
 	case "ALREADY_RUNNING":
 		return http.StatusConflict

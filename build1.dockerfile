@@ -17,47 +17,50 @@ ENV LANGUAGE=en_US:en
 # This is safe because we're already in a Docker container (sandboxed)
 ENV IS_SANDBOX=1
 
-# 2. Create dev user with sudo access (ensure UID 1000)
-RUN userdel -r ubuntu 2>/dev/null || true && \
-    useradd -m -u 1000 -s /bin/bash dev && \
-    echo 'dev:dev' | chpasswd && \
-    echo 'dev ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
-
-# 3. Setup SSH (enable password auth)
+# 2. Setup SSH (enable password auth)
 RUN mkdir /var/run/sshd && \
     echo 'root:root' | chpasswd && \
     sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config && \
     sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
 
-# 4. Install AI Coding Tools
+# 3. Install AI Coding Tools
 RUN npm install -g @anthropic-ai/claude-code
 
-# 5. Install Gastown & Beads (Orchestrator tools) & beads_viewer
-# Install to /root/go then copy to /usr/local/bin so dev user can access them
+# 4. Toolchain setup (Go env + tmux socket)
 ENV GOPATH=/root/go
 ENV PATH=$PATH:$GOPATH/bin
 # Ensure consistent tmux socket location for all processes (API, ttyd, SSH)
 ENV TMUX_TMPDIR=/tmp
-RUN go install github.com/steveyegge/beads/cmd/bd@latest
-RUN go install github.com/steveyegge/gastown/cmd/gt@latest
-# FIX: Move go binaries to global path
-RUN cp /root/go/bin/* /usr/local/bin/ 2>/dev/null || true
-RUN curl -fsSL "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh?$(date +%s)" | bash
-# Copy go binaries to public location
-RUN cp /root/go/bin/* /usr/local/bin/ 2>/dev/null || true
 
-# 6. Setup directories and permissions
-# /code - mounted from E:/Code (RW for dev & root)
-# /vault - mounted from E:/Vault (RO for dev, RW for root)
+# NOTE: This image intentionally does NOT download or install Gastown/Beads/beads_viewer
+# during build. Provide them via runtime mounts under ./vendor and run
+# `build-vendored-tools` inside the container to compile them.
+
+# Prefer locally-built vendored tools when present.
+# - If upstream/baked-in binaries exist, they are kept as *.upstream
+# - Wrappers `gt`, `bd`, and `bv` prefer /opt/*-bin/* outputs
+RUN set -eux && \
+  if [ -x /usr/local/bin/gt ] && [ ! -e /usr/local/bin/gt.upstream ]; then mv /usr/local/bin/gt /usr/local/bin/gt.upstream; fi && \
+  if [ -x /usr/local/bin/bd ] && [ ! -e /usr/local/bin/bd.upstream ]; then mv /usr/local/bin/bd /usr/local/bin/bd.upstream; fi && \
+  if [ -x /usr/local/bin/bv ] && [ ! -e /usr/local/bin/bv.upstream ]; then mv /usr/local/bin/bv /usr/local/bin/bv.upstream; fi && \
+  printf '#!/bin/bash\nset -euo pipefail\nexport TMUX_TMPDIR=${TMUX_TMPDIR:-/tmp}\nexport IS_SANDBOX=${IS_SANDBOX:-1}\nif [ -x /opt/gastown-bin/gt ]; then exec /opt/gastown-bin/gt "$@"; fi\nif [ -x /usr/local/bin/gt.upstream ]; then exec /usr/local/bin/gt.upstream "$@"; fi\necho "gt not found. Build it: build-vendored-tools (expects /opt/gastown-src mounted)." >&2\nexit 127\n' > /usr/local/bin/gt && \
+  chmod +x /usr/local/bin/gt && \
+  printf '#!/bin/bash\nset -euo pipefail\nexport TMUX_TMPDIR=${TMUX_TMPDIR:-/tmp}\nexport IS_SANDBOX=${IS_SANDBOX:-1}\nif [ -x /opt/beads-bin/bd ]; then exec /opt/beads-bin/bd "$@"; fi\nif [ -x /usr/local/bin/bd.upstream ]; then exec /usr/local/bin/bd.upstream "$@"; fi\necho "bd not found. Build it: build-vendored-tools (expects /opt/beads-src mounted)." >&2\nexit 127\n' > /usr/local/bin/bd && \
+  chmod +x /usr/local/bin/bd && \
+  printf '#!/bin/bash\nset -euo pipefail\nexport TMUX_TMPDIR=${TMUX_TMPDIR:-/tmp}\nexport IS_SANDBOX=${IS_SANDBOX:-1}\nif [ -x /opt/beadsviewer-bin/bv ]; then exec /opt/beadsviewer-bin/bv "$@"; fi\nif [ -x /usr/local/bin/bv.upstream ]; then exec /usr/local/bin/bv.upstream "$@"; fi\necho "bv not found. Build it: build-vendored-tools (expects /opt/beadsviewer-src mounted)." >&2\nexit 127\n' > /usr/local/bin/bv && \
+  chmod +x /usr/local/bin/bv
+
+# 5. Setup directories and permissions
+# /code - mounted from E:/Code (RW)
+# /vault - mounted from E:/Vault (RW)
 RUN mkdir -p /code && \
     mkdir -p /vault && \
-    chown -R dev:dev /home/dev && \
-    chown dev:dev /code && \
+    chown root:root /code && \
     chown root:root /vault && \
     chmod 775 /code && \
     chmod 755 /vault
 
-# 6a. Setup minimal tmux config (for root - all Gastown operations run as root)
+# 5a. Setup minimal tmux config (for root - all Gastown operations run as root)
 RUN printf '# UTF-8 support for emojis and special characters\n\
 set -gq utf8 on\n\
 set -gq status-utf8 on\n\
@@ -77,7 +80,7 @@ set -g window-active-style "bg=default"\n\
 ' > /root/.tmux.conf && \
     cp /root/.tmux.conf /etc/skel/.tmux.conf
 
-# 6a2. Create tmux session launcher script for ttyd
+# 5a2. Create tmux session launcher script for ttyd
 # Now runs as root - all Gastown sessions use single tmux socket at /tmp/tmux-0/
 RUN printf '#!/bin/bash\n\
 # Terminal launcher script for ttyd\n\
@@ -122,88 +125,63 @@ else\n\
 fi\n\
 ' > /usr/local/bin/terminal-launch.sh && chmod +x /usr/local/bin/terminal-launch.sh
 
-# 6a3. Robust helpers: always operate on dev's tmux server even from root
-# - as-dev: run any command as dev with consistent env
-# - tmux-dev/gt-dev/bd-dev: convenience wrappers
-# - arena-sessions: show both root and dev tmux servers for debugging
-# - root shells get safe aliases so accidental root tmux servers don't happen
-RUN set -eux; \
-  cat > /usr/local/bin/as-dev <<'EOF'
-#!/bin/bash
-set -euo pipefail
+# 5a3. Utility scripts for root-only model
+# All Gastown operations run as root with IS_SANDBOX=1, using single tmux socket at /tmp/tmux-0/
+RUN printf '#!/bin/bash\n\
+set -euo pipefail\n\
+\n\
+# Build locally-mounted tool repos (if present) into /opt/*-bin.\n\
+# Intended for iterating on your own forks without rebuilding the image.\n\
+\n\
+mkdir -p /opt/gastown-bin /opt/beads-bin /opt/beadsviewer-bin\n\
+\n\
+if [ -f /opt/gastown-src/go.mod ]; then\n\
+  echo "Building Gastown -> /opt/gastown-bin/gt"\n\
+  cd /opt/gastown-src && go build -buildvcs=false -o /opt/gastown-bin/gt ./cmd/gt\n\
+fi\n\
+\n\
+if [ -f /opt/beads-src/go.mod ]; then\n\
+  echo "Building Beads -> /opt/beads-bin/bd"\n\
+  cd /opt/beads-src && go build -buildvcs=false -o /opt/beads-bin/bd ./cmd/bd\n\
+fi\n\
+\n\
+if [ -f /opt/beadsviewer-src/go.mod ]; then\n\
+  echo "Building beads_viewer -> /opt/beadsviewer-bin/bv"\n\
+  cd /opt/beadsviewer-src && go build -buildvcs=false -o /opt/beadsviewer-bin/bv ./cmd/bv\n\
+fi\n\
+\n\
+echo "Done. Vendored binaries at /opt/gastown-bin/gt, /opt/beads-bin/bd, /opt/beadsviewer-bin/bv"\n\
+' > /usr/local/bin/build-vendored-tools && chmod +x /usr/local/bin/build-vendored-tools
 
-# Run a command as the dev user with a stable environment.
-# This avoids the common "root vs dev tmux server" split.
-exec sudo -u dev -H env \
-  HOME=/home/dev \
-  USER=dev \
-  TMUX_TMPDIR=/tmp \
-  LANG=en_US.UTF-8 \
-  LC_ALL=en_US.UTF-8 \
-  PATH=/usr/local/bin:/usr/bin:/bin:/home/dev/.local/bin:/home/dev/go/bin \
-  "$@"
-EOF
-  chmod +x /usr/local/bin/as-dev; \
-  cat > /usr/local/bin/tmux-dev <<'EOF'
-#!/bin/bash
-exec /usr/local/bin/as-dev tmux "$@"
-EOF
-  chmod +x /usr/local/bin/tmux-dev; \
-  cat > /usr/local/bin/gt-dev <<'EOF'
-#!/bin/bash
-exec /usr/local/bin/as-dev gt "$@"
-EOF
-  chmod +x /usr/local/bin/gt-dev; \
-  cat > /usr/local/bin/bd-dev <<'EOF'
-#!/bin/bash
-exec /usr/local/bin/as-dev bd "$@"
-EOF
-  chmod +x /usr/local/bin/bd-dev; \
-  cat > /usr/local/bin/arena-sessions <<'EOF'
-#!/bin/bash
-set -euo pipefail
+RUN printf '#!/bin/bash\n\
+set -euo pipefail\n\
+\n\
+echo "== tmux sessions (all run as root with IS_SANDBOX=1) =="\n\
+TMUX_TMPDIR=/tmp tmux list-sessions 2>/dev/null || echo "(none)"\n\
+\n\
+echo\n\
+\n\
+echo "== sockets =="\n\
+ls -la /tmp/tmux-* 2>/dev/null || echo "(no tmux sockets)"\n\
+\n\
+echo\n\
+echo "All Gastown operations run as root. Dashboard/API see all sessions via /tmp/tmux-0/ socket."\n\
+' > /usr/local/bin/arena-sessions && chmod +x /usr/local/bin/arena-sessions
 
-echo "== dev sessions (uid 1000) =="
-/usr/local/bin/tmux-dev list-sessions 2>/dev/null || echo "(none)"
-
-echo
-
-echo "== root sessions (uid 0) =="
-TMUX_TMPDIR=/tmp tmux list-sessions 2>/dev/null || echo "(none)"
-
-echo
-
-echo "== sockets =="
-ls -la /tmp/tmux-* 2>/dev/null || true
-EOF
-  chmod +x /usr/local/bin/arena-sessions; \
-  cat > /etc/profile.d/arena-aliases.sh <<'EOF'
-# Root interactive shells default to dev wrappers.
-if [ "$(id -u)" -eq 0 ]; then
-  alias tmux=tmux-dev
-  alias gt=gt-dev
-  alias bd=bd-dev
-  alias arena-sessions=/usr/local/bin/arena-sessions
-  # Escape hatch for true root tmux (rarely needed):
-  alias tmux-root='command tmux'
-fi
-EOF
-
-# 6b. Add README to container root
+# 5b. Add README to container root
 COPY README.md /README.md
 
-# 6c. Copy API server (owned by dev so it can run as dev)
+# 5c. Copy API server
 COPY api /srv/api
 RUN cd /srv/api && npm install --production 2>/dev/null || npm install express
-RUN chown -R dev:dev /srv/api
 
-# 6d. Copy nginx config and dashboard
+# 5d. Copy nginx config and dashboard
 COPY nginx/nginx.conf /etc/nginx/nginx.conf
 COPY dashboard/dist /usr/share/nginx/html
 
 WORKDIR /code
 
-# 7. Entrypoint script - simplified for root-only operation
+# 6. Entrypoint script - simplified for root-only operation
 # All Gastown operations run as root with IS_SANDBOX=1 for consistent tmux socket
 RUN printf '#!/bin/bash\n\
 # Export IS_SANDBOX for all child processes (allows Claude --dangerously-skip-permissions as root)\n\
@@ -218,6 +196,12 @@ chmod -R 755 /vault 2>/dev/null || true\n\
 # Ensure .tmux.conf exists for root\n\
 if [ ! -f /root/.tmux.conf ]; then\n\
   cp /etc/skel/.tmux.conf /root/.tmux.conf 2>/dev/null || true\n\
+fi\n\
+\n\
+# Build vendored tools (Gastown, Beads) if source is mounted\n\
+if [ -f /opt/gastown-src/go.mod ] || [ -f /opt/beads-src/go.mod ]; then\n\
+  echo "Building vendored tools..."\n\
+  build-vendored-tools 2>&1 | head -20 || true\n\
 fi\n\
 \n\
 # Start SSH\n\

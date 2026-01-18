@@ -4,168 +4,132 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-AgentArena is a Docker-based development environment for managing AI coding agents via tmux sessions, with a React web dashboard for monitoring and control. The system runs behind Tailscale for secure remote access.
+CHROTE (**C**ontrol **H**ub for **R**emote **O**perations & **T**mux **E**xecution) is a WSL2-based environment for managing AI coding agents via tmux sessions, with a React web dashboard for monitoring and control. The system runs behind Tailscale for secure remote access.
 
-**Primary Use Case:** Agent Arena is designed to run [Gastown](https://github.com/steveyegge/gastown), an orchestration framework for running 10-30+ Claude Code instances in parallel on a home server, served via Tailscale. The system can support multiple Gastown "rigs" simultaneously.
-
-## Root-Only Architecture
-
-All operations run as **root** with `IS_SANDBOX=1` environment variable. This design choice solves the "user permission slipping" problem where tmux sessions would end up split between different users' socket directories.
-
-**Why root?**
-- Tmux creates sockets at `/tmp/tmux-{UID}/` - different UIDs = different sockets
-- Gastown spawns sessions that inherit the spawning user's context
-- With multiple users, sessions can "slip" and become invisible to the dashboard
-- Single user (root) = single socket = all sessions visible
-
-**Why IS_SANDBOX=1?**
-- Claude Code blocks `--dangerously-skip-permissions` when running as root
-- `IS_SANDBOX=1` tells Claude "I'm in a container, it's safe"
-- The container IS sandboxed (Docker + Tailscale isolation)
+**Primary Use Case:** Run [Gastown](https://github.com/steveyegge/gastown), an orchestration framework for 10-30+ Claude Code instances in parallel on a home server via Tailscale.
 
 ## Build & Run Commands
 
-**Recommended:** Use the interactive control script `AgentArena-Toggle.ps1` which provides a menu for all common operations:
-- Start/Stop/Restart
-- Rebuild (with cache) - fast, for code changes
-- Rebuild (no cache) - full rebuild, for dependency/apt changes
-- View/follow logs, shell access, status, cleanup
-
 ```bash
-# Or use docker compose directly:
+# Primary control script (Windows) - interactive menu
+./Chrote-Toggle.ps1
 
-# Start the full stack
-docker compose up -d agent-arena
-
-# Rebuild after code changes (uses cached layers, fast)
-cd dashboard && npm run build && cd ..
-docker compose build agent-arena
-docker compose up -d --force-recreate agent-arena
-
-# Full rebuild (no cache, use after dependency changes)
-cd dashboard && npm run build && cd ..
-docker compose build --no-cache agent-arena
-docker compose up -d --force-recreate agent-arena
-
-# View logs
-docker compose logs -f agent-arena
+# Service management (WSL)
+systemctl status chrote-server chrote-ttyd     # Status
+systemctl restart chrote-server                # Restart
+journalctl -u chrote-server -f                 # Logs
 
 # Dashboard development (localhost:5173)
 cd dashboard && npm install && npm run dev
 
-# Run tests
-cd dashboard && npm test           # Playwright E2E (38 tests)
-cd dashboard && npm run test:ui    # Playwright with UI
-cd api && npm test                 # Jest unit tests (17 tests)
+# Dashboard tests (Playwright E2E)
+cd dashboard && npm test                       # Run all tests
+cd dashboard && npm run test:ui                # Interactive test UI
+cd dashboard && npx playwright test dashboard.spec.ts  # Single test file
+
+# Go backend tests
+cd src && go test ./...                        # All tests
+cd src && go test ./internal/api/...           # API tests only
+cd src && go test -v ./internal/api/ -run TestFilesHandler  # Single test
+
+# Build and deploy
+cd dashboard && npm run build && cd ..
+cp -r dashboard/dist src/internal/dashboard/
+cd src && go build -o ../chrote-server ./cmd/server
+sudo systemctl restart chrote-server
 ```
 
 ## Architecture
 
-The system consists of Docker containers orchestrated via docker-compose.yml with Tailscale sidecars:
+**Go Single Binary Backend** (`src/`):
 
-- **agent-arena** (build1.dockerfile): Ubuntu 24.04 container with nginx, ttyd, Express API, SSH
-- **tailscale-arena**: Network sidecar for secure Tailnet access
+```
+cmd/server/main.go          # Entry point, middleware, routes
+internal/
+  api/                      # HTTP handlers
+    tmux.go                 # Session management, appearance
+    files.go                # File browser API (security-critical)
+    beads.go                # Beads issue tracking
+    health.go               # Health checks
+  core/                     # Shared utilities
+    session.go              # Session parsing, categorization
+    response.go             # JSON response helpers
+    pathutil.go             # Path utilities
+  proxy/
+    terminal.go             # ttyd WebSocket proxy
+  dashboard/
+    embed.go                # Embedded React dashboard
+```
+
+**Key Patterns:**
+- Handlers register routes via `RegisterRoutes(mux *http.ServeMux)`
+- File API restricts access to `/code` and `/vault` only (`resolveSafePath()`)
+- Session cache with 1s TTL to reduce tmux calls
+- `core.WriteJSON()` and `core.WriteError()` for consistent responses
+
+### React Dashboard (`dashboard/`)
+
+```
+src/
+  App.tsx                   # Main component, tab routing
+  context/SessionContext.tsx # Global state (windows, sessions, theme)
+  components/
+    TerminalWindow.tsx      # xterm.js terminal with ttyd WebSocket
+    SessionPanel.tsx        # Left sidebar with session list
+    FilesView/              # Native file browser (not filebrowser app)
+    BeadsView/              # Kanban, Triage, Insights views
+    MusicPlayer.tsx         # Ambient music in tab bar
+```
+
+**Views (Tab Bar):**
+- Terminal 1 & 2 - Dual independent terminal workspaces
+- Files - Native React file browser for /code and /vault
+- Beads - Issue tracking with Kanban/Triage/Insights
+- Settings - Theme, font size, tmux appearance
+- Help
 
 ### Request Flow
+
 ```
-Browser → nginx (:8080)
-         ├── /           → React dashboard (static files)
-         ├── /terminal/  → ttyd (:7681) → terminal-launch.sh → tmux attach
-         ├── /api/       → Express API (:3001) for session management
-         └── /files/     → filebrowser (:8081)
-```
-
-### Key Environment Variables
-- `TMUX_TMPDIR=/tmp` - Consistent tmux socket base directory
-- `IS_SANDBOX=1` - Allows Claude Code `--dangerously-skip-permissions` as root
-
-All tmux sessions use the socket at `/tmp/tmux-0/default` (root user).
-
-### Root vs dev tmux split (common operator pitfall)
-
-tmux runs a separate server per user (`/tmp/tmux-<uid>/...`). The Arena UI and API run as `dev` (uid 1000). If you create sessions as `root`, they won't appear in the dashboard.
-
-Use the built-in helpers (safe even from a root shell):
-
-```bash
-arena-sessions
-tmux-dev ls
-gt-dev status
+Browser → Go Server (:8080)
+         ├── /           → Embedded React dashboard
+         ├── /terminal/  → ttyd proxy → terminal-launch.sh → tmux
+         └── /api/       → Go handlers (tmux, files, beads)
 ```
 
-## Gastown
+## Session Categorization
 
-Agent Arena powers **Gastown**, an orchestration framework for running many AI coding agents (10-30+) in parallel. Gastown uses the "MEOW Stack" (Molecular Expression Of Work) with atomic tasks, Epics, Molecules, and Wisps. Philosophy: "Physics over Politeness" - sessions are ephemeral, throughput is king, all actions are idempotent.
-
-Session naming: `gt-{rigname}-{worker}` for rig workers, `hq-*` for coordination sessions.
-
-## Dashboard (React + TypeScript)
-
-**Tech Stack:** React 18, TypeScript, Vite, xterm.js, @dnd-kit (drag-drop)
-
-**Entry Point:** `dashboard/src/App.tsx`
-
-**State Management:** `SessionContext.tsx` manages:
-- Window count (1-4 terminal panes)
-- Window states with bound sessions
-- Sidebar visibility, theme settings
-
-**Session Categorization by prefix:**
+Session naming determines dashboard grouping:
 - `hq-*` → HQ group (priority 0)
 - `main`, `shell` → Main group (priority 1)
-- `gt-{rigname}-*` → Gastown rig groups (priority 2)
-- Other → Other group (priority 3)
+- `gt-{rigname}-*` → Gastown rig groups (priority 3)
+- Other → Other group (priority 4)
 
-**Views:** Terminal, Files (native React), Settings, Help
+Implemented in `src/internal/core/session.go:CategorizeSession()`.
 
-## API (Express.js)
+## Security Model
 
-**Entry Point:** `api/server.js`
+All operations run as **`chrote` user** (non-root, no sudo):
+- Tmux sockets at `/run/tmux/chrote/` - dedicated socket directory
+- User permissions provide isolation (not container boundary)
+- Agents cannot escalate privileges
 
-**Key Endpoints:**
-- `GET /api/tmux/sessions` - List sessions (polled every 5s)
-- `POST /api/tmux/sessions` - Create session
-- `PATCH /api/tmux/sessions/:name` - Rename session
-- `DELETE /api/tmux/sessions/:name` - Delete specific session
-- `DELETE /api/tmux/sessions/all` - Kill all sessions
+## Anti-Patterns
 
-## Session Panel Features
+1. **No silent fallbacks** - Never `2>/dev/null` on tmux commands
+2. **No auto-creating sessions** - Windows start empty; users drag sessions
+3. **Click = peek (modal), Drag = bind** - Distinct behaviors
+4. **No nginx** - Go server handles all routing (single binary)
 
-**Side Panel (260px width):**
-- Sessions grouped by category with colored text when assigned to a window
-- Search/filter sessions
-- "+" button creates sessions with auto-incrementing names (tmux1, tmux2, etc.)
-- "Nuke All" button to kill all sessions
+## Filesystem
 
-**Right-Click Context Menu:**
-- **Rename** - Inline rename with Enter to save, Escape to cancel
-- **Assign to Window →** - Submenu to assign session to Window 1-4
-- **Unassign** - Remove from window without deleting (only shows if assigned)
-- **Delete Session** - Kill the tmux session
+```
+/code   → /home/chrote/chrote    (symlink, read/write)
+/vault  → /mnt/e/Vault           (symlink, read-only)
+```
 
-**Drag-and-Drop:**
-- Drag sessions to terminal windows to assign them
-- Drag session tags between windows to move assignments
-
-## Anti-Patterns to Avoid
-
-1. **No silent fallbacks** - Never add `else exec bash -l` or `2>/dev/null` on tmux commands; expose errors
-2. **No empty catch blocks** - Always log errors even when degrading gracefully
-3. **No auto-creating sessions** - Windows initialize empty; users drag sessions explicitly
-4. **Click vs Drag behavior** - Click opens floating modal (peek), Drag binds to window
-
-## Testing
-
-Playwright tests in `dashboard/tests/` cover: session panel, terminal layouts, drag-and-drop, search, keyboard navigation, state persistence.
-
-Jest tests in `api/utils.test.js` cover: session categorization, agent name extraction, group priority.
-
-## Volume Mounts (Windows Host)
-
-- `E:/Code` → `/code` (RW)
-- `E:/Vault` → `/vault` (RW)
+File API only allows access to these paths.
 
 ## Access URLs (via Tailscale)
 
-- Dashboard: `http://arena:8080`
-- SSH: `ssh root@arena` (password: root)
+- Dashboard: `http://chrote:8080`

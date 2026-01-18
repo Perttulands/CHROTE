@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/agentarena/server/internal/core"
+	"github.com/chrote/server/internal/core"
 )
 
 // BeadsHandler handles beads-related API endpoints

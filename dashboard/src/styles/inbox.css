@@ -1,0 +1,546 @@
+/* Arena Dashboard - Inbox Styles */
+/* File inbox and dropzone components */
+
+/* Inbox Dropzone (old style) */
+.fb-inbox {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 32px;
+  max-width: 600px;
+  margin: 0 auto;
+  width: 100%;
+  gap: 20px;
+}
+
+.fb-inbox-header {
+  text-align: center;
+}
+
+.fb-inbox-header h3 {
+  margin: 0 0 8px 0;
+  font-size: 18px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.fb-inbox-subtitle {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.fb-inbox-dropzone {
+  border: 2px dashed var(--divider);
+  border-radius: 8px;
+  padding: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--surface-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-height: 120px;
+}
+
+.fb-inbox-dropzone:hover {
+  border-color: var(--text-dim);
+  background-color: var(--surface-primary);
+}
+
+.fb-inbox-dropzone.dragging {
+  border-color: var(--accent);
+  background-color: var(--accent-light);
+  box-shadow: 0 0 20px rgba(var(--accent-rgb), 0.2);
+}
+
+.fb-inbox-dropzone.has-file {
+  border-style: solid;
+  border-color: var(--accent);
+  cursor: default;
+}
+
+.fb-inbox-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-dim);
+  font-size: 14px;
+}
+
+.fb-inbox-icon {
+  font-size: 48px;
+  opacity: 0.7;
+}
+
+.fb-inbox-file {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background-color: var(--surface-primary);
+  border-radius: 6px;
+  border: 1px solid var(--divider);
+}
+
+.fb-inbox-file-icon {
+  font-size: 24px;
+}
+
+.fb-inbox-file-name {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.fb-inbox-file-size {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.fb-inbox-file-remove {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  transition: color 0.15s ease;
+  margin-left: 8px;
+}
+
+.fb-inbox-file-remove:hover {
+  color: var(--color-error);
+}
+
+.fb-inbox-letter {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fb-inbox-label {
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.fb-inbox-textarea {
+  width: 100%;
+  padding: 12px 14px;
+  background-color: var(--surface-secondary);
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 14px;
+  resize: vertical;
+  min-height: 120px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.fb-inbox-textarea:hover {
+  border-color: var(--text-dim);
+}
+
+.fb-inbox-textarea:focus {
+  border-color: var(--accent);
+}
+
+.fb-inbox-textarea::placeholder {
+  color: var(--text-dim);
+}
+
+.fb-inbox-textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.fb-inbox-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.fb-inbox-btn {
+  padding: 10px 20px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.fb-inbox-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.fb-inbox-btn-clear {
+  background: transparent;
+  border: 1px solid var(--divider);
+  color: var(--text-secondary);
+}
+
+.fb-inbox-btn-clear:hover:not(:disabled) {
+  border-color: var(--text-dim);
+  color: var(--text-primary);
+}
+
+.fb-inbox-btn-send {
+  background-color: var(--accent);
+  border: 1px solid var(--accent);
+  color: var(--background);
+}
+
+.fb-inbox-btn-send:hover:not(:disabled) {
+  filter: brightness(1.15);
+  box-shadow: 0 0 15px rgba(var(--accent-rgb), 0.4);
+}
+
+.fb-inbox-status {
+  text-align: center;
+  padding: 10px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.fb-inbox-status-info {
+  background-color: var(--surface-secondary);
+  color: var(--text-secondary);
+}
+
+.fb-inbox-status-success {
+  background-color: var(--accent-light);
+  color: var(--accent);
+}
+
+.fb-inbox-status-error {
+  background-color: var(--color-error-light);
+  color: var(--color-error);
+}
+
+.fb-inbox-info {
+  text-align: center;
+  margin-top: auto;
+  padding-top: 16px;
+  border-top: 1px solid var(--divider);
+}
+
+.fb-inbox-info p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.fb-inbox-info code {
+  color: var(--text-secondary);
+  font-family: 'Courier Prime', 'Courier New', monospace;
+}
+
+/* Inbox Panel (Delightful) */
+.inbox-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  background: linear-gradient(135deg, var(--surface-secondary) 0%, var(--surface-primary) 100%);
+  border-bottom: 1px solid var(--divider);
+  transition: all 0.3s ease;
+}
+
+.inbox-panel.dragging {
+  background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.2) 0%, rgba(var(--accent-rgb), 0.05) 100%);
+  border-bottom-color: var(--accent);
+}
+
+.inbox-panel.success {
+  background: linear-gradient(135deg, rgba(76, 175, 80, 0.15) 0%, var(--surface-primary) 100%);
+}
+
+.inbox-panel.error {
+  background: linear-gradient(135deg, rgba(244, 67, 54, 0.15) 0%, var(--surface-primary) 100%);
+}
+
+/* Big drop zone */
+.inbox-dropzone {
+  min-height: 140px;
+  padding: 24px;
+  border: 2px dashed var(--divider);
+  border-radius: 16px;
+  background: var(--surface-primary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.inbox-dropzone:hover {
+  border-color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.03);
+}
+
+.inbox-panel.dragging .inbox-dropzone {
+  border-color: var(--accent);
+  border-style: solid;
+  background: rgba(var(--accent-rgb), 0.1);
+  box-shadow: 0 0 0 4px rgba(var(--accent-rgb), 0.2);
+  transform: scale(1.01);
+}
+
+.inbox-panel.has-files .inbox-dropzone {
+  cursor: default;
+  min-height: auto;
+  padding: 16px;
+}
+
+/* Empty state placeholder */
+.inbox-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+}
+
+.inbox-icon {
+  font-size: 48px;
+  line-height: 1;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+}
+
+.inbox-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.5px;
+}
+
+.inbox-subtitle {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+/* Files list when files are added */
+.inbox-files-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.inbox-file-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--surface-secondary);
+  border-radius: 8px;
+  transition: background 0.15s ease;
+}
+
+.inbox-file-item:hover {
+  background: var(--surface-tertiary, var(--surface-secondary));
+}
+
+.inbox-file-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.inbox-file-name {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.inbox-file-size {
+  color: var(--text-dim);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.inbox-file-remove {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.1s ease;
+  padding: 0;
+  line-height: 1;
+}
+
+.inbox-file-remove:hover {
+  background: rgba(244, 67, 54, 0.15);
+  color: #f44336;
+}
+
+.inbox-add-more {
+  padding: 8px 12px;
+  border: 1px dashed var(--divider);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: center;
+}
+
+.inbox-add-more:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.05);
+}
+
+/* Bottom section with note and send */
+.inbox-bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.inbox-note {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--divider);
+  border-radius: 10px;
+  background: var(--surface-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  transition: all 0.15s ease;
+  resize: none;
+}
+
+.inbox-note::placeholder {
+  color: var(--text-dim);
+}
+
+.inbox-note:hover {
+  border-color: var(--text-dim);
+}
+
+.inbox-note:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.1);
+}
+
+.inbox-note:disabled {
+  opacity: 0.6;
+}
+
+.inbox-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.inbox-summary {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.inbox-send {
+  padding: 10px 24px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--background);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+  min-width: 100px;
+}
+
+.inbox-send:hover:not(:disabled) {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(var(--accent-rgb), 0.3);
+}
+
+.inbox-send:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.inbox-send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.inbox-panel.success .inbox-send {
+  background: #4caf50;
+}
+
+.inbox-panel.error .inbox-send {
+  background: #f44336;
+}
+
+/* Browse buttons in empty state */
+.inbox-browse-buttons {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.inbox-browse-btn {
+  padding: 8px 16px;
+  border: 1px solid var(--divider);
+  border-radius: 6px;
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.inbox-browse-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.05);
+}
+
+/* Add buttons row when files are selected */
+.inbox-add-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.inbox-add-buttons .inbox-add-more {
+  flex: 1;
+}
+
+/* File count inside folder name */
+.inbox-file-count {
+  color: var(--text-dim);
+  font-weight: 400;
+  font-size: 11px;
+}

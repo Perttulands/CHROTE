@@ -3,7 +3,7 @@
 # Run this inside the container: docker exec -it agentarena-dev bash /code/AgentArena/test-sessions.sh
 # Or from within tmux in the container: bash /code/AgentArena/test-sessions.sh
 
-export TMUX_TMPDIR=/tmp
+export TMUX_TMPDIR=${TMUX_TMPDIR:-/tmp}
 
 echo "Creating test sessions..."
 

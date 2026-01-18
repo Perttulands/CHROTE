@@ -19,9 +19,9 @@ export default function BeadsView() {
   const [selectedProjectPath, setSelectedProjectPath] = useState<string | null>(null)
 
   const { projects, loading: projectsLoading } = useProjects()
-  const { issues, loading: issuesLoading, refresh: refreshIssues } = useIssues(selectedProjectPath)
-  const { triage, loading: triageLoading, refresh: refreshTriage } = useTriage(selectedProjectPath)
-  const { insights, loading: insightsLoading, refresh: refreshInsights } = useInsights(selectedProjectPath)
+  const { issues, loading: issuesLoading, error: issuesError, refresh: refreshIssues } = useIssues(selectedProjectPath)
+  const { triage, loading: triageLoading, error: triageError, refresh: refreshTriage } = useTriage(selectedProjectPath)
+  const { insights, loading: insightsLoading, error: insightsError, refresh: refreshInsights } = useInsights(selectedProjectPath)
 
   const handleProjectSelect = useCallback((path: string) => {
     setSelectedProjectPath(path || null)
@@ -72,13 +72,13 @@ export default function BeadsView() {
 
           <div className="beads-content">
             {activeSubTab === 'kanban' && (
-              <KanbanView issues={issues} loading={issuesLoading} />
+              <KanbanView issues={issues} loading={issuesLoading} error={issuesError} />
             )}
             {activeSubTab === 'triage' && (
-              <TriageView triage={triage} issues={issues} loading={triageLoading} />
+              <TriageView triage={triage} issues={issues} loading={triageLoading} error={triageError} />
             )}
             {activeSubTab === 'insights' && (
-              <InsightsView insights={insights} loading={insightsLoading} />
+              <InsightsView insights={insights} loading={insightsLoading} error={insightsError} />
             )}
           </div>
         </>

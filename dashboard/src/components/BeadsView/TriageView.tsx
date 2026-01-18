@@ -7,6 +7,7 @@ interface TriageViewProps {
   triage: TriageResponse | null
   issues: BeadsIssue[]
   loading?: boolean
+  error?: string | null
 }
 
 const IMPACT_COLORS: Record<ImpactLevel, string> = {
@@ -19,11 +20,19 @@ function getIssueById(issues: BeadsIssue[], id: string): BeadsIssue | undefined 
   return issues.find(i => i.id === id)
 }
 
-export default function TriageView({ triage, issues, loading }: TriageViewProps) {
+export default function TriageView({ triage, issues, loading, error }: TriageViewProps) {
   if (loading) {
     return (
       <div className="beads-triage loading">
         <div className="loading-message">Analyzing issues...</div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="beads-triage error">
+        <div className="error-message">{error}</div>
       </div>
     )
   }
