@@ -1,0 +1,145 @@
+/* Arena Dashboard - Music Player Styles */
+/* Ambient music player controls */
+
+.music-player {
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+}
+
+.music-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.music-btn {
+  background: transparent;
+  border: 1px solid var(--divider);
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 4px 8px;
+  font-size: 12px;
+  transition: all 0.15s ease;
+  min-width: 32px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.music-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.music-toggle.playing {
+  color: var(--accent);
+  border-color: var(--accent);
+  background-color: var(--accent-light);
+}
+
+/* Dropdown wrapper */
+.music-dropdown-wrap {
+  position: relative;
+}
+
+.music-track-btn {
+  min-width: auto;
+  padding: 4px 10px;
+  gap: 6px;
+}
+
+.track-num {
+  font-size: 10px;
+  opacity: 0.5;
+}
+
+/* Dropdown - opens DOWNWARD */
+.music-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface-secondary);
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  margin-top: 4px;
+  z-index: 1000;
+  min-width: 120px;
+}
+
+.music-dropdown-item {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.music-dropdown-item:hover {
+  background: var(--surface-primary);
+  color: var(--text-primary);
+}
+
+.music-dropdown-item.active {
+  color: var(--accent);
+}
+
+/* Inline volume slider */
+.music-volume-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--surface-secondary);
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+}
+
+.vol-icon {
+  font-size: 14px;
+  cursor: default;
+}
+
+.volume-slider-inline {
+  width: 60px;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--divider);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.volume-slider-inline::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 10px;
+  height: 10px;
+  background: var(--accent);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.volume-slider-inline::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  background: var(--accent);
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+}
+
+/* Backdrop to close dropdown on outside click */
+.music-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 999;
+}

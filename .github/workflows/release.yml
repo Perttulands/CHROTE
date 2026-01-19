@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Build dashboard
+      - name: Build Dashboard
+        run: |
+          cd dashboard
+          npm ci
+          npm run build
+          cp -r dist ../src/internal/dashboard/
+
+      # Run Go tests
+      - name: Run Go Tests
+        run: |
+          cd src
+          go test ./...
+
+      # Build Go binaries for multiple architectures
+      - name: Build Binaries
+        run: |
+          mkdir -p dist
+          cd src
+          GOOS=linux GOARCH=amd64 go build -o ../dist/chrote-server-linux-amd64 ./cmd/server
+          GOOS=linux GOARCH=arm64 go build -o ../dist/chrote-server-linux-arm64 ./cmd/server
+
+      # Create GitHub release with binaries
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/chrote-server-linux-amd64
+            dist/chrote-server-linux-arm64
+            install.sh
+            uninstall.sh
+          generate_release_notes: true

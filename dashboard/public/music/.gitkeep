@@ -1,0 +1,8 @@
+# Place your MP3 files here
+# The music player will automatically play files named:
+# - track1.mp3
+# - track2.mp3
+# - track3.mp3
+#
+# You can modify the MUSIC_TRACKS array in
+# src/components/MusicPlayer.tsx to change the track list.

@@ -1,0 +1,384 @@
+# CHROTE
+
+![CHROTE](CHROTE.png)
+
+**C**ontrol **H**ub for **R**emote **O**perations & **T**mux **E**xecution
+
+---
+
+> **WARNING:** This software was vibe-coded at 3am by mass hallucinations between a human and multiple AI agents. It works on my machine. It might work on yours. It probably won't. If it does, that's the miracle - not the expectation.
+
+> **DANGER:** You are about to run untested code that spawns dozens of AI agents with terminal access. They will read your files. They will write your files. They will argue with each other. They will occasionally achieve something useful. Mostly they will burn through your API credits like a war rig burns guzzoline.
+
+> **CAUTION:** If you have to ask "is this safe?" - turn back now. This is not safe. This is the wasteland. We don't do safe here. We do *fast*, *loud*, and *pray the tests pass*.
+
+---
+
+## What Is This?
+
+CHROTE is a web dashboard for running swarms of AI coding agents via tmux sessions. It's the control room for your wasteland coding operation.
+
+You know how normal people run one Claude Code instance and carefully review each change?
+
+We don't do that here.
+
+Here, we spin up 10, 20, 30 agents. We point them at problems. We watch the chaos unfold through terminal windows. Sometimes they solve the problem. Sometimes they fight each other. Sometimes they all independently decide to refactor the same file and create merge conflicts that would make God weep.
+
+**It's beautiful.**
+
+---
+
+## Who Is This For?
+
+**This is NOT for you if:**
+- You've never used Claude Code
+- You think "vibe coding" sounds irresponsible
+- You have a budget
+- You need things to work reliably
+- You value your sanity
+
+**This IS for you if:**
+- You're already mass-prompting Claude Code instances in a dozen terminal tabs
+- You've accepted that AI will write most of your code and you're just here to steer
+- You understand that "it works on my machine" is a lifestyle
+- You have more API credits than sense
+- You want to feel like a mad scientist running a robot army
+
+---
+
+## The Crew
+
+Every terminal window in CHROTE has a guardian - a wasteland operator watching over your agents. Meet them:
+
+### Terminal 1 - The Veterans
+
+<table>
+<tr>
+<td width="25%" align="center">
+<img src="dashboard/public/bg-polecat.png" width="150"><br>
+<b>POLECAT</b><br>
+<i>The Mechanic</i><br>
+V8 engine heart. Keeps the rigs running when everything's on fire.
+</td>
+<td width="25%" align="center">
+<img src="dashboard/public/bg_fox.png" width="150"><br>
+<b>FOX</b><br>
+<i>The Strategist</i><br>
+Monocle and military precision. Plans the operations others execute.
+</td>
+<td width="25%" align="center">
+<img src="dashboard/public/bg-badger.png" width="150"><br>
+<b>BADGER</b><br>
+<i>The Engineer</i><br>
+Welding goggles and steady hands. Builds what Fox designs.
+</td>
+<td width="25%" align="center">
+<img src="dashboard/public/bg_wolf.png" width="150"><br>
+<b>WOLF</b><br>
+<i>The Enforcer</i><br>
+Hooded and chained. When sessions need killing, Wolf answers.
+</td>
+</tr>
+</table>
+
+### Terminal 2 - The Operations
+
+<table>
+<tr>
+<td width="25%" align="center">
+<img src="dashboard/public/bg_crew.png" width="150"><br>
+<b>CREW</b><br>
+<i>The Technician</i><br>
+Wrench in hand, plasma flowing. Keeps the terminals alive.
+</td>
+<td width="25%" align="center">
+<img src="dashboard/public/bg_convoy.png" width="150"><br>
+<b>CONVOY</b><br>
+<i>The Transport</i><br>
+The war rig itself. Carries your workloads across the wasteland.
+</td>
+<td width="25%" align="center">
+<img src="dashboard/public/bg_hawk.png" width="150"><br>
+<b>HAWK</b><br>
+<i>The Architect</i><br>
+Cloaked scholar. Reads the ancient docs. Guides the workers.
+</td>
+<td width="25%" align="center">
+<img src="dashboard/public/bg_town.png" width="150"><br>
+<b>TOWN</b><br>
+<i>The Settlement</i><br>
+CHROTE itself. The glowing hub where all roads lead.
+</td>
+</tr>
+</table>
+
+---
+
+## Deployment Protocol
+
+> **STOP.** Before you proceed, accept these truths:
+> 1. This will probably break
+> 2. When it breaks, you get to keep both pieces
+> 3. There is no support team. There is only the wasteland.
+
+### Prerequisites
+
+- Windows 11 with WSL2 (we don't do Docker here, too many layers of abstraction between us and the metal)
+- Ubuntu 24.04 in WSL
+- Tailscale account (because exposing this to the internet would be *insane*)
+- A reckless disregard for best practices
+
+> **Mac users:** I used to have a Mac. Then I inhaled too many Sharpies and went out and bought a Windows computer. Don't be like me. But what that *does* mean is that CHROTE is Windows-native and you'll need to do some cooking to get it running on macOS. The core concepts translate - you've got native Linux, you've got tmux, you just need to wire up the systemd services differently. PRs welcome. We don't judge. Much.
+
+### Installation
+
+**If you're lucky:**
+
+```powershell
+# 1. Install Ubuntu 24.04 in WSL
+wsl --install -d Ubuntu-24.04
+
+# 2. Open WSL as root and run setup script
+wsl -d Ubuntu-24.04 -u root
+curl -fsSL https://raw.githubusercontent.com/Perttulands/CHROTE/main/wsl/setup-wsl.sh | bash
+
+# 3. Restart WSL and pray
+wsl --shutdown
+```
+
+**When that fails:** See [docs/WSL-migration-plan.md](docs/WSL-migration-plan.md) and debug it yourself like the rest of us.
+
+### Ignition
+
+```powershell
+# The toggle script - your daily driver
+.\Chrote-Toggle.ps1          # Start and open browser
+.\Chrote-Toggle.ps1 -Stop    # Kill everything
+.\Chrote-Toggle.ps1 -Status  # Check if anything's alive
+.\Chrote-Toggle.ps1 -Logs    # Watch the chaos unfold
+```
+
+### Access Points
+
+Once the rig is running (IF the rig is running):
+
+| Outpost | Location | Purpose |
+|---------|----------|---------|
+| Command Center | `http://chrote:8080` | Main dashboard - where you watch the madness |
+| Direct Terminal | `http://chrote:8080/terminal/` | Raw ttyd access - for when the UI fails |
+| File Depot | `http://chrote:8080/api/files/` | File API - surprisingly stable |
+
+---
+
+## The Gastown Connection
+
+CHROTE is infrastructure. **Gastown** is what runs on it.
+
+Gastown is Steve Yegge's orchestration framework for running 10-30+ AI coding agents in parallel. CHROTE gives Gastown a home - terminals to run in, a dashboard to monitor, and a "Nuke All" button for when everything goes wrong (which is often).
+
+The workflow:
+- **Beads** - atomic units of work
+- **Epics** - collections of parallel tasks
+- **Molecules** - complex workflow chains
+- **Wisps** - ephemeral coordination tasks
+
+The philosophy: **Physics over Politeness**. Sessions are expendable. Throughput is the mission. The "Nuke All" button isn't a failure state - it's a feature. Burn it down, start fresh, try again.
+
+```bash
+# Inside WSL - start the machine
+gt start gastown
+gt status
+gt peek
+```
+
+---
+
+## Dashboard Controls
+
+### Terminal View
+- 1-4 terminal panes per tab (two tabs = 8 total windows)
+- Drag sessions from sidebar onto windows
+- Click tabs to switch between assigned sessions
+- Each window has its guardian watching over your agents
+
+### The Nuclear Option
+
+See that "Nuke All Sessions" button?
+
+It does exactly what it says. All sessions. Gone. Instantly.
+
+Use it liberally. This is the wasteland. Attachment is weakness. If your agents are stuck in loops, arguing with themselves, or have collectively decided to rewrite your codebase in Haskell - nuke them. Start over. You'll feel better.
+
+### Session Naming
+
+| Prefix | Example | What It Means |
+|--------|---------|---------------|
+| `hq-` | `hq-mayor` | Headquarters - coordination sessions |
+| `gt-rigname-` | `gt-gastown-jack` | Rig workers - the agents doing actual work |
+| `main`, `shell` | `main` | Your personal sessions |
+| Other | `chaos-monkey` | Whatever you want, we don't judge |
+
+---
+
+## Architecture (For The Brave)
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Tailscale Network                             │
+│              (The only thing between you and disaster)               │
+└───────────────────────────────────────────────────────────────────┬──┘
+                                                                    │
+                    ┌───────────────────────────────────────────────▼──────────────────────────────┐
+                    │                    WSL2 (Ubuntu 24.04)                                        │
+                    │                   User: chrote (no sudo, we're not THAT reckless)            │
+                    │                                                                              │
+                    │  ┌─────────────────────────────────────────────────────────────────────┐    │
+                    │  │                        systemd services                              │    │
+                    │  │  ┌─────────────────────────┐  ┌─────────────────────────┐          │    │
+                    │  │  │ chrote-server :8080     │  │ chrote-ttyd :7681       │          │    │
+                    │  │  │ (Go binary - fast,      │  │ (web terminal - when    │          │    │
+                    │  │  │  surprisingly stable)   │  │  you need raw access)   │          │    │
+                    │  │  └─────────────────────────┘  └─────────────────────────┘          │    │
+                    │  └─────────────────────────────────────────────────────────────────────┘    │
+                    │                                                                              │
+                    │  Tailscale hostname: chrote                                                  │
+                    └──────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Why WSL2 instead of Docker?**
+
+Because we already tried Docker. The layers of indirection made debugging a nightmare. WSL2 gives us real Linux with real systemd and real performance. It's closer to the metal. In the wasteland, you want to feel the road.
+
+---
+
+## Security (Such As It Is)
+
+> **CRITICAL:** Do not expose port 8080 to the public internet. Ever. Under any circumstances. This dashboard has no authentication. Anyone who can reach it can spawn terminals, read your files, and run commands. It's protected by Tailscale. If you bypass Tailscale, you deserve what happens next.
+
+The security model:
+- Tailscale network = perimeter
+- Everything inside = trusted
+- Agents run as `chrote` user = no root, limited blast radius
+- File access limited to `/code` and `/vault`
+
+See [SECURITY.md](SECURITY.md) if you want to pretend this is enterprise software.
+
+---
+
+## When Things Go Wrong
+
+### Sessions disappear
+```bash
+echo $TMUX_TMPDIR  # Should be /run/tmux/chrote
+ls -la /run/tmux/chrote/  # Check socket exists
+# If not, something's very wrong. Good luck.
+```
+
+### Services won't start
+```bash
+systemctl status chrote-server chrote-ttyd
+journalctl -u chrote-server -f
+# Read the logs. The answer is in there. It's always in the logs.
+```
+
+### Terminal shows black screen
+```bash
+systemctl status chrote-ttyd
+# Restart it
+sudo systemctl restart chrote-ttyd
+# Still black? Check if tmux is even running
+tmux list-sessions
+```
+
+### Everything is on fire
+```bash
+# The nuclear option
+wsl --shutdown
+# Wait 10 seconds
+# Start fresh
+.\Chrote-Toggle.ps1
+```
+
+---
+
+## Development
+
+Want to make this worse? Here's how:
+
+```bash
+# Dashboard (React + TypeScript)
+cd dashboard
+npm install
+npm run dev    # localhost:5173
+
+# After breaking things
+npm run build
+cd ..
+cp -r dashboard/dist src/internal/dashboard/
+cd src && go build -o ../chrote-server ./cmd/server
+sudo systemctl restart chrote-server
+```
+
+### Running Tests
+
+```bash
+cd dashboard
+npm run test
+# If they pass, you probably broke the tests
+```
+
+---
+
+## File Structure
+
+```
+CHROTE/
+├── src/                      # Go server (the stable part)
+├── dashboard/                # React UI (the pretty part)
+│   └── public/               # Guardian images live here
+├── wsl/                      # WSL setup scripts (the scary part)
+├── vendor/                   # Gastown, Beads (optional chaos)
+├── docs/                     # Documentation (optimistic)
+└── test-sessions.sh          # Creates fake sessions for testing
+```
+
+---
+
+## Philosophy
+
+**This is not production software.** This is a weapon. A tool for those who have decided that shipping fast matters more than shipping safe. That iteration speed beats code review. That 30 agents writing code simultaneously is better than one agent writing code carefully.
+
+Is this responsible? No.
+Is this sustainable? Probably not.
+Is this the future? ...maybe.
+
+We're all figuring this out together. The AI coding paradigm is evolving weekly. What works today might be obsolete tomorrow. What seems crazy now might be standard practice in a year.
+
+CHROTE is a bet. A bet that the way to navigate this chaos is to embrace it. To build tools that let us run more agents, faster, with less friction. To accept that most of what they produce will be garbage, but the 10% that works will be worth it.
+
+Welcome to the wasteland.
+Keep your API key loaded.
+And remember: when in doubt, nuke it and start over.
+
+---
+
+## See Also
+
+| Document | What It Is |
+|----------|------------|
+| [PRD.md](PRD.md) | What we thought we were building |
+| [SPEC.md](SPEC.md) | What we actually built |
+| [SECURITY.md](SECURITY.md) | How we pretend this is secure |
+
+---
+
+## License
+
+MIT - Because even in the wasteland, we believe in open source.
+
+---
+
+<p align="center">
+<i>"I live, I die, I live again!"</i><br>
+<small>- Every tmux session, probably</small>
+</p>

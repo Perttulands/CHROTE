@@ -1,0 +1,65 @@
+/* Arena Dashboard - Floating Modal Styles */
+/* Pop-out modal for terminal windows */
+
+.floating-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+}
+
+.floating-modal {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  background-color: var(--surface-primary);
+  border: 1px solid var(--accent);
+  box-shadow: 0 0 30px rgba(var(--accent-rgb), 0.2);
+  min-width: 400px;
+  min-height: 300px;
+}
+
+.floating-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background-color: var(--surface-secondary);
+  border-bottom: 1px solid var(--divider);
+  cursor: move;
+}
+
+.modal-title {
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.modal-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.modal-close {
+  background: transparent;
+  border: 1px solid var(--divider);
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px 8px;
+  font-size: 16px;
+  transition: all 0.15s ease;
+}
+
+.modal-close:hover {
+  color: var(--color-error);
+  border-color: var(--color-error);
+}
+
+.floating-modal-body {
+  flex: 1;
+  overflow: hidden;
+}

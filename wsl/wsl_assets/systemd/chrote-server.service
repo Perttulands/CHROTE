@@ -1,0 +1,25 @@
+[Unit]
+Description=CHROTE Server (Go)
+Documentation=https://github.com/Perttulands/CHROTE
+After=network.target
+
+[Service]
+Type=simple
+User=chrote
+Group=chrote
+WorkingDirectory=/home/chrote/chrote
+
+# Environment
+Environment=TMUX_TMPDIR=/run/tmux/chrote
+Environment=PORT=8080
+Environment=TTYD_PORT=7681
+
+# The Go server embeds the dashboard and proxies ttyd
+# No nginx needed - single binary serves everything
+ExecStart=/home/chrote/chrote-server --start-ttyd=false
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
