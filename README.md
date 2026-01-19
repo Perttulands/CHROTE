@@ -114,6 +114,31 @@ CHROTE itself. The glowing hub where all roads lead.
 
 ---
 
+## The Soundtrack
+
+Every wasteland operation needs its anthem. The official CHROTE soundtrack - lo-fi beats for coding robots:
+
+**[CHROTE Official Playlist](https://suno.com/playlist/8bbca04c-31de-4f6b-a989-372cfd73b382)**
+
+Listen to that shit. You might learn something. The lyrics explain you Gastown and Tmux.
+
+**Built-in tracks** (yes, we ship MP3s with the codebase - this is the wasteland, might as well have some toons while you watch a stream of errors):
+
+- **Design_phase** - When the architects are scheming
+- **Who_ate_my_PRD** - The eternal question
+- **Vibes_at_the_hq** - Command center ambience
+- **Mayors_introspection** - Deep thoughts from the control room
+- **The_idle_Polecat** - When the mechanic takes a smoke break
+- **Polecat_Danceparty** - V8 engine rhythms
+- **Deacons_revenge** - Things got personal
+- **MergePush** - The moment of truth
+- **March_of_the_Polecats** - When the crew mobilizes
+- **Convoy_Run** - Full throttle across the wasteland
+
+Access the music player in the dashboard tab bar. Let it play while your agents "work". They can't hear it, but you'll feel better.
+
+---
+
 ## Deployment Protocol
 
 > **STOP.** Before you proceed, accept these truths:
