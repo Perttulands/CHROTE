@@ -126,7 +126,7 @@ Every wasteland operation needs its anthem. The official CHROTE soundtrack - lo-
 
 Listen to that shit. You might learn something. The lyrics explain you Gastown and Tmux.
 
-**Built-in tracks** (yes, we ship MP3s with the codebase - this is the wasteland, might as well have some toons while you watch a stream of errors):
+**Built-in tracks** (yes, we ship MP3s with the codebase - this is the wasteland, might as well have some tunes while you watch a stream of errors):
 
 - **Design_phase** - When the architects are scheming
 - **Who_ate_my_PRD** - The eternal question
