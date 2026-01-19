@@ -48,6 +48,45 @@ Here, we spin up 10, 20, 30 agents. We point them at problems. We watch the chao
 
 ---
 
+## Dashboard Features
+
+### Terminal View
+- 1-4 terminal panes per tab (two tabs = 8 total windows)
+- Drag sessions from sidebar onto windows
+- Click tabs to switch between assigned sessions
+- Each window has its guardian watching over your agents
+
+![Beads View](screenshot%202.png)
+
+### Files and Themes
+
+Access your project files directly through the dashboard with the native file browser:
+
+![File Browser](file%20system.png)
+
+Customize your workspace with multiple built-in themes:
+
+![Themes](Themes.png)
+
+### The Nuclear Option
+
+See that "Nuke All Sessions" button?
+
+It does exactly what it says. All sessions. Gone. Instantly.
+
+Use it liberally. This is the wasteland. Attachment is weakness. If your agents are stuck in loops, arguing with themselves, or have collectively decided to rewrite your codebase in Haskell - nuke them. Start over. You'll feel better.
+
+### Session Naming
+
+| Prefix | Example | What It Means |
+|--------|---------|---------------|
+| `hq-` | `hq-mayor` | Headquarters - coordination sessions |
+| `gt-rigname-` | `gt-gastown-jack` | Rig workers - the agents doing actual work |
+| `main`, `shell` | `main` | Your personal sessions |
+| Other | `chaos-monkey` | Whatever you want, we don't judge |
+
+---
+
 ## The Crew
 
 Every terminal window in CHROTE has a guardian - a wasteland operator watching over your agents. They don't actually *do* anything. They're just... there. Staring. Judging your tmux sessions with silent, pixel-based disapproval. Think of them as the dashboard's emotional support animals, except they're cyberpunk rodents who've seen some shit and have zero therapeutic credentials.
@@ -197,7 +236,9 @@ The setup script (`wsl/setup-wsl.sh`) handles everything:
 | **ttyd** | Web terminal backend |
 | **Claude Code** | Anthropic's CLI (via npm) |
 | **CHROTE Server** | Go binary serving the dashboard |
-| **Vendored Tools** | gastown (gt), beads (bd), beads_viewer (bv) |
+| **Gastown** | Downloaded and built from GitHub during setup |
+| **Beads** | Downloaded and built from GitHub during setup |
+| **Beads Viewer** | Downloaded and built from GitHub during setup |
 | **systemd Services** | chrote-server and chrote-ttyd auto-start on boot |
 
 After installation, the following paths are available inside WSL:
@@ -311,45 +352,6 @@ gt start gastown
 gt status
 gt peek
 ```
-
----
-
-## Dashboard Controls
-
-### Terminal View
-- 1-4 terminal panes per tab (two tabs = 8 total windows)
-- Drag sessions from sidebar onto windows
-- Click tabs to switch between assigned sessions
-- Each window has its guardian watching over your agents
-
-![Beads View](screenshot%202.png)
-
-### Files and Themes
-
-Access your project files directly through the dashboard with the native file browser:
-
-![File Browser](file%20system.png)
-
-Customize your workspace with multiple built-in themes:
-
-![Themes](Themes.png)
-
-### The Nuclear Option
-
-See that "Nuke All Sessions" button?
-
-It does exactly what it says. All sessions. Gone. Instantly.
-
-Use it liberally. This is the wasteland. Attachment is weakness. If your agents are stuck in loops, arguing with themselves, or have collectively decided to rewrite your codebase in Haskell - nuke them. Start over. You'll feel better.
-
-### Session Naming
-
-| Prefix | Example | What It Means |
-|--------|---------|---------------|
-| `hq-` | `hq-mayor` | Headquarters - coordination sessions |
-| `gt-rigname-` | `gt-gastown-jack` | Rig workers - the agents doing actual work |
-| `main`, `shell` | `main` | Your personal sessions |
-| Other | `chaos-monkey` | Whatever you want, we don't judge |
 
 ---
 
