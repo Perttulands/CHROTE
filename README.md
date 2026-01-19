@@ -26,6 +26,8 @@ Here, we spin up 10, 20, 30 agents. We point them at problems. We watch the chao
 
 **It's beautiful.**
 
+![Dashboard Screenshot](screenshot%201.png)
+
 ---
 
 ## Who Is This For?
@@ -317,6 +319,18 @@ gt peek
 - Drag sessions from sidebar onto windows
 - Click tabs to switch between assigned sessions
 - Each window has its guardian watching over your agents
+
+![Beads View](screenshot%202.png)
+
+### Files and Themes
+
+Access your project files directly through the dashboard with the native file browser:
+
+![File Browser](file%20system.png)
+
+Customize your workspace with multiple built-in themes:
+
+![Themes](Themes.png)
 
 ### The Nuclear Option
 
