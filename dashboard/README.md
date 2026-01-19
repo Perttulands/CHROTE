@@ -1,13 +1,13 @@
-# Arena Dashboard
+# Chrote Dashboard
 
-React + TypeScript web UI for managing tmux sessions in the Arena container.
+React + TypeScript web UI for managing tmux sessions in the Chrote environment.
 
 ## Quick Start
 
 ```bash
 npm install
 npm run dev      # Dev server at http://localhost:5173
-npm run build    # Build to dist/ (copied to container by dockerfile)
+npm run build    # Build to dist/ (embedded in Go binary)
 ```
 
 ## Architecture
@@ -43,7 +43,7 @@ src/
 
 ## Session Tracking
 
-Sessions are actual tmux sessions running as `dev` user inside the container.
+Sessions are actual tmux sessions running inside WSL.
 
 **How it works:**
 1. API server (`/api/tmux/sessions`) lists tmux sessions
@@ -52,7 +52,7 @@ Sessions are actual tmux sessions running as `dev` user inside the container.
 4. Terminal iframe loads `/terminal/?arg=session-name`
 5. ttyd receives the arg and attaches to that tmux session
 
-**Key constraint:** Both ttyd and API must run as the same user (dev) to share the tmux socket.
+**Key constraint:** Both ttyd and API must run as the same user to share the tmux socket.
 
 ## Drag and Drop
 
@@ -91,14 +91,14 @@ Save and restore window layouts with session assignments:
 
 Sessions with Gastown agent role prefixes display colored badges:
 
-| Role | Pattern | Badge |
-|------|---------|-------|
-| Mayor | `mayor-*` | 👑 |
-| Deacon | `deacon-*` | 📿 |
-| Witness | `witness-*` | 👁 |
-| Polecat | `polecat-*` | 🦨 |
-| Refinery | `refinery-*` | ⚗️ |
-| Crew | `crew-*` | 🔧 |
+| Role | Pattern | Badge | Description |
+|------|---------|-------|-------------|
+| Mayor | `hq-mayor`, `*-mayor` | 🎩 | Fox conductor |
+| Deacon | `hq-deacon`, `*-deacon` | 🐺 | Wolf in the engine room |
+| Witness | `*-witness` | 🦉 | Watchful owl |
+| Polecat | `*-polecat`, `*-pc-*` | 😺 | Transient worker |
+| Refinery | `*-refinery` | 🏭 | Industrial |
+| Crew | `*-crew-*` | 👷 | Established worker |
 
 ## Toast Notifications
 
@@ -130,13 +130,11 @@ npm run test:headed   # Run with browser visible
 npm run test:ui       # Interactive test UI
 ```
 
-## Building for Container
+## Building
 
-The dockerfile copies `dist/` to `/usr/share/nginx/html`. After changes:
+After making changes:
 
 ```bash
 npm run build
-# Then rebuild container
-docker compose build agent-arena
-docker compose up -d agent-arena
+# The dist/ folder is embedded in the Go binary at build time
 ```

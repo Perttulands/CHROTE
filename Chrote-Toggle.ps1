@@ -5,20 +5,61 @@
 param(
     [switch]$Stop,
     [switch]$Status,
-    [switch]$Logs
+    [switch]$Logs,
+    [switch]$Setup
 )
 
-$WSL_DISTRO = "Ubuntu"
+# Dynamic distro detection - find best Ubuntu candidate
+# Note: WSL outputs UTF-16 LE which has null bytes between characters
+function Find-UbuntuDistro {
+    # Force PowerShell to understand WSL's Unicode output and clean null bytes
+    [Console]::OutputEncoding = [System.Text.Encoding]::Unicode
+    $wslList = (wsl -l -q 2>$null | Out-String).Replace("`0", "").Trim()
+
+    if (-not $wslList) { return $null }
+
+    # Split into lines and filter for Ubuntu
+    $distros = $wslList -split "`r?`n" | Where-Object { $_ -match "Ubuntu" }
+
+    if ($distros) {
+        # Priority: Ubuntu-24.04 > Ubuntu-22.04 > Ubuntu
+        foreach ($pattern in @("Ubuntu-24.04", "Ubuntu-22.04", "^Ubuntu$")) {
+            $match = $distros | Where-Object { $_ -match $pattern } | Select-Object -First 1
+            if ($match) {
+                return $match.Trim()
+            }
+        }
+        # Fallback to first Ubuntu found
+        return ($distros | Select-Object -First 1).Trim()
+    }
+    return $null
+}
+
+$WSL_DISTRO = Find-UbuntuDistro
+if (-not $WSL_DISTRO) {
+    Write-Host "Error: No Ubuntu distro found in WSL." -ForegroundColor Red
+    Write-Host "Install Ubuntu from Microsoft Store or run: wsl --install -d Ubuntu-24.04" -ForegroundColor Yellow
+    exit 1
+}
+
 $CHROTE_URL = "http://chrote:8080"
 $LOCAL_URL = "http://localhost:8080"
+
+# Get script directory and convert to WSL path
+$SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
+if (-not $SCRIPT_DIR) { $SCRIPT_DIR = Get-Location }
+# Convert Windows path to WSL path: C:\foo\bar -> /mnt/c/foo/bar
+$WSL_CHROTE_PATH = ($SCRIPT_DIR -replace '\\', '/' -replace '^([A-Za-z]):', '/mnt/$1').ToLower()
 
 function Write-Color($Message, $Color = "White") {
     Write-Host $Message -ForegroundColor $Color
 }
 
 function Test-WSLRunning {
-    $running = wsl -l --running 2>$null | Select-String $WSL_DISTRO
-    return $null -ne $running
+    # WSL outputs UTF-16 LE - need to clean null bytes
+    [Console]::OutputEncoding = [System.Text.Encoding]::Unicode
+    $running = (wsl -l --running 2>$null | Out-String).Replace("`0", "")
+    return $running -match $WSL_DISTRO
 }
 
 function Start-Chrote {
@@ -100,8 +141,30 @@ function Get-ChroteLogs {
     wsl -d $WSL_DISTRO journalctl -u chrote-server -u chrote-ttyd -f --no-pager
 }
 
+function Install-Chrote {
+    Write-Color "Running CHROTE setup..." "Cyan"
+    Write-Color "Using distro: $WSL_DISTRO" "Yellow"
+    Write-Color "CHROTE path: $WSL_CHROTE_PATH" "Yellow"
+
+    # Run setup script directly, stripping CRLF inline
+    $scriptPath = "$WSL_CHROTE_PATH/wsl/setup-wsl.sh"
+    wsl -d $WSL_DISTRO -u root -e bash -c "export CHROTE_SRC='$WSL_CHROTE_PATH' && tr -d '\r' < '$scriptPath' | bash"
+
+    if ($LASTEXITCODE -eq 0) {
+        Write-Color "`nSetup complete! Restarting WSL..." "Green"
+        wsl --shutdown
+        Start-Sleep -Seconds 2
+        Write-Color "Starting CHROTE..." "Cyan"
+        Start-Chrote
+    } else {
+        Write-Color "Setup failed. Check the output above." "Red"
+    }
+}
+
 # Main logic
-if ($Stop) {
+if ($Setup) {
+    Install-Chrote
+} elseif ($Stop) {
     Stop-Chrote
 } elseif ($Status) {
     Get-ChroteStatus

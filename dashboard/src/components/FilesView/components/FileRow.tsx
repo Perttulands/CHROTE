@@ -71,7 +71,7 @@ export function FileRow({
     }
   }
 
-  // At root level, show Windows paths like E:/Code
+  // At root level, show paths like /code, /vault
   const displayName = isAtRoot ? getRootDisplayName(item.name) : item.name
 
   return (

@@ -28,11 +28,7 @@ COPY --from=builder /app/chrote-server /usr/local/bin/chrote-server
 
 # Create terminal launch script
 RUN echo '#!/bin/bash' > /usr/local/bin/terminal-launch.sh && \
-    echo 'if [ -n "$1" ]; then' >> /usr/local/bin/terminal-launch.sh && \
-    echo '  exec tmux new-session -A -s "$1"' >> /usr/local/bin/terminal-launch.sh && \
-    echo 'else' >> /usr/local/bin/terminal-launch.sh && \
-    echo '  exec bash -l' >> /usr/local/bin/terminal-launch.sh && \
-    echo 'fi' >> /usr/local/bin/terminal-launch.sh && \
+    echo 'exec bash -l' >> /usr/local/bin/terminal-launch.sh && \
     chmod +x /usr/local/bin/terminal-launch.sh
 
 # Set environment

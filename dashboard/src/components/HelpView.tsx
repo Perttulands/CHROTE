@@ -42,7 +42,7 @@ function HelpView() {
   return (
     <div className="help-view">
       <div className="help-header">
-        <h1 className="help-title">Arena Dashboard</h1>
+        <h1 className="help-title">Chrote Dashboard</h1>
         <p className="help-subtitle">Your command center for AI agent orchestration</p>
       </div>
 
@@ -71,7 +71,7 @@ function OverviewSection() {
     <div className="help-section-content">
       <div className="help-hero">
         <div className="help-hero-icon">&#x2726;</div>
-        <h2>Welcome to Arena</h2>
+        <h2>Welcome to Chrote</h2>
         <p>A powerful dashboard for managing tmux sessions and AI agents in a unified interface.</p>
       </div>
 
@@ -536,7 +536,7 @@ function TipsSection() {
   return (
     <div className="help-section-content">
       <h2>Tips & Tricks</h2>
-      <p className="help-intro">Get the most out of Arena with these pro tips.</p>
+      <p className="help-intro">Get the most out of Chrote with these pro tips.</p>
 
       <div className="help-tips-grid">
         <div className="help-tip-card">

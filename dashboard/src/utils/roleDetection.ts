@@ -12,39 +12,40 @@ export interface RoleInfo {
 }
 
 // Role configuration with display info and theme colors
+// Emojis match Gastown constants (see vendor/gastown/internal/constants/constants.go)
 export const ROLE_CONFIG: Record<AgentRole, Omit<RoleInfo, 'role'>> = {
   mayor: {
-    emoji: '👑',
+    emoji: '🎩',           // Fox conductor
     name: 'Mayor',
     color: '#ffd700',      // Gold
     glowColor: 'rgba(255, 215, 0, 0.5)',
   },
   deacon: {
-    emoji: '📿',
+    emoji: '🐺',           // Wolf in the engine room
     name: 'Deacon',
     color: '#9966ff',      // Purple
     glowColor: 'rgba(153, 102, 255, 0.5)',
   },
   witness: {
-    emoji: '👁',
+    emoji: '🦉',           // Watchful owl
     name: 'Witness',
     color: '#00bfff',      // Deep sky blue
     glowColor: 'rgba(0, 191, 255, 0.5)',
   },
   polecat: {
-    emoji: '🦨',
+    emoji: '😺',           // Transient worker
     name: 'Polecat',
     color: '#ff6b9d',      // Pink
     glowColor: 'rgba(255, 107, 157, 0.5)',
   },
   refinery: {
-    emoji: '🏭',
+    emoji: '🏭',           // Industrial
     name: 'Refinery',
     color: '#ff9933',      // Orange
     glowColor: 'rgba(255, 153, 51, 0.5)',
   },
   crew: {
-    emoji: '🔧',
+    emoji: '👷',           // Established worker
     name: 'Crew',
     color: '#4ade80',      // Green
     glowColor: 'rgba(74, 222, 128, 0.5)',

@@ -10,8 +10,21 @@ Thank you for your interest in contributing to CHROTE!
 
 ## Development Setup
 
-### Prerequisites
-- Go 1.22+
+### Quick Start (Recommended)
+
+The easiest way to get a development environment:
+
+```powershell
+# From PowerShell in the CHROTE directory
+.\Chrote-Toggle.ps1 -Setup
+```
+
+This sets up everything automatically. See [README.md](README.md) for details.
+
+### Manual Setup / Prerequisites
+
+If setting up manually:
+- Go 1.23+
 - Node.js 20+
 - WSL2 (for Windows) or Linux
 - tmux
@@ -20,6 +33,9 @@ Thank you for your interest in contributing to CHROTE!
 ### Building from Source
 
 ```bash
+# Inside WSL as chrote user
+cd /code
+
 # Build the dashboard
 cd dashboard
 npm install
@@ -28,7 +44,10 @@ cp -r dist ../src/internal/dashboard/
 
 # Build the server
 cd ../src
-go build -o chrote-server ./cmd/server
+go build -o ../chrote-server ./cmd/server
+
+# Restart the service to pick up changes
+sudo systemctl restart chrote-server
 ```
 
 ### Running Tests

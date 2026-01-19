@@ -98,7 +98,7 @@ func GetTmuxTmpdir() string {
 	if tmpdir != "" {
 		return tmpdir
 	}
-	return "/tmp"
+	return "/run/tmux/chrote"
 }
 
 // GetTmuxEnv returns the environment for tmux commands

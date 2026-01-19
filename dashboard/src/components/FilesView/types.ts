@@ -87,46 +87,29 @@ export interface ContextMenuState {
 }
 
 // ============================================
-// PATH MAPPING
+// PATH UTILITIES
 // ============================================
 
-export const PATH_MAP: Record<string, string> = {
-  '/code': 'E:/Code',
-  '/vault': 'E:/Vault',
-}
-
 /**
- * Convert container path to display path (Windows path)
+ * Convert container path to display path
+ * In WSL mode, paths are shown as-is (no Windows mapping needed)
  */
 export function toDisplayPath(containerPath: string): string {
-  for (const [container, windows] of Object.entries(PATH_MAP)) {
-    if (containerPath.startsWith(container)) {
-      return containerPath.replace(container, windows)
-    }
-  }
   return containerPath
 }
 
 /**
- * Convert display path (Windows) to container path
+ * Convert display path to container path
+ * In WSL mode, paths are the same (no Windows mapping needed)
  */
 export function toContainerPath(displayPath: string): string {
-  for (const [container, windows] of Object.entries(PATH_MAP)) {
-    if (displayPath.startsWith(windows)) {
-      return displayPath.replace(windows, container)
-    }
-  }
   return displayPath
 }
 
 /**
  * Get display name for root items
- * When at root, show E:/Code instead of 'code'
+ * Shows the actual path name (e.g., 'code', 'vault')
  */
 export function getRootDisplayName(name: string): string {
-  const mapping: Record<string, string> = {
-    'code': 'E:/Code',
-    'vault': 'E:/Vault',
-  }
-  return mapping[name] || name
+  return `/${name}`
 }

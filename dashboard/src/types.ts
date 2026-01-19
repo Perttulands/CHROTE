@@ -1,4 +1,4 @@
-// Arena Dashboard Types
+// Chrote Dashboard Types
 
 // tmux appearance customization (hot-reloadable)
 export interface TmuxAppearance {

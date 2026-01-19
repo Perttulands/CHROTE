@@ -2,14 +2,14 @@ export function InfoPanel() {
   return (
     <div className="fb-info-panel">
       <div className="fb-info-card">
-        <h3>Mounted Volumes</h3>
+        <h3>Available Directories</h3>
         <div className="fb-info-item">
           <span className="fb-info-label">/code</span>
-          <span className="fb-info-value">E:/Code</span>
+          <span className="fb-info-value">Project workspace</span>
         </div>
         <div className="fb-info-item">
           <span className="fb-info-label">/vault</span>
-          <span className="fb-info-value">E:/Vault</span>
+          <span className="fb-info-value">Read-only storage</span>
         </div>
       </div>
 

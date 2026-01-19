@@ -296,7 +296,7 @@ export function InboxPanel({ onError }: InboxPanelProps) {
         ) : (
           <div className="inbox-placeholder">
             <span className="inbox-icon">📬</span>
-            <span className="inbox-title">Send a package to E:/Code/incoming</span>
+            <span className="inbox-title">Send a package to /code/incoming</span>
             <span className="inbox-subtitle">Drop files or folders here</span>
             <div className="inbox-browse-buttons">
               <button

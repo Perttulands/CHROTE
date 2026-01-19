@@ -128,34 +128,89 @@ CHROTE itself. The glowing hub where all roads lead.
 - Tailscale account (because exposing this to the internet would be *insane*)
 - A reckless disregard for best practices
 
-> **Mac users:** I used to have a Mac. Then I inhaled too many Sharpies and went out and bought a Windows computer. Don't be like me. But what that *does* mean is that CHROTE is Windows-native and you'll need to do some cooking to get it running on macOS. The core concepts translate - you've got native Linux, you've got tmux, you just need to wire up the systemd services differently. PRs welcome. We don't judge. Much.
-
 ### Installation
 
-**If you're lucky:**
+**Two commands. That's it.**
 
 ```powershell
-# 1. Install Ubuntu 24.04 in WSL
+# 1. Install Ubuntu in WSL (skip if you already have it)
 wsl --install -d Ubuntu-24.04
 
-# 2. Open WSL as root and run setup script
-wsl -d Ubuntu-24.04 -u root
-curl -fsSL https://raw.githubusercontent.com/Perttulands/CHROTE/main/wsl/setup-wsl.sh | bash
-
-# 3. Restart WSL and pray
-wsl --shutdown
+# 2. Run setup from the CHROTE directory
+cd C:\path\to\CHROTE   # wherever you cloned/extracted it
+.\Chrote-Toggle.ps1 -Setup
 ```
 
-**When that fails:** See [docs/WSL-migration-plan.md](docs/WSL-migration-plan.md) and debug it yourself like the rest of us.
+The `-Setup` flag auto-detects your Ubuntu distro and handles CRLF line endings automatically. No sudo needed. No password prompts. Just run and walk away.
+
+**Manual alternative** (if PowerShell isn't your thing):
+```powershell
+wsl -d Ubuntu-24.04 -u root -e bash -c "tr -d '\r' < /mnt/c/path/to/CHROTE/wsl/setup-wsl.sh | bash"
+```
+
+> **ZIP Download Users:** If you downloaded this as a ZIP (not via Git), Windows may have added CRLF line endings to the scripts. Both methods above handle this automatically by stripping CRLF before execution. You can also use `wsl/bootstrap.sh` as an alternative entry point.
+
+> **Mac users:** I used to have a Mac. Then I inhaled too many Sharpies and went out and bought a Windows computer. Don't be like me. But what that *does* mean is that CHROTE is Windows-native and you'll need to do some cooking to get it running on macOS. The core concepts translate - you've got native Linux, you've got tmux, you just need to wire up the systemd services differently. PRs welcome. We don't judge. Much.
+
+> **Path flexibility:** The setup script automatically detects where CHROTE is located. Clone it anywhere you want - `C:\Users\you\CHROTE`, `D:\Projects\CHROTE`, wherever. Just run `.\Chrote-Toggle.ps1 -Setup` from that directory.
+
+### What Gets Installed
+
+The setup script (`wsl/setup-wsl.sh`) handles everything:
+
+| Component | What It Does |
+|-----------|--------------|
+| **WSL Config** | Enables systemd, sets default user to `chrote` |
+| **chrote user** | Non-root user for running agents (no sudo) |
+| **Dependencies** | curl, git, tmux, python3, jq, rsync, build-essential |
+| **Go 1.23** | For building the server and tools |
+| **Node.js 20** | For building the dashboard |
+| **ttyd** | Web terminal backend |
+| **Claude Code** | Anthropic's CLI (via npm) |
+| **CHROTE Server** | Go binary serving the dashboard |
+| **Vendored Tools** | gastown (gt), beads (bd), beads_viewer (bv) |
+| **systemd Services** | chrote-server and chrote-ttyd auto-start on boot |
+
+After installation, the following paths are available inside WSL:
+
+| Path | Purpose |
+|------|---------|
+| `/code` | Symlink to `~/chrote` (copy of your CHROTE install) |
+| `/vault` | Symlink to E:\Vault (optional, for read-only storage) |
+| `~/.local/bin/gt` | Gastown orchestrator |
+| `~/.local/bin/bd` | Beads issue tracker |
+| `~/.local/bin/bv` | Beads viewer |
 
 ### Ignition
 
 ```powershell
 # The toggle script - your daily driver
 .\Chrote-Toggle.ps1          # Start and open browser
+.\Chrote-Toggle.ps1 -Setup   # Run first-time setup
 .\Chrote-Toggle.ps1 -Stop    # Kill everything
 .\Chrote-Toggle.ps1 -Status  # Check if anything's alive
 .\Chrote-Toggle.ps1 -Logs    # Watch the chaos unfold
+```
+
+### Verifying Installation
+
+After setup completes and WSL restarts:
+
+```powershell
+# Check if services are running
+.\Chrote-Toggle.ps1 -Status
+
+# You should see:
+# WSL: Running
+# chrote-server: active (running)
+# chrote-ttyd: active (running)
+# API: OK
+```
+
+If something's wrong:
+```powershell
+# Check the logs
+.\Chrote-Toggle.ps1 -Logs
 ```
 
 ### Access Points
@@ -164,9 +219,24 @@ Once the rig is running (IF the rig is running):
 
 | Outpost | Location | Purpose |
 |---------|----------|---------|
-| Command Center | `http://chrote:8080` | Main dashboard - where you watch the madness |
-| Direct Terminal | `http://chrote:8080/terminal/` | Raw ttyd access - for when the UI fails |
-| File Depot | `http://chrote:8080/api/files/` | File API - surprisingly stable |
+| Command Center | `http://localhost:8080` | Main dashboard (local access) |
+| Command Center | `http://chrote:8080` | Main dashboard (via Tailscale) |
+| Direct Terminal | `http://localhost:8080/terminal/` | Raw ttyd access - for when the UI fails |
+| File Depot | `http://localhost:8080/api/files/` | File API - surprisingly stable |
+
+> **Note:** `http://chrote:8080` requires Tailscale configured on your WSL instance. For initial testing, use `http://localhost:8080` which works immediately.
+
+### Setting Up Tailscale (Optional but Recommended)
+
+For remote access from other devices:
+
+```bash
+# Inside WSL
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up --hostname chrote
+```
+
+Then access from any device on your Tailnet via `http://chrote:8080`.
 
 ---
 
@@ -176,8 +246,30 @@ CHROTE is infrastructure. **Gastown** is what runs on it.
 
 Gastown is Steve Yegge's orchestration framework for running 10-30+ AI coding agents in parallel. CHROTE gives Gastown a home - terminals to run in, a dashboard to monitor, and a "Nuke All" button for when everything goes wrong (which is often).
 
-The workflow:
-- **Beads** - atomic units of work
+### Getting Started with Gastown
+
+After CHROTE is installed, connect to WSL and start orchestrating:
+
+```bash
+# Enter WSL (auto-logs in as chrote user)
+wsl
+
+# Check that tools are installed
+which gt bd bv   # Should show ~/.local/bin paths
+
+# Start the gastown orchestrator
+gt start gastown
+
+# Check status
+gt status
+
+# Peek at what agents are doing
+gt peek
+```
+
+### The Workflow
+
+- **Beads** - atomic units of work (issues, tasks)
 - **Epics** - collections of parallel tasks
 - **Molecules** - complex workflow chains
 - **Wisps** - ephemeral coordination tasks
@@ -303,26 +395,46 @@ wsl --shutdown
 
 ## Development
 
-Want to make this worse? Here's how:
+### Where's My Code?
+
+Setup copies your files into WSL. Here's where everything lives:
+
+| What | Where |
+|------|-------|
+| Windows source | `E:\Docker\CHROTE` (or wherever you cloned it) |
+| WSL working copy | `/home/chrote/chrote` (aka `/code`) |
+| Windows path to WSL | `\\wsl$\Ubuntu-24.04\home\chrote\chrote` |
+
+**Edit directly in WSL from Windows** - open `\\wsl$\Ubuntu-24.04\home\chrote\chrote` in Explorer or VS Code. Changes are immediate, no sync needed.
+
+Or use VS Code's WSL extension:
+1. Install "WSL" extension
+2. `Ctrl+Shift+P` → "WSL: Connect to WSL"
+3. Open folder `/home/chrote/chrote`
+
+### Making Changes
 
 ```bash
-# Dashboard (React + TypeScript)
-cd dashboard
-npm install
-npm run dev    # localhost:5173
+# Enter WSL
+wsl
 
-# After breaking things
+# You're now in /code as chrote user
+# Edit files, then rebuild:
+
+# Dashboard only (React + TypeScript)
+cd dashboard
 npm run build
-cd ..
-cp -r dashboard/dist src/internal/dashboard/
-cd src && go build -o ../chrote-server ./cmd/server
+cp -r dist/* ../src/internal/dashboard/
 sudo systemctl restart chrote-server
+
+# For live development with hot reload
+npm run dev    # localhost:5173
 ```
 
 ### Running Tests
 
 ```bash
-cd dashboard
+cd /code/dashboard
 npm run test
 # If they pass, you probably broke the tests
 ```

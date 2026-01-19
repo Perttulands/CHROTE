@@ -1,0 +1,1176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gas Town Findings Report</title>
+    <style>
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --border-color: #30363d;
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --accent-blue: #58a6ff;
+            --accent-green: #3fb950;
+            --accent-red: #f85149;
+            --accent-yellow: #d29922;
+            --accent-purple: #a371f7;
+            --accent-orange: #db6d28;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 3rem;
+            padding-bottom: 2rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        header .meta {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 3rem;
+        }
+
+        .stat-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+            text-align: center;
+        }
+
+        .stat-card .number {
+            font-size: 2.5rem;
+            font-weight: bold;
+            margin-bottom: 0.25rem;
+        }
+
+        .stat-card .label {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .stat-card.success .number { color: var(--accent-green); }
+        .stat-card.warning .number { color: var(--accent-yellow); }
+        .stat-card.error .number { color: var(--accent-red); }
+        .stat-card.info .number { color: var(--accent-blue); }
+
+        section {
+            margin-bottom: 3rem;
+        }
+
+        section h2 {
+            font-size: 1.5rem;
+            margin-bottom: 1.5rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid var(--accent-blue);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .architecture-diagram {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 2rem;
+            overflow-x: auto;
+        }
+
+        .tree {
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.9rem;
+            white-space: pre;
+            color: var(--text-secondary);
+        }
+
+        .tree .folder { color: var(--accent-blue); }
+        .tree .file { color: var(--text-primary); }
+        .tree .comment { color: var(--accent-yellow); opacity: 0.8; }
+
+        .agents-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1rem;
+        }
+
+        .agent-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .agent-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+        }
+
+        .agent-card .header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+
+        .agent-card .emoji {
+            font-size: 2rem;
+        }
+
+        .agent-card .name {
+            font-weight: 600;
+            font-size: 1.1rem;
+        }
+
+        .agent-card .role {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+
+        .agent-card .status {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            margin-top: 0.5rem;
+        }
+
+        .status.running {
+            background: rgba(63, 185, 80, 0.15);
+            color: var(--accent-green);
+        }
+
+        .status.stopped {
+            background: rgba(139, 148, 158, 0.15);
+            color: var(--text-secondary);
+        }
+
+        .status.failed {
+            background: rgba(248, 81, 73, 0.15);
+            color: var(--accent-red);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+
+        .findings-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .findings-column h3 {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+            font-size: 1.1rem;
+        }
+
+        .findings-column.success h3 { color: var(--accent-green); }
+        .findings-column.error h3 { color: var(--accent-red); }
+        .findings-column.warning h3 { color: var(--accent-yellow); }
+
+        .finding-item {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 0.75rem;
+            border-left: 3px solid transparent;
+        }
+
+        .findings-column.success .finding-item { border-left-color: var(--accent-green); }
+        .findings-column.error .finding-item { border-left-color: var(--accent-red); }
+        .findings-column.warning .finding-item { border-left-color: var(--accent-yellow); }
+
+        .finding-item .title {
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .finding-item .desc {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .priority-badge {
+            display: inline-block;
+            padding: 0.15rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-left: 0.5rem;
+        }
+
+        .priority-badge.p0 { background: var(--accent-red); color: white; }
+        .priority-badge.p1 { background: var(--accent-orange); color: white; }
+        .priority-badge.p2 { background: var(--accent-yellow); color: black; }
+
+        .test-results {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .test-results table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .test-results th {
+            background: var(--bg-tertiary);
+            padding: 1rem;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .test-results td {
+            padding: 0.875rem 1rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .test-results tr:last-child td {
+            border-bottom: none;
+        }
+
+        .test-results .command {
+            font-family: 'Consolas', 'Monaco', monospace;
+            background: var(--bg-tertiary);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.85rem;
+        }
+
+        .result-pass {
+            color: var(--accent-green);
+            font-weight: 600;
+        }
+
+        .result-fail {
+            color: var(--accent-red);
+            font-weight: 600;
+        }
+
+        .code-block {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 1rem;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.85rem;
+            overflow-x: auto;
+            margin: 1rem 0;
+        }
+
+        .workflow-diagram {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 2rem;
+        }
+
+        .workflow-steps {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .workflow-step {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            text-align: center;
+            min-width: 120px;
+        }
+
+        .workflow-step .step-name {
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        .workflow-step .step-desc {
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+            margin-top: 0.25rem;
+        }
+
+        .workflow-arrow {
+            color: var(--accent-blue);
+            font-size: 1.5rem;
+        }
+
+        .commands-section {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .command-group {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+        }
+
+        .command-group h4 {
+            color: var(--accent-purple);
+            margin-bottom: 1rem;
+            font-size: 1rem;
+        }
+
+        .command-list {
+            list-style: none;
+        }
+
+        .command-list li {
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            gap: 1rem;
+        }
+
+        .command-list li:last-child {
+            border-bottom: none;
+        }
+
+        .command-list code {
+            background: var(--bg-tertiary);
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            white-space: nowrap;
+        }
+
+        .command-list .desc {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+
+        .beads-section {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .beads-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+        }
+
+        .beads-card h4 {
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .beads-stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.75rem;
+        }
+
+        .beads-stat {
+            background: var(--bg-tertiary);
+            padding: 0.75rem;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .beads-stat .value {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: var(--accent-blue);
+        }
+
+        .beads-stat .label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+        }
+
+        .recommendation {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .recommendation .header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .recommendation .content {
+            color: var(--text-secondary);
+        }
+
+        .recommendation .fix {
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 1rem;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.85rem;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 0.5rem;
+        }
+
+        .tab {
+            padding: 0.5rem 1rem;
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            border-radius: 8px 8px 0 0;
+            transition: all 0.2s;
+        }
+
+        .tab:hover {
+            color: var(--text-primary);
+            background: var(--bg-tertiary);
+        }
+
+        .tab.active {
+            color: var(--accent-blue);
+            background: var(--bg-secondary);
+            border-bottom: 2px solid var(--accent-blue);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        footer {
+            text-align: center;
+            padding: 2rem;
+            border-top: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+
+            header h1 {
+                font-size: 1.75rem;
+            }
+
+            .findings-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .workflow-steps {
+                flex-direction: column;
+            }
+
+            .workflow-arrow {
+                transform: rotate(90deg);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Gas Town Findings Report</h1>
+            <div class="meta">
+                Version 0.3.1 (dev) | Tested: 2026-01-18 | Workspace: /code/5
+            </div>
+        </header>
+
+        <!-- Dashboard Stats -->
+        <div class="dashboard">
+            <div class="stat-card success">
+                <div class="number">9</div>
+                <div class="label">Working Features</div>
+            </div>
+            <div class="stat-card error">
+                <div class="number">7</div>
+                <div class="label">Issues Found</div>
+            </div>
+            <div class="stat-card warning">
+                <div class="number">8</div>
+                <div class="label">Warnings</div>
+            </div>
+            <div class="stat-card info">
+                <div class="number">33</div>
+                <div class="label">Formulas Available</div>
+            </div>
+        </div>
+
+        <!-- What is Gas Town -->
+        <section>
+            <h2>What is Gas Town?</h2>
+            <div class="architecture-diagram">
+                <p style="margin-bottom: 1rem; color: var(--text-primary);">
+                    Gas Town (<code>gt</code>) is a <strong>multi-agent workspace manager</strong> for coordinating AI agents working on shared codebases.
+                    It follows the "steam engine" metaphor where the Mayor is the main drive shaft and agents execute work autonomously.
+                </p>
+                <p style="color: var(--text-secondary);">
+                    <strong>Key Principle - Propulsion:</strong> "If you find something on your hook, YOU RUN IT."
+                    The system's throughput depends on autonomous execution without confirmation.
+                </p>
+            </div>
+        </section>
+
+        <!-- Architecture -->
+        <section>
+            <h2>Architecture Overview</h2>
+            <div class="architecture-diagram">
+                <div class="tree"><span class="folder">Town (/code/5)</span>
+├── <span class="folder">mayor/</span>              <span class="comment">← Global coordinator</span>
+│   ├── <span class="file">town.json</span>       <span class="comment">← Town configuration</span>
+│   ├── <span class="file">rigs.json</span>       <span class="comment">← Registered rigs</span>
+│   └── <span class="file">CLAUDE.md</span>       <span class="comment">← Mayor context</span>
+├── <span class="folder">deacon/</span>             <span class="comment">← Town-level watchdog (daemon beacon)</span>
+├── <span class="folder">.beads/</span>             <span class="comment">← Town-level beads (hq-* prefix)</span>
+│   ├── <span class="file">beads.db</span>        <span class="comment">← SQLite database</span>
+│   ├── <span class="file">config.yaml</span>     <span class="comment">← Beads configuration</span>
+│   ├── <span class="folder">formulas/</span>       <span class="comment">← 33 workflow formulas</span>
+│   └── <span class="file">routes.jsonl</span>    <span class="comment">← Prefix routing</span>
+├── <span class="folder">settings/</span>           <span class="comment">← Town settings</span>
+└── <span class="folder">hamburg/</span>            <span class="comment">← Rig (project container)</span>
+    ├── <span class="file">config.json</span>     <span class="comment">← Rig configuration</span>
+    ├── <span class="folder">.beads/</span>         <span class="comment">← Rig-level beads (ha-* prefix)</span>
+    ├── <span class="folder">.repo.git/</span>      <span class="comment">← Shared bare repo</span>
+    ├── <span class="folder">refinery/</span>       <span class="comment">← Merge queue processor</span>
+    ├── <span class="folder">witness/</span>        <span class="comment">← Polecat health monitor</span>
+    ├── <span class="folder">crew/</span>           <span class="comment">← Persistent workspaces</span>
+    │   └── <span class="folder">claude/</span>     <span class="comment">← Crew member workspace</span>
+    └── <span class="folder">polecats/</span>       <span class="comment">← Ephemeral workers</span></div>
+            </div>
+        </section>
+
+        <!-- Agent Types -->
+        <section>
+            <h2>Agent Types</h2>
+            <div class="agents-grid">
+                <div class="agent-card">
+                    <div class="header">
+                        <span class="emoji">🎩</span>
+                        <div>
+                            <div class="name">Mayor</div>
+                            <div class="role">Global coordinator, cross-rig work</div>
+                        </div>
+                    </div>
+                    <div>Scope: Town | Lifecycle: Persistent</div>
+                    <div class="status stopped"><span class="status-dot"></span> Not Running</div>
+                </div>
+                <div class="agent-card">
+                    <div class="header">
+                        <span class="emoji">🐺</span>
+                        <div>
+                            <div class="name">Deacon</div>
+                            <div class="role">Daemon beacon, heartbeats, lifecycle</div>
+                        </div>
+                    </div>
+                    <div>Scope: Town | Lifecycle: Persistent</div>
+                    <div class="status running"><span class="status-dot"></span> Running</div>
+                </div>
+                <div class="agent-card">
+                    <div class="header">
+                        <span class="emoji">🦉</span>
+                        <div>
+                            <div class="name">Witness</div>
+                            <div class="role">Per-rig polecat health monitor</div>
+                        </div>
+                    </div>
+                    <div>Scope: Rig | Lifecycle: Persistent</div>
+                    <div class="status running"><span class="status-dot"></span> Running</div>
+                </div>
+                <div class="agent-card">
+                    <div class="header">
+                        <span class="emoji">🏭</span>
+                        <div>
+                            <div class="name">Refinery</div>
+                            <div class="role">Merge queue processor</div>
+                        </div>
+                    </div>
+                    <div>Scope: Rig | Lifecycle: Persistent</div>
+                    <div class="status failed"><span class="status-dot"></span> Failed to Start</div>
+                </div>
+                <div class="agent-card">
+                    <div class="header">
+                        <span class="emoji">🐱</span>
+                        <div>
+                            <div class="name">Polecat</div>
+                            <div class="role">Ephemeral workers (one task, then nuked)</div>
+                        </div>
+                    </div>
+                    <div>Scope: Rig | Lifecycle: Ephemeral</div>
+                    <div class="status stopped"><span class="status-dot"></span> None Active</div>
+                </div>
+                <div class="agent-card">
+                    <div class="header">
+                        <span class="emoji">👷</span>
+                        <div>
+                            <div class="name">Crew</div>
+                            <div class="role">Human-managed persistent workspaces</div>
+                        </div>
+                    </div>
+                    <div>Scope: Rig | Lifecycle: Persistent</div>
+                    <div class="status stopped"><span class="status-dot"></span> 1 Configured (claude)</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Test Results -->
+        <section>
+            <h2>Test Results Summary</h2>
+            <div class="findings-grid">
+                <div class="findings-column success">
+                    <h3>✓ Working Features</h3>
+                    <div class="finding-item">
+                        <div class="title">Town/Rig Structure</div>
+                        <div class="desc">Created correctly with all directories</div>
+                    </div>
+                    <div class="finding-item">
+                        <div class="title">Daemon</div>
+                        <div class="desc">Running and managing heartbeats (PID 8929)</div>
+                    </div>
+                    <div class="finding-item">
+                        <div class="title">Witness Agent</div>
+                        <div class="desc">Fully functional, executes patrol molecules</div>
+                    </div>
+                    <div class="finding-item">
+                        <div class="title">Nudge System</div>
+                        <div class="desc">Messages delivered successfully between agents</div>
+                    </div>
+                    <div class="finding-item">
+                        <div class="title">Hook System</div>
+                        <div class="desc">SessionStart, PreCompact, Stop hooks working</div>
+                    </div>
+                    <div class="finding-item">
+                        <div class="title">Wisp/Molecule System</div>
+                        <div class="desc">Creates and executes step sequences</div>
+                    </div>
+                    <div class="finding-item">
+                        <div class="title">Squash to Digest</div>
+                        <div class="desc">Compressed 10 wisps into digest ha-4ny</div>
+                    </div>
+                    <div class="finding-item">
+                        <div class="title">Tmux Sessions</div>
+                        <div class="desc">Created and managed properly</div>
+                    </div>
+                    <div class="finding-item">
+                        <div class="title">Orphan Cleanup</div>
+                        <div class="desc">Daemon cleans up stale processes</div>
+                    </div>
+                </div>
+                <div class="findings-column error">
+                    <h3>✗ Issues Found</h3>
+                    <div class="finding-item">
+                        <div class="title">Prefix Mismatch <span class="priority-badge p0">P0</span></div>
+                        <div class="desc">Database uses 'plan' but config says 'hq'/'ha'</div>
+                    </div>
+                    <div class="finding-item">
+                        <div class="title">Refinery Timeout <span class="priority-badge p1">P1</span></div>
+                        <div class="desc">Cannot start: "timeout waiting for runtime prompt"</div>
+                    </div>
+                    <div class="finding-item">
+                        <div class="title">Mail Send Fails <span class="priority-badge p1">P1</span></div>
+                        <div class="desc">'message' type not registered in types.custom</div>
+                    </div>
+                    <div class="finding-item">
+                        <div class="title">Convoy Create Fails <span class="priority-badge p2">P2</span></div>
+                        <div class="desc">Type validation error despite being in types.custom</div>
+                    </div>
+                    <div class="finding-item">
+                        <div class="title">Agent Beads Missing <span class="priority-badge p2">P2</span></div>
+                        <div class="desc">5 agent beads failed to create during setup</div>
+                    </div>
+                    <div class="finding-item">
+                        <div class="title">Role Beads Missing</div>
+                        <div class="desc">7 role beads missing from initialization</div>
+                    </div>
+                    <div class="finding-item">
+                        <div class="title">Rig Beads Missing</div>
+                        <div class="desc">ha-rig-hamburg not created</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Detailed Test Results Table -->
+        <section>
+            <h2>Command Test Results</h2>
+            <div class="test-results">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Command</th>
+                            <th>Result</th>
+                            <th>Notes</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><span class="command">gt install /code/5 --git</span></td>
+                            <td><span class="result-pass">✓ Pass</span></td>
+                            <td>Town created successfully</td>
+                        </tr>
+                        <tr>
+                            <td><span class="command">gt rig add hamburg &lt;url&gt;</span></td>
+                            <td><span class="result-pass">✓ Pass</span></td>
+                            <td>Rig added with all directories</td>
+                        </tr>
+                        <tr>
+                            <td><span class="command">gt crew add claude --rig hamburg</span></td>
+                            <td><span class="result-pass">✓ Pass</span></td>
+                            <td>Crew workspace created</td>
+                        </tr>
+                        <tr>
+                            <td><span class="command">gt status</span></td>
+                            <td><span class="result-pass">✓ Pass</span></td>
+                            <td>Shows town overview correctly</td>
+                        </tr>
+                        <tr>
+                            <td><span class="command">gt nudge hamburg/witness "msg"</span></td>
+                            <td><span class="result-pass">✓ Pass</span></td>
+                            <td>Message received by witness</td>
+                        </tr>
+                        <tr>
+                            <td><span class="command">gt mail inbox</span></td>
+                            <td><span class="result-pass">✓ Pass</span></td>
+                            <td>Shows inbox correctly</td>
+                        </tr>
+                        <tr>
+                            <td><span class="command">gt mail send hamburg/witness</span></td>
+                            <td><span class="result-fail">✗ Fail</span></td>
+                            <td>Error: invalid issue type: message</td>
+                        </tr>
+                        <tr>
+                            <td><span class="command">gt convoy create "name"</span></td>
+                            <td><span class="result-fail">✗ Fail</span></td>
+                            <td>Error: invalid issue type: convoy</td>
+                        </tr>
+                        <tr>
+                            <td><span class="command">gt convoy list</span></td>
+                            <td><span class="result-pass">✓ Pass</span></td>
+                            <td>Shows empty list correctly</td>
+                        </tr>
+                        <tr>
+                            <td><span class="command">bd create --title="..." --type=task</span></td>
+                            <td><span class="result-pass">✓ Pass*</span></td>
+                            <td>Creates but shows plan- prefix instead of expected</td>
+                        </tr>
+                        <tr>
+                            <td><span class="command">bd create --id=ha-test-task</span></td>
+                            <td><span class="result-fail">✗ Fail</span></td>
+                            <td>Error: prefix mismatch</td>
+                        </tr>
+                        <tr>
+                            <td><span class="command">gt refinery start</span></td>
+                            <td><span class="result-fail">✗ Fail</span></td>
+                            <td>Timeout waiting for runtime prompt</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Witness Patrol Workflow -->
+        <section>
+            <h2>Witness Patrol Workflow (Observed)</h2>
+            <div class="workflow-diagram">
+                <p style="margin-bottom: 1.5rem; color: var(--text-secondary);">
+                    The Witness agent executed a complete patrol cycle with 10 wisp steps:
+                </p>
+                <div class="workflow-steps">
+                    <div class="workflow-step">
+                        <div class="step-name">Process Mail</div>
+                        <div class="step-desc">ha-wisp-awd</div>
+                    </div>
+                    <span class="workflow-arrow">→</span>
+                    <div class="workflow-step">
+                        <div class="step-name">Cleanup Wisps</div>
+                        <div class="step-desc">ha-wisp-5xv</div>
+                    </div>
+                    <span class="workflow-arrow">→</span>
+                    <div class="workflow-step">
+                        <div class="step-name">Check Refinery</div>
+                        <div class="step-desc">ha-wisp-8i5</div>
+                    </div>
+                    <span class="workflow-arrow">→</span>
+                    <div class="workflow-step">
+                        <div class="step-name">Inspect Polecats</div>
+                        <div class="step-desc">ha-wisp-t6g</div>
+                    </div>
+                    <span class="workflow-arrow">→</span>
+                    <div class="workflow-step">
+                        <div class="step-name">Check Timers</div>
+                        <div class="step-desc">ha-wisp-fcj</div>
+                    </div>
+                </div>
+                <div class="workflow-steps" style="margin-top: 1rem;">
+                    <div class="workflow-step">
+                        <div class="step-name">Check Swarm</div>
+                        <div class="step-desc">ha-wisp-5db</div>
+                    </div>
+                    <span class="workflow-arrow">→</span>
+                    <div class="workflow-step">
+                        <div class="step-name">Ping Deacon</div>
+                        <div class="step-desc">ha-wisp-fgf</div>
+                    </div>
+                    <span class="workflow-arrow">→</span>
+                    <div class="workflow-step">
+                        <div class="step-name">Inbox Hygiene</div>
+                        <div class="step-desc">ha-wisp-biw</div>
+                    </div>
+                    <span class="workflow-arrow">→</span>
+                    <div class="workflow-step">
+                        <div class="step-name">Context Check</div>
+                        <div class="step-desc">ha-wisp-2jw</div>
+                    </div>
+                    <span class="workflow-arrow">→</span>
+                    <div class="workflow-step">
+                        <div class="step-name">Loop/Exit</div>
+                        <div class="step-desc">ha-wisp-fgs</div>
+                    </div>
+                </div>
+                <div style="margin-top: 1.5rem; text-align: center;">
+                    <span class="workflow-arrow" style="font-size: 2rem;">↓</span>
+                    <div class="workflow-step" style="display: inline-block; background: var(--accent-green); color: white;">
+                        <div class="step-name">Squashed to Digest</div>
+                        <div class="step-desc">ha-4ny (closed)</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Beads Database -->
+        <section>
+            <h2>Beads Database Status</h2>
+            <div class="beads-section">
+                <div class="beads-card">
+                    <h4>📊 Town Beads (/code/5/.beads/)</h4>
+                    <div class="beads-stats">
+                        <div class="beads-stat">
+                            <div class="value">0</div>
+                            <div class="label">Total Issues</div>
+                        </div>
+                        <div class="beads-stat">
+                            <div class="value">0</div>
+                            <div class="label">Open</div>
+                        </div>
+                        <div class="beads-stat">
+                            <div class="value">hq</div>
+                            <div class="label">Config Prefix</div>
+                        </div>
+                        <div class="beads-stat">
+                            <div class="value" style="color: var(--accent-red);">plan</div>
+                            <div class="label">Actual Prefix</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="beads-card">
+                    <h4>📊 Rig Beads (/code/5/hamburg/.beads/)</h4>
+                    <div class="beads-stats">
+                        <div class="beads-stat">
+                            <div class="value">2</div>
+                            <div class="label">Total Issues</div>
+                        </div>
+                        <div class="beads-stat">
+                            <div class="value">1</div>
+                            <div class="label">Closed</div>
+                        </div>
+                        <div class="beads-stat">
+                            <div class="value">ha</div>
+                            <div class="label">Config Prefix</div>
+                        </div>
+                        <div class="beads-stat">
+                            <div class="value">1</div>
+                            <div class="label">Epics Ready</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Doctor Report -->
+        <section>
+            <h2>Doctor Report Summary</h2>
+            <div class="dashboard" style="margin-bottom: 1.5rem;">
+                <div class="stat-card success">
+                    <div class="number">45</div>
+                    <div class="label">Passed Checks</div>
+                </div>
+                <div class="stat-card warning">
+                    <div class="number">8</div>
+                    <div class="label">Warnings</div>
+                </div>
+                <div class="stat-card error">
+                    <div class="number">3</div>
+                    <div class="label">Failed Checks</div>
+                </div>
+            </div>
+            <div class="findings-grid">
+                <div class="findings-column success">
+                    <h3>✓ Passed</h3>
+                    <div class="finding-item">
+                        <div class="title">Core town structure</div>
+                    </div>
+                    <div class="finding-item">
+                        <div class="title">Git initialization</div>
+                    </div>
+                    <div class="finding-item">
+                        <div class="title">Formulas (33 installed)</div>
+                    </div>
+                    <div class="finding-item">
+                        <div class="title">Hooks installed</div>
+                    </div>
+                    <div class="finding-item">
+                        <div class="title">Routes configured</div>
+                    </div>
+                </div>
+                <div class="findings-column warning">
+                    <h3>⚠ Warnings</h3>
+                    <div class="finding-item">
+                        <div class="title">Global state not initialized</div>
+                        <div class="desc">Run: gt enable</div>
+                    </div>
+                    <div class="finding-item">
+                        <div class="title">sqlite3 CLI not found</div>
+                    </div>
+                    <div class="finding-item">
+                        <div class="title">Boot directory not present</div>
+                    </div>
+                    <div class="finding-item">
+                        <div class="title">Patrol molecules missing</div>
+                    </div>
+                    <div class="finding-item">
+                        <div class="title">Role beads missing (7)</div>
+                    </div>
+                    <div class="finding-item">
+                        <div class="title">Session hooks need update (4)</div>
+                    </div>
+                </div>
+                <div class="findings-column error">
+                    <h3>✗ Failed</h3>
+                    <div class="finding-item">
+                        <div class="title">Agent beads missing (5)</div>
+                        <div class="desc">hq-deacon, hq-mayor, ha-hamburg-witness, ha-hamburg-refinery, ha-hamburg-crew-claude</div>
+                    </div>
+                    <div class="finding-item">
+                        <div class="title">Rig beads missing (1)</div>
+                        <div class="desc">ha-rig-hamburg</div>
+                    </div>
+                    <div class="finding-item">
+                        <div class="title">AGENTS.md too long</div>
+                        <div class="desc">Priming issue detected</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Recommendations -->
+        <section>
+            <h2>Recommendations</h2>
+
+            <div class="recommendation">
+                <div class="header">
+                    <span class="priority-badge p0">P0</span>
+                    <strong>Fix Prefix Mismatch</strong>
+                </div>
+                <div class="content">
+                    The database stores a different prefix than the config. This affects all bead creation and lookup operations.
+                </div>
+                <div class="fix">bd rename-prefix hq  # For town beads
+bd rename-prefix ha  # For rig beads (from rig directory)</div>
+            </div>
+
+            <div class="recommendation">
+                <div class="header">
+                    <span class="priority-badge p1">P1</span>
+                    <strong>Investigate Refinery Startup</strong>
+                </div>
+                <div class="content">
+                    "timeout waiting for runtime prompt" - the refinery agent cannot start. Check claude runtime configuration and permissions.
+                </div>
+                <div class="fix"># Check daemon logs for details
+cat /code/5/.beads/daemon.log | grep refinery
+
+# Try manual start for debugging
+cd /code/5/hamburg && gt refinery start --verbose</div>
+            </div>
+
+            <div class="recommendation">
+                <div class="header">
+                    <span class="priority-badge p1">P1</span>
+                    <strong>Register Missing Types</strong>
+                </div>
+                <div class="content">
+                    The 'message' type should be auto-registered during gt install. Add it manually for now.
+                </div>
+                <div class="fix"># Edit config.yaml and add 'message' to types.custom
+# Or run:
+gt doctor --fix</div>
+            </div>
+
+            <div class="recommendation">
+                <div class="header">
+                    <span class="priority-badge p2">P2</span>
+                    <strong>Create Missing Agent Beads</strong>
+                </div>
+                <div class="content">
+                    5 agent beads and 1 rig bead failed to create during initialization.
+                </div>
+                <div class="fix">gt doctor --fix</div>
+            </div>
+        </section>
+
+        <!-- Quick Reference -->
+        <section>
+            <h2>Quick Command Reference</h2>
+            <div class="commands-section">
+                <div class="command-group">
+                    <h4>Setup</h4>
+                    <ul class="command-list">
+                        <li><code>gt install &lt;path&gt; --git</code><span class="desc">Create town</span></li>
+                        <li><code>gt rig add &lt;name&gt; &lt;url&gt;</code><span class="desc">Add rig</span></li>
+                        <li><code>gt crew add &lt;name&gt;</code><span class="desc">Create workspace</span></li>
+                    </ul>
+                </div>
+                <div class="command-group">
+                    <h4>Status</h4>
+                    <ul class="command-list">
+                        <li><code>gt status</code><span class="desc">Town overview</span></li>
+                        <li><code>gt doctor</code><span class="desc">Health check</span></li>
+                        <li><code>gt agents</code><span class="desc">List sessions</span></li>
+                    </ul>
+                </div>
+                <div class="command-group">
+                    <h4>Work Dispatch</h4>
+                    <ul class="command-list">
+                        <li><code>gt sling &lt;bead&gt; &lt;target&gt;</code><span class="desc">Dispatch work</span></li>
+                        <li><code>gt hook</code><span class="desc">Show hooked work</span></li>
+                        <li><code>gt done</code><span class="desc">Signal complete</span></li>
+                    </ul>
+                </div>
+                <div class="command-group">
+                    <h4>Issues (beads)</h4>
+                    <ul class="command-list">
+                        <li><code>bd ready</code><span class="desc">Available work</span></li>
+                        <li><code>bd create --title="..."</code><span class="desc">Create issue</span></li>
+                        <li><code>bd close &lt;id&gt;</code><span class="desc">Complete</span></li>
+                    </ul>
+                </div>
+                <div class="command-group">
+                    <h4>Communication</h4>
+                    <ul class="command-list">
+                        <li><code>gt mail inbox</code><span class="desc">Check mail</span></li>
+                        <li><code>gt nudge &lt;target&gt; "msg"</code><span class="desc">Direct message</span></li>
+                        <li><code>gt broadcast "msg"</code><span class="desc">Message all</span></li>
+                    </ul>
+                </div>
+                <div class="command-group">
+                    <h4>Agents</h4>
+                    <ul class="command-list">
+                        <li><code>gt mayor start</code><span class="desc">Start Mayor</span></li>
+                        <li><code>gt deacon start</code><span class="desc">Start Deacon</span></li>
+                        <li><code>gt handoff</code><span class="desc">Session handoff</span></li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <!-- Next Steps -->
+        <section>
+            <h2>Recommended Next Steps</h2>
+            <div class="code-block">
+# 1. Fix missing beads and configuration issues
+gt doctor --fix
+
+# 2. Start daemon (if not running)
+gt daemon start
+
+# 3. Start Mayor
+gt mayor start
+
+# 4. Start Deacon
+gt deacon start
+
+# 5. For the hamburg rig:
+cd /code/5/hamburg && gt witness start
+cd /code/5/hamburg && gt refinery start  # May need debugging
+
+# 6. Fix prefix mismatch (if still occurring)
+cd /code/5 && bd rename-prefix hq
+cd /code/5/hamburg && bd rename-prefix ha</div>
+        </section>
+
+        <footer>
+            Gas Town Findings Report | Generated 2026-01-18 | Version 0.3.1 (dev)
+        </footer>
+    </div>
+</body>
+</html>
