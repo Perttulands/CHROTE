@@ -54,7 +54,7 @@ Here, we spin up 10, 20, 30 agents. We point them at problems. We watch the chao
 - 1-4 terminal panes per tab (two tabs = 8 total windows)
 - Drag sessions from sidebar onto windows
 - Click tabs to switch between assigned sessions
-- Each window has its guardian watching over your agents
+- Each empty window shows its guardian - placeholder artwork you get to look at for exactly three seconds before burying it under a tmux session. It's there. Then it's not. Like a wasteland Polaroid.
 
 ![Beads View](screenshot%202.png)
 
