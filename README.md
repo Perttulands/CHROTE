@@ -50,7 +50,9 @@ Here, we spin up 10, 20, 30 agents. We point them at problems. We watch the chao
 
 ## The Crew
 
-Every terminal window in CHROTE has a guardian - a wasteland operator watching over your agents. Meet them:
+Every terminal window in CHROTE has a guardian - a wasteland operator watching over your agents. They don't actually *do* anything. They're just... there. Staring. Judging your tmux sessions with silent, pixel-based disapproval. Think of them as the dashboard's emotional support animals, except they're cyberpunk rodents who've seen some shit and have zero therapeutic credentials.
+
+Meet them:
 
 ### Terminal 1 - The Veterans
 
