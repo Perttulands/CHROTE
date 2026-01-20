@@ -171,7 +171,7 @@ Every wasteland operation needs its anthem. The official CHROTE soundtrack - gen
 
 Listen to that shit. You might learn something. The lyrics explain you Gastown and Tmux.
 
-**Built-in tracks** (yes, we ship MP3s with the codebase - this is the wasteland, might as well have some tunes while you watch a stream of errors). These are instrumental versions. No lyrics. Just vibes. Because apparently the AI thought your terminal sessions didn't need a narrator explaining what was happening. Bold choice. We kept it.
+**Built-in tracks** (yes, we ship MP3s with the codebase - this is the wasteland, might as well have some tunes while you watch a stream of errors). These are their own can of worms - separate from the playlist above. Instrumental. Ambient. The kind of music that makes you feel like you're running a dystopian control room at 2am. Which you are.
 
 - **Design_phase** - When the architects are scheming
 - **Who_ate_my_PRD** - The eternal question
