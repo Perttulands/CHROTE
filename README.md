@@ -6,23 +6,25 @@
 
 ---
 
-> **NOTE:** This software was built through intensive human-AI collaboration - vibe-coded at 3am with multiple AI agents. It works reliably on our machines and should work on yours, but your mileage may vary.
+> **WARNING:** This software was vibe-coded at 3am by mass hallucinations between a human and multiple AI agents. It works on my machine. It might work on yours. It probably won't. If it does, that's the miracle - not the expectation.
 
-> **HEADS UP:** You're about to run software that spawns AI agents with terminal access. They will read and write files within the sandboxed workspace. They will burn through API credits. The `chrote` user has no sudo access and is limited to `/code` and `/vault` directories - we're reckless, not irresponsible.
+> **DANGER:** You are about to run code that spawns dozens of AI agents with terminal access. They will read your files. They will write your files. They will argue with each other. They will occasionally achieve something useful. Mostly they will burn through your API credits like a war rig burns guzzoline. The `chrote` user has no sudo and is sandboxed to `/code` and `/vault` - we're reckless, not stupid.
+
+> **CAUTION:** If you have to ask "is this safe?" - turn back now. This is the wasteland. We don't do safe here. We do *fast*, *loud*, and *pray the tests pass*.
 
 ---
 
 ## What Is This?
 
-CHROTE is a web dashboard for running swarms of AI coding agents via tmux sessions. It's the control room for your parallel agent operation.
+CHROTE is a web dashboard for running swarms of AI coding agents via tmux sessions. It's the control room for your wasteland coding operation.
 
 You know how normal people run one Claude Code instance and carefully review each change?
 
 We don't do that here.
 
-Here, we spin up 10, 20, 30 agents. We point them at problems. We watch through terminal windows. Sometimes they solve the problem beautifully. Sometimes they step on each other's toes. Sometimes they all independently decide to refactor the same file.
+Here, we spin up 10, 20, 30 agents. We point them at problems. We watch the chaos unfold through terminal windows. Sometimes they solve the problem. Sometimes they fight each other. Sometimes they all independently decide to refactor the same file and create merge conflicts that would make God weep.
 
-**It's a workflow.**
+**It's beautiful.**
 
 ![Dashboard Screenshot](screenshot%201.png)
 
@@ -32,14 +34,17 @@ Here, we spin up 10, 20, 30 agents. We point them at problems. We watch through 
 
 **This is NOT for you if:**
 - You've never used Claude Code
-- You need things to work out of the box on any platform
-- You want enterprise-grade reliability
+- You think "vibe coding" sounds irresponsible
+- You have a budget
+- You need things to work reliably
+- You value your sanity
 
 **This IS for you if:**
-- You're already running multiple Claude Code instances in terminal tabs
-- You've accepted that AI will write most of your code and you're here to orchestrate
-- You want a dashboard to monitor and manage many agents at once
-- You want to feel like you're running a control room
+- You're already mass-prompting Claude Code instances in a dozen terminal tabs
+- You've accepted that AI will write most of your code and you're just here to steer
+- You understand that "it works on my machine" is a lifestyle
+- You have more API credits than sense
+- You want to feel like a mad scientist running a robot army
 
 ---
 
