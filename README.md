@@ -18,7 +18,9 @@
 
 CHROTE is **your own personal tmux cloud** - a web dashboard that lets you run AI coding agent swarms from anywhere, on any device.
 
-**The pitch:** You're out jogging, dictating code changes through voice. You're on your phone checking agent progress. You're on your tablet reviewing diffs. You close your laptop lid and the agents keep working. You open a different machine and pick up exactly where you left off. Your tmux sessions live in the cloud (your cloud, on your hardware), accessible via Tailscale from anywhere in the world.
+**The pitch:** You're out jogging, dictating code changes through voice (and keeping your phone open on a browser where you squint to make sense of anything and scroll is so hard it makes you weep... but you can still yell at the mayor, which covers 95% of the mobile experience youd want anyway. 
+
+You close your laptop lid and the agents keep working. You open a different machine and pick up exactly where you left off. Your tmux sessions live in the cloud (your cloud, on your hardware), accessible via Tailscale from anywhere in the world.
 
 **The experience:** Best of both worlds. You get the raw power of terminal interfaces - tmux, Claude Code, the command line. And you get a modern web dashboard on top - drag-and-drop session management, visual monitoring, theme customization, ambient music. Terminal purists and GUI lovers, united at last.
 
