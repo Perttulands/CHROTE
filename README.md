@@ -8,15 +8,19 @@
 
 > **WARNING:** This software was vibe-coded at 3am by mass hallucinations between a human and multiple AI agents. It works on my machine. It might work on yours. It probably won't. If it does, that's the miracle - not the expectation.
 
-> **DANGER:** You are about to run code that spawns dozens of AI agents with terminal access. They will read your files. They will write your files. They will argue with each other. They will occasionally achieve something useful. Mostly they will burn through your API credits like a war rig burns guzzoline. The `chrote` user has no sudo and is sandboxed to `/code` and `/vault` - we're reckless, not stupid.
+> **DANGER:** You are about to run code that spawns dozens of AI agents with terminal access. They will read your project files. They will write your project files. They will argue with each other. They will occasionally achieve something useful. Mostly they will burn through your API credits like a war rig burns guzzoline.
 
-> **CAUTION:** If you have to ask "is this safe?" - turn back now. This is the wasteland. We don't do safe here. We do *fast*, *loud*, and *pray the tests pass*.
+> **CAUTION:** If you have to ask "is this safe?" - turn back now. This is the wasteland. We don't do safe here. We do *fast*, *loud*, and *pray the tests pass*. I asked the three wise men of the West - Gemini, Claude, and ChatGPT - and they said it's fine. Maybe I should consult the three wise men of the East next.
 
 ---
 
 ## What Is This?
 
-CHROTE is a web dashboard for running swarms of AI coding agents via tmux sessions. It's the control room for your wasteland coding operation.
+CHROTE is **your own personal tmux cloud** - a web dashboard that lets you run AI coding agent swarms from anywhere, on any device.
+
+**The pitch:** You're out jogging, dictating code changes through voice. You're on your phone checking agent progress. You're on your tablet reviewing diffs. You close your laptop lid and the agents keep working. You open a different machine and pick up exactly where you left off. Your tmux sessions live in the cloud (your cloud, on your hardware), accessible via Tailscale from anywhere in the world.
+
+**The experience:** Best of both worlds. You get the raw power of terminal interfaces - tmux, Claude Code, the command line. And you get a modern web dashboard on top - drag-and-drop session management, visual monitoring, theme customization, ambient music. Terminal purists and GUI lovers, united at last.
 
 You know how normal people run one Claude Code instance and carefully review each change?
 
@@ -382,11 +386,35 @@ We tried Docker first. The layers of indirection made debugging harder than it n
 
 ## Security Model
 
-The security approach:
-- **Network perimeter**: Tailscale (or localhost-only access)
-- **User isolation**: Agents run as `chrote` user with no sudo
-- **File sandboxing**: Access limited to `/code` and `/vault` directories
-- **No authentication**: The dashboard has no login - rely on network security
+We're reckless, not stupid. The wasteland has walls.
+
+### The Sandbox
+
+| Layer | What It Does |
+|-------|--------------|
+| **User isolation** | All agents run as `chrote` user - a dedicated non-root account with **no sudo access**. They can't escalate privileges, install system packages, or touch anything outside their sandbox. |
+| **File sandboxing** | The file API only allows access to `/code` and `/vault`. Path traversal attacks are blocked and logged. Agents can't read your SSH keys, browser history, or that folder you don't talk about. |
+| **Network perimeter** | Tailscale provides the access boundary. No authentication on the dashboard itself - if you're on the Tailnet, you're in. |
+
+### Tailscale Configuration (Recommended)
+
+For the paranoid (which you should be), configure your Tailscale ACLs to restrict the CHROTE machine:
+
+```jsonc
+// Example: CHROTE can only initiate outbound connections, not receive them
+// (except from your other devices on the Tailnet)
+{
+  "acls": [
+    // Your devices can reach CHROTE
+    {"action": "accept", "src": ["tag:trusted"], "dst": ["tag:chrote:*"]},
+    // CHROTE can reach the internet (for API calls)
+    {"action": "accept", "src": ["tag:chrote"], "dst": ["autogroup:internet:*"]},
+    // CHROTE cannot initiate connections to your other devices
+  ]
+}
+```
+
+This way, even if an agent goes rogue, it can't pivot to your other machines. The wasteland stays contained.
 
 > **IMPORTANT:** Do not expose port 8080 to the public internet. The dashboard has no authentication. Use Tailscale for remote access or keep it localhost-only.
 
@@ -490,14 +518,20 @@ CHROTE/
 
 ## Philosophy
 
-This is tooling for a fast-moving workflow. We're running many AI agents in parallel, iterating quickly, and accepting that not everything will be perfect.
+**Tmux sessions shouldn't be trapped on one machine.**
 
-The `chrote` user has no sudo. Files are sandboxed. Tailscale provides the network boundary. Within those constraints, we optimize for speed and throughput.
+The whole point of CHROTE is liberation. Your agents run on a beefy home server. You connect from your laptop, your phone, your tablet, your work machine. You dictate changes while walking. You check progress from the couch. You close the lid and the work continues. The sessions are always there, always running, always accessible.
 
-Is this the right approach for everyone? No.
-Is it useful for power users running many agents? We think so.
+**Terminal power, web convenience.**
 
-The AI coding paradigm is evolving rapidly. CHROTE is a tool for those who want to experiment with parallel agent workflows.
+We didn't build this to replace tmux. We built it to make tmux accessible from everywhere, with a modern UI layer that doesn't get in the way. Drag a session to a window. Click to peek. Nuke everything when it goes sideways. The dashboard serves the terminal, not the other way around.
+
+**Sandboxed chaos.**
+
+Yes, we run 30 agents in parallel. Yes, they fight each other. Yes, merge conflicts happen. But they're sandboxed - no sudo, no system access, no network pivoting. The `chrote` user is a padded cell where agents can thrash around without hurting anything that matters.
+
+Is this the right approach for everyone? Absolutely not.
+Is it useful for power users who want to vibe code from anywhere? We think so.
 
 ---
 
