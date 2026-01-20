@@ -6,25 +6,23 @@
 
 ---
 
-> **WARNING:** This software was vibe-coded at 3am by mass hallucinations between a human and multiple AI agents. It works on my machine. It might work on yours. It probably won't. If it does, that's the miracle - not the expectation.
+> **NOTE:** This software was built through intensive human-AI collaboration - vibe-coded at 3am with multiple AI agents. It works reliably on our machines and should work on yours, but your mileage may vary.
 
-> **DANGER:** You are about to run untested code that spawns dozens of AI agents with terminal access. They will read your files. They will write your files. They will argue with each other. They will occasionally achieve something useful. Mostly they will burn through your API credits like a war rig burns guzzoline.
-
-> **CAUTION:** If you have to ask "is this safe?" - turn back now. This is not safe. This is the wasteland. We don't do safe here. We do *fast*, *loud*, and *pray the tests pass*.
+> **HEADS UP:** You're about to run software that spawns AI agents with terminal access. They will read and write files within the sandboxed workspace. They will burn through API credits. The `chrote` user has no sudo access and is limited to `/code` and `/vault` directories - we're reckless, not irresponsible.
 
 ---
 
 ## What Is This?
 
-CHROTE is a web dashboard for running swarms of AI coding agents via tmux sessions. It's the control room for your wasteland coding operation.
+CHROTE is a web dashboard for running swarms of AI coding agents via tmux sessions. It's the control room for your parallel agent operation.
 
 You know how normal people run one Claude Code instance and carefully review each change?
 
 We don't do that here.
 
-Here, we spin up 10, 20, 30 agents. We point them at problems. We watch the chaos unfold through terminal windows. Sometimes they solve the problem. Sometimes they fight each other. Sometimes they all independently decide to refactor the same file and create merge conflicts that would make God weep.
+Here, we spin up 10, 20, 30 agents. We point them at problems. We watch through terminal windows. Sometimes they solve the problem beautifully. Sometimes they step on each other's toes. Sometimes they all independently decide to refactor the same file.
 
-**It's beautiful.**
+**It's a workflow.**
 
 ![Dashboard Screenshot](screenshot%201.png)
 
@@ -34,17 +32,14 @@ Here, we spin up 10, 20, 30 agents. We point them at problems. We watch the chao
 
 **This is NOT for you if:**
 - You've never used Claude Code
-- You think "vibe coding" sounds irresponsible
-- You have a budget
-- You need things to work reliably
-- You value your sanity
+- You need things to work out of the box on any platform
+- You want enterprise-grade reliability
 
 **This IS for you if:**
-- You're already mass-prompting Claude Code instances in a dozen terminal tabs
-- You've accepted that AI will write most of your code and you're just here to steer
-- You understand that "it works on my machine" is a lifestyle
-- You have more API credits than sense
-- You want to feel like a mad scientist running a robot army
+- You're already running multiple Claude Code instances in terminal tabs
+- You've accepted that AI will write most of your code and you're here to orchestrate
+- You want a dashboard to monitor and manage many agents at once
+- You want to feel like you're running a control room
 
 ---
 
@@ -184,17 +179,11 @@ Access the music player in the dashboard tab bar. Let it play while your agents 
 
 ## Deployment Protocol
 
-> **STOP.** Before you proceed, accept these truths:
-> 1. This will probably break
-> 2. When it breaks, you get to keep both pieces
-> 3. There is no support team. There is only the wasteland.
-
 ### Prerequisites
 
-- Windows 11 with WSL2 (we don't do Docker here, too many layers of abstraction between us and the metal)
+- Windows 11 with WSL2
 - Ubuntu 24.04 in WSL
-- Tailscale account (because exposing this to the internet would be *insane*)
-- A reckless disregard for best practices
+- Tailscale account (recommended for remote access)
 
 ### Installation
 
@@ -218,7 +207,7 @@ wsl -d Ubuntu-24.04 -u root -e bash -c "tr -d '\r' < /mnt/c/path/to/CHROTE/wsl/s
 
 > **ZIP Download Users:** If you downloaded this as a ZIP (not via Git), Windows may have added CRLF line endings to the scripts. Both methods above handle this automatically by stripping CRLF before execution. You can also use `wsl/bootstrap.sh` as an alternative entry point.
 
-> **Mac users:** I used to have a Mac. Then I inhaled too many Sharpies and went out and bought a Windows computer. Don't be like me. But what that *does* mean is that CHROTE is Windows-native and you'll need to do some cooking to get it running on macOS. The core concepts translate - you've got native Linux, you've got tmux, you just need to wire up the systemd services differently. PRs welcome. We don't judge. Much.
+> **Mac users:** CHROTE is Windows-native. The core concepts translate to macOS - you've got native Linux capabilities, you've got tmux, you just need to wire up the services differently. PRs welcome.
 
 > **Path flexibility:** The setup script automatically detects where CHROTE is located. Clone it anywhere you want - `C:\Users\you\CHROTE`, `D:\Projects\CHROTE`, wherever. Just run `.\Chrote-Toggle.ps1 -Setup` from that directory.
 
@@ -229,7 +218,7 @@ The setup script (`wsl/setup-wsl.sh`) handles everything:
 | Component | What It Does |
 |-----------|--------------|
 | **WSL Config** | Enables systemd, sets default user to `chrote` |
-| **chrote user** | Non-root user for running agents (no sudo) |
+| **chrote user** | Non-root user for running agents (no sudo access) |
 | **Dependencies** | curl, git, tmux, python3, jq, rsync, build-essential |
 | **Go 1.23** | For building the server and tools |
 | **Node.js 20** | For building the dashboard |
@@ -245,7 +234,7 @@ After installation, the following paths are available inside WSL:
 
 | Path | Purpose |
 |------|---------|
-| `/code` | Symlink to `~/chrote` (copy of your CHROTE install) |
+| `/code` | Symlink to `~/chrote` (your working directory) |
 | `/vault` | Symlink to E:\Vault (optional, for read-only storage) |
 | `~/.local/bin/gt` | Gastown orchestrator |
 | `~/.local/bin/bd` | Beads issue tracker |
@@ -259,7 +248,7 @@ After installation, the following paths are available inside WSL:
 .\Chrote-Toggle.ps1 -Setup   # Run first-time setup
 .\Chrote-Toggle.ps1 -Stop    # Kill everything
 .\Chrote-Toggle.ps1 -Status  # Check if anything's alive
-.\Chrote-Toggle.ps1 -Logs    # Watch the chaos unfold
+.\Chrote-Toggle.ps1 -Logs    # Watch the logs
 ```
 
 ### Verifying Installation
@@ -285,14 +274,14 @@ If something's wrong:
 
 ### Access Points
 
-Once the rig is running (IF the rig is running):
+Once the rig is running:
 
 | Outpost | Location | Purpose |
 |---------|----------|---------|
 | Command Center | `http://localhost:8080` | Main dashboard (local access) |
 | Command Center | `http://chrote:8080` | Main dashboard (via Tailscale) |
-| Direct Terminal | `http://localhost:8080/terminal/` | Raw ttyd access - for when the UI fails |
-| File Depot | `http://localhost:8080/api/files/` | File API - surprisingly stable |
+| Direct Terminal | `http://localhost:8080/terminal/` | Raw ttyd access |
+| File Depot | `http://localhost:8080/api/files/` | File API |
 
 > **Note:** `http://chrote:8080` requires Tailscale configured on your WSL instance. For initial testing, use `http://localhost:8080` which works immediately.
 
@@ -314,7 +303,7 @@ Then access from any device on your Tailnet via `http://chrote:8080`.
 
 CHROTE is infrastructure. **Gastown** is what runs on it.
 
-Gastown is Steve Yegge's orchestration framework for running 10-30+ AI coding agents in parallel. CHROTE gives Gastown a home - terminals to run in, a dashboard to monitor, and a "Nuke All" button for when everything goes wrong (which is often).
+Gastown is Steve Yegge's orchestration framework for running 10-30+ AI coding agents in parallel. CHROTE gives Gastown a home - terminals to run in, a dashboard to monitor, and session management for when things need cleanup.
 
 ### Getting Started with Gastown
 
@@ -344,7 +333,7 @@ gt peek
 - **Molecules** - complex workflow chains
 - **Wisps** - ephemeral coordination tasks
 
-The philosophy: **Physics over Politeness**. Sessions are expendable. Throughput is the mission. The "Nuke All" button isn't a failure state - it's a feature. Burn it down, start fresh, try again.
+The philosophy: **Physics over Politeness**. Sessions are expendable. Throughput is the mission. When agents get stuck, clear them out and try again.
 
 ```bash
 # Inside WSL - start the machine
@@ -355,24 +344,24 @@ gt peek
 
 ---
 
-## Architecture (For The Brave)
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        Tailscale Network                             │
-│              (The only thing between you and disaster)               │
+│                    (Network-level access control)                    │
 └───────────────────────────────────────────────────────────────────┬──┘
                                                                     │
                     ┌───────────────────────────────────────────────▼──────────────────────────────┐
                     │                    WSL2 (Ubuntu 24.04)                                        │
-                    │                   User: chrote (no sudo, we're not THAT reckless)            │
+                    │                   User: chrote (no sudo, sandboxed to /code and /vault)      │
                     │                                                                              │
                     │  ┌─────────────────────────────────────────────────────────────────────┐    │
                     │  │                        systemd services                              │    │
                     │  │  ┌─────────────────────────┐  ┌─────────────────────────┐          │    │
                     │  │  │ chrote-server :8080     │  │ chrote-ttyd :7681       │          │    │
-                    │  │  │ (Go binary - fast,      │  │ (web terminal - when    │          │    │
-                    │  │  │  surprisingly stable)   │  │  you need raw access)   │          │    │
+                    │  │  │ (Go binary - dashboard  │  │ (web terminal access)   │          │    │
+                    │  │  │  and API server)        │  │                         │          │    │
                     │  │  └─────────────────────────┘  └─────────────────────────┘          │    │
                     │  └─────────────────────────────────────────────────────────────────────┘    │
                     │                                                                              │
@@ -382,21 +371,21 @@ gt peek
 
 **Why WSL2 instead of Docker?**
 
-Because we already tried Docker. The layers of indirection made debugging a nightmare. WSL2 gives us real Linux with real systemd and real performance. It's closer to the metal. In the wasteland, you want to feel the road.
+We tried Docker first. The layers of indirection made debugging harder than it needed to be. WSL2 gives us real Linux with real systemd and better performance for this use case.
 
 ---
 
-## Security (Such As It Is)
+## Security Model
 
-> **CRITICAL:** Do not expose port 8080 to the public internet. Ever. Under any circumstances. This dashboard has no authentication. Anyone who can reach it can spawn terminals, read your files, and run commands. It's protected by Tailscale. If you bypass Tailscale, you deserve what happens next.
+The security approach:
+- **Network perimeter**: Tailscale (or localhost-only access)
+- **User isolation**: Agents run as `chrote` user with no sudo
+- **File sandboxing**: Access limited to `/code` and `/vault` directories
+- **No authentication**: The dashboard has no login - rely on network security
 
-The security model:
-- Tailscale network = perimeter
-- Everything inside = trusted
-- Agents run as `chrote` user = no root, limited blast radius
-- File access limited to `/code` and `/vault`
+> **IMPORTANT:** Do not expose port 8080 to the public internet. The dashboard has no authentication. Use Tailscale for remote access or keep it localhost-only.
 
-See [SECURITY.md](SECURITY.md) if you want to pretend this is enterprise software.
+See [SECURITY.md](SECURITY.md) for the full security model.
 
 ---
 
@@ -406,31 +395,27 @@ See [SECURITY.md](SECURITY.md) if you want to pretend this is enterprise softwar
 ```bash
 echo $TMUX_TMPDIR  # Should be /run/tmux/chrote
 ls -la /run/tmux/chrote/  # Check socket exists
-# If not, something's very wrong. Good luck.
 ```
 
 ### Services won't start
 ```bash
 systemctl status chrote-server chrote-ttyd
 journalctl -u chrote-server -f
-# Read the logs. The answer is in there. It's always in the logs.
+# Read the logs - the answer is usually there
 ```
 
 ### Terminal shows black screen
 ```bash
 systemctl status chrote-ttyd
-# Restart it
 sudo systemctl restart chrote-ttyd
-# Still black? Check if tmux is even running
 tmux list-sessions
 ```
 
-### Everything is on fire
+### Everything is broken
 ```bash
-# The nuclear option
+# Full reset
 wsl --shutdown
-# Wait 10 seconds
-# Start fresh
+# Wait 10 seconds, then start fresh
 .\Chrote-Toggle.ps1
 ```
 
@@ -479,7 +464,6 @@ npm run dev    # localhost:5173
 ```bash
 cd /code/dashboard
 npm run test
-# If they pass, you probably broke the tests
 ```
 
 ---
@@ -488,12 +472,12 @@ npm run test
 
 ```
 CHROTE/
-├── src/                      # Go server (the stable part)
-├── dashboard/                # React UI (the pretty part)
+├── src/                      # Go server
+├── dashboard/                # React UI
 │   └── public/               # Guardian images live here
-├── wsl/                      # WSL setup scripts (the scary part)
-├── vendor/                   # Gastown, Beads (optional chaos)
-├── docs/                     # Documentation (optimistic)
+├── wsl/                      # WSL setup scripts
+├── vendor/                   # Gastown, Beads (optional)
+├── docs/                     # Documentation
 └── test-sessions.sh          # Creates fake sessions for testing
 ```
 
@@ -501,19 +485,14 @@ CHROTE/
 
 ## Philosophy
 
-**This is not production software.** This is a weapon. A tool for those who have decided that shipping fast matters more than shipping safe. That iteration speed beats code review. That 30 agents writing code simultaneously is better than one agent writing code carefully.
+This is tooling for a fast-moving workflow. We're running many AI agents in parallel, iterating quickly, and accepting that not everything will be perfect.
 
-Is this responsible? No.
-Is this sustainable? Probably not.
-Is this the future? ...maybe.
+The `chrote` user has no sudo. Files are sandboxed. Tailscale provides the network boundary. Within those constraints, we optimize for speed and throughput.
 
-We're all figuring this out together. The AI coding paradigm is evolving weekly. What works today might be obsolete tomorrow. What seems crazy now might be standard practice in a year.
+Is this the right approach for everyone? No.
+Is it useful for power users running many agents? We think so.
 
-CHROTE is a bet. A bet that the way to navigate this chaos is to embrace it. To build tools that let us run more agents, faster, with less friction. To accept that most of what they produce will be garbage, but the 10% that works will be worth it.
-
-Welcome to the wasteland.
-Keep your API key loaded.
-And remember: when in doubt, nuke it and start over.
+The AI coding paradigm is evolving rapidly. CHROTE is a tool for those who want to experiment with parallel agent workflows.
 
 ---
 
@@ -521,15 +500,15 @@ And remember: when in doubt, nuke it and start over.
 
 | Document | What It Is |
 |----------|------------|
-| [PRD.md](PRD.md) | What we thought we were building |
-| [SPEC.md](SPEC.md) | What we actually built |
-| [SECURITY.md](SECURITY.md) | How we pretend this is secure |
+| [PRD.md](PRD.md) | Product requirements |
+| [SPEC.md](SPEC.md) | Technical specification |
+| [SECURITY.md](SECURITY.md) | Security model |
 
 ---
 
 ## License
 
-MIT - Because even in the wasteland, we believe in open source.
+MIT - Open source for the community.
 
 ---
 
