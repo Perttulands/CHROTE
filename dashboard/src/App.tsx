@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { DndContext, DragEndEvent, DragStartEvent, DragOverlay, useSensor, useSensors, PointerSensor } from '@dnd-kit/core'
 import { SessionProvider, useSession } from './context/SessionContext'
-import TabBar from './components/TabBar'
+import TabBar, { Tab } from './components/TabBar'
 import SessionPanel from './components/SessionPanel'
 import TerminalArea from './components/TerminalArea'
 import FilesView from './components/FilesView'
@@ -9,13 +9,12 @@ import SettingsView from './components/SettingsView'
 import FloatingModal from './components/FloatingModal'
 import HelpView from './components/HelpView'
 import BeadsView from './components/BeadsView'
+import MailView from './components/MailView'
 import ErrorBoundary from './components/ErrorBoundary'
 import { ToastContainer } from './components/ToastNotification'
 import KeyboardShortcutsOverlay from './components/KeyboardShortcutsOverlay'
 import LayoutPresetsPanel from './components/LayoutPresetsPanel'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
-
-type Tab = 'terminal1' | 'terminal2' | 'files' | 'beads' | 'settings' | 'help'
 
 // Dragged item overlay component
 function DraggedSessionOverlay({ name }: { name: string }) {
@@ -128,6 +127,11 @@ function DashboardContent() {
           {activeTab === 'beads' && (
             <ErrorBoundary>
               <BeadsView />
+            </ErrorBoundary>
+          )}
+          {activeTab === 'mail' && (
+            <ErrorBoundary>
+              <MailView />
             </ErrorBoundary>
           )}
           {activeTab === 'settings' && <SettingsView />}
