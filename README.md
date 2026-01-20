@@ -95,6 +95,8 @@ Use it liberally. This is the wasteland. Attachment is weakness. If your agents 
 
 Every terminal window in CHROTE has a guardian - a wasteland operator watching over your agents. They don't actually *do* anything. They're just... there. Staring. Judging your tmux sessions with silent, pixel-based disapproval. Think of them as the dashboard's emotional support animals, except they're cyberpunk rodents who've seen some shit and have zero therapeutic credentials.
 
+> **Fun fact:** 50% of CHROTE's development time was spent trying to make tmux sessions transparent so you could see the guardians while working. Turns out that's a mirage on the Fury Road - xterm.js doesn't do transparency, terminal emulators are a stack of ancient curses, and the guardians were never meant to be seen for more than three seconds anyway. They're watching you. You're not supposed to watch them back.
+
 Meet them:
 
 ### Terminal 1 - The Veterans
@@ -163,7 +165,7 @@ CHROTE itself. The glowing hub where all roads lead.
 
 ## The Soundtrack
 
-Every wasteland operation needs its anthem. The official CHROTE soundtrack - lo-fi beats for coding robots:
+Every wasteland operation needs its anthem. The official CHROTE soundtrack - genre-defying chaos for coding robots:
 
 **[CHROTE Official Playlist](https://suno.com/playlist/8bbca04c-31de-4f6b-a989-372cfd73b382)**
 
