@@ -69,6 +69,9 @@ func main() {
 	healthHandler := api.NewHealthHandler()
 	healthHandler.RegisterRoutes(mux)
 
+	mailHandler := api.NewMailHandler()
+	mailHandler.RegisterRoutes(mux)
+
 	// Create terminal proxy
 	terminalProxy := proxy.NewTerminalProxy(config.TtydPort)
 	terminalProxy.RegisterRoutes(mux)
