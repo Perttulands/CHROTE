@@ -8,6 +8,7 @@ import FilesView from './components/FilesView'
 import SettingsView from './components/SettingsView'
 import FloatingModal from './components/FloatingModal'
 import HelpView from './components/HelpView'
+import ManualView from './components/ManualView'
 import BeadsView from './components/BeadsView'
 import ErrorBoundary from './components/ErrorBoundary'
 import { ToastContainer } from './components/ToastNotification'
@@ -15,7 +16,7 @@ import KeyboardShortcutsOverlay from './components/KeyboardShortcutsOverlay'
 import LayoutPresetsPanel from './components/LayoutPresetsPanel'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 
-type Tab = 'terminal1' | 'terminal2' | 'files' | 'beads' | 'settings' | 'help'
+type Tab = 'terminal1' | 'terminal2' | 'files' | 'beads' | 'manual' | 'settings' | 'help'
 
 // Dragged item overlay component
 function DraggedSessionOverlay({ name }: { name: string }) {
@@ -130,6 +131,7 @@ function DashboardContent() {
               <BeadsView />
             </ErrorBoundary>
           )}
+          {activeTab === 'manual' && <ManualView />}
           {activeTab === 'settings' && <SettingsView />}
           {activeTab === 'help' && <HelpView />}
         </div>
