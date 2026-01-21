@@ -10,6 +10,7 @@ import FloatingModal from './components/FloatingModal'
 import HelpView from './components/HelpView'
 import BeadsView from './components/BeadsView'
 import MailView from './components/MailView'
+import ChroteChat from './components/ChroteChat'
 import ErrorBoundary from './components/ErrorBoundary'
 import { ToastContainer } from './components/ToastNotification'
 import KeyboardShortcutsOverlay from './components/KeyboardShortcutsOverlay'
@@ -132,6 +133,11 @@ function DashboardContent() {
           {activeTab === 'mail' && (
             <ErrorBoundary>
               <MailView />
+            </ErrorBoundary>
+          )}
+          {activeTab === 'chat' && (
+            <ErrorBoundary>
+              <ChroteChat />
             </ErrorBoundary>
           )}
           {activeTab === 'settings' && <SettingsView />}

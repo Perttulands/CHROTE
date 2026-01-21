@@ -72,6 +72,9 @@ func main() {
 	mailHandler := api.NewMailHandler()
 	mailHandler.RegisterRoutes(mux)
 
+	chatHandler := api.NewChatHandler()
+	chatHandler.RegisterRoutes(mux)
+
 	// Create terminal proxy
 	terminalProxy := proxy.NewTerminalProxy(config.TtydPort)
 	terminalProxy.RegisterRoutes(mux)
@@ -110,6 +113,7 @@ func main() {
 		log.Printf("CHROTE server starting on port %d", config.Port)
 		log.Printf("Dashboard: http://localhost:%d/", config.Port)
 		log.Printf("API: http://localhost:%d/api/", config.Port)
+		log.Printf("Chat: http://localhost:%d/api/chat/", config.Port)
 		log.Printf("Files: http://localhost:%d/api/files/", config.Port)
 		log.Printf("Terminal: http://localhost:%d/terminal/", config.Port)
 
