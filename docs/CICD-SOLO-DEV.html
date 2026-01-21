@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solo Dev CI/CD for Personal Cloud Services</title>
+    <style>
+        :root {
+            --bg: #1a1a2e;
+            --bg-secondary: #16162a;
+            --text: #e0e0e0;
+            --text-muted: #888;
+            --accent: #6366f1;
+            --success: #4ade80;
+            --warning: #fbbf24;
+            --danger: #f87171;
+            --border: #333;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            padding: 2rem;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            color: var(--accent);
+        }
+
+        .subtitle {
+            color: var(--text-muted);
+            margin-bottom: 2rem;
+            font-size: 1.1rem;
+        }
+
+        h2 {
+            font-size: 1.4rem;
+            margin-top: 2.5rem;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        h3 {
+            font-size: 1.1rem;
+            margin-top: 1.5rem;
+            margin-bottom: 0.75rem;
+            color: var(--accent);
+        }
+
+        p {
+            margin-bottom: 1rem;
+        }
+
+        code {
+            background: var(--bg-secondary);
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            font-size: 0.9em;
+        }
+
+        pre {
+            background: var(--bg-secondary);
+            padding: 1rem;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 1rem 0;
+            border: 1px solid var(--border);
+        }
+
+        pre code {
+            background: none;
+            padding: 0;
+        }
+
+        .card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin: 1rem 0;
+        }
+
+        .card-title {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .card.success { border-left: 4px solid var(--success); }
+        .card.warning { border-left: 4px solid var(--warning); }
+        .card.danger { border-left: 4px solid var(--danger); }
+        .card.info { border-left: 4px solid var(--accent); }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1rem;
+            margin: 1rem 0;
+        }
+
+        .strategy {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+        }
+
+        .strategy-name {
+            font-weight: 600;
+            color: var(--accent);
+            margin-bottom: 0.5rem;
+        }
+
+        .strategy-desc {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            margin-bottom: 0.75rem;
+        }
+
+        .pros-cons {
+            font-size: 0.85rem;
+        }
+
+        .pro { color: var(--success); }
+        .con { color: var(--danger); }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+        }
+
+        th, td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        th {
+            background: var(--bg-secondary);
+            font-weight: 600;
+        }
+
+        .flow {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            margin: 1rem 0;
+            font-family: monospace;
+        }
+
+        .flow-step {
+            background: var(--bg-secondary);
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+        }
+
+        .flow-arrow {
+            color: var(--text-muted);
+        }
+
+        ul, ol {
+            margin: 1rem 0;
+            padding-left: 1.5rem;
+        }
+
+        li {
+            margin-bottom: 0.5rem;
+        }
+
+        .emoji {
+            font-size: 1.2em;
+        }
+
+        .highlight {
+            background: rgba(99, 102, 241, 0.2);
+            padding: 0.1rem 0.3rem;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Solo Dev CI/CD for Personal Cloud</h1>
+    <p class="subtitle">Managing deployments when you have running processes, many PRs, and one pair of hands</p>
+
+    <div class="card info">
+        <div class="card-title"><span class="emoji">🎯</span> The Challenge</div>
+        <p>You're running a personal cloud service (like Gas Town) where:</p>
+        <ul>
+            <li>AI agents generate many PRs (polecats working in parallel)</li>
+            <li>Long-running processes must stay alive (tmux sessions, daemons)</li>
+            <li>You're the only human reviewer</li>
+            <li>Downtime = lost work and broken agent state</li>
+        </ul>
+    </div>
+
+    <h2>Strategy 1: The "Hot Swap" Approach</h2>
+    <p>Build new version alongside running version, swap atomically.</p>
+
+    <div class="flow">
+        <span class="flow-step">PR Merged</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step">Build in /tmp</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step">Test</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step">mv binary</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step">SIGHUP</span>
+    </div>
+
+    <pre><code># deploy.sh - Zero-downtime deploy for Go services
+#!/bin/bash
+set -e
+
+SERVICE="chrote-server"
+DEPLOY_DIR="/opt/chrote"
+BUILD_DIR="/tmp/chrote-build-$$"
+
+# 1. Build new version (doesn't touch running service)
+git pull origin main
+mkdir -p "$BUILD_DIR"
+go build -o "$BUILD_DIR/$SERVICE" ./cmd/server/
+
+# 2. Quick smoke test
+"$BUILD_DIR/$SERVICE" --health-check || exit 1
+
+# 3. Atomic swap
+mv "$DEPLOY_DIR/$SERVICE" "$DEPLOY_DIR/$SERVICE.old"
+mv "$BUILD_DIR/$SERVICE" "$DEPLOY_DIR/$SERVICE"
+
+# 4. Graceful reload (if supported) or restart
+systemctl reload $SERVICE || systemctl restart $SERVICE
+
+# 5. Verify
+sleep 2
+curl -f http://localhost:8080/api/health || {
+    # Rollback
+    mv "$DEPLOY_DIR/$SERVICE.old" "$DEPLOY_DIR/$SERVICE"
+    systemctl restart $SERVICE
+    exit 1
+}
+
+echo "✓ Deployed successfully"</code></pre>
+
+    <div class="card success">
+        <div class="card-title"><span class="emoji">✅</span> Best For</div>
+        <p>Stateless services, HTTP servers, APIs. The Chrote dashboard server is a good candidate.</p>
+    </div>
+
+    <h2>Strategy 2: The "Blue-Green Lite" Approach</h2>
+    <p>Run two versions on different ports, switch traffic with a reverse proxy.</p>
+
+    <pre><code># Two instances running
+chrote-server --port 8080  # Current (blue)
+chrote-server --port 8081  # New (green)
+
+# nginx.conf - switch with reload
+upstream chrote {
+    server 127.0.0.1:8080;  # Comment out to switch
+    # server 127.0.0.1:8081;  # Uncomment for green
+}
+
+# Deploy flow
+1. Start new version on 8081
+2. Test: curl localhost:8081/api/health
+3. Edit nginx.conf (swap ports)
+4. nginx -s reload
+5. Stop old version</code></pre>
+
+    <h2>Strategy 3: The "Batch Window" Approach</h2>
+    <p>For services with state (like Gas Town daemons), deploy during quiet periods.</p>
+
+    <div class="card warning">
+        <div class="card-title"><span class="emoji">⚠️</span> When Processes Have State</div>
+        <p>Gas Town has running agents with active work. You can't just restart without consequences:</p>
+        <ul>
+            <li>Polecats lose their current task context</li>
+            <li>Molecules get stuck mid-execution</li>
+            <li>Unfinished work becomes orphaned</li>
+        </ul>
+    </div>
+
+    <pre><code># safe-deploy.sh - State-aware deployment
+#!/bin/bash
+
+# 1. Check if it's safe to deploy
+ACTIVE_POLECATS=$(gt polecat list --all --json | jq '[.[] | select(.status != "done")] | length')
+ACTIVE_CONVOYS=$(gt convoy list --json | jq '[.[] | select(.status == "in_progress")] | length')
+
+if [ "$ACTIVE_POLECATS" -gt 0 ] || [ "$ACTIVE_CONVOYS" -gt 0 ]; then
+    echo "⚠️  Active work in progress:"
+    echo "   Polecats: $ACTIVE_POLECATS"
+    echo "   Convoys: $ACTIVE_CONVOYS"
+    echo ""
+    read -p "Deploy anyway? (y/N) " -n 1 -r
+    echo
+    [[ $REPLY =~ ^[Yy]$ ]] || exit 1
+fi
+
+# 2. Graceful shutdown signal
+gt shutdown --graceful --timeout 60
+
+# 3. Wait for agents to checkpoint
+sleep 10
+
+# 4. Deploy
+./deploy.sh
+
+# 5. Restart services
+gt up</code></pre>
+
+    <h2>PR Review Strategy for Solo Devs</h2>
+    <p>When AI agents generate 10+ PRs/day, you need a triage system.</p>
+
+    <div class="grid">
+        <div class="strategy">
+            <div class="strategy-name">🟢 Auto-Merge Safe</div>
+            <div class="strategy-desc">PRs that can merge without human review</div>
+            <div class="pros-cons">
+                <div class="pro">+ Docs only</div>
+                <div class="pro">+ Tests only</div>
+                <div class="pro">+ Config tweaks</div>
+                <div class="pro">+ Formatting/style</div>
+            </div>
+        </div>
+
+        <div class="strategy">
+            <div class="strategy-name">🟡 Quick Review</div>
+            <div class="strategy-desc">PRs that need a glance but not deep review</div>
+            <div class="pros-cons">
+                <div class="pro">+ Small features (&lt;100 lines)</div>
+                <div class="pro">+ Bug fixes with tests</div>
+                <div class="pro">+ Refactors with no behavior change</div>
+            </div>
+        </div>
+
+        <div class="strategy">
+            <div class="strategy-name">🔴 Deep Review</div>
+            <div class="strategy-desc">PRs requiring careful human attention</div>
+            <div class="pros-cons">
+                <div class="con">- Security changes</div>
+                <div class="con">- API changes</div>
+                <div class="con">- Database migrations</div>
+                <div class="con">- New dependencies</div>
+            </div>
+        </div>
+    </div>
+
+    <h3>GitHub Actions for Auto-Triage</h3>
+    <pre><code># .github/workflows/auto-merge.yml
+name: Auto-merge safe PRs
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    if: contains(github.event.pull_request.labels.*.name, 'safe-to-merge')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run tests
+        run: |
+          go test ./...
+          npm test --prefix dashboard
+
+      - name: Auto-merge if tests pass
+        if: success()
+        uses: pascalgn/automerge-action@v0.15.6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MERGE_METHOD: squash</code></pre>
+
+    <h2>The Gas Town Way: Refinery as CI/CD</h2>
+    <p>Gas Town already has a built-in merge queue processor: <strong>The Refinery</strong>.</p>
+
+    <div class="flow">
+        <span class="flow-step">Polecat completes work</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step">gt done</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step">MR enters queue</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step">Refinery processes</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step">Tests run</span>
+        <span class="flow-arrow">→</span>
+        <span class="flow-step">Merge to main</span>
+    </div>
+
+    <pre><code># The refinery already handles this flow:
+# 1. Polecat finishes → creates MR bead
+# 2. MR enters merge queue
+# 3. Refinery picks it up
+# 4. Runs validation (tests, build, lint)
+# 5. If pass → merge
+# 6. If fail → notify, park for human review
+
+# Check merge queue status
+gt mq list Chrote
+
+# See what refinery is doing
+gt peek Chrote/refinery</code></pre>
+
+    <div class="card info">
+        <div class="card-title"><span class="emoji">💡</span> Extend the Refinery</div>
+        <p>Add deployment to the refinery's post-merge step:</p>
+    </div>
+
+    <pre><code># In mol-refinery-patrol.formula.toml, add a post-merge step:
+
+[[steps]]
+id = "deploy"
+needs = ["merge"]
+title = "Deploy to production"
+description = """
+After successful merge, trigger deployment:
+
+```bash
+# Only for main branch merges
+if [ "$MERGED_TO" = "main" ]; then
+    ./scripts/deploy.sh
+fi
+```
+
+**If deploy fails:** Revert the merge, notify human.
+"""</code></pre>
+
+    <h2>Recommended Setup for Your Situation</h2>
+
+    <table>
+        <tr>
+            <th>Component</th>
+            <th>Strategy</th>
+            <th>Reason</th>
+        </tr>
+        <tr>
+            <td>Chrote Server</td>
+            <td>Hot Swap</td>
+            <td>Stateless, can restart quickly</td>
+        </tr>
+        <tr>
+            <td>Dashboard (React)</td>
+            <td>Static deploy</td>
+            <td>Just copy built files</td>
+        </tr>
+        <tr>
+            <td>Gas Town Daemon</td>
+            <td>Batch Window</td>
+            <td>Needs graceful shutdown</td>
+        </tr>
+        <tr>
+            <td>Polecats</td>
+            <td>Don't restart</td>
+            <td>They self-clean anyway</td>
+        </tr>
+        <tr>
+            <td>Mayor/Witness</td>
+            <td>Graceful handoff</td>
+            <td>Use gt handoff to preserve state</td>
+        </tr>
+    </table>
+
+    <h2>Quick Reference: Commands</h2>
+    <pre><code># Check if safe to deploy
+gt status                     # See what's running
+gt convoy list               # Active work
+gt ready                     # Pending work
+
+# Graceful operations
+gt shutdown --graceful       # Stop accepting work, finish current
+gt handoff                   # Hand off to fresh session
+
+# Deploy dashboard (static files)
+cd dashboard && npm run build
+rsync -av dist/ /var/www/chrote/
+
+# Deploy Go server
+go build -o /tmp/server ./cmd/server
+systemctl stop chrote && mv /tmp/server /opt/chrote/ && systemctl start chrote
+
+# Verify
+curl http://localhost:8080/api/health</code></pre>
+
+    <div class="card success">
+        <div class="card-title"><span class="emoji">🎯</span> TL;DR</div>
+        <ol>
+            <li><strong>Let the Refinery handle merges</strong> - it's already built for this</li>
+            <li><strong>Add deploy step to Refinery</strong> - post-merge hook</li>
+            <li><strong>Use labels for auto-merge</strong> - docs, tests, safe changes</li>
+            <li><strong>Batch risky deploys</strong> - when no active convoys</li>
+            <li><strong>Always have rollback</strong> - keep previous binary</li>
+        </ol>
+    </div>
+
+    <hr style="margin: 2rem 0; border: none; border-top: 1px solid var(--border);">
+    <p style="color: var(--text-muted); font-size: 0.9rem;">
+        Generated for Gas Town / Chrote deployments. Adapt to your specific setup.
+    </p>
+</body>
+</html>
