@@ -5,7 +5,7 @@ import type { Conversation, ChatMessage, SendResponse } from './types'
 
 const API_BASE = '/api/chat'
 
-// Fetch conversations (available chat targets)
+// Fetch conversations (available chat targets) with workspace info from backend
 export function useConversations() {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [loading, setLoading] = useState(true)
@@ -17,8 +17,9 @@ export function useConversations() {
       const res = await fetch(`${API_BASE}/conversations`)
       const data = await res.json()
 
-      if (data.success) {
-        setConversations(data.data?.conversations || [])
+      if (data.data?.conversations !== undefined) {
+        // Backend already includes workspace info and sorts
+        setConversations(data.data.conversations || [])
         setError(null)
       } else {
         setError(data.error?.message || 'Failed to load conversations')
@@ -38,25 +39,26 @@ export function useConversations() {
 }
 
 // Fetch chat history for a specific target
-export function useChatHistory(target: string | null) {
+export function useChatHistory(target: string | null, workspace: string | null) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const refresh = useCallback(async () => {
-    if (!target) {
+  const refresh = useCallback(async (silent = false) => {
+    if (!target || !workspace) {
       setMessages([])
       return
     }
 
     try {
-      setLoading(true)
+      if (!silent) setLoading(true)
       const encodedTarget = encodeURIComponent(target)
-      const res = await fetch(`${API_BASE}/${encodedTarget}/history`)
+      const encodedWorkspace = encodeURIComponent(workspace)
+      const res = await fetch(`${API_BASE}/history?target=${encodedTarget}&workspace=${encodedWorkspace}`)
       const data = await res.json()
 
-      if (data.success) {
-        setMessages(data.data?.messages || [])
+      if (data.data?.messages !== undefined) {
+        setMessages(data.data.messages || [])
         setError(null)
       } else {
         setError(data.error?.message || 'Failed to load history')
@@ -64,9 +66,9 @@ export function useChatHistory(target: string | null) {
     } catch (e) {
       setError('Network error')
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
-  }, [target])
+  }, [target, workspace])
 
   useEffect(() => {
     refresh()
@@ -77,19 +79,30 @@ export function useChatHistory(target: string | null) {
 
 // Send a chat message (dual-channel: mail + nudge)
 export async function sendChatMessage(
+  workspace: string,
   target: string,
   message: string
 ): Promise<SendResponse> {
+  const payload = { workspace, target, message }
+
+  console.group('[ChroteChat] Sending message')
+  console.log('Payload:', JSON.stringify(payload, null, 2))
+  console.log('Endpoint:', `${API_BASE}/send`)
+
   try {
-    const encodedTarget = encodeURIComponent(target)
-    const res = await fetch(`${API_BASE}/${encodedTarget}/send`, {
+    const res = await fetch(`${API_BASE}/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify(payload),
     })
-    const data = await res.json()
 
-    if (data.success) {
+    console.log('Response status:', res.status, res.statusText)
+
+    const data = await res.json()
+    console.log('Response body:', JSON.stringify(data, null, 2))
+    console.groupEnd()
+
+    if (data.data?.success) {
       return {
         success: true,
         messageId: data.data?.messageId,
@@ -105,11 +118,134 @@ export async function sendChatMessage(
       }
     }
   } catch (e) {
+    console.error('Network error:', e)
+    console.groupEnd()
     return {
       success: false,
       mailSent: false,
       nudged: false,
       error: 'Network error',
     }
+  }
+}
+
+// Nudge-only response
+export interface NudgeResponse {
+  success: boolean
+  nudged: boolean
+  error?: string
+}
+
+// Send a nudge only (no mail)
+export async function sendNudge(
+  workspace: string,
+  target: string,
+  message?: string
+): Promise<NudgeResponse> {
+  const payload = { workspace, target, message }
+
+  console.group('[ChroteChat] Sending nudge')
+  console.log('Payload:', JSON.stringify(payload, null, 2))
+
+  try {
+    const res = await fetch(`${API_BASE}/nudge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+
+    const data = await res.json()
+    console.log('Response:', JSON.stringify(data, null, 2))
+    console.groupEnd()
+
+    if (data.data?.success) {
+      return {
+        success: true,
+        nudged: data.data?.nudged ?? false,
+      }
+    } else {
+      return {
+        success: false,
+        nudged: false,
+        error: data.error?.message || 'Nudge failed',
+      }
+    }
+  } catch (e) {
+    console.error('Network error:', e)
+    console.groupEnd()
+    return {
+      success: false,
+      nudged: false,
+      error: 'Network error',
+    }
+  }
+}
+
+// Session management types
+export interface SessionStatus {
+  exists: boolean
+  workspace?: string
+}
+
+export interface SessionInitResult {
+  created: boolean
+  workspace?: string
+  message?: string
+}
+
+// Get chrote-chat session status
+export async function getSessionStatus(): Promise<SessionStatus> {
+  try {
+    const res = await fetch(`${API_BASE}/session/status`)
+    const data = await res.json()
+    return {
+      exists: data.data?.exists ?? false,
+      workspace: data.data?.workspace,
+    }
+  } catch {
+    return { exists: false }
+  }
+}
+
+// Initialize chrote-chat session in workspace
+export async function initSession(workspace: string): Promise<SessionInitResult> {
+  try {
+    const res = await fetch(`${API_BASE}/session/init`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspace }),
+    })
+    const data = await res.json()
+    if (data.data) {
+      return {
+        created: data.data.created ?? false,
+        workspace: data.data.workspace,
+        message: data.data.message,
+      }
+    }
+    return { created: false, message: data.error?.message || 'Failed to init session' }
+  } catch {
+    return { created: false, message: 'Network error' }
+  }
+}
+
+// Restart chrote-chat session
+export async function restartSession(workspace: string): Promise<SessionInitResult> {
+  try {
+    const res = await fetch(`${API_BASE}/session/restart`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspace }),
+    })
+    const data = await res.json()
+    if (data.data) {
+      return {
+        created: data.data.restarted ?? false,
+        workspace: data.data.workspace,
+      }
+    }
+    return { created: false, message: data.error?.message || 'Failed to restart session' }
+  } catch {
+    return { created: false, message: 'Network error' }
   }
 }

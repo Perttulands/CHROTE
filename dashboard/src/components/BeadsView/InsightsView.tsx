@@ -80,12 +80,17 @@ export default function InsightsView({ insights, loading, error }: InsightsViewP
     )
   }
 
+  // Safely access health object and its arrays
+  const health = insights.health || { score: 0, risks: [], warnings: [] }
+  const risks = health.risks || []
+  const warnings = health.warnings || []
+
   return (
     <div className="beads-insights">
       <div className="insights-grid">
         {/* Health Score */}
         <div className="insights-section health-section">
-          <HealthGauge score={insights.health.score} />
+          <HealthGauge score={health.score || 0} />
         </div>
 
         {/* Stats Overview */}
@@ -138,11 +143,11 @@ export default function InsightsView({ insights, loading, error }: InsightsViewP
         )}
 
         {/* Risks */}
-        {insights.health.risks.length > 0 && (
+        {risks.length > 0 && (
           <div className="insights-section risks-section">
             <h3>Risks</h3>
             <ul className="risks-list">
-              {insights.health.risks.map((risk, i) => (
+              {risks.map((risk, i) => (
                 <li key={i} className="risk-item">{risk}</li>
               ))}
             </ul>
@@ -150,11 +155,11 @@ export default function InsightsView({ insights, loading, error }: InsightsViewP
         )}
 
         {/* Warnings */}
-        {insights.health.warnings.length > 0 && (
+        {warnings.length > 0 && (
           <div className="insights-section warnings-section">
             <h3>Warnings</h3>
             <ul className="warnings-list">
-              {insights.health.warnings.map((warning, i) => (
+              {warnings.map((warning, i) => (
                 <li key={i} className="warning-item">{warning}</li>
               ))}
             </ul>

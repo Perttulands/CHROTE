@@ -14,6 +14,7 @@ const COLUMNS: { status: IssueStatus; label: string }[] = [
   { status: 'open', label: 'Open' },
   { status: 'ready', label: 'Ready' },
   { status: 'in_progress', label: 'In Progress' },
+  { status: 'hooked', label: 'Hooked' },
   { status: 'blocked', label: 'Blocked' },
   { status: 'closed', label: 'Closed' },
 ]

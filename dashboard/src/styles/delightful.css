@@ -281,14 +281,15 @@
 .shortcut-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
 }
 
 .shortcut-keys {
   display: flex;
   align-items: center;
   gap: 4px;
+  min-width: 140px;
+  flex-shrink: 0;
 }
 
 .key-separator {
@@ -635,30 +636,5 @@
 .tab-bar-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
-}
-
-.tab-bar-btn {
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 6px;
-  color: rgba(255, 255, 255, 0.7);
-  cursor: pointer;
-  font-size: 16px;
-  transition: all 0.2s;
-}
-
-.tab-bar-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--accent);
-  border-color: var(--accent);
-}
-
-.help-btn {
-  font-weight: bold;
+  gap: 0;
 }

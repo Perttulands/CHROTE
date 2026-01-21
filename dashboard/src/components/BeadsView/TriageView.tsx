@@ -45,17 +45,22 @@ export default function TriageView({ triage, issues, loading, error }: TriageVie
     )
   }
 
+  // Safely access arrays that may be undefined from bv output
+  const recommendations = triage.recommendations || []
+  const quickWins = triage.quickWins || []
+  const blockers = triage.blockers || []
+
   return (
     <div className="beads-triage">
       <div className="triage-sections">
         {/* Recommendations */}
         <section className="triage-section recommendations">
           <h3>Recommended Next</h3>
-          {triage.recommendations.length === 0 ? (
+          {recommendations.length === 0 ? (
             <p className="no-items">No recommendations</p>
           ) : (
             <div className="recommendation-list">
-              {triage.recommendations.map(rec => {
+              {recommendations.map(rec => {
                 const issue = getIssueById(issues, rec.issueId)
                 return (
                   <div key={rec.issueId} className="recommendation-item">
@@ -88,11 +93,11 @@ export default function TriageView({ triage, issues, loading, error }: TriageVie
         <section className="triage-section quick-wins">
           <h3>Quick Wins</h3>
           <p className="section-desc">Low-effort issues with no dependencies</p>
-          {triage.quickWins.length === 0 ? (
+          {quickWins.length === 0 ? (
             <p className="no-items">No quick wins identified</p>
           ) : (
             <div className="quick-wins-list">
-              {triage.quickWins.map(id => {
+              {quickWins.map(id => {
                 const issue = getIssueById(issues, id)
                 return issue ? (
                   <IssueCard key={id} issue={issue} compact />
@@ -110,11 +115,11 @@ export default function TriageView({ triage, issues, loading, error }: TriageVie
         <section className="triage-section blockers">
           <h3>Blockers</h3>
           <p className="section-desc">Issues blocking other work</p>
-          {triage.blockers.length === 0 ? (
+          {blockers.length === 0 ? (
             <p className="no-items">No blockers identified</p>
           ) : (
             <div className="blockers-list">
-              {triage.blockers.map(id => {
+              {blockers.map(id => {
                 const issue = getIssueById(issues, id)
                 return issue ? (
                   <IssueCard key={id} issue={issue} showDependencies />

@@ -9,6 +9,7 @@ export type IssueStatus =
   | 'wont_fix'
   | 'duplicate'
   | 'deferred'
+  | 'hooked'
 
 export type IssueType = 'bug' | 'feature' | 'task' | 'chore' | 'epic'
 

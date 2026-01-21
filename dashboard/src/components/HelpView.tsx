@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-type HelpSection = 'overview' | 'terminal' | 'sessions' | 'files' | 'shortcuts' | 'tips'
+type HelpSection = 'shortcuts' | 'terminals' | 'sessions' | 'files' | 'tmux'
 
 interface SectionConfig {
   id: HelpSection
@@ -9,41 +9,38 @@ interface SectionConfig {
 }
 
 const sections: SectionConfig[] = [
-  { id: 'overview', label: 'Overview', icon: '01' },
-  { id: 'terminal', label: 'Terminal', icon: '02' },
+  { id: 'shortcuts', label: 'Shortcuts', icon: '01' },
+  { id: 'terminals', label: 'Terminals', icon: '02' },
   { id: 'sessions', label: 'Sessions', icon: '03' },
   { id: 'files', label: 'Files', icon: '04' },
-  { id: 'shortcuts', label: 'tmux', icon: '05' },
-  { id: 'tips', label: 'Tips', icon: '06' },
+  { id: 'tmux', label: 'tmux', icon: '05' },
 ]
 
 function HelpView() {
-  const [activeSection, setActiveSection] = useState<HelpSection>('overview')
+  const [activeSection, setActiveSection] = useState<HelpSection>('shortcuts')
 
   const renderContent = () => {
     switch (activeSection) {
-      case 'overview':
-        return <OverviewSection />
-      case 'terminal':
-        return <TerminalSection />
+      case 'shortcuts':
+        return <ShortcutsSection />
+      case 'terminals':
+        return <TerminalsSection />
       case 'sessions':
         return <SessionsSection />
       case 'files':
         return <FilesSection />
-      case 'shortcuts':
-        return <ShortcutsSection />
-      case 'tips':
-        return <TipsSection />
+      case 'tmux':
+        return <TmuxSection />
       default:
-        return <OverviewSection />
+        return <ShortcutsSection />
     }
   }
 
   return (
     <div className="help-view">
       <div className="help-header">
-        <h1 className="help-title">Chrote Dashboard</h1>
-        <p className="help-subtitle">Your command center for AI agent orchestration</p>
+        <h1 className="help-title">Dashboard Help</h1>
+        <p className="help-subtitle">How to use this interface.</p>
       </div>
 
       <nav className="help-nav">
@@ -66,112 +63,121 @@ function HelpView() {
   )
 }
 
-function OverviewSection() {
+function ShortcutsSection() {
   return (
     <div className="help-section-content">
-      <div className="help-hero">
-        <div className="help-hero-icon">&#x2726;</div>
-        <h2>Welcome to Chrote</h2>
-        <p>A powerful dashboard for managing tmux sessions and AI agents in a unified interface.</p>
-      </div>
+      <h2>Keyboard Shortcuts</h2>
+      <p className="help-intro">Press <kbd>?</kbd> anywhere to see this overlay.</p>
 
-      <div className="help-features-grid">
-        <div className="help-feature-card">
-          <div className="help-feature-icon">&#x25A0;</div>
-          <h3>Multi-Terminal View</h3>
-          <p>View up to 4 terminal sessions simultaneously in a responsive grid layout.</p>
-        </div>
-
-        <div className="help-feature-card">
-          <div className="help-feature-icon">&#x21C4;</div>
-          <h3>Drag & Drop</h3>
-          <p>Organize sessions by dragging them between terminal windows or the sidebar.</p>
-        </div>
-
-        <div className="help-feature-card">
-          <div className="help-feature-icon">&#x2630;</div>
-          <h3>File Browser</h3>
-          <p>Browse, upload, and manage files directly within the dashboard.</p>
-        </div>
-
-        <div className="help-feature-card">
-          <div className="help-feature-icon">&#x2699;</div>
-          <h3>Customizable</h3>
-          <p>Choose from multiple themes and customize tmux colors to match your style.</p>
+      <div className="help-card">
+        <h3>Navigation</h3>
+        <div className="help-shortcuts-table">
+          <div className="help-shortcut-row">
+            <div className="help-shortcut-keys">
+              <kbd>Tab</kbd>
+            </div>
+            <span>Toggle between Terminal 1 and Terminal 2</span>
+          </div>
+          <div className="help-shortcut-row">
+            <div className="help-shortcut-keys">
+              <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd>
+            </div>
+            <span>Focus terminal pane by number</span>
+          </div>
+          <div className="help-shortcut-row">
+            <div className="help-shortcut-keys">
+              <kbd>/</kbd>
+            </div>
+            <span>Focus the session search box</span>
+          </div>
+          <div className="help-shortcut-row">
+            <div className="help-shortcut-keys">
+              <kbd>Esc</kbd>
+            </div>
+            <span>Close modals and overlays</span>
+          </div>
         </div>
       </div>
 
       <div className="help-card">
-        <h3>Quick Start</h3>
-        <ol className="help-steps">
-          <li>
-            <span className="help-step-number">1</span>
-            <div className="help-step-content">
-              <strong>View Sessions</strong>
-              <p>Your tmux sessions appear in the left sidebar. Each session shows its agent name.</p>
+        <h3>Actions</h3>
+        <div className="help-shortcuts-table">
+          <div className="help-shortcut-row">
+            <div className="help-shortcut-keys">
+              <kbd>Ctrl</kbd> + <kbd>S</kbd>
             </div>
-          </li>
-          <li>
-            <span className="help-step-number">2</span>
-            <div className="help-step-content">
-              <strong>Assign to Windows</strong>
-              <p>Drag sessions from the sidebar onto any of the terminal windows to view them.</p>
+            <span>Toggle the sidebar</span>
+          </div>
+          <div className="help-shortcut-row">
+            <div className="help-shortcut-keys">
+              <kbd>Ctrl</kbd> + <kbd>N</kbd>
             </div>
-          </li>
-          <li>
-            <span className="help-step-number">3</span>
-            <div className="help-step-content">
-              <strong>Interact</strong>
-              <p>Click on a terminal window to focus it, then type commands directly.</p>
+            <span>Create a new session</span>
+          </div>
+          <div className="help-shortcut-row">
+            <div className="help-shortcut-keys">
+              <kbd>Ctrl</kbd> + <kbd>1-9</kbd>
             </div>
-          </li>
-        </ol>
+            <span>Load layout preset by number</span>
+          </div>
+          <div className="help-shortcut-row">
+            <div className="help-shortcut-keys">
+              <kbd>?</kbd>
+            </div>
+            <span>Show keyboard shortcuts overlay</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="help-card help-card-accent">
+        <h3>Quick Tips</h3>
+        <ul className="help-list">
+          <li>Hold <kbd>Shift</kbd> while selecting text to bypass tmux and copy natively</li>
+          <li>Collapse the sidebar with <kbd>Ctrl+S</kbd> for maximum terminal space</li>
+          <li>Use <kbd>Tab</kbd> to quickly flip between your two terminal workspaces</li>
+        </ul>
       </div>
     </div>
   )
 }
 
-function TerminalSection() {
+function TerminalsSection() {
   return (
     <div className="help-section-content">
-      <h2>Terminal Windows</h2>
-      <p className="help-intro">The terminal view displays up to 4 tmux sessions in a responsive grid layout.</p>
+      <h2>Terminal Panes</h2>
+      <p className="help-intro">Each workspace has up to 4 panes in a responsive grid.</p>
 
       <div className="help-card">
-        <h3>Window Layout</h3>
-        <div className="help-layout-demo">
-          <div className="help-layout-grid">
-            <div className="help-layout-cell">Window 1</div>
-            <div className="help-layout-cell">Window 2</div>
-            <div className="help-layout-cell">Window 3</div>
-            <div className="help-layout-cell">Window 4</div>
-          </div>
-        </div>
-        <p className="help-hint">The grid automatically adjusts based on how many windows have sessions assigned.</p>
+        <h3>Two Workspaces</h3>
+        <p>
+          <strong>Terminal 1</strong> and <strong>Terminal 2</strong> are independent.
+          Each has its own set of 4 panes with different sessions bound.
+          Use <kbd>Tab</kbd> to switch between them.
+        </p>
       </div>
 
       <div className="help-card">
-        <h3>Window Controls</h3>
+        <h3>Pane Controls</h3>
         <div className="help-control-list">
           <div className="help-control-item">
             <span className="help-control-icon">&#x25A1;</span>
             <div>
               <strong>Pop Out</strong>
-              <p>Open a terminal in a floating window for better multitasking.</p>
+              <p>Open terminal in a floating window.</p>
             </div>
           </div>
           <div className="help-control-item">
             <span className="help-control-icon">&#x2715;</span>
             <div>
               <strong>Clear</strong>
-              <p>Remove all sessions from a window without closing them.</p>
+              <p>Unbind sessions from this pane (doesn't kill them).</p>
             </div>
           </div>
           <div className="help-control-item">
             <span className="help-control-icon">&#x21BB;</span>
             <div>
-              <strong>Cycle Sessions</strong>
-              <p>When multiple sessions are assigned, cycle through them with the arrow buttons.</p>
+              <strong>Cycle</strong>
+              <p>When multiple sessions are bound, cycle through them.</p>
             </div>
           </div>
         </div>
@@ -179,12 +185,35 @@ function TerminalSection() {
 
       <div className="help-card">
         <h3>Session Tags</h3>
-        <p>Each window shows colored tags for assigned sessions. You can:</p>
+        <p>Each pane shows colored tags for bound sessions:</p>
         <ul className="help-list">
-          <li>Click a tag to switch to that session</li>
-          <li>Drag tags between windows to reorganize</li>
-          <li>Drag tags outside to remove from the window</li>
+          <li><strong>Click a tag</strong> - Switch to that session</li>
+          <li><strong>Drag a tag</strong> - Move to another pane</li>
+          <li><strong>Drag outside</strong> - Unbind from pane</li>
         </ul>
+      </div>
+
+      <div className="help-card">
+        <h3>Watch vs Control Mode</h3>
+        <div className="help-control-list">
+          <div className="help-control-item">
+            <span className="help-control-icon">&#x1F441;</span>
+            <div>
+              <strong>Watch Mode (default)</strong>
+              <p>See output, scroll freely. Keyboard input disabled.</p>
+            </div>
+          </div>
+          <div className="help-control-item">
+            <span className="help-control-icon">&#x2328;</span>
+            <div>
+              <strong>Control Mode</strong>
+              <p>Click the pane to enable input. Type directly into tmux.</p>
+            </div>
+          </div>
+        </div>
+        <p style={{ marginTop: '1rem', opacity: 0.8 }}>
+          Watch mode is default because agents don't like surprise keyboard input.
+        </p>
       </div>
     </div>
   )
@@ -193,55 +222,69 @@ function TerminalSection() {
 function SessionsSection() {
   return (
     <div className="help-section-content">
-      <h2>Session Management</h2>
-      <p className="help-intro">The sidebar shows all available tmux sessions and provides drag-and-drop organization.</p>
+      <h2>Session Panel</h2>
+      <p className="help-intro">The left sidebar lists all tmux sessions.</p>
 
       <div className="help-card">
-        <h3>Session Panel</h3>
-        <p>The left sidebar displays all running tmux sessions. Sessions are identified by:</p>
-        <ul className="help-list">
-          <li><strong>Agent Name</strong> - Extracted from the session name (e.g., "claude" from "gastown-claude-abc123")</li>
-          <li><strong>Color Indicator</strong> - Each session gets a unique color for easy identification</li>
-          <li><strong>Assignment Status</strong> - Dimmed appearance if already assigned to a window</li>
-        </ul>
-      </div>
-
-      <div className="help-card">
-        <h3>Drag & Drop</h3>
-        <div className="help-drag-demo">
-          <div className="help-drag-source">
-            <span>Session</span>
-            <span className="help-drag-arrow">&#x2192;</span>
-          </div>
-          <div className="help-drag-target">
-            <span>Window</span>
-          </div>
-        </div>
-        <ul className="help-list">
-          <li>Drag from sidebar to assign a session to a window</li>
-          <li>Drag between windows to move sessions</li>
-          <li>Drag outside any window to unassign</li>
-        </ul>
-      </div>
-
-      <div className="help-card">
-        <h3>Panel Controls</h3>
+        <h3>Click vs Drag</h3>
         <div className="help-control-list">
           <div className="help-control-item">
-            <span className="help-control-icon">&#x276E;</span>
+            <span className="help-control-icon">&#x1F441;</span>
             <div>
-              <strong>Collapse/Expand</strong>
-              <p>Toggle the sidebar to maximize terminal space.</p>
+              <strong>Click = Peek</strong>
+              <p>Opens a modal with read-only preview. Quick look without binding.</p>
             </div>
           </div>
           <div className="help-control-item">
-            <span className="help-control-icon">&#x21BB;</span>
+            <span className="help-control-icon">&#x2725;</span>
             <div>
-              <strong>Auto-Refresh</strong>
-              <p>Sessions automatically refresh. Adjust the interval in Settings.</p>
+              <strong>Drag = Bind</strong>
+              <p>Drag onto a pane to bind the session there. It stays until you remove it.</p>
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="help-card">
+        <h3>Session Groups</h3>
+        <p>Sessions auto-organize by naming convention:</p>
+        <div className="help-shortcuts-table">
+          <div className="help-shortcut-row">
+            <div className="help-shortcut-keys">
+              <code>hq-*</code>
+            </div>
+            <span>HQ group (top priority)</span>
+          </div>
+          <div className="help-shortcut-row">
+            <div className="help-shortcut-keys">
+              <code>main</code> / <code>shell</code>
+            </div>
+            <span>Main group</span>
+          </div>
+          <div className="help-shortcut-row">
+            <div className="help-shortcut-keys">
+              <code>gt-*</code>
+            </div>
+            <span>Gastown workers</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="help-card">
+        <h3>Search & Filter</h3>
+        <p>
+          Press <kbd>/</kbd> to focus the search box. Type to filter sessions by name.
+          Clear the search to see all sessions again.
+        </p>
+      </div>
+
+      <div className="help-card">
+        <h3>Context Menu</h3>
+        <p>Right-click a session for options:</p>
+        <ul className="help-list">
+          <li><strong>Rename</strong> - Change the session name</li>
+          <li><strong>Kill</strong> - Terminate the session</li>
+        </ul>
       </div>
     </div>
   )
@@ -251,7 +294,28 @@ function FilesSection() {
   return (
     <div className="help-section-content">
       <h2>File Browser</h2>
-      <p className="help-intro">Browse and manage files on the server through an integrated file manager.</p>
+      <p className="help-intro">Browse files on the server. Read-only for /vault.</p>
+
+      <div className="help-card">
+        <h3>Available Paths</h3>
+        <div className="help-shortcuts-table">
+          <div className="help-shortcut-row">
+            <div className="help-shortcut-keys">
+              <code>/code</code>
+            </div>
+            <span>Project files (read/write)</span>
+          </div>
+          <div className="help-shortcut-row">
+            <div className="help-shortcut-keys">
+              <code>/vault</code>
+            </div>
+            <span>Reference files (read-only)</span>
+          </div>
+        </div>
+        <p style={{ marginTop: '1rem', opacity: 0.8 }}>
+          All other paths are restricted for security.
+        </p>
+      </div>
 
       <div className="help-card">
         <h3>Features</h3>
@@ -259,56 +323,44 @@ function FilesSection() {
           <div className="help-control-item">
             <span className="help-control-icon">&#x1F4C1;</span>
             <div>
-              <strong>Browse Files</strong>
-              <p>Navigate through directories with a familiar file explorer interface.</p>
+              <strong>Navigate</strong>
+              <p>Click folders to enter, breadcrumbs to go back.</p>
             </div>
           </div>
           <div className="help-control-item">
-            <span className="help-control-icon">&#x2191;</span>
+            <span className="help-control-icon">&#x1F4C4;</span>
             <div>
-              <strong>Upload</strong>
-              <p>Drag and drop files to upload them to the server.</p>
+              <strong>View</strong>
+              <p>Click files to preview with syntax highlighting.</p>
             </div>
           </div>
           <div className="help-control-item">
             <span className="help-control-icon">&#x2193;</span>
             <div>
               <strong>Download</strong>
-              <p>Download files directly to your local machine.</p>
-            </div>
-          </div>
-          <div className="help-control-item">
-            <span className="help-control-icon">&#x270E;</span>
-            <div>
-              <strong>Edit</strong>
-              <p>Open and edit text files with syntax highlighting.</p>
+              <p>Download files to your local machine.</p>
             </div>
           </div>
         </div>
-      </div>
-
-      <div className="help-card help-card-accent">
-        <h3>Workspace Path</h3>
-        <p>The file browser is rooted at the configured workspace directory. All agent operations happen within this sandboxed environment.</p>
       </div>
     </div>
   )
 }
 
-function ShortcutsSection() {
+function TmuxSection() {
   return (
     <div className="help-section-content">
-      <h2>tmux Commands</h2>
-      <p className="help-intro">Useful tmux commands for working with terminal sessions. The prefix key is <kbd>Ctrl</kbd> + <kbd>B</kbd>.</p>
+      <h2>tmux Reference</h2>
+      <p className="help-intro">Useful when you're in control mode. Prefix is <kbd>Ctrl</kbd> + <kbd>B</kbd>.</p>
 
       <div className="help-card">
-        <h3>Copy & Scroll Mode</h3>
+        <h3>Scrolling & Copy</h3>
         <div className="help-shortcuts-table">
           <div className="help-shortcut-row">
             <div className="help-shortcut-keys">
               <kbd>Prefix</kbd> <kbd>[</kbd>
             </div>
-            <span>Enter copy/scroll mode</span>
+            <span>Enter scroll/copy mode</span>
           </div>
           <div className="help-shortcut-row">
             <div className="help-shortcut-keys">
@@ -318,117 +370,51 @@ function ShortcutsSection() {
           </div>
           <div className="help-shortcut-row">
             <div className="help-shortcut-keys">
+              <kbd>g</kbd> / <kbd>G</kbd>
+            </div>
+            <span>Go to top / bottom</span>
+          </div>
+          <div className="help-shortcut-row">
+            <div className="help-shortcut-keys">
+              <kbd>/</kbd> / <kbd>?</kbd>
+            </div>
+            <span>Search forward / backward</span>
+          </div>
+          <div className="help-shortcut-row">
+            <div className="help-shortcut-keys">
               <kbd>Space</kbd>
             </div>
-            <span>Start selection (in copy mode)</span>
+            <span>Start selection</span>
           </div>
           <div className="help-shortcut-row">
             <div className="help-shortcut-keys">
               <kbd>Enter</kbd>
             </div>
-            <span>Copy selection (in copy mode)</span>
+            <span>Copy selection</span>
           </div>
           <div className="help-shortcut-row">
             <div className="help-shortcut-keys">
               <kbd>Prefix</kbd> <kbd>]</kbd>
             </div>
-            <span>Paste copied text</span>
-          </div>
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>g</kbd>
-            </div>
-            <span>Go to top (in copy mode)</span>
-          </div>
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>G</kbd>
-            </div>
-            <span>Go to bottom (in copy mode)</span>
-          </div>
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>/</kbd>
-            </div>
-            <span>Search forward (in copy mode)</span>
-          </div>
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>?</kbd>
-            </div>
-            <span>Search backward (in copy mode)</span>
-          </div>
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>n</kbd> / <kbd>N</kbd>
-            </div>
-            <span>Next / previous search result</span>
+            <span>Paste</span>
           </div>
         </div>
       </div>
 
       <div className="help-card">
-        <h3>Window Management</h3>
-        <div className="help-shortcuts-table">
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>Prefix</kbd> <kbd>c</kbd>
-            </div>
-            <span>Create new window</span>
-          </div>
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>Prefix</kbd> <kbd>n</kbd>
-            </div>
-            <span>Next window</span>
-          </div>
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>Prefix</kbd> <kbd>p</kbd>
-            </div>
-            <span>Previous window</span>
-          </div>
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>Prefix</kbd> <kbd>0-9</kbd>
-            </div>
-            <span>Switch to window by number</span>
-          </div>
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>Prefix</kbd> <kbd>w</kbd>
-            </div>
-            <span>List all windows</span>
-          </div>
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>Prefix</kbd> <kbd>&</kbd>
-            </div>
-            <span>Kill current window</span>
-          </div>
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>Prefix</kbd> <kbd>,</kbd>
-            </div>
-            <span>Rename current window</span>
-          </div>
-        </div>
-      </div>
-
-      <div className="help-card">
-        <h3>Pane Management</h3>
+        <h3>Panes (within tmux)</h3>
         <div className="help-shortcuts-table">
           <div className="help-shortcut-row">
             <div className="help-shortcut-keys">
               <kbd>Prefix</kbd> <kbd>%</kbd>
             </div>
-            <span>Split pane vertically</span>
+            <span>Split vertical</span>
           </div>
           <div className="help-shortcut-row">
             <div className="help-shortcut-keys">
               <kbd>Prefix</kbd> <kbd>"</kbd>
             </div>
-            <span>Split pane horizontally</span>
+            <span>Split horizontal</span>
           </div>
           <div className="help-shortcut-row">
             <div className="help-shortcut-keys">
@@ -440,145 +426,47 @@ function ShortcutsSection() {
             <div className="help-shortcut-keys">
               <kbd>Prefix</kbd> <kbd>z</kbd>
             </div>
-            <span>Toggle pane zoom (fullscreen)</span>
+            <span>Toggle pane zoom</span>
           </div>
           <div className="help-shortcut-row">
             <div className="help-shortcut-keys">
               <kbd>Prefix</kbd> <kbd>x</kbd>
             </div>
-            <span>Kill current pane</span>
-          </div>
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>Prefix</kbd> <kbd>o</kbd>
-            </div>
-            <span>Cycle through panes</span>
-          </div>
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>Prefix</kbd> <kbd>{'{'}</kbd> / <kbd>{'}'}</kbd>
-            </div>
-            <span>Swap pane left / right</span>
-          </div>
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>Prefix</kbd> <kbd>Ctrl+Arrow</kbd>
-            </div>
-            <span>Resize pane</span>
+            <span>Kill pane</span>
           </div>
         </div>
       </div>
 
       <div className="help-card">
-        <h3>Session Commands</h3>
+        <h3>Sessions</h3>
         <div className="help-shortcuts-table">
           <div className="help-shortcut-row">
             <div className="help-shortcut-keys">
               <kbd>Prefix</kbd> <kbd>d</kbd>
             </div>
-            <span>Detach from session</span>
+            <span>Detach</span>
           </div>
           <div className="help-shortcut-row">
             <div className="help-shortcut-keys">
               <kbd>Prefix</kbd> <kbd>s</kbd>
             </div>
-            <span>List all sessions</span>
+            <span>List sessions</span>
           </div>
           <div className="help-shortcut-row">
             <div className="help-shortcut-keys">
               <kbd>Prefix</kbd> <kbd>$</kbd>
             </div>
-            <span>Rename current session</span>
+            <span>Rename session</span>
           </div>
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>Prefix</kbd> <kbd>(</kbd> / <kbd>)</kbd>
-            </div>
-            <span>Previous / next session</span>
-          </div>
-        </div>
-      </div>
-
-      <div className="help-card">
-        <h3>Miscellaneous</h3>
-        <div className="help-shortcuts-table">
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>Prefix</kbd> <kbd>:</kbd>
-            </div>
-            <span>Enter command mode</span>
-          </div>
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>Prefix</kbd> <kbd>?</kbd>
-            </div>
-            <span>List all key bindings</span>
-          </div>
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>Prefix</kbd> <kbd>t</kbd>
-            </div>
-            <span>Show clock</span>
-          </div>
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>Prefix</kbd> <kbd>~</kbd>
-            </div>
-            <span>Show tmux messages</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function TipsSection() {
-  return (
-    <div className="help-section-content">
-      <h2>Tips & Tricks</h2>
-      <p className="help-intro">Get the most out of Chrote with these pro tips.</p>
-
-      <div className="help-tips-grid">
-        <div className="help-tip-card">
-          <div className="help-tip-number">01</div>
-          <h3>Scroll History</h3>
-          <p>Use <kbd>Ctrl+B</kbd> then <kbd>[</kbd> to enter copy mode and scroll through terminal history with arrow keys or Page Up/Down.</p>
-        </div>
-
-        <div className="help-tip-card">
-          <div className="help-tip-number">02</div>
-          <h3>Quick Copy Text</h3>
-          <p>Hold <kbd>Shift</kbd> while selecting text with your mouse to bypass tmux and perform a native selection. Then use <kbd>Ctrl+C</kbd> to copy.</p>
-        </div>
-
-        <div className="help-tip-card">
-          <div className="help-tip-number">03</div>
-          <h3>Search in Terminal</h3>
-          <p>In copy mode, press <kbd>/</kbd> to search forward or <kbd>?</kbd> to search backward through the terminal output.</p>
-        </div>
-
-        <div className="help-tip-card">
-          <div className="help-tip-number">04</div>
-          <h3>Theme Matching</h3>
-          <p>Match your tmux theme with the dashboard theme in Settings for a cohesive experience.</p>
-        </div>
-
-        <div className="help-tip-card">
-          <div className="help-tip-number">05</div>
-          <h3>Collapse for Space</h3>
-          <p>Collapse the session panel when you need maximum terminal real estate.</p>
-        </div>
-
-        <div className="help-tip-card">
-          <div className="help-tip-number">06</div>
-          <h3>CLI Commands</h3>
-          <p>Use <code>gt peek</code> and <code>gt status</code> in any terminal for Gastown monitoring.</p>
         </div>
       </div>
 
       <div className="help-card help-card-accent">
-        <h3>Need More Help?</h3>
-        <p>Check the <strong>Status</strong> tab to verify system health, or visit the <strong>Settings</strong> tab to customize your experience.</p>
+        <h3>Pro Tip</h3>
+        <p>
+          Hold <kbd>Shift</kbd> while selecting text with your mouse to bypass tmux
+          and use native browser copy. Works in watch mode too.
+        </p>
       </div>
     </div>
   )

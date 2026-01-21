@@ -17,6 +17,7 @@ export interface Conversation {
   online: boolean
   unreadCount: number
   lastMessage?: ChatMessage
+  workspace?: string // Gastown workspace for this agent
 }
 
 export interface SendResponse {
@@ -25,4 +26,9 @@ export interface SendResponse {
   mailSent: boolean
   nudged: boolean
   error?: string
+}
+
+export interface GastownWorkspace {
+  name: string
+  path: string
 }

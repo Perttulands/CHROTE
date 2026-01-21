@@ -1,6 +1,7 @@
+import { useState, useRef, useEffect } from 'react'
 import MusicPlayer from './MusicPlayer'
 
-export type Tab = 'terminal1' | 'terminal2' | 'files' | 'beads' | 'mail' | 'chat' | 'settings' | 'help'
+export type Tab = 'terminal1' | 'terminal2' | 'files' | 'beads' | 'chat' | 'manual' | 'settings' | 'help'
 
 interface InternalTab {
   id: Tab
@@ -25,15 +26,29 @@ interface TabBarProps {
 }
 
 function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarProps) {
+  const [helpMenuOpen, setHelpMenuOpen] = useState(false)
+  const helpMenuRef = useRef<HTMLDivElement>(null)
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (helpMenuRef.current && !helpMenuRef.current.contains(e.target as Node)) {
+        setHelpMenuOpen(false)
+      }
+    }
+    if (helpMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [helpMenuOpen])
+
   const tabs: TabConfig[] = [
+    { id: 'chat', label: '✉ Chat' },
     { id: 'terminal1', label: 'Terminal' },
     { id: 'terminal2', label: 'Terminal 2' },
     { id: 'files', label: 'Files' },
     { id: 'beads', label: 'Beads' },
-    { id: 'mail', label: 'Mail' },
-    { id: 'chat', label: 'Chat' },
     { id: 'settings', label: 'Settings' },
-    { id: 'help', label: 'Help' },
   ]
 
   const handleClick = (tab: TabConfig) => {
@@ -61,22 +76,55 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
       <div className="tab-bar-actions">
         {onShowPresets && (
           <button
-            className="tab-bar-btn presets-btn"
+            className="tab"
             onClick={onShowPresets}
             title="Layout Presets"
           >
-            ⊞
+            ⊞ Layouts
           </button>
         )}
-        {onShowHelp && (
+        <div className="help-menu-container" ref={helpMenuRef}>
           <button
-            className="tab-bar-btn help-btn"
-            onClick={onShowHelp}
-            title="Keyboard Shortcuts (?)"
+            className={`tab ${helpMenuOpen ? 'active' : ''}`}
+            onClick={() => setHelpMenuOpen(!helpMenuOpen)}
+            title="Help & Documentation"
           >
             ?
           </button>
-        )}
+          {helpMenuOpen && (
+            <div className="help-dropdown">
+              {onShowHelp && (
+                <button
+                  className="help-dropdown-item"
+                  onClick={() => {
+                    onShowHelp()
+                    setHelpMenuOpen(false)
+                  }}
+                >
+                  Keyboard Shortcuts
+                </button>
+              )}
+              <button
+                className="help-dropdown-item"
+                onClick={() => {
+                  onTabChange('help')
+                  setHelpMenuOpen(false)
+                }}
+              >
+                Dashboard Help
+              </button>
+              <button
+                className="help-dropdown-item"
+                onClick={() => {
+                  onTabChange('manual')
+                  setHelpMenuOpen(false)
+                }}
+              >
+                Gastown Operators Manual
+              </button>
+            </div>
+          )}
+        </div>
         <MusicPlayer />
       </div>
     </div>
