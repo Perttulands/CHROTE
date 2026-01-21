@@ -532,6 +532,53 @@ func (h *ChatHandler) normalizeTarget(target string) string {
 	return strings.TrimSuffix(strings.TrimSpace(target), "/")
 }
 
+// findSessionForTarget finds the tmux session name that corresponds to a target
+// This handles cases where the target path (e.g., "Chrote/Ronja") might map to
+// different session patterns (e.g., "gt-Chrote-crew-Ronja" for crew workers)
+func (h *ChatHandler) findSessionForTarget(target string) string {
+	// Get all sessions
+	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
+	cmd.Env = core.GetTmuxEnv()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return ""
+	}
+
+	sessions := strings.Split(strings.TrimSpace(string(output)), "\n")
+
+	// For each session, check if it matches our target
+	for _, sessionName := range sessions {
+		if sessionName == "" {
+			continue
+		}
+
+		// Parse the session to get its target
+		sessionTarget, _, _ := h.parseSessionName(sessionName)
+		if sessionTarget == "" {
+			continue
+		}
+
+		// Check for exact match
+		if h.normalizeTarget(sessionTarget) == h.normalizeTarget(target) {
+			return sessionName
+		}
+
+		// Check for partial match (target might be shortened form)
+		// e.g., target "Chrote/Ronja" might match session with target "Chrote/crew/Ronja"
+		normalizedTarget := h.normalizeTarget(target)
+		normalizedSessionTarget := h.normalizeTarget(sessionTarget)
+
+		// If session target contains the target as a suffix (handles crew workers)
+		// "Chrote/crew/Ronja" ends with "/Ronja" and starts with "Chrote/"
+		if strings.HasSuffix(normalizedSessionTarget, "/"+filepath.Base(normalizedTarget)) &&
+			strings.HasPrefix(normalizedSessionTarget, strings.Split(normalizedTarget, "/")[0]+"/") {
+			return sessionName
+		}
+	}
+
+	return ""
+}
+
 // SendMessage handles POST /api/chat/send
 func (h *ChatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	var req SendChatRequest
@@ -597,8 +644,19 @@ func (h *ChatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	time.Sleep(100 * time.Millisecond)
 
 	// 2. Nudge (Real-time attention)
+	// Find the actual session name for this target (handles crew workers, etc.)
+	nudgeTarget := req.Target
+	if sessionName := h.findSessionForTarget(req.Target); sessionName != "" {
+		// Parse session to get proper target format for nudge
+		properTarget, _, _ := h.parseSessionName(sessionName)
+		if properTarget != "" {
+			nudgeTarget = properTarget
+			fmt.Printf("Resolved nudge target: %s -> %s (session: %s)\n", req.Target, nudgeTarget, sessionName)
+		}
+	}
+
 	nudgeCommand := fmt.Sprintf("cd '%s' && gt nudge '%s' 'New chat message'",
-		req.Workspace, req.Target)
+		req.Workspace, nudgeTarget)
 	fmt.Printf("\nNudge command: %s\n", nudgeCommand)
 
 	nudged := h.sendToSession(nudgeCommand)
@@ -679,8 +737,19 @@ func (h *ChatHandler) NudgeOnly(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("  Target: %s\n", req.Target)
 	fmt.Printf("  Message: %s\n", nudgeMsg)
 
+	// Find the actual session name for this target (handles crew workers, etc.)
+	nudgeTarget := req.Target
+	if sessionName := h.findSessionForTarget(req.Target); sessionName != "" {
+		// Parse session to get proper target format for nudge
+		properTarget, _, _ := h.parseSessionName(sessionName)
+		if properTarget != "" {
+			nudgeTarget = properTarget
+			fmt.Printf("Resolved nudge target: %s -> %s (session: %s)\n", req.Target, nudgeTarget, sessionName)
+		}
+	}
+
 	nudgeCommand := fmt.Sprintf("cd '%s' && gt nudge '%s' '%s'",
-		req.Workspace, req.Target, nudgeMsg)
+		req.Workspace, nudgeTarget, nudgeMsg)
 	fmt.Printf("Nudge command: %s\n", nudgeCommand)
 
 	nudged := h.sendToSession(nudgeCommand)
