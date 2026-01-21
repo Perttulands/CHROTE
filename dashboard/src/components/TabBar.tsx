@@ -1,6 +1,6 @@
 import MusicPlayer from './MusicPlayer'
 
-export type Tab = 'terminal1' | 'terminal2' | 'files' | 'beads' | 'mail' | 'settings' | 'help'
+export type Tab = 'terminal1' | 'terminal2' | 'files' | 'beads' | 'mail' | 'settings' | 'help' | 'mobile'
 
 interface InternalTab {
   id: Tab
@@ -45,6 +45,16 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
 
   return (
     <div className="tab-bar">
+      <button
+        className={`tab-bar-mobile-btn ${activeTab === 'mobile' ? 'active' : ''}`}
+        onClick={() => onTabChange('mobile')}
+        title="Mobile Chat"
+      >
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+          <path d="M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z"/>
+        </svg>
+        Mobile
+      </button>
       <div className="tab-bar-tabs">
         {tabs.map((tab) => (
           <button

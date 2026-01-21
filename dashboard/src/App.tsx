@@ -10,6 +10,7 @@ import FloatingModal from './components/FloatingModal'
 import HelpView from './components/HelpView'
 import BeadsView from './components/BeadsView'
 import MailView from './components/MailView'
+import MobileView from './components/MobileView'
 import ErrorBoundary from './components/ErrorBoundary'
 import { ToastContainer } from './components/ToastNotification'
 import KeyboardShortcutsOverlay from './components/KeyboardShortcutsOverlay'
@@ -136,6 +137,7 @@ function DashboardContent() {
           )}
           {activeTab === 'settings' && <SettingsView />}
           {activeTab === 'help' && <HelpView />}
+          {activeTab === 'mobile' && <MobileView />}
         </div>
 
         <FloatingModal />
