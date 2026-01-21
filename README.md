@@ -18,7 +18,7 @@
 
 CHROTE is **your own personal tmux cloud** - a web dashboard that lets you run AI coding agent swarms from anywhere, on any device.
 
-**The pitch:** You're out jogging, dictating code changes through voice. You squint at your phone browser, scrolling is pain, the text is tiny, it makes you weep... but you can still yell at the mayor, and that covers 95% of the mobile experience you'd want anyway. 
+**The pitch:** You're out jogging, dictating code changes through voice. You squint at your phone browser, scrolling is pain, the text is tiny, it makes you weep... but you can still yell at the mayor (or well you actually cant right now but you can peek into some sessions - its something, right?), and that covers 95% of the mobile experience you'd want anyway. 
 
 You close your laptop lid and the agents keep working. You open a different machine and pick up exactly where you left off. Your tmux sessions live in the cloud (your cloud, on your hardware), accessible via Tailscale from anywhere in the world.
 
@@ -225,6 +225,8 @@ wsl -d Ubuntu-24.04 -u root -e bash -c "tr -d '\r' < /mnt/c/path/to/CHROTE/wsl/s
 > **Path flexibility:** The setup script automatically detects where CHROTE is located. Clone it anywhere you want - `C:\Users\you\CHROTE`, `D:\Projects\CHROTE`, wherever. Just run `.\Chrote-Toggle.ps1 -Setup` from that directory.
 
 ### What Gets Installed
+
+**Note:** Current gastown is a unstable and you will have to struggle with it to get it working. You can also use other setups or look for a stable fork. I might add one later as well. There is built in support for a vendored version in Chrote install. 
 
 The setup script (`wsl/setup-wsl.sh`) handles everything:
 
