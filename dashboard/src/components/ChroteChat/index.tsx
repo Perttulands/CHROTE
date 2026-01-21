@@ -33,8 +33,51 @@ export default function ChroteChat() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const chatContainerRef = useRef<HTMLDivElement>(null)
   const shouldAutoScroll = useRef(true)
   const prevMessageCount = useRef(0)
+
+  // Handle mobile keyboard - adjust height when virtual keyboard appears
+  // Only applies on mobile devices (touch-enabled with narrow viewport)
+  useEffect(() => {
+    const isMobile = () => window.innerWidth <= 768 && 'ontouchstart' in window
+
+    const handleResize = () => {
+      if (!chatContainerRef.current || !isMobile()) return
+      // Use visualViewport if available (handles keyboard properly)
+      if (window.visualViewport) {
+        const vh = window.visualViewport.height
+        chatContainerRef.current.style.height = `${vh}px`
+        // Scroll messages to bottom when keyboard opens
+        setTimeout(() => {
+          messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+        }, 100)
+      }
+    }
+
+    // Reset height when switching to desktop
+    const handleWindowResize = () => {
+      if (!chatContainerRef.current) return
+      if (!isMobile()) {
+        chatContainerRef.current.style.height = ''
+      }
+    }
+
+    // Listen to visualViewport resize (fires when keyboard shows/hides)
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', handleResize)
+      window.visualViewport.addEventListener('scroll', handleResize)
+    }
+    window.addEventListener('resize', handleWindowResize)
+
+    return () => {
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', handleResize)
+        window.visualViewport.removeEventListener('scroll', handleResize)
+      }
+      window.removeEventListener('resize', handleWindowResize)
+    }
+  }, [])
 
   // Track if user is near bottom of chat
   const handleScroll = () => {
@@ -217,7 +260,7 @@ export default function ChroteChat() {
   const allMessages = messages
 
   return (
-    <div className={`chrote-chat mobile-view-${mobileView}`}>
+    <div ref={chatContainerRef} className={`chrote-chat mobile-view-${mobileView}`}>
       {/* Conversation List */}
       <div className={`chat-sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <div className="chat-sidebar-header">
@@ -280,6 +323,37 @@ export default function ChroteChat() {
 
       {/* Chat Area */}
       <div className="chat-main">
+        {/* Header - always visible on mobile for navigation */}
+        <div className="chat-header">
+          <button
+            className="chat-back-btn mobile-only"
+            onClick={handleBackToList}
+            title="Back to agents"
+          >
+            ←
+          </button>
+          <div className="chat-header-info">
+            <span className="chat-header-name">
+              {selectedConvo?.displayName || selectedTarget || 'Chat'}
+            </span>
+            {selectedTarget && (
+              <span className={`chat-header-status ${selectedConvo?.online ? 'online' : 'offline'}`}>
+                {selectedConvo?.online ? 'Online' : 'Offline'}
+              </span>
+            )}
+          </div>
+          {selectedTarget && (
+            <button
+              className="refresh-btn"
+              onClick={() => refreshHistory()}
+              disabled={historyLoading}
+              title="Refresh history"
+            >
+              ↻
+            </button>
+          )}
+        </div>
+
         {!selectedTarget ? (
           <div className="chat-placeholder">
             <div className="chat-placeholder-icon">💬</div>
@@ -292,32 +366,6 @@ export default function ChroteChat() {
           </div>
         ) : (
           <>
-            {/* Chat Header */}
-            <div className="chat-header">
-              <button 
-                className="chat-back-btn mobile-only" 
-                onClick={handleBackToList}
-              >
-                ←
-              </button>
-              <div className="chat-header-info">
-                <span className="chat-header-name">
-                  {selectedConvo?.displayName || selectedTarget}
-                </span>
-                <span className={`chat-header-status ${selectedConvo?.online ? 'online' : 'offline'}`}>
-                  {selectedConvo?.online ? 'Online' : 'Offline'}
-                </span>
-              </div>
-              <button
-                className="refresh-btn"
-                onClick={() => refreshHistory()}
-                disabled={historyLoading}
-                title="Refresh history"
-              >
-                ↻
-              </button>
-            </div>
-
             {/* Messages */}
             <div className="chat-messages" ref={messagesContainerRef} onScroll={handleScroll}>
               {historyLoading && allMessages.length === 0 ? (
