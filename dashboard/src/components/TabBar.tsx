@@ -1,6 +1,6 @@
 import MusicPlayer from './MusicPlayer'
 
-export type Tab = 'terminal1' | 'terminal2' | 'files' | 'beads' | 'mail' | 'settings' | 'help'
+export type Tab = 'terminal1' | 'terminal2' | 'files' | 'beads' | 'mail' | 'manual' | 'settings' | 'help'
 
 interface InternalTab {
   id: Tab
@@ -31,6 +31,7 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
     { id: 'files', label: 'Files' },
     { id: 'beads', label: 'Beads' },
     { id: 'mail', label: 'Mail' },
+    { id: 'manual', label: 'Manual' },
     { id: 'settings', label: 'Settings' },
     { id: 'help', label: 'Help' },
   ]

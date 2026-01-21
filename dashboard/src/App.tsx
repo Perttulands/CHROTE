@@ -8,6 +8,7 @@ import FilesView from './components/FilesView'
 import SettingsView from './components/SettingsView'
 import FloatingModal from './components/FloatingModal'
 import HelpView from './components/HelpView'
+import ManualView from './components/ManualView'
 import BeadsView from './components/BeadsView'
 import MailView from './components/MailView'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -134,6 +135,7 @@ function DashboardContent() {
               <MailView />
             </ErrorBoundary>
           )}
+          {activeTab === 'manual' && <ManualView />}
           {activeTab === 'settings' && <SettingsView />}
           {activeTab === 'help' && <HelpView />}
         </div>
