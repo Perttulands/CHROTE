@@ -9,7 +9,7 @@ import SettingsView from './components/SettingsView'
 import FloatingModal from './components/FloatingModal'
 import HelpView from './components/HelpView'
 import BeadsView from './components/BeadsView'
-import MailView from './components/MailView'
+import ManualView from './components/ManualView'
 import ChroteChat from './components/ChroteChat'
 import ErrorBoundary from './components/ErrorBoundary'
 import { ToastContainer } from './components/ToastNotification'
@@ -130,16 +130,12 @@ function DashboardContent() {
               <BeadsView />
             </ErrorBoundary>
           )}
-          {activeTab === 'mail' && (
-            <ErrorBoundary>
-              <MailView />
-            </ErrorBoundary>
-          )}
           {activeTab === 'chat' && (
             <ErrorBoundary>
               <ChroteChat />
             </ErrorBoundary>
           )}
+          {activeTab === 'manual' && <ManualView />}
           {activeTab === 'settings' && <SettingsView />}
           {activeTab === 'help' && <HelpView />}
         </div>

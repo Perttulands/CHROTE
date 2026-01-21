@@ -18,6 +18,7 @@ const STATUS_COLORS: Record<IssueStatus, string> = {
   wont_fix: 'var(--beads-status-closed)',
   duplicate: 'var(--beads-status-closed)',
   deferred: 'var(--beads-status-deferred)',
+  hooked: 'var(--beads-status-hooked, var(--beads-status-progress))',
 }
 
 const TYPE_ICONS: Record<IssueType, string> = {

@@ -69,9 +69,6 @@ func main() {
 	healthHandler := api.NewHealthHandler()
 	healthHandler.RegisterRoutes(mux)
 
-	mailHandler := api.NewMailHandler()
-	mailHandler.RegisterRoutes(mux)
-
 	chatHandler := api.NewChatHandler()
 	chatHandler.RegisterRoutes(mux)
 

@@ -28,8 +28,6 @@ We don't do that here.
 
 Here, we spin up 10, 20, 30 agents. We point them at problems. We watch the chaos unfold through terminal windows. Sometimes they solve the problem. Sometimes they fight each other. Sometimes they all independently decide to refactor the same file and create merge conflicts that would make God weep.
 
-**It's beautiful.**
-
 ![Dashboard Screenshot](screenshot%201.png)
 
 ---
@@ -53,6 +51,31 @@ Here, we spin up 10, 20, 30 agents. We point them at problems. We watch the chao
 ---
 
 ## Dashboard Features
+
+### ChroteChat - Talk to Your Agents
+
+![ChroteChat](Chat_UI.png)
+
+You know what's harder than herding cats? Herding AI agents. They're off doing their thing, buried in tmux sessions, and you need to tell them something. Or ask them something. Or just poke them to make sure they're still alive.
+
+**ChroteChat** is the answer. A built-in messaging system that lets you talk to any agent in your swarm:
+
+- **Dual-channel delivery** - Messages go via Mail (persistent, stored in beads) AND Nudge (pokes the agent's Claude Code session directly)
+- **Real-time chat UI** - Pick an agent from the sidebar, type your message, hit send. Like texting, but your recipient is an AI that might be in the middle of refactoring your entire codebase
+- **Quick Nudge button** - Sometimes you don't need to say anything, you just need to poke them. "Hey. You alive? Check your mail." You'll be smashing that button.
+
+It took blood, sweat, and several 3am debugging sessions to get this working. I even had to look at the code my self. This thing is layers of duct tape and determination. But it works. You can talk to your robot army.
+
+### Tab Bar
+
+| Tab | What It Does |
+|-----|--------------|
+| **Chat** | Message your agents directly (mail + nudge) |
+| **Terminal 1 & 2** | Dual terminal workspaces, 4 panes each |
+| **Files** | Native file browser for /code and /vault |
+| **Beads** | Issue tracking with Kanban/Triage/Insights views |
+| **Settings** | Theme, font size, tmux appearance |
+| **Help** | Keyboard shortcuts and documentation |
 
 ### Terminal View
 - 1-4 terminal panes per tab (two tabs = 8 total windows)

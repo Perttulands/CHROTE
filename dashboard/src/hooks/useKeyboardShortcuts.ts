@@ -3,8 +3,8 @@ import { useSession } from '../context/SessionContext'
 import type { WorkspaceId } from '../types'
 
 interface KeyboardShortcutsConfig {
-  activeTab: 'terminal1' | 'terminal2' | 'files' | 'beads' | 'mail' | 'chat' | 'settings' | 'help'
-  onTabChange: (tab: 'terminal1' | 'terminal2' | 'files' | 'beads' | 'mail' | 'chat' | 'settings' | 'help') => void
+  activeTab: 'terminal1' | 'terminal2' | 'files' | 'beads' | 'chat' | 'manual' | 'settings' | 'help'
+  onTabChange: (tab: 'terminal1' | 'terminal2' | 'files' | 'beads' | 'chat' | 'manual' | 'settings' | 'help') => void
   onShowHelp: () => void
   isHelpOpen: boolean
 }

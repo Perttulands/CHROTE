@@ -114,12 +114,22 @@ All operations run as **`chrote` user** (non-root, no sudo):
 - User permissions provide isolation (not container boundary)
 - Agents cannot escalate privileges
 
+## Theming
+
+The dashboard supports multiple themes (Matrix, Dark, Gastown) via CSS variables in `dashboard/src/styles/theme-colors.css`. When adding new UI elements, reuse existing component classes (like `.tab`) rather than creating custom styles - this ensures automatic theme support.
+
+## Gastown Integration Constraints
+
+Gastown sessions run Claude Code instances. You cannot inject commands via `tmux send-keys` into Gastown sessions (they're running Claude, not a shell).
+
 ## Anti-Patterns
 
 1. **No silent fallbacks** - Never `2>/dev/null` on tmux commands
 2. **No auto-creating sessions** - Windows start empty; users drag sessions
 3. **Click = peek (modal), Drag = bind** - Distinct behaviors
 4. **No nginx** - Go server handles all routing (single binary)
+5. **Reuse existing styles** - Use existing component classes for theme consistency
+6. **No injecting into Gastown sessions** - They run Claude Code, not interactive shells
 
 ## Filesystem
 

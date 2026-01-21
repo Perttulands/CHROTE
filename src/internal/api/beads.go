@@ -134,6 +134,48 @@ func (h *BeadsHandler) parseJsonlFile(filePath string) ([]map[string]interface{}
 	return items, nil
 }
 
+// transformIssue converts raw JSONL issue to frontend-expected format
+func transformIssue(raw map[string]interface{}) map[string]interface{} {
+	issue := make(map[string]interface{})
+
+	// Copy direct fields
+	for _, key := range []string{"id", "title", "status", "priority", "assignee", "labels", "description"} {
+		if v, ok := raw[key]; ok {
+			issue[key] = v
+		}
+	}
+
+	// Map issue_type -> type
+	if v, ok := raw["issue_type"]; ok {
+		issue["type"] = v
+	}
+
+	// Map created_at -> created, updated_at -> updated
+	if v, ok := raw["created_at"]; ok {
+		issue["created"] = v
+	}
+	if v, ok := raw["updated_at"]; ok {
+		issue["updated"] = v
+	}
+
+	// Transform dependencies: extract depends_on_id from each object
+	if deps, ok := raw["dependencies"].([]interface{}); ok && len(deps) > 0 {
+		depIds := make([]string, 0, len(deps))
+		for _, d := range deps {
+			if depObj, ok := d.(map[string]interface{}); ok {
+				if depId, ok := depObj["depends_on_id"].(string); ok {
+					depIds = append(depIds, depId)
+				}
+			}
+		}
+		if len(depIds) > 0 {
+			issue["dependencies"] = depIds
+		}
+	}
+
+	return issue
+}
+
 // Health handles GET /api/beads/health
 func (h *BeadsHandler) Health(w http.ResponseWriter, r *http.Request) {
 	version, err := h.getBvVersion()
@@ -232,9 +274,15 @@ func (h *BeadsHandler) Issues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Transform issues to match frontend interface
+	transformed := make([]map[string]interface{}, len(issues))
+	for i, issue := range issues {
+		transformed[i] = transformIssue(issue)
+	}
+
 	core.WriteSuccess(w, map[string]interface{}{
-		"issues":      issues,
-		"totalCount":  len(issues),
+		"issues":      transformed,
+		"totalCount":  len(transformed),
 		"projectPath": projectPath,
 	})
 }

@@ -13,6 +13,7 @@ WorkingDirectory=/home/chrote/chrote
 Environment=TMUX_TMPDIR=/run/tmux/chrote
 Environment=PORT=8080
 Environment=TTYD_PORT=7681
+Environment=PATH=/home/chrote/chrote/vendor/gastown:/usr/local/bin:/usr/bin:/bin
 
 # The Go server embeds the dashboard and proxies ttyd
 # No nginx needed - single binary serves everything
