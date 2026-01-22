@@ -15,15 +15,25 @@ import (
 	"time"
 
 	"github.com/chrote/server/internal/core"
+	"github.com/gorilla/websocket"
 )
+
+// WebSocket upgrader for incoming connections
+var wsUpgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool {
+		return true // Allow all origins (CORS is handled by middleware)
+	},
+	ReadBufferSize:  4096,
+	WriteBufferSize: 4096,
+}
 
 // TerminalProxy manages ttyd process and proxies requests
 type TerminalProxy struct {
-	ttydPort    int
-	ttydCmd     *exec.Cmd
-	proxy       *httputil.ReverseProxy
-	mu          sync.Mutex
-	running     bool
+	ttydPort     int
+	ttydCmd      *exec.Cmd
+	proxy        *httputil.ReverseProxy
+	mu           sync.Mutex
+	running      bool
 	launchScript string
 }
 
@@ -164,8 +174,85 @@ func (tp *TerminalProxy) Handler() http.Handler {
 			r.URL.Path = "/"
 		}
 
+		// Check if this is a WebSocket upgrade request
+		if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+			tp.proxyWebSocket(w, r)
+			return
+		}
+
 		tp.proxy.ServeHTTP(w, r)
 	})
+}
+
+// proxyWebSocket handles WebSocket connections by proxying to ttyd
+func (tp *TerminalProxy) proxyWebSocket(w http.ResponseWriter, r *http.Request) {
+	// Connect to ttyd WebSocket - use 127.0.0.1 explicitly to avoid IPv6 issues
+	ttydURL := fmt.Sprintf("ws://127.0.0.1:%d%s", tp.ttydPort, r.URL.RequestURI())
+
+	dialer := websocket.Dialer{
+		HandshakeTimeout: 10 * time.Second,
+	}
+
+	// Forward relevant headers to ttyd
+	requestHeader := http.Header{}
+	if origin := r.Header.Get("Origin"); origin != "" {
+		requestHeader.Set("Origin", origin)
+	}
+
+	backendConn, resp, err := dialer.Dial(ttydURL, requestHeader)
+	if err != nil {
+		log.Printf("Failed to connect to ttyd WebSocket: %v", err)
+		if resp != nil {
+			log.Printf("ttyd response status: %d", resp.StatusCode)
+		}
+		http.Error(w, "Terminal not available", http.StatusBadGateway)
+		return
+	}
+	defer backendConn.Close()
+
+	// Upgrade the client connection
+	clientConn, err := wsUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("Failed to upgrade client WebSocket: %v", err)
+		return
+	}
+	defer clientConn.Close()
+
+	// Bidirectional message forwarding
+	errChan := make(chan error, 2)
+
+	// Client -> Backend
+	go func() {
+		for {
+			messageType, message, err := clientConn.ReadMessage()
+			if err != nil {
+				errChan <- err
+				return
+			}
+			if err := backendConn.WriteMessage(messageType, message); err != nil {
+				errChan <- err
+				return
+			}
+		}
+	}()
+
+	// Backend -> Client
+	go func() {
+		for {
+			messageType, message, err := backendConn.ReadMessage()
+			if err != nil {
+				errChan <- err
+				return
+			}
+			if err := clientConn.WriteMessage(messageType, message); err != nil {
+				errChan <- err
+				return
+			}
+		}
+	}()
+
+	// Wait for either direction to close
+	<-errChan
 }
 
 // RegisterRoutes registers the terminal proxy route
