@@ -189,8 +189,12 @@ func (tp *TerminalProxy) proxyWebSocket(w http.ResponseWriter, r *http.Request) 
 	// Connect to ttyd WebSocket - use 127.0.0.1 explicitly to avoid IPv6 issues
 	ttydURL := fmt.Sprintf("ws://127.0.0.1:%d%s", tp.ttydPort, r.URL.RequestURI())
 
+	// Get requested subprotocols from client
+	clientSubprotocols := websocket.Subprotocols(r)
+
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 10 * time.Second,
+		Subprotocols:     clientSubprotocols,
 	}
 
 	// Forward relevant headers to ttyd
@@ -210,8 +214,16 @@ func (tp *TerminalProxy) proxyWebSocket(w http.ResponseWriter, r *http.Request) 
 	}
 	defer backendConn.Close()
 
+	// Create upgrader with the negotiated subprotocol from backend
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			return true
+		},
+		Subprotocols: []string{backendConn.Subprotocol()},
+	}
+
 	// Upgrade the client connection
-	clientConn, err := wsUpgrader.Upgrade(w, r, nil)
+	clientConn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("Failed to upgrade client WebSocket: %v", err)
 		return
