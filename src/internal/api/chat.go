@@ -2,6 +2,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -609,13 +610,6 @@ func (h *ChatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check that chrote-chat session exists
-	if !h.sessionExists() {
-		core.WriteError(w, http.StatusPreconditionFailed, "SESSION_NOT_FOUND",
-			"chrote-chat session not found. Please restart the chat session.")
-		return
-	}
-
 	msgID := fmt.Sprintf("msg-%d", time.Now().UnixNano())
 
 	fmt.Printf("\n=== ChroteChat SendMessage ===\n")
@@ -624,26 +618,29 @@ func (h *ChatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("  Target: %s\n", req.Target)
 	fmt.Printf("  Message: %s\n", req.Message)
 
-	// Escape message for shell - replace single quotes with '\''
-	escapedMessage := strings.ReplaceAll(req.Message, "'", "'\\''")
+	// Use direct command execution with timeout (not tmux send-keys)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	// 1. Send via Mail (Persistence)
-	// Build command: cd <workspace> && gt mail send <target> -s 'Chat Message' -m '<message>'
-	mailCommand := fmt.Sprintf("cd '%s' && gt mail send '%s' -s 'Chat Message' -m '%s'",
-		req.Workspace, req.Target, escapedMessage)
-	fmt.Printf("\nMail command: %s\n", mailCommand)
+	// 1. Send via Mail (Persistence) - direct execution
+	fmt.Printf("\nMail: gt mail send %s -s 'Chat Message' -m '...'\n", req.Target)
+	mailCmd := exec.CommandContext(ctx, "gt", "mail", "send", req.Target, "-s", "Chat Message", "-m", req.Message)
+	mailCmd.Dir = req.Workspace
+	mailCmd.Env = h.getGtEnv()
 
-	mailSent := h.sendToSession(mailCommand)
+	mailOutput, mailErr := mailCmd.CombinedOutput()
+	mailSent := mailErr == nil
 	if mailSent {
-		fmt.Printf("Mail command sent to chrote-chat session\n")
+		fmt.Printf("Mail sent successfully: %s\n", strings.TrimSpace(string(mailOutput)))
+		// Try to extract message ID from output
+		if id := h.messageIDPattern.FindString(string(mailOutput)); id != "" {
+			msgID = id
+		}
 	} else {
-		fmt.Printf("Mail FAILED to send to session\n")
+		fmt.Printf("Mail FAILED: %v\nOutput: %s\n", mailErr, string(mailOutput))
 	}
 
-	// Small delay between commands
-	time.Sleep(100 * time.Millisecond)
-
-	// 2. Nudge (Real-time attention)
+	// 2. Nudge (Real-time attention) - direct execution
 	// Find the actual session name for this target (handles crew workers, etc.)
 	nudgeTarget := req.Target
 	if sessionName := h.findSessionForTarget(req.Target); sessionName != "" {
@@ -655,15 +652,17 @@ func (h *ChatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	nudgeCommand := fmt.Sprintf("cd '%s' && gt nudge '%s' 'New chat message'",
-		req.Workspace, nudgeTarget)
-	fmt.Printf("\nNudge command: %s\n", nudgeCommand)
+	fmt.Printf("Nudge: gt nudge %s 'New chat message'\n", nudgeTarget)
+	nudgeCmd := exec.CommandContext(ctx, "gt", "nudge", nudgeTarget, "New chat message")
+	nudgeCmd.Dir = req.Workspace
+	nudgeCmd.Env = h.getGtEnv()
 
-	nudged := h.sendToSession(nudgeCommand)
+	nudgeOutput, nudgeErr := nudgeCmd.CombinedOutput()
+	nudged := nudgeErr == nil
 	if nudged {
-		fmt.Printf("Nudge command sent to chrote-chat session\n")
+		fmt.Printf("Nudge sent successfully: %s\n", strings.TrimSpace(string(nudgeOutput)))
 	} else {
-		fmt.Printf("Nudge FAILED to send to session\n")
+		fmt.Printf("Nudge FAILED: %v\nOutput: %s\n", nudgeErr, string(nudgeOutput))
 	}
 
 	fmt.Printf("\nResult: mailSent=%v, nudged=%v\n", mailSent, nudged)
@@ -719,17 +718,10 @@ func (h *ChatHandler) NudgeOnly(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check session exists
-	if !h.sessionExists() {
-		core.WriteError(w, http.StatusPreconditionFailed, "SESSION_NOT_FOUND",
-			"chrote-chat session not found. Please restart the chat session.")
-		return
-	}
-
 	// Default nudge message
 	nudgeMsg := "Check your mail"
 	if req.Message != "" {
-		nudgeMsg = strings.ReplaceAll(req.Message, "'", "'\\''")
+		nudgeMsg = req.Message
 	}
 
 	fmt.Printf("\n=== ChroteChat NudgeOnly ===\n")
@@ -748,16 +740,29 @@ func (h *ChatHandler) NudgeOnly(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	nudgeCommand := fmt.Sprintf("cd '%s' && gt nudge '%s' '%s'",
-		req.Workspace, nudgeTarget, nudgeMsg)
-	fmt.Printf("Nudge command: %s\n", nudgeCommand)
+	// Use direct command execution with timeout (not tmux send-keys)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	nudged := h.sendToSession(nudgeCommand)
+	fmt.Printf("Nudge: gt nudge %s '%s'\n", nudgeTarget, nudgeMsg)
+	nudgeCmd := exec.CommandContext(ctx, "gt", "nudge", nudgeTarget, nudgeMsg)
+	nudgeCmd.Dir = req.Workspace
+	nudgeCmd.Env = h.getGtEnv()
+
+	nudgeOutput, nudgeErr := nudgeCmd.CombinedOutput()
+	nudged := nudgeErr == nil
+	if nudged {
+		fmt.Printf("Nudge sent successfully: %s\n", strings.TrimSpace(string(nudgeOutput)))
+	} else {
+		fmt.Printf("Nudge FAILED: %v\nOutput: %s\n", nudgeErr, string(nudgeOutput))
+	}
+
 	fmt.Printf("Result: nudged=%v\n", nudged)
 	fmt.Printf("=== End NudgeOnly ===\n\n")
 
 	if !nudged {
-		core.WriteError(w, http.StatusInternalServerError, "NUDGE_FAILED", "Failed to nudge target")
+		core.WriteError(w, http.StatusInternalServerError, "NUDGE_FAILED",
+			fmt.Sprintf("Failed to nudge target: %s", strings.TrimSpace(string(nudgeOutput))))
 		return
 	}
 
@@ -767,7 +772,9 @@ func (h *ChatHandler) NudgeOnly(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// sendToSession sends a command to the chrote-chat tmux session via send-keys
+// sendToSession sends a command to the chrote-chat tmux session via send-keys.
+// NOTE: This is kept for debugging purposes only. Critical mail/nudge operations
+// now use direct exec.Command for proper error handling and environment control.
 func (h *ChatHandler) sendToSession(command string) bool {
 	fmt.Printf("ChroteChat: Sending to session '%s': %s\n", ChroteChatSession, command)
 
