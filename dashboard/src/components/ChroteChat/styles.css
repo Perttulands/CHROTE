@@ -272,6 +272,7 @@
   justify-content: center;
   gap: 16px;
   color: var(--text-dim);
+  position: relative;
 }
 
 .chat-placeholder-icon {
@@ -546,6 +547,13 @@
 
 .chat-sidebar-toggle:active {
   transform: scale(0.95);
+}
+
+/* Toggle button when shown in placeholder (no conversation selected) */
+.chat-sidebar-toggle.placeholder-toggle {
+  position: absolute;
+  top: 16px;
+  left: 16px;
 }
 
 .chat-input-warning {
