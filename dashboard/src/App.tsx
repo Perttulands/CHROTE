@@ -118,12 +118,15 @@ function DashboardContent() {
         />
 
         <div className="dashboard-content">
-          {(activeTab === 'terminal1' || activeTab === 'terminal2') && (
-            <>
-              <SessionPanel />
-              <TerminalArea workspaceId={activeTab} />
-            </>
-          )}
+          {/* Terminal areas are always rendered but hidden via CSS to preserve WebSocket connections */}
+          <div className={`terminal-tab-content ${activeTab === 'terminal1' ? 'active' : 'hidden'}`}>
+            <SessionPanel />
+            <TerminalArea workspaceId="terminal1" />
+          </div>
+          <div className={`terminal-tab-content ${activeTab === 'terminal2' ? 'active' : 'hidden'}`}>
+            <SessionPanel />
+            <TerminalArea workspaceId="terminal2" />
+          </div>
           {activeTab === 'files' && <FilesView />}
           {activeTab === 'beads' && (
             <ErrorBoundary>

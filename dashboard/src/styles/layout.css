@@ -14,6 +14,21 @@
   overflow: hidden;
 }
 
+/* Terminal tab content wrapper - always rendered, hidden via CSS to preserve connections */
+.terminal-tab-content {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.terminal-tab-content.hidden {
+  display: none;
+}
+
+.terminal-tab-content.active {
+  display: flex;
+}
+
 /* Tab bar styles */
 .tab-bar {
   display: flex;
