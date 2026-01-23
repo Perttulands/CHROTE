@@ -620,6 +620,15 @@ export default function ChroteChat() {
                 </div>
               )}
               <div className="chat-input-row">
+                {sidebarCollapsed && (
+                  <button
+                    className="chat-sidebar-toggle"
+                    onClick={() => setSidebarCollapsed(false)}
+                    title="Show conversation list"
+                  >
+                    ☰
+                  </button>
+                )}
                 <textarea
                   ref={inputRef}
                   className="chat-input"
