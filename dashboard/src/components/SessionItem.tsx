@@ -55,6 +55,37 @@ function SessionItem({ session }: SessionItemProps) {
       }
     : undefined
 
+  // Implement Long Press detection
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    e.persist(); // Persist the event to use its properties in the timer callback
+    longPressTimer.current = setTimeout(() => {
+      if (longPressTimer.current) {
+        // Create a synthetic MouseEvent based on the first touch point
+        const touch = e.touches[0];
+        setContextMenu({ show: true, x: touch.clientX, y: touch.clientY });
+        setShowAssignSubmenu(false);
+      }
+    }, 500); // 500ms long press threshold
+  }, []);
+
+  const handleTouchEnd = useCallback(() => {
+    // If released before 500ms, clear the timer
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  }, []);
+
+  const handleTouchMove = useCallback(() => {
+    // Similarly, if moving, probably dragging/scrolling, so cancel long press
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  }, []);
+
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
@@ -149,6 +180,9 @@ function SessionItem({ session }: SessionItemProps) {
         {...attributes}
         onClick={() => handleSessionClick(session.name)}
         onContextMenu={handleContextMenu}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+        onTouchMove={handleTouchMove}
       >
         {assignment && (
           <span className="window-badge" style={badgeStyle}>
