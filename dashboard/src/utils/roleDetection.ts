@@ -71,22 +71,26 @@ export function detectAgentRole(sessionName: string): AgentRole | null {
   }
 
   // Witness - observer role
-  if (name.includes('-witness') || name === 'witness' || name.startsWith('witness')) {
+  // Note: Chat targets use slashes (e.g., "rigname/witness"), sessions use dashes
+  if (name.includes('-witness') || name.includes('/witness') || name === 'witness' || name.startsWith('witness')) {
     return 'witness'
   }
 
   // Polecat - worker role (matches gt-*-pc-* pattern or polecat keyword)
-  if (name.includes('-polecat') || name === 'polecat' || /-pc-/.test(name) || name.endsWith('-pc')) {
+  // Note: Chat targets use slashes (e.g., "rigname/polecat"), sessions use dashes
+  if (name.includes('-polecat') || name.includes('/polecat') || name === 'polecat' || /-pc-/.test(name) || name.endsWith('-pc') || /\/pc\//.test(name) || name.endsWith('/pc')) {
     return 'polecat'
   }
 
   // Refinery - processing role
-  if (name.includes('-refinery') || name === 'refinery' || name.startsWith('refinery')) {
+  // Note: Chat targets use slashes (e.g., "rigname/refinery"), sessions use dashes
+  if (name.includes('-refinery') || name.includes('/refinery') || name === 'refinery' || name.startsWith('refinery')) {
     return 'refinery'
   }
 
   // Crew - general worker role
-  if (name.includes('-crew-') || name.includes('-crew') || name === 'crew' || name.startsWith('crew-')) {
+  // Note: Chat targets use slashes (e.g., "rigname/crew/name"), sessions use dashes
+  if (name.includes('-crew-') || name.includes('/crew/') || name.includes('-crew') || name.includes('/crew') || name === 'crew' || name.startsWith('crew-') || name.startsWith('crew/')) {
     return 'crew'
   }
 

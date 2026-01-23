@@ -1,12 +1,81 @@
 // ChroteChat - Dual-channel messaging (Mail + Nudge)
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import type { Conversation, ChatMessage } from './types'
-import { useConversations, useChatHistory, sendChatMessage, sendNudge, initSession, restartSession, getSessionStatus } from './hooks'
+import { useConversations, useChatHistory, useChannels, sendChatMessage, sendNudge, initSession, restartSession, getSessionStatus, createChannel, inviteToChannel, deleteChannel, getChannelSubscribers } from './hooks'
 import { useToast } from '../../context/ToastContext'
+import RoleBadge from '../RoleBadge'
 import './styles.css'
 
 const STORAGE_KEY = 'chrote-chat-selected'
+const COLLAPSED_GROUPS_KEY = 'chrote-chat-collapsed-groups'
+
+// Group priority - matches session.go logic + channels
+function getChatGroupPriority(group: string): number {
+  if (group === 'channels') return -1
+  if (group === 'hq') return 0
+  if (group === 'main') return 1
+  if (group.startsWith('gt-')) return 3
+  return 4 // other
+}
+
+// Get display name for a group - matches types.ts getGroupDisplayName
+function getChatGroupDisplayName(group: string): string {
+  if (group === 'channels') return 'Channels'
+  if (group === 'hq') return 'HQ'
+  if (group === 'main') return 'Main'
+  if (group === 'other') return 'Other'
+  if (group.startsWith('gt-')) {
+    // gt-gastown → Gastown
+    const rigName = group.slice(3)
+    return rigName.charAt(0).toUpperCase() + rigName.slice(1)
+  }
+  return group
+}
+
+// Categorize a conversation into a group based on displayName (session name)
+// This mirrors CategorizeSession from session.go
+function categorizeConversation(convo: Conversation): string {
+  if (convo.role === 'channel') return 'channels'
+  const name = convo.displayName.toLowerCase()
+
+  // HQ sessions: hq-mayor, hq-deacon, etc.
+  if (name.startsWith('hq-')) {
+    return 'hq'
+  }
+
+  // Main sessions
+  if (name === 'main' || name === 'shell') {
+    return 'main'
+  }
+
+  // Gastown rig sessions: gt-{rigname}-{role}-{name}
+  // e.g., gt-greenplace-crew-max → gt-greenplace
+  if (name.startsWith('gt-')) {
+    const parts = name.split('-')
+    if (parts.length >= 2) {
+      return parts[0] + '-' + parts[1] // "gt-rigname"
+    }
+    return 'gt-unknown'
+  }
+
+  return 'other'
+}
+
+// Group conversations by their category (same as session grouping)
+function groupConversations(conversations: Conversation[]): Record<string, Conversation[]> {
+  const groups: Record<string, Conversation[]> = {}
+
+  for (const convo of conversations) {
+    const group = categorizeConversation(convo)
+    if (!groups[group]) {
+      groups[group] = []
+    }
+    groups[group].push(convo)
+  }
+
+  return groups
+}
 
 export default function ChroteChat() {
   // Restore selected target from localStorage
@@ -17,17 +86,65 @@ export default function ChroteChat() {
       return null
     }
   })
-  const [mobileView, setMobileView] = useState<'list' | 'chat'>('list')
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [pendingMessage, setPendingMessage] = useState<string | null>(null) // Message shown while waiting for server
   const [nudging, setNudging] = useState(false)
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  // Auto-collapse sidebar on mobile/narrow screens
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.innerWidth <= 768)
   const [sessionStatus, setSessionStatus] = useState<{ exists: boolean; initializing: boolean }>({ exists: false, initializing: false })
+  const [showChannelMgr, setShowChannelMgr] = useState(false)
+  const [channelName, setChannelName] = useState('')
+  const [inviteChannelName, setInviteChannelName] = useState('')
+  const [selectedInvitees, setSelectedInvitees] = useState<string[]>([])
+  const [channelSubscribers, setChannelSubscribers] = useState<string[]>([])
+  const [loadingSubscribers, setLoadingSubscribers] = useState(false)
+
+  // Collapsed groups state - "other" collapsed by default
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem(COLLAPSED_GROUPS_KEY)
+      if (saved) {
+        return new Set(JSON.parse(saved))
+      }
+    } catch { /* ignore */ }
+    return new Set(['other']) // Default: collapse "other"
+  })
 
   const { conversations, loading: convoLoading, refresh: refreshConvos } = useConversations()
-  const selectedConvo = conversations.find(c => c.target === selectedTarget)
-  const { messages, loading: historyLoading, refresh: refreshHistory } = useChatHistory(selectedTarget, selectedConvo?.workspace ?? null)
+  const workspace = conversations.find(c => c.workspace)?.workspace || null
+  const { channels, refresh: refreshChannels } = useChannels(workspace)
+  
+  // Create unified options list including channels
+  const allTargets: Conversation[] = useMemo(() => {
+    const channelConvos: Conversation[] = channels.map(c => ({
+      target: `channel:${c.name}`,
+      displayName: `#${c.name}`,
+      role: 'channel',
+      online: true,
+      unreadCount: 0,
+      workspace: workspace || undefined
+    }))
+    return [...conversations, ...channelConvos]
+  }, [conversations, channels, workspace])
+
+  // Group and sort conversations
+  const sortedGroups = useMemo(() => {
+    const grouped = groupConversations(allTargets)
+    return Object.entries(grouped)
+      .sort(([a], [b]) => getChatGroupPriority(a) - getChatGroupPriority(b))
+  }, [allTargets])
+
+  const selectedConvo = allTargets.find(c => c.target === selectedTarget)
+  
+  const isChannel = selectedTarget?.startsWith('channel:') ?? false
+  const realTarget = isChannel ? selectedTarget!.replace('channel:', '') : selectedTarget
+  
+  const { messages, loading: historyLoading, refresh: refreshHistory } = useChatHistory(
+    realTarget, 
+    selectedConvo?.workspace ?? null,
+    isChannel
+  )
   const { addToast } = useToast()
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -37,45 +154,37 @@ export default function ChroteChat() {
   const shouldAutoScroll = useRef(true)
   const prevMessageCount = useRef(0)
 
-  // Handle mobile keyboard - adjust height when virtual keyboard appears
-  // Only applies on mobile devices (touch-enabled with narrow viewport)
+  // Handle sidebar responsive behavior
   useEffect(() => {
-    const isMobile = () => window.innerWidth <= 768 && 'ontouchstart' in window
-
     const handleResize = () => {
-      if (!chatContainerRef.current || !isMobile()) return
-      // Use visualViewport if available (handles keyboard properly)
-      if (window.visualViewport) {
-        const vh = window.visualViewport.height
-        chatContainerRef.current.style.height = `${vh}px`
-        // Scroll messages to bottom when keyboard opens
-        setTimeout(() => {
-          messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-        }, 100)
+      // Auto-collapse when window becomes narrow
+      if (window.innerWidth <= 768) {
+        setSidebarCollapsed(true)
       }
     }
 
-    // Reset height when switching to desktop
-    const handleWindowResize = () => {
-      if (!chatContainerRef.current) return
-      if (!isMobile()) {
-        chatContainerRef.current.style.height = ''
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
+
+  // Ensure we scroll to bottom when viewport resizes (e.g. mobile keyboard)
+  useEffect(() => {
+    const scrollToBottom = () => {
+      if (shouldAutoScroll.current && messagesEndRef.current) {
+        messagesEndRef.current.scrollIntoView({ behavior: 'smooth' })
       }
     }
 
-    // Listen to visualViewport resize (fires when keyboard shows/hides)
     if (window.visualViewport) {
-      window.visualViewport.addEventListener('resize', handleResize)
-      window.visualViewport.addEventListener('scroll', handleResize)
+      window.visualViewport.addEventListener('resize', scrollToBottom)
     }
-    window.addEventListener('resize', handleWindowResize)
+    window.addEventListener('resize', scrollToBottom)
 
     return () => {
       if (window.visualViewport) {
-        window.visualViewport.removeEventListener('resize', handleResize)
-        window.visualViewport.removeEventListener('scroll', handleResize)
+        window.visualViewport.removeEventListener('resize', scrollToBottom)
       }
-      window.removeEventListener('resize', handleWindowResize)
+      window.removeEventListener('resize', scrollToBottom)
     }
   }, [])
 
@@ -115,10 +224,14 @@ export default function ChroteChat() {
     }
   }, [sending])
 
-  // Focus input when conversation selected
+  // Focus input when conversation selected (Desktop only)
   useEffect(() => {
     if (selectedTarget) {
-      inputRef.current?.focus()
+      // Don't auto-focus on mobile as it pops the keyboard and obscures messages
+      const isMobile = window.matchMedia('(max-width: 768px)').matches
+      if (!isMobile) {
+        inputRef.current?.focus()
+      }
     }
   }, [selectedTarget])
 
@@ -139,6 +252,23 @@ export default function ChroteChat() {
       setSessionStatus({ exists: status.exists, initializing: false })
     })
   }, [])
+
+  // Fetch channel subscribers when a channel is selected
+  useEffect(() => {
+    if (!isChannel || !realTarget || !workspace) {
+      setChannelSubscribers([])
+      return
+    }
+
+    const fetchSubscribers = async () => {
+      setLoadingSubscribers(true)
+      const result = await getChannelSubscribers(workspace, realTarget)
+      setChannelSubscribers(result.subscribers)
+      setLoadingSubscribers(false)
+    }
+
+    fetchSubscribers()
+  }, [isChannel, realTarget, workspace])
 
   // Initialize session when a conversation with workspace is selected
   useEffect(() => {
@@ -179,17 +309,14 @@ export default function ChroteChat() {
 
   const handleSelectConversation = (target: string) => {
     setSelectedTarget(target)
-    setMobileView('chat')
+    // Auto-collapse sidebar on mobile when selecting a conversation
+    if (window.innerWidth <= 768) {
+      setSidebarCollapsed(true)
+    }
     // Persist selection
     try {
       localStorage.setItem(STORAGE_KEY, target)
     } catch { /* ignore */ }
-  }
-
-  const handleBackToList = () => {
-    setMobileView('list')
-    // Optional: Keep selection or clear it? Clearing it might stop polling history.
-    // Let's keep selection but stop polling? No, polling is fine.
   }
 
   const handleSend = async () => {
@@ -200,6 +327,7 @@ export default function ChroteChat() {
     setSending(true)
 
     // Send via dual-channel - workspace comes from the conversation
+    // Channels already have "channel:" prefix in selectedConvo.target and use it directly
     const result = await sendChatMessage(selectedConvo.workspace, selectedConvo.target, messageContent)
 
     if (result.success) {
@@ -257,10 +385,85 @@ export default function ChroteChat() {
     textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px'
   }
 
+  // Channel Management Handlers
+  const handleCreateChannel = async () => {
+    const ws = selectedConvo?.workspace || conversations.find(c => c.workspace)?.workspace
+    if (!channelName || !ws) {
+        addToast('Select an agent first to define workspace', 'error')
+        return
+    }
+    const res = await createChannel(ws, channelName)
+    if (res.success) {
+      addToast(`Channel '${channelName}' created`, 'success')
+      setChannelName('')
+      setInviteChannelName(channelName) // Auto-fill next step
+      refreshChannels()
+    } else {
+      addToast(res.message || 'Failed', 'error')
+    }
+  }
+
+  const handleInvite = async () => {
+    const ws = selectedConvo?.workspace || conversations.find(c => c.workspace)?.workspace
+    if (!inviteChannelName || selectedInvitees.length === 0 || !ws) {
+        addToast('Missing info or workspace', 'error')
+        return
+    }
+    
+    addToast('Sending invites...', 'info')
+    const res = await inviteToChannel(ws, inviteChannelName, selectedInvitees)
+    if (res.success) {
+      addToast(`Invited ${res.sent} agents`, 'success')
+      setSelectedInvitees([])
+      setShowChannelMgr(false)
+    } else {
+      addToast(res.message || 'Failed', 'error')
+    }
+  }
+
+  const toggleInvitee = (target: string) => {
+    if (selectedInvitees.includes(target)) {
+        setSelectedInvitees(selectedInvitees.filter(t => t !== target))
+    } else {
+        setSelectedInvitees([...selectedInvitees, target])
+    }
+  }
+
+  const handleDeleteChannel = async () => {
+    if (!isChannel || !realTarget || !workspace) return
+
+    if (!confirm(`Delete channel "#${realTarget}"? This cannot be undone.`)) return
+
+    const res = await deleteChannel(workspace, realTarget)
+    if (res.success) {
+      addToast(`Channel "${realTarget}" deleted`, 'success')
+      setSelectedTarget(null)
+      refreshChannels()
+    } else {
+      addToast(res.message || 'Failed to delete channel', 'error')
+    }
+  }
+
+  const toggleGroupCollapse = (role: string) => {
+    setCollapsedGroups(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(role)) {
+        newSet.delete(role)
+      } else {
+        newSet.add(role)
+      }
+      // Persist to localStorage
+      try {
+        localStorage.setItem(COLLAPSED_GROUPS_KEY, JSON.stringify([...newSet]))
+      } catch { /* ignore */ }
+      return newSet
+    })
+  }
+
   const allMessages = messages
 
   return (
-    <div ref={chatContainerRef} className={`chrote-chat mobile-view-${mobileView}`}>
+    <div ref={chatContainerRef} className="chrote-chat">
       {/* Conversation List */}
       <div className={`chat-sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
         <div className="chat-sidebar-header">
@@ -276,7 +479,7 @@ export default function ChroteChat() {
               <span className="panel-title">Chat</span>
               <button
                 className="refresh-btn"
-                onClick={() => refreshConvos()}
+                onClick={() => { refreshConvos(); refreshChannels(); }}
                 disabled={convoLoading}
                 title="Refresh"
               >
@@ -294,12 +497,15 @@ export default function ChroteChat() {
               ) : conversations.length === 0 ? (
                 <div className="chat-empty">No agents available</div>
               ) : (
-                conversations.map(convo => (
-                  <ConversationItem
-                    key={convo.target}
-                    conversation={convo}
-                    selected={convo.target === selectedTarget}
-                    onClick={() => handleSelectConversation(convo.target)}
+                sortedGroups.map(([role, groupConvos]) => (
+                  <ChatGroup
+                    key={role}
+                    role={role}
+                    conversations={groupConvos}
+                    collapsed={collapsedGroups.has(role)}
+                    onToggle={() => toggleGroupCollapse(role)}
+                    selectedTarget={selectedTarget}
+                    onSelect={handleSelectConversation}
                   />
                 ))
               )}
@@ -307,15 +513,23 @@ export default function ChroteChat() {
             <div className="chat-sidebar-footer">
               <button
                 className="restart-session-btn"
-                onClick={handleRestartSession}
-                disabled={sessionStatus.initializing}
-                title="Restart the chrote-chat tmux session"
+                onClick={() => setShowChannelMgr(true)}
+                title="Create or invite to channels"
               >
-                {sessionStatus.initializing ? 'Restarting...' : 'Restart Chat Session'}
+                📢 Manage Channels
               </button>
-              <div className="session-status">
-                {sessionStatus.exists ? 'Session active' : 'No session'}
-              </div>
+              {sessionStatus.exists ? (
+                <div className="session-status">Session active</div>
+              ) : (
+                <button
+                  className="restart-session-btn"
+                  onClick={handleRestartSession}
+                  disabled={sessionStatus.initializing}
+                  title="Start the chrote-chat tmux session"
+                >
+                  {sessionStatus.initializing ? 'Starting...' : 'Start Chat Session'}
+                </button>
+              )}
             </div>
           </>
         )}
@@ -323,35 +537,47 @@ export default function ChroteChat() {
 
       {/* Chat Area */}
       <div className="chat-main">
-        {/* Header - always visible on mobile for navigation */}
+        {/* Header */}
         <div className="chat-header">
-          <button
-            className="chat-back-btn mobile-only"
-            onClick={handleBackToList}
-            title="Back to agents"
-          >
-            ←
-          </button>
           <div className="chat-header-info">
             <span className="chat-header-name">
               {selectedConvo?.displayName || selectedTarget || 'Chat'}
             </span>
-            {selectedTarget && (
+            {selectedTarget && !isChannel && (
               <span className={`chat-header-status ${selectedConvo?.online ? 'online' : 'offline'}`}>
                 {selectedConvo?.online ? 'Online' : 'Offline'}
               </span>
             )}
+            {isChannel && (
+              <span className="chat-header-subscribers">
+                {loadingSubscribers ? '...' :
+                  channelSubscribers.length === 0 ? 'No subscribers' :
+                  `${channelSubscribers.length} subscriber${channelSubscribers.length !== 1 ? 's' : ''}: ${channelSubscribers.join(', ')}`
+                }
+              </span>
+            )}
           </div>
-          {selectedTarget && (
-            <button
-              className="refresh-btn"
-              onClick={() => refreshHistory()}
-              disabled={historyLoading}
-              title="Refresh history"
-            >
-              ↻
-            </button>
-          )}
+          <div className="chat-header-actions">
+            {selectedTarget && (
+              <button
+                className="refresh-btn"
+                onClick={() => refreshHistory()}
+                disabled={historyLoading}
+                title="Refresh history"
+              >
+                ↻
+              </button>
+            )}
+            {isChannel && (
+              <button
+                className="delete-channel-btn"
+                onClick={handleDeleteChannel}
+                title="Delete channel"
+              >
+                🗑
+              </button>
+            )}
+          </div>
         </div>
 
         {!selectedTarget ? (
@@ -425,6 +651,59 @@ export default function ChroteChat() {
           </>
         )}
       </div>
+
+      {showChannelMgr && (
+        <div className="channel-modal-overlay" onClick={() => setShowChannelMgr(false)}>
+          <div className="channel-modal" onClick={e => e.stopPropagation()}>
+            <div className="channel-modal-header">
+              <h3>📢 Channels</h3>
+              <button className="close-btn" onClick={() => setShowChannelMgr(false)}>✕</button>
+            </div>
+
+            <div className="channel-modal-section">
+              <h4>Create Channel</h4>
+              <div className="channel-row">
+                <input
+                  value={channelName}
+                  onChange={e => setChannelName(e.target.value)}
+                  placeholder="Channel Name"
+                />
+                <button onClick={handleCreateChannel}>Create</button>
+              </div>
+            </div>
+
+            <div className="channel-modal-section">
+              <h4>Invite Members</h4>
+              <p className="hint">Selected agents receive a DM with subscription instructions.</p>
+              <input
+                value={inviteChannelName}
+                onChange={e => setInviteChannelName(e.target.value)}
+                placeholder="Channel Name to Invite To"
+                className="full-width"
+              />
+              <div className="agent-select-list">
+                {conversations.map(c => (
+                  <label key={c.target} className="agent-select-item">
+                    <input
+                      type="checkbox"
+                      checked={selectedInvitees.includes(c.target)}
+                      onChange={() => toggleInvitee(c.target)}
+                    />
+                    <span>{c.displayName}</span>
+                  </label>
+                ))}
+              </div>
+              <button
+                className="invite-btn full-width"
+                disabled={!inviteChannelName || selectedInvitees.length === 0}
+                onClick={handleInvite}
+              >
+                Invite {selectedInvitees.length} Agents
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -436,12 +715,50 @@ interface ConversationItemProps {
   onClick: () => void
 }
 
+// Chat group component (similar to SessionGroup)
+interface ChatGroupProps {
+  role: string
+  conversations: Conversation[]
+  collapsed: boolean
+  onToggle: () => void
+  selectedTarget: string | null
+  onSelect: (target: string) => void
+}
+
+function ChatGroup({ role, conversations, collapsed, onToggle, selectedTarget, onSelect }: ChatGroupProps) {
+  const displayName = getChatGroupDisplayName(role)
+
+  return (
+    <div className="chat-group">
+      <div className="chat-group-header" onClick={onToggle}>
+        <span className="expand-icon">{collapsed ? '▶' : '▼'}</span>
+        <span className="group-name">{displayName}</span>
+        <span className="chat-group-count">{conversations.length}</span>
+      </div>
+
+      {!collapsed && (
+        <div className="chat-group-items">
+          {conversations.map(convo => (
+            <ConversationItem
+              key={convo.target}
+              conversation={convo}
+              selected={convo.target === selectedTarget}
+              onClick={() => onSelect(convo.target)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ConversationItem({ conversation, selected, onClick }: ConversationItemProps) {
   return (
     <button
       className={`chat-convo-item ${selected ? 'selected' : ''} ${conversation.online ? 'online' : 'offline'}`}
       onClick={onClick}
     >
+      <RoleBadge sessionName={conversation.target} />
       <div className="chat-convo-info">
         <div className="chat-convo-name">{conversation.displayName}</div>
         <div className="chat-convo-status">

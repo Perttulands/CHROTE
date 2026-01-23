@@ -17,9 +17,10 @@ const SUB_TABS: { id: BeadsSubTab; label: string }[] = [
 export default function BeadsView() {
   const [activeSubTab, setActiveSubTab] = useState<BeadsSubTab>('kanban')
   const [selectedProjectPath, setSelectedProjectPath] = useState<string | null>(null)
+  const [showPatrols, setShowPatrols] = useState(false)
 
   const { projects, loading: projectsLoading } = useProjects()
-  const { issues, loading: issuesLoading, error: issuesError, refresh: refreshIssues } = useIssues(selectedProjectPath)
+  const { issues, loading: issuesLoading, error: issuesError, refresh: refreshIssues } = useIssues(selectedProjectPath, showPatrols)
   const { triage, loading: triageLoading, error: triageError, refresh: refreshTriage } = useTriage(selectedProjectPath)
   const { insights, loading: insightsLoading, error: insightsError, refresh: refreshInsights } = useInsights(selectedProjectPath)
 
@@ -45,14 +46,24 @@ export default function BeadsView() {
           loading={projectsLoading}
         />
         {selectedProjectPath && (
-          <button
-            className="beads-refresh-btn"
-            onClick={handleRefresh}
-            disabled={isLoading}
-            title="Refresh data"
-          >
-            {isLoading ? 'Loading...' : 'Refresh'}
-          </button>
+          <>
+            <label className="beads-patrol-toggle" title="Show/hide patrol digest beads">
+              <input
+                type="checkbox"
+                checked={showPatrols}
+                onChange={(e) => setShowPatrols(e.target.checked)}
+              />
+              <span>Show patrols</span>
+            </label>
+            <button
+              className="beads-refresh-btn"
+              onClick={handleRefresh}
+              disabled={isLoading}
+              title="Refresh data"
+            >
+              {isLoading ? 'Loading...' : 'Refresh'}
+            </button>
+          </>
         )}
       </div>
 

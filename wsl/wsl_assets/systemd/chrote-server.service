@@ -17,7 +17,7 @@ Environment=PATH=/home/chrote/chrote/vendor/gastown:/usr/local/bin:/usr/bin:/bin
 
 # The Go server embeds the dashboard and proxies ttyd
 # No nginx needed - single binary serves everything
-ExecStart=/home/chrote/chrote-server --start-ttyd=false
+ExecStart=/home/chrote/chrote/chrote-server --start-ttyd=false
 
 Restart=on-failure
 RestartSec=5

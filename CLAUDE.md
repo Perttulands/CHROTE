@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 CHROTE (**C**ontrol **H**ub for **R**emote **O**perations & **T**mux **E**xecution) is a WSL2-based environment for managing AI coding agents via tmux sessions, with a React web dashboard for monitoring and control. The system runs behind Tailscale for secure remote access.
 
+**GOLDEN RULE:** NEVER DISRUPT RUNNING SESSIONS
+
 **Primary Use Case:** Run [Gastown](https://github.com/steveyegge/gastown), an orchestration framework for 10-30+ Claude Code instances in parallel on a home server via Tailscale.
 
 ## Build & Run Commands
@@ -139,6 +141,38 @@ Gastown sessions run Claude Code instances. You cannot inject commands via `tmux
 ```
 
 File API only allows access to these paths.
+
+## Dev Mode vs Production
+
+**Production** - dashboard baked into binary:
+```bash
+systemctl start chrote-server
+# Access at localhost:8080 or chrote:8080
+```
+
+**Development** - live reload while hacking:
+```bash
+cd dashboard
+npm run dev   # Vite dev server on :5173
+```
+
+Change a file, browser updates instantly. When you're done, rebuild and restart:
+```bash
+npm run build
+cp -r dist/* ../src/internal/dashboard/dist/
+cd ../src && go build -o ../chrote-server ./cmd/server
+sudo systemctl restart chrote-server
+```
+
+**CRITICAL for Claude:** When debugging issues, FIRST ask which mode the user is running:
+- **localhost:5173** = Vite dev server. Routing is controlled by `dashboard/vite.config.ts` proxy settings. The Go binary's embedded assets are IRRELEVANT.
+- **localhost:8080** = Production Go server. Dashboard is embedded in the binary.
+
+If adding new backend routes (like `/bv-terminal/`), you MUST add them to BOTH:
+1. Go backend (for production)
+2. `vite.config.ts` proxy section (for dev mode)
+
+Don't assume "restart the server" or "rebuild the binary" will fix dev mode issues - check the vite proxy config first.
 
 ## Access URLs (via Tailscale)
 

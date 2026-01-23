@@ -117,6 +117,26 @@
   cursor: not-allowed;
 }
 
+/* Patrol toggle */
+.beads-patrol-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.beads-patrol-toggle input[type="checkbox"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.beads-patrol-toggle:hover {
+  color: var(--text-secondary);
+}
+
 /* Sub-tabs */
 .beads-subtabs {
   display: flex;

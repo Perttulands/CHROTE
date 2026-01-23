@@ -8,7 +8,7 @@ import FilesView from './components/FilesView'
 import SettingsView from './components/SettingsView'
 import FloatingModal from './components/FloatingModal'
 import HelpView from './components/HelpView'
-import BeadsView from './components/BeadsView'
+import BeadsViewerTab from './components/BeadsViewerTab'
 import ManualView from './components/ManualView'
 import ChroteChat from './components/ChroteChat'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -125,9 +125,9 @@ function DashboardContent() {
             </>
           )}
           {activeTab === 'files' && <FilesView />}
-          {activeTab === 'beads' && (
+          {activeTab === 'beads_viewer' && (
             <ErrorBoundary>
-              <BeadsView />
+              <BeadsViewerTab />
             </ErrorBoundary>
           )}
           {activeTab === 'chat' && (

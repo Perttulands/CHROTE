@@ -24,6 +24,7 @@ import (
 type Config struct {
 	Port          int
 	TtydPort      int
+	BvTtydPort    int
 	APIAuthToken  string
 	CORSOrigins   []string
 	StartTtyd     bool
@@ -34,6 +35,7 @@ func main() {
 	config := Config{}
 	flag.IntVar(&config.Port, "port", 8080, "Server port")
 	flag.IntVar(&config.TtydPort, "ttyd-port", 7681, "ttyd port")
+	flag.IntVar(&config.BvTtydPort, "bv-ttyd-port", 7682, "bv (beads viewer) ttyd port")
 	flag.StringVar(&config.APIAuthToken, "auth-token", "", "API authentication token")
 	flag.BoolVar(&config.StartTtyd, "start-ttyd", true, "Start ttyd child process")
 	flag.Parse()
@@ -44,6 +46,9 @@ func main() {
 	}
 	if port := os.Getenv("TTYD_PORT"); port != "" {
 		fmt.Sscanf(port, "%d", &config.TtydPort)
+	}
+	if port := os.Getenv("BV_TTYD_PORT"); port != "" {
+		fmt.Sscanf(port, "%d", &config.BvTtydPort)
 	}
 	if token := os.Getenv("API_AUTH_TOKEN"); token != "" {
 		config.APIAuthToken = token
@@ -77,6 +82,10 @@ func main() {
 	// Create terminal proxy
 	terminalProxy := proxy.NewTerminalProxy(config.TtydPort)
 	terminalProxy.RegisterRoutes(mux)
+
+	// Create BV terminal proxy (beads viewer)
+	bvTerminalProxy := proxy.NewBvTerminalProxy(config.BvTtydPort)
+	bvTerminalProxy.RegisterRoutes(mux)
 
 	// Serve embedded dashboard at root
 	dashboardHandler := dashboard.Handler()
@@ -115,6 +124,7 @@ func main() {
 		log.Printf("Chat: http://localhost:%d/api/chat/", config.Port)
 		log.Printf("Files: http://localhost:%d/api/files/", config.Port)
 		log.Printf("Terminal: http://localhost:%d/terminal/", config.Port)
+		log.Printf("BV Terminal: http://localhost:%d/bv-terminal/", config.Port)
 
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v", err)
@@ -125,10 +135,11 @@ func main() {
 	<-done
 	log.Println("Shutting down server...")
 
-	// Stop ttyd
+	// Stop ttyd processes
 	if config.StartTtyd {
 		terminalProxy.Stop()
 	}
+	bvTerminalProxy.Stop()
 
 	// Graceful shutdown with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

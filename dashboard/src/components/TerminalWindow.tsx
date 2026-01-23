@@ -134,9 +134,10 @@ interface TerminalWindowProps {
   workspaceId: WorkspaceId
   window: TerminalWindowType
   isDragging?: boolean
+  style?: React.CSSProperties
 }
 
-function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false }: TerminalWindowProps) {
+function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false, style }: TerminalWindowProps) {
   // Track loaded state per session
   const [loadedSessions, setLoadedSessions] = useState<Set<string>>(new Set())
   // Store refs for all iframes by session name
@@ -335,6 +336,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false 
         '--window-accent': colorTheme.accent,
         '--window-bg': colorTheme.bg,
         '--window-border': colorTheme.border,
+        ...style,
       } as React.CSSProperties}
     >
       <div className="terminal-window-header">

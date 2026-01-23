@@ -14,6 +14,9 @@ import (
 	"github.com/chrote/server/internal/core"
 )
 
+// Allow mocking exec.Command for testing
+var execCommand = exec.Command
+
 // GastownWorkspace represents a discovered Gastown workspace
 type GastownWorkspace struct {
 	Name string `json:"name"`
@@ -46,7 +49,7 @@ func (h *ChatHandler) ensureSessionExists() {
 	}
 
 	// Create session in home directory (will cd to workspace when sending)
-	cmd := exec.Command("tmux", "new-session", "-d", "-s", ChroteChatSession)
+	cmd := execCommand("tmux", "new-session", "-d", "-s", ChroteChatSession)
 	cmd.Env = core.GetTmuxEnv()
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -66,6 +69,12 @@ func (h *ChatHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/chat/history", h.GetHistory)
 	mux.HandleFunc("POST /api/chat/send", h.SendMessage)
 	mux.HandleFunc("POST /api/chat/nudge", h.NudgeOnly)
+	mux.HandleFunc("POST /api/chat/channel/create", h.CreateChannel)
+	mux.HandleFunc("POST /api/chat/channel/invite", h.InviteChannel)
+	mux.HandleFunc("GET /api/chat/channel/list", h.ListChannels)
+	mux.HandleFunc("GET /api/chat/channel/messages", h.GetChannelMessages)
+	mux.HandleFunc("GET /api/chat/channel/subscribers", h.GetChannelSubscribers)
+	mux.HandleFunc("POST /api/chat/channel/delete", h.DeleteChannel)
 	mux.HandleFunc("POST /api/chat/session/init", h.InitSession)
 	mux.HandleFunc("POST /api/chat/session/restart", h.RestartSession)
 	mux.HandleFunc("GET /api/chat/session/status", h.SessionStatus)
@@ -84,7 +93,7 @@ func (h *ChatHandler) getSessionWorkspaceMap() map[string]string {
 	result := make(map[string]string)
 
 	// Strategy 1: Try session_path (where session was created)
-	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}|#{session_path}")
+	cmd := execCommand("tmux", "list-sessions", "-F", "#{session_name}|#{session_path}")
 	cmd.Env = core.GetTmuxEnv()
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -121,7 +130,7 @@ func (h *ChatHandler) getSessionWorkspaceMap() map[string]string {
 		}
 
 		// Get the current working directory of the active pane
-		paneCmd := exec.Command("tmux", "display-message", "-t", sessionName, "-p", "#{pane_current_path}")
+		paneCmd := execCommand("tmux", "display-message", "-t", sessionName, "-p", "#{pane_current_path}")
 		paneCmd.Env = core.GetTmuxEnv()
 		paneOutput, err := paneCmd.CombinedOutput()
 		if err != nil {
@@ -147,7 +156,7 @@ func (h *ChatHandler) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
 	seen := make(map[string]bool)
 
 	// Get session paths from tmux - this tells us where each session is running
-	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_path}")
+	cmd := execCommand("tmux", "list-sessions", "-F", "#{session_path}")
 	cmd.Env = core.GetTmuxEnv()
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -249,7 +258,7 @@ func (h *ChatHandler) ListConversations(w http.ResponseWriter, r *http.Request) 
 	sessionWorkspaces := h.getSessionWorkspaceMap()
 
 	// Get tmux sessions with both name and path
-	tmuxCmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}|#{session_path}")
+	tmuxCmd := execCommand("tmux", "list-sessions", "-F", "#{session_name}|#{session_path}")
 	tmuxCmd.Env = core.GetTmuxEnv()
 
 	output, err := tmuxCmd.CombinedOutput()
@@ -298,72 +307,46 @@ func (h *ChatHandler) ListConversations(w http.ResponseWriter, r *http.Request) 
 
 // parseSessionName derives chat identity from tmux session name
 func (h *ChatHandler) parseSessionName(name string) (target, displayName, role string) {
-	// Defaults
-	role = ""
+	// Simplified Logic:
+	// 1. hq-X -> target=X
+	// 2. gt-A-B-C -> target=A/B/C
+	// DisplayName is always the full session name
+
 	displayName = name
+
+	if strings.HasPrefix(name, "hq-") {
+		// e.g. hq-mayor -> mayor
+		target = strings.TrimPrefix(name, "hq-")
+		role = target
+		return
+	}
+
+	if strings.HasPrefix(name, "gt-") {
+		// e.g. gt-greenplace-crew-max -> greenplace/crew/max
+		// e.g. gt-greenplace-witness -> greenplace/witness
+		trimmed := strings.TrimPrefix(name, "gt-")
+		target = strings.ReplaceAll(trimmed, "-", "/")
+
+		// Role parsing for sorting
+		role = "agent"
+		if strings.Contains(target, "/crew/") {
+			role = "crew"
+		} else if strings.Contains(target, "witness") {
+			role = "witness"
+		} else if strings.Contains(target, "refinery") {
+			role = "refinery"
+		} else if strings.Contains(target, "polecat") {
+			role = "polecat"
+		}
+		return
+	}
+
+	// Fallback
 	target = name
-
-	// 1. HQ Role patterns
-	if strings.Contains(name, "mayor") {
-		return "mayor", "🎩 Mayor", "mayor"
-	}
-	if strings.Contains(name, "deacon") {
-		return "deacon", "🐺 Deacon", "deacon"
-	}
-
-	// 2. Gastown Standard Patterns: gt-<rig>-<role>-<name> or gt-<rig>-<role>
-	// e.g. "gt-Chrote-crew-Ronja", "gt-Chrote-witness"
-	parts := strings.Split(name, "-")
-
-	if len(parts) >= 2 && parts[0] == "gt" {
-		// Identify Role
-		if strings.Contains(name, "witness") {
-			return "witness", "🦉 Witness", "witness"
-		}
-		if strings.Contains(name, "refinery") {
-			return "refinery", "🏭 Refinery", "refinery"
-		}
-
-		// Worker / Polecat / Crew detection
-		// "gt-Chrote-crew-Ronja" -> parts[2]="crew", parts[3]="Ronja"
-		// Crew address format: <rig>/crew/<name> (e.g., "Chrote/crew/Ronja")
-		for i, part := range parts {
-			if part == "crew" && i+1 < len(parts) {
-				workerName := parts[i+1]
-				formattedName := strings.Title(workerName)
-				rigName := parts[1]
-				// Crew workers use rig/crew/name format
-				target = fmt.Sprintf("%s/crew/%s", rigName, workerName)
-
-				return target, fmt.Sprintf("👷 %s", formattedName), "crew"
-			}
-			if part == "polecat" || part == "pc" {
-				// Handle "gt-rig-polecat-5"
-				suffix := ""
-				if i+1 < len(parts) {
-					suffix = " " + parts[i+1]
-				}
-				// Polecats might not have names, use session name or generated ID
-				return name, fmt.Sprintf("🐱 Polecat%s", suffix), "polecat"
-			}
-		}
-
-		// Fallback for generic "gt-Chrote-jasper" -> assume polecat/worker with name "jasper"
-		// Must have at least 3 parts: gt-<rig>-<name>
-		if len(parts) >= 3 {
-			lastPart := parts[len(parts)-1]
-			if lastPart != "witness" && lastPart != "refinery" && lastPart != "mayor" && lastPart != "boot" {
-				rigName := parts[1]
-				target = fmt.Sprintf("%s/%s", rigName, lastPart)
-				return target, fmt.Sprintf("🐱 %s", strings.Title(lastPart)), "polecat"
-			}
-		}
-	}
-
-	// 3. Allow all other sessions for debugging?
-	// For now, strict strictness to avoid clutter.
-	return "", "", ""
+	role = "other"
+	return
 }
+
 
 // sortConversations helper
 func (h *ChatHandler) sortConversations(convos []Conversation) {
@@ -486,7 +469,7 @@ type MailMessage struct {
 // getMailboxMessages fetches messages from a mailbox using gt mail inbox
 func (h *ChatHandler) getMailboxMessages(workspace, mailbox string) []MailMessage {
 	// Build command: gt mail inbox <mailbox> --json
-	cmd := exec.Command("gt", "mail", "inbox", mailbox, "--json")
+	cmd := execCommand("gt", "mail", "inbox", mailbox, "--json")
 	cmd.Dir = workspace
 	cmd.Env = h.getGtEnv()
 
@@ -537,7 +520,7 @@ func (h *ChatHandler) normalizeTarget(target string) string {
 // different session patterns (e.g., "gt-Chrote-crew-Ronja" for crew workers)
 func (h *ChatHandler) findSessionForTarget(target string) string {
 	// Get all sessions
-	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}")
+	cmd := execCommand("tmux", "list-sessions", "-F", "#{session_name}")
 	cmd.Env = core.GetTmuxEnv()
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -644,18 +627,14 @@ func (h *ChatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	time.Sleep(100 * time.Millisecond)
 
 	// 2. Nudge (Real-time attention)
-	// Find the actual session name for this target (handles crew workers, etc.)
-	nudgeTarget := req.Target
-	if sessionName := h.findSessionForTarget(req.Target); sessionName != "" {
-		// Parse session to get proper target format for nudge
-		properTarget, _, _ := h.parseSessionName(sessionName)
-		if properTarget != "" {
-			nudgeTarget = properTarget
-			fmt.Printf("Resolved nudge target: %s -> %s (session: %s)\n", req.Target, nudgeTarget, sessionName)
-		}
-	}
+	// Use same target as mail, but verify if trailing slash is needed or not.
+	// Users reported rig/crew works same as messages.
+	// For HQ roles, if target is "mayor", maybe no adjustment needed.
+	nudgeTarget := req.Target 
+	// Basic cleanup: some nudge commands might not like trailing slashes if 'mayor/' was sent
+	nudgeTarget = strings.TrimSuffix(nudgeTarget, "/")
 
-	nudgeCommand := fmt.Sprintf("cd '%s' && gt nudge '%s' 'New chat message'",
+	nudgeCommand := fmt.Sprintf("cd '%s' && gt nudge '%s' -m 'New chat message'",
 		req.Workspace, nudgeTarget)
 	fmt.Printf("\nNudge command: %s\n", nudgeCommand)
 
@@ -737,18 +716,11 @@ func (h *ChatHandler) NudgeOnly(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("  Target: %s\n", req.Target)
 	fmt.Printf("  Message: %s\n", nudgeMsg)
 
-	// Find the actual session name for this target (handles crew workers, etc.)
-	nudgeTarget := req.Target
-	if sessionName := h.findSessionForTarget(req.Target); sessionName != "" {
-		// Parse session to get proper target format for nudge
-		properTarget, _, _ := h.parseSessionName(sessionName)
-		if properTarget != "" {
-			nudgeTarget = properTarget
-			fmt.Printf("Resolved nudge target: %s -> %s (session: %s)\n", req.Target, nudgeTarget, sessionName)
-		}
-	}
+	// Use target directly (users confirmed rig/crew same as mail)
+	nudgeTarget := strings.TrimSuffix(req.Target, "/")
+	fmt.Printf("Nudge target: %s -> %s\n", req.Target, nudgeTarget)
 
-	nudgeCommand := fmt.Sprintf("cd '%s' && gt nudge '%s' '%s'",
+	nudgeCommand := fmt.Sprintf("cd '%s' && gt nudge '%s' -m '%s'",
 		req.Workspace, nudgeTarget, nudgeMsg)
 	fmt.Printf("Nudge command: %s\n", nudgeCommand)
 
@@ -772,7 +744,7 @@ func (h *ChatHandler) sendToSession(command string) bool {
 	fmt.Printf("ChroteChat: Sending to session '%s': %s\n", ChroteChatSession, command)
 
 	// Use tmux send-keys to inject the command
-	cmd := exec.Command("tmux", "send-keys", "-t", ChroteChatSession, command, "Enter")
+	cmd := execCommand("tmux", "send-keys", "-t", ChroteChatSession, command, "Enter")
 	cmd.Env = core.GetTmuxEnv()
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -854,7 +826,7 @@ func (h *ChatHandler) RestartSession(w http.ResponseWriter, r *http.Request) {
 
 	// Kill existing session if it exists
 	if h.sessionExists() {
-		killCmd := exec.Command("tmux", "kill-session", "-t", ChroteChatSession)
+		killCmd := execCommand("tmux", "kill-session", "-t", ChroteChatSession)
 		killCmd.Env = core.GetTmuxEnv()
 		killCmd.Run() // Ignore error, session might not exist
 	}
@@ -872,16 +844,283 @@ func (h *ChatHandler) RestartSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type CreateChannelRequest struct {
+	Workspace string `json:"workspace"`
+	Name      string `json:"name"`
+}
+
+// CreateChannel handles POST /api/chat/channel/create
+func (h *ChatHandler) CreateChannel(w http.ResponseWriter, r *http.Request) {
+	var req CreateChannelRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		core.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body")
+		return
+	}
+
+	if req.Name == "" {
+		core.WriteError(w, http.StatusBadRequest, "MISSING_NAME", "Channel name is required")
+		return
+	}
+	if req.Workspace == "" {
+		core.WriteError(w, http.StatusBadRequest, "MISSING_WORKSPACE", "Workspace is required")
+		return
+	}
+
+	// gt mail channel create <name>
+	// Use explicit command execution for better feedback than sendToSession
+	cmd := execCommand("gt", "mail", "channel", "create", req.Name)
+	cmd.Dir = req.Workspace
+	cmd.Env = append(cmd.Env, h.getGtEnv()...)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		fmt.Printf("Channel Create Failed: %v\nOutput: %s\n", err, string(output))
+		core.WriteError(w, http.StatusInternalServerError, "CMD_FAILED", "Failed to create channel: "+string(output))
+		return
+	}
+
+	core.WriteSuccess(w, map[string]bool{"success": true})
+}
+
+type InviteChannelRequest struct {
+	Workspace string   `json:"workspace"`
+	Channel   string   `json:"channel"`
+	Targets   []string `json:"targets"`
+}
+
+// InviteChannel handles POST /api/chat/channel/invite
+func (h *ChatHandler) InviteChannel(w http.ResponseWriter, r *http.Request) {
+	var req InviteChannelRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		core.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body")
+		return
+	}
+
+	if req.Channel == "" || len(req.Targets) == 0 {
+		core.WriteError(w, http.StatusBadRequest, "MISSING_PARAMS", "Channel and targets are required")
+		return
+	}
+
+	inviteMsg := fmt.Sprintf("Please join the channel by running: gt mail channel subscribe %s", req.Channel)
+	// escapedMsg := strings.ReplaceAll(inviteMsg, "'", "'\\''") // exec.Command handles args safely
+
+	count := 0
+	for _, target := range req.Targets {
+		// Send DM: gt mail send <target> -m "..."
+		cmd := execCommand("gt", "mail", "send", target, "-m", inviteMsg)
+		cmd.Dir = req.Workspace
+		cmd.Env = append(cmd.Env, h.getGtEnv()...)
+		
+		output, err := cmd.CombinedOutput()
+		if err == nil {
+			count++
+		} else {
+			fmt.Printf("Invite Failed for %s: %v\nOutput: %s\n", target, err, string(output))
+		}
+		// time.Sleep(50 * time.Millisecond) // Throttle slightly - not needed for exec?
+	}
+
+	core.WriteSuccess(w, map[string]interface{}{
+		"success": true,
+		"sent":    count,
+		"total":   len(req.Targets),
+	})
+}
+
+// GtChannel matches the PascalCase JSON from gt CLI
+type GtChannel struct {
+	Name           string   `json:"Name"`
+	Subscribers    []string `json:"Subscribers"`
+	Status         string   `json:"Status"`
+	RetentionCount int      `json:"RetentionCount"`
+	RetentionHours int      `json:"RetentionHours"`
+	CreatedBy      string   `json:"CreatedBy"`
+	CreatedAt      string   `json:"CreatedAt"`
+}
+
+// ChannelResponse is the frontend-friendly format with lowercase keys
+type ChannelResponse struct {
+	Name           string   `json:"name"`
+	Subscribers    []string `json:"subscribers"`
+	Status         string   `json:"status"`
+	RetentionCount int      `json:"retentionCount"`
+	RetentionHours int      `json:"retentionHours"`
+	CreatedBy      string   `json:"createdBy"`
+	CreatedAt      string   `json:"createdAt"`
+}
+
+// ListChannels handles GET /api/chat/channel/list?workspace=...
+func (h *ChatHandler) ListChannels(w http.ResponseWriter, r *http.Request) {
+	workspace := r.URL.Query().Get("workspace")
+	if workspace == "" {
+		core.WriteError(w, http.StatusBadRequest, "MISSING_WORKSPACE", "Workspace query parameter is required")
+		return
+	}
+
+	cmd := execCommand("gt", "mail", "channel", "list", "--json")
+	cmd.Dir = workspace
+	cmd.Env = append(cmd.Env, h.getGtEnv()...)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		fmt.Printf("ChroteChat: gt mail channel list FAILED: %v\nOutput: %s\n", err, string(output))
+		core.WriteError(w, http.StatusInternalServerError, "CMD_FAILED", "Failed to list channels")
+		return
+	}
+
+	// gt returns a map[string]GtChannel, not an array
+	var channelMap map[string]GtChannel
+	if err := json.NewDecoder(strings.NewReader(string(output))).Decode(&channelMap); err != nil {
+		fmt.Printf("ChroteChat: JSON parse error listing channels: %v\nRaw: %s\n", err, string(output))
+		channelMap = make(map[string]GtChannel)
+	}
+
+	// Convert map to array with lowercase keys for frontend
+	channels := make([]ChannelResponse, 0, len(channelMap))
+	for _, ch := range channelMap {
+		channels = append(channels, ChannelResponse{
+			Name:           ch.Name,
+			Subscribers:    ch.Subscribers,
+			Status:         ch.Status,
+			RetentionCount: ch.RetentionCount,
+			RetentionHours: ch.RetentionHours,
+			CreatedBy:      ch.CreatedBy,
+			CreatedAt:      ch.CreatedAt,
+		})
+	}
+
+	core.WriteSuccess(w, map[string]interface{}{"channels": channels})
+}
+
+// GetChannelMessages handles GET /api/chat/channel/messages?workspace=...&channel=...
+func (h *ChatHandler) GetChannelMessages(w http.ResponseWriter, r *http.Request) {
+	workspace := r.URL.Query().Get("workspace")
+	channel := r.URL.Query().Get("channel")
+	if workspace == "" || channel == "" {
+		core.WriteError(w, http.StatusBadRequest, "MISSING_PARAMS", "Workspace and channel required")
+		return
+	}
+
+	cmd := execCommand("gt", "mail", "channel", "show", channel, "--json")
+	cmd.Dir = workspace
+	cmd.Env = append(cmd.Env, h.getGtEnv()...)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		fmt.Printf("ChroteChat: gt mail channel show %s FAILED: %v\nOutput: %s\n", channel, err, string(output))
+		// Don't fail hard, channel might be empty/new
+		core.WriteSuccess(w, map[string]interface{}{"messages": []ChatMessage{}})
+		return
+	}
+
+	var messages []MailMessage
+	if err := json.NewDecoder(strings.NewReader(string(output))).Decode(&messages); err != nil {
+		messages = []MailMessage{}
+	}
+
+	// Convert to ChatMessage format
+	var chatMessages []ChatMessage
+	for _, msg := range messages {
+		chatMessages = append(chatMessages, ChatMessage{
+			ID:        msg.ID,
+			Role:      "agent", // Treat channel messages as "agent" (received)
+			From:      msg.From,
+			To:        channel, // Display channel name as recipient
+			Content:   msg.Body,
+			Timestamp: msg.Timestamp,
+			Read:      true,
+		})
+	}
+
+	// Sort by timestamp (oldest first for chat display)
+	for i := 0; i < len(chatMessages) - 1; i++ {
+		for j := i + 1; j < len(chatMessages); j++ {
+			if chatMessages[i].Timestamp.After(chatMessages[j].Timestamp) {
+				chatMessages[i], chatMessages[j] = chatMessages[j], chatMessages[i]
+			}
+		}
+	}
+
+	core.WriteSuccess(w, map[string]interface{}{"messages": chatMessages})
+}
+
+// GetChannelSubscribers handles GET /api/chat/channel/subscribers?workspace=...&channel=...
+func (h *ChatHandler) GetChannelSubscribers(w http.ResponseWriter, r *http.Request) {
+	workspace := r.URL.Query().Get("workspace")
+	channel := r.URL.Query().Get("channel")
+	if workspace == "" || channel == "" {
+		core.WriteError(w, http.StatusBadRequest, "MISSING_PARAMS", "Workspace and channel required")
+		return
+	}
+
+	cmd := execCommand("gt", "mail", "channel", "subscribers", channel, "--json")
+	cmd.Dir = workspace
+	cmd.Env = append(cmd.Env, h.getGtEnv()...)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		fmt.Printf("ChroteChat: gt mail channel subscribers %s FAILED: %v\nOutput: %s\n", channel, err, string(output))
+		// Return empty list on error
+		core.WriteSuccess(w, map[string]interface{}{"subscribers": []string{}})
+		return
+	}
+
+	var subscribers []string
+	if err := json.NewDecoder(strings.NewReader(string(output))).Decode(&subscribers); err != nil {
+		fmt.Printf("ChroteChat: JSON parse error for subscribers: %v\nRaw: %s\n", err, string(output))
+		subscribers = []string{}
+	}
+
+	core.WriteSuccess(w, map[string]interface{}{"subscribers": subscribers})
+}
+
+// DeleteChannelRequest is the request body for deleting a channel
+type DeleteChannelRequest struct {
+	Workspace string `json:"workspace"`
+	Name      string `json:"name"`
+}
+
+// DeleteChannel handles POST /api/chat/channel/delete
+func (h *ChatHandler) DeleteChannel(w http.ResponseWriter, r *http.Request) {
+	var req DeleteChannelRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		core.WriteError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body")
+		return
+	}
+
+	if req.Name == "" {
+		core.WriteError(w, http.StatusBadRequest, "MISSING_NAME", "Channel name is required")
+		return
+	}
+	if req.Workspace == "" {
+		core.WriteError(w, http.StatusBadRequest, "MISSING_WORKSPACE", "Workspace is required")
+		return
+	}
+
+	cmd := execCommand("gt", "mail", "channel", "delete", req.Name)
+	cmd.Dir = req.Workspace
+	cmd.Env = append(cmd.Env, h.getGtEnv()...)
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		fmt.Printf("Channel Delete Failed: %v\nOutput: %s\n", err, string(output))
+		core.WriteError(w, http.StatusInternalServerError, "CMD_FAILED", "Failed to delete channel: "+string(output))
+		return
+	}
+
+	core.WriteSuccess(w, map[string]bool{"success": true})
+}
+
 // sessionExists checks if the chrote-chat tmux session exists
 func (h *ChatHandler) sessionExists() bool {
-	cmd := exec.Command("tmux", "has-session", "-t", ChroteChatSession)
+	cmd := execCommand("tmux", "has-session", "-t", ChroteChatSession)
 	cmd.Env = core.GetTmuxEnv()
 	return cmd.Run() == nil
 }
 
 // createSession creates the chrote-chat tmux session in the given workspace
 func (h *ChatHandler) createSession(workspace string) error {
-	cmd := exec.Command("tmux", "new-session", "-d", "-s", ChroteChatSession, "-c", workspace)
+	cmd := execCommand("tmux", "new-session", "-d", "-s", ChroteChatSession, "-c", workspace)
 	cmd.Env = core.GetTmuxEnv()
 	output, err := cmd.CombinedOutput()
 	if err != nil {

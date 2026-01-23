@@ -272,9 +272,49 @@ After installation, the following paths are available inside WSL:
 |------|---------|
 | `/code` | Symlink to `~/chrote` (your working directory) |
 | `/vault` | Symlink to E:\Vault (optional, for read-only storage) |
-| `~/.local/bin/gt` | Gastown orchestrator |
-| `~/.local/bin/bd` | Beads issue tracker |
-| `~/.local/bin/bv` | Beads viewer |
+| `~/chrote/vendor/gastown/gt` | Gastown orchestrator (vendored) |
+| `~/chrote/vendor/gastown/bd` | Beads issue tracker (vendored) |
+| `~/chrote/vendor/gastown/bv` | Beads viewer (vendored) |
+
+### Updating Tools
+
+When new versions drop, here's how to update each component:
+
+**Claude Code** (npm global package):
+```bash
+# Check current version
+claude --version
+
+# Update to latest
+sudo npm update -g @anthropic-ai/claude-code
+
+# Or install specific version
+sudo npm install -g @anthropic-ai/claude-code@latest
+```
+
+**Gastown Tools** (gt, bd, bv) - download from GitHub releases:
+
+| Tool | Repository |
+|------|------------|
+| gt | [github.com/steveyegge/gastown/releases](https://github.com/steveyegge/gastown/releases) |
+| bd | [github.com/beads-ai/beads/releases](https://github.com/beads-ai/beads/releases) |
+| bv | [github.com/beads-ai/beads-viewer/releases](https://github.com/beads-ai/beads-viewer/releases) |
+
+```bash
+# Example: Update gt to version X.Y.Z
+cd /tmp
+curl -LO https://github.com/steveyegge/gastown/releases/download/vX.Y.Z/gt_X.Y.Z_linux_amd64.tar.gz
+tar -xzf gt_X.Y.Z_linux_amd64.tar.gz
+cp gt ~/chrote/vendor/gastown/gt
+
+# Restart service to pick up PATH changes
+sudo systemctl restart chrote-server
+
+# Verify
+gt --version
+```
+
+The chrote-server service has `vendor/gastown` in its PATH, so tools placed there are available to the server and any sessions it spawns.
 
 ### Ignition
 
@@ -350,7 +390,7 @@ After CHROTE is installed, connect to WSL and start orchestrating:
 wsl
 
 # Check that tools are installed
-which gt bd bv   # Should show ~/.local/bin paths
+which gt bd bv   # Should show ~/chrote/vendor/gastown paths
 
 # Start the gastown orchestrator
 gt start gastown
@@ -408,6 +448,111 @@ gt peek
 **Why WSL2 instead of Docker?**
 
 We tried Docker first. The layers of indirection made debugging harder than it needed to be. WSL2 gives us real Linux with real systemd and better performance for this use case.
+
+---
+
+## How The Build Works
+
+CHROTE is two programs welded together into one binary. Understanding this helps when things break.
+
+### The Fusion Process
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                         BUILD TIME                                │
+│                                                                   │
+│   dashboard/src/*.tsx  ──[npm run build]──►  dashboard/dist/     │
+│   (React + TypeScript)                       (HTML, CSS, JS)     │
+│                                                                   │
+│                              │                                    │
+│                              ▼ copy                               │
+│                                                                   │
+│                      src/internal/dashboard/dist/                 │
+│                              │                                    │
+│                              ▼ go:embed                           │
+│                                                                   │
+│   src/**/*.go  ──────[go build]─────────►  chrote-server         │
+│   (Go backend)                              (single binary)       │
+│                                             dashboard inside      │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**Stage 1** - Build the dashboard:
+```bash
+cd dashboard && npm run build
+```
+Vite compiles React and TypeScript into plain HTML, CSS, and JavaScript. Output lands in `dashboard/dist/`.
+
+**Stage 2** - Copy into Go's territory:
+```bash
+cp -r dashboard/dist/* src/internal/dashboard/dist/
+```
+
+**Stage 3** - Build the server:
+```bash
+cd src && go build -o ../chrote-server ./cmd/server
+```
+
+The magic is `//go:embed dist/*` in the Go code. This tells the compiler: "Take everything in that folder and bake it into the binary." The resulting `chrote-server` file contains the entire dashboard - no external files needed. One binary rules them all.
+
+### One Port, Everything
+
+At runtime, `chrote-server` handles all traffic on port 8080:
+
+| Path | What Happens |
+|------|--------------|
+| `/` | Serves embedded dashboard (React app) |
+| `/api/*` | JSON APIs - talks to tmux, filesystem, beads |
+| `/terminal/*` | WebSocket proxy to ttyd for live terminals |
+
+No nginx. No reverse proxy. No "which service handles what" confusion. One process, one port.
+
+### localhost vs chrote:8080
+
+Same server, different doors:
+
+| URL | How You Get There | When To Use |
+|-----|-------------------|-------------|
+| `localhost:8080` | Direct connection on same machine | Local dev, initial testing |
+| `chrote:8080` | Tailscale resolves hostname to your WSL's IP | Remote access from anywhere |
+
+```
+Your laptop (coffee shop wifi)
+         │
+         │ "http://chrote:8080"
+         ▼
+Tailscale network (encrypted tunnel across the internet)
+         │
+         ▼
+Your home server (WSL2)
+         │
+         ▼
+chrote-server listening on :8080
+```
+
+Tailscale makes your WSL instance reachable by the hostname `chrote` from anywhere in the world - but only on your private network. Same server, same code, just a longer wire.
+
+### Dev Mode vs Production
+
+**Production** - dashboard baked into binary:
+```bash
+systemctl start chrote-server
+# Access at localhost:8080 or chrote:8080
+```
+
+**Development** - live reload while hacking:
+```bash
+cd dashboard
+npm run dev   # Vite dev server on :5173
+```
+
+Change a file, browser updates instantly. When you're done, rebuild and restart:
+```bash
+npm run build
+cp -r dist/* ../src/internal/dashboard/dist/
+cd ../src && go build -o ../chrote-server ./cmd/server
+sudo systemctl restart chrote-server
+```
 
 ---
 
@@ -575,6 +720,20 @@ Is it useful for power users who want to vibe code from anywhere? We think so.
 ## License
 
 MIT - Open source for the community.
+
+---
+
+## 🙏 Acknowledgments & Credits
+
+CHROTE stands on the shoulders of giants (and some very caffeinated developers):
+
+| Project | Creator | What It Does |
+|---------|---------|--------------|
+| [Gastown](https://github.com/steveyegge/gastown) | [Steve Yegge](https://github.com/steveyegge/gastown/discussions) | The orchestration framework that makes running 30 AI agents feel almost sane. CHROTE is just the garage - Gastown is the war rig. |
+| [Beads](https://github.com/beads-ai/beads) | Steve Yegge | Atomic units of work for AI agents. The issue tracking system that actually understands what agents are doing. |
+| [Beads Viewer](https://github.com/Dicklesworthstone/beads_viewer) | [Dicklesworthstone](https://github.com/Dicklesworthstone/beads_viewer?tab=readme-ov-file) | Beautiful visualization for beads data. Makes the chaos comprehensible. |
+
+Special thanks to the [Gastown community](https://github.com/steveyegge/gastown/discussions) for pioneering the art of AI agent swarm management.
 
 ---
 

@@ -76,6 +76,12 @@ func (tp *TerminalProxy) Start() error {
 		return nil
 	}
 
+	// Kill any existing process on our port to prevent stale ttyd conflicts
+	// This handles cases where a previous ttyd instance wasn't cleaned up properly
+	killCmd := exec.Command("fuser", "-k", fmt.Sprintf("%d/tcp", tp.ttydPort))
+	killCmd.Run() // Ignore errors - port may not be in use
+	time.Sleep(100 * time.Millisecond)
+
 	// Build ttyd command
 	// ttyd -p PORT -W -a terminal-launch.sh
 	tp.ttydCmd = exec.Command(
