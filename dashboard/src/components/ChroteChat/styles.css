@@ -521,14 +521,23 @@
   .chrote-chat {
     width: 100%;
     /* Use dvh for dynamic viewport that adjusts with keyboard */
-    height: 100dvh;
-    /* Fallback for browsers without dvh support */
     height: 100vh;
     height: 100dvh;
   }
 
   .mobile-only {
     display: block;
+  }
+
+  /* Hide sidebar toggle on mobile as it's full screen list */
+  .chat-sidebar-header .toggle-btn {
+    display: none;
+  }
+
+  /* Better touch targets for list */
+  .chat-convo-item {
+    padding: 16px 16px; /* Larger touch target */
+    border-bottom: 1px solid var(--divider);
   }
 
   .mobile-view-list .chat-sidebar {
@@ -581,8 +590,12 @@
 
   /* Smaller buttons on mobile for more input space */
   .mobile-view-chat .chat-nudge-btn {
-    padding: 8px 10px;
+    padding: 0 10px;
     font-size: 12px;
+    height: 36px; /* Match send button height */
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .mobile-view-chat .chat-send-btn {
@@ -614,7 +627,9 @@
 /* Very narrow screens - stack buttons or hide nudge */
 @media (max-width: 360px) {
   .mobile-view-chat .chat-nudge-btn {
-    display: none; /* Hide nudge on very narrow screens */
+    padding: 0 6px;
+    font-size: 11px;
+    min-width: auto;
   }
 
   .mobile-view-chat .chat-input-row {

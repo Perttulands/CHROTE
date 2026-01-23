@@ -115,10 +115,14 @@ export default function ChroteChat() {
     }
   }, [sending])
 
-  // Focus input when conversation selected
+  // Focus input when conversation selected (Desktop only)
   useEffect(() => {
     if (selectedTarget) {
-      inputRef.current?.focus()
+      // Don't auto-focus on mobile as it pops the keyboard and obscures messages
+      const isMobile = window.matchMedia('(max-width: 768px)').matches
+      if (!isMobile) {
+        inputRef.current?.focus()
+      }
     }
   }, [selectedTarget])
 
