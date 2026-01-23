@@ -100,3 +100,12 @@ func GetLaunchScript() string {
 	}
 	return "/usr/local/bin/terminal-launch.sh"
 }
+
+// GetBvLaunchScript returns the beads viewer launch script path
+// Reads from CHROTE_BV_LAUNCH_SCRIPT env var, defaults to /usr/local/bin/bv-launch.sh
+func GetBvLaunchScript() string {
+	if script := os.Getenv("CHROTE_BV_LAUNCH_SCRIPT"); script != "" {
+		return script
+	}
+	return "/usr/local/bin/bv-launch.sh"
+}

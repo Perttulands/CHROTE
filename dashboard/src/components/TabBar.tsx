@@ -55,7 +55,7 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
   }, [helpMenuOpen, mobileMenuOpen])
 
   const tabs: TabConfig[] = [
-    { id: 'chat', label: '✉ Chat' },
+    { id: 'chat', label: '✉ ChroteChat' },
     { id: 'terminal1', label: 'Terminal' },
     { id: 'terminal2', label: 'Terminal 2' },
     { id: 'files', label: 'Files' },

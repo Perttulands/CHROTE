@@ -297,38 +297,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         setSessions(data.sessions)
         setGroupedSessions(data.grouped)
 
-        // Clean up orphaned session bindings (sessions that no longer exist in tmux)
-        const existingSessionNames = new Set(data.sessions.map(s => s.name))
-
-        setWorkspaces(prev => {
-          let changed = false
-          const next: Record<WorkspaceId, TerminalWorkspace> = { ...prev }
-
-          WORKSPACE_IDS.forEach(workspaceId => {
-            const ws = prev[workspaceId]
-            const updatedWindows = ws.windows.map(w => {
-              const validBound = w.boundSessions.filter(s => existingSessionNames.has(s))
-              if (validBound.length !== w.boundSessions.length) {
-                changed = true
-                const orphaned = w.boundSessions.filter(s => !existingSessionNames.has(s))
-                console.error(`Orphaned sessions removed from ${w.id}:`, orphaned)
-
-                const newActive = validBound.includes(w.activeSession ?? '')
-                  ? w.activeSession
-                  : (validBound[0] ?? null)
-
-                return { ...w, boundSessions: validBound, activeSession: newActive }
-              }
-              return w
-            })
-
-            if (updatedWindows !== ws.windows) {
-              next[workspaceId] = { ...ws, windows: updatedWindows }
-            }
-          })
-
-          return changed ? next : prev
-        })
+        // NOTE: We intentionally do NOT clean up "orphaned" sessions here.
+        // If a session is in the layout but not in the API list (e.g. server restart, network blip),
+        // we want to PERSIST it in the UI rather than wiping the user's layout.
+        // The terminal window will just show a disconnected state or error until it comes back.
       }
     } catch (e) {
       setError('Failed to fetch sessions')

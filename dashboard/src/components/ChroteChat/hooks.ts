@@ -38,8 +38,39 @@ export function useConversations() {
   return { conversations, loading, error, refresh }
 }
 
+// Fetch available channels
+export function useChannels(workspace: string | null) {
+  const [channels, setChannels] = useState<any[]>([]) // Using any for now to avoid extensive type updates, but effectively Channel[]
+  const [loading, setLoading] = useState(false)
+
+  const refresh = useCallback(async () => {
+    if (!workspace) {
+      setChannels([])
+      return
+    }
+    try {
+      setLoading(true)
+      const res = await fetch(`${API_BASE}/channel/list?workspace=${encodeURIComponent(workspace)}`)
+      const data = await res.json()
+      if (data.data?.channels) {
+        setChannels(data.data.channels)
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false)
+    }
+  }, [workspace])
+
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  return { channels, loading, refresh }
+}
+
 // Fetch chat history for a specific target
-export function useChatHistory(target: string | null, workspace: string | null) {
+export function useChatHistory(target: string | null, workspace: string | null, isChannel = false) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -54,7 +85,13 @@ export function useChatHistory(target: string | null, workspace: string | null) 
       if (!silent) setLoading(true)
       const encodedTarget = encodeURIComponent(target)
       const encodedWorkspace = encodeURIComponent(workspace)
-      const res = await fetch(`${API_BASE}/history?target=${encodedTarget}&workspace=${encodedWorkspace}`)
+      
+      let url = `${API_BASE}/history?target=${encodedTarget}&workspace=${encodedWorkspace}`
+      if (isChannel) {
+        url = `${API_BASE}/channel/messages?channel=${encodedTarget}&workspace=${encodedWorkspace}`
+      }
+
+      const res = await fetch(url)
       const data = await res.json()
 
       if (data.data?.messages !== undefined) {
@@ -68,7 +105,8 @@ export function useChatHistory(target: string | null, workspace: string | null) 
     } finally {
       if (!silent) setLoading(false)
     }
-  }, [target, workspace])
+  }, [target, workspace, isChannel])
+
 
   useEffect(() => {
     refresh()
@@ -247,5 +285,73 @@ export async function restartSession(workspace: string): Promise<SessionInitResu
     return { created: false, message: data.error?.message || 'Failed to restart session' }
   } catch {
     return { created: false, message: 'Network error' }
+  }
+}
+
+// Create a broadcast channel
+export async function createChannel(workspace: string, name: string): Promise<{ success: boolean; message?: string }> {
+  try {
+    const res = await fetch(`${API_BASE}/channel/create`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspace, name }),
+    })
+    const data = await res.json()
+    if (data.data?.success) {
+      return { success: true }
+    }
+    return { success: false, message: data.error?.message || 'Failed to create channel' }
+  } catch {
+    return { success: false, message: 'Network error' }
+  }
+}
+
+// Invite members to a channel (sends instructions via DM)
+export async function inviteToChannel(workspace: string, channel: string, targets: string[]): Promise<{ success: boolean; sent?: number; total?: number; message?: string }> {
+  try {
+    const res = await fetch(`${API_BASE}/channel/invite`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspace, channel, targets }),
+    })
+    const data = await res.json()
+    if (data.data?.success) {
+      return { success: true, sent: data.data.sent, total: data.data.total }
+    }
+    return { success: false, message: data.error?.message || 'Failed to invite members' }
+  } catch {
+    return { success: false, message: 'Network error' }
+  }
+}
+
+// Delete a channel
+export async function deleteChannel(workspace: string, name: string): Promise<{ success: boolean; message?: string }> {
+  try {
+    const res = await fetch(`${API_BASE}/channel/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspace, name }),
+    })
+    const data = await res.json()
+    if (data.data?.success) {
+      return { success: true }
+    }
+    return { success: false, message: data.error?.message || 'Failed to delete channel' }
+  } catch {
+    return { success: false, message: 'Network error' }
+  }
+}
+
+// Get channel subscribers
+export async function getChannelSubscribers(workspace: string, channel: string): Promise<{ subscribers: string[]; error?: string }> {
+  try {
+    const res = await fetch(`${API_BASE}/channel/subscribers?workspace=${encodeURIComponent(workspace)}&channel=${encodeURIComponent(channel)}`)
+    const data = await res.json()
+    if (data.data?.subscribers !== undefined) {
+      return { subscribers: data.data.subscribers || [] }
+    }
+    return { subscribers: [], error: data.error?.message || 'Failed to get subscribers' }
+  } catch {
+    return { subscribers: [], error: 'Network error' }
   }
 }

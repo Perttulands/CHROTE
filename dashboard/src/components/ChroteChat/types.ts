@@ -32,3 +32,13 @@ export interface GastownWorkspace {
   name: string
   path: string
 }
+
+export interface Channel {
+  name: string
+  subscribers: string[]
+  status: string
+  retention_count: number
+  retention_hours: number
+  created_by: string
+  created_at: string
+}

@@ -8,7 +8,7 @@ import FilesView from './components/FilesView'
 import SettingsView from './components/SettingsView'
 import FloatingModal from './components/FloatingModal'
 import HelpView from './components/HelpView'
-import BeadsView from './components/BeadsView'
+import BeadsViewerTab from './components/BeadsViewerTab'
 import ManualView from './components/ManualView'
 import ChroteChat from './components/ChroteChat'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -118,19 +118,16 @@ function DashboardContent() {
         />
 
         <div className="dashboard-content">
-          {/* Terminal areas are always rendered but hidden via CSS to preserve WebSocket connections */}
-          <div className={`terminal-tab-content ${activeTab === 'terminal1' ? 'active' : 'hidden'}`}>
-            <SessionPanel />
-            <TerminalArea workspaceId="terminal1" />
-          </div>
-          <div className={`terminal-tab-content ${activeTab === 'terminal2' ? 'active' : 'hidden'}`}>
-            <SessionPanel />
-            <TerminalArea workspaceId="terminal2" />
-          </div>
+          {(activeTab === 'terminal1' || activeTab === 'terminal2') && (
+            <>
+              <SessionPanel />
+              <TerminalArea workspaceId={activeTab} />
+            </>
+          )}
           {activeTab === 'files' && <FilesView />}
-          {activeTab === 'beads' && (
+          {activeTab === 'beads_viewer' && (
             <ErrorBoundary>
-              <BeadsView />
+              <BeadsViewerTab />
             </ErrorBoundary>
           )}
           {activeTab === 'chat' && (

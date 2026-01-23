@@ -1,10 +1,11 @@
 import { useEffect, useCallback } from 'react'
 import { useSession } from '../context/SessionContext'
 import type { WorkspaceId } from '../types'
+import type { Tab } from '../components/TabBar'
 
 interface KeyboardShortcutsConfig {
-  activeTab: 'terminal1' | 'terminal2' | 'files' | 'beads' | 'chat' | 'manual' | 'settings' | 'help'
-  onTabChange: (tab: 'terminal1' | 'terminal2' | 'files' | 'beads' | 'chat' | 'manual' | 'settings' | 'help') => void
+  activeTab: Tab
+  onTabChange: (tab: Tab) => void
   onShowHelp: () => void
   isHelpOpen: boolean
 }
