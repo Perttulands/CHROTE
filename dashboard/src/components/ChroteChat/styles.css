@@ -379,9 +379,9 @@
   color: white;
 }
 
-/* Messages Area */
+/* Messages Area - scrolls between fixed header and input */
 .chat-messages {
-  flex: 1;
+  flex: 1 1 auto;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 16px;
@@ -389,6 +389,7 @@
   flex-direction: column;
   gap: 12px;
   width: 100%;
+  min-height: 0; /* Critical for flex scroll */
 }
 
 .chat-empty-history {
@@ -491,7 +492,7 @@
   font-style: italic;
 }
 
-/* Input Area */
+/* Input Area - MUST always be visible */
 .chat-input-area {
   padding: 12px 16px;
   border-top: 1px solid var(--divider);
@@ -500,9 +501,14 @@
   gap: 8px;
   background: var(--surface-primary);
   flex-shrink: 0;
+  flex-grow: 0;
   min-width: 0;
+  min-height: 80px; /* Ensure minimum height for input */
   width: 100%;
   box-sizing: border-box;
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
 }
 
 .chat-input-row {
@@ -876,7 +882,7 @@
   box-sizing: border-box;
 }
 
-/* Very small height viewports - ensure header never disappears */
+/* Very small height viewports - ensure header and input never disappear */
 @media (max-height: 400px) {
   .chat-header {
     padding: 6px 10px;
@@ -893,6 +899,7 @@
 
   .chat-input-area {
     padding: 6px 10px;
+    min-height: 60px;
   }
 
   .chat-input {
@@ -903,5 +910,23 @@
   .chat-messages {
     padding: 8px;
     gap: 8px;
+  }
+}
+
+/* Very narrow width - ensure input row doesn't overflow */
+@media (max-width: 320px) {
+  .chat-input-row {
+    flex-wrap: wrap;
+  }
+
+  .chat-input {
+    flex: 1 1 100%;
+    order: 1;
+    margin-bottom: 6px;
+  }
+
+  .chat-nudge-btn,
+  .chat-send-btn {
+    order: 2;
   }
 }
