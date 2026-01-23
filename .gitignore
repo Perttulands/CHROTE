@@ -28,8 +28,14 @@ api/node_modules/
 vendor/
 
 # Go binaries
+chrote-server
+chrote-server-integ
+src/server
 chrote/chrote-server
 chrote/server.exe
 chrote/*.exe
+
+# Vite cache
+dashboard/.vite/
 
 README.md.backup

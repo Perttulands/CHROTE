@@ -582,6 +582,15 @@ export default function ChroteChat() {
 
         {!selectedTarget ? (
           <div className="chat-placeholder">
+            {sidebarCollapsed && (
+              <button
+                className="chat-sidebar-toggle placeholder-toggle"
+                onClick={() => setSidebarCollapsed(false)}
+                title="Show conversation list"
+              >
+                ☰
+              </button>
+            )}
             <div className="chat-placeholder-icon">💬</div>
             <div className="chat-placeholder-text">
               Select a conversation to start chatting
@@ -620,6 +629,15 @@ export default function ChroteChat() {
                 </div>
               )}
               <div className="chat-input-row">
+                {sidebarCollapsed && (
+                  <button
+                    className="chat-sidebar-toggle"
+                    onClick={() => setSidebarCollapsed(false)}
+                    title="Show conversation list"
+                  >
+                    ☰
+                  </button>
+                )}
                 <textarea
                   ref={inputRef}
                   className="chat-input"
