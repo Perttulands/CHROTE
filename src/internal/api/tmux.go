@@ -237,6 +237,11 @@ func (h *TmuxHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// protectedSessions is the list of sessions that should not be killed by nuke
+var protectedSessions = map[string]bool{
+	"chrote-chat": true,
+}
+
 // DeleteAllSessions handles DELETE /api/tmux/sessions/all
 func (h *TmuxHandler) DeleteAllSessions(w http.ResponseWriter, r *http.Request) {
 	// Verify the request came from the dashboard UI
@@ -249,12 +254,17 @@ func (h *TmuxHandler) DeleteAllSessions(w http.ResponseWriter, r *http.Request) 
 	// Get list of all sessions first
 	output, err := h.runTmux("list-sessions", "-F", "#{session_name}")
 	var sessionNames []string
+	var protectedNames []string
 	if err == nil {
 		lines := strings.Split(strings.TrimSpace(output), "\n")
 		for _, line := range lines {
 			line = strings.TrimSpace(line)
 			if line != "" {
-				sessionNames = append(sessionNames, line)
+				if protectedSessions[line] {
+					protectedNames = append(protectedNames, line)
+				} else {
+					sessionNames = append(sessionNames, line)
+				}
 			}
 		}
 	}
@@ -263,27 +273,39 @@ func (h *TmuxHandler) DeleteAllSessions(w http.ResponseWriter, r *http.Request) 
 		core.WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"success":   true,
 			"killed":    0,
-			"message":   "No sessions to kill",
+			"protected": protectedNames,
+			"message":   "No sessions to kill (protected sessions preserved)",
 			"timestamp": time.Now().UTC().Format(time.RFC3339),
 		})
 		return
 	}
 
-	// Kill the tmux server
-	_, err = h.runTmux("kill-server")
-	if err != nil {
-		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
-		return
+	// Kill each session individually instead of kill-server to preserve protected sessions
+	var killed []string
+	var errors []string
+	for _, name := range sessionNames {
+		_, err := h.runTmux("kill-session", "-t", name)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("%s: %v", name, err))
+		} else {
+			killed = append(killed, name)
+		}
 	}
 
 	h.invalidateCache()
 
-	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"success":   true,
-		"killed":    len(sessionNames),
-		"sessions":  sessionNames,
+	response := map[string]interface{}{
+		"success":   len(errors) == 0,
+		"killed":    len(killed),
+		"sessions":  killed,
+		"protected": protectedNames,
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
-	})
+	}
+	if len(errors) > 0 {
+		response["errors"] = errors
+	}
+
+	core.WriteJSON(w, http.StatusOK, response)
 }
 
 // RenameSession handles PATCH /api/tmux/sessions/{name}

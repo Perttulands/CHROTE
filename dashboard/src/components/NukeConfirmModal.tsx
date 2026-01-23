@@ -1,14 +1,22 @@
 import { useState } from 'react'
 
+// Sessions that are protected from nuke (must match backend)
+const PROTECTED_SESSIONS = ['chrote-chat']
+
 interface NukeConfirmModalProps {
   onConfirm: () => void
   onCancel: () => void
   sessionCount: number
+  sessionNames?: string[]
 }
 
-function NukeConfirmModal({ onConfirm, onCancel, sessionCount }: NukeConfirmModalProps) {
+function NukeConfirmModal({ onConfirm, onCancel, sessionCount, sessionNames = [] }: NukeConfirmModalProps) {
   const [inputValue, setInputValue] = useState('')
   const isValid = inputValue === 'NUKE'
+
+  // Calculate how many sessions will actually be killed (excluding protected)
+  const protectedCount = sessionNames.filter(name => PROTECTED_SESSIONS.includes(name)).length
+  const killableCount = sessionCount - protectedCount
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -27,8 +35,13 @@ function NukeConfirmModal({ onConfirm, onCancel, sessionCount }: NukeConfirmModa
 
         <div className="nuke-modal-body">
           <p className="nuke-warning">
-            This will permanently destroy <strong>{sessionCount}</strong> tmux session{sessionCount !== 1 ? 's' : ''}.
+            This will permanently destroy <strong>{killableCount}</strong> tmux session{killableCount !== 1 ? 's' : ''}.
           </p>
+          {protectedCount > 0 && (
+            <p className="nuke-protected">
+              <strong>{protectedCount}</strong> protected session{protectedCount !== 1 ? 's' : ''} will be preserved: {PROTECTED_SESSIONS.filter(name => sessionNames.includes(name)).join(', ')}
+            </p>
+          )}
           <p className="nuke-warning">
             All running processes will be terminated. This cannot be undone.
           </p>

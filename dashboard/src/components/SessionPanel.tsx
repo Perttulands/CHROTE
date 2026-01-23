@@ -180,6 +180,7 @@ function SessionPanel() {
       {showNukeModal && (
         <NukeConfirmModal
           sessionCount={sessions.length}
+          sessionNames={sessions.map(s => s.name)}
           onConfirm={nukeAllSessions}
           onCancel={() => setShowNukeModal(false)}
         />
