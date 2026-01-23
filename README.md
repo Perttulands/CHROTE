@@ -63,7 +63,7 @@ You know what's harder than herding cats? Herding AI agents. They're off doing t
 - **Dual-channel delivery** - Messages go via Mail (persistent, stored in beads) AND Nudge (pokes the agent's Claude Code session directly)
 - **Real-time chat UI** - Pick an agent from the sidebar, type your message, hit send. Like texting, but your recipient is an AI that might be in the middle of refactoring your entire codebase
 - **Quick Nudge button** - Sometimes you don't need to say anything, you just need to poke them. "Hey. You alive? Check your mail." You'll be smashing that button.
-- **Broadcast Channels** - Create channels, invite agents, and broadcast messages to groups. Subscribers are shown in the header. Delete channels when you're done. It's like Slack for your robot army.
+- **Broadcast Channels** - Create channels, add agents as subscribers, and mass-nudge your entire swarm with one message. Need to tell 10 polecats to check their mail? One click.
 
 It took blood, sweat, and several 3am debugging sessions to get this working. I even had to look at the code my self. This thing is layers of duct tape and determination. But it works. You can talk to your robot army.
 
@@ -97,6 +97,8 @@ CHROTE works on phones and tablets too. The recent mobile revamp includes:
 - **Improved input layout** - Chat input area adapts to mobile keyboards
 
 You can dictate code changes while jogging and monitor your agent swarm from the couch. The wasteland is mobile-first now.
+
+> **Fair warning:** ChroteChat on mobile is held together with duct tape and prayers. It works, mostly, but expect rough edges - layout glitches, keyboard weirdness, the occasional existential crisis. We're aware. We'll fix it. For now, it's "works on my phone" territory.
 
 ### Files and Themes
 
@@ -390,46 +392,9 @@ Then access from any device on your Tailnet via `http://chrote:8080`.
 
 ## The Gastown Connection
 
-CHROTE is infrastructure. **Gastown** is what runs on it.
+CHROTE was built with [Gastown](https://github.com/steveyegge/gastown) in mind - Steve Yegge's orchestration framework for running 10-30+ AI coding agents in parallel. But CHROTE is a platform, not a Gastown dependency. You can run anything that needs tmux sessions - other agent frameworks, manual Claude Code instances, or your own tooling.
 
-Gastown is Steve Yegge's orchestration framework for running 10-30+ AI coding agents in parallel. CHROTE gives Gastown a home - terminals to run in, a dashboard to monitor, and session management for when things need cleanup.
-
-### Getting Started with Gastown
-
-After CHROTE is installed, connect to WSL and start orchestrating:
-
-```bash
-# Enter WSL (auto-logs in as chrote user)
-wsl
-
-# Check that tools are installed
-which gt bd bv   # Should show ~/chrote/vendor/gastown paths
-
-# Start the gastown orchestrator
-gt start gastown
-
-# Check status
-gt status
-
-# Peek at what agents are doing
-gt peek
-```
-
-### The Workflow
-
-- **Beads** - atomic units of work (issues, tasks)
-- **Epics** - collections of parallel tasks
-- **Molecules** - complex workflow chains
-- **Wisps** - ephemeral coordination tasks
-
-The philosophy: **Physics over Politeness**. Sessions are expendable. Throughput is the mission. When agents get stuck, clear them out and try again.
-
-```bash
-# Inside WSL - start the machine
-gt start gastown
-gt status
-gt peek
-```
+CHROTE includes a **built-in Operators Manual** (Help tab) with documentation for both CHROTE itself and Gastown workflows. If you're new to agent swarms, start there.
 
 ---
 
