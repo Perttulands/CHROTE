@@ -216,6 +216,12 @@ The `target` for mail commands is derived from tmux session names:
 | `/api/chat/session/status` | GET | Check if chrote-chat session exists |
 | `/api/chat/session/init` | POST | Initialize chrote-chat session in workspace |
 | `/api/chat/session/restart` | POST | Restart chrote-chat session |
+| `/api/chat/channel/create` | POST | Create a broadcast channel |
+| `/api/chat/channel/list` | GET | List all channels in workspace |
+| `/api/chat/channel/messages` | GET | Get messages from a channel |
+| `/api/chat/channel/subscribers` | GET | Get list of channel subscribers |
+| `/api/chat/channel/invite` | POST | Invite targets to a channel (sends DM with subscribe instructions) |
+| `/api/chat/channel/delete` | POST | Delete a channel |
 
 ### Send Request
 
@@ -239,6 +245,81 @@ POST /api/chat/send
     "mailSent": true,
     "nudged": true
   }
+}
+```
+
+## Broadcast Channels
+
+ChroteChat supports broadcast channels for group messaging. Think of them like Slack channels for your agent swarm.
+
+### Channel Management (Dashboard UI)
+
+- **Create**: Click "Manage Channels" in the sidebar, enter a name, click "Create"
+- **View subscribers**: Select a channel - subscribers are shown in the chat header
+- **Delete**: Click the 🗑 button in the header when viewing a channel
+- **Invite**: Select targets and click "Invite" to send them subscription instructions via DM
+
+### Channel Commands (gt CLI)
+
+```bash
+# Create a channel
+gt mail channel create announcements
+
+# List channels
+gt mail channel list --json
+
+# Subscribe to a channel
+gt mail channel subscribe announcements
+
+# Unsubscribe
+gt mail channel unsubscribe announcements
+
+# Send to channel
+gt mail channel send announcements -m "Hello everyone!"
+
+# View channel messages
+gt mail channel show announcements --json
+
+# Get subscribers
+gt mail channel subscribers announcements --json
+
+# Delete a channel
+gt mail channel delete announcements
+```
+
+### Channel API Requests
+
+**Create Channel:**
+```json
+POST /api/chat/channel/create
+{
+  "workspace": "/home/chrote/workspace/Chrotetown",
+  "name": "announcements"
+}
+```
+
+**Invite to Channel:**
+```json
+POST /api/chat/channel/invite
+{
+  "workspace": "/home/chrote/workspace/Chrotetown",
+  "channel": "announcements",
+  "targets": ["Chrote/witness", "Chrote/refinery"]
+}
+```
+This sends a DM to each target with instructions to run `gt mail channel subscribe announcements`.
+
+**Get Subscribers:**
+```
+GET /api/chat/channel/subscribers?workspace=/home/chrote/workspace/Chrotetown&channel=announcements
+```
+
+**Delete Channel:**
+```json
+POST /api/chat/channel/delete
+{
+  "workspace": "/home/chrote/workspace/Chrotetown",
+  "name": "announcements"
 }
 ```
 

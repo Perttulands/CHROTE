@@ -63,6 +63,7 @@ You know what's harder than herding cats? Herding AI agents. They're off doing t
 - **Dual-channel delivery** - Messages go via Mail (persistent, stored in beads) AND Nudge (pokes the agent's Claude Code session directly)
 - **Real-time chat UI** - Pick an agent from the sidebar, type your message, hit send. Like texting, but your recipient is an AI that might be in the middle of refactoring your entire codebase
 - **Quick Nudge button** - Sometimes you don't need to say anything, you just need to poke them. "Hey. You alive? Check your mail." You'll be smashing that button.
+- **Broadcast Channels** - Create channels, invite agents, and broadcast messages to groups. Subscribers are shown in the header. Delete channels when you're done. It's like Slack for your robot army.
 
 It took blood, sweat, and several 3am debugging sessions to get this working. I even had to look at the code my self. This thing is layers of duct tape and determination. But it works. You can talk to your robot army.
 
@@ -70,10 +71,10 @@ It took blood, sweat, and several 3am debugging sessions to get this working. I 
 
 | Tab | What It Does |
 |-----|--------------|
-| **Chat** | Message your agents directly (mail + nudge) |
+| **ChroteChat** | Message your agents directly (mail + nudge + channels) |
 | **Terminal 1 & 2** | Dual terminal workspaces, 4 panes each |
 | **Files** | Native file browser for /code and /vault |
-| **Beads** | Issue tracking with Kanban/Triage/Insights views |
+| **Beads** | Issue tracking with Kanban/Triage/Insights + filtered views |
 | **Settings** | Theme, font size, tmux appearance |
 | **Help** | Keyboard shortcuts and documentation |
 
@@ -84,6 +85,18 @@ It took blood, sweat, and several 3am debugging sessions to get this working. I 
 - Each empty window shows its guardian - placeholder artwork you get to look at for exactly three seconds before burying it under a tmux session. It's there. Then it's not. Like a wasteland Polaroid.
 
 ![Beads View](screenshot%202.png)
+
+### Mobile UX
+
+CHROTE works on phones and tablets too. The recent mobile revamp includes:
+
+- **Responsive layout** - Top bar collapses to hamburger menu, terminal view adapts to narrow screens
+- **Touch-friendly targets** - Session list items are sized for fingers, not mouse precision
+- **Long-press context menus** - Hold on a session to get the context menu on mobile
+- **Collapsible sidebar** - Auto-collapses on narrow screens, manually toggle as needed
+- **Improved input layout** - Chat input area adapts to mobile keyboards
+
+You can dictate code changes while jogging and monitor your agent swarm from the couch. The wasteland is mobile-first now.
 
 ### Files and Themes
 
