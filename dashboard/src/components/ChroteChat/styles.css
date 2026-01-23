@@ -257,8 +257,10 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0; /* Critical for nested flex scroll */
   overflow: hidden;
   background: var(--background);
+  position: relative;
 }
 
 /* Placeholder */
@@ -287,7 +289,7 @@
   color: var(--text-dim);
 }
 
-/* Chat Header */
+/* Chat Header - MUST always be visible with controls */
 .chat-header {
   padding: 12px 16px;
   border-bottom: 1px solid var(--divider);
@@ -296,15 +298,20 @@
   align-items: center;
   background: var(--surface-primary);
   flex-shrink: 0;
+  flex-grow: 0;
   min-height: 48px;
+  height: auto;
   gap: 8px;
+  position: sticky;
+  top: 0;
+  z-index: 5;
 }
 
 .chat-header-info {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0; /* Allow truncation */
   overflow: hidden;
 }
@@ -595,6 +602,32 @@
     height: 100dvh;
   }
 
+  /* Header must stay visible on mobile - wrap if needed */
+  .chat-header {
+    flex-wrap: wrap;
+    min-height: 44px;
+    padding: 8px 12px;
+    gap: 6px;
+  }
+
+  .chat-header-info {
+    flex: 1 1 100%;
+    order: 1;
+  }
+
+  .chat-header-actions {
+    flex: 0 0 auto;
+    order: 2;
+    margin-left: auto;
+  }
+
+  .chat-header-subscribers {
+    max-width: none;
+    flex-basis: 100%;
+    order: 3;
+    font-size: 10px;
+  }
+
   /* Better touch targets for list */
   .chat-convo-item {
     padding: 14px 12px;
@@ -841,4 +874,34 @@
 .channel-modal .full-width {
   width: 100%;
   box-sizing: border-box;
+}
+
+/* Very small height viewports - ensure header never disappears */
+@media (max-height: 400px) {
+  .chat-header {
+    padding: 6px 10px;
+    min-height: 36px;
+  }
+
+  .chat-header-name {
+    font-size: 13px;
+  }
+
+  .chat-header-subscribers {
+    display: none; /* Hide subscribers text when very cramped */
+  }
+
+  .chat-input-area {
+    padding: 6px 10px;
+  }
+
+  .chat-input {
+    min-height: 28px;
+    max-height: 60px;
+  }
+
+  .chat-messages {
+    padding: 8px;
+    gap: 8px;
+  }
 }
