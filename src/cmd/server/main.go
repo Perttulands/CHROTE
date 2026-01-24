@@ -20,6 +20,9 @@ import (
 	"github.com/chrote/server/internal/proxy"
 )
 
+// Version is set at build time or defaults to dev
+var Version = "0.2.0"
+
 // Config holds server configuration
 type Config struct {
 	Port          int
@@ -73,7 +76,7 @@ func main() {
 	filesHandler := api.NewFilesHandler()
 	filesHandler.RegisterRoutes(mux)
 
-	healthHandler := api.NewHealthHandler()
+	healthHandler := api.NewHealthHandlerWithVersion(Version)
 	healthHandler.RegisterRoutes(mux)
 
 	chatHandler := api.NewChatHandler()
@@ -118,7 +121,7 @@ func main() {
 	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		log.Printf("CHROTE server starting on port %d", config.Port)
+		log.Printf("CHROTE v%s starting on port %d", Version, config.Port)
 		log.Printf("Dashboard: http://localhost:%d/", config.Port)
 		log.Printf("API: http://localhost:%d/api/", config.Port)
 		log.Printf("Chat: http://localhost:%d/api/chat/", config.Port)
