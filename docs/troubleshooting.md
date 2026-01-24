@@ -72,6 +72,7 @@ cd /code/dashboard
 rm -rf node_modules dist
 npm ci
 npm run build
+mkdir -p ../src/internal/dashboard
 cp -r dist/* ../src/internal/dashboard/
 cd ../src && go build -o ~/chrote-server ./cmd/server
 sudo systemctl restart chrote-server
@@ -83,7 +84,7 @@ sudo systemctl restart chrote-server
 
 **In prod mode (8080):** The CSS is embedded in the binary. You must:
 1. Run `npm run build`
-2. Copy dist to Go directory
+2. Copy contents of `dist/` to `../src/internal/dashboard/`
 3. Rebuild Go binary
 4. Restart service
 
@@ -436,7 +437,7 @@ journalctl -u chrote-server -n 20
 ```bash
 # Full clean rebuild
 cd /code/dashboard && rm -rf node_modules dist && npm ci && npm run build
-cp -r dist/* ../src/internal/dashboard/
+mkdir -p ../src/internal/dashboard && cp -r dist/* ../src/internal/dashboard/
 cd ../src && go clean -cache && go build -o ~/chrote-server ./cmd/server
 sudo systemctl restart chrote-server chrote-ttyd
 ```

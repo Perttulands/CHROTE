@@ -100,7 +100,8 @@ curl http://localhost:8080/api/health
 
 | URL | When to Use |
 |-----|-------------|
-| `http://localhost:8080` | Local access on the same machine |
+| `http://localhost:8080` | Local access on the same machine (Production) |
+| `http://localhost:5173` | Development mode (requires `npm run dev`) |
 | `http://chrote:8080` | Remote access via Tailscale |
 
 ### Configure Tailscale (Recommended)
@@ -114,6 +115,17 @@ sudo tailscale up --hostname chrote
 ```
 
 Then access from any device on your Tailnet: `http://chrote:8080`
+
+### Configure Claude Code (Optional)
+
+If you plan to use the AI agents:
+
+```bash
+# Inside WSL
+claude login
+```
+
+Follow the prompts to authenticate with Anthropic.
 
 ## Directory Structure
 
@@ -157,7 +169,7 @@ passwd -l chrote
 
 # 3. Install dependencies
 apt-get update
-apt-get install -y curl git tmux python3 jq build-essential
+apt-get install -y curl git tmux python3 python3-pip locales build-essential jq wget unzip rsync
 
 # 4. Install Go 1.23
 curl -sLO https://go.dev/dl/go1.23.4.linux-amd64.tar.gz
@@ -179,6 +191,7 @@ chown -R chrote:chrote /home/chrote/chrote
 # 8. Build dashboard and server
 su - chrote
 cd ~/chrote/dashboard && npm ci && npm run build
+mkdir -p ../src/internal/dashboard
 cp -r dist/* ../src/internal/dashboard/
 cd ../src && /usr/local/go/bin/go build -o ~/chrote-server ./cmd/server
 
