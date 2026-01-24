@@ -54,7 +54,7 @@ Here, we spin up 10, 20, 30 agents. We point them at problems. We watch the chao
 
 ### ChroteChat - Talk to Your Agents
 
-![ChroteChat](Chat_UI.png)
+![ChroteChat](chat_new.png)
 
 You know what's harder than herding cats? Herding AI agents. They're off doing their thing, buried in tmux sessions, and you need to tell them something. Or ask them something. Or just poke them to make sure they're still alive.
 
@@ -84,7 +84,9 @@ It took blood, sweat, and several 3am debugging sessions to get this working. I 
 - Click tabs to switch between assigned sessions
 - Each empty window shows its guardian - placeholder artwork you get to look at for exactly three seconds before burying it under a tmux session. It's there. Then it's not. Like a wasteland Polaroid.
 
-![Beads View](screenshot%202.png)
+![Beads Kanban](kanban.png)
+
+![Beads Viewer In-Session](BV_insession.png)
 
 ### Mobile UX
 
