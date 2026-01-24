@@ -8,8 +8,6 @@
 
 > **WARNING:** This software was vibe-coded at 3am by mass hallucinations between a human and multiple AI agents. It works on my machine. It might work on yours. It probably won't. If it does, that's the miracle - not the expectation.
 
-> **DANGER:** You are about to run code that spawns dozens of AI agents with terminal access. They will read your project files. They will write your project files. They will argue with each other. They will occasionally achieve something useful. Mostly they will burn through your API credits like a war rig burns guzzoline.
-
 > **CAUTION:** If you have to ask "is this safe?" - turn back now. This is the wasteland. We don't do safe here. We do *fast*, *loud*, and *pray the tests pass*. I asked the three wise men of the West - Gemini, Claude, and ChatGPT - and they said it's fine. Maybe I should consult the three wise men of the East next.
 
 ---
@@ -18,7 +16,7 @@
 
 CHROTE is **your own personal tmux cloud** - a web dashboard that lets you run AI coding agent swarms from anywhere, on any device.
 
-**The pitch:** You're out jogging (really?), dictating code changes through voice. You close your laptop lid and the agents keep working. You open a different machine and pick up exactly where you left off. Your tmux sessions live in the cloud (your cloud, on your hardware), accessible via Tailscale from anywhere in the world.
+**The pitch:** You're sitting on the can in the morning dictating all that cool shit you dreamt about last night to get your agents working. You close your laptop lid and the agents keep working. You open a different machine and pick up exactly where you left off. Your tmux sessions live in the cloud (your cloud, on your hardware), accessible via Tailscale from anywhere in the world.
 
 **The experience:** Best of both worlds. You get the raw power of terminal interfaces - tmux, Claude Code, the command line. And you get a modern web dashboard on top - drag-and-drop session management, visual monitoring, theme customization, ambient music. Terminal purists and GUI lovers, united at last.
 
@@ -54,7 +52,7 @@ Here, we spin up 10, 20, 30 agents. We point them at problems. We watch the chao
 
 ### ChroteChat - Talk to Your Agents
 
-![ChroteChat](Chat_UI.png)
+![ChroteChat](chat_new.png)
 
 You know what's harder than herding cats? Herding AI agents. They're off doing their thing, buried in tmux sessions, and you need to tell them something. Or ask them something. Or just poke them to make sure they're still alive.
 
@@ -84,7 +82,9 @@ It took blood, sweat, and several 3am debugging sessions to get this working. I 
 - Click tabs to switch between assigned sessions
 - Each empty window shows its guardian - placeholder artwork you get to look at for exactly three seconds before burying it under a tmux session. It's there. Then it's not. Like a wasteland Polaroid.
 
-![Beads View](screenshot%202.png)
+![Beads Kanban](kanban.png)
+
+![Beads Viewer In-Session](BV_insession.png)
 
 ### Mobile UX
 
@@ -574,33 +574,73 @@ See [SECURITY.md](SECURITY.md) for the full security model.
 
 ## When Things Go Wrong
 
-### Sessions disappear
-```bash
-echo $TMUX_TMPDIR  # Should be /run/tmux/chrote
-ls -la /run/tmux/chrote/  # Check socket exists
-```
+Quick fixes for common issues. For the full troubleshooting guide, see [docs/troubleshooting.md](docs/troubleshooting.md).
 
-### Services won't start
+### The #1 Mistake: Dev Mode vs Production Mode
+
+CHROTE has two ways to run the dashboard:
+
+| Mode | URL | What It Means |
+|------|-----|---------------|
+| **Development** | `localhost:5173` | Vite dev server - changes apply instantly |
+| **Production** | `localhost:8080` | Go binary - changes require rebuild + restart |
+
+**If you make a change and nothing happens:** Check which URL you're using. If you're on `:5173`, rebuilding the Go binary does nothing. If you're on `:8080`, you must rebuild AND restart.
+
+### Quick Fixes
+
 ```bash
+# Check service status
 systemctl status chrote-server chrote-ttyd
+
+# View logs
 journalctl -u chrote-server -f
-# Read the logs - the answer is usually there
-```
 
-### Terminal shows black screen
-```bash
-systemctl status chrote-ttyd
-sudo systemctl restart chrote-ttyd
-tmux list-sessions
-```
+# Restart services
+sudo systemctl restart chrote-server chrote-ttyd
 
-### Everything is broken
-```bash
-# Full reset
-wsl --shutdown
-# Wait 10 seconds, then start fresh
+# Nuclear option: full WSL reset
+wsl --shutdown  # From Windows PowerShell
 .\Chrote-Toggle.ps1
 ```
+
+### Get Help from Claude
+
+Copy one of these prompts to get AI assistance:
+
+<details>
+<summary><b>Installation Help Prompt</b></summary>
+
+```
+I need help installing CHROTE. Please read the installation guide at docs/installation.md and help me through the process.
+
+My environment:
+- Windows version: [your version]
+- WSL status: [installed/not installed]
+- Current step: [where you're stuck]
+- Error message: [paste any errors]
+
+Guide me through the installation step by step, explaining what each command does before I run it.
+```
+</details>
+
+<details>
+<summary><b>Troubleshooting Help Prompt</b></summary>
+
+```
+I'm having an issue with CHROTE. Please read docs/troubleshooting.md to understand the system, then help me debug.
+
+CRITICAL: First ask me whether I'm viewing localhost:5173 (dev mode) or localhost:8080 (production mode) - this determines what fixes apply.
+
+My issue:
+- What's happening: [describe the problem]
+- What I expected: [what should happen]
+- What I tried: [any fixes you attempted]
+- Error messages: [paste from browser console or terminal]
+
+Don't assume "rebuild and restart" fixes everything. Diagnose which mode I'm in first.
+```
+</details>
 
 ---
 
@@ -689,6 +729,8 @@ Is it useful for power users who want to vibe code from anywhere? We think so.
 
 | Document | What It Is |
 |----------|------------|
+| [docs/installation.md](docs/installation.md) | Detailed installation guide |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | Common issues and solutions |
 | [PRD.md](PRD.md) | Product requirements |
 | [SPEC.md](SPEC.md) | Technical specification |
 | [SECURITY.md](SECURITY.md) | Security model |
