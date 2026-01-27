@@ -56,14 +56,7 @@ Here, we spin up 10, 20, 30 agents. We point them at problems. We watch the chao
 
 You know what's harder than herding cats? Herding AI agents. They're off doing their thing, buried in tmux sessions, and you need to tell them something. Or ask them something. Or just poke them to make sure they're still alive.
 
-**ChroteChat** is the answer. A built-in messaging system that lets you talk to any agent in your swarm:
-
-- **Dual-channel delivery** - Messages go via Mail (persistent, stored in beads) AND Nudge (pokes the agent's Claude Code session directly)
-- **Real-time chat UI** - Pick an agent from the sidebar, type your message, hit send. Like texting, but your recipient is an AI that might be in the middle of refactoring your entire codebase
-- **Quick Nudge button** - Sometimes you don't need to say anything, you just need to poke them. "Hey. You alive? Check your mail." You'll be smashing that button.
-- **Broadcast Channels** - Create channels, add agents as subscribers, and mass-nudge your entire swarm with one message. Need to tell 10 polecats to check their mail? One click.
-
-It took blood, sweat, and several 3am debugging sessions to get this working. I even had to look at the code my self. This thing is layers of duct tape and determination. But it works. You can talk to your robot army.
+ChroteChat is somewhat functional, janky as hell and now rendered a little pointless. I recommend instead setting up Clawdbot in the same backend as CHROTE. It will be very easy to set up and you can then have Clawdbot control the CHROTE sessions for you. This is a really powerful flow and I cannot recommend it enough.
 
 ### Tab Bar
 
