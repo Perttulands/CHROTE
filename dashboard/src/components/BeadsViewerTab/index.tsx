@@ -111,13 +111,13 @@ export default function BeadsViewerTab() {
             {projectsLoading ? (
               <option>Loading projects...</option>
             ) : projects.length === 0 ? (
-              <option>No projects with .beads found</option>
+              <option>No projects found - add paths in Settings</option>
             ) : (
               <>
                 <option value="">Select a project</option>
                 {projects.map(project => (
                   <option key={project.path} value={project.path}>
-                    {project.name}
+                    {project.path}
                   </option>
                 ))}
               </>
@@ -140,6 +140,10 @@ export default function BeadsViewerTab() {
             BV Help
           </button>
         </div>
+        {/* Hint note for adding custom paths */}
+        <span className="bv-hint">
+          Missing a project? Add paths in <strong>Settings → Beads Projects</strong>
+        </span>
       </div>
 
       {/* Help Modal */}

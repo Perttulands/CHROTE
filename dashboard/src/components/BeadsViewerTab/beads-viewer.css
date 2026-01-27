@@ -62,6 +62,18 @@
   margin-left: auto;
 }
 
+/* Hint text for when no projects found */
+.bv-hint {
+  color: var(--text-dim);
+  font-size: 11px;
+  margin-left: 12px;
+  opacity: 0.8;
+}
+
+.bv-hint strong {
+  color: var(--accent);
+}
+
 /* Buttons - matches file-browser.css .fb-btn */
 .bv-btn {
   background: transparent;
