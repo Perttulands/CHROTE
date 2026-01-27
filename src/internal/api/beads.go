@@ -193,9 +193,11 @@ func (h *BeadsHandler) Health(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListProjects handles GET /api/beads/projects
+// Scans up to 5 levels deep for .beads folders
 func (h *BeadsHandler) ListProjects(w http.ResponseWriter, r *http.Request) {
 	var projects []map[string]interface{}
 	var warnings []string
+	const maxDepth = 5
 
 	for _, root := range core.AllowedRoots {
 		if !core.FileExists(root) {
@@ -203,34 +205,54 @@ func (h *BeadsHandler) ListProjects(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		entries, err := os.ReadDir(root)
-		if err != nil {
-			warnings = append(warnings, "Cannot read directory "+root+": "+err.Error())
-			continue
-		}
+		rootDepth := strings.Count(filepath.ToSlash(root), "/")
 
-		for _, entry := range entries {
-			if entry.IsDir() {
-				projectPath := filepath.Join(root, entry.Name())
-				beadsPath := filepath.Join(projectPath, ".beads")
+		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return nil // Skip directories we can't read
+			}
+
+			// Calculate current depth relative to root
+			currentDepth := strings.Count(filepath.ToSlash(path), "/") - rootDepth
+
+			// Skip if too deep
+			if currentDepth > maxDepth {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+
+			// Skip hidden directories (except .beads itself which we're looking for)
+			if d.IsDir() && strings.HasPrefix(d.Name(), ".") && d.Name() != ".beads" {
+				return filepath.SkipDir
+			}
+
+			// Skip common non-project directories
+			if d.IsDir() {
+				switch d.Name() {
+				case "node_modules", "vendor", "__pycache__", ".git", "dist", "build":
+					return filepath.SkipDir
+				}
+			}
+
+			// Check if this directory contains a .beads folder
+			if d.IsDir() && d.Name() != ".beads" {
+				beadsPath := filepath.Join(path, ".beads")
 				if core.FileExists(beadsPath) {
 					projects = append(projects, map[string]interface{}{
-						"name":      entry.Name(),
-						"path":      projectPath,
+						"name":      d.Name(),
+						"path":      path,
 						"beadsPath": beadsPath,
 					})
 				}
 			}
-		}
 
-		// Check root itself
-		beadsPath := filepath.Join(root, ".beads")
-		if core.FileExists(beadsPath) {
-			projects = append(projects, map[string]interface{}{
-				"name":      filepath.Base(root),
-				"path":      root,
-				"beadsPath": beadsPath,
-			})
+			return nil
+		})
+
+		if err != nil {
+			warnings = append(warnings, "Error walking "+root+": "+err.Error())
 		}
 	}
 
