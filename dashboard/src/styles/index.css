@@ -17,6 +17,9 @@
 @import './inbox.css';
 @import './help-view.css';
 @import './beads.css';
+@import './oracle.css';
+@import './services.css';
+@import './teams.css';
 
 /* Delightful features */
 @import './delightful.css';

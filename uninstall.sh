@@ -1,13 +1,12 @@
 #!/bin/bash
 # CHROTE Uninstaller
-set -e
+set -eo pipefail
 
 INSTALL_DIR="$HOME/.local/bin"
 CONFIG_DIR="$HOME/.chrote"
 SERVICE_DIR="$HOME/.config/systemd/user"
 
 # Colors
-RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
@@ -33,6 +32,7 @@ fi
 
 # Stop services
 log "Stopping services..."
+# REASON: services may not exist or already be stopped; failure is non-fatal
 systemctl --user stop chrote chrote-ttyd 2>/dev/null || true
 systemctl --user disable chrote chrote-ttyd 2>/dev/null || true
 
@@ -40,6 +40,7 @@ systemctl --user disable chrote chrote-ttyd 2>/dev/null || true
 log "Removing service files..."
 rm -f "$SERVICE_DIR/chrote.service"
 rm -f "$SERVICE_DIR/chrote-ttyd.service"
+# REASON: systemctl may not be available; failure is non-fatal during uninstall
 systemctl --user daemon-reload 2>/dev/null || true
 
 # Remove binaries

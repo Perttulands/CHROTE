@@ -1,179 +1,96 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for agents working on this CHROTE install.
 
-## Project Overview
+## Product Boundary
 
-CHROTE (**C**ontrol **H**ub for **R**emote **O**perations & **T**mux **E**xecution) is a WSL2-based environment for managing AI coding agents via tmux sessions, with a React web dashboard for monitoring and control. The system runs behind Tailscale for secure remote access.
+This is the CHROTE cockpit for the configured host workspace.
 
-**GOLDEN RULE:** NEVER DISRUPT RUNNING SESSIONS
+Do not assume Gastown, Ralph, or vendored orchestrator components are installed. CHROTE watches tmux sessions and modern Beads state. `bv` is installed as an optional Beads TUI sidecar.
 
-**Primary Use Case:** Run [Gastown](https://github.com/steveyegge/gastown), an orchestration framework for 10-30+ Claude Code instances in parallel on a home server via Tailscale.
+Golden rule: do not disrupt running shells or tmux sessions.
 
-## Build & Run Commands
+## Build And Verify
 
 ```bash
-# Primary control script (Windows) - interactive menu
-./Chrote-Toggle.ps1
+cd /path/to/chrote/src
+go test ./...
 
-# Service management (WSL)
-systemctl status chrote-server chrote-ttyd     # Status
-systemctl restart chrote-server                # Restart
-journalctl -u chrote-server -f                 # Logs
+cd /path/to/chrote/dashboard
+npm run build
 
-# Dashboard development (localhost:5173)
-cd dashboard && npm install && npm run dev
+cd /path/to/chrote
+rm -rf src/internal/dashboard/dist
+cp -r dashboard/dist src/internal/dashboard/dist
 
-# Dashboard tests (Playwright E2E)
-cd dashboard && npm test                       # Run all tests
-cd dashboard && npm run test:ui                # Interactive test UI
-cd dashboard && npx playwright test dashboard.spec.ts  # Single test file
+cd /path/to/chrote/src
+go build -o ../chrote-server ./cmd/server
+systemctl --user restart chrote.service
+```
 
-# Go backend tests
-cd src && go test ./...                        # All tests
-cd src && go test ./internal/api/...           # API tests only
-cd src && go test -v ./internal/api/ -run TestFilesHandler  # Single test
+## Service
 
-# Build and deploy
-cd dashboard && npm run build && cd ..
-cp -r dashboard/dist src/internal/dashboard/
-cd src && go build -o ../chrote-server ./cmd/server
-sudo systemctl restart chrote-server
+```bash
+systemctl --user status chrote.service
+journalctl --user -u chrote.service -f
+curl http://127.0.0.1:8094/api/health
+```
+
+Runtime:
+
+```text
+HTTP: 127.0.0.1:8094
+terminal ttyd: 127.0.0.1:7683
+tmux socket: /run/user/1000/chrote-tmux
+workdir: configured workspace root
+allowed roots: configured workspace roots
 ```
 
 ## Architecture
 
-**Go Single Binary Backend** (`src/`):
-
-```
-cmd/server/main.go          # Entry point, middleware, routes
-internal/
-  api/                      # HTTP handlers
-    tmux.go                 # Session management, appearance
-    files.go                # File browser API (security-critical)
-    beads.go                # Beads issue tracking
-    health.go               # Health checks
-  core/                     # Shared utilities
-    session.go              # Session parsing, categorization
-    response.go             # JSON response helpers
-    pathutil.go             # Path utilities
-  proxy/
-    terminal.go             # ttyd WebSocket proxy
-  dashboard/
-    embed.go                # Embedded React dashboard
+```text
+src/cmd/server/main.go          entry point, middleware, routes
+src/internal/api/tmux.go        tmux session API
+src/internal/api/files.go       file browser API
+src/internal/api/beads.go       modern bd-backed Beads API
+src/internal/api/oracle.go      generic agent observability API
+src/internal/proxy/terminal.go  ttyd proxy
+dashboard/src/                  React dashboard
 ```
 
-**Key Patterns:**
-- Handlers register routes via `RegisterRoutes(mux *http.ServeMux)`
-- File API restricts access to `/code` and `/vault` only (`resolveSafePath()`)
-- Session cache with 1s TTL to reduce tmux calls
-- `core.WriteJSON()` and `core.WriteError()` for consistent responses
+The `/api/oracle/*` route names are compatibility names. Product UI calls this surface `Agents`.
 
-### React Dashboard (`dashboard/`)
+## Active Views
 
-```
-src/
-  App.tsx                   # Main component, tab routing
-  context/SessionContext.tsx # Global state (windows, sessions, theme)
-  components/
-    TerminalWindow.tsx      # xterm.js terminal with ttyd WebSocket
-    SessionPanel.tsx        # Left sidebar with session list
-    FilesView/              # Native file browser (not filebrowser app)
-    BeadsView/              # Kanban, Triage, Insights views
-    MusicPlayer.tsx         # Ambient music in tab bar
-```
-
-**Views (Tab Bar):**
-- Terminal 1 & 2 - Dual independent terminal workspaces
-- Files - Native React file browser for /code and /vault
-- Beads - Issue tracking with Kanban/Triage/Insights
-- Settings - Theme, font size, tmux appearance
+- Terminal
+- Terminal 2
+- Files
+- Agents
+- Beads
+- Settings
 - Help
 
-### Request Flow
+## Beads
 
-```
-Browser → Go Server (:8080)
-         ├── /           → Embedded React dashboard
-         ├── /terminal/  → ttyd proxy → terminal-launch.sh → tmux
-         └── /api/       → Go handlers (tmux, files, beads)
-```
+Use modern `bd` for issue tracking. The primary project path is the configured workspace root.
 
-## Session Categorization
-
-Session naming determines dashboard grouping:
-- `hq-*` → HQ group (priority 0)
-- `main`, `shell` → Main group (priority 1)
-- `gt-{rigname}-*` → Gastown rig groups (priority 3)
-- Other → Other group (priority 4)
-
-Implemented in `src/internal/core/session.go:CategorizeSession()`.
-
-## Security Model
-
-All operations run as **`chrote` user** (non-root, no sudo):
-- Tmux sockets at `/run/tmux/chrote/` - dedicated socket directory
-- User permissions provide isolation (not container boundary)
-- Agents cannot escalate privileges
-
-## Theming
-
-The dashboard supports multiple themes (Matrix, Dark, Gastown) via CSS variables in `dashboard/src/styles/theme-colors.css`. When adding new UI elements, reuse existing component classes (like `.tab`) rather than creating custom styles - this ensures automatic theme support.
-
-## Gastown Integration Constraints
-
-Gastown sessions run Claude Code instances. You cannot inject commands via `tmux send-keys` into Gastown sessions (they're running Claude, not a shell).
-
-## Anti-Patterns
-
-1. **No silent fallbacks** - Never `2>/dev/null` on tmux commands
-2. **No auto-creating sessions** - Windows start empty; users drag sessions
-3. **Click = peek (modal), Drag = bind** - Distinct behaviors
-4. **No nginx** - Go server handles all routing (single binary)
-5. **Reuse existing styles** - Use existing component classes for theme consistency
-6. **No injecting into Gastown sessions** - They run Claude Code, not interactive shells
-
-## Filesystem
-
-```
-/code   → /home/chrote/chrote    (symlink, read/write)
-/vault  → /mnt/e/Vault           (symlink, read-only)
-```
-
-File API only allows access to these paths.
-
-## Dev Mode vs Production
-
-**Production** - dashboard baked into binary:
 ```bash
-systemctl start chrote-server
-# Access at localhost:8080 or chrote:8080
+bd ready
+bd show <id>
+bd update <id> --status in_progress
+bd close <id>
 ```
 
-**Development** - live reload while hacking:
+Use `bv` for graph-aware viewing or robot insights after exporting modern bd data:
+
 ```bash
-cd dashboard
-npm run dev   # Vite dev server on :5173
+/path/to/chrote/bin/bv-refresh <workspace-root>
+bv --db <workspace-root>/.beads --robot-next
 ```
 
-Change a file, browser updates instantly. When you're done, rebuild and restart:
-```bash
-npm run build
-cp -r dist/* ../src/internal/dashboard/dist/
-cd ../src && go build -o ../chrote-server ./cmd/server
-sudo systemctl restart chrote-server
-```
+## Cleanup Rules
 
-**CRITICAL for Claude:** When debugging issues, FIRST ask which mode the user is running:
-- **localhost:5173** = Vite dev server. Routing is controlled by `dashboard/vite.config.ts` proxy settings. The Go binary's embedded assets are IRRELEVANT.
-- **localhost:8080** = Production Go server. Dashboard is embedded in the binary.
-
-If adding new backend routes (like `/bv-terminal/`), you MUST add them to BOTH:
-1. Go backend (for production)
-2. `vite.config.ts` proxy section (for dev mode)
-
-Don't assume "restart the server" or "rebuild the binary" will fix dev mode issues - check the vite proxy config first.
-
-## Access URLs (via Tailscale)
-
-- Dashboard: `http://chrote:8080`
+- Remove old active coupling to Gastown/Ralph when found.
+- Preserve good ideas in `docs/legacy-ideas.md` instead of silently deleting them.
+- Keep all listeners localhost-only unless the user explicitly approves a broader binding.
+- Tailscale Serve is the external access layer.

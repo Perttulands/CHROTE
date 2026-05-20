@@ -124,10 +124,7 @@ function FloatingModal() {
 
   if (!floatingSession) return null
 
-  // Extract display name
-  const displayName = floatingSession.includes('-')
-    ? floatingSession.split('-').slice(-1)[0]
-    : floatingSession
+  const displayName = floatingSession
 
   return (
     <div className="floating-modal-overlay" onClick={closeFloatingModal}>

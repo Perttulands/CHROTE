@@ -71,7 +71,8 @@ func TestTerminalProxy_WebSocketUpgrade(t *testing.T) {
 
 	// Test HTTP request works
 	t.Run("HTTP request", func(t *testing.T) {
-		resp, err := http.Get(proxyServer.URL + "/terminal/")
+		client := &http.Client{Timeout: 5 * time.Second}
+		resp, err := client.Get(proxyServer.URL + "/terminal/")
 		if err != nil {
 			t.Fatalf("HTTP request failed: %v", err)
 		}

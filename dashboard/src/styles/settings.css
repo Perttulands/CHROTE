@@ -342,6 +342,8 @@
   flex-direction: column;
   gap: 8px;
   margin-bottom: 16px;
+  max-height: 200px;
+  overflow-y: auto;
 }
 
 .beads-project-item {

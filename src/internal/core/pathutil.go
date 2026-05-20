@@ -8,8 +8,14 @@ import (
 	"sync"
 )
 
-// Default allowed roots (your personal setup)
-var defaultAllowedRoots = []string{"/code", "/vault"}
+// defaultAllowedRoots derives from HOME rather than hardcoding a user path.
+var defaultAllowedRoots = func() []string {
+	home := os.Getenv("HOME")
+	if home == "" {
+		home = "/home/chrote"
+	}
+	return []string{home, "/code", "/vault"}
+}()
 
 var (
 	allowedRootsOnce sync.Once
@@ -32,10 +38,6 @@ func GetAllowedRoots() []string {
 	return allowedRoots
 }
 
-// AllowedRoots is deprecated, use GetAllowedRoots() instead
-// Kept for backwards compatibility
-var AllowedRoots = defaultAllowedRoots
-
 // ResetConfigForTesting resets the cached config (for testing only)
 func ResetConfigForTesting() {
 	allowedRootsOnce = sync.Once{}
@@ -55,7 +57,7 @@ func ValidateProjectPath(inputPath string) (string, string, string) {
 
 	isAllowed := false
 	for _, root := range GetAllowedRoots() {
-		absRoot, _ := filepath.Abs(root)
+		absRoot, _ := filepath.Abs(root) //nolint:errcheck // Abs only errors on empty string; roots come from config
 		if resolved == absRoot || strings.HasPrefix(resolved, absRoot+string(os.PathSeparator)) {
 			isAllowed = true
 			break

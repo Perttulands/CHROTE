@@ -13,13 +13,15 @@ interface ColorInputProps {
 }
 
 function ColorInput({ label, value, onChange }: ColorInputProps) {
+  const pickerValue = /^#[0-9a-fA-F]{6}$/.test(value) ? value : '#000000'
+
   return (
     <div className="color-input-group">
       <span className="color-input-label">{label}</span>
       <div className="color-input-controls">
         <input
           type="color"
-          value={value}
+          value={pickerValue}
           onChange={(e) => onChange(e.target.value)}
           className="color-picker"
         />

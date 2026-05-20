@@ -53,9 +53,9 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
                   {idx + 1}
                 </button>
               ))}
-              
+
               <div style={{ width: '1px', height: '16px', background: 'var(--divider)', margin: '0 8px' }}></div>
-              
+
               <span className="layout-label">Count:</span>
               {[1, 2, 3, 4].map(count => (
                 <button

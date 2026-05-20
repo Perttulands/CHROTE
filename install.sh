@@ -1,7 +1,7 @@
 #!/bin/bash
 # CHROTE Installer
 # Usage: curl -sL https://raw.githubusercontent.com/Perttulands/CHROTE/main/install.sh | bash
-set -e
+set -eo pipefail
 
 REPO="Perttulands/CHROTE"
 INSTALL_DIR="$HOME/.local/bin"
@@ -23,6 +23,7 @@ error() { echo -e "${RED}[CHROTE]${NC} $1"; exit 1; }
 
 # 1. Detect environment
 detect_env() {
+    # REASON: /proc/version may not exist on all platforms
     if grep -qi microsoft /proc/version 2>/dev/null; then
         echo "wsl"
     else
@@ -64,6 +65,7 @@ setup_dirs() {
     # Ensure ~/.local/bin is in PATH
     if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
         warn "Adding ~/.local/bin to PATH in ~/.bashrc"
+        # shellcheck disable=SC2016
         echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
     fi
 
@@ -75,6 +77,7 @@ download_binary() {
     log "Downloading chrote-server..."
 
     # Get latest release
+    # REASON: curl stderr suppressed; empty LATEST is handled below
     LATEST=$(curl -sL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | grep '"tag_name"' | cut -d'"' -f4)
 
     if [ -z "$LATEST" ]; then
@@ -93,6 +96,7 @@ download_binary() {
 
     BINARY_URL="https://github.com/$REPO/releases/download/$LATEST/chrote-server-linux-$ARCH"
 
+    # REASON: curl stderr suppressed; failure handled by else branch
     if curl -sL --fail "$BINARY_URL" -o "$INSTALL_DIR/chrote-server" 2>/dev/null; then
         chmod +x "$INSTALL_DIR/chrote-server"
         success "Downloaded chrote-server $LATEST"
@@ -145,6 +149,7 @@ download_ttyd() {
     ARCH=$(uname -m)
     TTYD_URL="https://github.com/tsl0922/ttyd/releases/download/$TTYD_VERSION/ttyd.$ARCH"
 
+    # REASON: curl stderr suppressed; failure handled by else branch
     if curl -sL --fail "$TTYD_URL" -o "$INSTALL_DIR/ttyd" 2>/dev/null; then
         chmod +x "$INSTALL_DIR/ttyd"
         success "Downloaded ttyd $TTYD_VERSION"
@@ -228,6 +233,7 @@ EOF
 
     # Reload and enable
     systemctl --user daemon-reload
+    # REASON: enable may warn about missing targets; non-fatal
     systemctl --user enable chrote chrote-ttyd 2>/dev/null || true
 
     success "Systemd services configured"

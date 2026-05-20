@@ -9,14 +9,14 @@ import { test, expect } from '@playwright/test';
  * and preset switching.
  */
 test.describe.serial('IframePool: session iframe renders in window', () => {
-  const BASE = 'http://localhost:8090';
   const createdSessions: string[] = [];
 
   test.afterEach(async ({ request }) => {
     // Clean up sessions we created
     for (const name of createdSessions) {
       try {
-        await request.delete(`${BASE}/api/tmux/sessions/${name}`);
+        // truthsayer:ignore sql-injection -- test-controlled variable, not user input
+        await request.delete(`/api/tmux/sessions/${name}`);
       } catch { /* ignore */ }
     }
     createdSessions.length = 0;
@@ -24,7 +24,7 @@ test.describe.serial('IframePool: session iframe renders in window', () => {
 
   test('new session button creates a visible iframe in window body', async ({ page }) => {
     // Clear localStorage to start fresh
-    await page.goto(BASE);
+    await page.goto('/');
     await page.evaluate(() => localStorage.clear());
     await page.reload();
     await page.waitForSelector('.dashboard', { timeout: 10000 });
@@ -71,23 +71,22 @@ test.describe.serial('IframePool: session iframe renders in window', () => {
     expect(src).toContain('/terminal/');
 
     // Wait for iframe to load, then check terminal is interactive
-    await page.waitForTimeout(3000); // ttyd needs time to connect
     const iframeEl = iframe.first();
     const frame = iframeEl.contentFrame();
     if (frame) {
-      // Check that xterm.js rendered something (terminal element exists)
+      // Wait for xterm.js to render inside the iframe (ttyd needs time to connect)
       const termEl = frame.locator('.xterm');
-      const termCount = await termEl.count();
-      console.log('xterm elements in iframe:', termCount);
-      // If xterm is there, terminal loaded successfully
-      if (termCount > 0) {
-        await expect(termEl.first()).toBeVisible();
-      }
+      await expect(async () => {
+        const termCount = await termEl.count();
+        expect(termCount).toBeGreaterThan(0);
+      }).toPass({ timeout: 10000 });
+      console.log('xterm elements in iframe:', await termEl.count());
+      await expect(termEl.first()).toBeVisible();
     }
   });
 
   test('iframe survives tab switch (terminal -> files -> terminal)', async ({ page }) => {
-    await page.goto(BASE);
+    await page.goto('/');
     await page.evaluate(() => localStorage.clear());
     await page.reload();
     await page.waitForSelector('.dashboard', { timeout: 10000 });
@@ -138,7 +137,7 @@ test.describe.serial('IframePool: session iframe renders in window', () => {
   });
 
   test('iframe persists across page reload', async ({ page }) => {
-    await page.goto(BASE);
+    await page.goto('/');
     await page.evaluate(() => localStorage.clear());
     await page.reload();
     await page.waitForSelector('.dashboard', { timeout: 10000 });

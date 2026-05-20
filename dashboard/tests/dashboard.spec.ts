@@ -1,4 +1,4 @@
-import { test, expect, Page } from '@playwright/test'
+import { test, expect, Page } from './fixtures'
 import { mockApiRoutes } from './mock-api'
 
 // Helper function to perform drag-and-drop with dnd-kit
@@ -28,10 +28,10 @@ async function dragAndDrop(page: Page, sourceSelector: string, targetSelector: s
   // Move in steps to trigger dnd-kit's distance threshold (8px)
   await page.mouse.move(startX + 10, startY + 10, { steps: 5 })
   await page.mouse.move(endX, endY, { steps: 10 })
-  // Small wait for dnd-kit to process
+  // drag settle — no event to wait for
   await page.waitForTimeout(100)
   await page.mouse.up()
-  // Wait for state update
+  // drag settle — no event to wait for
   await page.waitForTimeout(100)
 }
 
@@ -126,10 +126,11 @@ test.describe('Arena Dashboard', () => {
     })
 
     test('should maintain equal window heights in 4 window layout', async ({ page }) => {
-      await page.click('.layout-btn:has-text("4")')
-      await page.waitForTimeout(200) // Allow layout to settle
+      await page.click('.terminal-area:visible .layout-btn:has-text("4")')
+      // Wait for all 4 windows to render instead of arbitrary timeout
+      await expect(page.locator('.terminal-window:visible')).toHaveCount(4, { timeout: 3000 })
 
-      const windows = page.locator('.terminal-window')
+      const windows = page.locator('.terminal-window:visible')
       const firstBox = await windows.nth(0).boundingBox()
       const thirdBox = await windows.nth(2).boundingBox()
 
@@ -472,9 +473,6 @@ test.describe('Arena Dashboard', () => {
       // (page.keyboard.press goes to the focused iframe, not the main window listener)
       const pressCtrlRight = () => page.evaluate(() => {
         window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', ctrlKey: true, bubbles: true }))
-      })
-      const pressCtrlLeft = () => page.evaluate(() => {
-        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', ctrlKey: true, bubbles: true }))
       })
 
       await pressCtrlRight()

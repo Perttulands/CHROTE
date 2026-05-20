@@ -29,10 +29,10 @@ func TestValidateProjectPath(t *testing.T) {
 	}
 
 	tests := []struct {
-		name        string
-		inputPath   string
-		expectPath  bool
-		expectCode  string
+		name       string
+		inputPath  string
+		expectPath bool
+		expectCode string
 	}{
 		{"empty path", "", false, "BAD_REQUEST"},
 		{"valid root", tempDir, true, ""},

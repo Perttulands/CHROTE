@@ -27,7 +27,7 @@ export default function FolderPickerModal({ onSelect, onClose, initialPath = '/'
   const checkHasBeads = useCallback(async (folderPath: string): Promise<boolean> => {
     try {
       const beadsPath = folderPath === '/' ? '/.beads' : `${folderPath}/.beads`
-      const response = await fetch(`/api/files/resources${beadsPath}`)
+      const response = await fetch(`/api/files/resources${beadsPath}`, { signal: AbortSignal.timeout(10000) })
       if (!response.ok) return false
       const data = await response.json()
       return data.isDir === true

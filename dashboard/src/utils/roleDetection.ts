@@ -12,7 +12,7 @@ export interface RoleInfo {
 }
 
 // Role configuration with display info and theme colors
-// Emojis match Gastown constants (see vendor/gastown/internal/constants/constants.go)
+// Emojis match Gastown constants (see components/gastown/internal/constants/constants.go)
 export const ROLE_CONFIG: Record<AgentRole, Omit<RoleInfo, 'role'>> = {
   mayor: {
     emoji: '🎩',           // Fox conductor

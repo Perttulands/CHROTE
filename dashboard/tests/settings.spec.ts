@@ -1,4 +1,4 @@
-import { test, expect, Page } from '@playwright/test'
+import { test, expect, allowBrowserConsoleMessage, Page } from './fixtures'
 import { mockApiRoutes } from './mock-api'
 
 // Extended mock for settings tests
@@ -34,11 +34,16 @@ async function mockSettingsApiRoutes(page: Page) {
 
 test.describe('Settings View', () => {
   test.beforeEach(async ({ page }) => {
-    // Clear localStorage before each test
-    await page.goto('/')
-    await page.evaluate(() => localStorage.clear())
-    await page.reload()
     await mockSettingsApiRoutes(page)
+    // Clear persisted dashboard state before the app boots. The session flag keeps
+    // reload-based persistence checks from wiping the state they just wrote.
+    await page.addInitScript(() => {
+      const clearFlag = '__chrote_settings_storage_cleared'
+      if (sessionStorage.getItem(clearFlag) === '1') return
+      localStorage.clear()
+      sessionStorage.setItem(clearFlag, '1')
+    })
+    await page.goto('/')
     await page.waitForSelector('.dashboard')
   })
 
@@ -121,7 +126,6 @@ test.describe('Settings View', () => {
 
       // Reload
       await page.reload()
-      await mockSettingsApiRoutes(page)
       await page.waitForSelector('.dashboard')
 
       // Verify theme is applied
@@ -169,7 +173,6 @@ test.describe('Settings View', () => {
       })
 
       await page.reload()
-      await mockSettingsApiRoutes(page)
       await page.waitForSelector('.dashboard')
 
       // Go to settings and verify value
@@ -187,8 +190,9 @@ test.describe('Settings View', () => {
     test('should show polling interval control', async ({ page }) => {
       await page.click('.tab:has-text("Settings")')
 
-      // Look for polling/refresh interval control
-      const pollingControl = page.locator('[class*="polling"], [class*="refresh"], input[name*="interval"]')
+      // Look for polling/refresh interval control within the settings view
+      const settingsView = page.locator('.settings-view, [class*="settings"]')
+      const pollingControl = settingsView.locator('[class*="polling"], input[name*="interval"]')
       // This may or may not exist depending on UI
       if (await pollingControl.count() > 0) {
         await expect(pollingControl.first()).toBeVisible()
@@ -209,7 +213,6 @@ test.describe('Settings View', () => {
       })
 
       await page.reload()
-      await mockSettingsApiRoutes(page)
       await page.waitForSelector('.dashboard')
 
       // Verify it's stored
@@ -246,11 +249,10 @@ test.describe('Settings View', () => {
       if (await applyButton.count() > 0) {
         await applyButton.click()
 
-        // Wait for API call
-        await page.waitForTimeout(500)
-
-        // Verify API was called
-        expect(apiCalls.length).toBeGreaterThanOrEqual(0)
+        // Wait for API call to complete by polling the captured calls
+        await expect(async () => {
+          expect(apiCalls.length).toBeGreaterThanOrEqual(1)
+        }).toPass({ timeout: 3000 })
       }
     })
 
@@ -272,8 +274,11 @@ test.describe('Settings View', () => {
       const matrixOption = page.locator('.theme-option.theme-matrix').first()
       await matrixOption.click()
 
-      // Wait for potential API call
-      await page.waitForTimeout(500)
+      // Wait for theme to be applied to the DOM before checking API calls
+      await expect(async () => {
+        const theme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'))
+        expect(theme).toBe('matrix')
+      }).toPass({ timeout: 3000 })
 
       // If the app calls appearance API on theme change, verify payload
       if (appearanceCalls.length > 0) {
@@ -309,12 +314,11 @@ test.describe('Settings View', () => {
       })
 
       await page.reload()
-      await mockSettingsApiRoutes(page)
       await page.waitForSelector('.dashboard')
 
       // Verify all settings persisted
-      // 1. Window count
-      await expect(page.locator('.terminal-window')).toHaveCount(4)
+      // 1. Window count (scoped to terminal1 workspace — terminal2 also renders in DOM)
+      await expect(page.locator('[data-workspace="terminal1"] .terminal-window')).toHaveCount(4)
 
       // 2. Sidebar collapsed
       await expect(page.locator('.session-panel')).toHaveClass(/collapsed/)
@@ -329,17 +333,25 @@ test.describe('Settings View', () => {
     })
 
     test('should handle corrupted localStorage gracefully', async ({ page }) => {
+      allowBrowserConsoleMessage('Failed to load stored state:')
+      await page.addInitScript(() => {
+        const originalWarn = console.warn
+        console.warn = (...args: unknown[]) => {
+          if (String(args[0]).startsWith('Failed to load stored state:')) return
+          originalWarn(...args)
+        }
+      })
       // Set invalid JSON in localStorage
       await page.evaluate(() => {
         localStorage.setItem('chrote-dashboard-state', 'not valid json {{{')
       })
 
       await page.reload()
-      await mockSettingsApiRoutes(page)
 
       // App should still load with defaults
       await page.waitForSelector('.dashboard')
-      await expect(page.locator('.terminal-window')).toHaveCount(2) // Default
+      // Default is 2 windows per workspace; scope to terminal1 to avoid counting terminal2
+      await expect(page.locator('[data-workspace="terminal1"] .terminal-window')).toHaveCount(2)
     })
 
     test('should handle missing settings object gracefully', async ({ page }) => {
@@ -352,7 +364,6 @@ test.describe('Settings View', () => {
       })
 
       await page.reload()
-      await mockSettingsApiRoutes(page)
       await page.waitForSelector('.dashboard')
 
       // App should use default settings
@@ -364,8 +375,8 @@ test.describe('Settings View', () => {
 
 test.describe('Settings: Theme Visual Verification', () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto('/')
     await mockSettingsApiRoutes(page)
+    await page.goto('/')
     await page.waitForSelector('.dashboard')
   })
 

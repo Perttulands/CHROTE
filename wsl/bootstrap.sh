@@ -5,7 +5,7 @@
 # Usage: wsl -d Ubuntu-24.04 -u root -e bash /path/to/bootstrap.sh
 # Or just use: .\Chrote-Toggle.ps1 -Setup
 
-set -e
+set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CHROTE_DIR="$(dirname "$SCRIPT_DIR")"

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"os"
 	"testing"
 )
@@ -129,13 +130,27 @@ func TestValidateSessionName(t *testing.T) {
 
 func TestGetTmuxTmpdir(t *testing.T) {
 	// Save original env
-	original := os.Getenv("TMUX_TMPDIR")
-	defer os.Setenv("TMUX_TMPDIR", original)
+	origTmpdir := os.Getenv("TMUX_TMPDIR")
+	origXDG := os.Getenv("XDG_RUNTIME_DIR")
+	defer func() {
+		os.Setenv("TMUX_TMPDIR", origTmpdir)
+		os.Setenv("XDG_RUNTIME_DIR", origXDG)
+	}()
 
-	// Test default
+	// Test XDG_RUNTIME_DIR fallback
 	os.Unsetenv("TMUX_TMPDIR")
-	if result := GetTmuxTmpdir(); result != "/tmp" {
-		t.Errorf("GetTmuxTmpdir() with no env = %q, expected /tmp", result)
+	os.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+	if result := GetTmuxTmpdir(); result != "/run/user/1000/tmux" {
+		t.Errorf("GetTmuxTmpdir() with XDG_RUNTIME_DIR = %q, expected /run/user/1000/tmux", result)
+	}
+
+	// Test uid fallback when no XDG_RUNTIME_DIR
+	os.Unsetenv("TMUX_TMPDIR")
+	os.Unsetenv("XDG_RUNTIME_DIR")
+	result := GetTmuxTmpdir()
+	expected := fmt.Sprintf("/tmp/tmux-%d", os.Getuid())
+	if result != expected {
+		t.Errorf("GetTmuxTmpdir() with no env = %q, expected %q", result, expected)
 	}
 
 	// Test with custom value
@@ -150,10 +165,12 @@ func TestGetTmuxTmpdir(t *testing.T) {
 		t.Errorf("GetTmuxTmpdir() with whitespace = %q, expected /trimmed", result)
 	}
 
-	// Test empty string
+	// Test empty string falls through to XDG/uid
 	os.Setenv("TMUX_TMPDIR", "")
-	if result := GetTmuxTmpdir(); result != "/tmp" {
-		t.Errorf("GetTmuxTmpdir() with empty string = %q, expected /tmp", result)
+	os.Unsetenv("XDG_RUNTIME_DIR")
+	result = GetTmuxTmpdir()
+	if result != expected {
+		t.Errorf("GetTmuxTmpdir() with empty string = %q, expected %q", result, expected)
 	}
 }
 

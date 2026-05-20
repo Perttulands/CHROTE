@@ -162,17 +162,15 @@ func TestFilesHandler_CreateResource_AtRoot(t *testing.T) {
 func TestFilesHandler_RenameResource_InvalidPath(t *testing.T) {
 	handler := NewFilesHandler()
 
-	// Test that invalid paths (not under allowed roots) return 403
-	// Note: On Windows test env, /code doesn't exist, so the test verifies
-	// that non-allowed paths are rejected
-	req := httptest.NewRequest(http.MethodPatch, "/api/files/resources/code/test.txt", bytes.NewBufferString("{}"))
-	req.SetPathValue("path", "code/test.txt")
+	// Use a path that is never under any allowed root
+	req := httptest.NewRequest(http.MethodPatch, "/api/files/resources/etc/shadow", bytes.NewBufferString("{}"))
+	req.SetPathValue("path", "/etc/shadow")
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
 	handler.RenameResource(rec, req)
 
-	// Path is forbidden because it's not under an allowed root on this system
+	// Path is forbidden because it's not under an allowed root
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("RenameResource with invalid path status = %d, want %d", rec.Code, http.StatusForbidden)
 	}

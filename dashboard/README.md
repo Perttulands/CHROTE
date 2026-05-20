@@ -7,6 +7,7 @@ React + TypeScript web UI for managing tmux sessions in the Chrote environment.
 ```bash
 npm install
 npm run dev      # Dev server at http://localhost:5173
+npm run lint     # ESLint static check
 npm run build    # Build to dist/ (embedded in Go binary)
 ```
 
@@ -125,10 +126,22 @@ Two modes:
 ## Testing
 
 ```bash
-npm run test          # Run Playwright tests
-npm run test:headed   # Run with browser visible
-npm run test:ui       # Interactive test UI
+npm run test:unit               # Run Vitest unit/component tests
+npm run test:unit -- --coverage # Generate Vitest coverage in coverage/
+npm run lint                    # Run ESLint
+npm audit --audit-level=moderate
+npm test                        # Run deterministic mocked Playwright tests
+npm run test:headed             # Run mocked Playwright tests with browser visible
+npm run test:ui                 # Interactive Playwright UI
 ```
+
+Live CHROTE backend and terminal integration specs are separated from the default gate:
+
+```bash
+CHROTE_TEST_URL=http://127.0.0.1:8094 npm run test:live
+```
+
+Live tests are operator-run only unless the runner has an approved CHROTE backend, tmux, and terminal proxy available at `CHROTE_TEST_URL`.
 
 ## Building
 

@@ -1,4 +1,5 @@
 #!/bin/bash
+# truthsayer:ignore bad-defaults.missing-pipefail -- launch script uses intentional fallthrough
 # BV (Beads Viewer) Launcher for Chrote Dashboard
 # Launches bv in the specified project directory
 # USAGE: ttyd -W -a /usr/local/bin/bv-launch.sh
@@ -9,7 +10,7 @@ export LANG=en_US.UTF-8
 # Get project path from first argument, default to /code
 PROJECT_PATH="${1:-/code}"
 
-# Change to project directory (fallback to /code if invalid)
+# REASON: cd to preferred dir is optional, fallthrough is intentional
 cd "$PROJECT_PATH" 2>/dev/null || cd /code 2>/dev/null || cd ~
 
 # Check if .beads directory exists in current location

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook } from '@testing-library/react'
 import { createElement } from 'react'
 import { IframePoolProvider, useIframePool } from './IframePool'
@@ -6,7 +6,7 @@ import { SessionProvider } from '../context/SessionContext'
 import { ToastProvider } from '../context/ToastContext'
 
 // Mock fetch for SessionProvider
-global.fetch = vi.fn(() => Promise.resolve({
+;(globalThis as Record<string, unknown>).fetch = vi.fn(() => Promise.resolve({
   ok: true,
   json: () => Promise.resolve({ sessions: [], grouped: {}, timestamp: new Date().toISOString() }),
 })) as any

@@ -1,12 +1,12 @@
-import { test, expect, Page } from '@playwright/test'
+import { test, expect, Page } from './fixtures'
 
 /**
  * TDD Test: Path Mapping for FilesView
  *
  * These tests verify that:
  * 1. API calls use /code (not /srv/code) - filebrowser root is /
- * 2. UI displays E:/Code (not /code or /srv/code)
- * 3. Root folders show as E:/Code and E:/Vault
+ * 2. UI displays root folders without leaking a /srv prefix
+ * 3. No /srv/ prefix leaks into API calls or UI
  */
 
 // Mock data matching expected API paths (/code, not /srv/code)
@@ -30,7 +30,14 @@ async function setupPathTest(page: Page) {
   // Track API calls to verify correct paths
   const apiCalls: string[] = []
 
-  // Mock all API endpoints to prevent connection errors
+  await page.route(/.*\/terminal\/?.*/, async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/html',
+      body: '<html><body>mock terminal</body></html>',
+    })
+  })
+
   await page.route('**/api/**', async route => {
     const url = route.request().url()
 
@@ -52,53 +59,52 @@ async function setupPathTest(page: Page) {
       return
     }
 
+    if (url.includes('/api/files/resources')) {
+      apiCalls.push(url)
+
+      // Root directory request - should be /resources/ or /resources (no /srv)
+      if (url.endsWith('/resources/') || url.endsWith('/resources')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(mockRootResponse),
+        })
+        return
+      }
+
+      // /code directory - API should request /resources/code (NOT /resources/srv/code)
+      if (url.includes('/resources/code') && !url.includes('/srv/')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(mockCodeDirResponse),
+        })
+        return
+      }
+
+      // If we get /srv/code, that's the bug - return 404
+      if (url.includes('/srv/')) {
+        await route.fulfill({
+          status: 404,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Not found - /srv prefix should not be in API path' }),
+        })
+        return
+      }
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ isDir: true, items: [] }),
+      })
+      return
+    }
+
     // Default API response
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({}),
-    })
-  })
-
-  await page.route('**/api/files/resources/**', async route => {
-    const url = route.request().url()
-    apiCalls.push(url)
-
-    // Root directory request - should be /resources/ or /resources (no /srv)
-    if (url.endsWith('/resources/') || url.endsWith('/resources')) {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(mockRootResponse),
-      })
-      return
-    }
-
-    // /code directory - API should request /resources/code (NOT /resources/srv/code)
-    if (url.includes('/resources/code') && !url.includes('/srv/')) {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(mockCodeDirResponse),
-      })
-      return
-    }
-
-    // If we get /srv/code, that's the bug - return 404
-    if (url.includes('/srv/')) {
-      await route.fulfill({
-        status: 404,
-        contentType: 'application/json',
-        body: JSON.stringify({ error: 'Not found - /srv prefix should not be in API path' }),
-      })
-      return
-    }
-
-    // Default
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ isDir: true, items: [] }),
     })
   })
 
@@ -130,11 +136,13 @@ test.describe('Path Mapping - API Calls', () => {
     await page.waitForSelector('.files-view')
     await expect(page.locator('.fb-loading')).not.toBeVisible({ timeout: 5000 })
 
-    // Double-click on "code" folder (displayed as E:/Code)
-    await page.dblclick('.fb-row:has-text("E:/Code"), .fb-grid-item:has-text("E:/Code")')
+    await page.dblclick('.fb-row:has-text("code"), .fb-grid-item:has-text("code")')
 
-    // Wait for navigation
-    await page.waitForTimeout(500)
+    // Wait for navigation to complete by checking for child content
+    await expect(async () => {
+      const codeCall = apiCalls.find(url => url.includes('/code'))
+      expect(codeCall).toBeDefined()
+    }).toPass({ timeout: 3000 })
 
     // Check API calls - should have /resources/code, NOT /resources/srv/code
     const codeCall = apiCalls.find(url => url.includes('/code'))
@@ -154,37 +162,36 @@ test.describe('Path Mapping - UI Display', () => {
     await expect(page.locator('.fb-loading')).not.toBeVisible({ timeout: 5000 })
   })
 
-  test('root folders should display as E:/Code and E:/Vault', async ({ page }) => {
-    // Should show E:/Code, not "code" or "/code" or "/srv/code"
-    await expect(page.locator('.fb-filename:has-text("E:/Code"), .fb-grid-name:has-text("E:/Code")')).toBeVisible()
-    await expect(page.locator('.fb-filename:has-text("E:/Vault"), .fb-grid-name:has-text("E:/Vault")')).toBeVisible()
+  test('root folders should display without /srv prefix', async ({ page }) => {
+    await expect(page.locator('.fb-filename:has-text("code"), .fb-grid-name:has-text("code")')).toBeVisible()
+    await expect(page.locator('.fb-filename:has-text("vault"), .fb-grid-name:has-text("vault")')).toBeVisible()
 
     // Should NOT show raw container paths
     await expect(page.locator('.fb-filename:has-text("/srv/"), .fb-grid-name:has-text("/srv/")')).not.toBeVisible()
   })
 
-  test('breadcrumbs should show E:/Code when navigating', async ({ page }) => {
+  test('breadcrumbs should show /code when navigating', async ({ page }) => {
     // Navigate into code folder
-    await page.dblclick('.fb-row:has-text("E:/Code"), .fb-grid-item:has-text("E:/Code")')
+    await page.dblclick('.fb-row:has-text("code"), .fb-grid-item:has-text("code")')
 
-    // Breadcrumb should show E:/Code, not /code or /srv/code
-    await expect(page.locator('.fb-breadcrumb-item:has-text("E:/Code")')).toBeVisible()
+    // Breadcrumb should show code, not /srv/code
+    await expect(page.locator('.fb-breadcrumb-item:has-text("code")')).toBeVisible()
     await expect(page.locator('.fb-breadcrumb-item:has-text("/srv/")')).not.toBeVisible()
   })
 
-  test('current path display should show Windows path format', async ({ page }) => {
+  test('current path display should show path without /srv prefix', async ({ page }) => {
     // Navigate into code folder
-    await page.dblclick('.fb-row:has-text("E:/Code"), .fb-grid-item:has-text("E:/Code")')
+    await page.dblclick('.fb-row:has-text("code"), .fb-grid-item:has-text("code")')
 
-    // The path display/breadcrumbs should show E:/Code format
-    const breadcrumbs = page.locator('.fb-breadcrumbs')
-    await expect(breadcrumbs).toContainText('E:/Code')
-    await expect(breadcrumbs).not.toContainText('/srv/')
+    // The path display/breadcrumbs should show /code format
+    const pathDisplay = page.locator('.fb-path-display')
+    await expect(pathDisplay).toContainText('code')
+    await expect(pathDisplay).not.toContainText('/srv/')
   })
 })
 
 test.describe('Path Mapping - Context Menu', () => {
-  test('copy path should use Windows format E:/Code', async ({ page }) => {
+  test('copy path should use correct path format', async ({ page }) => {
     await setupPathTest(page)
     await page.goto('/')
     await page.waitForSelector('.dashboard')
@@ -193,8 +200,10 @@ test.describe('Path Mapping - Context Menu', () => {
     await expect(page.locator('.fb-loading')).not.toBeVisible({ timeout: 5000 })
 
     // Navigate into code folder first
-    await page.dblclick('.fb-row:has-text("E:/Code"), .fb-grid-item:has-text("E:/Code")')
-    await page.waitForTimeout(500)
+    await page.dblclick('.fb-row:has-text("code"), .fb-grid-item:has-text("code")')
+
+    // Wait for folder contents to load after navigation
+    await expect(page.locator('.fb-row:has-text("readme.md"), .fb-grid-item:has-text("readme.md")')).toBeVisible({ timeout: 3000 })
 
     // Right-click on a file
     await page.click('.fb-row:has-text("readme.md"), .fb-grid-item:has-text("readme.md")', { button: 'right' })
@@ -203,8 +212,6 @@ test.describe('Path Mapping - Context Menu', () => {
     const copyPathItem = page.locator('.fb-context-item:has-text("Copy Path")')
 
     if (await copyPathItem.isVisible()) {
-      // If Copy Path exists, clicking it should copy E:/Code/readme.md format
-      // We can't easily test clipboard, but we can verify the menu item exists
       await expect(copyPathItem).toBeVisible()
     }
   })

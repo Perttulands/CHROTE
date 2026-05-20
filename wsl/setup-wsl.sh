@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -eo pipefail
 
 RED="\033[0;31m"
 GREEN="\033[0;32m"
@@ -16,6 +16,7 @@ log "Starting CHROTE WSL setup..."
 
 # Phase 1: WSL config
 log "Phase 1: System configuration..."
+# REASON: wsl.conf may not exist yet on fresh installs
 if ! grep -q "systemd = true" /etc/wsl.conf 2>/dev/null; then
     cat > /etc/wsl.conf << EOF
 [boot]
@@ -49,6 +50,7 @@ EOF
 chown chrote:chrote /run/tmux/chrote
 chmod 0700 /run/tmux/chrote
 chown -R chrote:chrote /home/chrote/.local
+# REASON: /mnt/e/Vault may not exist on all hosts; symlink failure is non-fatal
 [ ! -L /vault ] && ln -s /mnt/e/Vault /vault 2>/dev/null || true
 
 # Phase 4: Dependencies
@@ -60,6 +62,7 @@ locale-gen en_US.UTF-8 >/dev/null
 
 # Install Go 1.23 (required by go.mod)
 GO_VERSION="1.23.4"
+# REASON: go binary may not exist yet; checking version before install
 if ! /usr/local/go/bin/go version 2>/dev/null | grep -q "go$GO_VERSION"; then
     log "Installing Go $GO_VERSION..."
     curl -sLO "https://go.dev/dl/go$GO_VERSION.linux-amd64.tar.gz"
@@ -71,6 +74,7 @@ export GOTOOLCHAIN=auto
 
 if ! command -v node &>/dev/null; then
     log "Installing Node.js..."
+    # REASON: nodesource setup is verbose; output suppressed for clean install logs
     curl -fsSL https://deb.nodesource.com/setup_20.x 2>/dev/null | bash - >/dev/null 2>&1
     apt-get install -y -qq nodejs >/dev/null
 fi
@@ -81,6 +85,7 @@ if [ ! -f /usr/local/bin/ttyd ]; then
     chmod +x /usr/local/bin/ttyd
 fi
 
+# REASON: claude-code is optional; install failure is non-fatal
 npm install -g @anthropic-ai/claude-code 2>/dev/null || true
 
 # Phase 5: Copy and build
@@ -90,39 +95,42 @@ SRC="${CHROTE_SRC:-/mnt/e/Docker/CHROTE}"  # Use env var from bootstrap, fallbac
 log "Source: $SRC"
 if [ ! -d "$CHROTE_HOME" ]; then
     mkdir -p "$CHROTE_HOME"
+    # REASON: rsync may not be installed yet; cp fallback is intentional
     rsync -a --exclude="node_modules" --exclude=".git" "$SRC/" "$CHROTE_HOME/" 2>/dev/null || cp -r "$SRC"/* "$CHROTE_HOME/"
     chown -R chrote:chrote "$CHROTE_HOME"
 fi
 [ ! -L /code ] && ln -s "$CHROTE_HOME" /code && chown -h chrote:chrote /code
 
 log "Building dashboard..."
+# REASON: npm warnings suppressed for clean install output
 su - chrote -c "cd ~/chrote/dashboard && npm ci --silent 2>/dev/null && npm run build --silent 2>/dev/null"
 su - chrote -c "mkdir -p ~/chrote/src/internal/dashboard && cp -r ~/chrote/dashboard/dist/* ~/chrote/src/internal/dashboard/"
 
 log "Building Go server..."
 su - chrote -c "export PATH=/usr/local/go/bin:\$PATH && cd ~/chrote/src && go build -o ~/chrote-server ./cmd/server"
 
-# Build vendored tools (gastown, beads, beads_viewer)
-log "Building vendored tools..."
+# Build components (gastown, beads, beads_viewer)
+log "Building components..."
 su - chrote -c '
 export PATH=/usr/local/go/bin:$PATH
 cd ~/chrote
-if [ -f vendor/gastown/go.mod ]; then
-    cd vendor/gastown && go build -o ~/.local/bin/gt ./cmd/gt && cd ../..
+if [ -f components/gastown/go.mod ]; then
+    cd components/gastown && go build -o ~/.local/bin/gt ./cmd/gt && cd ../..
     echo "  Built gastown (gt)"
 fi
-if [ -f vendor/beads/go.mod ]; then
-    cd vendor/beads && go build -o ~/.local/bin/bd ./cmd/bd && cd ../..
+if [ -f components/beads/go.mod ]; then
+    cd components/beads && go build -o ~/.local/bin/bd ./cmd/bd && cd ../..
     echo "  Built beads (bd)"
 fi
-if [ -f vendor/beads_viewer/go.mod ]; then
-    cd vendor/beads_viewer && go build -o ~/.local/bin/bv ./cmd/bv && cd ../..
+if [ -f components/beads_viewer/go.mod ]; then
+    cd components/beads_viewer && go build -o ~/.local/bin/bv ./cmd/bv && cd ../..
     echo "  Built beads_viewer (bv)"
 fi
 '
 
 # Phase 6: User environment
 log "Phase 6: Configuring environment..."
+# REASON: .bashrc may not exist yet on fresh user creation
 if ! grep -q "CHROTE Environment" /home/chrote/.bashrc 2>/dev/null; then
     cat >> /home/chrote/.bashrc << EOF
 
@@ -130,7 +138,7 @@ if ! grep -q "CHROTE Environment" /home/chrote/.bashrc 2>/dev/null; then
 export TMUX_TMPDIR=/run/tmux/chrote
 export PATH="/usr/local/go/bin:\$HOME/.local/bin:\$PATH"
 export LANG=en_US.UTF-8
-cd /code 2>/dev/null || cd ~
+cd /code 2>/dev/null || cd ~  # REASON: cd to preferred dir is optional
 EOF
     chown chrote:chrote /home/chrote/.bashrc
 fi
@@ -143,6 +151,7 @@ export TMUX_TMPDIR=/run/tmux/chrote
 export LANG=en_US.UTF-8
 cd /code
 SESSION="\$1"
+# REASON: tmux has-session tests existence; stderr is noise, not an error
 [ -n "\$SESSION" ] && tmux has-session -t "\$SESSION" 2>/dev/null && exec tmux attach-session -t "\$SESSION"
 exec bash -l
 EOF
@@ -182,6 +191,7 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
+# REASON: enable output is noisy; start may fail if systemd not fully booted (WSL)
 systemctl enable chrote-server chrote-ttyd >/dev/null 2>&1
 systemctl is-system-running &>/dev/null && systemctl start chrote-server chrote-ttyd || true
 

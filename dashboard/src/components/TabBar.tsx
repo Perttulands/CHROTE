@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import MusicPlayer from './MusicPlayer'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 
-export type Tab = 'terminal1' | 'terminal2' | 'files' | 'beads_viewer' | 'chat' | 'manual' | 'settings' | 'help'
+export type Tab = 'terminal1' | 'terminal2' | 'files' | 'agents' | 'beads' | 'services' | 'settings' | 'help'
 
 interface InternalTab {
   id: Tab
@@ -30,7 +30,7 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
   const [helpMenuOpen, setHelpMenuOpen] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const helpMenuRef = useRef<HTMLDivElement>(null)
-  
+
   const isMobile = useMediaQuery('(max-width: 768px)')
 
   // Close menu when clicking outside
@@ -40,14 +40,14 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
       if (helpMenuRef.current && !helpMenuRef.current.contains(e.target as Node)) {
         setHelpMenuOpen(false)
       }
-      
+
       // Close mobile menu if clicking outside tab bar
       const target = e.target as HTMLElement
       if (mobileMenuOpen && !target.closest('.tab-bar')) {
         setMobileMenuOpen(false)
       }
     }
-    
+
     if (helpMenuOpen || mobileMenuOpen) {
       document.addEventListener('mousedown', handleClickOutside)
       return () => document.removeEventListener('mousedown', handleClickOutside)
@@ -55,11 +55,12 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
   }, [helpMenuOpen, mobileMenuOpen])
 
   const tabs: TabConfig[] = [
-    { id: 'chat', label: '✉ ChroteChat' },
     { id: 'terminal1', label: 'Terminal' },
     { id: 'terminal2', label: 'Terminal 2' },
     { id: 'files', label: 'Files' },
-    { id: 'beads_viewer', label: 'Beads' },
+    { id: 'agents', label: 'Agents' },
+    { id: 'beads', label: 'Beads' },
+    { id: 'services', label: 'Services' },
     { id: 'settings', label: 'Settings' },
   ]
 
@@ -79,7 +80,7 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
       {isMobile ? (
         <>
           <div className="tab-bar-mobile-start">
-            <button 
+            <button
               className={`tab hamburger-btn ${mobileMenuOpen ? 'active' : ''}`}
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             >
@@ -100,9 +101,9 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
                   {tab.label}
                 </button>
               ))}
-              
+
               <div className="mobile-nav-divider"></div>
-              
+
               {onShowPresets && (
                 <button
                   className="mobile-nav-item"
@@ -132,18 +133,9 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
               >
                 Dashboard Help
               </button>
-               <button
-                className="mobile-nav-item"
-                onClick={() => {
-                   onTabChange('manual')
-                   setMobileMenuOpen(false)
-                }}
-              >
-                Gastown Operators Manual
-              </button>
             </div>
           )}
-          
+
           <div className="tab-bar-actions">
             <MusicPlayer />
           </div>
@@ -201,15 +193,6 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
                     }}
                   >
                     Dashboard Help
-                  </button>
-                  <button
-                    className="help-dropdown-item"
-                    onClick={() => {
-                      onTabChange('manual')
-                      setHelpMenuOpen(false)
-                    }}
-                  >
-                    Gastown Operators Manual
                   </button>
                 </div>
               )}
