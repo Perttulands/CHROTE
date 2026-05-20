@@ -253,8 +253,8 @@ describe('ServicesView', () => {
     }
 
     vi.stubGlobal('EventSource', MockEventSource)
-    vi.spyOn(window, 'setInterval').mockImplementation((handler: (...args: unknown[]) => void) => {
-      handler()
+    vi.spyOn(window, 'setInterval').mockImplementation((handler: Parameters<typeof window.setInterval>[0]) => {
+      if (typeof handler === 'function') handler()
       return {} as ReturnType<typeof window.setInterval>
     })
     vi.spyOn(window, 'clearInterval').mockImplementation(() => undefined)
