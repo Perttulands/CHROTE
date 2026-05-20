@@ -1,4 +1,6 @@
-import { test, expect, Page } from '@playwright/test'
+import { test, expect, allowBrowserConsoleMessage, Page } from './fixtures'
+
+const fileResourcesPattern = /.*\/api\/files\/resources(?:\/.*)?$/
 
 // Mock filebrowser API responses
 const mockDirectoryResponse = {
@@ -28,10 +30,30 @@ async function mockFilebrowserApi(page: Page, options?: { failConnection?: boole
     })
   })
 
+  await page.route('**/api/tmux/appearance', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true }),
+    })
+  })
+
+  await page.route('**/api/files/raw/**', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/plain',
+      body: 'mock file content',
+    })
+  })
+
   // Mock filebrowser API
-  await page.route('**/api/files/resources/**', async route => {
+  await page.route(fileResourcesPattern, async route => {
     if (options?.failConnection) {
-      await route.abort('connectionfailed')
+      await route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'file service unavailable' }),
+      })
       return
     }
 
@@ -83,6 +105,7 @@ test.describe('Filebrowser Connection', () => {
 
     // Should show loading indicator
     await expect(page.locator('.fb-loading')).toBeVisible()
+    await expect(page.locator('.fb-loading')).not.toBeVisible({ timeout: 5000 })
   })
 
   test('should load and display directory contents', async ({ page }) => {
@@ -106,6 +129,7 @@ test.describe('Filebrowser Connection', () => {
   })
 
   test('should show error state when connection fails', async ({ page }) => {
+    allowBrowserConsoleMessage('Failed to load resource: the server responded with a status of 503')
     await mockFilebrowserApi(page, { failConnection: true })
 
     await page.goto('/')
@@ -121,6 +145,7 @@ test.describe('Filebrowser Connection', () => {
   })
 
   test('should retry loading on retry button click', async ({ page }) => {
+    allowBrowserConsoleMessage('Failed to load resource: the server responded with a status of 503')
     // First: set up failure state
     await mockFilebrowserApi(page, { failConnection: true })
 
@@ -134,8 +159,8 @@ test.describe('Filebrowser Connection', () => {
     await expect(page.locator('.fb-retry-btn')).toBeVisible()
 
     // Now set up success state for retry
-    await page.unroute('**/api/files/resources/**')
-    await page.route('**/api/files/resources/**', async route => {
+    await page.unroute(fileResourcesPattern)
+    await page.route(fileResourcesPattern, async route => {
       const url = route.request().url()
       if (url.endsWith('/resources/') || url.endsWith('/resources')) {
         await route.fulfill({
@@ -216,12 +241,8 @@ test.describe('Filebrowser Navigation', () => {
     // Click refresh
     await page.click('.fb-btn[title="Refresh"]')
 
-    // Wait for any loading state to appear and disappear
-    await page.waitForTimeout(300)
-
-    // Items should still be there (content reloaded)
-    const afterCount = await page.locator('.fb-row, .fb-grid-item').count()
-    expect(afterCount).toBe(3)
+    // Wait for content to reload (items should still be there)
+    await expect(page.locator('.fb-row, .fb-grid-item')).toHaveCount(3, { timeout: 3000 })
   })
 })
 
@@ -304,86 +325,46 @@ test.describe('Filebrowser UI Elements', () => {
   })
 })
 
-test.describe('Filebrowser Inbox Panel', () => {
+test.describe('Filebrowser Workbench', () => {
   test.beforeEach(async ({ page }) => {
     await mockFilebrowserApi(page)
     await page.goto('/')
     await page.waitForSelector('.dashboard')
     await page.click('.tab:has-text("Files")')
     await page.waitForSelector('.files-view')
+    await expect(page.locator('.fb-loading')).not.toBeVisible({ timeout: 5000 })
   })
 
-  test('should display inbox panel', async ({ page }) => {
-    await expect(page.locator('.inbox-panel')).toBeVisible()
-    await expect(page.locator('.inbox-title')).toContainText('Send a package to E:/Code/incoming')
+  test('should display explorer tree and preview pane', async ({ page }) => {
+    await expect(page.locator('.fb-sidebar')).toBeVisible()
+    await expect(page.locator('.fb-editor-pane')).toBeVisible()
+    await expect(page.locator('.fb-section-title:has-text("Workspace")')).toBeVisible()
+    await expect(page.locator('.fb-editor-empty')).toContainText('No file selected')
   })
 
-  test('should have file input for upload', async ({ page }) => {
-    // The dropzone should be clickable
-    await expect(page.locator('.inbox-dropzone')).toBeVisible()
-  })
-})
+  test('should open a text file in the editor pane', async ({ page }) => {
+    await page.click('.fb-row:has-text("readme.txt")')
 
-test.describe('Filebrowser Inbox Send E2E', () => {
-  test.beforeEach(async ({ page }) => {
-    await mockFilebrowserApi(page)
-    await page.goto('/')
-    await page.waitForSelector('.dashboard')
-    await page.click('.tab:has-text("Files")')
-    await page.waitForSelector('.files-view')
+    await expect(page.locator('.fb-editor-tab:has-text("readme.txt")')).toBeVisible()
+    await expect(page.locator('.fb-editor-textarea')).toHaveValue('mock file content')
   })
 
-  test('should enable send button when file is selected', async ({ page }) => {
-    // Find the hidden file input
-    const fileInput = page.locator('.inbox-dropzone input[type="file"]:first-of-type')
-
-    // Send button should be disabled initially
-    const sendButton = page.locator('.inbox-send')
-    await expect(sendButton).toBeDisabled()
-
-    // Select a file
-    await fileInput.setInputFiles({
-      name: 'test-report.pdf',
-      mimeType: 'application/pdf',
-      buffer: Buffer.from('test file content'),
-    })
-
-    // Send button should now be enabled
-    await expect(sendButton).toBeEnabled()
+  test('should have upload control in the toolbar', async ({ page }) => {
+    await page.dblclick('.fb-row:has-text("code")')
+    await expect(page.locator('.fb-btn[title="Upload"]')).toBeEnabled()
+    await expect(page.locator('.fb-hidden-input[type="file"]')).toHaveCount(1)
   })
 
-  test('should show selected file name', async ({ page }) => {
-    const fileInput = page.locator('.inbox-dropzone input[type="file"]:first-of-type')
+  test('should upload files to the current folder', async ({ page }) => {
+    const uploadRequests: { url: string; body: Buffer }[] = []
+    let uploadCompleted = false
+    let postUploadRefreshCompleted = false
 
-    await fileInput.setInputFiles({
-      name: 'my-document.pdf',
-      mimeType: 'application/pdf',
-      buffer: Buffer.from('test content'),
-    })
-
-    // Should show the file name
-    await expect(page.locator('.inbox-selected-file, .inbox-file-name')).toContainText('my-document.pdf')
-  })
-
-  test('should allow entering a note', async ({ page }) => {
-    const noteInput = page.locator('.inbox-note, textarea[placeholder*="note"], textarea[placeholder*="message"]')
-
-    if (await noteInput.count() > 0) {
-      await noteInput.fill('Please analyze this report')
-      await expect(noteInput).toHaveValue('Please analyze this report')
-    }
-  })
-
-  test('should upload file on send', async ({ page }) => {
-    const uploadRequests: { url: string; method: string; body: Buffer }[] = []
-
-    // Track file upload requests
-    await page.route('**/api/files/resources/**', async route => {
+    await page.route(fileResourcesPattern, async route => {
       const request = route.request()
       if (request.method() === 'POST') {
         uploadRequests.push({
           url: request.url(),
-          method: request.method(),
           body: request.postDataBuffer() || Buffer.from(''),
         })
         await route.fulfill({
@@ -391,206 +372,41 @@ test.describe('Filebrowser Inbox Send E2E', () => {
           contentType: 'application/json',
           body: JSON.stringify({ success: true }),
         })
-      } else {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify(mockDirectoryResponse),
-        })
+        uploadCompleted = true
+        return
+      }
+
+      const isPostUploadRefresh = uploadCompleted && request.url().includes('/resources/code')
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(request.url().includes('/resources/code')
+          ? mockSubdirectoryResponse
+          : mockDirectoryResponse),
+      })
+      if (isPostUploadRefresh) {
+        postUploadRefreshCompleted = true
       }
     })
 
-    // Select a file
-    const fileInput = page.locator('.inbox-dropzone input[type="file"]:first-of-type')
+    await page.dblclick('.fb-row:has-text("code")')
+    await expect(page.locator('.fb-row, .fb-grid-item')).toHaveCount(2)
+
+    const fileInput = page.locator('.fb-hidden-input[type="file"]')
     await fileInput.setInputFiles({
-      name: 'report.pdf',
-      mimeType: 'application/pdf',
-      buffer: Buffer.from('PDF content here'),
-    })
-
-    // Click send
-    const sendButton = page.locator('.inbox-send')
-    if (await sendButton.isEnabled()) {
-      await sendButton.click()
-
-      // Wait for upload
-      await page.waitForTimeout(500)
-
-      // Should have made upload requests
-      // One for the file, possibly one for the note
-      expect(uploadRequests.length).toBeGreaterThanOrEqual(1)
-
-      // File should go to /code/incoming/
-      const fileUpload = uploadRequests.find(r => r.url.includes('/incoming/'))
-      expect(fileUpload).toBeDefined()
-    }
-  })
-
-  test('should create note file alongside uploaded file', async ({ page }) => {
-    const uploadRequests: { url: string }[] = []
-
-    await page.route('**/api/files/resources/**', async route => {
-      const request = route.request()
-      if (request.method() === 'POST') {
-        uploadRequests.push({ url: request.url() })
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ success: true }),
-        })
-      } else {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify(mockDirectoryResponse),
-        })
-      }
-    })
-
-    // Select file
-    const fileInput = page.locator('.inbox-dropzone input[type="file"]:first-of-type')
-    await fileInput.setInputFiles({
-      name: 'data.csv',
-      mimeType: 'text/csv',
-      buffer: Buffer.from('a,b,c\n1,2,3'),
-    })
-
-    // Enter a note
-    const noteInput = page.locator('.inbox-note, textarea[placeholder*="note"], textarea[placeholder*="message"]')
-    if (await noteInput.count() > 0) {
-      await noteInput.fill('Process this CSV data')
-    }
-
-    // Send
-    const sendButton = page.locator('.inbox-send')
-    if (await sendButton.isEnabled()) {
-      await sendButton.click()
-      await page.waitForTimeout(500)
-
-      // Should have created both file and note
-      const noteUpload = uploadRequests.find(r => r.url.includes('.note') || r.url.includes('.letter'))
-      if (noteInput && await noteInput.count() > 0) {
-        expect(noteUpload).toBeDefined()
-      }
-    }
-  })
-
-  test('should clear form after successful send', async ({ page }) => {
-    await page.route('**/api/files/resources/**', async route => {
-      if (route.request().method() === 'POST') {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ success: true }),
-        })
-      } else {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify(mockDirectoryResponse),
-        })
-      }
-    })
-
-    // Select file
-    const fileInput = page.locator('.inbox-dropzone input[type="file"]:first-of-type')
-    await fileInput.setInputFiles({
-      name: 'test.txt',
+      name: 'upload.txt',
       mimeType: 'text/plain',
-      buffer: Buffer.from('test'),
+      buffer: Buffer.from('uploaded content'),
     })
 
-    // Send
-    const sendButton = page.locator('.inbox-send')
-    if (await sendButton.isEnabled()) {
-      await sendButton.click()
-      await page.waitForTimeout(500)
-
-      // Form should be cleared
-      await expect(sendButton).toBeDisabled()
-
-      // Note should be cleared
-      const noteInput = page.locator('.inbox-note, textarea')
-      if (await noteInput.count() > 0) {
-        await expect(noteInput).toHaveValue('')
-      }
-    }
-  })
-
-  test('should show error on upload failure', async ({ page }) => {
-    await page.route('**/api/files/resources/**', async route => {
-      if (route.request().method() === 'POST') {
-        await route.fulfill({
-          status: 500,
-          contentType: 'application/json',
-          body: JSON.stringify({ error: 'Upload failed' }),
-        })
-      } else {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify(mockDirectoryResponse),
-        })
-      }
-    })
-
-    // Select file
-    const fileInput = page.locator('.inbox-dropzone input[type="file"]:first-of-type')
-    await fileInput.setInputFiles({
-      name: 'fail.txt',
-      mimeType: 'text/plain',
-      buffer: Buffer.from('will fail'),
-    })
-
-    // Send
-    const sendButton = page.locator('.inbox-send')
-    if (await sendButton.isEnabled()) {
-      await sendButton.click()
-      await page.waitForTimeout(500)
-
-      // Should show error toast
-      const errorToast = page.locator('.fb-error-toast')
-      await expect(errorToast).toBeVisible()
-    }
-  })
-
-  test('should support multiple file selection', async ({ page }) => {
-    const uploadRequests: string[] = []
-
-    await page.route('**/api/files/resources/**', async route => {
-      if (route.request().method() === 'POST') {
-        uploadRequests.push(route.request().url())
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ success: true }),
-        })
-      } else {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify(mockDirectoryResponse),
-        })
-      }
-    })
-
-    // Select multiple files
-    const fileInput = page.locator('.inbox-dropzone input[type="file"]:first-of-type')
-    await fileInput.setInputFiles([
-      { name: 'file1.txt', mimeType: 'text/plain', buffer: Buffer.from('one') },
-      { name: 'file2.txt', mimeType: 'text/plain', buffer: Buffer.from('two') },
-    ])
-
-    // Send
-    const sendButton = page.locator('.inbox-send')
-    if (await sendButton.isEnabled()) {
-      await sendButton.click()
-      await page.waitForTimeout(500)
-
-      // Should upload both files
-      const fileUploads = uploadRequests.filter(u => u.includes('/incoming/'))
-      expect(fileUploads.length).toBeGreaterThanOrEqual(2)
-    }
+    await expect(async () => {
+      expect(uploadRequests.length).toBe(1)
+    }).toPass({ timeout: 3000 })
+    await expect(async () => {
+      expect(postUploadRefreshCompleted).toBe(true)
+    }).toPass({ timeout: 3000 })
+    expect(uploadRequests[0].url).toContain('/resources/code/upload.txt')
+    expect(uploadRequests[0].body.toString()).toBe('uploaded content')
   })
 })
 
@@ -616,16 +432,15 @@ test.describe('Filebrowser Tab Navigation', () => {
     await expect(page.locator('.files-view')).not.toBeVisible()
   })
 
-  test('should show Info tab content', async ({ page }) => {
+  test('should show editor pane content', async ({ page }) => {
     // Go to Files tab
     await page.click('.tab:has-text("Files")')
     await page.waitForSelector('.files-view')
 
-    // Switch to Info sub-tab
-    await page.click('.fb-tab:has-text("Info")')
+    await expect(page.locator('.fb-editor-pane')).toBeVisible()
+    await expect(page.locator('.fb-editor-empty')).toContainText('No file selected')
 
-    // Should show info panel
-    await expect(page.locator('.fb-info-panel')).toBeVisible()
-    await expect(page.locator('.fb-info-card')).toHaveCount(3)
+    await page.click('.fb-row:has-text("readme.txt")')
+    await expect(page.locator('.fb-editor-tab:has-text("readme.txt")')).toBeVisible()
   })
 })

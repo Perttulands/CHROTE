@@ -3,7 +3,7 @@ const { chromium } = require('playwright');
 (async () => {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
-  
+
   // Capture all console messages
   const consoleMessages = [];
   page.on('console', msg => {
@@ -68,16 +68,16 @@ const { chromium } = require('playwright');
     const target = page.locator(targetSelector).first();
     const sourceBox = await source.boundingBox();
     const targetBox = await target.boundingBox();
-    
+
     if (!sourceBox || !targetBox) {
       throw new Error('Could not find source or target element for: ' + sourceSelector + ' -> ' + targetSelector);
     }
-    
+
     const startX = sourceBox.x + sourceBox.width / 2;
     const startY = sourceBox.y + sourceBox.height / 2;
     const endX = targetBox.x + targetBox.width / 2;
     const endY = targetBox.y + targetBox.height / 2;
-    
+
     await page.mouse.move(startX, startY);
     await page.mouse.down();
     await page.mouse.move(startX + 10, startY + 10, { steps: 5 });

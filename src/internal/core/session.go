@@ -2,6 +2,7 @@
 package core
 
 import (
+	"fmt"
 	"os"
 	"regexp"
 	"sort"
@@ -92,13 +93,17 @@ func ValidateSessionName(name, paramName string) (bool, string) {
 	return true, ""
 }
 
-// GetTmuxTmpdir returns the TMUX_TMPDIR environment variable or default
+// GetTmuxTmpdir returns the TMUX_TMPDIR environment variable or a portable default.
+// Prefers XDG_RUNTIME_DIR/tmux, falls back to /tmp/tmux-<uid>.
 func GetTmuxTmpdir() string {
 	tmpdir := strings.TrimSpace(os.Getenv("TMUX_TMPDIR"))
 	if tmpdir != "" {
 		return tmpdir
 	}
-	return "/run/tmux/chrote"
+	if xdg := os.Getenv("XDG_RUNTIME_DIR"); xdg != "" {
+		return xdg + "/tmux"
+	}
+	return fmt.Sprintf("/tmp/tmux-%d", os.Getuid())
 }
 
 // GetTmuxEnv returns the environment for tmux commands

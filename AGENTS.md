@@ -1,40 +1,35 @@
 # Agent Instructions
 
-This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
+Use `bd` for task tracking and keep CHROTE aligned with the configured host workspace.
 
-## Quick Reference
+## Current Role
+
+CHROTE is a durable browser cockpit for:
+
+- tmux sessions
+- browser terminal panes
+- files under the configured workspace roots
+- modern Beads via `bd`
+- optional Beads Viewer via `bv`
+- generic agent observability
+
+It is not currently a Gastown or Ralph deployment. `bv` is available as a Beads TUI sidecar, not as the source of truth.
+
+## Before Editing
+
+- Check `systemctl --user status chrote.service` if touching runtime behavior.
+- Check local deployment notes for host-specific context when available.
+- Do not kill tmux sessions unless explicitly asked.
+
+## Quality Gates
 
 ```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --status in_progress  # Claim work
-bd close <id>         # Complete work
-bd sync               # Sync with git
+cd /path/to/chrote/src && go test ./...
+cd /path/to/chrote/dashboard && npm run build
 ```
 
-## Landing the Plane (Session Completion)
+If changing frontend code that is served by the Go binary, rebuild and embed `dashboard/dist` into `src/internal/dashboard/dist`.
 
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+## Decisions
 
-**MANDATORY WORKFLOW:**
-
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
-   ```bash
-   git pull --rebase
-   bd sync
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
-
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
-
+If legacy CHROTE code has a good idea but assumes Gastown or Ralph, adapt the idea to an orchestrator-neutral design and capture it in `docs/legacy-ideas.md`.

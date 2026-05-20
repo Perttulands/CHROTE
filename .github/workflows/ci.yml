@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Go format
+        run: |
+          cd src
+          unformatted="$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
+          if [ -n "$unformatted" ]; then
+            printf '%s\n' "$unformatted"
+            exit 1
+          fi
+
+      - name: Go vet
+        run: |
+          cd src
+          go vet ./...
+
+      - name: Go tests
+        run: |
+          cd src
+          go test ./...
+
+      - name: Go race tests
+        run: |
+          cd src
+          go test -race ./...
+
+      - name: Go coverage
+        run: |
+          cd src
+          go test -coverprofile=coverage.out ./...
+          go tool cover -func=coverage.out
+
+      - name: Dashboard install dependencies
+        run: |
+          cd dashboard
+          npm ci
+
+      - name: Dashboard lint
+        run: |
+          cd dashboard
+          npm run lint
+
+      - name: Dashboard build
+        run: |
+          cd dashboard
+          npm run build
+
+      - name: Dashboard unit coverage
+        run: |
+          cd dashboard
+          npm run test:unit -- --coverage
+
+      - name: Dashboard dependency audit
+        run: |
+          cd dashboard
+          npm audit --audit-level=moderate
+
+      - name: Install Playwright browser
+        run: |
+          cd dashboard
+          npx playwright install --with-deps chromium
+
+      - name: Dashboard Playwright tests
+        run: |
+          cd dashboard
+          npm test
+
+      - name: Release package smoke
+        run: |
+          rm -rf src/internal/dashboard/dist
+          cp -r dashboard/dist src/internal/dashboard/
+          cd src
+          go test ./...
+          go build -o /tmp/chrote-server-ci ./cmd/server

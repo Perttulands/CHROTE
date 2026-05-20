@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+project=${1:-$PWD}
+
+cd "$project"
+"$(dirname "$0")/bv-refresh" "$project"
+exec bv --db "$project/.beads"

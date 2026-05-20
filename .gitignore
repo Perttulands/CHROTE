@@ -24,18 +24,51 @@ dashboard/node_modules/
 .idea/
 api/node_modules/
 
-.vendor
-vendor/
-
-# Go binaries
+# Go binaries (build with: cd src && go build -o chrote-server ./cmd/server)
+src/chrote-server
+src/server.exe
+src/arena-server
+src/server
 chrote-server
 chrote-server-integ
-src/server
-chrote/chrote-server
-chrote/server.exe
-chrote/*.exe
+*.exe
 
 # Vite cache
 dashboard/.vite/
+dashboard/dist/
+dashboard/coverage/
+dashboard/playwright-report/
+dashboard/public/music/*.mp3
 
 README.md.backup
+
+# Nested repo clones (reference only, not part of chrote)
+/components/
+/integrations/
+
+# Instance-specific state (Polis or any deployment)
+# Systemd units live outside the repo (~/.config/systemd/user/)
+# The following are created at runtime, not tracked:
+*.sqlite
+*.db
+*.db-wal
+*.db-shm
+.beads/
+src/internal/dashboard/dist/
+src/internal/dashboard/assets/
+src/internal/dashboard/music/
+src/internal/dashboard/*.html
+src/internal/dashboard/*.png
+
+# Claude Code config
+.claude/
+
+# Test results (generated)
+**/test-results/
+
+# Playwright report data (generated)
+dashboard/playwright-report/data/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+.beads-credential-key

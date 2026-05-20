@@ -22,15 +22,19 @@ function filterPatrolDigests(issues: BeadsIssue[], showPatrols: boolean): BeadsI
   return issues.filter(issue => !PATROL_DIGEST_PATTERN.test(issue.title))
 }
 
-async function fetchApi<T>(endpoint: string, params?: Record<string, string>): Promise<ApiResponse<T>> {
+async function fetchApi<T>(endpoint: string, params?: Record<string, string | string[]>): Promise<ApiResponse<T>> {
   const url = new URL(endpoint, window.location.origin)
   if (params) {
     Object.entries(params).forEach(([key, value]) => {
-      url.searchParams.set(key, value)
+      if (Array.isArray(value)) {
+        value.forEach(item => url.searchParams.append(key, item))
+      } else {
+        url.searchParams.set(key, value)
+      }
     })
   }
 
-  const response = await fetch(url.toString())
+  const response = await fetch(url.toString(), { signal: AbortSignal.timeout(10000) })
   return response.json()
 }
 
@@ -46,28 +50,15 @@ export function useProjects() {
     setError(null)
     try {
       // Fetch auto-discovered projects
-      const result = await fetchApi<{ projects: BeadsProject[] }>(`${API_BASE}/projects`)
+      const manualPaths = settings.beadsProjectPaths || []
+      const result = await fetchApi<{ projects: BeadsProject[] }>(
+        `${API_BASE}/projects`,
+        manualPaths.length > 0 ? { path: manualPaths } : undefined
+      )
       let allProjects: BeadsProject[] = []
 
       if (result.success && result.data) {
         allProjects = [...result.data.projects]
-      }
-
-      // Add manually configured paths from settings
-      const manualPaths = settings.beadsProjectPaths || []
-      for (const path of manualPaths) {
-        // Check if path is already in auto-discovered list
-        if (allProjects.some(p => p.path === path)) {
-          continue
-        }
-
-        // Create a project entry for the manual path
-        const name = path.split('/').filter(Boolean).pop() || path
-        allProjects.push({
-          name,
-          path,
-          beadsPath: `${path}/.beads`
-        })
       }
 
       setProjects(allProjects)

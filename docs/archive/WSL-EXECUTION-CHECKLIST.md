@@ -124,9 +124,9 @@ su - chrote
   ```
 - [x] Build vendored tools (if present):
   ```bash
-  cd ~/chrote/vendor/gastown && /usr/local/go/bin/go build -o ~/.local/bin/gt ./cmd/gt
-  cd ~/chrote/vendor/beads && /usr/local/go/bin/go build -o ~/.local/bin/bd ./cmd/bd
-  cd ~/chrote/vendor/beads_viewer && /usr/local/go/bin/go build -o ~/.local/bin/bv ./cmd/bv
+  cd ~/chrote/components/gastown && /usr/local/go/bin/go build -o ~/.local/bin/gt ./cmd/gt
+  cd ~/chrote/components/beads && /usr/local/go/bin/go build -o ~/.local/bin/bd ./cmd/bd
+  cd ~/chrote/components/beads_viewer && /usr/local/go/bin/go build -o ~/.local/bin/bv ./cmd/bv
   ```
 
 ---

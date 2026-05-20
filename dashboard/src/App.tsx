@@ -8,9 +8,9 @@ import FilesView from './components/FilesView'
 import SettingsView from './components/SettingsView'
 import FloatingModal from './components/FloatingModal'
 import HelpView from './components/HelpView'
-import BeadsViewerTab from './components/BeadsViewerTab'
-import ManualView from './components/ManualView'
-import ChroteChat from './components/ChroteChat'
+import BeadsView from './components/BeadsView'
+import OracleView from './components/OracleView'
+import ServicesView from './components/ServicesView'
 import ErrorBoundary from './components/ErrorBoundary'
 import { ToastContainer } from './components/ToastNotification'
 import KeyboardShortcutsOverlay from './components/KeyboardShortcutsOverlay'
@@ -20,7 +20,7 @@ import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 
 // Dragged item overlay component
 function DraggedSessionOverlay({ name }: { name: string }) {
-  const displayName = name.includes('-') ? name.split('-').slice(-1)[0] : name
+  const displayName = name
   return (
     <div className="session-item dragging-overlay">
       <span className="session-agent-name">{displayName}</span>
@@ -130,17 +130,21 @@ function DashboardContent() {
             <TerminalArea workspaceId="terminal2" />
           </div>
           {activeTab === 'files' && <FilesView />}
-          {activeTab === 'beads_viewer' && (
+          {activeTab === 'beads' && (
             <ErrorBoundary>
-              <BeadsViewerTab />
+              <BeadsView />
             </ErrorBoundary>
           )}
-          {activeTab === 'chat' && (
+          {activeTab === 'agents' && (
             <ErrorBoundary>
-              <ChroteChat />
+              <OracleView />
             </ErrorBoundary>
           )}
-          {activeTab === 'manual' && <ManualView />}
+          {activeTab === 'services' && (
+            <ErrorBoundary>
+              <ServicesView />
+            </ErrorBoundary>
+          )}
           {activeTab === 'settings' && <SettingsView />}
           {activeTab === 'help' && <HelpView />}
         </div>

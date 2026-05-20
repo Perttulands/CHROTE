@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -25,33 +26,33 @@ var Version = "0.2.0"
 
 // Config holds server configuration
 type Config struct {
-	Port          int
-	TtydPort      int
-	BvTtydPort    int
-	APIAuthToken  string
-	CORSOrigins   []string
-	StartTtyd     bool
+	Host         string
+	Port         int
+	TtydPort     int
+	APIAuthToken string
+	CORSOrigins  []string
+	StartTtyd    bool
 }
 
 func main() {
 	// Parse flags
 	config := Config{}
+	flag.StringVar(&config.Host, "host", "", "Bind address (default all interfaces)")
 	flag.IntVar(&config.Port, "port", 8080, "Server port")
 	flag.IntVar(&config.TtydPort, "ttyd-port", 7681, "ttyd port")
-	flag.IntVar(&config.BvTtydPort, "bv-ttyd-port", 7682, "bv (beads viewer) ttyd port")
 	flag.StringVar(&config.APIAuthToken, "auth-token", "", "API authentication token")
 	flag.BoolVar(&config.StartTtyd, "start-ttyd", true, "Start ttyd child process")
 	flag.Parse()
 
 	// Environment overrides
+	if host := os.Getenv("HOST"); host != "" {
+		config.Host = host
+	}
 	if port := os.Getenv("PORT"); port != "" {
-		fmt.Sscanf(port, "%d", &config.Port)
+		config.Port = mustParsePort("PORT", port)
 	}
 	if port := os.Getenv("TTYD_PORT"); port != "" {
-		fmt.Sscanf(port, "%d", &config.TtydPort)
-	}
-	if port := os.Getenv("BV_TTYD_PORT"); port != "" {
-		fmt.Sscanf(port, "%d", &config.BvTtydPort)
+		config.TtydPort = mustParsePort("TTYD_PORT", port)
 	}
 	if token := os.Getenv("API_AUTH_TOKEN"); token != "" {
 		config.APIAuthToken = token
@@ -79,16 +80,15 @@ func main() {
 	healthHandler := api.NewHealthHandlerWithVersion(Version)
 	healthHandler.RegisterRoutes(mux)
 
-	chatHandler := api.NewChatHandler()
-	chatHandler.RegisterRoutes(mux)
+	servicesHandler := api.NewServicesHandler(api.LoadServiceConfigFromEnv())
+	servicesHandler.RegisterRoutes(mux)
+
+	oracleHandler := api.NewOracleHandler(tmuxHandler, beadsHandler)
+	oracleHandler.RegisterRoutes(mux)
 
 	// Create terminal proxy
 	terminalProxy := proxy.NewTerminalProxy(config.TtydPort)
 	terminalProxy.RegisterRoutes(mux)
-
-	// Create BV terminal proxy (beads viewer)
-	bvTerminalProxy := proxy.NewBvTerminalProxy(config.BvTtydPort)
-	bvTerminalProxy.RegisterRoutes(mux)
 
 	// Serve embedded dashboard at root
 	dashboardHandler := dashboard.Handler()
@@ -101,7 +101,7 @@ func main() {
 
 	// Create server
 	server := &http.Server{
-		Addr:         fmt.Sprintf(":%d", config.Port),
+		Addr:         fmt.Sprintf("%s:%d", config.Host, config.Port),
 		Handler:      handler,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
@@ -124,10 +124,8 @@ func main() {
 		log.Printf("CHROTE v%s starting on port %d", Version, config.Port)
 		log.Printf("Dashboard: http://localhost:%d/", config.Port)
 		log.Printf("API: http://localhost:%d/api/", config.Port)
-		log.Printf("Chat: http://localhost:%d/api/chat/", config.Port)
 		log.Printf("Files: http://localhost:%d/api/files/", config.Port)
 		log.Printf("Terminal: http://localhost:%d/terminal/", config.Port)
-		log.Printf("BV Terminal: http://localhost:%d/bv-terminal/", config.Port)
 
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v", err)
@@ -138,11 +136,10 @@ func main() {
 	<-done
 	log.Println("Shutting down server...")
 
-	// Stop ttyd processes
+	// Stop subsystems
 	if config.StartTtyd {
 		terminalProxy.Stop()
 	}
-	bvTerminalProxy.Stop()
 
 	// Graceful shutdown with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -155,27 +152,40 @@ func main() {
 	log.Println("Server stopped")
 }
 
+// mustParsePort parses a port string and fatals on invalid values.
+func mustParsePort(name, raw string) int {
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		log.Fatalf("invalid %s=%q: %v", name, raw, err)
+	}
+	if n < 1 || n > 65535 {
+		log.Fatalf("invalid %s=%d: must be 1-65535", name, n)
+	}
+	return n
+}
+
 // corsMiddleware adds CORS headers
 func corsMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
+	allowed := make(map[string]struct{}, len(allowedOrigins))
+	for _, origin := range allowedOrigins {
+		origin = strings.TrimSpace(origin)
+		if origin != "" {
+			allowed[origin] = struct{}{}
+		}
+	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
 
-			if len(allowedOrigins) > 0 {
-				// Production mode: check against allowlist
-				for _, allowed := range allowedOrigins {
-					if origin == allowed {
-						w.Header().Set("Access-Control-Allow-Origin", origin)
-						break
-					}
+			if origin != "" && len(allowed) > 0 {
+				if _, ok := allowed[origin]; ok {
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+					w.Header().Set("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Nuke-Confirm")
+					w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+					w.Header().Add("Vary", "Origin")
 				}
-			} else {
-				// Development mode: allow all
-				w.Header().Set("Access-Control-Allow-Origin", "*")
 			}
-
-			w.Header().Set("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Nuke-Confirm")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 
 			// Handle preflight
 			if r.Method == "OPTIONS" {
@@ -206,6 +216,12 @@ func authMiddleware(token string) func(http.Handler) http.Handler {
 
 			// Skip auth for non-API routes
 			if !strings.HasPrefix(r.URL.Path, "/api/") {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Browser CORS preflights do not carry Authorization; let CORS answer them.
+			if r.Method == http.MethodOptions && r.Header.Get("Origin") != "" && r.Header.Get("Access-Control-Request-Method") != "" {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -267,4 +283,12 @@ func (rw *responseWriter) Flush() {
 	if flusher, ok := rw.ResponseWriter.(http.Flusher); ok {
 		flusher.Flush()
 	}
+}
+
+func (rw *responseWriter) SetWriteDeadline(deadline time.Time) error {
+	return http.NewResponseController(rw.ResponseWriter).SetWriteDeadline(deadline)
+}
+
+func (rw *responseWriter) Unwrap() http.ResponseWriter {
+	return rw.ResponseWriter
 }

@@ -39,7 +39,7 @@ type TerminalProxy struct {
 
 // NewTerminalProxy creates a new TerminalProxy
 func NewTerminalProxy(ttydPort int) *TerminalProxy {
-	target, _ := url.Parse(fmt.Sprintf("http://localhost:%d", ttydPort))
+	target, _ := url.Parse(fmt.Sprintf("http://localhost:%d", ttydPort)) //nolint:errcheck // static URL format cannot fail
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
 
@@ -78,6 +78,7 @@ func (tp *TerminalProxy) Start() error {
 
 	// Kill any existing process on our port to prevent stale ttyd conflicts
 	// This handles cases where a previous ttyd instance wasn't cleaned up properly
+	// SAFE: ttydPort is an int from server config, not user input
 	killCmd := exec.Command("fuser", "-k", fmt.Sprintf("%d/tcp", tp.ttydPort))
 	killCmd.Run() // Ignore errors - port may not be in use
 	time.Sleep(100 * time.Millisecond)
@@ -86,6 +87,7 @@ func (tp *TerminalProxy) Start() error {
 	// ttyd -p PORT -W -a terminal-launch.sh
 	tp.ttydCmd = exec.Command(
 		"ttyd",
+		"-i", "127.0.0.1",
 		"-p", fmt.Sprintf("%d", tp.ttydPort),
 		"-W", // WebSocket only mode (for better performance)
 		"-a", // Allow URL arguments (?arg=sessionName -> $1)
@@ -276,18 +278,4 @@ func (tp *TerminalProxy) proxyWebSocket(w http.ResponseWriter, r *http.Request) 
 // RegisterRoutes registers the terminal proxy route
 func (tp *TerminalProxy) RegisterRoutes(mux *http.ServeMux) {
 	mux.Handle("/terminal/", tp.Handler())
-	// Also handle /ws directly for ttyd WebSocket connections
-	mux.Handle("/ws", tp.wsHandler())
-}
-
-// wsHandler returns an http.Handler specifically for /ws WebSocket connections
-func (tp *TerminalProxy) wsHandler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Direct WebSocket proxy to ttyd without path modification
-		if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
-			tp.proxyWebSocket(w, r)
-			return
-		}
-		http.Error(w, "WebSocket upgrade required", http.StatusBadRequest)
-	})
 }

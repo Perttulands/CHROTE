@@ -2,6 +2,8 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+const mockedPlaywright = process.env.CHROTE_PLAYWRIGHT_MOCKED === '1'
+
 export default defineConfig({
   plugins: [react()],
   test: {
@@ -10,13 +12,25 @@ export default defineConfig({
     setupFiles: './src/test/setup.ts',
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     exclude: ['tests/**', 'node_modules/**', 'dist/**'],
+    coverage: {
+      provider: 'v8',
+      reportsDirectory: './coverage',
+      reporter: ['text', 'html', 'json-summary'],
+      thresholds: {
+        lines: 0,
+        functions: 0,
+        branches: 0,
+        statements: 0,
+      },
+    },
   },
   build: {
     outDir: 'dist',
     emptyOutDir: true,
   },
   server: {
-    proxy: {
+    forwardConsole: false,
+    proxy: mockedPlaywright ? undefined : {
       '/terminal': {
         target: 'http://localhost:7691',
         changeOrigin: true,

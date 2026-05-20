@@ -9,7 +9,7 @@ Comprehensive testing approach for the CHROTE codebase with copy-pasteable comma
 1. [Test Infrastructure Overview](#test-infrastructure-overview)
 2. [Running Tests](#running-tests)
 3. [Go Backend Tests](#go-backend-tests)
-4. [Frontend E2E Tests (Playwright)](#frontend-e2e-tests-playwright)
+4. [Frontend Tests](#frontend-tests)
 5. [Manual Testing Procedures](#manual-testing-procedures)
 6. [CI/CD Integration](#cicd-integration)
 7. [Writing New Tests](#writing-new-tests)
@@ -19,12 +19,14 @@ Comprehensive testing approach for the CHROTE codebase with copy-pasteable comma
 
 ## Test Infrastructure Overview
 
-CHROTE uses a two-tier testing strategy:
+CHROTE uses this testing strategy:
 
 | Layer | Framework | Location | Purpose |
 |-------|-----------|----------|---------|
 | **Backend** | Go testing | `src/**/*_test.go` | Unit tests, integration tests, API validation |
-| **Frontend** | Playwright | `dashboard/tests/*.spec.ts` | E2E browser tests, UI interactions |
+| **Frontend Unit** | Vitest | `dashboard/src/**/*.test.ts(x)` | Component, hook, service, and utility tests |
+| **Frontend E2E** | Playwright | `dashboard/tests/*.spec.ts` | Mocked deterministic browser tests |
+| **Live Frontend Integration** | Playwright | `dashboard/tests/integration/*.spec.ts` | Explicit CHROTE backend/terminal smoke tests |
 
 ### Directory Structure
 
@@ -59,28 +61,53 @@ CHROTE/
 ### Quick Commands
 
 ```bash
-# Run ALL tests (backend + frontend)
-cd /code && cd src && go test ./... && cd ../dashboard && npm test
+# Stable local quality gate
+cd /path/to/chrote/src
+test -z "$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
+go vet ./...
+go test ./...
+go test -race ./...
+go test -cover ./...
+
+cd /path/to/chrote/dashboard
+npm ci
+npm run lint
+npm run build
+npm run test:unit -- --coverage
+npm audit --audit-level=moderate
+npm test
 
 # Backend only
-cd /code/src && go test ./...
+cd /path/to/chrote/src && go test ./...
 
-# Frontend only
-cd /code/dashboard && npm test
+# Frontend unit tests
+cd /path/to/chrote/dashboard && npm run test:unit
+
+# Frontend lint
+cd /path/to/chrote/dashboard && npm run lint
+
+# Frontend unit coverage
+cd /path/to/chrote/dashboard && npm run test:unit -- --coverage
+
+# Frontend mocked browser tests
+cd /path/to/chrote/dashboard && npm test
+
+# Live backend/terminal browser tests
+cd /path/to/chrote/dashboard && CHROTE_TEST_URL=http://127.0.0.1:8094 npm run test:live
 
 # Frontend with UI mode (interactive)
-cd /code/dashboard && npm run test:ui
+cd /path/to/chrote/dashboard && npm run test:ui
 
 # Frontend headed mode (see browser)
-cd /code/dashboard && npm run test:headed
+cd /path/to/chrote/dashboard && npm run test:headed
 ```
 
 ### Full Test Suite
 
 ```bash
 # Complete test run with verbose output
-cd /code/src && go test -v ./...
-cd /code/dashboard && npm test
+cd /path/to/chrote/src && go test -v ./...
+cd /path/to/chrote/dashboard && npm run test:unit && npm test
 ```
 
 ---
@@ -90,14 +117,14 @@ cd /code/dashboard && npm test
 ### Run All Backend Tests
 
 ```bash
-cd /code/src
+cd /path/to/chrote/src
 go test ./...
 ```
 
 ### Run with Verbose Output
 
 ```bash
-cd /code/src
+cd /path/to/chrote/src
 go test -v ./...
 ```
 
@@ -105,18 +132,18 @@ go test -v ./...
 
 ```bash
 # API tests only
-cd /code/src
+cd /path/to/chrote/src
 go test -v ./internal/api/...
 
 # Core utilities only
-cd /code/src
+cd /path/to/chrote/src
 go test -v ./internal/core/...
 ```
 
 ### Run Single Test
 
 ```bash
-cd /code/src
+cd /path/to/chrote/src
 
 # Run specific test by name
 go test -v -run TestIntegration_FullAPIRouting ./internal/api/
@@ -128,7 +155,7 @@ go test -v -run "TestHealth" ./internal/api/
 ### Run with Coverage
 
 ```bash
-cd /code/src
+cd /path/to/chrote/src
 
 # Coverage report to terminal
 go test -cover ./...
@@ -141,7 +168,7 @@ go tool cover -html=coverage.out -o coverage.html
 ### Race Detection
 
 ```bash
-cd /code/src
+cd /path/to/chrote/src
 go test -race ./...
 ```
 
@@ -159,31 +186,56 @@ go test -race ./...
 
 ---
 
-## Frontend E2E Tests (Playwright)
+## Frontend Tests
 
 ### Prerequisites
 
 ```bash
-cd /code/dashboard
+cd /path/to/chrote/dashboard
 
 # Install dependencies (if needed)
-npm install
+npm ci
 
 # Install Playwright browsers
-npx playwright install
+npx playwright install chromium
 ```
 
-### Run All E2E Tests
+### Unit And Coverage
 
 ```bash
-cd /code/dashboard
+cd /path/to/chrote/dashboard
+npm run test:unit
+npm run test:unit -- --coverage
+```
+
+Coverage output is written to `dashboard/coverage/`.
+
+### Run Default Playwright Gate
+
+```bash
+cd /path/to/chrote/dashboard
 npm test
 ```
+
+The default Playwright suite is the mocked deterministic browser gate. It excludes `dashboard/tests/integration/**`.
+
+When Playwright starts the local Vite dev server, it sets `CHROTE_PLAYWRIGHT_MOCKED=1`; `dashboard/vite.config.ts` disables backend proxying in that mode. Default browser tests must mock every `/api/**` and terminal request.
+
+### Run Live Backend Integration Tests
+
+```bash
+cd /path/to/chrote/dashboard
+CHROTE_TEST_URL=http://127.0.0.1:8094 npm run test:live
+```
+
+Live integration specs require a running CHROTE backend and terminal proxy. They are intentionally excluded from `npm test` and CI's default Playwright gate.
+
+Live smokes are operator-run only in this workspace because GitHub-hosted runners do not have access to the local CHROTE runtime, tmux socket, or terminal proxy. Use `CHROTE_TEST_URL` to point at the operator-approved CHROTE backend under test. Do not hard-code private hostnames or tailnet addresses into the test suite.
 
 ### Interactive UI Mode
 
 ```bash
-cd /code/dashboard
+cd /path/to/chrote/dashboard
 npm run test:ui
 ```
 
@@ -192,14 +244,14 @@ Opens Playwright UI for running/debugging tests interactively.
 ### Headed Mode (Visible Browser)
 
 ```bash
-cd /code/dashboard
+cd /path/to/chrote/dashboard
 npm run test:headed
 ```
 
 ### Run Specific Test File
 
 ```bash
-cd /code/dashboard
+cd /path/to/chrote/dashboard
 
 # Dashboard tests only
 npx playwright test dashboard.spec.ts
@@ -214,7 +266,7 @@ npx playwright test settings.spec.ts
 ### Run Specific Test
 
 ```bash
-cd /code/dashboard
+cd /path/to/chrote/dashboard
 
 # Run single test by name
 npx playwright test -g "should render session panel with groups"
@@ -226,7 +278,7 @@ npx playwright test -g "drag"
 ### Debug Mode
 
 ```bash
-cd /code/dashboard
+cd /path/to/chrote/dashboard
 
 # Debug with Playwright Inspector
 npx playwright test --debug
@@ -238,7 +290,7 @@ npx playwright test -g "drag session" --debug
 ### Generate HTML Report
 
 ```bash
-cd /code/dashboard
+cd /path/to/chrote/dashboard
 
 # Run tests and generate report
 npx playwright test
@@ -263,8 +315,8 @@ npx playwright show-report
 
 ### Dashboard Smoke Test
 
-1. Open `http://localhost:8080`
-2. Verify tabs are visible: Terminal 1, Terminal 2, Files, Beads, Settings
+1. Open `http://127.0.0.1:8094`
+2. Verify tabs are visible: Terminal, Terminal 2, Files, Agents, Beads, Services, Settings
 3. Check session panel shows groups
 4. Create a new session
 5. Drag session to terminal window
@@ -281,21 +333,21 @@ tmux new-session -d -s gt-test-1
 
 ```bash
 # Test session creation via API
-curl -X POST http://localhost:8080/api/tmux/sessions \
+curl -X POST http://127.0.0.1:8094/api/tmux/sessions \
   -H "Content-Type: application/json" \
   -d '{"name": "test-session"}'
 
 # Test session listing
-curl http://localhost:8080/api/tmux/sessions
+curl http://127.0.0.1:8094/api/tmux/sessions
 
 # Test session deletion
-curl -X DELETE http://localhost:8080/api/tmux/sessions/test-session
+curl -X DELETE http://127.0.0.1:8094/api/tmux/sessions/test-session
 
 # Test nuke protection (should fail without header)
-curl -X DELETE http://localhost:8080/api/tmux/sessions/all
+curl -X DELETE http://127.0.0.1:8094/api/tmux/sessions/all
 
 # Test nuke with confirmation (USE WITH CAUTION)
-curl -X DELETE http://localhost:8080/api/tmux/sessions/all \
+curl -X DELETE http://127.0.0.1:8094/api/tmux/sessions/all \
   -H "X-Nuke-Confirm: yes"
 ```
 
@@ -303,20 +355,20 @@ curl -X DELETE http://localhost:8080/api/tmux/sessions/all \
 
 ```bash
 # List root directories
-curl http://localhost:8080/api/files/resources/
+curl http://127.0.0.1:8094/api/files/resources/
 
 # List /code directory
-curl http://localhost:8080/api/files/resources/code
+curl http://127.0.0.1:8094/api/files/resources/code
 
 # Test path traversal protection (should fail)
-curl http://localhost:8080/api/files/resources/code/../../../etc/passwd
+curl http://127.0.0.1:8094/api/files/resources/code/../../../etc/passwd
 ```
 
 ### Health Check
 
 ```bash
 # API health
-curl http://localhost:8080/api/health
+curl http://127.0.0.1:8094/api/health
 
 # Expected response: {"status":"ok","timestamp":"..."}
 ```
@@ -325,62 +377,44 @@ curl http://localhost:8080/api/health
 
 ```bash
 # Check Beads health (bv CLI availability)
-curl http://localhost:8080/api/beads/health
+curl http://127.0.0.1:8094/api/beads/health
 
 # List discovered projects
-curl http://localhost:8080/api/beads/projects
+curl http://127.0.0.1:8094/api/beads/projects
 ```
 
 ---
 
 ## CI/CD Integration
 
-### GitHub Actions Example
+The CI workflow lives at `.github/workflows/ci.yml`. It runs on pull requests and pushes to `main`/`master` with Go 1.23 and Node 20:
 
-```yaml
-name: Tests
+```bash
+cd src
+test -z "$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
+go vet ./...
+go test ./...
+go test -race ./...
+go test -coverprofile=coverage.out ./...
+go tool cover -func=coverage.out
 
-on: [push, pull_request]
+cd dashboard
+npm ci
+npm run lint
+npm run build
+npm run test:unit -- --coverage
+npm audit --audit-level=moderate
+npx playwright install --with-deps chromium
+npm test
 
-jobs:
-  backend:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.23'
-      - name: Run Go tests
-        run: |
-          cd src
-          go test -v -race -coverprofile=coverage.out ./...
-      - name: Upload coverage
-        uses: codecov/codecov-action@v4
-        with:
-          files: ./src/coverage.out
-
-  frontend:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Install dependencies
-        run: |
-          cd dashboard
-          npm ci
-          npx playwright install --with-deps
-      - name: Run Playwright tests
-        run: |
-          cd dashboard
-          npm test
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: playwright-report
-          path: dashboard/playwright-report/
+rm -rf src/internal/dashboard/dist
+cp -r dashboard/dist src/internal/dashboard/
+cd src
+go test ./...
+go build -o /tmp/chrote-server-ci ./cmd/server
 ```
+
+The release workflow also uses Go 1.23 and Node 20. It runs the same Go format/vet/test/race assumptions, dashboard lint/build/unit-coverage/audit, copies the fresh dashboard `dist` into `src/internal/dashboard/dist`, and performs an embedded-dashboard Go build smoke before producing tag artifacts.
 
 ### Pre-commit Hook
 
@@ -388,13 +422,21 @@ jobs:
 #!/bin/bash
 # .git/hooks/pre-commit
 
-# Run Go tests
+# Run Go checks
 cd src
+test -z "$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))" || exit 1
+go vet ./... || exit 1
 go test ./... || exit 1
+go test -race ./... || exit 1
+go test -cover ./... || exit 1
 
-# Run Playwright tests (optional, slower)
-# cd ../dashboard
-# npm test || exit 1
+# Run dashboard stable gates
+cd ../dashboard
+npm run lint || exit 1
+npm run build || exit 1
+npm run test:unit -- --coverage || exit 1
+npm audit --audit-level=moderate || exit 1
+npm test || exit 1
 ```
 
 ---
@@ -544,9 +586,9 @@ tmux list-sessions -F "#{session_name}" | grep "^test-" | xargs -I {} tmux kill-
 tmux new-session -d -s hq-mayor
 tmux new-session -d -s hq-deacon
 
-# Create Gastown rig sessions
+# Create grouped agent-style sessions
 for i in {1..3}; do
-  tmux new-session -d -s "gt-gastown-worker$i"
+  tmux new-session -d -s "agent-worker$i"
 done
 
 # Create misc sessions
@@ -567,12 +609,12 @@ tmux list-sessions
 tmux list-sessions -F "#{session_name}" | grep -E "^(test-|gt-test)" | xargs -I {} tmux kill-session -t {}
 
 # Remove test coverage files
-rm -f /code/src/coverage.out
-rm -f /code/src/coverage.html
+rm -f /path/to/chrote/src/coverage.out
+rm -f /path/to/chrote/src/coverage.html
 
 # Remove Playwright artifacts
-rm -rf /code/dashboard/playwright-report
-rm -rf /code/dashboard/test-results
+rm -rf /path/to/chrote/dashboard/playwright-report
+rm -rf /path/to/chrote/dashboard/test-results
 
 echo "Test artifacts cleaned"
 ```
@@ -583,8 +625,16 @@ echo "Test artifacts cleaned"
 
 | Task | Command |
 |------|---------|
-| All backend tests | `cd /code/src && go test ./...` |
-| All frontend tests | `cd /code/dashboard && npm test` |
+| All backend tests | `cd /path/to/chrote/src && go test ./...` |
+| Backend format check | `cd /path/to/chrote/src && test -z "$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"` |
+| Backend static check | `cd /path/to/chrote/src && go vet ./...` |
+| Backend race tests | `cd /path/to/chrote/src && go test -race ./...` |
+| Frontend unit tests | `cd /path/to/chrote/dashboard && npm run test:unit` |
+| Frontend lint | `cd /path/to/chrote/dashboard && npm run lint` |
+| Frontend coverage | `cd /path/to/chrote/dashboard && npm run test:unit -- --coverage` |
+| Frontend dependency audit | `cd /path/to/chrote/dashboard && npm audit --audit-level=moderate` |
+| Frontend mocked browser tests | `cd /path/to/chrote/dashboard && npm test` |
+| Live backend browser tests | `cd /path/to/chrote/dashboard && CHROTE_TEST_URL=http://127.0.0.1:8094 npm run test:live` |
 | Backend verbose | `go test -v ./...` |
 | Backend coverage | `go test -cover ./...` |
 | Frontend interactive | `npm run test:ui` |
@@ -606,7 +656,7 @@ go version
 # Should be 1.23+
 
 # Verify dependencies
-cd /code/src
+cd /path/to/chrote/src
 go mod verify
 
 # Clean and retry
@@ -618,7 +668,7 @@ go test ./...
 
 ```bash
 # Reinstall browsers
-cd /code/dashboard
+cd /path/to/chrote/dashboard
 npx playwright install
 
 # Check if dev server starts
@@ -632,12 +682,12 @@ npx playwright test --trace on
 ### Services Not Available
 
 ```bash
-# Ensure services are running
-systemctl status chrote-server chrote-ttyd
+# Ensure the user service is running
+systemctl --user status chrote.service
 
 # Check ports
-ss -tlnp | grep -E "8080|5173"
+ss -tlnp | grep -E "8094|7683|5173"
 
 # Restart services
-sudo systemctl restart chrote-server chrote-ttyd
+systemctl --user restart chrote.service
 ```

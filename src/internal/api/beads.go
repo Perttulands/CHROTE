@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -18,14 +19,19 @@ import (
 
 // BeadsHandler handles beads-related API endpoints
 type BeadsHandler struct {
-	bvCommand   string
+	bdCommand   string
 	execTimeout time.Duration
 }
 
 // NewBeadsHandler creates a new BeadsHandler
 func NewBeadsHandler() *BeadsHandler {
+	bdCommand := os.Getenv("CHROTE_BD_COMMAND")
+	if bdCommand == "" {
+		bdCommand = "bd"
+	}
+
 	return &BeadsHandler{
-		bvCommand:   "bv",
+		bdCommand:   bdCommand,
 		execTimeout: 60 * time.Second,
 	}
 }
@@ -40,12 +46,12 @@ func (h *BeadsHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/beads/graph", h.Graph)
 }
 
-// getBvVersion returns the bv version or error
-func (h *BeadsHandler) getBvVersion() (string, error) {
+// getBdVersion returns the bd version or error.
+func (h *BeadsHandler) getBdVersion() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, h.bvCommand, "--version")
+	cmd := exec.CommandContext(ctx, h.bdCommand, "version")
 	output, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -53,46 +59,183 @@ func (h *BeadsHandler) getBvVersion() (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
-// checkBvInstalled checks if bv is available
-func (h *BeadsHandler) checkBvInstalled() bool {
-	_, err := h.getBvVersion()
+// checkBdInstalled checks if bd is available.
+func (h *BeadsHandler) checkBdInstalled() bool {
+	_, err := h.getBdVersion()
 	return err == nil
 }
 
 // checkBeadsDirectory verifies .beads directory exists
 func (h *BeadsHandler) checkBeadsDirectory(projectPath string) (string, error) {
 	beadsPath := filepath.Join(projectPath, ".beads")
-	if !core.FileExists(beadsPath) {
-		return "", fmt.Errorf("no .beads directory found in %s. Run 'bv init' to create one", projectPath)
+	info, err := os.Stat(beadsPath)
+	if err != nil || !info.IsDir() {
+		return "", fmt.Errorf("no .beads directory found in %s. Run 'bd init' to create one", projectPath)
+	}
+	if !isRegularFile(filepath.Join(beadsPath, "metadata.json")) || !isDirectory(filepath.Join(beadsPath, "embeddeddolt")) {
+		return "", fmt.Errorf("%s exists but is not a modern bd workspace. Run 'bd init' in %s", beadsPath, projectPath)
 	}
 	return beadsPath, nil
 }
 
-// execBvCommand runs a bv command and returns parsed JSON
-func (h *BeadsHandler) execBvCommand(flag, projectPath string) (interface{}, error) {
+func isRegularFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
+}
+
+func isDirectory(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func configuredBeadsWorkspaces() []string {
+	raw := os.Getenv("CHROTE_BEADS_WORKSPACES")
+	if raw == "" {
+		return nil
+	}
+
+	parts := strings.Split(raw, ",")
+	workspaces := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		resolved, err := filepath.Abs(part)
+		if err != nil {
+			continue
+		}
+		workspaces = append(workspaces, resolved)
+	}
+	return workspaces
+}
+
+func isPathUnder(path string, roots []string) bool {
+	for _, root := range roots {
+		absRoot, err := filepath.Abs(root)
+		if err != nil {
+			continue
+		}
+		if path == absRoot || strings.HasPrefix(path, absRoot+string(os.PathSeparator)) {
+			return true
+		}
+	}
+	return false
+}
+
+func isConfiguredBeadsWorkspace(path string) bool {
+	for _, workspace := range configuredBeadsWorkspaces() {
+		if path == workspace {
+			return true
+		}
+	}
+	return false
+}
+
+func validateBeadsProjectPath(inputPath string) (string, string, string) {
+	if inputPath == "" {
+		return "", "BAD_REQUEST", "Missing required parameter: path"
+	}
+
+	resolved, err := filepath.Abs(inputPath)
+	if err != nil {
+		return "", "BAD_REQUEST", "Invalid path: " + err.Error()
+	}
+
+	if !isPathUnder(resolved, core.GetAllowedRoots()) && !isConfiguredBeadsWorkspace(resolved) {
+		return "", "FORBIDDEN", "Project path not in allowed roots or configured Beads workspaces: " + resolved
+	}
+
+	if _, err := os.Stat(resolved); os.IsNotExist(err) {
+		return "", "NOT_FOUND", "Project path does not exist: " + resolved
+	}
+
+	return resolved, "", ""
+}
+
+func projectName(projectPath string) string {
+	name := filepath.Base(projectPath)
+	if name == "." || name == string(os.PathSeparator) {
+		return projectPath
+	}
+	return name
+}
+
+func (h *BeadsHandler) appendProject(projects *[]map[string]interface{}, seen map[string]bool, projectPath, source string) error {
+	resolved, err := filepath.Abs(projectPath)
+	if err != nil {
+		return err
+	}
+	if seen[resolved] {
+		return nil
+	}
+	beadsPath, err := h.checkBeadsDirectory(resolved)
+	if err != nil {
+		return err
+	}
+	*projects = append(*projects, map[string]interface{}{
+		"name":      projectName(resolved),
+		"path":      resolved,
+		"beadsPath": beadsPath,
+		"source":    source,
+	})
+	seen[resolved] = true
+	return nil
+}
+
+// execBdJSON runs a bd command with --json and returns parsed JSON.
+func (h *BeadsHandler) execBdJSON(projectPath string, args ...string) (interface{}, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), h.execTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, h.bvCommand, flag, projectPath)
+	cmdArgs := append([]string{"--json"}, args...)
+	cmd := exec.CommandContext(ctx, h.bdCommand, cmdArgs...)
 	cmd.Dir = projectPath
 
 	output, err := cmd.Output()
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("bv %s timed out after %v", flag, h.execTimeout)
+			return nil, fmt.Errorf("bd %s timed out after %v", strings.Join(args, " "), h.execTimeout)
 		}
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("bv %s failed: %s", flag, string(exitErr.Stderr))
+			return nil, fmt.Errorf("bd %s failed: %s", strings.Join(args, " "), string(exitErr.Stderr))
 		}
-		return nil, fmt.Errorf("bv %s failed: %v", flag, err)
+		return nil, fmt.Errorf("bd %s failed: %v", strings.Join(args, " "), err)
 	}
 
 	var result interface{}
 	if err := json.Unmarshal(output, &result); err != nil {
-		return nil, fmt.Errorf("bv %s returned invalid JSON: %v. Output: %s", flag, err, string(output)[:min(200, len(output))])
+		return nil, fmt.Errorf("bd %s returned invalid JSON: %v. Output: %s", strings.Join(args, " "), err, string(output)[:min(200, len(output))])
 	}
 
 	return result, nil
+}
+
+// execBdIssues runs a bd command that returns a JSON array of issue objects.
+func (h *BeadsHandler) execBdIssues(projectPath string, args ...string) ([]map[string]interface{}, error) {
+	result, err := h.execBdJSON(projectPath, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	items, ok := result.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("bd %s returned %T, expected JSON array", strings.Join(args, " "), result)
+	}
+
+	issues := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		obj, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if typ, ok := obj["_type"].(string); ok && typ != "issue" {
+			continue
+		}
+		issues = append(issues, obj)
+	}
+
+	return issues, nil
 }
 
 // parseJsonlFile reads and parses a JSONL file
@@ -178,81 +321,77 @@ func transformIssue(raw map[string]interface{}) map[string]interface{} {
 
 // Health handles GET /api/beads/health
 func (h *BeadsHandler) Health(w http.ResponseWriter, r *http.Request) {
-	version, err := h.getBvVersion()
+	version, err := h.getBdVersion()
 	if err != nil {
-		core.WriteError(w, http.StatusServiceUnavailable, "BV_NOT_INSTALLED",
-			"bv command not found. Install beads_viewer: go install github.com/Dicklesworthstone/beads_viewer@latest")
+		core.WriteError(w, http.StatusServiceUnavailable, "BD_NOT_INSTALLED",
+			"bd command not found. Install modern Beads and ensure it is on CHROTE's PATH.")
 		return
 	}
 
 	core.WriteSuccess(w, map[string]interface{}{
-		"status":       "ok",
-		"bvVersion":    version,
-		"allowedRoots": core.AllowedRoots,
+		"status":               "ok",
+		"bdVersion":            version,
+		"allowedRoots":         core.GetAllowedRoots(),
+		"configuredWorkspaces": configuredBeadsWorkspaces(),
 	})
 }
 
 // ListProjects handles GET /api/beads/projects
-// Scans up to 5 levels deep for .beads folders
 func (h *BeadsHandler) ListProjects(w http.ResponseWriter, r *http.Request) {
 	var projects []map[string]interface{}
 	var warnings []string
-	const maxDepth = 5
+	seen := make(map[string]bool)
+	configuredWorkspaces := configuredBeadsWorkspaces()
 
-	for _, root := range core.AllowedRoots {
-		if !core.FileExists(root) {
-			warnings = append(warnings, "Allowed root does not exist: "+root)
+	for _, workspace := range configuredWorkspaces {
+		if err := h.appendProject(&projects, seen, workspace, "configured"); err != nil {
+			warnings = append(warnings, "Configured Beads workspace is invalid: "+workspace+": "+err.Error())
+		}
+	}
+
+	if len(configuredWorkspaces) == 0 {
+		for _, root := range core.GetAllowedRoots() {
+			if !core.FileExists(root) {
+				warnings = append(warnings, "Allowed root does not exist: "+root)
+				continue
+			}
+
+			entries, err := os.ReadDir(root)
+			if err != nil {
+				warnings = append(warnings, "Cannot read directory "+root+": "+err.Error())
+				continue
+			}
+
+			for _, entry := range entries {
+				if entry.IsDir() {
+					projectPath := filepath.Join(root, entry.Name())
+					if err := h.appendProject(&projects, seen, projectPath, "auto"); err != nil {
+						beadsPath := filepath.Join(projectPath, ".beads")
+						if isDirectory(beadsPath) {
+							warnings = append(warnings, "Ignoring invalid Beads workspace: "+projectPath+": "+err.Error())
+						}
+					}
+				}
+			}
+
+			// Check root itself
+			if err := h.appendProject(&projects, seen, root, "auto-root"); err != nil {
+				beadsPath := filepath.Join(root, ".beads")
+				if isDirectory(beadsPath) {
+					warnings = append(warnings, "Ignoring invalid Beads workspace: "+root+": "+err.Error())
+				}
+			}
+		}
+	}
+
+	for _, projectPath := range r.URL.Query()["path"] {
+		resolved, code, msg := validateBeadsProjectPath(projectPath)
+		if code != "" {
+			warnings = append(warnings, "Manual Beads workspace rejected: "+msg)
 			continue
 		}
-
-		rootDepth := strings.Count(filepath.ToSlash(root), "/")
-
-		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return nil // Skip directories we can't read
-			}
-
-			// Calculate current depth relative to root
-			currentDepth := strings.Count(filepath.ToSlash(path), "/") - rootDepth
-
-			// Skip if too deep
-			if currentDepth > maxDepth {
-				if d.IsDir() {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-
-			// Skip hidden directories (except .beads itself which we're looking for)
-			if d.IsDir() && strings.HasPrefix(d.Name(), ".") && d.Name() != ".beads" {
-				return filepath.SkipDir
-			}
-
-			// Skip common non-project directories
-			if d.IsDir() {
-				switch d.Name() {
-				case "node_modules", "vendor", "__pycache__", ".git", "dist", "build":
-					return filepath.SkipDir
-				}
-			}
-
-			// Check if this directory contains a .beads folder
-			if d.IsDir() && d.Name() != ".beads" {
-				beadsPath := filepath.Join(path, ".beads")
-				if core.FileExists(beadsPath) {
-					projects = append(projects, map[string]interface{}{
-						"name":      d.Name(),
-						"path":      path,
-						"beadsPath": beadsPath,
-					})
-				}
-			}
-
-			return nil
-		})
-
-		if err != nil {
-			warnings = append(warnings, "Error walking "+root+": "+err.Error())
+		if err := h.appendProject(&projects, seen, resolved, "manual"); err != nil {
+			warnings = append(warnings, "Manual Beads workspace is invalid: "+resolved+": "+err.Error())
 		}
 	}
 
@@ -271,7 +410,7 @@ func (h *BeadsHandler) ListProjects(w http.ResponseWriter, r *http.Request) {
 
 // Issues handles GET /api/beads/issues
 func (h *BeadsHandler) Issues(w http.ResponseWriter, r *http.Request) {
-	projectPath, code, msg := core.ValidateProjectPath(r.URL.Query().Get("path"))
+	projectPath, code, msg := validateBeadsProjectPath(r.URL.Query().Get("path"))
 	if code != "" {
 		core.WriteError(w, core.GetErrorStatusCode(code), code, msg)
 		return
@@ -283,16 +422,10 @@ func (h *BeadsHandler) Issues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	issuesFile := filepath.Join(beadsPath, "issues.jsonl")
-	if !core.FileExists(issuesFile) {
-		core.WriteError(w, http.StatusNotFound, "NOT_FOUND",
-			fmt.Sprintf("No issues.jsonl file found in %s. Create issues with 'bv add'.", beadsPath))
-		return
-	}
-
-	issues, err := h.parseJsonlFile(issuesFile)
+	_ = beadsPath
+	issues, err := h.execBdIssues(projectPath, "list")
 	if err != nil {
-		core.WriteError(w, http.StatusUnprocessableEntity, "INVALID_JSONL", err.Error())
+		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
 		return
 	}
 
@@ -311,13 +444,13 @@ func (h *BeadsHandler) Issues(w http.ResponseWriter, r *http.Request) {
 
 // Triage handles GET /api/beads/triage
 func (h *BeadsHandler) Triage(w http.ResponseWriter, r *http.Request) {
-	if !h.checkBvInstalled() {
-		core.WriteError(w, http.StatusServiceUnavailable, "BV_NOT_INSTALLED",
-			"bv command not found. Install beads_viewer.")
+	if !h.checkBdInstalled() {
+		core.WriteError(w, http.StatusServiceUnavailable, "BD_NOT_INSTALLED",
+			"bd command not found.")
 		return
 	}
 
-	projectPath, code, msg := core.ValidateProjectPath(r.URL.Query().Get("path"))
+	projectPath, code, msg := validateBeadsProjectPath(r.URL.Query().Get("path"))
 	if code != "" {
 		core.WriteError(w, core.GetErrorStatusCode(code), code, msg)
 		return
@@ -328,24 +461,82 @@ func (h *BeadsHandler) Triage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.execBvCommand("--robot-triage", projectPath)
+	ready, err := h.execBdIssues(projectPath, "ready")
 	if err != nil {
-		core.WriteError(w, http.StatusBadGateway, "BV_ERROR", err.Error())
+		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
 		return
 	}
 
-	core.WriteSuccess(w, result)
+	allIssues, err := h.execBdIssues(projectPath, "list")
+	if err != nil {
+		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
+		return
+	}
+
+	sortIssuesByPriority(ready)
+
+	recommendations := make([]map[string]interface{}, 0, min(5, len(ready)))
+	quickWins := make([]string, 0)
+	for i, issue := range ready {
+		id, _ := issue["id"].(string)
+		if id == "" {
+			continue
+		}
+		priority := issuePriority(issue)
+		impact := "medium"
+		if priority <= 1 {
+			impact = "high"
+		} else if priority >= 3 {
+			impact = "low"
+		}
+		if len(recommendations) < 5 {
+			recommendations = append(recommendations, map[string]interface{}{
+				"issueId":         id,
+				"rank":            i + 1,
+				"reasoning":       "Ready according to bd: open work with no active blockers.",
+				"estimatedImpact": impact,
+			})
+		}
+		if dependencyCount(issue) == 0 && len(quickWins) < 8 {
+			quickWins = append(quickWins, id)
+		}
+	}
+
+	blockers := make([]map[string]interface{}, 0)
+	for _, issue := range allIssues {
+		if dependentCount(issue) > 0 && issue["status"] != "closed" {
+			blockers = append(blockers, issue)
+		}
+	}
+	sort.Slice(blockers, func(i, j int) bool {
+		return dependentCount(blockers[i]) > dependentCount(blockers[j])
+	})
+	blockerIDs := make([]string, 0, min(8, len(blockers)))
+	for _, issue := range blockers {
+		if id, _ := issue["id"].(string); id != "" {
+			blockerIDs = append(blockerIDs, id)
+		}
+		if len(blockerIDs) >= 8 {
+			break
+		}
+	}
+
+	core.WriteSuccess(w, map[string]interface{}{
+		"recommendations": recommendations,
+		"quickWins":       quickWins,
+		"blockers":        blockerIDs,
+	})
 }
 
 // Insights handles GET /api/beads/insights
 func (h *BeadsHandler) Insights(w http.ResponseWriter, r *http.Request) {
-	if !h.checkBvInstalled() {
-		core.WriteError(w, http.StatusServiceUnavailable, "BV_NOT_INSTALLED",
-			"bv command not found. Install beads_viewer.")
+	if !h.checkBdInstalled() {
+		core.WriteError(w, http.StatusServiceUnavailable, "BD_NOT_INSTALLED",
+			"bd command not found.")
 		return
 	}
 
-	projectPath, code, msg := core.ValidateProjectPath(r.URL.Query().Get("path"))
+	projectPath, code, msg := validateBeadsProjectPath(r.URL.Query().Get("path"))
 	if code != "" {
 		core.WriteError(w, core.GetErrorStatusCode(code), code, msg)
 		return
@@ -356,24 +547,78 @@ func (h *BeadsHandler) Insights(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.execBvCommand("--robot-insights", projectPath)
+	issues, err := h.execBdIssues(projectPath, "list")
 	if err != nil {
-		core.WriteError(w, http.StatusBadGateway, "BV_ERROR", err.Error())
+		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
 		return
 	}
 
-	core.WriteSuccess(w, result)
+	byStatus := map[string]int{}
+	byType := map[string]int{}
+	openCount := 0
+	blockedCount := 0
+	closedCount := 0
+	for _, issue := range issues {
+		status, _ := issue["status"].(string)
+		if status == "" {
+			status = "unknown"
+		}
+		byStatus[status]++
+		switch status {
+		case "closed":
+			closedCount++
+		case "blocked":
+			blockedCount++
+			openCount++
+		default:
+			openCount++
+		}
+		typ := firstString(issue["issue_type"], issue["type"])
+		if typ == "" {
+			typ = "unknown"
+		}
+		byType[typ]++
+	}
+
+	warnings := make([]string, 0)
+	if blockedCount > 0 {
+		warnings = append(warnings, fmt.Sprintf("%d blocked issues need attention", blockedCount))
+	}
+	if openCount > 50 {
+		warnings = append(warnings, "Large open backlog; use bd ready or priorities to focus next work")
+	}
+	score := 100 - blockedCount*5
+	if openCount > 50 {
+		score -= 10
+	}
+	if score < 0 {
+		score = 0
+	}
+
+	core.WriteSuccess(w, map[string]interface{}{
+		"issueCount":   len(issues),
+		"openCount":    openCount,
+		"blockedCount": blockedCount,
+		"closedCount":  closedCount,
+		"byStatus":     byStatus,
+		"byType":       byType,
+		"health": map[string]interface{}{
+			"score":    score,
+			"risks":    []string{},
+			"warnings": warnings,
+		},
+	})
 }
 
 // Graph handles GET /api/beads/graph
 func (h *BeadsHandler) Graph(w http.ResponseWriter, r *http.Request) {
-	if !h.checkBvInstalled() {
-		core.WriteError(w, http.StatusServiceUnavailable, "BV_NOT_INSTALLED",
-			"bv command not found. Install beads_viewer.")
+	if !h.checkBdInstalled() {
+		core.WriteError(w, http.StatusServiceUnavailable, "BD_NOT_INSTALLED",
+			"bd command not found.")
 		return
 	}
 
-	projectPath, code, msg := core.ValidateProjectPath(r.URL.Query().Get("path"))
+	projectPath, code, msg := validateBeadsProjectPath(r.URL.Query().Get("path"))
 	if code != "" {
 		core.WriteError(w, core.GetErrorStatusCode(code), code, msg)
 		return
@@ -384,11 +629,99 @@ func (h *BeadsHandler) Graph(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.execBvCommand("--robot-graph", projectPath)
+	issues, err := h.execBdIssues(projectPath, "export")
 	if err != nil {
-		core.WriteError(w, http.StatusBadGateway, "BV_ERROR", err.Error())
+		issues, err = h.execBdIssues(projectPath, "list")
+	}
+	if err != nil {
+		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
 		return
 	}
 
-	core.WriteSuccess(w, result)
+	nodes := make([]map[string]interface{}, 0, len(issues))
+	edges := make([]map[string]interface{}, 0)
+	for _, issue := range issues {
+		id, _ := issue["id"].(string)
+		if id == "" {
+			continue
+		}
+		nodes = append(nodes, map[string]interface{}{
+			"id":       id,
+			"title":    issue["title"],
+			"status":   issue["status"],
+			"priority": issue["priority"],
+			"type":     firstString(issue["issue_type"], issue["type"]),
+		})
+		if deps, ok := issue["dependencies"].([]interface{}); ok {
+			for _, dep := range deps {
+				depObj, ok := dep.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				target, _ := depObj["depends_on_id"].(string)
+				if target == "" {
+					continue
+				}
+				edges = append(edges, map[string]interface{}{"source": id, "target": target})
+			}
+		}
+	}
+
+	core.WriteSuccess(w, map[string]interface{}{
+		"nodes": nodes,
+		"edges": edges,
+	})
+}
+
+func issuePriority(issue map[string]interface{}) int {
+	switch v := issue["priority"].(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	default:
+		return 3
+	}
+}
+
+func dependencyCount(issue map[string]interface{}) int {
+	switch v := issue["dependency_count"].(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	default:
+		return 0
+	}
+}
+
+func dependentCount(issue map[string]interface{}) int {
+	switch v := issue["dependent_count"].(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	default:
+		return 0
+	}
+}
+
+func sortIssuesByPriority(issues []map[string]interface{}) {
+	sort.SliceStable(issues, func(i, j int) bool {
+		pi := issuePriority(issues[i])
+		pj := issuePriority(issues[j])
+		if pi != pj {
+			return pi < pj
+		}
+		return fmt.Sprint(issues[i]["updated_at"]) > fmt.Sprint(issues[j]["updated_at"])
+	})
+}
+
+func firstString(values ...interface{}) string {
+	for _, value := range values {
+		if s, ok := value.(string); ok && s != "" {
+			return s
+		}
+	}
+	return ""
 }

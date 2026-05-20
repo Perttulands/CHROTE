@@ -74,7 +74,13 @@ func (h *TmuxHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/tmux/sessions/all", h.DeleteAllSessions)
 	mux.HandleFunc("DELETE /api/tmux/sessions/{name}", h.DeleteSession)
 	mux.HandleFunc("PATCH /api/tmux/sessions/{name}", h.RenameSession)
+	mux.HandleFunc("GET /api/tmux/sessions/{name}/capture", h.CapturePane)
 	mux.HandleFunc("POST /api/tmux/appearance", h.ApplyAppearance)
+}
+
+// RunTmux satisfies the teams.TmuxRunner interface.
+func (h *TmuxHandler) RunTmux(args ...string) (string, error) {
+	return h.runTmux(args...)
 }
 
 // runTmux executes a tmux command with proper environment
@@ -139,7 +145,7 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 			}
 			parts := strings.Split(line, ":")
 			if len(parts) >= 3 {
-				windows, _ := strconv.Atoi(parts[1])
+				windows, _ := strconv.Atoi(parts[1]) //nolint:errcheck // defaults to 0 on parse failure, corrected to 1 below
 				if windows == 0 {
 					windows = 1
 				}
@@ -238,9 +244,7 @@ func (h *TmuxHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 }
 
 // protectedSessions is the list of sessions that should not be killed by nuke
-var protectedSessions = map[string]bool{
-	"chrote-chat": true,
-}
+var protectedSessions = map[string]bool{}
 
 // DeleteAllSessions handles DELETE /api/tmux/sessions/all
 func (h *TmuxHandler) DeleteAllSessions(w http.ResponseWriter, r *http.Request) {
@@ -343,6 +347,42 @@ func (h *TmuxHandler) RenameSession(w http.ResponseWriter, r *http.Request) {
 		"oldName":   oldName,
 		"newName":   req.NewName,
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+// CapturePane handles GET /api/tmux/sessions/{name}/capture
+func (h *TmuxHandler) CapturePane(w http.ResponseWriter, r *http.Request) {
+	sessionName := r.PathValue("name")
+
+	valid, errMsg := core.ValidateSessionName(sessionName, "session name")
+	if !valid {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", errMsg)
+		return
+	}
+
+	// Build capture-pane command args
+	args := []string{"capture-pane", "-t", sessionName, "-p"}
+
+	// Support ?lines=N query param for scrollback
+	if linesParam := r.URL.Query().Get("lines"); linesParam != "" {
+		lines, err := strconv.Atoi(linesParam)
+		if err != nil || lines < 0 {
+			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid lines parameter: must be a non-negative integer")
+			return
+		}
+		// -S -N means start from N lines before the current position
+		args = append(args, "-S", fmt.Sprintf("-%d", lines))
+	}
+
+	output, err := h.runTmux(args...)
+	if err != nil {
+		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
+		return
+	}
+
+	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"content": output,
+		"session": sessionName,
 	})
 }
 

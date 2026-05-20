@@ -2,7 +2,7 @@
 # CHROTE - Deployment Script
 # Deploys the chrote-server binary to WSL
 
-set -e
+set -eo pipefail
 
 BINARY="chrote-server"
 INSTALL_PATH="/usr/local/bin/chrote-server"

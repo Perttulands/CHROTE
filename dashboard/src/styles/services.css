@@ -1,0 +1,569 @@
+/* CHROTE Services operator console */
+
+.services-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--background);
+  color: var(--text-primary);
+}
+
+.services-status-strip {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--surface-primary);
+  border-bottom: 1px solid var(--divider);
+  min-height: 42px;
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+
+.services-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: max-content;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.services-status-pill strong {
+  color: var(--accent);
+  text-transform: uppercase;
+  font-size: 11px;
+}
+
+.services-status-degraded strong,
+.services-status-error strong {
+  color: var(--color-error);
+}
+
+.services-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(320px, 0.8fr) minmax(420px, 1fr) minmax(460px, 1.2fr);
+  gap: 12px;
+  padding: 12px;
+  overflow: hidden;
+}
+
+.services-panel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--divider);
+  background: var(--surface-primary);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.services-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--divider);
+  background: var(--surface-secondary);
+  flex-shrink: 0;
+}
+
+.services-panel-header h2 {
+  font-size: 15px;
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.services-panel-header p {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.services-panel-actions,
+.services-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.services-button {
+  background: var(--surface-secondary);
+  border: 1px solid var(--accent);
+  color: var(--text-primary);
+  border-radius: 3px;
+  padding: 7px 12px;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.services-button.secondary {
+  border-color: var(--divider);
+  color: var(--text-secondary);
+}
+
+.services-button:hover:not(:disabled) {
+  background: var(--accent-light);
+}
+
+.services-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.services-live-badge {
+  border: 1px solid var(--divider);
+  border-radius: 3px;
+  padding: 3px 7px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.services-live-badge.is-live {
+  color: var(--accent);
+  background: var(--accent-light);
+}
+
+.tts-enqueue-form,
+.context-ask {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 12px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.context-ask {
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  border-top: 1px solid var(--divider);
+}
+
+.services-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.services-field-wide {
+  grid-column: 1 / -1;
+}
+
+.services-field span {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.services-field input,
+.services-field select,
+.services-field textarea {
+  width: 100%;
+  background: var(--background);
+  border: 1px solid var(--divider);
+  color: var(--text-primary);
+  border-radius: 3px;
+  padding: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+
+.services-field textarea {
+  min-height: 76px;
+}
+
+.services-field input:focus,
+.services-field select:focus,
+.services-field textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.services-inline-status {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.services-subheader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--divider);
+  flex-shrink: 0;
+}
+
+.services-subheader h3 {
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
+.services-subheader span {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.services-error,
+.services-warning,
+.services-empty {
+  margin: 10px 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--divider);
+  border-radius: 3px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.services-error {
+  border-color: var(--color-error);
+  color: var(--color-error);
+  background: var(--color-error-light);
+}
+
+.services-error.compact {
+  margin: 6px 0 0;
+  padding: 5px 7px;
+  font-size: 12px;
+}
+
+.services-warning {
+  color: var(--text-secondary);
+  background: var(--accent-light);
+}
+
+.tts-message-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+}
+
+.tts-message {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 260px);
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  background: var(--surface-secondary);
+}
+
+.tts-message + .tts-message {
+  margin-top: 8px;
+}
+
+.tts-message-error {
+  border-color: var(--color-error);
+}
+
+.tts-message-text {
+  color: var(--text-primary);
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.tts-message-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.tts-message audio {
+  width: 100%;
+  align-self: center;
+}
+
+.context-layout {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(180px, 0.42fr) minmax(260px, 1fr);
+  overflow: hidden;
+}
+
+.context-docs-list {
+  min-width: 0;
+  overflow: auto;
+  border-right: 1px solid var(--divider);
+}
+
+.context-doc-button,
+.context-source {
+  width: calc(100% - 16px);
+  margin: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  background: var(--surface-secondary);
+  border: 1px solid var(--divider);
+  color: var(--text-primary);
+  border-radius: 4px;
+  padding: 8px;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.context-doc-button.active,
+.context-doc-button:hover,
+.context-source:hover {
+  border-color: var(--accent);
+  background: var(--accent-light);
+}
+
+.context-doc-button small,
+.context-source small {
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+
+.context-editor {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  overflow: auto;
+}
+
+.context-editor .services-field textarea {
+  min-height: 220px;
+}
+
+.context-history {
+  border-top: 1px solid var(--divider);
+}
+
+.context-history-entry {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--divider);
+  font-size: 12px;
+}
+
+.context-history-entry code {
+  color: var(--accent);
+}
+
+.context-history-entry span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-history-entry time {
+  color: var(--text-dim);
+}
+
+.context-answer {
+  border-top: 1px solid var(--divider);
+  padding: 12px;
+  overflow: auto;
+  max-height: 260px;
+}
+
+.context-answer-text {
+  line-height: 1.45;
+  margin-bottom: 10px;
+  color: var(--text-primary);
+}
+
+.context-sources {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.context-source {
+  width: 100%;
+  margin: 0;
+}
+
+.context-integrations-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+.context-integration-form,
+.context-preview-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.context-preview-form {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--divider);
+}
+
+.context-token-banner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--divider);
+  background: var(--accent-light);
+  font-size: 12px;
+}
+
+.context-token-banner code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--accent);
+}
+
+.context-grant-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.context-grant-row,
+.context-mini-row {
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  background: var(--surface-secondary);
+  padding: 8px;
+}
+
+.context-grant-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.context-grant-row strong,
+.context-mini-row strong {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.context-grant-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 5px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.context-preview-result,
+.context-ops-columns {
+  margin-top: 12px;
+}
+
+.context-egress-state {
+  padding: 8px;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.context-preview-columns,
+.context-ops-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.context-preview-columns {
+  margin-top: 10px;
+}
+
+.context-mini-row {
+  margin-top: 8px;
+}
+
+.context-ingestion-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.context-mini-row small {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-secondary);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1300px) {
+  .services-grid {
+    grid-template-columns: 1fr;
+    overflow: auto;
+  }
+
+  .services-panel {
+    min-height: 720px;
+  }
+}
+
+@media (max-width: 700px) {
+  .services-grid {
+    padding: 8px;
+  }
+
+  .tts-enqueue-form,
+  .context-ask,
+  .context-layout,
+  .context-integration-form,
+  .context-preview-form,
+  .context-preview-columns,
+  .context-ops-columns,
+  .context-grant-row,
+  .context-ingestion-row,
+  .context-token-banner {
+    grid-template-columns: 1fr;
+  }
+
+  .context-docs-list {
+    border-right: none;
+    border-bottom: 1px solid var(--divider);
+    max-height: 220px;
+  }
+
+  .tts-message {
+    grid-template-columns: 1fr;
+  }
+
+  .context-history-entry {
+    grid-template-columns: 1fr;
+  }
+}

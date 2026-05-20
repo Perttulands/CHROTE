@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+project=${1:-$PWD}
+
+cd "$project"
+if [ ! -d .beads ]; then
+  printf 'No .beads directory found in %s\n' "$project" >&2
+  exit 1
+fi
+
+bd export --no-memories -o .beads/beads.jsonl
+printf 'Exported modern bd data to %s/.beads/beads.jsonl\n' "$project"

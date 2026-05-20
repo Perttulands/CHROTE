@@ -52,7 +52,8 @@ export function useKeyboardShortcuts({
       const response = await fetch('/api/tmux/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: sessionName })
+        body: JSON.stringify({ name: sessionName }),
+        signal: AbortSignal.timeout(10000),
       })
       if (response.ok) {
         refreshSessions()

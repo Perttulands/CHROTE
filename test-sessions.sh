@@ -1,4 +1,5 @@
 #!/bin/bash
+# truthsayer:ignore bad-defaults.missing-pipefail -- test helper; tmux failures are expected
 # Test script to simulate Gastown sessions
 # Run this inside the container: docker exec -it agentarena-dev bash /code/AgentArena/test-sessions.sh
 # Or from within tmux in the container: bash /code/AgentArena/test-sessions.sh

@@ -1,17 +1,16 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('Real Backend Integration', () => {
-  const BACKEND_URL = 'http://localhost:8080';
-
   test('GET /api/tmux/sessions connection and contract', async ({ request }) => {
     // 1. Fetch from the real backend
     let response;
     try {
-      response = await request.get(`${BACKEND_URL}/api/tmux/sessions`, {
+      response = await request.get('/api/tmux/sessions', {
         timeout: 5000 // 5s timeout for connection
       });
     } catch (e) {
-      throw new Error(`Failed to connect to backend at ${BACKEND_URL}. Is the Go server running? Error: ${e.message}`);
+      const message = e instanceof Error ? e.message : String(e);
+      throw new Error(`Failed to connect to the CHROTE backend. Set CHROTE_TEST_URL if it is not running at the Playwright baseURL. Error: ${message}`);
     }
 
     // 2. verify status
@@ -36,13 +35,13 @@ test.describe('Real Backend Integration', () => {
       // TmuxSession interface: name, windows, attached, group
       expect(session).toHaveProperty('name');
       expect(typeof session.name).toBe('string');
-      
+
       expect(session).toHaveProperty('windows');
       expect(typeof session.windows).toBe('number');
-      
+
       expect(session).toHaveProperty('attached');
       expect(typeof session.attached).toBe('boolean');
-      
+
       expect(session).toHaveProperty('group');
       expect(typeof session.group).toBe('string');
     }

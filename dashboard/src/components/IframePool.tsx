@@ -30,7 +30,7 @@ function getTerminalUrl(sessionName: string): string {
 }
 
 export function IframePoolProvider({ children }: { children: ReactNode }) {
-  const { workspaces, layoutPresets, settings } = useSession()
+  const { workspaces, settings } = useSession()
 
   // Compute all unique session names that need iframes
   const allSessions = useMemo(() => {
@@ -46,21 +46,8 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
       })
     })
 
-    // All presets
-    layoutPresets.forEach(preset => {
-      wsIds.forEach(wsId => {
-        const ws = preset.workspaces[wsId]
-        if (!ws) return
-        ws.windows.forEach(w => {
-          w.boundSessions.forEach(s => {
-            if (s && s !== 'INIT-PENDING') sessions.add(s)
-          })
-        })
-      })
-    })
-
     return sessions
-  }, [workspaces, layoutPresets])
+  }, [workspaces])
 
   // Refs for iframe elements and state
   const iframeRefs = useRef<Map<string, HTMLIFrameElement>>(new Map())
@@ -69,6 +56,9 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
 
   // Track which sessions are claimed and where
   const claimsRef = useRef<Map<string, HTMLElement>>(new Map())
+
+  // Track which sessions have had their src set (deferred connection)
+  const connectedRef = useRef<Set<string>>(new Set())
 
   // Clean up iframes for sessions no longer needed
   useEffect(() => {
@@ -85,6 +75,7 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
       }
       iframeRefs.current.delete(sessionName)
       claimsRef.current.delete(sessionName)
+      connectedRef.current.delete(sessionName)
     })
     if (toRemove.length > 0) {
       setLoadedSessions(prev => {
@@ -95,7 +86,7 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
     }
   }, [allSessions])
 
-  // Create iframes for new sessions
+  // Create iframe elements for new sessions (src deferred until first claim)
   useEffect(() => {
     const pool = poolContainerRef.current
     if (!pool) return
@@ -104,10 +95,11 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
       if (iframeRefs.current.has(sessionName)) return
 
       const iframe = document.createElement('iframe')
-      iframe.src = getTerminalUrl(sessionName)
+      // Deferred connection: do NOT set src here. It will be set on first claim.
       iframe.allow = 'clipboard-read; clipboard-write'
       iframe.title = `Terminal - ${sessionName}`
-      iframe.style.cssText = 'width:100%;height:100%;border:none;background:transparent;position:absolute;visibility:hidden;'
+      // Start hidden in pool; will be cleared when claimed into a container
+      iframe.style.cssText = 'width:400px;height:300px;border:none;background:transparent;position:absolute;visibility:hidden;'
 
       iframe.addEventListener('load', () => {
         setLoadedSessions(prev => new Set(prev).add(sessionName))
@@ -119,9 +111,13 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
       // If already claimed, put it in the container with visible styles; otherwise hide in pool
       const claimContainer = claimsRef.current.get(sessionName)
       if (claimContainer) {
-        iframe.style.position = ''
-        iframe.style.visibility = ''
+        iframe.style.cssText = 'width:100%;height:100%;border:none;background:transparent;'
         claimContainer.appendChild(iframe)
+        // Set src since it's being claimed immediately
+        if (!connectedRef.current.has(sessionName)) {
+          connectedRef.current.add(sessionName)
+          iframe.src = getTerminalUrl(sessionName)
+        }
       } else {
         pool.appendChild(iframe)
       }
@@ -158,10 +154,17 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
 
     const iframe = iframeRefs.current.get(sessionName)
     if (iframe) {
-      // Move iframe from pool (or another container) into the claiming container
+      // Move iframe from pool into the claiming container.
+      // Clear pool-specific inline styles; CSS (.terminal-window-body iframe)
+      // handles positioning via position:absolute + inset.
+      iframe.style.cssText = 'border:none;background:transparent;'
       container.appendChild(iframe)
-      iframe.style.position = ''
-      iframe.style.visibility = ''
+
+      // Deferred connection: set src only on first claim into a visible container
+      if (!connectedRef.current.has(sessionName)) {
+        connectedRef.current.add(sessionName)
+        iframe.src = getTerminalUrl(sessionName)
+      }
     }
 
     // Return cleanup: move iframe back to pool
@@ -170,8 +173,8 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
       const iframe = iframeRefs.current.get(sessionName)
       const pool = poolContainerRef.current
       if (iframe && pool) {
-        iframe.style.position = 'absolute'
-        iframe.style.visibility = 'hidden'
+        // Override CSS positioning: park in hidden pool with explicit inline styles
+        iframe.style.cssText = 'width:400px;height:300px;border:none;background:transparent;position:absolute;visibility:hidden;'
         pool.appendChild(iframe)
       }
     }
@@ -194,9 +197,12 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
   const triggerFit = useCallback((sessionName: string) => {
     try {
       const iframe = iframeRefs.current.get(sessionName)
-      if (iframe?.contentWindow) {
-        iframe.contentWindow.dispatchEvent(new Event('resize'))
-      }
+      if (!iframe?.contentWindow) return
+      // Only fit iframes that are claimed into a visible container, not parked in pool
+      if (!claimsRef.current.has(sessionName)) return
+      // Don't trigger fit if iframe has no meaningful dimensions
+      if (iframe.offsetWidth < 10 || iframe.offsetHeight < 10) return
+      iframe.contentWindow.dispatchEvent(new Event('resize'))
     } catch { /* cross-origin */ }
   }, [])
 
@@ -221,10 +227,21 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
 
   return (
     <IframePoolContext.Provider value={contextValue}>
-      {/* Hidden container for unclaimed iframes */}
+      {/* Pool container for released iframes that still have active ttyd connections.
+          Deferred connection handles initial creation (no src until first claim).
+          The 400x300 size prevents xterm from collapsing to 2x1 while parked. */}
       <div
         ref={poolContainerRef}
-        style={{ position: 'absolute', width: 0, height: 0, overflow: 'hidden', pointerEvents: 'none' }}
+        style={{
+          position: 'fixed',
+          left: '-9999px',
+          top: '-9999px',
+          width: '400px',
+          height: '300px',
+          overflow: 'hidden',
+          pointerEvents: 'none',
+          visibility: 'hidden',
+        }}
       />
       {children}
     </IframePoolContext.Provider>

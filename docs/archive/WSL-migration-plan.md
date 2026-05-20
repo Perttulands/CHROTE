@@ -141,7 +141,7 @@ Agents:     Run as 'chrote' user (proper Linux permissions)
 │       └── dashboard/dist/    # Built React app (embedded)
 ├── dashboard/                 # React source
 ├── wsl/                       # Systemd services, scripts
-└── vendor/                    # gastown, beads, beads_viewer
+└── components/                # gastown, beads, beads_viewer
 ```
 
 ### Symlinks (Compatibility)
@@ -297,16 +297,16 @@ cp -r dist/ ~/chrote/src/internal/dashboard/
 cd ~/chrote/src
 /usr/local/go/bin/go build -o ~/chrote-server ./cmd/server
 
-# Build vendored tools (if present)
+# Build components (if present)
 cd ~/chrote
-if [ -f vendor/gastown/go.mod ]; then
-    cd vendor/gastown && /usr/local/go/bin/go build -o ~/.local/bin/gt ./cmd/gt && cd ../..
+if [ -f components/gastown/go.mod ]; then
+    cd components/gastown && /usr/local/go/bin/go build -o ~/.local/bin/gt ./cmd/gt && cd ../..
 fi
-if [ -f vendor/beads/go.mod ]; then
-    cd vendor/beads && /usr/local/go/bin/go build -o ~/.local/bin/bd ./cmd/bd && cd ../..
+if [ -f components/beads/go.mod ]; then
+    cd components/beads && /usr/local/go/bin/go build -o ~/.local/bin/bd ./cmd/bd && cd ../..
 fi
-if [ -f vendor/beads_viewer/go.mod ]; then
-    cd vendor/beads_viewer && /usr/local/go/bin/go build -o ~/.local/bin/bv ./cmd/bv && cd ../..
+if [ -f components/beads_viewer/go.mod ]; then
+    cd components/beads_viewer && /usr/local/go/bin/go build -o ~/.local/bin/bv ./cmd/bv && cd ../..
 fi
 ```
 

@@ -1,5 +1,5 @@
 
-import { test, expect, Page } from '@playwright/test'
+import { test, expect, Page } from './fixtures'
 import { mockApiRoutes } from './mock-api'
 
 // Copied from dashboard.spec.ts
@@ -23,8 +23,10 @@ async function dragAndDrop(page: Page, sourceSelector: string, targetSelector: s
   await page.mouse.down()
   await page.mouse.move(startX + 10, startY + 10, { steps: 5 })
   await page.mouse.move(endX, endY, { steps: 10 })
+  // drag settle — no event to wait for
   await page.waitForTimeout(100)
   await page.mouse.up()
+  // drag settle — no event to wait for
   await page.waitForTimeout(100)
 }
 
@@ -34,18 +36,18 @@ test.describe('Session Persistence', () => {
     await mockApiRoutes(page)
     await page.goto('/')
     await page.waitForSelector('.dashboard')
-    
+
     // 2. Drag a session to the first window
     // We target "hq-deacon" from the session panel
     const sessionSource = '.session-item:has-text("hq-deacon")'
-    const windowTarget = '.terminal-window' 
-    
+    const windowTarget = '.terminal-window'
+
     // Wait for the session item to be available
     await page.waitForSelector(sessionSource)
-    
+
     // Drag it
     await dragAndDrop(page, sessionSource, windowTarget)
-    
+
     // Verify it is bound (tag appears in window header)
     const sessionTag = page.locator('.terminal-window-header .session-tags .session-tag:has-text("deacon")')
     await expect(sessionTag).toBeVisible()

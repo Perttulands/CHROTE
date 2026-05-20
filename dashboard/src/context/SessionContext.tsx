@@ -10,6 +10,7 @@ async function applyTmuxAppearance(appearance: TmuxAppearance): Promise<void> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(appearance),
+      signal: AbortSignal.timeout(10000),
     })
   } catch (e) {
     console.warn('Failed to apply tmux appearance:', e)
@@ -20,6 +21,8 @@ const STORAGE_KEY = 'chrote-dashboard-state'
 const PRESETS_STORAGE_KEY = 'chrote-dashboard-presets'
 
 const WORKSPACE_IDS: WorkspaceId[] = ['terminal1', 'terminal2']
+const VIEWPORT_BUCKETS = ['mobile', 'tablet', 'desktop'] as const
+type ViewportBucket = typeof VIEWPORT_BUCKETS[number]
 
 // Load presets from localStorage
 function loadStoredPresets(): LayoutPreset[] {
@@ -62,12 +65,65 @@ interface StoredStateV2 {
   settings: UserSettings
 }
 
-function loadStoredState(): StoredStateV2 | null {
+interface StoredLayout {
+  workspaces: Record<WorkspaceId, TerminalWorkspace>
+}
+
+interface StoredStateV3 {
+  version: 3
+  layoutsByViewport: Partial<Record<ViewportBucket, StoredLayout>>
+  sidebarCollapsed: boolean
+  settings: UserSettings
+}
+
+interface LoadedStoredState extends StoredStateV2 {
+  layoutsByViewport: Partial<Record<ViewportBucket, StoredLayout>>
+}
+
+function getCurrentViewportBucket(): ViewportBucket {
+  if (typeof window === 'undefined') return 'desktop'
+  const width = window.innerWidth || document.documentElement.clientWidth || 1024
+  if (width <= 768) return 'mobile'
+  if (width <= 1180) return 'tablet'
+  return 'desktop'
+}
+
+function isViewportBucket(value: string): value is ViewportBucket {
+  return VIEWPORT_BUCKETS.includes(value as ViewportBucket)
+}
+
+function mergeSettings(rawSettings: unknown): UserSettings {
+  if (!isRecord(rawSettings)) return DEFAULT_SETTINGS
+
+  const tmuxAppearance = isRecord(rawSettings.tmuxAppearance)
+    ? { ...DEFAULT_TMUX_APPEARANCE, ...rawSettings.tmuxAppearance }
+    : DEFAULT_TMUX_APPEARANCE
+
+  return {
+    ...DEFAULT_SETTINGS,
+    ...rawSettings,
+    tmuxAppearance,
+  } as UserSettings
+}
+
+function defaultStoredState(): LoadedStoredState {
+  return {
+    workspaces: {
+      terminal1: createDefaultWorkspace('terminal1', 2),
+      terminal2: createDefaultWorkspace('terminal2', 2),
+    },
+    layoutsByViewport: {},
+    sidebarCollapsed: false,
+    settings: DEFAULT_SETTINGS,
+  }
+}
+
+function loadStoredState(viewportBucket: ViewportBucket = getCurrentViewportBucket()): LoadedStoredState | null {
   try {
     const stored = localStorage.getItem(STORAGE_KEY)
     if (stored) {
       const parsed: unknown = JSON.parse(stored)
-      return migrateStoredState(parsed)
+      return migrateStoredState(parsed, viewportBucket)
     }
   } catch (e) {
     console.warn('Failed to load stored state:', e)
@@ -75,9 +131,19 @@ function loadStoredState(): StoredStateV2 | null {
   return null
 }
 
-function saveState(state: StoredStateV2): void {
+function saveState(state: StoredStateV2, viewportBucket: ViewportBucket): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+    const existing = loadStoredState(viewportBucket) ?? defaultStoredState()
+    const next: StoredStateV3 = {
+      version: 3,
+      layoutsByViewport: {
+        ...existing.layoutsByViewport,
+        [viewportBucket]: { workspaces: cloneWorkspaces(state.workspaces) },
+      },
+      sidebarCollapsed: state.sidebarCollapsed,
+      settings: state.settings,
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
   } catch (e) {
     console.warn('Failed to save state:', e)
   }
@@ -108,38 +174,65 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
-function migrateStoredState(raw: unknown): StoredStateV2 {
+function sanitizeWorkspace(workspaceId: WorkspaceId, wsRaw: unknown): TerminalWorkspace {
+  const ws = isRecord(wsRaw) ? wsRaw : {}
+  const windowCount = clampWindowCount(typeof ws.windowCount === 'number' ? ws.windowCount : 2)
+  const windowsRaw = Array.isArray(ws.windows) ? (ws.windows as TerminalWindow[]) : []
+
+  const windows: TerminalWindow[] = Array.from({ length: windowCount }, (_, i) => {
+    const existing = windowsRaw[i]
+    return {
+      id: `${workspaceId}-window-${i}`,
+      boundSessions: existing?.boundSessions ?? [],
+      activeSession: existing?.activeSession ?? null,
+      colorIndex: typeof existing?.colorIndex === 'number' ? existing.colorIndex : i,
+    }
+  })
+
+  return {
+    windows,
+    windowCount,
+  }
+}
+
+function sanitizeWorkspaces(rawWorkspaces: unknown): Record<WorkspaceId, TerminalWorkspace> {
+  const workspaces = isRecord(rawWorkspaces) ? rawWorkspaces : {}
+  return {
+    terminal1: sanitizeWorkspace('terminal1', workspaces.terminal1),
+    terminal2: sanitizeWorkspace('terminal2', workspaces.terminal2),
+  }
+}
+
+function migrateStoredState(raw: unknown, viewportBucket: ViewportBucket): LoadedStoredState {
   if (isRecord(raw)) {
+    if (raw.version === 3 && isRecord(raw.layoutsByViewport)) {
+      const layoutsByViewport: Partial<Record<ViewportBucket, StoredLayout>> = {}
+
+      Object.entries(raw.layoutsByViewport).forEach(([key, value]) => {
+        if (!isViewportBucket(key) || !isRecord(value)) return
+        layoutsByViewport[key] = {
+          workspaces: sanitizeWorkspaces(value.workspaces),
+        }
+      })
+
+      return {
+        workspaces: layoutsByViewport[viewportBucket]?.workspaces ?? defaultStoredState().workspaces,
+        layoutsByViewport,
+        sidebarCollapsed: typeof raw.sidebarCollapsed === 'boolean' ? raw.sidebarCollapsed : false,
+        settings: mergeSettings(raw.settings),
+      }
+    }
+
     // V2: workspaces already present
     if (isRecord(raw.workspaces) && isRecord(raw.workspaces.terminal1) && isRecord(raw.workspaces.terminal2)) {
       const sidebarCollapsed = typeof raw.sidebarCollapsed === 'boolean' ? raw.sidebarCollapsed : false
-      const settings = (raw.settings as UserSettings) ?? DEFAULT_SETTINGS
-
-      const toWorkspace = (workspaceId: WorkspaceId, wsRaw: unknown): TerminalWorkspace => {
-        const ws = isRecord(wsRaw) ? wsRaw : {}
-        const windowCount = clampWindowCount(typeof ws.windowCount === 'number' ? ws.windowCount : 2)
-        const windowsRaw = Array.isArray(ws.windows) ? (ws.windows as TerminalWindow[]) : []
-
-        const windows: TerminalWindow[] = Array.from({ length: windowCount }, (_, i) => {
-          const existing = windowsRaw[i]
-          return {
-            id: `${workspaceId}-window-${i}`,
-            boundSessions: existing?.boundSessions ?? [],
-            activeSession: existing?.activeSession ?? null,
-            colorIndex: typeof existing?.colorIndex === 'number' ? existing.colorIndex : i,
-          }
-        })
-
-        return {
-          windows,
-          windowCount,
-        }
-      }
+      const settings = mergeSettings(raw.settings)
+      const workspaces = sanitizeWorkspaces(raw.workspaces)
 
       return {
-        workspaces: {
-          terminal1: toWorkspace('terminal1', raw.workspaces.terminal1),
-          terminal2: toWorkspace('terminal2', raw.workspaces.terminal2),
+        workspaces,
+        layoutsByViewport: {
+          [viewportBucket]: { workspaces },
         },
         sidebarCollapsed,
         settings,
@@ -149,7 +242,7 @@ function migrateStoredState(raw: unknown): StoredStateV2 {
     // V1: migrate windows -> terminal1
     if (Array.isArray(raw.windows) && typeof raw.windowCount === 'number') {
       const sidebarCollapsed = typeof raw.sidebarCollapsed === 'boolean' ? raw.sidebarCollapsed : false
-      const settings = (raw.settings as UserSettings) ?? DEFAULT_SETTINGS
+      const settings = mergeSettings(raw.settings)
       const windowCount = clampWindowCount(raw.windowCount)
       const windowsRaw = raw.windows as TerminalWindow[]
 
@@ -163,13 +256,18 @@ function migrateStoredState(raw: unknown): StoredStateV2 {
         }
       })
 
+      const workspaces = {
+        terminal1: {
+          windows: terminal1Windows,
+          windowCount,
+        },
+        terminal2: createDefaultWorkspace('terminal2', 2),
+      }
+
       return {
-        workspaces: {
-          terminal1: {
-            windows: terminal1Windows,
-            windowCount,
-          },
-          terminal2: createDefaultWorkspace('terminal2', 2),
+        workspaces,
+        layoutsByViewport: {
+          [viewportBucket]: { workspaces },
         },
         sidebarCollapsed,
         settings,
@@ -178,21 +276,15 @@ function migrateStoredState(raw: unknown): StoredStateV2 {
   }
 
   // Default
-  return {
-    workspaces: {
-      terminal1: createDefaultWorkspace('terminal1', 2),
-      terminal2: createDefaultWorkspace('terminal2', 2),
-    },
-    sidebarCollapsed: false,
-    settings: DEFAULT_SETTINGS,
-  }
+  return defaultStoredState()
 }
 
 const SessionContext = createContext<DashboardContextType | null>(null)
 
 export function SessionProvider({ children }: { children: ReactNode }) {
+  const viewportBucket = useMemo(() => getCurrentViewportBucket(), [])
   // Load initial state from localStorage or use defaults
-  const stored = useMemo(() => loadStoredState(), [])
+  const stored = useMemo(() => loadStoredState(viewportBucket), [viewportBucket])
 
   // Toast notifications
   const { addToast } = useToast()
@@ -274,8 +366,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
     })
 
-    saveState({ workspaces: cleanWorkspaces, sidebarCollapsed, settings })
-  }, [workspaces, sidebarCollapsed, settings])
+    saveState({ workspaces: cleanWorkspaces, sidebarCollapsed, settings }, viewportBucket)
+  }, [workspaces, sidebarCollapsed, settings, viewportBucket])
 
   // Persist presets to localStorage
   useEffect(() => {
@@ -285,7 +377,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   // Fetch sessions from API
   const refreshSessions = useCallback(async () => {
     try {
-      const response = await fetch('/api/tmux/sessions')
+      const response = await fetch('/api/tmux/sessions', { signal: AbortSignal.timeout(10000) })
       const data: SessionsResponse = await response.json()
 
       if (data.error) {
@@ -523,6 +615,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     try {
       const response = await fetch(`/api/tmux/sessions/${encodeURIComponent(sessionName)}`, {
         method: 'DELETE',
+        signal: AbortSignal.timeout(10000),
       })
       if (response.ok) {
         addToast(`Session '${sessionName}' deleted`, 'info')
@@ -544,6 +637,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ newName }),
+        signal: AbortSignal.timeout(10000),
       })
       if (response.ok) {
         // Update window bindings to use the new name

@@ -33,8 +33,8 @@ If setting up manually:
 ### Building from Source
 
 ```bash
-# Inside WSL as chrote user
-cd /code
+# Inside the CHROTE workspace
+cd /path/to/chrote
 
 # Build the dashboard
 cd dashboard
@@ -46,28 +46,42 @@ cp -r dist ../src/internal/dashboard/
 cd ../src
 go build -o ../chrote-server ./cmd/server
 
-# Restart the service to pick up changes
-sudo systemctl restart chrote-server
+# Restart the user service to pick up changes
+systemctl --user restart chrote.service
 ```
 
 ### Running Tests
 
 ```bash
 cd src
+test -z "$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
 go test ./...
+go vet ./...
+go test -race ./...
+go test -cover ./...
+
+cd ../dashboard
+npm ci
+npm run lint
+npm run build
+npm run test:unit -- --coverage
+npm audit --audit-level=moderate
+npm test
 ```
 
 ## Code Style
 
 - Go: Follow standard Go conventions (`gofmt`, `go vet`)
-- TypeScript/React: ESLint with the project's configuration
+- TypeScript/React: `npm run lint`, `npm run build`, and `npm run test:unit -- --coverage` are the current static/unit gates.
 - Commit messages: Use clear, descriptive messages
 
 ## Pull Request Process
 
-1. Ensure tests pass: `go test ./...`
-2. Update documentation if needed
-3. Submit a pull request with a clear description of changes
+1. Ensure the backend gates pass: `cd src && test -z "$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))" && go vet ./... && go test ./... && go test -race ./...`
+2. Ensure the dashboard gates pass: `cd dashboard && npm run lint && npm run build && npm run test:unit -- --coverage && npm audit --audit-level=moderate && npm test`
+3. Run backend coverage when changing backend behavior: `cd src && go test -cover ./...`
+4. Update documentation if needed
+5. Submit a pull request with a clear description of changes
 
 ## Reporting Issues
 

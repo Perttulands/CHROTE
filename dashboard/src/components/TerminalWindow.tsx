@@ -24,7 +24,8 @@ function CreateSessionButton({ workspaceId, windowId, accentColor }: CreateSessi
       const response = await fetch('/api/tmux/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: sessionName })
+        body: JSON.stringify({ name: sessionName }),
+        signal: AbortSignal.timeout(10000),
       })
       if (response.ok) {
         addToast(`Session '${sessionName}' created`, 'success')
@@ -102,10 +103,8 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
     }
     : undefined
 
-  // Extract just the agent name for display
-  const displayName = sessionName.includes('-')
-    ? sessionName.split('-').slice(-1)[0]
-    : sessionName
+  // Show full tmux session name, including prefixes (e.g. critique-codex).
+  const displayName = sessionName
 
   // Handle click on the tag - only fire if not dragging
   const handleClick = (e: React.MouseEvent) => {
@@ -180,27 +179,52 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
   // eslint-disable-next-line react-hooks/exhaustive-deps -- pool.claimIframe is a stable ref
   }, [windowConfig.boundSessions])
 
-  // Manage visibility of claimed iframes based on active session
+  // Manage visibility of claimed iframes based on active session.
+  // CSS (.terminal-window-body iframe) handles position/size via position:absolute + inset.
+  // This effect only toggles display to show/hide the correct iframe.
   useEffect(() => {
     windowConfig.boundSessions.forEach(sessionName => {
       const iframe = pool.getIframe(sessionName)
       if (!iframe) return
       const isActive = sessionName === activeSession
       iframe.style.display = isActive ? 'block' : 'none'
-      iframe.style.position = isActive ? 'relative' : 'absolute'
-      iframe.style.width = '100%'
-      iframe.style.height = '100%'
     })
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- pool.getIframe is a stable ref
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- pool functions are stable refs
   }, [activeSession, windowConfig.boundSessions])
 
-  // Trigger fit when active session changes
+  // Fit active session after layout settles. rAF fires after the first
+  // paint; the 150ms fallback covers newly-connected iframes where xterm
+  // isn't ready in the first frame. ResizeObserver handles everything after.
   useEffect(() => {
-    if (activeSession && pool.isLoaded(activeSession)) {
-      setTimeout(() => pool.triggerFit(activeSession), 50)
+    if (!activeSession) return
+    const fitIfLoaded = () => {
+      if (pool.isLoaded(activeSession)) pool.triggerFit(activeSession)
+    }
+    const rafId = requestAnimationFrame(fitIfLoaded)
+    const timerId = setTimeout(fitIfLoaded, 150)
+    return () => {
+      cancelAnimationFrame(rafId)
+      clearTimeout(timerId)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- pool functions are stable refs
   }, [activeSession])
+
+  // Trigger fit() when the active session's iframe finishes loading.
+  // The effect above fires before the iframe has loaded (src just set),
+  // so xterm.js starts with default dimensions. This effect catches the
+  // load completion and re-fits with multiple delays so xterm has time
+  // to initialize its fit addon.
+  useEffect(() => {
+    if (!activeSession || !activeSessionLoaded) return
+    const timers = [
+      setTimeout(() => pool.triggerFit(activeSession), 50),
+      setTimeout(() => pool.triggerFit(activeSession), 200),
+      setTimeout(() => pool.triggerFit(activeSession), 500),
+    ]
+    return () => timers.forEach(clearTimeout)
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- pool functions are stable refs
+  }, [activeSession, activeSessionLoaded])
 
   // Focus iframe when this window is focused
   useEffect(() => {

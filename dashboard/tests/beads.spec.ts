@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, allowBrowserConsoleMessage } from './fixtures'
 import { mockApiRoutes, mockBeadsApiRoutes, mockBeadsApiError } from './mock-api'
 
 test.describe('Beads View', () => {
@@ -107,7 +107,7 @@ test.describe('Beads View', () => {
     })
 
     test('should display kanban columns', async ({ page }) => {
-      await expect(page.locator('.kanban-column')).toHaveCount(5) // open, ready, in_progress, blocked, closed
+      await expect(page.locator('.kanban-column')).toHaveCount(6) // open, ready, in_progress, hooked, blocked, closed
     })
 
     test('should display issues in columns', async ({ page }) => {
@@ -171,6 +171,7 @@ test.describe('Beads View', () => {
 
   test.describe('Error Handling', () => {
     test('should display error message when API fails', async ({ page }) => {
+      allowBrowserConsoleMessage('Failed to load resource: the server responded with a status of 503')
       // Override with error mocks
       await mockBeadsApiError(page)
 
@@ -185,14 +186,15 @@ test.describe('Beads View', () => {
     })
 
     test('should not crash when switching tabs with error state', async ({ page }) => {
+      allowBrowserConsoleMessage('Failed to load resource: the server responded with a status of 503')
       await mockBeadsApiError(page)
 
       await page.click('.tab:has-text("Beads")')
       await page.waitForSelector('#project-select')
       await page.selectOption('#project-select', '/code/test-project')
 
-      // Wait a bit for API errors
-      await page.waitForTimeout(500)
+      // Wait for error state to appear after API failures
+      await expect(page.locator('.error-message')).toBeVisible({ timeout: 3000 })
 
       // Switch between tabs - should not crash
       await page.click('.beads-subtab:has-text("Triage")')
@@ -206,14 +208,15 @@ test.describe('Beads View', () => {
     })
 
     test('should maintain beads-view element after error', async ({ page }) => {
+      allowBrowserConsoleMessage('Failed to load resource: the server responded with a status of 503')
       await mockBeadsApiError(page)
 
       await page.click('.tab:has-text("Beads")')
       await page.waitForSelector('#project-select')
       await page.selectOption('#project-select', '/code/test-project')
 
-      // Wait for API response
-      await page.waitForTimeout(500)
+      // Wait for error state to appear after API failures
+      await expect(page.locator('.error-message')).toBeVisible({ timeout: 3000 })
 
       // BeadsView should still be present (not blank screen)
       await expect(page.locator('.beads-view')).toBeVisible()

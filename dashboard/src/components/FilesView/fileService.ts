@@ -10,7 +10,7 @@ const API_BASE = '/api/files'
  * Sanitize filename to prevent path traversal and other attacks
  * SECURITY: Rejects dangerous patterns, allows only safe characters
  */
-function sanitizeFilename(filename: string): string {
+export function sanitizeFilename(filename: string): string {
   // Reject path separators and traversal patterns
   if (filename.includes('/') || filename.includes('\\') || filename.includes('..')) {
     throw new FileOperationError(
@@ -115,6 +115,7 @@ export async function fetchDirectory(path: string): Promise<FileItem[]> {
       headers: {
         'Accept': 'application/json',
       },
+      signal: AbortSignal.timeout(10000),
     })
   } catch (error) {
     throw new FileOperationError(
@@ -160,7 +161,8 @@ export async function fetchDirectory(path: string): Promise<FileItem[]> {
  * Throws on: 403 (permission), 409 (exists), 500+ (server error)
  */
 export async function createFolder(path: string, name: string): Promise<void> {
-  const fullPath = path === '/' ? `/${name}` : `${path}/${name}`
+  const safeName = sanitizeFilename(name)
+  const fullPath = path === '/' ? `/${safeName}` : `${path}/${safeName}`
 
   let response: Response
   try {
@@ -169,6 +171,7 @@ export async function createFolder(path: string, name: string): Promise<void> {
       headers: {
         'Content-Type': 'text/plain',
       },
+      signal: AbortSignal.timeout(10000),
     })
   } catch (error) {
     throw new FileOperationError(
@@ -182,6 +185,67 @@ export async function createFolder(path: string, name: string): Promise<void> {
   }
 
   throwForStatus(response, 'Failed to create folder')
+}
+
+/**
+ * Read a file as text for the editor/preview pane.
+ * Throws on all non-OK responses so callers can surface the real failure.
+ */
+export async function readTextFile(path: string): Promise<string> {
+  let response: Response
+  try {
+    response = await fetch(getDownloadUrl(path), {
+      headers: {
+        'Accept': 'text/plain, text/*, application/json, */*',
+      },
+      signal: AbortSignal.timeout(10000),
+    })
+  } catch (error) {
+    throw new FileOperationError(
+      error instanceof Error ? error.message : 'Network error',
+      'NETWORK'
+    )
+  }
+
+  throwForStatus(response, 'Failed to read file')
+  return response.text()
+}
+
+/**
+ * Write text content to a file. The backend intentionally uses POST for both
+ * file creation and overwrite.
+ */
+export async function writeTextFile(path: string, content: string): Promise<void> {
+  const cleanPath = path.startsWith('/') ? path : '/' + path
+
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE}/resources${cleanPath}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+      },
+      body: content,
+      signal: AbortSignal.timeout(10000),
+    })
+  } catch (error) {
+    throw new FileOperationError(
+      error instanceof Error ? error.message : 'Network error',
+      'NETWORK'
+    )
+  }
+
+  throwForStatus(response, 'Failed to write file')
+}
+
+/**
+ * Create an empty file in a directory.
+ */
+export async function createFile(path: string, name: string): Promise<string> {
+  const safeName = sanitizeFilename(name)
+  const fullPath = path === '/' ? `/${safeName}` : `${path}/${safeName}`
+  await writeTextFile(fullPath, '')
+  return fullPath
 }
 
 /**
@@ -200,6 +264,7 @@ export async function renameItem(oldPath: string, newPath: string): Promise<void
         action: 'rename',
         destination: newPath,
       }),
+      signal: AbortSignal.timeout(10000),
     })
   } catch (error) {
     throw new FileOperationError(
@@ -224,6 +289,7 @@ export async function deleteItem(path: string): Promise<void> {
   try {
     response = await fetch(`${API_BASE}/resources${path}`, {
       method: 'DELETE',
+      signal: AbortSignal.timeout(10000),
     })
   } catch (error) {
     throw new FileOperationError(
@@ -256,6 +322,7 @@ export async function uploadFiles(path: string, files: FileList | File[]): Promi
           'Content-Type': file.type || 'application/octet-stream',
         },
         body: file,
+        signal: AbortSignal.timeout(30000),
       })
     } catch (error) {
       throw new FileOperationError(
@@ -287,6 +354,7 @@ export async function pathExists(path: string): Promise<boolean> {
       headers: {
         'Accept': 'application/json',
       },
+      signal: AbortSignal.timeout(10000),
     })
     return response.ok
   } catch {
@@ -331,6 +399,7 @@ export async function uploadFilesWithPaths(basePath: string, filesWithPaths: Fil
           'Content-Type': file.type || 'application/octet-stream',
         },
         body: file,
+        signal: AbortSignal.timeout(30000),
       })
     } catch (error) {
       throw new FileOperationError(

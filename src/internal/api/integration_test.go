@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/chrote/server/internal/core"
 )
 
 // TestIntegration_FullAPIRouting tests that all routes are properly registered
@@ -89,8 +91,9 @@ func TestIntegration_FullAPIRouting(t *testing.T) {
 			t.Error("Root should be a directory")
 		}
 
-		if len(response.Items) != 2 {
-			t.Errorf("Expected 2 root items (code, vault), got %d", len(response.Items))
+		expectedRoots := len(core.GetAllowedRoots())
+		if len(response.Items) != expectedRoots {
+			t.Errorf("Expected %d root items, got %d", expectedRoots, len(response.Items))
 		}
 	})
 }

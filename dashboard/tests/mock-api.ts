@@ -1,5 +1,9 @@
 import { Page } from '@playwright/test'
 
+const fileResourcesPattern = /.*\/api\/files\/resources(?:\/.*)?$/
+const tmuxAppearancePattern = /.*\/api\/tmux\/appearance\/?$/
+const tmuxSessionsPattern = /.*\/api\/tmux\/sessions\/?$/
+
 // Mock beads data for testing
 export const mockBeadsProjects = {
   success: true,
@@ -107,7 +111,49 @@ export const mockSessions = {
 }
 
 export async function mockApiRoutes(page: Page) {
-  await page.route('**/api/tmux/sessions', async route => {
+  await page.route(/.*\/terminal\/?.*/, async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/html',
+      body: '<html><body><div class="xterm"><div class="xterm-viewport"><div class="xterm-screen">mock terminal</div></div></div></body></html>',
+    })
+  })
+
+  await page.route(tmuxAppearancePattern, async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true }),
+    })
+  })
+
+  await page.route(fileResourcesPattern, async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ isDir: true, items: [] }),
+    })
+  })
+
+  await page.route('**/api/files/raw/**', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/plain',
+      body: 'mock file content',
+    })
+  })
+
+  await page.route(tmuxSessionsPattern, async route => {
+    if (route.request().method() === 'POST') {
+      const body = route.request().postDataJSON() as { name?: string } | null
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ name: body?.name ?? 'shell-test' }),
+      })
+      return
+    }
+
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
