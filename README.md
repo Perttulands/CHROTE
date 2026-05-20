@@ -2,6 +2,16 @@
 
 CHROTE is a browser cockpit for a host-owned development workspace.
 
+## Version Line
+
+CHROTE v2 is the current next-generation architecture. It is a major-version
+continuation of the original CHROTE system, not a compatibility patch to v1.
+
+The original code line is preserved for reference:
+
+- branch: `legacy/v1`
+- release: `v1.0.0`
+
 Its job is narrow:
 
 - show durable tmux sessions
