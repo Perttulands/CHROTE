@@ -21,6 +21,18 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Dashboard install dependencies
+        run: |
+          cd dashboard
+          npm ci
+
+      - name: Dashboard build embedded assets
+        run: |
+          cd dashboard
+          npm run build
+          rm -rf ../src/internal/dashboard/dist
+          cp -r dist ../src/internal/dashboard/
+
       - name: Go format
         run: |
           cd src
@@ -51,20 +63,10 @@ jobs:
           go test -coverprofile=coverage.out ./...
           go tool cover -func=coverage.out
 
-      - name: Dashboard install dependencies
-        run: |
-          cd dashboard
-          npm ci
-
       - name: Dashboard lint
         run: |
           cd dashboard
           npm run lint
-
-      - name: Dashboard build
-        run: |
-          cd dashboard
-          npm run build
 
       - name: Dashboard unit coverage
         run: |
