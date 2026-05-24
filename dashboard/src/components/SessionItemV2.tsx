@@ -1,5 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useDraggable } from '@dnd-kit/core'
+import {
+  Pencil,
+  Monitor,
+  MonitorX,
+  Trash2,
+  Check,
+  Circle,
+  ChevronRight,
+} from 'lucide-react'
 import type { TmuxSession } from '../types'
 import { useSession } from '../context/SessionContext'
 import { WINDOW_COLORS } from '../types'
@@ -40,7 +49,6 @@ function SessionItem({ session }: SessionItemProps) {
       }
     : undefined
 
-  // Color the session name text based on window assignment
   const nameStyle = assignment
     ? { color: windowColor }
     : undefined
@@ -60,23 +68,19 @@ function SessionItem({ session }: SessionItemProps) {
       }
     : undefined
 
-  // Implement Long Press detection
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
-    e.persist(); // Persist the event to use its properties in the timer callback
     longPressTimer.current = setTimeout(() => {
       if (longPressTimer.current) {
-        // Create a synthetic MouseEvent based on the first touch point
         const touch = e.touches[0];
         setContextMenu({ show: true, x: touch.clientX, y: touch.clientY });
         setShowAssignSubmenu(false);
       }
-    }, 500); // 500ms long press threshold
+    }, 500);
   }, []);
 
   const handleTouchEnd = useCallback(() => {
-    // If released before 500ms, clear the timer
     if (longPressTimer.current) {
       clearTimeout(longPressTimer.current);
       longPressTimer.current = null;
@@ -84,7 +88,6 @@ function SessionItem({ session }: SessionItemProps) {
   }, []);
 
   const handleTouchMove = useCallback(() => {
-    // Similarly, if moving, probably dragging/scrolling, so cancel long press
     if (longPressTimer.current) {
       clearTimeout(longPressTimer.current);
       longPressTimer.current = null;
@@ -142,7 +145,6 @@ function SessionItem({ session }: SessionItemProps) {
     closeContextMenu()
   }, [assignment, removeSessionFromWindow, session.name, closeContextMenu])
 
-  // Focus rename input when it appears
   useEffect(() => {
     if (isRenaming && renameInputRef.current) {
       renameInputRef.current.focus()
@@ -150,7 +152,6 @@ function SessionItem({ session }: SessionItemProps) {
     }
   }, [isRenaming])
 
-  // Close context menu on click outside
   useEffect(() => {
     if (!contextMenu.show) return
     const handleClick = () => closeContextMenu()
@@ -158,7 +159,6 @@ function SessionItem({ session }: SessionItemProps) {
     return () => document.removeEventListener('click', handleClick)
   }, [contextMenu.show, closeContextMenu])
 
-  // Rename mode
   if (isRenaming) {
     return (
       <div className="session-item renaming">
@@ -204,7 +204,11 @@ function SessionItem({ session }: SessionItemProps) {
         )}
         <RoleBadge sessionName={session.name} />
         <span className="session-name" style={nameStyle}>{session.name}</span>
-        {session.attached && !isAssigned && <span className="attached-indicator" title="Attached elsewhere">●</span>}
+        {session.attached && !isAssigned && (
+          <span className="attached-indicator" title="Attached elsewhere">
+            <Circle size={6} fill="currentColor" />
+          </span>
+        )}
       </div>
 
       {contextMenu.show && (
@@ -214,7 +218,7 @@ function SessionItem({ session }: SessionItemProps) {
           onClick={e => e.stopPropagation()}
         >
           <button className="session-context-item" onClick={handleStartRename}>
-            <span className="session-context-icon">✎</span>
+            <span className="session-context-icon"><Pencil size={12} /></span>
             Rename
           </button>
 
@@ -223,9 +227,9 @@ function SessionItem({ session }: SessionItemProps) {
             onMouseEnter={() => setShowAssignSubmenu(true)}
             onMouseLeave={() => setShowAssignSubmenu(false)}
           >
-            <span className="session-context-icon">◫</span>
+            <span className="session-context-icon"><Monitor size={12} /></span>
             Assign to Window
-            <span className="session-context-arrow">▶</span>
+            <ChevronRight size={10} className="session-context-arrow" />
 
             {showAssignSubmenu && (
               <div className="session-context-submenu">
@@ -234,7 +238,7 @@ function SessionItem({ session }: SessionItemProps) {
                   return ws.windows.slice(0, ws.windowCount).map((w, idx) => {
                     const color = WINDOW_COLORS[w.colorIndex % WINDOW_COLORS.length]
                     const isCurrentWindow = assignment?.windowId === w.id
-                    const labelPrefix = wsId === 'terminal2' ? 'Terminal 2 - ' : ''
+                    const labelPrefix = wsId === 'terminal2' ? 'T2 ' : ''
                     return (
                       <button
                         key={w.id}
@@ -243,7 +247,7 @@ function SessionItem({ session }: SessionItemProps) {
                         style={{ borderLeft: `3px solid ${color.border}` }}
                       >
                         {labelPrefix}Window {idx + 1}
-                        {isCurrentWindow && <span className="session-context-check">✓</span>}
+                        {isCurrentWindow && <Check size={12} className="session-context-check" />}
                       </button>
                     )
                   })
@@ -254,7 +258,7 @@ function SessionItem({ session }: SessionItemProps) {
 
           {isAssigned && (
             <button className="session-context-item" onClick={handleUnassign}>
-              <span className="session-context-icon">⊘</span>
+              <span className="session-context-icon"><MonitorX size={12} /></span>
               Unassign
             </button>
           )}
@@ -262,7 +266,7 @@ function SessionItem({ session }: SessionItemProps) {
           <div className="session-context-divider" />
 
           <button className="session-context-item session-context-danger" onClick={handleDelete}>
-            <span className="session-context-icon">✕</span>
+            <span className="session-context-icon"><Trash2 size={12} /></span>
             Delete Session
           </button>
         </div>
