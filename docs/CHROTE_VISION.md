@@ -33,7 +33,7 @@ CHROTE is moving in stages:
 1. Durable workspace cockpit: tmux, terminals, files, Beads, and agent session
    observability.
 2. Services platform: first-class operator views for selected `/srv` services,
-   currently TTS Gateway and Context API.
+   currently TTS Gateway and Context Citadel.
 3. Meta-harness: reusable, auditable orchestration for multiple AI harnesses and
    tools.
 4. Agent Teams: team topology, typed collaboration workflows, and Beads-backed

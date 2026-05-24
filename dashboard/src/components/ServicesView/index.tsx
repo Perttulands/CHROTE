@@ -152,7 +152,6 @@ function TTSConsole({ service }: { service?: ServiceStatus }) {
   const handleBackendChange = (nextBackend: string) => {
     setBackend(nextBackend)
     if (nextBackend === 'edge') setVoice('en-US-ChristopherNeural')
-    if (nextBackend === 'kokoro') setVoice('am_onyx')
     if (nextBackend === 'orpheus') setVoice('troy')
   }
 
@@ -200,7 +199,6 @@ function TTSConsole({ service }: { service?: ServiceStatus }) {
             value={backend}
             onChange={(event) => handleBackendChange(event.target.value)}
           >
-            <option value="kokoro">kokoro</option>
             <option value="edge">edge</option>
             <option value="orpheus">orpheus</option>
           </select>
@@ -770,10 +768,10 @@ function ContextConsole({ service }: { service?: ServiceStatus }) {
   }
 
   return (
-    <section className="services-panel" aria-label="Context API">
+    <section className="services-panel" aria-label="Context Citadel">
       <div className="services-panel-header">
         <div>
-          <h2>Context API</h2>
+          <h2>Context Citadel</h2>
           <p>status: {statusLabel(service)}</p>
         </div>
         <button type="button" className="services-button secondary" onClick={loadDocs} disabled={loading}>

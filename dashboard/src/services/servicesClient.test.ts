@@ -65,8 +65,8 @@ describe('servicesClient', () => {
     await enqueueTTS({
       text: 'Operator status',
       source: 'Codex',
-      backend: 'kokoro',
-      voice: 'am_onyx',
+      backend: 'edge',
+      voice: 'en-US-ChristopherNeural',
     })
 
     expect(fetchMock).toHaveBeenCalledWith('/api/services/tts/enqueue', expect.objectContaining({
@@ -75,8 +75,8 @@ describe('servicesClient', () => {
       body: JSON.stringify({
         text: 'Operator status',
         source: 'Codex',
-        backend: 'kokoro',
-        voice: 'am_onyx',
+        backend: 'edge',
+        voice: 'en-US-ChristopherNeural',
       }),
     }))
   })

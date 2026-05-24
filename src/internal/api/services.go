@@ -137,7 +137,7 @@ func (h *ServicesHandler) Catalog(w http.ResponseWriter, r *http.Request) {
 func (h *ServicesHandler) contextStatus() ServiceStatus {
 	status := ServiceStatus{
 		ID:              "context",
-		Name:            "Context API",
+		Name:            "Context Citadel",
 		Status:          "configured",
 		Configured:      true,
 		TokenConfigured: h.config.ContextToken != "",
@@ -156,7 +156,7 @@ func (h *ServicesHandler) contextStatus() ServiceStatus {
 	}
 	if !status.TokenConfigured {
 		status.Status = "degraded"
-		status.Message = "CHROTE_CONTEXT_API_TOKEN is not configured; Context API document and integration operations are disabled."
+		status.Message = "CHROTE_CONTEXT_API_TOKEN is not configured; Context Citadel document and integration operations are disabled."
 	}
 	return status
 }
