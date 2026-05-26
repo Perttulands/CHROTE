@@ -11,16 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added the CHROTE Services platform surface for selected `/srv` services.
 - Added Go server-side service registry and proxy routes under `/api/services`
-  for TTS Gateway and Context Citadel.
+  for TTS Gateway and Context API.
 - Added a Services dashboard tab with a TTS console for health, queue/messages,
   playback, backend/voice controls, and enqueue actions.
-- Added a Context Citadel operator console for document list/read/edit/save,
+- Added a Context API operator console for document list/read/edit/save,
   Git-backed history, and grounded ask responses with source paths.
 - Added backend and frontend tests for Services route boundaries, token
   redaction, queue rendering, enqueue flow, playback links, Context document
   flows, and missing-token/upstream error states.
 - Added product requirements for the Services view, beginning with TTS Gateway
-  and Context Citadel operator consoles.
+  and Context API operator consoles.
 
 ### Changed
 
@@ -30,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Clarified component ownership so CHROTE wraps `/srv` services through
   server-side adapters instead of exposing service credentials to the browser.
 - Updated the embedded dashboard assets after building the Services UI.
-- Gave Context Citadel ask requests a longer CHROTE proxy timeout than fast service
+- Gave Context API ask requests a longer CHROTE proxy timeout than fast service
   health/list/read routes, matching the LLM-backed route latency.
 
 ## [0.2.0] - 2025-01-23

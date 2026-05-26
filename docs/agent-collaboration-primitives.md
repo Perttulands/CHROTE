@@ -6,7 +6,7 @@ This note records the exploration of Disler's `pi-vs-claude-code` communication 
 
 See `docs/meta-harness-desired-state.md` for the desired state captured from Perttu's clarification.
 
-See `docs/gascity-meta-harness-evaluation.md` for the second-look assessment that treats Gas City as a serious candidate SDK/component.
+See `docs/chrote-gascity-framing.md` for the current descriptive Gas City context and CHROTE leverage problem. See `docs/gascity-meta-harness-evaluation.md` for the second-look assessment as evidence/history.
 
 ## Desired Shape
 

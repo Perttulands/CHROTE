@@ -6,6 +6,7 @@ export const FEATURE_FLAGS = {
   filesPersistTabState: 'chrote-files-persist-tab-state',
   filesResizablePreview: 'chrote-files-resizable-preview',
   terminalRefitButton: 'chrote-terminal-refit-button',
+  serverStatusTab: 'chrote-server-status-tab',
 } as const
 
 export type FeatureFlagName = keyof typeof FEATURE_FLAGS
@@ -18,6 +19,7 @@ const DEFAULT_ENABLED: Record<FeatureFlagName, boolean> = {
   filesPersistTabState: true,
   filesResizablePreview: true,
   terminalRefitButton: true,
+  serverStatusTab: true,
 }
 
 function storageAvailable(): boolean {

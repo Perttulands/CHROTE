@@ -27,7 +27,7 @@ function installHappyPathFetch() {
       return envelope({
         services: [
           { id: 'tts', name: 'TTS Gateway', status: 'configured', configured: true, capabilities: [] },
-          { id: 'context', name: 'Context Citadel', status: 'configured', configured: true, tokenConfigured: true, capabilities: [] },
+          { id: 'context', name: 'Context API', status: 'configured', configured: true, tokenConfigured: true, capabilities: [] },
         ],
       })
     }
@@ -39,8 +39,8 @@ function installHappyPathFetch() {
             id: 'ready1',
             text: 'Ready message',
             source: 'Codex',
-            backend: 'edge',
-            voice: 'en-US-ChristopherNeural',
+            backend: 'kokoro',
+            voice: 'am_onyx',
             status: 'ready',
             createdAt: '2026-05-19T08:00:00Z',
           },
@@ -220,8 +220,8 @@ describe('ServicesView', () => {
 
     fireEvent.change(await screen.findByLabelText('TTS text'), { target: { value: 'Short spoken status.' } })
     fireEvent.change(screen.getByLabelText('TTS source'), { target: { value: 'Codex' } })
-    fireEvent.change(screen.getByLabelText('TTS backend'), { target: { value: 'edge' } })
-    fireEvent.change(screen.getByLabelText('TTS voice'), { target: { value: 'en-US-ChristopherNeural' } })
+    fireEvent.change(screen.getByLabelText('TTS backend'), { target: { value: 'kokoro' } })
+    fireEvent.change(screen.getByLabelText('TTS voice'), { target: { value: 'am_onyx' } })
     fireEvent.click(screen.getByRole('button', { name: 'Enqueue' }))
 
     await waitFor(() => {
@@ -230,8 +230,8 @@ describe('ServicesView', () => {
         body: JSON.stringify({
           text: 'Short spoken status.',
           source: 'Codex',
-          backend: 'edge',
-          voice: 'en-US-ChristopherNeural',
+          backend: 'kokoro',
+          voice: 'am_onyx',
         }),
       }))
     })
@@ -375,7 +375,7 @@ describe('ServicesView', () => {
         return envelope({
           services: [
             { id: 'tts', name: 'TTS Gateway', status: 'configured', configured: true, capabilities: [] },
-            { id: 'context', name: 'Context Citadel', status: 'configured', configured: true, tokenConfigured: true, capabilities: [] },
+            { id: 'context', name: 'Context API', status: 'configured', configured: true, tokenConfigured: true, capabilities: [] },
           ],
         })
       }
@@ -439,7 +439,7 @@ describe('ServicesView', () => {
             { id: 'tts', name: 'TTS Gateway', status: 'configured', configured: true, capabilities: [] },
             {
               id: 'context',
-              name: 'Context Citadel',
+              name: 'Context API',
               status: 'degraded',
               configured: true,
               tokenConfigured: false,

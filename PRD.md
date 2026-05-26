@@ -11,7 +11,7 @@ state, and support agent-to-agent collaboration across different harnesses.
 The implementation path is staged:
 
 1. Keep the durable workspace visible and recoverable.
-2. Add a Services platform for host-owned capabilities such as TTS and Context Citadel.
+2. Add a Services platform for host-owned capabilities such as TTS and Context API.
 3. Grow toward a deliberate meta-harness with recipes, teams, run ledgers, and
    audited agent collaboration.
 
@@ -65,7 +65,7 @@ V1 services are:
 | Service | Operator outcome |
 | --- | --- |
 | TTS Gateway | See agent voice messages, generation status, playback, backend/voice choices, and enqueue test messages |
-| Context Citadel | Read, edit, save, inspect history, and ask grounded questions over Markdown/Git-backed context files |
+| Context API | Read, edit, save, inspect history, and ask grounded questions over Markdown/Git-backed context files |
 
 ### Services Requirements
 
@@ -74,9 +74,9 @@ V1 services are:
 - Keep service runtimes outside the browser and behind CHROTE-owned routes.
 - Proxy service access through CHROTE-owned API routes instead of making browser
   code call raw service ports directly.
-- Keep Context Citadel bearer tokens server-side only.
+- Keep Context API bearer tokens server-side only.
 - Provide clear degraded states when a service is unavailable or not configured.
-- Keep Services v1 focused on TTS and Context Citadel.
+- Keep Services v1 focused on TTS and Context API.
 - Do not implement Agent Teams, recipes, autonomous agent messaging, or Gas City
   orchestration as part of Services v1.
 
@@ -88,8 +88,8 @@ environment variables:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `CHROTE_TTS_URL` | `http://127.0.0.1:3100` | TTS Gateway upstream |
-| `CHROTE_CONTEXT_API_URL` | `http://127.0.0.1:3200` | Context Citadel upstream |
-| `CHROTE_CONTEXT_API_TOKEN` | unset | Server-side owner token for Context Citadel operations |
+| `CHROTE_CONTEXT_API_URL` | `http://127.0.0.1:3200` | Context API upstream |
+| `CHROTE_CONTEXT_API_TOKEN` | unset | Server-side owner token for Context API operations |
 
 Secrets must live in private runtime configuration, not tracked docs. The
 current deployment unit loads `~/.config/chrote/services.env` if present.
@@ -133,7 +133,7 @@ observability, and private tailnet access.
 ### Phase 2 - Services Platform
 
 Current phase. CHROTE is a component host for selected local services,
-starting with TTS Gateway and Context Citadel through server-side proxies.
+starting with TTS Gateway and Context API through server-side proxies.
 
 ### Phase 3 - Service Expansion
 
@@ -163,9 +163,9 @@ are implemented.
 - `/api/tmux/sessions` returns the CHROTE tmux session list.
 - `/api/oracle/status` returns OK even when no agents are running.
 - `/api/beads/health` reports modern `bd`.
-- Services routes report clear health/degraded states for TTS and Context Citadel.
+- Services routes report clear health/degraded states for TTS and Context API.
 - Services UI can show TTS health/messages, enqueue voice output, play ready
   messages, and show generation errors.
 - Services UI can list/read/save Context docs, show history, and ask grounded
-  questions when a server-side Context Citadel token is configured.
+  questions when a server-side Context API token is configured.
 - Tailscale Serve continues to expose `:8445` only to the tailnet.

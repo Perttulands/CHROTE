@@ -13,6 +13,7 @@ import BeadsView from './components/BeadsView'
 import OracleView from './components/OracleView'
 import OracleViewV2 from './components/OracleView/V2'
 import ServicesView from './components/ServicesView'
+import SystemStatusView from './components/SystemStatusView'
 import ErrorBoundary from './components/ErrorBoundary'
 import { ToastContainer } from './components/ToastNotification'
 import KeyboardShortcutsOverlay from './components/KeyboardShortcutsOverlay'
@@ -40,6 +41,7 @@ function DashboardContent() {
   const [showPresets, setShowPresets] = useState(false)
   const { addSessionToWindow, removeSessionFromWindow, setIsDragging, isDragging, settings } = useSession()
   const persistFilesTabState = isFeatureEnabled('filesPersistTabState')
+  const serverStatusTab = isFeatureEnabled('serverStatusTab')
 
   const handleShowHelp = useCallback(() => setShowHelp(true), [])
   const handleCloseHelp = useCallback(() => setShowHelp(false), [])
@@ -159,6 +161,11 @@ function DashboardContent() {
           {activeTab === 'services' && (
             <ErrorBoundary>
               <ServicesView />
+            </ErrorBoundary>
+          )}
+          {serverStatusTab && activeTab === 'server' && (
+            <ErrorBoundary>
+              <SystemStatusView />
             </ErrorBoundary>
           )}
           {activeTab === 'settings' && <SettingsView />}

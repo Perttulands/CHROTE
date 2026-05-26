@@ -21,7 +21,7 @@ func TestLoadServiceConfigFromEnvDefaults(t *testing.T) {
 		t.Fatalf("TTSBaseURL = %q, want default localhost tts-gateway", cfg.TTSBaseURL)
 	}
 	if cfg.ContextBaseURL != "http://127.0.0.1:3200" {
-		t.Fatalf("ContextBaseURL = %q, want default localhost context-citadel", cfg.ContextBaseURL)
+		t.Fatalf("ContextBaseURL = %q, want default localhost context-api", cfg.ContextBaseURL)
 	}
 	if cfg.ContextToken != "" {
 		t.Fatal("ContextToken should be empty when env is unset")
@@ -117,7 +117,7 @@ func TestServicesHandlerCatalogShowsMissingTokenAsDegraded(t *testing.T) {
 	if context.Message == "" {
 		t.Fatal("degraded context service should include an operator-facing message")
 	}
-	wantMessage := "CHROTE_CONTEXT_API_TOKEN is not configured; Context Citadel document and integration operations are disabled."
+	wantMessage := "CHROTE_CONTEXT_API_TOKEN is not configured; Context API document and integration operations are disabled."
 	if context.Message != wantMessage {
 		t.Fatalf("context message = %q, want %q", context.Message, wantMessage)
 	}

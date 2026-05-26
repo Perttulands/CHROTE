@@ -8,6 +8,8 @@ This is the CHROTE cockpit for the configured host workspace.
 
 Do not assume Gastown, Ralph, or vendored orchestrator components are installed. CHROTE watches tmux sessions and modern Beads state. `bv` is installed as an optional Beads TUI sidecar.
 
+For the current CHROTE/Gas City relationship, read `docs/chrote-gascity-framing.md`. Native `gc` is the Gas City operator CLI; do not mirror the `gc` command tree inside CHROTE.
+
 Golden rule: do not disrupt running shells or tmux sessions.
 
 ## Build And Verify

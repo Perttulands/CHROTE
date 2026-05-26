@@ -1,7 +1,7 @@
 # CHROTE Agent Teams v2 — Architecture Plan
 
-> **Status:** Ready for review
-> **Branch:** `feature/agent-teams`
+> **Status:** Ready for review  
+> **Branch:** `feature/agent-teams`  
 > **Reference:** [the-verifier-agent](https://github.com/disler/the-verifier-agent) (disler)
 
 ---

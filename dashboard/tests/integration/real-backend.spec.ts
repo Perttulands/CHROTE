@@ -35,13 +35,13 @@ test.describe('Real Backend Integration', () => {
       // TmuxSession interface: name, windows, attached, group
       expect(session).toHaveProperty('name');
       expect(typeof session.name).toBe('string');
-
+      
       expect(session).toHaveProperty('windows');
       expect(typeof session.windows).toBe('number');
-
+      
       expect(session).toHaveProperty('attached');
       expect(typeof session.attached).toBe('boolean');
-
+      
       expect(session).toHaveProperty('group');
       expect(typeof session.group).toBe('string');
     }

@@ -36,18 +36,18 @@ test.describe('Session Persistence', () => {
     await mockApiRoutes(page)
     await page.goto('/')
     await page.waitForSelector('.dashboard')
-
+    
     // 2. Drag a session to the first window
     // We target "hq-deacon" from the session panel
     const sessionSource = '.session-item:has-text("hq-deacon")'
-    const windowTarget = '.terminal-window'
-
+    const windowTarget = '.terminal-window' 
+    
     // Wait for the session item to be available
     await page.waitForSelector(sessionSource)
-
+    
     // Drag it
     await dragAndDrop(page, sessionSource, windowTarget)
-
+    
     // Verify it is bound (tag appears in window header)
     const sessionTag = page.locator('.terminal-window-header .session-tags .session-tag:has-text("deacon")')
     await expect(sessionTag).toBeVisible()

@@ -1,5 +1,7 @@
 # Gas City Meta-Harness Evaluation
 
+> 2026-05-24 update: this document is evidence/history, not the current source of truth. Current CHROTE/Gas City context lives in `docs/chrote-gascity-framing.md`: it describes what Gas City is, how it works, what it appears to afford, and the open problem of how CHROTE can best leverage it. It is not an implementation decision.
+
 This is a second-look assessment of Gas City through CHROTE's meta-harness desired state.
 
 ## User-Stated Lens
@@ -203,18 +205,14 @@ Upside: lets CHROTE remain the cockpit while adopting proven seams.
 
 Downside: may be awkward because many Go packages are internal and not exported as a stable public library.
 
-## Current Recommendation
+## Historical Recommendation
 
-Treat Gas City as a first-class candidate component for the meta-harness.
+At the time of this evaluation, the recommendation was to treat Gas City as a first-class candidate component for the meta-harness.
 
 The contained sidecar has now been set up at `<workspace-root>/gascity`.
 See `docs/gascity-sidecar-spike-results.md` for the verification record.
 
-Current recommendation after the spike: use Gas City as a sidecar
-orchestration runtime for the next CHROTE slice, with CHROTE remaining the
-browser cockpit. CHROTE should query the Gas City supervisor API first, then add
-real harness adapters only after the read-only observer/control surface is
-stable.
+That sidecar-first recommendation is historical evidence, not the current source of truth. Use `docs/chrote-gascity-framing.md` for the current descriptive context and open leverage problem.
 
 ## Risks To Keep Visible
 
@@ -223,17 +221,16 @@ stable.
 - Some Go surfaces are internal packages rather than public SDK packages.
 - The graph.v2 formula path is opt-in and depends on modern `bd --graph` behavior.
 - The adapter registry for external messaging is in-memory; adapters need reconnect behavior.
-- CHROTE already has a cockpit and tmux layer, so we must avoid creating two competing control planes.
+- CHROTE already has cockpit, tmux, files, and service surfaces, so any reuse strategy must avoid duplicating control planes by accident.
 
-## CHROTE Direction
+## Candidate Uses Identified During This Evaluation
 
-CHROTE should remain the browser cockpit for the host-owned workspace.
+This evaluation identified possible ways Gas City might be useful to CHROTE. They are candidates, not decisions:
 
-Gas City may become:
+- orchestration sidecar behind a CHROTE-facing view;
+- recipe/molecule execution substrate;
+- session/mail/convoy/event layer for CHROTE to inspect;
+- reference model for a lighter CHROTE-native implementation;
+- upstream project to extend if the missing seam is broadly useful.
 
-- the orchestration sidecar behind the cockpit
-- the source of recipe/molecule execution
-- the session/mail/convoy/event layer that CHROTE visualizes
-- or the reference model for a lighter CHROTE-native implementation
-
-The next decision should be based on a local sidecar spike, not abstract judgment.
+This evaluation predated the later framing consolidation. Keep it as evidence from the sidecar evaluation period, not as a standing direction.

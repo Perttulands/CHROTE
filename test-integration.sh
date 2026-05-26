@@ -19,7 +19,7 @@ echo "Backend built: ./chrote-server-integ"
 
 echo "=== Setup: Starting Backend ==="
 # Start in background
-# Using a different ttyd port (7682) to avoid conflict if ttyd is running elsewhere,
+# Using a different ttyd port (7682) to avoid conflict if ttyd is running elsewhere, 
 # though we are mostly testing the API on 8080.
 ./chrote-server-integ --port 8080 --ttyd-port 7682 &
 SERVER_PID=$!

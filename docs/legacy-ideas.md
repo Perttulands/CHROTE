@@ -2,6 +2,8 @@
 
 This CHROTE install is not the old Gastown-oriented stack. The useful ideas from that stack should be retained deliberately, without carrying stale dependencies.
 
+For current descriptive Gas City context and CHROTE leverage framing, use `docs/chrote-gascity-framing.md`; this file is only legacy idea archaeology.
+
 ## Keep
 
 - Tmux as the universal session bus.

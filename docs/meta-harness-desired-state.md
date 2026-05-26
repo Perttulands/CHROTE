@@ -76,13 +76,13 @@ The key design pressure is to make orchestration deliberate, inspectable, and re
 
 ## Evaluation Targets
 
-Gas City should be evaluated as:
+Current descriptive Gas City context and CHROTE leverage framing lives in `docs/chrote-gascity-framing.md`. Gas City should be evaluated as:
 
 - a possible orchestrator SDK
 - a source of Beads-backed mail, nudge, session, and molecule concepts
 - a possible component to reuse directly if it can fit CHROTE without taking over the whole environment
 
-Second-look assessment: `docs/gascity-meta-harness-evaluation.md`.
+Second-look assessment: `docs/gascity-meta-harness-evaluation.md` as evidence/history, not as a standing implementation plan.
 
 Pi comms should be evaluated as:
 

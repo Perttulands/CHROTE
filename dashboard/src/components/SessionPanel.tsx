@@ -17,7 +17,7 @@ function SessionPanel() {
   const sortedGroups = useMemo(() => {
     // Determine which groups/sessions to show
     const entries = Object.entries(groupedSessions)
-
+    
     // Filter
     const filtered = searchTerm
       ? entries.map(([key, sessions]) => ([
@@ -49,12 +49,12 @@ function SessionPanel() {
         .map(s => s.name.match(regex))
         .filter(Boolean)
         .map(m => parseInt(m![1], 10))
-
+        
       const nextNum = existingNumbers.length > 0
         ? Math.max(...existingNumbers) + 1
         : 1
       const sessionName = `${prefix}${nextNum}`
-
+      
       const response = await fetch('/api/tmux/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

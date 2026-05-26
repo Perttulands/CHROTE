@@ -83,6 +83,9 @@ func main() {
 	servicesHandler := api.NewServicesHandler(api.LoadServiceConfigFromEnv())
 	servicesHandler.RegisterRoutes(mux)
 
+	systemHandler := api.NewSystemHandler()
+	systemHandler.RegisterRoutes(mux)
+
 	oracleHandler := api.NewOracleHandler(tmuxHandler, beadsHandler)
 	oracleHandler.RegisterRoutes(mux)
 
