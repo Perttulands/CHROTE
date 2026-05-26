@@ -41,6 +41,16 @@ describe('TabBar Services navigation', () => {
     expect(onTabChange).toHaveBeenCalledWith('services')
   })
 
+  it('shows Gas City in desktop navigation', () => {
+    mockMatchMedia(false)
+    const onTabChange = vi.fn()
+
+    render(<TabBar activeTab="terminal1" onTabChange={onTabChange} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Gas City' }))
+
+    expect(onTabChange).toHaveBeenCalledWith('gascity')
+  })
+
   it('shows the feature-flagged Server tab in desktop navigation', () => {
     mockMatchMedia(false)
     const onTabChange = vi.fn()

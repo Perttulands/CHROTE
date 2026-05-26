@@ -89,6 +89,9 @@ func main() {
 	oracleHandler := api.NewOracleHandler(tmuxHandler, beadsHandler)
 	oracleHandler.RegisterRoutes(mux)
 
+	gasCityHandler := api.NewGasCityHandler(api.LoadGasCityConfigFromEnv())
+	gasCityHandler.RegisterRoutes(mux)
+
 	// Create terminal proxy
 	terminalProxy := proxy.NewTerminalProxy(config.TtydPort)
 	terminalProxy.RegisterRoutes(mux)
