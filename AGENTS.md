@@ -19,7 +19,8 @@ verification; do not duplicate those rules here.
 
 CHROTE is a private browser cockpit for durable host-owned work. The Ubuntu
 host owns terminals, agents, files, dev servers, builds, tests, Beads, logs,
-and selected `/srv` service access. Browser clients are disposable viewports.
+Gas City runtime state, and selected `/srv` service access. Browser clients are
+disposable viewports.
 
 Current CHROTE surfaces:
 
@@ -29,12 +30,14 @@ Current CHROTE surfaces:
 - optional Beads Viewer via `bv`
 - generic agent observability from tmux sessions
 - selected local services through CHROTE-owned server-side routes
+- early Gas City orchestration access for named agent identities
 
-CHROTE is not currently Gastown, Ralph, or a vendored orchestrator deployment.
-Do not add Gas City/Gastown/Ralph coupling unless a current PRD, bead, or user
-request explicitly says so. Preserve useful legacy ideas in
-`docs/legacy-ideas.md`; treat `docs/archive/*` as historical unless proven
-current.
+CHROTE 3.0 intentionally uses Gas City as the orchestration substrate while
+CHROTE remains the access/operator layer for named sessions and named agent
+identities. Do not turn this into a passive transcript/status dashboard; the
+product goal is addressable agent collaboration through Gas City primitives.
+Preserve useful legacy ideas in `docs/legacy-ideas.md`; treat
+`docs/archive/*` as historical unless proven current.
 
 For the current CHROTE/Gas City relationship, read
 `docs/chrote-gascity-framing.md`. Native `gc` is the Gas City operator CLI;

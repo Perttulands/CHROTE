@@ -6,9 +6,18 @@ Guidance for agents working on this CHROTE install.
 
 This is the CHROTE cockpit for the configured host workspace.
 
-Do not assume Gastown, Ralph, or vendored orchestrator components are installed. CHROTE watches tmux sessions and modern Beads state. `bv` is installed as an optional Beads TUI sidecar.
+CHROTE 3.0 uses Gas City as the orchestration substrate and CHROTE as the
+access/operator layer. CHROTE still opens durable named sessions, but selected
+sessions should evolve into named Gas City-backed identities that can use mail,
+nudging, sling/delegation, formulas, molecules, workflows, and events. `bv` is
+installed as an optional Beads TUI sidecar.
 
 For the current CHROTE/Gas City relationship, read `docs/chrote-gascity-framing.md`. Native `gc` is the Gas City operator CLI; do not mirror the `gc` command tree inside CHROTE.
+
+Do not mistake Gas City integration for a passive transcript/status dashboard.
+The target is named-agent collaboration, such as Codxia helping Claudia through
+Gas City primitives while CHROTE remains the place to access and recover the
+work.
 
 Golden rule: do not disrupt running shells or tmux sessions.
 
@@ -69,6 +78,8 @@ The `/api/oracle/*` route names are compatibility names. Product UI calls this s
 - Files
 - Agents
 - Beads
+- Gas City
+- Services
 - Settings
 - Help
 

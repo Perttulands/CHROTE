@@ -1,8 +1,13 @@
 # Agent Collaboration Primitives
 
-CHROTE should expose durable host state and make agent work inspectable. It should also be able to grow into a deliberate meta-harness for orchestrating multiple AI harnesses.
+CHROTE should expose durable host state and make agent work inspectable. It
+should also grow into a deliberate meta-harness for orchestrating multiple AI
+harnesses through named agent identities.
 
-This note records the exploration of Disler's `pi-vs-claude-code` communication extensions and Gastown Hall's Gas City as possible seeds for a future CHROTE agent-team layer.
+This note records the exploration of Disler's `pi-vs-claude-code`
+communication extensions and Gastown Hall's Gas City as seeds for a CHROTE
+agent-team layer. ADR-0001 has since selected Gas City as the CHROTE 3.0
+orchestration substrate.
 
 See `docs/meta-harness-desired-state.md` for the desired state captured from Perttu's clarification.
 
@@ -13,6 +18,8 @@ See `docs/chrote-gascity-framing.md` for the current descriptive Gas City contex
 The human should be able to:
 
 - see which agent sessions exist
+- open named sessions and named agent identities
+- tell one named agent to help another named agent
 - see what Beads they appear to be working on
 - inspect recent output
 - understand team or role topology when one exists
@@ -21,9 +28,9 @@ The human should be able to:
 
 The system should not:
 
-- depend on Gastown being installed
 - assume a specific AI agent implementation
 - scrape agent responses as if they were a stable API
+- treat passive transcript/status surfacing as the main collaboration feature
 - inject prompts into arbitrary sessions without an explicit human action
 - expose local IPC or agent-control endpoints outside the host trust boundary
 
@@ -71,19 +78,29 @@ Primary risks:
 
 ## Gas City
 
-Gas City is larger and closer to a full agent workspace runtime. The important discovery is its Beads-based messaging primitive: mail-like messages are represented as Beads, with inbox/read/archive/threading behavior layered on top. It also has a nudge mechanism that can target live sessions while keeping runtime artifacts under a project-local `.gc` area.
+Gas City is larger and closer to a full agent workspace runtime. The important
+discovery is not only its Beads-based messaging primitive; it is the combination
+of valid session identities, mail, nudging, sling/delegation, formulas,
+molecules, events, and supervisor-owned runtime evidence.
 
 Useful idea:
 
+- valid Gas City identities make agent-to-agent mail authorship real instead of
+  spoofed by arbitrary launched processes
 - Beads are a plausible durable substrate for agent-visible messages
 - mail/thread/read/archive semantics map well to human-agent coordination
 - nudges can be explicit events rather than hidden terminal typing
 - session abstractions can cover tmux, subprocesses, ACP, Kubernetes, and other providers
+- formulas and molecules can package reusable workflows such as plan plus review
 
 CHROTE fit:
 
-- the Beads mail model is the strongest candidate for a future CHROTE collaboration primitive
-- Gas City itself should stay an explored upstream, not a hidden dependency
+- Gas City is the selected orchestration substrate for CHROTE 3.0
+- CHROTE should expose named-agent access and safe operator controls above Gas
+  City rather than mirroring the `gc` CLI or hiding Gas City as an invisible
+  dependency
+- the target operator move is named-agent collaboration, for example Codxia
+  helping Claudia through Gas City primitives
 
 Primary risks:
 
@@ -93,35 +110,39 @@ Primary risks:
 
 ## Revised Decision Boundary
 
-The earlier shorthand "CHROTE should not become the orchestrator" was too broad. The corrected boundary is:
+The earlier shorthand "CHROTE should not become the orchestrator" was too
+broad. The corrected boundary is:
 
 - CHROTE should not hide fragile or unaudited orchestration behind the cockpit.
-- CHROTE can and should support deliberate orchestration as a meta-harness when that orchestration is inspectable, durable, and adapter-based.
+- CHROTE can and should support deliberate orchestration as a meta-harness when
+  that orchestration is inspectable, durable, and Gas City-backed.
 - The meta-harness should be able to include different agent products and harnesses as interchangeable participants.
 
 Build CHROTE's collaboration and meta-harness layer in stages:
 
-1. Improve observer-only agent visibility.
-2. Define the meta-harness desired state and adapter boundaries.
-3. Add team topology metadata.
-4. Add explicit messages or nudges into known durable sessions.
-5. Spike a Beads-backed mailbox/message model.
-6. Evaluate Gas City as a possible orchestrator SDK or reusable component.
-7. Evaluate Pi comms as a possible team communication concept or adapter target.
-8. Build recipes/molecules for repeatable workflows such as plan plus two reviewers and senate sessions.
+1. Keep durable named-session access stable.
+2. Bind selected named sessions to valid Gas City identities.
+3. Add explicit mail/nudge/sling flows between known named identities.
+4. Build recipes/molecules for repeatable workflows such as plan plus two
+   reviewers and senate sessions.
+5. Add team topology metadata and operator affordances in CHROTE.
+6. Evaluate Pi comms as a possible adapter target or reference for team
+   topology, not as the primary substrate.
 
 Do not build automatic agent-to-agent routing, response scraping, team launchers, or a hosted communication hub without an explicit run model, audit trail, adapter boundary, and recovery story.
 
-## Candidate Beads
+## Historical Candidate Beads
 
-The follow-up Beads should use these acceptance boundaries:
+These pre-ADR follow-up boundaries remain useful as safety checks, but current
+work should be tracked in the active Gas City/CHROTE 3.0 beads:
 
-- Observer v2: no mutation, no agent control, no dependency on Gastown.
+- Observer v2: no mutation and no agent control.
 - Team topology: configuration only, rendered read-only, validated against live tmux sessions.
 - Human nudge/message: explicit, audited, targeted to one known session or role.
 - Beads mailbox spike: document schema compatibility with modern `bd`; no production mutation until reviewed.
 - Coms adapter spike: read-only only; no CHROTE-owned hub, no token exposure.
-- Meta-harness design: document registry, adapters, run ledger, recipe/molecule model, and safety boundaries before broad orchestration.
+- Meta-harness design: document registry, adapters, run ledger, Gas City
+  recipe/molecule model, and safety boundaries before broad orchestration.
 
 ## References
 

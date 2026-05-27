@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted
 
 ## Context
 
@@ -28,6 +28,13 @@ baseline.
 CHROTE 3.0 uses Gas City as the underlying session, mail, dispatch, workflow,
 and event substrate. CHROTE remains the authenticated access, UI, operator
 cockpit, recovery, and policy layer on top.
+
+The product consequence is that CHROTE should grow from "open named tmux
+sessions" toward "open named Gas City-backed agent identities." A target
+operator action is: tell one named agent, such as Codxia, to help another named
+agent, such as Claudia. Gas City carries the identity, mail/nudge,
+sling/delegation, molecule/workflow, event, and recovery mechanics. CHROTE makes
+that action reachable and inspectable.
 
 Source-of-truth boundaries are explicit:
 
@@ -84,6 +91,8 @@ What gets simpler:
   and event ontology.
 - Gas City-owned identities give mail and dispatch a real substrate instead of
   ad hoc terminal automation.
+- Named-agent collaboration can be built as an operator workflow instead of a
+  transcript-watching feature.
 - CHROTE can focus on authenticated access, visibility, recovery, and safe
   operator controls.
 - Future harnesses can follow one substrate pattern instead of one-off CHROTE

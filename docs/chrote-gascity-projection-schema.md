@@ -4,6 +4,9 @@ Date: 2026-05-27
 
 This document defines the first CHROTE 3.0 projection contract between
 canonical `/home/perttu` Beads work and Gas City runtime orchestration records.
+The projection exists to make named-agent orchestration recoverable and
+inspectable. It is not a product requirement to build passive transcript
+watching as the main Gas City surface.
 
 ## Source Of Truth
 
@@ -93,5 +96,6 @@ When CHROTE observes a Gas City record without `home_bead_id`:
 
 - Gas City does not become the work tracker of record.
 - CHROTE does not mirror the entire `gc` command tree.
+- CHROTE does not treat passive transcript watching as the main Gas City value.
 - The browser never receives raw supervisor mutation access.
 - Title-only matching is never canonical.

@@ -167,4 +167,11 @@ systemctl --user restart chrote.service
 
 ## Product Boundary
 
-This install does not assume Gastown, Ralph, or vendored orchestrator components. Agent Teams and the broader meta-harness remain roadmap work outside Services V1. Old ideas that are still useful are captured in `docs/legacy-ideas.md`.
+CHROTE is the access layer for durable named sessions and, in CHROTE 3.0, named
+Gas City-backed agent identities. Gas City is the orchestration substrate for
+identity, mail, nudging, sling/delegation, formulas, molecules, workflows, and
+events. CHROTE should not mirror the native `gc` command tree or become a
+passive transcript/status dashboard as its main value.
+
+Agent Teams and the broader meta-harness remain roadmap work outside Services
+V1. Old ideas that are still useful are captured in `docs/legacy-ideas.md`.

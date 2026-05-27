@@ -6,6 +6,11 @@ This document separates what Perttu has stated as the desired state from impleme
 
 Perttu wants CHROTE to grow into a meta-harness for AI work.
 
+The access model starts with CHROTE's existing strength: named tmux sessions.
+The next shape is named agent identities. A named identity may still be backed
+by tmux, but it should also be valid in Gas City so it can receive routed work,
+use mail/nudge, participate in molecules, and leave durable workflow evidence.
+
 The meta-harness should be able to include multiple AI harnesses and products in one system, such as:
 
 - Claude Code
@@ -18,6 +23,10 @@ These agents and harnesses should become interchangeable parts of Perttu's syste
 
 The workspace should support workflows such as:
 
+- giving the user a named agent, for example Claudia, that can be opened from
+  CHROTE like any other session;
+- telling another named agent, for example Codxia, "Help Claudia get this done"
+  and having the collaboration route through Gas City primitives;
 - one agent makes a plan
 - two other agents review it from different perspectives
 - the first agent or a chair role synthesizes the result
@@ -28,7 +37,9 @@ Subagents inside one product are useful, but not enough. The more important capa
 
 Previous CHROTE work has already used tmux `send-keys` to make agents prompt each other. That proved the concept, but it is cumbersome. The desired state is a cleaner orchestration and team layer above that kind of mechanism.
 
-Perttu pointed to Gas City because it may be usable as-is or as a useful source of concepts. Perttu understands Gas City as something like an SDK for orchestrators.
+Perttu pointed to Gas City because it provides the orchestration plumbing CHROTE
+is missing: valid runtime identities, agent mail, nudging, sling/delegation,
+molecules, workflow automation, event evidence, and later automation layers.
 
 Perttu pointed to the Pi communication repositories because they express a useful team concept: agents are not only run in sequence; they can form a team and prompt each other. In practice this may still be agents sending prompts without shared context beyond those messages, but the team shape is important.
 
@@ -43,6 +54,10 @@ The desired system should not be limited to:
 - a linear chain of agent calls
 - manual tmux pane targeting as the normal interface
 - a workflow that dies when the client device disconnects
+- passive transcript watching, status surfacing, or review summaries as the core
+  purpose of Gas City inside CHROTE
+- forced migration of current old sessions before the named-identity model can
+  move forward
 
 ## Acceptance Shape
 
@@ -50,6 +65,8 @@ A successful meta-harness should let Perttu:
 
 - define a reusable workflow such as plan plus two reviews
 - choose which harnesses or agent products fill each role
+- access named agents from CHROTE as the normal entry point
+- delegate from one named agent to another without manually targeting tmux panes
 - run the workflow from the host-owned Ubuntu workspace
 - watch the workflow progress from CHROTE
 - inspect each agent's session, messages, outputs, Beads, and artifacts
@@ -66,21 +83,27 @@ This section is not the user's stated desired state. It is the current working i
 CHROTE likely needs a layered model:
 
 - cockpit: browser UI for durable host state
-- agent registry: known harnesses, roles, capabilities, launch methods, and active sessions
-- adapter layer: one adapter per harness, with native APIs preferred and tmux fallback allowed
+- identity/access registry: known names, harnesses, roles, capabilities, launch
+  methods, active sessions, and Gas City identity bindings
+- adapter layer: one adapter per harness, with Gas City ownership preferred and
+  tmux fallback allowed
 - message/run ledger: durable record of prompts, replies, role assignments, state transitions, artifacts, and audit events
-- recipe engine: reusable workflow definitions, possibly inspired by Gas City molecules
-- team communication layer: explicit messages between roles and sessions, possibly inspired by Pi comms and Gas City mail/nudge concepts
+- recipe engine: reusable workflow definitions, using Gas City formulas and
+  molecules where they fit
+- team communication layer: explicit messages between roles and sessions, using
+  Gas City mail/nudge where possible
 
 The key design pressure is to make orchestration deliberate, inspectable, and recoverable instead of hidden behind fragile terminal automation.
 
 ## Evaluation Targets
 
-Current descriptive Gas City context and CHROTE leverage framing lives in `docs/chrote-gascity-framing.md`. Gas City should be evaluated as:
+Current descriptive Gas City context and CHROTE leverage framing lives in `docs/chrote-gascity-framing.md`. Gas City should be treated as:
 
-- a possible orchestrator SDK
-- a source of Beads-backed mail, nudge, session, and molecule concepts
-- a possible component to reuse directly if it can fit CHROTE without taking over the whole environment
+- the orchestration substrate selected by ADR-0001
+- the source of Beads-backed mail, nudge, session, formula, molecule, sling, and
+  event primitives
+- a component CHROTE must integrate without letting it take over Beads, Context
+  Citadel, authentication, or the browser access layer
 
 Second-look assessment: `docs/gascity-meta-harness-evaluation.md` as evidence/history, not as a standing implementation plan.
 
@@ -98,8 +121,11 @@ tmux should be evaluated as:
 
 ## Open Questions
 
-- Should CHROTE embed or depend on Gas City, or only adapt ideas from it?
+- Should CHROTE reach Gas City first through CLI, supervisor API, SDK/library, or
+  a narrow adapter?
 - What is the minimum adapter interface for Claude Code, Codex, Pi, OpenCode, and generic tmux agents?
-- Should recipes be represented directly as Beads, as Gas City molecules, as CHROTE config, or as a bridge across those?
-- What is the right shared-context model for a team: transcript-only, Beads-backed mailbox, shared files, or a richer run database?
+- How should recipes be represented to the user when the underlying execution is
+  a Gas City formula/molecule?
+- What is the right shared-context model for a team: Gas City mail, Beads,
+  shared files, Context Citadel, or a richer run database?
 - What safety controls are needed before agents can prompt other agents automatically?

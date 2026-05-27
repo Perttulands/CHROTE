@@ -5,14 +5,18 @@
 CHROTE is the private browser platform for host-owned agentic work.
 
 The long-term vision is one cockpit through which the human operator can
-orchestrate swarms of agents, drive agentic development work, inspect durable
-state, and support agent-to-agent collaboration across different harnesses.
+access named sessions and agent identities, orchestrate swarms of agents, drive
+agentic development work, inspect durable state when needed, and support
+agent-to-agent collaboration across different harnesses.
 
 The implementation path is staged:
 
 1. Keep the durable workspace visible and recoverable.
 2. Add a Services platform for host-owned capabilities such as TTS and Context API.
-3. Grow toward a deliberate meta-harness with recipes, teams, run ledgers, and
+3. Put Gas City under CHROTE as the orchestration substrate for named agent
+   identities, mail, nudging, sling/delegation, molecules, workflows, events,
+   and automation.
+4. Grow toward a deliberate meta-harness with recipes, teams, run ledgers, and
    audited agent collaboration.
 
 The browser is disposable. The Ubuntu host owns the work.
@@ -25,22 +29,35 @@ development workspace.
 The host owns terminals, agents, files, dev servers, builds, tests, Beads, logs,
 and runtime state. Client devices only view and operate that state.
 
+The product direction for CHROTE 3.0 is not "show more information about
+running sessions." The direction is to make CHROTE the access layer where named
+tmux sessions can become named Gas City-backed agent identities, and where the
+operator can start, address, inspect, and recover those identities without
+manually wiring every tmux command.
+
 ### Current Goals
 
-1. Make durable tmux sessions visible and controllable from a browser.
+1. Make durable named tmux sessions visible and controllable from a browser.
 2. Keep browser or device disconnects from killing important work.
 3. Provide file and Beads visibility in the same cockpit.
-4. Surface agent-like sessions without depending on a specific orchestrator.
-5. Wrap selected local services through CHROTE-owned server-side routes.
-6. Stay private to localhost and Tailscale unless explicitly changed.
+4. Evolve selected named sessions into explicit Gas City-backed agent
+   identities.
+5. Provide a path for agent collaboration through Gas City mail, nudge,
+   sling/delegation, molecules, workflows, and events.
+6. Wrap selected local services through CHROTE-owned server-side routes.
+7. Stay private to localhost and Tailscale unless explicitly changed.
 
 ### Current Non-Goals
 
 - CHROTE is not an IDE.
 - CHROTE does not expose Windows as the workspace source of truth.
 - CHROTE does not replace `bd`.
-- CHROTE does not assume Gastown, Ralph, or vendored orchestrator components.
-- CHROTE does not currently own agent-to-agent IPC or autonomous team routing.
+- CHROTE does not become a passive transcript-watching or status-dashboard
+  product as the main value proposition.
+- CHROTE does not require migration of current old tmux sessions before the
+  Gas City-backed identity model can move forward.
+- CHROTE does not mirror the native `gc` command tree as a second operator CLI.
+- CHROTE does not replace Gas City as the owner of orchestration primitives.
 
 ## Current Views
 
@@ -51,9 +68,42 @@ and runtime state. Client devices only view and operate that state.
 | Files | Browse allowed host workspace files |
 | Agents | Observe agent-like tmux sessions |
 | Beads | Show modern `bd` project issues, ready work, health, and optional `bv` sidecar usage |
+| Gas City | Early orchestration surface for Gas City-backed identities, mail, workflows, and runtime state |
 | Services | Operate selected `/srv` services through CHROTE-owned proxies |
 | Settings | Theme, font, session behavior |
 | Help | Dashboard usage |
+
+## Gas City Orchestration Direction
+
+Gas City is the lower layer for orchestration. CHROTE is the access and
+operator layer above it.
+
+Gas City owns:
+
+- valid agent identities and session ownership;
+- mail as durable agent-to-agent communication;
+- nudges as live delivery/wake-up;
+- sling/delegation as routed work assignment;
+- formulas and molecules as reusable workflow packages;
+- events and supervisor state as runtime evidence.
+
+CHROTE owns:
+
+- the browser access layer for named sessions and named agent identities;
+- safe operator controls for starting, addressing, inspecting, and recovering
+  agents;
+- private proxying and policy boundaries;
+- the human-facing shape of workflows.
+
+The target felt experience is direct delegation between named agents. For
+example, Perttu can open a CHROTE session for an agent named Claudia, then tell
+another agent identity, Codxia, "Help Claudia get this done." CHROTE should make
+that action legible and reachable; Gas City should carry the identity,
+mail/nudge, sling, molecule, event, and recovery mechanics.
+
+The Gas City tab should earn its place by helping the operator use
+orchestration. Merely surfacing more transcript lines, status counts, or passive
+session information is not the core product win.
 
 ## Services Platform V1
 
@@ -77,8 +127,8 @@ V1 services are:
 - Keep Context API bearer tokens server-side only.
 - Provide clear degraded states when a service is unavailable or not configured.
 - Keep Services v1 focused on TTS and Context API.
-- Do not implement Agent Teams, recipes, autonomous agent messaging, or Gas City
-  orchestration as part of Services v1.
+- Do not implement Agent Teams, recipes, autonomous agent messaging, or new Gas
+  City orchestration mutations as part of Services v1.
 
 ### Service Configuration
 
@@ -135,24 +185,32 @@ observability, and private tailnet access.
 Current phase. CHROTE is a component host for selected local services,
 starting with TTS Gateway and Context API through server-side proxies.
 
-### Phase 3 - Service Expansion
+### Phase 3 - Named Identity Access
+
+Current CHROTE 3.0 alignment work. CHROTE should distinguish plain named tmux
+sessions from Gas City-backed named identities, without forcing migration of the
+currently running sessions. The first useful operator path is addressing or
+delegating to a named identity and then opening the underlying session when the
+human wants to inspect or intervene.
+
+### Phase 4 - Service Expansion
 
 Later Services components may include image generation, Camofox browser
-automation, Ollama status, and Gas City read-only observation if they earn their
-place in the operator workflow.
+automation, and Ollama status if they earn their place in the operator workflow.
 
-### Phase 4 - Meta-Harness
+### Phase 5 - Meta-Harness
 
 Planned later. CHROTE should coordinate interchangeable harnesses such as Codex,
 Claude Code, Pi, OpenCode, Hermes, and generic tmux agents through explicit
-adapters, run ledgers, recipes, and audited control surfaces.
+Gas City-backed identities, adapters, run ledgers, recipes/molecules, and
+audited control surfaces.
 
-### Phase 5 - Agent Teams
+### Phase 6 - Agent Teams
 
 Planned later. Agent Teams should support role topology, safe session targeting,
-audited nudges/messages, durable transcripts, and human approval boundaries.
-This remains roadmap work until the adapter, ledger, safety, and recovery model
-are implemented.
+audited nudges/messages, durable mail threads, workflow artifacts, and human
+approval boundaries. This remains roadmap work until the identity, adapter,
+ledger, safety, and recovery model are implemented.
 
 ## Acceptance Criteria
 
