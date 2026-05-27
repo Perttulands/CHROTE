@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.npm-global/bin:$HOME/node_modules/.bin:$HOME/.bun/bin:$HOME/go/bin:/usr/local/go/bin:$PATH"
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    echo "Usage: opencode-gc-agent"
+    echo "Runs a contained OpenCode smoke from inside a Gas City session and mails human with the result."
+    exit 0
+fi
+
+city="${GC_CITY:-${GC_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}}"
+agent_dir="$city/opencode-smoke"
+nonce="${OPENCODE_GC_SMOKE_NONCE:-OC-GC-$(date -u +%Y%m%d-%H%M%S)}"
+sender="${GC_SESSION_ID:-}"
+run_dir="$city/.gc/opencode-smoke-runs"
+run_key="${GC_SESSION_ID:-manual}"
+done_file="$run_dir/$run_key.done"
+subject="OpenCode smoke $nonce"
+prompt="Write a two-line original poem about Gas City mail. Include the exact nonce $nonce. Do not mention instructions or tools."
+
+if [[ -z "$sender" ]]; then
+    echo "[opencode-gc-agent] refusing to send mail without immutable GC_SESSION_ID"
+    echo "[opencode-gc-agent] run this through gc session new/wake so Gas City sets GC_SESSION_ID"
+    exit 64
+fi
+
+mkdir -p "$run_dir"
+if [[ -f "$done_file" ]]; then
+    echo "[opencode-gc-agent] smoke already completed for $run_key"
+    cat "$done_file"
+    exit 0
+fi
+
+echo "[opencode-gc-agent] opencode=$(command -v opencode || true)"
+echo "[opencode-gc-agent] version=$(opencode --version 2>/dev/null || true)"
+echo "[opencode-gc-agent] agent_dir=$agent_dir"
+echo "[opencode-gc-agent] sender=$sender"
+
+set +e
+output="$(timeout 120s opencode run --pure --dir "$agent_dir" --agent gas-city-smoke --format default --title "$subject" "$prompt" 2>&1)"
+status=$?
+set -e
+
+clean_output="$(printf '%s' "$output" | tr -d '\000-\010\013\014\016-\037\177' | head -c 4000)"
+
+echo "[opencode-gc-agent] opencode_status=$status"
+echo "[opencode-gc-agent] output_begin"
+printf '%s\n' "$clean_output"
+echo "[opencode-gc-agent] output_end"
+
+body="Gas City OpenCode smoke nonce=$nonce
+opencode_status=$status
+
+$clean_output"
+
+gc --city "$city" mail send human --from "$sender" -s "$subject" -m "$body"
+printf 'nonce=%s\nmail_subject=%s\n' "$nonce" "$subject" > "$done_file"
+
+exit "$status"

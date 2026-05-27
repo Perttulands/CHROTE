@@ -210,5 +210,44 @@ describe('GasCityView', () => {
     expect(await screen.findByText('Transcript: planner')).toBeInTheDocument()
     expect(screen.getByText('gc-session-peek / gc-1 / active / 2 lines')).toBeInTheDocument()
     expect(screen.getByText(/recovered after browser disconnect/)).toBeInTheDocument()
+    expect(screen.queryByText(/Recovered from CHROTE archive/)).not.toBeInTheDocument()
+  })
+
+  it('flags an archive-recovered transcript as a stale snapshot after restart', async () => {
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const path = String(input)
+      if (path === '/api/gascity/observer') return envelope(observerFixture)
+      if (path === '/api/gascity/mail?recipient=human&limit=20') return envelope(mailFixture)
+      if (path === '/api/gascity/sessions/gc-1/transcript?lines=120') {
+        return envelope({
+          source: 'chrote-archive',
+          stale: true,
+          sessionId: 'gc-1',
+          alias: 'planner',
+          template: 'planner',
+          state: 'active',
+          city: 'gascity',
+          lines: 120,
+          lineCount: 1,
+          capturedAt: '2026-05-27T12:00:00Z',
+          transcript: 'last captured planner output',
+          truncated: false,
+        })
+      }
+      return Promise.resolve(new Response(JSON.stringify({
+        success: false,
+        error: { code: 'UNEXPECTED_FETCH', message: path },
+      }), { status: 500, headers: { 'Content-Type': 'application/json' } }))
+    })
+
+    render(<GasCityView />)
+
+    expect(await screen.findByText('planner')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Recover transcript for planner' }))
+
+    expect(await screen.findByText('Transcript: planner')).toBeInTheDocument()
+    expect(screen.getByText(/Recovered from CHROTE archive/)).toBeInTheDocument()
+    expect(screen.getByText(/captured 2026-05-27T12:00:00Z/)).toBeInTheDocument()
+    expect(screen.getByText(/last captured planner output/)).toBeInTheDocument()
   })
 })

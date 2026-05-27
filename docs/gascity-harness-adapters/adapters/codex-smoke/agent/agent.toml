@@ -1,0 +1,7 @@
+description = "Contained smoke-test Codex harness agent."
+work_dir = "."
+start_command = "./bin/codex-gc-agent"
+prompt_mode = "none"
+nudge = "ready"
+max_active_sessions = 1
+min_active_sessions = 0

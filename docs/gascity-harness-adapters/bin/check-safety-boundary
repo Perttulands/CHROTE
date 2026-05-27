@@ -1,0 +1,456 @@
+#!/usr/bin/env bash
+# check-safety-boundary — repeatable enforcement test that the Gas City
+# real-harness safety boundary (Beads home-4xv.5 / ADR-0002) actually HOLDS for
+# every packaged harness adapter, and that the install gate refuses adapters
+# that would breach it.
+#
+# This asserts CHROTE 3.0 ready-criterion 7 ("the safety boundary holds") and
+# feeds the ready gate (Beads home-5na1). It is the executable counterpart to
+# the boundary decision doc: the doc says what must be true; this proves it.
+#
+# WHAT IT CHECKS, for every adapter under adapters/ (positive assertions):
+#   P1  no dangerous-skip / bypass / yolo flags anywhere — the install gate's
+#       forbidden-substring check is real (an injected --dangerously-* / --yolo
+#       is rejected) and the adapter declares the bypass families.
+#   P2  tool default-deny via the DECLARED + VALIDATED mechanism — install-adapter
+#       (post-hardening) accepts the adapter only because a real config allowlist
+#       or a real --sandbox read-only is invoked, not a bare "deny" word/comment.
+#   P3  immutable GC_SESSION_ID required before mail — running the real wrapper
+#       with GC_SESSION_ID unset exits 64 and sends no mail.
+#   P4  env / credential scrubbing present — the wrapper normalizes PATH, dumps
+#       no environment, and `controller.token` is in forbidden_substrings.
+#
+# ADVERSARIAL NEGATIVES (every one MUST be refused; nothing installed):
+#   N-a  junk file containing the word "deny" but no real deny mechanism.
+#   N-b  --tools allowlist present ONLY inside a comment (no real flag).
+#   N-c  a wrapper carrying a dangerous-skip flag.
+#   N-d  a wrapper missing the GC_SESSION_ID gate (named only in a comment).
+#   N-e  --sandbox read-only present ONLY inside a comment (sandbox analog of N-b).
+# (N-a..d are the four required by the bead; N-e additionally guards the
+#  sandbox-read-only branch's comment-hardening.)
+#
+# COVERAGE of the home-d0lv disposable-init dangerous-flag finding: `gc init
+# --provider codex` can materialize a mayor session carrying
+# `--dangerously-bypass-approvals-and-sandbox`. That is mayor/`gc init`
+# provisioning, OUT OF ADAPTER SCOPE (this package never calls `gc init`). At the
+# adapter boundary the test asserts every adapter forbids that bypass family, so
+# an adapter can never reintroduce it; the gc-init path itself is tracked under
+# home-d0lv (resolved: scaffold disposable cities from an inert `--file` config,
+# never `--provider codex` — see chrote-3.0-gascity substrate map).
+#
+# SAFETY: this test is hermetic. It reads tracked source and writes only under a
+# private mktemp dir. It NEVER starts a Gas City supervisor, NEVER runs `gc
+# init`, and NEVER writes to the live /home/perttu/gascity city. The install
+# gate it exercises reads source files only; `--dry-run` writes nothing and the
+# negative fixtures are installed (when they wrongly pass) into a throwaway city
+# that is asserted empty and then removed.
+#
+# Usage:
+#   check-safety-boundary [--verbose]
+# Exit: 0 = boundary holds for all adapters and all negatives refused; non-zero
+#       = at least one assertion failed (details printed; FAILS LOUD).
+set -uo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+pkg_root="$(cd "$here/.." && pwd)"
+adapters_dir="$pkg_root/adapters"
+install_adapter="$here/install-adapter"
+
+VERBOSE=0
+[[ "${1:-}" == "--verbose" || "${1:-}" == "-v" ]] && VERBOSE=1
+
+# The exact dangerous bypass flag the home-d0lv gc-init Codex mayor would carry.
+DANGEROUS_INIT_FLAG="--dangerously-bypass-approvals-and-sandbox"
+
+# --- scratch space (hermetic; removed on exit) -----------------------------
+WORK="$(mktemp -d /tmp/gc-safety-boundary.XXXXXX)"
+REASON_FILE="$WORK/.last-reason"
+cleanup() { rm -rf "$WORK"; }
+trap cleanup EXIT
+
+pass_count=0
+fail_count=0
+declare -a RESULTS=()
+
+green() { printf '\033[32m%s\033[0m' "$1"; }
+red()   { printf '\033[31m%s\033[0m' "$1"; }
+
+record() {
+    # record PASS|FAIL "id" "description"
+    local verdict="$1" id="$2" desc="$3"
+    if [[ "$verdict" == PASS ]]; then
+        pass_count=$((pass_count+1))
+        RESULTS+=("PASS|$id|$desc")
+        [[ $VERBOSE -eq 1 ]] && printf '  [%s] %-22s %s\n' "$(green PASS)" "$id" "$desc"
+    else
+        fail_count=$((fail_count+1))
+        RESULTS+=("FAIL|$id|$desc")
+        printf '  [%s] %-22s %s\n' "$(red FAIL)" "$id" "$desc" >&2
+    fi
+}
+
+# Run install-adapter's safety gate against a fixture package, asserting it
+# REFUSES (non-zero) and writes nothing. Used for the adversarial negatives.
+# Args: fixture_pkg_root adapter_name
+# Echoes the verdict ("refused" | "PASSED-WRONGLY(...)" | "WROTE-FILES(n)") and
+# writes the gate's diagnostic line to $REASON_FILE so the caller can read it as
+# $REASON (a command-substitution subshell cannot export a variable upward, so
+# the reason travels via a file, not a global — set -u safe in the caller).
+assert_refused() {
+    local fpkg="$1" name="$2"
+    local city; city="$(mktemp -d "$WORK/neg-city.XXXXXX")"
+    local out rc nfiles reason
+    out="$("$fpkg/bin/install-adapter" "$name" --city "$city" 2>&1)"; rc=$?
+    nfiles="$(find "$city" -type f 2>/dev/null | wc -l | tr -d ' ')"
+    reason="$(printf '%s\n' "$out" | grep -E 'SAFETY|error|safety contract OK' | head -1)"
+    [[ -n "$reason" ]] || reason="(no diagnostic; exit=$rc)"
+    printf '%s\n' "$reason" > "$REASON_FILE"
+    if [[ $rc -ne 0 && "$nfiles" == "0" ]]; then
+        echo "refused"
+    elif [[ "$nfiles" != "0" ]]; then
+        echo "WROTE-FILES($nfiles)"
+    else
+        echo "PASSED-WRONGLY(exit=$rc)"
+    fi
+}
+# Read the reason recorded by the most recent assert_refused (set -u safe).
+get_reason() { [[ -f "$REASON_FILE" ]] && cat "$REASON_FILE" || echo "(no reason)"; }
+
+# Make a throwaway copy of the package bin/ + a single fixture adapter so the
+# real install-adapter logic runs against the fixture.
+make_fixture_pkg() {
+    local fpkg; fpkg="$(mktemp -d "$WORK/fixpkg.XXXXXX")"
+    mkdir -p "$fpkg/bin" "$fpkg/adapters"
+    cp "$install_adapter" "$fpkg/bin/install-adapter"
+    echo "$fpkg"
+}
+
+# =====================================================================
+# PART 1 — positive assertions per packaged adapter
+# =====================================================================
+echo "== Gas City real-harness safety boundary enforcement (home-4xv.5 / ADR-0002) =="
+echo "package: $pkg_root"
+echo
+
+mapfile -t ADAPTERS < <(for d in "$adapters_dir"/*/; do [[ -f "$d/adapter.toml" ]] && basename "$d"; done | sort)
+if [[ ${#ADAPTERS[@]} -eq 0 ]]; then
+    echo "FATAL: no adapters found under $adapters_dir" >&2
+    exit 2
+fi
+echo "adapters under test (${#ADAPTERS[@]}): ${ADAPTERS[*]}"
+echo
+
+for a in "${ADAPTERS[@]}"; do
+    adir="$adapters_dir/$a"
+    manifest="$adir/adapter.toml"
+    echo "-- adapter: $a --"
+
+    # P0: the adapter must install cleanly today (gate passes on real mechanism).
+    out="$("$install_adapter" "$a" --dry-run 2>&1)"; rc=$?
+    if [[ $rc -eq 0 ]] && printf '%s' "$out" | grep -q 'safety contract OK'; then
+        record PASS "$a/P0-install" "install gate accepts the legitimate adapter"
+    else
+        record FAIL "$a/P0-install" "install gate REJECTED a legitimate adapter (rc=$rc)"
+    fi
+
+    # P1: forbidden-substring enforcement is real. Inject a dangerous flag into a
+    # copy of the wrapper and confirm the gate now refuses + writes nothing.
+    fpkg="$(make_fixture_pkg)"
+    cp -r "$adir" "$fpkg/adapters/$a"
+    wrapper="$(find "$fpkg/adapters/$a/bin" -type f | head -1)"
+    if [[ -n "$wrapper" ]]; then
+        printf '\n%s real-edit\n' "$DANGEROUS_INIT_FLAG" >> "$wrapper"
+        verdict="$(assert_refused "$fpkg" "$a")"
+        if [[ "$verdict" == refused ]]; then
+            record PASS "$a/P1-forbidden" "injected '$DANGEROUS_INIT_FLAG' is refused (0 files)"
+        else
+            record FAIL "$a/P1-forbidden" "dangerous flag NOT refused: $verdict :: $(get_reason)"
+        fi
+    else
+        record FAIL "$a/P1-forbidden" "no wrapper file found in bin/"
+    fi
+
+    # P1b: the adapter must DECLARE the bypass families it forbids.
+    if grep -q -- '--dangerously-bypass' "$manifest" && grep -q -- '--yolo' "$manifest"; then
+        record PASS "$a/P1b-declared" "declares --dangerously-bypass and --yolo as forbidden"
+    else
+        record FAIL "$a/P1b-declared" "missing --dangerously-bypass / --yolo in forbidden_substrings"
+    fi
+
+    # P2: tool default-deny via the declared + validated mechanism. Re-run the
+    # gate on a copy whose declared mechanism's enforcement is removed; it must
+    # then refuse (proving P0 passed on the REAL mechanism, not incidentally).
+    mech="$(awk -F'"' '/^[[:space:]]*tool_deny_mechanism[[:space:]]*=/{print $2; exit}' "$manifest")"
+    tdd="$(awk -F'"' '/^[[:space:]]*tool_default_deny[[:space:]]*=/{print; exit}' "$manifest" | grep -c 'true')"
+    if [[ "$tdd" -ge 1 ]]; then
+        fpkg2="$(make_fixture_pkg)"
+        cp -r "$adir" "$fpkg2/adapters/$a"
+        w2="$(find "$fpkg2/adapters/$a/bin" -type f | head -1)"
+        case "$mech" in
+            config)
+                # Strip --tools flags from the wrapper AND any `<tool>: deny` line
+                # from workdir/, leaving only prose. Gate must then refuse.
+                sed -i -E 's/--tools[[:space:]]+[A-Za-z0-9,_-]+//g' "$w2"
+                if [[ -d "$fpkg2/adapters/$a/workdir" ]]; then
+                    find "$fpkg2/adapters/$a/workdir" -type f -print0 \
+                      | xargs -0 -r sed -i -E '/^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*:[[:space:]]*deny[[:space:]]*$/d'
+                fi
+                verdict="$(assert_refused "$fpkg2" "$a")"
+                if [[ "$verdict" == refused ]]; then
+                    record PASS "$a/P2-deny" "mechanism=config validated for real (stripped allowlist => refused)"
+                else
+                    record FAIL "$a/P2-deny" "config mechanism not really enforced: $verdict :: $(get_reason)"
+                fi
+                ;;
+            sandbox-read-only)
+                # Strip the --sandbox read-only invocation; gate must then refuse.
+                sed -i -E 's/--sandbox[[:space:]]+read-only//g; s/--sandbox-read-only//g; s/--sandbox=read-only//g' "$w2"
+                verdict="$(assert_refused "$fpkg2" "$a")"
+                if [[ "$verdict" == refused ]]; then
+                    record PASS "$a/P2-deny" "mechanism=sandbox-read-only validated for real (stripped => refused)"
+                else
+                    record FAIL "$a/P2-deny" "sandbox mechanism not really enforced: $verdict :: $(get_reason)"
+                fi
+                ;;
+            *)
+                record FAIL "$a/P2-deny" "tool_default_deny=true but mechanism='$mech' is not a recognized form"
+                ;;
+        esac
+    else
+        record FAIL "$a/P2-deny" "tool_default_deny is not true (real harness must default-deny)"
+    fi
+
+    # P3: immutable GC_SESSION_ID gate — run the real wrapper with no session id;
+    # must exit 64 and not reach any mail send. Hermetic: the wrapper exits
+    # before invoking gc. GC_CITY points at an empty temp dir for safety.
+    if [[ -n "$wrapper" ]]; then
+        realw="$(find "$adir/bin" -type f | head -1)"
+        gate_city="$(mktemp -d "$WORK/gate-city.XXXXXX")"
+        # The script runs without errexit; capturing $? here is sufficient and we
+        # never toggle `set -e` (doing so previously aborted the run on the first
+        # record() that returned non-zero). timeout guards against any hang.
+        gout="$(env -u GC_SESSION_ID GC_CITY="$gate_city" GC_DIR="$gate_city" \
+                 timeout 20s bash "$realw" </dev/null 2>&1)"
+        grc=$?
+        nmail="$(find "$gate_city" -type f 2>/dev/null | wc -l | tr -d ' ')"
+        if [[ $grc -eq 64 && "$nmail" == "0" ]]; then
+            record PASS "$a/P3-session-gate" "wrapper exits 64 without GC_SESSION_ID, sends nothing"
+        else
+            record FAIL "$a/P3-session-gate" "expected exit 64/no-write, got rc=$grc files=$nmail"
+        fi
+    fi
+
+    # P4: env / credential scrubbing present in the wrapper.
+    realw="$(find "$adir/bin" -type f | head -1)"
+    p4_ok=1; p4_why=""
+    grep -qE '^[[:space:]]*export[[:space:]]+PATH=' "$realw" || { p4_ok=0; p4_why="no PATH normalization; "; }
+    # Must not dump the whole environment.
+    if grep -nE '(^|[^A-Za-z_])(env|printenv|set)([[:space:]]|$)' "$realw" \
+         | grep -vE '#' | grep -qE '(printenv([[:space:]]|$)|env[[:space:]]*$|^[[:space:]]*set[[:space:]]*$)'; then
+        p4_ok=0; p4_why="${p4_why}possible env dump; "
+    fi
+    grep -q -- 'controller.token' "$manifest" || { p4_ok=0; p4_why="${p4_why}controller.token not forbidden; "; }
+    if [[ $p4_ok -eq 1 ]]; then
+        record PASS "$a/P4-scrub" "PATH normalized, no env dump, controller.token forbidden"
+    else
+        record FAIL "$a/P4-scrub" "scrubbing weak: $p4_why"
+    fi
+
+    echo
+done
+
+# =====================================================================
+# PART 2 — adversarial negatives (each MUST be refused, nothing installed)
+# =====================================================================
+echo "-- adversarial negatives (each must be REFUSED with 0 files written) --"
+
+# A reusable clean wrapper that gates on GC_SESSION_ID (so non-target checks pass
+# and we isolate the property under test).
+clean_wrapper() {
+    cat <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+export PATH="$HOME/.local/bin:$PATH"
+sender="${GC_SESSION_ID:-}"
+if [[ -z "$sender" ]]; then
+  echo "refusing without GC_SESSION_ID"; exit 64
+fi
+__HARNESS__ -p --tools Read,Grep,Glob "answer"
+SH
+}
+
+mk_neg_adapter() {
+    # mk_neg_adapter NAME MECH  -> creates $WORK/<NAME> fixture pkg, echoes pkg path
+    local name="$1" mech="$2"
+    local fpkg; fpkg="$(make_fixture_pkg)"
+    local adir="$fpkg/adapters/$name"
+    mkdir -p "$adir/bin" "$adir/workdir"
+    cat > "$adir/adapter.toml" <<TOML
+[adapter]
+name = "$name"
+harness = "claude"
+lifecycle = "one-shot"
+description = "negative fixture"
+[[file]]
+src = "bin/n-gc-agent"
+dest = "bin/n-gc-agent"
+mode = "0755"
+[safety]
+requires_immutable_session_id = true
+tool_default_deny = true
+tool_deny_mechanism = "$mech"
+no_dangerous_skip_flags = true
+forbidden_substrings = ["--dangerously-skip-permissions","--yolo","--dangerously-bypass","controller.token"]
+TOML
+    echo "$fpkg"
+}
+
+# N-a: junk file containing "deny" but NO real mechanism (config form, but the
+#      only "deny" is prose, and no --tools flag anywhere).
+fpkg="$(mk_neg_adapter na-junk-deny config)"
+adir="$fpkg/adapters/na-junk-deny"
+clean_wrapper | sed 's/__HARNESS__ -p --tools Read,Grep,Glob "answer"/claude -p "answer"/' > "$adir/bin/n-gc-agent"
+chmod +x "$adir/bin/n-gc-agent"
+printf 'This agent will deny everything dangerous. deny deny deny.\n' > "$adir/workdir/NOTES.md"
+verdict="$(assert_refused "$fpkg" na-junk-deny)"
+if [[ "$verdict" == refused ]]; then
+    record PASS "neg-a/junk-deny" "junk 'deny' text with no mechanism is refused"
+else
+    record FAIL "neg-a/junk-deny" "junk-deny NOT refused: $verdict :: $(get_reason)"
+fi
+
+# N-b: --tools present ONLY in a comment (config form, real gate, no real flag).
+fpkg="$(mk_neg_adapter nb-comment-tools config)"
+adir="$fpkg/adapters/nb-comment-tools"
+{
+  echo '#!/usr/bin/env bash'
+  echo 'set -euo pipefail'
+  echo 'export PATH="$HOME/.local/bin:$PATH"'
+  echo 'sender="${GC_SESSION_ID:-}"'
+  echo '[[ -n "$sender" ]] || { echo no-session; exit 64; }'
+  echo '# read-only is provided via the --tools Read,Grep,Glob allowlist (comment only!)'
+  echo 'claude -p "answer"'
+} > "$adir/bin/n-gc-agent"
+chmod +x "$adir/bin/n-gc-agent"
+verdict="$(assert_refused "$fpkg" nb-comment-tools)"
+if [[ "$verdict" == refused ]]; then
+    record PASS "neg-b/comment-tools" "--tools only in a comment is refused"
+else
+    record FAIL "neg-b/comment-tools" "comment-tools NOT refused: $verdict :: $(get_reason)"
+fi
+
+# N-c: a dangerous-flag wrapper (real --tools so deny passes; but carries a
+#      forbidden bypass flag). Must be refused by the forbidden-substring check.
+fpkg="$(mk_neg_adapter nc-dangerous config)"
+adir="$fpkg/adapters/nc-dangerous"
+{
+  echo '#!/usr/bin/env bash'
+  echo 'set -euo pipefail'
+  echo 'export PATH="$HOME/.local/bin:$PATH"'
+  echo 'sender="${GC_SESSION_ID:-}"'
+  echo '[[ -n "$sender" ]] || { echo no-session; exit 64; }'
+  echo 'claude -p --tools Read,Grep,Glob --dangerously-skip-permissions "answer"'
+} > "$adir/bin/n-gc-agent"
+chmod +x "$adir/bin/n-gc-agent"
+verdict="$(assert_refused "$fpkg" nc-dangerous)"
+if [[ "$verdict" == refused ]]; then
+    record PASS "neg-c/dangerous-flag" "wrapper with --dangerously-skip-permissions is refused"
+else
+    record FAIL "neg-c/dangerous-flag" "dangerous-flag NOT refused: $verdict :: $(get_reason)"
+fi
+
+# N-d: a wrapper missing the GC_SESSION_ID gate (real --tools so deny passes;
+#      requires_immutable_session_id=true but no real GC_SESSION_ID gate). The
+#      ONLY mention of GC_SESSION_ID is a comment, so this also exercises the
+#      comment-fooling hardening of check #2: a loose grep would wrongly accept.
+fpkg="$(mk_neg_adapter nd-no-session config)"
+adir="$fpkg/adapters/nd-no-session"
+{
+  echo '#!/usr/bin/env bash'
+  echo 'set -euo pipefail'
+  echo 'export PATH="$HOME/.local/bin:$PATH"'
+  echo '# a real wrapper would gate on GC_SESSION_ID here, but this one does not'
+  echo 'claude -p --tools Read,Grep,Glob "answer"'
+  echo 'gc mail send human -s x -m y'
+} > "$adir/bin/n-gc-agent"
+chmod +x "$adir/bin/n-gc-agent"
+verdict="$(assert_refused "$fpkg" nd-no-session)"
+if [[ "$verdict" == refused ]]; then
+    record PASS "neg-d/no-session-gate" "wrapper missing GC_SESSION_ID gate is refused"
+else
+    record FAIL "neg-d/no-session-gate" "no-session-gate NOT refused: $verdict :: $(get_reason)"
+fi
+
+# N-e: sandbox-read-only form whose '--sandbox read-only' appears ONLY in a
+#      comment (real GC_SESSION_ID gate, no real sandbox invocation). The
+#      sandbox analog of neg-b: a loose grep would wrongly accept it; the
+#      hardened grep_code must refuse. Guards the sandbox-read-only branch.
+fpkg="$(mk_neg_adapter ne-comment-sandbox sandbox-read-only)"
+adir="$fpkg/adapters/ne-comment-sandbox"
+{
+  echo '#!/usr/bin/env bash'
+  echo 'set -euo pipefail'
+  echo 'export PATH="$HOME/.local/bin:$PATH"'
+  echo 'sender="${GC_SESSION_ID:-}"'
+  echo '[[ -n "$sender" ]] || { echo no-session; exit 64; }'
+  echo '# we normally run codex exec --sandbox read-only (comment only — no real flag!)'
+  echo 'codex exec "answer"'
+} > "$adir/bin/n-gc-agent"
+chmod +x "$adir/bin/n-gc-agent"
+verdict="$(assert_refused "$fpkg" ne-comment-sandbox)"
+if [[ "$verdict" == refused ]]; then
+    record PASS "neg-e/comment-sandbox" "--sandbox read-only only in a comment is refused"
+else
+    record FAIL "neg-e/comment-sandbox" "comment-sandbox NOT refused: $verdict :: $(get_reason)"
+fi
+
+echo
+
+# =====================================================================
+# PART 3 — home-d0lv disposable-init dangerous-flag coverage (adapter boundary)
+# =====================================================================
+echo "-- home-d0lv coverage: gc-init mayor dangerous bypass flag at adapter boundary --"
+d0lv_all=1
+for a in "${ADAPTERS[@]}"; do
+    manifest="$adapters_dir/$a/adapter.toml"
+    # The forbidden 'substring' --dangerously-bypass is a literal prefix of the
+    # gc-init Codex mayor flag, so grep -F in the gate catches the full flag.
+    if grep -q -- '--dangerously-bypass' "$manifest"; then
+        :
+    else
+        d0lv_all=0
+    fi
+done
+if [[ $d0lv_all -eq 1 ]]; then
+    record PASS "d0lv/bypass-covered" "every adapter forbids '$DANGEROUS_INIT_FLAG' (prefix --dangerously-bypass)"
+else
+    record FAIL "d0lv/bypass-covered" "an adapter does not forbid the gc-init mayor bypass family"
+fi
+echo "  note: gc-init/mayor provisioning is OUT OF ADAPTER SCOPE; tracked under home-d0lv"
+echo "        (resolved: scaffold disposable cities from an inert --file config, never --provider codex)."
+echo
+
+# =====================================================================
+# Summary
+# =====================================================================
+echo "================ SUMMARY ================"
+for r in "${RESULTS[@]}"; do
+    IFS='|' read -r v id desc <<< "$r"
+    if [[ "$v" == PASS ]]; then printf '  %s  %-24s %s\n' "$(green PASS)" "$id" "$desc"
+    else printf '  %s  %-24s %s\n' "$(red FAIL)" "$id" "$desc"; fi
+done
+neg_count=0
+for r in "${RESULTS[@]}"; do [[ "$r" == *"|neg-"* ]] && neg_count=$((neg_count+1)); done
+echo "-----------------------------------------"
+echo "adapters tested: ${#ADAPTERS[@]} (${ADAPTERS[*]})"
+echo "checks: $((pass_count+fail_count))  passed: $pass_count  failed: $fail_count"
+
+if [[ $fail_count -gt 0 ]]; then
+    echo
+    red "BOUNDARY DOES NOT HOLD: $fail_count assertion(s) failed."; echo
+    echo "The Gas City real-harness safety boundary (home-4xv.5) has regressed."
+    exit 1
+fi
+green "BOUNDARY HOLDS: all $pass_count assertions passed across ${#ADAPTERS[@]} adapters + $neg_count adversarial negatives."
+echo
+exit 0

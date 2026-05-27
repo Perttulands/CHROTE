@@ -1,0 +1,281 @@
+#!/usr/bin/env bash
+# install-adapter — recreate a Gas City harness adapter's runtime files from
+# this tracked source package into a Gas City city root.
+#
+# The live /home/perttu/gascity runtime tree is .gitignored, so these adapter
+# files are not committed there. This script is the documented install/sync
+# path: tracked source (here) -> live city root.
+#
+# Usage:
+#   install-adapter list
+#   install-adapter <adapter> [--city DIR] [--dry-run|--verify]
+#
+#   list      Show available adapters in this package.
+#   <adapter> Name of a directory under adapters/ (e.g. opencode-smoke).
+#   --city    Target Gas City city root. Default: $GC_CITY, then
+#             /home/perttu/gascity.
+#   --dry-run Print what would be copied; change nothing.
+#   --verify  Diff installed files against source; non-zero exit if they drift.
+#
+# Safety: this script never copies Gas City runtime state (.gc/), tokens, or
+# node_modules. It only writes the explicit [[file]] entries in adapter.toml,
+# and refuses to install if the adapter's [safety] contract is violated.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+pkg_root="$(cd "$here/.." && pwd)"
+adapters_dir="$pkg_root/adapters"
+
+die() { echo "[install-adapter] error: $*" >&2; exit 1; }
+info() { echo "[install-adapter] $*"; }
+
+# --- tiny fixed-schema TOML readers (no external deps) ---------------------
+# Read a top-level scalar key from a [section]: toml_scalar FILE SECTION KEY
+toml_scalar() {
+    local file="$1" section="$2" key="$3"
+    awk -v sect="$section" -v key="$key" '
+        /^[[:space:]]*\[/ {
+            line=$0; sub(/^[[:space:]]*\[/,"",line); sub(/\].*$/,"",line)
+            cur=line; next
+        }
+        cur==sect {
+            line=$0; sub(/[[:space:]]*#.*$/,"",line)
+            if (line ~ "^[[:space:]]*" key "[[:space:]]*=") {
+                sub(/^[^=]*=[[:space:]]*/,"",line)
+                gsub(/^[[:space:]]+|[[:space:]]+$/,"",line)
+                gsub(/^"|"$/,"",line)
+                print line; exit
+            }
+        }
+    ' "$file"
+}
+
+# Emit "src<TAB>dest<TAB>mode" for each [[file]] block.
+toml_files() {
+    local file="$1"
+    awk '
+        function flush() { if (inblk) { print src "\t" dest "\t" mode; inblk=0 } }
+        /^[[:space:]]*\[\[file\]\]/ { flush(); inblk=1; src=""; dest=""; mode="0644"; next }
+        /^[[:space:]]*\[/          { flush(); next }
+        inblk {
+            line=$0; sub(/[[:space:]]*#.*$/,"",line)
+            split(line, kv, "=")
+            k=kv[1]; gsub(/[[:space:]]/,"",k)
+            v=line; sub(/^[^=]*=[[:space:]]*/,"",v); gsub(/^[[:space:]]+|[[:space:]]+$/,"",v); gsub(/^"|"$/,"",v)
+            if (k=="src") src=v
+            else if (k=="dest") dest=v
+            else if (k=="mode") mode=v
+        }
+        END { flush() }
+    ' "$file"
+}
+
+# Emit forbidden substrings, one per line.
+toml_forbidden() {
+    local file="$1"
+    awk '
+        /^[[:space:]]*forbidden_substrings[[:space:]]*=/ { collecting=1 }
+        collecting {
+            n=split($0, parts, "\"")
+            for (i=2; i<=n; i+=2) if (parts[i]!="") print parts[i]
+            if ($0 ~ /\]/) collecting=0
+        }
+    ' "$file"
+}
+
+# grep_code REGEX DIR — match an ERE only on the EXECUTABLE (non-comment) lines
+# of every file under DIR, recursively. Returns 0 if any code line matches.
+#
+# This exists because the structural safety checks below assert that a real
+# enforcement flag is actually INVOKED, not merely described. A loose
+# `grep -rE` would match the same pattern inside a `# ... --tools ...` prose
+# comment, letting an adapter fake compliance with a comment and no real flag.
+# We therefore strip shell-style comments before matching:
+#   - drop any line whose first non-blank character is `#`;
+#   - drop an inline trailing comment introduced by ` #` (a `#` preceded by
+#     whitespace), so `claude -p ... # uses --tools` cannot match on the comment.
+# Assumption: the enforced flags we look for (`--tools <list>`, `--sandbox
+# read-only`, `$GC_SESSION_ID`) contain no `#`, so stripping from an unquoted
+# ` #` onward never hides a real invocation. The wrapper scripts are bash, where
+# `#` is the comment character, so this matches the harness's own parsing.
+grep_code() {
+    local regex="$1" dir="$2"
+    [[ -d "$dir" ]] || return 1
+    local f
+    while IFS= read -r f; do
+        # Strip full-line and inline shell comments, then test the remainder.
+        if sed -E 's/^[[:space:]]*#.*$//; s/[[:space:]]#.*$//' "$f" \
+           | grep -qE -- "$regex" 2>/dev/null; then
+            return 0
+        fi
+    done < <(find "$dir" -type f)
+    return 1
+}
+
+cmd_list() {
+    info "adapters in $adapters_dir:"
+    local d
+    for d in "$adapters_dir"/*/; do
+        [[ -f "$d/adapter.toml" ]] || continue
+        local name harness lifecycle desc
+        name="$(toml_scalar "$d/adapter.toml" adapter name)"
+        harness="$(toml_scalar "$d/adapter.toml" adapter harness)"
+        lifecycle="$(toml_scalar "$d/adapter.toml" adapter lifecycle)"
+        desc="$(toml_scalar "$d/adapter.toml" adapter description)"
+        printf '  %-16s harness=%-10s lifecycle=%-12s %s\n' "$name" "$harness" "$lifecycle" "$desc"
+    done
+}
+
+# Assert the [safety] contract against the source files before any copy.
+check_safety() {
+    local adapter_dir="$1" manifest="$2"
+    local violations=0
+
+    # 1. Forbidden substrings must not appear in any source file.
+    local pattern f
+    while IFS= read -r pattern; do
+        [[ -z "$pattern" ]] && continue
+        while IFS= read -r f; do
+            if grep -qF -- "$pattern" "$f" 2>/dev/null; then
+                echo "[install-adapter] SAFETY: forbidden substring '$pattern' found in $f" >&2
+                violations=$((violations+1))
+            fi
+        done < <(find "$adapter_dir" -type f ! -name adapter.toml)
+    done < <(toml_forbidden "$manifest")
+
+    # 2. If requires_immutable_session_id, the wrapper must gate on GC_SESSION_ID.
+    #    The reference must be on a real code line, not just named in a comment.
+    if [[ "$(toml_scalar "$manifest" safety requires_immutable_session_id)" == "true" ]]; then
+        if ! grep_code 'GC_SESSION_ID' "$adapter_dir/bin"; then
+            echo "[install-adapter] SAFETY: requires_immutable_session_id=true but no GC_SESSION_ID gate on a non-comment line in bin/" >&2
+            violations=$((violations+1))
+        fi
+    fi
+
+    # 3. If tool_default_deny, validate the DECLARED deny mechanism structurally.
+    #    A bare occurrence of the word "deny" does not satisfy this; the adapter
+    #    must declare tool_deny_mechanism in [safety] and that mechanism must
+    #    actually be present where it belongs.
+    if [[ "$(toml_scalar "$manifest" safety tool_default_deny)" == "true" ]]; then
+        local mechanism
+        mechanism="$(toml_scalar "$manifest" safety tool_deny_mechanism)"
+        case "$mechanism" in
+            config)
+                # Per-tool deny config: a structural `<tool>: deny` block in the
+                # harness agent config, OR an explicit read-only `--tools`
+                # allowlist actually invoked in the wrapper. Both are matched only
+                # on non-comment lines (grep_code), so neither a junk file that
+                # merely contains the word "deny" nor a `# ...--tools...` prose
+                # comment can satisfy this — the enforcement must be real code.
+                if grep_code '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*:[[:space:]]*deny[[:space:]]*$' "$adapter_dir/workdir" \
+                   || grep_code '--tools[[:space:]]+[A-Za-z]' "$adapter_dir/bin"; then
+                    :
+                else
+                    echo "[install-adapter] SAFETY: tool_deny_mechanism=config but no structural '<tool>: deny' block in workdir/ and no invoked '--tools <allowlist>' on a non-comment line in bin/" >&2
+                    violations=$((violations+1))
+                fi
+                ;;
+            sandbox-read-only)
+                # Sandbox-enforced deny: the wrapper must actually invoke a
+                # read-only sandbox (e.g. `codex exec --sandbox read-only`) on a
+                # real code line, not merely mention it in a comment.
+                if grep_code '--sandbox[[:space:]]+read-only|--sandbox-read-only|--sandbox=read-only' "$adapter_dir/bin"; then
+                    :
+                else
+                    echo "[install-adapter] SAFETY: tool_deny_mechanism=sandbox-read-only but wrapper in bin/ does not invoke '--sandbox read-only' (or equivalent) on a non-comment line" >&2
+                    violations=$((violations+1))
+                fi
+                ;;
+            "")
+                echo "[install-adapter] SAFETY: tool_default_deny=true but [safety] tool_deny_mechanism is not declared (expected: config | sandbox-read-only)" >&2
+                violations=$((violations+1))
+                ;;
+            *)
+                echo "[install-adapter] SAFETY: unknown tool_deny_mechanism='$mechanism' (expected: config | sandbox-read-only)" >&2
+                violations=$((violations+1))
+                ;;
+        esac
+    fi
+
+    if (( violations > 0 )); then
+        die "$violations safety violation(s); refusing to install. Fix the source before syncing."
+    fi
+    info "safety contract OK ($adapter cleared $(toml_forbidden "$manifest" | grep -c . ) forbidden-substring checks plus invariants)"
+}
+
+mode_default="install"
+city="${GC_CITY:-/home/perttu/gascity}"
+adapter=""
+
+[[ $# -ge 1 ]] || { sed -n '2,20p' "${BASH_SOURCE[0]}"; exit 64; }
+
+case "$1" in
+    list) cmd_list; exit 0 ;;
+esac
+
+adapter="$1"; shift
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --city) city="$2"; shift 2 ;;
+        --dry-run) mode_default="dry-run"; shift ;;
+        --verify) mode_default="verify"; shift ;;
+        *) die "unknown argument: $1" ;;
+    esac
+done
+
+adapter_dir="$adapters_dir/$adapter"
+manifest="$adapter_dir/adapter.toml"
+[[ -d "$adapter_dir" ]] || die "no such adapter: $adapter (try: install-adapter list)"
+[[ -f "$manifest" ]] || die "missing manifest: $manifest"
+
+info "adapter=$adapter city=$city mode=$mode_default"
+
+# Safety check runs for install and dry-run (verify only diffs, no contract gate).
+if [[ "$mode_default" != "verify" ]]; then
+    check_safety "$adapter_dir" "$manifest"
+fi
+
+drift=0
+while IFS=$'\t' read -r src dest mode; do
+    [[ -z "$src" ]] && continue
+    src_path="$adapter_dir/$src"
+    dest_path="$city/$dest"
+    [[ -f "$src_path" ]] || die "manifest source missing: $src_path"
+
+    case "$mode_default" in
+        dry-run)
+            if [[ -f "$dest_path" ]] && cmp -s "$src_path" "$dest_path"; then
+                echo "  = $dest (already matches)"
+            else
+                echo "  + $dest (would write, mode $mode)"
+            fi
+            ;;
+        verify)
+            if [[ ! -f "$dest_path" ]]; then
+                echo "  ! $dest (MISSING in city)"; drift=$((drift+1))
+            elif cmp -s "$src_path" "$dest_path"; then
+                echo "  = $dest (matches source)"
+            else
+                echo "  ~ $dest (DRIFTED from source)"; drift=$((drift+1))
+            fi
+            ;;
+        install)
+            mkdir -p "$(dirname "$dest_path")"
+            cp "$src_path" "$dest_path"
+            chmod "$mode" "$dest_path"
+            echo "  + $dest (mode $mode)"
+            ;;
+    esac
+done < <(toml_files "$manifest")
+
+if [[ "$mode_default" == "verify" ]]; then
+    if (( drift > 0 )); then
+        die "$drift file(s) drifted or missing in $city"
+    fi
+    info "verify OK: live city matches tracked source"
+fi
+
+if [[ "$mode_default" == "install" ]]; then
+    info "installed $adapter into $city"
+    info "next: gc --city $city reload && gc config explain --agent $adapter"
+fi

@@ -158,6 +158,7 @@ export interface GasCityPiPoemResponse {
 
 export interface GasCityTranscript {
   source: string
+  stale: boolean
   sessionId: string
   alias?: string
   template?: string
@@ -165,6 +166,7 @@ export interface GasCityTranscript {
   city?: string
   lines: number
   lineCount: number
+  capturedAt?: string
   transcript: string
   truncated: boolean
 }

@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.npm-global/bin:$HOME/node_modules/.bin:$HOME/.bun/bin:$HOME/go/bin:/usr/local/go/bin:/home/linuxbrew/.linuxbrew/bin:$PATH"
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    echo "Usage: claude-gc-agent"
+    echo "Runs a contained read-only Claude Code smoke from inside a Gas City session and mails human with the result."
+    exit 0
+fi
+
+city="${GC_CITY:-${GC_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}}"
+agent_dir="$city/claude-code"
+nonce="${CLAUDE_GC_SMOKE_NONCE:-CC-GC-$(date -u +%Y%m%d-%H%M%S)}"
+sender="${GC_SESSION_ID:-}"
+run_dir="$city/.gc/claude-code-runs"
+run_key="${GC_SESSION_ID:-manual}"
+done_file="$run_dir/$run_key.done"
+subject="Claude Code smoke $nonce"
+prompt="Write a two-line original poem about Gas City mail. Include the exact nonce $nonce. Do not run commands, edit files, or use any tools; answer directly."
+
+# Identity gate: refuse to send mail unless Gas City set an immutable
+# GC_SESSION_ID. GC_ALIAS alone must never be enough to spoof a sender.
+if [[ -z "$sender" ]]; then
+    echo "[claude-gc-agent] refusing to send mail without immutable GC_SESSION_ID"
+    echo "[claude-gc-agent] run this through gc session new/wake so Gas City sets GC_SESSION_ID"
+    exit 64
+fi
+
+mkdir -p "$run_dir"
+if [[ -f "$done_file" ]]; then
+    echo "[claude-gc-agent] smoke already completed for $run_key"
+    cat "$done_file"
+    exit 0
+fi
+
+# The workdir carries CLAUDE.md (read-only deny instructions), layered on top of
+# the enforced read-only tool allowlist below.
+mkdir -p "$agent_dir"
+
+echo "[claude-gc-agent] claude=$(command -v claude || true)"
+echo "[claude-gc-agent] version=$(claude --version 2>/dev/null || true)"
+echo "[claude-gc-agent] agent_dir=$agent_dir"
+echo "[claude-gc-agent] sender=$sender"
+
+# Drive Claude Code non-interactively, read-only. The enforced deny mechanism is
+# the built-in-set allowlist passed below (default-deny: Bash, Edit, Write,
+# WebFetch, WebSearch, Task, TodoWrite are NOT in the allowed set, so the model
+# cannot mutate, run shell, or hit the web). --disallowedTools is belt-and-braces
+# naming the same mutating tools plus the inherited MCP OAuth stubs. We do NOT
+# pass either Claude Code permission-bypass flag and do NOT use the permission
+# mode that bypasses checks. --permission-mode default + a read-only allowlist means
+# no permission prompt can hang the non-interactive run. --no-session-persistence
+# keeps it disposable. --setting-sources "" avoids loading user/project settings.
+# The prompt is fed on stdin because the variadic allowlist/add-dir flags would
+# otherwise swallow a positional prompt. CLAUDE_CODE_* env vars are scrubbed so a
+# nested launch does not inherit a parent Claude session's runtime.
+set +e
+output="$(printf '%s' "$prompt" | env \
+    -u CLAUDECODE \
+    -u CLAUDE_CODE_SESSION_ID \
+    -u CLAUDE_CODE_ENTRYPOINT \
+    -u CLAUDE_CODE_EXECPATH \
+    -u CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS \
+    timeout 180s claude -p \
+    --tools Read,Grep,Glob \
+    --disallowedTools Bash,Edit,Write,WebFetch,WebSearch,Task,TodoWrite,mcp__claude_ai_Gmail__authenticate,mcp__claude_ai_Google_Calendar__authenticate,mcp__claude_ai_Google_Drive__authenticate \
+    --permission-mode default \
+    --no-session-persistence \
+    --setting-sources "" \
+    --add-dir "$agent_dir" 2>&1)"
+status=$?
+set -e
+
+clean_output="$(printf '%s' "$output" | tr -d '\000-\010\013\014\016-\037\177' | head -c 4000)"
+
+echo "[claude-gc-agent] claude_status=$status"
+echo "[claude-gc-agent] output_begin"
+printf '%s\n' "$clean_output"
+echo "[claude-gc-agent] output_end"
+
+body="Gas City Claude Code smoke nonce=$nonce
+claude_status=$status
+
+$clean_output"
+
+gc --city "$city" mail send human --from "$sender" -s "$subject" -m "$body"
+printf 'nonce=%s\nmail_subject=%s\n' "$nonce" "$subject" > "$done_file"
+
+exit "$status"

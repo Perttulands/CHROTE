@@ -166,9 +166,99 @@ Conclusion:
   standalone Dolt and Dolt identity are available.
 - The current `gc init` path is not sufficiently isolated for repeated
   automated proofs because it can register/start a temp city with the live
-  supervisor.
+  supervisor. Resolved by the GC_HOME-isolated inert-config path below
+  (see "Safe Disposable City Proof Path (home-d0lv)").
 - Do not migrate `/home/perttu/gascity/.gc/beads.json` until a disposable
   bd-backed city or rig projection can run without live-supervisor side effects.
+
+## Safe Disposable City Proof Path (home-d0lv)
+
+Resolved on 2026-05-27. `gc init` has no `--no-register` / `--no-start` /
+`--offline` flag: it always registers the new city, writes a per-`GC_HOME`
+systemd user unit, and starts a supervisor that launches the city. A precise
+negative result on a pure offline scaffold flag, but a fully safe disposable
+path exists by isolating `GC_HOME` and using an inert mayor config.
+
+Isolation mechanism:
+
+- The machine-wide supervisor registry is `${GC_HOME}/cities.toml`. The live
+  supervisor runs with `GC_HOME=/home/perttu/.gc`, so the live registry is
+  `/home/perttu/.gc/cities.toml`.
+- Setting `GC_HOME=<tmp>/.gc` redirects the registry, supervisor socket, API
+  port, and the generated systemd unit name (`gascity-supervisor-gc-<hash>`)
+  entirely into the temp tree. The live registry and live supervisor are never
+  touched.
+- `HOME` must stay `/home/perttu`. The binary refuses a `HOME` override for the
+  platform supervisor ("Keep HOME unchanged and use GC_HOME for isolated runs").
+- `TMUX_TMPDIR=<tmp>/tmux` isolates any tmux socket away from the live
+  `gascity` socket. With an inert mayor no tmux session is created at all.
+
+Avoiding paid/credentialed harness sessions:
+
+- Do NOT use `--provider codex` (or any real-harness provider). That path
+  materializes a `mayor` session whose command carries
+  `--dangerously-bypass-approvals-and-sandbox` (and equivalent yolo /
+  `--approval-mode auto_edit` flags for other providers).
+- Instead init from an inert `city.toml` with `--file`:
+  `start_command = "true"` (no-op mayor) and `[beads] provider = "file"`. This
+  still materializes the full builtin packs, including the `core` formulas
+  (`mol-review-quorum`, `mol-scoped-work`), but creates no harness session and
+  no dangerous flags anywhere in the city tree.
+
+Supported safe sequence (verified):
+
+```bash
+TMPROOT="$(mktemp -d /tmp/gc-disposable.XXXXXX)"
+export HOME=/home/perttu                 # keep real HOME (required)
+export GC_HOME="$TMPROOT/gchome/.gc"     # isolate registry/supervisor/unit
+export TMUX_TMPDIR="$TMPROOT/tmux"       # isolate tmux socket
+mkdir -p "$GC_HOME" "$TMUX_TMPDIR"
+
+cat > "$TMPROOT/inert-city.toml" <<'TOML'
+[workspace]
+start_command = "true"
+max_active_sessions = 1
+[beads]
+provider = "file"
+TOML
+
+CITY="$TMPROOT/city"
+gc init --file "$TMPROOT/inert-city.toml" "$CITY"   # auto-registers+starts in GC_HOME only
+
+# Read-only inspection works even after stopping the isolated supervisor:
+gc --city "$CITY" stop && gc --city "$CITY" unregister && gc supervisor stop
+gc --city "$CITY" formula list                       # works offline, no supervisor
+gc --city "$CITY" formula show mol-review-quorum      # reproduces home-706s offline
+
+# Teardown: remove the per-GC_HOME systemd unit, then the temp tree.
+systemctl --user disable --now gascity-supervisor-gc-*.service 2>/dev/null || true
+rm -f /home/perttu/.local/share/systemd/user/gascity-supervisor-gc-*.service
+systemctl --user daemon-reload
+rm -rf "$TMPROOT"
+```
+
+Notes:
+
+- `gc init` will print "Registered city ..." and write/start the isolated unit.
+  This is expected and safe: it all lives under `GC_HOME`. Always remove the
+  `gascity-supervisor-gc-<hash>.service` unit during teardown so it does not
+  linger in user systemd.
+- Read-only `gc --city <dir> formula list/show` and file-provider bead reads do
+  NOT require a running supervisor, so pure inspection work (e.g. home-706s) can
+  skip the start/register entirely after scaffolding — or even reuse a scaffold
+  without ever starting it.
+- For bd/Dolt-backed disposable proofs, set `provider = "bd"` in the inert
+  `city.toml` and supply standalone Dolt as in the prior section; the same
+  `GC_HOME` isolation keeps it off live state.
+
+Live-state evidence (2026-05-27 run):
+
+- `/home/perttu/.gc/cities.toml` byte-identical before/after; registered cities
+  list unchanged (only `gascity`); live supervisor PID unchanged (3826452).
+- Live `/home/perttu/gascity/.gc` file set identical (427 files, 0 added,
+  0 removed); no live `.gc` path referenced the temp tree. The live
+  `beads.json` / `events.jsonl` contents change continuously from the live
+  supervisor's own activity, independent of the proof.
 
 ## Canonical Store For CHROTE 3.0 Work
 
@@ -278,7 +368,7 @@ implementation.
 | Bead | Status | Notes |
 | --- | --- | --- |
 | `home-6p0j` | Completed | Installed Dolt and proved a bd-backed temp-city path, but found live-supervisor side effects. |
-| `home-d0lv` | Open | Follow-up for a safe offline/no-register disposable Gas City init path. This must land before unattended temp-city proofs. |
+| `home-d0lv` | Verified, pending close | Safe disposable path resolved: `gc init` has no offline/no-register flag, but `GC_HOME`-isolated init from an inert `city.toml` keeps all register/start side effects off live state and creates no harness session. See "Safe Disposable City Proof Path (home-d0lv)". |
 | `home-p81n` | Completed | Projection schema is in `docs/chrote-gascity-projection-schema.md`. |
 | `home-4xv.2` | Completed | CHROTE observer is implemented as `GET /api/gascity/observer` plus the dashboard Gas City view. |
 | `home-ujx8` | Completed | Split-brain guidance is in `docs/gascity-split-brain-runbook.md`. |

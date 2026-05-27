@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gascity.hermes_bridge.result.v0",
+  "title": "Hermes -> Gas City ingress result receipt (v0)",
+  "description": "Artifact receipt returned after a successful dispatch. A record for CHROTE display or Beads notes; NOT a source-of-truth update by itself.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "nonce", "city", "artifacts", "sender_principal", "commands", "notes"],
+  "properties": {
+    "schema_version": { "const": "gascity.hermes_bridge.result.v0" },
+    "nonce": { "type": "string", "description": "Echoes the request nonce." },
+    "city": { "type": "string", "description": "Gas City city root the artifacts live in." },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mail_id", "sling_bead_id"],
+      "properties": {
+        "mail_id": {
+          "type": ["string", "null"],
+          "pattern": "^gc-[0-9]+$",
+          "description": "gc-* id of the mail receipt."
+        },
+        "sling_bead_id": {
+          "type": ["string", "null"],
+          "pattern": "^gc-[0-9]+$",
+          "description": "gc-* id of the routed task bead (null for mail_only)."
+        }
+      }
+    },
+    "sender_principal": {
+      "type": "string",
+      "description": "The fixed local writer principal that wrote to Gas City. Never an envelope-controlled Discord identity."
+    },
+    "commands": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Human-readable echo of the gc commands run (argv joined for display only)."
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

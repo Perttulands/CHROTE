@@ -1,0 +1,69 @@
+# Gas City harness-adapter manifest.
+#
+# This is the machine-readable contract a harness adapter fills in. The
+# install script (../../bin/install-adapter) reads this to recreate the live
+# runtime files under a Gas City city root. To add a new harness (Codex,
+# Claude Code, ...), copy this directory, change the [adapter] identity, point
+# the [[file]] sources at the new wrapper/agent/workdir files, and keep the
+# [safety] contract satisfied.
+
+[adapter]
+# Stable adapter id. Becomes the Gas City agent alias and the agents/<name>/ dir.
+name = "codex-smoke"
+# The underlying harness CLI this adapter wraps.
+harness = "codex"
+# How the wrapper drives the harness:
+#   "one-shot"     -> wrapper runs the CLI once and exits (codex exec ...)
+#   "interactive"  -> wrapper exec's a long-lived CLI session (e.g. exec pi ...)
+lifecycle = "one-shot"
+description = "Contained read-only sandboxed Codex smoke that mails the human a poem under a valid Gas City identity."
+
+# Files this adapter installs into the city root. `src` is relative to this
+# adapter directory; `dest` is relative to the Gas City city root.
+# `mode` is the octal file mode applied after copy.
+
+[[file]]
+src = "bin/codex-gc-agent"
+dest = "bin/codex-gc-agent"
+mode = "0755"
+
+[[file]]
+src = "agent/agent.toml"
+dest = "agents/codex-smoke/agent.toml"
+mode = "0644"
+
+# Codex reads AGENTS.md from its working root (-C). This carries the read-only
+# deny instructions, layered on top of the wrapper's `--sandbox read-only`.
+[[file]]
+src = "workdir/AGENTS.md"
+dest = "codex-smoke/AGENTS.md"
+mode = "0644"
+
+# Safety contract. The install script asserts these are true of the installed
+# files and refuses to install if a hard invariant is violated. These mirror
+# the home-4xv.5 real-harness boundary.
+[safety]
+# Wrapper must refuse to send mail unless an immutable GC_SESSION_ID is set
+# (identity is not spoofable via GC_ALIAS alone).
+requires_immutable_session_id = true
+# Harness agent must default-deny mutating tools (bash/edit/web/task/...).
+# For Codex this is satisfied two ways: the wrapper drives `codex exec
+# --sandbox read-only` (the enforced mechanism: no writes/network, model-run
+# shell is sandboxed read-only), and workdir/AGENTS.md instructs the agent it
+# is denied edit/shell/network/tool use (Codex reads and honors AGENTS.md).
+tool_default_deny = true
+# How deny is enforced. Codex has no per-tool deny config and no --tools flag;
+# its real enforced deny is the sandbox. "sandbox-read-only": the wrapper must
+# actually invoke `codex exec --sandbox read-only` (validated by install-adapter).
+# The AGENTS.md deny text is a belt-and-braces instruction layered on top, not
+# the enforcement mechanism.
+tool_deny_mechanism = "sandbox-read-only"
+# No dangerous-skip / broad-permission bypass flags in the committed wrapper.
+no_dangerous_skip_flags = true
+# Strings that must NOT appear anywhere in this adapter's committed files.
+forbidden_substrings = [
+  "--dangerously-skip-permissions",
+  "--yolo",
+  "--dangerously-bypass",
+  "controller.token",
+]

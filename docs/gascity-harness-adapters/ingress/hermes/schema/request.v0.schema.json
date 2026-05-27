@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gascity.hermes_bridge.request.v0",
+  "title": "Hermes -> Gas City ingress request envelope (v0)",
+  "description": "A sanitized request envelope. NOT a raw Discord gateway event and NOT token material. Authentication happens in Hermes before this envelope is produced.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "nonce", "origin", "request"],
+  "properties": {
+    "schema_version": { "const": "gascity.hermes_bridge.request.v0" },
+    "nonce": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Caller-supplied correlation/idempotency token."
+    },
+    "origin": {
+      "type": "object",
+      "description": "External attribution only. Never a Gas City sender identity.",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string", "minLength": 1, "examples": ["discord_message"] },
+        "hermes_profile": { "type": "string" },
+        "discord_guild_id": { "type": "string" },
+        "discord_channel_id": { "type": "string" },
+        "discord_message_id": { "type": "string" },
+        "discord_user_id": { "type": "string" }
+      },
+      "comment": "Raw Discord gateway fields (op, d, s, t, heartbeat_interval, session_id, intents, ...) are rejected by the adapter."
+    },
+    "auth": {
+      "type": "object",
+      "description": "Attribution of the pre-bridge verification. Must NOT carry token material and must NOT set a Gas City sender (auth.from is rejected).",
+      "properties": {
+        "verified_by": { "type": "string" },
+        "bridge_actor": { "type": "string" },
+        "verified_at": { "type": "string" }
+      },
+      "not": { "required": ["from"] }
+    },
+    "request": {
+      "type": "object",
+      "required": ["title", "intent"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "body": { "type": "string" },
+        "intent": { "enum": ["mail_only", "route_task"] },
+        "target": {
+          "type": "string",
+          "description": "Allowed without approval: human (default), planner. Other targets are rejected in v0.",
+          "default": "human"
+        },
+        "home_bead_id": { "type": "string", "description": "Canonical /home/perttu Beads link." },
+        "notify": { "type": "boolean", "default": false }
+      },
+      "not": {
+        "anyOf": [
+          { "required": ["from"] },
+          { "required": ["gc_from"] },
+          { "required": ["sender_identity"] }
+        ]
+      },
+      "comment": "The envelope may NOT set a Gas City sender. The bridge pins the writer principal; Discord identity is body metadata only."
+    },
+    "approval": {
+      "type": "object",
+      "description": "Operator approval token. Required for any action beyond mail/task creation (e.g. notify=true).",
+      "properties": {
+        "operator_approved": { "type": "boolean" },
+        "approved_action": { "type": "string", "minLength": 1 }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "properties": {
+        "synthetic": { "type": "boolean" },
+        "allow_real_harness_start": { "const": false },
+        "allow_file_mutation": { "const": false },
+        "allow_notify": { "type": "boolean" }
+      }
+    }
+  }
+}

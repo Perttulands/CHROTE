@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.npm-global/bin:$HOME/node_modules/.bin:$HOME/.bun/bin:$HOME/go/bin:/usr/local/go/bin:/home/linuxbrew/.linuxbrew/bin:$PATH"
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    echo "Usage: codex-gc-agent"
+    echo "Runs a contained read-only Codex smoke from inside a Gas City session and mails human with the result."
+    exit 0
+fi
+
+city="${GC_CITY:-${GC_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}}"
+agent_dir="$city/codex-smoke"
+nonce="${CODEX_GC_SMOKE_NONCE:-CX-GC-$(date -u +%Y%m%d-%H%M%S)}"
+sender="${GC_SESSION_ID:-}"
+run_dir="$city/.gc/codex-smoke-runs"
+run_key="${GC_SESSION_ID:-manual}"
+done_file="$run_dir/$run_key.done"
+subject="Codex smoke $nonce"
+prompt="Write a two-line original poem about Gas City mail. Include the exact nonce $nonce. Do not run commands, edit files, or use any tools; answer directly."
+
+# Identity gate: refuse to send mail unless Gas City set an immutable
+# GC_SESSION_ID. GC_ALIAS alone must never be enough to spoof a sender.
+if [[ -z "$sender" ]]; then
+    echo "[codex-gc-agent] refusing to send mail without immutable GC_SESSION_ID"
+    echo "[codex-gc-agent] run this through gc session new/wake so Gas City sets GC_SESSION_ID"
+    exit 64
+fi
+
+mkdir -p "$run_dir"
+if [[ -f "$done_file" ]]; then
+    echo "[codex-gc-agent] smoke already completed for $run_key"
+    cat "$done_file"
+    exit 0
+fi
+
+# The workdir carries AGENTS.md (read-only deny instructions Codex honors).
+mkdir -p "$agent_dir"
+last_file="$run_dir/$run_key.last"
+: > "$last_file"
+
+echo "[codex-gc-agent] codex=$(command -v codex || true)"
+echo "[codex-gc-agent] version=$(codex --version 2>/dev/null || true)"
+echo "[codex-gc-agent] agent_dir=$agent_dir"
+echo "[codex-gc-agent] sender=$sender"
+
+# Drive Codex non-interactively, read-only and sandboxed. No dangerous-skip
+# flags. --ignore-user-config keeps the smoke self-contained (does not inherit
+# ~/.codex/config.toml model/effort/project state); auth still uses CODEX_HOME.
+# --ephemeral avoids persisting session files; --skip-git-repo-check lets it run
+# in the non-repo workdir. -o captures only the final message; full stdout/stderr
+# stays in the log for diagnostics. stdin is /dev/null so exec does not block.
+set +e
+output="$(timeout 180s codex exec \
+    --sandbox read-only \
+    --skip-git-repo-check \
+    --ephemeral \
+    --ignore-user-config \
+    --color never \
+    -C "$agent_dir" \
+    -o "$last_file" \
+    "$prompt" </dev/null 2>&1)"
+status=$?
+set -e
+
+clean_output="$(printf '%s' "$output" | tr -d '\000-\010\013\014\016-\037\177' | head -c 4000)"
+answer="$(tr -d '\000-\010\013\014\016-\037\177' < "$last_file" | head -c 2000)"
+[[ -n "$answer" ]] || answer="$clean_output"
+
+echo "[codex-gc-agent] codex_status=$status"
+echo "[codex-gc-agent] output_begin"
+printf '%s\n' "$clean_output"
+echo "[codex-gc-agent] output_end"
+
+body="Gas City Codex smoke nonce=$nonce
+codex_status=$status
+
+$answer"
+
+gc --city "$city" mail send human --from "$sender" -s "$subject" -m "$body"
+printf 'nonce=%s\nmail_subject=%s\n' "$nonce" "$subject" > "$done_file"
+
+exit "$status"

@@ -60,6 +60,10 @@ type GasCityConfig struct {
 	PoemTarget    string
 	PoemTemplate  string
 	MailRecipient string
+	// TranscriptArchiveDir is the CHROTE-owned directory where successful
+	// session peeks are archived so transcripts survive a supervisor restart.
+	// Empty disables archiving (live peek only).
+	TranscriptArchiveDir string
 }
 
 // GasCityObserverResponse is a CHROTE-safe read model of the local Gas City supervisor.
@@ -200,14 +204,22 @@ type GasCityPiPoemResponse struct {
 }
 
 type GasCityTranscriptResponse struct {
-	Source     string `json:"source"`
-	SessionID  string `json:"sessionId"`
-	Alias      string `json:"alias,omitempty"`
-	Template   string `json:"template,omitempty"`
-	State      string `json:"state,omitempty"`
-	City       string `json:"city,omitempty"`
-	Lines      int    `json:"lines"`
-	LineCount  int    `json:"lineCount"`
+	// Source is gc-session-peek for a fresh live peek, or chrote-archive when
+	// the live peek was unavailable and CHROTE served the last archived peek.
+	Source string `json:"source"`
+	// Stale is true when the response is served from the archive rather than a
+	// fresh live peek (for example after a supervisor restart).
+	Stale     bool   `json:"stale"`
+	SessionID string `json:"sessionId"`
+	Alias     string `json:"alias,omitempty"`
+	Template  string `json:"template,omitempty"`
+	State     string `json:"state,omitempty"`
+	City      string `json:"city,omitempty"`
+	Lines     int    `json:"lines"`
+	LineCount int    `json:"lineCount"`
+	// CapturedAt is the archive capture time (RFC3339) when Source is
+	// chrote-archive; empty for a fresh live peek.
+	CapturedAt string `json:"capturedAt,omitempty"`
 	Transcript string `json:"transcript"`
 	Truncated  bool   `json:"truncated"`
 }
@@ -226,6 +238,7 @@ type GasCityHandler struct {
 	nonce              func() string
 	auditMu            sync.Mutex
 	audit              []gasCityAuditEntry
+	transcriptArchive  *gasCityTranscriptArchive
 }
 
 type gasCityAuditEntry struct {
@@ -277,12 +290,37 @@ func LoadGasCityConfigFromEnv() GasCityConfig {
 		recipient = defaultGasCityMailRecipient
 	}
 	return GasCityConfig{
-		BaseURL:       baseURL,
-		CityDir:       cityDir,
-		PoemTarget:    target,
-		PoemTemplate:  template,
-		MailRecipient: recipient,
+		BaseURL:              baseURL,
+		CityDir:              cityDir,
+		PoemTarget:           target,
+		PoemTemplate:         template,
+		MailRecipient:        recipient,
+		TranscriptArchiveDir: resolveGasCityTranscriptArchiveDir(),
 	}
+}
+
+// resolveGasCityTranscriptArchiveDir picks the CHROTE-owned transcript archive
+// directory. CHROTE_GASCITY_TRANSCRIPT_DIR overrides it; the value "off" (any
+// case) disables archiving. The default is under XDG_STATE_HOME (or
+// ~/.local/state), keeping the archive out of the Gas City runtime tree so Gas
+// City never becomes the durable owner of CHROTE recovery data.
+func resolveGasCityTranscriptArchiveDir() string {
+	configured := strings.TrimSpace(os.Getenv("CHROTE_GASCITY_TRANSCRIPT_DIR"))
+	if strings.EqualFold(configured, "off") {
+		return ""
+	}
+	if configured != "" {
+		return configured
+	}
+	base := strings.TrimSpace(os.Getenv("XDG_STATE_HOME"))
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil || strings.TrimSpace(home) == "" {
+			return ""
+		}
+		base = filepath.Join(home, ".local", "state")
+	}
+	return filepath.Join(base, "chrote", "gascity-transcripts")
 }
 
 // NewGasCityHandler creates a Gas City handler with production defaults.
@@ -309,11 +347,12 @@ func NewGasCityHandler(config GasCityConfig) *GasCityHandler {
 	recipient, recipientError := validateGasCityIdentity("CHROTE_GASCITY_MAIL_RECIPIENT", config.MailRecipient)
 	return &GasCityHandler{
 		config: GasCityConfig{
-			BaseURL:       baseURL,
-			CityDir:       cityDir,
-			PoemTarget:    target,
-			PoemTemplate:  template,
-			MailRecipient: recipient,
+			BaseURL:              baseURL,
+			CityDir:              cityDir,
+			PoemTarget:           target,
+			PoemTemplate:         template,
+			MailRecipient:        recipient,
+			TranscriptArchiveDir: strings.TrimSpace(config.TranscriptArchiveDir),
 		},
 		client:             newGasCityHTTPClient(),
 		configError:        configError,
@@ -321,6 +360,7 @@ func NewGasCityHandler(config GasCityConfig) *GasCityHandler {
 		runner:             gasCityExecRunner{},
 		nonce:              newGasCityNonce,
 		audit:              []gasCityAuditEntry{},
+		transcriptArchive:  newGasCityTranscriptArchive(strings.TrimSpace(config.TranscriptArchiveDir)),
 	}
 }
 
@@ -411,6 +451,13 @@ func (h *GasCityHandler) Transcript(w http.ResponseWriter, r *http.Request) {
 	defer resolveCancel()
 	session, err := h.resolveGasCityTranscriptSession(resolveCtx, sessionID)
 	if err != nil {
+		// The supervisor could not resolve the session (e.g. it was restarted,
+		// is down, or pruned the session). Recover the last archived peek so an
+		// operator still sees the most recent Gas City-owned output.
+		if snapshot, ok := h.transcriptArchive.load(sessionID); ok {
+			core.WriteSuccess(w, gasCityArchiveTranscriptResponse(snapshot, lines))
+			return
+		}
 		switch {
 		case errors.Is(err, errGasCitySessionNotFound):
 			core.WriteError(w, http.StatusNotFound, "GASCITY_SESSION_NOT_FOUND", "Gas City session not found")
@@ -430,13 +477,28 @@ func (h *GasCityHandler) Transcript(w http.ResponseWriter, r *http.Request) {
 		"--lines", strconv.Itoa(lines),
 	})
 	if err != nil {
+		if snapshot, ok := h.transcriptArchive.load(session.ID); ok {
+			core.WriteSuccess(w, gasCityArchiveTranscriptResponse(snapshot, lines))
+			return
+		}
 		core.WriteError(w, http.StatusBadGateway, "GASCITY_TRANSCRIPT_UNAVAILABLE", "Gas City transcript peek failed")
 		return
 	}
 
 	transcript, truncated := sanitizeGasCityTranscriptOutput(output)
-	core.WriteSuccess(w, GasCityTranscriptResponse{
+	// A live peek with no content (e.g. tmux pane recreated empty after a
+	// supervisor restart) should still surface the last archived transcript
+	// rather than a misleading empty pane.
+	if strings.TrimSpace(transcript) == "" {
+		if snapshot, ok := h.transcriptArchive.load(session.ID); ok && strings.TrimSpace(snapshot.Transcript) != "" {
+			core.WriteSuccess(w, gasCityArchiveTranscriptResponse(snapshot, lines))
+			return
+		}
+	}
+
+	live := GasCityTranscriptResponse{
 		Source:     "gc-session-peek",
+		Stale:      false,
 		SessionID:  session.ID,
 		Alias:      session.Alias,
 		Template:   session.Template,
@@ -446,7 +508,46 @@ func (h *GasCityHandler) Transcript(w http.ResponseWriter, r *http.Request) {
 		LineCount:  countGasCityTranscriptLines(transcript),
 		Transcript: transcript,
 		Truncated:  truncated,
-	})
+	}
+
+	// Archive the fresh, already-sanitized peek so it survives a restart.
+	// Best-effort: never fail the live response on an archive write error.
+	if strings.TrimSpace(transcript) != "" {
+		if err := h.transcriptArchive.save(gasCityTranscriptSnapshot{
+			SessionID:  live.SessionID,
+			Alias:      live.Alias,
+			Template:   live.Template,
+			State:      live.State,
+			City:       live.City,
+			Lines:      live.Lines,
+			LineCount:  live.LineCount,
+			Transcript: live.Transcript,
+			Truncated:  live.Truncated,
+		}); err != nil {
+			log.Printf("gascity transcript archive write failed session=%s: %v", live.SessionID, err)
+		}
+	}
+
+	core.WriteSuccess(w, live)
+}
+
+// gasCityArchiveTranscriptResponse builds a stale, archive-sourced transcript
+// response from a stored snapshot. lines is the request bound used for display.
+func gasCityArchiveTranscriptResponse(snapshot gasCityTranscriptSnapshot, lines int) GasCityTranscriptResponse {
+	return GasCityTranscriptResponse{
+		Source:     "chrote-archive",
+		Stale:      true,
+		SessionID:  snapshot.SessionID,
+		Alias:      snapshot.Alias,
+		Template:   snapshot.Template,
+		State:      snapshot.State,
+		City:       snapshot.City,
+		Lines:      lines,
+		LineCount:  snapshot.LineCount,
+		CapturedAt: snapshot.CapturedAt,
+		Transcript: snapshot.Transcript,
+		Truncated:  snapshot.Truncated,
+	}
 }
 
 // PiPoem handles POST /api/gascity/requests/pi-poem.

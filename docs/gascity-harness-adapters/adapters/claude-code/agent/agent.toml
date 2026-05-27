@@ -1,0 +1,7 @@
+description = "Contained smoke-test Claude Code harness agent."
+work_dir = "."
+start_command = "./bin/claude-gc-agent"
+prompt_mode = "none"
+nudge = "ready"
+max_active_sessions = 1
+min_active_sessions = 0

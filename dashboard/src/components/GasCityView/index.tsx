@@ -117,9 +117,16 @@ function SessionsPanel({
                 transcript.state,
                 `${transcript.lineCount} lines`,
                 transcript.truncated ? 'truncated' : '',
+                transcript.capturedAt ? `captured ${transcript.capturedAt}` : '',
               ].filter(Boolean).join(' / ')}
             </small>
           </div>
+          {transcript.stale && (
+            <div className="gascity-transcript-stale" role="status">
+              Recovered from CHROTE archive (live peek unavailable). This is the
+              last captured snapshot, not live output.
+            </div>
+          )}
           <pre>{transcript.transcript || '(empty transcript)'}</pre>
         </div>
       )}

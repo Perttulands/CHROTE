@@ -1,0 +1,31 @@
+{
+  "schema_version": "gascity.hermes_bridge.request.v0",
+  "nonce": "HGB-EXAMPLE-0001",
+  "origin": {
+    "kind": "discord_message",
+    "hermes_profile": "hermes-smoke",
+    "discord_guild_id": "synthetic-guild",
+    "discord_channel_id": "synthetic-channel",
+    "discord_message_id": "synthetic-message-HGB-EXAMPLE-0001",
+    "discord_user_id": "synthetic-user"
+  },
+  "auth": {
+    "verified_by": "hermes",
+    "bridge_actor": "local-hermes-bridge",
+    "verified_at": "2026-05-27T12:00:00+03:00"
+  },
+  "request": {
+    "title": "Synthetic Hermes ingress example HGB-EXAMPLE-0001",
+    "body": "Synthetic Hermes/Discord-originated request. No real Discord data.",
+    "intent": "route_task",
+    "target": "planner",
+    "home_bead_id": "home-qnzi",
+    "notify": false
+  },
+  "safety": {
+    "synthetic": true,
+    "allow_real_harness_start": false,
+    "allow_file_mutation": false,
+    "allow_notify": false
+  }
+}

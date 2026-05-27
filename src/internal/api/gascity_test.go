@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -723,6 +724,225 @@ func TestGasCityHandlerTranscriptRejectsAliasTarget(t *testing.T) {
 	}
 }
 
+// TestGasCityHandlerTranscriptRecoversArchivedPeekAfterSupervisorRestart is the
+// core home-5ubb guarantee: once a live peek has been captured, an operator can
+// still retrieve that session transcript after the supervisor is gone, beyond a
+// single bounded live peek. Without the archive, a restart-volatile tmux pane
+// leaves CHROTE with no transcript at all.
+func TestGasCityHandlerTranscriptRecoversArchivedPeekAfterSupervisorRestart(t *testing.T) {
+	cityDir := t.TempDir()
+	archiveDir := t.TempDir()
+	upstream := newTestGasCitySupervisor(t, cityDir, []map[string]any{
+		{
+			"id":       "gc-4171",
+			"alias":    "planner",
+			"template": "planner",
+			"state":    "active",
+			"running":  true,
+			"provider": "./bin/mock-agent",
+		},
+	})
+	runner := &fakeGasCityRunner{output: "planner ready\nDURABLE_MARKER_7\n"}
+	handler := NewGasCityHandler(GasCityConfig{BaseURL: upstream.URL, CityDir: cityDir, TranscriptArchiveDir: archiveDir})
+	handler.runner = runner
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// 1) Live peek while the supervisor is up: fresh source, archived to disk.
+	liveRec := httptest.NewRecorder()
+	mux.ServeHTTP(liveRec, httptest.NewRequest(http.MethodGet, "/api/gascity/sessions/gc-4171/transcript?lines=40", nil))
+	if liveRec.Code != http.StatusOK {
+		t.Fatalf("live status = %d, want 200; body: %s", liveRec.Code, liveRec.Body.String())
+	}
+	var liveResp struct {
+		Data GasCityTranscriptResponse `json:"data"`
+	}
+	if err := json.Unmarshal(liveRec.Body.Bytes(), &liveResp); err != nil {
+		t.Fatalf("decode live transcript: %v", err)
+	}
+	if liveResp.Data.Source != "gc-session-peek" || liveResp.Data.Stale {
+		t.Fatalf("live response = %+v, want fresh non-stale gc-session-peek", liveResp.Data)
+	}
+	if !strings.Contains(liveResp.Data.Transcript, "DURABLE_MARKER_7") {
+		t.Fatalf("live transcript = %q, want captured marker", liveResp.Data.Transcript)
+	}
+
+	// 2) Supervisor restart: it can no longer resolve the session.
+	upstream.Close()
+
+	recRec := httptest.NewRecorder()
+	mux.ServeHTTP(recRec, httptest.NewRequest(http.MethodGet, "/api/gascity/sessions/gc-4171/transcript?lines=40", nil))
+	if recRec.Code != http.StatusOK {
+		t.Fatalf("recovery status = %d, want 200 from archive; body: %s", recRec.Code, recRec.Body.String())
+	}
+	var recResp struct {
+		Data GasCityTranscriptResponse `json:"data"`
+	}
+	if err := json.Unmarshal(recRec.Body.Bytes(), &recResp); err != nil {
+		t.Fatalf("decode recovery transcript: %v", err)
+	}
+	if recResp.Data.Source != "chrote-archive" || !recResp.Data.Stale {
+		t.Fatalf("recovery response = %+v, want stale chrote-archive source", recResp.Data)
+	}
+	if !strings.Contains(recResp.Data.Transcript, "DURABLE_MARKER_7") {
+		t.Fatalf("recovery transcript = %q, want archived marker after restart", recResp.Data.Transcript)
+	}
+	if recResp.Data.CapturedAt == "" {
+		t.Fatal("recovery response should report when the archived peek was captured")
+	}
+	if recResp.Data.SessionID != "gc-4171" {
+		t.Fatalf("recovery session id = %q, want gc-4171", recResp.Data.SessionID)
+	}
+}
+
+// TestGasCityHandlerTranscriptRecoversArchiveWhenPeekReturnsEmptyPane covers the
+// post-restart case where the supervisor is back but the tmux pane was recreated
+// empty: a misleading blank live peek should fall back to the archived snapshot.
+func TestGasCityHandlerTranscriptRecoversArchiveWhenPeekReturnsEmptyPane(t *testing.T) {
+	cityDir := t.TempDir()
+	archiveDir := t.TempDir()
+	upstream := newTestGasCitySupervisor(t, cityDir, []map[string]any{
+		{"id": "gc-4171", "alias": "planner", "template": "planner", "state": "active", "running": true},
+	})
+	defer upstream.Close()
+	runner := &scriptedGasCityRunner{results: []struct {
+		output string
+		err    error
+	}{
+		{output: "planner ready\nDURABLE_MARKER_7\n"}, // first live peek populates archive
+		{output: "   \n"},                              // post-restart empty pane
+	}}
+	handler := NewGasCityHandler(GasCityConfig{BaseURL: upstream.URL, CityDir: cityDir, TranscriptArchiveDir: archiveDir})
+	handler.runner = runner
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	first := httptest.NewRecorder()
+	mux.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/api/gascity/sessions/gc-4171/transcript", nil))
+	if first.Code != http.StatusOK {
+		t.Fatalf("first status = %d, want 200; body: %s", first.Code, first.Body.String())
+	}
+
+	second := httptest.NewRecorder()
+	mux.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/api/gascity/sessions/gc-4171/transcript", nil))
+	if second.Code != http.StatusOK {
+		t.Fatalf("second status = %d, want 200; body: %s", second.Code, second.Body.String())
+	}
+	var resp struct {
+		Data GasCityTranscriptResponse `json:"data"`
+	}
+	if err := json.Unmarshal(second.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode second transcript: %v", err)
+	}
+	if resp.Data.Source != "chrote-archive" || !resp.Data.Stale {
+		t.Fatalf("empty-pane response = %+v, want stale archive fallback", resp.Data)
+	}
+	if !strings.Contains(resp.Data.Transcript, "DURABLE_MARKER_7") {
+		t.Fatalf("empty-pane transcript = %q, want archived content not blank pane", resp.Data.Transcript)
+	}
+}
+
+// TestGasCityHandlerTranscriptWithoutArchivePreservesErrorAfterRestart proves the
+// recovery is additive: with archiving disabled (or nothing captured yet), an
+// unresolvable session still returns the original not-found error, not a 200.
+func TestGasCityHandlerTranscriptWithoutArchivePreservesErrorAfterRestart(t *testing.T) {
+	cityDir := t.TempDir()
+	upstream := newTestGasCitySupervisor(t, cityDir, []map[string]any{}) // no sessions
+	defer upstream.Close()
+	runner := &fakeGasCityRunner{}
+	handler := NewGasCityHandler(GasCityConfig{BaseURL: upstream.URL, CityDir: cityDir, TranscriptArchiveDir: ""})
+	handler.runner = runner
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/gascity/sessions/gc-4171/transcript", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 when no archive snapshot exists; body: %s", rec.Code, rec.Body.String())
+	}
+	if runner.calls != 0 {
+		t.Fatalf("runner calls = %d, want no peek for unresolvable session", runner.calls)
+	}
+}
+
+func TestGasCityTranscriptArchiveSaveLoadAndDisabled(t *testing.T) {
+	// Disabled archive is inert: save is a no-op, load misses.
+	disabled := newGasCityTranscriptArchive("")
+	if err := disabled.save(gasCityTranscriptSnapshot{SessionID: "gc-1", Transcript: "x"}); err != nil {
+		t.Fatalf("disabled save error = %v, want nil no-op", err)
+	}
+	if _, ok := disabled.load("gc-1"); ok {
+		t.Fatal("disabled archive should never load a snapshot")
+	}
+
+	dir := t.TempDir()
+	archive := newGasCityTranscriptArchive(dir)
+	if err := archive.save(gasCityTranscriptSnapshot{SessionID: "gc-9", Alias: "planner", Transcript: "captured output", LineCount: 1}); err != nil {
+		t.Fatalf("save error = %v", err)
+	}
+	got, ok := archive.load("gc-9")
+	if !ok {
+		t.Fatal("expected to load saved snapshot")
+	}
+	if got.Transcript != "captured output" || got.Alias != "planner" || got.CapturedAt == "" {
+		t.Fatalf("loaded snapshot = %+v, want captured fields and timestamp", got)
+	}
+
+	// File is created private to the user.
+	info, err := os.Stat(filepath.Join(dir, "gc-9.json"))
+	if err != nil {
+		t.Fatalf("stat snapshot: %v", err)
+	}
+	if info.Mode().Perm() != gasCityArchiveFilePerm {
+		t.Fatalf("snapshot perm = %v, want %v", info.Mode().Perm(), gasCityArchiveFilePerm)
+	}
+
+	if _, ok := archive.load("gc-missing"); ok {
+		t.Fatal("missing session should not load")
+	}
+}
+
+func TestGasCityTranscriptArchiveEvictsOldestPastCap(t *testing.T) {
+	dir := t.TempDir()
+	archive := newGasCityTranscriptArchive(dir)
+	base := time.Date(2026, 5, 27, 0, 0, 0, 0, time.UTC)
+	total := gasCityArchiveMaxSessions + 5
+	for i := 0; i < total; i++ {
+		i := i
+		archive.now = func() time.Time { return base.Add(time.Duration(i) * time.Minute) }
+		id := "gc-" + strconv.Itoa(i)
+		if err := archive.save(gasCityTranscriptSnapshot{SessionID: id, Transcript: "t"}); err != nil {
+			t.Fatalf("save %s: %v", id, err)
+		}
+		// Stagger file mtimes so eviction order is deterministic.
+		stamp := base.Add(time.Duration(i) * time.Minute)
+		if err := os.Chtimes(filepath.Join(dir, id+".json"), stamp, stamp); err != nil {
+			t.Fatalf("chtimes %s: %v", id, err)
+		}
+		archive.evictLocked()
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	jsonCount := 0
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".json") {
+			jsonCount++
+		}
+	}
+	if jsonCount != gasCityArchiveMaxSessions {
+		t.Fatalf("archived snapshots = %d, want cap %d", jsonCount, gasCityArchiveMaxSessions)
+	}
+	// Oldest (gc-0) evicted; newest (last) retained.
+	if _, ok := archive.load("gc-0"); ok {
+		t.Fatal("oldest snapshot gc-0 should have been evicted")
+	}
+	if _, ok := archive.load("gc-" + strconv.Itoa(total-1)); !ok {
+		t.Fatal("newest snapshot should be retained")
+	}
+}
+
 func writeTestGasCityBeads(t *testing.T, cityDir string, store map[string]any) {
 	t.Helper()
 	gcDir := filepath.Join(cityDir, ".gc")
@@ -778,4 +998,23 @@ func (r *fakeGasCityRunner) Run(_ context.Context, name string, args []string) (
 	r.name = name
 	r.args = append([]string(nil), args...)
 	return r.output, r.err
+}
+
+// scriptedGasCityRunner returns a different (output, err) per call so a test can
+// model a live peek followed by a post-restart peek failure or empty pane.
+type scriptedGasCityRunner struct {
+	calls   int
+	results []struct {
+		output string
+		err    error
+	}
+}
+
+func (r *scriptedGasCityRunner) Run(_ context.Context, _ string, _ []string) (string, error) {
+	idx := r.calls
+	r.calls++
+	if idx >= len(r.results) {
+		idx = len(r.results) - 1
+	}
+	return r.results[idx].output, r.results[idx].err
 }

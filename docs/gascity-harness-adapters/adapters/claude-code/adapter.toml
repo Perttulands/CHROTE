@@ -1,0 +1,74 @@
+# Gas City harness-adapter manifest.
+#
+# This is the machine-readable contract a harness adapter fills in. The
+# install script (../../bin/install-adapter) reads this to recreate the live
+# runtime files under a Gas City city root. To add a new harness (Codex,
+# Claude Code, ...), copy this directory, change the [adapter] identity, point
+# the [[file]] sources at the new wrapper/agent/workdir files, and keep the
+# [safety] contract satisfied.
+
+[adapter]
+# Stable adapter id. Becomes the Gas City agent alias and the agents/<name>/ dir.
+name = "claude-code"
+# The underlying harness CLI this adapter wraps.
+harness = "claude"
+# How the wrapper drives the harness:
+#   "one-shot"     -> wrapper runs the CLI once and exits (claude -p ...)
+#   "interactive"  -> wrapper exec's a long-lived CLI session (e.g. exec pi ...)
+lifecycle = "one-shot"
+description = "Contained read-only Claude Code smoke that mails the human a poem under a valid Gas City identity."
+
+# Files this adapter installs into the city root. `src` is relative to this
+# adapter directory; `dest` is relative to the Gas City city root.
+# `mode` is the octal file mode applied after copy.
+
+[[file]]
+src = "bin/claude-gc-agent"
+dest = "bin/claude-gc-agent"
+mode = "0755"
+
+[[file]]
+src = "agent/agent.toml"
+dest = "agents/claude-code/agent.toml"
+mode = "0644"
+
+# Claude Code auto-discovers CLAUDE.md from its working root (--add-dir). This
+# carries the read-only deny instructions, layered on top of the wrapper's
+# enforced `--tools` allowlist.
+[[file]]
+src = "workdir/CLAUDE.md"
+dest = "claude-code/CLAUDE.md"
+mode = "0644"
+
+# Safety contract. The install script asserts these are true of the installed
+# files and refuses to install if a hard invariant is violated. These mirror
+# the home-4xv.5 real-harness boundary.
+[safety]
+# Wrapper must refuse to send mail unless an immutable GC_SESSION_ID is set
+# (identity is not spoofable via GC_ALIAS alone).
+requires_immutable_session_id = true
+# Harness agent must default-deny mutating tools (bash/edit/web/task/...).
+# For Claude Code this is the wrapper's built-in-set allowlist
+# `--tools Read,Grep,Glob`: Bash/Edit/Write/WebFetch/WebSearch/Task/TodoWrite
+# are not in the available set, so the model cannot mutate, run shell, or hit
+# the web. workdir/CLAUDE.md repeats the deny as belt-and-braces, not as the
+# enforcement mechanism.
+tool_default_deny = true
+# How deny is enforced. "config": Claude Code has a per-tool allowlist; the
+# wrapper passes an explicit read-only `--tools Read,Grep,Glob` allowlist (and a
+# belt-and-braces --disallowedTools). install-adapter validates the
+# `--tools <allowlist>` is present in bin/.
+tool_deny_mechanism = "config"
+# No dangerous-skip / broad-permission bypass flags in the committed wrapper.
+no_dangerous_skip_flags = true
+# Strings that must NOT appear anywhere in this adapter's committed files.
+# Includes both Claude Code permission-bypass flags and the bypassPermissions
+# mode, since this is a paid/credentialed harness whose defaults must not relax.
+forbidden_substrings = [
+  "--dangerously-skip-permissions",
+  "--allow-dangerously-skip-permissions",
+  "bypassPermissions",
+  "--yolo",
+  "--dangerously-bypass",
+  "controller.token",
+]
