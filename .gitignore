@@ -72,3 +72,6 @@ dashboard/playwright-report/data/
 # Beads / Dolt files (added by bd init)
 .dolt/
 .beads-credential-key
+
+# Local deploy backups + rollback state (scripts/deploy-local.sh)
+.deploy-backups/

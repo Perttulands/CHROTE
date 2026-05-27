@@ -27,6 +27,101 @@ func TestLoadGasCityConfigFromEnvDefaultsToLoopbackSupervisor(t *testing.T) {
 	}
 }
 
+// TestGasCityChildEnvPrependsExtraPathForGCInvocation encodes the deployed-502
+// root cause: the chrote.service PATH resolves tmux to an older /usr/bin/tmux
+// that cannot read the Gas City supervisor's tmux server, so gc session peek
+// fails. gc invocations must run with the supervisor's tmux dir prepended to
+// PATH. This test pins that the child PATH starts with the extra dir.
+func TestGasCityChildEnvPrependsExtraPathForGCInvocation(t *testing.T) {
+	sep := string(os.PathListSeparator)
+	t.Setenv("PATH", "/usr/bin"+sep+"/bin")
+
+	env := gasCityChildEnv("/home/linuxbrew/.linuxbrew/bin")
+
+	var gotPath string
+	pathCount := 0
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "PATH=") {
+			gotPath = strings.TrimPrefix(kv, "PATH=")
+			pathCount++
+		}
+	}
+	if pathCount != 1 {
+		t.Fatalf("child env has %d PATH entries, want exactly 1", pathCount)
+	}
+	want := "/home/linuxbrew/.linuxbrew/bin" + sep + "/usr/bin" + sep + "/bin"
+	if gotPath != want {
+		t.Fatalf("child PATH = %q, want extra dir prepended: %q", gotPath, want)
+	}
+}
+
+func TestGasCityChildEnvEmptyExtraPathIsParentEnv(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin")
+	env := gasCityChildEnv("")
+	for _, kv := range env {
+		if kv == "PATH=/usr/bin" {
+			return
+		}
+	}
+	t.Fatalf("empty extra path should leave PATH unchanged; env=%v", env)
+}
+
+func TestMergePathPrependDeduplicates(t *testing.T) {
+	sep := string(os.PathListSeparator)
+	// The supervisor dir already present in PATH must not be duplicated, so the
+	// child PATH does not grow on every restart.
+	got := mergePathPrepend("/brew/bin", "/usr/bin"+sep+"/brew/bin"+sep+"/bin")
+	want := "/brew/bin" + sep + "/usr/bin" + sep + "/bin"
+	if got != want {
+		t.Fatalf("merged PATH = %q, want deduplicated %q", got, want)
+	}
+}
+
+func TestResolveGasCityGCExtraPathOffDisables(t *testing.T) {
+	t.Setenv("CHROTE_GASCITY_GC_PATH", "off")
+	if got := resolveGasCityGCExtraPath(); got != "" {
+		t.Fatalf("extra path = %q, want empty when set to off", got)
+	}
+}
+
+func TestResolveGasCityGCExtraPathHonorsExplicitOverride(t *testing.T) {
+	t.Setenv("CHROTE_GASCITY_GC_PATH", "/custom/tmux/bin")
+	if got := resolveGasCityGCExtraPath(); got != "/custom/tmux/bin" {
+		t.Fatalf("extra path = %q, want explicit override", got)
+	}
+}
+
+func TestResolveGasCityGCExtraPathPicksDirWithDistinctTmux(t *testing.T) {
+	t.Setenv("CHROTE_GASCITY_GC_PATH", "")
+	dir := t.TempDir()
+	tmuxPath := filepath.Join(dir, "tmux")
+	if err := os.WriteFile(tmuxPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+	// A dir without tmux must be skipped; the dir with an executable tmux wins.
+	emptyDir := t.TempDir()
+	orig := gasCityTmuxCandidateDirs
+	gasCityTmuxCandidateDirs = []string{emptyDir, dir}
+	t.Cleanup(func() { gasCityTmuxCandidateDirs = orig })
+
+	if got := resolveGasCityGCExtraPath(); got != dir {
+		t.Fatalf("extra path = %q, want candidate dir with executable tmux %q", got, dir)
+	}
+}
+
+func TestResolveGasCityGCExtraPathSkipsServiceTmuxDir(t *testing.T) {
+	t.Setenv("CHROTE_GASCITY_GC_PATH", "")
+	// If the only candidate is the service tmux dir itself, add nothing (it is
+	// the incompatible 3.4 build we must NOT prefer).
+	orig := gasCityTmuxCandidateDirs
+	gasCityTmuxCandidateDirs = []string{filepath.Dir(gasCityServiceTmux)}
+	t.Cleanup(func() { gasCityTmuxCandidateDirs = orig })
+
+	if got := resolveGasCityGCExtraPath(); got != "" {
+		t.Fatalf("extra path = %q, want empty when only candidate is the service tmux dir", got)
+	}
+}
+
 func TestGasCityHandlerObserverFetchesReadOnlySummary(t *testing.T) {
 	var seen []string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

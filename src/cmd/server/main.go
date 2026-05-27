@@ -24,6 +24,12 @@ import (
 // Version is set at build time or defaults to dev
 var Version = "0.2.0"
 
+// Commit is the CHROTE source commit this binary was built from, set at build
+// time via -ldflags "-X main.Commit=<sha>". It exists because Go's automatic
+// VCS stamp is unreliable for this git worktree (buildvcs walks up to the outer
+// repo), so deploys stamp the real source commit explicitly for provenance.
+var Commit = "unknown"
+
 // Config holds server configuration
 type Config struct {
 	Host         string
@@ -77,7 +83,7 @@ func main() {
 	filesHandler := api.NewFilesHandler()
 	filesHandler.RegisterRoutes(mux)
 
-	healthHandler := api.NewHealthHandlerWithVersion(Version)
+	healthHandler := api.NewHealthHandlerWithBuild(Version, Commit)
 	healthHandler.RegisterRoutes(mux)
 
 	servicesHandler := api.NewServicesHandler(api.LoadServiceConfigFromEnv())
@@ -127,7 +133,7 @@ func main() {
 	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		log.Printf("CHROTE v%s starting on port %d", Version, config.Port)
+		log.Printf("CHROTE v%s (commit %s) starting on port %d", Version, Commit, config.Port)
 		log.Printf("Dashboard: http://localhost:%d/", config.Port)
 		log.Printf("API: http://localhost:%d/api/", config.Port)
 		log.Printf("Files: http://localhost:%d/api/files/", config.Port)

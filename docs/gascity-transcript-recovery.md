@@ -22,6 +22,26 @@ stripped), and the returned text is capped. The response identifies the source
 and includes the resolved session id, template, alias, state, city, requested
 line bound, and returned line count.
 
+## Tmux Binary Version Dependency (deployed-502 root cause)
+
+`gc session peek` shells to `tmux` via PATH. The chrote.service runs with a
+minimal PATH that resolves `tmux` to `/usr/bin/tmux` (3.4), but the Gas City
+supervisor created its `-L gascity` tmux server with the Linuxbrew `tmux`
+(3.6a). **tmux 3.4 cannot read a 3.6a server** ("server exited unexpectedly"),
+so under the service env `gc session peek` failed and the route returned
+`502 GASCITY_TRANSCRIPT_UNAVAILABLE`. This was NOT a missing socket env and NOT
+a gc bug — gc selects the `-L gascity` socket correctly; the wrong tmux binary
+was on PATH. It worked from an interactive shell only because that shell had
+Linuxbrew on PATH.
+
+Fix: the server prepends a compatible-tmux bin dir to PATH **for gc subprocesses
+only** (`resolveGasCityGCExtraPath` + `gasCityChildEnv` in `gascity.go`),
+resolving the same tmux build the supervisor uses. CHROTE's own terminal-proxy
+tmux (`tmux.go`, `/usr/bin/tmux`) is left untouched so CHROTE's own 3.4-created
+sessions still work. Override the selection with `CHROTE_GASCITY_GC_PATH=<dir>`
+(or `off`) if the supervisor's tmux moves. This is a documented version
+dependency on the supervisor's tmux build.
+
 The dashboard Gas City sessions panel calls this route from the per-session
 transcript action. The browser sends only the immutable `gc-*` id from the
 observer model; aliases such as `planner` are display labels only.

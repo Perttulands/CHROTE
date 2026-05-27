@@ -64,6 +64,10 @@ type GasCityConfig struct {
 	// session peeks are archived so transcripts survive a supervisor restart.
 	// Empty disables archiving (live peek only).
 	TranscriptArchiveDir string
+	// GCExtraPath is prepended to PATH for gc CLI invocations so gc resolves the
+	// same tmux binary the Gas City supervisor used to create session sockets
+	// (the service PATH otherwise picks an incompatible older tmux).
+	GCExtraPath string
 }
 
 // GasCityObserverResponse is a CHROTE-safe read model of the local Gas City supervisor.
@@ -259,12 +263,66 @@ type gasCityCommandRunner interface {
 	Run(ctx context.Context, name string, args []string) (string, error)
 }
 
-type gasCityExecRunner struct{}
+// gasCityExecRunner runs the gc CLI (gc shells out to tmux itself via PATH; this
+// runner never execs tmux directly). extraPath is prepended to the child PATH so
+// gc resolves a tmux build compatible with the Gas City server's sockets. The
+// chrote.service PATH resolves tmux to an older /usr/bin/tmux that cannot read
+// the supervisor's newer tmux server, so without this `gc session peek` fails
+// and the transcript route 502s. See resolveGasCityGCExtraPath for the details.
+type gasCityExecRunner struct {
+	extraPath string
+}
 
-func (gasCityExecRunner) Run(ctx context.Context, name string, args []string) (string, error) {
+func (r gasCityExecRunner) Run(ctx context.Context, name string, args []string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = gasCityChildEnv(r.extraPath)
 	output, err := cmd.CombinedOutput()
 	return string(output), err
+}
+
+// gasCityChildEnv returns the parent environment with extraPath prepended to
+// PATH. extraPath entries already present in PATH are not duplicated.
+func gasCityChildEnv(extraPath string) []string {
+	env := os.Environ()
+	extraPath = strings.TrimSpace(extraPath)
+	if extraPath == "" {
+		return env
+	}
+	current := os.Getenv("PATH")
+	merged := mergePathPrepend(extraPath, current)
+	out := make([]string, 0, len(env)+1)
+	replaced := false
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "PATH=") {
+			out = append(out, "PATH="+merged)
+			replaced = true
+			continue
+		}
+		out = append(out, kv)
+	}
+	if !replaced {
+		out = append(out, "PATH="+merged)
+	}
+	return out
+}
+
+// mergePathPrepend prepends prefix path entries to base, skipping any that are
+// already present so PATH does not grow unbounded across restarts.
+func mergePathPrepend(prefix, base string) string {
+	seen := map[string]bool{}
+	var ordered []string
+	add := func(list string) {
+		for _, p := range strings.Split(list, string(os.PathListSeparator)) {
+			if p == "" || seen[p] {
+				continue
+			}
+			seen[p] = true
+			ordered = append(ordered, p)
+		}
+	}
+	add(prefix)
+	add(base)
+	return strings.Join(ordered, string(os.PathListSeparator))
 }
 
 // LoadGasCityConfigFromEnv loads Gas City config from process env.
@@ -296,7 +354,56 @@ func LoadGasCityConfigFromEnv() GasCityConfig {
 		PoemTemplate:         template,
 		MailRecipient:        recipient,
 		TranscriptArchiveDir: resolveGasCityTranscriptArchiveDir(),
+		GCExtraPath:          resolveGasCityGCExtraPath(),
 	}
+}
+
+// gasCityServiceTmux is the tmux the minimal chrote.service PATH resolves to.
+// It is tmux 3.4 here and cannot read the Gas City server's 3.6a sockets, so a
+// candidate tmux dir is only useful if it holds a DIFFERENT tmux than this one.
+const gasCityServiceTmux = "/usr/bin/tmux"
+
+// gasCityTmuxCandidateDirs are bin dirs that commonly hold a newer tmux than the
+// service PATH's /usr/bin/tmux (e.g. the Linuxbrew tmux 3.6a the Gas City
+// supervisor uses). Ordered by preference.
+var gasCityTmuxCandidateDirs = []string{
+	"/home/linuxbrew/.linuxbrew/bin",
+	"/usr/local/bin",
+}
+
+// resolveGasCityGCExtraPath returns PATH entries to prepend for gc invocations
+// so gc resolves the same tmux build the Gas City supervisor used to create the
+// session sockets.
+//
+// ROOT CAUSE this addresses: the chrote.service runs with a minimal PATH whose
+// tmux is /usr/bin/tmux 3.4, but the supervisor created the `-L gascity` server
+// with Linuxbrew tmux 3.6a. tmux 3.4 cannot read a 3.6a server ("server exited
+// unexpectedly"), so a PATH-resolved `gc session peek` fails and the route 502s.
+// Prepending the dir of a compatible tmux fixes it for gc subprocesses only,
+// without touching CHROTE's own /usr/bin/tmux terminal-proxy sessions.
+//
+// CHROTE_GASCITY_GC_PATH overrides the result ("off" adds nothing). Otherwise we
+// pick the first candidate dir that holds a tmux executable distinct from the
+// service tmux. This is a deliberate version dependency: if the supervisor's
+// tmux moves, set CHROTE_GASCITY_GC_PATH to its bin dir.
+func resolveGasCityGCExtraPath() string {
+	configured := strings.TrimSpace(os.Getenv("CHROTE_GASCITY_GC_PATH"))
+	if strings.EqualFold(configured, "off") {
+		return ""
+	}
+	if configured != "" {
+		return configured
+	}
+	for _, dir := range gasCityTmuxCandidateDirs {
+		tmuxPath := filepath.Join(dir, "tmux")
+		if tmuxPath == gasCityServiceTmux {
+			continue
+		}
+		if info, err := os.Stat(tmuxPath); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			return dir
+		}
+	}
+	return ""
 }
 
 // resolveGasCityTranscriptArchiveDir picks the CHROTE-owned transcript archive
@@ -345,6 +452,7 @@ func NewGasCityHandler(config GasCityConfig) *GasCityHandler {
 	target, targetError := validateGasCityIdentity("CHROTE_GASCITY_PI_POEM_TARGET", config.PoemTarget)
 	template, templateError := validateGasCityIdentity("CHROTE_GASCITY_PI_POEM_TEMPLATE", config.PoemTemplate)
 	recipient, recipientError := validateGasCityIdentity("CHROTE_GASCITY_MAIL_RECIPIENT", config.MailRecipient)
+	extraPath := strings.TrimSpace(config.GCExtraPath)
 	return &GasCityHandler{
 		config: GasCityConfig{
 			BaseURL:              baseURL,
@@ -353,11 +461,12 @@ func NewGasCityHandler(config GasCityConfig) *GasCityHandler {
 			PoemTemplate:         template,
 			MailRecipient:        recipient,
 			TranscriptArchiveDir: strings.TrimSpace(config.TranscriptArchiveDir),
+			GCExtraPath:          extraPath,
 		},
 		client:             newGasCityHTTPClient(),
 		configError:        configError,
 		controlConfigError: firstNonEmpty(cityDirError, targetError, templateError, recipientError),
-		runner:             gasCityExecRunner{},
+		runner:             gasCityExecRunner{extraPath: extraPath},
 		nonce:              newGasCityNonce,
 		audit:              []gasCityAuditEntry{},
 		transcriptArchive:  newGasCityTranscriptArchive(strings.TrimSpace(config.TranscriptArchiveDir)),
