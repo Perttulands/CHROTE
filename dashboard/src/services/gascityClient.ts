@@ -78,6 +78,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return envelope.data as T
 }
 
-export function getGasCityObserver() {
-  return request<GasCityObserver>('/api/gascity/observer')
+export function getGasCityObserver(init?: RequestInit) {
+  return request<GasCityObserver>('/api/gascity/observer', init)
 }

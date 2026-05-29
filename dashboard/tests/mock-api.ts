@@ -1,6 +1,7 @@
 import { Page } from '@playwright/test'
 
 const fileResourcesPattern = /.*\/api\/files\/resources(?:\/.*)?$/
+const gasCityObserverPattern = /.*\/api\/gascity\/observer\/?$/
 const tmuxAppearancePattern = /.*\/api\/tmux\/appearance\/?$/
 const tmuxSessionsPattern = /.*\/api\/tmux\/sessions\/?$/
 
@@ -132,6 +133,21 @@ export async function mockApiRoutes(page: Page) {
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({ isDir: true, items: [] }),
+    })
+  })
+
+  await page.route(gasCityObserverPattern, async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: true,
+        data: {
+          status: 'unavailable',
+          checkedAt: new Date().toISOString(),
+          sessions: [],
+        },
+      }),
     })
   })
 

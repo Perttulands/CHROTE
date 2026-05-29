@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { renderHook, act } from '@testing-library/react'
+import { renderHook, act, waitFor } from '@testing-library/react'
 import { createElement } from 'react'
 import { SessionProvider, useSession } from './SessionContext'
 import { ToastProvider } from './ToastContext'
@@ -605,5 +605,134 @@ describe('clampWindowCount (via setWindowCount)', () => {
     // New windows should be empty
     expect(result.current.workspaces.terminal1.windows[2].boundSessions).toEqual([])
     expect(result.current.workspaces.terminal1.windows[3].boundSessions).toEqual([])
+  })
+})
+
+describe('refreshSessions Gas City merge', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it('merges observer identities into the existing session flow with gc attach keys', async () => {
+    vi.mocked(fetch as any).mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/gascity/observer')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            success: true,
+            data: {
+              status: 'ok',
+              checkedAt: '2026-05-30T00:00:01Z',
+              sessions: [
+                {
+                  source: 'gascity',
+                  city: 'gascity',
+                  id: 'gc-1',
+                  alias: 'planner',
+                  title: 'Planner',
+                  attachTarget: 'gc:gc-1',
+                  running: true,
+                  attached: false,
+                },
+              ],
+            },
+          }),
+          text: () => Promise.resolve(''),
+        })
+      }
+
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          sessions: [{ name: 'plain-tmux', windows: 1, attached: false, group: 'main' }],
+          grouped: { main: [{ name: 'plain-tmux', windows: 1, attached: false, group: 'main' }] },
+          timestamp: '2026-05-30T00:00:00Z',
+        }),
+        text: () => Promise.resolve(''),
+      })
+    })
+
+    const { result } = renderSession()
+
+    await waitFor(() => {
+      expect(result.current.sessions.map(session => session.name)).toEqual(['plain-tmux', 'gc:gc-1'])
+    })
+    expect(result.current.groupedSessions.gascity[0]).toMatchObject({
+      source: 'gascity',
+      attachTarget: 'gc:gc-1',
+      displayName: 'planner',
+    })
+  })
+
+  it('keeps plain tmux sessions when the Gas City observer request fails', async () => {
+    vi.mocked(fetch as any).mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/gascity/observer')) {
+        return Promise.reject(new Error('observer unavailable'))
+      }
+
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          sessions: [{ name: 'plain-tmux', windows: 1, attached: false, group: 'main' }],
+          grouped: { main: [{ name: 'plain-tmux', windows: 1, attached: false, group: 'main' }] },
+          timestamp: '2026-05-30T00:00:00Z',
+        }),
+        text: () => Promise.resolve(''),
+      })
+    })
+
+    const { result } = renderSession()
+
+    await waitFor(() => {
+      expect(result.current.sessions.map(session => session.name)).toEqual(['plain-tmux'])
+    })
+    expect(result.current.error).toBeNull()
+  })
+
+  it('does not send Gas City attach targets to tmux mutation endpoints', async () => {
+    vi.mocked(fetch as any).mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/gascity/observer')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            success: true,
+            data: {
+              status: 'ok',
+              checkedAt: '2026-05-30T00:00:01Z',
+              sessions: [],
+            },
+          }),
+          text: () => Promise.resolve(''),
+        })
+      }
+
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          sessions: [{ name: 'plain-tmux', windows: 1, attached: false, group: 'main' }],
+          grouped: { main: [{ name: 'plain-tmux', windows: 1, attached: false, group: 'main' }] },
+          timestamp: '2026-05-30T00:00:00Z',
+        }),
+        text: () => Promise.resolve(''),
+      })
+    })
+
+    const { result } = renderSession()
+
+    await waitFor(() => {
+      expect(result.current.sessions.map(session => session.name)).toEqual(['plain-tmux'])
+    })
+    vi.mocked(fetch as any).mockClear()
+
+    await act(async () => {
+      await result.current.deleteSession('gc:gc-1')
+      const renamed = await result.current.renameSession('gc:gc-1', 'planner')
+      expect(renamed).toBe(false)
+    })
+
+    expect(fetch).not.toHaveBeenCalledWith(expect.stringContaining('/api/tmux/sessions/gc%3Agc-1'), expect.anything())
   })
 })

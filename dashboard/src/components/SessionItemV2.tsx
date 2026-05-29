@@ -30,6 +30,8 @@ function SessionItem({ session }: SessionItemProps) {
   const { assignedSessions, handleSessionClick, deleteSession, renameSession, workspaces, addSessionToWindow, removeSessionFromWindow } = useSession()
   const assignment = assignedSessions.get(session.name)
   const isAssigned = !!assignment
+  const isGasCity = session.source === 'gascity'
+  const displayName = session.displayName ?? session.name
   const useLocationBadges = isFeatureEnabled('sessionLocationBadges')
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({ show: false, x: 0, y: 0 })
   const [isRenaming, setIsRenaming] = useState(false)
@@ -107,15 +109,17 @@ function SessionItem({ session }: SessionItemProps) {
   }, [])
 
   const handleDelete = useCallback(async () => {
+    if (isGasCity) return
     closeContextMenu()
     await deleteSession(session.name)
-  }, [deleteSession, session.name, closeContextMenu])
+  }, [deleteSession, session.name, closeContextMenu, isGasCity])
 
   const handleStartRename = useCallback(() => {
+    if (isGasCity) return
     setRenameValue(session.name)
     setIsRenaming(true)
     closeContextMenu()
-  }, [session.name, closeContextMenu])
+  }, [session.name, closeContextMenu, isGasCity])
 
   const handleRenameSubmit = useCallback(async () => {
     if (renameValue && renameValue !== session.name) {
@@ -188,6 +192,7 @@ function SessionItem({ session }: SessionItemProps) {
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
         onTouchMove={handleTouchMove}
+        title={isGasCity ? `Gas City identity ${session.attachTarget ?? session.name}` : undefined}
       >
         {assignment && (
           <span
@@ -202,8 +207,9 @@ function SessionItem({ session }: SessionItemProps) {
                 : assignment.windowIndex}
           </span>
         )}
-        <RoleBadge sessionName={session.name} />
-        <span className="session-name" style={nameStyle}>{session.name}</span>
+        {!isGasCity && <RoleBadge sessionName={session.name} />}
+        {isGasCity && <span className="session-source-chip">GC</span>}
+        <span className="session-name" style={nameStyle}>{displayName}</span>
         {session.attached && !isAssigned && (
           <span className="attached-indicator" title="Attached elsewhere">
             <Circle size={6} fill="currentColor" />
@@ -217,10 +223,12 @@ function SessionItem({ session }: SessionItemProps) {
           style={{ left: contextMenu.x, top: contextMenu.y }}
           onClick={e => e.stopPropagation()}
         >
-          <button className="session-context-item" onClick={handleStartRename}>
-            <span className="session-context-icon"><Pencil size={12} /></span>
-            Rename
-          </button>
+          {!isGasCity && (
+            <button className="session-context-item" onClick={handleStartRename}>
+              <span className="session-context-icon"><Pencil size={12} /></span>
+              Rename
+            </button>
+          )}
 
           <div
             className="session-context-item session-context-submenu-trigger"
@@ -263,12 +271,16 @@ function SessionItem({ session }: SessionItemProps) {
             </button>
           )}
 
-          <div className="session-context-divider" />
+          {!isGasCity && (
+            <>
+              <div className="session-context-divider" />
 
-          <button className="session-context-item session-context-danger" onClick={handleDelete}>
-            <span className="session-context-icon"><Trash2 size={12} /></span>
-            Delete Session
-          </button>
+              <button className="session-context-item session-context-danger" onClick={handleDelete}>
+                <span className="session-context-icon"><Trash2 size={12} /></span>
+                Delete Session
+              </button>
+            </>
+          )}
         </div>
       )}
     </>

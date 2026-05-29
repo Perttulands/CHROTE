@@ -2,6 +2,8 @@ import { createContext, useContext, useState, useEffect, useCallback, useMemo, R
 import type { DashboardContextType, TmuxSession, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance, WorkspaceId, TerminalWorkspace, LayoutPreset } from '../types'
 import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE, MAX_PRESETS } from '../types'
 import { useToast } from './ToastContext'
+import { getGasCityObserver } from '../services/gascityClient'
+import { mergeTmuxAndGasCitySessions } from '../services/sessionMerge'
 
 // Apply tmux appearance settings via API (hot-reload)
 async function applyTmuxAppearance(appearance: TmuxAppearance): Promise<void> {
@@ -172,6 +174,10 @@ function createDefaultWorkspace(workspaceId: WorkspaceId, count: number): Termin
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+function isGasCityAttachTarget(sessionName: string): boolean {
+  return sessionName.startsWith('gc:')
 }
 
 function sanitizeWorkspace(workspaceId: WorkspaceId, wsRaw: unknown): TerminalWorkspace {
@@ -377,6 +383,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   // Fetch sessions from API
   const refreshSessions = useCallback(async () => {
     try {
+      const gasCityObserverPromise = getGasCityObserver({ signal: AbortSignal.timeout(3000) }).catch(() => null)
       const response = await fetch('/api/tmux/sessions', { signal: AbortSignal.timeout(10000) })
       const data: SessionsResponse = await response.json()
 
@@ -385,9 +392,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         setSessions([])
         setGroupedSessions({})
       } else {
+        const gasCityObserver = await gasCityObserverPromise
+        const merged = mergeTmuxAndGasCitySessions(data, gasCityObserver)
+
         setError(null)
-        setSessions(data.sessions)
-        setGroupedSessions(data.grouped)
+        setSessions(merged.sessions)
+        setGroupedSessions(merged.grouped)
 
         // NOTE: We intentionally do NOT clean up "orphaned" sessions here.
         // If a session is in the layout but not in the API list (e.g. server restart, network blip),
@@ -612,6 +622,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const deleteSession = useCallback(async (sessionName: string) => {
+    if (isGasCityAttachTarget(sessionName)) {
+      addToast('Gas City identities are read-only in CHROTE', 'info')
+      return
+    }
+
     try {
       const response = await fetch(`/api/tmux/sessions/${encodeURIComponent(sessionName)}`, {
         method: 'DELETE',
@@ -632,6 +647,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [refreshSessions, addToast])
 
   const renameSession = useCallback(async (oldName: string, newName: string): Promise<boolean> => {
+    if (isGasCityAttachTarget(oldName) || isGasCityAttachTarget(newName)) {
+      addToast('Gas City identities are read-only in CHROTE', 'info')
+      return false
+    }
+
     try {
       const response = await fetch(`/api/tmux/sessions/${encodeURIComponent(oldName)}`, {
         method: 'PATCH',

@@ -76,6 +76,16 @@ export interface TmuxSession {
   windows: number
   attached: boolean
   group: string
+  source?: 'tmux' | 'gascity'
+  attachTarget?: string
+  displayName?: string
+  gasCityId?: string
+  gasCityCity?: string
+  title?: string
+  alias?: string
+  template?: string
+  status?: string
+  running?: boolean
 }
 
 export interface SessionsResponse {
@@ -192,6 +202,7 @@ export const WINDOW_COLORS = [
 export const GROUP_CONFIG: Record<string, { displayName: string; priority: number }> = {
   'hq': { displayName: 'HQ', priority: 0 },
   'main': { displayName: 'Main', priority: 1 },
+  'gascity': { displayName: 'Gas City', priority: 2 },
   'other': { displayName: 'Other', priority: 100 },
 }
 

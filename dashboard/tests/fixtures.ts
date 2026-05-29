@@ -16,6 +16,22 @@ export const test = base.extend<{ allowedConsoleMessages: ConsoleMatcher[] }>({
 
     await page.route('**/api/**', async (route) => {
       const request = route.request()
+      if (request.url().includes('/api/gascity/observer')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            data: {
+              status: 'unavailable',
+              checkedAt: new Date().toISOString(),
+              sessions: [],
+            },
+          }),
+        })
+        return
+      }
+
       unexpectedBackendRequests.push(`${request.method()} ${request.url()}`)
       await route.fulfill({
         status: 599,

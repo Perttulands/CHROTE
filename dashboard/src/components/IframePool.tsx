@@ -25,7 +25,7 @@ export function useIframePool(): IframePoolContextType {
   return ctx
 }
 
-function getTerminalUrl(sessionName: string): string {
+export function getTerminalUrl(sessionName: string): string {
   return `/terminal/?arg=${encodeURIComponent(sessionName)}&theme=${encodeURIComponent('{"background":"transparent"}')}`
 }
 

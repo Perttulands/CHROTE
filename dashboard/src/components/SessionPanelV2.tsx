@@ -14,6 +14,13 @@ import { getGroupPriority } from '../types'
 import SessionGroup from './SessionGroupV2'
 import NukeConfirmModal from './NukeConfirmModal'
 
+function sessionMatchesSearch(session: { name: string; displayName?: string; attachTarget?: string; alias?: string; title?: string; source?: string }, searchTerm: string) {
+  const search = searchTerm.toLowerCase()
+  return [session.name, session.displayName, session.attachTarget, session.alias, session.title, session.source]
+    .filter(Boolean)
+    .some(value => value!.toLowerCase().includes(search))
+}
+
 function SessionPanel() {
   const { groupedSessions, loading, error, sidebarCollapsed, toggleSidebar, refreshSessions, sessions, settings } = useSession()
   const { addToast } = useToast()
@@ -29,9 +36,7 @@ function SessionPanel() {
     const filtered = searchTerm
       ? entries.map(([key, sessions]) => ([
           key,
-          sessions.filter(s =>
-            s.name.toLowerCase().includes(searchTerm.toLowerCase())
-          )
+          sessions.filter(s => sessionMatchesSearch(s, searchTerm))
         ] as [string, typeof sessions])).filter(([_, sessions]) => sessions.length > 0)
       : entries
 
@@ -49,8 +54,9 @@ function SessionPanel() {
       const prefix = settings.defaultSessionPrefix || 'tmux'
       const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       const regex = new RegExp(`^${escapedPrefix}(\\d+)$`)
+      const tmuxSessions = sessions.filter(s => s.source !== 'gascity')
 
-      const existingNumbers = sessions
+      const existingNumbers = tmuxSessions
         .map(s => s.name.match(regex))
         .filter(Boolean)
         .map(m => parseInt(m![1], 10))
@@ -105,6 +111,8 @@ function SessionPanel() {
       setShowNukeModal(false)
     }
   }
+
+  const tmuxSessions = sessions.filter(s => s.source !== 'gascity')
 
   return (
     <div className={`session-panel ${sidebarCollapsed ? 'collapsed' : ''}`}>
@@ -194,7 +202,7 @@ function SessionPanel() {
         </div>
       )}
 
-      {!sidebarCollapsed && sessions.length > 0 && (
+      {!sidebarCollapsed && tmuxSessions.length > 0 && (
         <div className="session-panel-footer">
           <button
             className="nuke-trigger-btn"
@@ -211,8 +219,8 @@ function SessionPanel() {
 
       {showNukeModal && (
         <NukeConfirmModal
-          sessionCount={sessions.length}
-          sessionNames={sessions.map(s => s.name)}
+          sessionCount={tmuxSessions.length}
+          sessionNames={tmuxSessions.map(s => s.name)}
           onConfirm={nukeAllSessions}
           onCancel={() => setShowNukeModal(false)}
         />
