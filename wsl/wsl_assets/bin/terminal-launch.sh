@@ -13,6 +13,23 @@ cd /code 2>/dev/null || cd ~
 
 SESSION="$1"
 
+case "$SESSION" in
+  gc:*)
+    GC_SESSION="${SESSION#gc:}"
+    if [ -z "$GC_SESSION" ]; then
+      echo "terminal-launch: gc target requires a session id" >&2
+      exit 2
+    fi
+    GC_CITY_DIR="${CHROTE_GASCITY_CITY_DIR:-$HOME/gascity}"
+    if [ ! -d "$GC_CITY_DIR/.gc" ]; then
+      echo "terminal-launch: Gas City not found at $GC_CITY_DIR (set CHROTE_GASCITY_CITY_DIR)" >&2
+      exit 2
+    fi
+    unset TMUX TMUX_TMPDIR
+    exec gc --city "$GC_CITY_DIR" session attach "$GC_SESSION"
+    ;;
+esac
+
 # Check if session exists and attach, otherwise start fresh shell
 # REASON: tmux has-session tests existence; stderr is noise, not an error
 if [ -n "$SESSION" ] && tmux has-session -t "$SESSION" 2>/dev/null; then

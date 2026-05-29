@@ -41,14 +41,21 @@ describe('TabBar Services navigation', () => {
     expect(onTabChange).toHaveBeenCalledWith('services')
   })
 
-  it('shows Gas City in desktop navigation', () => {
+  it('does not show Gas City in desktop navigation', () => {
     mockMatchMedia(false)
-    const onTabChange = vi.fn()
 
-    render(<TabBar activeTab="terminal1" onTabChange={onTabChange} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Gas City' }))
+    render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} />)
 
-    expect(onTabChange).toHaveBeenCalledWith('gascity')
+    expect(screen.queryByRole('button', { name: 'Gas City' })).not.toBeInTheDocument()
+  })
+
+  it('does not show Gas City in mobile navigation', () => {
+    mockMatchMedia(true)
+
+    render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: '☰' }))
+
+    expect(screen.queryByRole('button', { name: 'Gas City' })).not.toBeInTheDocument()
   })
 
   it('shows the feature-flagged Server tab in desktop navigation', () => {

@@ -2,8 +2,6 @@ package api
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,10 +14,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/chrote/server/internal/core"
@@ -28,35 +24,14 @@ import (
 const (
 	defaultGasCityBaseURL         = "http://127.0.0.1:8372"
 	defaultGasCityCityDir         = "/home/perttu/gascity"
-	defaultGasCityPoemTarget      = "chrote-poem-pi"
-	defaultGasCityPoemTemplate    = "pi-smoke"
-	defaultGasCityMailRecipient   = "human"
-	gasCityMailBodyLimit          = 4096
-	gasCityMailStoreLimit         = 64 << 20
-	gasCityMaxMailLimit           = 50
-	gasCityPoemOutputLimit        = 4000
-	gasCityPoemTopicLimit         = 80
-	gasCityReviewQuorumFormula    = "mol-review-quorum"
-	gasCityReviewQuorumBaseRef    = "origin/main"
-	gasCityReviewQuorumMode       = "review-quorum"
-	gasCityReviewQuorumSafetyMode = "read_only"
-	gasCityReviewQuorumScopeKind  = "city"
-	gasCityReviewQuorumScopeRef   = "gascity"
-	gasCityReviewQuorumSynth      = "codex-synth"
-	gasCityReviewQuorumTextLimit  = 256
-	gasCityReviewQuorumErrorLimit = 512
 	gasCityTranscriptDefaultLines = 120
 	gasCityTranscriptMaxLines     = 500
 	gasCityTranscriptOutputLimit  = 64 << 10
 )
 
 var (
-	gasCityIdentityPattern          = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
-	gasCityQualifiedIdentityPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(/[A-Za-z0-9][A-Za-z0-9._-]{0,63})?$`)
-	gasCityReviewQuorumBasePattern  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/+:~^-]{0,127}$`)
-	gasCitySessionIDPattern         = regexp.MustCompile(`^gc-[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
-	gasCityPoemTopicPattern         = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 .,!_?-]{0,79}$`)
-	gasCityANSIPattern              = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
+	gasCitySessionIDPattern = regexp.MustCompile(`^gc-[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+	gasCityANSIPattern      = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
 
 	errGasCityConfiguredCityUnavailable = errors.New("configured Gas City is not running")
 	errGasCitySessionListUnavailable    = errors.New("Gas City session list unavailable")
@@ -64,22 +39,10 @@ var (
 	errGasCitySessionAmbiguous          = errors.New("Gas City session id is ambiguous")
 )
 
-var gasCityReviewQuorumAllowedReviewTargets = map[string]struct{}{
-	"codex-review":  {},
-	"claude-review": {},
-}
-
-var gasCityReviewQuorumAllowedSynthesisTargets = map[string]struct{}{
-	gasCityReviewQuorumSynth: {},
-}
-
 // GasCityConfig is the server-side configuration for CHROTE's bounded Gas City surface.
 type GasCityConfig struct {
-	BaseURL       string
-	CityDir       string
-	PoemTarget    string
-	PoemTemplate  string
-	MailRecipient string
+	BaseURL string
+	CityDir string
 	// TranscriptArchiveDir is the CHROTE-owned directory where successful
 	// session peeks are archived so transcripts survive a supervisor restart.
 	// Empty disables archiving (live peek only).
@@ -95,186 +58,30 @@ type GasCityObserverResponse struct {
 	Status         string                  `json:"status"`
 	CheckedAt      string                  `json:"checkedAt"`
 	Error          string                  `json:"error,omitempty"`
-	Health         GasCityHealthSummary    `json:"health"`
-	Cities         []GasCityCitySummary    `json:"cities"`
 	Sessions       []GasCitySessionSummary `json:"sessions"`
-	Mail           GasCityMailCounts       `json:"mail"`
-	Work           GasCityWorkCounts       `json:"work"`
-	Formulas       []GasCityFormulaSummary `json:"formulas"`
-	Molecules      []GasCityWorkItem       `json:"molecules"`
-	Wisps          []GasCityWorkItem       `json:"wisps"`
-	Convoys        []GasCityWorkItem       `json:"convoys"`
-	RecentEvents   []GasCityEventSummary   `json:"recentEvents"`
 	UpstreamErrors []GasCityUpstreamError  `json:"upstreamErrors,omitempty"`
 }
 
-type GasCityHealthSummary struct {
-	Status        string `json:"status"`
-	Version       string `json:"version,omitempty"`
-	BuildID       string `json:"buildId,omitempty"`
-	UptimeSeconds int64  `json:"uptimeSeconds,omitempty"`
-	CitiesTotal   int    `json:"citiesTotal"`
-	CitiesRunning int    `json:"citiesRunning"`
-	StartupReady  bool   `json:"startupReady"`
-	StartupPhase  string `json:"startupPhase,omitempty"`
-}
-
-type GasCityCitySummary struct {
-	Name    string `json:"name"`
-	Path    string `json:"path,omitempty"`
-	Running bool   `json:"running"`
-	Status  string `json:"status,omitempty"`
-	Error   string `json:"error,omitempty"`
-}
-
 type GasCitySessionSummary struct {
-	City        string `json:"city"`
-	ID          string `json:"id"`
-	Title       string `json:"title,omitempty"`
-	Alias       string `json:"alias,omitempty"`
-	Template    string `json:"template,omitempty"`
-	State       string `json:"state,omitempty"`
-	Provider    string `json:"provider,omitempty"`
-	SessionName string `json:"sessionName,omitempty"`
-	CreatedAt   string `json:"createdAt,omitempty"`
-	LastActive  string `json:"lastActive,omitempty"`
-	Running     bool   `json:"running"`
-	Attached    bool   `json:"attached"`
-}
-
-type GasCityMailCounts struct {
-	Total  int `json:"total"`
-	Unread int `json:"unread"`
-}
-
-type GasCityWorkCounts struct {
-	Open       int `json:"open"`
-	Ready      int `json:"ready"`
-	InProgress int `json:"inProgress"`
-	Routed     int `json:"routed"`
-	Molecules  int `json:"molecules"`
-	Wisps      int `json:"wisps"`
-	Convoys    int `json:"convoys"`
-}
-
-type GasCityFormulaSummary struct {
-	City        string `json:"city"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Version     string `json:"version,omitempty"`
-	RunCount    int    `json:"runCount"`
-}
-
-type GasCityWorkItem struct {
-	City      string `json:"city"`
-	ID        string `json:"id"`
-	Title     string `json:"title,omitempty"`
-	Status    string `json:"status,omitempty"`
-	IssueType string `json:"issueType,omitempty"`
-	Ref       string `json:"ref,omitempty"`
-	RoutedTo  string `json:"routedTo,omitempty"`
-	CreatedAt string `json:"createdAt,omitempty"`
-}
-
-type GasCityEventSummary struct {
-	City    string `json:"city,omitempty"`
-	Seq     int64  `json:"seq"`
-	Type    string `json:"type"`
-	Time    string `json:"time,omitempty"`
-	Actor   string `json:"actor,omitempty"`
-	Subject string `json:"subject,omitempty"`
+	Source       string `json:"source"`
+	City         string `json:"city"`
+	ID           string `json:"id"`
+	Name         string `json:"name,omitempty"`
+	Title        string `json:"title,omitempty"`
+	Alias        string `json:"alias,omitempty"`
+	Template     string `json:"template,omitempty"`
+	Status       string `json:"status,omitempty"`
+	State        string `json:"state,omitempty"`
+	AttachTarget string `json:"attachTarget,omitempty"`
+	CreatedAt    string `json:"createdAt,omitempty"`
+	LastActive   string `json:"lastActive,omitempty"`
+	Running      bool   `json:"running"`
+	Attached     bool   `json:"attached"`
 }
 
 type GasCityUpstreamError struct {
 	Route   string `json:"route"`
 	Message string `json:"message"`
-}
-
-type GasCityMailListResponse struct {
-	Recipient string               `json:"recipient"`
-	Limit     int                  `json:"limit"`
-	Messages  []GasCityMailMessage `json:"messages"`
-}
-
-type GasCityMailMessage struct {
-	ID            string `json:"id"`
-	From          string `json:"from,omitempty"`
-	Recipient     string `json:"recipient"`
-	Subject       string `json:"subject,omitempty"`
-	Body          string `json:"body"`
-	BodyTruncated bool   `json:"bodyTruncated"`
-	Status        string `json:"status,omitempty"`
-	IssueType     string `json:"issueType,omitempty"`
-	Read          bool   `json:"read"`
-	FromSessionID string `json:"fromSessionId,omitempty"`
-	CreatedAt     string `json:"createdAt,omitempty"`
-	UpdatedAt     string `json:"updatedAt,omitempty"`
-	order         int
-}
-
-type GasCityPiPoemRequest struct {
-	Topic string `json:"topic"`
-}
-
-type GasCityPiPoemResponse struct {
-	Nonce           string `json:"nonce"`
-	Subject         string `json:"subject"`
-	Target          string `json:"target"`
-	TargetAlias     string `json:"targetAlias,omitempty"`
-	TargetTemplate  string `json:"targetTemplate,omitempty"`
-	TargetSessionID string `json:"targetSessionId,omitempty"`
-	Recipient       string `json:"recipient"`
-	Output          string `json:"output"`
-}
-
-type GasCityReviewQuorumRequest struct {
-	Subject         string                  `json:"subject"`
-	Title           string                  `json:"title"`
-	BaseRef         string                  `json:"baseRef"`
-	ScopeKind       string                  `json:"scopeKind"`
-	ScopeRef        string                  `json:"scopeRef"`
-	SafetyMode      string                  `json:"safetyMode"`
-	LaneOne         GasCityReviewQuorumLane `json:"laneOne"`
-	LaneTwo         GasCityReviewQuorumLane `json:"laneTwo"`
-	SynthesisTarget string                  `json:"synthesisTarget"`
-}
-
-type GasCityReviewQuorumLane struct {
-	ID       string `json:"id"`
-	Provider string `json:"provider"`
-	Model    string `json:"model"`
-	Target   string `json:"target"`
-}
-
-type GasCityReviewQuorumResponse struct {
-	Formula    string                   `json:"formula"`
-	WorkflowID string                   `json:"workflowId,omitempty"`
-	BeadID     string                   `json:"beadId,omitempty"`
-	Target     string                   `json:"target"`
-	Title      string                   `json:"title"`
-	Subject    string                   `json:"subject"`
-	BaseRef    string                   `json:"baseRef"`
-	Mode       string                   `json:"mode"`
-	Scope      GasCityReviewQuorumScope `json:"scope"`
-	Output     string                   `json:"output,omitempty"`
-}
-
-type GasCityReviewQuorumScope struct {
-	Kind string `json:"kind"`
-	Ref  string `json:"ref"`
-}
-
-type GasCityReviewQuorumCapabilityResponse struct {
-	Available bool     `json:"available"`
-	Formula   string   `json:"formula"`
-	Targets   []string `json:"targets,omitempty"`
-	Reason    string   `json:"reason,omitempty"`
-}
-
-type gasCityCLIStatus struct {
-	Agents []struct {
-		QualifiedName string `json:"qualified_name"`
-	} `json:"agents"`
 }
 
 type GasCityTranscriptResponse struct {
@@ -298,43 +105,14 @@ type GasCityTranscriptResponse struct {
 	Truncated  bool   `json:"truncated"`
 }
 
-type GasCityAuditResponse struct {
-	Entries []gasCityAuditEntry `json:"entries"`
-}
-
-// GasCityHandler handles CHROTE's bounded Gas City observer and control routes.
+// GasCityHandler handles CHROTE's bounded Gas City observer and transcript routes.
 type GasCityHandler struct {
 	config             GasCityConfig
 	client             *http.Client
 	configError        string
 	controlConfigError string
 	runner             gasCityCommandRunner
-	nonce              func() string
-	auditMu            sync.Mutex
-	audit              []gasCityAuditEntry
 	transcriptArchive  *gasCityTranscriptArchive
-}
-
-type gasCityAuditEntry struct {
-	Time            string `json:"time"`
-	Action          string `json:"action"`
-	Target          string `json:"target"`
-	TargetAlias     string `json:"targetAlias,omitempty"`
-	TargetTemplate  string `json:"targetTemplate,omitempty"`
-	TargetSessionID string `json:"targetSessionId,omitempty"`
-	Recipient       string `json:"recipient"`
-	Subject         string `json:"subject"`
-	Formula         string `json:"formula,omitempty"`
-	WorkflowID      string `json:"workflowId,omitempty"`
-	Mode            string `json:"mode,omitempty"`
-	BaseRef         string `json:"baseRef,omitempty"`
-	ScopeKind       string `json:"scopeKind,omitempty"`
-	ScopeRef        string `json:"scopeRef,omitempty"`
-	LaneOneTarget   string `json:"laneOneTarget,omitempty"`
-	LaneTwoTarget   string `json:"laneTwoTarget,omitempty"`
-	Nonce           string `json:"nonce"`
-	Success         bool   `json:"success"`
-	Error           string `json:"error,omitempty"`
 }
 
 type gasCityCommandRunner interface {
@@ -413,24 +191,9 @@ func LoadGasCityConfigFromEnv() GasCityConfig {
 	if cityDir == "" {
 		cityDir = defaultGasCityCityDir
 	}
-	target := strings.TrimSpace(os.Getenv("CHROTE_GASCITY_PI_POEM_TARGET"))
-	if target == "" {
-		target = defaultGasCityPoemTarget
-	}
-	template := strings.TrimSpace(os.Getenv("CHROTE_GASCITY_PI_POEM_TEMPLATE"))
-	if template == "" {
-		template = defaultGasCityPoemTemplate
-	}
-	recipient := strings.TrimSpace(os.Getenv("CHROTE_GASCITY_MAIL_RECIPIENT"))
-	if recipient == "" {
-		recipient = defaultGasCityMailRecipient
-	}
 	return GasCityConfig{
 		BaseURL:              baseURL,
 		CityDir:              cityDir,
-		PoemTarget:           target,
-		PoemTemplate:         template,
-		MailRecipient:        recipient,
 		TranscriptArchiveDir: resolveGasCityTranscriptArchiveDir(),
 		GCExtraPath:          resolveGasCityGCExtraPath(),
 	}
@@ -516,37 +279,20 @@ func NewGasCityHandler(config GasCityConfig) *GasCityHandler {
 	if strings.TrimSpace(config.CityDir) == "" {
 		config.CityDir = defaultGasCityCityDir
 	}
-	if strings.TrimSpace(config.PoemTarget) == "" {
-		config.PoemTarget = defaultGasCityPoemTarget
-	}
-	if strings.TrimSpace(config.PoemTemplate) == "" {
-		config.PoemTemplate = defaultGasCityPoemTemplate
-	}
-	if strings.TrimSpace(config.MailRecipient) == "" {
-		config.MailRecipient = defaultGasCityMailRecipient
-	}
 	baseURL, configError := validateGasCityBaseURL(config.BaseURL)
 	cityDir, cityDirError := validateGasCityCityDir(config.CityDir)
-	target, targetError := validateGasCityIdentity("CHROTE_GASCITY_PI_POEM_TARGET", config.PoemTarget)
-	template, templateError := validateGasCityIdentity("CHROTE_GASCITY_PI_POEM_TEMPLATE", config.PoemTemplate)
-	recipient, recipientError := validateGasCityIdentity("CHROTE_GASCITY_MAIL_RECIPIENT", config.MailRecipient)
 	extraPath := strings.TrimSpace(config.GCExtraPath)
 	return &GasCityHandler{
 		config: GasCityConfig{
 			BaseURL:              baseURL,
 			CityDir:              cityDir,
-			PoemTarget:           target,
-			PoemTemplate:         template,
-			MailRecipient:        recipient,
 			TranscriptArchiveDir: strings.TrimSpace(config.TranscriptArchiveDir),
 			GCExtraPath:          extraPath,
 		},
 		client:             newGasCityHTTPClient(),
 		configError:        configError,
-		controlConfigError: firstNonEmpty(cityDirError, targetError, templateError, recipientError),
+		controlConfigError: cityDirError,
 		runner:             gasCityExecRunner{extraPath: extraPath},
-		nonce:              newGasCityNonce,
-		audit:              []gasCityAuditEntry{},
 		transcriptArchive:  newGasCityTranscriptArchive(strings.TrimSpace(config.TranscriptArchiveDir)),
 	}
 }
@@ -563,56 +309,12 @@ func NewGasCityHandlerWithClient(config GasCityConfig, client *http.Client) *Gas
 // RegisterRoutes registers Gas City routes.
 func (h *GasCityHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/gascity/observer", h.Observer)
-	mux.HandleFunc("GET /api/gascity/mail", h.Mail)
-	mux.HandleFunc("GET /api/gascity/audit", h.Audit)
 	mux.HandleFunc("GET /api/gascity/sessions/{id}/transcript", h.Transcript)
-	mux.HandleFunc("POST /api/gascity/requests/pi-poem", h.PiPoem)
-	mux.HandleFunc("GET /api/gascity/workflows/review-quorum/capability", h.ReviewQuorumCapability)
-	mux.HandleFunc("POST /api/gascity/workflows/review-quorum", h.ReviewQuorum)
 }
 
 // Observer handles GET /api/gascity/observer.
 func (h *GasCityHandler) Observer(w http.ResponseWriter, r *http.Request) {
 	core.WriteSuccess(w, h.snapshot(r.Context()))
-}
-
-// Mail handles GET /api/gascity/mail.
-func (h *GasCityHandler) Mail(w http.ResponseWriter, r *http.Request) {
-	if h.controlConfigError != "" {
-		core.WriteError(w, http.StatusServiceUnavailable, "GASCITY_MISCONFIGURED", h.controlConfigError)
-		return
-	}
-	recipient := strings.TrimSpace(r.URL.Query().Get("recipient"))
-	if recipient == "" {
-		recipient = h.config.MailRecipient
-	}
-	if recipient != h.config.MailRecipient {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Gas City mail recipient is fixed to "+h.config.MailRecipient)
-		return
-	}
-	limit, err := parseGasCityMailLimit(r.URL.Query().Get("limit"))
-	if err != nil {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
-		return
-	}
-	messages, err := h.mailMessages(recipient, limit)
-	if err != nil {
-		core.WriteError(w, http.StatusServiceUnavailable, "GASCITY_STORE_UNAVAILABLE", sanitizeGasCityStoreError(err))
-		return
-	}
-	core.WriteSuccess(w, GasCityMailListResponse{
-		Recipient: recipient,
-		Limit:     limit,
-		Messages:  messages,
-	})
-}
-
-// Audit handles GET /api/gascity/audit.
-func (h *GasCityHandler) Audit(w http.ResponseWriter, r *http.Request) {
-	h.auditMu.Lock()
-	entries := append([]gasCityAuditEntry(nil), h.audit...)
-	h.auditMu.Unlock()
-	core.WriteSuccess(w, GasCityAuditResponse{Entries: entries})
 }
 
 // Transcript handles GET /api/gascity/sessions/{id}/transcript.
@@ -739,242 +441,6 @@ func gasCityArchiveTranscriptResponse(snapshot gasCityTranscriptSnapshot, lines 
 	}
 }
 
-// PiPoem handles POST /api/gascity/requests/pi-poem.
-func (h *GasCityHandler) PiPoem(w http.ResponseWriter, r *http.Request) {
-	if h.controlConfigError != "" {
-		core.WriteError(w, http.StatusServiceUnavailable, "GASCITY_MISCONFIGURED", h.controlConfigError)
-		return
-	}
-	if h.configError != "" {
-		core.WriteError(w, http.StatusServiceUnavailable, "GASCITY_MISCONFIGURED", h.configError)
-		return
-	}
-	var request GasCityPiPoemRequest
-	body := http.MaxBytesReader(w, r.Body, 1024)
-	decoder := json.NewDecoder(body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON body")
-		return
-	}
-	topic, err := validateGasCityPoemTopic(request.Topic)
-	if err != nil {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
-		return
-	}
-
-	resolveCtx, resolveCancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer resolveCancel()
-	session, err := h.resolveGasCityPoemSession(resolveCtx)
-	if err != nil {
-		core.WriteError(w, http.StatusConflict, "GASCITY_SESSION_UNAVAILABLE", err.Error())
-		return
-	}
-
-	nonce := h.nonce()
-	subject := "CHROTE Pi poem " + nonce
-	command := buildGasCityPiPoemCommand(topic, nonce, subject, h.config.MailRecipient)
-	args := []string{
-		"--city", h.config.CityDir,
-		"session", "nudge", session.ID,
-		"--delivery", "immediate",
-		command,
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
-	defer cancel()
-	output, err := h.runner.Run(ctx, "gc", args)
-	success := err == nil
-	errorMessage := ""
-	if err != nil {
-		errorMessage = "Gas City poem request failed"
-	}
-	h.recordAudit(gasCityAuditEntry{
-		Time:            time.Now().UTC().Format(time.RFC3339),
-		Action:          "pi-poem",
-		Target:          h.config.PoemTarget,
-		TargetAlias:     session.Alias,
-		TargetTemplate:  session.Template,
-		TargetSessionID: session.ID,
-		Recipient:       h.config.MailRecipient,
-		Subject:         subject,
-		Nonce:           nonce,
-		Success:         success,
-		Error:           errorMessage,
-	})
-	log.Printf("gascity control action=pi-poem target_session=%s target_alias=%s target_template=%s recipient=%s nonce=%s success=%t", session.ID, session.Alias, session.Template, h.config.MailRecipient, nonce, success)
-	if err != nil {
-		core.WriteError(w, http.StatusBadGateway, "GASCITY_REQUEST_FAILED", "Gas City poem request failed")
-		return
-	}
-
-	core.WriteSuccess(w, GasCityPiPoemResponse{
-		Nonce:           nonce,
-		Subject:         subject,
-		Target:          session.ID,
-		TargetAlias:     session.Alias,
-		TargetTemplate:  session.Template,
-		TargetSessionID: session.ID,
-		Recipient:       h.config.MailRecipient,
-		Output:          sanitizeGasCityCLIOutput(output),
-	})
-}
-
-// ReviewQuorumCapability handles GET /api/gascity/workflows/review-quorum/capability.
-func (h *GasCityHandler) ReviewQuorumCapability(w http.ResponseWriter, r *http.Request) {
-	if h.controlConfigError != "" {
-		core.WriteError(w, http.StatusServiceUnavailable, "GASCITY_MISCONFIGURED", h.controlConfigError)
-		return
-	}
-	if h.configError != "" {
-		core.WriteError(w, http.StatusServiceUnavailable, "GASCITY_MISCONFIGURED", h.configError)
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
-	launch := defaultGasCityReviewQuorumLaunch()
-	targets, err := h.ensureGasCityReviewQuorumTargets(ctx, launch)
-	if err != nil {
-		core.WriteSuccess(w, GasCityReviewQuorumCapabilityResponse{
-			Available: false,
-			Formula:   gasCityReviewQuorumFormula,
-			Reason:    err.Error(),
-		})
-		return
-	}
-	if output, err := h.preflightGasCityReviewQuorum(ctx, launch); err != nil {
-		core.WriteSuccess(w, GasCityReviewQuorumCapabilityResponse{
-			Available: false,
-			Formula:   gasCityReviewQuorumFormula,
-			Targets:   targets,
-			Reason:    gasCityReviewQuorumFailureMessage("Gas City review quorum formula is unavailable", output),
-		})
-		return
-	}
-	core.WriteSuccess(w, GasCityReviewQuorumCapabilityResponse{
-		Available: true,
-		Formula:   gasCityReviewQuorumFormula,
-		Targets:   targets,
-	})
-}
-
-// ReviewQuorum handles POST /api/gascity/workflows/review-quorum.
-func (h *GasCityHandler) ReviewQuorum(w http.ResponseWriter, r *http.Request) {
-	if h.controlConfigError != "" {
-		core.WriteError(w, http.StatusServiceUnavailable, "GASCITY_MISCONFIGURED", h.controlConfigError)
-		return
-	}
-	if h.configError != "" {
-		core.WriteError(w, http.StatusServiceUnavailable, "GASCITY_MISCONFIGURED", h.configError)
-		return
-	}
-	var request GasCityReviewQuorumRequest
-	body := http.MaxBytesReader(w, r.Body, 8192)
-	decoder := json.NewDecoder(body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON body")
-		return
-	}
-
-	launch, err := normalizeGasCityReviewQuorumRequest(request)
-	if err != nil {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
-		return
-	}
-
-	targetCtx, targetCancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer targetCancel()
-	if _, err := h.ensureGasCityReviewQuorumTargets(targetCtx, launch); err != nil {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
-		return
-	}
-
-	preflightCtx, preflightCancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer preflightCancel()
-	if output, err := h.preflightGasCityReviewQuorum(preflightCtx, launch); err != nil {
-		errorMessage := gasCityReviewQuorumFailureMessage("Gas City review quorum formula is unavailable", output)
-		h.recordAudit(gasCityAuditEntry{
-			Time:          time.Now().UTC().Format(time.RFC3339),
-			Action:        "review-quorum",
-			Target:        launch.SynthesisTarget,
-			Subject:       launch.Subject,
-			Formula:       gasCityReviewQuorumFormula,
-			Mode:          gasCityReviewQuorumMode,
-			BaseRef:       launch.BaseRef,
-			ScopeKind:     launch.ScopeKind,
-			ScopeRef:      launch.ScopeRef,
-			LaneOneTarget: launch.LaneOne.Target,
-			LaneTwoTarget: launch.LaneTwo.Target,
-			Success:       false,
-			Error:         errorMessage,
-		})
-		core.WriteError(w, http.StatusServiceUnavailable, "GASCITY_FORMULA_UNAVAILABLE", errorMessage)
-		return
-	}
-
-	vars := buildGasCityReviewQuorumVars(launch)
-	launchArgs := appendGasCityVarArgs([]string{
-		"--city", h.config.CityDir,
-		"sling", launch.SynthesisTarget, gasCityReviewQuorumFormula,
-		"--formula",
-		"--json",
-		"--no-convoy",
-		"--title", launch.Title,
-		"--scope-kind", launch.ScopeKind,
-		"--scope-ref", launch.ScopeRef,
-	}, vars)
-	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
-	defer cancel()
-	output, err := h.runner.Run(ctx, "gc", launchArgs)
-	workflowID, beadID, outputNeeded := parseGasCityReviewQuorumLaunchOutput(output)
-	success := err == nil
-	errorMessage := ""
-	if err != nil {
-		errorMessage = gasCityReviewQuorumFailureMessage("Gas City review quorum launch failed", output)
-	}
-	h.recordAudit(gasCityAuditEntry{
-		Time:          time.Now().UTC().Format(time.RFC3339),
-		Action:        "review-quorum",
-		Target:        launch.SynthesisTarget,
-		Subject:       launch.Subject,
-		Formula:       gasCityReviewQuorumFormula,
-		WorkflowID:    firstNonEmpty(workflowID, beadID),
-		Mode:          gasCityReviewQuorumMode,
-		BaseRef:       launch.BaseRef,
-		ScopeKind:     launch.ScopeKind,
-		ScopeRef:      launch.ScopeRef,
-		LaneOneTarget: launch.LaneOne.Target,
-		LaneTwoTarget: launch.LaneTwo.Target,
-		Success:       success,
-		Error:         errorMessage,
-	})
-	if err != nil {
-		core.WriteError(w, http.StatusBadGateway, "GASCITY_WORKFLOW_FAILED", errorMessage)
-		return
-	}
-
-	response := GasCityReviewQuorumResponse{
-		Formula:    gasCityReviewQuorumFormula,
-		WorkflowID: workflowID,
-		BeadID:     beadID,
-		Target:     launch.SynthesisTarget,
-		Title:      launch.Title,
-		Subject:    launch.Subject,
-		BaseRef:    launch.BaseRef,
-		Mode:       gasCityReviewQuorumMode,
-		Scope: GasCityReviewQuorumScope{
-			Kind: launch.ScopeKind,
-			Ref:  launch.ScopeRef,
-		},
-	}
-	if outputNeeded {
-		response.Output = sanitizeGasCityCLIOutput(output)
-	}
-	core.WriteSuccess(w, response)
-}
-
 func (h *GasCityHandler) snapshot(ctx context.Context) GasCityObserverResponse {
 	response := newGasCityObserverResponse("ok")
 	if h.configError != "" {
@@ -993,7 +459,6 @@ func (h *GasCityHandler) snapshot(ctx context.Context) GasCityObserverResponse {
 		})
 		return response
 	}
-	response.Health = health.summary()
 
 	var cities gasCityCitiesResponse
 	if err := h.getJSON(ctx, "/v0/cities", &cities); err != nil {
@@ -1007,34 +472,15 @@ func (h *GasCityHandler) snapshot(ctx context.Context) GasCityObserverResponse {
 	}
 
 	for _, city := range cities.Items {
-		response.Cities = append(response.Cities, GasCityCitySummary{
-			Name:    city.Name,
-			Path:    city.Path,
-			Running: city.Running,
-			Status:  city.Status,
-			Error:   city.Error,
-		})
 		if city.Name == "" || !city.Running {
 			continue
 		}
 		h.addCitySnapshot(ctx, city.Name, &response)
 	}
 
-	var events gasCityEventsResponse
-	if err := h.getJSON(ctx, "/v0/events?limit=20", &events); err != nil {
-		addGasCityUpstreamError(&response, "/v0/events", err)
-	} else {
-		for _, event := range events.Items {
-			response.RecentEvents = append(response.RecentEvents, event.summary())
-		}
-	}
-
-	response.Work.Molecules = len(response.Molecules)
-	response.Work.Wisps = len(response.Wisps)
-	response.Work.Convoys = len(response.Convoys)
 	if len(response.UpstreamErrors) > 0 && response.Status == "ok" {
 		response.Status = "degraded"
-		response.Error = "Some Gas City observer fields are unavailable"
+		response.Error = "Some Gas City session metadata is unavailable"
 	}
 	return response
 }
@@ -1042,22 +488,11 @@ func (h *GasCityHandler) snapshot(ctx context.Context) GasCityObserverResponse {
 func (h *GasCityHandler) addCitySnapshot(ctx context.Context, cityName string, response *GasCityObserverResponse) {
 	escapedCity := url.PathEscape(cityName)
 
-	var status gasCityCityStatusResponse
-	statusOK := true
-	if err := h.getJSON(ctx, "/v0/city/"+escapedCity+"/status", &status); err != nil {
-		statusOK = false
-		addGasCityUpstreamError(response, "/v0/city/{city}/status", err)
-	} else {
-		response.Work.Open += status.Work.Open
-		response.Work.Ready += status.Work.Ready
-		response.Work.InProgress += status.Work.InProgress
-	}
-
 	var sessions gasCitySessionsResponse
 	sessionPath := "/v0/city/" + escapedCity + "/sessions?" + url.Values{
-		"limit": []string{"50"},
+		"limit": []string{"100"},
 		"peek":  []string{"false"},
-		"state": []string{"active"},
+		"state": []string{"all"},
 	}.Encode()
 	if err := h.getJSON(ctx, sessionPath, &sessions); err != nil {
 		addGasCityUpstreamError(response, "/v0/city/{city}/sessions", err)
@@ -1066,65 +501,6 @@ func (h *GasCityHandler) addCitySnapshot(ctx context.Context, cityName string, r
 			response.Sessions = append(response.Sessions, session.summary(cityName))
 		}
 	}
-
-	cityMail := status.Mail
-	var mail GasCityMailCounts
-	if err := h.getJSON(ctx, "/v0/city/"+escapedCity+"/mail/count", &mail); err != nil {
-		addGasCityUpstreamError(response, "/v0/city/{city}/mail/count", err)
-	} else {
-		cityMail = mail
-	}
-	if statusOK || cityMail.Total != 0 || cityMail.Unread != 0 {
-		response.Mail.Total += cityMail.Total
-		response.Mail.Unread += cityMail.Unread
-	}
-
-	formulaPath := "/v0/city/" + escapedCity + "/formulas?" + url.Values{
-		"scope_kind": []string{"city"},
-		"scope_ref":  []string{cityName},
-	}.Encode()
-	var formulas gasCityFormulasResponse
-	if err := h.getJSON(ctx, formulaPath, &formulas); err != nil {
-		addGasCityUpstreamError(response, "/v0/city/{city}/formulas", err)
-	} else {
-		for _, formula := range formulas.Items {
-			response.Formulas = append(response.Formulas, formula.summary(cityName))
-		}
-	}
-
-	var convoys gasCityWorkItemsResponse
-	if err := h.getJSON(ctx, "/v0/city/"+escapedCity+"/convoys", &convoys); err != nil {
-		addGasCityUpstreamError(response, "/v0/city/{city}/convoys", err)
-	} else {
-		for _, convoy := range convoys.Items {
-			response.Convoys = append(response.Convoys, convoy.summary(cityName))
-		}
-	}
-
-	var beads gasCityWorkItemsResponse
-	if err := h.getJSON(ctx, "/v0/city/"+escapedCity+"/beads?limit=50", &beads); err != nil {
-		addGasCityUpstreamError(response, "/v0/city/{city}/beads", err)
-		return
-	}
-	for _, bead := range beads.Items {
-		item := bead.summary(cityName)
-		switch bead.IssueType {
-		case "molecule":
-			response.Molecules = append(response.Molecules, item)
-		case "wisp":
-			response.Wisps = append(response.Wisps, item)
-		}
-		if item.RoutedTo != "" {
-			response.Work.Routed++
-		}
-	}
-}
-
-type gasCityPoemSession struct {
-	ID       string
-	Alias    string
-	Template string
-	CityName string
 }
 
 type gasCityTranscriptSession struct {
@@ -1133,67 +509,6 @@ type gasCityTranscriptSession struct {
 	Template string
 	State    string
 	CityName string
-}
-
-func (h *GasCityHandler) resolveGasCityPoemSession(ctx context.Context) (gasCityPoemSession, error) {
-	var cities gasCityCitiesResponse
-	if err := h.getJSON(ctx, "/v0/cities", &cities); err != nil {
-		return gasCityPoemSession{}, errors.New("Gas City city list unavailable")
-	}
-
-	cityName := ""
-	for _, city := range cities.Items {
-		if !city.Running {
-			continue
-		}
-		if filepath.Clean(city.Path) == h.config.CityDir {
-			cityName = city.Name
-			break
-		}
-	}
-	if cityName == "" {
-		return gasCityPoemSession{}, errors.New("configured Gas City is not running")
-	}
-
-	var sessions gasCitySessionsResponse
-	sessionPath := "/v0/city/" + url.PathEscape(cityName) + "/sessions?" + url.Values{
-		"limit": []string{"100"},
-		"peek":  []string{"false"},
-		"state": []string{"active"},
-	}.Encode()
-	if err := h.getJSON(ctx, sessionPath, &sessions); err != nil {
-		return gasCityPoemSession{}, errors.New("Gas City session list unavailable")
-	}
-
-	var matches []gasCitySessionItem
-	for _, session := range sessions.Items {
-		if session.ID != h.config.PoemTarget && session.Alias != h.config.PoemTarget {
-			continue
-		}
-		matches = append(matches, session)
-	}
-	if len(matches) == 0 {
-		return gasCityPoemSession{}, errors.New("configured Pi target session is not active")
-	}
-	if len(matches) > 1 {
-		return gasCityPoemSession{}, errors.New("configured Pi target session is ambiguous")
-	}
-	session := matches[0]
-	if session.Template != h.config.PoemTemplate {
-		return gasCityPoemSession{}, errors.New("configured Pi target session has unexpected template")
-	}
-	if !session.Running || session.State != "active" {
-		return gasCityPoemSession{}, errors.New("configured Pi target session is not running")
-	}
-	if session.ID == "" {
-		return gasCityPoemSession{}, errors.New("configured Pi target session has no stable id")
-	}
-	return gasCityPoemSession{
-		ID:       session.ID,
-		Alias:    session.Alias,
-		Template: session.Template,
-		CityName: cityName,
-	}, nil
 }
 
 func (h *GasCityHandler) resolveGasCityTranscriptSession(ctx context.Context, sessionID string) (gasCityTranscriptSession, error) {
@@ -1248,82 +563,6 @@ func (h *GasCityHandler) resolveGasCityTranscriptSession(ctx context.Context, se
 	}, nil
 }
 
-func (h *GasCityHandler) mailMessages(recipient string, limit int) ([]GasCityMailMessage, error) {
-	storePath := filepath.Join(h.config.CityDir, ".gc", "beads.json")
-	file, err := os.Open(storePath)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	var store gasCityBeadsStore
-	if err := json.NewDecoder(io.LimitReader(file, gasCityMailStoreLimit)).Decode(&store); err != nil {
-		return nil, gasCityInvalidJSONError{}
-	}
-
-	messages := []GasCityMailMessage{}
-	for i, bead := range store.Beads {
-		if !isGasCityMailIssueType(bead.IssueType) {
-			continue
-		}
-		messageRecipient := firstNonEmpty(
-			bead.Assignee,
-			metadataStringPath(bead.Metadata, "mail.to"),
-			metadataStringPath(bead.Metadata, "mail.recipient"),
-			metadataStringPath(bead.Metadata, "to"),
-		)
-		if messageRecipient != recipient {
-			continue
-		}
-		body, truncated := truncateGasCityText(bead.Description, gasCityMailBodyLimit)
-		messages = append(messages, GasCityMailMessage{
-			ID:            bead.ID,
-			From:          firstNonEmpty(metadataStringPath(bead.Metadata, "mail.from_display"), bead.From),
-			Recipient:     messageRecipient,
-			Subject:       bead.Title,
-			Body:          body,
-			BodyTruncated: truncated,
-			Status:        bead.Status,
-			IssueType:     bead.IssueType,
-			Read:          metadataBoolPath(bead.Metadata, "mail.read"),
-			FromSessionID: metadataStringPath(bead.Metadata, "mail.from_session_id"),
-			CreatedAt:     bead.CreatedAt,
-			UpdatedAt:     jsonStringValue(bead.UpdatedAt),
-			order:         i,
-		})
-	}
-
-	sort.SliceStable(messages, func(i, j int) bool {
-		left, leftOK := parseGasCityTime(messages[i].CreatedAt)
-		right, rightOK := parseGasCityTime(messages[j].CreatedAt)
-		if leftOK && rightOK && !left.Equal(right) {
-			return left.After(right)
-		}
-		if leftOK != rightOK {
-			return leftOK
-		}
-		return messages[i].order > messages[j].order
-	})
-	if len(messages) > limit {
-		messages = messages[:limit]
-	}
-	for i := range messages {
-		messages[i].order = 0
-	}
-	return messages, nil
-}
-
-func parseGasCityMailLimit(raw string) (int, error) {
-	if strings.TrimSpace(raw) == "" {
-		return 20, nil
-	}
-	limit, err := strconv.Atoi(strings.TrimSpace(raw))
-	if err != nil || limit < 1 || limit > gasCityMaxMailLimit {
-		return 0, fmt.Errorf("limit must be between 1 and %d", gasCityMaxMailLimit)
-	}
-	return limit, nil
-}
-
 func parseGasCityTranscriptLines(raw string) (int, error) {
 	if strings.TrimSpace(raw) == "" {
 		return gasCityTranscriptDefaultLines, nil
@@ -1344,354 +583,6 @@ func validateGasCitySessionID(raw string) (string, error) {
 		return "", errors.New("session id must be a stable Gas City gc-* id")
 	}
 	return sessionID, nil
-}
-
-func validateGasCityPoemTopic(raw string) (string, error) {
-	topic := strings.TrimSpace(raw)
-	if topic == "" {
-		return "", errors.New("topic is required")
-	}
-	if len(topic) > gasCityPoemTopicLimit {
-		return "", fmt.Errorf("topic must be %d characters or fewer", gasCityPoemTopicLimit)
-	}
-	if !gasCityPoemTopicPattern.MatchString(topic) {
-		return "", errors.New("topic may use only letters, numbers, spaces, and .,!_?-")
-	}
-	return topic, nil
-}
-
-type gasCityReviewQuorumLaunch struct {
-	Subject         string
-	Title           string
-	BaseRef         string
-	ScopeKind       string
-	ScopeRef        string
-	SafetyMode      string
-	LaneOne         GasCityReviewQuorumLane
-	LaneTwo         GasCityReviewQuorumLane
-	SynthesisTarget string
-}
-
-func normalizeGasCityReviewQuorumRequest(request GasCityReviewQuorumRequest) (gasCityReviewQuorumLaunch, error) {
-	subject, err := validateGasCityReviewQuorumText("subject", request.Subject, gasCityReviewQuorumTextLimit)
-	if err != nil {
-		return gasCityReviewQuorumLaunch{}, err
-	}
-	title := strings.TrimSpace(request.Title)
-	if title == "" {
-		title = "Review quorum: " + subject
-		if len([]rune(title)) > gasCityReviewQuorumTextLimit {
-			title = "Review quorum"
-		}
-	}
-	title, err = validateGasCityReviewQuorumText("title", title, gasCityReviewQuorumTextLimit)
-	if err != nil {
-		return gasCityReviewQuorumLaunch{}, err
-	}
-	baseRef := strings.TrimSpace(request.BaseRef)
-	if baseRef == "" {
-		baseRef = gasCityReviewQuorumBaseRef
-	}
-	baseRef, err = validateGasCityReviewQuorumBaseRef(baseRef)
-	if err != nil {
-		return gasCityReviewQuorumLaunch{}, err
-	}
-	scopeKind := strings.TrimSpace(request.ScopeKind)
-	if scopeKind == "" {
-		scopeKind = gasCityReviewQuorumScopeKind
-	}
-	scopeKind, err = validateGasCityReviewQuorumScopeKind(scopeKind)
-	if err != nil {
-		return gasCityReviewQuorumLaunch{}, err
-	}
-	scopeRef := strings.TrimSpace(request.ScopeRef)
-	if scopeRef == "" {
-		scopeRef = gasCityReviewQuorumScopeRef
-	}
-	scopeRef, err = validateGasCityRequestIdentity("scopeRef", scopeRef)
-	if err != nil {
-		return gasCityReviewQuorumLaunch{}, err
-	}
-	safetyMode := strings.TrimSpace(request.SafetyMode)
-	if safetyMode != "" && safetyMode != gasCityReviewQuorumSafetyMode {
-		return gasCityReviewQuorumLaunch{}, errors.New("safetyMode must be read_only")
-	}
-	laneOne, err := validateGasCityReviewQuorumLane("laneOne", request.LaneOne)
-	if err != nil {
-		return gasCityReviewQuorumLaunch{}, err
-	}
-	laneTwo, err := validateGasCityReviewQuorumLane("laneTwo", request.LaneTwo)
-	if err != nil {
-		return gasCityReviewQuorumLaunch{}, err
-	}
-	if laneOne.Target == laneTwo.Target {
-		return gasCityReviewQuorumLaunch{}, errors.New("review lane targets must be different")
-	}
-	if laneOne.ID == laneTwo.ID {
-		return gasCityReviewQuorumLaunch{}, errors.New("review lane IDs must be different")
-	}
-	synthesisTarget, err := validateGasCityQualifiedRequestIdentity("synthesisTarget", request.SynthesisTarget)
-	if err != nil {
-		return gasCityReviewQuorumLaunch{}, err
-	}
-	return gasCityReviewQuorumLaunch{
-		Subject:         subject,
-		Title:           title,
-		BaseRef:         baseRef,
-		ScopeKind:       scopeKind,
-		ScopeRef:        scopeRef,
-		SafetyMode:      safetyMode,
-		LaneOne:         laneOne,
-		LaneTwo:         laneTwo,
-		SynthesisTarget: synthesisTarget,
-	}, nil
-}
-
-func defaultGasCityReviewQuorumLaunch() gasCityReviewQuorumLaunch {
-	return gasCityReviewQuorumLaunch{
-		Subject:   "capability-check",
-		Title:     "Review quorum capability check",
-		BaseRef:   gasCityReviewQuorumBaseRef,
-		ScopeKind: gasCityReviewQuorumScopeKind,
-		ScopeRef:  gasCityReviewQuorumScopeRef,
-		LaneOne: GasCityReviewQuorumLane{
-			ID:       "capability-codex",
-			Provider: "codex",
-			Model:    "codex-cli-default",
-			Target:   "codex-review",
-		},
-		LaneTwo: GasCityReviewQuorumLane{
-			ID:       "capability-claude",
-			Provider: "claude",
-			Model:    "claude-cli-default",
-			Target:   "claude-review",
-		},
-		SynthesisTarget: gasCityReviewQuorumSynth,
-	}
-}
-
-func validateGasCityReviewQuorumLane(name string, lane GasCityReviewQuorumLane) (GasCityReviewQuorumLane, error) {
-	id, err := validateGasCityRequestIdentity(name+".id", lane.ID)
-	if err != nil {
-		return GasCityReviewQuorumLane{}, err
-	}
-	provider, err := validateGasCityRequestIdentity(name+".provider", lane.Provider)
-	if err != nil {
-		return GasCityReviewQuorumLane{}, err
-	}
-	model, err := validateGasCityRequestIdentity(name+".model", lane.Model)
-	if err != nil {
-		return GasCityReviewQuorumLane{}, err
-	}
-	target, err := validateGasCityQualifiedRequestIdentity(name+".target", lane.Target)
-	if err != nil {
-		return GasCityReviewQuorumLane{}, err
-	}
-	return GasCityReviewQuorumLane{
-		ID:       id,
-		Provider: provider,
-		Model:    model,
-		Target:   target,
-	}, nil
-}
-
-func validateGasCityReviewQuorumText(field, raw string, limit int) (string, error) {
-	value := strings.TrimSpace(raw)
-	if value == "" {
-		return "", fmt.Errorf("%s is required", field)
-	}
-	if len([]rune(value)) > limit {
-		return "", fmt.Errorf("%s must be %d characters or fewer", field, limit)
-	}
-	for _, r := range value {
-		if r < 0x20 || r == 0x7f {
-			return "", fmt.Errorf("%s must not contain control characters", field)
-		}
-	}
-	return value, nil
-}
-
-func validateGasCityReviewQuorumScopeKind(raw string) (string, error) {
-	value := strings.TrimSpace(raw)
-	switch value {
-	case "city", "rig":
-		return value, nil
-	default:
-		return "", errors.New("scopeKind must be city or rig")
-	}
-}
-
-func validateGasCityReviewQuorumBaseRef(raw string) (string, error) {
-	value := strings.TrimSpace(raw)
-	if value == "" {
-		return "", errors.New("baseRef must not be empty")
-	}
-	if !gasCityReviewQuorumBasePattern.MatchString(value) {
-		return "", errors.New("baseRef must be a git ref-like value")
-	}
-	return value, nil
-}
-
-func validateGasCityRequestIdentity(field, raw string) (string, error) {
-	value := strings.TrimSpace(raw)
-	if value == "" {
-		return "", fmt.Errorf("%s must not be empty", field)
-	}
-	if !gasCityIdentityPattern.MatchString(value) {
-		return "", fmt.Errorf("%s must contain only letters, numbers, dot, underscore, or dash", field)
-	}
-	return value, nil
-}
-
-func validateGasCityQualifiedRequestIdentity(field, raw string) (string, error) {
-	value := strings.TrimSpace(raw)
-	if value == "" {
-		return "", fmt.Errorf("%s must not be empty", field)
-	}
-	if !gasCityQualifiedIdentityPattern.MatchString(value) {
-		return "", fmt.Errorf("%s must be a Gas City identity or qualified identity", field)
-	}
-	return value, nil
-}
-
-func buildGasCityReviewQuorumVars(launch gasCityReviewQuorumLaunch) []string {
-	return []string{
-		"subject=" + launch.Subject,
-		"base_ref=" + launch.BaseRef,
-		"lane_one_id=" + launch.LaneOne.ID,
-		"lane_one_provider=" + launch.LaneOne.Provider,
-		"lane_one_model=" + launch.LaneOne.Model,
-		"lane_one_target=" + launch.LaneOne.Target,
-		"lane_two_id=" + launch.LaneTwo.ID,
-		"lane_two_provider=" + launch.LaneTwo.Provider,
-		"lane_two_model=" + launch.LaneTwo.Model,
-		"lane_two_target=" + launch.LaneTwo.Target,
-		"synthesis_target=" + launch.SynthesisTarget,
-	}
-}
-
-func appendGasCityVarArgs(args []string, vars []string) []string {
-	for _, variable := range vars {
-		args = append(args, "--var", variable)
-	}
-	return args
-}
-
-func (h *GasCityHandler) preflightGasCityReviewQuorum(ctx context.Context, launch gasCityReviewQuorumLaunch) (string, error) {
-	args := appendGasCityVarArgs([]string{
-		"--city", h.config.CityDir,
-		"formula", "show", gasCityReviewQuorumFormula,
-		"--json",
-	}, buildGasCityReviewQuorumVars(launch))
-	return h.runner.Run(ctx, "gc", args)
-}
-
-func (h *GasCityHandler) ensureGasCityReviewQuorumTargets(ctx context.Context, launch gasCityReviewQuorumLaunch) ([]string, error) {
-	reviewTargets := []string{launch.LaneOne.Target, launch.LaneTwo.Target}
-	for _, target := range reviewTargets {
-		if _, ok := gasCityReviewQuorumAllowedReviewTargets[target]; !ok {
-			return nil, fmt.Errorf("%s is not a configured read-only review-quorum worker target", target)
-		}
-	}
-	if _, ok := gasCityReviewQuorumAllowedSynthesisTargets[launch.SynthesisTarget]; !ok {
-		return nil, fmt.Errorf("%s is not a configured review-quorum synthesis target", launch.SynthesisTarget)
-	}
-
-	targets := []string{launch.LaneOne.Target, launch.LaneTwo.Target, launch.SynthesisTarget}
-	status, err := h.readGasCityStatus(ctx)
-	if err != nil {
-		return nil, err
-	}
-	seen := make(map[string]struct{}, len(status.Agents))
-	for _, agent := range status.Agents {
-		seen[agent.QualifiedName] = struct{}{}
-	}
-	for _, target := range targets {
-		if _, ok := seen[target]; !ok {
-			return nil, fmt.Errorf("%s is not registered in Gas City", target)
-		}
-	}
-	return targets, nil
-}
-
-func (h *GasCityHandler) readGasCityStatus(ctx context.Context) (gasCityCLIStatus, error) {
-	output, err := h.runner.Run(ctx, "gc", []string{
-		"--city", h.config.CityDir,
-		"status", "--json",
-	})
-	if err != nil {
-		return gasCityCLIStatus{}, errors.New("Gas City status is unavailable")
-	}
-	var status gasCityCLIStatus
-	if err := json.Unmarshal([]byte(output), &status); err != nil {
-		return gasCityCLIStatus{}, errors.New("Gas City status returned invalid JSON")
-	}
-	return status, nil
-}
-
-func parseGasCityReviewQuorumLaunchOutput(output string) (string, string, bool) {
-	var result struct {
-		WorkflowID string `json:"workflow_id"`
-		BeadID     string `json:"bead_id"`
-		Data       struct {
-			WorkflowID string `json:"workflow_id"`
-			BeadID     string `json:"bead_id"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal([]byte(output), &result); err != nil {
-		return "", "", strings.TrimSpace(output) != ""
-	}
-	workflowID := firstNonEmpty(result.WorkflowID, result.Data.WorkflowID)
-	beadID := firstNonEmpty(result.BeadID, result.Data.BeadID)
-	return workflowID, beadID, workflowID == "" && beadID == "" && strings.TrimSpace(output) != ""
-}
-
-func gasCityReviewQuorumFailureMessage(prefix, output string) string {
-	summary := sanitizeGasCityCLIOutput(output)
-	if summary == "" {
-		return prefix
-	}
-	summary, truncated := truncateGasCityText(summary, gasCityReviewQuorumErrorLimit)
-	if truncated {
-		summary += "..."
-	}
-	return prefix + ": " + summary
-}
-
-func buildGasCityPiPoemCommand(topic, nonce, subject, recipient string) string {
-	prompt := fmt.Sprintf(
-		"Write a two-line original poem about %s for Gas City mail. Include the exact nonce %s. Do not mention instructions or tools.",
-		topic,
-		nonce,
-	)
-	return strings.Join([]string{
-		"!",
-		"set -euo pipefail;",
-		`tmp=$(mktemp);`,
-		`trap 'rm -f "$tmp"' EXIT;`,
-		"pi --no-tools --no-context-files --no-extensions --no-skills --no-prompt-templates --no-session --mode text --print " + shellSingleQuote(prompt) + ` > "$tmp";`,
-		"gc mail send " + shellSingleQuote(recipient) + " -s " + shellSingleQuote(subject) + ` -m "$(cat "$tmp")"`,
-	}, " ")
-}
-
-func shellSingleQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
-}
-
-func newGasCityNonce() string {
-	var random [4]byte
-	if _, err := rand.Read(random[:]); err != nil {
-		return "C4A-" + time.Now().UTC().Format("20060102-150405")
-	}
-	return "C4A-" + time.Now().UTC().Format("20060102-150405") + "-" + hex.EncodeToString(random[:])
-}
-
-func sanitizeGasCityCLIOutput(output string) string {
-	output = strings.ReplaceAll(output, "\x00", "")
-	output = gasCityANSIPattern.ReplaceAllString(output, "")
-	output = strings.TrimSpace(output)
-	truncated, _ := truncateGasCityText(output, gasCityPoemOutputLimit)
-	return truncated
 }
 
 func sanitizeGasCityTranscriptOutput(output string) (string, bool) {
@@ -1718,26 +609,11 @@ func countGasCityTranscriptLines(output string) int {
 	return strings.Count(output, "\n") + 1
 }
 
-func (h *GasCityHandler) recordAudit(entry gasCityAuditEntry) {
-	h.auditMu.Lock()
-	defer h.auditMu.Unlock()
-	h.audit = append(h.audit, entry)
-	if len(h.audit) > 20 {
-		h.audit = h.audit[len(h.audit)-20:]
-	}
-}
-
 func newGasCityObserverResponse(status string) GasCityObserverResponse {
 	return GasCityObserverResponse{
-		Status:       status,
-		CheckedAt:    time.Now().UTC().Format(time.RFC3339),
-		Cities:       []GasCityCitySummary{},
-		Sessions:     []GasCitySessionSummary{},
-		Formulas:     []GasCityFormulaSummary{},
-		Molecules:    []GasCityWorkItem{},
-		Wisps:        []GasCityWorkItem{},
-		Convoys:      []GasCityWorkItem{},
-		RecentEvents: []GasCityEventSummary{},
+		Status:    status,
+		CheckedAt: time.Now().UTC().Format(time.RFC3339),
+		Sessions:  []GasCitySessionSummary{},
 	}
 }
 
@@ -1857,17 +733,6 @@ func validateGasCityCityDir(raw string) (string, string) {
 	return cleaned, ""
 }
 
-func validateGasCityIdentity(envName, raw string) (string, string) {
-	value := strings.TrimSpace(raw)
-	if value == "" {
-		return "", envName + " must not be empty"
-	}
-	if !gasCityIdentityPattern.MatchString(value) {
-		return "", envName + " must contain only letters, numbers, dot, underscore, or dash"
-	}
-	return value, ""
-}
-
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
@@ -1884,20 +749,6 @@ func isGasCityLoopbackHost(host string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
-}
-
-func isGasCityMailIssueType(issueType string) bool {
-	switch strings.ToLower(strings.TrimSpace(issueType)) {
-	case "message", "mail":
-		return true
-	default:
-		return false
-	}
-}
-
-func parseGasCityTime(raw string) (time.Time, bool) {
-	parsed, err := time.Parse(time.RFC3339Nano, raw)
-	return parsed, err == nil
 }
 
 func truncateGasCityText(value string, limit int) (string, bool) {
@@ -1920,84 +771,6 @@ func truncateGasCityText(value string, limit int) (string, bool) {
 	return builder.String(), true
 }
 
-func sanitizeGasCityStoreError(err error) string {
-	var invalidJSONErr gasCityInvalidJSONError
-	if errors.As(err, &invalidJSONErr) {
-		return "Gas City mail store returned invalid JSON"
-	}
-	return "Gas City mail store unavailable"
-}
-
-func metadataStringPath(metadata map[string]any, path string) string {
-	if metadata == nil {
-		return ""
-	}
-	if value, ok := metadata[path]; ok {
-		return scalarString(value)
-	}
-	parts := strings.Split(path, ".")
-	var value any = metadata
-	for _, part := range parts {
-		object, ok := value.(map[string]any)
-		if !ok {
-			return ""
-		}
-		value, ok = object[part]
-		if !ok {
-			return ""
-		}
-	}
-	return scalarString(value)
-}
-
-func metadataBoolPath(metadata map[string]any, path string) bool {
-	value := metadataStringPath(metadata, path)
-	if value == "" {
-		return false
-	}
-	parsed, err := strconv.ParseBool(value)
-	return err == nil && parsed
-}
-
-func scalarString(value any) string {
-	switch typed := value.(type) {
-	case string:
-		return typed
-	case bool:
-		return strconv.FormatBool(typed)
-	case float64:
-		return strconv.FormatFloat(typed, 'f', -1, 64)
-	case nil:
-		return ""
-	default:
-		return fmt.Sprint(typed)
-	}
-}
-
-func jsonStringValue(value any) string {
-	if value == nil {
-		return ""
-	}
-	return scalarString(value)
-}
-
-type gasCityBeadsStore struct {
-	Beads []gasCityMailBead `json:"beads"`
-}
-
-type gasCityMailBead struct {
-	ID          string         `json:"id"`
-	Title       string         `json:"title"`
-	Description string         `json:"description"`
-	IssueType   string         `json:"issue_type"`
-	Status      string         `json:"status"`
-	From        string         `json:"from"`
-	Assignee    string         `json:"assignee"`
-	CreatedAt   string         `json:"created_at"`
-	UpdatedAt   any            `json:"updated_at"`
-	Metadata    map[string]any `json:"metadata"`
-}
-
 type gasCityHealthUpstream struct {
 	Ready bool   `json:"ready"`
 	Phase string `json:"phase"`
@@ -2013,19 +786,6 @@ type gasCityHealthResponse struct {
 	Startup       gasCityHealthUpstream `json:"startup"`
 }
 
-func (h gasCityHealthResponse) summary() GasCityHealthSummary {
-	return GasCityHealthSummary{
-		Status:        h.Status,
-		Version:       h.Version,
-		BuildID:       h.BuildID,
-		UptimeSeconds: h.UptimeSeconds,
-		CitiesTotal:   h.CitiesTotal,
-		CitiesRunning: h.CitiesRunning,
-		StartupReady:  h.Startup.Ready,
-		StartupPhase:  h.Startup.Phase,
-	}
-}
-
 type gasCityCitiesResponse struct {
 	Items []gasCityCityItem `json:"items"`
 	Total int               `json:"total"`
@@ -2037,23 +797,6 @@ type gasCityCityItem struct {
 	Running bool   `json:"running"`
 	Status  string `json:"status"`
 	Error   string `json:"error"`
-}
-
-type gasCityCityStatusResponse struct {
-	Name    string            `json:"name"`
-	Running int               `json:"running"`
-	Work    gasCityWorkCounts `json:"work"`
-	Mail    GasCityMailCounts `json:"mail"`
-}
-
-type gasCityWorkCounts struct {
-	Open       int `json:"open"`
-	Ready      int `json:"ready"`
-	InProgress int `json:"in_progress"`
-	Routed     int `json:"routed"`
-	Molecules  int `json:"molecules"`
-	Wisps      int `json:"wisps"`
-	Convoys    int `json:"convoys"`
 }
 
 type gasCitySessionsResponse struct {
@@ -2076,109 +819,24 @@ type gasCitySessionItem struct {
 }
 
 func (s gasCitySessionItem) summary(cityName string) GasCitySessionSummary {
+	attachTarget := ""
+	if strings.TrimSpace(s.ID) != "" {
+		attachTarget = "gc:" + strings.TrimSpace(s.ID)
+	}
 	return GasCitySessionSummary{
-		City:        cityName,
-		ID:          s.ID,
-		Title:       s.Title,
-		Alias:       s.Alias,
-		Template:    s.Template,
-		State:       s.State,
-		Provider:    s.Provider,
-		SessionName: s.SessionName,
-		CreatedAt:   s.CreatedAt,
-		LastActive:  s.LastActive,
-		Running:     s.Running,
-		Attached:    s.Attached,
-	}
-}
-
-type gasCityFormulasResponse struct {
-	Items []gasCityFormulaItem `json:"items"`
-	Total int                  `json:"total"`
-}
-
-type gasCityFormulaItem struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Version     string `json:"version"`
-	RunCount    int    `json:"run_count"`
-}
-
-func (f gasCityFormulaItem) summary(cityName string) GasCityFormulaSummary {
-	return GasCityFormulaSummary{
-		City:        cityName,
-		Name:        f.Name,
-		Description: f.Description,
-		Version:     f.Version,
-		RunCount:    f.RunCount,
-	}
-}
-
-type gasCityWorkItemsResponse struct {
-	Items []gasCityWorkItem `json:"items"`
-	Total int               `json:"total"`
-}
-
-type gasCityWorkItem struct {
-	ID        string         `json:"id"`
-	Title     string         `json:"title"`
-	Status    string         `json:"status"`
-	IssueType string         `json:"issue_type"`
-	Ref       string         `json:"ref"`
-	CreatedAt string         `json:"created_at"`
-	Metadata  map[string]any `json:"metadata"`
-}
-
-func (w gasCityWorkItem) summary(cityName string) GasCityWorkItem {
-	return GasCityWorkItem{
-		City:      cityName,
-		ID:        w.ID,
-		Title:     w.Title,
-		Status:    w.Status,
-		IssueType: w.IssueType,
-		Ref:       w.Ref,
-		RoutedTo:  metadataString(w.Metadata, "gc.routed_to"),
-		CreatedAt: w.CreatedAt,
-	}
-}
-
-func metadataString(metadata map[string]any, key string) string {
-	if metadata == nil {
-		return ""
-	}
-	value, ok := metadata[key]
-	if !ok {
-		return ""
-	}
-	switch typed := value.(type) {
-	case string:
-		return typed
-	default:
-		return fmt.Sprint(typed)
-	}
-}
-
-type gasCityEventsResponse struct {
-	Items []gasCityEventItem `json:"items"`
-	Total int                `json:"total"`
-}
-
-type gasCityEventItem struct {
-	City    string `json:"city"`
-	Seq     int64  `json:"seq"`
-	Type    string `json:"type"`
-	Time    string `json:"ts"`
-	Actor   string `json:"actor"`
-	Subject string `json:"subject"`
-}
-
-func (e gasCityEventItem) summary() GasCityEventSummary {
-	return GasCityEventSummary{
-		City:    e.City,
-		Seq:     e.Seq,
-		Type:    e.Type,
-		Time:    e.Time,
-		Actor:   e.Actor,
-		Subject: e.Subject,
+		Source:       "gascity",
+		City:         cityName,
+		ID:           s.ID,
+		Name:         firstNonEmpty(s.Alias, s.Title, s.ID),
+		Title:        s.Title,
+		Alias:        s.Alias,
+		Template:     s.Template,
+		Status:       s.State,
+		State:        s.State,
+		AttachTarget: attachTarget,
+		CreatedAt:    s.CreatedAt,
+		LastActive:   s.LastActive,
+		Running:      s.Running,
+		Attached:     s.Attached,
 	}
 }

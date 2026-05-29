@@ -25,191 +25,30 @@ export interface GasCityObserver {
   status: string
   checkedAt: string
   error?: string
-  health: GasCityHealth
-  cities: GasCityCity[]
   sessions: GasCitySession[]
-  mail: GasCityMailCounts
-  work: GasCityWorkCounts
-  formulas: GasCityFormula[]
-  molecules: GasCityWorkItem[]
-  wisps: GasCityWorkItem[]
-  convoys: GasCityWorkItem[]
-  recentEvents: GasCityEvent[]
   upstreamErrors?: GasCityUpstreamError[]
 }
 
-export interface GasCityHealth {
-  status: string
-  version?: string
-  buildId?: string
-  uptimeSeconds?: number
-  citiesTotal: number
-  citiesRunning: number
-  startupReady: boolean
-  startupPhase?: string
-}
-
-export interface GasCityCity {
-  name: string
-  path?: string
-  running: boolean
-  status?: string
-  error?: string
-}
-
 export interface GasCitySession {
+  source?: 'gascity'
   city: string
   id: string
+  name?: string
   title?: string
   alias?: string
   template?: string
+  status?: string
   state?: string
-  provider?: string
-  sessionName?: string
+  attachTarget?: string
   createdAt?: string
   lastActive?: string
   running: boolean
   attached: boolean
 }
 
-export interface GasCityMailCounts {
-  total: number
-  unread: number
-}
-
-export interface GasCityWorkCounts {
-  open: number
-  ready: number
-  inProgress: number
-  routed: number
-  molecules: number
-  wisps: number
-  convoys: number
-}
-
-export interface GasCityFormula {
-  city: string
-  name: string
-  description?: string
-  version?: string
-  runCount: number
-}
-
-export interface GasCityWorkItem {
-  city: string
-  id: string
-  title?: string
-  status?: string
-  issueType?: string
-  ref?: string
-  routedTo?: string
-  createdAt?: string
-}
-
-export interface GasCityEvent {
-  city?: string
-  seq: number
-  type: string
-  time?: string
-  actor?: string
-  subject?: string
-}
-
 export interface GasCityUpstreamError {
   route: string
   message: string
-}
-
-export interface GasCityMailList {
-  recipient: string
-  limit: number
-  messages: GasCityMailMessage[]
-}
-
-export interface GasCityMailMessage {
-  id: string
-  from?: string
-  recipient: string
-  subject?: string
-  body: string
-  bodyTruncated: boolean
-  status?: string
-  issueType?: string
-  read: boolean
-  fromSessionId?: string
-  createdAt?: string
-  updatedAt?: string
-}
-
-export interface GasCityPiPoemRequest {
-  topic: string
-}
-
-export interface GasCityPiPoemResponse {
-  nonce: string
-  subject: string
-  target: string
-  targetAlias?: string
-  targetTemplate?: string
-  targetSessionId?: string
-  recipient: string
-  output: string
-}
-
-export interface GasCityReviewQuorumLane {
-  id: string
-  provider: string
-  model: string
-  target: string
-}
-
-export interface GasCityReviewQuorumRequest {
-  subject: string
-  title?: string
-  baseRef: string
-  scopeKind?: 'city' | 'rig'
-  scopeRef?: string
-  laneOne: GasCityReviewQuorumLane
-  laneTwo: GasCityReviewQuorumLane
-  synthesisTarget: string
-}
-
-export interface GasCityReviewQuorumResponse {
-  formula: string
-  workflowId?: string
-  beadId?: string
-  target: string
-  title: string
-  subject: string
-  baseRef: string
-  mode: string
-  scope: {
-    kind: string
-    ref: string
-  }
-  output?: string
-}
-
-export interface GasCityReviewQuorumCapability {
-  available: boolean
-  formula: string
-  targets?: string[]
-  reason?: string
-}
-
-export interface GasCityTranscript {
-  source: string
-  stale: boolean
-  sessionId: string
-  alias?: string
-  template?: string
-  state?: string
-  city?: string
-  lines: number
-  lineCount: number
-  capturedAt?: string
-  transcript: string
-  truncated: boolean
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -241,32 +80,4 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function getGasCityObserver() {
   return request<GasCityObserver>('/api/gascity/observer')
-}
-
-export function getGasCityMail(recipient = 'human', limit = 20) {
-  const query = new URLSearchParams({ recipient, limit: String(limit) })
-  return request<GasCityMailList>(`/api/gascity/mail?${query.toString()}`)
-}
-
-export function sendGasCityPiPoem(body: GasCityPiPoemRequest) {
-  return request<GasCityPiPoemResponse>('/api/gascity/requests/pi-poem', {
-    method: 'POST',
-    body: JSON.stringify(body),
-  })
-}
-
-export function launchGasCityReviewQuorum(body: GasCityReviewQuorumRequest) {
-  return request<GasCityReviewQuorumResponse>('/api/gascity/workflows/review-quorum', {
-    method: 'POST',
-    body: JSON.stringify(body),
-  })
-}
-
-export function getGasCityReviewQuorumCapability() {
-  return request<GasCityReviewQuorumCapability>('/api/gascity/workflows/review-quorum/capability')
-}
-
-export function getGasCityTranscript(sessionId: string, lines = 120) {
-  const query = new URLSearchParams({ lines: String(lines) })
-  return request<GasCityTranscript>(`/api/gascity/sessions/${encodeURIComponent(sessionId)}/transcript?${query.toString()}`)
 }

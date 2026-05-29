@@ -13,7 +13,6 @@ import BeadsView from './components/BeadsView'
 import OracleView from './components/OracleView'
 import OracleViewV2 from './components/OracleView/V2'
 import ServicesView from './components/ServicesView'
-import GasCityView from './components/GasCityView'
 import SystemStatusView from './components/SystemStatusView'
 import ErrorBoundary from './components/ErrorBoundary'
 import { ToastContainer } from './components/ToastNotification'
@@ -162,11 +161,6 @@ function DashboardContent() {
           {activeTab === 'services' && (
             <ErrorBoundary>
               <ServicesView />
-            </ErrorBoundary>
-          )}
-          {activeTab === 'gascity' && (
-            <ErrorBoundary>
-              <GasCityView />
             </ErrorBoundary>
           )}
           {serverStatusTab && activeTab === 'server' && (

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # CHROTE local deploy: build artifacts from the canonical source worktree and
-# swap the runtime chrote-server binary, preserving the tmux socket/sessions.
+# swap the runtime chrote-server binary and terminal launch script, preserving
+# the tmux socket/sessions.
 #
 # Model and rationale: docs/runtime-deploy-model.md
 # Beads: home-gia (epic), home-a3l (this script), home-j7x (exclusions),
@@ -12,6 +13,7 @@
 #   - NEVER runs any git operation on the runtime tree.
 #   - NEVER runs tmux kill-* and NEVER removes the tmux socket dir.
 #   - NEVER copies private config (services.env) into the repo.
+#   - Copies only the runtime launch script needed by ttyd; no source-tree sync.
 #   - Restarts ONLY chrote.service (systemctl --user).
 #   - Records rollback state (runtime git HEAD, service status, tmux sessions,
 #     backed-up binary path) before restart.
@@ -30,6 +32,8 @@ set -Eeuo pipefail
 CANONICAL_DIR="/home/perttu/chrote-3.0-gascity"
 RUNTIME_DIR="/home/perttu/chrote"
 RUNTIME_BINARY="${RUNTIME_DIR}/chrote-server"
+RUNTIME_LAUNCH_SCRIPT="${RUNTIME_DIR}/terminal-launch.sh"
+SOURCE_LAUNCH_SCRIPT="${CANONICAL_DIR}/terminal-launch.sh"
 SERVICE="chrote.service"
 HEALTH_URL="http://127.0.0.1:8094/api/health"
 CHROTE_TMUX_TMPDIR="/run/user/1000/chrote-tmux"
@@ -61,6 +65,7 @@ command -v npm >/dev/null 2>&1 || die "npm not found"
 log "1. Verify canonical source"
 [ -d "$CANONICAL_DIR/src" ] || die "canonical src not found at $CANONICAL_DIR/src"
 [ -f "$CANONICAL_DIR/src/internal/dashboard/embed.go" ] || die "embed.go missing (wrong tree?)"
+[ -f "$SOURCE_LAUNCH_SCRIPT" ] || die "terminal launch script missing at $SOURCE_LAUNCH_SCRIPT"
 cd "$CANONICAL_DIR"
 SRC_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 SRC_HEAD="$(git rev-parse HEAD)"
@@ -111,10 +116,24 @@ info "staged binary: $STAGE_BIN ($STAGE_SIZE bytes)"
 info "stamped provenance: version=$SRC_VERSION commit=$SRC_COMMIT_SHORT (source $SRC_COMMIT_FULL)"
 "$STAGE_BIN" --help >/dev/null 2>&1 || info "note: --help nonzero (binary still runnable)"
 
-# ---- 5. Capture rollback state (always, even in dry-run) --------------------
+# ---- 5. Capture rollback state ---------------------------------------------
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  log "5. DRY RUN — stopping before runtime change"
+  info "Would record rollback state under: ${BACKUP_DIR}/deploy-${STAMP}.state.txt"
+  info "Would back up: $RUNTIME_BINARY"
+  info "Would back up: $RUNTIME_LAUNCH_SCRIPT"
+  info "Would copy: $STAGE_BIN  ->  $RUNTIME_BINARY"
+  info "Would copy: $SOURCE_LAUNCH_SCRIPT  ->  $RUNTIME_LAUNCH_SCRIPT"
+  info "Would run:  systemctl --user restart $SERVICE"
+  info "Would smoke: $HEALTH_URL and tmux session preservation"
+  rm -f "$STAGE_BIN"
+  exit 0
+fi
+
 log "5. Capture rollback state"
 mkdir -p "$BACKUP_DIR"
-STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 STATE_FILE="${BACKUP_DIR}/deploy-${STAMP}.state.txt"
 {
   echo "deploy_timestamp_utc: $STAMP"
@@ -124,6 +143,12 @@ STATE_FILE="${BACKUP_DIR}/deploy-${STAMP}.state.txt"
   echo "runtime_dir: $RUNTIME_DIR"
   echo "runtime_git_head: $(git -C "$RUNTIME_DIR" rev-parse HEAD 2>&1)"
   echo "runtime_git_branch: $(git -C "$RUNTIME_DIR" rev-parse --abbrev-ref HEAD 2>&1)"
+  echo "source_launch_script_sha256: $(sha256sum "$SOURCE_LAUNCH_SCRIPT" | awk '{print $1}')"
+  if [ -f "$RUNTIME_LAUNCH_SCRIPT" ]; then
+    echo "runtime_launch_script_sha256: $(sha256sum "$RUNTIME_LAUNCH_SCRIPT" | awk '{print $1}')"
+  else
+    echo "runtime_launch_script_sha256: <missing>"
+  fi
   echo "staged_binary_size: $STAGE_SIZE"
   echo "--- systemctl --user status $SERVICE (head) ---"
   systemctl --user status "$SERVICE" --no-pager 2>&1 | head -6 || true
@@ -147,23 +172,31 @@ else
   info "WARNING: no existing runtime binary at $RUNTIME_BINARY to back up"
 fi
 
-if [ "$DRY_RUN" -eq 1 ]; then
-  log "DRY RUN — stopping before runtime change"
-  info "Would copy: $STAGE_BIN  ->  $RUNTIME_BINARY"
-  info "Would run:  systemctl --user restart $SERVICE"
-  info "Would smoke: $HEALTH_URL and tmux session preservation"
-  rm -f "$STAGE_BIN"
-  exit 0
+# Back up the current runtime terminal launch script. ttyd reads this path from
+# chrote.service, so gc:<id> dispatch changes must deploy with the binary.
+BACKUP_LAUNCH_SCRIPT=""
+if [ -f "$RUNTIME_LAUNCH_SCRIPT" ]; then
+  BACKUP_LAUNCH_SCRIPT="${BACKUP_DIR}/terminal-launch.sh.${STAMP}.bak"
+  cp -p "$RUNTIME_LAUNCH_SCRIPT" "$BACKUP_LAUNCH_SCRIPT"
+  info "runtime launch script backed up: $BACKUP_LAUNCH_SCRIPT"
+else
+  info "WARNING: no existing runtime launch script at $RUNTIME_LAUNCH_SCRIPT to back up"
 fi
 
 # ---- 6. Swap binary (atomic) ------------------------------------------------
-log "6. Deploy binary into runtime (atomic swap)"
+log "6. Deploy binary and launch script into runtime (atomic swap)"
 INSTALL_TMP="${RUNTIME_BINARY}.new.${STAMP}"
 cp "$STAGE_BIN" "$INSTALL_TMP"
 chmod +x "$INSTALL_TMP"
 mv -f "$INSTALL_TMP" "$RUNTIME_BINARY"   # rename within same fs == atomic
 rm -f "$STAGE_BIN"
 info "installed: $RUNTIME_BINARY ($(stat -c %s "$RUNTIME_BINARY") bytes)"
+
+LAUNCH_TMP="${RUNTIME_LAUNCH_SCRIPT}.new.${STAMP}"
+cp "$SOURCE_LAUNCH_SCRIPT" "$LAUNCH_TMP"
+chmod +x "$LAUNCH_TMP"
+mv -f "$LAUNCH_TMP" "$RUNTIME_LAUNCH_SCRIPT"
+info "installed: $RUNTIME_LAUNCH_SCRIPT"
 
 # ---- 7. Restart only chrote.service ----------------------------------------
 log "7. Restart $SERVICE"
@@ -200,8 +233,11 @@ if [ "$ok" -ne 1 ]; then
   log "SMOKE FAILED — rolling back"
   if [ -n "$BACKUP_BIN" ] && [ -f "$BACKUP_BIN" ]; then
     cp -p "$BACKUP_BIN" "$RUNTIME_BINARY"
+    if [ -n "$BACKUP_LAUNCH_SCRIPT" ] && [ -f "$BACKUP_LAUNCH_SCRIPT" ]; then
+      cp -p "$BACKUP_LAUNCH_SCRIPT" "$RUNTIME_LAUNCH_SCRIPT"
+    fi
     systemctl --user restart "$SERVICE" || true
-    info "rolled back to $BACKUP_BIN and restarted $SERVICE"
+    info "rolled back to $BACKUP_BIN${BACKUP_LAUNCH_SCRIPT:+ and $BACKUP_LAUNCH_SCRIPT} and restarted $SERVICE"
     sleep 2
     rb="$(curl -sS -m 5 "$HEALTH_URL" 2>/dev/null || true)"
     info "post-rollback health: ${rb:-<none>}"

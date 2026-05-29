@@ -115,18 +115,22 @@ Use `scripts/deploy-local.sh` (in the canonical tree). It:
    `src/internal/dashboard/dist` from `dashboard/dist`.
 4. Builds `chrote-server` into a staging path (never overwrites the runtime
    binary until the build fully succeeds).
-5. **Backs up the current runtime binary** to a timestamped file and records
-   rollback state (runtime git HEAD, service status, tmux session list).
-6. Atomically swaps the new binary into `/home/perttu/chrote/chrote-server`.
+5. **Backs up the current runtime binary and terminal launch script** to
+   timestamped files and records rollback state (runtime git HEAD, service
+   status, tmux session list, launch-script hashes).
+6. Atomically swaps the new binary into `/home/perttu/chrote/chrote-server`
+   and the launch script into `/home/perttu/chrote/terminal-launch.sh`.
 7. Restarts **only** `chrote.service` (`systemctl --user`).
 8. Smokes `/api/health` and verifies the chrote tmux session list is unchanged.
 
 `--dry-run` performs build + checks and prints the planned actions without
-touching the runtime binary or restarting the service.
+touching runtime artifacts, writing rollback backups, or restarting the service.
 
 The deploy **never** touches the tmux socket, never runs `tmux kill-*`, never
 removes `/run/user/1000/chrote-tmux`, never edits the runtime git tree, and never
-copies private config into the repo.
+copies private config into the repo. The terminal launch script is copied because
+`chrote.service`/ttyd executes that script directly for every terminal attach;
+it is a small runtime artifact, not a source-tree sync.
 
 ## 5. Why we do NOT use a git operation to deploy
 
@@ -138,10 +142,10 @@ an ancestor of the canonical commit), but:
 - The runtime tree shares its object store with the canonical worktree; branch
   ref churn there is unnecessary risk for zero runtime benefit.
 
-Therefore: **build artifacts, swap the binary.** No runtime git op is part of the
-deploy. If a future operator wants the runtime branch to also track the new
-commits for bookkeeping, do that as a separate, reviewed step — it is not
-required for the code to be live.
+Therefore: **build artifacts, swap the binary and launch script.** No runtime git
+op is part of the deploy. If a future operator wants the runtime branch to also
+track the new commits for bookkeeping, do that as a separate, reviewed step — it
+is not required for the code to be live.
 
 Destructive git (force-reset of runtime, branch deletion, anything that could
 lose uncommitted runtime state) is out of scope: stop and report instead.
@@ -155,7 +159,8 @@ governs any future tree-sync variant of the deploy.
 
 | Path | Class | Notes |
 | --- | --- | --- |
-| `/home/perttu/chrote/chrote-server` | **deploy target** | The one artifact the deploy replaces (with backup). |
+| `/home/perttu/chrote/chrote-server` | **deploy target** | Runtime server binary; the deploy replaces it with backup. |
+| `/home/perttu/chrote/terminal-launch.sh` | **deploy target** | ttyd launch script for plain tmux and `gc:<id>` terminal attaches; the deploy replaces it with backup. |
 | `src/internal/dashboard/dist/`, `dashboard/dist/`, `dashboard/.vite/` | generated | Rebuilt each deploy; gitignored. Never source-sync. |
 | `dashboard/node_modules/`, `*/node_modules/` | generated | Rebuild from lockfile; never sync. |
 | `dashboard/coverage/`, `dashboard/playwright-report/`, `**/test-results/` | generated | Test output; never sync. |

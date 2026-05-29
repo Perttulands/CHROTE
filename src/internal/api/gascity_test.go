@@ -3,12 +3,10 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -23,8 +21,8 @@ func TestLoadGasCityConfigFromEnvDefaultsToLoopbackSupervisor(t *testing.T) {
 	if cfg.BaseURL != "http://127.0.0.1:8372" {
 		t.Fatalf("BaseURL = %q, want default localhost supervisor", cfg.BaseURL)
 	}
-	if cfg.CityDir != defaultGasCityCityDir || cfg.PoemTarget != defaultGasCityPoemTarget || cfg.PoemTemplate != defaultGasCityPoemTemplate || cfg.MailRecipient != defaultGasCityMailRecipient {
-		t.Fatalf("control defaults = %+v, want local city, Pi target, and human recipient", cfg)
+	if cfg.CityDir != defaultGasCityCityDir {
+		t.Fatalf("CityDir = %q, want default local city", cfg.CityDir)
 	}
 }
 
@@ -123,7 +121,7 @@ func TestResolveGasCityGCExtraPathSkipsServiceTmuxDir(t *testing.T) {
 	}
 }
 
-func TestGasCityHandlerObserverFetchesReadOnlySummary(t *testing.T) {
+func TestGasCityHandlerObserverFetchesReadOnlySessionMetadata(t *testing.T) {
 	var seen []string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -151,20 +149,12 @@ func TestGasCityHandlerObserverFetchesReadOnlySummary(t *testing.T) {
 				},
 				"total": 1,
 			})
-		case "/v0/city/testcity/status":
-			writeTestJSON(w, http.StatusOK, map[string]any{
-				"name":       "testcity",
-				"running":    2,
-				"uptime_sec": 99,
-				"work":       map[string]any{"open": 7, "ready": 3, "in_progress": 1},
-				"mail":       map[string]any{"total": 5, "unread": 2},
-			})
-		case "/v0/city/testcity/sessions?limit=50&peek=false&state=active":
+		case "/v0/city/testcity/sessions?limit=100&peek=false&state=all":
 			writeTestJSON(w, http.StatusOK, map[string]any{
 				"items": []map[string]any{
 					{
 						"id":           "gc-1",
-						"title":        "planner",
+						"title":        "Planner",
 						"alias":        "planner",
 						"template":     "planner",
 						"state":        "active",
@@ -173,41 +163,10 @@ func TestGasCityHandlerObserverFetchesReadOnlySummary(t *testing.T) {
 						"created_at":   "2026-05-26T10:00:00Z",
 						"last_active":  "2026-05-26T10:01:00Z",
 						"running":      true,
+						"attached":     true,
 					},
 				},
 				"total": 1,
-			})
-		case "/v0/city/testcity/mail/count":
-			writeTestJSON(w, http.StatusOK, map[string]any{"total": 5, "unread": 2})
-		case "/v0/city/testcity/formulas?scope_kind=city&scope_ref=testcity":
-			writeTestJSON(w, http.StatusOK, map[string]any{
-				"items": []map[string]any{
-					{"name": "plan-review-synthesis", "description": "Plan and review.", "version": "1", "run_count": 2},
-				},
-				"total": 1,
-			})
-		case "/v0/city/testcity/convoys":
-			writeTestJSON(w, http.StatusOK, map[string]any{
-				"items": []map[string]any{
-					{"id": "gc-30", "title": "sling-gc-29", "status": "open", "issue_type": "convoy"},
-				},
-				"total": 1,
-			})
-		case "/v0/city/testcity/beads?limit=50":
-			writeTestJSON(w, http.StatusOK, map[string]any{
-				"items": []map[string]any{
-					{"id": "gc-29", "title": "Routed task", "status": "open", "issue_type": "task", "metadata": map[string]string{"gc.routed_to": "planner"}},
-					{"id": "gc-31", "title": "Review molecule", "status": "open", "issue_type": "molecule", "ref": "plan-review-synthesis"},
-					{"id": "gc-32", "title": "Temporary workflow", "status": "open", "issue_type": "wisp", "ref": "mol-review-quorum"},
-				},
-				"total": 3,
-			})
-		case "/v0/events?limit=20":
-			writeTestJSON(w, http.StatusOK, map[string]any{
-				"items": []map[string]any{
-					{"seq": 101, "type": "session.woke", "ts": "2026-05-26T10:02:00Z", "actor": "controller", "subject": "planner", "city": "testcity"},
-				},
-				"total": 101,
 			})
 		default:
 			t.Fatalf("unexpected upstream request %s", r.URL.RequestURI())
@@ -239,41 +198,31 @@ func TestGasCityHandlerObserverFetchesReadOnlySummary(t *testing.T) {
 	if data.Status != "ok" {
 		t.Fatalf("observer status = %q, want ok; errors=%+v", data.Status, data.UpstreamErrors)
 	}
-	if data.Health.Status != "ok" || !data.Health.StartupReady {
-		t.Fatalf("health = %+v, want ok startup-ready health", data.Health)
+	if len(data.Sessions) != 1 {
+		t.Fatalf("sessions = %+v, want one Gas City session", data.Sessions)
 	}
-	if len(data.Cities) != 1 || data.Cities[0].Name != "testcity" || !data.Cities[0].Running {
-		t.Fatalf("cities = %+v, want running testcity", data.Cities)
+	session := data.Sessions[0]
+	if session.Source != "gascity" || session.ID != "gc-1" || session.Name != "planner" || session.Title != "Planner" || session.Alias != "planner" || session.Template != "planner" || session.Status != "active" || session.AttachTarget != "gc:gc-1" || !session.Running || !session.Attached {
+		t.Fatalf("session = %+v, want read-only identity metadata with stable gc attach target", session)
 	}
-	if len(data.Sessions) != 1 || data.Sessions[0].ID != "gc-1" || !data.Sessions[0].Running {
-		t.Fatalf("sessions = %+v, want running gc-1 session", data.Sessions)
-	}
-	if data.Mail.Total != 5 || data.Mail.Unread != 2 {
-		t.Fatalf("mail = %+v, want total=5 unread=2", data.Mail)
-	}
-	if data.Work.Open != 7 || data.Work.Ready != 3 || data.Work.InProgress != 1 || data.Work.Routed != 1 {
-		t.Fatalf("work = %+v, want status and routed counts", data.Work)
-	}
-	if len(data.Formulas) != 1 || data.Formulas[0].Name != "plan-review-synthesis" {
-		t.Fatalf("formulas = %+v, want plan-review-synthesis", data.Formulas)
-	}
-	if len(data.Molecules) != 1 || data.Molecules[0].ID != "gc-31" {
-		t.Fatalf("molecules = %+v, want gc-31", data.Molecules)
-	}
-	if len(data.Wisps) != 1 || data.Wisps[0].ID != "gc-32" {
-		t.Fatalf("wisps = %+v, want gc-32", data.Wisps)
-	}
-	if len(data.Convoys) != 1 || data.Convoys[0].ID != "gc-30" {
-		t.Fatalf("convoys = %+v, want gc-30", data.Convoys)
-	}
-	if len(data.RecentEvents) != 1 || data.RecentEvents[0].Type != "session.woke" {
-		t.Fatalf("recent events = %+v, want session.woke event", data.RecentEvents)
+	wantSeen := strings.Join([]string{
+		"GET /health",
+		"GET /v0/cities",
+		"GET /v0/city/testcity/sessions?limit=100&peek=false&state=all",
+	}, "\n")
+	if gotSeen := strings.Join(seen, "\n"); gotSeen != wantSeen {
+		t.Fatalf("upstream requests = %q, want only read-only session metadata requests %q", gotSeen, wantSeen)
 	}
 
-	sort.Strings(seen)
-	for _, request := range seen {
-		if strings.Contains(request, "/wake") || strings.Contains(request, "/sling") || strings.Contains(request, "/close") {
-			t.Fatalf("observer made mutating-looking upstream request: %s", request)
+	var raw struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode raw observer response: %v", err)
+	}
+	for _, forbidden := range []string{"health", "cities", "mail", "work", "formulas", "molecules", "wisps", "convoys", "recentEvents"} {
+		if _, ok := raw.Data[forbidden]; ok {
+			t.Fatalf("observer response retained %q hidden surface: %s", forbidden, rec.Body.String())
 		}
 	}
 }
@@ -307,8 +256,8 @@ func TestGasCityHandlerObserverReportsUnavailableWithoutRunningSupervisor(t *tes
 	if response.Data.Error == "" {
 		t.Fatal("unavailable observer should include a clear error")
 	}
-	if len(response.Data.Sessions) != 0 || response.Data.Mail.Total != 0 || len(response.Data.RecentEvents) != 0 {
-		t.Fatalf("unavailable observer should return empty read model, got %+v", response.Data)
+	if len(response.Data.Sessions) != 0 {
+		t.Fatalf("unavailable observer should return no sessions, got %+v", response.Data.Sessions)
 	}
 	body := rec.Body.String()
 	if strings.Contains(body, upstream.URL) || strings.Contains(body, "127.0.0.1") || strings.Contains(body, "connect:") {
@@ -341,27 +290,15 @@ func TestGasCityHandlerObserverBlocksNonLoopbackConfig(t *testing.T) {
 	}
 }
 
-func TestGasCityHandlerObserverDegradesWhenOptionalRoutesFail(t *testing.T) {
+func TestGasCityHandlerObserverDegradesWhenSessionRouteFails(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.RequestURI() {
 		case "/health":
 			writeTestJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 		case "/v0/cities":
 			writeTestJSON(w, http.StatusOK, map[string]any{"items": []map[string]any{{"name": "testcity", "running": true}}})
-		case "/v0/city/testcity/status":
-			writeTestJSON(w, http.StatusOK, map[string]any{"name": "testcity", "work": map[string]any{"open": 1}})
-		case "/v0/city/testcity/sessions?limit=50&peek=false&state=active":
-			writeTestJSON(w, http.StatusOK, map[string]any{"items": []map[string]any{}})
-		case "/v0/city/testcity/mail/count":
-			writeTestJSON(w, http.StatusOK, map[string]any{"total": 0, "unread": 0})
-		case "/v0/city/testcity/formulas?scope_kind=city&scope_ref=testcity":
-			writeTestJSON(w, http.StatusBadRequest, map[string]any{"detail": "scope unavailable"})
-		case "/v0/city/testcity/convoys":
-			writeTestJSON(w, http.StatusOK, map[string]any{"items": []map[string]any{}})
-		case "/v0/city/testcity/beads?limit=50":
-			writeTestJSON(w, http.StatusOK, map[string]any{"items": []map[string]any{}})
-		case "/v0/events?limit=20":
-			writeTestJSON(w, http.StatusServiceUnavailable, map[string]any{"detail": "events unavailable"})
+		case "/v0/city/testcity/sessions?limit=100&peek=false&state=all":
+			writeTestJSON(w, http.StatusServiceUnavailable, map[string]any{"detail": "sessions unavailable"})
 		default:
 			t.Fatalf("unexpected upstream request %s", r.URL.RequestURI())
 		}
@@ -384,799 +321,35 @@ func TestGasCityHandlerObserverDegradesWhenOptionalRoutesFail(t *testing.T) {
 	if response.Data.Status != "degraded" {
 		t.Fatalf("status = %q, want degraded", response.Data.Status)
 	}
-	if response.Data.Work.Open != 1 {
-		t.Fatalf("work = %+v, want status data preserved despite optional failures", response.Data.Work)
+	if len(response.Data.Sessions) != 0 {
+		t.Fatalf("sessions = %+v, want empty sessions when route fails", response.Data.Sessions)
 	}
-	if len(response.Data.Formulas) != 0 || len(response.Data.RecentEvents) != 0 {
-		t.Fatalf("failed optional routes should return empty collections, got formulas=%+v events=%+v", response.Data.Formulas, response.Data.RecentEvents)
-	}
-	if len(response.Data.UpstreamErrors) != 2 {
-		t.Fatalf("upstream errors = %+v, want formulas and events errors", response.Data.UpstreamErrors)
+	if len(response.Data.UpstreamErrors) != 1 || response.Data.UpstreamErrors[0].Route != "/v0/city/{city}/sessions" {
+		t.Fatalf("upstream errors = %+v, want session-route error only", response.Data.UpstreamErrors)
 	}
 }
 
-func TestGasCityHandlerMailListsHumanMessagesFromStore(t *testing.T) {
-	cityDir := t.TempDir()
-	longBody := strings.Repeat("a", gasCityMailBodyLimit+10)
-	writeTestGasCityBeads(t, cityDir, map[string]any{
-		"beads": []map[string]any{
-			{
-				"id":          "gc-task",
-				"issue_type":  "task",
-				"title":       "not mail",
-				"description": "should not appear",
-				"assignee":    "human",
-				"created_at":  "2026-05-27T09:00:00Z",
-			},
-			{
-				"id":          "gc-older",
-				"issue_type":  "message",
-				"title":       "Older reply",
-				"description": "first body",
-				"from":        "chrote-poem-pi",
-				"assignee":    "human",
-				"created_at":  "2026-05-27T09:01:00Z",
-				"metadata": map[string]any{
-					"mail.from_session_id": "gc-51923",
-					"mail.read":            "true",
-				},
-			},
-			{
-				"id":          "gc-other",
-				"issue_type":  "message",
-				"title":       "Wrong recipient",
-				"description": "not human",
-				"from":        "planner",
-				"assignee":    "planner",
-				"created_at":  "2026-05-27T09:02:00Z",
-			},
-			{
-				"id":          "gc-newer",
-				"issue_type":  "message",
-				"title":       "Newer reply",
-				"description": longBody,
-				"from":        "chrote-poem-pi",
-				"assignee":    "human",
-				"created_at":  "2026-05-27T09:03:00Z",
-				"metadata": map[string]any{
-					"mail.from_display":    "chrote-poem-pi",
-					"mail.from_session_id": "gc-51923",
-				},
-			},
-		},
-		"deps": []any{},
-		"seq":  4,
-	})
-
-	handler := NewGasCityHandler(GasCityConfig{CityDir: cityDir})
+func TestGasCityHandlerDoesNotRegisterHiddenProductSurfaceRoutes(t *testing.T) {
+	handler := NewGasCityHandler(GasCityConfig{BaseURL: "http://127.0.0.1:8372"})
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/gascity/mail?recipient=human&limit=20", nil))
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
-	}
-	var response struct {
-		Success bool                    `json:"success"`
-		Data    GasCityMailListResponse `json:"data"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode mail response: %v", err)
-	}
-	if !response.Success {
-		t.Fatal("mail response should use success envelope")
-	}
-	if response.Data.Recipient != "human" {
-		t.Fatalf("recipient = %q, want human", response.Data.Recipient)
-	}
-	if len(response.Data.Messages) != 2 {
-		t.Fatalf("messages = %+v, want two human message beads", response.Data.Messages)
-	}
-	newest := response.Data.Messages[0]
-	if newest.ID != "gc-newer" || newest.Subject != "Newer reply" || newest.From != "chrote-poem-pi" {
-		t.Fatalf("newest = %+v, want newest human mail first", newest)
-	}
-	if !newest.BodyTruncated || len(newest.Body) != gasCityMailBodyLimit {
-		t.Fatalf("newest body length/truncated = %d/%v, want limited body", len(newest.Body), newest.BodyTruncated)
-	}
-	older := response.Data.Messages[1]
-	if older.ID != "gc-older" || !older.Read || older.FromSessionID != "gc-51923" {
-		t.Fatalf("older = %+v, want read message with session metadata", older)
-	}
-}
-
-func TestGasCityHandlerMailReadsCurrentSizedStore(t *testing.T) {
-	cityDir := t.TempDir()
-	writeTestGasCityBeads(t, cityDir, map[string]any{
-		"beads": []map[string]any{
-			{
-				"id":          "gc-large-task",
-				"issue_type":  "task",
-				"title":       "large non-mail history",
-				"description": strings.Repeat("x", 21<<20),
-				"assignee":    "planner",
-				"created_at":  "2026-05-27T09:00:00Z",
-			},
-			{
-				"id":          "gc-live-mail",
-				"issue_type":  "message",
-				"title":       "Latest reply",
-				"description": "current live-sized store still parses",
-				"from":        "chrote-poem-pi",
-				"assignee":    "human",
-				"created_at":  "2026-05-27T09:03:00Z",
-			},
-		},
-		"deps": []any{},
-		"seq":  2,
-	})
-
-	handler := NewGasCityHandler(GasCityConfig{CityDir: cityDir})
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/gascity/mail?recipient=human&limit=20", nil))
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 for live-sized store; body: %s", rec.Code, rec.Body.String())
-	}
-	var response struct {
-		Data GasCityMailListResponse `json:"data"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode mail response: %v", err)
-	}
-	if len(response.Data.Messages) != 1 || response.Data.Messages[0].ID != "gc-live-mail" {
-		t.Fatalf("messages = %+v, want live-sized store mail", response.Data.Messages)
-	}
-}
-
-func TestGasCityHandlerPiPoemRejectsUnsafeTopic(t *testing.T) {
-	runner := &fakeGasCityRunner{}
-	handler := NewGasCityHandler(GasCityConfig{CityDir: t.TempDir()})
-	handler.runner = runner
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/gascity/requests/pi-poem", strings.NewReader(`{"topic":"mail; rm -rf /"}`)))
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
-	}
-	if runner.calls != 0 {
-		t.Fatalf("runner calls = %d, want no Gas City mutation for unsafe topic", runner.calls)
-	}
-}
-
-func TestGasCityHandlerPiPoemRejectsRawCommandFields(t *testing.T) {
-	runner := &fakeGasCityRunner{}
-	handler := NewGasCityHandler(GasCityConfig{CityDir: t.TempDir()})
-	handler.runner = runner
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/gascity/requests/pi-poem", strings.NewReader(`{"topic":"mail routes","command":"gc session stop gc-1"}`)))
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
-	}
-	if runner.calls != 0 {
-		t.Fatalf("runner calls = %d, want no Gas City mutation when browser sends raw command text", runner.calls)
-	}
-}
-
-func TestGasCityHandlerPiPoemNudgesConfiguredTargetWithBoundedCommand(t *testing.T) {
-	runner := &fakeGasCityRunner{output: "Nudged chrote-poem-pi\n"}
-	cityDir := t.TempDir()
-	upstream := newTestGasCitySupervisor(t, cityDir, []map[string]any{
-		{
-			"id":           "gc-51923",
-			"alias":        "chrote-poem-pi",
-			"template":     "pi-smoke",
-			"state":        "active",
-			"running":      true,
-			"session_name": "s-gc-51923",
-			"title":        "pi-smoke",
-		},
-	})
-	defer upstream.Close()
-	handler := NewGasCityHandler(GasCityConfig{BaseURL: upstream.URL, CityDir: cityDir})
-	handler.runner = runner
-	handler.nonce = func() string { return "C4A-TEST-NONCE" }
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/gascity/requests/pi-poem", strings.NewReader(`{"topic":"mail routes"}`)))
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
-	}
-	if runner.calls != 1 {
-		t.Fatalf("runner calls = %d, want one bounded gc invocation", runner.calls)
-	}
-	if runner.name != "gc" {
-		t.Fatalf("runner name = %q, want gc", runner.name)
-	}
-	wantPrefix := []string{"--city", cityDir, "session", "nudge", "gc-51923", "--delivery", "immediate"}
-	if len(runner.args) != len(wantPrefix)+1 {
-		t.Fatalf("args = %#v, want prefix plus one bounded shell command", runner.args)
-	}
-	for i, want := range wantPrefix {
-		if runner.args[i] != want {
-			t.Fatalf("args[%d] = %q, want %q; args=%#v", i, runner.args[i], want, runner.args)
-		}
-	}
-	command := runner.args[len(runner.args)-1]
-	for _, required := range []string{
-		"! set -euo pipefail;",
-		"pi --no-tools --no-context-files --no-extensions --no-skills --no-prompt-templates --no-session --mode text --print",
-		"mail routes",
-		"C4A-TEST-NONCE",
-		"gc mail send 'human'",
-		"CHROTE Pi poem C4A-TEST-NONCE",
+	for _, tc := range []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{method: http.MethodPost, path: "/api/gascity/requests/pi-poem", body: `{"topic":"mail routes"}`},
+		{method: http.MethodGet, path: "/api/gascity/workflows/review-quorum/capability"},
+		{method: http.MethodPost, path: "/api/gascity/workflows/review-quorum", body: `{"subject":"home-123"}`},
+		{method: http.MethodGet, path: "/api/gascity/mail"},
+		{method: http.MethodGet, path: "/api/gascity/audit"},
 	} {
-		if !strings.Contains(command, required) {
-			t.Fatalf("bounded command missing %q: %s", required, command)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body)))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s %s status = %d, want 404 after removing hidden Gas City product surfaces; body: %s", tc.method, tc.path, rec.Code, rec.Body.String())
 		}
-	}
-	for _, forbidden := range []string{"gc session stop", "gc --city", "CHROTE_GASCITY", "CONTEXT_API_TOKEN"} {
-		if strings.Contains(command, forbidden) {
-			t.Fatalf("bounded command exposed forbidden text %q: %s", forbidden, command)
-		}
-	}
-
-	var response struct {
-		Success bool                  `json:"success"`
-		Data    GasCityPiPoemResponse `json:"data"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode poem response: %v", err)
-	}
-	if !response.Success {
-		t.Fatal("poem response should use success envelope")
-	}
-	if response.Data.Nonce != "C4A-TEST-NONCE" || response.Data.Target != "gc-51923" || response.Data.TargetAlias != "chrote-poem-pi" || response.Data.TargetTemplate != "pi-smoke" || response.Data.TargetSessionID != "gc-51923" || response.Data.Recipient != "human" {
-		t.Fatalf("poem response = %+v, want fixed nonce/resolved target/recipient", response.Data)
-	}
-	if response.Data.Output != "Nudged chrote-poem-pi" {
-		t.Fatalf("output = %q, want sanitized runner output", response.Data.Output)
-	}
-	if len(handler.audit) != 1 || handler.audit[0].Nonce != "C4A-TEST-NONCE" || handler.audit[0].TargetSessionID != "gc-51923" || !handler.audit[0].Success {
-		t.Fatalf("audit = %+v, want one successful bounded request entry", handler.audit)
-	}
-
-	auditRec := httptest.NewRecorder()
-	mux.ServeHTTP(auditRec, httptest.NewRequest(http.MethodGet, "/api/gascity/audit", nil))
-	if auditRec.Code != http.StatusOK {
-		t.Fatalf("audit status = %d, want 200; body: %s", auditRec.Code, auditRec.Body.String())
-	}
-	var auditResponse struct {
-		Data GasCityAuditResponse `json:"data"`
-	}
-	if err := json.Unmarshal(auditRec.Body.Bytes(), &auditResponse); err != nil {
-		t.Fatalf("decode audit response: %v", err)
-	}
-	if len(auditResponse.Data.Entries) != 1 || auditResponse.Data.Entries[0].TargetSessionID != "gc-51923" {
-		t.Fatalf("audit response = %+v, want inspectable resolved target audit", auditResponse.Data)
-	}
-}
-
-func TestGasCityHandlerPiPoemRejectsUnexpectedTargetTemplate(t *testing.T) {
-	runner := &fakeGasCityRunner{}
-	cityDir := t.TempDir()
-	upstream := newTestGasCitySupervisor(t, cityDir, []map[string]any{
-		{
-			"id":       "gc-51923",
-			"alias":    "chrote-poem-pi",
-			"template": "planner",
-			"state":    "active",
-			"running":  true,
-		},
-	})
-	defer upstream.Close()
-	handler := NewGasCityHandler(GasCityConfig{BaseURL: upstream.URL, CityDir: cityDir})
-	handler.runner = runner
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/gascity/requests/pi-poem", strings.NewReader(`{"topic":"mail routes"}`)))
-
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want 409; body: %s", rec.Code, rec.Body.String())
-	}
-	if runner.calls != 0 {
-		t.Fatalf("runner calls = %d, want no Gas City mutation for unexpected target template", runner.calls)
-	}
-}
-
-func TestGasCityHandlerReviewQuorumRejectsRawCommandFields(t *testing.T) {
-	runner := &fakeGasCityRunner{}
-	handler := NewGasCityHandler(GasCityConfig{CityDir: t.TempDir()})
-	handler.runner = runner
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/gascity/workflows/review-quorum", strings.NewReader(`{
-		"subject":"home-4xv.4",
-		"command":"gc sling planner mol-review-quorum --formula",
-		"laneOne":{"id":"codex-review","provider":"codex","model":"codex-cli-default","target":"codex-review"},
-		"laneTwo":{"id":"claude-review","provider":"claude","model":"claude-cli-default","target":"claude-review"},
-		"synthesisTarget":"codex-synth"
-	}`)))
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
-	}
-	if runner.calls != 0 {
-		t.Fatalf("runner calls = %d, want no Gas City invocation when browser sends raw command text", runner.calls)
-	}
-}
-
-func TestGasCityHandlerReviewQuorumRejectsMutatingSafetyMode(t *testing.T) {
-	runner := &fakeGasCityRunner{}
-	handler := NewGasCityHandler(GasCityConfig{CityDir: t.TempDir()})
-	handler.runner = runner
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/gascity/workflows/review-quorum", strings.NewReader(`{
-		"subject":"home-4xv.4",
-		"safetyMode":"write",
-		"laneOne":{"id":"codex-review","provider":"codex","model":"codex-cli-default","target":"codex-review"},
-		"laneTwo":{"id":"claude-review","provider":"claude","model":"claude-cli-default","target":"claude-review"},
-		"synthesisTarget":"codex-synth"
-	}`)))
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
-	}
-	if runner.calls != 0 {
-		t.Fatalf("runner calls = %d, want no Gas City invocation for mutating safety mode", runner.calls)
-	}
-}
-
-func TestNormalizeGasCityReviewQuorumDefaultTitleFallsBackWhenSubjectWouldOverflow(t *testing.T) {
-	launch, err := normalizeGasCityReviewQuorumRequest(GasCityReviewQuorumRequest{
-		Subject: strings.Repeat("a", gasCityReviewQuorumTextLimit),
-		LaneOne: GasCityReviewQuorumLane{
-			ID:       "codex-review",
-			Provider: "codex",
-			Model:    "codex-cli-default",
-			Target:   "codex-review",
-		},
-		LaneTwo: GasCityReviewQuorumLane{
-			ID:       "claude-review",
-			Provider: "claude",
-			Model:    "claude-cli-default",
-			Target:   "claude-review",
-		},
-		SynthesisTarget: "codex-synth",
-	})
-	if err != nil {
-		t.Fatalf("normalize review quorum request: %v", err)
-	}
-	if launch.Title != "Review quorum" {
-		t.Fatalf("title = %q, want bounded fallback title for long default", launch.Title)
-	}
-	if launch.BaseRef != gasCityReviewQuorumBaseRef {
-		t.Fatalf("baseRef = %q, want default %q", launch.BaseRef, gasCityReviewQuorumBaseRef)
-	}
-}
-
-func TestGasCityHandlerReviewQuorumRejectsDuplicateLaneIDs(t *testing.T) {
-	runner := &fakeGasCityRunner{}
-	handler := NewGasCityHandler(GasCityConfig{CityDir: t.TempDir()})
-	handler.runner = runner
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/gascity/workflows/review-quorum", strings.NewReader(`{
-		"subject":"home-4xv.4",
-		"laneOne":{"id":"same-lane","provider":"codex","model":"codex-cli-default","target":"codex-review"},
-		"laneTwo":{"id":"same-lane","provider":"claude","model":"claude-cli-default","target":"claude-review"},
-		"synthesisTarget":"codex-synth"
-	}`)))
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
-	}
-	if runner.calls != 0 {
-		t.Fatalf("runner calls = %d, want no Gas City invocation for duplicate durable lane ids", runner.calls)
-	}
-	if !strings.Contains(rec.Body.String(), "review lane IDs must be different") {
-		t.Fatalf("body = %s, want duplicate lane id rejection", rec.Body.String())
-	}
-}
-
-func TestGasCityHandlerReviewQuorumRejectsInvalidScopeKind(t *testing.T) {
-	runner := &fakeGasCityRunner{}
-	handler := NewGasCityHandler(GasCityConfig{CityDir: t.TempDir()})
-	handler.runner = runner
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/gascity/workflows/review-quorum", strings.NewReader(`{
-		"subject":"home-4xv.4",
-		"scopeKind":"chrote-workflow",
-		"laneOne":{"id":"codex-review","provider":"codex","model":"codex-cli-default","target":"codex-review"},
-		"laneTwo":{"id":"claude-review","provider":"claude","model":"claude-cli-default","target":"claude-review"},
-		"synthesisTarget":"codex-synth"
-	}`)))
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
-	}
-	if runner.calls != 0 {
-		t.Fatalf("runner calls = %d, want no Gas City invocation for invalid scope kind", runner.calls)
-	}
-}
-
-func TestGasCityHandlerReviewQuorumRejectsFixedMockReviewerTargets(t *testing.T) {
-	runner := &fakeGasCityRunner{}
-	handler := NewGasCityHandler(GasCityConfig{CityDir: t.TempDir()})
-	handler.runner = runner
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/gascity/workflows/review-quorum", strings.NewReader(`{
-		"subject":"home-4xv.4",
-		"laneOne":{"id":"lane-one-codex","provider":"codex","model":"codex-cli-default","target":"reviewer-a"},
-		"laneTwo":{"id":"lane-two-claude","provider":"claude","model":"claude-cli-default","target":"reviewer-b"},
-		"synthesisTarget":"codex-synth"
-	}`)))
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
-	}
-	if runner.calls != 0 {
-		t.Fatalf("runner calls = %d, want allowlist rejection before gc status/preflight", runner.calls)
-	}
-	if !strings.Contains(rec.Body.String(), "configured read-only review-quorum worker target") {
-		t.Fatalf("body = %s, want configured worker target rejection", rec.Body.String())
-	}
-}
-
-func TestGasCityHandlerReviewQuorumRejectsMissingConfiguredTargetFromStatus(t *testing.T) {
-	cityDir := t.TempDir()
-	runner := &scriptedGasCityRunner{results: []struct {
-		output string
-		err    error
-	}{
-		{output: `{"schema_version":"1","ok":true,"agents":[{"qualified_name":"codex-review"},{"qualified_name":"codex-synth"}]}`},
-	}}
-	handler := NewGasCityHandler(GasCityConfig{CityDir: cityDir})
-	handler.runner = runner
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/gascity/workflows/review-quorum", strings.NewReader(`{
-		"subject":"home-4xv.4",
-		"laneOne":{"id":"codex-review","provider":"codex","model":"codex-cli-default","target":"codex-review"},
-		"laneTwo":{"id":"claude-review","provider":"claude","model":"claude-cli-default","target":"claude-review"},
-		"synthesisTarget":"codex-synth"
-	}`)))
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
-	}
-	if runner.calls != 1 {
-		t.Fatalf("runner calls = %d, want only gc status before rejecting missing target", runner.calls)
-	}
-	wantStatus := expectedReviewQuorumStatusArgs(cityDir)
-	if strings.Join(runner.args[0], "\x00") != strings.Join(wantStatus, "\x00") {
-		t.Fatalf("status args = %#v, want %#v", runner.args[0], wantStatus)
-	}
-	if !strings.Contains(rec.Body.String(), "claude-review is not registered in Gas City") {
-		t.Fatalf("body = %s, want missing registered target rejection", rec.Body.String())
-	}
-}
-
-func TestGasCityHandlerReviewQuorumCapabilityAvailable(t *testing.T) {
-	cityDir := t.TempDir()
-	runner := &scriptedGasCityRunner{results: []struct {
-		output string
-		err    error
-	}{
-		{output: reviewQuorumStatusJSON()},
-		{output: `{"formula":"mol-review-quorum"}`},
-	}}
-	handler := NewGasCityHandler(GasCityConfig{CityDir: cityDir})
-	handler.runner = runner
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/gascity/workflows/review-quorum/capability", nil))
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
-	}
-	if runner.calls != 2 {
-		t.Fatalf("runner calls = %d, want status and formula preflight", runner.calls)
-	}
-	wantPreflight := expectedReviewQuorumPreflightArgsFor(cityDir, "capability-check", gasCityReviewQuorumBaseRef, "capability-codex", "capability-claude")
-	if strings.Join(runner.args[1], "\x00") != strings.Join(wantPreflight, "\x00") {
-		t.Fatalf("preflight args = %#v, want %#v", runner.args[1], wantPreflight)
-	}
-	var response struct {
-		Success bool                                  `json:"success"`
-		Data    GasCityReviewQuorumCapabilityResponse `json:"data"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode capability response: %v", err)
-	}
-	if !response.Success || !response.Data.Available || response.Data.Formula != "mol-review-quorum" {
-		t.Fatalf("response = %+v, want available mol-review-quorum capability", response)
-	}
-	wantTargets := []string{"codex-review", "claude-review", "codex-synth"}
-	if strings.Join(response.Data.Targets, "\x00") != strings.Join(wantTargets, "\x00") {
-		t.Fatalf("targets = %+v, want %+v", response.Data.Targets, wantTargets)
-	}
-}
-
-func TestGasCityHandlerReviewQuorumCapabilityUnavailableKeepsSanitizedReason(t *testing.T) {
-	cityDir := t.TempDir()
-	runner := &scriptedGasCityRunner{results: []struct {
-		output string
-		err    error
-	}{
-		{output: reviewQuorumStatusJSON()},
-		{output: "\x1b[31mformula unavailable\x1b[0m\n", err: errors.New("exit status 1")},
-	}}
-	handler := NewGasCityHandler(GasCityConfig{CityDir: cityDir})
-	handler.runner = runner
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/gascity/workflows/review-quorum/capability", nil))
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
-	}
-	var response struct {
-		Data GasCityReviewQuorumCapabilityResponse `json:"data"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode capability response: %v", err)
-	}
-	if response.Data.Available {
-		t.Fatalf("response = %+v, want unavailable capability", response.Data)
-	}
-	if !strings.Contains(response.Data.Reason, "formula unavailable") || strings.Contains(response.Data.Reason, "\x1b") {
-		t.Fatalf("reason = %q, want sanitized formula failure output", response.Data.Reason)
-	}
-}
-
-func TestGasCityHandlerReviewQuorumPreflightFailureDoesNotSling(t *testing.T) {
-	cityDir := t.TempDir()
-	runner := &scriptedGasCityRunner{results: []struct {
-		output string
-		err    error
-	}{
-		{output: reviewQuorumStatusJSON()},
-		{output: "formula unavailable\n", err: errors.New("exit status 1")},
-	}}
-	handler := NewGasCityHandler(GasCityConfig{CityDir: cityDir})
-	handler.runner = runner
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/gascity/workflows/review-quorum", strings.NewReader(`{
-		"subject":"home-4xv.4",
-		"title":"Quorum home-4xv.4",
-		"laneOne":{"id":"codex-review","provider":"codex","model":"codex-cli-default","target":"codex-review"},
-		"laneTwo":{"id":"claude-review","provider":"claude","model":"claude-cli-default","target":"claude-review"},
-		"synthesisTarget":"codex-synth"
-	}`)))
-
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503; body: %s", rec.Code, rec.Body.String())
-	}
-	if runner.calls != 2 {
-		t.Fatalf("runner calls = %d, want status check and formula preflight", runner.calls)
-	}
-	wantStatus := expectedReviewQuorumStatusArgs(cityDir)
-	if strings.Join(runner.args[0], "\x00") != strings.Join(wantStatus, "\x00") {
-		t.Fatalf("status args = %#v, want %#v", runner.args[0], wantStatus)
-	}
-	wantArgs := expectedReviewQuorumPreflightArgs(cityDir, "home-4xv.4", gasCityReviewQuorumBaseRef)
-	if strings.Join(runner.args[1], "\x00") != strings.Join(wantArgs, "\x00") {
-		t.Fatalf("preflight args = %#v, want %#v", runner.args[1], wantArgs)
-	}
-	var response struct {
-		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode error response: %v", err)
-	}
-	if response.Error.Code != "GASCITY_FORMULA_UNAVAILABLE" || !strings.Contains(response.Error.Message, "review quorum formula is unavailable") {
-		t.Fatalf("error = %+v, want clear formula unavailable response", response.Error)
-	}
-	if !strings.Contains(response.Error.Message, "formula unavailable") {
-		t.Fatalf("error message = %q, want sanitized preflight output", response.Error.Message)
-	}
-	if len(handler.audit) != 1 || handler.audit[0].Action != "review-quorum" || handler.audit[0].Target != "codex-synth" || handler.audit[0].Subject != "home-4xv.4" || handler.audit[0].Success {
-		t.Fatalf("audit = %+v, want failed review-quorum preflight entry", handler.audit)
-	}
-	audit := handler.audit[0]
-	if audit.Mode != gasCityReviewQuorumMode || audit.BaseRef != gasCityReviewQuorumBaseRef || audit.ScopeKind != "city" || audit.ScopeRef != "gascity" || audit.LaneOneTarget != "codex-review" || audit.LaneTwoTarget != "claude-review" {
-		t.Fatalf("audit = %+v, want mode/baseRef/scope/lane targets without safety guarantee", audit)
-	}
-}
-
-func TestGasCityHandlerReviewQuorumRunsFixedFormulaPreflightAndLaunch(t *testing.T) {
-	cityDir := t.TempDir()
-	runner := &scriptedGasCityRunner{results: []struct {
-		output string
-		err    error
-	}{
-		{output: reviewQuorumStatusJSON()},
-		{output: `{"formula":"mol-review-quorum"}`},
-		{output: `{"workflow_id":"gc-9001"}`},
-	}}
-	handler := NewGasCityHandler(GasCityConfig{CityDir: cityDir})
-	handler.runner = runner
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/gascity/workflows/review-quorum", strings.NewReader(`{
-		"subject":"home-4xv.4",
-		"title":"Quorum home-4xv.4",
-		"baseRef":"main",
-		"safetyMode":"read_only",
-		"laneOne":{"id":"codex-review","provider":"codex","model":"codex-cli-default","target":"codex-review"},
-		"laneTwo":{"id":"claude-review","provider":"claude","model":"claude-cli-default","target":"claude-review"},
-		"synthesisTarget":"codex-synth"
-	}`)))
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
-	}
-	if runner.calls != 3 {
-		t.Fatalf("runner calls = %d, want status check, preflight, and launch", runner.calls)
-	}
-	for i, name := range runner.names {
-		if name != "gc" {
-			t.Fatalf("runner name[%d] = %q, want gc", i, name)
-		}
-	}
-	wantStatus := expectedReviewQuorumStatusArgs(cityDir)
-	if strings.Join(runner.args[0], "\x00") != strings.Join(wantStatus, "\x00") {
-		t.Fatalf("status args = %#v, want %#v", runner.args[0], wantStatus)
-	}
-	wantPreflight := expectedReviewQuorumPreflightArgs(cityDir, "home-4xv.4", "main")
-	if strings.Join(runner.args[1], "\x00") != strings.Join(wantPreflight, "\x00") {
-		t.Fatalf("preflight args = %#v, want %#v", runner.args[1], wantPreflight)
-	}
-	wantLaunch := append([]string{
-		"--city", cityDir,
-		"sling", "codex-synth", "mol-review-quorum",
-		"--formula",
-		"--json",
-		"--no-convoy",
-		"--title", "Quorum home-4xv.4",
-		"--scope-kind", "city",
-		"--scope-ref", "gascity",
-	}, expectedReviewQuorumVarArgs("home-4xv.4", "main")...)
-	if strings.Join(runner.args[2], "\x00") != strings.Join(wantLaunch, "\x00") {
-		t.Fatalf("launch args = %#v, want %#v", runner.args[2], wantLaunch)
-	}
-
-	var response struct {
-		Success bool                        `json:"success"`
-		Data    GasCityReviewQuorumResponse `json:"data"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode review quorum response: %v", err)
-	}
-	if !response.Success {
-		t.Fatal("review quorum response should use success envelope")
-	}
-	if response.Data.Formula != "mol-review-quorum" || response.Data.WorkflowID != "gc-9001" || response.Data.Target != "codex-synth" || response.Data.Subject != "home-4xv.4" || response.Data.BaseRef != "main" || response.Data.Mode != gasCityReviewQuorumMode {
-		t.Fatalf("response = %+v, want formula/workflow id/target/subject/base ref/mode", response.Data)
-	}
-	if response.Data.Scope.Kind != "city" || response.Data.Scope.Ref != "gascity" {
-		t.Fatalf("scope = %+v, want default valid city scope", response.Data.Scope)
-	}
-	if response.Data.Output != "" {
-		t.Fatalf("output = %q, want omitted when workflow id is parsed from JSON", response.Data.Output)
-	}
-	if len(handler.audit) != 1 || handler.audit[0].Action != "review-quorum" || handler.audit[0].WorkflowID != "gc-9001" || !handler.audit[0].Success {
-		t.Fatalf("audit = %+v, want successful review-quorum entry with workflow id", handler.audit)
-	}
-	audit := handler.audit[0]
-	if audit.Mode != gasCityReviewQuorumMode || audit.BaseRef != "main" || audit.ScopeKind != "city" || audit.ScopeRef != "gascity" || audit.LaneOneTarget != "codex-review" || audit.LaneTwoTarget != "claude-review" {
-		t.Fatalf("audit = %+v, want compact mode/baseRef/scope/lane target fields", audit)
-	}
-}
-
-func TestGasCityHandlerReviewQuorumLaunchFailureReportsSanitizedOutput(t *testing.T) {
-	cityDir := t.TempDir()
-	runner := &scriptedGasCityRunner{results: []struct {
-		output string
-		err    error
-	}{
-		{output: reviewQuorumStatusJSON()},
-		{output: `{"formula":"mol-review-quorum"}`},
-		{output: "\x1b[31mworkflow exploded\x1b[0m\x00\n", err: errors.New("exit status 1")},
-	}}
-	handler := NewGasCityHandler(GasCityConfig{CityDir: cityDir})
-	handler.runner = runner
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/gascity/workflows/review-quorum", strings.NewReader(`{
-		"subject":"home-4xv.4",
-		"title":"Quorum home-4xv.4",
-		"laneOne":{"id":"codex-review","provider":"codex","model":"codex-cli-default","target":"codex-review"},
-		"laneTwo":{"id":"claude-review","provider":"claude","model":"claude-cli-default","target":"claude-review"},
-		"synthesisTarget":"codex-synth"
-	}`)))
-
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("status = %d, want 502; body: %s", rec.Code, rec.Body.String())
-	}
-	if runner.calls != 3 {
-		t.Fatalf("runner calls = %d, want status, preflight, and launch attempt", runner.calls)
-	}
-	wantLaunch := append([]string{
-		"--city", cityDir,
-		"sling", "codex-synth", "mol-review-quorum",
-		"--formula",
-		"--json",
-		"--no-convoy",
-		"--title", "Quorum home-4xv.4",
-		"--scope-kind", "city",
-		"--scope-ref", "gascity",
-	}, expectedReviewQuorumVarArgs("home-4xv.4", gasCityReviewQuorumBaseRef)...)
-	if strings.Join(runner.args[2], "\x00") != strings.Join(wantLaunch, "\x00") {
-		t.Fatalf("launch args = %#v, want default base_ref launch args %#v", runner.args[2], wantLaunch)
-	}
-
-	var response struct {
-		Error struct {
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode launch failure response: %v", err)
-	}
-	if !strings.Contains(response.Error.Message, "workflow exploded") || strings.Contains(response.Error.Message, "\x1b") {
-		t.Fatalf("error message = %q, want sanitized launch failure output", response.Error.Message)
-	}
-	if len(handler.audit) != 1 {
-		t.Fatalf("audit = %+v, want one failed launch audit entry", handler.audit)
-	}
-	audit := handler.audit[0]
-	if audit.Success || audit.Mode != gasCityReviewQuorumMode || audit.BaseRef != gasCityReviewQuorumBaseRef || !strings.Contains(audit.Error, "workflow exploded") || strings.Contains(audit.Error, "\x1b") {
-		t.Fatalf("audit = %+v, want sanitized failure output and default baseRef/mode", audit)
-	}
-}
-
-func TestSanitizeGasCityCLIOutputStripsANSI(t *testing.T) {
-	got := sanitizeGasCityCLIOutput("\x1b[31mfailed\x1b[0m\x00\n")
-	if got != "failed" {
-		t.Fatalf("sanitized CLI output = %q, want ANSI and NUL stripped", got)
 	}
 }
 
@@ -1523,21 +696,6 @@ func TestGasCityTranscriptArchiveEvictsOldestPastCap(t *testing.T) {
 	}
 }
 
-func writeTestGasCityBeads(t *testing.T, cityDir string, store map[string]any) {
-	t.Helper()
-	gcDir := filepath.Join(cityDir, ".gc")
-	if err := os.MkdirAll(gcDir, 0o755); err != nil {
-		t.Fatalf("mkdir .gc: %v", err)
-	}
-	body, err := json.Marshal(store)
-	if err != nil {
-		t.Fatalf("marshal store fixture: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(gcDir, "beads.json"), body, 0o644); err != nil {
-		t.Fatalf("write store fixture: %v", err)
-	}
-}
-
 func newTestGasCitySupervisor(t *testing.T, cityDir string, sessions []map[string]any) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1563,46 +721,6 @@ func newTestGasCitySupervisor(t *testing.T, cityDir string, sessions []map[strin
 			t.Fatalf("unexpected upstream request %s", r.URL.RequestURI())
 		}
 	}))
-}
-
-func expectedReviewQuorumPreflightArgs(cityDir, subject, baseRef string) []string {
-	return expectedReviewQuorumPreflightArgsFor(cityDir, subject, baseRef, "codex-review", "claude-review")
-}
-
-func expectedReviewQuorumPreflightArgsFor(cityDir, subject, baseRef, laneOneID, laneTwoID string) []string {
-	return append([]string{
-		"--city", cityDir,
-		"formula", "show", "mol-review-quorum",
-		"--json",
-	}, expectedReviewQuorumVarArgsFor(subject, baseRef, laneOneID, laneTwoID)...)
-}
-
-func expectedReviewQuorumStatusArgs(cityDir string) []string {
-	return []string{"--city", cityDir, "status", "--json"}
-}
-
-func expectedReviewQuorumVarArgs(subject, baseRef string) []string {
-	return expectedReviewQuorumVarArgsFor(subject, baseRef, "codex-review", "claude-review")
-}
-
-func expectedReviewQuorumVarArgsFor(subject, baseRef, laneOneID, laneTwoID string) []string {
-	return []string{
-		"--var", "subject=" + subject,
-		"--var", "base_ref=" + baseRef,
-		"--var", "lane_one_id=" + laneOneID,
-		"--var", "lane_one_provider=codex",
-		"--var", "lane_one_model=codex-cli-default",
-		"--var", "lane_one_target=codex-review",
-		"--var", "lane_two_id=" + laneTwoID,
-		"--var", "lane_two_provider=claude",
-		"--var", "lane_two_model=claude-cli-default",
-		"--var", "lane_two_target=claude-review",
-		"--var", "synthesis_target=codex-synth",
-	}
-}
-
-func reviewQuorumStatusJSON() string {
-	return `{"schema_version":"1","ok":true,"agents":[{"qualified_name":"codex-review"},{"qualified_name":"claude-review"},{"qualified_name":"codex-synth"}]}`
 }
 
 type fakeGasCityRunner struct {

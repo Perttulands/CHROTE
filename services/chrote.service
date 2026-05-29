@@ -16,6 +16,7 @@ Environment=CHROTE_WORKDIR=%h
 Environment=CHROTE_ROOTS=%h
 Environment=CHROTE_BEADS_WORKSPACES=%h
 Environment=CHROTE_LAUNCH_SCRIPT=%h/chrote/terminal-launch.sh
+Environment=CHROTE_GASCITY_CITY_DIR=%h/gascity
 Environment=CHROTE_BD_COMMAND=bd
 Environment=CHROTE_TTS_URL=http://127.0.0.1:3100
 Environment=CHROTE_CONTEXT_API_URL=http://127.0.0.1:3200

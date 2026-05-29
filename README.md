@@ -137,6 +137,7 @@ Runtime overrides:
 CHROTE_TTS_URL=http://127.0.0.1:3100
 CHROTE_CONTEXT_API_URL=http://127.0.0.1:3200
 CHROTE_CONTEXT_API_TOKEN=...
+CHROTE_GASCITY_CITY_DIR=/home/perttu/gascity
 ```
 
 Private service adapter values live in:
