@@ -272,6 +272,8 @@ leader selection, and shared work context. A Master Board may be the shared
 context artifact for teams, with project description, task lists, findings,
 ideas, and work state. Workshop/discussion space may be useful before a team
 settles the board. The default runtime pattern is leader-orchestrated teams.
+Perttu's 2026-05-30 correction below narrows this: the Master Board should be
+low-structure and should not become the durable task/work-state tracker.
 
 ### 4. First Useful Workflow
 
@@ -339,3 +341,59 @@ Remaining question from Claude:
 This matters because the board's contents overlap Beads and Context Citadel.
 The answer decides whether CHROTE should create new storage or only provide a
 window onto existing ledgers.
+
+## Perttu's Master Board Correction (2026-05-30)
+
+Perttu corrected the Master Board understanding:
+
+> The masterboard should actually have very little structure. It's a place where
+> the agents can write things that they want the other agents to be aware of,
+> such as:
+> - claiming work
+> - asking for a review
+> - asking for input on something
+> - telling about the bug that they found
+> While we could work in this way, we would still maintain the core philosophy
+> of always working through beads.
+>
+> One use case would be that me or a higher-level strategy agent could even do
+> something like propose a question or an idea and have an agent team develop
+> it. The pattern on a higher perspective that this enables is: if you think
+> about the orchestration, it's always one agent sending mail or a prompt to
+> another agent but with this board it can be one agent surfacing something to a
+> wider group of agents. That is the reason why I think this could be useful.
+
+### Corrected Understanding
+
+The Master Board is not primarily a structured project-management board.
+
+The Master Board is a low-structure team noticeboard / shared broadcast surface
+where Perttu, strategy-level agents, and worker agents can post signals or asks
+they want the wider team to be aware of.
+
+The value is easiest to see by comparing it with the existing primitives:
+
+- mail or prompt: one agent sends to one other agent or a specific target;
+- sling: one agent delegates work to a specific target;
+- Beads: the durable work ledger and source of truth for tasks/status;
+- Master Board: an operator or agent surfaces a signal, question, finding, or
+  ask to the wider group.
+
+Examples of Master Board posts:
+
+- announcing that work has been claimed in Beads;
+- asking for a review;
+- asking for input on something;
+- telling the team about a bug that was found;
+- proposing a question or idea for a team to develop;
+- strategy-level prompts or questions for a team.
+
+The Master Board should preserve the philosophy that actual work tracking
+continues through Beads. It should not become a replacement task tracker. Its
+purpose is broader team awareness and group-addressed asks, not durable task
+state. A board post can announce a Beads action, but the durable record remains
+in Beads.
+
+This makes the Master Board valuable because it adds a missing team
+communication primitive: not one-to-one mail, not delegated work, but shared
+team visibility.
