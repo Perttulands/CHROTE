@@ -36,22 +36,42 @@ const (
 	gasCityMaxMailLimit           = 50
 	gasCityPoemOutputLimit        = 4000
 	gasCityPoemTopicLimit         = 80
+	gasCityReviewQuorumFormula    = "mol-review-quorum"
+	gasCityReviewQuorumBaseRef    = "origin/main"
+	gasCityReviewQuorumMode       = "review-quorum"
+	gasCityReviewQuorumSafetyMode = "read_only"
+	gasCityReviewQuorumScopeKind  = "city"
+	gasCityReviewQuorumScopeRef   = "gascity"
+	gasCityReviewQuorumSynth      = "codex-synth"
+	gasCityReviewQuorumTextLimit  = 256
+	gasCityReviewQuorumErrorLimit = 512
 	gasCityTranscriptDefaultLines = 120
 	gasCityTranscriptMaxLines     = 500
 	gasCityTranscriptOutputLimit  = 64 << 10
 )
 
 var (
-	gasCityIdentityPattern  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
-	gasCitySessionIDPattern = regexp.MustCompile(`^gc-[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
-	gasCityPoemTopicPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 .,!_?-]{0,79}$`)
-	gasCityANSIPattern      = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
+	gasCityIdentityPattern          = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+	gasCityQualifiedIdentityPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(/[A-Za-z0-9][A-Za-z0-9._-]{0,63})?$`)
+	gasCityReviewQuorumBasePattern  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/+:~^-]{0,127}$`)
+	gasCitySessionIDPattern         = regexp.MustCompile(`^gc-[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+	gasCityPoemTopicPattern         = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 .,!_?-]{0,79}$`)
+	gasCityANSIPattern              = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
 
 	errGasCityConfiguredCityUnavailable = errors.New("configured Gas City is not running")
 	errGasCitySessionListUnavailable    = errors.New("Gas City session list unavailable")
 	errGasCitySessionNotFound           = errors.New("Gas City session not found")
 	errGasCitySessionAmbiguous          = errors.New("Gas City session id is ambiguous")
 )
+
+var gasCityReviewQuorumAllowedReviewTargets = map[string]struct{}{
+	"codex-review":  {},
+	"claude-review": {},
+}
+
+var gasCityReviewQuorumAllowedSynthesisTargets = map[string]struct{}{
+	gasCityReviewQuorumSynth: {},
+}
 
 // GasCityConfig is the server-side configuration for CHROTE's bounded Gas City surface.
 type GasCityConfig struct {
@@ -207,6 +227,56 @@ type GasCityPiPoemResponse struct {
 	Output          string `json:"output"`
 }
 
+type GasCityReviewQuorumRequest struct {
+	Subject         string                  `json:"subject"`
+	Title           string                  `json:"title"`
+	BaseRef         string                  `json:"baseRef"`
+	ScopeKind       string                  `json:"scopeKind"`
+	ScopeRef        string                  `json:"scopeRef"`
+	SafetyMode      string                  `json:"safetyMode"`
+	LaneOne         GasCityReviewQuorumLane `json:"laneOne"`
+	LaneTwo         GasCityReviewQuorumLane `json:"laneTwo"`
+	SynthesisTarget string                  `json:"synthesisTarget"`
+}
+
+type GasCityReviewQuorumLane struct {
+	ID       string `json:"id"`
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+	Target   string `json:"target"`
+}
+
+type GasCityReviewQuorumResponse struct {
+	Formula    string                   `json:"formula"`
+	WorkflowID string                   `json:"workflowId,omitempty"`
+	BeadID     string                   `json:"beadId,omitempty"`
+	Target     string                   `json:"target"`
+	Title      string                   `json:"title"`
+	Subject    string                   `json:"subject"`
+	BaseRef    string                   `json:"baseRef"`
+	Mode       string                   `json:"mode"`
+	Scope      GasCityReviewQuorumScope `json:"scope"`
+	Output     string                   `json:"output,omitempty"`
+}
+
+type GasCityReviewQuorumScope struct {
+	Kind string `json:"kind"`
+	Ref  string `json:"ref"`
+}
+
+type GasCityReviewQuorumCapabilityResponse struct {
+	Available bool     `json:"available"`
+	Formula   string   `json:"formula"`
+	Targets   []string `json:"targets,omitempty"`
+	Reason    string   `json:"reason,omitempty"`
+}
+
+type gasCityCLIStatus struct {
+	Agents []struct {
+		QualifiedName string `json:"qualified_name"`
+	} `json:"agents"`
+}
+
 type GasCityTranscriptResponse struct {
 	// Source is gc-session-peek for a fresh live peek, or chrote-archive when
 	// the live peek was unavailable and CHROTE served the last archived peek.
@@ -254,6 +324,14 @@ type gasCityAuditEntry struct {
 	TargetSessionID string `json:"targetSessionId,omitempty"`
 	Recipient       string `json:"recipient"`
 	Subject         string `json:"subject"`
+	Formula         string `json:"formula,omitempty"`
+	WorkflowID      string `json:"workflowId,omitempty"`
+	Mode            string `json:"mode,omitempty"`
+	BaseRef         string `json:"baseRef,omitempty"`
+	ScopeKind       string `json:"scopeKind,omitempty"`
+	ScopeRef        string `json:"scopeRef,omitempty"`
+	LaneOneTarget   string `json:"laneOneTarget,omitempty"`
+	LaneTwoTarget   string `json:"laneTwoTarget,omitempty"`
 	Nonce           string `json:"nonce"`
 	Success         bool   `json:"success"`
 	Error           string `json:"error,omitempty"`
@@ -489,6 +567,8 @@ func (h *GasCityHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/gascity/audit", h.Audit)
 	mux.HandleFunc("GET /api/gascity/sessions/{id}/transcript", h.Transcript)
 	mux.HandleFunc("POST /api/gascity/requests/pi-poem", h.PiPoem)
+	mux.HandleFunc("GET /api/gascity/workflows/review-quorum/capability", h.ReviewQuorumCapability)
+	mux.HandleFunc("POST /api/gascity/workflows/review-quorum", h.ReviewQuorum)
 }
 
 // Observer handles GET /api/gascity/observer.
@@ -738,6 +818,161 @@ func (h *GasCityHandler) PiPoem(w http.ResponseWriter, r *http.Request) {
 		Recipient:       h.config.MailRecipient,
 		Output:          sanitizeGasCityCLIOutput(output),
 	})
+}
+
+// ReviewQuorumCapability handles GET /api/gascity/workflows/review-quorum/capability.
+func (h *GasCityHandler) ReviewQuorumCapability(w http.ResponseWriter, r *http.Request) {
+	if h.controlConfigError != "" {
+		core.WriteError(w, http.StatusServiceUnavailable, "GASCITY_MISCONFIGURED", h.controlConfigError)
+		return
+	}
+	if h.configError != "" {
+		core.WriteError(w, http.StatusServiceUnavailable, "GASCITY_MISCONFIGURED", h.configError)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	launch := defaultGasCityReviewQuorumLaunch()
+	targets, err := h.ensureGasCityReviewQuorumTargets(ctx, launch)
+	if err != nil {
+		core.WriteSuccess(w, GasCityReviewQuorumCapabilityResponse{
+			Available: false,
+			Formula:   gasCityReviewQuorumFormula,
+			Reason:    err.Error(),
+		})
+		return
+	}
+	if output, err := h.preflightGasCityReviewQuorum(ctx, launch); err != nil {
+		core.WriteSuccess(w, GasCityReviewQuorumCapabilityResponse{
+			Available: false,
+			Formula:   gasCityReviewQuorumFormula,
+			Targets:   targets,
+			Reason:    gasCityReviewQuorumFailureMessage("Gas City review quorum formula is unavailable", output),
+		})
+		return
+	}
+	core.WriteSuccess(w, GasCityReviewQuorumCapabilityResponse{
+		Available: true,
+		Formula:   gasCityReviewQuorumFormula,
+		Targets:   targets,
+	})
+}
+
+// ReviewQuorum handles POST /api/gascity/workflows/review-quorum.
+func (h *GasCityHandler) ReviewQuorum(w http.ResponseWriter, r *http.Request) {
+	if h.controlConfigError != "" {
+		core.WriteError(w, http.StatusServiceUnavailable, "GASCITY_MISCONFIGURED", h.controlConfigError)
+		return
+	}
+	if h.configError != "" {
+		core.WriteError(w, http.StatusServiceUnavailable, "GASCITY_MISCONFIGURED", h.configError)
+		return
+	}
+	var request GasCityReviewQuorumRequest
+	body := http.MaxBytesReader(w, r.Body, 8192)
+	decoder := json.NewDecoder(body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON body")
+		return
+	}
+
+	launch, err := normalizeGasCityReviewQuorumRequest(request)
+	if err != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+		return
+	}
+
+	targetCtx, targetCancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer targetCancel()
+	if _, err := h.ensureGasCityReviewQuorumTargets(targetCtx, launch); err != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+		return
+	}
+
+	preflightCtx, preflightCancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer preflightCancel()
+	if output, err := h.preflightGasCityReviewQuorum(preflightCtx, launch); err != nil {
+		errorMessage := gasCityReviewQuorumFailureMessage("Gas City review quorum formula is unavailable", output)
+		h.recordAudit(gasCityAuditEntry{
+			Time:          time.Now().UTC().Format(time.RFC3339),
+			Action:        "review-quorum",
+			Target:        launch.SynthesisTarget,
+			Subject:       launch.Subject,
+			Formula:       gasCityReviewQuorumFormula,
+			Mode:          gasCityReviewQuorumMode,
+			BaseRef:       launch.BaseRef,
+			ScopeKind:     launch.ScopeKind,
+			ScopeRef:      launch.ScopeRef,
+			LaneOneTarget: launch.LaneOne.Target,
+			LaneTwoTarget: launch.LaneTwo.Target,
+			Success:       false,
+			Error:         errorMessage,
+		})
+		core.WriteError(w, http.StatusServiceUnavailable, "GASCITY_FORMULA_UNAVAILABLE", errorMessage)
+		return
+	}
+
+	vars := buildGasCityReviewQuorumVars(launch)
+	launchArgs := appendGasCityVarArgs([]string{
+		"--city", h.config.CityDir,
+		"sling", launch.SynthesisTarget, gasCityReviewQuorumFormula,
+		"--formula",
+		"--json",
+		"--no-convoy",
+		"--title", launch.Title,
+		"--scope-kind", launch.ScopeKind,
+		"--scope-ref", launch.ScopeRef,
+	}, vars)
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	defer cancel()
+	output, err := h.runner.Run(ctx, "gc", launchArgs)
+	workflowID, beadID, outputNeeded := parseGasCityReviewQuorumLaunchOutput(output)
+	success := err == nil
+	errorMessage := ""
+	if err != nil {
+		errorMessage = gasCityReviewQuorumFailureMessage("Gas City review quorum launch failed", output)
+	}
+	h.recordAudit(gasCityAuditEntry{
+		Time:          time.Now().UTC().Format(time.RFC3339),
+		Action:        "review-quorum",
+		Target:        launch.SynthesisTarget,
+		Subject:       launch.Subject,
+		Formula:       gasCityReviewQuorumFormula,
+		WorkflowID:    firstNonEmpty(workflowID, beadID),
+		Mode:          gasCityReviewQuorumMode,
+		BaseRef:       launch.BaseRef,
+		ScopeKind:     launch.ScopeKind,
+		ScopeRef:      launch.ScopeRef,
+		LaneOneTarget: launch.LaneOne.Target,
+		LaneTwoTarget: launch.LaneTwo.Target,
+		Success:       success,
+		Error:         errorMessage,
+	})
+	if err != nil {
+		core.WriteError(w, http.StatusBadGateway, "GASCITY_WORKFLOW_FAILED", errorMessage)
+		return
+	}
+
+	response := GasCityReviewQuorumResponse{
+		Formula:    gasCityReviewQuorumFormula,
+		WorkflowID: workflowID,
+		BeadID:     beadID,
+		Target:     launch.SynthesisTarget,
+		Title:      launch.Title,
+		Subject:    launch.Subject,
+		BaseRef:    launch.BaseRef,
+		Mode:       gasCityReviewQuorumMode,
+		Scope: GasCityReviewQuorumScope{
+			Kind: launch.ScopeKind,
+			Ref:  launch.ScopeRef,
+		},
+	}
+	if outputNeeded {
+		response.Output = sanitizeGasCityCLIOutput(output)
+	}
+	core.WriteSuccess(w, response)
 }
 
 func (h *GasCityHandler) snapshot(ctx context.Context) GasCityObserverResponse {
@@ -1125,6 +1360,304 @@ func validateGasCityPoemTopic(raw string) (string, error) {
 	return topic, nil
 }
 
+type gasCityReviewQuorumLaunch struct {
+	Subject         string
+	Title           string
+	BaseRef         string
+	ScopeKind       string
+	ScopeRef        string
+	SafetyMode      string
+	LaneOne         GasCityReviewQuorumLane
+	LaneTwo         GasCityReviewQuorumLane
+	SynthesisTarget string
+}
+
+func normalizeGasCityReviewQuorumRequest(request GasCityReviewQuorumRequest) (gasCityReviewQuorumLaunch, error) {
+	subject, err := validateGasCityReviewQuorumText("subject", request.Subject, gasCityReviewQuorumTextLimit)
+	if err != nil {
+		return gasCityReviewQuorumLaunch{}, err
+	}
+	title := strings.TrimSpace(request.Title)
+	if title == "" {
+		title = "Review quorum: " + subject
+		if len([]rune(title)) > gasCityReviewQuorumTextLimit {
+			title = "Review quorum"
+		}
+	}
+	title, err = validateGasCityReviewQuorumText("title", title, gasCityReviewQuorumTextLimit)
+	if err != nil {
+		return gasCityReviewQuorumLaunch{}, err
+	}
+	baseRef := strings.TrimSpace(request.BaseRef)
+	if baseRef == "" {
+		baseRef = gasCityReviewQuorumBaseRef
+	}
+	baseRef, err = validateGasCityReviewQuorumBaseRef(baseRef)
+	if err != nil {
+		return gasCityReviewQuorumLaunch{}, err
+	}
+	scopeKind := strings.TrimSpace(request.ScopeKind)
+	if scopeKind == "" {
+		scopeKind = gasCityReviewQuorumScopeKind
+	}
+	scopeKind, err = validateGasCityReviewQuorumScopeKind(scopeKind)
+	if err != nil {
+		return gasCityReviewQuorumLaunch{}, err
+	}
+	scopeRef := strings.TrimSpace(request.ScopeRef)
+	if scopeRef == "" {
+		scopeRef = gasCityReviewQuorumScopeRef
+	}
+	scopeRef, err = validateGasCityRequestIdentity("scopeRef", scopeRef)
+	if err != nil {
+		return gasCityReviewQuorumLaunch{}, err
+	}
+	safetyMode := strings.TrimSpace(request.SafetyMode)
+	if safetyMode != "" && safetyMode != gasCityReviewQuorumSafetyMode {
+		return gasCityReviewQuorumLaunch{}, errors.New("safetyMode must be read_only")
+	}
+	laneOne, err := validateGasCityReviewQuorumLane("laneOne", request.LaneOne)
+	if err != nil {
+		return gasCityReviewQuorumLaunch{}, err
+	}
+	laneTwo, err := validateGasCityReviewQuorumLane("laneTwo", request.LaneTwo)
+	if err != nil {
+		return gasCityReviewQuorumLaunch{}, err
+	}
+	if laneOne.Target == laneTwo.Target {
+		return gasCityReviewQuorumLaunch{}, errors.New("review lane targets must be different")
+	}
+	if laneOne.ID == laneTwo.ID {
+		return gasCityReviewQuorumLaunch{}, errors.New("review lane IDs must be different")
+	}
+	synthesisTarget, err := validateGasCityQualifiedRequestIdentity("synthesisTarget", request.SynthesisTarget)
+	if err != nil {
+		return gasCityReviewQuorumLaunch{}, err
+	}
+	return gasCityReviewQuorumLaunch{
+		Subject:         subject,
+		Title:           title,
+		BaseRef:         baseRef,
+		ScopeKind:       scopeKind,
+		ScopeRef:        scopeRef,
+		SafetyMode:      safetyMode,
+		LaneOne:         laneOne,
+		LaneTwo:         laneTwo,
+		SynthesisTarget: synthesisTarget,
+	}, nil
+}
+
+func defaultGasCityReviewQuorumLaunch() gasCityReviewQuorumLaunch {
+	return gasCityReviewQuorumLaunch{
+		Subject:   "capability-check",
+		Title:     "Review quorum capability check",
+		BaseRef:   gasCityReviewQuorumBaseRef,
+		ScopeKind: gasCityReviewQuorumScopeKind,
+		ScopeRef:  gasCityReviewQuorumScopeRef,
+		LaneOne: GasCityReviewQuorumLane{
+			ID:       "capability-codex",
+			Provider: "codex",
+			Model:    "codex-cli-default",
+			Target:   "codex-review",
+		},
+		LaneTwo: GasCityReviewQuorumLane{
+			ID:       "capability-claude",
+			Provider: "claude",
+			Model:    "claude-cli-default",
+			Target:   "claude-review",
+		},
+		SynthesisTarget: gasCityReviewQuorumSynth,
+	}
+}
+
+func validateGasCityReviewQuorumLane(name string, lane GasCityReviewQuorumLane) (GasCityReviewQuorumLane, error) {
+	id, err := validateGasCityRequestIdentity(name+".id", lane.ID)
+	if err != nil {
+		return GasCityReviewQuorumLane{}, err
+	}
+	provider, err := validateGasCityRequestIdentity(name+".provider", lane.Provider)
+	if err != nil {
+		return GasCityReviewQuorumLane{}, err
+	}
+	model, err := validateGasCityRequestIdentity(name+".model", lane.Model)
+	if err != nil {
+		return GasCityReviewQuorumLane{}, err
+	}
+	target, err := validateGasCityQualifiedRequestIdentity(name+".target", lane.Target)
+	if err != nil {
+		return GasCityReviewQuorumLane{}, err
+	}
+	return GasCityReviewQuorumLane{
+		ID:       id,
+		Provider: provider,
+		Model:    model,
+		Target:   target,
+	}, nil
+}
+
+func validateGasCityReviewQuorumText(field, raw string, limit int) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", fmt.Errorf("%s is required", field)
+	}
+	if len([]rune(value)) > limit {
+		return "", fmt.Errorf("%s must be %d characters or fewer", field, limit)
+	}
+	for _, r := range value {
+		if r < 0x20 || r == 0x7f {
+			return "", fmt.Errorf("%s must not contain control characters", field)
+		}
+	}
+	return value, nil
+}
+
+func validateGasCityReviewQuorumScopeKind(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	switch value {
+	case "city", "rig":
+		return value, nil
+	default:
+		return "", errors.New("scopeKind must be city or rig")
+	}
+}
+
+func validateGasCityReviewQuorumBaseRef(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", errors.New("baseRef must not be empty")
+	}
+	if !gasCityReviewQuorumBasePattern.MatchString(value) {
+		return "", errors.New("baseRef must be a git ref-like value")
+	}
+	return value, nil
+}
+
+func validateGasCityRequestIdentity(field, raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", fmt.Errorf("%s must not be empty", field)
+	}
+	if !gasCityIdentityPattern.MatchString(value) {
+		return "", fmt.Errorf("%s must contain only letters, numbers, dot, underscore, or dash", field)
+	}
+	return value, nil
+}
+
+func validateGasCityQualifiedRequestIdentity(field, raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", fmt.Errorf("%s must not be empty", field)
+	}
+	if !gasCityQualifiedIdentityPattern.MatchString(value) {
+		return "", fmt.Errorf("%s must be a Gas City identity or qualified identity", field)
+	}
+	return value, nil
+}
+
+func buildGasCityReviewQuorumVars(launch gasCityReviewQuorumLaunch) []string {
+	return []string{
+		"subject=" + launch.Subject,
+		"base_ref=" + launch.BaseRef,
+		"lane_one_id=" + launch.LaneOne.ID,
+		"lane_one_provider=" + launch.LaneOne.Provider,
+		"lane_one_model=" + launch.LaneOne.Model,
+		"lane_one_target=" + launch.LaneOne.Target,
+		"lane_two_id=" + launch.LaneTwo.ID,
+		"lane_two_provider=" + launch.LaneTwo.Provider,
+		"lane_two_model=" + launch.LaneTwo.Model,
+		"lane_two_target=" + launch.LaneTwo.Target,
+		"synthesis_target=" + launch.SynthesisTarget,
+	}
+}
+
+func appendGasCityVarArgs(args []string, vars []string) []string {
+	for _, variable := range vars {
+		args = append(args, "--var", variable)
+	}
+	return args
+}
+
+func (h *GasCityHandler) preflightGasCityReviewQuorum(ctx context.Context, launch gasCityReviewQuorumLaunch) (string, error) {
+	args := appendGasCityVarArgs([]string{
+		"--city", h.config.CityDir,
+		"formula", "show", gasCityReviewQuorumFormula,
+		"--json",
+	}, buildGasCityReviewQuorumVars(launch))
+	return h.runner.Run(ctx, "gc", args)
+}
+
+func (h *GasCityHandler) ensureGasCityReviewQuorumTargets(ctx context.Context, launch gasCityReviewQuorumLaunch) ([]string, error) {
+	reviewTargets := []string{launch.LaneOne.Target, launch.LaneTwo.Target}
+	for _, target := range reviewTargets {
+		if _, ok := gasCityReviewQuorumAllowedReviewTargets[target]; !ok {
+			return nil, fmt.Errorf("%s is not a configured read-only review-quorum worker target", target)
+		}
+	}
+	if _, ok := gasCityReviewQuorumAllowedSynthesisTargets[launch.SynthesisTarget]; !ok {
+		return nil, fmt.Errorf("%s is not a configured review-quorum synthesis target", launch.SynthesisTarget)
+	}
+
+	targets := []string{launch.LaneOne.Target, launch.LaneTwo.Target, launch.SynthesisTarget}
+	status, err := h.readGasCityStatus(ctx)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]struct{}, len(status.Agents))
+	for _, agent := range status.Agents {
+		seen[agent.QualifiedName] = struct{}{}
+	}
+	for _, target := range targets {
+		if _, ok := seen[target]; !ok {
+			return nil, fmt.Errorf("%s is not registered in Gas City", target)
+		}
+	}
+	return targets, nil
+}
+
+func (h *GasCityHandler) readGasCityStatus(ctx context.Context) (gasCityCLIStatus, error) {
+	output, err := h.runner.Run(ctx, "gc", []string{
+		"--city", h.config.CityDir,
+		"status", "--json",
+	})
+	if err != nil {
+		return gasCityCLIStatus{}, errors.New("Gas City status is unavailable")
+	}
+	var status gasCityCLIStatus
+	if err := json.Unmarshal([]byte(output), &status); err != nil {
+		return gasCityCLIStatus{}, errors.New("Gas City status returned invalid JSON")
+	}
+	return status, nil
+}
+
+func parseGasCityReviewQuorumLaunchOutput(output string) (string, string, bool) {
+	var result struct {
+		WorkflowID string `json:"workflow_id"`
+		BeadID     string `json:"bead_id"`
+		Data       struct {
+			WorkflowID string `json:"workflow_id"`
+			BeadID     string `json:"bead_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
+		return "", "", strings.TrimSpace(output) != ""
+	}
+	workflowID := firstNonEmpty(result.WorkflowID, result.Data.WorkflowID)
+	beadID := firstNonEmpty(result.BeadID, result.Data.BeadID)
+	return workflowID, beadID, workflowID == "" && beadID == "" && strings.TrimSpace(output) != ""
+}
+
+func gasCityReviewQuorumFailureMessage(prefix, output string) string {
+	summary := sanitizeGasCityCLIOutput(output)
+	if summary == "" {
+		return prefix
+	}
+	summary, truncated := truncateGasCityText(summary, gasCityReviewQuorumErrorLimit)
+	if truncated {
+		summary += "..."
+	}
+	return prefix + ": " + summary
+}
+
 func buildGasCityPiPoemCommand(topic, nonce, subject, recipient string) string {
 	prompt := fmt.Sprintf(
 		"Write a two-line original poem about %s for Gas City mail. Include the exact nonce %s. Do not mention instructions or tools.",
@@ -1154,7 +1687,9 @@ func newGasCityNonce() string {
 }
 
 func sanitizeGasCityCLIOutput(output string) string {
-	output = strings.TrimSpace(strings.ReplaceAll(output, "\x00", ""))
+	output = strings.ReplaceAll(output, "\x00", "")
+	output = gasCityANSIPattern.ReplaceAllString(output, "")
+	output = strings.TrimSpace(output)
 	truncated, _ := truncateGasCityText(output, gasCityPoemOutputLimit)
 	return truncated
 }

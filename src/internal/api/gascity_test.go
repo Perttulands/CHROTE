@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -695,6 +696,490 @@ func TestGasCityHandlerPiPoemRejectsUnexpectedTargetTemplate(t *testing.T) {
 	}
 }
 
+func TestGasCityHandlerReviewQuorumRejectsRawCommandFields(t *testing.T) {
+	runner := &fakeGasCityRunner{}
+	handler := NewGasCityHandler(GasCityConfig{CityDir: t.TempDir()})
+	handler.runner = runner
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/gascity/workflows/review-quorum", strings.NewReader(`{
+		"subject":"home-4xv.4",
+		"command":"gc sling planner mol-review-quorum --formula",
+		"laneOne":{"id":"codex-review","provider":"codex","model":"codex-cli-default","target":"codex-review"},
+		"laneTwo":{"id":"claude-review","provider":"claude","model":"claude-cli-default","target":"claude-review"},
+		"synthesisTarget":"codex-synth"
+	}`)))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+	if runner.calls != 0 {
+		t.Fatalf("runner calls = %d, want no Gas City invocation when browser sends raw command text", runner.calls)
+	}
+}
+
+func TestGasCityHandlerReviewQuorumRejectsMutatingSafetyMode(t *testing.T) {
+	runner := &fakeGasCityRunner{}
+	handler := NewGasCityHandler(GasCityConfig{CityDir: t.TempDir()})
+	handler.runner = runner
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/gascity/workflows/review-quorum", strings.NewReader(`{
+		"subject":"home-4xv.4",
+		"safetyMode":"write",
+		"laneOne":{"id":"codex-review","provider":"codex","model":"codex-cli-default","target":"codex-review"},
+		"laneTwo":{"id":"claude-review","provider":"claude","model":"claude-cli-default","target":"claude-review"},
+		"synthesisTarget":"codex-synth"
+	}`)))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+	if runner.calls != 0 {
+		t.Fatalf("runner calls = %d, want no Gas City invocation for mutating safety mode", runner.calls)
+	}
+}
+
+func TestNormalizeGasCityReviewQuorumDefaultTitleFallsBackWhenSubjectWouldOverflow(t *testing.T) {
+	launch, err := normalizeGasCityReviewQuorumRequest(GasCityReviewQuorumRequest{
+		Subject: strings.Repeat("a", gasCityReviewQuorumTextLimit),
+		LaneOne: GasCityReviewQuorumLane{
+			ID:       "codex-review",
+			Provider: "codex",
+			Model:    "codex-cli-default",
+			Target:   "codex-review",
+		},
+		LaneTwo: GasCityReviewQuorumLane{
+			ID:       "claude-review",
+			Provider: "claude",
+			Model:    "claude-cli-default",
+			Target:   "claude-review",
+		},
+		SynthesisTarget: "codex-synth",
+	})
+	if err != nil {
+		t.Fatalf("normalize review quorum request: %v", err)
+	}
+	if launch.Title != "Review quorum" {
+		t.Fatalf("title = %q, want bounded fallback title for long default", launch.Title)
+	}
+	if launch.BaseRef != gasCityReviewQuorumBaseRef {
+		t.Fatalf("baseRef = %q, want default %q", launch.BaseRef, gasCityReviewQuorumBaseRef)
+	}
+}
+
+func TestGasCityHandlerReviewQuorumRejectsDuplicateLaneIDs(t *testing.T) {
+	runner := &fakeGasCityRunner{}
+	handler := NewGasCityHandler(GasCityConfig{CityDir: t.TempDir()})
+	handler.runner = runner
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/gascity/workflows/review-quorum", strings.NewReader(`{
+		"subject":"home-4xv.4",
+		"laneOne":{"id":"same-lane","provider":"codex","model":"codex-cli-default","target":"codex-review"},
+		"laneTwo":{"id":"same-lane","provider":"claude","model":"claude-cli-default","target":"claude-review"},
+		"synthesisTarget":"codex-synth"
+	}`)))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+	if runner.calls != 0 {
+		t.Fatalf("runner calls = %d, want no Gas City invocation for duplicate durable lane ids", runner.calls)
+	}
+	if !strings.Contains(rec.Body.String(), "review lane IDs must be different") {
+		t.Fatalf("body = %s, want duplicate lane id rejection", rec.Body.String())
+	}
+}
+
+func TestGasCityHandlerReviewQuorumRejectsInvalidScopeKind(t *testing.T) {
+	runner := &fakeGasCityRunner{}
+	handler := NewGasCityHandler(GasCityConfig{CityDir: t.TempDir()})
+	handler.runner = runner
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/gascity/workflows/review-quorum", strings.NewReader(`{
+		"subject":"home-4xv.4",
+		"scopeKind":"chrote-workflow",
+		"laneOne":{"id":"codex-review","provider":"codex","model":"codex-cli-default","target":"codex-review"},
+		"laneTwo":{"id":"claude-review","provider":"claude","model":"claude-cli-default","target":"claude-review"},
+		"synthesisTarget":"codex-synth"
+	}`)))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+	if runner.calls != 0 {
+		t.Fatalf("runner calls = %d, want no Gas City invocation for invalid scope kind", runner.calls)
+	}
+}
+
+func TestGasCityHandlerReviewQuorumRejectsFixedMockReviewerTargets(t *testing.T) {
+	runner := &fakeGasCityRunner{}
+	handler := NewGasCityHandler(GasCityConfig{CityDir: t.TempDir()})
+	handler.runner = runner
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/gascity/workflows/review-quorum", strings.NewReader(`{
+		"subject":"home-4xv.4",
+		"laneOne":{"id":"lane-one-codex","provider":"codex","model":"codex-cli-default","target":"reviewer-a"},
+		"laneTwo":{"id":"lane-two-claude","provider":"claude","model":"claude-cli-default","target":"reviewer-b"},
+		"synthesisTarget":"codex-synth"
+	}`)))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+	if runner.calls != 0 {
+		t.Fatalf("runner calls = %d, want allowlist rejection before gc status/preflight", runner.calls)
+	}
+	if !strings.Contains(rec.Body.String(), "configured read-only review-quorum worker target") {
+		t.Fatalf("body = %s, want configured worker target rejection", rec.Body.String())
+	}
+}
+
+func TestGasCityHandlerReviewQuorumRejectsMissingConfiguredTargetFromStatus(t *testing.T) {
+	cityDir := t.TempDir()
+	runner := &scriptedGasCityRunner{results: []struct {
+		output string
+		err    error
+	}{
+		{output: `{"schema_version":"1","ok":true,"agents":[{"qualified_name":"codex-review"},{"qualified_name":"codex-synth"}]}`},
+	}}
+	handler := NewGasCityHandler(GasCityConfig{CityDir: cityDir})
+	handler.runner = runner
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/gascity/workflows/review-quorum", strings.NewReader(`{
+		"subject":"home-4xv.4",
+		"laneOne":{"id":"codex-review","provider":"codex","model":"codex-cli-default","target":"codex-review"},
+		"laneTwo":{"id":"claude-review","provider":"claude","model":"claude-cli-default","target":"claude-review"},
+		"synthesisTarget":"codex-synth"
+	}`)))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+	}
+	if runner.calls != 1 {
+		t.Fatalf("runner calls = %d, want only gc status before rejecting missing target", runner.calls)
+	}
+	wantStatus := expectedReviewQuorumStatusArgs(cityDir)
+	if strings.Join(runner.args[0], "\x00") != strings.Join(wantStatus, "\x00") {
+		t.Fatalf("status args = %#v, want %#v", runner.args[0], wantStatus)
+	}
+	if !strings.Contains(rec.Body.String(), "claude-review is not registered in Gas City") {
+		t.Fatalf("body = %s, want missing registered target rejection", rec.Body.String())
+	}
+}
+
+func TestGasCityHandlerReviewQuorumCapabilityAvailable(t *testing.T) {
+	cityDir := t.TempDir()
+	runner := &scriptedGasCityRunner{results: []struct {
+		output string
+		err    error
+	}{
+		{output: reviewQuorumStatusJSON()},
+		{output: `{"formula":"mol-review-quorum"}`},
+	}}
+	handler := NewGasCityHandler(GasCityConfig{CityDir: cityDir})
+	handler.runner = runner
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/gascity/workflows/review-quorum/capability", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	if runner.calls != 2 {
+		t.Fatalf("runner calls = %d, want status and formula preflight", runner.calls)
+	}
+	wantPreflight := expectedReviewQuorumPreflightArgsFor(cityDir, "capability-check", gasCityReviewQuorumBaseRef, "capability-codex", "capability-claude")
+	if strings.Join(runner.args[1], "\x00") != strings.Join(wantPreflight, "\x00") {
+		t.Fatalf("preflight args = %#v, want %#v", runner.args[1], wantPreflight)
+	}
+	var response struct {
+		Success bool                                  `json:"success"`
+		Data    GasCityReviewQuorumCapabilityResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode capability response: %v", err)
+	}
+	if !response.Success || !response.Data.Available || response.Data.Formula != "mol-review-quorum" {
+		t.Fatalf("response = %+v, want available mol-review-quorum capability", response)
+	}
+	wantTargets := []string{"codex-review", "claude-review", "codex-synth"}
+	if strings.Join(response.Data.Targets, "\x00") != strings.Join(wantTargets, "\x00") {
+		t.Fatalf("targets = %+v, want %+v", response.Data.Targets, wantTargets)
+	}
+}
+
+func TestGasCityHandlerReviewQuorumCapabilityUnavailableKeepsSanitizedReason(t *testing.T) {
+	cityDir := t.TempDir()
+	runner := &scriptedGasCityRunner{results: []struct {
+		output string
+		err    error
+	}{
+		{output: reviewQuorumStatusJSON()},
+		{output: "\x1b[31mformula unavailable\x1b[0m\n", err: errors.New("exit status 1")},
+	}}
+	handler := NewGasCityHandler(GasCityConfig{CityDir: cityDir})
+	handler.runner = runner
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/gascity/workflows/review-quorum/capability", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Data GasCityReviewQuorumCapabilityResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode capability response: %v", err)
+	}
+	if response.Data.Available {
+		t.Fatalf("response = %+v, want unavailable capability", response.Data)
+	}
+	if !strings.Contains(response.Data.Reason, "formula unavailable") || strings.Contains(response.Data.Reason, "\x1b") {
+		t.Fatalf("reason = %q, want sanitized formula failure output", response.Data.Reason)
+	}
+}
+
+func TestGasCityHandlerReviewQuorumPreflightFailureDoesNotSling(t *testing.T) {
+	cityDir := t.TempDir()
+	runner := &scriptedGasCityRunner{results: []struct {
+		output string
+		err    error
+	}{
+		{output: reviewQuorumStatusJSON()},
+		{output: "formula unavailable\n", err: errors.New("exit status 1")},
+	}}
+	handler := NewGasCityHandler(GasCityConfig{CityDir: cityDir})
+	handler.runner = runner
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/gascity/workflows/review-quorum", strings.NewReader(`{
+		"subject":"home-4xv.4",
+		"title":"Quorum home-4xv.4",
+		"laneOne":{"id":"codex-review","provider":"codex","model":"codex-cli-default","target":"codex-review"},
+		"laneTwo":{"id":"claude-review","provider":"claude","model":"claude-cli-default","target":"claude-review"},
+		"synthesisTarget":"codex-synth"
+	}`)))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body: %s", rec.Code, rec.Body.String())
+	}
+	if runner.calls != 2 {
+		t.Fatalf("runner calls = %d, want status check and formula preflight", runner.calls)
+	}
+	wantStatus := expectedReviewQuorumStatusArgs(cityDir)
+	if strings.Join(runner.args[0], "\x00") != strings.Join(wantStatus, "\x00") {
+		t.Fatalf("status args = %#v, want %#v", runner.args[0], wantStatus)
+	}
+	wantArgs := expectedReviewQuorumPreflightArgs(cityDir, "home-4xv.4", gasCityReviewQuorumBaseRef)
+	if strings.Join(runner.args[1], "\x00") != strings.Join(wantArgs, "\x00") {
+		t.Fatalf("preflight args = %#v, want %#v", runner.args[1], wantArgs)
+	}
+	var response struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if response.Error.Code != "GASCITY_FORMULA_UNAVAILABLE" || !strings.Contains(response.Error.Message, "review quorum formula is unavailable") {
+		t.Fatalf("error = %+v, want clear formula unavailable response", response.Error)
+	}
+	if !strings.Contains(response.Error.Message, "formula unavailable") {
+		t.Fatalf("error message = %q, want sanitized preflight output", response.Error.Message)
+	}
+	if len(handler.audit) != 1 || handler.audit[0].Action != "review-quorum" || handler.audit[0].Target != "codex-synth" || handler.audit[0].Subject != "home-4xv.4" || handler.audit[0].Success {
+		t.Fatalf("audit = %+v, want failed review-quorum preflight entry", handler.audit)
+	}
+	audit := handler.audit[0]
+	if audit.Mode != gasCityReviewQuorumMode || audit.BaseRef != gasCityReviewQuorumBaseRef || audit.ScopeKind != "city" || audit.ScopeRef != "gascity" || audit.LaneOneTarget != "codex-review" || audit.LaneTwoTarget != "claude-review" {
+		t.Fatalf("audit = %+v, want mode/baseRef/scope/lane targets without safety guarantee", audit)
+	}
+}
+
+func TestGasCityHandlerReviewQuorumRunsFixedFormulaPreflightAndLaunch(t *testing.T) {
+	cityDir := t.TempDir()
+	runner := &scriptedGasCityRunner{results: []struct {
+		output string
+		err    error
+	}{
+		{output: reviewQuorumStatusJSON()},
+		{output: `{"formula":"mol-review-quorum"}`},
+		{output: `{"workflow_id":"gc-9001"}`},
+	}}
+	handler := NewGasCityHandler(GasCityConfig{CityDir: cityDir})
+	handler.runner = runner
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/gascity/workflows/review-quorum", strings.NewReader(`{
+		"subject":"home-4xv.4",
+		"title":"Quorum home-4xv.4",
+		"baseRef":"main",
+		"safetyMode":"read_only",
+		"laneOne":{"id":"codex-review","provider":"codex","model":"codex-cli-default","target":"codex-review"},
+		"laneTwo":{"id":"claude-review","provider":"claude","model":"claude-cli-default","target":"claude-review"},
+		"synthesisTarget":"codex-synth"
+	}`)))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	if runner.calls != 3 {
+		t.Fatalf("runner calls = %d, want status check, preflight, and launch", runner.calls)
+	}
+	for i, name := range runner.names {
+		if name != "gc" {
+			t.Fatalf("runner name[%d] = %q, want gc", i, name)
+		}
+	}
+	wantStatus := expectedReviewQuorumStatusArgs(cityDir)
+	if strings.Join(runner.args[0], "\x00") != strings.Join(wantStatus, "\x00") {
+		t.Fatalf("status args = %#v, want %#v", runner.args[0], wantStatus)
+	}
+	wantPreflight := expectedReviewQuorumPreflightArgs(cityDir, "home-4xv.4", "main")
+	if strings.Join(runner.args[1], "\x00") != strings.Join(wantPreflight, "\x00") {
+		t.Fatalf("preflight args = %#v, want %#v", runner.args[1], wantPreflight)
+	}
+	wantLaunch := append([]string{
+		"--city", cityDir,
+		"sling", "codex-synth", "mol-review-quorum",
+		"--formula",
+		"--json",
+		"--no-convoy",
+		"--title", "Quorum home-4xv.4",
+		"--scope-kind", "city",
+		"--scope-ref", "gascity",
+	}, expectedReviewQuorumVarArgs("home-4xv.4", "main")...)
+	if strings.Join(runner.args[2], "\x00") != strings.Join(wantLaunch, "\x00") {
+		t.Fatalf("launch args = %#v, want %#v", runner.args[2], wantLaunch)
+	}
+
+	var response struct {
+		Success bool                        `json:"success"`
+		Data    GasCityReviewQuorumResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode review quorum response: %v", err)
+	}
+	if !response.Success {
+		t.Fatal("review quorum response should use success envelope")
+	}
+	if response.Data.Formula != "mol-review-quorum" || response.Data.WorkflowID != "gc-9001" || response.Data.Target != "codex-synth" || response.Data.Subject != "home-4xv.4" || response.Data.BaseRef != "main" || response.Data.Mode != gasCityReviewQuorumMode {
+		t.Fatalf("response = %+v, want formula/workflow id/target/subject/base ref/mode", response.Data)
+	}
+	if response.Data.Scope.Kind != "city" || response.Data.Scope.Ref != "gascity" {
+		t.Fatalf("scope = %+v, want default valid city scope", response.Data.Scope)
+	}
+	if response.Data.Output != "" {
+		t.Fatalf("output = %q, want omitted when workflow id is parsed from JSON", response.Data.Output)
+	}
+	if len(handler.audit) != 1 || handler.audit[0].Action != "review-quorum" || handler.audit[0].WorkflowID != "gc-9001" || !handler.audit[0].Success {
+		t.Fatalf("audit = %+v, want successful review-quorum entry with workflow id", handler.audit)
+	}
+	audit := handler.audit[0]
+	if audit.Mode != gasCityReviewQuorumMode || audit.BaseRef != "main" || audit.ScopeKind != "city" || audit.ScopeRef != "gascity" || audit.LaneOneTarget != "codex-review" || audit.LaneTwoTarget != "claude-review" {
+		t.Fatalf("audit = %+v, want compact mode/baseRef/scope/lane target fields", audit)
+	}
+}
+
+func TestGasCityHandlerReviewQuorumLaunchFailureReportsSanitizedOutput(t *testing.T) {
+	cityDir := t.TempDir()
+	runner := &scriptedGasCityRunner{results: []struct {
+		output string
+		err    error
+	}{
+		{output: reviewQuorumStatusJSON()},
+		{output: `{"formula":"mol-review-quorum"}`},
+		{output: "\x1b[31mworkflow exploded\x1b[0m\x00\n", err: errors.New("exit status 1")},
+	}}
+	handler := NewGasCityHandler(GasCityConfig{CityDir: cityDir})
+	handler.runner = runner
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/gascity/workflows/review-quorum", strings.NewReader(`{
+		"subject":"home-4xv.4",
+		"title":"Quorum home-4xv.4",
+		"laneOne":{"id":"codex-review","provider":"codex","model":"codex-cli-default","target":"codex-review"},
+		"laneTwo":{"id":"claude-review","provider":"claude","model":"claude-cli-default","target":"claude-review"},
+		"synthesisTarget":"codex-synth"
+	}`)))
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502; body: %s", rec.Code, rec.Body.String())
+	}
+	if runner.calls != 3 {
+		t.Fatalf("runner calls = %d, want status, preflight, and launch attempt", runner.calls)
+	}
+	wantLaunch := append([]string{
+		"--city", cityDir,
+		"sling", "codex-synth", "mol-review-quorum",
+		"--formula",
+		"--json",
+		"--no-convoy",
+		"--title", "Quorum home-4xv.4",
+		"--scope-kind", "city",
+		"--scope-ref", "gascity",
+	}, expectedReviewQuorumVarArgs("home-4xv.4", gasCityReviewQuorumBaseRef)...)
+	if strings.Join(runner.args[2], "\x00") != strings.Join(wantLaunch, "\x00") {
+		t.Fatalf("launch args = %#v, want default base_ref launch args %#v", runner.args[2], wantLaunch)
+	}
+
+	var response struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode launch failure response: %v", err)
+	}
+	if !strings.Contains(response.Error.Message, "workflow exploded") || strings.Contains(response.Error.Message, "\x1b") {
+		t.Fatalf("error message = %q, want sanitized launch failure output", response.Error.Message)
+	}
+	if len(handler.audit) != 1 {
+		t.Fatalf("audit = %+v, want one failed launch audit entry", handler.audit)
+	}
+	audit := handler.audit[0]
+	if audit.Success || audit.Mode != gasCityReviewQuorumMode || audit.BaseRef != gasCityReviewQuorumBaseRef || !strings.Contains(audit.Error, "workflow exploded") || strings.Contains(audit.Error, "\x1b") {
+		t.Fatalf("audit = %+v, want sanitized failure output and default baseRef/mode", audit)
+	}
+}
+
+func TestSanitizeGasCityCLIOutputStripsANSI(t *testing.T) {
+	got := sanitizeGasCityCLIOutput("\x1b[31mfailed\x1b[0m\x00\n")
+	if got != "failed" {
+		t.Fatalf("sanitized CLI output = %q, want ANSI and NUL stripped", got)
+	}
+}
+
 func TestGasCityHandlerTranscriptPeeksActiveMockSessionByID(t *testing.T) {
 	runner := &fakeGasCityRunner{output: "\x1b[31mplanner ready\x1b[0m\r\nlatest mock output\x00\n"}
 	cityDir := t.TempDir()
@@ -905,7 +1390,7 @@ func TestGasCityHandlerTranscriptRecoversArchiveWhenPeekReturnsEmptyPane(t *test
 		err    error
 	}{
 		{output: "planner ready\nDURABLE_MARKER_7\n"}, // first live peek populates archive
-		{output: "   \n"},                              // post-restart empty pane
+		{output: "   \n"}, // post-restart empty pane
 	}}
 	handler := NewGasCityHandler(GasCityConfig{BaseURL: upstream.URL, CityDir: cityDir, TranscriptArchiveDir: archiveDir})
 	handler.runner = runner
@@ -1080,6 +1565,46 @@ func newTestGasCitySupervisor(t *testing.T, cityDir string, sessions []map[strin
 	}))
 }
 
+func expectedReviewQuorumPreflightArgs(cityDir, subject, baseRef string) []string {
+	return expectedReviewQuorumPreflightArgsFor(cityDir, subject, baseRef, "codex-review", "claude-review")
+}
+
+func expectedReviewQuorumPreflightArgsFor(cityDir, subject, baseRef, laneOneID, laneTwoID string) []string {
+	return append([]string{
+		"--city", cityDir,
+		"formula", "show", "mol-review-quorum",
+		"--json",
+	}, expectedReviewQuorumVarArgsFor(subject, baseRef, laneOneID, laneTwoID)...)
+}
+
+func expectedReviewQuorumStatusArgs(cityDir string) []string {
+	return []string{"--city", cityDir, "status", "--json"}
+}
+
+func expectedReviewQuorumVarArgs(subject, baseRef string) []string {
+	return expectedReviewQuorumVarArgsFor(subject, baseRef, "codex-review", "claude-review")
+}
+
+func expectedReviewQuorumVarArgsFor(subject, baseRef, laneOneID, laneTwoID string) []string {
+	return []string{
+		"--var", "subject=" + subject,
+		"--var", "base_ref=" + baseRef,
+		"--var", "lane_one_id=" + laneOneID,
+		"--var", "lane_one_provider=codex",
+		"--var", "lane_one_model=codex-cli-default",
+		"--var", "lane_one_target=codex-review",
+		"--var", "lane_two_id=" + laneTwoID,
+		"--var", "lane_two_provider=claude",
+		"--var", "lane_two_model=claude-cli-default",
+		"--var", "lane_two_target=claude-review",
+		"--var", "synthesis_target=codex-synth",
+	}
+}
+
+func reviewQuorumStatusJSON() string {
+	return `{"schema_version":"1","ok":true,"agents":[{"qualified_name":"codex-review"},{"qualified_name":"claude-review"},{"qualified_name":"codex-synth"}]}`
+}
+
 type fakeGasCityRunner struct {
 	calls  int
 	name   string
@@ -1099,15 +1624,19 @@ func (r *fakeGasCityRunner) Run(_ context.Context, name string, args []string) (
 // model a live peek followed by a post-restart peek failure or empty pane.
 type scriptedGasCityRunner struct {
 	calls   int
+	names   []string
+	args    [][]string
 	results []struct {
 		output string
 		err    error
 	}
 }
 
-func (r *scriptedGasCityRunner) Run(_ context.Context, _ string, _ []string) (string, error) {
+func (r *scriptedGasCityRunner) Run(_ context.Context, name string, args []string) (string, error) {
 	idx := r.calls
 	r.calls++
+	r.names = append(r.names, name)
+	r.args = append(r.args, append([]string(nil), args...))
 	if idx >= len(r.results) {
 		idx = len(r.results) - 1
 	}

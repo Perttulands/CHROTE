@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { getGasCityReviewQuorumCapability, launchGasCityReviewQuorum } from '../../services/gascityClient'
 import GasCityView from './index'
 
 const fetchMock = vi.fn()
@@ -65,11 +66,18 @@ const mailFixture = {
   ],
 }
 
+const reviewQuorumCapabilityFixture = {
+  available: true,
+  formula: 'mol-review-quorum',
+  targets: ['codex-review', 'claude-review', 'codex-synth'],
+}
+
 function mockGasCityFetch() {
   fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input)
     if (path === '/api/gascity/observer') return envelope(observerFixture)
     if (path === '/api/gascity/mail?recipient=human&limit=20') return envelope(mailFixture)
+    if (path === '/api/gascity/workflows/review-quorum/capability') return envelope(reviewQuorumCapabilityFixture)
     if (path === '/api/gascity/requests/pi-poem' && init?.method === 'POST') {
       return envelope({
         nonce: 'C4A-TEST-NONCE',
@@ -80,6 +88,20 @@ function mockGasCityFetch() {
         targetSessionId: 'gc-51923',
         recipient: 'human',
         output: 'Nudged chrote-poem-pi',
+      })
+    }
+    if (path === '/api/gascity/workflows/review-quorum' && init?.method === 'POST') {
+      return envelope({
+        formula: 'mol-review-quorum',
+        workflowId: 'wf-review-42',
+        beadId: 'home-a2vw',
+        target: 'codex-synth',
+        title: 'Quorum review',
+        subject: 'Review launcher frontend slice',
+        baseRef: 'origin/main',
+        mode: 'read-only review quorum',
+        scope: { kind: 'city', ref: 'gascity' },
+        output: 'Queued review quorum',
       })
     }
     if (path === '/api/gascity/sessions/gc-1/transcript?lines=120') {
@@ -102,6 +124,69 @@ function mockGasCityFetch() {
     }), { status: 500, headers: { 'Content-Type': 'application/json' } }))
   })
 }
+
+describe('gascityClient', () => {
+  beforeEach(() => {
+    fetchMock.mockReset()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  it('posts expected review quorum JSON to Gas City', async () => {
+    const request = {
+      subject: 'Review launcher frontend slice',
+      title: 'Quorum review',
+      baseRef: 'origin/main',
+      scopeKind: 'city' as const,
+      scopeRef: 'gascity',
+      laneOne: {
+        id: 'codex-review-mock-1',
+        provider: 'codex',
+        model: 'codex-cli-default',
+        target: 'codex-review',
+      },
+      laneTwo: {
+        id: 'claude-review-mock-2',
+        provider: 'claude',
+        model: 'claude-cli-default',
+        target: 'claude-review',
+      },
+      synthesisTarget: 'codex-synth',
+    }
+
+    fetchMock.mockImplementation(() => envelope({
+      formula: 'mol-review-quorum',
+      workflowId: 'wf-review-42',
+      target: 'codex-synth',
+      title: 'Quorum review',
+      subject: 'Review launcher frontend slice',
+      baseRef: 'origin/main',
+      mode: 'read-only review quorum',
+      scope: { kind: 'city', ref: 'gascity' },
+    }))
+
+    await expect(launchGasCityReviewQuorum(request)).resolves.toMatchObject({
+      workflowId: 'wf-review-42',
+      title: 'Quorum review',
+    })
+    expect(fetchMock).toHaveBeenCalledWith('/api/gascity/workflows/review-quorum', expect.objectContaining({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    }))
+  })
+
+  it('fetches review quorum capability from the dedicated endpoint', async () => {
+    fetchMock.mockImplementation(() => envelope(reviewQuorumCapabilityFixture))
+
+    await expect(getGasCityReviewQuorumCapability()).resolves.toEqual(reviewQuorumCapabilityFixture)
+    expect(fetchMock).toHaveBeenCalledWith('/api/gascity/workflows/review-quorum/capability')
+  })
+})
 
 describe('GasCityView', () => {
   beforeEach(() => {
@@ -131,8 +216,14 @@ describe('GasCityView', () => {
     expect(screen.getByText('session.woke')).toBeInTheDocument()
     expect(screen.getByText('C3 remedial pi poem C3R-20260527-004915')).toBeInTheDocument()
     expect(screen.getByText('The mail of Gas City carries nonce C3R-20260527-004915.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Launch review quorum' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Review quorum targets')).toHaveTextContent('codex-review')
+    expect(screen.getByLabelText('Review quorum targets')).toHaveTextContent('claude-review')
+    expect(screen.getByLabelText('Review quorum targets')).toHaveTextContent('codex-synth')
+    expect(screen.getByLabelText('Review base ref')).toHaveValue('origin/main')
     expect(fetchMock).toHaveBeenCalledWith('/api/gascity/observer')
     expect(fetchMock).toHaveBeenCalledWith('/api/gascity/mail?recipient=human&limit=20')
+    expect(fetchMock).toHaveBeenCalledWith('/api/gascity/workflows/review-quorum/capability')
   })
 
   it('shows unavailable state without mutating Gas City', async () => {
@@ -159,6 +250,9 @@ describe('GasCityView', () => {
       if (path === '/api/gascity/mail?recipient=human&limit=20') {
         return envelope({ recipient: 'human', limit: 20, messages: [] })
       }
+      if (path === '/api/gascity/workflows/review-quorum/capability') {
+        return envelope({ available: false, formula: 'mol-review-quorum', reason: 'Gas City unavailable' })
+      }
       return envelope({})
     })
 
@@ -170,10 +264,32 @@ describe('GasCityView', () => {
     expect(screen.getByText('No active Gas City sessions.')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Refresh Gas City observer' }))
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(6))
 
     const methods = fetchMock.mock.calls.map(([, init]) => init?.method || 'GET')
-    expect(methods).toEqual(['GET', 'GET', 'GET', 'GET'])
+    expect(methods).toEqual(['GET', 'GET', 'GET', 'GET', 'GET', 'GET'])
+  })
+
+  it('hides review quorum launcher when capability is unavailable but keeps workflow lists', async () => {
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const path = String(input)
+      if (path === '/api/gascity/observer') return envelope(observerFixture)
+      if (path === '/api/gascity/mail?recipient=human&limit=20') return envelope(mailFixture)
+      if (path === '/api/gascity/workflows/review-quorum/capability') {
+        return envelope({ available: false, formula: 'mol-review-quorum', reason: 'Gas City review quorum formula is unavailable' })
+      }
+      return Promise.resolve(new Response(JSON.stringify({
+        success: false,
+        error: { code: 'UNEXPECTED_FETCH', message: path },
+      }), { status: 500, headers: { 'Content-Type': 'application/json' } }))
+    })
+
+    render(<GasCityView />)
+
+    expect(await screen.findByText('mol-review-quorum')).toBeInTheDocument()
+    expect(screen.getByText('Review molecule')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Launch review quorum' })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Review subject')).not.toBeInTheDocument()
   })
 
   it('sends one bounded Pi poem smoke request', async () => {
@@ -194,6 +310,83 @@ describe('GasCityView', () => {
     expect(await screen.findByText('C4A-TEST-NONCE')).toBeInTheDocument()
     expect(screen.getByText('CHROTE Pi poem C4A-TEST-NONCE')).toBeInTheDocument()
     expect(screen.getByText('Nudged chrote-poem-pi')).toBeInTheDocument()
+  })
+
+  it('launches review quorum and renders the returned workflow id', async () => {
+    mockGasCityFetch()
+
+    render(<GasCityView />)
+
+    expect(await screen.findByText('mol-review-quorum')).toBeInTheDocument()
+    expect(screen.getByLabelText('Review base ref')).toHaveValue('origin/main')
+    expect(screen.getByLabelText('Review quorum targets')).toHaveTextContent('codex-review')
+    expect(screen.getByLabelText('Review quorum targets')).toHaveTextContent('claude-review')
+    expect(screen.getByLabelText('Review quorum targets')).toHaveTextContent('codex-synth')
+    fireEvent.change(screen.getByLabelText('Review subject'), { target: { value: 'Review launcher frontend slice' } })
+    fireEvent.change(screen.getByLabelText('Review title'), { target: { value: 'Quorum review' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Launch review quorum' }))
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([input, init]) => (
+        String(input) === '/api/gascity/workflows/review-quorum' && init?.method === 'POST'
+      ))).toBe(true)
+    })
+    const launchCall = fetchMock.mock.calls.find(([input, init]) => (
+      String(input) === '/api/gascity/workflows/review-quorum' && init?.method === 'POST'
+    ))
+    const launchBody = JSON.parse(String(launchCall?.[1]?.body))
+    expect(launchBody).toMatchObject({
+      subject: 'Review launcher frontend slice',
+      title: 'Quorum review',
+      baseRef: 'origin/main',
+      scopeKind: 'city',
+      scopeRef: 'gascity',
+      laneOne: {
+        provider: 'codex',
+        model: 'codex-cli-default',
+        target: 'codex-review',
+      },
+      laneTwo: {
+        provider: 'claude',
+        model: 'claude-cli-default',
+        target: 'claude-review',
+      },
+      synthesisTarget: 'codex-synth',
+    })
+    expect(launchBody.safetyMode).toBeUndefined()
+    expect(launchBody.laneOne.id).toMatch(/^codex-review-[a-z0-9]+-\d+$/)
+    expect(launchBody.laneTwo.id).toMatch(/^claude-review-[a-z0-9]+-\d+$/)
+    expect(launchBody.laneOne.id).not.toEqual(launchBody.laneTwo.id)
+    expect(await screen.findByText('wf-review-42')).toBeInTheDocument()
+    expect(screen.getByText('Quorum review / read-only review quorum / base origin/main / target codex-synth')).toBeInTheDocument()
+    expect(screen.getByText('Queued review quorum')).toBeInTheDocument()
+  })
+
+  it('shows review quorum API errors', async () => {
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input)
+      if (path === '/api/gascity/observer') return envelope(observerFixture)
+      if (path === '/api/gascity/mail?recipient=human&limit=20') return envelope(mailFixture)
+      if (path === '/api/gascity/workflows/review-quorum/capability') return envelope(reviewQuorumCapabilityFixture)
+      if (path === '/api/gascity/workflows/review-quorum' && init?.method === 'POST') {
+        return Promise.resolve(new Response(JSON.stringify({
+          success: false,
+          error: { code: 'GASCITY_REVIEW_FAILED', message: 'review quorum refused' },
+        }), { status: 400, headers: { 'Content-Type': 'application/json' } }))
+      }
+      return Promise.resolve(new Response(JSON.stringify({
+        success: false,
+        error: { code: 'UNEXPECTED_FETCH', message: path },
+      }), { status: 500, headers: { 'Content-Type': 'application/json' } }))
+    })
+
+    render(<GasCityView />)
+
+    expect(await screen.findByText('mol-review-quorum')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Review subject'), { target: { value: 'Review launcher frontend slice' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Launch review quorum' }))
+
+    expect(await screen.findByText('GASCITY_REVIEW_FAILED: review quorum refused')).toBeInTheDocument()
   })
 
   it('recovers a Gas City session transcript through its immutable session id', async () => {

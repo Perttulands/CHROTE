@@ -4,7 +4,9 @@ import {
   GasCityApiError,
   getGasCityMail,
   getGasCityObserver,
+  getGasCityReviewQuorumCapability,
   getGasCityTranscript,
+  launchGasCityReviewQuorum,
   sendGasCityPiPoem,
   type GasCityEvent,
   type GasCityFormula,
@@ -12,6 +14,8 @@ import {
   type GasCityMailMessage,
   type GasCityObserver,
   type GasCityPiPoemResponse,
+  type GasCityReviewQuorumCapability,
+  type GasCityReviewQuorumResponse,
   type GasCitySession,
   type GasCityTranscript,
   type GasCityWorkItem,
@@ -215,23 +219,197 @@ function MailRow({ message }: { message: GasCityMailMessage }) {
   )
 }
 
+interface ReviewQuorumFormState {
+  subject: string
+  title: string
+  baseRef: string
+  scopeKind: string
+  scopeRef: string
+}
+
+const defaultReviewQuorumForm: ReviewQuorumFormState = {
+  subject: '',
+  title: '',
+  baseRef: 'origin/main',
+  scopeKind: 'city',
+  scopeRef: 'gascity',
+}
+
+let reviewQuorumLaneSerial = 0
+
+function createReviewQuorumLaneId(prefix: string) {
+  reviewQuorumLaneSerial += 1
+  return `${prefix}-${Date.now().toString(36)}-${reviewQuorumLaneSerial}`
+}
+
 function WorkflowPanel({
   formulas,
   molecules,
   wisps,
   convoys,
+  reviewQuorumCapability,
+  onLaunched,
 }: {
   formulas: GasCityFormula[]
   molecules: GasCityWorkItem[]
   wisps: GasCityWorkItem[]
   convoys: GasCityWorkItem[]
+  reviewQuorumCapability: GasCityReviewQuorumCapability | null
+  onLaunched: () => Promise<void>
 }) {
+  const [reviewForm, setReviewForm] = useState(defaultReviewQuorumForm)
+  const [launching, setLaunching] = useState(false)
+  const [launchError, setLaunchError] = useState('')
+  const [launchResult, setLaunchResult] = useState<GasCityReviewQuorumResponse | null>(null)
+
+  const updateReviewForm = (field: keyof ReviewQuorumFormState, value: string) => {
+    setReviewForm(current => ({ ...current, [field]: value }))
+  }
+
+  const launchReviewQuorum = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (reviewQuorumCapability?.available !== true) return
+    const subject = reviewForm.subject.trim()
+    const baseRef = reviewForm.baseRef.trim()
+    if (!subject || !baseRef) return
+
+    const title = reviewForm.title.trim()
+    const scopeKind = reviewForm.scopeKind === 'rig' ? 'rig' : 'city'
+    const scopeRef = reviewForm.scopeRef.trim()
+    const [laneOneTarget = 'codex-review', laneTwoTarget = 'claude-review', synthesisTarget = 'codex-synth'] = reviewQuorumCapability.targets ?? []
+    setLaunchError('')
+    setLaunchResult(null)
+    setLaunching(true)
+    try {
+      const result = await launchGasCityReviewQuorum({
+        subject,
+        title: title || undefined,
+        baseRef,
+        scopeKind,
+        scopeRef: scopeRef || 'gascity',
+        laneOne: {
+          id: createReviewQuorumLaneId('codex-review'),
+          provider: 'codex',
+          model: 'codex-cli-default',
+          target: laneOneTarget,
+        },
+        laneTwo: {
+          id: createReviewQuorumLaneId('claude-review'),
+          provider: 'claude',
+          model: 'claude-cli-default',
+          target: laneTwoTarget,
+        },
+        synthesisTarget,
+      })
+      setLaunchResult(result)
+      setReviewForm(current => ({
+        ...current,
+        subject: '',
+        title: '',
+        baseRef: 'origin/main',
+        scopeKind: 'city',
+        scopeRef: 'gascity',
+      }))
+      await onLaunched()
+    } catch (err) {
+      setLaunchError(errorMessage(err))
+    } finally {
+      setLaunching(false)
+    }
+  }
+
+  const canLaunch = reviewForm.subject.trim().length > 0
+    && reviewForm.baseRef.trim().length > 0
+  const [laneOneTarget = 'codex-review', laneTwoTarget = 'claude-review', synthesisTarget = 'codex-synth'] = reviewQuorumCapability?.targets ?? []
+
   return (
     <section className="gascity-panel" aria-label="Gas City workflows">
       <div className="gascity-panel-header">
         <h2>Workflows</h2>
         <span>{formulas.length} formulas</span>
       </div>
+      {reviewQuorumCapability?.available === true && (
+        <form className="gascity-workflow-launch-form" onSubmit={launchReviewQuorum}>
+          <div className="gascity-launch-grid">
+            <label className="gascity-field gascity-field-wide">
+              <span>Subject</span>
+              <input
+                aria-label="Review subject"
+                value={reviewForm.subject}
+                onChange={event => updateReviewForm('subject', event.target.value)}
+                maxLength={160}
+                required
+                disabled={launching}
+              />
+            </label>
+            <label className="gascity-field">
+              <span>Title</span>
+              <input
+                aria-label="Review title"
+                value={reviewForm.title}
+                onChange={event => updateReviewForm('title', event.target.value)}
+                maxLength={120}
+                disabled={launching}
+              />
+            </label>
+            <label className="gascity-field">
+              <span>Base</span>
+              <input
+                aria-label="Review base ref"
+                value={reviewForm.baseRef}
+                onChange={event => updateReviewForm('baseRef', event.target.value)}
+                maxLength={120}
+                required
+                disabled={launching}
+              />
+            </label>
+            <label className="gascity-field">
+              <span>Scope</span>
+              <select
+                aria-label="Review scope kind"
+                value={reviewForm.scopeKind}
+                onChange={event => updateReviewForm('scopeKind', event.target.value)}
+                disabled={launching}
+              >
+                <option value="city">city</option>
+                <option value="rig">rig</option>
+              </select>
+            </label>
+            <label className="gascity-field">
+              <span>Ref</span>
+              <input
+                aria-label="Review scope ref"
+                value={reviewForm.scopeRef}
+                onChange={event => updateReviewForm('scopeRef', event.target.value)}
+                maxLength={120}
+                disabled={launching}
+              />
+            </label>
+            <div className="gascity-workflow-targets" aria-label="Review quorum targets">
+              <span>{laneOneTarget}</span>
+              <span>{laneTwoTarget}</span>
+              <span>{synthesisTarget}</span>
+            </div>
+            <button
+              type="submit"
+              className="gascity-action-button"
+              aria-label="Launch review quorum"
+              disabled={launching || !canLaunch}
+            >
+              <Send size={15} aria-hidden="true" />
+              <span>{launching ? 'Launching' : 'Launch'}</span>
+            </button>
+          </div>
+          {launchError && <div className="gascity-inline-error" role="alert">{launchError}</div>}
+          {launchResult && (
+            <div className="gascity-workflow-launch-result" role="status">
+              <strong>{launchResult.workflowId || launchResult.beadId}</strong>
+              <small>{[launchResult.title, launchResult.mode, `base ${launchResult.baseRef}`, `target ${launchResult.target}`].filter(Boolean).join(' / ')}</small>
+              {launchResult.output && <span>{launchResult.output}</span>}
+            </div>
+          )}
+        </form>
+      )}
       <div className="gascity-workflow-columns">
         <div>
           <h3>Formulas</h3>
@@ -322,6 +500,7 @@ export default function GasCityView() {
   const [requesting, setRequesting] = useState(false)
   const [requestError, setRequestError] = useState('')
   const [requestResult, setRequestResult] = useState<GasCityPiPoemResponse | null>(null)
+  const [reviewQuorumCapability, setReviewQuorumCapability] = useState<GasCityReviewQuorumCapability | null>(null)
   const [transcript, setTranscript] = useState<GasCityTranscript | null>(null)
   const [transcriptLoading, setTranscriptLoading] = useState(false)
   const [transcriptError, setTranscriptError] = useState('')
@@ -329,14 +508,17 @@ export default function GasCityView() {
   const refresh = useCallback(async () => {
     setError('')
     try {
-      const [nextObserver, nextMail] = await Promise.all([
+      const [nextObserver, nextMail, nextReviewQuorumCapability] = await Promise.all([
         getGasCityObserver(),
         getGasCityMail('human', 20),
+        getGasCityReviewQuorumCapability().catch(() => null),
       ])
       setObserver(nextObserver)
       setMail(nextMail)
+      setReviewQuorumCapability(nextReviewQuorumCapability)
     } catch (err) {
       setError(errorMessage(err))
+      setReviewQuorumCapability(null)
     } finally {
       setLoading(false)
     }
@@ -443,6 +625,8 @@ export default function GasCityView() {
           molecules={observer?.molecules || []}
           wisps={observer?.wisps || []}
           convoys={observer?.convoys || []}
+          reviewQuorumCapability={reviewQuorumCapability}
+          onLaunched={refresh}
         />
         <EventsPanel events={observer?.recentEvents || []} />
       </main>

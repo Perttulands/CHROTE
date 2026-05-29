@@ -156,6 +156,47 @@ export interface GasCityPiPoemResponse {
   output: string
 }
 
+export interface GasCityReviewQuorumLane {
+  id: string
+  provider: string
+  model: string
+  target: string
+}
+
+export interface GasCityReviewQuorumRequest {
+  subject: string
+  title?: string
+  baseRef: string
+  scopeKind?: 'city' | 'rig'
+  scopeRef?: string
+  laneOne: GasCityReviewQuorumLane
+  laneTwo: GasCityReviewQuorumLane
+  synthesisTarget: string
+}
+
+export interface GasCityReviewQuorumResponse {
+  formula: string
+  workflowId?: string
+  beadId?: string
+  target: string
+  title: string
+  subject: string
+  baseRef: string
+  mode: string
+  scope: {
+    kind: string
+    ref: string
+  }
+  output?: string
+}
+
+export interface GasCityReviewQuorumCapability {
+  available: boolean
+  formula: string
+  targets?: string[]
+  reason?: string
+}
+
 export interface GasCityTranscript {
   source: string
   stale: boolean
@@ -212,6 +253,17 @@ export function sendGasCityPiPoem(body: GasCityPiPoemRequest) {
     method: 'POST',
     body: JSON.stringify(body),
   })
+}
+
+export function launchGasCityReviewQuorum(body: GasCityReviewQuorumRequest) {
+  return request<GasCityReviewQuorumResponse>('/api/gascity/workflows/review-quorum', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export function getGasCityReviewQuorumCapability() {
+  return request<GasCityReviewQuorumCapability>('/api/gascity/workflows/review-quorum/capability')
 }
 
 export function getGasCityTranscript(sessionId: string, lines = 120) {
