@@ -304,3 +304,38 @@ This strongly limits dashboard/status/recovery feature scope.
 Implication: this becomes the core product test for any CHROTE UI around Gas
 City. If Perttu would rather ask an agent to explain or resolve the issue, do
 not build a web-app surface for it.
+
+## Claude's Refined Frame After Perttu's Answers
+
+Claude's concise synthesis after reading Perttu's responses:
+
+- The real CHROTE product is identity provisioning, not observability. Spawn a
+  Gas City identity like spawning a session: name plus identity yes/no. Agents
+  should spawn teammates too, either persistent identities such as "hire Lucy"
+  or disposable identities. Gas City polecats should be investigated as likely
+  existing plumbing for disposable agent-spawned identities.
+- Phase 1 has no guardrails. Spawning/delegation is an ordinary action: no
+  budgets, approval gates, or special security. Cost and safety policy may
+  matter later, but should not be built now.
+- The product shape is Team Builder plus Master Board, not a launcher. Compose
+  teams, name a leader, and share a board containing project description, task
+  lists, findings, and ideas as the team's thinking context. A workshop
+  touchpoint may help before the board settles.
+- The first useful workflow is the current lived pattern: primary/leader agent
+  plus a second agent improving quality at each stage: planning, bead creation,
+  execution, and verification. The `gascity-considering` / `claude-home`
+  collaboration is the reference pattern.
+- CHROTE does not diagnose collaboration failures in phase 1. Recovery is
+  social: Perttu asks the agents to explain. The sanity test supersedes most
+  dashboard instincts: would Perttu rather have an agent explain or figure this
+  out than look at a web app?
+
+Remaining question from Claude:
+
+> Where does the Master Board live and who owns it — is it a CHROTE-native
+> artifact, a new Gas City primitive, or just a view over what's already in
+> Beads (task lists) and Context Citadel (findings/ideas)?
+
+This matters because the board's contents overlap Beads and Context Citadel.
+The answer decides whether CHROTE should create new storage or only provide a
+window onto existing ledgers.
