@@ -1,0 +1,1156 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CHROTE / Gas City Decision Workbench</title>
+  <style>
+    :root {
+      --bg: #f6f7f4;
+      --panel: #ffffff;
+      --ink: #17201c;
+      --muted: #5e6962;
+      --line: #d8ddd6;
+      --line-strong: #b8c0b7;
+      --green: #1f6f50;
+      --green-soft: #e5f2ec;
+      --teal: #1d6670;
+      --teal-soft: #e2f0f2;
+      --amber: #8a5b13;
+      --amber-soft: #f6ebd2;
+      --red: #8d382f;
+      --red-soft: #f4dfdc;
+      --gray-soft: #edf0ec;
+      --shadow: 0 12px 28px rgba(25, 34, 29, 0.08);
+      color-scheme: light;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-size: 16px;
+      line-height: 1.45;
+    }
+
+    a {
+      color: var(--teal);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 3px;
+    }
+
+    button, input, textarea {
+      font: inherit;
+    }
+
+    .shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
+    }
+
+    aside {
+      border-right: 1px solid var(--line);
+      background: #fbfcfa;
+      padding: 24px;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow: auto;
+    }
+
+    main {
+      padding: 28px;
+      max-width: 1320px;
+      width: 100%;
+    }
+
+    .eyebrow {
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0;
+      text-transform: uppercase;
+      margin: 0 0 8px;
+    }
+
+    h1, h2, h3 {
+      line-height: 1.12;
+      letter-spacing: 0;
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 1.9rem;
+      margin-bottom: 12px;
+    }
+
+    h2 {
+      font-size: 1.4rem;
+      margin-bottom: 14px;
+    }
+
+    h3 {
+      font-size: 1.02rem;
+      margin-bottom: 8px;
+    }
+
+    p {
+      margin: 0;
+    }
+
+    .lead {
+      color: var(--muted);
+      margin-bottom: 20px;
+    }
+
+    .north-star {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 16px;
+      box-shadow: var(--shadow);
+      margin-bottom: 18px;
+    }
+
+    .north-star ul {
+      padding-left: 18px;
+      margin: 10px 0 0;
+    }
+
+    .nav-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 18px;
+    }
+
+    .nav-item {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--ink);
+      text-align: left;
+      padding: 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      display: grid;
+      gap: 6px;
+    }
+
+    .nav-item:hover,
+    .nav-item.active {
+      border-color: var(--teal);
+      background: var(--teal-soft);
+    }
+
+    .nav-title {
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .nav-meta {
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 20px 0;
+    }
+
+    .chip,
+    .bead,
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+      padding: 4px 9px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .chip {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--ink);
+      cursor: pointer;
+    }
+
+    .chip.active {
+      background: var(--green-soft);
+      border-color: var(--green);
+      color: var(--green);
+    }
+
+    .bead {
+      color: var(--teal);
+      background: var(--teal-soft);
+    }
+
+    .badge.p1 {
+      color: var(--red);
+      background: var(--red-soft);
+    }
+
+    .badge.p2 {
+      color: var(--amber);
+      background: var(--amber-soft);
+    }
+
+    .badge.p3 {
+      color: var(--muted);
+      background: var(--gray-soft);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(310px, 380px);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .section {
+      margin-bottom: 18px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .decision-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      margin-bottom: 16px;
+      overflow: hidden;
+    }
+
+    .decision-head {
+      border-bottom: 1px solid var(--line);
+      padding: 18px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .decision-head-row {
+      display: flex;
+      gap: 10px;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+
+    .decision-body {
+      padding: 18px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .fact-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .fact {
+      background: var(--gray-soft);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      min-height: 78px;
+    }
+
+    .fact span {
+      display: block;
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      margin-bottom: 5px;
+    }
+
+    .option-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .option {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+      background: #fff;
+    }
+
+    .option.selected {
+      border-color: var(--green);
+      background: var(--green-soft);
+    }
+
+    .option-head {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 10px;
+      align-items: start;
+    }
+
+    .option input {
+      margin-top: 3px;
+      width: 16px;
+      height: 16px;
+      accent-color: var(--green);
+    }
+
+    .option-title {
+      font-weight: 800;
+    }
+
+    .recommend {
+      color: var(--green);
+      background: var(--green-soft);
+      border: 1px solid rgba(31, 111, 80, 0.25);
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 0.76rem;
+      font-weight: 800;
+    }
+
+    .tradeoffs {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .tradeoffs div {
+      border-left: 3px solid var(--line-strong);
+      padding-left: 10px;
+      color: var(--muted);
+    }
+
+    .tradeoffs strong,
+    .plain-list strong {
+      color: var(--ink);
+    }
+
+    .plain-list {
+      padding-left: 18px;
+      margin: 8px 0 0;
+      color: var(--muted);
+    }
+
+    .plain-list li {
+      margin: 5px 0;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 96px;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      padding: 12px;
+      resize: vertical;
+      color: var(--ink);
+      background: #fff;
+    }
+
+    .summary-box {
+      min-height: 320px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 0.88rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+
+    .button-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+
+    .action-button {
+      border: 1px solid var(--line-strong);
+      background: var(--panel);
+      color: var(--ink);
+      border-radius: 8px;
+      padding: 9px 12px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .action-button.primary {
+      background: var(--green);
+      color: #fff;
+      border-color: var(--green);
+    }
+
+    .timeline {
+      display: grid;
+      gap: 9px;
+      counter-reset: step;
+    }
+
+    .timeline-item {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 10px;
+      align-items: start;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .timeline-item:last-child {
+      border-bottom: 0;
+      padding-bottom: 0;
+    }
+
+    .number {
+      width: 28px;
+      height: 28px;
+      border-radius: 999px;
+      background: var(--ink);
+      color: #fff;
+      display: inline-grid;
+      place-items: center;
+      font-size: 0.84rem;
+      font-weight: 800;
+      flex: 0 0 auto;
+    }
+
+    .small {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .footer-note {
+      color: var(--muted);
+      margin-top: 18px;
+      font-size: 0.88rem;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    @media (max-width: 1020px) {
+      .shell {
+        grid-template-columns: 1fr;
+      }
+
+      aside {
+        position: static;
+        height: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 720px) {
+      main,
+      aside {
+        padding: 18px;
+      }
+
+      .fact-grid,
+      .tradeoffs {
+        grid-template-columns: 1fr;
+      }
+
+      .decision-head-row,
+      .option-head {
+        grid-template-columns: 1fr;
+      }
+
+      .option-head {
+        display: grid;
+      }
+
+      .option input {
+        margin-top: 0;
+      }
+    }
+
+    @media print {
+      body {
+        background: #fff;
+      }
+
+      aside,
+      .toolbar,
+      .button-row,
+      textarea:not(.summary-box) {
+        display: none;
+      }
+
+      .shell,
+      .grid {
+        display: block;
+      }
+
+      main {
+        padding: 0;
+      }
+
+      .panel,
+      .decision-card {
+        box-shadow: none;
+        break-inside: avoid;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside>
+      <p class="eyebrow">Decision aid</p>
+      <h1>CHROTE / Gas City Workbench</h1>
+      <p class="lead">A compact map of the decisions required before CHROTE can treat Gas City as reliable orchestration plumbing.</p>
+
+      <div class="north-star">
+        <h3>North star</h3>
+        <ul>
+          <li>Gas City is orchestration plumbing: identities, mail, sling, workflows, molecules, and events.</li>
+          <li>CHROTE is the access layer for named tmux and Gas City identities.</li>
+          <li>No hidden mocks. Unsupported paths fail loud.</li>
+          <li>Beads remain the work ledger. Context Citadel remains durable context, not orchestration.</li>
+        </ul>
+      </div>
+
+      <div class="toolbar" aria-label="Decision filters">
+        <button class="chip active" type="button" data-filter="all">All</button>
+        <button class="chip" type="button" data-filter="p1">P1</button>
+        <button class="chip" type="button" data-filter="p2">P2</button>
+        <button class="chip" type="button" data-filter="later">Later</button>
+      </div>
+
+      <nav class="nav-list" id="navList" aria-label="Decision list"></nav>
+    </aside>
+
+    <main>
+      <section class="section panel">
+        <p class="eyebrow">Working set</p>
+        <h2>Required Decisions</h2>
+        <p class="lead">The first-pass answer is not "build more UI." It is to choose the access-layer boundaries and failure semantics that keep Gas City real, recoverable, and useful for agent collaboration.</p>
+        <div class="fact-grid">
+          <div class="fact">
+            <span>Immediate pressure</span>
+            CHROTE must serve the shell-first source and expose only intended identities.
+          </div>
+          <div class="fact">
+            <span>Architecture pressure</span>
+            The HTTP/CLI split and tmux assumptions need an explicit transport decision.
+          </div>
+          <div class="fact">
+            <span>Durability pressure</span>
+            The live city config must either be reproducible or explicitly disposable.
+          </div>
+        </div>
+      </section>
+
+      <div class="grid">
+        <section id="decisionContainer" aria-label="Decision details"></section>
+
+        <aside class="panel" style="position: static; height: auto; overflow: visible; border: 1px solid var(--line);">
+          <section class="section">
+            <p class="eyebrow">Suggested order</p>
+            <h2>Decision Sequence</h2>
+            <div class="timeline" id="timeline"></div>
+          </section>
+
+          <section class="section">
+            <p class="eyebrow">Local draft</p>
+            <h2>Decision Summary</h2>
+            <textarea id="summaryBox" class="summary-box" readonly></textarea>
+            <div class="button-row">
+              <button class="action-button primary" type="button" id="copySummary">Copy summary</button>
+              <button class="action-button" type="button" id="resetChoices">Reset local choices</button>
+            </div>
+            <p class="footer-note">Selections and notes are stored only in this browser's local storage for this file.</p>
+          </section>
+
+          <section>
+            <p class="eyebrow">References</p>
+            <h2>Source Docs</h2>
+            <ul class="plain-list">
+              <li><a href="chrote-gascity-framing.md">CHROTE Gas City framing</a></li>
+              <li><a href="adr/0001-chrote-3-gas-city-substrate.md">ADR 0001: Gas City substrate</a></li>
+              <li><a href="adr/0002-gascity-real-harness-safety-boundary.md">ADR 0002: real harness boundary</a></li>
+              <li><a href="plans/chrote-3-gascity-refactor-plan.md">CHROTE 3.0 refactor plan</a></li>
+            </ul>
+          </section>
+        </aside>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const decisions = [
+      {
+        id: "observer-scope",
+        priority: "P1",
+        bead: "home-caiq",
+        title: "Observer boundary",
+        question: "Which Gas City sessions should CHROTE expose as normal user sessions?",
+        pressure: "The observer can currently project system/control sessions such as control-dispatcher into CHROTE choices.",
+        recommendation: "Filter to intended user identity sessions by default; hide or explicitly classify system sessions.",
+        order: 1,
+        filter: "p1",
+        options: [
+          {
+            key: "user-only",
+            title: "User identities only by default",
+            recommended: true,
+            chooseIf: "CHROTE should stay a bounded access layer for named identities.",
+            pros: "Keeps operator surface clean, prevents accidental attachment to system sessions, matches the no-dashboard-first vision.",
+            cons: "Requires classification rules for system/control sessions and tests with multiple cities.",
+            rollback: "Diagnostic endpoint can still expose hidden sessions for agent troubleshooting."
+          },
+          {
+            key: "show-all-classified",
+            title: "Show all, but classify and gate",
+            recommended: false,
+            chooseIf: "You want visibility into system sessions from the same interface.",
+            pros: "More transparent for debugging; less filtering logic.",
+            cons: "Risks turning CHROTE into a broad supervisor dashboard and makes accidental attach more likely.",
+            rollback: "Can later move system sessions into diagnostics only."
+          },
+          {
+            key: "show-all",
+            title: "Expose everything",
+            recommended: false,
+            chooseIf: "Only acceptable for a short diagnostic build.",
+            pros: "Fastest to implement and easiest to inspect.",
+            cons: "Conflicts with CHROTE as a bounded access layer and makes system sessions look like user sessions.",
+            rollback: "Replace with filter/classification immediately after diagnosis."
+          }
+        ],
+        next: "Implement observer filtering/classification before relying on Gas City session lists in the UI."
+      },
+      {
+        id: "transport",
+        priority: "P1",
+        bead: "home-tsc2",
+        title: "Control-plane transport",
+        question: "Should CHROTE call Gas City through supervisor HTTP, gc CLI, or an explicit split?",
+        pressure: "Observe uses supervisor HTTP while create and transcript peek shell out to gc, with tmux PATH/version assumptions.",
+        recommendation: "Target supervisor HTTP for durable operations; keep CLI only as a named transitional adapter with loud health checks.",
+        order: 2,
+        filter: "p1",
+        options: [
+          {
+            key: "supervisor-target",
+            title: "Supervisor API as target transport",
+            recommended: true,
+            chooseIf: "Gas City should be the socket/plumbing and CHROTE should not guess local tmux binaries.",
+            pros: "One stable channel, fewer PATH assumptions, easier to test and reason about from CHROTE.",
+            cons: "May require upstream Gas City API gaps to be filled before create/peek can fully move.",
+            rollback: "Keep CLI adapter behind explicit feature/health checks while API matures."
+          },
+          {
+            key: "cli-explicit",
+            title: "CLI exec as accepted transport",
+            recommended: false,
+            chooseIf: "The CLI is the most complete current interface and API parity is not ready.",
+            pros: "Matches current gc operator behavior and may unlock features faster.",
+            cons: "Requires explicit tmux/socket version checks and failure messages; more host-environment coupling.",
+            rollback: "Move operation by operation to supervisor API as endpoints become sufficient."
+          },
+          {
+            key: "hybrid-recorded",
+            title: "Recorded hybrid",
+            recommended: false,
+            chooseIf: "Some operations are clearly API-owned and others are CLI-owned for now.",
+            pros: "Pragmatic if Gas City API coverage is uneven.",
+            cons: "Can become accidental architecture unless every split has a reason and health check.",
+            rollback: "Set a sunset condition for each CLI-owned operation."
+          }
+        ],
+        next: "Write an ADR or bead close reason that names the chosen channel and the failure semantics."
+      },
+      {
+        id: "deployed-source",
+        priority: "P1",
+        bead: "home-06xp",
+        title: "Deployed source parity",
+        question: "How do we prove the running CHROTE is the shell-first version?",
+        pressure: "Dirty source does not prove the service at 8094 or the browser UI is serving those changes.",
+        recommendation: "Treat deploy verification as a required gate before user-facing claims.",
+        order: 3,
+        filter: "p1",
+        options: [
+          {
+            key: "verify-now",
+            title: "Gate on build, restart, and smoke",
+            recommended: true,
+            chooseIf: "The operator is testing local CHROTE as the product.",
+            pros: "Prevents stale UI confusion; aligns with user-visible success.",
+            cons: "Touches running service and must be done carefully around sessions.",
+            rollback: "Service restart can return to the previous binary if artifacts are preserved."
+          },
+          {
+            key: "source-only",
+            title: "Accept source-level proof only",
+            recommended: false,
+            chooseIf: "This is only a code review artifact, not a live local product claim.",
+            pros: "No runtime disruption.",
+            cons: "Does not answer what the user sees in the browser.",
+            rollback: "Run the full deployment gate before any live claim."
+          }
+        ],
+        next: "Run the documented build/copy/rebuild/restart path, then smoke create and fail-loud paths."
+      },
+      {
+        id: "rigs",
+        priority: "P1",
+        bead: "home-f1f9, home-vok5",
+        title: "Rig scope",
+        question: "When should CHROTE allow Gas City rig-scoped sessions?",
+        pressure: "Rig argv plumbing exists, but validation rejects all rigs because native rig workdir/scope is not proven.",
+        recommendation: "Keep rigs blocked until a real CHROTE rig proves workdir, beads, and routing scope.",
+        order: 4,
+        filter: "p1",
+        options: [
+          {
+            key: "block-until-proven",
+            title: "Keep blocked until proven",
+            recommended: true,
+            chooseIf: "Correct identity/work scope matters more than early UI affordance.",
+            pros: "Avoids pretending project scope exists; preserves fail-loud behavior.",
+            cons: "Team/project spawning stays less convenient until proof is done.",
+            rollback: "Once proven, enable rig selection with tests."
+          },
+          {
+            key: "remove-plumbing",
+            title: "Remove unreachable branch for now",
+            recommended: false,
+            chooseIf: "You want no forward scaffolding in code.",
+            pros: "Cleaner current code, less dead logic.",
+            cons: "Rig work later has to reintroduce handler plumbing.",
+            rollback: "Re-add rig arguments when home-f1f9 is ready."
+          },
+          {
+            key: "enable-fast",
+            title: "Enable selected rig now",
+            recommended: false,
+            chooseIf: "Only acceptable after native gc rig behavior is demonstrated.",
+            pros: "Gets closer to named project/team identity quickly.",
+            cons: "High risk if workdir and routing scope are wrong; creates subtle context errors.",
+            rollback: "Disable rig input and close any wrongly scoped sessions."
+          }
+        ],
+        next: "Prove a CHROTE rig with real gc behavior before surfacing it."
+      },
+      {
+        id: "ui-errors",
+        priority: "P2",
+        bead: "home-pilv",
+        title: "Fail-loud UI semantics",
+        question: "How much Gas City failure detail should CHROTE show to the operator?",
+        pressure: "Backend errors are structured, but UI paths can collapse them into generic messages or swallow observer failures.",
+        recommendation: "Show safe structured messages and degraded states; do not expose supervisor internals.",
+        order: 5,
+        filter: "p2",
+        options: [
+          {
+            key: "safe-structured",
+            title: "Safe structured errors",
+            recommended: true,
+            chooseIf: "The operator should know exactly which primitive failed without seeing secrets.",
+            pros: "Supports debugging through agents, matches fail-loud principle.",
+            cons: "Requires careful redaction and tests.",
+            rollback: "Fallback to generic user copy while preserving detailed logs server-side."
+          },
+          {
+            key: "generic-ui",
+            title: "Generic UI errors",
+            recommended: false,
+            chooseIf: "The UI should stay very quiet and agents will inspect logs.",
+            pros: "Lower leakage risk.",
+            cons: "Operator cannot tell unsupported rig from service failure without asking an agent.",
+            rollback: "Add structured codes later."
+          }
+        ],
+        next: "Use backend code/message in TerminalWindow and observer degraded state tests."
+      },
+      {
+        id: "state-semantics",
+        priority: "P2",
+        bead: "home-2spf",
+        title: "Session state semantics",
+        question: "Which Gas City state source is canonical for CHROTE availability and attachability?",
+        pressure: "CLI and supervisor can disagree, for example asleep versus active/running on control-dispatcher.",
+        recommendation: "Separate lifecycle status from runtime attachability and document the mapping.",
+        order: 6,
+        filter: "p2",
+        options: [
+          {
+            key: "dual-fields",
+            title: "Display lifecycle and runtime separately",
+            recommended: true,
+            chooseIf: "Different Gas City sources are expressing different truths.",
+            pros: "Avoids false normalization; useful for agents and debugging.",
+            cons: "Requires a clear model and may need UI copy restraint.",
+            rollback: "Collapse to one field after upstream semantics are clarified."
+          },
+          {
+            key: "supervisor-canonical",
+            title: "Supervisor state is canonical",
+            recommended: false,
+            chooseIf: "CHROTE should follow the long-running service as source of truth.",
+            pros: "Matches current observer path.",
+            cons: "May hide lifecycle semantics from gc CLI.",
+            rollback: "Add CLI lifecycle as secondary metadata."
+          },
+          {
+            key: "cli-canonical",
+            title: "CLI state is canonical",
+            recommended: false,
+            chooseIf: "gc CLI is the operator contract and supervisor is runtime detail.",
+            pros: "Aligns with native operator tool.",
+            cons: "May report attachable tmux sessions as asleep.",
+            rollback: "Use supervisor runtime state for attach decisions."
+          }
+        ],
+        next: "Reproduce and write the mapping before changing displayed status."
+      },
+      {
+        id: "city-durability",
+        priority: "P2",
+        bead: "home-jcml",
+        title: "Live city durability",
+        question: "What is the source of truth for the shell-only Gas City city config?",
+        pressure: "/home/perttu/gascity is git-ignored runtime state but now contains important hand-authored shell identity config.",
+        recommendation: "Make the intended shell-only config reproducible from versioned source, while keeping runtime data untracked.",
+        order: 7,
+        filter: "p2",
+        options: [
+          {
+            key: "versioned-pack",
+            title: "Generated from a versioned pack",
+            recommended: true,
+            chooseIf: "You want drift detection without committing runtime state.",
+            pros: "Clean source of truth, repeatable setup, avoids secrets/runtime data.",
+            cons: "Requires a pack/apply workflow and documentation.",
+            rollback: "Fall back to tracked minimal config if generation is too heavy."
+          },
+          {
+            key: "track-minimal",
+            title: "Track minimal city config",
+            recommended: false,
+            chooseIf: "The live config itself is small and safe enough to commit.",
+            pros: "Simple diff and rollback.",
+            cons: "Need strong ignore rules to avoid mail/session/runtime data.",
+            rollback: "Move to generated source if runtime churn leaks into git."
+          },
+          {
+            key: "disposable-runtime",
+            title: "Intentionally disposable runtime",
+            recommended: false,
+            chooseIf: "The city can be rebuilt from other docs or commands.",
+            pros: "No repo hygiene overhead.",
+            cons: "Current shell-only state can drift or disappear without review.",
+            rollback: "Create a tracked bootstrap pack."
+          }
+        ],
+        next: "Choose source of truth before further hand-editing live city config."
+      },
+      {
+        id: "api-parity",
+        priority: "P3",
+        bead: "home-ddtc",
+        title: "suppress_startup_prompt API parity",
+        question: "Should suppress_startup_prompt be config-only or exposed through supervisor API?",
+        pressure: "The field is operationally important for shell identities, but current shell flow is TOML/CLI-driven.",
+        recommendation: "Keep config-only until an API writer needs it; record that as intentional.",
+        order: 8,
+        filter: "later",
+        options: [
+          {
+            key: "config-only",
+            title: "Config-only by design",
+            recommended: true,
+            chooseIf: "No supervisor API workflow needs to set this field yet.",
+            pros: "Small surface, no generated client churn.",
+            cons: "Future API tooling cannot configure it without another slice.",
+            rollback: "Promote to API field when a real use case appears."
+          },
+          {
+            key: "api-parity",
+            title: "Expose API parity now",
+            recommended: false,
+            chooseIf: "Supervisor clients must patch/create agents with this setting.",
+            pros: "Consistent with other config fields.",
+            cons: "More API/schema/client work for no immediate CHROTE need.",
+            rollback: "Deprecate or leave optional if unused."
+          }
+        ],
+        next: "Record config-only intent unless a real API use case appears."
+      },
+      {
+        id: "cleanup",
+        priority: "P3",
+        bead: "home-srd9",
+        title: "Inactive artifact cleanup",
+        question: "Should old smoke/mock/backups under the live city be removed now?",
+        pressure: "Inactive residue can confuse future agents, but deletion is not needed for the shell-first slice.",
+        recommendation: "Inventory now, delete only after explicit approval.",
+        order: 9,
+        filter: "later",
+        options: [
+          {
+            key: "approval-gate",
+            title: "Approval-gated cleanup",
+            recommended: true,
+            chooseIf: "You want less confusion without losing evidence accidentally.",
+            pros: "Safe cleanup, preserves recovery context until reviewed.",
+            cons: "Leaves some clutter temporarily.",
+            rollback: "Restore retained archive or backups if a deletion was wrong."
+          },
+          {
+            key: "ignore-now",
+            title: "Ignore for now",
+            recommended: false,
+            chooseIf: "Active config is already clean and no agent is confused by residue.",
+            pros: "No deletion risk.",
+            cons: "Future agents may rediscover stale smoke paths.",
+            rollback: "Reopen cleanup when confusion appears."
+          },
+          {
+            key: "delete-now",
+            title: "Delete immediately",
+            recommended: false,
+            chooseIf: "Only after inventory proves every target is inactive and disposable.",
+            pros: "Fastest path to a clean tree.",
+            cons: "Risk of deleting useful runtime evidence.",
+            rollback: "Recover from backups if available."
+          }
+        ],
+        next: "Do not delete anything until the candidate list is approved."
+      }
+    ];
+
+    const storagePrefix = "chrote-gascity-decision-workbench:";
+    let activeFilter = "all";
+
+    function priorityClass(priority) {
+      return priority.toLowerCase();
+    }
+
+    function selectedFor(decision) {
+      return localStorage.getItem(storagePrefix + decision.id + ":choice") || "";
+    }
+
+    function notesFor(decision) {
+      return localStorage.getItem(storagePrefix + decision.id + ":notes") || "";
+    }
+
+    function setChoice(decisionId, optionKey) {
+      localStorage.setItem(storagePrefix + decisionId + ":choice", optionKey);
+      render();
+    }
+
+    function setNotes(decisionId, value) {
+      localStorage.setItem(storagePrefix + decisionId + ":notes", value);
+      updateSummary();
+    }
+
+    function filteredDecisions() {
+      return decisions.filter((decision) => {
+        if (activeFilter === "all") return true;
+        return decision.filter === activeFilter;
+      });
+    }
+
+    function renderNav() {
+      const nav = document.getElementById("navList");
+      nav.innerHTML = "";
+      filteredDecisions().forEach((decision) => {
+        const button = document.createElement("button");
+        button.className = "nav-item";
+        button.type = "button";
+        button.dataset.target = decision.id;
+        button.innerHTML = `
+          <span class="nav-title">
+            <span>${decision.title}</span>
+            <span class="badge ${priorityClass(decision.priority)}">${decision.priority}</span>
+          </span>
+          <span class="nav-meta">${decision.bead}</span>
+        `;
+        button.addEventListener("click", () => {
+          document.getElementById(decision.id).scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+        nav.appendChild(button);
+      });
+    }
+
+    function renderDecisions() {
+      const container = document.getElementById("decisionContainer");
+      container.innerHTML = "";
+
+      filteredDecisions().forEach((decision) => {
+        const selected = selectedFor(decision);
+        const article = document.createElement("article");
+        article.className = "decision-card";
+        article.id = decision.id;
+
+        const optionsHtml = decision.options.map((option) => {
+          const isSelected = selected === option.key;
+          return `
+            <label class="option ${isSelected ? "selected" : ""}">
+              <span class="option-head">
+                <input type="radio" name="${decision.id}" value="${option.key}" ${isSelected ? "checked" : ""}>
+                <span>
+                  <span class="option-title">${option.title}</span>
+                  <span class="small">${option.chooseIf}</span>
+                </span>
+                ${option.recommended ? '<span class="recommend">Recommended</span>' : ""}
+              </span>
+              <span class="tradeoffs">
+                <span><strong>Upside:</strong> ${option.pros}</span>
+                <span><strong>Cost:</strong> ${option.cons}</span>
+              </span>
+              <span class="small"><strong>Escape hatch:</strong> ${option.rollback}</span>
+            </label>
+          `;
+        }).join("");
+
+        article.innerHTML = `
+          <header class="decision-head">
+            <div class="decision-head-row">
+              <div>
+                <p class="eyebrow">${decision.question}</p>
+                <h2>${decision.title}</h2>
+              </div>
+              <div>
+                <span class="badge ${priorityClass(decision.priority)}">${decision.priority}</span>
+                <span class="bead">${decision.bead}</span>
+              </div>
+            </div>
+            <p class="small"><strong>Pressure:</strong> ${decision.pressure}</p>
+            <p><strong>Default lean:</strong> ${decision.recommendation}</p>
+          </header>
+          <div class="decision-body">
+            <div class="option-list">${optionsHtml}</div>
+            <div>
+              <h3>Next action</h3>
+              <p class="small">${decision.next}</p>
+            </div>
+            <div>
+              <h3>Decision notes</h3>
+              <textarea data-notes="${decision.id}" placeholder="Write local notes, objections, or final decision language.">${notesFor(decision)}</textarea>
+            </div>
+          </div>
+        `;
+
+        article.querySelectorAll("input[type='radio']").forEach((input) => {
+          input.addEventListener("change", () => setChoice(decision.id, input.value));
+        });
+
+        article.querySelectorAll("textarea[data-notes]").forEach((textarea) => {
+          textarea.addEventListener("input", () => setNotes(decision.id, textarea.value));
+        });
+
+        container.appendChild(article);
+      });
+    }
+
+    function renderTimeline() {
+      const timeline = document.getElementById("timeline");
+      timeline.innerHTML = "";
+      decisions
+        .slice()
+        .sort((a, b) => a.order - b.order)
+        .forEach((decision) => {
+          const row = document.createElement("div");
+          row.className = "timeline-item";
+          row.innerHTML = `
+            <span class="number">${decision.order}</span>
+            <span>
+              <strong>${decision.title}</strong>
+              <span class="small"> ${decision.bead}</span>
+            </span>
+          `;
+          timeline.appendChild(row);
+        });
+    }
+
+    function updateSummary() {
+      const lines = [];
+      lines.push("CHROTE / Gas City decision draft");
+      lines.push("");
+      decisions
+        .slice()
+        .sort((a, b) => a.order - b.order)
+        .forEach((decision) => {
+          const selected = selectedFor(decision);
+          const option = decision.options.find((item) => item.key === selected);
+          const notes = notesFor(decision).trim();
+          lines.push(`${decision.order}. ${decision.title} (${decision.priority}, ${decision.bead})`);
+          lines.push(`   Default lean: ${decision.recommendation}`);
+          lines.push(`   Selected: ${option ? option.title : "Undecided"}`);
+          if (notes) {
+            lines.push(`   Notes: ${notes.replace(/\n/g, "\n          ")}`);
+          }
+          lines.push("");
+        });
+      document.getElementById("summaryBox").value = lines.join("\n");
+    }
+
+    function render() {
+      renderNav();
+      renderDecisions();
+      renderTimeline();
+      updateSummary();
+    }
+
+    document.querySelectorAll("[data-filter]").forEach((button) => {
+      button.addEventListener("click", () => {
+        activeFilter = button.dataset.filter;
+        document.querySelectorAll("[data-filter]").forEach((item) => item.classList.toggle("active", item === button));
+        render();
+      });
+    });
+
+    document.getElementById("copySummary").addEventListener("click", async () => {
+      const summary = document.getElementById("summaryBox");
+      summary.select();
+      try {
+        await navigator.clipboard.writeText(summary.value);
+      } catch (error) {
+        document.execCommand("copy");
+      }
+    });
+
+    document.getElementById("resetChoices").addEventListener("click", () => {
+      decisions.forEach((decision) => {
+        localStorage.removeItem(storagePrefix + decision.id + ":choice");
+        localStorage.removeItem(storagePrefix + decision.id + ":notes");
+      });
+      render();
+    });
+
+    render();
+  </script>
+</body>
+</html>

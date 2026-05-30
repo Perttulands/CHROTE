@@ -2,6 +2,8 @@
 
 Date: 2026-05-18
 
+> Current Gas City context/problem framing lives in `docs/chrote-gascity-framing.md`. This file is empirical evidence from the sidecar spike, not a standing adoption plan or implementation decision.
+
 ## Setup
 
 The isolated Gas City sidecar is installed at `<workspace-root>/gascity`.
@@ -183,18 +185,13 @@ policy, and approval rules.
 File-backed Beads are acceptable for this spike but are not a production
 durability proof. Dolt-backed behavior still needs separate validation.
 
-## Recommendation
+## Historical Recommendation From Spike
 
-Use Gas City as a sidecar orchestration runtime for the next CHROTE
-meta-harness slice.
+At the time of the spike, the recommendation was to use Gas City as a sidecar orchestration runtime for the next CHROTE meta-harness slice.
 
-The sidecar path is currently the best fit because it gives CHROTE durable
-sessions, mail, sling, formulas, molecules, wisps, convoys, and a typed
-HTTP/SSE control plane without requiring CHROTE to reimplement those primitives
-first.
+That recommendation is now evidence, not a standing plan. The lasting finding is that Gas City already provides durable sessions, mail, sling, formulas, molecules, wisps, convoys, and a typed HTTP/SSE control plane without requiring CHROTE to reimplement those primitives first.
 
-The next slice should not connect paid AI harnesses immediately. It should first
-build a read-only CHROTE panel that queries the supervisor API and displays:
+Any future CHROTE/Gas City integration should preserve the safety boundary in `docs/chrote-gascity-framing.md`. The spike suggested that a read-only projection could display:
 
 - running cities
 - sessions
@@ -205,7 +202,7 @@ build a read-only CHROTE panel that queries the supervisor API and displays:
 
 After that panel is stable, add one real harness adapter at a time.
 
-Follow-up Beads:
+Historical follow-up Beads from the spike:
 
 - `home-4xv.2`: Build CHROTE read-only Gas City observer
 - `home-4xv.3`: Fix Gas City transcript recovery for CHROTE
