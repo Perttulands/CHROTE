@@ -29,8 +29,11 @@ Removal manifest: `/home/perttu/rollback-snapshots/gascity-runtime-removal-20260
 
 ## How To Read This Folder
 
-- Start with [framing.md](framing.md) for the clearest statement of what we were
-  trying to get from Gas City.
+- Start with [what-we-were-trying-to-do.md](what-we-were-trying-to-do.md) for
+  the concise historical record of the goal, what was attempted, what was
+  learned, and which Gas City Beads were removed from the active ledger.
+- Read [framing.md](framing.md) for the longer research framing behind that
+  record.
 - Read [adr/0003-rollback-active-gascity-integration.md](adr/0003-rollback-active-gascity-integration.md)
   before assuming any Gas City plan is current.
 - Treat [adr/0001-chrote-3-gas-city-substrate.md](adr/0001-chrote-3-gas-city-substrate.md)
