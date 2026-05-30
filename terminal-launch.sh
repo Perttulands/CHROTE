@@ -18,7 +18,19 @@ case "$SESSION" in
       echo "terminal-launch: Gas City not found at $GC_CITY_DIR (set CHROTE_GASCITY_CITY_DIR)" >&2
       exit 2
     fi
-    unset TMUX TMUX_TMPDIR
+    case "${CHROTE_GASCITY_GC_PATH:-}" in
+      off|OFF) ;;
+      "")
+        [ -x /home/linuxbrew/.linuxbrew/bin/tmux ] && export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
+        ;;
+      *)
+        export PATH="${CHROTE_GASCITY_GC_PATH}:$PATH"
+        ;;
+    esac
+    # Leave TMUX_TMPDIR intact so Gas City attaches to the same tmux socket
+    # namespace as the supervisor-managed sessions. TMUX itself must be cleared
+    # because ttyd launches from outside an attached tmux client.
+    unset TMUX
     exec gc --city "$GC_CITY_DIR" session attach "$GC_SESSION"
     ;;
 esac
