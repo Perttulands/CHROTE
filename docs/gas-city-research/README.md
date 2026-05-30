@@ -32,6 +32,8 @@ Removal manifest: `/home/perttu/rollback-snapshots/gascity-runtime-removal-20260
 - Start with [what-we-were-trying-to-do.md](what-we-were-trying-to-do.md) for
   the concise historical record of the goal, what was attempted, what was
   learned, and which Gas City Beads were removed from the active ledger.
+- Use [interview-plan-new-orchestration.md](interview-plan-new-orchestration.md)
+  to interview Perttu before turning the retained lessons into any new plan.
 - Read [framing.md](framing.md) for the longer research framing behind that
   record.
 - Read [adr/0003-rollback-active-gascity-integration.md](adr/0003-rollback-active-gascity-integration.md)
