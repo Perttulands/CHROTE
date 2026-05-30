@@ -1,4 +1,4 @@
-// Gastown Agent Role Detection
+// Legacy agent role detection
 // Detects agent roles from session name patterns
 
 export type AgentRole = 'mayor' | 'deacon' | 'witness' | 'polecat' | 'refinery' | 'crew'
@@ -12,7 +12,7 @@ export interface RoleInfo {
 }
 
 // Role configuration with display info and theme colors
-// Emojis match Gastown constants (see components/gastown/internal/constants/constants.go)
+// Role names are retained for compatibility with older session naming patterns.
 export const ROLE_CONFIG: Record<AgentRole, Omit<RoleInfo, 'role'>> = {
   mayor: {
     emoji: '🎩',           // Fox conductor
@@ -53,7 +53,7 @@ export const ROLE_CONFIG: Record<AgentRole, Omit<RoleInfo, 'role'>> = {
 }
 
 /**
- * Detect the Gastown agent role from a session name
+ * Detect the legacy agent role from a session name
  * @param sessionName The tmux session name
  * @returns The detected role or null if no role pattern matches
  */

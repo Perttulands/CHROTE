@@ -41,6 +41,8 @@ and runtime state. Client devices only view and operate that state.
 - CHROTE does not replace `bd`.
 - CHROTE does not assume Gastown, Ralph, or vendored orchestrator components.
 - CHROTE does not currently own agent-to-agent IPC or autonomous team routing.
+- Gas City is archived research only unless explicitly reintroduced through a
+  new decision and implementation slice.
 
 ## Current Views
 
@@ -77,8 +79,8 @@ V1 services are:
 - Keep Context Citadel bearer tokens server-side only.
 - Provide clear degraded states when a service is unavailable or not configured.
 - Keep Services v1 focused on TTS and Context Citadel.
-- Do not implement Agent Teams, recipes, autonomous agent messaging, or Gas City
-  orchestration as part of Services v1.
+- Do not implement Agent Teams, recipes, autonomous agent messaging, or archived
+  Gas City orchestration as part of Services v1.
 
 ### Service Configuration
 
@@ -138,8 +140,8 @@ starting with TTS Gateway and Context Citadel through server-side proxies.
 ### Phase 3 - Service Expansion
 
 Later Services components may include image generation, Camofox browser
-automation, Ollama status, and Gas City read-only observation if they earn their
-place in the operator workflow.
+automation, and Ollama status if they earn their place in the operator workflow.
+Gas City work is not on this roadmap while the rollback decision stands.
 
 ### Phase 4 - Meta-Harness
 

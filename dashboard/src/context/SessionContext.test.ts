@@ -156,6 +156,23 @@ describe('migrateStoredState (via loadStoredState)', () => {
     expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual([])
   })
 
+  it('migrates retired Gastown theme storage to Amber', () => {
+    localStorage.setItem('chrote-dashboard-state', JSON.stringify({
+      workspaces: {
+        terminal1: { windows: [], windowCount: 2 },
+        terminal2: { windows: [], windowCount: 2 },
+      },
+      sidebarCollapsed: false,
+      settings: {
+        theme: 'gastown',
+      },
+    }))
+
+    const { result } = renderSession()
+
+    expect(result.current.settings.theme).toBe('amber')
+  })
+
   it('keeps window layouts separate between desktop and mobile viewports', () => {
     setViewportWidth(1280)
     const desktop = renderSession()

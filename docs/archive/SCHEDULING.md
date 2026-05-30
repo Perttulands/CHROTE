@@ -2,6 +2,12 @@
 
 Last updated: 2026-01-21
 
+> Historical design note: this document predates the current CHROTE baseline and
+> still discusses legacy Gastown/Gas City-style mail and orchestration ideas.
+> It is not current implementation guidance. CHROTE currently runs as the plain
+> tmux access cockpit; any future scheduler work should start from current PRD
+> requirements and active Beads, not from this document.
+
 ## Table of Contents
 
 1. [Architecture Overview](#1-architecture-overview)

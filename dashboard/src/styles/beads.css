@@ -35,7 +35,7 @@
   --bg-tertiary: #2a2a2a;
 }
 
-[data-theme="gastown"] {
+[data-theme="amber"] {
   --beads-status-open: #f6cd54;
   --beads-status-progress: #fbdb7d;
   --beads-status-blocked: #e07856;

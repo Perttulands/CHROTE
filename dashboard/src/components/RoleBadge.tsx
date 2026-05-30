@@ -6,7 +6,7 @@ interface RoleBadgeProps {
 }
 
 /**
- * Displays a role badge with emoji and tooltip for Gastown agent sessions
+ * Displays a role badge with emoji and tooltip for legacy agent sessions
  * Shows nothing if no role is detected from the session name
  */
 function RoleBadge({ sessionName, compact = false }: RoleBadgeProps) {

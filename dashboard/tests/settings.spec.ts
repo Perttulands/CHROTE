@@ -85,14 +85,14 @@ test.describe('Settings View', () => {
       expect(dataTheme).toBe('dark')
     })
 
-    test('should change theme to Gastown', async ({ page }) => {
+    test('should change theme to Amber', async ({ page }) => {
       await page.click('.tab:has-text("Settings")')
 
-      const gastownOption = page.locator('.theme-option.theme-gastown').first()
-      await gastownOption.click()
+      const amberOption = page.locator('.theme-option.theme-amber').first()
+      await amberOption.click()
 
       const dataTheme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'))
-      expect(dataTheme).toBe('gastown')
+      expect(dataTheme).toBe('amber')
     })
 
     test('should persist theme to localStorage', async ({ page }) => {
@@ -119,7 +119,7 @@ test.describe('Settings View', () => {
           windows: [],
           focusedWindowIndex: 0,
           sidebarCollapsed: false,
-          settings: { theme: 'gastown', fontSize: 14, pollingInterval: 5000 },
+          settings: { theme: 'amber', fontSize: 14, pollingInterval: 5000 },
         }
         localStorage.setItem('chrote-dashboard-state', JSON.stringify(state))
       })
@@ -130,7 +130,7 @@ test.describe('Settings View', () => {
 
       // Verify theme is applied
       const dataTheme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'))
-      expect(dataTheme).toBe('gastown')
+      expect(dataTheme).toBe('amber')
     })
   })
 
@@ -305,7 +305,7 @@ test.describe('Settings View', () => {
           focusedWindowIndex: 0,
           sidebarCollapsed: true,
           settings: {
-            theme: 'gastown',
+            theme: 'amber',
             fontSize: 18,
             pollingInterval: 3000,
           },
@@ -325,7 +325,7 @@ test.describe('Settings View', () => {
 
       // 3. Theme
       const dataTheme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'))
-      expect(dataTheme).toBe('gastown')
+      expect(dataTheme).toBe('amber')
 
       // 4. Session binding (display shows short name "mayor" extracted from "hq-mayor")
       const firstWindow = page.locator('.terminal-window').first()
@@ -368,7 +368,7 @@ test.describe('Settings View', () => {
 
       // App should use default settings
       const dataTheme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'))
-      expect(['matrix', 'dark', 'gastown', null]).toContain(dataTheme)
+      expect(['matrix', 'dark', 'amber', null]).toContain(dataTheme)
     })
   })
 })
@@ -403,14 +403,14 @@ test.describe('Settings: Theme Visual Verification', () => {
     expect(accentColor).toMatch(/#[0-9a-fA-F]{3,6}|rgb|blue/i)
   })
 
-  test('Gastown theme should have warm colors', async ({ page }) => {
-    await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'gastown'))
+  test('Amber theme should have warm colors', async ({ page }) => {
+    await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'amber'))
 
     const backgroundColor = await page.evaluate(() => {
       return getComputedStyle(document.documentElement).getPropertyValue('--background').trim()
     })
 
-    // Gastown has warm cream/russet colors
+    // Amber has warm cream/russet colors
     expect(backgroundColor).toBeTruthy()
   })
 })

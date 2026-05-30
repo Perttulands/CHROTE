@@ -73,7 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Session panel with drag-and-drop session binding
   - Native file browser for /code and /vault directories
   - Beads issue tracking with Kanban/Triage/Insights views
-  - Theme support (Matrix, Dark, Gastown)
+  - Theme support (Matrix, Dark, Amber)
   - Ambient music player with built-in tracks
   - Crew companions (cosmetic)
 - **Go Backend**: Single binary server

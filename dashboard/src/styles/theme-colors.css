@@ -57,8 +57,8 @@
   --window-orange: #fb923c;
 }
 
-/* Gastown theme - warm coffee/russet palette */
-[data-theme="gastown"] {
+/* Amber theme - warm coffee/russet palette */
+[data-theme="amber"] {
   --background: #32160f;        /* Coffee Bean */
   --surface-primary: #3d1c12;   /* Slightly lighter coffee */
   --surface-secondary: #4a2518; /* Warm brown */
@@ -70,7 +70,7 @@
   --accent-light: #f6cd5420;    /* Cream Can with transparency */
   --accent-glow: 0 0 10px #f6cd54;
 
-  /* Error/danger colors - warm rust red for Gastown */
+  /* Error/danger colors - warm rust red for Amber */
   --color-error: #e07856;
   --color-error-light: rgba(224, 120, 86, 0.15);
   --color-error-glow: 0 0 10px rgba(224, 120, 86, 0.4);

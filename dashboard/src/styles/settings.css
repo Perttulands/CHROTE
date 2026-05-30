@@ -154,7 +154,7 @@
   box-shadow: 0 0 10px rgba(107, 159, 255, 0.3);
 }
 
-.theme-option.theme-gastown.selected {
+.theme-option.theme-amber.selected {
   border-color: #f6cd54;
   box-shadow: 0 0 10px rgba(246, 205, 84, 0.3);
 }

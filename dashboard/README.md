@@ -31,14 +31,14 @@ src/
 │   │   ├── fileService.ts # API layer (no silent fallbacks)
 │   │   └── components/  # ErrorToast, etc.
 │   ├── SettingsView     # Theme and preferences
-│   ├── RoleBadge        # Gastown role badge display
+│   ├── RoleBadge        # Legacy role badge display
 │   ├── ToastNotification # Toast notification UI
 │   ├── KeyboardShortcutsOverlay # Keyboard shortcuts help modal
 │   └── LayoutPresetsPanel # Save/load layout presets
 ├── hooks/
 │   └── useKeyboardShortcuts # Global keyboard shortcuts
 ├── utils/
-│   └── roleDetection    # Gastown agent role detection
+│   └── roleDetection    # Legacy agent role detection
 └── types.ts             # TypeScript interfaces
 ```
 
@@ -90,7 +90,7 @@ Save and restore window layouts with session assignments:
 
 ## Role Badges
 
-Sessions with Gastown agent role prefixes display colored badges:
+Sessions with legacy agent role prefixes display colored badges:
 
 | Role | Pattern | Badge | Description |
 |------|---------|-------|-------------|

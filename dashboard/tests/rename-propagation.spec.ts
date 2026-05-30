@@ -60,7 +60,7 @@ test.describe('Rename Propagation (pol-ace3)', () => {
   })
 
   test('bind session to window, rename via context menu, verify tag updates', async ({ page }) => {
-    const oldName = 'gt-gastown-jack'
+    const oldName = 'gt-review-alex'
     const newName = 'renamed-jack'
 
     // 1. Bind "jack" session to the first terminal window
@@ -140,7 +140,7 @@ test.describe('Rename Propagation (pol-ace3)', () => {
   })
 
   test('renamed binding persists in localStorage after reload', async ({ page }) => {
-    const oldName = 'gt-gastown-jack'
+    const oldName = 'gt-review-alex'
     const newName = 'renamed-jack'
 
     // 1. Bind session to window

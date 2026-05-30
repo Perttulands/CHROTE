@@ -14,7 +14,7 @@ func TestGetGroupPriority(t *testing.T) {
 	}{
 		{"hq group", "hq", 0},
 		{"main group", "main", 1},
-		{"gastown rig", "gt-gastown", 3},
+		{"review rig", "gt-review", 3},
 		{"another rig", "gt-otherrig", 3},
 		{"other group", "random", 4},
 		{"empty group", "", 4},
@@ -40,8 +40,8 @@ func TestCategorizeSession(t *testing.T) {
 		{"hq coordinator", "hq-coordinator", "hq"},
 		{"main session", "main", "main"},
 		{"shell session", "shell", "main"},
-		{"gastown worker", "gt-gastown-jack", "gt-gastown"},
-		{"gastown simple", "gt-gastown", "gt-gastown"},
+		{"review worker", "gt-review-alex", "gt-review"},
+		{"review simple", "gt-review", "gt-review"},
 		{"gt-only", "gt-", "gt-"},
 		{"random session", "random", "other"},
 		{"tmux default", "tmux1", "other"},
@@ -61,7 +61,7 @@ func TestCategorizeSession(t *testing.T) {
 func TestSortSessions(t *testing.T) {
 	sessions := []Session{
 		{Name: "random1", Group: "other"},
-		{Name: "gt-gastown-1", Group: "gt-gastown"},
+		{Name: "gt-review-1", Group: "gt-review"},
 		{Name: "main", Group: "main"},
 		{Name: "hq-main", Group: "hq"},
 		{Name: "gt-otherrig-1", Group: "gt-otherrig"},
@@ -69,8 +69,8 @@ func TestSortSessions(t *testing.T) {
 
 	SortSessions(sessions)
 
-	// Expected order: hq, main, gt-gastown, gt-otherrig, other
-	expectedOrder := []string{"hq-main", "main", "gt-gastown-1", "gt-otherrig-1", "random1"}
+	// Expected order: hq, main, legacy grouped sessions alphabetically, other
+	expectedOrder := []string{"hq-main", "main", "gt-otherrig-1", "gt-review-1", "random1"}
 
 	for i, expected := range expectedOrder {
 		if sessions[i].Name != expected {

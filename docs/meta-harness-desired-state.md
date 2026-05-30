@@ -1,5 +1,10 @@
 # Meta-Harness Desired State
 
+> Current status: this is a desired-state research document, not current CHROTE
+> implementation guidance. The active Gas City integration was rolled back on
+> 2026-05-30. Gas City remains archived research only unless explicitly
+> reintroduced through a new decision.
+
 This document separates what Perttu has stated as the desired state from implementation interpretations and recommendations.
 
 ## User-Stated Desired State
@@ -28,11 +33,11 @@ Subagents inside one product are useful, but not enough. The more important capa
 
 Previous CHROTE work has already used tmux `send-keys` to make agents prompt each other. That proved the concept, but it is cumbersome. The desired state is a cleaner orchestration and team layer above that kind of mechanism.
 
-Perttu pointed to Gas City because it may be usable as-is or as a useful source of concepts. Perttu understands Gas City as something like an SDK for orchestrators.
+During the rolled-back exploration, Perttu pointed to Gas City because it looked usable as-is or as a useful source of concepts. The retained lesson is that orchestration may benefit from SDK-like primitives, but Gas City is not an active dependency or current implementation target.
 
 Perttu pointed to the Pi communication repositories because they express a useful team concept: agents are not only run in sequence; they can form a team and prompt each other. In practice this may still be agents sending prompts without shared context beyond those messages, but the team shape is important.
 
-Recipes are key. Gas City's molecule system is relevant because molecules are prebuilt bundles of Beads that form workflows.
+Recipes are key. The archived Gas City molecule research remains useful background because it explored prebuilt bundles of Beads that form workflows.
 
 ## User-Stated Non-Goals
 
@@ -69,20 +74,20 @@ CHROTE likely needs a layered model:
 - agent registry: known harnesses, roles, capabilities, launch methods, and active sessions
 - adapter layer: one adapter per harness, with native APIs preferred and tmux fallback allowed
 - message/run ledger: durable record of prompts, replies, role assignments, state transitions, artifacts, and audit events
-- recipe engine: reusable workflow definitions, possibly inspired by Gas City molecules
-- team communication layer: explicit messages between roles and sessions, possibly inspired by Pi comms and Gas City mail/nudge concepts
+- recipe engine: reusable workflow definitions, informed by archived molecule research where useful
+- team communication layer: explicit messages between roles and sessions, informed by Pi comms and archived mail/nudge research where useful
 
 The key design pressure is to make orchestration deliberate, inspectable, and recoverable instead of hidden behind fragile terminal automation.
 
-## Evaluation Targets
+## Archived Research Inputs
 
-Gas City should be evaluated as:
+Gas City should not be evaluated as a live dependency while the rollback decision stands. The archived research can still inform future design as:
 
-- a possible orchestrator SDK
-- a source of Beads-backed mail, nudge, session, and molecule concepts
-- a possible component to reuse directly if it can fit CHROTE without taking over the whole environment
+- a studied example of orchestrator SDK shape;
+- a source of Beads-backed mail, nudge, session, and molecule concepts;
+- a record of why direct reuse was rolled back before it became product foundation.
 
-Second-look assessment: `gas-city-research/evaluations/meta-harness-evaluation.md`.
+Archived second-look assessment: `gas-city-research/evaluations/meta-harness-evaluation.md`.
 
 Pi comms should be evaluated as:
 
@@ -98,8 +103,7 @@ tmux should be evaluated as:
 
 ## Open Questions
 
-- Should CHROTE embed or depend on Gas City, or only adapt ideas from it?
 - What is the minimum adapter interface for Claude Code, Codex, Pi, OpenCode, and generic tmux agents?
-- Should recipes be represented directly as Beads, as Gas City molecules, as CHROTE config, or as a bridge across those?
+- Should recipes be represented directly as Beads, CHROTE config, or a bridge across those?
 - What is the right shared-context model for a team: transcript-only, Beads-backed mailbox, shared files, or a richer run database?
 - What safety controls are needed before agents can prompt other agents automatically?

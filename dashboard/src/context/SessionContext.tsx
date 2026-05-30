@@ -98,10 +98,16 @@ function mergeSettings(rawSettings: unknown): UserSettings {
   const tmuxAppearance = isRecord(rawSettings.tmuxAppearance)
     ? { ...DEFAULT_TMUX_APPEARANCE, ...rawSettings.tmuxAppearance }
     : DEFAULT_TMUX_APPEARANCE
+  const rawTheme = rawSettings.theme === 'gastown' ? 'amber' : rawSettings.theme
+  const theme =
+    rawTheme === 'matrix' || rawTheme === 'dark' || rawTheme === 'amber'
+      ? rawTheme
+      : DEFAULT_SETTINGS.theme
 
   return {
     ...DEFAULT_SETTINGS,
     ...rawSettings,
+    theme,
     tmuxAppearance,
   } as UserSettings
 }

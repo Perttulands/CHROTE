@@ -67,6 +67,7 @@ The `/api/oracle/*` route names are compatibility names. Product UI calls this s
 - Files
 - Agents
 - Beads
+- Services
 - Settings
 - Help
 

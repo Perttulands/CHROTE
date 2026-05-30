@@ -20,9 +20,9 @@ const { chromium } = require('playwright');
       { name: 'hq-mayor', windows: 1, attached: false, group: 'hq' },
       { name: 'hq-deacon', windows: 1, attached: true, group: 'hq' },
       { name: 'main', windows: 2, attached: false, group: 'main' },
-      { name: 'gt-gastown-jack', windows: 1, attached: false, group: 'gt-gastown' },
-      { name: 'gt-gastown-joe', windows: 1, attached: false, group: 'gt-gastown' },
-      { name: 'gt-gastown-max', windows: 1, attached: false, group: 'gt-gastown' },
+      { name: 'gt-review-alex', windows: 1, attached: false, group: 'gt-review' },
+      { name: 'gt-review-blair', windows: 1, attached: false, group: 'gt-review' },
+      { name: 'gt-review-casey', windows: 1, attached: false, group: 'gt-review' },
       { name: 'gt-beads-lizzy', windows: 1, attached: false, group: 'gt-beads' },
       { name: 'gt-beads-darcy', windows: 1, attached: false, group: 'gt-beads' },
     ],
@@ -34,10 +34,10 @@ const { chromium } = require('playwright');
       'main': [
         { name: 'main', windows: 2, attached: false, group: 'main' },
       ],
-      'gt-gastown': [
-        { name: 'gt-gastown-jack', windows: 1, attached: false, group: 'gt-gastown' },
-        { name: 'gt-gastown-joe', windows: 1, attached: false, group: 'gt-gastown' },
-        { name: 'gt-gastown-max', windows: 1, attached: false, group: 'gt-gastown' },
+      'gt-review': [
+        { name: 'gt-review-alex', windows: 1, attached: false, group: 'gt-review' },
+        { name: 'gt-review-blair', windows: 1, attached: false, group: 'gt-review' },
+        { name: 'gt-review-casey', windows: 1, attached: false, group: 'gt-review' },
       ],
       'gt-beads': [
         { name: 'gt-beads-lizzy', windows: 1, attached: false, group: 'gt-beads' },
@@ -88,11 +88,11 @@ const { chromium } = require('playwright');
   }
 
   // Add multiple sessions to first window (using actual session names from mock)
-  console.log('Adding gt-gastown-jack...');
+  console.log('Adding gt-review-alex...');
   await dragAndDrop('.session-item:has-text("jack")', '.terminal-window');
-  console.log('Adding gt-gastown-joe...');
+  console.log('Adding gt-review-blair...');
   await dragAndDrop('.session-item:has-text("joe")', '.terminal-window');
-  console.log('Adding gt-gastown-max...');
+  console.log('Adding gt-review-casey...');
   await dragAndDrop('.session-item:has-text("max")', '.terminal-window');
 
   // Verify 3 sessions in window

@@ -1,5 +1,10 @@
 # Gas Town Formulas: Operator Guide
 
+> Historical design note: this document describes legacy formula and Gastown-era
+> workflow ideas. It is not current CHROTE runtime guidance. Gas City research is
+> archived under `docs/gas-city-research/` and should only be reintroduced by a
+> new explicit decision.
+
 Formulas are TOML-based workflow templates that define multi-step processes in Gas Town. They coordinate work across AI agents, enabling complex tasks like builds, deployments, code reviews, and releases.
 
 ## The Formula Lifecycle

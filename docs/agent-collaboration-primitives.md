@@ -1,5 +1,11 @@
 # Agent Collaboration Primitives
 
+> Historical research note: this document predates the 2026-05-30 rollback of
+> active Gas City integration. Treat it as prior exploration of collaboration
+> ideas, not current CHROTE runtime guidance. Current Gas City research lives in
+> `docs/gas-city-research/`, starting with
+> `docs/gas-city-research/what-we-were-trying-to-do.md`.
+
 CHROTE should expose durable host state and make agent work inspectable. It should also be able to grow into a deliberate meta-harness for orchestrating multiple AI harnesses.
 
 This note records the exploration of Disler's `pi-vs-claude-code` communication extensions and Gastown Hall's Gas City as possible seeds for a future CHROTE agent-team layer.
@@ -128,4 +134,5 @@ The follow-up Beads should use these acceptance boundaries:
 - `https://github.com/disler/pi-vs-claude-code/blob/main/extensions/coms.ts`
 - `https://github.com/disler/pi-vs-claude-code/blob/main/extensions/coms-net.ts`
 - `https://github.com/gastownhall/gascity`
-- Local Gas City checkout: `<workspace-root>/research/upstreams/gascity`
+- Historical local Gas City checkout: removed after rollback; use
+  `docs/gas-city-research/` for retained notes.

@@ -548,7 +548,7 @@ export async function mockApiRoutes(page: Page) {
         sessions: [
           { name: 'hq-mayor', attached: false },
           { name: 'hq-deacon', attached: true },
-          { name: 'gt-gastown-jack', attached: false },
+          { name: 'gt-review-alex', attached: false },
           // ... more mock sessions
         ],
         groups: [

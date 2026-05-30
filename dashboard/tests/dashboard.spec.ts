@@ -49,7 +49,7 @@ test.describe('Arena Dashboard', () => {
       await page.waitForSelector('.session-panel')
 
       // Check that groups are rendered
-      await expect(page.locator('.session-group')).toHaveCount(4) // hq, main, gt-gastown, gt-beads
+      await expect(page.locator('.session-group')).toHaveCount(4) // hq, main, gt-review, gt-beads
     })
 
     test('should show HQ group first', async ({ page }) => {
@@ -391,13 +391,13 @@ test.describe('Arena Dashboard', () => {
       // Initially 4 groups
       await expect(page.locator('.session-group')).toHaveCount(4)
 
-      // Filter to only gt-gastown sessions
-      await page.fill('.session-search-input', 'gastown')
+      // Filter to only gt-review sessions
+      await page.fill('.session-search-input', 'review')
 
-      // Only gt-gastown group should remain (others are removed from DOM)
-      // Group display name is "Gastown" (capitalized, without gt- prefix)
+      // Only gt-review group should remain (others are removed from DOM)
+      // Group display name is "Review" (capitalized, without gt- prefix)
       await expect(page.locator('.session-group')).toHaveCount(1)
-      await expect(page.locator('.session-group .group-name')).toContainText('Gastown')
+      await expect(page.locator('.session-group .group-name')).toContainText('Review')
     })
 
     test('should show all sessions when search cleared', async ({ page }) => {

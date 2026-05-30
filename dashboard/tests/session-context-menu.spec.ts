@@ -247,7 +247,7 @@ test.describe('Session Context Menu', () => {
   // -------------------------------------------------------
   test('unassign option only appears for assigned sessions', async ({ page }) => {
     // Right-click on an unassigned session
-    const unassigned = page.locator('.session-item:has-text("gt-gastown-jack")')
+    const unassigned = page.locator('.session-item:has-text("gt-review-alex")')
     await unassigned.click({ button: 'right' })
 
     let menu = page.locator('.session-context-menu')
@@ -261,10 +261,10 @@ test.describe('Session Context Menu', () => {
     await expect(menu).not.toBeVisible()
 
     // Now assign the session via drag-and-drop
-    await dragAndDrop(page, '.session-panel .session-item:has-text("gt-gastown-jack")', '.terminal-window')
+    await dragAndDrop(page, '.session-panel .session-item:has-text("gt-review-alex")', '.terminal-window')
 
     // Verify it's assigned
-    const sessionItem = page.locator('.session-panel .session-item:has-text("gt-gastown-jack")')
+    const sessionItem = page.locator('.session-panel .session-item:has-text("gt-review-alex")')
     await expect(sessionItem).toHaveClass(/assigned/)
 
     // Right-click the now-assigned session

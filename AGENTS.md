@@ -12,6 +12,7 @@ CHROTE is a durable browser cockpit for:
 - modern Beads via `bd`
 - optional Beads Viewer via `bv`
 - generic agent observability
+- selected localhost services through CHROTE-owned routes
 
 It is not currently a Gastown or Ralph deployment. `bv` is available as a Beads TUI sidecar, not as the source of truth.
 

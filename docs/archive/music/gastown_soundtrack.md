@@ -1,5 +1,8 @@
 # Gas Town Soundtrack - Suno Prompts
 
+> Archived historical asset. This is not current CHROTE setup, runtime, or
+> product guidance.
+
 ## Track 1: Welcome to Gas Town
 
 ### Lyrics

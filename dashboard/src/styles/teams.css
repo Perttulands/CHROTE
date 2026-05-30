@@ -1,5 +1,5 @@
 /* TeamsView styles. Uses theme tokens defined in theme-colors.css so the
-   tab inherits Matrix / Dark / Gastown palettes automatically. */
+   tab inherits Matrix / Dark / Amber palettes automatically. */
 
 .teams-view {
   display: grid;

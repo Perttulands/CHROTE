@@ -13,6 +13,7 @@ error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 [ "$EUID" -ne 0 ] && error "Must run as root"
 
 log "Starting CHROTE WSL setup..."
+warn "This WSL setup script is legacy. Verify it against current README/PRD before use."
 
 # Phase 1: WSL config
 log "Phase 1: System configuration..."
@@ -109,15 +110,11 @@ su - chrote -c "mkdir -p ~/chrote/src/internal/dashboard && cp -r ~/chrote/dashb
 log "Building Go server..."
 su - chrote -c "export PATH=/usr/local/go/bin:\$PATH && cd ~/chrote/src && go build -o ~/chrote-server ./cmd/server"
 
-# Build components (gastown, beads, beads_viewer)
+# Build optional bundled components when present.
 log "Building components..."
 su - chrote -c '
 export PATH=/usr/local/go/bin:$PATH
 cd ~/chrote
-if [ -f components/gastown/go.mod ]; then
-    cd components/gastown && go build -o ~/.local/bin/gt ./cmd/gt && cd ../..
-    echo "  Built gastown (gt)"
-fi
 if [ -f components/beads/go.mod ]; then
     cd components/beads && go build -o ~/.local/bin/bd ./cmd/bd && cd ../..
     echo "  Built beads (bd)"

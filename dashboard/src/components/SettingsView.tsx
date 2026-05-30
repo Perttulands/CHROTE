@@ -101,7 +101,7 @@ function SettingsView() {
         <div className="settings-field">
           <label className="settings-label">Theme</label>
           <div className="settings-theme-options">
-            {(['matrix', 'dark', 'gastown'] as const).map((theme) => (
+            {(['matrix', 'dark', 'amber'] as const).map((theme) => (
               <button
                 key={theme}
                 className={`theme-option ${settings.theme === theme ? 'selected' : ''} theme-${theme}`}
@@ -143,7 +143,7 @@ function SettingsView() {
         <div className="settings-field">
           <label className="settings-label">Presets</label>
           <div className="settings-theme-options">
-            {(['matrix', 'dark', 'gastown'] as const).map((preset) => (
+            {(['matrix', 'dark', 'amber'] as const).map((preset) => (
               <button
                 key={preset}
                 className={`theme-option theme-${preset}`}

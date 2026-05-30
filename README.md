@@ -148,7 +148,7 @@ sidecar when you want the graph-aware view without leaving the cockpit.
 
 The dashboard still has a little theater in it.
 
-Matrix, Dark, and Gastown themes change the room without changing the job. The
+Matrix, Dark, and Amber themes change the room without changing the job. The
 terminal remains the terminal. The cockpit just gets to have an opinion.
 
 ![Themes](Themes.png)
@@ -339,9 +339,10 @@ v2 drops the parts that became dead weight.
 
 ChroteChat is gone. The cockpit is not chat.
 
-Gastown is no longer the center of the universe. Gastown, Gas City, Codex,
-Claude Code, OpenCode, Gemini, Hermes, Beads, `bv`, and plain old tmux can all
-matter. None of them gets to own CHROTE.
+Gastown is no longer the center of the universe. Gastown and Gas City now matter
+as archived research or possible future adapters, while Codex, Claude Code,
+OpenCode, Gemini, Hermes, Beads, `bv`, and plain old tmux can all matter as
+current or future workspace tools. None of them gets to own CHROTE.
 
 CHROTE belongs to the workspace.
 
@@ -509,8 +510,9 @@ The next serious direction is a meta-harness: explicit adapters, run ledgers,
 recipes, teams, transcripts, and human approval boundaries across multiple
 agent products and local tools.
 
-Gas City may become a sidecar. Gastown ideas may come back as adapters. Other
-harnesses may earn first-class treatment.
+Gas City research is archived under `docs/gas-city-research/`; it is not active
+runtime guidance. Gastown ideas may come back as adapters. Other harnesses may
+earn first-class treatment.
 
 Nothing gets to own the center for free.
 

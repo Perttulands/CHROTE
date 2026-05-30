@@ -37,7 +37,7 @@ export const TMUX_PRESETS: Record<string, TmuxAppearance> = {
     modeStyleBg: '#6b9fff',
     modeStyleFg: '#0f0f0f',
   },
-  gastown: {
+  amber: {
     statusBg: 'default',
     statusFg: '#f6cd54',
     paneBorderActive: '#f6cd54',
@@ -51,7 +51,7 @@ export const TMUX_PRESETS: Record<string, TmuxAppearance> = {
 export interface UserSettings {
   terminalMode: 'tmux'              // Terminal mode (tmux only)
   fontSize: number                   // Terminal font size (12-20)
-  theme: 'matrix' | 'dark' | 'gastown' // Color theme
+  theme: 'matrix' | 'dark' | 'amber' // Color theme
   autoRefreshInterval: number        // Session refresh interval in ms (1000-30000)
   defaultSessionPrefix: string       // Prefix for new sessions (e.g., 'shell')
   musicVolume: number                // Music volume (0-1)
@@ -198,7 +198,7 @@ export const GROUP_CONFIG: Record<string, { displayName: string; priority: numbe
 export function getGroupDisplayName(group: string): string {
   if (GROUP_CONFIG[group]) return GROUP_CONFIG[group].displayName
   if (group.startsWith('gt-')) {
-    // gt-gastown → Gastown
+    // gt-review → Review
     const rigName = group.slice(3)
     return rigName.charAt(0).toUpperCase() + rigName.slice(1)
   }

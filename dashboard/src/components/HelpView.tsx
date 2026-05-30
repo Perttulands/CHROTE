@@ -261,12 +261,6 @@ function SessionsSection() {
             </div>
             <span>Main group</span>
           </div>
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <code>gt-*</code>
-            </div>
-            <span>Gastown workers</span>
-          </div>
         </div>
       </div>
 

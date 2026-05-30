@@ -1,4 +1,8 @@
 # Gas Town: The Complete Guide
+
+> Archived historical asset. This is not current CHROTE setup, runtime, or
+> product guidance.
+
 ## A Master Song Covering All Aspects of Gastown
 
 ---
