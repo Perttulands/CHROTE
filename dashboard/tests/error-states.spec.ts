@@ -147,6 +147,8 @@ test.describe('Error States', () => {
   test.describe('Session poll failure does not clear existing layout', () => {
     test('should preserve bound sessions from localStorage when GET /api/tmux/sessions fails', async ({ page }) => {
       allowBrowserConsoleMessage('Failed to load resource: the server responded with a status of 500')
+      await mockApiRoutes(page)
+
       // Pre-seed localStorage with a layout that has bound sessions
       const storedState = {
         workspaces: {

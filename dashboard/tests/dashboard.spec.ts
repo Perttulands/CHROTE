@@ -105,7 +105,7 @@ test.describe('Arena Dashboard', () => {
   test.describe('Terminal Area', () => {
     test('should render layout controls', async ({ page }) => {
       await expect(page.locator('.terminal-area-controls:visible')).toBeVisible()
-      await expect(page.locator('.layout-btn:visible')).toHaveCount(4)
+      await expect(page.locator('.layout-btn:not(.terminal-refit-btn):visible')).toHaveCount(4)
     })
 
     test('should start with 2 windows by default', async ({ page }) => {

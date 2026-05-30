@@ -1,5 +1,5 @@
 import { test, expect, Page } from './fixtures'
-import { mockSessions } from './mock-api'
+import { mockApiRoutes, mockSessions } from './mock-api'
 
 /**
  * Helper: set up API mocks that also handle DELETE and PATCH (rename) for sessions.
@@ -7,6 +7,8 @@ import { mockSessions } from './mock-api'
  * After a rename, the old name is replaced in subsequent GET responses.
  */
 async function mockApiRoutesWithMutations(page: Page) {
+  await mockApiRoutes(page)
+
   await page.route(/.*\/terminal\/?.*/, async route => {
     await route.fulfill({
       status: 200,

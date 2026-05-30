@@ -118,7 +118,7 @@ test.describe('Terminal Area - Mobile View Switcher', () => {
   test('view buttons switch between windows', async ({ page }) => {
     // Scope to the visible terminal area's controls
     const controlsRow = page.locator('.terminal-area:visible .mobile-controls-row')
-    const viewButtons = controlsRow.locator('.layout-btn')
+    const viewButtons = controlsRow.locator('.layout-btn:not(.terminal-refit-btn)')
 
     // Default 2 windows means view buttons 1 and 2, plus 4 count buttons = 6 total
     // Button "1" (first view button) should be active by default
@@ -134,7 +134,7 @@ test.describe('Terminal Area - Mobile View Switcher', () => {
 
   test('mobile view buttons 1-4 work with 4-window layout', async ({ page }) => {
     const controlsRow = page.locator('.terminal-area:visible .mobile-controls-row')
-    const allButtons = controlsRow.locator('.layout-btn')
+    const allButtons = controlsRow.locator('.layout-btn:not(.terminal-refit-btn)')
 
     // With default 2 windows: [View:1] [View:2] | [Count:1] [Count:2] [Count:3] [Count:4]
     // That's 6 buttons total. Count "4" is the last one.
@@ -162,7 +162,7 @@ test.describe('Terminal Area - Mobile View Switcher', () => {
 
   test('layout count buttons work on mobile', async ({ page }) => {
     const controlsRow = page.locator('.terminal-area:visible .mobile-controls-row')
-    const allButtons = controlsRow.locator('.layout-btn')
+    const allButtons = controlsRow.locator('.layout-btn:not(.terminal-refit-btn)')
 
     // Default 2 windows: [View:1] [View:2] | [Count:1] [Count:2] [Count:3] [Count:4]
     // 6 buttons total. Count buttons start at index 2.
