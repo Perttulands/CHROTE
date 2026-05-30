@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# CHROTE local deploy: build artifacts from the canonical source worktree and
-# swap the runtime chrote-server binary and terminal launch script, preserving
-# the tmux socket/sessions.
+# CHROTE local deploy: build artifacts from the source repo containing this
+# script, then swap the runtime chrote-server binary and terminal launch script,
+# preserving the tmux socket/sessions.
 #
 # Model and rationale: docs/runtime-deploy-model.md
 # Beads: home-gia (epic), home-a3l (this script), home-j7x (exclusions),
 #        home-8qm (controlled deploy).
 #
 # Safety guarantees (fail loud; never force):
-#   - Builds in the canonical worktree + a staging path; the runtime binary is
+#   - Builds in the source repo + a staging path; the runtime binary is
 #     only replaced after a fully successful build, atomically, with a backup.
 #   - NEVER runs any git operation on the runtime tree.
 #   - NEVER runs tmux kill-* and NEVER removes the tmux socket dir.
@@ -16,29 +16,43 @@
 #   - Copies only the runtime launch script needed by ttyd; no source-tree sync.
 #   - Restarts ONLY chrote.service (systemctl --user).
 #   - Records rollback state (runtime git HEAD, service status, tmux sessions,
-#     backed-up binary path) before restart.
+#     backed-up binary path) before restart. Rollback artifacts are temporary
+#     and removed after a successful smoke.
 #
 # Usage:
 #   scripts/deploy-local.sh [--dry-run] [--allow-dirty] [--skip-tests]
 #
 #   --dry-run     Build + checks only. Does not touch the runtime binary or
 #                 restart the service. Prints planned actions.
-#   --allow-dirty Permit deploying from a dirty canonical worktree (NOT default).
+#   --allow-dirty Permit deploying from a dirty source worktree (NOT default).
 #   --skip-tests  Skip `go test ./...` (NOT recommended).
 
 set -Eeuo pipefail
 
 # ---- Fixed, verified runtime facts (see docs/runtime-deploy-model.md) --------
-CANONICAL_DIR="/home/perttu/chrote-3.0-gascity"
+SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+if command -v readlink >/dev/null 2>&1; then
+  SCRIPT_PATH="$(readlink -f "$SCRIPT_SOURCE")"
+else
+  case "$SCRIPT_SOURCE" in
+    /*) SCRIPT_PATH="$SCRIPT_SOURCE" ;;
+    *) SCRIPT_PATH="$PWD/$SCRIPT_SOURCE" ;;
+  esac
+fi
+SCRIPT_DIR="$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd -P)"
+SOURCE_DIR="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+[ -n "$SOURCE_DIR" ] || SOURCE_DIR="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 RUNTIME_DIR="/home/perttu/chrote"
 RUNTIME_BINARY="${RUNTIME_DIR}/chrote-server"
 RUNTIME_LAUNCH_SCRIPT="${RUNTIME_DIR}/terminal-launch.sh"
-SOURCE_LAUNCH_SCRIPT="${CANONICAL_DIR}/terminal-launch.sh"
+SOURCE_LAUNCH_SCRIPT="${SOURCE_DIR}/terminal-launch.sh"
 SERVICE="chrote.service"
 HEALTH_URL="http://127.0.0.1:8094/api/health"
 CHROTE_TMUX_TMPDIR="/run/user/1000/chrote-tmux"
 GO_BIN="/usr/local/go/bin/go"
-BACKUP_DIR="${RUNTIME_DIR}/.deploy-backups"
+TMP_PARENT="${TMPDIR:-/tmp}"
+TMP_PARENT="${TMP_PARENT%/}"
+ROLLBACK_DIR=""
 
 DRY_RUN=0
 ALLOW_DIRTY=0
@@ -61,22 +75,22 @@ command -v "$GO_BIN" >/dev/null 2>&1 || GO_BIN="$(command -v go || true)"
 [ -n "$GO_BIN" ] || die "Go toolchain not found"
 command -v npm >/dev/null 2>&1 || die "npm not found"
 
-# ---- 1. Verify canonical source -------------------------------------------
-log "1. Verify canonical source"
-[ -d "$CANONICAL_DIR/src" ] || die "canonical src not found at $CANONICAL_DIR/src"
-[ -f "$CANONICAL_DIR/src/internal/dashboard/embed.go" ] || die "embed.go missing (wrong tree?)"
+# ---- 1. Verify source repo -------------------------------------------------
+log "1. Verify source repo"
+[ -d "$SOURCE_DIR/src" ] || die "source src not found at $SOURCE_DIR/src"
+[ -f "$SOURCE_DIR/src/internal/dashboard/embed.go" ] || die "embed.go missing (wrong tree?)"
 [ -f "$SOURCE_LAUNCH_SCRIPT" ] || die "terminal launch script missing at $SOURCE_LAUNCH_SCRIPT"
-cd "$CANONICAL_DIR"
+cd "$SOURCE_DIR"
 SRC_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 SRC_HEAD="$(git rev-parse HEAD)"
-info "canonical: $CANONICAL_DIR @ $SRC_BRANCH ($SRC_HEAD)"
+info "source: $SOURCE_DIR @ $SRC_BRANCH ($SRC_HEAD)"
 
 if [ -n "$(git status --porcelain)" ]; then
   if [ "$ALLOW_DIRTY" -eq 1 ]; then
-    info "WARNING: canonical worktree is dirty; proceeding due to --allow-dirty"
+    info "WARNING: source worktree is dirty; proceeding due to --allow-dirty"
   else
     git status --short
-    die "canonical worktree is dirty. Commit/stash, or pass --allow-dirty."
+    die "source worktree is dirty. Commit/stash, or pass --allow-dirty."
   fi
 fi
 
@@ -85,19 +99,19 @@ log "2. Go tests"
 if [ "$SKIP_TESTS" -eq 1 ]; then
   info "SKIPPED (--skip-tests)"
 else
-  ( cd "$CANONICAL_DIR/src" && "$GO_BIN" test ./... ) || die "go test failed"
+  ( cd "$SOURCE_DIR/src" && "$GO_BIN" test ./... ) || die "go test failed"
 fi
 
 # ---- 3. Dashboard build + refresh embedded dist -----------------------------
 log "3. Build dashboard and refresh embedded dist"
-( cd "$CANONICAL_DIR/dashboard" && npm run build ) || die "dashboard build failed"
-[ -d "$CANONICAL_DIR/dashboard/dist" ] || die "dashboard/dist missing after build"
-rm -rf "$CANONICAL_DIR/src/internal/dashboard/dist"
-cp -r "$CANONICAL_DIR/dashboard/dist" "$CANONICAL_DIR/src/internal/dashboard/dist"
+( cd "$SOURCE_DIR/dashboard" && npm run build ) || die "dashboard build failed"
+[ -d "$SOURCE_DIR/dashboard/dist" ] || die "dashboard/dist missing after build"
+rm -rf "$SOURCE_DIR/src/internal/dashboard/dist"
+cp -r "$SOURCE_DIR/dashboard/dist" "$SOURCE_DIR/src/internal/dashboard/dist"
 info "embedded dist refreshed from dashboard/dist"
 
 # ---- 4. Build binary into staging ------------------------------------------
-# Provenance (home-altx): the canonical tree is a git worktree whose .git is a
+# Provenance (home-altx): when the source tree is a git worktree whose .git is a
 # file, so Go's automatic VCS stamp walks up to the OUTER /home/perttu repo and
 # records the wrong commit with modified=true. We disable that misleading stamp
 # (-buildvcs=false) and stamp the real CHROTE source commit explicitly via
@@ -108,7 +122,7 @@ SRC_COMMIT_FULL="$SRC_HEAD"
 SRC_COMMIT_SHORT="$(git rev-parse --short HEAD)"
 LDFLAGS="-X main.Version=${SRC_VERSION} -X main.Commit=${SRC_COMMIT_SHORT}"
 STAGE_BIN="$(mktemp "${TMPDIR:-/tmp}/chrote-server.stage.XXXXXX")"
-( cd "$CANONICAL_DIR/src" && "$GO_BIN" build -buildvcs=false -ldflags "$LDFLAGS" -o "$STAGE_BIN" ./cmd/server ) \
+( cd "$SOURCE_DIR/src" && "$GO_BIN" build -buildvcs=false -ldflags "$LDFLAGS" -o "$STAGE_BIN" ./cmd/server ) \
   || { rm -f "$STAGE_BIN"; die "go build failed"; }
 chmod +x "$STAGE_BIN"
 STAGE_SIZE="$(stat -c %s "$STAGE_BIN")"
@@ -121,7 +135,8 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 
 if [ "$DRY_RUN" -eq 1 ]; then
   log "5. DRY RUN — stopping before runtime change"
-  info "Would record rollback state under: ${BACKUP_DIR}/deploy-${STAMP}.state.txt"
+  info "Would create a temporary rollback directory under: $TMP_PARENT"
+  info "Would record rollback state there, then remove it after successful smoke"
   info "Would back up: $RUNTIME_BINARY"
   info "Would back up: $RUNTIME_LAUNCH_SCRIPT"
   info "Would copy: $STAGE_BIN  ->  $RUNTIME_BINARY"
@@ -133,11 +148,11 @@ if [ "$DRY_RUN" -eq 1 ]; then
 fi
 
 log "5. Capture rollback state"
-mkdir -p "$BACKUP_DIR"
-STATE_FILE="${BACKUP_DIR}/deploy-${STAMP}.state.txt"
+ROLLBACK_DIR="$(mktemp -d "$TMP_PARENT/chrote-deploy.XXXXXX")"
+STATE_FILE="${ROLLBACK_DIR}/deploy-${STAMP}.state.txt"
 {
   echo "deploy_timestamp_utc: $STAMP"
-  echo "canonical: $CANONICAL_DIR @ $SRC_BRANCH ($SRC_HEAD)"
+  echo "source: $SOURCE_DIR @ $SRC_BRANCH ($SRC_HEAD)"
   echo "source_commit: $SRC_COMMIT_FULL"
   echo "binary_provenance: version=$SRC_VERSION commit=$SRC_COMMIT_SHORT (ldflags-stamped; buildvcs disabled)"
   echo "runtime_dir: $RUNTIME_DIR"
@@ -165,7 +180,7 @@ info "chrote tmux sessions before: $BEFORE_COUNT"
 # Back up the current runtime binary.
 BACKUP_BIN=""
 if [ -f "$RUNTIME_BINARY" ]; then
-  BACKUP_BIN="${BACKUP_DIR}/chrote-server.${STAMP}.bak"
+  BACKUP_BIN="${ROLLBACK_DIR}/chrote-server.${STAMP}.bak"
   cp -p "$RUNTIME_BINARY" "$BACKUP_BIN"
   info "runtime binary backed up: $BACKUP_BIN ($(stat -c %s "$BACKUP_BIN") bytes)"
 else
@@ -176,7 +191,7 @@ fi
 # chrote.service, so gc:<id> dispatch changes must deploy with the binary.
 BACKUP_LAUNCH_SCRIPT=""
 if [ -f "$RUNTIME_LAUNCH_SCRIPT" ]; then
-  BACKUP_LAUNCH_SCRIPT="${BACKUP_DIR}/terminal-launch.sh.${STAMP}.bak"
+  BACKUP_LAUNCH_SCRIPT="${ROLLBACK_DIR}/terminal-launch.sh.${STAMP}.bak"
   cp -p "$RUNTIME_LAUNCH_SCRIPT" "$BACKUP_LAUNCH_SCRIPT"
   info "runtime launch script backed up: $BACKUP_LAUNCH_SCRIPT"
 else
@@ -244,12 +259,17 @@ if [ "$ok" -ne 1 ]; then
   else
     info "NO BACKUP BINARY AVAILABLE — manual recovery required"
   fi
-  die "deploy verification failed; rollback attempted. See $STATE_FILE"
+  die "deploy verification failed; rollback attempted. See $STATE_FILE; rollback artifacts kept in $ROLLBACK_DIR"
 fi
 
 log "DEPLOY OK"
-info "canonical $SRC_BRANCH ($SRC_HEAD) -> $RUNTIME_BINARY"
+REMOVED_ROLLBACK_DIR="$ROLLBACK_DIR"
+case "$ROLLBACK_DIR" in
+  "$TMP_PARENT"/chrote-deploy.*) rm -rf "$ROLLBACK_DIR" ;;
+  *) info "WARNING: not removing unexpected rollback dir: $ROLLBACK_DIR" ;;
+esac
+ROLLBACK_DIR=""
+info "source $SRC_BRANCH ($SRC_HEAD) -> $RUNTIME_BINARY"
 info "binary provenance: version=$SRC_VERSION commit=$SRC_COMMIT_SHORT (verify: curl -s ${HEALTH_URL%/api/health}/api/version)"
-info "rollback binary: ${BACKUP_BIN:-<none>}"
-info "rollback state:  $STATE_FILE"
+info "temporary rollback artifacts removed: $REMOVED_ROLLBACK_DIR"
 info "Run scripts/smoke.sh for the full read-only verification incl. transcript route."

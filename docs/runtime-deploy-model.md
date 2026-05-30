@@ -1,204 +1,210 @@
 # CHROTE Runtime Deploy Model
 
 Durable ownership and deploy model for the CHROTE operator cockpit. This is the
-authoritative reference for *where source lives*, *where the live service runs*,
-*how to get committed code into the runtime safely*, and *what must never be
-touched*. It satisfies Beads `home-gia` (epic), `home-ksz` (ownership), and
-`home-j7x` (sync exclusions).
+authoritative reference for where CHROTE source lives, where the live service
+runs, how committed code becomes the runtime binary, and what must never be
+touched. It supersedes the earlier two-checkout/worktree model and satisfies the
+local consolidation target tracked by `home-x2ri`.
 
-> Golden rule (inherited from `CLAUDE.md`): never disrupt running shells or tmux
-> sessions. A broken deploy must be rolled back, never left half-applied.
+> Golden rule: never disrupt running shells or tmux sessions. A broken deploy
+> must be rolled back, never left half-applied.
 
-## 1. Trees and their roles
+## 1. Trees and Their Roles
 
-| Tree | Role | Git | Touch policy |
-| --- | --- | --- | --- |
-| `/home/perttu/chrote-3.0-gascity` | **Canonical source for the CHROTE 3.0 Gas City work.** Build artifacts here. Worktree on branch `chrote-3.0-gascity`. | Worktree of `/home/perttu/chrote/.git` (shared object store) | Edit source here. Never run a branch-switch/reset that would disturb the shared store. |
-| `/home/perttu/chrote` | **Runtime deploy tree** used by `chrote.service`. Branch `feature/chrote-ui-review-batch`. `WorkingDirectory=%h/chrote`. Holds the live `chrote-server` binary. | Real repo; `.git` object store is shared by the worktree above | Do **not** hand-edit source here. Update only via the deploy script (artifacts). No `git pull`/`reset`/`checkout` here — see Section 5. |
-| `/home/perttu/repos/CHROTE-public` | **Public release clone.** Clean public GitHub mirror (branch e.g. `docs/readme-service-labels`). Does **not** contain the CHROTE 3.0 Gas City commits. | Independent clone | Source of public releases only. Not the source for *this* runtime deploy. |
+| Tree | Role | Touch policy |
+| --- | --- | --- |
+| `/home/perttu/chrote` | **Canonical CHROTE source checkout and runtime deploy target.** `chrote.service` runs from this tree and executes `/home/perttu/chrote/chrote-server`. | Edit, build, and deploy CHROTE here. Git operations here are source-sync operations, not a substitute for building the runtime binary. Avoid destructive git unless explicitly approved. |
+| `/home/perttu/chrote-3.0-gascity` | Temporary redundant transition clone/worktree from the old Gas City branch workflow. | Do not treat as canonical and do not deploy from it. Remove only after clean/remote-backed verification and explicit cleanup approval. |
+| `/home/perttu/repos/CHROTE-public` | Temporary redundant public clone/mirror from the old release workflow. | Not the runtime source for local CHROTE. Remove after verification, or recreate later only as a deliberate release mirror. |
 
-### Why two trees that share a `.git`
-`/home/perttu/chrote-3.0-gascity` is a `git worktree` of `/home/perttu/chrote`
-(`.git` -> `/home/perttu/chrote/.git/worktrees/chrote-3.0-gascity`). They share
-one object store but check out different branches. This is why git operations on
-the runtime tree are risky (Section 5) and why we deploy **built artifacts**, not
-git state.
+### Single-Checkout Rule
 
-### Canonical source disambiguation
-The older `home-gia` text named `/home/perttu/repos/CHROTE-public` as canonical.
-For the CHROTE 3.0 Gas City release the canonical source is
-`/home/perttu/chrote-3.0-gascity @ chrote-3.0-gascity` (commit `ee585b1` at first
-deploy), because the transcript-recovery code (`src/internal/api/gascity*.go`,
-`dashboard/`) and the harness-adapter docs live only on that branch.
-`CHROTE-public` remains the public *release* source and should be reconciled
-separately (it does not yet carry these commits).
+`/home/perttu/chrote` is both the source checkout and the live runtime directory.
+The served endpoint remains `127.0.0.1:8094`; consolidation must not move the
+browser/API endpoint or create a second served CHROTE instance.
 
-## 2. Service facts (verified from the unit and live process)
+The old model used `/home/perttu/chrote-3.0-gascity` as the source worktree and
+`/home/perttu/chrote` as an artifact-only runtime tree. That model is obsolete.
+To deploy the Gas City branch locally, first make `/home/perttu/chrote` contain
+the intended branch/commit, then build and install the binary from that same
+checkout.
+
+The redundant clones are cleanup candidates only. Deleting them is a separate
+reviewed cleanup step after verification; it is not part of normal deploy.
+
+## 2. Service Facts
+
+Expected unit facts from `services/chrote.service`:
 
 ```text
 unit:        ~/.config/systemd/user/chrote.service  (systemctl --user)
 WorkingDirectory: %h/chrote  (= /home/perttu/chrote)
 ExecStart:   %h/chrote/chrote-server --host 127.0.0.1 --port 8094 --ttyd-port 7683
-HTTP health: http://127.0.0.1:8094/api/health  -> {"status":"ok",...}
+HTTP health: http://127.0.0.1:8094/api/health
 ttyd:        127.0.0.1:7683
 tmux socket: TMUX_TMPDIR=%t/chrote-tmux  => /run/user/1000/chrote-tmux
-             (tmux socket file: /run/user/1000/chrote-tmux/tmux-1000/default)
+Gas City:    CHROTE_GASCITY_CITY_DIR=%h/gascity
 private cfg: EnvironmentFile=-%h/.config/chrote/services.env   (mode 0600, never print/commit)
 restart:     systemctl --user restart chrote.service
 ```
 
-## 3. Build chain (authoritative, from `CLAUDE.md`)
+The source-controlled unit should keep `WorkingDirectory`, `ExecStart`,
+`CHROTE_LAUNCH_SCRIPT`, and all CHROTE paths wired to `%h/chrote`. It must also
+set `CHROTE_GASCITY_CITY_DIR=%h/gascity` so CHROTE points at the existing Gas
+City city rather than inferring a path from the checkout.
+
+## 3. Build Chain
 
 The Go module root is `src/` (`module github.com/chrote/server`, `go 1.23`).
 The server embeds the dashboard via `//go:embed dist/*` in
 `src/internal/dashboard/embed.go`, so the built dashboard must be copied into
-`src/internal/dashboard/dist` **before** the Go build.
+`src/internal/dashboard/dist` before the Go build.
 
 ```bash
-cd <canonical>/src      && go test ./...
-cd <canonical>/dashboard && npm run build            # -> dashboard/dist
-rm -rf <canonical>/src/internal/dashboard/dist
-cp -r  <canonical>/dashboard/dist <canonical>/src/internal/dashboard/dist
-cd <canonical>/src      && go build -o ../chrote-server ./cmd/server
-# deploy: copy built chrote-server -> /home/perttu/chrote/chrote-server
-systemctl --user restart chrote.service
+cd /home/perttu/chrote/src       && go test ./...
+cd /home/perttu/chrote/dashboard && npm run build
+rm -rf /home/perttu/chrote/src/internal/dashboard/dist
+cp -r  /home/perttu/chrote/dashboard/dist /home/perttu/chrote/src/internal/dashboard/dist
+cd /home/perttu/chrote/src       && go build -o ../chrote-server ./cmd/server
 ```
 
-Both `chrote-server` and `src/internal/dashboard/dist/` are **gitignored build
-artifacts** (see `.gitignore`). Git operations never update them; the binary
-must be rebuilt and copied for any code change to go live.
+`chrote-server`, `dashboard/dist/`, and `src/internal/dashboard/dist/` are
+generated artifacts. Git state alone does not update the served app; the binary
+must be rebuilt after source changes.
 
-### Build provenance (home-altx)
+### Build Provenance
 
-The canonical tree is a git **worktree** whose `.git` is a file, so Go's
-automatic VCS stamp walks up to the OUTER `/home/perttu` repo and records the
-wrong commit (`vcs.revision` of the home-repo HEAD, `vcs.modified=true`). The
-deploy therefore builds with `-buildvcs=false` and stamps the real CHROTE
-source commit explicitly:
+The single-checkout model removes the old worktree provenance problem where Go
+could stamp the outer `/home/perttu` repository. The deploy should still stamp
+or verify the intended CHROTE source commit explicitly, because `GET
+/api/version` is the operator-visible proof of what binary is live.
+
+Preferred explicit stamp:
 
 ```bash
 go build -buildvcs=false \
   -ldflags "-X main.Version=<ver> -X main.Commit=$(git rev-parse --short HEAD)" \
-  -o <staging> ./cmd/server
+  -o ../chrote-server ./cmd/server
 ```
 
 The stamped commit is observable at `GET /api/version` (`{"version","commit"}`)
-and in the startup log line, and is recorded in the deploy state receipt as
-`source_commit` / `binary_provenance`.
+and should match the intended `/home/perttu/chrote` checkout commit.
 
-### Gas City tmux version dependency (home-5ubb)
+### Gas City Tmux Version Dependency
 
 The transcript route shells to `gc session peek`, and `gc` shells to `tmux` via
-PATH. The **root cause** of the deployed transcript 502 was a tmux **binary
-version mismatch**: the chrote.service minimal PATH resolved `tmux` to
-`/usr/bin/tmux` (3.4), but the Gas City supervisor created its `-L gascity`
-server with the Linuxbrew `tmux` (3.6a). tmux 3.4 cannot read a 3.6a server
-("server exited unexpectedly"), so `gc session peek` failed and the handler
-returned `502 GASCITY_TRANSCRIPT_UNAVAILABLE`. It worked from an interactive
-shell only because that shell had Linuxbrew on PATH.
+PATH. A prior deployed transcript 502 was caused by a tmux binary version
+mismatch: `chrote.service` resolved `tmux` to `/usr/bin/tmux` (3.4), while the
+Gas City supervisor used the Linuxbrew `tmux` (3.6a). tmux 3.4 cannot read a
+3.6a server, so `gc session peek` failed.
 
-Fix: the server prepends a compatible-tmux bin dir to PATH **for gc
-subprocesses only** (see `resolveGasCityGCExtraPath`/`gasCityChildEnv` in
-`gascity.go`), without changing CHROTE's own `/usr/bin/tmux` terminal-proxy
-sessions (`tmux.go`). Override with `CHROTE_GASCITY_GC_PATH=<bin-dir>` (or `off`)
-if the supervisor's tmux moves. This is a deliberate, documented version
-dependency on the supervisor's tmux build.
+The server prepends a compatible tmux bin dir to PATH for `gc` subprocesses only
+(see `resolveGasCityGCExtraPath` / `gasCityChildEnv` in `gascity.go`), without
+changing CHROTE's own terminal-proxy tmux sessions. Override with
+`CHROTE_GASCITY_GC_PATH=<bin-dir>` or `CHROTE_GASCITY_GC_PATH=off` if the
+supervisor's tmux moves.
 
-## 4. Deploy workflow
+## 4. Deploy Workflow
 
-Use `scripts/deploy-local.sh` (in the canonical tree). It:
+`scripts/deploy-local.sh` is the intended local deploy entrypoint. In the
+single-checkout model it must operate from `/home/perttu/chrote`, not from the
+redundant transition clone.
 
-1. Verifies it is running from the canonical worktree and the worktree is clean
-   (refuses a dirty source tree unless `--allow-dirty`).
-2. Runs `go test ./...` (skippable with `--skip-tests`, not recommended).
-3. Builds the dashboard (`npm run build`) and refreshes
-   `src/internal/dashboard/dist` from `dashboard/dist`.
-4. Builds `chrote-server` into a staging path (never overwrites the runtime
-   binary until the build fully succeeds).
-5. **Backs up the current runtime binary and terminal launch script** to
-   timestamped files and records rollback state (runtime git HEAD, service
-   status, tmux session list, launch-script hashes).
-6. Atomically swaps the new binary into `/home/perttu/chrote/chrote-server`
-   and the launch script into `/home/perttu/chrote/terminal-launch.sh`.
-7. Restarts **only** `chrote.service` (`systemctl --user`).
-8. Smokes `/api/health` and verifies the chrote tmux session list is unchanged.
+The deploy workflow:
 
-`--dry-run` performs build + checks and prints the planned actions without
-touching runtime artifacts, writing rollback backups, or restarting the service.
+1. Verifies `/home/perttu/chrote` is the canonical checkout, on the intended
+   branch/commit, and clean unless an explicit dirty deploy is approved.
+2. Runs `go test ./...` under `src/`.
+3. Builds the dashboard with `npm run build` under `dashboard/`.
+4. Refreshes `src/internal/dashboard/dist` from `dashboard/dist`.
+5. Builds `chrote-server` into a staging path before touching the live binary.
+6. Captures enough temporary rollback state to recover if the deploy fails.
+7. Atomically installs the staged binary as `/home/perttu/chrote/chrote-server`.
+8. Restarts only `chrote.service`.
+9. Smokes health, version, and tmux-session preservation.
+10. On success, removes backup/state/temp files created for that successful
+    deploy. Persistent `.deploy-backups` dirt, `*.bak`, or `*.new.*` files
+    should not remain after a successful deploy.
 
-The deploy **never** touches the tmux socket, never runs `tmux kill-*`, never
-removes `/run/user/1000/chrote-tmux`, never edits the runtime git tree, and never
-copies private config into the repo. The terminal launch script is copied because
-`chrote.service`/ttyd executes that script directly for every terminal attach;
-it is a small runtime artifact, not a source-tree sync.
+`--dry-run` should perform build and checks without touching the runtime binary,
+writing rollback backups, or restarting the service.
 
-## 5. Why we do NOT use a git operation to deploy
+The deploy must never touch the tmux socket, run `tmux kill-*`, remove
+`/run/user/1000/chrote-tmux`, copy private config into the repo, or delete the
+redundant clone directories. Failed deploys may keep rollback evidence until the
+operator resolves the failure; successful deploys should leave no persistent
+backup dirt.
 
-A `git pull --ff-only` in the runtime tree would *appear* clean (runtime HEAD is
-an ancestor of the canonical commit), but:
+## 5. Why Git Alone Is Not Deploy
 
-- It updates tracked source files only; the **binary and embedded dist are
-  gitignored** and would stay stale, so the service would not actually change.
-- The runtime tree shares its object store with the canonical worktree; branch
-  ref churn there is unnecessary risk for zero runtime benefit.
+A `git pull --ff-only` or branch checkout in `/home/perttu/chrote` updates source
+files only. It does not rebuild the dashboard, refresh embedded assets, rebuild
+`chrote-server`, or prove the live service has restarted with the intended
+binary.
 
-Therefore: **build artifacts, swap the binary and launch script.** No runtime git
-op is part of the deploy. If a future operator wants the runtime branch to also
-track the new commits for bookkeeping, do that as a separate, reviewed step — it
-is not required for the code to be live.
+Therefore:
 
-Destructive git (force-reset of runtime, branch deletion, anything that could
-lose uncommitted runtime state) is out of scope: stop and report instead.
+- Use Git in `/home/perttu/chrote` only to move the canonical source checkout to
+  the intended commit.
+- Use the build/deploy workflow to update the served binary.
+- Verify the served binary through `GET /api/version` and health/smoke checks.
 
-## 6. Runtime-only / generated artifacts (sync exclusions) — `home-j7x`
+Destructive git operations that could lose uncommitted source or runtime state
+remain out of scope: stop and report instead.
 
-Because we deploy a single built binary (not an rsync of the source tree), the
-classic rsync-exclusion risk is largely avoided. The classification below
-documents what is runtime-only and what must never be synced or deleted, and it
-governs any future tree-sync variant of the deploy.
+## 6. Runtime-Only / Generated Artifacts
+
+Because source and runtime now share one checkout, the important distinction is
+between tracked source, generated build output, private config, and operator
+runtime state.
 
 | Path | Class | Notes |
 | --- | --- | --- |
-| `/home/perttu/chrote/chrote-server` | **deploy target** | Runtime server binary; the deploy replaces it with backup. |
-| `/home/perttu/chrote/terminal-launch.sh` | **deploy target** | ttyd launch script for plain tmux and `gc:<id>` terminal attaches; the deploy replaces it with backup. |
-| `src/internal/dashboard/dist/`, `dashboard/dist/`, `dashboard/.vite/` | generated | Rebuilt each deploy; gitignored. Never source-sync. |
-| `dashboard/node_modules/`, `*/node_modules/` | generated | Rebuild from lockfile; never sync. |
-| `dashboard/coverage/`, `dashboard/playwright-report/`, `**/test-results/` | generated | Test output; never sync. |
-| `/home/perttu/.config/chrote/services.env` | **private config** | Loaded by the unit. Never print, sync, or commit. Lives outside both trees. |
-| `/home/perttu/.chrote`, `/home/perttu/.config/chrote` | private state/config | Operator runtime state; outside source sync. |
+| `/home/perttu/chrote/chrote-server` | generated deploy artifact | Runtime server binary; replace atomically after a successful build. |
+| `/home/perttu/chrote/terminal-launch.sh` | tracked source and live launch script | `chrote.service` / ttyd reads this path directly. Keep it in the canonical checkout. |
+| `src/internal/dashboard/dist/`, `dashboard/dist/`, `dashboard/.vite/` | generated | Rebuilt each deploy; gitignored. |
+| `dashboard/node_modules/`, `*/node_modules/` | generated | Rebuild from lockfile; never treat as source. |
+| `dashboard/coverage/`, `dashboard/playwright-report/`, `**/test-results/` | generated | Test output. |
+| `/home/perttu/chrote/.deploy-backups/`, `*.bak`, `*.new.*` | temporary deploy state | Allowed during deploy or after failure. Must not persist after successful deploy verification. |
+| `/home/perttu/.config/chrote/services.env` | private config | Loaded by the unit. Never print, sync, or commit. |
+| `/home/perttu/.chrote`, `/home/perttu/.config/chrote` | private state/config | Operator runtime state outside source control. |
 | `~/.local/state/chrote/gascity-transcripts/` (or `$XDG_STATE_HOME/chrote/...`) | runtime state | Transcript-recovery archive written by the live server. Operator data; never sync/delete on deploy. |
 | `*.sqlite`, `*.db`, `*.db-wal`, `*.db-shm`, `.beads/`, `.dolt/` | runtime state | Beads/DB state; gitignored; never source-sync. |
 | `.env`, `.env.*`, `tailscale_state/`, `filebrowser_data/` | secrets/state | Never sync or commit. |
-| Large repo media (`*.png` at repo root, `bg_*.png`, `*.mp3`) | tracked assets | Embedded via dist where relevant; not part of binary swap. |
 
-No runtime files are deleted by the deploy. Any cleanup of stale runtime
-artifacts must be a separate, reviewed step (per `home-j7x`).
+Normal deploy should not delete operator runtime state. The only cleanup it
+should perform automatically is successful-deploy cleanup of its own temporary
+backup/state files. Removing `/home/perttu/chrote-3.0-gascity` and
+`/home/perttu/repos/CHROTE-public` is a separate consolidation cleanup after
+verification.
 
-## 7. Verification / smoke — `scripts/smoke.sh`
+## 7. Verification / Smoke
 
-`scripts/smoke.sh` is read-only and proves a deploy is healthy:
+Read-only smoke checks prove the deployed service is healthy:
 
-- (a) `chrote.service` is `active`.
-- (b) `GET http://127.0.0.1:8094/api/health` returns `status: ok`.
-- (c) Every chrote tmux session present in a recorded "before" list is still
-  present after (no session lost). It reads
-  `TMUX_TMPDIR=/run/user/1000/chrote-tmux tmux list-sessions`.
-- (d) Transcript-recovery is live: `GET /api/gascity/sessions/<id>/transcript`
-  returns the JSON API envelope (`Content-Type: application/json`,
-  `{"success":...}`), not the SPA HTML fallback. On the old binary this route
-  fell through to `index.html` (HTML); on the new binary it is a real API route
-  (`gascity.go` -> `GET /api/gascity/sessions/{id}/transcript`). The archive /
-  stale-recovery branch is exercised read-only by requesting a session id the
-  supervisor will not resolve — it still returns the JSON envelope.
+- `chrote.service` is `active`.
+- `GET http://127.0.0.1:8094/api/health` returns `status: ok`.
+- `GET http://127.0.0.1:8094/api/version` reports the intended commit.
+- Every chrote tmux session present in a recorded "before" list is still present
+  after deploy.
+- Gas City API routes return JSON API envelopes, not the SPA HTML fallback.
 
-## 8. Hard constraints
+Safe doc/service checks for this model include `systemd-analyze verify --user
+services/chrote.service`, `git diff --check`, and targeted `rg` scans for stale
+two-checkout language. They do not require restarting the service or deleting
+directories.
 
-- Never touch Gas City: `gascity-supervisor.service`, `/home/perttu/gascity`,
-  the `tmux -L gascity` socket, or its sessions (`planner`, `reviewer-*`,
-  `s-gc-*`, `*-smoke`, ...). NB: a CHROTE session named `gascity-considering`
-  lives on the **CHROTE** socket and is a CHROTE session to preserve — it is not
-  the Gas City substrate.
+## 8. Hard Constraints
+
+- `/home/perttu/chrote` remains the single canonical source/runtime checkout.
+- The served endpoint remains `127.0.0.1:8094`.
+- Do not delete `/home/perttu/chrote-3.0-gascity` or
+  `/home/perttu/repos/CHROTE-public` until cleanup is explicitly approved after
+  clean/remote-backed verification.
+- Never touch Gas City runtime ownership: `gascity-supervisor.service`,
+  `/home/perttu/gascity`, the `tmux -L gascity` socket, or its sessions.
 - Never kill the chrote tmux socket/sessions; preserve
   `/run/user/1000/chrote-tmux`.
-- Never print or commit secrets; never change public repo history; never push.
+- Never print or commit secrets; never change public repo history; never push
+  without explicit approval.
 - No destructive git without stopping to report.
