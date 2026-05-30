@@ -2,7 +2,7 @@
 
 > 2026-05-30 rollback update: this document is evidence/history, not the
 > current source of truth. ADR-0003 rolled back active CHROTE/Gas City
-> integration. `docs/chrote-gascity-framing.md` is retained as historical
+> integration. `../framing.md` is retained as historical
 > context, not an implementation decision.
 
 This is a second-look assessment of Gas City through CHROTE's meta-harness desired state.
@@ -213,10 +213,10 @@ Downside: may be awkward because many Go packages are internal and not exported 
 At the time of this evaluation, the recommendation was to treat Gas City as a first-class candidate component for the meta-harness.
 
 The contained sidecar has now been set up at `<workspace-root>/gascity`.
-See `docs/gascity-sidecar-spike-results.md` for the verification record.
+See `../experiments/sidecar-spike-results.md` for the verification record.
 
 That sidecar-first recommendation is historical evidence, not the current
-source of truth. Use `docs/chrote-gascity-framing.md` only for historical
+source of truth. Use `../framing.md` only for historical
 context and the old leverage problem.
 
 ## Risks To Keep Visible

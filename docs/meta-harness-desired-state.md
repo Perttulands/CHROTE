@@ -82,7 +82,7 @@ Gas City should be evaluated as:
 - a source of Beads-backed mail, nudge, session, and molecule concepts
 - a possible component to reuse directly if it can fit CHROTE without taking over the whole environment
 
-Second-look assessment: `docs/gascity-meta-harness-evaluation.md`.
+Second-look assessment: `gas-city-research/evaluations/meta-harness-evaluation.md`.
 
 Pi comms should be evaluated as:
 

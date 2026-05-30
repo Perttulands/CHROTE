@@ -35,7 +35,7 @@ notes.
 
 ## What the tracked package contains
 
-Package: `chrote/docs/gascity-harness-adapters/` (this repo).
+Package: `chrote/docs/gas-city-research/adapter-research/harness-adapters/` (this repo).
 
 The three live runtime files are mirrored byte-for-byte as adapter source and
 installed back into the city by `bin/install-adapter` per the adapter manifest:
@@ -83,7 +83,7 @@ on `127.0.0.1:8372` (localhost-only, unchanged).
 ## Reproducing the OpenCode smoke from tracked source
 
 ```bash
-PKG=/home/perttu/chrote/docs/gascity-harness-adapters
+PKG=/home/perttu/chrote/docs/gas-city-research/adapter-research/harness-adapters
 
 # 1. Sync the adapter into the live city from tracked source.
 "$PKG/bin/install-adapter" opencode-smoke

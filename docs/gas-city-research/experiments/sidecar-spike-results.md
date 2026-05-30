@@ -2,7 +2,7 @@
 
 Date: 2026-05-18
 
-> Current Gas City context/problem framing lives in `docs/chrote-gascity-framing.md`. This file is empirical evidence from the sidecar spike, not a standing adoption plan or implementation decision.
+> Current Gas City context/problem framing lives in `../framing.md`. This file is empirical evidence from the sidecar spike, not a standing adoption plan or implementation decision.
 
 ## Setup
 
@@ -191,7 +191,7 @@ At the time of the spike, the recommendation was to use Gas City as a sidecar or
 
 That recommendation is now evidence, not a standing plan. The lasting finding is that Gas City already provides durable sessions, mail, sling, formulas, molecules, wisps, convoys, and a typed HTTP/SSE control plane without requiring CHROTE to reimplement those primitives first.
 
-Any future CHROTE/Gas City integration should preserve the safety boundary in `docs/chrote-gascity-framing.md`. The spike suggested that a read-only projection could display:
+Any future CHROTE/Gas City integration should preserve the safety boundary in `../framing.md`. The spike suggested that a read-only projection could display:
 
 - running cities
 - sessions

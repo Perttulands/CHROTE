@@ -11,8 +11,8 @@ Related work:
 - `home-e5yp`: prove Gas City can use shared Beads truth.
 - `home-bi6d.4`: map CHROTE 2.0 primitives to Gas City 3.0 primitives.
 - `home-4xv.4`: Dolt/quorum validation; see
-  `docs/gascity-dolt-quorum-validation.md`.
-- ADR: `docs/adr/0001-chrote-3-gas-city-substrate.md`.
+  `../experiments/dolt-quorum-validation.md`.
+- ADR: `../adr/0001-chrote-3-gas-city-substrate.md`.
 
 ## Assumptions And Scope
 
@@ -373,12 +373,12 @@ implementation.
 | --- | --- | --- |
 | `home-6p0j` | Completed | Installed Dolt and proved a bd-backed temp-city path, but found live-supervisor side effects. |
 | `home-d0lv` | Verified, pending close | Safe disposable path resolved: `gc init` has no offline/no-register flag, but `GC_HOME`-isolated init from an inert `city.toml` keeps all register/start side effects off live state and creates no harness session. See "Safe Disposable City Proof Path (home-d0lv)". |
-| `home-p81n` | Completed | Projection schema is in `docs/chrote-gascity-projection-schema.md`. |
+| `home-p81n` | Completed | Projection schema is in `projection-schema.md`. |
 | `home-4xv.2` | Completed | CHROTE observer is implemented as `GET /api/gascity/observer` plus the dashboard Gas City view. |
-| `home-ujx8` | Completed | Split-brain guidance is in `docs/gascity-split-brain-runbook.md`. |
-| `home-ukyt` | In progress | Restart reconciliation evidence is in `docs/gascity-restart-reconciliation-drill.md`; close with the CHROTE count-level caveat after review. |
-| `home-4xv.3` | In progress | Transcript recovery is implemented through `gc session peek`, documented in `docs/gascity-transcript-recovery.md`, and exposed through the dashboard sessions panel. |
-| `home-bi6d.5` | Completed | First identity proof succeeded through a Pi-owned Gas City mail fallback; evidence is in `docs/gascity-real-identity-smoke.md`. |
+| `home-ujx8` | Completed | Split-brain guidance is in `../runbooks/split-brain-runbook.md`. |
+| `home-ukyt` | In progress | Restart reconciliation evidence is in `../experiments/restart-reconciliation-drill.md`; close with the CHROTE count-level caveat after review. |
+| `home-4xv.3` | In progress | Transcript recovery is implemented through `gc session peek`, documented in `../runbooks/transcript-recovery.md`, and exposed through the dashboard sessions panel. |
+| `home-bi6d.5` | Completed | First identity proof succeeded through a Pi-owned Gas City mail fallback; evidence is in `../experiments/real-identity-smoke.md`. |
 | `home-bi6d.6` | Completed | Minimal CHROTE control surface can observe sessions/mail/workflows/events and send one bounded Pi poem request. |
-| `home-4xv.4` | In progress | Dolt/quorum validation is documented in `docs/gascity-dolt-quorum-validation.md`; live state remains file-backed. |
+| `home-4xv.4` | In progress | Dolt/quorum validation is documented in `../experiments/dolt-quorum-validation.md`; live state remains file-backed. |
 | `home-706s` | Open | Follow-up for silent `graph.v2` / `mol-review-quorum` formula inspection failure. |

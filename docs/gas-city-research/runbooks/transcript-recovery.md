@@ -123,7 +123,7 @@ remains orchestration truth. The archive is an operator-recovery cache only.
 
 Restart-recovery behavior must only be exercised in a disposable, `GC_HOME`-
 isolated city per the "Safe Disposable City Proof Path" in
-`chrote-gascity-substrate-map.md`. The live `/home/perttu/gascity` supervisor
+`../architecture/substrate-map.md`. The old `/home/perttu/gascity` supervisor
 must never be restarted for testing. The archive recovery path itself is fully
 covered by unit tests (`gascity_test.go`) using fake/scripted runners and an
 httptest supervisor, with no live restart required.

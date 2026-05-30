@@ -3,7 +3,7 @@
 This document preserves the Codex Gas City parity evidence: the first paid,
 credentialed harness built on the reusable adapter mold from `home-7jk3`. It is
 the durable record for Beads `home-piis`. The shared mold contract and the
-OpenCode reference live in `README.md` and `docs/gascity-opencode-parity.md`.
+OpenCode reference live in `README.md` and `gascity-opencode-parity.md`.
 
 ## Codex parity smoke (2026-05-27)
 
@@ -89,7 +89,7 @@ city left empty).
 
 ## Adapter source and install
 
-Package: `chrote/docs/gascity-harness-adapters/` (this repo).
+Package: `chrote/docs/gas-city-research/adapter-research/harness-adapters/` (this repo).
 
 | tracked source                                          | live city dest                                  |
 |---------------------------------------------------------|-------------------------------------------------|
@@ -98,7 +98,7 @@ Package: `chrote/docs/gascity-harness-adapters/` (this repo).
 | `adapters/codex-smoke/workdir/AGENTS.md`                | `/home/perttu/gascity/codex-smoke/AGENTS.md`    |
 
 ```bash
-PKG=/home/perttu/chrote/docs/gascity-harness-adapters
+PKG=/home/perttu/chrote/docs/gas-city-research/adapter-research/harness-adapters
 "$PKG/bin/install-adapter" codex-smoke            # sync into live city ($GC_CITY|/home/perttu/gascity)
 "$PKG/bin/install-adapter" codex-smoke --verify   # confirm city matches source
 gc --city /home/perttu/gascity reload

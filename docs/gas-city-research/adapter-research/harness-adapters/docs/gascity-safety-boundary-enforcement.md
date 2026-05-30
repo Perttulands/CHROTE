@@ -13,7 +13,7 @@ the install gate — regresses away from default-deny / no-credential-leak.
 ## What runs
 
 ```bash
-PKG=/home/perttu/chrote/docs/gascity-harness-adapters
+PKG=/home/perttu/chrote/docs/gas-city-research/adapter-research/harness-adapters
 "$PKG/bin/check-safety-boundary"            # pass/fail summary, exit 0/1
 "$PKG/bin/check-safety-boundary" --verbose  # per-check PASS/FAIL lines
 ```
@@ -65,7 +65,7 @@ the gate's `grep -F`), so an adapter can never reintroduce it. The `gc init` pat
 itself is tracked and resolved under `home-d0lv`: scaffold disposable cities from
 an inert `--file` config (`start_command = "true"`, `[beads] provider = "file"`),
 never `--provider codex` — see
-`chrote-3.0-gascity/docs/chrote-gascity-substrate-map.md`, "Safe Disposable City
+`chrote-3.0-gascity/docs/gas-city-research/architecture/substrate-map.md`, "Safe Disposable City
 Proof Path (home-d0lv)".
 
 ## Result (2026-05-27)
@@ -113,7 +113,7 @@ appear **nowhere** in the committed files. See `home-7jk3` notes and the README
 check (home-td6q) passes" as an acceptance item. The ready gate runs:
 
 ```bash
-/home/perttu/chrote/docs/gascity-harness-adapters/bin/check-safety-boundary
+/home/perttu/chrote/docs/gas-city-research/adapter-research/harness-adapters/bin/check-safety-boundary
 ```
 
 and treats a non-zero exit as a ready-bar failure for criterion 7.

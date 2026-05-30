@@ -39,7 +39,7 @@ When this first refactor PR is done:
 
 - `PRD.md` and `docs/CHROTE_VISION.md` already state that CHROTE 3.0 should
   focus on named Gas City-backed identities rather than passive dashboards.
-- `docs/gascity-agent-orchestration-vision-working.md` now records the
+- `../vision/agent-orchestration-vision.md` now records the
   corrected vision and the low-structure Master Board idea.
 - `dashboard/src/components/TabBar.tsx` still exposes a top-level `Gas City`
   tab.
@@ -231,7 +231,7 @@ Likely touched files:
 
 - `src/internal/api/gascity.go`
 - `src/internal/api/gascity_test.go`
-- `docs/gascity-agent-orchestration-vision-working.md`
+- `../vision/agent-orchestration-vision.md`
 - `PRD.md`
 - `README.md`
 

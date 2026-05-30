@@ -28,6 +28,11 @@ handling, or a `CHROTE_GASCITY_CITY_DIR` runtime dependency.
 The full pre-rollback state remains recoverable through the safety branch and
 rollback snapshot. `/home/perttu/gascity` is not deleted by this rollback.
 
+2026-05-30 follow-up: the local runnable Gas City runtime was later removed in a
+separate cleanup to reduce confusion. The thinking, docs, and conversation
+artifacts were retained. Removal manifest:
+`/home/perttu/rollback-snapshots/gascity-runtime-removal-20260530-215854/manifest.txt`.
+
 ## Consequences
 
 What gets better:

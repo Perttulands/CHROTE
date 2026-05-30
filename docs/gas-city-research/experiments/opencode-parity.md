@@ -96,7 +96,7 @@ Evidence checked:
   `gc-51923` / `chrote-poem-pi` could receive a bounded prompt through
   `gc session nudge` and return model-authored content through Gas City mail
   `gc-52383` without sender spoofing.
-- `docs/gascity-real-identity-smoke.md` records the same proof.
+- `real-identity-smoke.md` records the same proof.
 - Live Gas City still reports `gc-51923` active as template `pi-smoke` with
   target `chrote-poem-pi`.
 - The live mail record `gc-52383` has `from=chrote-poem-pi`,

@@ -2,7 +2,7 @@
 
 Durable record for Beads `home-qnzi` (productize the Hermes → Gas City bridge),
 the follow-up of `home-5qmz`. The bridge source lives at
-`chrote/docs/gascity-harness-adapters/ingress/hermes/`; this is the focused
+`chrote/docs/gas-city-research/adapter-research/harness-adapters/ingress/hermes/`; this is the focused
 verification + rationale record (sibling of `gascity-opencode-parity.md`).
 
 The bridge is an **ingress adapter** (sanitized envelope → native `gc`

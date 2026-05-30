@@ -11,9 +11,13 @@ the CHROTE/Gas City investigation.
 ## Current Decision Note
 
 As of 2026-05-30, ADR-0003
-(`docs/adr/0003-rollback-active-gascity-integration.md`) is the active decision:
+(`adr/0003-rollback-active-gascity-integration.md`) is the active decision:
 CHROTE has rolled back the active Gas City integration and keeps only Gas City
 docs/plans/research as historical context.
+
+The local runnable Gas City runtime was removed after rollback. This document is
+therefore research context only, not an instruction to use an installed `gc`
+setup.
 
 The product framing that led to the rollback is:
 
@@ -87,7 +91,7 @@ Gas City's architecture is organized around five primitive concepts and four der
 
 ## What The Local Spike Proved
 
-Local evidence lives in `docs/gascity-sidecar-spike-results.md`.
+Local evidence lives in `experiments/sidecar-spike-results.md`.
 
 The sidecar spike showed that, in this environment:
 
@@ -250,8 +254,8 @@ Those require separate evidence and explicit decisions.
 
 These documents are evidence or historical exploration, not standing plans:
 
-- `docs/gascity-sidecar-spike-results.md` records the local sidecar spike and localhost supervisor findings.
-- `docs/gascity-meta-harness-evaluation.md` records why Gas City looked like a strong meta-harness candidate.
+- `experiments/sidecar-spike-results.md` records the local sidecar spike and localhost supervisor findings.
+- `evaluations/meta-harness-evaluation.md` records why Gas City looked like a strong meta-harness candidate.
 - `docs/chrote-cli-control-plane-exploration.md` records a superseded CHROTE-native control-plane branch of thinking.
 - `docs/meta-harness-desired-state.md` records Perttu's desired meta-harness shape separately from assistant recommendations.
 - `docs/agent-collaboration-primitives.md` records broader collaboration primitive research.

@@ -4,7 +4,7 @@ This document preserves the Claude Code Gas City parity evidence: the second
 paid, credentialed harness built on the reusable adapter mold from `home-7jk3`,
 after Codex (`home-piis`). It is the durable record for Beads `home-5v4k`. The
 shared mold contract and the other references live in `README.md`,
-`docs/gascity-opencode-parity.md`, and `docs/gascity-codex-parity.md`.
+`gascity-opencode-parity.md`, and `gascity-codex-parity.md`.
 
 ## Claude Code parity smoke (2026-05-27)
 
@@ -127,7 +127,7 @@ auth. The smoke therefore uses plain `--print` with the existing auth, plus
 
 ## Adapter source and install
 
-Package: `chrote/docs/gascity-harness-adapters/` (this repo).
+Package: `chrote/docs/gas-city-research/adapter-research/harness-adapters/` (this repo).
 
 | tracked source                                          | live city dest                                  |
 |---------------------------------------------------------|-------------------------------------------------|
@@ -136,7 +136,7 @@ Package: `chrote/docs/gascity-harness-adapters/` (this repo).
 | `adapters/claude-code/workdir/CLAUDE.md`                | `/home/perttu/gascity/claude-code/CLAUDE.md`    |
 
 ```bash
-PKG=/home/perttu/chrote/docs/gascity-harness-adapters
+PKG=/home/perttu/chrote/docs/gas-city-research/adapter-research/harness-adapters
 "$PKG/bin/install-adapter" claude-code            # sync into live city ($GC_CITY|/home/perttu/gascity)
 "$PKG/bin/install-adapter" claude-code --verify   # confirm city matches source
 gc --city /home/perttu/gascity reload
