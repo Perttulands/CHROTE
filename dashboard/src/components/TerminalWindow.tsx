@@ -5,6 +5,7 @@ import { useToast } from '../context/ToastContext'
 import { useIframePool } from './IframePool'
 import { WINDOW_COLORS } from '../types'
 import type { TerminalWindow as TerminalWindowType, WorkspaceId } from '../types'
+import { createGasCitySession } from '../services/gascityClient'
 
 interface CreateSessionButtonProps {
   workspaceId: WorkspaceId
@@ -12,47 +13,129 @@ interface CreateSessionButtonProps {
   accentColor: string
 }
 
+type CreateSessionMode = 'tmux' | 'gascity'
+
 function CreateSessionButton({ workspaceId, windowId, accentColor }: CreateSessionButtonProps) {
   const [creating, setCreating] = useState(false)
+  const [mode, setMode] = useState<CreateSessionMode>('tmux')
+  const [gasCityName, setGasCityName] = useState(`agent-${Date.now().toString(36)}`)
+  const [gasCityTemplate, setGasCityTemplate] = useState('planner')
+  const [gasCityTitle, setGasCityTitle] = useState('')
   const { settings, refreshSessions, addSessionToWindow } = useSession()
   const { addToast } = useToast()
+
+  const handleCreateTmux = async () => {
+    const sessionName = `${settings.defaultSessionPrefix}-${Date.now().toString(36)}`
+    const response = await fetch('/api/tmux/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: sessionName }),
+      signal: AbortSignal.timeout(10000),
+    })
+    if (!response.ok) {
+      addToast('Failed to create session', 'error')
+      return
+    }
+    addToast(`Session '${sessionName}' created`, 'success')
+    await refreshSessions()
+    addSessionToWindow(workspaceId, windowId, sessionName)
+  }
+
+  const handleCreateGasCity = async () => {
+    const name = gasCityName.trim()
+    const template = gasCityTemplate.trim()
+    const title = gasCityTitle.trim()
+    if (!name || !template) {
+      addToast('Name and template are required', 'error')
+      return
+    }
+
+    const created = await createGasCitySession({
+      name,
+      template,
+      ...(title ? { title } : {}),
+    }, {
+      signal: AbortSignal.timeout(150000),
+    })
+
+    const attachTarget = created.attachTarget || `gc:${created.id}`
+    addToast(`Identity '${created.name || name}' created`, 'success')
+    await refreshSessions()
+    addSessionToWindow(workspaceId, windowId, attachTarget)
+  }
 
   const handleCreate = async () => {
     setCreating(true)
     try {
-      const sessionName = `${settings.defaultSessionPrefix}-${Date.now().toString(36)}`
-      const response = await fetch('/api/tmux/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: sessionName }),
-        signal: AbortSignal.timeout(10000),
-      })
-      if (response.ok) {
-        addToast(`Session '${sessionName}' created`, 'success')
-        await refreshSessions()
-        addSessionToWindow(workspaceId, windowId, sessionName)
-      } else {
-        addToast('Failed to create session', 'error')
-      }
+      await (mode === 'gascity' ? handleCreateGasCity() : handleCreateTmux())
     } catch (e) {
       console.error('Failed to create session:', e)
-      addToast('Failed to create session', 'error')
+      addToast(mode === 'gascity' ? 'Failed to create identity' : 'Failed to create session', 'error')
     } finally {
       setCreating(false)
     }
   }
 
   return (
-    <button
-      className="create-session-btn"
-      onClick={handleCreate}
-      disabled={creating}
-      style={{ '--btn-accent': accentColor } as React.CSSProperties}
-      title="Create new session"
-    >
-      <span className="create-session-icon">{creating ? '...' : '+'}</span>
-      <span className="create-session-label">New Session</span>
-    </button>
+    <div className="create-session-controls" style={{ '--btn-accent': accentColor } as React.CSSProperties}>
+      <div className="create-session-mode" role="group" aria-label="Session type">
+        <button
+          type="button"
+          className={`create-session-mode-btn ${mode === 'tmux' ? 'active' : ''}`}
+          aria-pressed={mode === 'tmux'}
+          onClick={() => setMode('tmux')}
+        >
+          tmux
+        </button>
+        <button
+          type="button"
+          className={`create-session-mode-btn ${mode === 'gascity' ? 'active' : ''}`}
+          aria-pressed={mode === 'gascity'}
+          onClick={() => setMode('gascity')}
+        >
+          Gas City
+        </button>
+      </div>
+
+      {mode === 'gascity' && (
+        <div className="gascity-create-fields">
+          <label className="gascity-create-field">
+            <span>Name</span>
+            <input
+              value={gasCityName}
+              onChange={(event) => setGasCityName(event.target.value)}
+              autoComplete="off"
+            />
+          </label>
+          <label className="gascity-create-field">
+            <span>Template</span>
+            <input
+              value={gasCityTemplate}
+              onChange={(event) => setGasCityTemplate(event.target.value)}
+              autoComplete="off"
+            />
+          </label>
+          <label className="gascity-create-field">
+            <span>Title</span>
+            <input
+              value={gasCityTitle}
+              onChange={(event) => setGasCityTitle(event.target.value)}
+              autoComplete="off"
+            />
+          </label>
+        </div>
+      )}
+
+      <button
+        className={`create-session-btn ${mode === 'gascity' ? 'gascity-create-submit' : ''}`}
+        onClick={handleCreate}
+        disabled={creating}
+        title={mode === 'gascity' ? 'Create Gas City identity' : 'Create new session'}
+      >
+        <span className="create-session-icon">{creating ? '...' : '+'}</span>
+        <span className="create-session-label">{mode === 'gascity' ? 'New Identity' : 'New Session'}</span>
+      </button>
+    </div>
   )
 }
 

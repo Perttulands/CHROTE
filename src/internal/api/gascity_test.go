@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -63,6 +64,23 @@ func TestGasCityChildEnvEmptyExtraPathIsParentEnv(t *testing.T) {
 		}
 	}
 	t.Fatalf("empty extra path should leave PATH unchanged; env=%v", env)
+}
+
+func TestGasCityExecRunnerDoesNotWaitForDescendantOutputHandles(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	output, err := (gasCityExecRunner{}).Run(ctx, "/bin/sh", []string{"-c", `printf '{"ok":true}\n'; (sleep 2) &`})
+	if err != nil {
+		t.Fatalf("runner returned error before shell exited: %v; output=%q", err, output)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("runner waited %s for descendant-owned output handles; want prompt return after gc exits", elapsed)
+	}
+	if !strings.Contains(output, `"ok":true`) {
+		t.Fatalf("output = %q, want captured command output", output)
+	}
 }
 
 func TestMergePathPrependDeduplicates(t *testing.T) {
@@ -350,6 +368,204 @@ func TestGasCityHandlerDoesNotRegisterHiddenProductSurfaceRoutes(t *testing.T) {
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("%s %s status = %d, want 404 after removing hidden Gas City product surfaces; body: %s", tc.method, tc.path, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+func TestGasCityHandlerCreateSessionRunsNativeGCSessionNew(t *testing.T) {
+	cityDir := t.TempDir()
+	runner := &fakeGasCityRunner{output: `{
+		"schema_version":"gascity.session.new.result.v1",
+		"ok":true,
+		"session_id":"ga-9001",
+		"session_name":"codxia",
+		"template":"codex-smoke",
+		"transport":"",
+		"work_dir":"/tmp/codxia",
+		"deferred_start":true,
+		"attached":false,
+		"alias":"codxia"
+	}`}
+	handler := NewGasCityHandler(GasCityConfig{CityDir: cityDir})
+	handler.runner = runner
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/gascity/sessions", strings.NewReader(`{
+		"name":"codxia",
+		"template":"codex-smoke",
+		"title":"Codxia agent"
+	}`))
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	if runner.calls != 1 || runner.name != "gc" {
+		t.Fatalf("runner calls/name = %d/%q, want one gc invocation", runner.calls, runner.name)
+	}
+	wantArgs := []string{"--city", cityDir, "session", "new", "codex-smoke", "--alias", "codxia", "--title", "Codxia agent", "--no-attach", "--json"}
+	if strings.Join(runner.args, "\x00") != strings.Join(wantArgs, "\x00") {
+		t.Fatalf("args = %#v, want native gc session new argv %#v", runner.args, wantArgs)
+	}
+
+	var response struct {
+		Success bool                         `json:"success"`
+		Data    GasCityCreateSessionResponse `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if !response.Success {
+		t.Fatal("create response should use success envelope")
+	}
+	if response.Data.Source != "gascity" || response.Data.ID != "ga-9001" || response.Data.AttachTarget != "gc:ga-9001" {
+		t.Fatalf("response = %+v, want Gas City source with gc attach target", response.Data)
+	}
+	if response.Data.Name != "codxia" || response.Data.SessionName != "codxia" || response.Data.Template != "codex-smoke" || response.Data.Transport != "" || response.Data.WorkDir != "/tmp/codxia" {
+		t.Fatalf("response = %+v, want parsed gc session new result fields", response.Data)
+	}
+	if response.Data.Attached || !response.Data.DeferredStart {
+		t.Fatalf("response booleans = attached %v deferred %v, want no-attach deferred result", response.Data.Attached, response.Data.DeferredStart)
+	}
+}
+
+func TestGasCityHandlerCreateSessionDefaultsEmptyTitleToAliasInArgv(t *testing.T) {
+	cityDir := t.TempDir()
+	runner := &fakeGasCityRunner{output: `{
+		"schema_version":"gascity.session.new.result.v1",
+		"ok":true,
+		"session_id":"ga-9002",
+		"session_name":"codxia",
+		"template":"planner",
+		"transport":"tmux",
+		"work_dir":"/tmp/codxia",
+		"deferred_start":false,
+		"attached":false,
+		"alias":"codxia"
+	}`}
+	handler := NewGasCityHandler(GasCityConfig{CityDir: cityDir})
+	handler.runner = runner
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/gascity/sessions", strings.NewReader(`{"name":"codxia","template":"planner"}`)))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	wantArgs := []string{"--city", cityDir, "session", "new", "planner", "--alias", "codxia", "--title", "codxia", "--no-attach", "--json"}
+	if strings.Join(runner.args, "\x00") != strings.Join(wantArgs, "\x00") {
+		t.Fatalf("args = %#v, want title defaulted explicitly in argv %#v", runner.args, wantArgs)
+	}
+}
+
+func TestGasCityHandlerCreateSessionValidatesRequestBeforeGC(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "empty name", body: `{"name":"","template":"planner"}`},
+		{name: "unsafe name", body: `{"name":"bad name","template":"planner"}`},
+		{name: "empty template", body: `{"name":"codxia","template":""}`},
+		{name: "unsafe template", body: `{"name":"codxia","template":"../planner"}`},
+		{name: "control title", body: "{\"name\":\"codxia\",\"template\":\"planner\",\"title\":\"bad\\ncaption\"}"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := &fakeGasCityRunner{}
+			handler := NewGasCityHandler(GasCityConfig{CityDir: t.TempDir()})
+			handler.runner = runner
+			mux := http.NewServeMux()
+			handler.RegisterRoutes(mux)
+
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/gascity/sessions", strings.NewReader(tc.body)))
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+			}
+			if runner.calls != 0 {
+				t.Fatalf("runner calls = %d, want no gc invocation for invalid request", runner.calls)
+			}
+			var response struct {
+				Success bool `json:"success"`
+				Error   struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode error response: %v", err)
+			}
+			if response.Success || response.Error.Code != "BAD_REQUEST" {
+				t.Fatalf("response = %+v, want BAD_REQUEST envelope", response)
+			}
+		})
+	}
+}
+
+func TestGasCityHandlerCreateSessionReturnsFailureEnvelopeFromGCErrorJSON(t *testing.T) {
+	runner := &fakeGasCityRunner{
+		output: `{
+			"schema_version":"gascity.session.new.result.v1",
+			"ok":false,
+			"error":{"code":"session_create_failed","message":"beads creation timed out","exit_code":124}
+		}`,
+		err: errors.New("exit status 124"),
+	}
+	handler := NewGasCityHandler(GasCityConfig{CityDir: t.TempDir()})
+	handler.runner = runner
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/gascity/sessions", strings.NewReader(`{"name":"codxia","template":"planner"}`)))
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502; body: %s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Success bool `json:"success"`
+		Error   struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if response.Success || response.Error.Code != "GASCITY_SESSION_CREATE_FAILED" {
+		t.Fatalf("response = %+v, want Gas City create failure envelope", response)
+	}
+	if !strings.Contains(response.Error.Message, "beads creation timed out") {
+		t.Fatalf("error message = %q, want gc failure message", response.Error.Message)
+	}
+}
+
+func TestGasCityHandlerCreateSessionRejectsInvalidGCJSON(t *testing.T) {
+	runner := &fakeGasCityRunner{output: `{"ok":true,"session_id":""}`}
+	handler := NewGasCityHandler(GasCityConfig{CityDir: t.TempDir()})
+	handler.runner = runner
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/gascity/sessions", strings.NewReader(`{"name":"codxia","template":"planner"}`)))
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502; body: %s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Success bool `json:"success"`
+		Error   struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if response.Success || response.Error.Code != "GASCITY_INVALID_RESPONSE" {
+		t.Fatalf("response = %+v, want invalid-response envelope", response)
 	}
 }
 

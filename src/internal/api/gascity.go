@@ -31,6 +31,9 @@ const (
 
 var (
 	gasCitySessionIDPattern = regexp.MustCompile(`^gc-[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+	gasCityResultIDPattern  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+	gasCityAliasPattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+	gasCityTemplatePattern  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 	gasCityANSIPattern      = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
 
 	errGasCityConfiguredCityUnavailable = errors.New("configured Gas City is not running")
@@ -105,6 +108,29 @@ type GasCityTranscriptResponse struct {
 	Truncated  bool   `json:"truncated"`
 }
 
+type GasCityCreateSessionRequest struct {
+	Name     string `json:"name"`
+	Alias    string `json:"alias,omitempty"`
+	Template string `json:"template"`
+	Title    string `json:"title,omitempty"`
+}
+
+type GasCityCreateSessionResponse struct {
+	Source        string `json:"source"`
+	SchemaVersion string `json:"schemaVersion"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	SessionName   string `json:"sessionName"`
+	Alias         string `json:"alias,omitempty"`
+	Title         string `json:"title,omitempty"`
+	Template      string `json:"template"`
+	Transport     string `json:"transport"`
+	WorkDir       string `json:"workDir"`
+	DeferredStart bool   `json:"deferredStart"`
+	Attached      bool   `json:"attached"`
+	AttachTarget  string `json:"attachTarget"`
+}
+
 // GasCityHandler handles CHROTE's bounded Gas City observer and transcript routes.
 type GasCityHandler struct {
 	config             GasCityConfig
@@ -132,8 +158,27 @@ type gasCityExecRunner struct {
 func (r gasCityExecRunner) Run(ctx context.Context, name string, args []string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = gasCityChildEnv(r.extraPath)
-	output, err := cmd.CombinedOutput()
-	return string(output), err
+
+	outputFile, err := os.CreateTemp("", "chrote-gascity-gc-*.log")
+	if err != nil {
+		return "", err
+	}
+	outputPath := outputFile.Name()
+	defer os.Remove(outputPath)
+	defer outputFile.Close()
+
+	cmd.Stdout = outputFile
+	cmd.Stderr = outputFile
+	runErr := cmd.Run()
+
+	if _, err := outputFile.Seek(0, 0); err != nil {
+		return "", err
+	}
+	output, readErr := io.ReadAll(outputFile)
+	if readErr != nil {
+		return "", readErr
+	}
+	return string(output), runErr
 }
 
 // gasCityChildEnv returns the parent environment with extraPath prepended to
@@ -309,12 +354,65 @@ func NewGasCityHandlerWithClient(config GasCityConfig, client *http.Client) *Gas
 // RegisterRoutes registers Gas City routes.
 func (h *GasCityHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/gascity/observer", h.Observer)
+	mux.HandleFunc("POST /api/gascity/sessions", h.CreateSession)
 	mux.HandleFunc("GET /api/gascity/sessions/{id}/transcript", h.Transcript)
 }
 
 // Observer handles GET /api/gascity/observer.
 func (h *GasCityHandler) Observer(w http.ResponseWriter, r *http.Request) {
 	core.WriteSuccess(w, h.snapshot(r.Context()))
+}
+
+// CreateSession handles POST /api/gascity/sessions.
+func (h *GasCityHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
+	if h.controlConfigError != "" {
+		core.WriteError(w, http.StatusServiceUnavailable, "GASCITY_MISCONFIGURED", h.controlConfigError)
+		return
+	}
+
+	var req GasCityCreateSessionRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&req); err != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON body")
+		return
+	}
+
+	alias, template, title, err := validateGasCityCreateSessionRequest(req)
+	if err != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 150*time.Second)
+	defer cancel()
+	output, runErr := h.runner.Run(ctx, "gc", []string{
+		"--city", h.config.CityDir,
+		"session", "new", template,
+		"--alias", alias,
+		"--title", title,
+		"--no-attach",
+		"--json",
+	})
+
+	result, parseErr := parseGasCitySessionNewResult(output)
+	if parseErr != nil {
+		if runErr != nil {
+			core.WriteError(w, http.StatusBadGateway, "GASCITY_SESSION_CREATE_FAILED", "Gas City session creation failed")
+			return
+		}
+		core.WriteError(w, http.StatusBadGateway, "GASCITY_INVALID_RESPONSE", parseErr.Error())
+		return
+	}
+	if !result.OK {
+		core.WriteError(w, http.StatusBadGateway, "GASCITY_SESSION_CREATE_FAILED", result.failureMessage())
+		return
+	}
+	if runErr != nil {
+		core.WriteError(w, http.StatusBadGateway, "GASCITY_SESSION_CREATE_FAILED", "Gas City session creation failed")
+		return
+	}
+
+	response := result.createResponse(title)
+	core.WriteSuccess(w, response)
 }
 
 // Transcript handles GET /api/gascity/sessions/{id}/transcript.
@@ -585,6 +683,44 @@ func validateGasCitySessionID(raw string) (string, error) {
 	return sessionID, nil
 }
 
+func validateGasCityCreateSessionRequest(req GasCityCreateSessionRequest) (string, string, string, error) {
+	name := strings.TrimSpace(req.Name)
+	alias := strings.TrimSpace(req.Alias)
+	if name == "" {
+		name = alias
+	} else if alias != "" && alias != name {
+		return "", "", "", errors.New("name and alias must match when both are provided")
+	}
+	if name == "" {
+		return "", "", "", errors.New("name is required")
+	}
+	if !gasCityAliasPattern.MatchString(name) {
+		return "", "", "", errors.New("name must start with a letter or number and contain only letters, numbers, dots, underscores, or dashes")
+	}
+
+	template := strings.TrimSpace(req.Template)
+	if template == "" {
+		return "", "", "", errors.New("template is required")
+	}
+	if !gasCityTemplatePattern.MatchString(template) {
+		return "", "", "", errors.New("template must start with a letter or number and contain only letters, numbers, dots, underscores, or dashes")
+	}
+
+	title := strings.TrimSpace(req.Title)
+	if title == "" {
+		title = name
+	}
+	if len([]rune(title)) > 120 {
+		return "", "", "", errors.New("title must be 120 characters or fewer")
+	}
+	for _, r := range title {
+		if r < 0x20 || r == 0x7f {
+			return "", "", "", errors.New("title must not contain control characters")
+		}
+	}
+	return name, template, title, nil
+}
+
 func sanitizeGasCityTranscriptOutput(output string) (string, bool) {
 	output = strings.ReplaceAll(output, "\x00", "")
 	output = gasCityANSIPattern.ReplaceAllString(output, "")
@@ -838,5 +974,77 @@ func (s gasCitySessionItem) summary(cityName string) GasCitySessionSummary {
 		LastActive:   s.LastActive,
 		Running:      s.Running,
 		Attached:     s.Attached,
+	}
+}
+
+type gasCitySessionNewResult struct {
+	SchemaVersion string                  `json:"schema_version"`
+	OK            bool                    `json:"ok"`
+	SessionID     string                  `json:"session_id"`
+	SessionName   string                  `json:"session_name"`
+	Template      string                  `json:"template"`
+	Transport     string                  `json:"transport"`
+	WorkDir       string                  `json:"work_dir"`
+	DeferredStart bool                    `json:"deferred_start"`
+	Attached      bool                    `json:"attached"`
+	Alias         string                  `json:"alias,omitempty"`
+	Error         *gasCitySessionNewError `json:"error,omitempty"`
+}
+
+type gasCitySessionNewError struct {
+	Code     string `json:"code"`
+	Message  string `json:"message"`
+	ExitCode int    `json:"exit_code"`
+}
+
+func parseGasCitySessionNewResult(output string) (gasCitySessionNewResult, error) {
+	var result gasCitySessionNewResult
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
+		return gasCitySessionNewResult{}, errors.New("Gas City returned invalid JSON")
+	}
+	if !result.OK {
+		return result, nil
+	}
+	for field, value := range map[string]string{
+		"schema_version": result.SchemaVersion,
+		"session_id":     result.SessionID,
+		"session_name":   result.SessionName,
+		"template":       result.Template,
+		"work_dir":       result.WorkDir,
+	} {
+		if strings.TrimSpace(value) == "" {
+			return gasCitySessionNewResult{}, fmt.Errorf("Gas City success response is missing %s", field)
+		}
+	}
+	if !gasCityResultIDPattern.MatchString(strings.TrimSpace(result.SessionID)) {
+		return gasCitySessionNewResult{}, errors.New("Gas City success response returned an invalid session id")
+	}
+	return result, nil
+}
+
+func (r gasCitySessionNewResult) failureMessage() string {
+	if r.Error != nil && strings.TrimSpace(r.Error.Message) != "" {
+		return strings.TrimSpace(r.Error.Message)
+	}
+	return "Gas City session creation failed"
+}
+
+func (r gasCitySessionNewResult) createResponse(title string) GasCityCreateSessionResponse {
+	alias := strings.TrimSpace(r.Alias)
+	name := firstNonEmpty(alias, r.SessionName, r.SessionID)
+	return GasCityCreateSessionResponse{
+		Source:        "gascity",
+		SchemaVersion: r.SchemaVersion,
+		ID:            r.SessionID,
+		Name:          name,
+		SessionName:   r.SessionName,
+		Alias:         alias,
+		Title:         strings.TrimSpace(title),
+		Template:      r.Template,
+		Transport:     r.Transport,
+		WorkDir:       r.WorkDir,
+		DeferredStart: r.DeferredStart,
+		Attached:      r.Attached,
+		AttachTarget:  "gc:" + r.SessionID,
 	}
 }

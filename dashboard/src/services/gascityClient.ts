@@ -51,6 +51,28 @@ export interface GasCityUpstreamError {
   message: string
 }
 
+export interface CreateGasCitySessionRequest {
+  name: string
+  template: string
+  title?: string
+}
+
+export interface GasCityCreatedSession {
+  source: 'gascity'
+  schemaVersion?: string
+  id: string
+  name: string
+  sessionName: string
+  alias?: string
+  title?: string
+  template: string
+  transport: string
+  workDir: string
+  deferredStart: boolean
+  attached: boolean
+  attachTarget: string
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = init
     ? await fetch(path, {
@@ -80,4 +102,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function getGasCityObserver(init?: RequestInit) {
   return request<GasCityObserver>('/api/gascity/observer', init)
+}
+
+export function createGasCitySession(input: CreateGasCitySessionRequest, init?: RequestInit) {
+  return request<GasCityCreatedSession>('/api/gascity/sessions', {
+    ...init,
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
 }

@@ -319,6 +319,65 @@
   gap: 16px;
 }
 
+.create-session-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: min(320px, calc(100% - 32px));
+}
+
+.create-session-mode {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid color-mix(in srgb, var(--btn-accent, var(--accent)) 45%, transparent);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.24);
+}
+
+.create-session-mode-btn {
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 10px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.create-session-mode-btn.active {
+  background: color-mix(in srgb, var(--btn-accent, var(--accent)) 22%, transparent);
+  color: var(--btn-accent, var(--accent));
+}
+
+.gascity-create-fields {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  width: 100%;
+}
+
+.gascity-create-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.gascity-create-field input {
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--btn-accent, var(--accent)) 35%, var(--divider));
+  border-radius: 6px;
+  padding: 7px 8px;
+  background: rgba(0, 0, 0, 0.26);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
 .create-session-btn {
   display: flex;
   flex-direction: column;
@@ -332,6 +391,16 @@
   cursor: pointer;
   transition: all 0.2s ease;
   color: var(--btn-accent, var(--accent));
+}
+
+.create-session-btn.gascity-create-submit {
+  flex-direction: row;
+  padding: 12px 16px;
+  border-radius: 8px;
+}
+
+.create-session-btn.gascity-create-submit .create-session-icon {
+  font-size: 22px;
 }
 
 .create-session-btn:hover:not(:disabled) {
@@ -359,7 +428,7 @@
   font-size: 14px;
   font-weight: 500;
   text-transform: uppercase;
-  letter-spacing: 1px;
+  letter-spacing: 0;
 }
 
 .empty-window-hint {
