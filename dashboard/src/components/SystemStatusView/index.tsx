@@ -9,7 +9,8 @@ import {
   type SystemWarning,
 } from '../../services/systemClient'
 
-const POLL_MS = 2000
+const ACTIVE_POLL_MS = 2000
+const BACKGROUND_POLL_MS = 10000
 const MAX_HISTORY_POINTS = 300
 
 interface StatusSample {
@@ -163,9 +164,9 @@ function StatusGraph({ history }: { history: StatusSample[] }) {
   const chartHeight = height - padY * 2
 
   const series = [
-    { key: 'cpuPercent' as const, label: 'CPU', color: '#58a6ff' },
-    { key: 'memoryPercent' as const, label: 'MEM', color: '#3fb950' },
-    { key: 'loadPercent' as const, label: 'LOAD', color: '#f2cc60' },
+    { key: 'cpuPercent' as const, label: 'CPU', className: 'cpu' },
+    { key: 'memoryPercent' as const, label: 'MEM', className: 'memory' },
+    { key: 'loadPercent' as const, label: 'LOAD', className: 'load' },
   ]
 
   const xFor = (index: number) => {
@@ -185,7 +186,7 @@ function StatusGraph({ history }: { history: StatusSample[] }) {
         <div className="system-graph-legend">
           {series.map(item => (
             <span key={item.key}>
-              <i style={{ background: item.color }} />
+              <i className={`system-graph-legend-${item.className}`} />
               {item.label}
             </span>
           ))}
@@ -217,10 +218,9 @@ function StatusGraph({ history }: { history: StatusSample[] }) {
           return (
             <polyline
               key={item.key}
-              className="system-graph-line"
+              className={`system-graph-line system-graph-line-${item.className}`}
               points={points}
               fill="none"
-              stroke={item.color}
             />
           )
         })}
@@ -229,7 +229,7 @@ function StatusGraph({ history }: { history: StatusSample[] }) {
   )
 }
 
-function SystemStatusView() {
+function SystemStatusView({ active = true }: { active?: boolean }) {
   const [status, setStatus] = useState<SystemStatus | null>(null)
   const [history, setHistory] = useState<StatusSample[]>([])
   const [loading, setLoading] = useState(true)
@@ -280,9 +280,9 @@ function SystemStatusView() {
 
   useEffect(() => {
     if (paused) return
-    const interval = window.setInterval(refresh, POLL_MS)
+    const interval = window.setInterval(refresh, active ? ACTIVE_POLL_MS : BACKGROUND_POLL_MS)
     return () => window.clearInterval(interval)
-  }, [paused, refresh])
+  }, [active, paused, refresh])
 
   const latest = history[history.length - 1]
   const rootDisk = status?.disks.find(disk => disk.mount === '/') || status?.disks[0]

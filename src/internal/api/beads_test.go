@@ -169,6 +169,50 @@ func TestBeadsHandler_ListProjectsAllowsConfiguredWorkspaceOutsideRoots(t *testi
 	}
 }
 
+func TestBeadsHandler_ListProjectsIncludesConfiguredAndAllowedRootWorkspaces(t *testing.T) {
+	rootDir := t.TempDir()
+	rootWorkspace := filepath.Join(rootDir, "home-project")
+	makeValidBeadsWorkspace(t, rootWorkspace)
+	serviceWorkspace := filepath.Join(t.TempDir(), "srv")
+	makeValidBeadsWorkspace(t, serviceWorkspace)
+
+	t.Setenv("CHROTE_ROOTS", rootDir)
+	t.Setenv("CHROTE_BEADS_WORKSPACES", serviceWorkspace)
+	core.ResetConfigForTesting()
+
+	handler := NewBeadsHandler()
+	req := httptest.NewRequest(http.MethodGet, "/api/beads/projects", nil)
+	rec := httptest.NewRecorder()
+	handler.ListProjects(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ListProjects status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var response struct {
+		Data struct {
+			Projects []struct {
+				Path   string `json:"path"`
+				Source string `json:"source"`
+			} `json:"projects"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	projectsByPath := map[string]string{}
+	for _, project := range response.Data.Projects {
+		projectsByPath[project.Path] = project.Source
+	}
+	if projectsByPath[serviceWorkspace] != "configured" {
+		t.Fatalf("configured workspace source = %q, want configured", projectsByPath[serviceWorkspace])
+	}
+	if projectsByPath[rootWorkspace] != "auto" {
+		t.Fatalf("allowed root workspace source = %q, want auto", projectsByPath[rootWorkspace])
+	}
+}
+
 func TestBeadsHandler_ListProjectsValidatesManualNestedWorkspace(t *testing.T) {
 	rootDir := t.TempDir()
 	nestedWorkspace := filepath.Join(rootDir, "research", "upstreams", "beads_viewer")

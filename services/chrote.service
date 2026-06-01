@@ -14,7 +14,7 @@ Environment=TTYD_PORT=7683
 Environment=TMUX_TMPDIR=%t/chrote-tmux
 Environment=CHROTE_WORKDIR=%h
 Environment=CHROTE_ROOTS=%h
-Environment=CHROTE_BEADS_WORKSPACES=%h
+Environment=CHROTE_BEADS_WORKSPACES=%h,/srv
 Environment=CHROTE_LAUNCH_SCRIPT=%h/chrote/terminal-launch.sh
 Environment=CHROTE_BD_COMMAND=bd
 Environment=CHROTE_TTS_URL=http://127.0.0.1:3100

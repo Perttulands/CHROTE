@@ -163,10 +163,12 @@ function DashboardContent() {
               <ServicesView />
             </ErrorBoundary>
           )}
-          {serverStatusTab && activeTab === 'server' && (
-            <ErrorBoundary>
-              <SystemStatusView />
-            </ErrorBoundary>
+          {serverStatusTab && (
+            <div style={{ display: activeTab === 'server' ? 'contents' : 'none' }}>
+              <ErrorBoundary>
+                <SystemStatusView active={activeTab === 'server'} />
+              </ErrorBoundary>
+            </div>
           )}
           {activeTab === 'settings' && <SettingsView />}
           {activeTab === 'help' && <HelpView />}

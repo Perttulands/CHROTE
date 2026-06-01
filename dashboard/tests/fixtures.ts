@@ -8,6 +8,53 @@ function matchesAllowedMessage(text: string, allowedMessages: ConsoleMatcher[]) 
   ))
 }
 
+function systemStatusMockBody() {
+  return JSON.stringify({
+    success: true,
+    timestamp: new Date().toISOString(),
+    data: {
+      timestamp: new Date().toISOString(),
+      host: {
+        hostname: 'test-host',
+        uptimeSeconds: 3600,
+        load1: 1,
+        load5: 0.8,
+        load15: 0.7,
+      },
+      cpu: {
+        cores: 4,
+        totalTicks: 1000,
+        idleTicks: 750,
+      },
+      memory: {
+        totalBytes: 16 * 1024 * 1024 * 1024,
+        availableBytes: 8 * 1024 * 1024 * 1024,
+        usedBytes: 8 * 1024 * 1024 * 1024,
+        usedPercent: 50,
+        swapTotalBytes: 2 * 1024 * 1024 * 1024,
+        swapUsedBytes: 0,
+        swapUsedPercent: 0,
+      },
+      disks: [
+        {
+          mount: '/',
+          totalBytes: 100 * 1024 * 1024 * 1024,
+          availableBytes: 60 * 1024 * 1024 * 1024,
+          usedBytes: 40 * 1024 * 1024 * 1024,
+          usedPercent: 40,
+        },
+      ],
+      network: [
+        { name: 'eth0', rxBytes: 1000000, txBytes: 500000 },
+      ],
+      gpus: [
+        { available: false, message: 'nvidia-smi unavailable' },
+      ],
+      warnings: [],
+    },
+  })
+}
+
 export const test = base.extend<{ allowedConsoleMessages: ConsoleMatcher[] }>({
   allowedConsoleMessages: [[], { option: true }],
   page: async ({ page, allowedConsoleMessages }, use, testInfo) => {
@@ -16,6 +63,14 @@ export const test = base.extend<{ allowedConsoleMessages: ConsoleMatcher[] }>({
 
     await page.route('**/api/**', async (route) => {
       const request = route.request()
+      if (new URL(request.url()).pathname === '/api/system/status') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: systemStatusMockBody(),
+        })
+        return
+      }
       unexpectedBackendRequests.push(`${request.method()} ${request.url()}`)
       await route.fulfill({
         status: 599,

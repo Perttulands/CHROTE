@@ -19,6 +19,7 @@ async function applyTmuxAppearance(appearance: TmuxAppearance): Promise<void> {
 
 const STORAGE_KEY = 'chrote-dashboard-state'
 const PRESETS_STORAGE_KEY = 'chrote-dashboard-presets'
+const SETTINGS_SCHEMA_VERSION = 2
 
 const WORKSPACE_IDS: WorkspaceId[] = ['terminal1', 'terminal2']
 const VIEWPORT_BUCKETS = ['mobile', 'tablet', 'desktop'] as const
@@ -71,6 +72,7 @@ interface StoredLayout {
 
 interface StoredStateV3 {
   version: 3
+  settingsSchemaVersion?: number
   layoutsByViewport: Partial<Record<ViewportBucket, StoredLayout>>
   sidebarCollapsed: boolean
   settings: UserSettings
@@ -106,6 +108,18 @@ function mergeSettings(rawSettings: unknown): UserSettings {
   } as UserSettings
 }
 
+function migrateSettings(rawSettings: unknown, schemaVersion: unknown): UserSettings {
+  const settings = mergeSettings(rawSettings)
+  if (schemaVersion !== SETTINGS_SCHEMA_VERSION && settings.theme === 'matrix') {
+    return {
+      ...settings,
+      theme: DEFAULT_SETTINGS.theme,
+      tmuxAppearance: DEFAULT_SETTINGS.tmuxAppearance,
+    }
+  }
+  return settings
+}
+
 function defaultStoredState(): LoadedStoredState {
   return {
     workspaces: {
@@ -136,6 +150,7 @@ function saveState(state: StoredStateV2, viewportBucket: ViewportBucket): void {
     const existing = loadStoredState(viewportBucket) ?? defaultStoredState()
     const next: StoredStateV3 = {
       version: 3,
+      settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
       layoutsByViewport: {
         ...existing.layoutsByViewport,
         [viewportBucket]: { workspaces: cloneWorkspaces(state.workspaces) },
@@ -219,14 +234,14 @@ function migrateStoredState(raw: unknown, viewportBucket: ViewportBucket): Loade
         workspaces: layoutsByViewport[viewportBucket]?.workspaces ?? defaultStoredState().workspaces,
         layoutsByViewport,
         sidebarCollapsed: typeof raw.sidebarCollapsed === 'boolean' ? raw.sidebarCollapsed : false,
-        settings: mergeSettings(raw.settings),
+        settings: migrateSettings(raw.settings, raw.settingsSchemaVersion),
       }
     }
 
     // V2: workspaces already present
     if (isRecord(raw.workspaces) && isRecord(raw.workspaces.terminal1) && isRecord(raw.workspaces.terminal2)) {
       const sidebarCollapsed = typeof raw.sidebarCollapsed === 'boolean' ? raw.sidebarCollapsed : false
-      const settings = mergeSettings(raw.settings)
+      const settings = migrateSettings(raw.settings, raw.settingsSchemaVersion)
       const workspaces = sanitizeWorkspaces(raw.workspaces)
 
       return {
@@ -242,7 +257,7 @@ function migrateStoredState(raw: unknown, viewportBucket: ViewportBucket): Loade
     // V1: migrate windows -> terminal1
     if (Array.isArray(raw.windows) && typeof raw.windowCount === 'number') {
       const sidebarCollapsed = typeof raw.sidebarCollapsed === 'boolean' ? raw.sidebarCollapsed : false
-      const settings = mergeSettings(raw.settings)
+      const settings = migrateSettings(raw.settings, raw.settingsSchemaVersion)
       const windowCount = clampWindowCount(raw.windowCount)
       const windowsRaw = raw.windows as TerminalWindow[]
 

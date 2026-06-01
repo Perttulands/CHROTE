@@ -1,6 +1,6 @@
 // Main BeadsView component with sub-tab navigation
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import type { BeadsSubTab } from './types'
 import { useProjects, useIssues, useTriage, useInsights } from './hooks'
 import { isFeatureEnabled } from '../../featureFlags'
@@ -33,6 +33,10 @@ export default function BeadsView() {
     selectedProjectPath,
     { includeAllStatuses }
   )
+  const selectedProject = useMemo(
+    () => projects.find(project => project.path === selectedProjectPath) || null,
+    [projects, selectedProjectPath]
+  )
 
   const handleProjectSelect = useCallback((path: string) => {
     setSelectedProjectPath(path || null)
@@ -46,15 +50,36 @@ export default function BeadsView() {
 
   const isLoading = issuesLoading || triageLoading || insightsLoading
 
+  useEffect(() => {
+    if (projectsLoading) return
+    if (projects.length === 0) {
+      if (selectedProjectPath !== null) setSelectedProjectPath(null)
+      return
+    }
+    if (!selectedProjectPath || !projects.some(project => project.path === selectedProjectPath)) {
+      setSelectedProjectPath(projects[0].path)
+    }
+  }, [projects, projectsLoading, selectedProjectPath])
+
   return (
     <div className="beads-view">
-      <div className="beads-header">
+      <div className="beads-status-strip">
         <ProjectSelector
           projects={projects}
           selectedPath={selectedProjectPath}
           onSelect={handleProjectSelect}
           loading={projectsLoading}
         />
+        <span className="beads-status-pill">
+          <span>projects</span>
+          <strong>{projectsLoading ? '--' : projects.length}</strong>
+        </span>
+        {selectedProject && (
+          <span className="beads-status-pill">
+            <span>active</span>
+            <strong>{selectedProject.name}</strong>
+          </span>
+        )}
         {selectedProjectPath && (
           <>
             <label className="beads-patrol-toggle" title="Show/hide patrol digest beads">
@@ -71,7 +96,7 @@ export default function BeadsView() {
               disabled={isLoading}
               title="Refresh data"
             >
-              {isLoading ? 'Loading...' : 'Refresh'}
+              {isLoading ? 'Loading' : 'Refresh'}
             </button>
           </>
         )}
@@ -112,12 +137,12 @@ export default function BeadsView() {
         </>
       ) : (
         <div className="beads-empty-state">
-          <div className="empty-icon">&#x1F4CB;</div>
-          <h2>Select a Project</h2>
-          <p>Choose a project with a .beads directory to view issues and insights.</p>
+          <div className="empty-icon">BD</div>
+          <h2>{projectsLoading ? 'Loading Projects' : projects.length === 0 ? 'No Beads Projects' : 'Select a Project'}</h2>
+          <p>{projectsLoading ? 'Scanning configured workspaces.' : 'No modern .beads workspace is available to display.'}</p>
           {projects.length === 0 && !projectsLoading && (
             <p className="empty-hint">
-              No projects found. Create a .beads directory in /code or /workspace to get started.
+              Check CHROTE_BEADS_WORKSPACES or add a project path in Settings.
             </p>
           )}
         </div>

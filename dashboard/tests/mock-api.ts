@@ -68,6 +68,51 @@ export const mockBeadsInsights = {
   }
 }
 
+export const mockSystemStatus = {
+  success: true,
+  timestamp: new Date().toISOString(),
+  data: {
+    timestamp: new Date().toISOString(),
+    host: {
+      hostname: 'test-host',
+      uptimeSeconds: 3600,
+      load1: 1.2,
+      load5: 1.1,
+      load15: 1.0,
+    },
+    cpu: {
+      cores: 4,
+      totalTicks: 1000,
+      idleTicks: 750,
+    },
+    memory: {
+      totalBytes: 16 * 1024 * 1024 * 1024,
+      availableBytes: 8 * 1024 * 1024 * 1024,
+      usedBytes: 8 * 1024 * 1024 * 1024,
+      usedPercent: 50,
+      swapTotalBytes: 2 * 1024 * 1024 * 1024,
+      swapUsedBytes: 128 * 1024 * 1024,
+      swapUsedPercent: 6.25,
+    },
+    disks: [
+      {
+        mount: '/',
+        totalBytes: 100 * 1024 * 1024 * 1024,
+        availableBytes: 60 * 1024 * 1024 * 1024,
+        usedBytes: 40 * 1024 * 1024 * 1024,
+        usedPercent: 40,
+      },
+    ],
+    network: [
+      { name: 'eth0', rxBytes: 1000000, txBytes: 500000 },
+    ],
+    gpus: [
+      { available: false, message: 'nvidia-smi unavailable' },
+    ],
+    warnings: [],
+  },
+}
+
 export const mockBeadsError = {
   success: false,
   timestamp: new Date().toISOString(),
@@ -146,6 +191,7 @@ export async function mockApiRoutes(page: Page) {
   })
 
   await mockFileApiRoutes(page)
+  await mockSystemStatusApiRoutes(page)
 
   await page.route(tmuxSessionsPattern, async route => {
     if (route.request().method() === 'POST') {
@@ -205,6 +251,44 @@ export async function mockBeadsApiRoutes(page: Page, options?: {
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify(options?.insightsResponse ?? mockBeadsInsights),
+    })
+  })
+}
+
+export async function mockSystemStatusApiRoutes(page: Page, onRequest?: () => void) {
+  let sample = 0
+  await page.route('**/api/system/status', async route => {
+    onRequest?.()
+    sample += 1
+    const totalTicks = 1000 + sample * 100
+    const idleTicks = 750 + sample * 55
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ...mockSystemStatus,
+        timestamp: new Date().toISOString(),
+        data: {
+          ...mockSystemStatus.data,
+          timestamp: new Date().toISOString(),
+          cpu: {
+            ...mockSystemStatus.data.cpu,
+            totalTicks,
+            idleTicks,
+          },
+          memory: {
+            ...mockSystemStatus.data.memory,
+            usedPercent: 45 + sample,
+          },
+          host: {
+            ...mockSystemStatus.data.host,
+            load1: 0.8 + sample / 10,
+          },
+          network: [
+            { name: 'eth0', rxBytes: 1000000 + sample * 1024, txBytes: 500000 + sample * 512 },
+          ],
+        },
+      }),
     })
   })
 }

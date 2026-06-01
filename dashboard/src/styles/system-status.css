@@ -10,6 +10,25 @@
   color: var(--text-primary);
 }
 
+:root,
+[data-theme="matrix"] {
+  --system-graph-cpu: #00ccff;
+  --system-graph-memory: #00ff41;
+  --system-graph-load: #ffcc00;
+}
+
+[data-theme="dark"] {
+  --system-graph-cpu: #6b9fff;
+  --system-graph-memory: #4ade80;
+  --system-graph-load: #fbbf24;
+}
+
+[data-theme="gastown"] {
+  --system-graph-cpu: #fbdb7d;
+  --system-graph-memory: #f6cd54;
+  --system-graph-load: #e07856;
+}
+
 .system-status-strip {
   display: flex;
   align-items: center;
@@ -204,6 +223,18 @@
   border-radius: 2px;
 }
 
+.system-graph-legend-cpu {
+  background: var(--system-graph-cpu);
+}
+
+.system-graph-legend-memory {
+  background: var(--system-graph-memory);
+}
+
+.system-graph-legend-load {
+  background: var(--system-graph-load);
+}
+
 .system-graph {
   flex: 1;
   width: 100%;
@@ -225,6 +256,18 @@
   stroke-width: 2.5;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.system-graph-line-cpu {
+  stroke: var(--system-graph-cpu);
+}
+
+.system-graph-line-memory {
+  stroke: var(--system-graph-memory);
+}
+
+.system-graph-line-load {
+  stroke: var(--system-graph-load);
 }
 
 .system-detail-grid {

@@ -12,11 +12,11 @@ export interface TmuxAppearance {
 
 export const DEFAULT_TMUX_APPEARANCE: TmuxAppearance = {
   statusBg: 'default',
-  statusFg: '#00ff41',
-  paneBorderActive: '#00ff41',
-  paneBorderInactive: '#333333',
-  modeStyleBg: '#00ff41',
-  modeStyleFg: '#000000',
+  statusFg: '#6b9fff',
+  paneBorderActive: '#6b9fff',
+  paneBorderInactive: '#3a3a3a',
+  modeStyleBg: '#6b9fff',
+  modeStyleFg: '#0f0f0f',
 }
 
 // tmux appearance presets matching dashboard themes
@@ -30,12 +30,7 @@ export const TMUX_PRESETS: Record<string, TmuxAppearance> = {
     modeStyleFg: '#000000',
   },
   dark: {
-    statusBg: 'default',
-    statusFg: '#6b9fff',
-    paneBorderActive: '#6b9fff',
-    paneBorderInactive: '#3a3a3a',
-    modeStyleBg: '#6b9fff',
-    modeStyleFg: '#0f0f0f',
+    ...DEFAULT_TMUX_APPEARANCE,
   },
   gastown: {
     statusBg: 'default',
@@ -63,7 +58,7 @@ export interface UserSettings {
 export const DEFAULT_SETTINGS: UserSettings = {
   terminalMode: 'tmux',
   fontSize: 14,
-  theme: 'matrix',
+  theme: 'dark',
   autoRefreshInterval: 5000,
   defaultSessionPrefix: 'shell',
   musicVolume: 0.5,
