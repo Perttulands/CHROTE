@@ -56,8 +56,54 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 16px;
+  width: 100%;
+  background: var(--background);
+  color: var(--text-primary);
   overflow: hidden;
+}
+
+.beads-status-strip {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--surface-primary);
+  border-bottom: 1px solid var(--divider);
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+
+.beads-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: max-content;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.beads-status-pill strong {
+  color: var(--accent);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.beads-status-pill span {
+  color: var(--text-secondary);
+}
+
+.beads-view > .beads-empty-state {
+  flex: 1;
+  min-height: 0;
+}
+
+.beads-view > .beads-subtabs,
+.beads-view > .beads-content {
+  padding: 16px;
 }
 
 /* Header with project selector */
@@ -73,20 +119,24 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: max-content;
 }
 
 .project-selector label {
   color: var(--text-secondary);
-  font-size: 14px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .project-selector select {
   background: var(--surface-secondary);
   color: var(--text-primary);
   border: 1px solid var(--divider);
-  padding: 8px 12px;
+  border-radius: 4px;
+  padding: 6px 10px;
   font-family: inherit;
-  font-size: 14px;
+  font-size: 12px;
   min-width: 300px;
   cursor: pointer;
 }
@@ -100,9 +150,10 @@
   background: var(--surface-secondary);
   color: var(--text-primary);
   border: 1px solid var(--divider);
-  padding: 8px 16px;
+  border-radius: 4px;
+  padding: 6px 12px;
   font-family: inherit;
-  font-size: 14px;
+  font-size: 12px;
   cursor: pointer;
   transition: all 0.2s;
 }
@@ -141,7 +192,7 @@
 .beads-subtabs {
   display: flex;
   gap: 4px;
-  margin-bottom: 16px;
+  margin: 0;
   border-bottom: 1px solid var(--divider);
   padding-bottom: 8px;
   flex-shrink: 0;
@@ -171,6 +222,7 @@
 /* Content area */
 .beads-content {
   flex: 1;
+  min-height: 0;
   overflow: auto;
 }
 
@@ -186,9 +238,17 @@
 }
 
 .beads-empty-state .empty-icon {
-  font-size: 64px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 44px;
+  border: 1px solid var(--divider);
+  background: var(--surface-primary);
+  color: var(--accent);
+  font-size: 20px;
+  font-weight: 700;
   margin-bottom: 16px;
-  opacity: 0.5;
 }
 
 .beads-empty-state h2 {

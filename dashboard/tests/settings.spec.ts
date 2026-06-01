@@ -48,6 +48,11 @@ test.describe('Settings View', () => {
   })
 
   test.describe('Theme Selection', () => {
+    test('should default fresh browser state to Dark theme', async ({ page }) => {
+      const dataTheme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'))
+      expect(dataTheme).toBe('dark')
+    })
+
     test('should show Settings tab', async ({ page }) => {
       const settingsTab = page.locator('.tab:has-text("Settings")')
       await expect(settingsTab).toBeVisible()
@@ -131,6 +136,43 @@ test.describe('Settings View', () => {
       // Verify theme is applied
       const dataTheme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'))
       expect(dataTheme).toBe('gastown')
+    })
+
+    test('should migrate legacy Matrix default state to Dark on reload', async ({ page }) => {
+      await page.evaluate(() => {
+        const state = {
+          version: 3,
+          layoutsByViewport: {},
+          sidebarCollapsed: false,
+          settings: { theme: 'matrix', fontSize: 14, autoRefreshInterval: 5000 },
+        }
+        localStorage.setItem('chrote-dashboard-state', JSON.stringify(state))
+      })
+
+      await page.reload()
+      await page.waitForSelector('.dashboard')
+
+      const dataTheme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'))
+      expect(dataTheme).toBe('dark')
+    })
+
+    test('should preserve explicitly saved Matrix theme after migration marker exists', async ({ page }) => {
+      await page.evaluate(() => {
+        const state = {
+          version: 3,
+          settingsSchemaVersion: 2,
+          layoutsByViewport: {},
+          sidebarCollapsed: false,
+          settings: { theme: 'matrix', fontSize: 14, autoRefreshInterval: 5000 },
+        }
+        localStorage.setItem('chrote-dashboard-state', JSON.stringify(state))
+      })
+
+      await page.reload()
+      await page.waitForSelector('.dashboard')
+
+      const dataTheme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'))
+      expect(dataTheme).toBe('matrix')
     })
   })
 
@@ -368,7 +410,7 @@ test.describe('Settings View', () => {
 
       // App should use default settings
       const dataTheme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'))
-      expect(['matrix', 'dark', 'gastown', null]).toContain(dataTheme)
+      expect(dataTheme).toBe('dark')
     })
   })
 })

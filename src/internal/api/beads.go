@@ -454,37 +454,35 @@ func (h *BeadsHandler) ListProjects(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if len(configuredWorkspaces) == 0 {
-		for _, root := range core.GetAllowedRoots() {
-			if !core.FileExists(root) {
-				warnings = append(warnings, "Allowed root does not exist: "+root)
-				continue
-			}
+	for _, root := range core.GetAllowedRoots() {
+		if !core.FileExists(root) {
+			warnings = append(warnings, "Allowed root does not exist: "+root)
+			continue
+		}
 
-			entries, err := os.ReadDir(root)
-			if err != nil {
-				warnings = append(warnings, "Cannot read directory "+root+": "+err.Error())
-				continue
-			}
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			warnings = append(warnings, "Cannot read directory "+root+": "+err.Error())
+			continue
+		}
 
-			for _, entry := range entries {
-				if entry.IsDir() {
-					projectPath := filepath.Join(root, entry.Name())
-					if err := h.appendProject(&projects, seen, projectPath, "auto"); err != nil {
-						beadsPath := filepath.Join(projectPath, ".beads")
-						if isDirectory(beadsPath) {
-							warnings = append(warnings, "Ignoring invalid Beads workspace: "+projectPath+": "+err.Error())
-						}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				projectPath := filepath.Join(root, entry.Name())
+				if err := h.appendProject(&projects, seen, projectPath, "auto"); err != nil {
+					beadsPath := filepath.Join(projectPath, ".beads")
+					if isDirectory(beadsPath) {
+						warnings = append(warnings, "Ignoring invalid Beads workspace: "+projectPath+": "+err.Error())
 					}
 				}
 			}
+		}
 
-			// Check root itself
-			if err := h.appendProject(&projects, seen, root, "auto-root"); err != nil {
-				beadsPath := filepath.Join(root, ".beads")
-				if isDirectory(beadsPath) {
-					warnings = append(warnings, "Ignoring invalid Beads workspace: "+root+": "+err.Error())
-				}
+		// Check root itself
+		if err := h.appendProject(&projects, seen, root, "auto-root"); err != nil {
+			beadsPath := filepath.Join(root, ".beads")
+			if isDirectory(beadsPath) {
+				warnings = append(warnings, "Ignoring invalid Beads workspace: "+root+": "+err.Error())
 			}
 		}
 	}

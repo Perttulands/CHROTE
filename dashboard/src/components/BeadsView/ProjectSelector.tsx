@@ -1,6 +1,7 @@
 // Project selector dropdown for Beads views
 
 import type { BeadsProject } from './types'
+import { toDisplayPath } from '../FilesView/types'
 
 interface ProjectSelectorProps {
   projects: BeadsProject[]
@@ -32,7 +33,7 @@ export default function ProjectSelector({ projects, selectedPath, onSelect, load
 
   return (
     <div className="project-selector">
-      <label htmlFor="project-select">Project:</label>
+      <label htmlFor="project-select">Project</label>
       <select
         id="project-select"
         value={selectedPath || ''}
@@ -41,7 +42,7 @@ export default function ProjectSelector({ projects, selectedPath, onSelect, load
         <option value="">Select a project</option>
         {projects.map(project => (
           <option key={project.path} value={project.path}>
-            {project.name} ({project.path})
+            {project.name} ({toDisplayPath(project.path)})
           </option>
         ))}
       </select>

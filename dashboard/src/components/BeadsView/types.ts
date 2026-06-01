@@ -48,6 +48,7 @@ export interface BeadsProject {
   name: string
   path: string
   beadsPath: string
+  source?: string
 }
 
 export interface TriageRecommendation {

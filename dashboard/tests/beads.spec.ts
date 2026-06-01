@@ -21,10 +21,13 @@ test.describe('Beads View', () => {
       await expect(page.locator('#project-select')).toBeVisible()
     })
 
-    test('should show empty state when no project selected', async ({ page }) => {
+    test('should open with the first discovered project selected', async ({ page }) => {
       await page.click('.tab:has-text("Beads")')
-      await expect(page.locator('.beads-empty-state')).toBeVisible()
-      await expect(page.locator('.beads-empty-state h2')).toContainText('Select a Project')
+      await page.waitForSelector('#project-select')
+
+      await expect(page.locator('#project-select')).toHaveValue('/code/test-project')
+      await expect(page.locator('.beads-subtabs')).toBeVisible()
+      await expect(page.locator('.beads-kanban')).toBeVisible()
     })
 
     test('should load and display projects in dropdown', async ({ page }) => {
@@ -36,6 +39,20 @@ test.describe('Beads View', () => {
       await expect(options).toHaveCount(3) // "Select a project" + 2 mock projects
       await expect(options.nth(1)).toContainText('test-project')
       await expect(options.nth(2)).toContainText('another-project')
+    })
+
+    test('should show empty state when no projects are discovered', async ({ page }) => {
+      await mockBeadsApiRoutes(page, {
+        projectsResponse: {
+          success: true,
+          timestamp: new Date().toISOString(),
+          data: { projects: [] },
+        },
+      })
+
+      await page.click('.tab:has-text("Beads")')
+      await expect(page.locator('.beads-empty-state')).toBeVisible()
+      await expect(page.locator('.beads-empty-state h2')).toContainText('No Beads Projects')
     })
   })
 
@@ -220,7 +237,7 @@ test.describe('Beads View', () => {
 
       // BeadsView should still be present (not blank screen)
       await expect(page.locator('.beads-view')).toBeVisible()
-      await expect(page.locator('.beads-header')).toBeVisible()
+      await expect(page.locator('.beads-status-strip')).toBeVisible()
       await expect(page.locator('.beads-subtabs')).toBeVisible()
     })
   })
