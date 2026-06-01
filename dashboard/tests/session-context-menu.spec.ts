@@ -1,5 +1,5 @@
 import { test, expect, Page } from './fixtures'
-import { mockSessions } from './mock-api'
+import { mockFileApiRoutes, mockSessions } from './mock-api'
 
 /**
  * Helper: set up API mocks that also handle DELETE and PATCH (rename) for sessions.
@@ -22,6 +22,8 @@ async function mockApiRoutesWithMutations(page: Page) {
       body: JSON.stringify({ success: true }),
     })
   })
+
+  await mockFileApiRoutes(page)
 
   // Mutable copy of session list so delete/rename are reflected on refresh
   let sessions = structuredClone(mockSessions.sessions)

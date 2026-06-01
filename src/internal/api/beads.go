@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,6 +42,9 @@ func (h *BeadsHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/beads/health", h.Health)
 	mux.HandleFunc("GET /api/beads/projects", h.ListProjects)
 	mux.HandleFunc("GET /api/beads/issues", h.Issues)
+	mux.HandleFunc("GET /api/beads/issue", h.IssueDetail)
+	mux.HandleFunc("GET /api/beads/comments", h.Comments)
+	mux.HandleFunc("POST /api/beads/comments", h.AddComment)
 	mux.HandleFunc("GET /api/beads/triage", h.Triage)
 	mux.HandleFunc("GET /api/beads/insights", h.Insights)
 	mux.HandleFunc("GET /api/beads/graph", h.Graph)
@@ -238,6 +242,93 @@ func (h *BeadsHandler) execBdIssues(projectPath string, args ...string) ([]map[s
 	return issues, nil
 }
 
+func (h *BeadsHandler) execBdIssue(projectPath string, args ...string) (map[string]interface{}, error) {
+	result, err := h.execBdJSON(projectPath, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	if items, ok := result.([]interface{}); ok {
+		if len(items) == 0 {
+			return nil, fmt.Errorf("bd %s returned an empty array, expected issue", strings.Join(args, " "))
+		}
+		result = items[0]
+	}
+
+	issue, ok := result.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("bd %s returned %T, expected JSON object", strings.Join(args, " "), result)
+	}
+	if typ, ok := issue["_type"].(string); ok && typ != "issue" {
+		return nil, fmt.Errorf("bd %s returned %q, expected issue", strings.Join(args, " "), typ)
+	}
+	return issue, nil
+}
+
+func (h *BeadsHandler) execBdComments(projectPath string, args ...string) ([]map[string]interface{}, error) {
+	result, err := h.execBdJSON(projectPath, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	items, ok := result.([]interface{})
+	if !ok {
+		if obj, ok := result.(map[string]interface{}); ok {
+			return []map[string]interface{}{obj}, nil
+		}
+		return nil, fmt.Errorf("bd %s returned %T, expected JSON array", strings.Join(args, " "), result)
+	}
+
+	comments := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
+		obj, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		comments = append(comments, obj)
+	}
+	return comments, nil
+}
+
+func bdListArgsFromRequest(r *http.Request) ([]string, error) {
+	args := []string{"list"}
+	query := r.URL.Query()
+
+	if status := strings.TrimSpace(query.Get("status")); status != "" {
+		if !isAllowedBeadsStatus(status) {
+			return nil, fmt.Errorf("invalid status %q", status)
+		}
+		args = append(args, "--status", status)
+	}
+
+	if limitRaw := strings.TrimSpace(query.Get("limit")); limitRaw != "" {
+		limit, err := strconv.Atoi(limitRaw)
+		if err != nil || limit < 0 {
+			return nil, fmt.Errorf("invalid limit %q", limitRaw)
+		}
+		args = append(args, "--limit", strconv.Itoa(limit))
+	}
+
+	return args, nil
+}
+
+func isAllowedBeadsStatus(status string) bool {
+	switch status {
+	case "all", "open", "ready", "in_progress", "hooked", "blocked", "closed", "wont_fix", "duplicate", "deferred":
+		return true
+	default:
+		return false
+	}
+}
+
+func requiredIssueID(r *http.Request) (string, string, string) {
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if id == "" {
+		return "", "BAD_REQUEST", "Missing required parameter: id"
+	}
+	return id, "", ""
+}
+
 // parseJsonlFile reads and parses a JSONL file
 func (h *BeadsHandler) parseJsonlFile(filePath string) ([]map[string]interface{}, error) {
 	if !core.FileExists(filePath) {
@@ -317,6 +408,20 @@ func transformIssue(raw map[string]interface{}) map[string]interface{} {
 	}
 
 	return issue
+}
+
+func transformIssueDetail(raw map[string]interface{}) map[string]interface{} {
+	detail := make(map[string]interface{}, len(raw)+8)
+	for key, value := range raw {
+		detail[key] = value
+	}
+	for key, value := range transformIssue(raw) {
+		detail[key] = value
+	}
+	if v, ok := raw["acceptance_criteria"]; ok {
+		detail["acceptance"] = v
+	}
+	return detail
 }
 
 // Health handles GET /api/beads/health
@@ -423,7 +528,13 @@ func (h *BeadsHandler) Issues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = beadsPath
-	issues, err := h.execBdIssues(projectPath, "list")
+	args, err := bdListArgsFromRequest(r)
+	if err != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+		return
+	}
+
+	issues, err := h.execBdIssues(projectPath, args...)
 	if err != nil {
 		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
 		return
@@ -439,6 +550,115 @@ func (h *BeadsHandler) Issues(w http.ResponseWriter, r *http.Request) {
 		"issues":      transformed,
 		"totalCount":  len(transformed),
 		"projectPath": projectPath,
+	})
+}
+
+// IssueDetail handles GET /api/beads/issue
+func (h *BeadsHandler) IssueDetail(w http.ResponseWriter, r *http.Request) {
+	projectPath, code, msg := validateBeadsProjectPath(r.URL.Query().Get("path"))
+	if code != "" {
+		core.WriteError(w, core.GetErrorStatusCode(code), code, msg)
+		return
+	}
+	issueID, code, msg := requiredIssueID(r)
+	if code != "" {
+		core.WriteError(w, core.GetErrorStatusCode(code), code, msg)
+		return
+	}
+
+	if _, err := h.checkBeadsDirectory(projectPath); err != nil {
+		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+		return
+	}
+
+	issue, err := h.execBdIssue(projectPath, "show", issueID)
+	if err != nil {
+		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
+		return
+	}
+
+	core.WriteSuccess(w, map[string]interface{}{
+		"issue":       transformIssueDetail(issue),
+		"projectPath": projectPath,
+	})
+}
+
+// Comments handles GET /api/beads/comments
+func (h *BeadsHandler) Comments(w http.ResponseWriter, r *http.Request) {
+	projectPath, code, msg := validateBeadsProjectPath(r.URL.Query().Get("path"))
+	if code != "" {
+		core.WriteError(w, core.GetErrorStatusCode(code), code, msg)
+		return
+	}
+	issueID, code, msg := requiredIssueID(r)
+	if code != "" {
+		core.WriteError(w, core.GetErrorStatusCode(code), code, msg)
+		return
+	}
+
+	if _, err := h.checkBeadsDirectory(projectPath); err != nil {
+		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+		return
+	}
+
+	comments, err := h.execBdComments(projectPath, "comments", issueID)
+	if err != nil {
+		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
+		return
+	}
+
+	core.WriteSuccess(w, map[string]interface{}{
+		"comments":    comments,
+		"projectPath": projectPath,
+		"issueId":     issueID,
+	})
+}
+
+type addCommentRequest struct {
+	Path    string `json:"path"`
+	ID      string `json:"id"`
+	Comment string `json:"comment"`
+}
+
+// AddComment handles POST /api/beads/comments
+func (h *BeadsHandler) AddComment(w http.ResponseWriter, r *http.Request) {
+	var req addCommentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON body: "+err.Error())
+		return
+	}
+
+	projectPath, code, msg := validateBeadsProjectPath(req.Path)
+	if code != "" {
+		core.WriteError(w, core.GetErrorStatusCode(code), code, msg)
+		return
+	}
+	issueID := strings.TrimSpace(req.ID)
+	if issueID == "" {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Missing required field: id")
+		return
+	}
+	comment := strings.TrimSpace(req.Comment)
+	if comment == "" {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Missing required field: comment")
+		return
+	}
+
+	if _, err := h.checkBeadsDirectory(projectPath); err != nil {
+		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+		return
+	}
+
+	result, err := h.execBdJSON(projectPath, "comments", "add", issueID, comment)
+	if err != nil {
+		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
+		return
+	}
+
+	core.WriteSuccess(w, map[string]interface{}{
+		"comment":     result,
+		"projectPath": projectPath,
+		"issueId":     issueID,
 	})
 }
 
@@ -547,7 +767,13 @@ func (h *BeadsHandler) Insights(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	issues, err := h.execBdIssues(projectPath, "list")
+	args, err := bdListArgsFromRequest(r)
+	if err != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+		return
+	}
+
+	issues, err := h.execBdIssues(projectPath, args...)
 	if err != nil {
 		core.WriteError(w, http.StatusBadGateway, "BD_ERROR", err.Error())
 		return

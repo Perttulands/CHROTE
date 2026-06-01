@@ -5,6 +5,8 @@ import { useSession } from '../../context/SessionContext'
 import type {
   BeadsProject,
   BeadsIssue,
+  BeadsIssueDetail,
+  BeadsComment,
   TriageResponse,
   InsightsResponse,
   GraphResponse,
@@ -36,6 +38,29 @@ async function fetchApi<T>(endpoint: string, params?: Record<string, string | st
 
   const response = await fetch(url.toString(), { signal: AbortSignal.timeout(10000) })
   return response.json()
+}
+
+async function postApi<T>(endpoint: string, body: unknown): Promise<ApiResponse<T>> {
+  const response = await fetch(new URL(endpoint, window.location.origin).toString(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10000),
+  })
+  return response.json()
+}
+
+interface IssueFetchOptions {
+  includeAllStatuses?: boolean
+}
+
+function issueListParams(projectPath: string, options?: IssueFetchOptions): Record<string, string> {
+  if (!options?.includeAllStatuses) return { path: projectPath }
+  return {
+    path: projectPath,
+    status: 'all',
+    limit: '0',
+  }
 }
 
 // Hook to fetch available projects
@@ -81,7 +106,7 @@ export function useProjects() {
 }
 
 // Hook to fetch issues for a project
-export function useIssues(projectPath: string | null, showPatrols = false) {
+export function useIssues(projectPath: string | null, showPatrols = false, options?: IssueFetchOptions) {
   const [allIssues, setAllIssues] = useState<BeadsIssue[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -97,7 +122,7 @@ export function useIssues(projectPath: string | null, showPatrols = false) {
     try {
       const result = await fetchApi<{ issues: BeadsIssue[]; totalCount: number }>(
         `${API_BASE}/issues`,
-        { path: projectPath }
+        issueListParams(projectPath, options)
       )
       if (result.success && result.data) {
         setAllIssues(result.data.issues)
@@ -109,7 +134,7 @@ export function useIssues(projectPath: string | null, showPatrols = false) {
     } finally {
       setLoading(false)
     }
-  }, [projectPath])
+  }, [projectPath, options?.includeAllStatuses])
 
   useEffect(() => {
     refresh()
@@ -157,7 +182,7 @@ export function useTriage(projectPath: string | null) {
 }
 
 // Hook to fetch insights/metrics
-export function useInsights(projectPath: string | null) {
+export function useInsights(projectPath: string | null, options?: IssueFetchOptions) {
   const [insights, setInsights] = useState<InsightsResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -171,7 +196,7 @@ export function useInsights(projectPath: string | null) {
     setLoading(true)
     setError(null)
     try {
-      const result = await fetchApi<InsightsResponse>(`${API_BASE}/insights`, { path: projectPath })
+      const result = await fetchApi<InsightsResponse>(`${API_BASE}/insights`, issueListParams(projectPath, options))
       if (result.success && result.data) {
         setInsights(result.data)
       } else {
@@ -182,7 +207,7 @@ export function useInsights(projectPath: string | null) {
     } finally {
       setLoading(false)
     }
-  }, [projectPath])
+  }, [projectPath, options?.includeAllStatuses])
 
   useEffect(() => {
     refresh()
@@ -224,6 +249,88 @@ export function useGraph(projectPath: string | null) {
   }, [refresh])
 
   return { graph, loading, error, refresh }
+}
+
+export function useIssueDetail(projectPath: string | null, issueId: string | null) {
+  const [issue, setIssue] = useState<BeadsIssueDetail | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const refresh = useCallback(async () => {
+    if (!projectPath || !issueId) {
+      setIssue(null)
+      return
+    }
+
+    setLoading(true)
+    setError(null)
+    try {
+      const result = await fetchApi<{ issue: BeadsIssueDetail }>(`${API_BASE}/issue`, {
+        path: projectPath,
+        id: issueId,
+      })
+      if (result.success && result.data) {
+        setIssue(result.data.issue)
+      } else {
+        setError(result.error?.message || 'Failed to fetch issue detail')
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Network error')
+    } finally {
+      setLoading(false)
+    }
+  }, [projectPath, issueId])
+
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  return { issue, loading, error, refresh }
+}
+
+export function useIssueComments(projectPath: string | null, issueId: string | null) {
+  const [comments, setComments] = useState<BeadsComment[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const refresh = useCallback(async () => {
+    if (!projectPath || !issueId) {
+      setComments([])
+      return
+    }
+
+    setLoading(true)
+    setError(null)
+    try {
+      const result = await fetchApi<{ comments: BeadsComment[] }>(`${API_BASE}/comments`, {
+        path: projectPath,
+        id: issueId,
+      })
+      if (result.success && result.data) {
+        setComments(result.data.comments)
+      } else {
+        setError(result.error?.message || 'Failed to fetch comments')
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Network error')
+    } finally {
+      setLoading(false)
+    }
+  }, [projectPath, issueId])
+
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  return { comments, loading, error, refresh }
+}
+
+export async function addIssueComment(projectPath: string, issueId: string, comment: string) {
+  return postApi<{ comment: BeadsComment }>(`${API_BASE}/comments`, {
+    path: projectPath,
+    id: issueId,
+    comment,
+  })
 }
 
 // Combined hook for all beads data

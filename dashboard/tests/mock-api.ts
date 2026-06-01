@@ -110,6 +110,24 @@ export const mockSessions = {
   timestamp: new Date().toISOString(),
 }
 
+export async function mockFileApiRoutes(page: Page) {
+  await page.route(fileResourcesPattern, async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ isDir: true, items: [] }),
+    })
+  })
+
+  await page.route('**/api/files/raw/**', async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/plain',
+      body: 'mock file content',
+    })
+  })
+}
+
 export async function mockApiRoutes(page: Page) {
   await page.route(/.*\/terminal\/?.*/, async route => {
     await route.fulfill({
@@ -127,21 +145,7 @@ export async function mockApiRoutes(page: Page) {
     })
   })
 
-  await page.route(fileResourcesPattern, async route => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ isDir: true, items: [] }),
-    })
-  })
-
-  await page.route('**/api/files/raw/**', async route => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'text/plain',
-      body: 'mock file content',
-    })
-  })
+  await mockFileApiRoutes(page)
 
   await page.route(tmuxSessionsPattern, async route => {
     if (route.request().method() === 'POST') {

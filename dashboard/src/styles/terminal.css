@@ -47,6 +47,12 @@
   background-color: var(--accent-light);
 }
 
+.terminal-refit-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 /* Terminal Grid Layouts */
 .terminal-grid {
   flex: 1;

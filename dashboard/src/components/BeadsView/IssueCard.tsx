@@ -1,5 +1,6 @@
 // Reusable issue card component for Beads views
 
+import type { KeyboardEvent } from 'react'
 import type { BeadsIssue, IssueStatus, IssueType } from './types'
 
 interface IssueCardProps {
@@ -7,6 +8,7 @@ interface IssueCardProps {
   compact?: boolean
   showDependencies?: boolean
   highlighted?: boolean
+  onClick?: (issue: BeadsIssue) => void
 }
 
 const STATUS_COLORS: Record<IssueStatus, string> = {
@@ -49,13 +51,26 @@ function formatStatus(status: IssueStatus): string {
   return status.replace(/_/g, ' ')
 }
 
-export default function IssueCard({ issue, compact = false, showDependencies = false, highlighted = false }: IssueCardProps) {
+export default function IssueCard({ issue, compact = false, showDependencies = false, highlighted = false, onClick }: IssueCardProps) {
   const statusColor = STATUS_COLORS[issue.status] || 'var(--text-secondary)'
   const typeIcon = issue.type ? TYPE_ICONS[issue.type] || '' : ''
+  const interactiveProps = onClick
+    ? {
+        role: 'button',
+        tabIndex: 0,
+        onClick: () => onClick(issue),
+        onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            onClick(issue)
+          }
+        },
+      }
+    : {}
 
   if (compact) {
     return (
-      <div className={`issue-card compact ${highlighted ? 'highlighted' : ''}`}>
+      <div className={`issue-card compact ${onClick ? 'clickable' : ''} ${highlighted ? 'highlighted' : ''}`} {...interactiveProps}>
         <span className="issue-id">{issue.id}</span>
         <span className="issue-title">{issue.title}</span>
         {issue.priority && (
@@ -68,7 +83,7 @@ export default function IssueCard({ issue, compact = false, showDependencies = f
   }
 
   return (
-    <div className={`issue-card ${highlighted ? 'highlighted' : ''}`}>
+    <div className={`issue-card ${onClick ? 'clickable' : ''} ${highlighted ? 'highlighted' : ''}`} {...interactiveProps}>
       <div className="issue-card-header">
         <span className="issue-id">{issue.id}</span>
         <div className="issue-card-meta">

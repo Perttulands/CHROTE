@@ -158,6 +158,17 @@
   margin-right: 4px;
 }
 
+.window-badge.window-location-chip {
+  width: auto;
+  min-width: 48px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 2px;
+  font-size: 10px;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
 /* Session Item */
 .session-item {
   display: flex;

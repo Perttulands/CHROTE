@@ -1,5 +1,5 @@
 import { test, expect, allowBrowserConsoleMessage, type Route } from './fixtures'
-import { mockApiRoutes, mockSessions } from './mock-api'
+import { mockApiRoutes, mockFileApiRoutes, mockSessions } from './mock-api'
 
 /**
  * pol-0281: Error state E2E tests
@@ -210,6 +210,8 @@ test.describe('Error States', () => {
           body: JSON.stringify({ success: true }),
         })
       })
+
+      await mockFileApiRoutes(page)
 
       // Mock ALL GET requests to sessions to return 500 (server down)
       await page.route('**/api/tmux/sessions', async route => {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ChangeEvent, DragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
+import type { CSSProperties, ChangeEvent, DragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { FileItem, toDisplayPath } from './types'
 import {
   createFile,
@@ -15,6 +15,7 @@ import {
   writeTextFile,
 } from './fileService'
 import { formatDate, formatSize } from './utils'
+import { isFeatureEnabled } from '../../featureFlags'
 
 type SortKey = 'name' | 'size' | 'modified'
 type SortDir = 'asc' | 'desc'
@@ -54,7 +55,10 @@ interface CreateIntent {
 
 const PINNED_STORAGE_KEY = 'chrote.files.pinnedPaths'
 const RECENT_STORAGE_KEY = 'chrote.files.recentPaths'
+const PREVIEW_WIDTH_STORAGE_KEY = 'chrote.files.previewWidthPercent'
 const MAX_TEXT_PREVIEW_BYTES = 1024 * 1024
+const MIN_PREVIEW_WIDTH = 28
+const MAX_PREVIEW_WIDTH = 70
 
 const TEXT_EXTENSIONS = new Set([
   'bash',
@@ -189,6 +193,23 @@ function writeSavedPaths(key: string, paths: SavedPath[]): void {
   }
 }
 
+function readPreviewWidthPercent(): number {
+  if (typeof window === 'undefined') return 42
+  const raw = window.localStorage.getItem(PREVIEW_WIDTH_STORAGE_KEY)
+  const value = raw ? Number(raw) : 42
+  if (!Number.isFinite(value)) return 42
+  return Math.min(MAX_PREVIEW_WIDTH, Math.max(MIN_PREVIEW_WIDTH, value))
+}
+
+function writePreviewWidthPercent(width: number): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(PREVIEW_WIDTH_STORAGE_KEY, String(Math.round(width)))
+  } catch {
+    // localStorage failures should not break resizing.
+  }
+}
+
 function makeFileItemFromPath(path: string): FileItem {
   const name = getBaseName(path)
   return {
@@ -204,6 +225,8 @@ function makeFileItemFromPath(path: string): FileItem {
 function FilesView() {
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const pathInputRef = useRef<HTMLInputElement | null>(null)
+  const contentRef = useRef<HTMLDivElement | null>(null)
+  const resizablePreview = isFeatureEnabled('filesResizablePreview')
   const [items, setItems] = useState<FileItem[]>([])
   const [treeItems, setTreeItems] = useState<Record<string, FileItem[]>>({})
   const [treeLoading, setTreeLoading] = useState<Set<string>>(new Set())
@@ -233,8 +256,12 @@ function FilesView() {
   const [draggingPaths, setDraggingPaths] = useState<string[]>([])
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null)
   const [operationLabel, setOperationLabel] = useState<string | null>(null)
+  const [previewWidth, setPreviewWidth] = useState(readPreviewWidthPercent)
 
   const isRootListing = currentPath === '/'
+  const contentStyle = resizablePreview
+    ? ({ '--fb-preview-width': `${previewWidth}%` } as CSSProperties)
+    : undefined
 
   const showError = useCallback((message: string) => {
     setToast(message)
@@ -300,6 +327,31 @@ function FilesView() {
     void loadTree(currentPath)
     void loadTree('/')
   }, [currentPath, loadDirectory, loadTree])
+
+  const startPreviewResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!resizablePreview || !contentRef.current) return
+    event.preventDefault()
+    const rect = contentRef.current.getBoundingClientRect()
+
+    const updateWidth = (clientX: number) => {
+      const next = ((rect.right - clientX) / rect.width) * 100
+      const clamped = Math.min(MAX_PREVIEW_WIDTH, Math.max(MIN_PREVIEW_WIDTH, next))
+      setPreviewWidth(clamped)
+      writePreviewWidthPercent(clamped)
+    }
+
+    const handlePointerMove = (moveEvent: PointerEvent) => updateWidth(moveEvent.clientX)
+    const handlePointerUp = () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+      document.body.classList.remove('fb-resizing-preview')
+    }
+
+    document.body.classList.add('fb-resizing-preview')
+    updateWidth(event.clientX)
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp, { once: true })
+  }, [resizablePreview])
 
   useEffect(() => {
     void loadDirectory('/')
@@ -1082,7 +1134,9 @@ function FilesView() {
           </div>
 
           <div
-            className="fb-content"
+            ref={contentRef}
+            className={`fb-content ${resizablePreview ? 'resizable-preview' : ''}`}
+            style={contentStyle}
             onDragOver={(event) => event.preventDefault()}
             onDrop={handleDropUpload}
             onContextMenu={(event) => {
@@ -1151,6 +1205,16 @@ function FilesView() {
                 {operationLabel && <span className="fb-statusbar-operation">{operationLabel}...</span>}
               </div>
             </section>
+
+            {resizablePreview && (
+              <div
+                className="fb-preview-resizer"
+                role="separator"
+                aria-orientation="vertical"
+                title="Resize preview"
+                onPointerDown={startPreviewResize}
+              />
+            )}
 
             <aside className="fb-editor-pane">
               <div className="fb-editor-tabs">

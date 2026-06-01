@@ -3,6 +3,7 @@ import { useSession } from '../context/SessionContext'
 import TerminalWindow from './TerminalWindow'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import type { WorkspaceId } from '../types'
+import { isFeatureEnabled } from '../featureFlags'
 
 interface TerminalAreaProps {
   workspaceId: WorkspaceId
@@ -16,6 +17,8 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
 
   const isMobile = useMediaQuery('(max-width: 768px)')
   const [mobileActiveIndex, setMobileActiveIndex] = useState(0)
+  const [refitNonce, setRefitNonce] = useState(0)
+  const showRefitButton = isFeatureEnabled('terminalRefitButton')
 
   // Ensure valid mobile index when configuration changes
   useEffect(() => {
@@ -67,6 +70,16 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
                   {count}
                 </button>
               ))}
+              {showRefitButton && (
+                <button
+                  className="layout-btn terminal-refit-btn"
+                  onClick={() => setRefitNonce(n => n + 1)}
+                  title="Refit terminal layout"
+                  aria-label="Refit terminal layout"
+                >
+                  <span aria-hidden="true">↻</span>
+                </button>
+              )}
             </div>
           </>
         ) : (
@@ -82,6 +95,16 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
                 {count}
               </button>
             ))}
+            {showRefitButton && (
+              <button
+                className="layout-btn terminal-refit-btn"
+                onClick={() => setRefitNonce(n => n + 1)}
+                title="Refit terminal layout"
+                aria-label="Refit terminal layout"
+              >
+                <span aria-hidden="true">↻</span>
+              </button>
+            )}
           </>
         )}
       </div>
@@ -95,6 +118,7 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
               workspaceId={workspaceId}
               window={window}
               isDragging={isDragging}
+              refitNonce={refitNonce}
               style={{ display: isVisible ? 'flex' : 'none' }}
             />
           )

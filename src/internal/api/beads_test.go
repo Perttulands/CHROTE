@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/chrote/server/internal/core"
@@ -33,7 +35,38 @@ func resetBeadsTestEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("CHROTE_ROOTS", "")
 	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
+	t.Setenv("CHROTE_BD_COMMAND", "")
 	core.ResetConfigForTesting()
+}
+
+func makeFakeBdCommand(t *testing.T, output string) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	argsPath := filepath.Join(dir, "args.txt")
+	scriptPath := filepath.Join(dir, "bd")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$@\" > \"$BD_ARGS_FILE\"\n" +
+		"printf '%s' \"$BD_OUTPUT\"\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0700); err != nil {
+		t.Fatalf("write fake bd command: %v", err)
+	}
+	t.Setenv("BD_ARGS_FILE", argsPath)
+	t.Setenv("BD_OUTPUT", output)
+	t.Setenv("CHROTE_BD_COMMAND", scriptPath)
+	return scriptPath, argsPath
+}
+
+func readFakeBdArgs(t *testing.T, argsPath string) []string {
+	t.Helper()
+	raw, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read fake bd args: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		return nil
+	}
+	return lines
 }
 
 func TestBeadsHandler_CheckBeadsDirectoryRequiresModernWorkspace(t *testing.T) {
@@ -192,5 +225,122 @@ func TestBeadsHandler_IssuesRejectsInvalidWorkspaceBeforeRunningBd(t *testing.T)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("Issues status = %d, want %d: %s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+}
+
+func TestBeadsHandler_IssuesSupportsExplicitStatusAndLimit(t *testing.T) {
+	rootDir := t.TempDir()
+	projectPath := filepath.Join(rootDir, "project")
+	makeValidBeadsWorkspace(t, projectPath)
+
+	t.Setenv("CHROTE_ROOTS", rootDir)
+	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
+	core.ResetConfigForTesting()
+	_, argsPath := makeFakeBdCommand(t, `[{"_type":"issue","id":"test-1","title":"Closed issue","status":"closed"}]`)
+
+	handler := NewBeadsHandler()
+	req := httptest.NewRequest(http.MethodGet, "/api/beads/issues?path="+projectPath+"&status=all&limit=0", nil)
+	rec := httptest.NewRecorder()
+	handler.Issues(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Issues status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	wantArgs := []string{"--json", "list", "--status", "all", "--limit", "0"}
+	if gotArgs := readFakeBdArgs(t, argsPath); !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("bd args = %#v, want %#v", gotArgs, wantArgs)
+	}
+}
+
+func TestBeadsHandler_InsightsSupportsExplicitStatusAndLimit(t *testing.T) {
+	rootDir := t.TempDir()
+	projectPath := filepath.Join(rootDir, "project")
+	makeValidBeadsWorkspace(t, projectPath)
+
+	t.Setenv("CHROTE_ROOTS", rootDir)
+	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
+	core.ResetConfigForTesting()
+	_, argsPath := makeFakeBdCommand(t, `[{"_type":"issue","id":"test-1","title":"Closed issue","status":"closed"}]`)
+
+	handler := NewBeadsHandler()
+	req := httptest.NewRequest(http.MethodGet, "/api/beads/insights?path="+projectPath+"&status=all&limit=0", nil)
+	rec := httptest.NewRecorder()
+	handler.Insights(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Insights status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	wantArgs := []string{"--json", "list", "--status", "all", "--limit", "0"}
+	if gotArgs := readFakeBdArgs(t, argsPath); !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("bd args = %#v, want %#v", gotArgs, wantArgs)
+	}
+}
+
+func TestBeadsHandler_IssueDetailRejectsInvalidWorkspaceBeforeRunningBd(t *testing.T) {
+	rootDir := t.TempDir()
+	partialProject := filepath.Join(rootDir, "partial")
+	makePartialBeadsDirectory(t, partialProject)
+
+	t.Setenv("CHROTE_ROOTS", rootDir)
+	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
+	core.ResetConfigForTesting()
+
+	handler := NewBeadsHandler()
+	req := httptest.NewRequest(http.MethodGet, "/api/beads/issue?path="+partialProject+"&id=test-1", nil)
+	rec := httptest.NewRecorder()
+	handler.IssueDetail(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("IssueDetail status = %d, want %d: %s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+}
+
+func TestBeadsHandler_IssueDetailAcceptsBdShowArrayResponse(t *testing.T) {
+	rootDir := t.TempDir()
+	projectPath := filepath.Join(rootDir, "project")
+	makeValidBeadsWorkspace(t, projectPath)
+
+	t.Setenv("CHROTE_ROOTS", rootDir)
+	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
+	core.ResetConfigForTesting()
+	_, argsPath := makeFakeBdCommand(t, `[{"_type":"issue","id":"test-1","title":"Shown issue","status":"open"}]`)
+
+	handler := NewBeadsHandler()
+	req := httptest.NewRequest(http.MethodGet, "/api/beads/issue?path="+projectPath+"&id=test-1", nil)
+	rec := httptest.NewRecorder()
+	handler.IssueDetail(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("IssueDetail status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	wantArgs := []string{"--json", "show", "test-1"}
+	if gotArgs := readFakeBdArgs(t, argsPath); !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("bd args = %#v, want %#v", gotArgs, wantArgs)
+	}
+}
+
+func TestBeadsHandler_AddCommentPassesTextAsSingleArgument(t *testing.T) {
+	rootDir := t.TempDir()
+	projectPath := filepath.Join(rootDir, "project")
+	makeValidBeadsWorkspace(t, projectPath)
+
+	t.Setenv("CHROTE_ROOTS", rootDir)
+	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
+	core.ResetConfigForTesting()
+	_, argsPath := makeFakeBdCommand(t, `{"id":"comment-1","body":"ok"}`)
+
+	handler := NewBeadsHandler()
+	body := strings.NewReader(`{"path":"` + projectPath + `","id":"test-1","comment":"review this; $(touch /tmp/nope)"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/beads/comments", body)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handler.AddComment(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("AddComment status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	wantArgs := []string{"--json", "comments", "add", "test-1", "review this; $(touch /tmp/nope)"}
+	if gotArgs := readFakeBdArgs(t, argsPath); !reflect.DeepEqual(gotArgs, wantArgs) {
+		t.Fatalf("bd args = %#v, want %#v", gotArgs, wantArgs)
 	}
 }

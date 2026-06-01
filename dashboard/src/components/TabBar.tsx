@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
-import MusicPlayer from './MusicPlayer'
 import { useMediaQuery } from '../hooks/useMediaQuery'
+import { isFeatureEnabled } from '../featureFlags'
 
-export type Tab = 'terminal1' | 'terminal2' | 'files' | 'agents' | 'beads' | 'services' | 'settings' | 'help'
+export type Tab = 'terminal1' | 'terminal2' | 'files' | 'agents' | 'beads' | 'services' | 'server' | 'settings' | 'help'
 
 interface InternalTab {
   id: Tab
@@ -61,6 +61,7 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
     { id: 'agents', label: 'Agents' },
     { id: 'beads', label: 'Beads' },
     { id: 'services', label: 'Services' },
+    ...(isFeatureEnabled('serverStatusTab') ? [{ id: 'server' as const, label: 'Server' }] : []),
     { id: 'settings', label: 'Settings' },
   ]
 
@@ -135,10 +136,6 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
               </button>
             </div>
           )}
-
-          <div className="tab-bar-actions">
-            <MusicPlayer />
-          </div>
         </>
       ) : (
         <>
@@ -197,7 +194,6 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
                 </div>
               )}
             </div>
-            <MusicPlayer />
           </div>
         </>
       )}
