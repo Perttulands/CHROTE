@@ -134,10 +134,11 @@ interface TerminalWindowProps {
   workspaceId: WorkspaceId
   window: TerminalWindowType
   isDragging?: boolean
+  refitNonce?: number
   style?: React.CSSProperties
 }
 
-function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false, style }: TerminalWindowProps) {
+function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false, refitNonce = 0, style }: TerminalWindowProps) {
   const bodyRef = useRef<HTMLDivElement>(null)
   const windowRef = useRef<HTMLDivElement>(null)
 
@@ -225,6 +226,17 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
     return () => timers.forEach(clearTimeout)
   // eslint-disable-next-line react-hooks/exhaustive-deps -- pool functions are stable refs
   }, [activeSession, activeSessionLoaded])
+
+  useEffect(() => {
+    if (!activeSession) return
+    const timers = [
+      setTimeout(() => pool.triggerFit(activeSession), 0),
+      setTimeout(() => pool.triggerFit(activeSession), 120),
+      setTimeout(() => pool.triggerFit(activeSession), 300),
+    ]
+    return () => timers.forEach(clearTimeout)
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- pool.triggerFit is a stable ref
+  }, [activeSession, refitNonce])
 
   // Focus iframe when this window is focused
   useEffect(() => {

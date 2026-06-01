@@ -29,6 +29,21 @@ export interface BeadsIssue {
   description?: string
 }
 
+export interface BeadsIssueDetail extends BeadsIssue {
+  [key: string]: unknown
+}
+
+export interface BeadsComment {
+  id?: string
+  body?: string
+  comment?: string
+  text?: string
+  author?: string
+  created_at?: string
+  created?: string
+  [key: string]: unknown
+}
+
 export interface BeadsProject {
   name: string
   path: string

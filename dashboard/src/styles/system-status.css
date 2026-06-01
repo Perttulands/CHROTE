@@ -1,0 +1,358 @@
+/* CHROTE Server status cockpit */
+
+.system-status-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--background);
+  color: var(--text-primary);
+}
+
+.system-status-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 8px 12px;
+  background: var(--surface-primary);
+  border-bottom: 1px solid var(--divider);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.system-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: max-content;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.system-status-pill strong {
+  color: var(--accent);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.system-status-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.system-icon-button {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.system-icon-button:hover:not(:disabled),
+.system-icon-button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-light);
+}
+
+.system-icon-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.system-copy-status {
+  min-width: max-content;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.system-error {
+  margin: 10px 12px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--color-error);
+  border-radius: 4px;
+  background: var(--color-error-light);
+  color: var(--color-error);
+  font-size: 13px;
+}
+
+.system-status-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(220px, 0.85fr) minmax(160px, 1fr);
+  gap: 12px;
+  padding: 12px;
+  overflow: auto;
+}
+
+.system-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.system-metric,
+.system-graph-panel,
+.system-detail-panel {
+  min-width: 0;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  background: var(--surface-primary);
+}
+
+.system-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 92px;
+  padding: 11px 12px;
+}
+
+.system-metric span {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.system-metric strong {
+  color: var(--text-primary);
+  font-size: 24px;
+  line-height: 1.1;
+  font-weight: 700;
+}
+
+.system-metric small {
+  color: var(--text-dim);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.system-metric-warn {
+  border-color: var(--color-error);
+}
+
+.system-metric-warn strong {
+  color: var(--color-error);
+}
+
+.system-metric-muted strong,
+.system-metric-muted small {
+  color: var(--text-dim);
+}
+
+.system-graph-panel,
+.system-detail-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.system-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--divider);
+  background: var(--surface-secondary);
+  flex-shrink: 0;
+}
+
+.system-panel-header h2 {
+  font-size: 14px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.system-panel-header p {
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.system-graph-legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.system-graph-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.system-graph-legend i {
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.system-graph {
+  flex: 1;
+  width: 100%;
+  min-height: 190px;
+}
+
+.system-graph-grid {
+  stroke: var(--divider);
+  stroke-width: 1;
+  opacity: 0.75;
+}
+
+.system-graph-label {
+  fill: var(--text-dim);
+  font-size: 10px;
+}
+
+.system-graph-line {
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.system-detail-grid {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(220px, 0.8fr) minmax(260px, 1fr);
+  gap: 12px;
+}
+
+.system-table,
+.system-warning-list,
+.system-gpu-detail {
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+}
+
+.system-table-row,
+.system-warning-row {
+  display: grid;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  background: var(--surface-secondary);
+  font-size: 12px;
+}
+
+.system-table-row {
+  grid-template-columns: 56px 64px minmax(0, 1fr);
+}
+
+.system-table-row + .system-table-row,
+.system-warning-row + .system-warning-row {
+  margin-top: 8px;
+}
+
+.system-table-row strong,
+.system-warning-row strong,
+.system-gpu-detail strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-table-row span {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.system-table-row small,
+.system-warning-row span {
+  min-width: 0;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.system-warning-row {
+  grid-template-columns: minmax(84px, 0.35fr) minmax(0, 1fr);
+  border-color: var(--color-error);
+}
+
+.system-warning-row strong {
+  color: var(--color-error);
+  font-size: 11px;
+}
+
+.system-gpu-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.system-detail-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.system-detail-chips span {
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  padding: 4px 7px;
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.system-empty {
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 8px;
+}
+
+@media (max-width: 1100px) {
+  .system-status-body {
+    grid-template-rows: auto auto auto;
+  }
+
+  .system-metrics-grid {
+    grid-template-columns: repeat(2, minmax(160px, 1fr));
+  }
+
+  .system-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .system-status-strip {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .system-status-actions {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .system-metrics-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .system-metric strong {
+    font-size: 22px;
+  }
+}

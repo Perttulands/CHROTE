@@ -11,7 +11,6 @@
 @import './terminal.css';
 @import './floating-modal.css';
 @import './settings.css';
-@import './music-player.css';
 @import './nuke-modal.css';
 @import './file-browser.css';
 @import './inbox.css';
@@ -19,6 +18,7 @@
 @import './beads.css';
 @import './oracle.css';
 @import './services.css';
+@import './system-status.css';
 @import './teams.css';
 
 /* Delightful features */

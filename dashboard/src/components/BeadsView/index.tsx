@@ -3,6 +3,7 @@
 import { useState, useCallback } from 'react'
 import type { BeadsSubTab } from './types'
 import { useProjects, useIssues, useTriage, useInsights } from './hooks'
+import { isFeatureEnabled } from '../../featureFlags'
 import ProjectSelector from './ProjectSelector'
 import KanbanView from './KanbanView'
 import TriageView from './TriageView'
@@ -18,11 +19,20 @@ export default function BeadsView() {
   const [activeSubTab, setActiveSubTab] = useState<BeadsSubTab>('kanban')
   const [selectedProjectPath, setSelectedProjectPath] = useState<string | null>(null)
   const [showPatrols, setShowPatrols] = useState(false)
+  const includeAllStatuses = isFeatureEnabled('beadsAllStatuses')
+  const enableDetailModal = isFeatureEnabled('beadsDetailModal')
 
   const { projects, loading: projectsLoading } = useProjects()
-  const { issues, loading: issuesLoading, error: issuesError, refresh: refreshIssues } = useIssues(selectedProjectPath, showPatrols)
+  const { issues, loading: issuesLoading, error: issuesError, refresh: refreshIssues } = useIssues(
+    selectedProjectPath,
+    showPatrols,
+    { includeAllStatuses }
+  )
   const { triage, loading: triageLoading, error: triageError, refresh: refreshTriage } = useTriage(selectedProjectPath)
-  const { insights, loading: insightsLoading, error: insightsError, refresh: refreshInsights } = useInsights(selectedProjectPath)
+  const { insights, loading: insightsLoading, error: insightsError, refresh: refreshInsights } = useInsights(
+    selectedProjectPath,
+    { includeAllStatuses }
+  )
 
   const handleProjectSelect = useCallback((path: string) => {
     setSelectedProjectPath(path || null)
@@ -83,7 +93,14 @@ export default function BeadsView() {
 
           <div className="beads-content">
             {activeSubTab === 'kanban' && (
-              <KanbanView issues={issues} loading={issuesLoading} error={issuesError} />
+              <KanbanView
+                issues={issues}
+                loading={issuesLoading}
+                error={issuesError}
+                projectPath={selectedProjectPath}
+                enableDetailModal={enableDetailModal}
+                onIssueUpdated={refreshIssues}
+              />
             )}
             {activeSubTab === 'triage' && (
               <TriageView triage={triage} issues={issues} loading={triageLoading} error={triageError} />

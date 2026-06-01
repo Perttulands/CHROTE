@@ -326,6 +326,30 @@
   overflow: hidden;
 }
 
+.fb-content.resizable-preview {
+  grid-template-columns:
+    minmax(320px, calc(100% - var(--fb-preview-width, 42%) - 6px))
+    6px
+    minmax(280px, var(--fb-preview-width, 42%));
+}
+
+.fb-preview-resizer {
+  min-width: 6px;
+  background: var(--divider);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.fb-preview-resizer:hover,
+.fb-resizing-preview .fb-preview-resizer {
+  background: var(--accent);
+}
+
+.fb-resizing-preview {
+  cursor: col-resize;
+  user-select: none;
+}
+
 .fb-browser-pane,
 .fb-editor-pane {
   min-width: 0;
@@ -904,6 +928,14 @@
 
   .fb-content {
     grid-template-columns: 1fr;
+  }
+
+  .fb-content.resizable-preview {
+    grid-template-columns: 1fr;
+  }
+
+  .fb-preview-resizer {
+    display: none;
   }
 
   .fb-editor-pane {
