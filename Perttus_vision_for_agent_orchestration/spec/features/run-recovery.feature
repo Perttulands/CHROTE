@@ -1,5 +1,5 @@
 # Captures recovery + fail-loud behaviors implied by the run model and DECISIONS-LOCKED (ledger is
-# canonical; status is projected; resume replays; binding/sentinel failures are loud, never silent).
+# canonical; status is projected; recovery replays; binding/sentinel failures are loud, never silent).
 # The prototype mocks runs, so these are real-engine requirements the spec must pin.
 
 Feature: Run recovery and fail-loud failure modes
@@ -14,9 +14,9 @@ Feature: Run recovery and fail-loud failure modes
   # ── Recovery ────────────────────────────────────────────────────────────────
 
   @cli
-  Scenario: A run resumes after a disconnect by replaying the ledger
+  Scenario: A run recovers after a disconnect by replaying the ledger
     Given a run is mid-cascade when the client (or server) disconnects
-    When I run "archon run resume run_01J9"
+    When the engine reconnects and replays the ledger
     Then the engine replays the ledger to the last consistent point and continues
     And no completed node is re-run
 
@@ -57,10 +57,10 @@ Feature: Run recovery and fail-loud failure modes
   @cli
   Scenario: Replay never blindly re-dispatches a prompt
     Given the ledger contains "slot_dispatch" for "slot_peer_a" with no matching "slot_result"
-    When I run "archon run resume run_01J9"
+    When the recovery reconciler replays the ledger
     Then the engine re-attaches capture for that slot if its session is still live
     And it records a loud "error" if capture cannot be re-attached
-    But it never sends the original prompt a second time without an operator action
+    But it never sends the original prompt a second time without an explicit blocked-run resume
 
   # ── Sentinel / completion failures (fail loud) ──────────────────────────────
 

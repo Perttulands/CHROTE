@@ -17,12 +17,16 @@ canned terminals are not persistence or run contracts.
 <workspace>/.formations/boards/<slug>.formation.toml
 <workspace>/.formations/layout/<slug>.layout.toml
 <workspace>/.formations/runs/<slug>/<run-id>.ndjson
+<workspace>/.formations/runs/<slug>/<run-id>.snapshot.toml
+<workspace>/.formations/runs/<slug>/<run-id>.bindings.toml
+<workspace>/.formations/runs/<slug>/<run-id>.refs/
 <workspace>/.formations/runs/<slug>/latest.json
 ```
 
 The shared formations package is the only writer for persona cards, board, and
 layout files. The UI, `archon`, and agents all call that writer. Runs append
-their own NDJSON ledger and atomically rewrite only regenerable run caches.
+their own NDJSON ledger, write immutable run snapshots and payload refs under the
+same slug run folder, and atomically rewrite only regenerable run caches.
 
 ## Identity and Addressing
 
@@ -276,6 +280,7 @@ envelope:
   "missionId": "mis_01J9_improve",
   "beadId": "bd-204",
   "snapshot": ".formations/runs/session-search/run_01J9.snapshot.toml",
+  "bindingsSnapshot": ".formations/runs/session-search/run_01J9.bindings.toml",
   "epoch": 0,
   "attempt": 0,
   "data": {}
@@ -288,18 +293,161 @@ that touch graph objects include the relevant `boardId`, `boardRev`, `missionId`
 is the first event and must include the board id, board revision or snapshot
 path, mission id, and run id.
 
-Terminal run events are:
+Run state is epoch-aware:
 
 ```text
-run_succeeded
-run_failed
-run_blocked
-run_canceled
+run_started seq=1, epoch=0
+run_blocked closes an epoch and may be resumed explicitly
+run_resumed opens the next epoch after an operator resume
+run_succeeded, run_failed, and run_canceled are final for the whole run
 ```
 
-Replay is idempotent. A `slot_dispatch` is recorded before the prompt is sent.
-If replay sees a dispatch without a `slot_result`, it re-attaches capture or
-records a loud `error`; it never blindly re-delivers the prompt.
+`seq` is monotonic for the whole run and never resets. `run_started` appears
+exactly once at `seq=1`. `epoch` starts at `0` and increments only when an
+operator explicitly resumes a blocked run. A `run_blocked` event stops dispatch
+for that epoch. `archon run resume <runId>` or the equivalent API action is
+accepted only when the latest projection is blocked and `resumeAllowed=true`;
+it appends `run_resumed` as the first event in `epoch + 1` with
+`data.resumedFromSeq` set to the `run_blocked` sequence. The engine must not
+append after `run_succeeded`, `run_failed`, or `run_canceled`.
+
+Ledger replay is idempotent. A `slot_dispatch` is recorded before the prompt is
+sent. If the recovery reconciler sees a dispatch without a `slot_result`, it
+re-attaches capture or records a loud `error`; it never blindly re-delivers the
+prompt. See `docs/adr/0001-formations-run-recovery-contract.md`.
+
+## Run Snapshot And Revision Rules
+
+Run start reads the current board definition, validates the selected mission,
+resolves every staffed slot to a persona card and harness variant, and writes
+immutable board and binding snapshots before appending `run_started`. The board
+snapshot is copied to `<run-id>.snapshot.toml` under the slug run folder and is
+the graph the engine executes. The binding snapshot is copied to
+`<run-id>.bindings.toml` and records the resolved `agentId`, harness variant,
+`sessionStem`, card path, card hash, and launch/source pointers needed for this
+run. It does not inline source files, prompts, skill bodies, or secrets.
+
+`run_started` records the source board path, board id, board rev, board snapshot
+path, binding snapshot path, and mission id. If a caller supplies an expected
+board rev or ETag and it does not match the current board, run start fails with
+the same conflict semantics as a board write and appends no event. Resume replays
+the board and binding snapshots and never revalidates or rewrites current
+board/layout/persona files. Board, layout, and persona edits after `run_started`
+apply only to future runs. Runs may atomically rewrite regenerable run caches
+such as `latest.json`, but they never write persona cards, board definitions, or
+layout definitions.
+
+## Event Payload Schemas
+
+Each event uses the envelope above. Fields listed here are inside `data` unless
+the envelope already names the field. Unknown `data` keys are allowed for
+forward-compatible readers, but the required keys below must be present.
+
+| Event type | Required payload |
+|---|---|
+| `run_started` | `boardSlug`, `boardPath`, `boardRev`, `snapshot`, `bindingsSnapshot`, `missionId`, `beadId`, `objective`, `limits` (`maxDispatch`, `wallClockSeconds`, `redact`) |
+| `run_resumed` | `resumedFromSeq`, `resumedBy`, `resumeMode` (`reattach`, `redispatch`, `operator-input`), `reason`, `openDispatches` |
+| `node_waiting` | `nodeId`, `neededInputs`, `readyInputs`, `totalInputs`, `waitingFor` (`edgeId` or `portId` list) |
+| `node_started` | `nodeId`, `nodeKind` (`mission`, `formation`, `gate`), `attempt`, `inputRefs`, `reason` (`initial`, `resume`, `pushback`, `judge`) |
+| `slot_dispatch` | `dispatchId`, `nodeId`, `slotId`, `agentId`, `harness`, `sessionStem`, `sessionRef`, `promptSha256`, `promptRef`, `nativeAck`, `recordedBeforeSend=true` |
+| `slot_result` | `dispatchId`, `nodeId`, `slotId`, `agentId`, `status` (`ok`, `error`, `timeout`, `needs-review`), `capturedRange`, `textRef`, `artifacts`, `sentinel` |
+| `node_output` | `nodeId`, `status` (`done`, `needs-review`, `blocked`), `reportRef`, `artifacts`, `diffs`, `producedBy`, `timing`, `deliveredEdges` |
+| `gate_evaluating` | `gateId`, `nodeId`, `kinds`, `criterion`, `inputRef`, `judgeChain` |
+| `gate_verdict` | `gateId`, `verdict` (`pass`, `fail`), `perKind`, `routePort` (`pass`, `fail`, `none`), `routedEdges`, `reason` |
+| `verification_verdict` | `verificationId`, `nodeId`, `verdict` (`pass`, `fail`), `kinds`, `criterion`, `onFail`, `feedback` |
+| `artifact_attached` | `nodeId`, `slotId`, `name`, `type`, `ref`, `sha256` |
+| `escalation_raised` | `trigger`, `severity` (`info`, `needs-attention`, `stop`), `reason`, `source` (`system`, `agent`, `human`), `nodeId`, `gateId`, `blocks` |
+| `human_input_requested` | `gateId`, `nodeId`, `prompt`, `choices`, `requestedBy`, `timeoutSeconds` |
+| `human_verdict_recorded` | `gateId`, `nodeId`, `verdict` (`pass`, `fail`), `reason`, `requestedSeq`, `decidedBy` |
+| `error` | `code`, `message`, `boundary` (`engine`, `writer`, `adapter`, `tmux`, `schema`, `operator`), `nodeId`, `slotId`, `recoverable`, `relatedSeq` |
+| `run_blocked` | `reason`, `blockedNodeId`, `blockedGateId`, `resumeAllowed`, `resumePolicy`, `openDispatches`, `nextEpoch` |
+| `run_canceled` | `reason`, `requestedBy`, `softInterruptedSlots`, `final=true` |
+| `run_failed` | `code`, `reason`, `unrecoverable`, `relatedSeq`, `final=true` |
+| `run_succeeded` | `summaryRef`, `outputRefs`, `artifactRefs`, `final=true` |
+
+`promptRef`, `textRef`, `reportRef`, and `summaryRef` may point to files under
+`<run-id>.refs/` when payloads are large or redacted. If `redact` is true, the
+payload keeps hashes and refs but may omit full prompt or reply text.
+
+Structured payload fields use these shapes:
+
+- `inputRefs`: array of `{edgeId, fromNodeId, outputSeq, ref}`.
+- `capturedRange`: `{sessionRef, start, end, startedAt, endedAt}` where `start`
+  and `end` are adapter-defined capture cursors, not executable text.
+- `artifacts` and `artifactRefs`: array of `{name, type, ref, sha256}`.
+- `diffs`: array of `{path, ref, sha256}`.
+- `timing`: `{startedAt, finishedAt, durationMs}`.
+- `deliveredEdges`: array of `{edgeId, toNodeId, toPortId, ref}`.
+- `openDispatches`: array of `{dispatchId, nodeId, slotId, agentId, sessionRef,
+  dispatchSeq}`.
+
+## Dispatcher Lease And Idempotency
+
+`slot_dispatch.dispatchId` is the durable lease for one attempted delivery to
+one slot. It is unique within a run and includes the run id, epoch, node id, slot
+id, and attempt in its generated value or payload. The engine must append
+`slot_dispatch` and fsync the ledger before calling the adapter boundary that can
+send text to tmux. For tmux adapters, `nativeAck` is always `false`; a future
+adapter may set a native acknowledgement token, but it never replaces
+ledger-before-send ordering.
+
+Replay handles an open dispatch lease as follows:
+
+1. If a matching `slot_result` exists, the slot is complete and is never
+   redispatched.
+2. If the recorded `sessionRef` is live, the engine reattaches capture and
+   waits for a matching sentinel or idle-timeout result.
+3. If capture proves the agent finished while the engine was down, append
+   `slot_result` from captured output.
+4. If the session is missing, dead, ambiguous, or capture cannot be reattached,
+   append `error` and then `run_blocked`.
+5. Never send the original prompt a second time without an explicit operator
+   resume that appends `run_resumed`, advances the epoch, and creates a new
+   `slot_dispatch`.
+
+Automatic replay or process reconnect does not advance the epoch. It may append
+`slot_result` for a proven completed dispatch, or `error` followed by
+`run_blocked` when recovery cannot be proven. Explicit resume from a blocked run
+always advances the epoch, even when the first resumed action is reattaching
+capture rather than redispatching.
+
+Adapter output is data only. Captured text, sentinels, artifact paths, and
+escalation reasons are recorded and parsed; they are never executed.
+
+## Projection Mapping
+
+Status is projected by replaying events in ascending `seq`. Missing or duplicate
+sequence numbers make the ledger invalid and surface as `error` on read. A
+projector must be deterministic and must not inspect live tmux state or current
+board/layout/persona files after `run_started`; it uses only the ledger and the
+snapshots named there. Runtime recovery is a separate reconciler that appends
+events; projection changes only after those events exist.
+
+Run projection:
+
+- `run_started` initializes status `running`.
+- `run_blocked` projects status `blocked` for its epoch and stops automatic
+  dispatch until explicit resume appends a higher-epoch event.
+- `run_resumed` projects status `running` for the new epoch and records the
+  blocked sequence being resumed.
+- `run_succeeded`, `run_failed`, and `run_canceled` project final statuses and
+  reject further appends.
+- An open `slot_dispatch` without a result projects `running` with open
+  dispatches from the ledger. If recovery cannot reattach or prove completion,
+  the reconciler appends `error` and `run_blocked`; only then does projection
+  become `blocked`.
+
+Node projection:
+
+- `node_waiting` projects waiting readiness counts.
+- `node_started` projects `running` and the current `attempt`.
+- `slot_dispatch` marks a slot in flight.
+- `slot_result` marks that slot complete, failed, or needs review.
+- `node_output` projects `done`, `needs-review`, or `blocked` and delivers the
+  listed output edges.
+- `gate_evaluating`, `gate_verdict`, `verification_verdict`,
+  `human_input_requested`, and `human_verdict_recorded` project gate or
+  verification state from the latest event for that object in the current epoch.
 
 ## API Surface
 
@@ -356,7 +504,6 @@ These are real design topics but not required to unblock S1/S2:
 - Gate-level `--onfail`; S0 uses fail wiring and keeps `onFail` only on
   verification.
 - Multiple edges to one formation input port; S0 uses one edge per input port.
-- Full S4 ledger payload schemas beyond the envelope and terminal events above.
 - Interactive keystroke forwarding inside canvas terminal popups.
 - Broad undo matrices for every S3/S4 mutation beyond the structural cases in
   `canvas.feature`.

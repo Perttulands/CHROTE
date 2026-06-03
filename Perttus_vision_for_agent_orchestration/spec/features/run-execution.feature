@@ -161,5 +161,5 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
     Given a per-run max-dispatch count and wall-clock timeout
     When either limit is exceeded
     Then the run records the limit hit as "error"
-    And records "run_blocked" as the terminal event (record-and-stop, not approval)
+    And records "run_blocked" as the epoch-stopping event (record-and-stop, not approval)
     # Honors "no safeguards" (no gating) while preventing the runaway-cost failure mode.

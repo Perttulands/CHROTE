@@ -138,12 +138,13 @@ gate `pass`/`fail`→next, and formation↔gate `judge`. Node positions and hand
 run_started · node_waiting · node_started · slot_dispatch · slot_result · node_output ·
 gate_evaluating · gate_verdict · verification_verdict · artifact_attached ·
 escalation_raised · human_input_requested · human_verdict_recorded ·
-error · run_blocked · run_canceled · run_failed · run_succeeded
+error · run_blocked · run_resumed · run_canceled · run_failed · run_succeeded
 ```
 
 Every event uses the envelope in [`contracts.md`](contracts.md). `run_started` includes run id, board id,
-board revision or snapshot, mission id, monotonic sequence, actor, and initial attempt/epoch. Terminal
-events are exactly `run_succeeded`, `run_failed`, `run_blocked`, and `run_canceled`.
+board revision, board snapshot, binding snapshot, mission id, monotonic sequence, actor, and initial
+attempt/epoch. Final whole-run events are exactly `run_succeeded`, `run_failed`, and `run_canceled`.
+`run_blocked` stops the current epoch and can be resumed explicitly with `run_resumed`.
 
 ## Sentinels (completion + escalation over tmux, no native ACK)
 
@@ -160,7 +161,11 @@ as **data**, never executed.
 ~/agents/<id>.toml                                  # central persona cards (cross-project)
 <workspace>/.formations/boards/<board>.formation.toml   # definition (structure) — TOML
 <workspace>/.formations/layout/<board>.layout.toml      # presentation (x/y, lanes) — sidecar
-<workspace>/.formations/runs/<board>/<run-id>.ndjson    # append-only run ledger (+ latest.json)
+<workspace>/.formations/runs/<board>/<run-id>.ndjson    # append-only run ledger
+<workspace>/.formations/runs/<board>/<run-id>.snapshot.toml
+<workspace>/.formations/runs/<board>/<run-id>.bindings.toml
+<workspace>/.formations/runs/<board>/<run-id>.refs/
+<workspace>/.formations/runs/<board>/latest.json        # regenerable cache
 # .formations/board.ndjson (notice board) — DEFERRED
 ```
 Kill switches: `chrote-formations` (UI localStorage flag, default off) · `CHROTE_FORMATIONS` (server
