@@ -3,6 +3,7 @@ package formations
 import (
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -170,12 +171,15 @@ func TestRunEngineWallClockLimitBlocksSlowExecutor(t *testing.T) {
 }
 
 type slowRunExecutor struct {
+	mu    sync.Mutex
 	delay time.Duration
 	calls []FormationExecution
 }
 
 func (f *slowRunExecutor) ExecuteFormation(req FormationExecution) (FormationExecutionResult, error) {
+	f.mu.Lock()
 	f.calls = append(f.calls, req)
+	f.mu.Unlock()
 	time.Sleep(f.delay)
 	return FormationExecutionResult{
 		Status:    "done",
@@ -185,6 +189,8 @@ func (f *slowRunExecutor) ExecuteFormation(req FormationExecution) (FormationExe
 }
 
 func (f *slowRunExecutor) nodeIDs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	ids := make([]string, 0, len(f.calls))
 	for _, call := range f.calls {
 		ids = append(ids, call.NodeID)
