@@ -17,7 +17,9 @@ import (
 	"time"
 
 	"github.com/chrote/server/internal/api"
+	"github.com/chrote/server/internal/core"
 	"github.com/chrote/server/internal/dashboard"
+	"github.com/chrote/server/internal/formations"
 	"github.com/chrote/server/internal/proxy"
 )
 
@@ -26,12 +28,13 @@ var Version = "0.2.0"
 
 // Config holds server configuration
 type Config struct {
-	Host         string
-	Port         int
-	TtydPort     int
-	APIAuthToken string
-	CORSOrigins  []string
-	StartTtyd    bool
+	Host              string
+	Port              int
+	TtydPort          int
+	APIAuthToken      string
+	CORSOrigins       []string
+	StartTtyd         bool
+	FormationsEnabled bool
 }
 
 func main() {
@@ -63,35 +66,13 @@ func main() {
 			config.CORSOrigins[i] = strings.TrimSpace(config.CORSOrigins[i])
 		}
 	}
+	config.FormationsEnabled = formationsEnabled(os.Getenv("CHROTE_FORMATIONS"))
 
 	// Create main mux
 	mux := http.NewServeMux()
 
-	// Register API handlers
-	tmuxHandler := api.NewTmuxHandler()
-	tmuxHandler.RegisterRoutes(mux)
-
-	beadsHandler := api.NewBeadsHandler()
-	beadsHandler.RegisterRoutes(mux)
-
-	filesHandler := api.NewFilesHandler()
-	filesHandler.RegisterRoutes(mux)
-
-	healthHandler := api.NewHealthHandlerWithVersion(Version)
-	healthHandler.RegisterRoutes(mux)
-
-	servicesHandler := api.NewServicesHandler(api.LoadServiceConfigFromEnv())
-	servicesHandler.RegisterRoutes(mux)
-
-	systemHandler := api.NewSystemHandler()
-	systemHandler.RegisterRoutes(mux)
-
-	oracleHandler := api.NewOracleHandler(tmuxHandler, beadsHandler)
-	oracleHandler.RegisterRoutes(mux)
-
-	// Create terminal proxy
-	terminalProxy := proxy.NewTerminalProxy(config.TtydPort)
-	terminalProxy.RegisterRoutes(mux)
+	terminalProxy := registerRuntimeRoutes(mux, config)
+	registerAPIFallback(mux)
 
 	// Serve embedded dashboard at root
 	dashboardHandler := dashboard.Handler()
@@ -155,6 +136,42 @@ func main() {
 	log.Println("Server stopped")
 }
 
+func registerRuntimeRoutes(mux *http.ServeMux, config Config) *proxy.TerminalProxy {
+	tmuxHandler := api.NewTmuxHandler()
+	tmuxHandler.RegisterRoutes(mux)
+
+	beadsHandler := api.NewBeadsHandler()
+	beadsHandler.RegisterRoutes(mux)
+
+	filesHandler := api.NewFilesHandler()
+	filesHandler.RegisterRoutes(mux)
+
+	healthHandler := api.NewHealthHandlerWithVersion(Version)
+	healthHandler.RegisterRoutes(mux)
+
+	servicesHandler := api.NewServicesHandler(api.LoadServiceConfigFromEnv())
+	servicesHandler.RegisterRoutes(mux)
+
+	systemHandler := api.NewSystemHandler()
+	systemHandler.RegisterRoutes(mux)
+
+	oracleHandler := api.NewOracleHandler(tmuxHandler, beadsHandler)
+	oracleHandler.RegisterRoutes(mux)
+
+	if config.FormationsEnabled {
+		agentsHandler := api.NewAgentsHandler(formations.DefaultAgentsDir(), oracleHandler)
+		agentsHandler.RegisterRoutes(mux)
+
+		formationsHandler := api.NewFormationsHandler(core.GetWorkDir())
+		formationsHandler.RegisterRoutes(mux)
+	}
+
+	// Create terminal proxy
+	terminalProxy := proxy.NewTerminalProxy(config.TtydPort)
+	terminalProxy.RegisterRoutes(mux)
+	return terminalProxy
+}
+
 // mustParsePort parses a port string and fatals on invalid values.
 func mustParsePort(name, raw string) int {
 	n, err := strconv.Atoi(raw)
@@ -165,6 +182,26 @@ func mustParsePort(name, raw string) int {
 		log.Fatalf("invalid %s=%d: must be 1-65535", name, n)
 	}
 	return n
+}
+
+func formationsEnabled(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func registerAPIFallback(mux *http.ServeMux) {
+	mux.HandleFunc("/api", apiNotFound)
+	mux.HandleFunc("/api/", apiNotFound)
+}
+
+func apiNotFound(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotFound)
+	_, _ = w.Write([]byte(`{"success":false,"error":{"code":"NOT_FOUND","message":"API route not found"}}`))
 }
 
 // corsMiddleware adds CORS headers

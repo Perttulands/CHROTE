@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { isFeatureEnabled } from '../featureFlags'
 
-export type Tab = 'terminal1' | 'terminal2' | 'files' | 'agents' | 'beads' | 'services' | 'server' | 'settings' | 'help'
+export type Tab = 'terminal1' | 'terminal2' | 'files' | 'agents' | 'beads' | 'formations' | 'services' | 'server' | 'settings' | 'help'
 
 interface InternalTab {
   id: Tab
@@ -60,6 +60,7 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
     { id: 'files', label: 'Files' },
     { id: 'agents', label: 'Agents' },
     { id: 'beads', label: 'Beads' },
+    ...(isFeatureEnabled('formations') ? [{ id: 'formations' as const, label: 'Formations' }] : []),
     { id: 'services', label: 'Services' },
     ...(isFeatureEnabled('serverStatusTab') ? [{ id: 'server' as const, label: 'Server' }] : []),
     { id: 'settings', label: 'Settings' },

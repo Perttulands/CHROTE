@@ -4,7 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"reflect"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 )
@@ -207,6 +211,35 @@ func TestIsAgentSession(t *testing.T) {
 	}
 }
 
+func TestOracleHandlerLiveAgentSessionsUsesUnfilteredSessionNames(t *testing.T) {
+	argsPath := installLiveAgentSessionsTmux(t)
+	handler := NewOracleHandler(NewTmuxHandler(), NewBeadsHandler())
+	defer handler.Stop()
+
+	live, err := handler.LiveAgentSessions()
+
+	if err != nil {
+		t.Fatalf("LiveAgentSessions error = %v", err)
+	}
+	wantNames := []string{"susie", "scratch", "codex-run"}
+	gotNames := make([]string, 0, len(live))
+	for _, session := range live {
+		gotNames = append(gotNames, session.Name)
+		if session.Status != "live" {
+			t.Fatalf("session %q status = %q, want live", session.Name, session.Status)
+		}
+	}
+	if !reflect.DeepEqual(gotNames, wantNames) {
+		t.Fatalf("live session names = %#v, want %#v", gotNames, wantNames)
+	}
+	if !live[0].Attached || live[1].Attached || live[2].Attached {
+		t.Fatalf("attached flags = %#v, want only susie attached", live)
+	}
+	if gotCalls := readLines(t, argsPath); !reflect.DeepEqual(gotCalls, []string{"list-sessions -F #{session_name}:#{session_attached}"}) {
+		t.Fatalf("tmux calls = %#v, want only unfiltered list-sessions", gotCalls)
+	}
+}
+
 func TestOracleHandler_New(t *testing.T) {
 	tmux := NewTmuxHandler()
 	beads := NewBeadsHandler()
@@ -231,6 +264,50 @@ func TestOracleHandler_New(t *testing.T) {
 	if handler.clients == nil {
 		t.Error("clients map is nil")
 	}
+}
+
+func installLiveAgentSessionsTmux(t *testing.T) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	argsPath := filepath.Join(dir, "tmux-args.txt")
+	scriptPath := filepath.Join(dir, "tmux")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_ARGS_FILE"
+case "$*" in
+  "list-sessions -F #{session_name}:#{session_attached}")
+    printf 'susie:1\nscratch:0\ncodex-run:0\n'
+    ;;
+  *)
+    printf 'unexpected tmux call: %s\n' "$*" >&2
+    exit 9
+    ;;
+esac
+`
+	if err := os.WriteFile(scriptPath, []byte(script), 0700); err != nil {
+		t.Fatalf("write fake tmux command: %v", err)
+	}
+	if err := os.WriteFile(argsPath, nil, 0600); err != nil {
+		t.Fatalf("write fake tmux args file: %v", err)
+	}
+
+	t.Setenv("TMUX_ARGS_FILE", argsPath)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return argsPath
+}
+
+func readLines(t *testing.T, path string) []string {
+	t.Helper()
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read lines: %v", err)
+	}
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" {
+		return nil
+	}
+	return strings.Split(trimmed, "\n")
 }
 
 func TestOracleHandler_RegisterRoutes(t *testing.T) {

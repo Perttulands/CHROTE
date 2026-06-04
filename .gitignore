@@ -15,6 +15,7 @@ filebrowser_data/
 # Temporary files
 tmpclaude-*
 *.tmp
+*:Zone.Identifier
 
 # Node modules (rebuild from package.json)
 dashboard/node_modules/

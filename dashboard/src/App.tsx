@@ -10,6 +10,8 @@ import SettingsView from './components/SettingsView'
 import FloatingModal from './components/FloatingModal'
 import HelpView from './components/HelpView'
 import BeadsView from './components/BeadsView'
+import FormationsView from './components/FormationsView'
+import AgentsView from './components/AgentsView'
 import OracleView from './components/OracleView'
 import OracleViewV2 from './components/OracleView/V2'
 import ServicesView from './components/ServicesView'
@@ -41,17 +43,25 @@ function DashboardContent() {
   const [showPresets, setShowPresets] = useState(false)
   const { addSessionToWindow, removeSessionFromWindow, setIsDragging, isDragging, settings } = useSession()
   const persistFilesTabState = isFeatureEnabled('filesPersistTabState')
+  const formationsEnabled = isFeatureEnabled('formations')
   const serverStatusTab = isFeatureEnabled('serverStatusTab')
 
   const handleShowHelp = useCallback(() => setShowHelp(true), [])
   const handleCloseHelp = useCallback(() => setShowHelp(false), [])
   const handleShowPresets = useCallback(() => setShowPresets(true), [])
   const handleClosePresets = useCallback(() => setShowPresets(false), [])
+  const handleTabChange = useCallback((tab: Tab) => {
+    if (tab === 'formations' && !isFeatureEnabled('formations')) {
+      setActiveTab('terminal1')
+      return
+    }
+    setActiveTab(tab)
+  }, [])
 
   // Global keyboard shortcuts
   useKeyboardShortcuts({
     activeTab,
-    onTabChange: setActiveTab,
+    onTabChange: handleTabChange,
     onShowHelp: handleShowHelp,
     isHelpOpen: showHelp,
   })
@@ -64,6 +74,12 @@ function DashboardContent() {
   useEffect(() => {
     installFeatureFlagHelpers()
   }, [])
+
+  useEffect(() => {
+    if (!formationsEnabled && activeTab === 'formations') {
+      setActiveTab('terminal1')
+    }
+  }, [activeTab, formationsEnabled])
 
   // Apply font size as CSS variable for terminal styling
   useEffect(() => {
@@ -125,7 +141,7 @@ function DashboardContent() {
       <div className={`dashboard ${isDragging ? 'is-dragging' : ''}`}>
         <TabBar
           activeTab={activeTab}
-          onTabChange={setActiveTab}
+          onTabChange={handleTabChange}
           onShowHelp={handleShowHelp}
           onShowPresets={handleShowPresets}
         />
@@ -153,9 +169,14 @@ function DashboardContent() {
               <BeadsView />
             </ErrorBoundary>
           )}
+          {formationsEnabled && activeTab === 'formations' && (
+            <ErrorBoundary>
+              <FormationsView />
+            </ErrorBoundary>
+          )}
           {activeTab === 'agents' && (
             <ErrorBoundary>
-              {UI_V2 ? <OracleViewV2 /> : <OracleView />}
+              {formationsEnabled ? <AgentsView /> : (UI_V2 ? <OracleViewV2 /> : <OracleView />)}
             </ErrorBoundary>
           )}
           {activeTab === 'services' && (

@@ -1,12 +1,17 @@
 import { defineConfig, devices } from '@playwright/test'
 
 const liveBackend = process.env.CHROTE_PLAYWRIGHT_LIVE === '1'
+const formationsOnly = process.env.CHROTE_PLAYWRIGHT_FORMATIONS === '1'
 const devServerURL = 'http://localhost:5173'
 const liveBackendURL = process.env.CHROTE_TEST_URL ?? 'http://127.0.0.1:8094'
+const localOnlyIgnores = [
+  '**/integration/**',
+  ...(formationsOnly ? [] : ['**/formations/**']),
+]
 
 export default defineConfig({
   testDir: './tests',
-  testIgnore: liveBackend ? [] : ['**/integration/**'],
+  testIgnore: liveBackend ? [] : localOnlyIgnores,
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
@@ -21,11 +26,17 @@ export default defineConfig({
       name: 'live-backend',
       use: { ...devices['Desktop Chrome'] },
     },
+  ] : formationsOnly ? [
+    {
+      name: 'formations',
+      use: { ...devices['Desktop Chrome'] },
+      testMatch: 'formations/**/*.spec.ts',
+    },
   ] : [
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
-      testIgnore: ['**/mobile.spec.ts', '**/integration/**'],
+      testIgnore: ['**/mobile.spec.ts', '**/integration/**', '**/formations/**'],
     },
     {
       name: 'mobile',
