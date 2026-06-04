@@ -2,8 +2,8 @@
   flex: 1;
   width: 100%;
   min-width: 0;
-  display: grid;
-  grid-template-rows: auto auto 1fr;
+  display: flex;
+  flex-direction: column;
   height: 100%;
   min-height: 420px;
   background: var(--background);
@@ -167,6 +167,7 @@
 }
 
 .formations-canvas {
+  flex: 1 1 auto;
   position: relative;
   min-height: 0;
   height: 100%;
