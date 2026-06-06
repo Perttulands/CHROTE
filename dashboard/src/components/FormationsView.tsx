@@ -1,237 +1,77 @@
 import { MouseEvent, PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LocateFixed, Minus, Plus } from 'lucide-react'
+import {
+  cloneBrief,
+  cloneVerification,
+  findAddedByID,
+  findAddedPort,
+  judgeChainWithReturn,
+  undoBoardPatch,
+  upsertNode,
+} from './formationsBoardModel'
+import { clampScale, defaultPosition, endpointNodeId, screenPointToWorld, visibleWirePath, zoomTransform } from './formationsCanvas'
+import {
+  ApiRequestError,
+  abortRunRequest,
+  fetchAgents,
+  fetchBoardChanged,
+  fetchBoardDocument,
+  fetchBoardLayout,
+  fetchBoardSummaries,
+  fetchRunEvents,
+  fetchRunStatus,
+  missingLayoutForBoard,
+  patchBoardDocument,
+  patchBoardLayout,
+  recordGateVerdict,
+  resumeRunRequest,
+  startRun,
+  type PatchCreateFormationResult,
+} from './formationsApi'
 import { routeFormationWire, type ObstacleRect } from './formationsRouting'
-
-interface ApiResponse<T> {
-  success: boolean
-  data?: T
-  error?: { code: string; message: string }
-}
-
-interface BoardSummary {
-  id: string
-  slug: string
-  title: string
-  rev: number
-  etag: string
-}
-
-interface FormationPort {
-  id: string
-  label: string
-}
-
-interface FormationSlot {
-  id: string
-  label: string
-  controller: boolean
-  agentId?: string
-  harness?: string
-}
-
-interface FormationBrief {
-  goal?: string
-  beadId?: string
-  files?: string[]
-  links?: string[]
-}
-
-interface FormationVerification {
-  id: string
-  kinds: string[]
-  criterion: string
-  onFail: 'block' | 'pushback'
-}
-
-interface FormationNode {
-  id: string
-  type: 'solo' | 'peer' | 'flow' | 'orchestrated'
-  title: string
-  brief?: FormationBrief
-  inputs: FormationPort[]
-  outputs: FormationPort[]
-  slots: FormationSlot[]
-  verification?: FormationVerification
-}
-
-interface BoardConnection {
-  id: string
-  from: string
-  to: string
-}
-
-interface BoardDocument {
-  id: string
-  slug: string
-  title: string
-  rev: number
-  etag: string
-  missions?: MissionNode[]
-  formations: FormationNode[]
-  gates?: GateNode[]
-  connections: BoardConnection[]
-}
-
-interface MissionNode {
-  id: string
-  title: string
-  goal: string
-  beadId: string
-}
-
-interface GateNode {
-  id: string
-  title: string
-  kinds: string[]
-  criterion: string
-}
-
-interface RunStatusProjection {
-  runId: string
-  status: string
-  final: boolean
-  boardSlug: string
-  missionId: string
-  eventCount: number
-  resumeAllowed?: boolean
-}
-
-interface RunEvent {
-  seq: number
-  type: string
-  runId: string
-  nodeId?: string
-  gateId?: string
-  data?: Record<string, unknown>
-}
-
-interface RunStartResult {
-  runId: string
-  status: RunStatusProjection
-}
-
-interface RunStatusResult {
-  status: RunStatusProjection
-}
-
-interface LayoutNode {
-  id: string
-  x: number
-  y: number
-}
-
-interface LayoutEdge {
-  id: string
-  lane: string
-}
-
-interface LayoutDocument {
-  boardId: string
-  boardRev: number
-  etag: string
-  nodes: LayoutNode[]
-  edges?: LayoutEdge[]
-}
-
-interface ViewTransform {
-  x: number
-  y: number
-  scale: number
-}
-
-interface ContextMenuItem {
-  label: string
-  action?: () => void
-  destructive?: boolean
-  disabled?: boolean
-}
-
-interface ContextMenuState {
-  label: string
-  x: number
-  y: number
-  items: ContextMenuItem[]
-}
-
-interface AgentProjection {
-  id: string
-  displayName?: string
-  harnessDefault?: string
-  assignable: boolean
-  unbound?: boolean
-  liveness?: string
-}
-
-interface BriefDraft {
-  goal: string
-  beadId: string
-  files: string
-  links: string
-}
-
-interface VerificationDraft {
-  criterion: string
-  onFail: 'block' | 'pushback'
-}
-
-interface TerminalPopup {
-  agentId: string
-  title: string
-  liveness: string
-  x: number
-  y: number
-  width: number
-  height: number
-  focusedAt: number
-  dragged?: boolean
-  resized?: boolean
-}
-
-type WireDragState =
-  | { kind: 'new'; from: string }
-  | { kind: 'reconnect-target'; connection: BoardConnection }
-  | { kind: 'judge'; gateId: string }
-
-type UndoAction =
-  | { kind: 'deleteFormation'; formationId: string }
-  | { kind: 'deleteGate'; gateId: string }
-  | { kind: 'deleteMission'; missionId: string }
-  | { kind: 'assignSlot'; formationId: string; slotId: string; agentId: string; harness: string }
-  | { kind: 'makeController'; formationId: string; slotId: string }
-  | { kind: 'setBrief'; formationId: string; brief?: FormationBrief }
-  | { kind: 'setVerification'; formationId: string; verification?: FormationVerification }
-  | { kind: 'removePort'; formationId: string; portId: string }
-  | { kind: 'unwireConnection'; from: string; to: string }
-  | { kind: 'moveNode'; node: LayoutNode }
-
-type BoardUndoAction = Exclude<UndoAction, { kind: 'moveNode'; node: LayoutNode }>
-
-class ApiRequestError extends Error {
-  status: number
-  code: string
-
-  constructor(message: string, status: number, code: string) {
-    super(message)
-    this.status = status
-    this.code = code
-  }
-}
-
-async function fetchApi<T>(endpoint: string, init?: RequestInit): Promise<{ data: T; etag: string }> {
-  const response = await fetch(endpoint, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers || {}),
-    },
-    signal: AbortSignal.timeout(10000),
-  })
-  const result = await response.json() as ApiResponse<T>
-  if (!response.ok || !result.success || !result.data) {
-    throw new ApiRequestError(result.error?.message || `Request failed: ${response.status}`, response.status, result.error?.code || '')
-  }
-  return { data: result.data, etag: response.headers.get('ETag') || '' }
-}
+import {
+  activeRunStorageKey,
+  runEventReportRef,
+  runEventResumeAllowed,
+  runEventText,
+  runEventTypes,
+  runStatusFromResponse,
+  statusFromRunEvent,
+  upsertRunEvent,
+} from './formationsRunState'
+import { isOptionalSafeBeadsIssueID, isSafeBeadsIssueID } from './formationsBeadId'
+import {
+  applyStarterBoardPatch,
+  createStarterBoard,
+  createStarterLayout,
+  isStarterBoard,
+  starterBoardSummary,
+  withStarterLayoutRev,
+} from './formationsStarterBoard'
+import type {
+  AgentProjection,
+  BoardConnection,
+  BoardDocument,
+  BoardSummary,
+  BriefDraft,
+  ContextMenuItem,
+  ContextMenuState,
+  FormationNode,
+  FormationPort,
+  FormationSlot,
+  GateNode,
+  LayoutDocument,
+  LayoutEdge,
+  LayoutNode,
+  MissionNode,
+  RunEvent,
+  RunStatusProjection,
+  TerminalPopup,
+  UndoAction,
+  VerificationDraft,
+  ViewTransform,
+  WireDragState,
+} from './formationsTypes'
 
 const cardWidth = 240
 const cardHeight = 150
@@ -242,538 +82,6 @@ const typeLabels: Record<FormationNode['type'], string> = {
   peer: 'Peer',
   flow: 'Flow',
   orchestrated: 'Orchestrated',
-}
-
-const runEventTypes = [
-  'run_started',
-  'run_resumed',
-  'node_waiting',
-  'node_started',
-  'slot_dispatch',
-  'slot_result',
-  'node_output',
-  'gate_evaluating',
-  'gate_verdict',
-  'human_input_requested',
-  'human_verdict_recorded',
-  'verification_verdict',
-  'escalation_raised',
-  'error',
-  'run_blocked',
-  'run_canceled',
-  'run_failed',
-  'run_succeeded',
-]
-
-const starterBoardID = 'brd_starter_session_search'
-const starterBoardSlug = 'starter-session-search'
-const starterBoardETag = 'starter-board-etag-1'
-const starterLayoutETag = 'starter-layout-etag-1'
-let starterLocalSequence = 0
-
-function createStarterBoard(): BoardDocument {
-  return {
-    id: starterBoardID,
-    slug: starterBoardSlug,
-    title: 'Improve session search',
-    rev: 1,
-    etag: starterBoardETag,
-    missions: [{
-      id: 'mis_starter_session_search',
-      title: 'Improve session search',
-      goal: 'Make session search fuzzy and keyboard-first',
-      beadId: 'home-pfyv',
-    }],
-    formations: [
-      {
-        id: 'fmn_starter_frame',
-        type: 'solo',
-        title: 'Frame the goal',
-        brief: {
-          goal: 'Turn the manual report into clear acceptance criteria',
-          beadId: 'home-pfyv',
-        },
-        inputs: [{ id: 'in', label: 'Input' }],
-        outputs: [{ id: 'out', label: 'Output' }],
-        slots: [{ id: 'slot_starter_frame_agent', label: 'Agent', controller: false, agentId: 'conductor' }],
-      },
-      {
-        id: 'fmn_starter_research',
-        type: 'peer',
-        title: 'Research huddle',
-        inputs: [{ id: 'in', label: 'Input' }],
-        outputs: [{ id: 'out', label: 'Output' }],
-        slots: [
-          { id: 'slot_starter_research_a', label: 'Peer', controller: false, agentId: 'codex' },
-          { id: 'slot_starter_research_b', label: 'Peer', controller: false, agentId: 'claude-code' },
-        ],
-        verification: {
-          id: 'ver_starter_research',
-          kinds: ['code'],
-          criterion: 'both reads converge on a safe recommendation',
-          onFail: 'block',
-        },
-      },
-      {
-        id: 'fmn_starter_ship',
-        type: 'flow',
-        title: 'Ship a change',
-        inputs: [{ id: 'in', label: 'Input' }],
-        outputs: [{ id: 'out', label: 'Output' }],
-        slots: [
-          { id: 'slot_starter_ship_plan', label: 'Plan', controller: false, agentId: 'scout' },
-          { id: 'slot_starter_ship_execute', label: 'Execute', controller: false, agentId: 'refiner' },
-          { id: 'slot_starter_ship_push', label: 'Push', controller: false, agentId: 'mason' },
-        ],
-      },
-      {
-        id: 'fmn_starter_triage',
-        type: 'orchestrated',
-        title: 'Triage desk',
-        inputs: [{ id: 'in', label: 'Input' }],
-        outputs: [{ id: 'out', label: 'Output' }],
-        slots: [
-          { id: 'slot_starter_triage_orchestrator', label: 'Orchestrator', controller: true, agentId: 'conductor' },
-          { id: 'slot_starter_triage_a', label: 'Agent', controller: false, agentId: 'witness' },
-          { id: 'slot_starter_triage_b', label: 'Agent', controller: false },
-          { id: 'slot_starter_triage_c', label: 'Agent', controller: false },
-        ],
-      },
-    ],
-    gates: [{
-      id: 'gate_starter_review',
-      title: 'Review gate',
-      kinds: ['human', 'code'],
-      criterion: 'research is sound and the plan is safe to build',
-    }],
-    connections: [
-      { id: 'edge_starter_mission_frame', from: 'mis_starter_session_search:out', to: 'fmn_starter_frame:in' },
-      { id: 'edge_starter_frame_research', from: 'fmn_starter_frame:out', to: 'fmn_starter_research:in' },
-      { id: 'edge_starter_research_gate', from: 'fmn_starter_research:out', to: 'gate_starter_review:in' },
-      { id: 'edge_starter_gate_ship', from: 'gate_starter_review:pass', to: 'fmn_starter_ship:in' },
-    ],
-  }
-}
-
-function createStarterLayout(): LayoutDocument {
-  return {
-    boardId: starterBoardID,
-    boardRev: 1,
-    etag: starterLayoutETag,
-    nodes: [
-      { id: 'mis_starter_session_search', x: 70, y: 90 },
-      { id: 'fmn_starter_frame', x: 350, y: 70 },
-      { id: 'fmn_starter_research', x: 650, y: 70 },
-      { id: 'gate_starter_review', x: 950, y: 95 },
-      { id: 'fmn_starter_ship', x: 1250, y: 70 },
-      { id: 'fmn_starter_triage', x: 350, y: 380 },
-    ],
-    edges: [],
-  }
-}
-
-function starterBoardSummary(board: BoardDocument): BoardSummary {
-  return {
-    id: board.id,
-    slug: board.slug,
-    title: board.title,
-    rev: board.rev,
-    etag: board.etag,
-  }
-}
-
-function isStarterBoard(board: BoardDocument | null | undefined): boolean {
-  return board?.id === starterBoardID && board.slug === starterBoardSlug
-}
-
-function starterID(prefix: string): string {
-  starterLocalSequence += 1
-  return `${prefix}_starter_local_${starterLocalSequence}`
-}
-
-function localFormation(type: FormationNode['type'], title: string): FormationNode {
-  const id = starterID('fmn')
-  return {
-    id,
-    type,
-    title: title || typeLabels[type],
-    inputs: [{ id: starterID('port'), label: 'Input' }],
-    outputs: [{ id: starterID('port'), label: 'Output' }],
-    slots: localFormationSlots(type),
-  }
-}
-
-function localFormationSlots(type: FormationNode['type']): FormationSlot[] {
-  switch (type) {
-    case 'solo':
-      return [{ id: starterID('slot'), label: 'Agent', controller: false }]
-    case 'peer':
-      return [
-        { id: starterID('slot'), label: 'Peer', controller: false },
-        { id: starterID('slot'), label: 'Peer', controller: false },
-      ]
-    case 'flow':
-      return [
-        { id: starterID('slot'), label: 'Plan', controller: false },
-        { id: starterID('slot'), label: 'Execute', controller: false },
-        { id: starterID('slot'), label: 'Push', controller: false },
-      ]
-    case 'orchestrated':
-      return [
-        { id: starterID('slot'), label: 'Orchestrator', controller: true },
-        { id: starterID('slot'), label: 'Agent', controller: false },
-        { id: starterID('slot'), label: 'Agent', controller: false },
-      ]
-  }
-}
-
-function withStarterBoardRev(board: BoardDocument): BoardDocument {
-  const rev = board.rev + 1
-  return {
-    ...board,
-    rev,
-    etag: `starter-board-etag-${rev}`,
-  }
-}
-
-function withStarterLayoutRev(layout: LayoutDocument, boardRev: number): LayoutDocument {
-  return {
-    ...layout,
-    boardRev,
-    etag: `starter-layout-etag-${boardRev}-${starterLocalSequence}`,
-  }
-}
-
-function applyStarterBoardPatch(
-  board: BoardDocument,
-  layout: LayoutDocument,
-  patch: Record<string, unknown>
-): { board: BoardDocument; layout?: LayoutDocument } {
-  const createFormation = patch.createFormation as Partial<{
-    type: FormationNode['type']
-    title: string
-    x: number
-    y: number
-  }> | undefined
-  if (createFormation) {
-    const type = isFormationType(createFormation.type) ? createFormation.type : 'solo'
-    const formation = localFormation(type, String(createFormation.title || typeLabels[type]))
-    const nextBoard = withStarterBoardRev({
-      ...board,
-      formations: [...board.formations, formation],
-    })
-    return {
-      board: nextBoard,
-      layout: withStarterLayoutRev({
-        ...layout,
-        nodes: upsertNode(layout.nodes || [], {
-          id: formation.id,
-          x: Number(createFormation.x || 120),
-          y: Number(createFormation.y || 120),
-        }),
-      }, nextBoard.rev),
-    }
-  }
-
-  const createGate = patch.createGate as Partial<{ title: string; kinds: string[]; criterion: string }> | undefined
-  if (createGate) {
-    const gate: GateNode = {
-      id: starterID('gate'),
-      title: createGate.title || 'Review gate',
-      kinds: createGate.kinds?.length ? createGate.kinds : ['code'],
-      criterion: createGate.criterion || '',
-    }
-    const nextBoard = withStarterBoardRev({
-      ...board,
-      gates: [...(board.gates || []), gate],
-    })
-    return {
-      board: nextBoard,
-      layout: withStarterLayoutRev({
-        ...layout,
-        nodes: upsertNode(layout.nodes || [], { id: gate.id, x: 420, y: 220 }),
-      }, nextBoard.rev),
-    }
-  }
-
-  const createMission = patch.createMission as Partial<{ title: string; goal: string; beadId: string }> | undefined
-  if (createMission) {
-    const mission: MissionNode = {
-      id: starterID('mis'),
-      title: createMission.title || 'Mission',
-      goal: createMission.goal || '',
-      beadId: createMission.beadId || 'home-pfyv',
-    }
-    const nextBoard = withStarterBoardRev({
-      ...board,
-      missions: [...(board.missions || []), mission],
-    })
-    return {
-      board: nextBoard,
-      layout: withStarterLayoutRev({
-        ...layout,
-        nodes: upsertNode(layout.nodes || [], { id: mission.id, x: 80, y: 280 }),
-      }, nextBoard.rev),
-    }
-  }
-
-  const deleteFormation = patch.deleteFormation as Partial<{ id: string }> | undefined
-  if (deleteFormation?.id) {
-    return deleteStarterNodes(board, layout, new Set([deleteFormation.id]))
-  }
-
-  const deleteGate = patch.deleteGate as Partial<{ id: string }> | undefined
-  if (deleteGate?.id) {
-    return deleteStarterNodes(board, layout, new Set([deleteGate.id]))
-  }
-
-  const deleteMission = patch.deleteMission as Partial<{ id: string }> | undefined
-  if (deleteMission?.id) {
-    return deleteStarterNodes(board, layout, new Set([deleteMission.id]))
-  }
-
-  const assignSlot = patch.assignSlot as Partial<{ formationId: string; slotId: string; agentId: string; harness: string }> | undefined
-  if (assignSlot?.formationId && assignSlot.slotId) {
-    return {
-      board: withStarterBoardRev({
-        ...board,
-        formations: board.formations.map(formation => formation.id === assignSlot.formationId
-          ? {
-            ...formation,
-            slots: formation.slots.map(slot => slot.id === assignSlot.slotId
-              ? { ...slot, agentId: assignSlot.agentId || undefined, harness: assignSlot.harness || undefined }
-              : slot),
-          }
-          : formation),
-      }),
-    }
-  }
-
-  const makeController = patch.makeController as Partial<{ formationId: string; slotId: string }> | undefined
-  if (makeController?.formationId && makeController.slotId) {
-    return {
-      board: withStarterBoardRev({
-        ...board,
-        formations: board.formations.map(formation => formation.id === makeController.formationId
-          ? {
-            ...formation,
-            slots: formation.slots.map(slot => ({ ...slot, controller: slot.id === makeController.slotId })),
-          }
-          : formation),
-      }),
-    }
-  }
-
-  const setBrief = patch.setBrief as Partial<{ formationId: string; goal: string; beadId: string; files: string[]; links: string[] }> | undefined
-  if (setBrief?.formationId) {
-    return {
-      board: withStarterBoardRev({
-        ...board,
-        formations: board.formations.map(formation => formation.id === setBrief.formationId
-          ? {
-            ...formation,
-            brief: {
-              goal: setBrief.goal || '',
-              beadId: setBrief.beadId || '',
-              files: setBrief.files || [],
-              links: setBrief.links || [],
-            },
-          }
-          : formation),
-      }),
-    }
-  }
-
-  const clearBrief = patch.clearBrief as Partial<{ formationId: string }> | undefined
-  if (clearBrief?.formationId) {
-    return {
-      board: withStarterBoardRev({
-        ...board,
-        formations: board.formations.map(formation => formation.id === clearBrief.formationId
-          ? { ...formation, brief: undefined }
-          : formation),
-      }),
-    }
-  }
-
-  const setVerification = patch.setVerification as Partial<{
-    formationId: string
-    kinds: string[]
-    criterion: string
-    onFail: 'block' | 'pushback'
-  }> | undefined
-  if (setVerification?.formationId) {
-    return {
-      board: withStarterBoardRev({
-        ...board,
-        formations: board.formations.map(formation => formation.id === setVerification.formationId
-          ? {
-            ...formation,
-            verification: {
-              id: formation.verification?.id || starterID('ver'),
-              kinds: setVerification.kinds?.length ? setVerification.kinds : ['code'],
-              criterion: setVerification.criterion || '',
-              onFail: setVerification.onFail || 'block',
-            },
-          }
-          : formation),
-      }),
-    }
-  }
-
-  const removeVerification = patch.removeVerification as Partial<{ formationId: string }> | undefined
-  if (removeVerification?.formationId) {
-    return {
-      board: withStarterBoardRev({
-        ...board,
-        formations: board.formations.map(formation => formation.id === removeVerification.formationId
-          ? { ...formation, verification: undefined }
-          : formation),
-      }),
-    }
-  }
-
-  const addPort = patch.addPort as Partial<{ formationId: string; direction: 'input' | 'output'; label: string }> | undefined
-  if (addPort?.formationId && (addPort.direction === 'input' || addPort.direction === 'output')) {
-    const port = { id: starterID('port'), label: addPort.label || (addPort.direction === 'input' ? 'Input' : 'Output') }
-    return {
-      board: withStarterBoardRev({
-        ...board,
-        formations: board.formations.map(formation => formation.id === addPort.formationId
-          ? addPort.direction === 'input'
-            ? { ...formation, inputs: [...formation.inputs, port] }
-            : { ...formation, outputs: [...formation.outputs, port] }
-          : formation),
-      }),
-    }
-  }
-
-  const removePort = patch.removePort as Partial<{ formationId: string; portId: string }> | undefined
-  if (removePort?.formationId && removePort.portId) {
-    const endpoint = `${removePort.formationId}:${removePort.portId}`
-    return {
-      board: withStarterBoardRev({
-        ...board,
-        formations: board.formations.map(formation => formation.id === removePort.formationId
-          ? {
-            ...formation,
-            inputs: formation.inputs.filter(input => input.id !== removePort.portId),
-            outputs: formation.outputs.filter(output => output.id !== removePort.portId),
-          }
-          : formation),
-        connections: board.connections.filter(connection => connection.from !== endpoint && connection.to !== endpoint),
-      }),
-    }
-  }
-
-  const wireConnection = patch.wireConnection as Partial<{ from: string; to: string }> | undefined
-  if (wireConnection?.from && wireConnection.to) {
-    if (
-      endpointNodeId(wireConnection.from) === endpointNodeId(wireConnection.to) ||
-      board.connections.some(connection => connection.from === wireConnection.from && connection.to === wireConnection.to)
-    ) {
-      return { board }
-    }
-    return {
-      board: withStarterBoardRev({
-        ...board,
-        connections: [
-          ...board.connections.filter(connection => connection.to !== wireConnection.to),
-          { id: starterID('edge'), from: wireConnection.from, to: wireConnection.to },
-        ],
-      }),
-    }
-  }
-
-  const unwireConnection = patch.unwireConnection as Partial<{ from: string; to: string }> | undefined
-  if (unwireConnection?.from && unwireConnection.to) {
-    return {
-      board: withStarterBoardRev({
-        ...board,
-        connections: board.connections.filter(connection => connection.from !== unwireConnection.from || connection.to !== unwireConnection.to),
-      }),
-    }
-  }
-
-  const setGateJudge = patch.setGateJudge as Partial<{ gateId: string; chain: string[] }> | undefined
-  if (setGateJudge?.gateId && setGateJudge.chain?.length) {
-    const gateID = setGateJudge.gateId
-    const judgeConnections = judgeConnectionsForChain(gateID, setGateJudge.chain)
-    return {
-      board: withStarterBoardRev({
-        ...board,
-        gates: (board.gates || []).map(gate => gate.id === gateID
-          ? { ...gate, kinds: Array.from(new Set([...gate.kinds, 'formation'])) }
-          : gate),
-        connections: [
-          ...board.connections.filter(connection => connection.from !== `${gateID}:judge` && connection.to !== `${gateID}:judge`),
-          ...judgeConnections,
-        ],
-      }),
-    }
-  }
-
-  const detachGateJudge = patch.detachGateJudge as Partial<{ gateId: string }> | undefined
-  if (detachGateJudge?.gateId) {
-    const gateID = detachGateJudge.gateId
-    return {
-      board: withStarterBoardRev({
-        ...board,
-        gates: (board.gates || []).map(gate => gate.id === gateID
-          ? { ...gate, kinds: gate.kinds.filter(kind => kind !== 'formation') }
-          : gate),
-        connections: board.connections.filter(connection => connection.from !== `${gateID}:judge` && connection.to !== `${gateID}:judge`),
-      }),
-    }
-  }
-
-  const title = typeof patch.title === 'string' ? patch.title.trim() : ''
-  return {
-    board: title ? withStarterBoardRev({ ...board, title }) : board,
-  }
-}
-
-function deleteStarterNodes(
-  board: BoardDocument,
-  layout: LayoutDocument,
-  nodeIDs: Set<string>
-): { board: BoardDocument; layout: LayoutDocument } {
-  const nextBoard = withStarterBoardRev({
-    ...board,
-    missions: (board.missions || []).filter(mission => !nodeIDs.has(mission.id)),
-    formations: board.formations.filter(formation => !nodeIDs.has(formation.id)),
-    gates: (board.gates || []).filter(gate => !nodeIDs.has(gate.id)),
-    connections: board.connections.filter(connection => !nodeIDs.has(endpointNodeId(connection.from)) && !nodeIDs.has(endpointNodeId(connection.to))),
-  })
-  return {
-    board: nextBoard,
-    layout: withStarterLayoutRev({
-      ...layout,
-      nodes: (layout.nodes || []).filter(node => !nodeIDs.has(node.id)),
-    }, nextBoard.rev),
-  }
-}
-
-function judgeConnectionsForChain(gateID: string, chain: string[]): BoardConnection[] {
-  const connections: BoardConnection[] = []
-  if (chain[0]) {
-    connections.push({ id: starterID('edge'), from: `${gateID}:judge`, to: `${chain[0]}:in` })
-  }
-  for (let i = 0; i < chain.length - 1; i += 1) {
-    connections.push({ id: starterID('edge'), from: `${chain[i]}:out`, to: `${chain[i + 1]}:in` })
-  }
-  if (chain.length > 0) {
-    connections.push({ id: starterID('edge'), from: `${chain[chain.length - 1]}:out`, to: `${gateID}:judge` })
-  }
-  return connections
-}
-
-function isFormationType(value: unknown): value is FormationNode['type'] {
-  return value === 'solo' || value === 'peer' || value === 'flow' || value === 'orchestrated'
-}
-
-function defaultPosition(index: number): LayoutNode {
-  return { id: '', x: 120 + index * 280, y: 120 + (index % 2) * 180 }
 }
 
 function round(value: number): number {
@@ -801,6 +109,8 @@ export default function FormationsView() {
   const [terminals, setTerminals] = useState<TerminalPopup[]>([])
   const boardETag = board?.etag || ''
   const layoutETag = layout?.etag || ''
+  const missionBeadID = missionBead.trim()
+  const canCreateMission = isSafeBeadsIssueID(missionBeadID)
   const canvasRef = useRef<HTMLDivElement | null>(null)
   const panning = useRef<{ startX: number; startY: number; view: ViewTransform } | null>(null)
   const boardRef = useRef<BoardDocument | null>(null)
@@ -913,38 +223,20 @@ export default function FormationsView() {
   )), [board])
 
   const loadBoard = useCallback(async (slug: string) => {
-    const boardResult = await fetchApi<{ board: BoardDocument }>(`/api/formations/boards/${encodeURIComponent(slug)}`)
-    const nextBoard = {
-      ...boardResult.data.board,
-      etag: boardResult.etag || boardResult.data.board.etag,
-      missions: boardResult.data.board.missions || [],
-      formations: boardResult.data.board.formations || [],
-      gates: boardResult.data.board.gates || [],
-      connections: boardResult.data.board.connections || [],
-    }
+    const nextBoard = await fetchBoardDocument(slug)
     let nextLayout: LayoutDocument
     try {
-      const layoutResult = await fetchApi<{ layout: LayoutDocument }>(`/api/formations/boards/${encodeURIComponent(slug)}/layout`)
-      nextLayout = {
-        ...layoutResult.data.layout,
-        etag: layoutResult.etag || layoutResult.data.layout.etag,
-        nodes: layoutResult.data.layout.nodes || [],
-        edges: layoutResult.data.layout.edges || [],
-      }
+      nextLayout = await fetchBoardLayout(slug)
     } catch (err) {
       if (!(err instanceof ApiRequestError) || (err.status !== 404 && err.code !== 'NOT_FOUND')) throw err
-      nextLayout = {
-        boardId: nextBoard.id,
-        boardRev: nextBoard.rev,
-        etag: '*',
-        nodes: [],
-        edges: [],
-      }
+      nextLayout = missingLayoutForBoard(nextBoard)
     }
     boardRef.current = nextBoard
     layoutRef.current = nextLayout
     setBoard(nextBoard)
     setLayout(nextLayout)
+    setBriefDrafts({})
+    setVerificationDrafts({})
     setSelectedSlug(slug)
   }, [])
 
@@ -952,9 +244,8 @@ export default function FormationsView() {
     let cancelled = false
     async function load() {
       try {
-        const result = await fetchApi<{ boards: BoardSummary[] }>('/api/formations/boards')
+        const summaries = await fetchBoardSummaries()
         if (cancelled) return
-        const summaries = result.data.boards || []
         setBoards(summaries)
         if (summaries[0]) {
           await loadBoard(summaries[0].slug)
@@ -983,12 +274,15 @@ export default function FormationsView() {
     let cancelled = false
     async function loadAgents() {
       try {
-        const result = await fetchApi<{ agents: AgentProjection[] }>('/api/agents')
+        const result = await fetchAgents()
         if (!cancelled) {
-          setAgents((result.data.agents || []).filter(agent => agent.assignable && !agent.unbound))
+          setAgents(result.filter(agent => agent.assignable && !agent.unbound))
         }
-      } catch {
-        if (!cancelled) setAgents([])
+      } catch (err) {
+        if (!cancelled) {
+          setAgents([])
+          setError(err instanceof Error ? err.message : 'Failed to load agents')
+        }
       }
     }
     loadAgents()
@@ -1022,6 +316,9 @@ export default function FormationsView() {
       }
     }
     runEventTypes.forEach(type => source.addEventListener(type, handleEvent))
+    source.onerror = () => {
+      setError('Run stream interrupted; refresh or reopen the run status to reconnect.')
+    }
     return () => {
       runEventTypes.forEach(type => source.removeEventListener(type, handleEvent))
       source.close()
@@ -1033,14 +330,14 @@ export default function FormationsView() {
     let cancelled = false
     const checkChanges = async () => {
       try {
-        const result = await fetchApi<{ signal: { changed?: boolean } }>(
-          `/api/formations/boards/${encodeURIComponent(selectedSlug)}/changes?rev=${encodeURIComponent(String(board.rev))}`
-        )
-        if (!cancelled && result.data.signal?.changed) {
+        const changed = await fetchBoardChanged(selectedSlug, board.rev)
+        if (!cancelled && changed) {
           await loadBoard(selectedSlug)
         }
-      } catch {
-        // Board-change signals are best-effort; direct edits still use ETag failures.
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Failed to check board changes')
+        }
       }
     }
     const timer = window.setInterval(() => {
@@ -1060,19 +357,24 @@ export default function FormationsView() {
     let cancelled = false
     async function restoreRun() {
       try {
-        const statusResult = await fetchApi<RunStatusProjection | RunStatusResult>(`/api/formations/runs/${encodeURIComponent(restoredRunID)}`)
+        const statusResult = await fetchRunStatus(restoredRunID)
         if (cancelled) return
-        const status = runStatusFromResponse(statusResult.data)
+        const status = runStatusFromResponse(statusResult)
         setActiveRun(status)
         try {
-          const eventsResult = await fetchApi<{ events: RunEvent[] }>(`/api/formations/runs/${encodeURIComponent(restoredRunID)}/events`)
-          if (!cancelled) setRunEvents((eventsResult.data.events || []).sort((a, b) => a.seq - b.seq))
-        } catch {
-          if (!cancelled) setRunEvents([])
+          const events = await fetchRunEvents(restoredRunID)
+          if (!cancelled) setRunEvents(events)
+        } catch (err) {
+          if (!cancelled) {
+            setRunEvents([])
+            setError(err instanceof Error ? err.message : 'Failed to restore run events')
+          }
         }
         if (status.final) window.localStorage.removeItem(activeRunStorageKey(selectedSlug))
-      } catch {
-        if (!cancelled) window.localStorage.removeItem(activeRunStorageKey(selectedSlug))
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Failed to restore active run')
+        }
       }
     }
     void restoreRun()
@@ -1108,42 +410,28 @@ export default function FormationsView() {
         setError('')
         return
       }
-      const result = await fetchApi<{ board: BoardDocument; layout: LayoutDocument; formation: FormationNode }>(
-        `/api/formations/boards/${encodeURIComponent(board.slug)}`,
+      const result = await patchBoardDocument<PatchCreateFormationResult>(
+        board.slug,
+        boardETag,
+        board.rev,
         {
-          method: 'PATCH',
-          headers: { 'If-Match': boardETag },
-          body: JSON.stringify({
-            expectedRev: board.rev,
-            updatedBy: 'agent:ui',
-            createFormation: {
-              type,
-              title: requestedTitle,
-              x: 120,
-              y: 120,
-            },
-          }),
-        }
+          createFormation: {
+            type,
+            title: requestedTitle,
+            x: 120,
+            y: 120,
+          },
+        },
       )
-      const nextBoard = {
-        ...result.data.board,
-        etag: result.etag || result.data.board.etag,
-        missions: result.data.board.missions || [],
-        formations: result.data.board.formations || [],
-        gates: result.data.board.gates || [],
-        connections: result.data.board.connections || [],
-      }
-      const nextLayout = {
-        ...result.data.layout,
-        etag: result.data.layout.etag,
-        nodes: result.data.layout.nodes || [],
-        edges: result.data.layout.edges || [],
-      }
+      const nextBoard = result.board
+      const nextLayout = result.layout
       boardRef.current = nextBoard
-      layoutRef.current = nextLayout
       setBoard(nextBoard)
-      setLayout(nextLayout)
-      undoStack.current.push({ kind: 'deleteFormation', formationId: result.data.formation.id })
+      if (nextLayout) {
+        layoutRef.current = nextLayout
+        setLayout(nextLayout)
+      }
+      undoStack.current.push({ kind: 'deleteFormation', formationId: result.formation.id })
       setTitle('')
       setError('')
     } catch (err) {
@@ -1166,37 +454,13 @@ export default function FormationsView() {
       setError('')
       return result.board
     }
-    const result = await fetchApi<{ board: BoardDocument; layout?: LayoutDocument }>(
-      `/api/formations/boards/${encodeURIComponent(currentBoard.slug)}`,
-      {
-        method: 'PATCH',
-        headers: { 'If-Match': currentBoard.etag },
-        body: JSON.stringify({
-          expectedRev: currentBoard.rev,
-          updatedBy: 'agent:ui',
-          ...patch,
-        }),
-      }
-    )
-    const nextBoard = {
-      ...result.data.board,
-      etag: result.etag || result.data.board.etag,
-      missions: result.data.board.missions || [],
-      formations: result.data.board.formations || [],
-      gates: result.data.board.gates || [],
-      connections: result.data.board.connections || [],
-    }
+    const result = await patchBoardDocument(currentBoard.slug, currentBoard.etag, currentBoard.rev, patch)
+    const nextBoard = result.board
     boardRef.current = nextBoard
     setBoard(nextBoard)
-    if (result.data.layout) {
-      const nextLayout = {
-        ...result.data.layout,
-        etag: result.data.layout.etag,
-        nodes: result.data.layout.nodes || [],
-        edges: result.data.layout.edges || [],
-      }
-      layoutRef.current = nextLayout
-      setLayout(nextLayout)
+    if (result.layout) {
+      layoutRef.current = result.layout
+      setLayout(result.layout)
     }
     setError('')
     return nextBoard
@@ -1238,6 +502,14 @@ export default function FormationsView() {
     await setGateJudgeChain(gate, [value])
   }, [setGateJudgeChain])
 
+  const setGateJudgeReturn = useCallback(async (gate: GateNode, fromEndpoint: string) => {
+    const currentBoard = boardRef.current
+    if (!currentBoard) return
+    const chain = judgeChainWithReturn(currentBoard, gate.id, fromEndpoint)
+    if (chain.length === 0) return
+    await setGateJudgeChain(gate, chain)
+  }, [setGateJudgeChain])
+
   const detachGateJudge = useCallback(async (gate: GateNode) => {
     try {
       await patchBoard({
@@ -1250,15 +522,16 @@ export default function FormationsView() {
     }
   }, [patchBoard])
 
-  const createJudgeFormation = useCallback(async (gate: GateNode) => {
+  const createJudgeFormation = useCallback(async (gate: GateNode, position?: { x: number; y: number }) => {
     try {
       const before = boardRef.current
+      const fallback = layoutByNode.get(gate.id) || { id: gate.id, x: 360, y: 220 }
       const nextBoard = await patchBoard({
         createFormation: {
           type: 'solo',
           title: 'Judge formation',
-          x: (layoutByNode.get(gate.id)?.x || 360) + 120,
-          y: (layoutByNode.get(gate.id)?.y || 220) - 160,
+          x: position?.x ?? fallback.x + 120,
+          y: position?.y ?? fallback.y - 160,
         },
       })
       const created = findAddedByID(before?.formations || [], nextBoard?.formations || [])
@@ -1269,13 +542,14 @@ export default function FormationsView() {
   }, [layoutByNode, patchBoard, setGateJudgeChain])
 
   const createMission = useCallback(async () => {
+    if (!canCreateMission) return
     try {
       const before = boardRef.current
       const nextBoard = await patchBoard({
         createMission: {
           title: missionTitle.trim() || 'Mission',
           goal: missionGoal.trim(),
-          beadId: missionBead.trim(),
+          beadId: missionBeadID,
         },
       })
       const mission = findAddedByID(before?.missions || [], nextBoard?.missions || [])
@@ -1286,7 +560,7 @@ export default function FormationsView() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create mission')
     }
-  }, [missionBead, missionGoal, missionTitle, patchBoard])
+  }, [canCreateMission, missionBeadID, missionGoal, missionTitle, patchBoard])
 
   const startMission = useCallback(async (mission: MissionNode) => {
     const currentBoard = boardRef.current
@@ -1311,20 +585,16 @@ export default function FormationsView() {
       return
     }
     try {
-      const result = await fetchApi<RunStartResult>('/api/formations/runs', {
-        method: 'POST',
-        headers: { 'If-Match': currentBoard.etag },
-        body: JSON.stringify({
-          board: currentBoard.slug,
-          missionId: mission.id,
-          actor: 'agent:ui',
-        }),
+      const result = await startRun(currentBoard.etag, {
+        board: currentBoard.slug,
+        missionId: mission.id,
+        actor: 'agent:ui',
       })
       setActiveRun({
-        ...result.data.status,
-        runId: result.data.status.runId || result.data.runId,
+        ...result.status,
+        runId: result.status.runId || result.runId,
       })
-      window.localStorage.setItem(activeRunStorageKey(currentBoard.slug), result.data.status.runId || result.data.runId)
+      window.localStorage.setItem(activeRunStorageKey(currentBoard.slug), result.status.runId || result.runId)
       setRunEvents([])
       setError('')
     } catch (err) {
@@ -1335,18 +605,13 @@ export default function FormationsView() {
   const abortRun = useCallback(async () => {
     if (!activeRun?.runId || activeRun.final) return
     try {
-      const result = await fetchApi<RunStatusProjection | RunStatusResult>(
-        `/api/formations/runs/${encodeURIComponent(activeRun.runId)}/abort`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            reason: 'operator stop',
-            requestedBy: 'agent:ui',
-          }),
-        }
-      )
-      setActiveRun(runStatusFromResponse(result.data))
-      if (runStatusFromResponse(result.data).final && selectedSlug) {
+      const result = await abortRunRequest(activeRun.runId, {
+        reason: 'operator stop',
+        requestedBy: 'agent:ui',
+      })
+      const status = runStatusFromResponse(result)
+      setActiveRun(status)
+      if (status.final && selectedSlug) {
         window.localStorage.removeItem(activeRunStorageKey(selectedSlug))
       }
       setError('')
@@ -1358,20 +623,15 @@ export default function FormationsView() {
   const resumeRun = useCallback(async () => {
     if (!activeRun?.runId || activeRun.final || !activeRun.resumeAllowed) return
     try {
-      const result = await fetchApi<RunStatusProjection | RunStatusResult>(
-        `/api/formations/runs/${encodeURIComponent(activeRun.runId)}/resume`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            actor: 'agent:ui',
-            mode: 'reattach',
-            reason: 'operator resume',
-          }),
-        }
-      )
-      setActiveRun(runStatusFromResponse(result.data))
+      const result = await resumeRunRequest(activeRun.runId, {
+        actor: 'agent:ui',
+        mode: 'reattach',
+        reason: 'operator resume',
+      })
+      const status = runStatusFromResponse(result)
+      setActiveRun(status)
       if (selectedSlug) {
-        window.localStorage.setItem(activeRunStorageKey(selectedSlug), runStatusFromResponse(result.data).runId)
+        window.localStorage.setItem(activeRunStorageKey(selectedSlug), status.runId)
       }
       setError('')
     } catch (err) {
@@ -1382,18 +642,12 @@ export default function FormationsView() {
   const recordHumanGateVerdict = useCallback(async (gateId: string, verdict: 'pass' | 'fail') => {
     if (!activeRun?.runId || activeRun.final) return
     try {
-      const result = await fetchApi<RunStatusProjection | RunStatusResult>(
-        `/api/formations/runs/${encodeURIComponent(activeRun.runId)}/gates/${encodeURIComponent(gateId)}/verdict`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            actor: 'agent:ui',
-            verdict,
-            reason: verdict === 'pass' ? 'operator approved' : 'operator rejected',
-          }),
-        }
-      )
-      setActiveRun(runStatusFromResponse(result.data))
+      const result = await recordGateVerdict(activeRun.runId, gateId, {
+        actor: 'agent:ui',
+        verdict,
+        reason: verdict === 'pass' ? 'operator approved' : 'operator rejected',
+      })
+      setActiveRun(runStatusFromResponse(result))
       setError('')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to record human verdict')
@@ -1592,14 +846,9 @@ export default function FormationsView() {
     if (!to || connection.to === to || endpointNodeId(connection.from) === endpointNodeId(to)) return
     try {
       await patchBoard({
-        unwireConnection: {
+        rewireConnection: {
           from: connection.from,
-          to: connection.to,
-        },
-      })
-      await patchBoard({
-        wireConnection: {
-          from: connection.from,
+          previousTo: connection.to,
           to,
         },
       })
@@ -1627,20 +876,7 @@ export default function FormationsView() {
       return
     }
     try {
-      const result = await fetchApi<{ layout: LayoutDocument }>(
-        `/api/formations/boards/${encodeURIComponent(currentBoard.slug)}/layout`,
-        {
-          method: 'PATCH',
-          headers: { 'If-Match': currentLayout.etag },
-          body: JSON.stringify({ edges }),
-        }
-      )
-      const nextLayout = {
-        ...result.data.layout,
-        etag: result.etag || result.data.layout.etag,
-        nodes: result.data.layout.nodes || [],
-        edges: result.data.layout.edges || [],
-      }
+      const nextLayout = await patchBoardLayout(currentBoard.slug, currentLayout.etag, { edges })
       layoutRef.current = nextLayout
       setLayout(nextLayout)
       setError('')
@@ -1670,6 +906,18 @@ export default function FormationsView() {
     }
   }, [patchBoard])
 
+  const canvasDropPosition = useCallback((point: { x: number; y: number }): { x: number; y: number } | null => {
+    const canvas = canvasRef.current
+    if (!canvas) return null
+    const rect = canvas.getBoundingClientRect()
+    if (point.x < rect.left || point.x > rect.right || point.y < rect.top || point.y > rect.bottom) return null
+    const world = screenPointToWorld(point, rect, view)
+    return {
+      x: round(world.x - cardWidth / 2),
+      y: round(world.y - cardHeight / 2),
+    }
+  }, [view])
+
   const finishWireDrag = useCallback(async (drag: WireDragState, target: Element | null, point: { x: number; y: number }) => {
     const hit = formationDropTarget(target, point)
     const endpoint = hit.endpoint
@@ -1681,7 +929,7 @@ export default function FormationsView() {
     if (drag.kind === 'new') {
       if (judgeGateID) {
         const gate = currentBoard.gates?.find(candidate => candidate.id === judgeGateID)
-        if (gate) await setGateJudgeChain(gate, [endpointNodeId(drag.from)])
+        if (gate) await setGateJudgeReturn(gate, drag.from)
         return
       }
       if (endpoint) await wireEndpoints(drag.from, endpoint)
@@ -1699,8 +947,10 @@ export default function FormationsView() {
       await setGateJudgeChain(gate, [formationID])
       return
     }
-    await createJudgeFormation(gate)
-  }, [createJudgeFormation, rewireTarget, setGateJudgeChain, wireEndpoints])
+    if (target?.closest('.formation-card, .formations-context-menu, .formation-terminal-popup')) return
+    const position = canvasDropPosition(point)
+    if (position) await createJudgeFormation(gate, position)
+  }, [canvasDropPosition, createJudgeFormation, rewireTarget, setGateJudgeChain, setGateJudgeReturn, wireEndpoints])
 
   const beginWireDrag = useCallback((event: PointerEvent<HTMLElement> | MouseEvent<HTMLElement>, drag: WireDragState) => {
     if (event.button !== 0) return
@@ -1871,20 +1121,7 @@ export default function FormationsView() {
       return
     }
     try {
-      const result = await fetchApi<{ layout: LayoutDocument }>(
-        `/api/formations/boards/${encodeURIComponent(board.slug)}/layout`,
-        {
-          method: 'PATCH',
-          headers: { 'If-Match': layoutETag },
-          body: JSON.stringify({ nodes: [node] }),
-        }
-      )
-      const nextLayout = {
-        ...result.data.layout,
-        etag: result.etag || result.data.layout.etag,
-        nodes: result.data.layout.nodes || [],
-        edges: result.data.layout.edges || [],
-      }
+      const nextLayout = await patchBoardLayout(board.slug, layoutETag, { nodes: [node] })
       layoutRef.current = nextLayout
       setLayout(nextLayout)
       if (undoNode && (undoNode.x !== node.x || undoNode.y !== node.y)) {
@@ -1914,20 +1151,7 @@ export default function FormationsView() {
           setError('')
           return
         }
-        const result = await fetchApi<{ layout: LayoutDocument }>(
-          `/api/formations/boards/${encodeURIComponent(currentBoard.slug)}/layout`,
-          {
-            method: 'PATCH',
-            headers: { 'If-Match': currentLayout.etag },
-            body: JSON.stringify({ nodes: [action.node] }),
-          }
-        )
-        const nextLayout = {
-          ...result.data.layout,
-          etag: result.etag || result.data.layout.etag,
-          nodes: result.data.layout.nodes || [],
-          edges: result.data.layout.edges || [],
-        }
+        const nextLayout = await patchBoardLayout(currentBoard.slug, currentLayout.etag, { nodes: [action.node] })
         layoutRef.current = nextLayout
         setLayout(nextLayout)
       } else {
@@ -2015,17 +1239,16 @@ export default function FormationsView() {
     })
   }, [positionedCanvasNodes])
 
-  const moveNode = useCallback((formation: FormationNode, event: PointerEvent<HTMLElement>) => {
+  const moveCanvasNode = useCallback((node: LayoutNode, event: PointerEvent<HTMLElement>) => {
     if (event.button !== 0) return
     event.stopPropagation()
-    setDraggingNodeId(formation.id)
-    const fallback = defaultPosition(board?.formations.findIndex(item => item.id === formation.id) ?? 0)
-    const current = layoutByNode.get(formation.id) || { ...fallback, id: formation.id }
+    setDraggingNodeId(node.id)
+    const current = layoutByNode.get(node.id) || node
     const start = { x: event.clientX, y: event.clientY, node: current }
     let latest = current
     const move = (moveEvent: globalThis.PointerEvent) => {
       latest = {
-        id: formation.id,
+        id: node.id,
         x: round(start.node.x + (moveEvent.clientX - start.x) / view.scale),
         y: round(start.node.y + (moveEvent.clientY - start.y) / view.scale),
       }
@@ -2042,11 +1265,11 @@ export default function FormationsView() {
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
-  }, [board, layoutByNode, saveNodeLayout, view.scale])
+  }, [layoutByNode, saveNodeLayout, view.scale])
 
   const zoomLevel = `${Math.round(view.scale * 100)}%`
   const boardMenuItems: ContextMenuItem[] = [
-    { label: 'Mission', action: () => void createMission() },
+    { label: 'Mission', action: () => void createMission(), disabled: !canCreateMission },
     { label: 'Solo formation', action: () => void createFormation('solo') },
     { label: 'Peer formation', action: () => void createFormation('peer') },
     { label: 'Flow formation', action: () => void createFormation('flow') },
@@ -2160,9 +1383,9 @@ export default function FormationsView() {
             aria-label="Mission bead"
             value={missionBead}
             onChange={event => setMissionBead(event.target.value)}
-            placeholder="home-..."
+            placeholder="bd-204"
           />
-          <button type="button" onClick={createMission}>Mission</button>
+          <button type="button" onClick={createMission} disabled={!canCreateMission}>Mission</button>
         </form>
         <div className="formations-zoom-controls">
           <button type="button" aria-label="Zoom out" onClick={() => zoomBy(1 / 1.2)}><Minus size={15} /></button>
@@ -2284,7 +1507,7 @@ export default function FormationsView() {
                 data-formation-id={formation.id}
                 data-formation-type={formation.type}
                 style={{ left: position.x, top: position.y }}
-                onPointerDown={event => moveNode(formation, event)}
+                onPointerDown={event => moveCanvasNode(position, event)}
                 onContextMenu={event => openContextMenu(event, 'Formation actions', formationMenuItems(formation))}
               >
                 <header>
@@ -2403,7 +1626,7 @@ export default function FormationsView() {
                       aria-label={`Bead for ${formation.title}`}
                       value={briefDraft.beadId}
                       onChange={event => updateBriefDraft(formation, { beadId: event.target.value })}
-                      placeholder="home-..."
+                      placeholder="bd-204"
                     />
                     <input
                       aria-label={`Files for ${formation.title}`}
@@ -2417,7 +1640,7 @@ export default function FormationsView() {
                       onChange={event => updateBriefDraft(formation, { links: event.target.value })}
                       placeholder="links"
                     />
-                    <button type="button" aria-label={`Save brief for ${formation.title}`} onClick={() => saveBrief(formation)}>
+                    <button type="button" aria-label={`Save brief for ${formation.title}`} onClick={() => saveBrief(formation)} disabled={!isOptionalSafeBeadsIssueID(briefDraft.beadId)}>
                       Save brief
                     </button>
                   </div>
@@ -2450,6 +1673,7 @@ export default function FormationsView() {
               className="formation-card gate-card"
               data-testid={`gate-node-${gate.id}`}
               style={{ left: position.x, top: position.y }}
+              onPointerDown={event => moveCanvasNode(position, event)}
               onContextMenu={event => openContextMenu(event, 'Gate actions', gateMenuItems)}
             >
               <header>
@@ -2525,6 +1749,7 @@ export default function FormationsView() {
               className="formation-card mission-card"
               data-testid={`mission-node-${mission.id}`}
               style={{ left: position.x, top: position.y }}
+              onPointerDown={event => moveCanvasNode(position, event)}
               onContextMenu={event => openContextMenu(event, 'Mission actions', missionMenuItems)}
             >
               <header>
@@ -2534,7 +1759,17 @@ export default function FormationsView() {
               <div className="formation-card-body">
                 <span className="formation-type-note">{mission.goal}</span>
                 <span className="formation-type-note">{mission.beadId}</span>
-                <span className="formation-type-note">out</span>
+                <button
+                  type="button"
+                  className="formation-port formation-port-output"
+                  data-testid={`mission-output-${mission.id}-out`}
+                  data-formation-endpoint={`${mission.id}:out`}
+                  aria-label={`${mission.title} output`}
+                  onPointerDown={event => beginWireDrag(event, { kind: 'new', from: `${mission.id}:out` })}
+                  onMouseDown={event => beginWireDrag(event, { kind: 'new', from: `${mission.id}:out` })}
+                >
+                  out
+                </button>
                 <button
                   type="button"
                   aria-label={`Start ${mission.title}`}
@@ -2634,162 +1869,6 @@ export default function FormationsView() {
   )
 }
 
-function upsertNode(nodes: LayoutNode[], next: LayoutNode): LayoutNode[] {
-  const index = nodes.findIndex(node => node.id === next.id)
-  if (index < 0) return [...nodes, next]
-  return nodes.map(node => node.id === next.id ? next : node)
-}
-
-function undoBoardPatch(action: BoardUndoAction): Record<string, unknown> {
-  switch (action.kind) {
-    case 'deleteFormation':
-      return { deleteFormation: { id: action.formationId } }
-    case 'deleteGate':
-      return { deleteGate: { id: action.gateId } }
-    case 'deleteMission':
-      return { deleteMission: { id: action.missionId } }
-    case 'assignSlot':
-      return {
-        assignSlot: {
-          formationId: action.formationId,
-          slotId: action.slotId,
-          agentId: action.agentId,
-          harness: action.harness,
-        },
-      }
-    case 'makeController':
-      return {
-        makeController: {
-          formationId: action.formationId,
-          slotId: action.slotId,
-        },
-      }
-    case 'setBrief':
-      if (!action.brief) {
-        return { clearBrief: { formationId: action.formationId } }
-      }
-      return {
-        setBrief: {
-          formationId: action.formationId,
-          goal: action.brief.goal || '',
-          beadId: action.brief.beadId || '',
-          files: action.brief.files || [],
-          links: action.brief.links || [],
-        },
-      }
-    case 'setVerification':
-      if (!action.verification) {
-        return { removeVerification: { formationId: action.formationId } }
-      }
-      return {
-        setVerification: {
-          formationId: action.formationId,
-          kinds: action.verification.kinds || ['code'],
-          criterion: action.verification.criterion || '',
-          onFail: action.verification.onFail,
-        },
-      }
-    case 'removePort':
-      return {
-        removePort: {
-          formationId: action.formationId,
-          portId: action.portId,
-        },
-      }
-    case 'unwireConnection':
-      return {
-        unwireConnection: {
-          from: action.from,
-          to: action.to,
-        },
-      }
-  }
-}
-
-function findAddedByID<T extends { id: string }>(before: T[], after: T[]): T | undefined {
-  const known = new Set(before.map(item => item.id))
-  return after.find(item => !known.has(item.id))
-}
-
-function findAddedPort(before: BoardDocument | null, after: BoardDocument | null, formationId: string, direction: 'input' | 'output'): FormationPort | undefined {
-  const beforeFormation = before?.formations.find(formation => formation.id === formationId)
-  const afterFormation = after?.formations.find(formation => formation.id === formationId)
-  if (!afterFormation) return undefined
-  const key = direction === 'input' ? 'inputs' : 'outputs'
-  return findAddedByID(beforeFormation?.[key] || [], afterFormation[key] || [])
-}
-
-function upsertRunEvent(events: RunEvent[], next: RunEvent): RunEvent[] {
-  if (!next.runId || !next.seq) return events
-  const existing = events.findIndex(event => event.seq === next.seq && event.runId === next.runId)
-  const merged = existing >= 0
-    ? events.map((event, index) => index === existing ? next : event)
-    : [...events, next]
-  return merged.sort((a, b) => a.seq - b.seq)
-}
-
-function statusFromRunEvent(event: RunEvent): string {
-  switch (event.type) {
-    case 'run_started':
-    case 'run_resumed':
-      return 'running'
-    case 'run_blocked':
-      return 'blocked'
-    case 'run_canceled':
-      return 'canceled'
-    case 'run_failed':
-      return 'failed'
-    case 'run_succeeded':
-      return 'succeeded'
-    default:
-      return ''
-  }
-}
-
-function runEventResumeAllowed(event: RunEvent, fallback: boolean): boolean {
-  if (event.type === 'run_blocked') return event.data?.resumeAllowed === true
-  if (event.type === 'run_started' || event.type === 'run_resumed') return false
-  if (event.type === 'run_canceled' || event.type === 'run_failed' || event.type === 'run_succeeded') return false
-  return fallback
-}
-
-function runEventText(event: RunEvent): string {
-  const data = event.data || {}
-  if (typeof data.text === 'string') return data.text
-  if (typeof data.reason === 'string') return data.reason
-  if (typeof data.prompt === 'string') return data.prompt
-  if (typeof data.error === 'string') return data.error
-  return ''
-}
-
-function runStatusFromResponse(data: RunStatusProjection | RunStatusResult): RunStatusProjection {
-  const nested = (data as RunStatusResult).status
-  return typeof nested === 'object' && nested !== null ? nested : data as RunStatusProjection
-}
-
-function runEventReportRef(event: RunEvent): string {
-  const reportRef = event.data?.reportRef
-  return typeof reportRef === 'string' ? reportRef : ''
-}
-
-function cloneBrief(brief: FormationBrief): FormationBrief {
-  return {
-    goal: brief.goal || '',
-    beadId: brief.beadId || '',
-    files: [...(brief.files || [])],
-    links: [...(brief.links || [])],
-  }
-}
-
-function cloneVerification(verification: FormationVerification): FormationVerification {
-  return {
-    id: verification.id,
-    kinds: [...(verification.kinds || [])],
-    criterion: verification.criterion,
-    onFail: verification.onFail,
-  }
-}
-
 function slotAgentValue(slot: FormationSlot, agents: AgentProjection[]): string {
   if (!slot.agentId) return ''
   const harness = slot.harness || agents.find(agent => agent.id === slot.agentId)?.harnessDefault || ''
@@ -2819,10 +1898,6 @@ function isTextEditingTarget(target: EventTarget | null): boolean {
   return Boolean(target.closest('[contenteditable="true"], [contenteditable=""]'))
 }
 
-function endpointNodeId(endpoint: string): string {
-  return endpoint.split(':', 1)[0]
-}
-
 function formationDropTarget(target: Element | null, point: { x: number; y: number }): {
   endpoint: string
   judgeGateID: string
@@ -2850,32 +1925,4 @@ function formationDropTarget(target: Element | null, point: { x: number; y: numb
   if (judgeGateID) return { endpoint: '', judgeGateID, formationID: '' }
   const formationID = hit<HTMLElement>('[data-formation-id]', element => element.dataset.formationId || '')
   return { endpoint: '', judgeGateID: '', formationID }
-}
-
-function visibleWirePath(path: string): string {
-  const match = path.match(/^M(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?) L(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/)
-  if (!match || match[2] !== match[4]) return path
-  const y = Number(match[4])
-  if (!Number.isFinite(y)) return path
-  return `${path} L${match[3]},${y + 1}`
-}
-
-function activeRunStorageKey(slug: string): string {
-  return `chrote-formations-active-run-${slug}`
-}
-
-function clampScale(scale: number, max = 2.2): number {
-  return Math.max(0.4, Math.min(max, Number(scale.toFixed(2))))
-}
-
-function zoomTransform(current: ViewTransform, factor: number, cursor?: { x: number; y: number }): ViewTransform {
-  const scale = clampScale(current.scale * factor)
-  if (!cursor) return { ...current, scale }
-  const worldX = (cursor.x - current.x) / current.scale
-  const worldY = (cursor.y - current.y) / current.scale
-  return {
-    x: round(cursor.x - worldX * scale),
-    y: round(cursor.y - worldY * scale),
-    scale,
-  }
 }

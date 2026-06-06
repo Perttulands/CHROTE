@@ -125,6 +125,13 @@ type FormationWireRequest struct {
 	UpdatedBy string
 }
 
+type FormationRewireRequest struct {
+	From       string
+	PreviousTo string
+	To         string
+	UpdatedBy  string
+}
+
 type GateCreateRequest struct {
 	Title     string
 	Kinds     []string
@@ -218,19 +225,26 @@ func (s *Store) ResolveBoardSelector(selector string) (string, error) {
 	if err := validateSlug(selector); err != nil {
 		return "", err
 	}
-	if _, err := os.Stat(s.BoardPath(selector)); err == nil {
-		return selector, nil
-	} else if err != nil && !os.IsNotExist(err) {
-		return "", err
-	}
 	boards, err := s.ListBoards()
 	if err != nil {
 		return "", err
 	}
+	matches := []BoardSummary{}
 	for _, board := range boards {
 		if board.ID == selector || board.Slug == selector {
-			return board.Slug, nil
+			matches = append(matches, board)
 		}
+	}
+	if len(matches) == 1 {
+		return matches[0].Slug, nil
+	}
+	if len(matches) > 1 {
+		return "", fmt.Errorf("%w: board %q matched %d boards", ErrAmbiguousSelector, selector, len(matches))
+	}
+	if _, err := os.Stat(s.BoardPath(selector)); err == nil {
+		return selector, nil
+	} else if err != nil && !os.IsNotExist(err) {
+		return "", err
 	}
 	return "", ErrNotFound
 }
@@ -575,8 +589,8 @@ func (s *Store) SetFormationBrief(slug string, req FormationBriefRequest, opts W
 	if req.FormationID == "" {
 		return nil, ErrNotFound
 	}
-	if req.BeadID != "" && !strings.HasPrefix(req.BeadID, "home-") {
-		return nil, fmt.Errorf("%w: beadId must use the home- Beads prefix", ErrInvalidSlug)
+	if req.BeadID != "" && !isSafeBeadsIssueID(req.BeadID) {
+		return nil, fmt.Errorf("%w: beadId must be a safe Beads issue id", ErrInvalidSlug)
 	}
 	return s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, _ *BoardDocument) ([]byte, error) {
 		lines := splitLines(raw)
@@ -727,8 +741,8 @@ func (s *Store) DetachGateJudge(slug string, req GateJudgeRequest, opts WriteOpt
 }
 
 func (s *Store) CreateMission(slug string, req MissionCreateRequest, opts WriteOptions) (*BoardDocument, error) {
-	if req.BeadID == "" || !strings.HasPrefix(req.BeadID, "home-") {
-		return nil, fmt.Errorf("%w: mission beadId must use the home- Beads prefix", ErrInvalidSlug)
+	if !isSafeBeadsIssueID(req.BeadID) {
+		return nil, fmt.Errorf("%w: mission beadId must be a safe Beads issue id", ErrInvalidSlug)
 	}
 	title := req.Title
 	if title == "" {
@@ -841,6 +855,50 @@ func (s *Store) UnwireFormationPorts(slug string, req FormationWireRequest, opts
 			return nil, ErrNotFound
 		}
 		return nextRaw, nil
+	})
+}
+
+func (s *Store) RewireFormationTarget(slug string, req FormationRewireRequest, opts WriteOptions) (*BoardDocument, error) {
+	if req.From == "" || req.PreviousTo == "" || req.To == "" {
+		return nil, ErrNotFound
+	}
+	return s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, current *BoardDocument) ([]byte, error) {
+		fromNode, ok := endpointAllowsDirection(raw, req.From, FormationPortOutput)
+		if !ok {
+			return nil, ErrNotFound
+		}
+		toNode, ok := endpointAllowsDirection(raw, req.To, FormationPortInput)
+		if !ok {
+			return nil, ErrNotFound
+		}
+		if fromNode == toNode {
+			return nil, ErrConflict
+		}
+		hasOriginal := false
+		for _, connection := range current.Connections {
+			if connection.From == req.From && connection.To == req.PreviousTo {
+				hasOriginal = true
+				continue
+			}
+			if connection.From == req.From && connection.To == req.To {
+				return nil, ErrConflict
+			}
+			if connection.To == req.To {
+				return nil, ErrConflict
+			}
+		}
+		if !hasOriginal {
+			return nil, ErrNotFound
+		}
+		nextRaw, deleted := deleteConnectionByEndpoints(raw, req.From, req.PreviousTo)
+		if !deleted {
+			return nil, ErrNotFound
+		}
+		return appendConnectionBlock(nextRaw, BoardConnection{
+			ID:   newPrefixedID("edge"),
+			From: req.From,
+			To:   req.To,
+		}), nil
 	})
 }
 

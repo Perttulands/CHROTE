@@ -75,6 +75,7 @@ test.describe('Formations Playwright stack smoke', () => {
 
     await page.getByRole('button', { name: 'Formations' }).click()
 
+    await expect(page.locator('.fmx[data-cockpit="d7"]')).toBeVisible()
     await expect(page.getByTestId('formations-canvas')).toBeVisible()
     await expect(page.getByTestId('mission-node-mis_starter_session_search')).toContainText('Improve session search')
     await expect(page.getByTestId('formation-node-fmn_starter_frame')).toContainText('Frame the goal')
@@ -82,8 +83,7 @@ test.describe('Formations Playwright stack smoke', () => {
     await expect(page.getByTestId('gate-node-gate_starter_review')).toContainText('Review gate')
     await expect(page.getByTestId('formation-wire-edge_starter_mission_frame')).toBeVisible()
 
-    await page.getByLabel('Formation title').fill('Quick huddle')
-    await page.getByRole('button', { name: 'Peer' }).click()
-    await expect(page.locator('[data-testid^="formation-node-fmn_starter_local_"]').filter({ hasText: 'Quick huddle' })).toBeVisible()
+    await page.getByTestId('new-formation').click()
+    await expect(page.locator('[data-testid^="formation-node-fmn_starter_local_"]').filter({ hasText: 'New formation' })).toBeVisible()
   })
 })

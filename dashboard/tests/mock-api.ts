@@ -302,12 +302,22 @@ export async function mockFormationsApiRoutes(page: Page, options?: {
   layout?: typeof mockFormationsLayout
   agents?: typeof mockFormationsAgents
   runEvents?: typeof mockFormationsRunEvents
+  runStatus?: {
+    runId: string
+    status: string
+    final: boolean
+    boardSlug: string
+    missionId: string
+    eventCount: number
+    resumeAllowed: boolean
+    [key: string]: unknown
+  }
 }) {
   const board = options?.board ?? mockFormationsBoard
   const layout = options?.layout ?? mockFormationsLayout
   const agents = options?.agents ?? mockFormationsAgents
   const runEvents = options?.runEvents ?? mockFormationsRunEvents
-  const runStatus = {
+  const runStatus = options?.runStatus ?? {
     runId: 'run-playwright-smoke',
     status: 'blocked',
     final: false,

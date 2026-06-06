@@ -680,7 +680,7 @@ controller = false
 	}
 }
 
-func TestS3BriefAndVerificationPersistHomeBeadAndOnFail(t *testing.T) {
+func TestS3BriefAndVerificationPersistProjectBeadAndOnFail(t *testing.T) {
 	store := formations.NewStore(t.TempDir())
 	store.Now = fixedFormationsAPIClock()
 	writeFormationsAPIFixture(t, store.BoardPath("session-search"), `schema = 1
@@ -703,7 +703,7 @@ title = "Ship"
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
-	briefReq := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/session-search", bytes.NewBufferString(`{"setBrief":{"formationId":"fmn_ship","goal":"Ship the change","beadId":"home-7kc4.5","files":["src/SessionPanel.tsx"],"links":["https://example.com/spec"]},"expectedRev":7,"updatedBy":"agent:test"}`))
+	briefReq := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/session-search", bytes.NewBufferString(`{"setBrief":{"formationId":"fmn_ship","goal":"Ship the change","beadId":"srv-abc.2","files":["src/SessionPanel.tsx"],"links":["https://example.com/spec"]},"expectedRev":7,"updatedBy":"agent:test"}`))
 	briefReq.Header.Set("If-Match", board.ETag)
 	briefRec := httptest.NewRecorder()
 	mux.ServeHTTP(briefRec, briefReq)
@@ -722,7 +722,7 @@ title = "Ship"
 	if verifyRec.Code != http.StatusOK {
 		t.Fatalf("verification status = %d, want %d: %s", verifyRec.Code, http.StatusOK, verifyRec.Body.String())
 	}
-	if !bytes.Contains(verifyRec.Body.Bytes(), []byte(`"beadId":"home-7kc4.5"`)) || !bytes.Contains(verifyRec.Body.Bytes(), []byte(`"onFail":"block"`)) {
+	if !bytes.Contains(verifyRec.Body.Bytes(), []byte(`"beadId":"srv-abc.2"`)) || !bytes.Contains(verifyRec.Body.Bytes(), []byte(`"onFail":"block"`)) {
 		t.Fatalf("verification response missing brief/onFail: %s", verifyRec.Body.String())
 	}
 }
@@ -772,6 +772,81 @@ label = "Input"
 	}
 	if !bytes.Contains(rec.Body.Bytes(), []byte(`"from":"fmn_frame:port_frame_out"`)) || !bytes.Contains(rec.Body.Bytes(), []byte(`"to":"fmn_ship:port_ship_in"`)) {
 		t.Fatalf("wire response missing stable endpoints: %s", rec.Body.String())
+	}
+}
+
+func TestS3RewireRejectsOccupiedTargetWithoutDroppingOriginal(t *testing.T) {
+	store := formations.NewStore(t.TempDir())
+	store.Now = fixedFormationsAPIClock()
+	writeFormationsAPIFixture(t, store.BoardPath("session-search"), `schema = 1
+id = "brd_01J9_sesssearch"
+slug = "session-search"
+title = "Improve session search"
+rev = 7
+updatedAt = "2026-06-03T16:00:00Z"
+
+[[formation]]
+id = "fmn_frame"
+type = "solo"
+title = "Frame"
+
+[[formation.output]]
+id = "port_frame_out"
+label = "Output"
+
+[[formation]]
+id = "fmn_research"
+type = "solo"
+title = "Research"
+
+[[formation.input]]
+id = "port_research_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_research_out"
+label = "Output"
+
+[[formation]]
+id = "fmn_ship"
+type = "solo"
+title = "Ship"
+
+[[formation.input]]
+id = "port_ship_in"
+label = "Input"
+
+[[connection]]
+id = "edge_frame_research"
+from = "fmn_frame:port_frame_out"
+to = "fmn_research:port_research_in"
+
+[[connection]]
+id = "edge_research_ship"
+from = "fmn_research:port_research_out"
+to = "fmn_ship:port_ship_in"
+`)
+	board, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	handler := NewFormationsHandlerWithStore(store)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/session-search", bytes.NewBufferString(`{"rewireConnection":{"from":"fmn_frame:port_frame_out","previousTo":"fmn_research:port_research_in","to":"fmn_ship:port_ship_in"},"expectedRev":7,"updatedBy":"agent:test"}`))
+	req.Header.Set("If-Match", board.ETag)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("rewire occupied target status = %d, want %d: %s", rec.Code, http.StatusConflict, rec.Body.String())
+	}
+	after, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read after failed rewire: %v", err)
+	}
+	if len(after.Connections) != 2 || !hasAPIConnection(after.Connections, "fmn_frame:port_frame_out", "fmn_research:port_research_in") {
+		t.Fatalf("failed rewire changed connections: %+v", after.Connections)
 	}
 }
 
@@ -853,7 +928,7 @@ label = "Output"
 	}
 }
 
-func TestS3MissionCreateRequiresHomeBeadIDAndSingleOut(t *testing.T) {
+func TestS3MissionCreateAcceptsProjectBeadIDAndSingleOut(t *testing.T) {
 	store := formations.NewStore(t.TempDir())
 	store.Now = fixedFormationsAPIClock()
 	writeFormationsAPIFixture(t, store.BoardPath("session-search"), `schema = 1
@@ -870,14 +945,14 @@ updatedAt = "2026-06-03T16:00:00Z"
 	handler := NewFormationsHandlerWithStore(store)
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
-	req := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/session-search", bytes.NewBufferString(`{"createMission":{"title":"Showcase","goal":"Build it","beadId":"home-7kc4.5"},"expectedRev":7,"updatedBy":"agent:test"}`))
+	req := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/session-search", bytes.NewBufferString(`{"createMission":{"title":"Showcase","goal":"Build it","beadId":"chlab-123"},"expectedRev":7,"updatedBy":"agent:test"}`))
 	req.Header.Set("If-Match", board.ETag)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("mission status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	if !bytes.Contains(rec.Body.Bytes(), []byte(`"beadId":"home-7kc4.5"`)) || bytes.Contains(rec.Body.Bytes(), []byte("chain")) {
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"beadId":"chlab-123"`)) || bytes.Contains(rec.Body.Bytes(), []byte("chain")) {
 		t.Fatalf("mission response wrong: %s", rec.Body.String())
 	}
 }
@@ -1009,6 +1084,54 @@ func TestFormationsHandlerS4RunLifecycleAndSSE(t *testing.T) {
 	}
 }
 
+func TestFormationsHandlerS4ConfiguredLabExecutorRunsStaffedFormation(t *testing.T) {
+	workspace := t.TempDir()
+	agentsDir := t.TempDir()
+	t.Setenv("CHROTE_FORMATIONS_LAB_HARNESSES", "lab-fake")
+	t.Setenv("CHROTE_FORMATIONS_LAB_CWD", workspace)
+	t.Setenv("CHROTE_FORMATIONS_LAB_ROOTS", workspace)
+
+	store := formations.NewStore(workspace)
+	personas := formations.NewPersonaStore(agentsDir)
+	if _, err := personas.CreatePersona(formations.CreatePersonaRequest{
+		ID:      "lab-poet",
+		Kind:    "specialist",
+		Harness: "lab-fake",
+	}); err != nil {
+		t.Fatalf("create persona: %v", err)
+	}
+	writeFormationsAPIFixture(t, store.BoardPath("poems"), formationsAPILabPoemBoardFixture())
+	board, err := store.ReadBoard("poems")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+
+	handler := NewFormationsHandlerWithStores(store, personas)
+	startReq := httptest.NewRequest(http.MethodPost, "/api/formations/runs", bytes.NewBufferString(`{"board":"poems","missionId":"mis_poem","actor":"agent:test","limits":{"maxDispatch":3,"maxAttempts":1}}`))
+	startReq.Header.Set("If-Match", board.ETag)
+	startRec := httptest.NewRecorder()
+	handler.StartRun(startRec, startReq)
+	if startRec.Code != http.StatusOK {
+		t.Fatalf("start run status = %d, want %d: %s", startRec.Code, http.StatusOK, startRec.Body.String())
+	}
+	started := decodeFormationsRunStartResponse(t, startRec.Body.Bytes())
+	if started.Status.Status != formations.RunStatusSucceeded || !started.Status.Final {
+		t.Fatalf("start response = %+v, want configured lab success", started)
+	}
+	events, err := store.ReadRunEvents(started.RunID)
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if !apiLabEventsContain(events, formations.RunEventSlotDispatch, "fmn_draft") ||
+		!apiLabEventsContain(events, formations.RunEventSlotResult, "fmn_draft") ||
+		!apiLabEventsContain(events, formations.RunEventNodeOutput, "fmn_draft") {
+		t.Fatalf("events = %+v, want lab slot dispatch/result/node output", events)
+	}
+	if apiLabEventsContainErrorCode(events, "missing_executor") {
+		t.Fatalf("configured lab API run still reported missing_executor: %+v", events)
+	}
+}
+
 func TestFormationsHandlerRejectsOversizedJSONBody(t *testing.T) {
 	store := formations.NewStore(t.TempDir())
 	handler := NewFormationsHandlerWithStore(store)
@@ -1104,6 +1227,70 @@ func decodeFormationsStatusResponse(t *testing.T, raw []byte) formations.RunStat
 		t.Fatalf("decode status response: %v\n%s", err, string(raw))
 	}
 	return response.Data.Status
+}
+
+func apiLabEventsContain(events []formations.RunEvent, typ, nodeID string) bool {
+	for _, event := range events {
+		if event.Type != typ {
+			continue
+		}
+		if nodeID == "" || event.NodeID == nodeID {
+			return true
+		}
+	}
+	return false
+}
+
+func apiLabEventsContainErrorCode(events []formations.RunEvent, code string) bool {
+	for _, event := range events {
+		if event.Type != formations.RunEventError || event.Data == nil {
+			continue
+		}
+		if event.Data["code"] == code {
+			return true
+		}
+	}
+	return false
+}
+
+func formationsAPILabPoemBoardFixture() string {
+	return `schema = 1
+id = "brd_poems"
+slug = "poems"
+title = "Poems"
+rev = 7
+
+[[mission]]
+id = "mis_poem"
+title = "Simple poem"
+goal = "Create a simple poem"
+beadId = "home-vdki.33.1"
+
+[[formation]]
+id = "fmn_draft"
+type = "solo"
+title = "Draft poem"
+
+[[formation.input]]
+id = "port_draft_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_draft_out"
+label = "Output"
+
+[[formation.slot]]
+id = "slot_writer"
+label = "Writer"
+agentId = "lab-poet"
+harness = "lab-fake"
+controller = true
+
+[[connection]]
+id = "edge_mission_draft"
+from = "mis_poem:out"
+to = "fmn_draft:port_draft_in"
+`
 }
 
 func formationsAPIS5CascadeBoardFixture() string {
@@ -1258,6 +1445,15 @@ func readFormationsAPIFile(t *testing.T, path string) string {
 
 func stringPtrForFormationsAPI(v string) *string {
 	return &v
+}
+
+func hasAPIConnection(connections []formations.BoardConnection, from, to string) bool {
+	for _, connection := range connections {
+		if connection.From == from && connection.To == to {
+			return true
+		}
+	}
+	return false
 }
 
 func fixedFormationsAPIClock() func() time.Time {

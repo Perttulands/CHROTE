@@ -58,6 +58,7 @@ type formationsBoardPatchRequest struct {
 	RemovePort         *formationsRemovePortRequest         `json:"removePort"`
 	WireConnection     *formationsWireConnectionRequest     `json:"wireConnection"`
 	UnwireConnection   *formationsWireConnectionRequest     `json:"unwireConnection"`
+	RewireConnection   *formationsRewireConnectionRequest   `json:"rewireConnection"`
 	CreateGate         *formationsCreateGateRequest         `json:"createGate"`
 	SetGateJudge       *formationsSetGateJudgeRequest       `json:"setGateJudge"`
 	DetachGateJudge    *formationsDetachGateJudgeRequest    `json:"detachGateJudge"`
@@ -183,6 +184,14 @@ type formationsDetachGateJudgeRequest struct {
 	UpdatedBy   string `json:"updatedBy"`
 }
 
+type formationsRewireConnectionRequest struct {
+	From        string `json:"from"`
+	PreviousTo  string `json:"previousTo"`
+	To          string `json:"to"`
+	ExpectedRev int    `json:"expectedRev"`
+	UpdatedBy   string `json:"updatedBy"`
+}
+
 type formationsCreateMissionRequest struct {
 	Title       string `json:"title"`
 	Goal        string `json:"goal"`
@@ -249,7 +258,7 @@ func (h *FormationsHandler) StartRun(w http.ResponseWriter, r *http.Request) {
 	if expectedRev == 0 {
 		expectedRev = board.Rev
 	}
-	engine := formations.NewRunEngine(h.store, h.personas, formations.NewUnavailableFormationExecutor("api"))
+	engine := formations.NewRunEngine(h.store, h.personas, formations.NewConfiguredFormationExecutorFromEnv(h.store, h.personas, "api"))
 	status, err := engine.RunMission(slug, formations.RunStartRequest{
 		MissionID:         request.MissionID,
 		Actor:             request.Actor,
@@ -361,7 +370,7 @@ func (h *FormationsHandler) ResumeRun(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSONBody(w, r, &request) {
 		return
 	}
-	engine := formations.NewRunEngine(h.store, h.personas, formations.NewUnavailableFormationExecutor("api"))
+	engine := formations.NewRunEngine(h.store, h.personas, formations.NewConfiguredFormationExecutorFromEnv(h.store, h.personas, "api"))
 	status, err := engine.ResumeRun(r.PathValue("runId"), formations.RunResumeRequest{
 		Actor:  request.Actor,
 		Mode:   request.Mode,
@@ -379,7 +388,7 @@ func (h *FormationsHandler) RecordHumanGateVerdict(w http.ResponseWriter, r *htt
 	if !decodeJSONBody(w, r, &request) {
 		return
 	}
-	engine := formations.NewRunEngine(h.store, h.personas, formations.NewUnavailableFormationExecutor("api"))
+	engine := formations.NewRunEngine(h.store, h.personas, formations.NewConfiguredFormationExecutorFromEnv(h.store, h.personas, "api"))
 	status, err := engine.RecordHumanGateVerdict(r.PathValue("runId"), formations.HumanGateVerdictRequest{
 		GateID:  r.PathValue("gateId"),
 		Verdict: request.Verdict,
@@ -705,6 +714,25 @@ func (h *FormationsHandler) PatchBoard(w http.ResponseWriter, r *http.Request) {
 		core.WriteSuccess(w, map[string]interface{}{"board": board})
 		return
 	}
+	if request.RewireConnection != nil {
+		wire := request.RewireConnection
+		board, err := h.store.RewireFormationTarget(slug, formations.FormationRewireRequest{
+			From:       wire.From,
+			PreviousTo: wire.PreviousTo,
+			To:         wire.To,
+			UpdatedBy:  patchUpdatedBy(request.UpdatedBy, wire.UpdatedBy),
+		}, formations.WriteOptions{
+			ExpectedETag: r.Header.Get("If-Match"),
+			ExpectedRev:  patchExpectedRev(request.ExpectedRev, wire.ExpectedRev),
+		})
+		if err != nil {
+			writeFormationsError(w, err)
+			return
+		}
+		w.Header().Set("ETag", board.ETag)
+		core.WriteSuccess(w, map[string]interface{}{"board": board})
+		return
+	}
 	if request.UnwireConnection != nil {
 		wire := request.UnwireConnection
 		board, err := h.store.UnwireFormationPorts(slug, formations.FormationWireRequest{
@@ -899,6 +927,8 @@ func writeFormationsError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, formations.ErrConflict):
 		core.WriteError(w, http.StatusConflict, "CONFLICT", "Formation definition changed; reload and retry")
+	case errors.Is(err, formations.ErrAmbiguousSelector):
+		core.WriteError(w, http.StatusBadRequest, "AMBIGUOUS_SELECTOR", err.Error())
 	case errors.Is(err, formations.ErrNotFound):
 		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", "Formation resource not found")
 	case errors.Is(err, formations.ErrPreconditionRequired):

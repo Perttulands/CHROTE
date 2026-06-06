@@ -128,6 +128,31 @@ func TestS4DeadPaneAndIdleTimeoutRecordLoudError(t *testing.T) {
 	})
 }
 
+func TestS4CompletionForUnknownDispatchFailsLoud(t *testing.T) {
+	store, started := startS4DispatchRun(t)
+	dispatcher := NewSlotDispatcher(store, &fakeDispatchAdapter{})
+
+	err := dispatcher.CompleteFromCapture(started.RunID, "dsp_unknown", "<<<CHROTE-DONE run-id="+started.RunID+" status=ok artifact=report.md>>>")
+	if err == nil || !strings.Contains(err.Error(), "unknown dispatch") {
+		t.Fatalf("complete unknown dispatch error = %v, want unknown dispatch failure", err)
+	}
+	status, err := store.ProjectRun(started.RunID)
+	if err != nil {
+		t.Fatalf("project run: %v", err)
+	}
+	if status.Status != RunStatusBlocked {
+		t.Fatalf("status = %+v, want blocked for unknown dispatch completion", status)
+	}
+	events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
+	if eventsContainType(events, RunEventSlotResult) {
+		t.Fatalf("events include orphan slot_result for unknown dispatch: %+v", events)
+	}
+	errEvent := eventOfType(t, events, RunEventError)
+	if errEvent.Data["code"] != "unknown_dispatch" {
+		t.Fatalf("error data = %#v, want unknown_dispatch", errEvent.Data)
+	}
+}
+
 type fakeDispatchAdapter struct {
 	beforeSend func(SlotDispatchPayload)
 	sent       []SlotDispatchPayload

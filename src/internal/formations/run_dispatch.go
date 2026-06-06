@@ -117,10 +117,23 @@ func (d *SlotDispatcher) CompleteFromCapture(runID, dispatchID, captured string)
 		}
 		return ErrDispatchTimeout
 	}
+	dispatch := d.dispatchEvent(runID, dispatchID)
+	if dispatch.Type == "" {
+		message := fmt.Sprintf("unknown dispatch %q", dispatchID)
+		if err := d.appendDispatchErrorAndBlock(runID, dispatchID, "", "", "unknown_dispatch", message, "adapter"); err != nil {
+			return err
+		}
+		return errors.New(message)
+	}
 	return d.store.AppendRunEvent(runID, RunEvent{
-		Type: RunEventSlotResult,
+		Type:    RunEventSlotResult,
+		NodeID:  dispatch.NodeID,
+		SlotID:  dispatch.SlotID,
+		Attempt: dispatch.Attempt,
 		Data: map[string]any{
 			"dispatchId": dispatchID,
+			"nodeId":     dispatch.NodeID,
+			"slotId":     dispatch.SlotID,
 			"status":     sentinel.Status,
 			"sentinel": map[string]any{
 				"runId":    sentinel.RunID,
@@ -129,6 +142,26 @@ func (d *SlotDispatcher) CompleteFromCapture(runID, dispatchID, captured string)
 			},
 		},
 	})
+}
+
+func (d *SlotDispatcher) dispatchEvent(runID, dispatchID string) RunEvent {
+	if d == nil || d.store == nil || dispatchID == "" {
+		return RunEvent{}
+	}
+	events, err := d.store.ReadRunEvents(runID)
+	if err != nil {
+		return RunEvent{}
+	}
+	for i := len(events) - 1; i >= 0; i-- {
+		event := events[i]
+		if event.Type != RunEventSlotDispatch || event.Data == nil {
+			continue
+		}
+		if stringFromAny(event.Data["dispatchId"]) == dispatchID {
+			return event
+		}
+	}
+	return RunEvent{}
 }
 
 func ParseCompletionSentinel(captured, runID string) (CompletionSentinel, bool) {

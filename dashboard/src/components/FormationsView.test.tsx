@@ -1,6 +1,21 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import FormationsView from './FormationsView'
+import { activeRunStorageKey } from './formationsRunState'
+import type { BoardDocument, FormationNode, LayoutDocument, RunEvent, RunStatusProjection } from './formationsTypes'
+
+type TestBoard = BoardDocument & { schema?: number }
+type TestLayout = LayoutDocument & { schema?: number }
+type FetchCall = { url: string; init?: RequestInit }
+type MockFetchOptions = {
+  board?: TestBoard
+  layout?: TestLayout
+  layoutMissing?: boolean
+  reloadBoard?: TestBoard
+  agentsFailure?: string
+  restoreStatusFailure?: string
+  restoreEventsFailure?: string
+}
 
 const initialBoard = {
   schema: 1,
@@ -23,7 +38,7 @@ const initialBoard = {
     },
   ],
   connections: [],
-}
+} satisfies TestBoard
 
 const initialLayout = {
   schema: 1,
@@ -31,7 +46,7 @@ const initialLayout = {
   boardRev: 7,
   etag: 'layout-etag',
   nodes: [{ id: 'fmn_01J9_research', x: 120, y: 80 }],
-}
+} satisfies TestLayout
 
 const shipFormation = {
   id: 'fmn_01J9_ship',
@@ -40,7 +55,7 @@ const shipFormation = {
   inputs: [{ id: 'port_ship_in', label: 'Input' }],
   outputs: [{ id: 'port_ship_out', label: 'Output' }],
   slots: [{ id: 'slot_ship', label: 'Agent', controller: false }],
-}
+} satisfies FormationNode
 
 const blockerFormation = {
   id: 'fmn_01J9_blocker',
@@ -49,24 +64,76 @@ const blockerFormation = {
   inputs: [{ id: 'port_blocker_in', label: 'Input' }],
   outputs: [{ id: 'port_blocker_out', label: 'Output' }],
   slots: [{ id: 'slot_blocker', label: 'Agent', controller: false }],
-}
+} satisfies FormationNode
 
 function successResponse(data: unknown, etag?: string) {
   return Promise.resolve({
     ok: true,
+    status: 200,
     headers: { get: (name: string) => name.toLowerCase() === 'etag' ? etag ?? null : null },
     json: () => Promise.resolve({ success: true, data }),
     text: () => Promise.resolve(''),
   })
 }
 
-function mockFetch(options: { board?: any; layout?: any; layoutMissing?: boolean } = {}) {
-  const board = options.board || initialBoard
+function failureResponse(message: string, status = 500, code = 'MOCK_FAILURE') {
+  return Promise.resolve({
+    ok: false,
+    status,
+    headers: { get: () => null },
+    json: () => Promise.resolve({ success: false, error: { code, message } }),
+    text: () => Promise.resolve(''),
+  })
+}
+
+class MockEventSource {
+  static instances: MockEventSource[] = []
+
+  readonly url: string
+  onerror: ((event: Event) => void) | null = null
+  private listeners = new Map<string, Set<EventListener>>()
+  close = vi.fn()
+
+  constructor(url: string | URL) {
+    this.url = String(url)
+    MockEventSource.instances.push(this)
+  }
+
+  addEventListener(type: string, listener: EventListener) {
+    const listeners = this.listeners.get(type) || new Set<EventListener>()
+    listeners.add(listener)
+    this.listeners.set(type, listeners)
+  }
+
+  removeEventListener(type: string, listener: EventListener) {
+    this.listeners.get(type)?.delete(listener)
+  }
+
+  fail() {
+    this.onerror?.(new Event('error'))
+  }
+}
+
+function mockFetch(options: MockFetchOptions = {}) {
+  let board = options.board || initialBoard
   const layout = options.layout || initialLayout
-  const calls: Array<{ url: string; init?: RequestInit }> = []
+  const calls: FetchCall[] = []
+  let changesServed = 0
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     calls.push({ url, init })
+    if (url === '/api/agents') {
+      if (options.agentsFailure) return failureResponse(options.agentsFailure)
+      return successResponse({
+        agents: [{
+          id: 'codex',
+          displayName: 'Codex',
+          harnessDefault: 'openai-codex',
+          assignable: true,
+          liveness: 'live',
+        }],
+      })
+    }
     if (url === '/api/formations/boards') {
       return successResponse({
         boards: [{ id: board.id, slug: board.slug, title: board.title, rev: board.rev, etag: board.etag }],
@@ -84,7 +151,7 @@ function mockFetch(options: { board?: any; layout?: any; layoutMissing?: boolean
             { id: 'slot_created_a', label: 'Peer', controller: false },
             { id: 'slot_created_b', label: 'Peer', controller: false },
           ],
-        }
+        } satisfies FormationNode
         return successResponse({
           board: { ...board, rev: 8, etag: 'board-etag-2', formations: [...board.formations, created] },
           formation: created,
@@ -95,38 +162,78 @@ function mockFetch(options: { board?: any; layout?: any; layoutMissing?: boolean
     }
     if (url === '/api/formations/boards/session-search/layout') {
       if (init?.method === 'PATCH') {
-        const body = JSON.parse(String(init.body || '{}'))
+        const body = JSON.parse(String(init.body || '{}')) as { nodes?: TestLayout['nodes'] }
         return successResponse({ layout: { ...layout, etag: 'layout-etag-2', nodes: body.nodes || layout.nodes } }, 'layout-etag-2')
       }
       if (options.layoutMissing) {
-        return Promise.resolve({
-          ok: false,
-          status: 404,
-          headers: { get: () => null },
-          json: () => Promise.resolve({ success: false, error: { code: 'NOT_FOUND', message: 'layout deleted' } }),
-          text: () => Promise.resolve(''),
-        })
+        return failureResponse('layout deleted', 404, 'NOT_FOUND')
       }
       return successResponse({ layout }, layout.etag)
     }
-    return Promise.resolve({
-      ok: false,
-      headers: { get: () => null },
-      json: () => Promise.resolve({ success: false, error: { code: 'NOT_FOUND', message: url } }),
-      text: () => Promise.resolve(''),
-    })
+    if (url.startsWith('/api/formations/boards/session-search/changes')) {
+      changesServed += 1
+      if (options.reloadBoard && changesServed === 1) {
+        board = options.reloadBoard
+        return successResponse({ signal: { changed: true, rev: board.rev, etag: board.etag } })
+      }
+      return successResponse({ signal: { changed: false, rev: board.rev, etag: board.etag } })
+    }
+    if (url === '/api/formations/runs' && init?.method === 'POST') {
+      const status = runStatus('run_01')
+      return successResponse({ runId: status.runId, status })
+    }
+    if (url === '/api/formations/runs/run_01') {
+      return successResponse({ status: runStatus('run_01') })
+    }
+    if (url === '/api/formations/runs/run_01/events') {
+      return successResponse({ events: runEvents('run_01') })
+    }
+    if (url === '/api/formations/runs/stale-run') {
+      if (options.restoreStatusFailure) return failureResponse(options.restoreStatusFailure)
+      return successResponse({ status: runStatus('stale-run') })
+    }
+    if (url === '/api/formations/runs/stale-run/events') {
+      if (options.restoreEventsFailure) return failureResponse(options.restoreEventsFailure)
+      return successResponse({ events: runEvents('stale-run') })
+    }
+    return failureResponse(url, 404, 'NOT_FOUND')
   })
-  vi.stubGlobal('fetch', fetchMock as any)
+  vi.stubGlobal('fetch', fetchMock)
   return { fetchMock, calls }
+}
+
+function runStatus(runId: string): RunStatusProjection {
+  return {
+    runId,
+    status: 'blocked',
+    final: false,
+    boardSlug: 'session-search',
+    missionId: 'mis_showcase',
+    eventCount: 1,
+    resumeAllowed: true,
+  }
+}
+
+function runEvents(runId: string): RunEvent[] {
+  return [{
+    seq: 1,
+    type: 'run_blocked',
+    runId,
+    gateId: 'gate_review',
+    data: { reason: 'waiting for human', resumeAllowed: true },
+  }]
 }
 
 describe('FormationsView S2 canvas', () => {
   beforeEach(() => {
+    window.localStorage.clear()
+    MockEventSource.instances = []
     mockFetch()
   })
 
   afterEach(() => {
     cleanup()
+    window.localStorage.clear()
     vi.unstubAllGlobals()
   })
 
@@ -139,6 +246,77 @@ describe('FormationsView S2 canvas', () => {
     expect(node).toHaveAttribute('data-formation-type', 'peer')
     expect(within(node).getAllByText('Peer')).toHaveLength(3)
     expect(screen.getByTestId('formation-zoom-level')).toHaveTextContent('100%')
+  })
+
+  it('surfaces agent roster load failures instead of silently emptying assignable agents', async () => {
+    mockFetch({ agentsFailure: 'agent roster down' })
+    render(<FormationsView />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('agent roster down')
+  })
+
+  it('keeps the active run marker when run restore fails', async () => {
+    mockFetch({ restoreStatusFailure: 'run status down' })
+    window.localStorage.setItem(activeRunStorageKey('session-search'), 'stale-run')
+    render(<FormationsView />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('run status down')
+    expect(window.localStorage.getItem(activeRunStorageKey('session-search'))).toBe('stale-run')
+  })
+
+  it('surfaces EventSource stream failures for active runs', async () => {
+    vi.stubGlobal('EventSource', MockEventSource)
+    mockFetch({
+      board: {
+        ...initialBoard,
+        missions: [{
+          id: 'mis_showcase',
+          title: 'Showcase',
+          goal: 'Build the page',
+          beadId: 'home-7kc4.5',
+        }],
+      },
+    })
+    render(<FormationsView />)
+
+    await screen.findByText('Showcase')
+    fireEvent.click(screen.getByRole('button', { name: 'Start Showcase' }))
+
+    await screen.findByTestId('formation-run-status')
+    await waitFor(() => {
+      expect(MockEventSource.instances).toHaveLength(1)
+    })
+    MockEventSource.instances[0].fail()
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Run stream interrupted')
+  })
+
+  it('rebases editor drafts when board-change polling reloads file-backed truth', async () => {
+    const boardWithBrief: TestBoard = {
+      ...initialBoard,
+      formations: [{
+        ...initialBoard.formations[0],
+        brief: { goal: 'old file goal' },
+      }],
+    }
+    const reloadedBoard: TestBoard = {
+      ...boardWithBrief,
+      rev: 8,
+      etag: 'board-etag-reloaded',
+      formations: [{
+        ...boardWithBrief.formations[0],
+        brief: { goal: 'fresh file goal' },
+      }],
+    }
+    mockFetch({ board: boardWithBrief, reloadBoard: reloadedBoard })
+    render(<FormationsView />)
+
+    const goal = await screen.findByLabelText('Goal for Research huddle')
+    fireEvent.change(goal, { target: { value: 'local stale draft' } })
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Goal for Research huddle')).toHaveValue('fresh file goal')
+    }, { timeout: 2000 })
   })
 
   it('creates a peer formation with board ETag and revision preconditions', async () => {

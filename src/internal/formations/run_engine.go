@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -509,6 +510,12 @@ func (e *RunEngine) resumeSnapshot(runID string, board *BoardDocument, mission M
 		completed[event.NodeID] = true
 		e.replayOutputToReady(runID, board, event.NodeID, stringFromEventData(event, "text"), ready, queued, &queue)
 	}
+	if err := e.replayGateVerdictsToReady(runID, board, gateByID, events, limits, ready, queued, &queue); err != nil {
+		if errors.Is(err, errRunStopped) {
+			return nil
+		}
+		return err
+	}
 
 	dispatches := 0
 	ranAny := false
@@ -598,6 +605,9 @@ func (e *RunEngine) resumeSnapshot(runID string, board *BoardDocument, mission M
 		}
 	}
 
+	if starved := starvedFormations(formationByID, ready); len(starved) > 0 {
+		return e.appendStarvedBlock(runID, starved)
+	}
 	if !ranAny {
 		return e.appendErrorAndBlock(runID, "resume_no_work", "no resumable work found", "engine", "", "no resumable work found")
 	}
@@ -638,6 +648,50 @@ func (e *RunEngine) replayOutputToReady(runID string, board *BoardDocument, from
 			*queue = append(*queue, toNode)
 		}
 	}
+}
+
+func (e *RunEngine) replayGateVerdictsToReady(runID string, board *BoardDocument, gates map[string]GateNode, events []RunEvent, limits RunLimits, ready map[string]map[string]RunInputRef, queued map[string]bool, queue *[]string) error {
+	for _, event := range events {
+		if event.Type != RunEventGateVerdict {
+			continue
+		}
+		routePort := stringFromEventData(event, "routePort")
+		if routePort == "" || routePort == "none" {
+			continue
+		}
+		gateID := event.GateID
+		if gateID == "" {
+			gateID = event.NodeID
+		}
+		input := runInputRefFromAny(event.Data["inputRef"])
+		for _, route := range gateVerdictRoutes(board, event, gateID, routePort) {
+			nextInput := RunInputRef{
+				EdgeID:     route.ID,
+				FromNodeID: gateID,
+				Ref:        fmt.Sprintf("ledger://%s/%s", runID, route.ID),
+				Text:       input.Text,
+			}
+			if err := e.deliverConnection(runID, board, gates, route, nextInput, limits, ready, queued, queue); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func gateVerdictRoutes(board *BoardDocument, event RunEvent, gateID, routePort string) []BoardConnection {
+	routed := map[string]bool{}
+	for _, id := range stringSliceFromAny(event.Data["routedEdges"]) {
+		routed[id] = true
+	}
+	var routes []BoardConnection
+	for _, connection := range outgoingConnectionsFromPort(board.Connections, gateID, routePort) {
+		if len(routed) > 0 && !routed[connection.ID] {
+			continue
+		}
+		routes = append(routes, connection)
+	}
+	return routes
 }
 
 func (e *RunEngine) readRunBoard(snapshotPath string) (*BoardDocument, error) {
@@ -784,6 +838,9 @@ func (e *RunEngine) executeSnapshot(runID string, board *BoardDocument, mission 
 		}
 	}
 
+	if starved := starvedFormations(formationByID, ready); len(starved) > 0 {
+		return e.appendStarvedBlock(runID, starved)
+	}
 	return e.store.AppendRunEvent(runID, RunEvent{
 		Type: RunEventSucceeded,
 		Data: map[string]any{
@@ -1039,6 +1096,7 @@ func (e *RunEngine) routeGateEvaluation(runID string, board *BoardDocument, gate
 			"routePort":   routePort,
 			"routedEdges": connectionIDs(routes),
 			"reason":      result.Reason,
+			"inputRef":    input,
 		},
 	}); err != nil {
 		return err
@@ -1079,6 +1137,7 @@ func (e *RunEngine) routeGateVerdict(runID string, board *BoardDocument, gate Ga
 			"routePort":   routePort,
 			"routedEdges": connectionIDs(routes),
 			"reason":      reason,
+			"inputRef":    input,
 		},
 	}); err != nil {
 		return nil, err
@@ -1090,122 +1149,7 @@ func (e *RunEngine) routeGateVerdict(runID string, board *BoardDocument, gate Ga
 		return e.store.ProjectRun(runID)
 	}
 
-	formationByID := map[string]FormationNode{}
-	for _, formation := range board.Formations {
-		formationByID[formation.ID] = formation
-	}
-	gateByID := map[string]GateNode{}
-	for _, item := range board.Gates {
-		gateByID[item.ID] = item
-	}
-	ready := map[string]map[string]RunInputRef{}
-	queued := map[string]bool{}
-	attempts := map[string]int{}
-	var queue []string
-	for _, route := range routes {
-		nextInput := RunInputRef{
-			EdgeID:     route.ID,
-			FromNodeID: gate.ID,
-			Ref:        fmt.Sprintf("ledger://%s/%s", runID, route.ID),
-			Text:       input.Text,
-		}
-		if err := e.deliverConnection(runID, board, gateByID, route, nextInput, limits, ready, queued, &queue); err != nil {
-			if errors.Is(err, errRunStopped) {
-				return e.store.ProjectRun(runID)
-			}
-			return nil, err
-		}
-	}
-	dispatches := 0
-	for len(queue) > 0 {
-		nodeID := queue[0]
-		queue = queue[1:]
-		queued[nodeID] = false
-		formation, ok := formationByID[nodeID]
-		if !ok {
-			continue
-		}
-		inputs := orderedInputs(formation, ready[nodeID])
-		if !formationReady(formation, ready[nodeID]) {
-			if err := e.appendWaiting(runID, formation, ready[nodeID]); err != nil {
-				return nil, err
-			}
-			continue
-		}
-		nextAttempt := attempts[nodeID] + 1
-		if maxAttempts(limits) > 0 && nextAttempt > maxAttempts(limits) {
-			if err := e.appendErrorAndBlock(runID, "human_gate_attempts_exhausted", "human gate attempts exhausted", "engine", nodeID, "human gate attempts exhausted"); err != nil {
-				return nil, err
-			}
-			return e.store.ProjectRun(runID)
-		}
-		if limits.MaxDispatch > 0 && dispatches >= limits.MaxDispatch {
-			if err := e.appendErrorAndBlock(runID, "max_dispatch_exceeded", "max dispatch exceeded", "engine", nodeID, "max dispatch exceeded"); err != nil {
-				return nil, err
-			}
-			return e.store.ProjectRun(runID)
-		}
-		attempts[nodeID] = nextAttempt
-		if err := e.store.AppendRunEvent(runID, RunEvent{
-			Type:    RunEventNodeStarted,
-			NodeID:  nodeID,
-			Attempt: nextAttempt,
-			Data: map[string]any{
-				"nodeKind":  "formation",
-				"inputRefs": inputs,
-				"reason":    "human-verdict",
-				"brief":     formationBriefEventData(formationBriefValue(formation)),
-			},
-		}); err != nil {
-			return nil, err
-		}
-		result, err := e.executeFormation(FormationExecution{
-			RunID:     runID,
-			NodeID:    nodeID,
-			Title:     formation.Title,
-			Formation: formation,
-			Brief:     formationBriefValue(formation),
-			Inputs:    inputs,
-			Attempt:   nextAttempt,
-		}, limits)
-		if err != nil {
-			if blockErr := e.appendExecutionFailureAndBlock(runID, nodeID, err); blockErr != nil {
-				return nil, blockErr
-			}
-			return e.store.ProjectRun(runID)
-		}
-		dispatches++
-		if result.Status == "" {
-			result.Status = "done"
-		}
-		if err := e.store.AppendRunEvent(runID, RunEvent{
-			Type:   RunEventNodeOutput,
-			NodeID: nodeID,
-			Data: map[string]any{
-				"status":    result.Status,
-				"reportRef": result.ReportRef,
-				"text":      result.Text,
-			},
-		}); err != nil {
-			return nil, err
-		}
-		if err := e.deliverOutput(runID, board, gateByID, nodeID, result.Text, limits, ready, queued, &queue); err != nil {
-			if errors.Is(err, errRunStopped) {
-				return e.store.ProjectRun(runID)
-			}
-			return nil, err
-		}
-	}
-	if err := e.store.AppendRunEvent(runID, RunEvent{
-		Type: RunEventSucceeded,
-		Data: map[string]any{
-			"summaryRef":   "",
-			"outputRefs":   []string{},
-			"artifactRefs": []string{},
-			"final":        true,
-			"reason":       "human-verdict",
-		},
-	}); err != nil {
+	if err := e.appendRunBlocked(runID, "human gate verdict recorded; resume required", "", gate.ID); err != nil {
 		return nil, err
 	}
 	return e.store.ProjectRun(runID)
@@ -1332,6 +1276,14 @@ func (e *RunEngine) appendExecutionFailureAndBlock(runID, nodeID string, err err
 }
 
 func executionFailureEvent(err error) (string, string, string) {
+	var executionErr *RunExecutionError
+	if errors.As(err, &executionErr) {
+		boundary := executionErr.Boundary
+		if boundary == "" {
+			boundary = "executor"
+		}
+		return executionErr.Code, executionErr.Message, boundary
+	}
 	switch {
 	case errors.Is(err, ErrRunWallClockExceeded):
 		return "wall_clock_exceeded", "wall clock limit exceeded", "limits"
@@ -1356,6 +1308,71 @@ func (e *RunEngine) appendRunBlocked(runID, reason, nodeID, gateID string) error
 			"blockedGateId":  gateID,
 			"resumeAllowed":  true,
 			"resumePolicy":   "explicit",
+			"openDispatches": []map[string]any{},
+			"nextEpoch":      1,
+		},
+	})
+}
+
+type starvedFormation struct {
+	ID      string
+	Title   string
+	Missing []string
+}
+
+// starvedFormations returns the reachable formations that received at least one
+// input but can never become runnable because a required input was never
+// produced. A formation that completed has all its inputs filled (it only runs
+// when formationReady), so it is excluded; one that was never reached has no
+// entry in ready and is excluded too. The result is sorted by ID so the run
+// ledger is deterministic.
+func starvedFormations(formationByID map[string]FormationNode, ready map[string]map[string]RunInputRef) []starvedFormation {
+	var starved []starvedFormation
+	for id, formation := range formationByID {
+		fed := ready[id]
+		if len(fed) == 0 || formationReady(formation, fed) {
+			continue
+		}
+		missing := make([]string, 0, len(formation.Inputs))
+		for _, input := range formation.Inputs {
+			if _, ok := fed[input.ID]; !ok {
+				missing = append(missing, input.ID)
+			}
+		}
+		starved = append(starved, starvedFormation{ID: id, Title: formation.Title, Missing: missing})
+	}
+	sort.Slice(starved, func(i, j int) bool { return starved[i].ID < starved[j].ID })
+	return starved
+}
+
+// appendStarvedBlock records a fail-loud run_blocked instead of run_succeeded
+// when reachable required formations can never run. Resume cannot conjure a
+// missing producer, so the run is blocked non-resumably with recovery guidance:
+// wire a producer to the starved ports and start a new run.
+func (e *RunEngine) appendStarvedBlock(runID string, starved []starvedFormation) error {
+	waitingNodes := make([]map[string]any, 0, len(starved))
+	for _, s := range starved {
+		waitingNodes = append(waitingNodes, map[string]any{
+			"nodeId":        s.ID,
+			"title":         s.Title,
+			"missingInputs": s.Missing,
+		})
+	}
+	primary := starved[0]
+	reason := fmt.Sprintf("formation %q is waiting on inputs %v that no upstream node produces; wire a producer to those ports and start a new run", primary.ID, primary.Missing)
+	return e.store.AppendRunEvent(runID, RunEvent{
+		Type:   RunEventBlocked,
+		NodeID: primary.ID,
+		Data: map[string]any{
+			"reason":         reason,
+			"code":           "reachable_node_starved",
+			"blockedNodeId":  primary.ID,
+			"blockedGateId":  "",
+			"boundary":       "wiring",
+			"waitingNodes":   waitingNodes,
+			"recoverable":    false,
+			"resumeAllowed":  false,
+			"resumePolicy":   "authoring",
 			"openDispatches": []map[string]any{},
 			"nextEpoch":      1,
 		},

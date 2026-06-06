@@ -11,6 +11,7 @@ import FloatingModal from './components/FloatingModal'
 import HelpView from './components/HelpView'
 import BeadsView from './components/BeadsView'
 import FormationsView from './components/FormationsView'
+import FormationsCockpit from './components/FormationsCockpit'
 import AgentsView from './components/AgentsView'
 import OracleView from './components/OracleView'
 import OracleViewV2 from './components/OracleView/V2'
@@ -44,6 +45,7 @@ function DashboardContent() {
   const { addSessionToWindow, removeSessionFromWindow, setIsDragging, isDragging, settings } = useSession()
   const persistFilesTabState = isFeatureEnabled('filesPersistTabState')
   const formationsEnabled = isFeatureEnabled('formations')
+  const cockpitEnabled = isFeatureEnabled('formationsCockpit')
   const serverStatusTab = isFeatureEnabled('serverStatusTab')
 
   const handleShowHelp = useCallback(() => setShowHelp(true), [])
@@ -171,7 +173,7 @@ function DashboardContent() {
           )}
           {formationsEnabled && activeTab === 'formations' && (
             <ErrorBoundary>
-              <FormationsView />
+              {cockpitEnabled ? <FormationsCockpit /> : <FormationsView />}
             </ErrorBoundary>
           )}
           {activeTab === 'agents' && (

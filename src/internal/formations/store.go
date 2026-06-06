@@ -18,6 +18,7 @@ const CurrentSchema = 1
 
 var (
 	ErrConflict             = errors.New("formations conflict")
+	ErrAmbiguousSelector    = errors.New("ambiguous formations selector")
 	ErrInvalidSlug          = errors.New("invalid formations slug")
 	ErrNotFound             = errors.New("formations file not found")
 	ErrPreconditionRequired = errors.New("formations write precondition required")

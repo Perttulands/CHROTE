@@ -954,7 +954,7 @@ controller = false
 	}
 }
 
-func TestS3BriefAndVerificationPersistHomeBeadAndOnFail(t *testing.T) {
+func TestS3BriefAndVerificationPersistProjectBeadAndOnFail(t *testing.T) {
 	store := NewStore(t.TempDir())
 	store.Now = fixedClock()
 	writeFixture(t, store.BoardPath("session-search"), `schema = 1
@@ -977,7 +977,7 @@ title = "Ship"
 	withBrief, err := store.SetFormationBrief("session-search", FormationBriefRequest{
 		FormationID: "fmn_ship",
 		Goal:        "Ship the change",
-		BeadID:      "home-7kc4.5",
+		BeadID:      "srv-abc.2",
 		Files:       []string{"src/SessionPanel.tsx"},
 		Links:       []string{"https://example.com/spec"},
 		UpdatedBy:   "agent:test",
@@ -997,8 +997,8 @@ title = "Ship"
 	}
 
 	formation := after.Formations[0]
-	if formation.Brief == nil || formation.Brief.Goal != "Ship the change" || formation.Brief.BeadID != "home-7kc4.5" {
-		t.Fatalf("brief = %+v, want goal and home bead", formation.Brief)
+	if formation.Brief == nil || formation.Brief.Goal != "Ship the change" || formation.Brief.BeadID != "srv-abc.2" {
+		t.Fatalf("brief = %+v, want goal and project bead", formation.Brief)
 	}
 	if formation.Verification == nil || !strings.HasPrefix(formation.Verification.ID, "ver_") || formation.Verification.OnFail != "pushback" {
 		t.Fatalf("verification = %+v, want ver_ id and onFail pushback", formation.Verification)
@@ -1007,7 +1007,7 @@ title = "Ship"
 	for _, want := range []string{
 		`customFuture = "keep me"`,
 		`[formation.brief]`,
-		`beadId = "home-7kc4.5"`,
+		`beadId = "srv-abc.2"`,
 		`files = ["src/SessionPanel.tsx"]`,
 		`links = ["https://example.com/spec"]`,
 		`[formation.verification]`,
@@ -1016,6 +1016,39 @@ title = "Ship"
 		if !strings.Contains(raw, want) {
 			t.Fatalf("board TOML missing %q:\n%s", want, raw)
 		}
+	}
+}
+
+func TestS3FormationBriefRejectsUnsafeNonEmptyBeadID(t *testing.T) {
+	for _, beadID := range []string{"nohyphen", "Home-123", "chlab/123", "../home-pfyv", "home-pfyv\n"} {
+		t.Run(beadID, func(t *testing.T) {
+			store := NewStore(t.TempDir())
+			store.Now = fixedClock()
+			writeFixture(t, store.BoardPath("session-search"), `schema = 1
+id = "brd_01J9_sesssearch"
+slug = "session-search"
+title = "Improve session search"
+rev = 7
+updatedAt = "2026-06-03T16:00:00Z"
+
+[[formation]]
+id = "fmn_ship"
+type = "solo"
+title = "Ship"
+`)
+			before, err := store.ReadBoard("session-search")
+			if err != nil {
+				t.Fatalf("read board: %v", err)
+			}
+			if _, err := store.SetFormationBrief("session-search", FormationBriefRequest{
+				FormationID: "fmn_ship",
+				Goal:        "Ship the change",
+				BeadID:      beadID,
+				UpdatedBy:   "agent:test",
+			}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev}); !errors.Is(err, ErrInvalidSlug) {
+				t.Fatalf("set brief beadId %q error = %v, want ErrInvalidSlug", beadID, err)
+			}
+		})
 	}
 }
 
@@ -1133,6 +1166,50 @@ func TestS3WireRejectsSelfDuplicateAndSecondInput(t *testing.T) {
 		UpdatedBy: "agent:test",
 	}, WriteOptions{ExpectedETag: wired.ETag, ExpectedRev: wired.Rev}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("second input wire error = %v, want ErrConflict", err)
+	}
+}
+
+func TestS3RewireRejectsOccupiedTargetWithoutDroppingOriginal(t *testing.T) {
+	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
+	writeFixture(t, store.BoardPath("session-search"), s3ConnectionsBoardFixture())
+	before, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	first, err := store.WireFormationPorts("session-search", FormationWireRequest{
+		From:      "fmn_frame:port_frame_out",
+		To:        "fmn_research:port_research_in",
+		UpdatedBy: "agent:test",
+	}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev})
+	if err != nil {
+		t.Fatalf("wire first: %v", err)
+	}
+	second, err := store.WireFormationPorts("session-search", FormationWireRequest{
+		From:      "fmn_research:port_research_out",
+		To:        "fmn_ship:port_ship_in",
+		UpdatedBy: "agent:test",
+	}, WriteOptions{ExpectedETag: first.ETag, ExpectedRev: first.Rev})
+	if err != nil {
+		t.Fatalf("wire second: %v", err)
+	}
+	if _, err := store.RewireFormationTarget("session-search", FormationRewireRequest{
+		From:       "fmn_frame:port_frame_out",
+		PreviousTo: "fmn_research:port_research_in",
+		To:         "fmn_ship:port_ship_in",
+		UpdatedBy:  "agent:test",
+	}, WriteOptions{ExpectedETag: second.ETag, ExpectedRev: second.Rev}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("rewire occupied target error = %v, want ErrConflict", err)
+	}
+	after, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read after failed rewire: %v", err)
+	}
+	if !hasConnection(after.Connections, "fmn_frame:port_frame_out", "fmn_research:port_research_in") {
+		t.Fatalf("failed rewire dropped original connection: %+v", after.Connections)
+	}
+	if !hasConnection(after.Connections, "fmn_research:port_research_out", "fmn_ship:port_ship_in") {
+		t.Fatalf("failed rewire changed occupied target connection: %+v", after.Connections)
 	}
 }
 
@@ -1329,7 +1406,7 @@ to = "fmn_j1:port_j1_in"
 	}
 }
 
-func TestS3MissionCreateRequiresHomeBeadIDAndSingleOut(t *testing.T) {
+func TestS3MissionCreateAcceptsProjectBeadIDAndSingleOut(t *testing.T) {
 	store := NewStore(t.TempDir())
 	store.Now = fixedClock()
 	writeFixture(t, store.BoardPath("session-search"), minimalBoard("session-search", 7))
@@ -1337,29 +1414,43 @@ func TestS3MissionCreateRequiresHomeBeadIDAndSingleOut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read board: %v", err)
 	}
-	if _, err := store.CreateMission("session-search", MissionCreateRequest{
-		Title:     "Showcase site",
-		Goal:      "Build the showcase",
-		BeadID:    "bd-204",
-		UpdatedBy: "agent:test",
-	}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev}); !errors.Is(err, ErrInvalidSlug) {
-		t.Fatalf("bd-prefixed mission error = %v, want ErrInvalidSlug", err)
-	}
 	after, err := store.CreateMission("session-search", MissionCreateRequest{
 		Title:     "Showcase site",
 		Goal:      "Build the showcase",
-		BeadID:    "home-7kc4.5",
+		BeadID:    "home-vdki.34.1",
 		UpdatedBy: "agent:test",
 	}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev})
 	if err != nil {
 		t.Fatalf("create mission: %v", err)
 	}
-	if len(after.Missions) != 1 || !strings.HasPrefix(after.Missions[0].ID, "mis_") || after.Missions[0].BeadID != "home-7kc4.5" {
-		t.Fatalf("missions = %+v, want one home-backed mission", after.Missions)
+	if len(after.Missions) != 1 || !strings.HasPrefix(after.Missions[0].ID, "mis_") || after.Missions[0].BeadID != "home-vdki.34.1" {
+		t.Fatalf("missions = %+v, want one project-backed mission", after.Missions)
 	}
 	raw := readFile(t, store.BoardPath("session-search"))
 	if strings.Contains(raw, "chain") || strings.Count(raw, "out") != 0 {
 		t.Fatalf("mission stored a chain or explicit dynamic port instead of fixed out:\n%s", raw)
+	}
+}
+
+func TestS3MissionCreateRejectsUnsafeBeadID(t *testing.T) {
+	for _, beadID := range []string{"", "nohyphen", "Home-123", "chlab/123", "../home-pfyv", "home-pfyv\n"} {
+		t.Run(beadID, func(t *testing.T) {
+			store := NewStore(t.TempDir())
+			store.Now = fixedClock()
+			writeFixture(t, store.BoardPath("session-search"), minimalBoard("session-search", 7))
+			before, err := store.ReadBoard("session-search")
+			if err != nil {
+				t.Fatalf("read board: %v", err)
+			}
+			if _, err := store.CreateMission("session-search", MissionCreateRequest{
+				Title:     "Showcase site",
+				Goal:      "Build the showcase",
+				BeadID:    beadID,
+				UpdatedBy: "agent:test",
+			}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev}); !errors.Is(err, ErrInvalidSlug) {
+				t.Fatalf("create mission beadId %q error = %v, want ErrInvalidSlug", beadID, err)
+			}
+		})
 	}
 }
 

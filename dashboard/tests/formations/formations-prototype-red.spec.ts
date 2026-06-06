@@ -13,6 +13,7 @@ type Formation = {
   id: string
   type: 'solo' | 'peer' | 'flow' | 'orchestrated'
   title: string
+  brief?: { goal?: string; beadId?: string; files?: string[]; links?: string[] }
   inputs: { id: string; label: string }[]
   outputs: { id: string; label: string }[]
   slots: Slot[]
@@ -49,6 +50,33 @@ type Layout = {
   etag: string
   nodes: { id: string; x: number; y: number }[]
   edges: { id: string; lane: string }[]
+}
+
+type EndpointPatch = {
+  from: string
+  to: string
+}
+
+type GateJudgePatch = {
+  gateId: string
+  chain?: string[]
+}
+
+type BoardPatch = {
+  wireConnection?: EndpointPatch
+  unwireConnection?: EndpointPatch
+  rewireConnection?: EndpointPatch & { previousTo: string }
+  setGateJudge?: GateJudgePatch
+  detachGateJudge?: { gateId: string }
+  createFormation?: { id?: string; type?: Formation['type']; title?: string; x?: number; y?: number }
+  assignSlot?: { formationId: string; slotId: string; agentId?: string; harness?: string }
+  setBrief?: { formationId: string; goal?: string; beadId?: string; files?: string[]; links?: string[] }
+  clearBrief?: { formationId: string }
+}
+
+type LayoutPatch = {
+  nodes?: { id: string; x: number; y: number }[]
+  edges?: { id: string; lane: string }[]
 }
 
 function baseBoard(): Board {
@@ -107,6 +135,28 @@ function baseBoard(): Board {
         outputs: [{ id: 'out', label: 'output' }],
         slots: [{ id: 'slot-ship', label: 'Shipper', controller: false }],
       },
+      {
+        id: 'formation-critique',
+        type: 'peer',
+        title: 'Critique',
+        inputs: [{ id: 'in', label: 'input' }],
+        outputs: [{ id: 'out', label: 'output' }],
+        slots: [
+          { id: 'slot-critique-a', label: 'Peer A', controller: false },
+          { id: 'slot-critique-b', label: 'Peer B', controller: false },
+        ],
+      },
+      {
+        id: 'formation-steps',
+        type: 'flow',
+        title: 'Steps',
+        inputs: [{ id: 'in', label: 'input' }],
+        outputs: [{ id: 'out', label: 'output' }],
+        slots: [
+          { id: 'slot-step-1', label: 'Step 1', controller: false },
+          { id: 'slot-step-2', label: 'Step 2', controller: false },
+        ],
+      },
     ],
     gates: [
       {
@@ -136,6 +186,8 @@ function baseLayout(board: Board): Layout {
       { id: 'formation-frame', x: 300, y: 120 },
       { id: 'formation-research', x: 650, y: 120 },
       { id: 'formation-ship', x: 1000, y: 120 },
+      { id: 'formation-critique', x: 300, y: 680 },
+      { id: 'formation-steps', x: 650, y: 680 },
       { id: 'gate-review', x: 650, y: 380 },
     ],
     edges: [{ id: 'edge-frame-research', lane: 'auto' }],
@@ -145,6 +197,9 @@ function baseLayout(board: Board): Layout {
 async function mountFormations(page: Page) {
   await page.addInitScript(() => {
     window.localStorage.setItem('chrote-formations', '1')
+    // These specs pin the legacy form-style view; the rebuilt cockpit (default-on) is
+    // covered by formations-cockpit.spec.ts with reference-grounded checks.
+    window.localStorage.setItem('chrote-formations-cockpit', '0')
   })
   await page.goto('/')
   await page.getByRole('button', { name: 'Formations' }).click()
@@ -183,6 +238,31 @@ async function dragHandle(page: Page, testId: string, dx: number, dy: number) {
     window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: x, clientY: y, button: 0, buttons: 1 }))
     window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: x, clientY: y, button: 0 }))
   }, { x: start.x + dx, y: start.y + dy })
+}
+
+async function dragToCanvasPoint(page: Page, testId: string, canvasPoint: { x: number; y: number }) {
+  const handle = page.getByTestId(testId)
+  const canvas = page.getByTestId('formations-canvas')
+  await expect(handle).toBeVisible()
+  await expect(canvas).toBeVisible()
+  const handleBox = await handle.boundingBox()
+  const canvasBox = await canvas.boundingBox()
+  expect(handleBox, `${testId} should have a box`).not.toBeNull()
+  expect(canvasBox, 'formations canvas should have a box').not.toBeNull()
+  const start = { x: Math.round(handleBox!.x + handleBox!.width / 2), y: Math.round(handleBox!.y + handleBox!.height / 2) }
+  const end = { x: Math.round(canvasBox!.x + canvasPoint.x), y: Math.round(canvasBox!.y + canvasPoint.y) }
+  await handle.dispatchEvent('pointerdown', {
+    bubbles: true,
+    cancelable: true,
+    button: 0,
+    buttons: 1,
+    clientX: start.x,
+    clientY: start.y,
+  })
+  await page.evaluate(({ x, y }) => {
+    window.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: x, clientY: y, button: 0, buttons: 1 }))
+    window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: x, clientY: y, button: 0 }))
+  }, end)
 }
 
 function pointerEventInit(box: { x: number; y: number; width: number; height: number }, phase: 'down' | 'up') {
@@ -238,8 +318,8 @@ async function clickAtCenter(page: Page, testId: string) {
 async function installPrototypeHarness(page: Page, options?: { enableBoardChange?: boolean }) {
   let board = baseBoard()
   let layout = baseLayout(board)
-  const boardPatches: unknown[] = []
-  const layoutPatches: unknown[] = []
+  const boardPatches: BoardPatch[] = []
+  const layoutPatches: LayoutPatch[] = []
   const tmuxMutations: string[] = []
   let changesServed = 0
 
@@ -326,16 +406,32 @@ async function installPrototypeHarness(page: Page, options?: { enableBoardChange
     }
 
     if (request.method() === 'PATCH' && path === `/api/formations/boards/${board.slug}`) {
-      const body = request.postDataJSON() as Record<string, any>
+      const body = request.postDataJSON() as BoardPatch
+      const beforeFormationIds = new Set(board.formations.map(formation => formation.id))
       boardPatches.push(body)
       board = applyBoardPatch(board, body)
-      layout = { ...layout, boardRev: board.rev, etag: `"layout-prototype-red-rev-${board.rev}"` }
+      const createdFormation = board.formations.find(formation => !beforeFormationIds.has(formation.id))
+      layout = {
+        ...layout,
+        boardRev: board.rev,
+        etag: `"layout-prototype-red-rev-${board.rev}"`,
+        nodes: createdFormation
+          ? [
+            ...layout.nodes.filter(node => node.id !== createdFormation.id),
+            {
+              id: createdFormation.id,
+              x: body.createFormation?.x ?? 120,
+              y: body.createFormation?.y ?? 120,
+            },
+          ]
+          : layout.nodes,
+      }
       await json(route, { board, layout }, { ETag: board.etag })
       return
     }
 
     if (request.method() === 'PATCH' && path === `/api/formations/boards/${board.slug}/layout`) {
-      const body = request.postDataJSON() as Record<string, any>
+      const body = request.postDataJSON() as LayoutPatch
       layoutPatches.push(body)
       layout = applyLayoutPatch(layout, body)
       await json(route, { layout }, { ETag: layout.etag })
@@ -412,6 +508,69 @@ async function installPrototypeHarness(page: Page, options?: { enableBoardChange
 }
 
 test.describe('Formations D7 prototype RED coverage', () => {
+  test('FORMATIONS.md + 03-formations.html: first viewport is a spatial cockpit with mission, typed cards, gate, and wire geometry', async ({ page }) => {
+    await installPrototypeHarness(page)
+    await mountFormations(page)
+
+    await expect(page.getByTestId('formations-canvas')).toBeVisible()
+    await expect(page.getByTestId('mission-node-mission-showcase')).toBeVisible()
+    await expect(page.getByTestId('gate-node-gate-review')).toBeVisible()
+    await expect(page.getByTestId('formation-wire-edge-frame-research')).toBeVisible()
+    await expect(page.getByTestId('formation-node-formation-frame')).toHaveAttribute('data-formation-type', 'orchestrated')
+    await expect(page.getByTestId('formation-node-formation-research')).toHaveAttribute('data-formation-type', 'solo')
+    await expect(page.getByTestId('formation-node-formation-critique')).toHaveAttribute('data-formation-type', 'peer')
+    await expect(page.getByTestId('formation-node-formation-steps')).toHaveAttribute('data-formation-type', 'flow')
+    await expect(page.getByText('one controller')).toBeVisible()
+    await expect(page.getByTestId('formation-node-formation-critique')).toContainText('peers, no hierarchy')
+    await expect(page.getByTestId('formation-node-formation-steps')).toContainText('ordered steps')
+  })
+
+  test('03-formations.js canvas.feature: mission and gate nodes move, and mission output wires into the graph', async ({ page }) => {
+    const harness = await installPrototypeHarness(page)
+    await mountFormations(page)
+
+    await dragHandle(page, 'mission-node-mission-showcase', 90, 36)
+    await expect.poll(() => harness.currentLayout().nodes.find(node => node.id === 'mission-showcase')?.x).toBe(150)
+    await expect.poll(() => harness.currentLayout().nodes.find(node => node.id === 'mission-showcase')?.y).toBe(76)
+
+    await dragHandle(page, 'gate-node-gate-review', -70, 42)
+    await expect.poll(() => harness.currentLayout().nodes.find(node => node.id === 'gate-review')?.x).toBe(580)
+    await expect.poll(() => harness.currentLayout().nodes.find(node => node.id === 'gate-review')?.y).toBe(422)
+
+    await dragBetween(page, 'mission-output-mission-showcase-out', 'formation-input-formation-frame-in')
+    await expect.poll(() => harness.currentBoard().connections.some(connection => (
+      connection.from === 'mission-showcase:out' && connection.to === 'formation-frame:in'
+    ))).toBe(true)
+  })
+
+  test('formations-and-slots + canvas undo: slot assignment and brief edits write through the board and undo outside text fields', async ({ page }) => {
+    const harness = await installPrototypeHarness(page)
+    await mountFormations(page)
+
+    await page.getByLabel('Agent for Shipper').selectOption('codex|openai-codex')
+    await expect.poll(() => harness.currentBoard().formations.find(formation => formation.id === 'formation-ship')?.slots[0]?.agentId).toBe('codex')
+
+    await page.getByLabel('Goal for Ship').fill('draft while focused')
+    const patchesBeforeFocusedUndo = harness.boardPatches.length
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Z' : 'Control+Z')
+    expect(harness.boardPatches.length).toBe(patchesBeforeFocusedUndo)
+    await page.getByTestId('formations-canvas').click({ position: { x: 16, y: 16 } })
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Z' : 'Control+Z')
+    await expect.poll(() => harness.currentBoard().formations.find(formation => formation.id === 'formation-ship')?.slots[0]?.agentId || '').toBe('')
+
+    await page.getByLabel('Goal for Ship').fill('Ship the verified flow')
+    await page.getByLabel('Bead for Ship').fill('home-vdki.24')
+    await page.getByLabel('Save brief for Ship').click()
+    await expect.poll(() => harness.currentBoard().formations.find(formation => formation.id === 'formation-ship')?.brief?.goal).toBe('Ship the verified flow')
+    await page.getByLabel('Goal for Ship').focus()
+    const patchesBeforeFocusedBriefUndo = harness.boardPatches.length
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Z' : 'Control+Z')
+    expect(harness.boardPatches.length).toBe(patchesBeforeFocusedBriefUndo)
+    await page.getByTestId('formations-canvas').click({ position: { x: 16, y: 16 } })
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Z' : 'Control+Z')
+    await expect.poll(() => harness.currentBoard().formations.find(formation => formation.id === 'formation-ship')?.brief?.goal || '').toBe('')
+  })
+
   test('03-formations.js openTerm + terminals.feature: on-canvas terminals open, focus, stream, and close without session mutation', async ({ page }) => {
     const harness = await installPrototypeHarness(page)
     await mountFormations(page)
@@ -527,8 +686,18 @@ test.describe('Formations D7 prototype RED coverage', () => {
 
     await clickAtCenter(page, 'gate-judge-socket-gate-review')
     await page.getByRole('menuitem', { name: 'Use chain: Frame, Research, Ship' }).click()
-    const lastJudgePatch = [...harness.boardPatches].reverse().find((patch: any) => patch.setGateJudge) as any
-    expect(lastJudgePatch.setGateJudge.chain).toEqual(['formation-frame', 'formation-research', 'formation-ship'])
+    const lastJudgePatch = [...harness.boardPatches].reverse().find(hasGateJudgeChain)
+    expect(lastJudgePatch?.setGateJudge.chain).toEqual(['formation-frame', 'formation-research', 'formation-ship'])
+
+    await dragBetween(page, 'formation-output-formation-critique-out', 'gate-judge-socket-gate-review')
+    const movedReturnPatch = [...harness.boardPatches].reverse().find(hasGateJudgeChain)
+    expect(movedReturnPatch?.setGateJudge.chain).toEqual(['formation-frame', 'formation-research', 'formation-ship', 'formation-critique'])
+    await expect.poll(() => harness.currentBoard().connections.some(connection => (
+      connection.from === 'gate-review:judge' && connection.to === 'formation-frame:in'
+    ))).toBe(true)
+    await expect.poll(() => harness.currentBoard().connections.some(connection => (
+      connection.from === 'formation-critique:out' && connection.to === 'gate-review:judge'
+    ))).toBe(true)
 
     await clickAtCenter(page, 'gate-judge-socket-gate-review')
     await page.getByRole('menuitem', { name: 'Detach judge' }).click()
@@ -536,8 +705,14 @@ test.describe('Formations D7 prototype RED coverage', () => {
       connection.from === 'gate-review:judge' || connection.to === 'gate-review:judge'
     ))).toBe(false)
 
-    await dragHandle(page, 'gate-judge-socket-gate-review', 240, -140)
-    await expect.poll(() => harness.currentBoard().formations.some(formation => formation.id === 'formation-judge-spawned')).toBe(true)
+    const gateBeforeSpawn = harness.currentLayout().nodes.find(node => node.id === 'gate-review')
+    expect(gateBeforeSpawn, 'gate layout should exist before spawning a judge').not.toBeUndefined()
+    const formationCountBeforeSpawn = harness.currentBoard().formations.length
+    await dragToCanvasPoint(page, 'gate-judge-socket-gate-review', { x: 40, y: 80 })
+    await expect.poll(() => harness.currentBoard().formations.length).toBe(formationCountBeforeSpawn + 1)
+    const spawnedId = harness.currentBoard().formations[harness.currentBoard().formations.length - 1]?.id
+    await expect.poll(() => harness.currentLayout().nodes.find(node => node.id === spawnedId)?.x).toBeLessThan((gateBeforeSpawn?.x || 0) - 500)
+    await expect.poll(() => harness.currentLayout().nodes.find(node => node.id === spawnedId)?.y).toBeLessThan((gateBeforeSpawn?.y || 0) - 300)
   })
 
   test('frontend-prototype report: board-change truth reloads external edits and blocked runs survive tab reconnect', async ({ page }) => {
@@ -571,10 +746,10 @@ function withNextRev(board: Board): Board {
   return { ...board, rev, etag: `"board-prototype-red-rev-${rev}"` }
 }
 
-function applyBoardPatch(board: Board, body: Record<string, any>): Board {
+function applyBoardPatch(board: Board, body: BoardPatch): Board {
   if (body.wireConnection) {
-    const from = String(body.wireConnection.from)
-    const to = String(body.wireConnection.to)
+    const from = body.wireConnection.from
+    const to = body.wireConnection.to
     const nextConnections = [
       ...board.connections.filter(connection => connection.to !== to && connection.from !== from),
       { id: `edge-${endpointID(from)}-${endpointID(to)}`, from, to },
@@ -583,24 +758,49 @@ function applyBoardPatch(board: Board, body: Record<string, any>): Board {
   }
 
   if (body.unwireConnection) {
-    const from = String(body.unwireConnection.from)
-    const to = String(body.unwireConnection.to)
+    const from = body.unwireConnection.from
+    const to = body.unwireConnection.to
     return withNextRev({
       ...board,
       connections: board.connections.filter(connection => connection.from !== from || connection.to !== to),
     })
   }
 
+  if (body.rewireConnection) {
+    const from = body.rewireConnection.from
+    const previousTo = body.rewireConnection.previousTo
+    const to = body.rewireConnection.to
+    if (!board.connections.some(connection => connection.from === from && connection.to === previousTo)) return withNextRev(board)
+    if (board.connections.some(connection => connection.to === to && !(connection.from === from && connection.to === previousTo))) return withNextRev(board)
+    return withNextRev({
+      ...board,
+      connections: [
+        ...board.connections.filter(connection => connection.from !== from || connection.to !== previousTo),
+        { id: `edge-${endpointID(from)}-${endpointID(to)}`, from, to },
+      ],
+    })
+  }
+
   if (body.setGateJudge) {
-    const gateId = String(body.setGateJudge.gateId)
-    const chain = Array.isArray(body.setGateJudge.chain) ? body.setGateJudge.chain.map(String) : []
+    const gateId = body.setGateJudge.gateId
+    const chain = body.setGateJudge.chain || []
     const judgeConnections: Connection[] = []
-    if (chain[0]) judgeConnections.push({ id: `edge-${gateId}-judge-${chain[0]}-in`, from: `${gateId}:judge`, to: `${chain[0]}:in` })
+    const addJudgeConnection = (from: string, to: string) => {
+      if (judgeConnections.some(connection => connection.from === from && connection.to === to)) return
+      if (board.connections.some(connection => (
+        connection.from !== `${gateId}:judge` &&
+        connection.to !== `${gateId}:judge` &&
+        connection.from === from &&
+        connection.to === to
+      ))) return
+      judgeConnections.push({ id: `edge-${endpointID(from)}-${endpointID(to)}`, from, to })
+    }
+    if (chain[0]) addJudgeConnection(`${gateId}:judge`, `${chain[0]}:in`)
     for (let i = 0; i < chain.length - 1; i += 1) {
-      judgeConnections.push({ id: `edge-${chain[i]}-out-${chain[i + 1]}-in`, from: `${chain[i]}:out`, to: `${chain[i + 1]}:in` })
+      addJudgeConnection(`${chain[i]}:out`, `${chain[i + 1]}:in`)
     }
     if (chain.length > 0) {
-      judgeConnections.push({ id: `edge-${chain[chain.length - 1]}-out-${gateId}-judge`, from: `${chain[chain.length - 1]}:out`, to: `${gateId}:judge` })
+      addJudgeConnection(`${chain[chain.length - 1]}:out`, `${gateId}:judge`)
     }
     return withNextRev({
       ...board,
@@ -615,7 +815,7 @@ function applyBoardPatch(board: Board, body: Record<string, any>): Board {
   }
 
   if (body.detachGateJudge) {
-    const gateId = String(body.detachGateJudge.gateId)
+    const gateId = body.detachGateJudge.gateId
     return withNextRev({
       ...board,
       gates: board.gates.map(gate => gate.id === gateId
@@ -626,7 +826,8 @@ function applyBoardPatch(board: Board, body: Record<string, any>): Board {
   }
 
   if (body.createFormation) {
-    const id = body.createFormation.id || 'formation-judge-spawned'
+    const generatedId = nextGeneratedFormationId(board, body.createFormation.title || 'Judge formation')
+    const id = body.createFormation.id || generatedId
     return withNextRev({
       ...board,
       formations: [
@@ -643,13 +844,66 @@ function applyBoardPatch(board: Board, body: Record<string, any>): Board {
     })
   }
 
+  if (body.assignSlot) {
+    const formationId = body.assignSlot.formationId
+    const slotId = body.assignSlot.slotId
+    const agentId = body.assignSlot.agentId || ''
+    const harness = body.assignSlot.harness || ''
+    return withNextRev({
+      ...board,
+      formations: board.formations.map(formation => formation.id === formationId
+        ? {
+          ...formation,
+          slots: formation.slots.map(slot => slot.id === slotId
+            ? {
+              ...slot,
+              agentId: agentId || undefined,
+              harness: harness || undefined,
+            }
+            : slot),
+        }
+        : formation),
+    })
+  }
+
+  if (body.setBrief) {
+    const formationId = body.setBrief.formationId
+    return withNextRev({
+      ...board,
+      formations: board.formations.map(formation => formation.id === formationId
+        ? {
+          ...formation,
+          brief: {
+            goal: body.setBrief?.goal || '',
+            beadId: body.setBrief?.beadId || '',
+            files: body.setBrief?.files || [],
+            links: body.setBrief?.links || [],
+          },
+        }
+        : formation),
+    })
+  }
+
+  if (body.clearBrief) {
+    const formationId = body.clearBrief.formationId
+    return withNextRev({
+      ...board,
+      formations: board.formations.map(formation => {
+        if (formation.id !== formationId) return formation
+        const next = { ...formation }
+        delete next.brief
+        return next
+      }),
+    })
+  }
+
   return withNextRev(board)
 }
 
-function applyLayoutPatch(layout: Layout, body: Record<string, any>): Layout {
+function applyLayoutPatch(layout: Layout, body: LayoutPatch): Layout {
   const rev = Number(layout.etag.match(/rev-(\d+)/)?.[1] || '3') + 1
   if (Array.isArray(body.edges)) {
-    const patches = body.edges as { id: string; lane: string }[]
+    const patches = body.edges
     return {
       ...layout,
       etag: `"layout-prototype-red-rev-${rev}"`,
@@ -660,7 +914,7 @@ function applyLayoutPatch(layout: Layout, body: Record<string, any>): Layout {
     }
   }
   if (Array.isArray(body.nodes)) {
-    const patches = body.nodes as { id: string; x: number; y: number }[]
+    const patches = body.nodes
     return {
       ...layout,
       etag: `"layout-prototype-red-rev-${rev}"`,
@@ -675,4 +929,17 @@ function applyLayoutPatch(layout: Layout, body: Record<string, any>): Layout {
 
 function endpointID(endpoint: string) {
   return endpoint.replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '')
+}
+
+function hasGateJudgeChain(patch: BoardPatch): patch is BoardPatch & { setGateJudge: GateJudgePatch & { chain: string[] } } {
+  return Array.isArray(patch.setGateJudge?.chain)
+}
+
+function nextGeneratedFormationId(board: Board, title: string): string {
+  const stem = title === 'Judge formation' ? 'formation-judge-spawned' : `formation-${endpointID(title.toLowerCase()) || 'created'}`
+  if (!board.formations.some(formation => formation.id === stem)) return stem
+  for (let index = 2; ; index += 1) {
+    const candidate = `${stem}-${index}`
+    if (!board.formations.some(formation => formation.id === candidate)) return candidate
+  }
 }

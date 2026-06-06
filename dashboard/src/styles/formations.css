@@ -169,8 +169,8 @@
 .formations-canvas {
   flex: 1 1 auto;
   position: relative;
-  min-height: 0;
-  height: 100%;
+  flex: 1 1 420px;
+  min-height: 420px;
   overflow: hidden;
   cursor: grab;
   background:

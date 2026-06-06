@@ -376,7 +376,43 @@ func (s *Store) ProjectRun(runID string) (*RunStatusProjection, error) {
 			status.ResumeAllowed = false
 		}
 	}
+	// Honesty safety net: a run can only project succeeded when every reachable
+	// required node reached a terminal state. If the ledger still shows a node
+	// whose last lifecycle event is node_waiting, the success is a lie (e.g. a
+	// stray/legacy run_succeeded over a starved join); project blocked instead so
+	// CLI, API, and UI never report finished work that never ran.
+	if status.Status == RunStatusSucceeded {
+		if waiting := unresolvedWaitingNodes(events); len(waiting) > 0 {
+			status.Status = RunStatusBlocked
+			status.Final = false
+			status.ResumeAllowed = false
+		}
+	}
 	return status, nil
+}
+
+// unresolvedWaitingNodes returns node IDs whose last lifecycle event in the
+// ledger is node_waiting — reached but never run to output. Order follows first
+// appearance for deterministic reporting.
+func unresolvedWaitingNodes(events []RunEvent) []string {
+	last := map[string]string{}
+	order := make([]string, 0)
+	for _, event := range events {
+		switch event.Type {
+		case RunEventNodeWaiting, RunEventNodeStarted, RunEventNodeOutput:
+			if _, seen := last[event.NodeID]; !seen {
+				order = append(order, event.NodeID)
+			}
+			last[event.NodeID] = event.Type
+		}
+	}
+	var waiting []string
+	for _, id := range order {
+		if last[id] == RunEventNodeWaiting {
+			waiting = append(waiting, id)
+		}
+	}
+	return waiting
 }
 
 func (s *Store) ReadRunEvents(runID string) ([]RunEvent, error) {

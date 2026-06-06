@@ -61,14 +61,14 @@ describe('FormationsView S3 missions', () => {
     vi.unstubAllGlobals()
   })
 
-  it('creates a mission backed by a home-prefixed bead id', async () => {
+  it('creates a mission backed by a project Beads issue id', async () => {
     const { calls } = mockFetch()
     render(<FormationsView />)
     await screen.findByText('Improve session search')
 
     fireEvent.change(screen.getByLabelText('Mission title'), { target: { value: 'Showcase' } })
     fireEvent.change(screen.getByLabelText('Mission goal'), { target: { value: 'Build it' } })
-    fireEvent.change(screen.getByLabelText('Mission bead'), { target: { value: 'home-7kc4.5' } })
+    fireEvent.change(screen.getByLabelText('Mission bead'), { target: { value: 'chlab-123' } })
     fireEvent.click(screen.getByRole('button', { name: 'Mission' }))
 
     await waitFor(() => {
@@ -80,9 +80,25 @@ describe('FormationsView S3 missions', () => {
       createMission: {
         title: 'Showcase',
         goal: 'Build it',
-        beadId: 'home-7kc4.5',
+        beadId: 'chlab-123',
       },
     })
     expect(String(missionCall?.init?.body || '')).not.toContain('chain')
+  })
+
+  it('keeps mission create disabled for unsafe Beads issue ids', async () => {
+    const { calls } = mockFetch()
+    render(<FormationsView />)
+    await screen.findByText('Improve session search')
+
+    fireEvent.change(screen.getByLabelText('Mission title'), { target: { value: 'Showcase' } })
+    fireEvent.change(screen.getByLabelText('Mission goal'), { target: { value: 'Build it' } })
+    fireEvent.change(screen.getByLabelText('Mission bead'), { target: { value: 'chlab/123' } })
+
+    const missionButton = screen.getByRole('button', { name: 'Mission' })
+    expect(missionButton).toBeDisabled()
+    fireEvent.click(missionButton)
+
+    expect(calls.some(call => String(call.init?.body || '').includes('createMission'))).toBe(false)
   })
 })

@@ -53,8 +53,8 @@ func TestFormationsRunProjectionParity(t *testing.T) {
 		t.Fatalf("verdict status = %d, want %d: %s", verdictRec.Code, http.StatusOK, verdictRec.Body.String())
 	}
 	approved := decodeFormationsStatusResponse(t, verdictRec.Body.Bytes())
-	if approved.Status != formations.RunStatusBlocked || approved.Final {
-		t.Fatalf("approved = %+v, want blocked after public verdict path reaches missing executor", approved)
+	if approved.Status != formations.RunStatusBlocked || approved.Final || !approved.ResumeAllowed {
+		t.Fatalf("approved = %+v, want resumable block after public verdict", approved)
 	}
 
 	statusRec := httptest.NewRecorder()
@@ -65,6 +65,16 @@ func TestFormationsRunProjectionParity(t *testing.T) {
 	status := decodeFormationsStatusResponse(t, statusRec.Body.Bytes())
 	if status.RunID != started.RunID || status.Status != approved.Status || status.EventCount != approved.EventCount {
 		t.Fatalf("status projection = %+v, want same truth as verdict response %+v", status, approved)
+	}
+
+	resumeRec := httptest.NewRecorder()
+	mux.ServeHTTP(resumeRec, httptest.NewRequest(http.MethodPost, "/api/formations/runs/"+started.RunID+"/resume", bytes.NewBufferString(`{"reason":"gate approved","actor":"agent:test"}`)))
+	if resumeRec.Code != http.StatusOK {
+		t.Fatalf("resume status = %d, want %d: %s", resumeRec.Code, http.StatusOK, resumeRec.Body.String())
+	}
+	resumed := decodeFormationsStatusResponse(t, resumeRec.Body.Bytes())
+	if resumed.Status != formations.RunStatusBlocked || resumed.Final {
+		t.Fatalf("resumed = %+v, want blocked when resume reaches missing executor", resumed)
 	}
 
 	eventsRec := httptest.NewRecorder()
@@ -81,11 +91,11 @@ func TestFormationsRunProjectionParity(t *testing.T) {
 	if err := json.Unmarshal(eventsRec.Body.Bytes(), &eventsResponse); err != nil {
 		t.Fatalf("decode events: %v\n%s", err, eventsRec.Body.String())
 	}
-	if len(eventsResponse.Data.Events) != status.EventCount {
-		t.Fatalf("events len = %d, status eventCount = %d", len(eventsResponse.Data.Events), status.EventCount)
+	if len(eventsResponse.Data.Events) != resumed.EventCount {
+		t.Fatalf("events len = %d, resumed eventCount = %d", len(eventsResponse.Data.Events), resumed.EventCount)
 	}
-	if !apiEventsContain(eventsResponse.Data.Events, formations.RunEventNodeOutput, formations.RunEventHumanInputRequested, formations.RunEventEscalationRaised, formations.RunEventHumanVerdictRecorded, formations.RunEventGateVerdict, formations.RunEventError, formations.RunEventBlocked) {
-		t.Fatalf("events = %v, want ledger truth for output/escalation/human verdict/gate/block", apiEventTypes(eventsResponse.Data.Events))
+	if !apiEventsContain(eventsResponse.Data.Events, formations.RunEventNodeOutput, formations.RunEventHumanInputRequested, formations.RunEventEscalationRaised, formations.RunEventHumanVerdictRecorded, formations.RunEventGateVerdict, formations.RunEventBlocked, formations.RunEventResumed, formations.RunEventError) {
+		t.Fatalf("events = %v, want ledger truth for output/escalation/human verdict/gate/resume/error/block", apiEventTypes(eventsResponse.Data.Events))
 	}
 
 	escalationsRec := httptest.NewRecorder()

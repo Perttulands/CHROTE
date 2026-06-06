@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	chroteapi "github.com/chrote/server/internal/api"
 	"github.com/chrote/server/internal/formations"
 )
 
@@ -239,6 +242,401 @@ customFuture = "keep me"
 	}
 }
 
+func TestArchonBoardListAndInspectExposeDurableJSON(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("poems"), `schema = 1
+id = "brd_poems"
+slug = "poems"
+title = "Poems"
+rev = 7
+updatedAt = "2026-06-03T16:00:00Z"
+viewport = "browser-only"
+selectedNode = "fmn_draft"
+popup = "gate-config"
+terminalFocus = "pane-1"
+undoStack = "browser-only"
+
+[[mission]]
+id = "mis_poem"
+title = "Simple poem"
+goal = "Create a simple poem"
+beadId = "home-vdki.33.1"
+
+[[formation]]
+id = "fmn_draft"
+type = "solo"
+title = "Draft poem"
+
+[[formation.input]]
+id = "port_draft_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_draft_out"
+label = "Output"
+
+[[formation.slot]]
+id = "slot_writer"
+label = "Writer"
+agentId = "lab-poet"
+harness = "lab-fake"
+controller = true
+
+[[gate]]
+id = "gate_review"
+title = "Human review"
+kinds = ["human"]
+criterion = "Draft is ready"
+
+[[connection]]
+id = "edge_draft_review"
+from = "fmn_draft:port_draft_out"
+to = "gate_review:in"
+`)
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "board", "list", "--json")
+	if code != 0 {
+		t.Fatalf("board list code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var list struct {
+		Boards []formations.BoardSummary `json:"boards"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &list); err != nil {
+		t.Fatalf("decode board list: %v\n%s", err, stdout)
+	}
+	if len(list.Boards) != 1 || list.Boards[0].ID != "brd_poems" || list.Boards[0].Slug != "poems" || list.Boards[0].Rev != 7 || list.Boards[0].ETag == "" {
+		t.Fatalf("board list = %+v, want stable board identity with revision", list.Boards)
+	}
+
+	stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "board", "inspect", "poems", "--json")
+	if code != 0 {
+		t.Fatalf("board inspect code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var board formations.BoardDocument
+	if err := json.Unmarshal([]byte(stdout), &board); err != nil {
+		t.Fatalf("decode board inspect: %v\n%s", err, stdout)
+	}
+	if board.ID != "brd_poems" || board.Slug != "poems" || board.Rev != 7 || board.ETag == "" {
+		t.Fatalf("board inspect identity = %+v, want durable id/slug/rev/etag", board)
+	}
+	if len(board.Missions) != 1 || board.Missions[0].ID != "mis_poem" ||
+		len(board.Formations) != 1 || board.Formations[0].ID != "fmn_draft" ||
+		len(board.Formations[0].Slots) != 1 || board.Formations[0].Slots[0].ID != "slot_writer" ||
+		len(board.Formations[0].Inputs) != 1 || board.Formations[0].Inputs[0].ID != "port_draft_in" ||
+		len(board.Formations[0].Outputs) != 1 || board.Formations[0].Outputs[0].ID != "port_draft_out" ||
+		len(board.Gates) != 1 || board.Gates[0].ID != "gate_review" ||
+		len(board.Connections) != 1 || board.Connections[0].ID != "edge_draft_review" {
+		t.Fatalf("board inspect missing stable graph ids: %+v", board)
+	}
+	for _, browserOnly := range []string{"viewport", "selectedNode", "popup", "terminalFocus", "undoStack", "toml"} {
+		if strings.Contains(stdout, browserOnly) {
+			t.Fatalf("board inspect leaked browser-only/raw field %q: %s", browserOnly, stdout)
+		}
+	}
+}
+
+func TestArchonBoardInspectFailsLoudOnAmbiguousSelector(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("poems"), `schema = 1
+id = "brd_duplicate"
+slug = "poems"
+title = "Poems"
+rev = 1
+`)
+	writeArchonFile(t, store.BoardPath("drafts"), `schema = 1
+id = "brd_duplicate"
+slug = "drafts"
+title = "Drafts"
+rev = 2
+`)
+
+	_, stderr, code := runArchon(t, &fakeTmux{live: map[string]bool{}}, "--workspace", workspace, "board", "inspect", "brd_duplicate", "--json")
+	if code == 0 || !strings.Contains(stderr, "ambiguous") || !strings.Contains(stderr, "brd_duplicate") {
+		t.Fatalf("ambiguous board inspect code=%d stderr=%s, want loud ambiguous selector", code, stderr)
+	}
+}
+
+func TestArchonMissionListAndInspectExposeReachableChain(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("poems"), `schema = 1
+id = "brd_poems"
+slug = "poems"
+title = "Poems"
+rev = 7
+updatedAt = "2026-06-03T16:00:00Z"
+viewport = "browser-only"
+undoStack = "browser-only"
+
+[[mission]]
+id = "mis_poem"
+title = "Simple poem"
+goal = "Create a simple poem"
+beadId = "home-vdki.33.1"
+
+[[formation]]
+id = "fmn_draft"
+type = "solo"
+title = "Draft poem"
+
+[[formation.input]]
+id = "port_draft_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_draft_out"
+label = "Output"
+
+[[gate]]
+id = "gate_review"
+title = "Human review"
+kinds = ["human"]
+criterion = "Draft is ready"
+
+[[formation]]
+id = "fmn_polish"
+type = "solo"
+title = "Polish poem"
+
+[[formation.input]]
+id = "port_polish_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_polish_out"
+label = "Output"
+
+[[connection]]
+id = "edge_mission_draft"
+from = "mis_poem:out"
+to = "fmn_draft:port_draft_in"
+
+[[connection]]
+id = "edge_draft_gate"
+from = "fmn_draft:port_draft_out"
+to = "gate_review:in"
+
+[[connection]]
+id = "edge_gate_polish"
+from = "gate_review:pass"
+to = "fmn_polish:port_polish_in"
+`)
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "mission", "list", "poems", "--json")
+	if code != 0 {
+		t.Fatalf("mission list code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var list struct {
+		Board    archonBoardIdentity      `json:"board"`
+		Missions []formations.MissionNode `json:"missions"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &list); err != nil {
+		t.Fatalf("decode mission list: %v\n%s", err, stdout)
+	}
+	if list.Board.ID != "brd_poems" || list.Board.Slug != "poems" || list.Board.Rev != 7 || list.Board.ETag == "" {
+		t.Fatalf("mission list board identity = %+v, want stable board identity", list.Board)
+	}
+	if len(list.Missions) != 1 || list.Missions[0].ID != "mis_poem" || list.Missions[0].Title != "Simple poem" ||
+		list.Missions[0].Goal != "Create a simple poem" || list.Missions[0].BeadID != "home-vdki.33.1" {
+		t.Fatalf("mission list missions = %+v, want stable mission fields", list.Missions)
+	}
+
+	stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "mission", "inspect", "poems", "simple-poem", "--json")
+	if code != 0 {
+		t.Fatalf("mission inspect code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var inspect struct {
+		Board       archonBoardIdentity          `json:"board"`
+		Mission     formations.MissionNode       `json:"mission"`
+		Chain       []archonMissionChainNode     `json:"chain"`
+		Connections []formations.BoardConnection `json:"connections"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &inspect); err != nil {
+		t.Fatalf("decode mission inspect: %v\n%s", err, stdout)
+	}
+	if inspect.Mission.ID != "mis_poem" || inspect.Board.Rev != 7 {
+		t.Fatalf("mission inspect identity = %+v board=%+v", inspect.Mission, inspect.Board)
+	}
+	gotChain := make([]string, 0, len(inspect.Chain))
+	for _, node := range inspect.Chain {
+		gotChain = append(gotChain, node.Kind+":"+node.ID+":"+node.Title)
+	}
+	wantChain := []string{
+		"formation:fmn_draft:Draft poem",
+		"gate:gate_review:Human review",
+		"formation:fmn_polish:Polish poem",
+	}
+	if strings.Join(gotChain, "|") != strings.Join(wantChain, "|") {
+		t.Fatalf("mission inspect chain = %v, want %v", gotChain, wantChain)
+	}
+	if len(inspect.Connections) != 3 || inspect.Connections[0].ID != "edge_mission_draft" {
+		t.Fatalf("mission inspect connections = %+v, want reachable edges", inspect.Connections)
+	}
+	for _, browserOnly := range []string{"viewport", "undoStack", "toml"} {
+		if strings.Contains(stdout, browserOnly) {
+			t.Fatalf("mission inspect leaked browser-only/raw field %q: %s", browserOnly, stdout)
+		}
+	}
+}
+
+func TestArchonMissionInspectJSONSelectorErrorIsStructured(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("poems"), `schema = 1
+id = "brd_poems"
+slug = "poems"
+title = "Poems"
+rev = 1
+
+[[mission]]
+id = "mis_first"
+title = "Simple poem"
+goal = "One"
+beadId = "home-vdki.33.1"
+
+[[mission]]
+id = "mis_second"
+title = "Simple poem"
+goal = "Two"
+beadId = "home-vdki.33.2"
+`)
+
+	stdout, stderr, code := runArchon(t, &fakeTmux{live: map[string]bool{}}, "--workspace", workspace, "mission", "inspect", "poems", "simple-poem", "--json")
+	if code == 0 {
+		t.Fatalf("ambiguous mission inspect code=0 stdout=%s", stdout)
+	}
+	var response archonErrorResponse
+	if err := json.Unmarshal([]byte(stderr), &response); err != nil {
+		t.Fatalf("decode selector error: %v\nstderr=%s", err, stderr)
+	}
+	if response.Code != "ambiguous_selector" || response.Boundary != "mission" || response.Selector != "simple-poem" || !strings.Contains(response.Message, "ambiguous") {
+		t.Fatalf("selector error = %+v, want structured ambiguous mission selector", response)
+	}
+}
+
+func TestArchonGraphSelectorsFailLoudOnAmbiguousTitles(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("poems"), `schema = 1
+id = "brd_poems"
+slug = "poems"
+title = "Poems"
+rev = 1
+
+[[mission]]
+id = "mis_poem"
+title = "Simple poem"
+goal = "Create a simple poem"
+beadId = "home-vdki.33.1"
+
+[[formation]]
+id = "fmn_first"
+type = "solo"
+title = "Draft poem"
+
+[[formation.input]]
+id = "port_first_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_first_out"
+label = "Output"
+
+[[formation.slot]]
+id = "slot_writer"
+label = "Writer"
+controller = true
+
+[[formation]]
+id = "fmn_second"
+type = "solo"
+title = "Draft poem"
+
+[[formation.input]]
+id = "port_second_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_second_out"
+label = "Output"
+
+[[formation.slot]]
+id = "slot_writer"
+label = "Writer"
+controller = true
+
+[[gate]]
+id = "gate_first"
+title = "Review"
+kinds = ["human"]
+criterion = "Ready"
+
+[[gate]]
+id = "gate_second"
+title = "Review"
+kinds = ["human"]
+criterion = "Ready"
+`)
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	_, stderr, code := runArchon(t, runner, "--workspace", workspace, "formation", "assign", "poems", "draft-poem", "--slot", "slot_writer", "--agent", "lab-poet", "--json")
+	if code == 0 || !strings.Contains(stderr, "ambiguous") || !strings.Contains(stderr, "draft-poem") {
+		t.Fatalf("ambiguous formation assign code=%d stderr=%s", code, stderr)
+	}
+	raw := readArchonFile(t, store.BoardPath("poems"))
+	if strings.Contains(raw, `agentId = "lab-poet"`) {
+		t.Fatalf("ambiguous formation assign mutated board:\n%s", raw)
+	}
+
+	_, stderr, code = runArchon(t, runner, "--workspace", workspace, "gate", "judge", "poems", "review", "--chain", "fmn_first", "--json")
+	if code == 0 || !strings.Contains(stderr, "ambiguous") || !strings.Contains(stderr, "review") {
+		t.Fatalf("ambiguous gate judge code=%d stderr=%s", code, stderr)
+	}
+	raw = readArchonFile(t, store.BoardPath("poems"))
+	if strings.Contains(raw, `formation"]`) || strings.Contains(raw, `gate_first:judge`) || strings.Contains(raw, `gate_second:judge`) {
+		t.Fatalf("ambiguous gate judge mutated board:\n%s", raw)
+	}
+}
+
+func TestArchonFormationUnassignClearsSlotWithoutDeletingPersona(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("poems"), `schema = 1
+id = "brd_poems"
+slug = "poems"
+title = "Poems"
+rev = 7
+
+[[formation]]
+id = "fmn_draft"
+type = "solo"
+title = "Draft poem"
+
+[[formation.slot]]
+id = "slot_writer"
+label = "Writer"
+agentId = "lab-poet"
+harness = "lab-fake"
+controller = true
+`)
+
+	stdout, stderr, code := runArchon(t, &fakeTmux{live: map[string]bool{}}, "--workspace", workspace, "formation", "unassign", "poems", "draft-poem", "--slot", "slot_writer", "--json")
+	if code != 0 {
+		t.Fatalf("formation unassign code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	raw := readArchonFile(t, store.BoardPath("poems"))
+	if strings.Contains(raw, "agentId") || strings.Contains(raw, "harness") {
+		t.Fatalf("unassign left runtime assignment fields:\n%s", raw)
+	}
+	if !strings.Contains(raw, `id = "slot_writer"`) || !strings.Contains(raw, `controller = true`) {
+		t.Fatalf("unassign removed the slot instead of clearing assignment:\n%s", raw)
+	}
+}
+
 func TestArchonS3FormationAssignAndSetBrief(t *testing.T) {
 	workspace := t.TempDir()
 	store := formations.NewStore(workspace)
@@ -436,7 +834,7 @@ label = "Output"
 	}
 }
 
-func TestArchonS3MissionCreateWireRejectsBDPrefix(t *testing.T) {
+func TestArchonS3MissionCreateWireAcceptsProjectBeadID(t *testing.T) {
 	workspace := t.TempDir()
 	store := formations.NewStore(workspace)
 	writeArchonFile(t, store.BoardPath("session-search"), `schema = 1
@@ -457,15 +855,15 @@ label = "Input"
 `)
 	runner := &fakeTmux{live: map[string]bool{}}
 
-	if _, stderr, code := runArchon(t, runner, "--workspace", workspace, "mission", "create", "session-search", "--title", "Showcase", "--goal", "Build it", "--bead", "bd-204"); code == 0 || !strings.Contains(stderr, "home-") {
-		t.Fatalf("mission create bd-prefix code=%d stderr=%s, want rejection", code, stderr)
+	if _, stderr, code := runArchon(t, runner, "--workspace", workspace, "mission", "create", "session-search", "--title", "Showcase", "--goal", "Build it", "--bead", "nohyphen"); code == 0 || !strings.Contains(stderr, "Beads issue id") {
+		t.Fatalf("mission create unsafe bead code=%d stderr=%s, want rejection", code, stderr)
 	}
-	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "mission", "create", "session-search", "--title", "Showcase", "--goal", "Build it", "--bead", "home-7kc4.5", "--json")
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "mission", "create", "session-search", "--title", "Showcase", "--goal", "Build it", "--bead", "bd-204", "--json")
 	if code != 0 {
 		t.Fatalf("mission create code=%d stderr=%s stdout=%s", code, stderr, stdout)
 	}
 	raw := readArchonFile(t, store.BoardPath("session-search"))
-	if !strings.Contains(raw, `[[mission]]`) || !strings.Contains(raw, `beadId = "home-7kc4.5"`) || strings.Contains(raw, "chain") {
+	if !strings.Contains(raw, `[[mission]]`) || !strings.Contains(raw, `beadId = "bd-204"`) || strings.Contains(raw, "chain") {
 		t.Fatalf("mission create persisted wrong fields:\n%s", raw)
 	}
 	board, err := store.ReadBoard("session-search")
@@ -789,6 +1187,442 @@ func TestArchonS5GateApproveRoutesHumanGate(t *testing.T) {
 	}
 }
 
+func TestArchonS4ConfiguredLabPoemMissionReachesGateAndPolishesAfterApproval(t *testing.T) {
+	workspace := t.TempDir()
+	agentsDir := t.TempDir()
+	t.Setenv("CHROTE_AGENTS_DIR", agentsDir)
+	t.Setenv("CHROTE_FORMATIONS_LAB_HARNESSES", "lab-fake")
+	t.Setenv("CHROTE_FORMATIONS_LAB_CWD", workspace)
+	t.Setenv("CHROTE_FORMATIONS_LAB_ROOTS", workspace)
+
+	personas := formations.NewPersonaStore(agentsDir)
+	for _, id := range []string{"lab-poet", "lab-poem-reviewer"} {
+		if _, err := personas.CreatePersona(formations.CreatePersonaRequest{
+			ID:      id,
+			Kind:    "specialist",
+			Harness: "lab-fake",
+		}); err != nil {
+			t.Fatalf("create persona %s: %v", id, err)
+		}
+	}
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("poems"), archonS4PoemBoardFixture())
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "mission", "run", "poems", "--mission", "mis_poem", "--json")
+	if code != 0 {
+		t.Fatalf("mission run code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	started := decodeArchonRunResponse(t, stdout)
+	events, err := store.ReadRunEvents(started.RunID)
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if started.Status.Status != formations.RunStatusRunning || started.Status.Final {
+		t.Fatalf("configured lab poem run status = %+v events=%s, want running at human gate without missing executor", started.Status, archonEventTypes(events))
+	}
+	if eventsContainErrorCode(events, "missing_executor") || eventsContainReason(events, "formation executor unavailable") {
+		t.Fatalf("configured lab poem run still blocked as missing executor: %+v", events)
+	}
+	for _, want := range []struct {
+		eventType string
+		nodeID    string
+	}{
+		{formations.RunEventStarted, ""},
+		{formations.RunEventNodeStarted, "fmn_draft"},
+		{formations.RunEventSlotDispatch, "fmn_draft"},
+		{formations.RunEventSlotResult, "fmn_draft"},
+		{formations.RunEventNodeOutput, "fmn_draft"},
+		{formations.RunEventGateEvaluating, "gate_review"},
+		{formations.RunEventHumanInputRequested, "gate_review"},
+	} {
+		if !eventsContain(events, want.eventType, want.nodeID) {
+			t.Fatalf("events %s missing %s for %s: %+v", archonEventTypes(events), want.eventType, want.nodeID, events)
+		}
+	}
+	draftReport, err := store.ProjectRunNodeReport(started.RunID, "fmn_draft")
+	if err != nil {
+		t.Fatalf("project draft report: %v", err)
+	}
+	if !strings.Contains(draftReport.Text, "lab-poet") || !strings.Contains(draftReport.Text, "Create a simple poem") {
+		t.Fatalf("draft report text = %q, want lab-poet output seeded by mission objective", draftReport.Text)
+	}
+
+	stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "gate", "approve", started.RunID, "gate_review", "--reason", "draft approved", "--json")
+	if code != 0 {
+		t.Fatalf("gate approve code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	approved := decodeArchonStatus(t, stdout)
+	if approved.Status != formations.RunStatusBlocked || approved.Final || !approved.ResumeAllowed {
+		t.Fatalf("approved status = %+v, want resumable block before polish dispatch", approved)
+	}
+	events, err = store.ReadRunEvents(started.RunID)
+	if err != nil {
+		t.Fatalf("read approved events: %v", err)
+	}
+	if eventsContain(events, formations.RunEventNodeStarted, "fmn_polish") ||
+		eventsContain(events, formations.RunEventSlotDispatch, "fmn_polish") ||
+		eventsContain(events, formations.RunEventSucceeded, "") {
+		t.Fatalf("approve dispatched or finalized before resume: %s", archonEventTypes(events))
+	}
+
+	stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "run", "resume", started.RunID, "--reason", "gate approved", "--json")
+	if code != 0 {
+		t.Fatalf("run resume code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	resumed := decodeArchonStatus(t, stdout)
+	if resumed.Status != formations.RunStatusSucceeded || !resumed.Final {
+		t.Fatalf("resumed status = %+v, want final succeeded after polish", resumed)
+	}
+	events, err = store.ReadRunEvents(started.RunID)
+	if err != nil {
+		t.Fatalf("read final events: %v", err)
+	}
+	for _, want := range []struct {
+		eventType string
+		nodeID    string
+	}{
+		{formations.RunEventHumanVerdictRecorded, "gate_review"},
+		{formations.RunEventGateVerdict, "gate_review"},
+		{formations.RunEventResumed, ""},
+		{formations.RunEventNodeStarted, "fmn_polish"},
+		{formations.RunEventSlotDispatch, "fmn_polish"},
+		{formations.RunEventSlotResult, "fmn_polish"},
+		{formations.RunEventNodeOutput, "fmn_polish"},
+		{formations.RunEventSucceeded, ""},
+	} {
+		if !eventsContain(events, want.eventType, want.nodeID) {
+			t.Fatalf("final events %s missing %s for %s: %+v", archonEventTypes(events), want.eventType, want.nodeID, events)
+		}
+	}
+}
+
+func TestArchonPoemMissionRoundTripsThroughCLIAPIFileAndLedger(t *testing.T) {
+	workspace := t.TempDir()
+	agentsDir := t.TempDir()
+	t.Setenv("CHROTE_AGENTS_DIR", agentsDir)
+	t.Setenv("CHROTE_FORMATIONS_LAB_HARNESSES", "lab-fake")
+	t.Setenv("CHROTE_FORMATIONS_LAB_CWD", workspace)
+	t.Setenv("CHROTE_FORMATIONS_LAB_ROOTS", workspace)
+
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("poems"), `schema = 1
+id = "brd_poems"
+slug = "poems"
+title = "Poems"
+rev = 1
+`)
+	runner := &fakeTmux{live: map[string]bool{}}
+	archon := func(args ...string) string {
+		t.Helper()
+		stdout, stderr, code := runArchon(t, runner, args...)
+		if code != 0 {
+			t.Fatalf("archon %q code=%d stderr=%s stdout=%s", strings.Join(args, " "), code, stderr, stdout)
+		}
+		return stdout
+	}
+	workspaceArgs := func(args ...string) []string {
+		return append([]string{"--workspace", workspace}, args...)
+	}
+
+	for _, persona := range []struct {
+		id   string
+		kind string
+	}{
+		{id: "lab-poet", kind: "poet"},
+		{id: "lab-poem-reviewer", kind: "reviewer"},
+	} {
+		archon(workspaceArgs("agent", "new", persona.id, "--kind", persona.kind, "--harness", "lab-fake", "--json")...)
+	}
+
+	boardList := decodeArchonBoardList(t, archon(workspaceArgs("board", "list", "--json")...))
+	if len(boardList.Boards) != 1 || boardList.Boards[0].ID != "brd_poems" || boardList.Boards[0].Slug != "poems" {
+		t.Fatalf("board list = %+v, want selected empty poems board", boardList)
+	}
+
+	archon(workspaceArgs("mission", "create", "poems", "--title", "Simple poem", "--goal", "Create a simple poem", "--bead", "home-vdki.34.1", "--json")...)
+	archon(workspaceArgs("formation", "create", "poems", "solo", "--title", "Draft poem", "--x", "320", "--y", "120", "--json")...)
+	archon(workspaceArgs("formation", "create", "poems", "solo", "--title", "Polish poem", "--x", "860", "--y", "120", "--json")...)
+	archon(workspaceArgs("gate", "create", "poems", "--title", "Human review", "--kinds", "human", "--criterion", "Draft is ready to polish", "--json")...)
+
+	board := decodeArchonBoard(t, archon(workspaceArgs("board", "inspect", "poems", "--json")...))
+	mission := mustMissionByTitle(t, board, "Simple poem")
+	draft := mustFormationByTitle(t, board, "Draft poem")
+	polish := mustFormationByTitle(t, board, "Polish poem")
+	gate := mustGateByTitle(t, board, "Human review")
+
+	archon(workspaceArgs("formation", "assign", "poems", draft.ID, "--slot", draft.Slots[0].ID, "--agent", "lab-poet", "--harness", "lab-fake", "--json")...)
+	archon(workspaceArgs("formation", "assign", "poems", polish.ID, "--slot", polish.Slots[0].ID, "--agent", "lab-poem-reviewer", "--harness", "lab-fake", "--json")...)
+	archon(workspaceArgs("mission", "wire", "poems", mission.ID, draft.ID+":"+draft.Inputs[0].ID, "--json")...)
+	archon(workspaceArgs("formation", "wire", "poems", draft.ID+":"+draft.Outputs[0].ID, gate.ID+":in", "--json")...)
+	archon(workspaceArgs("formation", "wire", "poems", gate.ID+":pass", polish.ID+":"+polish.Inputs[0].ID, "--json")...)
+
+	afterAuthoring := decodeArchonBoard(t, archon(workspaceArgs("board", "inspect", "poems", "--json")...))
+	draft = mustFormationByTitle(t, afterAuthoring, "Draft poem")
+	polish = mustFormationByTitle(t, afterAuthoring, "Polish poem")
+	gate = mustGateByTitle(t, afterAuthoring, "Human review")
+	mission = mustMissionByTitle(t, afterAuthoring, "Simple poem")
+	if len(afterAuthoring.Connections) != 3 {
+		t.Fatalf("connections = %+v, want mission->draft, draft->gate, gate->polish", afterAuthoring.Connections)
+	}
+	for _, edge := range afterAuthoring.Connections {
+		if edge.ID == "" || !strings.HasPrefix(edge.ID, "edge_") {
+			t.Fatalf("edge lacks stable id: %+v", edge)
+		}
+	}
+
+	started := decodeArchonRunResponse(t, archon(workspaceArgs("mission", "run", "poems", "--mission", mission.ID, "--json")...))
+	if started.RunID == "" || !strings.HasPrefix(started.RunID, "run_") {
+		t.Fatalf("run id = %q, want stable run_ id", started.RunID)
+	}
+	if started.Status.Status != formations.RunStatusRunning || started.Status.Final {
+		t.Fatalf("started status = %+v, want running at human gate", started.Status)
+	}
+	events, err := store.ReadRunEvents(started.RunID)
+	if err != nil {
+		t.Fatalf("read run events: %v", err)
+	}
+	for _, want := range []struct {
+		eventType string
+		nodeID    string
+	}{
+		{formations.RunEventStarted, ""},
+		{formations.RunEventNodeStarted, draft.ID},
+		{formations.RunEventSlotDispatch, draft.ID},
+		{formations.RunEventSlotResult, draft.ID},
+		{formations.RunEventNodeOutput, draft.ID},
+		{formations.RunEventGateEvaluating, gate.ID},
+		{formations.RunEventHumanInputRequested, gate.ID},
+	} {
+		if !eventsContain(events, want.eventType, want.nodeID) {
+			t.Fatalf("events %s missing %s for %s: %+v", archonEventTypes(events), want.eventType, want.nodeID, events)
+		}
+	}
+
+	approved := decodeArchonStatus(t, archon(workspaceArgs("gate", "approve", started.RunID, gate.ID, "--reason", "draft approved", "--json")...))
+	if approved.Status != formations.RunStatusBlocked || approved.Final || !approved.ResumeAllowed {
+		t.Fatalf("approved status = %+v, want resumable block before explicit resume", approved)
+	}
+	resumed := decodeArchonStatus(t, archon(workspaceArgs("run", "resume", started.RunID, "--reason", "gate approved", "--json")...))
+	if resumed.Status != formations.RunStatusSucceeded || !resumed.Final {
+		t.Fatalf("resumed status = %+v, want final success", resumed)
+	}
+	finalStatus := decodeArchonStatus(t, archon(workspaceArgs("run", "status", started.RunID, "--json")...))
+	if finalStatus.RunID != started.RunID || finalStatus.BoardSlug != "poems" || finalStatus.MissionID != mission.ID || finalStatus.Status != formations.RunStatusSucceeded {
+		t.Fatalf("final archon status = %+v, want same run/board/mission success", finalStatus)
+	}
+
+	handler := chroteapi.NewFormationsHandlerWithStores(store, formations.NewPersonaStore(agentsDir))
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	apiBoard := decodeAPIBoard(t, requestArchonFormationsAPI(t, mux, http.MethodGet, "/api/formations/boards/poems", ""))
+	apiLayout := decodeAPILayout(t, requestArchonFormationsAPI(t, mux, http.MethodGet, "/api/formations/boards/poems/layout", ""))
+	apiStatus := decodeAPIStatus(t, requestArchonFormationsAPI(t, mux, http.MethodGet, "/api/formations/runs/"+started.RunID, ""))
+	apiEvents := decodeAPIEvents(t, requestArchonFormationsAPI(t, mux, http.MethodGet, "/api/formations/runs/"+started.RunID+"/events", ""))
+
+	if apiBoard.ID != afterAuthoring.ID || apiBoard.Slug != afterAuthoring.Slug || apiBoard.Rev != afterAuthoring.Rev {
+		t.Fatalf("api board identity = %+v, archon board = %+v", apiBoard, afterAuthoring)
+	}
+	if mustMissionByTitle(t, apiBoard, "Simple poem").ID != mission.ID ||
+		mustFormationByTitle(t, apiBoard, "Draft poem").ID != draft.ID ||
+		mustFormationByTitle(t, apiBoard, "Polish poem").ID != polish.ID ||
+		mustGateByTitle(t, apiBoard, "Human review").ID != gate.ID {
+		t.Fatalf("api board ids drifted: api=%+v archon=%+v", apiBoard, afterAuthoring)
+	}
+	if len(apiBoard.Connections) != len(afterAuthoring.Connections) || connectionIDs(apiBoard.Connections) != connectionIDs(afterAuthoring.Connections) {
+		t.Fatalf("api connections drifted: api=%+v archon=%+v", apiBoard.Connections, afterAuthoring.Connections)
+	}
+	if apiStatus.RunID != started.RunID || apiStatus.Status != formations.RunStatusSucceeded || !apiStatus.Final {
+		t.Fatalf("api status = %+v, want final success for same run", apiStatus)
+	}
+	if len(apiEvents) != finalStatus.EventCount || !eventsContain(apiEvents, formations.RunEventSucceeded, "") {
+		t.Fatalf("api events = %s, archon event count = %d", archonEventTypes(apiEvents), finalStatus.EventCount)
+	}
+
+	boardRaw := readArchonFile(t, store.BoardPath("poems"))
+	layoutRaw := readArchonFile(t, store.LayoutPath("poems"))
+	runRaw := readArchonFile(t, filepath.Join(workspace, ".formations", "runs", "poems", started.RunID+".ndjson"))
+	if strings.Contains(boardRaw, "[[node]]") || strings.Contains(boardRaw, "x = 320") || strings.Contains(boardRaw, "y = 120") {
+		t.Fatalf("board file contains layout sidecar data:\n%s", boardRaw)
+	}
+	for _, id := range []string{draft.ID, polish.ID} {
+		if !layoutHasNode(apiLayout, id) || !strings.Contains(layoutRaw, `id = "`+id+`"`) {
+			t.Fatalf("layout sidecar missing node %s:\n%s", id, layoutRaw)
+		}
+	}
+	for _, id := range []string{mission.ID, draft.ID, polish.ID, gate.ID, draft.Slots[0].ID, draft.Inputs[0].ID, draft.Outputs[0].ID, started.RunID} {
+		if !strings.Contains(boardRaw+runRaw, id) {
+			t.Fatalf("stable id %s missing from board/run files", id)
+		}
+	}
+}
+
+func TestDefaultCockpitPatchRoundTripsToArchonFilesAndLayoutSidecar(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("poems"), `schema = 1
+id = "brd_poems"
+slug = "poems"
+title = "Poems"
+rev = 3
+
+[[mission]]
+id = "mis_poem"
+title = "Simple poem"
+goal = "Create a simple poem"
+beadId = "home-vdki.34"
+
+[[formation]]
+id = "fmn_draft"
+type = "solo"
+title = "Draft poem"
+
+[[formation.input]]
+id = "in"
+label = "Input"
+
+[[formation.output]]
+id = "out"
+label = "Output"
+
+[[formation.slot]]
+id = "slot_writer"
+label = "Writer"
+controller = false
+`)
+	writeArchonFile(t, store.LayoutPath("poems"), `schema = 1
+boardId = "brd_poems"
+boardRev = 3
+
+[[node]]
+id = "mis_poem"
+x = 80
+y = 120
+
+[[node]]
+id = "fmn_draft"
+x = 320
+y = 120
+`)
+	handler := chroteapi.NewFormationsHandlerWithStore(store)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	requestAPI := func(method, path, body, etag string) []byte {
+		t.Helper()
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		if etag != "" {
+			req.Header.Set("If-Match", etag)
+		}
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s %s status=%d body=%s", method, path, rec.Code, rec.Body.String())
+		}
+		return rec.Body.Bytes()
+	}
+
+	board, err := store.ReadBoard("poems")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	assignRaw := requestAPI(
+		http.MethodPatch,
+		"/api/formations/boards/poems",
+		`{"assignSlot":{"formationId":"fmn_draft","slotId":"slot_writer","agentId":"lab-poet","harness":"lab-fake"},"expectedRev":3,"updatedBy":"agent:ui"}`,
+		board.ETag,
+	)
+	assigned := decodeAPIBoard(t, assignRaw)
+	if assigned.Rev != 4 || assigned.Formations[0].Slots[0].AgentID != "lab-poet" || assigned.Formations[0].Slots[0].Harness != "lab-fake" {
+		t.Fatalf("assigned board = %+v, want UI slot assignment persisted through API", assigned)
+	}
+
+	board, err = store.ReadBoard("poems")
+	if err != nil {
+		t.Fatalf("read assigned board: %v", err)
+	}
+	wiredRaw := requestAPI(
+		http.MethodPatch,
+		"/api/formations/boards/poems",
+		`{"wireConnection":{"from":"mis_poem:out","to":"fmn_draft:in"},"expectedRev":4,"updatedBy":"agent:ui"}`,
+		board.ETag,
+	)
+	wired := decodeAPIBoard(t, wiredRaw)
+	if wired.Rev != 5 || len(wired.Connections) != 1 || wired.Connections[0].From != "mis_poem:out" || wired.Connections[0].To != "fmn_draft:in" {
+		t.Fatalf("wired board = %+v, want UI wire persisted as stable board connection", wired)
+	}
+
+	layout, err := store.ReadLayout("poems")
+	if err != nil {
+		t.Fatalf("read layout: %v", err)
+	}
+	requestAPI(
+		http.MethodPatch,
+		"/api/formations/boards/poems/layout",
+		`{"nodes":[{"id":"fmn_draft","x":444,"y":222}]}`,
+		layout.ETag,
+	)
+
+	stdout, stderr, code := runArchon(t, &fakeTmux{live: map[string]bool{}}, "--workspace", workspace, "board", "inspect", "poems", "--json")
+	if code != 0 {
+		t.Fatalf("archon inspect code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	archonBoard := decodeArchonBoard(t, stdout)
+	if archonBoard.Formations[0].Slots[0].ID != "slot_writer" ||
+		archonBoard.Formations[0].Slots[0].AgentID != "lab-poet" ||
+		len(archonBoard.Connections) != 1 ||
+		archonBoard.Connections[0].ID == "" ||
+		archonBoard.Connections[0].From != "mis_poem:out" ||
+		archonBoard.Connections[0].To != "fmn_draft:in" {
+		t.Fatalf("archon board = %+v, want API/UI mutation visible without structural drift", archonBoard)
+	}
+	boardRaw := readArchonFile(t, store.BoardPath("poems"))
+	layoutRaw := readArchonFile(t, store.LayoutPath("poems"))
+	if strings.Contains(boardRaw, "[[node]]") || strings.Contains(boardRaw, "x = 444") || strings.Contains(boardRaw, "sessionName") {
+		t.Fatalf("board file leaked layout/runtime state:\n%s", boardRaw)
+	}
+	if !strings.Contains(layoutRaw, `id = "fmn_draft"`) || !strings.Contains(layoutRaw, "x = 444") || !strings.Contains(layoutRaw, "y = 222") {
+		t.Fatalf("layout sidecar missing UI node move:\n%s", layoutRaw)
+	}
+}
+
+func TestArchonS4ConfiguredLabExecutorMissingRootBlocksWithSpecificReason(t *testing.T) {
+	workspace := t.TempDir()
+	agentsDir := t.TempDir()
+	t.Setenv("CHROTE_AGENTS_DIR", agentsDir)
+	t.Setenv("CHROTE_FORMATIONS_LAB_HARNESSES", "lab-fake")
+	t.Setenv("CHROTE_FORMATIONS_LAB_CWD", workspace)
+
+	personas := formations.NewPersonaStore(agentsDir)
+	if _, err := personas.CreatePersona(formations.CreatePersonaRequest{
+		ID:      "lab-poet",
+		Kind:    "specialist",
+		Harness: "lab-fake",
+	}); err != nil {
+		t.Fatalf("create persona: %v", err)
+	}
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("poems"), archonS4PoemMissingRootBoardFixture())
+
+	stdout, stderr, code := runArchon(t, &fakeTmux{live: map[string]bool{}}, "--workspace", workspace, "mission", "run", "poems", "--mission", "mis_poem", "--json")
+	if code != 0 {
+		t.Fatalf("mission run code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	started := decodeArchonRunResponse(t, stdout)
+	if started.Status.Status != formations.RunStatusBlocked || !started.Status.ResumeAllowed {
+		t.Fatalf("status = %+v, want resumable block for missing lab root", started.Status)
+	}
+	events, err := store.ReadRunEvents(started.RunID)
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if eventsContainErrorCode(events, "missing_executor") || eventsContainReason(events, "formation executor unavailable") {
+		t.Fatalf("configured but incomplete lab executor reported generic missing executor: %+v", events)
+	}
+	if !eventsContainErrorCode(events, "missing_root") || !eventsContainReason(events, "lab executor root is not configured") {
+		t.Fatalf("events = %+v, want missing_root lab configuration block", events)
+	}
+}
+
 func TestArchonS5RunAskSurfacesOpenEscalations(t *testing.T) {
 	workspace := t.TempDir()
 	agentsDir := t.TempDir()
@@ -885,6 +1719,141 @@ func decodeArchonEvents(t *testing.T, raw string) []formations.RunEvent {
 	return events
 }
 
+func decodeArchonBoardList(t *testing.T, raw string) struct {
+	Boards []formations.BoardSummary `json:"boards"`
+} {
+	t.Helper()
+	var list struct {
+		Boards []formations.BoardSummary `json:"boards"`
+	}
+	if err := json.Unmarshal([]byte(raw), &list); err != nil {
+		t.Fatalf("decode board list: %v\n%s", err, raw)
+	}
+	return list
+}
+
+func decodeArchonBoard(t *testing.T, raw string) formations.BoardDocument {
+	t.Helper()
+	var board formations.BoardDocument
+	if err := json.Unmarshal([]byte(raw), &board); err != nil {
+		t.Fatalf("decode board: %v\n%s", err, raw)
+	}
+	return board
+}
+
+func requestArchonFormationsAPI(t *testing.T, mux *http.ServeMux, method, path, body string) []byte {
+	t.Helper()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("%s %s status=%d body=%s", method, path, rec.Code, rec.Body.String())
+	}
+	return rec.Body.Bytes()
+}
+
+func decodeAPIBoard(t *testing.T, raw []byte) formations.BoardDocument {
+	t.Helper()
+	var response struct {
+		Data struct {
+			Board formations.BoardDocument `json:"board"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &response); err != nil {
+		t.Fatalf("decode api board: %v\n%s", err, string(raw))
+	}
+	return response.Data.Board
+}
+
+func decodeAPILayout(t *testing.T, raw []byte) formations.LayoutDocument {
+	t.Helper()
+	var response struct {
+		Data struct {
+			Layout formations.LayoutDocument `json:"layout"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &response); err != nil {
+		t.Fatalf("decode api layout: %v\n%s", err, string(raw))
+	}
+	return response.Data.Layout
+}
+
+func decodeAPIStatus(t *testing.T, raw []byte) formations.RunStatusProjection {
+	t.Helper()
+	var response struct {
+		Data struct {
+			Status formations.RunStatusProjection `json:"status"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &response); err != nil {
+		t.Fatalf("decode api status: %v\n%s", err, string(raw))
+	}
+	return response.Data.Status
+}
+
+func decodeAPIEvents(t *testing.T, raw []byte) []formations.RunEvent {
+	t.Helper()
+	var response struct {
+		Data struct {
+			Events []formations.RunEvent `json:"events"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &response); err != nil {
+		t.Fatalf("decode api events: %v\n%s", err, string(raw))
+	}
+	return response.Data.Events
+}
+
+func mustMissionByTitle(t *testing.T, board formations.BoardDocument, title string) formations.MissionNode {
+	t.Helper()
+	for _, mission := range board.Missions {
+		if mission.Title == title {
+			return mission
+		}
+	}
+	t.Fatalf("mission %q not found in %+v", title, board.Missions)
+	return formations.MissionNode{}
+}
+
+func mustFormationByTitle(t *testing.T, board formations.BoardDocument, title string) formations.FormationNode {
+	t.Helper()
+	for _, formation := range board.Formations {
+		if formation.Title == title {
+			return formation
+		}
+	}
+	t.Fatalf("formation %q not found in %+v", title, board.Formations)
+	return formations.FormationNode{}
+}
+
+func mustGateByTitle(t *testing.T, board formations.BoardDocument, title string) formations.GateNode {
+	t.Helper()
+	for _, gate := range board.Gates {
+		if gate.Title == title {
+			return gate
+		}
+	}
+	t.Fatalf("gate %q not found in %+v", title, board.Gates)
+	return formations.GateNode{}
+}
+
+func connectionIDs(connections []formations.BoardConnection) string {
+	ids := make([]string, 0, len(connections))
+	for _, connection := range connections {
+		ids = append(ids, connection.ID)
+	}
+	return strings.Join(ids, ",")
+}
+
+func layoutHasNode(layout formations.LayoutDocument, id string) bool {
+	for _, node := range layout.Nodes {
+		if node.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 func eventsContain(events []formations.RunEvent, typ, nodeID string) bool {
 	for _, event := range events {
 		if event.Type != typ {
@@ -895,6 +1864,42 @@ func eventsContain(events []formations.RunEvent, typ, nodeID string) bool {
 		}
 	}
 	return false
+}
+
+func eventsContainErrorCode(events []formations.RunEvent, code string) bool {
+	for _, event := range events {
+		if event.Type != formations.RunEventError || event.Data == nil {
+			continue
+		}
+		if event.Data["code"] == code {
+			return true
+		}
+	}
+	return false
+}
+
+func eventsContainReason(events []formations.RunEvent, reason string) bool {
+	for _, event := range events {
+		if event.Data == nil {
+			continue
+		}
+		if event.Data["reason"] == reason || event.Data["message"] == reason {
+			return true
+		}
+	}
+	return false
+}
+
+func archonEventTypes(events []formations.RunEvent) string {
+	types := make([]string, 0, len(events))
+	for _, event := range events {
+		if event.NodeID != "" {
+			types = append(types, event.Type+":"+event.NodeID)
+		} else {
+			types = append(types, event.Type)
+		}
+	}
+	return strings.Join(types, ",")
 }
 
 type archonTestRunExecutor struct{}
@@ -1032,6 +2037,86 @@ to = "fmn_ship:port_ship_in"
 
 func archonS5HumanGateBoardFixture() string {
 	return strings.Replace(s5HumanGateBoardFixtureForArchon(), "home-7kc4.7", "home-7kc4.8", 1)
+}
+
+func archonS4PoemMissingRootBoardFixture() string {
+	return `schema = 1
+id = "brd_poems"
+slug = "poems"
+title = "Poems"
+rev = 7
+
+[[mission]]
+id = "mis_poem"
+title = "Simple poem"
+goal = "Create a simple poem"
+beadId = "home-vdki.33.1"
+
+[[formation]]
+id = "fmn_draft"
+type = "solo"
+title = "Draft poem"
+
+[[formation.input]]
+id = "port_draft_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_draft_out"
+label = "Output"
+
+[[formation.slot]]
+id = "slot_writer"
+label = "Writer"
+agentId = "lab-poet"
+harness = "lab-fake"
+controller = true
+
+[[connection]]
+id = "edge_mission_draft"
+from = "mis_poem:out"
+to = "fmn_draft:port_draft_in"
+`
+}
+
+func archonS4PoemBoardFixture() string {
+	return archonS4PoemMissingRootBoardFixture() + `
+[[gate]]
+id = "gate_review"
+title = "Human review"
+kinds = ["human"]
+criterion = "Draft is ready to polish"
+
+[[formation]]
+id = "fmn_polish"
+type = "solo"
+title = "Polish poem"
+
+[[formation.input]]
+id = "port_polish_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_polish_out"
+label = "Output"
+
+[[formation.slot]]
+id = "slot_reviewer"
+label = "Reviewer"
+agentId = "lab-poem-reviewer"
+harness = "lab-fake"
+controller = true
+
+[[connection]]
+id = "edge_draft_gate"
+from = "fmn_draft:port_draft_out"
+to = "gate_review:in"
+
+[[connection]]
+id = "edge_gate_pass_polish"
+from = "gate_review:pass"
+to = "fmn_polish:port_polish_in"
+`
 }
 
 func s5HumanGateBoardFixtureForArchon() string {
