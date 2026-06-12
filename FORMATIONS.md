@@ -38,6 +38,40 @@ Formations gives that organization a concrete operating model:
 - both surfaces round-trip through the same files, shared Go package, and run
   ledger.
 
+## Collaboration model
+
+Formations exist to enable capable agents to collaborate, not to reduce them to
+fixed pipeline steps. The system should give high-tier models enough context,
+tools, and visibility to use their intelligence inside the team setting while
+CHROTE/Archon keeps the work reproducible, bounded, and observable.
+
+- `solo` is one agent working with a clear brief and output contract.
+- `flow` is ordered handoff where the sequence itself is the coordination model.
+- `peer` is collaborative work without hierarchy: agents share the brief, use a
+  shared run plane (for example an append-only chat/blackboard file) to converse,
+  inspect or critique each other's work as the available tools allow, and
+  converge on a synthesis or set of artifacts. Archon should seed the first turn
+  with the task and enough team context to get the group moving; peers then read
+  the shared plane, decide what to say or do next, write their contribution, and
+  may wait, inspect sibling sessions with scoped tools, or continue work. A
+  lightweight facilitator may nudge stuck peers, detect loops, or surface
+  problems, but it must not become a hidden hierarchy or fixed choreography.
+- `orchestrated` is leader-driven collaboration: one appointed agent owns team
+  coordination, but it should steer through practical affordances such as
+  prompting worker sessions, inspecting/capturing session state, collecting
+  artifacts, using monitors or subagents to surface key worker status, requesting
+  revisions, running or requesting checks, and deciding when the formation is
+  ready to finish. Those affordances may be native tools the agent already uses
+  well, such as `tmux` CLI against scoped session names, or Archon helpers where
+  formation context, lookup, provenance, or UI projection adds value.
+
+Do not treat peer or orchestrated formations as a rigid choreography. Archon and
+the runtime provide the team roster, scoped session mapping, redaction/output
+caps, artifact collection, and ledger evidence; the agents supply the judgment
+about how to collaborate. Do not build Archon commands that merely duplicate
+standard terminal skills unless they add formation semantics, safety, or durable
+evidence.
+
 ## Core nouns
 
 | Noun | Meaning |
@@ -66,12 +100,34 @@ Formations gives that organization a concrete operating model:
    sidecars, not board definitions.
 6. **Execution context fails loud.** Missing or ambiguous sessions, harnesses,
    checks, cwd, or agents cannot silently substitute.
-7. **Feature flags default off until ready.** UI flag: `chrote-formations`.
-   Server env: `CHROTE_FORMATIONS`.
+7. **Formations is always-on.** It is a permanent first-class surface, not a
+   feature flag. The only Formations env vars are the executor safety ladder
+   (`CHROTE_FORMATIONS_LAB_*` / `CHROTE_FORMATIONS_TMUX_*` /
+   `CHROTE_FORMATIONS_TMUX_PROD_SMOKE`), which gate execution-environment
+   promotion, never feature availability.
 8. **Beads can anchor missions; it is not the graph store.**
 9. **No command-execution landmines.** Free-text criteria never become implicit
    shell execution. Executable checks require explicit operator-authored config
    and guardrails.
+10. **Ports carry concrete payloads.** Connections route the payload attached to
+   their source output port. Every formation emits `node_output.outputs` keyed by
+   stable output port ids; missing or unknown output ids block loudly instead of
+   silently broadcasting a blob.
+
+## Port payload contract
+
+Connections are not just visual arrows. A wire from `source:summary` to
+`writer:input` carries the `summary` payload from `source`'s `node_output.outputs`
+map into `writer`'s `node_started.inputRefs[]`. That input ref records the
+`edgeId`, `fromNodeId`, `fromPortId`, `toPortId`, payload text, and optional
+artifact/report refs.
+
+There is one routing contract: `node_output.outputs[portId]`. Free-form
+`node_output.text` is display summary only and never feeds graph edges.
+Tmux-backed agents receive this contract as a fenced `chrote-outputs` JSON block
+instruction; lab runs synthesize deterministic payloads for every output port.
+If a formation omits a declared output or emits an unknown output id, the run
+blocks and records `missing_output_payload` or `invalid_output_payload`.
 
 ## Interaction model
 
@@ -122,6 +178,32 @@ A correct run model:
    reflected in the UI.
 
 Watching is optional. Recovery must not depend on a browser tab staying open.
+
+## Execution environments
+
+Formations execution promotes through three environments. Each step up is an
+explicit configuration decision, never a silent fallback.
+
+1. **Lab.** `CHROTE_FORMATIONS_LAB_*` configures a deterministic executor that
+   synthesizes outputs and sentinels with no tmux involvement. Full run-engine,
+   ledger, gate, and recovery behavior is exercisable here. When lab harnesses
+   are configured, lab takes precedence over the tmux executor.
+2. **Isolated tmux.** `CHROTE_FORMATIONS_TMUX_*` dispatches to real agent
+   sessions, but the executor refuses to run unless the socket, cwd, and all
+   roots live under the system temp directory and the socket is not the
+   default-resolved tmux socket. Dogfooding happens on a throwaway socket with
+   its own sessions; the live cockpit socket is unreachable by construction.
+3. **Live socket (prod smoke).** Setting `CHROTE_FORMATIONS_TMUX_PROD_SMOKE`
+   is the explicit operator opt-in that lifts the temp-socket and temp-root
+   restrictions so the executor may target the live CHROTE tmux socket and real
+   workspace roots. Nothing else is relaxed: sessions must already exist with
+   the configured prefix, panes must be alive with cwd inside configured roots,
+   output caps, timeouts, redaction, and fail-loud ledger events all still
+   apply. The executor never creates or kills tmux sessions.
+
+Promotion to the live socket means setting the `CHROTE_FORMATIONS_TMUX_*`
+boundary and the prod-smoke opt-in on the CHROTE service itself, with lab
+variables unset. `.env.example` documents the full variable surface.
 
 ## Build sequence
 

@@ -7,17 +7,14 @@ test.describe('Formations Playwright stack smoke', () => {
     await mockFormationsApiRoutes(page)
   })
 
-  test('keeps the Formations tab default-off', async ({ page }) => {
+  test('shows the Formations tab by default with no opt-in', async ({ page }) => {
     await page.goto('/')
 
-    await expect(page.getByRole('button', { name: 'Formations' })).toHaveCount(0)
-    await expect(page.getByTestId('formations-view')).toHaveCount(0)
+    // Formations is always-on: the tab is present with no localStorage tinkering.
+    await expect(page.getByRole('button', { name: 'Formations' })).toBeVisible()
   })
 
-  test('mounts mocked Formations data after explicit opt-in', async ({ page }) => {
-    await page.addInitScript(() => {
-      window.localStorage.setItem('chrote-formations', '1')
-    })
+  test('mounts mocked Formations data on the default tab', async ({ page }) => {
     await page.goto('/')
 
     await page.getByRole('button', { name: 'Formations' }).click()
@@ -67,9 +64,6 @@ test.describe('Formations Playwright stack smoke', () => {
           error: { code: 'MOCK_NOT_FOUND', message: `${request.method()} ${path}` },
         }),
       })
-    })
-    await page.addInitScript(() => {
-      window.localStorage.setItem('chrote-formations', '1')
     })
     await page.goto('/')
 

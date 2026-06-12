@@ -251,10 +251,6 @@ test.describe('Formations cockpit — D7 reference parity', () => {
   test.beforeEach(async ({ page }) => {
     await mockApiRoutes(page)
     await mockFormationsApiRoutes(page)
-    await page.addInitScript(() => {
-      window.localStorage.setItem('chrote-formations', '1')
-      window.localStorage.setItem('chrote-formations-cockpit', '1')
-    })
     await page.goto('/')
     await page.getByRole('button', { name: 'Formations' }).click()
     await expect(page.getByTestId('formations-view')).toBeVisible()
@@ -354,10 +350,6 @@ test.describe('Formations cockpit — layout safety', () => {
         nodes: mockFormationsLayout.nodes.map(node => ({ ...node, x: 220, y: 160 })),
       },
     })
-    await page.addInitScript(() => {
-      window.localStorage.setItem('chrote-formations', '1')
-      window.localStorage.setItem('chrote-formations-cockpit', '1')
-    })
     await page.goto('/')
     await page.getByRole('button', { name: 'Formations' }).click()
     await expect(page.getByTestId('formations-view')).toBeVisible()
@@ -392,10 +384,6 @@ test.describe('Formations cockpit — responsive safety', () => {
       await page.setViewportSize({ width: viewport.width, height: viewport.height })
       await mockApiRoutes(page)
       await mockFormationsApiRoutes(page)
-      await page.addInitScript(() => {
-        window.localStorage.setItem('chrote-formations', '1')
-        window.localStorage.setItem('chrote-formations-cockpit', '1')
-      })
       await page.goto('/')
       if (viewport.width <= 768) {
         await page.locator('.hamburger-btn').click()
@@ -490,10 +478,6 @@ test.describe('Formations cockpit — Archon round-trip projection', () => {
           resumeAllowed: boolean
         },
       })
-      await page.addInitScript(() => {
-        window.localStorage.setItem('chrote-formations', '1')
-        window.localStorage.setItem('chrote-formations-cockpit', '1')
-      })
       await page.goto('/')
       await page.getByRole('button', { name: 'Formations' }).click()
       await expect(page.getByTestId('formations-view')).toBeVisible()
@@ -525,10 +509,6 @@ test.describe('Formations cockpit — Archon round-trip projection', () => {
       const polishSlotId = requiredString(requiredArray(fixture.polish.slots, 'polish slots')[0]?.id, 'polish slot id')
       const { runId, gateId, boardSlug } = await installArchonRunLifecycleHarness(page, fixture)
 
-      await page.addInitScript(() => {
-        window.localStorage.setItem('chrote-formations', '1')
-        window.localStorage.setItem('chrote-formations-cockpit', '1')
-      })
       await page.goto('/')
       await page.getByRole('button', { name: 'Formations' }).click()
       await expect(page.getByTestId('formations-view')).toBeVisible()
@@ -560,8 +540,6 @@ test.describe('Formations cockpit — Archon round-trip projection', () => {
   test('reloads a blocked run and reconciles external board changes without losing run context', async ({ page }) => {
     const { runId, boardSlug } = await installReloadRecoveryHarness(page)
     await page.addInitScript(({ key, value }) => {
-      window.localStorage.setItem('chrote-formations', '1')
-      window.localStorage.setItem('chrote-formations-cockpit', '1')
       window.localStorage.setItem(key, value)
     }, { key: activeRunStorageKey(boardSlug), value: runId })
 
@@ -625,10 +603,6 @@ test.describe('Formations cockpit — direct manipulation gestures', () => {
         return
       }
       await route.fallback()
-    })
-    await page.addInitScript(() => {
-      window.localStorage.setItem('chrote-formations', '1')
-      window.localStorage.setItem('chrote-formations-cockpit', '1')
     })
     await page.goto('/')
     await page.getByRole('button', { name: 'Formations' }).click()
@@ -749,7 +723,8 @@ test.describe('Formations cockpit — direct manipulation gestures', () => {
 
   test('local formation menu edits input through a popover and undo emits the inverse model operation', async ({ page }) => {
     const formation = { id: 'formation-ship', title: 'Ship formation' }
-    await page.getByTestId(`formation-node-${formation.id}`).click({ button: 'right' })
+    // Right-click the card header (not the slot, which has its own menu per the reference).
+    await page.getByTestId(`formation-node-${formation.id}`).locator('.fhead').click({ button: 'right' })
     await expect(page.getByRole('menu', { name: 'Formation actions' })).toBeVisible()
     await page.getByRole('menuitem', { name: 'Set input' }).click()
 
@@ -787,9 +762,12 @@ test.describe('Formations cockpit — direct manipulation gestures', () => {
 
     const wire = page.locator('.fmx .wires path.wire').first()
     const wirePoint = await visibleSvgPathPoint(wire)
+    // Hand-routing the MIDDLE of a wire sets a lane POINT (reference `via.y`), not an inert string.
     await pointerDragFromPoint(page, wirePoint.x, wirePoint.y, wirePoint.x, wirePoint.y + 92)
     await expect.poll(() => layoutPatches.find(p => 'edges' in p)).toBeTruthy()
-    expect(layoutPatches.find(p => 'edges' in p)?.edges).toEqual([{ id: 'conn-review-gate', lane: 'manual' }])
+    const laneEdge = (layoutPatches.find(p => 'edges' in p)?.edges as { id: string; lane: string }[])[0]
+    expect(laneEdge.id).toBe('conn-review-gate')
+    expect(laneEdge.lane).toMatch(/^y:-?\d+$/)
 
     await page.mouse.click(wirePoint.x, wirePoint.y, { button: 'right' })
     await page.getByRole('menuitem', { name: 'Reset routing' }).click()
@@ -805,11 +783,26 @@ test.describe('Formations cockpit — direct manipulation gestures', () => {
   })
 
   test('gate judge socket opens local affordances and attaches an existing formation as judge', async ({ page }) => {
+    // A plain click on the judge socket opens the reference judge picker (new-judge
+    // options plus existing formations by title and detach when wired).
     await expect(page.getByTestId('gate-judge-socket-gate-review')).toBeVisible()
     await page.getByTestId('gate-judge-socket-gate-review').click()
-    await expect(page.getByRole('menu', { name: 'Judge socket actions' })).toBeVisible()
-    await page.getByRole('menuitem', { name: 'Use Review formation' }).click()
+    await expect(page.getByRole('menu', { name: 'Judge' })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: 'Solo · 1 agent' })).toBeVisible()
+    await page.getByRole('menuitem', { name: 'Review formation' }).click()
 
+    await expect.poll(() => patches.find(p => 'setGateJudge' in p)).toBeTruthy()
+    expect(patches.find(p => 'setGateJudge' in p)?.setGateJudge).toMatchObject({
+      gateId: 'gate-review',
+      chain: ['formation-review'],
+    })
+  })
+
+  test('gate judge socket attaches a formation by dragging the judge wire onto it', async ({ page }) => {
+    const reviewCard = page.getByTestId('formation-node-formation-review')
+    const box = await reviewCard.boundingBox()
+    if (!box) throw new Error('review formation has no box')
+    await pointerDrag(page, page.getByTestId('gate-judge-socket-gate-review'), box.x + box.width / 2, box.y + box.height / 2)
     await expect.poll(() => patches.find(p => 'setGateJudge' in p)).toBeTruthy()
     expect(patches.find(p => 'setGateJudge' in p)?.setGateJudge).toMatchObject({
       gateId: 'gate-review',

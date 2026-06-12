@@ -77,3 +77,63 @@ export function runEventReportRef(event: RunEvent): string {
 export function activeRunStorageKey(slug: string): string {
   return `chrote-formations-active-run-${slug}`
 }
+
+export type NodeRunState = '' | 'running' | 'done' | 'blocked' | 'waiting' | 'failed'
+
+/** Project honest per-node run state from the ledger events (mirrors the engine vocabulary). */
+export function projectNodeStates(events: RunEvent[], activeRun: RunStatusProjection | null): Map<string, NodeRunState> {
+  const map = new Map<string, NodeRunState>()
+  for (const event of events) {
+    const nodeId = event.nodeId || event.gateId
+    if (!nodeId) continue
+    switch (event.type) {
+      case 'node_started':
+      case 'slot_dispatch':
+      case 'gate_evaluating':
+        map.set(nodeId, 'running')
+        break
+      case 'node_waiting':
+        map.set(nodeId, 'waiting')
+        break
+      case 'node_output': {
+        const status = typeof event.data?.status === 'string' ? event.data.status : 'done'
+        map.set(nodeId, status === 'blocked' ? 'blocked' : 'done')
+        break
+      }
+      case 'gate_verdict': {
+        const verdict = typeof event.data?.verdict === 'string' ? event.data.verdict : ''
+        map.set(nodeId, verdict === 'fail' ? 'failed' : 'done')
+        break
+      }
+      case 'run_blocked':
+        map.set(nodeId, 'blocked')
+        break
+      case 'run_failed':
+        map.set(nodeId, 'failed')
+        break
+      default:
+        break
+    }
+  }
+  if (activeRun && !activeRun.final && activeRun.status === 'running') {
+    // leave node states as projected
+  }
+  return map
+}
+
+export function openHumanGateId(events: RunEvent[]): string {
+  let openGateId = ''
+  for (const event of [...events].sort((a, b) => a.seq - b.seq)) {
+    if (event.type === 'human_input_requested' && event.gateId) {
+      openGateId = event.gateId
+      continue
+    }
+    if ((event.type === 'human_verdict_recorded' || event.type === 'gate_verdict') && event.gateId === openGateId) {
+      openGateId = ''
+    }
+    if (event.type === 'run_succeeded' || event.type === 'run_failed' || event.type === 'run_canceled') {
+      openGateId = ''
+    }
+  }
+  return openGateId
+}

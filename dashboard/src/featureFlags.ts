@@ -7,8 +7,6 @@ export const FEATURE_FLAGS = {
   filesResizablePreview: 'chrote-files-resizable-preview',
   terminalRefitButton: 'chrote-terminal-refit-button',
   serverStatusTab: 'chrote-server-status-tab',
-  formations: 'chrote-formations',
-  formationsCockpit: 'chrote-formations-cockpit',
 } as const
 
 export type FeatureFlagName = keyof typeof FEATURE_FLAGS
@@ -22,10 +20,6 @@ const DEFAULT_ENABLED: Record<FeatureFlagName, boolean> = {
   filesResizablePreview: true,
   terminalRefitButton: true,
   serverStatusTab: true,
-  formations: false,
-  // The rebuilt reference-faithful cockpit is the default Formations view whenever
-  // Formations is enabled; set chrote-formations-cockpit=0 to fall back to the legacy view.
-  formationsCockpit: true,
 }
 
 function storageAvailable(): boolean {

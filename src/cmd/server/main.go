@@ -4,6 +4,8 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"flag"
 	"fmt"
 	"log"
@@ -11,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"syscall"
@@ -26,23 +29,28 @@ import (
 // Version is set at build time or defaults to dev
 var Version = "0.2.0"
 
+const (
+	defaultBindHost   = "127.0.0.1"
+	defaultServerPort = 8094
+	defaultTtydPort   = 7683
+)
+
 // Config holds server configuration
 type Config struct {
-	Host              string
-	Port              int
-	TtydPort          int
-	APIAuthToken      string
-	CORSOrigins       []string
-	StartTtyd         bool
-	FormationsEnabled bool
+	Host         string
+	Port         int
+	TtydPort     int
+	APIAuthToken string
+	CORSOrigins  []string
+	StartTtyd    bool
 }
 
 func main() {
 	// Parse flags
 	config := Config{}
-	flag.StringVar(&config.Host, "host", "", "Bind address (default all interfaces)")
-	flag.IntVar(&config.Port, "port", 8080, "Server port")
-	flag.IntVar(&config.TtydPort, "ttyd-port", 7681, "ttyd port")
+	flag.StringVar(&config.Host, "host", defaultBindHost, "Bind address")
+	flag.IntVar(&config.Port, "port", defaultServerPort, "Server port")
+	flag.IntVar(&config.TtydPort, "ttyd-port", defaultTtydPort, "ttyd port")
 	flag.StringVar(&config.APIAuthToken, "auth-token", "", "API authentication token")
 	flag.BoolVar(&config.StartTtyd, "start-ttyd", true, "Start ttyd child process")
 	flag.Parse()
@@ -66,7 +74,6 @@ func main() {
 			config.CORSOrigins[i] = strings.TrimSpace(config.CORSOrigins[i])
 		}
 	}
-	config.FormationsEnabled = formationsEnabled(os.Getenv("CHROTE_FORMATIONS"))
 
 	// Create main mux
 	mux := http.NewServeMux()
@@ -81,6 +88,7 @@ func main() {
 	// Wrap with middleware
 	handler := corsMiddleware(config.CORSOrigins)(mux)
 	handler = authMiddleware(config.APIAuthToken)(handler)
+	handler = recoveryMiddleware(handler)
 	handler = loggingMiddleware(handler)
 
 	// Create server
@@ -158,13 +166,11 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config) *proxy.TerminalPro
 	oracleHandler := api.NewOracleHandler(tmuxHandler, beadsHandler)
 	oracleHandler.RegisterRoutes(mux)
 
-	if config.FormationsEnabled {
-		agentsHandler := api.NewAgentsHandler(formations.DefaultAgentsDir(), oracleHandler)
-		agentsHandler.RegisterRoutes(mux)
+	agentsHandler := api.NewAgentsHandler(formations.DefaultAgentsDir(), oracleHandler)
+	agentsHandler.RegisterRoutes(mux)
 
-		formationsHandler := api.NewFormationsHandler(core.GetWorkDir())
-		formationsHandler.RegisterRoutes(mux)
-	}
+	formationsHandler := api.NewFormationsHandler(core.GetWorkDir())
+	formationsHandler.RegisterRoutes(mux)
 
 	// Create terminal proxy
 	terminalProxy := proxy.NewTerminalProxy(config.TtydPort)
@@ -182,15 +188,6 @@ func mustParsePort(name, raw string) int {
 		log.Fatalf("invalid %s=%d: must be 1-65535", name, n)
 	}
 	return n
-}
-
-func formationsEnabled(raw string) bool {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
 }
 
 func registerAPIFallback(mux *http.ServeMux) {
@@ -273,7 +270,7 @@ func authMiddleware(token string) func(http.Handler) http.Handler {
 			}
 
 			providedToken := strings.TrimPrefix(authHeader, "Bearer ")
-			if providedToken != token {
+			if !tokenMatches(providedToken, token) {
 				http.Error(w, `{"success":false,"error":{"code":"FORBIDDEN","message":"Invalid token"}}`, http.StatusForbidden)
 				return
 			}
@@ -281,6 +278,32 @@ func authMiddleware(token string) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func tokenMatches(providedToken, expectedToken string) bool {
+	providedHash := sha256.Sum256([]byte(providedToken))
+	expectedHash := sha256.Sum256([]byte(expectedToken))
+	hashMatch := subtle.ConstantTimeCompare(providedHash[:], expectedHash[:]) == 1
+	return len(providedToken) == len(expectedToken) && hashMatch
+}
+
+func recoveryMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				log.Printf("handler panic recovered: %T\n%s", recovered, debug.Stack())
+				if wrapped, ok := w.(*responseWriter); ok && wrapped.wroteHeader {
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				if _, err := w.Write([]byte(`{"success":false,"error":{"code":"INTERNAL_ERROR","message":"Internal server error"}}`)); err != nil {
+					log.Printf("failed to write panic response: %v", err)
+				}
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
 
 // loggingMiddleware logs requests
@@ -302,18 +325,36 @@ func loggingMiddleware(next http.Handler) http.Handler {
 
 type responseWriter struct {
 	http.ResponseWriter
-	status int
+	status      int
+	wroteHeader bool
+}
+
+func (rw *responseWriter) Write(p []byte) (int, error) {
+	if !rw.wroteHeader {
+		rw.status = http.StatusOK
+		rw.wroteHeader = true
+	}
+	return rw.ResponseWriter.Write(p)
 }
 
 func (rw *responseWriter) WriteHeader(status int) {
+	if rw.wroteHeader {
+		return
+	}
 	rw.status = status
+	rw.wroteHeader = true
 	rw.ResponseWriter.WriteHeader(status)
 }
 
 // Hijack implements http.Hijacker interface to support WebSocket upgrades
 func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if hijacker, ok := rw.ResponseWriter.(http.Hijacker); ok {
-		return hijacker.Hijack()
+		conn, rwbuf, err := hijacker.Hijack()
+		if err == nil {
+			rw.status = http.StatusSwitchingProtocols
+			rw.wroteHeader = true
+		}
+		return conn, rwbuf, err
 	}
 	return nil, nil, fmt.Errorf("underlying ResponseWriter does not support Hijack")
 }

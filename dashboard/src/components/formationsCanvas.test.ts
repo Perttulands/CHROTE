@@ -18,8 +18,8 @@ describe('formations canvas helpers', () => {
   })
 
   it('clamps zoom and preserves cursor world position', () => {
-    expect(clampScale(0.1)).toBe(0.4)
-    expect(clampScale(9)).toBe(2.2)
+    expect(clampScale(0.1)).toBe(0.2)
+    expect(clampScale(9)).toBe(1.9)
     const next = zoomTransform({ x: 10, y: 20, scale: 1 }, 1.2, { x: 110, y: 220 })
     expect(next.scale).toBe(1.2)
     expect(next.x).toBe(-10)

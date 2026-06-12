@@ -60,7 +60,7 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
     { id: 'files', label: 'Files' },
     { id: 'agents', label: 'Agents' },
     { id: 'beads', label: 'Beads' },
-    ...(isFeatureEnabled('formations') ? [{ id: 'formations' as const, label: 'Formations' }] : []),
+    { id: 'formations', label: 'Formations' },
     { id: 'services', label: 'Services' },
     ...(isFeatureEnabled('serverStatusTab') ? [{ id: 'server' as const, label: 'Server' }] : []),
     { id: 'settings', label: 'Settings' },
