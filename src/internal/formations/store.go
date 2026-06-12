@@ -78,6 +78,12 @@ type BoardMetadataPatch struct {
 	UpdatedBy string
 }
 
+type BoardCreateRequest struct {
+	Slug      string
+	Title     string
+	UpdatedBy string
+}
+
 type LayoutMetadataPatch struct {
 	UpdatedAt time.Time
 }
@@ -143,6 +149,39 @@ func (s *Store) ReadBoard(slug string) (*BoardDocument, error) {
 		return nil, err
 	}
 	return s.readBoardPath(s.BoardPath(slug))
+}
+
+func (s *Store) CreateBoard(req BoardCreateRequest) (*BoardDocument, error) {
+	if err := validateSlug(req.Slug); err != nil {
+		return nil, err
+	}
+	title := strings.TrimSpace(req.Title)
+	if title == "" {
+		return nil, fmt.Errorf("%w: board title is required", ErrInvalidSlug)
+	}
+	path := s.BoardPath(req.Slug)
+	var created *BoardDocument
+	err := withFileLock(path, func() error {
+		if _, err := os.Stat(path); err == nil {
+			return ErrAlreadyExists
+		} else if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		raw := renderBoard(req.Slug, title, strings.TrimSpace(req.UpdatedBy), s.now())
+		if err := writeAtomic(path, raw); err != nil {
+			return err
+		}
+		board, err := parseBoard(raw)
+		if err != nil {
+			return err
+		}
+		created = board
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return created, nil
 }
 
 func (s *Store) BoardChangeSince(slug, previousETag string) (*BoardChangeSignal, error) {
@@ -456,4 +495,18 @@ func renderString(v string) string {
 
 func renderInt(v int) string {
 	return strconv.Itoa(v)
+}
+
+func renderBoard(slug, title, updatedBy string, updatedAt time.Time) []byte {
+	var b strings.Builder
+	b.WriteString("schema = " + renderInt(CurrentSchema) + "\n")
+	b.WriteString("id = " + renderString(newPrefixedID("brd")) + "\n")
+	b.WriteString("slug = " + renderString(slug) + "\n")
+	b.WriteString("title = " + renderString(title) + "\n")
+	b.WriteString("rev = 1\n")
+	if updatedBy != "" {
+		b.WriteString("updatedBy = " + renderString(updatedBy) + "\n")
+	}
+	b.WriteString("updatedAt = " + renderString(updatedAt.UTC().Format(time.RFC3339)) + "\n")
+	return []byte(b.String())
 }

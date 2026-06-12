@@ -140,6 +140,66 @@ func TestArchonAgentNewFromHermesProfilePopulatesLaunchReference(t *testing.T) {
 	}
 }
 
+func TestArchonAgentNewOpenAICodexDefaultsLaunchAndSpawnUsesIt(t *testing.T) {
+	agentsDir := t.TempDir()
+	t.Setenv("CHROTE_AGENTS_DIR", agentsDir)
+	runner := &fakeTmux{live: map[string]bool{}}
+	wantLaunch := "codex --yolo -c check_for_update_on_startup=false"
+
+	stdout, stderr, code := runArchon(t, runner, "agent", "new", "codexer", "--kind", "specialist", "--harness", "openai-codex", "--json")
+	if code != 0 {
+		t.Fatalf("create openai-codex failed: code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var card formations.PersonaCard
+	if err := json.Unmarshal([]byte(stdout), &card); err != nil {
+		t.Fatalf("decode created card JSON: %v\n%s", err, stdout)
+	}
+	variant := card.DefaultVariant()
+	if variant.ID != "openai-codex" || variant.Launch != wantLaunch {
+		t.Fatalf("openai-codex variant = %#v, want launch %q", variant, wantLaunch)
+	}
+	raw := readArchonFile(t, filepath.Join(agentsDir, "codexer.toml"))
+	if !strings.Contains(raw, `launch = "`+wantLaunch+`"`) {
+		t.Fatalf("created TOML missing codex launch %q:\n%s", wantLaunch, raw)
+	}
+
+	stdout, stderr, code = runArchon(t, runner, "agent", "spawn", "codexer")
+	if code != 0 {
+		t.Fatalf("spawn openai-codex failed: code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	if len(runner.spawned) != 1 || runner.spawned[0] != "codexer:"+wantLaunch {
+		t.Fatalf("spawned=%#v, want codexer:%s", runner.spawned, wantLaunch)
+	}
+}
+
+func TestArchonAgentNewClaudeCodeDefaultsLaunchAndSpawnUsesIt(t *testing.T) {
+	agentsDir := t.TempDir()
+	t.Setenv("CHROTE_AGENTS_DIR", agentsDir)
+	runner := &fakeTmux{live: map[string]bool{}}
+	wantLaunch := "HOME=/home/perttu claude --dangerously-skip-permissions --effort=\"max\""
+
+	stdout, stderr, code := runArchon(t, runner, "agent", "new", "clauder", "--kind", "specialist", "--harness", "claude-code", "--json")
+	if code != 0 {
+		t.Fatalf("create claude-code failed: code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var card formations.PersonaCard
+	if err := json.Unmarshal([]byte(stdout), &card); err != nil {
+		t.Fatalf("decode created card JSON: %v\n%s", err, stdout)
+	}
+	variant := card.DefaultVariant()
+	if variant.ID != "claude-code" || variant.Launch != wantLaunch {
+		t.Fatalf("claude-code variant = %#v, want launch %q", variant, wantLaunch)
+	}
+
+	stdout, stderr, code = runArchon(t, runner, "agent", "spawn", "clauder")
+	if code != 0 {
+		t.Fatalf("spawn claude-code failed: code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	if len(runner.spawned) != 1 || runner.spawned[0] != "clauder:"+wantLaunch {
+		t.Fatalf("spawned=%#v, want clauder:%s", runner.spawned, wantLaunch)
+	}
+}
+
 func TestArchonAgentSpawnUsesFakeTmuxWithoutDuplicateSession(t *testing.T) {
 	agentsDir := t.TempDir()
 	t.Setenv("CHROTE_AGENTS_DIR", agentsDir)
@@ -161,6 +221,48 @@ func TestArchonAgentSpawnUsesFakeTmuxWithoutDuplicateSession(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "already live") || len(runner.spawned) != 1 {
 		t.Fatalf("second spawn output=%s spawned=%#v", stdout, runner.spawned)
+	}
+}
+
+func TestArchonAgentSpawnListAttachUseTmuxSessionPrefix(t *testing.T) {
+	agentsDir := t.TempDir()
+	t.Setenv("CHROTE_AGENTS_DIR", agentsDir)
+	t.Setenv("CHROTE_FORMATIONS_TMUX_SESSION_PREFIX", "dogfood-")
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	if _, stderr, code := runArchon(t, runner, "agent", "new", "scout", "--kind", "specialist", "--harness", "claude-code"); code != 0 {
+		t.Fatalf("create failed: %d %s", code, stderr)
+	}
+	stdout, stderr, code := runArchon(t, runner, "agent", "spawn", "scout")
+	if code != 0 {
+		t.Fatalf("spawn failed: %d stderr=%s", code, stderr)
+	}
+	if !strings.Contains(stdout, "spawned scout as dogfood-scout") || len(runner.spawned) != 1 || !strings.HasPrefix(runner.spawned[0], "dogfood-scout:") {
+		t.Fatalf("spawn output=%s spawned=%#v, want prefixed tmux target", stdout, runner.spawned)
+	}
+
+	stdout, stderr, code = runArchon(t, runner, "agent", "list", "--json")
+	if code != 0 {
+		t.Fatalf("list failed: %d stderr=%s", code, stderr)
+	}
+	if !strings.Contains(stdout, `"id": "scout"`) || !strings.Contains(stdout, `"liveness": "live"`) || !strings.Contains(stdout, `"sessionId": "dogfood-scout"`) || strings.Contains(stdout, `"id": "dogfood-scout"`) {
+		t.Fatalf("list output=%s, want scout live on prefixed tmux target without unbound prefixed alias", stdout)
+	}
+
+	stdout, stderr, code = runArchon(t, runner, "agent", "attach", "scout")
+	if code != 0 {
+		t.Fatalf("attach failed: %d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	if len(runner.attach) != 1 || runner.attach[0] != "dogfood-scout" {
+		t.Fatalf("attach calls = %#v, want prefixed tmux target", runner.attach)
+	}
+
+	stdout, stderr, code = runArchon(t, runner, "agent", "spawn", "scout")
+	if code != 0 {
+		t.Fatalf("second spawn failed: %d stderr=%s", code, stderr)
+	}
+	if !strings.Contains(stdout, "already live as dogfood-scout") || len(runner.spawned) != 1 {
+		t.Fatalf("second spawn output=%s spawned=%#v, want prefixed liveness to prevent duplicate", stdout, runner.spawned)
 	}
 }
 
@@ -334,6 +436,83 @@ to = "gate_review:in"
 		if strings.Contains(stdout, browserOnly) {
 			t.Fatalf("board inspect leaked browser-only/raw field %q: %s", browserOnly, stdout)
 		}
+	}
+}
+
+func TestArchonBoardNewCreatesDurableBoardJSONAndText(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "board", "new", "poems", "--title", "Poems", "--json")
+	if code != 0 {
+		t.Fatalf("board new --json code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var board formations.BoardDocument
+	if err := json.Unmarshal([]byte(stdout), &board); err != nil {
+		t.Fatalf("decode board new JSON: %v\n%s", err, stdout)
+	}
+	if board.Slug != "poems" || board.Title != "Poems" || board.Rev != 1 || !strings.HasPrefix(board.ID, "brd_") || board.ETag == "" {
+		t.Fatalf("board new JSON = %+v, want durable board identity", board)
+	}
+	if board.TOML != "" || strings.Contains(stdout, "toml") {
+		t.Fatalf("board new JSON leaked raw TOML: %s", stdout)
+	}
+	raw := readArchonFile(t, store.BoardPath("poems"))
+	for _, want := range []string{`schema = 1`, `slug = "poems"`, `title = "Poems"`, `rev = 1`} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("created board file missing %q:\n%s", want, raw)
+		}
+	}
+
+	stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "board", "new", "drafts", "--title", "Drafts")
+	if code != 0 {
+		t.Fatalf("board new text code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	if !strings.Contains(stdout, "created drafts") {
+		t.Fatalf("board new text stdout=%q, want created slug", stdout)
+	}
+	drafts, err := store.ReadBoard("drafts")
+	if err != nil {
+		t.Fatalf("read text-created board: %v", err)
+	}
+	if drafts.Title != "Drafts" || drafts.Rev != 1 || !strings.HasPrefix(drafts.ID, "brd_") {
+		t.Fatalf("text-created board = %+v, want persisted board", drafts)
+	}
+}
+
+func TestArchonBoardNewDuplicateFailsWithoutChangingBoard(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	if _, stderr, code := runArchon(t, runner, "--workspace", workspace, "board", "new", "poems", "--title", "Poems"); code != 0 {
+		t.Fatalf("first board create failed: %d %s", code, stderr)
+	}
+	before := readArchonFile(t, store.BoardPath("poems"))
+
+	_, stderr, code := runArchon(t, runner, "--workspace", workspace, "board", "new", "poems", "--title", "Different")
+	if code == 0 || !strings.Contains(stderr, "already exists") {
+		t.Fatalf("duplicate board create code=%d stderr=%s", code, stderr)
+	}
+	after := readArchonFile(t, store.BoardPath("poems"))
+	if after != before {
+		t.Fatalf("duplicate board create changed board:\n%s", after)
+	}
+}
+
+func TestArchonBoardNewRequiresSlugAndTitle(t *testing.T) {
+	workspace := t.TempDir()
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	_, stderr, code := runArchon(t, runner, "--workspace", workspace, "board", "new", "--title", "Missing slug")
+	if code == 0 || !strings.Contains(stderr, "usage: archon board new") {
+		t.Fatalf("missing slug code=%d stderr=%s", code, stderr)
+	}
+
+	_, stderr, code = runArchon(t, runner, "--workspace", workspace, "board", "new", "poems")
+	if code == 0 || !strings.Contains(stderr, "--title") {
+		t.Fatalf("missing title code=%d stderr=%s", code, stderr)
 	}
 }
 
@@ -763,13 +942,30 @@ updatedAt = "2026-06-03T16:00:00Z"
 `)
 	runner := &fakeTmux{live: map[string]bool{}}
 
-	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "gate", "create", "session-search", "--kinds", "code,human", "--criterion", "research is sound and safe to build", "--json")
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "gate", "create", "session-search", "--kinds", "code,human", "--criterion", "research is sound and safe to build", "--x", "420", "--y", "260", "--json")
 	if code != 0 {
 		t.Fatalf("gate create code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var jsonBoard formations.BoardDocument
+	if err := json.Unmarshal([]byte(stdout), &jsonBoard); err != nil {
+		t.Fatalf("gate create JSON did not decode as board document: %v\n%s", err, stdout)
+	}
+	if jsonBoard.ID != "brd_01J9_sesssearch" || len(jsonBoard.Gates) != 1 {
+		t.Fatalf("gate create JSON = %+v, want board document with one gate", jsonBoard)
 	}
 	raw := readArchonFile(t, store.BoardPath("session-search"))
 	if !strings.Contains(raw, `[[gate]]`) || !strings.Contains(raw, `kinds = ["code", "human"]`) || strings.Contains(raw, "verdict") || strings.Contains(raw, "onFail") {
 		t.Fatalf("gate create persisted wrong fields:\n%s", raw)
+	}
+	if strings.Contains(raw, "x = 420") || strings.Contains(raw, "y = 260") {
+		t.Fatalf("gate create leaked layout coordinates into board TOML:\n%s", raw)
+	}
+	layout, err := store.ReadLayout("session-search")
+	if err != nil {
+		t.Fatalf("read gate layout: %v", err)
+	}
+	if len(layout.Nodes) != 1 || layout.Nodes[0].ID != jsonBoard.Gates[0].ID || layout.Nodes[0].X != 420 || layout.Nodes[0].Y != 260 {
+		t.Fatalf("gate layout nodes = %+v, want CLI-created gate at 420,260", layout.Nodes)
 	}
 }
 
@@ -858,13 +1054,23 @@ label = "Input"
 	if _, stderr, code := runArchon(t, runner, "--workspace", workspace, "mission", "create", "session-search", "--title", "Showcase", "--goal", "Build it", "--bead", "nohyphen"); code == 0 || !strings.Contains(stderr, "Beads issue id") {
 		t.Fatalf("mission create unsafe bead code=%d stderr=%s, want rejection", code, stderr)
 	}
-	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "mission", "create", "session-search", "--title", "Showcase", "--goal", "Build it", "--bead", "bd-204", "--json")
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "mission", "create", "session-search", "--title", "Showcase", "--goal", "Build it", "--bead", "bd-204", "--x", "180", "--y", "95", "--json")
 	if code != 0 {
 		t.Fatalf("mission create code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var jsonBoard formations.BoardDocument
+	if err := json.Unmarshal([]byte(stdout), &jsonBoard); err != nil {
+		t.Fatalf("mission create JSON did not decode as board document: %v\n%s", err, stdout)
+	}
+	if jsonBoard.ID != "brd_01J9_sesssearch" || len(jsonBoard.Missions) != 1 {
+		t.Fatalf("mission create JSON = %+v, want board document with one mission", jsonBoard)
 	}
 	raw := readArchonFile(t, store.BoardPath("session-search"))
 	if !strings.Contains(raw, `[[mission]]`) || !strings.Contains(raw, `beadId = "bd-204"`) || strings.Contains(raw, "chain") {
 		t.Fatalf("mission create persisted wrong fields:\n%s", raw)
+	}
+	if strings.Contains(raw, "x = 180") || strings.Contains(raw, "y = 95") {
+		t.Fatalf("mission create leaked layout coordinates into board TOML:\n%s", raw)
 	}
 	board, err := store.ReadBoard("session-search")
 	if err != nil {
@@ -872,6 +1078,13 @@ label = "Input"
 	}
 	if len(board.Missions) != 1 {
 		t.Fatalf("missions = %+v, want one mission", board.Missions)
+	}
+	layout, err := store.ReadLayout("session-search")
+	if err != nil {
+		t.Fatalf("read mission layout: %v", err)
+	}
+	if len(layout.Nodes) != 1 || layout.Nodes[0].ID != board.Missions[0].ID || layout.Nodes[0].X != 180 || layout.Nodes[0].Y != 95 {
+		t.Fatalf("mission layout nodes = %+v, want CLI-created mission at 180,95", layout.Nodes)
 	}
 	if stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "mission", "wire", "session-search", board.Missions[0].ID, "fmn_frame:port_frame_in", "--json"); code != 0 {
 		t.Fatalf("mission wire code=%d stderr=%s stdout=%s", code, stderr, stdout)
@@ -1660,6 +1873,197 @@ func TestArchonS5RunAskSurfacesOpenEscalations(t *testing.T) {
 	}
 }
 
+func TestArchonRunListJSONListsDurableRunsAndFiltersBoard(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	alphaRun := startArchonLedgerRun(t, store, "alpha", "brd_alpha", "mis_alpha")
+	betaRun := startArchonLedgerRun(t, store, "beta", "brd_beta", "mis_beta")
+	if err := store.AppendRunEvent(alphaRun.RunID, formations.RunEvent{Type: formations.RunEventSucceeded}); err != nil {
+		t.Fatalf("finish alpha run: %v", err)
+	}
+	if err := store.AppendRunEvent(betaRun.RunID, formations.RunEvent{
+		Type: formations.RunEventBlocked,
+		Data: map[string]any{
+			"reason":        "beta needs operator",
+			"resumeAllowed": true,
+		},
+	}); err != nil {
+		t.Fatalf("block beta run: %v", err)
+	}
+
+	stdout, stderr, code := runArchon(t, &fakeTmux{live: map[string]bool{}}, "--workspace", workspace, "run", "list", "--json")
+	if code != 0 {
+		t.Fatalf("run list --json code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	list := decodeArchonRunList(t, stdout)
+	if len(list.Runs) != 2 {
+		t.Fatalf("run list returned %+v, want two durable ledger runs", list.Runs)
+	}
+	byRunID := map[string]formations.RunStatusProjection{}
+	for _, run := range list.Runs {
+		byRunID[run.RunID] = run
+	}
+	if byRunID[alphaRun.RunID].BoardSlug != "alpha" || byRunID[alphaRun.RunID].Status != formations.RunStatusSucceeded || !byRunID[alphaRun.RunID].Final {
+		t.Fatalf("alpha run projection = %+v, want durable succeeded run", byRunID[alphaRun.RunID])
+	}
+	if byRunID[betaRun.RunID].BoardSlug != "beta" || byRunID[betaRun.RunID].Status != formations.RunStatusBlocked || !byRunID[betaRun.RunID].ResumeAllowed {
+		t.Fatalf("beta run projection = %+v, want durable blocked run", byRunID[betaRun.RunID])
+	}
+
+	stdout, stderr, code = runArchon(t, &fakeTmux{live: map[string]bool{}}, "--workspace", workspace, "run", "list", "--board", "brd_alpha", "--json")
+	if code != 0 {
+		t.Fatalf("run list --board --json code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	filtered := decodeArchonRunList(t, stdout)
+	if len(filtered.Runs) != 1 || filtered.Runs[0].RunID != alphaRun.RunID || filtered.Runs[0].BoardSlug != "alpha" {
+		t.Fatalf("board-filtered run list = %+v, want only alpha run", filtered.Runs)
+	}
+}
+
+func TestArchonRunFollowJSONEmitsNDJSONUntilFinal(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	started := startArchonLedgerRun(t, store, "alpha", "brd_alpha", "mis_alpha")
+	if err := store.AppendRunEvent(started.RunID, formations.RunEvent{Type: formations.RunEventNodeStarted, NodeID: "fmn_work"}); err != nil {
+		t.Fatalf("append node_started: %v", err)
+	}
+
+	type runResult struct {
+		stdout string
+		stderr string
+		code   int
+	}
+	done := make(chan runResult, 1)
+	go func() {
+		stdout, stderr, code := runArchon(t, &fakeTmux{live: map[string]bool{}}, "--workspace", workspace, "run", "follow", started.RunID, "--json")
+		done <- runResult{stdout: stdout, stderr: stderr, code: code}
+	}()
+	time.Sleep(20 * time.Millisecond)
+	if err := store.AppendRunEvent(started.RunID, formations.RunEvent{Type: formations.RunEventSucceeded}); err != nil {
+		t.Fatalf("append final event: %v", err)
+	}
+
+	var result runResult
+	select {
+	case result = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("run follow --json did not terminate after final ledger event")
+	}
+	if result.code != 0 {
+		t.Fatalf("run follow --json code=%d stderr=%s stdout=%s", result.code, result.stderr, result.stdout)
+	}
+	if strings.HasPrefix(strings.TrimSpace(result.stdout), "[") {
+		t.Fatalf("run follow --json emitted a JSON array instead of NDJSON: %s", result.stdout)
+	}
+	var asArray []formations.RunEvent
+	if err := json.Unmarshal([]byte(result.stdout), &asArray); err == nil {
+		t.Fatalf("run follow --json output decoded as a JSON array; want one JSON event per line: %+v", asArray)
+	}
+	events := decodeArchonNDJSONEvents(t, result.stdout)
+	if len(events) != 3 || events[0].Type != formations.RunEventStarted || events[1].Type != formations.RunEventNodeStarted || events[2].Type != formations.RunEventSucceeded {
+		t.Fatalf("follow NDJSON events = %+v, want started, node_started, succeeded", events)
+	}
+}
+
+func TestArchonRunAskJSONIncludesDurableLedgerEvidence(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	started := startArchonLedgerRun(t, store, "session-search", "brd_session_search", "mis_showcase")
+	if err := store.AppendRunEvent(started.RunID, formations.RunEvent{Type: formations.RunEventNodeStarted, NodeID: "fmn_work"}); err != nil {
+		t.Fatalf("append node_started: %v", err)
+	}
+	if err := store.AppendRunEvent(started.RunID, formations.RunEvent{
+		Type:   formations.RunEventNodeOutput,
+		NodeID: "fmn_work",
+		Data: map[string]any{
+			"status":    "done",
+			"reportRef": "reports/fmn_work.md",
+			"text":      "durable output from fmn_work",
+		},
+	}); err != nil {
+		t.Fatalf("append node_output: %v", err)
+	}
+	if recorded, err := store.RecordEscalationFromCapture(started.RunID, "fmn_work", "<<<CHROTE-ESCALATE run-id="+started.RunID+" severity=needs-attention reason='operator should review output'>>>"); err != nil || !recorded {
+		t.Fatalf("record escalation recorded=%v err=%v", recorded, err)
+	}
+	if err := store.AppendRunEvent(started.RunID, formations.RunEvent{
+		Type:   formations.RunEventHumanInputRequested,
+		NodeID: "gate_review",
+		GateID: "gate_review",
+		Data: map[string]any{
+			"prompt":  "Approve durable output?",
+			"choices": []string{"pass", "fail"},
+		},
+	}); err != nil {
+		t.Fatalf("append human input request: %v", err)
+	}
+	if err := store.AppendRunEvent(started.RunID, formations.RunEvent{
+		Type:   formations.RunEventBlocked,
+		NodeID: "fmn_work",
+		Data: map[string]any{
+			"reason":        "waiting for operator",
+			"code":          "operator_required",
+			"blockedNodeId": "fmn_work",
+			"resumeAllowed": true,
+		},
+	}); err != nil {
+		t.Fatalf("append blocked event: %v", err)
+	}
+
+	stdout, stderr, code := runArchon(t, &fakeTmux{live: map[string]bool{}}, "--workspace", workspace, "run", "ask", started.RunID, "what happened?", "--json")
+	if code != 0 {
+		t.Fatalf("run ask --json code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var response archonRunAskResponse
+	if err := json.Unmarshal([]byte(stdout), &response); err != nil {
+		t.Fatalf("decode run ask response: %v\n%s", err, stdout)
+	}
+	if response.RunID != started.RunID || response.Question != "what happened?" || response.Status == nil || response.Status.Status != formations.RunStatusBlocked {
+		t.Fatalf("ask identity/status = %+v, want blocked status with question", response)
+	}
+	if len(response.OpenEscalations) != 1 || response.OpenEscalations[0].Reason != "operator should review output" {
+		t.Fatalf("open escalations = %+v, want recorded sentinel escalation", response.OpenEscalations)
+	}
+	if len(response.CompletedNodes) != 1 || response.CompletedNodes[0].NodeID != "fmn_work" || response.CompletedNodes[0].ReportRef != "reports/fmn_work.md" || response.CompletedNodes[0].Text != "durable output from fmn_work" {
+		t.Fatalf("completed nodes = %+v, want durable node_output evidence", response.CompletedNodes)
+	}
+	if len(response.ProducedOutputs) != 1 || response.ProducedOutputs[0].NodeID != "fmn_work" || response.ProducedOutputs[0].Text == "" {
+		t.Fatalf("produced outputs = %+v, want durable produced output", response.ProducedOutputs)
+	}
+	if len(response.WaitingGates) != 1 || response.WaitingGates[0].GateID != "gate_review" || response.WaitingGates[0].Prompt != "Approve durable output?" {
+		t.Fatalf("waiting gates = %+v, want pending human gate evidence", response.WaitingGates)
+	}
+	if len(response.BlockedReasons) != 1 || response.BlockedReasons[0].Reason != "waiting for operator" || response.BlockedReasons[0].Code != "operator_required" || !response.BlockedReasons[0].ResumeAllowed {
+		t.Fatalf("blocked reasons = %+v, want ledger block reason", response.BlockedReasons)
+	}
+	for _, seq := range []int{response.OpenEscalations[0].Seq, response.CompletedNodes[0].OutputSeq, response.WaitingGates[0].RequestedSeq, response.BlockedReasons[0].Seq} {
+		if !intSliceContains(response.EvidenceSeqs, seq) {
+			t.Fatalf("evidence seqs = %v, want seq %d from durable run evidence", response.EvidenceSeqs, seq)
+		}
+	}
+	if !strings.Contains(response.Answer, "completed nodes: fmn_work") || !strings.Contains(response.Answer, "latest output from fmn_work") || !strings.Contains(response.Answer, "latest block: waiting for operator") {
+		t.Fatalf("answer = %q, want summary of durable evidence", response.Answer)
+	}
+}
+
+func TestArchonRunJSONStatusNotFoundErrorIsStructured(t *testing.T) {
+	workspace := t.TempDir()
+	stdout, stderr, code := runArchon(t, &fakeTmux{live: map[string]bool{}}, "--workspace", workspace, "run", "status", "run_missing", "--json")
+	if code == 0 {
+		t.Fatalf("run status missing code=0 stdout=%s", stdout)
+	}
+	if stdout != "" {
+		t.Fatalf("run status missing stdout=%q, want structured error on stderr only", stdout)
+	}
+	var response archonErrorResponse
+	if err := json.Unmarshal([]byte(stderr), &response); err != nil {
+		t.Fatalf("decode JSON error envelope: %v\nstderr=%s", err, stderr)
+	}
+	if response.Code != "not_found" || response.Boundary != "run" || response.Selector != "run_missing" || response.Message == "" {
+		t.Fatalf("structured error = %+v, want run not_found envelope", response)
+	}
+}
+
 func runArchon(t *testing.T, runner *fakeTmux, args ...string) (string, string, int) {
 	t.Helper()
 	var stdout bytes.Buffer
@@ -1685,6 +2089,28 @@ func writeArchonFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
+}
+
+func startArchonLedgerRun(t *testing.T, store *formations.Store, slug, boardID, missionID string) *formations.RunStartResult {
+	t.Helper()
+	writeArchonFile(t, store.BoardPath(slug), archonMinimalRunBoardFixture(slug, boardID, missionID))
+	started, err := store.StartRun(slug, formations.RunStartRequest{
+		MissionID: missionID,
+		Actor:     "agent:test",
+	})
+	if err != nil {
+		t.Fatalf("start run for board %s: %v", slug, err)
+	}
+	return started
+}
+
+func intSliceContains(values []int, target int) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 type archonRunResponse struct {
@@ -1717,6 +2143,44 @@ func decodeArchonEvents(t *testing.T, raw string) []formations.RunEvent {
 		t.Fatalf("decode events response: %v\n%s", err, raw)
 	}
 	return events
+}
+
+func decodeArchonNDJSONEvents(t *testing.T, raw string) []formations.RunEvent {
+	t.Helper()
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		t.Fatal("empty NDJSON event stream")
+	}
+	if strings.HasPrefix(trimmed, "[") {
+		t.Fatalf("NDJSON stream started with JSON array: %s", raw)
+	}
+	lines := strings.Split(trimmed, "\n")
+	events := make([]formations.RunEvent, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var event formations.RunEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("decode NDJSON event line %q: %v\nstream=%s", line, err, raw)
+		}
+		events = append(events, event)
+	}
+	return events
+}
+
+func decodeArchonRunList(t *testing.T, raw string) struct {
+	Runs []formations.RunStatusProjection `json:"runs"`
+} {
+	t.Helper()
+	var list struct {
+		Runs []formations.RunStatusProjection `json:"runs"`
+	}
+	if err := json.Unmarshal([]byte(raw), &list); err != nil {
+		t.Fatalf("decode run list: %v\n%s", err, raw)
+	}
+	return list
 }
 
 func decodeArchonBoardList(t *testing.T, raw string) struct {
@@ -1905,11 +2369,22 @@ func archonEventTypes(events []formations.RunEvent) string {
 type archonTestRunExecutor struct{}
 
 func (archonTestRunExecutor) ExecuteFormation(req formations.FormationExecution) (formations.FormationExecutionResult, error) {
+	text := "archon test output " + req.NodeID
+	reportRef := "refs/" + req.NodeID + ".md"
 	return formations.FormationExecutionResult{
 		Status:    "done",
-		ReportRef: "refs/" + req.NodeID + ".md",
-		Text:      "archon test output " + req.NodeID,
+		ReportRef: reportRef,
+		Text:      text,
+		Outputs:   archonPayloadsForFormationOutputs(req.Formation, text, reportRef),
 	}, nil
+}
+
+func archonPayloadsForFormationOutputs(formation formations.FormationNode, text, reportRef string) map[string]formations.FormationOutputPayload {
+	outputs := make(map[string]formations.FormationOutputPayload, len(formation.Outputs))
+	for _, port := range formation.Outputs {
+		outputs[port.ID] = formations.FormationOutputPayload{Text: text, ReportRef: reportRef}
+	}
+	return outputs
 }
 
 type archonTestGateEvaluator struct {
@@ -1922,6 +2397,21 @@ func (e archonTestGateEvaluator) EvaluateGate(formations.GateEvaluation) (format
 		verdict = "pass"
 	}
 	return formations.GateEvaluationResult{Verdict: verdict, Reason: "archon test " + verdict}, nil
+}
+
+func archonMinimalRunBoardFixture(slug, boardID, missionID string) string {
+	return `schema = 1
+id = "` + boardID + `"
+slug = "` + slug + `"
+title = "` + slug + ` board"
+rev = 1
+
+[[mission]]
+id = "` + missionID + `"
+title = "Mission"
+goal = "Exercise durable run ledger"
+beadId = "home-test.1"
+`
 }
 
 func archonS4BoardFixture() string {

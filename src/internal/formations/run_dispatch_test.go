@@ -60,6 +60,21 @@ func TestS4CompletionSentinelRequiresMatchingRunID(t *testing.T) {
 	}
 }
 
+func TestS4CompletionSentinelReturnsLatestMatchingRunID(t *testing.T) {
+	sentinel, ok := ParseCompletionSentinel(strings.Join([]string{
+		"<<<CHROTE-DONE run-id=run_test status=ok artifact=first.md>>>",
+		"ignored output",
+		"<<<CHROTE-DONE run-id=wrong status=ok artifact=wrong.md>>>",
+		"<<<CHROTE-DONE run-id=run_test status=ok artifact=second.md>>>",
+	}, "\n"), "run_test")
+	if !ok || sentinel.Artifact != "second.md" {
+		t.Fatalf("latest sentinel = %+v ok=%v, want second.md", sentinel, ok)
+	}
+	if count := countCompletionSentinels("<<<CHROTE-DONE run-id=run_test status=ok artifact=one.md>>>\n<<<CHROTE-DONE run-id=run_test status=ok artifact=two.md>>>", "run_test"); count != 2 {
+		t.Fatalf("completion sentinel count = %d, want 2", count)
+	}
+}
+
 func TestS4DeadPaneAndIdleTimeoutRecordLoudError(t *testing.T) {
 	t.Run("dead pane after lease blocks run", func(t *testing.T) {
 		store, started := startS4DispatchRun(t)

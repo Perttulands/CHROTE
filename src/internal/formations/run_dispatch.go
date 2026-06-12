@@ -28,6 +28,7 @@ type SlotDispatchRequest struct {
 	SessionStem string
 	SessionRef  string
 	Prompt      string
+	Phase       string
 	Attempt     int
 }
 
@@ -38,6 +39,7 @@ type SlotDispatchPayload struct {
 	SlotID     string
 	SessionRef string
 	Prompt     string
+	Phase      string
 }
 
 type SlotDispatchLease struct {
@@ -81,6 +83,7 @@ func (d *SlotDispatcher) DispatchSlot(runID string, req SlotDispatchRequest) (Sl
 			"harness":            req.Harness,
 			"sessionStem":        req.SessionStem,
 			"sessionRef":         req.SessionRef,
+			"phase":              req.Phase,
 			"promptSha256":       etag([]byte(req.Prompt)),
 			"promptRef":          "",
 			"nativeAck":          false,
@@ -96,12 +99,14 @@ func (d *SlotDispatcher) DispatchSlot(runID string, req SlotDispatchRequest) (Sl
 		SlotID:     req.SlotID,
 		SessionRef: req.SessionRef,
 		Prompt:     req.Prompt,
+		Phase:      req.Phase,
 	}
 	if d.adapter == nil {
 		return lease, nil
 	}
 	if err := d.adapter.SendSlotDispatch(payload); err != nil {
-		if blockErr := d.appendDispatchErrorAndBlock(runID, dispatchID, req.NodeID, req.SlotID, dispatchErrorCode(err), err.Error(), "tmux"); blockErr != nil {
+		message := redactPromptFromLedgerText(err.Error(), req.Prompt)
+		if blockErr := d.appendDispatchErrorAndBlock(runID, dispatchID, req.NodeID, req.SlotID, dispatchErrorCode(err), message, "tmux"); blockErr != nil {
 			return lease, blockErr
 		}
 		return lease, err
@@ -134,11 +139,11 @@ func (d *SlotDispatcher) CompleteFromCapture(runID, dispatchID, captured string)
 			"dispatchId": dispatchID,
 			"nodeId":     dispatch.NodeID,
 			"slotId":     dispatch.SlotID,
-			"status":     sentinel.Status,
+			"status":     redactLedgerText(sentinel.Status),
 			"sentinel": map[string]any{
 				"runId":    sentinel.RunID,
-				"status":   sentinel.Status,
-				"artifact": sentinel.Artifact,
+				"status":   redactLedgerText(sentinel.Status),
+				"artifact": redactLedgerText(sentinel.Artifact),
 			},
 		},
 	})
@@ -165,27 +170,40 @@ func (d *SlotDispatcher) dispatchEvent(runID, dispatchID string) RunEvent {
 }
 
 func ParseCompletionSentinel(captured, runID string) (CompletionSentinel, bool) {
+	sentinels := completionSentinels(captured, runID)
+	if len(sentinels) == 0 {
+		return CompletionSentinel{}, false
+	}
+	return sentinels[len(sentinels)-1], true
+}
+
+func countCompletionSentinels(captured, runID string) int {
+	return len(completionSentinels(captured, runID))
+}
+
+func completionSentinels(captured, runID string) []CompletionSentinel {
 	remaining := captured
+	var sentinels []CompletionSentinel
 	for {
 		start := strings.Index(remaining, "<<<CHROTE-DONE ")
 		if start == -1 {
-			return CompletionSentinel{}, false
+			return sentinels
 		}
 		remaining = remaining[start+len("<<<CHROTE-DONE "):]
 		end := strings.Index(remaining, ">>>")
 		if end == -1 {
-			return CompletionSentinel{}, false
+			return sentinels
 		}
 		fields := parseSentinelFields(remaining[:end])
 		remaining = remaining[end+len(">>>"):]
 		if fields["run-id"] != runID {
 			continue
 		}
-		return CompletionSentinel{
+		sentinels = append(sentinels, CompletionSentinel{
 			RunID:    fields["run-id"],
 			Status:   fields["status"],
 			Artifact: fields["artifact"],
-		}, true
+		})
 	}
 }
 
@@ -202,6 +220,7 @@ func parseSentinelFields(raw string) map[string]string {
 }
 
 func (d *SlotDispatcher) appendDispatchErrorAndBlock(runID, dispatchID, nodeID, slotID, code, message, boundary string) error {
+	message = redactLedgerText(message)
 	if err := d.store.AppendRunEvent(runID, RunEvent{
 		Type:   RunEventError,
 		NodeID: nodeID,

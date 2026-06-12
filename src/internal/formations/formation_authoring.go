@@ -136,6 +136,8 @@ type GateCreateRequest struct {
 	Title     string
 	Kinds     []string
 	Criterion string
+	X         int
+	Y         int
 	UpdatedBy string
 }
 
@@ -149,6 +151,8 @@ type MissionCreateRequest struct {
 	Title     string
 	Goal      string
 	BeadID    string
+	X         int
+	Y         int
 	UpdatedBy string
 }
 
@@ -690,14 +694,22 @@ func (s *Store) CreateGate(slug string, req GateCreateRequest, opts WriteOptions
 	if title == "" {
 		title = "Review gate"
 	}
-	return s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, _ *BoardDocument) ([]byte, error) {
-		return appendGateBlock(raw, GateNode{
-			ID:        newPrefixedID("gate"),
-			Title:     title,
-			Kinds:     kinds,
-			Criterion: req.Criterion,
-		}), nil
+	gate := GateNode{
+		ID:        newPrefixedID("gate"),
+		Title:     title,
+		Kinds:     kinds,
+		Criterion: req.Criterion,
+	}
+	board, err := s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, _ *BoardDocument) ([]byte, error) {
+		return appendGateBlock(raw, gate), nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.upsertLayoutNode(slug, board.ID, board.Rev, LayoutNode{ID: gate.ID, X: req.X, Y: req.Y}); err != nil {
+		return nil, err
+	}
+	return board, nil
 }
 
 func (s *Store) SetGateJudgeChain(slug string, req GateJudgeRequest, opts WriteOptions) (*BoardDocument, error) {
@@ -748,14 +760,22 @@ func (s *Store) CreateMission(slug string, req MissionCreateRequest, opts WriteO
 	if title == "" {
 		title = "Mission"
 	}
-	return s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, _ *BoardDocument) ([]byte, error) {
-		return appendMissionBlock(raw, MissionNode{
-			ID:     newPrefixedID("mis"),
-			Title:  title,
-			Goal:   req.Goal,
-			BeadID: req.BeadID,
-		}), nil
+	mission := MissionNode{
+		ID:     newPrefixedID("mis"),
+		Title:  title,
+		Goal:   req.Goal,
+		BeadID: req.BeadID,
+	}
+	board, err := s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, _ *BoardDocument) ([]byte, error) {
+		return appendMissionBlock(raw, mission), nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.upsertLayoutNode(slug, board.ID, board.Rev, LayoutNode{ID: mission.ID, X: req.X, Y: req.Y}); err != nil {
+		return nil, err
+	}
+	return board, nil
 }
 
 func (s *Store) AddFormationPort(slug string, req FormationPortRequest, opts WriteOptions) (*BoardDocument, error) {

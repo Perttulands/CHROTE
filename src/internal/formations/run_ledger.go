@@ -23,7 +23,10 @@ const (
 	RunEventResumed              = "run_resumed"
 	RunEventNodeWaiting          = "node_waiting"
 	RunEventNodeStarted          = "node_started"
+	RunEventOrchestrationTeam    = "orchestration_team"
+	RunEventPeerPlane            = "peer_plane"
 	RunEventSlotDispatch         = "slot_dispatch"
+	RunEventAdapterSend          = "adapter_send"
 	RunEventSlotResult           = "slot_result"
 	RunEventNodeOutput           = "node_output"
 	RunEventGateEvaluating       = "gate_evaluating"
@@ -108,15 +111,20 @@ type RunStatusProjection struct {
 	ResumeAllowed bool   `json:"resumeAllowed"`
 }
 
+type RunListFilter struct {
+	BoardSlug string
+}
+
 type RunNodeReport struct {
-	RunID      string         `json:"runId"`
-	NodeID     string         `json:"nodeId"`
-	Status     string         `json:"status"`
-	ReportRef  string         `json:"reportRef,omitempty"`
-	Text       string         `json:"text,omitempty"`
-	OutputSeq  int            `json:"outputSeq,omitempty"`
-	EventCount int            `json:"eventCount"`
-	Brief      FormationBrief `json:"brief,omitempty"`
+	RunID      string                            `json:"runId"`
+	NodeID     string                            `json:"nodeId"`
+	Status     string                            `json:"status"`
+	ReportRef  string                            `json:"reportRef,omitempty"`
+	Text       string                            `json:"text,omitempty"`
+	Outputs    map[string]FormationOutputPayload `json:"outputs,omitempty"`
+	OutputSeq  int                               `json:"outputSeq,omitempty"`
+	EventCount int                               `json:"eventCount"`
+	Brief      FormationBrief                    `json:"brief,omitempty"`
 }
 
 type runBinding struct {
@@ -423,6 +431,52 @@ func (s *Store) ReadRunEvents(runID string) ([]RunEvent, error) {
 	return readRunEventsFile(ledgerPath)
 }
 
+func (s *Store) ListRuns(filter RunListFilter) ([]RunStatusProjection, error) {
+	root := filepath.Join(s.Workspace, ".formations", "runs")
+	seen := map[string]string{}
+	runIDs := []string{}
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".ndjson") {
+			return nil
+		}
+		runID := strings.TrimSuffix(entry.Name(), ".ndjson")
+		if !strings.HasPrefix(runID, "run_") {
+			return nil
+		}
+		if previous, ok := seen[runID]; ok {
+			return fmt.Errorf("%w: run id %q appears in multiple ledgers: %s and %s", ErrRunLedgerInvalid, runID, previous, path)
+		}
+		seen[runID] = path
+		runIDs = append(runIDs, runID)
+		return nil
+	})
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []RunStatusProjection{}, nil
+		}
+		return nil, err
+	}
+	sort.Strings(runIDs)
+	runs := make([]RunStatusProjection, 0, len(runIDs))
+	for _, runID := range runIDs {
+		status, err := s.ProjectRun(runID)
+		if err != nil {
+			return nil, err
+		}
+		if filter.BoardSlug != "" && status.BoardSlug != filter.BoardSlug {
+			continue
+		}
+		runs = append(runs, *status)
+	}
+	return runs, nil
+}
+
 func (s *Store) ProjectRunNodeReport(runID, nodeID string) (*RunNodeReport, error) {
 	events, err := s.ReadRunEvents(runID)
 	if err != nil {
@@ -446,6 +500,7 @@ func (s *Store) ProjectRunNodeReport(runID, nodeID string) (*RunNodeReport, erro
 			report.Status = stringFromEventData(event, "status")
 			report.ReportRef = stringFromEventData(event, "reportRef")
 			report.Text = stringFromEventData(event, "text")
+			report.Outputs = outputPayloadsFromAny(event.Data["outputs"])
 			if report.Status == "" {
 				report.Status = "done"
 			}

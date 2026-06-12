@@ -120,11 +120,22 @@ func TestFormationsRunProjectionParity(t *testing.T) {
 type apiTestRunExecutor struct{}
 
 func (apiTestRunExecutor) ExecuteFormation(req formations.FormationExecution) (formations.FormationExecutionResult, error) {
+	text := "api test output " + req.NodeID
+	reportRef := "refs/" + req.NodeID + ".md"
 	return formations.FormationExecutionResult{
 		Status:    "done",
-		ReportRef: "refs/" + req.NodeID + ".md",
-		Text:      "api test output " + req.NodeID,
+		ReportRef: reportRef,
+		Text:      text,
+		Outputs:   apiPayloadsForFormationOutputs(req.Formation, text, reportRef),
 	}, nil
+}
+
+func apiPayloadsForFormationOutputs(formation formations.FormationNode, text, reportRef string) map[string]formations.FormationOutputPayload {
+	outputs := make(map[string]formations.FormationOutputPayload, len(formation.Outputs))
+	for _, port := range formation.Outputs {
+		outputs[port.ID] = formations.FormationOutputPayload{Text: text, ReportRef: reportRef}
+	}
+	return outputs
 }
 
 type apiTestGateEvaluator struct {

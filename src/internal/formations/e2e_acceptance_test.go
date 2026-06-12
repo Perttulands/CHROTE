@@ -200,7 +200,7 @@ func (e *careerDispatchExecutor) ExecuteFormation(req FormationExecution) (Forma
 	if err := e.dispatcher.CompleteFromCapture(req.RunID, lease.DispatchID, fmt.Sprintf("<<<CHROTE-DONE run-id=%s status=ok artifact=%s>>>", req.RunID, artifact)); err != nil {
 		return FormationExecutionResult{}, err
 	}
-	return FormationExecutionResult{Status: "done", ReportRef: artifact, Text: text}, nil
+	return FormationExecutionResult{Status: "done", ReportRef: artifact, Text: text, Outputs: payloadsForFormationOutputs(req.Formation, text, artifact)}, nil
 }
 
 func (e *careerDispatchExecutor) nodeIDs() []string {

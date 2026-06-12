@@ -62,6 +62,14 @@ type FormationExecutionResult struct {
 	Status    string
 	ReportRef string
 	Text      string
+	Outputs   map[string]FormationOutputPayload
+}
+
+type FormationOutputPayload struct {
+	Ref         string `json:"ref,omitempty"`
+	Text        string `json:"text,omitempty"`
+	ReportRef   string `json:"reportRef,omitempty"`
+	ArtifactRef string `json:"artifactRef,omitempty"`
 }
 
 type GateEvaluation struct {
@@ -104,12 +112,15 @@ type VerificationEvaluationResult struct {
 }
 
 type RunInputRef struct {
-	EdgeID     string `json:"edgeId,omitempty"`
-	FromNodeID string `json:"fromNodeId,omitempty"`
-	ToPortID   string `json:"toPortId,omitempty"`
-	OutputSeq  int    `json:"outputSeq,omitempty"`
-	Ref        string `json:"ref,omitempty"`
-	Text       string `json:"text,omitempty"`
+	EdgeID      string `json:"edgeId,omitempty"`
+	FromNodeID  string `json:"fromNodeId,omitempty"`
+	FromPortID  string `json:"fromPortId,omitempty"`
+	ToPortID    string `json:"toPortId,omitempty"`
+	OutputSeq   int    `json:"outputSeq,omitempty"`
+	Ref         string `json:"ref,omitempty"`
+	Text        string `json:"text,omitempty"`
+	ReportRef   string `json:"reportRef,omitempty"`
+	ArtifactRef string `json:"artifactRef,omitempty"`
 }
 
 func NewRunEngine(store *Store, personas *PersonaStore, executor FormationExecutor) *RunEngine {
@@ -226,14 +237,16 @@ func (e *RunEngine) RunFormation(slug, formationID string, req FormationRunReque
 	if result.Status == "" {
 		result.Status = "done"
 	}
+	if err := e.ensureFormationOutputPayloads(started.RunID, formation, result); err != nil {
+		if errors.Is(err, errRunStopped) {
+			return e.store.ProjectRun(started.RunID)
+		}
+		return nil, err
+	}
 	if err := e.store.AppendRunEvent(started.RunID, RunEvent{
 		Type:   RunEventNodeOutput,
 		NodeID: formation.ID,
-		Data: map[string]any{
-			"status":    result.Status,
-			"reportRef": result.ReportRef,
-			"text":      result.Text,
-		},
+		Data:   formationOutputEventData(result),
 	}); err != nil {
 		return nil, err
 	}
@@ -508,7 +521,12 @@ func (e *RunEngine) resumeSnapshot(runID string, board *BoardDocument, mission M
 			continue
 		}
 		completed[event.NodeID] = true
-		e.replayOutputToReady(runID, board, event.NodeID, stringFromEventData(event, "text"), ready, queued, &queue)
+		if err := e.replayNodeOutputToReady(runID, board, event, ready, queued, &queue); err != nil {
+			if errors.Is(err, errRunStopped) {
+				return nil
+			}
+			return err
+		}
 	}
 	if err := e.replayGateVerdictsToReady(runID, board, gateByID, events, limits, ready, queued, &queue); err != nil {
 		if errors.Is(err, errRunStopped) {
@@ -575,6 +593,12 @@ func (e *RunEngine) resumeSnapshot(runID string, board *BoardDocument, mission M
 		if result.Status == "" {
 			result.Status = "done"
 		}
+		if err := e.ensureFormationOutputPayloads(runID, formation, result); err != nil {
+			if errors.Is(err, errRunStopped) {
+				return nil
+			}
+			return err
+		}
 		verificationAction, err := e.handleVerification(runID, formation, result, nextAttempt, limits, queued, &queue)
 		if err != nil {
 			return err
@@ -588,16 +612,12 @@ func (e *RunEngine) resumeSnapshot(runID string, board *BoardDocument, mission M
 		if err := e.store.AppendRunEvent(runID, RunEvent{
 			Type:   RunEventNodeOutput,
 			NodeID: nodeID,
-			Data: map[string]any{
-				"status":    result.Status,
-				"reportRef": result.ReportRef,
-				"text":      result.Text,
-			},
+			Data:   formationOutputEventData(result),
 		}); err != nil {
 			return err
 		}
 		completed[nodeID] = true
-		if err := e.deliverOutput(runID, board, gateByID, nodeID, result.Text, limits, ready, queued, &queue); err != nil {
+		if err := e.deliverFormationOutput(runID, board, gateByID, nodeID, result, limits, ready, queued, &queue); err != nil {
 			if errors.Is(err, errRunStopped) {
 				return nil
 			}
@@ -623,8 +643,16 @@ func (e *RunEngine) resumeSnapshot(runID string, board *BoardDocument, mission M
 	})
 }
 
-func (e *RunEngine) replayOutputToReady(runID string, board *BoardDocument, fromNodeID, text string, ready map[string]map[string]RunInputRef, queued map[string]bool, queue *[]string) {
-	for _, connection := range outgoingConnections(board.Connections, fromNodeID) {
+func (e *RunEngine) replayNodeOutputToReady(runID string, board *BoardDocument, event RunEvent, ready map[string]map[string]RunInputRef, queued map[string]bool, queue *[]string) error {
+	for _, connection := range outgoingConnections(board.Connections, event.NodeID) {
+		_, fromPort := endpointParts(connection.From)
+		payload, ok := outputPayloadForPortFromEvent(event, fromPort)
+		if !ok {
+			if err := e.appendErrorAndBlock(runID, "missing_output_payload", fmt.Sprintf("node %s did not produce output for port %s", event.NodeID, fromPort), "engine", event.NodeID, "missing output payload"); err != nil {
+				return err
+			}
+			return errRunStopped
+		}
 		toNode, toPort := endpointParts(connection.To)
 		if toNode == "" || toPort == "" {
 			continue
@@ -636,18 +664,14 @@ func (e *RunEngine) replayOutputToReady(runID string, board *BoardDocument, from
 		if ready[toNode] == nil {
 			ready[toNode] = map[string]RunInputRef{}
 		}
-		ready[toNode][toPort] = RunInputRef{
-			EdgeID:     connection.ID,
-			FromNodeID: fromNodeID,
-			ToPortID:   toPort,
-			Ref:        fmt.Sprintf("ledger://%s/%s", runID, connection.ID),
-			Text:       text,
-		}
+		input := runInputRefForConnection(runID, connection, payload)
+		ready[toNode][toPort] = input
 		if formationReady(formation, ready[toNode]) && !queued[toNode] {
 			queued[toNode] = true
 			*queue = append(*queue, toNode)
 		}
 	}
+	return nil
 }
 
 func (e *RunEngine) replayGateVerdictsToReady(runID string, board *BoardDocument, gates map[string]GateNode, events []RunEvent, limits RunLimits, ready map[string]map[string]RunInputRef, queued map[string]bool, queue *[]string) error {
@@ -665,12 +689,11 @@ func (e *RunEngine) replayGateVerdictsToReady(runID string, board *BoardDocument
 		}
 		input := runInputRefFromAny(event.Data["inputRef"])
 		for _, route := range gateVerdictRoutes(board, event, gateID, routePort) {
-			nextInput := RunInputRef{
-				EdgeID:     route.ID,
-				FromNodeID: gateID,
-				Ref:        fmt.Sprintf("ledger://%s/%s", runID, route.ID),
-				Text:       input.Text,
-			}
+			nextInput := input
+			nextInput.EdgeID = route.ID
+			nextInput.FromNodeID = gateID
+			nextInput.FromPortID = routePort
+			nextInput.Ref = fmt.Sprintf("ledger://%s/%s", runID, route.ID)
 			if err := e.deliverConnection(runID, board, gates, route, nextInput, limits, ready, queued, queue); err != nil {
 				return err
 			}
@@ -730,18 +753,22 @@ func (e *RunEngine) executeSnapshot(runID string, board *BoardDocument, mission 
 	}); err != nil {
 		return err
 	}
+	missionOutputs := map[string]FormationOutputPayload{
+		"out": {Text: mission.Goal},
+	}
 	if err := e.store.AppendRunEvent(runID, RunEvent{
 		Type:      RunEventNodeOutput,
 		NodeID:    mission.ID,
 		MissionID: mission.ID,
-		Data: map[string]any{
-			"status": "done",
-			"text":   mission.Goal,
-		},
+		Data: formationOutputEventData(FormationExecutionResult{
+			Status:  "done",
+			Text:    mission.Goal,
+			Outputs: missionOutputs,
+		}),
 	}); err != nil {
 		return err
 	}
-	if err := e.deliverOutput(runID, board, gateByID, mission.ID, mission.Goal, limits, ready, queued, &queue); err != nil {
+	if err := e.deliverOutputPayloads(runID, board, gateByID, mission.ID, missionOutputs, limits, ready, queued, &queue); err != nil {
 		if errors.Is(err, errRunStopped) {
 			return nil
 		}
@@ -809,6 +836,12 @@ func (e *RunEngine) executeSnapshot(runID string, board *BoardDocument, mission 
 		if result.Status == "" {
 			result.Status = "done"
 		}
+		if err := e.ensureFormationOutputPayloads(runID, formation, result); err != nil {
+			if errors.Is(err, errRunStopped) {
+				return nil
+			}
+			return err
+		}
 		verificationAction, err := e.handleVerification(runID, formation, result, nextAttempt, limits, queued, &queue)
 		if err != nil {
 			return err
@@ -822,15 +855,11 @@ func (e *RunEngine) executeSnapshot(runID string, board *BoardDocument, mission 
 		if err := e.store.AppendRunEvent(runID, RunEvent{
 			Type:   RunEventNodeOutput,
 			NodeID: nodeID,
-			Data: map[string]any{
-				"status":    result.Status,
-				"reportRef": result.ReportRef,
-				"text":      result.Text,
-			},
+			Data:   formationOutputEventData(result),
 		}); err != nil {
 			return err
 		}
-		if err := e.deliverOutput(runID, board, gateByID, nodeID, result.Text, limits, ready, queued, &queue); err != nil {
+		if err := e.deliverFormationOutput(runID, board, gateByID, nodeID, result, limits, ready, queued, &queue); err != nil {
 			if errors.Is(err, errRunStopped) {
 				return nil
 			}
@@ -961,19 +990,121 @@ func normalizeVerificationVerdict(verdict string) string {
 	return "pass"
 }
 
-func (e *RunEngine) deliverOutput(runID string, board *BoardDocument, gates map[string]GateNode, fromNodeID, text string, limits RunLimits, ready map[string]map[string]RunInputRef, queued map[string]bool, queue *[]string) error {
-	for _, connection := range outgoingConnections(board.Connections, fromNodeID) {
-		input := RunInputRef{
-			EdgeID:     connection.ID,
-			FromNodeID: fromNodeID,
-			Ref:        fmt.Sprintf("ledger://%s/%s", runID, connection.ID),
-			Text:       text,
+func (e *RunEngine) ensureFormationOutputPayloads(runID string, formation FormationNode, result FormationExecutionResult) error {
+	expected := make(map[string]bool, len(formation.Outputs))
+	for _, output := range formation.Outputs {
+		expected[output.ID] = true
+		if _, ok := result.Outputs[output.ID]; !ok {
+			if err := e.appendErrorAndBlock(runID, "missing_output_payload", fmt.Sprintf("formation %s did not produce output for port %s", formation.ID, output.ID), "engine", formation.ID, "missing output payload"); err != nil {
+				return err
+			}
+			return errRunStopped
 		}
+	}
+	for portID := range result.Outputs {
+		if !expected[portID] {
+			if err := e.appendErrorAndBlock(runID, "invalid_output_payload", fmt.Sprintf("formation %s produced unknown output port %s", formation.ID, portID), "engine", formation.ID, "invalid output payload"); err != nil {
+				return err
+			}
+			return errRunStopped
+		}
+	}
+	return nil
+}
+
+func (e *RunEngine) deliverOutputPayloads(runID string, board *BoardDocument, gates map[string]GateNode, fromNodeID string, outputs map[string]FormationOutputPayload, limits RunLimits, ready map[string]map[string]RunInputRef, queued map[string]bool, queue *[]string) error {
+	for _, connection := range outgoingConnections(board.Connections, fromNodeID) {
+		_, fromPort := endpointParts(connection.From)
+		payload, ok := outputs[fromPort]
+		if !ok {
+			if err := e.appendErrorAndBlock(runID, "missing_output_payload", fmt.Sprintf("node %s did not produce output for port %s", fromNodeID, fromPort), "engine", fromNodeID, "missing output payload"); err != nil {
+				return err
+			}
+			return errRunStopped
+		}
+		input := runInputRefForConnection(runID, connection, payload)
 		if err := e.deliverConnection(runID, board, gates, connection, input, limits, ready, queued, queue); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (e *RunEngine) deliverFormationOutput(runID string, board *BoardDocument, gates map[string]GateNode, fromNodeID string, result FormationExecutionResult, limits RunLimits, ready map[string]map[string]RunInputRef, queued map[string]bool, queue *[]string) error {
+	return e.deliverOutputPayloads(runID, board, gates, fromNodeID, result.Outputs, limits, ready, queued, queue)
+}
+
+func runInputRefForConnection(runID string, connection BoardConnection, payload FormationOutputPayload) RunInputRef {
+	fromNode, fromPort := endpointParts(connection.From)
+	_, toPort := endpointParts(connection.To)
+	ref := payload.Ref
+	if ref == "" {
+		ref = fmt.Sprintf("ledger://%s/%s", runID, connection.ID)
+	}
+	return RunInputRef{
+		EdgeID:      connection.ID,
+		FromNodeID:  fromNode,
+		FromPortID:  fromPort,
+		ToPortID:    toPort,
+		Ref:         ref,
+		Text:        payload.Text,
+		ReportRef:   payload.ReportRef,
+		ArtifactRef: payload.ArtifactRef,
+	}
+}
+
+func formationOutputEventData(result FormationExecutionResult) map[string]any {
+	outputs := make(map[string]FormationOutputPayload, len(result.Outputs))
+	for portID, payload := range result.Outputs {
+		outputs[portID] = payload
+	}
+	return map[string]any{
+		"status":    result.Status,
+		"reportRef": result.ReportRef,
+		"text":      result.Text,
+		"outputs":   outputs,
+	}
+}
+
+func outputPayloadForPortFromEvent(event RunEvent, portID string) (FormationOutputPayload, bool) {
+	outputs := outputPayloadsFromAny(event.Data["outputs"])
+	payload, ok := outputs[portID]
+	return payload, ok
+}
+
+func outputPayloadsFromAny(value any) map[string]FormationOutputPayload {
+	switch raw := value.(type) {
+	case map[string]FormationOutputPayload:
+		outputs := make(map[string]FormationOutputPayload, len(raw))
+		for portID, payload := range raw {
+			outputs[portID] = payload
+		}
+		return outputs
+	case map[string]any:
+		outputs := make(map[string]FormationOutputPayload, len(raw))
+		for portID, payload := range raw {
+			outputs[portID] = outputPayloadFromAny(payload)
+		}
+		return outputs
+	default:
+		return nil
+	}
+}
+
+func outputPayloadFromAny(value any) FormationOutputPayload {
+	switch raw := value.(type) {
+	case FormationOutputPayload:
+		return raw
+	case map[string]any:
+		return FormationOutputPayload{
+			Ref:         stringFromAny(raw["ref"]),
+			Text:        stringFromAny(raw["text"]),
+			ReportRef:   stringFromAny(raw["reportRef"]),
+			ArtifactRef: stringFromAny(raw["artifactRef"]),
+		}
+	default:
+		return FormationOutputPayload{}
+	}
 }
 
 func (e *RunEngine) deliverConnection(runID string, board *BoardDocument, gates map[string]GateNode, connection BoardConnection, input RunInputRef, limits RunLimits, ready map[string]map[string]RunInputRef, queued map[string]bool, queue *[]string) error {
@@ -1108,12 +1239,11 @@ func (e *RunEngine) routeGateEvaluation(runID string, board *BoardDocument, gate
 		return errRunStopped
 	}
 	for _, route := range routes {
-		nextInput := RunInputRef{
-			EdgeID:     route.ID,
-			FromNodeID: gate.ID,
-			Ref:        fmt.Sprintf("ledger://%s/%s", runID, route.ID),
-			Text:       input.Text,
-		}
+		nextInput := input
+		nextInput.EdgeID = route.ID
+		nextInput.FromNodeID = gate.ID
+		nextInput.FromPortID = routePort
+		nextInput.Ref = fmt.Sprintf("ledger://%s/%s", runID, route.ID)
 		if err := e.deliverConnection(runID, board, gates, route, nextInput, limits, ready, queued, queue); err != nil {
 			return err
 		}
@@ -1211,47 +1341,74 @@ func (e *RunEngine) runJudgeChain(board *BoardDocument, req GateEvaluation, chai
 		if result.Status == "" {
 			result.Status = "done"
 		}
+		if err := e.ensureFormationOutputPayloads(req.RunID, formation, result); err != nil {
+			return "", err
+		}
+		data := formationOutputEventData(result)
+		data["reason"] = "judge"
 		if err := e.store.AppendRunEvent(req.RunID, RunEvent{
 			Type:   RunEventNodeOutput,
 			NodeID: formation.ID,
-			Data: map[string]any{
-				"status":    result.Status,
-				"reportRef": result.ReportRef,
-				"text":      result.Text,
-				"reason":    "judge",
-			},
+			Data:   data,
 		}); err != nil {
 			return "", err
 		}
 		finalText = result.Text
+		if len(formation.Outputs) == 0 {
+			return "", fmt.Errorf("%w: judge formation %q has no output port", ErrConflict, formation.ID)
+		}
+		fromPortID := formation.Outputs[0].ID
+		payload := result.Outputs[fromPortID]
 		input = RunInputRef{
-			FromNodeID: formation.ID,
-			Ref:        fmt.Sprintf("ledger://%s/%s", req.RunID, formation.ID),
-			Text:       result.Text,
+			FromNodeID:  formation.ID,
+			FromPortID:  fromPortID,
+			Ref:         payload.Ref,
+			Text:        payload.Text,
+			ReportRef:   payload.ReportRef,
+			ArtifactRef: payload.ArtifactRef,
+		}
+		if input.Ref == "" {
+			input.Ref = fmt.Sprintf("ledger://%s/%s", req.RunID, formation.ID)
 		}
 	}
 	return finalText, nil
 }
 
 func (e *RunEngine) appendErrorAndBlock(runID, code, message, boundary, nodeID, blockReason string) error {
+	return e.appendErrorAndBlockWithDetails(runID, code, message, boundary, nodeID, blockReason, "", "")
+}
+
+func (e *RunEngine) appendErrorAndBlockWithDetails(runID, code, message, boundary, nodeID, blockReason, slotID, dispatchID string) error {
+	message = redactLedgerText(message)
+	blockReason = redactLedgerText(blockReason)
+	data := map[string]any{
+		"code":        code,
+		"message":     message,
+		"reason":      blockReason,
+		"boundary":    boundary,
+		"nodeId":      nodeID,
+		"recoverable": true,
+	}
+	if slotID != "" {
+		data["slotId"] = slotID
+	}
+	if dispatchID != "" {
+		data["dispatchId"] = dispatchID
+	}
 	if err := e.store.AppendRunEvent(runID, RunEvent{
 		Type:   RunEventError,
 		NodeID: nodeID,
-		Data: map[string]any{
-			"code":        code,
-			"message":     message,
-			"reason":      blockReason,
-			"boundary":    boundary,
-			"nodeId":      nodeID,
-			"recoverable": true,
-		},
+		SlotID: slotID,
+		Data:   data,
 	}); err != nil {
 		return err
 	}
-	return e.appendRunBlocked(runID, blockReason, nodeID, "")
+	return e.appendRunBlockedWithDispatches(runID, blockReason, nodeID, "", slotID, openDispatchesForBlock(nodeID, slotID, dispatchID))
 }
 
 func (e *RunEngine) appendGateErrorAndBlock(runID, gateID, code, message, boundary, blockReason string) error {
+	message = redactLedgerText(message)
+	blockReason = redactLedgerText(blockReason)
 	if err := e.store.AppendRunEvent(runID, RunEvent{
 		Type:   RunEventError,
 		GateID: gateID,
@@ -1270,48 +1427,86 @@ func (e *RunEngine) appendGateErrorAndBlock(runID, gateID, code, message, bounda
 	return e.appendRunBlocked(runID, blockReason, "", gateID)
 }
 
-func (e *RunEngine) appendExecutionFailureAndBlock(runID, nodeID string, err error) error {
-	code, message, boundary := executionFailureEvent(err)
-	return e.appendErrorAndBlock(runID, code, message, boundary, nodeID, message)
+type executionFailureDetails struct {
+	Code       string
+	Message    string
+	Boundary   string
+	NodeID     string
+	SlotID     string
+	DispatchID string
 }
 
-func executionFailureEvent(err error) (string, string, string) {
+func (e *RunEngine) appendExecutionFailureAndBlock(runID, nodeID string, err error) error {
+	failure := executionFailureEvent(err)
+	if failure.NodeID != "" {
+		nodeID = failure.NodeID
+	}
+	return e.appendErrorAndBlockWithDetails(runID, failure.Code, failure.Message, failure.Boundary, nodeID, failure.Message, failure.SlotID, failure.DispatchID)
+}
+
+func executionFailureEvent(err error) executionFailureDetails {
 	var executionErr *RunExecutionError
 	if errors.As(err, &executionErr) {
 		boundary := executionErr.Boundary
 		if boundary == "" {
 			boundary = "executor"
 		}
-		return executionErr.Code, executionErr.Message, boundary
+		return executionFailureDetails{
+			Code:       executionErr.Code,
+			Message:    executionErr.Message,
+			Boundary:   boundary,
+			NodeID:     executionErr.NodeID,
+			SlotID:     executionErr.SlotID,
+			DispatchID: executionErr.DispatchID,
+		}
 	}
 	switch {
 	case errors.Is(err, ErrRunWallClockExceeded):
-		return "wall_clock_exceeded", "wall clock limit exceeded", "limits"
+		return executionFailureDetails{Code: "wall_clock_exceeded", Message: "wall clock limit exceeded", Boundary: "limits"}
 	case errors.Is(err, ErrRunExecutorUnavailable):
-		return "missing_executor", "formation executor unavailable", "executor"
+		return executionFailureDetails{Code: "missing_executor", Message: "formation executor unavailable", Boundary: "executor"}
 	default:
 		if err == nil {
-			return "executor_failed", "formation executor failed", "executor"
+			return executionFailureDetails{Code: "executor_failed", Message: "formation executor failed", Boundary: "executor"}
 		}
-		return "executor_failed", err.Error(), "executor"
+		return executionFailureDetails{Code: "executor_failed", Message: redactLedgerText(err.Error()), Boundary: "executor"}
 	}
 }
 
 func (e *RunEngine) appendRunBlocked(runID, reason, nodeID, gateID string) error {
+	return e.appendRunBlockedWithDispatches(runID, reason, nodeID, gateID, "", nil)
+}
+
+func (e *RunEngine) appendRunBlockedWithDispatches(runID, reason, nodeID, gateID, slotID string, openDispatches []map[string]any) error {
+	if openDispatches == nil {
+		openDispatches = []map[string]any{}
+	}
 	return e.store.AppendRunEvent(runID, RunEvent{
 		Type:   RunEventBlocked,
 		NodeID: nodeID,
+		SlotID: slotID,
 		GateID: gateID,
 		Data: map[string]any{
-			"reason":         reason,
+			"reason":         redactLedgerText(reason),
 			"blockedNodeId":  nodeID,
 			"blockedGateId":  gateID,
 			"resumeAllowed":  true,
 			"resumePolicy":   "explicit",
-			"openDispatches": []map[string]any{},
+			"openDispatches": openDispatches,
 			"nextEpoch":      1,
 		},
 	})
+}
+
+func openDispatchesForBlock(nodeID, slotID, dispatchID string) []map[string]any {
+	if dispatchID == "" {
+		return nil
+	}
+	return []map[string]any{{
+		"dispatchId": dispatchID,
+		"nodeId":     nodeID,
+		"slotId":     slotID,
+	}}
 }
 
 type starvedFormation struct {
@@ -1447,12 +1642,15 @@ func runInputRefFromAny(value any) RunInputRef {
 		return RunInputRef{}
 	}
 	return RunInputRef{
-		EdgeID:     stringFromAny(raw["edgeId"]),
-		FromNodeID: stringFromAny(raw["fromNodeId"]),
-		ToPortID:   stringFromAny(raw["toPortId"]),
-		OutputSeq:  intFromRunEventData(raw["outputSeq"]),
-		Ref:        stringFromAny(raw["ref"]),
-		Text:       stringFromAny(raw["text"]),
+		EdgeID:      stringFromAny(raw["edgeId"]),
+		FromNodeID:  stringFromAny(raw["fromNodeId"]),
+		FromPortID:  stringFromAny(raw["fromPortId"]),
+		ToPortID:    stringFromAny(raw["toPortId"]),
+		OutputSeq:   intFromRunEventData(raw["outputSeq"]),
+		Ref:         stringFromAny(raw["ref"]),
+		Text:        stringFromAny(raw["text"]),
+		ReportRef:   stringFromAny(raw["reportRef"]),
+		ArtifactRef: stringFromAny(raw["artifactRef"]),
 	}
 }
 

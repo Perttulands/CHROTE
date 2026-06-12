@@ -350,7 +350,13 @@ func TestS5EngineResumeHonorsMaxAttemptsFromOriginalRun(t *testing.T) {
 	}
 	for _, event := range []RunEvent{
 		{Type: RunEventNodeStarted, NodeID: "fmn_frame", Attempt: 1},
-		{Type: RunEventNodeOutput, NodeID: "fmn_frame", Data: map[string]any{"text": "frame output"}},
+		{Type: RunEventNodeOutput, NodeID: "fmn_frame", Data: formationOutputEventData(FormationExecutionResult{
+			Status: "done",
+			Text:   "frame output",
+			Outputs: map[string]FormationOutputPayload{
+				"port_frame_out": {Text: "frame output"},
+			},
+		})},
 		{Type: RunEventNodeStarted, NodeID: "fmn_research", Attempt: 1},
 		{Type: RunEventBlocked, NodeID: "fmn_research", Data: map[string]any{"resumeAllowed": true, "resumePolicy": "explicit", "reason": "resume limit check"}},
 	} {

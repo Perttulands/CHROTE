@@ -205,6 +205,61 @@ func TestConcurrentBoardWritesReturnConflictNotClobber(t *testing.T) {
 	}
 }
 
+func TestCreateBoardWritesMinimalDurableBoard(t *testing.T) {
+	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
+
+	board, err := store.CreateBoard(BoardCreateRequest{
+		Slug:      "poems",
+		Title:     "Poems",
+		UpdatedBy: "agent:test",
+	})
+	if err != nil {
+		t.Fatalf("create board: %v", err)
+	}
+	if board.Schema != CurrentSchema || board.Slug != "poems" || board.Title != "Poems" || board.Rev != 1 || !strings.HasPrefix(board.ID, "brd_") || board.ETag == "" {
+		t.Fatalf("created board = %+v, want durable board identity", board)
+	}
+	if board.UpdatedBy != "agent:test" || board.UpdatedAt != "2026-06-03T17:00:00Z" {
+		t.Fatalf("created board update metadata = %q/%q", board.UpdatedBy, board.UpdatedAt)
+	}
+	raw := readFile(t, store.BoardPath("poems"))
+	for _, want := range []string{`schema = 1`, `id = "brd_`, `slug = "poems"`, `title = "Poems"`, `rev = 1`, `updatedBy = "agent:test"`, `updatedAt = "2026-06-03T17:00:00Z"`} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("created board file missing %q:\n%s", want, raw)
+		}
+	}
+	if strings.Contains(raw, "[[node]]") || strings.Contains(raw, "\nx = ") || strings.Contains(raw, "\ny = ") {
+		t.Fatalf("created board leaked layout sidecar data:\n%s", raw)
+	}
+}
+
+func TestCreateBoardRefusesDuplicateSlugWithoutClobber(t *testing.T) {
+	store := NewStore(t.TempDir())
+	writeFixture(t, store.BoardPath("poems"), minimalBoard("poems", 7))
+	before := readFile(t, store.BoardPath("poems"))
+
+	_, err := store.CreateBoard(BoardCreateRequest{Slug: "poems", Title: "Different"})
+	if !errors.Is(err, ErrAlreadyExists) {
+		t.Fatalf("duplicate board create error = %v, want ErrAlreadyExists", err)
+	}
+	after := readFile(t, store.BoardPath("poems"))
+	if after != before {
+		t.Fatalf("duplicate board create changed board:\n%s", after)
+	}
+}
+
+func TestCreateBoardValidatesSlugAndTitle(t *testing.T) {
+	store := NewStore(t.TempDir())
+
+	if _, err := store.CreateBoard(BoardCreateRequest{Slug: "bad/path", Title: "Bad"}); !errors.Is(err, ErrInvalidSlug) {
+		t.Fatalf("invalid slug error = %v, want ErrInvalidSlug", err)
+	}
+	if _, err := store.CreateBoard(BoardCreateRequest{Slug: "poems"}); !errors.Is(err, ErrInvalidSlug) {
+		t.Fatalf("missing title error = %v, want ErrInvalidSlug", err)
+	}
+}
+
 func TestSchemaVersionRefusesNewerAndMigratesOlderPreservingContent(t *testing.T) {
 	store := NewStore(t.TempDir())
 	store.Now = fixedClock()
@@ -1263,6 +1318,8 @@ func TestS3GatePersistsKindsCriterionWithoutVerdictOrOnFail(t *testing.T) {
 		Title:     "Review gate",
 		Kinds:     []string{"code", "human"},
 		Criterion: "Research is sound and safe to build.",
+		X:         410,
+		Y:         220,
 		UpdatedBy: "agent:test",
 	}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev})
 	if err != nil {
@@ -1274,6 +1331,19 @@ func TestS3GatePersistsKindsCriterionWithoutVerdictOrOnFail(t *testing.T) {
 	raw := readFile(t, store.BoardPath("session-search"))
 	if strings.Contains(raw, "verdict") || strings.Contains(raw, "onFail") {
 		t.Fatalf("gate persisted runtime verdict/onFail fields:\n%s", raw)
+	}
+	if strings.Contains(raw, "x = 410") || strings.Contains(raw, "y = 220") {
+		t.Fatalf("gate layout coordinates leaked into board definition:\n%s", raw)
+	}
+	layout, err := store.ReadLayout("session-search")
+	if err != nil {
+		t.Fatalf("read gate layout: %v", err)
+	}
+	if layout.BoardRev != after.Rev {
+		t.Fatalf("layout boardRev = %d, want %d", layout.BoardRev, after.Rev)
+	}
+	if len(layout.Nodes) != 1 || layout.Nodes[0].ID != after.Gates[0].ID || layout.Nodes[0].X != 410 || layout.Nodes[0].Y != 220 {
+		t.Fatalf("layout nodes = %+v, want created gate at 410,220", layout.Nodes)
 	}
 }
 
@@ -1418,6 +1488,8 @@ func TestS3MissionCreateAcceptsProjectBeadIDAndSingleOut(t *testing.T) {
 		Title:     "Showcase site",
 		Goal:      "Build the showcase",
 		BeadID:    "home-vdki.34.1",
+		X:         150,
+		Y:         90,
 		UpdatedBy: "agent:test",
 	}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev})
 	if err != nil {
@@ -1429,6 +1501,19 @@ func TestS3MissionCreateAcceptsProjectBeadIDAndSingleOut(t *testing.T) {
 	raw := readFile(t, store.BoardPath("session-search"))
 	if strings.Contains(raw, "chain") || strings.Count(raw, "out") != 0 {
 		t.Fatalf("mission stored a chain or explicit dynamic port instead of fixed out:\n%s", raw)
+	}
+	if strings.Contains(raw, "x = 150") || strings.Contains(raw, "y = 90") {
+		t.Fatalf("mission layout coordinates leaked into board definition:\n%s", raw)
+	}
+	layout, err := store.ReadLayout("session-search")
+	if err != nil {
+		t.Fatalf("read mission layout: %v", err)
+	}
+	if layout.BoardRev != after.Rev {
+		t.Fatalf("layout boardRev = %d, want %d", layout.BoardRev, after.Rev)
+	}
+	if len(layout.Nodes) != 1 || layout.Nodes[0].ID != after.Missions[0].ID || layout.Nodes[0].X != 150 || layout.Nodes[0].Y != 90 {
+		t.Fatalf("layout nodes = %+v, want created mission at 150,90", layout.Nodes)
 	}
 }
 

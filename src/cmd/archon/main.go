@@ -62,6 +62,58 @@ type archonErrorResponse struct {
 	Selector string `json:"selector"`
 }
 
+type archonRunAskResponse struct {
+	RunID           string                          `json:"runId"`
+	Question        string                          `json:"question,omitempty"`
+	Status          *formations.RunStatusProjection `json:"status"`
+	Answer          string                          `json:"answer"`
+	CompletedNodes  []archonRunCompletedNode        `json:"completedNodes"`
+	ProducedOutputs []archonRunProducedOutput       `json:"producedOutputs"`
+	OpenEscalations []formations.OpenEscalation     `json:"openEscalations"`
+	WaitingGates    []archonRunWaitingGate          `json:"waitingGates"`
+	BlockedReasons  []archonRunBlockedReason        `json:"blockedReasons"`
+	EvidenceSeqs    []int                           `json:"evidenceSeqs"`
+	MissingEvidence []string                        `json:"missingEvidence,omitempty"`
+}
+
+type archonRunCompletedNode struct {
+	NodeID    string `json:"nodeId"`
+	Status    string `json:"status"`
+	OutputSeq int    `json:"outputSeq"`
+	ReportRef string `json:"reportRef,omitempty"`
+	Text      string `json:"text,omitempty"`
+}
+
+type archonRunProducedOutput struct {
+	NodeID    string `json:"nodeId"`
+	OutputSeq int    `json:"outputSeq"`
+	ReportRef string `json:"reportRef,omitempty"`
+	Text      string `json:"text,omitempty"`
+}
+
+type archonRunWaitingGate struct {
+	GateID       string   `json:"gateId"`
+	NodeID       string   `json:"nodeId"`
+	Prompt       string   `json:"prompt,omitempty"`
+	Choices      []string `json:"choices,omitempty"`
+	RequestedSeq int      `json:"requestedSeq"`
+}
+
+type archonRunBlockedReason struct {
+	Seq           int    `json:"seq"`
+	NodeID        string `json:"nodeId,omitempty"`
+	GateID        string `json:"gateId,omitempty"`
+	Reason        string `json:"reason"`
+	Code          string `json:"code,omitempty"`
+	Boundary      string `json:"boundary,omitempty"`
+	ResumeAllowed bool   `json:"resumeAllowed"`
+}
+
+type archonStreamError struct {
+	Type  string              `json:"type"`
+	Error archonErrorResponse `json:"error"`
+}
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, realTmuxRunner{}))
 }
@@ -100,6 +152,8 @@ func run(args []string, stdout, stderr io.Writer, runner tmuxRunner) int {
 	case "board":
 		store := formations.NewStore(config.Workspace)
 		switch args[1] {
+		case "new":
+			return runBoardNew(store, args[2:], stdout, stderr)
 		case "list":
 			return runBoardList(store, args[2:], stdout, stderr)
 		case "inspect":
@@ -172,10 +226,14 @@ func run(args []string, stdout, stderr io.Writer, runner tmuxRunner) int {
 	case "run":
 		store := formations.NewStore(config.Workspace)
 		switch args[1] {
+		case "list":
+			return runList(store, args[2:], stdout, stderr)
 		case "status":
 			return runStatus(store, args[2:], stdout, stderr)
 		case "logs":
 			return runLogs(store, args[2:], stdout, stderr)
+		case "follow":
+			return runFollow(store, args[2:], stdout, stderr)
 		case "resume":
 			return runResume(store, args[2:], stdout, stderr)
 		case "abort":
@@ -234,6 +292,7 @@ func runAgentList(store *formations.PersonaStore, args []string, stdout, stderr 
 	if err != nil {
 		return fail(stderr, err)
 	}
+	archonExposeTmuxTargetSessions(&roster)
 	if *jsonOut {
 		return writeJSON(stdout, roster)
 	}
@@ -364,7 +423,7 @@ func runAgentSpawn(store *formations.PersonaStore, args []string, stdout, stderr
 		return fail(stderr, err)
 	}
 	if binding, err := formations.ResolveAgentSession(*card, live, *harness); err == nil {
-		fmt.Fprintf(stdout, "%s already live as %s\n", card.ID, binding.Session.Name)
+		fmt.Fprintf(stdout, "%s already live as %s\n", card.ID, archonTmuxTargetSessionName(binding.SessionStem))
 		return 0
 	} else if !errors.Is(err, formations.ErrAgentSessionOffline) {
 		return fail(stderr, err)
@@ -372,10 +431,11 @@ func runAgentSpawn(store *formations.PersonaStore, args []string, stdout, stderr
 	if variant.SessionStem == "" {
 		return fail(stderr, fmt.Errorf("%w: agent %q harness %q has no session_stem", formations.ErrAgentSessionOffline, card.ID, variant.ID))
 	}
-	if err := runner.Spawn(variant.SessionStem, variant.Launch); err != nil {
+	targetSession := archonTmuxTargetSessionName(variant.SessionStem)
+	if err := runner.Spawn(targetSession, variant.Launch); err != nil {
 		return fail(stderr, err)
 	}
-	fmt.Fprintf(stdout, "spawned %s as %s\n", card.ID, variant.SessionStem)
+	fmt.Fprintf(stdout, "spawned %s as %s\n", card.ID, targetSession)
 	return 0
 }
 
@@ -402,7 +462,7 @@ func runAgentAttach(store *formations.PersonaStore, args []string, stdout, stder
 	if err != nil {
 		return fail(stderr, err)
 	}
-	if err := runner.Attach(binding.Session.Name); err != nil {
+	if err := runner.Attach(archonTmuxTargetSessionName(binding.SessionStem)); err != nil {
 		return fail(stderr, err)
 	}
 	return 0
@@ -682,13 +742,15 @@ func runGateCreate(store *formations.Store, args []string, stdout, stderr io.Wri
 	title := fs.String("title", "Review gate", "gate title")
 	kinds := fs.String("kinds", "code", "comma-separated gate kinds")
 	criterion := fs.String("criterion", "", "gate criterion")
+	x := fs.Int("x", 0, "layout x coordinate")
+	y := fs.Int("y", 0, "layout y coordinate")
 	updatedBy := fs.String("updated-by", "agent:archon", "update actor")
 	jsonOut := fs.Bool("json", false, "write JSON")
 	if err := fs.Parse(reorderFlags(args, map[string]bool{"json": true})); err != nil {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: archon gate create <board> [--kinds code,human] [--criterion text] [--json]")
+		fmt.Fprintln(stderr, "usage: archon gate create <board> [--kinds code,human] [--criterion text] [--x n] [--y n] [--json]")
 		return 2
 	}
 	slug, err := store.ResolveBoardSelector(fs.Arg(0))
@@ -703,6 +765,8 @@ func runGateCreate(store *formations.Store, args []string, stdout, stderr io.Wri
 		Title:     *title,
 		Kinds:     splitCSV(*kinds),
 		Criterion: *criterion,
+		X:         *x,
+		Y:         *y,
 		UpdatedBy: *updatedBy,
 	}, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
 	if err != nil {
@@ -805,13 +869,15 @@ func runMissionCreate(store *formations.Store, args []string, stdout, stderr io.
 	title := fs.String("title", "", "mission title")
 	goal := fs.String("goal", "", "mission goal")
 	beadID := fs.String("bead", "", "project Beads id")
+	x := fs.Int("x", 0, "layout x coordinate")
+	y := fs.Int("y", 0, "layout y coordinate")
 	updatedBy := fs.String("updated-by", "agent:archon", "update actor")
 	jsonOut := fs.Bool("json", false, "write JSON")
 	if err := fs.Parse(reorderFlags(args, map[string]bool{"json": true})); err != nil {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: archon mission create <board> --title <title> --goal <goal> --bead <beads-id> [--json]")
+		fmt.Fprintln(stderr, "usage: archon mission create <board> --title <title> --goal <goal> --bead <beads-id> [--x n] [--y n] [--json]")
 		return 2
 	}
 	slug, err := store.ResolveBoardSelector(fs.Arg(0))
@@ -826,6 +892,8 @@ func runMissionCreate(store *formations.Store, args []string, stdout, stderr io.
 		Title:     *title,
 		Goal:      *goal,
 		BeadID:    *beadID,
+		X:         *x,
+		Y:         *y,
 		UpdatedBy: *updatedBy,
 	}, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
 	if err != nil {
@@ -977,17 +1045,17 @@ func runMissionRun(store *formations.Store, args []string, stdout, stderr io.Wri
 	}
 	board, err := store.ReadBoard(slug)
 	if err != nil {
-		return fail(stderr, err)
+		return failJSON(stderr, err, *jsonOut, "board", fs.Arg(0))
 	}
 	missionID := *missionSelector
 	if missionID == "" {
 		switch len(board.Missions) {
 		case 0:
-			return fail(stderr, fmt.Errorf("%w: board %q has no mission", formations.ErrNotFound, slug))
+			return failJSON(stderr, fmt.Errorf("%w: board %q has no mission", formations.ErrNotFound, slug), *jsonOut, "mission", "")
 		case 1:
 			missionID = board.Missions[0].ID
 		default:
-			return fail(stderr, fmt.Errorf("%w: board %q has multiple missions; pass --mission", formations.ErrConflict, slug))
+			return failJSON(stderr, fmt.Errorf("%w: board %q has multiple missions; pass --mission", formations.ErrConflict, slug), *jsonOut, "mission", "")
 		}
 	} else if resolved, err := resolveMissionSelector(board, missionID); err != nil {
 		return failSelector(stderr, err, *jsonOut, "mission", missionID)
@@ -1009,7 +1077,7 @@ func runMissionRun(store *formations.Store, args []string, stdout, stderr io.Wri
 		},
 	})
 	if err != nil {
-		return fail(stderr, err)
+		return failJSON(stderr, err, *jsonOut, "run", missionID)
 	}
 	return writeRunCommandResponse(stdout, status, *jsonOut)
 }
@@ -1045,9 +1113,42 @@ func runFormationRun(store *formations.Store, args []string, stdout, stderr io.W
 		},
 	})
 	if err != nil {
-		return fail(stderr, err)
+		return failJSON(stderr, err, *jsonOut, "run", formationID)
 	}
 	return writeRunCommandResponse(stdout, status, *jsonOut)
+}
+
+func runList(store *formations.Store, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("run list", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	boardSelector := fs.String("board", "", "board selector filter")
+	jsonOut := fs.Bool("json", false, "write JSON")
+	if err := fs.Parse(reorderFlags(args, map[string]bool{"json": true})); err != nil {
+		return 2
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "usage: archon run list [--board <board>] [--json]")
+		return 2
+	}
+	boardSlug := ""
+	if *boardSelector != "" {
+		resolved, err := store.ResolveBoardSelector(*boardSelector)
+		if err != nil {
+			return failSelector(stderr, err, *jsonOut, "board", *boardSelector)
+		}
+		boardSlug = resolved
+	}
+	runs, err := store.ListRuns(formations.RunListFilter{BoardSlug: boardSlug})
+	if err != nil {
+		return failJSON(stderr, err, *jsonOut, "run", "")
+	}
+	if *jsonOut {
+		return writeJSON(stdout, map[string]any{"runs": runs})
+	}
+	for _, run := range runs {
+		fmt.Fprintf(stdout, "%s\t%s\t%s\t%d events\n", run.RunID, run.Status, run.BoardSlug, run.EventCount)
+	}
+	return 0
 }
 
 func runStatus(store *formations.Store, args []string, stdout, stderr io.Writer) int {
@@ -1063,7 +1164,7 @@ func runStatus(store *formations.Store, args []string, stdout, stderr io.Writer)
 	}
 	status, err := store.ProjectRun(fs.Arg(0))
 	if err != nil {
-		return fail(stderr, err)
+		return failJSON(stderr, err, *jsonOut, "run", fs.Arg(0))
 	}
 	if *jsonOut {
 		return writeJSON(stdout, status)
@@ -1088,14 +1189,14 @@ func runLogs(store *formations.Store, args []string, stdout, stderr io.Writer) i
 	runID := fs.Arg(0)
 	events, err := store.ReadRunEvents(runID)
 	if err != nil {
-		return fail(stderr, err)
+		return failJSON(stderr, err, *jsonOut, "run", runID)
 	}
 	filtered := filterRunEvents(events, *nodeID)
 	if *follow && *jsonOut {
 		for {
 			status, err := store.ProjectRun(runID)
 			if err != nil {
-				return fail(stderr, err)
+				return failJSON(stderr, err, *jsonOut, "run", runID)
 			}
 			if status.Final || isBlockedResumable(status) {
 				break
@@ -1104,7 +1205,7 @@ func runLogs(store *formations.Store, args []string, stdout, stderr io.Writer) i
 		}
 		events, err = store.ReadRunEvents(runID)
 		if err != nil {
-			return fail(stderr, err)
+			return failJSON(stderr, err, *jsonOut, "run", runID)
 		}
 		filtered = filterRunEvents(events, *nodeID)
 	}
@@ -1118,7 +1219,7 @@ func runLogs(store *formations.Store, args []string, stdout, stderr io.Writer) i
 			time.Sleep(250 * time.Millisecond)
 			nextEvents, err := store.ReadRunEvents(runID)
 			if err != nil {
-				return fail(stderr, err)
+				return failJSON(stderr, err, *jsonOut, "run", runID)
 			}
 			var newEvents []formations.RunEvent
 			for _, event := range nextEvents {
@@ -1130,7 +1231,7 @@ func runLogs(store *formations.Store, args []string, stdout, stderr io.Writer) i
 			lastSeq = lastRunSeq(nextEvents)
 			status, err := store.ProjectRun(runID)
 			if err != nil {
-				return fail(stderr, err)
+				return failJSON(stderr, err, *jsonOut, "run", runID)
 			}
 			if status.Final {
 				return 0
@@ -1138,6 +1239,55 @@ func runLogs(store *formations.Store, args []string, stdout, stderr io.Writer) i
 		}
 	}
 	return 0
+}
+
+func runFollow(store *formations.Store, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("run follow", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	nodeID := fs.String("node", "", "node id filter")
+	since := fs.Int("since", 0, "only emit events with seq greater than this value")
+	jsonOut := fs.Bool("json", false, "write NDJSON")
+	if err := fs.Parse(reorderFlags(args, map[string]bool{"json": true})); err != nil {
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(stderr, "usage: archon run follow <runId> [--since <seq>] [--node <id>] [--json]")
+		return 2
+	}
+	if *since < 0 {
+		return failJSON(stderr, fmt.Errorf("%w: --since must be non-negative", formations.ErrInvalidSlug), *jsonOut, "run", fs.Arg(0))
+	}
+	runID := fs.Arg(0)
+	lastSeq := *since
+	for {
+		events, err := store.ReadRunEvents(runID)
+		if err != nil {
+			return failRunStreamError(stdout, stderr, err, *jsonOut, "run", runID)
+		}
+		for _, event := range events {
+			if event.Seq <= lastSeq || !runEventReferencesNode(event, *nodeID) {
+				continue
+			}
+			if *jsonOut {
+				if err := writeNDJSON(stdout, event); err != nil {
+					return 1
+				}
+			} else {
+				writeRunEventsText(stdout, []formations.RunEvent{event})
+			}
+		}
+		if ledgerLast := lastRunSeq(events); ledgerLast > lastSeq {
+			lastSeq = ledgerLast
+		}
+		status, err := store.ProjectRun(runID)
+		if err != nil {
+			return failRunStreamError(stdout, stderr, err, *jsonOut, "run", runID)
+		}
+		if status.Final {
+			return 0
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
 }
 
 func isBlockedResumable(status *formations.RunStatusProjection) bool {
@@ -1166,7 +1316,7 @@ func runResume(store *formations.Store, args []string, stdout, stderr io.Writer)
 		Reason: *reason,
 	})
 	if err != nil {
-		return fail(stderr, err)
+		return failJSON(stderr, err, *jsonOut, "run", fs.Arg(0))
 	}
 	if *jsonOut {
 		return writeJSON(stdout, status)
@@ -1198,11 +1348,11 @@ func runAbort(store *formations.Store, args []string, stdout, stderr io.Writer) 
 			"final":       true,
 		},
 	}); err != nil {
-		return fail(stderr, err)
+		return failJSON(stderr, err, *jsonOut, "run", runID)
 	}
 	status, err := store.ProjectRun(runID)
 	if err != nil {
-		return fail(stderr, err)
+		return failJSON(stderr, err, *jsonOut, "run", runID)
 	}
 	if *jsonOut {
 		return writeJSON(stdout, status)
@@ -1223,20 +1373,24 @@ func runAsk(store *formations.Store, args []string, stdout, stderr io.Writer) in
 		return 2
 	}
 	runID := fs.Arg(0)
+	question := strings.Join(fs.Args()[1:], " ")
+	status, err := store.ProjectRun(runID)
+	if err != nil {
+		return failJSON(stderr, err, *jsonOut, "run", runID)
+	}
+	events, err := store.ReadRunEvents(runID)
+	if err != nil {
+		return failJSON(stderr, err, *jsonOut, "run", runID)
+	}
 	escalations, err := store.ProjectOpenEscalations(runID)
 	if err != nil {
-		return fail(stderr, err)
+		return failJSON(stderr, err, *jsonOut, "run", runID)
 	}
+	response := buildRunAskResponse(runID, question, status, events, escalations)
 	if *jsonOut {
-		return writeJSON(stdout, map[string]any{"runId": runID, "escalations": escalations})
+		return writeJSON(stdout, response)
 	}
-	if len(escalations) == 0 {
-		fmt.Fprintf(stdout, "%s: nothing needs you right now\n", runID)
-		return 0
-	}
-	for _, escalation := range escalations {
-		fmt.Fprintf(stdout, "%s needs attention at %s: %s\n", escalation.RunID, escalation.NodeID, escalation.Reason)
-	}
+	fmt.Fprintln(stdout, response.Answer)
 	return 0
 }
 
@@ -1250,19 +1404,180 @@ func writeRunCommandResponse(stdout io.Writer, status *formations.RunStatusProje
 			Status: status,
 		})
 	}
-	fmt.Fprintf(stdout, "%s\t%s\t%s\n", status.RunID, status.Status, status.BoardSlug)
+	fmt.Fprintf(stdout, "%s	%s	%s\n", status.RunID, status.Status, status.BoardSlug)
 	return 0
+}
+
+func buildRunAskResponse(runID, question string, status *formations.RunStatusProjection, events []formations.RunEvent, escalations []formations.OpenEscalation) archonRunAskResponse {
+	response := archonRunAskResponse{
+		RunID:           runID,
+		Question:        question,
+		Status:          status,
+		OpenEscalations: escalations,
+	}
+	waitingBySeq := map[int]archonRunWaitingGate{}
+	waitingOrder := []int{}
+	seenEvidence := map[int]bool{}
+	addEvidence := func(seq int) {
+		if seq <= 0 || seenEvidence[seq] {
+			return
+		}
+		seenEvidence[seq] = true
+		response.EvidenceSeqs = append(response.EvidenceSeqs, seq)
+	}
+	for _, escalation := range escalations {
+		addEvidence(escalation.Seq)
+	}
+	for _, event := range events {
+		switch event.Type {
+		case formations.RunEventNodeOutput:
+			statusText := stringFromMap(event.Data, "status")
+			if statusText == "" {
+				statusText = "done"
+			}
+			completed := archonRunCompletedNode{
+				NodeID:    event.NodeID,
+				Status:    statusText,
+				OutputSeq: event.Seq,
+				ReportRef: stringFromMap(event.Data, "reportRef"),
+				Text:      stringFromMap(event.Data, "text"),
+			}
+			response.CompletedNodes = append(response.CompletedNodes, completed)
+			response.ProducedOutputs = append(response.ProducedOutputs, archonRunProducedOutput{
+				NodeID:    completed.NodeID,
+				OutputSeq: completed.OutputSeq,
+				ReportRef: completed.ReportRef,
+				Text:      completed.Text,
+			})
+			addEvidence(event.Seq)
+		case formations.RunEventHumanInputRequested:
+			waiting := archonRunWaitingGate{
+				GateID:       event.GateID,
+				NodeID:       event.NodeID,
+				Prompt:       stringFromMap(event.Data, "prompt"),
+				Choices:      stringSliceFromMap(event.Data, "choices"),
+				RequestedSeq: event.Seq,
+			}
+			waitingBySeq[event.Seq] = waiting
+			waitingOrder = append(waitingOrder, event.Seq)
+			addEvidence(event.Seq)
+		case formations.RunEventHumanVerdictRecorded:
+			requestedSeq := intFromMap(event.Data, "requestedSeq")
+			if requestedSeq > 0 {
+				delete(waitingBySeq, requestedSeq)
+				continue
+			}
+			for seq, waiting := range waitingBySeq {
+				if waiting.GateID == event.GateID {
+					delete(waitingBySeq, seq)
+				}
+			}
+		case formations.RunEventBlocked:
+			response.BlockedReasons = append(response.BlockedReasons, archonRunBlockedReason{
+				Seq:           event.Seq,
+				NodeID:        firstNonEmpty(event.NodeID, stringFromMap(event.Data, "blockedNodeId")),
+				GateID:        firstNonEmpty(event.GateID, stringFromMap(event.Data, "blockedGateId")),
+				Reason:        stringFromMap(event.Data, "reason"),
+				Code:          stringFromMap(event.Data, "code"),
+				Boundary:      stringFromMap(event.Data, "boundary"),
+				ResumeAllowed: boolFromMap(event.Data, "resumeAllowed"),
+			})
+			addEvidence(event.Seq)
+		}
+	}
+	for _, seq := range waitingOrder {
+		if waiting, ok := waitingBySeq[seq]; ok {
+			response.WaitingGates = append(response.WaitingGates, waiting)
+		}
+	}
+	if len(response.CompletedNodes) == 0 {
+		response.MissingEvidence = append(response.MissingEvidence, "no node_output events are present in the durable ledger")
+	}
+	if len(response.ProducedOutputs) == 0 {
+		response.MissingEvidence = append(response.MissingEvidence, "no produced output text or report references are present in the durable ledger")
+	}
+	response.Answer = buildRunAskAnswer(response)
+	return response
+}
+
+func buildRunAskAnswer(response archonRunAskResponse) string {
+	parts := []string{}
+	if response.Status != nil {
+		parts = append(parts, fmt.Sprintf("Run %s is %s with %d ledger events", response.RunID, response.Status.Status, response.Status.EventCount))
+	} else {
+		parts = append(parts, fmt.Sprintf("Run %s has no status projection", response.RunID))
+	}
+	if len(response.CompletedNodes) > 0 {
+		nodes := make([]string, 0, len(response.CompletedNodes))
+		for _, node := range response.CompletedNodes {
+			nodes = append(nodes, node.NodeID)
+		}
+		parts = append(parts, fmt.Sprintf("completed nodes: %s", strings.Join(nodes, ", ")))
+	} else {
+		parts = append(parts, "no completed node_output evidence yet")
+	}
+	if len(response.ProducedOutputs) > 0 {
+		latest := response.ProducedOutputs[len(response.ProducedOutputs)-1]
+		detail := latest.ReportRef
+		if latest.Text != "" {
+			detail = clipText(latest.Text, 160)
+		}
+		if detail != "" {
+			parts = append(parts, fmt.Sprintf("latest output from %s: %s", latest.NodeID, detail))
+		}
+	}
+	if len(response.WaitingGates) > 0 {
+		gates := make([]string, 0, len(response.WaitingGates))
+		for _, gate := range response.WaitingGates {
+			gates = append(gates, gate.GateID)
+		}
+		parts = append(parts, fmt.Sprintf("waiting gates: %s", strings.Join(gates, ", ")))
+	}
+	if len(response.BlockedReasons) > 0 {
+		latest := response.BlockedReasons[len(response.BlockedReasons)-1]
+		parts = append(parts, fmt.Sprintf("latest block: %s", latest.Reason))
+	}
+	if len(response.OpenEscalations) > 0 {
+		escalations := make([]string, 0, len(response.OpenEscalations))
+		for _, escalation := range response.OpenEscalations {
+			where := firstNonEmpty(escalation.NodeID, escalation.GateID)
+			if where == "" {
+				where = "run"
+			}
+			escalations = append(escalations, where+": "+escalation.Reason)
+		}
+		parts = append(parts, fmt.Sprintf("open escalations: %s", strings.Join(escalations, "; ")))
+	}
+	if len(response.MissingEvidence) > 0 {
+		parts = append(parts, "missing evidence: "+strings.Join(response.MissingEvidence, "; "))
+	}
+	return strings.Join(parts, ". ") + "."
 }
 
 func filterRunEvents(events []formations.RunEvent, nodeID string) []formations.RunEvent {
 	filtered := make([]formations.RunEvent, 0, len(events))
 	for _, event := range events {
-		if nodeID != "" && event.NodeID != nodeID {
+		if !runEventReferencesNode(event, nodeID) {
 			continue
 		}
 		filtered = append(filtered, event)
 	}
 	return filtered
+}
+
+func runEventReferencesNode(event formations.RunEvent, nodeID string) bool {
+	if nodeID == "" || event.NodeID == nodeID {
+		return true
+	}
+	if event.Data == nil {
+		return false
+	}
+	for _, key := range []string{"nodeId", "blockedNodeId", "fromNodeId", "toNodeId"} {
+		if stringFromMap(event.Data, key) == nodeID {
+			return true
+		}
+	}
+	return false
 }
 
 func writeRunEventsText(stdout io.Writer, events []formations.RunEvent) {
@@ -1286,6 +1601,35 @@ func identityFromBoard(board *formations.BoardDocument) archonBoardIdentity {
 		Rev:   board.Rev,
 		ETag:  board.ETag,
 	}
+}
+
+func runBoardNew(store *formations.Store, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("board new", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	title := fs.String("title", "", "board title")
+	updatedBy := fs.String("updated-by", "agent:archon", "update actor")
+	jsonOut := fs.Bool("json", false, "write JSON")
+	if err := fs.Parse(reorderFlags(args, map[string]bool{"json": true})); err != nil {
+		return 2
+	}
+	if fs.NArg() != 1 || strings.TrimSpace(*title) == "" {
+		fmt.Fprintln(stderr, "usage: archon board new <slug> --title <title> [--json]")
+		return 2
+	}
+	board, err := store.CreateBoard(formations.BoardCreateRequest{
+		Slug:      fs.Arg(0),
+		Title:     *title,
+		UpdatedBy: *updatedBy,
+	})
+	if err != nil {
+		return failJSON(stderr, err, *jsonOut, "board", fs.Arg(0))
+	}
+	board.TOML = ""
+	if *jsonOut {
+		return writeJSON(stdout, board)
+	}
+	fmt.Fprintf(stdout, "created %s\n", board.Slug)
+	return 0
 }
 
 func runBoardList(store *formations.Store, args []string, stdout, stderr io.Writer) int {
@@ -1386,14 +1730,15 @@ func liveFromRunner(runner tmuxRunner) ([]formations.LiveAgentSession, error) {
 	if runner == nil {
 		return nil, nil
 	}
-	return runner.LiveSessions()
+	live, err := runner.LiveSessions()
+	if err != nil {
+		return nil, err
+	}
+	return archonLogicalTmuxSessions(live), nil
 }
 
 func liveForCard(card formations.PersonaCard, runner tmuxRunner) ([]formations.LiveAgentSession, error) {
-	if runner == nil {
-		return nil, nil
-	}
-	live, err := runner.LiveSessions()
+	live, err := liveFromRunner(runner)
 	if err != nil {
 		return nil, err
 	}
@@ -1413,6 +1758,42 @@ func liveForCard(card formations.PersonaCard, runner tmuxRunner) ([]formations.L
 		}
 	}
 	return filtered, nil
+}
+
+func archonTmuxSessionPrefix() string {
+	return strings.TrimSpace(os.Getenv("CHROTE_FORMATIONS_TMUX_SESSION_PREFIX"))
+}
+
+func archonTmuxTargetSessionName(stem string) string {
+	return archonTmuxSessionPrefix() + stem
+}
+
+func archonLogicalTmuxSessions(live []formations.LiveAgentSession) []formations.LiveAgentSession {
+	prefix := archonTmuxSessionPrefix()
+	if prefix == "" {
+		return live
+	}
+	logical := make([]formations.LiveAgentSession, 0, len(live))
+	for _, session := range live {
+		stem, ok := strings.CutPrefix(session.Name, prefix)
+		if !ok || stem == "" {
+			continue
+		}
+		session.Name = stem
+		logical = append(logical, session)
+	}
+	return logical
+}
+
+func archonExposeTmuxTargetSessions(roster *formations.AgentRoster) {
+	if roster == nil || archonTmuxSessionPrefix() == "" {
+		return
+	}
+	for i := range roster.Agents {
+		if roster.Agents[i].SessionID != "" {
+			roster.Agents[i].SessionID = archonTmuxTargetSessionName(roster.Agents[i].SessionID)
+		}
+	}
 }
 
 func (realTmuxRunner) LiveSessions() ([]formations.LiveAgentSession, error) {
@@ -1472,34 +1853,75 @@ func writeJSON(w io.Writer, value interface{}) int {
 	return 0
 }
 
+func writeNDJSON(w io.Writer, value interface{}) error {
+	return json.NewEncoder(w).Encode(value)
+}
+
 func fail(stderr io.Writer, err error) int {
 	fmt.Fprintln(stderr, err)
 	return 1
 }
 
-func failSelector(stderr io.Writer, err error, jsonOut bool, boundary, selector string) int {
+func failJSON(stderr io.Writer, err error, jsonOut bool, boundary, selector string) int {
 	if !jsonOut {
 		return fail(stderr, err)
 	}
-	code := ""
-	switch {
-	case errors.Is(err, formations.ErrAmbiguousSelector):
-		code = "ambiguous_selector"
-	case errors.Is(err, formations.ErrNotFound):
-		code = "not_found"
-	}
-	if code == "" {
-		return fail(stderr, err)
-	}
-	if code := writeJSON(stderr, archonErrorResponse{
-		Code:     code,
-		Message:  err.Error(),
-		Boundary: boundary,
-		Selector: selector,
-	}); code != 0 {
+	if code := writeJSON(stderr, archonErrorFromError(err, boundary, selector)); code != 0 {
 		return code
 	}
 	return 1
+}
+
+func failRunStreamError(stdout, stderr io.Writer, err error, jsonOut bool, boundary, selector string) int {
+	if !jsonOut {
+		return fail(stderr, err)
+	}
+	if err := writeNDJSON(stdout, archonStreamError{Type: "stream_error", Error: archonErrorFromError(err, boundary, selector)}); err != nil {
+		return 1
+	}
+	return 1
+}
+
+func archonErrorFromError(err error, boundary, selector string) archonErrorResponse {
+	return archonErrorResponse{
+		Code:     archonErrorCode(err),
+		Message:  err.Error(),
+		Boundary: boundary,
+		Selector: selector,
+	}
+}
+
+func archonErrorCode(err error) string {
+	switch {
+	case errors.Is(err, formations.ErrAmbiguousSelector):
+		return "ambiguous_selector"
+	case errors.Is(err, formations.ErrNotFound):
+		return "not_found"
+	case errors.Is(err, formations.ErrAlreadyExists):
+		return "conflict"
+	case errors.Is(err, formations.ErrConflict):
+		return "conflict"
+	case errors.Is(err, formations.ErrInvalidSlug):
+		return "invalid_selector"
+	case errors.Is(err, formations.ErrPreconditionRequired):
+		return "precondition_required"
+	case errors.Is(err, formations.ErrUnsupportedSchema):
+		return "unsupported_schema"
+	case errors.Is(err, formations.ErrRunFinal):
+		return "run_final"
+	case errors.Is(err, formations.ErrRunLedgerInvalid):
+		return "run_ledger_invalid"
+	case errors.Is(err, formations.ErrRunResumeNotAllowed):
+		return "run_resume_not_allowed"
+	case errors.Is(err, formations.ErrRunEpochBlocked):
+		return "run_epoch_blocked"
+	default:
+		return "error"
+	}
+}
+
+func failSelector(stderr io.Writer, err error, jsonOut bool, boundary, selector string) int {
+	return failJSON(stderr, err, jsonOut, boundary, selector)
 }
 
 func splitCSV(raw string) []string {
@@ -1515,6 +1937,90 @@ func splitCSV(raw string) []string {
 		}
 	}
 	return values
+}
+
+func stringFromMap(values map[string]any, key string) string {
+	if values == nil {
+		return ""
+	}
+	value, ok := values[key]
+	if !ok || value == nil {
+		return ""
+	}
+	switch v := value.(type) {
+	case string:
+		return v
+	case fmt.Stringer:
+		return v.String()
+	default:
+		return ""
+	}
+}
+
+func boolFromMap(values map[string]any, key string) bool {
+	if values == nil {
+		return false
+	}
+	value, ok := values[key].(bool)
+	return ok && value
+}
+
+func intFromMap(values map[string]any, key string) int {
+	if values == nil {
+		return 0
+	}
+	switch value := values[key].(type) {
+	case int:
+		return value
+	case int64:
+		return int(value)
+	case float64:
+		return int(value)
+	case json.Number:
+		parsed, err := value.Int64()
+		if err != nil {
+			return 0
+		}
+		return int(parsed)
+	default:
+		return 0
+	}
+}
+
+func stringSliceFromMap(values map[string]any, key string) []string {
+	if values == nil {
+		return nil
+	}
+	switch raw := values[key].(type) {
+	case []string:
+		return append([]string(nil), raw...)
+	case []any:
+		items := make([]string, 0, len(raw))
+		for _, item := range raw {
+			if text, ok := item.(string); ok && text != "" {
+				items = append(items, text)
+			}
+		}
+		return items
+	default:
+		return nil
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func clipText(value string, limit int) string {
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	return value[:limit] + "…"
 }
 
 type stringList []string

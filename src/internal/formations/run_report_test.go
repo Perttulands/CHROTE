@@ -127,7 +127,7 @@ type capturingBriefExecutor struct {
 
 func (e *capturingBriefExecutor) ExecuteFormation(req FormationExecution) (FormationExecutionResult, error) {
 	e.brief = req.Brief
-	return FormationExecutionResult{Status: "done", Text: "done"}, nil
+	return FormationExecutionResult{Status: "done", Text: "done", Outputs: payloadsForFormationOutputs(req.Formation, "done", "")}, nil
 }
 
 type staticReportExecutor struct {
@@ -135,8 +135,8 @@ type staticReportExecutor struct {
 	reportRef string
 }
 
-func (e staticReportExecutor) ExecuteFormation(FormationExecution) (FormationExecutionResult, error) {
-	return FormationExecutionResult{Status: "done", Text: e.text, ReportRef: e.reportRef}, nil
+func (e staticReportExecutor) ExecuteFormation(req FormationExecution) (FormationExecutionResult, error) {
+	return FormationExecutionResult{Status: "done", Text: e.text, ReportRef: e.reportRef, Outputs: payloadsForFormationOutputs(req.Formation, e.text, e.reportRef)}, nil
 }
 
 func removeFile(t *testing.T, path string) {

@@ -181,10 +181,12 @@ func (f *slowRunExecutor) ExecuteFormation(req FormationExecution) (FormationExe
 	f.calls = append(f.calls, req)
 	f.mu.Unlock()
 	time.Sleep(f.delay)
+	text := "slow output from " + req.NodeID
 	return FormationExecutionResult{
 		Status:    "done",
 		ReportRef: "refs/" + req.NodeID + ".md",
-		Text:      "slow output from " + req.NodeID,
+		Text:      text,
+		Outputs:   payloadsForFormationOutputs(req.Formation, text, "refs/"+req.NodeID+".md"),
 	}, nil
 }
 

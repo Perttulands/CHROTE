@@ -167,6 +167,8 @@ type formationsCreateGateRequest struct {
 	Title       string   `json:"title"`
 	Kinds       []string `json:"kinds"`
 	Criterion   string   `json:"criterion"`
+	X           int      `json:"x"`
+	Y           int      `json:"y"`
 	ExpectedRev int      `json:"expectedRev"`
 	UpdatedBy   string   `json:"updatedBy"`
 }
@@ -196,6 +198,8 @@ type formationsCreateMissionRequest struct {
 	Title       string `json:"title"`
 	Goal        string `json:"goal"`
 	BeadID      string `json:"beadId"`
+	X           int    `json:"x"`
+	Y           int    `json:"y"`
 	ExpectedRev int    `json:"expectedRev"`
 	UpdatedBy   string `json:"updatedBy"`
 }
@@ -757,6 +761,8 @@ func (h *FormationsHandler) PatchBoard(w http.ResponseWriter, r *http.Request) {
 			Title:     gate.Title,
 			Kinds:     gate.Kinds,
 			Criterion: gate.Criterion,
+			X:         gate.X,
+			Y:         gate.Y,
 			UpdatedBy: patchUpdatedBy(request.UpdatedBy, gate.UpdatedBy),
 		}, formations.WriteOptions{
 			ExpectedETag: r.Header.Get("If-Match"),
@@ -811,6 +817,8 @@ func (h *FormationsHandler) PatchBoard(w http.ResponseWriter, r *http.Request) {
 			Title:     mission.Title,
 			Goal:      mission.Goal,
 			BeadID:    mission.BeadID,
+			X:         mission.X,
+			Y:         mission.Y,
 			UpdatedBy: patchUpdatedBy(request.UpdatedBy, mission.UpdatedBy),
 		}, formations.WriteOptions{
 			ExpectedETag: r.Header.Get("If-Match"),

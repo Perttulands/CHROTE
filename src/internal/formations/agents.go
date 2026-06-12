@@ -279,10 +279,14 @@ func (s *PersonaStore) EditPersona(id string, req EditPersonaRequest) (*PersonaC
 			if stem == "" {
 				stem = req.AddHarness + "-" + id
 			}
+			launch := req.Launch
+			if launch == "" {
+				launch = inferLaunch(req.AddHarness, req.Source)
+			}
 			next = appendHarnessVariant(next, HarnessVariant{
 				ID:          req.AddHarness,
 				SessionStem: stem,
-				Launch:      req.Launch,
+				Launch:      launch,
 				Source:      req.Source,
 			})
 		}
@@ -806,6 +810,12 @@ func inferHarness(source string) string {
 }
 
 func inferLaunch(harness, source string) string {
+	if harness == "openai-codex" {
+		return "codex --yolo -c check_for_update_on_startup=false"
+	}
+	if harness == "claude-code" {
+		return "HOME=/home/perttu claude --dangerously-skip-permissions --effort=\"max\""
+	}
 	if harness == "hermes" && source != "" {
 		return "hermes --profile " + shellQuote(source)
 	}

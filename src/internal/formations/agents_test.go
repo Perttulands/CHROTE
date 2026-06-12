@@ -53,6 +53,41 @@ func TestCreatePersonaWritesOneIDSpineAndDefaultSessionStem(t *testing.T) {
 	}
 }
 
+func TestCreatePersonaOpenAICodexInfersLaunch(t *testing.T) {
+	store := NewPersonaStore(t.TempDir())
+	wantLaunch := "codex --yolo -c check_for_update_on_startup=false"
+
+	card, err := store.CreatePersona(CreatePersonaRequest{ID: "codexer", Kind: "specialist", Harness: "openai-codex"})
+	if err != nil {
+		t.Fatalf("create openai-codex persona: %v", err)
+	}
+	if got := card.DefaultVariant().Launch; got != wantLaunch {
+		t.Fatalf("openai-codex launch = %q, want %q", got, wantLaunch)
+	}
+	raw := readFile(t, store.PersonaPath("codexer"))
+	if !strings.Contains(raw, `launch = "`+wantLaunch+`"`) {
+		t.Fatalf("persona TOML missing codex launch:\n%s", raw)
+	}
+}
+
+func TestCreatePersonaExplicitOpenAICodexLaunchIsHonored(t *testing.T) {
+	store := NewPersonaStore(t.TempDir())
+	explicitLaunch := "codex --dangerously-bypass-approvals-and-sandbox"
+
+	card, err := store.CreatePersona(CreatePersonaRequest{
+		ID:      "codexer",
+		Kind:    "specialist",
+		Harness: "openai-codex",
+		Launch:  explicitLaunch,
+	})
+	if err != nil {
+		t.Fatalf("create openai-codex persona with explicit launch: %v", err)
+	}
+	if got := card.DefaultVariant().Launch; got != explicitLaunch {
+		t.Fatalf("openai-codex explicit launch = %q, want %q", got, explicitLaunch)
+	}
+}
+
 func TestCreatePersonaRefusesExistingIDWithoutClobber(t *testing.T) {
 	store := NewPersonaStore(t.TempDir())
 	existing := `schema = 1
@@ -132,6 +167,27 @@ func TestEditPersonaAddsHarnessVariantAndNote(t *testing.T) {
 	}
 	if len(card.Notes) != 1 || card.Notes[0].Text != "react quality improved over sprint 3" {
 		t.Fatalf("notes = %#v", card.Notes)
+	}
+}
+
+func TestEditPersonaAddOpenAICodexInfersLaunch(t *testing.T) {
+	store := NewPersonaStore(t.TempDir())
+	writeFixture(t, store.PersonaPath("susie"), minimalPersona("susie", "specialist", []string{"design"}))
+	wantLaunch := "codex --yolo -c check_for_update_on_startup=false"
+
+	card := editPersonaWithFreshETag(t, store, "susie", EditPersonaRequest{
+		AddHarness:  "openai-codex",
+		SessionStem: "codex-susie",
+	})
+	if len(card.HarnessVariants) != 2 {
+		t.Fatalf("harness variants = %d, want 2", len(card.HarnessVariants))
+	}
+	if got := card.HarnessVariants[1].Launch; got != wantLaunch {
+		t.Fatalf("added openai-codex launch = %q, want %q", got, wantLaunch)
+	}
+	raw := readFile(t, store.PersonaPath("susie"))
+	if !strings.Contains(raw, `launch = "`+wantLaunch+`"`) {
+		t.Fatalf("edited persona TOML missing codex launch:\n%s", raw)
 	}
 }
 

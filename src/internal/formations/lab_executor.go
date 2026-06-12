@@ -12,10 +12,13 @@ import (
 const defaultLabOutputCapBytes = 8192
 
 type RunExecutionError struct {
-	Code     string
-	Message  string
-	Boundary string
-	Cause    error
+	Code       string
+	Message    string
+	Boundary   string
+	Cause      error
+	NodeID     string
+	SlotID     string
+	DispatchID string
 }
 
 func (e *RunExecutionError) Error() string {
@@ -46,11 +49,15 @@ type LabFormationExecutor struct {
 }
 
 func NewConfiguredFormationExecutorFromEnv(store *Store, personas *PersonaStore, boundary string) FormationExecutor {
-	config := LabExecutorConfigFromEnv()
-	if len(config.Harnesses) == 0 {
-		return NewUnavailableFormationExecutor(boundary)
+	labConfig := LabExecutorConfigFromEnv()
+	if len(labConfig.Harnesses) != 0 {
+		return NewLabFormationExecutor(store, personas, labConfig)
 	}
-	return NewLabFormationExecutor(store, personas, config)
+	tmuxConfig := TmuxExecutorConfigFromEnv()
+	if len(tmuxConfig.Harnesses) != 0 {
+		return NewTmuxFormationExecutor(store, personas, tmuxConfig)
+	}
+	return NewUnavailableFormationExecutor(boundary)
 }
 
 func LabExecutorConfigFromEnv() LabExecutorConfig {
@@ -143,6 +150,7 @@ func (e *LabFormationExecutor) ExecuteFormation(req FormationExecution) (Formati
 		Status:    "done",
 		ReportRef: fmt.Sprintf("lab://%s/%s/report.md", req.RunID, req.NodeID),
 		Text:      text,
+		Outputs:   labOutputPayloads(req.Formation, text),
 	}, nil
 }
 
@@ -216,10 +224,25 @@ func (e *LabFormationExecutor) renderSlotOutput(req FormationExecution, slot For
 	return fmt.Sprintf("lab-fake output from %s using %s for %s\nslot: %s\ninput: %s", card.ID, variant.ID, req.Title, slot.ID, inputText)
 }
 
+func labOutputPayloads(formation FormationNode, text string) map[string]FormationOutputPayload {
+	outputs := make(map[string]FormationOutputPayload, len(formation.Outputs))
+	multiOutput := len(formation.Outputs) > 1
+	for _, port := range formation.Outputs {
+		payloadText := text
+		if multiOutput {
+			payloadText = fmt.Sprintf("%s\noutput-port: %s", text, port.ID)
+		}
+		outputs[port.ID] = FormationOutputPayload{
+			Text: payloadText,
+		}
+	}
+	return outputs
+}
+
 func runExecutionError(code, message, boundary string, cause error) error {
 	return &RunExecutionError{
 		Code:     code,
-		Message:  message,
+		Message:  redactLedgerText(message),
 		Boundary: boundary,
 		Cause:    cause,
 	}
