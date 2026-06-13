@@ -511,9 +511,10 @@ func (e *RunEngine) resumeSnapshot(runID string, board *BoardDocument, mission M
 	queued := map[string]bool{}
 	attempts := map[string]int{}
 	completed := map[string]bool{}
+	lastOutputIdx := map[string]int{}
 	var queue []string
 
-	for _, event := range events {
+	for i, event := range events {
 		if event.Type == RunEventNodeStarted && event.Attempt > attempts[event.NodeID] {
 			attempts[event.NodeID] = event.Attempt
 		}
@@ -521,6 +522,7 @@ func (e *RunEngine) resumeSnapshot(runID string, board *BoardDocument, mission M
 			continue
 		}
 		completed[event.NodeID] = true
+		lastOutputIdx[event.NodeID] = i
 		if err := e.replayNodeOutputToReady(runID, board, event, ready, queued, &queue); err != nil {
 			if errors.Is(err, errRunStopped) {
 				return nil
@@ -528,7 +530,7 @@ func (e *RunEngine) resumeSnapshot(runID string, board *BoardDocument, mission M
 			return err
 		}
 	}
-	if err := e.replayGateVerdictsToReady(runID, board, gateByID, events, limits, ready, queued, &queue); err != nil {
+	if err := e.replayGateVerdictsToReady(runID, board, gateByID, events, limits, ready, queued, &queue, completed, lastOutputIdx); err != nil {
 		if errors.Is(err, errRunStopped) {
 			return nil
 		}
@@ -674,8 +676,8 @@ func (e *RunEngine) replayNodeOutputToReady(runID string, board *BoardDocument, 
 	return nil
 }
 
-func (e *RunEngine) replayGateVerdictsToReady(runID string, board *BoardDocument, gates map[string]GateNode, events []RunEvent, limits RunLimits, ready map[string]map[string]RunInputRef, queued map[string]bool, queue *[]string) error {
-	for _, event := range events {
+func (e *RunEngine) replayGateVerdictsToReady(runID string, board *BoardDocument, gates map[string]GateNode, events []RunEvent, limits RunLimits, ready map[string]map[string]RunInputRef, queued map[string]bool, queue *[]string, completed map[string]bool, lastOutputIdx map[string]int) error {
+	for i, event := range events {
 		if event.Type != RunEventGateVerdict {
 			continue
 		}
@@ -689,6 +691,19 @@ func (e *RunEngine) replayGateVerdictsToReady(runID string, board *BoardDocument
 		}
 		input := runInputRefFromAny(event.Data["inputRef"])
 		for _, route := range gateVerdictRoutes(board, event, gateID, routePort) {
+			// A gate verdict that routes back to a node which already produced
+			// output BEFORE this verdict is a pushback (e.g. a human or code gate
+			// fail wired back to the work formation). Clear its completed mark so
+			// the dispatch loop re-runs it; without this the re-routed node is
+			// skipped and the resume reports resume_no_work (home-28ww). Ordering
+			// guard: only clear when this verdict is newer than the target's last
+			// output, so a pushback already serviced by a later attempt is not
+			// re-run on subsequent resumes.
+			if toNode, _ := endpointParts(route.To); toNode != "" {
+				if idx, ok := lastOutputIdx[toNode]; ok && i > idx {
+					delete(completed, toNode)
+				}
+			}
 			nextInput := input
 			nextInput.EdgeID = route.ID
 			nextInput.FromNodeID = gateID
