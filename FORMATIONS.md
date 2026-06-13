@@ -87,6 +87,40 @@ evidence.
 | Run | Execution instance that binds slots, dispatches work, records events, and projects state |
 | Ledger | Append-only event history for a run |
 
+## Primitive graph model
+
+Formations is built from a small set of loose primitives:
+
+- **Input port.** A named incoming stream on a mission, formation, or gate.
+  By default input ports are required: if a node has multiple incoming required
+  inputs, it is a join point and cannot run until every connected input has
+  delivered. The ledger records that as `node_waiting` with `readyInputs` and
+  `totalInputs`.
+- **Output port.** A named outgoing stream produced by a run. One output may feed
+  one downstream node or fan out to many. A node may also produce multiple
+  distinct outputs, each with its own payload.
+- **Formation.** A coordination card with a brief, slots, assigned agents, and
+  one or more input/output ports. Arriving input payloads plus the brief are the
+  task; produced output payloads continue the graph.
+- **Gate.** A routing checkpoint using the same port graph. Basic script gates
+  run explicit operator-authored checks such as tests, lint, typecheck, or smoke
+  commands. Judge gates run a judge formation and interpret its verdict. The
+  important contract is the routing result: pass/fail output ports carry the
+  verdict payload into whatever nodes are connected downstream. Human gates are
+  a simple stop-for-inspection mechanism and can stay minimal until the script
+  and judge paths are solid.
+
+The UI mirrors this model on every formation card:
+
+```text
+[input ports / incoming streams]
+[formation card: brief, type, slots, assigned agents, local state]
+[output ports / outgoing streams]
+```
+
+This matches the reference prototype: create primitives, connect output ports to
+input ports, and let work cascade as inputs become ready.
+
 ## Required invariants
 
 1. **One model, multiple surfaces.** UI gestures and `archon` verbs must use the
@@ -121,6 +155,11 @@ Connections are not just visual arrows. A wire from `source:summary` to
 map into `writer`'s `node_started.inputRefs[]`. That input ref records the
 `edgeId`, `fromNodeId`, `fromPortId`, `toPortId`, payload text, and optional
 artifact/report refs.
+
+Fan-out is just multiple connections from the same output port: each downstream
+input receives that output port's payload. Fan-in/join is multiple connected
+required inputs on the same downstream node: the node records `node_waiting` and
+does not dispatch until all required inputs have delivered.
 
 There is one routing contract: `node_output.outputs[portId]`. Free-form
 `node_output.text` is display summary only and never feeds graph edges.
