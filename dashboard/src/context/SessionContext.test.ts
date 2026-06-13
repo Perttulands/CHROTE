@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { renderHook, act } from '@testing-library/react'
+import { renderHook, act, waitFor } from '@testing-library/react'
 import { createElement } from 'react'
 import { SessionProvider, useSession } from './SessionContext'
 import { ToastProvider } from './ToastContext'
+import { featureFlagKey } from '../featureFlags'
+import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE } from '../types'
 
 function setViewportWidth(width: number) {
   Object.defineProperty(window, 'innerWidth', {
@@ -38,6 +40,193 @@ function Wrapper({ children }: { children: React.ReactNode }) {
 function renderSession() {
   return renderHook(() => useSession(), { wrapper: Wrapper })
 }
+
+function storedDashboardState() {
+  const stored = store['chrote-dashboard-state']
+  expect(stored).toBeDefined()
+  return JSON.parse(stored)
+}
+
+// ──────────────────────────────────────────────
+// 0. localStorage key and persisted shape contract
+// ──────────────────────────────────────────────
+describe('dashboard persisted storage contract', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    setViewportWidth(1280)
+  })
+
+  it('pins the exact dashboard state, presets, and feature flag key strings', () => {
+    const { result } = renderSession()
+
+    act(() => {
+      result.current.saveCurrentLayout('baseline')
+    })
+
+    expect(store).toHaveProperty('chrote-dashboard-state')
+    expect(store).toHaveProperty('chrote-dashboard-presets')
+    expect(featureFlagKey('uiV2')).toBe('chrote-ui-v2')
+    expect(featureFlagKey('filesPersistTabState')).toBe('chrote-files-persist-tab-state')
+    expect(featureFlagKey('serverStatusTab')).toBe('chrote-server-status-tab')
+
+    const presets = JSON.parse(store['chrote-dashboard-presets'])
+    expect(presets).toHaveLength(1)
+    expect(presets[0].name).toBe('baseline')
+  })
+
+  it('loads V3 viewport layouts as a normalized stored-state fixture', () => {
+    localStorage.setItem('chrote-dashboard-state', JSON.stringify({
+      version: 3,
+      settingsSchemaVersion: 2,
+      layoutsByViewport: {
+        desktop: {
+          workspaces: {
+            terminal1: {
+              windows: [
+                { id: 'legacy-id', boundSessions: ['desk-a'], activeSession: 'desk-a', colorIndex: 3 },
+                { id: 'also-legacy', boundSessions: ['desk-b'], activeSession: null },
+              ],
+              windowCount: 2,
+            },
+            terminal2: {
+              windows: [
+                { id: 'wrong-terminal', boundSessions: ['desk-c'], activeSession: 'desk-c', colorIndex: 7 },
+              ],
+              windowCount: 1,
+            },
+          },
+        },
+        mobile: {
+          workspaces: {
+            terminal1: {
+              windows: [
+                { id: 'mobile-legacy', boundSessions: ['mobile-a'], activeSession: 'mobile-a', colorIndex: 1 },
+              ],
+              windowCount: 1,
+            },
+            terminal2: {
+              windows: [],
+              windowCount: 1,
+            },
+          },
+        },
+      },
+      sidebarCollapsed: true,
+      settings: {
+        fontSize: 18,
+        tmuxAppearance: {
+          statusFg: '#ffffff',
+        },
+      },
+    }))
+
+    const { result } = renderSession()
+
+    expect(result.current.workspaces).toEqual({
+      terminal1: {
+        windows: [
+          { id: 'terminal1-window-0', boundSessions: ['desk-a'], activeSession: 'desk-a', colorIndex: 3 },
+          { id: 'terminal1-window-1', boundSessions: ['desk-b'], activeSession: null, colorIndex: 1 },
+        ],
+        windowCount: 2,
+      },
+      terminal2: {
+        windows: [
+          { id: 'terminal2-window-0', boundSessions: ['desk-c'], activeSession: 'desk-c', colorIndex: 7 },
+        ],
+        windowCount: 1,
+      },
+    })
+    expect(result.current.sidebarCollapsed).toBe(true)
+    expect(result.current.settings).toEqual({
+      ...DEFAULT_SETTINGS,
+      fontSize: 18,
+      tmuxAppearance: {
+        ...DEFAULT_TMUX_APPEARANCE,
+        statusFg: '#ffffff',
+      },
+    })
+  })
+
+  it('merges older saved settings with current defaults', () => {
+    localStorage.setItem('chrote-dashboard-state', JSON.stringify({
+      workspaces: {
+        terminal1: {
+          windows: [
+            { id: 'terminal1-window-0', boundSessions: [], activeSession: null, colorIndex: 0 },
+          ],
+          windowCount: 1,
+        },
+        terminal2: {
+          windows: [
+            { id: 'terminal2-window-0', boundSessions: [], activeSession: null, colorIndex: 0 },
+          ],
+          windowCount: 1,
+        },
+      },
+      sidebarCollapsed: false,
+      settingsSchemaVersion: 2,
+      settings: {
+        fontSize: 17,
+        tmuxAppearance: {
+          paneBorderActive: '#abcdef',
+        },
+      },
+    }))
+
+    const { result } = renderSession()
+
+    expect(result.current.settings).toEqual({
+      ...DEFAULT_SETTINGS,
+      fontSize: 17,
+      tmuxAppearance: {
+        ...DEFAULT_TMUX_APPEARANCE,
+        paneBorderActive: '#abcdef',
+      },
+    })
+  })
+
+  it('filters INIT-PENDING active sessions before persisting state', async () => {
+    localStorage.setItem('chrote-dashboard-state', JSON.stringify({
+      version: 3,
+      settingsSchemaVersion: 2,
+      layoutsByViewport: {
+        desktop: {
+          workspaces: {
+            terminal1: {
+              windows: [
+                { id: 'terminal1-window-0', boundSessions: ['pending'], activeSession: 'INIT-PENDING', colorIndex: 0 },
+              ],
+              windowCount: 1,
+            },
+            terminal2: {
+              windows: [
+                { id: 'terminal2-window-0', boundSessions: [], activeSession: null, colorIndex: 0 },
+              ],
+              windowCount: 1,
+            },
+          },
+        },
+      },
+      sidebarCollapsed: false,
+      settings: DEFAULT_SETTINGS,
+    }))
+
+    const { result } = renderSession()
+
+    await waitFor(() => {
+      expect(result.current.workspaces.terminal1.windows[0].activeSession).toBeNull()
+    })
+
+    const persisted = storedDashboardState()
+    expect(persisted.layoutsByViewport.desktop.workspaces.terminal1.windows[0]).toEqual({
+      id: 'terminal1-window-0',
+      boundSessions: ['pending'],
+      activeSession: null,
+      colorIndex: 0,
+    })
+  })
+})
 
 // ──────────────────────────────────────────────
 // 1. migrateStoredState — V1 → V2 migration

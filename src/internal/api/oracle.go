@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/chrote/server/internal/core"
+	"github.com/chrote/server/internal/formations"
 )
 
 // Agent status constants
@@ -298,6 +299,37 @@ func (h *OracleHandler) enrichAgent(session core.Session) OracleAgent {
 	agent.LastLines = extractLastLines(output, 5)
 
 	return agent
+}
+
+func (h *OracleHandler) LiveAgentSessions() ([]formations.LiveAgentSession, error) {
+	output, err := h.runTmux("list-sessions", "-F", "#{session_name}:#{session_attached}")
+	if err != nil {
+		if strings.Contains(err.Error(), "no server running") ||
+			strings.Contains(err.Error(), "No such file or directory") ||
+			strings.Contains(err.Error(), "server exited unexpectedly") {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var live []formations.LiveAgentSession
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 2)
+		name := parts[0]
+		if name == "" {
+			continue
+		}
+		live = append(live, formations.LiveAgentSession{
+			Name:     name,
+			Status:   "live",
+			Attached: len(parts) > 1 && parts[1] == "1",
+		})
+	}
+	return live, nil
 }
 
 // GetStatus handles GET /api/oracle/status

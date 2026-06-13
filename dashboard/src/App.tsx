@@ -3,15 +3,14 @@ import { DndContext, DragEndEvent, DragStartEvent, DragOverlay, useSensor, useSe
 import { SessionProvider, useSession } from './context/SessionContext'
 import TabBar, { Tab } from './components/TabBar'
 import SessionPanel from './components/SessionPanel'
-import SessionPanelV2 from './components/SessionPanelV2'
 import TerminalArea from './components/TerminalArea'
 import FilesView from './components/FilesView'
 import SettingsView from './components/SettingsView'
 import FloatingModal from './components/FloatingModal'
 import HelpView from './components/HelpView'
 import BeadsView from './components/BeadsView'
-import OracleView from './components/OracleView'
-import OracleViewV2 from './components/OracleView/V2'
+import FormationsCockpit from './components/FormationsCockpit'
+import AgentsView from './components/AgentsView'
 import ServicesView from './components/ServicesView'
 import SystemStatusView from './components/SystemStatusView'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -21,8 +20,6 @@ import LayoutPresetsPanel from './components/LayoutPresetsPanel'
 import { IframePoolProvider } from './components/IframePool'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { installFeatureFlagHelpers, isFeatureEnabled } from './featureFlags'
-
-const UI_V2 = isFeatureEnabled('uiV2')
 
 // Dragged item overlay component
 function DraggedSessionOverlay({ name }: { name: string }) {
@@ -39,6 +36,7 @@ function DashboardContent() {
   const [activeDragId, setActiveDragId] = useState<string | null>(null)
   const [showHelp, setShowHelp] = useState(false)
   const [showPresets, setShowPresets] = useState(false)
+  const [formationsVisited, setFormationsVisited] = useState(false)
   const { addSessionToWindow, removeSessionFromWindow, setIsDragging, isDragging, settings } = useSession()
   const persistFilesTabState = isFeatureEnabled('filesPersistTabState')
   const serverStatusTab = isFeatureEnabled('serverStatusTab')
@@ -47,11 +45,14 @@ function DashboardContent() {
   const handleCloseHelp = useCallback(() => setShowHelp(false), [])
   const handleShowPresets = useCallback(() => setShowPresets(true), [])
   const handleClosePresets = useCallback(() => setShowPresets(false), [])
+  const handleTabChange = useCallback((tab: Tab) => {
+    setActiveTab(tab)
+  }, [])
 
   // Global keyboard shortcuts
   useKeyboardShortcuts({
     activeTab,
-    onTabChange: setActiveTab,
+    onTabChange: handleTabChange,
     onShowHelp: handleShowHelp,
     isHelpOpen: showHelp,
   })
@@ -64,6 +65,12 @@ function DashboardContent() {
   useEffect(() => {
     installFeatureFlagHelpers()
   }, [])
+
+  // Once visited, Formations stays mounted (hidden) so canvas/viewport state
+  // survives tab switches, mirroring the terminal tabs' keep-alive pattern.
+  useEffect(() => {
+    if (activeTab === 'formations') setFormationsVisited(true)
+  }, [activeTab])
 
   // Apply font size as CSS variable for terminal styling
   useEffect(() => {
@@ -125,7 +132,7 @@ function DashboardContent() {
       <div className={`dashboard ${isDragging ? 'is-dragging' : ''}`}>
         <TabBar
           activeTab={activeTab}
-          onTabChange={setActiveTab}
+          onTabChange={handleTabChange}
           onShowHelp={handleShowHelp}
           onShowPresets={handleShowPresets}
         />
@@ -133,7 +140,7 @@ function DashboardContent() {
         <div className="dashboard-content">
           {/* Terminal areas are always rendered (hidden via CSS) to preserve iframe connections */}
           <div style={{ display: (activeTab === 'terminal1' || activeTab === 'terminal2') ? 'contents' : 'none' }}>
-            {UI_V2 ? <SessionPanelV2 /> : <SessionPanel />}
+            <SessionPanel />
           </div>
           <div style={{ display: activeTab === 'terminal1' ? 'contents' : 'none' }}>
             <TerminalArea workspaceId="terminal1" />
@@ -153,9 +160,25 @@ function DashboardContent() {
               <BeadsView />
             </ErrorBoundary>
           )}
+          {(formationsVisited || activeTab === 'formations') && (
+            <div
+              className="formations-host"
+              data-testid="formations-host"
+              style={{
+                display: activeTab === 'formations' ? 'flex' : 'none',
+                position: 'relative',
+                flex: 1,
+                minWidth: 0,
+              }}
+            >
+              <ErrorBoundary>
+                <FormationsCockpit active={activeTab === 'formations'} />
+              </ErrorBoundary>
+            </div>
+          )}
           {activeTab === 'agents' && (
             <ErrorBoundary>
-              {UI_V2 ? <OracleViewV2 /> : <OracleView />}
+              <AgentsView />
             </ErrorBoundary>
           )}
           {activeTab === 'services' && (
