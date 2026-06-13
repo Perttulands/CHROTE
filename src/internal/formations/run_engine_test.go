@@ -128,6 +128,37 @@ func TestS4JoinWaitsUntilAllInputsReady(t *testing.T) {
 	if got, want := executor.nodeIDs(), []string{"fmn_a", "fmn_b", "fmn_join"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("executor nodes = %v, want %v", got, want)
 	}
+	joinCalls := callsByNode(executor.calls)["fmn_join"]
+	if len(joinCalls) != 1 {
+		t.Fatalf("join calls = %+v, want one joined dispatch", joinCalls)
+	}
+	if got := len(joinCalls[0].Inputs); got != 2 {
+		t.Fatalf("join inputs = %d, want both required inputs", got)
+	}
+	assertRunInputRef(t, joinCalls[0].Inputs[0], RunInputRef{
+		EdgeID:     "edge_a_join",
+		FromNodeID: "fmn_a",
+		FromPortID: "port_a_out",
+		ToPortID:   "port_join_left",
+		Text:       "output from fmn_a",
+		ReportRef:  "refs/fmn_a.md",
+	})
+	assertRunInputRef(t, joinCalls[0].Inputs[1], RunInputRef{
+		EdgeID:     "edge_b_join",
+		FromNodeID: "fmn_b",
+		FromPortID: "port_b_out",
+		ToPortID:   "port_join_right",
+		Text:       "output from fmn_b",
+		ReportRef:  "refs/fmn_b.md",
+	})
+
+	started := findNodeStartedEvent(t, events, "fmn_join")
+	inputRefs, ok := started.Data["inputRefs"].([]any)
+	if !ok || len(inputRefs) != 2 {
+		t.Fatalf("join node_started inputRefs = %#v, want two refs", started.Data["inputRefs"])
+	}
+	assertRunInputRef(t, runInputRefFromAny(inputRefs[0]), joinCalls[0].Inputs[0])
+	assertRunInputRef(t, runInputRefFromAny(inputRefs[1]), joinCalls[0].Inputs[1])
 }
 
 func TestS4NamedOutputPortsRouteDistinctPayloads(t *testing.T) {
@@ -188,6 +219,75 @@ func TestS4NamedOutputPortsRouteDistinctPayloads(t *testing.T) {
 	}
 	assertOutputPayloadText(t, outputs, "port_split_left", "LEFT-PAYLOAD")
 	assertOutputPayloadText(t, outputs, "port_split_right", "RIGHT-PAYLOAD")
+}
+
+func TestS4OneNamedOutputFansOutToMultipleInputs(t *testing.T) {
+	store, personas := s4RunFixture(t)
+	store.Now = fixedClock()
+	personas.Now = fixedClock()
+	createS4Persona(t, personas, "scout")
+	writeFixture(t, store.BoardPath("session-search"), s4FanOutBoardFixture())
+	board, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	executor := &fakeRunExecutor{
+		outputsByPort: map[string]map[string]FormationOutputPayload{
+			"fmn_split": {
+				"port_split_left":  {Text: "LEFT-PAYLOAD", ReportRef: "refs/split-left.md"},
+				"port_split_right": {Text: "RIGHT-PAYLOAD", ReportRef: "refs/split-right.md"},
+			},
+		},
+	}
+	engine := NewRunEngine(store, personas, executor)
+
+	status, err := engine.RunMission("session-search", RunStartRequest{
+		MissionID:         "mis_showcase",
+		Actor:             "agent:test",
+		ExpectedBoardETag: board.ETag,
+		ExpectedBoardRev:  board.Rev,
+		Limits:            RunLimits{MaxDispatch: 10, WallClockSeconds: 60},
+	})
+	if err != nil {
+		t.Fatalf("run mission: %v", err)
+	}
+	if status.Status != RunStatusSucceeded || !status.Final {
+		t.Fatalf("status = %+v, want final succeeded", status)
+	}
+
+	calls := callsByNode(executor.calls)
+	leftInputs := calls["fmn_left"][0].Inputs
+	assertRunInputRef(t, leftInputs[0], RunInputRef{
+		EdgeID:     "edge_split_left",
+		FromNodeID: "fmn_split",
+		FromPortID: "port_split_left",
+		ToPortID:   "port_left_in",
+		Text:       "LEFT-PAYLOAD",
+		ReportRef:  "refs/split-left.md",
+	})
+	rightInputs := calls["fmn_right"][0].Inputs
+	assertRunInputRef(t, rightInputs[0], RunInputRef{
+		EdgeID:     "edge_split_left_fanout",
+		FromNodeID: "fmn_split",
+		FromPortID: "port_split_left",
+		ToPortID:   "port_right_in",
+		Text:       "LEFT-PAYLOAD",
+		ReportRef:  "refs/split-left.md",
+	})
+
+	events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
+	leftStarted := findNodeStartedEvent(t, events, "fmn_left")
+	leftRefs, ok := leftStarted.Data["inputRefs"].([]any)
+	if !ok || len(leftRefs) != 1 {
+		t.Fatalf("left node_started inputRefs = %#v, want one ref", leftStarted.Data["inputRefs"])
+	}
+	assertRunInputRef(t, runInputRefFromAny(leftRefs[0]), leftInputs[0])
+	rightStarted := findNodeStartedEvent(t, events, "fmn_right")
+	rightRefs, ok := rightStarted.Data["inputRefs"].([]any)
+	if !ok || len(rightRefs) != 1 {
+		t.Fatalf("right node_started inputRefs = %#v, want one ref", rightStarted.Data["inputRefs"])
+	}
+	assertRunInputRef(t, runInputRefFromAny(rightRefs[0]), rightInputs[0])
 }
 
 func TestS4MissingNamedOutputPayloadBlocksInsteadOfBroadcasting(t *testing.T) {
@@ -358,6 +458,33 @@ func findNodeOutputEvent(t *testing.T, events []RunEvent, nodeID string) RunEven
 	}
 	t.Fatalf("missing node_output for %s", nodeID)
 	return RunEvent{}
+}
+
+func findNodeStartedEvent(t *testing.T, events []RunEvent, nodeID string) RunEvent {
+	t.Helper()
+	for _, event := range events {
+		if event.Type == RunEventNodeStarted && event.NodeID == nodeID {
+			return event
+		}
+	}
+	t.Fatalf("missing node_started for %s", nodeID)
+	return RunEvent{}
+}
+
+func assertRunInputRef(t *testing.T, got RunInputRef, want RunInputRef) {
+	t.Helper()
+	if got.EdgeID != want.EdgeID ||
+		got.FromNodeID != want.FromNodeID ||
+		got.FromPortID != want.FromPortID ||
+		got.ToPortID != want.ToPortID ||
+		got.Text != want.Text ||
+		got.ReportRef != want.ReportRef ||
+		got.ArtifactRef != want.ArtifactRef {
+		t.Fatalf("input ref = %+v, want %+v", got, want)
+	}
+	if got.Ref == "" {
+		t.Fatalf("input ref = %+v, want non-empty provenance ref", got)
+	}
 }
 
 func assertOutputPayloadText(t *testing.T, outputs map[string]any, portID, want string) {
@@ -642,6 +769,89 @@ to = "fmn_left:port_left_in"
 [[connection]]
 id = "edge_split_right"
 from = "fmn_split:port_split_right"
+to = "fmn_right:port_right_in"
+`
+}
+
+func s4FanOutBoardFixture() string {
+	return s4MissionOnlyBoardFixture() + `
+[[formation]]
+id = "fmn_split"
+type = "solo"
+title = "Split"
+
+[[formation.input]]
+id = "port_split_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_split_left"
+label = "Left"
+
+[[formation.output]]
+id = "port_split_right"
+label = "Right"
+
+[[formation.slot]]
+id = "slot_split"
+label = "Worker"
+agentId = "scout"
+harness = "openai-codex"
+controller = true
+
+[[formation]]
+id = "fmn_left"
+type = "solo"
+title = "Left consumer"
+
+[[formation.input]]
+id = "port_left_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_left_out"
+label = "Output"
+
+[[formation.slot]]
+id = "slot_left"
+label = "Worker"
+agentId = "scout"
+harness = "openai-codex"
+controller = true
+
+[[formation]]
+id = "fmn_right"
+type = "solo"
+title = "Right consumer"
+
+[[formation.input]]
+id = "port_right_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_right_out"
+label = "Output"
+
+[[formation.slot]]
+id = "slot_right"
+label = "Worker"
+agentId = "scout"
+harness = "openai-codex"
+controller = true
+
+[[connection]]
+id = "edge_mission_split"
+from = "mis_showcase:out"
+to = "fmn_split:port_split_in"
+
+[[connection]]
+id = "edge_split_left"
+from = "fmn_split:port_split_left"
+to = "fmn_left:port_left_in"
+
+[[connection]]
+id = "edge_split_left_fanout"
+from = "fmn_split:port_split_left"
 to = "fmn_right:port_right_in"
 `
 }

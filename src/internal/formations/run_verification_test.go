@@ -44,6 +44,58 @@ func TestS4JudgeChainVerdictRoutesGate(t *testing.T) {
 	}
 }
 
+func TestS4JudgeChainFailVerdictRoutesGateFailPort(t *testing.T) {
+	store, personas := s4RunFixture(t)
+	store.Now = fixedClock()
+	personas.Now = fixedClock()
+	createS4Persona(t, personas, "scout")
+	writeFixture(t, store.BoardPath("session-search"), s4JudgeChainRunBoardFixture(true))
+	board, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	executor := &fakeRunExecutor{outputs: map[string]string{
+		"fmn_j1": "review notes",
+		"fmn_j2": "fail",
+	}}
+	engine := NewRunEngine(store, personas, executor)
+
+	status, err := engine.RunMission("session-search", RunStartRequest{
+		MissionID:         "mis_showcase",
+		Actor:             "agent:test",
+		ExpectedBoardETag: board.ETag,
+		ExpectedBoardRev:  board.Rev,
+		Limits:            RunLimits{MaxDispatch: 8, MaxAttempts: 2},
+	})
+	if err != nil {
+		t.Fatalf("run mission: %v", err)
+	}
+	if status.Status != RunStatusSucceeded {
+		t.Fatalf("status = %+v, want succeeded from wired judge fail verdict", status)
+	}
+	if got, want := executor.nodeIDs(), []string{"fmn_work", "fmn_j1", "fmn_j2", "fmn_revise"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("executor nodes = %v, want work, judge chain, fail branch", got)
+	}
+	events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
+	verdict := eventOfType(t, events, RunEventGateVerdict)
+	if verdict.Data["verdict"] != "fail" || verdict.Data["routePort"] != "fail" {
+		t.Fatalf("gate verdict = %+v, want fail route from judge output", verdict)
+	}
+	if got, want := stringSliceFromAny(verdict.Data["routedEdges"]), []string{"edge_gate_fail_revise"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("routed edges = %v, want %v", got, want)
+	}
+	reviseInputs := callsByNode(executor.calls)["fmn_revise"][0].Inputs
+	if got, want := reviseInputs[0].FromNodeID, "gate_review"; got != want {
+		t.Fatalf("revise input from node = %q, want %q", got, want)
+	}
+	if got, want := reviseInputs[0].FromPortID, "fail"; got != want {
+		t.Fatalf("revise input from port = %q, want %q", got, want)
+	}
+	if got, want := reviseInputs[0].EdgeID, "edge_gate_fail_revise"; got != want {
+		t.Fatalf("revise input edge = %q, want %q", got, want)
+	}
+}
+
 func TestS4FormationVerificationBlockAndPushback(t *testing.T) {
 	t.Run("block stops before downstream formation", func(t *testing.T) {
 		store, personas := s4RunFixture(t)
@@ -138,7 +190,36 @@ func (f *fakeVerificationEvaluator) EvaluateVerification(req VerificationEvaluat
 	return VerificationEvaluationResult{Verdict: verdict, Feedback: "fake " + verdict}, nil
 }
 
-func s4JudgeChainRunBoardFixture() string {
+func s4JudgeChainRunBoardFixture(failRoute ...bool) string {
+	failBranch := ""
+	if len(failRoute) > 0 && failRoute[0] {
+		failBranch = `
+[[formation]]
+id = "fmn_revise"
+type = "solo"
+title = "Revise"
+
+[[formation.input]]
+id = "port_revise_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_revise_out"
+label = "Output"
+
+[[formation.slot]]
+id = "slot_revise"
+label = "Worker"
+agentId = "scout"
+harness = "openai-codex"
+controller = true
+
+[[connection]]
+id = "edge_gate_fail_revise"
+from = "gate_review:fail"
+to = "fmn_revise:port_revise_in"
+`
+	}
 	return s4MissionOnlyBoardFixture() + `
 [[formation]]
 id = "fmn_work"
@@ -255,7 +336,7 @@ to = "gate_review:judge"
 id = "edge_gate_pass_ship"
 from = "gate_review:pass"
 to = "fmn_ship:port_ship_in"
-`
+` + failBranch
 }
 
 func s4VerificationBoardFixture(onFail string) string {
