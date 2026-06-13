@@ -1137,3 +1137,67 @@ fi
 		t.Fatalf("capture-pane did not request -J to join wrapped lines:\n%s", raw)
 	}
 }
+
+// TestFormationResultRecoversBarePortJSONFromRealAgentCapture locks the
+// home-3b7m finding: real coding-agent TUIs (Claude Code, Codex) emit the
+// chrote-outputs payload as bare JSON with no literal ```chrote-outputs fence
+// (the markdown fence is rendered away/omitted), while the captured pane still
+// contains the echoed prompt's placeholder example fence
+// ({"port_id":{"text":"payload for that output"}}). The fence-only parser then
+// latches onto that placeholder and the run blocks with missing_output_payload
+// even though the agent emitted the correct declared port id and payload. The
+// deterministic bash responder hid this by echoing a literal fence keyed by the
+// real port id. The executor must recover the declared-port-keyed JSON the
+// agent actually emitted, while still failing loud on unknown/missing ports.
+func TestFormationResultRecoversBarePortJSONFromRealAgentCapture(t *testing.T) {
+	port := "port_01KV09ZAXN949Y9N1GGW1KDAHT"
+	fence := "```"
+	// Mirrors a real Claude Code / Codex capture: echoed contract (with the
+	// placeholder example fence), then the agent's bare single-line JSON keyed by
+	// the real declared port id, then the completion sentinel.
+	captured := strings.Join([]string{
+		"brief: SOLO real-LLM smoke. Compute 19*21 ...",
+		"formation output contract:",
+		fence + "chrote-outputs",
+		`{"port_id":{"text":"payload for that output"}}`,
+		fence,
+		"Use all and only these output port ids:",
+		"- " + port + ` label="Output"`,
+		"turn marker: turn_01KV09ZAYR0DJ1MK2AEZWN6ENE",
+		"When complete, emit exactly one sentinel line ...",
+		`{"` + port + `":{"text":"SOLO-REAL-ANSWER=399"}}`,
+		"<<<CHROTE-DONE run-id=run_01KV09ZAYC status=ok artifact=none>>>",
+	}, "\n")
+
+	exec := &TmuxFormationExecutor{config: TmuxExecutorConfig{OutputCapBytes: 1 << 20}}
+	req := FormationExecution{
+		NodeID:    "fmn_solo",
+		Formation: FormationNode{Outputs: []FormationPort{{ID: port, Label: "Output"}}},
+	}
+
+	res, err := exec.formationResultFromText(req, "report", captured)
+	if err != nil {
+		t.Fatalf("formationResultFromText errored on real-agent capture (home-3b7m regression): %v", err)
+	}
+	payload, ok := res.Outputs[port]
+	if !ok {
+		t.Fatalf("declared port %q not recovered from bare-JSON real-agent capture; outputs=%#v", port, res.Outputs)
+	}
+	if !strings.Contains(payload.Text, "SOLO-REAL-ANSWER=399") {
+		t.Fatalf("recovered payload = %q, want the agent's real computed answer", payload.Text)
+	}
+	if _, ok := res.Outputs["port_id"]; ok {
+		t.Fatalf("placeholder example port_id leaked into outputs: %#v", res.Outputs)
+	}
+
+	// Fail-loud preserved: a bare JSON object keyed by a port that is NOT declared
+	// must not be routed; the declared port is still missing -> the run blocks.
+	unknownCapture := strings.Join([]string{
+		"turn marker: turn_x",
+		`{"port_not_declared":{"text":"SOLO-REAL-ANSWER=399"}}`,
+		"<<<CHROTE-DONE run-id=run_x status=ok artifact=none>>>",
+	}, "\n")
+	if _, err := exec.formationResultFromText(req, "report", unknownCapture); err == nil {
+		t.Fatalf("expected missing_output_payload for undeclared bare port, got success")
+	}
+}

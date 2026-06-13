@@ -245,13 +245,27 @@ func (e *TmuxFormationExecutor) executePeerFormation(req FormationExecution) (Fo
 }
 
 func (e *TmuxFormationExecutor) formationResultFromText(req FormationExecution, reportRef, text string) (FormationExecutionResult, error) {
+	knownPorts := map[string]bool{}
+	for _, output := range req.Formation.Outputs {
+		knownPorts[output.ID] = true
+	}
 	cleanText, namedOutputs, err := parseChroteOutputs(text)
 	if err != nil {
 		return FormationExecutionResult{}, runExecutionError("invalid_output_payloads", err.Error(), "executor", err)
 	}
-	knownPorts := map[string]bool{}
+	// Real coding-agent TUIs (Claude Code, Codex) emit the chrote-outputs payload
+	// as bare JSON without a literal ```chrote-outputs fence — the markdown fence
+	// is rendered away or omitted — so the fence-only parse recovers nothing (or
+	// the echoed placeholder example). When no declared port was recovered, fall
+	// back to the declared-port-keyed JSON the agent actually emitted. Output port
+	// ids are high-entropy, so this cannot collide with echoed prose, and the
+	// missing/unknown checks below keep the routing contract fail-loud (home-3b7m).
+	if len(knownPorts) > 0 && !outputsContainKnownPort(namedOutputs, knownPorts) {
+		if recoveredText, recovered, ok := extractDeclaredPortOutputs(text, knownPorts); ok {
+			cleanText, namedOutputs = recoveredText, recovered
+		}
+	}
 	for _, output := range req.Formation.Outputs {
-		knownPorts[output.ID] = true
 		if _, ok := namedOutputs[output.ID]; !ok {
 			return FormationExecutionResult{}, runExecutionError("missing_output_payload", fmt.Sprintf("formation %q did not emit required output port %q", req.NodeID, output.ID), "executor", nil)
 		}
@@ -270,6 +284,54 @@ func (e *TmuxFormationExecutor) formationResultFromText(req FormationExecution, 
 		Text:      cleanText,
 		Outputs:   namedOutputs,
 	}, nil
+}
+
+func outputsContainKnownPort(outputs map[string]FormationOutputPayload, knownPorts map[string]bool) bool {
+	for portID := range outputs {
+		if knownPorts[portID] {
+			return true
+		}
+	}
+	return false
+}
+
+// extractDeclaredPortOutputs recovers the routing payload a real coding-agent
+// TUI emits as bare JSON when the literal ```chrote-outputs fence does not
+// survive capture (rendered away/omitted, with the echoed prompt holding the
+// contract's placeholder example). It scans for the last single-line JSON
+// object whose keys are all declared (high-entropy) output port ids, so it
+// cannot collide with echoed prose or the "port_id" placeholder. The brief
+// instructs agents to keep the chrote-outputs JSON on a single line.
+func extractDeclaredPortOutputs(text string, knownPorts map[string]bool) (string, map[string]FormationOutputPayload, bool) {
+	lines := strings.Split(text, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		open := strings.Index(lines[i], "{")
+		closeIdx := strings.LastIndex(lines[i], "}")
+		if open < 0 || closeIdx <= open {
+			continue
+		}
+		var raw map[string]any
+		if err := json.Unmarshal([]byte(lines[i][open:closeIdx+1]), &raw); err != nil || len(raw) == 0 {
+			continue
+		}
+		allKnown := true
+		for portID := range raw {
+			if !knownPorts[portID] {
+				allKnown = false
+				break
+			}
+		}
+		if !allKnown {
+			continue
+		}
+		outputs := outputPayloadsFromAny(raw)
+		if len(outputs) == 0 {
+			continue
+		}
+		remaining := append(append([]string{}, lines[:i]...), lines[i+1:]...)
+		return strings.TrimSpace(strings.Join(remaining, "\n")), outputs, true
+	}
+	return "", nil, false
 }
 
 func outputContractExtraLines(formation FormationNode) []string {
