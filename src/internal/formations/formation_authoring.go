@@ -201,10 +201,19 @@ type BoardConnection struct {
 }
 
 type GateNode struct {
-	ID        string   `json:"id"`
-	Title     string   `json:"title"`
-	Kinds     []string `json:"kinds"`
-	Criterion string   `json:"criterion"`
+	ID        string            `json:"id"`
+	Title     string            `json:"title"`
+	Kinds     []string          `json:"kinds"`
+	Criterion string            `json:"criterion"`
+	Script    *GateScriptConfig `json:"script,omitempty"`
+}
+
+type GateScriptConfig struct {
+	Root             string   `json:"root"`
+	Cwd              string   `json:"cwd"`
+	Command          []string `json:"command"`
+	TimeoutSeconds   int      `json:"timeoutSeconds"`
+	OutputLimitBytes int      `json:"outputLimitBytes"`
 }
 
 type MissionNode struct {
@@ -1332,6 +1341,13 @@ func appendGateBlock(raw []byte, gate GateNode) []byte {
 	b.WriteString("title = " + renderString(gate.Title) + "\n")
 	b.WriteString("kinds = " + renderStringArray(gate.Kinds) + "\n")
 	b.WriteString("criterion = " + renderString(gate.Criterion) + "\n")
+	if gate.Script != nil {
+		b.WriteString("scriptRoot = " + renderString(gate.Script.Root) + "\n")
+		b.WriteString("scriptCwd = " + renderString(gate.Script.Cwd) + "\n")
+		b.WriteString("scriptCommand = " + renderStringArray(gate.Script.Command) + "\n")
+		b.WriteString("scriptTimeoutSeconds = " + renderInt(gate.Script.TimeoutSeconds) + "\n")
+		b.WriteString("scriptOutputLimitBytes = " + renderInt(gate.Script.OutputLimitBytes) + "\n")
+	}
 	return []byte(b.String())
 }
 
@@ -2168,9 +2184,26 @@ func parseGateNodes(raw []byte) []GateNode {
 			current.Kinds = parseStringArray(value)
 		case "criterion":
 			current.Criterion = value
+		case "scriptRoot":
+			ensureGateScript(current).Root = value
+		case "scriptCwd":
+			ensureGateScript(current).Cwd = value
+		case "scriptCommand":
+			ensureGateScript(current).Command = parseStringArray(value)
+		case "scriptTimeoutSeconds":
+			ensureGateScript(current).TimeoutSeconds, _ = strconv.Atoi(value)
+		case "scriptOutputLimitBytes":
+			ensureGateScript(current).OutputLimitBytes, _ = strconv.Atoi(value)
 		}
 	}
 	return gates
+}
+
+func ensureGateScript(gate *GateNode) *GateScriptConfig {
+	if gate.Script == nil {
+		gate.Script = &GateScriptConfig{}
+	}
+	return gate.Script
 }
 
 func parseMissionNodes(raw []byte) []MissionNode {

@@ -82,9 +82,11 @@ type GateEvaluation struct {
 }
 
 type GateEvaluationResult struct {
-	Verdict string
-	Reason  string
-	PerKind map[string]string
+	Verdict  string
+	Reason   string
+	PerKind  map[string]string
+	Outputs  map[string]FormationOutputPayload
+	Evidence map[string]any
 }
 
 type HumanGateVerdictRequest struct {
@@ -1232,18 +1234,25 @@ func (e *RunEngine) routeGateEvaluation(runID string, board *BoardDocument, gate
 	if verdict == "fail" && len(routes) == 0 {
 		routePort = "none"
 	}
+	data := map[string]any{
+		"verdict":     verdict,
+		"perKind":     result.PerKind,
+		"routePort":   routePort,
+		"routedEdges": connectionIDs(routes),
+		"reason":      result.Reason,
+		"inputRef":    input,
+	}
+	if len(result.Outputs) > 0 {
+		data["outputs"] = result.Outputs
+	}
+	if len(result.Evidence) > 0 {
+		data["script"] = result.Evidence
+	}
 	if err := e.store.AppendRunEvent(runID, RunEvent{
 		Type:   RunEventGateVerdict,
 		GateID: gate.ID,
 		NodeID: gate.ID,
-		Data: map[string]any{
-			"verdict":     verdict,
-			"perKind":     result.PerKind,
-			"routePort":   routePort,
-			"routedEdges": connectionIDs(routes),
-			"reason":      result.Reason,
-			"inputRef":    input,
-		},
+		Data:   data,
 	}); err != nil {
 		return err
 	}
@@ -1259,6 +1268,14 @@ func (e *RunEngine) routeGateEvaluation(runID string, board *BoardDocument, gate
 		nextInput.FromNodeID = gate.ID
 		nextInput.FromPortID = routePort
 		nextInput.Ref = fmt.Sprintf("ledger://%s/%s", runID, route.ID)
+		if payload, ok := result.Outputs[routePort]; ok {
+			nextInput.Text = payload.Text
+			nextInput.ReportRef = payload.ReportRef
+			nextInput.ArtifactRef = payload.ArtifactRef
+			if payload.Ref != "" {
+				nextInput.Ref = payload.Ref
+			}
+		}
 		if err := e.deliverConnection(runID, board, gates, route, nextInput, limits, ready, queued, queue); err != nil {
 			return err
 		}
@@ -1311,6 +1328,16 @@ func (e *RunEngine) evaluateGateResult(board *BoardDocument, gate GateNode, req 
 			Verdict: normalizeGateVerdict(strings.TrimSpace(text)),
 			Reason:  "judge chain",
 		}, nil
+	}
+	if hasGateKind(gate.Kinds, "script") {
+		result, err := e.evaluateScriptGate(req, gate.Script)
+		if err != nil {
+			if blockErr := e.appendGateErrorAndBlock(req.RunID, gate.ID, scriptGateErrorCode(err), err.Error(), "script", "script gate unavailable"); blockErr != nil {
+				return GateEvaluationResult{}, blockErr
+			}
+			return GateEvaluationResult{}, errRunStopped
+		}
+		return result, nil
 	}
 	if e.gateEvaluator == nil {
 		if err := e.appendGateErrorAndBlock(req.RunID, gate.ID, "missing_gate_evaluator", "gate evaluator unavailable", "gate", "gate evaluator unavailable"); err != nil {
