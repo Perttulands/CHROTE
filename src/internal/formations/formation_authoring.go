@@ -136,6 +136,7 @@ type GateCreateRequest struct {
 	Title     string
 	Kinds     []string
 	Criterion string
+	Script    *GateScriptConfig
 	X         int
 	Y         int
 	UpdatedBy string
@@ -708,6 +709,10 @@ func (s *Store) CreateGate(slug string, req GateCreateRequest, opts WriteOptions
 		Title:     title,
 		Kinds:     kinds,
 		Criterion: req.Criterion,
+		Script:    req.Script,
+	}
+	if err := validateGateScriptAuthoringConfig(gate.Script); err != nil {
+		return nil, err
 	}
 	board, err := s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, _ *BoardDocument) ([]byte, error) {
 		return appendGateBlock(raw, gate), nil
@@ -719,6 +724,36 @@ func (s *Store) CreateGate(slug string, req GateCreateRequest, opts WriteOptions
 		return nil, err
 	}
 	return board, nil
+}
+
+func validateGateScriptAuthoringConfig(config *GateScriptConfig) error {
+	if config == nil {
+		return nil
+	}
+	if len(config.Command) == 0 {
+		return fmt.Errorf("%w: scriptCommand requires at least one --script-arg", ErrInvalidSlug)
+	}
+	for _, part := range config.Command {
+		if strings.TrimSpace(part) == "" {
+			return fmt.Errorf("%w: scriptCommand contains an empty argv part", ErrInvalidSlug)
+		}
+	}
+	if disallowedInlineShell(config.Command) {
+		return fmt.Errorf("%w: inline shell commands are not allowed", ErrInvalidSlug)
+	}
+	if strings.TrimSpace(config.Root) == "" {
+		return fmt.Errorf("%w: scriptRoot is required", ErrInvalidSlug)
+	}
+	if strings.TrimSpace(config.Cwd) == "" {
+		return fmt.Errorf("%w: scriptCwd is required", ErrInvalidSlug)
+	}
+	if config.TimeoutSeconds <= 0 {
+		return fmt.Errorf("%w: scriptTimeoutSeconds must be positive", ErrInvalidSlug)
+	}
+	if config.OutputLimitBytes <= 0 {
+		return fmt.Errorf("%w: scriptOutputLimitBytes must be positive", ErrInvalidSlug)
+	}
+	return nil
 }
 
 func (s *Store) SetGateJudgeChain(slug string, req GateJudgeRequest, opts WriteOptions) (*BoardDocument, error) {

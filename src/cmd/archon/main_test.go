@@ -969,6 +969,94 @@ updatedAt = "2026-06-03T16:00:00Z"
 	}
 }
 
+func TestArchonS4GateCreateAuthorsScriptConfigFromArgvFlags(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("session-search"), `schema = 1
+id = "brd_01J9_sesssearch"
+slug = "session-search"
+title = "Improve session search"
+rev = 7
+updatedAt = "2026-06-03T16:00:00Z"
+`)
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "gate", "create", "session-search",
+		"--title", "Script check",
+		"--kinds", "script",
+		"--criterion", "criterion is documentation only; do not run echo unsafe",
+		"--script-root", ".",
+		"--script-cwd", "checks",
+		"--script-arg", "./pass.sh",
+		"--script-arg", "--format",
+		"--script-arg", "json",
+		"--script-timeout-seconds", "7",
+		"--script-output-limit-bytes", "2048",
+		"--json")
+	if code != 0 {
+		t.Fatalf("gate create script code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var jsonBoard formations.BoardDocument
+	if err := json.Unmarshal([]byte(stdout), &jsonBoard); err != nil {
+		t.Fatalf("gate create script JSON did not decode as board document: %v\n%s", err, stdout)
+	}
+	if len(jsonBoard.Gates) != 1 || jsonBoard.Gates[0].Script == nil {
+		t.Fatalf("gate create JSON = %+v, want script gate config", jsonBoard.Gates)
+	}
+	script := jsonBoard.Gates[0].Script
+	if script.Root != "." || script.Cwd != "checks" || strings.Join(script.Command, "\x00") != "./pass.sh\x00--format\x00json" || script.TimeoutSeconds != 7 || script.OutputLimitBytes != 2048 {
+		t.Fatalf("script config = %+v, want argv-backed explicit config", script)
+	}
+
+	raw := readArchonFile(t, store.BoardPath("session-search"))
+	for _, want := range []string{
+		`kinds = ["script"]`,
+		`criterion = "criterion is documentation only; do not run echo unsafe"`,
+		`scriptRoot = "."`,
+		`scriptCwd = "checks"`,
+		`scriptCommand = ["./pass.sh", "--format", "json"]`,
+		`scriptTimeoutSeconds = 7`,
+		`scriptOutputLimitBytes = 2048`,
+	} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("gate create script TOML missing %q:\n%s", want, raw)
+		}
+	}
+}
+
+func TestArchonS4GateCreateRejectsInlineShellScriptCommand(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("session-search"), `schema = 1
+id = "brd_01J9_sesssearch"
+slug = "session-search"
+title = "Improve session search"
+rev = 7
+updatedAt = "2026-06-03T16:00:00Z"
+`)
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "gate", "create", "session-search",
+		"--kinds", "script",
+		"--criterion", "criterion stays data-only",
+		"--script-root", ".",
+		"--script-arg", "sh",
+		"--script-arg", "-c",
+		"--script-arg", "touch should-not-exist",
+		"--script-timeout-seconds", "7",
+		"--script-output-limit-bytes", "2048")
+	if code == 0 {
+		t.Fatalf("gate create accepted inline shell command stdout=%s stderr=%s", stdout, stderr)
+	}
+	if !strings.Contains(stderr, "inline shell commands are not allowed") {
+		t.Fatalf("stderr = %q, want inline shell rejection", stderr)
+	}
+	raw := readArchonFile(t, store.BoardPath("session-search"))
+	if strings.Contains(raw, "[[gate]]") {
+		t.Fatalf("rejected script command mutated board:\n%s", raw)
+	}
+}
+
 func TestArchonS3GateJudgeChainAndDetach(t *testing.T) {
 	workspace := t.TempDir()
 	store := formations.NewStore(workspace)
@@ -1804,6 +1892,7 @@ func TestArchonS4ConfiguredLabExecutorMissingRootBlocksWithSpecificReason(t *tes
 	t.Setenv("CHROTE_AGENTS_DIR", agentsDir)
 	t.Setenv("CHROTE_FORMATIONS_LAB_HARNESSES", "lab-fake")
 	t.Setenv("CHROTE_FORMATIONS_LAB_CWD", workspace)
+	t.Setenv("CHROTE_FORMATIONS_LAB_ROOTS", "")
 
 	personas := formations.NewPersonaStore(agentsDir)
 	if _, err := personas.CreatePersona(formations.CreatePersonaRequest{

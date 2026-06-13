@@ -742,6 +742,12 @@ func runGateCreate(store *formations.Store, args []string, stdout, stderr io.Wri
 	title := fs.String("title", "Review gate", "gate title")
 	kinds := fs.String("kinds", "code", "comma-separated gate kinds")
 	criterion := fs.String("criterion", "", "gate criterion")
+	scriptRoot := fs.String("script-root", "", "script gate root directory under workspace")
+	scriptCwd := fs.String("script-cwd", ".", "script gate working directory under script root")
+	var scriptArgs stringList
+	fs.Var(&scriptArgs, "script-arg", "script gate command argv part; repeat for each argv piece")
+	scriptTimeoutSeconds := fs.Int("script-timeout-seconds", 0, "script gate timeout in seconds")
+	scriptOutputLimitBytes := fs.Int("script-output-limit-bytes", 0, "script gate output limit in bytes")
 	x := fs.Int("x", 0, "layout x coordinate")
 	y := fs.Int("y", 0, "layout y coordinate")
 	updatedBy := fs.String("updated-by", "agent:archon", "update actor")
@@ -750,8 +756,18 @@ func runGateCreate(store *formations.Store, args []string, stdout, stderr io.Wri
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: archon gate create <board> [--kinds code,human] [--criterion text] [--x n] [--y n] [--json]")
+		fmt.Fprintln(stderr, "usage: archon gate create <board> [--kinds code,human] [--criterion text] [--script-root dir --script-arg argv ... --script-timeout-seconds n --script-output-limit-bytes n] [--x n] [--y n] [--json]")
 		return 2
+	}
+	script := gateScriptConfigFromFlags(fs, *scriptRoot, *scriptCwd, scriptArgs, *scriptTimeoutSeconds, *scriptOutputLimitBytes)
+	gateKinds := splitCSV(*kinds)
+	if script != nil {
+		if !flagWasPassed(fs, "kinds") && *kinds == "code" {
+			gateKinds = []string{"script"}
+		}
+		if !containsString(gateKinds, "script") {
+			return fail(stderr, fmt.Errorf("%w: script config requires script gate kind", formations.ErrInvalidSlug))
+		}
 	}
 	slug, err := store.ResolveBoardSelector(fs.Arg(0))
 	if err != nil {
@@ -763,8 +779,9 @@ func runGateCreate(store *formations.Store, args []string, stdout, stderr io.Wri
 	}
 	result, err := store.CreateGate(slug, formations.GateCreateRequest{
 		Title:     *title,
-		Kinds:     splitCSV(*kinds),
+		Kinds:     gateKinds,
 		Criterion: *criterion,
+		Script:    script,
 		X:         *x,
 		Y:         *y,
 		UpdatedBy: *updatedBy,
@@ -1937,6 +1954,47 @@ func splitCSV(raw string) []string {
 		}
 	}
 	return values
+}
+
+func gateScriptConfigFromFlags(fs *flag.FlagSet, root, cwd string, command []string, timeoutSeconds, outputLimitBytes int) *formations.GateScriptConfig {
+	if !anyFlagWasPassed(fs, "script-root", "script-cwd", "script-arg", "script-timeout-seconds", "script-output-limit-bytes") {
+		return nil
+	}
+	return &formations.GateScriptConfig{
+		Root:             root,
+		Cwd:              cwd,
+		Command:          append([]string(nil), command...),
+		TimeoutSeconds:   timeoutSeconds,
+		OutputLimitBytes: outputLimitBytes,
+	}
+}
+
+func anyFlagWasPassed(fs *flag.FlagSet, names ...string) bool {
+	for _, name := range names {
+		if flagWasPassed(fs, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func flagWasPassed(fs *flag.FlagSet, name string) bool {
+	passed := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			passed = true
+		}
+	})
+	return passed
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func stringFromMap(values map[string]any, key string) string {
