@@ -54,7 +54,15 @@ README.md.backup
 *.db
 *.db-wal
 *.db-shm
-.beads/
+# Beads workspace: track durable issue data + identity with the code,
+# ignore the local Dolt database and runtime files (see .beads/.gitignore).
+.beads/*
+!.beads/issues.jsonl
+!.beads/metadata.json
+!.beads/config.yaml
+!.beads/README.md
+!.beads/WORKSPACE.md
+!.beads/.gitignore
 src/internal/dashboard/dist/
 src/internal/dashboard/assets/
 src/internal/dashboard/music/
@@ -73,3 +81,6 @@ dashboard/playwright-report/data/
 # Beads / Dolt files (added by bd init)
 .dolt/
 .beads-credential-key
+
+# Beads / Dolt files (added by bd init)
+.beads/proxieddb/
