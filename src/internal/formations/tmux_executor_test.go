@@ -1149,6 +1149,50 @@ fi
 // deterministic bash responder hid this by echoing a literal fence keyed by the
 // real port id. The executor must recover the declared-port-keyed JSON the
 // agent actually emitted, while still failing loud on unknown/missing ports.
+func TestFormationResultRecoversWrappedBarePortJSONFromRealAgentCapture(t *testing.T) {
+	portSummary := "port_01KV32R9HVVQW6MS4DSFMPN8S4"
+	portRaw := "port_01KV32R9J56WPS7H39SC0SNWQ9"
+	fence := "```"
+	// Codex can render the declared-port JSON without fences and wrap the line
+	// inside quoted string values even when capture-pane uses -J. The executor
+	// must recover this real answer instead of treating the echoed placeholder
+	// contract as the output payload.
+	captured := strings.Join([]string{
+		"formation output contract:",
+		fence + "chrote-outputs",
+		`{"port_id":{"text":"payload for that output"}}`,
+		fence,
+		"Use all and only these output port ids:",
+		"- " + portSummary + ` label="Output"`,
+		"- " + portRaw + ` label="Raw evidence"`,
+		"REAL-SCOUT-COLLECTED",
+		`{"` + portSummary + `":{"text":"REAL-SCOUT-COLLECTED summary fans out to script gate and peer review; scout raw evidence`,
+		`  enters judge gate before final fan-in."},"` + portRaw + `":{"text":"Raw evidence lives under /tmp/chrote-reports/20260614T124716Z-real-agent-`,
+		`  holistic-mission/workspace and the log bundle will include REAL_AGENT_LOG_BUNDLE."}}`,
+		"<<<CHROTE-DONE run-id=run_01KV32R9SQ9NZAG8VQTCW3R5KW status=ok artifact=artifacts/real-scout-evidence.txt>>>",
+	}, "\n")
+
+	exec := &TmuxFormationExecutor{config: TmuxExecutorConfig{OutputCapBytes: 1 << 20}}
+	req := FormationExecution{
+		NodeID: "fmn_collect",
+		Formation: FormationNode{Outputs: []FormationPort{
+			{ID: portSummary, Label: "Output"},
+			{ID: portRaw, Label: "Raw evidence"},
+		}},
+	}
+
+	res, err := exec.formationResultFromText(req, "report", captured)
+	if err != nil {
+		t.Fatalf("formationResultFromText errored on wrapped real-agent bare JSON: %v", err)
+	}
+	if !strings.Contains(res.Outputs[portSummary].Text, "summary fans out") {
+		t.Fatalf("summary output not recovered from wrapped JSON: %#v", res.Outputs[portSummary])
+	}
+	if !strings.Contains(res.Outputs[portRaw].Text, "REAL_AGENT_LOG_BUNDLE") {
+		t.Fatalf("raw output not recovered from wrapped JSON: %#v", res.Outputs[portRaw])
+	}
+}
+
 func TestFormationResultRecoversBarePortJSONFromRealAgentCapture(t *testing.T) {
 	port := "port_01KV09ZAXN949Y9N1GGW1KDAHT"
 	fence := "```"

@@ -298,10 +298,11 @@ func outputsContainKnownPort(outputs map[string]FormationOutputPayload, knownPor
 // extractDeclaredPortOutputs recovers the routing payload a real coding-agent
 // TUI emits as bare JSON when the literal ```chrote-outputs fence does not
 // survive capture (rendered away/omitted, with the echoed prompt holding the
-// contract's placeholder example). It scans for the last single-line JSON
-// object whose keys are all declared (high-entropy) output port ids, so it
-// cannot collide with echoed prose or the "port_id" placeholder. The brief
-// instructs agents to keep the chrote-outputs JSON on a single line.
+// contract's placeholder example). It first scans for a single-line JSON
+// object, then falls back to a multiline candidate because real TUIs can wrap
+// long bare JSON inside string values even after capture-pane joins soft wraps.
+// Only objects whose keys are all declared output port ids are accepted, so it
+// cannot collide with echoed prose or the "port_id" placeholder.
 func extractDeclaredPortOutputs(text string, knownPorts map[string]bool) (string, map[string]FormationOutputPayload, bool) {
 	lines := strings.Split(text, "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
@@ -310,8 +311,36 @@ func extractDeclaredPortOutputs(text string, knownPorts map[string]bool) (string
 		if open < 0 || closeIdx <= open {
 			continue
 		}
+		if outputs, ok := decodeDeclaredPortJSONCandidate(lines[i][open:closeIdx+1], knownPorts); ok {
+			remaining := append(append([]string{}, lines[:i]...), lines[i+1:]...)
+			return strings.TrimSpace(strings.Join(remaining, "\n")), outputs, true
+		}
+	}
+	for startLine := len(lines) - 1; startLine >= 0; startLine-- {
+		for _, startCol := range jsonObjectStartColumns(lines[startLine]) {
+			endLine, endCol, ok := jsonObjectEnd(lines, startLine, startCol)
+			if !ok || endLine == startLine {
+				continue
+			}
+			candidateLines := append([]string{}, lines[startLine:endLine+1]...)
+			candidateLines[0] = candidateLines[0][startCol:]
+			candidateLines[len(candidateLines)-1] = candidateLines[len(candidateLines)-1][:endCol+1]
+			candidate := strings.Join(candidateLines, "\n")
+			outputs, ok := decodeDeclaredPortJSONCandidate(candidate, knownPorts)
+			if !ok {
+				continue
+			}
+			remaining := append(append([]string{}, lines[:startLine]...), lines[endLine+1:]...)
+			return strings.TrimSpace(strings.Join(remaining, "\n")), outputs, true
+		}
+	}
+	return "", nil, false
+}
+
+func decodeDeclaredPortJSONCandidate(candidate string, knownPorts map[string]bool) (map[string]FormationOutputPayload, bool) {
+	for _, text := range []string{candidate, repairWrappedJSONCandidate(candidate)} {
 		var raw map[string]any
-		if err := json.Unmarshal([]byte(lines[i][open:closeIdx+1]), &raw); err != nil || len(raw) == 0 {
+		if err := json.Unmarshal([]byte(text), &raw); err != nil || len(raw) == 0 {
 			continue
 		}
 		allKnown := true
@@ -328,10 +357,99 @@ func extractDeclaredPortOutputs(text string, knownPorts map[string]bool) (string
 		if len(outputs) == 0 {
 			continue
 		}
-		remaining := append(append([]string{}, lines[:i]...), lines[i+1:]...)
-		return strings.TrimSpace(strings.Join(remaining, "\n")), outputs, true
+		return outputs, true
 	}
-	return "", nil, false
+	return nil, false
+}
+
+func jsonObjectStartColumns(line string) []int {
+	cols := []int{}
+	for i, r := range line {
+		if r == '{' {
+			cols = append(cols, i)
+		}
+	}
+	return cols
+}
+
+func jsonObjectEnd(lines []string, startLine, startCol int) (int, int, bool) {
+	depth := 0
+	inString := false
+	escaped := false
+	for lineIdx := startLine; lineIdx < len(lines); lineIdx++ {
+		line := lines[lineIdx]
+		colStart := 0
+		if lineIdx == startLine {
+			colStart = startCol
+		}
+		for col := colStart; col < len(line); col++ {
+			ch := line[col]
+			if inString {
+				if escaped {
+					escaped = false
+					continue
+				}
+				switch ch {
+				case '\\':
+					escaped = true
+				case '"':
+					inString = false
+				}
+				continue
+			}
+			switch ch {
+			case '"':
+				inString = true
+			case '{':
+				depth++
+			case '}':
+				depth--
+				if depth == 0 {
+					return lineIdx, col, true
+				}
+			}
+		}
+	}
+	return 0, 0, false
+}
+
+func repairWrappedJSONCandidate(candidate string) string {
+	var b strings.Builder
+	inString := false
+	escaped := false
+	for _, r := range candidate {
+		if r == '\r' {
+			continue
+		}
+		if r == '\n' {
+			if inString {
+				b.WriteByte(' ')
+			} else {
+				b.WriteByte('\n')
+			}
+			continue
+		}
+		if inString {
+			if escaped {
+				escaped = false
+				b.WriteRune(r)
+				continue
+			}
+			switch r {
+			case '\\':
+				escaped = true
+			case '"':
+				inString = false
+			}
+			b.WriteRune(r)
+			continue
+		}
+		if r == '"' {
+			inString = true
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 func outputContractExtraLines(formation FormationNode) []string {

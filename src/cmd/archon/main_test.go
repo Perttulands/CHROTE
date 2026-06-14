@@ -176,7 +176,7 @@ func TestArchonAgentNewClaudeCodeDefaultsLaunchAndSpawnUsesIt(t *testing.T) {
 	agentsDir := t.TempDir()
 	t.Setenv("CHROTE_AGENTS_DIR", agentsDir)
 	runner := &fakeTmux{live: map[string]bool{}}
-	wantLaunch := "HOME=/home/perttu claude --dangerously-skip-permissions --effort=\"max\""
+	wantLaunch := "HOME=/home/perttu claude --dangerously-skip-permissions --model opus --effort=\"max\""
 
 	stdout, stderr, code := runArchon(t, runner, "agent", "new", "clauder", "--kind", "specialist", "--harness", "claude-code", "--json")
 	if code != 0 {
@@ -197,6 +197,42 @@ func TestArchonAgentNewClaudeCodeDefaultsLaunchAndSpawnUsesIt(t *testing.T) {
 	}
 	if len(runner.spawned) != 1 || runner.spawned[0] != "clauder:"+wantLaunch {
 		t.Fatalf("spawned=%#v, want clauder:%s", runner.spawned, wantLaunch)
+	}
+}
+
+func TestArchonAgentLaunchOverrideFlagsPersistAndSpawn(t *testing.T) {
+	agentsDir := t.TempDir()
+	t.Setenv("CHROTE_AGENTS_DIR", agentsDir)
+	runner := &fakeTmux{live: map[string]bool{}}
+	customLaunch := "HOME=/home/perttu claude --dangerously-skip-permissions --model sonnet --effort=\"max\""
+
+	stdout, stderr, code := runArchon(t, runner, "agent", "new", "custom", "--kind", "specialist", "--harness", "claude-code", "--launch", customLaunch, "--json")
+	if code != 0 {
+		t.Fatalf("create custom launch failed: code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var card formations.PersonaCard
+	if err := json.Unmarshal([]byte(stdout), &card); err != nil {
+		t.Fatalf("decode custom card JSON: %v\n%s", err, stdout)
+	}
+	if got := card.DefaultVariant().Launch; got != customLaunch {
+		t.Fatalf("new --launch persisted %q, want %q", got, customLaunch)
+	}
+
+	stdout, stderr, code = runArchon(t, runner, "agent", "spawn", "custom")
+	if code != 0 {
+		t.Fatalf("spawn custom failed: code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	if len(runner.spawned) != 1 || runner.spawned[0] != "custom:"+customLaunch {
+		t.Fatalf("spawned=%#v, want custom:%s", runner.spawned, customLaunch)
+	}
+
+	stdout, stderr, code = runArchon(t, runner, "agent", "edit", "custom", "--add-harness", "openai-codex", "--session-stem", "codex-custom", "--launch", "codex --yolo --test", "--json")
+	if code != 0 {
+		t.Fatalf("edit custom harness launch failed: code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	raw := readArchonFile(t, filepath.Join(agentsDir, "custom.toml"))
+	if !strings.Contains(raw, `launch = "codex --yolo --test"`) {
+		t.Fatalf("edit --launch missing from added harness:\n%s", raw)
 	}
 }
 

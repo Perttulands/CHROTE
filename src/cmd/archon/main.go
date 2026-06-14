@@ -333,12 +333,13 @@ func runAgentNew(store *formations.PersonaStore, args []string, stdout, stderr i
 	capable := fs.String("capable", "", "comma-separated bare capabilities")
 	personality := fs.String("personality", "", "personality facet")
 	from := fs.String("from", "", "source config path")
+	launch := fs.String("launch", "", "harness launch command")
 	jsonOut := fs.Bool("json", false, "write JSON")
 	if err := fs.Parse(reorderFlags(args, map[string]bool{"json": true})); err != nil {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: archon agent new <id> --kind <kind> [--harness <h>] [--from <path>]")
+		fmt.Fprintln(stderr, "usage: archon agent new <id> --kind <kind> [--harness <h>] [--launch <cmd>] [--from <path>]")
 		return 2
 	}
 	card, err := store.CreatePersona(formations.CreatePersonaRequest{
@@ -348,6 +349,7 @@ func runAgentNew(store *formations.PersonaStore, args []string, stdout, stderr i
 		Capabilities: splitCSV(*capable),
 		Personality:  *personality,
 		Source:       *from,
+		Launch:       *launch,
 	})
 	if err != nil {
 		return fail(stderr, err)
@@ -367,13 +369,14 @@ func runAgentEdit(store *formations.PersonaStore, args []string, stdout, stderr 
 	removeCapability := fs.String("remove-capability", "", "remove bare capability")
 	addHarness := fs.String("add-harness", "", "add harness variant")
 	sessionStem := fs.String("session-stem", "", "session stem for added harness")
+	launch := fs.String("launch", "", "launch command for new/edited harness")
 	note := fs.String("note", "", "append note")
 	jsonOut := fs.Bool("json", false, "write JSON")
 	if err := fs.Parse(reorderFlags(args, map[string]bool{"json": true})); err != nil {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: archon agent edit <id> [--add-capability t|--remove-capability t|--add-harness h --session-stem s|--note text]")
+		fmt.Fprintln(stderr, "usage: archon agent edit <id> [--add-capability t|--remove-capability t|--add-harness h --session-stem s --launch cmd|--note text]")
 		return 2
 	}
 	before, err := store.ReadPersona(fs.Arg(0))
@@ -385,6 +388,7 @@ func runAgentEdit(store *formations.PersonaStore, args []string, stdout, stderr 
 		RemoveCapability: *removeCapability,
 		AddHarness:       *addHarness,
 		SessionStem:      *sessionStem,
+		Launch:           *launch,
 		Note:             *note,
 		ExpectedETag:     before.ETag,
 	})

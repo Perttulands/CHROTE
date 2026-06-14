@@ -814,7 +814,7 @@ func inferLaunch(harness, source string) string {
 		return "codex --yolo -c check_for_update_on_startup=false"
 	}
 	if harness == "claude-code" {
-		return "HOME=/home/perttu claude --dangerously-skip-permissions --effort=\"max\""
+		return "HOME=/home/perttu claude --dangerously-skip-permissions --model opus --effort=\"max\""
 	}
 	if harness == "hermes" && source != "" {
 		return "hermes --profile " + shellQuote(source)
