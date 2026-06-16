@@ -218,7 +218,7 @@
     <div class="flow">
         <span class="flow-step">PR Merged</span>
         <span class="flow-arrow">→</span>
-        <span class="flow-step">Build in /tmp</span>
+        <span class="flow-step">Build artifact</span>
         <span class="flow-arrow">→</span>
         <span class="flow-step">Test</span>
         <span class="flow-arrow">→</span>
@@ -233,7 +233,7 @@ set -e
 
 SERVICE="chrote-server"
 DEPLOY_DIR="/opt/chrote"
-BUILD_DIR="/tmp/chrote-build-$$"
+BUILD_DIR="$DEPLOY_DIR/builds/chrote-build-$$"
 
 # 1. Build new version (doesn't touch running service)
 git pull origin main
@@ -497,8 +497,9 @@ cd dashboard && npm run build
 rsync -av dist/ /var/www/chrote/
 
 # Deploy Go server
-go build -o /tmp/server ./cmd/server
-systemctl stop chrote && mv /tmp/server /opt/chrote/ && systemctl start chrote
+mkdir -p /opt/chrote/builds
+go build -o /opt/chrote/builds/server ./cmd/server
+systemctl stop chrote && mv /opt/chrote/builds/server /opt/chrote/ && systemctl start chrote
 
 # Verify
 curl http://localhost:8080/api/health</code></pre>

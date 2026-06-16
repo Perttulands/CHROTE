@@ -360,23 +360,50 @@ customFuture = "keep me"
 		t.Fatalf("formation create did not preserve board structure/layout split:\n%s", boardRaw)
 	}
 
-	stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "formation", "list", "--json")
+	// formation list is scoped to ONE board and reports the board's formations,
+	// not the global board list. Decode the formations array and assert the
+	// formation we just created is present with its formation-level fields.
+	stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "formation", "list", "session-search", "--json")
 	if code != 0 {
 		t.Fatalf("formation list code=%d stderr=%s stdout=%s", code, stderr, stdout)
 	}
-	if !strings.Contains(stdout, `"slug": "session-search"`) || !strings.Contains(stdout, `"rev": 8`) {
-		t.Fatalf("list JSON missing board summary: %s", stdout)
+	var listResponse struct {
+		Board      archonBoardIdentity        `json:"board"`
+		Formations []formations.FormationNode `json:"formations"`
 	}
+	if err := json.Unmarshal([]byte(stdout), &listResponse); err != nil {
+		t.Fatalf("decode formation list: %v\n%s", err, stdout)
+	}
+	if listResponse.Board.Slug != "session-search" || listResponse.Board.Rev != 8 {
+		t.Fatalf("formation list board identity = %+v, want session-search rev 8", listResponse.Board)
+	}
+	if len(listResponse.Formations) != 1 || listResponse.Formations[0].Type != "peer" || listResponse.Formations[0].Title != "Research huddle" {
+		t.Fatalf("formation list formations = %+v, want one peer formation", listResponse.Formations)
+	}
+	createdID := listResponse.Formations[0].ID
 
-	stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "formation", "inspect", "brd_01J9_sesssearch", "--json")
+	// formation inspect resolves a single formation BY id within the board and
+	// returns formation-level detail (type/title/slots/ports), not a board summary.
+	stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "formation", "inspect", "session-search", createdID, "--json")
 	if code != 0 {
 		t.Fatalf("formation inspect by id code=%d stderr=%s stdout=%s", code, stderr, stdout)
 	}
-	if !strings.Contains(stdout, `"slug": "session-search"`) || !strings.Contains(stdout, `"title": "Research huddle"`) {
-		t.Fatalf("inspect JSON missing structural formation: %s", stdout)
+	var inspectResponse struct {
+		Board       archonBoardIdentity          `json:"board"`
+		Formation   formations.FormationNode     `json:"formation"`
+		Connections []formations.BoardConnection `json:"connections"`
 	}
-	if strings.Contains(stdout, `"x":`) || strings.Contains(stdout, `"y":`) {
-		t.Fatalf("inspect JSON leaked layout coordinates: %s", stdout)
+	if err := json.Unmarshal([]byte(stdout), &inspectResponse); err != nil {
+		t.Fatalf("decode formation inspect: %v\n%s", err, stdout)
+	}
+	if inspectResponse.Formation.ID != createdID || inspectResponse.Formation.Type != "peer" || inspectResponse.Formation.Title != "Research huddle" {
+		t.Fatalf("formation inspect formation = %+v, want the created peer formation", inspectResponse.Formation)
+	}
+	if inspectResponse.Board.Slug != "session-search" {
+		t.Fatalf("formation inspect board = %+v, want session-search context", inspectResponse.Board)
+	}
+	if strings.Contains(stdout, `"x":`) || strings.Contains(stdout, `"y":`) || strings.Contains(stdout, "toml") {
+		t.Fatalf("inspect JSON leaked layout coordinates or raw TOML: %s", stdout)
 	}
 }
 
@@ -475,12 +502,16 @@ to = "gate_review:in"
 	}
 }
 
-func TestArchonBoardNewCreatesDurableBoardJSONAndText(t *testing.T) {
+// TestArchonBoardNewCreatesMissionBoardJSONAndText locks the Mission Board create
+// CLI contract: `board new` creates the board AND its single mission atomically,
+// so the created board file already carries the mission block and the JSON output
+// surfaces it. A board is never created empty.
+func TestArchonBoardNewCreatesMissionBoardJSONAndText(t *testing.T) {
 	workspace := t.TempDir()
 	store := formations.NewStore(workspace)
 	runner := &fakeTmux{live: map[string]bool{}}
 
-	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "board", "new", "poems", "--title", "Poems", "--json")
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "board", "new", "poems", "--title", "Poems", "--goal", "Ship a poem", "--bead", "home-vdki.34.1", "--x", "150", "--y", "90", "--json")
 	if code != 0 {
 		t.Fatalf("board new --json code=%d stderr=%s stdout=%s", code, stderr, stdout)
 	}
@@ -491,17 +522,30 @@ func TestArchonBoardNewCreatesDurableBoardJSONAndText(t *testing.T) {
 	if board.Slug != "poems" || board.Title != "Poems" || board.Rev != 1 || !strings.HasPrefix(board.ID, "brd_") || board.ETag == "" {
 		t.Fatalf("board new JSON = %+v, want durable board identity", board)
 	}
+	if len(board.Missions) != 1 || board.Missions[0].Goal != "Ship a poem" || board.Missions[0].BeadID != "home-vdki.34.1" {
+		t.Fatalf("board new JSON missions = %+v, want the single created mission", board.Missions)
+	}
 	if board.TOML != "" || strings.Contains(stdout, "toml") {
 		t.Fatalf("board new JSON leaked raw TOML: %s", stdout)
 	}
 	raw := readArchonFile(t, store.BoardPath("poems"))
-	for _, want := range []string{`schema = 1`, `slug = "poems"`, `title = "Poems"`, `rev = 1`} {
+	for _, want := range []string{`schema = 1`, `slug = "poems"`, `title = "Poems"`, `rev = 1`, `[[mission]]`, `goal = "Ship a poem"`, `beadId = "home-vdki.34.1"`} {
 		if !strings.Contains(raw, want) {
 			t.Fatalf("created board file missing %q:\n%s", want, raw)
 		}
 	}
+	if strings.Contains(raw, "x = 150") || strings.Contains(raw, "y = 90") {
+		t.Fatalf("mission layout coordinates leaked into board definition:\n%s", raw)
+	}
+	layout, err := store.ReadLayout("poems")
+	if err != nil {
+		t.Fatalf("read layout: %v", err)
+	}
+	if len(layout.Nodes) != 1 || layout.Nodes[0].ID != board.Missions[0].ID || layout.Nodes[0].X != 150 || layout.Nodes[0].Y != 90 {
+		t.Fatalf("layout nodes = %+v, want the mission placed at 150,90", layout.Nodes)
+	}
 
-	stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "board", "new", "drafts", "--title", "Drafts")
+	stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "board", "new", "drafts", "--title", "Drafts", "--goal", "Write drafts")
 	if code != 0 {
 		t.Fatalf("board new text code=%d stderr=%s stdout=%s", code, stderr, stdout)
 	}
@@ -515,6 +559,9 @@ func TestArchonBoardNewCreatesDurableBoardJSONAndText(t *testing.T) {
 	if drafts.Title != "Drafts" || drafts.Rev != 1 || !strings.HasPrefix(drafts.ID, "brd_") {
 		t.Fatalf("text-created board = %+v, want persisted board", drafts)
 	}
+	if len(drafts.Missions) != 1 || drafts.Missions[0].Goal != "Write drafts" {
+		t.Fatalf("text-created board missions = %+v, want the single created mission", drafts.Missions)
+	}
 }
 
 func TestArchonBoardNewDuplicateFailsWithoutChangingBoard(t *testing.T) {
@@ -522,12 +569,12 @@ func TestArchonBoardNewDuplicateFailsWithoutChangingBoard(t *testing.T) {
 	store := formations.NewStore(workspace)
 	runner := &fakeTmux{live: map[string]bool{}}
 
-	if _, stderr, code := runArchon(t, runner, "--workspace", workspace, "board", "new", "poems", "--title", "Poems"); code != 0 {
+	if _, stderr, code := runArchon(t, runner, "--workspace", workspace, "board", "new", "poems", "--title", "Poems", "--goal", "Ship a poem"); code != 0 {
 		t.Fatalf("first board create failed: %d %s", code, stderr)
 	}
 	before := readArchonFile(t, store.BoardPath("poems"))
 
-	_, stderr, code := runArchon(t, runner, "--workspace", workspace, "board", "new", "poems", "--title", "Different")
+	_, stderr, code := runArchon(t, runner, "--workspace", workspace, "board", "new", "poems", "--title", "Different", "--goal", "Other goal")
 	if code == 0 || !strings.Contains(stderr, "already exists") {
 		t.Fatalf("duplicate board create code=%d stderr=%s", code, stderr)
 	}
@@ -537,18 +584,27 @@ func TestArchonBoardNewDuplicateFailsWithoutChangingBoard(t *testing.T) {
 	}
 }
 
-func TestArchonBoardNewRequiresSlugAndTitle(t *testing.T) {
+// TestArchonBoardNewRequiresSlugTitleAndGoal asserts that creating a Mission
+// Board requires all three identity inputs: a slug, a board title, and the
+// mission's goal. A board cannot exist without its mission, so the goal is
+// required up front rather than added later.
+func TestArchonBoardNewRequiresSlugTitleAndGoal(t *testing.T) {
 	workspace := t.TempDir()
 	runner := &fakeTmux{live: map[string]bool{}}
 
-	_, stderr, code := runArchon(t, runner, "--workspace", workspace, "board", "new", "--title", "Missing slug")
+	_, stderr, code := runArchon(t, runner, "--workspace", workspace, "board", "new", "--title", "Missing slug", "--goal", "g")
 	if code == 0 || !strings.Contains(stderr, "usage: archon board new") {
 		t.Fatalf("missing slug code=%d stderr=%s", code, stderr)
 	}
 
-	_, stderr, code = runArchon(t, runner, "--workspace", workspace, "board", "new", "poems")
+	_, stderr, code = runArchon(t, runner, "--workspace", workspace, "board", "new", "poems", "--goal", "g")
 	if code == 0 || !strings.Contains(stderr, "--title") {
 		t.Fatalf("missing title code=%d stderr=%s", code, stderr)
+	}
+
+	_, stderr, code = runArchon(t, runner, "--workspace", workspace, "board", "new", "poems", "--title", "Poems")
+	if code == 0 || !strings.Contains(stderr, "--goal") {
+		t.Fatalf("missing goal code=%d stderr=%s", code, stderr)
 	}
 }
 
@@ -2731,6 +2787,1056 @@ to = "gate_review:in"
 id = "edge_gate_pass_polish"
 from = "gate_review:pass"
 to = "fmn_polish:port_polish_in"
+`
+}
+
+// archonFormationDetailBoardFixture is a board with one richly populated
+// formation (two slots, one assigned; one input port, one output port) wired to
+// a gate, so formation list/inspect can be asserted at formation granularity.
+func archonFormationDetailBoardFixture() string {
+	return `schema = 1
+id = "brd_detail"
+slug = "detail"
+title = "Detail board"
+rev = 4
+
+[[formation]]
+id = "fmn_huddle"
+type = "peer"
+title = "Research huddle"
+
+[[formation.input]]
+id = "port_huddle_in"
+label = "Brief in"
+
+[[formation.output]]
+id = "port_huddle_out"
+label = "Findings out"
+
+[[formation.slot]]
+id = "slot_lead"
+label = "Lead"
+agentId = "scout"
+harness = "openai-codex"
+controller = true
+
+[[formation.slot]]
+id = "slot_helper"
+label = "Helper"
+controller = false
+
+[[gate]]
+id = "gate_check"
+title = "Check"
+kinds = ["human"]
+criterion = "Findings are sound"
+
+[[connection]]
+id = "edge_huddle_gate"
+from = "fmn_huddle:port_huddle_out"
+to = "gate_check:in"
+`
+}
+
+func TestArchonFormationListAndInspectReportFormationLevelDetail(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("detail"), archonFormationDetailBoardFixture())
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "formation", "list", "detail", "--json")
+	if code != 0 {
+		t.Fatalf("formation list code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var list struct {
+		Board      archonBoardIdentity        `json:"board"`
+		Formations []formations.FormationNode `json:"formations"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &list); err != nil {
+		t.Fatalf("decode formation list: %v\n%s", err, stdout)
+	}
+	if list.Board.Slug != "detail" || list.Board.ID != "brd_detail" {
+		t.Fatalf("formation list board = %+v, want detail board context", list.Board)
+	}
+	if len(list.Formations) != 1 || list.Formations[0].ID != "fmn_huddle" ||
+		list.Formations[0].Type != "peer" || len(list.Formations[0].Slots) != 2 {
+		t.Fatalf("formation list = %+v, want one peer formation with two slots", list.Formations)
+	}
+	// List must not leak global board summaries (the bug it replaces did).
+	if strings.Contains(stdout, `"boards"`) || strings.Contains(stdout, "toml") {
+		t.Fatalf("formation list leaked board-list/raw fields: %s", stdout)
+	}
+
+	stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "formation", "inspect", "detail", "research-huddle", "--json")
+	if code != 0 {
+		t.Fatalf("formation inspect code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var inspect struct {
+		Board       archonBoardIdentity          `json:"board"`
+		Formation   formations.FormationNode     `json:"formation"`
+		Connections []formations.BoardConnection `json:"connections"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &inspect); err != nil {
+		t.Fatalf("decode formation inspect: %v\n%s", err, stdout)
+	}
+	if inspect.Formation.ID != "fmn_huddle" || inspect.Formation.Type != "peer" {
+		t.Fatalf("formation inspect formation = %+v, want fmn_huddle peer", inspect.Formation)
+	}
+	if len(inspect.Formation.Inputs) != 1 || inspect.Formation.Inputs[0].ID != "port_huddle_in" ||
+		len(inspect.Formation.Outputs) != 1 || inspect.Formation.Outputs[0].ID != "port_huddle_out" {
+		t.Fatalf("formation inspect ports = inputs %+v outputs %+v, want one each", inspect.Formation.Inputs, inspect.Formation.Outputs)
+	}
+	if len(inspect.Formation.Slots) != 2 || inspect.Formation.Slots[0].AgentID != "scout" || inspect.Formation.Slots[1].AgentID != "" {
+		t.Fatalf("formation inspect slots = %+v, want one assigned and one empty", inspect.Formation.Slots)
+	}
+	// Connections must be only the ones touching this formation, not the board's
+	// global graph (here: the edge from this formation's output to the gate).
+	if len(inspect.Connections) != 1 || inspect.Connections[0].ID != "edge_huddle_gate" {
+		t.Fatalf("formation inspect connections = %+v, want only this formation's edges", inspect.Connections)
+	}
+}
+
+func TestArchonFormationInspectFailsLoudOnUnknownFormation(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("detail"), archonFormationDetailBoardFixture())
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	_, stderr, code := runArchon(t, runner, "--workspace", workspace, "formation", "inspect", "detail", "nope", "--json")
+	if code == 0 {
+		t.Fatalf("unknown formation inspect code=0 stderr=%s", stderr)
+	}
+	var response archonErrorResponse
+	if err := json.Unmarshal([]byte(stderr), &response); err != nil {
+		t.Fatalf("decode selector error: %v\nstderr=%s", err, stderr)
+	}
+	if response.Code != "not_found" || response.Boundary != "formation" || response.Selector != "nope" {
+		t.Fatalf("formation inspect error = %+v, want structured not-found", response)
+	}
+}
+
+func TestArchonMissionSetGoalKeepsUnsetFieldsOnFullReplace(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("poems"), `schema = 1
+id = "brd_poems"
+slug = "poems"
+title = "Poems"
+rev = 3
+
+[[mission]]
+id = "mis_poem"
+title = "Original title"
+goal = "Original goal"
+beadId = "home-vdki.33.1"
+`)
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	// Bare --goal must keep the existing title and bead untouched even though the
+	// underlying UpdateMission is full-replace.
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "mission", "set-goal", "poems", "mis_poem", "--goal", "Reframed goal", "--json")
+	if code != 0 {
+		t.Fatalf("mission set-goal code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	board, err := store.ReadBoard("poems")
+	if err != nil {
+		t.Fatalf("read board after set-goal: %v", err)
+	}
+	mission, ok := missionByID(board, "mis_poem")
+	if !ok {
+		t.Fatalf("mission missing after set-goal")
+	}
+	if mission.Goal != "Reframed goal" {
+		t.Fatalf("mission goal = %q, want updated goal", mission.Goal)
+	}
+	if mission.Title != "Original title" {
+		t.Fatalf("mission title = %q, want preserved title (full-replace must not clobber)", mission.Title)
+	}
+	if mission.BeadID != "home-vdki.33.1" {
+		t.Fatalf("mission beadId = %q, want preserved bead (full-replace must not clobber)", mission.BeadID)
+	}
+}
+
+func TestArchonMissionSetGoalCanRetargetTitleAndBead(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("poems"), `schema = 1
+id = "brd_poems"
+slug = "poems"
+title = "Poems"
+rev = 3
+
+[[mission]]
+id = "mis_poem"
+title = "Original title"
+goal = "Original goal"
+beadId = "home-vdki.33.1"
+`)
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "mission", "set-goal", "poems", "mis_poem",
+		"--title", "Renamed", "--bead", "home-vdki.99.2", "--json")
+	if code != 0 {
+		t.Fatalf("mission set-goal retarget code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	board, err := store.ReadBoard("poems")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	mission, _ := missionByID(board, "mis_poem")
+	if mission.Title != "Renamed" || mission.BeadID != "home-vdki.99.2" || mission.Goal != "Original goal" {
+		t.Fatalf("mission after retarget = %+v, want new title/bead and preserved goal", mission)
+	}
+}
+
+func TestArchonMissionSetGoalFailsLoudOnUnknownMission(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("poems"), `schema = 1
+id = "brd_poems"
+slug = "poems"
+title = "Poems"
+rev = 1
+
+[[mission]]
+id = "mis_poem"
+title = "Original title"
+goal = "Original goal"
+beadId = "home-vdki.33.1"
+`)
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	_, stderr, code := runArchon(t, runner, "--workspace", workspace, "mission", "set-goal", "poems", "ghost", "--goal", "x", "--json")
+	if code == 0 {
+		t.Fatalf("unknown mission set-goal code=0 stderr=%s", stderr)
+	}
+	var response archonErrorResponse
+	if err := json.Unmarshal([]byte(stderr), &response); err != nil {
+		t.Fatalf("decode selector error: %v\nstderr=%s", err, stderr)
+	}
+	if response.Code != "not_found" || response.Boundary != "mission" || response.Selector != "ghost" {
+		t.Fatalf("set-goal error = %+v, want structured not-found mission", response)
+	}
+}
+
+func TestArchonMissionSetGoalFailsLoudOnBadBead(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("poems"), `schema = 1
+id = "brd_poems"
+slug = "poems"
+title = "Poems"
+rev = 1
+
+[[mission]]
+id = "mis_poem"
+title = "Original title"
+goal = "Original goal"
+beadId = "home-vdki.33.1"
+`)
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	_, stderr, code := runArchon(t, runner, "--workspace", workspace, "mission", "set-goal", "poems", "mis_poem", "--bead", "not a bead", "--json")
+	if code == 0 {
+		t.Fatalf("bad bead set-goal code=0 stderr=%s", stderr)
+	}
+	var response archonErrorResponse
+	if err := json.Unmarshal([]byte(stderr), &response); err != nil {
+		t.Fatalf("decode bead error: %v\nstderr=%s", err, stderr)
+	}
+	if response.Code != "invalid_bead_id" {
+		t.Fatalf("set-goal bad bead error = %+v, want invalid_bead_id", response)
+	}
+}
+
+func TestArchonGateInspectReportsKindJudgeChainAndWiring(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("poems"), `schema = 1
+id = "brd_poems"
+slug = "poems"
+title = "Poems"
+rev = 9
+
+[[gate]]
+id = "gate_review"
+title = "Review"
+kinds = ["human"]
+criterion = "Good"
+
+[[formation]]
+id = "fmn_judge"
+type = "solo"
+title = "Judge"
+
+[[formation.input]]
+id = "port_judge_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_judge_out"
+label = "Output"
+
+[[formation]]
+id = "fmn_next"
+type = "solo"
+title = "Next"
+
+[[formation.input]]
+id = "port_next_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_next_out"
+label = "Output"
+
+[[connection]]
+id = "edge_gate_judge"
+from = "gate_review:judge"
+to = "fmn_judge:port_judge_in"
+
+[[connection]]
+id = "edge_judge_back"
+from = "fmn_judge:port_judge_out"
+to = "gate_review:judge"
+
+[[connection]]
+id = "edge_gate_pass"
+from = "gate_review:pass"
+to = "fmn_next:port_next_in"
+
+[[connection]]
+id = "edge_gate_fail"
+from = "gate_review:fail"
+to = "fmn_judge:port_judge_in"
+`)
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "gate", "inspect", "poems", "gate_review", "--json")
+	if code != 0 {
+		t.Fatalf("gate inspect code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var inspect struct {
+		Board      archonBoardIdentity `json:"board"`
+		Gate       formations.GateNode `json:"gate"`
+		Kind       string              `json:"kind"`
+		JudgeChain []struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+		} `json:"judgeChain"`
+		Pass []formations.BoardConnection `json:"pass"`
+		Fail []formations.BoardConnection `json:"fail"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &inspect); err != nil {
+		t.Fatalf("decode gate inspect: %v\n%s", err, stdout)
+	}
+	// This gate is wired to a judge chain, so its effective routing kind is
+	// "judge" even though its declared kinds include "human": the judge chain is
+	// where its verdict comes from.
+	if inspect.Gate.ID != "gate_review" || inspect.Kind != "judge" {
+		t.Fatalf("gate inspect = gate %+v kind %q, want judge gate (has judge chain)", inspect.Gate, inspect.Kind)
+	}
+	if len(inspect.JudgeChain) != 1 || inspect.JudgeChain[0].ID != "fmn_judge" {
+		t.Fatalf("gate inspect judgeChain = %+v, want fmn_judge", inspect.JudgeChain)
+	}
+	if len(inspect.Pass) != 1 || inspect.Pass[0].To != "fmn_next:port_next_in" {
+		t.Fatalf("gate inspect pass wiring = %+v, want pass to fmn_next", inspect.Pass)
+	}
+	if len(inspect.Fail) != 1 || inspect.Fail[0].To != "fmn_judge:port_judge_in" {
+		t.Fatalf("gate inspect fail wiring = %+v, want fail to fmn_judge", inspect.Fail)
+	}
+	if strings.Contains(stdout, "toml") {
+		t.Fatalf("gate inspect leaked raw TOML: %s", stdout)
+	}
+}
+
+func TestArchonGateInspectReportsHumanKindWhenNoJudgeOrScript(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("poems"), `schema = 1
+id = "brd_poems"
+slug = "poems"
+title = "Poems"
+rev = 2
+
+[[gate]]
+id = "gate_human"
+title = "Human review"
+kinds = ["human"]
+criterion = "Looks good"
+
+[[formation]]
+id = "fmn_next"
+type = "solo"
+title = "Next"
+
+[[formation.input]]
+id = "port_next_in"
+label = "Input"
+
+[[connection]]
+id = "edge_pass"
+from = "gate_human:pass"
+to = "fmn_next:port_next_in"
+`)
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "gate", "inspect", "poems", "gate_human", "--json")
+	if code != 0 {
+		t.Fatalf("gate inspect human code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var inspect struct {
+		Kind       string `json:"kind"`
+		JudgeChain []struct {
+			ID string `json:"id"`
+		} `json:"judgeChain"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &inspect); err != nil {
+		t.Fatalf("decode gate inspect human: %v\n%s", err, stdout)
+	}
+	if inspect.Kind != "human" || len(inspect.JudgeChain) != 0 {
+		t.Fatalf("gate inspect human = kind %q judgeChain %+v, want human with empty judge chain", inspect.Kind, inspect.JudgeChain)
+	}
+}
+
+func TestArchonGateInspectReportsScriptKind(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("session-search"), `schema = 1
+id = "brd_01J9_sesssearch"
+slug = "session-search"
+title = "Improve session search"
+rev = 7
+`)
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	if _, stderr, code := runArchon(t, runner, "--workspace", workspace, "gate", "create", "session-search",
+		"--title", "Script check", "--kinds", "script", "--criterion", "doc only",
+		"--script-root", ".", "--script-cwd", "checks", "--script-arg", "./pass.sh",
+		"--script-timeout-seconds", "7", "--script-output-limit-bytes", "2048", "--json"); code != 0 {
+		t.Fatalf("gate create script failed: code=%d stderr=%s", code, stderr)
+	}
+	board, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	gateID := board.Gates[0].ID
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "gate", "inspect", "session-search", gateID, "--json")
+	if code != 0 {
+		t.Fatalf("gate inspect script code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var inspect struct {
+		Kind   string                       `json:"kind"`
+		Gate   formations.GateNode          `json:"gate"`
+		Script *formations.GateScriptConfig `json:"script"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &inspect); err != nil {
+		t.Fatalf("decode gate inspect script: %v\n%s", err, stdout)
+	}
+	if inspect.Kind != "script" || inspect.Script == nil || len(inspect.Script.Command) == 0 {
+		t.Fatalf("gate inspect script = kind %q script %+v, want script kind with command", inspect.Kind, inspect.Script)
+	}
+}
+
+func TestArchonGateRouteRoutesPassThroughSameEnginePathAsApprove(t *testing.T) {
+	workspace := t.TempDir()
+	agentsDir := t.TempDir()
+	t.Setenv("CHROTE_AGENTS_DIR", agentsDir)
+	personas := formations.NewPersonaStore(agentsDir)
+	if _, err := personas.CreatePersona(formations.CreatePersonaRequest{ID: "scout", Kind: "specialist", Harness: "openai-codex"}); err != nil {
+		t.Fatalf("create persona: %v", err)
+	}
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("session-search"), archonS5HumanGateBoardFixture())
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	board, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read human gate board: %v", err)
+	}
+	engine := formations.NewRunEngine(store, personas, archonTestRunExecutor{})
+	engine.SetGateEvaluator(archonTestGateEvaluator{verdict: "pass"})
+	waiting, err := engine.RunMission("session-search", formations.RunStartRequest{
+		MissionID:         "mis_showcase",
+		Actor:             "agent:test",
+		ExpectedBoardETag: board.ETag,
+		ExpectedBoardRev:  board.Rev,
+		Personas:          personas,
+		Limits:            formations.RunLimits{MaxDispatch: 5, MaxAttempts: 2},
+	})
+	if err != nil {
+		t.Fatalf("start human waiting run: %v", err)
+	}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "gate", "route", waiting.RunID, "gate_review", "--verdict", "pass", "--reason", "good", "--json")
+	if code != 0 {
+		t.Fatalf("gate route code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	routed := decodeArchonStatus(t, stdout)
+	if routed.RunID != waiting.RunID {
+		t.Fatalf("gate route status runId = %q, want %q", routed.RunID, waiting.RunID)
+	}
+	events, err := store.ReadRunEvents(waiting.RunID)
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if !eventsContain(events, formations.RunEventHumanVerdictRecorded, "gate_review") {
+		t.Fatalf("gate route did not record human verdict like approve: %s", archonEventTypes(events))
+	}
+}
+
+func TestArchonGateRouteRejectsNonStrictVerdict(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("session-search"), archonS5HumanGateBoardFixture())
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	_, stderr, code := runArchon(t, runner, "--workspace", workspace, "gate", "route", "run_anything", "gate_review", "--verdict", "approve", "--json")
+	if code == 0 {
+		t.Fatalf("gate route non-strict verdict code=0 stderr=%s", stderr)
+	}
+	if !strings.Contains(stderr, "pass") || !strings.Contains(stderr, "fail") {
+		t.Fatalf("gate route non-strict verdict stderr=%s, want clear pass|fail contract message", stderr)
+	}
+}
+
+func TestArchonBoardValidateExitsNonZeroOnErrors(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	// A "code"-kind gate with no judge chain and no script config can only route
+	// through a runtime-injected evaluator (not part of the board), so the board
+	// cannot run it on its own — a routability ERROR. (A "human"-kind gate, by
+	// contrast, routes via an operator verdict and is valid.)
+	writeArchonFile(t, store.BoardPath("broken"), `schema = 1
+id = "brd_broken"
+slug = "broken"
+title = "Broken"
+rev = 1
+
+[[gate]]
+id = "gate_orphan"
+title = "Orphan"
+kinds = ["code"]
+criterion = "x"
+`)
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "board", "validate", "broken", "--json")
+	if code == 0 {
+		t.Fatalf("board validate with errors code=0; must exit non-zero. stdout=%s stderr=%s", stdout, stderr)
+	}
+	var report formations.BoardValidationReport
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatalf("decode validation report: %v\n%s", err, stdout)
+	}
+	if len(report.Errors) == 0 {
+		t.Fatalf("board validate report = %+v, want at least one error", report)
+	}
+	foundGate := false
+	for _, finding := range report.Errors {
+		if finding.Code == formations.FindingGateNotRoutable && finding.NodeID == "gate_orphan" {
+			foundGate = true
+		}
+	}
+	if !foundGate {
+		t.Fatalf("board validate errors = %+v, want gate_not_routable for gate_orphan", report.Errors)
+	}
+}
+
+func TestArchonBoardValidateExitsZeroOnWarningsOnly(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	// A mission with no outgoing connection is only a WARNING; no errors here.
+	writeArchonFile(t, store.BoardPath("warn"), `schema = 1
+id = "brd_warn"
+slug = "warn"
+title = "Warn"
+rev = 1
+
+[[mission]]
+id = "mis_lonely"
+title = "Lonely"
+goal = "Go nowhere"
+beadId = "home-vdki.1.1"
+`)
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "board", "validate", "warn", "--json")
+	if code != 0 {
+		t.Fatalf("board validate warnings-only code=%d (want 0). stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var report formations.BoardValidationReport
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatalf("decode validation report: %v\n%s", err, stdout)
+	}
+	if len(report.Errors) != 0 || len(report.Warnings) == 0 {
+		t.Fatalf("board validate report = %+v, want warnings only", report)
+	}
+}
+
+// TestArchonBoardValidateSurfacesMissionCountInHumanOutput locks the operator's
+// signal: a board with the wrong mission count is malformed (a Mission Board has
+// exactly one mission), and the HUMAN-readable `board validate` output — not just
+// the JSON — must name the mission_count finding with an actionable message and
+// exit non-zero. This is what an operator sees when a board is broken, so the
+// message has to read as a clear instruction, not just a code.
+func TestArchonBoardValidateSurfacesMissionCountInHumanOutput(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	// Two missions: a Mission Board must have exactly one. The second mission is
+	// the malformation the operator needs to see flagged.
+	writeArchonFile(t, store.BoardPath("twins"), `schema = 1
+id = "brd_twins"
+slug = "twins"
+title = "Twins"
+rev = 1
+
+[[mission]]
+id = "mis_first"
+title = "First"
+goal = "Do the thing"
+beadId = "home-vdki.1.1"
+
+[[mission]]
+id = "mis_second"
+title = "Second"
+goal = "Do another thing"
+beadId = "home-vdki.2.1"
+`)
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "board", "validate", "twins")
+	if code != 1 {
+		t.Fatalf("board validate two-mission board code=%d (want 1). stdout=%s stderr=%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stdout, formations.FindingMissionCount) {
+		t.Fatalf("human board validate output did not name the mission_count finding: %s", stdout)
+	}
+	if !strings.Contains(stdout, "exactly one mission") || !strings.Contains(stdout, "found 2") {
+		t.Fatalf("human board validate output mission_count message is not actionable: %s", stdout)
+	}
+}
+
+func TestArchonBoardExportEmitsBoardAndLayout(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	if _, err := store.CreateMissionBoard("poems", "Poems", formations.MissionCreateRequest{Goal: "Ship a poem", UpdatedBy: "agent:test"}, formations.WriteOptions{}); err != nil {
+		t.Fatalf("create mission board: %v", err)
+	}
+	// Create a formation so a layout sidecar exists.
+	board, err := store.ReadBoard("poems")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	if _, err := store.CreateFormation("poems", formations.FormationCreateRequest{Type: "solo", Title: "Solo", X: 10, Y: 20, UpdatedBy: "agent:test"},
+		formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev}); err != nil {
+		t.Fatalf("create formation: %v", err)
+	}
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "board", "export", "poems")
+	if code != 0 {
+		t.Fatalf("board export code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var export formations.BoardExport
+	if err := json.Unmarshal([]byte(stdout), &export); err != nil {
+		t.Fatalf("decode board export: %v\n%s", err, stdout)
+	}
+	if export.Board == nil || export.Board.Slug != "poems" {
+		t.Fatalf("board export board = %+v, want poems", export.Board)
+	}
+	// Two placed nodes: the mission node CreateMissionBoard lays down, plus the
+	// formation node created above.
+	if export.Layout == nil || len(export.Layout.Nodes) != 2 {
+		t.Fatalf("board export layout = %+v, want the mission and formation nodes placed", export.Layout)
+	}
+	if strings.Contains(stdout, `"toml"`) {
+		t.Fatalf("board export leaked raw TOML: %s", stdout)
+	}
+}
+
+func TestArchonAgentRetireCleanWhenNoReferences(t *testing.T) {
+	workspace := t.TempDir()
+	agentsDir := t.TempDir()
+	t.Setenv("CHROTE_AGENTS_DIR", agentsDir)
+	personas := formations.NewPersonaStore(agentsDir)
+	if _, err := personas.CreatePersona(formations.CreatePersonaRequest{ID: "lonely", Kind: "specialist", Harness: "openai-codex"}); err != nil {
+		t.Fatalf("create persona: %v", err)
+	}
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	// No --force required when there are no references.
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "agent", "retire", "lonely", "--json")
+	if code != 0 {
+		t.Fatalf("agent retire clean code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	if !strings.Contains(stdout, `"retired"`) || !strings.Contains(stdout, "lonely") {
+		t.Fatalf("agent retire clean stdout=%s, want retired confirmation", stdout)
+	}
+	card, err := personas.ReadPersona("lonely")
+	if err != nil {
+		t.Fatalf("read persona after retire: %v", err)
+	}
+	if card.Status != "retired" {
+		t.Fatalf("persona status = %q, want retired", card.Status)
+	}
+}
+
+func TestArchonAgentRetireRefusesWhenReferencedWithoutForce(t *testing.T) {
+	workspace := t.TempDir()
+	agentsDir := t.TempDir()
+	t.Setenv("CHROTE_AGENTS_DIR", agentsDir)
+	personas := formations.NewPersonaStore(agentsDir)
+	if _, err := personas.CreatePersona(formations.CreatePersonaRequest{ID: "scout", Kind: "specialist", Harness: "openai-codex"}); err != nil {
+		t.Fatalf("create persona: %v", err)
+	}
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("detail"), archonFormationDetailBoardFixture())
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	_, stderr, code := runArchon(t, runner, "--workspace", workspace, "agent", "retire", "scout", "--json")
+	if code == 0 {
+		t.Fatalf("referenced retire without force code=0 stderr=%s", stderr)
+	}
+	// Must name the offending board/formation/slot.
+	if !strings.Contains(stderr, "detail") || !strings.Contains(stderr, "fmn_huddle") || !strings.Contains(stderr, "slot_lead") {
+		t.Fatalf("referenced retire stderr=%s, want board/formation/slot named", stderr)
+	}
+	if !strings.Contains(stderr, "--force") {
+		t.Fatalf("referenced retire stderr=%s, want --force hint", stderr)
+	}
+	card, err := personas.ReadPersona("scout")
+	if err != nil {
+		t.Fatalf("read persona after refused retire: %v", err)
+	}
+	if card.Status == "retired" {
+		t.Fatalf("persona was retired despite refusal")
+	}
+}
+
+func TestArchonAgentRetireForcedReportsOverriddenReferences(t *testing.T) {
+	workspace := t.TempDir()
+	agentsDir := t.TempDir()
+	t.Setenv("CHROTE_AGENTS_DIR", agentsDir)
+	personas := formations.NewPersonaStore(agentsDir)
+	if _, err := personas.CreatePersona(formations.CreatePersonaRequest{ID: "scout", Kind: "specialist", Harness: "openai-codex"}); err != nil {
+		t.Fatalf("create persona: %v", err)
+	}
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("detail"), archonFormationDetailBoardFixture())
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "agent", "retire", "scout", "--force", "--json")
+	if code != 0 {
+		t.Fatalf("forced retire code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var response struct {
+		Retired    string                      `json:"retired"`
+		Overridden []formations.AgentReference `json:"overriddenReferences"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &response); err != nil {
+		t.Fatalf("decode forced retire: %v\n%s", err, stdout)
+	}
+	if response.Retired != "scout" || len(response.Overridden) != 1 || response.Overridden[0].FormationID != "fmn_huddle" || response.Overridden[0].SlotID != "slot_lead" {
+		t.Fatalf("forced retire response = %+v, want overridden reference reported", response)
+	}
+	card, err := personas.ReadPersona("scout")
+	if err != nil {
+		t.Fatalf("read persona after forced retire: %v", err)
+	}
+	if card.Status != "retired" {
+		t.Fatalf("persona status = %q, want retired after force", card.Status)
+	}
+}
+
+// TestArchonDoctorEnvReportsLabExecutorSelection asserts that `doctor env` reads
+// the executor env ladder and reports lab as the selected executor (with its
+// configured boundary) when lab harnesses are set, matching the precedence
+// NewConfiguredFormationExecutorFromEnv applies (lab over tmux over unavailable).
+func TestArchonDoctorEnvReportsLabExecutorSelection(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("CHROTE_FORMATIONS_LAB_HARNESSES", "openai-codex")
+	t.Setenv("CHROTE_FORMATIONS_LAB_CWD", workspace)
+	t.Setenv("CHROTE_FORMATIONS_LAB_ROOTS", workspace)
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "doctor", "env", "--json")
+	if code != 0 {
+		t.Fatalf("doctor env code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	if !strings.Contains(stdout, `"selectedExecutor": "lab"`) {
+		t.Fatalf("doctor env did not select lab executor: %s", stdout)
+	}
+	if !strings.Contains(stdout, `"workspace": "`+workspace+`"`) {
+		t.Fatalf("doctor env did not report resolved workspace: %s", stdout)
+	}
+}
+
+// TestArchonDoctorEnvReportsTmuxDedicatedRequired asserts that with no lab
+// harnesses but tmux harnesses configured, `doctor env` reports the tmux runtime
+// as blocked until the dedicated Formations socket opt-in is present.
+func TestArchonDoctorEnvReportsTmuxDedicatedRequired(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("CHROTE_FORMATIONS_LAB_HARNESSES", "")
+	t.Setenv("CHROTE_FORMATIONS_TMUX_HARNESSES", "openai-codex")
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "doctor", "env", "--json")
+	if code != 0 {
+		t.Fatalf("doctor env code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	if !strings.Contains(stdout, `"selectedExecutor": "tmux-dedicated-required"`) {
+		t.Fatalf("doctor env did not report tmux-dedicated-required executor: %s", stdout)
+	}
+	if !strings.Contains(stdout, `"dedicated": false`) {
+		t.Fatalf("doctor env did not report dedicated off: %s", stdout)
+	}
+}
+
+// TestArchonDoctorEnvReportsDedicatedTmuxSelection asserts that the explicit
+// dedicated opt-in is reported as the dedicated-tmux executor selection so an
+// operator can see at a glance that the executor targets the dedicated
+// formations socket with real roots.
+func TestArchonDoctorEnvReportsDedicatedTmuxSelection(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("CHROTE_FORMATIONS_LAB_HARNESSES", "")
+	t.Setenv("CHROTE_FORMATIONS_TMUX_HARNESSES", "openai-codex")
+	t.Setenv("CHROTE_FORMATIONS_TMUX_DEDICATED", "1")
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "doctor", "env", "--json")
+	if code != 0 {
+		t.Fatalf("doctor env code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	if !strings.Contains(stdout, `"selectedExecutor": "dedicated-tmux"`) {
+		t.Fatalf("doctor env did not select dedicated-tmux executor: %s", stdout)
+	}
+	if !strings.Contains(stdout, `"dedicated": true`) {
+		t.Fatalf("doctor env did not report dedicated on: %s", stdout)
+	}
+}
+
+// TestArchonDoctorEnvReportsUnavailableExecutor asserts that with neither lab nor
+// tmux harnesses configured, `doctor env` reports the executor as unavailable
+// rather than guessing one would run.
+func TestArchonDoctorEnvReportsUnavailableExecutor(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("CHROTE_FORMATIONS_LAB_HARNESSES", "")
+	t.Setenv("CHROTE_FORMATIONS_TMUX_HARNESSES", "")
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "doctor", "env", "--json")
+	if code != 0 {
+		t.Fatalf("doctor env code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	if !strings.Contains(stdout, `"selectedExecutor": "unavailable"`) {
+		t.Fatalf("doctor env did not report unavailable executor: %s", stdout)
+	}
+}
+
+// TestArchonDoctorFilesCleanBoardReportsOK asserts `doctor files` reports a clean
+// .formations tree with one validating board as healthy and exits zero.
+func TestArchonDoctorFilesCleanBoardReportsOK(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("session-search"), archonS5CascadeBoardFixture())
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "doctor", "files", "--json")
+	if code != 0 {
+		t.Fatalf("doctor files code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	if !strings.Contains(stdout, `"boardCount": 1`) {
+		t.Fatalf("doctor files did not count the board: %s", stdout)
+	}
+	if !strings.Contains(stdout, `"ok": true`) {
+		t.Fatalf("doctor files clean board not reported ok: %s", stdout)
+	}
+}
+
+// TestArchonDoctorFilesDanglingWireBoardFlaggedWithErrors asserts a board with a
+// dangling connection is surfaced through ValidateBoard with an error count and
+// that the doctor exits non-zero because a validation Error is a HARD problem.
+func TestArchonDoctorFilesDanglingWireBoardFlaggedWithErrors(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("broken"), archonDoctorDanglingWireBoardFixture())
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "doctor", "files", "--json")
+	if code == 0 {
+		t.Fatalf("doctor files exited 0 on a board with validation errors: stdout=%s stderr=%s", stdout, stderr)
+	}
+	if !strings.Contains(stdout, `"slug": "broken"`) {
+		t.Fatalf("doctor files did not name the broken board: %s", stdout)
+	}
+	if strings.Contains(stdout, `"errorCount": 0`) || !strings.Contains(stdout, `"errorCount"`) {
+		t.Fatalf("doctor files did not report a non-zero error count for the broken board: %s", stdout)
+	}
+}
+
+// TestArchonDoctorFilesMissingFormationsTreeIsLoud asserts that a workspace with
+// no .formations directory is reported loudly (not silently treated as healthy),
+// because a missing tree means there are no boards/runs at all.
+func TestArchonDoctorFilesMissingFormationsTreeIsLoud(t *testing.T) {
+	workspace := t.TempDir()
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "doctor", "files", "--json")
+	if code != 0 {
+		t.Fatalf("doctor files code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	if !strings.Contains(stdout, `"formationsTreePresent": false`) {
+		t.Fatalf("doctor files did not flag the missing .formations tree: %s", stdout)
+	}
+}
+
+// TestArchonDoctorFilesCorruptBoardIsNamedLoudly asserts that an unreadable/corrupt
+// board file is reported by name as a HARD problem (non-zero exit) instead of
+// aborting the whole report or being silently skipped.
+func TestArchonDoctorFilesCorruptBoardIsNamedLoudly(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("session-search"), archonS5CascadeBoardFixture())
+	writeArchonFile(t, store.BoardPath("corrupt"), "schema = this is not valid toml [[[")
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "doctor", "files", "--json")
+	if code == 0 {
+		t.Fatalf("doctor files exited 0 with a corrupt board present: stdout=%s stderr=%s", stdout, stderr)
+	}
+	if !strings.Contains(stdout, "corrupt") {
+		t.Fatalf("doctor files did not name the corrupt board file: %s", stdout)
+	}
+}
+
+// TestArchonDoctorSessionsReportsZeroWithoutLiveTmux asserts the sessions probe is
+// graceful with no live sessions: it reports zero and does not crash. The unit
+// test must not depend on a real tmux server, so the fake runner returns none.
+func TestArchonDoctorSessionsReportsZeroWithoutLiveTmux(t *testing.T) {
+	workspace := t.TempDir()
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "doctor", "sessions", "--json")
+	if code != 0 {
+		t.Fatalf("doctor sessions code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	if !strings.Contains(stdout, `"sessionCount": 0`) {
+		t.Fatalf("doctor sessions did not report zero sessions: %s", stdout)
+	}
+}
+
+// TestArchonDoctorChecksWritableWorkspaceIsOK asserts `doctor checks` reports a
+// writable workspace as ok. tmux-on-PATH and socket presence are environment
+// dependent, so this test only pins the workspace-writable check, which the
+// temp workspace guarantees.
+func TestArchonDoctorChecksWritableWorkspaceIsOK(t *testing.T) {
+	workspace := t.TempDir()
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "doctor", "checks", "--json")
+	if code != 0 {
+		t.Fatalf("doctor checks code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	if !strings.Contains(stdout, `"name": "workspace_writable"`) || !strings.Contains(stdout, `"status": "ok"`) {
+		t.Fatalf("doctor checks did not report a writable workspace: %s", stdout)
+	}
+}
+
+// TestArchonDoctorChecksUnwritableWorkspaceIsHardProblem asserts that a missing
+// workspace is a HARD problem: the check is a problem and the exit code is
+// non-zero so scripts can gate on it.
+func TestArchonDoctorChecksMissingWorkspaceIsHardProblem(t *testing.T) {
+	workspace := filepath.Join(t.TempDir(), "does-not-exist")
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "doctor", "checks", "--json")
+	if code == 0 {
+		t.Fatalf("doctor checks exited 0 on a missing workspace: stdout=%s stderr=%s", stdout, stderr)
+	}
+	if !strings.Contains(stdout, `"name": "workspace_present"`) || !strings.Contains(stdout, `"status": "problem"`) {
+		t.Fatalf("doctor checks did not flag the missing workspace: %s", stdout)
+	}
+}
+
+// TestArchonDoctorBareRunsAllSections asserts a bare `archon doctor` runs all four
+// sections so an operator gets one scannable readiness report.
+func TestArchonDoctorBareRunsAllSections(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("session-search"), archonS5CascadeBoardFixture())
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "doctor", "--json")
+	if code != 0 {
+		t.Fatalf("doctor code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	for _, section := range []string{`"env"`, `"files"`, `"sessions"`, `"checks"`} {
+		if !strings.Contains(stdout, section) {
+			t.Fatalf("bare doctor missing section %s: %s", section, stdout)
+		}
+	}
+}
+
+// TestArchonDoctorUnknownSubcommandFailsLoud asserts an unknown doctor subcommand
+// fails loudly with a usage exit code, matching the other noun dispatchers.
+func TestArchonDoctorUnknownSubcommandFailsLoud(t *testing.T) {
+	runner := &fakeTmux{live: map[string]bool{}}
+	_, stderr, code := runArchon(t, runner, "doctor", "bogus")
+	if code != 2 {
+		t.Fatalf("unknown doctor subcommand code=%d stderr=%s", code, stderr)
+	}
+	if !strings.Contains(stderr, "unknown doctor command") {
+		t.Fatalf("unknown doctor subcommand stderr=%s", stderr)
+	}
+}
+
+// archonDoctorDanglingWireBoardFixture is a board whose single connection targets
+// a non-existent input port, so ValidateBoard reports a dangling_connection
+// Error. doctor files must surface that as a flagged board with errors.
+func archonDoctorDanglingWireBoardFixture() string {
+	return `schema = 1
+id = "brd_doctor_broken"
+slug = "broken"
+title = "Broken board"
+rev = 1
+
+[[mission]]
+id = "mis_broken"
+title = "Broken mission"
+goal = "Has a dangling wire"
+beadId = "home-test.9"
+
+[[formation]]
+id = "fmn_work"
+type = "solo"
+title = "Work"
+
+[[formation.input]]
+id = "port_work_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_work_out"
+label = "Output"
+
+[[formation.slot]]
+id = "slot_work"
+label = "Worker"
+agentId = "scout"
+harness = "openai-codex"
+controller = true
+
+[[connection]]
+id = "edge_mission_work"
+from = "mis_broken:out"
+to = "fmn_work:port_work_in"
+
+[[connection]]
+id = "edge_dangling"
+from = "fmn_work:port_work_out"
+to = "fmn_ghost:port_missing_in"
 `
 }
 

@@ -80,12 +80,36 @@ evidence.
 | Formation | Typed coordination unit: `solo`, `peer`, `flow`, or `orchestrated` |
 | Slot | Role position inside a formation, optionally assigned to an agent id |
 | Mission | Concrete goal and entry point for a run, usually linked to work state |
-| Board | Persisted graph of missions, formations, gates, connections, and layout metadata |
+| Board | A **Mission Board**: exactly one mission (its identity) plus the formations, gates, connections, and layout that carry that mission out |
 | Connection | Directed edge from an output port to an input port |
 | Gate | Routing checkpoint that passes, fails, blocks, or loops work |
 | Verification | Inline check local to a formation |
 | Run | Execution instance that binds slots, dispatches work, records events, and projects state |
 | Ledger | Append-only event history for a run |
+
+## Mission Boards
+
+A board is a **Mission Board**: it has exactly one mission, and that mission is
+the board's identity. There is no generic multi-mission board; you do not create
+an empty board and then add missions to it. A board and its single mission are
+born together in one atomic write, so there is never a window where an empty
+board exists on disk.
+
+- Creating a board creates its mission: `POST /api/formations/boards
+  {slug, title, mission:{goal, ...}}` and `archon board new <slug> --title <t>
+  --goal <g> [--bead <id>]` both create the board and its mission atomically.
+- The one-mission invariant is enforced, not assumed: adding a second mission is
+  refused, and `ValidateBoard` records a `mission_count` error when a board has
+  anything other than exactly one mission (`board validate` exits non-zero and
+  `doctor files` flags such a board as a hard problem). Edit the existing mission
+  with `mission set-goal`; do not add another.
+- Running a board runs its mission. `POST /api/formations/runs {board}` with no
+  explicit mission runs the board's single mission.
+- Board summaries carry their mission and latest run, so a gallery can render
+  goal plus status without a follow-up read per board.
+
+This makes the board the unit of work a human points at: one board, one mission,
+one goal, observable from a gallery.
 
 ## Primitive graph model
 
@@ -136,9 +160,9 @@ input ports, and let work cascade as inputs become ready.
    checks, cwd, or agents cannot silently substitute.
 7. **Formations is always-on.** It is a permanent first-class surface, not a
    feature flag. The only Formations env vars are the executor safety ladder
-   (`CHROTE_FORMATIONS_LAB_*` / `CHROTE_FORMATIONS_TMUX_*` /
-   `CHROTE_FORMATIONS_TMUX_PROD_SMOKE`), which gate execution-environment
-   promotion, never feature availability.
+   (`CHROTE_FORMATIONS_LAB_*` / `CHROTE_FORMATIONS_TMUX_*`, including
+   `CHROTE_FORMATIONS_TMUX_DEDICATED` for the dedicated formations socket), which
+   gate execution-environment promotion, never feature availability.
 8. **Beads can anchor missions; it is not the graph store.**
 9. **No command-execution landmines.** Free-text criteria never become implicit
    shell execution. Executable checks require explicit operator-authored config
@@ -157,9 +181,17 @@ map into `writer`'s `node_started.inputRefs[]`. That input ref records the
 artifact/report refs.
 
 Fan-out is just multiple connections from the same output port: each downstream
-input receives that output port's payload. Fan-in/join is multiple connected
-required inputs on the same downstream node: the node records `node_waiting` and
-does not dispatch until all required inputs have delivered.
+input receives that output port's payload.
+
+Fan-in/join is modeled precisely. A single input endpoint is single-source:
+exactly one connection may terminate on a given input port. `WireFormationPorts`
+rejects a second connection into the same input endpoint rather than silently
+merging or overwriting payloads. A join is therefore not "many wires into one
+port"; it is modeled as MULTIPLE distinct required input ports on the same node,
+one connection per port. Such a node records `node_waiting` with `readyInputs`
+and `totalInputs` and does not dispatch until every required input port has
+delivered its payload. This keeps every delivered payload attributable to a
+specific input port and makes the join's readiness condition explicit.
 
 There is one routing contract: `node_output.outputs[portId]`. Free-form
 `node_output.text` is display summary only and never feeds graph edges.
@@ -167,6 +199,28 @@ Tmux-backed agents receive this contract as a fenced `chrote-outputs` JSON block
 instruction; lab runs synthesize deterministic payloads for every output port.
 If a formation omits a declared output or emits an unknown output id, the run
 blocks and records `missing_output_payload` or `invalid_output_payload`.
+
+## Strict verdict contract
+
+Gate routing and inline verification are fail-closed by design.
+
+A gate judge verdict and an inline verification verdict must each be exactly the
+token `pass` or exactly the token `fail`. A judge formation's verdict is read
+from its display output text and must BE exactly that token; the engine does not
+fuzzy-match, infer intent from prose, or treat "looks like a pass" as a pass.
+
+Any ambiguous or unrecognized verdict BLOCKS the run loudly and routes neither
+pass nor fail:
+
+- an unrecognized gate verdict records a non-resumable `run_blocked` with code
+  `ambiguous_gate_verdict`;
+- an unrecognized inline verification verdict records a non-resumable
+  `run_blocked` with code `ambiguous_verification_verdict`.
+
+The block is non-resumable on purpose: resume must not reinterpret the offending
+text. The judge formation, gate evaluator, or verification must be fixed and a
+new run started. This is fail-closed: an ambiguous verdict never silently picks a
+branch the verdict never authorized.
 
 ## Interaction model
 
@@ -187,6 +241,12 @@ Product principle:
 
 Permissive gestures do not mean invalid persisted state. Gestures normalize into
 valid model operations or fail loudly with an understandable reason.
+
+In CHROTE this surface is the **Missions** tab: a Mission Board gallery showing
+each board's mission, goal, and latest run, opening into the board canvas. A
+session side-panel bound to the dedicated formations socket
+(`/api/formations/tmux/*`, `/terminal-formations/`) lets an operator watch and
+attach the mission agents' sessions without touching the cockpit socket.
 
 ## Prototype references
 
@@ -220,29 +280,31 @@ Watching is optional. Recovery must not depend on a browser tab staying open.
 
 ## Execution environments
 
-Formations execution promotes through three environments. Each step up is an
-explicit configuration decision, never a silent fallback.
+Formations execution uses explicit environment selection. Each step is a visible
+configuration decision, never a silent fallback. Mission agents never run on the
+cockpit tmux socket: the executor always refuses it.
 
 1. **Lab.** `CHROTE_FORMATIONS_LAB_*` configures a deterministic executor that
    synthesizes outputs and sentinels with no tmux involvement. Full run-engine,
    ledger, gate, and recovery behavior is exercisable here. When lab harnesses
-   are configured, lab takes precedence over the tmux executor.
-2. **Isolated tmux.** `CHROTE_FORMATIONS_TMUX_*` dispatches to real agent
-   sessions, but the executor refuses to run unless the socket, cwd, and all
-   roots live under the system temp directory and the socket is not the
-   default-resolved tmux socket. Dogfooding happens on a throwaway socket with
-   its own sessions; the live cockpit socket is unreachable by construction.
-3. **Live socket (prod smoke).** Setting `CHROTE_FORMATIONS_TMUX_PROD_SMOKE`
-   is the explicit operator opt-in that lifts the temp-socket and temp-root
-   restrictions so the executor may target the live CHROTE tmux socket and real
-   workspace roots. Nothing else is relaxed: sessions must already exist with
-   the configured prefix, panes must be alive with cwd inside configured roots,
-   output caps, timeouts, redaction, and fail-loud ledger events all still
-   apply. The executor never creates or kills tmux sessions.
+   are configured, lab takes precedence over the tmux executor. Lab success is
+   source/runtime mechanics evidence, not deployed real-agent proof.
+2. **Dedicated formations socket (runtime).** Setting
+   `CHROTE_FORMATIONS_TMUX_DEDICATED=1` is required for tmux-backed mission
+   execution. It runs mission agents on a dedicated formations tmux socket
+   (`CHROTE_FORMATIONS_TMUX_SOCKET`, sessions named with the configured prefix),
+   separated from the cockpit socket. Nothing else is relaxed: the executor
+   still refuses the cockpit socket, sessions must already exist with the
+   configured prefix, panes must be alive with cwd inside configured roots, and
+   output caps, timeouts, redaction, and fail-loud ledger events all still apply.
+   The executor never creates or kills tmux sessions.
 
-Promotion to the live socket means setting the `CHROTE_FORMATIONS_TMUX_*`
-boundary and the prod-smoke opt-in on the CHROTE service itself, with lab
-variables unset. `.env.example` documents the full variable surface.
+Promotion to live mission execution means setting the `CHROTE_FORMATIONS_TMUX_*`
+boundary, a dedicated `CHROTE_FORMATIONS_TMUX_SOCKET`, and
+`CHROTE_FORMATIONS_TMUX_DEDICATED=1` on the CHROTE service itself, with lab
+variables unset. `.env.example` documents the full variable surface. There is no
+prod-smoke-against-the-cockpit mode: the cockpit socket is never an execution
+target.
 
 ## Build sequence
 

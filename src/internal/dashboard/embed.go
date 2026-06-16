@@ -26,11 +26,22 @@ func Handler() http.Handler {
 
 		// Serve static files directly
 		if path != "/" && hasFileExtension(path) {
+			// Vite emits content-hashed filenames under /assets/, so they are
+			// safe to cache forever. Everything else (favicon, etc.) may change
+			// in place, so revalidate.
+			if strings.HasPrefix(path, "/assets/") {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			} else {
+				w.Header().Set("Cache-Control", "no-cache")
+			}
 			fileServer.ServeHTTP(w, r)
 			return
 		}
 
-		// For SPA routing: serve index.html for all other paths
+		// For SPA routing: serve index.html for all other paths. Never cache the
+		// HTML entry point — it references the current hashed bundle, so caching
+		// it would serve a stale dashboard after a deploy.
+		w.Header().Set("Cache-Control", "no-cache")
 		r.URL.Path = "/"
 		fileServer.ServeHTTP(w, r)
 	})

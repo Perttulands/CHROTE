@@ -37,30 +37,139 @@ func TestConfiguredFormationExecutorFromEnvSelectsTmuxOnlyWhenHarnessesSet(t *te
 	}
 }
 
-func TestTmuxExecutorRefusesLiveChroteSocketUnlessProdSmoke(t *testing.T) {
+// TestTmuxExecutorNeverTargetsCockpitSocketEvenWhenDedicated locks the
+// safety-critical guard: the cockpit/default socket is the interactive shells'
+// socket, so mission agents must NEVER run on it. The guard must reject it even
+// in Dedicated mode — otherwise a misconfigured Dedicated run could inject
+// keystrokes into the operator's live sessions.
+func TestTmuxExecutorNeverTargetsCockpitSocketEvenWhenDedicated(t *testing.T) {
+	// The real cockpit socket: tmux appends a tmux-<uid> dir under TMUX_TMPDIR,
+	// so the live socket is $TMUX_TMPDIR/tmux-<uid>/default, not
+	// $TMUX_TMPDIR/default. The guard must catch the real layout.
+	tmuxTmpdir := t.TempDir()
+	cockpitSocket := filepath.Join(tmuxTmpdir, fmt.Sprintf("tmux-%d", os.Getuid()), "default")
+	if err := os.MkdirAll(filepath.Dir(cockpitSocket), 0o755); err != nil {
+		t.Fatalf("make cockpit socket dir: %v", err)
+	}
+	if err := os.WriteFile(cockpitSocket, nil, 0o600); err != nil {
+		t.Fatalf("write cockpit socket placeholder: %v", err)
+	}
+	t.Setenv("TMUX_TMPDIR", tmuxTmpdir)
+
 	cfg := tmuxTestConfig(t)
-	cfg.Socket = "/run/user/1000/chrote-tmux/tmux-1000/default"
-	cfg.ProdSmoke = false
+	cfg.Socket = cockpitSocket
+	cfg.Dedicated = true
 
 	err := newTmuxFormationExecutorWithClient(nil, nil, cfg, &fakeTmuxHarnessClient{}).validateConfiguredBoundary()
 	var executionErr *RunExecutionError
 	if !errors.As(err, &executionErr) {
-		t.Fatalf("live socket error = %v, want RunExecutionError", err)
+		t.Fatalf("cockpit socket error = %v, want RunExecutionError", err)
 	}
-	if executionErr.Code != "unsafe_socket" || executionErr.Boundary != "executor" {
-		t.Fatalf("live socket error = %+v, want unsafe_socket/executor", executionErr)
+	if executionErr.Code != "cockpit_socket" || executionErr.Boundary != "executor" {
+		t.Fatalf("cockpit socket error = %+v, want cockpit_socket/executor", executionErr)
 	}
+	if !strings.Contains(executionErr.Message, "must never target the cockpit socket") {
+		t.Fatalf("cockpit socket error message = %q, want precise cockpit-socket guard text", executionErr.Message)
+	}
+}
 
-	cfg.ProdSmoke = true
+// TestTmuxExecutorAcceptsDedicatedNonTempSocketAndRoots locks the sanctioned
+// always-on path: the dedicated formations socket and the real workspace roots
+// live OUTSIDE the system temp dir, which Dedicated mode must allow while
+// keeping every other safety requirement intact.
+func TestTmuxExecutorAcceptsDedicatedNonTempSocketAndRoots(t *testing.T) {
+	root := nonTempBoundaryDir(t)
+	cfg := TmuxExecutorConfig{
+		Harnesses:      []string{"openai-codex"},
+		Socket:         filepath.Join(root, "formations-tmux", "default"),
+		Cwd:            root,
+		Roots:          []string{root},
+		SessionPrefix:  "mission-",
+		OutputCapBytes: defaultTmuxOutputCapBytes,
+		TimeoutSeconds: 1,
+		Dedicated:      true,
+	}
 	if err := newTmuxFormationExecutorWithClient(nil, nil, cfg, &fakeTmuxHarnessClient{}).validateConfiguredBoundary(); err != nil {
-		t.Fatalf("prod-smoke live socket validate error = %v, want allowed", err)
+		t.Fatalf("dedicated non-temp socket+roots validate error = %v, want accepted", err)
 	}
+}
 
-	clearExecutorEnv(t)
-	t.Setenv("CHROTE_FORMATIONS_TMUX_PROD_SMOKE", "prod-smoke")
-	if !TmuxExecutorConfigFromEnv().ProdSmoke {
-		t.Fatal("CHROTE_FORMATIONS_TMUX_PROD_SMOKE=prod-smoke did not enable prod smoke config")
+// TestTmuxExecutorRequiresDedicatedOptIn locks the product boundary: configuring
+// tmux harnesses is not enough to run mission agents. Mission execution must use
+// the dedicated Formations socket opt-in.
+func TestTmuxExecutorRequiresDedicatedOptIn(t *testing.T) {
+	root := nonTempBoundaryDir(t)
+	for _, tc := range []struct {
+		name   string
+		config TmuxExecutorConfig
+	}{
+		{
+			name: "real root without dedicated",
+			config: TmuxExecutorConfig{
+				Harnesses:      []string{"openai-codex"},
+				Socket:         filepath.Join(root, "formations-tmux", "default"),
+				Cwd:            root,
+				Roots:          []string{root},
+				SessionPrefix:  "mission-",
+				OutputCapBytes: defaultTmuxOutputCapBytes,
+				TimeoutSeconds: 1,
+				Dedicated:      false,
+			},
+		},
+		{
+			name:   "test helper config without dedicated",
+			config: tmuxTestConfig(t),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.config.Dedicated = false
+			err := newTmuxFormationExecutorWithClient(nil, nil, tc.config, &fakeTmuxHarnessClient{}).validateConfiguredBoundary()
+			var executionErr *RunExecutionError
+			if !errors.As(err, &executionErr) {
+				t.Fatalf("dedicated-required error = %v, want RunExecutionError", err)
+			}
+			if executionErr.Code != "dedicated_required" || executionErr.Boundary != "executor" {
+				t.Fatalf("dedicated-required error = %+v, want dedicated_required/executor", executionErr)
+			}
+		})
 	}
+}
+
+// TestTmuxExecutorConfigFromEnvReadsDedicatedFlag locks the env surface: the
+// dedicated flag is read from CHROTE_FORMATIONS_TMUX_DEDICATED.
+func TestTmuxExecutorConfigFromEnvReadsDedicatedFlag(t *testing.T) {
+	clearExecutorEnv(t)
+	t.Setenv("CHROTE_FORMATIONS_TMUX_DEDICATED", "1")
+	if !TmuxExecutorConfigFromEnv().Dedicated {
+		t.Fatal("CHROTE_FORMATIONS_TMUX_DEDICATED=1 did not enable the dedicated socket config")
+	}
+}
+
+// nonTempBoundaryDir returns a real directory that is guaranteed NOT under the
+// system temp dir, so it exercises the non-temp branch of the boundary check.
+// t.TempDir() lives under the system temp dir, so it cannot be used here.
+func nonTempBoundaryDir(t *testing.T) string {
+	t.Helper()
+	base := filepath.Join(repoRootDir(t), "src", "internal", "formations")
+	dir, err := os.MkdirTemp(base, "dedicated-boundary-")
+	if err != nil {
+		t.Fatalf("make non-temp boundary dir under %s: %v", base, err)
+	}
+	if pathWithinRoot(dir, os.TempDir()) {
+		t.Skipf("repo path %q is under the system temp dir; cannot exercise the non-temp boundary", dir)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
+func repoRootDir(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	// tests run from .../src/internal/formations; the repo root is three up.
+	return filepath.Dir(filepath.Dir(filepath.Dir(wd)))
 }
 
 func TestTmuxExecutorSessionFailuresRecordDurableBoundaryAndProvenance(t *testing.T) {
@@ -481,7 +590,7 @@ func TestExtractCapturedSlotTextKeepsFinalTurnAfterTranscriptNoise(t *testing.T)
 
 func TestTmuxRenderedPromptDoesNotContainParseableActualRunSentinel(t *testing.T) {
 	runID := "run_prompt_echo_regression"
-	executor := &TmuxFormationExecutor{config: TmuxExecutorConfig{Cwd: "/tmp/chrote-test"}}
+	executor := &TmuxFormationExecutor{config: TmuxExecutorConfig{Cwd: "/home/perttu/chrote-test"}}
 	prompt := executor.renderPrompt(FormationExecution{
 		RunID:  runID,
 		NodeID: "fmn_research",
@@ -547,7 +656,7 @@ stdin="$(cat)"
 	}
 
 	ctx := context.Background()
-	socket := "/tmp/chrote-test-tmux.sock"
+	socket := "/run/user/1000/chrote-test-tmux.sock"
 	target := "tmux-scout"
 	if err := (realTmuxHarnessClient{}).SendPrompt(ctx, socket, target, "dispatch-123", "run: test\n"); err != nil {
 		t.Fatalf("send prompt with fake tmux: %v", err)
@@ -635,7 +744,7 @@ fi
 	tmuxSleep = func(time.Duration) {}
 
 	ctx := context.Background()
-	socket := "/tmp/chrote-test-tmux.sock"
+	socket := "/run/user/1000/chrote-test-tmux.sock"
 	target := "tmux-worker"
 	if err := (realTmuxHarnessClient{}).SendPrompt(ctx, socket, target, "dispatch-retry", strings.Repeat("worker prompt\n", 80)); err != nil {
 		t.Fatalf("send prompt with fake tmux: %v", err)
@@ -659,7 +768,7 @@ func TestTmuxPaneLooksLikePendingPastedInputHandlesBulletsInsidePrompt(t *testin
 		"",
 		"  • Worker A: identify the API/runtime boundary.",
 		"  • Worker B: identify the verification evidence.",
-		"  gpt-5.5 xhigh · /tmp/workspace",
+		"  gpt-5.5 xhigh · /home/perttu/workspace",
 	}, "\n")
 	if !tmuxPaneLooksLikePendingPastedInput(pending) {
 		t.Fatalf("pending pasted prompt with bullet lines was not detected")
@@ -736,6 +845,7 @@ func tmuxTestConfig(t *testing.T) TmuxExecutorConfig {
 		SessionPrefix:  "tmux-",
 		OutputCapBytes: defaultTmuxOutputCapBytes,
 		TimeoutSeconds: 1,
+		Dedicated:      true,
 	}
 }
 
@@ -750,7 +860,7 @@ func clearExecutorEnv(t *testing.T) {
 		"CHROTE_FORMATIONS_TMUX_CWD",
 		"CHROTE_FORMATIONS_TMUX_ROOTS",
 		"CHROTE_FORMATIONS_TMUX_SESSION_PREFIX",
-		"CHROTE_FORMATIONS_TMUX_PROD_SMOKE",
+		"CHROTE_FORMATIONS_TMUX_DEDICATED",
 	} {
 		t.Setenv(key, "")
 	}
@@ -1112,7 +1222,7 @@ fi
 	t.Setenv("TMUX_FAKE_WRAPPED", wrappedPath)
 	t.Setenv("PATH", fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	captured, err := (realTmuxHarnessClient{}).CapturePane(context.Background(), "/tmp/chrote-test-o25k.sock", "tmux-solo", 1<<20)
+	captured, err := (realTmuxHarnessClient{}).CapturePane(context.Background(), "/run/user/1000/chrote-test-o25k.sock", "tmux-solo", 1<<20)
 	if err != nil {
 		t.Fatalf("capture pane with fake tmux: %v", err)
 	}
@@ -1167,7 +1277,7 @@ func TestFormationResultRecoversWrappedBarePortJSONFromRealAgentCapture(t *testi
 		"- " + portRaw + ` label="Raw evidence"`,
 		"REAL-SCOUT-COLLECTED",
 		`{"` + portSummary + `":{"text":"REAL-SCOUT-COLLECTED summary fans out to script gate and peer review; scout raw evidence`,
-		`  enters judge gate before final fan-in."},"` + portRaw + `":{"text":"Raw evidence lives under /tmp/chrote-reports/20260614T124716Z-real-agent-`,
+		`  enters judge gate before final fan-in."},"` + portRaw + `":{"text":"Raw evidence lives under /home/perttu/.local/state/chrote/reports/20260614T124716Z-real-agent-`,
 		`  holistic-mission/workspace and the log bundle will include REAL_AGENT_LOG_BUNDLE."}}`,
 		"<<<CHROTE-DONE run-id=run_01KV32R9SQ9NZAG8VQTCW3R5KW status=ok artifact=artifacts/real-scout-evidence.txt>>>",
 	}, "\n")

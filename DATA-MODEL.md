@@ -28,6 +28,7 @@ or narrower docs, but they should not contradict this file.
 | formation layout | `.formations/layout/` | TOML sidecars for visual placement/routing |
 | agent personas | configured persona roots | TOML cards with stable ids and harness variants |
 | run history | `.formations/runs/` | Append-only NDJSON ledgers |
+| formations execution socket | dedicated formations tmux socket | Mission agents run here, isolated from the cockpit socket; configured via env, not durable state |
 
 ## Dashboard settings
 
@@ -97,7 +98,8 @@ agents/
 A board definition contains structural state:
 
 - board id/name/version;
-- missions;
+- its single mission (a board is a **Mission Board**: exactly one mission, which
+  is the board's identity — see `FORMATIONS.md`);
 - formations;
 - gates;
 - slots;
@@ -106,6 +108,11 @@ A board definition contains structural state:
 - verification/check specs.
 
 It does not contain pixel positions, viewport state, or run event history.
+
+The one-mission-per-board invariant is enforced on write (a second mission is
+refused) and on validation (`ValidateBoard` records a `mission_count` finding
+when a board does not have exactly one mission). A board and its mission are
+created together atomically; there is no empty-board state on disk.
 
 ### Layout sidecar
 
@@ -157,6 +164,16 @@ run_canceled
 run_failed
 run_succeeded
 ```
+
+## Execution environment surface
+
+Formations run dispatch is configured by the executor env ladder, not by durable
+files. The variables are `CHROTE_FORMATIONS_LAB_*` (deterministic lab executor)
+and `CHROTE_FORMATIONS_TMUX_*` (real agent sessions), where
+`CHROTE_FORMATIONS_TMUX_DEDICATED=1` plus `CHROTE_FORMATIONS_TMUX_SOCKET` runs
+mission agents on a dedicated formations socket (sessions prefixed `mission-`),
+isolated from the cockpit socket, which is never an execution target. See
+`FORMATIONS.md` for the promotion ladder and `.env.example` for the full surface.
 
 ## Revision and concurrency
 

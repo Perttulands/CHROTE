@@ -20,6 +20,12 @@ import (
 type TmuxHandler struct {
 	cache      *sessionsCache
 	colorRegex *regexp.Regexp
+	// socket, when non-empty, scopes every tmux invocation to an explicit
+	// socket path via `tmux -S <socket> ...`. This is how the formations side
+	// panel targets the EXACT same socket the formations executor dispatches to
+	// (CHROTE_FORMATIONS_TMUX_SOCKET). When empty, the cockpit handler relies on
+	// TMUX_TMPDIR via core.GetTmuxEnv() and injects no -S flag.
+	socket string
 }
 
 type sessionsCache struct {
@@ -47,6 +53,11 @@ type RenameSessionRequest struct {
 	NewName string `json:"newName"`
 }
 
+// MouseModeRequest is the request body for toggling tmux mouse mode
+type MouseModeRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
 // AppearanceRequest is the request body for tmux appearance settings
 type AppearanceRequest struct {
 	StatusBg           string `json:"statusBg"`
@@ -57,25 +68,48 @@ type AppearanceRequest struct {
 	ModeStyleFg        string `json:"modeStyleFg"`
 }
 
-// NewTmuxHandler creates a new TmuxHandler
+// NewTmuxHandler creates a new TmuxHandler bound to the cockpit socket
+// (TMUX_TMPDIR-driven via core.GetTmuxEnv). Behavior is unchanged.
 func NewTmuxHandler() *TmuxHandler {
+	return newTmuxHandler("")
+}
+
+// NewTmuxHandlerForSocket creates a TmuxHandler whose every tmux invocation is
+// scoped to the explicit socket path via `tmux -S <socket> ...`. Use this for
+// the formations side panel so it lists/attaches the SAME sessions the
+// formations executor dispatches to. The socket must be the exact path from
+// CHROTE_FORMATIONS_TMUX_SOCKET; a mismatch yields an empty side panel.
+func NewTmuxHandlerForSocket(socket string) *TmuxHandler {
+	return newTmuxHandler(socket)
+}
+
+func newTmuxHandler(socket string) *TmuxHandler {
 	return &TmuxHandler{
 		cache: &sessionsCache{
 			ttl: time.Second,
 		},
 		colorRegex: regexp.MustCompile(`^#[0-9A-Fa-f]{3,6}$|^[a-zA-Z]+$|^default$`),
+		socket:     socket,
 	}
 }
 
-// RegisterRoutes registers the tmux routes on the given mux
+// RegisterRoutes registers the tmux routes under the default cockpit prefix.
 func (h *TmuxHandler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/tmux/sessions", h.ListSessions)
-	mux.HandleFunc("POST /api/tmux/sessions", h.CreateSession)
-	mux.HandleFunc("DELETE /api/tmux/sessions/all", h.DeleteAllSessions)
-	mux.HandleFunc("DELETE /api/tmux/sessions/{name}", h.DeleteSession)
-	mux.HandleFunc("PATCH /api/tmux/sessions/{name}", h.RenameSession)
-	mux.HandleFunc("GET /api/tmux/sessions/{name}/capture", h.CapturePane)
-	mux.HandleFunc("POST /api/tmux/appearance", h.ApplyAppearance)
+	h.RegisterRoutesWithPrefix(mux, "/api/tmux")
+}
+
+// RegisterRoutesWithPrefix registers the tmux routes under the given prefix
+// (e.g. "/api/tmux" for the cockpit, "/api/formations/tmux" for the formations
+// socket). The prefix must not end with a slash.
+func (h *TmuxHandler) RegisterRoutesWithPrefix(mux *http.ServeMux, prefix string) {
+	mux.HandleFunc("GET "+prefix+"/sessions", h.ListSessions)
+	mux.HandleFunc("POST "+prefix+"/sessions", h.CreateSession)
+	mux.HandleFunc("DELETE "+prefix+"/sessions/all", h.DeleteAllSessions)
+	mux.HandleFunc("DELETE "+prefix+"/sessions/{name}", h.DeleteSession)
+	mux.HandleFunc("PATCH "+prefix+"/sessions/{name}", h.RenameSession)
+	mux.HandleFunc("GET "+prefix+"/sessions/{name}/capture", h.CapturePane)
+	mux.HandleFunc("POST "+prefix+"/appearance", h.ApplyAppearance)
+	mux.HandleFunc("POST "+prefix+"/mouse", h.SetMouseMode)
 }
 
 // RunTmux satisfies the teams.TmuxRunner interface.
@@ -83,10 +117,20 @@ func (h *TmuxHandler) RunTmux(args ...string) (string, error) {
 	return h.runTmux(args...)
 }
 
-// runTmux executes a tmux command with proper environment
+// runTmux executes a tmux command with proper environment.
+//
+// When the handler is socket-scoped (NewTmuxHandlerForSocket), every invocation
+// is prefixed with `-S <socket>` so it targets the EXACT same socket file as the
+// formations executor (which also uses `tmux -S <socket> ...`, see
+// formations/tmux_executor.go runTmuxCommand). The cockpit handler leaves the
+// socket empty and relies on TMUX_TMPDIR via core.GetTmuxEnv().
 func (h *TmuxHandler) runTmux(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	if h.socket != "" {
+		args = append([]string{"-S", h.socket}, args...)
+	}
 
 	cmd := exec.CommandContext(ctx, "tmux", args...)
 	cmd.Env = core.GetTmuxEnv()
@@ -439,6 +483,35 @@ func (h *TmuxHandler) ApplyAppearance(w http.ResponseWriter, r *http.Request) {
 		"success":   true,
 		"applied":   applied,
 		"total":     len(commands),
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+// SetMouseMode handles POST /api/tmux/mouse — toggles tmux's global mouse mode.
+// With mouse mode on, the scroll wheel scrolls tmux history (via copy-mode) in
+// the browser terminal; it also enables click-to-select-pane and drag-select.
+// This is a global tmux option, so it applies to every session at once and
+// affects all attached clients. Errors are ignored the same way appearance does:
+// the tmux server may not be running yet, which is not a failure worth surfacing.
+func (h *TmuxHandler) SetMouseMode(w http.ResponseWriter, r *http.Request) {
+	var req MouseModeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON body")
+		return
+	}
+
+	value := "off"
+	if req.Enabled {
+		value = "on"
+	}
+
+	_, err := h.runTmux("set", "-g", "mouse", value)
+	applied := err == nil
+
+	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"success":   true,
+		"mouse":     value,
+		"applied":   applied,
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	})
 }

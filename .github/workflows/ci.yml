@@ -100,4 +100,5 @@ jobs:
           find src/internal/dashboard/dist -type d -empty -delete
           cd src
           go test ./...
-          go build -o /tmp/chrote-server-ci ./cmd/server
+          mkdir -p ../dist
+          go build -o ../dist/chrote-server-ci ./cmd/server

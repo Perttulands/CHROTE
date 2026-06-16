@@ -1,9 +1,25 @@
+/** Gallery-facing projection of a board's most-recent run (server RunSummary). */
+export interface BoardRunSummary {
+  runId: string
+  status: string
+  final: boolean
+  epoch: number
+}
+
 export interface BoardSummary {
   id: string
   slug: string
   title: string
   rev: number
   etag: string
+  /**
+   * The board's single mission (its identity). Null only for a malformed board
+   * with no mission; a well-formed Mission Board always carries one. The
+   * gallery renders the goal from here without reading each board.
+   */
+  mission?: MissionNode | null
+  /** The board's most-recent run, or null when it has never run. */
+  latestRun?: BoardRunSummary | null
 }
 
 export interface FormationPort {

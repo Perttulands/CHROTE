@@ -66,7 +66,8 @@ jobs:
         run: |
           cd src
           go test ./...
-          go build -o /tmp/chrote-server-release-smoke ./cmd/server
+          mkdir -p ../dist
+          go build -o ../dist/chrote-server-release-smoke ./cmd/server
 
       # Build Go binaries for multiple architectures
       - name: Build Binaries

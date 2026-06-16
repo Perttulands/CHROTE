@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   activeRunStorageKey,
+  projectNodeOutputs,
   runEventReportRef,
   runEventResumeAllowed,
   runEventText,
@@ -38,6 +39,41 @@ describe('formations run-state helpers', () => {
     expect(runEventReportRef({ runId: 'run_1', seq: 2, type: 'node_output', data: { reportRef: 'reports/fmn_work.md' } })).toBe('reports/fmn_work.md')
     expect(runEventResumeAllowed({ runId: 'run_1', seq: 3, type: 'run_blocked', data: { resumeAllowed: true } }, false)).toBe(true)
     expect(runEventResumeAllowed({ runId: 'run_1', seq: 4, type: 'run_failed' }, true)).toBe(false)
+  })
+
+  it('projects the per-output-port payloads from the routing contract, not the display summary', () => {
+    // The only routing-truth payload is node_output.outputs[portId]; node_output.text is a
+    // display-only summary and must never be surfaced as a port payload (FORMATIONS.md).
+    const events: RunEvent[] = [
+      { runId: 'run_1', seq: 1, type: 'run_started' },
+      {
+        runId: 'run_1',
+        seq: 2,
+        type: 'node_output',
+        nodeId: 'fmn_work',
+        data: {
+          text: 'human summary that must not leak into ports',
+          outputs: { port_work_out: 'the real produced payload' },
+        },
+      },
+    ]
+
+    const outputs = projectNodeOutputs(events)
+
+    expect(outputs.get('fmn_work')?.get('port_work_out')).toBe('the real produced payload')
+    // The display summary is not a port payload.
+    expect(outputs.get('fmn_work')?.get('port_work_out')).not.toBe('human summary that must not leak into ports')
+    // Ports that never produced an output are absent (the card keeps its honest idle state).
+    expect(outputs.get('fmn_work')?.get('port_unproduced')).toBeUndefined()
+    expect(outputs.get('fmn_other')).toBeUndefined()
+  })
+
+  it('keeps the latest output payload when a port is re-emitted', () => {
+    const events: RunEvent[] = [
+      { runId: 'run_1', seq: 1, type: 'node_output', nodeId: 'fmn_work', data: { outputs: { port_out: 'first' } } },
+      { runId: 'run_1', seq: 2, type: 'node_output', nodeId: 'fmn_work', data: { outputs: { port_out: 'second' } } },
+    ]
+    expect(projectNodeOutputs(events).get('fmn_work')?.get('port_out')).toBe('second')
   })
 
   it('normalizes run status envelopes and active run storage keys', () => {

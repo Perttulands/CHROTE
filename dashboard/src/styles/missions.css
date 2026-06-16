@@ -1,0 +1,247 @@
+/* Missions tab: the open-board view (canvas + formations session side-panel) and
+   the gallery card extras. The gallery itself reuses the oracle-* classes; only
+   the mission-specific additions live here. */
+
+/* ----- gallery container ----- */
+/* Fills the flex formations-host (App mounts MissionsView there when the flag is on). */
+.missions-gallery {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+
+/* ----- open-board layout ----- */
+/* The positioned container so the cockpit's .fmx{position:absolute;inset:0} fills
+   the canvas host rather than overlaying the whole view. Mirrors formations-host. */
+.missions-open-board {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.missions-open-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border-color, #2c2c2c);
+  background: var(--bg-secondary, #1a1a1a);
+  flex-shrink: 0;
+}
+
+.missions-back-btn,
+.missions-edit-mission-btn {
+  background: var(--bg-tertiary, #252525);
+  border: 1px solid var(--border-color, #3a3a3a);
+  border-radius: 6px;
+  color: var(--text-primary, #ececec);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.missions-back-btn:hover,
+.missions-edit-mission-btn:hover:not(:disabled) {
+  border-color: var(--accent-color, #54e08a);
+}
+
+.missions-edit-mission-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.missions-open-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  position: relative;
+}
+
+/* Canvas host: relative so the absolutely-positioned cockpit fills it. */
+.missions-canvas-host {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+/* ----- formations session side-panel ----- */
+.mission-session-panel {
+  width: 360px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border-color, #2c2c2c);
+  background: var(--bg-secondary, #161616);
+  overflow: hidden;
+}
+
+.mission-session-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-color, #2c2c2c);
+  flex-shrink: 0;
+}
+
+.mission-session-header .panel-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary, #bcbcbc);
+}
+
+.mission-session-error {
+  margin: 8px 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--error-color, #f87171);
+  border-radius: 6px;
+  color: var(--error-color, #f87171);
+  font-size: 12px;
+}
+
+.mission-session-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  flex-shrink: 0;
+  max-height: 30%;
+  overflow-y: auto;
+}
+
+.mission-session-empty {
+  font-size: 12px;
+  color: var(--text-tertiary, #8c8c8c);
+  padding: 4px 0;
+}
+
+.mission-session-tab {
+  text-align: left;
+  background: var(--bg-tertiary, #252525);
+  border: 1px solid var(--border-color, #3a3a3a);
+  border-radius: 6px;
+  color: var(--text-primary, #ececec);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.mission-session-tab.active {
+  border-color: var(--accent-color, #54e08a);
+  background: var(--bg-primary, #0f0f0f);
+}
+
+.mission-session-spawn {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-color, #2c2c2c);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.mission-session-spawn-title {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary, #8c8c8c);
+}
+
+.mission-session-spawn-btn {
+  text-align: left;
+  background: transparent;
+  border: 1px dashed var(--border-color, #3a3a3a);
+  border-radius: 6px;
+  color: var(--accent-color, #54e08a);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.mission-session-spawn-btn:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.mission-session-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  border-top: 1px solid var(--border-color, #2c2c2c);
+}
+
+.mission-session-iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: transparent;
+}
+
+.mission-session-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 16px;
+  font-size: 12px;
+  color: var(--text-tertiary, #8c8c8c);
+}
+
+/* ----- gallery card extras (reuses oracle-* otherwise) ----- */
+.mission-board-card {
+  text-align: left;
+}
+
+.mission-board-goal {
+  font-size: 13px;
+  color: var(--text-primary, #ececec);
+  margin: 6px 0;
+  line-height: 1.4;
+}
+
+.mission-board-bead {
+  color: var(--accent-color, #54e08a);
+}
+
+/* ----- card↔pane linkage on cockpit slots ----- */
+.fmx .slot-view-agent {
+  margin-top: 4px;
+  background: transparent;
+  border: 1px solid var(--terra);
+  border-radius: 5px;
+  color: var(--terra);
+  font-family: inherit;
+  font-size: 10px;
+  padding: 2px 7px;
+  cursor: pointer;
+}
+
+.fmx .slot-no-session {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--dimmer);
+  font-style: italic;
+}
+
+.fmx .boardname {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--ink);
+}

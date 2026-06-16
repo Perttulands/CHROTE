@@ -270,9 +270,9 @@ test.describe('Formations cockpit — D7 reference parity', () => {
     const formation = mockFormationsBoard.formations[0]
     const card = page.getByTestId(`formation-node-${formation.id}`)
     await expect(card).toBeVisible()
-    // compact card head with title + run button (not a tall form stack)
+    // compact card head with title (not a tall form stack); runs start from missions on real boards.
     await expect(card.locator('.fhead .tt')).toHaveText(formation.title)
-    await expect(card.locator('.frun')).toBeVisible()
+    await expect(card.locator('.frun')).toHaveCount(0)
     // each slot is a sphere ring; the staffed ones show agent initials, no <select>
     const rings = card.locator('.slot .slot-ring')
     await expect(rings).toHaveCount(formation.slots.length)
@@ -336,7 +336,7 @@ test.describe('Formations cockpit — D7 reference parity', () => {
     await expect(gate.locator('.glabel.fail')).toBeVisible()
     await expect(gate.locator('.pjudge')).toBeVisible()
     await expect(page.locator('.fmx .wires path.wire')).toHaveCount(mockFormationsBoard.connections.length)
-    await page.screenshot({ path: '/tmp/chrote-gap-loop/reports/CODEX_UI_REFERENCE_FIX_COCKPIT.png' })
+    await page.screenshot({ path: test.info().outputPath('CODEX_UI_REFERENCE_FIX_COCKPIT.png') })
   })
 })
 
@@ -377,8 +377,8 @@ test.describe('Formations cockpit — layout safety', () => {
 
 test.describe('Formations cockpit — responsive safety', () => {
   for (const viewport of [
-    { label: 'desktop', width: 1280, height: 720, minCanvasWidth: 720, artifact: '/tmp/chrote-gap-loop/reports/CODEX_FINAL_CONFORMANCE_DESKTOP.png' },
-    { label: 'mobile', width: 390, height: 844, minCanvasWidth: 180, artifact: '/tmp/chrote-gap-loop/reports/CODEX_FINAL_CONFORMANCE_MOBILE.png' },
+    { label: 'desktop', width: 1280, height: 720, minCanvasWidth: 720, artifact: 'CODEX_FINAL_CONFORMANCE_DESKTOP.png' },
+    { label: 'mobile', width: 390, height: 844, minCanvasWidth: 180, artifact: 'CODEX_FINAL_CONFORMANCE_MOBILE.png' },
   ]) {
     test(`keeps ${viewport.label} cockpit controls reachable without a blank canvas`, async ({ page }) => {
       await page.setViewportSize({ width: viewport.width, height: viewport.height })
@@ -431,7 +431,7 @@ test.describe('Formations cockpit — responsive safety', () => {
       const visibleNodes = nodes.filter(box => boxesOverlap(box, viewportRect))
       expect(visibleNodes.length, `${viewport.label} should show at least one card on the canvas`).toBeGreaterThan(0)
 
-      await page.screenshot({ path: viewport.artifact })
+      await page.screenshot({ path: test.info().outputPath(viewport.artifact) })
     })
   }
 })

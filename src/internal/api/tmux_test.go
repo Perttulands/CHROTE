@@ -162,6 +162,20 @@ func TestTmuxHandler_ApplyAppearance_InvalidColor(t *testing.T) {
 	}
 }
 
+func TestTmuxHandler_SetMouseMode_InvalidJSON(t *testing.T) {
+	handler := NewTmuxHandler()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/mouse", bytes.NewBufferString("{invalid}"))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	handler.SetMouseMode(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Errorf("Status code = %d, expected %d", recorder.Code, http.StatusBadRequest)
+	}
+}
+
 func TestTmuxHandler_RegisterRoutes(t *testing.T) {
 	handler := NewTmuxHandler()
 	mux := http.NewServeMux()

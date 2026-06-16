@@ -38,7 +38,7 @@ default = "claude-code"
 [[harness.variant]]
 id = "claude-code"
 session_stem = "susie"
-source = "/tmp/CLAUDE.md"
+source = "/home/perttu/CLAUDE.md"
 `)
 
 	handler := NewAgentsHandler(agentsDir, fakeAgentLiveness{live: []formations.LiveAgentSession{
@@ -73,7 +73,7 @@ source = "/tmp/CLAUDE.md"
 		t.Fatalf("second agent = %#v, want unbound scratch", body.Data.Agents[1])
 	}
 	if strings.Contains(rec.Body.String(), "CLAUDE.md contents") ||
-		strings.Contains(rec.Body.String(), "/tmp/CLAUDE.md") ||
+		strings.Contains(rec.Body.String(), "/home/perttu/CLAUDE.md") ||
 		strings.Contains(rec.Body.String(), "harnessVariants") {
 		t.Fatalf("roster response leaked source or harness internals: %s", rec.Body.String())
 	}

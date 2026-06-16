@@ -412,7 +412,7 @@ You can send special keys: `Enter`, `C-m` (carriage return), `Up`, `Down`, `Left
 
 The `send-keys` command works from any shell—you don't need to be inside tmux. The only requirement is that the tmux server is running and accessible.
 
-**Default socket:** tmux uses `/tmp/tmux-$UID/default` by default.
+**Default socket:** CHROTE-managed tmux uses an explicit runtime socket, normally under `$XDG_RUNTIME_DIR/chrote-tmux/`.
 
 **Custom socket:** If sessions use a different socket (like chrote uses `/run/tmux/chrote/`), specify it with `-S`:
 

@@ -157,6 +157,14 @@ type MissionCreateRequest struct {
 	UpdatedBy string
 }
 
+type MissionUpdateRequest struct {
+	MissionID string
+	Title     string
+	Goal      string
+	BeadID    string
+	UpdatedBy string
+}
+
 type FormationNode struct {
 	ID           string                 `json:"id"`
 	Type         string                 `json:"type"`
@@ -239,7 +247,7 @@ func (s *Store) ResolveBoardSelector(selector string) (string, error) {
 	if err := validateSlug(selector); err != nil {
 		return "", err
 	}
-	boards, err := s.ListBoards()
+	boards, err := s.listBoardIdentities()
 	if err != nil {
 		return "", err
 	}
@@ -603,8 +611,8 @@ func (s *Store) SetFormationBrief(slug string, req FormationBriefRequest, opts W
 	if req.FormationID == "" {
 		return nil, ErrNotFound
 	}
-	if req.BeadID != "" && !isSafeBeadsIssueID(req.BeadID) {
-		return nil, fmt.Errorf("%w: beadId must be a safe Beads issue id", ErrInvalidSlug)
+	if err := validateOptionalBeadID(req.BeadID); err != nil {
+		return nil, err
 	}
 	return s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, _ *BoardDocument) ([]byte, error) {
 		lines := splitLines(raw)
@@ -797,8 +805,8 @@ func (s *Store) DetachGateJudge(slug string, req GateJudgeRequest, opts WriteOpt
 }
 
 func (s *Store) CreateMission(slug string, req MissionCreateRequest, opts WriteOptions) (*BoardDocument, error) {
-	if !isSafeBeadsIssueID(req.BeadID) {
-		return nil, fmt.Errorf("%w: mission beadId must be a safe Beads issue id", ErrInvalidSlug)
+	if err := validateOptionalBeadID(req.BeadID); err != nil {
+		return nil, err
 	}
 	title := req.Title
 	if title == "" {
@@ -810,7 +818,13 @@ func (s *Store) CreateMission(slug string, req MissionCreateRequest, opts WriteO
 		Goal:   req.Goal,
 		BeadID: req.BeadID,
 	}
-	board, err := s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, _ *BoardDocument) ([]byte, error) {
+	board, err := s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, current *BoardDocument) ([]byte, error) {
+		// A Mission Board has exactly one mission: its identity. Adding a second
+		// mission would force the runner to pick, which the model deliberately
+		// avoids, so refuse it loud rather than persist an unrunnable board.
+		if len(current.Missions) > 0 {
+			return nil, fmt.Errorf("%w: board %q already has a mission; a Mission Board has exactly one mission — edit it with mission set-goal instead of adding another", ErrConflict, slug)
+		}
 		return appendMissionBlock(raw, mission), nil
 	})
 	if err != nil {
@@ -820,6 +834,33 @@ func (s *Store) CreateMission(slug string, req MissionCreateRequest, opts WriteO
 		return nil, err
 	}
 	return board, nil
+}
+
+// UpdateMission reconfigures an existing mission's title, goal, and optional
+// bead in place. The mission id is the target, not a field to change: its id and
+// its derived ":out" endpoint are preserved so existing wires keep resolving.
+// Title/Goal/BeadID are set (full replace) on the mission, mirroring how
+// SetFormationBrief replaces its scalars. An empty BeadID clears the bead; a
+// non-empty BeadID must match the Beads issue id format. An unknown mission id
+// fails loud with ErrNotFound naming the mission and board rather than no-op.
+func (s *Store) UpdateMission(slug string, req MissionUpdateRequest, opts WriteOptions) (*BoardDocument, error) {
+	if req.MissionID == "" {
+		return nil, fmt.Errorf("%w: missionId is required to update a mission on board %q", ErrNotFound, slug)
+	}
+	if err := validateOptionalBeadID(req.BeadID); err != nil {
+		return nil, err
+	}
+	return s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, _ *BoardDocument) ([]byte, error) {
+		lines := splitLines(raw)
+		missionStart, missionEnd, ok := findMissionBlockByID(lines, req.MissionID)
+		if !ok {
+			return nil, fmt.Errorf("%w: mission %q not found on board %q", ErrNotFound, req.MissionID, slug)
+		}
+		lines = setScalarInLineRange(lines, missionStart+1, missionEnd, "title", renderString(req.Title))
+		lines = setScalarInLineRange(lines, missionStart+1, missionEnd, "goal", renderString(req.Goal))
+		lines = setScalarInLineRange(lines, missionStart+1, missionEnd, "beadId", renderString(req.BeadID))
+		return renderTOMLLines(lines), nil
+	})
 }
 
 func (s *Store) AddFormationPort(slug string, req FormationPortRequest, opts WriteOptions) (*BoardDocument, error) {

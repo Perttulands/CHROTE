@@ -56,7 +56,7 @@ func TestFilesHandler_ResolveSafePath_NotAllowed(t *testing.T) {
 		{"etc passwd", "/etc/passwd"},
 		{"random path", "/foo/bar"},
 		{"windows path", "C:/Windows"},
-		{"tmp path", "/tmp/test"},
+		{"var path", "/var/test"},
 		{"home path", "/home/user"},
 	}
 
@@ -183,12 +183,12 @@ func TestFilesHandler_RenameResource_NotAllowedPath(t *testing.T) {
 
 	body := RenameRequest{
 		Action:      "rename",
-		Destination: "/tmp/dest.txt",
+		Destination: "/var/dest.txt",
 	}
 	bodyBytes, _ := json.Marshal(body)
 
 	// Try to rename a path not under allowed roots
-	req := httptest.NewRequest(http.MethodPatch, "/api/files/resources/tmp/test.txt", bytes.NewBuffer(bodyBytes))
+	req := httptest.NewRequest(http.MethodPatch, "/api/files/resources/var/test.txt", bytes.NewBuffer(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 

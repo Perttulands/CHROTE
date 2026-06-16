@@ -63,8 +63,24 @@ type formationsBoardPatchRequest struct {
 	SetGateJudge       *formationsSetGateJudgeRequest       `json:"setGateJudge"`
 	DetachGateJudge    *formationsDetachGateJudgeRequest    `json:"detachGateJudge"`
 	CreateMission      *formationsCreateMissionRequest      `json:"createMission"`
+	UpdateMission      *formationsUpdateMissionRequest      `json:"updateMission"`
 	ExpectedRev        int                                  `json:"expectedRev"`
 	UpdatedBy          string                               `json:"updatedBy"`
+}
+
+type formationsCreateMissionBoardRequest struct {
+	Slug      string                              `json:"slug"`
+	Title     string                              `json:"title"`
+	Mission   formationsCreateMissionBoardMission `json:"mission"`
+	UpdatedBy string                              `json:"updatedBy"`
+}
+
+type formationsCreateMissionBoardMission struct {
+	Title  string `json:"title"`
+	Goal   string `json:"goal"`
+	BeadID string `json:"beadId"`
+	X      int    `json:"x"`
+	Y      int    `json:"y"`
 }
 
 type formationsCreateFormationRequest struct {
@@ -204,6 +220,15 @@ type formationsCreateMissionRequest struct {
 	UpdatedBy   string `json:"updatedBy"`
 }
 
+type formationsUpdateMissionRequest struct {
+	MissionID   string `json:"missionId"`
+	Title       string `json:"title"`
+	Goal        string `json:"goal"`
+	BeadID      string `json:"beadId"`
+	ExpectedRev int    `json:"expectedRev"`
+	UpdatedBy   string `json:"updatedBy"`
+}
+
 type formationsLayoutPatchRequest struct {
 	UpdatedAt string                  `json:"updatedAt"`
 	Nodes     []formations.LayoutNode `json:"nodes"`
@@ -224,6 +249,7 @@ func NewFormationsHandlerWithStores(store *formations.Store, personas *formation
 
 func (h *FormationsHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/formations/boards", h.ListBoards)
+	mux.HandleFunc("POST /api/formations/boards", h.CreateBoard)
 	mux.HandleFunc("POST /api/formations/runs", h.StartRun)
 	mux.HandleFunc("GET /api/formations/runs/{runId}", h.GetRun)
 	mux.HandleFunc("GET /api/formations/runs/{runId}/events", h.GetRunEvents)
@@ -244,8 +270,8 @@ func (h *FormationsHandler) StartRun(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSONBody(w, r, &request) {
 		return
 	}
-	if request.Board == "" || request.MissionID == "" {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "board and missionId are required")
+	if request.Board == "" {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "board is required")
 		return
 	}
 	slug, err := h.store.ResolveBoardSelector(request.Board)
@@ -258,13 +284,29 @@ func (h *FormationsHandler) StartRun(w http.ResponseWriter, r *http.Request) {
 		writeFormationsError(w, err)
 		return
 	}
+	// A Mission Board has exactly one mission, so an omitted missionId means "run
+	// this board's mission". Resolve it here rather than forcing the caller to know
+	// the mission id. An explicit missionId still works and takes precedence.
+	missionID := request.MissionID
+	if missionID == "" {
+		switch len(board.Missions) {
+		case 1:
+			missionID = board.Missions[0].ID
+		case 0:
+			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", fmt.Sprintf("board %q has no mission to run; create one before running the board", slug))
+			return
+		default:
+			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", fmt.Sprintf("board %q has %d missions, so a missionId is required to choose which to run", slug, len(board.Missions)))
+			return
+		}
+	}
 	expectedRev := request.ExpectedRev
 	if expectedRev == 0 {
 		expectedRev = board.Rev
 	}
 	engine := formations.NewRunEngine(h.store, h.personas, formations.NewConfiguredFormationExecutorFromEnv(h.store, h.personas, "api"))
 	status, err := engine.RunMission(slug, formations.RunStartRequest{
-		MissionID:         request.MissionID,
+		MissionID:         missionID,
 		Actor:             request.Actor,
 		ExpectedBoardETag: r.Header.Get("If-Match"),
 		ExpectedBoardRev:  expectedRev,
@@ -422,6 +464,31 @@ func (h *FormationsHandler) ListBoards(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	core.WriteSuccess(w, map[string]interface{}{"boards": boards})
+}
+
+// CreateBoard creates a Mission Board: a board and its single mission, atomically.
+// It maps the typed store errors precisely so the UI can react: a duplicate slug
+// or any other conflict is 409, an invalid slug is 400, and a malformed bead id
+// is 400. On success it returns {board} with the created mission and a fresh ETag.
+func (h *FormationsHandler) CreateBoard(w http.ResponseWriter, r *http.Request) {
+	var request formationsCreateMissionBoardRequest
+	if !decodeJSONBody(w, r, &request) {
+		return
+	}
+	board, err := h.store.CreateMissionBoard(request.Slug, request.Title, formations.MissionCreateRequest{
+		Title:     request.Mission.Title,
+		Goal:      request.Mission.Goal,
+		BeadID:    request.Mission.BeadID,
+		X:         request.Mission.X,
+		Y:         request.Mission.Y,
+		UpdatedBy: request.UpdatedBy,
+	}, formations.WriteOptions{})
+	if err != nil {
+		writeFormationsError(w, err)
+		return
+	}
+	w.Header().Set("ETag", board.ETag)
+	core.WriteSuccess(w, map[string]interface{}{"board": board})
 }
 
 func (h *FormationsHandler) GetBoard(w http.ResponseWriter, r *http.Request) {
@@ -832,6 +899,26 @@ func (h *FormationsHandler) PatchBoard(w http.ResponseWriter, r *http.Request) {
 		core.WriteSuccess(w, map[string]interface{}{"board": board})
 		return
 	}
+	if request.UpdateMission != nil {
+		mission := request.UpdateMission
+		board, err := h.store.UpdateMission(slug, formations.MissionUpdateRequest{
+			MissionID: mission.MissionID,
+			Title:     mission.Title,
+			Goal:      mission.Goal,
+			BeadID:    mission.BeadID,
+			UpdatedBy: patchUpdatedBy(request.UpdatedBy, mission.UpdatedBy),
+		}, formations.WriteOptions{
+			ExpectedETag: r.Header.Get("If-Match"),
+			ExpectedRev:  patchExpectedRev(request.ExpectedRev, mission.ExpectedRev),
+		})
+		if err != nil {
+			writeFormationsError(w, err)
+			return
+		}
+		w.Header().Set("ETag", board.ETag)
+		core.WriteSuccess(w, map[string]interface{}{"board": board})
+		return
+	}
 	board, err := h.store.UpdateBoardMetadata(slug, formations.BoardMetadataPatch{
 		Title:     request.Title,
 		UpdatedBy: request.UpdatedBy,
@@ -933,6 +1020,8 @@ func patchUpdatedBy(parent, child string) string {
 
 func writeFormationsError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, formations.ErrAlreadyExists):
+		core.WriteError(w, http.StatusConflict, "ALREADY_EXISTS", err.Error())
 	case errors.Is(err, formations.ErrConflict):
 		core.WriteError(w, http.StatusConflict, "CONFLICT", "Formation definition changed; reload and retry")
 	case errors.Is(err, formations.ErrAmbiguousSelector):
@@ -941,6 +1030,8 @@ func writeFormationsError(w http.ResponseWriter, err error) {
 		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", "Formation resource not found")
 	case errors.Is(err, formations.ErrPreconditionRequired):
 		core.WriteError(w, http.StatusPreconditionRequired, "PRECONDITION_REQUIRED", "If-Match and revision preconditions are required")
+	case errors.Is(err, formations.ErrInvalidBeadID):
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 	case errors.Is(err, formations.ErrInvalidSlug):
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid formation slug")
 	case errors.Is(err, formations.ErrUnsupportedSchema):

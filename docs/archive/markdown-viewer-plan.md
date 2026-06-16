@@ -172,22 +172,22 @@ func TestClaudeContentEndpoint(t *testing.T) {
 
     t.Run("returns 400 for directory", func(t *testing.T) {
         // Create test directory
-        os.MkdirAll("/tmp/test/.claude/plans", 0755)
-        resp := srv.Get("/api/files/claude-content/tmp/test/.claude/plans")
+        os.MkdirAll("/home/test/.claude/plans", 0755)
+        resp := srv.Get("/api/files/claude-content/home/test/.claude/plans")
         assert.Equal(t, 400, resp.StatusCode)
     })
 
     t.Run("returns 413 for file over 1MB", func(t *testing.T) {
         // Create 2MB file
-        createTestFile(t, "/tmp/test/.claude/large.md", 2*1024*1024)
-        resp := srv.Get("/api/files/claude-content/tmp/test/.claude/large.md")
+        createTestFile(t, "/home/test/.claude/large.md", 2*1024*1024)
+        resp := srv.Get("/api/files/claude-content/home/test/.claude/large.md")
         assert.Equal(t, 413, resp.StatusCode)
     })
 
     t.Run("returns content for valid file", func(t *testing.T) {
         content := "# Test Plan\n\nThis is a test."
-        createTestFile(t, "/tmp/test/.claude/plans/test.md", content)
-        resp := srv.Get("/api/files/claude-content/tmp/test/.claude/plans/test.md")
+        createTestFile(t, "/home/test/.claude/plans/test.md", content)
+        resp := srv.Get("/api/files/claude-content/home/test/.claude/plans/test.md")
         assert.Equal(t, 200, resp.StatusCode)
         assert.Equal(t, "text/plain; charset=utf-8", resp.Header.Get("Content-Type"))
         assert.Equal(t, content, resp.Body)

@@ -4,7 +4,8 @@
 # Run this inside the container: docker exec -it agentarena-dev bash /code/AgentArena/test-sessions.sh
 # Or from within tmux in the container: bash /code/AgentArena/test-sessions.sh
 
-export TMUX_TMPDIR=${TMUX_TMPDIR:-/tmp}
+export TMUX_TMPDIR=${TMUX_TMPDIR:-${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/chrote-tmux}
+mkdir -p "$TMUX_TMPDIR"
 
 echo "Creating test sessions..."
 

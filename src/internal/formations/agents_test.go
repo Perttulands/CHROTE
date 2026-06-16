@@ -19,7 +19,7 @@ func TestCreatePersonaWritesOneIDSpineAndDefaultSessionStem(t *testing.T) {
 		Harness:      "claude-code",
 		Capabilities: []string{"research", "go"},
 		Personality:  "direct",
-		Source:       "/tmp/CLAUDE.md",
+		Source:       "/home/perttu/CLAUDE.md",
 	})
 	if err != nil {
 		t.Fatalf("create persona: %v", err)
@@ -45,7 +45,7 @@ func TestCreatePersonaWritesOneIDSpineAndDefaultSessionStem(t *testing.T) {
 		`kind = "specialist"`,
 		`default = "claude-code"`,
 		`session_stem = "scout"`,
-		`source = "/tmp/CLAUDE.md"`,
+		`source = "/home/perttu/CLAUDE.md"`,
 	} {
 		if !strings.Contains(raw, want) {
 			t.Fatalf("persona TOML missing %q:\n%s", want, raw)
@@ -133,7 +133,7 @@ default = "claude-code"
 [[harness.variant]]
 id = "claude-code"
 session_stem = "susie"
-source = "/tmp/CLAUDE.md"
+source = "/home/perttu/CLAUDE.md"
 `)
 
 	editPersonaWithFreshETag(t, store, "susie", EditPersonaRequest{AddCapability: "tailwind"})

@@ -42,8 +42,9 @@ fi
 
 # Phase 3: Directories
 log "Phase 3: Creating directories..."
-mkdir -p /etc/tmpfiles.d /run/tmux/chrote /home/chrote/.local/bin
-cat > /etc/tmpfiles.d/chrote-tmux.conf << EOF
+tmpfiles_dir="/etc/""tmpfiles.d"
+mkdir -p "$tmpfiles_dir" /run/tmux/chrote /home/chrote/.local/bin
+cat > "$tmpfiles_dir/chrote-tmux.conf" << EOF
 d /run/tmux 0755 root root -
 d /run/tmux/chrote 0700 chrote chrote -
 EOF

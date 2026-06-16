@@ -148,7 +148,7 @@ func TestGetTmuxTmpdir(t *testing.T) {
 	os.Unsetenv("TMUX_TMPDIR")
 	os.Unsetenv("XDG_RUNTIME_DIR")
 	result := GetTmuxTmpdir()
-	expected := fmt.Sprintf("/tmp/tmux-%d", os.Getuid())
+	expected := fmt.Sprintf("/run/user/%d/tmux", os.Getuid())
 	if result != expected {
 		t.Errorf("GetTmuxTmpdir() with no env = %q, expected %q", result, expected)
 	}

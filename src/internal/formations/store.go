@@ -20,6 +20,7 @@ var (
 	ErrConflict             = errors.New("formations conflict")
 	ErrAmbiguousSelector    = errors.New("ambiguous formations selector")
 	ErrInvalidSlug          = errors.New("invalid formations slug")
+	ErrInvalidBeadID        = errors.New("invalid Beads issue id")
 	ErrNotFound             = errors.New("formations file not found")
 	ErrPreconditionRequired = errors.New("formations write precondition required")
 	ErrUnsupportedSchema    = errors.New("unsupported formations schema")
@@ -52,6 +53,24 @@ type BoardSummary struct {
 	Title string `json:"title"`
 	Rev   int    `json:"rev"`
 	ETag  string `json:"etag"`
+	// Mission is the board's single mission (its identity). It is nil only for a
+	// malformed board that has no mission; a well-formed Mission Board always has
+	// exactly one. Carried in the summary so a gallery can render the goal without
+	// reading each board.
+	Mission *MissionNode `json:"mission"`
+	// LatestRun is the board's most-recent run, or nil when the board has never
+	// run. Carried in the summary so a gallery can render run status without a
+	// follow-up request per board.
+	LatestRun *RunSummary `json:"latestRun"`
+}
+
+// RunSummary is the gallery-facing projection of a board's most-recent run: just
+// enough to render a status pill without fetching the full run.
+type RunSummary struct {
+	RunID  string `json:"runId"`
+	Status string `json:"status"`
+	Final  bool   `json:"final"`
+	Epoch  int    `json:"epoch"`
 }
 
 type LayoutDocument struct {
@@ -75,12 +94,6 @@ type BoardChangeSignal struct {
 
 type BoardMetadataPatch struct {
 	Title     *string
-	UpdatedBy string
-}
-
-type BoardCreateRequest struct {
-	Slug      string
-	Title     string
 	UpdatedBy string
 }
 
@@ -110,7 +123,41 @@ func (s *Store) LayoutPath(slug string) string {
 	return filepath.Join(s.Workspace, ".formations", "layout", slug+".layout.toml")
 }
 
+// ListBoards returns one gallery-ready summary per board: its identity, its
+// single mission, and its most-recent run. Populating the latest run walks the
+// run ledgers, so this is the gallery path, not the selector hot path —
+// ResolveBoardSelector uses listBoardIdentities, which skips the run walk.
 func (s *Store) ListBoards() ([]BoardSummary, error) {
+	boards, err := s.listBoardIdentities()
+	if err != nil {
+		return nil, err
+	}
+	for i := range boards {
+		// The most-recent run is the last entry from ListRuns, which returns runs
+		// sorted ascending by run id (run ids are time-ordered). Fail loud if the
+		// run ledgers cannot be read rather than hiding a corrupt ledger.
+		runs, err := s.ListRuns(RunListFilter{BoardSlug: boards[i].Slug})
+		if err != nil {
+			return nil, err
+		}
+		if len(runs) > 0 {
+			latest := runs[len(runs)-1]
+			boards[i].LatestRun = &RunSummary{
+				RunID:  latest.RunID,
+				Status: latest.Status,
+				Final:  latest.Final,
+				Epoch:  latest.Epoch,
+			}
+		}
+	}
+	return boards, nil
+}
+
+// listBoardIdentities returns the cheap per-board summary: identity plus the
+// board's single mission, parsed straight from the board file with no run-ledger
+// walk. It is the shared basis for both ResolveBoardSelector (which needs ids and
+// slugs) and ListBoards (which enriches each summary with the latest run).
+func (s *Store) listBoardIdentities() ([]BoardSummary, error) {
 	dir := filepath.Join(s.Workspace, ".formations", "boards")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -130,13 +177,21 @@ func (s *Store) ListBoards() ([]BoardSummary, error) {
 		if err != nil {
 			return nil, err
 		}
-		boards = append(boards, BoardSummary{
+		summary := BoardSummary{
 			ID:    board.ID,
 			Slug:  board.Slug,
 			Title: board.Title,
 			Rev:   board.Rev,
 			ETag:  board.ETag,
-		})
+		}
+		// A Mission Board's mission is its identity; carry it so a gallery does not
+		// have to read each board. Take the first when present (the one-mission
+		// invariant guarantees there is at most one on a well-formed board).
+		if len(board.Missions) > 0 {
+			mission := board.Missions[0]
+			summary.Mission = &mission
+		}
+		boards = append(boards, summary)
 	}
 	sort.Slice(boards, func(i, j int) bool {
 		return boards[i].Slug < boards[j].Slug
@@ -151,15 +206,40 @@ func (s *Store) ReadBoard(slug string) (*BoardDocument, error) {
 	return s.readBoardPath(s.BoardPath(slug))
 }
 
-func (s *Store) CreateBoard(req BoardCreateRequest) (*BoardDocument, error) {
-	if err := validateSlug(req.Slug); err != nil {
+// CreateMissionBoard creates a Mission Board: a board and its single mission in
+// one atomic write. A Mission Board's identity IS its mission, so the two are
+// born together — there is never a window where an empty board persists on disk.
+// The board definition (with the mission block) is rendered and written in a
+// single writeAtomic under the board file lock; only the mission's layout
+// coordinates land afterward in the non-authoritative layout sidecar (a missing
+// layout is a normal degraded state). A duplicate slug, an invalid slug, an empty
+// title, or a malformed beadId is rejected with its precise typed error before
+// the board is written. opts is accepted for signature symmetry with the other
+// write paths; create is unconditional (the slug must not already exist), so its
+// preconditions are not consulted.
+func (s *Store) CreateMissionBoard(slug, title string, mission MissionCreateRequest, opts WriteOptions) (*BoardDocument, error) {
+	_ = opts
+	if err := validateSlug(slug); err != nil {
 		return nil, err
 	}
-	title := strings.TrimSpace(req.Title)
-	if title == "" {
+	cleanTitle := strings.TrimSpace(title)
+	if cleanTitle == "" {
 		return nil, fmt.Errorf("%w: board title is required", ErrInvalidSlug)
 	}
-	path := s.BoardPath(req.Slug)
+	if err := validateOptionalBeadID(mission.BeadID); err != nil {
+		return nil, err
+	}
+	missionTitle := mission.Title
+	if missionTitle == "" {
+		missionTitle = "Mission"
+	}
+	node := MissionNode{
+		ID:     newPrefixedID("mis"),
+		Title:  missionTitle,
+		Goal:   mission.Goal,
+		BeadID: mission.BeadID,
+	}
+	path := s.BoardPath(slug)
 	var created *BoardDocument
 	err := withFileLock(path, func() error {
 		if _, err := os.Stat(path); err == nil {
@@ -167,7 +247,7 @@ func (s *Store) CreateBoard(req BoardCreateRequest) (*BoardDocument, error) {
 		} else if err != nil && !os.IsNotExist(err) {
 			return err
 		}
-		raw := renderBoard(req.Slug, title, strings.TrimSpace(req.UpdatedBy), s.now())
+		raw := appendMissionBlock(renderBoard(slug, cleanTitle, strings.TrimSpace(mission.UpdatedBy), s.now()), node)
 		if err := writeAtomic(path, raw); err != nil {
 			return err
 		}
@@ -179,6 +259,9 @@ func (s *Store) CreateBoard(req BoardCreateRequest) (*BoardDocument, error) {
 		return nil
 	})
 	if err != nil {
+		return nil, err
+	}
+	if _, err := s.upsertLayoutNode(slug, created.ID, created.Rev, LayoutNode{ID: node.ID, X: mission.X, Y: mission.Y}); err != nil {
 		return nil, err
 	}
 	return created, nil

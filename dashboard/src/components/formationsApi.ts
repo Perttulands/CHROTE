@@ -90,10 +90,47 @@ export async function fetchBoardLayout(slug: string): Promise<LayoutDocument> {
   return normalizeLayout(result.data.layout, result.etag)
 }
 
-export async function createBoard(title: string, template: string): Promise<BoardDocument> {
+export interface CreateBoardInput {
+  /** URL-safe board slug. Backend 400s on an invalid slug (e.g. "bad/path"). */
+  slug: string
+  /** Board title. */
+  title: string
+  /** The mission goal — the meaningful field of a Mission Board. */
+  goal: string
+  /** Optional Beads anchor. Empty string means "no anchor"; a malformed non-empty id 400s. */
+  beadId: string
+  /** Optional mission title; defaults to "Mission" backend-side when omitted. */
+  missionTitle?: string
+  /** Optional initial mission position on the canvas. */
+  x?: number
+  y?: number
+}
+
+/**
+ * Create a Mission Board atomically. Maps to POST /api/formations/boards with the
+ * {slug, title, mission:{title?, goal, beadId?, x?, y?}, updatedBy?} contract.
+ *
+ * Errors surface as ApiRequestError with the server status/code so callers can
+ * render a precise message: 409 duplicate slug, 400 invalid slug, 400 malformed bead.
+ */
+export async function createBoard(input: CreateBoardInput): Promise<BoardDocument> {
+  const mission: Record<string, unknown> = { goal: input.goal }
+  // An empty bead is "no anchor", not a value to send — the backend 400s on a
+  // malformed bead, so only forward a non-empty trimmed id.
+  const beadId = input.beadId.trim()
+  if (beadId) mission.beadId = beadId
+  if (input.missionTitle && input.missionTitle.trim()) mission.title = input.missionTitle.trim()
+  if (typeof input.x === 'number') mission.x = input.x
+  if (typeof input.y === 'number') mission.y = input.y
+
   const result = await fetchApi<{ board: BoardDocument }>('/api/formations/boards', {
     method: 'POST',
-    body: JSON.stringify({ title, template }),
+    body: JSON.stringify({
+      slug: input.slug,
+      title: input.title,
+      mission,
+      updatedBy: 'agent:ui',
+    }),
   })
   return normalizeBoard(result.data.board, result.etag)
 }
@@ -152,7 +189,7 @@ export async function patchBoardLayout(slug: string, etag: string, patch: { node
   return normalizeLayout(result.data.layout, result.etag)
 }
 
-export async function startRun(etag: string, body: { board: string; missionId?: string; formationId?: string; actor: string }): Promise<RunStartResult> {
+export async function startRun(etag: string, body: { board: string; missionId: string; actor: string }): Promise<RunStartResult> {
   const result = await fetchApi<RunStartResult>('/api/formations/runs', {
     method: 'POST',
     headers: { 'If-Match': etag },
@@ -207,4 +244,17 @@ export async function recordGateVerdict(runId: string, gateId: string, body: { a
 export type PatchCreateFormationResult = {
   layout: LayoutDocument
   formation: FormationNode
+}
+
+export interface UpdateMissionInput {
+  missionId: string
+  title: string
+  goal: string
+  /** Optional Beads anchor. "" clears the link; non-empty must be a valid bead id (backend 400s otherwise). */
+  beadId: string
+}
+
+/** Build the board PATCH op that full-replaces a mission's title/goal/bead (maps to store.UpdateMission). */
+export function updateMissionOp(input: UpdateMissionInput): { updateMission: UpdateMissionInput } {
+  return { updateMission: input }
 }

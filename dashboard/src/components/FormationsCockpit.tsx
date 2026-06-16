@@ -6,13 +6,12 @@
  * gate cards, and SVG wires. Reuses the sound file/model/API plumbing
  * (formationsApi/Types/Canvas/RunState) — only the broken form-style view layer is replaced.
  *
- * This pass implements: roster + drag-to-staff, typed cards with slot spheres,
- * mission/gate cards, wires, port-drag wiring, pan/zoom/fit, card drag-to-reposition,
- * and run buttons with honest per-node run-state projection. Wire reconnect/delete,
- * context menus, on-canvas editors/terminals, and undo are tracked for follow passes
- * (bead home-f7as).
+ * Implemented: roster + drag-to-staff, typed cards with slot spheres, mission/gate
+ * cards, SVG wires with reconnect/lane-routing/delete, port-drag wiring, pan/zoom/fit,
+ * card drag-to-reposition, right-click context menus, on-canvas brief/verification
+ * editors, undo, and mission run with honest per-node run-state projection.
  */
-import { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { forwardRef, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   abortRunRequest,
   fetchAgents,
@@ -27,17 +26,20 @@ import {
   recordGateVerdict,
   resumeRunRequest,
   startRun,
+  updateMissionOp,
 } from './formationsApi'
 import {
   activeRunStorageKey,
   openHumanGateId,
+  projectNodeOutputs,
   projectNodeStates,
   runStatusFromResponse,
   upsertRunEvent,
 } from './formationsRunState'
 import { clampScale, displayLayoutFor, fallbackNodePosition, zoomTransform } from './formationsCanvas'
 import { GATE_SVG, PLAY_SVG, TYPE_TAG, agentColor, agentRole, agentState, initials } from './formationsCockpitVisuals'
-import { connectionKind, findInputPortAt, findOutputPortAt, isTextEditingTarget, laneYFrom, splitList } from './formationsCockpitDom'
+import { connectionKind, findInputPortAt, findOutputPortAt, isTextEditingTarget, laneYFrom, splitList, truncatePayload } from './formationsCockpitDom'
+import { missionSessionName } from './MissionSessionPanel'
 import { routeJudgeWire, routeOrthoWire } from './formationsRouting'
 import type { ObstacleRect } from './formationsRouting'
 import { findAddedByID, upsertNode } from './formationsBoardModel'
@@ -80,13 +82,23 @@ type LaneDrag = { connectionId: string; previousLane: string; moved: boolean }
 type MenuItem = { label: string; action?: () => void; destructive?: boolean; disabled?: boolean; head?: boolean }
 type MenuState = { label: string; x: number; y: number; items: MenuItem[] }
 type VerificationEditorState = { formationId: string; title: string; kinds: string[]; criterion: string; onFail: 'block' | 'pushback' }
+// Shared node-config popover. `formation` edits a formation's input brief (goal/bead/files/links);
+// `mission` edits a mission's title/goal/optional bead. Both reuse the same popover shell and the
+// same setState-on-change machinery — only the persisted op and the visible fields differ.
 type BriefEditorState = {
-  formationId: string
+  kind: 'formation'
+  nodeId: string
   title: string
   goal: string
   beadId: string
   files: string
   links: string
+} | {
+  kind: 'mission'
+  nodeId: string
+  title: string
+  goal: string
+  beadId: string
 }
 type CockpitUndo =
   | { kind: 'clearBrief'; formationId: string }
@@ -108,9 +120,39 @@ type CockpitUndo =
   | { kind: 'removePort'; formationId: string; portId: string }
   | { kind: 'makeController'; formationId: string; slotId: string }
 
-export default function FormationsCockpit({ active = true }: { active?: boolean } = {}) {
+/** Imperative surface exposed to a parent (e.g. the open-board header's "Edit mission"). */
+export interface FormationsCockpitHandle {
+  /** Open the mission editor popover for the board's single mission, if it has one. */
+  openMissionEditor: () => void
+}
+
+interface FormationsCockpitProps {
+  active?: boolean
+  /**
+   * When set, the cockpit is driven by this board slug and the in-canvas board
+   * picker is hidden (the Missions gallery owns board selection instead). The
+   * existing load logic still runs off internal selectedSlug, which we sync to
+   * this prop.
+   */
+  selectedSlug?: string
+  /**
+   * Live formations-socket session names (e.g. "mission-scout"). A slot whose
+   * assigned persona has a matching live session gets a "view agent" affordance;
+   * one without shows an honest "no live session" hint. Never fabricated.
+   */
+  liveSessionNames?: ReadonlySet<string>
+  /** Focus/attach a mission agent pane in the side-panel by session name. */
+  onViewAgentSession?: (sessionName: string) => void
+  /** Report the loaded board doc up (so the side-panel can derive assigned persona stems). */
+  onBoardLoaded?: (board: BoardDocument | null) => void
+}
+
+const FormationsCockpit = forwardRef<FormationsCockpitHandle, FormationsCockpitProps>(function FormationsCockpit(
+  { active = true, selectedSlug: controlledSlug, liveSessionNames, onViewAgentSession, onBoardLoaded }: FormationsCockpitProps,
+  ref,
+) {
   const [boards, setBoards] = useState<BoardSummary[]>([])
-  const [selectedSlug, setSelectedSlug] = useState('')
+  const [selectedSlug, setSelectedSlug] = useState(controlledSlug ?? '')
   const [board, setBoard] = useState<BoardDocument | null>(null)
   const [layout, setLayout] = useState<LayoutDocument | null>(null)
   const [agents, setAgents] = useState<AgentProjection[]>([])
@@ -152,6 +194,15 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   useEffect(() => { boardRef.current = board }, [board])
   useEffect(() => { layoutRef.current = layout }, [layout])
   useEffect(() => { judgeHoverRef.current = judgeHover }, [judgeHover])
+  useEffect(() => { onBoardLoaded?.(board) }, [board, onBoardLoaded])
+
+  // When the parent controls board selection (Missions gallery → open board),
+  // drive the internal slug from the prop so the existing load effects re-run.
+  useEffect(() => {
+    if (controlledSlug !== undefined && controlledSlug !== selectedSlug) {
+      setSelectedSlug(controlledSlug)
+    }
+  }, [controlledSlug, selectedSlug])
 
   // ----- data loading -----
   useEffect(() => {
@@ -298,6 +349,8 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   }, [displayLayoutByNode, dragPos])
 
   const nodeStates = useMemo(() => projectNodeStates(runEvents, activeRun), [runEvents, activeRun])
+  // Concrete per-output-port payloads from the run ledger (node_output.outputs[portId]).
+  const nodeOutputs = useMemo(() => projectNodeOutputs(runEvents), [runEvents])
 
   // ----- wire geometry: measure rendered port centers in world coords -----
   // Reads board/layout/view STATE directly (not refs) so the measurement runs in the
@@ -464,7 +517,8 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const openBriefEditor = useCallback((formation: FormationNode) => {
     setMenu(null)
     setBriefEditor({
-      formationId: formation.id,
+      kind: 'formation',
+      nodeId: formation.id,
       title: formation.title,
       goal: formation.brief?.goal || '',
       beadId: formation.brief?.beadId || '',
@@ -473,15 +527,46 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     })
   }, [])
 
+  const openMissionEditor = useCallback((mission: MissionNode) => {
+    setMenu(null)
+    setBriefEditor({
+      kind: 'mission',
+      nodeId: mission.id,
+      title: mission.title,
+      goal: mission.goal || '',
+      beadId: mission.beadId || '',
+    })
+  }, [])
+
+  // Expose the mission editor so the open-board header's "Edit mission" can open it.
+  // A Mission Board's identity is its single mission, so edit board[0].
+  useImperativeHandle(ref, () => ({
+    openMissionEditor: () => {
+      const mission = boardRef.current?.missions?.[0]
+      if (mission) openMissionEditor(mission)
+    },
+  }), [openMissionEditor])
+
   const saveBriefEditor = useCallback(async () => {
     if (!briefEditor) return
-    const currentFormation = boardRef.current?.formations.find(formation => formation.id === briefEditor.formationId)
+    if (briefEditor.kind === 'mission') {
+      // Full-replace per the backend contract; trimmed empty bead clears the link.
+      await patchBoard(updateMissionOp({
+        missionId: briefEditor.nodeId,
+        title: briefEditor.title.trim(),
+        goal: briefEditor.goal.trim(),
+        beadId: briefEditor.beadId.trim(),
+      }))
+      setBriefEditor(null)
+      return
+    }
+    const currentFormation = boardRef.current?.formations.find(formation => formation.id === briefEditor.nodeId)
     undoStack.current.push(currentFormation?.brief
-      ? { kind: 'setBrief', formationId: briefEditor.formationId, brief: currentFormation.brief }
-      : { kind: 'clearBrief', formationId: briefEditor.formationId })
+      ? { kind: 'setBrief', formationId: briefEditor.nodeId, brief: currentFormation.brief }
+      : { kind: 'clearBrief', formationId: briefEditor.nodeId })
     await patchBoard({
       setBrief: {
-        formationId: briefEditor.formationId,
+        formationId: briefEditor.nodeId,
         goal: briefEditor.goal.trim(),
         beadId: briefEditor.beadId.trim(),
         files: splitList(briefEditor.files),
@@ -684,13 +769,13 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     void patchBoard({ deleteMission: { id: mission.id } })
   }, [patchBoard])
 
-  const addPortOp = useCallback(async (formation: FormationNode, direction: 'in' | 'out') => {
+  const addPortOp = useCallback(async (formation: FormationNode, direction: 'input' | 'output') => {
     const before = boardRef.current?.formations.find(item => item.id === formation.id)
-    const result = await patchBoard({ addPort: { formationId: formation.id, direction, label: direction === 'in' ? 'Input' : 'Output' } })
+    const result = await patchBoard({ addPort: { formationId: formation.id, direction, label: direction === 'input' ? 'Input' : 'Output' } })
     if (!before || !result) return
     const after = result.board.formations.find(item => item.id === formation.id)
     if (!after) return
-    const created = direction === 'in'
+    const created = direction === 'input'
       ? findAddedByID(before.inputs || [], after.inputs || [])
       : findAddedByID(before.outputs || [], after.outputs || [])
     if (created) undoStack.current.push({ kind: 'removePort', formationId: formation.id, portId: created.id })
@@ -824,40 +909,6 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     }
     try {
       const result = await startRun(current.etag, { board: current.slug, missionId: mission.id, actor: 'agent:ui' })
-      const status = { ...result.status, runId: result.status.runId || result.runId }
-      setActiveRun(status)
-      setRunEvents([])
-      window.localStorage.setItem(activeRunStorageKey(current.slug), status.runId)
-      setError('')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to start run')
-    }
-  }, [])
-
-  const runFormation = useCallback(async (formation: FormationNode) => {
-    const current = boardRef.current
-    if (!current) return
-    if (isStarterBoard(current)) {
-      const runId = `run-starter-preview-${formation.id}`
-      const events: RunEvent[] = [
-        { seq: 1, type: 'run_started', runId, nodeId: formation.id, data: { actor: 'agent:ui' } },
-        { seq: 2, type: 'run_succeeded', runId, nodeId: formation.id, data: { text: 'starter formation preview run' } },
-      ]
-      setActiveRun({
-        runId,
-        status: 'succeeded',
-        final: true,
-        boardSlug: current.slug,
-        missionId: '',
-        eventCount: events.length,
-        resumeAllowed: false,
-      })
-      setRunEvents(events)
-      setError('')
-      return
-    }
-    try {
-      const result = await startRun(current.etag, { board: current.slug, formationId: formation.id, actor: 'agent:ui' })
       const status = { ...result.status, runId: result.status.runId || result.runId }
       setActiveRun(status)
       setRunEvents([])
@@ -1186,7 +1237,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const beginNodeDrag = useCallback((event: ReactPointerEvent, id: string, index: number) => {
     if (event.button !== 0) return
     const target = event.target as HTMLElement
-    if (target.closest('.port,.frun,.mrun')) return
+    if (target.closest('.port,.mrun')) return
     event.stopPropagation()
     const pos = positionOf(id, index)
     dragNodeRef.current = { id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, originX: pos.x, originY: pos.y, moved: false }
@@ -1305,15 +1356,14 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
 
   const formationMenu = useCallback((event: ReactMouseEvent<HTMLElement>, formation: FormationNode) => {
     openMenu(event, 'Formation actions', [
-      { label: 'Run formation', action: () => void runFormation(formation) },
       { label: 'Set input', action: () => openBriefEditor(formation) },
-      { label: 'Add input port', action: () => void addPortOp(formation, 'in') },
-      { label: 'Add output port', action: () => void addPortOp(formation, 'out') },
+      { label: 'Add input port', action: () => void addPortOp(formation, 'input') },
+      { label: 'Add output port', action: () => void addPortOp(formation, 'output') },
       { label: formation.verification ? 'Configure verification' : 'Add verification', action: () => openVerificationEditor(formation) },
       ...(formation.verification ? [{ label: 'Remove verification', destructive: true, action: () => removeVerificationOp(formation) }] : []),
       { label: 'Delete formation', destructive: true, action: () => deleteFormationOp(formation) },
     ])
-  }, [addPortOp, deleteFormationOp, openBriefEditor, openMenu, openVerificationEditor, removeVerificationOp, runFormation])
+  }, [addPortOp, deleteFormationOp, openBriefEditor, openMenu, openVerificationEditor, removeVerificationOp])
 
   const slotMenu = useCallback((event: ReactMouseEvent<HTMLElement>, formation: FormationNode, slot: FormationSlot) => {
     const items: MenuItem[] = []
@@ -1376,22 +1426,23 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
 
   const missionMenu = useCallback((event: ReactMouseEvent<HTMLElement>, mission: MissionNode) => {
     openMenu(event, 'Mission actions', [
+      { label: 'Edit mission…', action: () => openMissionEditor(mission) },
       { label: 'Start mission', action: () => void runMission(mission) },
       { label: 'Delete mission', destructive: true, action: () => deleteMissionOp(mission) },
     ])
-  }, [deleteMissionOp, openMenu, runMission])
+  }, [deleteMissionOp, openMenu, openMissionEditor, runMission])
 
   const inputRowMenu = useCallback((event: ReactMouseEvent<HTMLElement>, formation: FormationNode, portId: string, incoming?: BoardConnection) => {
     openMenu(event, 'Input port', [
       ...(incoming ? [{ label: 'Disconnect input', action: () => removeWire(incoming) }] : []),
-      { label: 'Add input port', action: () => void addPortOp(formation, 'in') },
+      { label: 'Add input port', action: () => void addPortOp(formation, 'input') },
       { label: 'Remove this input', destructive: true, action: () => removePortOp(formation, portId) },
     ])
   }, [addPortOp, openMenu, removePortOp, removeWire])
 
   const outputRowMenu = useCallback((event: ReactMouseEvent<HTMLElement>, formation: FormationNode, portId: string) => {
     openMenu(event, 'Output port', [
-      { label: 'Add output port', action: () => void addPortOp(formation, 'out') },
+      { label: 'Add output port', action: () => void addPortOp(formation, 'output') },
       { label: 'Remove this output', destructive: true, action: () => removePortOp(formation, portId) },
     ])
   }, [addPortOp, openMenu, removePortOp])
@@ -1419,6 +1470,37 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   }, [createFormationAt, createGateAt, createMissionAt, screenToWorld])
 
   // ----- render helpers -----
+  // Card↔pane linkage: render a "view agent" action only when the slot's persona has
+  // a LIVE mission-<stem> session on the formations socket; otherwise an honest "no
+  // live session" hint. Only shown in the open-board view (when the linkage props
+  // are supplied) so the standalone cockpit is unchanged.
+  const renderAgentLink = (agentId: string) => {
+    if (!liveSessionNames || !onViewAgentSession) return null
+    const sessionName = missionSessionName(agentId)
+    if (liveSessionNames.has(sessionName)) {
+      return (
+        <button
+          type="button"
+          className="slot-view-agent"
+          data-testid={`view-agent-${agentId}`}
+          title={`View ${sessionName} in the session panel`}
+          onPointerDown={event => event.stopPropagation()}
+          onClick={event => {
+            event.stopPropagation()
+            onViewAgentSession(sessionName)
+          }}
+        >
+          view agent
+        </button>
+      )
+    }
+    return (
+      <span className="slot-no-session" data-testid={`no-session-${agentId}`} title={`No live ${sessionName} session on the formations socket`}>
+        no live session
+      </span>
+    )
+  }
+
   const renderSlot = (formation: FormationNode, slot: FormationSlot, badge?: number) => {
     const filled = !!slot.agentId
     const key = `${formation.id}:${slot.id}`
@@ -1442,6 +1524,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
         </div>
         <div className="slot-label">{slot.label}</div>
         {filled ? <div className="who">{slot.agentId}</div> : null}
+        {filled ? renderAgentLink(slot.agentId as string) : null}
       </div>
     )
   }
@@ -1492,10 +1575,17 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
         <div className="spacer" />
         <div className="boardpick">
           board
-          <select value={selectedSlug} onChange={event => setSelectedSlug(event.target.value)} data-testid="board-picker">
-            {boards.map(summary => <option key={summary.slug} value={summary.slug}>{summary.title || summary.slug}</option>)}
-          </select>
+          {controlledSlug !== undefined ? (
+            <span className="boardname" data-testid="board-name">{board?.title || board?.slug || controlledSlug}</span>
+          ) : (
+            <select value={selectedSlug} onChange={event => setSelectedSlug(event.target.value)} data-testid="board-picker">
+              {boards.map(summary => <option key={summary.slug} value={summary.slug}>{summary.title || summary.slug}</option>)}
+            </select>
+          )}
           {board ? <span className="rev">rev {board.rev}</span> : null}
+          {isStarterBoard(board)
+            ? <span className="demo-badge" data-testid="starter-demo-badge" title="In-memory demo board. Edits and runs are previews only — nothing is persisted.">Demo · not saved</span>
+            : null}
         </div>
         <div className="gatetoken" title="Drag onto the canvas to drop a gate" data-testid="gate-token" onPointerDown={beginGateToken}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M5 11V7a7 7 0 0114 0v4" /><rect x="4" y="11" width="16" height="9" rx="2" /></svg>
@@ -1582,6 +1672,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
                   data-testid={`mission-node-${mission.id}`}
                   style={{ left: pos.x, top: pos.y }}
                   onPointerDown={event => beginNodeDrag(event, mission.id, index)}
+                  onDoubleClick={() => openMissionEditor(mission)}
                   onContextMenu={event => missionMenu(event, mission)}
                 >
                   <div className="mhd">
@@ -1633,7 +1724,6 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
                   })}
                   <div className="fhead" onPointerDown={event => beginNodeDrag(event, formation.id, index)}>
                     <div className="ft"><div className="tt">{formation.title}</div><div className="tg">{TYPE_TAG[formation.type]}</div></div>
-                    <button className="frun" title="Run formation" onClick={() => void runFormation(formation)} data-testid={`run-formation-${formation.id}`}>{PLAY_SVG}</button>
                   </div>
                   <div className="fstatus">{state && state !== 'done' ? state : ''}</div>
                   <div className="fbody" onPointerDown={event => beginNodeDrag(event, formation.id, index)}>{renderBody(formation)}</div>
@@ -1653,10 +1743,15 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
                   </div>
                   {formation.outputs.map((port, portIndex) => {
                     const endpoint = `${formation.id}:${port.id}`
+                    const payload = nodeOutputs.get(formation.id)?.get(port.id)
                     return (
                       <div className="fio out" key={port.id} onContextMenu={event => outputRowMenu(event, formation, port.id)}>
                         <span className="glyph">out</span>
-                        <span className="io-status idle">{portIndex === 0 ? 'no output yet' : port.label.toLowerCase()}</span>
+                        {payload !== undefined ? (
+                          <span className="io-text produced" data-testid={`output-payload-${formation.id}-${port.id}`} title={payload}>{truncatePayload(payload)}</span>
+                        ) : (
+                          <span className="io-status idle" data-testid={`output-payload-${formation.id}-${port.id}`}>{portIndex === 0 ? 'no output yet' : port.label.toLowerCase()}</span>
+                        )}
                         <span className={`port pout ready${hoverPort === endpoint ? ' snaptarget' : ''}`} data-port-out={endpoint} title="Drag to a downstream input" onPointerDown={event => beginWire(event, endpoint, 'wire')} />
                       </div>
                     )
@@ -1739,14 +1834,31 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
         <div
           className="pop"
           role="dialog"
-          aria-label={`Input · ${briefEditor.title}`}
+          aria-label={briefEditor.kind === 'mission' ? `Mission · ${briefEditor.title}` : `Input · ${briefEditor.title}`}
           onPointerDown={event => event.stopPropagation()}
         >
           <div className="pop-head">
-            <span className="pt">Input · {briefEditor.title}</span>
-            <button className="x" type="button" aria-label="Close input editor" onClick={() => setBriefEditor(null)}>x</button>
+            <span className="pt">{briefEditor.kind === 'mission' ? `Mission · ${briefEditor.title}` : `Input · ${briefEditor.title}`}</span>
+            <button
+              className="x"
+              type="button"
+              aria-label={briefEditor.kind === 'mission' ? 'Close mission editor' : 'Close input editor'}
+              onClick={() => setBriefEditor(null)}
+            >x</button>
           </div>
           <div className="pop-body">
+            {briefEditor.kind === 'mission' ? (
+              <>
+                <label htmlFor="cockpit-mission-title">Title</label>
+                <input
+                  id="cockpit-mission-title"
+                  className="f"
+                  aria-label={`Title for ${briefEditor.title}`}
+                  value={briefEditor.title}
+                  onChange={event => setBriefEditor(current => current && current.kind === 'mission' ? { ...current, title: event.target.value } : current)}
+                />
+              </>
+            ) : null}
             <label htmlFor="cockpit-brief-goal">Goal / idea</label>
             <textarea
               id="cockpit-brief-goal"
@@ -1754,7 +1866,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
               value={briefEditor.goal}
               onChange={event => setBriefEditor(current => current ? { ...current, goal: event.target.value } : current)}
             />
-            <label htmlFor="cockpit-brief-bead">Bead</label>
+            <label htmlFor="cockpit-brief-bead">Bead id (optional)</label>
             <input
               id="cockpit-brief-bead"
               className="f"
@@ -1762,23 +1874,30 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
               value={briefEditor.beadId}
               onChange={event => setBriefEditor(current => current ? { ...current, beadId: event.target.value } : current)}
             />
-            <label htmlFor="cockpit-brief-files">File links & context</label>
-            <input
-              id="cockpit-brief-files"
-              className="f"
-              aria-label={`Files for ${briefEditor.title}`}
-              value={briefEditor.files}
-              onChange={event => setBriefEditor(current => current ? { ...current, files: event.target.value } : current)}
-            />
-            <label htmlFor="cockpit-brief-links">Links</label>
-            <input
-              id="cockpit-brief-links"
-              className="f"
-              aria-label={`Links for ${briefEditor.title}`}
-              value={briefEditor.links}
-              onChange={event => setBriefEditor(current => current ? { ...current, links: event.target.value } : current)}
-            />
-            <button className="save" type="button" onClick={() => void saveBriefEditor()}>Save input</button>
+            <span className="hint">Optional Beads anchor (e.g. home-7kc4.5). Leave empty to clear the link.</span>
+            {briefEditor.kind === 'formation' ? (
+              <>
+                <label htmlFor="cockpit-brief-files">File links & context</label>
+                <input
+                  id="cockpit-brief-files"
+                  className="f"
+                  aria-label={`Files for ${briefEditor.title}`}
+                  value={briefEditor.files}
+                  onChange={event => setBriefEditor(current => current && current.kind === 'formation' ? { ...current, files: event.target.value } : current)}
+                />
+                <label htmlFor="cockpit-brief-links">Links</label>
+                <input
+                  id="cockpit-brief-links"
+                  className="f"
+                  aria-label={`Links for ${briefEditor.title}`}
+                  value={briefEditor.links}
+                  onChange={event => setBriefEditor(current => current && current.kind === 'formation' ? { ...current, links: event.target.value } : current)}
+                />
+              </>
+            ) : null}
+            <button className="save" type="button" onClick={() => void saveBriefEditor()}>
+              {briefEditor.kind === 'mission' ? 'Save mission' : 'Save input'}
+            </button>
           </div>
         </div>
       ) : null}
@@ -1874,4 +1993,6 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       ) : null}
     </div>
   )
-}
+})
+
+export default FormationsCockpit

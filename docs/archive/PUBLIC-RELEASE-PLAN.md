@@ -42,7 +42,7 @@ Add to `main.go`:
 var (
     port         = flag.Int("port", 8080, "HTTP server port")
     allowedRoots = flag.String("allowed-roots", "/code,/vault", "Comma-separated allowed file roots")
-    tmuxSocket   = flag.String("tmux-socket", "", "tmux socket path (default: $TMUX_TMPDIR or /tmp)")
+    tmuxSocket   = flag.String("tmux-socket", "", "tmux socket path (default: explicit CHROTE runtime socket)")
 )
 ```
 

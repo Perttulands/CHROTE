@@ -104,7 +104,7 @@ else
   echo "OK: no gascity in Go"
 fi
 
-cd src && go test ./... && go build -o /tmp/chrote-server-check ./cmd/server && cd ..
+cd src && go test ./... && mkdir -p "$HOME/.local/state/chrote/builds" && go build -o "$HOME/.local/state/chrote/builds/chrote-server-check" ./cmd/server && cd ..
 ```
 
 This phase intentionally restores the Beads detail and comments endpoints, including

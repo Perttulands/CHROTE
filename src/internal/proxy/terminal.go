@@ -35,10 +35,33 @@ type TerminalProxy struct {
 	mu           sync.Mutex
 	running      bool
 	launchScript string
+	// socket, when non-empty, is the explicit tmux socket path the launch script
+	// must attach to via `tmux -S <socket>`. It is threaded to ttyd through the
+	// CHROTE_TMUX_SOCKET env var (read by terminal-launch.sh). This binds the
+	// formations terminal to the SAME socket as the formations executor and
+	// session API. When empty, the cockpit terminal stays TMUX_TMPDIR-driven.
+	socket string
+	// routePrefix is the HTTP path prefix this proxy serves and strips before
+	// forwarding to ttyd (e.g. "/terminal" or "/terminal-formations").
+	routePrefix string
 }
 
-// NewTerminalProxy creates a new TerminalProxy
+// NewTerminalProxy creates a new cockpit TerminalProxy (TMUX_TMPDIR-driven,
+// served at /terminal/). Behavior is unchanged.
 func NewTerminalProxy(ttydPort int) *TerminalProxy {
+	return newTerminalProxy(ttydPort, "", "/terminal")
+}
+
+// NewTerminalProxyForSocket creates a TerminalProxy whose ttyd attaches to an
+// explicit tmux socket via `tmux -S <socket>` (passed to the launch script as
+// CHROTE_TMUX_SOCKET). It is served at /terminal-formations/. Use this for the
+// formations side panel so the browser terminal hits the SAME sessions the
+// formations executor and session API use.
+func NewTerminalProxyForSocket(ttydPort int, socket string) *TerminalProxy {
+	return newTerminalProxy(ttydPort, socket, "/terminal-formations")
+}
+
+func newTerminalProxy(ttydPort int, socket, routePrefix string) *TerminalProxy {
 	target, _ := url.Parse(fmt.Sprintf("http://localhost:%d", ttydPort)) //nolint:errcheck // static URL format cannot fail
 
 	proxy := httputil.NewSingleHostReverseProxy(target)
@@ -64,7 +87,20 @@ func NewTerminalProxy(ttydPort int) *TerminalProxy {
 		ttydPort:     ttydPort,
 		proxy:        proxy,
 		launchScript: core.GetLaunchScript(),
+		socket:       socket,
+		routePrefix:  routePrefix,
 	}
+}
+
+// launchEnv returns the environment passed to the ttyd child process. It starts
+// from the cockpit tmux env (TMUX_TMPDIR) and, when this proxy is socket-scoped,
+// adds CHROTE_TMUX_SOCKET so the launch script attaches with `tmux -S <socket>`.
+func (tp *TerminalProxy) launchEnv() []string {
+	env := core.GetTmuxEnv()
+	if tp.socket != "" {
+		env = append(env, "CHROTE_TMUX_SOCKET="+tp.socket)
+	}
+	return env
 }
 
 // Start starts the ttyd process
@@ -89,13 +125,13 @@ func (tp *TerminalProxy) Start() error {
 		"ttyd",
 		"-i", "127.0.0.1",
 		"-p", fmt.Sprintf("%d", tp.ttydPort),
-		"-W", // WebSocket only mode (for better performance)
+		"-W", // --writable: let the browser send keystrokes to the TTY (read-only without this)
 		"-a", // Allow URL arguments (?arg=sessionName -> $1)
 		tp.launchScript,
 	)
 
-	// Set environment with TMUX_TMPDIR
-	tp.ttydCmd.Env = core.GetTmuxEnv()
+	// Set environment with TMUX_TMPDIR (and CHROTE_TMUX_SOCKET when scoped).
+	tp.ttydCmd.Env = tp.launchEnv()
 
 	// Pipe stdout/stderr for debugging
 	tp.ttydCmd.Stdout = os.Stdout
@@ -176,8 +212,8 @@ func (tp *TerminalProxy) IsRunning() bool {
 // Handler returns an http.Handler that proxies to ttyd
 func (tp *TerminalProxy) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Strip /terminal prefix before proxying
-		r.URL.Path = strings.TrimPrefix(r.URL.Path, "/terminal")
+		// Strip this proxy's route prefix before proxying
+		r.URL.Path = strings.TrimPrefix(r.URL.Path, tp.routePrefix)
 		if r.URL.Path == "" {
 			r.URL.Path = "/"
 		}
@@ -275,7 +311,9 @@ func (tp *TerminalProxy) proxyWebSocket(w http.ResponseWriter, r *http.Request) 
 	<-errChan
 }
 
-// RegisterRoutes registers the terminal proxy route
+// RegisterRoutes registers the terminal proxy route at this proxy's route
+// prefix (e.g. "/terminal/" for the cockpit, "/terminal-formations/" for the
+// formations socket).
 func (tp *TerminalProxy) RegisterRoutes(mux *http.ServeMux) {
-	mux.Handle("/terminal/", tp.Handler())
+	mux.Handle(tp.routePrefix+"/", tp.Handler())
 }

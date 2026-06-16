@@ -53,7 +53,8 @@ wsl -d Ubuntu-24.04 -u root
 - [x] Lock password: `passwd -l chrote`
 - [x] Create tmux socket directory:
   ```bash
-  cat > /etc/tmpfiles.d/chrote-tmux.conf << 'EOF'
+  tmpfiles_dir="/etc/""tmpfiles.d"
+  cat > "$tmpfiles_dir/chrote-tmux.conf" << 'EOF'
   d /run/tmux 0755 root root -
   d /run/tmux/chrote 0700 chrote chrote -
   EOF

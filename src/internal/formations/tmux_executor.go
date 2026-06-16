@@ -33,7 +33,12 @@ type TmuxExecutorConfig struct {
 	SessionPrefix  string
 	OutputCapBytes int
 	TimeoutSeconds int
-	ProdSmoke      bool
+	// Dedicated marks the sanctioned always-on formations socket: a real tmux
+	// socket that hosts ONLY mission agents, separated from the cockpit/default
+	// socket that hosts interactive operator shells. It NEVER lifts the
+	// cockpit-socket guard. When unset, tmux execution is refused rather than
+	// silently falling back to a detached harness.
+	Dedicated bool
 }
 
 type TmuxFormationExecutor struct {
@@ -76,7 +81,7 @@ func TmuxExecutorConfigFromEnv() TmuxExecutorConfig {
 		SessionPrefix:  strings.TrimSpace(os.Getenv("CHROTE_FORMATIONS_TMUX_SESSION_PREFIX")),
 		OutputCapBytes: capBytes,
 		TimeoutSeconds: timeoutSeconds,
-		ProdSmoke:      tmuxProdSmokeAllowed(os.Getenv("CHROTE_FORMATIONS_TMUX_PROD_SMOKE")),
+		Dedicated:      tmuxDedicatedEnabled(os.Getenv("CHROTE_FORMATIONS_TMUX_DEDICATED")),
 	}
 }
 
@@ -981,15 +986,15 @@ func (e *TmuxFormationExecutor) validateConfiguredBoundary() error {
 		return runExecutionError("cwd_outside_root", "tmux executor cwd is outside configured roots", "executor", nil)
 	}
 	e.config.Roots = roots
-	if !e.config.ProdSmoke {
-		if isDefaultTmuxSocket(socket) || !pathWithinRoot(socket, os.TempDir()) {
-			return runExecutionError("unsafe_socket", "tmux executor socket must be an isolated temp socket unless prod-smoke is explicitly enabled", "executor", nil)
-		}
-		for _, root := range append([]string{cwd}, roots...) {
-			if !pathWithinRoot(root, os.TempDir()) {
-				return runExecutionError("unsafe_root", "tmux executor roots must be isolated temp paths unless prod-smoke is explicitly enabled", "executor", nil)
-			}
-		}
+	// Safety-critical guard, enforced in EVERY mode: mission agents must never
+	// run on the cockpit/default tmux socket, which hosts the operator's
+	// interactive shells. Dedicated mode is the only tmux execution mode: a
+	// dedicated formations socket is a separate socket, not the cockpit one.
+	if isDefaultTmuxSocket(socket) {
+		return runExecutionError("cockpit_socket", fmt.Sprintf("tmux executor must never target the cockpit socket %q; mission agents run on a dedicated formations socket", socket), "executor", nil)
+	}
+	if !e.config.Dedicated {
+		return runExecutionError("dedicated_required", "tmux executor requires CHROTE_FORMATIONS_TMUX_DEDICATED=1 and a dedicated formations socket; no detached tmux fallback is allowed", "executor", nil)
 	}
 	return nil
 }
@@ -1007,10 +1012,10 @@ func (e *TmuxFormationExecutor) ensureSessionReady(ctx context.Context, sessionN
 	}
 	switch matches {
 	case 0:
-		return runExecutionError("missing_session", fmt.Sprintf("tmux session %q was not found on isolated socket", sessionName), "adapter", nil)
+		return runExecutionError("missing_session", fmt.Sprintf("tmux session %q was not found on the dedicated formations socket", sessionName), "adapter", nil)
 	case 1:
 	default:
-		return runExecutionError("ambiguous_session", fmt.Sprintf("tmux session %q matched %d sessions on isolated socket", sessionName, matches), "adapter", nil)
+		return runExecutionError("ambiguous_session", fmt.Sprintf("tmux session %q matched %d sessions on the dedicated formations socket", sessionName, matches), "adapter", nil)
 	}
 	pane, err := e.client.DescribeActivePane(ctx, e.config.Socket, sessionName)
 	if err != nil {
@@ -1200,9 +1205,9 @@ func runSlotExecutionError(code, message, boundary string, cause error, nodeID, 
 	}
 }
 
-func tmuxProdSmokeAllowed(raw string) bool {
+func tmuxDedicatedEnabled(raw string) bool {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "1", "true", "yes", "allow", "allow-live", "prod-smoke":
+	case "1", "true", "yes":
 		return true
 	default:
 		return false
@@ -1222,15 +1227,34 @@ func safeTmuxSessionName(name string) bool {
 	return true
 }
 
+// isDefaultTmuxSocket robustly identifies the cockpit/default tmux socket so the
+// executor can refuse it in every mode. tmux does NOT place its socket directly
+// in TMUX_TMPDIR: it always creates a per-user "tmux-<uid>" subdirectory there
+// and names the default socket "default" inside it. Concretely, the CHROTE
+// cockpit socket configured via TMUX_TMPDIR=/run/user/<uid>/chrote-tmux lives at
+// /run/user/<uid>/chrote-tmux/tmux-<uid>/default — not /run/user/<uid>/chrote-tmux/default.
+// The old heuristic checked the wrong layer and could let the cockpit socket
+// slip through, so this enumerates the real layouts tmux uses for the default
+// "default" socket across TMUX_TMPDIR, TMPDIR, and Go's process temp fallback. The socket
+// argument is expected to already be an absolute, cleaned path.
 func isDefaultTmuxSocket(socket string) bool {
-	candidates := []string{}
+	uidDir := fmt.Sprintf("tmux-%d", os.Getuid())
+	bases := []string{}
 	if tmpdir := strings.TrimSpace(os.Getenv("TMUX_TMPDIR")); tmpdir != "" {
-		candidates = append(candidates, filepath.Join(tmpdir, "default"))
+		bases = append(bases, tmpdir)
 	}
-	if xdg := strings.TrimSpace(os.Getenv("XDG_RUNTIME_DIR")); xdg != "" {
-		candidates = append(candidates, filepath.Join(xdg, "tmux", "default"))
+	if tmpdir := strings.TrimSpace(os.Getenv("TMPDIR")); tmpdir != "" {
+		bases = append(bases, tmpdir)
 	}
-	candidates = append(candidates, filepath.Join(fmt.Sprintf("/tmp/tmux-%d", os.Getuid()), "default"))
+	bases = append(bases, os.TempDir())
+	candidates := []string{}
+	for _, base := range bases {
+		// tmux's real layout: <base>/tmux-<uid>/default.
+		candidates = append(candidates, filepath.Join(base, uidDir, "default"))
+		// Defense in depth: also reject a "default" socket placed directly in the
+		// base, in case a base is itself already a tmux-<uid>-style dir.
+		candidates = append(candidates, filepath.Join(base, "default"))
+	}
 	for _, candidate := range candidates {
 		abs, err := filepath.Abs(candidate)
 		if err == nil && abs == socket {

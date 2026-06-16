@@ -35,7 +35,7 @@ Type=simple
 ExecStart=/usr/local/bin/chrote-server --port 8080 --ttyd-port 7681
 Restart=always
 RestartSec=5
-Environment=TMUX_TMPDIR=/tmp
+Environment=TMUX_TMPDIR=/run/tmux/chrote
 
 [Install]
 WantedBy=multi-user.target

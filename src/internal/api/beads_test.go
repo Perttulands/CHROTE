@@ -374,7 +374,7 @@ func TestBeadsHandler_AddCommentPassesTextAsSingleArgument(t *testing.T) {
 	_, argsPath := makeFakeBdCommand(t, `{"id":"comment-1","body":"ok"}`)
 
 	handler := NewBeadsHandler()
-	body := strings.NewReader(`{"path":"` + projectPath + `","id":"test-1","comment":"review this; $(touch /tmp/nope)"}`)
+	body := strings.NewReader(`{"path":"` + projectPath + `","id":"test-1","comment":"review this; $(touch /home/perttu/nope)"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/beads/comments", body)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -383,7 +383,7 @@ func TestBeadsHandler_AddCommentPassesTextAsSingleArgument(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("AddComment status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	wantArgs := []string{"--json", "comments", "add", "test-1", "review this; $(touch /tmp/nope)"}
+	wantArgs := []string{"--json", "comments", "add", "test-1", "review this; $(touch /home/perttu/nope)"}
 	if gotArgs := readFakeBdArgs(t, argsPath); !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Fatalf("bd args = %#v, want %#v", gotArgs, wantArgs)
 	}

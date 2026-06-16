@@ -21,7 +21,7 @@ FROM alpine:latest
 RUN apk add --no-cache tmux ttyd bash curl
 
 # Create working directories
-RUN mkdir -p /code /workspace
+RUN mkdir -p /code /workspace /run/tmux/chrote
 
 # Copy binary from builder
 COPY --from=builder /app/chrote-server /usr/local/bin/chrote-server
@@ -32,7 +32,7 @@ RUN echo '#!/bin/bash' > /usr/local/bin/terminal-launch.sh && \
     chmod +x /usr/local/bin/terminal-launch.sh
 
 # Set environment
-ENV TMUX_TMPDIR=/tmp
+ENV TMUX_TMPDIR=/run/tmux/chrote
 ENV PORT=8080
 ENV TTYD_PORT=7681
 

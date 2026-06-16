@@ -205,58 +205,187 @@ func TestConcurrentBoardWritesReturnConflictNotClobber(t *testing.T) {
 	}
 }
 
-func TestCreateBoardWritesMinimalDurableBoard(t *testing.T) {
+// TestCreateMissionBoardCreatesBoardAndMissionAtomically locks the Mission Board
+// create contract: the board and its single mission are created together in one
+// shot, and the returned board carries that mission plus a fresh ETag/Rev. The
+// board file on disk must already contain the mission (no separate append step),
+// and the mission's layout coordinates must land in the layout sidecar, not the
+// board definition.
+func TestCreateMissionBoardCreatesBoardAndMissionAtomically(t *testing.T) {
 	store := NewStore(t.TempDir())
 	store.Now = fixedClock()
 
-	board, err := store.CreateBoard(BoardCreateRequest{
-		Slug:      "poems",
-		Title:     "Poems",
+	board, err := store.CreateMissionBoard("poems", "Poems", MissionCreateRequest{
+		Title:     "Write a poem",
+		Goal:      "Ship a poem the user loves",
+		BeadID:    "home-vdki.34.1",
+		X:         150,
+		Y:         90,
 		UpdatedBy: "agent:test",
-	})
+	}, WriteOptions{})
 	if err != nil {
-		t.Fatalf("create board: %v", err)
+		t.Fatalf("create mission board: %v", err)
 	}
-	if board.Schema != CurrentSchema || board.Slug != "poems" || board.Title != "Poems" || board.Rev != 1 || !strings.HasPrefix(board.ID, "brd_") || board.ETag == "" {
+	if board.Slug != "poems" || board.Title != "Poems" || board.Rev != 1 || !strings.HasPrefix(board.ID, "brd_") || board.ETag == "" {
 		t.Fatalf("created board = %+v, want durable board identity", board)
 	}
-	if board.UpdatedBy != "agent:test" || board.UpdatedAt != "2026-06-03T17:00:00Z" {
-		t.Fatalf("created board update metadata = %q/%q", board.UpdatedBy, board.UpdatedAt)
+	if len(board.Missions) != 1 {
+		t.Fatalf("created board missions = %+v, want exactly one", board.Missions)
 	}
+	mission := board.Missions[0]
+	if !strings.HasPrefix(mission.ID, "mis_") || mission.Title != "Write a poem" || mission.Goal != "Ship a poem the user loves" || mission.BeadID != "home-vdki.34.1" {
+		t.Fatalf("created mission = %+v, want the requested single mission", mission)
+	}
+
 	raw := readFile(t, store.BoardPath("poems"))
-	for _, want := range []string{`schema = 1`, `id = "brd_`, `slug = "poems"`, `title = "Poems"`, `rev = 1`, `updatedBy = "agent:test"`, `updatedAt = "2026-06-03T17:00:00Z"`} {
+	for _, want := range []string{`schema = 1`, `slug = "poems"`, `title = "Poems"`, `rev = 1`, `[[mission]]`, `goal = "Ship a poem the user loves"`, `beadId = "home-vdki.34.1"`, `updatedBy = "agent:test"`} {
 		if !strings.Contains(raw, want) {
 			t.Fatalf("created board file missing %q:\n%s", want, raw)
 		}
 	}
-	if strings.Contains(raw, "[[node]]") || strings.Contains(raw, "\nx = ") || strings.Contains(raw, "\ny = ") {
-		t.Fatalf("created board leaked layout sidecar data:\n%s", raw)
+	if strings.Contains(raw, "x = 150") || strings.Contains(raw, "y = 90") {
+		t.Fatalf("mission layout coordinates leaked into board definition:\n%s", raw)
+	}
+
+	// The mission round-trips through a fresh read with a stable id.
+	reread, err := store.ReadBoard("poems")
+	if err != nil {
+		t.Fatalf("reread board: %v", err)
+	}
+	if len(reread.Missions) != 1 || reread.Missions[0].ID != mission.ID {
+		t.Fatalf("reread missions = %+v, want the persisted single mission", reread.Missions)
+	}
+
+	layout, err := store.ReadLayout("poems")
+	if err != nil {
+		t.Fatalf("read layout: %v", err)
+	}
+	if len(layout.Nodes) != 1 || layout.Nodes[0].ID != mission.ID || layout.Nodes[0].X != 150 || layout.Nodes[0].Y != 90 {
+		t.Fatalf("layout nodes = %+v, want the mission placed at 150,90", layout.Nodes)
 	}
 }
 
-func TestCreateBoardRefusesDuplicateSlugWithoutClobber(t *testing.T) {
+// TestCreateMissionBoardRejectsDuplicateSlugWithoutPartialState guards against a
+// half-created board: a duplicate slug must fail with ErrAlreadyExists and leave
+// the existing board byte-for-byte unchanged.
+func TestCreateMissionBoardRejectsDuplicateSlugWithoutPartialState(t *testing.T) {
 	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
 	writeFixture(t, store.BoardPath("poems"), minimalBoard("poems", 7))
 	before := readFile(t, store.BoardPath("poems"))
 
-	_, err := store.CreateBoard(BoardCreateRequest{Slug: "poems", Title: "Different"})
+	_, err := store.CreateMissionBoard("poems", "Different", MissionCreateRequest{
+		Goal:      "Should never persist",
+		UpdatedBy: "agent:test",
+	}, WriteOptions{})
 	if !errors.Is(err, ErrAlreadyExists) {
-		t.Fatalf("duplicate board create error = %v, want ErrAlreadyExists", err)
+		t.Fatalf("duplicate mission-board create error = %v, want ErrAlreadyExists", err)
 	}
 	after := readFile(t, store.BoardPath("poems"))
 	if after != before {
-		t.Fatalf("duplicate board create changed board:\n%s", after)
+		t.Fatalf("rejected duplicate mission-board create changed the board:\n%s", after)
 	}
 }
 
-func TestCreateBoardValidatesSlugAndTitle(t *testing.T) {
+// TestCreateMissionBoardValidatesSlugTitleAndBead asserts the create path rejects
+// each bad input with the precise typed error, before any file is written.
+func TestCreateMissionBoardValidatesSlugTitleAndBead(t *testing.T) {
 	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
 
-	if _, err := store.CreateBoard(BoardCreateRequest{Slug: "bad/path", Title: "Bad"}); !errors.Is(err, ErrInvalidSlug) {
+	if _, err := store.CreateMissionBoard("bad/path", "Bad", MissionCreateRequest{Goal: "g"}, WriteOptions{}); !errors.Is(err, ErrInvalidSlug) {
 		t.Fatalf("invalid slug error = %v, want ErrInvalidSlug", err)
 	}
-	if _, err := store.CreateBoard(BoardCreateRequest{Slug: "poems"}); !errors.Is(err, ErrInvalidSlug) {
+	if _, err := store.CreateMissionBoard("poems", "", MissionCreateRequest{Goal: "g"}, WriteOptions{}); !errors.Is(err, ErrInvalidSlug) {
 		t.Fatalf("missing title error = %v, want ErrInvalidSlug", err)
+	}
+	if _, err := store.CreateMissionBoard("poems", "Poems", MissionCreateRequest{Goal: "g", BeadID: "NotAValidBead"}, WriteOptions{}); !errors.Is(err, ErrInvalidBeadID) {
+		t.Fatalf("invalid bead error = %v, want ErrInvalidBeadID", err)
+	}
+	// No board file should have been created by any of the rejected attempts.
+	if _, err := os.Stat(store.BoardPath("poems")); !os.IsNotExist(err) {
+		t.Fatalf("rejected create left a board file behind: stat err = %v", err)
+	}
+}
+
+// TestListBoardsCarriesMissionAndLatestRun locks the gallery contract: each board
+// summary carries its single mission and its most-recent run so a gallery can
+// render goal + status without N follow-up requests. A board with no runs reports
+// a nil LatestRun (not a zero-value run that would look like a real run).
+func TestListBoardsCarriesMissionAndLatestRun(t *testing.T) {
+	store, personas := s4RunFixture(t)
+	store.Now = fixedClock()
+	personas.Now = fixedClock()
+	if _, err := personas.CreatePersona(CreatePersonaRequest{
+		ID:      "scout",
+		Kind:    "specialist",
+		Harness: "openai-codex",
+	}); err != nil {
+		t.Fatalf("create persona: %v", err)
+	}
+	writeFixture(t, store.BoardPath("session-search"), s4RunBoardFixture())
+	// A second board with a mission but no runs.
+	writeFixture(t, store.BoardPath("drafts"), `schema = 1
+id = "brd_drafts"
+slug = "drafts"
+title = "Drafts"
+rev = 1
+updatedAt = "2026-06-03T16:00:00Z"
+
+[[mission]]
+id = "mis_draft"
+title = "Draft"
+goal = "Write a draft"
+beadId = ""
+`)
+	board, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	// Two runs; the most-recent must win.
+	if _, err := store.StartRun("session-search", RunStartRequest{
+		MissionID:         "mis_showcase",
+		Actor:             "agent:test",
+		ExpectedBoardETag: board.ETag,
+		ExpectedBoardRev:  board.Rev,
+		Personas:          personas,
+	}); err != nil {
+		t.Fatalf("start first run: %v", err)
+	}
+	latest, err := store.StartRun("session-search", RunStartRequest{
+		MissionID:         "mis_showcase",
+		Actor:             "agent:test",
+		ExpectedBoardETag: board.ETag,
+		ExpectedBoardRev:  board.Rev,
+		Personas:          personas,
+	})
+	if err != nil {
+		t.Fatalf("start second run: %v", err)
+	}
+
+	boards, err := store.ListBoards()
+	if err != nil {
+		t.Fatalf("list boards: %v", err)
+	}
+	bySlug := map[string]BoardSummary{}
+	for _, b := range boards {
+		bySlug[b.Slug] = b
+	}
+
+	run := bySlug["session-search"]
+	if run.Mission == nil || run.Mission.ID != "mis_showcase" || run.Mission.Goal != "Ship a showcase" {
+		t.Fatalf("session-search summary mission = %+v, want the board's single mission", run.Mission)
+	}
+	if run.LatestRun == nil || run.LatestRun.RunID != latest.RunID {
+		t.Fatalf("session-search summary latestRun = %+v, want most-recent run %q", run.LatestRun, latest.RunID)
+	}
+
+	drafts := bySlug["drafts"]
+	if drafts.Mission == nil || drafts.Mission.ID != "mis_draft" || drafts.Mission.Goal != "Write a draft" {
+		t.Fatalf("drafts summary mission = %+v, want the board's single mission", drafts.Mission)
+	}
+	if drafts.LatestRun != nil {
+		t.Fatalf("drafts summary latestRun = %+v, want nil (board has no runs)", drafts.LatestRun)
 	}
 }
 
@@ -1074,6 +1203,41 @@ title = "Ship"
 	}
 }
 
+func TestS3FormationBriefAllowsEmptyBeadID(t *testing.T) {
+	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
+	writeFixture(t, store.BoardPath("session-search"), `schema = 1
+id = "brd_01J9_sesssearch"
+slug = "session-search"
+title = "Improve session search"
+rev = 7
+updatedAt = "2026-06-03T16:00:00Z"
+
+[[formation]]
+id = "fmn_ship"
+type = "solo"
+title = "Ship"
+`)
+	before, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	// A brief can carry a goal without anchoring to a bead.
+	after, err := store.SetFormationBrief("session-search", FormationBriefRequest{
+		FormationID: "fmn_ship",
+		Goal:        "Ship the change",
+		BeadID:      "",
+		UpdatedBy:   "agent:test",
+	}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev})
+	if err != nil {
+		t.Fatalf("set brief with empty beadId: %v", err)
+	}
+	formation := after.Formations[0]
+	if formation.Brief == nil || formation.Brief.Goal != "Ship the change" || formation.Brief.BeadID != "" {
+		t.Fatalf("brief = %+v, want goal-only brief with empty beadId", formation.Brief)
+	}
+}
+
 func TestS3FormationBriefRejectsUnsafeNonEmptyBeadID(t *testing.T) {
 	for _, beadID := range []string{"nohyphen", "Home-123", "chlab/123", "../home-pfyv", "home-pfyv\n"} {
 		t.Run(beadID, func(t *testing.T) {
@@ -1095,13 +1259,21 @@ title = "Ship"
 			if err != nil {
 				t.Fatalf("read board: %v", err)
 			}
-			if _, err := store.SetFormationBrief("session-search", FormationBriefRequest{
+			_, err = store.SetFormationBrief("session-search", FormationBriefRequest{
 				FormationID: "fmn_ship",
 				Goal:        "Ship the change",
 				BeadID:      beadID,
 				UpdatedBy:   "agent:test",
-			}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev}); !errors.Is(err, ErrInvalidSlug) {
-				t.Fatalf("set brief beadId %q error = %v, want ErrInvalidSlug", beadID, err)
+			}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev})
+			if !errors.Is(err, ErrInvalidBeadID) {
+				t.Fatalf("set brief beadId %q error = %v, want ErrInvalidBeadID", beadID, err)
+			}
+			msg := err.Error()
+			if strings.Contains(msg, "slug") {
+				t.Fatalf("set brief beadId %q error message mentions slug, want bead-format message: %q", beadID, msg)
+			}
+			if !strings.Contains(msg, "valid Beads issue id") || !strings.Contains(msg, safeBeadsIssueIDPattern.String()) {
+				t.Fatalf("set brief beadId %q error message = %q, want it to state the expected Beads id format", beadID, msg)
 			}
 		})
 	}
@@ -1517,8 +1689,42 @@ func TestS3MissionCreateAcceptsProjectBeadIDAndSingleOut(t *testing.T) {
 	}
 }
 
-func TestS3MissionCreateRejectsUnsafeBeadID(t *testing.T) {
-	for _, beadID := range []string{"", "nohyphen", "Home-123", "chlab/123", "../home-pfyv", "home-pfyv\n"} {
+func TestS3MissionCreateAllowsEmptyBeadIDAndRoundTrips(t *testing.T) {
+	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
+	writeFixture(t, store.BoardPath("session-search"), minimalBoard("session-search", 7))
+	before, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	// A mission's required essence is its goal, not a bead (FORMATIONS.md, invariant 8).
+	// The UI creates missions with no bead, so an empty beadId must succeed.
+	after, err := store.CreateMission("session-search", MissionCreateRequest{
+		Title:     "Showcase site",
+		Goal:      "Build the showcase",
+		BeadID:    "",
+		X:         150,
+		Y:         90,
+		UpdatedBy: "agent:test",
+	}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev})
+	if err != nil {
+		t.Fatalf("create mission with empty beadId: %v", err)
+	}
+	if len(after.Missions) != 1 || after.Missions[0].Goal != "Build the showcase" || after.Missions[0].BeadID != "" {
+		t.Fatalf("missions = %+v, want one goal-only mission with empty beadId", after.Missions)
+	}
+	// Persisted and round-trips through a fresh read.
+	reread, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("reread board: %v", err)
+	}
+	if len(reread.Missions) != 1 || reread.Missions[0].ID != after.Missions[0].ID || reread.Missions[0].BeadID != "" {
+		t.Fatalf("reread missions = %+v, want persisted goal-only mission with empty beadId", reread.Missions)
+	}
+}
+
+func TestS3MissionCreateRejectsUnsafeNonEmptyBeadID(t *testing.T) {
+	for _, beadID := range []string{"nohyphen", "Home-123", "chlab/123", "../home-pfyv", "home-pfyv\n"} {
 		t.Run(beadID, func(t *testing.T) {
 			store := NewStore(t.TempDir())
 			store.Now = fixedClock()
@@ -1527,15 +1733,69 @@ func TestS3MissionCreateRejectsUnsafeBeadID(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read board: %v", err)
 			}
-			if _, err := store.CreateMission("session-search", MissionCreateRequest{
+			_, err = store.CreateMission("session-search", MissionCreateRequest{
 				Title:     "Showcase site",
 				Goal:      "Build the showcase",
 				BeadID:    beadID,
 				UpdatedBy: "agent:test",
-			}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev}); !errors.Is(err, ErrInvalidSlug) {
-				t.Fatalf("create mission beadId %q error = %v, want ErrInvalidSlug", beadID, err)
+			}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev})
+			if !errors.Is(err, ErrInvalidBeadID) {
+				t.Fatalf("create mission beadId %q error = %v, want ErrInvalidBeadID", beadID, err)
+			}
+			// The message must name the actual problem (bead format), not a slug.
+			msg := err.Error()
+			if strings.Contains(msg, "slug") {
+				t.Fatalf("create mission beadId %q error message mentions slug, want bead-format message: %q", beadID, msg)
+			}
+			if !strings.Contains(msg, "valid Beads issue id") || !strings.Contains(msg, safeBeadsIssueIDPattern.String()) {
+				t.Fatalf("create mission beadId %q error message = %q, want it to state the expected Beads id format", beadID, msg)
 			}
 		})
+	}
+}
+
+// TestCreateMissionRejectsSecondMission locks the Mission Board one-mission
+// invariant: a board's mission is its identity, so once it has a mission,
+// CreateMission must refuse to add another rather than silently producing a
+// two-mission board the runner cannot resolve without a picker. The refusal must
+// be ErrConflict (a precondition the caller can recover from by editing the
+// existing mission) and the board on disk must be left untouched.
+func TestCreateMissionRejectsSecondMission(t *testing.T) {
+	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
+	writeFixture(t, store.BoardPath("session-search"), minimalBoard("session-search", 7))
+	first, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	withOne, err := store.CreateMission("session-search", MissionCreateRequest{
+		Title:     "Primary",
+		Goal:      "Ship the one thing",
+		UpdatedBy: "agent:test",
+	}, WriteOptions{ExpectedETag: first.ETag, ExpectedRev: first.Rev})
+	if err != nil {
+		t.Fatalf("create first mission: %v", err)
+	}
+	if len(withOne.Missions) != 1 {
+		t.Fatalf("after first create missions = %+v, want exactly one", withOne.Missions)
+	}
+	before := readFile(t, store.BoardPath("session-search"))
+
+	_, err = store.CreateMission("session-search", MissionCreateRequest{
+		Title:     "Second",
+		Goal:      "A board can only have one mission",
+		UpdatedBy: "agent:test",
+	}, WriteOptions{ExpectedETag: withOne.ETag, ExpectedRev: withOne.Rev})
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("second mission create error = %v, want ErrConflict", err)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "already has a mission") || !strings.Contains(msg, "set-goal") {
+		t.Fatalf("second mission error message = %q, want it to explain the one-mission invariant and point at set-goal", msg)
+	}
+	after := readFile(t, store.BoardPath("session-search"))
+	if after != before {
+		t.Fatalf("rejected second mission mutated the board:\n%s", after)
 	}
 }
 
@@ -1581,6 +1841,208 @@ label = "Input"
 	}
 	if got := readFile(t, store.BoardPath("session-search")); strings.Contains(got, "chain") {
 		t.Fatalf("mission wire stored a chain instead of a connection:\n%s", got)
+	}
+}
+
+// twoMissionBoard returns a board with two missions and a wire off mis_showcase,
+// so UpdateMission tests can prove the edit is surgical (only the target mission
+// changes) and that the mission id / its derived :out endpoint stay stable.
+func twoMissionBoard() string {
+	return `schema = 1
+id = "brd_01J9_sesssearch"
+slug = "session-search"
+title = "Improve session search"
+rev = 7
+updatedAt = "2026-06-03T16:00:00Z"
+
+[[mission]]
+id = "mis_showcase"
+title = "Showcase"
+goal = "Build it"
+beadId = "home-7kc4.5"
+
+[[mission]]
+id = "mis_other"
+title = "Other"
+goal = "Leave me alone"
+beadId = "home-9zz9.2"
+
+[[formation]]
+id = "fmn_frame"
+type = "solo"
+title = "Frame"
+
+[[formation.input]]
+id = "port_frame_in"
+label = "Input"
+
+[[connection]]
+id = "edge_mission_frame"
+from = "mis_showcase:out"
+to = "fmn_frame:port_frame_in"
+`
+}
+
+func TestUpdateMissionUpdatesTitleGoalBeadAndRoundTripsWithStableIDs(t *testing.T) {
+	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
+	writeFixture(t, store.BoardPath("session-search"), twoMissionBoard())
+	before, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	after, err := store.UpdateMission("session-search", MissionUpdateRequest{
+		MissionID: "mis_showcase",
+		Title:     "Showcase v2",
+		Goal:      "Ship the polished showcase",
+		BeadID:    "home-vdki.34.1",
+		UpdatedBy: "agent:test",
+	}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev})
+	if err != nil {
+		t.Fatalf("update mission: %v", err)
+	}
+	if len(after.Missions) != 2 {
+		t.Fatalf("missions = %+v, want both missions preserved", after.Missions)
+	}
+	target := after.Missions[0]
+	if target.ID != "mis_showcase" {
+		t.Fatalf("mission id = %q, want stable mis_showcase", target.ID)
+	}
+	if target.Title != "Showcase v2" || target.Goal != "Ship the polished showcase" || target.BeadID != "home-vdki.34.1" {
+		t.Fatalf("updated mission = %+v, want new title/goal/bead", target)
+	}
+	// The other mission must be untouched.
+	if after.Missions[1] != before.Missions[1] {
+		t.Fatalf("sibling mission = %+v, want unchanged %+v", after.Missions[1], before.Missions[1])
+	}
+	// The mission's derived :out endpoint depends only on its id, which must
+	// survive the update, so its existing wire must still resolve.
+	if len(after.Connections) != 1 || after.Connections[0].From != "mis_showcase:out" {
+		t.Fatalf("connections = %+v, want mission out wire preserved with stable id", after.Connections)
+	}
+	// Persisted and round-trips through a fresh read.
+	reread, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("reread board: %v", err)
+	}
+	if len(reread.Missions) != 2 || reread.Missions[0].ID != "mis_showcase" ||
+		reread.Missions[0].Title != "Showcase v2" || reread.Missions[0].Goal != "Ship the polished showcase" ||
+		reread.Missions[0].BeadID != "home-vdki.34.1" {
+		t.Fatalf("reread missions = %+v, want persisted update with stable id", reread.Missions)
+	}
+	if reread.Missions[1] != before.Missions[1] {
+		t.Fatalf("reread sibling mission = %+v, want unchanged %+v", reread.Missions[1], before.Missions[1])
+	}
+}
+
+func TestUpdateMissionAllowsEmptyBeadID(t *testing.T) {
+	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
+	writeFixture(t, store.BoardPath("session-search"), twoMissionBoard())
+	before, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	// A mission's required essence is its goal, not a bead, so clearing the bead must succeed.
+	after, err := store.UpdateMission("session-search", MissionUpdateRequest{
+		MissionID: "mis_showcase",
+		Title:     "Showcase",
+		Goal:      "Build it",
+		BeadID:    "",
+		UpdatedBy: "agent:test",
+	}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev})
+	if err != nil {
+		t.Fatalf("update mission with empty beadId: %v", err)
+	}
+	if after.Missions[0].BeadID != "" {
+		t.Fatalf("mission beadId = %q, want cleared to empty", after.Missions[0].BeadID)
+	}
+}
+
+func TestUpdateMissionRejectsUnsafeNonEmptyBeadID(t *testing.T) {
+	for _, beadID := range []string{"nohyphen", "Home-123", "chlab/123", "../home-pfyv", "home-pfyv\n"} {
+		t.Run(beadID, func(t *testing.T) {
+			store := NewStore(t.TempDir())
+			store.Now = fixedClock()
+			writeFixture(t, store.BoardPath("session-search"), twoMissionBoard())
+			before, err := store.ReadBoard("session-search")
+			if err != nil {
+				t.Fatalf("read board: %v", err)
+			}
+			_, err = store.UpdateMission("session-search", MissionUpdateRequest{
+				MissionID: "mis_showcase",
+				Title:     "Showcase",
+				Goal:      "Build it",
+				BeadID:    beadID,
+				UpdatedBy: "agent:test",
+			}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev})
+			if !errors.Is(err, ErrInvalidBeadID) {
+				t.Fatalf("update mission beadId %q error = %v, want ErrInvalidBeadID", beadID, err)
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, "valid Beads issue id") || !strings.Contains(msg, safeBeadsIssueIDPattern.String()) {
+				t.Fatalf("update mission beadId %q error = %q, want it to state the expected Beads id format", beadID, msg)
+			}
+		})
+	}
+}
+
+func TestUpdateMissionUnknownMissionFailsWithClearNotFound(t *testing.T) {
+	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
+	writeFixture(t, store.BoardPath("session-search"), twoMissionBoard())
+	before, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	_, err = store.UpdateMission("session-search", MissionUpdateRequest{
+		MissionID: "mis_ghost",
+		Title:     "Nope",
+		Goal:      "Nope",
+		UpdatedBy: "agent:test",
+	}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev})
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("update unknown mission error = %v, want ErrNotFound", err)
+	}
+	// Fail loud: the message must name the missing mission id and the board so
+	// the caller knows exactly what could not be updated.
+	msg := err.Error()
+	if !strings.Contains(msg, "mis_ghost") || !strings.Contains(msg, "session-search") {
+		t.Fatalf("update unknown mission error = %q, want it to name mission id and board", msg)
+	}
+	// A failed lookup must not have bumped the revision.
+	reread, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("reread board: %v", err)
+	}
+	if reread.Rev != before.Rev {
+		t.Fatalf("rev = %d after failed update, want unchanged %d", reread.Rev, before.Rev)
+	}
+}
+
+func TestUpdateMissionRejectsStaleETagAndRev(t *testing.T) {
+	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
+	writeFixture(t, store.BoardPath("session-search"), twoMissionBoard())
+	before, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	if _, err := store.UpdateMission("session-search", MissionUpdateRequest{
+		MissionID: "mis_showcase",
+		Title:     "Showcase v2",
+		Goal:      "New goal",
+		UpdatedBy: "agent:test",
+	}, WriteOptions{ExpectedETag: "stale", ExpectedRev: before.Rev}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale ETag error = %v, want ErrConflict", err)
+	}
+	if _, err := store.UpdateMission("session-search", MissionUpdateRequest{
+		MissionID: "mis_showcase",
+		Title:     "Showcase v2",
+		Goal:      "New goal",
+		UpdatedBy: "agent:test",
+	}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev + 1}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale rev error = %v, want ErrConflict", err)
 	}
 }
 

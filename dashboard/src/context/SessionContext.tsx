@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, ReactNode } from 'react'
 import type { DashboardContextType, TmuxSession, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance, WorkspaceId, TerminalWorkspace, LayoutPreset } from '../types'
 import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE, MAX_PRESETS } from '../types'
 import { useToast } from './ToastContext'
@@ -14,6 +14,21 @@ async function applyTmuxAppearance(appearance: TmuxAppearance): Promise<void> {
     })
   } catch (e) {
     console.warn('Failed to apply tmux appearance:', e)
+  }
+}
+
+// Apply tmux mouse mode via API (hot-reload). Mouse mode lets the scroll wheel
+// scroll tmux history; it is a global tmux option affecting all sessions.
+async function applyTmuxMouse(enabled: boolean): Promise<void> {
+  try {
+    await fetch('/api/tmux/mouse', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+      signal: AbortSignal.timeout(10000),
+    })
+  } catch (e) {
+    console.warn('Failed to apply tmux mouse mode:', e)
   }
 }
 
@@ -294,6 +309,47 @@ function migrateStoredState(raw: unknown, viewportBucket: ViewportBucket): Loade
   return defaultStoredState()
 }
 
+// A bound session must be absent from this many consecutive SUCCESSFUL session
+// polls before it is auto-removed from its viewer window. The grace period guards
+// the narrow race where a just-created/just-renamed session has not yet appeared
+// in an already-in-flight poll; a genuinely killed session is absent from every
+// poll and so is removed after ~one extra poll interval.
+const MISSING_POLLS_BEFORE_REMOVAL = 2
+
+// Remove the given (confirmed-dead) session names from every viewer window across
+// all workspaces, falling back the active session to the first remaining one (or
+// null) — matching removeSessionFromWindow's convention. Returns prev unchanged
+// when nothing matched so React can skip the re-render.
+function dropDeadSessions(
+  prev: Record<WorkspaceId, TerminalWorkspace>,
+  dead: Set<string>,
+): Record<WorkspaceId, TerminalWorkspace> {
+  let changed = false
+  const next: Record<WorkspaceId, TerminalWorkspace> = { ...prev }
+  WORKSPACE_IDS.forEach(workspaceId => {
+    const ws = prev[workspaceId]
+    let wsChanged = false
+    const windows = ws.windows.map(w => {
+      if (!w.boundSessions.some(s => dead.has(s))) return w
+      wsChanged = true
+      const newBound = w.boundSessions.filter(s => !dead.has(s))
+      return {
+        ...w,
+        boundSessions: newBound,
+        activeSession:
+          w.activeSession && dead.has(w.activeSession)
+            ? (newBound[0] ?? null)
+            : w.activeSession,
+      }
+    })
+    if (wsChanged) {
+      changed = true
+      next[workspaceId] = { ...ws, windows }
+    }
+  })
+  return changed ? next : prev
+}
+
 const SessionContext = createContext<DashboardContextType | null>(null)
 
 export function SessionProvider({ children }: { children: ReactNode }) {
@@ -342,6 +398,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     })
     return assigned
   }, [workspaces])
+
+  // Keep a ref mirror of the currently-bound session names so the (dependency-free)
+  // refreshSessions poll can reconcile without re-subscribing on every layout change.
+  const assignedRef = useRef(assignedSessions)
+  useEffect(() => {
+    assignedRef.current = assignedSessions
+  }, [assignedSessions])
+
+  // Per-session count of consecutive successful polls in which a bound session was
+  // missing from the live list. Reset to 0 (deleted) the moment it reappears.
+  const missingPollsRef = useRef<Map<string, number>>(new Map())
 
   // Clean up any stuck INIT-PENDING windows on mount (from page refresh during creation)
   useEffect(() => {
@@ -404,10 +471,37 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         setSessions(data.sessions)
         setGroupedSessions(data.grouped)
 
-        // NOTE: We intentionally do NOT clean up "orphaned" sessions here.
-        // If a session is in the layout but not in the API list (e.g. server restart, network blip),
-        // we want to PERSIST it in the UI rather than wiping the user's layout.
-        // The terminal window will just show a disconnected state or error until it comes back.
+        // Reconcile viewer windows against the authoritative live list so killed
+        // sessions drop out of their windows automatically. This runs ONLY on a
+        // successful poll — a server restart or network blip throws/sets data.error
+        // and is handled below, leaving the layout untouched. A bound session is
+        // removed only after it has been absent for MISSING_POLLS_BEFORE_REMOVAL
+        // consecutive successful polls, so a just-created/just-renamed session that
+        // hasn't yet surfaced in an in-flight poll is not transiently wiped.
+        const liveNames = new Set((data.sessions ?? []).map(s => s.name))
+        const counts = missingPollsRef.current
+        const dead = new Set<string>()
+        for (const name of assignedRef.current.keys()) {
+          if (name === 'INIT-PENDING') continue
+          if (liveNames.has(name)) {
+            counts.delete(name)
+            continue
+          }
+          const next = (counts.get(name) ?? 0) + 1
+          if (next >= MISSING_POLLS_BEFORE_REMOVAL) {
+            counts.delete(name)
+            dead.add(name)
+          } else {
+            counts.set(name, next)
+          }
+        }
+        // Drop stale counters for sessions no longer bound to any window.
+        for (const name of [...counts.keys()]) {
+          if (!assignedRef.current.has(name)) counts.delete(name)
+        }
+        if (dead.size > 0) {
+          setWorkspaces(prev => dropDeadSessions(prev, dead))
+        }
       }
     } catch (e) {
       setError('Failed to fetch sessions')
@@ -424,11 +518,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(interval)
   }, [refreshSessions, settings.autoRefreshInterval])
 
-  // Apply tmux appearance on initial load (ensures container matches saved settings)
+  // Apply tmux appearance + mouse mode on initial load (ensures the tmux server
+  // matches saved settings)
   useEffect(() => {
     // Merge saved settings with defaults to handle missing fields from older localStorage
     const appearance = { ...DEFAULT_TMUX_APPEARANCE, ...settings.tmuxAppearance }
     applyTmuxAppearance(appearance)
+    applyTmuxMouse(settings.mouseScroll)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Actions
@@ -604,16 +700,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const handleSessionClick = useCallback((sessionName: string) => {
-    // Check if session is already assigned to any window
-    const assignment = assignedSessions.get(sessionName)
-    if (assignment) {
-      // Focus the session in its assigned window instead of opening modal
-      setActiveSession(assignment.workspaceId, assignment.windowId, sessionName)
-    } else {
-      // Open floating modal for "peek" functionality
-      openFloatingModal(sessionName)
-    }
-  }, [assignedSessions, setActiveSession, openFloatingModal])
+    // Always open the floating "peek" popup — even when the session is pinned to a
+    // window. This lets you check in on a session attached to another terminal page
+    // without switching to that page in the tab bar. The sidebar still shows where a
+    // session is pinned via its window badge; clicking is purely a non-disruptive peek.
+    openFloatingModal(sessionName)
+  }, [openFloatingModal])
 
   const updateSettings = useCallback((newSettings: Partial<UserSettings>) => {
     setSettings(prev => {
@@ -621,6 +713,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // Hot-reload tmux appearance if it changed
       if (newSettings.tmuxAppearance) {
         applyTmuxAppearance(updated.tmuxAppearance)
+      }
+      // Hot-reload tmux mouse mode if it changed
+      if (newSettings.mouseScroll !== undefined) {
+        applyTmuxMouse(updated.mouseScroll)
       }
       return updated
     })

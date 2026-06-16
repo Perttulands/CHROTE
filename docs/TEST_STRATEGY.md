@@ -411,7 +411,8 @@ rm -rf src/internal/dashboard/dist
 cp -r dashboard/dist src/internal/dashboard/
 cd src
 go test ./...
-go build -o /tmp/chrote-server-ci ./cmd/server
+mkdir -p "$HOME/.local/state/chrote/builds"
+go build -o "$HOME/.local/state/chrote/builds/chrote-server-ci" ./cmd/server
 ```
 
 The release workflow also uses Go 1.23 and Node 20. It runs the same Go format/vet/test/race assumptions, dashboard lint/build/unit-coverage/audit, copies the fresh dashboard `dist` into `src/internal/dashboard/dist`, and performs an embedded-dashboard Go build smoke before producing tag artifacts.

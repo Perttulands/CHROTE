@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -30,19 +31,21 @@ import (
 var Version = "0.2.0"
 
 const (
-	defaultBindHost   = "127.0.0.1"
-	defaultServerPort = 8094
-	defaultTtydPort   = 7683
+	defaultBindHost           = "127.0.0.1"
+	defaultServerPort         = 8094
+	defaultTtydPort           = 7683
+	defaultFormationsTtydPort = 7684
 )
 
 // Config holds server configuration
 type Config struct {
-	Host         string
-	Port         int
-	TtydPort     int
-	APIAuthToken string
-	CORSOrigins  []string
-	StartTtyd    bool
+	Host               string
+	Port               int
+	TtydPort           int
+	FormationsTtydPort int
+	APIAuthToken       string
+	CORSOrigins        []string
+	StartTtyd          bool
 }
 
 func main() {
@@ -51,6 +54,7 @@ func main() {
 	flag.StringVar(&config.Host, "host", defaultBindHost, "Bind address")
 	flag.IntVar(&config.Port, "port", defaultServerPort, "Server port")
 	flag.IntVar(&config.TtydPort, "ttyd-port", defaultTtydPort, "ttyd port")
+	flag.IntVar(&config.FormationsTtydPort, "formations-ttyd-port", defaultFormationsTtydPort, "ttyd port for the formations socket terminal")
 	flag.StringVar(&config.APIAuthToken, "auth-token", "", "API authentication token")
 	flag.BoolVar(&config.StartTtyd, "start-ttyd", true, "Start ttyd child process")
 	flag.Parse()
@@ -65,6 +69,9 @@ func main() {
 	if port := os.Getenv("TTYD_PORT"); port != "" {
 		config.TtydPort = mustParsePort("TTYD_PORT", port)
 	}
+	if port := os.Getenv("FORMATIONS_TTYD_PORT"); port != "" {
+		config.FormationsTtydPort = mustParsePort("FORMATIONS_TTYD_PORT", port)
+	}
 	if token := os.Getenv("API_AUTH_TOKEN"); token != "" {
 		config.APIAuthToken = token
 	}
@@ -78,7 +85,7 @@ func main() {
 	// Create main mux
 	mux := http.NewServeMux()
 
-	terminalProxy := registerRuntimeRoutes(mux, config)
+	terminalProxy, formationsTerminalProxy := registerRuntimeRoutes(mux, config)
 	registerAPIFallback(mux)
 
 	// Serve embedded dashboard at root
@@ -106,6 +113,12 @@ func main() {
 			log.Printf("Warning: failed to start ttyd: %v", err)
 			log.Printf("Terminal functionality will not be available")
 		}
+		if formationsTerminalProxy != nil {
+			if err := formationsTerminalProxy.Start(); err != nil {
+				log.Printf("Warning: failed to start formations ttyd: %v", err)
+				log.Printf("Formations terminal functionality will not be available")
+			}
+		}
 	}
 
 	// Graceful shutdown handling
@@ -131,6 +144,9 @@ func main() {
 	// Stop subsystems
 	if config.StartTtyd {
 		terminalProxy.Stop()
+		if formationsTerminalProxy != nil {
+			formationsTerminalProxy.Stop()
+		}
 	}
 
 	// Graceful shutdown with timeout
@@ -144,7 +160,11 @@ func main() {
 	log.Println("Server stopped")
 }
 
-func registerRuntimeRoutes(mux *http.ServeMux, config Config) *proxy.TerminalProxy {
+// registerRuntimeRoutes wires the cockpit runtime routes and, when a formations
+// tmux socket is configured, the formations side-panel routes. It returns the
+// cockpit terminal proxy and (when configured) the formations terminal proxy
+// (nil otherwise).
+func registerRuntimeRoutes(mux *http.ServeMux, config Config) (*proxy.TerminalProxy, *proxy.TerminalProxy) {
 	tmuxHandler := api.NewTmuxHandler()
 	tmuxHandler.RegisterRoutes(mux)
 
@@ -175,7 +195,50 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config) *proxy.TerminalPro
 	// Create terminal proxy
 	terminalProxy := proxy.NewTerminalProxy(config.TtydPort)
 	terminalProxy.RegisterRoutes(mux)
-	return terminalProxy
+
+	// Formations side panel: list/attach the mission-agent sessions that run on
+	// the DEDICATED formations tmux socket. CHROTE_FORMATIONS_TMUX_SOCKET is the
+	// ONE source of truth — the same env var the formations executor reads
+	// (formations.TmuxExecutorConfigFromEnv). The session API and the second
+	// ttyd are both bound to this EXACT path via `tmux -S <socket>`, so they hit
+	// the same sessions the executor dispatches to. When unset, we register
+	// nothing rather than silently pointing at the wrong socket.
+	formationsTerminalProxy := registerFormationsRoutes(mux, config)
+
+	return terminalProxy, formationsTerminalProxy
+}
+
+// registerFormationsRoutes registers the formations socket-scoped session API
+// (/api/formations/tmux/*) and second terminal proxy (/terminal-formations/)
+// when CHROTE_FORMATIONS_TMUX_SOCKET is set. Returns the formations terminal
+// proxy, or nil when the socket is unset.
+func registerFormationsRoutes(mux *http.ServeMux, config Config) *proxy.TerminalProxy {
+	socket := strings.TrimSpace(os.Getenv("CHROTE_FORMATIONS_TMUX_SOCKET"))
+	if socket == "" {
+		log.Printf("Formations socket not configured (CHROTE_FORMATIONS_TMUX_SOCKET unset); formations terminal side panel disabled")
+		return nil
+	}
+
+	// The systemd ExecStartPre creates the socket's parent dir. If the dir is
+	// missing the socket is unreachable; log clearly but do not crash — tmux
+	// commands will surface a clear error per-request and the executor (which
+	// owns session creation) may not have started the server yet.
+	socketDir := filepath.Dir(socket)
+	if _, err := os.Stat(socketDir); err != nil {
+		log.Printf("Warning: formations socket dir %q not reachable: %v; the side panel will be empty until the formations tmux server is up", socketDir, err)
+	}
+
+	log.Printf("Formations socket: %s", socket)
+	log.Printf("Formations session API: /api/formations/tmux/* bound to -S %s", socket)
+
+	formationsTmux := api.NewTmuxHandlerForSocket(socket)
+	formationsTmux.RegisterRoutesWithPrefix(mux, "/api/formations/tmux")
+
+	formationsTerminalProxy := proxy.NewTerminalProxyForSocket(config.FormationsTtydPort, socket)
+	formationsTerminalProxy.RegisterRoutes(mux)
+	log.Printf("Formations terminal: /terminal-formations/ -> ttyd :%d attaching with -S %s", config.FormationsTtydPort, socket)
+
+	return formationsTerminalProxy
 }
 
 // mustParsePort parses a port string and fatals on invalid values.

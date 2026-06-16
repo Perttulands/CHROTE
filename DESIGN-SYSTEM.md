@@ -80,11 +80,21 @@ Components should use tokens rather than hard-coded theme-specific colors.
 
 ## Formations canvas rules
 
+The Formations surface is the **Missions** tab: a Mission Board gallery (each
+board is one mission with a goal and latest run) that opens into the board canvas.
+A session side-panel bound to the dedicated formations socket lets the operator
+watch and attach mission agents without leaving the tab or touching the cockpit
+socket.
+
+- The gallery should show each board's mission goal and latest run status at a
+  glance, so an operator can pick a board without opening it.
 - The canvas should communicate graph structure immediately.
 - Missions, formations, gates, wires, slots, and run states need distinct shapes
   and affordances.
 - Direct manipulation is the expected interaction model.
 - Wires and cards should show run progress, errors, blocked gates, and outputs.
+- The session side-panel should make clear these are dedicated-socket mission
+  sessions, distinct from the cockpit Terminal tabs.
 - Empty first-run state must still be useful; never show a blank dead canvas.
 
 ## Copy tone

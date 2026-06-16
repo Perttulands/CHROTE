@@ -121,6 +121,32 @@ export function projectNodeStates(events: RunEvent[], activeRun: RunStatusProjec
   return map
 }
 
+/**
+ * Project the concrete per-output-port payloads produced by the run.
+ *
+ * The only routing-truth payload is `node_output.outputs[portId]` (FORMATIONS.md). The free-form
+ * `node_output.text` is a display summary and is deliberately NOT consumed here — it must never be
+ * surfaced as a port payload. A port absent from the map genuinely has no produced output yet.
+ * Re-emitted ports keep their latest payload (events are processed in seq order).
+ */
+export function projectNodeOutputs(events: RunEvent[]): Map<string, Map<string, string>> {
+  const map = new Map<string, Map<string, string>>()
+  for (const event of events) {
+    if (event.type !== 'node_output' || !event.nodeId) continue
+    const outputs = event.data?.outputs
+    if (typeof outputs !== 'object' || outputs === null) continue
+    let ports = map.get(event.nodeId)
+    if (!ports) {
+      ports = new Map<string, string>()
+      map.set(event.nodeId, ports)
+    }
+    for (const [portId, payload] of Object.entries(outputs as Record<string, unknown>)) {
+      if (typeof payload === 'string') ports.set(portId, payload)
+    }
+  }
+  return map
+}
+
 export function openHumanGateId(events: RunEvent[]): string {
   let openGateId = ''
   for (const event of [...events].sort((a, b) => a.seq - b.seq)) {

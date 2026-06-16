@@ -25,7 +25,7 @@ func installFailingTmux(t *testing.T, stderr string) {
 
 func TestTmuxHandler_ListSessionsTreatsKnownNoServerErrorsAsEmptyList(t *testing.T) {
 	tests := []string{
-		"no server running on /tmp/tmux-1000/default",
+		"no server running on /run/user/1000/tmux/default",
 		"No such file or directory",
 		"error connecting to /run/user/1000/tmux/default",
 	}

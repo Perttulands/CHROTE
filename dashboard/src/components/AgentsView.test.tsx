@@ -46,7 +46,7 @@ describe('AgentsView', () => {
             tags: ['design', 'react'],
             harnessDefault: 'claude-code',
             harnessVariants: [
-              { id: 'claude-code', sessionStem: 'susie', source: '/tmp/CLAUDE.md' },
+              { id: 'claude-code', sessionStem: 'susie', source: '/home/perttu/CLAUDE.md' },
             ],
           },
         }))
@@ -61,7 +61,7 @@ describe('AgentsView', () => {
 
     expect(await screen.findByText((_, element) => Boolean(
       element?.classList.contains('oracle-output-line') &&
-      (element.textContent?.includes('/tmp/CLAUDE.md') ?? false),
+      (element.textContent?.includes('/home/perttu/CLAUDE.md') ?? false),
     ))).toBeInTheDocument()
     expect(screen.queryByText('CLAUDE.md contents')).not.toBeInTheDocument()
   })

@@ -2,6 +2,7 @@ import { Page, Route } from '@playwright/test'
 
 const fileResourcesPattern = /.*\/api\/files\/resources(?:\/.*)?$/
 const tmuxAppearancePattern = /.*\/api\/tmux\/appearance\/?$/
+const tmuxMousePattern = /.*\/api\/tmux\/mouse\/?$/
 const tmuxSessionsPattern = /.*\/api\/tmux\/sessions\/?$/
 
 // Mock beads data for testing
@@ -453,6 +454,14 @@ export async function mockApiRoutes(page: Page) {
   })
 
   await page.route(tmuxAppearancePattern, async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true }),
+    })
+  })
+
+  await page.route(tmuxMousePattern, async route => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',

@@ -169,22 +169,74 @@ func (s *Store) StartRun(slug string, req RunStartRequest) (*RunStartResult, err
 	if err != nil {
 		return nil, err
 	}
+	return s.bootstrapRun(runBootstrap{
+		Slug:     slug,
+		Board:    board,
+		BoardRaw: boardRaw,
+		Mission:  mission,
+		Bindings: bindings,
+		Actor:    req.Actor,
+		Limits:   req.Limits,
+	})
+}
 
+// runBootstrap carries everything the shared run-start writer needs once the
+// caller has resolved the board, the mission (a real board mission for a mission
+// run or a synthetic single-formation mission), and the slot bindings.
+type runBootstrap struct {
+	Slug     string
+	Board    *BoardDocument
+	BoardRaw []byte
+	Mission  MissionNode
+	Bindings []runBinding
+	Actor    string
+	Limits   RunLimits
+	// ExtraData is merged into the run_started event data after the shared
+	// fields. Callers use it for path-specific markers (e.g. single-formation
+	// runs add mode and formationId); it must not overwrite a shared key.
+	ExtraData map[string]any
+}
+
+// bootstrapRun is the single place that snapshots the board, writes the run
+// bindings, and appends the seq-1 run_started event. Both mission runs
+// (store.StartRun) and single-formation runs (RunEngine.startFormationRun) go
+// through here so the two start paths cannot drift apart, per ADR-0002.
+func (s *Store) bootstrapRun(b runBootstrap) (*RunStartResult, error) {
 	runID := newPrefixedID("run")
-	ledgerPath := runArtifactPath(slug, runID, ".ndjson")
-	snapshotPath := runArtifactPath(slug, runID, ".snapshot.toml")
-	bindingsPath := runArtifactPath(slug, runID, ".bindings.toml")
+	ledgerPath := runArtifactPath(b.Slug, runID, ".ndjson")
+	snapshotPath := runArtifactPath(b.Slug, runID, ".snapshot.toml")
+	bindingsPath := runArtifactPath(b.Slug, runID, ".bindings.toml")
 
-	if err := writeAtomic(filepath.Join(s.Workspace, snapshotPath), boardRaw); err != nil {
+	data := map[string]any{
+		"boardSlug":        b.Slug,
+		"boardPath":        filepath.ToSlash(s.BoardPath(b.Slug)),
+		"boardRev":         b.Board.Rev,
+		"snapshot":         snapshotPath,
+		"bindingsSnapshot": bindingsPath,
+		"missionId":        b.Mission.ID,
+		"beadId":           b.Mission.BeadID,
+		"objective":        b.Mission.Goal,
+		"limits":           b.Limits,
+	}
+	// Validate the caller's markers before any write so a bad caller fails
+	// loudly without leaving half-written run artifacts behind.
+	for key, value := range b.ExtraData {
+		if _, exists := data[key]; exists {
+			return nil, fmt.Errorf("%w: run_started extra data key %q overwrites a shared field", ErrConflict, key)
+		}
+		data[key] = value
+	}
+
+	if err := writeAtomic(filepath.Join(s.Workspace, snapshotPath), b.BoardRaw); err != nil {
 		return nil, err
 	}
-	if err := writeAtomic(filepath.Join(s.Workspace, bindingsPath), []byte(renderRunBindings(runID, board, mission, bindings))); err != nil {
+	if err := writeAtomic(filepath.Join(s.Workspace, bindingsPath), []byte(renderRunBindings(runID, b.Board, b.Mission, b.Bindings))); err != nil {
 		return nil, err
 	}
 
 	result := &RunStartResult{
 		RunID:                runID,
-		BoardSlug:            slug,
+		BoardSlug:            b.Slug,
 		LedgerPath:           ledgerPath,
 		SnapshotPath:         snapshotPath,
 		BindingsSnapshotPath: bindingsPath,
@@ -194,24 +246,14 @@ func (s *Store) StartRun(slug string, req RunStartRequest) (*RunStartResult, err
 		RunID:     runID,
 		Seq:       1,
 		Type:      RunEventStarted,
-		Actor:     defaultRunActor(req.Actor),
-		BoardID:   board.ID,
-		BoardRev:  board.Rev,
-		MissionID: mission.ID,
-		BeadID:    mission.BeadID,
+		Actor:     defaultRunActor(b.Actor),
+		BoardID:   b.Board.ID,
+		BoardRev:  b.Board.Rev,
+		MissionID: b.Mission.ID,
+		BeadID:    b.Mission.BeadID,
 		Epoch:     0,
 		Attempt:   0,
-		Data: map[string]any{
-			"boardSlug":        slug,
-			"boardPath":        filepath.ToSlash(boardPath),
-			"boardRev":         board.Rev,
-			"snapshot":         snapshotPath,
-			"bindingsSnapshot": bindingsPath,
-			"missionId":        mission.ID,
-			"beadId":           mission.BeadID,
-			"objective":        mission.Goal,
-			"limits":           req.Limits,
-		},
+		Data:      data,
 	}
 	if err := writeInitialRunEvent(filepath.Join(s.Workspace, ledgerPath), event); err != nil {
 		return nil, err

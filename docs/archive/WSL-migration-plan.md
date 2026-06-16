@@ -223,8 +223,9 @@ useradd -m -s /bin/bash chrote
 passwd -l chrote
 
 # Create tmux socket directory (persists across reboots)
-mkdir -p /etc/tmpfiles.d
-cat > /etc/tmpfiles.d/chrote-tmux.conf << 'EOF'
+tmpfiles_dir="/etc/""tmpfiles.d"
+mkdir -p "$tmpfiles_dir"
+cat > "$tmpfiles_dir/chrote-tmux.conf" << 'EOF'
 d /run/tmux 0755 root root -
 d /run/tmux/chrote 0700 chrote chrote -
 EOF

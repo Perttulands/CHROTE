@@ -35,7 +35,7 @@ Feature: Build, evolve, and retire agents
       | susie3    | specialist  |
       | red       | reviewer    |
       | janitor   | maintainer  |
-      | throwaway | disposable  |
+      | scratch   | disposable  |
     # The system does not police the kind vocabulary; new kinds need no code change.
 
   @cli @file

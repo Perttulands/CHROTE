@@ -29,6 +29,61 @@ function getTerminalUrl(sessionName: string): string {
   return `/terminal/?arg=${encodeURIComponent(sessionName)}&theme=${encodeURIComponent('{"background":"transparent"}')}`
 }
 
+interface XtermLike {
+  options: { fontSize: number }
+  paste: (data: string) => void
+}
+
+type TerminalGlobal = Window & { term?: XtermLike }
+
+// Ctrl+V paste bridge. ttyd/xterm only paste via the browser's native paste
+// event, which fires only when xterm's hidden textarea is focused. When the
+// iframe (not the textarea) holds focus, Ctrl+V otherwise reaches the PTY as a
+// raw ^V. We intercept plain Ctrl+V on the same-origin iframe window, read the
+// iframe-scoped clipboard (granted via allow="clipboard-read"), and hand the
+// text to xterm's paste() so bracketed-paste mode is honored. Ctrl+Shift+V and
+// Cmd+V are left to native handling.
+function attachPasteBridge(iframe: HTMLIFrameElement): void {
+  const win = iframe.contentWindow as TerminalGlobal | null
+  if (!win) return
+  if (iframe.dataset.chrotePasteBound === '1') return
+  iframe.dataset.chrotePasteBound = '1'
+  win.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (!e.ctrlKey || e.shiftKey || e.altKey || e.metaKey) return
+    if (e.code !== 'KeyV' && e.key !== 'v' && e.key !== 'V') return
+    const term = win.term
+    const clipboard = win.navigator?.clipboard
+    if (!term || typeof term.paste !== 'function' || !clipboard?.readText) return
+    // We own this keystroke: stop xterm from emitting ^V and stop the browser
+    // from firing its own paste event (which would otherwise double-paste).
+    e.preventDefault()
+    e.stopImmediatePropagation()
+    clipboard.readText().then(text => { if (text) term.paste(text) }).catch(() => { /* clipboard blocked/denied */ })
+  }, true)
+}
+
+// Hide xterm's scrollbar by injecting a style tag into the same-origin iframe
+// document. Under tmux the xterm scrollback buffer stays empty (tmux owns the
+// alternate screen and keeps its own history), so xterm's always-on
+// overflow-y:scroll gutter is a dead widget — it can never scroll. We hide it
+// unconditionally; scrolling history is handled by tmux mouse mode instead.
+//
+// overflow-y:hidden is the load-bearing rule: it removes the bar in every
+// engine and every scrollbar mode (classic or overlay), where scrollbar-width
+// and ::-webkit-scrollbar each only cover some browsers. Safe because the
+// viewport is never meant to scroll under tmux.
+const SCROLLBAR_STYLE_ID = 'chrote-hide-scrollbar'
+function hideXtermScrollbar(iframe: HTMLIFrameElement): void {
+  try {
+    const doc = iframe.contentDocument
+    if (!doc?.head || doc.getElementById(SCROLLBAR_STYLE_ID)) return
+    const style = doc.createElement('style')
+    style.id = SCROLLBAR_STYLE_ID
+    style.textContent = '.xterm-viewport{overflow-y:hidden!important;scrollbar-width:none!important}.xterm-viewport::-webkit-scrollbar{width:0!important;height:0!important;display:none!important}'
+    doc.head.appendChild(style)
+  } catch { /* cross-origin or not ready */ }
+}
+
 export function IframePoolProvider({ children }: { children: ReactNode }) {
   const { workspaces, settings } = useSession()
 
@@ -104,6 +159,8 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
       iframe.addEventListener('load', () => {
         setLoadedSessions(prev => new Set(prev).add(sessionName))
         applyFontSizeToIframe(iframe, settings.fontSize)
+        attachPasteBridge(iframe)
+        hideXtermScrollbar(iframe)
       })
 
       iframeRefs.current.set(sessionName, iframe)

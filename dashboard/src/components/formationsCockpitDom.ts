@@ -7,6 +7,12 @@ export function splitList(value: string): string[] {
   return value.split(',').map(item => item.trim()).filter(Boolean)
 }
 
+/** Collapse a produced output payload to a single-line card-sized preview; full text lives in the title. */
+export function truncatePayload(value: string, max = 120): string {
+  const single = value.replace(/\s+/g, ' ').trim()
+  return single.length > max ? `${single.slice(0, max - 1)}…` : single
+}
+
 export function isTextEditingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false
   return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable

@@ -678,6 +678,18 @@ describe('renameSession', () => {
       result.current.setActiveSession('terminal1', 'terminal1-window-0', 'rename-me')
     })
 
+    // The backend reports both live sessions (under the new name) for the refresh
+    // that renameSession fires, so the reconciler does not treat them as killed.
+    vi.mocked(fetch as any).mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessions: [{ name: 'renamed' }, { name: 'keep-me' }],
+        grouped: {},
+        timestamp: new Date().toISOString(),
+      }),
+      text: () => Promise.resolve(''),
+    })
+
     await act(async () => {
       await result.current.renameSession('rename-me', 'renamed')
     })
@@ -711,6 +723,172 @@ describe('renameSession', () => {
     expect(success).toBe(false)
     // Binding should remain unchanged
     expect(result.current.workspaces.terminal1.windows[0].boundSessions).toContain('wont-rename')
+  })
+})
+
+// ──────────────────────────────────────────────
+// 5b. refreshSessions — auto-reconcile killed sessions out of viewer windows
+// ──────────────────────────────────────────────
+describe('refreshSessions reconciliation', () => {
+  function mockLiveSessions(names: string[]) {
+    vi.mocked(fetch as any).mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessions: names.map(name => ({ name })),
+        grouped: {},
+        timestamp: new Date().toISOString(),
+      }),
+      text: () => Promise.resolve(''),
+    })
+  }
+
+  beforeEach(() => {
+    localStorage.clear()
+    setViewportWidth(1280)
+    mockLiveSessions([])
+  })
+
+  // Lets the mount poll settle so it doesn't count toward a later-bound session's
+  // grace period (the counter must start fresh when the session is actually bound).
+  async function renderSettled() {
+    const hook = renderSession()
+    await waitFor(() => expect(hook.result.current.loading).toBe(false))
+    return hook
+  }
+
+  it('auto-removes a bound session once it is absent for the grace period (killed in tmux)', async () => {
+    const { result } = await renderSettled()
+
+    act(() => {
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'doomed')
+    })
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toContain('doomed')
+
+    // Session no longer reported by the backend — but one missing poll is within
+    // the grace window, so it must still be bound (guards the create/rename race).
+    mockLiveSessions([])
+    await act(async () => { await result.current.refreshSessions() })
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toContain('doomed')
+
+    // Second consecutive missing poll confirms the kill — now it is removed and the
+    // active session falls back to null (nothing left in the window).
+    await act(async () => { await result.current.refreshSessions() })
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).not.toContain('doomed')
+    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBeNull()
+  })
+
+  it('keeps other bound sessions and re-points activeSession when a dead one is dropped', async () => {
+    const { result } = await renderSettled()
+
+    act(() => {
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'alpha')
+    })
+    act(() => {
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'beta')
+    })
+    // alpha is active (added to the empty window first)
+    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('alpha')
+
+    // Only beta survives in tmux; alpha was killed.
+    mockLiveSessions(['beta'])
+    await act(async () => { await result.current.refreshSessions() })
+    await act(async () => { await result.current.refreshSessions() })
+
+    const win = result.current.workspaces.terminal1.windows[0]
+    expect(win.boundSessions).toEqual(['beta'])
+    // active must fall back to the first remaining session, not stay on dead alpha
+    expect(win.activeSession).toBe('beta')
+  })
+
+  it('resets the grace counter when a session reappears (flicker is not removal)', async () => {
+    const { result } = await renderSettled()
+
+    act(() => {
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'flicker')
+    })
+
+    // Missing once (counter -> 1, still bound)...
+    mockLiveSessions([])
+    await act(async () => { await result.current.refreshSessions() })
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toContain('flicker')
+
+    // ...reappears, which must RESET the counter rather than accumulate misses.
+    mockLiveSessions(['flicker'])
+    await act(async () => { await result.current.refreshSessions() })
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toContain('flicker')
+
+    // A single later miss is therefore still within grace — proves the reset.
+    mockLiveSessions([])
+    await act(async () => { await result.current.refreshSessions() })
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toContain('flicker')
+  })
+
+  it('never wipes bound sessions when the poll fails (server restart / network blip)', async () => {
+    const { result } = await renderSettled()
+
+    act(() => {
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'survivor')
+    })
+
+    // Fetch throws repeatedly — reconciliation must not run.
+    vi.mocked(fetch as any).mockRejectedValue(new Error('network down'))
+    await act(async () => { await result.current.refreshSessions() })
+    await act(async () => { await result.current.refreshSessions() })
+    await act(async () => { await result.current.refreshSessions() })
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toContain('survivor')
+
+    // Backend error payload (data.error set) must likewise preserve the layout.
+    vi.mocked(fetch as any).mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ error: 'tmux unavailable', sessions: [], grouped: {} }),
+      text: () => Promise.resolve(''),
+    })
+    await act(async () => { await result.current.refreshSessions() })
+    await act(async () => { await result.current.refreshSessions() })
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toContain('survivor')
+  })
+})
+
+// ──────────────────────────────────────────────
+// 5c. handleSessionClick — sidebar click always opens the peek popup
+// ──────────────────────────────────────────────
+describe('handleSessionClick (sidebar peek)', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it('opens the floating popup for an unassigned session', () => {
+    const { result } = renderSession()
+
+    act(() => {
+      result.current.handleSessionClick('lonely')
+    })
+
+    expect(result.current.floatingSession).toBe('lonely')
+  })
+
+  it('opens the popup for a pinned session without disturbing its window', () => {
+    const { result } = renderSession()
+
+    act(() => {
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'first')
+    })
+    act(() => {
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'second')
+    })
+    // 'first' is active; 'second' is bound to the same window but not active.
+    expect(result.current.assignedSessions.has('second')).toBe(true)
+    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('first')
+
+    act(() => {
+      result.current.handleSessionClick('second')
+    })
+
+    // Feature B: peeking opens the popup even for an attached session...
+    expect(result.current.floatingSession).toBe('second')
+    // ...and does NOT switch the window's active session (non-disruptive peek of a
+    // session pinned to another page).
+    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('first')
   })
 })
 

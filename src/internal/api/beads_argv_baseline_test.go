@@ -51,11 +51,11 @@ func TestBeadsHandler_IssueDetailPassesNormalIDAsBDPositionals(t *testing.T) {
 }
 
 func TestBeadsHandler_CurrentlyPassesLeadingDashIssueIDAsRawPositionals(t *testing.T) {
-	handler, projectPath, argsPath := beadsHandlerWithFakeCommand(t, `{"_type":"issue","id":"--db=/tmp/evil","title":"baseline"}`)
+	handler, projectPath, argsPath := beadsHandlerWithFakeCommand(t, `{"_type":"issue","id":"--db=/home/perttu/evil","title":"baseline"}`)
 
 	values := url.Values{}
 	values.Set("path", projectPath)
-	values.Set("id", "--db=/tmp/evil")
+	values.Set("id", "--db=/home/perttu/evil")
 	req := httptest.NewRequest(http.MethodGet, "/api/beads/issue?"+values.Encode(), nil)
 	rec := httptest.NewRecorder()
 
@@ -64,7 +64,7 @@ func TestBeadsHandler_CurrentlyPassesLeadingDashIssueIDAsRawPositionals(t *testi
 	if rec.Code != http.StatusOK {
 		t.Fatalf("IssueDetail status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	wantArgs := []string{"--json", "show", "--db=/tmp/evil"}
+	wantArgs := []string{"--json", "show", "--db=/home/perttu/evil"}
 	if gotArgs := readFakeBdArgs(t, argsPath); !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Fatalf("bd args = %#v, want current raw positional args %#v", gotArgs, wantArgs)
 	}
@@ -96,12 +96,12 @@ func TestBeadsHandler_AddCommentPassesNormalIDAndCommentAsBDPositionals(t *testi
 }
 
 func TestBeadsHandler_CurrentlyPassesLeadingDashCommentAsRawPositional(t *testing.T) {
-	handler, projectPath, argsPath := beadsHandlerWithFakeCommand(t, `{"id":"comment-1","body":"--file=/tmp/secret"}`)
+	handler, projectPath, argsPath := beadsHandlerWithFakeCommand(t, `{"id":"comment-1","body":"--file=/home/perttu/secret"}`)
 
 	body, err := json.Marshal(map[string]string{
 		"path":    projectPath,
 		"id":      "home-abc1",
-		"comment": "--file=/tmp/secret",
+		"comment": "--file=/home/perttu/secret",
 	})
 	if err != nil {
 		t.Fatalf("marshal body: %v", err)
@@ -114,7 +114,7 @@ func TestBeadsHandler_CurrentlyPassesLeadingDashCommentAsRawPositional(t *testin
 	if rec.Code != http.StatusOK {
 		t.Fatalf("AddComment status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	wantArgs := []string{"--json", "comments", "add", "home-abc1", "--file=/tmp/secret"}
+	wantArgs := []string{"--json", "comments", "add", "home-abc1", "--file=/home/perttu/secret"}
 	if gotArgs := readFakeBdArgs(t, argsPath); !reflect.DeepEqual(gotArgs, wantArgs) {
 		t.Fatalf("bd args = %#v, want current raw positional args %#v", gotArgs, wantArgs)
 	}
@@ -134,7 +134,7 @@ func TestBeadsHandler_BaselineDoesNotUseRealWorkspaceDatabase(t *testing.T) {
 	if !filepath.IsAbs(projectPath) {
 		t.Fatalf("projectPath = %q, want absolute temp path", projectPath)
 	}
-	if !strings.HasPrefix(projectPath, os.TempDir()) && !strings.HasPrefix(projectPath, "/tmp/") {
+	if !strings.HasPrefix(projectPath, os.TempDir()) {
 		t.Fatalf("projectPath = %q, want a temp fixture path", projectPath)
 	}
 	if handler.bdCommand == "bd" {

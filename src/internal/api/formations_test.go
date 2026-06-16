@@ -59,6 +59,127 @@ updatedAt = "2026-06-03T16:00:00Z"
 	}
 }
 
+// TestFormationsHandlerCreateMissionBoard locks the POST /boards contract: the
+// handler creates a Mission Board (board + single mission) atomically and returns
+// {board} with the mission. It maps the typed errors precisely: a duplicate slug
+// is a 409 (conflict), an invalid slug is a 400, and a malformed bead is a 400.
+func TestFormationsHandlerCreateMissionBoard(t *testing.T) {
+	store := formations.NewStore(t.TempDir())
+	store.Now = fixedFormationsAPIClock()
+	handler := NewFormationsHandlerWithStore(store)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	// Happy path -> 200 with board carrying its single mission.
+	okRec := httptest.NewRecorder()
+	mux.ServeHTTP(okRec, httptest.NewRequest(http.MethodPost, "/api/formations/boards",
+		bytes.NewBufferString(`{"slug":"poems","title":"Poems","mission":{"title":"Write a poem","goal":"Ship a poem","beadId":"home-vdki.34.1","x":150,"y":90},"updatedBy":"agent:test"}`)))
+	if okRec.Code != http.StatusOK {
+		t.Fatalf("create board status = %d, want %d: %s", okRec.Code, http.StatusOK, okRec.Body.String())
+	}
+	var okResponse struct {
+		Data struct {
+			Board formations.BoardDocument `json:"board"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(okRec.Body.Bytes(), &okResponse); err != nil {
+		t.Fatalf("decode create response: %v\n%s", err, okRec.Body.String())
+	}
+	created := okResponse.Data.Board
+	if created.Slug != "poems" || created.Title != "Poems" || created.Rev != 1 || created.ETag == "" {
+		t.Fatalf("created board = %+v, want durable identity", created)
+	}
+	if len(created.Missions) != 1 || created.Missions[0].Goal != "Ship a poem" || created.Missions[0].BeadID != "home-vdki.34.1" {
+		t.Fatalf("created board missions = %+v, want the single requested mission", created.Missions)
+	}
+	// The mission's layout coordinates landed in the layout sidecar.
+	layout, err := store.ReadLayout("poems")
+	if err != nil {
+		t.Fatalf("read layout: %v", err)
+	}
+	if len(layout.Nodes) != 1 || layout.Nodes[0].X != 150 || layout.Nodes[0].Y != 90 {
+		t.Fatalf("layout nodes = %+v, want mission at 150,90", layout.Nodes)
+	}
+
+	// Duplicate slug -> 409.
+	dupRec := httptest.NewRecorder()
+	mux.ServeHTTP(dupRec, httptest.NewRequest(http.MethodPost, "/api/formations/boards",
+		bytes.NewBufferString(`{"slug":"poems","title":"Other","mission":{"goal":"x"},"updatedBy":"agent:test"}`)))
+	if dupRec.Code != http.StatusConflict {
+		t.Fatalf("duplicate slug status = %d, want %d: %s", dupRec.Code, http.StatusConflict, dupRec.Body.String())
+	}
+
+	// Invalid slug -> 400.
+	badSlugRec := httptest.NewRecorder()
+	mux.ServeHTTP(badSlugRec, httptest.NewRequest(http.MethodPost, "/api/formations/boards",
+		bytes.NewBufferString(`{"slug":"bad/path","title":"Bad","mission":{"goal":"x"},"updatedBy":"agent:test"}`)))
+	if badSlugRec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid slug status = %d, want %d: %s", badSlugRec.Code, http.StatusBadRequest, badSlugRec.Body.String())
+	}
+
+	// Malformed bead -> 400.
+	badBeadRec := httptest.NewRecorder()
+	mux.ServeHTTP(badBeadRec, httptest.NewRequest(http.MethodPost, "/api/formations/boards",
+		bytes.NewBufferString(`{"slug":"essays","title":"Essays","mission":{"goal":"x","beadId":"Not A Bead"},"updatedBy":"agent:test"}`)))
+	if badBeadRec.Code != http.StatusBadRequest {
+		t.Fatalf("malformed bead status = %d, want %d: %s", badBeadRec.Code, http.StatusBadRequest, badBeadRec.Body.String())
+	}
+}
+
+// TestFormationsHandlerListBoardsCarriesMissionAndLatestRun locks the gallery
+// contract on the wire: each board summary in GET /boards carries its single
+// mission and (here) a nil latestRun when the board has never run.
+func TestFormationsHandlerListBoardsCarriesMissionAndLatestRun(t *testing.T) {
+	store := formations.NewStore(t.TempDir())
+	writeFormationsAPIFixture(t, store.BoardPath("poems"), `schema = 1
+id = "brd_poems"
+slug = "poems"
+title = "Poems"
+rev = 1
+updatedAt = "2026-06-03T16:00:00Z"
+
+[[mission]]
+id = "mis_poem"
+title = "Write a poem"
+goal = "Ship a poem"
+beadId = ""
+`)
+	handler := NewFormationsHandlerWithStore(store)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/formations/boards", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var response struct {
+		Data struct {
+			Boards []struct {
+				Slug      string                  `json:"slug"`
+				Mission   *formations.MissionNode `json:"mission"`
+				LatestRun *struct {
+					RunID  string `json:"runId"`
+					Status string `json:"status"`
+				} `json:"latestRun"`
+			} `json:"boards"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode list response: %v\n%s", err, rec.Body.String())
+	}
+	if len(response.Data.Boards) != 1 {
+		t.Fatalf("boards len = %d, want 1", len(response.Data.Boards))
+	}
+	board := response.Data.Boards[0]
+	if board.Mission == nil || board.Mission.ID != "mis_poem" || board.Mission.Goal != "Ship a poem" {
+		t.Fatalf("board summary mission = %+v, want the board's single mission", board.Mission)
+	}
+	if board.LatestRun != nil {
+		t.Fatalf("board summary latestRun = %+v, want nil for a board with no runs", board.LatestRun)
+	}
+}
+
 func TestFormationsHandlerBoardPatchReturnsConflictForStaleETag(t *testing.T) {
 	store := formations.NewStore(t.TempDir())
 	store.Now = fixedFormationsAPIClock()
@@ -443,6 +564,72 @@ y = 80
 	}
 	if len(missionResponse.Data.Layout.Nodes) != 0 {
 		t.Fatalf("layout nodes = %+v, want deleted gate/mission layout pruned", missionResponse.Data.Layout.Nodes)
+	}
+}
+
+func TestFormationsHandlerUpdatesMissionThroughBoardPatch(t *testing.T) {
+	store := formations.NewStore(t.TempDir())
+	store.Now = fixedFormationsAPIClock()
+	writeFormationsAPIFixture(t, store.BoardPath("session-search"), `schema = 1
+id = "brd_01J9_sesssearch"
+slug = "session-search"
+title = "Improve session search"
+rev = 7
+updatedAt = "2026-06-03T16:00:00Z"
+
+[[mission]]
+id = "mis_showcase"
+title = "Showcase"
+goal = "Build"
+beadId = "home-7kc4.5"
+`)
+	board, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	handler := NewFormationsHandlerWithStore(store)
+
+	// Happy path: updateMission edits the mission and returns the new board.
+	okReq := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/session-search", bytes.NewBufferString(`{"updateMission":{"missionId":"mis_showcase","title":"Showcase v2","goal":"Ship it","beadId":"home-vdki.34.1"},"expectedRev":7,"updatedBy":"agent:test"}`))
+	okReq.Header.Set("If-Match", board.ETag)
+	okReq.SetPathValue("board", "session-search")
+	okRec := httptest.NewRecorder()
+	handler.PatchBoard(okRec, okReq)
+	if okRec.Code != http.StatusOK {
+		t.Fatalf("update mission status = %d, want %d: %s", okRec.Code, http.StatusOK, okRec.Body.String())
+	}
+	var okResponse struct {
+		Data struct {
+			Board formations.BoardDocument `json:"board"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(okRec.Body.Bytes(), &okResponse); err != nil {
+		t.Fatalf("decode update response: %v\n%s", err, okRec.Body.String())
+	}
+	got := okResponse.Data.Board.Missions
+	if len(got) != 1 || got[0].ID != "mis_showcase" || got[0].Title != "Showcase v2" ||
+		got[0].Goal != "Ship it" || got[0].BeadID != "home-vdki.34.1" {
+		t.Fatalf("updated board missions = %+v, want stable id with new title/goal/bead", got)
+	}
+
+	// Bad bead id -> 400.
+	badReq := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/session-search", bytes.NewBufferString(`{"updateMission":{"missionId":"mis_showcase","title":"Showcase","goal":"Build","beadId":"Not A Bead"},"expectedRev":8,"updatedBy":"agent:test"}`))
+	badReq.Header.Set("If-Match", okRec.Header().Get("ETag"))
+	badReq.SetPathValue("board", "session-search")
+	badRec := httptest.NewRecorder()
+	handler.PatchBoard(badRec, badReq)
+	if badRec.Code != http.StatusBadRequest {
+		t.Fatalf("bad bead status = %d, want %d: %s", badRec.Code, http.StatusBadRequest, badRec.Body.String())
+	}
+
+	// Unknown mission -> 404.
+	missingReq := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/session-search", bytes.NewBufferString(`{"updateMission":{"missionId":"mis_ghost","title":"Nope","goal":"Nope"},"expectedRev":8,"updatedBy":"agent:test"}`))
+	missingReq.Header.Set("If-Match", okRec.Header().Get("ETag"))
+	missingReq.SetPathValue("board", "session-search")
+	missingRec := httptest.NewRecorder()
+	handler.PatchBoard(missingRec, missingReq)
+	if missingRec.Code != http.StatusNotFound {
+		t.Fatalf("unknown mission status = %d, want %d: %s", missingRec.Code, http.StatusNotFound, missingRec.Body.String())
 	}
 }
 
@@ -1129,6 +1316,76 @@ func TestFormationsHandlerS4ConfiguredLabExecutorRunsStaffedFormation(t *testing
 	}
 	if apiLabEventsContainErrorCode(events, "missing_executor") {
 		t.Fatalf("configured lab API run still reported missing_executor: %+v", events)
+	}
+}
+
+// TestFormationsHandlerStartRunResolvesBoardSingleMissionWhenMissionIDOmitted
+// locks the run-the-board contract: a Mission Board has exactly one mission, so a
+// run request with no missionId must resolve and run that mission rather than
+// rejecting the request. This is the deliberate relaxation of the prior
+// "missionId required" 400 behavior.
+func TestFormationsHandlerStartRunResolvesBoardSingleMissionWhenMissionIDOmitted(t *testing.T) {
+	workspace := t.TempDir()
+	agentsDir := t.TempDir()
+	t.Setenv("CHROTE_FORMATIONS_LAB_HARNESSES", "lab-fake")
+	t.Setenv("CHROTE_FORMATIONS_LAB_CWD", workspace)
+	t.Setenv("CHROTE_FORMATIONS_LAB_ROOTS", workspace)
+
+	store := formations.NewStore(workspace)
+	personas := formations.NewPersonaStore(agentsDir)
+	if _, err := personas.CreatePersona(formations.CreatePersonaRequest{
+		ID:      "lab-poet",
+		Kind:    "specialist",
+		Harness: "lab-fake",
+	}); err != nil {
+		t.Fatalf("create persona: %v", err)
+	}
+	writeFormationsAPIFixture(t, store.BoardPath("poems"), formationsAPILabPoemBoardFixture())
+	board, err := store.ReadBoard("poems")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+
+	handler := NewFormationsHandlerWithStores(store, personas)
+	// No missionId in the body: the handler must resolve the board's single mission.
+	startReq := httptest.NewRequest(http.MethodPost, "/api/formations/runs", bytes.NewBufferString(`{"board":"poems","actor":"agent:test","limits":{"maxDispatch":3,"maxAttempts":1}}`))
+	startReq.Header.Set("If-Match", board.ETag)
+	startRec := httptest.NewRecorder()
+	handler.StartRun(startRec, startReq)
+	if startRec.Code != http.StatusOK {
+		t.Fatalf("start run (no missionId) status = %d, want %d: %s", startRec.Code, http.StatusOK, startRec.Body.String())
+	}
+	started := decodeFormationsRunStartResponse(t, startRec.Body.Bytes())
+	if started.Status.MissionID != "mis_poem" {
+		t.Fatalf("resolved mission = %q, want the board's single mission mis_poem", started.Status.MissionID)
+	}
+	if started.Status.Status != formations.RunStatusSucceeded || !started.Status.Final {
+		t.Fatalf("start response = %+v, want a completed run of the board's mission", started.Status)
+	}
+}
+
+// TestFormationsHandlerStartRunFailsWhenBoardHasNoSingleMission asserts the run
+// path fails loud and precisely when a board does not have exactly one mission so
+// there is no unambiguous mission to run.
+func TestFormationsHandlerStartRunFailsWhenBoardHasNoSingleMission(t *testing.T) {
+	store := formations.NewStore(t.TempDir())
+	// A board with zero missions.
+	writeFormationsAPIFixture(t, store.BoardPath("empty"), `schema = 1
+id = "brd_empty"
+slug = "empty"
+title = "Empty"
+rev = 1
+updatedAt = "2026-06-03T16:00:00Z"
+`)
+	handler := NewFormationsHandlerWithStore(store)
+	req := httptest.NewRequest(http.MethodPost, "/api/formations/runs", bytes.NewBufferString(`{"board":"empty","actor":"agent:test"}`))
+	rec := httptest.NewRecorder()
+	handler.StartRun(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("run on no-mission board status = %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "mission") {
+		t.Fatalf("run on no-mission board error = %s, want it to name the missing mission", rec.Body.String())
 	}
 }
 

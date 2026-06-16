@@ -320,7 +320,16 @@ func (e *RunEngine) RecordHumanGateVerdict(runID string, req HumanGateVerdictReq
 	if !ok {
 		return nil, fmt.Errorf("%w: human gate request %q", ErrNotFound, req.GateID)
 	}
-	verdict := normalizeGateVerdict(req.Verdict)
+	verdict, recognized := parseStrictVerdict(req.Verdict)
+	if !recognized {
+		// Human verdicts arrive pre-constrained to pass/fail from the CLI/API;
+		// an unrecognized value here means a caller bypassed that contract.
+		// Block loudly rather than silently routing pass.
+		if err := e.appendAmbiguousGateVerdictBlock(runID, req.GateID, req.Verdict); err != nil {
+			return nil, err
+		}
+		return e.store.ProjectRun(runID)
+	}
 	actor := defaultRunActor(req.Actor)
 	if err := e.store.AppendRunEvent(runID, RunEvent{
 		Type:   RunEventHumanVerdictRecorded,
@@ -429,6 +438,12 @@ func (e *RunEngine) appendOpenDispatchReattachFailure(runID string, refs []openD
 	})
 }
 
+// startFormationRun bootstraps a single-formation run. It models the run as a
+// synthetic mission (single_<formationID>) that is not on the board, then routes
+// the snapshot + bindings + initial run_started write through the shared
+// store.bootstrapRun path so this start cannot drift from store.StartRun
+// (ADR-0002). The single-formation marker (mode + formationId) rides along as
+// bootstrap ExtraData; everything else is the shared start contract.
 func (e *RunEngine) startFormationRun(slug string, board *BoardDocument, formation FormationNode, actor string, personas *PersonaStore, limits RunLimits) (*RunStartResult, MissionNode, RunInputRef, error) {
 	bindings, err := resolveRunBindings(board, personas)
 	if err != nil {
@@ -446,50 +461,20 @@ func (e *RunEngine) startFormationRun(slug string, board *BoardDocument, formati
 		Goal:   goal,
 		BeadID: beadID,
 	}
-	runID := newPrefixedID("run")
-	ledgerPath := runArtifactPath(slug, runID, ".ndjson")
-	snapshotPath := runArtifactPath(slug, runID, ".snapshot.toml")
-	bindingsPath := runArtifactPath(slug, runID, ".bindings.toml")
-	if err := writeAtomic(filepath.Join(e.store.Workspace, snapshotPath), []byte(board.TOML)); err != nil {
-		return nil, MissionNode{}, RunInputRef{}, err
-	}
-	if err := writeAtomic(filepath.Join(e.store.Workspace, bindingsPath), []byte(renderRunBindings(runID, board, mission, bindings))); err != nil {
-		return nil, MissionNode{}, RunInputRef{}, err
-	}
-	started := &RunStartResult{
-		RunID:                runID,
-		BoardSlug:            slug,
-		LedgerPath:           ledgerPath,
-		SnapshotPath:         snapshotPath,
-		BindingsSnapshotPath: bindingsPath,
-	}
-	event := RunEvent{
-		Timestamp: e.store.now().Format(time.RFC3339Nano),
-		RunID:     runID,
-		Seq:       1,
-		Type:      RunEventStarted,
-		Actor:     defaultRunActor(actor),
-		BoardID:   board.ID,
-		BoardRev:  board.Rev,
-		MissionID: mission.ID,
-		BeadID:    mission.BeadID,
-		Epoch:     0,
-		Attempt:   0,
-		Data: map[string]any{
-			"boardSlug":        slug,
-			"boardPath":        filepath.ToSlash(e.store.BoardPath(slug)),
-			"boardRev":         board.Rev,
-			"snapshot":         snapshotPath,
-			"bindingsSnapshot": bindingsPath,
-			"missionId":        mission.ID,
-			"beadId":           mission.BeadID,
-			"objective":        mission.Goal,
-			"limits":           limits,
-			"mode":             "formation",
-			"formationId":      formation.ID,
+	started, err := e.store.bootstrapRun(runBootstrap{
+		Slug:     slug,
+		Board:    board,
+		BoardRaw: []byte(board.TOML),
+		Mission:  mission,
+		Bindings: bindings,
+		Actor:    actor,
+		Limits:   limits,
+		ExtraData: map[string]any{
+			"mode":        "formation",
+			"formationId": formation.ID,
 		},
-	}
-	if err := writeInitialRunEvent(filepath.Join(e.store.Workspace, ledgerPath), event); err != nil {
+	})
+	if err != nil {
 		return nil, MissionNode{}, RunInputRef{}, err
 	}
 	seedInput := RunInputRef{
@@ -950,7 +935,13 @@ func (e *RunEngine) handleVerification(runID string, formation FormationNode, re
 		}
 		return verificationStopped, err
 	}
-	verdict := normalizeVerificationVerdict(evaluation.Verdict)
+	verdict, ok := parseStrictVerdict(evaluation.Verdict)
+	if !ok {
+		if err := e.appendAmbiguousVerificationVerdictBlock(runID, formation.ID, formation.Verification.ID, evaluation.Verdict); err != nil {
+			return verificationStopped, err
+		}
+		return verificationStopped, nil
+	}
 	if err := e.store.AppendRunEvent(runID, RunEvent{
 		Type:   RunEventVerificationVerdict,
 		NodeID: formation.ID,
@@ -998,13 +989,6 @@ func (e *RunEngine) evaluateVerification(req VerificationEvaluation) (Verificati
 		return VerificationEvaluationResult{}, errRunStopped
 	}
 	return e.verificationEvaluator.EvaluateVerification(req)
-}
-
-func normalizeVerificationVerdict(verdict string) string {
-	if verdict == "fail" {
-		return "fail"
-	}
-	return "pass"
 }
 
 func (e *RunEngine) ensureFormationOutputPayloads(runID string, formation FormationNode, result FormationExecutionResult) error {
@@ -1202,7 +1186,13 @@ func (e *RunEngine) evaluateGate(runID string, board *BoardDocument, gates map[s
 	if err != nil {
 		return err
 	}
-	verdict := normalizeGateVerdict(result.Verdict)
+	verdict, ok := parseStrictVerdict(result.Verdict)
+	if !ok {
+		if err := e.appendAmbiguousGateVerdictBlock(runID, gate.ID, result.Verdict); err != nil {
+			return err
+		}
+		return errRunStopped
+	}
 	if humanGate && verdict == "pass" {
 		if err := e.store.AppendRunEvent(runID, RunEvent{
 			Type:   RunEventHumanInputRequested,
@@ -1324,8 +1314,11 @@ func (e *RunEngine) evaluateGateResult(board *BoardDocument, gate GateNode, req 
 		if err != nil {
 			return GateEvaluationResult{}, err
 		}
+		// The judge formation's raw output is verified strictly by the caller
+		// (evaluateGate) so judge, script, and evaluator gates share one parser
+		// and one ambiguous-verdict block path.
 		return GateEvaluationResult{
-			Verdict: normalizeGateVerdict(strings.TrimSpace(text)),
+			Verdict: strings.TrimSpace(text),
 			Reason:  "judge chain",
 		}, nil
 	}
@@ -1616,6 +1609,57 @@ func (e *RunEngine) appendStarvedBlock(runID string, starved []starvedFormation)
 	})
 }
 
+// appendAmbiguousGateVerdictBlock records a fail-loud run_blocked when a gate
+// (judge formation, gate evaluator, or human decision) returns a verdict that is
+// not exactly "pass" or "fail". Routing such a verdict would silently pick a
+// branch the verdict never authorized, so the run blocks non-resumably: resume
+// cannot reinterpret the offending text, the judge/evaluator must be fixed and a
+// new run started.
+func (e *RunEngine) appendAmbiguousGateVerdictBlock(runID, gateID, rawVerdict string) error {
+	reason := fmt.Sprintf("gate %s returned an unrecognized verdict %q; expected exactly \"pass\" or \"fail\"", gateID, verdictSnippet(rawVerdict))
+	return e.store.AppendRunEvent(runID, RunEvent{
+		Type:   RunEventBlocked,
+		NodeID: gateID,
+		GateID: gateID,
+		Data: map[string]any{
+			"reason":         reason,
+			"code":           "ambiguous_gate_verdict",
+			"blockedNodeId":  gateID,
+			"blockedGateId":  gateID,
+			"boundary":       "verdict",
+			"recoverable":    false,
+			"resumeAllowed":  false,
+			"resumePolicy":   "authoring",
+			"openDispatches": []map[string]any{},
+			"nextEpoch":      1,
+		},
+	})
+}
+
+// appendAmbiguousVerificationVerdictBlock is the verification-path twin of
+// appendAmbiguousGateVerdictBlock: an inline verification verdict that is not
+// exactly "pass" or "fail" blocks the run non-resumably instead of failing open
+// to pass and continuing downstream.
+func (e *RunEngine) appendAmbiguousVerificationVerdictBlock(runID, nodeID, verificationID, rawVerdict string) error {
+	reason := fmt.Sprintf("verification %s returned an unrecognized verdict %q; expected exactly \"pass\" or \"fail\"", verificationID, verdictSnippet(rawVerdict))
+	return e.store.AppendRunEvent(runID, RunEvent{
+		Type:   RunEventBlocked,
+		NodeID: nodeID,
+		Data: map[string]any{
+			"reason":         reason,
+			"code":           "ambiguous_verification_verdict",
+			"blockedNodeId":  nodeID,
+			"blockedGateId":  "",
+			"boundary":       "verdict",
+			"recoverable":    false,
+			"resumeAllowed":  false,
+			"resumePolicy":   "authoring",
+			"openDispatches": []map[string]any{},
+			"nextEpoch":      1,
+		},
+	})
+}
+
 func maxAttempts(limits RunLimits) int {
 	if limits.MaxAttempts > 0 {
 		return limits.MaxAttempts
@@ -1745,11 +1789,37 @@ func formationBriefEventData(brief FormationBrief) map[string]any {
 	}
 }
 
-func normalizeGateVerdict(verdict string) string {
-	if verdict == "fail" {
-		return "fail"
+// recognizedVerdicts is the single source of truth for the verdict tokens a
+// judge formation, gate evaluator, verification evaluator, or human decision may
+// emit. Anything outside this set is ambiguous and must block the run loudly
+// rather than fail open to pass (see parseStrictVerdict callers).
+var recognizedVerdicts = map[string]string{
+	"pass": "pass",
+	"fail": "fail",
+}
+
+// parseStrictVerdict recognizes a verdict only when its trimmed, lower-cased
+// text is exactly one of recognizedVerdicts. It returns (canonical, true) for a
+// recognized verdict and ("", false) otherwise. Callers must block loudly on a
+// false result instead of routing pass.
+func parseStrictVerdict(verdict string) (string, bool) {
+	canonical, ok := recognizedVerdicts[strings.ToLower(strings.TrimSpace(verdict))]
+	return canonical, ok
+}
+
+// verdictSnippet returns a redacted, length-bounded view of an offending verdict
+// for inclusion in a block reason. Empty input renders as an explicit marker so
+// the message never reads as if nothing was checked.
+func verdictSnippet(verdict string) string {
+	snippet := redactLedgerText(verdict)
+	if snippet == "" {
+		return "(empty)"
 	}
-	return "pass"
+	const maxVerdictSnippet = 120
+	if len(snippet) > maxVerdictSnippet {
+		snippet = snippet[:maxVerdictSnippet] + "…"
+	}
+	return snippet
 }
 
 func connectionIDs(connections []BoardConnection) []string {
