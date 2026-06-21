@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -20,6 +21,8 @@ import (
 type TmuxHandler struct {
 	cache      *sessionsCache
 	colorRegex *regexp.Regexp
+	socket     string
+	workDir    string
 }
 
 type sessionsCache struct {
@@ -57,13 +60,17 @@ type AppearanceRequest struct {
 	ModeStyleFg        string `json:"modeStyleFg"`
 }
 
-// NewTmuxHandler creates a new TmuxHandler
+// NewTmuxHandler creates the default tmux handler. By default it uses
+// TMUX_TMPDIR; CHROTE_DEFAULT_TMUX_SOCKET pins the same /api/tmux route to an
+// explicit socket without changing the dashboard UI.
 func NewTmuxHandler() *TmuxHandler {
 	return &TmuxHandler{
 		cache: &sessionsCache{
 			ttl: time.Second,
 		},
 		colorRegex: regexp.MustCompile(`^#[0-9A-Fa-f]{3,6}$|^[a-zA-Z]+$|^default$`),
+		socket:     strings.TrimSpace(os.Getenv("CHROTE_DEFAULT_TMUX_SOCKET")),
+		workDir:    strings.TrimSpace(os.Getenv("CHROTE_DEFAULT_TMUX_WORKDIR")),
 	}
 }
 
@@ -87,6 +94,10 @@ func (h *TmuxHandler) RunTmux(args ...string) (string, error) {
 func (h *TmuxHandler) runTmux(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	if h.socket != "" {
+		args = append([]string{"-S", h.socket}, args...)
+	}
 
 	cmd := exec.CommandContext(ctx, "tmux", args...)
 	cmd.Env = core.GetTmuxEnv()
@@ -202,8 +213,13 @@ func (h *TmuxHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	workDir := h.workDir
+	if workDir == "" {
+		workDir = core.GetWorkDir()
+	}
+
 	// Create the session (detached)
-	_, err := h.runTmux("new-session", "-d", "-s", name, "-c", core.GetWorkDir())
+	_, err := h.runTmux("new-session", "-d", "-s", name, "-c", workDir)
 	if err != nil {
 		core.WriteError(w, http.StatusBadRequest, "TMUX_ERROR", err.Error())
 		return

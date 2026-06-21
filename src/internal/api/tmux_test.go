@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -197,5 +200,40 @@ func TestTmuxHandler_ListSessions_ReturnsValidJSON(t *testing.T) {
 	// Grouped should be initialized (not nil)
 	if response.Grouped == nil {
 		t.Error("Grouped should be initialized map, not nil")
+	}
+}
+
+func TestTmuxHandler_DefaultProfileUsesConfiguredSocketAndWorkDir(t *testing.T) {
+	tmpDir := t.TempDir()
+	argsPath := filepath.Join(tmpDir, "tmux.args")
+	fakeTmux := filepath.Join(tmpDir, "tmux")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\n"
+	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+	t.Setenv("PATH", tmpDir)
+	t.Setenv("CHROTE_DEFAULT_TMUX_SOCKET", "/tmp/tmux-1001/default")
+	t.Setenv("CHROTE_DEFAULT_TMUX_WORKDIR", "/srv/terminal-three")
+
+	handler := NewTmuxHandler()
+	body := CreateSessionRequest{Name: "terminal-three-smoke"}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions", bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	handler.CreateSession(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	args, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read fake tmux args: %v", err)
+	}
+	got := strings.Split(strings.TrimSpace(string(args)), "\n")
+	want := []string{"-S", "/tmp/tmux-1001/default", "new-session", "-d", "-s", "terminal-three-smoke", "-c", "/srv/terminal-three"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("tmux args = %#v, want %#v", got, want)
 	}
 }
