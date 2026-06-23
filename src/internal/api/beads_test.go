@@ -35,6 +35,7 @@ func resetBeadsTestEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("CHROTE_ROOTS", "")
 	t.Setenv("CHROTE_BEADS_WORKSPACES", "")
+	t.Setenv("CHROTE_BEADS_AUTO_DISCOVER", "")
 	t.Setenv("CHROTE_BD_COMMAND", "")
 	core.ResetConfigForTesting()
 }
@@ -210,6 +211,64 @@ func TestBeadsHandler_ListProjectsIncludesConfiguredAndAllowedRootWorkspaces(t *
 	}
 	if projectsByPath[rootWorkspace] != "auto" {
 		t.Fatalf("allowed root workspace source = %q, want auto", projectsByPath[rootWorkspace])
+	}
+}
+
+func TestBeadsHandler_ListProjectsCanDisableAutoDiscovery(t *testing.T) {
+	for _, flag := range []string{"0", "false"} {
+		flag := flag
+		t.Run(flag, func(t *testing.T) {
+			rootDir := t.TempDir()
+			autoWorkspace := filepath.Join(rootDir, "auto")
+			makeValidBeadsWorkspace(t, autoWorkspace)
+			manualWorkspace := filepath.Join(rootDir, "manual")
+			makeValidBeadsWorkspace(t, manualWorkspace)
+			configuredWorkspace := filepath.Join(t.TempDir(), "configured")
+			makeValidBeadsWorkspace(t, configuredWorkspace)
+
+			t.Setenv("CHROTE_ROOTS", rootDir)
+			t.Setenv("CHROTE_BEADS_WORKSPACES", configuredWorkspace)
+			t.Setenv("CHROTE_BEADS_AUTO_DISCOVER", flag)
+			core.ResetConfigForTesting()
+
+			handler := NewBeadsHandler()
+			req := httptest.NewRequest(http.MethodGet, "/api/beads/projects?path="+manualWorkspace, nil)
+			rec := httptest.NewRecorder()
+			handler.ListProjects(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("ListProjects status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+			}
+
+			var response struct {
+				Data struct {
+					Projects []struct {
+						Path   string `json:"path"`
+						Source string `json:"source"`
+					} `json:"projects"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+
+			projectsByPath := map[string]string{}
+			for _, project := range response.Data.Projects {
+				projectsByPath[project.Path] = project.Source
+			}
+			if len(projectsByPath) != 2 {
+				t.Fatalf("projects = %#v, want only configured and manual workspaces", projectsByPath)
+			}
+			if projectsByPath[configuredWorkspace] != "configured" {
+				t.Fatalf("configured source = %q, want configured", projectsByPath[configuredWorkspace])
+			}
+			if projectsByPath[manualWorkspace] != "manual" {
+				t.Fatalf("manual source = %q, want manual", projectsByPath[manualWorkspace])
+			}
+			if _, ok := projectsByPath[autoWorkspace]; ok {
+				t.Fatalf("auto-discovered workspace %q was included with CHROTE_BEADS_AUTO_DISCOVER=%s", autoWorkspace, flag)
+			}
+		})
 	}
 }
 

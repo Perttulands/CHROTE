@@ -22,6 +22,69 @@ func filePathValue(path string) string {
 	return strings.TrimPrefix(filepath.ToSlash(path), "/")
 }
 
+func TestFilesHandler_RootAllowedRootListsActualFilesystemRoot(t *testing.T) {
+	handler := &FilesHandler{allowedRoots: []string{"/"}}
+	req := httptest.NewRequest(http.MethodGet, "/api/files/resources/", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ListRoot(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ListRoot status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var response DirectoryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode root listing: %v", err)
+	}
+	if !response.IsDir {
+		t.Fatal("root listing should be a directory")
+	}
+	if len(response.Items) == 1 && response.Items[0].Name == "" {
+		t.Fatalf("root listing returned blank virtual-root item; want actual / contents")
+	}
+	if _, err := os.Stat("/home"); err == nil {
+		foundHome := false
+		for _, item := range response.Items {
+			if item.Name == "home" && item.IsDir {
+				foundHome = true
+				break
+			}
+		}
+		if !foundHome {
+			t.Fatalf("root listing did not include /home directory; items = %+v", response.Items)
+		}
+	}
+}
+
+func TestFilesHandler_ResolveSafePath_RootAllowedRootCoversFilesystemChildren(t *testing.T) {
+	handler := &FilesHandler{allowedRoots: []string{"/"}}
+
+	for _, path := range []string{"/home", "/srv"} {
+		t.Run(path, func(t *testing.T) {
+			result := handler.resolveSafePath(path)
+			if result.Error != "" || result.IsRoot {
+				t.Fatalf("resolveSafePath(%q) = %+v, want allowed filesystem child", path, result)
+			}
+			if result.Path != filepath.Clean(path) {
+				t.Fatalf("resolved path = %q, want %q", result.Path, filepath.Clean(path))
+			}
+		})
+	}
+}
+
+func TestFilesHandler_ResolveSafePath_NormalizesBackslashSeparators(t *testing.T) {
+	handler := &FilesHandler{allowedRoots: []string{"/"}}
+
+	result := handler.resolveSafePath(`/home\perttu`)
+	if result.Error != "" || result.IsRoot {
+		t.Fatalf("resolveSafePath with backslashes = %+v, want allowed absolute path", result)
+	}
+	if result.Path != "/home/perttu" {
+		t.Fatalf("resolved path = %q, want /home/perttu", result.Path)
+	}
+}
+
 func TestFilesHandler_TempRootResourceRoundTrip(t *testing.T) {
 	handler, root := tempRootFilesHandler(t)
 	filePath := filepath.Join(root, "nested", "note.txt")

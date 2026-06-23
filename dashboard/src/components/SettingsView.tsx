@@ -1,7 +1,8 @@
 import { useState } from 'react'
+import type { FormEvent } from 'react'
 import { useSession } from '../context/SessionContext'
-import type { UserSettings, TmuxAppearance } from '../types'
-import { TMUX_PRESETS } from '../types'
+import type { UserSettings, TmuxAppearance, WorkspaceId, LaunchUser } from '../types'
+import { TERMINAL_LABELS, TERMINAL_WORKSPACE_IDS, TMUX_PRESETS, defaultSessionPrefixForUser, defaultTerminalUserColor, getSessionPrefixForUser, getTerminalUserColor, normalizeTerminalUsers, resolveLaunchUser } from '../types'
 import FolderPickerModal from './FolderPickerModal'
 import { toDisplayPath } from './FilesView/types'
 
@@ -24,6 +25,7 @@ function ColorInput({ label, value, onChange }: ColorInputProps) {
           value={pickerValue}
           onChange={(e) => onChange(e.target.value)}
           className="color-picker"
+          aria-label={`${label} picker`}
         />
         <input
           type="text"
@@ -31,22 +33,50 @@ function ColorInput({ label, value, onChange }: ColorInputProps) {
           onChange={(e) => onChange(e.target.value)}
           className="color-text-input"
           placeholder="#000000"
+          aria-label={`${label} value`}
         />
       </div>
     </div>
   )
 }
 
+function normalizeProjectPath(path: string): string {
+  const trimmed = path.trim()
+  if (trimmed === '/') return trimmed
+  return trimmed.replace(/\/+$/, '')
+}
+
 function SettingsView() {
-  const { settings, updateSettings } = useSession()
+  const { settings, updateSettings, terminalUsers } = useSession()
   const [showFolderPicker, setShowFolderPicker] = useState(false)
+  const [projectPathInput, setProjectPathInput] = useState('')
+  const configuredUsers = normalizeTerminalUsers(terminalUsers.length > 0
+    ? terminalUsers
+    : [
+        ...Object.values(settings.terminalLaunchUsers),
+        ...Object.keys(settings.terminalSessionPrefixes),
+        ...Object.keys(settings.terminalUserColors),
+      ])
 
   const handleAddProjectPath = (path: string) => {
-    const currentPaths = settings.beadsProjectPaths || []
-    if (!currentPaths.includes(path)) {
-      updateSettings({ beadsProjectPaths: [...currentPaths, path] })
+    const normalizedPath = normalizeProjectPath(path)
+    if (!normalizedPath) {
+      setShowFolderPicker(false)
+      return
     }
+
+    const currentPaths = settings.beadsProjectPaths || []
+    const exists = currentPaths.some(existing => normalizeProjectPath(existing) === normalizedPath)
+    if (!exists) {
+      updateSettings({ beadsProjectPaths: [...currentPaths, normalizedPath] })
+    }
+    setProjectPathInput('')
     setShowFolderPicker(false)
+  }
+
+  const handleProjectPathSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    handleAddProjectPath(projectPathInput)
   }
 
   const handleRemoveProjectPath = (pathToRemove: string) => {
@@ -69,8 +99,31 @@ function SettingsView() {
     updateSettings({ autoRefreshInterval: parseInt(e.target.value, 10) })
   }
 
-  const handlePrefixChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    updateSettings({ defaultSessionPrefix: e.target.value })
+  const handleLaunchUserChange = (workspaceId: WorkspaceId, launchUser: LaunchUser) => {
+    updateSettings({
+      terminalLaunchUsers: {
+        ...settings.terminalLaunchUsers,
+        [workspaceId]: launchUser,
+      },
+    })
+  }
+
+  const handleSessionPrefixChange = (launchUser: LaunchUser, prefix: string) => {
+    updateSettings({
+      terminalSessionPrefixes: {
+        ...settings.terminalSessionPrefixes,
+        [launchUser]: prefix,
+      },
+    })
+  }
+
+  const handleUserColorChange = (launchUser: LaunchUser, color: string) => {
+    updateSettings({
+      terminalUserColors: {
+        ...settings.terminalUserColors,
+        [launchUser]: color,
+      },
+    })
   }
 
   const handleTmuxColorChange = (key: keyof TmuxAppearance, value: string) => {
@@ -232,16 +285,81 @@ function SettingsView() {
         </div>
 
         <div className="settings-field">
-          <label className="settings-label">Default Session Prefix</label>
-          <input
-            type="text"
-            value={settings.defaultSessionPrefix}
-            onChange={handlePrefixChange}
-            className="settings-input"
-            placeholder="shell"
-            maxLength={20}
-          />
-          <p className="settings-hint">Prefix used when creating new sessions (e.g., "shell-abc123")</p>
+          <label className="settings-label">Session Prefixes</label>
+          {configuredUsers.length === 0 ? (
+            <p className="settings-hint">No terminal users configured by the server yet.</p>
+          ) : (
+            <div className="settings-color-row">
+              {configuredUsers.map(launchUser => {
+                const label = `${launchUser} session prefix`
+                const id = `session-prefix-${launchUser}`
+                return (
+                  <div key={launchUser} className="color-input-group">
+                    <label className="color-input-label" htmlFor={id}>{label}</label>
+                    <input
+                      id={id}
+                      aria-label={label}
+                      type="text"
+                      value={getSessionPrefixForUser(settings, launchUser, configuredUsers)}
+                      onChange={(e) => handleSessionPrefixChange(launchUser, e.target.value)}
+                      className="settings-input"
+                      placeholder={defaultSessionPrefixForUser(launchUser, configuredUsers)}
+                      maxLength={20}
+                    />
+                  </div>
+                )
+              })}
+            </div>
+          )}
+          <p className="settings-hint">Prefix used when creating new sessions for each Unix user (e.g., "user-abc123")</p>
+        </div>
+
+        <div className="settings-field">
+          <label className="settings-label">Session User Indicators</label>
+          {configuredUsers.length === 0 ? (
+            <p className="settings-hint">No terminal users configured by the server yet.</p>
+          ) : (
+            <div className="settings-color-row">
+              {configuredUsers.map(launchUser => (
+                <ColorInput
+                  key={launchUser}
+                  label={`${launchUser} badge color`}
+                  value={getTerminalUserColor(settings, launchUser) || defaultTerminalUserColor(launchUser)}
+                  onChange={(value) => handleUserColorChange(launchUser, value)}
+                />
+              ))}
+            </div>
+          )}
+          <p className="settings-hint">Small badges in the Sessions panel use the configured Unix username initial and color.</p>
+        </div>
+
+        <div className="settings-field">
+          <label className="settings-label">Terminal launch users</label>
+          <div className="settings-color-row">
+            {TERMINAL_WORKSPACE_IDS.map(workspaceId => {
+              const label = `${TERMINAL_LABELS[workspaceId]} launch user`
+              const id = `launch-user-${workspaceId}`
+              const value = resolveLaunchUser(settings, workspaceId, configuredUsers)
+              return (
+                <div key={workspaceId} className="color-input-group">
+                  <label className="color-input-label" htmlFor={id}>{label}</label>
+                  <select
+                    id={id}
+                    aria-label={label}
+                    className="settings-select"
+                    value={value}
+                    onChange={(e) => handleLaunchUserChange(workspaceId, e.target.value as LaunchUser)}
+                    disabled={configuredUsers.length === 0}
+                  >
+                    {configuredUsers.map(user => (
+                      <option key={user} value={user}>{user}</option>
+                    ))}
+                  </select>
+                </div>
+              )
+            })}
+          </div>
+          <p className="settings-hint">Controls which Unix user's tmux socket new shells attach to in each terminal tab.</p>
         </div>
       </section>
 
@@ -259,9 +377,11 @@ function SettingsView() {
               <div key={path} className="beads-project-item">
                 <span className="beads-project-path">{toDisplayPath(path)}</span>
                 <button
+                  type="button"
                   className="beads-project-remove"
                   onClick={() => handleRemoveProjectPath(path)}
                   title="Remove project"
+                  aria-label={`Remove ${path}`}
                 >
                   &times;
                 </button>
@@ -272,12 +392,35 @@ function SettingsView() {
           )}
         </div>
 
-        <button
-          className="settings-btn settings-btn-add"
-          onClick={() => setShowFolderPicker(true)}
-        >
-          + Add Project
-        </button>
+        <form className="beads-project-add-form" onSubmit={handleProjectPathSubmit}>
+          <label className="settings-label" htmlFor="beads-project-path-input">Project path</label>
+          <div className="beads-project-add-row">
+            <input
+              id="beads-project-path-input"
+              aria-label="Beads project path"
+              type="text"
+              className="settings-input"
+              value={projectPathInput}
+              onChange={(event) => setProjectPathInput(event.target.value)}
+              placeholder="/home/tavern/velvetwood"
+            />
+            <button
+              type="submit"
+              className="settings-btn"
+              disabled={!projectPathInput.trim()}
+            >
+              Add Path
+            </button>
+            <button
+              type="button"
+              className="settings-btn settings-btn-add"
+              onClick={() => setShowFolderPicker(true)}
+            >
+              Browse...
+            </button>
+          </div>
+          <p className="settings-hint">Enter an absolute path to a modern Beads project containing .beads, or browse for one.</p>
+        </form>
       </section>
 
       {/* Info Section */}

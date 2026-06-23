@@ -143,6 +143,44 @@
   color: var(--text-dim);
 }
 
+.fb-section-toggle {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.fb-section-toggle:hover {
+  color: var(--text-primary);
+}
+
+.fb-section-toggle:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.fb-section-caret {
+  width: 10px;
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.fb-section-count {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.fb-saved-section.is-collapsed {
+  padding-bottom: 4px;
+}
+
 .fb-saved-list {
   display: flex;
   flex-direction: column;

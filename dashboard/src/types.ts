@@ -42,13 +42,123 @@ export const TMUX_PRESETS: Record<string, TmuxAppearance> = {
   },
 }
 
+// Terminal workspaces and launch-user settings
+export type WorkspaceId = 'terminal1' | 'terminal2' | 'terminal3'
+
+export const TERMINAL_WORKSPACE_IDS = ['terminal1', 'terminal2', 'terminal3'] as const
+
+export const TERMINAL_LABELS: Record<WorkspaceId, string> = {
+  terminal1: 'Terminal',
+  terminal2: 'Terminal 2',
+  terminal3: 'Terminal 3',
+}
+
+export type LaunchUser = string
+
+const SESSION_KEY_SEPARATOR = ':'
+
+export function getSessionKey(sessionName: string, unixUser?: LaunchUser): string {
+  const user = unixUser?.trim()
+  return user ? `${encodeURIComponent(user)}${SESSION_KEY_SEPARATOR}${sessionName}` : sessionName
+}
+
+export function getSessionNameFromKey(sessionKey: string): string {
+  const separator = sessionKey.indexOf(SESSION_KEY_SEPARATOR)
+  return separator === -1 ? sessionKey : sessionKey.slice(separator + 1)
+}
+
+export function getSessionUserFromKey(sessionKey: string): LaunchUser {
+  const separator = sessionKey.indexOf(SESSION_KEY_SEPARATOR)
+  if (separator === -1) return ''
+  return decodeURIComponent(sessionKey.slice(0, separator))
+}
+
+export const DEFAULT_TERMINAL_SESSION_PREFIXES: Record<LaunchUser, string> = {}
+
+export const DEFAULT_TERMINAL_LAUNCH_USERS: Record<WorkspaceId, LaunchUser> = {
+  terminal1: '',
+  terminal2: '',
+  terminal3: '',
+}
+
+export const TERMINAL_USER_COLOR_PALETTE = [
+  '#4a9eff',
+  '#ffb347',
+  '#8bd450',
+  '#c084fc',
+  '#ff6b9d',
+  '#45d6d6',
+] as const
+
+export const DEFAULT_TERMINAL_USER_COLORS: Record<LaunchUser, string> = {}
+
+export function normalizeTerminalUsers(users: readonly string[] | undefined): LaunchUser[] {
+  const seen = new Set<string>()
+  return (users ?? [])
+    .map(user => user.trim())
+    .filter(user => {
+      if (!user || seen.has(user)) return false
+      seen.add(user)
+      return true
+    })
+}
+
+export function getDefaultLaunchUser(workspaceId: WorkspaceId, terminalUsers: readonly string[] | undefined): LaunchUser {
+  const users = normalizeTerminalUsers(terminalUsers)
+  if (workspaceId === 'terminal3' && users[1]) return users[1]
+  return users[0] ?? ''
+}
+
+export function resolveLaunchUser(settings: UserSettings, workspaceId: WorkspaceId, terminalUsers: readonly string[] | undefined): LaunchUser {
+  const users = normalizeTerminalUsers(terminalUsers)
+  const configured = settings.terminalLaunchUsers[workspaceId]?.trim() ?? ''
+  if (configured && users.includes(configured)) return configured
+  return getDefaultLaunchUser(workspaceId, users)
+}
+
+export function defaultSessionPrefixForUser(user: LaunchUser, terminalUsers: readonly string[] | undefined): string {
+  const users = normalizeTerminalUsers(terminalUsers)
+  const trimmed = user.trim()
+  if (!trimmed) return 'shell'
+  return users[0] === trimmed ? 'shell' : trimmed
+}
+
+export function getSessionPrefixForUser(settings: UserSettings, user: LaunchUser, terminalUsers: readonly string[] | undefined): string {
+  const stored = settings.terminalSessionPrefixes[user]?.trim()
+  if (stored) return stored
+  const users = normalizeTerminalUsers(terminalUsers)
+  const legacy = settings.defaultSessionPrefix?.trim()
+  if (legacy && users[0] === user.trim()) return legacy
+  return defaultSessionPrefixForUser(user, users)
+}
+
+export function getTerminalUserInitial(user: LaunchUser): string {
+  return Array.from(user.trim())[0]?.toUpperCase() ?? '?'
+}
+
+export function defaultTerminalUserColor(user: LaunchUser): string {
+  const name = user.trim()
+  if (!name) return TERMINAL_USER_COLOR_PALETTE[0]
+  let hash = 0
+  for (const char of name) hash = ((hash << 5) - hash) + char.charCodeAt(0)
+  return TERMINAL_USER_COLOR_PALETTE[Math.abs(hash) % TERMINAL_USER_COLOR_PALETTE.length]
+}
+
+export function getTerminalUserColor(settings: UserSettings, user: LaunchUser): string {
+  return settings.terminalUserColors[user] || defaultTerminalUserColor(user)
+}
+
 // User settings for persistent configuration
 export interface UserSettings {
   terminalMode: 'tmux'              // Terminal mode (tmux only)
   fontSize: number                   // Terminal font size (12-20)
   theme: 'matrix' | 'dark' | 'gastown' // Color theme
   autoRefreshInterval: number        // Session refresh interval in ms (1000-30000)
-  defaultSessionPrefix: string       // Prefix for new sessions (e.g., 'shell')
+  defaultSessionPrefix: string       // Legacy fallback for stored settings before per-user prefixes
+  terminalSessionPrefixes: Record<LaunchUser, string> // Prefix for new sessions per Unix user
+  terminalLaunchUsers: Record<WorkspaceId, LaunchUser> // Unix user for new shells per terminal tab
+  terminalLabels: Partial<Record<WorkspaceId, string>> // Optional terminal tab display labels
+  terminalUserColors: Record<LaunchUser, string> // Session panel badge colors per Unix user
   musicVolume: number                // Music volume (0-1)
   musicEnabled: boolean              // Whether music is playing
   tmuxAppearance: TmuxAppearance     // tmux color customization
@@ -61,6 +171,10 @@ export const DEFAULT_SETTINGS: UserSettings = {
   theme: 'dark',
   autoRefreshInterval: 5000,
   defaultSessionPrefix: 'shell',
+  terminalSessionPrefixes: DEFAULT_TERMINAL_SESSION_PREFIXES,
+  terminalLaunchUsers: DEFAULT_TERMINAL_LAUNCH_USERS,
+  terminalLabels: {},
+  terminalUserColors: DEFAULT_TERMINAL_USER_COLORS,
   musicVolume: 0.5,
   musicEnabled: false,
   tmuxAppearance: DEFAULT_TMUX_APPEARANCE,
@@ -71,11 +185,13 @@ export interface TmuxSession {
   windows: number
   attached: boolean
   group: string
+  unixUser?: LaunchUser
 }
 
 export interface SessionsResponse {
   sessions: TmuxSession[]
   grouped: Record<string, TmuxSession[]>
+  terminalUsers?: LaunchUser[]
   timestamp: string
   error?: string
 }
@@ -86,8 +202,6 @@ export interface TerminalWindow {
   activeSession: string | null // Currently displayed session
   colorIndex: number // 0-3 for window color theme
 }
-
-export type WorkspaceId = 'terminal1' | 'terminal2'
 
 export interface TerminalWorkspace {
   windows: TerminalWindow[]
@@ -125,6 +239,9 @@ export interface DashboardState {
   // User settings
   settings: UserSettings
 
+  // Terminal users exposed by the server for user-scoped session controls
+  terminalUsers: LaunchUser[]
+
   // Focused window for keyboard navigation (workspaceId-windowId format)
   focusedWindowKey: string | null
 
@@ -135,7 +252,9 @@ export interface DashboardState {
 export interface DashboardActions {
   // Window management
   setWindowCount: (workspaceId: WorkspaceId, count: number) => void
-  addSessionToWindow: (workspaceId: WorkspaceId, windowId: string, sessionName: string) => void
+  clearWorkspaceAssignments: (workspaceId: WorkspaceId) => void
+  clearStaleSessionsFromWindow: (workspaceId: WorkspaceId, windowId: string) => void
+  addSessionToWindow: (workspaceId: WorkspaceId, windowId: string, sessionName: string, unixUser?: LaunchUser) => void
   removeSessionFromWindow: (workspaceId: WorkspaceId, windowId: string, sessionName: string) => void
   setActiveSession: (workspaceId: WorkspaceId, windowId: string, sessionName: string) => void
   cycleSession: (workspaceId: WorkspaceId, windowId: string, direction: 'prev' | 'next') => void
@@ -152,10 +271,10 @@ export interface DashboardActions {
   refreshSessions: () => Promise<void>
 
   // Delete a session
-  deleteSession: (sessionName: string) => Promise<void>
+  deleteSession: (sessionName: string, unixUser?: LaunchUser) => Promise<boolean>
 
   // Rename a session
-  renameSession: (oldName: string, newName: string) => Promise<boolean>
+  renameSession: (oldName: string, newName: string, unixUser?: LaunchUser) => Promise<boolean>
 
   // Drag state
   setIsDragging: (dragging: boolean) => void

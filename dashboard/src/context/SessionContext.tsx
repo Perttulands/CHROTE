@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react'
-import type { DashboardContextType, TmuxSession, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance, WorkspaceId, TerminalWorkspace, LayoutPreset } from '../types'
-import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE, MAX_PRESETS } from '../types'
+import type { DashboardContextType, TmuxSession, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance, WorkspaceId, TerminalWorkspace, LayoutPreset, LaunchUser } from '../types'
+import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE, MAX_PRESETS, TERMINAL_WORKSPACE_IDS, getSessionKey, normalizeTerminalUsers } from '../types'
 import { useToast } from './ToastContext'
 
 // Apply tmux appearance settings via API (hot-reload)
@@ -21,7 +21,7 @@ const STORAGE_KEY = 'chrote-dashboard-state'
 const PRESETS_STORAGE_KEY = 'chrote-dashboard-presets'
 const SETTINGS_SCHEMA_VERSION = 2
 
-const WORKSPACE_IDS: WorkspaceId[] = ['terminal1', 'terminal2']
+const WORKSPACE_IDS: WorkspaceId[] = [...TERMINAL_WORKSPACE_IDS]
 const VIEWPORT_BUCKETS = ['mobile', 'tablet', 'desktop'] as const
 type ViewportBucket = typeof VIEWPORT_BUCKETS[number]
 
@@ -32,7 +32,12 @@ function loadStoredPresets(): LayoutPreset[] {
     if (stored) {
       const parsed = JSON.parse(stored)
       if (Array.isArray(parsed)) {
-        return parsed
+        return parsed.filter(isRecord).map((preset) => ({
+          id: typeof preset.id === 'string' ? preset.id : generatePresetId(),
+          name: typeof preset.name === 'string' ? preset.name : 'Untitled',
+          createdAt: typeof preset.createdAt === 'number' ? preset.createdAt : Date.now(),
+          workspaces: sanitizeWorkspaces(preset.workspaces),
+        }))
       }
     }
   } catch (e) {
@@ -94,16 +99,56 @@ function isViewportBucket(value: string): value is ViewportBucket {
   return VIEWPORT_BUCKETS.includes(value as ViewportBucket)
 }
 
+function mergeTerminalLaunchUsers(raw: unknown): Record<WorkspaceId, LaunchUser> {
+  const rawUsers = isRecord(raw) ? raw : {}
+  return WORKSPACE_IDS.reduce((acc, workspaceId) => {
+    const value = rawUsers[workspaceId]
+    acc[workspaceId] = typeof value === 'string' ? value : ''
+    return acc
+  }, {} as Record<WorkspaceId, LaunchUser>)
+}
+
+function mergeStringMap(raw: unknown): Record<LaunchUser, string> {
+  const source = isRecord(raw) ? raw : {}
+  return Object.entries(source).reduce((acc, [key, value]) => {
+    const user = key.trim()
+    if (user && typeof value === 'string') acc[user] = value
+    return acc
+  }, {} as Record<LaunchUser, string>)
+}
+
+function mergeTerminalSessionPrefixes(raw: unknown, legacyPrefix: unknown, rawLaunchUsers: unknown): Record<LaunchUser, string> {
+  const prefixes = mergeStringMap(raw)
+  const legacy = typeof legacyPrefix === 'string' && legacyPrefix.trim() !== '' ? legacyPrefix : null
+  if (legacy && Object.keys(prefixes).length === 0) {
+    const users = normalizeTerminalUsers(Object.values(mergeTerminalLaunchUsers(rawLaunchUsers)))
+    if (users[0]) prefixes[users[0]] = legacy
+  }
+  return prefixes
+}
+
 function mergeSettings(rawSettings: unknown): UserSettings {
   if (!isRecord(rawSettings)) return DEFAULT_SETTINGS
 
   const tmuxAppearance = isRecord(rawSettings.tmuxAppearance)
     ? { ...DEFAULT_TMUX_APPEARANCE, ...rawSettings.tmuxAppearance }
     : DEFAULT_TMUX_APPEARANCE
+  const terminalLaunchUsers = mergeTerminalLaunchUsers(rawSettings.terminalLaunchUsers)
+  const terminalSessionPrefixes = mergeTerminalSessionPrefixes(
+    rawSettings.terminalSessionPrefixes,
+    rawSettings.defaultSessionPrefix,
+    rawSettings.terminalLaunchUsers,
+  )
+  const terminalLabels = mergeStringMap(rawSettings.terminalLabels)
+  const terminalUserColors = mergeStringMap(rawSettings.terminalUserColors)
 
   return {
     ...DEFAULT_SETTINGS,
     ...rawSettings,
+    terminalLaunchUsers,
+    terminalSessionPrefixes,
+    terminalLabels,
+    terminalUserColors,
     tmuxAppearance,
   } as UserSettings
 }
@@ -125,6 +170,7 @@ function defaultStoredState(): LoadedStoredState {
     workspaces: {
       terminal1: createDefaultWorkspace('terminal1', 2),
       terminal2: createDefaultWorkspace('terminal2', 2),
+      terminal3: createDefaultWorkspace('terminal3', 2),
     },
     layoutsByViewport: {},
     sidebarCollapsed: false,
@@ -212,10 +258,10 @@ function sanitizeWorkspace(workspaceId: WorkspaceId, wsRaw: unknown): TerminalWo
 
 function sanitizeWorkspaces(rawWorkspaces: unknown): Record<WorkspaceId, TerminalWorkspace> {
   const workspaces = isRecord(rawWorkspaces) ? rawWorkspaces : {}
-  return {
-    terminal1: sanitizeWorkspace('terminal1', workspaces.terminal1),
-    terminal2: sanitizeWorkspace('terminal2', workspaces.terminal2),
-  }
+  return WORKSPACE_IDS.reduce((acc, workspaceId) => {
+    acc[workspaceId] = sanitizeWorkspace(workspaceId, workspaces[workspaceId])
+    return acc
+  }, {} as Record<WorkspaceId, TerminalWorkspace>)
 }
 
 function migrateStoredState(raw: unknown, viewportBucket: ViewportBucket): LoadedStoredState {
@@ -271,12 +317,13 @@ function migrateStoredState(raw: unknown, viewportBucket: ViewportBucket): Loade
         }
       })
 
-      const workspaces = {
+      const workspaces: Record<WorkspaceId, TerminalWorkspace> = {
         terminal1: {
           windows: terminal1Windows,
           windowCount,
         },
         terminal2: createDefaultWorkspace('terminal2', 2),
+        terminal3: createDefaultWorkspace('terminal3', 2),
       }
 
       return {
@@ -306,14 +353,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const [sessions, setSessions] = useState<TmuxSession[]>([])
   const [groupedSessions, setGroupedSessions] = useState<Record<string, TmuxSession[]>>({})
+  const [terminalUsers, setTerminalUsers] = useState<LaunchUser[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const [workspaces, setWorkspaces] = useState<Record<WorkspaceId, TerminalWorkspace>>(
-    stored?.workspaces ?? {
-      terminal1: createDefaultWorkspace('terminal1', 2),
-      terminal2: createDefaultWorkspace('terminal2', 2),
-    }
+    stored?.workspaces ?? WORKSPACE_IDS.reduce((acc, workspaceId) => {
+      acc[workspaceId] = createDefaultWorkspace(workspaceId, 2)
+      return acc
+    }, {} as Record<WorkspaceId, TerminalWorkspace>)
   )
   const [sidebarCollapsed, setSidebarCollapsed] = useState(stored?.sidebarCollapsed ?? false)
   const [floatingSession, setFloatingSession] = useState<string | null>(null)
@@ -395,20 +443,22 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const response = await fetch('/api/tmux/sessions', { signal: AbortSignal.timeout(10000) })
       const data: SessionsResponse = await response.json()
 
+      if (Array.isArray(data.terminalUsers)) {
+        setTerminalUsers(normalizeTerminalUsers(data.terminalUsers))
+      }
+
       if (data.error) {
         setError(data.error)
-        setSessions([])
-        setGroupedSessions({})
       } else {
         setError(null)
-        setSessions(data.sessions)
-        setGroupedSessions(data.grouped)
-
-        // NOTE: We intentionally do NOT clean up "orphaned" sessions here.
-        // If a session is in the layout but not in the API list (e.g. server restart, network blip),
-        // we want to PERSIST it in the UI rather than wiping the user's layout.
-        // The terminal window will just show a disconnected state or error until it comes back.
       }
+      setSessions(data.sessions)
+      setGroupedSessions(data.grouped)
+
+      // NOTE: We intentionally do NOT clean up "orphaned" sessions here.
+      // If a session is in the layout but not in the API list (e.g. server restart, network blip),
+      // we want to PERSIST it in the UI rather than wiping the user's layout.
+      // The terminal window will just show a disconnected state or error until it comes back.
     } catch (e) {
       setError('Failed to fetch sessions')
       console.error('Failed to fetch sessions:', e)
@@ -471,7 +521,50 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
-  const addSessionToWindow = useCallback((workspaceId: WorkspaceId, windowId: string, sessionName: string) => {
+  const clearWorkspaceAssignments = useCallback((workspaceId: WorkspaceId) => {
+    setWorkspaces(prev => {
+      const ws = prev[workspaceId]
+      if (!ws) return prev
+      return {
+        ...prev,
+        [workspaceId]: {
+          ...ws,
+          windows: ws.windows.map(w => ({ ...w, boundSessions: [], activeSession: null })),
+        },
+      }
+    })
+  }, [])
+
+  const clearStaleSessionsFromWindow = useCallback((workspaceId: WorkspaceId, windowId: string) => {
+    const liveSessions = new Set<string>()
+    sessions.forEach(s => {
+      liveSessions.add(getSessionKey(s.name, s.unixUser))
+      liveSessions.add(s.name) // backward compatibility for layouts saved before user-qualified keys
+    })
+    setWorkspaces(prev => {
+      const ws = prev[workspaceId]
+      if (!ws) return prev
+      return {
+        ...prev,
+        [workspaceId]: {
+          ...ws,
+          windows: ws.windows.map(w => {
+            if (w.id !== windowId) return w
+            const boundSessions = w.boundSessions.filter(s => liveSessions.has(s))
+            return {
+              ...w,
+              boundSessions,
+              activeSession: w.activeSession && boundSessions.includes(w.activeSession) ? w.activeSession : (boundSessions[0] ?? null),
+            }
+          }),
+        },
+      }
+    })
+  }, [sessions])
+
+  const addSessionToWindow = useCallback((workspaceId: WorkspaceId, windowId: string, sessionName: string, unixUser?: LaunchUser) => {
+    const sessionKey = getSessionKey(sessionName, unixUser)
+    const aliases = unixUser ? [sessionKey, sessionName] : [sessionKey]
     setWorkspaces(prev => {
       // 1) Remove session from ALL windows across ALL workspaces
       const cleaned: Record<WorkspaceId, TerminalWorkspace> = { ...prev }
@@ -482,16 +575,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         const ws = prev[wsId]
         const updatedWindows = ws.windows.map(w => {
           const isTarget = wsId === workspaceId && w.id === windowId
-          const hasSession = w.boundSessions.includes(sessionName)
+          const hasSession = aliases.some(alias => w.boundSessions.includes(alias))
 
           if (!isTarget && !hasSession) return w
 
           if (!isTarget && hasSession) {
-            const newBound = w.boundSessions.filter(s => s !== sessionName)
+            const newBound = w.boundSessions.filter(s => !aliases.includes(s))
             return {
               ...w,
               boundSessions: newBound,
-              activeSession: w.activeSession === sessionName ? (newBound[0] ?? null) : w.activeSession,
+              activeSession: w.activeSession && aliases.includes(w.activeSession) ? (newBound[0] ?? null) : w.activeSession,
             }
           }
 
@@ -510,11 +603,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const ws = cleaned[workspaceId]
       const updatedWindows = ws.windows.map(w => {
         if (w.id !== windowId) return w
-        if (w.boundSessions.includes(sessionName)) return w
+        const boundSessions = w.boundSessions.filter(s => !aliases.includes(s))
         return {
           ...w,
-          boundSessions: [...w.boundSessions, sessionName],
-          activeSession: targetWasEmpty ? sessionName : w.activeSession,
+          boundSessions: [...boundSessions, sessionKey],
+          activeSession: targetWasEmpty || (w.activeSession && aliases.includes(w.activeSession)) ? sessionKey : w.activeSession,
         }
       })
 
@@ -626,36 +719,62 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
-  const deleteSession = useCallback(async (sessionName: string) => {
+  const deleteSession = useCallback(async (sessionName: string, unixUser?: LaunchUser) => {
     try {
-      const response = await fetch(`/api/tmux/sessions/${encodeURIComponent(sessionName)}`, {
+      const query = unixUser ? `?unixUser=${encodeURIComponent(unixUser)}` : ''
+      const response = await fetch(`/api/tmux/sessions/${encodeURIComponent(sessionName)}${query}`, {
         method: 'DELETE',
         signal: AbortSignal.timeout(10000),
       })
       if (response.ok) {
+        const deletedKey = getSessionKey(sessionName, unixUser)
+        setWorkspaces(prev => {
+          const next: Record<WorkspaceId, TerminalWorkspace> = { ...prev }
+          WORKSPACE_IDS.forEach(workspaceId => {
+            const ws = prev[workspaceId]
+            next[workspaceId] = {
+              ...ws,
+              windows: ws.windows.map(w => {
+                const boundSessions = w.boundSessions.filter(s => s !== deletedKey && s !== sessionName)
+                return {
+                  ...w,
+                  boundSessions,
+                  activeSession: w.activeSession && boundSessions.includes(w.activeSession) ? w.activeSession : (boundSessions[0] ?? null),
+                }
+              }),
+            }
+          })
+          return next
+        })
         addToast(`Session '${sessionName}' deleted`, 'info')
         refreshSessions()
+        return true
       } else {
         const errorText = await response.text()
         console.error('Failed to delete session:', errorText)
         addToast(`Failed to delete session`, 'error')
+        return false
       }
     } catch (e) {
       console.error('Failed to delete session:', e)
       addToast(`Failed to delete session`, 'error')
+      return false
     }
   }, [refreshSessions, addToast])
 
-  const renameSession = useCallback(async (oldName: string, newName: string): Promise<boolean> => {
+  const renameSession = useCallback(async (oldName: string, newName: string, unixUser?: LaunchUser): Promise<boolean> => {
     try {
-      const response = await fetch(`/api/tmux/sessions/${encodeURIComponent(oldName)}`, {
+      const query = unixUser ? `?unixUser=${encodeURIComponent(unixUser)}` : ''
+      const response = await fetch(`/api/tmux/sessions/${encodeURIComponent(oldName)}${query}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ newName }),
         signal: AbortSignal.timeout(10000),
       })
       if (response.ok) {
-        // Update window bindings to use the new name
+        const oldKey = getSessionKey(oldName, unixUser)
+        const newKey = getSessionKey(newName, unixUser)
+        // Update window bindings to use the new name/key
         setWorkspaces(prev => {
           const next: Record<WorkspaceId, TerminalWorkspace> = { ...prev }
           WORKSPACE_IDS.forEach(workspaceId => {
@@ -664,8 +783,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
               ...ws,
               windows: ws.windows.map(w => ({
                 ...w,
-                boundSessions: w.boundSessions.map(s => s === oldName ? newName : s),
-                activeSession: w.activeSession === oldName ? newName : w.activeSession,
+                boundSessions: w.boundSessions.map(s => s === oldKey || s === oldName ? newKey : s),
+                activeSession: w.activeSession === oldKey || w.activeSession === oldName ? newKey : w.activeSession,
               })),
             }
           })
@@ -713,7 +832,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return
     }
 
-    setWorkspaces(cloneWorkspaces(preset.workspaces))
+    setWorkspaces(sanitizeWorkspaces(cloneWorkspaces(preset.workspaces)))
     addToast(`Layout '${preset.name}' loaded`, 'info')
   }, [layoutPresets, addToast])
 
@@ -736,6 +855,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     // State
     sessions,
     groupedSessions,
+    terminalUsers,
     loading,
     error,
     workspaces,
@@ -749,6 +869,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
     // Actions
     setWindowCount,
+    clearWorkspaceAssignments,
+    clearStaleSessionsFromWindow,
     addSessionToWindow,
     removeSessionFromWindow,
     setActiveSession,
@@ -770,6 +892,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }), [
     sessions,
     groupedSessions,
+    terminalUsers,
     loading,
     error,
     workspaces,
@@ -781,6 +904,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     focusedWindowKey,
     layoutPresets,
     setWindowCount,
+    clearWorkspaceAssignments,
+    clearStaleSessionsFromWindow,
     addSessionToWindow,
     removeSessionFromWindow,
     setActiveSession,

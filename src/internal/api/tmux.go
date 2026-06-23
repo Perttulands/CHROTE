@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	osuser "os/user"
 	"regexp"
 	"strconv"
 	"strings"
@@ -34,15 +35,17 @@ type sessionsCache struct {
 
 // SessionsResponse is the response for listing sessions
 type SessionsResponse struct {
-	Sessions  []core.Session            `json:"sessions"`
-	Grouped   map[string][]core.Session `json:"grouped"`
-	Timestamp string                    `json:"timestamp"`
-	Error     string                    `json:"error,omitempty"`
+	Sessions      []core.Session            `json:"sessions"`
+	Grouped       map[string][]core.Session `json:"grouped"`
+	TerminalUsers []string                  `json:"terminalUsers"`
+	Timestamp     string                    `json:"timestamp"`
+	Error         string                    `json:"error,omitempty"`
 }
 
 // CreateSessionRequest is the request body for creating a session
 type CreateSessionRequest struct {
-	Name string `json:"name"`
+	Name     string `json:"name"`
+	UnixUser string `json:"unixUser,omitempty"`
 }
 
 // RenameSessionRequest is the request body for renaming a session
@@ -90,13 +93,140 @@ func (h *TmuxHandler) RunTmux(args ...string) (string, error) {
 	return h.runTmux(args...)
 }
 
+type tmuxTarget struct {
+	socket   string
+	workDir  string
+	unixUser string
+}
+
+func parseUserValueMap(raw string) map[string]string {
+	result := map[string]string{}
+	for _, item := range strings.Split(raw, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		parts := strings.SplitN(item, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		user := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+		if user != "" && value != "" {
+			result[user] = value
+		}
+	}
+	return result
+}
+
+func configuredTerminalUsers() []string {
+	raw := strings.TrimSpace(os.Getenv("CHROTE_TERMINAL_USERS"))
+	if raw == "" {
+		return []string{}
+	}
+	users := []string{}
+	seen := map[string]bool{}
+	for _, item := range strings.Split(raw, ",") {
+		item = strings.TrimSpace(item)
+		if item != "" && !seen[item] {
+			users = append(users, item)
+			seen[item] = true
+		}
+	}
+	return users
+}
+
+func advertisedTerminalUsers() []string {
+	return configuredTerminalUsers()
+}
+
+func allowedTerminalUsers() map[string]bool {
+	allowed := map[string]bool{}
+	configured := configuredTerminalUsers()
+	if len(configured) > 0 {
+		for _, item := range configured {
+			allowed[item] = true
+		}
+		return allowed
+	}
+	if current, err := osuser.Current(); err == nil && current.Username != "" {
+		allowed[current.Username] = true
+	}
+	return allowed
+}
+
+func (h *TmuxHandler) targetForUnixUser(unixUser string) (tmuxTarget, error) {
+	unixUser = strings.TrimSpace(unixUser)
+	if unixUser == "" {
+		return tmuxTarget{socket: h.socket, workDir: h.workDir}, nil
+	}
+
+	allowed := allowedTerminalUsers()
+	if !allowed[unixUser] {
+		return tmuxTarget{}, fmt.Errorf("Unix user %q is not allowed for terminal launch", unixUser)
+	}
+
+	socketMap := parseUserValueMap(os.Getenv("CHROTE_TERMINAL_USER_SOCKETS"))
+	workDirMap := parseUserValueMap(os.Getenv("CHROTE_TERMINAL_USER_WORKDIRS"))
+	target := tmuxTarget{
+		socket:   socketMap[unixUser],
+		workDir:  workDirMap[unixUser],
+		unixUser: unixUser,
+	}
+	if target.socket != "" && target.workDir != "" {
+		return target, nil
+	}
+
+	account, err := osuser.Lookup(unixUser)
+	if err != nil {
+		return tmuxTarget{}, fmt.Errorf("lookup Unix user %q: %w", unixUser, err)
+	}
+	currentUser := ""
+	if current, err := osuser.Current(); err == nil {
+		currentUser = current.Username
+	}
+	if target.workDir == "" {
+		if currentUser == unixUser && h.workDir != "" {
+			target.workDir = h.workDir
+		} else {
+			target.workDir = account.HomeDir
+		}
+	}
+	if target.socket == "" {
+		if currentUser == unixUser {
+			target.socket = h.socket
+		} else {
+			target.socket = fmt.Sprintf("/tmp/tmux-%s/default", account.Uid)
+		}
+	}
+	return target, nil
+}
+
+func targetFromRequest(h *TmuxHandler, r *http.Request, bodyUnixUser string) (tmuxTarget, error) {
+	unixUser := strings.TrimSpace(bodyUnixUser)
+	if unixUser == "" && r != nil {
+		unixUser = strings.TrimSpace(r.URL.Query().Get("unixUser"))
+	}
+	return h.targetForUnixUser(unixUser)
+}
+
+func isTmuxNoServerError(errStr string) bool {
+	return strings.Contains(errStr, "no server running") ||
+		strings.Contains(errStr, "No such file or directory") ||
+		(strings.Contains(errStr, "error connecting to ") && strings.Contains(errStr, "(No such file or directory)"))
+}
+
 // runTmux executes a tmux command with proper environment
 func (h *TmuxHandler) runTmux(args ...string) (string, error) {
+	return h.runTmuxOnSocket(h.socket, args...)
+}
+
+func (h *TmuxHandler) runTmuxOnSocket(socket string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if h.socket != "" {
-		args = append([]string{"-S", h.socket}, args...)
+	if socket != "" {
+		args = append([]string{"-S", socket}, args...)
 	}
 
 	cmd := exec.CommandContext(ctx, "tmux", args...)
@@ -112,73 +242,114 @@ func (h *TmuxHandler) runTmux(args ...string) (string, error) {
 	return string(output), nil
 }
 
+func parseSessionsOutput(output string, unixUser string) []core.Session {
+	sessions := []core.Session{}
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, ":")
+		if len(parts) < 3 {
+			continue
+		}
+		windows, _ := strconv.Atoi(parts[1]) //nolint:errcheck // defaults to 0 on parse failure, corrected to 1 below
+		if windows == 0 {
+			windows = 1
+		}
+		sessions = append(sessions, core.Session{
+			Name:     parts[0],
+			Windows:  windows,
+			Attached: parts[2] == "1",
+			Group:    core.CategorizeSession(parts[0]),
+			UnixUser: unixUser,
+		})
+	}
+	return sessions
+}
+
+func (h *TmuxHandler) listSessionsForTarget(target tmuxTarget) ([]core.Session, string) {
+	output, err := h.runTmuxOnSocket(target.socket, "list-sessions", "-F", "#{session_name}:#{session_windows}:#{session_attached}")
+	if err != nil {
+		errStr := err.Error()
+		if isTmuxNoServerError(errStr) {
+			return []core.Session{}, ""
+		}
+		return []core.Session{}, errStr
+	}
+	return parseSessionsOutput(output, target.unixUser), ""
+}
+
 // ListSessions handles GET /api/tmux/sessions
 func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
-	// Check cache
-	h.cache.mu.RLock()
-	if h.cache.data != nil && time.Since(h.cache.timestamp) < h.cache.ttl {
-		data := h.cache.data
-		h.cache.mu.RUnlock()
-		core.WriteJSON(w, http.StatusOK, data)
-		return
+	queryUnixUser := ""
+	if r != nil {
+		queryUnixUser = strings.TrimSpace(r.URL.Query().Get("unixUser"))
 	}
-	h.cache.mu.RUnlock()
+	useConfiguredUsers := queryUnixUser == "" && len(configuredTerminalUsers()) > 0
+	useCache := queryUnixUser == "" && !useConfiguredUsers
 
-	// Fetch sessions
-	output, err := h.runTmux("list-sessions", "-F", "#{session_name}:#{session_windows}:#{session_attached}")
+	// Check cache
+	if useCache {
+		h.cache.mu.RLock()
+		if h.cache.data != nil && time.Since(h.cache.timestamp) < h.cache.ttl {
+			data := h.cache.data
+			h.cache.mu.RUnlock()
+			core.WriteJSON(w, http.StatusOK, data)
+			return
+		}
+		h.cache.mu.RUnlock()
+	}
 
 	response := &SessionsResponse{
-		Sessions:  []core.Session{},
-		Grouped:   make(map[string][]core.Session),
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Sessions:      []core.Session{},
+		Grouped:       make(map[string][]core.Session),
+		TerminalUsers: advertisedTerminalUsers(),
+		Timestamp:     time.Now().UTC().Format(time.RFC3339),
 	}
 
-	if err != nil {
-		// Check for "no server running" type errors
-		errStr := err.Error()
-		noServerErrors := []string{"no server running", "No such file or directory", "error connecting"}
-		isNoServer := false
-		for _, msg := range noServerErrors {
-			if strings.Contains(errStr, msg) {
-				isNoServer = true
-				break
-			}
-		}
-		if !isNoServer {
-			response.Error = errStr
-		}
-	} else {
-		lines := strings.Split(strings.TrimSpace(output), "\n")
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if line == "" {
+	if useConfiguredUsers {
+		var errors []string
+		for _, unixUser := range configuredTerminalUsers() {
+			target, targetErr := h.targetForUnixUser(unixUser)
+			if targetErr != nil {
+				errors = append(errors, targetErr.Error())
 				continue
 			}
-			parts := strings.Split(line, ":")
-			if len(parts) >= 3 {
-				windows, _ := strconv.Atoi(parts[1]) //nolint:errcheck // defaults to 0 on parse failure, corrected to 1 below
-				if windows == 0 {
-					windows = 1
-				}
-				session := core.Session{
-					Name:     parts[0],
-					Windows:  windows,
-					Attached: parts[2] == "1",
-					Group:    core.CategorizeSession(parts[0]),
-				}
-				response.Sessions = append(response.Sessions, session)
+			sessions, errStr := h.listSessionsForTarget(target)
+			if errStr != "" {
+				errors = append(errors, fmt.Sprintf("%s: %s", unixUser, errStr))
+				continue
 			}
+			response.Sessions = append(response.Sessions, sessions...)
 		}
-
-		core.SortSessions(response.Sessions)
-		response.Grouped = core.GroupSessions(response.Sessions)
+		if len(errors) > 0 {
+			response.Error = strings.Join(errors, "; ")
+		}
+	} else {
+		target, targetErr := targetFromRequest(h, r, "")
+		if targetErr != nil {
+			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", targetErr.Error())
+			return
+		}
+		sessions, errStr := h.listSessionsForTarget(target)
+		response.Sessions = append(response.Sessions, sessions...)
+		if errStr != "" {
+			response.Error = errStr
+		}
 	}
 
+	core.SortSessions(response.Sessions)
+	response.Grouped = core.GroupSessions(response.Sessions)
+
 	// Update cache
-	h.cache.mu.Lock()
-	h.cache.data = response
-	h.cache.timestamp = time.Now()
-	h.cache.mu.Unlock()
+	if useCache {
+		h.cache.mu.Lock()
+		h.cache.data = response
+		h.cache.timestamp = time.Now()
+		h.cache.mu.Unlock()
+	}
 
 	core.WriteJSON(w, http.StatusOK, response)
 }
@@ -213,13 +384,19 @@ func (h *TmuxHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	workDir := h.workDir
+	target, targetErr := targetFromRequest(h, r, req.UnixUser)
+	if targetErr != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", targetErr.Error())
+		return
+	}
+
+	workDir := target.workDir
 	if workDir == "" {
 		workDir = core.GetWorkDir()
 	}
 
 	// Create the session (detached)
-	_, err := h.runTmux("new-session", "-d", "-s", name, "-c", workDir)
+	_, err := h.runTmuxOnSocket(target.socket, "new-session", "-d", "-s", name, "-c", workDir)
 	if err != nil {
 		core.WriteError(w, http.StatusBadRequest, "TMUX_ERROR", err.Error())
 		return
@@ -244,7 +421,13 @@ func (h *TmuxHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := h.runTmux("kill-session", "-t", sessionName)
+	target, targetErr := targetFromRequest(h, r, "")
+	if targetErr != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", targetErr.Error())
+		return
+	}
+
+	_, err := h.runTmuxOnSocket(target.socket, "kill-session", "-t", sessionName)
 	if err != nil {
 		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
 		return
@@ -271,8 +454,14 @@ func (h *TmuxHandler) DeleteAllSessions(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	target, targetErr := targetFromRequest(h, r, "")
+	if targetErr != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", targetErr.Error())
+		return
+	}
+
 	// Get list of all sessions first
-	output, err := h.runTmux("list-sessions", "-F", "#{session_name}")
+	output, err := h.runTmuxOnSocket(target.socket, "list-sessions", "-F", "#{session_name}")
 	var sessionNames []string
 	var protectedNames []string
 	if err == nil {
@@ -287,6 +476,9 @@ func (h *TmuxHandler) DeleteAllSessions(w http.ResponseWriter, r *http.Request) 
 				}
 			}
 		}
+	} else if !isTmuxNoServerError(err.Error()) {
+		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
+		return
 	}
 
 	if len(sessionNames) == 0 {
@@ -304,7 +496,7 @@ func (h *TmuxHandler) DeleteAllSessions(w http.ResponseWriter, r *http.Request) 
 	var killed []string
 	var errors []string
 	for _, name := range sessionNames {
-		_, err := h.runTmux("kill-session", "-t", name)
+		_, err := h.runTmuxOnSocket(target.socket, "kill-session", "-t", name)
 		if err != nil {
 			errors = append(errors, fmt.Sprintf("%s: %v", name, err))
 		} else {
@@ -350,7 +542,13 @@ func (h *TmuxHandler) RenameSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := h.runTmux("rename-session", "-t", oldName, req.NewName)
+	target, targetErr := targetFromRequest(h, r, "")
+	if targetErr != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", targetErr.Error())
+		return
+	}
+
+	_, err := h.runTmuxOnSocket(target.socket, "rename-session", "-t", oldName, req.NewName)
 	if err != nil {
 		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
 		return
@@ -376,6 +574,12 @@ func (h *TmuxHandler) CapturePane(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	target, targetErr := targetFromRequest(h, r, "")
+	if targetErr != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", targetErr.Error())
+		return
+	}
+
 	// Build capture-pane command args
 	args := []string{"capture-pane", "-t", sessionName, "-p"}
 
@@ -390,7 +594,7 @@ func (h *TmuxHandler) CapturePane(w http.ResponseWriter, r *http.Request) {
 		args = append(args, "-S", fmt.Sprintf("-%d", lines))
 	}
 
-	output, err := h.runTmux(args...)
+	output, err := h.runTmuxOnSocket(target.socket, args...)
 	if err != nil {
 		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
 		return

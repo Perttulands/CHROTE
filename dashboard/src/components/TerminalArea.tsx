@@ -1,16 +1,18 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useSession } from '../context/SessionContext'
 import TerminalWindow from './TerminalWindow'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import type { WorkspaceId } from '../types'
 import { isFeatureEnabled } from '../featureFlags'
+import { useIframePool } from './IframePool'
 
 interface TerminalAreaProps {
   workspaceId: WorkspaceId
 }
 
 function TerminalArea({ workspaceId }: TerminalAreaProps) {
-  const { workspaces, setWindowCount, isDragging } = useSession()
+  const { workspaces, setWindowCount, clearStaleSessionsFromWindow, isDragging } = useSession()
+  const pool = useIframePool()
   const workspace = workspaces[workspaceId]
   const windows = workspace.windows
   const windowCount = workspace.windowCount
@@ -18,7 +20,10 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
   const isMobile = useMediaQuery('(max-width: 768px)')
   const [mobileActiveIndex, setMobileActiveIndex] = useState(0)
   const [refitNonce, setRefitNonce] = useState(0)
+  const [controlsMenu, setControlsMenu] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 })
+  const controlsMenuRef = useRef<HTMLDivElement>(null)
   const showRefitButton = isFeatureEnabled('terminalRefitButton')
+  const visibleWindows = windows.slice(0, windowCount)
 
   // Ensure valid mobile index when configuration changes
   useEffect(() => {
@@ -26,6 +31,37 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
       setMobileActiveIndex(0)
     }
   }, [windowCount, mobileActiveIndex])
+
+  useEffect(() => {
+    if (!controlsMenu.show) return
+    const close = (event: MouseEvent) => {
+      if (controlsMenuRef.current?.contains(event.target as Node)) return
+      setControlsMenu({ show: false, x: 0, y: 0 })
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [controlsMenu.show])
+
+  const closeControlsMenu = () => setControlsMenu({ show: false, x: 0, y: 0 })
+
+  const reconnectFrames = () => {
+    const sessionNames = new Set<string>()
+    visibleWindows.forEach(window => window.boundSessions.forEach(sessionName => {
+      if (sessionName && sessionName !== 'INIT-PENDING') sessionNames.add(sessionName)
+    }))
+    sessionNames.forEach(sessionName => pool.reconnectIframe(sessionName))
+    closeControlsMenu()
+  }
+
+  const clearStaleSessions = () => {
+    visibleWindows.forEach(window => clearStaleSessionsFromWindow(workspaceId, window.id))
+    closeControlsMenu()
+  }
+
+  const refitTerminalLayout = () => {
+    setRefitNonce(n => n + 1)
+    closeControlsMenu()
+  }
 
   // Get grid class based on window count
   const getGridClass = () => {
@@ -42,7 +78,14 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
 
   return (
     <div className="terminal-area">
-      <div className="terminal-area-controls">
+      <div
+        className="terminal-area-controls"
+        aria-label="Terminal layout controls"
+        onContextMenu={(event) => {
+          event.preventDefault()
+          setControlsMenu({ show: true, x: event.clientX, y: event.clientY })
+        }}
+      >
         {isMobile ? (
           <>
             <span className="layout-label">View:</span>
@@ -73,7 +116,7 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
               {showRefitButton && (
                 <button
                   className="layout-btn terminal-refit-btn"
-                  onClick={() => setRefitNonce(n => n + 1)}
+                  onClick={refitTerminalLayout}
                   title="Refit terminal layout"
                   aria-label="Refit terminal layout"
                 >
@@ -98,7 +141,7 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
             {showRefitButton && (
               <button
                 className="layout-btn terminal-refit-btn"
-                onClick={() => setRefitNonce(n => n + 1)}
+                onClick={refitTerminalLayout}
                 title="Refit terminal layout"
                 aria-label="Refit terminal layout"
               >
@@ -109,8 +152,29 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
         )}
       </div>
 
+      {controlsMenu.show && (
+        <div
+          ref={controlsMenuRef}
+          className="session-context-menu"
+          style={{ left: controlsMenu.x, top: controlsMenu.y }}
+        >
+          <button className="session-context-item" onClick={reconnectFrames} disabled={visibleWindows.every(window => window.boundSessions.length === 0)}>
+            <span className="session-context-icon">↻</span>
+            Reconnect frames
+          </button>
+          <button className="session-context-item" onClick={clearStaleSessions}>
+            <span className="session-context-icon">⌫</span>
+            Clear stale sessions
+          </button>
+          <button className="session-context-item" onClick={refitTerminalLayout}>
+            <span className="session-context-icon">⤢</span>
+            Refit terminal layout
+          </button>
+        </div>
+      )}
+
       <div className={`terminal-grid ${getGridClass()}`} data-workspace={workspaceId}>
-        {windows.slice(0, windowCount).map((window, index) => {
+        {visibleWindows.map((window, index) => {
           const isVisible = !isMobile || index === mobileActiveIndex
           return (
             <TerminalWindow

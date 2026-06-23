@@ -1,6 +1,7 @@
 import { useEffect, useCallback } from 'react'
 import { useSession } from '../context/SessionContext'
 import type { WorkspaceId } from '../types'
+import { getSessionPrefixForUser, resolveLaunchUser } from '../types'
 import type { Tab } from '../components/TabBar'
 
 interface KeyboardShortcutsConfig {
@@ -27,6 +28,7 @@ export function useKeyboardShortcuts({
     floatingSession,
     refreshSessions,
     settings,
+    terminalUsers,
     sessions,
     loadPreset,
     layoutPresets,
@@ -35,7 +37,13 @@ export function useKeyboardShortcuts({
   // Create a new session
   const createSession = useCallback(async () => {
     try {
-      const prefix = settings.defaultSessionPrefix || 'tmux'
+      const workspaceId: WorkspaceId | null = activeTab === 'terminal1' || activeTab === 'terminal2' || activeTab === 'terminal3'
+        ? activeTab
+        : null
+      const unixUser = workspaceId ? resolveLaunchUser(settings, workspaceId, terminalUsers) : undefined
+      const prefix = unixUser
+        ? getSessionPrefixForUser(settings, unixUser, terminalUsers)
+        : (settings.defaultSessionPrefix || 'tmux')
       const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       const regex = new RegExp(`^${escapedPrefix}(\\d+)$`)
 
@@ -52,7 +60,7 @@ export function useKeyboardShortcuts({
       const response = await fetch('/api/tmux/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: sessionName }),
+        body: JSON.stringify({ name: sessionName, unixUser }),
         signal: AbortSignal.timeout(10000),
       })
       if (response.ok) {
@@ -61,7 +69,7 @@ export function useKeyboardShortcuts({
     } catch (e) {
       console.error('Failed to create session:', e)
     }
-  }, [settings.defaultSessionPrefix, sessions, refreshSessions])
+  }, [activeTab, settings, terminalUsers, sessions, refreshSessions])
 
   // Focus search box
   const focusSearchBox = useCallback(() => {
@@ -74,7 +82,7 @@ export function useKeyboardShortcuts({
 
   // Get current workspace ID based on active tab
   const getCurrentWorkspaceId = useCallback((): WorkspaceId | null => {
-    if (activeTab === 'terminal1' || activeTab === 'terminal2') {
+    if (activeTab === 'terminal1' || activeTab === 'terminal2' || activeTab === 'terminal3') {
       return activeTab
     }
     return null
@@ -119,12 +127,14 @@ export function useKeyboardShortcuts({
         return
       }
 
-      // Tab - Toggle between Terminal 1 and Terminal 2
+      // Tab - Cycle terminal tabs
       if (e.key === 'Tab' && !e.ctrlKey && !e.shiftKey && !e.altKey) {
-        // Only toggle if we're on a terminal tab
-        if (activeTab === 'terminal1' || activeTab === 'terminal2') {
+        // Only cycle if we're on a terminal tab
+        const terminalTabs: WorkspaceId[] = ['terminal1', 'terminal2', 'terminal3']
+        if (terminalTabs.includes(activeTab as WorkspaceId)) {
           e.preventDefault()
-          onTabChange(activeTab === 'terminal1' ? 'terminal2' : 'terminal1')
+          const currentIndex = terminalTabs.indexOf(activeTab as WorkspaceId)
+          onTabChange(terminalTabs[(currentIndex + 1) % terminalTabs.length])
           return
         }
       }

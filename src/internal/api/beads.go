@@ -116,15 +116,20 @@ func configuredBeadsWorkspaces() []string {
 
 func isPathUnder(path string, roots []string) bool {
 	for _, root := range roots {
-		absRoot, err := filepath.Abs(root)
-		if err != nil {
-			continue
-		}
-		if path == absRoot || strings.HasPrefix(path, absRoot+string(os.PathSeparator)) {
+		if core.IsPathUnderRoot(path, root) {
 			return true
 		}
 	}
 	return false
+}
+
+func beadsAutoDiscoverEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("CHROTE_BEADS_AUTO_DISCOVER"))) {
+	case "0", "false":
+		return false
+	default:
+		return true
+	}
 }
 
 func isConfiguredBeadsWorkspace(path string) bool {
@@ -454,35 +459,37 @@ func (h *BeadsHandler) ListProjects(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	for _, root := range core.GetAllowedRoots() {
-		if !core.FileExists(root) {
-			warnings = append(warnings, "Allowed root does not exist: "+root)
-			continue
-		}
+	if beadsAutoDiscoverEnabled() {
+		for _, root := range core.GetAllowedRoots() {
+			if !core.FileExists(root) {
+				warnings = append(warnings, "Allowed root does not exist: "+root)
+				continue
+			}
 
-		entries, err := os.ReadDir(root)
-		if err != nil {
-			warnings = append(warnings, "Cannot read directory "+root+": "+err.Error())
-			continue
-		}
+			entries, err := os.ReadDir(root)
+			if err != nil {
+				warnings = append(warnings, "Cannot read directory "+root+": "+err.Error())
+				continue
+			}
 
-		for _, entry := range entries {
-			if entry.IsDir() {
-				projectPath := filepath.Join(root, entry.Name())
-				if err := h.appendProject(&projects, seen, projectPath, "auto"); err != nil {
-					beadsPath := filepath.Join(projectPath, ".beads")
-					if isDirectory(beadsPath) {
-						warnings = append(warnings, "Ignoring invalid Beads workspace: "+projectPath+": "+err.Error())
+			for _, entry := range entries {
+				if entry.IsDir() {
+					projectPath := filepath.Join(root, entry.Name())
+					if err := h.appendProject(&projects, seen, projectPath, "auto"); err != nil {
+						beadsPath := filepath.Join(projectPath, ".beads")
+						if isDirectory(beadsPath) {
+							warnings = append(warnings, "Ignoring invalid Beads workspace: "+projectPath+": "+err.Error())
+						}
 					}
 				}
 			}
-		}
 
-		// Check root itself
-		if err := h.appendProject(&projects, seen, root, "auto-root"); err != nil {
-			beadsPath := filepath.Join(root, ".beads")
-			if isDirectory(beadsPath) {
-				warnings = append(warnings, "Ignoring invalid Beads workspace: "+root+": "+err.Error())
+			// Check root itself
+			if err := h.appendProject(&projects, seen, root, "auto-root"); err != nil {
+				beadsPath := filepath.Join(root, ".beads")
+				if isDirectory(beadsPath) {
+					warnings = append(warnings, "Ignoring invalid Beads workspace: "+root+": "+err.Error())
+				}
 			}
 		}
 	}

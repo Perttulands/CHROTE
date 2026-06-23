@@ -20,10 +20,12 @@ import LayoutPresetsPanel from './components/LayoutPresetsPanel'
 import { IframePoolProvider } from './components/IframePool'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { installFeatureFlagHelpers, isFeatureEnabled } from './featureFlags'
+import { TERMINAL_WORKSPACE_IDS, getSessionNameFromKey } from './types'
+import type { WorkspaceId } from './types'
 
 // Dragged item overlay component
 function DraggedSessionOverlay({ name }: { name: string }) {
-  const displayName = name
+  const displayName = getSessionNameFromKey(name)
   return (
     <div className="session-item dragging-overlay">
       <span className="session-agent-name">{displayName}</span>
@@ -36,6 +38,7 @@ function DashboardContent() {
   const [activeDragId, setActiveDragId] = useState<string | null>(null)
   const [showHelp, setShowHelp] = useState(false)
   const [showPresets, setShowPresets] = useState(false)
+  const [filesNavigateRequest, setFilesNavigateRequest] = useState<{ path: string; nonce: number } | null>(null)
   const [formationsVisited, setFormationsVisited] = useState(false)
   const { addSessionToWindow, removeSessionFromWindow, setIsDragging, isDragging, settings } = useSession()
   const persistFilesTabState = isFeatureEnabled('filesPersistTabState')
@@ -47,6 +50,10 @@ function DashboardContent() {
   const handleClosePresets = useCallback(() => setShowPresets(false), [])
   const handleTabChange = useCallback((tab: Tab) => {
     setActiveTab(tab)
+  }, [])
+  const handleOpenProjectInFiles = useCallback((path: string) => {
+    setFilesNavigateRequest({ path, nonce: Date.now() })
+    setActiveTab('files')
   }, [])
 
   // Global keyboard shortcuts
@@ -88,7 +95,7 @@ function DashboardContent() {
   const handleDragStart = (event: DragStartEvent) => {
     const type = event.active.data.current?.type
     if (type === 'tag') {
-      setActiveDragId(event.active.data.current?.sessionName ?? null)
+      setActiveDragId(event.active.data.current?.sessionKey ?? event.active.data.current?.sessionName ?? null)
     } else {
       setActiveDragId(event.active.id as string)
     }
@@ -103,8 +110,8 @@ function DashboardContent() {
     if (!over) {
       // Dragged outside - if it's a tag, remove it from the window
       if (active.data.current?.type === 'tag') {
-        const { sessionName, sourceWindowId, sourceWorkspaceId } = active.data.current
-        removeSessionFromWindow(sourceWorkspaceId, sourceWindowId, sessionName)
+        const { sessionName, sessionKey, sourceWindowId, sourceWorkspaceId } = active.data.current
+        removeSessionFromWindow(sourceWorkspaceId, sourceWindowId, sessionKey ?? sessionName)
       }
       return
     }
@@ -112,16 +119,17 @@ function DashboardContent() {
     // Dropped on a window
     if (over.data.current?.type === 'window') {
       const targetWindowId = over.data.current.windowId
-      const targetWorkspaceId = over.data.current.workspaceId as 'terminal1' | 'terminal2'
+      const targetWorkspaceId = over.data.current.workspaceId as WorkspaceId
 
       if (active.data.current?.type === 'session') {
         // Dragging from panel
-        addSessionToWindow(targetWorkspaceId, targetWindowId, active.id as string)
+        const { sessionName, unixUser } = active.data.current
+        addSessionToWindow(targetWorkspaceId, targetWindowId, sessionName ?? active.id as string, unixUser)
       } else if (active.data.current?.type === 'tag') {
         // Dragging a tag between windows
-        const { sessionName, sourceWindowId, sourceWorkspaceId } = active.data.current
+        const { sessionName, sessionKey, unixUser, sourceWindowId, sourceWorkspaceId } = active.data.current
         if (sourceWindowId !== targetWindowId || sourceWorkspaceId !== targetWorkspaceId) {
-          addSessionToWindow(targetWorkspaceId, targetWindowId, sessionName)
+          addSessionToWindow(targetWorkspaceId, targetWindowId, sessionName ?? sessionKey, unixUser)
         }
       }
     }
@@ -139,25 +147,24 @@ function DashboardContent() {
 
         <div className="dashboard-content">
           {/* Terminal areas are always rendered (hidden via CSS) to preserve iframe connections */}
-          <div style={{ display: (activeTab === 'terminal1' || activeTab === 'terminal2') ? 'contents' : 'none' }}>
+          <div style={{ display: TERMINAL_WORKSPACE_IDS.includes(activeTab as WorkspaceId) ? 'contents' : 'none' }}>
             <SessionPanel />
           </div>
-          <div style={{ display: activeTab === 'terminal1' ? 'contents' : 'none' }}>
-            <TerminalArea workspaceId="terminal1" />
-          </div>
-          <div style={{ display: activeTab === 'terminal2' ? 'contents' : 'none' }}>
-            <TerminalArea workspaceId="terminal2" />
-          </div>
+          {TERMINAL_WORKSPACE_IDS.map(workspaceId => (
+            <div key={workspaceId} style={{ display: activeTab === workspaceId ? 'contents' : 'none' }}>
+              <TerminalArea workspaceId={workspaceId} />
+            </div>
+          ))}
           {persistFilesTabState ? (
             <div style={{ display: activeTab === 'files' ? 'contents' : 'none' }}>
-              <FilesView />
+              <FilesView navigateRequest={filesNavigateRequest} />
             </div>
           ) : (
-            activeTab === 'files' && <FilesView />
+            activeTab === 'files' && <FilesView navigateRequest={filesNavigateRequest} />
           )}
           {activeTab === 'beads' && (
             <ErrorBoundary>
-              <BeadsView />
+              <BeadsView onOpenProjectInFiles={handleOpenProjectInFiles} />
             </ErrorBoundary>
           )}
           {(formationsVisited || activeTab === 'formations') && (

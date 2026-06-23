@@ -1,9 +1,8 @@
 // Kanban board view for Beads issues
 
-import { useState } from 'react'
+import type { MouseEvent as ReactMouseEvent } from 'react'
 import type { BeadsIssue, IssueStatus } from './types'
 import IssueCard from './IssueCard'
-import IssueDetailModal from './IssueDetailModal'
 
 interface KanbanViewProps {
   issues: BeadsIssue[]
@@ -12,6 +11,8 @@ interface KanbanViewProps {
   projectPath?: string | null
   enableDetailModal?: boolean
   onIssueUpdated?: () => void
+  onIssueOpen?: (issue: BeadsIssue) => void
+  onIssueContextMenu?: (issue: BeadsIssue, event: ReactMouseEvent) => void
 }
 
 const COLUMNS: { status: IssueStatus; label: string }[] = [
@@ -29,11 +30,11 @@ export default function KanbanView({
   error,
   projectPath,
   enableDetailModal = false,
-  onIssueUpdated,
+  onIssueOpen,
+  onIssueContextMenu,
 }: KanbanViewProps) {
-  const [selectedIssue, setSelectedIssue] = useState<BeadsIssue | null>(null)
-  const openIssue = enableDetailModal && projectPath
-    ? (issue: BeadsIssue) => setSelectedIssue(issue)
+  const openIssue = enableDetailModal && projectPath && onIssueOpen
+    ? onIssueOpen
     : undefined
 
   if (loading) {
@@ -93,7 +94,7 @@ export default function KanbanView({
               </div>
               <div className="kanban-column-content">
                 {columnIssues.map(issue => (
-                  <IssueCard key={issue.id} issue={issue} showDependencies onClick={openIssue} />
+                  <IssueCard key={issue.id} issue={issue} showDependencies onClick={openIssue} onContextMenu={onIssueContextMenu} />
                 ))}
               </div>
             </div>
@@ -107,20 +108,12 @@ export default function KanbanView({
             </div>
             <div className="kanban-column-content">
               {otherIssues.map(issue => (
-                <IssueCard key={issue.id} issue={issue} showDependencies onClick={openIssue} />
+                <IssueCard key={issue.id} issue={issue} showDependencies onClick={openIssue} onContextMenu={onIssueContextMenu} />
               ))}
             </div>
           </div>
         )}
       </div>
-      {selectedIssue && projectPath && (
-        <IssueDetailModal
-          projectPath={projectPath}
-          issue={selectedIssue}
-          onClose={() => setSelectedIssue(null)}
-          onIssueUpdated={onIssueUpdated}
-        />
-      )}
     </>
   )
 }

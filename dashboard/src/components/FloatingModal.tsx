@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useSession } from '../context/SessionContext'
+import { getSessionKey, getSessionNameFromKey, getSessionUserFromKey } from '../types'
 
 function FloatingModal() {
-  const { floatingSession, closeFloatingModal, settings } = useSession()
+  const { floatingSession, closeFloatingModal, settings, sessions } = useSession()
   const [loaded, setLoaded] = useState(false)
   const [position, setPosition] = useState({ x: 80, y: 60 })
   const [size] = useState({ width: 1000, height: 700 })
@@ -124,7 +125,15 @@ function FloatingModal() {
 
   if (!floatingSession) return null
 
-  const displayName = floatingSession
+  const displayName = getSessionNameFromKey(floatingSession)
+  const keyUser = getSessionUserFromKey(floatingSession)
+  const matchingSessions = keyUser
+    ? sessions.filter(item => getSessionKey(item.name, item.unixUser) === floatingSession)
+    : sessions.filter(item => item.name === displayName)
+  const session = matchingSessions.length === 1 ? matchingSessions[0] : undefined
+  const unixUser = session?.unixUser ?? keyUser
+  const canOpenSession = Boolean(session || unixUser.trim())
+  const userArg = unixUser.trim() ? `&arg=${encodeURIComponent(unixUser)}` : ''
 
   return (
     <div className="floating-modal-overlay" onClick={closeFloatingModal}>
@@ -149,19 +158,23 @@ function FloatingModal() {
           </div>
         </div>
         <div ref={bodyRef} className="floating-modal-body">
-          <iframe
-            ref={iframeRef}
-            key={floatingSession}
-            src={`/terminal/?arg=${encodeURIComponent(floatingSession)}`}
-            onLoad={handleIframeLoad}
-            style={{
-              width: '100%',
-              height: '100%',
-              border: 'none',
-              backgroundColor: '#0a0a0a',
-            }}
-            title={`Terminal - ${floatingSession}`}
-          />
+          {canOpenSession ? (
+            <iframe
+              ref={iframeRef}
+              key={floatingSession}
+              src={`/terminal/?arg=${encodeURIComponent(displayName)}${userArg}`}
+              onLoad={handleIframeLoad}
+              style={{
+                width: '100%',
+                height: '100%',
+                border: 'none',
+                backgroundColor: '#0a0a0a',
+              }}
+              title={`Terminal - ${displayName}`}
+            />
+          ) : (
+            <div className="empty-window-content">Ambiguous legacy session name; attach the user-qualified session from the session list.</div>
+          )}
         </div>
       </div>
     </div>

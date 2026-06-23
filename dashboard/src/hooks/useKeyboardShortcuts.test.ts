@@ -1,7 +1,8 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { renderHook } from '@testing-library/react'
+import { renderHook, waitFor } from '@testing-library/react'
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
+import { DEFAULT_SETTINGS } from '../types'
 
 // We need to mock the useSession context hook
 const mockUseSession = vi.fn()
@@ -24,14 +25,16 @@ describe('useKeyboardShortcuts Hook', () => {
     mockUseSession.mockReturnValue({
       workspaces: {
         'terminal1': { windowCount: 4 }, // Add mock workspace
-        'terminal2': { windowCount: 4 }
+        'terminal2': { windowCount: 4 },
+        'terminal3': { windowCount: 4 },
       },
       toggleSidebar: mockToggleSidebar,
       closeFloatingModal: mockCloseFloatingModal,
 
       floatingSession: null,
       refreshSessions: vi.fn(),
-      settings: { defaultSessionPrefix: 'tmux' },
+      settings: DEFAULT_SETTINGS,
+      terminalUsers: ['perttu', 'tavern'],
       sessions: [],
       loadPreset: vi.fn(),
       layoutPresets: [],
@@ -123,13 +126,47 @@ describe('useKeyboardShortcuts Hook', () => {
     document.body.removeChild(input)
   })
 
-  it('switches tabs on number keys (1-5) if not in terminal context', () => {
-     // NOTE: The implementation shows strict checking for 1-4 being mapped to windows?
-     // Let's re-read the implementation.
-     // "Number keys 1-4 without Ctrl - Switch to window"
-     // "Tab - Toggle between Terminal 1 and Terminal 2"
-     // It does NOT seem to map 1-5 to Tabs in this specific file snippet we saw.
-     // We will remove this test case or skip it until we confirm where that logic lives. 
-     // The "Tab Bar" logic might be elsewhere. 
+  it('creates Ctrl+N sessions with the active tab launch user prefix', async () => {
+    const refreshSessions = vi.fn()
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true })) as any)
+    mockUseSession.mockReturnValue({
+      workspaces: {
+        terminal1: { windowCount: 4 },
+        terminal2: { windowCount: 4 },
+        terminal3: { windowCount: 4 },
+      },
+      toggleSidebar: mockToggleSidebar,
+      closeFloatingModal: mockCloseFloatingModal,
+      floatingSession: null,
+      refreshSessions,
+      settings: {
+        ...DEFAULT_SETTINGS,
+        terminalLaunchUsers: {
+          ...DEFAULT_SETTINGS.terminalLaunchUsers,
+          terminal3: 'tavern',
+        },
+        terminalSessionPrefixes: {
+          ...DEFAULT_SETTINGS.terminalSessionPrefixes,
+          tavern: 'forge',
+        },
+      },
+      terminalUsers: ['perttu', 'tavern'],
+      sessions: [],
+      loadPreset: vi.fn(),
+      layoutPresets: [],
+    })
+
+    renderHook(() => useKeyboardShortcuts({
+      activeTab: 'terminal3',
+      onTabChange: mockOnTabChange,
+      onShowHelp: mockOnShowHelp,
+      isHelpOpen: false
+    }))
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', ctrlKey: true }))
+
+    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled())
+    const [, init] = (globalThis.fetch as any).mock.calls[0]
+    expect(JSON.parse(init.body)).toEqual({ name: 'forge1', unixUser: 'tavern' })
   })
 })

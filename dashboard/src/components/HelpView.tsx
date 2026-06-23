@@ -76,7 +76,7 @@ function ShortcutsSection() {
             <div className="help-shortcut-keys">
               <kbd>Tab</kbd>
             </div>
-            <span>Toggle between Terminal 1 and Terminal 2</span>
+            <span>Cycle between Terminal tabs</span>
           </div>
           <div className="help-shortcut-row">
             <div className="help-shortcut-keys">
@@ -134,7 +134,7 @@ function ShortcutsSection() {
         <ul className="help-list">
           <li>Hold <kbd>Shift</kbd> while selecting text to bypass tmux and copy natively</li>
           <li>Collapse the sidebar with <kbd>Ctrl+S</kbd> for maximum terminal space</li>
-          <li>Use <kbd>Tab</kbd> to quickly flip between your two terminal workspaces</li>
+          <li>Use <kbd>Tab</kbd> to quickly cycle between terminal workspaces</li>
         </ul>
       </div>
     </div>
@@ -148,11 +148,11 @@ function TerminalsSection() {
       <p className="help-intro">Each workspace has up to 4 panes in a responsive grid.</p>
 
       <div className="help-card">
-        <h3>Two Workspaces</h3>
+        <h3>Three Workspaces</h3>
         <p>
-          <strong>Terminal 1</strong> and <strong>Terminal 2</strong> are independent.
+          <strong>Terminal</strong>, <strong>Terminal 2</strong>, and <strong>Terminal 3</strong> are independent.
           Each has its own set of 4 panes with different sessions bound.
-          Use <kbd>Tab</kbd> to switch between them.
+          Use <kbd>Tab</kbd> to cycle between them.
         </p>
       </div>
 

@@ -1,6 +1,6 @@
 // Reusable issue card component for Beads views
 
-import type { KeyboardEvent } from 'react'
+import type { KeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
 import type { BeadsIssue, IssueStatus, IssueType } from './types'
 
 interface IssueCardProps {
@@ -9,6 +9,7 @@ interface IssueCardProps {
   showDependencies?: boolean
   highlighted?: boolean
   onClick?: (issue: BeadsIssue) => void
+  onContextMenu?: (issue: BeadsIssue, event: ReactMouseEvent<HTMLDivElement>) => void
 }
 
 const STATUS_COLORS: Record<IssueStatus, string> = {
@@ -51,7 +52,7 @@ function formatStatus(status: IssueStatus): string {
   return status.replace(/_/g, ' ')
 }
 
-export default function IssueCard({ issue, compact = false, showDependencies = false, highlighted = false, onClick }: IssueCardProps) {
+export default function IssueCard({ issue, compact = false, showDependencies = false, highlighted = false, onClick, onContextMenu }: IssueCardProps) {
   const statusColor = STATUS_COLORS[issue.status] || 'var(--text-secondary)'
   const typeIcon = issue.type ? TYPE_ICONS[issue.type] || '' : ''
   const interactiveProps = onClick
@@ -67,10 +68,15 @@ export default function IssueCard({ issue, compact = false, showDependencies = f
         },
       }
     : {}
+  const contextMenuProps = onContextMenu
+    ? {
+        onContextMenu: (event: ReactMouseEvent<HTMLDivElement>) => onContextMenu(issue, event),
+      }
+    : {}
 
   if (compact) {
     return (
-      <div className={`issue-card compact ${onClick ? 'clickable' : ''} ${highlighted ? 'highlighted' : ''}`} {...interactiveProps}>
+      <div className={`issue-card compact ${onClick ? 'clickable' : ''} ${highlighted ? 'highlighted' : ''}`} {...interactiveProps} {...contextMenuProps}>
         <span className="issue-id">{issue.id}</span>
         <span className="issue-title">{issue.title}</span>
         {issue.priority && (
@@ -83,7 +89,7 @@ export default function IssueCard({ issue, compact = false, showDependencies = f
   }
 
   return (
-    <div className={`issue-card ${onClick ? 'clickable' : ''} ${highlighted ? 'highlighted' : ''}`} {...interactiveProps}>
+    <div className={`issue-card ${onClick ? 'clickable' : ''} ${highlighted ? 'highlighted' : ''}`} {...interactiveProps} {...contextMenuProps}>
       <div className="issue-card-header">
         <span className="issue-id">{issue.id}</span>
         <div className="issue-card-meta">

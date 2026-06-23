@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { TmuxSession } from '../types'
-import { getGroupDisplayName } from '../types'
+import { getGroupDisplayName, getSessionKey } from '../types'
 import SessionItem from './SessionItem'
 
 interface SessionGroupProps {
@@ -26,7 +26,7 @@ function SessionGroup({ groupKey, sessions }: SessionGroupProps) {
       {expanded && (
         <div className="session-group-items">
           {sessions.map(session => (
-            <SessionItem key={session.name} session={session} />
+            <SessionItem key={getSessionKey(session.name, session.unixUser)} session={session} />
           ))}
         </div>
       )}

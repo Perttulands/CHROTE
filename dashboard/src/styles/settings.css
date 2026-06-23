@@ -382,6 +382,31 @@
   color: var(--danger, #ff4444);
 }
 
+.beads-project-add-form {
+  margin-top: 12px;
+}
+
+.beads-project-add-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.beads-project-add-row .settings-input {
+  flex: 1;
+  min-width: 260px;
+}
+
+.settings-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.settings-btn:disabled:hover {
+  border-color: var(--divider);
+  color: var(--text-secondary);
+}
+
 .settings-btn {
   padding: 10px 16px;
   background-color: var(--surface-primary);
