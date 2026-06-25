@@ -4,7 +4,7 @@ import { createElement } from 'react'
 import { SessionProvider, useSession } from './SessionContext'
 import { ToastProvider } from './ToastContext'
 import { featureFlagKey } from '../featureFlags'
-import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE } from '../types'
+import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE, resolveLaunchUser } from '../types'
 
 function setViewportWidth(width: number) {
   Object.defineProperty(window, 'innerWidth', {
@@ -136,6 +136,13 @@ describe('dashboard persisted storage contract', () => {
         ],
         windowCount: 1,
       },
+      terminal3: {
+        windows: [
+          { id: 'terminal3-window-0', boundSessions: [], activeSession: null, colorIndex: 0 },
+          { id: 'terminal3-window-1', boundSessions: [], activeSession: null, colorIndex: 1 },
+        ],
+        windowCount: 2,
+      },
     })
     expect(result.current.sidebarCollapsed).toBe(true)
     expect(result.current.settings).toEqual({
@@ -184,6 +191,35 @@ describe('dashboard persisted storage contract', () => {
         paneBorderActive: '#abcdef',
       },
     })
+  })
+
+  it('preserves the legacy global session prefix without hardcoded user-key migration', () => {
+    localStorage.setItem('chrote-dashboard-state', JSON.stringify({
+      workspaces: {
+        terminal1: {
+          windows: [
+            { id: 'terminal1-window-0', boundSessions: [], activeSession: null, colorIndex: 0 },
+          ],
+          windowCount: 1,
+        },
+        terminal2: {
+          windows: [
+            { id: 'terminal2-window-0', boundSessions: [], activeSession: null, colorIndex: 0 },
+          ],
+          windowCount: 1,
+        },
+      },
+      sidebarCollapsed: false,
+      settingsSchemaVersion: 2,
+      settings: {
+        defaultSessionPrefix: 'legacy',
+      },
+    }))
+
+    const { result } = renderSession()
+
+    expect(result.current.settings.defaultSessionPrefix).toBe('legacy')
+    expect(result.current.settings.terminalSessionPrefixes).toEqual({})
   })
 
   it('filters INIT-PENDING active sessions before persisting state', async () => {
@@ -376,7 +412,178 @@ describe('migrateStoredState (via loadStoredState)', () => {
 })
 
 // ──────────────────────────────────────────────
-// 2. addSessionToWindow — deduplication across ALL workspaces
+// 4. launch-user resolution
+// ──────────────────────────────────────────────
+describe('resolveLaunchUser', () => {
+  it('keeps default/no configured-users mode as bare tmux sessions even with stale stored launch user settings', () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      terminalLaunchUsers: {
+        ...DEFAULT_SETTINGS.terminalLaunchUsers,
+        terminal1: 'perttu',
+      },
+    }
+
+    expect(resolveLaunchUser(settings, 'terminal1', [])).toBe('')
+  })
+
+  it('uses configured launch users only when the server advertises that user-scoped mode is enabled', () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      terminalLaunchUsers: {
+        ...DEFAULT_SETTINGS.terminalLaunchUsers,
+        terminal3: 'tavern',
+      },
+    }
+
+    expect(resolveLaunchUser(settings, 'terminal3', ['perttu', 'tavern'])).toBe('tavern')
+  })
+})
+
+// ──────────────────────────────────────────────
+// 5. createSession — single creation path, optional attach
+// ──────────────────────────────────────────────
+describe('createSession', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  function stubSessionFetch(existingSessions = [
+    { name: 'shell1', windows: 1, attached: false, group: 'shell', unixUser: 'perttu' },
+  ]) {
+    const fetchMock = vi.fn((_: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({}),
+          text: () => Promise.resolve(''),
+        })
+      }
+
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          sessions: existingSessions,
+          grouped: {},
+          terminalUsers: ['perttu', 'tavern'],
+          timestamp: new Date().toISOString(),
+        }),
+        text: () => Promise.resolve(''),
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  it('creates a standalone side-panel session through the shared action without attaching it', async () => {
+    const fetchMock = stubSessionFetch()
+    const { result } = renderSession()
+
+    await waitFor(() => expect(result.current.terminalUsers).toEqual(['perttu', 'tavern']))
+    fetchMock.mockClear()
+
+    let created: string | null = null
+    await act(async () => {
+      created = await result.current.createSession({ workspaceId: 'terminal1', unixUser: 'perttu' })
+    })
+
+    expect(created).toBe('shell2')
+    expect(fetchMock).toHaveBeenCalled()
+    const [, init] = fetchMock.mock.calls[0]
+    expect(JSON.parse(String(init?.body))).toEqual({ name: 'shell2', unixUser: 'perttu' })
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual([])
+  })
+
+  it('creates and immediately attaches a window session through the same shared action', async () => {
+    const fetchMock = stubSessionFetch()
+    const { result } = renderSession()
+
+    await waitFor(() => expect(result.current.terminalUsers).toEqual(['perttu', 'tavern']))
+    fetchMock.mockClear()
+
+    let created: string | null = null
+    await act(async () => {
+      created = await result.current.createSession({
+        workspaceId: 'terminal3',
+        unixUser: 'tavern',
+        attachTo: { workspaceId: 'terminal3', windowId: 'terminal3-window-0' },
+      })
+    })
+
+    expect(created).toBe('tavern1')
+    const [, init] = fetchMock.mock.calls[0]
+    expect(JSON.parse(String(init?.body))).toEqual({ name: 'tavern1', unixUser: 'tavern' })
+    const win = result.current.workspaces.terminal3.windows[0]
+    expect(win.boundSessions).toEqual(['tavern:tavern1'])
+    expect(win.activeSession).toBe('tavern:tavern1')
+  })
+
+  it('handles expected create-session API failures with a toast and no console error', async () => {
+    const fetchMock = stubSessionFetch()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { result } = renderSession()
+
+    await waitFor(() => expect(result.current.terminalUsers).toEqual(['perttu', 'tavern']))
+    fetchMock.mockClear()
+    fetchMock.mockImplementationOnce(() => Promise.resolve({
+      ok: false,
+      json: () => Promise.resolve({ error: 'tmux not running' }),
+      text: () => Promise.resolve('{"error":"tmux not running"}'),
+    }))
+
+    let created: string | null = 'not-null'
+    await act(async () => {
+      created = await result.current.createSession({ workspaceId: 'terminal1', unixUser: 'perttu' })
+    })
+
+    expect(created).toBeNull()
+    expect(consoleError).not.toHaveBeenCalled()
+    consoleError.mockRestore()
+  })
+})
+
+describe('refreshSessions', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it('preserves existing sessions and groups when a poll returns a non-ok response', async () => {
+    const existingSessions = [
+      { name: 'shell1', windows: 1, attached: false, group: 'shell', unixUser: 'perttu' },
+    ]
+    const existingGrouped = { shell: existingSessions }
+    const fetchMock = vi.fn((): Promise<any> => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({
+        sessions: existingSessions,
+        grouped: existingGrouped,
+        terminalUsers: ['perttu'],
+        timestamp: new Date().toISOString(),
+      }),
+      text: () => Promise.resolve(''),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { result } = renderSession()
+
+    await waitFor(() => expect(result.current.sessions).toEqual(existingSessions))
+    fetchMock.mockImplementationOnce(() => Promise.resolve({
+      ok: false,
+      json: () => Promise.resolve({ error: 'tmux server not running' }),
+      text: () => Promise.resolve('{"error":"tmux server not running"}'),
+    }))
+
+    await act(async () => {
+      await result.current.refreshSessions()
+    })
+
+    expect(result.current.error).toBe('tmux server not running')
+    expect(result.current.sessions).toEqual(existingSessions)
+    expect(result.current.groupedSessions).toEqual(existingGrouped)
+  })
+})
+
+// ──────────────────────────────────────────────
+// 6. addSessionToWindow cross-window dedup behavior
 // ──────────────────────────────────────────────
 describe('addSessionToWindow', () => {
   beforeEach(() => {
@@ -411,6 +618,37 @@ describe('addSessionToWindow', () => {
 
     expect(result.current.workspaces.terminal2.windows[0].boundSessions).toContain('traveler')
     expect(result.current.workspaces.terminal1.windows[0].boundSessions).not.toContain('traveler')
+  })
+
+  it('keeps same-named sessions from different Unix users distinct', () => {
+    const { result } = renderSession()
+
+    act(() => {
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'shell', 'perttu')
+    })
+    act(() => {
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'shell', 'tavern')
+    })
+
+    const win = result.current.workspaces.terminal1.windows[0]
+    expect(win.boundSessions).toEqual(['perttu:shell', 'tavern:shell'])
+    expect(result.current.assignedSessions.get('perttu:shell')).toMatchObject({ workspaceId: 'terminal1', windowId: 'terminal1-window-0' })
+    expect(result.current.assignedSessions.get('tavern:shell')).toMatchObject({ workspaceId: 'terminal1', windowId: 'terminal1-window-0' })
+  })
+
+  it('replaces a legacy bare binding with the user-qualified binding instead of duplicating it', () => {
+    const { result } = renderSession()
+
+    act(() => {
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'shell')
+    })
+    act(() => {
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'shell', 'perttu')
+    })
+
+    const win = result.current.workspaces.terminal1.windows[0]
+    expect(win.boundSessions).toEqual(['perttu:shell'])
+    expect(win.activeSession).toBe('perttu:shell')
   })
 
   it('removes session from another window in the SAME workspace', () => {

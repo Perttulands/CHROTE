@@ -1,17 +1,23 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSession } from '../context/SessionContext'
 import { useToast } from '../context/ToastContext'
-import { getGroupPriority } from '../types'
+import { getDefaultLaunchUser, getGroupPriority, getTerminalUserInitial } from '../types'
 import SessionGroup from './SessionGroup'
 import NukeConfirmModal from './NukeConfirmModal'
 
 function SessionPanel() {
-  const { groupedSessions, loading, error, sidebarCollapsed, toggleSidebar, refreshSessions, sessions, settings } = useSession()
+  const { groupedSessions, loading, error, sidebarCollapsed, toggleSidebar, refreshSessions, createSession: createSessionAction, sessions, terminalUsers } = useSession()
   const { addToast } = useToast()
   const [creating, setCreating] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [showNukeModal, setShowNukeModal] = useState(false)
   const [nuking, setNuking] = useState(false)
+  const [newSessionMenu, setNewSessionMenu] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 })
+  const [namedSessionPopup, setNamedSessionPopup] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 })
+  const [namedSessionName, setNamedSessionName] = useState('')
+  const [namedSessionUser, setNamedSessionUser] = useState('')
+  const newSessionMenuRef = useRef<HTMLDivElement>(null)
+  const namedSessionPopupRef = useRef<HTMLDivElement>(null)
 
   // Sort groups by priority and filter by search
   const sortedGroups = useMemo(() => {
@@ -36,43 +42,59 @@ function SessionPanel() {
     })
   }, [groupedSessions, searchTerm])
 
-  const createSession = async () => {
+  useEffect(() => {
+    if (!newSessionMenu.show) return
+    const close = (event: MouseEvent) => {
+      if (newSessionMenuRef.current?.contains(event.target as Node)) return
+      setNewSessionMenu({ show: false, x: 0, y: 0 })
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [newSessionMenu.show])
+
+  useEffect(() => {
+    if (!namedSessionPopup.show) return
+    const close = (event: MouseEvent) => {
+      if (namedSessionPopupRef.current?.contains(event.target as Node)) return
+      setNamedSessionPopup({ show: false, x: 0, y: 0 })
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [namedSessionPopup.show])
+
+  const createSessionForUser = async (unixUser?: string, explicitName?: string) => {
     setCreating(true)
     try {
-      const prefix = settings.defaultSessionPrefix || 'tmux'
-      // Escape regex special chars in prefix
-      const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      const regex = new RegExp(`^${escapedPrefix}(\\d+)$`)
-
-      // Find the next available number for this prefix
-      const existingNumbers = sessions
-        .map(s => s.name.match(regex))
-        .filter(Boolean)
-        .map(m => parseInt(m![1], 10))
-
-      const nextNum = existingNumbers.length > 0
-        ? Math.max(...existingNumbers) + 1
-        : 1
-      const sessionName = `${prefix}${nextNum}`
-
-      const response = await fetch('/api/tmux/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: sessionName }),
-        signal: AbortSignal.timeout(10000),
+      const created = await createSessionAction({
+        workspaceId: 'terminal1',
+        ...(unixUser !== undefined ? { unixUser } : {}),
+        ...(explicitName !== undefined ? { name: explicitName } : {}),
       })
-      if (response.ok) {
-        addToast(`Session '${sessionName}' created`, 'success')
-        refreshSessions()
-      } else {
-        addToast('Failed to create session', 'error')
+      if (created) {
+        setNamedSessionName('')
+        setNamedSessionPopup({ show: false, x: 0, y: 0 })
       }
-    } catch (e) {
-      console.error('Failed to create session:', e)
-      addToast('Failed to create session', 'error')
     } finally {
       setCreating(false)
+      setNewSessionMenu({ show: false, x: 0, y: 0 })
     }
+  }
+
+  const createSession = async () => {
+    await createSessionForUser()
+  }
+
+  const openNamedSessionField = () => {
+    const unixUser = getDefaultLaunchUser('terminal1', terminalUsers)
+    setNamedSessionUser(unixUser)
+    setNamedSessionPopup({ show: true, x: newSessionMenu.x, y: newSessionMenu.y })
+    setNewSessionMenu({ show: false, x: 0, y: 0 })
+  }
+
+  const submitNamedSession = async () => {
+    const unixUser = namedSessionUser || getDefaultLaunchUser('terminal1', terminalUsers)
+    if (!namedSessionName.trim()) return
+    await createSessionForUser(unixUser, namedSessionName)
   }
 
   const nukeAllSessions = async () => {
@@ -113,6 +135,10 @@ function SessionPanel() {
             <button
               className="add-btn"
               onClick={createSession}
+              onContextMenu={(event) => {
+                event.preventDefault()
+                setNewSessionMenu({ show: true, x: event.clientX, y: event.clientY })
+              }}
               disabled={creating}
               title="New tmux session"
             >
@@ -124,6 +150,74 @@ function SessionPanel() {
           </>
         )}
       </div>
+
+      {newSessionMenu.show && (
+        <div
+          ref={newSessionMenuRef}
+          className="session-context-menu"
+          style={{ left: newSessionMenu.x, top: newSessionMenu.y }}
+        >
+          {terminalUsers.map(user => (
+            <button
+              key={user}
+              className="session-context-item"
+              onClick={() => createSessionForUser(user)}
+              disabled={creating}
+            >
+              <span className="session-context-icon">{getTerminalUserInitial(user)}</span>
+              New as {getTerminalUserInitial(user)} {user}
+            </button>
+          ))}
+          <div className="session-context-divider" />
+          <button className="session-context-item" onClick={openNamedSessionField}>
+            <span className="session-context-icon">✎</span>
+            New named session
+          </button>
+        </div>
+      )}
+
+      {!sidebarCollapsed && namedSessionPopup.show && (
+        <div
+          ref={namedSessionPopupRef}
+          role="dialog"
+          aria-label="Create named tmux session"
+          className="session-context-menu session-named-popup"
+          style={{ left: namedSessionPopup.x, top: namedSessionPopup.y }}
+        >
+          <div className="session-named-popup-title">New named session</div>
+          <input
+            aria-label="New session name"
+            type="text"
+            className="session-search-input"
+            placeholder="Session name..."
+            value={namedSessionName}
+            onChange={(e) => setNamedSessionName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void submitNamedSession()
+              if (e.key === 'Escape') setNamedSessionPopup({ show: false, x: 0, y: 0 })
+            }}
+            autoFocus
+          />
+          {terminalUsers.length > 1 && (
+            <select
+              aria-label="New named session user"
+              className="session-user-select"
+              value={namedSessionUser || getDefaultLaunchUser('terminal1', terminalUsers)}
+              onChange={(e) => setNamedSessionUser(e.target.value)}
+            >
+              {terminalUsers.map(user => <option key={user} value={user}>{user}</option>)}
+            </select>
+          )}
+          <div className="session-named-popup-actions">
+            <button className="session-context-item session-inline-action" onClick={submitNamedSession} disabled={!namedSessionName.trim() || creating}>
+              Create named session
+            </button>
+            <button className="session-context-item session-inline-action" onClick={() => setNamedSessionPopup({ show: false, x: 0, y: 0 })}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {!sidebarCollapsed && (
         <div className="session-search-container">

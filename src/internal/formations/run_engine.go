@@ -22,6 +22,18 @@ type FormationExecutor interface {
 	ExecuteFormation(FormationExecution) (FormationExecutionResult, error)
 }
 
+type FormationReattachExecutor interface {
+	ReattachFormationDispatch(FormationReattachRequest) (FormationExecutionResult, error)
+}
+
+type FormationReattachRequest struct {
+	RunID      string
+	DispatchID string
+	NodeID     string
+	SlotID     string
+	Formation  FormationNode
+}
+
 type unavailableFormationExecutor struct {
 	boundary string
 }
@@ -73,12 +85,16 @@ type FormationOutputPayload struct {
 }
 
 type GateEvaluation struct {
-	RunID     string
-	GateID    string
-	Title     string
-	Kinds     []string
-	Criterion string
-	Input     RunInputRef
+	RunID        string
+	GateID       string
+	Title        string
+	Kinds        []string
+	Criterion    string
+	Command      string // legacy string form: parseable, but not executable by script gates
+	CommandArgv  []string
+	CommandCWD   string
+	CommandShell string
+	Input        RunInputRef
 }
 
 type GateEvaluationResult struct {
@@ -283,10 +299,26 @@ func (e *RunEngine) ResumeRun(runID string, req RunResumeRequest) (*RunStatusPro
 	}
 	resumeEvent := events[len(events)-1]
 	if openDispatches := openDispatchRefsFromEvent(resumeEvent); len(openDispatches) > 0 {
-		if err := e.appendOpenDispatchReattachFailure(runID, openDispatches); err != nil {
+		openDispatches = enrichOpenDispatchRefs(events, openDispatches)
+		started := events[0]
+		board, err := e.readRunBoard(stringFromEventData(started, "snapshot"))
+		if err != nil {
 			return nil, err
 		}
-		return e.store.ProjectRun(runID)
+		handled, err := e.reattachOpenDispatches(runID, board, openDispatches)
+		if err != nil {
+			return nil, err
+		}
+		if !handled {
+			if err := e.appendOpenDispatchReattachFailure(runID, openDispatches); err != nil {
+				return nil, err
+			}
+			return e.store.ProjectRun(runID)
+		}
+		events, err = e.store.ReadRunEvents(runID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	started := events[0]
 	board, err := e.readRunBoard(stringFromEventData(started, "snapshot"))
@@ -378,6 +410,78 @@ func openDispatchRefsFromEvent(event RunEvent) []openDispatchRef {
 		}
 	}
 	return refs
+}
+
+func enrichOpenDispatchRefs(events []RunEvent, refs []openDispatchRef) []openDispatchRef {
+	if len(refs) == 0 {
+		return refs
+	}
+	dispatches := map[string]RunEvent{}
+	for _, event := range events {
+		if event.Type != RunEventSlotDispatch || event.Data == nil {
+			continue
+		}
+		dispatchID := stringFromEventData(event, "dispatchId")
+		if dispatchID != "" {
+			dispatches[dispatchID] = event
+		}
+	}
+	enriched := append([]openDispatchRef(nil), refs...)
+	for i, ref := range enriched {
+		dispatch := dispatches[ref.DispatchID]
+		if ref.NodeID == "" {
+			enriched[i].NodeID = dispatch.NodeID
+			if enriched[i].NodeID == "" {
+				enriched[i].NodeID = stringFromEventData(dispatch, "nodeId")
+			}
+		}
+		if ref.SlotID == "" {
+			enriched[i].SlotID = dispatch.SlotID
+			if enriched[i].SlotID == "" {
+				enriched[i].SlotID = stringFromEventData(dispatch, "slotId")
+			}
+		}
+	}
+	return enriched
+}
+
+func (e *RunEngine) reattachOpenDispatches(runID string, board *BoardDocument, refs []openDispatchRef) (bool, error) {
+	reattacher, ok := e.executor.(FormationReattachExecutor)
+	if !ok || reattacher == nil || len(refs) == 0 {
+		return false, nil
+	}
+	if len(refs) != 1 {
+		return false, nil
+	}
+	ref := refs[0]
+	formation, ok := findFormation(board.Formations, ref.NodeID)
+	if !ok {
+		return false, nil
+	}
+	result, err := reattacher.ReattachFormationDispatch(FormationReattachRequest{
+		RunID:      runID,
+		DispatchID: ref.DispatchID,
+		NodeID:     ref.NodeID,
+		SlotID:     ref.SlotID,
+		Formation:  formation,
+	})
+	if err != nil {
+		return true, err
+	}
+	if result.Status == "" {
+		result.Status = "done"
+	}
+	if err := e.ensureFormationOutputPayloads(runID, formation, result); err != nil {
+		return true, err
+	}
+	if err := e.store.AppendRunEvent(runID, RunEvent{
+		Type:   RunEventNodeOutput,
+		NodeID: ref.NodeID,
+		Data:   formationOutputEventData(result),
+	}); err != nil {
+		return true, err
+	}
+	return true, nil
 }
 
 func (e *RunEngine) appendOpenDispatchReattachFailure(runID string, refs []openDispatchRef) error {
@@ -506,11 +610,15 @@ func (e *RunEngine) resumeSnapshot(runID string, board *BoardDocument, mission M
 	for _, gate := range board.Gates {
 		gateByID[gate.ID] = gate
 	}
+	if terminalPassReachedOnBoard(board, events) {
+		return e.appendResumeSucceeded(runID)
+	}
 
 	ready := map[string]map[string]RunInputRef{}
 	queued := map[string]bool{}
 	attempts := map[string]int{}
 	completed := map[string]bool{}
+	processedGateEdges := processedGateInputEdges(events)
 	var queue []string
 
 	for _, event := range events {
@@ -521,7 +629,7 @@ func (e *RunEngine) resumeSnapshot(runID string, board *BoardDocument, mission M
 			continue
 		}
 		completed[event.NodeID] = true
-		if err := e.replayNodeOutputToReady(runID, board, event, ready, queued, &queue); err != nil {
+		if err := e.replayNodeOutputToReady(runID, board, gateByID, event, limits, processedGateEdges, ready, queued, &queue); err != nil {
 			if errors.Is(err, errRunStopped) {
 				return nil
 			}
@@ -629,8 +737,20 @@ func (e *RunEngine) resumeSnapshot(runID string, board *BoardDocument, mission M
 		return e.appendStarvedBlock(runID, starved)
 	}
 	if !ranAny {
+		completionEvents := events
+		if refreshed, err := e.store.ReadRunEvents(runID); err == nil && len(refreshed) > len(events) {
+			completionEvents = refreshed
+			completed = completedFormationsFromEvents(refreshed)
+		}
+		if terminalPassReachedOnBoard(board, completionEvents) || (latestGateVerdictAllowsGraphCompletion(completionEvents) && runGraphComplete(board, mission.ID, completed)) {
+			return e.appendResumeSucceeded(runID)
+		}
 		return e.appendErrorAndBlock(runID, "resume_no_work", "no resumable work found", "engine", "", "no resumable work found")
 	}
+	return e.appendResumeSucceeded(runID)
+}
+
+func (e *RunEngine) appendResumeSucceeded(runID string) error {
 	return e.store.AppendRunEvent(runID, RunEvent{
 		Type: RunEventSucceeded,
 		Data: map[string]any{
@@ -643,7 +763,108 @@ func (e *RunEngine) resumeSnapshot(runID string, board *BoardDocument, mission M
 	})
 }
 
-func (e *RunEngine) replayNodeOutputToReady(runID string, board *BoardDocument, event RunEvent, ready map[string]map[string]RunInputRef, queued map[string]bool, queue *[]string) error {
+func completedFormationsFromEvents(events []RunEvent) map[string]bool {
+	completed := map[string]bool{}
+	for _, event := range events {
+		if event.Type == RunEventNodeOutput && event.NodeID != "" {
+			completed[event.NodeID] = true
+		}
+	}
+	return completed
+}
+
+func terminalPassReached(events []RunEvent) bool {
+	return terminalPassReachedOnBoard(nil, events)
+}
+
+func terminalPassReachedOnBoard(board *BoardDocument, events []RunEvent) bool {
+	for i := len(events) - 1; i >= 0; i-- {
+		event := events[i]
+		if event.Type != RunEventGateVerdict {
+			continue
+		}
+		if stringFromEventData(event, "routePort") != "pass" {
+			return false
+		}
+		gateID := event.GateID
+		if gateID == "" {
+			gateID = event.NodeID
+		}
+		if board != nil {
+			return len(gateVerdictRoutes(board, event, gateID, "pass")) == 0
+		}
+		return len(stringSliceFromAny(event.Data["routedEdges"])) == 0
+	}
+	return false
+}
+
+func latestGateVerdictAllowsGraphCompletion(events []RunEvent) bool {
+	for i := len(events) - 1; i >= 0; i-- {
+		event := events[i]
+		if event.Type != RunEventGateVerdict {
+			continue
+		}
+		return stringFromEventData(event, "routePort") == "pass"
+	}
+	return true
+}
+
+func runGraphComplete(board *BoardDocument, startNodeID string, completed map[string]bool) bool {
+	formationIDs := map[string]bool{}
+	for _, formation := range board.Formations {
+		formationIDs[formation.ID] = true
+	}
+	visited := map[string]bool{}
+	queue := []string{startNodeID}
+	reachableFormations := map[string]bool{}
+	for len(queue) > 0 {
+		nodeID := queue[0]
+		queue = queue[1:]
+		if visited[nodeID] {
+			continue
+		}
+		visited[nodeID] = true
+		if formationIDs[nodeID] {
+			reachableFormations[nodeID] = true
+		}
+		for _, connection := range outgoingConnections(board.Connections, nodeID) {
+			toNode, _ := endpointParts(connection.To)
+			if toNode != "" && !visited[toNode] {
+				queue = append(queue, toNode)
+			}
+		}
+	}
+	if len(reachableFormations) == 0 {
+		return false
+	}
+	for id := range reachableFormations {
+		if !completed[id] {
+			return false
+		}
+	}
+	return true
+}
+
+func processedGateInputEdges(events []RunEvent) map[string]bool {
+	processed := map[string]bool{}
+	for _, event := range events {
+		switch event.Type {
+		case RunEventGateEvaluating, RunEventGateVerdict, RunEventHumanInputRequested:
+		default:
+			continue
+		}
+		if event.Data == nil {
+			continue
+		}
+		input := runInputRefFromAny(event.Data["inputRef"])
+		if input.EdgeID != "" {
+			processed[input.EdgeID] = true
+		}
+	}
+	return processed
+}
+
+func (e *RunEngine) replayNodeOutputToReady(runID string, board *BoardDocument, gates map[string]GateNode, event RunEvent, limits RunLimits, processedGateEdges map[string]bool, ready map[string]map[string]RunInputRef, queued map[string]bool, queue *[]string) error {
 	for _, connection := range outgoingConnections(board.Connections, event.NodeID) {
 		_, fromPort := endpointParts(connection.From)
 		payload, ok := outputPayloadForPortFromEvent(event, fromPort)
@@ -657,6 +878,17 @@ func (e *RunEngine) replayNodeOutputToReady(runID string, board *BoardDocument, 
 		if toNode == "" || toPort == "" {
 			continue
 		}
+		input := runInputRefForConnection(runID, connection, payload)
+		if _, ok := gates[toNode]; ok {
+			if processedGateEdges[connection.ID] {
+				continue
+			}
+			processedGateEdges[connection.ID] = true
+			if err := e.deliverConnection(runID, board, gates, connection, input, limits, ready, queued, queue); err != nil {
+				return err
+			}
+			continue
+		}
 		formation, ok := findFormation(board.Formations, toNode)
 		if !ok {
 			continue
@@ -664,7 +896,6 @@ func (e *RunEngine) replayNodeOutputToReady(runID string, board *BoardDocument, 
 		if ready[toNode] == nil {
 			ready[toNode] = map[string]RunInputRef{}
 		}
-		input := runInputRefForConnection(runID, connection, payload)
 		ready[toNode][toPort] = input
 		if formationReady(formation, ready[toNode]) && !queued[toNode] {
 			queued[toNode] = true
@@ -1175,12 +1406,16 @@ func (e *RunEngine) evaluateGate(runID string, board *BoardDocument, gates map[s
 		return errRunStopped
 	}
 	result, err := e.evaluateGateResult(board, evaluationGate, GateEvaluation{
-		RunID:     runID,
-		GateID:    gate.ID,
-		Title:     gate.Title,
-		Kinds:     evaluationGate.Kinds,
-		Criterion: gate.Criterion,
-		Input:     input,
+		RunID:        runID,
+		GateID:       gate.ID,
+		Title:        gate.Title,
+		Kinds:        evaluationGate.Kinds,
+		Criterion:    gate.Criterion,
+		Command:      gate.Command,
+		CommandArgv:  append([]string(nil), gate.CommandArgv...),
+		CommandCWD:   gate.CommandCWD,
+		CommandShell: gate.CommandShell,
+		Input:        input,
 	}, limits)
 	if err != nil {
 		return err

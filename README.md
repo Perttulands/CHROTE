@@ -99,7 +99,8 @@ It is a cockpit for the host where the work actually lives.
 | **Terminal 2** | A second independent terminal workspace |
 | **Files** | File browsing for configured workspace roots |
 | **Beads** | Modern `bd` issues, ready work, triage, and project state |
-| **Agents** | Read-only visibility into agent-like tmux sessions |
+| **Agents** | Visibility into persona cards and agent-like tmux sessions |
+| **Formations** | Spatial mission/formation/gate cockpit backed by Archon/Formations files |
 | **Services** | Operator panels for selected local services |
 | **Settings** | Theme, font, terminal, and session behavior |
 | **Help** | Dashboard usage notes |
@@ -522,6 +523,7 @@ The center is the workspace.
 
 | Document | What It Is |
 | --- | --- |
+| [docs/source-truth-index.md](docs/source-truth-index.md) | Active/supporting/archive doc hierarchy and enforcement boundary |
 | [PRD.md](PRD.md) | Current product requirements and staged roadmap |
 | [docs/installation.md](docs/installation.md) | Generic install and rebuild notes |
 | [docs/legacy-ideas.md](docs/legacy-ideas.md) | Useful ideas from the old line, demoted on purpose |

@@ -99,18 +99,19 @@ type AgentRoster struct {
 }
 
 type AgentProjection struct {
-	ID          string   `json:"id"`
-	DisplayName string   `json:"displayName,omitempty"`
-	Kind        string   `json:"kind,omitempty"`
-	Tags        []string `json:"tags,omitempty"`
-	Liveness    string   `json:"liveness"`
-	SessionID   string   `json:"sessionId,omitempty"`
-	Status      string   `json:"status,omitempty"`
-	ContextPct  int      `json:"contextPct,omitempty"`
-	BeadID      string   `json:"beadId,omitempty"`
-	Attached    bool     `json:"attached"`
-	Assignable  bool     `json:"assignable"`
-	Unbound     bool     `json:"unbound,omitempty"`
+	ID             string   `json:"id"`
+	DisplayName    string   `json:"displayName,omitempty"`
+	Kind           string   `json:"kind,omitempty"`
+	Tags           []string `json:"tags,omitempty"`
+	HarnessDefault string   `json:"harnessDefault,omitempty"`
+	Liveness       string   `json:"liveness"`
+	SessionID      string   `json:"sessionId,omitempty"`
+	Status         string   `json:"status,omitempty"`
+	ContextPct     int      `json:"contextPct,omitempty"`
+	BeadID         string   `json:"beadId,omitempty"`
+	Attached       bool     `json:"attached"`
+	Assignable     bool     `json:"assignable"`
+	Unbound        bool     `json:"unbound,omitempty"`
 }
 
 type AgentSessionBinding struct {
@@ -442,12 +443,13 @@ func (r AgentRoster) ByID(id string) *AgentProjection {
 
 func projectCard(card PersonaCard, live []LiveAgentSession) AgentProjection {
 	projection := AgentProjection{
-		ID:          card.ID,
-		DisplayName: card.DisplayName,
-		Kind:        card.Kind,
-		Tags:        append([]string{}, card.Tags...),
-		Liveness:    AgentLivenessOffline,
-		Assignable:  card.Status != "retired",
+		ID:             card.ID,
+		DisplayName:    card.DisplayName,
+		Kind:           card.Kind,
+		Tags:           append([]string{}, card.Tags...),
+		HarnessDefault: card.HarnessDefault,
+		Liveness:       AgentLivenessOffline,
+		Assignable:     card.Status != "retired",
 	}
 	defaultVariant := card.DefaultVariant()
 	for _, session := range live {

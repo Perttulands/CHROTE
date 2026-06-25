@@ -28,7 +28,7 @@ test.describe('Formations Playwright stack smoke', () => {
       .toContainText(mockFormationsBoard.gates[0].title)
   })
 
-  test('shows a usable starter canvas when the first-run board list is empty', async ({ page }) => {
+  test('fails loud instead of fabricating a starter canvas when the first-run board list is empty', async ({ page }) => {
     await mockApiRoutes(page)
     await page.route('**/api/agents**', async route => {
       await route.fulfill({
@@ -71,13 +71,11 @@ test.describe('Formations Playwright stack smoke', () => {
 
     await expect(page.locator('.fmx[data-cockpit="d7"]')).toBeVisible()
     await expect(page.getByTestId('formations-canvas')).toBeVisible()
-    await expect(page.getByTestId('mission-node-mis_starter_session_search')).toContainText('Improve session search')
-    await expect(page.getByTestId('formation-node-fmn_starter_frame')).toContainText('Frame the goal')
-    await expect(page.getByTestId('formation-node-fmn_starter_research')).toContainText('Research huddle')
-    await expect(page.getByTestId('gate-node-gate_starter_review')).toContainText('Review gate')
-    await expect(page.getByTestId('formation-wire-edge_starter_mission_frame')).toBeVisible()
-
-    await page.getByTestId('new-formation').click()
-    await expect(page.locator('[data-testid^="formation-node-fmn_starter_local_"]').filter({ hasText: 'New formation' })).toBeVisible()
+    await expect(page.getByTestId('formations-empty-board')).toContainText('No persisted formation boards')
+    await expect(page.getByTestId('formations-empty-board')).toContainText('no longer shows fake starter missions')
+    await expect(page.getByTestId('mission-node-mis_starter_session_search')).toHaveCount(0)
+    await expect(page.getByTestId('formation-node-fmn_starter_frame')).toHaveCount(0)
+    await expect(page.getByTestId('gate-node-gate_starter_review')).toHaveCount(0)
+    await expect(page.getByTestId('new-formation')).toBeDisabled()
   })
 })

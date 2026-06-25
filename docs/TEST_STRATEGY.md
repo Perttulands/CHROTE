@@ -62,6 +62,10 @@ CHROTE/
 
 ```bash
 # Stable local quality gate
+cd /path/to/chrote
+python3 -m py_compile scripts/doc-lint.py
+scripts/doc-lint.py
+
 cd /path/to/chrote/src
 test -z "$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
 go vet ./...

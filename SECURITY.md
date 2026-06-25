@@ -24,26 +24,33 @@ We will respond within 48 hours and work with you to understand and address the 
 
 ### Network Exposure
 
-CHROTE is designed for **local or trusted network use only**. By default:
+CHROTE is designed for **local or explicitly trusted network use only**. By default:
 
-- The server binds to `0.0.0.0` (all interfaces)
-- No built-in authentication is provided
-- Use a reverse proxy with authentication (Tailscale, nginx + auth, etc.) for production
+- The server binds to `127.0.0.1`.
+- The server port is `8094`.
+- The terminal proxy port is `7683`.
+- `/api/*` authentication is optional through `API_AUTH_TOKEN`; if unset, rely on localhost/Tailscale/reverse-proxy boundaries.
+- Use a reverse proxy, Tailscale, or equivalent network controls before binding beyond localhost.
 
 ### Recommended Security Practices
 
-1. **Use Tailscale or similar** - CHROTE works well behind Tailscale for secure remote access
-2. **Bind to localhost** - Set `CHROTE_HOST=127.0.0.1` if only local access is needed
-3. **Restrict allowed roots** - Use `CHROTE_ROOTS` to limit filesystem access
-4. **Run as non-root user** - The systemd service runs as your user, not root
+1. **Keep localhost as the default** - Leave `HOST=127.0.0.1` unless the host network is explicitly trusted.
+2. **Use Tailscale or similar for remote access** - CHROTE works well behind private-network controls.
+3. **Restrict allowed roots** - Use `CHROTE_ROOTS` to limit filesystem access.
+4. **Run as a non-root user** - The systemd service should run as the owning Unix user, not root.
+5. **Treat terminal access as host access** - tmux sessions are not a sandbox.
 
 ### Environment Variables
 
-Sensitive configuration should use environment variables, not config files:
+Sensitive configuration should use host-owned environment files or service environment, not browser state:
 
-- `CHROTE_ROOTS` - Comma-separated list of allowed filesystem roots
-- `CHROTE_PORT` - Server port (default: 8080)
-- `CHROTE_HOST` - Bind address (default: 0.0.0.0)
+- `HOST` - Server bind address (default: `127.0.0.1`).
+- `PORT` - Server port (default: `8094`).
+- `TTYD_PORT` - Terminal proxy port (default: `7683`).
+- `API_AUTH_TOKEN` - Optional bearer token for `/api/*` routes except `/api/health`.
+- `CORS_ORIGINS` - Optional comma-separated browser origins for cross-origin API access.
+- `CHROTE_ROOTS` - Comma-separated list of allowed filesystem roots.
+- `CHROTE_WORKDIR` - Default working directory for launched sessions.
 
 ### Path Traversal Protection
 

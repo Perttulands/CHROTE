@@ -29,7 +29,8 @@
 .fmx .gatetoken:hover{border-color:var(--terra);color:var(--terra);}
 .fmx .gatetoken svg{width:14px;height:14px;color:var(--terra);}
 .fmx .newbtn{background:var(--terra);color:#0f0f0f;border:none;border-radius:6px;padding:9px 16px;font-family:inherit;font-weight:700;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:8px;transition:transform .12s,background .15s,box-shadow .15s;text-transform:uppercase;letter-spacing:.04em;}
-.fmx .newbtn:hover{background:#86efac;transform:translateY(-1px);box-shadow:0 0 16px rgba(var(--accent-rgb),.4);}
+.fmx .newbtn:hover:not(:disabled){background:#86efac;transform:translateY(-1px);box-shadow:0 0 16px rgba(var(--accent-rgb),.4);}
+.fmx .newbtn:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none;}
 .fmx .newbtn svg{width:14px;height:14px;}
 .fmx .helpbtn{width:30px;height:30px;border-radius:6px;border:1px solid var(--line);background:var(--paper2);color:var(--dim);font-family:inherit;font-size:15px;cursor:pointer;transition:all .14s;flex-shrink:0;}
 .fmx .helpbtn:hover{border-color:var(--terra);color:var(--terra);}
@@ -66,6 +67,9 @@
     radial-gradient(circle at 1px 1px, rgba(var(--accent-rgb),.10) 1.2px, transparent 0);
   background-size:112px 112px, 112px 112px, 28px 28px;}
 .fmx .world.smooth{transition:transform .35s cubic-bezier(.2,.7,.3,1);}
+.fmx .empty-board{position:absolute;left:120px;top:120px;width:360px;border:1px solid var(--line);border-radius:10px;background:var(--card);box-shadow:0 22px 50px -26px rgba(0,0,0,.85);padding:18px 20px;z-index:5;}
+.fmx .empty-board .empty-title{font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink);}
+.fmx .empty-board .empty-copy{margin-top:8px;font-size:11px;line-height:1.55;color:var(--dim);}
 .fmx .zoomctl{position:absolute;bottom:18px;right:18px;z-index:80;display:flex;flex-direction:column;background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden;box-shadow:0 10px 26px -14px rgba(0,0,0,.8);}
 .fmx .zoomctl button{width:40px;height:38px;background:transparent;border:none;border-bottom:1px solid var(--line2);color:var(--dim);cursor:pointer;font-size:16px;font-family:inherit;transition:all .12s;}
 .fmx .zoomctl button:last-child{border-bottom:none;font-size:9px;letter-spacing:.06em;}

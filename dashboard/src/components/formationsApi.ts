@@ -103,9 +103,9 @@ export async function fetchAgents(): Promise<AgentProjection[]> {
   return result.data.agents || []
 }
 
-export async function fetchBoardChanged(slug: string, rev: number): Promise<boolean> {
+export async function fetchBoardChanged(slug: string, etag: string): Promise<boolean> {
   const result = await fetchApi<{ signal: { changed?: boolean } }>(
-    `/api/formations/boards/${encodeURIComponent(slug)}/changes?rev=${encodeURIComponent(String(rev))}`
+    `/api/formations/boards/${encodeURIComponent(slug)}/changes?etag=${encodeURIComponent(etag)}`
   )
   return result.data.signal?.changed === true
 }

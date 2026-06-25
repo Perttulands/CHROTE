@@ -39,7 +39,7 @@ Current theme ids:
 ```text
 matrix
 dark
-ember
+gastown
 ```
 
 Host tmux appearance presets may share these ids but apply to tmux status/pane
@@ -83,12 +83,18 @@ Recommended layout:
 ```text
 .formations/
   boards/
-    <board-id>.toml
+    <slug>.formation.toml
   layout/
-    <board-id>.layout.toml
+    <slug>.layout.toml
   runs/
-    <run-id>.ndjson
-agents/
+    <slug>/
+      <run-id>.ndjson
+      <run-id>.snapshot.toml
+      <run-id>.bindings.toml
+  artifacts/
+    <run-id>/
+      <agent-created output files>
+agents/ or CHROTE_AGENTS_DIR/
   <agent-id>.toml
 ```
 
@@ -99,7 +105,10 @@ A board definition contains structural state:
 - board id/name/version;
 - missions;
 - formations;
-- gates;
+- gates, including `kinds`, `criterion`, and optional structured script gate
+  command fields (`commandArgv` or explicit `commandShell`, plus optional
+  `commandCwd`; legacy `command` is parseable compatibility metadata, not the
+  executable contract);
 - slots;
 - ports;
 - connections;
@@ -132,7 +141,13 @@ A persona card contains stable assignment identity:
 ### Run ledger
 
 Run ledgers are append-only NDJSON. Event payloads are versioned and should be
-sufficient to reconstruct projected state and recovery handles.
+sufficient to reconstruct projected state and recovery handles. `node_output`
+records display text plus `outputs[portId]` payloads. A `FormationOutputPayload`
+may carry short inline `text`, an artifact `ref`, `reportRef`, and `artifactRef`.
+Short inline `text` preserves the existing routing path. For tmux-backed long
+outputs, local file `ref` values are canonicalized under configured roots and
+hydrated into routed text before the payload is written to the ledger; invalid
+refs block instead of becoming arbitrary file reads.
 
 Representative event kinds:
 

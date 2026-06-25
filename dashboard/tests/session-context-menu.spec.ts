@@ -121,8 +121,8 @@ test.describe('Session Context Menu', () => {
 
     // Menu should contain standard items
     await expect(menu.locator('.session-context-item:has-text("Rename")')).toBeVisible()
-    await expect(menu.locator('.session-context-item:has-text("Delete Session")')).toBeVisible()
-    await expect(menu.locator('.session-context-item:has-text("Assign to Window")')).toBeVisible()
+    await expect(menu.locator('.session-context-item:has-text("Kill Session")')).toBeVisible()
+    await expect(menu.locator('.session-context-item:has-text("Attach to Window")')).toBeVisible()
   })
 
   // -------------------------------------------------------
@@ -200,34 +200,34 @@ test.describe('Session Context Menu', () => {
   })
 
   // -------------------------------------------------------
-  // 5. Delete session via context menu
+  // 5. Kill session via context menu
   // -------------------------------------------------------
-  test('delete session via context menu removes it from list', async ({ page }) => {
+  test('kill session via context menu removes it from list', async ({ page }) => {
     // Verify it exists first
     await expect(page.locator('.session-item:has-text("hq-mayor")')).toBeVisible()
 
     const session = page.locator('.session-item:has-text("hq-mayor")')
     await session.click({ button: 'right' })
 
-    // Click Delete
-    await page.locator('.session-context-menu .session-context-item:has-text("Delete Session")').click()
+    // Click Kill
+    await page.locator('.session-context-menu .session-context-item:has-text("Kill Session")').click()
 
     // Session should be removed after the API call + refresh
     await expect(page.locator('.session-item:has-text("hq-mayor")')).not.toBeVisible()
   })
 
   // -------------------------------------------------------
-  // 6. "Assign to Window" submenu shows correct windows
+  // 6. "Attach to Window" submenu shows correct windows
   // -------------------------------------------------------
-  test('assign to window submenu shows correct windows', async ({ page }) => {
+  test('attach to window submenu shows correct windows', async ({ page }) => {
     const session = page.locator('.session-item:has-text("hq-mayor")')
     await session.click({ button: 'right' })
 
     const menu = page.locator('.session-context-menu')
     await expect(menu).toBeVisible()
 
-    // Hover over "Assign to Window" to reveal submenu
-    const assignTrigger = menu.locator('.session-context-submenu-trigger:has-text("Assign to Window")')
+    // Hover over "Attach to Window" to reveal submenu
+    const assignTrigger = menu.locator('.session-context-submenu-trigger:has-text("Attach to Window")')
     await assignTrigger.hover()
 
     // Submenu should appear with window entries

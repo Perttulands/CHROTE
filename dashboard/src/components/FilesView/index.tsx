@@ -23,10 +23,19 @@ type ViewMode = 'list' | 'grid'
 type PreviewKind = 'text' | 'image' | 'audio' | 'video' | 'pdf' | 'download'
 type SavedKind = 'file' | 'directory'
 type CreateKind = 'file' | 'folder'
+type SavedPathGroup = 'pinned' | 'recent'
+type SavedGroupsCollapsed = Record<SavedPathGroup, boolean>
 
 interface SavedPath {
   path: string
   kind: SavedKind
+}
+
+interface FilesViewProps {
+  navigateRequest?: {
+    path: string
+    nonce: number
+  } | null
 }
 
 interface OpenFile {
@@ -55,10 +64,15 @@ interface CreateIntent {
 
 const PINNED_STORAGE_KEY = 'chrote.files.pinnedPaths'
 const RECENT_STORAGE_KEY = 'chrote.files.recentPaths'
+const SAVED_GROUPS_COLLAPSED_STORAGE_KEY = 'chrote.files.savedGroupsCollapsed'
 const PREVIEW_WIDTH_STORAGE_KEY = 'chrote.files.previewWidthPercent'
 const MAX_TEXT_PREVIEW_BYTES = 1024 * 1024
 const MIN_PREVIEW_WIDTH = 28
 const MAX_PREVIEW_WIDTH = 70
+const DEFAULT_SAVED_GROUPS_COLLAPSED: SavedGroupsCollapsed = {
+  pinned: false,
+  recent: false,
+}
 
 const TEXT_EXTENSIONS = new Set([
   'bash',
@@ -193,6 +207,32 @@ function writeSavedPaths(key: string, paths: SavedPath[]): void {
   }
 }
 
+function readSavedGroupsCollapsed(): SavedGroupsCollapsed {
+  if (typeof window === 'undefined') return { ...DEFAULT_SAVED_GROUPS_COLLAPSED }
+  try {
+    const raw = window.localStorage.getItem(SAVED_GROUPS_COLLAPSED_STORAGE_KEY)
+    if (!raw) return { ...DEFAULT_SAVED_GROUPS_COLLAPSED }
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ...DEFAULT_SAVED_GROUPS_COLLAPSED }
+    const record = parsed as Partial<Record<SavedPathGroup, unknown>>
+    return {
+      pinned: record.pinned === true,
+      recent: record.recent === true,
+    }
+  } catch {
+    return { ...DEFAULT_SAVED_GROUPS_COLLAPSED }
+  }
+}
+
+function writeSavedGroupsCollapsed(collapsed: SavedGroupsCollapsed): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(SAVED_GROUPS_COLLAPSED_STORAGE_KEY, JSON.stringify(collapsed))
+  } catch {
+    // localStorage quota/private mode failures should not break the file UI.
+  }
+}
+
 function readPreviewWidthPercent(): number {
   if (typeof window === 'undefined') return 42
   const raw = window.localStorage.getItem(PREVIEW_WIDTH_STORAGE_KEY)
@@ -222,7 +262,7 @@ function makeFileItemFromPath(path: string): FileItem {
   }
 }
 
-function FilesView() {
+function FilesView({ navigateRequest = null }: FilesViewProps) {
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const pathInputRef = useRef<HTMLInputElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
@@ -251,6 +291,7 @@ function FilesView() {
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null)
   const [pinnedPaths, setPinnedPaths] = useState<SavedPath[]>(() => readSavedPaths(PINNED_STORAGE_KEY))
   const [recentPaths, setRecentPaths] = useState<SavedPath[]>(() => readSavedPaths(RECENT_STORAGE_KEY))
+  const [savedGroupsCollapsed, setSavedGroupsCollapsed] = useState<SavedGroupsCollapsed>(() => readSavedGroupsCollapsed())
   const [editingPath, setEditingPath] = useState(false)
   const [pathDraft, setPathDraft] = useState('/')
   const [draggingPaths, setDraggingPaths] = useState<string[]>([])
@@ -258,7 +299,7 @@ function FilesView() {
   const [operationLabel, setOperationLabel] = useState<string | null>(null)
   const [previewWidth, setPreviewWidth] = useState(readPreviewWidthPercent)
 
-  const isRootListing = currentPath === '/'
+  const currentPathPinned = pinnedPaths.some(item => item.path === currentPath)
   const contentStyle = resizablePreview
     ? ({ '--fb-preview-width': `${previewWidth}%` } as CSSProperties)
     : undefined
@@ -354,8 +395,12 @@ function FilesView() {
   }, [resizablePreview])
 
   useEffect(() => {
-    void loadDirectory('/')
+    void loadDirectory(navigateRequest?.path || '/')
   }, [loadDirectory])
+
+  useEffect(() => {
+    if (navigateRequest) navigateTo(navigateRequest.path)
+  }, [navigateRequest?.nonce])
 
   useEffect(() => {
     if (!editingPath) {
@@ -564,7 +609,6 @@ function FilesView() {
   }
 
   const beginRename = (item: FileItem) => {
-    if (isRootListing && item.isDir) return
     setRenamingPath(item.path)
     setRenameValue(item.name)
     setContextMenu(null)
@@ -602,10 +646,6 @@ function FilesView() {
   }
 
   const startCreate = (kind: CreateKind, parentPath = currentPath) => {
-    if (parentPath === '/') {
-      showError('Choose a workspace folder before creating files')
-      return
-    }
     setCreateIntent({
       kind,
       parentPath,
@@ -639,9 +679,8 @@ function FilesView() {
   }
 
   const requestDelete = (targets: FileItem[]) => {
-    const mutableTargets = targets.filter(target => !(isRootListing && target.isDir))
-    if (mutableTargets.length === 0) return
-    setDeleteTargets(mutableTargets)
+    if (targets.length === 0) return
+    setDeleteTargets(targets)
     setContextMenu(null)
   }
 
@@ -668,10 +707,6 @@ function FilesView() {
   }
 
   const handleUpload = async (fileList: FileList | File[]) => {
-    if (currentPath === '/') {
-      showError('Choose a workspace folder before uploading')
-      return
-    }
     const files = Array.isArray(fileList) ? fileList : Array.from(fileList)
     if (files.length === 0) return
 
@@ -713,6 +748,29 @@ function FilesView() {
     setContextMenu(null)
   }
 
+  const pathRelativeToCurrent = (path: string) => {
+    if (currentPath === '/') return path.replace(/^\//, '') || '/'
+    if (path === currentPath) return getBaseName(path)
+    if (path.startsWith(`${currentPath}/`)) return path.slice(currentPath.length + 1)
+    return path
+  }
+
+  const copySelectedPaths = (targets: FileItem[]) => {
+    if (targets.length === 0) return
+    void navigator.clipboard?.writeText(targets.map(target => toDisplayPath(target.path)).join('\n'))
+    setContextMenu(null)
+  }
+
+  const copyRelativePath = (path: string) => {
+    void navigator.clipboard?.writeText(pathRelativeToCurrent(path))
+    setContextMenu(null)
+  }
+
+  const openParentFolder = (path: string) => {
+    navigateTo(getParentPath(path))
+    setContextMenu(null)
+  }
+
   const togglePin = (path: string, kind: SavedKind) => {
     setPinnedPaths(prev => {
       const exists = prev.some(item => item.path === path)
@@ -723,6 +781,17 @@ function FilesView() {
       return next
     })
     setContextMenu(null)
+  }
+
+  const toggleSavedGroup = (group: SavedPathGroup) => {
+    setSavedGroupsCollapsed(prev => {
+      const next = {
+        ...prev,
+        [group]: !prev[group],
+      }
+      writeSavedGroupsCollapsed(next)
+      return next
+    })
   }
 
   const saveActiveFile = async () => {
@@ -890,6 +959,34 @@ function FilesView() {
     </button>
   )
 
+  const renderSavedPathGroup = (group: SavedPathGroup, title: string, paths: SavedPath[]) => {
+    if (paths.length === 0) return null
+
+    const collapsed = savedGroupsCollapsed[group]
+    const listId = `fb-${group}-saved-list`
+
+    return (
+      <section className={`fb-sidebar-section fb-saved-section ${collapsed ? 'is-collapsed' : ''}`}>
+        <button
+          className="fb-section-title fb-section-toggle"
+          type="button"
+          aria-expanded={!collapsed}
+          aria-controls={listId}
+          onClick={() => toggleSavedGroup(group)}
+        >
+          <span className="fb-section-caret" aria-hidden="true">{collapsed ? '>' : 'v'}</span>
+          <span>{title}</span>
+          <span className="fb-section-count">{paths.length}</span>
+        </button>
+        {!collapsed && (
+          <div id={listId} className="fb-saved-list">
+            {paths.map(item => renderSavedPath(item, 'fb-saved-item'))}
+          </div>
+        )}
+      </section>
+    )
+  }
+
   const renderCreateRow = () => {
     if (!createIntent || createIntent.parentPath !== currentPath) return null
     return (
@@ -941,7 +1038,7 @@ function FilesView() {
         key={item.path}
         role="row"
         tabIndex={0}
-        draggable={!isRootListing}
+        draggable
         onClick={(event) => handleItemClick(item, event)}
         onDoubleClick={() => item.isDir ? navigateTo(item.path) : void openFile(item)}
         onContextMenu={(event) => handleContextMenu(event, item)}
@@ -973,7 +1070,7 @@ function FilesView() {
         className={`fb-grid-item ${selected ? 'selected' : ''} ${dropTarget ? 'drop-target' : ''}`}
         key={item.path}
         tabIndex={0}
-        draggable={!isRootListing}
+        draggable
         onClick={(event) => handleItemClick(item, event)}
         onDoubleClick={() => item.isDir ? navigateTo(item.path) : void openFile(item)}
         onContextMenu={(event) => handleContextMenu(event, item)}
@@ -1021,19 +1118,20 @@ function FilesView() {
           <div className="fb-tabs" aria-label="File workbench views">
             <button className="fb-tab active" type="button">Explorer</button>
             <button
-              className="fb-tab"
+              className={`fb-tab ${currentPathPinned ? 'active' : ''}`}
               type="button"
-              title="Pin current folder"
+              title={currentPathPinned ? 'Unpin current folder' : 'Pin current folder'}
+              aria-pressed={currentPathPinned}
               onClick={() => togglePin(currentPath, 'directory')}
             >
-              Pin
+              {currentPathPinned ? 'Unpin' : 'Pin'}
             </button>
           </div>
         </div>
         <div className="fb-header-right">
-          <button className="fb-btn" type="button" title="New File" disabled={isRootListing} onClick={() => startCreate('file')}>+ File</button>
-          <button className="fb-btn" type="button" title="New Folder" disabled={isRootListing} onClick={() => startCreate('folder')}>+ Folder</button>
-          <button className="fb-btn" type="button" title="Upload" disabled={isRootListing} onClick={() => uploadInputRef.current?.click()}>Upload</button>
+          <button className="fb-btn" type="button" title="New File" onClick={() => startCreate('file')}>+ File</button>
+          <button className="fb-btn" type="button" title="New Folder" onClick={() => startCreate('folder')}>+ Folder</button>
+          <button className="fb-btn" type="button" title="Upload" onClick={() => uploadInputRef.current?.click()}>Upload</button>
           <button className="fb-btn" type="button" title="Refresh" disabled={loading} onClick={refreshCurrentPath}>Refresh</button>
         </div>
       </div>
@@ -1045,23 +1143,8 @@ function FilesView() {
             <button className="fb-sidebar-action" type="button" title="Refresh tree" onClick={() => loadTree('/')}>Refresh</button>
           </div>
 
-          {pinnedPaths.length > 0 && (
-            <section className="fb-sidebar-section">
-              <div className="fb-section-title">Pinned</div>
-              <div className="fb-saved-list">
-                {pinnedPaths.map(item => renderSavedPath(item, 'fb-saved-item'))}
-              </div>
-            </section>
-          )}
-
-          {recentPaths.length > 0 && (
-            <section className="fb-sidebar-section">
-              <div className="fb-section-title">Recent</div>
-              <div className="fb-saved-list">
-                {recentPaths.map(item => renderSavedPath(item, 'fb-saved-item'))}
-              </div>
-            </section>
-          )}
+          {renderSavedPathGroup('pinned', 'Pinned', pinnedPaths)}
+          {renderSavedPathGroup('recent', 'Recent', recentPaths)}
 
           <section className="fb-sidebar-section fb-tree-section">
             <div className="fb-section-title">Workspace</div>
@@ -1201,7 +1284,6 @@ function FilesView() {
               <div className="fb-statusbar">
                 <span>{visibleItems.length} items</span>
                 {selectedPaths.size > 0 && <span>{selectedPaths.size} selected</span>}
-                {isRootListing && <span>Open a workspace folder to create or upload files</span>}
                 {operationLabel && <span className="fb-statusbar-operation">{operationLabel}...</span>}
               </div>
             </section>
@@ -1324,12 +1406,25 @@ function FilesView() {
           )}
           {!contextMenu.item && (
             <>
-              <button className="fb-context-item" type="button" disabled={isRootListing} onClick={() => startCreate('file')}>New File</button>
-              <button className="fb-context-item" type="button" disabled={isRootListing} onClick={() => startCreate('folder')}>New Folder</button>
-              <button className="fb-context-item" type="button" disabled={isRootListing} onClick={() => uploadInputRef.current?.click()}>Upload</button>
+              <button className="fb-context-item" type="button" onClick={() => startCreate('file')}>New File</button>
+              <button className="fb-context-item" type="button" onClick={() => startCreate('folder')}>New Folder</button>
+              <button className="fb-context-item" type="button" onClick={() => uploadInputRef.current?.click()}>Upload</button>
+              <button className="fb-context-item" type="button" onClick={refreshCurrentPath}>Refresh</button>
+              <div className="fb-context-divider" />
+              <button className="fb-context-item" type="button" onClick={() => copyPath(currentPath)}>Copy Current Folder Path</button>
+              {selectedItems.length > 0 && (
+                <button className="fb-context-item" type="button" onClick={() => copySelectedPaths(selectedItems)}>Copy Selected Path(s)</button>
+              )}
+              <button
+                className="fb-context-item"
+                type="button"
+                onClick={() => togglePin(currentPath, 'directory')}
+              >
+                {currentPathPinned ? 'Unpin Current Folder' : 'Pin Current Folder'}
+              </button>
             </>
           )}
-          {contextMenu.item && !(isRootListing && contextMenu.item.isDir) && (
+          {contextMenu.item && (
             <>
               <div className="fb-context-divider" />
               <button className="fb-context-item" type="button" onClick={() => beginRename(contextMenu.item!)}>Rename</button>
@@ -1341,6 +1436,9 @@ function FilesView() {
                 {pinnedPaths.some(item => item.path === contextMenu.item!.path) ? 'Unpin' : 'Pin'}
               </button>
               <button className="fb-context-item" type="button" onClick={() => copyPath(contextMenu.item!.path)}>Copy Path</button>
+              <button className="fb-context-item" type="button" onClick={() => copySelectedPaths(contextTargets)}>Copy Selected Path(s)</button>
+              <button className="fb-context-item" type="button" onClick={() => copyRelativePath(contextMenu.item!.path)}>Copy Relative Path</button>
+              <button className="fb-context-item" type="button" onClick={() => openParentFolder(contextMenu.item!.path)}>Open Parent Folder</button>
               <div className="fb-context-divider" />
               <button className="fb-context-item fb-context-danger" type="button" onClick={() => requestDelete(contextTargets)}>Delete</button>
             </>

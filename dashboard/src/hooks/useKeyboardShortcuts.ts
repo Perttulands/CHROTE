@@ -25,43 +25,22 @@ export function useKeyboardShortcuts({
     toggleSidebar,
     closeFloatingModal,
     floatingSession,
-    refreshSessions,
-    settings,
-    sessions,
+    createSession,
     loadPreset,
     layoutPresets,
   } = useSession()
 
   // Create a new session
-  const createSession = useCallback(async () => {
+  const createSessionForActiveTab = useCallback(async () => {
     try {
-      const prefix = settings.defaultSessionPrefix || 'tmux'
-      const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      const regex = new RegExp(`^${escapedPrefix}(\\d+)$`)
-
-      const existingNumbers = sessions
-        .map(s => s.name.match(regex))
-        .filter(Boolean)
-        .map(m => parseInt(m![1], 10))
-
-      const nextNum = existingNumbers.length > 0
-        ? Math.max(...existingNumbers) + 1
-        : 1
-      const sessionName = `${prefix}${nextNum}`
-
-      const response = await fetch('/api/tmux/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: sessionName }),
-        signal: AbortSignal.timeout(10000),
-      })
-      if (response.ok) {
-        refreshSessions()
-      }
+      const workspaceId: WorkspaceId | null = activeTab === 'terminal1' || activeTab === 'terminal2' || activeTab === 'terminal3'
+        ? activeTab
+        : null
+      await createSession(workspaceId ? { workspaceId } : { workspaceId: 'terminal1' })
     } catch (e) {
       console.error('Failed to create session:', e)
     }
-  }, [settings.defaultSessionPrefix, sessions, refreshSessions])
+  }, [activeTab, createSession])
 
   // Focus search box
   const focusSearchBox = useCallback(() => {
@@ -74,7 +53,7 @@ export function useKeyboardShortcuts({
 
   // Get current workspace ID based on active tab
   const getCurrentWorkspaceId = useCallback((): WorkspaceId | null => {
-    if (activeTab === 'terminal1' || activeTab === 'terminal2') {
+    if (activeTab === 'terminal1' || activeTab === 'terminal2' || activeTab === 'terminal3') {
       return activeTab
     }
     return null
@@ -119,12 +98,14 @@ export function useKeyboardShortcuts({
         return
       }
 
-      // Tab - Toggle between Terminal 1 and Terminal 2
+      // Tab - Cycle terminal tabs
       if (e.key === 'Tab' && !e.ctrlKey && !e.shiftKey && !e.altKey) {
-        // Only toggle if we're on a terminal tab
-        if (activeTab === 'terminal1' || activeTab === 'terminal2') {
+        // Only cycle if we're on a terminal tab
+        const terminalTabs: WorkspaceId[] = ['terminal1', 'terminal2', 'terminal3']
+        if (terminalTabs.includes(activeTab as WorkspaceId)) {
           e.preventDefault()
-          onTabChange(activeTab === 'terminal1' ? 'terminal2' : 'terminal1')
+          const currentIndex = terminalTabs.indexOf(activeTab as WorkspaceId)
+          onTabChange(terminalTabs[(currentIndex + 1) % terminalTabs.length])
           return
         }
       }
@@ -153,7 +134,7 @@ export function useKeyboardShortcuts({
       // Ctrl + N - Create new session
       if (e.ctrlKey && e.key === 'n') {
         e.preventDefault()
-        createSession()
+        createSessionForActiveTab()
         return
       }
 
@@ -179,7 +160,7 @@ export function useKeyboardShortcuts({
     closeFloatingModal,
     focusSearchBox,
     toggleSidebar,
-    createSession,
+    createSessionForActiveTab,
     getCurrentWorkspaceId,
     workspaces,
     loadPreset,

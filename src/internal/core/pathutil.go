@@ -23,19 +23,65 @@ var (
 )
 
 // GetAllowedRoots returns the configured allowed roots
-// Reads from CHROTE_ROOTS env var, defaults to /code,/vault
+// Reads from CHROTE_ROOTS env var, defaults to HOME,/code,/vault
 func GetAllowedRoots() []string {
 	allowedRootsOnce.Do(func() {
 		if roots := os.Getenv("CHROTE_ROOTS"); roots != "" {
-			allowedRoots = strings.Split(roots, ",")
-			for i := range allowedRoots {
-				allowedRoots[i] = strings.TrimSpace(allowedRoots[i])
-			}
+			allowedRoots = normalizeRoots(strings.Split(roots, ","))
 		} else {
-			allowedRoots = defaultAllowedRoots
+			allowedRoots = normalizeRoots(defaultAllowedRoots)
 		}
 	})
 	return allowedRoots
+}
+
+func normalizeRoots(parts []string) []string {
+	roots := make([]string, 0, len(parts))
+	seen := make(map[string]bool, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		absRoot, err := filepath.Abs(part)
+		if err != nil {
+			continue
+		}
+		absRoot = filepath.Clean(absRoot)
+		if absRoot == string(os.PathSeparator) {
+			return []string{absRoot}
+		}
+		if seen[absRoot] {
+			continue
+		}
+		seen[absRoot] = true
+		roots = append(roots, absRoot)
+	}
+	return roots
+}
+
+// IsPathUnderRoot reports whether an absolute path is equal to root or a child of root.
+// A filesystem root (/) allows every absolute path beneath it.
+func IsPathUnderRoot(path, root string) bool {
+	if path == "" || root == "" || !filepath.IsAbs(path) {
+		return false
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+
+	absPath = filepath.Clean(absPath)
+	absRoot = filepath.Clean(absRoot)
+	if absRoot == string(os.PathSeparator) {
+		return true
+	}
+	return absPath == absRoot || strings.HasPrefix(absPath, absRoot+string(os.PathSeparator))
 }
 
 // ResetConfigForTesting resets the cached config (for testing only)
@@ -57,8 +103,7 @@ func ValidateProjectPath(inputPath string) (string, string, string) {
 
 	isAllowed := false
 	for _, root := range GetAllowedRoots() {
-		absRoot, _ := filepath.Abs(root) //nolint:errcheck // Abs only errors on empty string; roots come from config
-		if resolved == absRoot || strings.HasPrefix(resolved, absRoot+string(os.PathSeparator)) {
+		if IsPathUnderRoot(resolved, root) {
 			isAllowed = true
 			break
 		}

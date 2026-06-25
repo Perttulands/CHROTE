@@ -27,7 +27,7 @@ func TestTmuxHandler_ListSessionsTreatsKnownNoServerErrorsAsEmptyList(t *testing
 	tests := []string{
 		"no server running on /tmp/tmux-1000/default",
 		"No such file or directory",
-		"error connecting to /run/user/1000/tmux/default",
+		"error connecting to /run/user/1000/tmux/default (No such file or directory)",
 	}
 
 	for _, stderr := range tests {
@@ -53,6 +53,46 @@ func TestTmuxHandler_ListSessionsTreatsKnownNoServerErrorsAsEmptyList(t *testing
 				t.Fatalf("error = %q, want no user-visible error for no-server condition", response.Error)
 			}
 		})
+	}
+}
+
+func TestTmuxHandler_ListSessionsReportsPermissionDeniedConnectionErrors(t *testing.T) {
+	installFailingTmux(t, "error connecting to /run/user/1000/chrote-tmux/default (Permission denied)")
+	handler := NewTmuxHandler()
+	req := httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ListSessions(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var response SessionsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !strings.Contains(response.Error, "Permission denied") {
+		t.Fatalf("error = %q, want tmux permission/connectivity error to fail loud", response.Error)
+	}
+}
+
+func TestTmuxHandler_ListSessionsReportsUnknownConnectionErrors(t *testing.T) {
+	installFailingTmux(t, "error connecting to /run/user/1000/chrote-tmux/default")
+	handler := NewTmuxHandler()
+	req := httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ListSessions(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var response SessionsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !strings.Contains(response.Error, "error connecting") {
+		t.Fatalf("error = %q, want unknown tmux connection error to fail loud", response.Error)
 	}
 }
 

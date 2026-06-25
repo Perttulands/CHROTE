@@ -1,5 +1,6 @@
 // Triage recommendations view for Beads
 
+import type { MouseEvent as ReactMouseEvent } from 'react'
 import type { BeadsIssue, TriageResponse, ImpactLevel } from './types'
 import IssueCard from './IssueCard'
 
@@ -8,6 +9,8 @@ interface TriageViewProps {
   issues: BeadsIssue[]
   loading?: boolean
   error?: string | null
+  onIssueOpen?: (issue: BeadsIssue) => void
+  onIssueContextMenu?: (issue: BeadsIssue, event: ReactMouseEvent) => void
 }
 
 const IMPACT_COLORS: Record<ImpactLevel, string> = {
@@ -20,7 +23,7 @@ function getIssueById(issues: BeadsIssue[], id: string): BeadsIssue | undefined 
   return issues.find(i => i.id === id)
 }
 
-export default function TriageView({ triage, issues, loading, error }: TriageViewProps) {
+export default function TriageView({ triage, issues, loading, error, onIssueOpen, onIssueContextMenu }: TriageViewProps) {
   if (loading) {
     return (
       <div className="beads-triage loading">
@@ -74,7 +77,7 @@ export default function TriageView({ triage, issues, loading, error }: TriageVie
                       </span>
                     </div>
                     {issue ? (
-                      <IssueCard issue={issue} />
+                      <IssueCard issue={issue} onClick={onIssueOpen} onContextMenu={onIssueContextMenu} />
                     ) : (
                       <div className="issue-card missing">
                         <span className="issue-id">{rec.issueId}</span>
@@ -100,7 +103,7 @@ export default function TriageView({ triage, issues, loading, error }: TriageVie
               {quickWins.map(id => {
                 const issue = getIssueById(issues, id)
                 return issue ? (
-                  <IssueCard key={id} issue={issue} compact />
+                  <IssueCard key={id} issue={issue} compact onClick={onIssueOpen} onContextMenu={onIssueContextMenu} />
                 ) : (
                   <div key={id} className="issue-card compact missing">
                     <span className="issue-id">{id}</span>
@@ -122,7 +125,7 @@ export default function TriageView({ triage, issues, loading, error }: TriageVie
               {blockers.map(id => {
                 const issue = getIssueById(issues, id)
                 return issue ? (
-                  <IssueCard key={id} issue={issue} showDependencies />
+                  <IssueCard key={id} issue={issue} showDependencies onClick={onIssueOpen} onContextMenu={onIssueContextMenu} />
                 ) : (
                   <div key={id} className="issue-card missing">
                     <span className="issue-id">{id}</span>

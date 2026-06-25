@@ -2,6 +2,7 @@ package formations
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -122,6 +123,42 @@ func TestS4GateFailWirePushesBackWithAttemptLimit(t *testing.T) {
 	errEvent := eventOfType(t, events, RunEventError)
 	if errEvent.Data["reason"] != "revise loop exhausted" {
 		t.Fatalf("error data = %#v, want revise loop exhausted", errEvent.Data)
+	}
+}
+
+func TestS4GateEvaluationReceivesPersistedCommandArgv(t *testing.T) {
+	store, personas := s4RunFixture(t)
+	store.Now = fixedClock()
+	personas.Now = fixedClock()
+	createS4Persona(t, personas, "scout")
+	writeFixture(t, store.BoardPath("session-search"), strings.Replace(s4GateBoardFixture(false), `criterion = "Good enough to ship"`, `criterion = "touch should-not-run"`+"\n"+`commandArgv = ["npm", "run", "lint"]`+"\n"+`commandCwd = "dashboard"`, 1))
+	board, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	evaluator := &fakeGateEvaluator{verdicts: []string{"pass"}}
+	engine := NewRunEngine(store, personas, &fakeRunExecutor{})
+	engine.SetGateEvaluator(evaluator)
+
+	_, err = engine.RunMission("session-search", RunStartRequest{
+		MissionID:         "mis_showcase",
+		Actor:             "agent:test",
+		ExpectedBoardETag: board.ETag,
+		ExpectedBoardRev:  board.Rev,
+		Limits:            RunLimits{MaxDispatch: 5, MaxAttempts: 2},
+	})
+	if err != nil {
+		t.Fatalf("run mission: %v", err)
+	}
+	if len(evaluator.calls) != 1 {
+		t.Fatalf("gate calls = %+v, want one call", evaluator.calls)
+	}
+	call := evaluator.calls[0]
+	if !reflect.DeepEqual(call.CommandArgv, []string{"npm", "run", "lint"}) || call.CommandCWD != "dashboard" {
+		t.Fatalf("gate call command = %+v, want persisted argv/cwd", call)
+	}
+	if call.Command != "" || call.Criterion != "touch should-not-run" {
+		t.Fatalf("gate call mixed criterion into command: %+v", call)
 	}
 }
 

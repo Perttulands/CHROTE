@@ -15,6 +15,7 @@ type Session struct {
 	Windows  int    `json:"windows"`
 	Attached bool   `json:"attached"`
 	Group    string `json:"group"`
+	UnixUser string `json:"unixUser,omitempty"`
 }
 
 // GroupPriority defines the sort order for session groups
@@ -48,6 +49,13 @@ func CategorizeSession(name string) string {
 			return parts[0] + "-" + parts[1]
 		}
 		return "gt-unknown"
+	}
+	if prefix, _, ok := strings.Cut(name, "-"); ok && prefix != "" {
+		return prefix
+	}
+	trimmed := strings.TrimRight(name, "0123456789")
+	if trimmed != "" && trimmed != name {
+		return trimmed
 	}
 	return "other"
 }

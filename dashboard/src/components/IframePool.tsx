@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo, ReactNode } from 'react'
 import { useSession } from '../context/SessionContext'
-import type { WorkspaceId } from '../types'
+import { TERMINAL_WORKSPACE_IDS, getSessionKey, getSessionNameFromKey, getSessionUserFromKey } from '../types'
+import type { LaunchUser } from '../types'
 
 interface IframePoolContextType {
   /** Claim an iframe into a container element. Returns cleanup function. */
@@ -15,6 +16,8 @@ interface IframePoolContextType {
   triggerFit: (sessionName: string) => void
   /** Focus a session's iframe */
   focusIframe: (sessionName: string) => void
+  /** Reconnect a session's iframe without changing the window/session binding */
+  reconnectIframe: (sessionName: string) => void
 }
 
 const IframePoolContext = createContext<IframePoolContextType | null>(null)
@@ -25,29 +28,62 @@ export function useIframePool(): IframePoolContextType {
   return ctx
 }
 
-function getTerminalUrl(sessionName: string): string {
-  return `/terminal/?arg=${encodeURIComponent(sessionName)}&theme=${encodeURIComponent('{"background":"transparent"}')}`
+function getTerminalUrl(sessionName: string, unixUser: LaunchUser): string {
+  const userArg = unixUser.trim() ? `&arg=${encodeURIComponent(unixUser)}` : ''
+  return `/terminal/?arg=${encodeURIComponent(sessionName)}${userArg}`
+}
+
+const TERMINAL_IFRAME_BACKGROUND = '#0a0a0a'
+
+function applyClaimedIframeStyle(iframe: HTMLIFrameElement) {
+  iframe.style.cssText = ''
+  iframe.style.width = '100%'
+  iframe.style.height = '100%'
+  iframe.style.border = 'none'
+  iframe.style.backgroundColor = TERMINAL_IFRAME_BACKGROUND
+  iframe.style.overflow = 'hidden'
+}
+
+function applyParkedIframeStyle(iframe: HTMLIFrameElement) {
+  applyClaimedIframeStyle(iframe)
+  iframe.style.width = '400px'
+  iframe.style.height = '300px'
+  iframe.style.position = 'absolute'
+  iframe.style.visibility = 'hidden'
 }
 
 export function IframePoolProvider({ children }: { children: ReactNode }) {
-  const { workspaces, settings } = useSession()
+  const { workspaces, settings, sessions } = useSession()
 
-  // Compute all unique session names that need iframes
-  const allSessions = useMemo(() => {
-    const sessions = new Set<string>()
-
-    // Current workspaces
-    const wsIds: WorkspaceId[] = ['terminal1', 'terminal2']
-    wsIds.forEach(wsId => {
+  const sessionUsers = useMemo(() => {
+    const users = new Map<string, LaunchUser>()
+    const nameCounts = new Map<string, number>()
+    sessions.forEach(session => {
+      nameCounts.set(session.name, (nameCounts.get(session.name) ?? 0) + 1)
+    })
+    sessions.forEach(session => {
+      const sessionKey = getSessionKey(session.name, session.unixUser)
+      users.set(sessionKey, session.unixUser ?? '')
+      if (nameCounts.get(session.name) === 1) {
+        users.set(session.name, session.unixUser ?? '') // backward compatibility only when unambiguous
+      }
+    })
+    TERMINAL_WORKSPACE_IDS.forEach(wsId => {
       workspaces[wsId].windows.forEach(w => {
-        w.boundSessions.forEach(s => {
-          if (s && s !== 'INIT-PENDING') sessions.add(s)
+        w.boundSessions.forEach(sessionKey => {
+          if (!sessionKey || sessionKey === 'INIT-PENDING' || users.has(sessionKey)) return
+          const keyUser = getSessionUserFromKey(sessionKey)
+          if (keyUser) users.set(sessionKey, keyUser)
         })
       })
     })
+    return users
+  }, [workspaces, sessions])
+  const sessionUsersRef = useRef(sessionUsers)
+  sessionUsersRef.current = sessionUsers
 
-    return sessions
-  }, [workspaces])
+  // Compute all unique session names that need iframes
+  const allSessions = useMemo(() => new Set(sessionUsers.keys()), [sessionUsers])
 
   // Refs for iframe elements and state
   const iframeRefs = useRef<Map<string, HTMLIFrameElement>>(new Map())
@@ -97,9 +133,11 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
       const iframe = document.createElement('iframe')
       // Deferred connection: do NOT set src here. It will be set on first claim.
       iframe.allow = 'clipboard-read; clipboard-write'
-      iframe.title = `Terminal - ${sessionName}`
+      iframe.title = `Terminal - ${getSessionNameFromKey(sessionName)}`
+      iframe.scrolling = 'no'
+      iframe.setAttribute('scrolling', 'no')
       // Start hidden in pool; will be cleared when claimed into a container
-      iframe.style.cssText = 'width:400px;height:300px;border:none;background:transparent;position:absolute;visibility:hidden;'
+      applyParkedIframeStyle(iframe)
 
       iframe.addEventListener('load', () => {
         setLoadedSessions(prev => new Set(prev).add(sessionName))
@@ -111,12 +149,12 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
       // If already claimed, put it in the container with visible styles; otherwise hide in pool
       const claimContainer = claimsRef.current.get(sessionName)
       if (claimContainer) {
-        iframe.style.cssText = 'width:100%;height:100%;border:none;background:transparent;'
+        applyClaimedIframeStyle(iframe)
         claimContainer.appendChild(iframe)
         // Set src since it's being claimed immediately
         if (!connectedRef.current.has(sessionName)) {
           connectedRef.current.add(sessionName)
-          iframe.src = getTerminalUrl(sessionName)
+          iframe.src = getTerminalUrl(getSessionNameFromKey(sessionName), sessionUsersRef.current.get(sessionName) ?? getSessionUserFromKey(sessionName))
         }
       } else {
         pool.appendChild(iframe)
@@ -157,13 +195,13 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
       // Move iframe from pool into the claiming container.
       // Clear pool-specific inline styles; CSS (.terminal-window-body iframe)
       // handles positioning via position:absolute + inset.
-      iframe.style.cssText = 'border:none;background:transparent;'
+      applyClaimedIframeStyle(iframe)
       container.appendChild(iframe)
 
       // Deferred connection: set src only on first claim into a visible container
       if (!connectedRef.current.has(sessionName)) {
         connectedRef.current.add(sessionName)
-        iframe.src = getTerminalUrl(sessionName)
+        iframe.src = getTerminalUrl(getSessionNameFromKey(sessionName), sessionUsersRef.current.get(sessionName) ?? getSessionUserFromKey(sessionName))
       }
     }
 
@@ -174,7 +212,7 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
       const pool = poolContainerRef.current
       if (iframe && pool) {
         // Override CSS positioning: park in hidden pool with explicit inline styles
-        iframe.style.cssText = 'width:400px;height:300px;border:none;background:transparent;position:absolute;visibility:hidden;'
+        applyParkedIframeStyle(iframe)
         pool.appendChild(iframe)
       }
     }
@@ -216,6 +254,20 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
     } catch { /* cross-origin */ }
   }, [])
 
+  const reconnectIframe = useCallback((sessionName: string) => {
+    const iframe = iframeRefs.current.get(sessionName)
+    if (!iframe) return
+    connectedRef.current.delete(sessionName)
+    setLoadedSessions(prev => {
+      const next = new Set(prev)
+      next.delete(sessionName)
+      return next
+    })
+    connectedRef.current.add(sessionName)
+    const url = getTerminalUrl(getSessionNameFromKey(sessionName), sessionUsersRef.current.get(sessionName) ?? getSessionUserFromKey(sessionName))
+    iframe.src = `${url}&reconnect=${Date.now()}`
+  }, [])
+
   const contextValue = useMemo<IframePoolContextType>(() => ({
     claimIframe,
     isLoaded,
@@ -223,7 +275,8 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
     applyFontSize,
     triggerFit,
     focusIframe,
-  }), [claimIframe, isLoaded, getIframe, applyFontSize, triggerFit, focusIframe])
+    reconnectIframe,
+  }), [claimIframe, isLoaded, getIframe, applyFontSize, triggerFit, focusIframe, reconnectIframe])
 
   return (
     <IframePoolContext.Provider value={contextValue}>

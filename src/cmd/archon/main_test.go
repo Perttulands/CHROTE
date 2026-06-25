@@ -41,6 +41,58 @@ func (f *fakeTmux) Attach(name string) error {
 	return nil
 }
 
+func withoutArchonTmuxPrefix(t *testing.T) {
+	t.Helper()
+	t.Setenv("CHROTE_FORMATIONS_TMUX_SESSION_PREFIX", "")
+}
+
+func TestArchonTmuxCommandUsesConfiguredFormationSocketAndDropsAmbientTmux(t *testing.T) {
+	t.Setenv("CHROTE_FORMATIONS_TMUX_SOCKET", "/tmp/chrote-formations-test/default")
+	t.Setenv("TMUX", "/tmp/ambient,123,0")
+
+	args := archonTmuxArgs("new-session", "-d", "-s", "dogfood-scout")
+	wantArgs := []string{"-S", "/tmp/chrote-formations-test/default", "new-session", "-d", "-s", "dogfood-scout"}
+	if strings.Join(args, "\x00") != strings.Join(wantArgs, "\x00") {
+		t.Fatalf("tmux args = %#v, want %#v", args, wantArgs)
+	}
+	for _, item := range archonTmuxEnv() {
+		if strings.HasPrefix(item, "TMUX=") {
+			t.Fatalf("archon tmux env leaked ambient TMUX: %q", item)
+		}
+	}
+}
+
+func TestRealTmuxRunnerSpawnUsesConfiguredSocketAndDropsAmbientTmux(t *testing.T) {
+	binDir := t.TempDir()
+	capturePath := filepath.Join(t.TempDir(), "tmux-capture")
+	fakeTmux := filepath.Join(binDir, "tmux")
+	if err := os.WriteFile(fakeTmux, []byte("#!/usr/bin/env bash\nprintf 'args:%s\\n' \"$*\" >> \"$ARCHON_TMUX_CAPTURE\"\nif env | grep '^TMUX=' >> \"$ARCHON_TMUX_CAPTURE\"; then :; else printf 'TMUX:<unset>\\n' >> \"$ARCHON_TMUX_CAPTURE\"; fi\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("ARCHON_TMUX_CAPTURE", capturePath)
+	t.Setenv("CHROTE_FORMATIONS_TMUX_SOCKET", "/tmp/chrote-formations-test/default")
+	t.Setenv("TMUX", "/tmp/ambient,123,0")
+
+	if err := (realTmuxRunner{}).Spawn("dogfood-scout", "printf hi"); err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	captured, err := os.ReadFile(capturePath)
+	if err != nil {
+		t.Fatalf("read fake tmux capture: %v", err)
+	}
+	text := string(captured)
+	if !strings.Contains(text, "args:-S /tmp/chrote-formations-test/default new-session -d -s dogfood-scout printf hi") {
+		t.Fatalf("capture missing explicit socket args:\n%s", text)
+	}
+	if strings.Contains(text, "TMUX=/tmp/ambient") {
+		t.Fatalf("capture leaked ambient TMUX:\n%s", text)
+	}
+	if !strings.Contains(text, "TMUX:<unset>") {
+		t.Fatalf("capture did not prove TMUX was removed:\n%s", text)
+	}
+}
+
 func TestArchonAgentNewListInspectAndEditUsePersonaStore(t *testing.T) {
 	agentsDir := t.TempDir()
 	t.Setenv("CHROTE_AGENTS_DIR", agentsDir)
@@ -101,6 +153,7 @@ func TestArchonAgentNewDuplicateFailsWithoutChangingCard(t *testing.T) {
 }
 
 func TestArchonAgentListShowsUnboundLiveSessionsButExcludesAssignable(t *testing.T) {
+	withoutArchonTmuxPrefix(t)
 	agentsDir := t.TempDir()
 	t.Setenv("CHROTE_AGENTS_DIR", agentsDir)
 	runner := &fakeTmux{live: map[string]bool{"scratch": true}}
@@ -141,6 +194,7 @@ func TestArchonAgentNewFromHermesProfilePopulatesLaunchReference(t *testing.T) {
 }
 
 func TestArchonAgentNewOpenAICodexDefaultsLaunchAndSpawnUsesIt(t *testing.T) {
+	withoutArchonTmuxPrefix(t)
 	agentsDir := t.TempDir()
 	t.Setenv("CHROTE_AGENTS_DIR", agentsDir)
 	runner := &fakeTmux{live: map[string]bool{}}
@@ -173,6 +227,7 @@ func TestArchonAgentNewOpenAICodexDefaultsLaunchAndSpawnUsesIt(t *testing.T) {
 }
 
 func TestArchonAgentNewClaudeCodeDefaultsLaunchAndSpawnUsesIt(t *testing.T) {
+	withoutArchonTmuxPrefix(t)
 	agentsDir := t.TempDir()
 	t.Setenv("CHROTE_AGENTS_DIR", agentsDir)
 	runner := &fakeTmux{live: map[string]bool{}}
@@ -201,6 +256,7 @@ func TestArchonAgentNewClaudeCodeDefaultsLaunchAndSpawnUsesIt(t *testing.T) {
 }
 
 func TestArchonAgentSpawnUsesFakeTmuxWithoutDuplicateSession(t *testing.T) {
+	withoutArchonTmuxPrefix(t)
 	agentsDir := t.TempDir()
 	t.Setenv("CHROTE_AGENTS_DIR", agentsDir)
 	runner := &fakeTmux{live: map[string]bool{}}
@@ -267,6 +323,7 @@ func TestArchonAgentSpawnListAttachUseTmuxSessionPrefix(t *testing.T) {
 }
 
 func TestArchonAgentSpawnAndAttachUseExplicitHarnessStem(t *testing.T) {
+	withoutArchonTmuxPrefix(t)
 	agentsDir := t.TempDir()
 	t.Setenv("CHROTE_AGENTS_DIR", agentsDir)
 	runner := &fakeTmux{live: map[string]bool{}}
@@ -341,6 +398,59 @@ customFuture = "keep me"
 	}
 	if strings.Contains(stdout, `"x":`) || strings.Contains(stdout, `"y":`) {
 		t.Fatalf("inspect JSON leaked layout coordinates: %s", stdout)
+	}
+}
+
+func TestArchonGateCreateAndUpdatePersistStructuredScriptCommand(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("session-search"), `schema = 1
+id = "brd_01J9_sesssearch"
+slug = "session-search"
+title = "Improve session search"
+rev = 7
+updatedAt = "2026-06-03T16:00:00Z"
+`)
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "gate", "create", "session-search", "--kinds", "lint", "--criterion", "Lint passes", "--command-argv", "npm,run,lint", "--command-cwd", "dashboard", "--json")
+	if code != 0 {
+		t.Fatalf("gate create code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var created formations.BoardDocument
+	if err := json.Unmarshal([]byte(stdout), &created); err != nil {
+		t.Fatalf("decode gate create JSON: %v\n%s", err, stdout)
+	}
+	if len(created.Gates) != 1 || !strings.Contains(stdout, `"commandArgv": [`) || !strings.Contains(stdout, `"commandCwd": "dashboard"`) {
+		t.Fatalf("gate create JSON missing structured command: %s", stdout)
+	}
+	raw := readArchonFile(t, store.BoardPath("session-search"))
+	if !strings.Contains(raw, `commandArgv = ["npm", "run", "lint"]`) || !strings.Contains(raw, `commandCwd = "dashboard"`) || strings.Contains(raw, `command = "npm run lint"`) {
+		t.Fatalf("gate create TOML missing structured argv/cwd or persisted legacy command:\n%s", raw)
+	}
+
+	gateID := created.Gates[0].ID
+	stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "gate", "update", "session-search", gateID, "--command-shell", "printf ok", "--command-cwd", "dashboard", "--json")
+	if code != 0 {
+		t.Fatalf("gate update code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	raw = readArchonFile(t, store.BoardPath("session-search"))
+	if !strings.Contains(raw, `commandShell = "printf ok"`) || strings.Contains(raw, `commandArgv =`) || strings.Contains(raw, `command =`) {
+		t.Fatalf("gate update TOML did not switch cleanly to explicit shell command:\n%s", raw)
+	}
+
+	stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "gate", "update", "session-search", gateID, "--command", "legacy only", "--json")
+	if code != 0 {
+		t.Fatalf("legacy gate update code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	raw = readArchonFile(t, store.BoardPath("session-search"))
+	if !strings.Contains(raw, `command = "legacy only"`) || strings.Contains(raw, `commandShell =`) || strings.Contains(raw, `commandArgv =`) || strings.Contains(raw, `commandCwd =`) {
+		t.Fatalf("legacy command update did not clear executable fields:\n%s", raw)
+	}
+
+	_, stderr, code = runArchon(t, runner, "--workspace", workspace, "gate", "create", "session-search", "--command-argv", "npm,run,lint", "--command-shell", "printf ok")
+	if code == 0 || !strings.Contains(stderr, "gate command must use only one") {
+		t.Fatalf("mixed command mode create code=%d stderr=%s", code, stderr)
 	}
 }
 

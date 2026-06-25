@@ -67,6 +67,12 @@ func NewFilesHandler() *FilesHandler {
 	}
 }
 
+func normalizeRequestPath(path string) string {
+	normalized := filepath.Clean(path)
+	normalized = strings.ReplaceAll(filepath.ToSlash(normalized), "\\", "/")
+	return filepath.ToSlash(filepath.Clean(normalized))
+}
+
 // resolveSafePath validates and resolves a path - CRITICAL for security
 func (h *FilesHandler) resolveSafePath(requestPath string) PathResult {
 	// Decode and normalize
@@ -76,25 +82,32 @@ func (h *FilesHandler) resolveSafePath(requestPath string) PathResult {
 	}
 
 	// Clean the path to prevent traversal
-	normalized := filepath.Clean(decoded)
+	normalized := normalizeRequestPath(decoded)
 
-	// Convert to forward slashes for consistency
-	normalized = strings.ReplaceAll(normalized, "\\", "/")
+	// Virtual root listing remains separate from filesystem roots; mutating handlers
+	// still block it, while ListRoot can choose how to render it.
+	if normalized == "/" || normalized == "." {
+		return PathResult{IsRoot: true}
+	}
+	if !filepath.IsAbs(normalized) {
+		return PathResult{Error: "Path not allowed"}
+	}
 
 	// Must start with allowed root
 	var matchedRoot string
 	for _, root := range h.allowedRoots {
-		if normalized == root || strings.HasPrefix(normalized, root+"/") {
-			matchedRoot = root
+		absRoot, err := filepath.Abs(root)
+		if err != nil {
+			continue
+		}
+		absRoot = filepath.ToSlash(filepath.Clean(absRoot))
+		if core.IsPathUnderRoot(normalized, absRoot) {
+			matchedRoot = absRoot
 			break
 		}
 	}
 
 	if matchedRoot == "" {
-		// Root listing
-		if normalized == "/" || normalized == "." {
-			return PathResult{IsRoot: true}
-		}
 		return PathResult{Error: "Path not allowed"}
 	}
 
@@ -105,9 +118,9 @@ func (h *FilesHandler) resolveSafePath(requestPath string) PathResult {
 	}
 
 	// Normalize again after Abs
-	resolved = strings.ReplaceAll(resolved, "\\", "/")
+	resolved = filepath.ToSlash(filepath.Clean(resolved))
 
-	if !strings.HasPrefix(resolved, matchedRoot) {
+	if !core.IsPathUnderRoot(resolved, matchedRoot) {
 		return PathResult{Error: "Path traversal detected"}
 	}
 
@@ -126,6 +139,11 @@ func (h *FilesHandler) RegisterRoutes(mux *http.ServeMux) {
 
 // ListRoot handles GET /api/files/resources/ - root listing
 func (h *FilesHandler) ListRoot(w http.ResponseWriter, r *http.Request) {
+	if h.hasOnlyFilesystemRoot() {
+		writeDirectoryListing(w, string(os.PathSeparator))
+		return
+	}
+
 	items := make([]FileItem, len(h.allowedRoots))
 	now := time.Now().Format(time.RFC3339)
 
@@ -137,6 +155,52 @@ func (h *FilesHandler) ListRoot(w http.ResponseWriter, r *http.Request) {
 			IsDir:    true,
 			Type:     "",
 		}
+	}
+
+	core.WriteJSON(w, http.StatusOK, DirectoryResponse{
+		IsDir: true,
+		Items: items,
+	})
+}
+
+func (h *FilesHandler) hasOnlyFilesystemRoot() bool {
+	if len(h.allowedRoots) != 1 {
+		return false
+	}
+	absRoot, err := filepath.Abs(h.allowedRoots[0])
+	if err != nil {
+		return false
+	}
+	return filepath.Clean(absRoot) == string(os.PathSeparator)
+}
+
+func writeDirectoryListing(w http.ResponseWriter, dirPath string) {
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		core.WriteError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		return
+	}
+
+	items := make([]FileItem, 0, len(entries))
+	for _, entry := range entries {
+		fullPath := filepath.Join(dirPath, entry.Name())
+		info, err := os.Stat(fullPath)
+		if err != nil {
+			continue // Skip inaccessible files
+		}
+
+		ext := ""
+		if !entry.IsDir() {
+			ext = strings.TrimPrefix(filepath.Ext(entry.Name()), ".")
+		}
+
+		items = append(items, FileItem{
+			Name:     entry.Name(),
+			Size:     info.Size(),
+			Modified: info.ModTime().Format(time.RFC3339),
+			IsDir:    entry.IsDir(),
+			Type:     ext,
+		})
 	}
 
 	core.WriteJSON(w, http.StatusOK, DirectoryResponse{

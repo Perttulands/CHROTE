@@ -1,9 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useDraggable } from '@dnd-kit/core'
-import type { TmuxSession } from '../types'
+import type { TmuxSession, WorkspaceId } from '../types'
 import { useSession } from '../context/SessionContext'
-import { WINDOW_COLORS } from '../types'
-import type { WorkspaceId } from '../types'
+import { TERMINAL_LABELS, TERMINAL_WORKSPACE_IDS, WINDOW_COLORS, getSessionKey, getTerminalUserColor, getTerminalUserInitial } from '../types'
 import { isFeatureEnabled } from '../featureFlags'
 import RoleBadge from './RoleBadge'
 
@@ -18,8 +17,9 @@ interface ContextMenuState {
 }
 
 function SessionItem({ session }: SessionItemProps) {
-  const { assignedSessions, handleSessionClick, deleteSession, renameSession, workspaces, addSessionToWindow, removeSessionFromWindow } = useSession()
-  const assignment = assignedSessions.get(session.name)
+  const { assignedSessions, handleSessionClick, deleteSession, renameSession, workspaces, addSessionToWindow, removeSessionFromWindow, openFloatingModal, settings } = useSession()
+  const sessionKey = getSessionKey(session.name, session.unixUser)
+  const assignment = assignedSessions.get(sessionKey) ?? assignedSessions.get(session.name)
   const isAssigned = !!assignment
   const useLocationBadges = isFeatureEnabled('sessionLocationBadges')
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({ show: false, x: 0, y: 0 })
@@ -45,12 +45,19 @@ function SessionItem({ session }: SessionItemProps) {
     ? { color: windowColor }
     : undefined
   const locationLabel = assignment
-    ? `${assignment.workspaceId === 'terminal2' ? 'T2' : 'T1'} W${assignment.windowIndex}`
+    ? `${assignment.workspaceId.replace('terminal', 'T')} W${assignment.windowIndex}`
     : ''
+  const userBadgeColor = session.unixUser ? getTerminalUserColor(settings, session.unixUser) : undefined
+  const userBadgeStyle = userBadgeColor
+    ? {
+        backgroundColor: userBadgeColor,
+        borderColor: userBadgeColor,
+      }
+    : undefined
 
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
-    id: session.name,
-    data: { type: 'session', session },
+    id: sessionKey,
+    data: { type: 'session', session, sessionName: session.name, sessionKey, unixUser: session.unixUser },
   })
 
   const style = transform
@@ -105,8 +112,8 @@ function SessionItem({ session }: SessionItemProps) {
 
   const handleDelete = useCallback(async () => {
     closeContextMenu()
-    await deleteSession(session.name)
-  }, [deleteSession, session.name, closeContextMenu])
+    await deleteSession(session.name, session.unixUser)
+  }, [deleteSession, session.name, session.unixUser, closeContextMenu])
 
   const handleStartRename = useCallback(() => {
     setRenameValue(session.name)
@@ -116,10 +123,10 @@ function SessionItem({ session }: SessionItemProps) {
 
   const handleRenameSubmit = useCallback(async () => {
     if (renameValue && renameValue !== session.name) {
-      await renameSession(session.name, renameValue)
+      await renameSession(session.name, renameValue, session.unixUser)
     }
     setIsRenaming(false)
-  }, [renameValue, session.name, renameSession])
+  }, [renameValue, session.name, session.unixUser, renameSession])
 
   const handleRenameKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
@@ -130,17 +137,25 @@ function SessionItem({ session }: SessionItemProps) {
   }, [handleRenameSubmit])
 
   const handleAssignToWindow = useCallback((windowId: string) => {
-    const workspaceId = (windowId.startsWith('terminal2-') ? 'terminal2' : 'terminal1') as WorkspaceId
-    addSessionToWindow(workspaceId, windowId, session.name)
+    const workspaceId = TERMINAL_WORKSPACE_IDS.find(wsId =>
+      workspaces[wsId]?.windows.some(w => w.id === windowId)
+    ) as WorkspaceId | undefined
+    if (!workspaceId) return
+    addSessionToWindow(workspaceId, windowId, session.name, session.unixUser)
     closeContextMenu()
-  }, [addSessionToWindow, session.name, closeContextMenu])
+  }, [addSessionToWindow, workspaces, session.name, session.unixUser, closeContextMenu])
 
   const handleUnassign = useCallback(() => {
     if (assignment) {
-      removeSessionFromWindow(assignment.workspaceId, assignment.windowId, session.name)
+      removeSessionFromWindow(assignment.workspaceId, assignment.windowId, sessionKey)
     }
     closeContextMenu()
-  }, [assignment, removeSessionFromWindow, session.name, closeContextMenu])
+  }, [assignment, removeSessionFromWindow, sessionKey, closeContextMenu])
+
+  const handlePeek = useCallback(() => {
+    openFloatingModal(sessionKey)
+    closeContextMenu()
+  }, [openFloatingModal, sessionKey, closeContextMenu])
 
   // Focus rename input when it appears
   useEffect(() => {
@@ -183,12 +198,22 @@ function SessionItem({ session }: SessionItemProps) {
         style={style}
         {...listeners}
         {...attributes}
-        onClick={() => handleSessionClick(session.name)}
+        onClick={() => handleSessionClick(sessionKey)}
         onContextMenu={handleContextMenu}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
         onTouchMove={handleTouchMove}
       >
+        {session.unixUser && (
+          <span
+            className="unix-user-badge"
+            style={userBadgeStyle}
+            title={`Unix user: ${session.unixUser}`}
+            aria-label={`Unix user ${session.unixUser}`}
+          >
+            {getTerminalUserInitial(session.unixUser)}
+          </span>
+        )}
         {assignment && (
           <span
             className={`window-badge ${useLocationBadges ? 'window-location-chip' : ''}`}
@@ -197,9 +222,9 @@ function SessionItem({ session }: SessionItemProps) {
           >
             {useLocationBadges
               ? locationLabel
-              : assignment.workspaceId === 'terminal2'
-                ? `2-${assignment.windowIndex}`
-                : assignment.windowIndex}
+              : assignment.workspaceId === 'terminal1'
+                ? assignment.windowIndex
+                : `${assignment.workspaceId.replace('terminal', '')}-${assignment.windowIndex}`}
           </span>
         )}
         <RoleBadge sessionName={session.name} />
@@ -217,6 +242,10 @@ function SessionItem({ session }: SessionItemProps) {
             <span className="session-context-icon">✎</span>
             Rename
           </button>
+          <button className="session-context-item" onClick={handlePeek}>
+            <span className="session-context-icon">◉</span>
+            Peek
+          </button>
 
           <div
             className="session-context-item session-context-submenu-trigger"
@@ -224,17 +253,17 @@ function SessionItem({ session }: SessionItemProps) {
             onMouseLeave={() => setShowAssignSubmenu(false)}
           >
             <span className="session-context-icon">◫</span>
-            Assign to Window
+            Attach to Window
             <span className="session-context-arrow">▶</span>
 
             {showAssignSubmenu && (
               <div className="session-context-submenu">
-                {(['terminal1', 'terminal2'] as WorkspaceId[]).flatMap((wsId) => {
+                {TERMINAL_WORKSPACE_IDS.flatMap((wsId) => {
                   const ws = workspaces[wsId]
                   return ws.windows.slice(0, ws.windowCount).map((w, idx) => {
                     const color = WINDOW_COLORS[w.colorIndex % WINDOW_COLORS.length]
                     const isCurrentWindow = assignment?.windowId === w.id
-                    const labelPrefix = wsId === 'terminal2' ? 'Terminal 2 - ' : ''
+                    const labelPrefix = wsId === 'terminal1' ? '' : `${TERMINAL_LABELS[wsId]} - `
                     return (
                       <button
                         key={w.id}
@@ -263,7 +292,7 @@ function SessionItem({ session }: SessionItemProps) {
 
           <button className="session-context-item session-context-danger" onClick={handleDelete}>
             <span className="session-context-icon">✕</span>
-            Delete Session
+            Kill Session
           </button>
         </div>
       )}

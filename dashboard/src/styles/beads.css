@@ -168,6 +168,34 @@
   cursor: not-allowed;
 }
 
+.beads-context-menu {
+  position: fixed;
+  z-index: 2000;
+  min-width: 210px;
+  background: var(--surface-primary);
+  border: 1px solid var(--divider);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+  padding: 4px;
+}
+
+.beads-context-item {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 7px 10px;
+  text-align: left;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.beads-context-item:hover {
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+}
+
 /* Patrol toggle */
 .beads-patrol-toggle {
   display: flex;

@@ -15,7 +15,7 @@ const shortcutCategories: ShortcutCategory[] = [
     title: 'Navigation',
     shortcuts: [
       { keys: ['1', '2', '3', '4'], description: 'Switch to window 1-4' },
-      { keys: ['Tab'], description: 'Toggle Terminal 1 / Terminal 2' },
+      { keys: ['Tab'], description: 'Cycle Terminal tabs' },
       { keys: ['Ctrl', 'Down'], description: 'Cycle through windows' },
       { keys: ['/'], description: 'Focus search box' },
     ],
