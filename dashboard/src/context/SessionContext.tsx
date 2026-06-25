@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react'
-import type { DashboardContextType, TmuxSession, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance, WorkspaceId, TerminalWorkspace, LayoutPreset, LaunchUser } from '../types'
-import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE, MAX_PRESETS, TERMINAL_WORKSPACE_IDS, getSessionKey, normalizeTerminalUsers } from '../types'
+import type { DashboardContextType, TmuxSession, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance, WorkspaceId, TerminalWorkspace, LayoutPreset, LaunchUser, CreateSessionOptions } from '../types'
+import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE, MAX_PRESETS, TERMINAL_WORKSPACE_IDS, getSessionKey, getSessionPrefixForUser, normalizeTerminalUsers, resolveLaunchUser } from '../types'
 import { useToast } from './ToastContext'
 
 // Apply tmux appearance settings via API (hot-reload)
@@ -235,6 +235,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
+function nextSessionNameForPrefix(sessions: TmuxSession[], prefix: string): string {
+  const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const regex = new RegExp(`^${escapedPrefix}(\\d+)$`)
+  const existingNumbers = sessions
+    .map(s => s.name.match(regex))
+    .filter(Boolean)
+    .map(m => parseInt(m![1], 10))
+
+  const nextNum = existingNumbers.length > 0
+    ? Math.max(...existingNumbers) + 1
+    : 1
+
+  return `${prefix}${nextNum}`
+}
+
 function sanitizeWorkspace(workspaceId: WorkspaceId, wsRaw: unknown): TerminalWorkspace {
   const ws = isRecord(wsRaw) ? wsRaw : {}
   const windowCount = clampWindowCount(typeof ws.windowCount === 'number' ? ws.windowCount : 2)
@@ -441,10 +456,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const refreshSessions = useCallback(async () => {
     try {
       const response = await fetch('/api/tmux/sessions', { signal: AbortSignal.timeout(10000) })
-      const data: SessionsResponse = await response.json()
+      const data = await response.json().catch(() => ({})) as Partial<SessionsResponse>
 
       if (Array.isArray(data.terminalUsers)) {
         setTerminalUsers(normalizeTerminalUsers(data.terminalUsers))
+      }
+
+      if (!response.ok) {
+        setError(typeof data.error === 'string' ? data.error : 'Failed to fetch sessions')
+        return
       }
 
       if (data.error) {
@@ -452,8 +472,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       } else {
         setError(null)
       }
-      setSessions(data.sessions)
-      setGroupedSessions(data.grouped)
+      setSessions(Array.isArray(data.sessions) ? data.sessions : [])
+      setGroupedSessions(isRecord(data.grouped) ? data.grouped as Record<string, TmuxSession[]> : {})
 
       // NOTE: We intentionally do NOT clean up "orphaned" sessions here.
       // If a session is in the layout but not in the API list (e.g. server restart, network blip),
@@ -617,6 +637,39 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
     })
   }, [])
+
+  const createSession = useCallback(async (options: CreateSessionOptions = {}): Promise<string | null> => {
+    const workspaceId = options.workspaceId ?? options.attachTo?.workspaceId ?? 'terminal1'
+    const unixUser = options.unixUser ?? resolveLaunchUser(settings, workspaceId, terminalUsers)
+    const explicitName = options.name?.trim()
+    const prefix = getSessionPrefixForUser(settings, unixUser, terminalUsers)
+    const sessionName = explicitName || nextSessionNameForPrefix(sessions, prefix)
+
+    try {
+      const response = await fetch('/api/tmux/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: sessionName, unixUser }),
+        signal: AbortSignal.timeout(10000),
+      })
+
+      if (!response.ok) {
+        addToast('Failed to create session', 'error')
+        return null
+      }
+
+      addToast(`Session '${sessionName}' created`, 'success')
+      if (options.attachTo) {
+        addSessionToWindow(options.attachTo.workspaceId, options.attachTo.windowId, sessionName, unixUser)
+      }
+      void refreshSessions()
+      return sessionName
+    } catch (e) {
+      console.error('Failed to create session:', e)
+      addToast('Failed to create session', 'error')
+      return null
+    }
+  }, [addSessionToWindow, addToast, refreshSessions, sessions, settings, terminalUsers])
 
   const removeSessionFromWindow = useCallback((workspaceId: WorkspaceId, windowId: string, sessionName: string) => {
     setWorkspaces(prev => {
@@ -880,6 +933,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     closeFloatingModal,
     handleSessionClick,
     refreshSessions,
+    createSession,
     deleteSession,
     renameSession,
     setIsDragging,
@@ -915,6 +969,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     closeFloatingModal,
     handleSessionClick,
     refreshSessions,
+    createSession,
     deleteSession,
     renameSession,
     setIsDragging,

@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSession } from '../context/SessionContext'
 import { useToast } from '../context/ToastContext'
-import { getDefaultLaunchUser, getGroupPriority, getSessionPrefixForUser, getTerminalUserInitial } from '../types'
+import { getDefaultLaunchUser, getGroupPriority, getTerminalUserInitial } from '../types'
 import SessionGroup from './SessionGroup'
 import NukeConfirmModal from './NukeConfirmModal'
 
 function SessionPanel() {
-  const { groupedSessions, loading, error, sidebarCollapsed, toggleSidebar, refreshSessions, sessions, settings, terminalUsers } = useSession()
+  const { groupedSessions, loading, error, sidebarCollapsed, toggleSidebar, refreshSessions, createSession: createSessionAction, sessions, terminalUsers } = useSession()
   const { addToast } = useToast()
   const [creating, setCreating] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
@@ -62,40 +62,18 @@ function SessionPanel() {
     return () => document.removeEventListener('mousedown', close)
   }, [namedSessionPopup.show])
 
-  const createSessionForUser = async (unixUser: string, explicitName?: string) => {
+  const createSessionForUser = async (unixUser?: string, explicitName?: string) => {
     setCreating(true)
     try {
-      const prefix = getSessionPrefixForUser(settings, unixUser, terminalUsers)
-      const sessionName = explicitName?.trim() || (() => {
-        const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-        const regex = new RegExp(`^${escapedPrefix}(\\d+)$`)
-        const existingNumbers = sessions
-          .map(s => s.name.match(regex))
-          .filter(Boolean)
-          .map(m => parseInt(m![1], 10))
-        const nextNum = existingNumbers.length > 0
-          ? Math.max(...existingNumbers) + 1
-          : 1
-        return `${prefix}${nextNum}`
-      })()
-
-      const response = await fetch('/api/tmux/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: sessionName, unixUser }),
-        signal: AbortSignal.timeout(10000),
+      const created = await createSessionAction({
+        workspaceId: 'terminal1',
+        ...(unixUser !== undefined ? { unixUser } : {}),
+        ...(explicitName !== undefined ? { name: explicitName } : {}),
       })
-      if (response.ok) {
-        addToast(`Session '${sessionName}' created`, 'success')
-        refreshSessions()
+      if (created) {
         setNamedSessionName('')
         setNamedSessionPopup({ show: false, x: 0, y: 0 })
-      } else {
-        addToast('Failed to create session', 'error')
       }
-    } catch (e) {
-      console.error('Failed to create session:', e)
-      addToast('Failed to create session', 'error')
     } finally {
       setCreating(false)
       setNewSessionMenu({ show: false, x: 0, y: 0 })
@@ -103,8 +81,7 @@ function SessionPanel() {
   }
 
   const createSession = async () => {
-    const unixUser = getDefaultLaunchUser('terminal1', terminalUsers)
-    await createSessionForUser(unixUser)
+    await createSessionForUser()
   }
 
   const openNamedSessionField = () => {

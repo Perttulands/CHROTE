@@ -20,6 +20,7 @@ type FormationsHandler struct {
 type formationsRunStartRequest struct {
 	Board       string               `json:"board"`
 	MissionID   string               `json:"missionId"`
+	FormationID string               `json:"formationId"`
 	Actor       string               `json:"actor"`
 	Limits      formations.RunLimits `json:"limits"`
 	ExpectedRev int                  `json:"expectedRev"`
@@ -164,13 +165,17 @@ type formationsWireConnectionRequest struct {
 }
 
 type formationsCreateGateRequest struct {
-	Title       string   `json:"title"`
-	Kinds       []string `json:"kinds"`
-	Criterion   string   `json:"criterion"`
-	X           int      `json:"x"`
-	Y           int      `json:"y"`
-	ExpectedRev int      `json:"expectedRev"`
-	UpdatedBy   string   `json:"updatedBy"`
+	Title        string   `json:"title"`
+	Kinds        []string `json:"kinds"`
+	Criterion    string   `json:"criterion"`
+	Command      string   `json:"command"`
+	CommandArgv  []string `json:"commandArgv"`
+	CommandCWD   string   `json:"commandCwd"`
+	CommandShell string   `json:"commandShell"`
+	X            int      `json:"x"`
+	Y            int      `json:"y"`
+	ExpectedRev  int      `json:"expectedRev"`
+	UpdatedBy    string   `json:"updatedBy"`
 }
 
 type formationsSetGateJudgeRequest struct {
@@ -222,6 +227,12 @@ func NewFormationsHandlerWithStores(store *formations.Store, personas *formation
 	return &FormationsHandler{store: store, personas: personas}
 }
 
+func (h *FormationsHandler) newRunEngine(boundary string) *formations.RunEngine {
+	engine := formations.NewRunEngine(h.store, h.personas, formations.NewConfiguredFormationExecutorFromEnv(h.store, h.personas, boundary))
+	engine.SetGateEvaluator(formations.NewConfiguredGateEvaluatorFromEnv(h.store.Workspace))
+	return engine
+}
+
 func (h *FormationsHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/formations/boards", h.ListBoards)
 	mux.HandleFunc("POST /api/formations/runs", h.StartRun)
@@ -244,8 +255,12 @@ func (h *FormationsHandler) StartRun(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSONBody(w, r, &request) {
 		return
 	}
-	if request.Board == "" || request.MissionID == "" {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "board and missionId are required")
+	if request.Board == "" {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "board is required")
+		return
+	}
+	if (request.MissionID == "") == (request.FormationID == "") {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "exactly one of missionId or formationId is required")
 		return
 	}
 	slug, err := h.store.ResolveBoardSelector(request.Board)
@@ -262,7 +277,28 @@ func (h *FormationsHandler) StartRun(w http.ResponseWriter, r *http.Request) {
 	if expectedRev == 0 {
 		expectedRev = board.Rev
 	}
-	engine := formations.NewRunEngine(h.store, h.personas, formations.NewConfiguredFormationExecutorFromEnv(h.store, h.personas, "api"))
+	engine := h.newRunEngine("api")
+	if request.FormationID != "" {
+		if match := r.Header.Get("If-Match"); match != "" && match != board.ETag {
+			writeFormationsError(w, formations.ErrConflict)
+			return
+		}
+		if expectedRev != 0 && expectedRev != board.Rev {
+			writeFormationsError(w, formations.ErrConflict)
+			return
+		}
+		status, err := engine.RunFormation(slug, request.FormationID, formations.FormationRunRequest{
+			Actor:    request.Actor,
+			Personas: h.personas,
+			Limits:   request.Limits,
+		})
+		if err != nil {
+			writeFormationsError(w, err)
+			return
+		}
+		core.WriteSuccess(w, map[string]interface{}{"runId": status.RunID, "status": status})
+		return
+	}
 	status, err := engine.RunMission(slug, formations.RunStartRequest{
 		MissionID:         request.MissionID,
 		Actor:             request.Actor,
@@ -374,7 +410,7 @@ func (h *FormationsHandler) ResumeRun(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSONBody(w, r, &request) {
 		return
 	}
-	engine := formations.NewRunEngine(h.store, h.personas, formations.NewConfiguredFormationExecutorFromEnv(h.store, h.personas, "api"))
+	engine := h.newRunEngine("api")
 	status, err := engine.ResumeRun(r.PathValue("runId"), formations.RunResumeRequest{
 		Actor:  request.Actor,
 		Mode:   request.Mode,
@@ -392,7 +428,7 @@ func (h *FormationsHandler) RecordHumanGateVerdict(w http.ResponseWriter, r *htt
 	if !decodeJSONBody(w, r, &request) {
 		return
 	}
-	engine := formations.NewRunEngine(h.store, h.personas, formations.NewConfiguredFormationExecutorFromEnv(h.store, h.personas, "api"))
+	engine := h.newRunEngine("api")
 	status, err := engine.RecordHumanGateVerdict(r.PathValue("runId"), formations.HumanGateVerdictRequest{
 		GateID:  r.PathValue("gateId"),
 		Verdict: request.Verdict,
@@ -758,12 +794,16 @@ func (h *FormationsHandler) PatchBoard(w http.ResponseWriter, r *http.Request) {
 	if request.CreateGate != nil {
 		gate := request.CreateGate
 		board, err := h.store.CreateGate(slug, formations.GateCreateRequest{
-			Title:     gate.Title,
-			Kinds:     gate.Kinds,
-			Criterion: gate.Criterion,
-			X:         gate.X,
-			Y:         gate.Y,
-			UpdatedBy: patchUpdatedBy(request.UpdatedBy, gate.UpdatedBy),
+			Title:        gate.Title,
+			Kinds:        gate.Kinds,
+			Criterion:    gate.Criterion,
+			Command:      gate.Command,
+			CommandArgv:  gate.CommandArgv,
+			CommandCWD:   gate.CommandCWD,
+			CommandShell: gate.CommandShell,
+			X:            gate.X,
+			Y:            gate.Y,
+			UpdatedBy:    patchUpdatedBy(request.UpdatedBy, gate.UpdatedBy),
 		}, formations.WriteOptions{
 			ExpectedETag: r.Header.Get("If-Match"),
 			ExpectedRev:  patchExpectedRev(request.ExpectedRev, gate.ExpectedRev),

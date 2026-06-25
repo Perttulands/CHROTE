@@ -4,6 +4,7 @@ import TerminalWindow from './TerminalWindow'
 import { DEFAULT_SETTINGS } from '../types'
 
 const refreshSessions = vi.fn()
+const createSession = vi.fn()
 const addSessionToWindow = vi.fn()
 const addToast = vi.fn()
 const removeSessionFromWindow = vi.fn()
@@ -32,6 +33,7 @@ vi.mock('../context/SessionContext', () => ({
     ],
     layoutPresets: [{ id: 'preset-1', name: 'Focus Layout', createdAt: 1, workspaces: {} }],
     refreshSessions,
+    createSession,
     addSessionToWindow,
     removeSessionFromWindow,
     setActiveSession: vi.fn(),
@@ -65,6 +67,7 @@ vi.mock('./IframePool', () => ({
 describe('TerminalWindow launch user', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    createSession.mockResolvedValue('forge1')
     deleteSession.mockResolvedValue(true)
     renameSession.mockResolvedValue(true)
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true })) as any)
@@ -74,7 +77,7 @@ describe('TerminalWindow launch user', () => {
     })
   })
 
-  it('creates new sessions with the workspace configured Unix user', async () => {
+  it('creates new sessions with the shared creation action and attaches to the current window', async () => {
     render(
       <TerminalWindow
         workspaceId="terminal3"
@@ -84,15 +87,14 @@ describe('TerminalWindow launch user', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /New Session/i }))
 
-    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled())
-    const [, init] = (globalThis.fetch as any).mock.calls[0]
-    expect(JSON.parse(init.body)).toMatchObject({ unixUser: 'tavern' })
-    expect(JSON.parse(init.body).name).toMatch(/^forge-/)
+    await waitFor(() => expect(createSession).toHaveBeenCalled())
+    expect(createSession).toHaveBeenCalledWith({
+      workspaceId: 'terminal3',
+      attachTo: { workspaceId: 'terminal3', windowId: 'terminal3-window-0' },
+    })
   })
 
-  it('binds the new session immediately instead of waiting for aggregate refresh', async () => {
-    refreshSessions.mockReturnValue(new Promise(() => {}))
-
+  it('passes explicit user choices from the window new-session menu into the same shared action', async () => {
     render(
       <TerminalWindow
         workspaceId="terminal3"
@@ -100,13 +102,15 @@ describe('TerminalWindow launch user', () => {
       />
     )
 
-    fireEvent.click(screen.getByRole('button', { name: /New Session/i }))
+    fireEvent.contextMenu(screen.getByRole('button', { name: /New Session/i }))
+    fireEvent.click(screen.getByRole('button', { name: /New here as P perttu/i }))
 
-    await waitFor(() => expect(addSessionToWindow).toHaveBeenCalled())
-    expect(refreshSessions).toHaveBeenCalled()
-    expect(addSessionToWindow.mock.invocationCallOrder[0]).toBeLessThan(refreshSessions.mock.invocationCallOrder[0])
-    const addedSession = addSessionToWindow.mock.calls[0][2]
-    expect(addedSession).toMatch(/^forge-/)
+    await waitFor(() => expect(createSession).toHaveBeenCalled())
+    expect(createSession).toHaveBeenCalledWith({
+      workspaceId: 'terminal3',
+      unixUser: 'perttu',
+      attachTo: { workspaceId: 'terminal3', windowId: 'terminal3-window-0' },
+    })
   })
 
   it('keeps session tag context menu limited to rename and kill', () => {
@@ -125,7 +129,7 @@ describe('TerminalWindow launch user', () => {
     expect(screen.queryByText(/Detach/i)).not.toBeInTheDocument()
   })
 
-  it('does not focus or refit the terminal iframe when clicking the session tab bar', () => {
+  it('does not focus from generic header clicks but focuses when clicking the status dot or body', () => {
     const { container } = render(
       <TerminalWindow
         workspaceId="terminal3"
@@ -136,6 +140,11 @@ describe('TerminalWindow launch user', () => {
     fireEvent.click(container.querySelector('.terminal-window-header')!)
 
     expect(setFocusedWindowKey).not.toHaveBeenCalled()
+
+    fireEvent.click(container.querySelector('.status-dot')!)
+    expect(setFocusedWindowKey).toHaveBeenCalledWith('terminal3-terminal3-window-0')
+
+    setFocusedWindowKey.mockClear()
 
     fireEvent.click(container.querySelector('.terminal-window-body')!)
     expect(setFocusedWindowKey).toHaveBeenCalledWith('terminal3-terminal3-window-0')

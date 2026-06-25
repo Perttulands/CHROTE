@@ -441,7 +441,149 @@ describe('resolveLaunchUser', () => {
 })
 
 // ──────────────────────────────────────────────
-// 5. addSessionToWindow cross-window dedup behavior
+// 5. createSession — single creation path, optional attach
+// ──────────────────────────────────────────────
+describe('createSession', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  function stubSessionFetch(existingSessions = [
+    { name: 'shell1', windows: 1, attached: false, group: 'shell', unixUser: 'perttu' },
+  ]) {
+    const fetchMock = vi.fn((_: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({}),
+          text: () => Promise.resolve(''),
+        })
+      }
+
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          sessions: existingSessions,
+          grouped: {},
+          terminalUsers: ['perttu', 'tavern'],
+          timestamp: new Date().toISOString(),
+        }),
+        text: () => Promise.resolve(''),
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  it('creates a standalone side-panel session through the shared action without attaching it', async () => {
+    const fetchMock = stubSessionFetch()
+    const { result } = renderSession()
+
+    await waitFor(() => expect(result.current.terminalUsers).toEqual(['perttu', 'tavern']))
+    fetchMock.mockClear()
+
+    let created: string | null = null
+    await act(async () => {
+      created = await result.current.createSession({ workspaceId: 'terminal1', unixUser: 'perttu' })
+    })
+
+    expect(created).toBe('shell2')
+    expect(fetchMock).toHaveBeenCalled()
+    const [, init] = fetchMock.mock.calls[0]
+    expect(JSON.parse(String(init?.body))).toEqual({ name: 'shell2', unixUser: 'perttu' })
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual([])
+  })
+
+  it('creates and immediately attaches a window session through the same shared action', async () => {
+    const fetchMock = stubSessionFetch()
+    const { result } = renderSession()
+
+    await waitFor(() => expect(result.current.terminalUsers).toEqual(['perttu', 'tavern']))
+    fetchMock.mockClear()
+
+    let created: string | null = null
+    await act(async () => {
+      created = await result.current.createSession({
+        workspaceId: 'terminal3',
+        unixUser: 'tavern',
+        attachTo: { workspaceId: 'terminal3', windowId: 'terminal3-window-0' },
+      })
+    })
+
+    expect(created).toBe('tavern1')
+    const [, init] = fetchMock.mock.calls[0]
+    expect(JSON.parse(String(init?.body))).toEqual({ name: 'tavern1', unixUser: 'tavern' })
+    const win = result.current.workspaces.terminal3.windows[0]
+    expect(win.boundSessions).toEqual(['tavern:tavern1'])
+    expect(win.activeSession).toBe('tavern:tavern1')
+  })
+
+  it('handles expected create-session API failures with a toast and no console error', async () => {
+    const fetchMock = stubSessionFetch()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { result } = renderSession()
+
+    await waitFor(() => expect(result.current.terminalUsers).toEqual(['perttu', 'tavern']))
+    fetchMock.mockClear()
+    fetchMock.mockImplementationOnce(() => Promise.resolve({
+      ok: false,
+      json: () => Promise.resolve({ error: 'tmux not running' }),
+      text: () => Promise.resolve('{"error":"tmux not running"}'),
+    }))
+
+    let created: string | null = 'not-null'
+    await act(async () => {
+      created = await result.current.createSession({ workspaceId: 'terminal1', unixUser: 'perttu' })
+    })
+
+    expect(created).toBeNull()
+    expect(consoleError).not.toHaveBeenCalled()
+    consoleError.mockRestore()
+  })
+})
+
+describe('refreshSessions', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it('preserves existing sessions and groups when a poll returns a non-ok response', async () => {
+    const existingSessions = [
+      { name: 'shell1', windows: 1, attached: false, group: 'shell', unixUser: 'perttu' },
+    ]
+    const existingGrouped = { shell: existingSessions }
+    const fetchMock = vi.fn((): Promise<any> => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({
+        sessions: existingSessions,
+        grouped: existingGrouped,
+        terminalUsers: ['perttu'],
+        timestamp: new Date().toISOString(),
+      }),
+      text: () => Promise.resolve(''),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { result } = renderSession()
+
+    await waitFor(() => expect(result.current.sessions).toEqual(existingSessions))
+    fetchMock.mockImplementationOnce(() => Promise.resolve({
+      ok: false,
+      json: () => Promise.resolve({ error: 'tmux server not running' }),
+      text: () => Promise.resolve('{"error":"tmux server not running"}'),
+    }))
+
+    await act(async () => {
+      await result.current.refreshSessions()
+    })
+
+    expect(result.current.error).toBe('tmux server not running')
+    expect(result.current.sessions).toEqual(existingSessions)
+    expect(result.current.groupedSessions).toEqual(existingGrouped)
+  })
+})
+
+// ──────────────────────────────────────────────
+// 6. addSessionToWindow cross-window dedup behavior
 // ──────────────────────────────────────────────
 describe('addSessionToWindow', () => {
   beforeEach(() => {

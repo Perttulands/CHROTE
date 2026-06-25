@@ -133,12 +133,28 @@ type FormationRewireRequest struct {
 }
 
 type GateCreateRequest struct {
-	Title     string
-	Kinds     []string
-	Criterion string
-	X         int
-	Y         int
-	UpdatedBy string
+	Title        string
+	Kinds        []string
+	Criterion    string
+	Command      string // legacy string form: parseable, but not executable by script gates
+	CommandArgv  []string
+	CommandCWD   string
+	CommandShell string
+	X            int
+	Y            int
+	UpdatedBy    string
+}
+
+type GateUpdateRequest struct {
+	GateID       string
+	Title        string
+	Kinds        []string
+	Criterion    string
+	Command      string // legacy string form: parseable, but not executable by script gates
+	CommandArgv  []string
+	CommandCWD   string
+	CommandShell string
+	UpdatedBy    string
 }
 
 type GateJudgeRequest struct {
@@ -201,10 +217,14 @@ type BoardConnection struct {
 }
 
 type GateNode struct {
-	ID        string   `json:"id"`
-	Title     string   `json:"title"`
-	Kinds     []string `json:"kinds"`
-	Criterion string   `json:"criterion"`
+	ID           string   `json:"id"`
+	Title        string   `json:"title"`
+	Kinds        []string `json:"kinds"`
+	Criterion    string   `json:"criterion"`
+	Command      string   `json:"command,omitempty"` // legacy string form: parseable, but not executable by script gates
+	CommandArgv  []string `json:"commandArgv,omitempty"`
+	CommandCWD   string   `json:"commandCwd,omitempty"`
+	CommandShell string   `json:"commandShell,omitempty"`
 }
 
 type MissionNode struct {
@@ -686,6 +706,9 @@ func (s *Store) RemoveFormationVerification(slug string, req FormationVerificati
 }
 
 func (s *Store) CreateGate(slug string, req GateCreateRequest, opts WriteOptions) (*BoardDocument, error) {
+	if err := validateGateCommandMode(req.Command, req.CommandArgv, req.CommandShell); err != nil {
+		return nil, err
+	}
 	kinds := req.Kinds
 	if len(kinds) == 0 {
 		kinds = []string{"code"}
@@ -695,10 +718,14 @@ func (s *Store) CreateGate(slug string, req GateCreateRequest, opts WriteOptions
 		title = "Review gate"
 	}
 	gate := GateNode{
-		ID:        newPrefixedID("gate"),
-		Title:     title,
-		Kinds:     kinds,
-		Criterion: req.Criterion,
+		ID:           newPrefixedID("gate"),
+		Title:        title,
+		Kinds:        kinds,
+		Criterion:    req.Criterion,
+		Command:      req.Command,
+		CommandArgv:  append([]string(nil), req.CommandArgv...),
+		CommandCWD:   req.CommandCWD,
+		CommandShell: req.CommandShell,
 	}
 	board, err := s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, _ *BoardDocument) ([]byte, error) {
 		return appendGateBlock(raw, gate), nil
@@ -710,6 +737,51 @@ func (s *Store) CreateGate(slug string, req GateCreateRequest, opts WriteOptions
 		return nil, err
 	}
 	return board, nil
+}
+
+func (s *Store) UpdateGate(slug string, req GateUpdateRequest, opts WriteOptions) (*BoardDocument, error) {
+	if req.GateID == "" {
+		return nil, ErrNotFound
+	}
+	if err := validateGateCommandMode(req.Command, req.CommandArgv, req.CommandShell); err != nil {
+		return nil, err
+	}
+	return s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, _ *BoardDocument) ([]byte, error) {
+		lines := splitLines(raw)
+		gateStart, gateEnd, ok := findGateBlockByID(lines, req.GateID)
+		if !ok {
+			return nil, ErrNotFound
+		}
+		if req.Title != "" {
+			lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "title", renderString(req.Title))
+		}
+		if len(req.Kinds) > 0 {
+			lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "kinds", renderStringArray(req.Kinds))
+		}
+		if req.Criterion != "" {
+			lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "criterion", renderString(req.Criterion))
+		}
+		if req.Command != "" {
+			lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "command", renderString(req.Command))
+			lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, "commandArgv")
+			lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, "commandShell")
+			lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, "commandCwd")
+		}
+		if len(req.CommandArgv) > 0 {
+			lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "commandArgv", renderStringArray(req.CommandArgv))
+			lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, "command")
+			lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, "commandShell")
+		}
+		if req.CommandCWD != "" {
+			lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "commandCwd", renderString(req.CommandCWD))
+		}
+		if req.CommandShell != "" {
+			lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "commandShell", renderString(req.CommandShell))
+			lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, "command")
+			lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, "commandArgv")
+		}
+		return renderTOMLLines(lines), nil
+	})
 }
 
 func (s *Store) SetGateJudgeChain(slug string, req GateJudgeRequest, opts WriteOptions) (*BoardDocument, error) {
@@ -1317,6 +1389,23 @@ func appendConnectionBlock(raw []byte, connection BoardConnection) []byte {
 	return []byte(b.String())
 }
 
+func validateGateCommandMode(command string, commandArgv []string, commandShell string) error {
+	modes := 0
+	if strings.TrimSpace(command) != "" {
+		modes++
+	}
+	if len(commandArgv) > 0 {
+		modes++
+	}
+	if strings.TrimSpace(commandShell) != "" {
+		modes++
+	}
+	if modes > 1 {
+		return fmt.Errorf("%w: gate command must use only one of legacy command, commandArgv, or commandShell", ErrConflict)
+	}
+	return nil
+}
+
 func appendGateBlock(raw []byte, gate GateNode) []byte {
 	var b strings.Builder
 	b.Write(raw)
@@ -1332,6 +1421,18 @@ func appendGateBlock(raw []byte, gate GateNode) []byte {
 	b.WriteString("title = " + renderString(gate.Title) + "\n")
 	b.WriteString("kinds = " + renderStringArray(gate.Kinds) + "\n")
 	b.WriteString("criterion = " + renderString(gate.Criterion) + "\n")
+	if gate.Command != "" {
+		b.WriteString("command = " + renderString(gate.Command) + "\n")
+	}
+	if len(gate.CommandArgv) > 0 {
+		b.WriteString("commandArgv = " + renderStringArray(gate.CommandArgv) + "\n")
+	}
+	if gate.CommandCWD != "" {
+		b.WriteString("commandCwd = " + renderString(gate.CommandCWD) + "\n")
+	}
+	if gate.CommandShell != "" {
+		b.WriteString("commandShell = " + renderString(gate.CommandShell) + "\n")
+	}
 	return []byte(b.String())
 }
 
@@ -2168,6 +2269,14 @@ func parseGateNodes(raw []byte) []GateNode {
 			current.Kinds = parseStringArray(value)
 		case "criterion":
 			current.Criterion = value
+		case "command":
+			current.Command = value
+		case "commandArgv":
+			current.CommandArgv = parseStringArray(value)
+		case "commandCwd":
+			current.CommandCWD = value
+		case "commandShell":
+			current.CommandShell = value
 		}
 	}
 	return gates

@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -76,7 +78,7 @@ func TmuxExecutorConfigFromEnv() TmuxExecutorConfig {
 		SessionPrefix:  strings.TrimSpace(os.Getenv("CHROTE_FORMATIONS_TMUX_SESSION_PREFIX")),
 		OutputCapBytes: capBytes,
 		TimeoutSeconds: timeoutSeconds,
-		ProdSmoke:      tmuxProdSmokeAllowed(os.Getenv("CHROTE_FORMATIONS_TMUX_PROD_SMOKE")),
+		ProdSmoke:      tmuxProdSmokeAllowed(os.Getenv("CHROTE_FORMATIONS_TMUX_PROD_SMOKE")) || tmuxProdSmokeAllowed(os.Getenv("CHROTE_FORMATIONS_TMUX_DEDICATED")),
 	}
 }
 
@@ -151,6 +153,62 @@ func (e *TmuxFormationExecutor) ExecuteFormation(req FormationExecution) (Format
 	}
 	text := strings.Join(outputs, "\n\n")
 	return e.formationResultFromText(req, fmt.Sprintf("tmux://%s/%s/report", req.RunID, req.NodeID), text)
+}
+
+func (e *TmuxFormationExecutor) ReattachFormationDispatch(req FormationReattachRequest) (FormationExecutionResult, error) {
+	if e == nil || e.store == nil {
+		return FormationExecutionResult{}, runExecutionError("missing_executor", "tmux executor store is not configured", "executor", ErrRunExecutorUnavailable)
+	}
+	if err := e.validateConfiguredBoundary(); err != nil {
+		return FormationExecutionResult{}, err
+	}
+	if req.DispatchID == "" || req.NodeID == "" || req.SlotID == "" {
+		return FormationExecutionResult{}, runExecutionError("invalid_reattach", "reattach requires dispatch, node, and slot identifiers", "recovery", nil)
+	}
+	dispatcher := NewSlotDispatcher(e.store, nil)
+	dispatch := dispatcher.dispatchEvent(req.RunID, req.DispatchID)
+	if dispatch.Type == "" {
+		return FormationExecutionResult{}, runExecutionError("unknown_dispatch", fmt.Sprintf("dispatch %q was not found", req.DispatchID), "recovery", nil)
+	}
+	sessionRef := stringFromEventData(dispatch, "sessionRef")
+	sessionName, ok := strings.CutPrefix(sessionRef, "tmux:")
+	if !ok || !safeTmuxSessionName(sessionName) {
+		return FormationExecutionResult{}, runExecutionError("invalid_session", fmt.Sprintf("dispatch %q has invalid sessionRef %q", req.DispatchID, sessionRef), "recovery", nil)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(e.config.TimeoutSeconds)*time.Second)
+	defer cancel()
+	captured, err := e.client.CapturePane(ctx, e.config.Socket, sessionName, e.config.OutputCapBytes+1)
+	if err != nil {
+		return FormationExecutionResult{}, runSlotExecutionError("reattach_capture_failed", redactLedgerText(err.Error()), "adapter", err, req.NodeID, req.SlotID, req.DispatchID)
+	}
+	capBytes := e.config.OutputCapBytes
+	if capBytes <= 0 {
+		capBytes = defaultTmuxOutputCapBytes
+	}
+	if len(captured) > capBytes {
+		return FormationExecutionResult{}, runSlotExecutionError("oversized_output", "tmux captured output exceeds configured cap", "adapter", nil, req.NodeID, req.SlotID, req.DispatchID)
+	}
+	sentinel, _ := ParseCompletionSentinel(captured, req.RunID)
+	artifact := redactLedgerText(sentinel.Artifact)
+	if artifact == "" {
+		artifact = "tmux://" + req.RunID + "/" + req.NodeID + "/" + req.SlotID
+	}
+	text := extractCapturedSlotText(captured, "", req.RunID)
+	if strings.TrimSpace(text) == "" {
+		text = fmt.Sprintf("tmux harness completed for sessionRef %s artifact %s", sessionRef, artifact)
+	}
+	result, err := e.formationResultFromText(FormationExecution{
+		RunID:     req.RunID,
+		NodeID:    req.NodeID,
+		Formation: req.Formation,
+	}, artifact, text)
+	if err != nil {
+		return FormationExecutionResult{}, err
+	}
+	if err := dispatcher.CompleteFromCapture(req.RunID, req.DispatchID, captured); err != nil {
+		return FormationExecutionResult{}, err
+	}
+	return result, nil
 }
 
 func (e *TmuxFormationExecutor) executeOrchestratedFormation(req FormationExecution) (FormationExecutionResult, error) {
@@ -261,6 +319,9 @@ func (e *TmuxFormationExecutor) formationResultFromText(req FormationExecution, 
 			return FormationExecutionResult{}, runExecutionError("invalid_output_payloads", fmt.Sprintf("formation %q emitted unknown output port %q", req.NodeID, portID), "executor", nil)
 		}
 	}
+	if err := e.materializeOutputRefs(namedOutputs); err != nil {
+		return FormationExecutionResult{}, err
+	}
 	if len(cleanText) > e.config.OutputCapBytes {
 		return FormationExecutionResult{}, runExecutionError("oversized_output", "tmux executor output exceeds configured cap", "adapter", nil)
 	}
@@ -272,28 +333,156 @@ func (e *TmuxFormationExecutor) formationResultFromText(req FormationExecution, 
 	}, nil
 }
 
+func (e *TmuxFormationExecutor) materializeOutputRefs(outputs map[string]FormationOutputPayload) error {
+	if len(outputs) == 0 {
+		return nil
+	}
+	for portID, payload := range outputs {
+		ref := strings.TrimSpace(payload.Ref)
+		if ref == "" {
+			continue
+		}
+		body, err := e.readOutputRefArtifact(ref)
+		if err != nil {
+			return err
+		}
+		payload.Text = redactLedgerText(body)
+		outputs[portID] = payload
+	}
+	return nil
+}
+
+func (e *TmuxFormationExecutor) readOutputRefArtifact(ref string) (string, error) {
+	path, err := e.resolveOutputRefPath(ref)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", runExecutionError("unavailable_output_ref", fmt.Sprintf("output ref %q is not stat-able", ref), "executor", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", runExecutionError("invalid_output_ref", fmt.Sprintf("output ref %q is not a regular file", ref), "executor", nil)
+	}
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		code := "unavailable_output_ref"
+		if errors.Is(err, syscall.ELOOP) {
+			code = "output_ref_outside_root"
+		}
+		return "", runExecutionError(code, fmt.Sprintf("output ref %q is not readable", ref), "executor", err)
+	}
+	file := os.NewFile(uintptr(fd), path)
+	if file == nil {
+		syscall.Close(fd)
+		return "", runExecutionError("unavailable_output_ref", fmt.Sprintf("output ref %q could not be opened", ref), "executor", nil)
+	}
+	defer file.Close()
+	info, err = file.Stat()
+	if err != nil {
+		return "", runExecutionError("unavailable_output_ref", fmt.Sprintf("output ref %q is not stat-able", ref), "executor", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", runExecutionError("invalid_output_ref", fmt.Sprintf("output ref %q is not a regular file", ref), "executor", nil)
+	}
+	capBytes := e.config.OutputCapBytes
+	if capBytes <= 0 {
+		capBytes = defaultTmuxOutputCapBytes
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, int64(capBytes)+1))
+	if err != nil {
+		return "", runExecutionError("unavailable_output_ref", fmt.Sprintf("output ref %q could not be read", ref), "executor", err)
+	}
+	if len(raw) > capBytes {
+		return "", runExecutionError("oversized_output_ref", fmt.Sprintf("output ref %q exceeds configured output cap", ref), "executor", nil)
+	}
+	if bytes.Contains(raw, []byte{0}) {
+		return "", runExecutionError("invalid_output_ref", fmt.Sprintf("output ref %q is not text", ref), "executor", nil)
+	}
+	return string(raw), nil
+}
+
+func (e *TmuxFormationExecutor) resolveOutputRefPath(ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", runExecutionError("invalid_output_ref", "empty output ref", "executor", nil)
+	}
+	if strings.ContainsRune(ref, 0) || strings.Contains(ref, "://") {
+		return "", runExecutionError("invalid_output_ref", fmt.Sprintf("unsupported output ref %q", ref), "executor", nil)
+	}
+	var candidate string
+	if filepath.IsAbs(ref) {
+		candidate = filepath.Clean(ref)
+	} else {
+		base := e.config.Cwd
+		if e.store != nil && strings.TrimSpace(e.store.Workspace) != "" {
+			base = e.store.Workspace
+		}
+		candidate = filepath.Join(base, filepath.FromSlash(ref))
+	}
+	candidate, err := filepath.Abs(candidate)
+	if err != nil {
+		return "", runExecutionError("invalid_output_ref", fmt.Sprintf("output ref %q is invalid", ref), "executor", err)
+	}
+	if !e.pathWithinRoots(candidate) {
+		return "", runExecutionError("output_ref_outside_root", fmt.Sprintf("output ref %q is outside configured roots", ref), "executor", nil)
+	}
+	resolved, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", runExecutionError("unavailable_output_ref", fmt.Sprintf("output ref %q does not exist", ref), "executor", err)
+		}
+		return "", runExecutionError("unavailable_output_ref", fmt.Sprintf("output ref %q could not be resolved", ref), "executor", err)
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		return "", runExecutionError("invalid_output_ref", fmt.Sprintf("output ref %q is invalid", ref), "executor", err)
+	}
+	if !e.pathWithinRoots(resolved) {
+		return "", runExecutionError("output_ref_outside_root", fmt.Sprintf("output ref %q resolves outside configured roots", ref), "executor", nil)
+	}
+	return resolved, nil
+}
+
 func outputContractExtraLines(formation FormationNode) []string {
 	if len(formation.Outputs) == 0 {
 		return nil
 	}
 	lines := []string{
 		"formation output contract:",
-		"Every formation output must be emitted through exactly one fenced JSON block before the sentinel:",
+		"Every formation output must be emitted through exactly one fenced JSON block before the sentinel. Keep JSON string values short; terminal wrapping corrupts long JSON strings.",
+		"Required routing payload shape:",
 		"```chrote-outputs",
-		"{\"port_id\":{\"text\":\"payload for that output\"}}",
+		"{",
+	}
+	for i, output := range formation.Outputs {
+		comma := ","
+		if i == len(formation.Outputs)-1 {
+			comma = ""
+		}
+		lines = append(lines, fmt.Sprintf("  %q: {\"text\": \"one-line summary\", \"ref\": \"artifact/path.md\"}%s", output.ID, comma))
+	}
+	lines = append(lines,
+		"}",
 		"```",
-		"Use all and only these output port ids:",
-	}
-	for _, output := range formation.Outputs {
-		lines = append(lines, fmt.Sprintf("- %s label=%q", output.ID, output.Label))
-	}
-	lines = append(lines, "Do not rely on free-form answer text for routing; it is display-only. Missing or unknown output ids block the run.")
+		"Use all and only the exact output port ids in that skeleton.",
+	)
+	lines = append(lines,
+		"Do not rely on free-form answer text for routing; it is display-only. Missing or unknown output ids block the run.",
+		"Use text for a short, non-secret routed payload or summary.",
+		"For longer payloads, create a text artifact under the artifact directory shown below and put its path in ref; CHROTE reads that file for routing.",
+		"Do not point ref at arbitrary host files or secrets. Invalid, unreadable, out-of-root, symlink-escaped, non-text, or oversized refs block the run.",
+		"Before the CHROTE-DONE sentinel, you MUST emit a fresh ```chrote-outputs fenced JSON block for this run. Do not omit the fence.",
+	)
 	return lines
 }
 
 func parseChroteOutputs(text string) (string, map[string]FormationOutputPayload, error) {
 	start := strings.LastIndex(text, "```chrote-outputs")
 	if start == -1 {
+		if clean, outputs, ok := parseBareChroteOutputs(text); ok {
+			return clean, outputs, nil
+		}
 		return strings.TrimSpace(text), nil, nil
 	}
 	afterStart := text[start:]
@@ -308,8 +497,8 @@ func parseChroteOutputs(text string) (string, map[string]FormationOutputPayload,
 		return "", nil, fmt.Errorf("chrote-outputs fence is missing closing fence")
 	}
 	jsonText := strings.TrimSpace(afterJSONStart[:endRel])
-	var raw map[string]any
-	if err := json.Unmarshal([]byte(jsonText), &raw); err != nil {
+	raw, err := decodeChroteOutputsJSON(jsonText)
+	if err != nil {
 		return "", nil, fmt.Errorf("chrote-outputs JSON is invalid: %w", err)
 	}
 	outputs := outputPayloadsFromAny(raw)
@@ -319,6 +508,94 @@ func parseChroteOutputs(text string) (string, map[string]FormationOutputPayload,
 	end := jsonStart + endRel + len("```")
 	clean := strings.TrimSpace(text[:start] + text[end:])
 	return clean, outputs, nil
+}
+
+func parseBareChroteOutputs(text string) (string, map[string]FormationOutputPayload, bool) {
+	trimmed := strings.TrimSpace(text)
+	for start := 0; start < len(trimmed); start++ {
+		if trimmed[start] != '{' {
+			continue
+		}
+		raw, ok := decodeBareChroteOutputsCandidate(trimmed[start:])
+		if !ok {
+			continue
+		}
+		if !hasOutputPortKey(raw) {
+			continue
+		}
+		outputs := outputPayloadsFromAny(raw)
+		if len(outputs) == 0 {
+			continue
+		}
+		return strings.TrimSpace(trimmed[:start]), outputs, true
+	}
+	return strings.TrimSpace(text), nil, false
+}
+
+func decodeBareChroteOutputsCandidate(candidate string) (map[string]any, bool) {
+	decode := func(rawText string) (map[string]any, bool) {
+		decoder := json.NewDecoder(strings.NewReader(rawText))
+		var raw map[string]any
+		if err := decoder.Decode(&raw); err != nil {
+			return nil, false
+		}
+		if strings.TrimSpace(rawText[int(decoder.InputOffset()):]) != "" {
+			return nil, false
+		}
+		return raw, true
+	}
+	if raw, ok := decode(candidate); ok {
+		return raw, true
+	}
+	return decode(repairTerminalWrappedJSONStrings(candidate))
+}
+
+func decodeChroteOutputsJSON(jsonText string) (map[string]any, error) {
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(jsonText), &raw); err != nil {
+		if repairedErr := json.Unmarshal([]byte(repairTerminalWrappedJSONStrings(jsonText)), &raw); repairedErr == nil {
+			return raw, nil
+		}
+		return nil, err
+	}
+	return raw, nil
+}
+
+func repairTerminalWrappedJSONStrings(jsonText string) string {
+	var b strings.Builder
+	inString := false
+	escaped := false
+	for i := 0; i < len(jsonText); i++ {
+		ch := jsonText[i]
+		if inString && ch == '\n' {
+			for i+1 < len(jsonText) && (jsonText[i+1] == ' ' || jsonText[i+1] == '	') {
+				i++
+			}
+			continue
+		}
+		b.WriteByte(ch)
+		if escaped {
+			escaped = false
+			continue
+		}
+		if ch == '\\' {
+			escaped = true
+			continue
+		}
+		if ch == '"' {
+			inString = !inString
+		}
+	}
+	return b.String()
+}
+
+func hasOutputPortKey(raw map[string]any) bool {
+	for key := range raw {
+		if strings.HasPrefix(key, "port_") {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *TmuxFormationExecutor) executeSlot(req FormationExecution, slot FormationSlot, allowed map[string]bool, dispatcher *SlotDispatcher, phase string, extraLines []string) (tmuxSlotOutput, error) {
@@ -978,6 +1255,11 @@ func (e *TmuxFormationExecutor) renderPromptWithContext(req FormationExecution, 
 		if strings.TrimSpace(line) != "" {
 			b.WriteString(line + "\n")
 		}
+	}
+	if len(req.Formation.Outputs) > 0 && e.store != nil {
+		artifactDir := filepath.Join(e.store.Workspace, ".formations", "artifacts", req.RunID)
+		b.WriteString("artifact directory for long routed outputs: " + artifactDir + "\n")
+		b.WriteString("If you use ref in chrote-outputs, create the file first under that artifact directory or another configured root path. Do not point ref at arbitrary host files or secrets.\n")
 	}
 	b.WriteString("When complete, emit exactly one sentinel line using the run value above: <<<CHROTE-DONE run-id=<the-run-value-above> status=ok artifact=<path-or-ref>>>\n")
 	return b.String()

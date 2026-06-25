@@ -332,6 +332,78 @@ func TestFormationsHandlerS5ResumeVerdictAndEscalations(t *testing.T) {
 	}
 }
 
+func TestFormationsHandlerStartsSingleFormationByID(t *testing.T) {
+	store := formations.NewStore(t.TempDir())
+	store.Now = fixedFormationsAPIClock()
+	personas := formations.NewPersonaStore(t.TempDir())
+	personas.Now = fixedFormationsAPIClock()
+	if _, err := personas.CreatePersona(formations.CreatePersonaRequest{ID: "scout", Kind: "specialist", Harness: "openai-codex"}); err != nil {
+		t.Fatalf("create persona: %v", err)
+	}
+	t.Setenv("CHROTE_FORMATIONS_LAB_HARNESSES", "openai-codex")
+	t.Setenv("CHROTE_FORMATIONS_LAB_CWD", store.Workspace)
+	t.Setenv("CHROTE_FORMATIONS_LAB_ROOTS", store.Workspace)
+	writeFormationsAPIFixture(t, store.BoardPath("session-search"), formationsAPIS5CascadeBoardFixture())
+	handler := NewFormationsHandlerWithStores(store, personas)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	startReq := httptest.NewRequest(http.MethodPost, "/api/formations/runs", bytes.NewBufferString(`{"board":"session-search","formationId":"fmn_work","actor":"agent:test","limits":{"maxDispatch":1,"maxAttempts":1}}`))
+	startRec := httptest.NewRecorder()
+	mux.ServeHTTP(startRec, startReq)
+	if startRec.Code != http.StatusOK {
+		t.Fatalf("start status = %d, want %d: %s", startRec.Code, http.StatusOK, startRec.Body.String())
+	}
+	started := decodeFormationsRunStartResponse(t, startRec.Body.Bytes())
+	if started.RunID == "" || started.Status.Status != formations.RunStatusSucceeded {
+		t.Fatalf("started = %+v, want succeeded single-formation run", started)
+	}
+	events, err := store.ReadRunEvents(started.RunID)
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if !apiEventsContain(events, formations.RunEventStarted, formations.RunEventNodeStarted, formations.RunEventNodeOutput, formations.RunEventSucceeded) {
+		t.Fatalf("events = %v, want single formation output path", apiEventTypes(events))
+	}
+}
+
+func TestFormationsHandlerStartRunRequiresExactlyOneTargetAndHonorsFormationPreconditions(t *testing.T) {
+	store := formations.NewStore(t.TempDir())
+	store.Now = fixedFormationsAPIClock()
+	personas := formations.NewPersonaStore(t.TempDir())
+	personas.Now = fixedFormationsAPIClock()
+	writeFormationsAPIFixture(t, store.BoardPath("session-search"), formationsAPIS5CascadeBoardFixture())
+	handler := NewFormationsHandlerWithStores(store, personas)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "missing target", body: `{"board":"session-search"}`},
+		{name: "ambiguous target", body: `{"board":"session-search","missionId":"mis_showcase","formationId":"fmn_work"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/formations/runs", bytes.NewBufferString(tc.body))
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+			}
+		})
+	}
+
+	staleReq := httptest.NewRequest(http.MethodPost, "/api/formations/runs", bytes.NewBufferString(`{"board":"session-search","formationId":"fmn_work","expectedRev":7}`))
+	staleReq.Header.Set("If-Match", "stale-etag")
+	staleRec := httptest.NewRecorder()
+	mux.ServeHTTP(staleRec, staleReq)
+	if staleRec.Code != http.StatusConflict {
+		t.Fatalf("stale status = %d, want %d: %s", staleRec.Code, http.StatusConflict, staleRec.Body.String())
+	}
+}
+
 func TestFormationsHandlerS3DeletesGateAndMissionThroughBoardPatch(t *testing.T) {
 	store := formations.NewStore(t.TempDir())
 	store.Now = fixedFormationsAPIClock()
@@ -868,14 +940,17 @@ updatedAt = "2026-06-03T16:00:00Z"
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
-	req := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/session-search", bytes.NewBufferString(`{"createGate":{"title":"Review gate","kinds":["code","human"],"criterion":"Research is sound."},"expectedRev":7,"updatedBy":"agent:test"}`))
+	req := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/session-search", bytes.NewBufferString(`{"createGate":{"title":"Review gate","kinds":["code","human"],"criterion":"Research is sound.","commandArgv":["npm","run","lint"],"commandCwd":"dashboard"},"expectedRev":7,"updatedBy":"agent:test"}`))
 	req.Header.Set("If-Match", board.ETag)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("gate create status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	if !bytes.Contains(rec.Body.Bytes(), []byte(`"kinds":["code","human"]`)) || bytes.Contains(rec.Body.Bytes(), []byte("verdict")) || bytes.Contains(rec.Body.Bytes(), []byte("onFail")) {
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"kinds":["code","human"]`)) ||
+		!bytes.Contains(rec.Body.Bytes(), []byte(`"commandArgv":["npm","run","lint"]`)) ||
+		!bytes.Contains(rec.Body.Bytes(), []byte(`"commandCwd":"dashboard"`)) ||
+		bytes.Contains(rec.Body.Bytes(), []byte("verdict")) || bytes.Contains(rec.Body.Bytes(), []byte("onFail")) {
 		t.Fatalf("gate response wrong: %s", rec.Body.String())
 	}
 }

@@ -1315,12 +1315,14 @@ func TestS3GatePersistsKindsCriterionWithoutVerdictOrOnFail(t *testing.T) {
 		t.Fatalf("read board: %v", err)
 	}
 	after, err := store.CreateGate("session-search", GateCreateRequest{
-		Title:     "Review gate",
-		Kinds:     []string{"code", "human"},
-		Criterion: "Research is sound and safe to build.",
-		X:         410,
-		Y:         220,
-		UpdatedBy: "agent:test",
+		Title:       "Review gate",
+		Kinds:       []string{"code", "human"},
+		Criterion:   "Research is sound and safe to build.",
+		CommandArgv: []string{"npm", "run", "lint"},
+		CommandCWD:  "dashboard",
+		X:           410,
+		Y:           220,
+		UpdatedBy:   "agent:test",
 	}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev})
 	if err != nil {
 		t.Fatalf("create gate: %v", err)
@@ -1334,6 +1336,15 @@ func TestS3GatePersistsKindsCriterionWithoutVerdictOrOnFail(t *testing.T) {
 	}
 	if strings.Contains(raw, "x = 410") || strings.Contains(raw, "y = 220") {
 		t.Fatalf("gate layout coordinates leaked into board definition:\n%s", raw)
+	}
+	if !strings.Contains(raw, `commandArgv = ["npm", "run", "lint"]`) {
+		t.Fatalf("gate command argv did not persist in board definition:\n%s", raw)
+	}
+	if !strings.Contains(raw, `commandCwd = "dashboard"`) {
+		t.Fatalf("gate command cwd did not persist in board definition:\n%s", raw)
+	}
+	if strings.Contains(raw, `command = "npm run lint"`) {
+		t.Fatalf("gate command persisted as legacy shell string:\n%s", raw)
 	}
 	layout, err := store.ReadLayout("session-search")
 	if err != nil {

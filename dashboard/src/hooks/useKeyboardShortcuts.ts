@@ -1,7 +1,6 @@
 import { useEffect, useCallback } from 'react'
 import { useSession } from '../context/SessionContext'
 import type { WorkspaceId } from '../types'
-import { getSessionPrefixForUser, resolveLaunchUser } from '../types'
 import type { Tab } from '../components/TabBar'
 
 interface KeyboardShortcutsConfig {
@@ -26,50 +25,22 @@ export function useKeyboardShortcuts({
     toggleSidebar,
     closeFloatingModal,
     floatingSession,
-    refreshSessions,
-    settings,
-    terminalUsers,
-    sessions,
+    createSession,
     loadPreset,
     layoutPresets,
   } = useSession()
 
   // Create a new session
-  const createSession = useCallback(async () => {
+  const createSessionForActiveTab = useCallback(async () => {
     try {
       const workspaceId: WorkspaceId | null = activeTab === 'terminal1' || activeTab === 'terminal2' || activeTab === 'terminal3'
         ? activeTab
         : null
-      const unixUser = workspaceId ? resolveLaunchUser(settings, workspaceId, terminalUsers) : undefined
-      const prefix = unixUser
-        ? getSessionPrefixForUser(settings, unixUser, terminalUsers)
-        : (settings.defaultSessionPrefix || 'tmux')
-      const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      const regex = new RegExp(`^${escapedPrefix}(\\d+)$`)
-
-      const existingNumbers = sessions
-        .map(s => s.name.match(regex))
-        .filter(Boolean)
-        .map(m => parseInt(m![1], 10))
-
-      const nextNum = existingNumbers.length > 0
-        ? Math.max(...existingNumbers) + 1
-        : 1
-      const sessionName = `${prefix}${nextNum}`
-
-      const response = await fetch('/api/tmux/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: sessionName, unixUser }),
-        signal: AbortSignal.timeout(10000),
-      })
-      if (response.ok) {
-        refreshSessions()
-      }
+      await createSession(workspaceId ? { workspaceId } : { workspaceId: 'terminal1' })
     } catch (e) {
       console.error('Failed to create session:', e)
     }
-  }, [activeTab, settings, terminalUsers, sessions, refreshSessions])
+  }, [activeTab, createSession])
 
   // Focus search box
   const focusSearchBox = useCallback(() => {
@@ -163,7 +134,7 @@ export function useKeyboardShortcuts({
       // Ctrl + N - Create new session
       if (e.ctrlKey && e.key === 'n') {
         e.preventDefault()
-        createSession()
+        createSessionForActiveTab()
         return
       }
 
@@ -189,7 +160,7 @@ export function useKeyboardShortcuts({
     closeFloatingModal,
     focusSearchBox,
     toggleSidebar,
-    createSession,
+    createSessionForActiveTab,
     getCurrentWorkspaceId,
     workspaces,
     loadPreset,

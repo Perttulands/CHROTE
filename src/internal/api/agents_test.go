@@ -69,6 +69,9 @@ source = "/tmp/CLAUDE.md"
 	if body.Data.Agents[0].ID != "susie" || body.Data.Agents[0].Liveness != formations.AgentLivenessLive {
 		t.Fatalf("first agent = %#v, want live susie", body.Data.Agents[0])
 	}
+	if body.Data.Agents[0].HarnessDefault != "claude-code" {
+		t.Fatalf("first agent harnessDefault = %q, want claude-code", body.Data.Agents[0].HarnessDefault)
+	}
 	if body.Data.Agents[1].ID != "scratch" || !body.Data.Agents[1].Unbound || body.Data.Agents[1].Assignable {
 		t.Fatalf("second agent = %#v, want unbound scratch", body.Data.Agents[1])
 	}

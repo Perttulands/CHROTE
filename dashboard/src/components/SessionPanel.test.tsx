@@ -4,6 +4,7 @@ import SessionPanel from './SessionPanel'
 import { DEFAULT_SETTINGS } from '../types'
 
 const refreshSessions = vi.fn()
+const createSession = vi.fn()
 const addToast = vi.fn()
 
 vi.mock('../context/SessionContext', () => ({
@@ -14,6 +15,7 @@ vi.mock('../context/SessionContext', () => ({
     sidebarCollapsed: false,
     toggleSidebar: vi.fn(),
     refreshSessions,
+    createSession,
     sessions: [],
     settings: {
       ...DEFAULT_SETTINGS,
@@ -34,7 +36,16 @@ vi.mock('./NukeConfirmModal', () => ({
 describe('SessionPanel new-session context menu', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true })) as any)
+    createSession.mockResolvedValue('created')
+  })
+
+  it('creates a default side-panel session through the shared creation action', async () => {
+    render(<SessionPanel />)
+
+    fireEvent.click(screen.getByTitle('New tmux session'))
+
+    await waitFor(() => expect(createSession).toHaveBeenCalled())
+    expect(createSession).toHaveBeenCalledWith({ workspaceId: 'terminal1' })
   })
 
   it('creates a new session as the selected configured Unix user from the New Session context menu', async () => {
@@ -43,10 +54,8 @@ describe('SessionPanel new-session context menu', () => {
     fireEvent.contextMenu(screen.getByTitle('New tmux session'))
     fireEvent.click(screen.getByRole('button', { name: /New as B bob/i }))
 
-    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled())
-    const [, init] = (globalThis.fetch as any).mock.calls[0]
-    expect(JSON.parse(init.body)).toMatchObject({ unixUser: 'bob' })
-    expect(JSON.parse(init.body).name).toMatch(/^bob\d+$/)
+    await waitFor(() => expect(createSession).toHaveBeenCalled())
+    expect(createSession).toHaveBeenCalledWith({ workspaceId: 'terminal1', unixUser: 'bob' })
   })
 
   it('opens a named session field and creates the exact typed session name', async () => {
@@ -60,8 +69,7 @@ describe('SessionPanel new-session context menu', () => {
     fireEvent.change(screen.getByLabelText('New session name'), { target: { value: 'research-agent' } })
     fireEvent.click(screen.getByRole('button', { name: 'Create named session' }))
 
-    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled())
-    const [, init] = (globalThis.fetch as any).mock.calls[0]
-    expect(JSON.parse(init.body)).toMatchObject({ name: 'research-agent', unixUser: 'alice' })
+    await waitFor(() => expect(createSession).toHaveBeenCalled())
+    expect(createSession).toHaveBeenCalledWith({ workspaceId: 'terminal1', unixUser: 'alice', name: 'research-agent' })
   })
 })

@@ -40,15 +40,7 @@ import { GATE_SVG, PLAY_SVG, TYPE_TAG, agentColor, agentRole, agentState, initia
 import { connectionKind, findInputPortAt, findOutputPortAt, isTextEditingTarget, laneYFrom, splitList } from './formationsCockpitDom'
 import { routeJudgeWire, routeOrthoWire } from './formationsRouting'
 import type { ObstacleRect } from './formationsRouting'
-import { findAddedByID, upsertNode } from './formationsBoardModel'
-import {
-  applyStarterBoardPatch,
-  createStarterBoard,
-  createStarterLayout,
-  isStarterBoard,
-  starterBoardSummary,
-  withStarterLayoutRev,
-} from './formationsStarterBoard'
+import { findAddedByID } from './formationsBoardModel'
 import type {
   AgentProjection,
   BoardConnection,
@@ -164,14 +156,14 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
           setSelectedSlug(current => current || list[0].slug)
           return
         }
-        const starterBoard = createStarterBoard()
-        const starterLayout = createStarterLayout()
-        boardRef.current = starterBoard
-        layoutRef.current = starterLayout
-        setBoards([starterBoardSummary(starterBoard)])
-        setSelectedSlug(starterBoard.slug)
-        setBoard(starterBoard)
-        setLayout(starterLayout)
+        boardRef.current = null
+        layoutRef.current = null
+        setBoards([])
+        setSelectedSlug('')
+        setBoard(null)
+        setLayout(null)
+        setActiveRun(null)
+        setRunEvents([])
       })
       .catch(err => !cancelled && setError(err instanceof Error ? err.message : 'Failed to load boards'))
     return () => { cancelled = true }
@@ -179,8 +171,6 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
 
   useEffect(() => {
     if (!selectedSlug) return
-    const currentBoard = boardRef.current
-    if (currentBoard && isStarterBoard(currentBoard) && currentBoard.slug === selectedSlug) return
     let cancelled = false
     Promise.all([fetchBoardDocument(selectedSlug), fetchBoardLayout(selectedSlug)])
       .then(([nextBoard, nextLayout]) => {
@@ -196,11 +186,11 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   useEffect(() => {
     // Paused while the tab is hidden (keep-alive); reactivation re-runs this
     // effect and refreshes immediately via the leading checkChanges() call.
-    if (!active || !selectedSlug || !board?.rev || isStarterBoard(board)) return
+    if (!active || !selectedSlug || !board?.etag) return
     let cancelled = false
     const checkChanges = async () => {
       try {
-        const changed = await fetchBoardChanged(selectedSlug, board.rev)
+        const changed = await fetchBoardChanged(selectedSlug, board.etag)
         if (cancelled || !changed) return
         const [nextBoard, nextLayout] = await Promise.all([fetchBoardDocument(selectedSlug), fetchBoardLayout(selectedSlug)])
         if (cancelled) return
@@ -214,7 +204,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     void checkChanges()
     const timer = window.setInterval(() => { void checkChanges() }, 600)
     return () => { cancelled = true; window.clearInterval(timer) }
-  }, [active, board?.rev, selectedSlug])
+  }, [active, board?.etag, selectedSlug])
 
   useEffect(() => {
     if (!active) return
@@ -226,7 +216,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   }, [active])
 
   useEffect(() => {
-    if (!selectedSlug || isStarterBoard(board)) return
+    if (!selectedSlug) return
     const runId = window.localStorage.getItem(activeRunStorageKey(selectedSlug))
     if (!runId || activeRun?.runId === runId) return
     let cancelled = false
@@ -374,18 +364,6 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const patchBoard = useCallback(async (patch: Record<string, unknown>): Promise<{ board: BoardDocument; layout: LayoutDocument | null } | null> => {
     const current = boardRef.current
     if (!current) return null
-    if (isStarterBoard(current)) {
-      const result = applyStarterBoardPatch(current, layoutRef.current || createStarterLayout(), patch)
-      boardRef.current = result.board
-      setBoard(result.board)
-      setBoards([starterBoardSummary(result.board)])
-      if (result.layout) {
-        layoutRef.current = result.layout
-        setLayout(result.layout)
-      }
-      setError('')
-      return { board: result.board, layout: result.layout ?? null }
-    }
     try {
       const result = await patchBoardDocument(current.slug, current.etag, current.rev, patch)
       boardRef.current = result.board
@@ -406,19 +384,6 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     const currentBoard = boardRef.current
     const currentLayout = layoutRef.current
     if (!currentBoard || !currentLayout) return
-    if (isStarterBoard(currentBoard)) {
-      const next = withStarterLayoutRev({
-        ...currentLayout,
-        edges: [
-          ...(currentLayout.edges || []).filter(edge => edge.id !== edgeId),
-          { id: edgeId, lane },
-        ],
-      }, currentBoard.rev)
-      layoutRef.current = next
-      setLayout(next)
-      setError('')
-      return
-    }
     try {
       const next = await patchBoardLayout(currentBoard.slug, currentLayout.etag, { edges: [{ id: edgeId, lane }] })
       layoutRef.current = next
@@ -433,16 +398,6 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     const currentBoard = boardRef.current
     const currentLayout = layoutRef.current
     if (!currentBoard || !currentLayout) return
-    if (isStarterBoard(currentBoard)) {
-      const next = withStarterLayoutRev({
-        ...currentLayout,
-        nodes: upsertNode(currentLayout.nodes || [], { id, x, y }),
-      }, currentBoard.rev)
-      layoutRef.current = next
-      setLayout(next)
-      setError('')
-      return
-    }
     try {
       const next = await patchBoardLayout(currentBoard.slug, currentLayout.etag, { nodes: [{ id, x, y }] })
       layoutRef.current = next
@@ -623,7 +578,6 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     const before = boardRef.current
     const result = await patchBoard({ createGate: { title: 'Review gate', kinds: ['code'], criterion: '', x: Math.round(worldX), y: Math.round(worldY) } })
     if (!before || !result) return
-    if (isStarterBoard(result.board)) return
     const gate = findAddedByID(before.gates || [], result.board.gates || [])
     if (gate) undoStack.current.push({ kind: 'deleteGate', id: gate.id })
     const placementEtag = result.layout?.etag || layoutRef.current?.etag
@@ -803,25 +757,6 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const runMission = useCallback(async (mission: MissionNode) => {
     const current = boardRef.current
     if (!current) return
-    if (isStarterBoard(current)) {
-      const runId = 'run-starter-preview'
-      const events: RunEvent[] = [
-        { seq: 1, type: 'run_started', runId, data: { actor: 'agent:ui' } },
-        { seq: 2, type: 'run_succeeded', runId, nodeId: mission.id, data: { text: 'starter board preview run' } },
-      ]
-      setActiveRun({
-        runId,
-        status: 'succeeded',
-        final: true,
-        boardSlug: current.slug,
-        missionId: mission.id,
-        eventCount: events.length,
-        resumeAllowed: false,
-      })
-      setRunEvents(events)
-      setError('')
-      return
-    }
     try {
       const result = await startRun(current.etag, { board: current.slug, missionId: mission.id, actor: 'agent:ui' })
       const status = { ...result.status, runId: result.status.runId || result.runId }
@@ -837,25 +772,6 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const runFormation = useCallback(async (formation: FormationNode) => {
     const current = boardRef.current
     if (!current) return
-    if (isStarterBoard(current)) {
-      const runId = `run-starter-preview-${formation.id}`
-      const events: RunEvent[] = [
-        { seq: 1, type: 'run_started', runId, nodeId: formation.id, data: { actor: 'agent:ui' } },
-        { seq: 2, type: 'run_succeeded', runId, nodeId: formation.id, data: { text: 'starter formation preview run' } },
-      ]
-      setActiveRun({
-        runId,
-        status: 'succeeded',
-        final: true,
-        boardSlug: current.slug,
-        missionId: '',
-        eventCount: events.length,
-        resumeAllowed: false,
-      })
-      setRunEvents(events)
-      setError('')
-      return
-    }
     try {
       const result = await startRun(current.etag, { board: current.slug, formationId: formation.id, actor: 'agent:ui' })
       const status = { ...result.status, runId: result.status.runId || result.runId }
@@ -1293,6 +1209,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
 
   const beginGateToken = useCallback((event: ReactPointerEvent) => {
     if (event.button !== 0) return
+    if (!boardRef.current) return
     event.preventDefault()
     gateDragRef.current = true
     setGateGhost({ x: event.clientX, y: event.clientY })
@@ -1482,6 +1399,11 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     return <div className="solo-body">{slots[0] ? renderSlot(formation, slots[0]) : null}</div>
   }
 
+  const rosterAgents = useMemo(() => agents.filter(agent => agent.assignable && !agent.unbound), [agents])
+  const deployedAgentCount = useMemo(
+    () => new Set((board?.formations || []).flatMap(f => f.slots.map(s => s.agentId).filter(Boolean))).size,
+    [board?.formations],
+  )
   const runBadgeClass = activeRun ? activeRun.status : ''
   const pendingHumanGateId = useMemo(() => openHumanGateId(runEvents), [runEvents])
 
@@ -1492,7 +1414,8 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
         <div className="spacer" />
         <div className="boardpick">
           board
-          <select value={selectedSlug} onChange={event => setSelectedSlug(event.target.value)} data-testid="board-picker">
+          <select value={selectedSlug} onChange={event => setSelectedSlug(event.target.value)} data-testid="board-picker" disabled={boards.length === 0}>
+            {boards.length === 0 ? <option value="">No boards</option> : null}
             {boards.map(summary => <option key={summary.slug} value={summary.slug}>{summary.title || summary.slug}</option>)}
           </select>
           {board ? <span className="rev">rev {board.rev}</span> : null}
@@ -1501,7 +1424,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M5 11V7a7 7 0 0114 0v4" /><rect x="4" y="11" width="16" height="9" rx="2" /></svg>
           Gate
         </div>
-        <button className="newbtn" onClick={createSolo} data-testid="new-formation">
+        <button className="newbtn" onClick={createSolo} data-testid="new-formation" disabled={!board}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
           New formation
         </button>
@@ -1512,12 +1435,12 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
         <aside className="roster" data-testid="agent-roster">
           <div className="roster-hd">
             <div className="t">Agent roster</div>
-            <div className="s">{agents.length} agents · {new Set((board?.formations || []).flatMap(f => f.slots.map(s => s.agentId).filter(Boolean))).size} deployed</div>
+            <div className="s">{rosterAgents.length} catalog agents · {deployedAgentCount} deployed</div>
           </div>
           <div className="roster-list">
-            {agents.length === 0
-              ? <div className="roster-empty">No agents on the socket. Spawn an agent to staff a formation.</div>
-              : agents.map(agent => {
+            {rosterAgents.length === 0
+              ? <div className="roster-empty">No assignable catalog agents. Add persona cards in ~/agents to staff formations.</div>
+              : rosterAgents.map(agent => {
                 const deployed = (board?.formations || []).some(f => f.slots.some(s => s.agentId === agent.id))
                 return (
                   <div
@@ -1570,6 +1493,13 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
                 />
               ) : null}
             </svg>
+
+            {!board ? (
+              <div className="empty-board" data-testid="formations-empty-board">
+                <div className="empty-title">No persisted formation boards</div>
+                <div className="empty-copy">Seed a real board with Archon or create one through the API. The cockpit no longer shows fake starter missions.</div>
+              </div>
+            ) : null}
 
             {(board?.missions || []).map((mission, index) => {
               const pos = positionOf(mission.id, index)

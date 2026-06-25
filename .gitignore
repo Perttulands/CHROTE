@@ -61,6 +61,9 @@ src/internal/dashboard/music/
 src/internal/dashboard/*.html
 src/internal/dashboard/*.png
 
+# Agent-local planning/context artifacts
+.hermes/
+
 # Claude Code config
 .claude/
 

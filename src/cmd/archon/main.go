@@ -196,6 +196,8 @@ func run(args []string, stdout, stderr io.Writer, runner tmuxRunner) int {
 		switch args[1] {
 		case "create":
 			return runGateCreate(store, args[2:], stdout, stderr)
+		case "update":
+			return runGateUpdate(store, args[2:], stdout, stderr)
 		case "judge":
 			return runGateJudge(store, args[2:], stdout, stderr)
 		case "approve":
@@ -248,6 +250,12 @@ func run(args []string, stdout, stderr io.Writer, runner tmuxRunner) int {
 		fmt.Fprintf(stderr, "unknown archon noun %q\n", args[0])
 		return 2
 	}
+}
+
+func newArchonRunEngine(store *formations.Store, personas *formations.PersonaStore, boundary string) *formations.RunEngine {
+	engine := formations.NewRunEngine(store, personas, formations.NewConfiguredFormationExecutorFromEnv(store, personas, boundary))
+	engine.SetGateEvaluator(formations.NewConfiguredGateEvaluatorFromEnv(store.Workspace))
+	return engine
 }
 
 func parseGlobalArgs(args []string, stderr io.Writer) (archonConfig, []string, bool) {
@@ -742,6 +750,10 @@ func runGateCreate(store *formations.Store, args []string, stdout, stderr io.Wri
 	title := fs.String("title", "Review gate", "gate title")
 	kinds := fs.String("kinds", "code", "comma-separated gate kinds")
 	criterion := fs.String("criterion", "", "gate criterion")
+	command := fs.String("command", "", "legacy script/lint gate command string (stored but not executable by script gates)")
+	commandArgv := fs.String("command-argv", "", "comma-separated argv command for script/lint gates, e.g. npm,run,lint")
+	commandCWD := fs.String("command-cwd", "", "command working directory relative to workspace")
+	commandShell := fs.String("command-shell", "", "explicit shell command for script/lint gates")
 	x := fs.Int("x", 0, "layout x coordinate")
 	y := fs.Int("y", 0, "layout y coordinate")
 	updatedBy := fs.String("updated-by", "agent:archon", "update actor")
@@ -750,7 +762,7 @@ func runGateCreate(store *formations.Store, args []string, stdout, stderr io.Wri
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: archon gate create <board> [--kinds code,human] [--criterion text] [--x n] [--y n] [--json]")
+		fmt.Fprintln(stderr, "usage: archon gate create <board> [--kinds code,human] [--criterion text] [--command-argv npm,run,lint] [--command-cwd dir] [--command-shell cmd] [--x n] [--y n] [--json]")
 		return 2
 	}
 	slug, err := store.ResolveBoardSelector(fs.Arg(0))
@@ -762,12 +774,16 @@ func runGateCreate(store *formations.Store, args []string, stdout, stderr io.Wri
 		return fail(stderr, err)
 	}
 	result, err := store.CreateGate(slug, formations.GateCreateRequest{
-		Title:     *title,
-		Kinds:     splitCSV(*kinds),
-		Criterion: *criterion,
-		X:         *x,
-		Y:         *y,
-		UpdatedBy: *updatedBy,
+		Title:        *title,
+		Kinds:        splitCSV(*kinds),
+		Criterion:    *criterion,
+		Command:      *command,
+		CommandArgv:  splitCSV(*commandArgv),
+		CommandCWD:   *commandCWD,
+		CommandShell: *commandShell,
+		X:            *x,
+		Y:            *y,
+		UpdatedBy:    *updatedBy,
 	}, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
 	if err != nil {
 		return fail(stderr, err)
@@ -777,6 +793,63 @@ func runGateCreate(store *formations.Store, args []string, stdout, stderr io.Wri
 		return writeJSON(stdout, result)
 	}
 	fmt.Fprintln(stdout, "created gate")
+	return 0
+}
+
+func runGateUpdate(store *formations.Store, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("gate update", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	title := fs.String("title", "", "gate title")
+	kinds := fs.String("kinds", "", "comma-separated gate kinds")
+	criterion := fs.String("criterion", "", "gate criterion")
+	command := fs.String("command", "", "legacy script/lint gate command string (stored but not executable by script gates)")
+	commandArgv := fs.String("command-argv", "", "comma-separated argv command for script/lint gates, e.g. npm,run,lint")
+	commandCWD := fs.String("command-cwd", "", "command working directory relative to workspace")
+	commandShell := fs.String("command-shell", "", "explicit shell command for script/lint gates")
+	updatedBy := fs.String("updated-by", "agent:archon", "update actor")
+	jsonOut := fs.Bool("json", false, "write JSON")
+	if err := fs.Parse(reorderFlags(args, map[string]bool{"json": true})); err != nil {
+		return 2
+	}
+	if fs.NArg() != 2 {
+		fmt.Fprintln(stderr, "usage: archon gate update <board> <gate> [--title text] [--kinds code,llm] [--criterion text] [--command-argv npm,run,lint] [--command-cwd dir] [--command-shell cmd] [--json]")
+		return 2
+	}
+	slug, err := store.ResolveBoardSelector(fs.Arg(0))
+	if err != nil {
+		return failSelector(stderr, err, *jsonOut, "board", fs.Arg(0))
+	}
+	board, err := store.ReadBoard(slug)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	gateID, err := resolveGateSelector(board, fs.Arg(1))
+	if err != nil {
+		return failSelector(stderr, err, *jsonOut, "gate", fs.Arg(1))
+	}
+	var updateKinds []string
+	if strings.TrimSpace(*kinds) != "" {
+		updateKinds = splitCSV(*kinds)
+	}
+	result, err := store.UpdateGate(slug, formations.GateUpdateRequest{
+		GateID:       gateID,
+		Title:        *title,
+		Kinds:        updateKinds,
+		Criterion:    *criterion,
+		Command:      *command,
+		CommandArgv:  splitCSV(*commandArgv),
+		CommandCWD:   *commandCWD,
+		CommandShell: *commandShell,
+		UpdatedBy:    *updatedBy,
+	}, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
+	if err != nil {
+		return fail(stderr, err)
+	}
+	result.TOML = ""
+	if *jsonOut {
+		return writeJSON(stdout, result)
+	}
+	fmt.Fprintln(stdout, "updated gate")
 	return 0
 }
 
@@ -846,7 +919,7 @@ func runGateVerdict(store *formations.Store, args []string, stdout, stderr io.Wr
 		return 2
 	}
 	personas := formations.NewPersonaStore(formations.DefaultAgentsDir())
-	engine := formations.NewRunEngine(store, personas, formations.NewConfiguredFormationExecutorFromEnv(store, personas, "archon"))
+	engine := newArchonRunEngine(store, personas, "archon")
 	status, err := engine.RecordHumanGateVerdict(fs.Arg(0), formations.HumanGateVerdictRequest{
 		GateID:  fs.Arg(1),
 		Verdict: verdict,
@@ -1063,7 +1136,7 @@ func runMissionRun(store *formations.Store, args []string, stdout, stderr io.Wri
 		missionID = resolved
 	}
 	personas := formations.NewPersonaStore(formations.DefaultAgentsDir())
-	engine := formations.NewRunEngine(store, personas, formations.NewConfiguredFormationExecutorFromEnv(store, personas, "archon"))
+	engine := newArchonRunEngine(store, personas, "archon")
 	status, err := engine.RunMission(slug, formations.RunStartRequest{
 		MissionID:         missionID,
 		Actor:             *actor,
@@ -1102,7 +1175,7 @@ func runFormationRun(store *formations.Store, args []string, stdout, stderr io.W
 		return failSelector(stderr, err, *jsonOut, "formation", fs.Arg(1))
 	}
 	personas := formations.NewPersonaStore(formations.DefaultAgentsDir())
-	engine := formations.NewRunEngine(store, personas, formations.NewConfiguredFormationExecutorFromEnv(store, personas, "archon"))
+	engine := newArchonRunEngine(store, personas, "archon")
 	status, err := engine.RunFormation(slug, formationID, formations.FormationRunRequest{
 		Actor:    *actor,
 		Personas: personas,
@@ -1309,7 +1382,7 @@ func runResume(store *formations.Store, args []string, stdout, stderr io.Writer)
 		return 2
 	}
 	personas := formations.NewPersonaStore(formations.DefaultAgentsDir())
-	engine := formations.NewRunEngine(store, personas, formations.NewConfiguredFormationExecutorFromEnv(store, personas, "archon"))
+	engine := newArchonRunEngine(store, personas, "archon")
 	status, err := engine.ResumeRun(fs.Arg(0), formations.RunResumeRequest{
 		Actor:  *actor,
 		Mode:   *mode,
@@ -1797,8 +1870,8 @@ func archonExposeTmuxTargetSessions(roster *formations.AgentRoster) {
 }
 
 func (realTmuxRunner) LiveSessions() ([]formations.LiveAgentSession, error) {
-	cmd := exec.Command("tmux", "list-sessions", "-F", "#{session_name}:#{session_attached}")
-	cmd.Env = core.GetTmuxEnv()
+	cmd := exec.Command("tmux", archonTmuxArgs("list-sessions", "-F", "#{session_name}:#{session_attached}")...)
+	cmd.Env = archonTmuxEnv()
 	output, err := cmd.Output()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -1830,18 +1903,40 @@ func (realTmuxRunner) Spawn(name, command string) error {
 	if command != "" {
 		args = append(args, command)
 	}
-	cmd := exec.Command("tmux", args...)
-	cmd.Env = core.GetTmuxEnv()
+	cmd := exec.Command("tmux", archonTmuxArgs(args...)...)
+	cmd.Env = archonTmuxEnv()
 	return cmd.Run()
 }
 
 func (realTmuxRunner) Attach(name string) error {
-	cmd := exec.Command("tmux", "attach-session", "-t", name)
-	cmd.Env = core.GetTmuxEnv()
+	cmd := exec.Command("tmux", archonTmuxArgs("attach-session", "-t", name)...)
+	cmd.Env = archonTmuxEnv()
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func archonTmuxArgs(args ...string) []string {
+	socket := strings.TrimSpace(os.Getenv("CHROTE_FORMATIONS_TMUX_SOCKET"))
+	if socket == "" {
+		return append([]string(nil), args...)
+	}
+	allArgs := []string{"-S", socket}
+	allArgs = append(allArgs, args...)
+	return allArgs
+}
+
+func archonTmuxEnv() []string {
+	base := core.GetTmuxEnv()
+	env := make([]string, 0, len(base))
+	for _, item := range base {
+		if strings.HasPrefix(item, "TMUX=") {
+			continue
+		}
+		env = append(env, item)
+	}
+	return env
 }
 
 func writeJSON(w io.Writer, value interface{}) int {

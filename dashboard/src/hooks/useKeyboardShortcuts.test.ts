@@ -17,6 +17,7 @@ describe('useKeyboardShortcuts Hook', () => {
   const mockOnShowHelp = vi.fn()
   const mockToggleSidebar = vi.fn()
   const mockCloseFloatingModal = vi.fn()
+  const mockCreateSession = vi.fn()
   
   beforeEach(() => {
     vi.clearAllMocks()
@@ -33,6 +34,7 @@ describe('useKeyboardShortcuts Hook', () => {
 
       floatingSession: null,
       refreshSessions: vi.fn(),
+      createSession: mockCreateSession,
       settings: DEFAULT_SETTINGS,
       terminalUsers: ['perttu', 'tavern'],
       sessions: [],
@@ -126,9 +128,8 @@ describe('useKeyboardShortcuts Hook', () => {
     document.body.removeChild(input)
   })
 
-  it('creates Ctrl+N sessions with the active tab launch user prefix', async () => {
-    const refreshSessions = vi.fn()
-    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true })) as any)
+  it('creates Ctrl+N sessions through the shared creation action for the active terminal tab', async () => {
+    mockCreateSession.mockResolvedValue('created')
     mockUseSession.mockReturnValue({
       workspaces: {
         terminal1: { windowCount: 4 },
@@ -138,18 +139,9 @@ describe('useKeyboardShortcuts Hook', () => {
       toggleSidebar: mockToggleSidebar,
       closeFloatingModal: mockCloseFloatingModal,
       floatingSession: null,
-      refreshSessions,
-      settings: {
-        ...DEFAULT_SETTINGS,
-        terminalLaunchUsers: {
-          ...DEFAULT_SETTINGS.terminalLaunchUsers,
-          terminal3: 'tavern',
-        },
-        terminalSessionPrefixes: {
-          ...DEFAULT_SETTINGS.terminalSessionPrefixes,
-          tavern: 'forge',
-        },
-      },
+      refreshSessions: vi.fn(),
+      createSession: mockCreateSession,
+      settings: DEFAULT_SETTINGS,
       terminalUsers: ['perttu', 'tavern'],
       sessions: [],
       loadPreset: vi.fn(),
@@ -165,8 +157,7 @@ describe('useKeyboardShortcuts Hook', () => {
 
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', ctrlKey: true }))
 
-    await waitFor(() => expect(globalThis.fetch).toHaveBeenCalled())
-    const [, init] = (globalThis.fetch as any).mock.calls[0]
-    expect(JSON.parse(init.body)).toEqual({ name: 'forge1', unixUser: 'tavern' })
+    await waitFor(() => expect(mockCreateSession).toHaveBeenCalled())
+    expect(mockCreateSession).toHaveBeenCalledWith({ workspaceId: 'terminal3' })
   })
 })

@@ -2,8 +2,13 @@ import { defineConfig, devices } from '@playwright/test'
 
 const liveBackend = process.env.CHROTE_PLAYWRIGHT_LIVE === '1'
 const formationsOnly = process.env.CHROTE_PLAYWRIGHT_FORMATIONS === '1'
-const devServerURL = 'http://localhost:5173'
+const devServerPort = process.env.CHROTE_PLAYWRIGHT_PORT ?? '5173'
+if (!/^\d+$/.test(devServerPort)) {
+  throw new Error(`CHROTE_PLAYWRIGHT_PORT must be numeric, got ${devServerPort}`)
+}
+const devServerURL = `http://127.0.0.1:${devServerPort}`
 const liveBackendURL = process.env.CHROTE_TEST_URL ?? 'http://127.0.0.1:8094'
+const reuseExistingDevServer = process.env.CHROTE_PLAYWRIGHT_REUSE_SERVER === '1'
 const localOnlyIgnores = [
   '**/integration/**',
   ...(formationsOnly ? [] : ['**/formations/**']),
@@ -48,9 +53,9 @@ export default defineConfig({
     },
   ],
   webServer: liveBackend ? undefined : {
-    command: 'CHROTE_PLAYWRIGHT_MOCKED=1 npm run dev',
+    command: `CHROTE_PLAYWRIGHT_MOCKED=1 npm run dev -- --host 127.0.0.1 --port ${devServerPort} --strictPort`,
     url: devServerURL,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: reuseExistingDevServer,
     timeout: 120000,
   },
 })

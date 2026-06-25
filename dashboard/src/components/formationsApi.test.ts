@@ -125,16 +125,16 @@ describe('formations API helpers', () => {
     })
   })
 
-  it('checks board changes against the current revision', async () => {
+  it('checks board changes against the current ETag', async () => {
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
-      expect(String(input)).toBe('/api/formations/boards/session-search/changes?rev=7')
+      expect(String(input)).toBe('/api/formations/boards/session-search/changes?etag=board-etag')
       return Promise.resolve(jsonResponse({
         success: true,
         data: { signal: { changed: true } },
       }))
     }) as unknown as typeof fetch)
 
-    await expect(fetchBoardChanged('session-search', 7)).resolves.toBe(true)
+    await expect(fetchBoardChanged('session-search', 'board-etag')).resolves.toBe(true)
   })
 
   it('patches a board with explicit optimistic concurrency inputs', async () => {

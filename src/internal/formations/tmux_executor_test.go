@@ -61,6 +61,12 @@ func TestTmuxExecutorRefusesLiveChroteSocketUnlessProdSmoke(t *testing.T) {
 	if !TmuxExecutorConfigFromEnv().ProdSmoke {
 		t.Fatal("CHROTE_FORMATIONS_TMUX_PROD_SMOKE=prod-smoke did not enable prod smoke config")
 	}
+
+	clearExecutorEnv(t)
+	t.Setenv("CHROTE_FORMATIONS_TMUX_DEDICATED", "1")
+	if !TmuxExecutorConfigFromEnv().ProdSmoke {
+		t.Fatal("CHROTE_FORMATIONS_TMUX_DEDICATED=1 did not enable dedicated live tmux config")
+	}
 }
 
 func TestTmuxExecutorSessionFailuresRecordDurableBoundaryAndProvenance(t *testing.T) {
@@ -259,6 +265,314 @@ func TestTmuxExecutorParsesNamedOutputPayloadBlockForPortRouting(t *testing.T) {
 	}
 	if got, want := firstStartedInputText(t, events, "fmn_right"), "RIGHT-FROM-TMUX"; got != want {
 		t.Fatalf("right routed input = %q, want %q", got, want)
+	}
+}
+
+func TestTmuxExecutorReadsOutputRefArtifactForPortRouting(t *testing.T) {
+	store, personas := s4RunFixture(t)
+	store.Now = fixedClock()
+	personas.Now = fixedClock()
+	createS4Persona(t, personas, "scout")
+	writeFixture(t, store.BoardPath("session-search"), s4NamedOutputBoardFixture())
+	board, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	leftArtifact := filepath.Join(store.Workspace, ".formations", "artifacts", "left-long.md")
+	leftArtifactRef, err := filepath.Rel(store.Workspace, leftArtifact)
+	if err != nil {
+		t.Fatalf("relative artifact ref: %v", err)
+	}
+	leftArtifactRef = filepath.ToSlash(leftArtifactRef)
+	longLeft := "LEFT-ARTIFACT-BEGIN\n" + strings.Repeat("long routed artifact line with preserved spacing 0123456789\n", 80) + "LEFT-ARTIFACT-END"
+	writeFixture(t, leftArtifact, longLeft)
+	payloads := map[string]FormationOutputPayload{
+		"port_split_left":  {Text: "LEFT-SUMMARY", Ref: leftArtifactRef},
+		"port_split_right": {Text: "RIGHT-FROM-TMUX"},
+	}
+	rawPayloads, err := json.Marshal(payloads)
+	if err != nil {
+		t.Fatalf("marshal output payloads: %v", err)
+	}
+	cfg := tmuxTestConfig(t)
+	cfg.Cwd = store.Workspace
+	cfg.Roots = []string{store.Workspace}
+	client := &fakeTmuxHarnessClient{
+		sessions: []string{"tmux-scout"},
+		pane:     tmuxPaneState{CurrentPath: cfg.Cwd},
+		captures: []string{
+			"splitter wrote long payload artifact\n```chrote-outputs\n" + string(rawPayloads) + "\n```\n<<<CHROTE-DONE run-id=run_missing status=ok artifact=split.md>>>",
+			"left consumer saw artifact payload\n<<<CHROTE-DONE run-id=run_missing status=ok artifact=left.md>>>",
+			"right consumer saw RIGHT-FROM-TMUX\n<<<CHROTE-DONE run-id=run_missing status=ok artifact=right.md>>>",
+		},
+	}
+	executor := newTmuxFormationExecutorWithClient(store, personas, cfg, client)
+	engine := NewRunEngine(store, personas, executor)
+	status, err := engine.RunMission("session-search", RunStartRequest{
+		MissionID:         "mis_showcase",
+		Actor:             "agent:test",
+		ExpectedBoardETag: board.ETag,
+		ExpectedBoardRev:  board.Rev,
+		Limits:            RunLimits{MaxDispatch: 5, MaxAttempts: 1},
+	})
+	if err != nil {
+		t.Fatalf("run mission: %v", err)
+	}
+	if status.Status != RunStatusSucceeded || !status.Final {
+		t.Fatalf("status = %+v, want succeeded final", status)
+	}
+	events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
+	splitOutput := findNodeOutputEvent(t, events, "fmn_split")
+	outputs, ok := splitOutput.Data["outputs"].(map[string]any)
+	if !ok {
+		t.Fatalf("split output payloads = %#v, want map", splitOutput.Data["outputs"])
+	}
+	assertOutputPayloadText(t, outputs, "port_split_left", longLeft)
+	assertOutputPayloadText(t, outputs, "port_split_right", "RIGHT-FROM-TMUX")
+	leftPayload, ok := outputs["port_split_left"].(map[string]any)
+	if !ok || leftPayload["ref"] != leftArtifactRef {
+		t.Fatalf("left payload = %#v, want ref %q", outputs["port_split_left"], leftArtifactRef)
+	}
+	if got := firstStartedInputText(t, events, "fmn_left"); got != longLeft {
+		t.Fatalf("left routed input length=%d, want artifact length=%d", len(got), len(longLeft))
+	}
+	if len(client.sentPrompts) < 2 || !strings.Contains(client.sentPrompts[1], longLeft) {
+		t.Fatalf("left consumer prompt did not receive hydrated artifact body; prompts=%d", len(client.sentPrompts))
+	}
+}
+
+func TestTmuxExecutorBlocksInvalidOutputRefArtifacts(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		setupRef func(t *testing.T, store *Store) string
+		wantCode string
+	}{
+		{
+			name: "missing_ref_file",
+			setupRef: func(t *testing.T, store *Store) string {
+				t.Helper()
+				return filepath.Join(store.Workspace, ".formations", "artifacts", "missing-left.md")
+			},
+			wantCode: "unavailable_output_ref",
+		},
+		{
+			name: "non_regular_ref_directory",
+			setupRef: func(t *testing.T, store *Store) string {
+				t.Helper()
+				dir := filepath.Join(store.Workspace, ".formations", "artifacts", "directory-ref")
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatalf("create directory ref fixture: %v", err)
+				}
+				return dir
+			},
+			wantCode: "invalid_output_ref",
+		},
+		{
+			name: "outside_configured_roots",
+			setupRef: func(t *testing.T, store *Store) string {
+				t.Helper()
+				outside := filepath.Join(t.TempDir(), "outside-left.md")
+				writeFixture(t, outside, "SHOULD-NOT-ROUTE")
+				return outside
+			},
+			wantCode: "output_ref_outside_root",
+		},
+		{
+			name: "symlink_escape",
+			setupRef: func(t *testing.T, store *Store) string {
+				t.Helper()
+				outside := filepath.Join(t.TempDir(), "outside-left.md")
+				writeFixture(t, outside, "SHOULD-NOT-ROUTE")
+				insideLink := filepath.Join(store.Workspace, ".formations", "artifacts", "linked-outside.md")
+				if err := os.MkdirAll(filepath.Dir(insideLink), 0o755); err != nil {
+					t.Fatalf("mkdir symlink parent: %v", err)
+				}
+				if err := os.Symlink(outside, insideLink); err != nil {
+					t.Fatalf("create symlink escape fixture: %v", err)
+				}
+				return insideLink
+			},
+			wantCode: "output_ref_outside_root",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, personas := s4RunFixture(t)
+			store.Now = fixedClock()
+			personas.Now = fixedClock()
+			createS4Persona(t, personas, "scout")
+			writeFixture(t, store.BoardPath("session-search"), s4NamedOutputBoardFixture())
+			board, err := store.ReadBoard("session-search")
+			if err != nil {
+				t.Fatalf("read board: %v", err)
+			}
+			badRef := tc.setupRef(t, store)
+			payloads := map[string]FormationOutputPayload{
+				"port_split_left":  {Text: "LEFT-SUMMARY", Ref: badRef},
+				"port_split_right": {Text: "RIGHT-FROM-TMUX"},
+			}
+			rawPayloads, err := json.Marshal(payloads)
+			if err != nil {
+				t.Fatalf("marshal output payloads: %v", err)
+			}
+			cfg := tmuxTestConfig(t)
+			cfg.Cwd = store.Workspace
+			cfg.Roots = []string{store.Workspace}
+			client := &fakeTmuxHarnessClient{
+				sessions: []string{"tmux-scout"},
+				pane:     tmuxPaneState{CurrentPath: cfg.Cwd},
+				captures: []string{
+					"splitter referenced invalid artifact\n```chrote-outputs\n" + string(rawPayloads) + "\n```\n<<<CHROTE-DONE run-id=run_missing status=ok artifact=split.md>>>",
+				},
+			}
+			executor := newTmuxFormationExecutorWithClient(store, personas, cfg, client)
+			engine := NewRunEngine(store, personas, executor)
+			status, err := engine.RunMission("session-search", RunStartRequest{
+				MissionID:         "mis_showcase",
+				Actor:             "agent:test",
+				ExpectedBoardETag: board.ETag,
+				ExpectedBoardRev:  board.Rev,
+				Limits:            RunLimits{MaxDispatch: 5, MaxAttempts: 1},
+			})
+			if err != nil {
+				t.Fatalf("run mission: %v", err)
+			}
+			if status.Status != RunStatusBlocked || status.Final {
+				t.Fatalf("status = %+v, want blocked non-final", status)
+			}
+			events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
+			errEvent := eventOfType(t, events, RunEventError)
+			if errEvent.NodeID != "fmn_split" || errEvent.Data["code"] != tc.wantCode || errEvent.Data["boundary"] != "executor" {
+				t.Fatalf("error event = %+v data=%#v, want %s on fmn_split/executor", errEvent, errEvent.Data, tc.wantCode)
+			}
+			if eventsContainNodeStart(events, "fmn_left") {
+				t.Fatalf("events = %v, invalid ref must not route to fmn_left", eventTypesOf(events))
+			}
+		})
+	}
+}
+
+func eventsContainNodeStart(events []RunEvent, nodeID string) bool {
+	for _, event := range events {
+		if event.Type == RunEventNodeStarted && event.NodeID == nodeID {
+			return true
+		}
+	}
+	return false
+}
+
+func TestTmuxExecutorReattachesCompletedDispatchFromPaneCapture(t *testing.T) {
+	store, personas := s4RunFixture(t)
+	store.Now = fixedClock()
+	personas.Now = fixedClock()
+	createS4Persona(t, personas, "scout")
+	writeFixture(t, store.BoardPath("session-search"), s4RunBoardFixture())
+	board, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	started, err := store.StartRun("session-search", RunStartRequest{
+		MissionID:         "mis_showcase",
+		Actor:             "agent:test",
+		ExpectedBoardETag: board.ETag,
+		ExpectedBoardRev:  board.Rev,
+		Personas:          personas,
+	})
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	dispatcher := NewSlotDispatcher(store, &fakeDispatchAdapter{})
+	lease, err := dispatcher.DispatchSlot(started.RunID, SlotDispatchRequest{
+		NodeID:      "fmn_research",
+		SlotID:      "slot_research",
+		AgentID:     "scout",
+		Harness:     "openai-codex",
+		SessionStem: "scout",
+		SessionRef:  "tmux:tmux-scout",
+		Prompt:      "Do the work",
+		Attempt:     1,
+	})
+	if err != nil {
+		t.Fatalf("dispatch slot: %v", err)
+	}
+	if err := dispatcher.CompleteFromCapture(started.RunID, lease.DispatchID, "still working"); !errors.Is(err, ErrDispatchTimeout) {
+		t.Fatalf("complete without sentinel error = %v, want ErrDispatchTimeout", err)
+	}
+	if _, err := store.ResumeRun(started.RunID, RunResumeRequest{Actor: "agent:test", Mode: "reattach", Reason: "recover completed pane"}); err != nil {
+		t.Fatalf("record resume: %v", err)
+	}
+	cfg := tmuxTestConfig(t)
+	client := &fakeTmuxHarnessClient{paneText: fmt.Sprintf("reattached pane output\n```chrote-outputs\n{\"port_research_out\":{\"text\":\"reattached from tmux\"}}\n```\n<<<CHROTE-DONE run-id=%s status=ok artifact=done.md>>>", started.RunID)}
+	executor := newTmuxFormationExecutorWithClient(store, personas, cfg, client)
+	result, err := executor.ReattachFormationDispatch(FormationReattachRequest{
+		RunID:      started.RunID,
+		DispatchID: lease.DispatchID,
+		NodeID:     "fmn_research",
+		SlotID:     "slot_research",
+		Formation:  board.Formations[0],
+	})
+	if err != nil {
+		t.Fatalf("reattach dispatch: %v", err)
+	}
+	if client.sendCalls != 0 || client.captureCalls != 1 {
+		t.Fatalf("client send/capture calls = %d/%d, want no resend and one capture", client.sendCalls, client.captureCalls)
+	}
+	if result.Outputs["port_research_out"].Text != "reattached from tmux" {
+		t.Fatalf("result outputs = %#v, want reattached payload", result.Outputs)
+	}
+	events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
+	if eventOfType(t, events, RunEventSlotResult).Data["dispatchId"] != lease.DispatchID {
+		t.Fatalf("events = %#v, want slot_result for original dispatch", events)
+	}
+}
+
+func TestTmuxExecutorReattachRejectsOversizedCapture(t *testing.T) {
+	store, personas := s4RunFixture(t)
+	store.Now = fixedClock()
+	personas.Now = fixedClock()
+	createS4Persona(t, personas, "scout")
+	writeFixture(t, store.BoardPath("session-search"), s4RunBoardFixture())
+	board, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	started, err := store.StartRun("session-search", RunStartRequest{
+		MissionID:         "mis_showcase",
+		Actor:             "agent:test",
+		ExpectedBoardETag: board.ETag,
+		ExpectedBoardRev:  board.Rev,
+		Personas:          personas,
+	})
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	dispatcher := NewSlotDispatcher(store, &fakeDispatchAdapter{})
+	lease, err := dispatcher.DispatchSlot(started.RunID, SlotDispatchRequest{
+		NodeID:      "fmn_research",
+		SlotID:      "slot_research",
+		AgentID:     "scout",
+		Harness:     "openai-codex",
+		SessionStem: "scout",
+		SessionRef:  "tmux:tmux-scout",
+		Prompt:      "Do the work",
+		Attempt:     1,
+	})
+	if err != nil {
+		t.Fatalf("dispatch slot: %v", err)
+	}
+	cfg := tmuxTestConfig(t)
+	cfg.OutputCapBytes = 64
+	client := &fakeTmuxHarnessClient{paneText: strings.Repeat("x", 65) + "\n<<<CHROTE-DONE run-id=" + started.RunID + " status=ok artifact=done.md>>>"}
+	executor := newTmuxFormationExecutorWithClient(store, personas, cfg, client)
+	_, err = executor.ReattachFormationDispatch(FormationReattachRequest{
+		RunID:      started.RunID,
+		DispatchID: lease.DispatchID,
+		NodeID:     "fmn_research",
+		SlotID:     "slot_research",
+		Formation:  board.Formations[0],
+	})
+	var executionErr *RunExecutionError
+	if !errors.As(err, &executionErr) || executionErr.Code != "oversized_output" || executionErr.DispatchID != lease.DispatchID {
+		t.Fatalf("reattach oversized error = %#v, want oversized_output with dispatch provenance", err)
 	}
 }
 
@@ -751,6 +1065,7 @@ func clearExecutorEnv(t *testing.T) {
 		"CHROTE_FORMATIONS_TMUX_ROOTS",
 		"CHROTE_FORMATIONS_TMUX_SESSION_PREFIX",
 		"CHROTE_FORMATIONS_TMUX_PROD_SMOKE",
+		"CHROTE_FORMATIONS_TMUX_DEDICATED",
 	} {
 		t.Setenv(key, "")
 	}
@@ -970,6 +1285,15 @@ func withPromptOutputContract(captured, prompt string) string {
 
 func outputPortsFromPrompt(prompt string) []string {
 	var ports []string
+	seen := map[string]bool{}
+	add := func(port string) {
+		port = strings.TrimSpace(port)
+		if port == "" || seen[port] {
+			return
+		}
+		seen[port] = true
+		ports = append(ports, port)
+	}
 	inList := false
 	for _, line := range strings.Split(prompt, "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -980,11 +1304,27 @@ func outputPortsFromPrompt(prompt string) []string {
 		case inList && strings.HasPrefix(trimmed, "- "):
 			fields := strings.Fields(strings.TrimPrefix(trimmed, "- "))
 			if len(fields) > 0 {
-				ports = append(ports, fields[0])
+				add(fields[0])
 			}
 			continue
-		case inList:
-			return ports
+		case inList && trimmed != "":
+			inList = false
+		}
+		for cursor := 0; ; {
+			idx := strings.Index(trimmed[cursor:], "\"port_")
+			if idx < 0 {
+				break
+			}
+			start := cursor + idx + 1
+			endRel := strings.Index(trimmed[start:], "\"")
+			if endRel < 0 {
+				break
+			}
+			add(trimmed[start : start+endRel])
+			cursor = start + endRel + 1
+			if cursor >= len(trimmed) {
+				break
+			}
 		}
 	}
 	return ports

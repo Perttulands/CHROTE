@@ -37,7 +37,7 @@ Current dashboard themes:
 | --- | --- |
 | `matrix` | High-contrast green-on-dark terminal energy |
 | `dark` | Neutral default cockpit |
-| `ember` | Warm amber/russet cockpit palette |
+| `gastown` | Warm amber/russet cockpit palette |
 
 Theme ids are persisted settings. Rename them deliberately and test migration or
 fallback behavior.

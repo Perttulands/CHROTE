@@ -163,12 +163,14 @@ function FloatingModal() {
               ref={iframeRef}
               key={floatingSession}
               src={`/terminal/?arg=${encodeURIComponent(displayName)}${userArg}`}
+              scrolling="no"
               onLoad={handleIframeLoad}
               style={{
                 width: '100%',
                 height: '100%',
                 border: 'none',
                 backgroundColor: '#0a0a0a',
+                overflow: 'hidden',
               }}
               title={`Terminal - ${displayName}`}
             />

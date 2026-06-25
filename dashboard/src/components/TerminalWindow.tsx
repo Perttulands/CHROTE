@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useDroppable, useDraggable } from '@dnd-kit/core'
 import { useSession } from '../context/SessionContext'
-import { useToast } from '../context/ToastContext'
 import { useIframePool } from './IframePool'
-import { WINDOW_COLORS, getSessionKey, getSessionNameFromKey, getSessionPrefixForUser, getSessionUserFromKey, getTerminalUserColor, getTerminalUserInitial, resolveLaunchUser } from '../types'
+import { WINDOW_COLORS, getSessionKey, getSessionNameFromKey, getSessionUserFromKey, getTerminalUserColor, getTerminalUserInitial, resolveLaunchUser } from '../types'
 import type { TerminalWindow as TerminalWindowType, WorkspaceId } from '../types'
 
 interface CreateSessionButtonProps {
@@ -17,30 +16,21 @@ function CreateSessionButton({ workspaceId, windowId, accentColor }: CreateSessi
   const [menu, setMenu] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 })
   const [namedPopup, setNamedPopup] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 })
   const [namedName, setNamedName] = useState('')
-  const { settings, terminalUsers, refreshSessions, addSessionToWindow } = useSession()
-  const { addToast } = useToast()
+  const { settings, terminalUsers, createSession } = useSession()
 
-  const createSessionForUser = async (unixUser: string, explicitName?: string) => {
+  const createSessionForUser = async (unixUser?: string, explicitName?: string) => {
     setCreating(true)
     try {
-      const prefix = getSessionPrefixForUser(settings, unixUser, terminalUsers)
-      const sessionName = explicitName?.trim() || `${prefix}-${Date.now().toString(36)}`
-      const response = await fetch('/api/tmux/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: sessionName, unixUser }),
-        signal: AbortSignal.timeout(10000),
+      const created = await createSession({
+        workspaceId,
+        ...(unixUser !== undefined ? { unixUser } : {}),
+        ...(explicitName !== undefined ? { name: explicitName } : {}),
+        attachTo: { workspaceId, windowId },
       })
-      if (response.ok) {
-        addToast(`Session '${sessionName}' created`, 'success')
-        addSessionToWindow(workspaceId, windowId, sessionName, unixUser)
-        void refreshSessions()
-      } else {
-        addToast('Failed to create session', 'error')
+      if (created) {
+        setNamedName('')
+        setNamedPopup({ show: false, x: 0, y: 0 })
       }
-    } catch (e) {
-      console.error('Failed to create session:', e)
-      addToast('Failed to create session', 'error')
     } finally {
       setCreating(false)
       setMenu({ show: false, x: 0, y: 0 })
@@ -48,8 +38,7 @@ function CreateSessionButton({ workspaceId, windowId, accentColor }: CreateSessi
   }
 
   const handleCreate = async () => {
-    const unixUser = resolveLaunchUser(settings, workspaceId, terminalUsers)
-    await createSessionForUser(unixUser)
+    await createSessionForUser()
   }
 
   const namedSession = () => {
@@ -60,10 +49,7 @@ function CreateSessionButton({ workspaceId, windowId, accentColor }: CreateSessi
   const submitNamedSession = async () => {
     const name = namedName.trim()
     if (!name) return
-    const unixUser = resolveLaunchUser(settings, workspaceId, terminalUsers)
-    await createSessionForUser(unixUser, name)
-    setNamedName('')
-    setNamedPopup({ show: false, x: 0, y: 0 })
+    await createSessionForUser(undefined, name)
   }
 
   const userChoices = terminalUsers.length > 0 ? terminalUsers : [resolveLaunchUser(settings, workspaceId, terminalUsers)]
@@ -300,7 +286,6 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
   const windowRef = useRef<HTMLDivElement>(null)
 
   const pool = useIframePool()
-  const { addToast } = useToast()
   const [windowMenu, setWindowMenu] = useState<{ show: boolean; x: number; y: number; submenu: string | null }>({ show: false, x: 0, y: 0, submenu: null })
 
   const {
@@ -308,7 +293,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
     terminalUsers,
     settings,
     layoutPresets,
-    refreshSessions,
+    createSession,
     addSessionToWindow,
     removeSessionFromWindow,
     setActiveSession,
@@ -486,21 +471,11 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
   const closeWindowMenu = () => setWindowMenu({ show: false, x: 0, y: 0, submenu: null })
 
   const createSessionHere = async (unixUser: string) => {
-    const prefix = getSessionPrefixForUser(settings, unixUser, terminalUsers)
-    const sessionName = `${prefix}-${Date.now().toString(36)}`
-    const response = await fetch('/api/tmux/sessions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: sessionName, unixUser }),
-      signal: AbortSignal.timeout(10000),
+    await createSession({
+      workspaceId,
+      unixUser,
+      attachTo: { workspaceId, windowId: windowConfig.id },
     })
-    if (response.ok) {
-      addToast(`Session '${sessionName}' created`, 'success')
-      addSessionToWindow(workspaceId, windowConfig.id, sessionName, unixUser)
-      void refreshSessions()
-    } else {
-      addToast('Failed to create session', 'error')
-    }
     closeWindowMenu()
   }
 
@@ -535,7 +510,6 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
       tabIndex={-1}
       style={{
         '--window-accent': colorTheme.accent,
-        '--window-bg': colorTheme.bg,
         '--window-border': colorTheme.border,
         ...style,
       } as React.CSSProperties}
@@ -580,7 +554,13 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
               </button>
             </>
           )}
-          <span className={`status-dot ${activeSessionLoaded ? '' : 'disconnected'}`} />
+          <span
+            className={`status-dot ${activeSessionLoaded ? '' : 'disconnected'}`}
+            onClick={(event) => {
+              event.stopPropagation()
+              handleWindowClick()
+            }}
+          />
         </div>
       </div>
 

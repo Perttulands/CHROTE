@@ -208,6 +208,18 @@ export interface TerminalWorkspace {
   windowCount: number // 1-4
 }
 
+export interface CreateSessionAttachTarget {
+  workspaceId: WorkspaceId
+  windowId: string
+}
+
+export interface CreateSessionOptions {
+  workspaceId?: WorkspaceId
+  unixUser?: LaunchUser
+  name?: string
+  attachTo?: CreateSessionAttachTarget
+}
+
 // Layout preset for saving/restoring window configurations
 export interface LayoutPreset {
   id: string
@@ -270,6 +282,9 @@ export interface DashboardActions {
   // Refresh sessions from API
   refreshSessions: () => Promise<void>
 
+  // Create a tmux session, optionally attaching it to a terminal window
+  createSession: (options?: CreateSessionOptions) => Promise<string | null>
+
   // Delete a session
   deleteSession: (sessionName: string, unixUser?: LaunchUser) => Promise<boolean>
 
@@ -296,10 +311,10 @@ export type DashboardContextType = DashboardState & DashboardActions
 
 // Window color themes
 export const WINDOW_COLORS = [
-  { name: 'blue', bg: 'rgba(10, 10, 26, 0.85)', border: '#4a9eff', accent: '#4a9eff' },
-  { name: 'purple', bg: 'rgba(15, 10, 26, 0.85)', border: '#9966ff', accent: '#9966ff' },
-  { name: 'green', bg: 'rgba(10, 26, 10, 0.85)', border: '#00ff41', accent: '#00ff41' },
-  { name: 'orange', bg: 'rgba(26, 20, 10, 0.85)', border: '#ff9933', accent: '#ff9933' },
+  { name: 'blue', border: '#4a9eff', accent: '#4a9eff' },
+  { name: 'purple', border: '#9966ff', accent: '#9966ff' },
+  { name: 'green', border: '#00ff41', accent: '#00ff41' },
+  { name: 'orange', border: '#ff9933', accent: '#ff9933' },
 ] as const
 
 // Group display names and priorities

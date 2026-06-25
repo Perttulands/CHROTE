@@ -171,7 +171,7 @@ test.describe('Dual Workspace: Terminal 1 & Terminal 2', () => {
       await sessionItem.click({ button: 'right' })
       const menu = page.locator('.session-context-menu')
       await expect(menu).toBeVisible()
-      await menu.locator('.session-context-submenu-trigger:has-text("Assign to Window")').hover()
+      await menu.locator('.session-context-submenu-trigger:has-text("Attach to Window")').hover()
       await page.locator('.session-context-submenu .session-context-item:has-text("Terminal 2 - Window 1")').click()
 
       // jack should now be in terminal2

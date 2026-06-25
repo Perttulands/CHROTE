@@ -68,11 +68,12 @@ const layout = {
 const agents = [
   { id: 'mason', displayName: 'Mason', harnessDefault: 'codex', liveness: 'live', assignable: true, unbound: false },
   { id: 'hazel', displayName: 'Hazel', harnessDefault: 'claude', liveness: 'live', assignable: true, unbound: false },
+  { id: 'scratch', displayName: 'scratch', liveness: 'live', assignable: false, unbound: true },
 ]
 
 type RecordedPatch = { url: string; body: Record<string, unknown> }
 
-function installFetchMock() {
+function installFetchMock(options: { emptyBoards?: boolean } = {}) {
   const patches: RecordedPatch[] = []
   let board = makeBoard()
   ;(globalThis as Record<string, unknown>).fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -90,7 +91,7 @@ function installFetchMock() {
       if (url.endsWith('/layout')) return respond({ layout }, 'layout-etag-2')
       return respond({ board }, 'board-etag-2')
     }
-    if (url === '/api/formations/boards') return respond({ boards: [{ slug: board.slug, title: board.title }] })
+    if (url === '/api/formations/boards') return respond({ boards: options.emptyBoards ? [] : [{ slug: board.slug, title: board.title }] })
     if (url.includes('/changes')) return respond({ signal: { changed: false } })
     if (url.endsWith('/layout')) return respond({ layout }, 'layout-etag')
     if (url.includes('/api/formations/boards/')) return respond({ board }, 'board-etag')
@@ -117,6 +118,25 @@ describe('FormationsCockpit reference parity', () => {
   afterEach(() => {
     cleanup()
     vi.restoreAllMocks()
+  })
+
+  it('does not fabricate a starter board when no real boards exist', async () => {
+    patches = installFetchMock({ emptyBoards: true })
+    render(<FormationsCockpit />)
+    expect(await screen.findByTestId('formations-empty-board')).toHaveTextContent('No persisted formation boards')
+    expect(screen.getByTestId('board-picker')).toHaveTextContent('No boards')
+    expect(screen.queryByText('Improve session search')).toBeNull()
+    expect(screen.getByTestId('new-formation')).toBeDisabled()
+    expect(patches).toEqual([])
+  })
+
+  it('shows only assignable persona cards in the formation staffing roster', async () => {
+    await renderCockpit()
+    const roster = screen.getByTestId('agent-roster')
+    expect(roster).toHaveTextContent('2 catalog agents')
+    expect(roster).toHaveTextContent('Mason')
+    expect(roster).toHaveTextContent('Hazel')
+    expect(roster).not.toHaveTextContent('scratch')
   })
 
   it('renders judge connections as wires anchored on the gate socket', async () => {

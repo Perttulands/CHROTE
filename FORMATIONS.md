@@ -103,12 +103,17 @@ evidence.
 7. **Formations is always-on.** It is a permanent first-class surface, not a
    feature flag. The only Formations env vars are the executor safety ladder
    (`CHROTE_FORMATIONS_LAB_*` / `CHROTE_FORMATIONS_TMUX_*` /
+   `CHROTE_FORMATIONS_SCRIPT_GATES` / `CHROTE_FORMATIONS_GATE_*` /
    `CHROTE_FORMATIONS_TMUX_PROD_SMOKE`), which gate execution-environment
-   promotion, never feature availability.
+   or gate-adapter promotion, never feature availability.
 8. **Beads can anchor missions; it is not the graph store.**
 9. **No command-execution landmines.** Free-text criteria never become implicit
-   shell execution. Executable checks require explicit operator-authored config
-   and guardrails.
+   shell execution. Executable script gates require explicit operator-authored
+   command config and guardrails: `commandArgv` is the default form; CHROTE
+   passes argv literally and does not insert a shell. `commandCwd` is a cwd guard
+   under the workspace, not a filesystem sandbox. `commandShell` is the explicit
+   shell opt-in. Legacy `command` strings are parseable for old boards but are
+   not executable by script gates.
 10. **Ports carry concrete payloads.** Connections route the payload attached to
    their source output port. Every formation emits `node_output.outputs` keyed by
    stable output port ids; missing or unknown output ids block loudly instead of
@@ -128,6 +133,27 @@ Tmux-backed agents receive this contract as a fenced `chrote-outputs` JSON block
 instruction; lab runs synthesize deterministic payloads for every output port.
 If a formation omits a declared output or emits an unknown output id, the run
 blocks and records `missing_output_payload` or `invalid_output_payload`.
+
+Short routed outputs may live entirely in the JSON envelope:
+
+```json
+{"port_summary":{"text":"short non-secret payload"}}
+```
+
+Long routed outputs must not put prose into JSON strings. Tmux-backed agents
+write the full payload to a text artifact and use `ref` as the artifact pointer:
+
+```json
+{"port_summary":{"text":"short non-secret summary","ref":".formations/artifacts/<run-id>/summary.md"}}
+```
+
+For tmux-backed runs, local file refs are resolved only after canonicalizing them
+under the executor's configured roots/workspace. Missing, unreadable, out-of-root,
+symlink-escaped, non-regular, non-text, or oversized refs block loudly. `ref` is
+not a general host-file read capability, and these root checks are not an OS
+sandbox: tmux agents still run with the host Unix user's permissions. Treat
+output text, refs, filenames, and hydrated artifact content as durable non-secret
+run evidence.
 
 ## Interaction model
 
@@ -181,8 +207,9 @@ Watching is optional. Recovery must not depend on a browser tab staying open.
 
 ## Execution environments
 
-Formations execution promotes through three environments. Each step up is an
-explicit configuration decision, never a silent fallback.
+Formations execution promotes through explicit execution environments and gate
+adapters. Each step up is an explicit configuration decision, never a silent
+fallback.
 
 1. **Lab.** `CHROTE_FORMATIONS_LAB_*` configures a deterministic executor that
    synthesizes outputs and sentinels with no tmux involvement. Full run-engine,
@@ -193,7 +220,15 @@ explicit configuration decision, never a silent fallback.
    roots live under the system temp directory and the socket is not the
    default-resolved tmux socket. Dogfooding happens on a throwaway socket with
    its own sessions; the live cockpit socket is unreachable by construction.
-3. **Live socket (prod smoke).** Setting `CHROTE_FORMATIONS_TMUX_PROD_SMOKE`
+3. **Script gates.** `CHROTE_FORMATIONS_SCRIPT_GATES` enables operator-authored
+   script/lint/code gate commands. Script gates execute `commandArgv` literally
+   without a CHROTE-inserted shell, inside the board workspace or a `commandCwd`
+   that resolves under that workspace. This is a cwd guard, not a filesystem
+   sandbox. A shell is allowed only with explicit `commandShell`.
+   Legacy `command` text is stored for compatibility but deliberately fails if
+   no structured command is present. Output caps, timeouts, redaction, and
+   fail-loud gate verdicts apply.
+4. **Live socket (prod smoke).** Setting `CHROTE_FORMATIONS_TMUX_PROD_SMOKE`
    is the explicit operator opt-in that lifts the temp-socket and temp-root
    restrictions so the executor may target the live CHROTE tmux socket and real
    workspace roots. Nothing else is relaxed: sessions must already exist with
