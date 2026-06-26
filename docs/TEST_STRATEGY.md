@@ -97,7 +97,7 @@ cd /path/to/chrote/dashboard && npm run test:unit -- --coverage
 cd /path/to/chrote/dashboard && npm test
 
 # Live backend/terminal browser tests
-cd /path/to/chrote/dashboard && CHROTE_TEST_URL=http://127.0.0.1:8094 npm run test:live
+cd /path/to/chrote/dashboard && CHROTE_TEST_URL=http://127.0.0.1:8095 npm run test:live
 
 # Frontend with UI mode (interactive)
 cd /path/to/chrote/dashboard && npm run test:ui
@@ -229,12 +229,12 @@ When Playwright starts the local Vite dev server, it sets `CHROTE_PLAYWRIGHT_MOC
 
 ```bash
 cd /path/to/chrote/dashboard
-CHROTE_TEST_URL=http://127.0.0.1:8094 npm run test:live
+CHROTE_TEST_URL=http://127.0.0.1:8095 npm run test:live
 ```
 
 Live integration specs require a running CHROTE backend and terminal proxy. They are intentionally excluded from `npm test` and CI's default Playwright gate.
 
-Live smokes are operator-run only in this workspace because GitHub-hosted runners do not have access to the local CHROTE runtime, tmux socket, or terminal proxy. Use `CHROTE_TEST_URL` to point at the operator-approved CHROTE backend under test. Do not hard-code private hostnames or tailnet addresses into the test suite.
+Live smokes are operator-run only in this workspace because GitHub-hosted runners do not have access to the local CHROTE runtime, tmux socket, or terminal proxy. Use `CHROTE_TEST_URL` to point at the operator-approved CHROTE backend under test. The current `/srv` proving lane is `/srv/chrote` with data under `/srv/data/chrote`, `chrote-srv.service`, HTTP `8095`, and ttyd `7686`; set `CHROTE_TEST_URL=http://127.0.0.1:8094` only for the legacy rollback lane. Do not hard-code private hostnames or tailnet addresses into the test suite.
 
 ### Interactive UI Mode
 
@@ -319,7 +319,7 @@ npx playwright show-report
 
 ### Dashboard Smoke Test
 
-1. Open `http://127.0.0.1:8094`
+1. Open the operator-approved backend, usually `http://127.0.0.1:8095` for the `/srv` proving lane.
 2. Verify tabs are visible: Terminal, Terminal 2, Files, Agents, Beads, Services, Settings
 3. Check session panel shows groups
 4. Create a new session
@@ -337,21 +337,24 @@ tmux new-session -d -s gt-test-1
 
 ```bash
 # Test session creation via API
-curl -X POST http://127.0.0.1:8094/api/tmux/sessions \
+CHROTE_URL=http://127.0.0.1:8095      # /srv proving lane
+# CHROTE_URL=http://127.0.0.1:8094    # legacy rollback lane
+
+curl -X POST "$CHROTE_URL/api/tmux/sessions" \
   -H "Content-Type: application/json" \
   -d '{"name": "test-session"}'
 
 # Test session listing
-curl http://127.0.0.1:8094/api/tmux/sessions
+curl "$CHROTE_URL/api/tmux/sessions"
 
 # Test session deletion
-curl -X DELETE http://127.0.0.1:8094/api/tmux/sessions/test-session
+curl -X DELETE "$CHROTE_URL/api/tmux/sessions/test-session"
 
 # Test nuke protection (should fail without header)
-curl -X DELETE http://127.0.0.1:8094/api/tmux/sessions/all
+curl -X DELETE "$CHROTE_URL/api/tmux/sessions/all"
 
 # Test nuke with confirmation (USE WITH CAUTION)
-curl -X DELETE http://127.0.0.1:8094/api/tmux/sessions/all \
+curl -X DELETE "$CHROTE_URL/api/tmux/sessions/all" \
   -H "X-Nuke-Confirm: yes"
 ```
 
@@ -359,20 +362,20 @@ curl -X DELETE http://127.0.0.1:8094/api/tmux/sessions/all \
 
 ```bash
 # List root directories
-curl http://127.0.0.1:8094/api/files/resources/
+curl "$CHROTE_URL/api/files/resources/"
 
 # List /code directory
-curl http://127.0.0.1:8094/api/files/resources/code
+curl "$CHROTE_URL/api/files/resources/code"
 
 # Test path traversal protection (should fail)
-curl http://127.0.0.1:8094/api/files/resources/code/../../../etc/passwd
+curl "$CHROTE_URL/api/files/resources/code/../../../etc/passwd"
 ```
 
 ### Health Check
 
 ```bash
 # API health
-curl http://127.0.0.1:8094/api/health
+curl "$CHROTE_URL/api/health"
 
 # Expected response: {"status":"ok","timestamp":"..."}
 ```
@@ -381,10 +384,10 @@ curl http://127.0.0.1:8094/api/health
 
 ```bash
 # Check Beads health (bv CLI availability)
-curl http://127.0.0.1:8094/api/beads/health
+curl "$CHROTE_URL/api/beads/health"
 
 # List discovered projects
-curl http://127.0.0.1:8094/api/beads/projects
+curl "$CHROTE_URL/api/beads/projects"
 ```
 
 ---
@@ -638,7 +641,7 @@ echo "Test artifacts cleaned"
 | Frontend coverage | `cd /path/to/chrote/dashboard && npm run test:unit -- --coverage` |
 | Frontend dependency audit | `cd /path/to/chrote/dashboard && npm audit --audit-level=moderate` |
 | Frontend mocked browser tests | `cd /path/to/chrote/dashboard && npm test` |
-| Live backend browser tests | `cd /path/to/chrote/dashboard && CHROTE_TEST_URL=http://127.0.0.1:8094 npm run test:live` |
+| Live backend browser tests | `cd /path/to/chrote/dashboard && CHROTE_TEST_URL=http://127.0.0.1:8095 npm run test:live` |
 | Backend verbose | `go test -v ./...` |
 | Backend coverage | `go test -cover ./...` |
 | Frontend interactive | `npm run test:ui` |
@@ -686,12 +689,13 @@ npx playwright test --trace on
 ### Services Not Available
 
 ```bash
-# Ensure the user service is running
-systemctl --user status chrote.service
+# Ensure the intended service is running.
+systemctl status chrote-srv.service --no-pager       # /srv proving lane
+systemctl --user status chrote.service               # legacy rollback lane
 
 # Check ports
-ss -tlnp | grep -E "8094|7683|5173"
+ss -tlnp | grep -E "8095|7686|5173"
 
 # Restart services
-systemctl --user restart chrote.service
+systemctl restart chrote-srv.service
 ```

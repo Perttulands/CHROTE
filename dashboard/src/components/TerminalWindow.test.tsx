@@ -1,5 +1,8 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import TerminalWindow from './TerminalWindow'
 import { DEFAULT_SETTINGS } from '../types'
 
@@ -64,6 +67,9 @@ vi.mock('./IframePool', () => ({
   }),
 }))
 
+const testDir = dirname(fileURLToPath(import.meta.url))
+const terminalCss = () => readFileSync(resolve(testDir, '../styles/terminal.css'), 'utf8')
+
 describe('TerminalWindow launch user', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -127,6 +133,23 @@ describe('TerminalWindow launch user', () => {
     expect(screen.getByRole('button', { name: /Kill/i })).toBeInTheDocument()
     expect(screen.queryByText(/Move/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/Detach/i)).not.toBeInTheDocument()
+  })
+
+  it('keeps terminal panes on the per-window opaque background palette', () => {
+    const { container } = render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: [], activeSession: null, colorIndex: 2 }}
+      />
+    )
+
+    const terminalWindow = container.querySelector('.terminal-window') as HTMLElement
+    expect(terminalWindow.style.getPropertyValue('--window-bg')).toBe('rgba(10, 26, 10, 0.85)')
+
+    const css = terminalCss()
+    expect(css).toContain('background-color: var(--window-bg, var(--surface-primary));')
+    expect(css).toContain('background-color: var(--window-bg, rgba(0, 0, 0, 0.5));')
+    expect(css).not.toContain('background-image: url(')
   })
 
   it('does not focus from generic header clicks but focuses when clicking the status dot or body', () => {

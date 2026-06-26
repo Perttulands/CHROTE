@@ -377,7 +377,13 @@ The host owns the hard state. CHROTE is the cockpit.
 
 ## Access
 
-Local service:
+Current local `/srv` proving service:
+
+```text
+http://127.0.0.1:8095/
+```
+
+Legacy rollback user service:
 
 ```text
 http://127.0.0.1:8094/
@@ -396,6 +402,11 @@ have added an authentication and network story you are willing to defend.
 Common service commands:
 
 ```bash
+# /srv proving lane
+systemctl status chrote-srv.service --no-pager
+journalctl -u chrote-srv.service -f
+
+# legacy rollback lane
 systemctl --user status chrote.service
 systemctl --user restart chrote.service
 journalctl --user -u chrote.service -f
@@ -405,20 +416,29 @@ journalctl --user -u chrote.service -f
 
 ## Runtime
 
-CHROTE can run through user systemd.
+CHROTE currently runs side-by-side in two service lanes during the `/srv`
+migration.
 
 ```text
-CHROTE HTTP: 127.0.0.1:8094
-terminal ttyd: 127.0.0.1:7683
-tmux socket: /run/user/1000/chrote-tmux
-workdir: <workspace-root>
-allowed roots: <workspace-root>
+/srv proving lane:
+  source: /srv/chrote
+  data: /srv/data/chrote
+  unit: chrote-srv.service
+  CHROTE HTTP: 127.0.0.1:8095
+  terminal ttyd: 127.0.0.1:7686
+
+legacy rollback lane:
+  source: /home/perttu/chrote
+  unit: chrote.service
+  CHROTE HTTP: 127.0.0.1:8094
+  terminal ttyd: 127.0.0.1:7683
 ```
 
 The terminal proxy is loopback-only. A private access layer should expose only
 the CHROTE HTTP server.
 
-CHROTE uses a dedicated tmux socket:
+The `/srv` proving lane reads tmux socket mappings from its private runtime
+environment. The Perttu legacy rollback lane uses this interactive tmux socket:
 
 ```bash
 TMUX_TMPDIR=/run/user/1000/chrote-tmux tmux ls
@@ -449,7 +469,9 @@ CHROTE_CONTEXT_API_URL=http://127.0.0.1:3200
 Private service adapter values live outside the repo:
 
 ```text
-~/.config/chrote/services.env
+/srv/chrote/config/chrote.env
+/etc/chrote/chrote-srv.env
+~/.config/chrote/services.env   # legacy rollback lane
 ```
 
 That is where owner tokens belong. Do not commit it. Do not paste it into issues.
@@ -470,7 +492,10 @@ cp -r dashboard/dist src/internal/dashboard/dist
 cd /path/to/chrote/src
 go test ./...
 go build -o ../chrote-server ./cmd/server
-systemctl --user restart chrote.service
+
+# Restart only the intended lane.
+systemctl restart chrote-srv.service        # /srv proving lane
+systemctl --user restart chrote.service     # legacy rollback lane
 ```
 
 For more installation detail, see [docs/installation.md](docs/installation.md).

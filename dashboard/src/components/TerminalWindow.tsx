@@ -510,6 +510,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
       tabIndex={-1}
       style={{
         '--window-accent': colorTheme.accent,
+        '--window-bg': colorTheme.bg,
         '--window-border': colorTheme.border,
         ...style,
       } as React.CSSProperties}

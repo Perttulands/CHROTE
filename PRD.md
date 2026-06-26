@@ -92,14 +92,22 @@ environment variables:
 | `CHROTE_CONTEXT_API_TOKEN` | unset | Server-side owner token for Context Citadel operations |
 
 Secrets must live in private runtime configuration, not tracked docs. The
-current deployment unit loads `~/.config/chrote/services.env` if present.
+`/srv` proving lane runs from `/srv/chrote` with data under `/srv/data/chrote`,
+system unit `chrote-srv.service`, HTTP `127.0.0.1:8095`, and ttyd `7686`.
+Its private environment is under `/srv/chrote/config/chrote.env` and the
+installed system unit reads `/etc/chrote/chrote-srv.env`.
+
+The legacy rollback lane runs from `/home/perttu/chrote`, user unit
+`chrote.service`, HTTP `127.0.0.1:8094`, ttyd `7683`, and may load
+`~/.config/chrote/services.env`.
 
 ## Runtime Requirements
 
-- Run as the configured host user.
-- Bind CHROTE HTTP to `127.0.0.1:8094`.
-- Bind ttyd to `127.0.0.1:7683`.
-- Use `TMUX_TMPDIR=/run/user/1000/chrote-tmux`.
+- Run the `/srv` proving lane as the dedicated `chrote` service identity.
+- Bind `/srv` CHROTE HTTP to `127.0.0.1:8095`.
+- Bind `/srv` ttyd to `127.0.0.1:7686`.
+- Read per-user tmux socket mappings from private runtime configuration.
+- Keep the legacy rollback lane available on `127.0.0.1:8094` and ttyd `7683` until cutover is proven.
 - Restrict file roots to configured workspace roots.
 - Expose the dashboard through a private access layer such as Tailscale Serve.
 - Keep all service adapters private to localhost or tailnet-safe routes.
@@ -158,7 +166,8 @@ are implemented.
 
 - `go test ./...` passes.
 - `npm run build` passes.
-- `chrote.service` is active after restart.
+- `chrote-srv.service` is active after restart for the `/srv` proving lane.
+- `chrote.service` remains the labeled legacy rollback lane until cutover is proven.
 - `/api/health` returns OK.
 - `/api/tmux/sessions` returns the CHROTE tmux session list.
 - `/api/oracle/status` returns OK even when no agents are running.

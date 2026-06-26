@@ -12,6 +12,13 @@ Active components in a CHROTE install:
 | beads_viewer `bv` | Optional graph-aware Beads TUI sidecar |
 | Tailscale Serve | Tailnet-only HTTPS access |
 
+Current service lanes:
+
+| Lane | Source | State | Ports |
+| --- | --- | --- | --- |
+| `/srv` proving lane | `/srv/chrote` with data under `/srv/data/chrote` | system unit `chrote-srv.service` | HTTP `8095`, ttyd `7686` |
+| legacy rollback lane | `/home/perttu/chrote` | user unit `chrote.service` | HTTP `8094`, ttyd `7683` |
+
 Services Platform V1 components:
 
 | Component | Source | CHROTE role |
@@ -28,9 +35,10 @@ Service adapter environment:
 | `CHROTE_CONTEXT_API_URL` | `http://127.0.0.1:3200` | Context Citadel base URL |
 | `CHROTE_CONTEXT_API_TOKEN` | unset | Optional bearer token injected by the Go server for Context Citadel requests |
 
-The user systemd unit loads optional private values from
-`~/.config/chrote/services.env`. That file is not a tracked component and must
-not contain values in docs or diffs.
+The `/srv` proving lane keeps private values in `/srv/chrote/config/chrote.env`
+and the installed system units read `/etc/chrote/chrote-srv.env`. The legacy
+rollback user unit may load `~/.config/chrote/services.env`. These files are not
+tracked components and must not contain values in docs or diffs.
 
 Not active in this install:
 
