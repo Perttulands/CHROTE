@@ -14,6 +14,7 @@ Golden rule: do not disrupt running shells or tmux sessions.
 
 ```bash
 cd /path/to/chrote/src
+
 go test ./...
 
 cd /path/to/chrote/dashboard
@@ -25,13 +26,28 @@ cp -r dashboard/dist src/internal/dashboard/dist
 
 cd /path/to/chrote/src
 go build -o ../chrote-server ./cmd/server
+```
+
+Restart only the intended service lane after rebuilding:
+
+```bash
+# /srv proving lane
+sudo systemctl restart chrote-srv.service
+
+# legacy rollback lane only
 systemctl --user restart chrote.service
 ```
 
 ## Service
 
 ```bash
-systemctl --user status chrote.service
+# /srv proving lane
+systemctl status chrote-srv.service --no-pager
+journalctl -u chrote-srv.service -f
+curl http://127.0.0.1:8095/api/health
+
+# legacy rollback lane
+systemctl --user status chrote.service --no-pager
 journalctl --user -u chrote.service -f
 curl http://127.0.0.1:8094/api/health
 ```
@@ -39,11 +55,18 @@ curl http://127.0.0.1:8094/api/health
 Runtime:
 
 ```text
-HTTP: 127.0.0.1:8094
-terminal ttyd: 127.0.0.1:7683
-tmux socket: /run/user/1000/chrote-tmux
-workdir: configured workspace root
-allowed roots: configured workspace roots
+/srv proving lane:
+  source: /srv/chrote
+  data: /srv/data/chrote
+  HTTP: 127.0.0.1:8095
+  terminal ttyd: 127.0.0.1:7686
+
+legacy rollback lane:
+  source: /home/perttu/chrote
+  HTTP: 127.0.0.1:8094
+  terminal ttyd: 127.0.0.1:7683
+
+tmux sockets/workdirs/allowed roots: configured by the active service env; do not print private env values.
 ```
 
 ## Architecture

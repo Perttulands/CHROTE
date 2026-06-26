@@ -1,8 +1,10 @@
-# Place your MP3 files here
-# The music player will automatically play files named:
-# - track1.mp3
-# - track2.mp3
-# - track3.mp3
+# Place local MP3 files here.
 #
-# You can modify the MUSIC_TRACKS array in
-# src/components/MusicPlayer.tsx to change the track list.
+# The current MusicPlayer track list is hard-coded in
+# dashboard/src/components/MusicPlayer.tsx and expects the named MP3s in this
+# directory. MP3 files are intentionally ignored by git.
+#
+# /srv deployment note:
+# Keep the durable source copy under /srv/data/chrote/assets/music/ and copy it
+# into this directory before running `npm run build` when rebuilding a fresh
+# /srv/chrote checkout.
