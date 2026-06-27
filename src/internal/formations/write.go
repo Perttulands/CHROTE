@@ -9,9 +9,14 @@ import (
 
 var lockRegistry sync.Map
 
+const (
+	sharedDirMode  = os.ModeSetgid | 0o770
+	sharedFileMode = os.FileMode(0o660)
+)
+
 func withFileLock(path string, fn func() error) error {
 	lockPath := path + ".lock"
-	if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
+	if err := ensureSharedDir(filepath.Dir(lockPath)); err != nil {
 		return err
 	}
 
@@ -19,8 +24,12 @@ func withFileLock(path string, fn func() error) error {
 	mutex.Lock()
 	defer mutex.Unlock()
 
-	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
+	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, sharedFileMode)
 	if err != nil {
+		return err
+	}
+	if err := ensureSharedFile(lockPath); err != nil {
+		_ = lockFile.Close()
 		return err
 	}
 	defer lockFile.Close()
@@ -38,9 +47,41 @@ func mutexFor(lockPath string) *sync.Mutex {
 	return value.(*sync.Mutex)
 }
 
+func ensureSharedDir(dir string) error {
+	if err := os.MkdirAll(dir, sharedDirMode); err != nil {
+		return err
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return err
+	}
+	if hasSharedDirMode(info.Mode()) {
+		return nil
+	}
+	if err := os.Chmod(dir, sharedDirMode); err != nil {
+		return err
+	}
+	return nil
+}
+
+func hasSharedDirMode(mode os.FileMode) bool {
+	return mode.Perm() == 0o770 && mode&os.ModeSetgid != 0
+}
+
+func ensureSharedFile(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode().Perm() == sharedFileMode {
+		return nil
+	}
+	return os.Chmod(path, sharedFileMode)
+}
+
 func writeAtomic(path string, raw []byte) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := ensureSharedDir(dir); err != nil {
 		return err
 	}
 
@@ -65,6 +106,9 @@ func writeAtomic(path string, raw []byte) error {
 		return err
 	}
 	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpPath, sharedFileMode); err != nil {
 		return err
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
