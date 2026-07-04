@@ -172,6 +172,9 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config) *proxy.TerminalPro
 	formationsHandler := api.NewFormationsHandler(core.GetWorkDir())
 	formationsHandler.RegisterRoutes(mux)
 
+	commsHandler := api.NewCommsHandler(core.GetWorkDir())
+	commsHandler.RegisterRoutes(mux)
+
 	// Create terminal proxy
 	terminalProxy := proxy.NewTerminalProxy(config.TtydPort)
 	terminalProxy.RegisterRoutes(mux)
