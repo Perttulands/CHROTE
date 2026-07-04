@@ -55,6 +55,27 @@ function systemStatusMockBody() {
   })
 }
 
+function systemHistoryMockBody() {
+  const now = Date.now()
+  const samples = [0, 1].map((index) => {
+    const sample = JSON.parse(systemStatusMockBody()).data
+    sample.timestamp = new Date(now - (1 - index) * 60_000).toISOString()
+    sample.cpu.totalTicks += index * 100
+    sample.cpu.idleTicks += index * 55
+    sample.memory.usedPercent += index
+    return sample
+  })
+
+  return JSON.stringify({
+    success: true,
+    timestamp: new Date().toISOString(),
+    data: {
+      limit: 288,
+      samples,
+    },
+  })
+}
+
 export const test = base.extend<{ allowedConsoleMessages: ConsoleMatcher[] }>({
   allowedConsoleMessages: [[], { option: true }],
   page: async ({ page, allowedConsoleMessages }, use, testInfo) => {
@@ -63,11 +84,20 @@ export const test = base.extend<{ allowedConsoleMessages: ConsoleMatcher[] }>({
 
     await page.route('**/api/**', async (route) => {
       const request = route.request()
-      if (new URL(request.url()).pathname === '/api/system/status') {
+      const pathname = new URL(request.url()).pathname
+      if (pathname === '/api/system/status') {
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
           body: systemStatusMockBody(),
+        })
+        return
+      }
+      if (pathname === '/api/system/history') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: systemHistoryMockBody(),
         })
         return
       }

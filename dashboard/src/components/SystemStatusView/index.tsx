@@ -1,43 +1,59 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Copy, Pause, Play, RefreshCw, Trash2 } from 'lucide-react'
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { AlertTriangle, Copy, Gauge, Pause, Play, RefreshCw } from 'lucide-react'
 import {
   SystemApiError,
+  getSystemHistory,
   getSystemStatus,
   type SystemDiskStatus,
   type SystemGPUStatus,
   type SystemStatus,
   type SystemWarning,
 } from '../../services/systemClient'
+import { copyTextToClipboard } from '../../utils/clipboard'
 
 const ACTIVE_POLL_MS = 2000
 const BACKGROUND_POLL_MS = 10000
-const MAX_HISTORY_POINTS = 300
+const MAX_TIMELINE_SAMPLES = 300
+const SWAP_ACTIVITY_WARN_BPS = 1024 * 1024
 
-interface StatusSample {
+interface TimelineSample {
   at: number
+  timestamp: string
+  gpuPercent: number | null
+  vramPercent: number | null
+  ramPercent: number | null
+  swapPercent: number | null
+  swapActivityBytesPerSecond: number | null
   cpuPercent: number | null
-  memoryPercent: number
-  loadPercent: number
-  rxBytesPerSecond: number | null
-  txBytesPerSecond: number | null
+  loadPercent: number | null
 }
 
-interface PreviousSnapshot {
-  status: SystemStatus
-  at: number
+interface TimelineSeries {
+  key: 'gpu' | 'vram' | 'memory' | 'swap' | 'cpu' | 'load'
+  label: string
+  value: string
+  meta?: string
+  values: Array<number | null>
 }
 
 function clampPercent(value: number) {
   return Math.max(0, Math.min(100, value))
 }
 
-function formatPercent(value: number | null | undefined) {
-  if (typeof value !== 'number' || Number.isNaN(value)) return '--'
-  return `${value.toFixed(value >= 10 ? 0 : 1)}%`
+function readablePercent(value: number | null | undefined) {
+  if (typeof value !== 'number' || Number.isNaN(value)) return null
+  return clampPercent(value)
 }
 
-function formatBytes(bytes: number | undefined) {
-  if (!bytes || bytes <= 0) return '--'
+function formatPercent(value: number | null | undefined) {
+  const safe = readablePercent(value)
+  if (safe === null) return '--'
+  return `${safe.toFixed(safe >= 10 ? 0 : 1)}%`
+}
+
+function formatBytes(bytes: number | null | undefined) {
+  if (typeof bytes !== 'number' || Number.isNaN(bytes)) return '--'
+  if (bytes <= 0) return '0 B'
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
   let value = bytes
   let unit = 0
@@ -49,14 +65,15 @@ function formatBytes(bytes: number | undefined) {
 }
 
 function formatRate(bytesPerSecond: number | null | undefined) {
-  if (typeof bytesPerSecond !== 'number' || Number.isNaN(bytesPerSecond)) return '--'
+  if (typeof bytesPerSecond !== 'number' || Number.isNaN(bytesPerSecond)) return '--/s'
   return `${formatBytes(bytesPerSecond)}/s`
 }
 
 function formatUptime(seconds: number) {
-  const days = Math.floor(seconds / 86400)
-  const hours = Math.floor((seconds % 86400) / 3600)
-  const minutes = Math.floor((seconds % 3600) / 60)
+  const wholeSeconds = Math.max(0, Math.floor(seconds))
+  const days = Math.floor(wholeSeconds / 86400)
+  const hours = Math.floor((wholeSeconds % 86400) / 3600)
+  const minutes = Math.floor((wholeSeconds % 3600) / 60)
   if (days > 0) return `${days}d ${hours}h`
   if (hours > 0) return `${hours}h ${minutes}m`
   return `${minutes}m`
@@ -69,35 +86,54 @@ function formatTime(raw?: string) {
   return date.toLocaleTimeString()
 }
 
+function timestampMs(status: SystemStatus, fallbackIndex = 0) {
+  const parsed = Date.parse(status.timestamp)
+  return Number.isNaN(parsed) ? fallbackIndex : parsed
+}
+
 function cpuUsage(previous: SystemStatus | null, next: SystemStatus) {
-  if (!previous) return null
+  if (!previous?.cpu || !next.cpu) return null
   const totalDelta = next.cpu.totalTicks - previous.cpu.totalTicks
   const idleDelta = next.cpu.idleTicks - previous.cpu.idleTicks
   if (totalDelta <= 0 || idleDelta < 0) return null
   return clampPercent((1 - idleDelta / totalDelta) * 100)
 }
 
-function totalNetworkBytes(status: SystemStatus) {
-  return status.network.reduce(
-    (total, item) => ({
-      rx: total.rx + item.rxBytes,
-      tx: total.tx + item.txBytes,
-    }),
-    { rx: 0, tx: 0 }
-  )
+function secondsBetween(previous: SystemStatus | null, next: SystemStatus) {
+  if (!previous) return null
+  const seconds = (timestampMs(next) - timestampMs(previous)) / 1000
+  return seconds > 0 ? seconds : null
 }
 
-function networkRate(previous: PreviousSnapshot | null, next: SystemStatus, at: number) {
-  if (!previous) return { rxBytesPerSecond: null, txBytesPerSecond: null }
-  const seconds = (at - previous.at) / 1000
-  if (seconds <= 0) return { rxBytesPerSecond: null, txBytesPerSecond: null }
+function swapActivityBytesPerSecond(previous: SystemStatus | null, next: SystemStatus) {
+  const previousMemory = previous?.memory
+  const nextMemory = next.memory
+  if (!previousMemory || !nextMemory) return null
+  const previousIn = previousMemory.swapInPages
+  const previousOut = previousMemory.swapOutPages
+  const nextIn = nextMemory.swapInPages
+  const nextOut = nextMemory.swapOutPages
+  if ([previousIn, previousOut, nextIn, nextOut].some(value => typeof value !== 'number')) return null
 
-  const prevBytes = totalNetworkBytes(previous.status)
-  const nextBytes = totalNetworkBytes(next)
-  return {
-    rxBytesPerSecond: Math.max(0, (nextBytes.rx - prevBytes.rx) / seconds),
-    txBytesPerSecond: Math.max(0, (nextBytes.tx - prevBytes.tx) / seconds),
-  }
+  const seconds = secondsBetween(previous, next)
+  if (!seconds) return null
+  const inDelta = Math.max(0, (nextIn || 0) - (previousIn || 0))
+  const outDelta = Math.max(0, (nextOut || 0) - (previousOut || 0))
+  const pageSize = nextMemory.pageSizeBytes || previousMemory.pageSizeBytes || 4096
+  return (inDelta + outDelta) * pageSize / seconds
+}
+
+function swapActivityMeta(bytesPerSecond: number | null | undefined) {
+  if (typeof bytesPerSecond !== 'number' || Number.isNaN(bytesPerSecond)) return 'active swap I/O pending'
+  return `${formatRate(bytesPerSecond)} active swap I/O`
+}
+
+function hasActiveSwapPressure(bytesPerSecond: number | null | undefined) {
+  return typeof bytesPerSecond === 'number' && bytesPerSecond >= SWAP_ACTIVITY_WARN_BPS
+}
+
+interface StorageDiskGroup extends SystemDiskStatus {
+  mounts: string[]
 }
 
 function diskLabel(disk?: SystemDiskStatus) {
@@ -105,13 +141,46 @@ function diskLabel(disk?: SystemDiskStatus) {
   return `${formatBytes(disk.usedBytes)} / ${formatBytes(disk.totalBytes)}`
 }
 
+function diskFingerprint(disk: SystemDiskStatus) {
+  return [disk.totalBytes, disk.availableBytes, disk.usedBytes, Math.round(disk.usedPercent * 100) / 100].join(':')
+}
+
+function dedupeStorageDisks(disks: SystemDiskStatus[]): StorageDiskGroup[] {
+  const groups = new Map<string, StorageDiskGroup>()
+  disks.forEach(disk => {
+    const key = diskFingerprint(disk)
+    const existing = groups.get(key)
+    if (existing) {
+      existing.mounts.push(disk.mount)
+      return
+    }
+    groups.set(key, { ...disk, mounts: [disk.mount] })
+  })
+  return Array.from(groups.values())
+}
+
+function gpuSourceLabel(gpu?: SystemGPUStatus) {
+  if (!gpu?.source) return ''
+  if (gpu.source.includes('/wsl/') || gpu.source.includes('lxss')) return 'WSL nvidia-smi'
+  return gpu.source.endsWith('nvidia-smi') ? 'nvidia-smi' : gpu.source
+}
+
+function primaryGPU(status?: SystemStatus | null) {
+  return status?.gpus?.find(gpu => gpu.available) || status?.gpus?.[0]
+}
+
 function gpuLabel(gpu?: SystemGPUStatus) {
   if (!gpu) return 'No GPU data'
-  if (!gpu.available) return gpu.message || 'Unavailable'
+  if (!gpu.available) return 'GPU unavailable'
   if (typeof gpu.utilizationPercent === 'number') {
-    return `${gpu.name || 'GPU'} at ${formatPercent(gpu.utilizationPercent)}`
+    return `${gpu.name || 'GPU'} · ${formatPercent(gpu.utilizationPercent)}`
   }
   return gpu.name || 'GPU available'
+}
+
+function gpuMemoryPercent(gpu?: SystemGPUStatus) {
+  if (!gpu?.available || !gpu.memoryTotalBytes) return null
+  return clampPercent((gpu.memoryUsedBytes || 0) / gpu.memoryTotalBytes * 100)
 }
 
 function gpuMemoryLabel(gpu?: SystemGPUStatus) {
@@ -119,159 +188,391 @@ function gpuMemoryLabel(gpu?: SystemGPUStatus) {
   return `${formatBytes(gpu.memoryUsedBytes)} / ${formatBytes(gpu.memoryTotalBytes)}`
 }
 
-function buildWarnings(status: SystemStatus | null, rootDisk?: SystemDiskStatus): SystemWarning[] {
+function formatSystemError(err: unknown, fallback: string) {
+  if (err instanceof SystemApiError) return `${err.code}: ${err.message}`
+  if (err instanceof Error) return err.message
+  return fallback
+}
+
+function loadPercent(status?: SystemStatus | null) {
+  if (!status?.cpu?.cores || typeof status.host?.load1 !== 'number') return null
+  return clampPercent((status.host.load1 / status.cpu.cores) * 100)
+}
+
+function buildWarnings(status: SystemStatus | null, rootDisk?: SystemDiskStatus, latestTimeline?: TimelineSample): SystemWarning[] {
   if (!status) return []
   const warnings = [...(status.warnings || [])]
-  if (status.memory.usedPercent >= 90) {
-    warnings.push({ code: 'MEMORY_HIGH', message: `Memory use is ${formatPercent(status.memory.usedPercent)}` })
+  const memory = status.memory
+  if (memory?.usedPercent >= 90) {
+    warnings.push({ code: 'MEMORY_HIGH', message: `Memory use is ${formatPercent(memory.usedPercent)}` })
+  }
+  if ((memory?.swapTotalBytes || 0) > 0 && hasActiveSwapPressure(latestTimeline?.swapActivityBytesPerSecond)) {
+    warnings.push({ code: 'SWAP_ACTIVE', message: `Active swap I/O is ${formatRate(latestTimeline?.swapActivityBytesPerSecond)}` })
   }
   if (rootDisk && rootDisk.usedPercent >= 85) {
     warnings.push({ code: 'DISK_HIGH', message: `${rootDisk.mount} disk use is ${formatPercent(rootDisk.usedPercent)}` })
   }
-  const loadPercent = status.cpu.cores ? (status.host.load1 / status.cpu.cores) * 100 : 0
-  if (loadPercent >= 100) {
-    warnings.push({ code: 'LOAD_HIGH', message: `1m load is ${status.host.load1.toFixed(2)} across ${status.cpu.cores} cores` })
+  const load = loadPercent(status) || 0
+  if (load >= 100) {
+    warnings.push({ code: 'LOAD_HIGH', message: `1m load is ${status.host.load1.toFixed(2)} across ${status.cpu?.cores || '--'} cores` })
   }
   return warnings
 }
 
-function MetricCard({
+function PercentBar({ value, tone = 'normal' }: { value: number | null | undefined; tone?: 'normal' | 'warn' | 'muted' | 'gpu' }) {
+  const width = readablePercent(value) || 0
+  return (
+    <span className={`system-bar system-bar-${tone}`}>
+      <span style={{ width: `${width}%` }} />
+    </span>
+  )
+}
+
+function combineStatusHistory(samples: SystemStatus[], current: SystemStatus | null) {
+  const byTimestamp = new Map<string, SystemStatus>()
+  samples.forEach((sample, index) => {
+    byTimestamp.set(sample.timestamp || `history-${index}`, sample)
+  })
+  if (current) {
+    byTimestamp.set(current.timestamp || 'current', current)
+  }
+  return Array.from(byTimestamp.values())
+    .sort((left, right) => timestampMs(left) - timestampMs(right))
+    .slice(-MAX_TIMELINE_SAMPLES)
+}
+
+function buildTimelineSamples(statuses: SystemStatus[]): TimelineSample[] {
+  return statuses.map((sample, index) => {
+    const previous = index > 0 ? statuses[index - 1] : null
+    const gpu = primaryGPU(sample)
+    const memory = sample.memory
+    return {
+      at: timestampMs(sample, index),
+      timestamp: sample.timestamp,
+      gpuPercent: gpu?.available ? readablePercent(gpu.utilizationPercent) : null,
+      vramPercent: gpuMemoryPercent(gpu),
+      ramPercent: readablePercent(memory?.usedPercent),
+      swapPercent: (memory?.swapTotalBytes || 0) > 0 ? readablePercent(memory?.swapUsedPercent) : null,
+      swapActivityBytesPerSecond: swapActivityBytesPerSecond(previous, sample),
+      cpuPercent: cpuUsage(previous, sample),
+      loadPercent: loadPercent(sample),
+    }
+  })
+}
+
+function latestNumber(values: Array<number | null | undefined>) {
+  for (let index = values.length - 1; index >= 0; index -= 1) {
+    const value = values[index]
+    if (typeof value === 'number' && !Number.isNaN(value)) return value
+  }
+  return null
+}
+
+function SummaryCard({
   label,
   value,
   detail,
+  meta,
   tone = 'normal',
+  gaugeValue,
+  metric = 'load',
 }: {
   label: string
   value: string
   detail?: string
-  tone?: 'normal' | 'warn' | 'muted'
+  meta?: string
+  tone?: 'normal' | 'warn' | 'muted' | 'gpu' | 'memory' | 'swap' | 'cpu'
+  gaugeValue: number | null | undefined
+  metric?: string
 }) {
+  const safe = readablePercent(gaugeValue)
+  const gaugeDegrees = (safe || 0) * 3.6
+
   return (
-    <section className={`system-metric system-metric-${tone}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-      {detail && <small>{detail}</small>}
+    <section className={`system-summary-card system-summary-${tone}`}>
+      <span
+        className={`system-donut system-donut-${safe === null ? 'muted' : tone}`}
+        role="img"
+        aria-label={`${label} ${metric} ${formatPercent(safe)}`}
+        style={{ '--system-gauge-deg': `${gaugeDegrees}deg` } as CSSProperties}
+      >
+        <span>{formatPercent(safe)}</span>
+      </span>
+      <div className="system-summary-copy">
+        <span className="system-summary-label">{label}</span>
+        <strong>{value}</strong>
+        {detail && <small>{detail}</small>}
+        {meta && <em>{meta}</em>}
+      </div>
     </section>
   )
 }
 
-function StatusGraph({ history }: { history: StatusSample[] }) {
-  const width = 680
-  const height = 210
-  const padX = 28
-  const padY = 20
-  const chartWidth = width - padX * 2
-  const chartHeight = height - padY * 2
+function buildTimelineSeries(samples: TimelineSample[]): TimelineSeries[] {
+  const gpuValues = samples.map(sample => sample.gpuPercent)
+  const vramValues = samples.map(sample => sample.vramPercent)
+  const ramValues = samples.map(sample => sample.ramPercent)
+  const swapValues = samples.map(sample => sample.swapPercent)
+  const swapActivityValues = samples.map(sample => sample.swapActivityBytesPerSecond)
+  const cpuValues = samples.map(sample => sample.cpuPercent)
+  const loadValues = samples.map(sample => sample.loadPercent)
 
-  const series = [
-    { key: 'cpuPercent' as const, label: 'CPU', className: 'cpu' },
-    { key: 'memoryPercent' as const, label: 'MEM', className: 'memory' },
-    { key: 'loadPercent' as const, label: 'LOAD', className: 'load' },
+  return [
+    {
+      key: 'gpu',
+      label: 'GPU',
+      value: formatPercent(latestNumber(gpuValues)),
+      values: gpuValues,
+    },
+    {
+      key: 'vram',
+      label: 'VRAM',
+      value: formatPercent(latestNumber(vramValues)),
+      values: vramValues,
+    },
+    {
+      key: 'memory',
+      label: 'RAM',
+      value: formatPercent(latestNumber(ramValues)),
+      values: ramValues,
+    },
+    {
+      key: 'swap',
+      label: 'Swap',
+      value: formatPercent(latestNumber(swapValues)),
+      meta: `occupied · ${swapActivityMeta(latestNumber(swapActivityValues))}`,
+      values: swapValues,
+    },
+    {
+      key: 'cpu',
+      label: 'CPU',
+      value: formatPercent(latestNumber(cpuValues)),
+      values: cpuValues,
+    },
+    {
+      key: 'load',
+      label: 'Load',
+      value: formatPercent(latestNumber(loadValues)),
+      values: loadValues,
+    },
   ]
+}
 
+function TimelineGraph({ samples, historyLimit, historyError, active }: { samples: TimelineSample[]; historyLimit?: number; historyError?: string; active: boolean }) {
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const series = buildTimelineSeries(samples)
+  const labelWidth = 154
+  const rowHeight = 76
+  const rowGap = 8
+  const axisHeight = 28
+  const sampleSpacing = 5
+  const barWidth = 4
+  const innerWidth = Math.max(900, Math.min(2960, Math.max(samples.length - 1, 1) * sampleSpacing))
+  const width = labelWidth + innerWidth + 16
+  const finiteTimes = samples.map(sample => sample.at).filter(Number.isFinite)
+  const startTime = finiteTimes.length ? Math.min(...finiteTimes) : 0
+  const endTime = finiteTimes.length ? Math.max(...finiteTimes) : startTime
+  const timeRange = endTime - startTime
   const xFor = (index: number) => {
-    if (history.length <= 1) return padX
-    return padX + (index / (history.length - 1)) * chartWidth
+    const at = samples[index]?.at
+    if (!Number.isFinite(at) || timeRange <= 0) return innerWidth
+    return ((at - startTime) / timeRange) * innerWidth
   }
+  const chartTop = 8
+  const chartBottom = rowHeight - 7
+  const yFor = (value: number) => chartTop + (100 - clampPercent(value)) / 100 * (chartBottom - chartTop)
+  const barXFor = (index: number) => Math.max(0, Math.min(innerWidth - barWidth, xFor(index)))
+  const tickIndexes = Array.from(new Set(samples.length > 0 ? [0, Math.floor((samples.length - 1) / 2), samples.length - 1] : []))
+  const latestSampleAt = samples[samples.length - 1]?.at
+  const sampleCountLabel = `${samples.length} ${samples.length === 1 ? 'sample' : 'samples'}`
 
-  const yFor = (value: number) => padY + (1 - clampPercent(value) / 100) * chartHeight
+  useEffect(() => {
+    const node = scrollRef.current
+    if (!node) return
+    const scrollToLatest = () => {
+      node.scrollLeft = Math.max(0, node.scrollWidth - node.clientWidth)
+    }
+    scrollToLatest()
+    const frame = window.requestAnimationFrame(scrollToLatest)
+    const timeout = window.setTimeout(scrollToLatest, 60)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.clearTimeout(timeout)
+    }
+  }, [samples.length, latestSampleAt, width, active])
 
   return (
-    <section className="system-graph-panel" aria-label="Server metrics history">
+    <section className="system-panel system-timeline-panel" aria-labelledby="system-timeline-title">
       <div className="system-panel-header">
         <div>
-          <h2>History</h2>
-          <p>{history.length ? `${history.length} samples` : 'warming'}</p>
-        </div>
-        <div className="system-graph-legend">
-          {series.map(item => (
-            <span key={item.key}>
-              <i className={`system-graph-legend-${item.className}`} />
-              {item.label}
-            </span>
-          ))}
+          <h2 id="system-timeline-title">Telemetry strips</h2>
+          <p>{samples.length ? `${sampleCountLabel} · ${historyError ? 'current status fallback' : `backend history${historyLimit ? ` limit ${historyLimit}` : ''}`}` : 'waiting for backend history'}</p>
         </div>
       </div>
-      <svg className="system-graph" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="CPU memory and load history">
-        {[0, 25, 50, 75, 100].map(value => (
-          <g key={value}>
-            <line
-              x1={padX}
-              x2={width - padX}
-              y1={yFor(value)}
-              y2={yFor(value)}
-              className="system-graph-grid"
-            />
-            <text x={6} y={yFor(value) + 4} className="system-graph-label">{value}</text>
-          </g>
+      <div className="system-timeline-meta">
+        <div className="system-timeline-hint">TUI-style separated graphs · scroll sideways for history</div>
+        {historyError && <div className="system-timeline-note" role="status">History unavailable: {historyError}</div>}
+      </div>
+      <div ref={scrollRef} className="system-timeline-scroll" aria-label="Scrollable server telemetry history" tabIndex={0}>
+        <div className="system-tui-chart" style={{ width }}>
+          <div className="system-tui-time-axis" style={{ gridTemplateColumns: `${labelWidth}px ${innerWidth}px` }}>
+            <span />
+            <svg viewBox={`0 0 ${innerWidth} ${axisHeight}`} width={innerWidth} height={axisHeight} aria-hidden="true">
+              {tickIndexes.map(index => (
+                <g key={`axis-${index}`}>
+                  <line className="system-tui-tick" x1={xFor(index)} x2={xFor(index)} y1="4" y2={axisHeight - 12} />
+                  <text className="system-tui-time" x={xFor(index)} y={axisHeight - 2}>{formatTime(samples[index]?.timestamp)}</text>
+                </g>
+              ))}
+            </svg>
+          </div>
+          <div className="system-tui-rows" style={{ gap: rowGap }}>
+            {samples.length === 0 && <div className="system-timeline-empty">Waiting for backend history</div>}
+            {series.map(item => {
+              return (
+                <div key={item.key} className={`system-tui-row system-tui-row-${item.key}`} style={{ gridTemplateColumns: `${labelWidth}px ${innerWidth}px` }}>
+                  <div className="system-tui-row-label">
+                    <span>{item.label}</span>
+                    <strong>{item.value}</strong>
+                    <small>{item.meta || '0-100'}</small>
+                  </div>
+                  <svg
+                    className="system-tui-strip"
+                    role="img"
+                    aria-label={`${item.label} telemetry strip`}
+                    viewBox={`0 0 ${innerWidth} ${rowHeight}`}
+                    width={innerWidth}
+                    height={rowHeight}
+                  >
+                    <title>{item.label} telemetry strip</title>
+                    <rect className="system-tui-bg" x="0" y="0" width={innerWidth} height={rowHeight} />
+                    {[25, 50, 75].map(percent => (
+                      <line key={`${item.key}-guide-${percent}`} className="system-tui-guide" x1="0" x2={innerWidth} y1={yFor(percent)} y2={yFor(percent)} />
+                    ))}
+                    {tickIndexes.map(index => (
+                      <line key={`${item.key}-tick-${index}`} className="system-tui-tick" x1={xFor(index)} x2={xFor(index)} y1="0" y2={rowHeight} />
+                    ))}
+                    {item.values.map((value, index) => {
+                      if (typeof value !== 'number' || Number.isNaN(value)) return null
+                      const y = yFor(value)
+                      const hoverLabel = `${item.label} ${formatPercent(value)} · ${formatTime(samples[index]?.timestamp)}`
+                      return (
+                        <g key={`${item.key}-bar-${index}`} className="system-tui-bar-point" aria-label={hoverLabel}>
+                          <title>{hoverLabel}</title>
+                          <rect
+                            className={`system-tui-bar system-tui-bar-${item.key}`}
+                            x={barXFor(index)}
+                            y={y}
+                            width={barWidth}
+                            height={Math.max(2, chartBottom - y)}
+                          />
+                        </g>
+                      )
+                    })}
+                  </svg>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function StoragePanel({ disks }: { disks: SystemDiskStatus[] }) {
+  const storageGroups = dedupeStorageDisks(disks)
+  const storageCount = storageGroups.length
+
+  return (
+    <section className="system-panel system-storage-panel" aria-label="Storage state">
+      <div className="system-panel-header">
+        <div>
+          <h2>Storage</h2>
+          <p>{storageCount ? `${storageCount} ${storageCount === 1 ? 'storage pool' : 'storage pools'}${storageCount !== disks.length ? ` · ${disks.length} mounts deduped` : ''}` : 'no disk data'}</p>
+        </div>
+      </div>
+      <div className="system-storage-list">
+        {storageGroups.map(disk => (
+          <div key={disk.mounts.join('|')} className="system-storage-row">
+            <div className="system-storage-main">
+              <strong>{disk.mounts.join(', ')}</strong>
+              <small>{diskLabel(disk)}</small>
+            </div>
+            <div className="system-storage-usage">
+              <b>{formatPercent(disk.usedPercent)}</b>
+              <span>{formatBytes(disk.availableBytes)} available</span>
+            </div>
+            <PercentBar value={disk.usedPercent} tone={disk.usedPercent >= 85 ? 'warn' : 'normal'} />
+          </div>
         ))}
-        {series.map(item => {
-          const points = history
-            .map((sample, index) => {
-              const value = sample[item.key]
-              if (value === null || Number.isNaN(value)) return ''
-              return `${xFor(index).toFixed(1)},${yFor(value).toFixed(1)}`
-            })
-            .filter(Boolean)
-            .join(' ')
-          if (!points) return null
-          return (
-            <polyline
-              key={item.key}
-              className={`system-graph-line system-graph-line-${item.className}`}
-              points={points}
-              fill="none"
-            />
-          )
-        })}
-      </svg>
+        {storageGroups.length === 0 && <div className="system-empty">No disk data</div>}
+      </div>
+    </section>
+  )
+}
+
+function WarningPanel({ warnings }: { warnings: SystemWarning[] }) {
+  if (warnings.length === 0) return null
+  return (
+    <section className="system-panel system-warning-panel" aria-label="Warnings">
+      <div className="system-panel-header">
+        <div>
+          <h2>Warnings</h2>
+          <p>{warnings.length} active</p>
+        </div>
+      </div>
+      <div className="system-warning-list">
+        {warnings.map((warning, index) => (
+          <div key={`${warning.code}-${index}`} className="system-warning-row">
+            <AlertTriangle size={15} />
+            <strong>{warning.code}</strong>
+            <span>{warning.message}</span>
+          </div>
+        ))}
+      </div>
     </section>
   )
 }
 
 function SystemStatusView({ active = true }: { active?: boolean }) {
   const [status, setStatus] = useState<SystemStatus | null>(null)
-  const [history, setHistory] = useState<StatusSample[]>([])
+  const [historySamples, setHistorySamples] = useState<SystemStatus[]>([])
+  const [historyLimit, setHistoryLimit] = useState<number | undefined>()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [historyError, setHistoryError] = useState('')
   const [paused, setPaused] = useState(false)
   const [copyStatus, setCopyStatus] = useState('')
-  const previousRef = useRef<PreviousSnapshot | null>(null)
 
   const refresh = useCallback(async () => {
     setError('')
-    try {
-      const next = await getSystemStatus()
-      const at = Date.now()
-      const previous = previousRef.current
-      const cpuPercent = cpuUsage(previous?.status || null, next)
-      const rates = networkRate(previous, next, at)
-      const loadPercent = next.cpu.cores ? clampPercent((next.host.load1 / next.cpu.cores) * 100) : 0
+    setHistoryError('')
 
+    const [statusResult, historyResult] = await Promise.allSettled([
+      getSystemStatus(),
+      getSystemHistory(),
+    ])
+
+    let next: SystemStatus | null = null
+
+    if (statusResult.status === 'fulfilled') {
+      next = statusResult.value
       setStatus(next)
-      setHistory(current => [
-        ...current,
-        {
-          at,
-          cpuPercent,
-          memoryPercent: clampPercent(next.memory.usedPercent),
-          loadPercent,
-          rxBytesPerSecond: rates.rxBytesPerSecond,
-          txBytesPerSecond: rates.txBytesPerSecond,
-        },
-      ].slice(-MAX_HISTORY_POINTS))
-      previousRef.current = { status: next, at }
-    } catch (err) {
-      if (err instanceof SystemApiError) {
-        setError(`${err.code}: ${err.message}`)
-      } else if (err instanceof Error) {
-        setError(err.message)
-      } else {
-        setError('System status request failed')
-      }
-    } finally {
-      setLoading(false)
+    } else {
+      setError(formatSystemError(statusResult.reason, 'System status request failed'))
     }
+
+    if (historyResult.status === 'fulfilled') {
+      setHistorySamples(combineStatusHistory(historyResult.value.samples || [], next))
+      setHistoryLimit(historyResult.value.limit)
+    } else {
+      setHistorySamples(combineStatusHistory([], next))
+      setHistoryLimit(undefined)
+      setHistoryError(formatSystemError(historyResult.reason, 'System history request failed'))
+    }
+
+    setLoading(false)
   }, [])
 
   useEffect(() => {
@@ -284,43 +585,48 @@ function SystemStatusView({ active = true }: { active?: boolean }) {
     return () => window.clearInterval(interval)
   }, [active, paused, refresh])
 
-  const latest = history[history.length - 1]
-  const rootDisk = status?.disks.find(disk => disk.mount === '/') || status?.disks[0]
-  const primaryGPU = status?.gpus.find(gpu => gpu.available) || status?.gpus[0]
-  const warnings = useMemo(() => buildWarnings(status, rootDisk), [status, rootDisk])
-
-  const handleClearHistory = () => {
-    setHistory([])
-  }
+  const host = status?.host
+  const cpu = status?.cpu
+  const disks = status?.disks || []
+  const rootDisk = disks.find(disk => disk.mount === '/') || disks[0]
+  const gpu = primaryGPU(status)
+  const gpuSource = gpuSourceLabel(gpu)
+  const gpuMemory = gpuMemoryLabel(gpu)
+  const memory = status?.memory
+  const hasSwap = (memory?.swapTotalBytes || 0) > 0
+  const timelineSamples = useMemo(() => buildTimelineSamples(historySamples), [historySamples])
+  const latestTimeline = timelineSamples[timelineSamples.length - 1]
+  const warnings = useMemo(() => buildWarnings(status, rootDisk, latestTimeline), [status, rootDisk, latestTimeline])
 
   const handleCopySnapshot = async () => {
     if (!status) return
     setCopyStatus('')
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(status, null, 2))
+    const copied = await copyTextToClipboard(JSON.stringify(status, null, 2))
+    if (copied) {
       setCopyStatus('copied')
       window.setTimeout(() => setCopyStatus(''), 1400)
-    } catch {
+    } else {
       setCopyStatus('copy failed')
     }
   }
 
   return (
     <div className="system-status-view">
-      <div className="system-status-strip">
-        <span className="system-status-pill">
-          <strong>{status?.host.hostname || 'host'}</strong>
-          <span>{status ? formatUptime(status.host.uptimeSeconds) : '--'}</span>
-        </span>
-        <span className="system-status-pill">
-          <strong>load</strong>
-          <span>{status ? `${status.host.load1.toFixed(2)} ${status.host.load5.toFixed(2)} ${status.host.load15.toFixed(2)}` : '--'}</span>
-        </span>
-        <span className="system-status-pill">
-          <strong>updated</strong>
-          <span>{formatTime(status?.timestamp)}</span>
-        </span>
-        <div className="system-status-actions">
+      <header className="system-hero">
+        <div className="system-hero-title">
+          <h1>Server cockpit</h1>
+          <p>
+            <strong>{host?.hostname || 'host'}</strong>
+            <span>{host ? `${formatUptime(host.uptimeSeconds)} uptime` : loading ? 'loading' : 'offline'}</span>
+            <span>{status ? `updated ${formatTime(status.timestamp)}` : '--'}</span>
+            <span>{warnings.length ? `${warnings.length} warnings` : error ? 'status error' : 'nominal'}</span>
+          </p>
+        </div>
+        <div className="system-hero-actions">
+          <span className="system-load-pill">
+            <Gauge size={14} />
+            load {host ? `${host.load1.toFixed(2)} / ${host.load5.toFixed(2)} / ${host.load15.toFixed(2)}` : '--'}
+          </span>
           <button type="button" className="system-icon-button" onClick={refresh} title="Refresh status" aria-label="Refresh status">
             <RefreshCw size={16} />
           </button>
@@ -333,111 +639,55 @@ function SystemStatusView({ active = true }: { active?: boolean }) {
           >
             {paused ? <Play size={16} /> : <Pause size={16} />}
           </button>
-          <button type="button" className="system-icon-button" onClick={handleClearHistory} title="Clear graph history" aria-label="Clear graph history">
-            <Trash2 size={16} />
-          </button>
           <button type="button" className="system-icon-button" onClick={handleCopySnapshot} disabled={!status} title="Copy status JSON" aria-label="Copy status JSON">
             <Copy size={16} />
           </button>
           {copyStatus && <span className="system-copy-status">{copyStatus}</span>}
         </div>
-      </div>
+      </header>
 
       {error && <div className="system-error" role="alert">{error}</div>}
 
       <div className="system-status-body">
-        <div className="system-metrics-grid" aria-live="polite">
-          <MetricCard
-            label="CPU"
-            value={formatPercent(latest?.cpuPercent)}
-            detail={status ? `${status.cpu.cores} cores` : loading ? 'loading' : undefined}
-            tone={latest?.cpuPercent && latest.cpuPercent >= 85 ? 'warn' : 'normal'}
+        <div className="system-summary-grid">
+          <SummaryCard
+            label="CPU / LOAD"
+            value={status ? `load ${formatPercent(latestTimeline?.loadPercent)}` : '--'}
+            detail={cpu ? `CPU ${formatPercent(latestTimeline?.cpuPercent)} · ${cpu.cores} cores` : status ? 'CPU unavailable' : loading ? 'loading' : undefined}
+            gaugeValue={latestTimeline?.loadPercent}
+            tone={(latestTimeline?.cpuPercent || 0) >= 85 || (latestTimeline?.loadPercent || 0) >= 90 ? 'warn' : 'cpu'}
           />
-          <MetricCard
-            label="Memory"
-            value={formatPercent(status?.memory.usedPercent)}
-            detail={status ? `${formatBytes(status.memory.usedBytes)} / ${formatBytes(status.memory.totalBytes)}` : undefined}
-            tone={status?.memory.usedPercent && status.memory.usedPercent >= 90 ? 'warn' : 'normal'}
-          />
-          <MetricCard
-            label="Disk"
-            value={formatPercent(rootDisk?.usedPercent)}
-            detail={diskLabel(rootDisk)}
-            tone={rootDisk?.usedPercent && rootDisk.usedPercent >= 85 ? 'warn' : 'normal'}
-          />
-          <MetricCard
+          <SummaryCard
             label="GPU"
-            value={primaryGPU?.available ? formatPercent(primaryGPU.utilizationPercent) : 'offline'}
-            detail={gpuMemoryLabel(primaryGPU) || gpuLabel(primaryGPU)}
-            tone={primaryGPU?.available ? 'normal' : 'muted'}
+            value={gpu?.available ? formatPercent(gpu.utilizationPercent) : gpuLabel(gpu)}
+            detail={gpu?.available ? gpu.name : gpu?.message || 'telemetry unavailable'}
+            meta={gpu?.available ? [gpuMemory ? `${gpuMemory} VRAM` : '', gpuSource].filter(Boolean).join(' · ') : gpu?.message}
+            gaugeValue={gpu?.available ? gpu.utilizationPercent : null}
+            tone={gpu?.available ? 'gpu' : 'muted'}
           />
-          <MetricCard
-            label="Network"
-            value={`${formatRate(latest?.rxBytesPerSecond)} down`}
-            detail={`${formatRate(latest?.txBytesPerSecond)} up`}
+          <SummaryCard
+            label="RAM"
+            value={formatPercent(memory?.usedPercent)}
+            detail={memory ? `${formatBytes(memory.usedBytes)} used of ${formatBytes(memory.totalBytes)}` : status ? 'memory unavailable' : loading ? 'loading' : undefined}
+            gaugeValue={memory?.usedPercent}
+            tone={(memory?.usedPercent || 0) >= 90 ? 'warn' : 'memory'}
+          />
+          <SummaryCard
+            label="SWAP"
+            value={hasSwap ? `${formatPercent(memory?.swapUsedPercent)} occupied` : '--'}
+            detail={hasSwap ? `${formatBytes(memory?.swapUsedBytes)} occupied of ${formatBytes(memory?.swapTotalBytes)}` : status ? memory ? 'swap not configured' : 'swap unavailable' : loading ? 'loading' : undefined}
+            meta={hasSwap ? [swapActivityMeta(latestTimeline?.swapActivityBytesPerSecond), (memory?.swapCachedBytes || 0) > 0 ? `${formatBytes(memory?.swapCachedBytes)} cached` : ''].filter(Boolean).join(' · ') : undefined}
+            gaugeValue={hasSwap ? memory?.swapUsedPercent : null}
+            tone={hasSwap && hasActiveSwapPressure(latestTimeline?.swapActivityBytesPerSecond) ? 'warn' : 'swap'}
+            metric="occupied"
           />
         </div>
 
-        <StatusGraph history={history} />
-
-        <section className="system-detail-grid">
-          <div className="system-detail-panel">
-            <div className="system-panel-header">
-              <div>
-                <h2>Disks</h2>
-                <p>{status?.disks.length || 0} mounts</p>
-              </div>
-            </div>
-            <div className="system-table">
-              {(status?.disks || []).map(disk => (
-                <div key={disk.mount} className="system-table-row">
-                  <strong>{disk.mount}</strong>
-                  <span>{formatPercent(disk.usedPercent)}</span>
-                  <small>{diskLabel(disk)}</small>
-                </div>
-              ))}
-              {status && status.disks.length === 0 && <div className="system-empty">No disk data</div>}
-            </div>
-          </div>
-
-          <div className="system-detail-panel">
-            <div className="system-panel-header">
-              <div>
-                <h2>GPU</h2>
-                <p>{primaryGPU?.available ? primaryGPU.name : 'unavailable'}</p>
-              </div>
-            </div>
-            <div className="system-gpu-detail">
-              <strong>{gpuLabel(primaryGPU)}</strong>
-              {primaryGPU?.available && (
-                <div className="system-detail-chips">
-                  {typeof primaryGPU.temperatureCelsius === 'number' && <span>{primaryGPU.temperatureCelsius.toFixed(0)} C</span>}
-                  {typeof primaryGPU.powerWatts === 'number' && <span>{primaryGPU.powerWatts.toFixed(0)} W</span>}
-                  {gpuMemoryLabel(primaryGPU) && <span>{gpuMemoryLabel(primaryGPU)}</span>}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="system-detail-panel">
-            <div className="system-panel-header">
-              <div>
-                <h2>Warnings</h2>
-                <p>{warnings.length ? `${warnings.length} active` : 'clear'}</p>
-              </div>
-            </div>
-            <div className="system-warning-list">
-              {warnings.length === 0 ? (
-                <div className="system-empty">No active warnings</div>
-              ) : warnings.map((warning, index) => (
-                <div key={`${warning.code}-${index}`} className="system-warning-row">
-                  <strong>{warning.code}</strong>
-                  <span>{warning.message}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
+        <div className="system-main-grid">
+          <TimelineGraph samples={timelineSamples} historyLimit={historyLimit} historyError={historyError} active={active} />
+          <StoragePanel disks={disks} />
+          <WarningPanel warnings={warnings} />
+        </div>
       </div>
     </div>
   )

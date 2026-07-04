@@ -32,6 +32,11 @@ export interface SystemStatus {
   warnings?: SystemWarning[]
 }
 
+export interface SystemHistory {
+  limit: number
+  samples: SystemStatus[]
+}
+
 export interface SystemHostStatus {
   hostname: string
   uptimeSeconds: number
@@ -54,6 +59,10 @@ export interface SystemMemoryStatus {
   swapTotalBytes: number
   swapUsedBytes: number
   swapUsedPercent: number
+  swapCachedBytes?: number
+  swapInPages?: number
+  swapOutPages?: number
+  pageSizeBytes?: number
 }
 
 export interface SystemDiskStatus {
@@ -78,6 +87,7 @@ export interface SystemGPUStatus {
   memoryUsedBytes?: number
   temperatureCelsius?: number
   powerWatts?: number
+  source?: string
   message?: string
 }
 
@@ -107,4 +117,8 @@ async function request<T>(path: string): Promise<T> {
 
 export function getSystemStatus() {
   return request<SystemStatus>('/api/system/status')
+}
+
+export function getSystemHistory() {
+  return request<SystemHistory>('/api/system/history')
 }

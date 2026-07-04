@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -21,9 +22,18 @@ import (
 
 var defaultSystemDiskMounts = []string{"/", "/home", "/srv"}
 
+const (
+	defaultSystemHistoryLimit          = 288
+	defaultSystemHistorySampleInterval = 5 * time.Minute
+)
+
 // SystemHandler handles lightweight local host status endpoints.
 type SystemHandler struct {
-	collector systemStatusCollector
+	collector   systemStatusCollector
+	history     *systemHistoryStore
+	samplerMu   sync.Mutex
+	samplerSeq  uint64
+	stopSampler context.CancelFunc
 }
 
 type systemStatusCollector interface {
@@ -40,6 +50,11 @@ type SystemStatusResponse struct {
 	Network   []SystemNetworkStatus `json:"network"`
 	GPUs      []SystemGPUStatus     `json:"gpus"`
 	Warnings  []SystemWarning       `json:"warnings,omitempty"`
+}
+
+type SystemHistoryResponse struct {
+	Limit   int                    `json:"limit"`
+	Samples []SystemStatusResponse `json:"samples"`
 }
 
 type SystemHostStatus struct {
@@ -64,6 +79,15 @@ type SystemMemoryStatus struct {
 	SwapTotalBytes  uint64  `json:"swapTotalBytes"`
 	SwapUsedBytes   uint64  `json:"swapUsedBytes"`
 	SwapUsedPercent float64 `json:"swapUsedPercent"`
+	SwapCachedBytes uint64  `json:"swapCachedBytes"`
+	SwapInPages     uint64  `json:"swapInPages"`
+	SwapOutPages    uint64  `json:"swapOutPages"`
+	PageSizeBytes   uint64  `json:"pageSizeBytes"`
+}
+
+type systemSwapCounters struct {
+	InPages  uint64
+	OutPages uint64
 }
 
 type SystemDiskStatus struct {
@@ -88,6 +112,7 @@ type SystemGPUStatus struct {
 	MemoryUsedBytes    uint64   `json:"memoryUsedBytes,omitempty"`
 	TemperatureCelsius *float64 `json:"temperatureCelsius,omitempty"`
 	PowerWatts         *float64 `json:"powerWatts,omitempty"`
+	Source             string   `json:"source,omitempty"`
 	Message            string   `json:"message,omitempty"`
 }
 
@@ -98,10 +123,11 @@ type SystemWarning struct {
 
 // LocalSystemCollector reads lightweight host metrics from local Linux files.
 type LocalSystemCollector struct {
-	procRoot     string
-	diskMounts   []string
-	lookPath     func(string) (string, error)
-	runNvidiaSMI func(context.Context, string) ([]byte, error)
+	procRoot       string
+	diskMounts     []string
+	nvidiaSMIPaths []string
+	lookPath       func(string) (string, error)
+	runNvidiaSMI   func(context.Context, string) ([]byte, error)
 }
 
 // NewSystemHandler creates a system status handler.
@@ -110,7 +136,10 @@ func NewSystemHandler() *SystemHandler {
 }
 
 func NewSystemHandlerWithCollector(collector systemStatusCollector) *SystemHandler {
-	return &SystemHandler{collector: collector}
+	return &SystemHandler{
+		collector: collector,
+		history:   newSystemHistoryStore(defaultSystemHistoryLimit),
+	}
 }
 
 // NewLocalSystemCollector creates a collector for the current host.
@@ -118,7 +147,12 @@ func NewLocalSystemCollector() *LocalSystemCollector {
 	return &LocalSystemCollector{
 		procRoot:   "/proc",
 		diskMounts: defaultSystemDiskMounts,
-		lookPath:   exec.LookPath,
+		nvidiaSMIPaths: []string{
+			"nvidia-smi",
+			"/usr/lib/wsl/lib/nvidia-smi",
+			"/mnt/c/Windows/System32/lxss/lib/nvidia-smi",
+		},
+		lookPath: exec.LookPath,
 		runNvidiaSMI: func(ctx context.Context, path string) ([]byte, error) {
 			cmd := exec.CommandContext(
 				ctx,
@@ -134,6 +168,7 @@ func NewLocalSystemCollector() *LocalSystemCollector {
 // RegisterRoutes registers system status routes.
 func (h *SystemHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/system/status", h.Status)
+	mux.HandleFunc("GET /api/system/history", h.History)
 }
 
 // Status handles GET /api/system/status.
@@ -144,6 +179,135 @@ func (h *SystemHandler) Status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	core.WriteSuccess(w, status)
+}
+
+// History handles GET /api/system/history.
+func (h *SystemHandler) History(w http.ResponseWriter, r *http.Request) {
+	if h.history == nil {
+		core.WriteSuccess(w, SystemHistoryResponse{})
+		return
+	}
+	core.WriteSuccess(w, SystemHistoryResponse{
+		Limit:   h.history.limit,
+		Samples: h.history.snapshot(),
+	})
+}
+
+func (h *SystemHandler) StartDefaultHistorySampler(ctx context.Context) context.CancelFunc {
+	return h.StartHistorySampler(ctx, defaultSystemHistorySampleInterval)
+}
+
+// StartHistorySampler records bounded server-side telemetry without requiring a browser poller.
+func (h *SystemHandler) StartHistorySampler(ctx context.Context, interval time.Duration) context.CancelFunc {
+	if interval <= 0 {
+		return func() {}
+	}
+	samplerCtx, cancel := context.WithCancel(ctx)
+
+	h.samplerMu.Lock()
+	if h.stopSampler != nil {
+		h.stopSampler()
+	}
+	h.samplerSeq++
+	samplerID := h.samplerSeq
+	h.stopSampler = cancel
+	h.samplerMu.Unlock()
+
+	go func() {
+		defer func() {
+			h.samplerMu.Lock()
+			if h.samplerSeq == samplerID {
+				h.stopSampler = nil
+			}
+			h.samplerMu.Unlock()
+		}()
+
+		select {
+		case <-samplerCtx.Done():
+			return
+		default:
+		}
+		h.recordHistorySnapshot(samplerCtx)
+
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-samplerCtx.Done():
+				return
+			case <-ticker.C:
+				h.recordHistorySnapshot(samplerCtx)
+			}
+		}
+	}()
+	return cancel
+}
+
+func (h *SystemHandler) StopHistorySampler() {
+	h.samplerMu.Lock()
+	defer h.samplerMu.Unlock()
+	if h.stopSampler != nil {
+		h.stopSampler()
+		h.stopSampler = nil
+	}
+}
+
+func (h *SystemHandler) recordHistorySnapshot(ctx context.Context) {
+	status, err := h.collector.Snapshot(ctx)
+	if err != nil {
+		return
+	}
+	h.history.add(status)
+}
+
+type systemHistoryStore struct {
+	mu      sync.RWMutex
+	limit   int
+	samples []SystemStatusResponse
+	next    int
+}
+
+func newSystemHistoryStore(limit int) *systemHistoryStore {
+	if limit < 1 {
+		limit = 1
+	}
+	return &systemHistoryStore{
+		limit:   limit,
+		samples: make([]SystemStatusResponse, 0, limit),
+	}
+}
+
+func (s *systemHistoryStore) add(sample SystemStatusResponse) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(s.samples) < s.limit {
+		s.samples = append(s.samples, sample)
+		return
+	}
+	s.samples[s.next] = sample
+	s.next = (s.next + 1) % s.limit
+}
+
+func (s *systemHistoryStore) snapshot() []SystemStatusResponse {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if len(s.samples) < s.limit {
+		out := make([]SystemStatusResponse, len(s.samples))
+		copy(out, s.samples)
+		return out
+	}
+	out := make([]SystemStatusResponse, 0, len(s.samples))
+	out = append(out, s.samples[s.next:]...)
+	out = append(out, s.samples[:s.next]...)
+	return out
 }
 
 // Snapshot returns a current local host status snapshot.
@@ -166,6 +330,16 @@ func (c *LocalSystemCollector) Snapshot(ctx context.Context) (SystemStatusRespon
 	memory, err := parseMemInfo(string(memRaw))
 	if err != nil {
 		return SystemStatusResponse{}, err
+	}
+	memory.PageSizeBytes = uint64(os.Getpagesize())
+	vmstatRaw, err := os.ReadFile(filepath.Join(c.procRoot, "vmstat"))
+	if err != nil {
+		warnings = append(warnings, SystemWarning{Code: "VMSTAT_UNAVAILABLE", Message: err.Error()})
+	} else if counters, err := parseVMStatSwapCounters(string(vmstatRaw)); err != nil {
+		warnings = append(warnings, SystemWarning{Code: "VMSTAT_PARSE_ERROR", Message: err.Error()})
+	} else {
+		memory.SwapInPages = counters.InPages
+		memory.SwapOutPages = counters.OutPages
 	}
 
 	loadRaw, err := os.ReadFile(filepath.Join(c.procRoot, "loadavg"))
@@ -258,11 +432,11 @@ func (c *LocalSystemCollector) collectDisks() ([]SystemDiskStatus, []SystemWarni
 }
 
 func (c *LocalSystemCollector) collectGPUs(ctx context.Context) []SystemGPUStatus {
-	path, err := c.lookPath("nvidia-smi")
+	path, err := c.resolveNvidiaSMIPath()
 	if err != nil {
 		return []SystemGPUStatus{{
 			Available: false,
-			Message:   "nvidia-smi not found",
+			Message:   err.Error(),
 		}}
 	}
 
@@ -273,6 +447,7 @@ func (c *LocalSystemCollector) collectGPUs(ctx context.Context) []SystemGPUStatu
 	if err != nil {
 		return []SystemGPUStatus{{
 			Available: false,
+			Source:    path,
 			Message:   "nvidia-smi failed: " + err.Error(),
 		}}
 	}
@@ -281,16 +456,52 @@ func (c *LocalSystemCollector) collectGPUs(ctx context.Context) []SystemGPUStatu
 	if err != nil {
 		return []SystemGPUStatus{{
 			Available: false,
+			Source:    path,
 			Message:   "nvidia-smi output could not be parsed: " + err.Error(),
 		}}
 	}
 	if len(gpus) == 0 {
 		return []SystemGPUStatus{{
 			Available: false,
+			Source:    path,
 			Message:   "nvidia-smi returned no GPUs",
 		}}
 	}
+	for i := range gpus {
+		gpus[i].Source = path
+	}
 	return gpus
+}
+
+func (c *LocalSystemCollector) resolveNvidiaSMIPath() (string, error) {
+	candidates := c.nvidiaSMIPaths
+	if len(candidates) == 0 {
+		candidates = []string{"nvidia-smi"}
+	}
+	var misses []string
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if strings.ContainsRune(candidate, os.PathSeparator) {
+			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+				return candidate, nil
+			} else if err != nil {
+				misses = append(misses, candidate)
+			}
+			continue
+		}
+		path, err := c.lookPath(candidate)
+		if err == nil {
+			return path, nil
+		}
+		misses = append(misses, candidate)
+	}
+	if len(misses) == 0 {
+		return "", errors.New("nvidia-smi not configured")
+	}
+	return "", fmt.Errorf("nvidia-smi not found; checked %s", strings.Join(misses, ", "))
 }
 
 func parseCPUStat(raw string, cores int) (SystemCPUStatus, error) {
@@ -367,6 +578,7 @@ func parseMemInfo(raw string) (SystemMemoryStatus, error) {
 
 	swapTotal := values["SwapTotal"]
 	swapFree := values["SwapFree"]
+	swapCached := values["SwapCached"]
 	swapUsed := uint64(0)
 	if swapTotal > swapFree {
 		swapUsed = swapTotal - swapFree
@@ -380,7 +592,44 @@ func parseMemInfo(raw string) (SystemMemoryStatus, error) {
 		SwapTotalBytes:  swapTotal,
 		SwapUsedBytes:   swapUsed,
 		SwapUsedPercent: percent(swapUsed, swapTotal),
+		SwapCachedBytes: swapCached,
 	}, nil
+}
+
+func parseVMStatSwapCounters(raw string) (systemSwapCounters, error) {
+	var counters systemSwapCounters
+	seenIn := false
+	seenOut := false
+	scanner := bufio.NewScanner(strings.NewReader(raw))
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) != 2 {
+			continue
+		}
+		switch fields[0] {
+		case "pswpin":
+			value, err := strconv.ParseUint(fields[1], 10, 64)
+			if err != nil {
+				return systemSwapCounters{}, fmt.Errorf("parse pswpin: %w", err)
+			}
+			counters.InPages = value
+			seenIn = true
+		case "pswpout":
+			value, err := strconv.ParseUint(fields[1], 10, 64)
+			if err != nil {
+				return systemSwapCounters{}, fmt.Errorf("parse pswpout: %w", err)
+			}
+			counters.OutPages = value
+			seenOut = true
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return systemSwapCounters{}, err
+	}
+	if !seenIn || !seenOut {
+		return systemSwapCounters{}, errors.New("vmstat missing pswpin/pswpout")
+	}
+	return counters, nil
 }
 
 func parseLoadAvg(raw string) (float64, float64, float64, error) {
