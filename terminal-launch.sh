@@ -61,15 +61,6 @@ socket_for_terminal_user() {
   return 1
 }
 
-ensure_mouse_mode() {
-  local socket="$1"
-  if [ -n "$socket" ]; then
-    tmux -S "$socket" set-option -g mouse on 2>/dev/null || true
-  else
-    tmux set-option -g mouse on 2>/dev/null || true
-  fi
-}
-
 attach_explicit_socket() {
   local socket="$1"
   local session="$2"
@@ -81,9 +72,6 @@ attach_explicit_socket() {
   # REASON: explicit-socket terminals must fail loud instead of falling back to
   # the ambient perttu tmux server when the configured session is unavailable.
   if tmux -S "$socket" has-session -t "$session" 2>/dev/null; then
-    # CHROTE terminal panes rely on tmux mouse mode for wheel scrollback; ttyd's
-    # xterm viewport has no useful scrollback once it is attached to tmux.
-    ensure_mouse_mode "$socket"
     exec tmux -S "$socket" attach-session -t "$session"
   fi
 
@@ -106,7 +94,6 @@ elif [ -n "${CHROTE_TMUX_SOCKET:-}" ]; then
 else
   # REASON: tmux has-session tests existence; stderr is noise, not an error
   if [ -n "$SESSION" ] && tmux has-session -t "$SESSION" 2>/dev/null; then
-    ensure_mouse_mode ""
     exec tmux attach-session -t "$SESSION"
   fi
 fi

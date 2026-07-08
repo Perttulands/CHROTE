@@ -97,6 +97,26 @@ describe('SettingsView terminal launch users', () => {
       },
     })
   })
+
+  it('toggles tmux mouse-wheel scrolling explicitly', () => {
+    const updateSettings = vi.fn()
+    mockUseSession.mockReturnValue({
+      settings: {
+        ...settings,
+        mouseScroll: true,
+      },
+      terminalUsers,
+      updateSettings,
+    })
+
+    render(<SettingsView />)
+
+    const checkbox = screen.getByLabelText('Mouse-wheel scrolling')
+    expect(checkbox).toBeChecked()
+    fireEvent.click(checkbox)
+
+    expect(updateSettings).toHaveBeenCalledWith({ mouseScroll: false })
+  })
 })
 
 describe('SettingsView Beads project paths', () => {

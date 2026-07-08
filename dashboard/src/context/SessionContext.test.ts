@@ -68,6 +68,7 @@ describe('dashboard persisted storage contract', () => {
     expect(featureFlagKey('uiV2')).toBe('chrote-ui-v2')
     expect(featureFlagKey('filesPersistTabState')).toBe('chrote-files-persist-tab-state')
     expect(featureFlagKey('serverStatusTab')).toBe('chrote-server-status-tab')
+    expect(DEFAULT_SETTINGS.mouseScroll).toBe(true)
 
     const presets = JSON.parse(store['chrote-dashboard-presets'])
     expect(presets).toHaveLength(1)
@@ -191,6 +192,34 @@ describe('dashboard persisted storage contract', () => {
         paneBorderActive: '#abcdef',
       },
     })
+  })
+
+  it('applies saved tmux mouse mode on initial load and when settings change', async () => {
+    localStorage.setItem('chrote-dashboard-state', JSON.stringify({
+      version: 3,
+      settingsSchemaVersion: 2,
+      layoutsByViewport: {},
+      settings: { ...DEFAULT_SETTINGS, mouseScroll: false },
+    }))
+    const fetchMock = vi.mocked(fetch as any)
+    fetchMock.mockClear()
+
+    const { result } = renderSession()
+    const hasMouseCall = (enabled: boolean) => fetchMock.mock.calls.some((call: unknown[]) => {
+      const [url, init] = call as [RequestInfo | URL, RequestInit | undefined]
+      return String(url) === '/api/tmux/mouse' &&
+        init?.method === 'POST' &&
+        JSON.parse(String(init?.body)).enabled === enabled
+    })
+
+    await waitFor(() => expect(hasMouseCall(false)).toBe(true))
+
+    fetchMock.mockClear()
+    act(() => {
+      result.current.updateSettings({ mouseScroll: true })
+    })
+
+    await waitFor(() => expect(hasMouseCall(true)).toBe(true))
   })
 
   it('preserves the legacy global session prefix without hardcoded user-key migration', () => {
@@ -490,7 +519,7 @@ describe('createSession', () => {
     expect(created).toBe('shell2')
     expect(fetchMock).toHaveBeenCalled()
     const [, init] = fetchMock.mock.calls[0]
-    expect(JSON.parse(String(init?.body))).toEqual({ name: 'shell2', unixUser: 'perttu' })
+    expect(JSON.parse(String(init?.body))).toEqual({ name: 'shell2', unixUser: 'perttu', mouseScroll: true })
     expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual([])
   })
 
@@ -512,10 +541,31 @@ describe('createSession', () => {
 
     expect(created).toBe('tavern1')
     const [, init] = fetchMock.mock.calls[0]
-    expect(JSON.parse(String(init?.body))).toEqual({ name: 'tavern1', unixUser: 'tavern' })
+    expect(JSON.parse(String(init?.body))).toEqual({ name: 'tavern1', unixUser: 'tavern', mouseScroll: true })
     const win = result.current.workspaces.terminal3.windows[0]
     expect(win.boundSessions).toEqual(['tavern:tavern1'])
     expect(win.activeSession).toBe('tavern:tavern1')
+  })
+
+  it('passes saved disabled mouse-scroll preference when creating sessions', async () => {
+    localStorage.setItem('chrote-dashboard-state', JSON.stringify({
+      version: 3,
+      settingsSchemaVersion: 2,
+      layoutsByViewport: {},
+      settings: { ...DEFAULT_SETTINGS, mouseScroll: false },
+    }))
+    const fetchMock = stubSessionFetch()
+    const { result } = renderSession()
+
+    await waitFor(() => expect(result.current.terminalUsers).toEqual(['perttu', 'tavern']))
+    fetchMock.mockClear()
+
+    await act(async () => {
+      await result.current.createSession({ workspaceId: 'terminal1', unixUser: 'perttu' })
+    })
+
+    const [, init] = fetchMock.mock.calls[0]
+    expect(JSON.parse(String(init?.body))).toEqual({ name: 'shell2', unixUser: 'perttu', mouseScroll: false })
   })
 
   it('handles expected create-session API failures with a toast and no console error', async () => {

@@ -281,7 +281,7 @@ func TestTmuxHandler_CreateSessionUsesSelectedUnixUserTarget(t *testing.T) {
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "perttu=/home/perttu,tavern=/home/tavern")
 
 	handler := NewTmuxHandler()
-	bodyBytes := []byte(`{"name":"tavern-shell","unixUser":"tavern"}`)
+	bodyBytes := []byte(`{"name":"tavern-shell","unixUser":"tavern","mouseScroll":false}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions", bytes.NewBuffer(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -294,7 +294,7 @@ func TestTmuxHandler_CreateSessionUsesSelectedUnixUserTarget(t *testing.T) {
 	got := readFakeCommandCalls(t, argsPath)
 	want := []string{
 		"-S /tmp/tmux-1001/default new-session -d -s tavern-shell -c /home/tavern",
-		"-S /tmp/tmux-1001/default set-option -g mouse on",
+		"-S /tmp/tmux-1001/default set-option -g mouse off",
 	}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("tmux calls = %#v, want %#v", got, want)
@@ -452,6 +452,100 @@ func TestTmuxHandler_ApplyAppearanceTargetsConfiguredTerminalUsers(t *testing.T)
 	}
 	if strings.Contains(got, "statusBg") {
 		t.Fatalf("tmux calls leaked JSON keys instead of set args: %q", got)
+	}
+}
+
+func TestTmuxHandler_SetMouseModeTargetsConfiguredTerminalUsers(t *testing.T) {
+	tmpDir := t.TempDir()
+	callsPath := filepath.Join(tmpDir, "tmux.calls")
+	fakeTmux := filepath.Join(tmpDir, "tmux")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" >> " + callsPath + "\nprintf '%s\\n' '---' >> " + callsPath + "\n"
+	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+	t.Setenv("PATH", tmpDir)
+	t.Setenv("CHROTE_TERMINAL_USERS", "perttu,tavern")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "perttu=/tmp/tmux-p,tavern=/tmp/tmux-t")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "perttu=/home/perttu,tavern=/home/tavern")
+
+	handler := NewTmuxHandler()
+	bodyBytes := []byte(`{"enabled":false}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/mouse", bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	handler.SetMouseMode(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var response map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response["mouse"] != "off" || response["applied"] != float64(2) || response["total"] != float64(2) {
+		t.Fatalf("response = %#v, want mouse off applied/total 2", response)
+	}
+	calls, err := os.ReadFile(callsPath)
+	if err != nil {
+		t.Fatalf("read fake tmux calls: %v", err)
+	}
+	got := string(calls)
+	if strings.Count(got, "-S\n/tmp/tmux-p\nset-option\n-g\nmouse\noff\n") != 1 {
+		t.Fatalf("perttu mouse calls = %q, want mouse off command on /tmp/tmux-p", got)
+	}
+	if strings.Count(got, "-S\n/tmp/tmux-t\nset-option\n-g\nmouse\noff\n") != 1 {
+		t.Fatalf("tavern mouse calls = %q, want mouse off command on /tmp/tmux-t", got)
+	}
+}
+
+func TestTmuxHandler_SetMouseModeRejectsInvalidJSON(t *testing.T) {
+	handler := NewTmuxHandler()
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/mouse", bytes.NewBufferString("{invalid}"))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	handler.SetMouseMode(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+}
+
+func TestTmuxHandler_SetMouseModeRejectsMissingEnabled(t *testing.T) {
+	_, argsPath := installFakeTmux(t)
+	handler := NewTmuxHandler()
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/mouse", bytes.NewBufferString(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	handler.SetMouseMode(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+	if got := readFakeCommandCalls(t, argsPath); len(got) != 0 {
+		t.Fatalf("tmux calls = %#v, want no side effect for missing enabled", got)
+	}
+}
+
+func TestTmuxHandler_RegisterRoutesWiresMouseMode(t *testing.T) {
+	_, argsPath := installFakeTmux(t)
+	handler := NewTmuxHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/mouse", bytes.NewBufferString(`{"enabled":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	mux.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	want := []string{"set-option -g mouse on"}
+	if got := readFakeCommandCalls(t, argsPath); strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("tmux calls = %#v, want %#v", got, want)
 	}
 }
 

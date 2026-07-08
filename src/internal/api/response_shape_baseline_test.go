@@ -154,6 +154,14 @@ func TestResponseShapeBaseline_FlatTmuxEndpointsDoNotUseDataEnvelope(t *testing.
 			call:     handler.ApplyAppearance,
 			wantKeys: []string{"applied", "success", "timestamp", "total"},
 		},
+		{
+			name:     "set mouse mode",
+			method:   http.MethodPost,
+			path:     "/api/tmux/mouse",
+			body:     `{"enabled":true}`,
+			call:     handler.SetMouseMode,
+			wantKeys: []string{"applied", "mouse", "success", "timestamp", "total"},
+		},
 	}
 
 	for _, tt := range tests {

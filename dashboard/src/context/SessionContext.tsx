@@ -17,6 +17,21 @@ async function applyTmuxAppearance(appearance: TmuxAppearance): Promise<void> {
   }
 }
 
+// Apply tmux mouse mode via API (hot-reload). Mouse mode lets the scroll wheel
+// scroll tmux history; it is a global tmux option affecting all sessions.
+async function applyTmuxMouse(enabled: boolean): Promise<void> {
+  try {
+    await fetch('/api/tmux/mouse', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+      signal: AbortSignal.timeout(10000),
+    })
+  } catch (e) {
+    console.warn('Failed to apply tmux mouse mode:', e)
+  }
+}
+
 const STORAGE_KEY = 'chrote-dashboard-state'
 const PRESETS_STORAGE_KEY = 'chrote-dashboard-presets'
 const SETTINGS_SCHEMA_VERSION = 2
@@ -496,11 +511,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(interval)
   }, [refreshSessions, settings.autoRefreshInterval])
 
-  // Apply tmux appearance on initial load (ensures container matches saved settings)
+  // Apply tmux appearance and mouse mode on initial load (ensures container matches saved settings)
   useEffect(() => {
     // Merge saved settings with defaults to handle missing fields from older localStorage
     const appearance = { ...DEFAULT_TMUX_APPEARANCE, ...settings.tmuxAppearance }
     applyTmuxAppearance(appearance)
+    applyTmuxMouse(settings.mouseScroll)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Actions
@@ -651,7 +667,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const response = await fetch('/api/tmux/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: sessionName, unixUser }),
+        body: JSON.stringify({ name: sessionName, unixUser, mouseScroll: options.mouseScroll ?? settings.mouseScroll }),
         signal: AbortSignal.timeout(10000),
       })
 
@@ -769,6 +785,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // Hot-reload tmux appearance if it changed
       if (newSettings.tmuxAppearance) {
         applyTmuxAppearance(updated.tmuxAppearance)
+      }
+      // Hot-reload tmux mouse mode if it changed
+      if (newSettings.mouseScroll !== undefined) {
+        applyTmuxMouse(updated.mouseScroll)
       }
       return updated
     })

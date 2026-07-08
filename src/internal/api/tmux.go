@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -64,13 +63,19 @@ type SessionBankEntry struct {
 
 // CreateSessionRequest is the request body for creating a session
 type CreateSessionRequest struct {
-	Name     string `json:"name"`
-	UnixUser string `json:"unixUser,omitempty"`
+	Name        string `json:"name"`
+	UnixUser    string `json:"unixUser,omitempty"`
+	MouseScroll *bool  `json:"mouseScroll,omitempty"`
 }
 
 // RenameSessionRequest is the request body for renaming a session
 type RenameSessionRequest struct {
 	NewName string `json:"newName"`
+}
+
+// MouseModeRequest is the request body for toggling tmux mouse mode.
+type MouseModeRequest struct {
+	Enabled *bool `json:"enabled"`
 }
 
 // AppearanceRequest is the request body for tmux appearance settings
@@ -107,6 +112,7 @@ func (h *TmuxHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/tmux/sessions/{name}", h.RenameSession)
 	mux.HandleFunc("GET /api/tmux/sessions/{name}/capture", h.CapturePane)
 	mux.HandleFunc("POST /api/tmux/appearance", h.ApplyAppearance)
+	mux.HandleFunc("POST /api/tmux/mouse", h.SetMouseMode)
 }
 
 // RunTmux satisfies the teams.TmuxRunner interface.
@@ -653,14 +659,15 @@ func (h *TmuxHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusBadRequest, "TMUX_ERROR", err.Error())
 		return
 	}
-	// CHROTE terminal panes rely on tmux mouse mode for wheel scrollback because
-	// xterm/ttyd itself has no useful scrollback once attached to tmux.
-	// Keep this best-effort: a session should still be created if an older tmux
-	// or unusual target refuses the option.
-	if _, mouseErr := h.runTmuxOnSocket(target.socket, "set-option", "-g", "mouse", "on"); mouseErr != nil {
-		log.Printf("Warning: failed to enable tmux mouse mode for %q: %v", name, mouseErr)
+	mouseScroll := true
+	if req.MouseScroll != nil {
+		mouseScroll = *req.MouseScroll
 	}
-
+	mouseValue := "off"
+	if mouseScroll {
+		mouseValue = "on"
+	}
+	_, _ = h.runTmuxOnSocket(target.socket, "set-option", "-g", "mouse", mouseValue)
 	h.invalidateCache()
 
 	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
@@ -891,6 +898,43 @@ func (h *TmuxHandler) appearanceTargets() []tmuxTarget {
 		return []tmuxTarget{{socket: h.socket, workDir: h.workDir}}
 	}
 	return targets
+}
+
+// SetMouseMode handles POST /api/tmux/mouse. It toggles tmux's global mouse
+// option across all configured CHROTE terminal sockets.
+func (h *TmuxHandler) SetMouseMode(w http.ResponseWriter, r *http.Request) {
+	var req MouseModeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON body")
+		return
+	}
+	if req.Enabled == nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "enabled must be a boolean")
+		return
+	}
+
+	value := "off"
+	if *req.Enabled {
+		value = "on"
+	}
+
+	applied := 0
+	targets := h.appearanceTargets()
+	for _, target := range targets {
+		_, err := h.runTmuxOnSocket(target.socket, "set-option", "-g", "mouse", value)
+		if err == nil {
+			applied++
+		}
+		// Ignore errors: a tmux server/profile may not be running yet.
+	}
+
+	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"success":   true,
+		"mouse":     value,
+		"applied":   applied,
+		"total":     len(targets),
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	})
 }
 
 // ApplyAppearance handles POST /api/tmux/appearance

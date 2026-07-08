@@ -95,6 +95,10 @@ function SettingsView() {
     }
   }
 
+  const handleMouseScrollChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    updateSettings({ mouseScroll: e.target.checked })
+  }
+
   const handleRefreshIntervalChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     updateSettings({ autoRefreshInterval: parseInt(e.target.value, 10) })
   }
@@ -182,6 +186,25 @@ function SettingsView() {
             <span>12px</span>
             <span>20px</span>
           </div>
+        </div>
+
+        <div className="settings-field">
+          <label
+            className="settings-label"
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
+          >
+            <input
+              type="checkbox"
+              checked={settings.mouseScroll}
+              onChange={handleMouseScrollChange}
+            />
+            Mouse-wheel scrolling
+          </label>
+          <p className="settings-hint">
+            Enables tmux mouse mode so the scroll wheel scrolls history. Applies instantly to
+            configured CHROTE terminal sockets. This is global per tmux server and makes
+            click-drag select inside tmux; hold Shift for browser text selection.
+          </p>
         </div>
       </section>
 

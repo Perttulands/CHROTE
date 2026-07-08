@@ -162,6 +162,7 @@ export interface UserSettings {
   musicVolume: number                // Music volume (0-1)
   musicEnabled: boolean              // Whether music is playing
   tmuxAppearance: TmuxAppearance     // tmux color customization
+  mouseScroll: boolean               // tmux mouse mode: scroll wheel scrolls history
   beadsProjectPaths?: string[]       // Manually added beads project paths
 }
 
@@ -178,6 +179,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   musicVolume: 0.5,
   musicEnabled: false,
   tmuxAppearance: DEFAULT_TMUX_APPEARANCE,
+  mouseScroll: true,
 }
 
 export interface TmuxSession {
@@ -226,6 +228,7 @@ export interface CreateSessionOptions {
   workspaceId?: WorkspaceId
   unixUser?: LaunchUser
   name?: string
+  mouseScroll?: boolean
   attachTo?: CreateSessionAttachTarget
 }
 
