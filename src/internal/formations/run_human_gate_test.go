@@ -302,3 +302,153 @@ from = "gate_review:pass"
 to = "fmn_join:port_join_left"
 `
 }
+
+func s5HumanGatePushbackBoardFixture() string {
+	return s4MissionOnlyBoardFixture() + `
+[[formation]]
+id = "fmn_work"
+type = "solo"
+title = "Work"
+
+[[formation.input]]
+id = "port_work_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_work_out"
+label = "Output"
+
+[[formation.slot]]
+id = "slot_work"
+label = "Worker"
+agentId = "scout"
+harness = "openai-codex"
+controller = true
+
+[[gate]]
+id = "gate_review"
+title = "Review"
+kinds = ["human"]
+criterion = "Good enough to ship"
+
+[[formation]]
+id = "fmn_ship"
+type = "solo"
+title = "Ship"
+
+[[formation.input]]
+id = "port_ship_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_ship_out"
+label = "Output"
+
+[[formation.slot]]
+id = "slot_ship"
+label = "Worker"
+agentId = "scout"
+harness = "openai-codex"
+controller = true
+
+[[connection]]
+id = "edge_mission_work"
+from = "mis_showcase:out"
+to = "fmn_work:port_work_in"
+
+[[connection]]
+id = "edge_work_gate"
+from = "fmn_work:port_work_out"
+to = "gate_review:in"
+
+[[connection]]
+id = "edge_gate_fail_work"
+from = "gate_review:fail"
+to = "fmn_work:port_work_in"
+
+[[connection]]
+id = "edge_gate_pass_ship"
+from = "gate_review:pass"
+to = "fmn_ship:port_ship_in"
+`
+}
+
+func TestS5HumanGateFailPushbackResumeReDispatchesWork(t *testing.T) {
+	store, personas := s4RunFixture(t)
+	store.Now = fixedClock()
+	personas.Now = fixedClock()
+	createS4Persona(t, personas, "scout")
+	writeFixture(t, store.BoardPath("session-search"), s5HumanGatePushbackBoardFixture())
+	board, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	executor := &fakeRunExecutor{}
+	engine := NewRunEngine(store, personas, executor)
+
+	status, err := engine.RunMission("session-search", RunStartRequest{
+		MissionID:         "mis_showcase",
+		Actor:             "agent:test",
+		ExpectedBoardETag: board.ETag,
+		ExpectedBoardRev:  board.Rev,
+		Limits:            RunLimits{MaxDispatch: 8, MaxAttempts: 3},
+	})
+	if err != nil {
+		t.Fatalf("run mission: %v", err)
+	}
+	if status.Status != RunStatusRunning || status.Final {
+		t.Fatalf("status = %+v, want running while waiting for first human verdict", status)
+	}
+	if got, want := executor.nodeIDs(), []string{"fmn_work"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("executor nodes before verdict = %v, want work only", got)
+	}
+
+	status, err = engine.RecordHumanGateVerdict(status.RunID, HumanGateVerdictRequest{
+		GateID:  "gate_review",
+		Verdict: "fail",
+		Reason:  "revise the draft",
+		Actor:   "human:perttu",
+	})
+	if err != nil {
+		t.Fatalf("record fail verdict: %v", err)
+	}
+	if status.Status != RunStatusBlocked || !status.ResumeAllowed {
+		t.Fatalf("status = %+v, want resumable block after fail verdict", status)
+	}
+
+	executor.calls = nil
+	status, err = engine.ResumeRun(status.RunID, RunResumeRequest{Actor: "agent:test", Mode: "reattach", Reason: "revise"})
+	if err != nil {
+		t.Fatalf("resume after fail pushback: %v", err)
+	}
+	events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
+	for _, ev := range events {
+		if ev.Type == RunEventError && ev.Data["code"] == "resume_no_work" {
+			t.Fatalf("resume recorded resume_no_work; fail-routed work was not re-queued")
+		}
+	}
+	if got, want := executor.nodeIDs(), []string{"fmn_work"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("executor nodes after fail-pushback resume = %v, want work re-dispatched", got)
+	}
+
+	status, err = engine.RecordHumanGateVerdict(status.RunID, HumanGateVerdictRequest{
+		GateID:  "gate_review",
+		Verdict: "pass",
+		Reason:  "looks good now",
+		Actor:   "human:perttu",
+	})
+	if err != nil {
+		t.Fatalf("record pass verdict: %v", err)
+	}
+	executor.calls = nil
+	status, err = engine.ResumeRun(status.RunID, RunResumeRequest{Actor: "agent:test", Mode: "reattach", Reason: "approved"})
+	if err != nil {
+		t.Fatalf("resume after pass: %v", err)
+	}
+	if status.Status != RunStatusSucceeded || !status.Final {
+		t.Fatalf("status = %+v, want succeeded after revise->approve->ship", status)
+	}
+	if got, want := executor.nodeIDs(), []string{"fmn_ship"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("executor nodes after approve resume = %v, want ship", got)
+	}
+}

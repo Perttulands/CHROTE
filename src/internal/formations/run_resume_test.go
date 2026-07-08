@@ -455,6 +455,61 @@ func TestS5EngineResumeOpenDispatchRoutesReattachedOutputThroughGate(t *testing.
 	}
 }
 
+func TestS5EngineResumeReplaysNewerGateInputOnSameEdge(t *testing.T) {
+	store, personas := s4RunFixture(t)
+	store.Now = fixedClock()
+	personas.Now = fixedClock()
+	createS4Persona(t, personas, "scout")
+	writeFixture(t, store.BoardPath("session-search"), s4GateBoardFixture(true))
+	board, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	started, err := store.StartRun("session-search", RunStartRequest{
+		MissionID:         "mis_showcase",
+		Actor:             "agent:test",
+		ExpectedBoardETag: board.ETag,
+		ExpectedBoardRev:  board.Rev,
+		Personas:          personas,
+		Limits:            RunLimits{MaxDispatch: 8, MaxAttempts: 3},
+	})
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	firstInput := RunInputRef{EdgeID: "edge_work_gate", FromNodeID: "fmn_work", FromPortID: "port_work_out", ToPortID: "in", Ref: "ledger://work/1", Text: "old output"}
+	for _, event := range []RunEvent{
+		{Type: RunEventNodeStarted, NodeID: "fmn_work", Attempt: 1, Data: map[string]any{"nodeKind": "formation"}},
+		{Type: RunEventNodeOutput, NodeID: "fmn_work", Data: formationOutputEventData(FormationExecutionResult{Status: "done", Text: "old output", Outputs: map[string]FormationOutputPayload{"port_work_out": {Ref: "ledger://work/1", Text: "old output"}}})},
+		{Type: RunEventGateEvaluating, GateID: "gate_review", NodeID: "gate_review", Data: map[string]any{"gateId": "gate_review", "inputRef": firstInput}},
+		{Type: RunEventGateVerdict, GateID: "gate_review", NodeID: "gate_review", Data: map[string]any{"verdict": "fail", "perKind": map[string]string{"code": "fail"}, "routePort": "fail", "routedEdges": []string{"edge_gate_fail_work"}, "reason": "push back", "inputRef": firstInput}},
+		{Type: RunEventNodeStarted, NodeID: "fmn_work", Attempt: 2, Data: map[string]any{"nodeKind": "formation", "reason": "pushback"}},
+		{Type: RunEventNodeOutput, NodeID: "fmn_work", Data: formationOutputEventData(FormationExecutionResult{Status: "done", Text: "revised output", Outputs: map[string]FormationOutputPayload{"port_work_out": {Ref: "ledger://work/2", Text: "revised output"}}})},
+		{Type: RunEventBlocked, NodeID: "fmn_work", Data: map[string]any{"reason": "crashed before revised gate evaluation", "resumeAllowed": true, "resumePolicy": "explicit"}},
+	} {
+		if err := store.AppendRunEvent(started.RunID, event); err != nil {
+			t.Fatalf("append %s/%s: %v", event.Type, event.NodeID, err)
+		}
+	}
+	executor := &fakeRunExecutor{}
+	evaluator := &fakeGateEvaluator{verdicts: []string{"pass"}}
+	engine := NewRunEngine(store, personas, executor)
+	engine.SetGateEvaluator(evaluator)
+
+	status, err := engine.ResumeRun(started.RunID, RunResumeRequest{Actor: "agent:test", Mode: "reattach", Reason: "resume revised output"})
+	if err != nil {
+		t.Fatalf("resume run: %v", err)
+	}
+	if status.Status != RunStatusSucceeded || !status.Final {
+		t.Fatalf("status = %+v, want succeeded after revised gate input", status)
+	}
+	if len(evaluator.calls) != 1 || evaluator.calls[0].Input.Text != "revised output" {
+		t.Fatalf("gate evaluator calls = %+v, want one call for revised output", evaluator.calls)
+	}
+	if got, want := executor.nodeIDs(), []string{"fmn_ship"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("executor nodes = %v, want %v", got, want)
+	}
+}
+
 func TestS5EngineResumeTerminalJudgeGatePassDoesNotReplayJudge(t *testing.T) {
 	store, personas := s4RunFixture(t)
 	store.Now = fixedClock()

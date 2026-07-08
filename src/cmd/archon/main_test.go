@@ -356,6 +356,68 @@ func TestArchonAgentSpawnAndAttachUseExplicitHarnessStem(t *testing.T) {
 	}
 }
 
+func TestArchonBoardValidateReportsStructuredFindings(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("session-search"), `schema = 1
+id = "brd_01J9_sesssearch"
+slug = "session-search"
+title = "Improve session search"
+rev = 7
+updatedAt = "2026-06-03T16:00:00Z"
+
+[[mission]]
+id = "mis_showcase"
+title = "Showcase"
+goal = "Ship it"
+beadId = "home-1.1"
+
+[[formation]]
+id = "fmn_work"
+type = "solo"
+title = "Work"
+
+[[formation.input]]
+id = "port_work_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_work_out"
+label = "Output"
+
+[[gate]]
+id = "gate_orphan"
+title = "Orphan gate"
+kinds = ["code"]
+criterion = "Decide somehow"
+
+[[connection]]
+id = "edge_broken"
+from = "fmn_work:missing_output"
+to = "gate_orphan:in"
+`)
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "board", "validate", "session-search", "--json")
+	if code != 1 {
+		t.Fatalf("board validate code=%d stderr=%s stdout=%s, want validation failure code 1", code, stderr, stdout)
+	}
+	if !strings.Contains(stdout, `"code": "dangling_connection"`) || !strings.Contains(stdout, `"code": "gate_not_routable"`) {
+		t.Fatalf("validate JSON missing expected finding codes: %s", stdout)
+	}
+	if !strings.Contains(stdout, `"warnings"`) {
+		t.Fatalf("validate JSON missing warnings envelope: %s", stdout)
+	}
+
+	stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "board", "validate", "session-search")
+	if code != 1 {
+		t.Fatalf("text board validate code=%d stderr=%s stdout=%s, want validation failure code 1", code, stderr, stdout)
+	}
+	if !strings.Contains(stdout, "dangling_connection") || !strings.Contains(stdout, "gate_not_routable") {
+		t.Fatalf("validate text missing expected finding codes: %s", stdout)
+	}
+}
+
 func TestArchonFormationCreateListInspectUseSharedStore(t *testing.T) {
 	workspace := t.TempDir()
 	store := formations.NewStore(workspace)

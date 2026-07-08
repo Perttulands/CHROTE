@@ -158,6 +158,8 @@ func run(args []string, stdout, stderr io.Writer, runner tmuxRunner) int {
 			return runBoardList(store, args[2:], stdout, stderr)
 		case "inspect":
 			return runBoardInspect(store, args[2:], stdout, stderr)
+		case "validate":
+			return runBoardValidate(store, args[2:], stdout, stderr)
 		default:
 			fmt.Fprintf(stderr, "unknown board command %q\n", args[1])
 			return 2
@@ -1748,7 +1750,51 @@ func runBoardInspect(store *formations.Store, args []string, stdout, stderr io.W
 	if *jsonOut {
 		return writeJSON(stdout, board)
 	}
-	fmt.Fprintf(stdout, "%s\t%s\t%d\t%d formations\n", board.Slug, board.Title, board.Rev, len(board.Formations))
+	fmt.Fprintf(stdout, "%s	%s	%d	%d formations\n", board.Slug, board.Title, board.Rev, len(board.Formations))
+	return 0
+}
+
+func runBoardValidate(store *formations.Store, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("board validate", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	jsonOut := fs.Bool("json", false, "write JSON")
+	if err := fs.Parse(reorderFlags(args, map[string]bool{"json": true})); err != nil {
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(stderr, "usage: archon board validate <board> [--json]")
+		return 2
+	}
+	slug, err := store.ResolveBoardSelector(fs.Arg(0))
+	if err != nil {
+		return failSelector(stderr, err, *jsonOut, "board", fs.Arg(0))
+	}
+	board, err := store.ReadBoard(slug)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	report := formations.ValidateBoard(board)
+	if *jsonOut {
+		code := writeJSON(stdout, map[string]interface{}{
+			"board":    identityFromBoard(board),
+			"errors":   report.Errors,
+			"warnings": report.Warnings,
+		})
+		if code != 0 {
+			return code
+		}
+	} else {
+		fmt.Fprintf(stdout, "%s	%d errors	%d warnings\n", board.Slug, len(report.Errors), len(report.Warnings))
+		for _, finding := range report.Errors {
+			fmt.Fprintf(stdout, "ERROR	%s	%s	%s\n", finding.Code, finding.NodeID, finding.Message)
+		}
+		for _, finding := range report.Warnings {
+			fmt.Fprintf(stdout, "WARN	%s	%s	%s\n", finding.Code, finding.NodeID, finding.Message)
+		}
+	}
+	if len(report.Errors) > 0 {
+		return 1
+	}
 	return 0
 }
 
