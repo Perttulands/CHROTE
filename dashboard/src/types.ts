@@ -181,6 +181,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
 }
 
 export interface TmuxSession {
+  id?: string
   name: string
   windows: number
   attached: boolean
@@ -188,9 +189,17 @@ export interface TmuxSession {
   unixUser?: LaunchUser
 }
 
+export interface SessionBankEntry extends TmuxSession {
+  live: boolean
+  firstSeen: string
+  lastSeen: string
+  resumeCommand: string
+}
+
 export interface SessionsResponse {
   sessions: TmuxSession[]
   grouped: Record<string, TmuxSession[]>
+  banked?: SessionBankEntry[]
   terminalUsers?: LaunchUser[]
   timestamp: string
   error?: string
@@ -234,6 +243,7 @@ export interface DashboardState {
   // Session data from API
   sessions: TmuxSession[]
   groupedSessions: Record<string, TmuxSession[]>
+  sessionBank: SessionBankEntry[]
   loading: boolean
   error: string | null
 

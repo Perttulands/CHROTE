@@ -28,6 +28,7 @@ function systemStatusMockBody() {
       },
       memory: {
         totalBytes: 16 * 1024 * 1024 * 1024,
+        freeBytes: 2 * 1024 * 1024 * 1024,
         availableBytes: 8 * 1024 * 1024 * 1024,
         usedBytes: 8 * 1024 * 1024 * 1024,
         usedPercent: 50,

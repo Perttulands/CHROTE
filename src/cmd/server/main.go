@@ -77,8 +77,9 @@ func main() {
 
 	// Create main mux
 	mux := http.NewServeMux()
+	runtimeCtx, stopRuntime := context.WithCancel(context.Background())
 
-	terminalProxy := registerRuntimeRoutes(mux, config)
+	terminalProxy, scheduledTasks, stopSystemHistory := registerRuntimeRoutes(mux, config, runtimeCtx)
 	registerAPIFallback(mux)
 
 	// Serve embedded dashboard at root
@@ -107,6 +108,9 @@ func main() {
 			log.Printf("Terminal functionality will not be available")
 		}
 	}
+	if err := scheduledTasks.StartScheduler(); err != nil {
+		log.Printf("Warning: failed to start scheduled tasks: %v", err)
+	}
 
 	// Graceful shutdown handling
 	done := make(chan os.Signal, 1)
@@ -129,6 +133,9 @@ func main() {
 	log.Println("Shutting down server...")
 
 	// Stop subsystems
+	stopRuntime()
+	stopSystemHistory()
+	scheduledTasks.StopScheduler()
 	if config.StartTtyd {
 		terminalProxy.Stop()
 	}
@@ -144,9 +151,12 @@ func main() {
 	log.Println("Server stopped")
 }
 
-func registerRuntimeRoutes(mux *http.ServeMux, config Config) *proxy.TerminalProxy {
+func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Context) (*proxy.TerminalProxy, *api.ScheduledHandler, context.CancelFunc) {
 	tmuxHandler := api.NewTmuxHandler()
 	tmuxHandler.RegisterRoutes(mux)
+
+	scheduledHandler := api.NewScheduledHandler(tmuxHandler)
+	scheduledHandler.RegisterRoutes(mux)
 
 	beadsHandler := api.NewBeadsHandler()
 	beadsHandler.RegisterRoutes(mux)
@@ -161,6 +171,7 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config) *proxy.TerminalPro
 	servicesHandler.RegisterRoutes(mux)
 
 	systemHandler := api.NewSystemHandler()
+	stopSystemHistory := systemHandler.StartDefaultHistorySampler(ctx)
 	systemHandler.RegisterRoutes(mux)
 
 	oracleHandler := api.NewOracleHandler(tmuxHandler, beadsHandler)
@@ -178,7 +189,7 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config) *proxy.TerminalPro
 	// Create terminal proxy
 	terminalProxy := proxy.NewTerminalProxy(config.TtydPort)
 	terminalProxy.RegisterRoutes(mux)
-	return terminalProxy
+	return terminalProxy, scheduledHandler, stopSystemHistory
 }
 
 // mustParsePort parses a port string and fatals on invalid values.

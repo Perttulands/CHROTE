@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SystemStatusView from './index'
 
@@ -11,6 +11,7 @@ function envelope(data: unknown) {
 function baseMemory(overrides: Record<string, unknown> = {}) {
   return {
     totalBytes: 64 * 1024 ** 3,
+    freeBytes: 1 * 1024 ** 3,
     availableBytes: 48 * 1024 ** 3,
     usedBytes: 16 * 1024 ** 3,
     usedPercent: 25,
@@ -128,26 +129,37 @@ describe('SystemStatusView', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/system/status'))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/system/history'))
 
-    expect(await screen.findByRole('heading', { name: 'Telemetry strips' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'History' })).toBeInTheDocument()
+    expect(screen.getByText('3 samples')).toBeInTheDocument()
     expect(screen.queryByRole('img', { name: 'Server telemetry timeline' })).not.toBeInTheDocument()
-    expect(screen.getByText(/TUI-style separated graphs/)).toBeInTheDocument()
+    expect(screen.queryByText(/TUI-style separated graphs/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/backend history/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/scroll sideways/i)).not.toBeInTheDocument()
     expect(screen.queryByRole('list', { name: 'Telemetry legend' })).not.toBeInTheDocument()
-    expect(screen.getByRole('img', { name: 'GPU telemetry strip' })).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: 'VRAM telemetry strip' })).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: 'RAM telemetry strip' })).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: 'Swap telemetry strip' })).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: 'CPU telemetry strip' })).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: 'Load telemetry strip' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'GPU history' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'VRAM history' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'RAM history' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Swap history' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'CPU history' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Load history' })).toBeInTheDocument()
     expect(container.querySelectorAll('.system-tui-row')).toHaveLength(6)
     expect(container.querySelectorAll('.system-tui-strip')).toHaveLength(6)
+    expect(container.querySelectorAll('.system-timeline-meta')).toHaveLength(0)
+    expect(container.querySelectorAll('.system-timeline-hint')).toHaveLength(0)
+    expect(container.querySelectorAll('.system-tui-guide')).toHaveLength(0)
+    const timeLabels = container.querySelectorAll('.system-tui-time')
+    expect(timeLabels[0]).toHaveAttribute('text-anchor', 'start')
+    expect(timeLabels[timeLabels.length - 1]).toHaveAttribute('text-anchor', 'end')
     const scroll = screen.getByLabelText(/scrollable server telemetry history/i)
     expect(scroll).toHaveClass('system-timeline-scroll')
-    expect(container.querySelectorAll('.system-donut')).toHaveLength(4)
+    expect(container.querySelectorAll('.system-donut')).toHaveLength(6)
     expect(container.querySelectorAll('.system-summary-label svg')).toHaveLength(0)
-    expect(screen.getByRole('img', { name: /CPU \/ LOAD load/i })).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: /GPU load 17%/i })).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: /RAM load 25%/i })).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: /SWAP occupied 13%/i })).toBeInTheDocument()
+    expect(container.querySelectorAll('.system-summary-card small')).toHaveLength(0)
+    expect(screen.getByRole('img', { name: /GPU 17%/i })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: /VRAM 14%/i })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: /RAM 25%/i })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: /SWAP 13%/i })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: /Storage 28%/i })).toBeInTheDocument()
     expect(container.querySelectorAll('.system-tui-bar-gpu').length).toBeGreaterThan(0)
     expect(container.querySelectorAll('.system-tui-bar-vram').length).toBeGreaterThan(0)
     expect(container.querySelectorAll('.system-tui-bar-memory').length).toBeGreaterThan(0)
@@ -156,14 +168,21 @@ describe('SystemStatusView', () => {
     expect(container.querySelectorAll('.system-tui-bar-load').length).toBeGreaterThan(0)
 
     expect(screen.getByText('landmass')).toBeInTheDocument()
-    expect(screen.getAllByText('NVIDIA GeForce RTX 4070 Ti SUPER').length).toBeGreaterThan(0)
+    expect(screen.queryByText('nominal')).not.toBeInTheDocument()
+    expect(screen.getAllByText(/NVIDIA GeForce RTX 4070 Ti SUPER/).length).toBeGreaterThan(0)
     expect(screen.getAllByText(/WSL nvidia-smi/).length).toBeGreaterThan(0)
-    expect(screen.getAllByText(/2\.2 GB \/ 16 GB VRAM/).length).toBeGreaterThan(0)
-    expect(screen.getByRole('heading', { name: 'Storage' })).toBeInTheDocument()
-    expect(screen.getByText('/, /home, /srv')).toBeInTheDocument()
-    expect(screen.getByText(/3 mounts deduped/)).toBeInTheDocument()
-    expect(screen.getByText('720 GB available')).toBeInTheDocument()
-    expect(container.querySelectorAll('.system-storage-row')).toHaveLength(1)
+    expect(screen.getByText('16 cores')).toBeInTheDocument()
+    expect(screen.getByText('2.2 GB / 16 GB')).toBeInTheDocument()
+    expect(screen.getByText('16 GB / 64 GB')).toBeInTheDocument()
+    expect(screen.getByText('free 1.0 GB · available 48 GB')).toBeInTheDocument()
+    expect(screen.getByText('1.0 GB / 8.0 GB')).toBeInTheDocument()
+    expect(screen.getByText('280 GB / 1000 GB')).toBeInTheDocument()
+    expect(screen.queryByText(/occupied/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Storage' })).not.toBeInTheDocument()
+    expect(container.querySelectorAll('.system-storage-row')).toHaveLength(0)
+    expect(container.querySelectorAll('.system-tui-row-label strong')).toHaveLength(0)
+    expect(container.querySelectorAll('.system-tui-row-label small')).toHaveLength(0)
+    expect(screen.queryByText('0-100')).not.toBeInTheDocument()
 
     expect(screen.queryByRole('img', { name: /CPU utilization trend/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('img', { name: /GPU utilization trend/i })).not.toBeInTheDocument()
@@ -202,7 +221,7 @@ describe('SystemStatusView', () => {
     const { container } = render(<SystemStatusView active />)
 
     await screen.findByText(/300 samples/)
-    const timeline = await screen.findByRole('img', { name: 'GPU telemetry strip' })
+    const timeline = await screen.findByRole('img', { name: 'GPU history' })
     const width = Number(timeline.getAttribute('width'))
     expect(width).toBeGreaterThanOrEqual(1400)
     expect(width).toBeLessThanOrEqual(1700)
@@ -214,18 +233,57 @@ describe('SystemStatusView', () => {
     expect(xs[2] - xs[1]).toBeLessThanOrEqual(firstWidth + 1)
   })
 
-  it('labels telemetry bars with the datapoint value and time for hover', async () => {
+  it('uses one synchronized crosshair readout instead of per-bar tooltip clutter', async () => {
     mockSystemResponses(statusResponse({ timestamp: '2026-06-28T07:20:00Z' }), historyResponse([
-      statusResponse({ timestamp: '2026-06-28T07:00:00Z', gpus: [baseGPU({ utilizationPercent: 8 })] }),
-      statusResponse({ timestamp: '2026-06-28T07:10:00Z', gpus: [baseGPU({ utilizationPercent: 12 })] }),
+      statusResponse({
+        timestamp: '2026-06-28T07:00:00Z',
+        host: { hostname: 'landmass', uptimeSeconds: 1078800, load1: 0.25, load5: 0.45, load15: 0.53 },
+        cpu: { cores: 16, totalTicks: 1200, idleTicks: 960 },
+        gpus: [baseGPU({ utilizationPercent: 8 })],
+      }),
+      statusResponse({
+        timestamp: '2026-06-28T07:10:00Z',
+        host: { hostname: 'landmass', uptimeSeconds: 1079400, load1: 0.5, load5: 0.58, load15: 0.6 },
+        cpu: { cores: 16, totalTicks: 1600, idleTicks: 1240 },
+        gpus: [baseGPU({ utilizationPercent: 12 })],
+      }),
     ]))
 
     const { container } = render(<SystemStatusView active />)
 
     await screen.findByText(/3 samples/)
-    const hoverLabels = Array.from(container.querySelectorAll('.system-tui-bar-point title'), node => node.textContent || '')
-    expect(hoverLabels).toContain(`GPU 8.0% · ${new Date('2026-06-28T07:00:00Z').toLocaleTimeString()}`)
-    expect(hoverLabels).toContain(`GPU 12% · ${new Date('2026-06-28T07:10:00Z').toLocaleTimeString()}`)
+    expect(container.querySelectorAll('.system-tui-bar-point title')).toHaveLength(0)
+    expect(screen.queryByLabelText('History sample')).not.toBeInTheDocument()
+
+    const strip = await screen.findByRole('img', { name: 'GPU history' })
+    vi.spyOn(strip, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 900,
+      bottom: 64,
+      width: 900,
+      height: 64,
+      toJSON: () => ({}),
+    } as DOMRect)
+
+    fireEvent.pointerMove(strip, { clientX: 451, clientY: 20 })
+
+    const readout = await screen.findByLabelText('History sample')
+    expect(readout).toHaveTextContent(new Date('2026-06-28T07:10:00Z').toLocaleTimeString())
+    expect(readout).toHaveTextContent('GPU 12%')
+    expect(readout).toHaveTextContent('VRAM 14%')
+    expect(readout).toHaveTextContent('RAM 25%')
+    expect(readout).toHaveTextContent('SWAP 13%')
+    expect(readout).toHaveTextContent('CPU 30%')
+    expect(readout).toHaveTextContent('LOAD 3.1%')
+    expect(container.querySelectorAll('.system-tui-crosshair')).toHaveLength(6)
+    expect(container.querySelectorAll('.system-tui-bar-hover')).toHaveLength(6)
+
+    fireEvent.pointerLeave(strip)
+    expect(screen.queryByLabelText('History sample')).not.toBeInTheDocument()
+    expect(container.querySelectorAll('.system-tui-crosshair')).toHaveLength(0)
   })
 
   it('positions telemetry by timestamp gaps instead of sample index', async () => {
@@ -238,7 +296,7 @@ describe('SystemStatusView', () => {
     const { container } = render(<SystemStatusView active />)
 
     await screen.findByText(/3 samples/)
-    await screen.findByRole('img', { name: 'GPU telemetry strip' })
+    await screen.findByRole('img', { name: 'GPU history' })
     const xs = barXCoordinates(container.querySelectorAll('.system-tui-bar-gpu'))
     expect(xs).toHaveLength(3)
     expect(xs[1] - xs[0]).toBeGreaterThan((xs[2] - xs[1]) * 10)
@@ -254,7 +312,7 @@ describe('SystemStatusView', () => {
     expect(screen.getByText('1 sample · current status fallback')).toBeInTheDocument()
     expect(await screen.findByRole('status')).toHaveTextContent('History unavailable: HISTORY_DOWN: history unavailable')
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Storage' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: /Storage 28%/i })).toBeInTheDocument()
     expect(container.querySelectorAll('.system-tui-bar-gpu')).toHaveLength(1)
   })
 
@@ -265,7 +323,7 @@ describe('SystemStatusView', () => {
     render(<SystemStatusView active />)
 
     expect(await screen.findByText('landmass')).toBeInTheDocument()
-    expect(screen.getByText('No disk data')).toBeInTheDocument()
+    expect(screen.getByText('storage unavailable')).toBeInTheDocument()
   })
 
   it('keeps the Server tab alive when a status payload has no GPU array', async () => {
@@ -337,7 +395,8 @@ describe('SystemStatusView', () => {
 
     render(<SystemStatusView active />)
 
-    expect(await screen.findByRole('img', { name: /SWAP occupied 99%/i })).toBeInTheDocument()
+    expect(await screen.findByRole('img', { name: /SWAP 99%/i })).toBeInTheDocument()
+    expect(screen.getByText('7.9 GB / 8.0 GB')).toBeInTheDocument()
     expect(screen.getByText('0 B/s active swap I/O')).toBeInTheDocument()
     expect(screen.queryByText('SWAP_HIGH')).not.toBeInTheDocument()
     expect(screen.queryByText('SWAP_ACTIVE')).not.toBeInTheDocument()

@@ -53,6 +53,7 @@ export interface SystemCPUStatus {
 
 export interface SystemMemoryStatus {
   totalBytes: number
+  freeBytes: number
   availableBytes: number
   usedBytes: number
   usedPercent: number

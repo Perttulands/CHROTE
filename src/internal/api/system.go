@@ -73,6 +73,7 @@ type SystemCPUStatus struct {
 
 type SystemMemoryStatus struct {
 	TotalBytes      uint64  `json:"totalBytes"`
+	FreeBytes       uint64  `json:"freeBytes"`
 	AvailableBytes  uint64  `json:"availableBytes"`
 	UsedBytes       uint64  `json:"usedBytes"`
 	UsedPercent     float64 `json:"usedPercent"`
@@ -586,6 +587,7 @@ func parseMemInfo(raw string) (SystemMemoryStatus, error) {
 
 	return SystemMemoryStatus{
 		TotalBytes:      total,
+		FreeBytes:       values["MemFree"],
 		AvailableBytes:  available,
 		UsedBytes:       used,
 		UsedPercent:     percent(used, total),

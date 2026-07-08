@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react'
-import type { DashboardContextType, TmuxSession, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance, WorkspaceId, TerminalWorkspace, LayoutPreset, LaunchUser, CreateSessionOptions } from '../types'
+import type { DashboardContextType, TmuxSession, SessionBankEntry, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance, WorkspaceId, TerminalWorkspace, LayoutPreset, LaunchUser, CreateSessionOptions } from '../types'
 import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE, MAX_PRESETS, TERMINAL_WORKSPACE_IDS, getSessionKey, getSessionPrefixForUser, normalizeTerminalUsers, resolveLaunchUser } from '../types'
 import { useToast } from './ToastContext'
 
@@ -368,6 +368,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const [sessions, setSessions] = useState<TmuxSession[]>([])
   const [groupedSessions, setGroupedSessions] = useState<Record<string, TmuxSession[]>>({})
+  const [sessionBank, setSessionBank] = useState<SessionBankEntry[]>([])
   const [terminalUsers, setTerminalUsers] = useState<LaunchUser[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -474,6 +475,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
       setSessions(Array.isArray(data.sessions) ? data.sessions : [])
       setGroupedSessions(isRecord(data.grouped) ? data.grouped as Record<string, TmuxSession[]> : {})
+      setSessionBank(Array.isArray(data.banked) ? data.banked : [])
 
       // NOTE: We intentionally do NOT clean up "orphaned" sessions here.
       // If a session is in the layout but not in the API list (e.g. server restart, network blip),
@@ -908,6 +910,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     // State
     sessions,
     groupedSessions,
+    sessionBank,
     terminalUsers,
     loading,
     error,
@@ -946,6 +949,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }), [
     sessions,
     groupedSessions,
+    sessionBank,
     terminalUsers,
     loading,
     error,

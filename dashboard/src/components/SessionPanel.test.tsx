@@ -7,6 +7,10 @@ const refreshSessions = vi.fn()
 const createSession = vi.fn()
 const addToast = vi.fn()
 
+const mockState = vi.hoisted(() => ({
+  sessionBank: [] as Array<Record<string, unknown>>,
+}))
+
 vi.mock('../context/SessionContext', () => ({
   useSession: () => ({
     groupedSessions: {},
@@ -17,6 +21,7 @@ vi.mock('../context/SessionContext', () => ({
     refreshSessions,
     createSession,
     sessions: [],
+    sessionBank: mockState.sessionBank,
     settings: {
       ...DEFAULT_SETTINGS,
       terminalSessionPrefixes: { alice: 'alice', bob: 'bob' },
@@ -36,7 +41,9 @@ vi.mock('./NukeConfirmModal', () => ({
 describe('SessionPanel new-session context menu', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockState.sessionBank.length = 0
     createSession.mockResolvedValue('created')
+    Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } })
   })
 
   it('creates a default side-panel session through the shared creation action', async () => {
@@ -71,5 +78,34 @@ describe('SessionPanel new-session context menu', () => {
 
     await waitFor(() => expect(createSession).toHaveBeenCalled())
     expect(createSession).toHaveBeenCalledWith({ workspaceId: 'terminal1', unixUser: 'alice', name: 'research-agent' })
+  })
+
+  it('keeps offline banked sessions and resume commands at hand after a restart', async () => {
+    mockState.sessionBank.push({
+      id: '$7',
+      name: 'codex-alpha',
+      unixUser: 'alice',
+      windows: 1,
+      attached: false,
+      group: 'codex',
+      live: false,
+      firstSeen: '2026-07-07T20:00:00Z',
+      lastSeen: '2026-07-07T21:00:00Z',
+      resumeCommand: '/resume $7',
+    })
+
+    render(<SessionPanel />)
+
+    expect(screen.getByRole('heading', { name: 'Session bank' })).toBeInTheDocument()
+    expect(screen.getByText('codex-alpha')).toBeInTheDocument()
+    expect(screen.getByText(/id \$7 · alice · last seen/)).toBeInTheDocument()
+    expect(screen.getByText('/resume $7')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copy resume command for codex-alpha' }))
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith('/resume $7'))
+    expect(addToast).toHaveBeenCalledWith('Resume command copied', 'success')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Recreate tmux shell for codex-alpha' }))
+    await waitFor(() => expect(createSession).toHaveBeenCalledWith({ workspaceId: 'terminal1', unixUser: 'alice', name: 'codex-alpha' }))
   })
 })

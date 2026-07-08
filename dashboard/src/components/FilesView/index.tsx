@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { CSSProperties, ChangeEvent, DragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
+import type { CSSProperties, ChangeEvent, DragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
 import { FileItem, toDisplayPath } from './types'
 import {
   createFile,
@@ -16,6 +16,8 @@ import {
 } from './fileService'
 import { formatDate, formatSize } from './utils'
 import { isFeatureEnabled } from '../../featureFlags'
+import { useViewportMenuPosition } from '../../hooks/useViewportMenuPosition'
+import { copyTextToClipboard } from '../../utils/clipboard'
 
 type SortKey = 'name' | 'size' | 'modified'
 type SortDir = 'asc' | 'desc'
@@ -56,6 +58,12 @@ interface ContextMenuState {
   item: FileItem | null
 }
 
+interface TabContextMenuState {
+  x: number
+  y: number
+  path: string
+}
+
 interface CreateIntent {
   kind: CreateKind
   parentPath: string
@@ -93,6 +101,7 @@ const TEXT_EXTENSIONS = new Set([
   'jsx',
   'log',
   'md',
+  'markdown',
   'py',
   'rb',
   'rs',
@@ -143,6 +152,206 @@ function getExtension(name: string): string {
   if (lower.startsWith('.env')) return 'env'
   const parts = lower.split('.')
   return parts.length > 1 ? parts.pop() || '' : ''
+}
+
+function isMarkdownFileName(name: string): boolean {
+  const ext = getExtension(name)
+  return ext === 'md' || ext === 'markdown'
+}
+
+function getSafeMarkdownHref(rawHref: string): string | null {
+  const href = rawHref.trim()
+  if (!href) return null
+
+  const normalized = href.replace(/[\u0000-\u001F\u007F\s]+/g, '').toLowerCase()
+  if (/^(javascript|data|vbscript):/.test(normalized)) return null
+
+  if (/^[a-z][a-z0-9+.-]*:/i.test(href) && !/^(https?:|mailto:)/i.test(href)) return null
+
+  return href
+}
+
+function plainMarkdownText(text: string): string {
+  return text
+    .replace(/\[([^\]\n]+)\]\(([^)\n]+)\)/g, '$1')
+    .replace(/[*_`~]/g, '')
+    .trim()
+}
+
+function renderMarkdownInline(text: string, keyPrefix: string): ReactNode[] {
+  const nodes: ReactNode[] = []
+  const linkPattern = /\[([^\]\n]+)\]\(([^)\n]+)\)/g
+  let cursor = 0
+  let linkIndex = 0
+  let match: RegExpExecArray | null
+
+  while ((match = linkPattern.exec(text)) !== null) {
+    if (match.index > cursor) {
+      nodes.push(text.slice(cursor, match.index))
+    }
+
+    const [, label, href] = match
+    const safeHref = getSafeMarkdownHref(href)
+    const key = `${keyPrefix}-link-${linkIndex}`
+
+    if (safeHref) {
+      nodes.push(
+        <a
+          key={key}
+          href={safeHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(event: ReactMouseEvent<HTMLAnchorElement>) => event.preventDefault()}
+        >
+          {label}
+        </a>,
+      )
+    } else {
+      nodes.push(
+        <span key={key} className="fb-markdown-unsafe-link">
+          {label}
+        </span>,
+      )
+    }
+
+    cursor = linkPattern.lastIndex
+    linkIndex += 1
+  }
+
+  if (cursor < text.length) {
+    nodes.push(text.slice(cursor))
+  }
+
+  return nodes
+}
+
+function isMarkdownBlockStart(line: string): boolean {
+  return /^(#{1,6})\s+/.test(line)
+    || /^(```|~~~)\s*([A-Za-z0-9_-]+)?\s*$/.test(line)
+    || /^>\s?/.test(line)
+    || /^\s*(?:[-*+]\s+|\d+[.)]\s+)/.test(line)
+}
+
+function renderMarkdownPreview(content: string): ReactNode[] {
+  const lines = content.replace(/\r\n?/g, '\n').split('\n')
+  const nodes: ReactNode[] = []
+  let index = 0
+
+  while (index < lines.length) {
+    const line = lines[index]
+
+    if (line.trim() === '') {
+      index += 1
+      continue
+    }
+
+    const fenceMatch = line.match(/^(```|~~~)\s*([A-Za-z0-9_-]+)?\s*$/)
+    if (fenceMatch) {
+      const marker = fenceMatch[1]
+      const language = fenceMatch[2]
+      const codeLines: string[] = []
+      index += 1
+
+      while (index < lines.length && !lines[index].startsWith(marker)) {
+        codeLines.push(lines[index])
+        index += 1
+      }
+      if (index < lines.length) index += 1
+
+      nodes.push(
+        <pre key={`md-code-${nodes.length}`} className="fb-markdown-code">
+          <code className={language ? `language-${language}` : undefined}>{codeLines.join('\n')}</code>
+        </pre>,
+      )
+      continue
+    }
+
+    const headingMatch = line.match(/^(#{1,6})\s+(.+)$/)
+    if (headingMatch) {
+      const HeadingTag = `h${headingMatch[1].length}` as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6'
+      nodes.push(
+        <HeadingTag key={`md-heading-${nodes.length}`}>
+          {renderMarkdownInline(headingMatch[2], `heading-${nodes.length}`)}
+        </HeadingTag>,
+      )
+      index += 1
+      continue
+    }
+
+    if (/^>\s?/.test(line)) {
+      const quoteLines: string[] = []
+      while (index < lines.length) {
+        const quoteMatch = lines[index].match(/^>\s?(.*)$/)
+        if (!quoteMatch) break
+        quoteLines.push(quoteMatch[1])
+        index += 1
+      }
+
+      nodes.push(
+        <blockquote key={`md-quote-${nodes.length}`}>
+          {quoteLines.map((quoteLine, quoteIndex) => (
+            <p key={`quote-line-${quoteIndex}`}>
+              {renderMarkdownInline(quoteLine, `quote-${nodes.length}-${quoteIndex}`)}
+            </p>
+          ))}
+        </blockquote>,
+      )
+      continue
+    }
+
+    const listMatch = line.match(/^\s*((?:[-*+])|(?:\d+[.)]))\s+(.+)$/)
+    if (listMatch) {
+      const ordered = /^\d/.test(listMatch[1])
+      const items: Array<{ text: string; checked: boolean | null }> = []
+
+      while (index < lines.length) {
+        const itemMatch = lines[index].match(/^\s*((?:[-*+])|(?:\d+[.)]))\s+(.+)$/)
+        if (!itemMatch || /^\d/.test(itemMatch[1]) !== ordered) break
+
+        const taskMatch = itemMatch[2].match(/^\[([ xX])\]\s+(.+)$/)
+        items.push({
+          text: taskMatch ? taskMatch[2] : itemMatch[2],
+          checked: taskMatch ? taskMatch[1].toLowerCase() === 'x' : null,
+        })
+        index += 1
+      }
+
+      const ListTag = ordered ? 'ol' : 'ul'
+      nodes.push(
+        <ListTag key={`md-list-${nodes.length}`} className={items.some(item => item.checked !== null) ? 'fb-markdown-task-list' : undefined}>
+          {items.map((item, itemIndex) => (
+            <li key={`item-${itemIndex}`} className={item.checked !== null ? 'fb-markdown-task-item' : undefined}>
+              {item.checked !== null && (
+                <input
+                  type="checkbox"
+                  aria-label={`Task: ${plainMarkdownText(item.text)}`}
+                  checked={item.checked}
+                  disabled
+                  readOnly
+                />
+              )}
+              <span>{renderMarkdownInline(item.text, `list-${nodes.length}-${itemIndex}`)}</span>
+            </li>
+          ))}
+        </ListTag>,
+      )
+      continue
+    }
+
+    const paragraphLines: string[] = []
+    while (index < lines.length && lines[index].trim() !== '' && !isMarkdownBlockStart(lines[index])) {
+      paragraphLines.push(lines[index])
+      index += 1
+    }
+
+    nodes.push(
+      <p key={`md-paragraph-${nodes.length}`}>
+        {renderMarkdownInline(paragraphLines.join(' '), `paragraph-${nodes.length}`)}
+      </p>,
+    )
+  }
+
+  return nodes
 }
 
 function getPreviewKind(item: FileItem): PreviewKind {
@@ -282,6 +491,7 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
   const [history, setHistory] = useState<string[]>(['/'])
   const [historyIndex, setHistoryIndex] = useState(0)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  const [tabContextMenu, setTabContextMenu] = useState<TabContextMenuState | null>(null)
   const [renamingPath, setRenamingPath] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [createIntent, setCreateIntent] = useState<CreateIntent | null>(null)
@@ -303,6 +513,14 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
   const contentStyle = resizablePreview
     ? ({ '--fb-preview-width': `${previewWidth}%` } as CSSProperties)
     : undefined
+  const contextMenuPosition = useViewportMenuPosition<HTMLDivElement>(
+    contextMenu ? { x: contextMenu.x, y: contextMenu.y } : null,
+    { estimatedSize: { width: 220, height: 320 } },
+  )
+  const tabContextMenuPosition = useViewportMenuPosition<HTMLDivElement>(
+    tabContextMenu ? { x: tabContextMenu.x, y: tabContextMenu.y } : null,
+    { estimatedSize: { width: 180, height: 84 } },
+  )
 
   const showError = useCallback((message: string) => {
     setToast(message)
@@ -435,6 +653,27 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
     }
   }, [contextMenu])
 
+  useEffect(() => {
+    if (!tabContextMenu) return
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Element
+      if (!target.closest('.fb-tab-context-menu')) {
+        setTabContextMenu(null)
+      }
+    }
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') setTabContextMenu(null)
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [tabContextMenu])
+
   const updateOpenFile = useCallback((path: string, patch: Partial<OpenFile>) => {
     setOpenFiles(prev => prev.map(file => (file.path === path ? { ...file, ...patch } : file)))
   }, [])
@@ -507,6 +746,32 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
       return next
     })
   }, [activeFilePath])
+
+  const closeAllOpenFiles = useCallback(() => {
+    setTabContextMenu(null)
+    if (openFiles.some(file => file.dirty)) {
+      showError('Save or close unsaved files before using Close All.')
+      return
+    }
+
+    setOpenFiles([])
+    setActiveFilePath(null)
+  }, [openFiles, showError])
+
+  const closeOtherOpenFiles = useCallback((path: string) => {
+    setTabContextMenu(null)
+    const fileToKeep = openFiles.find(file => file.path === path)
+    if (!fileToKeep) return
+
+    const filesToClose = openFiles.filter(file => file.path !== path)
+    if (filesToClose.some(file => file.dirty)) {
+      showError('Save or close unsaved files before closing other tabs.')
+      return
+    }
+
+    setOpenFiles([fileToKeep])
+    setActiveFilePath(fileToKeep.path)
+  }, [openFiles, showError])
 
   const activeFile = useMemo(
     () => openFiles.find(file => file.path === activeFilePath) || null,
@@ -744,7 +1009,7 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
   }
 
   const copyPath = (path: string) => {
-    void navigator.clipboard?.writeText(toDisplayPath(path))
+    void copyTextToClipboard(toDisplayPath(path))
     setContextMenu(null)
   }
 
@@ -757,12 +1022,12 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
 
   const copySelectedPaths = (targets: FileItem[]) => {
     if (targets.length === 0) return
-    void navigator.clipboard?.writeText(targets.map(target => toDisplayPath(target.path)).join('\n'))
+    void copyTextToClipboard(targets.map(target => toDisplayPath(target.path)).join('\n'))
     setContextMenu(null)
   }
 
   const copyRelativePath = (path: string) => {
-    void navigator.clipboard?.writeText(pathRelativeToCurrent(path))
+    void copyTextToClipboard(pathRelativeToCurrent(path))
     setContextMenu(null)
   }
 
@@ -1303,34 +1568,51 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
                 {openFiles.length === 0 ? (
                   <span className="fb-editor-placeholder-tab">Preview</span>
                 ) : (
-                  openFiles.map(file => (
-                    <button
-                      key={file.path}
-                      className={`fb-editor-tab ${file.path === activeFilePath ? 'active' : ''}`}
-                      type="button"
-                      title={file.path}
-                      onClick={() => setActiveFilePath(file.path)}
-                    >
-                      <span>{file.dirty ? '* ' : ''}{file.name}</span>
-                      <span
-                        className="fb-editor-tab-close"
-                        role="button"
-                        tabIndex={0}
-                        onClick={(event) => {
+                  <>
+                    {openFiles.map(file => (
+                      <button
+                        key={file.path}
+                        className={`fb-editor-tab ${file.path === activeFilePath ? 'active' : ''}`}
+                        type="button"
+                        title={file.path}
+                        onClick={() => setActiveFilePath(file.path)}
+                        onContextMenu={(event) => {
+                          event.preventDefault()
                           event.stopPropagation()
-                          closeOpenFile(file.path)
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter' || event.key === ' ') {
-                            event.stopPropagation()
-                            closeOpenFile(file.path)
-                          }
+                          setTabContextMenu({ x: event.clientX, y: event.clientY, path: file.path })
                         }}
                       >
-                        x
-                      </span>
-                    </button>
-                  ))
+                        <span>{file.dirty ? '* ' : ''}{file.name}</span>
+                        <span
+                          className="fb-editor-tab-close"
+                          role="button"
+                          tabIndex={0}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            closeOpenFile(file.path)
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.stopPropagation()
+                              closeOpenFile(file.path)
+                            }
+                          }}
+                        >
+                          x
+                        </span>
+                      </button>
+                    ))}
+                    {openFiles.length > 1 && (
+                      <button
+                        className="fb-editor-tabs-close-all"
+                        type="button"
+                        title="Close all open files"
+                        onClick={closeAllOpenFiles}
+                      >
+                        Close All
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
 
@@ -1358,12 +1640,27 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
                   ) : activeFile.error ? (
                     <div className="fb-editor-empty">{activeFile.error}</div>
                   ) : activeFile.kind === 'text' ? (
-                    <textarea
-                      className="fb-editor-textarea"
-                      value={activeFile.content}
-                      spellCheck={false}
-                      onChange={(event) => updateOpenFile(activeFile.path, { content: event.target.value, dirty: true })}
-                    />
+                    isMarkdownFileName(activeFile.name) ? (
+                      <div className="fb-markdown-editor" aria-label={`Markdown editor for ${activeFile.name}`}>
+                        <textarea
+                          className="fb-markdown-source"
+                          aria-label={`Markdown source for ${activeFile.name}`}
+                          value={activeFile.content}
+                          spellCheck={false}
+                          onChange={(event) => updateOpenFile(activeFile.path, { content: event.target.value, dirty: true })}
+                        />
+                        <div className="fb-markdown-preview" aria-label={`Markdown preview for ${activeFile.name}`}>
+                          {renderMarkdownPreview(activeFile.content)}
+                        </div>
+                      </div>
+                    ) : (
+                      <textarea
+                        className="fb-editor-textarea"
+                        value={activeFile.content}
+                        spellCheck={false}
+                        onChange={(event) => updateOpenFile(activeFile.path, { content: event.target.value, dirty: true })}
+                      />
+                    )
                   ) : activeFile.kind === 'image' ? (
                     <div className="fb-media-preview"><img src={getDownloadUrl(activeFile.path)} alt={activeFile.name} /></div>
                   ) : activeFile.kind === 'audio' ? (
@@ -1390,10 +1687,22 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
         </main>
       </div>
 
+      {tabContextMenu && openFiles.length > 1 && (
+        <div
+          ref={tabContextMenuPosition.ref}
+          className="fb-context-menu fb-tab-context-menu"
+          style={tabContextMenuPosition.style}
+        >
+          <button className="fb-context-item" type="button" onClick={() => closeOtherOpenFiles(tabContextMenu.path)}>Close Others</button>
+          <button className="fb-context-item" type="button" onClick={closeAllOpenFiles}>Close All</button>
+        </div>
+      )}
+
       {contextMenu && (
         <div
+          ref={contextMenuPosition.ref}
           className="fb-context-menu"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
+          style={contextMenuPosition.style}
         >
           {contextMenu.item?.isDir && (
             <button className="fb-context-item" type="button" onClick={() => navigateTo(contextMenu.item!.path)}>Open Folder</button>

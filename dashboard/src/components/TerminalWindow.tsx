@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useDroppable, useDraggable } from '@dnd-kit/core'
 import { useSession } from '../context/SessionContext'
 import { useIframePool } from './IframePool'
-import { WINDOW_COLORS, getSessionKey, getSessionNameFromKey, getSessionUserFromKey, getTerminalUserColor, getTerminalUserInitial, resolveLaunchUser } from '../types'
+import { WINDOW_COLORS, getSessionKey, getSessionNameFromKey, getSessionUserFromKey, getTerminalUserColor, getTerminalUserInitial } from '../types'
 import type { TerminalWindow as TerminalWindowType, WorkspaceId } from '../types'
 
 interface CreateSessionButtonProps {
@@ -13,122 +13,31 @@ interface CreateSessionButtonProps {
 
 function CreateSessionButton({ workspaceId, windowId, accentColor }: CreateSessionButtonProps) {
   const [creating, setCreating] = useState(false)
-  const [menu, setMenu] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 })
-  const [namedPopup, setNamedPopup] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 })
-  const [namedName, setNamedName] = useState('')
-  const { settings, terminalUsers, createSession } = useSession()
-
-  const createSessionForUser = async (unixUser?: string, explicitName?: string) => {
-    setCreating(true)
-    try {
-      const created = await createSession({
-        workspaceId,
-        ...(unixUser !== undefined ? { unixUser } : {}),
-        ...(explicitName !== undefined ? { name: explicitName } : {}),
-        attachTo: { workspaceId, windowId },
-      })
-      if (created) {
-        setNamedName('')
-        setNamedPopup({ show: false, x: 0, y: 0 })
-      }
-    } finally {
-      setCreating(false)
-      setMenu({ show: false, x: 0, y: 0 })
-    }
-  }
+  const { createSession } = useSession()
 
   const handleCreate = async () => {
-    await createSessionForUser()
-  }
-
-  const namedSession = () => {
-    setNamedPopup({ show: true, x: menu.x, y: menu.y })
-    setMenu({ show: false, x: 0, y: 0 })
-  }
-
-  const submitNamedSession = async () => {
-    const name = namedName.trim()
-    if (!name) return
-    await createSessionForUser(undefined, name)
-  }
-
-  const userChoices = terminalUsers.length > 0 ? terminalUsers : [resolveLaunchUser(settings, workspaceId, terminalUsers)]
-
-  useEffect(() => {
-    if (!menu.show) return
-    const close = () => setMenu({ show: false, x: 0, y: 0 })
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close()
+    setCreating(true)
+    try {
+      await createSession({
+        workspaceId,
+        attachTo: { workspaceId, windowId },
+      })
+    } finally {
+      setCreating(false)
     }
-    document.addEventListener('click', close)
-    document.addEventListener('keydown', closeOnEscape)
-    return () => {
-      document.removeEventListener('click', close)
-      document.removeEventListener('keydown', closeOnEscape)
-    }
-  }, [menu.show])
+  }
 
   return (
-    <>
-      <button
-        className="create-session-btn"
-        onClick={handleCreate}
-        onContextMenu={(event) => {
-          event.preventDefault()
-          setMenu({ show: true, x: event.clientX, y: event.clientY })
-        }}
-        disabled={creating}
-        style={{ '--btn-accent': accentColor } as React.CSSProperties}
-        title="Create new session"
-      >
-        <span className="create-session-icon">{creating ? '...' : '+'}</span>
-        <span className="create-session-label">New Session</span>
-      </button>
-      {menu.show && (
-        <div className="session-context-menu" style={{ left: menu.x, top: menu.y }}>
-          {userChoices.filter(Boolean).map(user => (
-            <button key={user} className="session-context-item" onClick={() => createSessionForUser(user)}>
-              <span className="session-context-icon">{getTerminalUserInitial(user)}</span>
-              New here as {getTerminalUserInitial(user)} {user}
-            </button>
-          ))}
-          <div className="session-context-divider" />
-          <button className="session-context-item" onClick={namedSession}>
-            <span className="session-context-icon">✎</span>
-            New named session
-          </button>
-        </div>
-      )}
-      {namedPopup.show && (
-        <div
-          role="dialog"
-          aria-label="Create named tmux session"
-          className="session-context-menu session-named-popup terminal-named-create"
-          style={{ left: namedPopup.x, top: namedPopup.y }}
-        >
-          <div className="session-named-popup-title">New named session</div>
-          <input
-            aria-label="New session name"
-            className="session-search-input"
-            value={namedName}
-            onChange={(event) => setNamedName(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') void submitNamedSession()
-              if (event.key === 'Escape') setNamedPopup({ show: false, x: 0, y: 0 })
-            }}
-            autoFocus
-          />
-          <div className="session-named-popup-actions">
-            <button className="session-context-item session-inline-action" onClick={submitNamedSession} disabled={!namedName.trim()}>
-              Create named session
-            </button>
-            <button className="session-context-item session-inline-action" onClick={() => setNamedPopup({ show: false, x: 0, y: 0 })}>
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-    </>
+    <button
+      className="create-session-btn"
+      onClick={handleCreate}
+      disabled={creating}
+      style={{ '--btn-accent': accentColor } as React.CSSProperties}
+      title="Create new session"
+    >
+      <span className="create-session-icon">{creating ? '...' : '+'}</span>
+      <span className="create-session-label">New Session</span>
+    </button>
   )
 }
 
@@ -167,8 +76,7 @@ interface SessionTagProps {
 }
 
 function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, onClick }: SessionTagProps) {
-  const [menu, setMenu] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 })
-  const { sessions, deleteSession, renameSession, settings } = useSession()
+  const { sessions, settings } = useSession()
   const actualName = getSessionNameFromKey(sessionName)
   const unixUser = getSessionUserFromKey(sessionName)
   const matchingSessions = unixUser
@@ -191,7 +99,6 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
 
   // Show full tmux session name, including prefixes (e.g. critique-codex).
   const displayName = actualName
-  const canTargetSession = Boolean(session || resolvedUser.trim())
 
   // Handle click on the tag - only fire if not dragging
   const handleClick = (e: React.MouseEvent) => {
@@ -202,74 +109,27 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
     onClick()
   }
 
-  const handleRename = async () => {
-    const newName = window.prompt('Rename session', actualName)?.trim()
-    setMenu({ show: false, x: 0, y: 0 })
-    if (!newName || newName === actualName) return
-    await renameSession(actualName, newName, resolvedUser)
-  }
-
-  const handleKill = async () => {
-    setMenu({ show: false, x: 0, y: 0 })
-    if (!window.confirm(`Kill session '${actualName}'?`)) return
-    const deleted = await deleteSession(actualName, resolvedUser)
-    if (deleted) onRemove()
-  }
-
-  useEffect(() => {
-    if (!menu.show) return
-    const close = () => setMenu({ show: false, x: 0, y: 0 })
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close()
-    }
-    document.addEventListener('click', close)
-    document.addEventListener('keydown', closeOnEscape)
-    return () => {
-      document.removeEventListener('click', close)
-      document.removeEventListener('keydown', closeOnEscape)
-    }
-  }, [menu.show])
-
   return (
-    <>
-      <div
-        ref={setNodeRef}
-        className={`session-tag ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''}`}
-        style={style}
-        onClick={handleClick}
-        onContextMenu={(event) => {
-          event.preventDefault()
-          event.stopPropagation()
-          setMenu({ show: true, x: event.clientX, y: event.clientY })
-        }}
-        {...listeners}
-        {...attributes}
-      >
-        {resolvedUser && (
-          <span
-            className="session-user-badge"
-            style={{ backgroundColor: getTerminalUserColor(settings, resolvedUser) }}
-            title={`Unix user: ${resolvedUser}`}
-          >
-            {getTerminalUserInitial(resolvedUser)}
-          </span>
-        )}
-        <span className="tag-name">{displayName}</span>
-        <button className="tag-remove" onClick={(e) => { e.stopPropagation(); onRemove(); }}>×</button>
-      </div>
-      {menu.show && (
-        <div className="session-context-menu" style={{ left: menu.x, top: menu.y }}>
-          <button className="session-context-item" onClick={handleRename} disabled={!canTargetSession}>
-            <span className="session-context-icon">✎</span>
-            Rename
-          </button>
-          <button className="session-context-item session-context-danger" onClick={handleKill} disabled={!canTargetSession}>
-            <span className="session-context-icon">✕</span>
-            Kill
-          </button>
-        </div>
+    <div
+      ref={setNodeRef}
+      className={`session-tag ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''}`}
+      style={style}
+      onClick={handleClick}
+      {...listeners}
+      {...attributes}
+    >
+      {resolvedUser && (
+        <span
+          className="session-user-badge"
+          style={{ backgroundColor: getTerminalUserColor(settings, resolvedUser) }}
+          title={`Unix user: ${resolvedUser}`}
+        >
+          {getTerminalUserInitial(resolvedUser)}
+        </span>
       )}
-    </>
+      <span className="tag-name">{displayName}</span>
+      <button className="tag-remove" onClick={(e) => { e.stopPropagation(); onRemove(); }}>×</button>
+    </div>
   )
 }
 
@@ -286,24 +146,13 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
   const windowRef = useRef<HTMLDivElement>(null)
 
   const pool = useIframePool()
-  const [windowMenu, setWindowMenu] = useState<{ show: boolean; x: number; y: number; submenu: string | null }>({ show: false, x: 0, y: 0, submenu: null })
 
   const {
-    sessions,
-    terminalUsers,
-    settings,
-    layoutPresets,
-    createSession,
-    addSessionToWindow,
     removeSessionFromWindow,
     setActiveSession,
     cycleSession,
-    setWindowCount,
-    clearStaleSessionsFromWindow,
     focusedWindowKey,
     setFocusedWindowKey,
-    saveCurrentLayout,
-    loadPreset,
   } = useSession()
 
   // Generate a unique key for this window
@@ -468,40 +317,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
     setActiveSession(workspaceId, windowConfig.id, sessionName)
   }
 
-  const closeWindowMenu = () => setWindowMenu({ show: false, x: 0, y: 0, submenu: null })
-
-  const createSessionHere = async (unixUser: string) => {
-    await createSession({
-      workspaceId,
-      unixUser,
-      attachTo: { workspaceId, windowId: windowConfig.id },
-    })
-    closeWindowMenu()
-  }
-
-  const saveLayoutFromMenu = () => {
-    const name = window.prompt('Layout preset name')?.trim()
-    if (name) saveCurrentLayout(name)
-    closeWindowMenu()
-  }
-
-  const attachableSessions = sessions.filter(session => !windowConfig.boundSessions.includes(getSessionKey(session.name, session.unixUser)))
-  const userChoices = terminalUsers.length > 0 ? terminalUsers : [resolveLaunchUser(settings, workspaceId, terminalUsers)]
   const hasSessions = windowConfig.boundSessions.length > 0
-
-  useEffect(() => {
-    if (!windowMenu.show) return
-    const close = () => setWindowMenu({ show: false, x: 0, y: 0, submenu: null })
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close()
-    }
-    document.addEventListener('click', close)
-    document.addEventListener('keydown', closeOnEscape)
-    return () => {
-      document.removeEventListener('click', close)
-      document.removeEventListener('keydown', closeOnEscape)
-    }
-  }, [windowMenu.show])
 
   return (
     <div
@@ -515,13 +331,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
         ...style,
       } as React.CSSProperties}
     >
-      <div
-        className="terminal-window-header"
-        onContextMenu={(event) => {
-          event.preventDefault()
-          setWindowMenu({ show: true, x: event.clientX, y: event.clientY, submenu: null })
-        }}
-      >
+      <div className="terminal-window-header">
         <div className="session-tags">
           {windowConfig.boundSessions.map(sessionName => (
             <SessionTag
@@ -564,136 +374,6 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
           />
         </div>
       </div>
-
-      {windowMenu.show && (
-        <div className="session-context-menu" style={{ left: windowMenu.x, top: windowMenu.y }}>
-          <div
-            className="session-context-item session-context-submenu-trigger"
-            onMouseEnter={() => setWindowMenu(prev => ({ ...prev, submenu: 'new' }))}
-          >
-            <span className="session-context-icon">+</span>
-            New Session Here
-            <span className="session-context-arrow">▶</span>
-            {windowMenu.submenu === 'new' && (
-              <div className="session-context-submenu">
-                {userChoices.filter(Boolean).map(user => (
-                  <button key={user} className="session-context-item" onClick={() => createSessionHere(user)}>
-                    {getTerminalUserInitial(user)} {user}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          <div
-            className="session-context-item session-context-submenu-trigger"
-            onMouseEnter={() => setWindowMenu(prev => ({ ...prev, submenu: 'attach' }))}
-          >
-            <span className="session-context-icon">◫</span>
-            Attach Existing
-            <span className="session-context-arrow">▶</span>
-            {windowMenu.submenu === 'attach' && (
-              <div className="session-context-submenu">
-                {attachableSessions.length === 0 ? (
-                  <button className="session-context-item" disabled>No sessions</button>
-                ) : attachableSessions.map(session => (
-                  <button
-                    key={`${session.unixUser ?? ''}:${session.name}`}
-                    className="session-context-item"
-                    onClick={() => {
-                      addSessionToWindow(workspaceId, windowConfig.id, session.name, session.unixUser)
-                      closeWindowMenu()
-                    }}
-                  >
-                    {session.unixUser && (
-                      <span
-                        className="session-user-badge"
-                        style={{ backgroundColor: getTerminalUserColor(settings, session.unixUser) }}
-                        title={`Unix user: ${session.unixUser}`}
-                      >
-                        {getTerminalUserInitial(session.unixUser)}
-                      </span>
-                    )}
-                    {session.name}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          <button
-            className="session-context-item"
-            onClick={() => {
-              if (activeSession) removeSessionFromWindow(workspaceId, windowConfig.id, activeSession)
-              closeWindowMenu()
-            }}
-            disabled={!activeSession}
-          >
-            <span className="session-context-icon">⊘</span>
-            Detach Active
-          </button>
-          <button
-            className="session-context-item"
-            onClick={() => {
-              if (activeSession) pool.reconnectIframe(activeSession)
-              closeWindowMenu()
-            }}
-            disabled={!activeSession}
-          >
-            <span className="session-context-icon">↻</span>
-            Reconnect iframe
-          </button>
-          <button
-            className="session-context-item"
-            onClick={() => {
-              clearStaleSessionsFromWindow(workspaceId, windowConfig.id)
-              closeWindowMenu()
-            }}
-          >
-            <span className="session-context-icon">⌫</span>
-            Clear dead/stale tags
-          </button>
-          <div
-            className="session-context-item session-context-submenu-trigger"
-            onMouseEnter={() => setWindowMenu(prev => ({ ...prev, submenu: 'count' }))}
-          >
-            <span className="session-context-icon">▦</span>
-            Window Count
-            <span className="session-context-arrow">▶</span>
-            {windowMenu.submenu === 'count' && (
-              <div className="session-context-submenu">
-                {[1, 2, 3, 4].map(count => (
-                  <button key={count} className="session-context-item" onClick={() => { setWindowCount(workspaceId, count); closeWindowMenu() }}>
-                    {count} window{count === 1 ? '' : 's'}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          <div className="session-context-divider" />
-          <button className="session-context-item" onClick={saveLayoutFromMenu}>
-            <span className="session-context-icon">▣</span>
-            Save layout as preset
-          </button>
-          <div
-            className="session-context-item session-context-submenu-trigger"
-            onMouseEnter={() => setWindowMenu(prev => ({ ...prev, submenu: 'preset' }))}
-          >
-            <span className="session-context-icon">⊞</span>
-            Restore layout preset
-            <span className="session-context-arrow">▶</span>
-            {windowMenu.submenu === 'preset' && (
-              <div className="session-context-submenu">
-                {layoutPresets.length === 0 ? (
-                  <button className="session-context-item" disabled>No presets</button>
-                ) : layoutPresets.map(preset => (
-                  <button key={preset.id} className="session-context-item" onClick={() => { loadPreset(preset.id); closeWindowMenu() }}>
-                    {preset.name}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       <div ref={bodyRef} className="terminal-window-body" onClick={handleWindowClick}>
         {activeSession === 'INIT-PENDING' ? (

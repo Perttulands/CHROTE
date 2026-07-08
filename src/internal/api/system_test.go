@@ -248,6 +248,9 @@ SwapFree:        6000 kB
 	if memory.TotalBytes != 16000*1024 {
 		t.Fatalf("total bytes = %d, want kB converted to bytes", memory.TotalBytes)
 	}
+	if memory.FreeBytes != 1000*1024 {
+		t.Fatalf("free bytes = %d, want MemFree", memory.FreeBytes)
+	}
 	if memory.AvailableBytes != 4000*1024 {
 		t.Fatalf("available bytes = %d, want MemAvailable", memory.AvailableBytes)
 	}

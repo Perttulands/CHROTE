@@ -70,6 +70,12 @@ vi.mock('./IframePool', () => ({
 const testDir = dirname(fileURLToPath(import.meta.url))
 const terminalCss = () => readFileSync(resolve(testDir, '../styles/terminal.css'), 'utf8')
 
+function dispatchContextMenu(target: Element) {
+  const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 350, clientY: 230 })
+  target.dispatchEvent(event)
+  return event
+}
+
 describe('TerminalWindow launch user', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -100,39 +106,50 @@ describe('TerminalWindow launch user', () => {
     })
   })
 
-  it('passes explicit user choices from the window new-session menu into the same shared action', async () => {
-    render(
+  it('does not intercept right-click on the empty-window new-session button', async () => {
+    const { container } = render(
       <TerminalWindow
         workspaceId="terminal3"
         window={{ id: 'terminal3-window-0', boundSessions: [], activeSession: null, colorIndex: 0 }}
       />
     )
 
-    fireEvent.contextMenu(screen.getByRole('button', { name: /New Session/i }))
-    fireEvent.click(screen.getByRole('button', { name: /New here as P perttu/i }))
+    const event = dispatchContextMenu(screen.getByRole('button', { name: /New Session/i }))
 
+    expect(event.defaultPrevented).toBe(false)
+    expect(container.querySelector('.session-context-menu')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /New Session/i }))
     await waitFor(() => expect(createSession).toHaveBeenCalled())
-    expect(createSession).toHaveBeenCalledWith({
-      workspaceId: 'terminal3',
-      unixUser: 'perttu',
-      attachTo: { workspaceId: 'terminal3', windowId: 'terminal3-window-0' },
-    })
   })
 
-  it('keeps session tag context menu limited to rename and kill', () => {
-    render(
+  it('does not intercept right-click on session tags', () => {
+    const { container } = render(
       <TerminalWindow
         workspaceId="terminal3"
         window={{ id: 'terminal3-window-0', boundSessions: ['forge-existing'], activeSession: 'forge-existing', colorIndex: 0 }}
       />
     )
 
-    fireEvent.contextMenu(screen.getByText('forge-existing'))
+    const event = dispatchContextMenu(screen.getByText('forge-existing'))
 
-    expect(screen.getByRole('button', { name: /Rename/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Kill/i })).toBeInTheDocument()
-    expect(screen.queryByText(/Move/i)).not.toBeInTheDocument()
-    expect(screen.queryByText(/Detach/i)).not.toBeInTheDocument()
+    expect(event.defaultPrevented).toBe(false)
+    expect(container.querySelector('.session-context-menu')).toBeNull()
+    expect(screen.queryByRole('button', { name: /Rename/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Kill/i })).not.toBeInTheDocument()
+  })
+
+  it('does not intercept right-click on terminal window chrome', () => {
+    const { container } = render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['forge-existing'], activeSession: 'forge-existing', colorIndex: 0 }}
+      />
+    )
+
+    const event = dispatchContextMenu(container.querySelector('.terminal-window-header') as HTMLElement)
+
+    expect(event.defaultPrevented).toBe(false)
+    expect(container.querySelector('.session-context-menu')).toBeNull()
   })
 
   it('keeps terminal panes on the per-window opaque background palette', () => {

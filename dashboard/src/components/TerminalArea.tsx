@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useSession } from '../context/SessionContext'
 import TerminalWindow from './TerminalWindow'
 import { useMediaQuery } from '../hooks/useMediaQuery'
+import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
 import type { WorkspaceId } from '../types'
 import { isFeatureEnabled } from '../featureFlags'
 import { useIframePool } from './IframePool'
@@ -21,7 +22,10 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
   const [mobileActiveIndex, setMobileActiveIndex] = useState(0)
   const [refitNonce, setRefitNonce] = useState(0)
   const [controlsMenu, setControlsMenu] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 })
-  const controlsMenuRef = useRef<HTMLDivElement>(null)
+  const controlsMenuPosition = useViewportMenuPosition<HTMLDivElement>(
+    controlsMenu.show ? { x: controlsMenu.x, y: controlsMenu.y } : null,
+    { estimatedSize: { width: 220, height: 130 } },
+  )
   const showRefitButton = isFeatureEnabled('terminalRefitButton')
   const visibleWindows = windows.slice(0, windowCount)
 
@@ -35,7 +39,7 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
   useEffect(() => {
     if (!controlsMenu.show) return
     const close = (event: MouseEvent) => {
-      if (controlsMenuRef.current?.contains(event.target as Node)) return
+      if (controlsMenuPosition.ref.current?.contains(event.target as Node)) return
       setControlsMenu({ show: false, x: 0, y: 0 })
     }
     document.addEventListener('mousedown', close)
@@ -154,9 +158,9 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
 
       {controlsMenu.show && (
         <div
-          ref={controlsMenuRef}
+          ref={controlsMenuPosition.ref}
           className="session-context-menu"
-          style={{ left: controlsMenu.x, top: controlsMenu.y }}
+          style={controlsMenuPosition.style}
         >
           <button className="session-context-item" onClick={reconnectFrames} disabled={visibleWindows.every(window => window.boundSessions.length === 0)}>
             <span className="session-context-icon">↻</span>

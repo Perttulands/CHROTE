@@ -13,6 +13,7 @@ import FormationsCockpit from './components/FormationsCockpit'
 import AgentsView from './components/AgentsView'
 import ServicesView from './components/ServicesView'
 import SystemStatusView from './components/SystemStatusView'
+import ScheduledTasksView from './components/ScheduledTasksView'
 import ErrorBoundary from './components/ErrorBoundary'
 import { ToastContainer } from './components/ToastNotification'
 import KeyboardShortcutsOverlay from './components/KeyboardShortcutsOverlay'
@@ -191,6 +192,11 @@ function DashboardContent() {
           {activeTab === 'services' && (
             <ErrorBoundary>
               <ServicesView />
+            </ErrorBoundary>
+          )}
+          {activeTab === 'scheduled' && (
+            <ErrorBoundary>
+              <ScheduledTasksView />
             </ErrorBoundary>
           )}
           {serverStatusTab && (

@@ -1,4 +1,4 @@
-import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type CSSProperties, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Copy, Gauge, Pause, Play, RefreshCw } from 'lucide-react'
 import {
   SystemApiError,
@@ -31,8 +31,6 @@ interface TimelineSample {
 interface TimelineSeries {
   key: 'gpu' | 'vram' | 'memory' | 'swap' | 'cpu' | 'load'
   label: string
-  value: string
-  meta?: string
   values: Array<number | null>
 }
 
@@ -132,31 +130,9 @@ function hasActiveSwapPressure(bytesPerSecond: number | null | undefined) {
   return typeof bytesPerSecond === 'number' && bytesPerSecond >= SWAP_ACTIVITY_WARN_BPS
 }
 
-interface StorageDiskGroup extends SystemDiskStatus {
-  mounts: string[]
-}
-
 function diskLabel(disk?: SystemDiskStatus) {
   if (!disk) return '--'
   return `${formatBytes(disk.usedBytes)} / ${formatBytes(disk.totalBytes)}`
-}
-
-function diskFingerprint(disk: SystemDiskStatus) {
-  return [disk.totalBytes, disk.availableBytes, disk.usedBytes, Math.round(disk.usedPercent * 100) / 100].join(':')
-}
-
-function dedupeStorageDisks(disks: SystemDiskStatus[]): StorageDiskGroup[] {
-  const groups = new Map<string, StorageDiskGroup>()
-  disks.forEach(disk => {
-    const key = diskFingerprint(disk)
-    const existing = groups.get(key)
-    if (existing) {
-      existing.mounts.push(disk.mount)
-      return
-    }
-    groups.set(key, { ...disk, mounts: [disk.mount] })
-  })
-  return Array.from(groups.values())
 }
 
 function gpuSourceLabel(gpu?: SystemGPUStatus) {
@@ -219,15 +195,6 @@ function buildWarnings(status: SystemStatus | null, rootDisk?: SystemDiskStatus,
   return warnings
 }
 
-function PercentBar({ value, tone = 'normal' }: { value: number | null | undefined; tone?: 'normal' | 'warn' | 'muted' | 'gpu' }) {
-  const width = readablePercent(value) || 0
-  return (
-    <span className={`system-bar system-bar-${tone}`}>
-      <span style={{ width: `${width}%` }} />
-    </span>
-  )
-}
-
 function combineStatusHistory(samples: SystemStatus[], current: SystemStatus | null) {
   const byTimestamp = new Map<string, SystemStatus>()
   samples.forEach((sample, index) => {
@@ -260,30 +227,18 @@ function buildTimelineSamples(statuses: SystemStatus[]): TimelineSample[] {
   })
 }
 
-function latestNumber(values: Array<number | null | undefined>) {
-  for (let index = values.length - 1; index >= 0; index -= 1) {
-    const value = values[index]
-    if (typeof value === 'number' && !Number.isNaN(value)) return value
-  }
-  return null
-}
-
 function SummaryCard({
   label,
   value,
-  detail,
   meta,
   tone = 'normal',
   gaugeValue,
-  metric = 'load',
 }: {
   label: string
-  value: string
-  detail?: string
+  value?: string
   meta?: string
-  tone?: 'normal' | 'warn' | 'muted' | 'gpu' | 'memory' | 'swap' | 'cpu'
+  tone?: 'normal' | 'warn' | 'muted' | 'gpu' | 'vram' | 'memory' | 'swap' | 'cpu' | 'storage'
   gaugeValue: number | null | undefined
-  metric?: string
 }) {
   const safe = readablePercent(gaugeValue)
   const gaugeDegrees = (safe || 0) * 3.6
@@ -293,15 +248,14 @@ function SummaryCard({
       <span
         className={`system-donut system-donut-${safe === null ? 'muted' : tone}`}
         role="img"
-        aria-label={`${label} ${metric} ${formatPercent(safe)}`}
+        aria-label={`${label} ${formatPercent(safe)}`}
         style={{ '--system-gauge-deg': `${gaugeDegrees}deg` } as CSSProperties}
       >
         <span>{formatPercent(safe)}</span>
       </span>
       <div className="system-summary-copy">
         <span className="system-summary-label">{label}</span>
-        <strong>{value}</strong>
-        {detail && <small>{detail}</small>}
+        {value && <strong>{value}</strong>}
         {meta && <em>{meta}</em>}
       </div>
     </section>
@@ -313,7 +267,6 @@ function buildTimelineSeries(samples: TimelineSample[]): TimelineSeries[] {
   const vramValues = samples.map(sample => sample.vramPercent)
   const ramValues = samples.map(sample => sample.ramPercent)
   const swapValues = samples.map(sample => sample.swapPercent)
-  const swapActivityValues = samples.map(sample => sample.swapActivityBytesPerSecond)
   const cpuValues = samples.map(sample => sample.cpuPercent)
   const loadValues = samples.map(sample => sample.loadPercent)
 
@@ -321,50 +274,44 @@ function buildTimelineSeries(samples: TimelineSample[]): TimelineSeries[] {
     {
       key: 'gpu',
       label: 'GPU',
-      value: formatPercent(latestNumber(gpuValues)),
       values: gpuValues,
     },
     {
       key: 'vram',
       label: 'VRAM',
-      value: formatPercent(latestNumber(vramValues)),
       values: vramValues,
     },
     {
       key: 'memory',
       label: 'RAM',
-      value: formatPercent(latestNumber(ramValues)),
       values: ramValues,
     },
     {
       key: 'swap',
       label: 'Swap',
-      value: formatPercent(latestNumber(swapValues)),
-      meta: `occupied · ${swapActivityMeta(latestNumber(swapActivityValues))}`,
       values: swapValues,
     },
     {
       key: 'cpu',
       label: 'CPU',
-      value: formatPercent(latestNumber(cpuValues)),
       values: cpuValues,
     },
     {
       key: 'load',
       label: 'Load',
-      value: formatPercent(latestNumber(loadValues)),
       values: loadValues,
     },
   ]
 }
 
-function TimelineGraph({ samples, historyLimit, historyError, active }: { samples: TimelineSample[]; historyLimit?: number; historyError?: string; active: boolean }) {
+function TimelineGraph({ samples, historyError, active }: { samples: TimelineSample[]; historyError?: string; active: boolean }) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
   const series = buildTimelineSeries(samples)
   const labelWidth = 154
-  const rowHeight = 76
-  const rowGap = 8
-  const axisHeight = 28
+  const rowHeight = 64
+  const rowGap = 0
+  const axisHeight = 24
   const sampleSpacing = 5
   const barWidth = 4
   const innerWidth = Math.max(900, Math.min(2960, Math.max(samples.length - 1, 1) * sampleSpacing))
@@ -382,9 +329,30 @@ function TimelineGraph({ samples, historyLimit, historyError, active }: { sample
   const chartBottom = rowHeight - 7
   const yFor = (value: number) => chartTop + (100 - clampPercent(value)) / 100 * (chartBottom - chartTop)
   const barXFor = (index: number) => Math.max(0, Math.min(innerWidth - barWidth, xFor(index)))
-  const tickIndexes = Array.from(new Set(samples.length > 0 ? [0, Math.floor((samples.length - 1) / 2), samples.length - 1] : []))
+  const tickIndexes = Array.from(new Set(samples.length > 0 ? [0, samples.length - 1] : []))
   const latestSampleAt = samples[samples.length - 1]?.at
   const sampleCountLabel = `${samples.length} ${samples.length === 1 ? 'sample' : 'samples'}`
+  const historyLabel = samples.length ? `${sampleCountLabel}${historyError ? ' · current status fallback' : ''}` : 'waiting for history'
+  const hoveredSample = hoveredIndex === null ? null : samples[hoveredIndex]
+  const hoveredX = hoveredIndex === null ? null : xFor(hoveredIndex)
+
+  const nearestSampleIndex = (localX: number) => {
+    if (samples.length === 0) return null
+    return samples.reduce((nearestIndex, _sample, index) => {
+      const nearestDistance = Math.abs(xFor(nearestIndex) - localX)
+      const distance = Math.abs(xFor(index) - localX)
+      return distance < nearestDistance ? index : nearestIndex
+    }, 0)
+  }
+
+  const handleStripPointerMove = (event: ReactPointerEvent<SVGSVGElement>) => {
+    const bounds = event.currentTarget.getBoundingClientRect()
+    if (bounds.width <= 0) return
+    const localX = Math.max(0, Math.min(innerWidth, (event.clientX - bounds.left) / bounds.width * innerWidth))
+    setHoveredIndex(nearestSampleIndex(localX))
+  }
+
+  const clearHover = () => setHoveredIndex(null)
 
   useEffect(() => {
     const node = scrollRef.current
@@ -405,50 +373,67 @@ function TimelineGraph({ samples, historyLimit, historyError, active }: { sample
     <section className="system-panel system-timeline-panel" aria-labelledby="system-timeline-title">
       <div className="system-panel-header">
         <div>
-          <h2 id="system-timeline-title">Telemetry strips</h2>
-          <p>{samples.length ? `${sampleCountLabel} · ${historyError ? 'current status fallback' : `backend history${historyLimit ? ` limit ${historyLimit}` : ''}`}` : 'waiting for backend history'}</p>
+          <h2 id="system-timeline-title">History</h2>
+          <p>{historyLabel}</p>
         </div>
+        {hoveredSample && (
+          <div className="system-history-readout" role="status" aria-label="History sample">
+            <strong>{formatTime(hoveredSample.timestamp)}</strong>
+            {series.map(item => (
+              <span key={`readout-${item.key}`}>
+                <b>{item.label.toUpperCase()}</b> {formatPercent(item.values[hoveredIndex ?? 0])}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
-      <div className="system-timeline-meta">
-        <div className="system-timeline-hint">TUI-style separated graphs · scroll sideways for history</div>
-        {historyError && <div className="system-timeline-note" role="status">History unavailable: {historyError}</div>}
-      </div>
+      {historyError && <div className="system-timeline-note" role="status">History unavailable: {historyError}</div>}
       <div ref={scrollRef} className="system-timeline-scroll" aria-label="Scrollable server telemetry history" tabIndex={0}>
         <div className="system-tui-chart" style={{ width }}>
           <div className="system-tui-time-axis" style={{ gridTemplateColumns: `${labelWidth}px ${innerWidth}px` }}>
             <span />
             <svg viewBox={`0 0 ${innerWidth} ${axisHeight}`} width={innerWidth} height={axisHeight} aria-hidden="true">
-              {tickIndexes.map(index => (
-                <g key={`axis-${index}`}>
-                  <line className="system-tui-tick" x1={xFor(index)} x2={xFor(index)} y1="4" y2={axisHeight - 12} />
-                  <text className="system-tui-time" x={xFor(index)} y={axisHeight - 2}>{formatTime(samples[index]?.timestamp)}</text>
-                </g>
-              ))}
+              {tickIndexes.map(index => {
+                const tickX = xFor(index)
+                const isFirstTick = index === 0
+                const isLastTick = index === samples.length - 1
+                return (
+                  <g key={`axis-${index}`}>
+                    <line className="system-tui-tick" x1={tickX} x2={tickX} y1="4" y2={axisHeight - 12} />
+                    <text
+                      className="system-tui-time"
+                      x={tickX}
+                      dx={isFirstTick ? 4 : isLastTick ? -4 : 0}
+                      y={axisHeight - 2}
+                      textAnchor={isFirstTick ? 'start' : isLastTick ? 'end' : 'middle'}
+                    >
+                      {formatTime(samples[index]?.timestamp)}
+                    </text>
+                  </g>
+                )
+              })}
             </svg>
           </div>
           <div className="system-tui-rows" style={{ gap: rowGap }}>
-            {samples.length === 0 && <div className="system-timeline-empty">Waiting for backend history</div>}
+            {samples.length === 0 && <div className="system-timeline-empty">Waiting for history</div>}
             {series.map(item => {
               return (
                 <div key={item.key} className={`system-tui-row system-tui-row-${item.key}`} style={{ gridTemplateColumns: `${labelWidth}px ${innerWidth}px` }}>
                   <div className="system-tui-row-label">
                     <span>{item.label}</span>
-                    <strong>{item.value}</strong>
-                    <small>{item.meta || '0-100'}</small>
                   </div>
                   <svg
                     className="system-tui-strip"
                     role="img"
-                    aria-label={`${item.label} telemetry strip`}
+                    aria-label={`${item.label} history`}
                     viewBox={`0 0 ${innerWidth} ${rowHeight}`}
                     width={innerWidth}
                     height={rowHeight}
+                    onPointerMove={handleStripPointerMove}
+                    onPointerLeave={clearHover}
                   >
-                    <title>{item.label} telemetry strip</title>
+                    <title>{item.label} history</title>
                     <rect className="system-tui-bg" x="0" y="0" width={innerWidth} height={rowHeight} />
-                    {[25, 50, 75].map(percent => (
-                      <line key={`${item.key}-guide-${percent}`} className="system-tui-guide" x1="0" x2={innerWidth} y1={yFor(percent)} y2={yFor(percent)} />
-                    ))}
                     {tickIndexes.map(index => (
                       <line key={`${item.key}-tick-${index}`} className="system-tui-tick" x1={xFor(index)} x2={xFor(index)} y1="0" y2={rowHeight} />
                     ))}
@@ -458,9 +443,8 @@ function TimelineGraph({ samples, historyLimit, historyError, active }: { sample
                       const hoverLabel = `${item.label} ${formatPercent(value)} · ${formatTime(samples[index]?.timestamp)}`
                       return (
                         <g key={`${item.key}-bar-${index}`} className="system-tui-bar-point" aria-label={hoverLabel}>
-                          <title>{hoverLabel}</title>
                           <rect
-                            className={`system-tui-bar system-tui-bar-${item.key}`}
+                            className={`system-tui-bar system-tui-bar-${item.key}${hoveredIndex === index ? ' system-tui-bar-hover' : ''}`}
                             x={barXFor(index)}
                             y={y}
                             width={barWidth}
@@ -469,44 +453,15 @@ function TimelineGraph({ samples, historyLimit, historyError, active }: { sample
                         </g>
                       )
                     })}
+                    {hoveredX !== null && (
+                      <line className="system-tui-crosshair" x1={hoveredX} x2={hoveredX} y1="0" y2={rowHeight} />
+                    )}
                   </svg>
                 </div>
               )
             })}
           </div>
         </div>
-      </div>
-    </section>
-  )
-}
-
-function StoragePanel({ disks }: { disks: SystemDiskStatus[] }) {
-  const storageGroups = dedupeStorageDisks(disks)
-  const storageCount = storageGroups.length
-
-  return (
-    <section className="system-panel system-storage-panel" aria-label="Storage state">
-      <div className="system-panel-header">
-        <div>
-          <h2>Storage</h2>
-          <p>{storageCount ? `${storageCount} ${storageCount === 1 ? 'storage pool' : 'storage pools'}${storageCount !== disks.length ? ` · ${disks.length} mounts deduped` : ''}` : 'no disk data'}</p>
-        </div>
-      </div>
-      <div className="system-storage-list">
-        {storageGroups.map(disk => (
-          <div key={disk.mounts.join('|')} className="system-storage-row">
-            <div className="system-storage-main">
-              <strong>{disk.mounts.join(', ')}</strong>
-              <small>{diskLabel(disk)}</small>
-            </div>
-            <div className="system-storage-usage">
-              <b>{formatPercent(disk.usedPercent)}</b>
-              <span>{formatBytes(disk.availableBytes)} available</span>
-            </div>
-            <PercentBar value={disk.usedPercent} tone={disk.usedPercent >= 85 ? 'warn' : 'normal'} />
-          </div>
-        ))}
-        {storageGroups.length === 0 && <div className="system-empty">No disk data</div>}
       </div>
     </section>
   )
@@ -538,7 +493,7 @@ function WarningPanel({ warnings }: { warnings: SystemWarning[] }) {
 function SystemStatusView({ active = true }: { active?: boolean }) {
   const [status, setStatus] = useState<SystemStatus | null>(null)
   const [historySamples, setHistorySamples] = useState<SystemStatus[]>([])
-  const [historyLimit, setHistoryLimit] = useState<number | undefined>()
+
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [historyError, setHistoryError] = useState('')
@@ -565,10 +520,8 @@ function SystemStatusView({ active = true }: { active?: boolean }) {
 
     if (historyResult.status === 'fulfilled') {
       setHistorySamples(combineStatusHistory(historyResult.value.samples || [], next))
-      setHistoryLimit(historyResult.value.limit)
     } else {
       setHistorySamples(combineStatusHistory([], next))
-      setHistoryLimit(undefined)
       setHistoryError(formatSystemError(historyResult.reason, 'System history request failed'))
     }
 
@@ -594,6 +547,16 @@ function SystemStatusView({ active = true }: { active?: boolean }) {
   const gpuMemory = gpuMemoryLabel(gpu)
   const memory = status?.memory
   const hasSwap = (memory?.swapTotalBytes || 0) > 0
+  const cpuValue = cpu ? `${cpu.cores} cores` : status ? 'CPU unavailable' : loading ? 'loading' : undefined
+  const cpuMeta = host ? `load ${host.load1.toFixed(2)} / ${host.load5.toFixed(2)} / ${host.load15.toFixed(2)}` : undefined
+  const gpuValue = gpu?.available ? undefined : gpuLabel(gpu)
+  const gpuMeta = gpu?.available ? undefined : gpu?.message || 'telemetry unavailable'
+  const vramValue = gpu?.available && gpuMemory ? gpuMemory : status ? 'VRAM unavailable' : loading ? 'loading' : undefined
+  const vramMeta = gpu?.available ? [gpu.name, gpuSource].filter(Boolean).join(' · ') : undefined
+  const ramValue = memory ? `${formatBytes(memory.usedBytes)} / ${formatBytes(memory.totalBytes)}` : status ? 'memory unavailable' : loading ? 'loading' : undefined
+  const ramMeta = memory ? `free ${formatBytes(memory.freeBytes)} · available ${formatBytes(memory.availableBytes)}` : undefined
+  const swapValue = hasSwap ? `${formatBytes(memory?.swapUsedBytes)} / ${formatBytes(memory?.swapTotalBytes)}` : status ? memory ? 'swap not configured' : 'swap unavailable' : loading ? 'loading' : undefined
+  const storageValue = rootDisk ? diskLabel(rootDisk) : status ? 'storage unavailable' : loading ? 'loading' : undefined
   const timelineSamples = useMemo(() => buildTimelineSamples(historySamples), [historySamples])
   const latestTimeline = timelineSamples[timelineSamples.length - 1]
   const warnings = useMemo(() => buildWarnings(status, rootDisk, latestTimeline), [status, rootDisk, latestTimeline])
@@ -619,7 +582,6 @@ function SystemStatusView({ active = true }: { active?: boolean }) {
             <strong>{host?.hostname || 'host'}</strong>
             <span>{host ? `${formatUptime(host.uptimeSeconds)} uptime` : loading ? 'loading' : 'offline'}</span>
             <span>{status ? `updated ${formatTime(status.timestamp)}` : '--'}</span>
-            <span>{warnings.length ? `${warnings.length} warnings` : error ? 'status error' : 'nominal'}</span>
           </p>
         </div>
         <div className="system-hero-actions">
@@ -651,41 +613,50 @@ function SystemStatusView({ active = true }: { active?: boolean }) {
       <div className="system-status-body">
         <div className="system-summary-grid">
           <SummaryCard
-            label="CPU / LOAD"
-            value={status ? `load ${formatPercent(latestTimeline?.loadPercent)}` : '--'}
-            detail={cpu ? `CPU ${formatPercent(latestTimeline?.cpuPercent)} · ${cpu.cores} cores` : status ? 'CPU unavailable' : loading ? 'loading' : undefined}
-            gaugeValue={latestTimeline?.loadPercent}
-            tone={(latestTimeline?.cpuPercent || 0) >= 85 || (latestTimeline?.loadPercent || 0) >= 90 ? 'warn' : 'cpu'}
+            label="CPU"
+            value={cpuValue}
+            meta={cpuMeta}
+            gaugeValue={latestTimeline?.cpuPercent}
+            tone={(latestTimeline?.cpuPercent || 0) >= 85 ? 'warn' : 'cpu'}
           />
           <SummaryCard
             label="GPU"
-            value={gpu?.available ? formatPercent(gpu.utilizationPercent) : gpuLabel(gpu)}
-            detail={gpu?.available ? gpu.name : gpu?.message || 'telemetry unavailable'}
-            meta={gpu?.available ? [gpuMemory ? `${gpuMemory} VRAM` : '', gpuSource].filter(Boolean).join(' · ') : gpu?.message}
+            value={gpuValue}
+            meta={gpuMeta}
             gaugeValue={gpu?.available ? gpu.utilizationPercent : null}
             tone={gpu?.available ? 'gpu' : 'muted'}
           />
           <SummaryCard
+            label="VRAM"
+            value={vramValue}
+            meta={vramMeta}
+            gaugeValue={gpuMemoryPercent(gpu)}
+            tone={gpu?.available ? 'vram' : 'muted'}
+          />
+          <SummaryCard
             label="RAM"
-            value={formatPercent(memory?.usedPercent)}
-            detail={memory ? `${formatBytes(memory.usedBytes)} used of ${formatBytes(memory.totalBytes)}` : status ? 'memory unavailable' : loading ? 'loading' : undefined}
+            value={ramValue}
+            meta={ramMeta}
             gaugeValue={memory?.usedPercent}
             tone={(memory?.usedPercent || 0) >= 90 ? 'warn' : 'memory'}
           />
           <SummaryCard
             label="SWAP"
-            value={hasSwap ? `${formatPercent(memory?.swapUsedPercent)} occupied` : '--'}
-            detail={hasSwap ? `${formatBytes(memory?.swapUsedBytes)} occupied of ${formatBytes(memory?.swapTotalBytes)}` : status ? memory ? 'swap not configured' : 'swap unavailable' : loading ? 'loading' : undefined}
+            value={swapValue}
             meta={hasSwap ? [swapActivityMeta(latestTimeline?.swapActivityBytesPerSecond), (memory?.swapCachedBytes || 0) > 0 ? `${formatBytes(memory?.swapCachedBytes)} cached` : ''].filter(Boolean).join(' · ') : undefined}
             gaugeValue={hasSwap ? memory?.swapUsedPercent : null}
             tone={hasSwap && hasActiveSwapPressure(latestTimeline?.swapActivityBytesPerSecond) ? 'warn' : 'swap'}
-            metric="occupied"
+          />
+          <SummaryCard
+            label="Storage"
+            value={storageValue}
+            gaugeValue={rootDisk?.usedPercent}
+            tone={(rootDisk?.usedPercent || 0) >= 85 ? 'warn' : 'storage'}
           />
         </div>
 
         <div className="system-main-grid">
-          <TimelineGraph samples={timelineSamples} historyLimit={historyLimit} historyError={historyError} active={active} />
-          <StoragePanel disks={disks} />
+          <TimelineGraph samples={timelineSamples} historyError={historyError} active={active} />
           <WarningPanel warnings={warnings} />
         </div>
       </div>

@@ -379,6 +379,87 @@
   border-top: 1px solid var(--divider);
 }
 
+/* Session bank */
+.session-bank {
+  padding: 8px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.session-bank h2 {
+  margin: 0 0 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.session-bank p {
+  margin: 0 0 8px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.session-bank-item {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  background: var(--surface-secondary);
+}
+
+.session-bank-item + .session-bank-item {
+  margin-top: 6px;
+}
+
+.session-bank-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.session-bank-main strong {
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.session-bank-main span {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.session-bank-main code {
+  overflow: hidden;
+  color: var(--accent);
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-bank-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.session-bank-actions button {
+  flex: 1;
+  border: 1px solid var(--divider);
+  border-radius: 3px;
+  padding: 4px 6px;
+  background: var(--surface-primary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.session-bank-actions button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* Getting Started Empty State */
 .getting-started {
   padding: 16px;

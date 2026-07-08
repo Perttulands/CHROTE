@@ -21,6 +21,10 @@ test.describe('System Status View', () => {
     await page.click('.tab:has-text("Server")')
     await expect(page.locator('.system-status-view')).toBeVisible()
     await expect(page.locator('.system-timeline-panel')).toContainText(/samples/)
+    await expect(page.getByText('free 2.0 GB · available 8.0 GB')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'History' })).toBeVisible()
+    await expect(page.getByText(/TUI-style separated graphs/)).toHaveCount(0)
+    await expect(page.getByText(/backend history/)).toHaveCount(0)
   })
 
   test('uses one theme-aware bar color for telemetry strips', async ({ page }) => {
@@ -49,5 +53,12 @@ test.describe('System Status View', () => {
     expect(darkFill).not.toBe(matrixFill)
     await expect(page.locator('.system-tui-path')).toHaveCount(0)
     await expect(page.locator('.system-tui-dot')).toHaveCount(0)
+    await expect(page.locator('.system-tui-bar-point title')).toHaveCount(0)
+
+    await page.getByRole('img', { name: 'GPU history' }).hover({ position: { x: 450, y: 20 } })
+    await expect(page.getByLabel('History sample')).toBeVisible()
+    await expect(page.getByLabel('History sample')).toContainText(/GPU\s+(--|\d)/)
+    await expect(page.getByLabel('History sample')).toContainText(/CPU\s+/)
+    await expect(page.locator('.system-tui-crosshair')).toHaveCount(6)
   })
 })

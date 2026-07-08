@@ -18,6 +18,7 @@
   --system-swap: var(--system-signal);
   --system-gpu: var(--system-signal);
   --system-vram: var(--system-signal);
+  --system-storage: var(--system-signal);
   --system-panel: var(--surface-primary);
   --system-panel-soft: var(--surface-secondary);
 }
@@ -134,7 +135,7 @@
 
 .system-summary-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
   gap: 10px;
 }
 
@@ -151,16 +152,18 @@
   --system-card-color: var(--accent);
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  gap: 12px;
+  gap: 10px;
   align-items: center;
-  min-height: 106px;
+  min-height: 96px;
   padding: 12px;
 }
 
 .system-summary-cpu,
 .system-summary-gpu,
+.system-summary-vram,
 .system-summary-memory,
-.system-summary-swap { --system-card-color: var(--system-signal); }
+.system-summary-swap,
+.system-summary-storage { --system-card-color: var(--system-signal); }
 .system-summary-warn { --system-card-color: var(--color-error); }
 .system-summary-muted { --system-card-color: var(--text-dim); }
 
@@ -194,7 +197,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 
 .system-summary-label {
@@ -210,10 +213,10 @@
 
 .system-summary-card strong {
   color: var(--system-card-color);
-  font-size: clamp(22px, 2vw, 30px);
+  font-size: clamp(17px, 1.45vw, 22px);
   line-height: 1;
   font-weight: 900;
-  letter-spacing: -0.04em;
+  letter-spacing: -0.03em;
 }
 
 .system-summary-card small,
@@ -237,11 +240,11 @@
 .system-main-grid {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(300px, 0.5fr);
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto auto;
   grid-template-areas:
-    'timeline storage'
-    'timeline warnings';
+    'timeline'
+    'warnings';
   gap: 12px;
   align-items: start;
 }
@@ -253,7 +256,6 @@
 }
 
 .system-timeline-panel { grid-area: timeline; }
-.system-storage-panel { grid-area: storage; }
 .system-warning-panel { grid-area: warnings; }
 
 .system-panel-header {
@@ -281,22 +283,8 @@
   font-size: 12px;
 }
 
-.system-timeline-meta {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px 0;
-  flex-shrink: 0;
-}
-
-.system-timeline-hint {
-  border-left: 2px solid var(--accent);
-  padding-left: 9px;
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
 .system-timeline-note {
+  margin: 10px 12px 0;
   border: 1px solid var(--color-error);
   border-radius: 4px;
   padding: 7px 9px;
@@ -305,16 +293,35 @@
   font-size: 12px;
 }
 
+.system-history-readout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px 10px;
+  max-width: min(760px, 70%);
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: right;
+}
+
+.system-history-readout strong {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.system-history-readout b {
+  color: var(--system-signal);
+  font-weight: 800;
+}
+
 .system-timeline-scroll {
   min-height: 0;
   overflow-x: auto;
   overflow-y: auto;
-  margin: 10px 12px 12px;
-  padding: 10px 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--divider) 82%, transparent);
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--surface-secondary) 54%, transparent);
-  box-shadow: inset -18px 0 18px -18px var(--accent), inset 18px 0 18px -22px var(--accent);
+  margin: 8px 12px 12px;
+  padding: 2px 0 8px;
+  background: transparent;
   scrollbar-color: var(--accent) var(--surface-primary);
   scrollbar-width: auto;
 }
@@ -330,14 +337,14 @@
 }
 
 .system-tui-time-axis {
-  height: 28px;
+  height: 24px;
 }
 
 .system-tui-time-axis > span {
   position: sticky;
   left: 0;
   z-index: 3;
-  background: color-mix(in srgb, var(--surface-secondary) 88%, var(--background));
+  background: var(--surface-primary);
   border-right: 1px solid var(--divider);
 }
 
@@ -347,11 +354,12 @@
 }
 
 .system-tui-row {
-  min-height: 76px;
-  border: 1px solid color-mix(in srgb, var(--divider) 82%, transparent);
-  border-radius: 3px;
-  background: var(--background);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--surface-secondary) 54%, transparent);
+  min-height: 64px;
+  background: transparent;
+}
+
+.system-tui-row + .system-tui-row {
+  border-top: 1px solid color-mix(in srgb, var(--divider) 72%, transparent);
 }
 
 .system-tui-row-label {
@@ -363,9 +371,9 @@
   justify-content: center;
   gap: 3px;
   min-width: 0;
-  padding: 8px 10px;
+  padding: 7px 10px;
   border-right: 1px solid var(--divider);
-  background: color-mix(in srgb, var(--surface-secondary) 88%, var(--background));
+  background: var(--surface-primary);
 }
 
 .system-tui-row-label span {
@@ -377,55 +385,44 @@
   text-transform: uppercase;
 }
 
-.system-tui-row-label strong {
-  color: var(--text-primary);
-  font-size: 18px;
-  line-height: 1;
-}
-
-.system-tui-row-label small {
-  color: var(--text-dim);
-  font-size: 11px;
-}
-
-.system-tui-row-gpu .system-tui-row-label strong { color: var(--system-gpu); }
-.system-tui-row-vram .system-tui-row-label strong { color: var(--system-vram); }
-.system-tui-row-memory .system-tui-row-label strong { color: var(--system-memory); }
-.system-tui-row-swap .system-tui-row-label strong { color: var(--system-swap); }
-.system-tui-row-cpu .system-tui-row-label strong { color: var(--system-cpu); }
-.system-tui-row-load .system-tui-row-label strong { color: var(--system-load); }
-
 .system-tui-strip {
   display: block;
-  height: 76px;
+  height: 64px;
+  touch-action: none;
 }
 
 .system-tui-bg {
-  fill: color-mix(in srgb, var(--background) 88%, var(--surface-secondary));
+  fill: color-mix(in srgb, var(--background) 94%, var(--surface-secondary));
 }
 
-.system-tui-guide,
 .system-tui-tick {
   stroke: color-mix(in srgb, var(--divider) 78%, transparent);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
 
-.system-tui-guide {
-  stroke-dasharray: 2 6;
-  opacity: 0.72;
-}
-
 .system-tui-time {
   fill: var(--text-dim);
   font-size: 12px;
-  text-anchor: middle;
 }
 
 .system-tui-bar {
   fill: var(--system-signal);
   opacity: 0.9;
   shape-rendering: crispEdges;
+}
+
+.system-tui-bar.system-tui-bar-hover {
+  fill: var(--accent);
+  opacity: 1;
+}
+
+.system-tui-crosshair {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  opacity: 0.92;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
 }
 
 .system-tui-bar-gpu,
@@ -549,15 +546,6 @@
 @media (max-width: 1240px) {
   .system-summary-grid {
     grid-template-columns: repeat(2, minmax(180px, 1fr));
-  }
-
-  .system-main-grid {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto auto auto;
-    grid-template-areas:
-      'timeline'
-      'storage'
-      'warnings';
   }
 }
 
