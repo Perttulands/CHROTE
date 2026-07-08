@@ -102,6 +102,20 @@ export const test = base.extend<{ allowedConsoleMessages: ConsoleMatcher[] }>({
         })
         return
       }
+      if (pathname === '/api/tmux/mouse') {
+        const body = request.postDataJSON() as { enabled?: boolean } | null
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            mouse: body?.enabled ? 'on' : 'off',
+            applied: 1,
+            total: 1,
+          }),
+        })
+        return
+      }
       unexpectedBackendRequests.push(`${request.method()} ${request.url()}`)
       await route.fulfill({
         status: 599,

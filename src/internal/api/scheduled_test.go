@@ -227,6 +227,7 @@ func TestScheduledTmuxRunnerSendsPromptWithLiteralSendKeysArgv(t *testing.T) {
 	t.Setenv("PATH", tmpDir)
 	t.Setenv("CHROTE_TERMINAL_USERS", "perttu")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "perttu=/tmp/chrote-fake-tmux.sock")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "perttu=/tmp/chrote-fake-home")
 
 	runner := NewScheduledTmuxRunner(NewTmuxHandler())
 	prompt := "-X; rm -rf / $(whoami)"
@@ -260,6 +261,7 @@ printf 'tmux started\n' >> "$TMUX_ARGS_FILE"
 	t.Setenv("PATH", tmpDir)
 	t.Setenv("CHROTE_TERMINAL_USERS", "perttu")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "perttu=/tmp/chrote-fake-tmux.sock")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "perttu=/tmp/chrote-fake-home")
 
 	runner := NewScheduledTmuxRunner(NewTmuxHandler())
 	ctx, cancel := context.WithCancel(context.Background())
