@@ -88,4 +88,7 @@ exit 0
 	if !strings.Contains(args, "-S /tmp/tmux-b attach-session -t shell-one") {
 		t.Fatalf("fake tmux args %q do not show trimmed socket attach", args)
 	}
+	if strings.Contains(args, "set-option") || strings.Contains(args, " mouse on") {
+		t.Fatalf("launch script should not force mouse mode and override dashboard setting; args=%q", args)
+	}
 }

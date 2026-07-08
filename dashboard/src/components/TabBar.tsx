@@ -2,10 +2,11 @@ import { useState, useRef, useEffect } from 'react'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { isFeatureEnabled } from '../featureFlags'
 import { useSession } from '../context/SessionContext'
+import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
 import { TERMINAL_LABELS, TERMINAL_WORKSPACE_IDS } from '../types'
 import type { WorkspaceId } from '../types'
 
-export type Tab = 'terminal1' | 'terminal2' | 'terminal3' | 'files' | 'agents' | 'beads' | 'formations' | 'services' | 'server' | 'settings' | 'help'
+export type Tab = 'terminal1' | 'terminal2' | 'terminal3' | 'files' | 'agents' | 'beads' | 'formations' | 'services' | 'scheduled' | 'server' | 'settings' | 'help'
 
 interface InternalTab {
   id: Tab
@@ -33,6 +34,10 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
   const [helpMenuOpen, setHelpMenuOpen] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [tabMenu, setTabMenu] = useState<{ show: boolean; x: number; y: number; workspaceId: WorkspaceId | null; submenu: string | null }>({ show: false, x: 0, y: 0, workspaceId: null, submenu: null })
+  const tabMenuPosition = useViewportMenuPosition<HTMLDivElement>(
+    tabMenu.show ? { x: tabMenu.x, y: tabMenu.y } : null,
+    { estimatedSize: { width: 230, height: 210 } },
+  )
   const helpMenuRef = useRef<HTMLDivElement>(null)
   const { settings, updateSettings, saveCurrentLayout, loadPreset, layoutPresets, clearWorkspaceAssignments } = useSession()
 
@@ -71,6 +76,7 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
     { id: 'beads', label: 'Beads' },
     { id: 'formations', label: 'Formations' },
     { id: 'services', label: 'Services' },
+    { id: 'scheduled', label: 'Scheduled' },
     ...(isFeatureEnabled('serverStatusTab') ? [{ id: 'server' as const, label: 'Server' }] : []),
     { id: 'settings', label: 'Settings' },
   ]
@@ -233,7 +239,7 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
             </div>
           </div>
           {terminalTabMenu && tabMenu.show && (
-            <div className="session-context-menu" style={{ left: tabMenu.x, top: tabMenu.y }}>
+            <div ref={tabMenuPosition.ref} className="session-context-menu" style={tabMenuPosition.style}>
               <button className="session-context-item" onClick={renameTab}>
                 <span className="session-context-icon">✎</span>
                 Rename tab label

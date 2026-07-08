@@ -5,6 +5,7 @@ import type { MouseEvent as ReactMouseEvent } from 'react'
 import type { BeadsIssue, BeadsSubTab } from './types'
 import { useProjects, useIssues, useTriage, useInsights } from './hooks'
 import { isFeatureEnabled } from '../../featureFlags'
+import { copyTextToClipboard } from '../../utils/clipboard'
 import ProjectSelector from './ProjectSelector'
 import KanbanView from './KanbanView'
 import TriageView from './TriageView'
@@ -26,7 +27,7 @@ interface BeadsViewProps {
 }
 
 function copyText(text: string): void {
-  void navigator.clipboard?.writeText(text)
+  void copyTextToClipboard(text)
 }
 
 function issueReference(issue: BeadsIssue): string {

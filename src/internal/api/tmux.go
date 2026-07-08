@@ -9,7 +9,9 @@ import (
 	"os"
 	"os/exec"
 	osuser "os/user"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,6 +26,7 @@ type TmuxHandler struct {
 	colorRegex *regexp.Regexp
 	socket     string
 	workDir    string
+	bank       *sessionBankStore
 }
 
 type sessionsCache struct {
@@ -37,20 +40,42 @@ type sessionsCache struct {
 type SessionsResponse struct {
 	Sessions      []core.Session            `json:"sessions"`
 	Grouped       map[string][]core.Session `json:"grouped"`
+	Banked        []SessionBankEntry        `json:"banked"`
 	TerminalUsers []string                  `json:"terminalUsers"`
 	Timestamp     string                    `json:"timestamp"`
 	Error         string                    `json:"error,omitempty"`
 }
 
+// SessionBankEntry is a durable reminder of a terminal session that CHROTE has
+// seen. It survives CHROTE/tmux restarts so agent resume IDs stay visible.
+type SessionBankEntry struct {
+	ID            string `json:"id,omitempty"`
+	Name          string `json:"name"`
+	UnixUser      string `json:"unixUser,omitempty"`
+	Group         string `json:"group"`
+	Windows       int    `json:"windows"`
+	Attached      bool   `json:"attached"`
+	Live          bool   `json:"live"`
+	FirstSeen     string `json:"firstSeen"`
+	LastSeen      string `json:"lastSeen"`
+	ResumeCommand string `json:"resumeCommand"`
+}
+
 // CreateSessionRequest is the request body for creating a session
 type CreateSessionRequest struct {
-	Name     string `json:"name"`
-	UnixUser string `json:"unixUser,omitempty"`
+	Name        string `json:"name"`
+	UnixUser    string `json:"unixUser,omitempty"`
+	MouseScroll *bool  `json:"mouseScroll,omitempty"`
 }
 
 // RenameSessionRequest is the request body for renaming a session
 type RenameSessionRequest struct {
 	NewName string `json:"newName"`
+}
+
+// MouseModeRequest is the request body for toggling tmux mouse mode.
+type MouseModeRequest struct {
+	Enabled *bool `json:"enabled"`
 }
 
 // AppearanceRequest is the request body for tmux appearance settings
@@ -74,6 +99,7 @@ func NewTmuxHandler() *TmuxHandler {
 		colorRegex: regexp.MustCompile(`^#[0-9A-Fa-f]{3,6}$|^[a-zA-Z]+$|^default$`),
 		socket:     strings.TrimSpace(os.Getenv("CHROTE_DEFAULT_TMUX_SOCKET")),
 		workDir:    strings.TrimSpace(os.Getenv("CHROTE_DEFAULT_TMUX_WORKDIR")),
+		bank:       newSessionBankStore(defaultSessionBankPath()),
 	}
 }
 
@@ -86,6 +112,7 @@ func (h *TmuxHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/tmux/sessions/{name}", h.RenameSession)
 	mux.HandleFunc("GET /api/tmux/sessions/{name}/capture", h.CapturePane)
 	mux.HandleFunc("POST /api/tmux/appearance", h.ApplyAppearance)
+	mux.HandleFunc("POST /api/tmux/mouse", h.SetMouseMode)
 }
 
 // RunTmux satisfies the teams.TmuxRunner interface.
@@ -210,10 +237,211 @@ func targetFromRequest(h *TmuxHandler, r *http.Request, bodyUnixUser string) (tm
 	return h.targetForUnixUser(unixUser)
 }
 
+const defaultSessionBankFile = "/srv/data/chrote/session-bank/sessions.json"
+
+func defaultSessionBankPath() string {
+	if override := strings.TrimSpace(os.Getenv("CHROTE_SESSION_BANK_PATH")); override != "" {
+		return override
+	}
+	return defaultSessionBankFile
+}
+
+type sessionBankStore struct {
+	path string
+	mu   sync.Mutex
+}
+
+func newSessionBankStore(path string) *sessionBankStore {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		path = defaultSessionBankFile
+	}
+	return &sessionBankStore{path: path}
+}
+
+func sessionBankKey(name, unixUser string) string {
+	return strings.TrimSpace(unixUser) + "\x00" + strings.TrimSpace(name)
+}
+
+func resumeCommandForSession(session core.Session) string {
+	name := strings.TrimSpace(session.Name)
+	if name == "" {
+		return ""
+	}
+	return "/resume " + name
+}
+
+func (s *sessionBankStore) Read() ([]SessionBankEntry, error) {
+	if s == nil {
+		return []SessionBankEntry{}, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entries, err := s.loadLocked()
+	if err != nil {
+		return nil, err
+	}
+	return sanitizeSessionBankEntries(entries), nil
+}
+
+func (s *sessionBankStore) Snapshot(liveSessions []core.Session) ([]SessionBankEntry, error) {
+	if s == nil {
+		return []SessionBankEntry{}, nil
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	entries, err := s.loadLocked()
+	if err != nil {
+		return nil, err
+	}
+	entries = sanitizeSessionBankEntries(entries)
+	byKey := map[string]SessionBankEntry{}
+	for _, entry := range entries {
+		if entry.Name == "" {
+			continue
+		}
+		if entry.Group == "" {
+			entry.Group = core.CategorizeSession(entry.Name)
+		}
+		entry.ResumeCommand = resumeCommandForSession(core.Session{Name: entry.Name})
+		byKey[sessionBankKey(entry.Name, entry.UnixUser)] = entry
+	}
+
+	liveKeys := map[string]bool{}
+	for _, session := range liveSessions {
+		if session.Name == "" {
+			continue
+		}
+		key := sessionBankKey(session.Name, session.UnixUser)
+		liveKeys[key] = true
+		entry := byKey[key]
+		if entry.FirstSeen == "" {
+			entry.FirstSeen = now
+		}
+		entry.Name = session.Name
+		entry.ID = session.ID
+		entry.UnixUser = session.UnixUser
+		entry.Group = session.Group
+		if entry.Group == "" {
+			entry.Group = core.CategorizeSession(session.Name)
+		}
+		entry.Windows = session.Windows
+		entry.Attached = session.Attached
+		entry.Live = true
+		entry.LastSeen = now
+		entry.ResumeCommand = resumeCommandForSession(session)
+		byKey[key] = entry
+	}
+
+	result := make([]SessionBankEntry, 0, len(byKey))
+	for key, entry := range byKey {
+		entry.Live = liveKeys[key]
+		result = append(result, entry)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Live != result[j].Live {
+			return result[i].Live
+		}
+		if result[i].LastSeen != result[j].LastSeen {
+			return result[i].LastSeen > result[j].LastSeen
+		}
+		if result[i].UnixUser != result[j].UnixUser {
+			return result[i].UnixUser < result[j].UnixUser
+		}
+		return result[i].Name < result[j].Name
+	})
+	if err := s.saveLocked(result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func sanitizeSessionBankEntries(entries []SessionBankEntry) []SessionBankEntry {
+	result := make([]SessionBankEntry, 0, len(entries))
+	for _, entry := range entries {
+		entry.Name = strings.TrimSpace(entry.Name)
+		entry.UnixUser = strings.TrimSpace(entry.UnixUser)
+		if valid, _ := core.ValidateSessionName(entry.Name, "session name"); !valid {
+			continue
+		}
+		if entry.Group == "" {
+			entry.Group = core.CategorizeSession(entry.Name)
+		}
+		entry.ResumeCommand = resumeCommandForSession(core.Session{Name: entry.Name})
+		result = append(result, entry)
+	}
+	return result
+}
+
+func (s *sessionBankStore) loadLocked() ([]SessionBankEntry, error) {
+	raw, err := os.ReadFile(s.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []SessionBankEntry{}, nil
+		}
+		return nil, err
+	}
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		return []SessionBankEntry{}, nil
+	}
+	var entries []SessionBankEntry
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return nil, fmt.Errorf("read session bank %s: %w", s.path, err)
+	}
+	return entries, nil
+}
+
+func (s *sessionBankStore) saveLocked(entries []SessionBankEntry) error {
+	raw, err := json.MarshalIndent(entries, "", "  ")
+	if err != nil {
+		return err
+	}
+	raw = append(raw, '\n')
+	dir := filepath.Dir(s.path)
+	if err := os.MkdirAll(dir, 0o2770); err != nil {
+		return err
+	}
+	_ = os.Chmod(dir, 0o2770)
+	tmp, err := os.CreateTemp(dir, ".tmp-session-bank-*.json")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+	if _, err := tmp.Write(raw); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o660); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, s.path); err != nil {
+		return err
+	}
+	_ = os.Chmod(s.path, 0o660)
+	return nil
+}
+
 func isTmuxNoServerError(errStr string) bool {
 	return strings.Contains(errStr, "no server running") ||
 		strings.Contains(errStr, "No such file or directory") ||
 		(strings.Contains(errStr, "error connecting to ") && strings.Contains(errStr, "(No such file or directory)"))
+}
+
+func appendSessionResponseError(existing, next string) string {
+	if strings.TrimSpace(existing) == "" {
+		return next
+	}
+	if strings.TrimSpace(next) == "" {
+		return existing
+	}
+	return existing + "; " + next
 }
 
 // runTmux executes a tmux command with proper environment
@@ -222,7 +450,14 @@ func (h *TmuxHandler) runTmux(args ...string) (string, error) {
 }
 
 func (h *TmuxHandler) runTmuxOnSocket(socket string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	return h.runTmuxOnSocketContext(context.Background(), socket, args...)
+}
+
+func (h *TmuxHandler) runTmuxOnSocketContext(parent context.Context, socket string, args ...string) (string, error) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
 
 	if socket != "" {
@@ -254,15 +489,23 @@ func parseSessionsOutput(output string, unixUser string) []core.Session {
 		if len(parts) < 3 {
 			continue
 		}
-		windows, _ := strconv.Atoi(parts[1]) //nolint:errcheck // defaults to 0 on parse failure, corrected to 1 below
+		sessionID := ""
+		nameIndex := 0
+		if len(parts) >= 4 {
+			sessionID = parts[0]
+			nameIndex = 1
+		}
+		name := parts[nameIndex]
+		windows, _ := strconv.Atoi(parts[nameIndex+1]) //nolint:errcheck // defaults to 0 on parse failure, corrected to 1 below
 		if windows == 0 {
 			windows = 1
 		}
 		sessions = append(sessions, core.Session{
-			Name:     parts[0],
+			ID:       sessionID,
+			Name:     name,
 			Windows:  windows,
-			Attached: parts[2] == "1",
-			Group:    core.CategorizeSession(parts[0]),
+			Attached: parts[nameIndex+2] == "1",
+			Group:    core.CategorizeSession(name),
 			UnixUser: unixUser,
 		})
 	}
@@ -270,7 +513,7 @@ func parseSessionsOutput(output string, unixUser string) []core.Session {
 }
 
 func (h *TmuxHandler) listSessionsForTarget(target tmuxTarget) ([]core.Session, string) {
-	output, err := h.runTmuxOnSocket(target.socket, "list-sessions", "-F", "#{session_name}:#{session_windows}:#{session_attached}")
+	output, err := h.runTmuxOnSocket(target.socket, "list-sessions", "-F", "#{session_id}:#{session_name}:#{session_windows}:#{session_attached}")
 	if err != nil {
 		errStr := err.Error()
 		if isTmuxNoServerError(errStr) {
@@ -305,6 +548,7 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	response := &SessionsResponse{
 		Sessions:      []core.Session{},
 		Grouped:       make(map[string][]core.Session),
+		Banked:        []SessionBankEntry{},
 		TerminalUsers: advertisedTerminalUsers(),
 		Timestamp:     time.Now().UTC().Format(time.RFC3339),
 	}
@@ -342,6 +586,20 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 
 	core.SortSessions(response.Sessions)
 	response.Grouped = core.GroupSessions(response.Sessions)
+	if h.bank != nil {
+		var banked []SessionBankEntry
+		var bankErr error
+		if queryUnixUser == "" && response.Error == "" {
+			banked, bankErr = h.bank.Snapshot(response.Sessions)
+		} else {
+			banked, bankErr = h.bank.Read()
+		}
+		if bankErr != nil {
+			response.Error = appendSessionResponseError(response.Error, "session bank: "+bankErr.Error())
+		} else {
+			response.Banked = banked
+		}
+	}
 
 	// Update cache
 	if useCache {
@@ -401,7 +659,15 @@ func (h *TmuxHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusBadRequest, "TMUX_ERROR", err.Error())
 		return
 	}
-
+	mouseScroll := true
+	if req.MouseScroll != nil {
+		mouseScroll = *req.MouseScroll
+	}
+	mouseValue := "off"
+	if mouseScroll {
+		mouseValue = "on"
+	}
+	_, _ = h.runTmuxOnSocket(target.socket, "set-option", "-g", "mouse", mouseValue)
 	h.invalidateCache()
 
 	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
@@ -606,6 +872,71 @@ func (h *TmuxHandler) CapturePane(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *TmuxHandler) appearanceTargets() []tmuxTarget {
+	users := configuredTerminalUsers()
+	if len(users) == 0 {
+		return []tmuxTarget{{socket: h.socket, workDir: h.workDir}}
+	}
+	targets := make([]tmuxTarget, 0, len(users))
+	seenSockets := map[string]bool{}
+	for _, user := range users {
+		target, err := h.targetForUnixUser(user)
+		if err != nil {
+			continue
+		}
+		key := target.socket
+		if key == "" {
+			key = "ambient:"
+		}
+		if seenSockets[key] {
+			continue
+		}
+		seenSockets[key] = true
+		targets = append(targets, target)
+	}
+	if len(targets) == 0 {
+		return []tmuxTarget{{socket: h.socket, workDir: h.workDir}}
+	}
+	return targets
+}
+
+// SetMouseMode handles POST /api/tmux/mouse. It toggles tmux's global mouse
+// option across all configured CHROTE terminal sockets.
+func (h *TmuxHandler) SetMouseMode(w http.ResponseWriter, r *http.Request) {
+	var req MouseModeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON body")
+		return
+	}
+	if req.Enabled == nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "enabled must be a boolean")
+		return
+	}
+
+	value := "off"
+	if *req.Enabled {
+		value = "on"
+	}
+
+	applied := 0
+	targets := h.appearanceTargets()
+	for _, target := range targets {
+		_, err := h.runTmuxOnSocket(target.socket, "set-option", "-g", "mouse", value)
+		if err == nil {
+			applied++
+		}
+		// Ignore errors: a tmux server/profile may not be running yet.
+	}
+
+	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"success":   true,
+		"mouse":     value,
+		"applied":   applied,
+		"total":     len(targets),
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
 // ApplyAppearance handles POST /api/tmux/appearance
 func (h *TmuxHandler) ApplyAppearance(w http.ResponseWriter, r *http.Request) {
 	var req AppearanceRequest
@@ -647,18 +978,21 @@ func (h *TmuxHandler) ApplyAppearance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	applied := 0
-	for _, args := range commands {
-		_, err := h.runTmux(args...)
-		if err == nil {
-			applied++
+	targets := h.appearanceTargets()
+	for _, target := range targets {
+		for _, args := range commands {
+			_, err := h.runTmuxOnSocket(target.socket, args...)
+			if err == nil {
+				applied++
+			}
+			// Ignore errors for appearance - a tmux server/profile might not be running.
 		}
-		// Ignore errors for appearance - tmux server might not be running
 	}
 
 	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"success":   true,
 		"applied":   applied,
-		"total":     len(commands),
+		"total":     len(commands) * len(targets),
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	})
 }

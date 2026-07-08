@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import FilesView from './FilesView'
-import { fetchDirectory } from './FilesView/fileService'
+import { fetchDirectory, readTextFile, writeTextFile } from './FilesView/fileService'
 
 vi.mock('./FilesView/fileService', async () => {
   const actual = await vi.importActual<typeof import('./FilesView/fileService')>('./FilesView/fileService')
@@ -20,16 +20,266 @@ vi.mock('./FilesView/fileService', async () => {
 })
 
 const mockFetchDirectory = vi.mocked(fetchDirectory)
+const mockReadTextFile = vi.mocked(readTextFile)
+const mockWriteTextFile = vi.mocked(writeTextFile)
+
+const textFile = (name: string, content = '') => ({
+  name,
+  path: `/${name}`,
+  isDir: false,
+  size: content.length,
+  modified: '2026-01-01T00:00:00Z',
+  type: 'text/plain',
+})
+
+function mockRootFiles(contentsByName: Record<string, string>) {
+  mockFetchDirectory.mockImplementation(async (path: string) => {
+    if (path === '/') {
+      return Object.entries(contentsByName).map(([name, content]) => textFile(name, content))
+    }
+    return []
+  })
+  mockReadTextFile.mockImplementation(async (path: string) => {
+    const name = path.replace(/^\//, '')
+    return contentsByName[name] ?? ''
+  })
+}
+
+async function openRootFile(name: string) {
+  const namePattern = new RegExp(name.replace('.', '\\.'), 'i')
+  fireEvent.click(await screen.findByRole('row', { name: namePattern }))
+  await within(editorTabs()).findByRole('button', { name: namePattern })
+}
+
+function editorTabs() {
+  return document.querySelector('.fb-editor-tabs') as HTMLElement
+}
+
+function setViewportForTest(width: number, height: number) {
+  const originalWidth = window.innerWidth
+  const originalHeight = window.innerHeight
+
+  Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: width })
+  Object.defineProperty(window, 'innerHeight', { configurable: true, writable: true, value: height })
+
+  return () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: originalWidth })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, writable: true, value: originalHeight })
+  }
+}
+
+function menuRect(width: number, height: number): DOMRect {
+  return {
+    x: 0,
+    y: 0,
+    width,
+    height,
+    top: 0,
+    left: 0,
+    right: width,
+    bottom: height,
+    toJSON: () => ({}),
+  } as DOMRect
+}
+
+function installClipboardMock(writeText = vi.fn().mockResolvedValue(undefined)) {
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText },
+  })
+  return writeText
+}
+
+function captureExecCommandCopy() {
+  const hadExecCommand = 'execCommand' in document
+  const originalExecCommand = document.execCommand
+  let copiedText = ''
+  const execCommand = vi.fn((command: string) => {
+    if (command !== 'copy') return false
+    copiedText = (document.querySelector('[data-chrote-clipboard-fallback="true"]') as HTMLTextAreaElement | null)?.value ?? ''
+    return true
+  })
+  Object.defineProperty(document, 'execCommand', {
+    configurable: true,
+    value: execCommand,
+  })
+  return {
+    execCommand,
+    copiedText: () => copiedText,
+    restore: () => {
+      if (hadExecCommand) {
+        Object.defineProperty(document, 'execCommand', { configurable: true, value: originalExecCommand })
+      } else {
+        Reflect.deleteProperty(document, 'execCommand')
+      }
+    },
+  }
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
   window.localStorage.clear()
-  Object.assign(navigator, {
-    clipboard: {
-      writeText: vi.fn().mockResolvedValue(undefined),
-    },
-  })
+  installClipboardMock()
   mockFetchDirectory.mockResolvedValue([])
+  mockReadTextFile.mockResolvedValue('')
+  mockWriteTextFile.mockResolvedValue(undefined)
+})
+
+describe('FilesView editor tab bulk close', () => {
+  it('shows Close All for multiple clean tabs and clears open files and active file', async () => {
+    mockRootFiles({
+      'one.txt': 'one',
+      'two.txt': 'two',
+    })
+
+    render(<FilesView />)
+
+    await openRootFile('one.txt')
+    await openRootFile('two.txt')
+
+    const tabs = editorTabs()
+    expect(await within(tabs).findByRole('button', { name: /one\.txt/ })).toBeInTheDocument()
+    expect(await within(tabs).findByRole('button', { name: /two\.txt/ })).toBeInTheDocument()
+
+    fireEvent.click(await within(tabs).findByRole('button', { name: /close all/i }))
+
+    await waitFor(() => {
+      expect(within(tabs).queryByRole('button', { name: /one\.txt/ })).not.toBeInTheDocument()
+      expect(within(tabs).queryByRole('button', { name: /two\.txt/ })).not.toBeInTheDocument()
+    })
+    expect(screen.getByText('Preview')).toBeInTheDocument()
+    expect(screen.getByText('No file selected')).toBeInTheDocument()
+  })
+
+  it('refuses Close All when any open tab is dirty', async () => {
+    mockRootFiles({
+      'clean.txt': 'clean',
+      'dirty.txt': 'dirty',
+    })
+
+    render(<FilesView />)
+
+    await openRootFile('clean.txt')
+    await openRootFile('dirty.txt')
+    fireEvent.change(await screen.findByDisplayValue('dirty'), { target: { value: 'changed but unsaved' } })
+
+    fireEvent.click(await within(editorTabs()).findByRole('button', { name: /close all/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/save or close unsaved files/i)
+    expect(within(editorTabs()).getByRole('button', { name: /clean\.txt/ })).toBeInTheDocument()
+    expect(within(editorTabs()).getByRole('button', { name: /dirty\.txt/ })).toBeInTheDocument()
+  })
+
+  it('offers Close Others and Close All from the tab context menu for multiple open tabs', async () => {
+    mockRootFiles({
+      'one.txt': 'one',
+      'two.txt': 'two',
+    })
+
+    render(<FilesView />)
+
+    await openRootFile('one.txt')
+    await openRootFile('two.txt')
+
+    fireEvent.contextMenu(within(editorTabs()).getByRole('button', { name: /one\.txt/ }), { clientX: 320, clientY: 180 })
+    const menu = document.querySelector('.fb-tab-context-menu') as HTMLElement
+
+    expect(within(menu).getByRole('button', { name: 'Close Others' })).toBeInTheDocument()
+    expect(within(menu).getByRole('button', { name: 'Close All' })).toBeInTheDocument()
+
+    fireEvent.click(within(menu).getByRole('button', { name: 'Close Others' }))
+
+    await waitFor(() => {
+      expect(within(editorTabs()).getByRole('button', { name: /one\.txt/ })).toBeInTheDocument()
+      expect(within(editorTabs()).queryByRole('button', { name: /two\.txt/ })).not.toBeInTheDocument()
+    })
+  })
+})
+
+describe('FilesView Markdown editor', () => {
+  it('renders Markdown files with a markdown-specific editor and safe preview markup', async () => {
+    mockRootFiles({
+      'notes.md': [
+        '# Title',
+        '',
+        '- Plain item',
+        '- [x] Done task',
+        '- [ ] Open task',
+        '',
+        '> Quoted line',
+        '',
+        '~~~ts',
+        'const answer = 42',
+        '~~~',
+        '',
+        '[Safe link](https://example.com/path)',
+        '<script>alert("owned")</script>',
+        '[Bad link](javascript:alert(1))',
+      ].join('\n'),
+    })
+
+    render(<FilesView />)
+
+    await openRootFile('notes.md')
+
+    expect(await screen.findByLabelText('Markdown source for notes.md')).toBeInTheDocument()
+    expect(screen.getByLabelText('Markdown preview for notes.md')).toBeInTheDocument()
+    expect(document.querySelector('.fb-editor-textarea')).not.toBeInTheDocument()
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Title' })).toBeInTheDocument()
+    expect(screen.getByText('Plain item').closest('li')).toBeInTheDocument()
+    expect(screen.getByText('Quoted line').closest('blockquote')).toBeInTheDocument()
+    expect(screen.getByText('const answer = 42').closest('code')).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: /Done task/ })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: /Done task/ })).toBeDisabled()
+    expect(screen.getByRole('checkbox', { name: /Open task/ })).not.toBeChecked()
+
+    const safeLink = screen.getByRole('link', { name: 'Safe link' })
+    expect(safeLink).toHaveAttribute('href', 'https://example.com/path')
+    expect(safeLink).toHaveAttribute('rel', expect.stringContaining('noopener'))
+
+    expect(document.querySelector('script')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Markdown preview for notes.md')).toHaveTextContent('<script>alert("owned")</script>')
+    expect(screen.getByText('Bad link')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Bad link' })).not.toBeInTheDocument()
+  })
+
+  it('marks Markdown edits dirty and saves through the existing text file API', async () => {
+    mockRootFiles({
+      'notes.markdown': '# Original',
+    })
+
+    render(<FilesView />)
+
+    await openRootFile('notes.markdown')
+    const source = await screen.findByLabelText('Markdown source for notes.markdown')
+    const nextContent = '# Edited\n\n- saved item'
+
+    fireEvent.change(source, { target: { value: nextContent } })
+
+    expect(within(editorTabs()).getByRole('button', { name: /\* notes\.markdown/ })).toBeInTheDocument()
+    const saveButton = screen.getByRole('button', { name: 'Save' })
+    expect(saveButton).toBeEnabled()
+
+    fireEvent.click(saveButton)
+
+    await waitFor(() => expect(mockWriteTextFile).toHaveBeenCalledWith('/notes.markdown', nextContent))
+    await waitFor(() => expect(within(editorTabs()).getByRole('button', { name: /notes\.markdown/ })).not.toHaveTextContent(/^\*/))
+  })
+
+  it('renders malformed fenced code starts as text instead of hanging the Markdown preview', async () => {
+    mockRootFiles({
+      'odd.md': ['# Odd', '```foo bar', 'still visible', 'after malformed fence'].join('\n'),
+    })
+
+    render(<FilesView />)
+
+    await openRootFile('odd.md')
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Odd' })).toBeInTheDocument()
+    const preview = screen.getByLabelText('Markdown preview for odd.md')
+    expect(preview).toHaveTextContent('```foo bar still visible after malformed fence')
+  })
 })
 
 describe('FilesView saved path groups', () => {
@@ -113,6 +363,57 @@ describe('FilesView context menu copy/open actions', () => {
 
     fireEvent.click(within(menu).getByRole('button', { name: 'Copy Current Folder Path' }))
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith('/')
+  })
+
+  it('copies current folder path through the browser fallback when Clipboard API is unavailable', async () => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+    const execCopy = captureExecCommandCopy()
+
+    try {
+      render(<FilesView />)
+      await screen.findByRole('row', { name: /hosts/ })
+
+      fireEvent.contextMenu(document.querySelector('.fb-content') as HTMLElement)
+      const menu = document.querySelector('.fb-context-menu') as HTMLElement
+      fireEvent.click(within(menu).getByRole('button', { name: 'Copy Current Folder Path' }))
+
+      expect(execCopy.execCommand).toHaveBeenCalledWith('copy')
+      expect(execCopy.copiedText()).toBe('/')
+    } finally {
+      execCopy.restore()
+    }
+  })
+
+  it('clamps the background context menu inside the viewport near the bottom-right edge', async () => {
+    const restoreViewport = setViewportForTest(400, 300)
+    const menuWidth = 180
+    const menuHeight = 180
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect
+    const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if ((this as HTMLElement).classList.contains('fb-context-menu')) return menuRect(menuWidth, menuHeight)
+      return originalGetBoundingClientRect.call(this)
+    })
+
+    try {
+      render(<FilesView />)
+      await screen.findByRole('row', { name: /hosts/ })
+
+      fireEvent.contextMenu(document.querySelector('.fb-content') as HTMLElement, { clientX: 390, clientY: 290 })
+      const menu = document.querySelector('.fb-context-menu') as HTMLElement
+
+      await waitFor(() => {
+        const left = Number.parseFloat(menu.style.left)
+        const top = Number.parseFloat(menu.style.top)
+
+        expect(left).toBeLessThan(390)
+        expect(top).toBeLessThan(290)
+        expect(left + menuWidth).toBeLessThanOrEqual(window.innerWidth)
+        expect(top + menuHeight).toBeLessThanOrEqual(window.innerHeight)
+      })
+    } finally {
+      rectSpy.mockRestore()
+      restoreViewport()
+    }
   })
 
   it('copies selected paths, relative path, and opens a selected item parent from item menus', async () => {

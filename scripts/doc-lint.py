@@ -27,6 +27,33 @@ REQUIRED_FRONTMATTER = {
     "enforced_by": "scripts/doc-lint.py",
 }
 INDEX_PATH = Path("docs/source-truth-index.md")
+LANE_AWARE_DOCS = [
+    "README.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "PRD.md",
+    "COMPONENTS.md",
+    "CLAUDE.md",
+    "AGENTS.md",
+    "docs/troubleshooting.md",
+    "docs/TEST_STRATEGY.md",
+    "dashboard/README.md",
+]
+LANE_TOKENS = {
+    "srv": [
+        "/srv/chrote",
+        "/srv/data/chrote",
+        "chrote-srv.service",
+        "8095",
+        "7686",
+    ],
+    "legacy": [
+        "/home/perttu/chrote",
+        "chrote.service",
+        "8094",
+        "7683",
+    ],
+}
 INTENTIONALLY_ABSENT = [
     "CHROTE.md",
     "SPEC-CHANGELOG.md",
@@ -216,6 +243,21 @@ def check_security_runtime_facts(errors: list[str]) -> None:
             fail(errors, f"SECURITY.md: stale runtime/security text remains: {token!r}")
 
 
+def check_service_lane_docs(errors: list[str]) -> None:
+    for rel_path in LANE_AWARE_DOCS:
+        path = ROOT / rel_path
+        if not path.exists():
+            fail(errors, f"missing lane-aware doc: {rel_path}")
+            continue
+        text = path.read_text(encoding="utf-8")
+        missing_srv = [token for token in LANE_TOKENS["srv"] if token not in text]
+        if missing_srv:
+            fail(errors, f"{rel_path}: missing /srv proving lane facts {missing_srv}")
+        legacy_present = any(token in text for token in LANE_TOKENS["legacy"])
+        if legacy_present and "legacy rollback" not in text:
+            fail(errors, f"{rel_path}: legacy runtime facts must be labeled as legacy rollback")
+
+
 def main() -> int:
     errors: list[str] = []
     check_active_spec_frontmatter(errors)
@@ -223,6 +265,7 @@ def main() -> int:
     check_source_truth_index(errors)
     check_theme_docs(errors)
     check_security_runtime_facts(errors)
+    check_service_lane_docs(errors)
 
     if errors:
         print("doc-lint: FAIL")

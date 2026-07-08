@@ -93,6 +93,8 @@ elif [ -n "${CHROTE_TMUX_SOCKET:-}" ]; then
   attach_explicit_socket "$CHROTE_TMUX_SOCKET" "$SESSION"
 else
   # REASON: tmux has-session tests existence; stderr is noise, not an error
-  [ -n "$SESSION" ] && tmux has-session -t "$SESSION" 2>/dev/null && exec tmux attach-session -t "$SESSION"
+  if [ -n "$SESSION" ] && tmux has-session -t "$SESSION" 2>/dev/null; then
+    exec tmux attach-session -t "$SESSION"
+  fi
 fi
 exec bash -l

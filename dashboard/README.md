@@ -138,10 +138,10 @@ npm run test:ui                 # Interactive Playwright UI
 Live CHROTE backend and terminal integration specs are separated from the default gate:
 
 ```bash
-CHROTE_TEST_URL=http://127.0.0.1:8094 npm run test:live
+CHROTE_TEST_URL=http://127.0.0.1:8095 npm run test:live
 ```
 
-Live tests are operator-run only unless the runner has an approved CHROTE backend, tmux, and terminal proxy available at `CHROTE_TEST_URL`.
+Live tests are operator-run only unless the runner has an approved CHROTE backend, tmux, and terminal proxy available at `CHROTE_TEST_URL`. The current `/srv` proving lane is `/srv/chrote` with data under `/srv/data/chrote`, `chrote-srv.service`, HTTP `8095`, and ttyd `7686`; use `http://127.0.0.1:8094` only for the legacy rollback lane.
 
 ## Building
 

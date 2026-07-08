@@ -162,6 +162,7 @@ export interface UserSettings {
   musicVolume: number                // Music volume (0-1)
   musicEnabled: boolean              // Whether music is playing
   tmuxAppearance: TmuxAppearance     // tmux color customization
+  mouseScroll: boolean               // tmux mouse mode: scroll wheel scrolls history
   beadsProjectPaths?: string[]       // Manually added beads project paths
 }
 
@@ -178,9 +179,11 @@ export const DEFAULT_SETTINGS: UserSettings = {
   musicVolume: 0.5,
   musicEnabled: false,
   tmuxAppearance: DEFAULT_TMUX_APPEARANCE,
+  mouseScroll: true,
 }
 
 export interface TmuxSession {
+  id?: string
   name: string
   windows: number
   attached: boolean
@@ -188,9 +191,17 @@ export interface TmuxSession {
   unixUser?: LaunchUser
 }
 
+export interface SessionBankEntry extends TmuxSession {
+  live: boolean
+  firstSeen: string
+  lastSeen: string
+  resumeCommand: string
+}
+
 export interface SessionsResponse {
   sessions: TmuxSession[]
   grouped: Record<string, TmuxSession[]>
+  banked?: SessionBankEntry[]
   terminalUsers?: LaunchUser[]
   timestamp: string
   error?: string
@@ -217,6 +228,7 @@ export interface CreateSessionOptions {
   workspaceId?: WorkspaceId
   unixUser?: LaunchUser
   name?: string
+  mouseScroll?: boolean
   attachTo?: CreateSessionAttachTarget
 }
 
@@ -234,6 +246,7 @@ export interface DashboardState {
   // Session data from API
   sessions: TmuxSession[]
   groupedSessions: Record<string, TmuxSession[]>
+  sessionBank: SessionBankEntry[]
   loading: boolean
   error: string | null
 
@@ -311,10 +324,10 @@ export type DashboardContextType = DashboardState & DashboardActions
 
 // Window color themes
 export const WINDOW_COLORS = [
-  { name: 'blue', border: '#4a9eff', accent: '#4a9eff' },
-  { name: 'purple', border: '#9966ff', accent: '#9966ff' },
-  { name: 'green', border: '#00ff41', accent: '#00ff41' },
-  { name: 'orange', border: '#ff9933', accent: '#ff9933' },
+  { name: 'blue', bg: 'rgba(10, 10, 26, 0.85)', border: '#4a9eff', accent: '#4a9eff' },
+  { name: 'purple', bg: 'rgba(15, 10, 26, 0.85)', border: '#9966ff', accent: '#9966ff' },
+  { name: 'green', bg: 'rgba(10, 26, 10, 0.85)', border: '#00ff41', accent: '#00ff41' },
+  { name: 'orange', bg: 'rgba(26, 20, 10, 0.85)', border: '#ff9933', accent: '#ff9933' },
 ] as const
 
 // Group display names and priorities

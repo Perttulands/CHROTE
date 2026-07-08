@@ -63,6 +63,16 @@ describe('TabBar Services navigation', () => {
     expect(onTabChange).toHaveBeenCalledWith('services')
   })
 
+  it('shows Scheduled Tasks in desktop navigation', () => {
+    mockMatchMedia(false)
+    const onTabChange = vi.fn()
+
+    render(<TabBar activeTab="terminal1" onTabChange={onTabChange} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Scheduled' }))
+
+    expect(onTabChange).toHaveBeenCalledWith('scheduled')
+  })
+
   it('shows Services in mobile navigation', () => {
     mockMatchMedia(true)
     const onTabChange = vi.fn()

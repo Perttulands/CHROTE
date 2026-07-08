@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSession } from '../context/SessionContext'
 import { useToast } from '../context/ToastContext'
 import { getDefaultLaunchUser, getGroupPriority, getTerminalUserInitial } from '../types'
+import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
+import { copyTextToClipboard } from '../utils/clipboard'
 import SessionGroup from './SessionGroup'
 import NukeConfirmModal from './NukeConfirmModal'
 
 function SessionPanel() {
-  const { groupedSessions, loading, error, sidebarCollapsed, toggleSidebar, refreshSessions, createSession: createSessionAction, sessions, terminalUsers } = useSession()
+  const { groupedSessions, loading, error, sidebarCollapsed, toggleSidebar, refreshSessions, createSession: createSessionAction, sessions, sessionBank, terminalUsers } = useSession()
   const { addToast } = useToast()
   const [creating, setCreating] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
@@ -16,8 +18,14 @@ function SessionPanel() {
   const [namedSessionPopup, setNamedSessionPopup] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 })
   const [namedSessionName, setNamedSessionName] = useState('')
   const [namedSessionUser, setNamedSessionUser] = useState('')
-  const newSessionMenuRef = useRef<HTMLDivElement>(null)
-  const namedSessionPopupRef = useRef<HTMLDivElement>(null)
+  const newSessionMenuPosition = useViewportMenuPosition<HTMLDivElement>(
+    newSessionMenu.show ? { x: newSessionMenu.x, y: newSessionMenu.y } : null,
+    { estimatedSize: { width: 190, height: 130 } },
+  )
+  const namedSessionPopupPosition = useViewportMenuPosition<HTMLDivElement>(
+    namedSessionPopup.show ? { x: namedSessionPopup.x, y: namedSessionPopup.y } : null,
+    { estimatedSize: { width: 240, height: 180 } },
+  )
 
   // Sort groups by priority and filter by search
   const sortedGroups = useMemo(() => {
@@ -42,10 +50,17 @@ function SessionPanel() {
     })
   }, [groupedSessions, searchTerm])
 
+  const bankedSessions = useMemo(() => {
+    const needle = searchTerm.trim().toLowerCase()
+    return sessionBank
+      .filter(session => !session.live)
+      .filter(session => !needle || session.name.toLowerCase().includes(needle) || session.resumeCommand.toLowerCase().includes(needle))
+  }, [sessionBank, searchTerm])
+
   useEffect(() => {
     if (!newSessionMenu.show) return
     const close = (event: MouseEvent) => {
-      if (newSessionMenuRef.current?.contains(event.target as Node)) return
+      if (newSessionMenuPosition.ref.current?.contains(event.target as Node)) return
       setNewSessionMenu({ show: false, x: 0, y: 0 })
     }
     document.addEventListener('mousedown', close)
@@ -55,7 +70,7 @@ function SessionPanel() {
   useEffect(() => {
     if (!namedSessionPopup.show) return
     const close = (event: MouseEvent) => {
-      if (namedSessionPopupRef.current?.contains(event.target as Node)) return
+      if (namedSessionPopupPosition.ref.current?.contains(event.target as Node)) return
       setNamedSessionPopup({ show: false, x: 0, y: 0 })
     }
     document.addEventListener('mousedown', close)
@@ -95,6 +110,15 @@ function SessionPanel() {
     const unixUser = namedSessionUser || getDefaultLaunchUser('terminal1', terminalUsers)
     if (!namedSessionName.trim()) return
     await createSessionForUser(unixUser, namedSessionName)
+  }
+
+  const copyResumeCommand = async (resumeCommand: string) => {
+    const copied = await copyTextToClipboard(resumeCommand)
+    addToast(copied ? 'Resume command copied' : 'Failed to copy resume command', copied ? 'success' : 'error')
+  }
+
+  const recreateBankedSession = async (name: string, unixUser?: string) => {
+    await createSessionForUser(unixUser, name)
   }
 
   const nukeAllSessions = async () => {
@@ -153,9 +177,9 @@ function SessionPanel() {
 
       {newSessionMenu.show && (
         <div
-          ref={newSessionMenuRef}
+          ref={newSessionMenuPosition.ref}
           className="session-context-menu"
-          style={{ left: newSessionMenu.x, top: newSessionMenu.y }}
+          style={newSessionMenuPosition.style}
         >
           {terminalUsers.map(user => (
             <button
@@ -178,11 +202,11 @@ function SessionPanel() {
 
       {!sidebarCollapsed && namedSessionPopup.show && (
         <div
-          ref={namedSessionPopupRef}
+          ref={namedSessionPopupPosition.ref}
           role="dialog"
           aria-label="Create named tmux session"
           className="session-context-menu session-named-popup"
-          style={{ left: namedSessionPopup.x, top: namedSessionPopup.y }}
+          style={namedSessionPopupPosition.style}
         >
           <div className="session-named-popup-title">New named session</div>
           <input
@@ -241,7 +265,39 @@ function SessionPanel() {
             <div className="panel-error">{error}</div>
           )}
 
-          {!loading && !error && sortedGroups.length === 0 && (
+          {!loading && !error && bankedSessions.length > 0 && (
+            <section className="session-bank" aria-label="Session bank">
+              <h2>Session bank</h2>
+              <p>Offline sessions seen before restart. Recreate the tmux shell, then paste the resume command.</p>
+              {bankedSessions.map(session => (
+                <div key={`${session.unixUser || 'default'}:${session.name}`} className="session-bank-item">
+                  <div className="session-bank-main">
+                    <strong>{session.name}</strong>
+                    <span>{[session.id ? `id ${session.id}` : '', session.unixUser || 'default', `last seen ${new Date(session.lastSeen).toLocaleString()}`].filter(Boolean).join(' · ')}</span>
+                    <code>{session.resumeCommand}</code>
+                  </div>
+                  <div className="session-bank-actions">
+                    <button
+                      type="button"
+                      onClick={() => void copyResumeCommand(session.resumeCommand)}
+                      aria-label={`Copy resume command for ${session.name}`}
+                    >
+                      Copy
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void recreateBankedSession(session.name, session.unixUser)}
+                      aria-label={`Recreate tmux shell for ${session.name}`}
+                    >
+                      Recreate
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </section>
+          )}
+
+          {!loading && !error && sortedGroups.length === 0 && bankedSessions.length === 0 && (
             <div className="getting-started">
               <div className="getting-started-title">Getting Started</div>
               <div className="getting-started-text">

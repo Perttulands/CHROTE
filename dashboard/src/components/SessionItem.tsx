@@ -4,6 +4,7 @@ import type { TmuxSession, WorkspaceId } from '../types'
 import { useSession } from '../context/SessionContext'
 import { TERMINAL_LABELS, TERMINAL_WORKSPACE_IDS, WINDOW_COLORS, getSessionKey, getTerminalUserColor, getTerminalUserInitial } from '../types'
 import { isFeatureEnabled } from '../featureFlags'
+import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
 import RoleBadge from './RoleBadge'
 
 interface SessionItemProps {
@@ -23,6 +24,10 @@ function SessionItem({ session }: SessionItemProps) {
   const isAssigned = !!assignment
   const useLocationBadges = isFeatureEnabled('sessionLocationBadges')
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({ show: false, x: 0, y: 0 })
+  const contextMenuPosition = useViewportMenuPosition<HTMLDivElement>(
+    contextMenu.show ? { x: contextMenu.x, y: contextMenu.y } : null,
+    { estimatedSize: { width: 220, height: 280 } },
+  )
   const [isRenaming, setIsRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState('')
   const [showAssignSubmenu, setShowAssignSubmenu] = useState(false)
@@ -234,8 +239,9 @@ function SessionItem({ session }: SessionItemProps) {
 
       {contextMenu.show && (
         <div
+          ref={contextMenuPosition.ref}
           className="session-context-menu"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
+          style={contextMenuPosition.style}
           onClick={e => e.stopPropagation()}
         >
           <button className="session-context-item" onClick={handleStartRename}>

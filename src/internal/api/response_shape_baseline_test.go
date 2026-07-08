@@ -102,7 +102,7 @@ func TestResponseShapeBaseline_FlatTmuxEndpointsDoNotUseDataEnvelope(t *testing.
 			method:   http.MethodGet,
 			path:     "/api/tmux/sessions",
 			call:     handler.ListSessions,
-			wantKeys: []string{"grouped", "sessions", "terminalUsers", "timestamp"},
+			wantKeys: []string{"banked", "grouped", "sessions", "terminalUsers", "timestamp"},
 		},
 		{
 			name:     "create session",
@@ -153,6 +153,14 @@ func TestResponseShapeBaseline_FlatTmuxEndpointsDoNotUseDataEnvelope(t *testing.
 			body:     `{"statusBg":"black","statusFg":"white","paneBorderActive":"green"}`,
 			call:     handler.ApplyAppearance,
 			wantKeys: []string{"applied", "success", "timestamp", "total"},
+		},
+		{
+			name:     "set mouse mode",
+			method:   http.MethodPost,
+			path:     "/api/tmux/mouse",
+			body:     `{"enabled":true}`,
+			call:     handler.SetMouseMode,
+			wantKeys: []string{"applied", "mouse", "success", "timestamp", "total"},
 		},
 	}
 

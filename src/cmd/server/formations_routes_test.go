@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,7 +16,7 @@ import (
 // separate boundary that still governs execution promotion, not API availability.
 func TestFormationsRoutesAreAlwaysRegistered(t *testing.T) {
 	mux := http.NewServeMux()
-	registerRuntimeRoutes(mux, Config{TtydPort: 1})
+	registerRuntimeRoutes(mux, Config{TtydPort: 1}, context.Background())
 	registerAPIFallback(mux)
 
 	for _, path := range []string{"/api/formations/boards", "/api/agents"} {
@@ -61,9 +62,25 @@ func TestFormationsRoutesAreAlwaysRegistered(t *testing.T) {
 	}
 }
 
+func TestScheduledTaskRoutesAreRegistered(t *testing.T) {
+	t.Setenv("CHROTE_SCHEDULED_TASKS_DIR", t.TempDir())
+	mux := http.NewServeMux()
+	registerRuntimeRoutes(mux, Config{TtydPort: 1}, context.Background())
+	registerAPIFallback(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/scheduled-tasks", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("scheduled tasks list status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"success":true`) || !strings.Contains(rec.Body.String(), `"tasks"`) {
+		t.Fatalf("scheduled tasks response = %s, want success/data envelope with tasks", rec.Body.String())
+	}
+}
+
 func TestAPIFallbackKeepsUnknownAPIRoutesOutOfDashboard(t *testing.T) {
 	mux := http.NewServeMux()
-	registerRuntimeRoutes(mux, Config{TtydPort: 1})
+	registerRuntimeRoutes(mux, Config{TtydPort: 1}, context.Background())
 	registerAPIFallback(mux)
 
 	rec := httptest.NewRecorder()

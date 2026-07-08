@@ -2,6 +2,7 @@ import { Page, Route } from '@playwright/test'
 
 const fileResourcesPattern = /.*\/api\/files\/resources(?:\/.*)?$/
 const tmuxAppearancePattern = /.*\/api\/tmux\/appearance\/?$/
+const tmuxMousePattern = /.*\/api\/tmux\/mouse\/?$/
 const tmuxSessionsPattern = /.*\/api\/tmux\/sessions\/?$/
 
 // Mock beads data for testing
@@ -87,6 +88,7 @@ export const mockSystemStatus = {
     },
     memory: {
       totalBytes: 16 * 1024 * 1024 * 1024,
+      freeBytes: 2 * 1024 * 1024 * 1024,
       availableBytes: 8 * 1024 * 1024 * 1024,
       usedBytes: 8 * 1024 * 1024 * 1024,
       usedPercent: 50,
@@ -460,6 +462,15 @@ export async function mockApiRoutes(page: Page) {
     })
   })
 
+  await page.route(tmuxMousePattern, async route => {
+    const body = route.request().postDataJSON() as { enabled?: boolean } | null
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true, mouse: body?.enabled ? 'on' : 'off', applied: 1, total: 1 }),
+    })
+  })
+
   await mockFileApiRoutes(page)
   await mockSystemStatusApiRoutes(page)
 
@@ -527,39 +538,51 @@ export async function mockBeadsApiRoutes(page: Page, options?: {
 
 export async function mockSystemStatusApiRoutes(page: Page, onRequest?: () => void) {
   let sample = 0
+  const buildStatusSample = (sequence: number, timestamp: string) => ({
+    ...mockSystemStatus.data,
+    timestamp,
+    cpu: {
+      ...mockSystemStatus.data.cpu,
+      totalTicks: 1000 + sequence * 100,
+      idleTicks: 750 + sequence * 55,
+    },
+    memory: {
+      ...mockSystemStatus.data.memory,
+      usedPercent: Math.min(92, 45 + (sequence % 24)),
+    },
+    host: {
+      ...mockSystemStatus.data.host,
+      load1: 0.8 + sequence / 10,
+    },
+    network: [
+      { name: 'eth0', rxBytes: 1000000 + sequence * 1024, txBytes: 500000 + sequence * 512 },
+    ],
+  })
+
   await page.route('**/api/system/status', async route => {
     onRequest?.()
     sample += 1
-    const totalTicks = 1000 + sample * 100
-    const idleTicks = 750 + sample * 55
+    const timestamp = new Date().toISOString()
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
         ...mockSystemStatus,
-        timestamp: new Date().toISOString(),
-        data: {
-          ...mockSystemStatus.data,
-          timestamp: new Date().toISOString(),
-          cpu: {
-            ...mockSystemStatus.data.cpu,
-            totalTicks,
-            idleTicks,
-          },
-          memory: {
-            ...mockSystemStatus.data.memory,
-            usedPercent: 45 + sample,
-          },
-          host: {
-            ...mockSystemStatus.data.host,
-            load1: 0.8 + sample / 10,
-          },
-          network: [
-            { name: 'eth0', rxBytes: 1000000 + sample * 1024, txBytes: 500000 + sample * 512 },
-          ],
-        },
+        timestamp,
+        data: buildStatusSample(sample + 24, timestamp),
       }),
     })
+  })
+
+  await page.route('**/api/system/history', async route => {
+    onRequest?.()
+    const now = Date.now()
+    const samples = Array.from({ length: 24 }, (_, index) => {
+      const sequence = sample + index + 1
+      const timestamp = new Date(now - (24 - index) * 60_000).toISOString()
+      return buildStatusSample(sequence, timestamp)
+    })
+    await fulfillJson(route, { limit: 288, samples })
   })
 }
 

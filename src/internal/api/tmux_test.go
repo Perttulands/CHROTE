@@ -12,6 +12,17 @@ import (
 	"testing"
 )
 
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "chrote-tmux-tests-*")
+	if err != nil {
+		panic(err)
+	}
+	_ = os.Setenv("CHROTE_SESSION_BANK_PATH", filepath.Join(dir, "sessions.json"))
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
+}
+
 func TestTmuxHandler_NewTmuxHandler(t *testing.T) {
 	handler := NewTmuxHandler()
 
@@ -205,14 +216,7 @@ func TestTmuxHandler_ListSessions_ReturnsValidJSON(t *testing.T) {
 }
 
 func TestTmuxHandler_DefaultProfileUsesConfiguredSocketAndWorkDir(t *testing.T) {
-	tmpDir := t.TempDir()
-	argsPath := filepath.Join(tmpDir, "tmux.args")
-	fakeTmux := filepath.Join(tmpDir, "tmux")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\n"
-	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake tmux: %v", err)
-	}
-	t.Setenv("PATH", tmpDir)
+	_, argsPath := installFakeTmux(t)
 	t.Setenv("CHROTE_DEFAULT_TMUX_SOCKET", "/tmp/tmux-1001/default")
 	t.Setenv("CHROTE_DEFAULT_TMUX_WORKDIR", "/srv/terminal-three")
 
@@ -228,14 +232,13 @@ func TestTmuxHandler_DefaultProfileUsesConfiguredSocketAndWorkDir(t *testing.T) 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
 	}
-	args, err := os.ReadFile(argsPath)
-	if err != nil {
-		t.Fatalf("read fake tmux args: %v", err)
+	got := readFakeCommandCalls(t, argsPath)
+	want := []string{
+		"-S /tmp/tmux-1001/default new-session -d -s terminal-three-smoke -c /srv/terminal-three",
+		"-S /tmp/tmux-1001/default set-option -g mouse on",
 	}
-	got := strings.Split(strings.TrimSpace(string(args)), "\n")
-	want := []string{"-S", "/tmp/tmux-1001/default", "new-session", "-d", "-s", "terminal-three-smoke", "-c", "/srv/terminal-three"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
-		t.Fatalf("tmux args = %#v, want %#v", got, want)
+		t.Fatalf("tmux calls = %#v, want %#v", got, want)
 	}
 }
 
@@ -244,14 +247,7 @@ func TestTmuxHandler_CurrentUnixUserHonorsConfiguredDefaultTarget(t *testing.T) 
 	if err != nil {
 		t.Fatalf("current user: %v", err)
 	}
-	tmpDir := t.TempDir()
-	argsPath := filepath.Join(tmpDir, "tmux.args")
-	fakeTmux := filepath.Join(tmpDir, "tmux")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\n"
-	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake tmux: %v", err)
-	}
-	t.Setenv("PATH", tmpDir)
+	_, argsPath := installFakeTmux(t)
 	t.Setenv("CHROTE_DEFAULT_TMUX_SOCKET", "/configured/current-user.sock")
 	t.Setenv("CHROTE_DEFAULT_TMUX_WORKDIR", "/srv/current-user")
 	t.Setenv("CHROTE_TERMINAL_USERS", current.Username)
@@ -268,32 +264,24 @@ func TestTmuxHandler_CurrentUnixUserHonorsConfiguredDefaultTarget(t *testing.T) 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
 	}
-	args, err := os.ReadFile(argsPath)
-	if err != nil {
-		t.Fatalf("read fake tmux args: %v", err)
+	got := readFakeCommandCalls(t, argsPath)
+	want := []string{
+		"-S /configured/current-user.sock new-session -d -s current-user-smoke -c /srv/current-user",
+		"-S /configured/current-user.sock set-option -g mouse on",
 	}
-	got := strings.Split(strings.TrimSpace(string(args)), "\n")
-	want := []string{"-S", "/configured/current-user.sock", "new-session", "-d", "-s", "current-user-smoke", "-c", "/srv/current-user"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
-		t.Fatalf("tmux args = %#v, want %#v", got, want)
+		t.Fatalf("tmux calls = %#v, want %#v", got, want)
 	}
 }
 
 func TestTmuxHandler_CreateSessionUsesSelectedUnixUserTarget(t *testing.T) {
-	tmpDir := t.TempDir()
-	argsPath := filepath.Join(tmpDir, "tmux.args")
-	fakeTmux := filepath.Join(tmpDir, "tmux")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsPath + "\n"
-	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake tmux: %v", err)
-	}
-	t.Setenv("PATH", tmpDir)
+	_, argsPath := installFakeTmux(t)
 	t.Setenv("CHROTE_TERMINAL_USERS", "perttu,tavern")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "perttu=/run/user/1000/chrote-tmux/tmux-1000/default,tavern=/tmp/tmux-1001/default")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "perttu=/home/perttu,tavern=/home/tavern")
 
 	handler := NewTmuxHandler()
-	bodyBytes := []byte(`{"name":"tavern-shell","unixUser":"tavern"}`)
+	bodyBytes := []byte(`{"name":"tavern-shell","unixUser":"tavern","mouseScroll":false}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions", bytes.NewBuffer(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -303,14 +291,13 @@ func TestTmuxHandler_CreateSessionUsesSelectedUnixUserTarget(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
 	}
-	args, err := os.ReadFile(argsPath)
-	if err != nil {
-		t.Fatalf("read fake tmux args: %v", err)
+	got := readFakeCommandCalls(t, argsPath)
+	want := []string{
+		"-S /tmp/tmux-1001/default new-session -d -s tavern-shell -c /home/tavern",
+		"-S /tmp/tmux-1001/default set-option -g mouse off",
 	}
-	got := strings.Split(strings.TrimSpace(string(args)), "\n")
-	want := []string{"-S", "/tmp/tmux-1001/default", "new-session", "-d", "-s", "tavern-shell", "-c", "/home/tavern"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
-		t.Fatalf("tmux args = %#v, want %#v", got, want)
+		t.Fatalf("tmux calls = %#v, want %#v", got, want)
 	}
 }
 
@@ -425,5 +412,261 @@ func TestTmuxHandler_DeleteAllSessionsReportsListErrors(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "Permission denied") {
 		t.Fatalf("body = %q, want permission error to fail loud", recorder.Body.String())
+	}
+}
+
+func TestTmuxHandler_ApplyAppearanceTargetsConfiguredTerminalUsers(t *testing.T) {
+	tmpDir := t.TempDir()
+	callsPath := filepath.Join(tmpDir, "tmux.calls")
+	fakeTmux := filepath.Join(tmpDir, "tmux")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" >> " + callsPath + "\nprintf '%s\\n' '---' >> " + callsPath + "\n"
+	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+	t.Setenv("PATH", tmpDir)
+	t.Setenv("CHROTE_TERMINAL_USERS", "perttu,tavern")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "perttu=/tmp/tmux-p,tavern=/tmp/tmux-t")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "perttu=/home/perttu,tavern=/home/tavern")
+
+	handler := NewTmuxHandler()
+	bodyBytes := []byte(`{"statusBg":"default","statusFg":"#ffffff","paneBorderActive":"#ff00ff"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/appearance", bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	handler.ApplyAppearance(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	calls, err := os.ReadFile(callsPath)
+	if err != nil {
+		t.Fatalf("read fake tmux calls: %v", err)
+	}
+	got := string(calls)
+	if strings.Count(got, "-S\n/tmp/tmux-p\nset\n-g\n") != 2 {
+		t.Fatalf("perttu appearance calls = %q, want two commands on /tmp/tmux-p", got)
+	}
+	if strings.Count(got, "-S\n/tmp/tmux-t\nset\n-g\n") != 2 {
+		t.Fatalf("tavern appearance calls = %q, want two commands on /tmp/tmux-t", got)
+	}
+	if strings.Contains(got, "statusBg") {
+		t.Fatalf("tmux calls leaked JSON keys instead of set args: %q", got)
+	}
+}
+
+func TestTmuxHandler_SetMouseModeTargetsConfiguredTerminalUsers(t *testing.T) {
+	tmpDir := t.TempDir()
+	callsPath := filepath.Join(tmpDir, "tmux.calls")
+	fakeTmux := filepath.Join(tmpDir, "tmux")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" >> " + callsPath + "\nprintf '%s\\n' '---' >> " + callsPath + "\n"
+	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+	t.Setenv("PATH", tmpDir)
+	t.Setenv("CHROTE_TERMINAL_USERS", "perttu,tavern")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "perttu=/tmp/tmux-p,tavern=/tmp/tmux-t")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "perttu=/home/perttu,tavern=/home/tavern")
+
+	handler := NewTmuxHandler()
+	bodyBytes := []byte(`{"enabled":false}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/mouse", bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	handler.SetMouseMode(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var response map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response["mouse"] != "off" || response["applied"] != float64(2) || response["total"] != float64(2) {
+		t.Fatalf("response = %#v, want mouse off applied/total 2", response)
+	}
+	calls, err := os.ReadFile(callsPath)
+	if err != nil {
+		t.Fatalf("read fake tmux calls: %v", err)
+	}
+	got := string(calls)
+	if strings.Count(got, "-S\n/tmp/tmux-p\nset-option\n-g\nmouse\noff\n") != 1 {
+		t.Fatalf("perttu mouse calls = %q, want mouse off command on /tmp/tmux-p", got)
+	}
+	if strings.Count(got, "-S\n/tmp/tmux-t\nset-option\n-g\nmouse\noff\n") != 1 {
+		t.Fatalf("tavern mouse calls = %q, want mouse off command on /tmp/tmux-t", got)
+	}
+}
+
+func TestTmuxHandler_SetMouseModeRejectsInvalidJSON(t *testing.T) {
+	handler := NewTmuxHandler()
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/mouse", bytes.NewBufferString("{invalid}"))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	handler.SetMouseMode(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+}
+
+func TestTmuxHandler_SetMouseModeRejectsMissingEnabled(t *testing.T) {
+	_, argsPath := installFakeTmux(t)
+	handler := NewTmuxHandler()
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/mouse", bytes.NewBufferString(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	handler.SetMouseMode(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+	if got := readFakeCommandCalls(t, argsPath); len(got) != 0 {
+		t.Fatalf("tmux calls = %#v, want no side effect for missing enabled", got)
+	}
+}
+
+func TestTmuxHandler_RegisterRoutesWiresMouseMode(t *testing.T) {
+	_, argsPath := installFakeTmux(t)
+	handler := NewTmuxHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/mouse", bytes.NewBufferString(`{"enabled":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	mux.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	want := []string{"set-option -g mouse on"}
+	if got := readFakeCommandCalls(t, argsPath); strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("tmux calls = %#v, want %#v", got, want)
+	}
+}
+
+func TestTmuxHandler_SessionBankDoesNotMutateOnFilteredScans(t *testing.T) {
+	tmpDir := t.TempDir()
+	bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
+	fakeTmux := filepath.Join(tmpDir, "tmux")
+	script := `#!/bin/sh
+case "$*" in
+  *"/tmp/tmux-a"*list-sessions*) printf '$1:codex-alpha:1:0\n' ;;
+  *"/tmp/tmux-b"*list-sessions*) printf '$2:claude-beta:1:0\n' ;;
+esac
+`
+	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+	t.Setenv("PATH", tmpDir)
+	t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice,bob")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a,bob=/tmp/tmux-b")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice,bob=/home/bob")
+
+	handler := NewTmuxHandler()
+	recorder := httptest.NewRecorder()
+	handler.ListSessions(recorder, httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("full scan status = %d; body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	recorder = httptest.NewRecorder()
+	handler.ListSessions(recorder, httptest.NewRequest(http.MethodGet, "/api/tmux/sessions?unixUser=alice", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("filtered scan status = %d; body=%s", recorder.Code, recorder.Body.String())
+	}
+	var filtered SessionsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &filtered); err != nil {
+		t.Fatalf("decode filtered response: %v", err)
+	}
+	var bob *SessionBankEntry
+	for i := range filtered.Banked {
+		if filtered.Banked[i].Name == "claude-beta" && filtered.Banked[i].UnixUser == "bob" {
+			bob = &filtered.Banked[i]
+			break
+		}
+	}
+	if bob == nil {
+		t.Fatalf("filtered bank = %+v, want existing bob entry preserved", filtered.Banked)
+	}
+	if !bob.Live {
+		t.Fatalf("filtered bank bob entry = %+v, want live unchanged by alice-only scan", *bob)
+	}
+}
+
+func TestTmuxHandler_SessionBankKeepsRestartResumeHints(t *testing.T) {
+	tmpDir := t.TempDir()
+	statePath := filepath.Join(tmpDir, "offline")
+	bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
+	fakeTmux := filepath.Join(tmpDir, "tmux")
+	script := "#!/bin/sh\ncase \"$*\" in\n  *list-sessions*)\n    if [ ! -f " + statePath + " ]; then printf '$7:codex-alpha:1:0\\n'; fi\n    ;;\nesac\n"
+	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+	t.Setenv("PATH", tmpDir)
+	t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
+
+	handler := NewTmuxHandler()
+	req := httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil)
+	recorder := httptest.NewRecorder()
+	handler.ListSessions(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var liveResponse SessionsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &liveResponse); err != nil {
+		t.Fatalf("decode live response: %v", err)
+	}
+	if len(liveResponse.Banked) != 1 || !liveResponse.Banked[0].Live {
+		t.Fatalf("banked live response = %+v, want one live banked session", liveResponse.Banked)
+	}
+	if liveResponse.Banked[0].ID != "$7" {
+		t.Fatalf("banked session id = %q, want tmux id", liveResponse.Banked[0].ID)
+	}
+	if liveResponse.Banked[0].ResumeCommand != "/resume codex-alpha" {
+		t.Fatalf("resume command = %q, want /resume codex-alpha", liveResponse.Banked[0].ResumeCommand)
+	}
+
+	rawBank, err := os.ReadFile(bankPath)
+	if err != nil {
+		t.Fatalf("read bank file: %v", err)
+	}
+	tampered := strings.Replace(string(rawBank), `"resumeCommand": "/resume codex-alpha"`, `"resumeCommand": "rm -rf /"`, 1)
+	if tampered == string(rawBank) {
+		t.Fatalf("bank fixture did not contain expected resume command: %s", rawBank)
+	}
+	if err := os.WriteFile(bankPath, []byte(tampered), 0o660); err != nil {
+		t.Fatalf("tamper bank file: %v", err)
+	}
+
+	if err := os.WriteFile(statePath, []byte("offline"), 0o644); err != nil {
+		t.Fatalf("write offline state: %v", err)
+	}
+	handler = NewTmuxHandler()
+	recorder = httptest.NewRecorder()
+	handler.ListSessions(recorder, httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil))
+	var offlineResponse SessionsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &offlineResponse); err != nil {
+		t.Fatalf("decode offline response: %v", err)
+	}
+	if len(offlineResponse.Sessions) != 0 {
+		t.Fatalf("live sessions = %+v, want none after restart/offline scan", offlineResponse.Sessions)
+	}
+	if len(offlineResponse.Banked) != 1 || offlineResponse.Banked[0].Live {
+		t.Fatalf("banked offline response = %+v, want one offline banked session", offlineResponse.Banked)
+	}
+	if offlineResponse.Banked[0].LastSeen == "" || offlineResponse.Banked[0].FirstSeen == "" {
+		t.Fatalf("bank timestamps missing: %+v", offlineResponse.Banked[0])
+	}
+	if offlineResponse.Banked[0].ResumeCommand != "/resume codex-alpha" {
+		t.Fatalf("offline resume command = %q, want sanitized /resume codex-alpha", offlineResponse.Banked[0].ResumeCommand)
 	}
 }

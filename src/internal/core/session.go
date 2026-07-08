@@ -11,6 +11,7 @@ import (
 
 // Session represents a tmux session
 type Session struct {
+	ID       string `json:"id,omitempty"`
 	Name     string `json:"name"`
 	Windows  int    `json:"windows"`
 	Attached bool   `json:"attached"`

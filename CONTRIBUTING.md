@@ -46,8 +46,9 @@ cp -r dist ../src/internal/dashboard/
 cd ../src
 go build -o ../chrote-server ./cmd/server
 
-# Restart the user service to pick up changes
-systemctl --user restart chrote.service
+# Restart only the intended service lane to pick up changes.
+systemctl restart chrote-srv.service        # /srv proving lane: /srv/chrote, /srv/data/chrote, 8095/7686
+systemctl --user restart chrote.service     # legacy rollback lane: /home/perttu/chrote, 8094/7683
 ```
 
 ### Running Tests

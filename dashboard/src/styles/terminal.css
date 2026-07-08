@@ -87,7 +87,7 @@
 .terminal-window {
   display: flex;
   flex-direction: column;
-  background-color: #0a0a0a;
+  background-color: var(--window-bg, var(--surface-primary));
   border: 1px solid var(--window-border, var(--divider));
   overflow: hidden;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
@@ -237,7 +237,7 @@
   flex: 1;
   overflow: hidden;
   min-height: 0;
-  background-color: #0a0a0a;
+  background-color: var(--window-bg, rgba(0, 0, 0, 0.5));
   position: relative;
   scrollbar-width: none;
 }

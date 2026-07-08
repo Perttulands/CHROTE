@@ -1404,7 +1404,7 @@ func (realTmuxHarnessClient) SendPrompt(ctx context.Context, socket, target, dis
 			return err
 		}
 		tmuxSleep(tmuxSubmitDelay)
-		captured, err := runTmuxCommand(ctx, socket, nil, "capture-pane", "-p", "-t", target, "-S", "-40")
+		captured, err := runTmuxCommand(ctx, socket, nil, "capture-pane", "-p", "-J", "-t", target, "-S", "-40")
 		if err != nil {
 			return err
 		}
@@ -1435,7 +1435,9 @@ func tmuxPaneLooksLikePendingPastedInput(captured string) bool {
 }
 
 func (realTmuxHarnessClient) CapturePane(ctx context.Context, socket, target string, _ int) (string, error) {
-	output, err := runTmuxCommand(ctx, socket, nil, "capture-pane", "-p", "-t", target, "-S", "-2000")
+	// -J joins tmux's soft-wrapped lines so long single-line chrote-outputs JSON
+	// payloads survive capture intact at normal terminal widths.
+	output, err := runTmuxCommand(ctx, socket, nil, "capture-pane", "-p", "-J", "-t", target, "-S", "-2000")
 	if err != nil {
 		if strings.Contains(err.Error(), "can't find") || strings.Contains(err.Error(), "not found") {
 			return "", fmt.Errorf("%w: %s", errTmuxTargetMissing, err.Error())

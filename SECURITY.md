@@ -27,8 +27,8 @@ We will respond within 48 hours and work with you to understand and address the 
 CHROTE is designed for **local or explicitly trusted network use only**. By default:
 
 - The server binds to `127.0.0.1`.
-- The server port is `8094`.
-- The terminal proxy port is `7683`.
+- The `/srv` proving lane runs from `/srv/chrote` with data under `/srv/data/chrote`, system unit `chrote-srv.service`, server port `8095`, and terminal proxy port `7686`.
+- The legacy rollback lane runs from `/home/perttu/chrote`, user unit `chrote.service`, server port `8094`, and terminal proxy port `7683`.
 - `/api/*` authentication is optional through `API_AUTH_TOKEN`; if unset, rely on localhost/Tailscale/reverse-proxy boundaries.
 - Use a reverse proxy, Tailscale, or equivalent network controls before binding beyond localhost.
 
@@ -45,8 +45,8 @@ CHROTE is designed for **local or explicitly trusted network use only**. By defa
 Sensitive configuration should use host-owned environment files or service environment, not browser state:
 
 - `HOST` - Server bind address (default: `127.0.0.1`).
-- `PORT` - Server port (default: `8094`).
-- `TTYD_PORT` - Terminal proxy port (default: `7683`).
+- `PORT` - Server port. The `/srv` proving lane sets `8095`; the legacy rollback lane uses `8094`.
+- `TTYD_PORT` - Terminal proxy port. The `/srv` proving lane sets `7686`; the legacy rollback lane uses `7683`.
 - `API_AUTH_TOKEN` - Optional bearer token for `/api/*` routes except `/api/health`.
 - `CORS_ORIGINS` - Optional comma-separated browser origins for cross-origin API access.
 - `CHROTE_ROOTS` - Comma-separated list of allowed filesystem roots.

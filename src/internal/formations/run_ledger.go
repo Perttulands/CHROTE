@@ -527,11 +527,15 @@ func appendRunEventLine(path string, event RunEvent) error {
 	if event.Type == "" {
 		return fmt.Errorf("%w: event type required", ErrInvalidSlug)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := ensureSharedDir(filepath.Dir(path)); err != nil {
 		return err
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, sharedFileMode)
 	if err != nil {
+		return err
+	}
+	if err := ensureSharedFile(path); err != nil {
+		_ = file.Close()
 		return err
 	}
 	encoder := json.NewEncoder(file)

@@ -618,10 +618,12 @@ func (e *RunEngine) resumeSnapshot(runID string, board *BoardDocument, mission M
 	queued := map[string]bool{}
 	attempts := map[string]int{}
 	completed := map[string]bool{}
-	processedGateEdges := processedGateInputEdges(events)
+	lastOutputIdx := map[string]int{}
+	processedGateInputs := processedGateInputRefs(board, events)
+	replayOutputOrdinals := map[string]int{}
 	var queue []string
 
-	for _, event := range events {
+	for i, event := range events {
 		if event.Type == RunEventNodeStarted && event.Attempt > attempts[event.NodeID] {
 			attempts[event.NodeID] = event.Attempt
 		}
@@ -629,14 +631,15 @@ func (e *RunEngine) resumeSnapshot(runID string, board *BoardDocument, mission M
 			continue
 		}
 		completed[event.NodeID] = true
-		if err := e.replayNodeOutputToReady(runID, board, gateByID, event, limits, processedGateEdges, ready, queued, &queue); err != nil {
+		lastOutputIdx[event.NodeID] = i
+		if err := e.replayNodeOutputToReady(runID, board, gateByID, event, limits, processedGateInputs, replayOutputOrdinals, ready, queued, &queue); err != nil {
 			if errors.Is(err, errRunStopped) {
 				return nil
 			}
 			return err
 		}
 	}
-	if err := e.replayGateVerdictsToReady(runID, board, gateByID, events, limits, ready, queued, &queue); err != nil {
+	if err := e.replayGateVerdictsToReady(runID, board, gateByID, events, limits, ready, queued, &queue, completed, lastOutputIdx); err != nil {
 		if errors.Is(err, errRunStopped) {
 			return nil
 		}
@@ -845,9 +848,14 @@ func runGraphComplete(board *BoardDocument, startNodeID string, completed map[st
 	return true
 }
 
-func processedGateInputEdges(events []RunEvent) map[string]bool {
+func processedGateInputRefs(board *BoardDocument, events []RunEvent) map[string]bool {
 	processed := map[string]bool{}
+	outputOrdinals := map[string]int{}
 	for _, event := range events {
+		if event.Type == RunEventNodeOutput {
+			advanceOutputOrdinals(board, outputOrdinals, event)
+			continue
+		}
 		switch event.Type {
 		case RunEventGateEvaluating, RunEventGateVerdict, RunEventHumanInputRequested:
 		default:
@@ -858,13 +866,36 @@ func processedGateInputEdges(events []RunEvent) map[string]bool {
 		}
 		input := runInputRefFromAny(event.Data["inputRef"])
 		if input.EdgeID != "" {
-			processed[input.EdgeID] = true
+			processed[gateInputReplayKey(input.EdgeID, gateInputOutputSeq(input, outputOrdinals))] = true
 		}
 	}
 	return processed
 }
 
-func (e *RunEngine) replayNodeOutputToReady(runID string, board *BoardDocument, gates map[string]GateNode, event RunEvent, limits RunLimits, processedGateEdges map[string]bool, ready map[string]map[string]RunInputRef, queued map[string]bool, queue *[]string) error {
+func advanceOutputOrdinals(board *BoardDocument, outputOrdinals map[string]int, event RunEvent) {
+	if board == nil || event.Type != RunEventNodeOutput {
+		return
+	}
+	for _, connection := range outgoingConnections(board.Connections, event.NodeID) {
+		_, fromPort := endpointParts(connection.From)
+		if _, ok := outputPayloadForPortFromEvent(event, fromPort); ok {
+			outputOrdinals[connection.ID]++
+		}
+	}
+}
+
+func gateInputOutputSeq(input RunInputRef, outputOrdinals map[string]int) int {
+	if input.OutputSeq > 0 {
+		return input.OutputSeq
+	}
+	return outputOrdinals[input.EdgeID]
+}
+
+func gateInputReplayKey(edgeID string, outputSeq int) string {
+	return fmt.Sprintf("%s#%d", edgeID, outputSeq)
+}
+
+func (e *RunEngine) replayNodeOutputToReady(runID string, board *BoardDocument, gates map[string]GateNode, event RunEvent, limits RunLimits, processedGateInputs map[string]bool, outputOrdinals map[string]int, ready map[string]map[string]RunInputRef, queued map[string]bool, queue *[]string) error {
 	for _, connection := range outgoingConnections(board.Connections, event.NodeID) {
 		_, fromPort := endpointParts(connection.From)
 		payload, ok := outputPayloadForPortFromEvent(event, fromPort)
@@ -878,12 +909,16 @@ func (e *RunEngine) replayNodeOutputToReady(runID string, board *BoardDocument, 
 		if toNode == "" || toPort == "" {
 			continue
 		}
+		outputOrdinals[connection.ID]++
+		outputSeq := outputOrdinals[connection.ID]
 		input := runInputRefForConnection(runID, connection, payload)
+		input.OutputSeq = outputSeq
 		if _, ok := gates[toNode]; ok {
-			if processedGateEdges[connection.ID] {
+			key := gateInputReplayKey(connection.ID, outputSeq)
+			if processedGateInputs[key] {
 				continue
 			}
-			processedGateEdges[connection.ID] = true
+			processedGateInputs[key] = true
 			if err := e.deliverConnection(runID, board, gates, connection, input, limits, ready, queued, queue); err != nil {
 				return err
 			}
@@ -905,8 +940,8 @@ func (e *RunEngine) replayNodeOutputToReady(runID string, board *BoardDocument, 
 	return nil
 }
 
-func (e *RunEngine) replayGateVerdictsToReady(runID string, board *BoardDocument, gates map[string]GateNode, events []RunEvent, limits RunLimits, ready map[string]map[string]RunInputRef, queued map[string]bool, queue *[]string) error {
-	for _, event := range events {
+func (e *RunEngine) replayGateVerdictsToReady(runID string, board *BoardDocument, gates map[string]GateNode, events []RunEvent, limits RunLimits, ready map[string]map[string]RunInputRef, queued map[string]bool, queue *[]string, completed map[string]bool, lastOutputIdx map[string]int) error {
+	for i, event := range events {
 		if event.Type != RunEventGateVerdict {
 			continue
 		}
@@ -920,6 +955,15 @@ func (e *RunEngine) replayGateVerdictsToReady(runID string, board *BoardDocument
 		}
 		input := runInputRefFromAny(event.Data["inputRef"])
 		for _, route := range gateVerdictRoutes(board, event, gateID, routePort) {
+			// A gate verdict newer than the target node's last output is a pushback
+			// route (for example gate:fail -> work). Clear the completed mark so a
+			// resume re-dispatches the stale target, but do not rerun a pushback that
+			// was already serviced by a later node_output.
+			if toNode, _ := endpointParts(route.To); toNode != "" {
+				if idx, ok := lastOutputIdx[toNode]; ok && i > idx {
+					delete(completed, toNode)
+				}
+			}
 			nextInput := input
 			nextInput.EdgeID = route.ID
 			nextInput.FromNodeID = gateID

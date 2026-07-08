@@ -884,7 +884,7 @@ stdin="$(cat)"
 		{"-S", socket, "paste-buffer", "-t", target, "-b", "chrote-dispatch-123"},
 		{"-S", socket, "send-keys", "-t", target, "ENTER"},
 		{"-S", socket, "send-keys", "-t", target, "C-m"},
-		{"-S", socket, "capture-pane", "-p", "-t", target, "-S", "-40"},
+		{"-S", socket, "capture-pane", "-p", "-J", "-t", target, "-S", "-40"},
 		{"-S", socket, "delete-buffer", "-b", "chrote-dispatch-123"},
 	}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
@@ -961,7 +961,7 @@ fi
 	}
 	enterCount := strings.Count(string(raw), "send-keys\t-t\t"+target+"\tENTER")
 	controlMCount := strings.Count(string(raw), "send-keys\t-t\t"+target+"\tC-m")
-	captureCount := strings.Count(string(raw), "capture-pane\t-p\t-t\t"+target)
+	captureCount := strings.Count(string(raw), "capture-pane	-p	-J	-t	"+target)
 	if enterCount != 2 || controlMCount != 2 || captureCount != 2 {
 		t.Fatalf("retry counts enter=%d c-m=%d capture=%d, want 2/2/2\nlog:\n%s", enterCount, controlMCount, captureCount, raw)
 	}
@@ -992,6 +992,80 @@ func TestTmuxPaneLooksLikePendingPastedInputHandlesBulletsInsidePrompt(t *testin
 	done := pending + "\n\n• Done\n<<<CHROTE-DONE run-id=run_x status=ok artifact=inline>>>"
 	if tmuxPaneLooksLikePendingPastedInput(done) {
 		t.Fatalf("completed Codex turn was misclassified as pending pasted input")
+	}
+}
+
+func TestRealTmuxHarnessClientCapturePaneJoinsWrappedChroteOutputs(t *testing.T) {
+	fakeDir := t.TempDir()
+	logPath := filepath.Join(fakeDir, "tmux.log")
+	joinedPath := filepath.Join(fakeDir, "joined.txt")
+	wrappedPath := filepath.Join(fakeDir, "wrapped.txt")
+	fakeTmuxPath := filepath.Join(fakeDir, "tmux")
+
+	fence := "```"
+	joined := "done thinking\n" + fence + "chrote-outputs\n" +
+		`{"port_solo_out":{"text":"SOLO-REAL-ANSWER=399 padded so this json line is wider than a normal terminal pane"}}` + "\n" +
+		fence + "\n<<<CHROTE-DONE run-id=run_o25k status=ok artifact=solo.md>>>\n"
+	wrapped := "done thinking\n" + fence + "chrote-outputs\n" +
+		`{"port_solo_out":{"text":"SOLO-REAL-ANSWER=399 padded so this json line is wider th` + "\n" +
+		`an a normal terminal pane"}}` + "\n" +
+		fence + "\n<<<CHROTE-DONE run-id=run_o25k status=ok artifact=solo.md>>>\n"
+	if err := os.WriteFile(joinedPath, []byte(joined), 0o644); err != nil {
+		t.Fatalf("write joined fixture: %v", err)
+	}
+	if err := os.WriteFile(wrappedPath, []byte(wrapped), 0o644); err != nil {
+		t.Fatalf("write wrapped fixture: %v", err)
+	}
+
+	fakeTmux := `#!/usr/bin/env bash
+set -euo pipefail
+cat >/dev/null
+{
+  printf 'ARGS'
+  for arg in "$@"; do
+    printf '\t%s' "$arg"
+  done
+  printf '\n'
+} >> "${TMUX_FAKE_LOG:?}"
+if [[ " $* " == *" capture-pane "* ]]; then
+  if [[ " $* " == *" -J "* ]]; then
+    cat "${TMUX_FAKE_JOINED:?}"
+  else
+    cat "${TMUX_FAKE_WRAPPED:?}"
+  fi
+fi
+`
+	if err := os.WriteFile(fakeTmuxPath, []byte(fakeTmux), 0o755); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+	t.Setenv("TMUX_FAKE_LOG", logPath)
+	t.Setenv("TMUX_FAKE_JOINED", joinedPath)
+	t.Setenv("TMUX_FAKE_WRAPPED", wrappedPath)
+	t.Setenv("PATH", fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	captured, err := (realTmuxHarnessClient{}).CapturePane(context.Background(), "/tmp/chrote-test-o25k.sock", "tmux-solo", 1<<20)
+	if err != nil {
+		t.Fatalf("capture pane with fake tmux: %v", err)
+	}
+
+	clean, outputs, err := parseChroteOutputs(captured)
+	if err != nil {
+		t.Fatalf("captured chrote-outputs failed to parse (home-o25k wrap regression): %v\ncaptured=%q", err, captured)
+	}
+	payload, ok := outputs["port_solo_out"]
+	if !ok {
+		t.Fatalf("captured outputs missing declared port port_solo_out: %#v (clean=%q)", outputs, clean)
+	}
+	if !strings.Contains(payload.Text, "SOLO-REAL-ANSWER=399") || strings.Contains(payload.Text, "\n") {
+		t.Fatalf("captured payload text = %q, want model answer intact and unwrapped", payload.Text)
+	}
+
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read fake tmux log: %v", err)
+	}
+	if !strings.Contains(string(raw), "\t-J") {
+		t.Fatalf("capture-pane did not request -J to join wrapped lines:\n%s", raw)
 	}
 }
 

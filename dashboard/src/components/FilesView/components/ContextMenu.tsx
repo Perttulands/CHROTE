@@ -1,5 +1,6 @@
-import { useRef, useEffect } from 'react'
+import { useEffect } from 'react'
 import { FileItem } from '../types'
+import { useViewportMenuPosition } from '../../../hooks/useViewportMenuPosition'
 
 interface ContextMenuProps {
   x: number
@@ -24,11 +25,14 @@ export function ContextMenu({
   onCopyPath,
   onNewFolder,
 }: ContextMenuProps) {
-  const menuRef = useRef<HTMLDivElement>(null)
+  const menuPosition = useViewportMenuPosition<HTMLDivElement>(
+    { x, y },
+    { estimatedSize: { width: 200, height: 180 } },
+  )
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+      if (menuPosition.ref.current && !menuPosition.ref.current.contains(e.target as Node)) {
         onClose()
       }
     }
@@ -47,15 +51,8 @@ export function ContextMenu({
     }
   }, [onClose])
 
-  const style: React.CSSProperties = {
-    position: 'fixed',
-    top: y,
-    left: x,
-    zIndex: 1000,
-  }
-
   return (
-    <div ref={menuRef} className="fb-context-menu" style={style}>
+    <div ref={menuPosition.ref} className="fb-context-menu" style={menuPosition.style}>
       {item && !item.isDir && (
         <button className="fb-context-item" onClick={onDownload}>
           <span className="fb-context-icon">⬇</span>
