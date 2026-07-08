@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/chrote/server/internal/core"
 )
 
 func TestMain(m *testing.M) {
@@ -668,5 +670,75 @@ func TestTmuxHandler_SessionBankKeepsRestartResumeHints(t *testing.T) {
 	}
 	if offlineResponse.Banked[0].ResumeCommand != "/resume codex-alpha" {
 		t.Fatalf("offline resume command = %q, want sanitized /resume codex-alpha", offlineResponse.Banked[0].ResumeCommand)
+	}
+}
+
+func TestSessionBankForgetRemovesExactUserEntry(t *testing.T) {
+	store := newSessionBankStore(filepath.Join(t.TempDir(), "session-bank", "sessions.json"))
+	_, err := store.Snapshot([]core.Session{
+		{Name: "codex-alpha", ID: "$7", UnixUser: "alice", Group: "codex", Windows: 1},
+		{Name: "codex-alpha", ID: "$8", UnixUser: "bob", Group: "codex", Windows: 1},
+	})
+	if err != nil {
+		t.Fatalf("snapshot bank: %v", err)
+	}
+
+	removed, err := store.Forget("codex-alpha", "alice")
+	if err != nil {
+		t.Fatalf("forget bank entry: %v", err)
+	}
+	if !removed {
+		t.Fatal("removed = false, want true")
+	}
+
+	entries, err := store.Read()
+	if err != nil {
+		t.Fatalf("read bank: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name != "codex-alpha" || entries[0].UnixUser != "bob" {
+		t.Fatalf("bank entries after forget = %+v, want only bob/codex-alpha", entries)
+	}
+
+	removed, err = store.Forget("missing", "alice")
+	if err != nil {
+		t.Fatalf("forget missing bank entry: %v", err)
+	}
+	if removed {
+		t.Fatal("removed missing = true, want false")
+	}
+}
+
+func TestTmuxHandler_RegisterRoutesWiresSessionBankForget(t *testing.T) {
+	bankPath := filepath.Join(t.TempDir(), "session-bank", "sessions.json")
+	t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
+
+	handler := NewTmuxHandler()
+	_, err := handler.bank.Snapshot([]core.Session{{Name: "codex-alpha", ID: "$7", UnixUser: "alice", Group: "codex", Windows: 1}})
+	if err != nil {
+		t.Fatalf("snapshot bank: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodDelete, "/api/tmux/session-bank/codex-alpha?unixUser=alice", nil)
+	recorder := httptest.NewRecorder()
+
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var response map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode forget response: %v", err)
+	}
+	if response["removed"] != true {
+		t.Fatalf("removed response = %#v, want true", response["removed"])
+	}
+	entries, err := handler.bank.Read()
+	if err != nil {
+		t.Fatalf("read bank: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("bank entries = %+v, want empty after forget", entries)
 	}
 }

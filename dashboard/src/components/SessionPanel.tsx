@@ -18,6 +18,7 @@ function SessionPanel() {
   const [namedSessionPopup, setNamedSessionPopup] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 })
   const [namedSessionName, setNamedSessionName] = useState('')
   const [namedSessionUser, setNamedSessionUser] = useState('')
+  const [sessionBankCollapsed, setSessionBankCollapsed] = useState(false)
   const newSessionMenuPosition = useViewportMenuPosition<HTMLDivElement>(
     newSessionMenu.show ? { x: newSessionMenu.x, y: newSessionMenu.y } : null,
     { estimatedSize: { width: 190, height: 130 } },
@@ -119,6 +120,27 @@ function SessionPanel() {
 
   const recreateBankedSession = async (name: string, unixUser?: string) => {
     await createSessionForUser(unixUser, name)
+  }
+
+  const removeBankedSession = async (name: string, unixUser?: string) => {
+    try {
+      const query = new URLSearchParams()
+      if (unixUser) query.set('unixUser', unixUser)
+      const response = await fetch(`/api/tmux/session-bank/${encodeURIComponent(name)}${query.toString() ? `?${query.toString()}` : ''}`, {
+        method: 'DELETE',
+        signal: AbortSignal.timeout(10000),
+      })
+      if (!response.ok) {
+        console.error('Failed to remove banked session:', await response.text())
+        addToast('Failed to remove session bank entry', 'error')
+        return
+      }
+      addToast(`Removed ${name} from session bank`, 'success')
+      await refreshSessions()
+    } catch (e) {
+      console.error('Failed to remove banked session:', e)
+      addToast('Failed to remove session bank entry', 'error')
+    }
   }
 
   const nukeAllSessions = async () => {
@@ -266,34 +288,59 @@ function SessionPanel() {
           )}
 
           {!loading && !error && bankedSessions.length > 0 && (
-            <section className="session-bank" aria-label="Session bank">
-              <h2>Session bank</h2>
-              <p>Offline sessions seen before restart. Recreate the tmux shell, then paste the resume command.</p>
-              {bankedSessions.map(session => (
-                <div key={`${session.unixUser || 'default'}:${session.name}`} className="session-bank-item">
-                  <div className="session-bank-main">
-                    <strong>{session.name}</strong>
-                    <span>{[session.id ? `id ${session.id}` : '', session.unixUser || 'default', `last seen ${new Date(session.lastSeen).toLocaleString()}`].filter(Boolean).join(' · ')}</span>
-                    <code>{session.resumeCommand}</code>
-                  </div>
-                  <div className="session-bank-actions">
-                    <button
-                      type="button"
-                      onClick={() => void copyResumeCommand(session.resumeCommand)}
-                      aria-label={`Copy resume command for ${session.name}`}
-                    >
-                      Copy
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void recreateBankedSession(session.name, session.unixUser)}
-                      aria-label={`Recreate tmux shell for ${session.name}`}
-                    >
-                      Recreate
-                    </button>
-                  </div>
+            <section className={`session-bank ${sessionBankCollapsed ? 'session-bank-collapsed' : ''}`} aria-label="Session bank">
+              <div className="session-bank-header">
+                <h2>Session bank</h2>
+                <span className="session-bank-count" aria-hidden="true">{bankedSessions.length}</span>
+                <button
+                  type="button"
+                  className="session-bank-toggle"
+                  aria-label={sessionBankCollapsed ? 'Expand session bank' : 'Collapse session bank'}
+                  aria-expanded={!sessionBankCollapsed}
+                  aria-controls="session-bank-list"
+                  onClick={() => setSessionBankCollapsed(collapsed => !collapsed)}
+                >
+                  {sessionBankCollapsed ? '▸' : '▾'}
+                </button>
+              </div>
+              {!sessionBankCollapsed && (
+                <div id="session-bank-list" className="session-bank-list">
+                  <p>Offline sessions seen before restart. Recreate the tmux shell, then paste the resume command.</p>
+                  {bankedSessions.map(session => (
+                    <div key={`${session.unixUser || 'default'}:${session.name}`} className="session-bank-item">
+                      <div className="session-bank-main">
+                        <strong>{session.name}</strong>
+                        <span>{[session.id ? `id ${session.id}` : '', session.unixUser || 'default', `last seen ${new Date(session.lastSeen).toLocaleString()}`].filter(Boolean).join(' · ')}</span>
+                        <code>{session.resumeCommand}</code>
+                      </div>
+                      <div className="session-bank-actions">
+                        <button
+                          type="button"
+                          onClick={() => void copyResumeCommand(session.resumeCommand)}
+                          aria-label={`Copy resume command for ${session.name}`}
+                        >
+                          Copy
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void recreateBankedSession(session.name, session.unixUser)}
+                          aria-label={`Recreate tmux shell for ${session.name}`}
+                        >
+                          Recreate
+                        </button>
+                        <button
+                          type="button"
+                          className="session-bank-remove"
+                          onClick={() => void removeBankedSession(session.name, session.unixUser)}
+                          aria-label={`Remove ${session.name} from session bank`}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
             </section>
           )}
 

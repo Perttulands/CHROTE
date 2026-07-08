@@ -107,6 +107,7 @@ func NewTmuxHandler() *TmuxHandler {
 func (h *TmuxHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/tmux/sessions", h.ListSessions)
 	mux.HandleFunc("POST /api/tmux/sessions", h.CreateSession)
+	mux.HandleFunc("DELETE /api/tmux/session-bank/{name}", h.ForgetBankedSession)
 	mux.HandleFunc("DELETE /api/tmux/sessions/all", h.DeleteAllSessions)
 	mux.HandleFunc("DELETE /api/tmux/sessions/{name}", h.DeleteSession)
 	mux.HandleFunc("PATCH /api/tmux/sessions/{name}", h.RenameSession)
@@ -282,6 +283,42 @@ func (s *sessionBankStore) Read() ([]SessionBankEntry, error) {
 		return nil, err
 	}
 	return sanitizeSessionBankEntries(entries), nil
+}
+
+func (s *sessionBankStore) Forget(name, unixUser string) (bool, error) {
+	if s == nil {
+		return false, nil
+	}
+	name = strings.TrimSpace(name)
+	unixUser = strings.TrimSpace(unixUser)
+	if valid, _ := core.ValidateSessionName(name, "session name"); !valid {
+		return false, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entries, err := s.loadLocked()
+	if err != nil {
+		return false, err
+	}
+	entries = sanitizeSessionBankEntries(entries)
+	key := sessionBankKey(name, unixUser)
+	filtered := make([]SessionBankEntry, 0, len(entries))
+	removed := false
+	for _, entry := range entries {
+		if sessionBankKey(entry.Name, entry.UnixUser) == key {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	if !removed {
+		return false, nil
+	}
+	if err := s.saveLocked(filtered); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *sessionBankStore) Snapshot(liveSessions []core.Session) ([]SessionBankEntry, error) {
@@ -610,6 +647,47 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	core.WriteJSON(w, http.StatusOK, response)
+}
+
+// ForgetBankedSession handles DELETE /api/tmux/session-bank/{name}.
+// It removes a durable offline resume hint from the session bank without
+// touching live tmux sessions. A later full scan will re-add a session if it is
+// still live.
+func (h *TmuxHandler) ForgetBankedSession(w http.ResponseWriter, r *http.Request) {
+	sessionName := strings.TrimSpace(r.PathValue("name"))
+	valid, errMsg := core.ValidateSessionName(sessionName, "session name")
+	if !valid {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", errMsg)
+		return
+	}
+	unixUser := ""
+	if r != nil {
+		unixUser = strings.TrimSpace(r.URL.Query().Get("unixUser"))
+	}
+	if h.bank == nil {
+		core.WriteJSON(w, http.StatusOK, map[string]interface{}{
+			"success":   true,
+			"removed":   false,
+			"session":   sessionName,
+			"unixUser":  unixUser,
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
+		})
+		return
+	}
+
+	removed, err := h.bank.Forget(sessionName, unixUser)
+	if err != nil {
+		core.WriteError(w, http.StatusInternalServerError, "SESSION_BANK_ERROR", err.Error())
+		return
+	}
+	h.invalidateCache()
+	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"success":   true,
+		"removed":   removed,
+		"session":   sessionName,
+		"unixUser":  unixUser,
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	})
 }
 
 // invalidateCache clears the sessions cache

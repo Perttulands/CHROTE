@@ -6,6 +6,7 @@ import { DEFAULT_SETTINGS } from '../types'
 const refreshSessions = vi.fn()
 const createSession = vi.fn()
 const addToast = vi.fn()
+const fetchMock = vi.fn()
 
 const mockState = vi.hoisted(() => ({
   sessionBank: [] as Array<Record<string, unknown>>,
@@ -38,11 +39,29 @@ vi.mock('./NukeConfirmModal', () => ({
   default: () => null,
 }))
 
+function addBankedSession(overrides: Record<string, unknown> = {}) {
+  mockState.sessionBank.push({
+    id: '$7',
+    name: 'codex-alpha',
+    unixUser: 'alice',
+    windows: 1,
+    attached: false,
+    group: 'codex',
+    live: false,
+    firstSeen: '2026-07-07T20:00:00Z',
+    lastSeen: '2026-07-07T21:00:00Z',
+    resumeCommand: '/resume $7',
+    ...overrides,
+  })
+}
+
 describe('SessionPanel new-session context menu', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockState.sessionBank.length = 0
     createSession.mockResolvedValue('created')
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ success: true, removed: true }) })
+    vi.stubGlobal('fetch', fetchMock)
     Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } })
   })
 
@@ -81,18 +100,7 @@ describe('SessionPanel new-session context menu', () => {
   })
 
   it('keeps offline banked sessions and resume commands at hand after a restart', async () => {
-    mockState.sessionBank.push({
-      id: '$7',
-      name: 'codex-alpha',
-      unixUser: 'alice',
-      windows: 1,
-      attached: false,
-      group: 'codex',
-      live: false,
-      firstSeen: '2026-07-07T20:00:00Z',
-      lastSeen: '2026-07-07T21:00:00Z',
-      resumeCommand: '/resume $7',
-    })
+    addBankedSession()
 
     render(<SessionPanel />)
 
@@ -107,5 +115,35 @@ describe('SessionPanel new-session context menu', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Recreate tmux shell for codex-alpha' }))
     await waitFor(() => expect(createSession).toHaveBeenCalledWith({ workspaceId: 'terminal1', unixUser: 'alice', name: 'codex-alpha' }))
+  })
+
+  it('collapses and expands the offline session bank list', () => {
+    addBankedSession()
+
+    render(<SessionPanel />)
+
+    expect(screen.getByText('/resume $7')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse session bank' }))
+
+    expect(screen.queryByText('/resume $7')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Expand session bank' })).toHaveAttribute('aria-expanded', 'false')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand session bank' }))
+    expect(screen.getByText('/resume $7')).toBeInTheDocument()
+  })
+
+  it('removes an offline banked session from the durable bank list', async () => {
+    addBankedSession()
+
+    render(<SessionPanel />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove codex-alpha from session bank' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    const [url, options] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/tmux/session-bank/codex-alpha?unixUser=alice')
+    expect(options).toMatchObject({ method: 'DELETE' })
+    expect(addToast).toHaveBeenCalledWith('Removed codex-alpha from session bank', 'success')
+    expect(refreshSessions).toHaveBeenCalled()
   })
 })

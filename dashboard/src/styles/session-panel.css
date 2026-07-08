@@ -385,13 +385,46 @@
   border-bottom: 1px solid var(--divider);
 }
 
+.session-bank-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+}
+
 .session-bank h2 {
-  margin: 0 0 4px;
+  flex: 1;
+  margin: 0;
   color: var(--text-secondary);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.session-bank-count {
+  border: 1px solid var(--divider);
+  border-radius: 999px;
+  padding: 1px 6px;
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.session-bank-toggle {
+  border: 1px solid var(--divider);
+  border-radius: 3px;
+  width: 24px;
+  height: 22px;
+  background: var(--surface-primary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  line-height: 1;
+}
+
+.session-bank-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .session-bank p {
@@ -458,6 +491,11 @@
 .session-bank-actions button:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.session-bank-actions .session-bank-remove:hover {
+  border-color: var(--danger, #ff5c5c);
+  color: var(--danger, #ff5c5c);
 }
 
 /* Getting Started Empty State */
