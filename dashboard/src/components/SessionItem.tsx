@@ -125,25 +125,12 @@ function SessionItem({ session }: SessionItemProps) {
     ? `Persistent ${session.persistentAgentKind || 'agent'} agent${session.persistentIdentity ? `: ${session.persistentIdentity}` : ''}`
     : undefined
 
-  const inferAgentKind = () => {
-    const lower = `${session.persistentAgentKind || ''} ${session.group || ''} ${session.name}`.toLowerCase()
-    return lower.includes('claude') ? 'claude' : 'codex'
-  }
-
   const handleMakePersistent = useCallback(async () => {
     closeContextMenu()
     const identity = window.prompt('One-sentence identity for this persistent agent:', session.persistentIdentity || '')
     if (identity === null) return
-    const agentKind = window.prompt('Agent kind (codex or claude):', inferAgentKind())
-    if (agentKind === null) return
-    const normalizedKind = agentKind.trim().toLowerCase()
-    if (!['codex', 'claude'].includes(normalizedKind)) return
-    const sessionId = window.prompt('Agent session id from the Codex/Claude resume command:', session.persistentAgentSessionId || '')
-    if (sessionId === null || !sessionId.trim()) return
     await makeSessionPersistent(session.name, {
       identity: identity.trim(),
-      agentKind: normalizedKind,
-      agentSessionId: sessionId.trim(),
     }, session.unixUser)
   }, [closeContextMenu, makeSessionPersistent, session])
 

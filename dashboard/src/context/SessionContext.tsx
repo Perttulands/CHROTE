@@ -885,10 +885,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const makeSessionPersistent = useCallback(async (sessionName: string, payload: PersistentAgentPayload, unixUser?: LaunchUser): Promise<boolean> => {
     try {
       const query = unixUser ? `?unixUser=${encodeURIComponent(unixUser)}` : ''
-      const body: Record<string, string> = {
-        agentKind: payload.agentKind,
-        agentSessionId: payload.agentSessionId,
-      }
+      const body: Record<string, string> = {}
+      const agentKind = payload.agentKind?.trim()
+      if (agentKind) body.agentKind = agentKind
+      const agentSessionId = payload.agentSessionId?.trim()
+      if (agentSessionId) body.agentSessionId = agentSessionId
       const identity = payload.identity?.trim()
       if (identity) body.identity = identity
       const newName = payload.newName?.trim()

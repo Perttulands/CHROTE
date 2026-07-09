@@ -524,6 +524,8 @@ type processInfo struct {
 	args string
 }
 
+var readPersistentAgentProcessTable = readProcessTable
+
 func readProcessTable(ctx context.Context) ([]processInfo, error) {
 	cmd := exec.CommandContext(ctx, "ps", "-eo", "pid=,ppid=,comm=,args=")
 	raw, err := cmd.Output()
@@ -553,9 +555,18 @@ func readProcessTable(ctx context.Context) ([]processInfo, error) {
 }
 
 func processTreeContainsAgentInTable(infos []processInfo, panePID, kind string) bool {
+	for _, info := range processTreeForPane(infos, panePID) {
+		if processLooksLikeAgent(info.comm, info.args, kind) {
+			return true
+		}
+	}
+	return false
+}
+
+func processTreeForPane(infos []processInfo, panePID string) []processInfo {
 	panePID = strings.TrimSpace(panePID)
 	if panePID == "" {
-		return false
+		return nil
 	}
 	childrenByParent := map[string][]processInfo{}
 	byPID := map[string]processInfo{}
@@ -570,6 +581,7 @@ func processTreeContainsAgentInTable(infos []processInfo, panePID, kind string) 
 		queue = append(queue, childrenByParent[panePID]...)
 	}
 	seen := map[string]bool{}
+	result := []processInfo{}
 	for len(queue) > 0 {
 		info := queue[0]
 		queue = queue[1:]
@@ -577,12 +589,127 @@ func processTreeContainsAgentInTable(infos []processInfo, panePID, kind string) 
 			continue
 		}
 		seen[info.pid] = true
-		if processLooksLikeAgent(info.comm, info.args, kind) {
-			return true
-		}
+		result = append(result, info)
 		queue = append(queue, childrenByParent[info.pid]...)
 	}
-	return false
+	return result
+}
+
+type inferredPersistentAgentMetadata struct {
+	Kind      string
+	SessionID string
+	Source    string
+}
+
+func normalizeProcessArgToken(token string) string {
+	return strings.Trim(token, `"' ,;()[]<>`)
+}
+
+func looksLikeInferredAgentSessionID(token string) bool {
+	token = normalizeProcessArgToken(token)
+	if strings.Count(token, "-") < 4 {
+		return false
+	}
+	return agentSessionIDRegex.MatchString(token)
+}
+
+func inferCodexSessionIDFromArgs(args string) string {
+	foundResume := false
+	for _, token := range strings.Fields(args) {
+		cleaned := normalizeProcessArgToken(token)
+		if cleaned == "resume" {
+			foundResume = true
+			continue
+		}
+		if !foundResume || strings.HasPrefix(cleaned, "-") {
+			continue
+		}
+		if looksLikeInferredAgentSessionID(cleaned) {
+			return cleaned
+		}
+	}
+	return ""
+}
+
+func inferClaudeSessionIDFromArgs(args string) string {
+	tokens := strings.Fields(args)
+	for i, token := range tokens {
+		cleaned := normalizeProcessArgToken(token)
+		if strings.HasPrefix(cleaned, "--resume=") {
+			candidate := strings.TrimPrefix(cleaned, "--resume=")
+			if looksLikeInferredAgentSessionID(candidate) {
+				return normalizeProcessArgToken(candidate)
+			}
+			continue
+		}
+		if cleaned != "--resume" {
+			continue
+		}
+		for _, candidate := range tokens[i+1:] {
+			candidate = normalizeProcessArgToken(candidate)
+			if strings.HasPrefix(candidate, "-") {
+				continue
+			}
+			if looksLikeInferredAgentSessionID(candidate) {
+				return candidate
+			}
+		}
+	}
+	return ""
+}
+
+func inferAgentSessionIDFromArgs(kind, args string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "codex":
+		return inferCodexSessionIDFromArgs(args)
+	case "claude":
+		return inferClaudeSessionIDFromArgs(args)
+	default:
+		return ""
+	}
+}
+
+func inferPersistentAgentMetadataInTable(infos []processInfo, panePID, requestedKind string) (inferredPersistentAgentMetadata, bool, bool) {
+	requestedKind = strings.ToLower(strings.TrimSpace(requestedKind))
+	foundAgent := false
+	for _, info := range processTreeForPane(infos, panePID) {
+		for _, kind := range []string{"codex", "claude"} {
+			if requestedKind != "" && requestedKind != kind {
+				continue
+			}
+			if !processLooksLikeAgent(info.comm, info.args, kind) {
+				continue
+			}
+			foundAgent = true
+			if sessionID := inferAgentSessionIDFromArgs(kind, info.args); sessionID != "" {
+				return inferredPersistentAgentMetadata{Kind: kind, SessionID: sessionID, Source: "process"}, true, true
+			}
+		}
+	}
+	return inferredPersistentAgentMetadata{}, foundAgent, false
+}
+
+func capitalizeFirst(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return strings.ToUpper(value[:1]) + value[1:]
+}
+
+func (h *TmuxHandler) inferPersistentAgentMetadata(ctx context.Context, pane paneInspection, requestedKind string) (inferredPersistentAgentMetadata, error) {
+	infos, err := readPersistentAgentProcessTable(ctx)
+	if err != nil {
+		return inferredPersistentAgentMetadata{}, err
+	}
+	metadata, foundAgent, foundSessionID := inferPersistentAgentMetadataInTable(infos, pane.PID, requestedKind)
+	if foundSessionID {
+		return metadata, nil
+	}
+	if foundAgent {
+		return inferredPersistentAgentMetadata{}, fmt.Errorf("could not infer Codex/Claude session id: live agent process has no resume session id in its arguments")
+	}
+	return inferredPersistentAgentMetadata{}, fmt.Errorf("could not infer Codex/Claude session id: session is not running a supported live agent")
 }
 
 func processTreeContainsAgent(ctx context.Context, panePID, kind string) (bool, error) {
@@ -590,7 +717,7 @@ func processTreeContainsAgent(ctx context.Context, panePID, kind string) (bool, 
 	if panePID == "" {
 		return false, nil
 	}
-	infos, err := readProcessTable(ctx)
+	infos, err := readPersistentAgentProcessTable(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -641,10 +768,6 @@ func (h *TmuxHandler) EnablePersistentAgent(w http.ResponseWriter, r *http.Reque
 			unixUser = queryUser
 		}
 	}
-	if _, ok := canonicalAgentResumeCommand(req.AgentKind, req.AgentSessionID); !ok {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Unsafe or unsupported agent persistence metadata")
-		return
-	}
 	newName := strings.TrimSpace(req.NewName)
 	if newName == "" {
 		newName = sessionName
@@ -661,6 +784,23 @@ func (h *TmuxHandler) EnablePersistentAgent(w http.ResponseWriter, r *http.Reque
 	pane, err := h.inspectSessionPane(r.Context(), target.socket, sessionName)
 	if err != nil {
 		core.WriteError(w, http.StatusBadRequest, "TMUX_ERROR", err.Error())
+		return
+	}
+	if strings.TrimSpace(req.AgentKind) == "" || strings.TrimSpace(req.AgentSessionID) == "" {
+		metadata, err := h.inferPersistentAgentMetadata(r.Context(), pane, req.AgentKind)
+		if err != nil {
+			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", capitalizeFirst(err.Error()))
+			return
+		}
+		if strings.TrimSpace(req.AgentKind) == "" {
+			req.AgentKind = metadata.Kind
+		}
+		if strings.TrimSpace(req.AgentSessionID) == "" {
+			req.AgentSessionID = metadata.SessionID
+		}
+	}
+	if _, ok := canonicalAgentResumeCommand(req.AgentKind, req.AgentSessionID); !ok {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Unsafe or unsupported agent persistence metadata")
 		return
 	}
 	agentLive, err := agentProcessLive(r.Context(), pane, req.AgentKind)

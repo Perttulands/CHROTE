@@ -198,8 +198,8 @@ export interface TmuxSession {
 
 export interface PersistentAgentPayload {
   identity?: string
-  agentKind: 'codex' | 'claude' | string
-  agentSessionId: string
+  agentKind?: 'codex' | 'claude' | string
+  agentSessionId?: string
   newName?: string
   cwd?: string
   transcriptPath?: string
