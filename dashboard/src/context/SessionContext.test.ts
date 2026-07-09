@@ -1045,6 +1045,30 @@ describe('persistent agent actions', () => {
     })
   })
 
+  it('makeSessionPersistent can let the backend infer agent metadata', async () => {
+    const { result } = renderSession()
+    vi.mocked(fetch as any).mockClear()
+    vi.mocked(fetch as any).mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ success: true }),
+      text: () => Promise.resolve(''),
+    })
+
+    let success: boolean | undefined
+    await act(async () => {
+      success = await result.current.makeSessionPersistent('codex-alpha', {
+        identity: 'Maintains the VW Codex lane.',
+      }, 'alice')
+    })
+
+    expect(success).toBe(true)
+    const [url, options] = vi.mocked(fetch as any).mock.calls[0]
+    expect(url).toBe('/api/tmux/sessions/codex-alpha/persistence?unixUser=alice')
+    expect(JSON.parse(options.body)).toEqual({
+      identity: 'Maintains the VW Codex lane.',
+    })
+  })
+
   it('makeSessionMortal removes supervision without deleting the live tmux session', async () => {
     const { result } = renderSession()
     vi.mocked(fetch as any).mockClear()

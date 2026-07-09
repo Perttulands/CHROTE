@@ -735,6 +735,88 @@ esac
 	}
 }
 
+func TestTmuxHandler_EnablePersistentAgentInfersCodexMetadataFromLiveProcess(t *testing.T) {
+	tmpDir := t.TempDir()
+	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")
+	installPersistentAgentScriptedTmux(t, `
+case "$*" in
+  *display-message*) printf '42:node:/home/alice/project\n' ;;
+esac
+`)
+	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
+	const sessionID = "019f45ec-f88b-7f70-88dc-b5b99a9e94c6"
+	originalReadProcessTable := readPersistentAgentProcessTable
+	readPersistentAgentProcessTable = func(context.Context) ([]processInfo, error) {
+		return []processInfo{{
+			pid:  "42",
+			ppid: "1",
+			comm: "node",
+			args: "node /usr/bin/codex resume --no-alt-screen -C /home/alice/project " + sessionID,
+		}}, nil
+	}
+	t.Cleanup(func() { readPersistentAgentProcessTable = originalReadProcessTable })
+
+	handler := NewTmuxHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	body := bytes.NewBufferString(`{"identity":"Maintains the VW Codex lane."}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions/codex-alpha/persistence?unixUser=alice", body)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var response map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response["agentKind"] != "codex" || response["agentSessionId"] != sessionID || response["resumeCommand"] != "codex resume "+sessionID || response["cwd"] != "/home/alice/project" {
+		t.Fatalf("persistent response = %#v", response)
+	}
+}
+
+func TestTmuxHandler_EnablePersistentAgentFailsClearlyWhenSessionIDCannotBeInferred(t *testing.T) {
+	tmpDir := t.TempDir()
+	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")
+	installPersistentAgentScriptedTmux(t, `
+case "$*" in
+  *display-message*) printf '42:node:/home/alice/project\n' ;;
+esac
+`)
+	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
+	originalReadProcessTable := readPersistentAgentProcessTable
+	readPersistentAgentProcessTable = func(context.Context) ([]processInfo, error) {
+		return []processInfo{{pid: "42", ppid: "1", comm: "node", args: "node /usr/bin/codex --no-alt-screen"}}, nil
+	}
+	t.Cleanup(func() { readPersistentAgentProcessTable = originalReadProcessTable })
+
+	handler := NewTmuxHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions/codex-alpha/persistence?unixUser=alice", bytes.NewBufferString(`{"identity":"Maintains the VW Codex lane."}`))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "Could not infer Codex/Claude session id") {
+		t.Fatalf("error body = %s", recorder.Body.String())
+	}
+	if raw, err := os.ReadFile(persistentPath); err == nil && strings.TrimSpace(string(raw)) != "[]" && strings.TrimSpace(string(raw)) != "" {
+		t.Fatalf("persistent store should be empty, got %s", raw)
+	}
+}
+
 func TestTmuxHandler_ListSessionsDoesNotWritePersistentLiveSessionsIntoBank(t *testing.T) {
 	tmpDir := t.TempDir()
 	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")
@@ -832,6 +914,15 @@ func TestPersistentAgentProcessTreeChecksPaneRootProcess(t *testing.T) {
 	infos := []processInfo{{pid: "42", ppid: "1", comm: "node", args: "node /usr/bin/codex"}}
 	if !processTreeContainsAgentInTable(infos, "42", "codex") {
 		t.Fatal("pane root node-wrapped Codex process should count as live codex")
+	}
+}
+
+func TestPersistentAgentMetadataInferenceParsesClaudeResumeArgs(t *testing.T) {
+	const sessionID = "9ed1181c-b2a3-4ef2-96ea-a84e51e79dc4"
+	infos := []processInfo{{pid: "50", ppid: "1", comm: "claude", args: "claude --dangerously-skip-permissions --resume " + sessionID + " READ-ONLY"}}
+	metadata, foundAgent, foundSessionID := inferPersistentAgentMetadataInTable(infos, "50", "")
+	if !foundAgent || !foundSessionID || metadata.Kind != "claude" || metadata.SessionID != sessionID {
+		t.Fatalf("metadata=%+v foundAgent=%v foundSessionID=%v", metadata, foundAgent, foundSessionID)
 	}
 }
 

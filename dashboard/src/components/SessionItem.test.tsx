@@ -150,11 +150,9 @@ describe('SessionItem user badge and context actions', () => {
     expect(lock).toHaveAttribute('title', 'Persistent codex agent: Maintains the VW Codex lane.')
   })
 
-  it('offers make persistent for mortal sessions and calls the live-session endpoint action', async () => {
+  it('offers make persistent for mortal sessions without asking for raw agent session id', async () => {
     vi.spyOn(window, 'prompt')
       .mockReturnValueOnce('Maintains the VW Codex lane.')
-      .mockReturnValueOnce('codex')
-      .mockReturnValueOnce('019f45ec-f88b-7f70-88dc-b5b99a9e94c6')
     mockState.makeSessionPersistent.mockResolvedValue(true)
 
     render(
@@ -174,9 +172,9 @@ describe('SessionItem user badge and context actions', () => {
 
     expect(mockState.makeSessionPersistent).toHaveBeenCalledWith('codex-alpha', {
       identity: 'Maintains the VW Codex lane.',
-      agentKind: 'codex',
-      agentSessionId: '019f45ec-f88b-7f70-88dc-b5b99a9e94c6',
     }, 'alice')
+    expect(window.prompt).toHaveBeenCalledTimes(1)
+    expect(window.prompt).not.toHaveBeenCalledWith(expect.stringMatching(/session id/i), expect.anything())
   })
 
   it('offers make mortal for persistent sessions and protects direct kill', async () => {
