@@ -39,7 +39,7 @@ vi.mock('./NukeConfirmModal', () => ({
   default: () => null,
 }))
 
-function addBankedSession(overrides: Record<string, unknown> = {}) {
+function addAgentBankedSession(overrides: Record<string, unknown> = {}) {
   mockState.sessionBank.push({
     id: '$7',
     name: 'codex-alpha',
@@ -50,7 +50,27 @@ function addBankedSession(overrides: Record<string, unknown> = {}) {
     live: false,
     firstSeen: '2026-07-07T20:00:00Z',
     lastSeen: '2026-07-07T21:00:00Z',
-    resumeCommand: '/resume $7',
+    recoveryKind: 'agent',
+    agentKind: 'codex',
+    agentSessionId: '019f45ec-f88b-7f70-88dc-b5b99a9e94c6',
+    resumeCommand: 'codex resume 019f45ec-f88b-7f70-88dc-b5b99a9e94c6',
+    cwd: '/srv/chrote',
+    ...overrides,
+  })
+}
+
+function addShellBankedSession(overrides: Record<string, unknown> = {}) {
+  mockState.sessionBank.push({
+    id: '$8',
+    name: 'shell-archive',
+    unixUser: 'alice',
+    windows: 1,
+    attached: false,
+    group: 'shell',
+    live: false,
+    firstSeen: '2026-07-07T20:00:00Z',
+    lastSeen: '2026-07-07T21:00:00Z',
+    recoveryKind: 'shell',
     ...overrides,
   })
 }
@@ -99,41 +119,76 @@ describe('SessionPanel new-session context menu', () => {
     expect(createSession).toHaveBeenCalledWith({ workspaceId: 'terminal1', unixUser: 'alice', name: 'research-agent' })
   })
 
-  it('keeps offline banked sessions and resume commands at hand after a restart', async () => {
-    addBankedSession()
+  it('shows recoverable agent bank entries with resume, copy, recreate, and remove actions', async () => {
+    addAgentBankedSession()
 
     render(<SessionPanel />)
 
     expect(screen.getByRole('heading', { name: 'Session bank' })).toBeInTheDocument()
     expect(screen.getByText('codex-alpha')).toBeInTheDocument()
-    expect(screen.getByText(/id \$7 · alice · last seen/)).toBeInTheDocument()
-    expect(screen.getByText('/resume $7')).toBeInTheDocument()
+    expect(screen.getByText('Recoverable agent')).toBeInTheDocument()
+    expect(screen.getByText(/codex · 019f45ec-f88b-7f70-88dc-b5b99a9e94c6/)).toBeInTheDocument()
+    expect(screen.getByText('codex resume 019f45ec-f88b-7f70-88dc-b5b99a9e94c6')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Copy resume command for codex-alpha' }))
-    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith('/resume $7'))
+    await waitFor(() => expect(navigator.clipboard.writeText).toHaveBeenCalledWith('codex resume 019f45ec-f88b-7f70-88dc-b5b99a9e94c6'))
     expect(addToast).toHaveBeenCalledWith('Resume command copied', 'success')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Recreate tmux shell for codex-alpha' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Recreate shell for codex-alpha' }))
     await waitFor(() => expect(createSession).toHaveBeenCalledWith({ workspaceId: 'terminal1', unixUser: 'alice', name: 'codex-alpha' }))
   })
 
-  it('collapses and expands the offline session bank list', () => {
-    addBankedSession()
+  it('resumes a recoverable agent through the session-bank recovery API', async () => {
+    addAgentBankedSession()
 
     render(<SessionPanel />)
 
-    expect(screen.getByText('/resume $7')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Resume agent for codex-alpha' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    const [url, options] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/tmux/session-bank/codex-alpha/recover?unixUser=alice')
+    expect(options).toMatchObject({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mouseScroll: DEFAULT_SETTINGS.mouseScroll }),
+    })
+    expect(addToast).toHaveBeenCalledWith('Resumed agent codex-alpha', 'success')
+    expect(refreshSessions).toHaveBeenCalled()
+  })
+
+  it('shows shell-only bank entries without agent-only actions', () => {
+    addShellBankedSession()
+
+    render(<SessionPanel />)
+
+    expect(screen.getByText('shell-archive')).toBeInTheDocument()
+    expect(screen.getByText('Shell only')).toBeInTheDocument()
+    expect(screen.getByText('No agent resume metadata saved.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Resume agent for shell-archive' })).not.toBeInTheDocument()
+    expect(screen.getByText('/resume shell-archive')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Copy resume command for shell-archive' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Recreate shell for shell-archive' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Remove shell-archive from session bank' })).toBeInTheDocument()
+  })
+
+  it('collapses and expands the offline session bank list', () => {
+    addAgentBankedSession()
+
+    render(<SessionPanel />)
+
+    expect(screen.getByText('codex resume 019f45ec-f88b-7f70-88dc-b5b99a9e94c6')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Collapse session bank' }))
 
-    expect(screen.queryByText('/resume $7')).not.toBeInTheDocument()
+    expect(screen.queryByText('codex resume 019f45ec-f88b-7f70-88dc-b5b99a9e94c6')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Expand session bank' })).toHaveAttribute('aria-expanded', 'false')
 
     fireEvent.click(screen.getByRole('button', { name: 'Expand session bank' }))
-    expect(screen.getByText('/resume $7')).toBeInTheDocument()
+    expect(screen.getByText('codex resume 019f45ec-f88b-7f70-88dc-b5b99a9e94c6')).toBeInTheDocument()
   })
 
   it('removes an offline banked session from the durable bank list', async () => {
-    addBankedSession()
+    addAgentBankedSession()
 
     render(<SessionPanel />)
 

@@ -673,6 +673,323 @@ func TestTmuxHandler_SessionBankKeepsRestartResumeHints(t *testing.T) {
 	}
 }
 
+func TestTmuxHandler_ListSessionsPreservesAgentRecoveryMetadata(t *testing.T) {
+	tmpDir := t.TempDir()
+	bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
+	argsPath := installArgvRecordingTmux(t)
+	const sessionID = "019f45ec-f88b-7f70-88dc-b5b99a9e94c6"
+	seed := []SessionBankEntry{{
+		Name:           "codex-alpha",
+		UnixUser:       "alice",
+		Group:          "codex",
+		Windows:        1,
+		Attached:       false,
+		Live:           true,
+		FirstSeen:      "2026-07-09T00:00:00Z",
+		LastSeen:       "2026-07-09T00:00:00Z",
+		AgentKind:      "codex",
+		AgentSessionID: sessionID,
+		ResumeCommand:  "rm -rf /",
+		CWD:            "/home/alice/project",
+		TranscriptPath: "/home/alice/.codex/sessions/rollout-" + sessionID + ".jsonl",
+	}}
+	raw, err := json.Marshal(seed)
+	if err != nil {
+		t.Fatalf("marshal bank seed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(bankPath), 0o755); err != nil {
+		t.Fatalf("mkdir bank: %v", err)
+	}
+	if err := os.WriteFile(bankPath, raw, 0o660); err != nil {
+		t.Fatalf("write bank seed: %v", err)
+	}
+	t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
+
+	handler := NewTmuxHandler()
+	recorder := httptest.NewRecorder()
+	handler.ListSessions(recorder, httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var response SessionsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(response.Sessions) != 0 {
+		t.Fatalf("live sessions = %+v, want none", response.Sessions)
+	}
+	if len(response.Banked) != 1 {
+		t.Fatalf("banked = %+v, want one entry", response.Banked)
+	}
+	entry := response.Banked[0]
+	if entry.Live {
+		t.Fatalf("entry.Live = true, want offline after empty tmux scan: %+v", entry)
+	}
+	if entry.AgentKind != "codex" || entry.AgentSessionID != sessionID || entry.CWD != "/home/alice/project" || entry.TranscriptPath == "" {
+		t.Fatalf("agent recovery metadata not preserved: %+v", entry)
+	}
+	if entry.RecoveryKind != "agent" {
+		t.Fatalf("recovery kind = %q, want agent", entry.RecoveryKind)
+	}
+	if entry.ResumeCommand != "codex resume "+sessionID {
+		t.Fatalf("resume command = %q, want canonical codex command", entry.ResumeCommand)
+	}
+	if calls := readArgvRecordingTmuxCalls(t, argsPath); len(calls) != 1 {
+		t.Fatalf("tmux calls = %#v, want one list-sessions call", calls)
+	}
+}
+
+func TestSessionBankCanonicalAgentResumeCommand(t *testing.T) {
+	const codexID = "019f45ec-f88b-7f70-88dc-b5b99a9e94c6"
+	const claudeID = "9ed1181c-b2a3-4ef2-96ea-a84e51e79dc4"
+	tests := []struct {
+		name string
+		kind string
+		id   string
+		want string
+		ok   bool
+	}{
+		{name: "codex", kind: "codex", id: codexID, want: "codex resume " + codexID, ok: true},
+		{name: "claude", kind: "claude", id: claudeID, want: "claude --resume " + claudeID, ok: true},
+		{name: "normalizes kind", kind: " Codex ", id: codexID, want: "codex resume " + codexID, ok: true},
+		{name: "unknown kind", kind: "pi", id: codexID, ok: false},
+		{name: "empty id", kind: "codex", id: "", ok: false},
+		{name: "space in id", kind: "codex", id: codexID + " extra", ok: false},
+		{name: "semicolon in id", kind: "codex", id: codexID + ";touch-pwn", ok: false},
+		{name: "newline in id", kind: "codex", id: codexID + "\nwhoami", ok: false},
+		{name: "dollar in id", kind: "codex", id: "$(whoami)", ok: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := canonicalAgentResumeCommand(tt.kind, tt.id)
+			if ok != tt.ok || got != tt.want {
+				t.Fatalf("canonicalAgentResumeCommand(%q, %q) = %q, %v; want %q, %v", tt.kind, tt.id, got, ok, tt.want, tt.ok)
+			}
+		})
+	}
+}
+
+func TestTmuxHandler_RecoverBankedCodexSessionCreatesShellAndSendsResumeCommandLiterally(t *testing.T) {
+	tmpDir := t.TempDir()
+	bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
+	argsPath := installArgvRecordingTmux(t)
+	const sessionID = "019f45ec-f88b-7f70-88dc-b5b99a9e94c6"
+	writeBankSeed(t, bankPath, []SessionBankEntry{{
+		Name:           "codex-alpha",
+		UnixUser:       "alice",
+		Group:          "codex",
+		Windows:        1,
+		FirstSeen:      "2026-07-09T00:00:00Z",
+		LastSeen:       "2026-07-09T00:00:00Z",
+		AgentKind:      "codex",
+		AgentSessionID: sessionID,
+		ResumeCommand:  "rm -rf /",
+		CWD:            "/home/alice/project",
+	}})
+	t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
+
+	handler := NewTmuxHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/session-bank/codex-alpha/recover?unixUser=alice", bytes.NewBufferString(`{"mouseScroll":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	wantCalls := [][]string{
+		{"-S", "/tmp/tmux-a", "new-session", "-d", "-s", "codex-alpha", "-c", "/home/alice/project"},
+		{"-S", "/tmp/tmux-a", "set-option", "-g", "mouse", "on"},
+		{"-S", "/tmp/tmux-a", "send-keys", "-t", "codex-alpha", "-l", "codex resume " + sessionID},
+		{"-S", "/tmp/tmux-a", "send-keys", "-t", "codex-alpha", "Enter"},
+	}
+	if got := readArgvRecordingTmuxCalls(t, argsPath); !equalArgvCalls(got, wantCalls) {
+		t.Fatalf("tmux calls = %#v, want %#v", got, wantCalls)
+	}
+	var response map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response["success"] != true || response["session"] != "codex-alpha" || response["agentKind"] != "codex" || response["agentSessionId"] != sessionID || response["resumeCommand"] != "codex resume "+sessionID {
+		t.Fatalf("recover response = %#v", response)
+	}
+	if _, hasData := response["data"]; hasData {
+		t.Fatalf("recover response should be flat JSON, got data envelope: %#v", response)
+	}
+}
+
+func TestTmuxHandler_UpdateBankedRecoveryMetadataMakesLiveSessionRecoverableAfterRestart(t *testing.T) {
+	tmpDir := t.TempDir()
+	statePath := filepath.Join(tmpDir, "offline")
+	bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
+	fakeTmux := filepath.Join(tmpDir, "tmux")
+	script := "#!/bin/sh\ncase \"$*\" in\n  *list-sessions*)\n    if [ ! -f " + statePath + " ]; then printf '$7:codex-alpha:1:0\\n'; fi\n    ;;\nesac\n"
+	if err := os.WriteFile(fakeTmux, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+	t.Setenv("PATH", tmpDir)
+	t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
+	const sessionID = "019f45ec-f88b-7f70-88dc-b5b99a9e94c6"
+
+	handler := NewTmuxHandler()
+	recorder := httptest.NewRecorder()
+	handler.ListSessions(recorder, httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("initial list status = %d; body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	body := bytes.NewBufferString(`{"agentKind":"codex","agentSessionId":"` + sessionID + `","cwd":"/home/alice/project","transcriptPath":"/home/alice/.codex/sessions/rollout-` + sessionID + `.jsonl"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/session-bank/codex-alpha/recovery?unixUser=alice", body)
+	req.Header.Set("Content-Type", "application/json")
+	recorder = httptest.NewRecorder()
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("recovery metadata status = %d; body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	if err := os.WriteFile(statePath, []byte("offline"), 0o644); err != nil {
+		t.Fatalf("write offline marker: %v", err)
+	}
+	handler = NewTmuxHandler()
+	recorder = httptest.NewRecorder()
+	handler.ListSessions(recorder, httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("offline list status = %d; body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response SessionsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode offline response: %v", err)
+	}
+	if len(response.Banked) != 1 {
+		t.Fatalf("banked = %+v, want one recoverable bank entry", response.Banked)
+	}
+	entry := response.Banked[0]
+	if entry.RecoveryKind != "agent" || entry.AgentKind != "codex" || entry.AgentSessionID != sessionID || entry.ResumeCommand != "codex resume "+sessionID || entry.CWD != "/home/alice/project" {
+		t.Fatalf("offline recovery entry = %+v, want persisted agent metadata", entry)
+	}
+}
+
+func TestTmuxHandler_RecoverBankedSessionDropsUnsafeTmuxFormatCWD(t *testing.T) {
+	tmpDir := t.TempDir()
+	bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
+	argsPath := installArgvRecordingTmux(t)
+	const sessionID = "019f45ec-f88b-7f70-88dc-b5b99a9e94c6"
+	writeBankSeed(t, bankPath, []SessionBankEntry{{
+		Name:           "codex-alpha",
+		UnixUser:       "alice",
+		Group:          "codex",
+		FirstSeen:      "2026-07-09T00:00:00Z",
+		LastSeen:       "2026-07-09T00:00:00Z",
+		AgentKind:      "codex",
+		AgentSessionID: sessionID,
+		CWD:            "/tmp/#(touch /tmp/chrote-pwned)",
+	}})
+	t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
+
+	handler := NewTmuxHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/session-bank/codex-alpha/recover?unixUser=alice", bytes.NewBufferString(`{"mouseScroll":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	calls := readArgvRecordingTmuxCalls(t, argsPath)
+	if len(calls) == 0 || strings.Join(calls[0], "\x00") != strings.Join([]string{"-S", "/tmp/tmux-a", "new-session", "-d", "-s", "codex-alpha", "-c", "/home/alice"}, "\x00") {
+		t.Fatalf("first tmux call = %#v, want unsafe cwd dropped and configured workdir used", calls)
+	}
+	for _, call := range calls {
+		if strings.Contains(strings.Join(call, " "), "#(") {
+			t.Fatalf("tmux calls include unsafe format cwd: %#v", calls)
+		}
+	}
+}
+
+func TestTmuxHandler_RecoverBankedSessionRejectsUnsafeAgentMetadataWithoutTmuxSideEffects(t *testing.T) {
+	tmpDir := t.TempDir()
+	bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
+	argsPath := installArgvRecordingTmux(t)
+	writeBankSeed(t, bankPath, []SessionBankEntry{{
+		Name:           "codex-alpha",
+		UnixUser:       "alice",
+		Group:          "codex",
+		FirstSeen:      "2026-07-09T00:00:00Z",
+		LastSeen:       "2026-07-09T00:00:00Z",
+		AgentKind:      "codex",
+		AgentSessionID: "019f45ec-f88b-7f70-88dc-b5b99a9e94c6;touch-pwn",
+		ResumeCommand:  "rm -rf /",
+	}})
+	t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
+
+	handler := NewTmuxHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/session-bank/codex-alpha/recover?unixUser=alice", nil)
+	recorder := httptest.NewRecorder()
+
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+	if got := readArgvRecordingTmuxCalls(t, argsPath); len(got) != 0 {
+		t.Fatalf("tmux calls = %#v, want none for unsafe recovery metadata", got)
+	}
+}
+
+func TestTmuxHandler_ForgetBankedAgentSessionDoesNotCallTmux(t *testing.T) {
+	tmpDir := t.TempDir()
+	bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
+	argsPath := installArgvRecordingTmux(t)
+	writeBankSeed(t, bankPath, []SessionBankEntry{{
+		Name:           "codex-alpha",
+		UnixUser:       "alice",
+		Group:          "codex",
+		FirstSeen:      "2026-07-09T00:00:00Z",
+		LastSeen:       "2026-07-09T00:00:00Z",
+		AgentKind:      "codex",
+		AgentSessionID: "019f45ec-f88b-7f70-88dc-b5b99a9e94c6",
+		ResumeCommand:  "codex resume 019f45ec-f88b-7f70-88dc-b5b99a9e94c6",
+	}})
+	t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
+
+	handler := NewTmuxHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodDelete, "/api/tmux/session-bank/codex-alpha?unixUser=alice", nil)
+	recorder := httptest.NewRecorder()
+
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if got := readArgvRecordingTmuxCalls(t, argsPath); len(got) != 0 {
+		t.Fatalf("tmux calls = %#v, want metadata-only forget", got)
+	}
+}
+
 func TestSessionBankForgetRemovesExactUserEntry(t *testing.T) {
 	store := newSessionBankStore(filepath.Join(t.TempDir(), "session-bank", "sessions.json"))
 	_, err := store.Snapshot([]core.Session{
@@ -741,4 +1058,84 @@ func TestTmuxHandler_RegisterRoutesWiresSessionBankForget(t *testing.T) {
 	if len(entries) != 0 {
 		t.Fatalf("bank entries = %+v, want empty after forget", entries)
 	}
+}
+
+func writeBankSeed(t *testing.T, path string, entries []SessionBankEntry) {
+	t.Helper()
+	raw, err := json.Marshal(entries)
+	if err != nil {
+		t.Fatalf("marshal bank seed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir bank dir: %v", err)
+	}
+	if err := os.WriteFile(path, raw, 0o660); err != nil {
+		t.Fatalf("write bank seed: %v", err)
+	}
+}
+
+func installArgvRecordingTmux(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	argsPath := filepath.Join(dir, "tmux-argv.txt")
+	scriptPath := filepath.Join(dir, "tmux")
+	script := `#!/bin/sh
+for arg in "$@"; do
+  printf '%s\n' "$arg" >> "$TMUX_ARGS_FILE"
+done
+printf '%s\n' '---' >> "$TMUX_ARGS_FILE"
+case "$*" in
+  *list-sessions*) printf '' ;;
+esac
+`
+	if err := os.WriteFile(scriptPath, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+	if err := os.WriteFile(argsPath, nil, 0o600); err != nil {
+		t.Fatalf("write args log: %v", err)
+	}
+	t.Setenv("TMUX_ARGS_FILE", argsPath)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return argsPath
+}
+
+func readArgvRecordingTmuxCalls(t *testing.T, argsPath string) [][]string {
+	t.Helper()
+	raw, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatalf("read tmux argv log: %v", err)
+	}
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" {
+		return nil
+	}
+	lines := strings.Split(trimmed, "\n")
+	calls := [][]string{}
+	current := []string{}
+	for _, line := range lines {
+		if line == "---" {
+			if len(current) > 0 {
+				calls = append(calls, current)
+				current = []string{}
+			}
+			continue
+		}
+		current = append(current, line)
+	}
+	if len(current) > 0 {
+		calls = append(calls, current)
+	}
+	return calls
+}
+
+func equalArgvCalls(a, b [][]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if strings.Join(a[i], "\x00") != strings.Join(b[i], "\x00") {
+			return false
+		}
+	}
+	return true
 }

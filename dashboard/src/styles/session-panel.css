@@ -453,9 +453,41 @@
   min-width: 0;
 }
 
+.session-bank-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .session-bank-main strong {
   color: var(--text-primary);
   font-size: 12px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-bank-badge {
+  border: 1px solid var(--divider);
+  border-radius: 999px;
+  padding: 1px 6px;
+  color: var(--text-secondary);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.session-bank-badge-agent {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.session-bank-badge-shell {
+  color: var(--text-dim);
 }
 
 .session-bank-main span {
@@ -474,11 +506,12 @@
 
 .session-bank-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
 .session-bank-actions button {
-  flex: 1;
+  flex: 1 1 44%;
   border: 1px solid var(--divider);
   border-radius: 3px;
   padding: 4px 6px;
@@ -489,6 +522,11 @@
 }
 
 .session-bank-actions button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.session-bank-actions .session-bank-resume {
   border-color: var(--accent);
   color: var(--accent);
 }

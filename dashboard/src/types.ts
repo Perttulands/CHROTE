@@ -195,7 +195,12 @@ export interface SessionBankEntry extends TmuxSession {
   live: boolean
   firstSeen: string
   lastSeen: string
-  resumeCommand: string
+  recoveryKind?: 'agent' | 'shell'
+  agentKind?: 'codex' | 'claude' | string
+  agentSessionId?: string
+  resumeCommand?: string
+  cwd?: string
+  transcriptPath?: string
 }
 
 export interface SessionsResponse {
