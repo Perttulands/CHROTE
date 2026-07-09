@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -27,6 +28,7 @@ type TmuxHandler struct {
 	socket     string
 	workDir    string
 	bank       *sessionBankStore
+	persistent *persistentAgentStore
 }
 
 type sessionsCache struct {
@@ -49,16 +51,21 @@ type SessionsResponse struct {
 // SessionBankEntry is a durable reminder of a terminal session that CHROTE has
 // seen. It survives CHROTE/tmux restarts so agent resume IDs stay visible.
 type SessionBankEntry struct {
-	ID            string `json:"id,omitempty"`
-	Name          string `json:"name"`
-	UnixUser      string `json:"unixUser,omitempty"`
-	Group         string `json:"group"`
-	Windows       int    `json:"windows"`
-	Attached      bool   `json:"attached"`
-	Live          bool   `json:"live"`
-	FirstSeen     string `json:"firstSeen"`
-	LastSeen      string `json:"lastSeen"`
-	ResumeCommand string `json:"resumeCommand"`
+	ID             string `json:"id,omitempty"`
+	Name           string `json:"name"`
+	UnixUser       string `json:"unixUser,omitempty"`
+	Group          string `json:"group"`
+	Windows        int    `json:"windows"`
+	Attached       bool   `json:"attached"`
+	Live           bool   `json:"live"`
+	FirstSeen      string `json:"firstSeen"`
+	LastSeen       string `json:"lastSeen"`
+	RecoveryKind   string `json:"recoveryKind,omitempty"`
+	AgentKind      string `json:"agentKind,omitempty"`
+	AgentSessionID string `json:"agentSessionId,omitempty"`
+	ResumeCommand  string `json:"resumeCommand"`
+	CWD            string `json:"cwd,omitempty"`
+	TranscriptPath string `json:"transcriptPath,omitempty"`
 }
 
 // CreateSessionRequest is the request body for creating a session
@@ -66,6 +73,21 @@ type CreateSessionRequest struct {
 	Name        string `json:"name"`
 	UnixUser    string `json:"unixUser,omitempty"`
 	MouseScroll *bool  `json:"mouseScroll,omitempty"`
+}
+
+// RecoverBankedSessionRequest is the request body for recovering a banked agent session.
+type RecoverBankedSessionRequest struct {
+	UnixUser    string `json:"unixUser,omitempty"`
+	MouseScroll *bool  `json:"mouseScroll,omitempty"`
+}
+
+// UpdateBankedRecoveryRequest records agent recovery metadata for a banked session.
+type UpdateBankedRecoveryRequest struct {
+	UnixUser       string `json:"unixUser,omitempty"`
+	AgentKind      string `json:"agentKind"`
+	AgentSessionID string `json:"agentSessionId"`
+	CWD            string `json:"cwd,omitempty"`
+	TranscriptPath string `json:"transcriptPath,omitempty"`
 }
 
 // RenameSessionRequest is the request body for renaming a session
@@ -100,6 +122,7 @@ func NewTmuxHandler() *TmuxHandler {
 		socket:     strings.TrimSpace(os.Getenv("CHROTE_DEFAULT_TMUX_SOCKET")),
 		workDir:    strings.TrimSpace(os.Getenv("CHROTE_DEFAULT_TMUX_WORKDIR")),
 		bank:       newSessionBankStore(defaultSessionBankPath()),
+		persistent: newPersistentAgentStore(defaultPersistentAgentsPath()),
 	}
 }
 
@@ -107,6 +130,11 @@ func NewTmuxHandler() *TmuxHandler {
 func (h *TmuxHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/tmux/sessions", h.ListSessions)
 	mux.HandleFunc("POST /api/tmux/sessions", h.CreateSession)
+	mux.HandleFunc("POST /api/tmux/sessions/{name}/persistence", h.EnablePersistentAgent)
+	mux.HandleFunc("DELETE /api/tmux/sessions/{name}/persistence", h.DisablePersistentAgent)
+	mux.HandleFunc("POST /api/tmux/session-bank/{name}/recovery", h.UpdateBankedRecovery)
+	mux.HandleFunc("POST /api/tmux/session-bank/{name}/recover", h.RecoverBankedSession)
+	mux.HandleFunc("DELETE /api/tmux/session-bank/{name}", h.ForgetBankedSession)
 	mux.HandleFunc("DELETE /api/tmux/sessions/all", h.DeleteAllSessions)
 	mux.HandleFunc("DELETE /api/tmux/sessions/{name}", h.DeleteSession)
 	mux.HandleFunc("PATCH /api/tmux/sessions/{name}", h.RenameSession)
@@ -263,12 +291,66 @@ func sessionBankKey(name, unixUser string) string {
 	return strings.TrimSpace(unixUser) + "\x00" + strings.TrimSpace(name)
 }
 
+var agentSessionIDRegex = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+
 func resumeCommandForSession(session core.Session) string {
 	name := strings.TrimSpace(session.Name)
 	if name == "" {
 		return ""
 	}
 	return "/resume " + name
+}
+
+func canonicalAgentResumeCommand(kind, sessionID string) (string, bool) {
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	sessionID = strings.TrimSpace(sessionID)
+	if !agentSessionIDRegex.MatchString(sessionID) {
+		return "", false
+	}
+	switch kind {
+	case "codex":
+		return "codex resume " + sessionID, true
+	case "claude":
+		return "claude --resume " + sessionID, true
+	default:
+		return "", false
+	}
+}
+
+func sanitizeRecoveryPath(value string, requireAbs bool) string {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.ContainsAny(value, "\x00\n\r#") {
+		return ""
+	}
+	if requireAbs && !filepath.IsAbs(value) {
+		return ""
+	}
+	return value
+}
+
+func sanitizeSessionBankEntry(entry SessionBankEntry) (SessionBankEntry, bool) {
+	entry.Name = strings.TrimSpace(entry.Name)
+	entry.UnixUser = strings.TrimSpace(entry.UnixUser)
+	if valid, _ := core.ValidateSessionName(entry.Name, "session name"); !valid {
+		return SessionBankEntry{}, false
+	}
+	if entry.Group == "" {
+		entry.Group = core.CategorizeSession(entry.Name)
+	}
+	entry.CWD = sanitizeRecoveryPath(entry.CWD, true)
+	entry.TranscriptPath = sanitizeRecoveryPath(entry.TranscriptPath, false)
+	if command, ok := canonicalAgentResumeCommand(entry.AgentKind, entry.AgentSessionID); ok {
+		entry.AgentKind = strings.ToLower(strings.TrimSpace(entry.AgentKind))
+		entry.AgentSessionID = strings.TrimSpace(entry.AgentSessionID)
+		entry.ResumeCommand = command
+		entry.RecoveryKind = "agent"
+		return entry, true
+	}
+	entry.AgentKind = ""
+	entry.AgentSessionID = ""
+	entry.RecoveryKind = "shell"
+	entry.ResumeCommand = resumeCommandForSession(core.Session{Name: entry.Name})
+	return entry, true
 }
 
 func (s *sessionBankStore) Read() ([]SessionBankEntry, error) {
@@ -282,6 +364,137 @@ func (s *sessionBankStore) Read() ([]SessionBankEntry, error) {
 		return nil, err
 	}
 	return sanitizeSessionBankEntries(entries), nil
+}
+
+func (s *sessionBankStore) Forget(name, unixUser string) (bool, error) {
+	if s == nil {
+		return false, nil
+	}
+	name = strings.TrimSpace(name)
+	unixUser = strings.TrimSpace(unixUser)
+	if valid, _ := core.ValidateSessionName(name, "session name"); !valid {
+		return false, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entries, err := s.loadLocked()
+	if err != nil {
+		return false, err
+	}
+	entries = sanitizeSessionBankEntries(entries)
+	key := sessionBankKey(name, unixUser)
+	filtered := make([]SessionBankEntry, 0, len(entries))
+	removed := false
+	for _, entry := range entries {
+		if sessionBankKey(entry.Name, entry.UnixUser) == key {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	if !removed {
+		return false, nil
+	}
+	if err := s.saveLocked(filtered); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *sessionBankStore) Find(name, unixUser string) (SessionBankEntry, bool, error) {
+	if s == nil {
+		return SessionBankEntry{}, false, nil
+	}
+	name = strings.TrimSpace(name)
+	unixUser = strings.TrimSpace(unixUser)
+	if valid, _ := core.ValidateSessionName(name, "session name"); !valid {
+		return SessionBankEntry{}, false, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entries, err := s.loadLocked()
+	if err != nil {
+		return SessionBankEntry{}, false, err
+	}
+	key := sessionBankKey(name, unixUser)
+	for _, entry := range sanitizeSessionBankEntries(entries) {
+		if sessionBankKey(entry.Name, entry.UnixUser) == key {
+			return entry, true, nil
+		}
+	}
+	return SessionBankEntry{}, false, nil
+}
+
+func (s *sessionBankStore) UpsertRecovery(name, unixUser string, req UpdateBankedRecoveryRequest) (SessionBankEntry, error) {
+	if s == nil {
+		return SessionBankEntry{}, fmt.Errorf("session bank is unavailable")
+	}
+	name = strings.TrimSpace(name)
+	unixUser = strings.TrimSpace(unixUser)
+	if valid, errMsg := core.ValidateSessionName(name, "session name"); !valid {
+		return SessionBankEntry{}, fmt.Errorf("%s", errMsg)
+	}
+	command, ok := canonicalAgentResumeCommand(req.AgentKind, req.AgentSessionID)
+	if !ok {
+		return SessionBankEntry{}, fmt.Errorf("unsafe or unsupported agent recovery metadata")
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entries, err := s.loadLocked()
+	if err != nil {
+		return SessionBankEntry{}, err
+	}
+	entries = sanitizeSessionBankEntries(entries)
+	key := sessionBankKey(name, unixUser)
+	updated := false
+	var resultEntry SessionBankEntry
+	for i, entry := range entries {
+		if sessionBankKey(entry.Name, entry.UnixUser) != key {
+			continue
+		}
+		entry.AgentKind = strings.ToLower(strings.TrimSpace(req.AgentKind))
+		entry.AgentSessionID = strings.TrimSpace(req.AgentSessionID)
+		entry.ResumeCommand = command
+		entry.RecoveryKind = "agent"
+		entry.CWD = sanitizeRecoveryPath(req.CWD, true)
+		entry.TranscriptPath = sanitizeRecoveryPath(req.TranscriptPath, false)
+		if entry.FirstSeen == "" {
+			entry.FirstSeen = now
+		}
+		entry.LastSeen = now
+		entry, _ = sanitizeSessionBankEntry(entry)
+		entries[i] = entry
+		resultEntry = entry
+		updated = true
+		break
+	}
+	if !updated {
+		entry := SessionBankEntry{
+			Name:           name,
+			UnixUser:       unixUser,
+			Group:          core.CategorizeSession(name),
+			Windows:        1,
+			FirstSeen:      now,
+			LastSeen:       now,
+			AgentKind:      strings.ToLower(strings.TrimSpace(req.AgentKind)),
+			AgentSessionID: strings.TrimSpace(req.AgentSessionID),
+			ResumeCommand:  command,
+			RecoveryKind:   "agent",
+			CWD:            sanitizeRecoveryPath(req.CWD, true),
+			TranscriptPath: sanitizeRecoveryPath(req.TranscriptPath, false),
+		}
+		entry, _ = sanitizeSessionBankEntry(entry)
+		entries = append(entries, entry)
+		resultEntry = entry
+	}
+	if err := s.saveLocked(entries); err != nil {
+		return SessionBankEntry{}, err
+	}
+	return resultEntry, nil
 }
 
 func (s *sessionBankStore) Snapshot(liveSessions []core.Session) ([]SessionBankEntry, error) {
@@ -299,13 +512,10 @@ func (s *sessionBankStore) Snapshot(liveSessions []core.Session) ([]SessionBankE
 	entries = sanitizeSessionBankEntries(entries)
 	byKey := map[string]SessionBankEntry{}
 	for _, entry := range entries {
-		if entry.Name == "" {
+		entry, ok := sanitizeSessionBankEntry(entry)
+		if !ok {
 			continue
 		}
-		if entry.Group == "" {
-			entry.Group = core.CategorizeSession(entry.Name)
-		}
-		entry.ResumeCommand = resumeCommandForSession(core.Session{Name: entry.Name})
 		byKey[sessionBankKey(entry.Name, entry.UnixUser)] = entry
 	}
 
@@ -331,7 +541,7 @@ func (s *sessionBankStore) Snapshot(liveSessions []core.Session) ([]SessionBankE
 		entry.Attached = session.Attached
 		entry.Live = true
 		entry.LastSeen = now
-		entry.ResumeCommand = resumeCommandForSession(session)
+		entry, _ = sanitizeSessionBankEntry(entry)
 		byKey[key] = entry
 	}
 
@@ -361,15 +571,10 @@ func (s *sessionBankStore) Snapshot(liveSessions []core.Session) ([]SessionBankE
 func sanitizeSessionBankEntries(entries []SessionBankEntry) []SessionBankEntry {
 	result := make([]SessionBankEntry, 0, len(entries))
 	for _, entry := range entries {
-		entry.Name = strings.TrimSpace(entry.Name)
-		entry.UnixUser = strings.TrimSpace(entry.UnixUser)
-		if valid, _ := core.ValidateSessionName(entry.Name, "session name"); !valid {
+		entry, ok := sanitizeSessionBankEntry(entry)
+		if !ok {
 			continue
 		}
-		if entry.Group == "" {
-			entry.Group = core.CategorizeSession(entry.Name)
-		}
-		entry.ResumeCommand = resumeCommandForSession(core.Session{Name: entry.Name})
 		result = append(result, entry)
 	}
 	return result
@@ -584,19 +789,41 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if h.persistent != nil {
+		var persistentErr error
+		response.Sessions, persistentErr = h.persistent.AnnotateSessions(response.Sessions)
+		if persistentErr != nil {
+			response.Error = appendSessionResponseError(response.Error, "persistent agents: "+persistentErr.Error())
+		}
+	}
 	core.SortSessions(response.Sessions)
 	response.Grouped = core.GroupSessions(response.Sessions)
 	if h.bank != nil {
 		var banked []SessionBankEntry
 		var bankErr error
 		if queryUnixUser == "" && response.Error == "" {
-			banked, bankErr = h.bank.Snapshot(response.Sessions)
+			liveForBank := response.Sessions
+			if h.persistent != nil {
+				var filterLiveErr error
+				liveForBank, filterLiveErr = h.persistent.FilterLiveSessionsForBank(liveForBank)
+				if filterLiveErr != nil {
+					response.Error = appendSessionResponseError(response.Error, "persistent agents: "+filterLiveErr.Error())
+				}
+			}
+			banked, bankErr = h.bank.Snapshot(liveForBank)
 		} else {
 			banked, bankErr = h.bank.Read()
 		}
 		if bankErr != nil {
 			response.Error = appendSessionResponseError(response.Error, "session bank: "+bankErr.Error())
 		} else {
+			if h.persistent != nil {
+				var filterErr error
+				banked, filterErr = h.persistent.FilterBanked(banked)
+				if filterErr != nil {
+					response.Error = appendSessionResponseError(response.Error, "persistent agents: "+filterErr.Error())
+				}
+			}
 			response.Banked = banked
 		}
 	}
@@ -610,6 +837,205 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	core.WriteJSON(w, http.StatusOK, response)
+}
+
+// ForgetBankedSession handles DELETE /api/tmux/session-bank/{name}.
+// It removes a durable offline resume hint from the session bank without
+// touching live tmux sessions. A later full scan will re-add a session if it is
+// still live.
+func (h *TmuxHandler) ForgetBankedSession(w http.ResponseWriter, r *http.Request) {
+	sessionName := strings.TrimSpace(r.PathValue("name"))
+	valid, errMsg := core.ValidateSessionName(sessionName, "session name")
+	if !valid {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", errMsg)
+		return
+	}
+	unixUser := ""
+	if r != nil {
+		unixUser = strings.TrimSpace(r.URL.Query().Get("unixUser"))
+	}
+	if h.bank == nil {
+		core.WriteJSON(w, http.StatusOK, map[string]interface{}{
+			"success":   true,
+			"removed":   false,
+			"session":   sessionName,
+			"unixUser":  unixUser,
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
+		})
+		return
+	}
+
+	removed, err := h.bank.Forget(sessionName, unixUser)
+	if err != nil {
+		core.WriteError(w, http.StatusInternalServerError, "SESSION_BANK_ERROR", err.Error())
+		return
+	}
+	h.invalidateCache()
+	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"success":   true,
+		"removed":   removed,
+		"session":   sessionName,
+		"unixUser":  unixUser,
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+func bankedRecoveryWorkDir(entry SessionBankEntry, target tmuxTarget) string {
+	if entry.CWD != "" {
+		return entry.CWD
+	}
+	if target.workDir != "" {
+		return target.workDir
+	}
+	return core.GetWorkDir()
+}
+
+func (h *TmuxHandler) recoverFailureCleanup(socket, sessionName string) {
+	if strings.TrimSpace(sessionName) == "" {
+		return
+	}
+	_, _ = h.runTmuxOnSocket(socket, "kill-session", "-t", sessionName)
+}
+
+func decodeOptionalJSONBody(r *http.Request, dest any) error {
+	if r == nil || r.Body == nil {
+		return nil
+	}
+	if err := json.NewDecoder(r.Body).Decode(dest); err != nil && err != io.EOF {
+		return err
+	}
+	return nil
+}
+
+// UpdateBankedRecovery handles POST /api/tmux/session-bank/{name}/recovery.
+// It records safe agent resume metadata captured outside the tmux listing path.
+func (h *TmuxHandler) UpdateBankedRecovery(w http.ResponseWriter, r *http.Request) {
+	sessionName := strings.TrimSpace(r.PathValue("name"))
+	valid, errMsg := core.ValidateSessionName(sessionName, "session name")
+	if !valid {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", errMsg)
+		return
+	}
+	var req UpdateBankedRecoveryRequest
+	if err := decodeOptionalJSONBody(r, &req); err != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON body")
+		return
+	}
+	unixUser := strings.TrimSpace(req.UnixUser)
+	if r != nil {
+		if queryUser := strings.TrimSpace(r.URL.Query().Get("unixUser")); queryUser != "" {
+			unixUser = queryUser
+		}
+	}
+	if h.bank == nil {
+		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", "Session bank is unavailable")
+		return
+	}
+	entry, err := h.bank.UpsertRecovery(sessionName, unixUser, req)
+	if err != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+		return
+	}
+	h.invalidateCache()
+	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"success":        true,
+		"session":        entry.Name,
+		"unixUser":       entry.UnixUser,
+		"recoveryKind":   entry.RecoveryKind,
+		"agentKind":      entry.AgentKind,
+		"agentSessionId": entry.AgentSessionID,
+		"resumeCommand":  entry.ResumeCommand,
+		"cwd":            entry.CWD,
+		"timestamp":      time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+// RecoverBankedSession handles POST /api/tmux/session-bank/{name}/recover.
+// It creates fresh tmux transport for a durable Codex/Claude agent transcript.
+func (h *TmuxHandler) RecoverBankedSession(w http.ResponseWriter, r *http.Request) {
+	sessionName := strings.TrimSpace(r.PathValue("name"))
+	valid, errMsg := core.ValidateSessionName(sessionName, "session name")
+	if !valid {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", errMsg)
+		return
+	}
+
+	var req RecoverBankedSessionRequest
+	if err := decodeOptionalJSONBody(r, &req); err != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON body")
+		return
+	}
+	unixUser := strings.TrimSpace(req.UnixUser)
+	if r != nil {
+		if queryUser := strings.TrimSpace(r.URL.Query().Get("unixUser")); queryUser != "" {
+			unixUser = queryUser
+		}
+	}
+	if h.bank == nil {
+		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", "Session bank is unavailable")
+		return
+	}
+	entry, found, err := h.bank.Find(sessionName, unixUser)
+	if err != nil {
+		core.WriteError(w, http.StatusInternalServerError, "SESSION_BANK_ERROR", err.Error())
+		return
+	}
+	if !found {
+		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", "Session bank entry not found")
+		return
+	}
+
+	resumeCommand, ok := canonicalAgentResumeCommand(entry.AgentKind, entry.AgentSessionID)
+	if !ok {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Session bank entry has no safe agent resume metadata")
+		return
+	}
+	target, targetErr := h.targetForUnixUser(entry.UnixUser)
+	if targetErr != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", targetErr.Error())
+		return
+	}
+	workDir := bankedRecoveryWorkDir(entry, target)
+	if workDir == "" {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "No recovery working directory available")
+		return
+	}
+
+	if _, err := h.runTmuxOnSocket(target.socket, "new-session", "-d", "-s", entry.Name, "-c", workDir); err != nil {
+		core.WriteError(w, http.StatusBadRequest, "TMUX_ERROR", err.Error())
+		return
+	}
+	mouseScroll := true
+	if req.MouseScroll != nil {
+		mouseScroll = *req.MouseScroll
+	}
+	mouseValue := "off"
+	if mouseScroll {
+		mouseValue = "on"
+	}
+	_, _ = h.runTmuxOnSocket(target.socket, "set-option", "-g", "mouse", mouseValue)
+	if _, err := h.runTmuxOnSocket(target.socket, "send-keys", "-t", entry.Name, "-l", resumeCommand); err != nil {
+		h.recoverFailureCleanup(target.socket, entry.Name)
+		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
+		return
+	}
+	if _, err := h.runTmuxOnSocket(target.socket, "send-keys", "-t", entry.Name, "Enter"); err != nil {
+		h.recoverFailureCleanup(target.socket, entry.Name)
+		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
+		return
+	}
+
+	h.invalidateCache()
+	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"success":        true,
+		"session":        entry.Name,
+		"unixUser":       entry.UnixUser,
+		"agentKind":      entry.AgentKind,
+		"agentSessionId": entry.AgentSessionID,
+		"resumeCommand":  resumeCommand,
+		"cwd":            workDir,
+		"timestamp":      time.Now().UTC().Format(time.RFC3339),
+	})
 }
 
 // invalidateCache clears the sessions cache
@@ -692,6 +1118,17 @@ func (h *TmuxHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", targetErr.Error())
 		return
 	}
+	if h.persistent != nil {
+		persistent, err := h.persistent.IsPersistent(sessionName, target.unixUser)
+		if err != nil {
+			core.WriteError(w, http.StatusInternalServerError, "PERSISTENT_AGENT_ERROR", err.Error())
+			return
+		}
+		if persistent {
+			core.WriteError(w, http.StatusConflict, "PERSISTENT_AGENT_LOCKED", "Session is persistent. Make it mortal before killing it.")
+			return
+		}
+	}
 
 	_, err := h.runTmuxOnSocket(target.socket, "kill-session", "-t", sessionName)
 	if err != nil {
@@ -727,6 +1164,15 @@ func (h *TmuxHandler) DeleteAllSessions(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Get list of all sessions first
+	persistentNames := map[string]bool{}
+	if h.persistent != nil {
+		var persistentErr error
+		persistentNames, persistentErr = h.persistent.NamesForUser(target.unixUser)
+		if persistentErr != nil {
+			core.WriteError(w, http.StatusInternalServerError, "PERSISTENT_AGENT_ERROR", persistentErr.Error())
+			return
+		}
+	}
 	output, err := h.runTmuxOnSocket(target.socket, "list-sessions", "-F", "#{session_name}")
 	var sessionNames []string
 	var protectedNames []string
@@ -735,7 +1181,7 @@ func (h *TmuxHandler) DeleteAllSessions(w http.ResponseWriter, r *http.Request) 
 		for _, line := range lines {
 			line = strings.TrimSpace(line)
 			if line != "" {
-				if protectedSessions[line] {
+				if protectedSessions[line] || persistentNames[line] {
 					protectedNames = append(protectedNames, line)
 				} else {
 					sessionNames = append(sessionNames, line)
@@ -818,6 +1264,12 @@ func (h *TmuxHandler) RenameSession(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
 		return
+	}
+	if h.persistent != nil {
+		if err := h.persistent.Rename(oldName, req.NewName, target.unixUser); err != nil {
+			core.WriteError(w, http.StatusInternalServerError, "PERSISTENT_AGENT_ERROR", err.Error())
+			return
+		}
 	}
 
 	h.invalidateCache()

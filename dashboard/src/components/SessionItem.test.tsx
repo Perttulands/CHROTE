@@ -7,6 +7,8 @@ const mockState = vi.hoisted(() => ({
   assignedSessions: new Map<string, { workspaceId: string; windowId: string; windowIndex: number; colorIndex: number }>(),
   openFloatingModal: vi.fn(),
   addSessionToWindow: vi.fn(),
+  makeSessionPersistent: vi.fn(),
+  makeSessionMortal: vi.fn(),
 }))
 
 vi.mock('@dnd-kit/core', () => ({
@@ -33,6 +35,8 @@ vi.mock('../context/SessionContext', () => ({
     addSessionToWindow: mockState.addSessionToWindow,
     removeSessionFromWindow: vi.fn(),
     openFloatingModal: mockState.openFloatingModal,
+    makeSessionPersistent: mockState.makeSessionPersistent,
+    makeSessionMortal: mockState.makeSessionMortal,
     settings: {
       ...DEFAULT_SETTINGS,
       terminalUserColors: {
@@ -51,6 +55,9 @@ describe('SessionItem user badge and context actions', () => {
     mockState.assignedSessions.clear()
     mockState.openFloatingModal.mockClear()
     mockState.addSessionToWindow.mockClear()
+    mockState.makeSessionPersistent.mockClear()
+    mockState.makeSessionMortal.mockClear()
+    vi.restoreAllMocks()
   })
 
   it('renders a configured Unix user indicator from session.unixUser', () => {
@@ -121,4 +128,81 @@ describe('SessionItem user badge and context actions', () => {
     fireEvent.click(screen.getByRole('button', { name: /Window 1/i }))
     expect(mockState.addSessionToWindow).toHaveBeenCalledWith('terminal1', 'terminal1-window-0', 'alice-shell', 'alice')
   })
+
+  it('renders a lock indicator with identity for persistent sessions', () => {
+    render(
+      <SessionItem
+        session={{
+          name: 'codex-alpha',
+          windows: 1,
+          attached: false,
+          group: 'codex',
+          unixUser: 'alice',
+          persistent: true,
+          persistentIdentity: 'Maintains the VW Codex lane.',
+          persistentAgentKind: 'codex',
+        }}
+      />
+    )
+
+    const lock = screen.getByLabelText('Persistent agent')
+    expect(lock).toHaveTextContent('🔒')
+    expect(lock).toHaveAttribute('title', 'Persistent codex agent: Maintains the VW Codex lane.')
+  })
+
+  it('offers make persistent for mortal sessions and calls the live-session endpoint action', async () => {
+    vi.spyOn(window, 'prompt')
+      .mockReturnValueOnce('Maintains the VW Codex lane.')
+      .mockReturnValueOnce('codex')
+      .mockReturnValueOnce('019f45ec-f88b-7f70-88dc-b5b99a9e94c6')
+    mockState.makeSessionPersistent.mockResolvedValue(true)
+
+    render(
+      <SessionItem
+        session={{
+          name: 'codex-alpha',
+          windows: 1,
+          attached: false,
+          group: 'codex',
+          unixUser: 'alice',
+        }}
+      />
+    )
+
+    fireEvent.contextMenu(screen.getByText('codex-alpha'))
+    fireEvent.click(screen.getByRole('button', { name: /Make persistent/i }))
+
+    expect(mockState.makeSessionPersistent).toHaveBeenCalledWith('codex-alpha', {
+      identity: 'Maintains the VW Codex lane.',
+      agentKind: 'codex',
+      agentSessionId: '019f45ec-f88b-7f70-88dc-b5b99a9e94c6',
+    }, 'alice')
+  })
+
+  it('offers make mortal for persistent sessions and protects direct kill', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockState.makeSessionMortal.mockResolvedValue(true)
+
+    render(
+      <SessionItem
+        session={{
+          name: 'codex-alpha',
+          windows: 1,
+          attached: false,
+          group: 'codex',
+          unixUser: 'alice',
+          persistent: true,
+          persistentIdentity: 'Maintains the VW Codex lane.',
+          persistentAgentKind: 'codex',
+        }}
+      />
+    )
+
+    fireEvent.contextMenu(screen.getByText('codex-alpha'))
+    expect(screen.queryByRole('button', { name: /Kill Session/i })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Make mortal/i }))
+
+    expect(mockState.makeSessionMortal).toHaveBeenCalledWith('codex-alpha', 'alice')
+  })
+
 })

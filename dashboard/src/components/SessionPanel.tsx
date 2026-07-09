@@ -8,7 +8,7 @@ import SessionGroup from './SessionGroup'
 import NukeConfirmModal from './NukeConfirmModal'
 
 function SessionPanel() {
-  const { groupedSessions, loading, error, sidebarCollapsed, toggleSidebar, refreshSessions, createSession: createSessionAction, sessions, sessionBank, terminalUsers } = useSession()
+  const { groupedSessions, loading, error, sidebarCollapsed, toggleSidebar, refreshSessions, createSession: createSessionAction, sessions, sessionBank, terminalUsers, settings } = useSession()
   const { addToast } = useToast()
   const [creating, setCreating] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
@@ -18,6 +18,7 @@ function SessionPanel() {
   const [namedSessionPopup, setNamedSessionPopup] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 })
   const [namedSessionName, setNamedSessionName] = useState('')
   const [namedSessionUser, setNamedSessionUser] = useState('')
+  const [sessionBankCollapsed, setSessionBankCollapsed] = useState(false)
   const newSessionMenuPosition = useViewportMenuPosition<HTMLDivElement>(
     newSessionMenu.show ? { x: newSessionMenu.x, y: newSessionMenu.y } : null,
     { estimatedSize: { width: 190, height: 130 } },
@@ -54,7 +55,17 @@ function SessionPanel() {
     const needle = searchTerm.trim().toLowerCase()
     return sessionBank
       .filter(session => !session.live)
-      .filter(session => !needle || session.name.toLowerCase().includes(needle) || session.resumeCommand.toLowerCase().includes(needle))
+      .filter(session => {
+        if (!needle) return true
+        return [
+          session.name,
+          session.unixUser ?? '',
+          session.resumeCommand ?? '',
+          session.agentKind ?? '',
+          session.agentSessionId ?? '',
+          session.cwd ?? '',
+        ].some(value => value.toLowerCase().includes(needle))
+      })
   }, [sessionBank, searchTerm])
 
   useEffect(() => {
@@ -119,6 +130,54 @@ function SessionPanel() {
 
   const recreateBankedSession = async (name: string, unixUser?: string) => {
     await createSessionForUser(unixUser, name)
+  }
+
+  const isRecoverableAgent = (session: typeof sessionBank[number]) => (
+    session.recoveryKind === 'agent' && Boolean(session.agentKind && session.agentSessionId && session.resumeCommand?.trim())
+  )
+
+  const resumeBankedAgent = async (session: typeof sessionBank[number]) => {
+    try {
+      const query = new URLSearchParams()
+      if (session.unixUser) query.set('unixUser', session.unixUser)
+      const response = await fetch(`/api/tmux/session-bank/${encodeURIComponent(session.name)}/recover${query.toString() ? `?${query.toString()}` : ''}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mouseScroll: settings.mouseScroll }),
+        signal: AbortSignal.timeout(10000),
+      })
+      if (!response.ok) {
+        console.error('Failed to resume banked agent:', await response.text())
+        addToast('Failed to resume agent', 'error')
+        return
+      }
+      addToast(`Resumed agent ${session.name}`, 'success')
+      await refreshSessions()
+    } catch (e) {
+      console.error('Failed to resume banked agent:', e)
+      addToast('Failed to resume agent', 'error')
+    }
+  }
+
+  const removeBankedSession = async (name: string, unixUser?: string) => {
+    try {
+      const query = new URLSearchParams()
+      if (unixUser) query.set('unixUser', unixUser)
+      const response = await fetch(`/api/tmux/session-bank/${encodeURIComponent(name)}${query.toString() ? `?${query.toString()}` : ''}`, {
+        method: 'DELETE',
+        signal: AbortSignal.timeout(10000),
+      })
+      if (!response.ok) {
+        console.error('Failed to remove banked session:', await response.text())
+        addToast('Failed to remove session bank entry', 'error')
+        return
+      }
+      addToast(`Removed ${name} from session bank`, 'success')
+      await refreshSessions()
+    } catch (e) {
+      console.error('Failed to remove banked session:', e)
+      addToast('Failed to remove session bank entry', 'error')
+    }
   }
 
   const nukeAllSessions = async () => {
@@ -266,34 +325,88 @@ function SessionPanel() {
           )}
 
           {!loading && !error && bankedSessions.length > 0 && (
-            <section className="session-bank" aria-label="Session bank">
-              <h2>Session bank</h2>
-              <p>Offline sessions seen before restart. Recreate the tmux shell, then paste the resume command.</p>
-              {bankedSessions.map(session => (
-                <div key={`${session.unixUser || 'default'}:${session.name}`} className="session-bank-item">
-                  <div className="session-bank-main">
-                    <strong>{session.name}</strong>
-                    <span>{[session.id ? `id ${session.id}` : '', session.unixUser || 'default', `last seen ${new Date(session.lastSeen).toLocaleString()}`].filter(Boolean).join(' · ')}</span>
-                    <code>{session.resumeCommand}</code>
-                  </div>
-                  <div className="session-bank-actions">
-                    <button
-                      type="button"
-                      onClick={() => void copyResumeCommand(session.resumeCommand)}
-                      aria-label={`Copy resume command for ${session.name}`}
-                    >
-                      Copy
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void recreateBankedSession(session.name, session.unixUser)}
-                      aria-label={`Recreate tmux shell for ${session.name}`}
-                    >
-                      Recreate
-                    </button>
-                  </div>
+            <section className={`session-bank ${sessionBankCollapsed ? 'session-bank-collapsed' : ''}`} aria-label="Session bank">
+              <div className="session-bank-header">
+                <h2>Session bank</h2>
+                <span className="session-bank-count" aria-hidden="true">{bankedSessions.length}</span>
+                <button
+                  type="button"
+                  className="session-bank-toggle"
+                  aria-label={sessionBankCollapsed ? 'Expand session bank' : 'Collapse session bank'}
+                  aria-expanded={!sessionBankCollapsed}
+                  aria-controls="session-bank-list"
+                  onClick={() => setSessionBankCollapsed(collapsed => !collapsed)}
+                >
+                  {sessionBankCollapsed ? '▸' : '▾'}
+                </button>
+              </div>
+              {!sessionBankCollapsed && (
+                <div id="session-bank-list" className="session-bank-list">
+                  <p>Offline sessions seen before restart. Resume saved agents directly, or recreate shell-only entries.</p>
+                  {bankedSessions.map(session => {
+                    const recoverableAgent = isRecoverableAgent(session)
+                    const resumeCommand = session.resumeCommand?.trim() || `/resume ${session.name}`
+                    return (
+                      <div key={`${session.unixUser || 'default'}:${session.name}`} className={`session-bank-item ${recoverableAgent ? 'session-bank-item-recoverable' : 'session-bank-item-shell'}`}>
+                        <div className="session-bank-main">
+                          <div className="session-bank-title-row">
+                            <strong>{session.name}</strong>
+                            <span className={`session-bank-badge ${recoverableAgent ? 'session-bank-badge-agent' : 'session-bank-badge-shell'}`}>
+                              {recoverableAgent ? 'Recoverable agent' : 'Shell only'}
+                            </span>
+                          </div>
+                          <span>{[session.id ? `id ${session.id}` : '', session.unixUser || 'default', `last seen ${new Date(session.lastSeen).toLocaleString()}`].filter(Boolean).join(' · ')}</span>
+                          {recoverableAgent ? (
+                            <>
+                              <span>{[session.agentKind, session.agentSessionId].filter(Boolean).join(' · ')}</span>
+                              <code>{resumeCommand}</code>
+                            </>
+                          ) : (
+                            <>
+                              <span>No agent resume metadata saved.</span>
+                              <code>{resumeCommand}</code>
+                            </>
+                          )}
+                        </div>
+                        <div className="session-bank-actions">
+                          {recoverableAgent && (
+                            <button
+                              type="button"
+                              className="session-bank-resume"
+                              onClick={() => void resumeBankedAgent(session)}
+                              aria-label={`Resume agent for ${session.name}`}
+                            >
+                              Resume agent
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => void copyResumeCommand(resumeCommand)}
+                            aria-label={`Copy resume command for ${session.name}`}
+                          >
+                            Copy
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void recreateBankedSession(session.name, session.unixUser)}
+                            aria-label={`Recreate shell for ${session.name}`}
+                          >
+                            Recreate shell
+                          </button>
+                          <button
+                            type="button"
+                            className="session-bank-remove"
+                            onClick={() => void removeBankedSession(session.name, session.unixUser)}
+                            aria-label={`Remove ${session.name} from session bank`}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
-              ))}
+              )}
             </section>
           )}
 
@@ -333,6 +446,7 @@ function SessionPanel() {
         <NukeConfirmModal
           sessionCount={sessions.length}
           sessionNames={sessions.map(s => s.name)}
+          protectedSessionNames={sessions.filter(s => s.persistent).map(s => s.name)}
           onConfirm={nukeAllSessions}
           onCancel={() => setShowNukeModal(false)}
         />

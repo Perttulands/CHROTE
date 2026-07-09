@@ -8,14 +8,17 @@ interface NukeConfirmModalProps {
   onCancel: () => void
   sessionCount: number
   sessionNames?: string[]
+  protectedSessionNames?: string[]
 }
 
-function NukeConfirmModal({ onConfirm, onCancel, sessionCount, sessionNames = [] }: NukeConfirmModalProps) {
+function NukeConfirmModal({ onConfirm, onCancel, sessionCount, sessionNames = [], protectedSessionNames = [] }: NukeConfirmModalProps) {
   const [inputValue, setInputValue] = useState('')
   const isValid = inputValue === 'NUKE'
 
   // Calculate how many sessions will actually be killed (excluding protected)
-  const protectedCount = sessionNames.filter(name => PROTECTED_SESSIONS.includes(name)).length
+  const protectedSet = new Set([...PROTECTED_SESSIONS, ...protectedSessionNames])
+  const protectedNames = sessionNames.filter(name => protectedSet.has(name))
+  const protectedCount = protectedNames.length
   const killableCount = sessionCount - protectedCount
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -39,7 +42,7 @@ function NukeConfirmModal({ onConfirm, onCancel, sessionCount, sessionNames = []
           </p>
           {protectedCount > 0 && (
             <p className="nuke-protected">
-              <strong>{protectedCount}</strong> protected session{protectedCount !== 1 ? 's' : ''} will be preserved: {PROTECTED_SESSIONS.filter(name => sessionNames.includes(name)).join(', ')}
+              <strong>{protectedCount}</strong> protected session{protectedCount !== 1 ? 's' : ''} will be preserved: {protectedNames.join(', ')}
             </p>
           )}
           <p className="nuke-warning">

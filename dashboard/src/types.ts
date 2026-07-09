@@ -189,13 +189,32 @@ export interface TmuxSession {
   attached: boolean
   group: string
   unixUser?: LaunchUser
+  persistent?: boolean
+  persistentIdentity?: string
+  persistentAgentKind?: 'codex' | 'claude' | string
+  persistentAgentSessionId?: string
+  persistentLastError?: string
+}
+
+export interface PersistentAgentPayload {
+  identity?: string
+  agentKind: 'codex' | 'claude' | string
+  agentSessionId: string
+  newName?: string
+  cwd?: string
+  transcriptPath?: string
 }
 
 export interface SessionBankEntry extends TmuxSession {
   live: boolean
   firstSeen: string
   lastSeen: string
-  resumeCommand: string
+  recoveryKind?: 'agent' | 'shell'
+  agentKind?: 'codex' | 'claude' | string
+  agentSessionId?: string
+  resumeCommand?: string
+  cwd?: string
+  transcriptPath?: string
 }
 
 export interface SessionsResponse {
@@ -303,6 +322,10 @@ export interface DashboardActions {
 
   // Rename a session
   renameSession: (oldName: string, newName: string, unixUser?: LaunchUser) => Promise<boolean>
+
+  // Mark a live Codex/Claude session as persistent desired state, or make it mortal again
+  makeSessionPersistent: (sessionName: string, payload: PersistentAgentPayload, unixUser?: LaunchUser) => Promise<boolean>
+  makeSessionMortal: (sessionName: string, unixUser?: LaunchUser) => Promise<boolean>
 
   // Drag state
   setIsDragging: (dragging: boolean) => void

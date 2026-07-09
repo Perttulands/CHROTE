@@ -11,12 +11,18 @@ import (
 
 // Session represents a tmux session
 type Session struct {
-	ID       string `json:"id,omitempty"`
-	Name     string `json:"name"`
-	Windows  int    `json:"windows"`
-	Attached bool   `json:"attached"`
-	Group    string `json:"group"`
-	UnixUser string `json:"unixUser,omitempty"`
+	ID                       string `json:"id,omitempty"`
+	Name                     string `json:"name"`
+	Windows                  int    `json:"windows"`
+	Attached                 bool   `json:"attached"`
+	Group                    string `json:"group"`
+	UnixUser                 string `json:"unixUser,omitempty"`
+	Persistent               bool   `json:"persistent,omitempty"`
+	PersistentIdentity       string `json:"persistentIdentity,omitempty"`
+	PersistentAgentKind      string `json:"persistentAgentKind,omitempty"`
+	PersistentAgentSessionID string `json:"persistentAgentSessionId,omitempty"`
+	PersistentResumeCommand  string `json:"persistentResumeCommand,omitempty"`
+	PersistentLastError      string `json:"persistentLastError,omitempty"`
 }
 
 // GroupPriority defines the sort order for session groups

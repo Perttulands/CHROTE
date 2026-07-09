@@ -18,7 +18,7 @@ interface ContextMenuState {
 }
 
 function SessionItem({ session }: SessionItemProps) {
-  const { assignedSessions, handleSessionClick, deleteSession, renameSession, workspaces, addSessionToWindow, removeSessionFromWindow, openFloatingModal, settings } = useSession()
+  const { assignedSessions, handleSessionClick, deleteSession, renameSession, makeSessionPersistent, makeSessionMortal, workspaces, addSessionToWindow, removeSessionFromWindow, openFloatingModal, settings } = useSession()
   const sessionKey = getSessionKey(session.name, session.unixUser)
   const assignment = assignedSessions.get(sessionKey) ?? assignedSessions.get(session.name)
   const isAssigned = !!assignment
@@ -26,7 +26,7 @@ function SessionItem({ session }: SessionItemProps) {
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({ show: false, x: 0, y: 0 })
   const contextMenuPosition = useViewportMenuPosition<HTMLDivElement>(
     contextMenu.show ? { x: contextMenu.x, y: contextMenu.y } : null,
-    { estimatedSize: { width: 220, height: 280 } },
+    { estimatedSize: { width: 240, height: 360 } },
   )
   const [isRenaming, setIsRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState('')
@@ -119,6 +119,41 @@ function SessionItem({ session }: SessionItemProps) {
     closeContextMenu()
     await deleteSession(session.name, session.unixUser)
   }, [deleteSession, session.name, session.unixUser, closeContextMenu])
+
+
+  const persistentTitle = session.persistent
+    ? `Persistent ${session.persistentAgentKind || 'agent'} agent${session.persistentIdentity ? `: ${session.persistentIdentity}` : ''}`
+    : undefined
+
+  const inferAgentKind = () => {
+    const lower = `${session.persistentAgentKind || ''} ${session.group || ''} ${session.name}`.toLowerCase()
+    return lower.includes('claude') ? 'claude' : 'codex'
+  }
+
+  const handleMakePersistent = useCallback(async () => {
+    closeContextMenu()
+    const identity = window.prompt('One-sentence identity for this persistent agent:', session.persistentIdentity || '')
+    if (identity === null) return
+    const agentKind = window.prompt('Agent kind (codex or claude):', inferAgentKind())
+    if (agentKind === null) return
+    const normalizedKind = agentKind.trim().toLowerCase()
+    if (!['codex', 'claude'].includes(normalizedKind)) return
+    const sessionId = window.prompt('Agent session id from the Codex/Claude resume command:', session.persistentAgentSessionId || '')
+    if (sessionId === null || !sessionId.trim()) return
+    await makeSessionPersistent(session.name, {
+      identity: identity.trim(),
+      agentKind: normalizedKind,
+      agentSessionId: sessionId.trim(),
+    }, session.unixUser)
+  }, [closeContextMenu, makeSessionPersistent, session])
+
+  const handleMakeMortal = useCallback(async () => {
+    closeContextMenu()
+    const confirmed = window.confirm(`Make ${session.name} mortal? CHROTE will stop supervising it, but the live tmux session stays running.`)
+    if (!confirmed) return
+    await makeSessionMortal(session.name, session.unixUser)
+  }, [closeContextMenu, makeSessionMortal, session.name, session.unixUser])
+
 
   const handleStartRename = useCallback(() => {
     setRenameValue(session.name)
@@ -233,6 +268,11 @@ function SessionItem({ session }: SessionItemProps) {
           </span>
         )}
         <RoleBadge sessionName={session.name} />
+        {session.persistent && (
+          <span className="persistent-agent-lock" aria-label="Persistent agent" title={persistentTitle}>
+            🔒
+          </span>
+        )}
         <span className="session-name" style={nameStyle}>{session.name}</span>
         {session.attached && !isAssigned && <span className="attached-indicator" title="Attached elsewhere">●</span>}
       </div>
@@ -252,6 +292,17 @@ function SessionItem({ session }: SessionItemProps) {
             <span className="session-context-icon">◉</span>
             Peek
           </button>
+          {session.persistent ? (
+            <button className="session-context-item" onClick={handleMakeMortal}>
+              <span className="session-context-icon">🔓</span>
+              Make mortal
+            </button>
+          ) : (
+            <button className="session-context-item" onClick={handleMakePersistent}>
+              <span className="session-context-icon">🔒</span>
+              Make persistent
+            </button>
+          )}
 
           <div
             className="session-context-item session-context-submenu-trigger"
@@ -296,10 +347,12 @@ function SessionItem({ session }: SessionItemProps) {
 
           <div className="session-context-divider" />
 
-          <button className="session-context-item session-context-danger" onClick={handleDelete}>
-            <span className="session-context-icon">✕</span>
-            Kill Session
-          </button>
+          {!session.persistent && (
+            <button className="session-context-item session-context-danger" onClick={handleDelete}>
+              <span className="session-context-icon">✕</span>
+              Kill Session
+            </button>
+          )}
         </div>
       )}
     </>
