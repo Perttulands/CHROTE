@@ -446,6 +446,7 @@ function SessionPanel() {
         <NukeConfirmModal
           sessionCount={sessions.length}
           sessionNames={sessions.map(s => s.name)}
+          protectedSessionNames={sessions.filter(s => s.persistent).map(s => s.name)}
           onConfirm={nukeAllSessions}
           onCancel={() => setShowNukeModal(false)}
         />

@@ -28,6 +28,7 @@ type TmuxHandler struct {
 	socket     string
 	workDir    string
 	bank       *sessionBankStore
+	persistent *persistentAgentStore
 }
 
 type sessionsCache struct {
@@ -121,6 +122,7 @@ func NewTmuxHandler() *TmuxHandler {
 		socket:     strings.TrimSpace(os.Getenv("CHROTE_DEFAULT_TMUX_SOCKET")),
 		workDir:    strings.TrimSpace(os.Getenv("CHROTE_DEFAULT_TMUX_WORKDIR")),
 		bank:       newSessionBankStore(defaultSessionBankPath()),
+		persistent: newPersistentAgentStore(defaultPersistentAgentsPath()),
 	}
 }
 
@@ -128,6 +130,8 @@ func NewTmuxHandler() *TmuxHandler {
 func (h *TmuxHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/tmux/sessions", h.ListSessions)
 	mux.HandleFunc("POST /api/tmux/sessions", h.CreateSession)
+	mux.HandleFunc("POST /api/tmux/sessions/{name}/persistence", h.EnablePersistentAgent)
+	mux.HandleFunc("DELETE /api/tmux/sessions/{name}/persistence", h.DisablePersistentAgent)
 	mux.HandleFunc("POST /api/tmux/session-bank/{name}/recovery", h.UpdateBankedRecovery)
 	mux.HandleFunc("POST /api/tmux/session-bank/{name}/recover", h.RecoverBankedSession)
 	mux.HandleFunc("DELETE /api/tmux/session-bank/{name}", h.ForgetBankedSession)
@@ -785,19 +789,41 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if h.persistent != nil {
+		var persistentErr error
+		response.Sessions, persistentErr = h.persistent.AnnotateSessions(response.Sessions)
+		if persistentErr != nil {
+			response.Error = appendSessionResponseError(response.Error, "persistent agents: "+persistentErr.Error())
+		}
+	}
 	core.SortSessions(response.Sessions)
 	response.Grouped = core.GroupSessions(response.Sessions)
 	if h.bank != nil {
 		var banked []SessionBankEntry
 		var bankErr error
 		if queryUnixUser == "" && response.Error == "" {
-			banked, bankErr = h.bank.Snapshot(response.Sessions)
+			liveForBank := response.Sessions
+			if h.persistent != nil {
+				var filterLiveErr error
+				liveForBank, filterLiveErr = h.persistent.FilterLiveSessionsForBank(liveForBank)
+				if filterLiveErr != nil {
+					response.Error = appendSessionResponseError(response.Error, "persistent agents: "+filterLiveErr.Error())
+				}
+			}
+			banked, bankErr = h.bank.Snapshot(liveForBank)
 		} else {
 			banked, bankErr = h.bank.Read()
 		}
 		if bankErr != nil {
 			response.Error = appendSessionResponseError(response.Error, "session bank: "+bankErr.Error())
 		} else {
+			if h.persistent != nil {
+				var filterErr error
+				banked, filterErr = h.persistent.FilterBanked(banked)
+				if filterErr != nil {
+					response.Error = appendSessionResponseError(response.Error, "persistent agents: "+filterErr.Error())
+				}
+			}
 			response.Banked = banked
 		}
 	}
@@ -1092,6 +1118,17 @@ func (h *TmuxHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", targetErr.Error())
 		return
 	}
+	if h.persistent != nil {
+		persistent, err := h.persistent.IsPersistent(sessionName, target.unixUser)
+		if err != nil {
+			core.WriteError(w, http.StatusInternalServerError, "PERSISTENT_AGENT_ERROR", err.Error())
+			return
+		}
+		if persistent {
+			core.WriteError(w, http.StatusConflict, "PERSISTENT_AGENT_LOCKED", "Session is persistent. Make it mortal before killing it.")
+			return
+		}
+	}
 
 	_, err := h.runTmuxOnSocket(target.socket, "kill-session", "-t", sessionName)
 	if err != nil {
@@ -1127,6 +1164,15 @@ func (h *TmuxHandler) DeleteAllSessions(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Get list of all sessions first
+	persistentNames := map[string]bool{}
+	if h.persistent != nil {
+		var persistentErr error
+		persistentNames, persistentErr = h.persistent.NamesForUser(target.unixUser)
+		if persistentErr != nil {
+			core.WriteError(w, http.StatusInternalServerError, "PERSISTENT_AGENT_ERROR", persistentErr.Error())
+			return
+		}
+	}
 	output, err := h.runTmuxOnSocket(target.socket, "list-sessions", "-F", "#{session_name}")
 	var sessionNames []string
 	var protectedNames []string
@@ -1135,7 +1181,7 @@ func (h *TmuxHandler) DeleteAllSessions(w http.ResponseWriter, r *http.Request) 
 		for _, line := range lines {
 			line = strings.TrimSpace(line)
 			if line != "" {
-				if protectedSessions[line] {
+				if protectedSessions[line] || persistentNames[line] {
 					protectedNames = append(protectedNames, line)
 				} else {
 					sessionNames = append(sessionNames, line)
@@ -1218,6 +1264,12 @@ func (h *TmuxHandler) RenameSession(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
 		return
+	}
+	if h.persistent != nil {
+		if err := h.persistent.Rename(oldName, req.NewName, target.unixUser); err != nil {
+			core.WriteError(w, http.StatusInternalServerError, "PERSISTENT_AGENT_ERROR", err.Error())
+			return
+		}
 	}
 
 	h.invalidateCache()

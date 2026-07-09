@@ -154,6 +154,7 @@ func main() {
 func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Context) (*proxy.TerminalProxy, *api.ScheduledHandler, context.CancelFunc) {
 	tmuxHandler := api.NewTmuxHandler()
 	tmuxHandler.RegisterRoutes(mux)
+	tmuxHandler.StartPersistentAgentSupervisor(ctx)
 
 	scheduledHandler := api.NewScheduledHandler(tmuxHandler)
 	scheduledHandler.RegisterRoutes(mux)

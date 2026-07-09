@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react'
-import type { DashboardContextType, TmuxSession, SessionBankEntry, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance, WorkspaceId, TerminalWorkspace, LayoutPreset, LaunchUser, CreateSessionOptions } from '../types'
+import type { DashboardContextType, TmuxSession, SessionBankEntry, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance, WorkspaceId, TerminalWorkspace, LayoutPreset, LaunchUser, CreateSessionOptions, PersistentAgentPayload } from '../types'
 import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE, MAX_PRESETS, TERMINAL_WORKSPACE_IDS, getSessionKey, getSessionPrefixForUser, normalizeTerminalUsers, resolveLaunchUser } from '../types'
 import { useToast } from './ToastContext'
 
@@ -881,6 +881,69 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, [refreshSessions, addToast])
 
+
+  const makeSessionPersistent = useCallback(async (sessionName: string, payload: PersistentAgentPayload, unixUser?: LaunchUser): Promise<boolean> => {
+    try {
+      const query = unixUser ? `?unixUser=${encodeURIComponent(unixUser)}` : ''
+      const body: Record<string, string> = {
+        agentKind: payload.agentKind,
+        agentSessionId: payload.agentSessionId,
+      }
+      const identity = payload.identity?.trim()
+      if (identity) body.identity = identity
+      const newName = payload.newName?.trim()
+      if (newName) body.newName = newName
+      const cwd = payload.cwd?.trim()
+      if (cwd) body.cwd = cwd
+      const transcriptPath = payload.transcriptPath?.trim()
+      if (transcriptPath) body.transcriptPath = transcriptPath
+
+      const response = await fetch(`/api/tmux/sessions/${encodeURIComponent(sessionName)}/persistence${query}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(10000),
+      })
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('Failed to make session persistent:', errorText)
+        addToast('Failed to make session persistent', 'error')
+        return false
+      }
+      addToast(`Session '${sessionName}' is persistent`, 'success')
+      refreshSessions()
+      return true
+    } catch (e) {
+      console.error('Failed to make session persistent:', e)
+      addToast('Failed to make session persistent', 'error')
+      return false
+    }
+  }, [addToast, refreshSessions])
+
+  const makeSessionMortal = useCallback(async (sessionName: string, unixUser?: LaunchUser): Promise<boolean> => {
+    try {
+      const query = unixUser ? `?unixUser=${encodeURIComponent(unixUser)}` : ''
+      const response = await fetch(`/api/tmux/sessions/${encodeURIComponent(sessionName)}/persistence${query}`, {
+        method: 'DELETE',
+        signal: AbortSignal.timeout(10000),
+      })
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('Failed to make session mortal:', errorText)
+        addToast('Failed to make session mortal', 'error')
+        return false
+      }
+      addToast(`Session '${sessionName}' is mortal`, 'info')
+      refreshSessions()
+      return true
+    } catch (e) {
+      console.error('Failed to make session mortal:', e)
+      addToast('Failed to make session mortal', 'error')
+      return false
+    }
+  }, [addToast, refreshSessions])
+
+
   // Layout Preset Actions
   const saveCurrentLayout = useCallback((name: string): boolean => {
     if (layoutPresets.length >= MAX_PRESETS) {
@@ -959,6 +1022,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     createSession,
     deleteSession,
     renameSession,
+    makeSessionPersistent,
+    makeSessionMortal,
     setIsDragging,
     updateSettings,
     setFocusedWindowKey,
@@ -996,6 +1061,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     createSession,
     deleteSession,
     renameSession,
+    makeSessionPersistent,
+    makeSessionMortal,
     setIsDragging,
     updateSettings,
     setFocusedWindowKey,

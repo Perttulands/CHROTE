@@ -253,6 +253,17 @@
   /* No longer greyed out - text is colored based on window assignment */
 }
 
+.persistent-agent-lock {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 11px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
 /* Session Context Menu */
 .session-context-menu {
   position: fixed;

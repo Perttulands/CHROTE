@@ -1002,6 +1002,70 @@ describe('renameSession', () => {
   })
 })
 
+
+// ──────────────────────────────────────────────
+// 5b. persistent agent actions — live session desired state
+// ──────────────────────────────────────────────
+describe('persistent agent actions', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    vi.mocked(fetch as any).mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ sessions: [], grouped: {}, timestamp: new Date().toISOString() }),
+      text: () => Promise.resolve(''),
+    })
+  })
+
+  it('makeSessionPersistent calls the live-session persistence endpoint with user-qualified metadata', async () => {
+    const { result } = renderSession()
+    vi.mocked(fetch as any).mockClear()
+    vi.mocked(fetch as any).mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ success: true }),
+      text: () => Promise.resolve(''),
+    })
+
+    let success: boolean | undefined
+    await act(async () => {
+      success = await result.current.makeSessionPersistent('codex-alpha', {
+        identity: 'Maintains the VW Codex lane.',
+        agentKind: 'codex',
+        agentSessionId: '019f45ec-f88b-7f70-88dc-b5b99a9e94c6',
+      }, 'alice')
+    })
+
+    expect(success).toBe(true)
+    const [url, options] = vi.mocked(fetch as any).mock.calls[0]
+    expect(url).toBe('/api/tmux/sessions/codex-alpha/persistence?unixUser=alice')
+    expect(options).toMatchObject({ method: 'POST', headers: { 'Content-Type': 'application/json' } })
+    expect(JSON.parse(options.body)).toEqual({
+      identity: 'Maintains the VW Codex lane.',
+      agentKind: 'codex',
+      agentSessionId: '019f45ec-f88b-7f70-88dc-b5b99a9e94c6',
+    })
+  })
+
+  it('makeSessionMortal removes supervision without deleting the live tmux session', async () => {
+    const { result } = renderSession()
+    vi.mocked(fetch as any).mockClear()
+    vi.mocked(fetch as any).mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ success: true }),
+      text: () => Promise.resolve(''),
+    })
+
+    let success: boolean | undefined
+    await act(async () => {
+      success = await result.current.makeSessionMortal('codex-alpha', 'alice')
+    })
+
+    expect(success).toBe(true)
+    const [url, options] = vi.mocked(fetch as any).mock.calls[0]
+    expect(url).toBe('/api/tmux/sessions/codex-alpha/persistence?unixUser=alice')
+    expect(options).toMatchObject({ method: 'DELETE' })
+  })
+})
+
 // ──────────────────────────────────────────────
 // 6. clampWindowCount — boundary values
 // ──────────────────────────────────────────────
