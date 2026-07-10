@@ -39,6 +39,7 @@ function DashboardContent() {
   const [activeDragId, setActiveDragId] = useState<string | null>(null)
   const [showHelp, setShowHelp] = useState(false)
   const [showPresets, setShowPresets] = useState(false)
+  const [settingsSessionBankFocusNonce, setSettingsSessionBankFocusNonce] = useState(0)
   const [filesNavigateRequest, setFilesNavigateRequest] = useState<{ path: string; nonce: number } | null>(null)
   const [formationsVisited, setFormationsVisited] = useState(false)
   const { addSessionToWindow, removeSessionFromWindow, setIsDragging, isDragging, settings } = useSession()
@@ -55,6 +56,10 @@ function DashboardContent() {
   const handleOpenProjectInFiles = useCallback((path: string) => {
     setFilesNavigateRequest({ path, nonce: Date.now() })
     setActiveTab('files')
+  }, [])
+  const handleOpenSessionBankSettings = useCallback(() => {
+    setSettingsSessionBankFocusNonce(Date.now())
+    setActiveTab('settings')
   }, [])
 
   // Global keyboard shortcuts
@@ -149,7 +154,7 @@ function DashboardContent() {
         <div className="dashboard-content">
           {/* Terminal areas are always rendered (hidden via CSS) to preserve iframe connections */}
           <div style={{ display: TERMINAL_WORKSPACE_IDS.includes(activeTab as WorkspaceId) ? 'contents' : 'none' }}>
-            <SessionPanel />
+            <SessionPanel onOpenSessionBankSettings={handleOpenSessionBankSettings} />
           </div>
           {TERMINAL_WORKSPACE_IDS.map(workspaceId => (
             <div key={workspaceId} style={{ display: activeTab === workspaceId ? 'contents' : 'none' }}>
@@ -206,7 +211,7 @@ function DashboardContent() {
               </ErrorBoundary>
             </div>
           )}
-          {activeTab === 'settings' && <SettingsView />}
+          {activeTab === 'settings' && <SettingsView sessionBankFocusNonce={settingsSessionBankFocusNonce} />}
           {activeTab === 'help' && <HelpView />}
         </div>
 
