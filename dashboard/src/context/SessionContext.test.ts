@@ -597,6 +597,114 @@ describe('refreshSessions', () => {
     localStorage.clear()
   })
 
+  it('auto-removes stale terminal bindings after repeated successful session refreshes', async () => {
+    const liveSessions = [
+      { name: 'alive', windows: 1, attached: false, group: 'shell', unixUser: 'perttu' },
+      { name: 'legacy-live', windows: 1, attached: false, group: 'shell' },
+      { name: 'agent-live', windows: 1, attached: false, group: 'agents', unixUser: 'tavern', persistent: true },
+    ]
+    const banked = [
+      {
+        name: 'gone', windows: 1, attached: false, group: 'shell', unixUser: 'perttu', live: false,
+        firstSeen: '2026-07-10T10:00:00Z', lastSeen: '2026-07-10T10:05:00Z', recoveryKind: 'shell',
+      },
+    ]
+    localStorage.setItem('chrote-dashboard-state', JSON.stringify({
+      version: 3,
+      settingsSchemaVersion: 2,
+      layoutsByViewport: {
+        desktop: {
+          workspaces: {
+            terminal1: {
+              windows: [
+                {
+                  id: 'terminal1-window-0',
+                  boundSessions: ['perttu:alive', 'perttu:gone', 'legacy-live', 'legacy-gone'],
+                  activeSession: 'perttu:gone',
+                  colorIndex: 0,
+                },
+              ],
+              windowCount: 1,
+            },
+            terminal2: {
+              windows: [
+                {
+                  id: 'terminal2-window-0',
+                  boundSessions: ['tavern:agent-live', 'tavern:agent-dead'],
+                  activeSession: 'tavern:agent-dead',
+                  colorIndex: 0,
+                },
+              ],
+              windowCount: 1,
+            },
+          },
+        },
+      },
+      sidebarCollapsed: false,
+      settings: DEFAULT_SETTINGS,
+    }))
+    const fetchMock = vi.fn((): Promise<any> => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({
+        sessions: liveSessions,
+        grouped: { shell: liveSessions.slice(0, 2), agents: liveSessions.slice(2) },
+        banked,
+        timestamp: new Date().toISOString(),
+      }),
+      text: () => Promise.resolve(''),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderSession()
+
+    await waitFor(() => expect(result.current.sessions).toEqual(liveSessions))
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toContain('perttu:gone')
+
+    await act(async () => {
+      await result.current.refreshSessions()
+    })
+
+    await waitFor(() => {
+      expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['perttu:alive', 'legacy-live'])
+      expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('perttu:alive')
+      expect(result.current.workspaces.terminal2.windows[0].boundSessions).toEqual(['tavern:agent-live'])
+      expect(result.current.workspaces.terminal2.windows[0].activeSession).toBe('tavern:agent-live')
+    })
+    expect(result.current.sessionBank).toEqual(banked)
+  })
+
+  it('preserves terminal bindings when a refresh fails instead of sweeping on uncertainty', async () => {
+    localStorage.setItem('chrote-dashboard-state', JSON.stringify({
+      version: 3,
+      settingsSchemaVersion: 2,
+      layoutsByViewport: {
+        desktop: {
+          workspaces: {
+            terminal1: {
+              windows: [
+                { id: 'terminal1-window-0', boundSessions: ['probably-live'], activeSession: 'probably-live', colorIndex: 0 },
+              ],
+              windowCount: 1,
+            },
+          },
+        },
+      },
+      sidebarCollapsed: false,
+      settings: DEFAULT_SETTINGS,
+    }))
+    vi.stubGlobal('fetch', vi.fn((): Promise<any> => Promise.resolve({
+      ok: false,
+      json: () => Promise.resolve({ error: 'tmux server not running' }),
+      text: () => Promise.resolve('{"error":"tmux server not running"}'),
+    })))
+
+    const { result } = renderSession()
+
+    await waitFor(() => expect(result.current.error).toBe('tmux server not running'))
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['probably-live'])
+    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('probably-live')
+  })
+
   it('preserves existing sessions and groups when a poll returns a non-ok response', async () => {
     const existingSessions = [
       { name: 'shell1', windows: 1, attached: false, group: 'shell', unixUser: 'perttu' },

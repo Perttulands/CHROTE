@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useSession } from '../context/SessionContext'
 import TerminalWindow from './TerminalWindow'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
+import { getSessionKey } from '../types'
 import type { WorkspaceId } from '../types'
 import { isFeatureEnabled } from '../featureFlags'
 import { useIframePool } from './IframePool'
@@ -12,7 +13,7 @@ interface TerminalAreaProps {
 }
 
 function TerminalArea({ workspaceId }: TerminalAreaProps) {
-  const { workspaces, setWindowCount, clearStaleSessionsFromWindow, isDragging } = useSession()
+  const { workspaces, setWindowCount, clearStaleSessionsFromWindow, isDragging, sessions } = useSession()
   const pool = useIframePool()
   const workspace = workspaces[workspaceId]
   const windows = workspace.windows
@@ -28,6 +29,17 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
   )
   const showRefitButton = isFeatureEnabled('terminalRefitButton')
   const visibleWindows = windows.slice(0, windowCount)
+  const liveSessions = useMemo(() => {
+    const live = new Set<string>()
+    sessions.forEach(session => {
+      live.add(getSessionKey(session.name, session.unixUser))
+      live.add(session.name)
+    })
+    return live
+  }, [sessions])
+  const staleSessionCount = useMemo(() => visibleWindows.reduce((count, window) => (
+    count + window.boundSessions.filter(sessionName => sessionName !== 'INIT-PENDING' && !liveSessions.has(sessionName)).length
+  ), 0), [liveSessions, visibleWindows])
 
   // Ensure valid mobile index when configuration changes
   useEffect(() => {
@@ -66,6 +78,17 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
     setRefitNonce(n => n + 1)
     closeControlsMenu()
   }
+
+  const cleanStaleControl = staleSessionCount > 0 ? (
+    <button
+      className="layout-btn terminal-clean-stale-btn"
+      onClick={clearStaleSessions}
+      title={`Clean ${staleSessionCount} stale terminal session${staleSessionCount === 1 ? '' : 's'}`}
+      aria-label={`Clean ${staleSessionCount} stale session${staleSessionCount === 1 ? '' : 's'}`}
+    >
+      Clean stale · {staleSessionCount}
+    </button>
+  ) : null
 
   // Get grid class based on window count
   const getGridClass = () => {
@@ -127,6 +150,7 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
                   <span aria-hidden="true">↻</span>
                 </button>
               )}
+              {cleanStaleControl}
             </div>
           </>
         ) : (
@@ -152,6 +176,7 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
                 <span aria-hidden="true">↻</span>
               </button>
             )}
+            {cleanStaleControl}
           </>
         )}
       </div>

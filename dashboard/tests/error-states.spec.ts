@@ -250,7 +250,7 @@ test.describe('Error States', () => {
   })
 
   test.describe('Binding a non-existent session', () => {
-    test('should preserve ghost session tag in layout even though session is not in API response', async ({ page }) => {
+    test('should clear ghost session tag after successful API refresh confirms it is not live', async ({ page }) => {
       // Pre-seed localStorage with a session name that does not exist in the mock API data
       const storedState = {
         workspaces: {
@@ -311,19 +311,17 @@ test.describe('Error States', () => {
       // Wait for sessions to load from API
       await page.waitForSelector('.session-panel')
 
-      // The window should show the ghost session tag — layout is preserved
-      // even though this session does not exist in the API response.
-      // (SessionContext comment: "We intentionally do NOT clean up orphaned sessions")
+      // Successful refreshes are authoritative: Terminal is a live surface,
+      // so stale bindings disappear instead of becoming user-cleared trash.
       const window0 = page.locator('.terminal-window:visible').nth(0)
-      await expect(window0.locator('.tag-name')).toContainText('ghost-session-does-not-exist')
+      await expect(window0.locator('.tag-name')).toHaveCount(0)
+      await expect(window0.locator('button', { hasText: 'New Session' })).toBeVisible()
 
       // The ghost session should NOT appear in the sidebar session list
       // since it's not in the API response
       await expect(page.locator('.session-item:has-text("ghost-session")')).toHaveCount(0)
 
-      // But the session should still be marked as "assigned" in the internal state,
-      // meaning another real session in the sidebar is NOT affected. Verify a
-      // known real session (hq-mayor) is visible and NOT assigned.
+      // The stale binding cleanup should not mark unrelated live sessions assigned.
       const hqMayor = page.locator('.session-item:has-text("hq-mayor")')
       await expect(hqMayor).toBeVisible()
       await expect(hqMayor).not.toHaveClass(/assigned/)

@@ -8,6 +8,9 @@ const reconnectIframe = vi.fn()
 
 vi.mock('../context/SessionContext', () => ({
   useSession: () => ({
+    sessions: [
+      { name: 'alpha', windows: 1, attached: false, group: 'shell', unixUser: 'alice' },
+    ],
     workspaces: {
       terminal1: {
         windowCount: 2,
@@ -55,6 +58,12 @@ describe('TerminalArea layout controls context menu', () => {
 
   it('clears stale sessions and refits layout from the layout controls menu', () => {
     render(<TerminalArea workspaceId="terminal1" />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Clean 2 stale sessions/i }))
+
+    expect(clearStaleSessionsFromWindow).toHaveBeenCalledWith('terminal1', 'terminal1-window-0')
+    expect(clearStaleSessionsFromWindow).toHaveBeenCalledWith('terminal1', 'terminal1-window-1')
+    clearStaleSessionsFromWindow.mockClear()
 
     fireEvent.contextMenu(screen.getByLabelText('Terminal layout controls'))
     fireEvent.click(screen.getByRole('button', { name: /Clear stale sessions/i }))
