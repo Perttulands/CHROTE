@@ -780,6 +780,54 @@ esac
 	}
 }
 
+func TestTmuxHandler_EnablePersistentAgentFallsBackToOwnerProbeWhenArgsLackResumeID(t *testing.T) {
+	tmpDir := t.TempDir()
+	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")
+	installPersistentAgentScriptedTmux(t, `
+case "$*" in
+  *display-message*) printf '42:node:/home/alice/project\n' ;;
+esac
+`)
+	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
+	const sessionID = "019f45ec-f88b-7f70-88dc-b5b99a9e94c6"
+	originalReadProcessTable := readPersistentAgentProcessTable
+	readPersistentAgentProcessTable = func(context.Context) ([]processInfo, error) {
+		return []processInfo{{pid: "42", ppid: "1", comm: "node", args: "node /usr/bin/codex --no-alt-screen"}}, nil
+	}
+	t.Cleanup(func() { readPersistentAgentProcessTable = originalReadProcessTable })
+	originalProbe := probePersistentAgentOwnerMetadata
+	probePersistentAgentOwnerMetadata = func(ctx context.Context, h *TmuxHandler, target tmuxTarget, pane paneInspection, requestedKind string) (inferredPersistentAgentMetadata, error) {
+		if target.unixUser != "alice" || target.socket != "/tmp/tmux-a" || pane.PID != "42" || pane.CWD != "/home/alice/project" || requestedKind != "" {
+			t.Fatalf("probe args target=%+v pane=%+v requestedKind=%q", target, pane, requestedKind)
+		}
+		return inferredPersistentAgentMetadata{Kind: "codex", SessionID: sessionID, Source: "owner-probe"}, nil
+	}
+	t.Cleanup(func() { probePersistentAgentOwnerMetadata = originalProbe })
+
+	handler := NewTmuxHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	body := bytes.NewBufferString(`{"identity":"Maintains the VW Codex lane."}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions/codex-alpha/persistence?unixUser=alice", body)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var response map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response["agentKind"] != "codex" || response["agentSessionId"] != sessionID || response["resumeCommand"] != "codex resume "+sessionID {
+		t.Fatalf("persistent response = %#v", response)
+	}
+}
+
 func TestTmuxHandler_EnablePersistentAgentFailsClearlyWhenSessionIDCannotBeInferred(t *testing.T) {
 	tmpDir := t.TempDir()
 	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")
@@ -797,6 +845,11 @@ esac
 		return []processInfo{{pid: "42", ppid: "1", comm: "node", args: "node /usr/bin/codex --no-alt-screen"}}, nil
 	}
 	t.Cleanup(func() { readPersistentAgentProcessTable = originalReadProcessTable })
+	originalProbe := probePersistentAgentOwnerMetadata
+	probePersistentAgentOwnerMetadata = func(context.Context, *TmuxHandler, tmuxTarget, paneInspection, string) (inferredPersistentAgentMetadata, error) {
+		return inferredPersistentAgentMetadata{}, context.Canceled
+	}
+	t.Cleanup(func() { probePersistentAgentOwnerMetadata = originalProbe })
 
 	handler := NewTmuxHandler()
 	mux := http.NewServeMux()

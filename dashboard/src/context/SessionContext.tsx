@@ -250,6 +250,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
+function apiErrorMessage(raw: string, fallback: string): string {
+  const text = raw.trim()
+  if (!text) return fallback
+  try {
+    const parsed = JSON.parse(text) as unknown
+    if (isRecord(parsed)) {
+      const error = parsed.error
+      if (isRecord(error) && typeof error.message === 'string' && error.message.trim()) {
+        return error.message.trim()
+      }
+      if (typeof parsed.message === 'string' && parsed.message.trim()) {
+        return parsed.message.trim()
+      }
+    }
+  } catch {
+    // Non-JSON responses are still useful if they are small enough to show directly.
+  }
+  return text.length <= 240 ? text : fallback
+}
+
 function nextSessionNameForPrefix(sessions: TmuxSession[], prefix: string): string {
   const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const regex = new RegExp(`^${escapedPrefix}(\\d+)$`)
@@ -987,8 +1007,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       })
       if (!response.ok) {
         const errorText = await response.text()
+        const message = apiErrorMessage(errorText, 'Failed to make session persistent')
         console.error('Failed to make session persistent:', errorText)
-        addToast('Failed to make session persistent', 'error')
+        addToast(message, 'error')
         return false
       }
       addToast(`Session '${sessionName}' is persistent`, 'success')

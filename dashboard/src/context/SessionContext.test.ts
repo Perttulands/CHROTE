@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { createElement } from 'react'
 import { SessionProvider, useSession } from './SessionContext'
-import { ToastProvider } from './ToastContext'
+import { ToastProvider, useToast } from './ToastContext'
 import { featureFlagKey } from '../featureFlags'
 import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE, resolveLaunchUser } from '../types'
 
@@ -39,6 +39,10 @@ function Wrapper({ children }: { children: React.ReactNode }) {
 
 function renderSession() {
   return renderHook(() => useSession(), { wrapper: Wrapper })
+}
+
+function renderSessionWithToast() {
+  return renderHook(() => ({ session: useSession(), toast: useToast() }), { wrapper: Wrapper })
 }
 
 function storedDashboardState() {
@@ -1175,6 +1179,32 @@ describe('persistent agent actions', () => {
     expect(JSON.parse(options.body)).toEqual({
       identity: 'Maintains the VW Codex lane.',
     })
+  })
+
+  it('makeSessionPersistent surfaces the backend failure reason instead of a generic toast', async () => {
+    const { result } = renderSessionWithToast()
+    vi.mocked(fetch as any).mockClear()
+    vi.mocked(fetch as any).mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({}),
+      text: () => Promise.resolve(JSON.stringify({
+        success: false,
+        error: {
+          code: 'BAD_REQUEST',
+          message: 'Could not infer Codex/Claude session id: live agent process has no resume session id in its arguments',
+        },
+      })),
+    })
+
+    let success: boolean | undefined
+    await act(async () => {
+      success = await result.current.session.makeSessionPersistent('codex-alpha', {
+        identity: 'Maintains the VW Codex lane.',
+      }, 'alice')
+    })
+
+    expect(success).toBe(false)
+    await waitFor(() => expect(result.current.toast.toasts[0]?.message).toContain('Could not infer Codex/Claude session id'))
   })
 
   it('makeSessionMortal removes supervision without deleting the live tmux session', async () => {

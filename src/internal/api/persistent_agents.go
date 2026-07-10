@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -596,9 +597,17 @@ func processTreeForPane(infos []processInfo, panePID string) []processInfo {
 }
 
 type inferredPersistentAgentMetadata struct {
-	Kind      string
-	SessionID string
-	Source    string
+	Kind       string
+	SessionID  string
+	Source     string
+	Confidence string
+}
+
+type persistentAgentOwnerProbeResponse struct {
+	Kind       string `json:"kind"`
+	SessionID  string `json:"sessionId"`
+	Confidence string `json:"confidence"`
+	Error      string `json:"error"`
 }
 
 func normalizeProcessArgToken(token string) string {
@@ -689,6 +698,249 @@ func inferPersistentAgentMetadataInTable(infos []processInfo, panePID, requested
 	return inferredPersistentAgentMetadata{}, foundAgent, false
 }
 
+const persistentAgentOwnerProbeResultPrefix = "CHROTE_PROBE_RESULT "
+
+const persistentAgentOwnerProbeShellCommand = `python3 - <<'PY'
+import base64
+import json
+import os
+import pathlib
+import re
+
+PREFIX = "CHROTE_PROBE_RESULT "
+UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+def env_b64(name):
+    raw = os.environ.get(name, "")
+    if not raw:
+        return ""
+    try:
+        return base64.b64decode(raw).decode("utf-8", "replace")
+    except Exception:
+        return ""
+
+def emit(obj):
+    print(PREFIX + json.dumps(obj, separators=(",", ":")), flush=True)
+
+probe_cwd = env_b64("CHROTE_PROBE_CWD")
+requested_kind = env_b64("CHROTE_PROBE_KIND").strip().lower()
+pane_pid = env_b64("CHROTE_PROBE_PANE_PID").strip()
+home = pathlib.Path.home()
+
+def kind_allowed(kind):
+    return not requested_kind or requested_kind == kind
+
+def classify_transcript_path(value):
+    value = value.removesuffix(" (deleted)")
+    name = pathlib.Path(value).name
+    match = UUID_RE.search(name)
+    if not match:
+        return None
+    if "/.codex/sessions/" in value and value.endswith(".jsonl") and kind_allowed("codex"):
+        return {"kind": "codex", "sessionId": match.group(0), "confidence": "high"}
+    if "/.claude/projects/" in value and value.endswith(".jsonl") and kind_allowed("claude"):
+        return {"kind": "claude", "sessionId": match.group(0), "confidence": "high"}
+    return None
+
+def process_descendants(root_pid):
+    if not root_pid.isdigit():
+        return []
+    children = {}
+    for stat_path in pathlib.Path("/proc").glob("[0-9]*/stat"):
+        pid = stat_path.parent.name
+        try:
+            text = stat_path.read_text(errors="replace")
+            after = text.rsplit(") ", 1)[1].split()
+            ppid = after[1]
+        except Exception:
+            continue
+        children.setdefault(ppid, []).append(pid)
+    queue = [root_pid]
+    seen = set()
+    result = []
+    while queue:
+        pid = queue.pop(0)
+        if pid in seen:
+            continue
+        seen.add(pid)
+        result.append(pid)
+        queue.extend(children.get(pid, []))
+    return result
+
+def fd_candidate():
+    for pid in process_descendants(pane_pid):
+        fd_dir = pathlib.Path("/proc") / pid / "fd"
+        try:
+            fds = list(fd_dir.iterdir())
+        except Exception:
+            continue
+        for fd in fds:
+            try:
+                target = os.readlink(fd)
+            except Exception:
+                continue
+            candidate = classify_transcript_path(target)
+            if candidate:
+                return candidate
+    return None
+
+def read_json_lines(path, limit):
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for index, line in enumerate(handle):
+                if index >= limit:
+                    break
+                try:
+                    yield json.loads(line)
+                except Exception:
+                    continue
+    except Exception:
+        return
+
+def codex_file_candidates():
+    root = home / ".codex" / "sessions"
+    if not root.exists() or not kind_allowed("codex"):
+        return []
+    paths = [p for p in root.glob("**/*.jsonl") if p.is_file()]
+    paths.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
+    result = []
+    for path in paths[:200]:
+        match = UUID_RE.search(path.name)
+        session_id = match.group(0) if match else ""
+        cwd = ""
+        for item in read_json_lines(path, 30):
+            payload = item.get("payload") if isinstance(item, dict) else None
+            if isinstance(payload, dict):
+                session_id = str(payload.get("id") or session_id)
+                cwd = str(payload.get("cwd") or cwd)
+            if session_id and cwd:
+                break
+        if session_id and (not probe_cwd or cwd == probe_cwd):
+            result.append((path.stat().st_mtime, {"kind": "codex", "sessionId": session_id, "confidence": "low"}))
+    return result
+
+def claude_file_candidates():
+    root = home / ".claude" / "projects"
+    if not root.exists() or not kind_allowed("claude"):
+        return []
+    paths = [p for p in root.glob("**/*.jsonl") if p.is_file()]
+    paths.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
+    result = []
+    for path in paths[:200]:
+        match = UUID_RE.search(path.name)
+        session_id = match.group(0) if match else ""
+        cwd = ""
+        for item in read_json_lines(path, 120):
+            if isinstance(item, dict):
+                session_id = str(item.get("sessionId") or session_id)
+                cwd = str(item.get("cwd") or cwd)
+            if session_id and cwd:
+                break
+        if session_id and (not probe_cwd or cwd == probe_cwd):
+            result.append((path.stat().st_mtime, {"kind": "claude", "sessionId": session_id, "confidence": "low"}))
+    return result
+
+candidate = fd_candidate()
+if candidate:
+    emit(candidate)
+else:
+    candidates = codex_file_candidates() + claude_file_candidates()
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    unique = []
+    seen = set()
+    for _, item in candidates:
+        key = (item["kind"], item["sessionId"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(item)
+    if len(unique) == 1:
+        emit(unique[0])
+    elif len(unique) > 1:
+        emit({"error": "owner probe found multiple matching agent transcripts"})
+    else:
+        emit({"error": "owner probe found no matching agent transcript"})
+PY
+printf '\nCHROTE_PROBE_DONE\n'
+sleep 2
+`
+
+var probePersistentAgentOwnerMetadata = runPersistentAgentOwnerProbe
+
+func encodeProbeEnv(name, value string) string {
+	return name + "=" + base64.StdEncoding.EncodeToString([]byte(value))
+}
+
+func parsePersistentAgentOwnerProbeOutput(raw string) (inferredPersistentAgentMetadata, error) {
+	var last persistentAgentOwnerProbeResponse
+	found := false
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		payload, ok := strings.CutPrefix(line, persistentAgentOwnerProbeResultPrefix)
+		if !ok {
+			continue
+		}
+		found = true
+		if err := json.Unmarshal([]byte(payload), &last); err != nil {
+			return inferredPersistentAgentMetadata{}, fmt.Errorf("owner probe returned invalid metadata")
+		}
+	}
+	if !found {
+		return inferredPersistentAgentMetadata{}, fmt.Errorf("owner probe did not return metadata")
+	}
+	if strings.TrimSpace(last.Error) != "" {
+		return inferredPersistentAgentMetadata{}, fmt.Errorf("%s", strings.TrimSpace(last.Error))
+	}
+	last.Kind = strings.ToLower(strings.TrimSpace(last.Kind))
+	last.SessionID = strings.TrimSpace(last.SessionID)
+	if _, ok := canonicalAgentResumeCommand(last.Kind, last.SessionID); !ok {
+		return inferredPersistentAgentMetadata{}, fmt.Errorf("owner probe returned unsafe or unsupported metadata")
+	}
+	confidence := strings.ToLower(strings.TrimSpace(last.Confidence))
+	if confidence == "" {
+		confidence = "low"
+	}
+	return inferredPersistentAgentMetadata{Kind: last.Kind, SessionID: last.SessionID, Source: "owner-probe", Confidence: confidence}, nil
+}
+
+func runPersistentAgentOwnerProbe(ctx context.Context, h *TmuxHandler, target tmuxTarget, pane paneInspection, requestedKind string) (inferredPersistentAgentMetadata, error) {
+	if h == nil {
+		return inferredPersistentAgentMetadata{}, fmt.Errorf("owner probe unavailable")
+	}
+	if strings.TrimSpace(target.socket) == "" {
+		return inferredPersistentAgentMetadata{}, fmt.Errorf("owner probe requires a tmux socket")
+	}
+	probeName := fmt.Sprintf("chrote-probe-%d-%d", os.Getpid(), time.Now().UnixNano())
+	probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	_, err := h.runTmuxOnSocketContext(probeCtx, target.socket,
+		"new-session", "-d", "-s", probeName,
+		"-e", encodeProbeEnv("CHROTE_PROBE_CWD", pane.CWD),
+		"-e", encodeProbeEnv("CHROTE_PROBE_KIND", requestedKind),
+		"-e", encodeProbeEnv("CHROTE_PROBE_PANE_PID", pane.PID),
+		persistentAgentOwnerProbeShellCommand,
+	)
+	if err != nil {
+		return inferredPersistentAgentMetadata{}, err
+	}
+	defer func() {
+		_, _ = h.runTmuxOnSocketContext(context.Background(), target.socket, "kill-session", "-t", probeName)
+	}()
+
+	deadline := time.Now().Add(6 * time.Second)
+	lastCapture := ""
+	for time.Now().Before(deadline) {
+		capture, captureErr := h.runTmuxOnSocketContext(probeCtx, target.socket, "capture-pane", "-p", "-J", "-t", probeName)
+		if captureErr == nil {
+			lastCapture = capture
+			if strings.Contains(capture, persistentAgentOwnerProbeResultPrefix) || strings.Contains(capture, "CHROTE_PROBE_DONE") {
+				break
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return parsePersistentAgentOwnerProbeOutput(lastCapture)
+}
+
 func capitalizeFirst(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -697,7 +949,7 @@ func capitalizeFirst(value string) string {
 	return strings.ToUpper(value[:1]) + value[1:]
 }
 
-func (h *TmuxHandler) inferPersistentAgentMetadata(ctx context.Context, pane paneInspection, requestedKind string) (inferredPersistentAgentMetadata, error) {
+func (h *TmuxHandler) inferPersistentAgentMetadata(ctx context.Context, target tmuxTarget, pane paneInspection, requestedKind string) (inferredPersistentAgentMetadata, error) {
 	infos, err := readPersistentAgentProcessTable(ctx)
 	if err != nil {
 		return inferredPersistentAgentMetadata{}, err
@@ -707,7 +959,11 @@ func (h *TmuxHandler) inferPersistentAgentMetadata(ctx context.Context, pane pan
 		return metadata, nil
 	}
 	if foundAgent {
-		return inferredPersistentAgentMetadata{}, fmt.Errorf("could not infer Codex/Claude session id: live agent process has no resume session id in its arguments")
+		metadata, probeErr := probePersistentAgentOwnerMetadata(ctx, h, target, pane, requestedKind)
+		if probeErr == nil {
+			return metadata, nil
+		}
+		return inferredPersistentAgentMetadata{}, fmt.Errorf("could not infer Codex/Claude session id: live agent process has no resume session id in its arguments and owner probe failed: %w", probeErr)
 	}
 	return inferredPersistentAgentMetadata{}, fmt.Errorf("could not infer Codex/Claude session id: session is not running a supported live agent")
 }
@@ -787,7 +1043,7 @@ func (h *TmuxHandler) EnablePersistentAgent(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if strings.TrimSpace(req.AgentKind) == "" || strings.TrimSpace(req.AgentSessionID) == "" {
-		metadata, err := h.inferPersistentAgentMetadata(r.Context(), pane, req.AgentKind)
+		metadata, err := h.inferPersistentAgentMetadata(r.Context(), target, pane, req.AgentKind)
 		if err != nil {
 			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", capitalizeFirst(err.Error()))
 			return
