@@ -1230,6 +1230,9 @@ func TestTmuxHandler_SendToSessionStoresDropAndPastesViaBuffer(t *testing.T) {
 	if err := writer.WriteField("submit", "true"); err != nil {
 		t.Fatalf("write submit field: %v", err)
 	}
+	if err := writer.WriteField("unixUser", "alice"); err != nil {
+		t.Fatalf("write unixUser field: %v", err)
+	}
 	fileWriter, err := writer.CreateFormFile("files", "../clipboard image.png")
 	if err != nil {
 		t.Fatalf("create file field: %v", err)
@@ -1244,7 +1247,7 @@ func TestTmuxHandler_SendToSessionStoresDropAndPastesViaBuffer(t *testing.T) {
 	handler := NewTmuxHandler()
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
-	req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions/alice-shell/send?unixUser=alice", body)
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions/alice-shell/send", body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	recorder := httptest.NewRecorder()
 	mux.ServeHTTP(recorder, req)

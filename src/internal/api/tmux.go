@@ -1122,17 +1122,21 @@ func (h *TmuxHandler) RecoverBankedSession(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-func writeSessionDrop(w http.ResponseWriter, r *http.Request, sessionName string, target tmuxTarget) (sessionDropManifest, error) {
+func parseSessionDropForm(w http.ResponseWriter, r *http.Request) error {
 	const maxDropBytes = 256 << 20
 	if r == nil {
-		return sessionDropManifest{}, fmt.Errorf("request is missing")
+		return fmt.Errorf("request is missing")
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxDropBytes)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		return sessionDropManifest{}, fmt.Errorf("invalid multipart body: %w", err)
+		return fmt.Errorf("invalid multipart body: %w", err)
 	}
-	if r.MultipartForm != nil {
-		defer r.MultipartForm.RemoveAll()
+	return nil
+}
+
+func writeSessionDrop(r *http.Request, sessionName string, target tmuxTarget) (sessionDropManifest, error) {
+	if r == nil {
+		return sessionDropManifest{}, fmt.Errorf("request is missing")
 	}
 	text := strings.TrimRight(strings.ReplaceAll(r.FormValue("text"), "\r\n", "\n"), "\x00")
 	fileHeaders := []*multipart.FileHeader{}
@@ -1263,13 +1267,20 @@ func (h *TmuxHandler) SendToSession(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", errMsg)
 		return
 	}
-	target, targetErr := targetFromRequest(h, r, "")
+	if err := parseSessionDropForm(w, r); err != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+		return
+	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
+	target, targetErr := targetFromRequest(h, r, r.FormValue("unixUser"))
 	if targetErr != nil {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", targetErr.Error())
 		return
 	}
 
-	manifest, err := writeSessionDrop(w, r, sessionName, target)
+	manifest, err := writeSessionDrop(r, sessionName, target)
 	if err != nil {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		return
