@@ -1,6 +1,7 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useSession } from '../context/SessionContext'
-import { getSessionKey, getSessionNameFromKey, getSessionUserFromKey } from '../types'
+import { getSessionKey, getSessionNameFromKey, getSessionUserFromKey, type TmuxSession } from '../types'
+import { detectAgentRole } from '../utils/roleDetection'
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -13,13 +14,22 @@ function filesFromList(list: FileList | File[] | null | undefined): File[] {
   return Array.from(list).filter(file => file.size >= 0)
 }
 
+function defaultSubmitForSession(session: TmuxSession | undefined): boolean {
+  if (!session) return false
+  return Boolean(session.persistent || session.persistentAgentKind || detectAgentRole(session.name))
+}
+
 function SendToSessionModal() {
   const { sendToSessionTarget, sessions, closeSendToSession, sendToSession } = useSession()
   const [text, setText] = useState('')
   const [files, setFiles] = useState<File[]>([])
-  const [submit, setSubmit] = useState(true)
+  const [submit, setSubmit] = useState(false)
   const [sending, setSending] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const activeTargetKeyRef = useRef<string | null>(null)
+  const activeSendRef = useRef<symbol | null>(null)
+  const defaultSubmitRef = useRef(false)
+  const submitTouchedRef = useRef(false)
 
   const target = useMemo(() => {
     if (!sendToSessionTarget) return null
@@ -32,6 +42,23 @@ function SendToSessionModal() {
     const unixUser = session?.unixUser ?? keyUser
     return { key: sendToSessionTarget, name: displayName, unixUser, session }
   }, [sendToSessionTarget, sessions])
+
+  activeTargetKeyRef.current = target?.key ?? null
+  defaultSubmitRef.current = defaultSubmitForSession(target?.session)
+
+  useLayoutEffect(() => {
+    activeSendRef.current = null
+    submitTouchedRef.current = false
+    setText('')
+    setFiles([])
+    setSubmit(defaultSubmitRef.current)
+    setSending(false)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }, [target?.key])
+
+  useLayoutEffect(() => {
+    if (!submitTouchedRef.current) setSubmit(defaultSubmitRef.current)
+  }, [target?.session])
 
   const addFiles = useCallback((incoming: File[]) => {
     if (incoming.length === 0) return
@@ -58,12 +85,19 @@ function SendToSessionModal() {
   const handleSend = useCallback(async () => {
     if (!target || sending) return
     if (!text.trim() && files.length === 0) return
+    const sendToken = Symbol(target.key)
+    activeSendRef.current = sendToken
     setSending(true)
     try {
       const ok = await sendToSession(target.name, { text, files, submit }, target.unixUser)
-      if (ok) closeSendToSession()
+      if (ok && activeTargetKeyRef.current === target.key && activeSendRef.current === sendToken) {
+        closeSendToSession()
+      }
     } finally {
-      setSending(false)
+      if (activeSendRef.current === sendToken) {
+        activeSendRef.current = null
+        setSending(false)
+      }
     }
   }, [closeSendToSession, files, sendToSession, sending, submit, target, text])
 
@@ -131,7 +165,10 @@ function SendToSessionModal() {
             className="send-session-file-input"
             type="file"
             multiple
-            onChange={event => addFiles(filesFromList(event.target.files))}
+            onChange={event => {
+              addFiles(filesFromList(event.target.files))
+              event.currentTarget.value = ''
+            }}
           />
         </div>
 
@@ -152,7 +189,10 @@ function SendToSessionModal() {
             <input
               type="checkbox"
               checked={submit}
-              onChange={event => setSubmit(event.target.checked)}
+              onChange={event => {
+                submitTouchedRef.current = true
+                setSubmit(event.target.checked)
+              }}
             />
             Press Enter after sending
           </label>
