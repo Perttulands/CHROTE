@@ -488,6 +488,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [layoutPresets, setLayoutPresets] = useState<LayoutPreset[]>(() => loadStoredPresets())
   const staleSessionCandidatesRef = useRef<Set<string>>(new Set())
   const staleSessionProtectionRef = useRef<Map<string, number>>(new Map())
+  const refreshMountedRef = useRef(false)
+  const refreshGenerationRef = useRef(0)
+  const trailingRefreshRef = useRef(false)
+  const activeRefreshRef = useRef<{
+    timeout: ReturnType<typeof setTimeout>
+    promise: Promise<void>
+    cancel: (reason: 'timeout' | 'lifecycle') => void
+  } | null>(null)
   const protectStaleSessionAliases = useCallback((aliases: string[]) => {
     aliases.forEach(alias => {
       if (alias) staleSessionProtectionRef.current.set(alias, 2)
@@ -559,57 +567,170 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     savePresets(layoutPresets)
   }, [layoutPresets])
 
-  // Fetch sessions from API
-  const refreshSessions = useCallback(async () => {
-    try {
-      const response = await fetch('/api/tmux/sessions', { signal: AbortSignal.timeout(10000) })
-      const data = await response.json().catch(() => ({})) as Partial<SessionsResponse>
+  // Fetch sessions from API. Triggers while a request is active share that request
+  // and request one coalesced trailing refresh rather than starting concurrent work.
+  const refreshSessions: () => Promise<void> = useCallback(() => {
+    if (!refreshMountedRef.current) return Promise.resolve()
 
-      if (Array.isArray(data.terminalUsers)) {
-        setTerminalUsers(normalizeTerminalUsers(data.terminalUsers))
+    const current = activeRefreshRef.current
+    if (current) {
+      trailingRefreshRef.current = true
+      return current.promise.then(() => activeRefreshRef.current?.promise ?? Promise.resolve())
+    }
+
+    type CancellationReason = 'timeout' | 'lifecycle'
+    const controller = new AbortController()
+    const generation = refreshGenerationRef.current
+    let cancellationReason: CancellationReason | null = null
+    let resolveCancellation!: (reason: CancellationReason) => void
+    const cancellation = new Promise<CancellationReason>(resolve => {
+      resolveCancellation = resolve
+    })
+    const cancel = (reason: CancellationReason) => {
+      if (cancellationReason) return
+      cancellationReason = reason
+      // Settle our independent race before aborting. Some fetch implementations reject
+      // synchronously on abort, but timeout still needs timeout (not lifecycle/error) semantics.
+      resolveCancellation(reason)
+      controller.abort()
+    }
+    const active = {
+      cancel,
+      timeout: setTimeout(() => cancel('timeout'), 10000),
+      promise: Promise.resolve(),
+    }
+    activeRefreshRef.current = active
+    const hasCurrentCleanupAuthority = () => (
+      refreshMountedRef.current &&
+      refreshGenerationRef.current === generation &&
+      activeRefreshRef.current === active
+    )
+    const isAuthoritative = () => (
+      hasCurrentCleanupAuthority() &&
+      cancellationReason === null
+    )
+    const raceWithCancellation = <T,>(operation: Promise<T>) => Promise.race([
+      operation.then(
+        value => ({ kind: 'value' as const, value }),
+        failure => ({ kind: 'failure' as const, failure }),
+      ),
+      cancellation.then(reason => ({ kind: 'cancelled' as const, reason })),
+    ])
+    const reportCancellation = (reason: CancellationReason) => {
+      if (reason === 'timeout' && hasCurrentCleanupAuthority()) {
+        setError('Failed to fetch sessions (request timed out)')
       }
+    }
 
-      if (!response.ok) {
-        setError(typeof data.error === 'string' ? data.error : 'Failed to fetch sessions')
-        return
-      }
-
-      if (data.error) {
-        setError(data.error)
-      } else {
-        setError(null)
-      }
-      const nextSessions = Array.isArray(data.sessions) ? data.sessions : []
-      setSessions(nextSessions)
-      setGroupedSessions(isRecord(data.grouped) ? data.grouped as Record<string, TmuxSession[]> : {})
-      setSessionBank(Array.isArray(data.banked) ? data.banked : [])
-
-      if (!data.error && Array.isArray(data.sessions)) {
-        const live = liveSessionKeys(nextSessions)
-        const protectedKeys = new Set(staleSessionProtectionRef.current.keys())
-        const pruneCandidates = new Set([...staleSessionCandidatesRef.current].filter(key => !protectedKeys.has(key)))
-        setWorkspaces(prev => {
-          const pruned = pruneWorkspacesToLiveSessions(prev, nextSessions, pruneCandidates)
-          const currentStale = staleSessionKeysInWorkspaces(pruned, live)
-          protectedKeys.forEach(key => currentStale.delete(key))
-          staleSessionCandidatesRef.current = currentStale
-          return pruned
-        })
-        setFloatingSession(prev => prev && (live.has(prev) || protectedKeys.has(prev) || !pruneCandidates.has(prev)) ? prev : null)
-        setSendToSessionTarget(prev => prev && (live.has(prev) || protectedKeys.has(prev) || !pruneCandidates.has(prev)) ? prev : null)
-        staleSessionProtectionRef.current.forEach((remaining, key) => {
-          if (remaining <= 1) {
-            staleSessionProtectionRef.current.delete(key)
-          } else {
-            staleSessionProtectionRef.current.set(key, remaining - 1)
+    active.promise = (async () => {
+      try {
+        const responseOutcome = await raceWithCancellation(
+          fetch('/api/tmux/sessions', { signal: controller.signal }),
+        )
+        if (responseOutcome.kind === 'cancelled') {
+          reportCancellation(responseOutcome.reason)
+          return
+        }
+        if (responseOutcome.kind === 'failure') {
+          if (cancellationReason) {
+            reportCancellation(cancellationReason)
+          } else if (isAuthoritative()) {
+            setError('Failed to fetch sessions')
+            console.error('Failed to fetch sessions:', responseOutcome.failure)
           }
-        })
+          return
+        }
+        if (!isAuthoritative()) return
+
+        const response = responseOutcome.value
+        const dataOutcome = await raceWithCancellation(
+          response.json() as Promise<Partial<SessionsResponse>>,
+        )
+        if (dataOutcome.kind === 'cancelled') {
+          reportCancellation(dataOutcome.reason)
+          return
+        }
+        if (dataOutcome.kind === 'failure') {
+          if (cancellationReason) {
+            reportCancellation(cancellationReason)
+          } else if (isAuthoritative()) {
+            setError('Failed to fetch sessions')
+          }
+          return
+        }
+        if (!isAuthoritative()) return
+
+        const data = dataOutcome.value
+        if (!response.ok || data.error) {
+          setError(typeof data.error === 'string' ? data.error : 'Failed to fetch sessions')
+          return
+        }
+
+        const nextSessions = Array.isArray(data.sessions) ? data.sessions : []
+        setError(null)
+        setSessions(nextSessions)
+        setGroupedSessions(isRecord(data.grouped) ? data.grouped as Record<string, TmuxSession[]> : {})
+        setSessionBank(Array.isArray(data.banked) ? data.banked : [])
+        if (Array.isArray(data.terminalUsers)) {
+          setTerminalUsers(normalizeTerminalUsers(data.terminalUsers))
+        }
+
+        if (Array.isArray(data.sessions)) {
+          const live = liveSessionKeys(nextSessions)
+          const protectedKeys = new Set(staleSessionProtectionRef.current.keys())
+          const pruneCandidates = new Set([...staleSessionCandidatesRef.current].filter(key => !protectedKeys.has(key)))
+          setWorkspaces(prev => {
+            const pruned = pruneWorkspacesToLiveSessions(prev, nextSessions, pruneCandidates)
+            const currentStale = staleSessionKeysInWorkspaces(pruned, live)
+            protectedKeys.forEach(key => currentStale.delete(key))
+            staleSessionCandidatesRef.current = currentStale
+            return pruned
+          })
+          setFloatingSession(prev => prev && (live.has(prev) || protectedKeys.has(prev) || !pruneCandidates.has(prev)) ? prev : null)
+          setSendToSessionTarget(prev => prev && (live.has(prev) || protectedKeys.has(prev) || !pruneCandidates.has(prev)) ? prev : null)
+          staleSessionProtectionRef.current.forEach((remaining, key) => {
+            if (remaining <= 1) {
+              staleSessionProtectionRef.current.delete(key)
+            } else {
+              staleSessionProtectionRef.current.set(key, remaining - 1)
+            }
+          })
+        }
+      } catch (e) {
+        if (isAuthoritative()) {
+          setError('Failed to fetch sessions')
+          console.error('Failed to fetch sessions:', e)
+        }
+      } finally {
+        const hasCleanupAuthority = hasCurrentCleanupAuthority()
+        clearTimeout(active.timeout)
+        if (activeRefreshRef.current === active) {
+          activeRefreshRef.current = null
+          if (hasCleanupAuthority) setLoading(false)
+          if (!refreshMountedRef.current || refreshGenerationRef.current !== generation) {
+            trailingRefreshRef.current = false
+          } else if (trailingRefreshRef.current) {
+            trailingRefreshRef.current = false
+            void refreshSessions()
+          }
+        }
       }
-    } catch (e) {
-      setError('Failed to fetch sessions')
-      console.error('Failed to fetch sessions:', e)
-    } finally {
-      setLoading(false)
+    })()
+    return active.promise
+  }, [])
+
+  useEffect(() => {
+    refreshMountedRef.current = true
+    return () => {
+      refreshMountedRef.current = false
+      refreshGenerationRef.current += 1
+      trailingRefreshRef.current = false
+      const active = activeRefreshRef.current
+      activeRefreshRef.current = null
+      if (active) {
+        clearTimeout(active.timeout)
+        active.cancel('lifecycle')
+      }
     }
   }, [])
 
