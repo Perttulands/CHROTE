@@ -7,6 +7,7 @@ import TerminalArea from './components/TerminalArea'
 import FilesView from './components/FilesView'
 import SettingsView from './components/SettingsView'
 import FloatingModal from './components/FloatingModal'
+import SendToSessionModal from './components/SendToSessionModal'
 import HelpView from './components/HelpView'
 import BeadsView from './components/BeadsView'
 import FormationsCockpit from './components/FormationsCockpit'
@@ -216,6 +217,7 @@ function DashboardContent() {
         </div>
 
         <FloatingModal />
+        <SendToSessionModal />
 
         {/* Overlays */}
         <KeyboardShortcutsOverlay isOpen={showHelp} onClose={handleCloseHelp} />

@@ -3,7 +3,7 @@ import { useSession } from '../context/SessionContext'
 import { getSessionKey, getSessionNameFromKey, getSessionUserFromKey } from '../types'
 
 function FloatingModal() {
-  const { floatingSession, closeFloatingModal, settings, sessions } = useSession()
+  const { floatingSession, closeFloatingModal, openSendToSession, settings, sessions } = useSession()
   const [loaded, setLoaded] = useState(false)
   const [position, setPosition] = useState({ x: 80, y: 60 })
   const [size] = useState({ width: 1000, height: 700 })
@@ -153,6 +153,7 @@ function FloatingModal() {
         >
           <span className="modal-title">{displayName}</span>
           <div className="modal-controls">
+            <button className="modal-send" onClick={() => openSendToSession(floatingSession)}>Send to Session</button>
             <span className={`status-dot ${loaded ? '' : 'disconnected'}`} />
             <button className="modal-close" onClick={closeFloatingModal}>×</button>
           </div>

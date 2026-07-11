@@ -15,6 +15,7 @@ const renameSession = vi.fn()
 const deleteSession = vi.fn()
 const reconnectIframe = vi.fn()
 const setFocusedWindowKey = vi.fn()
+const openSendToSession = vi.fn()
 
 vi.mock('../context/SessionContext', () => ({
   useSession: () => ({
@@ -45,6 +46,7 @@ vi.mock('../context/SessionContext', () => ({
     clearStaleSessionsFromWindow: vi.fn(),
     focusedWindowKey: null,
     setFocusedWindowKey,
+    openSendToSession,
     saveCurrentLayout: vi.fn(),
     loadPreset: vi.fn(),
     deleteSession,
@@ -136,6 +138,19 @@ describe('TerminalWindow launch user', () => {
     expect(container.querySelector('.session-context-menu')).toBeNull()
     expect(screen.queryByRole('button', { name: /Rename/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Kill/i })).not.toBeInTheDocument()
+  })
+
+  it('opens Send to Session from ctrl-click on an attached session tag', () => {
+    render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['tavern:forge-existing'], activeSession: 'tavern:forge-existing', colorIndex: 0 }}
+      />
+    )
+
+    fireEvent.click(screen.getByText('forge-existing'), { ctrlKey: true })
+
+    expect(openSendToSession).toHaveBeenCalledWith('tavern:forge-existing')
   })
 
   it('does not intercept right-click on terminal window chrome', () => {

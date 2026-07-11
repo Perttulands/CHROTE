@@ -3,9 +3,12 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"os/exec"
@@ -132,6 +135,7 @@ func (h *TmuxHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/tmux/sessions", h.CreateSession)
 	mux.HandleFunc("POST /api/tmux/sessions/{name}/persistence", h.EnablePersistentAgent)
 	mux.HandleFunc("DELETE /api/tmux/sessions/{name}/persistence", h.DisablePersistentAgent)
+	mux.HandleFunc("POST /api/tmux/sessions/{name}/send", h.SendToSession)
 	mux.HandleFunc("POST /api/tmux/session-bank/{name}/recovery", h.UpdateBankedRecovery)
 	mux.HandleFunc("POST /api/tmux/session-bank/{name}/recover", h.RecoverBankedSession)
 	mux.HandleFunc("DELETE /api/tmux/session-bank/{name}", h.ForgetBankedSession)
@@ -266,12 +270,92 @@ func targetFromRequest(h *TmuxHandler, r *http.Request, bodyUnixUser string) (tm
 }
 
 const defaultSessionBankFile = "/srv/data/chrote/session-bank/sessions.json"
+const defaultSessionDropsDir = "/srv/data/chrote/session-drops"
 
 func defaultSessionBankPath() string {
 	if override := strings.TrimSpace(os.Getenv("CHROTE_SESSION_BANK_PATH")); override != "" {
 		return override
 	}
 	return defaultSessionBankFile
+}
+
+func defaultSessionDropsPath() string {
+	if override := strings.TrimSpace(os.Getenv("CHROTE_SESSION_DROPS_DIR")); override != "" {
+		return override
+	}
+	return defaultSessionDropsDir
+}
+
+type sessionDropFile struct {
+	Name        string `json:"name"`
+	Original    string `json:"original"`
+	Path        string `json:"path"`
+	Size        int64  `json:"size"`
+	ContentType string `json:"contentType,omitempty"`
+}
+
+type sessionDropManifest struct {
+	ID        string            `json:"id"`
+	Session   string            `json:"session"`
+	UnixUser  string            `json:"unixUser,omitempty"`
+	CreatedAt string            `json:"createdAt"`
+	TextPath  string            `json:"textPath,omitempty"`
+	Payload   string            `json:"payload"`
+	Files     []sessionDropFile `json:"files"`
+}
+
+func newSessionDropID() (string, error) {
+	raw := make([]byte, 12)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return time.Now().UTC().Format("20060102T150405Z") + "-" + hex.EncodeToString(raw), nil
+}
+
+func sanitizeDropFileName(name string, fallback string) string {
+	name = strings.TrimSpace(filepath.Base(strings.ReplaceAll(name, "\\", "/")))
+	if name == "." || name == string(filepath.Separator) {
+		name = ""
+	}
+	var b strings.Builder
+	lastDash := false
+	for _, r := range name {
+		keep := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-'
+		if keep {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	cleaned := strings.Trim(b.String(), ".-_")
+	if cleaned == "" {
+		cleaned = fallback
+	}
+	return cleaned
+}
+
+func uniqueDropFileName(used map[string]int, name string) string {
+	if used[name] == 0 {
+		used[name] = 1
+		return name
+	}
+	ext := filepath.Ext(name)
+	base := strings.TrimSuffix(name, ext)
+	if base == "" {
+		base = "file"
+	}
+	for i := used[name] + 1; ; i++ {
+		candidate := fmt.Sprintf("%s-%d%s", base, i, ext)
+		if used[candidate] == 0 {
+			used[name] = i
+			used[candidate] = 1
+			return candidate
+		}
+	}
 }
 
 type sessionBankStore struct {
@@ -1035,6 +1119,185 @@ func (h *TmuxHandler) RecoverBankedSession(w http.ResponseWriter, r *http.Reques
 		"resumeCommand":  resumeCommand,
 		"cwd":            workDir,
 		"timestamp":      time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+func writeSessionDrop(w http.ResponseWriter, r *http.Request, sessionName string, target tmuxTarget) (sessionDropManifest, error) {
+	const maxDropBytes = 256 << 20
+	if r == nil {
+		return sessionDropManifest{}, fmt.Errorf("request is missing")
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxDropBytes)
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		return sessionDropManifest{}, fmt.Errorf("invalid multipart body: %w", err)
+	}
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
+	}
+	text := strings.TrimRight(strings.ReplaceAll(r.FormValue("text"), "\r\n", "\n"), "\x00")
+	fileHeaders := []*multipart.FileHeader{}
+	if r.MultipartForm != nil && r.MultipartForm.File != nil {
+		fileHeaders = append(fileHeaders, r.MultipartForm.File["files"]...)
+		fileHeaders = append(fileHeaders, r.MultipartForm.File["file"]...)
+	}
+	if strings.TrimSpace(text) == "" && len(fileHeaders) == 0 {
+		return sessionDropManifest{}, fmt.Errorf("send text or at least one file")
+	}
+
+	dropID, err := newSessionDropID()
+	if err != nil {
+		return sessionDropManifest{}, fmt.Errorf("create drop id: %w", err)
+	}
+	dropRoot := defaultSessionDropsPath()
+	if strings.TrimSpace(dropRoot) == "" {
+		return sessionDropManifest{}, fmt.Errorf("session drops path is empty")
+	}
+	dropPath := filepath.Join(dropRoot, dropID)
+	filesDir := filepath.Join(dropPath, "files")
+	if err := os.MkdirAll(filesDir, 0o755); err != nil {
+		return sessionDropManifest{}, fmt.Errorf("create drop directory: %w", err)
+	}
+	_ = os.Chmod(dropRoot, 0o755)
+	_ = os.Chmod(dropPath, 0o755)
+	_ = os.Chmod(filesDir, 0o755)
+
+	manifest := sessionDropManifest{
+		ID:        dropID,
+		Session:   sessionName,
+		UnixUser:  target.unixUser,
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Payload:   filepath.Join(dropPath, "payload.txt"),
+		Files:     []sessionDropFile{},
+	}
+	if text != "" {
+		manifest.TextPath = filepath.Join(dropPath, "text.txt")
+		if err := os.WriteFile(manifest.TextPath, []byte(text), 0o644); err != nil {
+			return sessionDropManifest{}, fmt.Errorf("write drop text: %w", err)
+		}
+		_ = os.Chmod(manifest.TextPath, 0o644)
+	}
+
+	usedNames := map[string]int{}
+	for idx, header := range fileHeaders {
+		if header == nil {
+			continue
+		}
+		fallback := fmt.Sprintf("file-%d", idx+1)
+		cleanName := uniqueDropFileName(usedNames, sanitizeDropFileName(header.Filename, fallback))
+		destPath := filepath.Join(filesDir, cleanName)
+		src, err := header.Open()
+		if err != nil {
+			return sessionDropManifest{}, fmt.Errorf("open uploaded file %q: %w", header.Filename, err)
+		}
+		dest, err := os.OpenFile(destPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if err != nil {
+			_ = src.Close()
+			return sessionDropManifest{}, fmt.Errorf("create uploaded file %q: %w", cleanName, err)
+		}
+		written, copyErr := io.Copy(dest, src)
+		closeDestErr := dest.Close()
+		closeSrcErr := src.Close()
+		if copyErr != nil {
+			return sessionDropManifest{}, fmt.Errorf("write uploaded file %q: %w", cleanName, copyErr)
+		}
+		if closeDestErr != nil {
+			return sessionDropManifest{}, fmt.Errorf("close uploaded file %q: %w", cleanName, closeDestErr)
+		}
+		if closeSrcErr != nil {
+			return sessionDropManifest{}, fmt.Errorf("close uploaded source %q: %w", header.Filename, closeSrcErr)
+		}
+		_ = os.Chmod(destPath, 0o644)
+		manifest.Files = append(manifest.Files, sessionDropFile{
+			Name:        cleanName,
+			Original:    filepath.Base(strings.ReplaceAll(header.Filename, "\\", "/")),
+			Path:        destPath,
+			Size:        written,
+			ContentType: header.Header.Get("Content-Type"),
+		})
+	}
+
+	sections := []string{}
+	if trimmedText := strings.TrimRight(text, "\n"); trimmedText != "" {
+		sections = append(sections, trimmedText)
+	}
+	sections = append(sections, "CHROTE stored this send at:\n- "+dropPath)
+	if len(manifest.Files) > 0 {
+		fileSection := "Files:\n"
+		for _, file := range manifest.Files {
+			fileSection += "- " + file.Path + "\n"
+		}
+		sections = append(sections, strings.TrimRight(fileSection, "\n"))
+	}
+	payload := strings.Join(sections, "\n\n") + "\n"
+	if err := os.WriteFile(manifest.Payload, []byte(payload), 0o644); err != nil {
+		return sessionDropManifest{}, fmt.Errorf("write drop payload: %w", err)
+	}
+	_ = os.Chmod(manifest.Payload, 0o644)
+
+	manifestPath := filepath.Join(dropPath, "manifest.json")
+	raw, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return sessionDropManifest{}, fmt.Errorf("marshal drop manifest: %w", err)
+	}
+	raw = append(raw, '\n')
+	if err := os.WriteFile(manifestPath, raw, 0o644); err != nil {
+		return sessionDropManifest{}, fmt.Errorf("write drop manifest: %w", err)
+	}
+	_ = os.Chmod(manifestPath, 0o644)
+	return manifest, nil
+}
+
+func submitFormValue(raw string) bool {
+	raw = strings.TrimSpace(strings.ToLower(raw))
+	return raw == "" || raw == "1" || raw == "true" || raw == "yes" || raw == "on"
+}
+
+// SendToSession handles POST /api/tmux/sessions/{name}/send.
+// It stores sent text/files durably on disk, then pastes a composed payload into
+// the target tmux session via tmux buffers so multiline content never rides in
+// command argv.
+func (h *TmuxHandler) SendToSession(w http.ResponseWriter, r *http.Request) {
+	sessionName := strings.TrimSpace(r.PathValue("name"))
+	valid, errMsg := core.ValidateSessionName(sessionName, "session name")
+	if !valid {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", errMsg)
+		return
+	}
+	target, targetErr := targetFromRequest(h, r, "")
+	if targetErr != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", targetErr.Error())
+		return
+	}
+
+	manifest, err := writeSessionDrop(w, r, sessionName, target)
+	if err != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+		return
+	}
+	bufferName := "chrote-send-" + manifest.ID
+	if _, err := h.runTmuxOnSocket(target.socket, "load-buffer", "-b", bufferName, manifest.Payload); err != nil {
+		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
+		return
+	}
+	if _, err := h.runTmuxOnSocket(target.socket, "paste-buffer", "-d", "-b", bufferName, "-t", sessionName); err != nil {
+		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
+		return
+	}
+	if submitFormValue(r.FormValue("submit")) {
+		if _, err := h.runTmuxOnSocket(target.socket, "send-keys", "-t", sessionName, "Enter"); err != nil {
+			core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
+			return
+		}
+	}
+	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"success":   true,
+		"session":   sessionName,
+		"unixUser":  target.unixUser,
+		"dropId":    manifest.ID,
+		"dropPath":  filepath.Dir(manifest.Payload),
+		"payload":   manifest.Payload,
+		"files":     manifest.Files,
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	})
 }
 

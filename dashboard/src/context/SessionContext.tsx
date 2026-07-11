@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, ReactNode } from 'react'
-import type { DashboardContextType, TmuxSession, SessionBankEntry, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance, WorkspaceId, TerminalWorkspace, LayoutPreset, LaunchUser, CreateSessionOptions, PersistentAgentPayload } from '../types'
+import type { DashboardContextType, TmuxSession, SessionBankEntry, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance, WorkspaceId, TerminalWorkspace, LayoutPreset, LaunchUser, CreateSessionOptions, PersistentAgentPayload, SendToSessionPayload } from '../types'
 import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE, MAX_PRESETS, TERMINAL_WORKSPACE_IDS, getSessionKey, getSessionPrefixForUser, normalizeTerminalUsers, resolveLaunchUser } from '../types'
 import { useToast } from './ToastContext'
 
@@ -479,6 +479,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   )
   const [sidebarCollapsed, setSidebarCollapsed] = useState(stored?.sidebarCollapsed ?? false)
   const [floatingSession, setFloatingSession] = useState<string | null>(null)
+  const [sendToSessionTarget, setSendToSessionTarget] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [settings, setSettings] = useState<UserSettings>(stored?.settings ?? DEFAULT_SETTINGS)
   // Track which window has focus for keyboard navigation (workspaceId-windowId)
@@ -595,6 +596,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           return pruned
         })
         setFloatingSession(prev => prev && (live.has(prev) || protectedKeys.has(prev) || !pruneCandidates.has(prev)) ? prev : null)
+        setSendToSessionTarget(prev => prev && (live.has(prev) || protectedKeys.has(prev) || !pruneCandidates.has(prev)) ? prev : null)
         staleSessionProtectionRef.current.forEach((remaining, key) => {
           if (remaining <= 1) {
             staleSessionProtectionRef.current.delete(key)
@@ -864,6 +866,42 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setFloatingSession(null)
   }, [])
 
+  const openSendToSession = useCallback((sessionName: string) => {
+    setSendToSessionTarget(sessionName)
+  }, [])
+
+  const closeSendToSession = useCallback(() => {
+    setSendToSessionTarget(null)
+  }, [])
+
+  const sendToSession = useCallback(async (sessionName: string, payload: SendToSessionPayload, unixUser?: LaunchUser): Promise<boolean> => {
+    try {
+      const form = new FormData()
+      form.set('text', payload.text)
+      form.set('submit', payload.submit ? 'true' : 'false')
+      payload.files.forEach(file => form.append('files', file, file.name))
+      const query = unixUser ? `?unixUser=${encodeURIComponent(unixUser)}` : ''
+      const response = await fetch(`/api/tmux/sessions/${encodeURIComponent(sessionName)}/send${query}`, {
+        method: 'POST',
+        body: form,
+        signal: AbortSignal.timeout(30000),
+      })
+      if (!response.ok) {
+        const errorText = await response.text()
+        const message = apiErrorMessage(errorText, 'Failed to send to session')
+        console.error('Failed to send to session:', errorText)
+        addToast(message, 'error')
+        return false
+      }
+      addToast(`Sent to '${sessionName}'`, 'success')
+      return true
+    } catch (e) {
+      console.error('Failed to send to session:', e)
+      addToast('Failed to send to session', 'error')
+      return false
+    }
+  }, [addToast])
+
   const handleSessionClick = useCallback((sessionName: string) => {
     // Check if session is already assigned to any window
     const assignment = assignedSessions.get(sessionName)
@@ -1102,6 +1140,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     workspaces,
     sidebarCollapsed,
     floatingSession,
+    sendToSessionTarget,
     assignedSessions,
     isDragging,
     settings,
@@ -1119,6 +1158,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     toggleSidebar,
     openFloatingModal,
     closeFloatingModal,
+    openSendToSession,
+    closeSendToSession,
+    sendToSession,
     handleSessionClick,
     refreshSessions,
     createSession,
@@ -1143,6 +1185,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     workspaces,
     sidebarCollapsed,
     floatingSession,
+    sendToSessionTarget,
     assignedSessions,
     isDragging,
     settings,
@@ -1158,6 +1201,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     toggleSidebar,
     openFloatingModal,
     closeFloatingModal,
+    openSendToSession,
+    closeSendToSession,
+    sendToSession,
     handleSessionClick,
     refreshSessions,
     createSession,

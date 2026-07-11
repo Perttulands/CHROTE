@@ -6,6 +6,8 @@ import { DEFAULT_SETTINGS } from '../types'
 const mockState = vi.hoisted(() => ({
   assignedSessions: new Map<string, { workspaceId: string; windowId: string; windowIndex: number; colorIndex: number }>(),
   openFloatingModal: vi.fn(),
+  openSendToSession: vi.fn(),
+  handleSessionClick: vi.fn(),
   addSessionToWindow: vi.fn(),
   makeSessionPersistent: vi.fn(),
   makeSessionMortal: vi.fn(),
@@ -24,7 +26,7 @@ vi.mock('@dnd-kit/core', () => ({
 vi.mock('../context/SessionContext', () => ({
   useSession: () => ({
     assignedSessions: mockState.assignedSessions,
-    handleSessionClick: vi.fn(),
+    handleSessionClick: mockState.handleSessionClick,
     deleteSession: vi.fn(),
     renameSession: vi.fn(),
     workspaces: {
@@ -35,6 +37,7 @@ vi.mock('../context/SessionContext', () => ({
     addSessionToWindow: mockState.addSessionToWindow,
     removeSessionFromWindow: vi.fn(),
     openFloatingModal: mockState.openFloatingModal,
+    openSendToSession: mockState.openSendToSession,
     makeSessionPersistent: mockState.makeSessionPersistent,
     makeSessionMortal: mockState.makeSessionMortal,
     settings: {
@@ -54,6 +57,8 @@ describe('SessionItem user badge and context actions', () => {
   afterEach(() => {
     mockState.assignedSessions.clear()
     mockState.openFloatingModal.mockClear()
+    mockState.openSendToSession.mockClear()
+    mockState.handleSessionClick.mockClear()
     mockState.addSessionToWindow.mockClear()
     mockState.makeSessionPersistent.mockClear()
     mockState.makeSessionMortal.mockClear()
@@ -127,6 +132,30 @@ describe('SessionItem user badge and context actions', () => {
     fireEvent.mouseEnter(screen.getByText(/Attach to Window/i))
     fireEvent.click(screen.getByRole('button', { name: /Window 1/i }))
     expect(mockState.addSessionToWindow).toHaveBeenCalledWith('terminal1', 'terminal1-window-0', 'alice-shell', 'alice')
+  })
+
+  it('offers Send to Session from context menu and ctrl-click shortcut', () => {
+    render(
+      <SessionItem
+        session={{
+          name: 'alice-shell',
+          windows: 1,
+          attached: true,
+          group: 'main',
+          unixUser: 'alice',
+        }}
+      />
+    )
+
+    const row = screen.getByText('alice-shell')
+    fireEvent.click(row, { ctrlKey: true })
+    expect(mockState.openSendToSession).toHaveBeenCalledWith('alice:alice-shell')
+    expect(mockState.handleSessionClick).not.toHaveBeenCalled()
+
+    fireEvent.contextMenu(row)
+    fireEvent.click(screen.getByRole('button', { name: /Send to Session/i }))
+    expect(mockState.openSendToSession).toHaveBeenCalledTimes(2)
+    expect(mockState.openSendToSession).toHaveBeenLastCalledWith('alice:alice-shell')
   })
 
   it('renders a lock indicator with identity for persistent sessions', () => {
