@@ -1277,6 +1277,9 @@ func TestTmuxHandler_SendToSessionStoresDropAndPastesViaBuffer(t *testing.T) {
 	if !strings.Contains(payloadText, "Please inspect this screenshot.") || !strings.Contains(payloadText, "CHROTE stored this send at:") || !strings.Contains(payloadText, dropPath) || !strings.Contains(payloadText, "Files:") || !strings.Contains(payloadText, filePath) {
 		t.Fatalf("payload = %q, want text, drop path %q, and stored file path %q", payloadText, dropPath, filePath)
 	}
+	if strings.HasSuffix(payloadText, "\n") {
+		t.Fatalf("payload has trailing newline; submit=false must not press Enter implicitly: %q", payloadText)
+	}
 	info, err := os.Stat(filePath)
 	if err != nil {
 		t.Fatalf("stat stored file: %v", err)

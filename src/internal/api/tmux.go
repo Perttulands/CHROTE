@@ -1228,7 +1228,7 @@ func writeSessionDrop(w http.ResponseWriter, r *http.Request, sessionName string
 		}
 		sections = append(sections, strings.TrimRight(fileSection, "\n"))
 	}
-	payload := strings.Join(sections, "\n\n") + "\n"
+	payload := strings.Join(sections, "\n\n")
 	if err := os.WriteFile(manifest.Payload, []byte(payload), 0o644); err != nil {
 		return sessionDropManifest{}, fmt.Errorf("write drop payload: %w", err)
 	}
