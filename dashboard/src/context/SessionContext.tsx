@@ -1,5 +1,5 @@
-import { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react'
-import type { DashboardContextType, TmuxSession, SessionBankEntry, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance, WorkspaceId, TerminalWorkspace, LayoutPreset, LaunchUser, CreateSessionOptions, PersistentAgentPayload } from '../types'
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, ReactNode } from 'react'
+import type { DashboardContextType, TmuxSession, SessionBankEntry, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance, WorkspaceId, TerminalWorkspace, LayoutPreset, LaunchUser, CreateSessionOptions, PersistentAgentPayload, SendToSessionPayload } from '../types'
 import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE, MAX_PRESETS, TERMINAL_WORKSPACE_IDS, getSessionKey, getSessionPrefixForUser, normalizeTerminalUsers, resolveLaunchUser } from '../types'
 import { useToast } from './ToastContext'
 
@@ -250,6 +250,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
+function apiErrorMessage(raw: string, fallback: string): string {
+  const text = raw.trim()
+  if (!text) return fallback
+  try {
+    const parsed = JSON.parse(text) as unknown
+    if (isRecord(parsed)) {
+      const error = parsed.error
+      if (isRecord(error) && typeof error.message === 'string' && error.message.trim()) {
+        return error.message.trim()
+      }
+      if (typeof parsed.message === 'string' && parsed.message.trim()) {
+        return parsed.message.trim()
+      }
+    }
+  } catch {
+    // Non-JSON responses are still useful if they are small enough to show directly.
+  }
+  return text.length <= 240 ? text : fallback
+}
+
 function nextSessionNameForPrefix(sessions: TmuxSession[], prefix: string): string {
   const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const regex = new RegExp(`^${escapedPrefix}(\\d+)$`)
@@ -263,6 +283,69 @@ function nextSessionNameForPrefix(sessions: TmuxSession[], prefix: string): stri
     : 1
 
   return `${prefix}${nextNum}`
+}
+
+function liveSessionKeys(sessions: TmuxSession[]): Set<string> {
+  const live = new Set<string>()
+  sessions.forEach(s => {
+    live.add(getSessionKey(s.name, s.unixUser))
+    live.add(s.name) // backward compatibility for layouts saved before user-qualified keys
+  })
+  return live
+}
+
+function pruneWindowToLiveSessions(window: TerminalWindow, live: Set<string>, pruneCandidates?: Set<string>): TerminalWindow {
+  const boundSessions = window.boundSessions.filter(s => (
+    s === 'INIT-PENDING' || live.has(s) || (pruneCandidates ? !pruneCandidates.has(s) : false)
+  ))
+  const activeSession = window.activeSession && boundSessions.includes(window.activeSession)
+    ? window.activeSession
+    : (pruneCandidates
+        ? (boundSessions.find(sessionName => sessionName === 'INIT-PENDING' || live.has(sessionName)) ?? null)
+        : (boundSessions[0] ?? null))
+
+  if (boundSessions.length === window.boundSessions.length && activeSession === window.activeSession) {
+    return window
+  }
+
+  return { ...window, boundSessions, activeSession }
+}
+
+function pruneWorkspacesToLiveSessions(
+  workspaces: Record<WorkspaceId, TerminalWorkspace>,
+  sessions: TmuxSession[],
+  pruneCandidates?: Set<string>,
+): Record<WorkspaceId, TerminalWorkspace> {
+  const live = liveSessionKeys(sessions)
+  let changed = false
+  const next: Record<WorkspaceId, TerminalWorkspace> = { ...workspaces }
+
+  WORKSPACE_IDS.forEach(workspaceId => {
+    const ws = workspaces[workspaceId]
+    if (!ws) return
+    const windows = ws.windows.map(w => {
+      const pruned = pruneWindowToLiveSessions(w, live, pruneCandidates)
+      if (pruned !== w) changed = true
+      return pruned
+    })
+    next[workspaceId] = windows === ws.windows ? ws : { ...ws, windows }
+  })
+
+  return changed ? next : workspaces
+}
+
+function staleSessionKeysInWorkspaces(workspaces: Record<WorkspaceId, TerminalWorkspace>, live: Set<string>): Set<string> {
+  const stale = new Set<string>()
+  WORKSPACE_IDS.forEach(workspaceId => {
+    const ws = workspaces[workspaceId]
+    if (!ws) return
+    ws.windows.forEach(w => {
+      w.boundSessions.forEach(sessionName => {
+        if (sessionName !== 'INIT-PENDING' && !live.has(sessionName)) stale.add(sessionName)
+      })
+    })
+  })
+  return stale
 }
 
 function sanitizeWorkspace(workspaceId: WorkspaceId, wsRaw: unknown): TerminalWorkspace {
@@ -396,12 +479,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   )
   const [sidebarCollapsed, setSidebarCollapsed] = useState(stored?.sidebarCollapsed ?? false)
   const [floatingSession, setFloatingSession] = useState<string | null>(null)
+  const [sendToSessionTarget, setSendToSessionTarget] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
   const [settings, setSettings] = useState<UserSettings>(stored?.settings ?? DEFAULT_SETTINGS)
   // Track which window has focus for keyboard navigation (workspaceId-windowId)
   const [focusedWindowKey, setFocusedWindowKey] = useState<string | null>(null)
   // Layout presets
   const [layoutPresets, setLayoutPresets] = useState<LayoutPreset[]>(() => loadStoredPresets())
+  const staleSessionCandidatesRef = useRef<Set<string>>(new Set())
+  const staleSessionProtectionRef = useRef<Map<string, number>>(new Map())
+  const protectStaleSessionAliases = useCallback((aliases: string[]) => {
+    aliases.forEach(alias => {
+      if (alias) staleSessionProtectionRef.current.set(alias, 2)
+    })
+  }, [])
 
   // Computed: which sessions are assigned to any window
   const assignedSessions = useMemo(() => {
@@ -488,14 +579,32 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       } else {
         setError(null)
       }
-      setSessions(Array.isArray(data.sessions) ? data.sessions : [])
+      const nextSessions = Array.isArray(data.sessions) ? data.sessions : []
+      setSessions(nextSessions)
       setGroupedSessions(isRecord(data.grouped) ? data.grouped as Record<string, TmuxSession[]> : {})
       setSessionBank(Array.isArray(data.banked) ? data.banked : [])
 
-      // NOTE: We intentionally do NOT clean up "orphaned" sessions here.
-      // If a session is in the layout but not in the API list (e.g. server restart, network blip),
-      // we want to PERSIST it in the UI rather than wiping the user's layout.
-      // The terminal window will just show a disconnected state or error until it comes back.
+      if (!data.error && Array.isArray(data.sessions)) {
+        const live = liveSessionKeys(nextSessions)
+        const protectedKeys = new Set(staleSessionProtectionRef.current.keys())
+        const pruneCandidates = new Set([...staleSessionCandidatesRef.current].filter(key => !protectedKeys.has(key)))
+        setWorkspaces(prev => {
+          const pruned = pruneWorkspacesToLiveSessions(prev, nextSessions, pruneCandidates)
+          const currentStale = staleSessionKeysInWorkspaces(pruned, live)
+          protectedKeys.forEach(key => currentStale.delete(key))
+          staleSessionCandidatesRef.current = currentStale
+          return pruned
+        })
+        setFloatingSession(prev => prev && (live.has(prev) || protectedKeys.has(prev) || !pruneCandidates.has(prev)) ? prev : null)
+        setSendToSessionTarget(prev => prev && (live.has(prev) || protectedKeys.has(prev) || !pruneCandidates.has(prev)) ? prev : null)
+        staleSessionProtectionRef.current.forEach((remaining, key) => {
+          if (remaining <= 1) {
+            staleSessionProtectionRef.current.delete(key)
+          } else {
+            staleSessionProtectionRef.current.set(key, remaining - 1)
+          }
+        })
+      }
     } catch (e) {
       setError('Failed to fetch sessions')
       console.error('Failed to fetch sessions:', e)
@@ -574,11 +683,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const clearStaleSessionsFromWindow = useCallback((workspaceId: WorkspaceId, windowId: string) => {
-    const liveSessions = new Set<string>()
-    sessions.forEach(s => {
-      liveSessions.add(getSessionKey(s.name, s.unixUser))
-      liveSessions.add(s.name) // backward compatibility for layouts saved before user-qualified keys
-    })
+    const liveSessions = liveSessionKeys(sessions)
     setWorkspaces(prev => {
       const ws = prev[workspaceId]
       if (!ws) return prev
@@ -586,15 +691,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         ...prev,
         [workspaceId]: {
           ...ws,
-          windows: ws.windows.map(w => {
-            if (w.id !== windowId) return w
-            const boundSessions = w.boundSessions.filter(s => liveSessions.has(s))
-            return {
-              ...w,
-              boundSessions,
-              activeSession: w.activeSession && boundSessions.includes(w.activeSession) ? w.activeSession : (boundSessions[0] ?? null),
-            }
-          }),
+          windows: ws.windows.map(w => w.id === windowId ? pruneWindowToLiveSessions(w, liveSessions) : w),
         },
       }
     })
@@ -603,6 +700,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const addSessionToWindow = useCallback((workspaceId: WorkspaceId, windowId: string, sessionName: string, unixUser?: LaunchUser) => {
     const sessionKey = getSessionKey(sessionName, unixUser)
     const aliases = unixUser ? [sessionKey, sessionName] : [sessionKey]
+    aliases.forEach(alias => staleSessionCandidatesRef.current.delete(alias))
+    protectStaleSessionAliases(aliases)
     setWorkspaces(prev => {
       // 1) Remove session from ALL windows across ALL workspaces
       const cleaned: Record<WorkspaceId, TerminalWorkspace> = { ...prev }
@@ -654,7 +753,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         [workspaceId]: { ...ws, windows: updatedWindows },
       }
     })
-  }, [])
+  }, [protectStaleSessionAliases])
 
   const createSession = useCallback(async (options: CreateSessionOptions = {}): Promise<string | null> => {
     const workspaceId = options.workspaceId ?? options.attachTo?.workspaceId ?? 'terminal1'
@@ -767,6 +866,42 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setFloatingSession(null)
   }, [])
 
+  const openSendToSession = useCallback((sessionName: string) => {
+    setSendToSessionTarget(sessionName)
+  }, [])
+
+  const closeSendToSession = useCallback(() => {
+    setSendToSessionTarget(null)
+  }, [])
+
+  const sendToSession = useCallback(async (sessionName: string, payload: SendToSessionPayload, unixUser?: LaunchUser): Promise<boolean> => {
+    try {
+      const form = new FormData()
+      form.set('text', payload.text)
+      form.set('submit', payload.submit ? 'true' : 'false')
+      payload.files.forEach(file => form.append('files', file, file.name))
+      const query = unixUser ? `?unixUser=${encodeURIComponent(unixUser)}` : ''
+      const response = await fetch(`/api/tmux/sessions/${encodeURIComponent(sessionName)}/send${query}`, {
+        method: 'POST',
+        body: form,
+        signal: AbortSignal.timeout(30000),
+      })
+      if (!response.ok) {
+        const errorText = await response.text()
+        const message = apiErrorMessage(errorText, 'Failed to send to session')
+        console.error('Failed to send to session:', errorText)
+        addToast(message, 'error')
+        return false
+      }
+      addToast(`Sent to '${sessionName}'`, 'success')
+      return true
+    } catch (e) {
+      console.error('Failed to send to session:', e)
+      addToast('Failed to send to session', 'error')
+      return false
+    }
+  }, [addToast])
+
   const handleSessionClick = useCallback((sessionName: string) => {
     // Check if session is already assigned to any window
     const assignment = assignedSessions.get(sessionName)
@@ -849,6 +984,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (response.ok) {
         const oldKey = getSessionKey(oldName, unixUser)
         const newKey = getSessionKey(newName, unixUser)
+        const renameAliases = [oldKey, oldName, newKey, newName]
+        renameAliases.forEach(alias => staleSessionCandidatesRef.current.delete(alias))
+        protectStaleSessionAliases(renameAliases)
         // Update window bindings to use the new name/key
         setWorkspaces(prev => {
           const next: Record<WorkspaceId, TerminalWorkspace> = { ...prev }
@@ -879,7 +1017,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       addToast(`Failed to rename session`, 'error')
       return false
     }
-  }, [refreshSessions, addToast])
+  }, [refreshSessions, addToast, protectStaleSessionAliases])
 
 
   const makeSessionPersistent = useCallback(async (sessionName: string, payload: PersistentAgentPayload, unixUser?: LaunchUser): Promise<boolean> => {
@@ -907,8 +1045,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       })
       if (!response.ok) {
         const errorText = await response.text()
+        const message = apiErrorMessage(errorText, 'Failed to make session persistent')
         console.error('Failed to make session persistent:', errorText)
-        addToast('Failed to make session persistent', 'error')
+        addToast(message, 'error')
         return false
       }
       addToast(`Session '${sessionName}' is persistent`, 'success')
@@ -1001,6 +1140,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     workspaces,
     sidebarCollapsed,
     floatingSession,
+    sendToSessionTarget,
     assignedSessions,
     isDragging,
     settings,
@@ -1018,6 +1158,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     toggleSidebar,
     openFloatingModal,
     closeFloatingModal,
+    openSendToSession,
+    closeSendToSession,
+    sendToSession,
     handleSessionClick,
     refreshSessions,
     createSession,
@@ -1042,6 +1185,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     workspaces,
     sidebarCollapsed,
     floatingSession,
+    sendToSessionTarget,
     assignedSessions,
     isDragging,
     settings,
@@ -1057,6 +1201,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     toggleSidebar,
     openFloatingModal,
     closeFloatingModal,
+    openSendToSession,
+    closeSendToSession,
+    sendToSession,
     handleSessionClick,
     refreshSessions,
     createSession,

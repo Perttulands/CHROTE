@@ -386,8 +386,29 @@
 
 /* Session Panel Footer */
 .session-panel-footer {
+  display: grid;
+  gap: 6px;
   padding: 8px;
   border-top: 1px solid var(--divider);
+}
+
+.session-bank-settings-link {
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  background: var(--surface-primary);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.session-bank-settings-link:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 /* Session bank */

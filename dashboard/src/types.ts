@@ -205,6 +205,12 @@ export interface PersistentAgentPayload {
   transcriptPath?: string
 }
 
+export interface SendToSessionPayload {
+  text: string
+  files: File[]
+  submit: boolean
+}
+
 export interface SessionBankEntry extends TmuxSession {
   live: boolean
   firstSeen: string
@@ -275,6 +281,7 @@ export interface DashboardState {
   // UI state
   sidebarCollapsed: boolean
   floatingSession: string | null // Session shown in floating modal
+  sendToSessionTarget: string | null // Session targeted by the Send to Session modal
   isDragging: boolean // True when a session is being dragged
 
   // Computed: which sessions are assigned to any window
@@ -307,6 +314,9 @@ export interface DashboardActions {
   toggleSidebar: () => void
   openFloatingModal: (sessionName: string) => void
   closeFloatingModal: () => void
+  openSendToSession: (sessionName: string) => void
+  closeSendToSession: () => void
+  sendToSession: (sessionName: string, payload: SendToSessionPayload, unixUser?: LaunchUser) => Promise<boolean>
 
   // Session click handler
   handleSessionClick: (sessionName: string) => void

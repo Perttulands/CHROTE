@@ -73,9 +73,10 @@ interface SessionTagProps {
   windowId: string
   onRemove: () => void
   onClick: () => void
+  onSend: () => void
 }
 
-function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, onClick }: SessionTagProps) {
+function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, onClick, onSend }: SessionTagProps) {
   const { sessions, settings } = useSession()
   const actualName = getSessionNameFromKey(sessionName)
   const unixUser = getSessionUserFromKey(sessionName)
@@ -106,6 +107,12 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
     if (isDragging) return
     // Don't trigger if clicking the remove button
     if ((e.target as HTMLElement).closest('.tag-remove')) return
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault()
+      e.stopPropagation()
+      onSend()
+      return
+    }
     onClick()
   }
 
@@ -151,6 +158,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
     removeSessionFromWindow,
     setActiveSession,
     cycleSession,
+    openSendToSession,
     focusedWindowKey,
     setFocusedWindowKey,
   } = useSession()
@@ -317,6 +325,10 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
     setActiveSession(workspaceId, windowConfig.id, sessionName)
   }
 
+  const handleTagSend = (sessionName: string) => {
+    openSendToSession(sessionName)
+  }
+
   const hasSessions = windowConfig.boundSessions.length > 0
 
   return (
@@ -342,6 +354,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
               windowId={windowConfig.id}
               onRemove={() => handleRemoveSession(sessionName)}
               onClick={() => handleTagClick(sessionName)}
+              onSend={() => handleTagSend(sessionName)}
             />
           ))}
         </div>

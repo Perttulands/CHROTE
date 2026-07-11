@@ -18,7 +18,7 @@ interface ContextMenuState {
 }
 
 function SessionItem({ session }: SessionItemProps) {
-  const { assignedSessions, handleSessionClick, deleteSession, renameSession, makeSessionPersistent, makeSessionMortal, workspaces, addSessionToWindow, removeSessionFromWindow, openFloatingModal, settings } = useSession()
+  const { assignedSessions, handleSessionClick, deleteSession, renameSession, makeSessionPersistent, makeSessionMortal, workspaces, addSessionToWindow, removeSessionFromWindow, openFloatingModal, openSendToSession, settings } = useSession()
   const sessionKey = getSessionKey(session.name, session.unixUser)
   const assignment = assignedSessions.get(sessionKey) ?? assignedSessions.get(session.name)
   const isAssigned = !!assignment
@@ -184,6 +184,21 @@ function SessionItem({ session }: SessionItemProps) {
     closeContextMenu()
   }, [openFloatingModal, sessionKey, closeContextMenu])
 
+  const handleOpenSendToSession = useCallback(() => {
+    openSendToSession(sessionKey)
+    closeContextMenu()
+  }, [openSendToSession, sessionKey, closeContextMenu])
+
+  const handleClick = useCallback((event: React.MouseEvent) => {
+    if (event.ctrlKey || event.metaKey) {
+      event.preventDefault()
+      event.stopPropagation()
+      openSendToSession(sessionKey)
+      return
+    }
+    handleSessionClick(sessionKey)
+  }, [handleSessionClick, openSendToSession, sessionKey])
+
   // Focus rename input when it appears
   useEffect(() => {
     if (isRenaming && renameInputRef.current) {
@@ -225,7 +240,7 @@ function SessionItem({ session }: SessionItemProps) {
         style={style}
         {...listeners}
         {...attributes}
-        onClick={() => handleSessionClick(sessionKey)}
+        onClick={handleClick}
         onContextMenu={handleContextMenu}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
@@ -278,6 +293,10 @@ function SessionItem({ session }: SessionItemProps) {
           <button className="session-context-item" onClick={handlePeek}>
             <span className="session-context-icon">◉</span>
             Peek
+          </button>
+          <button className="session-context-item" onClick={handleOpenSendToSession}>
+            <span className="session-context-icon">↗</span>
+            Send to Session
           </button>
           {session.persistent ? (
             <button className="session-context-item" onClick={handleMakeMortal}>

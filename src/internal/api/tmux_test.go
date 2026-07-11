@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -780,6 +781,54 @@ esac
 	}
 }
 
+func TestTmuxHandler_EnablePersistentAgentFallsBackToOwnerProbeWhenArgsLackResumeID(t *testing.T) {
+	tmpDir := t.TempDir()
+	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")
+	installPersistentAgentScriptedTmux(t, `
+case "$*" in
+  *display-message*) printf '42:node:/home/alice/project\n' ;;
+esac
+`)
+	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
+	const sessionID = "019f45ec-f88b-7f70-88dc-b5b99a9e94c6"
+	originalReadProcessTable := readPersistentAgentProcessTable
+	readPersistentAgentProcessTable = func(context.Context) ([]processInfo, error) {
+		return []processInfo{{pid: "42", ppid: "1", comm: "node", args: "node /usr/bin/codex --no-alt-screen"}}, nil
+	}
+	t.Cleanup(func() { readPersistentAgentProcessTable = originalReadProcessTable })
+	originalProbe := probePersistentAgentOwnerMetadata
+	probePersistentAgentOwnerMetadata = func(ctx context.Context, h *TmuxHandler, target tmuxTarget, pane paneInspection, requestedKind string) (inferredPersistentAgentMetadata, error) {
+		if target.unixUser != "alice" || target.socket != "/tmp/tmux-a" || pane.PID != "42" || pane.CWD != "/home/alice/project" || requestedKind != "" {
+			t.Fatalf("probe args target=%+v pane=%+v requestedKind=%q", target, pane, requestedKind)
+		}
+		return inferredPersistentAgentMetadata{Kind: "codex", SessionID: sessionID, Source: "owner-probe"}, nil
+	}
+	t.Cleanup(func() { probePersistentAgentOwnerMetadata = originalProbe })
+
+	handler := NewTmuxHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	body := bytes.NewBufferString(`{"identity":"Maintains the VW Codex lane."}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions/codex-alpha/persistence?unixUser=alice", body)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var response map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response["agentKind"] != "codex" || response["agentSessionId"] != sessionID || response["resumeCommand"] != "codex resume "+sessionID {
+		t.Fatalf("persistent response = %#v", response)
+	}
+}
+
 func TestTmuxHandler_EnablePersistentAgentFailsClearlyWhenSessionIDCannotBeInferred(t *testing.T) {
 	tmpDir := t.TempDir()
 	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")
@@ -797,6 +846,11 @@ esac
 		return []processInfo{{pid: "42", ppid: "1", comm: "node", args: "node /usr/bin/codex --no-alt-screen"}}, nil
 	}
 	t.Cleanup(func() { readPersistentAgentProcessTable = originalReadProcessTable })
+	originalProbe := probePersistentAgentOwnerMetadata
+	probePersistentAgentOwnerMetadata = func(context.Context, *TmuxHandler, tmuxTarget, paneInspection, string) (inferredPersistentAgentMetadata, error) {
+		return inferredPersistentAgentMetadata{}, context.Canceled
+	}
+	t.Cleanup(func() { probePersistentAgentOwnerMetadata = originalProbe })
 
 	handler := NewTmuxHandler()
 	mux := http.NewServeMux()
@@ -1156,6 +1210,113 @@ func TestTmuxHandler_RecoverBankedCodexSessionCreatesShellAndSendsResumeCommandL
 	}
 	if _, hasData := response["data"]; hasData {
 		t.Fatalf("recover response should be flat JSON, got data envelope: %#v", response)
+	}
+}
+
+func TestTmuxHandler_SendToSessionStoresDropAndPastesViaBuffer(t *testing.T) {
+	tmpDir := t.TempDir()
+	dropsDir := filepath.Join(tmpDir, "drops")
+	argsPath := installArgvRecordingTmux(t)
+	t.Setenv("CHROTE_SESSION_DROPS_DIR", dropsDir)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	if err := writer.WriteField("text", "Please inspect this screenshot."); err != nil {
+		t.Fatalf("write text field: %v", err)
+	}
+	if err := writer.WriteField("submit", "true"); err != nil {
+		t.Fatalf("write submit field: %v", err)
+	}
+	if err := writer.WriteField("unixUser", "alice"); err != nil {
+		t.Fatalf("write unixUser field: %v", err)
+	}
+	fileWriter, err := writer.CreateFormFile("files", "../clipboard image.png")
+	if err != nil {
+		t.Fatalf("create file field: %v", err)
+	}
+	if _, err := fileWriter.Write([]byte("fake png")); err != nil {
+		t.Fatalf("write file payload: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	handler := NewTmuxHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions/alice-shell/send", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var response map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response["success"] != true || response["session"] != "alice-shell" || response["unixUser"] != "alice" {
+		t.Fatalf("send response = %#v", response)
+	}
+	dropPath, _ := response["dropPath"].(string)
+	if dropPath == "" || !strings.HasPrefix(dropPath, dropsDir) {
+		t.Fatalf("dropPath = %q, want under %q", dropPath, dropsDir)
+	}
+	for _, rel := range []string{"manifest.json", "text.txt", "payload.txt", filepath.Join("files", "clipboard-image.png")} {
+		if _, err := os.Stat(filepath.Join(dropPath, rel)); err != nil {
+			t.Fatalf("expected drop file %s: %v", rel, err)
+		}
+	}
+	payload, err := os.ReadFile(filepath.Join(dropPath, "payload.txt"))
+	if err != nil {
+		t.Fatalf("read payload: %v", err)
+	}
+	filePath := filepath.Join(dropPath, "files", "clipboard-image.png")
+	payloadText := string(payload)
+	if !strings.Contains(payloadText, "Please inspect this screenshot.") || !strings.Contains(payloadText, "CHROTE stored this send at:") || !strings.Contains(payloadText, dropPath) || !strings.Contains(payloadText, "Files:") || !strings.Contains(payloadText, filePath) {
+		t.Fatalf("payload = %q, want text, drop path %q, and stored file path %q", payloadText, dropPath, filePath)
+	}
+	if strings.HasSuffix(payloadText, "\n") {
+		t.Fatalf("payload has trailing newline; submit=false must not press Enter implicitly: %q", payloadText)
+	}
+	info, err := os.Stat(filePath)
+	if err != nil {
+		t.Fatalf("stat stored file: %v", err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Fatalf("stored file mode = %o, want 644", info.Mode().Perm())
+	}
+
+	calls := readArgvRecordingTmuxCalls(t, argsPath)
+	joined := make([]string, 0, len(calls))
+	for _, call := range calls {
+		joined = append(joined, strings.Join(call, "\x00"))
+	}
+	wantSnippets := []string{
+		strings.Join([]string{"-S", "/tmp/tmux-a", "load-buffer"}, "\x00"),
+		strings.Join([]string{"-S", "/tmp/tmux-a", "paste-buffer", "-d"}, "\x00"),
+		strings.Join([]string{"-S", "/tmp/tmux-a", "send-keys", "-t", "alice-shell", "Enter"}, "\x00"),
+	}
+	for _, snippet := range wantSnippets {
+		found := false
+		for _, call := range joined {
+			if strings.Contains(call, snippet) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("tmux calls = %#v, missing %q", calls, snippet)
+		}
+	}
+	for _, call := range joined {
+		if strings.Contains(call, "Please inspect this screenshot") {
+			t.Fatalf("bulk text leaked into tmux argv instead of buffer file: %#v", calls)
+		}
 	}
 }
 

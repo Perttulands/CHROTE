@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useSession } from '../context/SessionContext'
 import type { UserSettings, TmuxAppearance, WorkspaceId, LaunchUser } from '../types'
 import { TERMINAL_LABELS, TERMINAL_WORKSPACE_IDS, TMUX_PRESETS, defaultSessionPrefixForUser, defaultTerminalUserColor, getSessionPrefixForUser, getTerminalUserColor, normalizeTerminalUsers, resolveLaunchUser } from '../types'
 import FolderPickerModal from './FolderPickerModal'
+import SessionBankSection from './SessionBankSection'
 import { toDisplayPath } from './FilesView/types'
 
 // Color input component with picker and text field
@@ -46,10 +47,16 @@ function normalizeProjectPath(path: string): string {
   return trimmed.replace(/\/+$/, '')
 }
 
-function SettingsView() {
+type SettingsViewProps = {
+  sessionBankFocusNonce?: number
+}
+
+function SettingsView({ sessionBankFocusNonce = 0 }: SettingsViewProps = {}) {
   const { settings, updateSettings, terminalUsers } = useSession()
   const [showFolderPicker, setShowFolderPicker] = useState(false)
   const [projectPathInput, setProjectPathInput] = useState('')
+  const [sessionBankCollapsed, setSessionBankCollapsed] = useState(true)
+  const sessionBankRef = useRef<HTMLDivElement>(null)
   const configuredUsers = normalizeTerminalUsers(terminalUsers.length > 0
     ? terminalUsers
     : [
@@ -57,6 +64,14 @@ function SettingsView() {
         ...Object.keys(settings.terminalSessionPrefixes),
         ...Object.keys(settings.terminalUserColors),
       ])
+
+  useEffect(() => {
+    if (!sessionBankFocusNonce) return
+    setSessionBankCollapsed(false)
+    window.requestAnimationFrame(() => {
+      sessionBankRef.current?.scrollIntoView({ block: 'start' })
+    })
+  }, [sessionBankFocusNonce])
 
   const handleAddProjectPath = (path: string) => {
     const normalizedPath = normalizeProjectPath(path)
@@ -385,6 +400,15 @@ function SettingsView() {
           <p className="settings-hint">Controls which Unix user's tmux socket new shells attach to in each terminal tab.</p>
         </div>
       </section>
+
+      {/* Session Bank Section */}
+      <div ref={sessionBankRef}>
+        <SessionBankSection
+          collapsed={sessionBankCollapsed}
+          onCollapsedChange={setSessionBankCollapsed}
+          className="settings-session-bank"
+        />
+      </div>
 
       {/* Beads Projects Section */}
       <section className="settings-section">

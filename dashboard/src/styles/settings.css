@@ -254,6 +254,36 @@
   color: var(--text-dim);
 }
 
+/* Settings-hosted Session Bank */
+.settings-session-bank {
+  background-color: var(--surface-secondary);
+  border: 1px solid var(--divider);
+  border-bottom: 1px solid var(--divider);
+  border-radius: 8px;
+  padding: 24px;
+  margin-bottom: 24px;
+}
+
+.settings-session-bank .session-bank-header {
+  margin-bottom: 8px;
+}
+
+.settings-session-bank h2 {
+  color: var(--text-primary);
+  font-size: 16px;
+  font-weight: 500;
+  letter-spacing: 1px;
+}
+
+.settings-session-bank .session-bank-count {
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.settings-session-bank .session-bank-item {
+  background: var(--surface-primary);
+}
+
 /* Info Section */
 .settings-info {
   background-color: transparent;

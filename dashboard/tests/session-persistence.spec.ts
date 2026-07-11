@@ -31,7 +31,7 @@ async function dragAndDrop(page: Page, sourceSelector: string, targetSelector: s
 }
 
 test.describe('Session Persistence', () => {
-  test('should persist bound sessions even if API returns empty list', async ({ page }) => {
+  test('should clean persisted bound sessions when API successfully confirms no live sessions', async ({ page }) => {
     // 1. Initial Load with Sessions
     await mockApiRoutes(page)
     await page.goto('/')
@@ -52,7 +52,7 @@ test.describe('Session Persistence', () => {
     const sessionTag = page.locator('.terminal-window-header .session-tags .session-tag:has-text("deacon")')
     await expect(sessionTag).toBeVisible()
 
-    // 3. Mock API to return empty list (Simulate server outage)
+    // 3. Mock API to return an authoritative empty live-session list.
     await page.route('**/api/tmux/sessions', async route => {
       await route.fulfill({
         status: 200,
@@ -69,7 +69,8 @@ test.describe('Session Persistence', () => {
     await page.reload()
     await page.waitForSelector('.dashboard')
 
-    // 5. Assert the session tag is STILL THERE
-    await expect(sessionTag).toBeVisible({ timeout: 10000 })
+    // 5. Assert the stale session tag was swept instead of requiring manual cleanup.
+    await expect(sessionTag).toHaveCount(0, { timeout: 10000 })
+    await expect(page.locator('.terminal-window:visible').first().locator('button', { hasText: 'New Session' })).toBeVisible()
   })
 })
