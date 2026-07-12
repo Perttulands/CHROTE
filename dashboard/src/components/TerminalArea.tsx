@@ -5,7 +5,6 @@ import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
 import { getSessionKey } from '../types'
 import type { WorkspaceId } from '../types'
-import { isFeatureEnabled } from '../featureFlags'
 import { useIframePool } from './IframePool'
 
 interface TerminalAreaProps {
@@ -29,7 +28,6 @@ function TerminalArea({ workspaceId, active = true }: TerminalAreaProps) {
     controlsMenu.show ? { x: controlsMenu.x, y: controlsMenu.y } : null,
     { estimatedSize: { width: 220, height: 130 } },
   )
-  const showRefitButton = isFeatureEnabled('terminalRefitButton')
   const visibleWindows = windows.slice(0, windowCount)
   const liveSessions = useMemo(() => {
     const live = new Set<string>()
@@ -70,8 +68,15 @@ function TerminalArea({ workspaceId, active = true }: TerminalAreaProps) {
       if (controlsMenuPosition.ref.current?.contains(event.target as Node)) return
       setControlsMenu({ show: false, x: 0, y: 0 })
     }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setControlsMenu({ show: false, x: 0, y: 0 })
+    }
     document.addEventListener('mousedown', close)
-    return () => document.removeEventListener('mousedown', close)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
   }, [controlsMenu.show])
 
   const closeControlsMenu = () => setControlsMenu({ show: false, x: 0, y: 0 })
@@ -95,17 +100,6 @@ function TerminalArea({ workspaceId, active = true }: TerminalAreaProps) {
     closeControlsMenu()
   }
 
-  const cleanStaleControl = staleSessionCount > 0 ? (
-    <button
-      className="layout-btn terminal-clean-stale-btn"
-      onClick={clearStaleSessions}
-      title={`Clean ${staleSessionCount} stale terminal session${staleSessionCount === 1 ? '' : 's'}`}
-      aria-label={`Clean ${staleSessionCount} stale session${staleSessionCount === 1 ? '' : 's'}`}
-    >
-      Clean stale · {staleSessionCount}
-    </button>
-  ) : null
-
   // Get grid class based on window count
   const getGridClass = () => {
     if (isMobile) return 'grid-1'
@@ -124,10 +118,6 @@ function TerminalArea({ workspaceId, active = true }: TerminalAreaProps) {
       <div
         className="terminal-area-controls"
         aria-label="Terminal layout controls"
-        onContextMenu={(event) => {
-          event.preventDefault()
-          setControlsMenu({ show: true, x: event.clientX, y: event.clientY })
-        }}
       >
         {isMobile ? (
           <>
@@ -159,17 +149,6 @@ function TerminalArea({ workspaceId, active = true }: TerminalAreaProps) {
                   {count}
                 </button>
               ))}
-              {showRefitButton && (
-                <button
-                  className="layout-btn terminal-refit-btn"
-                  onClick={refitTerminalLayout}
-                  title="Refit terminal layout"
-                  aria-label="Refit terminal layout"
-                >
-                  <span aria-hidden="true">↻</span>
-                </button>
-              )}
-              {cleanStaleControl}
             </div>
           </>
         ) : (
@@ -185,19 +164,19 @@ function TerminalArea({ workspaceId, active = true }: TerminalAreaProps) {
                 {count}
               </button>
             ))}
-            {showRefitButton && (
-              <button
-                className="layout-btn terminal-refit-btn"
-                onClick={refitTerminalLayout}
-                title="Refit terminal layout"
-                aria-label="Refit terminal layout"
-              >
-                <span aria-hidden="true">↻</span>
-              </button>
-            )}
-            {cleanStaleControl}
           </>
         )}
+        <button
+          className="layout-btn terminal-recovery-btn"
+          aria-label="Terminal recovery actions"
+          title="Terminal recovery actions"
+          onClick={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect()
+            setControlsMenu({ show: true, x: rect.right, y: rect.bottom + 4 })
+          }}
+        >
+          ⋯
+        </button>
       </div>
 
       {controlsMenu.show && (
@@ -210,9 +189,9 @@ function TerminalArea({ workspaceId, active = true }: TerminalAreaProps) {
             <span className="session-context-icon">↻</span>
             Reconnect frames
           </button>
-          <button className="session-context-item" onClick={clearStaleSessions}>
+          <button className="session-context-item" onClick={clearStaleSessions} disabled={staleSessionCount === 0}>
             <span className="session-context-icon">⌫</span>
-            Clear stale sessions
+            {staleSessionCount > 0 ? `Clear ${staleSessionCount} stale sessions` : 'No stale sessions'}
           </button>
           <button className="session-context-item" onClick={refitTerminalLayout}>
             <span className="session-context-icon">⤢</span>

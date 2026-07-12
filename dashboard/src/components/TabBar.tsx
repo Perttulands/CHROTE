@@ -67,6 +67,18 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
     }
   }, [helpMenuOpen, mobileMenuOpen, tabMenu.show])
 
+  useEffect(() => {
+    if (!helpMenuOpen && !mobileMenuOpen && !tabMenu.show) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      setHelpMenuOpen(false)
+      setMobileMenuOpen(false)
+      setTabMenu({ show: false, x: 0, y: 0, workspaceId: null, submenu: null })
+    }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [helpMenuOpen, mobileMenuOpen, tabMenu.show])
+
   const tabs: TabConfig[] = [
     { id: 'terminal1', label: settings.terminalLabels.terminal1?.trim() || TERMINAL_LABELS.terminal1 },
     { id: 'terminal2', label: settings.terminalLabels.terminal2?.trim() || TERMINAL_LABELS.terminal2 },
@@ -113,6 +125,58 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
   }
 
   const terminalTabMenu = tabMenu.workspaceId
+  const activeTerminalWorkspace = TERMINAL_WORKSPACE_IDS.includes(activeTab as WorkspaceId)
+    ? activeTab as WorkspaceId
+    : null
+  const openActiveTabMenu = (button: HTMLButtonElement) => {
+    if (!activeTerminalWorkspace) return
+    const rect = button.getBoundingClientRect()
+    setTabMenu({ show: true, x: rect.left, y: rect.bottom + 4, workspaceId: activeTerminalWorkspace, submenu: null })
+  }
+  const tabOptionsMenu = terminalTabMenu && tabMenu.show ? (
+    <div ref={tabMenuPosition.ref} className="session-context-menu" style={tabMenuPosition.style}>
+      <button className="session-context-item" onClick={renameTab}>
+        <span className="session-context-icon">✎</span>
+        Rename tab label
+      </button>
+      <button className="session-context-item" onClick={saveLayoutFromTab}>
+        <span className="session-context-icon">▣</span>
+        Save layout as preset
+      </button>
+      <div className="session-context-submenu-trigger">
+        <button
+          className="session-context-item"
+          aria-expanded={tabMenu.submenu === 'preset'}
+          onClick={() => setTabMenu(prev => ({ ...prev, submenu: prev.submenu === 'preset' ? null : 'preset' }))}
+        >
+          <span className="session-context-icon">⊞</span>
+          Restore layout preset
+          <span className="session-context-arrow">▶</span>
+        </button>
+        {tabMenu.submenu === 'preset' && (
+          <div className="session-context-submenu">
+            {layoutPresets.length === 0 ? (
+              <button className="session-context-item" disabled>No presets</button>
+            ) : layoutPresets.map(preset => (
+              <button key={preset.id} className="session-context-item" onClick={() => { loadPreset(preset.id); closeTabMenu() }}>
+                {preset.name}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <button
+        className="session-context-item"
+        onClick={() => {
+          clearWorkspaceAssignments(terminalTabMenu)
+          closeTabMenu()
+        }}
+      >
+        <span className="session-context-icon">⌫</span>
+        Clear tab assignments
+      </button>
+    </div>
+  ) : null
 
   return (
     <div className={`tab-bar ${isMobile ? 'mobile-mode' : ''}`}>
@@ -154,6 +218,17 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
                  ⊞ Layouts
                 </button>
               )}
+              {activeTerminalWorkspace && (
+                <button
+                  className="mobile-nav-item"
+                  onClick={(event) => {
+                    openActiveTabMenu(event.currentTarget)
+                    setMobileMenuOpen(false)
+                  }}
+                >
+                  Terminal tab options
+                </button>
+              )}
               <button
                 className="mobile-nav-item"
                 onClick={() => {
@@ -183,11 +258,6 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
                 key={tab.id}
                 className={`tab ${!tab.external && activeTab === tab.id ? 'active' : ''} ${tab.external ? 'external' : ''}`}
                 onClick={() => handleClick(tab)}
-                onContextMenu={(event) => {
-                  if (tab.external || !TERMINAL_WORKSPACE_IDS.includes(tab.id as WorkspaceId)) return
-                  event.preventDefault()
-                  setTabMenu({ show: true, x: event.clientX, y: event.clientY, workspaceId: tab.id as WorkspaceId, submenu: null })
-                }}
                 title={tab.external ? `Open ${tab.label.replace(' ↗', '')} in new tab` : undefined}
               >
                 {tab.label}
@@ -195,6 +265,11 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
             ))}
           </div>
           <div className="tab-bar-actions">
+            {activeTerminalWorkspace && (
+              <button className="tab" onClick={(event) => openActiveTabMenu(event.currentTarget)}>
+                ⋯ Tab
+              </button>
+            )}
             {onShowPresets && (
               <button
                 className="tab"
@@ -238,49 +313,9 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
               )}
             </div>
           </div>
-          {terminalTabMenu && tabMenu.show && (
-            <div ref={tabMenuPosition.ref} className="session-context-menu" style={tabMenuPosition.style}>
-              <button className="session-context-item" onClick={renameTab}>
-                <span className="session-context-icon">✎</span>
-                Rename tab label
-              </button>
-              <button className="session-context-item" onClick={saveLayoutFromTab}>
-                <span className="session-context-icon">▣</span>
-                Save layout as preset
-              </button>
-              <div
-                className="session-context-item session-context-submenu-trigger"
-                onMouseEnter={() => setTabMenu(prev => ({ ...prev, submenu: 'preset' }))}
-              >
-                <span className="session-context-icon">⊞</span>
-                Restore layout preset
-                <span className="session-context-arrow">▶</span>
-                {tabMenu.submenu === 'preset' && (
-                  <div className="session-context-submenu">
-                    {layoutPresets.length === 0 ? (
-                      <button className="session-context-item" disabled>No presets</button>
-                    ) : layoutPresets.map(preset => (
-                      <button key={preset.id} className="session-context-item" onClick={() => { loadPreset(preset.id); closeTabMenu() }}>
-                        {preset.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <button
-                className="session-context-item"
-                onClick={() => {
-                  clearWorkspaceAssignments(terminalTabMenu)
-                  closeTabMenu()
-                }}
-              >
-                <span className="session-context-icon">⌫</span>
-                Clear tab assignments
-              </button>
-            </div>
-          )}
         </>
       )}
+      {tabOptionsMenu}
     </div>
   )
 }

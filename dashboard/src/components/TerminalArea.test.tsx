@@ -49,7 +49,7 @@ vi.mock('./TerminalWindow', () => ({
   ),
 }))
 
-describe('TerminalArea layout controls context menu', () => {
+describe('TerminalArea layout controls', () => {
   const viewControls = () => within(screen.getByRole('group', { name: 'Window view controls' }))
 
   beforeEach(() => {
@@ -63,7 +63,7 @@ describe('TerminalArea layout controls context menu', () => {
   it('reconnects all visible session frames from the layout controls menu', () => {
     render(<TerminalArea workspaceId="terminal1" />)
 
-    fireEvent.contextMenu(screen.getByLabelText('Terminal layout controls'))
+    fireEvent.click(screen.getByRole('button', { name: 'Terminal recovery actions' }))
     fireEvent.click(screen.getByRole('button', { name: /Reconnect frames/i }))
 
     expect(reconnectIframe).toHaveBeenCalledWith('alice:alpha')
@@ -74,19 +74,14 @@ describe('TerminalArea layout controls context menu', () => {
   it('clears stale sessions and refits layout from the layout controls menu', () => {
     render(<TerminalArea workspaceId="terminal1" />)
 
-    fireEvent.click(screen.getByRole('button', { name: /Clean 2 stale sessions/i }))
-
-    expect(clearStaleSessionsFromWindow).toHaveBeenCalledWith('terminal1', 'terminal1-window-0')
-    expect(clearStaleSessionsFromWindow).toHaveBeenCalledWith('terminal1', 'terminal1-window-1')
-    clearStaleSessionsFromWindow.mockClear()
-
-    fireEvent.contextMenu(screen.getByLabelText('Terminal layout controls'))
-    fireEvent.click(screen.getByRole('button', { name: /Clear stale sessions/i }))
+    expect(screen.queryByRole('button', { name: /Clean 2 stale sessions/i })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Terminal recovery actions' }))
+    fireEvent.click(screen.getByRole('button', { name: /Clear 2 stale sessions/i }))
 
     expect(clearStaleSessionsFromWindow).toHaveBeenCalledWith('terminal1', 'terminal1-window-0')
     expect(clearStaleSessionsFromWindow).toHaveBeenCalledWith('terminal1', 'terminal1-window-1')
 
-    fireEvent.contextMenu(screen.getByLabelText('Terminal layout controls'))
+    fireEvent.click(screen.getByRole('button', { name: 'Terminal recovery actions' }))
     const menu = document.querySelector('.session-context-menu') as HTMLElement
     fireEvent.click(within(menu).getByRole('button', { name: /Refit terminal layout/i }))
 

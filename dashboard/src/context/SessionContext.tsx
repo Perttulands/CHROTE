@@ -1085,16 +1085,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [addToast])
 
   const handleSessionClick = useCallback((sessionName: string) => {
-    // Check if session is already assigned to any window
     const assignment = assignedSessions.get(sessionName)
     if (assignment) {
-      // Focus the session in its assigned window instead of opening modal
+      revealWindow(assignment.workspaceId, assignment.windowId)
       setActiveSession(assignment.workspaceId, assignment.windowId, sessionName)
+      setFocusedWindowKey(`${assignment.workspaceId}-${assignment.windowId}`)
     } else {
-      // Open floating modal for "peek" functionality
       openFloatingModal(sessionName)
     }
-  }, [assignedSessions, setActiveSession, openFloatingModal])
+  }, [assignedSessions, openFloatingModal, revealWindow, setActiveSession])
 
   const updateSettings = useCallback((newSettings: Partial<UserSettings>) => {
     setSettings(prev => {

@@ -18,10 +18,11 @@ const setFocusedWindowKey = vi.fn()
 const setActiveSession = vi.fn()
 const openSendToSession = vi.fn()
 const draggableState = vi.hoisted(() => ({
-  transform: null as { x: number; y: number } | null,
+  transform: null as { x: number, y: number } | null,
   isDragging: false,
   listeners: { onPointerDown: vi.fn() },
 }))
+const poolState = vi.hoisted(() => ({ loadedSessions: new Set<string>() }))
 
 vi.mock('@dnd-kit/core', () => ({
   useDraggable: () => ({
@@ -79,6 +80,7 @@ vi.mock('./IframePool', () => ({
   useIframePool: () => ({
     claimIframe: vi.fn(() => vi.fn()),
     isLoaded: vi.fn(() => false),
+    loadedSessions: poolState.loadedSessions,
     getIframe: vi.fn(() => null),
     triggerFit: vi.fn(),
     focusIframe: vi.fn(),
@@ -104,6 +106,7 @@ describe('TerminalWindow launch user', () => {
     draggableState.transform = null
     draggableState.isDragging = false
     draggableState.listeners.onPointerDown.mockClear()
+    poolState.loadedSessions = new Set()
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true })) as any)
     vi.stubGlobal('ResizeObserver', class {
       observe() {}
@@ -160,7 +163,7 @@ describe('TerminalWindow launch user', () => {
     expect(screen.queryByRole('button', { name: /Kill/i })).not.toBeInTheDocument()
   })
 
-  it('opens Send to Session from ctrl-click on an attached session tag', () => {
+  it('does not hide a Send action behind ctrl-click on an attached session tag', () => {
     render(
       <TerminalWindow
         workspaceId="terminal3"
@@ -170,7 +173,8 @@ describe('TerminalWindow launch user', () => {
 
     fireEvent.click(screen.getByText('forge-existing'), { ctrlKey: true })
 
-    expect(openSendToSession).toHaveBeenCalledWith('tavern:forge-existing')
+    expect(openSendToSession).not.toHaveBeenCalled()
+    expect(setActiveSession).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'tavern:forge-existing')
   })
 
   it('does not intercept right-click on terminal window chrome', () => {
@@ -280,7 +284,7 @@ describe('TerminalWindow launch user', () => {
     expect(css).not.toContain('background-image: url(')
   })
 
-  it('does not focus from generic header clicks but focuses when clicking the status dot or body', () => {
+  it('removes the misleading status dot and focuses only from the terminal body', () => {
     const { container } = render(
       <TerminalWindow
         workspaceId="terminal3"
@@ -292,10 +296,8 @@ describe('TerminalWindow launch user', () => {
 
     expect(setFocusedWindowKey).not.toHaveBeenCalled()
 
-    fireEvent.click(container.querySelector('.status-dot')!)
-    expect(setFocusedWindowKey).toHaveBeenCalledWith('terminal3-terminal3-window-0')
-
-    setFocusedWindowKey.mockClear()
+    expect(container.querySelector('.status-dot')).not.toBeInTheDocument()
+    expect(screen.getByText('Loading terminal…')).toBeInTheDocument()
 
     fireEvent.click(container.querySelector('.terminal-window-body')!)
     expect(setFocusedWindowKey).toHaveBeenCalledWith('terminal3-terminal3-window-0')

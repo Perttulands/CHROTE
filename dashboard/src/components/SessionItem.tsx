@@ -3,9 +3,7 @@ import { useDraggable } from '@dnd-kit/core'
 import type { TmuxSession, WorkspaceId } from '../types'
 import { useSession } from '../context/SessionContext'
 import { TERMINAL_LABELS, TERMINAL_WORKSPACE_IDS, WINDOW_COLORS, getSessionKey, getTerminalUserColor, getTerminalUserInitial } from '../types'
-import { isFeatureEnabled } from '../featureFlags'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
-import RoleBadge from './RoleBadge'
 
 interface SessionItemProps {
   session: TmuxSession
@@ -22,7 +20,6 @@ function SessionItem({ session }: SessionItemProps) {
   const sessionKey = getSessionKey(session.name, session.unixUser)
   const assignment = assignedSessions.get(sessionKey) ?? assignedSessions.get(session.name)
   const isAssigned = !!assignment
-  const useLocationBadges = isFeatureEnabled('sessionLocationBadges')
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({ show: false, x: 0, y: 0 })
   const contextMenuPosition = useViewportMenuPosition<HTMLDivElement>(
     contextMenu.show ? { x: contextMenu.x, y: contextMenu.y } : null,
@@ -33,22 +30,7 @@ function SessionItem({ session }: SessionItemProps) {
   const [showAssignSubmenu, setShowAssignSubmenu] = useState(false)
   const renameInputRef = useRef<HTMLInputElement>(null)
 
-  const windowColor = assignment
-    ? WINDOW_COLORS[assignment.colorIndex % WINDOW_COLORS.length].border
-    : undefined
 
-  const badgeStyle = assignment
-    ? {
-        backgroundColor: windowColor,
-        color: '#000',
-        borderColor: windowColor
-      }
-    : undefined
-
-  // Color the session name text based on window assignment
-  const nameStyle = assignment
-    ? { color: windowColor }
-    : undefined
   const locationLabel = assignment
     ? `${assignment.workspaceId.replace('terminal', 'T')} W${assignment.windowIndex}`
     : ''
@@ -180,15 +162,9 @@ function SessionItem({ session }: SessionItemProps) {
     closeContextMenu()
   }, [openSendToSession, sessionKey, closeContextMenu])
 
-  const handleClick = useCallback((event: React.MouseEvent) => {
-    if (event.ctrlKey || event.metaKey) {
-      event.preventDefault()
-      event.stopPropagation()
-      openSendToSession(sessionKey)
-      return
-    }
+  const handleClick = useCallback(() => {
     handleSessionClick(sessionKey)
-  }, [handleSessionClick, openSendToSession, sessionKey])
+  }, [handleSessionClick, sessionKey])
 
   // Focus rename input when it appears
   useEffect(() => {
@@ -202,8 +178,15 @@ function SessionItem({ session }: SessionItemProps) {
   useEffect(() => {
     if (!contextMenu.show) return
     const handleClick = () => closeContextMenu()
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeContextMenu()
+    }
     document.addEventListener('click', handleClick)
-    return () => document.removeEventListener('click', handleClick)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('click', handleClick)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
   }, [contextMenu.show, closeContextMenu])
 
   // Rename mode
@@ -263,25 +246,31 @@ function SessionItem({ session }: SessionItemProps) {
         )}
         {assignment && (
           <span
-            className={`window-badge ${useLocationBadges ? 'window-location-chip' : ''}`}
-            style={badgeStyle}
-            title={useLocationBadges ? `Assigned to ${locationLabel}` : undefined}
+            className="window-badge window-location-chip"
+            title={`Assigned to ${locationLabel}`}
           >
-            {useLocationBadges
-              ? locationLabel
-              : assignment.workspaceId === 'terminal1'
-                ? assignment.windowIndex
-                : `${assignment.workspaceId.replace('terminal', '')}-${assignment.windowIndex}`}
+            {locationLabel}
           </span>
         )}
-        <RoleBadge sessionName={session.name} />
         {session.persistent && (
           <span className="persistent-agent-lock" aria-label="Persistent agent" title={persistentTitle}>
             🔒
           </span>
         )}
-        <span className="session-name" style={nameStyle}>{session.name}</span>
-        {session.attached && !isAssigned && <span className="attached-indicator" title="Attached elsewhere">●</span>}
+        <span className="session-name">{session.name}</span>
+        <button
+          type="button"
+          className="session-item-menu-btn"
+          aria-label={`Session actions for ${session.name}`}
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            const rect = event.currentTarget.getBoundingClientRect()
+            setContextMenu({ show: true, x: rect.right, y: rect.bottom + 4 })
+          }}
+        >
+          ⋯
+        </button>
       </div>
 
       {contextMenu.show && (
@@ -316,13 +305,18 @@ function SessionItem({ session }: SessionItemProps) {
           )}
 
           <div
-            className="session-context-item session-context-submenu-trigger"
-            onMouseEnter={() => setShowAssignSubmenu(true)}
-            onMouseLeave={() => setShowAssignSubmenu(false)}
+            className="session-context-submenu-trigger"
+            onClick={(event) => event.stopPropagation()}
           >
-            <span className="session-context-icon">◫</span>
-            Attach to Window
-            <span className="session-context-arrow">▶</span>
+            <button
+              className="session-context-item"
+              aria-expanded={showAssignSubmenu}
+              onClick={() => setShowAssignSubmenu(open => !open)}
+            >
+              <span className="session-context-icon">◫</span>
+              Attach to Window
+              <span className="session-context-arrow">▶</span>
+            </button>
 
             {showAssignSubmenu && (
               <div className="session-context-submenu">

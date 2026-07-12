@@ -15,7 +15,7 @@ async function savePreset(page: Page, name: string) {
 
 // Helper: drag a session into a window (simplified — uses mouse events for dnd-kit)
 async function dragAndDrop(page: Page, sourceSelector: string, targetSelector: string) {
-  const source = page.locator(sourceSelector).first()
+  const source = page.locator(sourceSelector).first().locator('.session-drag-handle')
   const target = page.locator(targetSelector).first()
 
   const sourceBox = await source.boundingBox()
@@ -225,7 +225,11 @@ test.describe('Layout Presets', () => {
 
     // Now change: remove joe, add jack instead
     await page.locator('.terminal-window:visible').nth(0).locator('.tag-remove').click()
-    await dragAndDrop(page, '.session-item:has-text("jack")', '.terminal-window:visible >> nth=0')
+    await expect(page.locator('.terminal-window:visible').nth(0).locator('.session-tag')).toHaveCount(0)
+    const jackRow = page.locator('.session-item:has-text("jack")').first()
+    await jackRow.getByRole('button', { name: /Session actions/ }).click()
+    await page.getByRole('button', { name: /Attach to Window/ }).click()
+    await page.locator('.session-context-submenu').getByRole('button', { name: 'Window 1', exact: true }).click()
     await expect(page.locator('.terminal-window:visible').nth(0).locator('.tag-name')).toContainText('jack')
 
     // Load the Joe preset — should cleanly replace the current layout
@@ -240,7 +244,7 @@ test.describe('Layout Presets', () => {
     expect(tagTexts.some(t => t.includes('jack'))).toBe(false)
   })
 
-  test('should load first preset with Ctrl+1 keyboard shortcut', async ({ page }) => {
+  test('should leave Ctrl+1 available to terminal input', async ({ page }) => {
     await page.waitForSelector('.session-item')
 
     // Bind jack to window 0
@@ -256,7 +260,7 @@ test.describe('Layout Presets', () => {
     await page.locator('.terminal-window:visible').nth(0).locator('.tag-remove').click()
     await expect(page.locator('.terminal-window:visible').nth(0).locator('.session-tag')).toHaveCount(0)
 
-    // Press Ctrl+1 to load the first preset
+    // Ctrl+1 is intentionally not a dashboard shortcut.
     // Use page.evaluate to dispatch the keyboard event on the main window
     // (page.keyboard.press may get intercepted by iframes)
     await page.evaluate(() => {
@@ -267,7 +271,6 @@ test.describe('Layout Presets', () => {
       }))
     })
 
-    // Jack should be restored
-    await expect(page.locator('.terminal-window:visible').nth(0).locator('.tag-name')).toContainText('jack')
+    await expect(page.locator('.terminal-window:visible').nth(0).locator('.session-tag')).toHaveCount(0)
   })
 })

@@ -311,10 +311,10 @@ test.describe('Error States', () => {
       // Wait for sessions to load from API
       await page.waitForSelector('.session-panel')
 
-      // Successful refreshes are authoritative: Terminal is a live surface,
-      // so stale bindings disappear instead of becoming user-cleared trash.
+      // Repeated successful refreshes are authoritative. One miss is tolerated
+      // to avoid dropping sessions during transient loading/user-list races.
       const window0 = page.locator('.terminal-window:visible').nth(0)
-      await expect(window0.locator('.tag-name')).toHaveCount(0)
+      await expect(window0.locator('.tag-name')).toHaveCount(0, { timeout: 12000 })
       await expect(window0.locator('button', { hasText: 'New Session' })).toBeVisible()
 
       // The ghost session should NOT appear in the sidebar session list

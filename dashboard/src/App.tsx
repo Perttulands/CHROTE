@@ -143,7 +143,7 @@ function DashboardContent() {
   const [settingsSessionBankFocusNonce, setSettingsSessionBankFocusNonce] = useState(0)
   const [filesNavigateRequest, setFilesNavigateRequest] = useState<{ path: string; nonce: number } | null>(null)
   const [formationsVisited, setFormationsVisited] = useState(false)
-  const { addSessionToWindow, setIsDragging, isDragging, settings } = useSession()
+  const { addSessionToWindow, setIsDragging, isDragging, settings, windowRevealRequest } = useSession()
   const persistFilesTabState = isFeatureEnabled('filesPersistTabState')
   const serverStatusTab = isFeatureEnabled('serverStatusTab')
 
@@ -163,10 +163,12 @@ function DashboardContent() {
     setActiveTab('settings')
   }, [])
 
+  useEffect(() => {
+    if (windowRevealRequest) setActiveTab(windowRevealRequest.workspaceId)
+  }, [windowRevealRequest])
+
   // Global keyboard shortcuts
   useKeyboardShortcuts({
-    activeTab,
-    onTabChange: handleTabChange,
     onShowHelp: handleShowHelp,
     isHelpOpen: showHelp,
   })
@@ -252,7 +254,10 @@ function DashboardContent() {
         <div className="dashboard-content">
           {/* Terminal areas are always rendered (hidden via CSS) to preserve iframe connections */}
           <div style={{ display: TERMINAL_WORKSPACE_IDS.includes(activeTab as WorkspaceId) ? 'contents' : 'none' }}>
-            <SessionPanel onOpenSessionBankSettings={handleOpenSessionBankSettings} />
+            <SessionPanel
+              activeWorkspaceId={activeTab as WorkspaceId}
+              onOpenSessionBankSettings={handleOpenSessionBankSettings}
+            />
           </div>
           {TERMINAL_WORKSPACE_IDS.map(workspaceId => (
             <div key={workspaceId} style={{ display: activeTab === workspaceId ? 'contents' : 'none' }}>

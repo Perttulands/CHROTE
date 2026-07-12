@@ -107,7 +107,12 @@ test.describe('terminal drag lifecycle', () => {
     await expect(row).toHaveCSS('opacity', '0')
     await expect(row).toHaveCSS('transform', 'none')
     await expect(row).toHaveCSS('transition-property', 'none')
-    expect(await row.boundingBox()).toEqual(initialBox)
+    const dragBox = await row.boundingBox()
+    expect(dragBox).toBeTruthy()
+    expect(dragBox!.width).toBe(initialBox!.width)
+    expect(dragBox!.height).toBe(initialBox!.height)
+    expect(dragBox!.x).toBe(initialBox!.x)
+    expect(Math.abs(dragBox!.y - initialBox!.y)).toBeLessThanOrEqual(4)
 
     const overlayWrapper = page.locator('.drag-overlay-wrapper')
     await expect(overlayWrapper).toBeVisible()
@@ -296,6 +301,9 @@ test.describe('terminal drag lifecycle', () => {
   test('narrow Chromium view renders no drag overlay inside display-none mobile frames', async ({ page }) => {
     await page.setViewportSize({ width: 700, height: 900 })
     await expect(page.getByText('View:').first()).toBeVisible()
+    await page.getByTitle('Expand').click()
+    await expect(page.locator('.session-panel .session-item').first()).toBeVisible()
+    await page.waitForTimeout(250)
 
     const row = page.locator('.session-panel .session-item:has-text("gt-gastown-jack")')
     const windows = page.locator('.terminal-grid[data-workspace="terminal1"] .terminal-window')

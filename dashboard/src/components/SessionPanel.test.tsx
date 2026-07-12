@@ -10,6 +10,7 @@ const fetchMock = vi.fn()
 
 const mockState = vi.hoisted(() => ({
   sessionBank: [] as Array<Record<string, unknown>>,
+  sessions: [] as Array<Record<string, unknown>>,
 }))
 
 vi.mock('../context/SessionContext', () => ({
@@ -21,7 +22,7 @@ vi.mock('../context/SessionContext', () => ({
     toggleSidebar: vi.fn(),
     refreshSessions,
     createSession,
-    sessions: [],
+    sessions: mockState.sessions,
     sessionBank: mockState.sessionBank,
     settings: {
       ...DEFAULT_SETTINGS,
@@ -63,35 +64,36 @@ describe('SessionPanel new-session context menu', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockState.sessionBank.length = 0
+    mockState.sessions.length = 0
     createSession.mockResolvedValue('created')
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ success: true, removed: true }) })
     vi.stubGlobal('fetch', fetchMock)
     Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } })
   })
 
-  it('creates a default side-panel session through the shared creation action', async () => {
-    render(<SessionPanel />)
+  it('creates a default side-panel session in the visible terminal workspace', async () => {
+    render(<SessionPanel activeWorkspaceId="terminal3" />)
 
     fireEvent.click(screen.getByTitle('New tmux session'))
 
     await waitFor(() => expect(createSession).toHaveBeenCalled())
-    expect(createSession).toHaveBeenCalledWith({ workspaceId: 'terminal1' })
+    expect(createSession).toHaveBeenCalledWith({ workspaceId: 'terminal3' })
   })
 
   it('creates a new session as the selected configured Unix user from the New Session context menu', async () => {
-    render(<SessionPanel />)
+    render(<SessionPanel activeWorkspaceId="terminal2" />)
 
-    fireEvent.contextMenu(screen.getByTitle('New tmux session'))
+    fireEvent.click(screen.getByRole('button', { name: 'Session creation options' }))
     fireEvent.click(screen.getByRole('button', { name: /New as B bob/i }))
 
     await waitFor(() => expect(createSession).toHaveBeenCalled())
-    expect(createSession).toHaveBeenCalledWith({ workspaceId: 'terminal1', unixUser: 'bob' })
+    expect(createSession).toHaveBeenCalledWith({ workspaceId: 'terminal2', unixUser: 'bob' })
   })
 
   it('opens a named session field and creates the exact typed session name', async () => {
-    const { container } = render(<SessionPanel />)
+    const { container } = render(<SessionPanel activeWorkspaceId="terminal3" />)
 
-    fireEvent.contextMenu(screen.getByTitle('New tmux session'))
+    fireEvent.click(screen.getByRole('button', { name: 'Session creation options' }))
     fireEvent.click(screen.getByRole('button', { name: /New named session/i }))
     const popup = screen.getByRole('dialog', { name: /Create named tmux session/i })
     expect(popup).toHaveClass('session-named-popup')
@@ -100,14 +102,15 @@ describe('SessionPanel new-session context menu', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create named session' }))
 
     await waitFor(() => expect(createSession).toHaveBeenCalled())
-    expect(createSession).toHaveBeenCalledWith({ workspaceId: 'terminal1', unixUser: 'alice', name: 'research-agent' })
+    expect(createSession).toHaveBeenCalledWith({ workspaceId: 'terminal3', unixUser: 'bob', name: 'research-agent' })
+    expect(screen.queryByText('Nuke All')).not.toBeInTheDocument()
   })
 
   it('keeps banked session cards out of the Terminal tab and exposes only a compact Settings affordance', () => {
     addAgentBankedSession()
     const openSessionBankSettings = vi.fn()
 
-    render(<SessionPanel onOpenSessionBankSettings={openSessionBankSettings} />)
+    render(<SessionPanel activeWorkspaceId="terminal1" onOpenSessionBankSettings={openSessionBankSettings} />)
 
     expect(screen.queryByRole('heading', { name: /Session bank/i })).not.toBeInTheDocument()
     expect(screen.queryByText('codex-alpha')).not.toBeInTheDocument()
@@ -117,5 +120,11 @@ describe('SessionPanel new-session context menu', () => {
     expect(settingsLink).toHaveTextContent('Session Bank · 1 recoverable')
     fireEvent.click(settingsLink)
     expect(openSessionBankSettings).toHaveBeenCalled()
+  })
+
+  it('keeps bulk destruction out of the primary Session panel', () => {
+    mockState.sessions.push({ name: 'shell', windows: 1, attached: false, group: 'shell' })
+    render(<SessionPanel activeWorkspaceId="terminal1" />)
+    expect(screen.queryByText('Nuke All')).not.toBeInTheDocument()
   })
 })

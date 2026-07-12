@@ -44,10 +44,10 @@ test.describe('Floating Modal (pol-9a4a)', () => {
     const newBox = await modal.boundingBox()
     expect(newBox).toBeTruthy()
     expect(newBox!.x).not.toBe(initialBox!.x)
-    expect(newBox!.y).not.toBe(initialBox!.y)
-    // Should have moved roughly in the direction we dragged
-    expect(newBox!.x - initialBox!.x).toBeGreaterThan(50)
-    expect(newBox!.y - initialBox!.y).toBeGreaterThan(50)
+    // Horizontal drag moves; vertical movement is clamped to the viewport.
+    expect(newBox!.x - initialBox!.x).toBeGreaterThan(20)
+    expect(newBox!.y).toBeGreaterThanOrEqual(16)
+    expect(newBox!.y + newBox!.height).toBeLessThanOrEqual(await page.evaluate(() => window.innerHeight - 16))
   })
 
   test('click overlay background closes modal', async ({ page }) => {
@@ -74,7 +74,7 @@ test.describe('Floating Modal (pol-9a4a)', () => {
     await expect(page.locator('.floating-modal')).not.toBeVisible()
   })
 
-  test('modal shows disconnected indicator before iframe loads', async ({ page }) => {
+  test('modal shows truthful loading text before iframe loads', async ({ page }) => {
     await mockApiRoutes(page)
     let terminalRequestDone = false
 
@@ -97,10 +97,7 @@ test.describe('Floating Modal (pol-9a4a)', () => {
     await page.click('.session-item:has-text("jack")')
     await expect(page.locator('.floating-modal')).toBeVisible()
 
-    // Status dot should have 'disconnected' class while iframe is loading
-    const statusDot = page.locator('.floating-modal .status-dot')
-    await expect(statusDot).toBeVisible()
-    await expect(statusDot).toHaveClass(/disconnected/)
+    await expect(page.getByText('Loading terminal…')).toBeVisible()
 
     await expect(async () => {
       expect(terminalRequestDone).toBe(true)

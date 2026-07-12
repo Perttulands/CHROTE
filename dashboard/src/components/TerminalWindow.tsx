@@ -67,10 +67,9 @@ interface SessionTagProps {
   windowId: string
   onRemove: () => void
   onClick: () => void
-  onSend: () => void
 }
 
-function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, onClick, onSend }: SessionTagProps) {
+function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, onClick }: SessionTagProps) {
   const { sessions, settings } = useSession()
   const actualName = getSessionNameFromKey(sessionName)
   const unixUser = getSessionUserFromKey(sessionName)
@@ -99,12 +98,6 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
     if (isDragging) return
     // Don't trigger if clicking the remove button
     if ((e.target as HTMLElement).closest('.tag-remove')) return
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault()
-      e.stopPropagation()
-      onSend()
-      return
-    }
     onClick()
   }
 
@@ -169,7 +162,6 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
     removeSessionFromWindow,
     setActiveSession,
     cycleSession,
-    openSendToSession,
     focusedWindowKey,
     setFocusedWindowKey,
   } = useSession()
@@ -181,7 +173,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
   const activeSession = windowConfig.activeSession
 
   // Check if active session is loaded via pool
-  const activeSessionLoaded = activeSession ? pool.isLoaded(activeSession) : false
+  const activeSessionLoaded = activeSession ? pool.loadedSessions.has(activeSession) : false
 
   // Claim/release iframes from the pool as boundSessions change
   useEffect(() => {
@@ -216,49 +208,12 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
   // eslint-disable-next-line react-hooks/exhaustive-deps -- pool functions are stable refs
   }, [activeSession, windowConfig.boundSessions])
 
-  // Fit active session after layout settles. rAF fires after the first
-  // paint; the 150ms fallback covers newly-connected iframes where xterm
-  // isn't ready in the first frame. ResizeObserver handles everything after.
-  useEffect(() => {
-    if (!activeSession) return
-    const fitIfLoaded = () => {
-      if (pool.isLoaded(activeSession)) pool.triggerFit(activeSession)
-    }
-    const rafId = requestAnimationFrame(fitIfLoaded)
-    const timerId = setTimeout(fitIfLoaded, 150)
-    return () => {
-      cancelAnimationFrame(rafId)
-      clearTimeout(timerId)
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- pool functions are stable refs
-  }, [activeSession])
-
-  // Trigger fit() when the active session's iframe finishes loading.
-  // The effect above fires before the iframe has loaded (src just set),
-  // so xterm.js starts with default dimensions. This effect catches the
-  // load completion and re-fits with multiple delays so xterm has time
-  // to initialize its fit addon.
   useEffect(() => {
     if (!activeSession || !activeSessionLoaded) return
-    const timers = [
-      setTimeout(() => pool.triggerFit(activeSession), 50),
-      setTimeout(() => pool.triggerFit(activeSession), 200),
-      setTimeout(() => pool.triggerFit(activeSession), 500),
-    ]
-    return () => timers.forEach(clearTimeout)
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- pool functions are stable refs
-  }, [activeSession, activeSessionLoaded])
-
-  useEffect(() => {
-    if (!activeSession) return
-    const timers = [
-      setTimeout(() => pool.triggerFit(activeSession), 0),
-      setTimeout(() => pool.triggerFit(activeSession), 120),
-      setTimeout(() => pool.triggerFit(activeSession), 300),
-    ]
-    return () => timers.forEach(clearTimeout)
+    const rafId = requestAnimationFrame(() => pool.triggerFit(activeSession))
+    return () => cancelAnimationFrame(rafId)
   // eslint-disable-next-line react-hooks/exhaustive-deps -- pool.triggerFit is a stable ref
-  }, [activeSession, refitNonce])
+  }, [activeSession, activeSessionLoaded, refitNonce])
 
   // Focus iframe when this window is focused
   useEffect(() => {
@@ -273,33 +228,6 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
     setFocusedWindowKey(windowKey)
   }, [windowKey, setFocusedWindowKey])
 
-  // Store refs for values needed in keyboard handler to avoid stale closures
-  const isFocusedRef = useRef(isFocused)
-  const boundSessionsRef = useRef(windowConfig.boundSessions)
-  useEffect(() => {
-    isFocusedRef.current = isFocused
-    boundSessionsRef.current = windowConfig.boundSessions
-  }, [isFocused, windowConfig.boundSessions])
-
-  // Keyboard navigation: Ctrl+Arrow to cycle sessions (only when focused)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (!isFocusedRef.current) return
-      if (!e.ctrlKey) return
-      if (boundSessionsRef.current.length <= 1) return
-
-      if (e.key === 'ArrowRight') {
-        e.preventDefault()
-        cycleSession(workspaceId, windowConfig.id, 'next')
-      } else if (e.key === 'ArrowLeft') {
-        e.preventDefault()
-        cycleSession(workspaceId, windowConfig.id, 'prev')
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [workspaceId, windowConfig.id, cycleSession])
 
   // Store activeSession in ref for ResizeObserver callback
   const activeSessionRef = useRef(activeSession)
@@ -336,9 +264,6 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
     setActiveSession(workspaceId, windowConfig.id, sessionName)
   }
 
-  const handleTagSend = (sessionName: string) => {
-    openSendToSession(sessionName)
-  }
 
   const hasSessions = windowConfig.boundSessions.length > 0
 
@@ -365,7 +290,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
               windowId={windowConfig.id}
               onRemove={() => handleRemoveSession(sessionName)}
               onClick={() => handleTagClick(sessionName)}
-              onSend={() => handleTagSend(sessionName)}
+
             />
           ))}
         </div>
@@ -389,13 +314,9 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
               </button>
             </>
           )}
-          <span
-            className={`status-dot ${activeSessionLoaded ? '' : 'disconnected'}`}
-            onClick={(event) => {
-              event.stopPropagation()
-              handleWindowClick()
-            }}
-          />
+          {activeSession && !activeSessionLoaded && (
+            <span className="terminal-loading-state">Loading terminal…</span>
+          )}
         </div>
       </div>
 

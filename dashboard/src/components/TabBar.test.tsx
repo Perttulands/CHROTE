@@ -88,7 +88,7 @@ describe('TabBar Services navigation', () => {
     mockMatchMedia(false)
 
     render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} />)
-    fireEvent.contextMenu(screen.getByRole('button', { name: 'Terminal 2' }))
+    fireEvent.click(screen.getByRole('button', { name: '⋯ Tab' }))
 
     expect(screen.getByRole('button', { name: /Rename tab label/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Save layout as preset/i })).toBeInTheDocument()
@@ -97,6 +97,16 @@ describe('TabBar Services navigation', () => {
     expect(screen.queryByText(/defaults/i)).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /Clear tab assignments/i }))
-    expect(mockState.clearWorkspaceAssignments).toHaveBeenCalledWith('terminal2')
+    expect(mockState.clearWorkspaceAssignments).toHaveBeenCalledWith('terminal1')
+  })
+
+  it('closes the visible terminal tab menu with Escape', () => {
+    mockMatchMedia(false)
+    render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '⋯ Tab' }))
+    expect(screen.getByRole('button', { name: /Rename tab label/i })).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('button', { name: /Rename tab label/i })).not.toBeInTheDocument()
   })
 })

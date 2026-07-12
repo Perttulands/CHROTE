@@ -67,74 +67,32 @@ function ShortcutsSection() {
   return (
     <div className="help-section-content">
       <h2>Keyboard Shortcuts</h2>
-      <p className="help-intro">Press <kbd>?</kbd> anywhere to see this overlay.</p>
+      <p className="help-intro">Dashboard shortcuts deliberately stay out of terminal input.</p>
 
       <div className="help-card">
-        <h3>Navigation</h3>
+        <h3>Dashboard chrome</h3>
         <div className="help-shortcuts-table">
           <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>Tab</kbd>
-            </div>
-            <span>Cycle between Terminal tabs</span>
-          </div>
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd>
-            </div>
-            <span>Focus terminal pane by number</span>
-          </div>
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>/</kbd>
-            </div>
+            <div className="help-shortcut-keys"><kbd>/</kbd></div>
             <span>Focus the session search box</span>
           </div>
           <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>Esc</kbd>
-            </div>
-            <span>Close modals and overlays</span>
-          </div>
-        </div>
-      </div>
-
-      <div className="help-card">
-        <h3>Actions</h3>
-        <div className="help-shortcuts-table">
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>Ctrl</kbd> + <kbd>S</kbd>
-            </div>
-            <span>Toggle the sidebar</span>
+            <div className="help-shortcut-keys"><kbd>?</kbd></div>
+            <span>Show keyboard shortcut help</span>
           </div>
           <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>Ctrl</kbd> + <kbd>N</kbd>
-            </div>
-            <span>Create a new session</span>
-          </div>
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>Ctrl</kbd> + <kbd>1-9</kbd>
-            </div>
-            <span>Load layout preset by number</span>
-          </div>
-          <div className="help-shortcut-row">
-            <div className="help-shortcut-keys">
-              <kbd>?</kbd>
-            </div>
-            <span>Show keyboard shortcuts overlay</span>
+            <div className="help-shortcut-keys"><kbd>Esc</kbd></div>
+            <span>Close Peek or an open overlay</span>
           </div>
         </div>
       </div>
 
       <div className="help-card help-card-accent">
-        <h3>Quick Tips</h3>
+        <h3>Terminal-safe by default</h3>
         <ul className="help-list">
-          <li>Hold <kbd>Shift</kbd> while selecting text to bypass tmux and copy natively</li>
-          <li>Collapse the sidebar with <kbd>Ctrl+S</kbd> for maximum terminal space</li>
-          <li>Use <kbd>Tab</kbd> to quickly cycle between terminal workspaces</li>
+          <li><kbd>Tab</kbd>, number keys, <kbd>Ctrl+S</kbd>, <kbd>Ctrl+N</kbd>, and <kbd>Ctrl+Arrow</kbd> pass through untouched.</li>
+          <li>Use visible dashboard controls for workspace, layout, session, and recovery actions.</li>
+          <li>Hold <kbd>Shift</kbd> while selecting text to bypass tmux and copy natively.</li>
         </ul>
       </div>
     </div>
@@ -152,7 +110,7 @@ function TerminalsSection() {
         <p>
           <strong>Terminal</strong>, <strong>Terminal 2</strong>, and <strong>Terminal 3</strong> are independent.
           Each has its own set of 4 panes with different sessions bound.
-          Use <kbd>Tab</kbd> to cycle between them.
+          Use the visible tab bar to switch between them.
         </p>
       </div>
 
@@ -231,8 +189,8 @@ function SessionsSection() {
           <div className="help-control-item">
             <span className="help-control-icon">&#x1F441;</span>
             <div>
-              <strong>Click = Peek</strong>
-              <p>Opens a modal with read-only preview. Quick look without binding.</p>
+              <strong>Click a session row</strong>
+              <p>Assigned sessions open their workspace and frame; unassigned sessions open an interactive temporary Peek terminal.</p>
             </div>
           </div>
           <div className="help-control-item">

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   dndProps: null as Record<string, any> | null,
   addSessionToWindow: vi.fn(),
   removeSessionFromWindow: vi.fn(),
+  windowRevealRequest: null as { workspaceId: string; windowId: string; requestId: number } | null,
 }))
 
 vi.mock('@dnd-kit/core', () => ({
@@ -35,6 +36,7 @@ vi.mock('./context/SessionContext', async () => {
           isDragging,
           setIsDragging,
           settings: DEFAULT_SETTINGS,
+          windowRevealRequest: mocks.windowRevealRequest,
         }}>
           {children}
         </DragContext.Provider>
@@ -45,7 +47,9 @@ vi.mock('./context/SessionContext', async () => {
 })
 
 vi.mock('./components/TabBar', () => ({ default: () => <div data-testid="tab-bar" /> }))
-vi.mock('./components/SessionPanel', () => ({ default: () => <div className="session-panel" /> }))
+vi.mock('./components/SessionPanel', () => ({
+  default: ({ activeWorkspaceId }: { activeWorkspaceId: string }) => <div className="session-panel" data-active-workspace={activeWorkspaceId} />,
+}))
 vi.mock('./components/TerminalArea', () => ({
   default: ({ workspaceId, active }: { workspaceId: string; active?: boolean }) => (
     <div data-workspace={workspaceId} data-active={String(active)}><iframe title={`${workspaceId} frame`} /></div>
@@ -97,6 +101,7 @@ describe('App drag lifecycle', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.dndProps = null
+    mocks.windowRevealRequest = null
   })
 
   it('uses one reset path for drag cancel and clears all active drag visuals', () => {
@@ -209,5 +214,14 @@ describe('App drag lifecycle', () => {
     expect(container.querySelector('[data-workspace="terminal1"]')).toHaveAttribute('data-active', 'true')
     expect(container.querySelector('[data-workspace="terminal2"]')).toHaveAttribute('data-active', 'false')
     expect(container.querySelector('[data-workspace="terminal3"]')).toHaveAttribute('data-active', 'false')
+    expect(container.querySelector('.session-panel')).toHaveAttribute('data-active-workspace', 'terminal1')
+  })
+
+  it('switches to the workspace requested by assigned-session navigation', () => {
+    mocks.windowRevealRequest = { workspaceId: 'terminal3', windowId: 'terminal3-window-2', requestId: 1 }
+    const { container } = render(<App />)
+
+    expect(container.querySelector('[data-workspace="terminal3"]')).toHaveAttribute('data-active', 'true')
+    expect(container.querySelector('.session-panel')).toHaveAttribute('data-active-workspace', 'terminal3')
   })
 })

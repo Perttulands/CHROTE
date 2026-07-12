@@ -2364,6 +2364,32 @@ describe('canonical terminal layout invariants', () => {
       .filter(window => window.boundSessions.includes('existing'))
     expect(savedClaims).toHaveLength(1)
   })
+
+  it('reveals, activates, and focuses an assigned hidden session when its row is clicked', () => {
+    const { result } = renderSession()
+
+    act(() => {
+      result.current.setWindowCount('terminal2', 1)
+    })
+    act(() => {
+      result.current.addSessionToWindow('terminal2', 'terminal2-window-3', 'hidden', 'alice')
+    })
+    act(() => {
+      result.current.setWindowCount('terminal2', 1)
+    })
+    act(() => {
+      result.current.handleSessionClick('alice:hidden')
+    })
+
+    expect(result.current.workspaces.terminal2.windowCount).toBe(4)
+    expect(result.current.workspaces.terminal2.windows[3].activeSession).toBe('alice:hidden')
+    expect(result.current.focusedWindowKey).toBe('terminal2-terminal2-window-3')
+    expect(result.current.windowRevealRequest).toMatchObject({
+      workspaceId: 'terminal2',
+      windowId: 'terminal2-window-3',
+    })
+    expect(result.current.floatingSession).toBeNull()
+  })
 })
 
 // ──────────────────────────────────────────────

@@ -407,10 +407,22 @@
   flex: 1;
 }
 
-.attached-indicator {
-  color: var(--accent);
-  font-size: 8px;
-  animation: pulse 2s infinite;
+.session-item-menu-btn {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.session-item-menu-btn:hover,
+.session-item-menu-btn:focus-visible {
+  border-color: var(--divider);
+  color: var(--text-primary);
 }
 
 /* Session Panel Footer */
@@ -630,4 +642,19 @@
   font-size: 11px;
   color: var(--text-dim);
   font-style: italic;
+}
+
+@media (max-width: 768px) {
+  .session-panel {
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 20;
+    width: min(240px, 78vw);
+    box-shadow: 8px 0 24px rgba(0, 0, 0, 0.35);
+  }
+
+  .session-panel.collapsed {
+    width: 40px;
+    box-shadow: none;
+  }
 }

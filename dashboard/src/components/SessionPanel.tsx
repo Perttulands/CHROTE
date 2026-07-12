@@ -1,26 +1,26 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSession } from '../context/SessionContext'
-import { useToast } from '../context/ToastContext'
 import { getDefaultLaunchUser, getGroupPriority, getTerminalUserInitial } from '../types'
+import type { WorkspaceId } from '../types'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
+import { useMediaQuery } from '../hooks/useMediaQuery'
 import SessionGroup from './SessionGroup'
-import NukeConfirmModal from './NukeConfirmModal'
 
 type SessionPanelProps = {
   onOpenSessionBankSettings?: () => void
+  activeWorkspaceId: WorkspaceId
 }
 
-function SessionPanel({ onOpenSessionBankSettings }: SessionPanelProps = {}) {
-  const { groupedSessions, loading, error, sidebarCollapsed, toggleSidebar, refreshSessions, createSession: createSessionAction, sessions, sessionBank, terminalUsers } = useSession()
-  const { addToast } = useToast()
+function SessionPanel({ onOpenSessionBankSettings, activeWorkspaceId }: SessionPanelProps) {
+  const { groupedSessions, loading, error, sidebarCollapsed, toggleSidebar, refreshSessions, createSession: createSessionAction, sessionBank, terminalUsers } = useSession()
   const [creating, setCreating] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
-  const [showNukeModal, setShowNukeModal] = useState(false)
-  const [nuking, setNuking] = useState(false)
   const [newSessionMenu, setNewSessionMenu] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 })
   const [namedSessionPopup, setNamedSessionPopup] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 })
   const [namedSessionName, setNamedSessionName] = useState('')
   const [namedSessionUser, setNamedSessionUser] = useState('')
+  const isMobile = useMediaQuery('(max-width: 768px)')
+  const autoCollapsedForMobile = useRef(false)
   const newSessionMenuPosition = useViewportMenuPosition<HTMLDivElement>(
     newSessionMenu.show ? { x: newSessionMenu.x, y: newSessionMenu.y } : null,
     { estimatedSize: { width: 190, height: 130 } },
@@ -58,6 +58,16 @@ function SessionPanel({ onOpenSessionBankSettings }: SessionPanelProps = {}) {
   ), [sessionBank])
 
   useEffect(() => {
+    if (!isMobile) {
+      autoCollapsedForMobile.current = false
+      return
+    }
+    if (autoCollapsedForMobile.current) return
+    autoCollapsedForMobile.current = true
+    if (!sidebarCollapsed) toggleSidebar()
+  }, [isMobile, sidebarCollapsed, toggleSidebar])
+
+  useEffect(() => {
     if (!newSessionMenu.show) return
     const close = (event: MouseEvent) => {
       if (newSessionMenuPosition.ref.current?.contains(event.target as Node)) return
@@ -77,11 +87,22 @@ function SessionPanel({ onOpenSessionBankSettings }: SessionPanelProps = {}) {
     return () => document.removeEventListener('mousedown', close)
   }, [namedSessionPopup.show])
 
+  useEffect(() => {
+    if (!newSessionMenu.show && !namedSessionPopup.show) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      setNewSessionMenu({ show: false, x: 0, y: 0 })
+      setNamedSessionPopup({ show: false, x: 0, y: 0 })
+    }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [namedSessionPopup.show, newSessionMenu.show])
+
   const createSessionForUser = async (unixUser?: string, explicitName?: string) => {
     setCreating(true)
     try {
       const created = await createSessionAction({
-        workspaceId: 'terminal1',
+        workspaceId: activeWorkspaceId,
         ...(unixUser !== undefined ? { unixUser } : {}),
         ...(explicitName !== undefined ? { name: explicitName } : {}),
       })
@@ -100,42 +121,16 @@ function SessionPanel({ onOpenSessionBankSettings }: SessionPanelProps = {}) {
   }
 
   const openNamedSessionField = () => {
-    const unixUser = getDefaultLaunchUser('terminal1', terminalUsers)
+    const unixUser = getDefaultLaunchUser(activeWorkspaceId, terminalUsers)
     setNamedSessionUser(unixUser)
     setNamedSessionPopup({ show: true, x: newSessionMenu.x, y: newSessionMenu.y })
     setNewSessionMenu({ show: false, x: 0, y: 0 })
   }
 
   const submitNamedSession = async () => {
-    const unixUser = namedSessionUser || getDefaultLaunchUser('terminal1', terminalUsers)
+    const unixUser = namedSessionUser || getDefaultLaunchUser(activeWorkspaceId, terminalUsers)
     if (!namedSessionName.trim()) return
     await createSessionForUser(unixUser, namedSessionName)
-  }
-
-  const nukeAllSessions = async () => {
-    setNuking(true)
-    try {
-      const response = await fetch('/api/tmux/sessions/all', {
-        method: 'DELETE',
-        headers: {
-          'X-Nuke-Confirm': 'DASHBOARD-NUKE-CONFIRMED'
-        },
-        signal: AbortSignal.timeout(10000),
-      })
-      if (response.ok) {
-        addToast('All sessions destroyed', 'warning')
-        refreshSessions()
-      } else {
-        console.error('Failed to nuke sessions:', await response.text())
-        addToast('Failed to destroy sessions', 'error')
-      }
-    } catch (e) {
-      console.error('Failed to nuke sessions:', e)
-      addToast('Failed to destroy sessions', 'error')
-    } finally {
-      setNuking(false)
-      setShowNukeModal(false)
-    }
   }
 
   return (
@@ -150,14 +145,21 @@ function SessionPanel({ onOpenSessionBankSettings }: SessionPanelProps = {}) {
             <button
               className="add-btn"
               onClick={createSession}
-              onContextMenu={(event) => {
-                event.preventDefault()
-                setNewSessionMenu({ show: true, x: event.clientX, y: event.clientY })
-              }}
               disabled={creating}
               title="New tmux session"
             >
               +
+            </button>
+            <button
+              className="add-btn new-session-options-btn"
+              aria-label="Session creation options"
+              title="Session creation options"
+              onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect()
+                setNewSessionMenu({ show: true, x: rect.left, y: rect.bottom + 4 })
+              }}
+            >
+              ▾
             </button>
             <button className="refresh-btn" onClick={refreshSessions} title="Refresh sessions">
               ↻
@@ -217,7 +219,7 @@ function SessionPanel({ onOpenSessionBankSettings }: SessionPanelProps = {}) {
             <select
               aria-label="New named session user"
               className="session-user-select"
-              value={namedSessionUser || getDefaultLaunchUser('terminal1', terminalUsers)}
+              value={namedSessionUser || getDefaultLaunchUser(activeWorkspaceId, terminalUsers)}
               onChange={(e) => setNamedSessionUser(e.target.value)}
             >
               {terminalUsers.map(user => <option key={user} value={user}>{user}</option>)}
@@ -275,39 +277,17 @@ function SessionPanel({ onOpenSessionBankSettings }: SessionPanelProps = {}) {
         </div>
       )}
 
-      {!sidebarCollapsed && (sessions.length > 0 || bankedSessionCount > 0) && (
+      {!sidebarCollapsed && bankedSessionCount > 0 && (
         <div className="session-panel-footer">
-          {bankedSessionCount > 0 && (
-            <button
-              type="button"
-              className="session-bank-settings-link"
-              onClick={onOpenSessionBankSettings}
-              aria-label={`Open Session Bank settings for ${bankedSessionCount} recoverable ${bankedSessionCount === 1 ? 'session' : 'sessions'}`}
-            >
-              Session Bank · {bankedSessionCount} recoverable
-            </button>
-          )}
-          {sessions.length > 0 && (
-            <button
-              className="nuke-trigger-btn"
-              onClick={() => setShowNukeModal(true)}
-              disabled={nuking}
-              title="Destroy all tmux sessions"
-            >
-              ☢ {nuking ? 'Nuking...' : 'Nuke All'}
-            </button>
-          )}
+          <button
+            type="button"
+            className="session-bank-settings-link"
+            onClick={onOpenSessionBankSettings}
+            aria-label={`Open Session Bank settings for ${bankedSessionCount} recoverable ${bankedSessionCount === 1 ? 'session' : 'sessions'}`}
+          >
+            Session Bank · {bankedSessionCount} recoverable
+          </button>
         </div>
-      )}
-
-      {showNukeModal && (
-        <NukeConfirmModal
-          sessionCount={sessions.length}
-          sessionNames={sessions.map(s => s.name)}
-          protectedSessionNames={sessions.filter(s => s.persistent).map(s => s.name)}
-          onConfirm={nukeAllSessions}
-          onCancel={() => setShowNukeModal(false)}
-        />
       )}
     </div>
   )

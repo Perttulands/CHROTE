@@ -54,10 +54,6 @@ vi.mock('../context/SessionContext', () => ({
   }),
 }))
 
-vi.mock('./RoleBadge', () => ({
-  default: () => null,
-}))
-
 describe('SessionItem user badge and context actions', () => {
   afterEach(() => {
     mockState.assignedSessions.clear()
@@ -132,13 +128,13 @@ describe('SessionItem user badge and context actions', () => {
       />
     )
 
-    fireEvent.contextMenu(screen.getByText('alice-shell'))
+    fireEvent.click(screen.getByRole('button', { name: 'Session actions for alice-shell' }))
     fireEvent.click(screen.getByRole('button', { name: /Peek/i }))
     expect(mockState.openFloatingModal).toHaveBeenCalledWith('alice:alice-shell')
 
-    fireEvent.contextMenu(screen.getByText('alice-shell'))
+    fireEvent.click(screen.getByRole('button', { name: 'Session actions for alice-shell' }))
     expect(screen.getByText(/Attach to Window/i)).toBeInTheDocument()
-    fireEvent.mouseEnter(screen.getByText(/Attach to Window/i))
+    fireEvent.click(screen.getByRole('button', { name: /Attach to Window/i }))
     fireEvent.click(screen.getByRole('button', { name: /Window 1/i }))
     expect(mockState.addSessionToWindow).toHaveBeenCalledWith('terminal1', 'terminal1-window-0', 'alice-shell', 'alice')
   })
@@ -158,12 +154,12 @@ describe('SessionItem user badge and context actions', () => {
 
     const row = screen.getByText('alice-shell')
     fireEvent.click(row, { ctrlKey: true })
-    expect(mockState.openSendToSession).toHaveBeenCalledWith('alice:alice-shell')
-    expect(mockState.handleSessionClick).not.toHaveBeenCalled()
+    expect(mockState.openSendToSession).not.toHaveBeenCalled()
+    expect(mockState.handleSessionClick).toHaveBeenCalledWith('alice:alice-shell')
 
     fireEvent.contextMenu(row)
     fireEvent.click(screen.getByRole('button', { name: /Send to Session/i }))
-    expect(mockState.openSendToSession).toHaveBeenCalledTimes(2)
+    expect(mockState.openSendToSession).toHaveBeenCalledTimes(1)
     expect(mockState.openSendToSession).toHaveBeenLastCalledWith('alice:alice-shell')
   })
 
