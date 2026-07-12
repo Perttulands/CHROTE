@@ -13,6 +13,7 @@ func TestAuthMiddlewareBoundaryTruthTable(t *testing.T) {
 		method      string
 		path        string
 		authHeader  string
+		cookie      *http.Cookie
 		origin      string
 		preflight   string
 		wantStatus  int
@@ -60,9 +61,16 @@ func TestAuthMiddlewareBoundaryTruthTable(t *testing.T) {
 			wantReached: true,
 		},
 		{
-			name:        "terminal route bypasses configured token",
+			name:       "terminal route requires configured token",
+			token:      "secret-token",
+			path:       "/terminal/ws",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:        "browser session cookie authorizes terminal route",
 			token:       "secret-token",
 			path:        "/terminal/ws",
+			cookie:      &http.Cookie{Name: authSessionCookieName, Value: authSessionValue("secret-token")},
 			wantStatus:  http.StatusNoContent,
 			wantReached: true,
 		},
@@ -100,6 +108,9 @@ func TestAuthMiddlewareBoundaryTruthTable(t *testing.T) {
 			req := httptest.NewRequest(method, tt.path, nil)
 			if tt.authHeader != "" {
 				req.Header.Set("Authorization", tt.authHeader)
+			}
+			if tt.cookie != nil {
+				req.AddCookie(tt.cookie)
 			}
 			if tt.origin != "" {
 				req.Header.Set("Origin", tt.origin)

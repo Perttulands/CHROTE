@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/chrote/server/internal/core"
@@ -233,6 +235,119 @@ func TestFilesHandler_RegisterRoutes(t *testing.T) {
 
 	// Should not panic
 	handler.RegisterRoutes(mux)
+}
+
+func TestFilesHandlerRootReadPolicyBlocksSensitivePaths(t *testing.T) {
+	handler := &FilesHandler{
+		allowedRoots:   []string{"/"},
+		writeRoots:     []string{t.TempDir()},
+		deniedRoots:    defaultDeniedFileRoots(),
+		maxUploadBytes: defaultMaxUploadBytes,
+	}
+
+	for _, path := range []string{
+		"/proc/self/environ",
+		"/etc/chrote/chrote-srv.env",
+		"/home/perttu/.config/gh/hosts.yml",
+		"/home/perttu/.ssh/config",
+	} {
+		t.Run(path, func(t *testing.T) {
+			result := handler.resolveSafePath(path)
+			if result.Error == "" {
+				t.Fatalf("resolveSafePath(%q) allowed a sensitive path: %#v", path, result)
+			}
+		})
+	}
+}
+
+func TestFilesHandlerReadAllKeepsOrdinaryFilesUseful(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "notes.txt")
+	if err := os.WriteFile(path, []byte("useful"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	handler := &FilesHandler{
+		allowedRoots:   []string{"/"},
+		writeRoots:     []string{root},
+		deniedRoots:    defaultDeniedFileRoots(),
+		maxUploadBytes: defaultMaxUploadBytes,
+	}
+
+	result := handler.resolveSafePath(path)
+	if result.Error != "" || result.Path != path {
+		t.Fatalf("ordinary file rejected: %#v", result)
+	}
+}
+
+func TestFilesHandlerMutationRequiresConfiguredWriteRoot(t *testing.T) {
+	readRoot := t.TempDir()
+	writeRoot := t.TempDir()
+	readOnlyFile := filepath.Join(readRoot, "read-only.txt")
+	if err := os.WriteFile(readOnlyFile, []byte("keep"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	handler := &FilesHandler{
+		allowedRoots:   []string{readRoot, writeRoot},
+		writeRoots:     []string{writeRoot},
+		maxUploadBytes: defaultMaxUploadBytes,
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/files/resources/ignored", bytes.NewBufferString("replace"))
+	req.SetPathValue("path", readOnlyFile)
+	rec := httptest.NewRecorder()
+	handler.CreateResource(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+	content, err := os.ReadFile(readOnlyFile)
+	if err != nil || string(content) != "keep" {
+		t.Fatalf("read-only file changed: content=%q err=%v", content, err)
+	}
+}
+
+func TestFilesHandlerSymlinkCannotEscapeReadRoot(t *testing.T) {
+	readRoot := t.TempDir()
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(secret, []byte("secret"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(readRoot, "escape")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	handler := &FilesHandler{
+		allowedRoots:   []string{readRoot},
+		writeRoots:     []string{readRoot},
+		maxUploadBytes: defaultMaxUploadBytes,
+	}
+
+	if result := handler.resolveSafePath(filepath.Join(link, "secret.txt")); result.Error == "" {
+		t.Fatalf("symlink escape allowed: %#v", result)
+	}
+}
+
+func TestFilesHandlerRejectsOversizedUpload(t *testing.T) {
+	root := t.TempDir()
+	handler := &FilesHandler{
+		allowedRoots:   []string{root},
+		writeRoots:     []string{root},
+		maxUploadBytes: 4,
+	}
+	target := filepath.Join(root, "large.txt")
+	req := httptest.NewRequest(http.MethodPost, "/api/files/resources/ignored", bytes.NewBufferString("12345"))
+	req.SetPathValue("path", target)
+	rec := httptest.NewRecorder()
+
+	handler.CreateResource(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("oversized upload created target: %v", err)
+	}
 }
 
 func TestFilesHandler_SuccessResponse(t *testing.T) {
