@@ -77,6 +77,7 @@ func main() {
 
 	// Create main mux
 	mux := http.NewServeMux()
+	registerAuthSessionRoutes(mux, config.APIAuthToken)
 	runtimeCtx, stopRuntime := context.WithCancel(context.Background())
 
 	terminalProxy, scheduledTasks, stopSystemHistory := registerRuntimeRoutes(mux, config, runtimeCtx)
@@ -250,7 +251,7 @@ func corsMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
 	}
 }
 
-// authMiddleware adds optional bearer token authentication
+// authMiddleware protects API and terminal traffic with bearer or browser-session authentication.
 func authMiddleware(token string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -266,8 +267,10 @@ func authMiddleware(token string) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Skip auth for non-API routes
-			if !strings.HasPrefix(r.URL.Path, "/api/") {
+			// Keep the dashboard shell and login endpoint public. API and terminal
+			// traffic require either a bearer token or the secure browser session.
+			protected := strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/terminal/")
+			if !protected || r.URL.Path == "/auth/session" {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -278,19 +281,19 @@ func authMiddleware(token string) func(http.Handler) http.Handler {
 				return
 			}
 
+			if requestHasValidAuth(r, token) {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			authHeader := r.Header.Get("Authorization")
 			if !strings.HasPrefix(authHeader, "Bearer ") {
+				w.Header().Set("Content-Type", "application/json")
 				http.Error(w, `{"success":false,"error":{"code":"UNAUTHORIZED","message":"Authorization required"}}`, http.StatusUnauthorized)
 				return
 			}
-
-			providedToken := strings.TrimPrefix(authHeader, "Bearer ")
-			if !tokenMatches(providedToken, token) {
-				http.Error(w, `{"success":false,"error":{"code":"FORBIDDEN","message":"Invalid token"}}`, http.StatusForbidden)
-				return
-			}
-
-			next.ServeHTTP(w, r)
+			w.Header().Set("Content-Type", "application/json")
+			http.Error(w, `{"success":false,"error":{"code":"FORBIDDEN","message":"Invalid token"}}`, http.StatusForbidden)
 		})
 	}
 }

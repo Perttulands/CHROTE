@@ -15,7 +15,12 @@ func tempRootFilesHandler(t *testing.T) (*FilesHandler, string) {
 	t.Helper()
 
 	root := filepath.ToSlash(t.TempDir())
-	return &FilesHandler{allowedRoots: []string{root}}, root
+	return &FilesHandler{
+		allowedRoots:   []string{root},
+		writeRoots:     []string{root},
+		deniedRoots:    defaultDeniedFileRoots(),
+		maxUploadBytes: defaultMaxUploadBytes,
+	}, root
 }
 
 func filePathValue(path string) string {
@@ -233,7 +238,7 @@ func TestFilesHandler_ResolveSafePath_AllowsInRootSymlinkToInRootTarget(t *testi
 	}
 }
 
-func TestFilesHandler_CurrentlyFollowsOutboundSymlinkToOutOfRootTarget(t *testing.T) {
+func TestFilesHandler_RejectsOutboundSymlinkToOutOfRootTarget(t *testing.T) {
 	handler, root := tempRootFilesHandler(t)
 
 	outsideDir := t.TempDir()
@@ -254,18 +259,7 @@ func TestFilesHandler_CurrentlyFollowsOutboundSymlinkToOutOfRootTarget(t *testin
 
 	handler.DownloadFile(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("DownloadFile outbound symlink status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("DownloadFile outbound symlink status = %d, want %d: %s", rec.Code, http.StatusForbidden, rec.Body.String())
 	}
-	if got := rec.Body.String(); got != "outside target" {
-		t.Fatalf("DownloadFile outbound symlink body = %q, want outside target", got)
-	}
-}
-
-func TestFilesHandler_ResolveSafePath_BlocksOutboundSymlinkFutureSpec(t *testing.T) {
-	t.Skip("Known gap: enable in home-idhj.3 when Files API resolves symlinks and revalidates real targets")
-}
-
-func TestFilesHandler_CreateResource_RejectsOversizedBodyFutureSpec(t *testing.T) {
-	t.Skip("Known gap: enable in home-idhj.3 after CreateResource uses an explicit request-size limit")
 }

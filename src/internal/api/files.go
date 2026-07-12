@@ -2,10 +2,12 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,8 +16,13 @@ import (
 
 // FilesHandler handles file browser API requests
 type FilesHandler struct {
-	allowedRoots []string
+	allowedRoots   []string
+	writeRoots     []string
+	deniedRoots    []string
+	maxUploadBytes int64
 }
+
+const defaultMaxUploadBytes int64 = 64 << 20
 
 // FileItem represents a file or directory in listings
 type FileItem struct {
@@ -49,10 +56,12 @@ type RenameRequest struct {
 
 // PathResult represents path resolution result
 type PathResult struct {
-	Path   string
-	Root   string
-	IsRoot bool
-	Error  string
+	Path        string
+	Root        string
+	IsRoot      bool
+	Writable    bool
+	IsWriteRoot bool
+	Error       string
 }
 
 // SuccessResponse is a simple success response
@@ -62,9 +71,135 @@ type SuccessResponse struct {
 
 // NewFilesHandler creates a new file API handler
 func NewFilesHandler() *FilesHandler {
+	allowedRoots := core.GetAllowedRoots()
 	return &FilesHandler{
-		allowedRoots: core.GetAllowedRoots(),
+		allowedRoots:   allowedRoots,
+		writeRoots:     configuredFileRoots("CHROTE_WRITE_ROOTS", allowedRoots),
+		deniedRoots:    append(defaultDeniedFileRoots(), configuredFileRoots("CHROTE_FILE_DENY_PATHS", nil)...),
+		maxUploadBytes: configuredMaxUploadBytes(),
 	}
+}
+
+func configuredFileRoots(name string, fallback []string) []string {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return append([]string(nil), fallback...)
+	}
+	roots := make([]string, 0)
+	seen := map[string]bool{}
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		absolute, err := filepath.Abs(part)
+		if err != nil {
+			continue
+		}
+		absolute = filepath.Clean(absolute)
+		if !seen[absolute] {
+			seen[absolute] = true
+			roots = append(roots, absolute)
+		}
+	}
+	return roots
+}
+
+func configuredMaxUploadBytes() int64 {
+	raw := strings.TrimSpace(os.Getenv("CHROTE_MAX_UPLOAD_BYTES"))
+	if raw == "" {
+		return defaultMaxUploadBytes
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value < 1 {
+		return defaultMaxUploadBytes
+	}
+	return value
+}
+
+func defaultDeniedFileRoots() []string {
+	return []string{
+		"/proc",
+		"/sys",
+		"/dev",
+		"/run",
+		"/root",
+		"/etc/chrote",
+		"/etc/ssl/private",
+	}
+}
+
+func isSensitiveCredentialPath(path string) bool {
+	parts := strings.Split(strings.Trim(filepath.ToSlash(filepath.Clean(path)), "/"), "/")
+	sensitiveSegments := map[string]bool{
+		".ssh": true, ".gnupg": true, ".aws": true, ".azure": true,
+		".kube": true, ".docker": true, ".password-store": true,
+		".hermes": true, ".netrc": true, ".git-credentials": true,
+	}
+	for index, part := range parts {
+		if sensitiveSegments[part] {
+			return true
+		}
+		if part == ".config" && index+1 < len(parts) {
+			switch parts[index+1] {
+			case "gh", "gcloud", "hermes", "opencode":
+				return true
+			}
+		}
+		if part == ".local" && index+2 < len(parts) && parts[index+1] == "share" && parts[index+2] == "keyrings" {
+			return true
+		}
+	}
+	return false
+}
+
+func canonicalPathAllowMissing(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	current := filepath.Clean(absolute)
+	suffix := make([]string, 0)
+	for {
+		resolved, resolveErr := filepath.EvalSymlinks(current)
+		if resolveErr == nil {
+			for _, part := range suffix {
+				resolved = filepath.Join(resolved, part)
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !os.IsNotExist(resolveErr) {
+			return "", resolveErr
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", resolveErr
+		}
+		suffix = append([]string{filepath.Base(current)}, suffix...)
+		current = parent
+	}
+}
+
+func isPathUnderAnyRoot(path string, roots []string) (string, bool) {
+	for _, root := range roots {
+		absoluteRoot, err := filepath.Abs(root)
+		if err != nil {
+			continue
+		}
+		absoluteRoot = filepath.Clean(absoluteRoot)
+		if core.IsPathUnderRoot(path, absoluteRoot) {
+			return absoluteRoot, true
+		}
+	}
+	return "", false
+}
+
+func (h *FilesHandler) isDeniedPath(path string) bool {
+	if isSensitiveCredentialPath(path) {
+		return true
+	}
+	_, denied := isPathUnderAnyRoot(path, h.deniedRoots)
+	return denied
 }
 
 func normalizeRequestPath(path string) string {
@@ -75,56 +210,39 @@ func normalizeRequestPath(path string) string {
 
 // resolveSafePath validates and resolves a path - CRITICAL for security
 func (h *FilesHandler) resolveSafePath(requestPath string) PathResult {
-	// Decode and normalize
 	decoded := requestPath
 	if decoded == "" {
 		decoded = "/"
 	}
-
-	// Clean the path to prevent traversal
 	normalized := normalizeRequestPath(decoded)
-
-	// Virtual root listing remains separate from filesystem roots; mutating handlers
-	// still block it, while ListRoot can choose how to render it.
 	if normalized == "/" || normalized == "." {
 		return PathResult{IsRoot: true}
 	}
 	if !filepath.IsAbs(normalized) {
 		return PathResult{Error: "Path not allowed"}
 	}
-
-	// Must start with allowed root
-	var matchedRoot string
-	for _, root := range h.allowedRoots {
-		absRoot, err := filepath.Abs(root)
-		if err != nil {
-			continue
-		}
-		absRoot = filepath.ToSlash(filepath.Clean(absRoot))
-		if core.IsPathUnderRoot(normalized, absRoot) {
-			matchedRoot = absRoot
-			break
-		}
+	if h.isDeniedPath(normalized) {
+		return PathResult{Error: "Sensitive path not available in CHROTE Files"}
 	}
 
-	if matchedRoot == "" {
-		return PathResult{Error: "Path not allowed"}
-	}
-
-	// Resolve to absolute and verify it's still under allowed root
-	resolved, err := filepath.Abs(normalized)
+	resolved, err := canonicalPathAllowMissing(normalized)
 	if err != nil {
 		return PathResult{Error: "Invalid path"}
 	}
-
-	// Normalize again after Abs
-	resolved = filepath.ToSlash(filepath.Clean(resolved))
-
-	if !core.IsPathUnderRoot(resolved, matchedRoot) {
-		return PathResult{Error: "Path traversal detected"}
+	if h.isDeniedPath(resolved) {
+		return PathResult{Error: "Sensitive path not available in CHROTE Files"}
 	}
-
-	return PathResult{Path: resolved, Root: matchedRoot}
+	matchedRoot, allowed := isPathUnderAnyRoot(resolved, h.allowedRoots)
+	if !allowed {
+		return PathResult{Error: "Path not allowed"}
+	}
+	writeRoot, writable := isPathUnderAnyRoot(resolved, h.writeRoots)
+	return PathResult{
+		Path:        resolved,
+		Root:        matchedRoot,
+		Writable:    writable,
+		IsWriteRoot: writable && filepath.Clean(resolved) == filepath.Clean(writeRoot),
+	}
 }
 
 // RegisterRoutes registers all file API routes
@@ -140,7 +258,7 @@ func (h *FilesHandler) RegisterRoutes(mux *http.ServeMux) {
 // ListRoot handles GET /api/files/resources/ - root listing
 func (h *FilesHandler) ListRoot(w http.ResponseWriter, r *http.Request) {
 	if h.hasOnlyFilesystemRoot() {
-		writeDirectoryListing(w, string(os.PathSeparator))
+		h.writeDirectoryListing(w, string(os.PathSeparator))
 		return
 	}
 
@@ -174,7 +292,7 @@ func (h *FilesHandler) hasOnlyFilesystemRoot() bool {
 	return filepath.Clean(absRoot) == string(os.PathSeparator)
 }
 
-func writeDirectoryListing(w http.ResponseWriter, dirPath string) {
+func (h *FilesHandler) writeDirectoryListing(w http.ResponseWriter, dirPath string) {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
 		core.WriteError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
@@ -184,7 +302,11 @@ func writeDirectoryListing(w http.ResponseWriter, dirPath string) {
 	items := make([]FileItem, 0, len(entries))
 	for _, entry := range entries {
 		fullPath := filepath.Join(dirPath, entry.Name())
-		info, err := os.Stat(fullPath)
+		resolved := h.resolveSafePath(fullPath)
+		if resolved.Error != "" {
+			continue
+		}
+		info, err := os.Stat(resolved.Path)
 		if err != nil {
 			continue // Skip inaccessible files
 		}
@@ -251,7 +373,11 @@ func (h *FilesHandler) GetResource(w http.ResponseWriter, r *http.Request) {
 		items := make([]FileItem, 0, len(entries))
 		for _, entry := range entries {
 			fullPath := filepath.Join(result.Path, entry.Name())
-			info, err := os.Stat(fullPath)
+			entryResult := h.resolveSafePath(fullPath)
+			if entryResult.Error != "" {
+				continue
+			}
+			info, err := os.Stat(entryResult.Path)
 			if err != nil {
 				continue // Skip inaccessible files
 			}
@@ -291,10 +417,10 @@ func (h *FilesHandler) CreateResource(w http.ResponseWriter, r *http.Request) {
 	requestPath := "/" + r.PathValue("path")
 	result := h.resolveSafePath(requestPath)
 
-	if result.Error != "" || result.IsRoot {
+	if result.Error != "" || result.IsRoot || !result.Writable || result.IsWriteRoot {
 		errMsg := result.Error
-		if result.IsRoot {
-			errMsg = "Cannot create at root"
+		if errMsg == "" {
+			errMsg = "Path is outside configured write roots"
 		}
 		core.WriteError(w, http.StatusForbidden, "FORBIDDEN", errMsg)
 		return
@@ -310,20 +436,24 @@ func (h *FilesHandler) CreateResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Otherwise, upload file
-	// Ensure parent directory exists
-	if err := os.MkdirAll(filepath.Dir(result.Path), 0755); err != nil {
+	// Read and bound the body before creating parent directories.
+	r.Body = http.MaxBytesReader(w, r.Body, h.maxUploadBytes)
+	body, err := io.ReadAll(r.Body)
+	defer r.Body.Close()
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			core.WriteError(w, http.StatusRequestEntityTooLarge, "TOO_LARGE", "File exceeds the configured upload limit")
+			return
+		}
 		core.WriteError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
 		return
 	}
 
-	// Read the body and write to file
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
+	if err := os.MkdirAll(filepath.Dir(result.Path), 0755); err != nil {
 		core.WriteError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
 		return
 	}
-	defer r.Body.Close()
 
 	if err := os.WriteFile(result.Path, body, 0644); err != nil {
 		core.WriteError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
@@ -338,15 +468,16 @@ func (h *FilesHandler) RenameResource(w http.ResponseWriter, r *http.Request) {
 	requestPath := "/" + r.PathValue("path")
 	result := h.resolveSafePath(requestPath)
 
-	if result.Error != "" || result.IsRoot {
+	if result.Error != "" || result.IsRoot || !result.Writable || result.IsWriteRoot {
 		errMsg := result.Error
-		if result.IsRoot {
-			errMsg = "Cannot rename root"
+		if errMsg == "" {
+			errMsg = "Path is outside configured write roots"
 		}
 		core.WriteError(w, http.StatusForbidden, "FORBIDDEN", errMsg)
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	var req RenameRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON")
@@ -359,7 +490,7 @@ func (h *FilesHandler) RenameResource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	destResult := h.resolveSafePath(req.Destination)
-	if destResult.Error != "" || destResult.IsRoot {
+	if destResult.Error != "" || destResult.IsRoot || !destResult.Writable || destResult.IsWriteRoot {
 		core.WriteError(w, http.StatusForbidden, "FORBIDDEN", "Invalid destination")
 		return
 	}
@@ -377,10 +508,10 @@ func (h *FilesHandler) DeleteResource(w http.ResponseWriter, r *http.Request) {
 	requestPath := "/" + r.PathValue("path")
 	result := h.resolveSafePath(requestPath)
 
-	if result.Error != "" || result.IsRoot {
+	if result.Error != "" || result.IsRoot || !result.Writable || result.IsWriteRoot {
 		errMsg := result.Error
-		if result.IsRoot {
-			errMsg = "Cannot delete root"
+		if errMsg == "" {
+			errMsg = "Path is outside configured write roots"
 		}
 		core.WriteError(w, http.StatusForbidden, "FORBIDDEN", errMsg)
 		return
