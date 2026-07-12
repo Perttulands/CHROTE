@@ -60,48 +60,39 @@ function SessionItem({ session }: SessionItemProps) {
       }
     : undefined
 
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+  const { listeners, setNodeRef, isDragging } = useDraggable({
     id: sessionKey,
     data: { type: 'session', session, sessionName: session.name, sessionKey, unixUser: session.unixUser },
   })
 
-  const style = transform
-    ? {
-        transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
-        zIndex: isDragging ? 1000 : undefined,
-      }
+  const style = isDragging
+    ? { opacity: 0, transition: 'none' }
     : undefined
 
   // Implement Long Press detection
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const clearLongPressTimer = useCallback(() => {
+    if (longPressTimer.current !== null) {
+      clearTimeout(longPressTimer.current)
+      longPressTimer.current = null
+    }
+  }, [])
+
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
-    e.persist(); // Persist the event to use its properties in the timer callback
+    clearLongPressTimer()
+    if ((e.target as Element).closest('.session-drag-handle')) return
+    const touch = e.touches[0]
+    if (!touch) return
+    const { clientX, clientY } = touch
     longPressTimer.current = setTimeout(() => {
-      if (longPressTimer.current) {
-        // Create a synthetic MouseEvent based on the first touch point
-        const touch = e.touches[0];
-        setContextMenu({ show: true, x: touch.clientX, y: touch.clientY });
-        setShowAssignSubmenu(false);
-      }
+      longPressTimer.current = null
+      setContextMenu({ show: true, x: clientX, y: clientY });
+      setShowAssignSubmenu(false);
     }, 500); // 500ms long press threshold
-  }, []);
+  }, [clearLongPressTimer]);
 
-  const handleTouchEnd = useCallback(() => {
-    // If released before 500ms, clear the timer
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
-  }, []);
-
-  const handleTouchMove = useCallback(() => {
-    // Similarly, if moving, probably dragging/scrolling, so cancel long press
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
-  }, []);
+  useEffect(() => clearLongPressTimer, [clearLongPressTimer])
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -232,20 +223,34 @@ function SessionItem({ session }: SessionItemProps) {
     )
   }
 
+  const dragLabel = `Drag ${session.name}${session.unixUser ? ` (Unix user ${session.unixUser})` : ''}`
+
   return (
     <>
       <div
         ref={setNodeRef}
         className={`session-item ${isAssigned ? 'assigned' : ''} ${isDragging ? 'dragging' : ''}`}
         style={style}
-        {...listeners}
-        {...attributes}
         onClick={handleClick}
         onContextMenu={handleContextMenu}
         onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
-        onTouchMove={handleTouchMove}
+        onTouchEnd={clearLongPressTimer}
+        onTouchMove={clearLongPressTimer}
+        onTouchCancel={clearLongPressTimer}
       >
+        <span
+          className="session-drag-handle"
+          aria-hidden="true"
+          title={dragLabel}
+          style={{ touchAction: 'none' }}
+          {...listeners}
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+          }}
+        >
+          ⠿
+        </span>
         {session.unixUser && (
           <span
             className="unix-user-badge"

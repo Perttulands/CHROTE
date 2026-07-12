@@ -163,7 +163,7 @@
   border-radius: 6px 6px 0 0;
   font-size: 13px;
   font-weight: 500;
-  cursor: grab;
+  cursor: pointer;
   transition: all 0.15s ease;
   min-width: 60px;
   max-width: 180px;
@@ -183,8 +183,10 @@
 }
 
 .session-tag.dragging {
-  opacity: 0.6;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  opacity: 0 !important;
+  transform: none !important;
+  transition: none !important;
+  box-shadow: none;
 }
 
 .tag-name {

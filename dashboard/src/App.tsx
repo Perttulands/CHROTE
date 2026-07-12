@@ -22,28 +22,128 @@ import LayoutPresetsPanel from './components/LayoutPresetsPanel'
 import { IframePoolProvider } from './components/IframePool'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { installFeatureFlagHelpers, isFeatureEnabled } from './featureFlags'
-import { TERMINAL_WORKSPACE_IDS, getSessionNameFromKey } from './types'
-import type { WorkspaceId } from './types'
+import { TERMINAL_WORKSPACE_IDS, getSessionNameFromKey, getTerminalUserColor, getTerminalUserInitial } from './types'
+import type { UserSettings, WorkspaceId } from './types'
+
+interface ActiveDrag {
+  name: string
+  type: 'session' | 'tag'
+  unixUser?: string
+}
+
+interface SessionDragData {
+  type: 'session'
+  sessionName: string
+  sessionKey: string
+  unixUser?: string
+}
+
+interface TagDragData {
+  type: 'tag'
+  sessionName: string
+  sessionKey: string
+  unixUser?: string
+  sourceWorkspaceId: WorkspaceId
+  sourceWindowId: string
+}
+
+interface WindowDropData {
+  type: 'window'
+  workspaceId: WorkspaceId
+  windowId: string
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+function isWorkspaceId(value: unknown): value is WorkspaceId {
+  return typeof value === 'string' && TERMINAL_WORKSPACE_IDS.includes(value as WorkspaceId)
+}
+
+function isWindowIdForWorkspace(value: unknown, workspaceId: WorkspaceId): value is string {
+  if (typeof value !== 'string') return false
+  return /^[0-3]$/.test(value.slice(`${workspaceId}-window-`.length)) &&
+    value.startsWith(`${workspaceId}-window-`)
+}
+
+function readDragData(value: unknown): SessionDragData | TagDragData | null {
+  if (!value || typeof value !== 'object') return null
+  const data = value as Record<string, unknown>
+  if (!isNonEmptyString(data.sessionName) || !isNonEmptyString(data.sessionKey)) return null
+  if (data.unixUser !== undefined && typeof data.unixUser !== 'string') return null
+
+  if (data.type === 'session') {
+    return {
+      type: 'session',
+      sessionName: data.sessionName,
+      sessionKey: data.sessionKey,
+      ...(data.unixUser !== undefined ? { unixUser: data.unixUser } : {}),
+    }
+  }
+
+  if (
+    data.type === 'tag' &&
+    isWorkspaceId(data.sourceWorkspaceId) &&
+    isWindowIdForWorkspace(data.sourceWindowId, data.sourceWorkspaceId)
+  ) {
+    return {
+      type: 'tag',
+      sessionName: data.sessionName,
+      sessionKey: data.sessionKey,
+      sourceWorkspaceId: data.sourceWorkspaceId,
+      sourceWindowId: data.sourceWindowId,
+      ...(data.unixUser !== undefined ? { unixUser: data.unixUser } : {}),
+    }
+  }
+
+  return null
+}
+
+function readWindowDropData(value: unknown): WindowDropData | null {
+  if (!value || typeof value !== 'object') return null
+  const data = value as Record<string, unknown>
+  if (
+    data.type !== 'window' ||
+    !isWorkspaceId(data.workspaceId) ||
+    !isWindowIdForWorkspace(data.windowId, data.workspaceId)
+  ) return null
+
+  return { type: 'window', workspaceId: data.workspaceId, windowId: data.windowId }
+}
 
 // Dragged item overlay component
-function DraggedSessionOverlay({ name }: { name: string }) {
+function DraggedSessionOverlay({ drag, settings }: { drag: ActiveDrag; settings: UserSettings }) {
+  const { name, type, unixUser } = drag
   const displayName = getSessionNameFromKey(name)
+  const badgeClassName = type === 'tag' ? 'session-user-badge' : 'unix-user-badge'
   return (
-    <div className="session-item dragging-overlay">
-      <span className="session-agent-name">{displayName}</span>
+    <div className={`${type === 'tag' ? 'session-tag' : 'session-item'} dragging-overlay`}>
+      <span className="drag-overlay-grip" aria-hidden="true">⠿</span>
+      {unixUser && (
+        <span
+          className={badgeClassName}
+          style={{ backgroundColor: getTerminalUserColor(settings, unixUser) }}
+          title={`Unix user: ${unixUser}`}
+          aria-label={`Unix user ${unixUser}`}
+        >
+          {getTerminalUserInitial(unixUser)}
+        </span>
+      )}
+      <span className={type === 'tag' ? 'tag-name' : 'session-agent-name'}>{displayName}</span>
     </div>
   )
 }
 
 function DashboardContent() {
   const [activeTab, setActiveTab] = useState<Tab>('terminal1')
-  const [activeDragId, setActiveDragId] = useState<string | null>(null)
+  const [activeDrag, setActiveDrag] = useState<ActiveDrag | null>(null)
   const [showHelp, setShowHelp] = useState(false)
   const [showPresets, setShowPresets] = useState(false)
   const [settingsSessionBankFocusNonce, setSettingsSessionBankFocusNonce] = useState(0)
   const [filesNavigateRequest, setFilesNavigateRequest] = useState<{ path: string; nonce: number } | null>(null)
   const [formationsVisited, setFormationsVisited] = useState(false)
-  const { addSessionToWindow, removeSessionFromWindow, setIsDragging, isDragging, settings } = useSession()
+  const { addSessionToWindow, setIsDragging, isDragging, settings } = useSession()
   const persistFilesTabState = isFeatureEnabled('filesPersistTabState')
   const serverStatusTab = isFeatureEnabled('serverStatusTab')
 
@@ -91,59 +191,56 @@ function DashboardContent() {
     document.documentElement.style.setProperty('--terminal-font-size', `${settings.fontSize}px`)
   }, [settings.fontSize])
 
+  const resetDrag = useCallback(() => {
+    setActiveDrag(null)
+    setIsDragging(false)
+  }, [setIsDragging])
+
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
-        distance: 4, // Reduced from 8 for more responsive drag
+        distance: 8,
       },
-    })
+    }),
   )
 
   const handleDragStart = (event: DragStartEvent) => {
-    const type = event.active.data.current?.type
-    if (type === 'tag') {
-      setActiveDragId(event.active.data.current?.sessionKey ?? event.active.data.current?.sessionName ?? null)
-    } else {
-      setActiveDragId(event.active.id as string)
+    const data = readDragData(event.active.data.current)
+    if (!data) {
+      resetDrag()
+      return
     }
+
+    setActiveDrag({ name: data.sessionKey, type: data.type, unixUser: data.unixUser })
     setIsDragging(true)
   }
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
-    setActiveDragId(null)
-    setIsDragging(false)
+    resetDrag()
 
     if (!over) {
-      // Dragged outside - if it's a tag, remove it from the window
-      if (active.data.current?.type === 'tag') {
-        const { sessionName, sessionKey, sourceWindowId, sourceWorkspaceId } = active.data.current
-        removeSessionFromWindow(sourceWorkspaceId, sourceWindowId, sessionKey ?? sessionName)
-      }
+      // Off-target drops never mutate assignment. Detaching is explicit via
+      // the tag remove button or the session context menu's Unassign action.
       return
     }
 
-    // Dropped on a window
-    if (over.data.current?.type === 'window') {
-      const targetWindowId = over.data.current.windowId
-      const targetWorkspaceId = over.data.current.workspaceId as WorkspaceId
+    const dragData = readDragData(active.data.current)
+    const targetData = readWindowDropData(over.data.current)
+    if (!dragData || !targetData) return
 
-      if (active.data.current?.type === 'session') {
-        // Dragging from panel
-        const { sessionName, unixUser } = active.data.current
-        addSessionToWindow(targetWorkspaceId, targetWindowId, sessionName ?? active.id as string, unixUser)
-      } else if (active.data.current?.type === 'tag') {
-        // Dragging a tag between windows
-        const { sessionName, sessionKey, unixUser, sourceWindowId, sourceWorkspaceId } = active.data.current
-        if (sourceWindowId !== targetWindowId || sourceWorkspaceId !== targetWorkspaceId) {
-          addSessionToWindow(targetWorkspaceId, targetWindowId, sessionName ?? sessionKey, unixUser)
-        }
-      }
+    if (dragData.type === 'session') {
+      addSessionToWindow(targetData.workspaceId, targetData.windowId, dragData.sessionName, dragData.unixUser)
+    } else if (
+      dragData.sourceWindowId !== targetData.windowId ||
+      dragData.sourceWorkspaceId !== targetData.workspaceId
+    ) {
+      addSessionToWindow(targetData.workspaceId, targetData.windowId, dragData.sessionName, dragData.unixUser)
     }
   }
 
   return (
-    <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+    <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragCancel={resetDrag}>
       <div className={`dashboard ${isDragging ? 'is-dragging' : ''}`}>
         <TabBar
           activeTab={activeTab}
@@ -159,7 +256,7 @@ function DashboardContent() {
           </div>
           {TERMINAL_WORKSPACE_IDS.map(workspaceId => (
             <div key={workspaceId} style={{ display: activeTab === workspaceId ? 'contents' : 'none' }}>
-              <TerminalArea workspaceId={workspaceId} />
+              <TerminalArea workspaceId={workspaceId} active={activeTab === workspaceId} />
             </div>
           ))}
           {persistFilesTabState ? (
@@ -227,8 +324,8 @@ function DashboardContent() {
       {/* Toast notifications */}
       <ToastContainer />
 
-      <DragOverlay>
-        {activeDragId ? <DraggedSessionOverlay name={activeDragId} /> : null}
+      <DragOverlay className="drag-overlay-wrapper">
+        {activeDrag ? <DraggedSessionOverlay drag={activeDrag} settings={settings} /> : null}
       </DragOverlay>
     </DndContext>
   )

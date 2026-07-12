@@ -5,6 +5,7 @@ import TerminalArea from './TerminalArea'
 const setWindowCount = vi.fn()
 const clearStaleSessionsFromWindow = vi.fn()
 const reconnectIframe = vi.fn()
+const sessionState = vi.hoisted(() => ({ isDragging: false, isMobile: false }))
 
 vi.mock('../context/SessionContext', () => ({
   useSession: () => ({
@@ -22,12 +23,12 @@ vi.mock('../context/SessionContext', () => ({
     },
     setWindowCount,
     clearStaleSessionsFromWindow,
-    isDragging: false,
+    isDragging: sessionState.isDragging,
   }),
 }))
 
 vi.mock('../hooks/useMediaQuery', () => ({
-  useMediaQuery: () => false,
+  useMediaQuery: () => sessionState.isMobile,
 }))
 
 vi.mock('./IframePool', () => ({
@@ -35,14 +36,16 @@ vi.mock('./IframePool', () => ({
 }))
 
 vi.mock('./TerminalWindow', () => ({
-  default: ({ window, refitNonce }: { window: { id: string }, refitNonce: number }) => (
-    <div data-testid={`terminal-window-${window.id}`} data-refit-nonce={refitNonce} />
+  default: ({ window, refitNonce, isDragging }: { window: { id: string }, refitNonce: number, isDragging: boolean }) => (
+    <div data-testid={`terminal-window-${window.id}`} data-refit-nonce={refitNonce} data-dragging={String(isDragging)} />
   ),
 }))
 
 describe('TerminalArea layout controls context menu', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    sessionState.isDragging = false
+    sessionState.isMobile = false
   })
 
   it('reconnects all visible session frames from the layout controls menu', () => {
@@ -77,5 +80,28 @@ describe('TerminalArea layout controls context menu', () => {
 
     expect(screen.getByTestId('terminal-window-terminal1-window-0')).toHaveAttribute('data-refit-nonce', '1')
     expect(screen.getByTestId('terminal-window-terminal1-window-1')).toHaveAttribute('data-refit-nonce', '1')
+  })
+
+  it('suppresses drag feedback for a mounted but hidden workspace', () => {
+    sessionState.isDragging = true
+
+    const { rerender } = render(<TerminalArea workspaceId="terminal1" active={false} />)
+
+    expect(screen.getByTestId('terminal-window-terminal1-window-0')).toHaveAttribute('data-dragging', 'false')
+    expect(screen.getByTestId('terminal-window-terminal1-window-1')).toHaveAttribute('data-dragging', 'false')
+
+    rerender(<TerminalArea workspaceId="terminal1" active />)
+    expect(screen.getByTestId('terminal-window-terminal1-window-0')).toHaveAttribute('data-dragging', 'true')
+    expect(screen.getByTestId('terminal-window-terminal1-window-1')).toHaveAttribute('data-dragging', 'true')
+  })
+
+  it('passes drag feedback only to the actually visible mobile window', () => {
+    sessionState.isDragging = true
+    sessionState.isMobile = true
+
+    render(<TerminalArea workspaceId="terminal1" active />)
+
+    expect(screen.getByTestId('terminal-window-terminal1-window-0')).toHaveAttribute('data-dragging', 'true')
+    expect(screen.getByTestId('terminal-window-terminal1-window-1')).toHaveAttribute('data-dragging', 'false')
   })
 })

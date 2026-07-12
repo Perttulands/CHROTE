@@ -42,24 +42,18 @@ function CreateSessionButton({ workspaceId, windowId, accentColor }: CreateSessi
 }
 
 interface DropOverlayProps {
-  workspaceId: WorkspaceId
-  windowId: string
   isVisible: boolean
+  isOver: boolean
 }
 
 // Full-window drop overlay that appears during drag
-function DropOverlay({ workspaceId, windowId, isVisible }: DropOverlayProps) {
-  const { setNodeRef, isOver } = useDroppable({
-    id: `drop-${workspaceId}-${windowId}`,
-    data: { type: 'window', workspaceId, windowId },
-  })
-
+function DropOverlay({ isVisible, isOver }: DropOverlayProps) {
   if (!isVisible) return null
 
   return (
     <div
-      ref={setNodeRef}
       className={`terminal-drop-overlay ${isOver ? 'is-over' : ''}`}
+      style={{ inset: 0, pointerEvents: 'none' }}
     >
       <span className="drop-hint">{isOver ? 'Release to add' : 'Drop here'}</span>
     </div>
@@ -86,20 +80,18 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
   const session = matchingSessions.length === 1 ? matchingSessions[0] : undefined
   const resolvedUser = session?.unixUser || unixUser
   const sessionKey = getSessionKey(actualName, resolvedUser)
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+  const { listeners, setNodeRef, isDragging } = useDraggable({
     id: `tag-${workspaceId}-${windowId}-${sessionKey}`,
     data: { type: 'tag', sessionName: actualName, sessionKey, unixUser: resolvedUser, sourceWindowId: windowId, sourceWorkspaceId: workspaceId },
   })
 
-  const style = transform
-    ? {
-      transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
-      zIndex: isDragging ? 1000 : undefined,
-    }
+  const style = isDragging
+    ? { opacity: 0, transition: 'none' }
     : undefined
 
   // Show full tmux session name, including prefixes (e.g. critique-codex).
   const displayName = actualName
+  const dragLabel = `Drag ${displayName}${resolvedUser ? ` (Unix user ${resolvedUser})` : ''}`
 
   // Handle click on the tag - only fire if not dragging
   const handleClick = (e: React.MouseEvent) => {
@@ -122,9 +114,20 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
       className={`session-tag ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''}`}
       style={style}
       onClick={handleClick}
-      {...listeners}
-      {...attributes}
     >
+      <span
+        className="session-tag-drag-handle"
+        aria-hidden="true"
+        title={dragLabel}
+        style={{ touchAction: 'none' }}
+        {...listeners}
+        onClick={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+        }}
+      >
+        ⠿
+      </span>
       {resolvedUser && (
         <span
           className="session-user-badge"
@@ -149,8 +152,16 @@ interface TerminalWindowProps {
 }
 
 function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false, refitNonce = 0, style }: TerminalWindowProps) {
-  const bodyRef = useRef<HTMLDivElement>(null)
+  const bodyRef = useRef<HTMLDivElement | null>(null)
   const windowRef = useRef<HTMLDivElement>(null)
+  const { setNodeRef: setDropNodeRef, isOver } = useDroppable({
+    id: `drop-${workspaceId}-${windowConfig.id}`,
+    data: { type: 'window', workspaceId, windowId: windowConfig.id },
+  })
+  const setBodyRef = useCallback((node: HTMLDivElement | null) => {
+    bodyRef.current = node
+    setDropNodeRef(node)
+  }, [setDropNodeRef])
 
   const pool = useIframePool()
 
@@ -388,7 +399,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
         </div>
       </div>
 
-      <div ref={bodyRef} className="terminal-window-body" onClick={handleWindowClick}>
+      <div ref={setBodyRef} className="terminal-window-body" onClick={handleWindowClick}>
         {activeSession === 'INIT-PENDING' ? (
           <div style={{
             display: 'flex',
@@ -406,7 +417,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
           </div>
         ) : null}
         {/* Iframes are injected here by the IframePool via DOM manipulation */}
-        <DropOverlay workspaceId={workspaceId} windowId={windowConfig.id} isVisible={isDragging} />
+        <DropOverlay isVisible={isDragging} isOver={isOver} />
       </div>
     </div>
   )

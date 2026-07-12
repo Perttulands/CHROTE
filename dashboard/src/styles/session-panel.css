@@ -239,10 +239,38 @@
   display: flex;
   align-items: center;
   padding: 8px 12px;
-  cursor: grab;
-  transition: all 0.2s ease;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
   gap: 8px;
   font-size: 15px;
+}
+
+.session-drag-handle,
+.session-tag-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: grab;
+  font: inherit;
+  line-height: 1;
+  touch-action: none;
+}
+
+.session-drag-handle:hover,
+.session-tag-drag-handle:hover {
+  color: var(--accent);
+}
+
+.session-drag-handle:active,
+.session-tag-drag-handle:active {
+  cursor: grabbing;
 }
 
 .session-item:hover {
@@ -369,9 +397,10 @@
 }
 
 .session-item.dragging {
-  opacity: 0.8;
-  background-color: var(--accent-light);
-  box-shadow: 0 2px 8px rgba(var(--accent-rgb), 0.3);
+  opacity: 0 !important;
+  transform: none !important;
+  transition: none !important;
+  box-shadow: none;
 }
 
 .session-agent-name {

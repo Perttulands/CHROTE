@@ -15,7 +15,24 @@ const renameSession = vi.fn()
 const deleteSession = vi.fn()
 const reconnectIframe = vi.fn()
 const setFocusedWindowKey = vi.fn()
+const setActiveSession = vi.fn()
 const openSendToSession = vi.fn()
+const draggableState = vi.hoisted(() => ({
+  transform: null as { x: number; y: number } | null,
+  isDragging: false,
+  listeners: { onPointerDown: vi.fn() },
+}))
+
+vi.mock('@dnd-kit/core', () => ({
+  useDraggable: () => ({
+    attributes: { role: 'button', tabIndex: 0 },
+    listeners: draggableState.listeners,
+    setNodeRef: vi.fn(),
+    transform: draggableState.transform,
+    isDragging: draggableState.isDragging,
+  }),
+  useDroppable: () => ({ setNodeRef: vi.fn(), isOver: false }),
+}))
 
 vi.mock('../context/SessionContext', () => ({
   useSession: () => ({
@@ -40,7 +57,7 @@ vi.mock('../context/SessionContext', () => ({
     createSession,
     addSessionToWindow,
     removeSessionFromWindow,
-    setActiveSession: vi.fn(),
+    setActiveSession,
     cycleSession: vi.fn(),
     setWindowCount: vi.fn(),
     clearStaleSessionsFromWindow: vi.fn(),
@@ -84,6 +101,9 @@ describe('TerminalWindow launch user', () => {
     createSession.mockResolvedValue('forge1')
     deleteSession.mockResolvedValue(true)
     renameSession.mockResolvedValue(true)
+    draggableState.transform = null
+    draggableState.isDragging = false
+    draggableState.listeners.onPointerDown.mockClear()
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true })) as any)
     vi.stubGlobal('ResizeObserver', class {
       observe() {}
@@ -165,6 +185,82 @@ describe('TerminalWindow launch user', () => {
 
     expect(event.defaultPrevented).toBe(false)
     expect(container.querySelector('.session-context-menu')).toBeNull()
+  })
+
+  it('uses a pointer-only non-interactive tag grip and leaves the dragged tag as a stationary invisible placeholder', () => {
+    draggableState.transform = { x: 32, y: 18 }
+    draggableState.isDragging = true
+
+    const { container } = render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['forge-existing'], activeSession: 'forge-existing', colorIndex: 0 }}
+      />
+    )
+
+    const tag = container.querySelector('.session-tag') as HTMLElement
+    const handle = container.querySelector('.session-tag-drag-handle') as HTMLElement
+    expect(handle.tagName).toBe('SPAN')
+    expect(handle).toHaveAttribute('aria-hidden', 'true')
+    expect(handle).toHaveAttribute('title', 'Drag forge-existing (Unix user tavern)')
+    expect(handle).not.toHaveAttribute('role')
+    expect(handle).not.toHaveAttribute('tabindex')
+    expect(handle).not.toHaveAttribute('aria-roledescription')
+    expect(handle).not.toHaveAttribute('aria-describedby')
+    expect(tag.style.transform).toBe('')
+    expect(tag.style.transition).toBe('none')
+    expect(tag.style.opacity).toBe('0')
+
+    fireEvent.pointerDown(handle, { pointerType: 'touch' })
+    expect(draggableState.listeners.onPointerDown).toHaveBeenCalled()
+  })
+
+  it('keeps tag grip clicks inert while ordinary tag clicks still activate the session', () => {
+    const { container } = render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['forge-existing'], activeSession: 'forge-existing', colorIndex: 0 }}
+      />
+    )
+
+    const handle = container.querySelector('.session-tag-drag-handle') as HTMLElement
+    fireEvent.click(handle)
+    expect(setActiveSession).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByText('forge-existing'))
+    expect(setActiveSession).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'forge-existing')
+  })
+
+  it('calls removeSessionFromWindow when the tag remove button is clicked', () => {
+    render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['tavern:forge-existing'], activeSession: 'tavern:forge-existing', colorIndex: 0 }}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '×' }))
+
+    expect(removeSessionFromWindow).toHaveBeenCalledWith(
+      'terminal3',
+      'terminal3-window-0',
+      'tavern:forge-existing',
+    )
+  })
+
+  it('renders full-body visual drop feedback without making the overlay the hit target', () => {
+    const { container } = render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: [], activeSession: null, colorIndex: 0 }}
+        isDragging
+      />
+    )
+
+    const body = container.querySelector('.terminal-window-body') as HTMLElement
+    const overlay = container.querySelector('.terminal-drop-overlay') as HTMLElement
+    expect(body).toContainElement(overlay)
+    expect(overlay).toHaveStyle({ inset: '0', pointerEvents: 'none' })
   })
 
   it('keeps terminal panes on the per-window opaque background palette', () => {

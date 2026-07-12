@@ -10,9 +10,10 @@ import { useIframePool } from './IframePool'
 
 interface TerminalAreaProps {
   workspaceId: WorkspaceId
+  active?: boolean
 }
 
-function TerminalArea({ workspaceId }: TerminalAreaProps) {
+function TerminalArea({ workspaceId, active = true }: TerminalAreaProps) {
   const { workspaces, setWindowCount, clearStaleSessionsFromWindow, isDragging, sessions } = useSession()
   const pool = useIframePool()
   const workspace = workspaces[workspaceId]
@@ -210,7 +211,7 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
               key={window.id}
               workspaceId={workspaceId}
               window={window}
-              isDragging={isDragging}
+              isDragging={active && isVisible && isDragging}
               refitNonce={refitNonce}
               style={{ display: isVisible ? 'flex' : 'none' }}
             />
