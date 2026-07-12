@@ -171,12 +171,17 @@ describe('dashboard persisted storage contract', () => {
         windows: [
           { id: 'terminal1-window-0', boundSessions: ['desk-a'], activeSession: 'desk-a', colorIndex: 3 },
           { id: 'terminal1-window-1', boundSessions: ['desk-b'], activeSession: null, colorIndex: 1 },
+          { id: 'terminal1-window-2', boundSessions: [], activeSession: null, colorIndex: 2 },
+          { id: 'terminal1-window-3', boundSessions: [], activeSession: null, colorIndex: 3 },
         ],
         windowCount: 2,
       },
       terminal2: {
         windows: [
           { id: 'terminal2-window-0', boundSessions: ['desk-c'], activeSession: 'desk-c', colorIndex: 7 },
+          { id: 'terminal2-window-1', boundSessions: [], activeSession: null, colorIndex: 1 },
+          { id: 'terminal2-window-2', boundSessions: [], activeSession: null, colorIndex: 2 },
+          { id: 'terminal2-window-3', boundSessions: [], activeSession: null, colorIndex: 3 },
         ],
         windowCount: 1,
       },
@@ -184,6 +189,8 @@ describe('dashboard persisted storage contract', () => {
         windows: [
           { id: 'terminal3-window-0', boundSessions: [], activeSession: null, colorIndex: 0 },
           { id: 'terminal3-window-1', boundSessions: [], activeSession: null, colorIndex: 1 },
+          { id: 'terminal3-window-2', boundSessions: [], activeSession: null, colorIndex: 2 },
+          { id: 'terminal3-window-3', boundSessions: [], activeSession: null, colorIndex: 3 },
         ],
         windowCount: 2,
       },
@@ -380,15 +387,22 @@ describe('migrateStoredState (via loadStoredState)', () => {
     // V1 windows migrate into terminal1
     const t1 = result.current.workspaces.terminal1
     expect(t1.windowCount).toBe(2)
-    expect(t1.windows).toHaveLength(2)
+    expect(t1.windows).toHaveLength(4)
     expect(t1.windows[0].boundSessions).toEqual(['sess-a', 'sess-b'])
     expect(t1.windows[0].activeSession).toBe('sess-a')
     expect(t1.windows[0].id).toBe('terminal1-window-0')
     expect(t1.windows[1].boundSessions).toEqual(['sess-c'])
+    expect(t1.windows.map(window => window.id)).toEqual([
+      'terminal1-window-0',
+      'terminal1-window-1',
+      'terminal1-window-2',
+      'terminal1-window-3',
+    ])
 
     // terminal2 gets fresh defaults
     const t2 = result.current.workspaces.terminal2
     expect(t2.windowCount).toBe(2)
+    expect(t2.windows).toHaveLength(4)
     expect(t2.windows[0].boundSessions).toEqual([])
     expect(t2.windows[0].id).toBe('terminal2-window-0')
 
@@ -440,6 +454,8 @@ describe('migrateStoredState (via loadStoredState)', () => {
     expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alpha'])
     expect(result.current.workspaces.terminal2.windows[0].boundSessions).toEqual(['beta'])
     expect(result.current.workspaces.terminal2.windowCount).toBe(2)
+    expect(result.current.workspaces.terminal1.windows).toHaveLength(4)
+    expect(result.current.workspaces.terminal2.windows).toHaveLength(4)
   })
 
   it('returns defaults for empty/corrupt localStorage', () => {
@@ -1520,6 +1536,41 @@ describe('addSessionToWindow', () => {
     expect(win.activeSession).toBe('perttu:shell')
   })
 
+  it('moves the single safe bare-qualified identity into a non-empty target and activates it', () => {
+    const { result } = renderSession()
+
+    act(() => {
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'shell', 'alice')
+      result.current.addSessionToWindow('terminal2', 'terminal2-window-1', 'resident')
+    })
+    act(() => {
+      result.current.addSessionToWindow('terminal2', 'terminal2-window-1', 'shell')
+    })
+
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual([])
+    expect(result.current.workspaces.terminal2.windows[1]).toMatchObject({
+      boundSessions: ['resident', 'shell'],
+      activeSession: 'shell',
+    })
+  })
+
+  it('keeps a bare same-name binding distinct when multiple qualified users make the alias ambiguous', () => {
+    const { result } = renderSession()
+
+    act(() => {
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'shell', 'alice')
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-1', 'shell', 'bob')
+      result.current.addSessionToWindow('terminal2', 'terminal2-window-0', 'shell')
+    })
+
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:shell'])
+    expect(result.current.workspaces.terminal1.windows[1].boundSessions).toEqual(['bob:shell'])
+    expect(result.current.workspaces.terminal2.windows[0]).toMatchObject({
+      boundSessions: ['shell'],
+      activeSession: 'shell',
+    })
+  })
+
   it('removes session from another window in the SAME workspace', () => {
     const { result } = renderSession()
 
@@ -1535,20 +1586,19 @@ describe('addSessionToWindow', () => {
     expect(result.current.workspaces.terminal1.windows[1].boundSessions).toContain('jumper')
   })
 
-  it('sets activeSession on empty target but preserves existing active on non-empty target', () => {
+  it('activates every deliberate attach, including a non-empty destination used by drop and context Attach', () => {
     const { result } = renderSession()
 
-    // Add first session — becomes active
     act(() => {
       result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'first')
     })
     expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('first')
 
-    // Add second session — first stays active
+    // Drop/context Attach both use this action, so the newly attached session is visible immediately.
     act(() => {
       result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'second')
     })
-    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('first')
+    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('second')
     expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['first', 'second'])
   })
 
@@ -1562,6 +1612,7 @@ describe('addSessionToWindow', () => {
     act(() => {
       result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'beta')
     })
+    act(() => result.current.setActiveSession('terminal1', 'terminal1-window-0', 'alpha'))
     expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('alpha')
 
     // Move 'alpha' to terminal2 — source should fall back to 'beta'
@@ -1610,8 +1661,9 @@ describe('removeSessionFromWindow', () => {
       result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'C')
     })
 
-    // A is active (set when window was empty)
-    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('A')
+    // Each deliberate attach activates its session, so select A before testing fallback.
+    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('C')
+    act(() => result.current.setActiveSession('terminal1', 'terminal1-window-0', 'A'))
 
     // Remove A — should fall back to B (first remaining)
     act(() => {
@@ -1631,6 +1683,7 @@ describe('removeSessionFromWindow', () => {
     act(() => {
       result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'Y')
     })
+    act(() => result.current.setActiveSession('terminal1', 'terminal1-window-0', 'X'))
 
     expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('X')
 
@@ -1676,7 +1729,8 @@ describe('cycleSession', () => {
     act(() => {
       hook.result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'S2')
     })
-    // Active is S0 (first added to empty window)
+    // Deliberate attaches activate their targets; restore the baseline under test.
+    act(() => hook.result.current.setActiveSession('terminal1', 'terminal1-window-0', 'S0'))
     return hook
   }
 
@@ -1793,6 +1847,109 @@ describe('renameSession', () => {
     expect(win.activeSession).toBe('renamed')
     expect(win.boundSessions).toContain('renamed')
     expect(win.boundSessions).toContain('keep-me')
+  })
+
+  it('globally keeps the first canonical rename claimant and repairs later visible collisions', async () => {
+    const { result } = renderSession()
+
+    act(() => {
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'first-fallback')
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'old', 'alice')
+      result.current.addSessionToWindow('terminal2', 'terminal2-window-1', 'later-fallback')
+      result.current.addSessionToWindow('terminal2', 'terminal2-window-1', 'new', 'alice')
+      result.current.addSessionToWindow('terminal3', 'terminal3-window-0', 'new', 'bob')
+      result.current.addSessionToWindow('terminal3', 'terminal3-window-1', 'new')
+    })
+
+    await act(async () => {
+      expect(await result.current.renameSession('old', 'new', 'alice')).toBe(true)
+    })
+
+    expect(result.current.workspaces.terminal1.windows[0]).toMatchObject({
+      boundSessions: ['first-fallback', 'alice:new'],
+      activeSession: 'alice:new',
+    })
+    expect(result.current.workspaces.terminal2.windows[1]).toMatchObject({
+      boundSessions: ['later-fallback'],
+      activeSession: 'later-fallback',
+    })
+    expect(result.current.workspaces.terminal3.windows[0].boundSessions).toEqual(['bob:new'])
+    expect(result.current.workspaces.terminal3.windows[1].boundSessions).toEqual(['new'])
+
+    expect(result.current.assignedSessions.get('alice:new')).toMatchObject({
+      workspaceId: 'terminal1',
+      windowId: 'terminal1-window-0',
+    })
+    expect([...result.current.assignedSessions.keys()].filter(key => key === 'alice:new')).toHaveLength(1)
+
+    const visibleTerminalWindowCandidates = Object.values(result.current.workspaces)
+      .flatMap(workspace => workspace.windows.slice(0, workspace.windowCount))
+      .filter(window => window.boundSessions.includes('alice:new'))
+    expect(visibleTerminalWindowCandidates).toHaveLength(1)
+  })
+
+  it('renames only the qualified user when the old and new bare aliases are ambiguous', async () => {
+    const { result } = renderSession()
+
+    act(() => {
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'old', 'alice')
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-1', 'old', 'bob')
+      result.current.addSessionToWindow('terminal2', 'terminal2-window-0', 'old')
+      result.current.addSessionToWindow('terminal2', 'terminal2-window-1', 'new-fallback')
+      result.current.addSessionToWindow('terminal2', 'terminal2-window-1', 'new', 'alice')
+      result.current.addSessionToWindow('terminal3', 'terminal3-window-0', 'new', 'bob')
+      result.current.addSessionToWindow('terminal3', 'terminal3-window-1', 'new')
+    })
+
+    await act(async () => {
+      expect(await result.current.renameSession('old', 'new', 'alice')).toBe(true)
+    })
+
+    expect(result.current.workspaces.terminal1.windows[0]).toMatchObject({
+      boundSessions: ['alice:new'],
+      activeSession: 'alice:new',
+    })
+    expect(result.current.workspaces.terminal1.windows[1]).toMatchObject({
+      boundSessions: ['bob:old'],
+      activeSession: 'bob:old',
+    })
+    expect(result.current.workspaces.terminal2.windows[0]).toMatchObject({
+      boundSessions: ['old'],
+      activeSession: 'old',
+    })
+    expect(result.current.workspaces.terminal2.windows[1]).toMatchObject({
+      boundSessions: ['new-fallback'],
+      activeSession: 'new-fallback',
+    })
+    expect(result.current.workspaces.terminal3.windows[0].boundSessions).toEqual(['bob:new'])
+    expect(result.current.workspaces.terminal3.windows[1].boundSessions).toEqual(['new'])
+
+    const bindings = Object.values(result.current.workspaces)
+      .flatMap(workspace => workspace.windows)
+      .flatMap(window => window.boundSessions)
+    expect(bindings.filter(binding => binding === 'alice:new')).toHaveLength(1)
+    expect(bindings).toEqual(expect.arrayContaining(['bob:old', 'old', 'bob:new', 'new']))
+  })
+
+  it('keeps a bare rename exact when qualified same-name sessions also exist', async () => {
+    const { result } = renderSession()
+
+    act(() => {
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'old', 'alice')
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-1', 'old', 'bob')
+      result.current.addSessionToWindow('terminal2', 'terminal2-window-0', 'old')
+    })
+
+    await act(async () => {
+      expect(await result.current.renameSession('old', 'new')).toBe(true)
+    })
+
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:old'])
+    expect(result.current.workspaces.terminal1.windows[1].boundSessions).toEqual(['bob:old'])
+    expect(result.current.workspaces.terminal2.windows[0]).toMatchObject({
+      boundSessions: ['new'],
+      activeSession: 'new',
+    })
   })
 
   it('returns false when API call fails', async () => {
@@ -1936,7 +2093,281 @@ describe('persistent agent actions', () => {
 })
 
 // ──────────────────────────────────────────────
-// 6. clampWindowCount — boundary values
+// 6. canonical slots, reveal contract, viewport persistence, and preset identity
+// ──────────────────────────────────────────────
+describe('canonical terminal layout invariants', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    setViewportWidth(1280)
+  })
+
+  it('stores four canonical slots in every default workspace while windowCount remains visibility only', () => {
+    const { result } = renderSession()
+
+    ;(['terminal1', 'terminal2', 'terminal3'] as const).forEach(workspaceId => {
+      expect(result.current.workspaces[workspaceId].windowCount).toBe(2)
+      expect(result.current.workspaces[workspaceId].windows.map(window => window.id)).toEqual([
+        `${workspaceId}-window-0`,
+        `${workspaceId}-window-1`,
+        `${workspaceId}-window-2`,
+        `${workspaceId}-window-3`,
+      ])
+    })
+  })
+
+  it('preserves hidden bindings, active choice, and assignedSessions through shrink, re-expand, and reload', () => {
+    const initial = renderSession()
+
+    act(() => {
+      initial.result.current.setWindowCount('terminal1', 4)
+      initial.result.current.addSessionToWindow('terminal1', 'terminal1-window-3', 'hidden-a', 'alice')
+      initial.result.current.addSessionToWindow('terminal1', 'terminal1-window-3', 'hidden-b', 'alice')
+      initial.result.current.setActiveSession('terminal1', 'terminal1-window-3', 'alice:hidden-a')
+      initial.result.current.setWindowCount('terminal1', 1)
+    })
+
+    expect(initial.result.current.workspaces.terminal1.windows).toHaveLength(4)
+    expect(initial.result.current.workspaces.terminal1.windows[3]).toMatchObject({
+      boundSessions: ['alice:hidden-a', 'alice:hidden-b'],
+      activeSession: 'alice:hidden-a',
+    })
+    expect(initial.result.current.assignedSessions.get('alice:hidden-a')).toMatchObject({
+      windowId: 'terminal1-window-3',
+      windowIndex: 4,
+    })
+
+    act(() => initial.result.current.setWindowCount('terminal1', 4))
+    expect(initial.result.current.workspaces.terminal1.windows[3].activeSession).toBe('alice:hidden-a')
+    act(() => initial.result.current.setWindowCount('terminal1', 1))
+    initial.unmount()
+
+    const reloaded = renderSession()
+    expect(reloaded.result.current.workspaces.terminal1.windowCount).toBe(1)
+    expect(reloaded.result.current.workspaces.terminal1.windows[3]).toMatchObject({
+      boundSessions: ['alice:hidden-a', 'alice:hidden-b'],
+      activeSession: 'alice:hidden-a',
+    })
+  })
+
+  it('persists all four slots independently in mobile, tablet, and desktop viewport buckets', () => {
+    const buckets = [
+      { width: 390, session: 'mobile-hidden' },
+      { width: 900, session: 'tablet-hidden' },
+      { width: 1280, session: 'desktop-hidden' },
+    ]
+
+    buckets.forEach(({ width, session }) => {
+      setViewportWidth(width)
+      const mounted = renderSession()
+      act(() => {
+        mounted.result.current.addSessionToWindow('terminal2', 'terminal2-window-3', session)
+        mounted.result.current.setWindowCount('terminal2', 1)
+      })
+      mounted.unmount()
+    })
+
+    buckets.forEach(({ width, session }) => {
+      setViewportWidth(width)
+      const reloaded = renderSession()
+      expect(reloaded.result.current.workspaces.terminal2.windows).toHaveLength(4)
+      expect(reloaded.result.current.workspaces.terminal2.windows[3].boundSessions).toEqual([session])
+      expect(reloaded.result.current.workspaces.terminal2.windowCount).toBe(1)
+      reloaded.unmount()
+    })
+  })
+
+  it('reveals a hidden canonical slot before the navigation slice focuses it', () => {
+    const { result } = renderSession()
+
+    act(() => result.current.setWindowCount('terminal3', 1))
+    act(() => result.current.revealWindow('terminal3', 'terminal3-window-2'))
+
+    expect(result.current.workspaces.terminal3.windowCount).toBe(3)
+    expect(result.current.windowRevealRequest).toMatchObject({
+      workspaceId: 'terminal3',
+      windowId: 'terminal3-window-2',
+    })
+    expect(result.current.focusedWindowKey).toBeNull()
+
+    act(() => result.current.setFocusedWindowKey('terminal3-terminal3-window-2'))
+    expect(result.current.focusedWindowKey).toBe('terminal3-terminal3-window-2')
+  })
+
+  it('leaves visibility and reveal state unchanged for malformed or noncanonical targets', () => {
+    const { result } = renderSession()
+
+    act(() => result.current.setWindowCount('terminal3', 1))
+    expect(result.current.windowRevealRequest).toBeNull()
+
+    act(() => result.current.revealWindow('terminal3', 'terminal3-window-03'))
+    expect(result.current.workspaces.terminal3.windowCount).toBe(1)
+    expect(result.current.windowRevealRequest).toBeNull()
+
+    act(() => result.current.revealWindow('missing-workspace' as never, 'missing-workspace-window-0'))
+    expect(result.current.workspaces.terminal3.windowCount).toBe(1)
+    expect(result.current.windowRevealRequest).toBeNull()
+  })
+
+  it('issues a fresh increasing request ID for every repeated valid reveal', () => {
+    const { result } = renderSession()
+
+    act(() => result.current.revealWindow('terminal2', 'terminal2-window-1'))
+    const firstRequest = result.current.windowRevealRequest
+    act(() => result.current.revealWindow('terminal2', 'terminal2-window-1'))
+    const secondRequest = result.current.windowRevealRequest
+
+    expect(firstRequest).toMatchObject({ workspaceId: 'terminal2', windowId: 'terminal2-window-1' })
+    expect(secondRequest).toMatchObject({ workspaceId: 'terminal2', windowId: 'terminal2-window-1' })
+    expect(secondRequest!.requestId).toBeGreaterThan(firstRequest!.requestId)
+  })
+
+  it('normalizes stored presets and applied layouts to one claimable slot per safe identity', () => {
+    localStorage.setItem('chrote-dashboard-presets', JSON.stringify([{
+      id: 'historical',
+      name: 'Historical duplicates',
+      createdAt: 1,
+      workspaces: {
+        terminal1: {
+          windowCount: 2,
+          windows: [
+            { id: 'old-0', boundSessions: ['alice:solo', 'alice:shared'], activeSession: 'alice:solo', colorIndex: 0 },
+            { id: 'old-1', boundSessions: ['solo', 'fallback'], activeSession: 'solo', colorIndex: 1 },
+          ],
+        },
+        terminal2: {
+          windowCount: 2,
+          windows: [
+            { id: 'old-2', boundSessions: ['bob:shared', 'shared'], activeSession: 'shared', colorIndex: 2 },
+            { id: 'old-3', boundSessions: ['alice:solo', 'keep'], activeSession: 'alice:solo', colorIndex: 3 },
+          ],
+        },
+      },
+    }]))
+
+    const { result } = renderSession()
+    const preset = result.current.layoutPresets[0]
+
+    expect(preset.workspaces.terminal1.windows).toHaveLength(4)
+    expect(preset.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:solo', 'alice:shared'])
+    expect(preset.workspaces.terminal1.windows[1]).toMatchObject({
+      boundSessions: ['fallback'],
+      activeSession: 'fallback',
+    })
+    expect(preset.workspaces.terminal2.windows[0].boundSessions).toEqual(['bob:shared', 'shared'])
+    expect(preset.workspaces.terminal2.windows[1]).toMatchObject({
+      boundSessions: ['keep'],
+      activeSession: 'keep',
+    })
+
+    act(() => result.current.loadPreset('historical'))
+    const claimableSlots = Object.values(result.current.workspaces)
+      .flatMap(workspace => workspace.windows)
+      .filter(window => window.boundSessions.includes('alice:solo') || window.boundSessions.includes('solo'))
+    expect(claimableSlots).toHaveLength(1)
+    expect(result.current.assignedSessions.get('alice:solo')).toMatchObject({
+      workspaceId: 'terminal1',
+      windowId: 'terminal1-window-0',
+    })
+  })
+
+  it('keeps the stable first safe identity, exact-dedupes, preserves ambiguous users, and repairs only invalid active choices', () => {
+    localStorage.setItem('chrote-dashboard-presets', JSON.stringify([{
+      id: 'identity-audit',
+      name: 'Identity audit',
+      createdAt: 2,
+      workspaces: {
+        terminal1: {
+          windowCount: 4,
+          windows: [
+            {
+              id: 'legacy-0',
+              boundSessions: ['solo', 'solo', 'alice:solo', 'keep-active'],
+              activeSession: 'keep-active',
+              colorIndex: 0,
+            },
+            {
+              id: 'legacy-1',
+              boundSessions: ['alice:solo', 'fallback'],
+              activeSession: 'alice:solo',
+              colorIndex: 1,
+            },
+            {
+              id: 'legacy-2',
+              boundSessions: ['alice:shared', 'bob:shared', 'shared', 'shared'],
+              activeSession: 'bob:shared',
+              colorIndex: 2,
+            },
+            {
+              id: 'legacy-3',
+              boundSessions: ['first', 'second'],
+              activeSession: 'missing',
+              colorIndex: 3,
+            },
+            {
+              id: 'legacy-4',
+              boundSessions: ['must-be-dropped'],
+              activeSession: 'must-be-dropped',
+              colorIndex: 4,
+            },
+          ],
+        },
+      },
+    }]))
+
+    const { result } = renderSession()
+    const windows = result.current.layoutPresets[0].workspaces.terminal1.windows
+
+    expect(windows).toHaveLength(4)
+    expect(windows[0]).toMatchObject({
+      id: 'terminal1-window-0',
+      boundSessions: ['solo', 'keep-active'],
+      activeSession: 'keep-active',
+    })
+    expect(windows[1]).toMatchObject({ boundSessions: ['fallback'], activeSession: 'fallback' })
+    expect(windows[2]).toMatchObject({
+      boundSessions: ['alice:shared', 'bob:shared', 'shared'],
+      activeSession: 'bob:shared',
+    })
+    expect(windows[3]).toMatchObject({ boundSessions: ['first', 'second'], activeSession: 'first' })
+    expect(windows.flatMap(window => window.boundSessions)).not.toContain('must-be-dropped')
+  })
+
+  it('sanitizes and deduplicates the save-current-layout path', async () => {
+    const { result } = renderSession()
+
+    act(() => {
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'old')
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'existing')
+    })
+    await act(async () => {
+      expect(await result.current.renameSession('old', 'existing')).toBe(true)
+    })
+    expect(result.current.workspaces.terminal1.windows[0]).toMatchObject({
+      boundSessions: ['existing'],
+      activeSession: 'existing',
+    })
+
+    const liveClaims = Object.values(result.current.workspaces)
+      .flatMap(workspace => workspace.windows)
+      .filter(window => window.boundSessions.includes('existing'))
+    expect(liveClaims).toHaveLength(1)
+
+    act(() => expect(result.current.saveCurrentLayout('sanitized')).toBe(true))
+    const saved = result.current.layoutPresets.find(preset => preset.name === 'sanitized')
+    expect(saved?.workspaces.terminal1.windows).toHaveLength(4)
+    expect(saved?.workspaces.terminal1.windows[0]).toMatchObject({
+      boundSessions: ['existing'],
+      activeSession: 'existing',
+    })
+    const savedClaims = Object.values(saved!.workspaces)
+      .flatMap(workspace => workspace.windows)
+      .filter(window => window.boundSessions.includes('existing'))
+    expect(savedClaims).toHaveLength(1)
+  })
+})
+
+// ──────────────────────────────────────────────
+// 7. clampWindowCount — boundary values
 // ──────────────────────────────────────────────
 describe('clampWindowCount (via setWindowCount)', () => {
   beforeEach(() => {
@@ -1951,7 +2382,7 @@ describe('clampWindowCount (via setWindowCount)', () => {
     })
 
     expect(result.current.workspaces.terminal1.windowCount).toBe(1)
-    expect(result.current.workspaces.terminal1.windows).toHaveLength(1)
+    expect(result.current.workspaces.terminal1.windows).toHaveLength(4)
   })
 
   it('clamps 5 to 4', () => {
@@ -1973,7 +2404,7 @@ describe('clampWindowCount (via setWindowCount)', () => {
     })
 
     expect(result.current.workspaces.terminal1.windowCount).toBe(1)
-    expect(result.current.workspaces.terminal1.windows).toHaveLength(1)
+    expect(result.current.workspaces.terminal1.windows).toHaveLength(4)
   })
 
   it('keeps 4 as 4', () => {

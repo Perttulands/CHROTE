@@ -5,7 +5,12 @@ import TerminalArea from './TerminalArea'
 const setWindowCount = vi.fn()
 const clearStaleSessionsFromWindow = vi.fn()
 const reconnectIframe = vi.fn()
-const sessionState = vi.hoisted(() => ({ isDragging: false, isMobile: false }))
+const sessionState = vi.hoisted(() => ({
+  isDragging: false,
+  isMobile: false,
+  windowCount: 2,
+  windowRevealRequest: null as { workspaceId: string; windowId: string; requestId: number } | null,
+}))
 
 vi.mock('../context/SessionContext', () => ({
   useSession: () => ({
@@ -14,16 +19,19 @@ vi.mock('../context/SessionContext', () => ({
     ],
     workspaces: {
       terminal1: {
-        windowCount: 2,
+        windowCount: sessionState.windowCount,
         windows: [
           { id: 'terminal1-window-0', boundSessions: ['alice:alpha', 'bare-session'], activeSession: 'alice:alpha', colorIndex: 0 },
           { id: 'terminal1-window-1', boundSessions: ['bob:beta'], activeSession: 'bob:beta', colorIndex: 1 },
+          { id: 'terminal1-window-2', boundSessions: [], activeSession: null, colorIndex: 2 },
+          { id: 'terminal1-window-3', boundSessions: ['alice:hidden'], activeSession: 'alice:hidden', colorIndex: 3 },
         ],
       },
     },
     setWindowCount,
     clearStaleSessionsFromWindow,
     isDragging: sessionState.isDragging,
+    windowRevealRequest: sessionState.windowRevealRequest,
   }),
 }))
 
@@ -36,16 +44,20 @@ vi.mock('./IframePool', () => ({
 }))
 
 vi.mock('./TerminalWindow', () => ({
-  default: ({ window, refitNonce, isDragging }: { window: { id: string }, refitNonce: number, isDragging: boolean }) => (
-    <div data-testid={`terminal-window-${window.id}`} data-refit-nonce={refitNonce} data-dragging={String(isDragging)} />
+  default: ({ window, refitNonce, isDragging, style }: { window: { id: string }, refitNonce: number, isDragging: boolean, style?: React.CSSProperties }) => (
+    <div data-testid={`terminal-window-${window.id}`} data-refit-nonce={refitNonce} data-dragging={String(isDragging)} style={style} />
   ),
 }))
 
 describe('TerminalArea layout controls context menu', () => {
+  const viewControls = () => within(screen.getByRole('group', { name: 'Window view controls' }))
+
   beforeEach(() => {
     vi.clearAllMocks()
     sessionState.isDragging = false
     sessionState.isMobile = false
+    sessionState.windowCount = 2
+    sessionState.windowRevealRequest = null
   })
 
   it('reconnects all visible session frames from the layout controls menu', () => {
@@ -103,5 +115,108 @@ describe('TerminalArea layout controls context menu', () => {
 
     expect(screen.getByTestId('terminal-window-terminal1-window-0')).toHaveAttribute('data-dragging', 'true')
     expect(screen.getByTestId('terminal-window-terminal1-window-1')).toHaveAttribute('data-dragging', 'false')
+  })
+
+  it('selects a newly revealed hidden slot as the active mobile window after it enters the visible slice', () => {
+    sessionState.isMobile = true
+    sessionState.windowCount = 2
+    sessionState.windowRevealRequest = {
+      workspaceId: 'terminal1',
+      windowId: 'terminal1-window-3',
+      requestId: 1,
+    }
+
+    const { rerender } = render(<TerminalArea workspaceId="terminal1" active />)
+
+    expect(viewControls().getByRole('button', { name: 'View window 1' })).toHaveClass('active')
+    expect(viewControls().queryByRole('button', { name: 'View window 4' })).not.toBeInTheDocument()
+
+    sessionState.windowCount = 4
+    rerender(<TerminalArea workspaceId="terminal1" active />)
+
+    expect(viewControls().getByRole('button', { name: 'View window 4' })).toHaveClass('active')
+    expect(screen.getByTestId('terminal-window-terminal1-window-3')).toHaveStyle({ display: 'flex' })
+    expect(screen.getByTestId('terminal-window-terminal1-window-0')).toHaveStyle({ display: 'none' })
+  })
+
+  it('consumes two increasing matching requests while ignoring stale and other-workspace requests', () => {
+    sessionState.isMobile = true
+    sessionState.windowCount = 4
+
+    const { rerender } = render(<TerminalArea workspaceId="terminal1" active />)
+    sessionState.windowRevealRequest = {
+      workspaceId: 'terminal2',
+      windowId: 'terminal2-window-3',
+      requestId: 4,
+    }
+    rerender(<TerminalArea workspaceId="terminal1" active />)
+    expect(viewControls().getByRole('button', { name: 'View window 1' })).toHaveClass('active')
+
+    sessionState.windowRevealRequest = {
+      workspaceId: 'terminal1',
+      windowId: 'terminal1-window-2',
+      requestId: 5,
+    }
+    rerender(<TerminalArea workspaceId="terminal1" active />)
+    expect(viewControls().getByRole('button', { name: 'View window 3' })).toHaveClass('active')
+
+    sessionState.windowRevealRequest = {
+      workspaceId: 'terminal1',
+      windowId: 'terminal1-window-0',
+      requestId: 5,
+    }
+    rerender(<TerminalArea workspaceId="terminal1" active />)
+    expect(viewControls().getByRole('button', { name: 'View window 3' })).toHaveClass('active')
+
+    sessionState.windowRevealRequest = {
+      workspaceId: 'terminal1',
+      windowId: 'terminal1-window-1',
+      requestId: 3,
+    }
+    rerender(<TerminalArea workspaceId="terminal1" active />)
+    expect(viewControls().getByRole('button', { name: 'View window 3' })).toHaveClass('active')
+
+    sessionState.windowRevealRequest = {
+      workspaceId: 'terminal1',
+      windowId: 'terminal1-window-1',
+      requestId: 6,
+    }
+    rerender(<TerminalArea workspaceId="terminal1" active />)
+    expect(viewControls().getByRole('button', { name: 'View window 2' })).toHaveClass('active')
+
+    sessionState.windowRevealRequest = {
+      workspaceId: 'terminal2',
+      windowId: 'terminal2-window-3',
+      requestId: 7,
+    }
+    rerender(<TerminalArea workspaceId="terminal1" active />)
+    expect(viewControls().getByRole('button', { name: 'View window 2' })).toHaveClass('active')
+
+    sessionState.windowRevealRequest = {
+      workspaceId: 'terminal1',
+      windowId: 'terminal1-window-0',
+      requestId: 5,
+    }
+    rerender(<TerminalArea workspaceId="terminal1" active />)
+    expect(viewControls().getByRole('button', { name: 'View window 2' })).toHaveClass('active')
+  })
+
+  it('keeps desktop windows visible while consuming a matching reveal target for later mobile use', () => {
+    sessionState.windowCount = 4
+    sessionState.windowRevealRequest = {
+      workspaceId: 'terminal1',
+      windowId: 'terminal1-window-3',
+      requestId: 8,
+    }
+
+    const { rerender } = render(<TerminalArea workspaceId="terminal1" active />)
+    expect(screen.getByTestId('terminal-window-terminal1-window-0')).toHaveStyle({ display: 'flex' })
+    expect(screen.getByTestId('terminal-window-terminal1-window-3')).toHaveStyle({ display: 'flex' })
+
+    sessionState.isMobile = true
+    rerender(<TerminalArea workspaceId="terminal1" active />)
+    expect(viewControls().getByRole('button', { name: 'View window 4' })).toHaveClass('active')
+    expect(screen.getByTestId('terminal-window-terminal1-window-3')).toHaveStyle({ display: 'flex' })
+    expect(screen.getByTestId('terminal-window-terminal1-window-0')).toHaveStyle({ display: 'none' })
   })
 })

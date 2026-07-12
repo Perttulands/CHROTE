@@ -244,6 +244,12 @@ export interface TerminalWorkspace {
   windowCount: number // 1-4
 }
 
+export interface WindowRevealRequest {
+  workspaceId: WorkspaceId
+  windowId: string
+  requestId: number
+}
+
 export interface CreateSessionAttachTarget {
   workspaceId: WorkspaceId
   windowId: string
@@ -296,6 +302,9 @@ export interface DashboardState {
   // Focused window for keyboard navigation (workspaceId-windowId format)
   focusedWindowKey: string | null
 
+  // Canonical window requested for reveal; TerminalArea consumes this for mobile selection.
+  windowRevealRequest: WindowRevealRequest | null
+
   // Layout presets
   layoutPresets: LayoutPreset[]
 }
@@ -345,6 +354,7 @@ export interface DashboardActions {
 
   // Focus tracking for keyboard navigation
   setFocusedWindowKey: (key: string | null) => void
+  revealWindow: (workspaceId: WorkspaceId, windowId: string) => void
 
   // Layout presets
   saveCurrentLayout: (name: string) => boolean

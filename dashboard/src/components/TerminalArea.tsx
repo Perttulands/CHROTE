@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useSession } from '../context/SessionContext'
 import TerminalWindow from './TerminalWindow'
 import { useMediaQuery } from '../hooks/useMediaQuery'
@@ -14,7 +14,7 @@ interface TerminalAreaProps {
 }
 
 function TerminalArea({ workspaceId, active = true }: TerminalAreaProps) {
-  const { workspaces, setWindowCount, clearStaleSessionsFromWindow, isDragging, sessions } = useSession()
+  const { workspaces, setWindowCount, clearStaleSessionsFromWindow, isDragging, sessions, windowRevealRequest } = useSession()
   const pool = useIframePool()
   const workspace = workspaces[workspaceId]
   const windows = workspace.windows
@@ -22,6 +22,7 @@ function TerminalArea({ workspaceId, active = true }: TerminalAreaProps) {
 
   const isMobile = useMediaQuery('(max-width: 768px)')
   const [mobileActiveIndex, setMobileActiveIndex] = useState(0)
+  const lastConsumedRevealRequestId = useRef(0)
   const [refitNonce, setRefitNonce] = useState(0)
   const [controlsMenu, setControlsMenu] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 })
   const controlsMenuPosition = useViewportMenuPosition<HTMLDivElement>(
@@ -48,6 +49,20 @@ function TerminalArea({ workspaceId, active = true }: TerminalAreaProps) {
       setMobileActiveIndex(0)
     }
   }, [windowCount, mobileActiveIndex])
+
+  // A reveal first expands windowCount in SessionContext. Consume the matching
+  // request only once that canonical slot is actually part of this area's
+  // visible slice, so mobile navigation lands on the revealed window.
+  useEffect(() => {
+    if (!windowRevealRequest || windowRevealRequest.workspaceId !== workspaceId) return
+    if (windowRevealRequest.requestId <= lastConsumedRevealRequestId.current) return
+
+    const targetIndex = windows.findIndex(window => window.id === windowRevealRequest.windowId)
+    if (targetIndex < 0 || targetIndex >= windowCount) return
+
+    lastConsumedRevealRequestId.current = windowRevealRequest.requestId
+    setMobileActiveIndex(targetIndex)
+  }, [windowCount, windowRevealRequest, windows, workspaceId])
 
   useEffect(() => {
     if (!controlsMenu.show) return
@@ -118,15 +133,18 @@ function TerminalArea({ workspaceId, active = true }: TerminalAreaProps) {
           <>
             <span className="layout-label">View:</span>
             <div className="mobile-controls-row" style={{ display: 'flex', gap: '4px', alignItems: 'center', flex: 1, overflowX: 'auto' }}>
-              {Array.from({ length: windowCount }).map((_, idx) => (
-                <button
-                  key={`view-${idx}`}
-                  className={`layout-btn ${mobileActiveIndex === idx ? 'active' : ''}`}
-                  onClick={() => setMobileActiveIndex(idx)}
-                >
-                  {idx + 1}
-                </button>
-              ))}
+              <div role="group" aria-label="Window view controls" style={{ display: 'contents' }}>
+                {Array.from({ length: windowCount }).map((_, idx) => (
+                  <button
+                    key={`view-${idx}`}
+                    className={`layout-btn ${mobileActiveIndex === idx ? 'active' : ''}`}
+                    onClick={() => setMobileActiveIndex(idx)}
+                    aria-label={`View window ${idx + 1}`}
+                  >
+                    {idx + 1}
+                  </button>
+                ))}
+              </div>
 
               <div style={{ width: '1px', height: '16px', background: 'var(--divider)', margin: '0 8px' }}></div>
 

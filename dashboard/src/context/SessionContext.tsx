@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, ReactNode } from 'react'
-import type { DashboardContextType, TmuxSession, SessionBankEntry, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance, WorkspaceId, TerminalWorkspace, LayoutPreset, LaunchUser, CreateSessionOptions, PersistentAgentPayload, SendToSessionPayload } from '../types'
-import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE, MAX_PRESETS, TERMINAL_WORKSPACE_IDS, getSessionKey, getSessionPrefixForUser, normalizeTerminalUsers, resolveLaunchUser } from '../types'
+import type { DashboardContextType, TmuxSession, SessionBankEntry, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance, WorkspaceId, TerminalWorkspace, LayoutPreset, LaunchUser, CreateSessionOptions, PersistentAgentPayload, SendToSessionPayload, WindowRevealRequest } from '../types'
+import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE, MAX_PRESETS, TERMINAL_WORKSPACE_IDS, getSessionKey, getSessionNameFromKey, getSessionPrefixForUser, getSessionUserFromKey, normalizeTerminalUsers, resolveLaunchUser } from '../types'
 import { useToast } from './ToastContext'
 
 // Apply tmux appearance settings via API (hot-reload)
@@ -37,6 +37,7 @@ const PRESETS_STORAGE_KEY = 'chrote-dashboard-presets'
 const SETTINGS_SCHEMA_VERSION = 2
 
 const WORKSPACE_IDS: WorkspaceId[] = [...TERMINAL_WORKSPACE_IDS]
+const CANONICAL_WINDOW_COUNT = 4
 const VIEWPORT_BUCKETS = ['mobile', 'tablet', 'desktop'] as const
 type ViewportBucket = typeof VIEWPORT_BUCKETS[number]
 
@@ -214,7 +215,7 @@ function saveState(state: StoredStateV2, viewportBucket: ViewportBucket): void {
       settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
       layoutsByViewport: {
         ...existing.layoutsByViewport,
-        [viewportBucket]: { workspaces: cloneWorkspaces(state.workspaces) },
+        [viewportBucket]: { workspaces: sanitizeWorkspaces(state.workspaces) },
       },
       sidebarCollapsed: state.sidebarCollapsed,
       settings: state.settings,
@@ -229,9 +230,8 @@ function clampWindowCount(count: number): number {
   return Math.max(1, Math.min(4, count))
 }
 
-function createDefaultWindows(workspaceId: WorkspaceId, count: number): TerminalWindow[] {
-  const safeCount = clampWindowCount(count)
-  return Array.from({ length: safeCount }, (_, i) => ({
+function createDefaultWindows(workspaceId: WorkspaceId): TerminalWindow[] {
+  return Array.from({ length: CANONICAL_WINDOW_COUNT }, (_, i) => ({
     id: `${workspaceId}-window-${i}`,
     boundSessions: [],
     activeSession: null,
@@ -241,7 +241,7 @@ function createDefaultWindows(workspaceId: WorkspaceId, count: number): Terminal
 
 function createDefaultWorkspace(workspaceId: WorkspaceId, count: number): TerminalWorkspace {
   return {
-    windows: createDefaultWindows(workspaceId, count),
+    windows: createDefaultWindows(workspaceId),
     windowCount: clampWindowCount(count),
   }
 }
@@ -348,33 +348,118 @@ function staleSessionKeysInWorkspaces(workspaces: Record<WorkspaceId, TerminalWo
   return stale
 }
 
-function sanitizeWorkspace(workspaceId: WorkspaceId, wsRaw: unknown): TerminalWorkspace {
+function sanitizeWorkspaceSlots(workspaceId: WorkspaceId, wsRaw: unknown): TerminalWorkspace {
   const ws = isRecord(wsRaw) ? wsRaw : {}
   const windowCount = clampWindowCount(typeof ws.windowCount === 'number' ? ws.windowCount : 2)
-  const windowsRaw = Array.isArray(ws.windows) ? (ws.windows as TerminalWindow[]) : []
+  const windowsRaw = Array.isArray(ws.windows) ? ws.windows : []
 
-  const windows: TerminalWindow[] = Array.from({ length: windowCount }, (_, i) => {
-    const existing = windowsRaw[i]
+  const windows: TerminalWindow[] = Array.from({ length: CANONICAL_WINDOW_COUNT }, (_, i) => {
+    const existing = isRecord(windowsRaw[i]) ? windowsRaw[i] : {}
+    const boundSessions = Array.isArray(existing.boundSessions)
+      ? existing.boundSessions.filter((session): session is string => typeof session === 'string' && session.length > 0)
+      : []
+    const activeSession = existing.activeSession === 'INIT-PENDING'
+      ? existing.activeSession
+      : (typeof existing.activeSession === 'string'
+          ? (boundSessions.includes(existing.activeSession) ? existing.activeSession : (boundSessions[0] ?? null))
+          : null)
     return {
       id: `${workspaceId}-window-${i}`,
-      boundSessions: existing?.boundSessions ?? [],
-      activeSession: existing?.activeSession ?? null,
-      colorIndex: typeof existing?.colorIndex === 'number' ? existing.colorIndex : i,
+      boundSessions,
+      activeSession,
+      colorIndex: typeof existing.colorIndex === 'number' ? existing.colorIndex : i,
     }
   })
 
-  return {
-    windows,
-    windowCount,
+  return { windows, windowCount }
+}
+
+function qualifiedUsersBySessionName(workspaces: Record<WorkspaceId, TerminalWorkspace>): Map<string, Set<LaunchUser>> {
+  const qualifiedUsers = new Map<string, Set<LaunchUser>>()
+  WORKSPACE_IDS.forEach(workspaceId => {
+    workspaces[workspaceId].windows.forEach(window => {
+      window.boundSessions.forEach(sessionKey => {
+        const unixUser = getSessionUserFromKey(sessionKey)
+        if (!unixUser) return
+        const sessionName = getSessionNameFromKey(sessionKey)
+        const users = qualifiedUsers.get(sessionName) ?? new Set<LaunchUser>()
+        users.add(unixUser)
+        qualifiedUsers.set(sessionName, users)
+      })
+    })
+  })
+  return qualifiedUsers
+}
+
+function sessionBindingIdentity(sessionKey: string, qualifiedUsers: Map<string, Set<LaunchUser>>): string {
+  const sessionName = getSessionNameFromKey(sessionKey)
+  const unixUser = getSessionUserFromKey(sessionKey)
+  if (unixUser) return `qualified:${getSessionKey(sessionName, unixUser)}`
+
+  const users = qualifiedUsers.get(sessionName)
+  if (users?.size === 1) {
+    return `qualified:${getSessionKey(sessionName, users.values().next().value ?? '')}`
   }
+  return `bare:${sessionKey}`
+}
+
+function safeSessionAliases(
+  sessionName: string,
+  unixUser: LaunchUser | undefined,
+  qualifiedUsers: Map<string, Set<LaunchUser>>,
+): string[] {
+  const sessionKey = getSessionKey(sessionName, unixUser)
+  if (!unixUser) return [sessionKey]
+
+  const users = new Set(qualifiedUsers.get(sessionName) ?? [])
+  users.add(unixUser)
+  return users.size === 1 ? [sessionKey, sessionName] : [sessionKey]
+}
+
+function deduplicateWorkspaceBindings(
+  workspaces: Record<WorkspaceId, TerminalWorkspace>,
+  targetSessionKey?: string,
+): Record<WorkspaceId, TerminalWorkspace> {
+  const qualifiedUsers = qualifiedUsersBySessionName(workspaces)
+  const targetIdentity = targetSessionKey
+    ? sessionBindingIdentity(targetSessionKey, qualifiedUsers)
+    : null
+  const seen = new Set<string>()
+
+  return WORKSPACE_IDS.reduce((next, workspaceId) => {
+    const workspace = workspaces[workspaceId]
+    next[workspaceId] = {
+      ...workspace,
+      windows: workspace.windows.map(window => {
+        const originalBound = window.boundSessions
+        const boundSessions = originalBound.filter(sessionKey => {
+          const identity = sessionBindingIdentity(sessionKey, qualifiedUsers)
+          if (targetIdentity !== null && identity !== targetIdentity) return true
+          if (seen.has(identity)) return false
+          seen.add(identity)
+          return true
+        })
+        const activeWasRemoved = window.activeSession !== null
+          && window.activeSession !== 'INIT-PENDING'
+          && !boundSessions.includes(window.activeSession)
+        return {
+          ...window,
+          boundSessions,
+          activeSession: activeWasRemoved ? (boundSessions[0] ?? null) : window.activeSession,
+        }
+      }),
+    }
+    return next
+  }, {} as Record<WorkspaceId, TerminalWorkspace>)
 }
 
 function sanitizeWorkspaces(rawWorkspaces: unknown): Record<WorkspaceId, TerminalWorkspace> {
-  const workspaces = isRecord(rawWorkspaces) ? rawWorkspaces : {}
-  return WORKSPACE_IDS.reduce((acc, workspaceId) => {
-    acc[workspaceId] = sanitizeWorkspace(workspaceId, workspaces[workspaceId])
-    return acc
+  const raw = isRecord(rawWorkspaces) ? rawWorkspaces : {}
+  const canonical = WORKSPACE_IDS.reduce((workspaces, workspaceId) => {
+    workspaces[workspaceId] = sanitizeWorkspaceSlots(workspaceId, raw[workspaceId])
+    return workspaces
   }, {} as Record<WorkspaceId, TerminalWorkspace>)
+  return deduplicateWorkspaceBindings(canonical)
 }
 
 function migrateStoredState(raw: unknown, viewportBucket: ViewportBucket): LoadedStoredState {
@@ -417,27 +502,12 @@ function migrateStoredState(raw: unknown, viewportBucket: ViewportBucket): Loade
     if (Array.isArray(raw.windows) && typeof raw.windowCount === 'number') {
       const sidebarCollapsed = typeof raw.sidebarCollapsed === 'boolean' ? raw.sidebarCollapsed : false
       const settings = migrateSettings(raw.settings, raw.settingsSchemaVersion)
-      const windowCount = clampWindowCount(raw.windowCount)
-      const windowsRaw = raw.windows as TerminalWindow[]
-
-      const terminal1Windows: TerminalWindow[] = Array.from({ length: windowCount }, (_, i) => {
-        const existing = windowsRaw[i]
-        return {
-          id: `terminal1-window-${i}`,
-          boundSessions: existing?.boundSessions ?? [],
-          activeSession: existing?.activeSession ?? null,
-          colorIndex: typeof existing?.colorIndex === 'number' ? existing.colorIndex : i,
-        }
-      })
-
-      const workspaces: Record<WorkspaceId, TerminalWorkspace> = {
+      const workspaces = sanitizeWorkspaces({
         terminal1: {
-          windows: terminal1Windows,
-          windowCount,
+          windows: raw.windows,
+          windowCount: raw.windowCount,
         },
-        terminal2: createDefaultWorkspace('terminal2', 2),
-        terminal3: createDefaultWorkspace('terminal3', 2),
-      }
+      })
 
       return {
         workspaces,
@@ -484,6 +554,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<UserSettings>(stored?.settings ?? DEFAULT_SETTINGS)
   // Track which window has focus for keyboard navigation (workspaceId-windowId)
   const [focusedWindowKey, setFocusedWindowKey] = useState<string | null>(null)
+  const [windowRevealRequest, setWindowRevealRequest] = useState<WindowRevealRequest | null>(null)
+  const windowRevealRequestIdRef = useRef(0)
   // Layout presets
   const [layoutPresets, setLayoutPresets] = useState<LayoutPreset[]>(() => loadStoredPresets())
   const staleSessionCandidatesRef = useRef<Set<string>>(new Set())
@@ -755,37 +827,37 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
     setWorkspaces(prev => {
       const ws = prev[workspaceId]
-      if (!ws) return prev
-
-      const nextWindows = (() => {
-        if (newCount > ws.windows.length) {
-          const newWindows = [...ws.windows]
-          for (let i = ws.windows.length; i < newCount; i++) {
-            newWindows.push({
-              id: `${workspaceId}-window-${i}`,
-              boundSessions: [],
-              activeSession: null,
-              colorIndex: i,
-            })
-          }
-          return newWindows
-        }
-
-        if (newCount < ws.windows.length) {
-          return ws.windows.slice(0, newCount)
-        }
-
-        return ws.windows
-      })()
-
+      if (!ws || ws.windowCount === newCount) return prev
       return {
         ...prev,
-        [workspaceId]: {
-          ...ws,
-          windowCount: newCount,
-          windows: nextWindows,
-        },
+        [workspaceId]: { ...ws, windowCount: newCount },
       }
+    })
+  }, [])
+
+  const revealWindow = useCallback((workspaceId: WorkspaceId, windowId: string) => {
+    if (!WORKSPACE_IDS.includes(workspaceId)) return
+    const windowIndex = Array.from(
+      { length: CANONICAL_WINDOW_COUNT },
+      (_, index) => `${workspaceId}-window-${index}`,
+    ).indexOf(windowId)
+    if (windowIndex < 0) return
+
+    setWorkspaces(prev => {
+      const workspace = prev[workspaceId]
+      if (!workspace) return prev
+      const visibleCount = Math.max(workspace.windowCount, windowIndex + 1)
+      if (visibleCount === workspace.windowCount) return prev
+      return {
+        ...prev,
+        [workspaceId]: { ...workspace, windowCount: visibleCount },
+      }
+    })
+    windowRevealRequestIdRef.current += 1
+    setWindowRevealRequest({
+      workspaceId,
+      windowId,
+      requestId: windowRevealRequestIdRef.current,
     })
   }, [])
 
@@ -824,55 +896,44 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     aliases.forEach(alias => staleSessionCandidatesRef.current.delete(alias))
     protectStaleSessionAliases(aliases)
     setWorkspaces(prev => {
-      // 1) Remove session from ALL windows across ALL workspaces
-      const cleaned: Record<WorkspaceId, TerminalWorkspace> = { ...prev }
-      let targetWasEmpty = false
-      let targetFound = false
+      const targetWorkspace = prev[workspaceId]
+      if (!targetWorkspace?.windows.some(window => window.id === windowId)) return prev
 
-      WORKSPACE_IDS.forEach(wsId => {
-        const ws = prev[wsId]
-        const updatedWindows = ws.windows.map(w => {
-          const isTarget = wsId === workspaceId && w.id === windowId
-          const hasSession = aliases.some(alias => w.boundSessions.includes(alias))
-
-          if (!isTarget && !hasSession) return w
-
-          if (!isTarget && hasSession) {
-            const newBound = w.boundSessions.filter(s => !aliases.includes(s))
-            return {
-              ...w,
-              boundSessions: newBound,
-              activeSession: w.activeSession && aliases.includes(w.activeSession) ? (newBound[0] ?? null) : w.activeSession,
-            }
-          }
-
-          // target window
-          targetFound = true
-          targetWasEmpty = w.boundSessions.length === 0 || (w.boundSessions.length === 1 && hasSession)
-          return w
-        })
-
-        cleaned[wsId] = { ...ws, windows: updatedWindows }
-      })
-
-      if (!targetFound) return prev
-
-      // 2) Add to target window (within the selected workspace)
-      const ws = cleaned[workspaceId]
-      const updatedWindows = ws.windows.map(w => {
-        if (w.id !== windowId) return w
-        const boundSessions = w.boundSessions.filter(s => !aliases.includes(s))
-        return {
-          ...w,
-          boundSessions: [...boundSessions, sessionKey],
-          activeSession: targetWasEmpty || (w.activeSession && aliases.includes(w.activeSession)) ? sessionKey : w.activeSession,
-        }
-      })
-
-      return {
-        ...cleaned,
-        [workspaceId]: { ...ws, windows: updatedWindows },
+      const qualifiedUsers = qualifiedUsersBySessionName(prev)
+      if (unixUser) {
+        const users = qualifiedUsers.get(sessionName) ?? new Set<LaunchUser>()
+        users.add(unixUser)
+        qualifiedUsers.set(sessionName, users)
       }
+      const targetIdentity = sessionBindingIdentity(sessionKey, qualifiedUsers)
+
+      return WORKSPACE_IDS.reduce((next, wsId) => {
+        const workspace = prev[wsId]
+        next[wsId] = {
+          ...workspace,
+          windows: workspace.windows.map(window => {
+            const isTarget = wsId === workspaceId && window.id === windowId
+            const boundSessions = window.boundSessions.filter(bound => (
+              sessionBindingIdentity(bound, qualifiedUsers) !== targetIdentity
+            ))
+            if (isTarget) {
+              return {
+                ...window,
+                boundSessions: [...boundSessions, sessionKey],
+                activeSession: sessionKey,
+              }
+            }
+            const activeWasMoved = window.activeSession !== null
+              && sessionBindingIdentity(window.activeSession, qualifiedUsers) === targetIdentity
+            return {
+              ...window,
+              boundSessions,
+              activeSession: activeWasMoved ? (boundSessions[0] ?? null) : window.activeSession,
+            }
+          }),
+        }
+        return next
+      }, {} as Record<WorkspaceId, TerminalWorkspace>)
     })
   }, [protectStaleSessionAliases])
 
@@ -1094,6 +1155,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [refreshSessions, addToast])
 
   const renameSession = useCallback(async (oldName: string, newName: string, unixUser?: LaunchUser): Promise<boolean> => {
+    const qualifiedUsers = qualifiedUsersBySessionName(workspaces)
+    const newKey = getSessionKey(newName, unixUser)
+    const sourceAliases = safeSessionAliases(oldName, unixUser, qualifiedUsers)
+    const targetAliases = safeSessionAliases(newName, unixUser, qualifiedUsers)
+    const sourceAliasSet = new Set(sourceAliases)
+
     try {
       const query = unixUser ? `?unixUser=${encodeURIComponent(unixUser)}` : ''
       const response = await fetch(`/api/tmux/sessions/${encodeURIComponent(oldName)}${query}`, {
@@ -1103,11 +1170,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         signal: AbortSignal.timeout(10000),
       })
       if (response.ok) {
-        const oldKey = getSessionKey(oldName, unixUser)
-        const newKey = getSessionKey(newName, unixUser)
-        const renameAliases = [oldKey, oldName, newKey, newName]
-        renameAliases.forEach(alias => staleSessionCandidatesRef.current.delete(alias))
-        protectStaleSessionAliases(renameAliases)
+        sourceAliases.concat(targetAliases).forEach(alias => staleSessionCandidatesRef.current.delete(alias))
+        protectStaleSessionAliases(targetAliases)
         // Update window bindings to use the new name/key
         setWorkspaces(prev => {
           const next: Record<WorkspaceId, TerminalWorkspace> = { ...prev }
@@ -1117,12 +1181,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
               ...ws,
               windows: ws.windows.map(w => ({
                 ...w,
-                boundSessions: w.boundSessions.map(s => s === oldKey || s === oldName ? newKey : s),
-                activeSession: w.activeSession === oldKey || w.activeSession === oldName ? newKey : w.activeSession,
+                boundSessions: w.boundSessions.map(s => sourceAliasSet.has(s) ? newKey : s),
+                activeSession: w.activeSession && sourceAliasSet.has(w.activeSession) ? newKey : w.activeSession,
               })),
             }
           })
-          return next
+          return deduplicateWorkspaceBindings(next, newKey)
         })
         addToast(`Session renamed to '${newName}'`, 'success')
         refreshSessions()
@@ -1138,7 +1202,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       addToast(`Failed to rename session`, 'error')
       return false
     }
-  }, [refreshSessions, addToast, protectStaleSessionAliases])
+  }, [refreshSessions, addToast, protectStaleSessionAliases, workspaces])
 
 
   const makeSessionPersistent = useCallback(async (sessionName: string, payload: PersistentAgentPayload, unixUser?: LaunchUser): Promise<boolean> => {
@@ -1216,7 +1280,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       id: generatePresetId(),
       name,
       createdAt: Date.now(),
-      workspaces: cloneWorkspaces(workspaces),
+      workspaces: sanitizeWorkspaces(workspaces),
     }
 
     setLayoutPresets(prev => [...prev, newPreset])
@@ -1266,6 +1330,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     isDragging,
     settings,
     focusedWindowKey,
+    windowRevealRequest,
     layoutPresets,
 
     // Actions
@@ -1292,6 +1357,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setIsDragging,
     updateSettings,
     setFocusedWindowKey,
+    revealWindow,
     saveCurrentLayout,
     loadPreset,
     deletePreset,
@@ -1311,6 +1377,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     isDragging,
     settings,
     focusedWindowKey,
+    windowRevealRequest,
     layoutPresets,
     setWindowCount,
     clearWorkspaceAssignments,
@@ -1335,6 +1402,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setIsDragging,
     updateSettings,
     setFocusedWindowKey,
+    revealWindow,
     saveCurrentLayout,
     loadPreset,
     deletePreset,
