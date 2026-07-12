@@ -2,126 +2,140 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { useSession } from '../context/SessionContext'
 import { getSessionKey, getSessionNameFromKey, getSessionUserFromKey } from '../types'
 
+const VIEWPORT_MARGIN = 16
+
+function viewportRect() {
+  const width = Math.min(1000, Math.max(280, window.innerWidth - VIEWPORT_MARGIN * 2))
+  const height = Math.min(700, Math.max(240, window.innerHeight - VIEWPORT_MARGIN * 2))
+  return {
+    size: { width, height },
+    position: {
+      x: Math.max(VIEWPORT_MARGIN, (window.innerWidth - width) / 2),
+      y: Math.max(VIEWPORT_MARGIN, (window.innerHeight - height) / 2),
+    },
+  }
+}
+
 function FloatingModal() {
   const { floatingSession, closeFloatingModal, openSendToSession, settings, sessions } = useSession()
+  const initialRect = useRef(viewportRect())
   const [loaded, setLoaded] = useState(false)
-  const [position, setPosition] = useState({ x: 80, y: 60 })
-  const [size] = useState({ width: 1000, height: 700 })
+  const [position, setPosition] = useState(initialRect.current.position)
+  const [size, setSize] = useState(initialRect.current.size)
   const [isDragging, setIsDragging] = useState(false)
   const dragOffset = useRef({ x: 0, y: 0 })
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
 
-  // Reset loaded state when session changes
-  useEffect(() => {
-    setLoaded(false)
-  }, [floatingSession])
-
-  // Trigger xterm fit() by dispatching resize event to iframe
   const triggerFit = useCallback(() => {
     try {
-      const iframe = iframeRef.current
-      if (!iframe?.contentWindow) return
-      iframe.contentWindow.dispatchEvent(new Event('resize'))
+      iframeRef.current?.contentWindow?.dispatchEvent(new Event('resize'))
     } catch {
-      // Cross-origin or not ready - ignore
+      // Cross-origin or not ready.
     }
   }, [])
 
-  // Apply font size to xterm instance inside iframe with polling for readiness
-  const applyFontSize = useCallback((fontSize: number) => {
-    const iframe = iframeRef.current
-    if (!iframe?.contentWindow) return
+  useEffect(() => {
+    if (!floatingSession) return
+    const next = viewportRect()
+    setLoaded(false)
+    setPosition(next.position)
+    setSize(next.size)
+    setIsDragging(false)
+  }, [floatingSession])
 
+  useEffect(() => {
+    if (!loaded) return
+    let cancelled = false
     let attempts = 0
-    const maxAttempts = 20 // 20 * 50ms = 1 second max wait
-
-    const tryApply = () => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const apply = () => {
+      if (cancelled) return
       try {
-        const iframeWindow = iframe.contentWindow as Window & { term?: { options: { fontSize: number } } }
-        if (iframeWindow.term) {
-          iframeWindow.term.options.fontSize = fontSize
-          return // Success - stop polling
+        const frameWindow = iframeRef.current?.contentWindow as (Window & { term?: { options: { fontSize: number } } }) | null
+        if (frameWindow?.term) {
+          frameWindow.term.options.fontSize = settings.fontSize
+          return
         }
       } catch {
-        // Cross-origin or not ready - continue polling
+        // Cross-origin or not ready.
       }
-
-      attempts++
-      if (attempts < maxAttempts) {
-        setTimeout(tryApply, 50) // Poll every 50ms
-      }
+      attempts += 1
+      if (attempts < 20) timer = setTimeout(apply, 50)
     }
+    apply()
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [floatingSession, loaded, settings.fontSize])
 
-    tryApply()
-  }, [])
-
-  // Apply font size when iframe loads, and trigger fit after delays
-  const handleIframeLoad = useCallback(() => {
-    setLoaded(true)
-    applyFontSize(settings.fontSize)
-    setTimeout(triggerFit, 100)
-    setTimeout(triggerFit, 300)
-    setTimeout(triggerFit, 500)
-  }, [applyFontSize, settings.fontSize, triggerFit])
-
-  // Apply font size when setting changes
   useEffect(() => {
-    if (loaded) {
-      applyFontSize(settings.fontSize)
+    if (!loaded) return
+    const raf = requestAnimationFrame(triggerFit)
+    const fallback = setTimeout(triggerFit, 120)
+    return () => {
+      cancelAnimationFrame(raf)
+      clearTimeout(fallback)
     }
-  }, [loaded, settings.fontSize, applyFontSize])
+  }, [floatingSession, loaded, triggerFit])
 
-  // ResizeObserver to trigger fit() when container size changes
   useEffect(() => {
     const body = bodyRef.current
     if (!body) return
-
-    let timeoutId: ReturnType<typeof setTimeout>
+    let timer: ReturnType<typeof setTimeout> | undefined
     const observer = new ResizeObserver(() => {
-      clearTimeout(timeoutId)
-      timeoutId = setTimeout(triggerFit, 100)
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(triggerFit, 100)
     })
-
     observer.observe(body)
     return () => {
-      clearTimeout(timeoutId)
+      if (timer) clearTimeout(timer)
       observer.disconnect()
     }
-  }, [triggerFit])
+  }, [floatingSession, triggerFit])
 
-  // Dragging handlers
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('.modal-close')) return
+  useEffect(() => {
+    if (!floatingSession) return
+    const clampToViewport = () => {
+      const next = viewportRect()
+      setSize(next.size)
+      setPosition(current => ({
+        x: Math.min(Math.max(VIEWPORT_MARGIN, current.x), Math.max(VIEWPORT_MARGIN, window.innerWidth - next.size.width - VIEWPORT_MARGIN)),
+        y: Math.min(Math.max(VIEWPORT_MARGIN, current.y), Math.max(VIEWPORT_MARGIN, window.innerHeight - next.size.height - VIEWPORT_MARGIN)),
+      }))
+    }
+    window.addEventListener('resize', clampToViewport)
+    return () => window.removeEventListener('resize', clampToViewport)
+  }, [floatingSession])
+
+  const handleMouseDown = (event: React.MouseEvent) => {
+    if ((event.target as HTMLElement).closest('button')) return
     setIsDragging(true)
     dragOffset.current = {
-      x: e.clientX - position.x,
-      y: e.clientY - position.y,
+      x: event.clientX - position.x,
+      y: event.clientY - position.y,
     }
   }
 
   useEffect(() => {
     if (!isDragging) return
-
-    const handleMouseMove = (e: MouseEvent) => {
+    const handleMouseMove = (event: MouseEvent) => {
+      const maxX = Math.max(VIEWPORT_MARGIN, window.innerWidth - size.width - VIEWPORT_MARGIN)
+      const maxY = Math.max(VIEWPORT_MARGIN, window.innerHeight - size.height - VIEWPORT_MARGIN)
       setPosition({
-        x: e.clientX - dragOffset.current.x,
-        y: e.clientY - dragOffset.current.y,
+        x: Math.min(maxX, Math.max(VIEWPORT_MARGIN, event.clientX - dragOffset.current.x)),
+        y: Math.min(maxY, Math.max(VIEWPORT_MARGIN, event.clientY - dragOffset.current.y)),
       })
     }
-
-    const handleMouseUp = () => {
-      setIsDragging(false)
-    }
-
+    const handleMouseUp = () => setIsDragging(false)
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
-
     return () => {
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
     }
-  }, [isDragging])
+  }, [isDragging, size.height, size.width])
 
   if (!floatingSession) return null
 
@@ -139,22 +153,14 @@ function FloatingModal() {
     <div className="floating-modal-overlay" onClick={closeFloatingModal}>
       <div
         className="floating-modal"
-        style={{
-          left: position.x,
-          top: position.y,
-          width: size.width,
-          height: size.height,
-        }}
-        onClick={e => e.stopPropagation()}
+        style={{ left: position.x, top: position.y, width: size.width, height: size.height }}
+        onClick={event => event.stopPropagation()}
       >
-        <div
-          className="floating-modal-header"
-          onMouseDown={handleMouseDown}
-        >
+        <div className="floating-modal-header" onMouseDown={handleMouseDown}>
           <span className="modal-title">{displayName}</span>
           <div className="modal-controls">
+            {!loaded && canOpenSession && <span className="terminal-loading-state">Loading terminal…</span>}
             <button className="modal-send" onClick={() => openSendToSession(floatingSession)}>Send to Session</button>
-            <span className={`status-dot ${loaded ? '' : 'disconnected'}`} />
             <button className="modal-close" onClick={closeFloatingModal}>×</button>
           </div>
         </div>
@@ -165,14 +171,8 @@ function FloatingModal() {
               key={floatingSession}
               src={`/terminal/?arg=${encodeURIComponent(displayName)}${userArg}`}
               scrolling="no"
-              onLoad={handleIframeLoad}
-              style={{
-                width: '100%',
-                height: '100%',
-                border: 'none',
-                backgroundColor: '#0a0a0a',
-                overflow: 'hidden',
-              }}
+              onLoad={() => setLoaded(true)}
+              style={{ width: '100%', height: '100%', border: 'none', backgroundColor: '#0a0a0a', overflow: 'hidden' }}
               title={`Terminal - ${displayName}`}
             />
           ) : (

@@ -1,169 +1,52 @@
-import { useEffect, useCallback } from 'react'
+import { useCallback, useEffect } from 'react'
 import { useSession } from '../context/SessionContext'
-import type { WorkspaceId } from '../types'
-import type { Tab } from '../components/TabBar'
 
 interface KeyboardShortcutsConfig {
-  activeTab: Tab
-  onTabChange: (tab: Tab) => void
   onShowHelp: () => void
   isHelpOpen: boolean
 }
 
-/**
- * Hook to manage global keyboard shortcuts for the dashboard.
- * Shortcuts are disabled when typing in input fields or when help overlay is open.
- */
-export function useKeyboardShortcuts({
-  activeTab,
-  onTabChange,
-  onShowHelp,
-  isHelpOpen,
-}: KeyboardShortcutsConfig) {
-  const {
-    workspaces,
-    toggleSidebar,
-    closeFloatingModal,
-    floatingSession,
-    createSession,
-    loadPreset,
-    layoutPresets,
-  } = useSession()
+function isDashboardChrome(target: HTMLElement): boolean {
+  if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return false
+  return !target.closest('.terminal-window-body, .floating-modal-body')
+}
 
-  // Create a new session
-  const createSessionForActiveTab = useCallback(async () => {
-    try {
-      const workspaceId: WorkspaceId | null = activeTab === 'terminal1' || activeTab === 'terminal2' || activeTab === 'terminal3'
-        ? activeTab
-        : null
-      await createSession(workspaceId ? { workspaceId } : { workspaceId: 'terminal1' })
-    } catch (e) {
-      console.error('Failed to create session:', e)
-    }
-  }, [activeTab, createSession])
+export function useKeyboardShortcuts({ onShowHelp, isHelpOpen }: KeyboardShortcutsConfig) {
+  const { closeFloatingModal, floatingSession } = useSession()
 
-  // Focus search box
   const focusSearchBox = useCallback(() => {
-    const searchInput = document.querySelector('.session-search-input') as HTMLInputElement
-    if (searchInput) {
-      searchInput.focus()
-      searchInput.select()
-    }
+    const searchInput = document.querySelector('.session-search-input') as HTMLInputElement | null
+    searchInput?.focus()
+    searchInput?.select()
   }, [])
 
-  // Get current workspace ID based on active tab
-  const getCurrentWorkspaceId = useCallback((): WorkspaceId | null => {
-    if (activeTab === 'terminal1' || activeTab === 'terminal2' || activeTab === 'terminal3') {
-      return activeTab
-    }
-    return null
-  }, [activeTab])
-
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Check if user is typing in an input field
-      const target = e.target as HTMLElement
-      const isTyping =
-        target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
-        target.isContentEditable
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target instanceof HTMLElement
+        ? event.target
+        : (document.activeElement instanceof HTMLElement ? document.activeElement : document.body)
 
-      // Allow escape to close modals even when typing
-      if (e.key === 'Escape') {
-        if (isHelpOpen) {
-          // Help overlay handles its own escape
-          return
-        }
-        if (floatingSession) {
-          e.preventDefault()
-          closeFloatingModal()
-          return
-        }
+      if (event.key === 'Escape' && floatingSession) {
+        event.preventDefault()
+        closeFloatingModal()
+        return
       }
 
-      // Don't process other shortcuts when typing or help is open
-      if (isTyping || isHelpOpen) return
+      if (isHelpOpen || !isDashboardChrome(target)) return
 
-      // ? - Show help overlay
-      if (e.key === '?' || (e.shiftKey && e.key === '/')) {
-        e.preventDefault()
+      if (event.key === '?' || (event.shiftKey && event.key === '/')) {
+        event.preventDefault()
         onShowHelp()
         return
       }
 
-      // / - Focus search box
-      if (e.key === '/' && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault()
+      if (event.key === '/' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault()
         focusSearchBox()
-        return
-      }
-
-      // Tab - Cycle terminal tabs
-      if (e.key === 'Tab' && !e.ctrlKey && !e.shiftKey && !e.altKey) {
-        // Only cycle if we're on a terminal tab
-        const terminalTabs: WorkspaceId[] = ['terminal1', 'terminal2', 'terminal3']
-        if (terminalTabs.includes(activeTab as WorkspaceId)) {
-          e.preventDefault()
-          const currentIndex = terminalTabs.indexOf(activeTab as WorkspaceId)
-          onTabChange(terminalTabs[(currentIndex + 1) % terminalTabs.length])
-          return
-        }
-      }
-
-      // Number keys 1-4 without Ctrl - Switch to window
-      if (!e.ctrlKey && !e.metaKey && !e.altKey && /^[1-4]$/.test(e.key)) {
-        const workspaceId = getCurrentWorkspaceId()
-        if (workspaceId) {
-          const windowIndex = parseInt(e.key, 10)
-          const workspace = workspaces[workspaceId]
-          if (windowIndex <= workspace.windowCount) {
-            // Focus the window (this would need integration with TerminalWindow focus)
-            e.preventDefault()
-            return
-          }
-        }
-      }
-
-      // Ctrl + S - Toggle sidebar
-      if (e.ctrlKey && e.key === 's') {
-        e.preventDefault()
-        toggleSidebar()
-        return
-      }
-
-      // Ctrl + N - Create new session
-      if (e.ctrlKey && e.key === 'n') {
-        e.preventDefault()
-        createSessionForActiveTab()
-        return
-      }
-
-      // Ctrl + 1-9 - Load layout preset
-      if (e.ctrlKey && /^[1-9]$/.test(e.key)) {
-        const presetIndex = parseInt(e.key, 10) - 1
-        if (presetIndex < layoutPresets.length) {
-          e.preventDefault()
-          loadPreset(layoutPresets[presetIndex].id)
-          return
-        }
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [
-    activeTab,
-    onTabChange,
-    onShowHelp,
-    isHelpOpen,
-    floatingSession,
-    closeFloatingModal,
-    focusSearchBox,
-    toggleSidebar,
-    createSessionForActiveTab,
-    getCurrentWorkspaceId,
-    workspaces,
-    loadPreset,
-    layoutPresets,
-  ])
+  }, [closeFloatingModal, floatingSession, focusSearchBox, isHelpOpen, onShowHelp])
 }

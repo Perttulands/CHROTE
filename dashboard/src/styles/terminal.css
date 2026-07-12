@@ -120,12 +120,6 @@
   box-shadow: 0 0 15px color-mix(in srgb, var(--window-accent, var(--accent)) 40%, transparent);
 }
 
-.terminal-window.drop-target {
-  border-color: var(--window-accent, var(--accent));
-  border-style: dashed;
-  box-shadow: 0 0 20px color-mix(in srgb, var(--window-accent, var(--accent)) 30%, transparent);
-}
-
 .terminal-window-header {
   display: flex;
   justify-content: space-between;
@@ -163,7 +157,7 @@
   border-radius: 6px 6px 0 0;
   font-size: 13px;
   font-weight: 500;
-  cursor: grab;
+  cursor: pointer;
   transition: all 0.15s ease;
   min-width: 60px;
   max-width: 180px;
@@ -183,8 +177,10 @@
 }
 
 .session-tag.dragging {
-  opacity: 0.6;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  opacity: 0 !important;
+  transform: none !important;
+  transition: none !important;
+  box-shadow: none;
 }
 
 .tag-name {
@@ -235,17 +231,10 @@
   border-color: var(--window-accent, var(--accent));
 }
 
-.status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background-color: var(--accent);
-  box-shadow: 0 0 6px var(--accent);
-}
-
-.status-dot.disconnected {
-  background-color: var(--color-error);
-  box-shadow: 0 0 6px var(--color-error);
+.terminal-loading-state {
+  color: var(--text-dim);
+  font-size: 10px;
+  white-space: nowrap;
 }
 
 .terminal-window-body {
@@ -335,60 +324,8 @@
   margin-top: 8px;
 }
 
-/* Old terminal pane styles (backward compat) */
-.terminal-pane {
-  display: flex;
-  flex-direction: column;
-  background-color: var(--surface-primary);
-  border: 1px solid var(--divider);
-  overflow: hidden;
-}
-
-.terminal-pane:hover {
-  border-color: var(--accent);
-  box-shadow: 0 0 10px var(--accent-light);
-}
-
-.terminal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 4px 8px;
-  background-color: var(--surface-secondary);
-  border-bottom: 1px solid var(--divider);
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
-.terminal-header .session-name {
-  font-weight: bold;
-  color: var(--text-primary);
-}
-
-.terminal-header .status {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.terminal-body {
-  flex: 1;
-  overflow: hidden;
-}
-
-.terminal-pane.empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  border-style: dashed;
-}
-
-.terminal-pane.empty:hover {
-  background-color: var(--accent-light);
-}
-
-.add-pane-icon {
-  font-size: 32px;
-  color: var(--text-dim);
+@media (max-width: 768px) {
+  .terminal-area-controls {
+    padding-left: 44px;
+  }
 }

@@ -22,6 +22,8 @@ test.describe('Nuke All (pol-9783)', () => {
     await page.goto('/')
     await page.waitForSelector('.dashboard')
     await page.waitForSelector('.session-item')
+    await page.getByRole('button', { name: 'Settings' }).click()
+    await page.waitForSelector('.settings-view')
   })
 
   test('Nuke All button opens confirmation modal', async ({ page }) => {
@@ -121,6 +123,8 @@ test.describe('Nuke All (pol-9783)', () => {
     await page.reload()
     await page.waitForSelector('.dashboard')
     await page.waitForSelector('.session-item')
+    await page.getByRole('button', { name: 'Settings' }).click()
+    await page.waitForSelector('.settings-view')
 
     // Open nuke modal
     await page.locator('.nuke-trigger-btn').click()

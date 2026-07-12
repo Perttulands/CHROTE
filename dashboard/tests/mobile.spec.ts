@@ -120,7 +120,7 @@ test.describe('Terminal Area - Mobile View Switcher', () => {
     const controlsRow = page.locator('.terminal-area:visible .mobile-controls-row')
     const viewButtons = controlsRow.locator('.layout-btn')
 
-    // Default 2 windows means view buttons 1 and 2, plus 4 count buttons and refit.
+    // Default 2 windows means view buttons 1 and 2, plus 4 count buttons.
     // Button "1" (first view button) should be active by default
     await expect(viewButtons.first()).toHaveClass(/active/)
 
@@ -136,13 +136,13 @@ test.describe('Terminal Area - Mobile View Switcher', () => {
     const controlsRow = page.locator('.terminal-area:visible .mobile-controls-row')
     const allButtons = controlsRow.locator('.layout-btn')
 
-    // With default 2 windows: [View:1] [View:2] | [Count:1] [Count:2] [Count:3] [Count:4] [Refit]
-    await expect(allButtons).toHaveCount(7)
+    // With default 2 windows: [View:1] [View:2] | [Count:1] [Count:2] [Count:3] [Count:4]
+    await expect(allButtons).toHaveCount(6)
     const count4Btn = controlsRow.locator('.layout-btn', { hasText: /^4$/ })
     await count4Btn.click()
 
-    // Now we should have 4 view buttons + 4 count buttons + refit = 9 buttons
-    await expect(allButtons).toHaveCount(9)
+    // Now we should have 4 view buttons + 4 count buttons = 8 buttons
+    await expect(allButtons).toHaveCount(8)
 
     // Still only 1 visible window
     await expect(page.locator('.terminal-window:visible')).toHaveCount(1)
@@ -163,23 +163,23 @@ test.describe('Terminal Area - Mobile View Switcher', () => {
     const controlsRow = page.locator('.terminal-area:visible .mobile-controls-row')
     const allButtons = controlsRow.locator('.layout-btn')
 
-    // Default 2 windows: [View:1] [View:2] | [Count:1] [Count:2] [Count:3] [Count:4] [Refit]
-    // 7 buttons total. Count buttons start at index 2.
+    // Default 2 windows: [View:1] [View:2] | [Count:1] [Count:2] [Count:3] [Count:4]
+    // 6 buttons total. Count buttons start at index 2.
     // Count "2" (index 3) should be active since default is 2 windows
-    await expect(allButtons).toHaveCount(7)
+    await expect(allButtons).toHaveCount(6)
     await expect(allButtons.nth(3)).toHaveClass(/active/)
 
     // Switch to 1 window: click Count "1" (index 2)
     await allButtons.nth(2).click()
 
-    // Now only 1 view button + 4 count buttons + refit = 6 buttons
-    await expect(allButtons).toHaveCount(6)
+    // Now only 1 view button + 4 count buttons = 5 buttons
+    await expect(allButtons).toHaveCount(5)
 
     // Switch to 3 windows: Count "3" is now at index 3
     await allButtons.nth(3).click()
 
-    // 3 view buttons + 4 count buttons + refit = 8
-    await expect(allButtons).toHaveCount(8)
+    // 3 view buttons + 4 count buttons = 7
+    await expect(allButtons).toHaveCount(7)
   })
 
   test('grid uses grid-1 class on mobile regardless of window count', async ({ page }) => {

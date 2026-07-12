@@ -95,7 +95,7 @@ async function mockFilebrowserApi(page: Page, options?: { failConnection?: boole
 test.describe('Filebrowser Connection', () => {
   test('should show loading state while fetching directory', async ({ page }) => {
     // Add delay to observe loading state
-    await mockFilebrowserApi(page, { delay: 500 })
+    await mockFilebrowserApi(page, { delay: 1500 })
 
     await page.goto('/')
     await page.waitForSelector('.dashboard')

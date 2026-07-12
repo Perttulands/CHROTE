@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
-import { createElement } from 'react'
+import { createElement, StrictMode } from 'react'
 import { SessionProvider, useSession } from './SessionContext'
 import { ToastProvider, useToast } from './ToastContext'
 import { featureFlagKey } from '../featureFlags'
@@ -49,6 +49,45 @@ function storedDashboardState() {
   const stored = store['chrote-dashboard-state']
   expect(stored).toBeDefined()
   return JSON.parse(stored)
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+async function flushPromises() {
+  for (let index = 0; index < 12; index += 1) await Promise.resolve()
+}
+
+function sessionResponse(data: Record<string, unknown>, ok = true) {
+  return {
+    ok,
+    json: vi.fn(() => Promise.resolve(data)),
+    text: vi.fn(() => Promise.resolve(data.error ? JSON.stringify(data) : '')),
+  }
+}
+
+function stubDeferredSessionFetch() {
+  const requests: Array<{
+    response: ReturnType<typeof deferred<any>>
+    signal: AbortSignal | null
+  }> = []
+  const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input) === '/api/tmux/sessions' && !init?.method) {
+      const response = deferred<any>()
+      requests.push({ response, signal: init?.signal as AbortSignal | null })
+      return response.promise
+    }
+    return Promise.resolve(sessionResponse({}))
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  return { fetchMock, requests }
 }
 
 // ──────────────────────────────────────────────
@@ -132,12 +171,17 @@ describe('dashboard persisted storage contract', () => {
         windows: [
           { id: 'terminal1-window-0', boundSessions: ['desk-a'], activeSession: 'desk-a', colorIndex: 3 },
           { id: 'terminal1-window-1', boundSessions: ['desk-b'], activeSession: null, colorIndex: 1 },
+          { id: 'terminal1-window-2', boundSessions: [], activeSession: null, colorIndex: 2 },
+          { id: 'terminal1-window-3', boundSessions: [], activeSession: null, colorIndex: 3 },
         ],
         windowCount: 2,
       },
       terminal2: {
         windows: [
           { id: 'terminal2-window-0', boundSessions: ['desk-c'], activeSession: 'desk-c', colorIndex: 7 },
+          { id: 'terminal2-window-1', boundSessions: [], activeSession: null, colorIndex: 1 },
+          { id: 'terminal2-window-2', boundSessions: [], activeSession: null, colorIndex: 2 },
+          { id: 'terminal2-window-3', boundSessions: [], activeSession: null, colorIndex: 3 },
         ],
         windowCount: 1,
       },
@@ -145,6 +189,8 @@ describe('dashboard persisted storage contract', () => {
         windows: [
           { id: 'terminal3-window-0', boundSessions: [], activeSession: null, colorIndex: 0 },
           { id: 'terminal3-window-1', boundSessions: [], activeSession: null, colorIndex: 1 },
+          { id: 'terminal3-window-2', boundSessions: [], activeSession: null, colorIndex: 2 },
+          { id: 'terminal3-window-3', boundSessions: [], activeSession: null, colorIndex: 3 },
         ],
         windowCount: 2,
       },
@@ -341,15 +387,22 @@ describe('migrateStoredState (via loadStoredState)', () => {
     // V1 windows migrate into terminal1
     const t1 = result.current.workspaces.terminal1
     expect(t1.windowCount).toBe(2)
-    expect(t1.windows).toHaveLength(2)
+    expect(t1.windows).toHaveLength(4)
     expect(t1.windows[0].boundSessions).toEqual(['sess-a', 'sess-b'])
     expect(t1.windows[0].activeSession).toBe('sess-a')
     expect(t1.windows[0].id).toBe('terminal1-window-0')
     expect(t1.windows[1].boundSessions).toEqual(['sess-c'])
+    expect(t1.windows.map(window => window.id)).toEqual([
+      'terminal1-window-0',
+      'terminal1-window-1',
+      'terminal1-window-2',
+      'terminal1-window-3',
+    ])
 
     // terminal2 gets fresh defaults
     const t2 = result.current.workspaces.terminal2
     expect(t2.windowCount).toBe(2)
+    expect(t2.windows).toHaveLength(4)
     expect(t2.windows[0].boundSessions).toEqual([])
     expect(t2.windows[0].id).toBe('terminal2-window-0')
 
@@ -401,6 +454,8 @@ describe('migrateStoredState (via loadStoredState)', () => {
     expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alpha'])
     expect(result.current.workspaces.terminal2.windows[0].boundSessions).toEqual(['beta'])
     expect(result.current.workspaces.terminal2.windowCount).toBe(2)
+    expect(result.current.workspaces.terminal1.windows).toHaveLength(4)
+    expect(result.current.workspaces.terminal2.windows).toHaveLength(4)
   })
 
   it('returns defaults for empty/corrupt localStorage', () => {
@@ -599,7 +654,675 @@ describe('createSession', () => {
 describe('refreshSessions', () => {
   beforeEach(() => {
     localStorage.clear()
+    setViewportWidth(1280)
+    vi.useRealTimers()
   })
+
+  it('runs one request at a time and coalesces interval, manual, create, delete, and rename triggers', async () => {
+    vi.useFakeTimers()
+    const { requests } = stubDeferredSessionFetch()
+    const { result } = renderSession()
+
+    expect(requests).toHaveLength(1)
+    const refreshSessions = result.current.refreshSessions
+    let coalescedSettled = false
+
+    act(() => {
+      void result.current.refreshSessions().then(() => { coalescedSettled = true })
+      void result.current.refreshSessions()
+      vi.advanceTimersByTime(DEFAULT_SETTINGS.autoRefreshInterval)
+    })
+    await act(async () => {
+      await Promise.all([
+        result.current.createSession({ name: 'created' }),
+        result.current.deleteSession('deleted'),
+        result.current.renameSession('old', 'renamed'),
+      ])
+    })
+
+    expect(result.current.refreshSessions).toBe(refreshSessions)
+    expect(requests).toHaveLength(1)
+
+    await act(async () => {
+      requests[0].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: ['perttu'] }))
+      await Promise.resolve()
+    })
+    expect(requests).toHaveLength(2)
+    expect(coalescedSettled).toBe(false)
+
+    act(() => {
+      void result.current.refreshSessions()
+      void result.current.refreshSessions()
+      vi.advanceTimersByTime(DEFAULT_SETTINGS.autoRefreshInterval)
+    })
+    expect(requests).toHaveLength(2)
+
+    await act(async () => {
+      requests[1].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: ['perttu'] }))
+      await Promise.resolve()
+    })
+    expect(requests).toHaveLength(3)
+    expect(coalescedSettled).toBe(true)
+
+    await act(async () => {
+      requests[2].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: ['perttu'] }))
+      await Promise.resolve()
+    })
+    expect(requests).toHaveLength(3)
+    vi.useRealTimers()
+  })
+
+  it.each([
+    ['createSession', 'POST', '/api/tmux/sessions'],
+    ['deleteSession', 'DELETE', '/api/tmux/sessions/deleted'],
+    ['renameSession', 'PATCH', '/api/tmux/sessions/old'],
+  ] as const)('%s alone requests one trailing GET while the initial GET is unresolved', async (actionName, method, url) => {
+    vi.useFakeTimers()
+    const { fetchMock, requests } = stubDeferredSessionFetch()
+    const { result, unmount } = renderSession()
+
+    expect(requests).toHaveLength(1)
+
+    await act(async () => {
+      if (actionName === 'createSession') {
+        expect(await result.current.createSession({ name: 'created' })).toBe('created')
+      } else if (actionName === 'deleteSession') {
+        expect(await result.current.deleteSession('deleted')).toBe(true)
+      } else {
+        expect(await result.current.renameSession('old', 'renamed')).toBe(true)
+      }
+    })
+
+    expect(fetchMock.mock.calls.filter(([input, init]) => String(input) === url && init?.method === method)).toHaveLength(1)
+    expect(requests).toHaveLength(1)
+
+    await act(async () => {
+      requests[0].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: [] }))
+      await Promise.resolve()
+    })
+    expect(requests).toHaveLength(2)
+
+    await act(async () => {
+      requests[1].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: [] }))
+      await Promise.resolve()
+    })
+    expect(requests).toHaveLength(2)
+
+    unmount()
+    expect(vi.getTimerCount()).toBe(0)
+    vi.useRealTimers()
+  })
+
+  it('keeps a refresh requested during the trailing flight pending through one further coalesced GET', async () => {
+    vi.useFakeTimers()
+    const { requests } = stubDeferredSessionFetch()
+    const { result, unmount } = renderSession()
+
+    expect(requests).toHaveLength(1)
+    act(() => {
+      void result.current.refreshSessions()
+    })
+
+    await act(async () => {
+      requests[0].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: [] }))
+      await Promise.resolve()
+    })
+    expect(requests).toHaveLength(2)
+
+    let refreshSettled = false
+    let refreshDuringTrailing!: Promise<void>
+    act(() => {
+      refreshDuringTrailing = result.current.refreshSessions()
+      void refreshDuringTrailing.then(() => { refreshSettled = true })
+    })
+    expect(requests).toHaveLength(2)
+    expect(refreshSettled).toBe(false)
+
+    await act(async () => {
+      requests[1].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: [] }))
+      await Promise.resolve()
+    })
+    expect(requests).toHaveLength(3)
+    expect(refreshSettled).toBe(false)
+
+    await act(async () => {
+      requests[2].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: [] }))
+      await refreshDuringTrailing
+    })
+    expect(refreshSettled).toBe(true)
+    expect(requests).toHaveLength(3)
+
+    unmount()
+    expect(vi.getTimerCount()).toBe(0)
+    vi.useRealTimers()
+  })
+
+  it.each(['fetch', 'response.json'] as const)(
+    'times out when %s ignores abort, starts the queued trailing refresh, and remains reusable',
+    async stalledStage => {
+      vi.useFakeTimers()
+      const { requests } = stubDeferredSessionFetch()
+      const { result, unmount } = renderSession()
+
+      expect(requests).toHaveLength(1)
+      if (stalledStage === 'response.json') {
+        const neverSettlingBody = new Promise<never>(() => {})
+        const stalledJson = vi.fn(() => neverSettlingBody)
+        await act(async () => {
+          requests[0].response.resolve({
+            ok: true,
+            json: stalledJson,
+            text: vi.fn(() => Promise.resolve('')),
+          })
+          await flushPromises()
+        })
+        expect(stalledJson).toHaveBeenCalledOnce()
+      }
+
+      let queuedSettled = false
+      let queuedRefresh!: Promise<void>
+      act(() => {
+        queuedRefresh = result.current.refreshSessions()
+        void queuedRefresh.then(() => { queuedSettled = true })
+      })
+
+      await act(async () => {
+        vi.advanceTimersByTime(10000)
+        await Promise.resolve()
+      })
+
+      expect(requests[0].signal?.aborted).toBe(true)
+      expect(requests).toHaveLength(2)
+      expect(queuedSettled).toBe(false)
+      expect(result.current.loading).toBe(false)
+      // One polling interval plus the trailing flight timeout: the abandoned flight timer is gone.
+      expect(vi.getTimerCount()).toBe(2)
+
+      await act(async () => {
+        requests[1].response.resolve(sessionResponse({
+          sessions: [{ name: 'trailing' }],
+          grouped: {},
+          banked: [],
+          terminalUsers: [],
+        }))
+        await queuedRefresh
+      })
+      expect(queuedSettled).toBe(true)
+      expect(result.current.sessions).toEqual([{ name: 'trailing' }])
+      expect(vi.getTimerCount()).toBe(1)
+
+      const laterRefresh = result.current.refreshSessions()
+      expect(requests).toHaveLength(3)
+      await act(async () => {
+        requests[2].response.resolve(sessionResponse({
+          sessions: [{ name: 'later' }],
+          grouped: {},
+          banked: [],
+          terminalUsers: [],
+        }))
+        await laterRefresh
+      })
+      expect(result.current.sessions).toEqual([{ name: 'later' }])
+      expect(result.current.loading).toBe(false)
+      expect(vi.getTimerCount()).toBe(1)
+
+      unmount()
+      expect(vi.getTimerCount()).toBe(0)
+      vi.useRealTimers()
+    },
+  )
+
+  it('ignores an eventual rejection from an abandoned response body after a newer refresh succeeds', async () => {
+    vi.useFakeTimers()
+    localStorage.setItem('chrote-dashboard-state', JSON.stringify({
+      version: 3,
+      settingsSchemaVersion: 2,
+      layoutsByViewport: {},
+      settings: { ...DEFAULT_SETTINGS, autoRefreshInterval: 60000 },
+    }))
+    const { requests } = stubDeferredSessionFetch()
+    const { result, unmount } = renderSession()
+    const abandonedBody = deferred<Record<string, unknown>>()
+    const abandonedJson = vi.fn(() => abandonedBody.promise)
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await act(async () => {
+      requests[0].response.resolve({
+        ok: true,
+        json: abandonedJson,
+        text: vi.fn(() => Promise.resolve('')),
+      })
+      await flushPromises()
+    })
+    expect(abandonedJson).toHaveBeenCalledOnce()
+    await act(async () => {
+      vi.advanceTimersByTime(10000)
+      await flushPromises()
+    })
+
+    let newerSettled = false
+    const newerRefresh = result.current.refreshSessions()
+    void newerRefresh.then(() => { newerSettled = true })
+    expect(requests).toHaveLength(2)
+    await act(async () => {
+      requests[1].response.resolve(sessionResponse({
+        sessions: [{ name: 'newer' }],
+        grouped: {},
+        banked: [],
+        terminalUsers: [],
+      }))
+      await flushPromises()
+    })
+    expect(newerSettled).toBe(true)
+
+    await act(async () => {
+      abandonedBody.reject(new Error('late body failure'))
+      await Promise.resolve()
+    })
+    expect(result.current.sessions).toEqual([{ name: 'newer' }])
+    expect(result.current.error).toBeNull()
+    expect(consoleError).not.toHaveBeenCalled()
+
+    unmount()
+    expect(vi.getTimerCount()).toBe(0)
+    consoleError.mockRestore()
+    vi.useRealTimers()
+  })
+
+  it('settles coalesced callers on unmount without resolving an abort-ignoring fetch or honoring trailing intent', async () => {
+    vi.useFakeTimers()
+    const { requests } = stubDeferredSessionFetch()
+    const { result, unmount } = renderSession()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let settledCallers = 0
+
+    act(() => {
+      void result.current.refreshSessions().then(() => { settledCallers += 1 })
+      void result.current.refreshSessions().then(() => { settledCallers += 1 })
+    })
+    expect(requests).toHaveLength(1)
+
+    unmount()
+    expect(requests[0].signal?.aborted).toBe(true)
+    await act(async () => {
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(settledCallers).toBe(2)
+    expect(requests).toHaveLength(1)
+    expect(vi.getTimerCount()).toBe(0)
+    expect(consoleError).not.toHaveBeenCalled()
+    consoleError.mockRestore()
+    vi.useRealTimers()
+  })
+
+  it('keeps StrictMode generation cancellation silent and ignores its eventual completion', async () => {
+    vi.useFakeTimers()
+    const { requests } = stubDeferredSessionFetch()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const wrapper = ({ children }: { children: React.ReactNode }) => createElement(
+      StrictMode,
+      null,
+      createElement(Wrapper, null, children),
+    )
+    const { result, unmount } = renderHook(() => useSession(), { wrapper })
+
+    expect(requests).toHaveLength(2)
+    expect(requests[0].signal?.aborted).toBe(true)
+    expect(requests[1].signal?.aborted).toBe(false)
+
+    await act(async () => {
+      requests[1].response.resolve(sessionResponse({
+        sessions: [{ name: 'current-generation' }],
+        grouped: {},
+        banked: [],
+        terminalUsers: [],
+      }))
+      await flushPromises()
+    })
+    expect(result.current.sessions).toEqual([{ name: 'current-generation' }])
+    expect(result.current.error).toBeNull()
+
+    const abandonedResponse = sessionResponse({ sessions: [{ name: 'abandoned-generation' }] })
+    await act(async () => {
+      requests[0].response.resolve(abandonedResponse)
+      await flushPromises()
+    })
+    expect(abandonedResponse.json).not.toHaveBeenCalled()
+    expect(result.current.sessions).toEqual([{ name: 'current-generation' }])
+    expect(result.current.error).toBeNull()
+    expect(consoleError).not.toHaveBeenCalled()
+
+    unmount()
+    expect(vi.getTimerCount()).toBe(0)
+    consoleError.mockRestore()
+    vi.useRealTimers()
+  })
+
+  it('reports a mounted timeout while preserving known state, bindings, modals, and stale confirmation', async () => {
+    vi.useFakeTimers()
+    localStorage.setItem('chrote-dashboard-state', JSON.stringify({
+      version: 3,
+      settingsSchemaVersion: 2,
+      layoutsByViewport: {
+        desktop: {
+          workspaces: {
+            terminal1: {
+              windows: [{
+                id: 'terminal1-window-0',
+                boundSessions: ['perttu:known'],
+                activeSession: 'perttu:known',
+                colorIndex: 0,
+              }],
+              windowCount: 1,
+            },
+          },
+        },
+      },
+      sidebarCollapsed: false,
+      settings: { ...DEFAULT_SETTINGS, autoRefreshInterval: 60000 },
+    }))
+    const { requests } = stubDeferredSessionFetch()
+    const { result, unmount } = renderSession()
+    const knownSession = { name: 'known', windows: 1, attached: false, group: 'shell', unixUser: 'perttu' }
+    const knownGrouped = { shell: [knownSession] }
+    const knownBank = [{ name: 'banked', unixUser: 'perttu', live: false }]
+
+    await act(async () => {
+      requests[0].response.resolve(sessionResponse({
+        sessions: [knownSession],
+        grouped: knownGrouped,
+        banked: knownBank,
+        terminalUsers: ['perttu'],
+      }))
+      await flushPromises()
+    })
+    expect(result.current.sessions).toEqual([knownSession])
+    act(() => {
+      result.current.openFloatingModal('perttu:known')
+      result.current.openSendToSession('perttu:known')
+    })
+
+    let timeoutSettled = false
+    let timedOutRefresh!: Promise<void>
+    act(() => {
+      timedOutRefresh = result.current.refreshSessions()
+      void timedOutRefresh.then(() => { timeoutSettled = true })
+    })
+    expect(requests).toHaveLength(2)
+
+    await act(async () => {
+      vi.advanceTimersByTime(10000)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(requests[1].signal?.aborted).toBe(true)
+    expect(timeoutSettled).toBe(true)
+    await timedOutRefresh
+    expect(requests).toHaveLength(2)
+    expect(result.current).toMatchObject({
+      sessions: [knownSession],
+      groupedSessions: knownGrouped,
+      sessionBank: knownBank,
+      terminalUsers: ['perttu'],
+      floatingSession: 'perttu:known',
+      sendToSessionTarget: 'perttu:known',
+      loading: false,
+      error: 'Failed to fetch sessions (request timed out)',
+    })
+    expect(result.current.workspaces.terminal1.windows[0]).toMatchObject({
+      boundSessions: ['perttu:known'],
+      activeSession: 'perttu:known',
+    })
+    expect(vi.getTimerCount()).toBe(1)
+
+    const firstAuthoritativeMissing = result.current.refreshSessions()
+    expect(requests).toHaveLength(3)
+    await act(async () => {
+      requests[2].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: [] }))
+      await firstAuthoritativeMissing
+    })
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['perttu:known'])
+    expect(result.current.floatingSession).toBe('perttu:known')
+    expect(result.current.sendToSessionTarget).toBe('perttu:known')
+
+    const secondAuthoritativeMissing = result.current.refreshSessions()
+    await act(async () => {
+      requests[3].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: [] }))
+      await secondAuthoritativeMissing
+    })
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual([])
+    expect(result.current.floatingSession).toBeNull()
+    expect(result.current.sendToSessionTarget).toBeNull()
+
+    unmount()
+    expect(vi.getTimerCount()).toBe(0)
+    vi.useRealTimers()
+  })
+
+  it('preserves authoritative state and stale confirmation across failed, non-ok, and aborted refreshes', async () => {
+    vi.useFakeTimers()
+    localStorage.setItem('chrote-dashboard-state', JSON.stringify({
+      version: 3,
+      settingsSchemaVersion: 2,
+      layoutsByViewport: {
+        desktop: {
+          workspaces: {
+            terminal1: {
+              windows: [{
+                id: 'terminal1-window-0',
+                boundSessions: ['perttu:stale'],
+                activeSession: 'perttu:stale',
+                colorIndex: 0,
+              }],
+              windowCount: 1,
+            },
+          },
+        },
+      },
+      sidebarCollapsed: false,
+      settings: { ...DEFAULT_SETTINGS, autoRefreshInterval: 60000 },
+    }))
+    const { requests } = stubDeferredSessionFetch()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { result } = renderSession()
+    const staleSession = { name: 'stale', windows: 1, attached: false, group: 'shell', unixUser: 'perttu' }
+    const knownBank = [{ name: 'banked', unixUser: 'perttu', live: false }]
+
+    await act(async () => {
+      requests[0].response.resolve(sessionResponse({
+        sessions: [staleSession],
+        grouped: { shell: [staleSession] },
+        banked: knownBank,
+        terminalUsers: ['perttu'],
+      }))
+      await Promise.resolve()
+    })
+    act(() => {
+      result.current.openFloatingModal('perttu:stale')
+      result.current.openSendToSession('perttu:stale')
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'protected', 'perttu')
+    })
+
+    const knownState = {
+      sessions: result.current.sessions,
+      groupedSessions: result.current.groupedSessions,
+      sessionBank: result.current.sessionBank,
+      terminalUsers: result.current.terminalUsers,
+      floatingSession: result.current.floatingSession,
+      sendToSessionTarget: result.current.sendToSessionTarget,
+    }
+    const failedPayload = {
+      error: 'tmux unavailable',
+      sessions: [{ name: 'not-authoritative' }],
+      grouped: { bad: [{ name: 'not-authoritative' }] },
+      banked: [{ name: 'not-authoritative' }],
+      terminalUsers: ['not-authoritative'],
+    }
+
+    const nonOk = result.current.refreshSessions()
+    await act(async () => {
+      requests[1].response.resolve(sessionResponse(failedPayload, false))
+      await nonOk
+    })
+    expect(result.current).toMatchObject(knownState)
+
+    const failed = result.current.refreshSessions()
+    await act(async () => {
+      requests[2].response.resolve(sessionResponse(failedPayload))
+      await failed
+    })
+    expect(result.current).toMatchObject(knownState)
+
+    const aborted = result.current.refreshSessions()
+    expect(requests[3].signal?.aborted).toBe(false)
+    act(() => vi.advanceTimersByTime(10000))
+    expect(requests[3].signal?.aborted).toBe(true)
+    await act(async () => {
+      requests[3].response.reject(new DOMException('Aborted', 'AbortError'))
+      await aborted
+    })
+    expect(result.current).toMatchObject(knownState)
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['perttu:stale', 'perttu:protected'])
+
+    const firstMissing = result.current.refreshSessions()
+    await act(async () => {
+      requests[4].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: ['perttu'] }))
+      await firstMissing
+    })
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['perttu:stale', 'perttu:protected'])
+    expect(result.current.floatingSession).toBe('perttu:stale')
+    expect(result.current.sendToSessionTarget).toBe('perttu:stale')
+
+    const secondMissing = result.current.refreshSessions()
+    await act(async () => {
+      requests[5].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: ['perttu'] }))
+      await secondMissing
+    })
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['perttu:protected'])
+    expect(result.current.floatingSession).toBeNull()
+    expect(result.current.sendToSessionTarget).toBeNull()
+
+    for (const requestIndex of [6, 7]) {
+      const refresh = result.current.refreshSessions()
+      await act(async () => {
+        requests[requestIndex].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: ['perttu'] }))
+        await refresh
+      })
+    }
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual([])
+
+    consoleError.mockRestore()
+    vi.useRealTimers()
+  })
+
+  it.each(['invalid JSON', 'a non-aborted network rejection'] as const)(
+    'preserves all authoritative state and stale confirmation after %s',
+    async failureMode => {
+      vi.useFakeTimers()
+      localStorage.setItem('chrote-dashboard-state', JSON.stringify({
+        version: 3,
+        settingsSchemaVersion: 2,
+        layoutsByViewport: {
+          desktop: {
+            workspaces: {
+              terminal1: {
+                windows: [{
+                  id: 'terminal1-window-0',
+                  boundSessions: ['perttu:known'],
+                  activeSession: 'perttu:known',
+                  colorIndex: 0,
+                }],
+                windowCount: 1,
+              },
+            },
+          },
+        },
+        sidebarCollapsed: false,
+        settings: { ...DEFAULT_SETTINGS, autoRefreshInterval: 60000 },
+      }))
+      const { requests } = stubDeferredSessionFetch()
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const { result, unmount } = renderSession()
+      const knownSession = { name: 'known', windows: 1, attached: false, group: 'shell', unixUser: 'perttu' }
+      const knownGrouped = { shell: [knownSession] }
+      const knownBank = [{ name: 'banked', unixUser: 'perttu', live: false }]
+
+      await act(async () => {
+        requests[0].response.resolve(sessionResponse({
+          sessions: [knownSession],
+          grouped: knownGrouped,
+          banked: knownBank,
+          terminalUsers: ['perttu'],
+        }))
+        await Promise.resolve()
+      })
+      act(() => {
+        result.current.openFloatingModal('perttu:known')
+        result.current.openSendToSession('perttu:known')
+      })
+
+      const failedRefresh = result.current.refreshSessions()
+      expect(requests).toHaveLength(2)
+      expect(requests[1].signal?.aborted).toBe(false)
+      await act(async () => {
+        if (failureMode === 'invalid JSON') {
+          requests[1].response.resolve({
+            ok: true,
+            json: vi.fn(() => Promise.reject(new SyntaxError('Unexpected token'))),
+            text: vi.fn(() => Promise.resolve('not json')),
+          })
+        } else {
+          requests[1].response.reject(new TypeError('network unavailable'))
+        }
+        await failedRefresh
+      })
+
+      expect(result.current).toMatchObject({
+        sessions: [knownSession],
+        groupedSessions: knownGrouped,
+        sessionBank: knownBank,
+        terminalUsers: ['perttu'],
+        floatingSession: 'perttu:known',
+        sendToSessionTarget: 'perttu:known',
+      })
+      expect(result.current.workspaces.terminal1.windows[0]).toMatchObject({
+        boundSessions: ['perttu:known'],
+        activeSession: 'perttu:known',
+      })
+
+      const firstMissing = result.current.refreshSessions()
+      await act(async () => {
+        requests[2].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: [] }))
+        await firstMissing
+      })
+      expect(result.current.workspaces.terminal1.windows[0]).toMatchObject({
+        boundSessions: ['perttu:known'],
+        activeSession: 'perttu:known',
+      })
+      expect(result.current.floatingSession).toBe('perttu:known')
+      expect(result.current.sendToSessionTarget).toBe('perttu:known')
+
+      const secondMissing = result.current.refreshSessions()
+      await act(async () => {
+        requests[3].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: [] }))
+        await secondMissing
+      })
+      expect(result.current.workspaces.terminal1.windows[0]).toMatchObject({
+        boundSessions: [],
+        activeSession: null,
+      })
+      expect(result.current.floatingSession).toBeNull()
+      expect(result.current.sendToSessionTarget).toBeNull()
+
+      unmount()
+      expect(vi.getTimerCount()).toBe(0)
+      consoleError.mockRestore()
+      vi.useRealTimers()
+    },
+  )
 
   it('auto-removes stale terminal bindings after repeated successful session refreshes', async () => {
     const liveSessions = [
@@ -813,6 +1536,41 @@ describe('addSessionToWindow', () => {
     expect(win.activeSession).toBe('perttu:shell')
   })
 
+  it('moves the single safe bare-qualified identity into a non-empty target and activates it', () => {
+    const { result } = renderSession()
+
+    act(() => {
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'shell', 'alice')
+      result.current.addSessionToWindow('terminal2', 'terminal2-window-1', 'resident')
+    })
+    act(() => {
+      result.current.addSessionToWindow('terminal2', 'terminal2-window-1', 'shell')
+    })
+
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual([])
+    expect(result.current.workspaces.terminal2.windows[1]).toMatchObject({
+      boundSessions: ['resident', 'shell'],
+      activeSession: 'shell',
+    })
+  })
+
+  it('keeps a bare same-name binding distinct when multiple qualified users make the alias ambiguous', () => {
+    const { result } = renderSession()
+
+    act(() => {
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'shell', 'alice')
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-1', 'shell', 'bob')
+      result.current.addSessionToWindow('terminal2', 'terminal2-window-0', 'shell')
+    })
+
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:shell'])
+    expect(result.current.workspaces.terminal1.windows[1].boundSessions).toEqual(['bob:shell'])
+    expect(result.current.workspaces.terminal2.windows[0]).toMatchObject({
+      boundSessions: ['shell'],
+      activeSession: 'shell',
+    })
+  })
+
   it('removes session from another window in the SAME workspace', () => {
     const { result } = renderSession()
 
@@ -828,20 +1586,19 @@ describe('addSessionToWindow', () => {
     expect(result.current.workspaces.terminal1.windows[1].boundSessions).toContain('jumper')
   })
 
-  it('sets activeSession on empty target but preserves existing active on non-empty target', () => {
+  it('activates every deliberate attach, including a non-empty destination used by drop and context Attach', () => {
     const { result } = renderSession()
 
-    // Add first session — becomes active
     act(() => {
       result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'first')
     })
     expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('first')
 
-    // Add second session — first stays active
+    // Drop/context Attach both use this action, so the newly attached session is visible immediately.
     act(() => {
       result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'second')
     })
-    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('first')
+    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('second')
     expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['first', 'second'])
   })
 
@@ -855,6 +1612,7 @@ describe('addSessionToWindow', () => {
     act(() => {
       result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'beta')
     })
+    act(() => result.current.setActiveSession('terminal1', 'terminal1-window-0', 'alpha'))
     expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('alpha')
 
     // Move 'alpha' to terminal2 — source should fall back to 'beta'
@@ -903,8 +1661,9 @@ describe('removeSessionFromWindow', () => {
       result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'C')
     })
 
-    // A is active (set when window was empty)
-    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('A')
+    // Each deliberate attach activates its session, so select A before testing fallback.
+    expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('C')
+    act(() => result.current.setActiveSession('terminal1', 'terminal1-window-0', 'A'))
 
     // Remove A — should fall back to B (first remaining)
     act(() => {
@@ -924,6 +1683,7 @@ describe('removeSessionFromWindow', () => {
     act(() => {
       result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'Y')
     })
+    act(() => result.current.setActiveSession('terminal1', 'terminal1-window-0', 'X'))
 
     expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('X')
 
@@ -969,7 +1729,8 @@ describe('cycleSession', () => {
     act(() => {
       hook.result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'S2')
     })
-    // Active is S0 (first added to empty window)
+    // Deliberate attaches activate their targets; restore the baseline under test.
+    act(() => hook.result.current.setActiveSession('terminal1', 'terminal1-window-0', 'S0'))
     return hook
   }
 
@@ -1086,6 +1847,109 @@ describe('renameSession', () => {
     expect(win.activeSession).toBe('renamed')
     expect(win.boundSessions).toContain('renamed')
     expect(win.boundSessions).toContain('keep-me')
+  })
+
+  it('globally keeps the first canonical rename claimant and repairs later visible collisions', async () => {
+    const { result } = renderSession()
+
+    act(() => {
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'first-fallback')
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'old', 'alice')
+      result.current.addSessionToWindow('terminal2', 'terminal2-window-1', 'later-fallback')
+      result.current.addSessionToWindow('terminal2', 'terminal2-window-1', 'new', 'alice')
+      result.current.addSessionToWindow('terminal3', 'terminal3-window-0', 'new', 'bob')
+      result.current.addSessionToWindow('terminal3', 'terminal3-window-1', 'new')
+    })
+
+    await act(async () => {
+      expect(await result.current.renameSession('old', 'new', 'alice')).toBe(true)
+    })
+
+    expect(result.current.workspaces.terminal1.windows[0]).toMatchObject({
+      boundSessions: ['first-fallback', 'alice:new'],
+      activeSession: 'alice:new',
+    })
+    expect(result.current.workspaces.terminal2.windows[1]).toMatchObject({
+      boundSessions: ['later-fallback'],
+      activeSession: 'later-fallback',
+    })
+    expect(result.current.workspaces.terminal3.windows[0].boundSessions).toEqual(['bob:new'])
+    expect(result.current.workspaces.terminal3.windows[1].boundSessions).toEqual(['new'])
+
+    expect(result.current.assignedSessions.get('alice:new')).toMatchObject({
+      workspaceId: 'terminal1',
+      windowId: 'terminal1-window-0',
+    })
+    expect([...result.current.assignedSessions.keys()].filter(key => key === 'alice:new')).toHaveLength(1)
+
+    const visibleTerminalWindowCandidates = Object.values(result.current.workspaces)
+      .flatMap(workspace => workspace.windows.slice(0, workspace.windowCount))
+      .filter(window => window.boundSessions.includes('alice:new'))
+    expect(visibleTerminalWindowCandidates).toHaveLength(1)
+  })
+
+  it('renames only the qualified user when the old and new bare aliases are ambiguous', async () => {
+    const { result } = renderSession()
+
+    act(() => {
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'old', 'alice')
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-1', 'old', 'bob')
+      result.current.addSessionToWindow('terminal2', 'terminal2-window-0', 'old')
+      result.current.addSessionToWindow('terminal2', 'terminal2-window-1', 'new-fallback')
+      result.current.addSessionToWindow('terminal2', 'terminal2-window-1', 'new', 'alice')
+      result.current.addSessionToWindow('terminal3', 'terminal3-window-0', 'new', 'bob')
+      result.current.addSessionToWindow('terminal3', 'terminal3-window-1', 'new')
+    })
+
+    await act(async () => {
+      expect(await result.current.renameSession('old', 'new', 'alice')).toBe(true)
+    })
+
+    expect(result.current.workspaces.terminal1.windows[0]).toMatchObject({
+      boundSessions: ['alice:new'],
+      activeSession: 'alice:new',
+    })
+    expect(result.current.workspaces.terminal1.windows[1]).toMatchObject({
+      boundSessions: ['bob:old'],
+      activeSession: 'bob:old',
+    })
+    expect(result.current.workspaces.terminal2.windows[0]).toMatchObject({
+      boundSessions: ['old'],
+      activeSession: 'old',
+    })
+    expect(result.current.workspaces.terminal2.windows[1]).toMatchObject({
+      boundSessions: ['new-fallback'],
+      activeSession: 'new-fallback',
+    })
+    expect(result.current.workspaces.terminal3.windows[0].boundSessions).toEqual(['bob:new'])
+    expect(result.current.workspaces.terminal3.windows[1].boundSessions).toEqual(['new'])
+
+    const bindings = Object.values(result.current.workspaces)
+      .flatMap(workspace => workspace.windows)
+      .flatMap(window => window.boundSessions)
+    expect(bindings.filter(binding => binding === 'alice:new')).toHaveLength(1)
+    expect(bindings).toEqual(expect.arrayContaining(['bob:old', 'old', 'bob:new', 'new']))
+  })
+
+  it('keeps a bare rename exact when qualified same-name sessions also exist', async () => {
+    const { result } = renderSession()
+
+    act(() => {
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'old', 'alice')
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-1', 'old', 'bob')
+      result.current.addSessionToWindow('terminal2', 'terminal2-window-0', 'old')
+    })
+
+    await act(async () => {
+      expect(await result.current.renameSession('old', 'new')).toBe(true)
+    })
+
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:old'])
+    expect(result.current.workspaces.terminal1.windows[1].boundSessions).toEqual(['bob:old'])
+    expect(result.current.workspaces.terminal2.windows[0]).toMatchObject({
+      boundSessions: ['new'],
+      activeSession: 'new',
+    })
   })
 
   it('returns false when API call fails', async () => {
@@ -1229,7 +2093,307 @@ describe('persistent agent actions', () => {
 })
 
 // ──────────────────────────────────────────────
-// 6. clampWindowCount — boundary values
+// 6. canonical slots, reveal contract, viewport persistence, and preset identity
+// ──────────────────────────────────────────────
+describe('canonical terminal layout invariants', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    setViewportWidth(1280)
+  })
+
+  it('stores four canonical slots in every default workspace while windowCount remains visibility only', () => {
+    const { result } = renderSession()
+
+    ;(['terminal1', 'terminal2', 'terminal3'] as const).forEach(workspaceId => {
+      expect(result.current.workspaces[workspaceId].windowCount).toBe(2)
+      expect(result.current.workspaces[workspaceId].windows.map(window => window.id)).toEqual([
+        `${workspaceId}-window-0`,
+        `${workspaceId}-window-1`,
+        `${workspaceId}-window-2`,
+        `${workspaceId}-window-3`,
+      ])
+    })
+  })
+
+  it('preserves hidden bindings, active choice, and assignedSessions through shrink, re-expand, and reload', () => {
+    const initial = renderSession()
+
+    act(() => {
+      initial.result.current.setWindowCount('terminal1', 4)
+      initial.result.current.addSessionToWindow('terminal1', 'terminal1-window-3', 'hidden-a', 'alice')
+      initial.result.current.addSessionToWindow('terminal1', 'terminal1-window-3', 'hidden-b', 'alice')
+      initial.result.current.setActiveSession('terminal1', 'terminal1-window-3', 'alice:hidden-a')
+      initial.result.current.setWindowCount('terminal1', 1)
+    })
+
+    expect(initial.result.current.workspaces.terminal1.windows).toHaveLength(4)
+    expect(initial.result.current.workspaces.terminal1.windows[3]).toMatchObject({
+      boundSessions: ['alice:hidden-a', 'alice:hidden-b'],
+      activeSession: 'alice:hidden-a',
+    })
+    expect(initial.result.current.assignedSessions.get('alice:hidden-a')).toMatchObject({
+      windowId: 'terminal1-window-3',
+      windowIndex: 4,
+    })
+
+    act(() => initial.result.current.setWindowCount('terminal1', 4))
+    expect(initial.result.current.workspaces.terminal1.windows[3].activeSession).toBe('alice:hidden-a')
+    act(() => initial.result.current.setWindowCount('terminal1', 1))
+    initial.unmount()
+
+    const reloaded = renderSession()
+    expect(reloaded.result.current.workspaces.terminal1.windowCount).toBe(1)
+    expect(reloaded.result.current.workspaces.terminal1.windows[3]).toMatchObject({
+      boundSessions: ['alice:hidden-a', 'alice:hidden-b'],
+      activeSession: 'alice:hidden-a',
+    })
+  })
+
+  it('persists all four slots independently in mobile, tablet, and desktop viewport buckets', () => {
+    const buckets = [
+      { width: 390, session: 'mobile-hidden' },
+      { width: 900, session: 'tablet-hidden' },
+      { width: 1280, session: 'desktop-hidden' },
+    ]
+
+    buckets.forEach(({ width, session }) => {
+      setViewportWidth(width)
+      const mounted = renderSession()
+      act(() => {
+        mounted.result.current.addSessionToWindow('terminal2', 'terminal2-window-3', session)
+        mounted.result.current.setWindowCount('terminal2', 1)
+      })
+      mounted.unmount()
+    })
+
+    buckets.forEach(({ width, session }) => {
+      setViewportWidth(width)
+      const reloaded = renderSession()
+      expect(reloaded.result.current.workspaces.terminal2.windows).toHaveLength(4)
+      expect(reloaded.result.current.workspaces.terminal2.windows[3].boundSessions).toEqual([session])
+      expect(reloaded.result.current.workspaces.terminal2.windowCount).toBe(1)
+      reloaded.unmount()
+    })
+  })
+
+  it('reveals a hidden canonical slot before the navigation slice focuses it', () => {
+    const { result } = renderSession()
+
+    act(() => result.current.setWindowCount('terminal3', 1))
+    act(() => result.current.revealWindow('terminal3', 'terminal3-window-2'))
+
+    expect(result.current.workspaces.terminal3.windowCount).toBe(3)
+    expect(result.current.windowRevealRequest).toMatchObject({
+      workspaceId: 'terminal3',
+      windowId: 'terminal3-window-2',
+    })
+    expect(result.current.focusedWindowKey).toBeNull()
+
+    act(() => result.current.setFocusedWindowKey('terminal3-terminal3-window-2'))
+    expect(result.current.focusedWindowKey).toBe('terminal3-terminal3-window-2')
+  })
+
+  it('leaves visibility and reveal state unchanged for malformed or noncanonical targets', () => {
+    const { result } = renderSession()
+
+    act(() => result.current.setWindowCount('terminal3', 1))
+    expect(result.current.windowRevealRequest).toBeNull()
+
+    act(() => result.current.revealWindow('terminal3', 'terminal3-window-03'))
+    expect(result.current.workspaces.terminal3.windowCount).toBe(1)
+    expect(result.current.windowRevealRequest).toBeNull()
+
+    act(() => result.current.revealWindow('missing-workspace' as never, 'missing-workspace-window-0'))
+    expect(result.current.workspaces.terminal3.windowCount).toBe(1)
+    expect(result.current.windowRevealRequest).toBeNull()
+  })
+
+  it('issues a fresh increasing request ID for every repeated valid reveal', () => {
+    const { result } = renderSession()
+
+    act(() => result.current.revealWindow('terminal2', 'terminal2-window-1'))
+    const firstRequest = result.current.windowRevealRequest
+    act(() => result.current.revealWindow('terminal2', 'terminal2-window-1'))
+    const secondRequest = result.current.windowRevealRequest
+
+    expect(firstRequest).toMatchObject({ workspaceId: 'terminal2', windowId: 'terminal2-window-1' })
+    expect(secondRequest).toMatchObject({ workspaceId: 'terminal2', windowId: 'terminal2-window-1' })
+    expect(secondRequest!.requestId).toBeGreaterThan(firstRequest!.requestId)
+  })
+
+  it('normalizes stored presets and applied layouts to one claimable slot per safe identity', () => {
+    localStorage.setItem('chrote-dashboard-presets', JSON.stringify([{
+      id: 'historical',
+      name: 'Historical duplicates',
+      createdAt: 1,
+      workspaces: {
+        terminal1: {
+          windowCount: 2,
+          windows: [
+            { id: 'old-0', boundSessions: ['alice:solo', 'alice:shared'], activeSession: 'alice:solo', colorIndex: 0 },
+            { id: 'old-1', boundSessions: ['solo', 'fallback'], activeSession: 'solo', colorIndex: 1 },
+          ],
+        },
+        terminal2: {
+          windowCount: 2,
+          windows: [
+            { id: 'old-2', boundSessions: ['bob:shared', 'shared'], activeSession: 'shared', colorIndex: 2 },
+            { id: 'old-3', boundSessions: ['alice:solo', 'keep'], activeSession: 'alice:solo', colorIndex: 3 },
+          ],
+        },
+      },
+    }]))
+
+    const { result } = renderSession()
+    const preset = result.current.layoutPresets[0]
+
+    expect(preset.workspaces.terminal1.windows).toHaveLength(4)
+    expect(preset.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:solo', 'alice:shared'])
+    expect(preset.workspaces.terminal1.windows[1]).toMatchObject({
+      boundSessions: ['fallback'],
+      activeSession: 'fallback',
+    })
+    expect(preset.workspaces.terminal2.windows[0].boundSessions).toEqual(['bob:shared', 'shared'])
+    expect(preset.workspaces.terminal2.windows[1]).toMatchObject({
+      boundSessions: ['keep'],
+      activeSession: 'keep',
+    })
+
+    act(() => result.current.loadPreset('historical'))
+    const claimableSlots = Object.values(result.current.workspaces)
+      .flatMap(workspace => workspace.windows)
+      .filter(window => window.boundSessions.includes('alice:solo') || window.boundSessions.includes('solo'))
+    expect(claimableSlots).toHaveLength(1)
+    expect(result.current.assignedSessions.get('alice:solo')).toMatchObject({
+      workspaceId: 'terminal1',
+      windowId: 'terminal1-window-0',
+    })
+  })
+
+  it('keeps the stable first safe identity, exact-dedupes, preserves ambiguous users, and repairs only invalid active choices', () => {
+    localStorage.setItem('chrote-dashboard-presets', JSON.stringify([{
+      id: 'identity-audit',
+      name: 'Identity audit',
+      createdAt: 2,
+      workspaces: {
+        terminal1: {
+          windowCount: 4,
+          windows: [
+            {
+              id: 'legacy-0',
+              boundSessions: ['solo', 'solo', 'alice:solo', 'keep-active'],
+              activeSession: 'keep-active',
+              colorIndex: 0,
+            },
+            {
+              id: 'legacy-1',
+              boundSessions: ['alice:solo', 'fallback'],
+              activeSession: 'alice:solo',
+              colorIndex: 1,
+            },
+            {
+              id: 'legacy-2',
+              boundSessions: ['alice:shared', 'bob:shared', 'shared', 'shared'],
+              activeSession: 'bob:shared',
+              colorIndex: 2,
+            },
+            {
+              id: 'legacy-3',
+              boundSessions: ['first', 'second'],
+              activeSession: 'missing',
+              colorIndex: 3,
+            },
+            {
+              id: 'legacy-4',
+              boundSessions: ['must-be-dropped'],
+              activeSession: 'must-be-dropped',
+              colorIndex: 4,
+            },
+          ],
+        },
+      },
+    }]))
+
+    const { result } = renderSession()
+    const windows = result.current.layoutPresets[0].workspaces.terminal1.windows
+
+    expect(windows).toHaveLength(4)
+    expect(windows[0]).toMatchObject({
+      id: 'terminal1-window-0',
+      boundSessions: ['solo', 'keep-active'],
+      activeSession: 'keep-active',
+    })
+    expect(windows[1]).toMatchObject({ boundSessions: ['fallback'], activeSession: 'fallback' })
+    expect(windows[2]).toMatchObject({
+      boundSessions: ['alice:shared', 'bob:shared', 'shared'],
+      activeSession: 'bob:shared',
+    })
+    expect(windows[3]).toMatchObject({ boundSessions: ['first', 'second'], activeSession: 'first' })
+    expect(windows.flatMap(window => window.boundSessions)).not.toContain('must-be-dropped')
+  })
+
+  it('sanitizes and deduplicates the save-current-layout path', async () => {
+    const { result } = renderSession()
+
+    act(() => {
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'old')
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'existing')
+    })
+    await act(async () => {
+      expect(await result.current.renameSession('old', 'existing')).toBe(true)
+    })
+    expect(result.current.workspaces.terminal1.windows[0]).toMatchObject({
+      boundSessions: ['existing'],
+      activeSession: 'existing',
+    })
+
+    const liveClaims = Object.values(result.current.workspaces)
+      .flatMap(workspace => workspace.windows)
+      .filter(window => window.boundSessions.includes('existing'))
+    expect(liveClaims).toHaveLength(1)
+
+    act(() => expect(result.current.saveCurrentLayout('sanitized')).toBe(true))
+    const saved = result.current.layoutPresets.find(preset => preset.name === 'sanitized')
+    expect(saved?.workspaces.terminal1.windows).toHaveLength(4)
+    expect(saved?.workspaces.terminal1.windows[0]).toMatchObject({
+      boundSessions: ['existing'],
+      activeSession: 'existing',
+    })
+    const savedClaims = Object.values(saved!.workspaces)
+      .flatMap(workspace => workspace.windows)
+      .filter(window => window.boundSessions.includes('existing'))
+    expect(savedClaims).toHaveLength(1)
+  })
+
+  it('reveals, activates, and focuses an assigned hidden session when its row is clicked', () => {
+    const { result } = renderSession()
+
+    act(() => {
+      result.current.setWindowCount('terminal2', 1)
+    })
+    act(() => {
+      result.current.addSessionToWindow('terminal2', 'terminal2-window-3', 'hidden', 'alice')
+    })
+    act(() => {
+      result.current.setWindowCount('terminal2', 1)
+    })
+    act(() => {
+      result.current.handleSessionClick('alice:hidden')
+    })
+
+    expect(result.current.workspaces.terminal2.windowCount).toBe(4)
+    expect(result.current.workspaces.terminal2.windows[3].activeSession).toBe('alice:hidden')
+    expect(result.current.focusedWindowKey).toBe('terminal2-terminal2-window-3')
+    expect(result.current.windowRevealRequest).toMatchObject({
+      workspaceId: 'terminal2',
+      windowId: 'terminal2-window-3',
+    })
+    expect(result.current.floatingSession).toBeNull()
+  })
+})
+
+// ──────────────────────────────────────────────
+// 7. clampWindowCount — boundary values
 // ──────────────────────────────────────────────
 describe('clampWindowCount (via setWindowCount)', () => {
   beforeEach(() => {
@@ -1244,7 +2408,7 @@ describe('clampWindowCount (via setWindowCount)', () => {
     })
 
     expect(result.current.workspaces.terminal1.windowCount).toBe(1)
-    expect(result.current.workspaces.terminal1.windows).toHaveLength(1)
+    expect(result.current.workspaces.terminal1.windows).toHaveLength(4)
   })
 
   it('clamps 5 to 4', () => {
@@ -1266,7 +2430,7 @@ describe('clampWindowCount (via setWindowCount)', () => {
     })
 
     expect(result.current.workspaces.terminal1.windowCount).toBe(1)
-    expect(result.current.workspaces.terminal1.windows).toHaveLength(1)
+    expect(result.current.workspaces.terminal1.windows).toHaveLength(4)
   })
 
   it('keeps 4 as 4', () => {

@@ -1,4 +1,5 @@
 import { Page, Route } from '@playwright/test'
+import type { SessionsResponse } from '../src/types'
 
 const fileResourcesPattern = /.*\/api\/files\/resources(?:\/.*)?$/
 const tmuxAppearancePattern = /.*\/api\/tmux\/appearance\/?$/
@@ -155,7 +156,7 @@ export const mockSessions = {
     ],
   },
   timestamp: new Date().toISOString(),
-}
+} satisfies SessionsResponse
 
 export const mockFormationsBoard = {
   id: 'board-playwright-smoke',
@@ -445,7 +446,7 @@ export async function mockFileApiRoutes(page: Page) {
   })
 }
 
-export async function mockApiRoutes(page: Page) {
+export async function mockApiRoutes(page: Page, options?: { sessionsResponse?: SessionsResponse }) {
   await page.route(/.*\/terminal\/?.*/, async route => {
     await route.fulfill({
       status: 200,
@@ -488,7 +489,7 @@ export async function mockApiRoutes(page: Page) {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(mockSessions),
+      body: JSON.stringify(options?.sessionsResponse ?? mockSessions),
     })
   })
 

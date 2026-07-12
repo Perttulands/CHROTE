@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useSession } from '../context/SessionContext'
+import { useToast } from '../context/ToastContext'
 import type { UserSettings, TmuxAppearance, WorkspaceId, LaunchUser } from '../types'
 import { TERMINAL_LABELS, TERMINAL_WORKSPACE_IDS, TMUX_PRESETS, defaultSessionPrefixForUser, defaultTerminalUserColor, getSessionPrefixForUser, getTerminalUserColor, normalizeTerminalUsers, resolveLaunchUser } from '../types'
 import FolderPickerModal from './FolderPickerModal'
 import SessionBankSection from './SessionBankSection'
+import NukeConfirmModal from './NukeConfirmModal'
 import { toDisplayPath } from './FilesView/types'
 
 // Color input component with picker and text field
@@ -52,10 +54,13 @@ type SettingsViewProps = {
 }
 
 function SettingsView({ sessionBankFocusNonce = 0 }: SettingsViewProps = {}) {
-  const { settings, updateSettings, terminalUsers } = useSession()
+  const { settings, updateSettings, terminalUsers, sessions, refreshSessions } = useSession()
+  const { addToast } = useToast()
   const [showFolderPicker, setShowFolderPicker] = useState(false)
   const [projectPathInput, setProjectPathInput] = useState('')
   const [sessionBankCollapsed, setSessionBankCollapsed] = useState(true)
+  const [showNukeModal, setShowNukeModal] = useState(false)
+  const [nuking, setNuking] = useState(false)
   const sessionBankRef = useRef<HTMLDivElement>(null)
   const configuredUsers = normalizeTerminalUsers(terminalUsers.length > 0
     ? terminalUsers
@@ -158,6 +163,26 @@ function SettingsView({ sessionBankFocusNonce = 0 }: SettingsViewProps = {}) {
     const preset = TMUX_PRESETS[presetName]
     if (preset) {
       updateSettings({ tmuxAppearance: preset })
+    }
+  }
+
+  const nukeAllSessions = async () => {
+    setNuking(true)
+    try {
+      const response = await fetch('/api/tmux/sessions/all', {
+        method: 'DELETE',
+        headers: { 'X-Nuke-Confirm': 'DASHBOARD-NUKE-CONFIRMED' },
+        signal: AbortSignal.timeout(10000),
+      })
+      if (!response.ok) throw new Error(await response.text())
+      addToast('All sessions destroyed', 'warning')
+      refreshSessions()
+    } catch (error) {
+      console.error('Failed to destroy sessions:', error)
+      addToast('Failed to destroy sessions', 'error')
+    } finally {
+      setNuking(false)
+      setShowNukeModal(false)
     }
   }
 
@@ -410,6 +435,18 @@ function SettingsView({ sessionBankFocusNonce = 0 }: SettingsViewProps = {}) {
         />
       </div>
 
+      <section className="settings-section settings-danger-zone">
+        <h2 className="settings-section-title">Advanced session recovery</h2>
+        <p className="settings-description">Bulk destruction is an emergency action. Individual session controls are safer.</p>
+        <button
+          className="nuke-trigger-btn"
+          onClick={() => setShowNukeModal(true)}
+          disabled={nuking || sessions.length === 0}
+        >
+          ☢ {nuking ? 'Nuking…' : 'Nuke All sessions'}
+        </button>
+      </section>
+
       {/* Beads Projects Section */}
       <section className="settings-section">
         <h2 className="settings-section-title">Beads Projects</h2>
@@ -480,6 +517,16 @@ function SettingsView({ sessionBankFocusNonce = 0 }: SettingsViewProps = {}) {
         <FolderPickerModal
           onSelect={handleAddProjectPath}
           onClose={() => setShowFolderPicker(false)}
+        />
+      )}
+
+      {showNukeModal && (
+        <NukeConfirmModal
+          sessionCount={sessions.length}
+          sessionNames={sessions.map(session => session.name)}
+          protectedSessionNames={sessions.filter(session => session.persistent).map(session => session.name)}
+          onConfirm={nukeAllSessions}
+          onCancel={() => setShowNukeModal(false)}
         />
       )}
     </div>

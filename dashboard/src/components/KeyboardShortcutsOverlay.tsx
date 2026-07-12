@@ -12,34 +12,11 @@ interface ShortcutCategory {
 
 const shortcutCategories: ShortcutCategory[] = [
   {
-    title: 'Navigation',
+    title: 'Dashboard chrome',
     shortcuts: [
-      { keys: ['1', '2', '3', '4'], description: 'Switch to window 1-4' },
-      { keys: ['Tab'], description: 'Cycle Terminal tabs' },
-      { keys: ['Ctrl', 'Down'], description: 'Cycle through windows' },
-      { keys: ['/'], description: 'Focus search box' },
-    ],
-  },
-  {
-    title: 'Sessions',
-    shortcuts: [
-      { keys: ['Ctrl', 'N'], description: 'Create new session' },
-      { keys: ['Ctrl', 'Right'], description: 'Next session in window' },
-      { keys: ['Ctrl', 'Left'], description: 'Previous session in window' },
-    ],
-  },
-  {
-    title: 'Windows',
-    shortcuts: [
-      { keys: ['Ctrl', 'S'], description: 'Toggle sidebar' },
-      { keys: ['Ctrl', '1-9'], description: 'Load layout preset 1-9' },
-    ],
-  },
-  {
-    title: 'General',
-    shortcuts: [
+      { keys: ['/'], description: 'Focus session search' },
       { keys: ['?'], description: 'Show this help overlay' },
-      { keys: ['Escape'], description: 'Close overlay / modal' },
+      { keys: ['Escape'], description: 'Close overlay or Peek' },
     ],
   },
 ]

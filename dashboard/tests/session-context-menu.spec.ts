@@ -81,7 +81,7 @@ async function mockApiRoutesWithMutations(page: Page) {
 
 // Helper: drag-and-drop for assigning sessions to windows (same as dashboard.spec.ts)
 async function dragAndDrop(page: Page, sourceSelector: string, targetSelector: string) {
-  const source = page.locator(sourceSelector).first()
+  const source = page.locator(sourceSelector).first().locator('.session-drag-handle')
   const target = page.locator(targetSelector).first()
   const sourceBox = await source.boundingBox()
   const targetBox = await target.boundingBox()
@@ -226,9 +226,9 @@ test.describe('Session Context Menu', () => {
     const menu = page.locator('.session-context-menu')
     await expect(menu).toBeVisible()
 
-    // Hover over "Attach to Window" to reveal submenu
-    const assignTrigger = menu.locator('.session-context-submenu-trigger:has-text("Attach to Window")')
-    await assignTrigger.hover()
+    // Click "Attach to Window" to reveal the keyboard/touch-operable submenu
+    const assignTrigger = menu.getByRole('button', { name: /Attach to Window/ })
+    await assignTrigger.click()
 
     // Submenu should appear with window entries
     const submenu = page.locator('.session-context-submenu')

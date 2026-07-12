@@ -2,10 +2,8 @@ export const FEATURE_FLAGS = {
   uiV2: 'chrote-ui-v2',
   beadsAllStatuses: 'chrote-beads-all-statuses',
   beadsDetailModal: 'chrote-beads-detail-modal',
-  sessionLocationBadges: 'chrote-session-location-badges',
   filesPersistTabState: 'chrote-files-persist-tab-state',
   filesResizablePreview: 'chrote-files-resizable-preview',
-  terminalRefitButton: 'chrote-terminal-refit-button',
   serverStatusTab: 'chrote-server-status-tab',
 } as const
 
@@ -15,10 +13,8 @@ const DEFAULT_ENABLED: Record<FeatureFlagName, boolean> = {
   uiV2: false,
   beadsAllStatuses: true,
   beadsDetailModal: true,
-  sessionLocationBadges: true,
   filesPersistTabState: true,
   filesResizablePreview: true,
-  terminalRefitButton: true,
   serverStatusTab: true,
 }
 

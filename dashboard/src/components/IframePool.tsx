@@ -8,6 +8,8 @@ interface IframePoolContextType {
   claimIframe: (sessionName: string, container: HTMLElement) => (() => void)
   /** Check if a session's iframe has finished loading */
   isLoaded: (sessionName: string) => boolean
+  /** Reactive loaded identities for rendering truthful readiness state. */
+  loadedSessions: ReadonlySet<string>
   /** Get the iframe element for a session (for font size / fit operations) */
   getIframe: (sessionName: string) => HTMLIFrameElement | null
   /** Apply font size to a specific session's iframe */
@@ -57,23 +59,21 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
 
   const sessionUsers = useMemo(() => {
     const users = new Map<string, LaunchUser>()
-    const nameCounts = new Map<string, number>()
+    const sessionsByKey = new Map(sessions.map(session => [getSessionKey(session.name, session.unixUser), session]))
+    const sessionsByName = new Map<string, typeof sessions>()
     sessions.forEach(session => {
-      nameCounts.set(session.name, (nameCounts.get(session.name) ?? 0) + 1)
-    })
-    sessions.forEach(session => {
-      const sessionKey = getSessionKey(session.name, session.unixUser)
-      users.set(sessionKey, session.unixUser ?? '')
-      if (nameCounts.get(session.name) === 1) {
-        users.set(session.name, session.unixUser ?? '') // backward compatibility only when unambiguous
-      }
+      sessionsByName.set(session.name, [...(sessionsByName.get(session.name) ?? []), session])
     })
     TERMINAL_WORKSPACE_IDS.forEach(wsId => {
       workspaces[wsId].windows.forEach(w => {
         w.boundSessions.forEach(sessionKey => {
           if (!sessionKey || sessionKey === 'INIT-PENDING' || users.has(sessionKey)) return
-          const keyUser = getSessionUserFromKey(sessionKey)
-          if (keyUser) users.set(sessionKey, keyUser)
+          const exactSession = sessionsByKey.get(sessionKey)
+          const legacyMatches = sessionsByName.get(sessionKey) ?? []
+          const unixUser = exactSession?.unixUser
+            ?? (legacyMatches.length === 1 ? legacyMatches[0].unixUser : undefined)
+            ?? getSessionUserFromKey(sessionKey)
+          users.set(sessionKey, unixUser ?? '')
         })
       })
     })
@@ -271,12 +271,13 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
   const contextValue = useMemo<IframePoolContextType>(() => ({
     claimIframe,
     isLoaded,
+    loadedSessions,
     getIframe,
     applyFontSize,
     triggerFit,
     focusIframe,
     reconnectIframe,
-  }), [claimIframe, isLoaded, getIframe, applyFontSize, triggerFit, focusIframe, reconnectIframe])
+  }), [applyFontSize, claimIframe, focusIframe, getIframe, isLoaded, loadedSessions, reconnectIframe, triggerFit])
 
   return (
     <IframePoolContext.Provider value={contextValue}>

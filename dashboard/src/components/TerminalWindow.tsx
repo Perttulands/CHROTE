@@ -42,24 +42,18 @@ function CreateSessionButton({ workspaceId, windowId, accentColor }: CreateSessi
 }
 
 interface DropOverlayProps {
-  workspaceId: WorkspaceId
-  windowId: string
   isVisible: boolean
+  isOver: boolean
 }
 
 // Full-window drop overlay that appears during drag
-function DropOverlay({ workspaceId, windowId, isVisible }: DropOverlayProps) {
-  const { setNodeRef, isOver } = useDroppable({
-    id: `drop-${workspaceId}-${windowId}`,
-    data: { type: 'window', workspaceId, windowId },
-  })
-
+function DropOverlay({ isVisible, isOver }: DropOverlayProps) {
   if (!isVisible) return null
 
   return (
     <div
-      ref={setNodeRef}
       className={`terminal-drop-overlay ${isOver ? 'is-over' : ''}`}
+      style={{ inset: 0, pointerEvents: 'none' }}
     >
       <span className="drop-hint">{isOver ? 'Release to add' : 'Drop here'}</span>
     </div>
@@ -73,10 +67,9 @@ interface SessionTagProps {
   windowId: string
   onRemove: () => void
   onClick: () => void
-  onSend: () => void
 }
 
-function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, onClick, onSend }: SessionTagProps) {
+function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, onClick }: SessionTagProps) {
   const { sessions, settings } = useSession()
   const actualName = getSessionNameFromKey(sessionName)
   const unixUser = getSessionUserFromKey(sessionName)
@@ -86,20 +79,18 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
   const session = matchingSessions.length === 1 ? matchingSessions[0] : undefined
   const resolvedUser = session?.unixUser || unixUser
   const sessionKey = getSessionKey(actualName, resolvedUser)
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+  const { listeners, setNodeRef, isDragging } = useDraggable({
     id: `tag-${workspaceId}-${windowId}-${sessionKey}`,
     data: { type: 'tag', sessionName: actualName, sessionKey, unixUser: resolvedUser, sourceWindowId: windowId, sourceWorkspaceId: workspaceId },
   })
 
-  const style = transform
-    ? {
-      transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
-      zIndex: isDragging ? 1000 : undefined,
-    }
+  const style = isDragging
+    ? { opacity: 0, transition: 'none' }
     : undefined
 
   // Show full tmux session name, including prefixes (e.g. critique-codex).
   const displayName = actualName
+  const dragLabel = `Drag ${displayName}${resolvedUser ? ` (Unix user ${resolvedUser})` : ''}`
 
   // Handle click on the tag - only fire if not dragging
   const handleClick = (e: React.MouseEvent) => {
@@ -107,12 +98,6 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
     if (isDragging) return
     // Don't trigger if clicking the remove button
     if ((e.target as HTMLElement).closest('.tag-remove')) return
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault()
-      e.stopPropagation()
-      onSend()
-      return
-    }
     onClick()
   }
 
@@ -122,9 +107,20 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
       className={`session-tag ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''}`}
       style={style}
       onClick={handleClick}
-      {...listeners}
-      {...attributes}
     >
+      <span
+        className="session-tag-drag-handle"
+        aria-hidden="true"
+        title={dragLabel}
+        style={{ touchAction: 'none' }}
+        {...listeners}
+        onClick={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+        }}
+      >
+        ⠿
+      </span>
       {resolvedUser && (
         <span
           className="session-user-badge"
@@ -149,8 +145,16 @@ interface TerminalWindowProps {
 }
 
 function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false, refitNonce = 0, style }: TerminalWindowProps) {
-  const bodyRef = useRef<HTMLDivElement>(null)
+  const bodyRef = useRef<HTMLDivElement | null>(null)
   const windowRef = useRef<HTMLDivElement>(null)
+  const { setNodeRef: setDropNodeRef, isOver } = useDroppable({
+    id: `drop-${workspaceId}-${windowConfig.id}`,
+    data: { type: 'window', workspaceId, windowId: windowConfig.id },
+  })
+  const setBodyRef = useCallback((node: HTMLDivElement | null) => {
+    bodyRef.current = node
+    setDropNodeRef(node)
+  }, [setDropNodeRef])
 
   const pool = useIframePool()
 
@@ -158,7 +162,6 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
     removeSessionFromWindow,
     setActiveSession,
     cycleSession,
-    openSendToSession,
     focusedWindowKey,
     setFocusedWindowKey,
   } = useSession()
@@ -170,7 +173,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
   const activeSession = windowConfig.activeSession
 
   // Check if active session is loaded via pool
-  const activeSessionLoaded = activeSession ? pool.isLoaded(activeSession) : false
+  const activeSessionLoaded = activeSession ? pool.loadedSessions.has(activeSession) : false
 
   // Claim/release iframes from the pool as boundSessions change
   useEffect(() => {
@@ -205,49 +208,12 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
   // eslint-disable-next-line react-hooks/exhaustive-deps -- pool functions are stable refs
   }, [activeSession, windowConfig.boundSessions])
 
-  // Fit active session after layout settles. rAF fires after the first
-  // paint; the 150ms fallback covers newly-connected iframes where xterm
-  // isn't ready in the first frame. ResizeObserver handles everything after.
-  useEffect(() => {
-    if (!activeSession) return
-    const fitIfLoaded = () => {
-      if (pool.isLoaded(activeSession)) pool.triggerFit(activeSession)
-    }
-    const rafId = requestAnimationFrame(fitIfLoaded)
-    const timerId = setTimeout(fitIfLoaded, 150)
-    return () => {
-      cancelAnimationFrame(rafId)
-      clearTimeout(timerId)
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- pool functions are stable refs
-  }, [activeSession])
-
-  // Trigger fit() when the active session's iframe finishes loading.
-  // The effect above fires before the iframe has loaded (src just set),
-  // so xterm.js starts with default dimensions. This effect catches the
-  // load completion and re-fits with multiple delays so xterm has time
-  // to initialize its fit addon.
   useEffect(() => {
     if (!activeSession || !activeSessionLoaded) return
-    const timers = [
-      setTimeout(() => pool.triggerFit(activeSession), 50),
-      setTimeout(() => pool.triggerFit(activeSession), 200),
-      setTimeout(() => pool.triggerFit(activeSession), 500),
-    ]
-    return () => timers.forEach(clearTimeout)
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- pool functions are stable refs
-  }, [activeSession, activeSessionLoaded])
-
-  useEffect(() => {
-    if (!activeSession) return
-    const timers = [
-      setTimeout(() => pool.triggerFit(activeSession), 0),
-      setTimeout(() => pool.triggerFit(activeSession), 120),
-      setTimeout(() => pool.triggerFit(activeSession), 300),
-    ]
-    return () => timers.forEach(clearTimeout)
+    const rafId = requestAnimationFrame(() => pool.triggerFit(activeSession))
+    return () => cancelAnimationFrame(rafId)
   // eslint-disable-next-line react-hooks/exhaustive-deps -- pool.triggerFit is a stable ref
-  }, [activeSession, refitNonce])
+  }, [activeSession, activeSessionLoaded, refitNonce])
 
   // Focus iframe when this window is focused
   useEffect(() => {
@@ -262,33 +228,6 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
     setFocusedWindowKey(windowKey)
   }, [windowKey, setFocusedWindowKey])
 
-  // Store refs for values needed in keyboard handler to avoid stale closures
-  const isFocusedRef = useRef(isFocused)
-  const boundSessionsRef = useRef(windowConfig.boundSessions)
-  useEffect(() => {
-    isFocusedRef.current = isFocused
-    boundSessionsRef.current = windowConfig.boundSessions
-  }, [isFocused, windowConfig.boundSessions])
-
-  // Keyboard navigation: Ctrl+Arrow to cycle sessions (only when focused)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (!isFocusedRef.current) return
-      if (!e.ctrlKey) return
-      if (boundSessionsRef.current.length <= 1) return
-
-      if (e.key === 'ArrowRight') {
-        e.preventDefault()
-        cycleSession(workspaceId, windowConfig.id, 'next')
-      } else if (e.key === 'ArrowLeft') {
-        e.preventDefault()
-        cycleSession(workspaceId, windowConfig.id, 'prev')
-      }
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [workspaceId, windowConfig.id, cycleSession])
 
   // Store activeSession in ref for ResizeObserver callback
   const activeSessionRef = useRef(activeSession)
@@ -325,9 +264,6 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
     setActiveSession(workspaceId, windowConfig.id, sessionName)
   }
 
-  const handleTagSend = (sessionName: string) => {
-    openSendToSession(sessionName)
-  }
 
   const hasSessions = windowConfig.boundSessions.length > 0
 
@@ -354,7 +290,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
               windowId={windowConfig.id}
               onRemove={() => handleRemoveSession(sessionName)}
               onClick={() => handleTagClick(sessionName)}
-              onSend={() => handleTagSend(sessionName)}
+
             />
           ))}
         </div>
@@ -378,17 +314,13 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
               </button>
             </>
           )}
-          <span
-            className={`status-dot ${activeSessionLoaded ? '' : 'disconnected'}`}
-            onClick={(event) => {
-              event.stopPropagation()
-              handleWindowClick()
-            }}
-          />
+          {activeSession && !activeSessionLoaded && (
+            <span className="terminal-loading-state">Loading terminal…</span>
+          )}
         </div>
       </div>
 
-      <div ref={bodyRef} className="terminal-window-body" onClick={handleWindowClick}>
+      <div ref={setBodyRef} className="terminal-window-body" onClick={handleWindowClick}>
         {activeSession === 'INIT-PENDING' ? (
           <div style={{
             display: 'flex',
@@ -406,7 +338,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
           </div>
         ) : null}
         {/* Iframes are injected here by the IframePool via DOM manipulation */}
-        <DropOverlay workspaceId={workspaceId} windowId={windowConfig.id} isVisible={isDragging} />
+        <DropOverlay isVisible={isDragging} isOver={isOver} />
       </div>
     </div>
   )

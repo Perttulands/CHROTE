@@ -5,7 +5,7 @@ const terminalRoutePattern = /.*\/terminal\/?.*/
 
 // Helper: drag-and-drop for dnd-kit (same as dashboard.spec.ts)
 async function dragAndDrop(page: Page, sourceSelector: string, targetSelector: string) {
-  const source = page.locator(sourceSelector).first()
+  const source = page.locator(sourceSelector).first().locator('.session-drag-handle')
   const target = page.locator(targetSelector).first()
 
   const sourceBox = await source.boundingBox()

@@ -1,163 +1,70 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { renderHook } from '@testing-library/react'
+import { useKeyboardShortcuts } from './useKeyboardShortcuts'
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { renderHook, waitFor } from '@testing-library/react'
-import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
-import { DEFAULT_SETTINGS } from '../types'
-
-// We need to mock the useSession context hook
+const closeFloatingModal = vi.fn()
 const mockUseSession = vi.fn()
 
 vi.mock('../context/SessionContext', () => ({
   useSession: () => mockUseSession(),
 }))
 
-describe('useKeyboardShortcuts Hook', () => {
-  // Common mocks setup
-  const mockOnTabChange = vi.fn()
-  const mockOnShowHelp = vi.fn()
-  const mockToggleSidebar = vi.fn()
-  const mockCloseFloatingModal = vi.fn()
-  const mockCreateSession = vi.fn()
-  
+function mount(onShowHelp = vi.fn()) {
+  renderHook(() => useKeyboardShortcuts({ onShowHelp, isHelpOpen: false }))
+  return onShowHelp
+}
+
+describe('useKeyboardShortcuts', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    
-    // Default context values
-    mockUseSession.mockReturnValue({
-      workspaces: {
-        'terminal1': { windowCount: 4 }, // Add mock workspace
-        'terminal2': { windowCount: 4 },
-        'terminal3': { windowCount: 4 },
-      },
-      toggleSidebar: mockToggleSidebar,
-      closeFloatingModal: mockCloseFloatingModal,
-
-      floatingSession: null,
-      refreshSessions: vi.fn(),
-      createSession: mockCreateSession,
-      settings: DEFAULT_SETTINGS,
-      terminalUsers: ['perttu', 'tavern'],
-      sessions: [],
-      loadPreset: vi.fn(),
-      layoutPresets: [],
-    })
+    document.body.innerHTML = ''
+    mockUseSession.mockReturnValue({ floatingSession: null, closeFloatingModal })
   })
 
-  it('toggles sidebar on Ctrl+B', () => {
-    // Setup hook
-    renderHook(() => useKeyboardShortcuts({
-      activeTab: 'terminal1',
-      onTabChange: mockOnTabChange,
-      onShowHelp: mockOnShowHelp,
-      isHelpOpen: false
-    }))
+  it('leaves browser and terminal shortcuts alone', () => {
+    mount()
 
-    // Simulate key press
-    const event = new KeyboardEvent('keydown', { key: 'b', ctrlKey: true })
-    window.dispatchEvent(event)
-    
-    // NOTE: Implementation actually uses Ctrl+S for sidebar based on the file read
-    // But let's check if the test was assuming Ctrl+B which is standard tmux
-    // The previous test failed, so I'll trust the implementation code I read (Ctrl+S)
-    
-    // expect(mockToggleSidebar).toHaveBeenCalled() 
+    for (const event of [
+      new KeyboardEvent('keydown', { key: 'Tab', cancelable: true }),
+      new KeyboardEvent('keydown', { key: 's', ctrlKey: true, cancelable: true }),
+      new KeyboardEvent('keydown', { key: 'n', ctrlKey: true, cancelable: true }),
+      new KeyboardEvent('keydown', { key: '1', ctrlKey: true, cancelable: true }),
+      new KeyboardEvent('keydown', { key: 'ArrowRight', ctrlKey: true, cancelable: true }),
+    ]) {
+      window.dispatchEvent(event)
+      expect(event.defaultPrevented).toBe(false)
+    }
   })
 
-  // Renaming to match actual implementation logic (Ctrl+S, not Ctrl+B)
-  it('toggles sidebar on Ctrl+S', () => {
-     renderHook(() => useKeyboardShortcuts({
-      activeTab: 'terminal1',
-      onTabChange: mockOnTabChange,
-      onShowHelp: mockOnShowHelp,
-      isHelpOpen: false
-    }))
+  it('shows help and focuses search only from dashboard chrome', () => {
+    const onShowHelp = mount()
+    const search = document.createElement('input')
+    search.className = 'session-search-input'
+    document.body.appendChild(search)
 
-    const event = new KeyboardEvent('keydown', { key: 's', ctrlKey: true })
-    window.dispatchEvent(event)
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true, cancelable: true }))
+    expect(onShowHelp).toHaveBeenCalledTimes(1)
 
-    expect(mockToggleSidebar).toHaveBeenCalled()
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: '/', bubbles: true, cancelable: true }))
+    expect(search).toHaveFocus()
+
+    const terminalBody = document.createElement('div')
+    terminalBody.className = 'terminal-window-body'
+    document.body.appendChild(terminalBody)
+    terminalBody.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true, cancelable: true }))
+    expect(onShowHelp).toHaveBeenCalledTimes(1)
   })
 
-  it('shows help on ?', () => {
-    renderHook(() => useKeyboardShortcuts({
-      activeTab: 'terminal1',
-      onTabChange: mockOnTabChange,
-      onShowHelp: mockOnShowHelp,
-      isHelpOpen: false
-    }))
+  it('closes Peek on Escape without handling other keys while typing', () => {
+    mockUseSession.mockReturnValue({ floatingSession: 'alice:shell', closeFloatingModal })
+    const onShowHelp = mount()
+    const input = document.createElement('input')
+    document.body.appendChild(input)
 
-    const event = new KeyboardEvent('keydown', { key: '?' })
-    window.dispatchEvent(event)
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true, cancelable: true }))
+    expect(onShowHelp).not.toHaveBeenCalled()
 
-    expect(mockOnShowHelp).toHaveBeenCalled()
-  })
-
-  it('does NOT trigger shortcuts when typing in input', () => {
-    renderHook(() => useKeyboardShortcuts({
-      activeTab: 'terminal1',
-      onTabChange: mockOnTabChange,
-      onShowHelp: mockOnShowHelp,
-      isHelpOpen: false
-    }))
-
-     // Mock input element
-     const input = document.createElement('input')
-     document.body.appendChild(input)
-     input.focus()
-
-     // Helper property to simulate event target (React creates synthetic events, but window listeners receive native events)
-     // To test this properly with window listeners in JSDOM, we need to dispatch event with the correct target
-     // However, window.dispatchEvent doesn't easily let us set 'target'. 
-     // We rely on the hook implementation checking document.activeElement or event.target
-     
-     // Let's redefine the property on the event instance if needed, 
-     // but JSDOM event target is read-only usually. 
-     // The hook checks e.target. 
-     
-     // Simpler way: define a getter for target on a custom event mock or rely on JSDOM behavior.
-     // By default dispatched events target 'window' if dispatched on window. 
-     
-     // Trick: The hook implementation might check document.activeElement?
-     // No, the code reads: `const target = e.target as HTMLElement`
-     
-     // Creating a proper event that bubbles from input
-     const event = new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true })
-     input.dispatchEvent(event)
-
-    expect(mockToggleSidebar).not.toHaveBeenCalled()
-    document.body.removeChild(input)
-  })
-
-  it('creates Ctrl+N sessions through the shared creation action for the active terminal tab', async () => {
-    mockCreateSession.mockResolvedValue('created')
-    mockUseSession.mockReturnValue({
-      workspaces: {
-        terminal1: { windowCount: 4 },
-        terminal2: { windowCount: 4 },
-        terminal3: { windowCount: 4 },
-      },
-      toggleSidebar: mockToggleSidebar,
-      closeFloatingModal: mockCloseFloatingModal,
-      floatingSession: null,
-      refreshSessions: vi.fn(),
-      createSession: mockCreateSession,
-      settings: DEFAULT_SETTINGS,
-      terminalUsers: ['perttu', 'tavern'],
-      sessions: [],
-      loadPreset: vi.fn(),
-      layoutPresets: [],
-    })
-
-    renderHook(() => useKeyboardShortcuts({
-      activeTab: 'terminal3',
-      onTabChange: mockOnTabChange,
-      onShowHelp: mockOnShowHelp,
-      isHelpOpen: false
-    }))
-
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', ctrlKey: true }))
-
-    await waitFor(() => expect(mockCreateSession).toHaveBeenCalled())
-    expect(mockCreateSession).toHaveBeenCalledWith({ workspaceId: 'terminal3' })
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    expect(closeFloatingModal).toHaveBeenCalledTimes(1)
   })
 })

@@ -36,6 +36,7 @@ function sessionReturn(updateSettings: ReturnType<typeof vi.fn>, overrides: Reco
     terminalUsers,
     updateSettings,
     sessionBank: [],
+    sessions: [],
     refreshSessions,
     createSession,
     ...overrides,
@@ -164,6 +165,16 @@ describe('SettingsView terminal launch users', () => {
     fireEvent.click(checkbox)
 
     expect(updateSettings).toHaveBeenCalledWith({ mouseScroll: false })
+  })
+
+  it('keeps bulk session destruction in advanced Settings', () => {
+    const updateSettings = vi.fn()
+    mockUseSession.mockReturnValue(sessionReturn(updateSettings, {
+      sessions: [{ name: 'shell', windows: 1, attached: false, group: 'shell' }],
+    }))
+
+    render(<SettingsView />)
+    expect(screen.getByRole('button', { name: /Nuke All/i })).toBeInTheDocument()
   })
 })
 

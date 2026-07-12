@@ -1,19 +1,19 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useSession } from '../context/SessionContext'
 import TerminalWindow from './TerminalWindow'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
 import { getSessionKey } from '../types'
 import type { WorkspaceId } from '../types'
-import { isFeatureEnabled } from '../featureFlags'
 import { useIframePool } from './IframePool'
 
 interface TerminalAreaProps {
   workspaceId: WorkspaceId
+  active?: boolean
 }
 
-function TerminalArea({ workspaceId }: TerminalAreaProps) {
-  const { workspaces, setWindowCount, clearStaleSessionsFromWindow, isDragging, sessions } = useSession()
+function TerminalArea({ workspaceId, active = true }: TerminalAreaProps) {
+  const { workspaces, setWindowCount, clearStaleSessionsFromWindow, isDragging, sessions, windowRevealRequest } = useSession()
   const pool = useIframePool()
   const workspace = workspaces[workspaceId]
   const windows = workspace.windows
@@ -21,13 +21,13 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
 
   const isMobile = useMediaQuery('(max-width: 768px)')
   const [mobileActiveIndex, setMobileActiveIndex] = useState(0)
+  const lastConsumedRevealRequestId = useRef(0)
   const [refitNonce, setRefitNonce] = useState(0)
   const [controlsMenu, setControlsMenu] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 })
   const controlsMenuPosition = useViewportMenuPosition<HTMLDivElement>(
     controlsMenu.show ? { x: controlsMenu.x, y: controlsMenu.y } : null,
     { estimatedSize: { width: 220, height: 130 } },
   )
-  const showRefitButton = isFeatureEnabled('terminalRefitButton')
   const visibleWindows = windows.slice(0, windowCount)
   const liveSessions = useMemo(() => {
     const live = new Set<string>()
@@ -48,14 +48,35 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
     }
   }, [windowCount, mobileActiveIndex])
 
+  // A reveal first expands windowCount in SessionContext. Consume the matching
+  // request only once that canonical slot is actually part of this area's
+  // visible slice, so mobile navigation lands on the revealed window.
+  useEffect(() => {
+    if (!windowRevealRequest || windowRevealRequest.workspaceId !== workspaceId) return
+    if (windowRevealRequest.requestId <= lastConsumedRevealRequestId.current) return
+
+    const targetIndex = windows.findIndex(window => window.id === windowRevealRequest.windowId)
+    if (targetIndex < 0 || targetIndex >= windowCount) return
+
+    lastConsumedRevealRequestId.current = windowRevealRequest.requestId
+    setMobileActiveIndex(targetIndex)
+  }, [windowCount, windowRevealRequest, windows, workspaceId])
+
   useEffect(() => {
     if (!controlsMenu.show) return
     const close = (event: MouseEvent) => {
       if (controlsMenuPosition.ref.current?.contains(event.target as Node)) return
       setControlsMenu({ show: false, x: 0, y: 0 })
     }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setControlsMenu({ show: false, x: 0, y: 0 })
+    }
     document.addEventListener('mousedown', close)
-    return () => document.removeEventListener('mousedown', close)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
   }, [controlsMenu.show])
 
   const closeControlsMenu = () => setControlsMenu({ show: false, x: 0, y: 0 })
@@ -79,17 +100,6 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
     closeControlsMenu()
   }
 
-  const cleanStaleControl = staleSessionCount > 0 ? (
-    <button
-      className="layout-btn terminal-clean-stale-btn"
-      onClick={clearStaleSessions}
-      title={`Clean ${staleSessionCount} stale terminal session${staleSessionCount === 1 ? '' : 's'}`}
-      aria-label={`Clean ${staleSessionCount} stale session${staleSessionCount === 1 ? '' : 's'}`}
-    >
-      Clean stale · {staleSessionCount}
-    </button>
-  ) : null
-
   // Get grid class based on window count
   const getGridClass = () => {
     if (isMobile) return 'grid-1'
@@ -108,24 +118,23 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
       <div
         className="terminal-area-controls"
         aria-label="Terminal layout controls"
-        onContextMenu={(event) => {
-          event.preventDefault()
-          setControlsMenu({ show: true, x: event.clientX, y: event.clientY })
-        }}
       >
         {isMobile ? (
           <>
             <span className="layout-label">View:</span>
             <div className="mobile-controls-row" style={{ display: 'flex', gap: '4px', alignItems: 'center', flex: 1, overflowX: 'auto' }}>
-              {Array.from({ length: windowCount }).map((_, idx) => (
-                <button
-                  key={`view-${idx}`}
-                  className={`layout-btn ${mobileActiveIndex === idx ? 'active' : ''}`}
-                  onClick={() => setMobileActiveIndex(idx)}
-                >
-                  {idx + 1}
-                </button>
-              ))}
+              <div role="group" aria-label="Window view controls" style={{ display: 'contents' }}>
+                {Array.from({ length: windowCount }).map((_, idx) => (
+                  <button
+                    key={`view-${idx}`}
+                    className={`layout-btn ${mobileActiveIndex === idx ? 'active' : ''}`}
+                    onClick={() => setMobileActiveIndex(idx)}
+                    aria-label={`View window ${idx + 1}`}
+                  >
+                    {idx + 1}
+                  </button>
+                ))}
+              </div>
 
               <div style={{ width: '1px', height: '16px', background: 'var(--divider)', margin: '0 8px' }}></div>
 
@@ -140,17 +149,6 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
                   {count}
                 </button>
               ))}
-              {showRefitButton && (
-                <button
-                  className="layout-btn terminal-refit-btn"
-                  onClick={refitTerminalLayout}
-                  title="Refit terminal layout"
-                  aria-label="Refit terminal layout"
-                >
-                  <span aria-hidden="true">↻</span>
-                </button>
-              )}
-              {cleanStaleControl}
             </div>
           </>
         ) : (
@@ -166,19 +164,19 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
                 {count}
               </button>
             ))}
-            {showRefitButton && (
-              <button
-                className="layout-btn terminal-refit-btn"
-                onClick={refitTerminalLayout}
-                title="Refit terminal layout"
-                aria-label="Refit terminal layout"
-              >
-                <span aria-hidden="true">↻</span>
-              </button>
-            )}
-            {cleanStaleControl}
           </>
         )}
+        <button
+          className="layout-btn terminal-recovery-btn"
+          aria-label="Terminal recovery actions"
+          title="Terminal recovery actions"
+          onClick={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect()
+            setControlsMenu({ show: true, x: rect.right, y: rect.bottom + 4 })
+          }}
+        >
+          ⋯
+        </button>
       </div>
 
       {controlsMenu.show && (
@@ -191,9 +189,9 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
             <span className="session-context-icon">↻</span>
             Reconnect frames
           </button>
-          <button className="session-context-item" onClick={clearStaleSessions}>
+          <button className="session-context-item" onClick={clearStaleSessions} disabled={staleSessionCount === 0}>
             <span className="session-context-icon">⌫</span>
-            Clear stale sessions
+            {staleSessionCount > 0 ? `Clear ${staleSessionCount} stale sessions` : 'No stale sessions'}
           </button>
           <button className="session-context-item" onClick={refitTerminalLayout}>
             <span className="session-context-icon">⤢</span>
@@ -210,7 +208,7 @@ function TerminalArea({ workspaceId }: TerminalAreaProps) {
               key={window.id}
               workspaceId={workspaceId}
               window={window}
-              isDragging={isDragging}
+              isDragging={active && isVisible && isDragging}
               refitNonce={refitNonce}
               style={{ display: isVisible ? 'flex' : 'none' }}
             />

@@ -148,28 +148,6 @@
   background: #f87171;
 }
 
-/* ==================== ROLE BADGES ==================== */
-
-.role-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  margin-right: 6px;
-  filter: drop-shadow(0 0 4px var(--role-glow, transparent));
-  transition: transform 0.2s, filter 0.2s;
-}
-
-.role-badge:hover {
-  transform: scale(1.2);
-  filter: drop-shadow(0 0 8px var(--role-glow, transparent));
-}
-
-.role-badge-compact {
-  font-size: 12px;
-  margin-right: 4px;
-}
-
 /* ==================== KEYBOARD SHORTCUTS OVERLAY ==================== */
 
 .keyboard-overlay {
