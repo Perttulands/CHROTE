@@ -4,8 +4,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"flag"
 	"fmt"
 	"log"
@@ -37,12 +35,11 @@ const (
 
 // Config holds server configuration
 type Config struct {
-	Host         string
-	Port         int
-	TtydPort     int
-	APIAuthToken string
-	CORSOrigins  []string
-	StartTtyd    bool
+	Host        string
+	Port        int
+	TtydPort    int
+	CORSOrigins []string
+	StartTtyd   bool
 }
 
 func main() {
@@ -51,7 +48,6 @@ func main() {
 	flag.StringVar(&config.Host, "host", defaultBindHost, "Bind address")
 	flag.IntVar(&config.Port, "port", defaultServerPort, "Server port")
 	flag.IntVar(&config.TtydPort, "ttyd-port", defaultTtydPort, "ttyd port")
-	flag.StringVar(&config.APIAuthToken, "auth-token", "", "API authentication token")
 	flag.BoolVar(&config.StartTtyd, "start-ttyd", true, "Start ttyd child process")
 	flag.Parse()
 
@@ -65,9 +61,7 @@ func main() {
 	if port := os.Getenv("TTYD_PORT"); port != "" {
 		config.TtydPort = mustParsePort("TTYD_PORT", port)
 	}
-	if token := os.Getenv("API_AUTH_TOKEN"); token != "" {
-		config.APIAuthToken = token
-	}
+	warnRemovedAccessTokenSetting()
 	if origins := os.Getenv("CORS_ORIGINS"); origins != "" {
 		config.CORSOrigins = strings.Split(origins, ",")
 		for i := range config.CORSOrigins {
@@ -77,7 +71,6 @@ func main() {
 
 	// Create main mux
 	mux := http.NewServeMux()
-	registerAuthSessionRoutes(mux, config.APIAuthToken)
 	runtimeCtx, stopRuntime := context.WithCancel(context.Background())
 
 	terminalProxy, scheduledTasks, stopSystemHistory := registerRuntimeRoutes(mux, config, runtimeCtx)
@@ -89,7 +82,6 @@ func main() {
 
 	// Wrap with middleware
 	handler := corsMiddleware(config.CORSOrigins)(mux)
-	handler = authMiddleware(config.APIAuthToken)(handler)
 	handler = recoveryMiddleware(handler)
 	handler = loggingMiddleware(handler)
 
@@ -194,6 +186,13 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Contex
 	return terminalProxy, scheduledHandler, stopSystemHistory
 }
 
+func warnRemovedAccessTokenSetting() {
+	if strings.TrimSpace(os.Getenv("API_AUTH_TOKEN")) == "" {
+		return
+	}
+	log.Print("Warning: API_AUTH_TOKEN is no longer supported and does not protect CHROTE; restrict access with localhost and private-network controls")
+}
+
 // mustParsePort parses a port string and fatals on invalid values.
 func mustParsePort(name, raw string) int {
 	n, err := strconv.Atoi(raw)
@@ -234,7 +233,7 @@ func corsMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
 			if origin != "" && len(allowed) > 0 {
 				if _, ok := allowed[origin]; ok {
 					w.Header().Set("Access-Control-Allow-Origin", origin)
-					w.Header().Set("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Nuke-Confirm")
+					w.Header().Set("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, X-Nuke-Confirm")
 					w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 					w.Header().Add("Vary", "Origin")
 				}
@@ -249,60 +248,6 @@ func corsMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
-}
-
-// authMiddleware protects API and terminal traffic with bearer or browser-session authentication.
-func authMiddleware(token string) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Skip if no token configured
-			if token == "" {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			// Skip auth for health check
-			if r.URL.Path == "/api/health" {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			// Keep the dashboard shell and login endpoint public. API and terminal
-			// traffic require either a bearer token or the secure browser session.
-			protected := strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/terminal/")
-			if !protected || r.URL.Path == "/auth/session" {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			// Browser CORS preflights do not carry Authorization; let CORS answer them.
-			if r.Method == http.MethodOptions && r.Header.Get("Origin") != "" && r.Header.Get("Access-Control-Request-Method") != "" {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			if requestHasValidAuth(r, token) {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			authHeader := r.Header.Get("Authorization")
-			if !strings.HasPrefix(authHeader, "Bearer ") {
-				w.Header().Set("Content-Type", "application/json")
-				http.Error(w, `{"success":false,"error":{"code":"UNAUTHORIZED","message":"Authorization required"}}`, http.StatusUnauthorized)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			http.Error(w, `{"success":false,"error":{"code":"FORBIDDEN","message":"Invalid token"}}`, http.StatusForbidden)
-		})
-	}
-}
-
-func tokenMatches(providedToken, expectedToken string) bool {
-	providedHash := sha256.Sum256([]byte(providedToken))
-	expectedHash := sha256.Sum256([]byte(expectedToken))
-	hashMatch := subtle.ConstantTimeCompare(providedHash[:], expectedHash[:]) == 1
-	return len(providedToken) == len(expectedToken) && hashMatch
 }
 
 func recoveryMiddleware(next http.Handler) http.Handler {
