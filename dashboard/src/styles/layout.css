@@ -16,6 +16,18 @@
   position: relative;
 }
 
+.floating-panel-dismiss-layer {
+  position: fixed;
+  inset: 0;
+  background: transparent;
+  cursor: default;
+}
+
+.dismissible-trigger-active {
+  position: relative;
+  z-index: 2201;
+}
+
 /* Tab bar styles */
 .tab-bar {
   display: flex;

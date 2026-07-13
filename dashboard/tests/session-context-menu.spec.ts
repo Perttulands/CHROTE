@@ -259,7 +259,7 @@ test.describe('Session Context Menu', () => {
     await expect(menu.locator('.session-context-item:has-text("Unassign")')).not.toBeVisible()
 
     // Close menu
-    await page.click('body', { position: { x: 1, y: 1 } })
+    await page.mouse.click(1, 1)
     await expect(menu).not.toBeVisible()
 
     // Now assign the session via drag-and-drop
@@ -290,10 +290,29 @@ test.describe('Session Context Menu', () => {
     await expect(menu).toBeVisible()
 
     // Click somewhere outside the menu
-    await page.click('body', { position: { x: 1, y: 1 } })
+    await page.mouse.click(1, 1)
 
     // Menu should be gone
     await expect(menu).not.toBeVisible()
+  })
+
+  test('context menu closes when the outside click lands over a terminal iframe', async ({ page }) => {
+    const session = page.locator('.session-panel .session-item:has-text("hq-mayor")')
+    await dragAndDrop(page, '.session-panel .session-item:has-text("hq-mayor")', '.terminal-window')
+    const iframe = page.locator('iframe[title^="Terminal -"]').first()
+    await expect(iframe).toBeAttached()
+    const iframeBox = await iframe.boundingBox()
+    expect(iframeBox).toBeTruthy()
+
+    await session.click({ button: 'right' })
+    const menu = page.locator('.session-context-menu')
+    await expect(menu).toBeVisible()
+    await menu.getByRole('button', { name: /Attach to Window/i }).click()
+    await expect(menu.locator('.session-context-submenu')).toBeVisible()
+
+    await page.mouse.click(iframeBox!.x + iframeBox!.width / 2, iframeBox!.y + iframeBox!.height / 2)
+    await expect(menu).not.toBeVisible()
+    await expect(iframe).toBeAttached()
   })
 
   // -------------------------------------------------------

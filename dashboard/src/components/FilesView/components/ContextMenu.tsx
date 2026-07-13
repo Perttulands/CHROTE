@@ -1,6 +1,6 @@
-import { useEffect } from 'react'
 import { FileItem } from '../types'
 import { useViewportMenuPosition } from '../../../hooks/useViewportMenuPosition'
+import DismissiblePanel from '../../DismissiblePanel'
 
 interface ContextMenuProps {
   x: number
@@ -30,29 +30,9 @@ export function ContextMenu({
     { estimatedSize: { width: 200, height: 180 } },
   )
 
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (menuPosition.ref.current && !menuPosition.ref.current.contains(e.target as Node)) {
-        onClose()
-      }
-    }
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose()
-      }
-    }
-
-    document.addEventListener('mousedown', handleClickOutside)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [onClose])
-
   return (
-    <div ref={menuPosition.ref} className="fb-context-menu" style={menuPosition.style}>
+    <DismissiblePanel onDismiss={onClose} panelZIndex={2200} panelPosition="fixed">
+      <div ref={menuPosition.ref} className="fb-context-menu" style={menuPosition.style}>
       {item && !item.isDir && (
         <button className="fb-context-item" onClick={onDownload}>
           <span className="fb-context-icon">⬇</span>
@@ -82,6 +62,7 @@ export function ContextMenu({
           New Folder
         </button>
       )}
-    </div>
+      </div>
+    </DismissiblePanel>
   )
 }

@@ -87,16 +87,38 @@ test.describe('Arena Dashboard', () => {
       await expect(files).toHaveCSS('width', '24px')
 
       const layoutFontSize = await page.locator('.terminal-area:visible .layout-label').first().evaluate(element => getComputedStyle(element).fontSize)
-      for (const label of ['Sessions', 'Files']) {
+      for (const [label, panel] of [['Sessions', sessions], ['Files', files]] as const) {
         const toggle = page.getByRole('button', { name: `Expand ${label} panel` })
         await expect(toggle).toBeVisible()
         await expect(toggle).toHaveCSS('font-size', layoutFontSize)
         await expect(toggle).toContainText('>>')
+        const panelBox = await panel.boundingBox()
+        const toggleBox = await toggle.boundingBox()
+        const contentBox = await toggle.locator('.dock-toggle-content').boundingBox()
         const labelBox = await toggle.locator('.dock-toggle-label').boundingBox()
         const chevronBox = await toggle.locator('.dock-toggle-chevron').boundingBox()
+        expect(panelBox).toBeTruthy()
+        expect(toggleBox).toBeTruthy()
+        expect(contentBox).toBeTruthy()
         expect(labelBox).toBeTruthy()
         expect(chevronBox).toBeTruthy()
+        expect(Math.abs(toggleBox!.x - panelBox!.x)).toBeLessThan(1)
+        expect(Math.abs(toggleBox!.y - panelBox!.y)).toBeLessThan(1)
+        expect(Math.abs(toggleBox!.width - panelBox!.width)).toBeLessThanOrEqual(1)
+        expect(Math.abs(toggleBox!.height - panelBox!.height)).toBeLessThan(1)
+        expect(contentBox!.y - panelBox!.y).toBeGreaterThanOrEqual(8)
+        expect(contentBox!.y - panelBox!.y).toBeLessThanOrEqual(16)
         expect(Math.abs((labelBox!.x + labelBox!.width / 2) - (chevronBox!.x + chevronBox!.width / 2))).toBeLessThan(2)
+      }
+
+      for (const [label, panel] of [['Sessions', sessions], ['Files', files]] as const) {
+        const railToggle = page.getByRole('button', { name: `Expand ${label} panel` })
+        const railToggleBox = await railToggle.boundingBox()
+        expect(railToggleBox).toBeTruthy()
+        await railToggle.click({ position: { x: railToggleBox!.width / 2, y: railToggleBox!.height - 8 } })
+        await expect(panel).not.toHaveClass(/collapsed/)
+        await page.getByRole('button', { name: `Collapse ${label} panel` }).click()
+        await expect(panel).toHaveClass(/collapsed/)
       }
 
       const sessionTransition = await sessions.evaluate(element => getComputedStyle(element).transitionProperty)
@@ -427,6 +449,22 @@ test.describe('Arena Dashboard', () => {
       await page.click('.tab:has-text("Terminal")')
       await expect(page.locator('.session-panel')).toBeVisible()
       await expect(page.locator('.terminal-area:visible')).toBeVisible()
+    })
+
+    test('keeps the mobile navigation clickable above its outside-dismiss layer', async ({ page }) => {
+      await page.setViewportSize({ width: 700, height: 760 })
+      await page.getByRole('button', { name: '☰' }).click()
+
+      const menu = page.locator('.mobile-nav-dropdown')
+      const layer = page.locator('.floating-panel-dismiss-layer')
+      await expect(menu).toBeVisible()
+      await expect(menu).toHaveCSS('position', 'absolute')
+      expect(await menu.evaluate(element => Number(getComputedStyle(element).zIndex)))
+        .toBeGreaterThan(await layer.evaluate(element => Number(getComputedStyle(element).zIndex)))
+
+      await menu.getByRole('button', { name: 'Terminal 2' }).click()
+      await expect(page.locator('.terminal-grid[data-workspace="terminal2"]')).toBeVisible()
+      await expect(layer).toHaveCount(0)
     })
   })
 

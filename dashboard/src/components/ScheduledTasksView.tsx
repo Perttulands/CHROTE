@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { FormEvent, MouseEvent as ReactMouseEvent } from 'react'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
 import { copyTextToClipboard } from '../utils/clipboard'
+import DismissiblePanel from './DismissiblePanel'
 
 interface ScheduledTarget {
   sessionName: string
@@ -234,15 +235,6 @@ function ScheduledTasksView() {
     void load()
   }, [load])
 
-  useEffect(() => {
-    if (!menu) return undefined
-    const close = (event: MouseEvent) => {
-      const target = event.target as HTMLElement
-      if (!target.closest('.scheduled-task-menu')) setMenu(null)
-    }
-    document.addEventListener('mousedown', close)
-    return () => document.removeEventListener('mousedown', close)
-  }, [menu])
 
   const updateForm = <K extends keyof TaskFormState>(key: K, value: TaskFormState[K]) => {
     setFormDirty(true)
@@ -486,14 +478,16 @@ function ScheduledTasksView() {
       </div>
 
       {menu && menuTask && (
-        <div ref={menuPosition.ref} className="session-context-menu scheduled-task-menu" style={menuPosition.style}>
-          <button className="session-context-item" type="button" onClick={() => startEdit(menuTask)}>Edit</button>
-          <button className="session-context-item" type="button" onClick={() => void actionTask(menuTask, 'run-now')}>Run Now</button>
-          <button className="session-context-item" type="button" onClick={() => void actionTask(menuTask, menuTask.paused ? 'resume' : 'pause')}>{menuTask.paused ? 'Resume' : 'Pause'}</button>
-          <button className="session-context-item" type="button" onClick={() => startDuplicate(menuTask)}>Duplicate</button>
-          <button className="session-context-item" type="button" onClick={() => void copyTaskID(menuTask)}>Copy ID</button>
-          <button className="session-context-item session-context-danger" type="button" onClick={() => void deleteTask(menuTask)}>Delete</button>
-        </div>
+        <DismissiblePanel onDismiss={() => setMenu(null)} panelPosition="fixed">
+          <div ref={menuPosition.ref} className="session-context-menu scheduled-task-menu" style={menuPosition.style}>
+            <button className="session-context-item" type="button" onClick={() => startEdit(menuTask)}>Edit</button>
+            <button className="session-context-item" type="button" onClick={() => void actionTask(menuTask, 'run-now')}>Run Now</button>
+            <button className="session-context-item" type="button" onClick={() => void actionTask(menuTask, menuTask.paused ? 'resume' : 'pause')}>{menuTask.paused ? 'Resume' : 'Pause'}</button>
+            <button className="session-context-item" type="button" onClick={() => startDuplicate(menuTask)}>Duplicate</button>
+            <button className="session-context-item" type="button" onClick={() => void copyTaskID(menuTask)}>Copy ID</button>
+            <button className="session-context-item session-context-danger" type="button" onClick={() => void deleteTask(menuTask)}>Delete</button>
+          </div>
+        </DismissiblePanel>
       )}
     </div>
   )

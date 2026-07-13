@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useSession } from '../context/SessionContext'
 import TerminalWindow from './TerminalWindow'
+import DismissiblePanel from './DismissiblePanel'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
 import { getSessionKey } from '../types'
@@ -61,23 +62,6 @@ function TerminalArea({ workspaceId, active = true }: TerminalAreaProps) {
     lastConsumedRevealRequestId.current = windowRevealRequest.requestId
     setMobileActiveIndex(targetIndex)
   }, [windowCount, windowRevealRequest, windows, workspaceId])
-
-  useEffect(() => {
-    if (!controlsMenu.show) return
-    const close = (event: MouseEvent) => {
-      if (controlsMenuPosition.ref.current?.contains(event.target as Node)) return
-      setControlsMenu({ show: false, x: 0, y: 0 })
-    }
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setControlsMenu({ show: false, x: 0, y: 0 })
-    }
-    document.addEventListener('mousedown', close)
-    document.addEventListener('keydown', closeOnEscape)
-    return () => {
-      document.removeEventListener('mousedown', close)
-      document.removeEventListener('keydown', closeOnEscape)
-    }
-  }, [controlsMenu.show])
 
   const closeControlsMenu = () => setControlsMenu({ show: false, x: 0, y: 0 })
 
@@ -189,20 +173,22 @@ function TerminalArea({ workspaceId, active = true }: TerminalAreaProps) {
       </div>
 
       {controlsMenu.show && (
-        <div
-          ref={controlsMenuPosition.ref}
-          className="session-context-menu"
-          style={controlsMenuPosition.style}
-        >
-          <button className="session-context-item" onClick={reconnectFrames} disabled={visibleWindows.every(window => window.boundSessions.length === 0)}>
-            <span className="session-context-icon">↻</span>
-            Reconnect frames
-          </button>
-          <button className="session-context-item" onClick={clearStaleSessions} disabled={staleSessionCount === 0}>
-            <span className="session-context-icon">⌫</span>
-            {staleSessionCount > 0 ? `Clear ${staleSessionCount} stale sessions` : 'No stale sessions'}
-          </button>
-        </div>
+        <DismissiblePanel onDismiss={closeControlsMenu} panelPosition="fixed">
+          <div
+            ref={controlsMenuPosition.ref}
+            className="session-context-menu"
+            style={controlsMenuPosition.style}
+          >
+            <button className="session-context-item" onClick={reconnectFrames} disabled={visibleWindows.every(window => window.boundSessions.length === 0)}>
+              <span className="session-context-icon">↻</span>
+              Reconnect frames
+            </button>
+            <button className="session-context-item" onClick={clearStaleSessions} disabled={staleSessionCount === 0}>
+              <span className="session-context-icon">⌫</span>
+              {staleSessionCount > 0 ? `Clear ${staleSessionCount} stale sessions` : 'No stale sessions'}
+            </button>
+          </div>
+        </DismissiblePanel>
       )}
 
       <div className={`terminal-grid ${getGridClass()}`} data-workspace={workspaceId}>

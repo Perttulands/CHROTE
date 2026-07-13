@@ -9,7 +9,9 @@ describe('DockPanelToggle', () => {
 
     const expand = screen.getByRole('button', { name: `Expand ${label} panel` })
     expect(expand).toHaveClass('dock-toggle-btn')
+    expect(expand).toHaveAttribute('data-collapsed', 'true')
     expect(expand).toHaveTextContent(`${label}>>`)
+    expect(expand.querySelector('.dock-toggle-content')).toBeInTheDocument()
     expect(expand.querySelector('.dock-toggle-label')).toHaveTextContent(label)
     expect(expand.querySelector('.dock-toggle-chevron')).toHaveTextContent('>>')
     fireEvent.click(expand)
