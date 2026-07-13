@@ -328,6 +328,143 @@ func TestFilesHandlerSymlinkCannotEscapeReadRoot(t *testing.T) {
 	}
 }
 
+func TestFilesHandlerDeleteRemovesSymlinkNotTarget(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	if err := os.Mkdir(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	kept := filepath.Join(target, "keep.txt")
+	if err := os.WriteFile(kept, []byte("keep"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	handler := &FilesHandler{allowedRoots: []string{root}, writeRoots: []string{root}, maxUploadBytes: defaultMaxUploadBytes}
+	req := httptest.NewRequest(http.MethodDelete, "/api/files/resources/ignored", nil)
+	req.SetPathValue("path", link)
+	rec := httptest.NewRecorder()
+
+	handler.DeleteResource(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Lstat(link); !os.IsNotExist(err) {
+		t.Fatalf("symlink still exists after delete: %v", err)
+	}
+	if content, err := os.ReadFile(kept); err != nil || string(content) != "keep" {
+		t.Fatalf("symlink target was changed: content=%q err=%v", content, err)
+	}
+}
+
+func TestFilesHandlerRenameMovesSymlinkNotTarget(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target.txt")
+	if err := os.WriteFile(target, []byte("keep"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link.txt")
+	moved := filepath.Join(root, "moved-link.txt")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	handler := &FilesHandler{allowedRoots: []string{root}, writeRoots: []string{root}, maxUploadBytes: defaultMaxUploadBytes}
+	body, err := json.Marshal(RenameRequest{Action: "rename", Destination: moved})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPatch, "/api/files/resources/ignored", bytes.NewReader(body))
+	req.SetPathValue("path", link)
+	rec := httptest.NewRecorder()
+
+	handler.RenameResource(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if info, err := os.Lstat(moved); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("renamed path is not the symlink: info=%v err=%v", info, err)
+	}
+	if content, err := os.ReadFile(target); err != nil || string(content) != "keep" {
+		t.Fatalf("symlink target was changed: content=%q err=%v", content, err)
+	}
+}
+
+func TestFilesHandlerDeleteCanRemoveOutboundSymlinkWithoutTouchingTarget(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	target := filepath.Join(outside, "keep.txt")
+	if err := os.WriteFile(target, []byte("keep"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "outbound-link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	handler := &FilesHandler{allowedRoots: []string{root}, writeRoots: []string{root}, maxUploadBytes: defaultMaxUploadBytes}
+	req := httptest.NewRequest(http.MethodDelete, "/api/files/resources/ignored", nil)
+	req.SetPathValue("path", link)
+	rec := httptest.NewRecorder()
+
+	handler.DeleteResource(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Lstat(link); !os.IsNotExist(err) {
+		t.Fatalf("outbound symlink still exists after delete: %v", err)
+	}
+	if content, err := os.ReadFile(target); err != nil || string(content) != "keep" {
+		t.Fatalf("outbound target was changed: content=%q err=%v", content, err)
+	}
+}
+
+func TestFilesHandlerMutationCannotEscapeThroughParentSymlink(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	victim := filepath.Join(outside, "victim.txt")
+	if err := os.WriteFile(victim, []byte("keep"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	escape := filepath.Join(root, "escape")
+	if err := os.Symlink(outside, escape); err != nil {
+		t.Fatal(err)
+	}
+	handler := &FilesHandler{allowedRoots: []string{root}, writeRoots: []string{root}, maxUploadBytes: defaultMaxUploadBytes}
+	req := httptest.NewRequest(http.MethodDelete, "/api/files/resources/ignored", nil)
+	req.SetPathValue("path", filepath.Join(escape, "victim.txt"))
+	rec := httptest.NewRecorder()
+
+	handler.DeleteResource(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+	if content, err := os.ReadFile(victim); err != nil || string(content) != "keep" {
+		t.Fatalf("outbound victim was changed: content=%q err=%v", content, err)
+	}
+}
+
+func TestFilesHandlerMutationCannotRemoveConfiguredWriteRoot(t *testing.T) {
+	root := t.TempDir()
+	handler := &FilesHandler{allowedRoots: []string{root}, writeRoots: []string{root}, maxUploadBytes: defaultMaxUploadBytes}
+	req := httptest.NewRequest(http.MethodDelete, "/api/files/resources/ignored", nil)
+	req.SetPathValue("path", root)
+	rec := httptest.NewRecorder()
+
+	handler.DeleteResource(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		t.Fatalf("write root was removed: info=%v err=%v", info, err)
+	}
+}
+
 func TestFilesHandlerRejectsOversizedUpload(t *testing.T) {
 	root := t.TempDir()
 	handler := &FilesHandler{

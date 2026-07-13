@@ -245,6 +245,46 @@ func (h *FilesHandler) resolveSafePath(requestPath string) PathResult {
 	}
 }
 
+// resolveMutationPath canonicalizes the parent while deliberately preserving
+// the final path component. Delete and rename must act on a symlink itself,
+// never on the target selected by that symlink.
+func (h *FilesHandler) resolveMutationPath(requestPath string) PathResult {
+	decoded := requestPath
+	if decoded == "" {
+		decoded = "/"
+	}
+	normalized := normalizeRequestPath(decoded)
+	if normalized == "/" || normalized == "." {
+		return PathResult{IsRoot: true}
+	}
+	if !filepath.IsAbs(normalized) {
+		return PathResult{Error: "Path not allowed"}
+	}
+	if h.isDeniedPath(normalized) {
+		return PathResult{Error: "Sensitive path not available in CHROTE Files"}
+	}
+
+	resolvedParent, err := canonicalPathAllowMissing(filepath.Dir(normalized))
+	if err != nil {
+		return PathResult{Error: "Invalid path"}
+	}
+	if h.isDeniedPath(resolvedParent) {
+		return PathResult{Error: "Sensitive path not available in CHROTE Files"}
+	}
+	operationPath := filepath.Join(resolvedParent, filepath.Base(normalized))
+	matchedRoot, allowed := isPathUnderAnyRoot(operationPath, h.allowedRoots)
+	if !allowed {
+		return PathResult{Error: "Path not allowed"}
+	}
+	writeRoot, writable := isPathUnderAnyRoot(operationPath, h.writeRoots)
+	return PathResult{
+		Path:        operationPath,
+		Root:        matchedRoot,
+		Writable:    writable,
+		IsWriteRoot: writable && filepath.Clean(operationPath) == filepath.Clean(writeRoot),
+	}
+}
+
 // RegisterRoutes registers all file API routes
 func (h *FilesHandler) RegisterRoutes(mux *http.ServeMux) {
 	// All file routes - {path...} handles both empty and non-empty paths
@@ -466,7 +506,7 @@ func (h *FilesHandler) CreateResource(w http.ResponseWriter, r *http.Request) {
 // RenameResource handles PATCH /api/files/resources/* - rename/move
 func (h *FilesHandler) RenameResource(w http.ResponseWriter, r *http.Request) {
 	requestPath := "/" + r.PathValue("path")
-	result := h.resolveSafePath(requestPath)
+	result := h.resolveMutationPath(requestPath)
 
 	if result.Error != "" || result.IsRoot || !result.Writable || result.IsWriteRoot {
 		errMsg := result.Error
@@ -489,7 +529,7 @@ func (h *FilesHandler) RenameResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	destResult := h.resolveSafePath(req.Destination)
+	destResult := h.resolveMutationPath(req.Destination)
 	if destResult.Error != "" || destResult.IsRoot || !destResult.Writable || destResult.IsWriteRoot {
 		core.WriteError(w, http.StatusForbidden, "FORBIDDEN", "Invalid destination")
 		return
@@ -506,7 +546,7 @@ func (h *FilesHandler) RenameResource(w http.ResponseWriter, r *http.Request) {
 // DeleteResource handles DELETE /api/files/resources/* - delete file/folder
 func (h *FilesHandler) DeleteResource(w http.ResponseWriter, r *http.Request) {
 	requestPath := "/" + r.PathValue("path")
-	result := h.resolveSafePath(requestPath)
+	result := h.resolveMutationPath(requestPath)
 
 	if result.Error != "" || result.IsRoot || !result.Writable || result.IsWriteRoot {
 		errMsg := result.Error
@@ -517,7 +557,7 @@ func (h *FilesHandler) DeleteResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stat, err := os.Stat(result.Path)
+	stat, err := os.Lstat(result.Path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			core.WriteError(w, http.StatusNotFound, "NOT_FOUND", "Not found")
