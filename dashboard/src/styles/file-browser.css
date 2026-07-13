@@ -93,8 +93,21 @@
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(210px, 260px) minmax(0, 1fr);
+  grid-template-columns: var(--fb-explorer-width, 260px) 6px minmax(0, 1fr);
   overflow: hidden;
+}
+
+.fb-explorer-resizer {
+  min-width: 6px;
+  background: var(--divider);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.fb-explorer-resizer:hover,
+.fb-explorer-resizer:focus-visible {
+  background: var(--accent);
+  outline: none;
 }
 
 .fb-sidebar {
@@ -132,7 +145,9 @@
 .fb-tree-section {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   border-bottom: 0;
 }
 
@@ -359,8 +374,7 @@
 .fb-content {
   flex: 1;
   min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(360px, 1fr) minmax(320px, 42%);
+  display: block;
   overflow: hidden;
 }
 
@@ -390,6 +404,8 @@
 
 .fb-browser-pane,
 .fb-editor-pane {
+  width: 100%;
+  height: 100%;
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -398,7 +414,7 @@
 }
 
 .fb-browser-pane {
-  border-right: 1px solid var(--divider);
+  border-right: 0;
 }
 
 .fb-list-container {
@@ -1077,7 +1093,7 @@
 
 @media (max-width: 980px) {
   .fb-workbench {
-    grid-template-columns: 190px minmax(0, 1fr);
+    grid-template-columns: var(--fb-explorer-width, 220px) 6px minmax(0, 1fr);
   }
 
   .fb-content {
@@ -1119,6 +1135,10 @@
 
   .fb-workbench {
     grid-template-columns: 1fr;
+  }
+
+  .fb-explorer-resizer {
+    display: none;
   }
 
   .fb-sidebar {

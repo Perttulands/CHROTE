@@ -550,6 +550,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(stored?.sidebarCollapsed ?? false)
   const [floatingSession, setFloatingSession] = useState<string | null>(null)
   const [sendToSessionTarget, setSendToSessionTarget] = useState<string | null>(null)
+  const [sendToSessionPrefill, setSendToSessionPrefill] = useState('')
+  const [sendToSessionRequestId, setSendToSessionRequestId] = useState(0)
   const [isDragging, setIsDragging] = useState(false)
   const [settings, setSettings] = useState<UserSettings>(stored?.settings ?? DEFAULT_SETTINGS)
   // Track which window has focus for keyboard navigation (workspaceId-windowId)
@@ -1048,12 +1050,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setFloatingSession(null)
   }, [])
 
-  const openSendToSession = useCallback((sessionName: string) => {
+  const openSendToSession = useCallback((sessionName: string, prefill = '') => {
+    setSendToSessionPrefill(prefill)
+    setSendToSessionRequestId(prev => prev + 1)
     setSendToSessionTarget(sessionName)
   }, [])
 
   const closeSendToSession = useCallback(() => {
     setSendToSessionTarget(null)
+    setSendToSessionPrefill('')
   }, [])
 
   const sendToSession = useCallback(async (sessionName: string, payload: SendToSessionPayload, unixUser?: LaunchUser): Promise<boolean> => {
@@ -1325,6 +1330,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     sidebarCollapsed,
     floatingSession,
     sendToSessionTarget,
+    sendToSessionPrefill,
+    sendToSessionRequestId,
     assignedSessions,
     isDragging,
     settings,
@@ -1372,6 +1379,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     sidebarCollapsed,
     floatingSession,
     sendToSessionTarget,
+    sendToSessionPrefill,
+    sendToSessionRequestId,
     assignedSessions,
     isDragging,
     settings,

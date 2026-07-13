@@ -20,7 +20,14 @@ function defaultSubmitForSession(session: TmuxSession | undefined): boolean {
 }
 
 function SendToSessionModal() {
-  const { sendToSessionTarget, sessions, closeSendToSession, sendToSession } = useSession()
+  const {
+    sendToSessionTarget,
+    sendToSessionPrefill,
+    sendToSessionRequestId,
+    sessions,
+    closeSendToSession,
+    sendToSession,
+  } = useSession()
   const [text, setText] = useState('')
   const [files, setFiles] = useState<File[]>([])
   const [submit, setSubmit] = useState(false)
@@ -49,12 +56,12 @@ function SendToSessionModal() {
   useLayoutEffect(() => {
     activeSendRef.current = null
     submitTouchedRef.current = false
-    setText('')
+    setText(sendToSessionPrefill || '')
     setFiles([])
     setSubmit(defaultSubmitRef.current)
     setSending(false)
     if (fileInputRef.current) fileInputRef.current.value = ''
-  }, [target?.key])
+  }, [sendToSessionPrefill, sendToSessionRequestId, target?.key])
 
   useLayoutEffect(() => {
     if (!submitTouchedRef.current) setSubmit(defaultSubmitRef.current)

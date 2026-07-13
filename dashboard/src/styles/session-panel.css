@@ -2,16 +2,20 @@
 /* Sidebar session list and related components */
 
 .session-panel {
-  width: 260px;
+  width: var(--session-panel-width, 260px);
+  flex: 0 0 var(--session-panel-width, 260px);
+  min-width: 0;
   background-color: var(--surface-primary);
   border-right: 1px solid var(--divider);
   display: flex;
   flex-direction: column;
   transition: width 0.2s ease;
+  position: relative;
 }
 
 .session-panel.collapsed {
-  width: 40px;
+  width: 44px;
+  flex-basis: 44px;
 }
 
 .session-panel-header {
@@ -20,6 +24,49 @@
   padding: 8px;
   border-bottom: 1px solid var(--divider);
   gap: 8px;
+}
+
+.session-panel.collapsed .session-panel-header {
+  height: 100%;
+  padding: 6px 4px;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.dock-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+}
+
+.session-panel.collapsed .dock-toggle-btn,
+.terminal-files-panel.collapsed .dock-toggle-btn {
+  height: auto;
+  min-height: 120px;
+  padding: 8px 4px;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 8px;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.dock-resizer {
+  position: absolute;
+  inset: 0 -3px 0 auto;
+  width: 6px;
+  z-index: 8;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.dock-resizer:hover,
+.dock-resizer:focus-visible {
+  background: var(--accent);
 }
 
 .toggle-btn,

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   dndProps: null as Record<string, any> | null,
   addSessionToWindow: vi.fn(),
   removeSessionFromWindow: vi.fn(),
+  openSendToSession: vi.fn(),
   windowRevealRequest: null as { workspaceId: string; windowId: string; requestId: number } | null,
 }))
 
@@ -37,6 +38,13 @@ vi.mock('./context/SessionContext', async () => {
           setIsDragging,
           settings: DEFAULT_SETTINGS,
           windowRevealRequest: mocks.windowRevealRequest,
+          workspaces: {
+            terminal1: { windows: [] },
+            terminal2: { windows: [] },
+            terminal3: { windows: [] },
+          },
+          focusedWindowKey: null,
+          openSendToSession: mocks.openSendToSession,
         }}>
           {children}
         </DragContext.Provider>
@@ -47,6 +55,14 @@ vi.mock('./context/SessionContext', async () => {
 })
 
 vi.mock('./components/TabBar', () => ({ default: () => <div data-testid="tab-bar" /> }))
+vi.mock('./components/TerminalWorkspaceDock', () => ({
+  default: ({ workspaceId, active }: { workspaceId: string; active?: boolean }) => (
+    <div data-workspace={workspaceId} data-active={String(active)}>
+      {active && <div className="session-panel" data-active-workspace={workspaceId} />}
+      <iframe title={`${workspaceId} frame`} />
+    </div>
+  ),
+}))
 vi.mock('./components/SessionPanel', () => ({
   default: ({ activeWorkspaceId }: { activeWorkspaceId: string }) => <div className="session-panel" data-active-workspace={activeWorkspaceId} />,
 }))

@@ -8,6 +8,7 @@
 
 /* Component styles */
 @import './session-panel.css';
+@import './terminal-files.css';
 @import './terminal.css';
 @import './floating-modal.css';
 @import './settings.css';

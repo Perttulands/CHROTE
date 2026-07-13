@@ -288,6 +288,8 @@ export interface DashboardState {
   sidebarCollapsed: boolean
   floatingSession: string | null // Session shown in floating modal
   sendToSessionTarget: string | null // Session targeted by the Send to Session modal
+  sendToSessionPrefill: string // Optional caller-provided draft for the current Send modal opening
+  sendToSessionRequestId: number // Distinguishes deliberate reopenings of the same target
   isDragging: boolean // True when a session is being dragged
 
   // Computed: which sessions are assigned to any window
@@ -323,7 +325,7 @@ export interface DashboardActions {
   toggleSidebar: () => void
   openFloatingModal: (sessionName: string) => void
   closeFloatingModal: () => void
-  openSendToSession: (sessionName: string) => void
+  openSendToSession: (sessionName: string, prefill?: string) => void
   closeSendToSession: () => void
   sendToSession: (sessionName: string, payload: SendToSessionPayload, unixUser?: LaunchUser) => Promise<boolean>
 
