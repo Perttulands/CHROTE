@@ -223,9 +223,9 @@ def check_security_runtime_facts(errors: list[str]) -> None:
         "HOST",
         "PORT",
         "TTYD_PORT",
-        "API_AUTH_TOKEN",
         "CORS_ORIGINS",
         "CHROTE_ROOTS",
+        "no built-in application login",
     ]
     for token in required:
         if token not in text:

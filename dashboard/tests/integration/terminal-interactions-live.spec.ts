@@ -4,12 +4,6 @@ async function openLiveDashboard(page: Page) {
   const health = await page.request.get('/api/health')
   expect(health.ok()).toBe(true)
 
-  const token = process.env.CHROTE_API_AUTH_TOKEN
-  if (token) {
-    const session = await page.request.post('/auth/session', { data: { token } })
-    expect(session.status()).toBe(204)
-  }
-
   await page.goto('/')
   await expect(page.locator('.dashboard')).toBeVisible()
   await expect(page.locator('.terminal-grid[data-workspace="terminal1"]')).toBeVisible()

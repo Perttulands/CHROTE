@@ -1218,15 +1218,11 @@ func validateTarget(target Target) error {
 
 ### 9.3 Access Control
 
-Scheduler API requires same authentication as main CHROTE API:
-
-```go
-// Scheduler routes use existing auth middleware
-router.Group("/api/scheduler", authMiddleware).
-    GET("/jobs", listJobs).
-    POST("/jobs", createJob).
-    // ...
-```
+Scheduler routes use the same trust boundary as the rest of CHROTE: there is no
+application login or access token. Bind CHROTE to localhost and expose it only
+through an explicitly trusted private network such as a Tailscale tailnet. Job
+target validation, command validation, and Unix-user permissions remain the
+operation-level safeguards.
 
 ### 9.4 Audit Logging
 
@@ -1300,7 +1296,7 @@ func redactSecrets(log string, secrets []string) string {
 
 | Aspect | Implementation |
 |--------|----------------|
-| **Authentication** | Shared with CHROTE API (bearer token) |
+| **Authentication** | None; host and private-network access are the trust boundary |
 | **Authorization** | All jobs run as `chrote` user |
 | **Injection Prevention** | Command validation and logging |
 | **Target Validation** | Only existing sessions allowed |

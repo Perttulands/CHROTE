@@ -392,16 +392,17 @@ http://127.0.0.1:8094/
 Tailnet URL format:
 
 ```text
-https://<tailnet-host>:<tailnet-port>/
+http[s]://<tailnet-host>:<tailnet-port>/
 ```
 
-When `API_AUTH_TOKEN` is enabled, use the HTTPS URL for the browser. The browser
-session cookie is intentionally `Secure` and is not sent to the loopback HTTP
-backend; localhost automation should use the bearer token instead.
-
 The expected deployment is private: localhost and a private access layer such as
-Tailscale Serve. Do not expose CHROTE directly to the public internet unless you
-have added an authentication and network story you are willing to defend.
+Tailscale. CHROTE has no built-in application login or access token: host and
+tailnet access controls are the trust boundary. Do not expose CHROTE directly to
+the public internet. CORS is not an authorization or CSRF boundary; treat every
+browser origin and client with network reachability as trusted.
+
+Older deployments may still define `API_AUTH_TOKEN`. CHROTE ignores that removed
+setting and logs a startup warning without printing its value.
 
 Common service commands:
 
@@ -466,7 +467,6 @@ CHROTE_ROOTS=<workspace-root>
 CHROTE_WRITE_ROOTS=<comma-separated mutation roots>
 CHROTE_FILE_DENY_PATHS=<extra comma-separated sensitive roots>
 CHROTE_MAX_UPLOAD_BYTES=67108864
-API_AUTH_TOKEN=<random owner token>
 CHROTE_BEADS_WORKSPACES=<workspace-root>
 CHROTE_BD_COMMAND=bd
 CHROTE_AGENT_PREFIXES=claude-,codex,opencode,agent-
@@ -482,8 +482,8 @@ Private service adapter values live outside the repo:
 ~/.config/chrote/services.env   # legacy rollback lane
 ```
 
-That is where owner tokens belong. Do not commit it. Do not paste it into issues.
-Do not teach the browser your secrets.
+That is where private service-adapter credentials belong. Do not commit them or
+paste them into issues. Do not teach the browser your secrets.
 
 ---
 
@@ -517,9 +517,9 @@ CHROTE is private infrastructure.
 The sane shape is:
 
 - bind CHROTE and upstream services to localhost
-- expose only CHROTE through a private HTTPS network layer
+- expose only CHROTE through a private tailnet/network layer
+- treat host and tailnet access controls as the trust boundary; CHROTE has no application login
 - keep broad read access separate from narrower file mutation roots
-- enable `API_AUTH_TOKEN`; the dashboard exchanges it for a Secure, HttpOnly session cookie
 - keep service credentials server-side
 - treat browser clients as viewports, not secret owners
 

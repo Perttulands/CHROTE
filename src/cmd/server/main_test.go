@@ -3,7 +3,6 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 )
@@ -48,33 +47,6 @@ func TestCORSMiddlewareAllowsOnlyExactConfiguredOrigins(t *testing.T) {
 	}
 	if got := disallowedRec.Header().Get("Access-Control-Allow-Methods"); got != "" {
 		t.Fatalf("disallowed preflight Access-Control-Allow-Methods = %q, want no CORS grant", got)
-	}
-}
-
-func TestAuthenticatedCORSMiddlewareAllowsConfiguredPreflightWithoutAuthorization(t *testing.T) {
-	const origin = "https://app.example"
-
-	handler := authMiddleware("secret-token")(corsMiddleware([]string{origin})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Fatalf("preflight reached protected handler")
-	})))
-
-	req := httptest.NewRequest(http.MethodOptions, "/api/services/context/docs", nil)
-	req.Header.Set("Origin", origin)
-	req.Header.Set("Access-Control-Request-Method", http.MethodGet)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
-	}
-	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != origin {
-		t.Fatalf("Access-Control-Allow-Origin = %q, want %q", got, origin)
-	}
-	if got := rec.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(got, http.MethodOptions) {
-		t.Fatalf("Access-Control-Allow-Methods = %q, want it to include OPTIONS", got)
-	}
-	if got := rec.Header().Get("Access-Control-Allow-Headers"); !strings.Contains(got, "Authorization") {
-		t.Fatalf("Access-Control-Allow-Headers = %q, want it to include Authorization", got)
 	}
 }
 

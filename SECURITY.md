@@ -29,13 +29,14 @@ CHROTE is designed for **local or explicitly trusted network use only**. By defa
 - The server binds to `127.0.0.1`.
 - The `/srv` proving lane runs from `/srv/chrote` with data under `/srv/data/chrote`, system unit `chrote-srv.service`, server port `8095`, and terminal proxy port `7686`.
 - The legacy rollback lane runs from `/home/perttu/chrote`, user unit `chrote.service`, server port `8094`, and terminal proxy port `7683`.
-- `API_AUTH_TOKEN` protects `/api/*` and `/terminal/*`; the dashboard exchanges the token for a time-limited Secure, HttpOnly, SameSite session cookie.
+- CHROTE has no built-in application login or access token. Host and tailnet access controls are the trust boundary.
+- CORS controls browser response sharing; it is not authentication or a complete CSRF defense. Treat every browser origin and client with network reachability as trusted.
 - Use a reverse proxy, Tailscale, or equivalent network controls before binding beyond localhost.
 
 ### Recommended Security Practices
 
 1. **Keep localhost as the default** - Leave `HOST=127.0.0.1` unless the host network is explicitly trusted.
-2. **Use Tailscale HTTPS for remote access** - Never expose CHROTE with Funnel or raw HTTP.
+2. **Keep remote access private** - Use Tailscale ACLs or equivalent trusted-network controls. Never expose CHROTE through Funnel or the public internet.
 3. **Separate read and mutation roots** - `CHROTE_ROOTS=/` can provide broad browsing, while `CHROTE_WRITE_ROOTS` limits create, overwrite, rename, and delete.
 4. **Run as a non-root user** - The systemd service should run as the owning Unix user, not root.
 5. **Treat terminal access as host access** - tmux sessions are not a sandbox.
@@ -47,8 +48,8 @@ Sensitive configuration should use host-owned environment files or service envir
 - `HOST` - Server bind address (default: `127.0.0.1`).
 - `PORT` - Server port. The `/srv` proving lane sets `8095`; the legacy rollback lane uses `8094`.
 - `TTYD_PORT` - Terminal proxy port. The `/srv` proving lane sets `7686`; the legacy rollback lane uses `7683`.
-- `API_AUTH_TOKEN` - Owner token for API/terminal access and secure browser-session login; `/api/health` remains public.
 - `CORS_ORIGINS` - Optional comma-separated browser origins for cross-origin API access.
+- `API_AUTH_TOKEN` - Removed and ignored. A stale non-empty value emits a startup warning but never gates requests.
 - `CHROTE_ROOTS` - Comma-separated list of allowed filesystem roots.
 - `CHROTE_WRITE_ROOTS` - Comma-separated roots where file mutations are allowed. Defaults to `CHROTE_ROOTS` for backward compatibility.
 - `CHROTE_FILE_DENY_PATHS` - Additional sensitive roots blocked from browsing and mutation. Built-in credential and pseudo-filesystem exclusions always apply.
@@ -61,5 +62,6 @@ The server resolves symlinks before revalidating paths, blocks sensitive credent
 
 ## Known Limitations
 
+- No built-in application authentication; deploy only on localhost or an explicitly trusted private network
 - No built-in HTTPS termination (use tailnet-only Tailscale Serve or another trusted reverse proxy)
 - Terminal sessions are not isolated (tmux shared sessions)
