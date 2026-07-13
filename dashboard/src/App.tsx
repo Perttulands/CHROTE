@@ -1,9 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { DndContext, DragEndEvent, DragStartEvent, DragOverlay, useSensor, useSensors, PointerSensor } from '@dnd-kit/core'
 import { SessionProvider, useSession } from './context/SessionContext'
 import TabBar, { Tab } from './components/TabBar'
-import SessionPanel from './components/SessionPanel'
-import TerminalArea from './components/TerminalArea'
+import TerminalWorkspaceDock from './components/TerminalWorkspaceDock'
 import FilesView from './components/FilesView'
 import SettingsView from './components/SettingsView'
 import FloatingModal from './components/FloatingModal'
@@ -143,7 +142,27 @@ function DashboardContent() {
   const [settingsSessionBankFocusNonce, setSettingsSessionBankFocusNonce] = useState(0)
   const [filesNavigateRequest, setFilesNavigateRequest] = useState<{ path: string; nonce: number } | null>(null)
   const [formationsVisited, setFormationsVisited] = useState(false)
-  const { addSessionToWindow, setIsDragging, isDragging, settings, windowRevealRequest } = useSession()
+  const {
+    addSessionToWindow,
+    setIsDragging,
+    isDragging,
+    settings,
+    windowRevealRequest,
+    workspaces,
+    focusedWindowKey,
+    openSendToSession,
+  } = useSession()
+  const filesSendTarget = useMemo(() => {
+    if (!focusedWindowKey) return null
+    for (const [workspaceId, workspace] of Object.entries(workspaces)) {
+      const terminalWindow = workspace.windows.find(window => `${workspaceId}-${window.id}` === focusedWindowKey)
+      if (terminalWindow?.activeSession && terminalWindow.activeSession !== 'INIT-PENDING') return terminalWindow.activeSession
+    }
+    return null
+  }, [focusedWindowKey, workspaces])
+  const handleSendFilePath = useCallback((path: string) => {
+    if (filesSendTarget) openSendToSession(filesSendTarget, path)
+  }, [filesSendTarget, openSendToSession])
   const persistFilesTabState = isFeatureEnabled('filesPersistTabState')
   const serverStatusTab = isFeatureEnabled('serverStatusTab')
 
@@ -252,24 +271,30 @@ function DashboardContent() {
         />
 
         <div className="dashboard-content">
-          {/* Terminal areas are always rendered (hidden via CSS) to preserve iframe connections */}
-          <div style={{ display: TERMINAL_WORKSPACE_IDS.includes(activeTab as WorkspaceId) ? 'contents' : 'none' }}>
-            <SessionPanel
-              activeWorkspaceId={activeTab as WorkspaceId}
-              onOpenSessionBankSettings={handleOpenSessionBankSettings}
-            />
-          </div>
+          {/* Terminal workspaces stay mounted so panel state and pooled iframe connections survive tab switches. */}
           {TERMINAL_WORKSPACE_IDS.map(workspaceId => (
-            <div key={workspaceId} style={{ display: activeTab === workspaceId ? 'contents' : 'none' }}>
-              <TerminalArea workspaceId={workspaceId} active={activeTab === workspaceId} />
-            </div>
+            <TerminalWorkspaceDock
+              key={workspaceId}
+              workspaceId={workspaceId}
+              active={activeTab === workspaceId}
+              onOpenSessionBankSettings={handleOpenSessionBankSettings}
+              onOpenInFiles={handleOpenProjectInFiles}
+            />
           ))}
           {persistFilesTabState ? (
             <div style={{ display: activeTab === 'files' ? 'contents' : 'none' }}>
-              <FilesView navigateRequest={filesNavigateRequest} />
+              <FilesView
+                navigateRequest={filesNavigateRequest}
+                onSendPath={filesSendTarget ? handleSendFilePath : undefined}
+                sendTargetLabel={filesSendTarget ? getSessionNameFromKey(filesSendTarget) : null}
+              />
             </div>
           ) : (
-            activeTab === 'files' && <FilesView navigateRequest={filesNavigateRequest} />
+            activeTab === 'files' && <FilesView
+                navigateRequest={filesNavigateRequest}
+                onSendPath={filesSendTarget ? handleSendFilePath : undefined}
+                sendTargetLabel={filesSendTarget ? getSessionNameFromKey(filesSendTarget) : null}
+              />
           )}
           {activeTab === 'beads' && (
             <ErrorBoundary>

@@ -79,8 +79,51 @@ test.describe('Arena Dashboard', () => {
       const panel = page.locator('.session-panel')
       await expect(panel).not.toHaveClass(/collapsed/)
 
-      await page.click('.toggle-btn')
+      await page.getByRole('button', { name: 'Collapse Sessions panel' }).click()
       await expect(panel).toHaveClass(/collapsed/)
+    })
+
+    test('keeps Sessions and Files rails independent and opens one non-modal file Peek', async ({ page }) => {
+      await page.route(/.*\/api\/files\/resources(?:\/.*)?$/, async route => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            isDir: true,
+            items: [{ name: 'readme.txt', path: '/readme.txt', isDir: false, size: 12, modified: '2026-07-13T00:00:00Z', type: 'text/plain' }],
+          }),
+        })
+      })
+      const sessions = page.locator('.session-panel')
+      const files = page.locator('.terminal-files-panel')
+
+      await expect(sessions).not.toHaveClass(/collapsed/)
+      await expect(files).toHaveClass(/collapsed/)
+
+      await dragAndDrop(page, '.session-item:has-text("hq-mayor")', '.terminal-window')
+      const terminalFrame = page.locator('iframe[title^="Terminal -"]').first()
+      await expect(terminalFrame).toBeAttached()
+      await terminalFrame.evaluate(element => { element.setAttribute('data-dock-identity', 'preserved') })
+
+      await page.getByRole('button', { name: 'Expand Files panel' }).click()
+      await expect(files).not.toHaveClass(/collapsed/)
+      await expect(sessions).not.toHaveClass(/collapsed/)
+
+      await page.getByRole('button', { name: 'Collapse Sessions panel' }).click()
+      await expect(sessions).toHaveClass(/collapsed/)
+      await expect(files).not.toHaveClass(/collapsed/)
+
+      await page.getByRole('treeitem', { name: /File readme\.txt/ }).click()
+      const peek = page.getByRole('dialog', { name: /File Peek: readme\.txt/ })
+      await expect(peek).toBeVisible()
+      await expect(page.locator('.file-peek-overlay')).toHaveCount(0)
+      await page.getByRole('button', { name: 'Close file Peek' }).click()
+      await expect(peek).toHaveCount(0)
+
+      await page.getByRole('button', { name: 'Collapse Files panel' }).click()
+      await expect(files).toHaveClass(/collapsed/)
+      await expect(sessions).toHaveClass(/collapsed/)
+      await expect(terminalFrame).toHaveAttribute('data-dock-identity', 'preserved')
     })
 
     test('should expand/collapse groups', async ({ page }) => {

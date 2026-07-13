@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { CSSProperties, ChangeEvent, DragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
+import type { CSSProperties, ChangeEvent, DragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import { FileItem, toDisplayPath } from './types'
 import {
   createFile,
@@ -15,14 +15,28 @@ import {
   writeTextFile,
 } from './fileService'
 import { formatDate, formatSize } from './utils'
-import { isFeatureEnabled } from '../../featureFlags'
 import { useViewportMenuPosition } from '../../hooks/useViewportMenuPosition'
 import { copyTextToClipboard } from '../../utils/clipboard'
+import FileTree from '../FileTree'
+import FileViewer, {
+  MAX_TEXT_PREVIEW_BYTES,
+  getFileBadge,
+  getFileBaseName as getBaseName,
+  getPreviewKind,
+  makeFileItemFromPath,
+  normalizeFilePath as normalizePath,
+} from '../FileViewer'
+import { DEFAULT_FILE_VIEW_STATE, type FileViewState } from '../workspaceFilesState'
+import {
+  readFilesWorkbenchState,
+  writeFilesWorkbenchState,
+  type FilesContentMode,
+  type StoredOpenFile,
+} from './filesWorkbenchState'
 
 type SortKey = 'name' | 'size' | 'modified'
 type SortDir = 'asc' | 'desc'
 type ViewMode = 'list' | 'grid'
-type PreviewKind = 'text' | 'image' | 'audio' | 'video' | 'pdf' | 'download'
 type SavedKind = 'file' | 'directory'
 type CreateKind = 'file' | 'folder'
 type SavedPathGroup = 'pinned' | 'recent'
@@ -38,14 +52,11 @@ interface FilesViewProps {
     path: string
     nonce: number
   } | null
+  onSendPath?: (path: string) => void
+  sendTargetLabel?: string | null
 }
 
-interface OpenFile {
-  path: string
-  name: string
-  size: number
-  type: string
-  kind: PreviewKind
+interface OpenFile extends StoredOpenFile {
   content: string
   dirty: boolean
   loading: boolean
@@ -73,59 +84,9 @@ interface CreateIntent {
 const PINNED_STORAGE_KEY = 'chrote.files.pinnedPaths'
 const RECENT_STORAGE_KEY = 'chrote.files.recentPaths'
 const SAVED_GROUPS_COLLAPSED_STORAGE_KEY = 'chrote.files.savedGroupsCollapsed'
-const PREVIEW_WIDTH_STORAGE_KEY = 'chrote.files.previewWidthPercent'
-const MAX_TEXT_PREVIEW_BYTES = 1024 * 1024
-const MIN_PREVIEW_WIDTH = 28
-const MAX_PREVIEW_WIDTH = 70
 const DEFAULT_SAVED_GROUPS_COLLAPSED: SavedGroupsCollapsed = {
   pinned: false,
   recent: false,
-}
-
-const TEXT_EXTENSIONS = new Set([
-  'bash',
-  'c',
-  'conf',
-  'cpp',
-  'css',
-  'csv',
-  'dockerfile',
-  'env',
-  'go',
-  'h',
-  'html',
-  'ini',
-  'java',
-  'js',
-  'json',
-  'jsx',
-  'log',
-  'md',
-  'markdown',
-  'py',
-  'rb',
-  'rs',
-  'sh',
-  'sql',
-  'toml',
-  'ts',
-  'tsx',
-  'txt',
-  'xml',
-  'yaml',
-  'yml',
-])
-
-const IMAGE_EXTENSIONS = new Set(['bmp', 'gif', 'jpeg', 'jpg', 'png', 'svg', 'webp'])
-const AUDIO_EXTENSIONS = new Set(['flac', 'm4a', 'mp3', 'ogg', 'wav'])
-const VIDEO_EXTENSIONS = new Set(['avi', 'mkv', 'mov', 'mp4', 'webm'])
-
-function normalizePath(path: string): string {
-  const trimmed = path.trim()
-  if (!trimmed || trimmed === '.') return '/'
-  const withRoot = trimmed.startsWith('/') ? trimmed : `/${trimmed}`
-  const compact = withRoot.replace(/\/+/g, '/')
-  return compact.length > 1 ? compact.replace(/\/$/, '') : compact
 }
 
 function joinPath(parent: string, name: string): string {
@@ -139,240 +100,6 @@ function getParentPath(path: string): string {
   const parts = normalized.split('/').filter(Boolean)
   parts.pop()
   return parts.length === 0 ? '/' : `/${parts.join('/')}`
-}
-
-function getBaseName(path: string): string {
-  const parts = normalizePath(path).split('/').filter(Boolean)
-  return parts[parts.length - 1] || '/'
-}
-
-function getExtension(name: string): string {
-  const lower = name.toLowerCase()
-  if (lower === 'dockerfile' || lower.startsWith('dockerfile.')) return 'dockerfile'
-  if (lower.startsWith('.env')) return 'env'
-  const parts = lower.split('.')
-  return parts.length > 1 ? parts.pop() || '' : ''
-}
-
-function isMarkdownFileName(name: string): boolean {
-  const ext = getExtension(name)
-  return ext === 'md' || ext === 'markdown'
-}
-
-function getSafeMarkdownHref(rawHref: string): string | null {
-  const href = rawHref.trim()
-  if (!href) return null
-
-  const normalized = href.replace(/[\u0000-\u001F\u007F\s]+/g, '').toLowerCase()
-  if (/^(javascript|data|vbscript):/.test(normalized)) return null
-
-  if (/^[a-z][a-z0-9+.-]*:/i.test(href) && !/^(https?:|mailto:)/i.test(href)) return null
-
-  return href
-}
-
-function plainMarkdownText(text: string): string {
-  return text
-    .replace(/\[([^\]\n]+)\]\(([^)\n]+)\)/g, '$1')
-    .replace(/[*_`~]/g, '')
-    .trim()
-}
-
-function renderMarkdownInline(text: string, keyPrefix: string): ReactNode[] {
-  const nodes: ReactNode[] = []
-  const linkPattern = /\[([^\]\n]+)\]\(([^)\n]+)\)/g
-  let cursor = 0
-  let linkIndex = 0
-  let match: RegExpExecArray | null
-
-  while ((match = linkPattern.exec(text)) !== null) {
-    if (match.index > cursor) {
-      nodes.push(text.slice(cursor, match.index))
-    }
-
-    const [, label, href] = match
-    const safeHref = getSafeMarkdownHref(href)
-    const key = `${keyPrefix}-link-${linkIndex}`
-
-    if (safeHref) {
-      nodes.push(
-        <a
-          key={key}
-          href={safeHref}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={(event: ReactMouseEvent<HTMLAnchorElement>) => event.preventDefault()}
-        >
-          {label}
-        </a>,
-      )
-    } else {
-      nodes.push(
-        <span key={key} className="fb-markdown-unsafe-link">
-          {label}
-        </span>,
-      )
-    }
-
-    cursor = linkPattern.lastIndex
-    linkIndex += 1
-  }
-
-  if (cursor < text.length) {
-    nodes.push(text.slice(cursor))
-  }
-
-  return nodes
-}
-
-function isMarkdownBlockStart(line: string): boolean {
-  return /^(#{1,6})\s+/.test(line)
-    || /^(```|~~~)\s*([A-Za-z0-9_-]+)?\s*$/.test(line)
-    || /^>\s?/.test(line)
-    || /^\s*(?:[-*+]\s+|\d+[.)]\s+)/.test(line)
-}
-
-function renderMarkdownPreview(content: string): ReactNode[] {
-  const lines = content.replace(/\r\n?/g, '\n').split('\n')
-  const nodes: ReactNode[] = []
-  let index = 0
-
-  while (index < lines.length) {
-    const line = lines[index]
-
-    if (line.trim() === '') {
-      index += 1
-      continue
-    }
-
-    const fenceMatch = line.match(/^(```|~~~)\s*([A-Za-z0-9_-]+)?\s*$/)
-    if (fenceMatch) {
-      const marker = fenceMatch[1]
-      const language = fenceMatch[2]
-      const codeLines: string[] = []
-      index += 1
-
-      while (index < lines.length && !lines[index].startsWith(marker)) {
-        codeLines.push(lines[index])
-        index += 1
-      }
-      if (index < lines.length) index += 1
-
-      nodes.push(
-        <pre key={`md-code-${nodes.length}`} className="fb-markdown-code">
-          <code className={language ? `language-${language}` : undefined}>{codeLines.join('\n')}</code>
-        </pre>,
-      )
-      continue
-    }
-
-    const headingMatch = line.match(/^(#{1,6})\s+(.+)$/)
-    if (headingMatch) {
-      const HeadingTag = `h${headingMatch[1].length}` as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6'
-      nodes.push(
-        <HeadingTag key={`md-heading-${nodes.length}`}>
-          {renderMarkdownInline(headingMatch[2], `heading-${nodes.length}`)}
-        </HeadingTag>,
-      )
-      index += 1
-      continue
-    }
-
-    if (/^>\s?/.test(line)) {
-      const quoteLines: string[] = []
-      while (index < lines.length) {
-        const quoteMatch = lines[index].match(/^>\s?(.*)$/)
-        if (!quoteMatch) break
-        quoteLines.push(quoteMatch[1])
-        index += 1
-      }
-
-      nodes.push(
-        <blockquote key={`md-quote-${nodes.length}`}>
-          {quoteLines.map((quoteLine, quoteIndex) => (
-            <p key={`quote-line-${quoteIndex}`}>
-              {renderMarkdownInline(quoteLine, `quote-${nodes.length}-${quoteIndex}`)}
-            </p>
-          ))}
-        </blockquote>,
-      )
-      continue
-    }
-
-    const listMatch = line.match(/^\s*((?:[-*+])|(?:\d+[.)]))\s+(.+)$/)
-    if (listMatch) {
-      const ordered = /^\d/.test(listMatch[1])
-      const items: Array<{ text: string; checked: boolean | null }> = []
-
-      while (index < lines.length) {
-        const itemMatch = lines[index].match(/^\s*((?:[-*+])|(?:\d+[.)]))\s+(.+)$/)
-        if (!itemMatch || /^\d/.test(itemMatch[1]) !== ordered) break
-
-        const taskMatch = itemMatch[2].match(/^\[([ xX])\]\s+(.+)$/)
-        items.push({
-          text: taskMatch ? taskMatch[2] : itemMatch[2],
-          checked: taskMatch ? taskMatch[1].toLowerCase() === 'x' : null,
-        })
-        index += 1
-      }
-
-      const ListTag = ordered ? 'ol' : 'ul'
-      nodes.push(
-        <ListTag key={`md-list-${nodes.length}`} className={items.some(item => item.checked !== null) ? 'fb-markdown-task-list' : undefined}>
-          {items.map((item, itemIndex) => (
-            <li key={`item-${itemIndex}`} className={item.checked !== null ? 'fb-markdown-task-item' : undefined}>
-              {item.checked !== null && (
-                <input
-                  type="checkbox"
-                  aria-label={`Task: ${plainMarkdownText(item.text)}`}
-                  checked={item.checked}
-                  disabled
-                  readOnly
-                />
-              )}
-              <span>{renderMarkdownInline(item.text, `list-${nodes.length}-${itemIndex}`)}</span>
-            </li>
-          ))}
-        </ListTag>,
-      )
-      continue
-    }
-
-    const paragraphLines: string[] = []
-    while (index < lines.length && lines[index].trim() !== '' && !isMarkdownBlockStart(lines[index])) {
-      paragraphLines.push(lines[index])
-      index += 1
-    }
-
-    nodes.push(
-      <p key={`md-paragraph-${nodes.length}`}>
-        {renderMarkdownInline(paragraphLines.join(' '), `paragraph-${nodes.length}`)}
-      </p>,
-    )
-  }
-
-  return nodes
-}
-
-function getPreviewKind(item: FileItem): PreviewKind {
-  const ext = getExtension(item.name)
-  const lower = item.name.toLowerCase()
-
-  if (TEXT_EXTENSIONS.has(ext) || lower === 'readme' || lower === 'license' || lower === 'makefile') {
-    return 'text'
-  }
-  if (IMAGE_EXTENSIONS.has(ext)) return 'image'
-  if (AUDIO_EXTENSIONS.has(ext)) return 'audio'
-  if (VIDEO_EXTENSIONS.has(ext)) return 'video'
-  if (ext === 'pdf') return 'pdf'
-  return 'download'
-}
-
-function getFileBadge(item: FileItem): string {
-  if (item.isDir) return 'DIR'
-  const ext = getExtension(item.name)
-  if (!ext) return 'TXT'
-  return ext.slice(0, 4).toUpperCase()
 }
 
 function savedPathLabel(path: string): string {
@@ -442,54 +169,25 @@ function writeSavedGroupsCollapsed(collapsed: SavedGroupsCollapsed): void {
   }
 }
 
-function readPreviewWidthPercent(): number {
-  if (typeof window === 'undefined') return 42
-  const raw = window.localStorage.getItem(PREVIEW_WIDTH_STORAGE_KEY)
-  const value = raw ? Number(raw) : 42
-  if (!Number.isFinite(value)) return 42
-  return Math.min(MAX_PREVIEW_WIDTH, Math.max(MIN_PREVIEW_WIDTH, value))
-}
-
-function writePreviewWidthPercent(width: number): void {
-  if (typeof window === 'undefined') return
-  try {
-    window.localStorage.setItem(PREVIEW_WIDTH_STORAGE_KEY, String(Math.round(width)))
-  } catch {
-    // localStorage failures should not break resizing.
-  }
-}
-
-function makeFileItemFromPath(path: string): FileItem {
-  const name = getBaseName(path)
-  return {
-    name,
-    path,
-    isDir: false,
-    size: 0,
-    modified: new Date().toISOString(),
-    type: getExtension(name),
-  }
-}
-
-function FilesView({ navigateRequest = null }: FilesViewProps) {
+function FilesView({ navigateRequest = null, onSendPath, sendTargetLabel = null }: FilesViewProps) {
+  const [initialWorkbench] = useState(readFilesWorkbenchState)
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const pathInputRef = useRef<HTMLInputElement | null>(null)
-  const contentRef = useRef<HTMLDivElement | null>(null)
-  const resizablePreview = isFeatureEnabled('filesResizablePreview')
   const [items, setItems] = useState<FileItem[]>([])
-  const [treeItems, setTreeItems] = useState<Record<string, FileItem[]>>({})
-  const [treeLoading, setTreeLoading] = useState<Set<string>>(new Set())
-  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set(['/']))
-  const [currentPath, setCurrentPath] = useState('/')
+  const [treeRefreshToken, setTreeRefreshToken] = useState(0)
+  const [expandedPaths, setExpandedPaths] = useState<string[]>(initialWorkbench.expandedPaths)
+  const [treeScrollTop, setTreeScrollTop] = useState(initialWorkbench.treeScrollTop)
+  const [currentPath, setCurrentPath] = useState(initialWorkbench.currentPath)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set())
   const [sortBy, setSortBy] = useState<SortKey>('name')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
-  const [viewMode, setViewMode] = useState<ViewMode>('list')
+  const [viewMode, setViewMode] = useState<ViewMode>(initialWorkbench.viewMode)
+  const [contentMode, setContentMode] = useState<FilesContentMode>(initialWorkbench.contentMode)
   const [searchQuery, setSearchQuery] = useState('')
-  const [history, setHistory] = useState<string[]>(['/'])
-  const [historyIndex, setHistoryIndex] = useState(0)
+  const [history, setHistory] = useState<string[]>(initialWorkbench.history)
+  const [historyIndex, setHistoryIndex] = useState(initialWorkbench.historyIndex)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [tabContextMenu, setTabContextMenu] = useState<TabContextMenuState | null>(null)
   const [renamingPath, setRenamingPath] = useState<string | null>(null)
@@ -497,22 +195,27 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
   const [createIntent, setCreateIntent] = useState<CreateIntent | null>(null)
   const [deleteTargets, setDeleteTargets] = useState<FileItem[] | null>(null)
   const [toast, setToast] = useState<string | null>(null)
-  const [openFiles, setOpenFiles] = useState<OpenFile[]>([])
-  const [activeFilePath, setActiveFilePath] = useState<string | null>(null)
+  const [openFiles, setOpenFiles] = useState<OpenFile[]>(() => initialWorkbench.openFiles.map(file => ({
+    ...file,
+    content: '',
+    dirty: false,
+    loading: file.kind === 'text',
+    error: null,
+  })))
+  const [activeFilePath, setActiveFilePath] = useState<string | null>(initialWorkbench.activeFilePath)
+  const [fileViewStates, setFileViewStates] = useState<Record<string, FileViewState>>(initialWorkbench.fileViewStates)
   const [pinnedPaths, setPinnedPaths] = useState<SavedPath[]>(() => readSavedPaths(PINNED_STORAGE_KEY))
   const [recentPaths, setRecentPaths] = useState<SavedPath[]>(() => readSavedPaths(RECENT_STORAGE_KEY))
   const [savedGroupsCollapsed, setSavedGroupsCollapsed] = useState<SavedGroupsCollapsed>(() => readSavedGroupsCollapsed())
   const [editingPath, setEditingPath] = useState(false)
-  const [pathDraft, setPathDraft] = useState('/')
+  const [pathDraft, setPathDraft] = useState(initialWorkbench.currentPath)
   const [draggingPaths, setDraggingPaths] = useState<string[]>([])
   const [dropTargetPath, setDropTargetPath] = useState<string | null>(null)
   const [operationLabel, setOperationLabel] = useState<string | null>(null)
-  const [previewWidth, setPreviewWidth] = useState(readPreviewWidthPercent)
+  const [explorerWidth, setExplorerWidth] = useState(initialWorkbench.explorerWidth)
 
   const currentPathPinned = pinnedPaths.some(item => item.path === currentPath)
-  const contentStyle = resizablePreview
-    ? ({ '--fb-preview-width': `${previewWidth}%` } as CSSProperties)
-    : undefined
+  const workbenchStyle = { '--fb-explorer-width': `${explorerWidth}px` } as CSSProperties
   const contextMenuPosition = useViewportMenuPosition<HTMLDivElement>(
     contextMenu ? { x: contextMenu.x, y: contextMenu.y } : null,
     { estimatedSize: { width: 220, height: 320 } },
@@ -526,26 +229,6 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
     setToast(message)
   }, [])
 
-  const loadTree = useCallback(async (path: string) => {
-    const normalized = normalizePath(path)
-    setTreeLoading(prev => new Set(prev).add(normalized))
-    try {
-      const nextItems = await fetchDirectory(normalized)
-      const directories = nextItems
-        .filter(item => item.isDir)
-        .sort((a, b) => a.name.localeCompare(b.name))
-      setTreeItems(prev => ({ ...prev, [normalized]: directories }))
-    } catch {
-      setTreeItems(prev => (normalized in prev ? prev : { ...prev, [normalized]: [] }))
-    } finally {
-      setTreeLoading(prev => {
-        const next = new Set(prev)
-        next.delete(normalized)
-        return next
-      })
-    }
-  }, [])
-
   const loadDirectory = useCallback(async (path: string) => {
     const normalized = normalizePath(path)
     setLoading(true)
@@ -557,18 +240,18 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
       setPathDraft(normalized)
       setSelectedPaths(new Set())
       setError(null)
-      setExpandedPaths(prev => new Set(prev).add(normalized).add('/'))
-      void loadTree(normalized)
+      setExpandedPaths(previous => Array.from(new Set([...previous, '/', normalized])))
     } catch (loadError) {
       setItems([])
       setError(getErrorMessage(loadError, 'fetch'))
     } finally {
       setLoading(false)
     }
-  }, [loadTree])
+  }, [])
 
   const navigateTo = useCallback((path: string, addToHistory = true) => {
     const normalized = normalizePath(path)
+    setContentMode('folder')
     if (addToHistory) {
       setHistory(prev => {
         const base = prev.slice(0, historyIndex + 1)
@@ -583,42 +266,49 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
 
   const refreshCurrentPath = useCallback(() => {
     void loadDirectory(currentPath)
-    void loadTree(currentPath)
-    void loadTree('/')
-  }, [currentPath, loadDirectory, loadTree])
+    setTreeRefreshToken(previous => previous + 1)
+  }, [currentPath, loadDirectory])
 
-  const startPreviewResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!resizablePreview || !contentRef.current) return
+  const startExplorerResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault()
-    const rect = contentRef.current.getBoundingClientRect()
-
-    const updateWidth = (clientX: number) => {
-      const next = ((rect.right - clientX) / rect.width) * 100
-      const clamped = Math.min(MAX_PREVIEW_WIDTH, Math.max(MIN_PREVIEW_WIDTH, next))
-      setPreviewWidth(clamped)
-      writePreviewWidthPercent(clamped)
+    event.currentTarget.setPointerCapture(event.pointerId)
+    const startX = event.clientX
+    const startWidth = explorerWidth
+    const pointerId = event.pointerId
+    const move = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId === pointerId) setExplorerWidth(Math.min(560, Math.max(180, startWidth + moveEvent.clientX - startX)))
     }
-
-    const handlePointerMove = (moveEvent: PointerEvent) => updateWidth(moveEvent.clientX)
-    const handlePointerUp = () => {
-      window.removeEventListener('pointermove', handlePointerMove)
-      window.removeEventListener('pointerup', handlePointerUp)
-      document.body.classList.remove('fb-resizing-preview')
+    const finish = (upEvent: PointerEvent) => {
+      if (upEvent.pointerId !== pointerId) return
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', finish)
+      window.removeEventListener('pointercancel', finish)
     }
-
-    document.body.classList.add('fb-resizing-preview')
-    updateWidth(event.clientX)
-    window.addEventListener('pointermove', handlePointerMove)
-    window.addEventListener('pointerup', handlePointerUp, { once: true })
-  }, [resizablePreview])
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', finish)
+    window.addEventListener('pointercancel', finish)
+  }, [explorerWidth])
 
   useEffect(() => {
-    void loadDirectory(navigateRequest?.path || '/')
-  }, [loadDirectory])
+    void loadDirectory(initialWorkbench.currentPath)
+  }, [initialWorkbench.currentPath, loadDirectory])
 
   useEffect(() => {
-    if (navigateRequest) navigateTo(navigateRequest.path)
-  }, [navigateRequest?.nonce])
+    writeFilesWorkbenchState({
+      version: 1,
+      currentPath,
+      history,
+      historyIndex,
+      viewMode,
+      contentMode,
+      expandedPaths,
+      treeScrollTop,
+      explorerWidth,
+      openFiles: openFiles.map(({ path, name, size, type, kind }) => ({ path, name, size, type, kind })),
+      activeFilePath,
+      fileViewStates,
+    })
+  }, [activeFilePath, contentMode, currentPath, expandedPaths, explorerWidth, fileViewStates, history, historyIndex, openFiles, treeScrollTop, viewMode])
 
   useEffect(() => {
     if (!editingPath) {
@@ -694,6 +384,7 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
 
     const kind = getPreviewKind(item)
     setActiveFilePath(item.path)
+    setContentMode('file')
     rememberRecent(item.path)
 
     setOpenFiles(prev => {
@@ -727,6 +418,42 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
     }
   }, [navigateTo, rememberRecent, updateOpenFile])
 
+  useEffect(() => {
+    initialWorkbench.openFiles.forEach(file => {
+      if (file.kind !== 'text') return
+      if (file.size > MAX_TEXT_PREVIEW_BYTES) {
+        updateOpenFile(file.path, { loading: false, error: 'File is too large for inline editing' })
+        return
+      }
+      void readTextFile(file.path)
+        .then(content => updateOpenFile(file.path, { content, loading: false, error: null }))
+        .catch(readError => updateOpenFile(file.path, { loading: false, error: getErrorMessage(readError, 'read') }))
+    })
+  }, [initialWorkbench.openFiles, updateOpenFile])
+
+  useEffect(() => {
+    if (!navigateRequest) return
+    const requestedPath = normalizePath(navigateRequest.path)
+    const openRequestedPath = async () => {
+      const parentPath = getParentPath(requestedPath)
+      try {
+        const siblings = await fetchDirectory(parentPath)
+        const item = siblings.find(candidate => candidate.path === requestedPath)
+        if (item?.isDir) {
+          navigateTo(item.path)
+        } else if (item) {
+          await loadDirectory(parentPath)
+          await openFile(item)
+        } else {
+          navigateTo(requestedPath)
+        }
+      } catch {
+        navigateTo(requestedPath)
+      }
+    }
+    void openRequestedPath()
+  }, [navigateRequest?.nonce])
+
   const openSavedPath = useCallback((saved: SavedPath) => {
     if (saved.kind === 'directory') {
       navigateTo(saved.path)
@@ -743,6 +470,7 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
         const fallback = next[index] || next[index - 1] || next[0] || null
         setActiveFilePath(fallback?.path || null)
       }
+      if (next.length === 0) setContentMode('folder')
       return next
     })
   }, [activeFilePath])
@@ -756,6 +484,7 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
 
     setOpenFiles([])
     setActiveFilePath(null)
+    setContentMode('folder')
   }, [openFiles, showError])
 
   const closeOtherOpenFiles = useCallback((path: string) => {
@@ -901,7 +630,7 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
       }))
       if (activeFilePath === item.path) setActiveFilePath(destination)
       await loadDirectory(currentPath)
-      await loadTree(currentPath)
+      setTreeRefreshToken(previous => previous + 1)
     } catch (renameError) {
       showError(getErrorMessage(renameError, 'rename'))
     } finally {
@@ -934,7 +663,7 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
         await openFile(makeFileItemFromPath(path))
       }
       await loadDirectory(currentPath)
-      await loadTree(createIntent.parentPath)
+      setTreeRefreshToken(previous => previous + 1)
       setCreateIntent(null)
     } catch (createError) {
       showError(getErrorMessage(createError, 'create'))
@@ -962,7 +691,7 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
         setActiveFilePath(null)
       }
       await loadDirectory(currentPath)
-      await loadTree(currentPath)
+      setTreeRefreshToken(previous => previous + 1)
       setDeleteTargets(null)
     } catch (deleteError) {
       showError(getErrorMessage(deleteError, 'delete'))
@@ -979,7 +708,7 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
     try {
       await uploadFiles(currentPath, files)
       await loadDirectory(currentPath)
-      await loadTree(currentPath)
+      setTreeRefreshToken(previous => previous + 1)
     } catch (uploadError) {
       showError(getErrorMessage(uploadError, 'upload'))
     } finally {
@@ -1100,8 +829,8 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
         await renameItem(sourcePath, destination)
       }
       await loadDirectory(currentPath)
-      await loadTree(currentPath)
-      await loadTree(target.path)
+      setTreeRefreshToken(previous => previous + 1)
+      setTreeRefreshToken(previous => previous + 1)
     } catch (moveError) {
       showError(getErrorMessage(moveError, 'move'))
     } finally {
@@ -1146,55 +875,6 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [refreshCurrentPath, saveActiveFile, selectedItems, visibleItems])
-
-  const renderTreeNode = (item: FileItem, level: number) => {
-    const expanded = expandedPaths.has(item.path)
-    const children = treeItems[item.path] || []
-    const active = currentPath === item.path
-    const loadingChildren = treeLoading.has(item.path)
-
-    return (
-      <div className="fb-tree-node" key={item.path}>
-        <div
-          className={`fb-tree-row ${active ? 'active' : ''}`}
-          style={{ paddingLeft: `${8 + level * 14}px` }}
-          onClick={() => navigateTo(item.path)}
-          onContextMenu={(event) => handleContextMenu(event, item)}
-        >
-          <button
-            className="fb-tree-toggle"
-            type="button"
-            title={expanded ? 'Collapse' : 'Expand'}
-            onClick={(event) => {
-              event.stopPropagation()
-              setExpandedPaths(prev => {
-                const next = new Set(prev)
-                if (next.has(item.path)) next.delete(item.path)
-                else next.add(item.path)
-                return next
-              })
-              if (!expanded && !(item.path in treeItems)) {
-                void loadTree(item.path)
-              }
-            }}
-          >
-            {expanded ? 'v' : '>'}
-          </button>
-          <span className="fb-tree-glyph">DIR</span>
-          <span className="fb-tree-name" title={item.path}>{item.name}</span>
-        </div>
-        {expanded && (
-          <div className="fb-tree-children">
-            {loadingChildren ? (
-              <div className="fb-tree-loading" style={{ paddingLeft: `${28 + level * 14}px` }}>Loading...</div>
-            ) : (
-              children.map(child => renderTreeNode(child, level + 1))
-            )}
-          </div>
-        )}
-      </div>
-    )
-  }
 
   const renderSavedPath = (item: SavedPath, className: string) => (
     <button
@@ -1355,6 +1035,24 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
     )
   }
 
+  const activeFileItem: FileItem | null = activeFile ? {
+    path: activeFile.path,
+    name: activeFile.name,
+    size: activeFile.size,
+    type: activeFile.type,
+    isDir: false,
+    modified: '',
+  } : null
+  const activeViewState = activeFilePath ? fileViewStates[activeFilePath] || DEFAULT_FILE_VIEW_STATE : DEFAULT_FILE_VIEW_STATE
+  const updateActiveViewState = (next: FileViewState) => {
+    if (!activeFilePath) return
+    setFileViewStates(previous => ({ ...previous, [activeFilePath]: next }))
+  }
+  const imageItems = items.filter(item => !item.isDir && getPreviewKind(item) === 'image')
+  const activeImageIndex = activeFile ? imageItems.findIndex(item => item.path === activeFile.path) : -1
+  const previousImage = activeImageIndex > 0 ? imageItems[activeImageIndex - 1] : null
+  const nextImage = activeImageIndex >= 0 && activeImageIndex < imageItems.length - 1 ? imageItems[activeImageIndex + 1] : null
+
   const contextTargets = contextMenu?.item
     ? [contextMenu.item]
     : selectedItems
@@ -1401,11 +1099,11 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
         </div>
       </div>
 
-      <div className="fb-workbench">
+      <div className="fb-workbench" style={workbenchStyle}>
         <aside className="fb-sidebar" aria-label="Explorer">
           <div className="fb-sidebar-header">
             <span>Explorer</span>
-            <button className="fb-sidebar-action" type="button" title="Refresh tree" onClick={() => loadTree('/')}>Refresh</button>
+            <button className="fb-sidebar-action" type="button" title="Refresh tree" onClick={() => setTreeRefreshToken(previous => previous + 1)}>Refresh</button>
           </div>
 
           {renderSavedPathGroup('pinned', 'Pinned', pinnedPaths)}
@@ -1413,15 +1111,32 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
 
           <section className="fb-sidebar-section fb-tree-section">
             <div className="fb-section-title">Workspace</div>
-            <div className="fb-tree">
-              {treeLoading.has('/') && !treeItems['/'] ? (
-                <div className="fb-tree-loading">Loading...</div>
-              ) : (
-                (treeItems['/'] || []).map(item => renderTreeNode(item, 0))
-              )}
-            </div>
+            <FileTree
+              currentPath={currentPath}
+              selectedPath={activeFilePath || currentPath}
+              expandedPaths={expandedPaths}
+              scrollTop={treeScrollTop}
+              refreshToken={treeRefreshToken}
+              onOpenDirectory={navigateTo}
+              onOpenFile={item => void openFile(item)}
+              onExpandedPathsChange={setExpandedPaths}
+              onScrollTopChange={setTreeScrollTop}
+              onItemContextMenu={(event, item) => handleContextMenu(event, item)}
+            />
           </section>
         </aside>
+        <div
+          className="fb-explorer-resizer"
+          role="separator"
+          aria-label="Resize Files explorer"
+          aria-orientation="vertical"
+          tabIndex={0}
+          onPointerDown={startExplorerResize}
+          onKeyDown={event => {
+            if (event.key === 'ArrowLeft') setExplorerWidth(previous => Math.max(180, previous - 16))
+            if (event.key === 'ArrowRight') setExplorerWidth(previous => Math.min(560, previous + 16))
+          }}
+        />
 
         <main className="fb-main">
           <div className="fb-toolbar">
@@ -1469,22 +1184,41 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
             </div>
 
             <div className="fb-toolbar-actions">
-              <input
-                className="fb-search"
-                type="search"
-                placeholder="Filter"
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-              />
-              <button className={`fb-view-btn ${viewMode === 'list' ? 'active' : ''}`} type="button" title="List view" onClick={() => setViewMode('list')}>List</button>
-              <button className={`fb-view-btn ${viewMode === 'grid' ? 'active' : ''}`} type="button" title="Grid view" onClick={() => setViewMode('grid')}>Grid</button>
+              <button
+                className={`fb-view-btn ${contentMode === 'folder' ? 'active' : ''}`}
+                type="button"
+                aria-pressed={contentMode === 'folder'}
+                onClick={() => setContentMode('folder')}
+              >
+                Folder
+              </button>
+              <button
+                className={`fb-view-btn ${contentMode === 'file' ? 'active' : ''}`}
+                type="button"
+                aria-pressed={contentMode === 'file'}
+                disabled={!activeFile}
+                onClick={() => setContentMode('file')}
+              >
+                File
+              </button>
+              {contentMode === 'folder' && (
+                <>
+                  <input
+                    className="fb-search"
+                    type="search"
+                    placeholder="Filter"
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                  />
+                  <button className={`fb-view-btn ${viewMode === 'list' ? 'active' : ''}`} type="button" title="List view" onClick={() => setViewMode('list')}>List</button>
+                  <button className={`fb-view-btn ${viewMode === 'grid' ? 'active' : ''}`} type="button" title="Grid view" onClick={() => setViewMode('grid')}>Grid</button>
+                </>
+              )}
             </div>
           </div>
 
           <div
-            ref={contentRef}
-            className={`fb-content ${resizablePreview ? 'resizable-preview' : ''}`}
-            style={contentStyle}
+            className={`fb-content mode-${contentMode}`}
             onDragOver={(event) => event.preventDefault()}
             onDrop={handleDropUpload}
             onContextMenu={(event) => {
@@ -1493,7 +1227,8 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
               }
             }}
           >
-            <section className="fb-browser-pane">
+            {contentMode === 'folder' && (
+              <section className="fb-browser-pane">
               <div className="fb-list-container">
                 {loading ? (
                   <div className="fb-loading">
@@ -1552,18 +1287,10 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
                 {operationLabel && <span className="fb-statusbar-operation">{operationLabel}...</span>}
               </div>
             </section>
-
-            {resizablePreview && (
-              <div
-                className="fb-preview-resizer"
-                role="separator"
-                aria-orientation="vertical"
-                title="Resize preview"
-                onPointerDown={startPreviewResize}
-              />
             )}
 
-            <aside className="fb-editor-pane">
+            {contentMode === 'file' && (
+              <aside className="fb-editor-pane">
               <div className="fb-editor-tabs">
                 {openFiles.length === 0 ? (
                   <span className="fb-editor-placeholder-tab">Preview</span>
@@ -1575,7 +1302,10 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
                         className={`fb-editor-tab ${file.path === activeFilePath ? 'active' : ''}`}
                         type="button"
                         title={file.path}
-                        onClick={() => setActiveFilePath(file.path)}
+                        onClick={() => {
+                          setActiveFilePath(file.path)
+                          setContentMode('file')
+                        }}
                         onContextMenu={(event) => {
                           event.preventDefault()
                           event.stopPropagation()
@@ -1632,6 +1362,15 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
                       )}
                       <button className="fb-btn" type="button" onClick={() => downloadItems([makeFileItemFromPath(activeFile.path)])}>Download</button>
                       <button className="fb-btn" type="button" onClick={() => copyPath(activeFile.path)}>Copy Path</button>
+                      <button
+                        className="fb-btn"
+                        type="button"
+                        disabled={!onSendPath}
+                        title={onSendPath ? `Send path to ${sendTargetLabel || 'focused session'}` : 'Focus a terminal session first'}
+                        onClick={() => onSendPath?.(activeFile.path)}
+                      >
+                        Send Path
+                      </button>
                     </div>
                   </div>
 
@@ -1639,42 +1378,18 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
                     <div className="fb-editor-empty">Loading file...</div>
                   ) : activeFile.error ? (
                     <div className="fb-editor-empty">{activeFile.error}</div>
-                  ) : activeFile.kind === 'text' ? (
-                    isMarkdownFileName(activeFile.name) ? (
-                      <div className="fb-markdown-editor" aria-label={`Markdown editor for ${activeFile.name}`}>
-                        <textarea
-                          className="fb-markdown-source"
-                          aria-label={`Markdown source for ${activeFile.name}`}
-                          value={activeFile.content}
-                          spellCheck={false}
-                          onChange={(event) => updateOpenFile(activeFile.path, { content: event.target.value, dirty: true })}
-                        />
-                        <div className="fb-markdown-preview" aria-label={`Markdown preview for ${activeFile.name}`}>
-                          {renderMarkdownPreview(activeFile.content)}
-                        </div>
-                      </div>
-                    ) : (
-                      <textarea
-                        className="fb-editor-textarea"
-                        value={activeFile.content}
-                        spellCheck={false}
-                        onChange={(event) => updateOpenFile(activeFile.path, { content: event.target.value, dirty: true })}
-                      />
-                    )
-                  ) : activeFile.kind === 'image' ? (
-                    <div className="fb-media-preview"><img src={getDownloadUrl(activeFile.path)} alt={activeFile.name} /></div>
-                  ) : activeFile.kind === 'audio' ? (
-                    <div className="fb-media-preview"><audio src={getDownloadUrl(activeFile.path)} controls /></div>
-                  ) : activeFile.kind === 'video' ? (
-                    <div className="fb-media-preview"><video src={getDownloadUrl(activeFile.path)} controls /></div>
-                  ) : activeFile.kind === 'pdf' ? (
-                    <iframe className="fb-pdf-preview" src={getDownloadUrl(activeFile.path)} title={activeFile.name} />
-                  ) : (
-                    <div className="fb-editor-empty">
-                      <p>No inline preview is available for this file type.</p>
-                      <button className="fb-btn" type="button" onClick={() => downloadItems([makeFileItemFromPath(activeFile.path)])}>Download</button>
-                    </div>
-                  )}
+                  ) : activeFileItem ? (
+                    <FileViewer
+                      item={activeFileItem}
+                      content={activeFile.kind === 'text' ? activeFile.content : undefined}
+                      editable={activeFile.kind === 'text'}
+                      onContentChange={content => updateOpenFile(activeFile.path, { content, dirty: true })}
+                      viewState={activeViewState}
+                      onViewStateChange={updateActiveViewState}
+                      onPrevious={previousImage ? () => void openFile(previousImage) : undefined}
+                      onNext={nextImage ? () => void openFile(nextImage) : undefined}
+                    />
+                  ) : null}
                 </div>
               ) : (
                 <div className="fb-editor-empty">
@@ -1682,7 +1397,8 @@ function FilesView({ navigateRequest = null }: FilesViewProps) {
                   <span>Select a file to preview or edit it here.</span>
                 </div>
               )}
-            </aside>
+              </aside>
+            )}
           </div>
         </main>
       </div>

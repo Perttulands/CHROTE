@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
 import { useSession } from '../context/SessionContext'
 import { getDefaultLaunchUser, getGroupPriority, getTerminalUserInitial } from '../types'
 import type { WorkspaceId } from '../types'
@@ -9,10 +10,23 @@ import SessionGroup from './SessionGroup'
 type SessionPanelProps = {
   onOpenSessionBankSettings?: () => void
   activeWorkspaceId: WorkspaceId
+  collapsed?: boolean
+  width?: number
+  onToggle?: () => void
+  onWidthChange?: (width: number) => void
 }
 
-function SessionPanel({ onOpenSessionBankSettings, activeWorkspaceId }: SessionPanelProps) {
+function SessionPanel({
+  onOpenSessionBankSettings,
+  activeWorkspaceId,
+  collapsed,
+  width = 260,
+  onToggle,
+  onWidthChange,
+}: SessionPanelProps) {
   const { groupedSessions, loading, error, sidebarCollapsed, toggleSidebar, refreshSessions, createSession: createSessionAction, sessionBank, terminalUsers } = useSession()
+  const isCollapsed = collapsed ?? sidebarCollapsed
+  const handleToggle = onToggle ?? toggleSidebar
   const [creating, setCreating] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [newSessionMenu, setNewSessionMenu] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 })
@@ -64,8 +78,8 @@ function SessionPanel({ onOpenSessionBankSettings, activeWorkspaceId }: SessionP
     }
     if (autoCollapsedForMobile.current) return
     autoCollapsedForMobile.current = true
-    if (!sidebarCollapsed) toggleSidebar()
-  }, [isMobile, sidebarCollapsed, toggleSidebar])
+    if (!isCollapsed) handleToggle()
+  }, [handleToggle, isCollapsed, isMobile])
 
   useEffect(() => {
     if (!newSessionMenu.show) return
@@ -133,15 +147,42 @@ function SessionPanel({ onOpenSessionBankSettings, activeWorkspaceId }: SessionP
     await createSessionForUser(unixUser, namedSessionName)
   }
 
+  const startPanelResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!onWidthChange) return
+    event.currentTarget.setPointerCapture(event.pointerId)
+    const startX = event.clientX
+    const startWidth = width
+    const pointerId = event.pointerId
+    const move = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId === pointerId) onWidthChange(Math.min(480, Math.max(220, startWidth + moveEvent.clientX - startX)))
+    }
+    const finish = (upEvent: PointerEvent) => {
+      if (upEvent.pointerId !== pointerId) return
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', finish)
+      window.removeEventListener('pointercancel', finish)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', finish)
+    window.addEventListener('pointercancel', finish)
+  }
+
+  const panelStyle = isCollapsed ? undefined : ({ '--session-panel-width': `${width}px` } as CSSProperties)
+
   return (
-    <div className={`session-panel ${sidebarCollapsed ? 'collapsed' : ''}`}>
+    <div className={`session-panel ${isCollapsed ? 'collapsed' : ''}`} style={panelStyle}>
       <div className="session-panel-header">
-        <button className="toggle-btn" onClick={toggleSidebar} title={sidebarCollapsed ? 'Expand' : 'Collapse'}>
-          {sidebarCollapsed ? '»' : '«'}
+        <button
+          className="toggle-btn dock-toggle-btn"
+          onClick={handleToggle}
+          title={isCollapsed ? 'Expand' : 'Collapse'}
+          aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} Sessions panel`}
+        >
+          <span>Sessions</span>
+          <span aria-hidden="true">{isCollapsed ? '»' : '«'}</span>
         </button>
-        {!sidebarCollapsed && (
+        {!isCollapsed && (
           <>
-            <span className="panel-title">Sessions</span>
             <button
               className="add-btn"
               onClick={createSession}
@@ -193,7 +234,7 @@ function SessionPanel({ onOpenSessionBankSettings, activeWorkspaceId }: SessionP
         </div>
       )}
 
-      {!sidebarCollapsed && namedSessionPopup.show && (
+      {!isCollapsed && namedSessionPopup.show && (
         <div
           ref={namedSessionPopupPosition.ref}
           role="dialog"
@@ -236,7 +277,7 @@ function SessionPanel({ onOpenSessionBankSettings, activeWorkspaceId }: SessionP
         </div>
       )}
 
-      {!sidebarCollapsed && (
+      {!isCollapsed && (
         <div className="session-search-container">
           <input
             type="text"
@@ -248,7 +289,7 @@ function SessionPanel({ onOpenSessionBankSettings, activeWorkspaceId }: SessionP
         </div>
       )}
 
-      {!sidebarCollapsed && (
+      {!isCollapsed && (
         <div className="session-panel-content">
           {loading && (
             <div className="panel-status">Loading...</div>
@@ -277,7 +318,7 @@ function SessionPanel({ onOpenSessionBankSettings, activeWorkspaceId }: SessionP
         </div>
       )}
 
-      {!sidebarCollapsed && bankedSessionCount > 0 && (
+      {!isCollapsed && bankedSessionCount > 0 && (
         <div className="session-panel-footer">
           <button
             type="button"
@@ -288,6 +329,20 @@ function SessionPanel({ onOpenSessionBankSettings, activeWorkspaceId }: SessionP
             Session Bank · {bankedSessionCount} recoverable
           </button>
         </div>
+      )}
+      {!isCollapsed && onWidthChange && (
+        <div
+          className="dock-resizer"
+          role="separator"
+          aria-label="Resize Sessions panel"
+          aria-orientation="vertical"
+          tabIndex={0}
+          onPointerDown={startPanelResize}
+          onKeyDown={event => {
+            if (event.key === 'ArrowLeft') onWidthChange(Math.max(220, width - 16))
+            if (event.key === 'ArrowRight') onWidthChange(Math.min(480, width + 16))
+          }}
+        />
       )}
     </div>
   )

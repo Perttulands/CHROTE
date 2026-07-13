@@ -47,7 +47,9 @@ function mockRootFiles(contentsByName: Record<string, string>) {
 
 async function openRootFile(name: string) {
   const namePattern = new RegExp(name.replace('.', '\\.'), 'i')
-  fireEvent.click(await screen.findByRole('row', { name: namePattern }))
+  const folderRow = screen.queryByRole('row', { name: namePattern })
+  const treeRow = await screen.findByRole('treeitem', { name: namePattern })
+  fireEvent.click(folderRow || treeRow)
   await within(editorTabs()).findByRole('button', { name: namePattern })
 }
 
@@ -147,8 +149,8 @@ describe('FilesView editor tab bulk close', () => {
       expect(within(tabs).queryByRole('button', { name: /one\.txt/ })).not.toBeInTheDocument()
       expect(within(tabs).queryByRole('button', { name: /two\.txt/ })).not.toBeInTheDocument()
     })
-    expect(screen.getByText('Preview')).toBeInTheDocument()
-    expect(screen.getByText('No file selected')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Folder' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'File' })).toBeDisabled()
   })
 
   it('refuses Close All when any open tab is dirty', async () => {
@@ -222,6 +224,7 @@ describe('FilesView Markdown editor', () => {
 
     await openRootFile('notes.md')
 
+    fireEvent.click(screen.getByRole('button', { name: 'Split Markdown view' }))
     expect(await screen.findByLabelText('Markdown source for notes.md')).toBeInTheDocument()
     expect(screen.getByLabelText('Markdown preview for notes.md')).toBeInTheDocument()
     expect(document.querySelector('.fb-editor-textarea')).not.toBeInTheDocument()
@@ -252,6 +255,7 @@ describe('FilesView Markdown editor', () => {
     render(<FilesView />)
 
     await openRootFile('notes.markdown')
+    fireEvent.click(screen.getByRole('button', { name: 'Show Markdown source' }))
     const source = await screen.findByLabelText('Markdown source for notes.markdown')
     const nextContent = '# Edited\n\n- saved item'
 
@@ -279,6 +283,36 @@ describe('FilesView Markdown editor', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'Odd' })).toBeInTheDocument()
     const preview = screen.getByLabelText('Markdown preview for odd.md')
     expect(preview).toHaveTextContent('```foo bar still visible after malformed fence')
+  })
+  it('restores the active file, Markdown mode, and file scroll state after remount', async () => {
+    mockRootFiles({ 'persisted.md': '# Persisted\n\nBody' })
+
+    const first = render(<FilesView />)
+    await openRootFile('persisted.md')
+    fireEvent.click(screen.getByRole('button', { name: 'Split Markdown view' }))
+    const scroll = await screen.findByTestId('file-viewer-scroll')
+    Object.defineProperty(scroll, 'scrollTop', { configurable: true, writable: true, value: 360 })
+    fireEvent.scroll(scroll)
+    first.unmount()
+
+    render(<FilesView />)
+
+    expect(await within(editorTabs()).findByRole('button', { name: /persisted\.md/ })).toBeInTheDocument()
+    expect(await screen.findByLabelText('Markdown source for persisted.md')).toBeInTheDocument()
+    expect(screen.getByLabelText('Markdown preview for persisted.md')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('file-viewer-scroll')).toHaveProperty('scrollTop', 360))
+  })
+
+  it('prefills Send to Session with the active absolute path', async () => {
+    const onSendPath = vi.fn()
+    mockRootFiles({ 'send-me.txt': 'path payload' })
+
+    render(<FilesView onSendPath={onSendPath} sendTargetLabel="shell" />)
+    await openRootFile('send-me.txt')
+    fireEvent.click(screen.getByRole('button', { name: 'Send Path' }))
+
+    expect(onSendPath).toHaveBeenCalledWith('/send-me.txt')
+    expect(screen.getByRole('button', { name: 'Send Path' })).toHaveAttribute('title', 'Send path to shell')
   })
 })
 

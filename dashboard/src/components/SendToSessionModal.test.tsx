@@ -6,6 +6,8 @@ import SendToSessionModal from './SendToSessionModal'
 
 const mockState = vi.hoisted(() => ({
   sendToSessionTarget: 'alice:alice-shell' as string | null,
+  sendToSessionPrefill: '',
+  sendToSessionRequestId: 0,
   sessions: [
     { name: 'alice-shell', windows: 1, attached: true, group: 'main', unixUser: 'alice' },
     { name: 'bob-shell', windows: 1, attached: true, group: 'main', unixUser: 'bob' },
@@ -19,6 +21,8 @@ const mockState = vi.hoisted(() => ({
 vi.mock('../context/SessionContext', () => ({
   useSession: () => ({
     sendToSessionTarget: mockState.sendToSessionTarget,
+    sendToSessionPrefill: mockState.sendToSessionPrefill,
+    sendToSessionRequestId: mockState.sendToSessionRequestId,
     sessions: mockState.sessions,
     closeSendToSession: mockState.closeSendToSession,
     sendToSession: mockState.sendToSession,
@@ -54,7 +58,20 @@ describe('SendToSessionModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockState.sendToSessionTarget = 'alice:alice-shell'
+    mockState.sendToSessionPrefill = ''
+    mockState.sendToSessionRequestId = 0
     mockState.sendToSession.mockResolvedValue(true)
+  })
+
+  it('starts with a caller-provided path draft without submitting it', async () => {
+    mockState.sendToSessionPrefill = 'Please inspect:\n\n/srv/chrote/README.md\n\nNote: '
+    mockState.sendToSessionRequestId = 1
+
+    render(<SendToSessionModal />)
+
+    expect(screen.getByLabelText(/Message to send/i)).toHaveValue(mockState.sendToSessionPrefill)
+    expect(screen.getByRole('checkbox', { name: /Press Enter after sending/i })).not.toBeChecked()
+    expect(mockState.sendToSession).not.toHaveBeenCalled()
   })
 
   it('sends editable text and dropped files to the selected session', async () => {

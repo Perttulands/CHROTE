@@ -283,14 +283,12 @@ test.describe('Filebrowser UI Elements', () => {
     await expect(page.locator('.fb-statusbar')).toContainText('3 items')
   })
 
-  test('should select item on click', async ({ page }) => {
+  test('should open a selected file in the dedicated file view', async ({ page }) => {
     await page.click('.fb-row:has-text("readme.txt")')
 
-    // Item should be selected
-    await expect(page.locator('.fb-row.selected')).toHaveCount(1)
-
-    // Status bar should show selection
-    await expect(page.locator('.fb-statusbar')).toContainText('1 selected')
+    await expect(page.locator('.fb-content')).toHaveClass(/mode-file/)
+    await expect(page.getByRole('button', { name: 'File', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('.fb-editor-tab:has-text("readme.txt")')).toBeVisible()
   })
 
   test('should show context menu on right-click', async ({ page }) => {
@@ -335,11 +333,12 @@ test.describe('Filebrowser Workbench', () => {
     await expect(page.locator('.fb-loading')).not.toBeVisible({ timeout: 5000 })
   })
 
-  test('should display explorer tree and preview pane', async ({ page }) => {
+  test('should start in folder view with a file-level explorer tree', async ({ page }) => {
     await expect(page.locator('.fb-sidebar')).toBeVisible()
-    await expect(page.locator('.fb-editor-pane')).toBeVisible()
     await expect(page.locator('.fb-section-title:has-text("Workspace")')).toBeVisible()
-    await expect(page.locator('.fb-editor-empty')).toContainText('No file selected')
+    await expect(page.getByRole('treeitem', { name: /File readme\.txt/ })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Folder', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('.fb-editor-pane')).toHaveCount(0)
   })
 
   test('should open a text file in the editor pane', async ({ page }) => {
@@ -437,10 +436,11 @@ test.describe('Filebrowser Tab Navigation', () => {
     await page.click('.tab:has-text("Files")')
     await page.waitForSelector('.files-view')
 
-    await expect(page.locator('.fb-editor-pane')).toBeVisible()
-    await expect(page.locator('.fb-editor-empty')).toContainText('No file selected')
+    await expect(page.getByRole('button', { name: 'Folder', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('.fb-editor-pane')).toHaveCount(0)
 
     await page.click('.fb-row:has-text("readme.txt")')
+    await expect(page.locator('.fb-editor-pane')).toBeVisible()
     await expect(page.locator('.fb-editor-tab:has-text("readme.txt")')).toBeVisible()
   })
 })
