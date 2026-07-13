@@ -217,6 +217,7 @@ function TerminalFilesPanel({
   const { workspaces, focusedWindowKey, sessionBank, openSendToSession } = useSession()
   const [filesState, setFilesState] = useState<WorkspaceFilesState>(() => readWorkspaceFilesState(workspaceId))
   const [pathDraft, setPathDraft] = useState(filesState.currentPath)
+  const [refreshToken, setRefreshToken] = useState(0)
   const workspace = workspaces[workspaceId]
 
   const updateFilesState = useCallback((update: (previous: WorkspaceFilesState) => WorkspaceFilesState) => {
@@ -344,7 +345,15 @@ function TerminalFilesPanel({
         {!collapsed && (
           <>
             {sessionCwd && <button type="button" className="terminal-files-cwd" onClick={() => navigateTo(sessionCwd)}>CWD</button>}
-            <button type="button" className="terminal-files-refresh" onClick={() => navigateTo(filesState.currentPath)}>↻</button>
+            <button
+              type="button"
+              className="terminal-files-refresh"
+              aria-label="Refresh Files"
+              title="Refresh Files"
+              onClick={() => setRefreshToken(previous => previous + 1)}
+            >
+              ↻
+            </button>
           </>
         )}
       </header>
@@ -359,6 +368,7 @@ function TerminalFilesPanel({
             selectedPath={filesState.selectedPath}
             expandedPaths={filesState.expandedPaths}
             scrollTop={filesState.treeScrollTop}
+            refreshToken={refreshToken}
             onOpenDirectory={navigateTo}
             onOpenFile={openPeek}
             onExpandedPathsChange={expandedPaths => updateFilesState(previous => ({ ...previous, expandedPaths }))}

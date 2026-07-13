@@ -250,14 +250,15 @@ function FileViewer({
   }, [onViewStateChange, viewState])
 
   useEffect(() => {
+    let cancelled = false
+    setLoading(false)
+    setError(null)
     if (controlledContent !== undefined || kind !== 'text') return
     if (item.size > MAX_TEXT_PREVIEW_BYTES) {
       setError('File is too large for inline viewing')
       return
     }
-    let cancelled = false
     setLoading(true)
-    setError(null)
     void readTextFile(item.path)
       .then(next => {
         if (!cancelled) setLoadedContent(next)

@@ -87,4 +87,52 @@ describe('FileViewer', () => {
     )
     expect(mockedReadTextFile).toHaveBeenCalledTimes(1)
   })
+
+  it('clears pending text state when the reused viewer switches to an image', async () => {
+    mockedReadTextFile.mockImplementation(() => new Promise(() => {}))
+    const onViewStateChange = vi.fn()
+    const { rerender } = render(
+      <FileViewer
+        item={markdownFile}
+        viewState={DEFAULT_FILE_VIEW_STATE}
+        onViewStateChange={onViewStateChange}
+      />,
+    )
+
+    expect(await screen.findByText('Loading file...')).toBeInTheDocument()
+    rerender(
+      <FileViewer
+        item={{ ...markdownFile, path: '/photo.png', name: 'photo.png', type: 'image/png' }}
+        viewState={DEFAULT_FILE_VIEW_STATE}
+        onViewStateChange={onViewStateChange}
+      />,
+    )
+
+    expect(await screen.findByRole('img', { name: 'photo.png' })).toBeInTheDocument()
+    expect(screen.queryByText('Loading file...')).not.toBeInTheDocument()
+  })
+
+  it('clears a text read error when the reused viewer switches to an image', async () => {
+    mockedReadTextFile.mockRejectedValueOnce(new Error('read denied'))
+    const onViewStateChange = vi.fn()
+    const { rerender } = render(
+      <FileViewer
+        item={markdownFile}
+        viewState={DEFAULT_FILE_VIEW_STATE}
+        onViewStateChange={onViewStateChange}
+      />,
+    )
+
+    expect(await screen.findByText('read denied')).toBeInTheDocument()
+    rerender(
+      <FileViewer
+        item={{ ...markdownFile, path: '/photo.png', name: 'photo.png', type: 'image/png' }}
+        viewState={DEFAULT_FILE_VIEW_STATE}
+        onViewStateChange={onViewStateChange}
+      />,
+    )
+
+    expect(await screen.findByRole('img', { name: 'photo.png' })).toBeInTheDocument()
+    expect(screen.queryByText('read denied')).not.toBeInTheDocument()
+  })
 })

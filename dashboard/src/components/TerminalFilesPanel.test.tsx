@@ -123,4 +123,24 @@ describe('TerminalFilesPanel', () => {
       expect(stored.workspaces.terminal1.peek).toBeNull()
     })
   })
+
+  it('invalidates the FileTree cache when Refresh is clicked', async () => {
+    render(
+      <TerminalFilesPanel
+        workspaceId="terminal1"
+        collapsed={false}
+        width={320}
+        onToggle={vi.fn()}
+        onWidthChange={vi.fn()}
+        onOpenInFiles={vi.fn()}
+      />,
+    )
+
+    await screen.findByRole('treeitem', { name: /README\.md/ })
+    expect(mockedFetchDirectory).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh Files' }))
+
+    await waitFor(() => expect(mockedFetchDirectory).toHaveBeenCalledTimes(2))
+  })
 })
