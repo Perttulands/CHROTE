@@ -38,22 +38,40 @@
 .dock-toggle-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   min-height: 28px;
   white-space: nowrap;
 }
 
+.dock-toggle-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .dock-panel.collapsed .dock-toggle-btn {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  min-height: var(--dock-panel-rail-width, 24px);
-  height: var(--dock-panel-rail-width, 24px);
-  padding: 0 6px;
-  gap: 4px;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 0;
   border: 0;
-  transform: translate(-50%, -50%) rotate(-90deg);
-  transform-origin: center;
+  overflow: hidden;
+}
+
+.dock-panel.collapsed .dock-toggle-content {
+  position: absolute;
+  top: 10px;
+  right: 5px;
+  gap: 4px;
+  transform: rotate(-90deg);
+  transform-origin: top right;
+}
+
+.dock-panel.collapsed .dock-toggle-btn:hover,
+.dock-panel.collapsed .dock-toggle-btn:focus-visible {
+  background: var(--accent-light);
 }
 
 .dock-toggle-chevron {

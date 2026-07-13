@@ -1,10 +1,11 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState } from 'react'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { isFeatureEnabled } from '../featureFlags'
 import { useSession } from '../context/SessionContext'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
 import { TERMINAL_LABELS, TERMINAL_WORKSPACE_IDS } from '../types'
 import type { WorkspaceId } from '../types'
+import DismissiblePanel from './DismissiblePanel'
 
 export type Tab = 'terminal1' | 'terminal2' | 'terminal3' | 'files' | 'agents' | 'beads' | 'formations' | 'services' | 'scheduled' | 'server' | 'settings' | 'help'
 
@@ -38,46 +39,10 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
     tabMenu.show ? { x: tabMenu.x, y: tabMenu.y } : null,
     { estimatedSize: { width: 230, height: 210 } },
   )
-  const helpMenuRef = useRef<HTMLDivElement>(null)
   const { settings, updateSettings, saveCurrentLayout, loadPreset, layoutPresets, clearWorkspaceAssignments } = useSession()
 
   const isMobile = useMediaQuery('(max-width: 768px)')
 
-  // Close menu when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      // Close help menu
-      if (helpMenuRef.current && !helpMenuRef.current.contains(e.target as Node)) {
-        setHelpMenuOpen(false)
-      }
-
-      // Close mobile menu if clicking outside tab bar
-      const target = e.target as HTMLElement
-      if (mobileMenuOpen && !target.closest('.tab-bar')) {
-        setMobileMenuOpen(false)
-      }
-      if (tabMenu.show && !target.closest('.session-context-menu')) {
-        setTabMenu({ show: false, x: 0, y: 0, workspaceId: null, submenu: null })
-      }
-    }
-
-    if (helpMenuOpen || mobileMenuOpen || tabMenu.show) {
-      document.addEventListener('mousedown', handleClickOutside)
-      return () => document.removeEventListener('mousedown', handleClickOutside)
-    }
-  }, [helpMenuOpen, mobileMenuOpen, tabMenu.show])
-
-  useEffect(() => {
-    if (!helpMenuOpen && !mobileMenuOpen && !tabMenu.show) return
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      setHelpMenuOpen(false)
-      setMobileMenuOpen(false)
-      setTabMenu({ show: false, x: 0, y: 0, workspaceId: null, submenu: null })
-    }
-    document.addEventListener('keydown', closeOnEscape)
-    return () => document.removeEventListener('keydown', closeOnEscape)
-  }, [helpMenuOpen, mobileMenuOpen, tabMenu.show])
 
   const tabs: TabConfig[] = [
     { id: 'terminal1', label: settings.terminalLabels.terminal1?.trim() || TERMINAL_LABELS.terminal1 },
@@ -105,6 +70,16 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
   const activeTabLabel = tabs.find(t => t.id === activeTab)?.label || 'Menu'
 
   const closeTabMenu = () => setTabMenu({ show: false, x: 0, y: 0, workspaceId: null, submenu: null })
+  const toggleMobileMenu = () => {
+    closeTabMenu()
+    setHelpMenuOpen(false)
+    setMobileMenuOpen(open => !open)
+  }
+  const toggleHelpMenu = () => {
+    closeTabMenu()
+    setMobileMenuOpen(false)
+    setHelpMenuOpen(open => !open)
+  }
 
   const renameTab = () => {
     if (!tabMenu.workspaceId) return
@@ -131,10 +106,13 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
   const openActiveTabMenu = (button: HTMLButtonElement) => {
     if (!activeTerminalWorkspace) return
     const rect = button.getBoundingClientRect()
+    setHelpMenuOpen(false)
+    setMobileMenuOpen(false)
     setTabMenu({ show: true, x: rect.left, y: rect.bottom + 4, workspaceId: activeTerminalWorkspace, submenu: null })
   }
   const tabOptionsMenu = terminalTabMenu && tabMenu.show ? (
-    <div ref={tabMenuPosition.ref} className="session-context-menu" style={tabMenuPosition.style}>
+    <DismissiblePanel onDismiss={closeTabMenu} panelPosition="fixed">
+      <div ref={tabMenuPosition.ref} className="session-context-menu" style={tabMenuPosition.style}>
       <button className="session-context-item" onClick={renameTab}>
         <span className="session-context-icon">✎</span>
         Rename tab label
@@ -175,7 +153,8 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
         <span className="session-context-icon">⌫</span>
         Clear tab assignments
       </button>
-    </div>
+      </div>
+    </DismissiblePanel>
   ) : null
 
   return (
@@ -184,8 +163,8 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
         <>
           <div className="tab-bar-mobile-start">
             <button
-              className={`tab hamburger-btn ${mobileMenuOpen ? 'active' : ''}`}
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className={`tab hamburger-btn ${mobileMenuOpen ? 'active dismissible-trigger-active' : ''}`}
+              onClick={toggleMobileMenu}
             >
               ☰
             </button>
@@ -194,7 +173,8 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
 
           {/* Mobile Menu Dropdown */}
           {mobileMenuOpen && (
-            <div className="mobile-nav-dropdown">
+            <DismissiblePanel onDismiss={() => setMobileMenuOpen(false)} panelPosition="absolute">
+              <div className="mobile-nav-dropdown">
               {tabs.map((tab) => (
                 <button
                   key={tab.id}
@@ -247,7 +227,8 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
               >
                 Dashboard Help
               </button>
-            </div>
+              </div>
+            </DismissiblePanel>
           )}
         </>
       ) : (
@@ -266,7 +247,7 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
           </div>
           <div className="tab-bar-actions">
             {activeTerminalWorkspace && (
-              <button className="tab" onClick={(event) => openActiveTabMenu(event.currentTarget)}>
+              <button className={`tab ${tabMenu.show ? 'dismissible-trigger-active' : ''}`} onClick={(event) => openActiveTabMenu(event.currentTarget)}>
                 ⋯ Tab
               </button>
             )}
@@ -279,16 +260,17 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
                 ⊞ Layouts
               </button>
             )}
-            <div className="help-menu-container" ref={helpMenuRef}>
+            <div className="help-menu-container">
               <button
-                className={`tab ${helpMenuOpen ? 'active' : ''}`}
-                onClick={() => setHelpMenuOpen(!helpMenuOpen)}
+                className={`tab ${helpMenuOpen ? 'active dismissible-trigger-active' : ''}`}
+                onClick={toggleHelpMenu}
                 title="Help & Documentation"
               >
                 ?
               </button>
               {helpMenuOpen && (
-                <div className="help-dropdown">
+                <DismissiblePanel onDismiss={() => setHelpMenuOpen(false)} panelZIndex={1000} panelPosition="absolute">
+                  <div className="help-dropdown">
                   {onShowHelp && (
                     <button
                       className="help-dropdown-item"
@@ -309,7 +291,8 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
                   >
                     Dashboard Help
                   </button>
-                </div>
+                  </div>
+                </DismissiblePanel>
               )}
             </div>
           </div>

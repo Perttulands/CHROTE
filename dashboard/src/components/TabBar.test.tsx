@@ -109,4 +109,20 @@ describe('TabBar Services navigation', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('button', { name: /Rename tab label/i })).not.toBeInTheDocument()
   })
+
+  it('keeps help and terminal tab menus mutually exclusive', () => {
+    mockMatchMedia(false)
+    const { container } = render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '?' }))
+    expect(screen.getByRole('button', { name: 'Dashboard Help' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '⋯ Tab' }))
+    expect(screen.queryByRole('button', { name: 'Dashboard Help' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Rename tab label/i })).toBeInTheDocument()
+    expect(container.querySelectorAll('.floating-panel-dismiss-layer')).toHaveLength(1)
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('button', { name: /Rename tab label/i })).not.toBeInTheDocument()
+  })
 })

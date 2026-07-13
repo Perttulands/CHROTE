@@ -18,6 +18,7 @@ import { formatDate, formatSize } from './utils'
 import { useViewportMenuPosition } from '../../hooks/useViewportMenuPosition'
 import { copyTextToClipboard } from '../../utils/clipboard'
 import FileTree from '../FileTree'
+import DismissiblePanel from '../DismissiblePanel'
 import FileViewer, {
   MAX_TEXT_PREVIEW_BYTES,
   getFileBadge,
@@ -322,47 +323,6 @@ function FilesView({ navigateRequest = null, onSendPath, sendTargetLabel = null 
     }
   }, [editingPath])
 
-  useEffect(() => {
-    if (!contextMenu) return
-
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Element
-      if (!target.closest('.fb-context-menu')) {
-        setContextMenu(null)
-      }
-    }
-    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape') setContextMenu(null)
-    }
-
-    document.addEventListener('mousedown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [contextMenu])
-
-  useEffect(() => {
-    if (!tabContextMenu) return
-
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Element
-      if (!target.closest('.fb-tab-context-menu')) {
-        setTabContextMenu(null)
-      }
-    }
-    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape') setTabContextMenu(null)
-    }
-
-    document.addEventListener('mousedown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [tabContextMenu])
 
   const updateOpenFile = useCallback((path: string, patch: Partial<OpenFile>) => {
     setOpenFiles(prev => prev.map(file => (file.path === path ? { ...file, ...patch } : file)))
@@ -1404,22 +1364,25 @@ function FilesView({ navigateRequest = null, onSendPath, sendTargetLabel = null 
       </div>
 
       {tabContextMenu && openFiles.length > 1 && (
-        <div
-          ref={tabContextMenuPosition.ref}
-          className="fb-context-menu fb-tab-context-menu"
-          style={tabContextMenuPosition.style}
-        >
-          <button className="fb-context-item" type="button" onClick={() => closeOtherOpenFiles(tabContextMenu.path)}>Close Others</button>
-          <button className="fb-context-item" type="button" onClick={closeAllOpenFiles}>Close All</button>
-        </div>
+        <DismissiblePanel onDismiss={() => setTabContextMenu(null)} panelZIndex={2200} panelPosition="fixed">
+          <div
+            ref={tabContextMenuPosition.ref}
+            className="fb-context-menu fb-tab-context-menu"
+            style={tabContextMenuPosition.style}
+          >
+            <button className="fb-context-item" type="button" onClick={() => closeOtherOpenFiles(tabContextMenu.path)}>Close Others</button>
+            <button className="fb-context-item" type="button" onClick={closeAllOpenFiles}>Close All</button>
+          </div>
+        </DismissiblePanel>
       )}
 
       {contextMenu && (
-        <div
-          ref={contextMenuPosition.ref}
-          className="fb-context-menu"
-          style={contextMenuPosition.style}
-        >
+        <DismissiblePanel onDismiss={() => setContextMenu(null)} panelZIndex={2200} panelPosition="fixed">
+          <div
+            ref={contextMenuPosition.ref}
+            className="fb-context-menu"
+            style={contextMenuPosition.style}
+          >
           {contextMenu.item?.isDir && (
             <button className="fb-context-item" type="button" onClick={() => navigateTo(contextMenu.item!.path)}>Open Folder</button>
           )}
@@ -1468,7 +1431,8 @@ function FilesView({ navigateRequest = null, onSendPath, sendTargetLabel = null 
               <button className="fb-context-item fb-context-danger" type="button" onClick={() => requestDelete(contextTargets)}>Delete</button>
             </>
           )}
-        </div>
+          </div>
+        </DismissiblePanel>
       )}
 
       {deleteTargets && (

@@ -4,6 +4,7 @@ import type { TmuxSession, WorkspaceId } from '../types'
 import { useSession } from '../context/SessionContext'
 import { TERMINAL_LABELS, TERMINAL_WORKSPACE_IDS, WINDOW_COLORS, getSessionKey, getTerminalUserColor, getTerminalUserInitial } from '../types'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
+import DismissiblePanel from './DismissiblePanel'
 
 interface SessionItemProps {
   session: TmuxSession
@@ -213,21 +214,6 @@ function SessionItem({ session }: SessionItemProps) {
     }
   }, [isRenaming])
 
-  // Close context menu on click outside
-  useEffect(() => {
-    if (!contextMenu.show) return
-    const handleClick = () => closeContextMenu()
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') closeContextMenu()
-    }
-    document.addEventListener('click', handleClick)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('click', handleClick)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [contextMenu.show, closeContextMenu])
-
   // Rename mode
   if (isRenaming) {
     return (
@@ -306,9 +292,10 @@ function SessionItem({ session }: SessionItemProps) {
       </div>
 
       {contextMenu.show && (
-        <div
-          ref={contextMenuPosition.ref}
-          className="session-context-menu"
+        <DismissiblePanel onDismiss={closeContextMenu} panelPosition="fixed">
+          <div
+            ref={contextMenuPosition.ref}
+            className="session-context-menu"
           style={contextMenuPosition.style}
           onClick={e => e.stopPropagation()}
         >
@@ -390,7 +377,8 @@ function SessionItem({ session }: SessionItemProps) {
               Kill Session
             </button>
           )}
-        </div>
+          </div>
+        </DismissiblePanel>
       )}
     </>
   )

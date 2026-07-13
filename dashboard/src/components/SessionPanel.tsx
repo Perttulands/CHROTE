@@ -7,6 +7,7 @@ import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import SessionGroup from './SessionGroup'
 import DockPanelToggle from './DockPanelToggle'
+import DismissiblePanel from './DismissiblePanel'
 
 type SessionPanelProps = {
   onOpenSessionBankSettings?: () => void
@@ -81,39 +82,10 @@ function SessionPanel({
     autoCollapsedForMobile.current = true
     if (!isCollapsed) handleToggle()
   }, [handleToggle, isCollapsed, isMobile])
-
-  useEffect(() => {
-    if (!newSessionMenu.show) return
-    const close = (event: MouseEvent) => {
-      if (newSessionMenuPosition.ref.current?.contains(event.target as Node)) return
-      setNewSessionMenu({ show: false, x: 0, y: 0 })
-    }
-    document.addEventListener('mousedown', close)
-    return () => document.removeEventListener('mousedown', close)
-  }, [newSessionMenu.show])
-
-  useEffect(() => {
-    if (!namedSessionPopup.show) return
-    const close = (event: MouseEvent) => {
-      if (namedSessionPopupPosition.ref.current?.contains(event.target as Node)) return
-      setNamedSessionPopup({ show: false, x: 0, y: 0 })
-    }
-    document.addEventListener('mousedown', close)
-    return () => document.removeEventListener('mousedown', close)
-  }, [namedSessionPopup.show])
-
-  useEffect(() => {
-    if (!newSessionMenu.show && !namedSessionPopup.show) return
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      setNewSessionMenu({ show: false, x: 0, y: 0 })
-      setNamedSessionPopup({ show: false, x: 0, y: 0 })
-    }
-    document.addEventListener('keydown', closeOnEscape)
-    return () => document.removeEventListener('keydown', closeOnEscape)
-  }, [namedSessionPopup.show, newSessionMenu.show])
+  const closeNewSessionMenu = () => setNewSessionMenu({ show: false, x: 0, y: 0 })
 
   const createSessionForUser = async (unixUser?: string, explicitName?: string) => {
+    closeNewSessionMenu()
     setCreating(true)
     try {
       const created = await createSessionAction({
@@ -127,7 +99,7 @@ function SessionPanel({
       }
     } finally {
       setCreating(false)
-      setNewSessionMenu({ show: false, x: 0, y: 0 })
+      closeNewSessionMenu()
     }
   }
 
@@ -139,7 +111,7 @@ function SessionPanel({
     const unixUser = getDefaultLaunchUser(activeWorkspaceId, terminalUsers)
     setNamedSessionUser(unixUser)
     setNamedSessionPopup({ show: true, x: newSessionMenu.x, y: newSessionMenu.y })
-    setNewSessionMenu({ show: false, x: 0, y: 0 })
+    closeNewSessionMenu()
   }
 
   const submitNamedSession = async () => {
@@ -190,6 +162,7 @@ function SessionPanel({
               title="Session creation options"
               onClick={(event) => {
                 const rect = event.currentTarget.getBoundingClientRect()
+                setNamedSessionPopup({ show: false, x: 0, y: 0 })
                 setNewSessionMenu({ show: true, x: rect.left, y: rect.bottom + 4 })
               }}
             >
@@ -203,71 +176,75 @@ function SessionPanel({
       </div>
 
       {newSessionMenu.show && (
-        <div
-          ref={newSessionMenuPosition.ref}
-          className="session-context-menu"
-          style={newSessionMenuPosition.style}
-        >
-          {terminalUsers.map(user => (
-            <button
-              key={user}
-              className="session-context-item"
-              onClick={() => createSessionForUser(user)}
-              disabled={creating}
-            >
-              <span className="session-context-icon">{getTerminalUserInitial(user)}</span>
-              New as {getTerminalUserInitial(user)} {user}
+        <DismissiblePanel onDismiss={closeNewSessionMenu} panelPosition="fixed">
+          <div
+            ref={newSessionMenuPosition.ref}
+            className="session-context-menu"
+            style={newSessionMenuPosition.style}
+          >
+            {terminalUsers.map(user => (
+              <button
+                key={user}
+                className="session-context-item"
+                onClick={() => createSessionForUser(user)}
+                disabled={creating}
+              >
+                <span className="session-context-icon">{getTerminalUserInitial(user)}</span>
+                New as {getTerminalUserInitial(user)} {user}
+              </button>
+            ))}
+            <div className="session-context-divider" />
+            <button className="session-context-item" onClick={openNamedSessionField}>
+              <span className="session-context-icon">✎</span>
+              New named session
             </button>
-          ))}
-          <div className="session-context-divider" />
-          <button className="session-context-item" onClick={openNamedSessionField}>
-            <span className="session-context-icon">✎</span>
-            New named session
-          </button>
-        </div>
+          </div>
+        </DismissiblePanel>
       )}
 
       {!isCollapsed && namedSessionPopup.show && (
-        <div
-          ref={namedSessionPopupPosition.ref}
-          role="dialog"
-          aria-label="Create named tmux session"
-          className="session-context-menu session-named-popup"
-          style={namedSessionPopupPosition.style}
-        >
-          <div className="session-named-popup-title">New named session</div>
-          <input
-            aria-label="New session name"
-            type="text"
-            className="session-search-input"
-            placeholder="Session name..."
-            value={namedSessionName}
-            onChange={(e) => setNamedSessionName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void submitNamedSession()
-              if (e.key === 'Escape') setNamedSessionPopup({ show: false, x: 0, y: 0 })
-            }}
-            autoFocus
-          />
-          {terminalUsers.length > 1 && (
-            <select
-              aria-label="New named session user"
-              className="session-user-select"
-              value={namedSessionUser || getDefaultLaunchUser(activeWorkspaceId, terminalUsers)}
-              onChange={(e) => setNamedSessionUser(e.target.value)}
-            >
-              {terminalUsers.map(user => <option key={user} value={user}>{user}</option>)}
-            </select>
-          )}
-          <div className="session-named-popup-actions">
-            <button className="session-context-item session-inline-action" onClick={submitNamedSession} disabled={!namedSessionName.trim() || creating}>
-              Create named session
-            </button>
-            <button className="session-context-item session-inline-action" onClick={() => setNamedSessionPopup({ show: false, x: 0, y: 0 })}>
-              Cancel
-            </button>
+        <DismissiblePanel onDismiss={() => setNamedSessionPopup({ show: false, x: 0, y: 0 })} panelPosition="fixed">
+          <div
+            ref={namedSessionPopupPosition.ref}
+            role="dialog"
+            aria-label="Create named tmux session"
+            className="session-context-menu session-named-popup"
+            style={namedSessionPopupPosition.style}
+          >
+            <div className="session-named-popup-title">New named session</div>
+            <input
+              aria-label="New session name"
+              type="text"
+              className="session-search-input"
+              placeholder="Session name..."
+              value={namedSessionName}
+              onChange={(e) => setNamedSessionName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void submitNamedSession()
+                if (e.key === 'Escape') setNamedSessionPopup({ show: false, x: 0, y: 0 })
+              }}
+              autoFocus
+            />
+            {terminalUsers.length > 1 && (
+              <select
+                aria-label="New named session user"
+                className="session-user-select"
+                value={namedSessionUser || getDefaultLaunchUser(activeWorkspaceId, terminalUsers)}
+                onChange={(e) => setNamedSessionUser(e.target.value)}
+              >
+                {terminalUsers.map(user => <option key={user} value={user}>{user}</option>)}
+              </select>
+            )}
+            <div className="session-named-popup-actions">
+              <button className="session-context-item session-inline-action" onClick={submitNamedSession} disabled={!namedSessionName.trim() || creating}>
+                Create named session
+              </button>
+              <button className="session-context-item session-inline-action" onClick={() => setNamedSessionPopup({ show: false, x: 0, y: 0 })}>
+                Cancel
+              </button>
+            </div>
           </div>
-        </div>
+        </DismissiblePanel>
       )}
 
       {!isCollapsed && (

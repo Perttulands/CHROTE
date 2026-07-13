@@ -308,6 +308,11 @@ test.describe('Filebrowser UI Elements', () => {
     await expect(page.locator('.fb-context-item:has-text("Download")')).toBeVisible()
     await expect(page.locator('.fb-context-item:has-text("Rename")')).toBeVisible()
     await expect(page.locator('.fb-context-item:has-text("Delete")')).toBeVisible()
+    const menuZIndex = await page.locator('.fb-context-menu').evaluate(element => Number(getComputedStyle(element).zIndex))
+    const layerZIndex = await page.locator('.floating-panel-dismiss-layer').evaluate(element => Number(getComputedStyle(element).zIndex))
+    expect(menuZIndex).toBeGreaterThan(layerZIndex)
+    await page.locator('.fb-context-item:has-text("Rename")').click()
+    await expect(page.locator('.fb-rename-input')).toBeVisible()
   })
 
   test('should close context menu on click outside', async ({ page }) => {
@@ -316,7 +321,7 @@ test.describe('Filebrowser UI Elements', () => {
     await expect(page.locator('.fb-context-menu')).toBeVisible()
 
     // Click outside
-    await page.click('.fb-list-container')
+    await page.mouse.click(1, 1)
 
     // Context menu should close
     await expect(page.locator('.fb-context-menu')).not.toBeVisible()

@@ -85,6 +85,7 @@ describe('SessionPanel new-session context menu', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Session creation options' }))
     fireEvent.click(screen.getByRole('button', { name: /New as B bob/i }))
+    expect(screen.queryByRole('button', { name: /New as B bob/i })).not.toBeInTheDocument()
 
     await waitFor(() => expect(createSession).toHaveBeenCalled())
     expect(createSession).toHaveBeenCalledWith({ workspaceId: 'terminal2', unixUser: 'bob' })
@@ -94,9 +95,14 @@ describe('SessionPanel new-session context menu', () => {
     const { container } = render(<SessionPanel activeWorkspaceId="terminal3" />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Session creation options' }))
+    expect(document.querySelectorAll('.floating-panel-dismiss-layer')).toHaveLength(1)
     fireEvent.click(screen.getByRole('button', { name: /New named session/i }))
     const popup = screen.getByRole('dialog', { name: /Create named tmux session/i })
     expect(popup).toHaveClass('session-named-popup')
+    const layers = document.querySelectorAll('.floating-panel-dismiss-layer')
+    expect(layers).toHaveLength(1)
+    expect(container.querySelectorAll('.session-context-menu')).toHaveLength(1)
+    expect(Number(popup.style.zIndex)).toBeGreaterThan(Number((layers[0] as HTMLElement).style.zIndex))
     expect(container.querySelector('.session-panel-content .session-named-create')).not.toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('New session name'), { target: { value: 'research-agent' } })
     fireEvent.click(screen.getByRole('button', { name: 'Create named session' }))

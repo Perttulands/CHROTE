@@ -11,6 +11,7 @@ import KanbanView from './KanbanView'
 import TriageView from './TriageView'
 import InsightsView from './InsightsView'
 import IssueDetailModal from './IssueDetailModal'
+import DismissiblePanel from '../DismissiblePanel'
 
 const SUB_TABS: { id: BeadsSubTab; label: string }[] = [
   { id: 'kanban', label: 'Kanban' },
@@ -94,22 +95,6 @@ export default function BeadsView({ onOpenProjectInFiles }: BeadsViewProps = {})
 
   const isLoading = issuesLoading || triageLoading || insightsLoading
 
-  useEffect(() => {
-    if (!contextMenu) return
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Element
-      if (!target.closest('.beads-context-menu')) setContextMenu(null)
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setContextMenu(null)
-    }
-    document.addEventListener('mousedown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [contextMenu])
 
   useEffect(() => {
     if (projectsLoading) return
@@ -218,7 +203,8 @@ export default function BeadsView({ onOpenProjectInFiles }: BeadsViewProps = {})
       )}
 
       {contextMenu && (
-        <div className="beads-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
+        <DismissiblePanel onDismiss={() => setContextMenu(null)} panelPosition="fixed">
+          <div className="beads-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
           {contextMenu.type === 'issue' ? (
             <>
               {enableDetailModal && (
@@ -243,7 +229,8 @@ export default function BeadsView({ onOpenProjectInFiles }: BeadsViewProps = {})
               <button className="beads-context-item" type="button" onClick={handleRefresh}>Refresh</button>
             </>
           )}
-        </div>
+          </div>
+        </DismissiblePanel>
       )}
     </div>
   )
