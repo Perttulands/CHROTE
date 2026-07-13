@@ -51,8 +51,9 @@ function SessionItem({ session }: SessionItemProps) {
     ? { opacity: 0, transition: 'none' }
     : undefined
 
-  // Implement Long Press detection
-  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Implement long-press detection and arbitrate it against dnd-kit's pointer sensor.
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingTouchPointer = useRef<{ pointerId: number; ownerDocument: Document } | null>(null)
 
   const clearLongPressTimer = useCallback(() => {
     if (longPressTimer.current !== null) {
@@ -61,20 +62,58 @@ function SessionItem({ session }: SessionItemProps) {
     }
   }, [])
 
+  const cancelPendingTouchDrag = useCallback(() => {
+    const pending = pendingTouchPointer.current
+    if (!pending) return
+    pendingTouchPointer.current = null
+    const EventConstructor = pending.ownerDocument.defaultView?.Event ?? Event
+    const cancelEvent = new EventConstructor('pointercancel', { bubbles: true, cancelable: true })
+    Object.defineProperties(cancelEvent, {
+      pointerId: { value: pending.pointerId },
+      pointerType: { value: 'touch' },
+      isPrimary: { value: true },
+    })
+    pending.ownerDocument.dispatchEvent(cancelEvent)
+  }, [])
+
+  const handlePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'touch') {
+      pendingTouchPointer.current = {
+        pointerId: event.pointerId,
+        ownerDocument: event.currentTarget.ownerDocument,
+      }
+    } else {
+      pendingTouchPointer.current = null
+    }
+    listeners?.onPointerDown?.(event)
+  }, [listeners])
+
+  const clearPendingTouchGesture = useCallback(() => {
+    clearLongPressTimer()
+    pendingTouchPointer.current = null
+  }, [clearLongPressTimer])
+
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     clearLongPressTimer()
-    if ((e.target as Element).closest('.session-drag-handle')) return
     const touch = e.touches[0]
     if (!touch) return
     const { clientX, clientY } = touch
     longPressTimer.current = setTimeout(() => {
       longPressTimer.current = null
-      setContextMenu({ show: true, x: clientX, y: clientY });
-      setShowAssignSubmenu(false);
-    }, 500); // 500ms long press threshold
-  }, [clearLongPressTimer]);
+      cancelPendingTouchDrag()
+      setContextMenu({ show: true, x: clientX, y: clientY })
+      setShowAssignSubmenu(false)
+    }, 500)
+  }, [cancelPendingTouchDrag, clearLongPressTimer])
 
-  useEffect(() => clearLongPressTimer, [clearLongPressTimer])
+  useEffect(() => {
+    if (isDragging) clearPendingTouchGesture()
+  }, [clearPendingTouchGesture, isDragging])
+
+  useEffect(() => () => {
+    clearLongPressTimer()
+    pendingTouchPointer.current = null
+  }, [clearLongPressTimer])
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -214,26 +253,18 @@ function SessionItem({ session }: SessionItemProps) {
         ref={setNodeRef}
         className={`session-item ${isAssigned ? 'assigned' : ''} ${isDragging ? 'dragging' : ''}`}
         style={style}
+        title={dragLabel}
+        {...listeners}
+        onPointerDown={handlePointerDown}
+        onPointerUp={clearPendingTouchGesture}
+        onPointerCancel={clearPendingTouchGesture}
         onClick={handleClick}
         onContextMenu={handleContextMenu}
         onTouchStart={handleTouchStart}
-        onTouchEnd={clearLongPressTimer}
+        onTouchEnd={clearPendingTouchGesture}
         onTouchMove={clearLongPressTimer}
-        onTouchCancel={clearLongPressTimer}
+        onTouchCancel={clearPendingTouchGesture}
       >
-        <span
-          className="session-drag-handle"
-          aria-hidden="true"
-          title={dragLabel}
-          style={{ touchAction: 'none' }}
-          {...listeners}
-          onClick={(event) => {
-            event.preventDefault()
-            event.stopPropagation()
-          }}
-        >
-          ⠿
-        </span>
         {session.unixUser && (
           <span
             className="unix-user-badge"
@@ -262,6 +293,7 @@ function SessionItem({ session }: SessionItemProps) {
           type="button"
           className="session-item-menu-btn"
           aria-label={`Session actions for ${session.name}`}
+          onPointerDown={event => event.stopPropagation()}
           onClick={(event) => {
             event.preventDefault()
             event.stopPropagation()

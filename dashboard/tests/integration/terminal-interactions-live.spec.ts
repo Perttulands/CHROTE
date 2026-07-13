@@ -28,13 +28,13 @@ test.describe('live terminal interactions', () => {
 
     const firstWindow = page.locator('.terminal-window:visible').first()
     await expect(sessionRow.getByRole('button', { name: `Session actions for ${sessionName}` })).toBeVisible()
-    const gripBox = await sessionRow.locator('.session-drag-handle').boundingBox()
+    const rowBox = await sessionRow.boundingBox()
     const windowBox = await firstWindow.boundingBox()
-    expect(gripBox).toBeTruthy()
+    expect(rowBox).toBeTruthy()
     expect(windowBox).toBeTruthy()
-    await page.mouse.move(gripBox!.x + gripBox!.width / 2, gripBox!.y + gripBox!.height / 2)
+    await page.mouse.move(rowBox!.x + rowBox!.width / 2, rowBox!.y + rowBox!.height / 2)
     await page.mouse.down()
-    await page.mouse.move(gripBox!.x + gripBox!.width / 2 + 12, gripBox!.y + gripBox!.height / 2 + 12, { steps: 4 })
+    await page.mouse.move(rowBox!.x + rowBox!.width / 2 + 12, rowBox!.y + rowBox!.height / 2 + 12, { steps: 4 })
     await page.mouse.move(windowBox!.x + windowBox!.width / 2, windowBox!.y + windowBox!.height / 2, { steps: 10 })
     await page.mouse.up()
 

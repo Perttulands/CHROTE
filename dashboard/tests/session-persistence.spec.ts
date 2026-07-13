@@ -4,7 +4,7 @@ import { mockApiRoutes } from './mock-api'
 
 // Copied from dashboard.spec.ts
 async function dragAndDrop(page: Page, sourceSelector: string, targetSelector: string) {
-  const source = page.locator(sourceSelector).first().locator('.session-drag-handle')
+  const source = page.locator(sourceSelector).first()
   const target = page.locator(targetSelector).first()
 
   const sourceBox = await source.boundingBox()
@@ -21,13 +21,11 @@ async function dragAndDrop(page: Page, sourceSelector: string, targetSelector: s
 
   await page.mouse.move(startX, startY)
   await page.mouse.down()
-  await page.mouse.move(startX + 10, startY + 10, { steps: 5 })
-  await page.mouse.move(endX, endY, { steps: 10 })
-  // drag settle — no event to wait for
-  await page.waitForTimeout(100)
+  await page.mouse.move(startX + 12, startY + 12, { steps: 4 })
+  await page.mouse.move(endX, endY, { steps: 8 })
+  await expect(page.locator('.dashboard')).toHaveClass(/is-dragging/)
   await page.mouse.up()
-  // drag settle — no event to wait for
-  await page.waitForTimeout(100)
+  await expect(page.locator('.dashboard')).not.toHaveClass(/is-dragging/)
 }
 
 test.describe('Session Persistence', () => {
@@ -40,7 +38,7 @@ test.describe('Session Persistence', () => {
     // 2. Drag a session to the first window
     // We target "hq-deacon" from the session panel
     const sessionSource = '.session-item:has-text("hq-deacon")'
-    const windowTarget = '.terminal-window'
+    const windowTarget = '.terminal-window:visible .terminal-window-body'
 
     // Wait for the session item to be available
     await page.waitForSelector(sessionSource)

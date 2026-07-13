@@ -182,7 +182,7 @@ describe('App drag lifecycle', () => {
     const overlays = container.querySelectorAll('.dragging-overlay')
     expect(overlays).toHaveLength(1)
     expect(overlays[0]).toHaveClass('session-tag')
-    expect(overlays[0].querySelector('.drag-overlay-grip')).toHaveTextContent('⠿')
+    expect(overlays[0].querySelector('.drag-overlay-grip')).toBeNull()
     expect(overlays[0].querySelector('.session-user-badge')).toHaveTextContent('A')
     expect(overlays[0].querySelector('.session-user-badge')).toHaveAttribute('title', 'Unix user: alice')
   })

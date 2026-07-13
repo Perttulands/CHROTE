@@ -191,7 +191,7 @@ describe('TerminalWindow launch user', () => {
     expect(container.querySelector('.session-context-menu')).toBeNull()
   })
 
-  it('uses a pointer-only non-interactive tag grip and leaves the dragged tag as a stationary invisible placeholder', () => {
+  it('uses the whole mounted session tag as the drag surface and keeps a stationary invisible placeholder', () => {
     draggableState.transform = { x: 32, y: 18 }
     draggableState.isDragging = true
 
@@ -203,23 +203,17 @@ describe('TerminalWindow launch user', () => {
     )
 
     const tag = container.querySelector('.session-tag') as HTMLElement
-    const handle = container.querySelector('.session-tag-drag-handle') as HTMLElement
-    expect(handle.tagName).toBe('SPAN')
-    expect(handle).toHaveAttribute('aria-hidden', 'true')
-    expect(handle).toHaveAttribute('title', 'Drag forge-existing (Unix user tavern)')
-    expect(handle).not.toHaveAttribute('role')
-    expect(handle).not.toHaveAttribute('tabindex')
-    expect(handle).not.toHaveAttribute('aria-roledescription')
-    expect(handle).not.toHaveAttribute('aria-describedby')
+    expect(tag).toHaveAttribute('title', 'Drag forge-existing (Unix user tavern)')
+    expect(container.querySelector('.session-tag-drag-handle')).toBeNull()
     expect(tag.style.transform).toBe('')
     expect(tag.style.transition).toBe('none')
     expect(tag.style.opacity).toBe('0')
 
-    fireEvent.pointerDown(handle, { pointerType: 'touch' })
+    fireEvent.pointerDown(screen.getByText('forge-existing'), { pointerType: 'touch' })
     expect(draggableState.listeners.onPointerDown).toHaveBeenCalled()
   })
 
-  it('keeps tag grip clicks inert while ordinary tag clicks still activate the session', () => {
+  it('keeps the nested remove control out of drag activation while ordinary tag clicks still activate', () => {
     const { container } = render(
       <TerminalWindow
         workspaceId="terminal3"
@@ -227,9 +221,10 @@ describe('TerminalWindow launch user', () => {
       />
     )
 
-    const handle = container.querySelector('.session-tag-drag-handle') as HTMLElement
-    fireEvent.click(handle)
-    expect(setActiveSession).not.toHaveBeenCalled()
+    const remove = screen.getByRole('button', { name: '×' })
+    fireEvent.pointerDown(remove, { pointerType: 'mouse' })
+    expect(draggableState.listeners.onPointerDown).not.toHaveBeenCalled()
+    expect(container.querySelector('.session-tag-drag-handle')).toBeNull()
 
     fireEvent.click(screen.getByText('forge-existing'))
     expect(setActiveSession).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'forge-existing')

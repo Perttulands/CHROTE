@@ -4,7 +4,7 @@ import { mockApiRoutes } from './mock-api'
 // Helper function to perform drag-and-drop with dnd-kit
 // dnd-kit requires a minimum drag distance to activate
 async function dragAndDrop(page: Page, sourceSelector: string, targetSelector: string) {
-  const source = page.locator(sourceSelector).first().locator('.session-drag-handle')
+  const source = page.locator(sourceSelector).first()
   const target = page.locator(targetSelector).first()
 
   const sourceBox = await source.boundingBox()
@@ -75,12 +75,36 @@ test.describe('Arena Dashboard', () => {
       await expect(page.locator('.window-location-chip')).toHaveCount(0)
     })
 
-    test('should collapse sidebar when toggle clicked', async ({ page }) => {
-      const panel = page.locator('.session-panel')
-      await expect(panel).not.toHaveClass(/collapsed/)
+    test('renders Sessions and Files as matching slim rails with direct Refit access', async ({ page }) => {
+      const sessions = page.locator('.session-panel')
+      const files = page.locator('.terminal-files-panel')
+      await expect(sessions).not.toHaveClass(/collapsed/)
+      await expect(files).toHaveClass(/collapsed/)
 
       await page.getByRole('button', { name: 'Collapse Sessions panel' }).click()
-      await expect(panel).toHaveClass(/collapsed/)
+      await expect(sessions).toHaveClass(/collapsed/)
+      await expect(sessions).toHaveCSS('width', '24px')
+      await expect(files).toHaveCSS('width', '24px')
+
+      const layoutFontSize = await page.locator('.terminal-area:visible .layout-label').first().evaluate(element => getComputedStyle(element).fontSize)
+      for (const label of ['Sessions', 'Files']) {
+        const toggle = page.getByRole('button', { name: `Expand ${label} panel` })
+        await expect(toggle).toBeVisible()
+        await expect(toggle).toHaveCSS('font-size', layoutFontSize)
+        await expect(toggle).toContainText('>>')
+        const labelBox = await toggle.locator('.dock-toggle-label').boundingBox()
+        const chevronBox = await toggle.locator('.dock-toggle-chevron').boundingBox()
+        expect(labelBox).toBeTruthy()
+        expect(chevronBox).toBeTruthy()
+        expect(Math.abs((labelBox!.x + labelBox!.width / 2) - (chevronBox!.x + chevronBox!.width / 2))).toBeLessThan(2)
+      }
+
+      const sessionTransition = await sessions.evaluate(element => getComputedStyle(element).transitionProperty)
+      const filesTransition = await files.evaluate(element => getComputedStyle(element).transitionProperty)
+      expect(sessionTransition).toBe(filesTransition)
+      expect(sessionTransition).toContain('width')
+      expect(sessionTransition).toContain('flex-basis')
+      await expect(page.getByRole('button', { name: 'Refit terminal layout' })).toBeVisible()
     })
 
     test('keeps Sessions and Files rails independent and opens one non-modal file Peek', async ({ page }) => {
@@ -148,7 +172,8 @@ test.describe('Arena Dashboard', () => {
   test.describe('Terminal Area', () => {
     test('should render layout controls', async ({ page }) => {
       await expect(page.locator('.terminal-area-controls:visible')).toBeVisible()
-      await expect(page.locator('.layout-btn:visible')).toHaveCount(5)
+      await expect(page.locator('.layout-btn:visible')).toHaveCount(6)
+      await expect(page.getByRole('button', { name: 'Refit terminal layout' })).toBeVisible()
       await expect(page.getByRole('button', { name: 'Terminal recovery actions' })).toBeVisible()
     })
 

@@ -106,21 +106,10 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
       ref={setNodeRef}
       className={`session-tag ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''}`}
       style={style}
+      title={dragLabel}
+      {...listeners}
       onClick={handleClick}
     >
-      <span
-        className="session-tag-drag-handle"
-        aria-hidden="true"
-        title={dragLabel}
-        style={{ touchAction: 'none' }}
-        {...listeners}
-        onClick={(event) => {
-          event.preventDefault()
-          event.stopPropagation()
-        }}
-      >
-        ⠿
-      </span>
       {resolvedUser && (
         <span
           className="session-user-badge"
@@ -131,7 +120,13 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
         </span>
       )}
       <span className="tag-name">{displayName}</span>
-      <button className="tag-remove" onClick={(e) => { e.stopPropagation(); onRemove(); }}>×</button>
+      <button
+        className="tag-remove"
+        onPointerDown={event => event.stopPropagation()}
+        onClick={(event) => { event.stopPropagation(); onRemove() }}
+      >
+        ×
+      </button>
     </div>
   )
 }

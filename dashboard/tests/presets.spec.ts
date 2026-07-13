@@ -15,7 +15,7 @@ async function savePreset(page: Page, name: string) {
 
 // Helper: drag a session into a window (simplified — uses mouse events for dnd-kit)
 async function dragAndDrop(page: Page, sourceSelector: string, targetSelector: string) {
-  const source = page.locator(sourceSelector).first().locator('.session-drag-handle')
+  const source = page.locator(sourceSelector).first()
   const target = page.locator(targetSelector).first()
 
   const sourceBox = await source.boundingBox()

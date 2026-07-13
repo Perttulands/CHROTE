@@ -61,6 +61,23 @@ describe('FileViewer', () => {
     expect(onViewStateChange).toHaveBeenLastCalledWith(expect.objectContaining({ markdownSplitPercent: 55 }))
   })
 
+  it('renders editable Markdown source as an unwrapped full-viewport source surface', () => {
+    render(
+      <FileViewer
+        item={markdownFile}
+        content={'# Heading\n' + 'long source line '.repeat(80)}
+        editable
+        viewState={{ ...DEFAULT_FILE_VIEW_STATE, markdownMode: 'source' }}
+        onContentChange={vi.fn()}
+        onViewStateChange={vi.fn()}
+      />,
+    )
+
+    const source = screen.getByRole('textbox', { name: 'Markdown source for README.md' })
+    expect(source).toHaveAttribute('wrap', 'off')
+    expect(source.closest('.fb-markdown-editor')).toHaveClass('mode-source')
+  })
+
   it('restores content scroll and reports changes without reloading the file', async () => {
     const onViewStateChange = vi.fn()
     const { rerender } = render(

@@ -309,6 +309,9 @@ case "$*" in
   capture-pane*)
     printf 'line one\nline two\n'
     ;;
+  *new-session*)
+    printf '$42\n'
+    ;;
   *)
     printf ''
     ;;

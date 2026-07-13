@@ -6,6 +6,7 @@ import type { WorkspaceId } from '../types'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import SessionGroup from './SessionGroup'
+import DockPanelToggle from './DockPanelToggle'
 
 type SessionPanelProps = {
   onOpenSessionBankSettings?: () => void
@@ -170,17 +171,9 @@ function SessionPanel({
   const panelStyle = isCollapsed ? undefined : ({ '--session-panel-width': `${width}px` } as CSSProperties)
 
   return (
-    <div className={`session-panel ${isCollapsed ? 'collapsed' : ''}`} style={panelStyle}>
-      <div className="session-panel-header">
-        <button
-          className="toggle-btn dock-toggle-btn"
-          onClick={handleToggle}
-          title={isCollapsed ? 'Expand' : 'Collapse'}
-          aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} Sessions panel`}
-        >
-          <span>Sessions</span>
-          <span aria-hidden="true">{isCollapsed ? '»' : '«'}</span>
-        </button>
+    <div className={`session-panel dock-panel ${isCollapsed ? 'collapsed' : ''}`} style={panelStyle}>
+      <div className="session-panel-header dock-panel-header">
+        <DockPanelToggle label="Sessions" collapsed={isCollapsed} onToggle={handleToggle} />
         {!isCollapsed && (
           <>
             <button

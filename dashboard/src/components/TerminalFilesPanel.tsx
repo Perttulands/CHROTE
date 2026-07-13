@@ -5,6 +5,7 @@ import { getSessionKey, getSessionNameFromKey, type WorkspaceId } from '../types
 import { copyTextToClipboard } from '../utils/clipboard'
 import FileTree from './FileTree'
 import FileViewer, { normalizeFilePath } from './FileViewer'
+import DockPanelToggle from './DockPanelToggle'
 import type { FileItem } from './FilesView/types'
 import {
   DEFAULT_FILE_VIEW_STATE,
@@ -328,20 +329,12 @@ function TerminalFilesPanel({
 
   return (
     <aside
-      className={`terminal-files-panel ${collapsed ? 'collapsed' : ''}`}
+      className={`terminal-files-panel dock-panel ${collapsed ? 'collapsed' : ''}`}
       style={panelStyle}
       data-workspace-files={workspaceId}
     >
-      <header className="terminal-files-header">
-        <button
-          className="dock-toggle-btn"
-          type="button"
-          aria-label={`${collapsed ? 'Expand' : 'Collapse'} Files panel`}
-          onClick={onToggle}
-        >
-          <span>Files</span>
-          <span aria-hidden="true">{collapsed ? '»' : '«'}</span>
-        </button>
+      <header className="terminal-files-header dock-panel-header">
+        <DockPanelToggle label="Files" collapsed={collapsed} onToggle={onToggle} />
         {!collapsed && (
           <>
             {sessionCwd && <button type="button" className="terminal-files-cwd" onClick={() => navigateTo(sessionCwd)}>CWD</button>}

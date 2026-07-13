@@ -151,6 +151,12 @@
   border-bottom: 0;
 }
 
+.shared-file-tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
 .fb-section-title {
   padding: 4px 6px 8px;
   font-size: 11px;
@@ -828,6 +834,25 @@
   font-size: 13px;
   line-height: 1.5;
   tab-size: 2;
+  box-sizing: border-box;
+  overflow: auto;
+}
+
+.fb-file-viewer .fb-markdown-editor.mode-source {
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.fb-file-viewer .mode-source .fb-markdown-source {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  white-space: pre;
+  overflow: auto;
 }
 
 .fb-markdown-preview {

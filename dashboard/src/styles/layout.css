@@ -127,17 +127,6 @@
   cursor: grabbing;
 }
 
-.drag-overlay-grip {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  color: var(--accent);
-  line-height: 1;
-}
-
 .terminal-drop-overlay {
   position: absolute;
   inset: 0;

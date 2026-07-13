@@ -81,7 +81,7 @@ async function mockApiRoutesWithMutations(page: Page) {
 
 // Helper: drag-and-drop for assigning sessions to windows (same as dashboard.spec.ts)
 async function dragAndDrop(page: Page, sourceSelector: string, targetSelector: string) {
-  const source = page.locator(sourceSelector).first().locator('.session-drag-handle')
+  const source = page.locator(sourceSelector).first()
   const target = page.locator(targetSelector).first()
   const sourceBox = await source.boundingBox()
   const targetBox = await target.boundingBox()

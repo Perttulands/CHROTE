@@ -20,7 +20,12 @@ const mockSubdirectoryResponse = {
   ],
 }
 
-async function mockFilebrowserApi(page: Page, options?: { failConnection?: boolean; delay?: number }) {
+async function mockFilebrowserApi(page: Page, options?: {
+  failConnection?: boolean
+  delay?: number
+  rawBody?: string
+  rootItems?: typeof mockDirectoryResponse.items
+}) {
   // Mock the tmux sessions API (required for dashboard to load)
   await page.route('**/api/tmux/sessions', async route => {
     await route.fulfill({
@@ -42,7 +47,7 @@ async function mockFilebrowserApi(page: Page, options?: { failConnection?: boole
     await route.fulfill({
       status: 200,
       contentType: 'text/plain',
-      body: 'mock file content',
+      body: options?.rawBody ?? 'mock file content',
     })
   })
 
@@ -68,7 +73,10 @@ async function mockFilebrowserApi(page: Page, options?: { failConnection?: boole
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify(mockDirectoryResponse),
+        body: JSON.stringify({
+          ...mockDirectoryResponse,
+          items: options?.rootItems ?? mockDirectoryResponse.items,
+        }),
       })
       return
     }
@@ -406,6 +414,61 @@ test.describe('Filebrowser Workbench', () => {
     }).toPass({ timeout: 3000 })
     expect(uploadRequests[0].url).toContain('/resources/code/upload.txt')
     expect(uploadRequests[0].body.toString()).toBe('uploaded content')
+  })
+})
+
+test.describe('Filebrowser layout regressions', () => {
+  test('Markdown Source fills the artifact viewport instead of collapsing to textarea rows', async ({ page }) => {
+    await page.setViewportSize({ width: 1200, height: 760 })
+    await mockFilebrowserApi(page, {
+      rootItems: [{ name: 'README.md', size: 4096, modified: '2026-07-13T00:00:00Z', isDir: false, type: 'text/markdown' }],
+      rawBody: Array.from({ length: 160 }, (_, index) => `line ${index} ${'source '.repeat(24)}`).join('\n'),
+    })
+    await page.goto('/')
+    await page.waitForSelector('.dashboard')
+    await page.click('.tab:has-text("Files")')
+    await page.click('.fb-row:has-text("README.md")')
+    await page.getByRole('button', { name: 'Show Markdown source' }).click()
+
+    const source = page.getByRole('textbox', { name: 'Markdown source for README.md' })
+    const viewport = page.getByTestId('file-viewer-scroll')
+    await expect(source).toHaveAttribute('wrap', 'off')
+    const sourceBox = await source.boundingBox()
+    const viewportBox = await viewport.boundingBox()
+    expect(sourceBox).toBeTruthy()
+    expect(viewportBox).toBeTruthy()
+    expect(sourceBox!.width).toBeGreaterThanOrEqual(viewportBox!.width - 2)
+    expect(sourceBox!.height).toBeGreaterThanOrEqual(viewportBox!.height - 2)
+  })
+
+  test('Explorer owns a bounded wheel-scroll viewport for long file trees', async ({ page }) => {
+    await page.setViewportSize({ width: 1100, height: 620 })
+    await mockFilebrowserApi(page, {
+      rootItems: Array.from({ length: 80 }, (_, index) => ({
+        name: `artifact-${String(index).padStart(2, '0')}.txt`,
+        size: 128,
+        modified: '2026-07-13T00:00:00Z',
+        isDir: false,
+        type: 'text/plain',
+      })),
+    })
+    await page.goto('/')
+    await page.waitForSelector('.dashboard')
+    await page.click('.tab:has-text("Files")')
+
+    const tree = page.getByRole('tree', { name: 'File tree' })
+    await expect(tree.getByRole('treeitem')).toHaveCount(80)
+    const geometry = await tree.evaluate(element => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+      overflowY: getComputedStyle(element).overflowY,
+    }))
+    expect(geometry.scrollHeight).toBeGreaterThan(geometry.clientHeight)
+    expect(geometry.overflowY).toMatch(/auto|scroll/)
+
+    await tree.hover()
+    await page.mouse.wheel(0, 700)
+    await expect.poll(() => tree.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
   })
 })
 
