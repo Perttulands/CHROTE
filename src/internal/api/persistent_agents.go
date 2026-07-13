@@ -1141,16 +1141,18 @@ func (h *TmuxHandler) revivePersistentAgent(ctx context.Context, entry Persisten
 	if !ok {
 		return fmt.Errorf("unsafe or unsupported persistent agent metadata")
 	}
-	if _, err := h.runTmuxOnSocketContext(ctx, target.socket, "new-session", "-d", "-s", entry.Name, "-c", workDir); err != nil {
+	session, err := h.createOwnedTmuxSession(ctx, target.socket, entry.Name, workDir)
+	if err != nil {
 		return err
 	}
-	if _, err := h.runTmuxOnSocketContext(ctx, target.socket, "send-keys", "-t", entry.Name, "-l", "--", resumeCommand); err != nil {
-		h.recoverFailureCleanup(target.socket, entry.Name)
-		return err
+	if err := h.removeTmuxRightClickMenus(ctx, target.socket); err != nil {
+		return h.cleanupOwnedTmuxSessionAfterError(target.socket, session, err)
 	}
-	if _, err := h.runTmuxOnSocketContext(ctx, target.socket, "send-keys", "-t", entry.Name, "Enter"); err != nil {
-		h.recoverFailureCleanup(target.socket, entry.Name)
-		return err
+	if _, err := h.runTmuxOnSocketContext(ctx, target.socket, "send-keys", "-t", session.ID, "-l", "--", resumeCommand); err != nil {
+		return h.cleanupOwnedTmuxSessionAfterError(target.socket, session, err)
+	}
+	if _, err := h.runTmuxOnSocketContext(ctx, target.socket, "send-keys", "-t", session.ID, "Enter"); err != nil {
+		return h.cleanupOwnedTmuxSessionAfterError(target.socket, session, err)
 	}
 	return nil
 }

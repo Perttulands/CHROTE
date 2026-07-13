@@ -332,6 +332,7 @@ function FileViewer({
                   className="fb-markdown-source"
                   aria-label={`Markdown source for ${item.name}`}
                   value={content}
+                  wrap="off"
                   spellCheck={false}
                   onChange={event => onContentChange?.(event.target.value)}
                 />

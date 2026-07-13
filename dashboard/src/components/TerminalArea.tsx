@@ -167,6 +167,15 @@ function TerminalArea({ workspaceId, active = true }: TerminalAreaProps) {
           </>
         )}
         <button
+          className="layout-btn terminal-refit-btn"
+          type="button"
+          aria-label="Refit terminal layout"
+          title="Refit terminal layout"
+          onClick={refitTerminalLayout}
+        >
+          Refit
+        </button>
+        <button
           className="layout-btn terminal-recovery-btn"
           aria-label="Terminal recovery actions"
           title="Terminal recovery actions"
@@ -192,10 +201,6 @@ function TerminalArea({ workspaceId, active = true }: TerminalAreaProps) {
           <button className="session-context-item" onClick={clearStaleSessions} disabled={staleSessionCount === 0}>
             <span className="session-context-icon">⌫</span>
             {staleSessionCount > 0 ? `Clear ${staleSessionCount} stale sessions` : 'No stale sessions'}
-          </button>
-          <button className="session-context-item" onClick={refitTerminalLayout}>
-            <span className="session-context-icon">⤢</span>
-            Refit terminal layout
           </button>
         </div>
       )}

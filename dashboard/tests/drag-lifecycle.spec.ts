@@ -96,12 +96,11 @@ test.describe('terminal drag lifecycle', () => {
 
   test('only the overlay moves mid-drag and drop feedback has an opaque base', async ({ page }) => {
     const row = page.locator('.session-panel .session-item:has-text("gt-gastown-jack")')
-    const handle = row.locator('.session-drag-handle')
     const target = page.locator('.terminal-window:visible').first().locator('.terminal-window-body')
     const initialBox = await row.boundingBox()
 
-    await expect(handle).toHaveCSS('touch-action', 'none')
-    await startMouseDrag(page, handle, target)
+    await expect(row).toHaveCSS('touch-action', 'pan-y')
+    await startMouseDrag(page, row, target)
 
     await expect(row).toHaveClass(/dragging/)
     await expect(row).toHaveCSS('opacity', '0')
@@ -151,10 +150,9 @@ test.describe('terminal drag lifecycle', () => {
     await expect(row).toHaveCSS('opacity', '1')
   })
 
-  test('sub-8px mouse movement stays inactive and a real touch pointer drag activates only from the handle', async ({ page }) => {
+  test('sub-8px movement stays inactive and a real touch pointer drag activates from the whole row', async ({ page }) => {
     const row = page.locator('.session-panel .session-item:has-text("gt-gastown-jack")')
-    const handle = row.locator('.session-drag-handle')
-    const from = await point(handle)
+    const from = await point(row)
 
     await page.mouse.move(from.x, from.y)
     await page.mouse.down()
@@ -163,25 +161,22 @@ test.describe('terminal drag lifecycle', () => {
     await expect(page.locator('.dragging-overlay')).toHaveCount(0)
     await page.mouse.up()
 
-    const pointerId = await startTouchPointerDrag(page, handle, page.locator('.tab-bar'))
+    const pointerId = await startTouchPointerDrag(page, row, page.locator('.tab-bar'))
     await expect(row).toHaveClass(/dragging/)
     await expect(page.locator('.dragging-overlay')).toHaveCount(1)
     await cancelTouchPointerDrag(page, pointerId)
     await expect(row).not.toHaveClass(/dragging/)
   })
 
-  test('non-interactive grip clicks stay inert while row click and right-click behavior remain available', async ({ page }) => {
+  test('renders no grip while nested controls, row click, and right-click remain available', async ({ page }) => {
     const row = page.locator('.session-panel .session-item:has-text("gt-gastown-jack")')
-    const handle = row.locator('.session-drag-handle')
 
-    await expect(handle).toHaveJSProperty('tagName', 'SPAN')
-    await expect(handle).toHaveAttribute('aria-hidden', 'true')
-    await expect(handle).toHaveAttribute('title', 'Drag gt-gastown-jack (Unix user alice)')
-    await expect(handle).not.toHaveAttribute('role')
-    await expect(handle).not.toHaveAttribute('tabindex')
-
-    await handle.click()
-    await expect(page.locator('.floating-modal')).toHaveCount(0)
+    await expect(row.locator('.session-drag-handle')).toHaveCount(0)
+    await expect(row).toHaveAttribute('title', 'Drag gt-gastown-jack (Unix user alice)')
+    const actions = row.getByRole('button', { name: 'Session actions for gt-gastown-jack' })
+    await actions.click()
+    await expect(page.locator('.session-context-menu')).toBeVisible()
+    await page.keyboard.press('Escape')
     await expect(page.locator('.session-context-menu')).toHaveCount(0)
 
     await row.locator('.session-name').click()
@@ -192,16 +187,15 @@ test.describe('terminal drag lifecycle', () => {
     await expect(page.locator('.session-context-menu')).toBeVisible()
   })
 
-  test('touchcancel before a handle drag leaves no stale menu timer, while ordinary row long-press still opens', async ({ page }) => {
+  test('touchcancel before a row drag leaves no stale menu timer, while ordinary row long-press still opens', async ({ page }) => {
     const row = page.locator('.session-panel .session-item:has-text("gt-gastown-jack")')
-    const handle = row.locator('.session-drag-handle')
     const name = row.locator('.session-name')
     const namePoint = await point(name)
     const cancelledTouch = { identifier: 7, clientX: namePoint.x, clientY: namePoint.y, screenX: namePoint.x, screenY: namePoint.y }
 
     await name.dispatchEvent('touchstart', { touches: [cancelledTouch], targetTouches: [cancelledTouch], changedTouches: [cancelledTouch] })
     await name.dispatchEvent('touchcancel', { touches: [], targetTouches: [], changedTouches: [cancelledTouch] })
-    const pointerId = await startTouchPointerDrag(page, handle, page.locator('.tab-bar'))
+    const pointerId = await startTouchPointerDrag(page, row, page.locator('.tab-bar'))
     await page.waitForTimeout(600)
     await expect(page.locator('.session-context-menu')).toHaveCount(0)
     await cancelTouchPointerDrag(page, pointerId)
@@ -213,7 +207,32 @@ test.describe('terminal drag lifecycle', () => {
     await name.dispatchEvent('touchend', { touches: [], targetTouches: [], changedTouches: [rowTouch] })
   })
 
-  test('tag headers and same-window body are no-ops, cross-window body moves, and explicit removal paths detach', async ({ page }) => {
+  test('a trusted long-press opens actions and cancels drag activation for that touch', async ({ page }) => {
+    const row = page.locator('.session-panel .session-item:has-text("gt-gastown-jack")')
+    const from = await point(row.locator('.session-name'))
+    const cdp = await page.context().newCDPSession(page)
+    await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
+
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ x: from.x, y: from.y, id: 51, radiusX: 1, radiusY: 1, force: 1 }],
+    })
+    await page.waitForTimeout(600)
+    await expect(page.locator('.session-context-menu')).toBeVisible()
+
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchMove',
+      touchPoints: [{ x: from.x + 20, y: from.y + 4, id: 51, radiusX: 1, radiusY: 1, force: 1 }],
+    })
+    await expect(page.locator('.dashboard')).not.toHaveClass(/is-dragging/)
+    await expect(page.locator('.dragging-overlay')).toHaveCount(0)
+    await expect(page.locator('.session-context-menu')).toBeVisible()
+
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await cdp.detach()
+  })
+
+  test('row names assign; tag headers and same-window body are no-ops; explicit removal paths detach', async ({ page }) => {
     const row = page.locator('.session-panel .session-item:has-text("gt-gastown-jack")')
     const firstWindow = page.locator('.terminal-window:visible').nth(0)
     const secondWindow = page.locator('.terminal-window:visible').nth(1)
@@ -224,32 +243,28 @@ test.describe('terminal drag lifecycle', () => {
     await page.mouse.down()
     await page.mouse.move(to.x, to.y, { steps: 10 })
     await page.mouse.up()
-    await expectTagAssignment(firstWindow, secondWindow, 0, 0)
-
-    await startMouseDrag(page, row.locator('.session-drag-handle'), firstWindow.locator('.terminal-window-body'))
-    await finishMouseDrag(page)
     await expectTagAssignment(firstWindow, secondWindow, 1, 0)
 
     const tag = firstWindow.locator('.session-tag:has-text("gt-gastown-jack")')
-    const tagHandle = tag.locator('.session-tag-drag-handle')
+    const tagDragSurface = tag
 
-    await startMouseDrag(page, tagHandle, firstWindow.locator('.terminal-window-header'))
+    await startMouseDrag(page, tagDragSurface, firstWindow.locator('.terminal-window-header'))
     await finishMouseDrag(page)
     await expectTagAssignment(firstWindow, secondWindow, 1, 0)
 
-    await startMouseDrag(page, tagHandle, secondWindow.locator('.terminal-window-header'))
+    await startMouseDrag(page, tagDragSurface, secondWindow.locator('.terminal-window-header'))
     await finishMouseDrag(page)
     await expectTagAssignment(firstWindow, secondWindow, 1, 0)
 
-    await startMouseDrag(page, tagHandle, firstWindow.locator('.terminal-window-body'))
+    await startMouseDrag(page, tagDragSurface, firstWindow.locator('.terminal-window-body'))
     await finishMouseDrag(page)
     await expectTagAssignment(firstWindow, secondWindow, 1, 0)
 
-    await startMouseDrag(page, tagHandle, secondWindow.locator('.terminal-window-body'))
+    await startMouseDrag(page, tagDragSurface, secondWindow.locator('.terminal-window-body'))
     await expect(page.locator('.dragging-overlay')).toHaveCount(1)
     const overlay = page.locator('.dragging-overlay')
     await expect(overlay).toHaveClass(/session-tag/)
-    await expect(overlay.locator('.drag-overlay-grip')).toHaveText('⠿')
+    await expect(overlay.locator('.drag-overlay-grip')).toHaveCount(0)
     await expect(overlay.locator('.session-user-badge')).toHaveText('A')
     await expect(overlay.locator('.session-user-badge')).toHaveAttribute('title', 'Unix user: alice')
     await expect(tag).toHaveCSS('opacity', '0')
@@ -266,7 +281,7 @@ test.describe('terminal drag lifecycle', () => {
     await expectTagAssignment(firstWindow, secondWindow, 0, 0)
     await expect(row).not.toHaveClass(/assigned/)
 
-    await startMouseDrag(page, row.locator('.session-drag-handle'), firstWindow.locator('.terminal-window-body'))
+    await startMouseDrag(page, row, firstWindow.locator('.terminal-window-body'))
     await finishMouseDrag(page)
     await expectTagAssignment(firstWindow, secondWindow, 1, 0)
 
@@ -281,13 +296,21 @@ test.describe('terminal drag lifecycle', () => {
     const firstWindow = page.locator('.terminal-window:visible').nth(0)
     const secondWindow = page.locator('.terminal-window:visible').nth(1)
 
-    await startMouseDrag(page, row.locator('.session-drag-handle'), firstWindow.locator('.terminal-window-body'))
+    await startMouseDrag(page, row, firstWindow.locator('.terminal-window-body'))
     await finishMouseDrag(page)
 
     const tag = firstWindow.locator('.session-tag:has-text("gt-gastown-jack")')
     const iframe = firstWindow.locator('iframe')
     await expect(iframe).toHaveCount(1)
-    await startMouseDrag(page, tag.locator('.session-tag-drag-handle'), secondWindow.locator('.terminal-window-body'))
+    await iframe.evaluate(element => {
+      element.setAttribute('data-drag-identity', 'preserved')
+      element.setAttribute('data-drag-loads', '0')
+      element.addEventListener('load', () => {
+        const loads = Number(element.getAttribute('data-drag-loads') || '0') + 1
+        element.setAttribute('data-drag-loads', String(loads))
+      })
+    })
+    await startMouseDrag(page, tag, secondWindow.locator('.terminal-window-body'))
     await expect(iframe).toHaveCSS('pointer-events', 'none')
 
     await page.keyboard.press('Escape')
@@ -295,13 +318,15 @@ test.describe('terminal drag lifecycle', () => {
 
     await expect(page.locator('.dragging-overlay')).toHaveCount(0)
     await expect(iframe).toHaveCSS('pointer-events', 'auto')
+    await expect(iframe).toHaveAttribute('data-drag-identity', 'preserved')
+    await expect(iframe).toHaveAttribute('data-drag-loads', '0')
     await expectTagAssignment(firstWindow, secondWindow, 1, 0)
   })
 
   test('narrow Chromium view renders no drag overlay inside display-none mobile frames', async ({ page }) => {
     await page.setViewportSize({ width: 700, height: 900 })
     await expect(page.getByText('View:').first()).toBeVisible()
-    await page.getByTitle('Expand').click()
+    await page.getByRole('button', { name: 'Expand Sessions panel' }).click()
     await expect(page.locator('.session-panel .session-item').first()).toBeVisible()
     await page.waitForTimeout(250)
 
@@ -311,7 +336,7 @@ test.describe('terminal drag lifecycle', () => {
     const hiddenWindow = windows.nth(1)
     await expect(hiddenWindow).toHaveCSS('display', 'none')
 
-    await startMouseDrag(page, row.locator('.session-drag-handle'), visibleWindow.locator('.terminal-window-body'))
+    await startMouseDrag(page, row, visibleWindow.locator('.terminal-window-body'))
 
     await expect(visibleWindow.locator('.terminal-drop-overlay')).toHaveCount(1)
     await expect(hiddenWindow.locator('.terminal-drop-overlay')).toHaveCount(0)
@@ -324,11 +349,11 @@ test.describe('terminal drag lifecycle', () => {
     const firstWindow = page.locator('.terminal-window:visible').nth(0)
     const secondWindow = page.locator('.terminal-window:visible').nth(1)
 
-    await startMouseDrag(page, row.locator('.session-drag-handle'), firstWindow.locator('.terminal-window-body'))
+    await startMouseDrag(page, row, firstWindow.locator('.terminal-window-body'))
     await finishMouseDrag(page)
 
     const tag = firstWindow.locator('.session-tag:has-text("gt-gastown-jack")')
-    const handle = tag.locator('.session-tag-drag-handle')
+    const handle = tag
     const iframe = firstWindow.locator('iframe')
 
     await startMouseDrag(page, handle, secondWindow.locator('.terminal-window-body'))

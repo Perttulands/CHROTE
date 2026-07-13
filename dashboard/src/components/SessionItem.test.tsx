@@ -112,7 +112,7 @@ describe('SessionItem user badge and context actions', () => {
     const rowText = Array.from(container.querySelector('.session-item')?.children ?? [])
       .map(child => child.textContent)
 
-    expect(rowText.slice(1, 4)).toEqual(['A', 'T1 W1', 'alice-shell'])
+    expect(rowText.slice(0, 3)).toEqual(['A', 'T1 W1', 'alice-shell'])
   })
 
   it('offers peek and attach actions in the session context menu', () => {
@@ -267,7 +267,7 @@ describe('SessionItem user badge and context actions', () => {
     expect(mockState.makeSessionMortal).toHaveBeenCalledWith('codex-alpha', 'alice')
   })
 
-  it('uses a pointer-only non-interactive grip while keeping grip clicks inert and row clicks intact', () => {
+  it('uses the whole session row as the drag surface without rendering a drag grip', () => {
     const { container } = render(
       <SessionItem
         session={{
@@ -281,33 +281,24 @@ describe('SessionItem user badge and context actions', () => {
     )
 
     const row = container.querySelector('.session-item') as HTMLElement
-    const handle = container.querySelector('.session-drag-handle') as HTMLElement
+    const menuButton = screen.getByRole('button', { name: 'Session actions for alice-shell' })
 
     expect(row).not.toHaveAttribute('role', 'button')
     expect(row).not.toHaveAttribute('tabindex', '0')
-    expect(handle.tagName).toBe('SPAN')
-    expect(handle).toHaveAttribute('aria-hidden', 'true')
-    expect(handle).toHaveAttribute('title', 'Drag alice-shell (Unix user alice)')
-    expect(handle).not.toHaveAttribute('role')
-    expect(handle).not.toHaveAttribute('tabindex')
-    expect(handle).not.toHaveAttribute('aria-roledescription')
-    expect(handle).not.toHaveAttribute('aria-describedby')
-    expect(handle).not.toHaveAttribute('aria-pressed')
+    expect(row).toHaveAttribute('title', 'Drag alice-shell (Unix user alice)')
+    expect(container.querySelector('.session-drag-handle')).toBeNull()
 
-    fireEvent.pointerDown(handle, { pointerType: 'mouse' })
+    fireEvent.pointerDown(screen.getByText('alice-shell'), { pointerType: 'mouse' })
     expect(mockState.dragListeners.onPointerDown).toHaveBeenCalledTimes(1)
 
-    fireEvent.pointerDown(handle, { pointerType: 'touch' })
-    expect(mockState.dragListeners.onPointerDown).toHaveBeenCalledTimes(2)
-
-    fireEvent.click(handle)
-    expect(mockState.handleSessionClick).not.toHaveBeenCalled()
+    fireEvent.pointerDown(menuButton, { pointerType: 'mouse' })
+    expect(mockState.dragListeners.onPointerDown).toHaveBeenCalledTimes(1)
 
     fireEvent.click(screen.getByText('alice-shell'))
     expect(mockState.handleSessionClick).toHaveBeenCalledWith('alice:alice-shell')
   })
 
-  it('clears row long-press timers on move, end, cancel, and handle-origin touchstart while ordinary long-press still opens', () => {
+  it('clears row long-press timers on move, end, cancel, and drag start while ordinary long-press still opens', () => {
     vi.useFakeTimers()
     try {
       const { container } = render(
@@ -323,9 +314,7 @@ describe('SessionItem user badge and context actions', () => {
       )
 
       const row = container.querySelector('.session-item') as HTMLElement
-      const handle = container.querySelector('.session-drag-handle') as HTMLElement
-      const touch = { identifier: 1, target: handle, clientX: 32, clientY: 48 }
-      const rowTouch = { ...touch, target: row }
+      const rowTouch = { identifier: 1, target: row, clientX: 32, clientY: 48 }
 
       fireEvent.touchStart(row, { touches: [rowTouch], changedTouches: [rowTouch] })
       fireEvent.touchMove(row, { touches: [rowTouch], changedTouches: [rowTouch] })
@@ -339,12 +328,7 @@ describe('SessionItem user badge and context actions', () => {
 
       fireEvent.touchStart(row, { touches: [rowTouch], changedTouches: [rowTouch] })
       fireEvent.touchCancel(row, { touches: [], changedTouches: [rowTouch] })
-      fireEvent.pointerDown(handle, { pointerType: 'touch' })
-      act(() => vi.advanceTimersByTime(600))
-      expect(container.querySelector('.session-context-menu')).toBeNull()
-
-      fireEvent.touchStart(row, { touches: [rowTouch], changedTouches: [rowTouch] })
-      fireEvent.touchStart(handle, { touches: [touch], changedTouches: [touch] })
+      fireEvent.pointerDown(row, { pointerType: 'touch' })
       act(() => vi.advanceTimersByTime(600))
       expect(container.querySelector('.session-context-menu')).toBeNull()
 
@@ -352,6 +336,48 @@ describe('SessionItem user badge and context actions', () => {
       act(() => vi.advanceTimersByTime(600))
       expect(container.querySelector('.session-context-menu')).toBeInTheDocument()
     } finally {
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    }
+  })
+
+  it('cancels the pending touch pointer sensor when long-press opens session actions', () => {
+    vi.useFakeTimers()
+    const pointerCancels: Event[] = []
+    const recordPointerCancel = (event: Event) => pointerCancels.push(event)
+    document.addEventListener('pointercancel', recordPointerCancel)
+    try {
+      const { container } = render(
+        <SessionItem
+          session={{
+            name: 'alice-shell',
+            windows: 1,
+            attached: false,
+            group: 'main',
+            unixUser: 'alice',
+          }}
+        />
+      )
+
+      const row = container.querySelector('.session-item') as HTMLElement
+      const touch = { identifier: 1, target: row, clientX: 32, clientY: 48 }
+      fireEvent.pointerDown(row, {
+        pointerId: 41,
+        pointerType: 'touch',
+        isPrimary: true,
+        button: 0,
+        buttons: 1,
+      })
+      fireEvent.touchStart(row, { touches: [touch], changedTouches: [touch] })
+
+      act(() => vi.advanceTimersByTime(500))
+
+      expect(container.querySelector('.session-context-menu')).toBeInTheDocument()
+      expect(pointerCancels).toHaveLength(1)
+      expect((pointerCancels[0] as PointerEvent).pointerId).toBe(41)
+      expect((pointerCancels[0] as PointerEvent).pointerType).toBe('touch')
+    } finally {
+      document.removeEventListener('pointercancel', recordPointerCancel)
       vi.clearAllTimers()
       vi.useRealTimers()
     }

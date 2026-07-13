@@ -118,7 +118,6 @@ function DraggedSessionOverlay({ drag, settings }: { drag: ActiveDrag; settings:
   const badgeClassName = type === 'tag' ? 'session-user-badge' : 'unix-user-badge'
   return (
     <div className={`${type === 'tag' ? 'session-tag' : 'session-item'} dragging-overlay`}>
-      <span className="drag-overlay-grip" aria-hidden="true">⠿</span>
       {unixUser && (
         <span
           className={badgeClassName}

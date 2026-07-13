@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -974,11 +975,110 @@ func bankedRecoveryWorkDir(entry SessionBankEntry, target tmuxTarget) string {
 	return core.GetWorkDir()
 }
 
-func (h *TmuxHandler) recoverFailureCleanup(socket, sessionName string) {
-	if strings.TrimSpace(sessionName) == "" {
-		return
+const (
+	tmuxCreationTokenEnv          = "CHROTE_CREATION_TOKEN"
+	tmuxOwnershipMismatchResponse = "CHROTE_OWNERSHIP_MISMATCH"
+)
+
+var (
+	tmuxSessionIDPattern     = regexp.MustCompile(`^\$[0-9]+$`)
+	tmuxCreationTokenPattern = regexp.MustCompile(`^[0-9a-f]{24}$`)
+)
+
+type ownedTmuxSession struct {
+	ID    string
+	Name  string
+	Token string
+}
+
+func newTmuxCreationToken() (string, error) {
+	raw := make([]byte, 12)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
 	}
-	_, _ = h.runTmuxOnSocket(socket, "kill-session", "-t", sessionName)
+	return hex.EncodeToString(raw), nil
+}
+
+func isTmuxMissingTargetError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return isTmuxNoServerError(err.Error()) ||
+		strings.Contains(message, "can't find session") ||
+		strings.Contains(message, "no such session")
+}
+
+func (h *TmuxHandler) cleanupOwnedTmuxSession(parent context.Context, socket, target, token string) error {
+	if strings.TrimSpace(target) == "" || !tmuxCreationTokenPattern.MatchString(token) {
+		return fmt.Errorf("owned tmux cleanup requires a target and valid creation token")
+	}
+	if !tmuxSessionIDPattern.MatchString(target) {
+		if valid, _ := core.ValidateSessionName(target, "cleanup target"); !valid {
+			return fmt.Errorf("owned tmux cleanup target %q is invalid", target)
+		}
+	}
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
+
+	condition := fmt.Sprintf("#{==:#{%s},%s}", tmuxCreationTokenEnv, token)
+	killCommand := "kill-session -t " + target
+	mismatchCommand := "display-message -p " + tmuxOwnershipMismatchResponse
+	output, err := h.runTmuxOnSocketContext(ctx, socket,
+		"if-shell", "-F", "-t", target,
+		condition, killCommand, mismatchCommand,
+	)
+	if err != nil {
+		if isTmuxMissingTargetError(err) {
+			return nil
+		}
+		return fmt.Errorf("atomically clean owned tmux session %q: %w", target, err)
+	}
+	switch strings.TrimSpace(output) {
+	case "":
+		return nil
+	case tmuxOwnershipMismatchResponse:
+		return fmt.Errorf("refusing to clean tmux session %q: creation token does not match", target)
+	default:
+		return fmt.Errorf("atomically clean owned tmux session %q: unexpected tmux response", target)
+	}
+}
+
+func (h *TmuxHandler) cleanupOwnedTmuxSessionAfterError(socket string, session ownedTmuxSession, cause error) error {
+	target := session.ID
+	if target == "" {
+		target = session.Name
+	}
+	if cleanupErr := h.cleanupOwnedTmuxSession(context.Background(), socket, target, session.Token); cleanupErr != nil {
+		return errors.Join(cause, cleanupErr)
+	}
+	return cause
+}
+
+func (h *TmuxHandler) createOwnedTmuxSession(parent context.Context, socket, name, workDir string) (ownedTmuxSession, error) {
+	token, err := newTmuxCreationToken()
+	if err != nil {
+		return ownedTmuxSession{}, fmt.Errorf("generate tmux creation token: %w", err)
+	}
+	session := ownedTmuxSession{Name: name, Token: token}
+	output, createErr := h.runTmuxOnSocketContext(parent, socket,
+		"new-session", "-d", "-P", "-F", "#{session_id}",
+		"-e", tmuxCreationTokenEnv+"="+token,
+		"-s", name, "-c", workDir,
+	)
+	if createErr != nil {
+		return ownedTmuxSession{}, h.cleanupOwnedTmuxSessionAfterError(socket, session, createErr)
+	}
+	createdID := strings.TrimSpace(output)
+	if !tmuxSessionIDPattern.MatchString(createdID) {
+		parseErr := fmt.Errorf("tmux created session %q without a valid session ID", name)
+		return ownedTmuxSession{}, h.cleanupOwnedTmuxSessionAfterError(socket, session, parseErr)
+	}
+	session.ID = createdID
+	return session, nil
 }
 
 func decodeOptionalJSONBody(r *http.Request, dest any) error {
@@ -1085,7 +1185,8 @@ func (h *TmuxHandler) RecoverBankedSession(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if _, err := h.runTmuxOnSocket(target.socket, "new-session", "-d", "-s", entry.Name, "-c", workDir); err != nil {
+	session, err := h.createOwnedTmuxSession(r.Context(), target.socket, entry.Name, workDir)
+	if err != nil {
 		core.WriteError(w, http.StatusBadRequest, "TMUX_ERROR", err.Error())
 		return
 	}
@@ -1097,14 +1198,18 @@ func (h *TmuxHandler) RecoverBankedSession(w http.ResponseWriter, r *http.Reques
 	if mouseScroll {
 		mouseValue = "on"
 	}
-	_, _ = h.runTmuxOnSocket(target.socket, "set-option", "-g", "mouse", mouseValue)
-	if _, err := h.runTmuxOnSocket(target.socket, "send-keys", "-t", entry.Name, "-l", resumeCommand); err != nil {
-		h.recoverFailureCleanup(target.socket, entry.Name)
+	if err := h.applyMouseMode(r.Context(), target.socket, mouseValue); err != nil {
+		err = h.cleanupOwnedTmuxSessionAfterError(target.socket, session, err)
 		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
 		return
 	}
-	if _, err := h.runTmuxOnSocket(target.socket, "send-keys", "-t", entry.Name, "Enter"); err != nil {
-		h.recoverFailureCleanup(target.socket, entry.Name)
+	if _, err := h.runTmuxOnSocketContext(r.Context(), target.socket, "send-keys", "-t", session.ID, "-l", resumeCommand); err != nil {
+		err = h.cleanupOwnedTmuxSessionAfterError(target.socket, session, err)
+		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
+		return
+	}
+	if _, err := h.runTmuxOnSocketContext(r.Context(), target.socket, "send-keys", "-t", session.ID, "Enter"); err != nil {
+		err = h.cleanupOwnedTmuxSessionAfterError(target.socket, session, err)
 		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
 		return
 	}
@@ -1353,8 +1458,8 @@ func (h *TmuxHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		workDir = core.GetWorkDir()
 	}
 
-	// Create the session (detached)
-	_, err := h.runTmuxOnSocket(target.socket, "new-session", "-d", "-s", name, "-c", workDir)
+	// Create the session (detached) with an ownership marker and immutable ID.
+	session, err := h.createOwnedTmuxSession(r.Context(), target.socket, name, workDir)
 	if err != nil {
 		core.WriteError(w, http.StatusBadRequest, "TMUX_ERROR", err.Error())
 		return
@@ -1367,7 +1472,11 @@ func (h *TmuxHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	if mouseScroll {
 		mouseValue = "on"
 	}
-	_, _ = h.runTmuxOnSocket(target.socket, "set-option", "-g", "mouse", mouseValue)
+	if err := h.applyMouseMode(r.Context(), target.socket, mouseValue); err != nil {
+		err = h.cleanupOwnedTmuxSessionAfterError(target.socket, session, err)
+		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
+		return
+	}
 	h.invalidateCache()
 
 	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
@@ -1626,6 +1735,44 @@ func (h *TmuxHandler) appearanceTargets() []tmuxTarget {
 	return targets
 }
 
+var tmuxRightClickMenuKeys = []string{
+	"MouseDown3Pane",
+	"MouseDown3Status",
+	"MouseDown3StatusLeft",
+	"M-MouseDown3Pane",
+	"M-MouseDown3Status",
+	"M-MouseDown3StatusLeft",
+}
+
+func (h *TmuxHandler) removeTmuxRightClickMenus(parent context.Context, socket string) error {
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
+
+	for _, key := range tmuxRightClickMenuKeys {
+		// -q makes an already-absent binding successful; any remaining error is real.
+		if _, err := h.runTmuxOnSocketContext(ctx, socket, "unbind-key", "-q", "-n", key); err != nil {
+			return fmt.Errorf("remove tmux right-click binding %q: %w", key, err)
+		}
+	}
+	return nil
+}
+
+func (h *TmuxHandler) applyMouseMode(parent context.Context, socket, value string) error {
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
+
+	if _, err := h.runTmuxOnSocketContext(ctx, socket, "set-option", "-g", "mouse", value); err != nil {
+		return err
+	}
+	return h.removeTmuxRightClickMenus(ctx, socket)
+}
+
 // SetMouseMode handles POST /api/tmux/mouse. It toggles tmux's global mouse
 // option across all configured CHROTE terminal sockets.
 func (h *TmuxHandler) SetMouseMode(w http.ResponseWriter, r *http.Request) {
@@ -1647,15 +1794,14 @@ func (h *TmuxHandler) SetMouseMode(w http.ResponseWriter, r *http.Request) {
 	applied := 0
 	targets := h.appearanceTargets()
 	for _, target := range targets {
-		_, err := h.runTmuxOnSocket(target.socket, "set-option", "-g", "mouse", value)
-		if err == nil {
+		if err := h.applyMouseMode(r.Context(), target.socket, value); err == nil {
 			applied++
 		}
-		// Ignore errors: a tmux server/profile may not be running yet.
+		// A tmux server/profile may not be running yet; applied/success report that truthfully.
 	}
 
 	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"success":   true,
+		"success":   applied == len(targets),
 		"mouse":     value,
 		"applied":   applied,
 		"total":     len(targets),

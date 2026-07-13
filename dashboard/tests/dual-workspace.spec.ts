@@ -13,7 +13,7 @@ import { mockApiRoutes } from './mock-api'
 
 // Helper: drag-and-drop for dnd-kit (requires minimum distance to activate)
 async function dragAndDrop(page: Page, sourceSelector: string, targetSelector: string) {
-  const source = page.locator(sourceSelector).first().locator('.session-drag-handle')
+  const source = page.locator(sourceSelector).first()
   const target = page.locator(targetSelector).first()
 
   const sourceBox = await source.boundingBox()

@@ -17,7 +17,8 @@
   background-color: var(--surface-primary);
 }
 
-.layout-label {
+.layout-label,
+.dock-panel .dock-toggle-btn {
   font-size: 11px;
   text-transform: uppercase;
   color: var(--text-dim);
@@ -39,6 +40,11 @@
 .layout-btn:hover {
   color: var(--text-primary);
   border-color: var(--accent);
+}
+
+.terminal-refit-btn {
+  width: auto;
+  padding: 0 8px;
 }
 
 .layout-btn.active {
@@ -157,7 +163,8 @@
   border-radius: 6px 6px 0 0;
   font-size: 13px;
   font-weight: 500;
-  cursor: pointer;
+  cursor: grab;
+  touch-action: pan-y;
   transition: all 0.15s ease;
   min-width: 60px;
   max-width: 180px;
@@ -184,7 +191,7 @@
 }
 
 .tag-name {
-  cursor: pointer;
+  cursor: inherit;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -326,6 +333,6 @@
 
 @media (max-width: 768px) {
   .terminal-area-controls {
-    padding-left: 44px;
+    padding-left: var(--dock-panel-rail-width, 24px);
   }
 }

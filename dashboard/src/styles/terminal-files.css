@@ -1,6 +1,7 @@
 /* Terminal workspace Files companion and shared file viewer. */
 
 .terminal-workspace-dock {
+  --dock-panel-rail-width: 24px;
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -18,13 +19,8 @@
   position: relative;
   background: var(--surface-primary);
   border-right: 1px solid var(--divider);
-  transition: width 0.2s ease;
+  transition: width 0.2s ease, flex-basis 0.2s ease;
   z-index: 7;
-}
-
-.terminal-files-panel.collapsed {
-  width: 44px;
-  flex-basis: 44px;
 }
 
 .terminal-files-header {
@@ -34,13 +30,6 @@
   align-items: center;
   gap: 6px;
   border-bottom: 1px solid var(--divider);
-}
-
-.terminal-files-panel.collapsed .terminal-files-header {
-  flex: 1;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 6px 4px;
 }
 
 .terminal-files-header button,
@@ -101,9 +90,6 @@
 }
 
 .terminal-files-panel .shared-file-tree {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
   padding: 6px 0;
 }
 
@@ -292,12 +278,21 @@
 .fb-markdown-source-readonly,
 .fb-plain-text-preview {
   padding: 16px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
   color: var(--text-primary);
   background: var(--background);
   font-family: 'Courier Prime', 'Courier New', monospace;
   line-height: 1.55;
+}
+
+.fb-markdown-source-readonly {
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow: auto;
+}
+
+.fb-plain-text-preview {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .fb-file-viewer .fb-media-preview {
@@ -328,8 +323,8 @@
 
   .terminal-workspace-dock .session-panel.collapsed,
   .terminal-workspace-dock .terminal-files-panel.collapsed {
-    width: 44px;
-    flex-basis: 44px;
+    width: var(--dock-panel-rail-width);
+    flex-basis: var(--dock-panel-rail-width);
   }
 
   .terminal-workspace-dock .session-panel {
@@ -342,21 +337,21 @@
   }
 
   .terminal-workspace-dock[data-sessions-collapsed='true'] .terminal-files-panel {
-    left: 44px;
+    left: var(--dock-panel-rail-width);
   }
 
   .terminal-workspace-dock[data-sessions-collapsed='false'][data-files-collapsed='true'] .session-panel {
-    width: calc(100vw - 44px);
-    flex-basis: calc(100vw - 44px);
+    width: calc(100vw - var(--dock-panel-rail-width));
+    flex-basis: calc(100vw - var(--dock-panel-rail-width));
   }
 
   .terminal-workspace-dock[data-sessions-collapsed='false'][data-files-collapsed='true'] .terminal-files-panel {
-    left: calc(100vw - 44px);
+    left: calc(100vw - var(--dock-panel-rail-width));
   }
 
   .terminal-workspace-dock[data-sessions-collapsed='true'][data-files-collapsed='false'] .terminal-files-panel {
-    width: calc(100vw - 44px);
-    flex-basis: calc(100vw - 44px);
+    width: calc(100vw - var(--dock-panel-rail-width));
+    flex-basis: calc(100vw - var(--dock-panel-rail-width));
   }
 
   .terminal-workspace-dock[data-sessions-collapsed='false'][data-files-collapsed='false'] .session-panel,
@@ -370,11 +365,11 @@
   }
 
   .terminal-workspace-dock[data-sessions-collapsed='true'][data-files-collapsed='true'] .terminal-files-panel {
-    left: 44px;
+    left: var(--dock-panel-rail-width);
   }
 
   .terminal-workspace-dock[data-sessions-collapsed='true'][data-files-collapsed='true'] .terminal-area-controls {
-    padding-left: 96px;
+    padding-left: calc((var(--dock-panel-rail-width) * 2) + 8px);
   }
 
   .file-peek {
