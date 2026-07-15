@@ -40,7 +40,8 @@ No backend numeric threshold is enforced yet; the current policy is measured-and
 
 ```bash
 cd /path/to/chrote/dashboard
-CHROTE_TEST_URL=http://127.0.0.1:8094 npm run test:live
+CHROTE_TEST_URL=http://127.0.0.1:8095 npm run test:live
 ```
 
 Live smokes are operator-run only unless CHROTE is deployed in a runner environment with access to the backend, tmux, and terminal proxy.
+Use `http://127.0.0.1:8094` only for explicitly requested legacy rollback-lane checks.

@@ -102,21 +102,72 @@ def create_snapshot(
     doc = manifest_lib.new_manifest(collected_sessions, now=now, source=source)
     doc = manifest_lib.merge_preserving_extras(doc, baseline)
 
+    try:
+        staged = manifest_lib.stage_pending_manifest(doc, output_dir, now=doc["createdAt"])
+    except Exception as exc:
+        raise RuntimeError(f"failed to stage manifest before API posts: {exc}") from exc
+
+    try:
+        previous_bank = _previous_bank_by_key(client)
+    except Exception as exc:
+        raise RuntimeError(f"snapshot publish failed before API posts: {exc}; pending manifest left at {staged.pending_path}") from exc
     posted: list[tuple[str, str]] = []
     post_results: list[dict[str, Any]] = []
-    for session in doc["sessions"]:
-        if not manifest_lib.is_session_bank_session(session):
-            post_results.append(
-                {"sessionName": session["sessionName"], "unixUser": session.get("unixUser", ""), "posted": False, "reason": "manifest-only"}
-            )
-            continue
-        name = session["sessionName"]
-        unix_user = session.get("unixUser", "")
-        response = client.update_session_recovery(name, unix_user, session["descriptors"])
-        posted.append((name, unix_user))
-        post_results.append({"sessionName": name, "unixUser": unix_user, "posted": True, "response": response})
-    path = manifest_lib.write_timestamped_manifest(doc, output_dir, now=doc["createdAt"])
+    try:
+        for session in doc["sessions"]:
+            if not manifest_lib.is_session_bank_session(session):
+                post_results.append(
+                    {"sessionName": session["sessionName"], "unixUser": session.get("unixUser", ""), "posted": False, "reason": "manifest-only"}
+                )
+                continue
+            name = session["sessionName"]
+            unix_user = session.get("unixUser", "")
+            response = client.update_session_recovery(name, unix_user, session["descriptors"])
+            posted.append((name, unix_user))
+            post_results.append({"sessionName": name, "unixUser": unix_user, "posted": True, "response": response})
+        path = manifest_lib.accept_pending_manifest(staged)
+    except Exception as exc:
+        rollback_errors = _rollback_snapshot_posts(client, posted, previous_bank)
+        if rollback_errors:
+            details = "; ".join(rollback_errors)
+            raise RuntimeError(f"snapshot publish failed: {exc}; rollback failures: {details}; pending manifest left at {staged.pending_path}") from exc
+        raise RuntimeError(f"snapshot publish failed: {exc}; pending manifest left at {staged.pending_path}") from exc
     return SnapshotResult(path=path, manifest=doc, posted_sessions=posted, post_results=post_results)
+
+
+def _previous_bank_by_key(client: Any) -> dict[tuple[str, str], dict[str, Any]]:
+    response = client.get_sessions()
+    banked = response.get("banked", []) if isinstance(response, dict) else []
+    result: dict[tuple[str, str], dict[str, Any]] = {}
+    if not isinstance(banked, list):
+        return result
+    for entry in banked:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name") or "").strip()
+        if not name:
+            continue
+        unix_user = str(entry.get("unixUser") or "").strip()
+        result[(name, unix_user)] = dict(entry)
+    return result
+
+
+def _rollback_snapshot_posts(
+    client: Any,
+    posted: list[tuple[str, str]],
+    previous_bank: dict[tuple[str, str], dict[str, Any]],
+) -> list[str]:
+    failures: list[str] = []
+    for name, unix_user in reversed(posted):
+        previous = previous_bank.get((name, unix_user))
+        try:
+            if previous is None:
+                client.forget_session_bank(name, unix_user)
+            else:
+                client.restore_session_bank_entry(name, unix_user, previous)
+        except Exception as rollback_exc:
+            failures.append(f"{unix_user or 'default'}/{name}: {rollback_exc}")
+    return failures
 
 
 def main(

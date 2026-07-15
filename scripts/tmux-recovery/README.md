@@ -78,6 +78,7 @@ chrote-tmux-recovery-restore \
   --owner-home /home/alice \
   --owner-kind session_bank \
   --owner-may-restart \
+  --readiness-seconds 30 \
   --stability-seconds 30
 ```
 
@@ -87,17 +88,36 @@ restarts units, or reads unit environments. `--topology-only` is explicit and
 reports limited topology/cwd/dead verification rather than workload identity
 success.
 
-`restore` and `verify` default to a 30-second stability interval for live
-evidence. Tests may pass `--stability-seconds 0`; operators should not use stale
-observed evidence to certify recovery.
+`restore` and `verify` first poll readiness for up to 30 seconds at a bounded
+0.5-second interval, requiring exact topology, workload identity, pane health,
+helper endpoint probes, and managed owner status to pass together. After
+readiness succeeds, the separate 30-second stability interval takes an
+independent second sample. Tests may pass `--readiness-seconds 0` and
+`--stability-seconds 0`; operators should not use stale observed evidence to
+certify recovery.
 
 Fixture/offline modes remain available for tests and reviews:
 
 ```bash
 chrote-tmux-recovery-snapshot --api-url http://127.0.0.1:8095 --input sessions.json --output-dir /tmp/manifests
-chrote-tmux-recovery-restore --api-url http://127.0.0.1:8095 --manifest accepted.json --observed observed.json --allow-test-observed --stability-seconds 0
-chrote-tmux-recovery-verify --manifest accepted.json --observed observed.json --allow-test-observed --stability-seconds 0
+chrote-tmux-recovery-restore --api-url http://127.0.0.1:8095 --manifest accepted.json --observed observed.json --allow-test-observed --readiness-seconds 0 --stability-seconds 0
+chrote-tmux-recovery-verify --manifest accepted.json --observed observed.json --allow-test-observed --readiness-seconds 0 --stability-seconds 0
 ```
+
+Disposable integration smoke:
+
+```bash
+python3 scripts/tmux-recovery/smoke_disposable.py
+```
+
+The smoke builds the current CHROTE server into a unique `/tmp` root, starts it
+on random loopback ports with temporary Session Bank and Persistent Agent
+stores, creates a unique tmux socket plus fake owner home, runs real
+snapshot/restore/verify CLI calls, and prints a concise JSON result. It may add a
+unique current-user transient `systemd-run --user` sleep unit when user systemd
+is available; otherwise the managed-owner leg is reported as an explicit skip.
+It does not use live `8095`, `/srv/data/chrote`, existing tmux sockets, sudo, or
+existing systemd units.
 
 Install into an explicit prefix:
 

@@ -158,14 +158,14 @@ func storedHermesResumeCommandLooksCanonical(command, profile, sessionID string)
 		return false
 	}
 	tokens := strings.Fields(command)
-	if len(tokens) != 9 {
+	if len(tokens) != 7 {
 		return false
 	}
 	executable := filepath.Clean(tokens[0])
 	if !filepath.IsAbs(executable) || !strings.HasSuffix(executable, persistentAgentHermesExecutableTail) {
 		return false
 	}
-	want := []string{"-m", persistentAgentHermesModule, "--profile", profile, "--resume", sessionID, "--tui", "--yolo"}
+	want := []string{"-m", persistentAgentHermesModule, "--profile", profile, "--resume", sessionID}
 	for i, token := range want {
 		if tokens[i+1] != token {
 			return false
@@ -1469,7 +1469,13 @@ func persistentSessionBankConflict(entry SessionBankEntry, ownerHome string) err
 }
 
 func (h *TmuxHandler) ensurePersistentAgentOwnershipAvailable(name, unixUser, ownerHome string) error {
-	if h == nil || h.bank == nil {
+	if h == nil {
+		return nil
+	}
+	if err := h.ensureManagedRecoveryOwnershipAvailable(name, unixUser); err != nil {
+		return err
+	}
+	if h.bank == nil {
 		return nil
 	}
 	entry, found, err := h.bank.Find(name, unixUser)

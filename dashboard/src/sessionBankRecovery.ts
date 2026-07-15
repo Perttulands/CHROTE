@@ -445,9 +445,9 @@ function unresolvedCapability(
   return {
     kind: 'unresolved-unsafe',
     badgeLabel: 'Unresolved / unsafe',
-    description: 'Topology can be restored only with an explicit opt-in; workloads will not launch.',
+    description: 'Unsafe recovery evidence is kept for cleanup only; restore is disabled.',
     canRecoverWorkload: false,
-    canRestoreTopologyOnly: true,
+    canRestoreTopologyOnly: false,
     isReadOnly: false,
     descriptorCount: descriptors.length,
     owner: firstOwner(descriptors),

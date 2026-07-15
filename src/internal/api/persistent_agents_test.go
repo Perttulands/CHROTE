@@ -50,7 +50,7 @@ func TestTmuxHandler_EnablePersistentAgentStoresCanonicalExplicitDescriptors(t *
 			sessionID:   persistentTestHermesID,
 			profile:     "scout",
 			paneCommand: "python",
-			args:        "/home/alice/.hermes/hermes-agent-current/venv/bin/python -m hermes_cli.main --profile scout --resume " + persistentTestHermesID + " --tui --yolo",
+			args:        "/home/alice/.hermes/hermes-agent-current/venv/bin/python -m hermes_cli.main --profile scout --resume " + persistentTestHermesID,
 			wantCommand: "",
 		},
 	}
@@ -136,7 +136,7 @@ esac
 		pid:  "42",
 		ppid: "1",
 		comm: "python",
-		args: "/home/alice/.hermes/hermes-agent-current/venv/bin/python -m hermes_cli.main --profile scout --resume " + persistentTestHermesID + " --tui --yolo",
+		args: "/home/alice/.hermes/hermes-agent-current/venv/bin/python -m hermes_cli.main --profile scout --resume " + persistentTestHermesID,
 	}})
 
 	handler := NewTmuxHandler()
@@ -189,7 +189,7 @@ esac
 		pid:  "42",
 		ppid: "1",
 		comm: "python",
-		args: "/home/alice/.hermes/hermes-agent-current/venv/bin/python -m hermes_cli.main --profile scout --tui --yolo",
+		args: "/home/alice/.hermes/hermes-agent-current/venv/bin/python -m hermes_cli.main --profile scout",
 	}})
 
 	handler := NewTmuxHandler()
@@ -221,7 +221,7 @@ func TestPersistentAgentProcessTreeRejectsMultipleIdentifiedAgentDescendants(t *
 		{pid: "42", ppid: "1", comm: "bash", args: "bash"},
 		{pid: "50", ppid: "42", comm: "node", args: "node /usr/bin/codex resume " + persistentTestCodexID},
 		{pid: "51", ppid: "42", comm: "claude", args: "claude --resume " + persistentTestClaudeID},
-		{pid: "52", ppid: "42", comm: "python", args: "/home/alice/.hermes/hermes-agent-current/venv/bin/python -m hermes_cli.main --profile scout --resume " + persistentTestHermesID + " --tui --yolo"},
+		{pid: "52", ppid: "42", comm: "python", args: "/home/alice/.hermes/hermes-agent-current/venv/bin/python -m hermes_cli.main --profile scout --resume " + persistentTestHermesID},
 	}
 
 	_, foundAgent, foundSessionID, err := inferPersistentAgentMetadataInTableForOwner(infos, "42", "", "/home/alice")
@@ -441,6 +441,48 @@ func TestTmuxHandler_EnablePersistentAgentRejectsSessionBankOwnedPlanBeforeSideE
 	}
 	if got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)); len(got) != 0 {
 		t.Fatalf("tmux calls = %#v, want no tmux side effects before ownership conflict", got)
+	}
+	if raw, err := os.ReadFile(persistentPath); err == nil && strings.TrimSpace(string(raw)) != "" && strings.TrimSpace(string(raw)) != "[]" {
+		t.Fatalf("persistent store should be empty, got %s", raw)
+	}
+}
+
+func TestTmuxHandler_EnablePersistentAgentRejectsManagedStatusBeforeSideEffects(t *testing.T) {
+	tmpDir := t.TempDir()
+	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")
+	managedPath := filepath.Join(tmpDir, "tmux-recovery", "managed-status.json")
+	argsPath := installPersistentAgentScriptedTmux(t, `
+case "$*" in
+  *display-message*) printf '42:node:/home/alice/project\n' ;;
+esac
+`)
+	writeManagedStatusSeed(t, managedPath, "codex-alpha", "alice", "codex-alpha.service")
+	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	t.Setenv("CHROTE_MANAGED_RECOVERY_STATUS_PATH", managedPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+
+	handler := NewTmuxHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	body := persistentAgentRequestJSON(t, map[string]any{
+		"identity": "would incorrectly take over externally managed session",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions/codex-alpha/persistence?unixUser=alice", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusConflict, recorder.Body.String())
+	}
+	if !strings.Contains(strings.ToLower(recorder.Body.String()), "external manager") {
+		t.Fatalf("error body = %s, want external manager ownership conflict", recorder.Body.String())
+	}
+	if got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)); len(got) != 0 {
+		t.Fatalf("tmux calls = %#v, want no tmux side effects before managed ownership conflict", got)
 	}
 	if raw, err := os.ReadFile(persistentPath); err == nil && strings.TrimSpace(string(raw)) != "" && strings.TrimSpace(string(raw)) != "[]" {
 		t.Fatalf("persistent store should be empty, got %s", raw)
@@ -1406,7 +1448,7 @@ case "$*" in
 esac
 `)
 	entry := persistentAgentRawEntry("hermes-scout", "alice", RecoveryAgentHermes, persistentTestHermesID, "scout")
-	entry["resumeCommand"] = "/tmp/.hermes/hermes-agent-current/venv/bin/python -m hermes_cli.main --profile scout --resume " + persistentTestHermesID + " --tui --yolo"
+	entry["resumeCommand"] = "/tmp/.hermes/hermes-agent-current/venv/bin/python -m hermes_cli.main --profile scout --resume " + persistentTestHermesID
 	writePersistentAgentRawSeed(t, persistentPath, []map[string]any{entry})
 	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
@@ -1439,7 +1481,7 @@ esac
 		t.Fatalf("reconcile results = %+v, want recreated", results)
 	}
 	calls := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath))
-	wantCommand := "/home/alice/.hermes/hermes-agent-current/venv/bin/python -m hermes_cli.main --profile scout --resume " + persistentTestHermesID + " --tui --yolo"
+	wantCommand := "/home/alice/.hermes/hermes-agent-current/venv/bin/python -m hermes_cli.main --profile scout --resume " + persistentTestHermesID
 	for _, call := range calls {
 		for _, arg := range call {
 			if strings.Contains(arg, "hermes_cli.main") {
@@ -1487,7 +1529,7 @@ func persistentAgentRawEntry(sessionName, unixUser, kind, sessionID, profile str
 		command = "claude --resume " + sessionID
 	}
 	if kind == RecoveryAgentHermes {
-		command = "/home/alice/.hermes/hermes-agent-current/venv/bin/python -m hermes_cli.main --profile " + profile + " --resume " + sessionID + " --tui --yolo"
+		command = "/home/alice/.hermes/hermes-agent-current/venv/bin/python -m hermes_cli.main --profile " + profile + " --resume " + sessionID
 	}
 	return map[string]any{
 		"name":               sessionName,

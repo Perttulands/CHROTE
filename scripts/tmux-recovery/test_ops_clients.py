@@ -8,8 +8,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from io import BytesIO
+from io import BytesIO, StringIO
+from contextlib import redirect_stdout
 from urllib import error as urllib_error
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -167,12 +169,16 @@ def retarget_descriptor(
 
 def reallocated_verify_sessions() -> tuple[dict, dict, dict]:
     helper = {"kind": "http-get", "url": "http://127.0.0.1:8088/", "expectStatus": 200}
+    expected_agent_layout = "aaaa,160x40,0,0[160x20,0,0,1,160x19,0,21,2]"
+    observed_agent_layout = "bbbb,160x40,0,0[160x20,0,0,10,160x19,0,21,11]"
+    expected_server_layout = "cccc,80x24,0,0,3"
+    observed_server_layout = "dddd,80x24,0,0,12"
     expected_codex = retarget_descriptor(
         session_bank_descriptor("velis"),
         session_id="$old",
         window_index=4,
         window_name="agent",
-        window_layout="layout-agent",
+        window_layout=expected_agent_layout,
         pane_index=7,
         pane_id="%old-codex",
         cwd="/home/alice/project",
@@ -182,7 +188,7 @@ def reallocated_verify_sessions() -> tuple[dict, dict, dict]:
         session_id="$old",
         window_index=4,
         window_name="agent",
-        window_layout="layout-agent",
+        window_layout=expected_agent_layout,
         pane_index=8,
         pane_id="%old-hermes",
         cwd="/home/alice/project",
@@ -192,7 +198,7 @@ def reallocated_verify_sessions() -> tuple[dict, dict, dict]:
         session_id="$old",
         window_index=5,
         window_name="server",
-        window_layout="layout-server",
+        window_layout=expected_server_layout,
         pane_index=7,
         pane_id="%old-http",
         cwd="/home/alice/project/public",
@@ -202,7 +208,7 @@ def reallocated_verify_sessions() -> tuple[dict, dict, dict]:
         session_id="$new",
         window_index=0,
         window_name="agent",
-        window_layout="layout-agent",
+        window_layout=observed_agent_layout,
         pane_index=0,
         pane_id="%new-codex",
         cwd="/home/alice/project",
@@ -212,7 +218,7 @@ def reallocated_verify_sessions() -> tuple[dict, dict, dict]:
         session_id="$new",
         window_index=0,
         window_name="agent",
-        window_layout="layout-agent",
+        window_layout=observed_agent_layout,
         pane_index=1,
         pane_id="%new-hermes",
         cwd="/home/alice/project",
@@ -222,7 +228,7 @@ def reallocated_verify_sessions() -> tuple[dict, dict, dict]:
         session_id="$new",
         window_index=1,
         window_name="server",
-        window_layout="layout-server",
+        window_layout=observed_server_layout,
         pane_index=0,
         pane_id="%new-http",
         cwd="/home/alice/project/public",
@@ -306,12 +312,34 @@ def unresolved_descriptor(session: str, reason: str = "unknown_process") -> dict
 class RecordingClient:
     def __init__(self) -> None:
         self.updates: list[tuple[str, str, dict]] = []
+        self.entry_updates: list[tuple[str, str, dict]] = []
+        self.deletes: list[tuple[str, str]] = []
         self.recovers: list[tuple[str, str, dict]] = []
+        self.restored_entries: list[tuple[str, str, dict]] = []
         self.recover_responses: dict[str, dict] = {}
+        self.banked: list[dict] = []
+        self.session_reads = 0
+
+    def get_sessions(self) -> dict:
+        self.session_reads += 1
+        return {"banked": list(self.banked)}
+
+    def update_session_recovery_entry(self, name: str, unix_user: str, body: dict) -> dict:
+        self.entry_updates.append((name, unix_user, body))
+        if "recoveryPlan" in body:
+            self.updates.append((name, unix_user, body))
+        return {"success": True, "session": name}
 
     def update_session_recovery(self, name: str, unix_user: str, recovery_plan: list[dict]) -> dict:
         body = {"recoveryPlan": recovery_plan}
-        self.updates.append((name, unix_user, body))
+        return self.update_session_recovery_entry(name, unix_user, body)
+
+    def forget_session_bank(self, name: str, unix_user: str) -> dict:
+        self.deletes.append((name, unix_user))
+        return {"success": True, "removed": True, "session": name}
+
+    def restore_session_bank_entry(self, name: str, unix_user: str, entry: dict) -> dict:
+        self.restored_entries.append((name, unix_user, json.loads(json.dumps(entry))))
         return {"success": True, "session": name}
 
     def recover_session(self, name: str, unix_user: str, body: dict) -> dict:
@@ -349,6 +377,17 @@ class RecordingHTTPRunner:
     def check(self, probe: dict) -> dict:
         self.calls.append(probe)
         return {"ok": True, "status": probe.get("expectStatus", 200)}
+
+
+class SequencedHTTPRunner:
+    def __init__(self, statuses: list[bool]) -> None:
+        self.statuses = list(statuses)
+        self.calls: list[dict] = []
+
+    def check(self, probe: dict) -> dict:
+        self.calls.append(probe)
+        ok = self.statuses.pop(0) if self.statuses else False
+        return {"ok": ok, "status": probe.get("expectStatus", 200) if ok else 503}
 
 
 class ClientTest(unittest.TestCase):
@@ -920,12 +959,152 @@ class SnapshotTest(unittest.TestCase):
         self.assertFalse(managed["restartAllowed"])
         self.assertEqual(managed["managerKind"], "systemd-user")
 
-    def test_snapshot_posts_before_manifest_write_and_leaves_no_manifest_on_api_failure(self) -> None:
+    def test_snapshot_stages_manifest_before_any_api_post(self) -> None:
         sessions = [{"sessionName": "velis", "unixUser": "alice", "descriptors": [session_bank_descriptor("velis")]}]
         with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "not-a-directory"
+            output_dir.write_text("blocking file", encoding="utf-8")
+            client = RecordingClient()
             with self.assertRaises(RuntimeError):
-                snapshot.create_snapshot(FailingUpdateClient(), sessions, Path(tmp), now="2026-07-15T10:00:00Z")
-            self.assertEqual(list(Path(tmp).iterdir()), [])
+                snapshot.create_snapshot(client, sessions, output_dir, now="2026-07-15T10:00:00Z")
+            self.assertEqual(client.session_reads, 0)
+            self.assertEqual(client.updates, [])
+
+    def test_snapshot_second_post_failure_rolls_back_previous_bank_state_without_final_manifest(self) -> None:
+        old_desc = session_bank_descriptor("velis", pane_id="%old")
+        new_desc = session_bank_descriptor("velis", pane_id="%new")
+        sessions = [
+            {"sessionName": "velis", "unixUser": "alice", "descriptors": [new_desc]},
+            {"sessionName": "bridge", "unixUser": "alice", "descriptors": [session_bank_descriptor("bridge")]},
+        ]
+
+        class FailingSecondUpdateClient(RecordingClient):
+            def update_session_recovery(self, name: str, unix_user: str, recovery_plan: list[dict]) -> dict:
+                result = super().update_session_recovery(name, unix_user, recovery_plan)
+                if len(self.updates) == 2:
+                    raise RuntimeError("second post failed")
+                return result
+
+        client = FailingSecondUpdateClient()
+        client.banked = [{"name": "velis", "unixUser": "alice", "recoveryPlan": [old_desc], "live": False}]
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(RuntimeError, "second post failed"):
+                snapshot.create_snapshot(client, sessions, Path(tmp), now="2026-07-15T10:00:00Z")
+            self.assertEqual(list(Path(tmp).glob("*.json")), [])
+            self.assertEqual(len(list(Path(tmp).glob("*.pending"))), 1)
+        self.assertEqual(client.session_reads, 1)
+        self.assertEqual(client.restored_entries, [("velis", "alice", {"name": "velis", "unixUser": "alice", "recoveryPlan": [old_desc], "live": False})])
+
+    def test_snapshot_second_post_failure_restores_existing_legacy_absent_plan_exactly(self) -> None:
+        previous = {
+            "name": "legacy-agent",
+            "unixUser": "alice",
+            "group": "codex",
+            "windows": 1,
+            "attached": False,
+            "live": False,
+            "firstSeen": "2026-07-09T00:00:00Z",
+            "lastSeen": "2026-07-09T00:00:00Z",
+            "recoveryKind": "agent",
+            "agentKind": "codex",
+            "agentSessionId": CODEX_ID,
+            "resumeCommand": f"codex resume {CODEX_ID}",
+            "cwd": "/home/alice/project",
+        }
+        sessions = [
+            {"sessionName": "legacy-agent", "unixUser": "alice", "descriptors": [session_bank_descriptor("legacy-agent")]},
+            {"sessionName": "bridge", "unixUser": "alice", "descriptors": [session_bank_descriptor("bridge")]},
+        ]
+
+        class FailingSecondUpdateClient(RecordingClient):
+            def update_session_recovery(self, name: str, unix_user: str, recovery_plan: list[dict]) -> dict:
+                result = super().update_session_recovery(name, unix_user, recovery_plan)
+                if len(self.updates) == 2:
+                    raise RuntimeError("second post failed")
+                return result
+
+        client = FailingSecondUpdateClient()
+        client.banked = [json.loads(json.dumps(previous))]
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(RuntimeError, "second post failed"):
+                snapshot.create_snapshot(client, sessions, Path(tmp), now="2026-07-15T10:00:00Z")
+            self.assertEqual(list(Path(tmp).glob("*.json")), [])
+            self.assertEqual(len(list(Path(tmp).glob("*.pending"))), 1)
+        self.assertEqual(client.restored_entries, [("legacy-agent", "alice", previous)])
+        self.assertEqual(client.deletes, [])
+
+    def test_snapshot_final_rename_failure_rolls_back_new_bank_posts(self) -> None:
+        sessions = [
+            {"sessionName": "velis", "unixUser": "alice", "descriptors": [session_bank_descriptor("velis")]},
+            {"sessionName": "bridge", "unixUser": "alice", "descriptors": [session_bank_descriptor("bridge")]},
+        ]
+        client = RecordingClient()
+        original_replace = manifest.os.replace
+
+        def failing_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+            if str(src).endswith(".pending"):
+                raise OSError("final rename failed")
+            original_replace(src, dst)
+
+        manifest.os.replace = failing_replace
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                with self.assertRaisesRegex(RuntimeError, "final rename failed"):
+                    snapshot.create_snapshot(client, sessions, Path(tmp), now="2026-07-15T10:00:00Z")
+                self.assertEqual(list(Path(tmp).glob("*.json")), [])
+                self.assertEqual(len(list(Path(tmp).glob("*.pending"))), 1)
+        finally:
+            manifest.os.replace = original_replace
+        self.assertEqual(client.deletes, [("bridge", "alice"), ("velis", "alice")])
+
+    def test_snapshot_final_rename_failure_restores_present_empty_entry_and_deletes_only_new_posts(self) -> None:
+        previous = {
+            "name": "unsafe-empty",
+            "unixUser": "alice",
+            "group": "codex",
+            "windows": 1,
+            "attached": False,
+            "live": False,
+            "firstSeen": "2026-07-09T00:00:00Z",
+            "lastSeen": "2026-07-09T00:00:00Z",
+            "recoveryKind": "unresolved",
+            "recoveryPlan": [],
+        }
+        sessions = [
+            {"sessionName": "unsafe-empty", "unixUser": "alice", "descriptors": [session_bank_descriptor("unsafe-empty")]},
+            {"sessionName": "new-bank", "unixUser": "alice", "descriptors": [session_bank_descriptor("new-bank")]},
+        ]
+        client = RecordingClient()
+        client.banked = [json.loads(json.dumps(previous))]
+        original_replace = manifest.os.replace
+
+        def failing_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+            if str(src).endswith(".pending"):
+                raise OSError("final rename failed")
+            original_replace(src, dst)
+
+        manifest.os.replace = failing_replace
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                with self.assertRaisesRegex(RuntimeError, "final rename failed"):
+                    snapshot.create_snapshot(client, sessions, Path(tmp), now="2026-07-15T10:00:00Z")
+                self.assertEqual(list(Path(tmp).glob("*.json")), [])
+                self.assertEqual(len(list(Path(tmp).glob("*.pending"))), 1)
+        finally:
+            manifest.os.replace = original_replace
+        self.assertEqual(client.restored_entries, [("unsafe-empty", "alice", previous)])
+        self.assertEqual(client.deletes, [("new-bank", "alice")])
+
+    def test_snapshot_success_accepts_manifest_after_all_posts(self) -> None:
+        sessions = [{"sessionName": "velis", "unixUser": "alice", "descriptors": [session_bank_descriptor("velis")]}]
+        client = RecordingClient()
+        with tempfile.TemporaryDirectory() as tmp:
+            result = snapshot.create_snapshot(client, sessions, Path(tmp), now="2026-07-15T10:00:00Z")
+            self.assertTrue(result.path.exists())
+            self.assertEqual(result.path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(list(Path(tmp).glob("*.pending")), [])
+        self.assertEqual([(name, user) for name, user, _ in client.updates], [("velis", "alice")])
+        self.assertEqual(client.deletes, [])
 
     def test_snapshot_cli_collects_owner_evidence_and_allows_typed_managed_records(self) -> None:
         proc = FakeProcReader(
@@ -1069,6 +1248,98 @@ class RestoreTest(unittest.TestCase):
         restore.restore_manifest(doc, client, status_runner=RecordingStatusRunner(), topology_only=True, verifier=lambda **_: {"ok": True, "sessions": []})
         self.assertEqual(client.recovers, [("velis", "alice", {"topologyOnly": True})])
 
+    def test_restore_writes_managed_status_registry_from_actual_status_probe(self) -> None:
+        doc = manifest.new_manifest([managed_session("bridge", "bridge.service")], now="2026-07-15T10:00:00Z")
+        status = RecordingStatusRunner()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "managed-status.json"
+            result = restore.restore_manifest(
+                doc,
+                RecordingClient(),
+                status_runner=status,
+                verifier=lambda **_: {"ok": True, "sessions": []},
+                managed_status_output=output,
+            )
+            self.assertTrue(result["ok"], result)
+            self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+            entries = json.loads(output.read_text(encoding="utf-8"))
+        self.assertEqual(status.calls, [{"probe": {"kind": "systemd-user", "unit": "bridge.service", "expectActiveState": "active"}, "unixUser": "alice"}])
+        self.assertEqual(len(entries), 1)
+        entry = entries[0]
+        self.assertEqual(entry["name"], "bridge")
+        self.assertEqual(entry["sessionName"], "bridge")
+        self.assertEqual(entry["unixUser"], "alice")
+        self.assertEqual(entry["owner"], {"kind": "external_manager", "ref": "systemd:user/bridge.service", "mayRestart": False})
+        self.assertEqual(entry["managerKind"], "systemd-user")
+        self.assertEqual(entry["managerRef"], "bridge.service")
+        self.assertEqual(entry["status"]["activeState"], "active")
+        self.assertTrue(entry["status"]["ok"])
+        self.assertEqual(entry["storageKind"], "managed-status")
+        self.assertEqual(entry["sourceKind"], "restore")
+        self.assertNotIn("descriptors", entry)
+        self.assertNotIn("statusProbe", entry)
+        self.assertNotIn("restartAllowed", entry)
+
+    def test_restore_managed_status_output_validation_matches_go_reader_strictness(self) -> None:
+        base = {
+            "name": "bridge",
+            "sessionName": "bridge",
+            "unixUser": "alice",
+            "owner": {"kind": "external_manager", "ref": "systemd:user/bridge.service", "mayRestart": False},
+            "managerKind": "systemd-user",
+            "managerRef": "bridge.service",
+            "status": {"ok": True, "activeState": "active", "checkedAt": "2026-07-15T10:00:00Z"},
+            "storageKind": "managed-status",
+            "sourceKind": "restore",
+        }
+        restore._validate_managed_status_output_entry(json.loads(json.dumps(base)))
+        cases = {
+            "missing unix user": lambda entry: entry.pop("unixUser"),
+            "unsafe unix user": lambda entry: entry.update({"unixUser": "Alice"}),
+            "dotted session name": lambda entry: entry.update({"name": "bridge.worker", "sessionName": "bridge.worker"}),
+            "plus session name": lambda entry: entry.update({"name": "bridge+worker", "sessionName": "bridge+worker"}),
+            "overlong session name": lambda entry: entry.update({"name": "a" * 51, "sessionName": "a" * 51}),
+            "owner may restart": lambda entry: entry["owner"].update({"mayRestart": True}),
+            "owner ref mismatch": lambda entry: entry["owner"].update({"ref": "systemd:user/other.service"}),
+            "ok activeState rejected": lambda entry: entry["status"].update({"activeState": "ok"}),
+            "inactive cannot be ok": lambda entry: entry["status"].update({"activeState": "inactive"}),
+            "wrong storage kind": lambda entry: entry.update({"storageKind": "banked"}),
+            "wrong source kind": lambda entry: entry.update({"sourceKind": "manual"}),
+        }
+        for name, mutate in cases.items():
+            with self.subTest(name=name):
+                entry = json.loads(json.dumps(base))
+                mutate(entry)
+                with self.assertRaises(ValueError):
+                    restore._validate_managed_status_output_entry(entry)
+
+    def test_managed_status_atomic_write_uses_unique_temp_files_under_concurrency(self) -> None:
+        def entry(index: int) -> dict:
+            unit = f"bridge-{index}.service"
+            return {
+                "name": f"bridge-{index}",
+                "sessionName": f"bridge-{index}",
+                "unixUser": "alice",
+                "owner": {"kind": "external_manager", "ref": f"systemd:user/{unit}", "mayRestart": False},
+                "managerKind": "systemd-user",
+                "managerRef": unit,
+                "status": {"ok": True, "activeState": "active", "checkedAt": "2026-07-15T10:00:00Z"},
+                "storageKind": "managed-status",
+                "sourceKind": "restore",
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "managed-status.json"
+            values = [[entry(index)] for index in range(24)]
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                list(pool.map(lambda value: restore._atomic_write_json_0600(output, value), values))
+            self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+            final = json.loads(output.read_text(encoding="utf-8"))
+            self.assertIn(final, values)
+            self.assertEqual(list(Path(tmp).glob("managed-status.json.tmp")), [])
+            for leftover in Path(tmp).glob("managed-status.json.*.tmp"):
+                self.fail(f"leftover managed status temp file: {leftover}")
+
     def test_skip_live_backend_response_is_not_success_without_verification_health(self) -> None:
         client = RecordingClient()
         client.recover_responses["velis"] = {"success": True, "action": "skip-live", "session": "velis"}
@@ -1110,6 +1381,54 @@ class RestoreTest(unittest.TestCase):
         result = restore.restore_manifest(doc, client, status_runner=RecordingStatusRunner(), observed_provider=provider)
         self.assertTrue(result["ok"], result)
         self.assertEqual(calls, ["recollected"])
+
+    def test_restore_passes_bounded_readiness_to_verifier(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def verifier(**kwargs: Any) -> dict[str, Any]:
+            captured.update(kwargs)
+            return {"ok": True, "sessions": [{"sessionName": "velis", "unixUser": "alice", "ok": True, "errors": []}]}
+
+        doc = manifest.new_manifest(
+            [live_session_record("velis", [session_bank_descriptor("velis")])],
+            now="2026-07-15T10:00:00Z",
+        )
+        result = restore.restore_manifest(
+            doc,
+            RecordingClient(),
+            status_runner=RecordingStatusRunner(),
+            verifier=verifier,
+            readiness_seconds=10,
+            readiness_interval_seconds=0.5,
+            stability_seconds=2,
+        )
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(captured["readiness_seconds"], 10)
+        self.assertEqual(captured["readiness_interval_seconds"], 0.5)
+        self.assertEqual(captured["stability_seconds"], 2)
+
+    def test_restore_result_preserves_readiness_and_stability_evidence(self) -> None:
+        doc = manifest.new_manifest(
+            [live_session_record("velis", [session_bank_descriptor("velis")])],
+            now="2026-07-15T10:00:00Z",
+        )
+        result = restore.restore_manifest(
+            doc,
+            RecordingClient(),
+            status_runner=RecordingStatusRunner(),
+            verifier=lambda **_: {
+                "ok": True,
+                "sessions": [{"sessionName": "velis", "unixUser": "alice", "ok": True, "errors": []}],
+                "readinessSeconds": 5,
+                "readinessSamples": [{"ok": True, "elapsedSeconds": 0}],
+                "stabilitySeconds": 2,
+                "stabilitySamples": [{"ok": True, "elapsedSeconds": 1}],
+            },
+        )
+        self.assertEqual(result["readinessSeconds"], 5)
+        self.assertEqual(result["readinessSamples"], [{"ok": True, "elapsedSeconds": 0}])
+        self.assertEqual(result["stabilitySeconds"], 2)
+        self.assertEqual(result["stabilitySamples"], [{"ok": True, "elapsedSeconds": 1}])
 
     def test_restore_verification_uses_derived_python_http_helper_probe(self) -> None:
         sessions = snapshot.sessions_from_collected_evidence([python_http_collected_evidence()], unix_user="alice")
@@ -1160,6 +1479,141 @@ class VerifyTest(unittest.TestCase):
         result = runner.check({"kind": "http-get", "url": "http://127.0.0.1:8088/", "expectStatus": 200})
         self.assertFalse(result["ok"])
         self.assertEqual(opener.calls, ["http://127.0.0.1:8088/"])
+
+    def test_readiness_polls_helper_until_manifest_is_fully_healthy(self) -> None:
+        helper = {"kind": "http-get", "url": "http://127.0.0.1:8088/", "expectStatus": 200}
+        python = python_descriptor("velis")
+        expected = manifest.new_manifest(
+            [
+                session_record(
+                    "velis",
+                    [python],
+                    verification=[verification_for_descriptor(python, helper=helper)],
+                )
+            ],
+            now="2026-07-15T10:00:00Z",
+        )
+        sleeps: list[float] = []
+        http = SequencedHTTPRunner([False, False, True])
+        result = verify.verify_manifest(
+            expected,
+            observed_sessions=[session_record("velis", [python], verification=[verification_for_descriptor(python, helper=helper)])],
+            http_runner=http,
+            readiness_seconds=2,
+            readiness_interval_seconds=0.5,
+            sleep=sleeps.append,
+        )
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(sleeps, [0.5, 0.5])
+        self.assertEqual(len(http.calls), 3)
+        self.assertEqual(result["readinessSamples"], 3)
+
+    def test_readiness_polls_until_descriptor_appears(self) -> None:
+        expected = manifest.new_manifest(
+            [live_session_record("velis", [session_bank_descriptor("velis")])],
+            now="2026-07-15T10:00:00Z",
+        )
+        observed = [live_session_record("velis", [session_bank_descriptor("velis")])]
+        samples = iter([[], [], observed])
+        provider_calls: list[str] = []
+
+        def provider() -> list[dict]:
+            provider_calls.append("sample")
+            return next(samples)
+
+        sleeps: list[float] = []
+        result = verify.verify_manifest(
+            expected,
+            observed_provider=provider,
+            readiness_seconds=2,
+            readiness_interval_seconds=0.5,
+            sleep=sleeps.append,
+        )
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(provider_calls, ["sample", "sample", "sample"])
+        self.assertEqual(sleeps, [0.5, 0.5])
+
+    def test_readiness_times_out_permanent_descriptor_mismatch_without_stability_sleep(self) -> None:
+        expected = manifest.new_manifest(
+            [live_session_record("velis", [session_bank_descriptor("velis")])],
+            now="2026-07-15T10:00:00Z",
+        )
+        wrong = session_bank_descriptor("velis")
+        wrong["agent"]["nativeSessionId"] = CLAUDE_ID
+        observed = [live_session_record("velis", [wrong])]
+        sleeps: list[float] = []
+        result = verify.verify_manifest(
+            expected,
+            observed_provider=lambda: observed,
+            readiness_seconds=1,
+            readiness_interval_seconds=0.5,
+            stability_seconds=3,
+            sleep=sleeps.append,
+        )
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(sleeps, [0.5, 0.5])
+        self.assertEqual(result["readinessSamples"], 3)
+        self.assertEqual(result["stabilitySamples"], 1)
+        self.assertIn("missing expected descriptor", " ".join(result["sessions"][0]["errors"]))
+
+    def test_readiness_and_stability_are_independent_samples(self) -> None:
+        expected = manifest.new_manifest(
+            [live_session_record("velis", [session_bank_descriptor("velis")])],
+            now="2026-07-15T10:00:00Z",
+        )
+        observed = [live_session_record("velis", [session_bank_descriptor("velis")])]
+        samples = iter([[], observed, observed])
+        calls: list[str] = []
+
+        def provider() -> list[dict]:
+            calls.append("sample")
+            return next(samples)
+
+        sleeps: list[float] = []
+        result = verify.verify_manifest(
+            expected,
+            observed_provider=provider,
+            readiness_seconds=2,
+            readiness_interval_seconds=0.5,
+            stability_seconds=3,
+            sleep=sleeps.append,
+        )
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(calls, ["sample", "sample", "sample"])
+        self.assertEqual(sleeps, [0.5, 3])
+        self.assertEqual(result["readinessSamples"], 2)
+        self.assertEqual(result["stabilitySamples"], 2)
+
+    def test_tmux_window_layout_matches_semantically_after_reallocated_pane_ids(self) -> None:
+        def topology(layout: str) -> dict:
+            return {
+                "sessionName": "velis",
+                "windowName": "agent",
+                "windowLayout": layout,
+                "paneCurrentPath": "/home/alice/project",
+            }
+
+        same_layout_pairs = [
+            ("b25d,80x24,0,0,0", "91aa,80x24,0,0,4"),
+            (
+                "aaaa,160x40,0,0{80x40,0,0,1,79x40,81,0[79x20,81,0,2,79x19,81,21,3]}",
+                "bbbb,160x40,0,0{80x40,0,0,10,79x40,81,0[79x20,81,0,11,79x19,81,21,12]}",
+            ),
+        ]
+        for old_layout, new_layout in same_layout_pairs:
+            with self.subTest(old=old_layout, new=new_layout):
+                self.assertTrue(verify._topology_matches(topology(old_layout), topology(new_layout)))
+
+        different_layout_pairs = [
+            ("b25d,80x24,0,0,0", "91aa,81x24,0,0,4"),
+            ("aaaa,80x24,0,0[80x12,0,0,1,80x11,0,13,2]", "bbbb,80x24,0,0{80x12,0,0,3,80x11,0,13,4}"),
+            ("aaaa,80x24,0,0[80x12,0,0,1,80x11,0,13,2]", "bbbb,80x24,0,0[80x11,0,13,4,80x12,0,0,3]"),
+            ("aaaa,80x24,0,0[80x12,0,0,1,80x11,0,13,2]", "bbbb,80x24,0,0[80x12,0,0,3]"),
+            ("not-a-layout", "91aa,80x24,0,0,4"),
+        ]
+        for old_layout, new_layout in different_layout_pairs:
+            with self.subTest(old=old_layout, new=new_layout):
+                self.assertFalse(verify._topology_matches(topology(old_layout), topology(new_layout)))
 
     def test_verify_requires_exact_agents_pane_health_helper_endpoint_and_managed_status(self) -> None:
         helper = {"kind": "http-get", "url": "http://127.0.0.1:8088/", "expectStatus": 200}
@@ -1212,6 +1666,78 @@ class VerifyTest(unittest.TestCase):
         bad = verify.verify_manifest(expected, observed_sessions=bad_observed, status_runner=status, http_runner=http, stability_seconds=0)
         self.assertFalse(bad["ok"])
         self.assertIn("missing expected descriptor", " ".join(bad["sessions"][0]["errors"]))
+
+    def test_verify_matches_reallocated_single_pane_windows_by_semantic_layout(self) -> None:
+        helper = {"kind": "http-get", "url": "http://127.0.0.1:8088/", "expectStatus": 200}
+        expected_hermes = retarget_descriptor(
+            hermes_descriptor("ctx-sh7-smoke"),
+            session_id="$old",
+            window_index=0,
+            window_name="agent",
+            window_layout="b25d,80x24,0,0,0",
+            pane_index=0,
+            pane_id="%0",
+            cwd="/home/alice/project",
+        )
+        expected_python = retarget_descriptor(
+            python_descriptor("ctx-sh7-smoke"),
+            session_id="$old",
+            window_index=1,
+            window_name="server",
+            window_layout="aaaa,80x24,0,0,1",
+            pane_index=0,
+            pane_id="%1",
+            cwd="/home/alice/project/public",
+        )
+        observed_hermes = retarget_descriptor(
+            hermes_descriptor("ctx-sh7-smoke"),
+            session_id="$new",
+            window_index=0,
+            window_name="agent",
+            window_layout="91aa,80x24,0,0,4",
+            pane_index=0,
+            pane_id="%4",
+            cwd="/home/alice/project",
+        )
+        observed_python = retarget_descriptor(
+            python_descriptor("ctx-sh7-smoke"),
+            session_id="$new",
+            window_index=1,
+            window_name="server",
+            window_layout="4488,80x24,0,0,5",
+            pane_index=0,
+            pane_id="%5",
+            cwd="/home/alice/project/public",
+        )
+        expected = manifest.new_manifest(
+            [
+                session_record(
+                    "ctx-sh7-smoke",
+                    [expected_hermes, expected_python],
+                    verification=[
+                        verification_for_descriptor(expected_hermes),
+                        verification_for_descriptor(expected_python, helper=helper),
+                    ],
+                )
+            ],
+            now="2026-07-15T10:00:00Z",
+        )
+        observed = session_record(
+            "ctx-sh7-smoke",
+            [observed_hermes, observed_python],
+            verification=[
+                verification_for_descriptor(observed_hermes),
+                verification_for_descriptor(observed_python, helper=helper),
+            ],
+        )
+        result = verify.verify_manifest(expected, observed_sessions=[observed], http_runner=RecordingHTTPRunner(), stability_seconds=0)
+        self.assertTrue(result["ok"], result)
+
+        bad_observed = json.loads(json.dumps(observed))
+        bad_observed["descriptors"][0]["topology"]["windowLayout"] = "91aa,81x24,0,0,4"
+        bad = verify.verify_manifest(expected, observed_sessions=[bad_observed], http_runner=RecordingHTTPRunner(), stability_seconds=0)
+        self.assertFalse(bad["ok"], bad)
+        self.assertIn("windowLayout", " ".join(bad["sessions"][0]["errors"]))
 
     def test_verify_matches_reallocated_tmux_ids_by_logical_window_and_pane_ordinals(self) -> None:
         expected_session, observed_session, helper = reallocated_verify_sessions()
@@ -1333,12 +1859,16 @@ class VerifyTest(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 verify.main(["--manifest", str(manifest_path), "--observed", str(observed_path)])
             sleeps: list[float] = []
-            code = verify.main(
-                ["--manifest", str(manifest_path), "--observed", str(observed_path), "--allow-test-observed"],
-                sleep=sleeps.append,
-            )
+            stdout = StringIO()
+            with redirect_stdout(stdout):
+                code = verify.main(
+                    ["--manifest", str(manifest_path), "--observed", str(observed_path), "--allow-test-observed"],
+                    sleep=sleeps.append,
+                )
             self.assertEqual(code, 0)
             self.assertEqual(sleeps, [30])
+            result = json.loads(stdout.getvalue())
+            self.assertEqual(result["readinessSeconds"], 30)
         finally:
             manifest_path.unlink(missing_ok=True)
             observed_path.unlink(missing_ok=True)

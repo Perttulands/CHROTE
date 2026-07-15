@@ -289,6 +289,24 @@ export interface WorkloadRecoveryDescriptor {
   unresolvedReason?: string
 }
 
+export interface ManagedRecoveryHealthStatus {
+  ok: boolean
+  activeState: string
+  checkedAt: string
+}
+
+export interface ManagedRecoveryStatusEntry {
+  name: string
+  sessionName: string
+  unixUser?: LaunchUser
+  owner: WorkloadRecoveryOwner
+  managerKind: string
+  managerRef: string
+  status: ManagedRecoveryHealthStatus
+  storageKind: string
+  sourceKind: string
+}
+
 export interface SendToSessionPayload {
   text: string
   files: File[]
@@ -312,6 +330,7 @@ export interface SessionsResponse {
   sessions: TmuxSession[]
   grouped: Record<string, TmuxSession[]>
   banked?: SessionBankEntry[]
+  managed?: ManagedRecoveryStatusEntry[]
   terminalUsers?: LaunchUser[]
   timestamp: string
   error?: string
@@ -363,6 +382,7 @@ export interface DashboardState {
   sessions: TmuxSession[]
   groupedSessions: Record<string, TmuxSession[]>
   sessionBank: SessionBankEntry[]
+  managedSessions: ManagedRecoveryStatusEntry[]
   loading: boolean
   error: string | null
 

@@ -85,6 +85,12 @@ class ManifestPath:
     path: Path
 
 
+@dataclass(frozen=True)
+class StagedManifest:
+    pending_path: Path
+    final_path: Path
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -113,22 +119,53 @@ def load_manifest(path: str | Path) -> dict[str, Any]:
 
 
 def write_timestamped_manifest(doc: dict[str, Any], output_dir: str | Path, now: str | None = None) -> Path:
+    staged = stage_pending_manifest(doc, output_dir, now=now)
+    try:
+        return accept_pending_manifest(staged)
+    except Exception:
+        staged.pending_path.unlink(missing_ok=True)
+        raise
+
+
+def stage_pending_manifest(doc: dict[str, Any], output_dir: str | Path, now: str | None = None) -> StagedManifest:
     validate_manifest(doc)
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     stamp = _timestamp_slug(now or doc.get("createdAt") or utc_now())
     path = output / f"chrote-tmux-recovery-{stamp}.json"
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    pending_path = output / f"{path.name}.pending"
+    fd = os.open(pending_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(doc, handle, indent=2, sort_keys=True)
             handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
     except Exception:
         try:
-            path.unlink()
+            pending_path.unlink()
         finally:
             raise
-    return path
+    os.chmod(pending_path, 0o600)
+    _fsync_dir(output)
+    return StagedManifest(pending_path=pending_path, final_path=path)
+
+
+def accept_pending_manifest(staged: StagedManifest) -> Path:
+    if staged.final_path.exists():
+        raise FileExistsError(f"manifest already exists: {staged.final_path}")
+    os.replace(staged.pending_path, staged.final_path)
+    os.chmod(staged.final_path, 0o600)
+    _fsync_dir(staged.final_path.parent)
+    return staged.final_path
+
+
+def _fsync_dir(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def merge_preserving_extras(current: dict[str, Any], baseline: dict[str, Any] | None) -> dict[str, Any]:

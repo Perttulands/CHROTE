@@ -37,11 +37,26 @@ class ChroteClient:
         return self._request("GET", "/api/tmux/sessions")
 
     def update_session_recovery(self, name: str, unix_user: str, recovery_plan: list[dict[str, Any]]) -> dict[str, Any]:
+        return self.update_session_recovery_entry(name, unix_user, {"recoveryPlan": recovery_plan})
+
+    def update_session_recovery_entry(self, name: str, unix_user: str, body: dict[str, Any]) -> dict[str, Any]:
         query = _unix_user_query(unix_user)
         return self._request(
             "POST",
             f"/api/tmux/session-bank/{parse.quote(name, safe='')}/recovery{query}",
-            {"recoveryPlan": recovery_plan},
+            body,
+        )
+
+    def forget_session_bank(self, name: str, unix_user: str) -> dict[str, Any]:
+        query = _unix_user_query(unix_user)
+        return self._request("DELETE", f"/api/tmux/session-bank/{parse.quote(name, safe='')}{query}")
+
+    def restore_session_bank_entry(self, name: str, unix_user: str, entry: dict[str, Any]) -> dict[str, Any]:
+        query = _unix_user_query(unix_user)
+        return self._request(
+            "PUT",
+            f"/api/tmux/session-bank/{parse.quote(name, safe='')}/entry{query}",
+            entry,
         )
 
     def recover_session(self, name: str, unix_user: str, body: dict[str, Any]) -> dict[str, Any]:

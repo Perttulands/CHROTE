@@ -36,6 +36,7 @@ function sessionReturn(updateSettings: ReturnType<typeof vi.fn>, overrides: Reco
     terminalUsers,
     updateSettings,
     sessionBank: [],
+    managedSessions: [],
     sessions: [],
     refreshSessions,
     createSession,
@@ -418,15 +419,15 @@ describe('SettingsView Session Bank', () => {
     ].forEach(([name, staleCommand]) => {
       const entry = within(screen.getByRole('article', { name: `Session Bank entry ${name}` }))
       expect(entry.getByText('Unresolved / unsafe')).toBeInTheDocument()
-      expect(entry.getByRole('button', { name: `Restore topology only for ${name}` })).toBeInTheDocument()
+      expect(entry.queryByRole('button', { name: `Restore topology only for ${name}` })).not.toBeInTheDocument()
       expect(entry.queryByRole('button', { name: `Copy resume command for ${name}` })).not.toBeInTheDocument()
       expect(entry.queryByRole('button', { name: `Recreate shell for ${name}` })).not.toBeInTheDocument()
-      expect(entry.queryByRole('button', { name: `Remove ${name} from session bank` })).not.toBeInTheDocument()
+      expect(entry.getByRole('button', { name: `Remove ${name} from session bank` })).toBeInTheDocument()
       expect(entry.queryByText(staleCommand)).not.toBeInTheDocument()
     })
   })
 
-  it('renders typed plan-shape failures as topology-only without legacy or mutating actions', () => {
+  it('renders typed plan-shape failures as unresolved cleanup-only entries', () => {
     const updateSettings = vi.fn()
     mockUseSession.mockReturnValue(sessionReturn(updateSettings, {
       sessionBank: [
@@ -455,31 +456,18 @@ describe('SettingsView Session Bank', () => {
 
     const entry = within(screen.getByRole('article', { name: 'Session Bank entry duplicate-pane-id' }))
     expect(entry.getByText('Unresolved / unsafe')).toBeInTheDocument()
-    expect(entry.getByRole('button', { name: 'Restore topology only for duplicate-pane-id' })).toBeInTheDocument()
+    expect(entry.queryByRole('button', { name: 'Restore topology only for duplicate-pane-id' })).not.toBeInTheDocument()
     expect(entry.queryByRole('button', { name: 'Recover workload for duplicate-pane-id' })).not.toBeInTheDocument()
     expect(entry.queryByRole('button', { name: 'Copy resume command for duplicate-pane-id' })).not.toBeInTheDocument()
     expect(entry.queryByRole('button', { name: 'Recreate shell for duplicate-pane-id' })).not.toBeInTheDocument()
-    expect(entry.queryByRole('button', { name: 'Remove duplicate-pane-id from session bank' })).not.toBeInTheDocument()
+    expect(entry.getByRole('button', { name: 'Remove duplicate-pane-id from session bank' })).toBeInTheDocument()
     expect(entry.queryByText('tmux attach -t duplicate-pane-id')).not.toBeInTheDocument()
   })
 
-  it('renders managed and unresolved plans as read-only or topology-only without fake resume actions', () => {
+  it('renders managed registry entries as read-only and unresolved bank plans as cleanup-only', () => {
     const updateSettings = vi.fn()
     mockUseSession.mockReturnValue(sessionReturn(updateSettings, {
       sessionBank: [
-        descriptorBankedSession({
-          name: 'systemd-worker',
-          recoveryPlan: [
-            recoveryDescriptor({
-              mode: 'managed',
-              owner: { kind: 'external_manager', ref: 'systemd:user/velis.service', mayRestart: false },
-              topology: { ...recoveryDescriptor().topology, sessionName: 'systemd-worker' },
-              workloadKind: 'managed',
-              agent: undefined,
-              evidenceSource: 'manager',
-            }),
-          ],
-        }),
         descriptorBankedSession({
           name: 'mixed-agent',
           resumeCommand: 'codex resume stale-legacy-id',
@@ -501,15 +489,31 @@ describe('SettingsView Session Bank', () => {
           ],
         }),
       ],
+      managedSessions: [
+        {
+          name: 'systemd-worker',
+          sessionName: 'systemd-worker',
+          unixUser: 'alice',
+          owner: { kind: 'external_manager', ref: 'systemd:user/velis.service', mayRestart: false },
+          managerKind: 'systemd-user',
+          managerRef: 'velis.service',
+          status: { ok: true, activeState: 'active', checkedAt: '2026-07-15T10:00:00Z' },
+          storageKind: 'managed-status',
+          sourceKind: 'restore',
+        },
+      ],
     }))
 
     render(<SettingsView />)
     fireEvent.click(screen.getByRole('button', { name: 'Expand session bank' }))
 
-    const managed = within(screen.getByRole('article', { name: 'Session Bank entry systemd-worker' }))
+    expect(screen.getByText('1 managed')).toBeInTheDocument()
+
+    const managed = within(screen.getByRole('article', { name: 'Managed session systemd-worker' }))
     expect(managed.getByText('Managed read-only')).toBeInTheDocument()
     expect(managed.getByText('Owner external_manager · systemd:user/velis.service')).toBeInTheDocument()
-    expect(managed.getByText('Read-only: another manager owns this workload.')).toBeInTheDocument()
+    expect(managed.getByText('Manager systemd-user · velis.service')).toBeInTheDocument()
+    expect(managed.getByText('Status active · OK')).toBeInTheDocument()
     expect(managed.queryByRole('button', { name: /Recover workload/i })).not.toBeInTheDocument()
     expect(managed.queryByRole('button', { name: /Restore topology only/i })).not.toBeInTheDocument()
     expect(managed.queryByRole('button', { name: /Copy resume command/i })).not.toBeInTheDocument()
@@ -520,10 +524,10 @@ describe('SettingsView Session Bank', () => {
     expect(unresolved.getByText('Unresolved / unsafe')).toBeInTheDocument()
     expect(unresolved.getByText(/conflicting_evidence/)).toBeInTheDocument()
     expect(unresolved.queryByRole('button', { name: 'Recover workload for mixed-agent' })).not.toBeInTheDocument()
-    expect(unresolved.getByRole('button', { name: 'Restore topology only for mixed-agent' })).toBeInTheDocument()
+    expect(unresolved.queryByRole('button', { name: 'Restore topology only for mixed-agent' })).not.toBeInTheDocument()
     expect(unresolved.queryByRole('button', { name: 'Copy resume command for mixed-agent' })).not.toBeInTheDocument()
     expect(unresolved.queryByRole('button', { name: 'Recreate shell for mixed-agent' })).not.toBeInTheDocument()
-    expect(unresolved.queryByRole('button', { name: 'Remove mixed-agent from session bank' })).not.toBeInTheDocument()
+    expect(unresolved.getByRole('button', { name: 'Remove mixed-agent from session bank' })).toBeInTheDocument()
     expect(unresolved.queryByText('codex resume stale-legacy-id')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Make Persistent/i })).not.toBeInTheDocument()
   })

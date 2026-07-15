@@ -159,7 +159,7 @@ describe('session bank recovery capability', () => {
         }),
         kind: 'unresolved-unsafe',
         canRecoverWorkload: false,
-        canRestoreTopologyOnly: true,
+        canRestoreTopologyOnly: false,
         badgeLabel: 'Unresolved / unsafe',
       },
       {
@@ -207,7 +207,7 @@ describe('session bank recovery capability', () => {
 
     expect(capability.kind).toBe('unresolved-unsafe')
     expect(capability.canRecoverWorkload).toBe(false)
-    expect(capability.canRestoreTopologyOnly).toBe(true)
+    expect(capability.canRestoreTopologyOnly).toBe(false)
     expect(capability.unresolvedReasons).toContain(reason)
   })
 
@@ -276,7 +276,7 @@ describe('session bank recovery capability', () => {
 
     expect(capability.kind).toBe('unresolved-unsafe')
     expect(capability.canRecoverWorkload).toBe(false)
-    expect(capability.canRestoreTopologyOnly).toBe(true)
+    expect(capability.canRestoreTopologyOnly).toBe(false)
   })
 
   it('rejects duplicate pane targets and inconsistent owners as unsafe', () => {
@@ -329,6 +329,6 @@ describe('session bank recovery capability', () => {
 
     expect(capability.kind).toBe('unresolved-unsafe')
     expect(capability.canRecoverWorkload).toBe(false)
-    expect(capability.canRestoreTopologyOnly).toBe(true)
+    expect(capability.canRestoreTopologyOnly).toBe(false)
   })
 })

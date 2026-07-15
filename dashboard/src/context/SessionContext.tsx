@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, ReactNode } from 'react'
-import type { DashboardContextType, TmuxSession, SessionBankEntry, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance, WorkspaceId, TerminalWorkspace, LayoutPreset, LaunchUser, CreateSessionOptions, PersistentAgentPayload, SendToSessionPayload, WindowRevealRequest } from '../types'
+import type { DashboardContextType, TmuxSession, SessionBankEntry, ManagedRecoveryStatusEntry, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance, WorkspaceId, TerminalWorkspace, LayoutPreset, LaunchUser, CreateSessionOptions, PersistentAgentPayload, SendToSessionPayload, WindowRevealRequest } from '../types'
 import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE, MAX_PRESETS, TERMINAL_WORKSPACE_IDS, getSessionKey, getSessionNameFromKey, getSessionPrefixForUser, getSessionUserFromKey, normalizeTerminalUsers, resolveLaunchUser } from '../types'
 import { useToast } from './ToastContext'
 import { apiErrorMessage } from '../apiErrors'
@@ -518,6 +518,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [sessions, setSessions] = useState<TmuxSession[]>([])
   const [groupedSessions, setGroupedSessions] = useState<Record<string, TmuxSession[]>>({})
   const [sessionBank, setSessionBank] = useState<SessionBankEntry[]>([])
+  const [managedSessions, setManagedSessions] = useState<ManagedRecoveryStatusEntry[]>([])
   const [terminalUsers, setTerminalUsers] = useState<LaunchUser[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -726,6 +727,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         setSessions(nextSessions)
         setGroupedSessions(isRecord(data.grouped) ? data.grouped as Record<string, TmuxSession[]> : {})
         setSessionBank(Array.isArray(data.banked) ? data.banked : [])
+        setManagedSessions(Array.isArray(data.managed) ? data.managed : [])
         if (Array.isArray(data.terminalUsers)) {
           setTerminalUsers(normalizeTerminalUsers(data.terminalUsers))
         }
@@ -1305,6 +1307,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     sessions,
     groupedSessions,
     sessionBank,
+    managedSessions,
     terminalUsers,
     loading,
     error,
@@ -1354,6 +1357,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     sessions,
     groupedSessions,
     sessionBank,
+    managedSessions,
     terminalUsers,
     loading,
     error,

@@ -53,9 +53,9 @@ instead of turning weak evidence into a restart command.
 Canonical argv is derived from typed fields only; shell command strings are only
 a rendered view of that argv and must quote unsafe tokens. Codex and Claude use
 UUID resume ids. Hermes uses a validated profile, a native session id, the
-owner-home-bounded managed-venv Python path, module `hermes_cli.main`, and fixed
-`--tui --yolo` flags. Python HTTP server recovery uses only the typed bind,
-port, and directory fields.
+owner-home-bounded managed-venv Python path, and module `hermes_cli.main`.
+Python HTTP server recovery uses only the typed bind, port, and directory
+fields.
 
 ## Rejected Alternatives
 - **Newest-transcript guessing:** rejected. A recent transcript is evidence, not
@@ -104,6 +104,6 @@ command storage.
   topology, ambiguity, and unknown processes.
 - The probe fixtures assert that ambiguity is unresolved rather than newest-wins
   and that outputs do not contain raw `argv` or `env` keys.
-- The Hermes probe fixtures use the production Liora shape:
+- The Hermes probe fixtures use the production resume shape:
   `<ownerHome>/.hermes/hermes-agent-current/venv/bin/python -m hermes_cli.main
-  --profile <profile> [--resume <id>] --tui --yolo`.
+  --profile <profile> [--resume <id>]`.

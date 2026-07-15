@@ -334,7 +334,7 @@ func canonicalRecoveryAgentArgv(agent WorkloadRecoveryAgent, ownerHome string) (
 		if !pathUnderOwnerHome(executable, ownerHome) {
 			return nil, false
 		}
-		return []string{executable, "-m", "hermes_cli.main", "--profile", agent.HermesProfile, "--resume", agent.NativeSessionID, "--tui", "--yolo"}, true
+		return []string{executable, "-m", "hermes_cli.main", "--profile", agent.HermesProfile, "--resume", agent.NativeSessionID}, true
 	default:
 		return nil, false
 	}

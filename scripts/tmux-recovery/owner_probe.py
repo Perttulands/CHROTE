@@ -201,7 +201,7 @@ def _looks_like_known_unsafe_argv(argv: list[str], owner_home: str) -> bool:
 
 
 def _canonical_hermes_argv(argv: list[str], owner_home: str) -> list[str] | None:
-    if len(argv) not in {6, 7, 8, 9}:
+    if len(argv) not in {4, 5, 6, 7, 8, 9}:
         return None
     expected_python = os.path.normpath(os.path.join(owner_home, ".hermes", "hermes-agent-current", "venv", "bin", "python"))
     if os.path.normpath(argv[0]) != expected_python or not _path_under(argv[0], owner_home):
@@ -227,12 +227,12 @@ def _canonical_hermes_argv(argv: list[str], owner_home: str) -> list[str] | None
         index += 1
     if resume and not NATIVE_ID_RE.match(resume):
         return None
-    if argv[index:] != ["--tui", "--yolo"]:
+    tail = argv[index:]
+    if tail not in ([], ["--tui", "--yolo"]):
         return None
     canonical = [expected_python, "-m", "hermes_cli.main", "--profile", profile]
     if resume:
         canonical.extend(["--resume", resume])
-    canonical.extend(["--tui", "--yolo"])
     return canonical
 
 

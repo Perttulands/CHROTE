@@ -1400,6 +1400,40 @@ describe('refreshSessions', () => {
     expect(result.current.sessionBank).toEqual(banked)
   })
 
+  it('stores managed status registry entries separately from banked sessions', async () => {
+    const banked = [{ name: 'banked-agent', unixUser: 'perttu', live: false }]
+    const managed = [{
+      name: 'systemd-worker',
+      sessionName: 'systemd-worker',
+      unixUser: 'perttu',
+      owner: { kind: 'external_manager', ref: 'systemd:user/worker.service', mayRestart: false },
+      managerKind: 'systemd-user',
+      managerRef: 'worker.service',
+      status: { ok: true, activeState: 'active', checkedAt: '2026-07-15T10:00:00Z' },
+      storageKind: 'managed-status',
+      sourceKind: 'restore',
+    }]
+    const fetchMock = vi.fn((): Promise<any> => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({
+        sessions: [],
+        grouped: {},
+        banked,
+        managed,
+        terminalUsers: ['perttu'],
+        timestamp: new Date().toISOString(),
+      }),
+      text: () => Promise.resolve(''),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderSession()
+
+    await waitFor(() => expect(result.current.sessionBank).toEqual(banked))
+    expect(result.current.managedSessions).toEqual(managed)
+    expect(result.current.sessionBank).not.toContainEqual(expect.objectContaining({ name: 'systemd-worker' }))
+  })
+
   it('preserves terminal bindings when a refresh fails instead of sweeping on uncertainty', async () => {
     localStorage.setItem('chrote-dashboard-state', JSON.stringify({
       version: 3,

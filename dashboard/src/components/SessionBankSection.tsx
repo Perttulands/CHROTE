@@ -20,7 +20,7 @@ function SessionBankSection({
   showEmpty = true,
   className = '',
 }: SessionBankSectionProps) {
-  const { sessionBank, refreshSessions, createSession, settings } = useSession()
+  const { sessionBank, managedSessions, refreshSessions, createSession, settings } = useSession()
   const { addToast } = useToast()
 
   const bankedSessions = useMemo(() => {
@@ -40,17 +40,34 @@ function SessionBankSection({
       })
   }, [sessionBank, searchTerm])
 
+  const managedRegistrySessions = useMemo(() => {
+    const needle = searchTerm.trim().toLowerCase()
+    return managedSessions.filter(session => {
+      if (!needle) return true
+      return [
+        session.name,
+        session.sessionName,
+        session.unixUser ?? '',
+        session.owner.ref,
+        session.managerKind,
+        session.managerRef,
+        session.status.activeState,
+      ].some(value => value.toLowerCase().includes(needle))
+    })
+  }, [managedSessions, searchTerm])
+
   const capabilitySummary = useMemo(() => summarizeSessionBankCapabilities(bankedSessions), [bankedSessions])
+  const managedCount = capabilitySummary.externallyManaged + managedRegistrySessions.length
   const countLabels = [
     `${capabilitySummary.total} banked`,
     capabilitySummary.workloadRecoverable > 0 ? `${capabilitySummary.workloadRecoverable} workload recoverable` : '',
     capabilitySummary.topologyOnly > 0 ? `${capabilitySummary.topologyOnly} topology only` : '',
-    capabilitySummary.externallyManaged > 0 ? `${capabilitySummary.externallyManaged} managed` : '',
+    managedCount > 0 ? `${managedCount} managed` : '',
     capabilitySummary.unresolvedUnsafe > 0 ? `${capabilitySummary.unresolvedUnsafe} unresolved` : '',
   ].filter(Boolean)
   const listId = 'settings-session-bank-list'
 
-  if (bankedSessions.length === 0 && !showEmpty) return null
+  if (bankedSessions.length === 0 && managedRegistrySessions.length === 0 && !showEmpty) return null
 
   const copyResumeCommand = async (resumeCommand: string) => {
     const copied = await copyTextToClipboard(resumeCommand)
@@ -143,7 +160,7 @@ function SessionBankSection({
                   ? session.resumeCommand?.trim() || `/resume ${session.name}`
                   : ''
                 const ownerLabel = capability.owner ? `Owner ${capability.owner.kind} · ${capability.owner.ref}` : ''
-                const canRemove = capability.kind !== 'externally-managed' && capability.kind !== 'unresolved-unsafe'
+                const canRemove = !capability.isReadOnly
                 return (
                   <article
                     key={`${session.unixUser || 'default'}:${session.name}`}
@@ -224,9 +241,32 @@ function SessionBankSection({
                 )
               })}
             </>
-          ) : (
+          ) : managedRegistrySessions.length === 0 ? (
             <p>No recoverable sessions in the bank.</p>
+          ) : (
+            null
           )}
+          {managedRegistrySessions.map(session => (
+            <article
+              key={`managed:${session.unixUser || 'default'}:${session.name}`}
+              className="session-bank-item session-bank-item-externally-managed"
+              aria-label={`Managed session ${session.name}`}
+            >
+              <div className="session-bank-main">
+                <div className="session-bank-title-row">
+                  <strong>{session.name}</strong>
+                  <span className="session-bank-badge session-bank-badge-externally-managed">
+                    Managed read-only
+                  </span>
+                </div>
+                <span>{[session.unixUser || 'default', `checked ${new Date(session.status.checkedAt).toLocaleString()}`].join(' · ')}</span>
+                <span>{`Owner ${session.owner.kind} · ${session.owner.ref}`}</span>
+                <span>{`Manager ${session.managerKind} · ${session.managerRef}`}</span>
+                <span>{`Status ${session.status.activeState} · ${session.status.ok ? 'OK' : 'Not OK'}`}</span>
+                <span>Managed read-only: another manager owns this workload.</span>
+              </div>
+            </article>
+          ))}
         </div>
       )}
     </section>

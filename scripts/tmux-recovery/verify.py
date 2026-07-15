@@ -22,6 +22,8 @@ import snapshot
 
 UNIT_RE = re.compile(r"^[A-Za-z0-9_.@:-]+\.service$")
 DEFAULT_STABILITY_SECONDS = 30
+DEFAULT_READINESS_SECONDS = 30
+DEFAULT_READINESS_INTERVAL_SECONDS = 0.5
 
 
 class SystemdUserStatusRunner:
@@ -88,20 +90,29 @@ def verify_manifest(
     observed_provider: Callable[[], list[dict[str, Any]]] | None = None,
     status_runner: Any | None = None,
     http_runner: Any | None = None,
+    readiness_seconds: float = 0,
+    readiness_interval_seconds: float = DEFAULT_READINESS_INTERVAL_SECONDS,
     stability_seconds: float = 0,
     sleep: Callable[[float], Any] = time.sleep,
     topology_only: bool = False,
 ) -> dict[str, Any]:
     manifest_lib.validate_manifest(manifest_doc)
-    if observed_provider is None:
-        first_observed = observed_sessions or []
-    else:
-        first_observed = observed_provider()
-    first = _verify_once(manifest_doc, first_observed, status_runner=status_runner, http_runner=http_runner, topology_only=topology_only)
+    first = _verify_until_ready(
+        manifest_doc,
+        observed_sessions=observed_sessions,
+        observed_provider=observed_provider,
+        status_runner=status_runner,
+        http_runner=http_runner,
+        topology_only=topology_only,
+        readiness_seconds=readiness_seconds,
+        readiness_interval_seconds=readiness_interval_seconds,
+        sleep=sleep,
+    )
     if stability_seconds and first["ok"]:
         sleep(stability_seconds)
         second_observed = observed_provider() if observed_provider is not None else observed_sessions or []
         second = _verify_once(manifest_doc, second_observed, status_runner=status_runner, http_runner=http_runner, topology_only=topology_only)
+        _copy_readiness_metadata(first, second)
         second["stabilitySamples"] = 2
         second["stabilitySeconds"] = stability_seconds
         if topology_only:
@@ -112,6 +123,47 @@ def verify_manifest(
     if topology_only:
         first["mode"] = "topology-only"
     return first
+
+
+def _verify_until_ready(
+    manifest_doc: dict[str, Any],
+    *,
+    observed_sessions: list[dict[str, Any]] | None,
+    observed_provider: Callable[[], list[dict[str, Any]]] | None,
+    status_runner: Any | None,
+    http_runner: Any | None,
+    topology_only: bool,
+    readiness_seconds: float,
+    readiness_interval_seconds: float,
+    sleep: Callable[[float], Any],
+) -> dict[str, Any]:
+    deadline = max(0.0, float(readiness_seconds))
+    interval = max(0.0, float(readiness_interval_seconds))
+    elapsed = 0.0
+    samples = 0
+    while True:
+        observed = observed_provider() if observed_provider is not None else observed_sessions or []
+        result = _verify_once(manifest_doc, observed, status_runner=status_runner, http_runner=http_runner, topology_only=topology_only)
+        samples += 1
+        if result["ok"] or elapsed >= deadline:
+            result["readinessSamples"] = samples
+            result["readinessSeconds"] = deadline
+            result["readinessElapsedSeconds"] = elapsed
+            return result
+        delay = min(interval, deadline - elapsed)
+        if delay <= 0:
+            result["readinessSamples"] = samples
+            result["readinessSeconds"] = deadline
+            result["readinessElapsedSeconds"] = elapsed
+            return result
+        sleep(delay)
+        elapsed += delay
+
+
+def _copy_readiness_metadata(source: dict[str, Any], target: dict[str, Any]) -> None:
+    for key in ("readinessSamples", "readinessSeconds", "readinessElapsedSeconds"):
+        if key in source:
+            target[key] = source[key]
 
 
 def _verify_once(
@@ -167,8 +219,12 @@ def _verify_session(
             if desc.get("mode") == "managed":
                 continue
             candidate = observed_index["by_logical"].get(logical_key)
-            if candidate is None or not _descriptor_matches(desc, candidate, topology_only=topology_only):
-                errors.append(f"missing expected descriptor {desc.get('mode')}/{desc.get('workloadKind')} pane {desc.get('topology', {}).get('paneId', '')}")
+            mismatch = _descriptor_mismatch_reason(desc, candidate, topology_only=topology_only)
+            if candidate is None or mismatch:
+                message = f"missing expected descriptor {desc.get('mode')}/{desc.get('workloadKind')} pane {desc.get('topology', {}).get('paneId', '')}"
+                if mismatch and len(mismatch) <= 160:
+                    message = f"{message}: {mismatch}"
+                errors.append(message)
     else:
         expected_index = _logical_pane_index([])
         observed_index = _logical_pane_index([])
@@ -239,26 +295,123 @@ def _check_pane_set(expected_session: dict[str, Any], expected_index: dict[str, 
 
 
 def _descriptor_matches(expected: dict[str, Any], observed: Any, *, topology_only: bool = False) -> bool:
+    return _descriptor_mismatch_reason(expected, observed, topology_only=topology_only) == ""
+
+
+def _descriptor_mismatch_reason(expected: dict[str, Any], observed: Any, *, topology_only: bool = False) -> str:
     if not isinstance(observed, dict):
-        return False
+        return "observed descriptor missing"
     if topology_only:
-        return _topology_matches(expected.get("topology"), observed.get("topology"))
+        return _topology_mismatch_reason(expected.get("topology"), observed.get("topology"))
     for key in ("mode", "workloadKind", "unresolvedReason", "evidenceSource", "confidence"):
         if key in expected and observed.get(key) != expected.get(key):
-            return False
+            return f"{key} mismatch"
     for key in ("owner", "agent", "command"):
         if key in expected and not _is_subset(expected[key], observed.get(key)):
-            return False
-    return _topology_matches(expected.get("topology"), observed.get("topology"))
+            return f"{key} mismatch"
+    return _topology_mismatch_reason(expected.get("topology"), observed.get("topology"))
 
 
 def _topology_matches(expected: Any, observed: Any) -> bool:
+    return _topology_mismatch_reason(expected, observed) == ""
+
+
+def _topology_mismatch_reason(expected: Any, observed: Any) -> str:
     if not isinstance(expected, dict) or not isinstance(observed, dict):
-        return False
-    for key in ("sessionName", "windowName", "windowLayout", "paneCurrentPath"):
+        return "topology missing"
+    for key in ("sessionName", "windowName", "paneCurrentPath"):
         if key in expected and observed.get(key) != expected.get(key):
-            return False
-    return True
+            return f"{key} mismatch"
+    if "windowLayout" in expected:
+        same, reason = _tmux_layouts_match(expected.get("windowLayout"), observed.get("windowLayout"))
+        if not same:
+            return f"windowLayout {reason}"
+    return ""
+
+
+def _tmux_layouts_match(expected: Any, observed: Any) -> tuple[bool, str]:
+    try:
+        expected_layout = _parse_tmux_layout(expected)
+    except ValueError as exc:
+        return False, f"expected malformed ({exc})"
+    try:
+        observed_layout = _parse_tmux_layout(observed)
+    except ValueError as exc:
+        return False, f"observed malformed ({exc})"
+    if expected_layout != observed_layout:
+        return False, "geometry/tree mismatch"
+    return True, ""
+
+
+def _parse_tmux_layout(value: Any) -> tuple[Any, ...]:
+    if not isinstance(value, str) or not value:
+        raise ValueError("missing")
+    checksum, separator, body = value.partition(",")
+    if not separator or not re.fullmatch(r"[0-9A-Fa-f]+", checksum):
+        raise ValueError("missing checksum")
+    parser = _TmuxLayoutParser(body)
+    layout = parser.parse_cell()
+    if not parser.at_end():
+        raise ValueError("trailing data")
+    return layout
+
+
+class _TmuxLayoutParser:
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.pos = 0
+
+    def at_end(self) -> bool:
+        return self.pos == len(self.text)
+
+    def parse_cell(self) -> tuple[Any, ...]:
+        width = self._parse_uint()
+        self._consume("x")
+        height = self._parse_uint()
+        self._consume(",")
+        x = self._parse_uint()
+        self._consume(",")
+        y = self._parse_uint()
+        geometry = (width, height, x, y)
+        next_char = self._peek()
+        if next_char in ("[", "{"):
+            orientation = next_char
+            close = "]" if orientation == "[" else "}"
+            self.pos += 1
+            children = [self.parse_cell()]
+            while self._peek() == ",":
+                self.pos += 1
+                children.append(self.parse_cell())
+            self._consume(close)
+            if len(children) < 2:
+                raise ValueError("split has fewer than two children")
+            return ("split", geometry, orientation, tuple(children))
+        pane_id = None
+        if next_char == ",":
+            self.pos += 1
+            pane_id = self._parse_uint()
+        return ("leaf", geometry, pane_id is not None)
+
+    def _parse_uint(self) -> int:
+        start = self.pos
+        while self.pos < len(self.text) and self.text[self.pos].isdigit():
+            self.pos += 1
+        if self.pos == start:
+            raise ValueError("expected integer")
+        value = int(self.text[start:self.pos])
+        if value < 0:
+            raise ValueError("negative integer")
+        return value
+
+    def _consume(self, char: str) -> None:
+        if self._peek() != char:
+            raise ValueError(f"expected {char}")
+        self.pos += 1
+
+    def _peek(self) -> str:
+        if self.pos >= len(self.text):
+            return ""
+        return self.text[self.pos]
 
 
 def _pane_status_record_healthy(expected: dict[str, Any], observed: dict[str, Any], *, topology_only: bool) -> bool:
@@ -364,6 +517,8 @@ def main(
     parser.add_argument("--owner-may-restart", action="store_true")
     parser.add_argument("--session-name", help="Required filter for persistent/external owner collection")
     parser.add_argument("--stability-seconds", type=float, default=DEFAULT_STABILITY_SECONDS)
+    parser.add_argument("--readiness-seconds", type=float, default=DEFAULT_READINESS_SECONDS)
+    parser.add_argument("--readiness-interval-seconds", type=float, default=DEFAULT_READINESS_INTERVAL_SECONDS)
     parser.add_argument("--topology-only", action="store_true")
     args = parser.parse_args(argv)
     doc = manifest_lib.load_manifest(args.manifest)
@@ -408,6 +563,8 @@ def main(
         deepcopy(doc),
         observed_sessions=observed,
         observed_provider=observed_provider,
+        readiness_seconds=args.readiness_seconds,
+        readiness_interval_seconds=args.readiness_interval_seconds,
         stability_seconds=args.stability_seconds,
         sleep=sleep,
         topology_only=args.topology_only,

@@ -42,7 +42,7 @@ func TestWorkloadRecoveryDescriptorCanonicalAgentCommands(t *testing.T) {
 			kind:    RecoveryAgentHermes,
 			id:      recoveryTestHermesID,
 			profile: "scout",
-			want:    "/home/alice/.hermes/hermes-agent-current/venv/bin/python -m hermes_cli.main --profile scout --resume " + recoveryTestHermesID + " --tui --yolo",
+			want:    "/home/alice/.hermes/hermes-agent-current/venv/bin/python -m hermes_cli.main --profile scout --resume " + recoveryTestHermesID,
 		},
 	}
 
@@ -71,8 +71,6 @@ func TestWorkloadRecoveryDescriptorCanonicalAgentCommands(t *testing.T) {
 					"scout",
 					"--resume",
 					recoveryTestHermesID,
-					"--tui",
-					"--yolo",
 				}
 				if !ok || !reflect.DeepEqual(argv, wantArgv) {
 					t.Fatalf("canonical argv = %#v, %v; want %#v, true", argv, ok, wantArgv)

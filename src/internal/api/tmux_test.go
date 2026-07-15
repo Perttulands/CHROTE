@@ -533,6 +533,246 @@ esac
 	}
 }
 
+func TestTmuxHandler_ListSessionsProjectsManagedStatusSeparatelyAndSkipsBankOwnership(t *testing.T) {
+	tmpDir := t.TempDir()
+	bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
+	managedPath := filepath.Join(tmpDir, "tmux-recovery", "managed-status.json")
+	writeManagedStatusSeed(t, managedPath, "systemd-worker", "alice", "worker.service")
+	installPersistentAgentScriptedTmux(t, `
+case "$*" in
+  *list-sessions*) printf '$1:systemd-worker:1:0\n$2:shell-owned:1:0\n' ;;
+esac
+`)
+	t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
+	t.Setenv("CHROTE_MANAGED_RECOVERY_STATUS_PATH", managedPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+
+	handler := NewTmuxHandler()
+	recorder := httptest.NewRecorder()
+	handler.ListSessions(recorder, httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var response SessionsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(response.Managed) != 1 {
+		t.Fatalf("managed = %+v, want one read-only registry entry", response.Managed)
+	}
+	managed := response.Managed[0]
+	if managed.Name != "systemd-worker" || managed.SessionName != "systemd-worker" || managed.UnixUser != "alice" {
+		t.Fatalf("managed identity = %+v", managed)
+	}
+	if managed.Owner.Kind != RecoveryOwnerExternalManager || managed.Owner.Ref != "systemd:user/worker.service" || managed.Owner.MayRestart {
+		t.Fatalf("managed owner = %+v", managed.Owner)
+	}
+	if managed.ManagerKind != "systemd-user" || managed.ManagerRef != "worker.service" || !managed.Status.OK || managed.Status.ActiveState != "active" {
+		t.Fatalf("managed status = %+v", managed)
+	}
+	for _, session := range response.Sessions {
+		if session.Name == "systemd-worker" {
+			t.Fatalf("managed session leaked into ordinary sessions: %+v", response.Sessions)
+		}
+	}
+	for group, sessions := range response.Grouped {
+		for _, session := range sessions {
+			if session.Name == "systemd-worker" {
+				t.Fatalf("managed session leaked into grouped[%s]: %+v", group, sessions)
+			}
+		}
+	}
+	if len(response.Banked) != 1 || response.Banked[0].Name != "shell-owned" {
+		t.Fatalf("banked = %+v, want only CHROTE-owned shell session", response.Banked)
+	}
+	raw, err := os.ReadFile(bankPath)
+	if err != nil {
+		t.Fatalf("read bank snapshot: %v", err)
+	}
+	if bytes.Contains(raw, []byte("systemd-worker")) {
+		t.Fatalf("managed session leaked into Session Bank snapshot: %s", raw)
+	}
+}
+
+func TestTmuxHandler_ListSessionsReportsMalformedManagedStatusWithoutFailingSessions(t *testing.T) {
+	tmpDir := t.TempDir()
+	managedPath := filepath.Join(tmpDir, "tmux-recovery", "managed-status.json")
+	if err := os.MkdirAll(filepath.Dir(managedPath), 0o755); err != nil {
+		t.Fatalf("mkdir managed status: %v", err)
+	}
+	if err := os.WriteFile(managedPath, []byte(`{"not":"a-list"}`), 0o600); err != nil {
+		t.Fatalf("write malformed managed status: %v", err)
+	}
+	installPersistentAgentScriptedTmux(t, `
+case "$*" in
+  *list-sessions*) printf '$1:shell-owned:1:0\n' ;;
+esac
+`)
+	t.Setenv("CHROTE_MANAGED_RECOVERY_STATUS_PATH", managedPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+
+	handler := NewTmuxHandler()
+	recorder := httptest.NewRecorder()
+	handler.ListSessions(recorder, httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var response SessionsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(response.Sessions) != 1 || response.Sessions[0].Name != "shell-owned" {
+		t.Fatalf("sessions = %+v, want live session despite malformed managed status", response.Sessions)
+	}
+	if len(response.Managed) != 0 {
+		t.Fatalf("managed = %+v, want empty on malformed registry", response.Managed)
+	}
+	if !strings.Contains(strings.ToLower(response.Error), "managed status") {
+		t.Fatalf("error = %q, want managed status validation failure", response.Error)
+	}
+}
+
+func TestTmuxHandler_CreateSessionRejectsManagedNameBeforeTmux(t *testing.T) {
+	tmpDir := t.TempDir()
+	managedPath := filepath.Join(tmpDir, "tmux-recovery", "managed-status.json")
+	writeManagedStatusSeed(t, managedPath, "systemd-worker", "alice", "worker.service")
+	argsPath := installArgvRecordingTmux(t)
+	t.Setenv("CHROTE_MANAGED_RECOVERY_STATUS_PATH", managedPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+
+	handler := NewTmuxHandler()
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions", bytes.NewBufferString(`{"name":"systemd-worker","unixUser":"alice"}`))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	handler.CreateSession(recorder, req)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusConflict, recorder.Body.String())
+	}
+	if got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)); len(got) != 0 {
+		t.Fatalf("tmux calls = %#v, want none before managed create conflict", got)
+	}
+}
+
+func TestTmuxHandler_DeleteSessionRejectsManagedNameBeforeTmux(t *testing.T) {
+	tmpDir := t.TempDir()
+	managedPath := filepath.Join(tmpDir, "tmux-recovery", "managed-status.json")
+	writeManagedStatusSeed(t, managedPath, "systemd-worker", "alice", "worker.service")
+	argsPath := installArgvRecordingTmux(t)
+	t.Setenv("CHROTE_MANAGED_RECOVERY_STATUS_PATH", managedPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+
+	handler := NewTmuxHandler()
+	req := httptest.NewRequest(http.MethodDelete, "/api/tmux/sessions/systemd-worker?unixUser=alice", nil)
+	req.SetPathValue("name", "systemd-worker")
+	recorder := httptest.NewRecorder()
+
+	handler.DeleteSession(recorder, req)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusConflict, recorder.Body.String())
+	}
+	if got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)); len(got) != 0 {
+		t.Fatalf("tmux calls = %#v, want none before managed delete conflict", got)
+	}
+}
+
+func TestTmuxHandler_RenameSessionRejectsManagedSourceOrDestinationBeforeTmux(t *testing.T) {
+	tests := []struct {
+		name       string
+		oldName    string
+		newName    string
+		managed    string
+		managerRef string
+	}{
+		{name: "source", oldName: "systemd-worker", newName: "shell-owned", managed: "systemd-worker", managerRef: "worker.service"},
+		{name: "destination", oldName: "shell-owned", newName: "systemd-worker", managed: "systemd-worker", managerRef: "worker.service"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			managedPath := filepath.Join(tmpDir, "tmux-recovery", "managed-status.json")
+			writeManagedStatusSeed(t, managedPath, tt.managed, "alice", tt.managerRef)
+			argsPath := installArgvRecordingTmux(t)
+			t.Setenv("CHROTE_MANAGED_RECOVERY_STATUS_PATH", managedPath)
+			t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+			t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+			t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
+			t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+
+			handler := NewTmuxHandler()
+			req := httptest.NewRequest(http.MethodPatch, "/api/tmux/sessions/"+tt.oldName+"?unixUser=alice", bytes.NewBufferString(`{"newName":"`+tt.newName+`"}`))
+			req.Header.Set("Content-Type", "application/json")
+			req.SetPathValue("name", tt.oldName)
+			recorder := httptest.NewRecorder()
+
+			handler.RenameSession(recorder, req)
+			if recorder.Code != http.StatusConflict {
+				t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusConflict, recorder.Body.String())
+			}
+			if got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)); len(got) != 0 {
+				t.Fatalf("tmux calls = %#v, want none before managed rename conflict", got)
+			}
+		})
+	}
+}
+
+func TestTmuxHandler_DeleteAllSessionsPreservesManagedRegistryEntries(t *testing.T) {
+	tmpDir := t.TempDir()
+	managedPath := filepath.Join(tmpDir, "tmux-recovery", "managed-status.json")
+	writeManagedStatusSeed(t, managedPath, "systemd-worker", "alice", "worker.service")
+	argsPath := installPersistentAgentScriptedTmux(t, `
+case "$*" in
+  *list-sessions*) printf 'systemd-worker\nshell-owned\n' ;;
+esac
+`)
+	t.Setenv("CHROTE_MANAGED_RECOVERY_STATUS_PATH", managedPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+
+	handler := NewTmuxHandler()
+	req := httptest.NewRequest(http.MethodDelete, "/api/tmux/sessions/all?unixUser=alice", nil)
+	req.Header.Set("X-Nuke-Confirm", "DASHBOARD-NUKE-CONFIRMED")
+	recorder := httptest.NewRecorder()
+
+	handler.DeleteAllSessions(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var response struct {
+		Killed    int      `json:"killed"`
+		Sessions  []string `json:"sessions"`
+		Protected []string `json:"protected"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Killed != 1 || len(response.Sessions) != 1 || response.Sessions[0] != "shell-owned" {
+		t.Fatalf("nuke response = %+v, want only shell-owned killed", response)
+	}
+	if len(response.Protected) != 1 || response.Protected[0] != "systemd-worker" {
+		t.Fatalf("protected = %+v, want managed systemd-worker", response.Protected)
+	}
+	for _, call := range normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)) {
+		if containsArg(call, "kill-session") && containsArg(call, "systemd-worker") {
+			t.Fatalf("managed session received kill-session call: %#v", call)
+		}
+	}
+}
+
 func TestTmuxHandler_CreateAndRenameRejectReservedInternalSessionNames(t *testing.T) {
 	tmpDir := t.TempDir()
 	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")
@@ -2077,6 +2317,195 @@ func TestTmuxHandler_UpdateBankedRecoveryMetadataMakesLiveSessionRecoverableAfte
 	}
 }
 
+func TestTmuxHandler_UpdateBankedRecoveryRejectsManagedOwnerBeforeStoring(t *testing.T) {
+	tmpDir := t.TempDir()
+	bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
+	managedPath := filepath.Join(tmpDir, "tmux-recovery", "managed-status.json")
+	writeManagedStatusSeed(t, managedPath, "codex-alpha", "alice", "codex-alpha.service")
+	t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
+	t.Setenv("CHROTE_MANAGED_RECOVERY_STATUS_PATH", managedPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+
+	handler := NewTmuxHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	body := bytes.NewBufferString(`{"agentKind":"codex","agentSessionId":"019f45ec-f88b-7f70-88dc-b5b99a9e94c6","cwd":"/home/alice/project"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/session-bank/codex-alpha/recovery?unixUser=alice", body)
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusConflict, recorder.Body.String())
+	}
+	if !strings.Contains(strings.ToLower(recorder.Body.String()), "external manager") {
+		t.Fatalf("error body = %s, want external manager ownership conflict", recorder.Body.String())
+	}
+	if raw, err := os.ReadFile(bankPath); err == nil && strings.TrimSpace(string(raw)) != "" && strings.TrimSpace(string(raw)) != "[]" {
+		t.Fatalf("session bank should remain empty, got %s", raw)
+	}
+}
+
+func TestTmuxHandler_RecoverBankedRecoveryRejectsManagedOwnerBeforeTmux(t *testing.T) {
+	tmpDir := t.TempDir()
+	bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
+	managedPath := filepath.Join(tmpDir, "tmux-recovery", "managed-status.json")
+	argsPath := installSessionBankRecoveryTmux(t, "")
+	const sessionID = "019f45ec-f88b-7f70-88dc-b5b99a9e94c6"
+	writeBankSeed(t, bankPath, []SessionBankEntry{{
+		Name:           "codex-alpha",
+		UnixUser:       "alice",
+		Group:          "codex",
+		Windows:        1,
+		FirstSeen:      "2026-07-09T00:00:00Z",
+		LastSeen:       "2026-07-09T00:00:00Z",
+		AgentKind:      "codex",
+		AgentSessionID: sessionID,
+		CWD:            "/home/alice/project",
+	}})
+	writeManagedStatusSeed(t, managedPath, "codex-alpha", "alice", "codex-alpha.service")
+	t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
+	t.Setenv("CHROTE_MANAGED_RECOVERY_STATUS_PATH", managedPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+
+	handler := NewTmuxHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/session-bank/codex-alpha/recover?unixUser=alice", bytes.NewBufferString(`{"mouseScroll":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusConflict, recorder.Body.String())
+	}
+	if !strings.Contains(strings.ToLower(recorder.Body.String()), "external manager") {
+		t.Fatalf("error body = %s, want external manager ownership conflict", recorder.Body.String())
+	}
+	if got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)); len(got) != 0 {
+		t.Fatalf("tmux calls = %#v, want no tmux side effects before managed ownership conflict", got)
+	}
+}
+
+func TestSessionBankEntryPresentEmptyRecoveryPlanRoundTripStaysUnsafe(t *testing.T) {
+	raw := `[{
+		"name":"empty-plan",
+		"unixUser":"alice",
+		"group":"codex",
+		"windows":1,
+		"attached":false,
+		"live":false,
+		"firstSeen":"2026-07-09T00:00:00Z",
+		"lastSeen":"2026-07-09T00:00:00Z",
+		"agentKind":"codex",
+		"agentSessionId":"019f45ec-f88b-7f70-88dc-b5b99a9e94c6",
+		"resumeCommand":"codex resume 019f45ec-f88b-7f70-88dc-b5b99a9e94c6",
+		"cwd":"/home/alice/project",
+		"recoveryPlan":[]
+	}]`
+	var entries []SessionBankEntry
+	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
+		t.Fatalf("unmarshal present-empty recovery plan: %v", err)
+	}
+	entries = sanitizeSessionBankEntries(entries)
+	if len(entries) != 1 {
+		t.Fatalf("entries = %+v, want one sanitized entry", entries)
+	}
+	if entries[0].RecoveryKind != RecoveryModeUnresolved || entries[0].AgentKind != "" || entries[0].AgentSessionID != "" || entries[0].ResumeCommand != "" {
+		t.Fatalf("sanitized entry = %+v, want unresolved with no legacy resume metadata", entries[0])
+	}
+	encoded, err := json.Marshal(entries)
+	if err != nil {
+		t.Fatalf("marshal entries: %v", err)
+	}
+	if !bytes.Contains(encoded, []byte(`"recoveryPlan":[]`)) {
+		t.Fatalf("encoded entry = %s, want present empty recoveryPlan preserved", encoded)
+	}
+	if bytes.Contains(encoded, []byte(`"agentKind"`)) || bytes.Contains(encoded, []byte(`codex resume`)) {
+		t.Fatalf("encoded entry = %s, want no legacy resume metadata", encoded)
+	}
+}
+
+func TestTmuxHandler_RecoverBankedPresentEmptyPlanRejectsBeforeTmux(t *testing.T) {
+	for _, body := range []string{"{}", `{"topologyOnly":true}`} {
+		t.Run(body, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
+			argsPath := installSessionBankRecoveryTmux(t, "")
+			writeBankSeedRaw(t, bankPath, []byte(`[{
+				"name":"empty-plan",
+				"unixUser":"alice",
+				"group":"codex",
+				"windows":1,
+				"attached":false,
+				"live":false,
+				"firstSeen":"2026-07-09T00:00:00Z",
+				"lastSeen":"2026-07-09T00:00:00Z",
+				"agentKind":"codex",
+				"agentSessionId":"019f45ec-f88b-7f70-88dc-b5b99a9e94c6",
+				"resumeCommand":"codex resume 019f45ec-f88b-7f70-88dc-b5b99a9e94c6",
+				"cwd":"/home/alice/project",
+				"recoveryPlan":[]
+			}]`))
+			t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
+			t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+			t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+			t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
+			t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+
+			handler := NewTmuxHandler()
+			req := httptest.NewRequest(http.MethodPost, "/api/tmux/session-bank/empty-plan/recover?unixUser=alice", bytes.NewBufferString(body))
+			req.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+
+			handler.RecoverBankedSession(recorder, req)
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+			}
+			if got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)); len(got) != 0 {
+				t.Fatalf("tmux calls = %#v, want none before empty plan rejection", got)
+			}
+		})
+	}
+}
+
+func TestTmuxHandler_UpdateBankedRecoveryRejectsPresentEmptyOrNullPlanEvenWithLegacyAgent(t *testing.T) {
+	tests := map[string]string{
+		"empty": `{"agentKind":"codex","agentSessionId":"019f45ec-f88b-7f70-88dc-b5b99a9e94c6","cwd":"/home/alice/project","recoveryPlan":[]}`,
+		"null":  `{"agentKind":"codex","agentSessionId":"019f45ec-f88b-7f70-88dc-b5b99a9e94c6","cwd":"/home/alice/project","recoveryPlan":null}`,
+	}
+	for name, body := range tests {
+		t.Run(name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
+			t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
+			t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+			t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+			t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
+			t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+
+			handler := NewTmuxHandler()
+			req := httptest.NewRequest(http.MethodPost, "/api/tmux/session-bank/empty-plan/recovery?unixUser=alice", bytes.NewBufferString(body))
+			req.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+
+			handler.UpdateBankedRecovery(recorder, req)
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+			}
+			if raw, err := os.ReadFile(bankPath); err == nil && strings.TrimSpace(string(raw)) != "" && strings.TrimSpace(string(raw)) != "[]" {
+				t.Fatalf("bank should remain empty after rejected present-empty plan, got %s", raw)
+			}
+		})
+	}
+}
+
 func TestTmuxHandler_RecoverBankedSessionDropsUnsafeTmuxFormatCWD(t *testing.T) {
 	tmpDir := t.TempDir()
 	bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
@@ -2214,7 +2643,7 @@ esac
 		{"-S", "/tmp/tmux-a", "send-keys", "-t", "%24", "Enter"},
 		{"-S", "/tmp/tmux-a", "send-keys", "-t", "%44", "-l", "claude --resume " + recoveryTestClaudeID},
 		{"-S", "/tmp/tmux-a", "send-keys", "-t", "%44", "Enter"},
-		{"-S", "/tmp/tmux-a", "send-keys", "-t", "%45", "-l", "/home/alice/.hermes/hermes-agent-current/venv/bin/python -m hermes_cli.main --profile scout --resume " + recoveryTestHermesID + " --tui --yolo"},
+		{"-S", "/tmp/tmux-a", "send-keys", "-t", "%45", "-l", "/home/alice/.hermes/hermes-agent-current/venv/bin/python -m hermes_cli.main --profile scout --resume " + recoveryTestHermesID},
 		{"-S", "/tmp/tmux-a", "send-keys", "-t", "%45", "Enter"},
 		{"-S", "/tmp/tmux-a", "send-keys", "-t", "%31", "-l", "python3 -m http.server 8088 --bind 127.0.0.1 --directory /home/alice/velis/public"},
 		{"-S", "/tmp/tmux-a", "send-keys", "-t", "%31", "Enter"},
@@ -3254,6 +3683,122 @@ func TestTmuxHandler_RegisterRoutesWiresSessionBankForget(t *testing.T) {
 	}
 }
 
+func TestTmuxHandler_RestoreBankedSessionEntryReplacesExactLegacyEntryWithoutTmux(t *testing.T) {
+	tmpDir := t.TempDir()
+	bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
+	argsPath := installArgvRecordingTmux(t)
+	t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+	writeBankSeedRaw(t, bankPath, []byte(`[{
+		"name":"codex-alpha",
+		"unixUser":"alice",
+		"group":"codex",
+		"windows":1,
+		"attached":false,
+		"live":false,
+		"firstSeen":"2026-07-09T00:00:00Z",
+		"lastSeen":"2026-07-09T00:00:00Z",
+		"recoveryPlan":[]
+	}]`))
+
+	handler := NewTmuxHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	body := `{
+		"name":"codex-alpha",
+		"unixUser":"alice",
+		"group":"codex",
+		"windows":1,
+		"attached":false,
+		"live":false,
+		"firstSeen":"2026-07-09T00:00:00Z",
+		"lastSeen":"2026-07-09T00:00:00Z",
+		"agentKind":"codex",
+		"agentSessionId":"019f45ec-f88b-7f70-88dc-b5b99a9e94c6",
+		"resumeCommand":"codex resume 019f45ec-f88b-7f70-88dc-b5b99a9e94c6",
+		"cwd":"/home/alice/project"
+	}`
+	req := httptest.NewRequest(http.MethodPut, "/api/tmux/session-bank/codex-alpha/entry?unixUser=alice", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)); len(got) != 0 {
+		t.Fatalf("tmux calls = %#v, want exact bank restore with no tmux side effects", got)
+	}
+	raw, err := os.ReadFile(bankPath)
+	if err != nil {
+		t.Fatalf("read bank: %v", err)
+	}
+	if bytes.Contains(raw, []byte(`"recoveryPlan"`)) {
+		t.Fatalf("restored absent-plan legacy entry should not gain recoveryPlan: %s", raw)
+	}
+	var entries []SessionBankEntry
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		t.Fatalf("decode bank: %v", err)
+	}
+	if len(entries) != 1 || entries[0].RecoveryKind != "agent" || entries[0].ResumeCommand != "codex resume 019f45ec-f88b-7f70-88dc-b5b99a9e94c6" {
+		t.Fatalf("entries = %+v, want exact legacy agent metadata restored", entries)
+	}
+}
+
+func TestTmuxHandler_RestoreBankedSessionEntryPreservesPresentEmptyUnsafePlan(t *testing.T) {
+	tmpDir := t.TempDir()
+	bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
+	argsPath := installArgvRecordingTmux(t)
+	t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+
+	handler := NewTmuxHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	body := `{
+		"name":"empty-plan",
+		"unixUser":"alice",
+		"group":"codex",
+		"windows":1,
+		"attached":false,
+		"live":false,
+		"firstSeen":"2026-07-09T00:00:00Z",
+		"lastSeen":"2026-07-09T00:00:00Z",
+		"agentKind":"codex",
+		"agentSessionId":"019f45ec-f88b-7f70-88dc-b5b99a9e94c6",
+		"resumeCommand":"codex resume 019f45ec-f88b-7f70-88dc-b5b99a9e94c6",
+		"cwd":"/home/alice/project",
+		"recoveryPlan":[]
+	}`
+	req := httptest.NewRequest(http.MethodPut, "/api/tmux/session-bank/empty-plan/entry?unixUser=alice", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	mux.ServeHTTP(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)); len(got) != 0 {
+		t.Fatalf("tmux calls = %#v, want exact bank restore with no tmux side effects", got)
+	}
+	raw, err := os.ReadFile(bankPath)
+	if err != nil {
+		t.Fatalf("read bank: %v", err)
+	}
+	if !bytes.Contains(raw, []byte(`"recoveryPlan": []`)) && !bytes.Contains(raw, []byte(`"recoveryPlan":[]`)) {
+		t.Fatalf("restored present-empty entry lost recoveryPlan presence: %s", raw)
+	}
+	if bytes.Contains(raw, []byte(`"agentKind"`)) || bytes.Contains(raw, []byte(`codex resume`)) {
+		t.Fatalf("present-empty unsafe entry retained legacy resume metadata: %s", raw)
+	}
+}
+
 func writeBankSeed(t *testing.T, path string, entries []SessionBankEntry) {
 	t.Helper()
 	raw, err := json.Marshal(entries)
@@ -3275,6 +3820,131 @@ func writeBankSeedRaw(t *testing.T, path string, raw []byte) {
 	}
 	if err := os.WriteFile(path, raw, 0o660); err != nil {
 		t.Fatalf("write raw bank seed: %v", err)
+	}
+}
+
+func TestManagedRecoveryStatusRejectsCrossFieldContradictions(t *testing.T) {
+	valid := ManagedRecoveryStatusEntry{
+		Name:        "managed-worker",
+		SessionName: "managed-worker",
+		UnixUser:    "alice",
+		Owner: WorkloadRecoveryOwner{
+			Kind:       RecoveryOwnerExternalManager,
+			Ref:        "systemd:user/managed-worker.service",
+			MayRestart: false,
+		},
+		ManagerKind: "systemd-user",
+		ManagerRef:  "managed-worker.service",
+		Status: ManagedRecoveryHealthStatus{
+			OK:          true,
+			ActiveState: "active",
+			CheckedAt:   "2026-07-15T10:00:00Z",
+		},
+		StorageKind: "managed-status",
+		SourceKind:  "restore",
+	}
+
+	tests := map[string]func(*ManagedRecoveryStatusEntry){
+		"missing unix user":             func(entry *ManagedRecoveryStatusEntry) { entry.UnixUser = "" },
+		"owner ref mismatch":            func(entry *ManagedRecoveryStatusEntry) { entry.Owner.Ref = "systemd:user/other.service" },
+		"wrong storage kind":            func(entry *ManagedRecoveryStatusEntry) { entry.StorageKind = "arbitrary" },
+		"active state marked unhealthy": func(entry *ManagedRecoveryStatusEntry) { entry.Status.OK = false },
+		"inactive state marked healthy": func(entry *ManagedRecoveryStatusEntry) { entry.Status.ActiveState = "inactive" },
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			entry := valid
+			mutate(&entry)
+			if _, err := normalizeManagedRecoveryStatusEntry(entry, 0); err == nil {
+				t.Fatal("expected contradictory managed status entry to be rejected")
+			}
+		})
+	}
+}
+
+func TestManagedRecoveryStatusReadRejectsUntrustedFilesystemObjects(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, dir string) string
+		want  string
+	}{
+		{
+			name: "symlink",
+			setup: func(t *testing.T, dir string) string {
+				target := filepath.Join(dir, "target.json")
+				writeManagedStatusSeed(t, target, "managed-worker", "alice", "managed-worker.service")
+				link := filepath.Join(dir, "managed-status.json")
+				if err := os.Symlink(target, link); err != nil {
+					t.Fatalf("symlink managed status: %v", err)
+				}
+				return link
+			},
+			want: "symlink",
+		},
+		{
+			name: "group-readable",
+			setup: func(t *testing.T, dir string) string {
+				path := filepath.Join(dir, "managed-status.json")
+				writeManagedStatusSeed(t, path, "managed-worker", "alice", "managed-worker.service")
+				if err := os.Chmod(path, 0o640); err != nil {
+					t.Fatalf("chmod managed status: %v", err)
+				}
+				return path
+			},
+			want: "permissions",
+		},
+		{
+			name: "directory",
+			setup: func(t *testing.T, dir string) string {
+				path := filepath.Join(dir, "managed-status.json")
+				if err := os.Mkdir(path, 0o700); err != nil {
+					t.Fatalf("mkdir managed status path: %v", err)
+				}
+				return path
+			},
+			want: "regular file",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := tt.setup(t, t.TempDir())
+			_, err := newManagedRecoveryStatusStore(path).Read()
+			if err == nil || !strings.Contains(strings.ToLower(err.Error()), tt.want) {
+				t.Fatalf("Read() error = %v, want %q trust failure", err, tt.want)
+			}
+		})
+	}
+}
+
+func writeManagedStatusSeed(t *testing.T, path, name, unixUser, unit string) {
+	t.Helper()
+	raw, err := json.Marshal([]map[string]any{{
+		"name":        name,
+		"sessionName": name,
+		"unixUser":    unixUser,
+		"owner": map[string]any{
+			"kind":       RecoveryOwnerExternalManager,
+			"ref":        "systemd:user/" + unit,
+			"mayRestart": false,
+		},
+		"managerKind": "systemd-user",
+		"managerRef":  unit,
+		"status": map[string]any{
+			"ok":          true,
+			"activeState": "active",
+			"checkedAt":   "2026-07-15T10:00:00Z",
+		},
+		"storageKind": "managed-status",
+		"sourceKind":  "restore",
+	}})
+	if err != nil {
+		t.Fatalf("marshal managed status seed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir managed status dir: %v", err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write managed status seed: %v", err)
 	}
 }
 
