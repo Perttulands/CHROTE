@@ -1,0 +1,23 @@
+{
+  "input": {
+    "owner": {"kind": "persistent_agent", "ref": "persistent:alice/scout", "mayRestart": true},
+    "ownerHome": "/home/alice",
+    "sessionName": "hermes-scout",
+    "pane": {"windowIndex": 1, "windowName": "agent", "windowLayout": "b25f,80x24,0,0", "paneIndex": 0, "paneId": "%10", "cwd": "/home/alice/project"},
+    "process": {
+      "comm": "python",
+      "argv": ["/home/alice/.hermes/hermes-agent-current/venv/bin/python", "-m", "hermes_cli.main", "--profile", "scout", "--resume", "hermes-session-20260715T100000Z", "--tui", "--yolo"],
+      "cwd": "/home/alice/project",
+      "startedAt": "2026-07-15T10:00:00Z"
+    },
+    "openTranscript": {"kind": "claude", "sessionId": "9ed1181c-b2a3-4ef2-96ea-a84e51e79dc4"}
+  },
+  "want": {
+    "mode": "unresolved",
+    "owner": {"kind": "persistent_agent", "ref": "persistent:alice/scout", "mayRestart": false},
+    "workloadKind": "unknown",
+    "unresolvedReason": "conflicting_evidence",
+    "evidenceSource": "transcript",
+    "confidence": "low"
+  }
+}
