@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback, useMemo, u
 import type { DashboardContextType, TmuxSession, SessionBankEntry, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance, WorkspaceId, TerminalWorkspace, LayoutPreset, LaunchUser, CreateSessionOptions, PersistentAgentPayload, SendToSessionPayload, WindowRevealRequest } from '../types'
 import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE, MAX_PRESETS, TERMINAL_WORKSPACE_IDS, getSessionKey, getSessionNameFromKey, getSessionPrefixForUser, getSessionUserFromKey, normalizeTerminalUsers, resolveLaunchUser } from '../types'
 import { useToast } from './ToastContext'
+import { apiErrorMessage } from '../apiErrors'
 
 // Apply tmux appearance settings via API (hot-reload)
 async function applyTmuxAppearance(appearance: TmuxAppearance): Promise<void> {
@@ -248,26 +249,6 @@ function createDefaultWorkspace(workspaceId: WorkspaceId, count: number): Termin
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
-}
-
-function apiErrorMessage(raw: string, fallback: string): string {
-  const text = raw.trim()
-  if (!text) return fallback
-  try {
-    const parsed = JSON.parse(text) as unknown
-    if (isRecord(parsed)) {
-      const error = parsed.error
-      if (isRecord(error) && typeof error.message === 'string' && error.message.trim()) {
-        return error.message.trim()
-      }
-      if (typeof parsed.message === 'string' && parsed.message.trim()) {
-        return parsed.message.trim()
-      }
-    }
-  } catch {
-    // Non-JSON responses are still useful if they are small enough to show directly.
-  }
-  return text.length <= 240 ? text : fallback
 }
 
 function nextSessionNameForPrefix(sessions: TmuxSession[], prefix: string): string {
@@ -1212,7 +1193,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const makeSessionPersistent = useCallback(async (sessionName: string, payload: PersistentAgentPayload, unixUser?: LaunchUser): Promise<boolean> => {
     try {
       const query = unixUser ? `?unixUser=${encodeURIComponent(unixUser)}` : ''
-      const body: Record<string, string> = {}
+      const body: Record<string, unknown> = {}
       const agentKind = payload.agentKind?.trim()
       if (agentKind) body.agentKind = agentKind
       const agentSessionId = payload.agentSessionId?.trim()
@@ -1225,6 +1206,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (cwd) body.cwd = cwd
       const transcriptPath = payload.transcriptPath?.trim()
       if (transcriptPath) body.transcriptPath = transcriptPath
+      if (payload.recoveryDescriptor) body.recoveryDescriptor = payload.recoveryDescriptor
 
       const response = await fetch(`/api/tmux/sessions/${encodeURIComponent(sessionName)}/persistence${query}`, {
         method: 'POST',
@@ -1259,7 +1241,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (!response.ok) {
         const errorText = await response.text()
         console.error('Failed to make session mortal:', errorText)
-        addToast('Failed to make session mortal', 'error')
+        addToast(apiErrorMessage(errorText, 'Failed to make session mortal'), 'error')
         return false
       }
       addToast(`Session '${sessionName}' is mortal`, 'info')

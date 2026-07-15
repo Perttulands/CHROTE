@@ -203,6 +203,7 @@ describe('SessionItem user badge and context actions', () => {
           group: 'codex',
           unixUser: 'alice',
           persistent: true,
+          persistentState: 'healthy',
           persistentIdentity: 'Maintains the VW Codex lane.',
           persistentAgentKind: 'codex',
         }}
@@ -211,7 +212,60 @@ describe('SessionItem user badge and context actions', () => {
 
     const lock = screen.getByLabelText('Persistent agent')
     expect(lock).toHaveTextContent('🔒')
-    expect(lock).toHaveAttribute('title', 'Persistent codex agent: Maintains the VW Codex lane.')
+    expect(lock).toHaveAttribute('title', 'Persistent codex agent · healthy: Maintains the VW Codex lane.')
+    expect(screen.getByLabelText('Persistent state: healthy')).toHaveTextContent('healthy')
+  })
+
+  it.each([
+    ['starting', 'starting'],
+    ['healthy', 'healthy'],
+    ['needs_interaction', 'needs interaction'],
+    ['wrong_identity', 'wrong identity'],
+    ['failed', 'failed'],
+  ] as const)('renders persistent state %s exactly', (state, label) => {
+    render(
+      <SessionItem
+        session={{
+          name: `agent-${state}`,
+          windows: 1,
+          attached: false,
+          group: 'codex',
+          unixUser: 'alice',
+          persistent: true,
+          persistentState: state,
+          persistentAgentKind: 'codex',
+        }}
+      />
+    )
+
+    expect(screen.getByLabelText(`Persistent state: ${label}`)).toHaveTextContent(label)
+  })
+
+  it('renders backoff retry and Hermes profile metadata for persistent agents', () => {
+    render(
+      <SessionItem
+        session={{
+          name: 'hermes-scout',
+          windows: 1,
+          attached: false,
+          group: 'hermes',
+          unixUser: 'alice',
+          persistent: true,
+          persistentState: 'backoff',
+          persistentNextRetryAt: '2026-07-15T10:05:00Z',
+          persistentLastError: 'launch failed',
+          persistentAgentKind: 'hermes',
+          persistentAgentSessionId: 'hermes-session-20260715T100000Z',
+          persistentHermesProfile: 'scout',
+        }}
+      />
+    )
+
+    expect(screen.getByLabelText('Persistent state: backoff; retry at 2026-07-15T10:05:00Z')).toHaveTextContent('backoff')
+    expect(screen.getByLabelText('Persistent agent')).toHaveAttribute(
+      'title',
+      'Persistent hermes agent · Hermes profile scout · backoff; retry at 2026-07-15T10:05:00Z · launch failed',
+    )
   })
 
   it('offers make persistent for mortal sessions without asking for raw agent session id', async () => {
@@ -241,6 +295,37 @@ describe('SessionItem user badge and context actions', () => {
     expect(window.prompt).not.toHaveBeenCalledWith(expect.stringMatching(/session id/i), expect.anything())
   })
 
+  it('surfaces available Hermes profile identity when making a session persistent', async () => {
+    vi.spyOn(window, 'prompt')
+      .mockReturnValueOnce('Keeps Hermes scout alive.')
+    mockState.makeSessionPersistent.mockResolvedValue(true)
+
+    render(
+      <SessionItem
+        session={{
+          name: 'hermes-scout',
+          windows: 1,
+          attached: false,
+          group: 'hermes',
+          unixUser: 'alice',
+          persistentAgentKind: 'hermes',
+          persistentAgentSessionId: 'hermes-session-20260715T100000Z',
+          persistentHermesProfile: 'scout',
+        }}
+      />
+    )
+
+    fireEvent.contextMenu(screen.getByText('hermes-scout'))
+    fireEvent.click(screen.getByRole('button', { name: /Make persistent/i }))
+
+    expect(window.prompt).toHaveBeenCalledWith(expect.stringContaining('Hermes profile scout'), '')
+    expect(mockState.makeSessionPersistent).toHaveBeenCalledWith('hermes-scout', {
+      identity: 'Keeps Hermes scout alive.',
+      agentKind: 'hermes',
+      agentSessionId: 'hermes-session-20260715T100000Z',
+    }, 'alice')
+  })
+
   it('offers make mortal for persistent sessions and protects direct kill', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     mockState.makeSessionMortal.mockResolvedValue(true)
@@ -262,9 +347,10 @@ describe('SessionItem user badge and context actions', () => {
 
     fireEvent.contextMenu(screen.getByText('codex-alpha'))
     expect(screen.queryByRole('button', { name: /Kill Session/i })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /Make mortal/i }))
+    fireEvent.click(screen.getByRole('button', { name: /Make mortal \(metadata only\)/i }))
 
     expect(mockState.makeSessionMortal).toHaveBeenCalledWith('codex-alpha', 'alice')
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('only removes CHROTE persistence metadata'))
   })
 
   it('uses the whole session row as the drag surface without rendering a drag grip', () => {

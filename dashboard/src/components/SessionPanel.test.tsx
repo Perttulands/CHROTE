@@ -122,8 +122,8 @@ describe('SessionPanel new-session context menu', () => {
     expect(screen.queryByText('codex-alpha')).not.toBeInTheDocument()
     expect(screen.queryByText('codex resume 019f45ec-f88b-7f70-88dc-b5b99a9e94c6')).not.toBeInTheDocument()
 
-    const settingsLink = screen.getByRole('button', { name: 'Open Session Bank settings for 1 recoverable session' })
-    expect(settingsLink).toHaveTextContent('Session Bank · 1 recoverable')
+    const settingsLink = screen.getByRole('button', { name: 'Open Session Bank settings for 1 banked session' })
+    expect(settingsLink).toHaveTextContent('Session Bank · 1 banked')
     fireEvent.click(settingsLink)
     expect(openSessionBankSettings).toHaveBeenCalled()
   })

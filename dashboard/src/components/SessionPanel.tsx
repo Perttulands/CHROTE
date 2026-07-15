@@ -8,6 +8,7 @@ import { useMediaQuery } from '../hooks/useMediaQuery'
 import SessionGroup from './SessionGroup'
 import DockPanelToggle from './DockPanelToggle'
 import DismissiblePanel from './DismissiblePanel'
+import { summarizeSessionBankCapabilities } from '../sessionBankRecovery'
 
 type SessionPanelProps = {
   onOpenSessionBankSettings?: () => void
@@ -69,8 +70,8 @@ function SessionPanel({
     })
   }, [groupedSessions, searchTerm])
 
-  const bankedSessionCount = useMemo(() => (
-    sessionBank.filter(session => !session.live).length
+  const bankedSessionSummary = useMemo(() => (
+    summarizeSessionBankCapabilities(sessionBank.filter(session => !session.live))
   ), [sessionBank])
 
   useEffect(() => {
@@ -288,15 +289,15 @@ function SessionPanel({
         </div>
       )}
 
-      {!isCollapsed && bankedSessionCount > 0 && (
+      {!isCollapsed && bankedSessionSummary.total > 0 && (
         <div className="session-panel-footer">
           <button
             type="button"
             className="session-bank-settings-link"
             onClick={onOpenSessionBankSettings}
-            aria-label={`Open Session Bank settings for ${bankedSessionCount} recoverable ${bankedSessionCount === 1 ? 'session' : 'sessions'}`}
+            aria-label={`Open Session Bank settings for ${bankedSessionSummary.total} banked ${bankedSessionSummary.total === 1 ? 'session' : 'sessions'}`}
           >
-            Session Bank · {bankedSessionCount} recoverable
+            Session Bank · {bankedSessionSummary.total} banked
           </button>
         </div>
       )}
