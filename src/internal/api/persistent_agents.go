@@ -581,9 +581,25 @@ func (s *persistentAgentStore) AnnotateSessions(sessions []core.Session) ([]core
 		sessions[i].PersistentAgentKind = entry.AgentKind
 		sessions[i].PersistentAgentSessionID = entry.AgentSessionID
 		sessions[i].PersistentResumeCommand = entry.ResumeCommand
+		sessions[i].PersistentState = entry.State
+		sessions[i].PersistentConsecutiveLaunchFailures = entry.ConsecutiveLaunchFailures
+		sessions[i].PersistentNextRetryAt = entry.NextRetryAt
+		sessions[i].PersistentLastCheckAt = entry.LastCheckAt
+		sessions[i].PersistentLastRestartAt = entry.LastRestartAt
 		sessions[i].PersistentLastError = entry.LastError
+		sessions[i].PersistentHermesProfile = persistentAgentHermesProfile(entry)
 	}
 	return sessions, nil
+}
+
+func persistentAgentHermesProfile(entry PersistentAgentEntry) string {
+	if entry.RecoveryDescriptor == nil || entry.RecoveryDescriptor.Agent == nil {
+		return ""
+	}
+	if entry.RecoveryDescriptor.Agent.Kind != RecoveryAgentHermes {
+		return ""
+	}
+	return strings.TrimSpace(entry.RecoveryDescriptor.Agent.HermesProfile)
 }
 
 func (s *persistentAgentStore) FilterBanked(entries []SessionBankEntry) ([]SessionBankEntry, error) {
