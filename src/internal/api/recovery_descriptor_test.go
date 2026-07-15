@@ -525,6 +525,42 @@ func TestSessionBankEntryLegacyJSONRoundTripKeepsCurrentFields(t *testing.T) {
 	}
 }
 
+func TestSessionBankEntryRecoveryPlanJSONRoundTripKeepsPaneTopologyAndEvidence(t *testing.T) {
+	raw := `[{
+		"id":"$7",
+		"name":"velis",
+		"unixUser":"alice",
+		"group":"velis",
+		"windows":2,
+		"attached":false,
+		"live":false,
+		"firstSeen":"2026-07-09T00:00:00Z",
+		"lastSeen":"2026-07-09T00:00:00Z",
+		"recoveryPlan":[{
+			"mode":"agent",
+			"owner":{"kind":"session_bank","ref":"alice/velis","mayRestart":true},
+			"topology":{"sessionName":"velis","windowIndex":1,"windowName":"server","windowLayout":"b25f,120x40,0,0","paneIndex":0,"paneId":"%11","paneCurrentPath":"/home/alice/velis/server"},
+			"workloadKind":"codex",
+			"agent":{"kind":"codex","nativeSessionId":"` + recoveryTestCodexID + `"},
+			"evidenceSource":"argv",
+			"confidence":"high"
+		}]
+	}]`
+	var entries []SessionBankEntry
+	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
+		t.Fatalf("unmarshal recovery plan bank json: %v", err)
+	}
+	encoded, err := json.Marshal(entries)
+	if err != nil {
+		t.Fatalf("marshal recovery plan bank json: %v", err)
+	}
+	for _, field := range []string{"recoveryPlan", "windowName", "windowLayout", "paneCurrentPath", "owner", "evidenceSource"} {
+		if !strings.Contains(string(encoded), field) {
+			t.Fatalf("round trip output missing %s: %s", field, encoded)
+		}
+	}
+}
+
 func recoveryTestBaseDescriptor() WorkloadRecoveryDescriptor {
 	return WorkloadRecoveryDescriptor{
 		Owner: WorkloadRecoveryOwner{
