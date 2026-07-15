@@ -102,7 +102,7 @@ func TestResponseShapeBaseline_FlatTmuxEndpointsDoNotUseDataEnvelope(t *testing.
 			method:   http.MethodGet,
 			path:     "/api/tmux/sessions",
 			call:     handler.ListSessions,
-			wantKeys: []string{"banked", "grouped", "sessions", "terminalUsers", "timestamp"},
+			wantKeys: []string{"banked", "grouped", "managed", "sessions", "terminalUsers", "timestamp"},
 		},
 		{
 			name:     "create session",

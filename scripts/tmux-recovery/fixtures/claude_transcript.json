@@ -1,0 +1,26 @@
+{
+  "input": {
+    "owner": {"kind": "session_bank", "ref": "alice/claude-alpha", "mayRestart": true},
+    "ownerHome": "/home/alice",
+    "sessionName": "claude-alpha",
+    "pane": {"windowIndex": 0, "windowName": "zsh", "windowLayout": "b25f,80x24,0,0[80x12,0,0,1,80x11,0,13,2]", "paneIndex": 0, "paneId": "%2", "cwd": "/home/alice/project"},
+    "process": {
+      "comm": "claude",
+      "argv": ["claude", "--dangerously-skip-permissions"],
+      "cwd": "/home/alice/project",
+      "startedAt": "2026-07-15T10:00:00Z"
+    },
+    "openTranscript": {
+      "kind": "claude",
+      "sessionId": "9ed1181c-b2a3-4ef2-96ea-a84e51e79dc4"
+    }
+  },
+  "want": {
+    "mode": "unresolved",
+    "workloadKind": "unknown",
+    "owner": {"kind": "session_bank", "ref": "alice/claude-alpha", "mayRestart": false},
+    "unresolvedReason": "unsafe_evidence",
+    "evidenceSource": "argv",
+    "confidence": "low"
+  }
+}

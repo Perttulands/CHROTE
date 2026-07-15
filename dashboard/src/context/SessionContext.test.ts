@@ -1400,6 +1400,40 @@ describe('refreshSessions', () => {
     expect(result.current.sessionBank).toEqual(banked)
   })
 
+  it('stores managed status registry entries separately from banked sessions', async () => {
+    const banked = [{ name: 'banked-agent', unixUser: 'perttu', live: false }]
+    const managed = [{
+      name: 'systemd-worker',
+      sessionName: 'systemd-worker',
+      unixUser: 'perttu',
+      owner: { kind: 'external_manager', ref: 'systemd:user/worker.service', mayRestart: false },
+      managerKind: 'systemd-user',
+      managerRef: 'worker.service',
+      status: { ok: true, activeState: 'active', checkedAt: '2026-07-15T10:00:00Z' },
+      storageKind: 'managed-status',
+      sourceKind: 'restore',
+    }]
+    const fetchMock = vi.fn((): Promise<any> => Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({
+        sessions: [],
+        grouped: {},
+        banked,
+        managed,
+        terminalUsers: ['perttu'],
+        timestamp: new Date().toISOString(),
+      }),
+      text: () => Promise.resolve(''),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderSession()
+
+    await waitFor(() => expect(result.current.sessionBank).toEqual(banked))
+    expect(result.current.managedSessions).toEqual(managed)
+    expect(result.current.sessionBank).not.toContainEqual(expect.objectContaining({ name: 'systemd-worker' }))
+  })
+
   it('preserves terminal bindings when a refresh fails instead of sweeping on uncertainty', async () => {
     localStorage.setItem('chrote-dashboard-state', JSON.stringify({
       version: 3,
@@ -1786,7 +1820,7 @@ describe('cycleSession', () => {
 describe('renameSession', () => {
   beforeEach(() => {
     localStorage.clear()
-    vi.mocked(fetch as any).mockResolvedValue({
+    vi.mocked(fetch as any).mockResolvedValueOnce({
       ok: true,
       json: () => Promise.resolve({ sessions: [], grouped: {}, timestamp: new Date().toISOString() }),
       text: () => Promise.resolve(''),
@@ -2045,10 +2079,62 @@ describe('persistent agent actions', () => {
     })
   })
 
+  it('makeSessionPersistent forwards a typed recovery descriptor when the UI has one', async () => {
+    const { result } = renderSession()
+    vi.mocked(fetch as any).mockClear()
+    vi.mocked(fetch as any).mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ success: true }),
+      text: () => Promise.resolve(''),
+    })
+    const recoveryDescriptor = {
+      mode: 'agent',
+      owner: { kind: 'persistent_agent', ref: 'persistent:alice/hermes-scout', mayRestart: true },
+      topology: {
+        sessionName: 'hermes-scout',
+        sessionId: '$9',
+        windowIndex: 0,
+        windowName: 'agents',
+        windowLayout: 'b25f,80x24,0,0',
+        paneIndex: 0,
+        paneId: '%1',
+        paneCurrentPath: '/home/alice/project',
+      },
+      workloadKind: 'hermes',
+      agent: {
+        kind: 'hermes',
+        nativeSessionId: 'hermes-session-20260715T100000Z',
+        hermesProfile: 'scout',
+      },
+      evidenceSource: 'state_db',
+      confidence: 'high',
+    } as const
+
+    let success: boolean | undefined
+    await act(async () => {
+      success = await result.current.makeSessionPersistent('hermes-scout', {
+        identity: 'Keeps Hermes scout alive.',
+        agentKind: 'hermes',
+        agentSessionId: 'hermes-session-20260715T100000Z',
+        recoveryDescriptor,
+      }, 'alice')
+    })
+
+    expect(success).toBe(true)
+    const [url, options] = vi.mocked(fetch as any).mock.calls[0]
+    expect(url).toBe('/api/tmux/sessions/hermes-scout/persistence?unixUser=alice')
+    expect(JSON.parse(options.body)).toEqual({
+      identity: 'Keeps Hermes scout alive.',
+      agentKind: 'hermes',
+      agentSessionId: 'hermes-session-20260715T100000Z',
+      recoveryDescriptor,
+    })
+  })
+
   it('makeSessionPersistent surfaces the backend failure reason instead of a generic toast', async () => {
     const { result } = renderSessionWithToast()
     vi.mocked(fetch as any).mockClear()
-    vi.mocked(fetch as any).mockResolvedValue({
+    vi.mocked(fetch as any).mockResolvedValueOnce({
       ok: false,
       json: () => Promise.resolve({}),
       text: () => Promise.resolve(JSON.stringify({
@@ -2089,6 +2175,28 @@ describe('persistent agent actions', () => {
     const [url, options] = vi.mocked(fetch as any).mock.calls[0]
     expect(url).toBe('/api/tmux/sessions/codex-alpha/persistence?unixUser=alice')
     expect(options).toMatchObject({ method: 'DELETE' })
+  })
+
+  it('makeSessionMortal surfaces the backend failure reason instead of a generic toast', async () => {
+    const { result } = renderSessionWithToast()
+    vi.mocked(fetch as any).mockClear()
+    vi.mocked(fetch as any).mockResolvedValueOnce({
+      ok: false,
+      json: () => Promise.resolve({}),
+      text: () => Promise.resolve(JSON.stringify({
+        error: {
+          message: 'persistent agent metadata is locked by another owner',
+        },
+      })),
+    })
+
+    let success: boolean | undefined
+    await act(async () => {
+      success = await result.current.session.makeSessionMortal('codex-alpha', 'alice')
+    })
+
+    expect(success).toBe(false)
+    await waitFor(() => expect(result.current.toast.toasts[0]?.message).toBe('persistent agent metadata is locked by another owner'))
   })
 })
 

@@ -472,6 +472,7 @@ CHROTE_BD_COMMAND=bd
 CHROTE_AGENT_PREFIXES=claude-,codex,opencode,agent-
 CHROTE_TTS_URL=http://127.0.0.1:3100
 CHROTE_CONTEXT_API_URL=http://127.0.0.1:3200
+CHROTE_MANAGED_RECOVERY_STATUS_PATH=/srv/data/chrote/tmux-recovery/managed-status.json
 ```
 
 Private service adapter values live outside the repo:
@@ -484,6 +485,14 @@ Private service adapter values live outside the repo:
 
 That is where private service-adapter credentials belong. Do not commit them or
 paste them into issues. Do not teach the browser your secrets.
+
+Externally managed recovery status is a separate read-only registry, not
+Session Bank or Persistent desired state. Owner-side restore can atomically
+publish it with `scripts/tmux-recovery/restore.py --managed-status-output ...`;
+the file is mode `0600` and must not contain descriptors, argv, env, tokens, or
+restart instructions. CHROTE reads it only as a regular, non-symlink,
+owner-only file; it does not require the writer UID to match the service UID, so
+the configured file path and parent directory permissions are the trust boundary.
 
 ---
 

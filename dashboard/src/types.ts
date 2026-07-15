@@ -193,6 +193,13 @@ export interface TmuxSession {
   persistentIdentity?: string
   persistentAgentKind?: 'codex' | 'claude' | string
   persistentAgentSessionId?: string
+  persistentHermesProfile?: string
+  persistentResumeCommand?: string
+  persistentState?: PersistentAgentState
+  persistentConsecutiveLaunchFailures?: number
+  persistentNextRetryAt?: string
+  persistentLastCheckAt?: string
+  persistentLastRestartAt?: string
   persistentLastError?: string
 }
 
@@ -203,6 +210,101 @@ export interface PersistentAgentPayload {
   newName?: string
   cwd?: string
   transcriptPath?: string
+  recoveryDescriptor?: WorkloadRecoveryDescriptor
+}
+
+export type PersistentAgentState =
+  | 'starting'
+  | 'healthy'
+  | 'needs_interaction'
+  | 'wrong_identity'
+  | 'backoff'
+  | 'failed'
+
+export type WorkloadRecoveryMode =
+  | 'topology'
+  | 'agent'
+  | 'command'
+  | 'managed'
+  | 'unresolved'
+
+export type WorkloadRecoveryOwnerKind =
+  | 'session_bank'
+  | 'persistent_agent'
+  | 'external_manager'
+
+export type WorkloadRecoveryEvidenceSource =
+  | 'argv'
+  | 'transcript'
+  | 'state_db'
+  | 'topology'
+  | 'manager'
+  | 'process'
+
+export type WorkloadRecoveryConfidence = 'high' | 'medium' | 'low'
+
+export interface WorkloadRecoveryOwner {
+  kind: WorkloadRecoveryOwnerKind
+  ref: string
+  mayRestart: boolean
+}
+
+export interface WorkloadRecoveryTopology {
+  sessionName?: string
+  sessionId?: string
+  windowIndex: number
+  windowName?: string
+  windowLayout?: string
+  paneIndex: number
+  paneId?: string
+  paneCurrentPath?: string
+}
+
+export interface WorkloadRecoveryAgent {
+  kind: 'codex' | 'claude' | 'hermes' | string
+  nativeSessionId: string
+  hermesProfile?: string
+}
+
+export interface PythonHTTPServerRecoveryCommand {
+  bind: string
+  port: number
+  directory: string
+}
+
+export interface WorkloadRecoveryCommand {
+  kind: 'python-http-server' | string
+  pythonHTTPServer?: PythonHTTPServerRecoveryCommand
+}
+
+export interface WorkloadRecoveryDescriptor {
+  mode: WorkloadRecoveryMode
+  owner: WorkloadRecoveryOwner
+  topology: WorkloadRecoveryTopology
+  workloadKind: string
+  agent?: WorkloadRecoveryAgent
+  command?: WorkloadRecoveryCommand
+  evidenceSource: WorkloadRecoveryEvidenceSource
+  confidence: WorkloadRecoveryConfidence
+  unresolvedReason?: string
+}
+
+export interface ManagedRecoveryHealthStatus {
+  ok: boolean
+  activeState: string
+  checkedAt: string
+}
+
+export interface ManagedRecoveryStatusEntry {
+  name: string
+  sessionName: string
+  unixUser?: LaunchUser
+  owner: WorkloadRecoveryOwner
+  managerKind: string
+  managerRef: string
+  status: ManagedRecoveryHealthStatus
+  storageKind: string
+  sourceKind: string
 }
 
 export interface SendToSessionPayload {
@@ -215,18 +317,20 @@ export interface SessionBankEntry extends TmuxSession {
   live: boolean
   firstSeen: string
   lastSeen: string
-  recoveryKind?: 'agent' | 'shell'
+  recoveryKind?: 'agent' | 'shell' | 'topology' | 'unresolved' | 'descriptor-plan' | string
   agentKind?: 'codex' | 'claude' | string
   agentSessionId?: string
   resumeCommand?: string
   cwd?: string
   transcriptPath?: string
+  recoveryPlan?: WorkloadRecoveryDescriptor[]
 }
 
 export interface SessionsResponse {
   sessions: TmuxSession[]
   grouped: Record<string, TmuxSession[]>
   banked?: SessionBankEntry[]
+  managed?: ManagedRecoveryStatusEntry[]
   terminalUsers?: LaunchUser[]
   timestamp: string
   error?: string
@@ -278,6 +382,7 @@ export interface DashboardState {
   sessions: TmuxSession[]
   groupedSessions: Record<string, TmuxSession[]>
   sessionBank: SessionBankEntry[]
+  managedSessions: ManagedRecoveryStatusEntry[]
   loading: boolean
   error: string | null
 

@@ -2,6 +2,8 @@ import { useMemo } from 'react'
 import { useSession } from '../context/SessionContext'
 import { useToast } from '../context/ToastContext'
 import { copyTextToClipboard } from '../utils/clipboard'
+import { apiErrorMessage } from '../apiErrors'
+import { getSessionBankRecoveryCapability, summarizeSessionBankCapabilities } from '../sessionBankRecovery'
 
 type SessionBankSectionProps = {
   collapsed: boolean
@@ -18,7 +20,7 @@ function SessionBankSection({
   showEmpty = true,
   className = '',
 }: SessionBankSectionProps) {
-  const { sessionBank, refreshSessions, createSession, settings } = useSession()
+  const { sessionBank, managedSessions, refreshSessions, createSession, settings } = useSession()
   const { addToast } = useToast()
 
   const bankedSessions = useMemo(() => {
@@ -38,10 +40,34 @@ function SessionBankSection({
       })
   }, [sessionBank, searchTerm])
 
-  if (bankedSessions.length === 0 && !showEmpty) return null
+  const managedRegistrySessions = useMemo(() => {
+    const needle = searchTerm.trim().toLowerCase()
+    return managedSessions.filter(session => {
+      if (!needle) return true
+      return [
+        session.name,
+        session.sessionName,
+        session.unixUser ?? '',
+        session.owner.ref,
+        session.managerKind,
+        session.managerRef,
+        session.status.activeState,
+      ].some(value => value.toLowerCase().includes(needle))
+    })
+  }, [managedSessions, searchTerm])
 
-  const recoverableLabel = `${bankedSessions.length} ${bankedSessions.length === 1 ? 'recoverable' : 'recoverable'}`
+  const capabilitySummary = useMemo(() => summarizeSessionBankCapabilities(bankedSessions), [bankedSessions])
+  const managedCount = capabilitySummary.externallyManaged + managedRegistrySessions.length
+  const countLabels = [
+    `${capabilitySummary.total} banked`,
+    capabilitySummary.workloadRecoverable > 0 ? `${capabilitySummary.workloadRecoverable} workload recoverable` : '',
+    capabilitySummary.topologyOnly > 0 ? `${capabilitySummary.topologyOnly} topology only` : '',
+    managedCount > 0 ? `${managedCount} managed` : '',
+    capabilitySummary.unresolvedUnsafe > 0 ? `${capabilitySummary.unresolvedUnsafe} unresolved` : '',
+  ].filter(Boolean)
   const listId = 'settings-session-bank-list'
+
+  if (bankedSessions.length === 0 && managedRegistrySessions.length === 0 && !showEmpty) return null
 
   const copyResumeCommand = async (resumeCommand: string) => {
     const copied = await copyTextToClipboard(resumeCommand)
@@ -52,30 +78,29 @@ function SessionBankSection({
     await createSession({ workspaceId: 'terminal1', ...(unixUser ? { unixUser } : {}), name })
   }
 
-  const isRecoverableAgent = (session: typeof sessionBank[number]) => (
-    session.recoveryKind === 'agent' && Boolean(session.agentKind && session.agentSessionId && session.resumeCommand?.trim())
-  )
-
-  const resumeBankedAgent = async (session: typeof sessionBank[number]) => {
+  const recoverBankedSession = async (session: typeof sessionBank[number], topologyOnly = false) => {
     try {
       const query = new URLSearchParams()
       if (session.unixUser) query.set('unixUser', session.unixUser)
       const response = await fetch(`/api/tmux/session-bank/${encodeURIComponent(session.name)}/recover${query.toString() ? `?${query.toString()}` : ''}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mouseScroll: settings.mouseScroll }),
+        body: JSON.stringify(topologyOnly ? { topologyOnly: true } : { mouseScroll: settings.mouseScroll }),
         signal: AbortSignal.timeout(10000),
       })
       if (!response.ok) {
-        console.error('Failed to resume banked agent:', await response.text())
-        addToast('Failed to resume agent', 'error')
+        const errorText = await response.text()
+        console.error('Failed to recover banked session:', errorText)
+        addToast(apiErrorMessage(errorText, topologyOnly ? 'Failed to restore topology' : 'Failed to recover workload'), 'error')
         return
       }
-      addToast(`Resumed agent ${session.name}`, 'success')
+      addToast(topologyOnly
+        ? `Restored topology for ${session.name} without launching workloads`
+        : `Recovered workload ${session.name}`, 'success')
       await refreshSessions()
     } catch (e) {
-      console.error('Failed to resume banked agent:', e)
-      addToast('Failed to resume agent', 'error')
+      console.error('Failed to recover banked session:', e)
+      addToast(topologyOnly ? 'Failed to restore topology' : 'Failed to recover workload', 'error')
     }
   }
 
@@ -88,8 +113,9 @@ function SessionBankSection({
         signal: AbortSignal.timeout(10000),
       })
       if (!response.ok) {
-        console.error('Failed to remove banked session:', await response.text())
-        addToast('Failed to remove session bank entry', 'error')
+        const errorText = await response.text()
+        console.error('Failed to remove banked session:', errorText)
+        addToast(apiErrorMessage(errorText, 'Failed to remove session bank entry'), 'error')
         return
       }
       addToast(`Removed ${name} from session bank`, 'success')
@@ -104,7 +130,14 @@ function SessionBankSection({
     <section className={`session-bank ${collapsed ? 'session-bank-collapsed' : ''} ${className}`.trim()} aria-label="Session Bank">
       <div className="session-bank-header">
         <h2>Session Bank</h2>
-        <span className="session-bank-count">{recoverableLabel}</span>
+        {countLabels.map(label => (
+          <span
+            key={label}
+            className={`session-bank-count ${label.includes('workload') ? 'session-bank-count-workload' : ''}`.trim()}
+          >
+            {label}
+          </span>
+        ))}
         <button
           type="button"
           className="session-bank-toggle"
@@ -120,73 +153,120 @@ function SessionBankSection({
         <div id={listId} className="session-bank-list">
           {bankedSessions.length > 0 ? (
             <>
-              <p>Offline sessions seen before restart. Resume saved agents directly, or recreate shell-only entries.</p>
+              <p>Offline sessions seen before restart. Typed plans can recover workloads; unsafe or unmanaged entries stay limited.</p>
               {bankedSessions.map(session => {
-                const recoverableAgent = isRecoverableAgent(session)
-                const resumeCommand = session.resumeCommand?.trim() || `/resume ${session.name}`
+                const capability = getSessionBankRecoveryCapability(session)
+                const resumeCommand = capability.kind === 'legacy-no-plan'
+                  ? session.resumeCommand?.trim() || `/resume ${session.name}`
+                  : ''
+                const ownerLabel = capability.owner ? `Owner ${capability.owner.kind} · ${capability.owner.ref}` : ''
+                const canRemove = !capability.isReadOnly
                 return (
-                  <div key={`${session.unixUser || 'default'}:${session.name}`} className={`session-bank-item ${recoverableAgent ? 'session-bank-item-recoverable' : 'session-bank-item-shell'}`}>
+                  <article
+                    key={`${session.unixUser || 'default'}:${session.name}`}
+                    className={`session-bank-item session-bank-item-${capability.kind}`}
+                    aria-label={`Session Bank entry ${session.name}`}
+                  >
                     <div className="session-bank-main">
                       <div className="session-bank-title-row">
                         <strong>{session.name}</strong>
-                        <span className={`session-bank-badge ${recoverableAgent ? 'session-bank-badge-agent' : 'session-bank-badge-shell'}`}>
-                          {recoverableAgent ? 'Recoverable agent' : 'Shell only'}
+                        <span className={`session-bank-badge session-bank-badge-${capability.kind}`}>
+                          {capability.badgeLabel}
                         </span>
                       </div>
                       <span>{[session.id ? `id ${session.id}` : '', session.unixUser || 'default', `last seen ${new Date(session.lastSeen).toLocaleString()}`].filter(Boolean).join(' · ')}</span>
-                      {recoverableAgent ? (
-                        <>
-                          <span>{[session.agentKind, session.agentSessionId].filter(Boolean).join(' · ')}</span>
-                          <code>{resumeCommand}</code>
-                        </>
-                      ) : (
-                        <>
-                          <span>No agent resume metadata saved.</span>
-                          <code>{resumeCommand}</code>
-                        </>
+                      {ownerLabel && <span>{ownerLabel}</span>}
+                      <span>{capability.description}</span>
+                      {capability.unresolvedReasons.length > 0 && (
+                        <span>{`Blocked reason: ${capability.unresolvedReasons.join(', ')}`}</span>
+                      )}
+                      {capability.canRestoreTopologyOnly && (
+                        <span>Limited restore: creates tmux windows and panes only; no workloads launch.</span>
+                      )}
+                      {resumeCommand && (
+                        <code>{resumeCommand}</code>
                       )}
                     </div>
                     <div className="session-bank-actions">
-                      {recoverableAgent && (
+                      {capability.canRecoverWorkload && (
                         <button
                           type="button"
                           className="session-bank-resume"
-                          onClick={() => void resumeBankedAgent(session)}
-                          aria-label={`Resume agent for ${session.name}`}
+                          onClick={() => void recoverBankedSession(session)}
+                          aria-label={`Recover workload for ${session.name}`}
                         >
-                          Resume agent
+                          Recover workload
                         </button>
                       )}
-                      <button
-                        type="button"
-                        onClick={() => void copyResumeCommand(resumeCommand)}
-                        aria-label={`Copy resume command for ${session.name}`}
-                      >
-                        Copy
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void recreateBankedSession(session.name, session.unixUser)}
-                        aria-label={`Recreate shell for ${session.name}`}
-                      >
-                        Recreate shell
-                      </button>
-                      <button
-                        type="button"
-                        className="session-bank-remove"
-                        onClick={() => void removeBankedSession(session.name, session.unixUser)}
-                        aria-label={`Remove ${session.name} from session bank`}
-                      >
-                        Remove
-                      </button>
+                      {capability.canRestoreTopologyOnly && (
+                        <button
+                          type="button"
+                          className="session-bank-topology"
+                          onClick={() => void recoverBankedSession(session, true)}
+                          aria-label={`Restore topology only for ${session.name}`}
+                        >
+                          Restore topology only
+                        </button>
+                      )}
+                      {resumeCommand && (
+                        <button
+                          type="button"
+                          onClick={() => void copyResumeCommand(resumeCommand)}
+                          aria-label={`Copy resume command for ${session.name}`}
+                        >
+                          Copy
+                        </button>
+                      )}
+                      {capability.kind === 'legacy-no-plan' && (
+                        <button
+                          type="button"
+                          onClick={() => void recreateBankedSession(session.name, session.unixUser)}
+                          aria-label={`Recreate shell for ${session.name}`}
+                        >
+                          Recreate shell
+                        </button>
+                      )}
+                      {canRemove && (
+                        <button
+                          type="button"
+                          className="session-bank-remove"
+                          onClick={() => void removeBankedSession(session.name, session.unixUser)}
+                          aria-label={`Remove ${session.name} from session bank`}
+                        >
+                          Remove
+                        </button>
+                      )}
                     </div>
-                  </div>
+                  </article>
                 )
               })}
             </>
-          ) : (
+          ) : managedRegistrySessions.length === 0 ? (
             <p>No recoverable sessions in the bank.</p>
+          ) : (
+            null
           )}
+          {managedRegistrySessions.map(session => (
+            <article
+              key={`managed:${session.unixUser || 'default'}:${session.name}`}
+              className="session-bank-item session-bank-item-externally-managed"
+              aria-label={`Managed session ${session.name}`}
+            >
+              <div className="session-bank-main">
+                <div className="session-bank-title-row">
+                  <strong>{session.name}</strong>
+                  <span className="session-bank-badge session-bank-badge-externally-managed">
+                    Managed read-only
+                  </span>
+                </div>
+                <span>{[session.unixUser || 'default', `checked ${new Date(session.status.checkedAt).toLocaleString()}`].join(' · ')}</span>
+                <span>{`Owner ${session.owner.kind} · ${session.owner.ref}`}</span>
+                <span>{`Manager ${session.managerKind} · ${session.managerRef}`}</span>
+                <span>{`Status ${session.status.activeState} · ${session.status.ok ? 'OK' : 'Not OK'}`}</span>
+                <span>Managed read-only: another manager owns this workload.</span>
+              </div>
+            </article>
+          ))}
         </div>
       )}
     </section>

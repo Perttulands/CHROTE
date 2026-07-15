@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useDraggable } from '@dnd-kit/core'
-import type { TmuxSession, WorkspaceId } from '../types'
+import type { PersistentAgentPayload, PersistentAgentState, TmuxSession, WorkspaceId } from '../types'
 import { useSession } from '../context/SessionContext'
 import { TERMINAL_LABELS, TERMINAL_WORKSPACE_IDS, WINDOW_COLORS, getSessionKey, getTerminalUserColor, getTerminalUserInitial } from '../types'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
@@ -14,6 +14,64 @@ interface ContextMenuState {
   show: boolean
   x: number
   y: number
+}
+
+const PERSISTENT_STATE_LABELS: Record<PersistentAgentState, string> = {
+  starting: 'starting',
+  healthy: 'healthy',
+  needs_interaction: 'needs interaction',
+  wrong_identity: 'wrong identity',
+  backoff: 'backoff',
+  failed: 'failed',
+}
+
+function persistentAgentKind(session: TmuxSession): string {
+  return session.persistentAgentKind || 'agent'
+}
+
+function persistentAgentSessionId(session: TmuxSession): string {
+  return session.persistentAgentSessionId || ''
+}
+
+function persistentHermesProfile(session: TmuxSession): string {
+  return session.persistentHermesProfile || ''
+}
+
+function persistentStateLabel(state: PersistentAgentState | undefined): string {
+  return state ? PERSISTENT_STATE_LABELS[state] : ''
+}
+
+function persistentStateStatus(session: TmuxSession): string {
+  const state = persistentStateLabel(session.persistentState)
+  if (!state) return ''
+  if (session.persistentState === 'backoff' && session.persistentNextRetryAt) {
+    return `${state}; retry at ${session.persistentNextRetryAt}`
+  }
+  return state
+}
+
+function persistentTitle(session: TmuxSession): string | undefined {
+  if (!session.persistent) return undefined
+  const parts = [`Persistent ${persistentAgentKind(session)} agent`]
+  const hermesProfile = persistentHermesProfile(session)
+  if (hermesProfile) parts.push(`Hermes profile ${hermesProfile}`)
+  const state = persistentStateStatus(session)
+  if (state) parts.push(state)
+  if (session.persistentLastError) parts.push(session.persistentLastError)
+  const title = parts.join(' · ')
+  return session.persistentIdentity ? `${title}: ${session.persistentIdentity}` : title
+}
+
+function persistentPrompt(session: TmuxSession): string {
+  const parts = []
+  const kind = persistentAgentKind(session)
+  if (kind !== 'agent') parts.push(kind)
+  const hermesProfile = persistentHermesProfile(session)
+  if (hermesProfile) parts.push(`Hermes profile ${hermesProfile}`)
+  const sessionId = persistentAgentSessionId(session)
+  if (sessionId) parts.push(sessionId)
+  if (parts.length === 0) return 'One-sentence identity for this persistent agent:'
+  return `One-sentence identity for this persistent agent (${parts.join(' · ')}):`
 }
 
 function SessionItem({ session }: SessionItemProps) {
@@ -134,22 +192,27 @@ function SessionItem({ session }: SessionItemProps) {
   }, [deleteSession, session.name, session.unixUser, closeContextMenu])
 
 
-  const persistentTitle = session.persistent
-    ? `Persistent ${session.persistentAgentKind || 'agent'} agent${session.persistentIdentity ? `: ${session.persistentIdentity}` : ''}`
-    : undefined
+  const persistentAgentTitle = persistentTitle(session)
+  const persistentStatus = persistentStateStatus(session)
+  const persistentStatusLabel = persistentStateLabel(session.persistentState)
 
   const handleMakePersistent = useCallback(async () => {
     closeContextMenu()
-    const identity = window.prompt('One-sentence identity for this persistent agent:', session.persistentIdentity || '')
+    const identity = window.prompt(persistentPrompt(session), session.persistentIdentity || '')
     if (identity === null) return
-    await makeSessionPersistent(session.name, {
+    const payload: PersistentAgentPayload = {
       identity: identity.trim(),
-    }, session.unixUser)
+    }
+    const agentKind = persistentAgentKind(session)
+    if (agentKind && agentKind !== 'agent') payload.agentKind = agentKind
+    const agentSessionId = persistentAgentSessionId(session)
+    if (agentSessionId) payload.agentSessionId = agentSessionId
+    await makeSessionPersistent(session.name, payload, session.unixUser)
   }, [closeContextMenu, makeSessionPersistent, session])
 
   const handleMakeMortal = useCallback(async () => {
     closeContextMenu()
-    const confirmed = window.confirm(`Make ${session.name} mortal? CHROTE will stop supervising it, but the live tmux session stays running.`)
+    const confirmed = window.confirm(`Make ${session.name} mortal? This only removes CHROTE persistence metadata; the live tmux session stays running.`)
     if (!confirmed) return
     await makeSessionMortal(session.name, session.unixUser)
   }, [closeContextMenu, makeSessionMortal, session.name, session.unixUser])
@@ -270,8 +333,17 @@ function SessionItem({ session }: SessionItemProps) {
           </span>
         )}
         {session.persistent && (
-          <span className="persistent-agent-lock" aria-label="Persistent agent" title={persistentTitle}>
+          <span className="persistent-agent-lock" aria-label="Persistent agent" title={persistentAgentTitle}>
             🔒
+          </span>
+        )}
+        {session.persistent && persistentStatus && (
+          <span
+            className={`persistent-agent-state persistent-agent-state-${session.persistentState}`}
+            aria-label={`Persistent state: ${persistentStatus}`}
+            title={persistentStatus}
+          >
+            {persistentStatusLabel}
           </span>
         )}
         <span className="session-name">{session.name}</span>
@@ -314,7 +386,7 @@ function SessionItem({ session }: SessionItemProps) {
           {session.persistent ? (
             <button className="session-context-item" onClick={handleMakeMortal}>
               <span className="session-context-icon">🔓</span>
-              Make mortal
+              Make mortal (metadata only)
             </button>
           ) : (
             <button className="session-context-item" onClick={handleMakePersistent}>

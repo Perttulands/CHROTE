@@ -1,0 +1,23 @@
+{
+  "input": {
+    "owner": {"kind": "session_bank", "ref": "alice/node", "mayRestart": true},
+    "ownerHome": "/home/alice",
+    "sessionName": "node-worker",
+    "pane": {"windowIndex": 0, "windowName": "worker", "windowLayout": "b25f,80x24,0,0", "paneIndex": 0, "paneId": "%13", "cwd": "/home/alice/project"},
+    "process": {
+      "comm": "node",
+      "argv": ["node", "server.js"],
+      "cwd": "/home/alice/project",
+      "startedAt": "2026-07-15T10:00:00Z"
+    },
+    "openTranscript": {"kind": "claude", "sessionId": "9ed1181c-b2a3-4ef2-96ea-a84e51e79dc4"}
+  },
+  "want": {
+    "mode": "unresolved",
+    "owner": {"kind": "session_bank", "ref": "alice/node", "mayRestart": false},
+    "workloadKind": "unknown",
+    "unresolvedReason": "conflicting_evidence",
+    "evidenceSource": "transcript",
+    "confidence": "low"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "input": {
+    "owner": {"kind": "session_bank", "ref": "alice/static-site", "mayRestart": true},
+    "ownerHome": "/home/alice",
+    "sessionName": "static-site",
+    "pane": {"windowIndex": 0, "windowName": "server", "windowLayout": "b25f,80x24,0,0", "paneIndex": 0, "paneId": "%16", "cwd": "/home/alice/project"},
+    "process": {
+      "comm": "python3",
+      "argv": ["python3", "-m", "http.server", "--bind", "127.0.0.1", "eight", "--directory", "public"],
+      "cwd": "/home/alice/project",
+      "startedAt": "2026-07-15T10:00:00Z"
+    }
+  },
+  "want": {
+    "mode": "unresolved",
+    "owner": {"kind": "session_bank", "ref": "alice/static-site", "mayRestart": false},
+    "workloadKind": "unknown",
+    "unresolvedReason": "unsafe_evidence",
+    "evidenceSource": "argv",
+    "confidence": "low"
+  }
+}

@@ -63,6 +63,43 @@ test.describe('Settings View', () => {
       await expect(page.locator('.settings-view')).toBeVisible()
     })
 
+    test('should show managed registry entries as browser read-only with no restore or remove actions', async ({ page }) => {
+      await page.route('**/api/tmux/sessions', async route => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            sessions: [],
+            grouped: {},
+            banked: [],
+            managed: [{
+              name: 'systemd-worker',
+              sessionName: 'systemd-worker',
+              unixUser: 'alice',
+              owner: { kind: 'external_manager', ref: 'systemd:user/worker.service', mayRestart: false },
+              managerKind: 'systemd-user',
+              managerRef: 'worker.service',
+              status: { ok: true, activeState: 'active', checkedAt: '2026-07-15T10:00:00Z' },
+              storageKind: 'managed-status',
+              sourceKind: 'restore',
+            }],
+            terminalUsers: ['alice'],
+            timestamp: new Date().toISOString(),
+          }),
+        })
+      })
+      await page.reload()
+      await page.waitForSelector('.dashboard')
+      await page.click('.tab:has-text("Settings")')
+      await page.getByRole('button', { name: 'Expand session bank' }).click()
+
+      const managed = page.getByRole('article', { name: 'Managed session systemd-worker' })
+      await expect(managed).toContainText('Managed read-only')
+      await expect(managed).toContainText('Owner external_manager · systemd:user/worker.service')
+      await expect(managed).toContainText('Status active · OK')
+      await expect(managed.getByRole('button', { name: /Recover|Restore topology|Remove/i })).toHaveCount(0)
+    })
+
     test('should show theme selector', async ({ page }) => {
       await page.click('.tab:has-text("Settings")')
       await expect(page.locator('.settings-theme-options').first()).toBeVisible()

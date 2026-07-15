@@ -10,7 +10,7 @@ import { Page, Frame, Locator } from '@playwright/test';
  */
 
 /** Backend URL used by integration tests that hit the real CHROTE server. */
-export const BACKEND_URL = process.env.CHROTE_TEST_URL || 'http://127.0.0.1:8094';
+export const BACKEND_URL = process.env.CHROTE_TEST_URL || 'http://127.0.0.1:8095';
 
 // ---------------------------------------------------------------------------
 // StoredStateV2 helpers — mirror the structure in SessionContext.tsx

@@ -7,7 +7,7 @@ if (!/^\d+$/.test(devServerPort)) {
   throw new Error(`CHROTE_PLAYWRIGHT_PORT must be numeric, got ${devServerPort}`)
 }
 const devServerURL = `http://127.0.0.1:${devServerPort}`
-const liveBackendURL = process.env.CHROTE_TEST_URL ?? 'http://127.0.0.1:8094'
+const liveBackendURL = process.env.CHROTE_TEST_URL ?? 'http://127.0.0.1:8095'
 const reuseExistingDevServer = process.env.CHROTE_PLAYWRIGHT_REUSE_SERVER === '1'
 const localOnlyIgnores = [
   '**/integration/**',

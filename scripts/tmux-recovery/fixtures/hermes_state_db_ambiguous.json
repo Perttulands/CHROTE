@@ -1,0 +1,28 @@
+{
+  "input": {
+    "owner": {"kind": "persistent_agent", "ref": "persistent:alice/scout", "mayRestart": true},
+    "ownerHome": "/home/alice",
+    "sessionName": "hermes-scout",
+    "pane": {"windowIndex": 1, "windowName": "agent", "windowLayout": "b25f,80x24,0,0[80x12,0,0,1,80x11,0,13,2]", "paneIndex": 0, "paneId": "%5", "cwd": "/home/alice/project"},
+    "process": {
+      "comm": "python",
+      "argv": ["/home/alice/.hermes/hermes-agent-current/venv/bin/python", "-m", "hermes_cli.main", "--profile", "scout", "--tui", "--yolo"],
+      "cwd": "/home/alice/project",
+      "startedAt": "2026-07-15T10:00:00Z"
+    },
+    "stateDbCandidates": [
+      {"profile": "scout", "sessionId": "older-state-session", "cwd": "/home/alice/project", "startedAt": "2026-07-15T09:59:58Z"},
+      {"profile": "scout", "sessionId": "newest-state-session", "cwd": "/home/alice/project", "startedAt": "2026-07-15T10:00:01Z"}
+    ],
+    "stateDbToleranceSeconds": 5
+  },
+  "want": {
+    "mode": "unresolved",
+    "owner": {"kind": "persistent_agent", "ref": "persistent:alice/scout", "mayRestart": false},
+    "workloadKind": "unknown",
+    "unresolvedReason": "ambiguous_candidates",
+    "evidenceSource": "state_db",
+    "confidence": "low"
+  },
+  "forbiddenValues": ["newest-state-session", "older-state-session"]
+}
