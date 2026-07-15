@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "chrote.tmux-recovery.manifest.v1",
+  "createdAt": "2026-07-15T10:00:00Z",
+  "sessions": [
+    {
+      "sessionName": "velvetwood",
+      "unixUser": "alice",
+      "owner": {"kind": "external_manager", "ref": "systemd:user/velvetwood.service", "mayRestart": false},
+      "managerKind": "systemd-user",
+      "managerRef": "velvetwood.service",
+      "restartAllowed": false,
+      "statusProbe": {"kind": "systemd-user", "unit": "velvetwood.service", "expectActiveState": "active"},
+      "descriptors": [
+        {
+          "mode": "managed",
+          "owner": {"kind": "external_manager", "ref": "systemd:user/velvetwood.service", "mayRestart": false},
+          "topology": {"sessionName": "velvetwood", "windowIndex": 0, "windowName": "service", "windowLayout": "b25f,80x24,0,0", "paneIndex": 0, "paneId": "%11", "paneCurrentPath": "/home/alice/velvetwood"},
+          "workloadKind": "managed",
+          "evidenceSource": "manager",
+          "confidence": "high"
+        }
+      ]
+    }
+  ]
+}

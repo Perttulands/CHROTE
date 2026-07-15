@@ -1,0 +1,330 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chrote.local/schemas/tmux-recovery-manifest.v1.json",
+  "title": "CHROTE tmux recovery manifest",
+  "type": "object",
+  "required": ["schemaVersion", "createdAt", "sessions"],
+  "properties": {
+    "schemaVersion": {"const": "chrote.tmux-recovery.manifest.v1"},
+    "createdAt": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "source": {"$ref": "#/$defs/source"},
+    "sessions": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {"$ref": "#/$defs/session"}
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "source": {
+      "type": "object",
+      "properties": {
+        "apiUrl": {
+          "type": "string",
+          "maxLength": 8192,
+          "pattern": "^(http://(localhost|127\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}|\\[::1\\])(:[0-9]{1,5})?|https://([A-Za-z0-9.-]+|\\[[0-9A-Fa-f:.]+\\])(:[0-9]{1,5})?)$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "owner": {
+      "type": "object",
+      "required": ["kind", "ref", "mayRestart"],
+      "properties": {
+        "kind": {"enum": ["session_bank", "persistent_agent", "external_manager"]},
+        "ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,239}$"
+        },
+        "mayRestart": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "session": {
+      "type": "object",
+      "required": ["sessionName", "descriptors"],
+      "properties": {
+        "sessionName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]{0,239}$"
+        },
+        "unixUser": {"type": "string", "maxLength": 128},
+        "owner": {"$ref": "#/$defs/owner"},
+        "managerKind": {"enum": ["systemd-user"]},
+        "managerRef": {"type": "string", "pattern": "^[A-Za-z0-9_.@:-]+\\.service$"},
+        "restartAllowed": {"const": false},
+        "statusProbe": {"$ref": "#/$defs/statusProbe"},
+        "allowExtraPanes": {"type": "boolean"},
+        "descriptors": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {"$ref": "#/$defs/descriptor"}
+        },
+        "verification": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {"$ref": "#/$defs/paneVerification"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "topology": {
+      "type": "object",
+      "required": ["windowIndex", "paneIndex"],
+      "properties": {
+        "sessionName": {"type": "string", "maxLength": 240, "pattern": "^[A-Za-z0-9][A-Za-z0-9._@+-]{0,239}$"},
+        "sessionId": {"type": "string", "maxLength": 80, "pattern": "^[A-Za-z0-9%$._:-]{0,80}$"},
+        "windowIndex": {"type": "integer", "minimum": 0},
+        "windowName": {"type": "string", "maxLength": 240, "pattern": "^[^\\u0000\\n\\r]{0,240}$"},
+        "windowLayout": {"type": "string", "maxLength": 4096, "pattern": "^[^\\u0000\\n\\r]{0,4096}$"},
+        "paneIndex": {"type": "integer", "minimum": 0},
+        "paneId": {"type": "string", "maxLength": 80, "pattern": "^[A-Za-z0-9%$._:-]{0,80}$"},
+        "paneCurrentPath": {"type": "string", "maxLength": 8192, "pattern": "^/[^#\\u0000\\n\\r]*$"}
+      },
+      "additionalProperties": false
+    },
+    "descriptor": {
+      "type": "object",
+      "required": ["mode", "owner", "topology", "workloadKind", "evidenceSource", "confidence"],
+      "properties": {
+        "mode": {"enum": ["topology", "agent", "command", "managed", "unresolved"]},
+        "owner": {"$ref": "#/$defs/owner"},
+        "topology": {"$ref": "#/$defs/topology"},
+        "workloadKind": {"type": "string", "maxLength": 128},
+        "agent": {"$ref": "#/$defs/agent"},
+        "command": {"$ref": "#/$defs/command"},
+        "evidenceSource": {"enum": ["argv", "transcript", "state_db", "topology", "manager", "process"]},
+        "confidence": {"enum": ["high", "medium", "low"]},
+        "unresolvedReason": {
+          "enum": [
+            "unknown_process",
+            "ambiguous_candidates",
+            "unsafe_evidence",
+            "unsupported_workload",
+            "missing_evidence",
+            "conflicting_owners",
+            "conflicting_evidence"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"mode": {"const": "agent"}}, "required": ["mode"]},
+          "then": {
+            "required": ["agent"],
+            "properties": {"workloadKind": {"enum": ["codex", "claude", "hermes"]}},
+            "not": {
+              "anyOf": [
+                {"required": ["command"]},
+                {"required": ["unresolvedReason"]}
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {"mode": {"const": "agent"}, "agent": {"properties": {"kind": {"const": "codex"}}, "required": ["kind"]}},
+            "required": ["mode", "agent"]
+          },
+          "then": {"properties": {"workloadKind": {"const": "codex"}}}
+        },
+        {
+          "if": {
+            "properties": {"mode": {"const": "agent"}, "agent": {"properties": {"kind": {"const": "claude"}}, "required": ["kind"]}},
+            "required": ["mode", "agent"]
+          },
+          "then": {"properties": {"workloadKind": {"const": "claude"}}}
+        },
+        {
+          "if": {
+            "properties": {"mode": {"const": "agent"}, "agent": {"properties": {"kind": {"const": "hermes"}}, "required": ["kind"]}},
+            "required": ["mode", "agent"]
+          },
+          "then": {"properties": {"workloadKind": {"const": "hermes"}}}
+        },
+        {
+          "if": {"properties": {"mode": {"const": "command"}}, "required": ["mode"]},
+          "then": {
+            "required": ["command"],
+            "properties": {"workloadKind": {"const": "python-http-server"}, "command": {"properties": {"kind": {"const": "python-http-server"}}}},
+            "not": {
+              "anyOf": [
+                {"required": ["agent"]},
+                {"required": ["unresolvedReason"]}
+              ]
+            }
+          }
+        },
+        {
+          "if": {"properties": {"mode": {"const": "topology"}}, "required": ["mode"]},
+          "then": {
+            "properties": {"workloadKind": {"const": "shell"}},
+            "not": {
+              "anyOf": [
+                {"required": ["agent"]},
+                {"required": ["command"]},
+                {"required": ["unresolvedReason"]}
+              ]
+            }
+          }
+        },
+        {
+          "if": {"properties": {"mode": {"const": "managed"}}, "required": ["mode"]},
+          "then": {
+            "properties": {
+              "workloadKind": {"const": "managed"},
+              "owner": {
+                "properties": {
+                  "kind": {"const": "external_manager"},
+                  "mayRestart": {"const": false}
+                }
+              }
+            },
+            "not": {
+              "anyOf": [
+                {"required": ["agent"]},
+                {"required": ["command"]},
+                {"required": ["unresolvedReason"]}
+              ]
+            }
+          }
+        },
+        {
+          "if": {"properties": {"mode": {"const": "unresolved"}}, "required": ["mode"]},
+          "then": {
+            "required": ["unresolvedReason"],
+            "properties": {"workloadKind": {"const": "unknown"}},
+            "not": {
+              "anyOf": [
+                {"required": ["agent"]},
+                {"required": ["command"]}
+              ]
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "agent": {
+      "type": "object",
+      "required": ["kind", "nativeSessionId"],
+      "properties": {
+        "kind": {"enum": ["codex", "claude", "hermes"]},
+        "nativeSessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "hermesProfile": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"kind": {"enum": ["codex", "claude"]}}},
+          "then": {
+            "properties": {
+              "nativeSessionId": {
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"kind": {"const": "hermes"}}},
+          "then": {
+            "required": ["hermesProfile"],
+            "properties": {
+              "nativeSessionId": {"pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"}
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "command": {
+      "type": "object",
+      "required": ["kind", "pythonHTTPServer"],
+      "properties": {
+        "kind": {"const": "python-http-server"},
+        "pythonHTTPServer": {
+          "type": "object",
+          "required": ["bind", "port", "directory"],
+          "properties": {
+            "bind": {"enum": ["127.0.0.1", "localhost", "::1"]},
+            "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+            "directory": {"type": "string", "minLength": 1, "maxLength": 8192, "pattern": "^/[^#\\u0000\\n\\r]*$"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "paneVerification": {
+      "type": "object",
+      "description": "Operator-only pane health metadata. The target is captured provenance; runtime verification matches panes by normalized logical window/pane ordinals, not tmux id equality.",
+      "required": ["target", "paneStatus"],
+      "properties": {
+        "target": {"$ref": "#/$defs/paneTarget"},
+        "paneStatus": {"$ref": "#/$defs/paneStatus"},
+        "helperEndpoint": {"$ref": "#/$defs/helperEndpoint"}
+      },
+      "additionalProperties": false
+    },
+    "paneTarget": {
+      "type": "object",
+      "description": "Captured tmux pane target provenance, not a runtime recovery identity.",
+      "required": ["windowIndex", "paneIndex", "paneId"],
+      "properties": {
+        "windowIndex": {"type": "integer", "minimum": 0},
+        "paneIndex": {"type": "integer", "minimum": 0},
+        "paneId": {"type": "string", "minLength": 1, "maxLength": 80, "pattern": "^[A-Za-z0-9%$._:-]{0,80}$"}
+      },
+      "additionalProperties": false
+    },
+    "paneStatus": {
+      "type": "object",
+      "required": ["dead", "currentCommand", "cwd"],
+      "properties": {
+        "dead": {"type": "boolean"},
+        "currentCommand": {"type": "string", "maxLength": 512},
+        "cwd": {"type": "string", "maxLength": 8192, "pattern": "^/[^#\\u0000\\n\\r]*$"}
+      },
+      "additionalProperties": false
+    },
+    "statusProbe": {
+      "type": "object",
+      "required": ["kind", "unit"],
+      "properties": {
+        "kind": {"const": "systemd-user"},
+        "unit": {"type": "string", "pattern": "^[A-Za-z0-9_.@:-]+\\.service$"},
+        "expectActiveState": {
+          "enum": ["active", "inactive", "failed", "activating", "deactivating", "reloading", "maintenance"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "helperEndpoint": {
+      "type": "object",
+      "required": ["kind", "url"],
+      "properties": {
+        "kind": {"const": "http-get"},
+        "url": {
+          "type": "string",
+          "pattern": "^http://(127\\.0\\.0\\.1|localhost|\\[::1\\])(:[0-9]{1,5})?(/.*)?$"
+        },
+        "expectStatus": {"type": "integer", "minimum": 100, "maximum": 599},
+        "timeoutSeconds": {"type": "number", "exclusiveMinimum": 0, "maximum": 30}
+      },
+      "additionalProperties": false
+    }
+  }
+}

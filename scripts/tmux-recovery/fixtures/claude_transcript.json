@@ -16,10 +16,11 @@
     }
   },
   "want": {
-    "mode": "agent",
-    "workloadKind": "claude",
-    "agent": {"kind": "claude", "nativeSessionId": "9ed1181c-b2a3-4ef2-96ea-a84e51e79dc4"},
-    "evidenceSource": "transcript",
-    "confidence": "high"
+    "mode": "unresolved",
+    "workloadKind": "unknown",
+    "owner": {"kind": "session_bank", "ref": "alice/claude-alpha", "mayRestart": false},
+    "unresolvedReason": "unsafe_evidence",
+    "evidenceSource": "argv",
+    "confidence": "low"
   }
 }

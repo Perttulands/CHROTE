@@ -25,11 +25,72 @@ def classify_pane(evidence: dict[str, Any]) -> dict[str, Any]:
     owner_home = _clean_abs_path(evidence.get("ownerHome", ""))
     owner = _owner(evidence)
     topology = _topology(evidence)
+    process_tree = evidence.get("processTree")
+    if isinstance(process_tree, list) and process_tree:
+        return _attach_pane_status(
+            _classify_process_tree(evidence, process_tree, owner, topology, owner_home),
+            evidence,
+        )
     process = evidence.get("process") if isinstance(evidence.get("process"), dict) else {}
-    argv = _argv(process)
-    comm = _process_name(process, argv)
+    return _attach_pane_status(
+        _classify_single_process(evidence, process, owner, topology, owner_home, allow_transcript=True),
+        evidence,
+    )
 
-    transcript_agent = _agent_from_transcript(evidence.get("openTranscript"))
+
+def _classify_process_tree(
+    evidence: dict[str, Any],
+    process_tree: list[Any],
+    owner: dict[str, Any],
+    topology: dict[str, Any],
+    owner_home: str,
+) -> dict[str, Any]:
+    identities: dict[tuple[Any, ...], dict[str, Any]] = {}
+    fallbacks: list[dict[str, Any]] = []
+    for process in process_tree:
+        if not isinstance(process, dict):
+            continue
+        child_evidence = dict(evidence)
+        child_evidence["process"] = process
+        desc = _classify_single_process(child_evidence, process, owner, topology, owner_home, allow_transcript=False)
+        key = _identity_key(desc)
+        if key is not None:
+            identities[key] = desc
+        else:
+            fallbacks.append(desc)
+    if len(identities) == 1:
+        return next(iter(identities.values()))
+    if len(identities) > 1:
+        return _unresolved(owner, topology, "conflicting_evidence", "process", "low")
+    for desc in fallbacks:
+        if desc.get("mode") == "unresolved" and desc.get("unresolvedReason") != "unknown_process":
+            return desc
+    for desc in fallbacks:
+        if desc.get("mode") == "topology":
+            return desc
+    if fallbacks:
+        return fallbacks[0]
+    return _unresolved(owner, topology, "unknown_process", "process", "low")
+
+
+def _classify_single_process(
+    evidence: dict[str, Any],
+    process: dict[str, Any],
+    owner: dict[str, Any],
+    topology: dict[str, Any],
+    owner_home: str,
+    *,
+    allow_transcript: bool,
+) -> dict[str, Any]:
+    if process.get("unsafeEvidence") == "pid_reused":
+        return _unresolved(owner, topology, "unsafe_evidence", "process", "low")
+    raw_argv = _argv(process)
+    argv = _canonical_safe_argv(raw_argv, owner_home) or []
+    comm = _process_name(process, raw_argv)
+    if raw_argv and not argv and _looks_like_known_unsafe_argv(raw_argv, owner_home):
+        return _unresolved(owner, topology, "unsafe_evidence", "argv", "low")
+
+    transcript_agent = _agent_from_transcript(evidence.get("openTranscript")) if allow_transcript else None
     argv_agent = _agent_from_codex_claude_argv(argv)
     if transcript_agent is not None:
         live_kind = _live_workload_kind(argv, comm, owner_home)
@@ -56,6 +117,36 @@ def classify_pane(evidence: dict[str, Any]) -> dict[str, Any]:
     return _unresolved(owner, topology, "unknown_process", "process", "low")
 
 
+def _identity_key(desc: dict[str, Any]) -> tuple[Any, ...] | None:
+    mode = desc.get("mode")
+    if mode == "agent":
+        agent = desc.get("agent") if isinstance(desc.get("agent"), dict) else {}
+        return (
+            "agent",
+            agent.get("kind"),
+            agent.get("nativeSessionId"),
+            agent.get("hermesProfile", ""),
+        )
+    if mode == "command":
+        command = desc.get("command") if isinstance(desc.get("command"), dict) else {}
+        python = command.get("pythonHTTPServer") if isinstance(command.get("pythonHTTPServer"), dict) else {}
+        return ("command", command.get("kind"), python.get("bind"), python.get("port"), python.get("directory"))
+    return None
+
+
+def _attach_pane_status(desc: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
+    status = evidence.get("paneStatus")
+    if not isinstance(status, dict):
+        return desc
+    cwd = _clean_abs_path(status.get("cwd") or evidence.get("pane", {}).get("cwd", ""))
+    desc["paneStatus"] = {
+        "dead": bool(status.get("dead", False)),
+        "currentCommand": str(status.get("currentCommand", "")).strip(),
+        "cwd": cwd,
+    }
+    return desc
+
+
 def _agent_from_codex_claude_argv(argv: list[str]) -> dict[str, str] | None:
     if not argv:
         return None
@@ -73,6 +164,123 @@ def _agent_from_codex_claude_argv(argv: list[str]) -> dict[str, str] | None:
             if token == "--resume" and i + 1 < len(argv) and UUID_RE.match(argv[i + 1]):
                 return {"kind": "claude", "nativeSessionId": argv[i + 1]}
     return None
+
+
+def _canonical_safe_argv(argv: list[str], owner_home: str) -> list[str] | None:
+    if not argv:
+        return None
+    name = _basename(argv[0])
+    if name == "codex" and len(argv) == 3 and argv[1] == "resume" and UUID_RE.match(argv[2]):
+        return ["codex", "resume", argv[2]]
+    if name == "claude":
+        if len(argv) == 3 and argv[1] == "--resume" and UUID_RE.match(argv[2]):
+            return ["claude", "--resume", argv[2]]
+        if len(argv) == 2 and argv[1].startswith("--resume="):
+            session_id = argv[1].split("=", 1)[1]
+            if UUID_RE.match(session_id):
+                return ["claude", "--resume", session_id]
+    hermes = _canonical_hermes_argv(argv, owner_home)
+    if hermes is not None:
+        return hermes
+    python = _canonical_python_http_argv(argv)
+    if python is not None:
+        return python
+    return None
+
+
+def _looks_like_known_unsafe_argv(argv: list[str], owner_home: str) -> bool:
+    if not argv:
+        return False
+    name = _basename(argv[0])
+    if name in {"codex", "claude"}:
+        return True
+    expected_python = os.path.normpath(os.path.join(owner_home, ".hermes", "hermes-agent-current", "venv", "bin", "python"))
+    if os.path.normpath(argv[0]) == expected_python:
+        return True
+    return any(token == "-m" and i + 1 < len(argv) and argv[i + 1] == "http.server" for i, token in enumerate(argv))
+
+
+def _canonical_hermes_argv(argv: list[str], owner_home: str) -> list[str] | None:
+    if len(argv) not in {6, 7, 8, 9}:
+        return None
+    expected_python = os.path.normpath(os.path.join(owner_home, ".hermes", "hermes-agent-current", "venv", "bin", "python"))
+    if os.path.normpath(argv[0]) != expected_python or not _path_under(argv[0], owner_home):
+        return None
+    if argv[1:3] != ["-m", "hermes_cli.main"]:
+        return None
+    index = 3
+    profile = ""
+    if index < len(argv) and argv[index] == "--profile" and index + 1 < len(argv):
+        profile = argv[index + 1]
+        index += 2
+    elif index < len(argv) and argv[index].startswith("--profile="):
+        profile = argv[index].split("=", 1)[1]
+        index += 1
+    if not PROFILE_RE.match(profile):
+        return None
+    resume = ""
+    if index < len(argv) and argv[index] == "--resume" and index + 1 < len(argv):
+        resume = argv[index + 1]
+        index += 2
+    elif index < len(argv) and argv[index].startswith("--resume="):
+        resume = argv[index].split("=", 1)[1]
+        index += 1
+    if resume and not NATIVE_ID_RE.match(resume):
+        return None
+    if argv[index:] != ["--tui", "--yolo"]:
+        return None
+    canonical = [expected_python, "-m", "hermes_cli.main", "--profile", profile]
+    if resume:
+        canonical.extend(["--resume", resume])
+    canonical.extend(["--tui", "--yolo"])
+    return canonical
+
+
+def _canonical_python_http_argv(argv: list[str]) -> list[str] | None:
+    if len(argv) < 3 or argv[1:3] != ["-m", "http.server"]:
+        return None
+    name = os.path.basename(argv[0])
+    if name not in {"python", "python3"}:
+        return None
+    bind = ""
+    directory = ""
+    positionals: list[str] = []
+    index = 3
+    while index < len(argv):
+        token = argv[index]
+        if token in {"--bind", "-b"} and index + 1 < len(argv):
+            bind = argv[index + 1]
+            index += 2
+            continue
+        if token.startswith("--bind="):
+            bind = token.split("=", 1)[1]
+            index += 1
+            continue
+        if token in {"--directory", "-d"} and index + 1 < len(argv):
+            directory = argv[index + 1]
+            index += 2
+            continue
+        if token.startswith("--directory="):
+            directory = token.split("=", 1)[1]
+            index += 1
+            continue
+        if token.startswith("-"):
+            return None
+        positionals.append(token)
+        index += 1
+    if bind not in LOOPBACK_BINDS or len(positionals) > 1:
+        return None
+    port = "8000" if not positionals else positionals[0]
+    try:
+        port_int = int(port)
+    except ValueError:
+        return None
+    if port_int < 1 or port_int > 65535:
+        return None
+    canonical = [name, "-m", "http.server", str(port_int), "--bind", bind]
+    if directory:
+        canonical.extend(["--directory", directory])
+    return canonical
 
 
 def _agent_from_transcript(transcript: Any) -> dict[str, str] | None:
@@ -134,6 +342,8 @@ def _hermes_from_process(evidence: dict[str, Any], argv: list[str], owner_home: 
             "high",
         )
 
+    if evidence.get("stateDbIncomplete") is True:
+        return _unresolved(owner, topology, "missing_evidence", "state_db", "low")
     candidates = _matching_state_db_candidates(evidence, profile)
     if len(candidates) == 1:
         session_id = str(candidates[0].get("sessionId", "")).strip()
@@ -152,15 +362,7 @@ def _hermes_from_process(evidence: dict[str, Any], argv: list[str], owner_home: 
 
 
 def _looks_like_hermes_argv(argv: list[str], owner_home: str) -> bool:
-    if len(argv) < 3:
-        return False
-    expected_python = os.path.normpath(os.path.join(owner_home, ".hermes", "hermes-agent-current", "venv", "bin", "python"))
-    if os.path.normpath(argv[0]) != expected_python or not _path_under(argv[0], owner_home):
-        return False
-    for i, token in enumerate(argv[:-1]):
-        if token == "-m" and argv[i + 1] == "hermes_cli.main":
-            return True
-    return False
+    return _canonical_hermes_argv(argv, owner_home) is not None
 
 
 def _matching_state_db_candidates(evidence: dict[str, Any], profile: str) -> list[dict[str, Any]]:
@@ -213,10 +415,7 @@ def _python_http_server_descriptor(
 
 
 def _looks_like_python_http_server(argv: list[str]) -> bool:
-    for i, token in enumerate(argv[:-1]):
-        if token == "-m" and argv[i + 1] == "http.server":
-            return True
-    return False
+    return _canonical_python_http_argv(argv) is not None
 
 
 def _python_http_server_port(argv: list[str]) -> int | None:
