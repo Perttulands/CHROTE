@@ -1,0 +1,93 @@
+schema = 1
+boardId = "brd_open_design_web"
+boardRev = 1
+updatedAt = "2026-07-16T00:00:00Z"
+
+[[node]]
+id = "mis_design"
+x = 40
+y = 260
+
+[[node]]
+id = "fmn_direction"
+x = 300
+y = 260
+
+[[node]]
+id = "gate_direction"
+x = 560
+y = 260
+
+[[node]]
+id = "fmn_builder"
+x = 820
+y = 120
+
+[[node]]
+id = "gate_integrity"
+x = 1080
+y = 120
+
+[[node]]
+id = "fmn_jury"
+x = 1340
+y = 120
+
+[[node]]
+id = "gate_quality"
+x = 1600
+y = 120
+
+[[node]]
+id = "fmn_refiner"
+x = 1340
+y = 420
+
+[[node]]
+id = "fmn_handoff"
+x = 1860
+y = 120
+
+[[edge]]
+id = "edge_mission_direction"
+lane = "main"
+
+[[edge]]
+id = "edge_direction_gate"
+lane = "main"
+
+[[edge]]
+id = "edge_direction_pass"
+lane = "pass"
+
+[[edge]]
+id = "edge_direction_fail"
+lane = "fail"
+
+[[edge]]
+id = "edge_builder_integrity"
+lane = "main"
+
+[[edge]]
+id = "edge_integrity_pass"
+lane = "pass"
+
+[[edge]]
+id = "edge_integrity_fail"
+lane = "fail"
+
+[[edge]]
+id = "edge_jury_quality"
+lane = "main"
+
+[[edge]]
+id = "edge_quality_pass"
+lane = "pass"
+
+[[edge]]
+id = "edge_quality_fail"
+lane = "fail"
+
+[[edge]]
+id = "edge_refiner_integrity"
+lane = "loop"

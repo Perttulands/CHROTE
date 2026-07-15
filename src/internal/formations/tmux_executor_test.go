@@ -1069,6 +1069,68 @@ fi
 	}
 }
 
+func TestRenderPromptWithContextIncludesRoleAndBriefReferences(t *testing.T) {
+	formation := FormationNode{
+		ID:    "fmn_design",
+		Title: "Creative Director",
+		Brief: &FormationBrief{
+			Goal:  "Choose a coherent visual direction.",
+			Files: []string{".formations/packs/design/roles/creative-director.md", "DESIGN.md"},
+			Links: []string{"https://example.com/reference"},
+		},
+	}
+	slot := FormationSlot{ID: "slot_director", Label: "Direction lead"}
+	executor := &TmuxFormationExecutor{config: TmuxExecutorConfig{Cwd: "/workspace"}}
+	prompt := executor.renderPromptWithContext(
+		FormationExecution{
+			RunID:     "run_design",
+			NodeID:    formation.ID,
+			Formation: formation,
+			Brief:     *formation.Brief,
+			Inputs: []RunInputRef{{
+				ToPortID:     "port_direction_in",
+				Ref:          "brief://mission",
+				Text:         "Design a calm control plane.",
+				ArtifactRef:  "prototype/index.html",
+				ReportRef:    "prototype/report.json",
+				GateFeedback: "Increase primary-action contrast.",
+			}},
+		},
+		slot,
+		PersonaCard{ID: "agent-director"},
+		HarnessVariant{ID: "codex"},
+		"",
+		nil,
+	)
+	for _, want := range []string{
+		"Formation title: Creative Director",
+		"Assigned role: Direction lead",
+		"Choose a coherent visual direction.",
+		".formations/packs/design/roles/creative-director.md",
+		"DESIGN.md",
+		"https://example.com/reference",
+		"input 1 port: port_direction_in",
+		"input 1 ref: brief://mission",
+		"input 1 artifactRef: prototype/index.html",
+		"input 1 reportRef: prototype/report.json",
+		"input 1 text: Design a calm control plane.",
+		"input 1 gate feedback: Increase primary-action contrast.",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestOutputContractSkeletonIncludesAllRoutedPayloadFields(t *testing.T) {
+	contract := strings.Join(outputContractExtraLines(FormationNode{Outputs: []FormationPort{{ID: "port_out"}}}), "\n")
+	for _, field := range []string{"text", "ref", "artifactRef", "reportRef"} {
+		if !strings.Contains(contract, `"`+field+`"`) {
+			t.Fatalf("output contract missing %s:\n%s", field, contract)
+		}
+	}
+}
+
 func countFakeTmuxCommands(t *testing.T, logPath string) int {
 	t.Helper()
 	raw, err := os.ReadFile(logPath)

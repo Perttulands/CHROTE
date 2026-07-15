@@ -1,0 +1,9 @@
+schema = 1
+id = "open-design-web"
+version = "0.1.0"
+title = "OpenDesign Web Prototype"
+board = "open-design-web.formation.toml"
+layout = "open-design-web.layout.toml"
+missionId = "mis_design"
+license = "Apache-2.0"
+licenseFile = "LICENSE"

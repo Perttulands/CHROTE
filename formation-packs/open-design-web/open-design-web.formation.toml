@@ -1,0 +1,220 @@
+schema = 1
+id = "brd_open_design_web"
+slug = "open-design-web-template"
+title = "OpenDesign Web Prototype"
+rev = 1
+updatedBy = "pack:open-design-web"
+updatedAt = "2026-07-16T00:00:00Z"
+
+[[mission]]
+id = "mis_design"
+title = "Design and ship a web prototype"
+goal = "Replaced when instantiated"
+
+[[formation]]
+id = "fmn_direction"
+type = "solo"
+title = "Creative Direction"
+
+[formation.brief]
+goal = "Turn the mission into one explicit, evidence-backed visual and interaction direction before implementation."
+files = ["{{packRoot}}/roles/creative-director.md", "{{packRoot}}/roles/artifact-contract.md"]
+
+[[formation.input]]
+id = "port_direction_in"
+label = "Mission brief"
+
+[[formation.output]]
+id = "port_direction_out"
+label = "Direction contract"
+
+[[formation.slot]]
+id = "slot_direction"
+label = "Creative director"
+controller = false
+
+[[formation]]
+id = "fmn_builder"
+type = "solo"
+title = "Prototype Builder"
+
+[formation.brief]
+goal = "Build the approved direction as a real responsive, interactive web artifact in the workspace."
+files = ["{{packRoot}}/roles/prototype-builder.md", "{{packRoot}}/roles/artifact-contract.md"]
+
+[[formation.input]]
+id = "port_builder_in"
+label = "Approved direction"
+
+[[formation.output]]
+id = "port_builder_out"
+label = "Prototype artifact"
+
+[[formation.slot]]
+id = "slot_builder"
+label = "Frontend prototype builder"
+controller = false
+
+[[formation]]
+id = "fmn_jury"
+type = "orchestrated"
+title = "Design Jury"
+
+[formation.brief]
+goal = "Inspect the actual artifact, gather independent evidence, and emit one strict JSON scorecard while preserving its artifactRef."
+files = ["{{packRoot}}/roles/jury-controller.md", "{{packRoot}}/roles/design-critic.md", "{{packRoot}}/roles/brand-reviewer.md", "{{packRoot}}/roles/accessibility-reviewer.md", "{{packRoot}}/roles/copy-reviewer.md", "{{packRoot}}/roles/artifact-contract.md"]
+
+[[formation.input]]
+id = "port_jury_in"
+label = "Validated prototype"
+
+[[formation.output]]
+id = "port_jury_out"
+label = "Authoritative scorecard"
+
+[[formation.slot]]
+id = "slot_jury_controller"
+label = "Jury controller"
+controller = true
+
+[[formation.slot]]
+id = "slot_design_critic"
+label = "Design critic"
+controller = false
+
+[[formation.slot]]
+id = "slot_brand_reviewer"
+label = "Brand and visual-system reviewer"
+controller = false
+
+[[formation.slot]]
+id = "slot_accessibility_reviewer"
+label = "Accessibility reviewer"
+controller = false
+
+[[formation.slot]]
+id = "slot_copy_reviewer"
+label = "Copy and clarity reviewer"
+controller = false
+
+[[formation]]
+id = "fmn_refiner"
+type = "solo"
+title = "Prototype Refiner"
+
+[formation.brief]
+goal = "Address concrete validator or jury findings in the same artifact, preserve working behavior, and return the revised artifact reference."
+files = ["{{packRoot}}/roles/prototype-refiner.md", "{{packRoot}}/roles/artifact-contract.md"]
+
+[[formation.input]]
+id = "port_refiner_in"
+label = "Failed artifact or scorecard"
+
+[[formation.output]]
+id = "port_refiner_out"
+label = "Revised prototype artifact"
+
+[[formation.slot]]
+id = "slot_refiner"
+label = "Prototype refiner"
+controller = false
+
+[[formation]]
+id = "fmn_handoff"
+type = "solo"
+title = "Design Handoff"
+
+[formation.brief]
+goal = "Package the passing artifact, direction, scorecard evidence, validation result, and remaining caveats into a concise handoff."
+files = ["{{packRoot}}/roles/handoff-editor.md", "{{packRoot}}/roles/artifact-contract.md"]
+
+[[formation.input]]
+id = "port_handoff_in"
+label = "Passing scorecard"
+
+[[formation.output]]
+id = "port_handoff_out"
+label = "Handoff package"
+
+[[formation.slot]]
+id = "slot_handoff"
+label = "Handoff editor"
+controller = false
+
+[[gate]]
+id = "gate_direction"
+title = "Direction Approval"
+kinds = ["human"]
+criterion = "A human explicitly approves the visual and interaction direction before implementation."
+
+[[gate]]
+id = "gate_integrity"
+title = "Artifact Integrity"
+kinds = ["script"]
+criterion = "The routed artifact is a real, local, structurally valid, responsive web prototype without obvious placeholders or accessibility-integrity defects."
+commandArgv = ["python3", "{{packRoot}}/evaluators/validate_web.py", "{{input.artifactRef}}"]
+
+[[gate]]
+id = "gate_quality"
+title = "Design Quality"
+kinds = ["scorecard"]
+criterion = "The engine-recomputed weighted score is at least 8.0/10 and no reviewer reports an unresolved must-fix finding."
+scoreThreshold = 8.0
+requireNoMustFix = true
+requiredReviewers = ["critic", "brand", "a11y", "copy"]
+reviewerWeights = ["critic=0.4", "brand=0.2", "a11y=0.2", "copy=0.2"]
+
+[[connection]]
+id = "edge_mission_direction"
+from = "mis_design:out"
+to = "fmn_direction:port_direction_in"
+
+[[connection]]
+id = "edge_direction_gate"
+from = "fmn_direction:port_direction_out"
+to = "gate_direction:in"
+
+[[connection]]
+id = "edge_direction_pass"
+from = "gate_direction:pass"
+to = "fmn_builder:port_builder_in"
+
+[[connection]]
+id = "edge_direction_fail"
+from = "gate_direction:fail"
+to = "fmn_direction:port_direction_in"
+
+[[connection]]
+id = "edge_builder_integrity"
+from = "fmn_builder:port_builder_out"
+to = "gate_integrity:in"
+
+[[connection]]
+id = "edge_integrity_pass"
+from = "gate_integrity:pass"
+to = "fmn_jury:port_jury_in"
+
+[[connection]]
+id = "edge_integrity_fail"
+from = "gate_integrity:fail"
+to = "fmn_refiner:port_refiner_in"
+
+[[connection]]
+id = "edge_jury_quality"
+from = "fmn_jury:port_jury_out"
+to = "gate_quality:in"
+
+[[connection]]
+id = "edge_quality_pass"
+from = "gate_quality:pass"
+to = "fmn_handoff:port_handoff_in"
+
+[[connection]]
+id = "edge_quality_fail"
+from = "gate_quality:fail"
+to = "fmn_refiner:port_refiner_in"
+
+[[connection]]
+id = "edge_refiner_integrity"
+from = "fmn_refiner:port_refiner_out"
+to = "gate_integrity:in"

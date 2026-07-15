@@ -127,6 +127,10 @@ func (e ScriptGateEvaluator) command(req GateEvaluation) ([]string, string, erro
 	for _, arg := range req.CommandArgv {
 		argv = append(argv, arg)
 	}
+	argv, err := e.expandGateCommandArgv(argv, req)
+	if err != nil {
+		return nil, "", err
+	}
 	if strings.TrimSpace(argv[0]) == "" {
 		return nil, "", fmt.Errorf("command argv executable is missing")
 	}
@@ -136,40 +140,225 @@ func (e ScriptGateEvaluator) command(req GateEvaluation) ([]string, string, erro
 	return argv, "", nil
 }
 
-func (e ScriptGateEvaluator) argvInvokesShell(argv []string) bool {
-	if len(argv) == 0 {
+func (e ScriptGateEvaluator) expandGateCommandArgv(argv []string, req GateEvaluation) ([]string, error) {
+	if len(argv) > 0 && (strings.Contains(argv[0], "{{") || strings.Contains(argv[0], "}}")) {
+		return nil, fmt.Errorf("gate command executable must be fixed operator-authored argv")
+	}
+	artifactRef := ""
+	if slicesContain(argv, "{{input.artifactRef}}") {
+		if e.artifactPlaceholderSelectsInterpreterProgram(argv) {
+			return nil, fmt.Errorf("input artifactRef cannot select an interpreter program or code argument")
+		}
+		var err error
+		artifactRef, err = e.resolveGateArtifactRef(req.Input.ArtifactRef)
+		if err != nil {
+			return nil, err
+		}
+	}
+	values := map[string]string{
+		"{{run.id}}":            req.RunID,
+		"{{gate.id}}":           req.GateID,
+		"{{input.artifactRef}}": artifactRef,
+	}
+	expanded := make([]string, len(argv))
+	for index, arg := range argv {
+		if index == 0 && (strings.Contains(arg, "{{") || strings.Contains(arg, "}}")) {
+			return nil, fmt.Errorf("gate command executable must be fixed operator-authored argv")
+		}
+		if arg == "{{input.ref}}" {
+			return nil, fmt.Errorf("gate command placeholder {{input.ref}} is not allowed in argv")
+		}
+		if value, ok := values[arg]; ok {
+			if strings.TrimSpace(value) == "" {
+				return nil, fmt.Errorf("gate command placeholder %s has no value", arg)
+			}
+			expanded[index] = value
+			continue
+		}
+		if strings.Contains(arg, "{{") || strings.Contains(arg, "}}") {
+			return nil, fmt.Errorf("gate command placeholders must occupy a whole argument: %q", arg)
+		}
+		expanded[index] = arg
+	}
+	return expanded, nil
+}
+
+func (e ScriptGateEvaluator) artifactPlaceholderSelectsInterpreterProgram(argv []string) bool {
+	placeholderIndex := -1
+	for index, arg := range argv {
+		if arg == "{{input.artifactRef}}" {
+			placeholderIndex = index
+			break
+		}
+	}
+	if placeholderIndex < 1 {
 		return false
 	}
-	if shellInterpreter(argv[0]) || e.resolvesToShellInterpreter(argv[0]) {
+	executable := e.resolvedExecutableBase(argv[0])
+	if commandWrapper(executable) || artifactIsCodeFileArgument(executable, argv, placeholderIndex) {
 		return true
 	}
-	base := normalizedExecutableBase(argv[0])
-	if base == "env" && len(argv) > 1 {
-		return shellInterpreter(argv[1]) || e.resolvesToShellInterpreter(argv[1])
+	interpreter := executable == "node" || executable == "nodejs" || executable == "ruby" || executable == "perl" || executable == "php" || executable == "lua" || strings.HasPrefix(executable, "python")
+	if !interpreter {
+		return false
 	}
-	if base == "busybox" && len(argv) > 1 {
-		return shellInterpreter(argv[1])
+	fixedProgram := false
+	for _, arg := range argv[1:placeholderIndex] {
+		switch arg {
+		case "-c", "-e", "--eval", "--execute":
+			return true
+		}
+		if !strings.HasPrefix(arg, "-") {
+			fixedProgram = true
+		}
+	}
+	return !fixedProgram
+}
+
+func commandWrapper(executable string) bool {
+	switch executable {
+	case "env", "busybox", "nice", "nohup", "setsid", "stdbuf", "timeout", "sudo", "doas", "xargs":
+		return true
+	default:
+		return false
+	}
+}
+
+func artifactIsCodeFileArgument(executable string, argv []string, placeholderIndex int) bool {
+	if placeholderIndex <= 1 {
+		return false
+	}
+	previous := argv[placeholderIndex-1]
+	switch executable {
+	case "awk", "gawk", "mawk", "nawk", "sed", "make", "gmake":
+		return previous == "-f" || previous == "--file"
+	case "cmake":
+		return previous == "-P"
+	case "find":
+		for _, arg := range argv[1:placeholderIndex] {
+			if arg == "-exec" || arg == "-execdir" {
+				return true
+			}
+		}
 	}
 	return false
 }
 
-func (e ScriptGateEvaluator) resolvesToShellInterpreter(executable string) bool {
-	if !strings.Contains(executable, string(filepath.Separator)) {
-		return false
-	}
+func (e ScriptGateEvaluator) resolvedExecutableBase(executable string) string {
 	path := executable
-	if !filepath.IsAbs(path) {
+	if !strings.Contains(path, string(filepath.Separator)) {
+		resolved, err := exec.LookPath(path)
+		if err != nil {
+			return normalizedExecutableBase(executable)
+		}
+		path = resolved
+	} else if !filepath.IsAbs(path) {
 		cwd, err := e.commandCWD("")
 		if err != nil {
-			return false
+			return normalizedExecutableBase(executable)
 		}
 		path = filepath.Join(cwd, path)
 	}
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil {
+		return normalizedExecutableBase(executable)
+	}
+	return normalizedExecutableBase(resolved)
+}
+
+func slicesContain(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func (e ScriptGateEvaluator) resolveGateArtifactRef(ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", fmt.Errorf("gate command placeholder {{input.artifactRef}} has no value")
+	}
+	if filepath.IsAbs(ref) {
+		return "", fmt.Errorf("input artifactRef must be workspace-relative")
+	}
+	cleaned := filepath.Clean(filepath.FromSlash(ref))
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("input artifactRef is outside workspace")
+	}
+	workspace, err := e.commandCWD("")
+	if err != nil {
+		return "", err
+	}
+	candidate := filepath.Join(workspace, cleaned)
+	resolved, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return "", fmt.Errorf("input artifactRef is unavailable: %w", err)
+	}
+	inside, err := pathInside(resolved, workspace)
+	if err != nil {
+		return "", err
+	}
+	if !inside {
+		return "", fmt.Errorf("input artifactRef resolves outside workspace")
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("input artifactRef is not a regular file")
+	}
+	return resolved, nil
+}
+
+func (e ScriptGateEvaluator) argvInvokesShell(argv []string) bool {
+	if len(argv) == 0 {
 		return false
 	}
-	return shellInterpreter(resolved)
+	base := e.resolvedExecutableBase(argv[0])
+	if shellInterpreter(base) {
+		return true
+	}
+	if base == "env" {
+		nested, valid := envCommandArgv(argv[1:])
+		return !valid || e.argvInvokesShell(nested)
+	}
+	if base == "busybox" && len(argv) > 1 {
+		return e.argvInvokesShell(argv[1:])
+	}
+	return false
+}
+
+func envCommandArgv(argv []string) ([]string, bool) {
+	for index := 0; index < len(argv); {
+		arg := argv[index]
+		switch {
+		case arg == "--":
+			index++
+			if index >= len(argv) {
+				return nil, false
+			}
+			return argv[index:], true
+		case arg == "-i" || arg == "--ignore-environment" || arg == "-0" || arg == "--null":
+			index++
+		case arg == "-u" || arg == "--unset" || arg == "-C" || arg == "--chdir":
+			if index+1 >= len(argv) {
+				return nil, false
+			}
+			index += 2
+		case strings.HasPrefix(arg, "--unset=") || strings.HasPrefix(arg, "--chdir="):
+			index++
+		case strings.Contains(arg, "=") && !strings.HasPrefix(arg, "-"):
+			index++
+		case strings.HasPrefix(arg, "-"):
+			return nil, false
+		default:
+			return argv[index:], true
+		}
+	}
+	return nil, false
 }
 
 func (e ScriptGateEvaluator) commandCWD(commandCWD string) (string, error) {

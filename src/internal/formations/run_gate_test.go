@@ -83,6 +83,39 @@ func TestS4GateRoutesPassAndUnwiredFailBlocks(t *testing.T) {
 			t.Fatalf("gate verdict = %+v, want unwired fail route none", verdict)
 		}
 	})
+
+	t.Run("invalid evaluator verdict blocks instead of passing", func(t *testing.T) {
+		store, personas := s4RunFixture(t)
+		store.Now = fixedClock()
+		personas.Now = fixedClock()
+		createS4Persona(t, personas, "scout")
+		writeFixture(t, store.BoardPath("session-search"), s4GateBoardFixture(false))
+		board, err := store.ReadBoard("session-search")
+		if err != nil {
+			t.Fatal(err)
+		}
+		executor := &fakeRunExecutor{}
+		engine := NewRunEngine(store, personas, executor)
+		engine.SetGateEvaluator(&fakeGateEvaluator{verdicts: []string{"maybe"}})
+		status, err := engine.RunMission("session-search", RunStartRequest{
+			MissionID: "mis_showcase", Actor: "agent:test", ExpectedBoardETag: board.ETag, ExpectedBoardRev: board.Rev,
+			Limits: RunLimits{MaxDispatch: 5, MaxAttempts: 2},
+		})
+		if err != nil {
+			t.Fatalf("run mission: %v", err)
+		}
+		if status.Status != RunStatusBlocked || status.Final {
+			t.Fatalf("status = %+v, want blocked non-final", status)
+		}
+		if got := executor.nodeIDs(); !reflect.DeepEqual(got, []string{"fmn_work"}) {
+			t.Fatalf("executor nodes = %v, want no downstream execution", got)
+		}
+		events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
+		errEvent := eventOfType(t, events, RunEventError)
+		if errEvent.Data["code"] != "invalid_gate_verdict" {
+			t.Fatalf("error = %+v, want invalid_gate_verdict", errEvent)
+		}
+	})
 }
 
 func TestS4GateFailWirePushesBackWithAttemptLimit(t *testing.T) {

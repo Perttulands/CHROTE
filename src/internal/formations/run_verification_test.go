@@ -121,6 +121,36 @@ func TestS4FormationVerificationBlockAndPushback(t *testing.T) {
 			t.Fatalf("error data = %#v, want verification pushback exhausted", errEvent.Data)
 		}
 	})
+
+	t.Run("invalid evaluator verdict blocks", func(t *testing.T) {
+		store, personas := s4RunFixture(t)
+		store.Now = fixedClock()
+		personas.Now = fixedClock()
+		createS4Persona(t, personas, "scout")
+		writeFixture(t, store.BoardPath("session-search"), s4VerificationBoardFixture("block"))
+		board, err := store.ReadBoard("session-search")
+		if err != nil {
+			t.Fatal(err)
+		}
+		executor := &fakeRunExecutor{}
+		engine := NewRunEngine(store, personas, executor)
+		engine.SetVerificationEvaluator(&fakeVerificationEvaluator{verdicts: []string{"unknown"}})
+		status, err := engine.RunMission("session-search", RunStartRequest{
+			MissionID: "mis_showcase", Actor: "agent:test", ExpectedBoardETag: board.ETag, ExpectedBoardRev: board.Rev,
+			Limits: RunLimits{MaxDispatch: 5, MaxAttempts: 2},
+		})
+		if err != nil {
+			t.Fatalf("run mission: %v", err)
+		}
+		if status.Status != RunStatusBlocked || status.Final {
+			t.Fatalf("status = %+v, want blocked non-final", status)
+		}
+		events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
+		errEvent := eventOfType(t, events, RunEventError)
+		if errEvent.Data["code"] != "invalid_verification_verdict" {
+			t.Fatalf("error = %+v, want invalid_verification_verdict", errEvent)
+		}
+	})
 }
 
 type fakeVerificationEvaluator struct {

@@ -62,11 +62,28 @@ func ValidateBoard(board *BoardDocument) BoardValidationReport {
 		hasScriptCommand := len(gate.CommandArgv) > 0 || strings.TrimSpace(gate.CommandShell) != ""
 		nonHumanKinds := withoutGateKind(gate.Kinds, "human")
 		isHumanOnlyGate := len(nonHumanKinds) == 0 && hasGateKind(gate.Kinds, "human")
-		if !hasJudgeChain && !hasScriptCommand && !isHumanOnlyGate {
+		hasScorecardEvaluator := scorecardGateKinds(nonHumanKinds)
+		if hasScorecardEvaluator {
+			if _, err := validateScorecardPolicy(GateEvaluation{
+				Kinds:             nonHumanKinds,
+				ScoreThreshold:    gate.ScoreThreshold,
+				RequireNoMustFix:  gate.RequireNoMustFix,
+				RequiredReviewers: gate.RequiredReviewers,
+				ReviewerWeights:   gate.ReviewerWeights,
+			}); err != nil {
+				report.Errors = append(report.Errors, BoardFinding{
+					Code:    FindingGateNotRoutable,
+					NodeID:  gate.ID,
+					Message: fmt.Sprintf("gate %q has an invalid scorecard policy: %v", gate.ID, err),
+				})
+				continue
+			}
+		}
+		if !hasJudgeChain && !hasScriptCommand && !isHumanOnlyGate && !hasScorecardEvaluator {
 			report.Errors = append(report.Errors, BoardFinding{
 				Code:    FindingGateNotRoutable,
 				NodeID:  gate.ID,
-				Message: fmt.Sprintf("gate %q has no judge chain, command argv/shell, or human-only kind, so the board cannot route it; attach a judge chain, set a script command, or make it a human-only gate", gate.ID),
+				Message: fmt.Sprintf("gate %q has no judge chain, command argv/shell, built-in scorecard policy, or human-only kind, so the board cannot route it", gate.ID),
 			})
 		}
 	}

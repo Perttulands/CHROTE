@@ -133,28 +133,37 @@ type FormationRewireRequest struct {
 }
 
 type GateCreateRequest struct {
-	Title        string
-	Kinds        []string
-	Criterion    string
-	Command      string // legacy string form: parseable, but not executable by script gates
-	CommandArgv  []string
-	CommandCWD   string
-	CommandShell string
-	X            int
-	Y            int
-	UpdatedBy    string
+	Title             string
+	Kinds             []string
+	Criterion         string
+	Command           string // legacy string form: parseable, but not executable by script gates
+	CommandArgv       []string
+	CommandCWD        string
+	CommandShell      string
+	ScoreThreshold    float64
+	RequireNoMustFix  bool
+	RequiredReviewers []string
+	ReviewerWeights   []string
+	X                 int
+	Y                 int
+	UpdatedBy         string
 }
 
 type GateUpdateRequest struct {
-	GateID       string
-	Title        string
-	Kinds        []string
-	Criterion    string
-	Command      string // legacy string form: parseable, but not executable by script gates
-	CommandArgv  []string
-	CommandCWD   string
-	CommandShell string
-	UpdatedBy    string
+	GateID               string
+	Title                string
+	Kinds                []string
+	Criterion            string
+	Command              string // legacy string form: parseable, but not executable by script gates
+	CommandArgv          []string
+	CommandCWD           string
+	CommandShell         string
+	ScoreThreshold       *float64
+	RequireNoMustFix     *bool
+	RequiredReviewers    *[]string
+	ReviewerWeights      *[]string
+	ClearScorecardPolicy bool
+	UpdatedBy            string
 }
 
 type GateJudgeRequest struct {
@@ -217,14 +226,18 @@ type BoardConnection struct {
 }
 
 type GateNode struct {
-	ID           string   `json:"id"`
-	Title        string   `json:"title"`
-	Kinds        []string `json:"kinds"`
-	Criterion    string   `json:"criterion"`
-	Command      string   `json:"command,omitempty"` // legacy string form: parseable, but not executable by script gates
-	CommandArgv  []string `json:"commandArgv,omitempty"`
-	CommandCWD   string   `json:"commandCwd,omitempty"`
-	CommandShell string   `json:"commandShell,omitempty"`
+	ID                string   `json:"id"`
+	Title             string   `json:"title"`
+	Kinds             []string `json:"kinds"`
+	Criterion         string   `json:"criterion"`
+	Command           string   `json:"command,omitempty"` // legacy string form: parseable, but not executable by script gates
+	CommandArgv       []string `json:"commandArgv,omitempty"`
+	CommandCWD        string   `json:"commandCwd,omitempty"`
+	CommandShell      string   `json:"commandShell,omitempty"`
+	ScoreThreshold    float64  `json:"scoreThreshold,omitempty"`
+	RequireNoMustFix  bool     `json:"requireNoMustFix,omitempty"`
+	RequiredReviewers []string `json:"requiredReviewers,omitempty"`
+	ReviewerWeights   []string `json:"reviewerWeights,omitempty"`
 }
 
 type MissionNode struct {
@@ -718,14 +731,18 @@ func (s *Store) CreateGate(slug string, req GateCreateRequest, opts WriteOptions
 		title = "Review gate"
 	}
 	gate := GateNode{
-		ID:           newPrefixedID("gate"),
-		Title:        title,
-		Kinds:        kinds,
-		Criterion:    req.Criterion,
-		Command:      req.Command,
-		CommandArgv:  append([]string(nil), req.CommandArgv...),
-		CommandCWD:   req.CommandCWD,
-		CommandShell: req.CommandShell,
+		ID:                newPrefixedID("gate"),
+		Title:             title,
+		Kinds:             kinds,
+		Criterion:         req.Criterion,
+		Command:           req.Command,
+		CommandArgv:       append([]string(nil), req.CommandArgv...),
+		CommandCWD:        req.CommandCWD,
+		CommandShell:      req.CommandShell,
+		ScoreThreshold:    req.ScoreThreshold,
+		RequireNoMustFix:  req.RequireNoMustFix,
+		RequiredReviewers: append([]string(nil), req.RequiredReviewers...),
+		ReviewerWeights:   append([]string(nil), req.ReviewerWeights...),
 	}
 	board, err := s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, _ *BoardDocument) ([]byte, error) {
 		return appendGateBlock(raw, gate), nil
@@ -746,11 +763,27 @@ func (s *Store) UpdateGate(slug string, req GateUpdateRequest, opts WriteOptions
 	if err := validateGateCommandMode(req.Command, req.CommandArgv, req.CommandShell); err != nil {
 		return nil, err
 	}
-	return s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, _ *BoardDocument) ([]byte, error) {
+	policyUpdate := req.ScoreThreshold != nil || req.RequireNoMustFix != nil || req.RequiredReviewers != nil || req.ReviewerWeights != nil
+	if req.ClearScorecardPolicy && policyUpdate {
+		return nil, fmt.Errorf("%w: scorecard policy clear cannot be combined with policy updates", ErrInvalidSlug)
+	}
+	return s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, current *BoardDocument) ([]byte, error) {
 		lines := splitLines(raw)
 		gateStart, gateEnd, ok := findGateBlockByID(lines, req.GateID)
 		if !ok {
 			return nil, ErrNotFound
+		}
+		effectiveKinds := req.Kinds
+		if len(effectiveKinds) == 0 {
+			for _, gate := range current.Gates {
+				if gate.ID == req.GateID {
+					effectiveKinds = gate.Kinds
+					break
+				}
+			}
+		}
+		if policyUpdate && !scorecardGateKinds(effectiveKinds) {
+			return nil, fmt.Errorf("%w: scorecard policy requires the scorecard kind", ErrInvalidSlug)
 		}
 		if req.Title != "" {
 			lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "title", renderString(req.Title))
@@ -779,6 +812,42 @@ func (s *Store) UpdateGate(slug string, req GateUpdateRequest, opts WriteOptions
 			lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "commandShell", renderString(req.CommandShell))
 			lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, "command")
 			lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, "commandArgv")
+		}
+		clearScorecardPolicy := req.ClearScorecardPolicy || (len(req.Kinds) > 0 && !scorecardGateKinds(req.Kinds))
+		if clearScorecardPolicy {
+			for _, key := range []string{"scoreThreshold", "requireNoMustFix", "requiredReviewers", "reviewerWeights"} {
+				_, gateEnd, _ = findGateBlockByID(lines, req.GateID)
+				lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, key)
+			}
+			_, gateEnd, _ = findGateBlockByID(lines, req.GateID)
+		}
+		if req.ScoreThreshold != nil {
+			_, gateEnd, _ = findGateBlockByID(lines, req.GateID)
+			if *req.ScoreThreshold > 0 {
+				lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "scoreThreshold", renderFloat(*req.ScoreThreshold))
+			} else {
+				lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, "scoreThreshold")
+			}
+		}
+		if req.RequireNoMustFix != nil {
+			_, gateEnd, _ = findGateBlockByID(lines, req.GateID)
+			lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "requireNoMustFix", strconv.FormatBool(*req.RequireNoMustFix))
+		}
+		if req.RequiredReviewers != nil {
+			_, gateEnd, _ = findGateBlockByID(lines, req.GateID)
+			if len(*req.RequiredReviewers) > 0 {
+				lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "requiredReviewers", renderStringArray(*req.RequiredReviewers))
+			} else {
+				lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, "requiredReviewers")
+			}
+		}
+		if req.ReviewerWeights != nil {
+			_, gateEnd, _ = findGateBlockByID(lines, req.GateID)
+			if len(*req.ReviewerWeights) > 0 {
+				lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "reviewerWeights", renderStringArray(*req.ReviewerWeights))
+			} else {
+				lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, "reviewerWeights")
+			}
 		}
 		return renderTOMLLines(lines), nil
 	})
@@ -1432,6 +1501,18 @@ func appendGateBlock(raw []byte, gate GateNode) []byte {
 	}
 	if gate.CommandShell != "" {
 		b.WriteString("commandShell = " + renderString(gate.CommandShell) + "\n")
+	}
+	if gate.ScoreThreshold > 0 {
+		b.WriteString("scoreThreshold = " + renderFloat(gate.ScoreThreshold) + "\n")
+	}
+	if gate.RequireNoMustFix {
+		b.WriteString("requireNoMustFix = true\n")
+	}
+	if len(gate.RequiredReviewers) > 0 {
+		b.WriteString("requiredReviewers = " + renderStringArray(gate.RequiredReviewers) + "\n")
+	}
+	if len(gate.ReviewerWeights) > 0 {
+		b.WriteString("reviewerWeights = " + renderStringArray(gate.ReviewerWeights) + "\n")
 	}
 	return []byte(b.String())
 }
@@ -2277,6 +2358,14 @@ func parseGateNodes(raw []byte) []GateNode {
 			current.CommandCWD = value
 		case "commandShell":
 			current.CommandShell = value
+		case "scoreThreshold":
+			current.ScoreThreshold = parseTOMLFloat(value)
+		case "requireNoMustFix":
+			current.RequireNoMustFix, _ = strconv.ParseBool(value)
+		case "requiredReviewers":
+			current.RequiredReviewers = parseStringArray(value)
+		case "reviewerWeights":
+			current.ReviewerWeights = parseStringArray(value)
 		}
 	}
 	return gates

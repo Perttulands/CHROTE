@@ -94,6 +94,10 @@ Recommended layout:
   artifacts/
     <run-id>/
       <agent-created output files>
+  packs/
+    <pack-id>/<version>/
+      pack.toml
+      <immutable pack assets>
 agents/ or CHROTE_AGENTS_DIR/
   <agent-id>.toml
 ```
@@ -102,13 +106,15 @@ agents/ or CHROTE_AGENTS_DIR/
 
 A board definition contains structural state:
 
-- board id/name/version;
+- board id/name/version and optional producing workflow-pack id/version/digest;
 - missions;
 - formations;
 - gates, including `kinds`, `criterion`, and optional structured script gate
   command fields (`commandArgv` or explicit `commandShell`, plus optional
   `commandCwd`; legacy `command` is parseable compatibility metadata, not the
   executable contract);
+- scorecard gate policy fields: `scoreThreshold`, `requireNoMustFix`,
+  `requiredReviewers`, and `reviewerWeights`;
 - slots;
 - ports;
 - connections;
@@ -148,6 +154,10 @@ Short inline `text` preserves the existing routing path. For tmux-backed long
 outputs, local file `ref` values are canonicalized under configured roots and
 hydrated into routed text before the payload is written to the ledger; invalid
 refs block instead of becoming arbitrary file reads.
+
+When a gate routes work, the resulting `RunInputRef` retains the payload fields
+and adds `gateFeedback` from the recorded verdict reason. Replay reconstructs the
+same feedback from the append-only `gate_verdict` event.
 
 Representative event kinds:
 

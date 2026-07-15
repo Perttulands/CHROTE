@@ -460,7 +460,7 @@ func outputContractExtraLines(formation FormationNode) []string {
 		if i == len(formation.Outputs)-1 {
 			comma = ""
 		}
-		lines = append(lines, fmt.Sprintf("  %q: {\"text\": \"one-line summary\", \"ref\": \"artifact/path.md\"}%s", output.ID, comma))
+		lines = append(lines, fmt.Sprintf("  %q: {\"text\": \"one-line summary\", \"ref\": \"artifact/path.md\", \"artifactRef\": \"artifact/path.html\", \"reportRef\": \"artifact/report.json\"}%s", output.ID, comma))
 	}
 	lines = append(lines,
 		"}",
@@ -754,10 +754,8 @@ func (e *TmuxFormationExecutor) seedPeerPlane(req FormationExecution, peers []tm
 	b.WriteString("formation: " + req.NodeID + "\n")
 	b.WriteString("mode: no-hierarchy peer collaboration\n")
 	b.WriteString("brief: " + redactLedgerText(req.Brief.Goal) + "\n")
-	for _, input := range req.Inputs {
-		if strings.TrimSpace(input.Text) != "" {
-			b.WriteString("input: " + redactLedgerText(input.Text) + "\n")
-		}
+	for _, line := range routedInputContextLines(req.Inputs) {
+		b.WriteString(line + "\n")
 	}
 	b.WriteString("\n## Working agreement\n")
 	b.WriteString("- Read this plane before acting.\n")
@@ -1230,6 +1228,29 @@ func (e *TmuxFormationExecutor) allowedHarnesses() map[string]bool {
 	return allowed
 }
 
+func routedInputContextLines(inputs []RunInputRef) []string {
+	var lines []string
+	for index, input := range inputs {
+		prefix := fmt.Sprintf("input %d ", index+1)
+		for _, field := range []struct {
+			label string
+			value string
+		}{
+			{label: "port", value: input.ToPortID},
+			{label: "ref", value: input.Ref},
+			{label: "artifactRef", value: input.ArtifactRef},
+			{label: "reportRef", value: input.ReportRef},
+			{label: "text", value: input.Text},
+			{label: "gate feedback", value: input.GateFeedback},
+		} {
+			if strings.TrimSpace(field.value) != "" {
+				lines = append(lines, prefix+field.label+": "+redactLedgerText(field.value))
+			}
+		}
+	}
+	return lines
+}
+
 func (e *TmuxFormationExecutor) renderPrompt(req FormationExecution, slot FormationSlot, card PersonaCard, variant HarnessVariant) string {
 	return e.renderPromptWithContext(req, slot, card, variant, "", nil)
 }
@@ -1242,14 +1263,30 @@ func (e *TmuxFormationExecutor) renderPromptWithContext(req FormationExecution, 
 	b.WriteString("agent: " + card.ID + "\n")
 	b.WriteString("harness: " + variant.ID + "\n")
 	b.WriteString("cwd: " + e.config.Cwd + "\n")
+	if strings.TrimSpace(req.Formation.Title) != "" {
+		b.WriteString("Formation title: " + req.Formation.Title + "\n")
+	}
+	if strings.TrimSpace(slot.Label) != "" {
+		b.WriteString("Assigned role: " + slot.Label + "\n")
+	}
+	if req.Formation.Brief != nil && len(req.Formation.Brief.Files) > 0 {
+		b.WriteString("Required files/context:\n")
+		for _, path := range req.Formation.Brief.Files {
+			b.WriteString("- " + path + "\n")
+		}
+	}
+	if req.Formation.Brief != nil && len(req.Formation.Brief.Links) > 0 {
+		b.WriteString("Reference links:\n")
+		for _, link := range req.Formation.Brief.Links {
+			b.WriteString("- " + link + "\n")
+		}
+	}
 	if phase != "" {
 		b.WriteString("orchestration phase: " + phase + "\n")
 	}
 	b.WriteString("brief: " + req.Brief.Goal + "\n")
-	for _, input := range req.Inputs {
-		if input.Text != "" {
-			b.WriteString("input: " + input.Text + "\n")
-		}
+	for _, line := range routedInputContextLines(req.Inputs) {
+		b.WriteString(line + "\n")
 	}
 	for _, line := range extraLines {
 		if strings.TrimSpace(line) != "" {

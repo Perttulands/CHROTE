@@ -31,19 +31,22 @@ type Store struct {
 }
 
 type BoardDocument struct {
-	Schema      int               `json:"schema"`
-	ID          string            `json:"id"`
-	Slug        string            `json:"slug"`
-	Title       string            `json:"title"`
-	Rev         int               `json:"rev"`
-	UpdatedBy   string            `json:"updatedBy,omitempty"`
-	UpdatedAt   string            `json:"updatedAt,omitempty"`
-	Missions    []MissionNode     `json:"missions,omitempty"`
-	Formations  []FormationNode   `json:"formations,omitempty"`
-	Gates       []GateNode        `json:"gates,omitempty"`
-	Connections []BoardConnection `json:"connections,omitempty"`
-	ETag        string            `json:"etag"`
-	TOML        string            `json:"toml,omitempty"`
+	Schema              int               `json:"schema"`
+	ID                  string            `json:"id"`
+	Slug                string            `json:"slug"`
+	Title               string            `json:"title"`
+	Rev                 int               `json:"rev"`
+	WorkflowPackID      string            `json:"workflowPackId,omitempty"`
+	WorkflowPackVersion string            `json:"workflowPackVersion,omitempty"`
+	WorkflowPackDigest  string            `json:"workflowPackDigest,omitempty"`
+	UpdatedBy           string            `json:"updatedBy,omitempty"`
+	UpdatedAt           string            `json:"updatedAt,omitempty"`
+	Missions            []MissionNode     `json:"missions,omitempty"`
+	Formations          []FormationNode   `json:"formations,omitempty"`
+	Gates               []GateNode        `json:"gates,omitempty"`
+	Connections         []BoardConnection `json:"connections,omitempty"`
+	ETag                string            `json:"etag"`
+	TOML                string            `json:"toml,omitempty"`
 }
 
 type BoardSummary struct {
@@ -440,19 +443,22 @@ func parseBoard(raw []byte) (*BoardDocument, error) {
 		return nil, fmt.Errorf("%w: schema %d", ErrUnsupportedSchema, schema)
 	}
 	return &BoardDocument{
-		Schema:      schema,
-		ID:          doc.stringValue("id"),
-		Slug:        doc.stringValue("slug"),
-		Title:       doc.stringValue("title"),
-		Rev:         doc.intValue("rev"),
-		UpdatedBy:   doc.stringValue("updatedBy"),
-		UpdatedAt:   doc.stringValue("updatedAt"),
-		Missions:    parseMissionNodes(raw),
-		Formations:  parseFormationNodes(raw),
-		Gates:       parseGateNodes(raw),
-		Connections: parseBoardConnections(raw),
-		ETag:        etag(raw),
-		TOML:        string(raw),
+		Schema:              schema,
+		ID:                  doc.stringValue("id"),
+		Slug:                doc.stringValue("slug"),
+		Title:               doc.stringValue("title"),
+		Rev:                 doc.intValue("rev"),
+		WorkflowPackID:      doc.stringValue("workflowPackId"),
+		WorkflowPackVersion: doc.stringValue("workflowPackVersion"),
+		WorkflowPackDigest:  doc.stringValue("workflowPackDigest"),
+		UpdatedBy:           doc.stringValue("updatedBy"),
+		UpdatedAt:           doc.stringValue("updatedAt"),
+		Missions:            parseMissionNodes(raw),
+		Formations:          parseFormationNodes(raw),
+		Gates:               parseGateNodes(raw),
+		Connections:         parseBoardConnections(raw),
+		ETag:                etag(raw),
+		TOML:                string(raw),
 	}, nil
 }
 
@@ -495,6 +501,15 @@ func renderString(v string) string {
 
 func renderInt(v int) string {
 	return strconv.Itoa(v)
+}
+
+func renderFloat(v float64) string {
+	return strconv.FormatFloat(v, 'f', -1, 64)
+}
+
+func parseTOMLFloat(value string) float64 {
+	parsed, _ := strconv.ParseFloat(strings.TrimSpace(value), 64)
+	return parsed
 }
 
 func renderBoard(slug, title, updatedBy string, updatedAt time.Time) []byte {

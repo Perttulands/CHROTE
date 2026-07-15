@@ -124,7 +124,7 @@ func run(args []string, stdout, stderr io.Writer, runner tmuxRunner) int {
 		return 2
 	}
 	if len(args) < 2 {
-		fmt.Fprintln(stderr, "usage: archon <agent|board|formation|gate|mission|run> <command>")
+		fmt.Fprintln(stderr, "usage: archon <agent|board|workflow|formation|gate|mission|run> <command>")
 		return 2
 	}
 	switch args[0] {
@@ -162,6 +162,17 @@ func run(args []string, stdout, stderr io.Writer, runner tmuxRunner) int {
 			return runBoardValidate(store, args[2:], stdout, stderr)
 		default:
 			fmt.Fprintf(stderr, "unknown board command %q\n", args[1])
+			return 2
+		}
+	case "workflow":
+		store := formations.NewStore(config.Workspace)
+		switch args[1] {
+		case "inspect":
+			return runWorkflowInspect(args[2:], stdout, stderr)
+		case "instantiate":
+			return runWorkflowInstantiate(store, args[2:], stdout, stderr)
+		default:
+			fmt.Fprintf(stderr, "unknown workflow command %q\n", args[1])
 			return 2
 		}
 	case "formation":
@@ -756,15 +767,19 @@ func runGateCreate(store *formations.Store, args []string, stdout, stderr io.Wri
 	commandArgv := fs.String("command-argv", "", "comma-separated argv command for script/lint gates, e.g. npm,run,lint")
 	commandCWD := fs.String("command-cwd", "", "command working directory relative to workspace")
 	commandShell := fs.String("command-shell", "", "explicit shell command for script/lint gates")
+	scoreThreshold := fs.Float64("score-threshold", 0, "authoritative scorecard threshold from 0 to 10")
+	requireNoMustFix := fs.Bool("require-no-must-fix", false, "require zero open must-fix findings")
+	requiredReviewers := fs.String("required-reviewers", "", "comma-separated required scorecard reviewers")
+	reviewerWeights := fs.String("reviewer-weights", "", "comma-separated reviewer=weight scorecard policy")
 	x := fs.Int("x", 0, "layout x coordinate")
 	y := fs.Int("y", 0, "layout y coordinate")
 	updatedBy := fs.String("updated-by", "agent:archon", "update actor")
 	jsonOut := fs.Bool("json", false, "write JSON")
-	if err := fs.Parse(reorderFlags(args, map[string]bool{"json": true})); err != nil {
+	if err := fs.Parse(reorderFlags(args, map[string]bool{"json": true, "require-no-must-fix": true})); err != nil {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: archon gate create <board> [--kinds code,human] [--criterion text] [--command-argv npm,run,lint] [--command-cwd dir] [--command-shell cmd] [--x n] [--y n] [--json]")
+		fmt.Fprintln(stderr, "usage: archon gate create <board> [--kinds code,human] [--criterion text] [--command-argv npm,run,lint] [--command-cwd dir] [--command-shell cmd] [--score-threshold n] [--require-no-must-fix] [--required-reviewers a,b] [--reviewer-weights a=0.5,b=0.5] [--x n] [--y n] [--json]")
 		return 2
 	}
 	slug, err := store.ResolveBoardSelector(fs.Arg(0))
@@ -775,17 +790,27 @@ func runGateCreate(store *formations.Store, args []string, stdout, stderr io.Wri
 	if err != nil {
 		return fail(stderr, err)
 	}
+	createKinds := splitCSV(*kinds)
+	policyRequested := *scoreThreshold != 0 || *requireNoMustFix || strings.TrimSpace(*requiredReviewers) != "" || strings.TrimSpace(*reviewerWeights) != ""
+	if policyRequested && (len(createKinds) != 1 || strings.TrimSpace(createKinds[0]) != "scorecard") {
+		fmt.Fprintln(stderr, "scorecard policy requires kinds=scorecard")
+		return 2
+	}
 	result, err := store.CreateGate(slug, formations.GateCreateRequest{
-		Title:        *title,
-		Kinds:        splitCSV(*kinds),
-		Criterion:    *criterion,
-		Command:      *command,
-		CommandArgv:  splitCSV(*commandArgv),
-		CommandCWD:   *commandCWD,
-		CommandShell: *commandShell,
-		X:            *x,
-		Y:            *y,
-		UpdatedBy:    *updatedBy,
+		Title:             *title,
+		Kinds:             createKinds,
+		Criterion:         *criterion,
+		Command:           *command,
+		CommandArgv:       splitCSV(*commandArgv),
+		CommandCWD:        *commandCWD,
+		CommandShell:      *commandShell,
+		ScoreThreshold:    *scoreThreshold,
+		RequireNoMustFix:  *requireNoMustFix,
+		RequiredReviewers: splitCSV(*requiredReviewers),
+		ReviewerWeights:   splitCSV(*reviewerWeights),
+		X:                 *x,
+		Y:                 *y,
+		UpdatedBy:         *updatedBy,
 	}, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
 	if err != nil {
 		return fail(stderr, err)
@@ -808,13 +833,38 @@ func runGateUpdate(store *formations.Store, args []string, stdout, stderr io.Wri
 	commandArgv := fs.String("command-argv", "", "comma-separated argv command for script/lint gates, e.g. npm,run,lint")
 	commandCWD := fs.String("command-cwd", "", "command working directory relative to workspace")
 	commandShell := fs.String("command-shell", "", "explicit shell command for script/lint gates")
+	scoreThreshold := fs.Float64("score-threshold", 0, "authoritative scorecard threshold from 0 to 10")
+	requireNoMustFix := fs.Bool("require-no-must-fix", false, "require zero open must-fix findings")
+	requiredReviewers := fs.String("required-reviewers", "", "comma-separated required scorecard reviewers")
+	reviewerWeights := fs.String("reviewer-weights", "", "comma-separated reviewer=weight scorecard policy")
+	clearScorecardPolicy := fs.Bool("clear-scorecard-policy", false, "remove all persisted scorecard policy fields")
 	updatedBy := fs.String("updated-by", "agent:archon", "update actor")
 	jsonOut := fs.Bool("json", false, "write JSON")
-	if err := fs.Parse(reorderFlags(args, map[string]bool{"json": true})); err != nil {
+	if err := fs.Parse(reorderFlags(args, map[string]bool{"json": true, "require-no-must-fix": true, "clear-scorecard-policy": true})); err != nil {
 		return 2
 	}
+	var requireNoMustFixUpdate *bool
+	var scoreThresholdUpdate *float64
+	var requiredReviewersUpdate *[]string
+	var reviewerWeightsUpdate *[]string
+	fs.Visit(func(current *flag.Flag) {
+		switch current.Name {
+		case "require-no-must-fix":
+			value := *requireNoMustFix
+			requireNoMustFixUpdate = &value
+		case "score-threshold":
+			value := *scoreThreshold
+			scoreThresholdUpdate = &value
+		case "required-reviewers":
+			value := splitCSV(*requiredReviewers)
+			requiredReviewersUpdate = &value
+		case "reviewer-weights":
+			value := splitCSV(*reviewerWeights)
+			reviewerWeightsUpdate = &value
+		}
+	})
 	if fs.NArg() != 2 {
-		fmt.Fprintln(stderr, "usage: archon gate update <board> <gate> [--title text] [--kinds code,llm] [--criterion text] [--command-argv npm,run,lint] [--command-cwd dir] [--command-shell cmd] [--json]")
+		fmt.Fprintln(stderr, "usage: archon gate update <board> <gate> [--title text] [--kinds code,llm] [--criterion text] [--command-argv npm,run,lint] [--command-cwd dir] [--command-shell cmd] [--score-threshold n] [--require-no-must-fix] [--required-reviewers a,b] [--reviewer-weights a=0.5,b=0.5] [--clear-scorecard-policy] [--json]")
 		return 2
 	}
 	slug, err := store.ResolveBoardSelector(fs.Arg(0))
@@ -833,16 +883,39 @@ func runGateUpdate(store *formations.Store, args []string, stdout, stderr io.Wri
 	if strings.TrimSpace(*kinds) != "" {
 		updateKinds = splitCSV(*kinds)
 	}
+	policyUpdate := scoreThresholdUpdate != nil || requireNoMustFixUpdate != nil || requiredReviewersUpdate != nil || reviewerWeightsUpdate != nil
+	if *clearScorecardPolicy && policyUpdate {
+		fmt.Fprintln(stderr, "scorecard policy clear cannot be combined with scorecard policy updates")
+		return 2
+	}
+	effectiveKinds := updateKinds
+	if len(effectiveKinds) == 0 {
+		for _, gate := range board.Gates {
+			if gate.ID == gateID {
+				effectiveKinds = gate.Kinds
+				break
+			}
+		}
+	}
+	if policyUpdate && (len(effectiveKinds) != 1 || strings.TrimSpace(effectiveKinds[0]) != "scorecard") {
+		fmt.Fprintln(stderr, "scorecard policy requires kinds=scorecard")
+		return 2
+	}
 	result, err := store.UpdateGate(slug, formations.GateUpdateRequest{
-		GateID:       gateID,
-		Title:        *title,
-		Kinds:        updateKinds,
-		Criterion:    *criterion,
-		Command:      *command,
-		CommandArgv:  splitCSV(*commandArgv),
-		CommandCWD:   *commandCWD,
-		CommandShell: *commandShell,
-		UpdatedBy:    *updatedBy,
+		GateID:               gateID,
+		Title:                *title,
+		Kinds:                updateKinds,
+		Criterion:            *criterion,
+		Command:              *command,
+		CommandArgv:          splitCSV(*commandArgv),
+		CommandCWD:           *commandCWD,
+		CommandShell:         *commandShell,
+		ScoreThreshold:       scoreThresholdUpdate,
+		RequireNoMustFix:     requireNoMustFixUpdate,
+		RequiredReviewers:    requiredReviewersUpdate,
+		ReviewerWeights:      reviewerWeightsUpdate,
+		ClearScorecardPolicy: *clearScorecardPolicy,
+		UpdatedBy:            *updatedBy,
 	}, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
 	if err != nil {
 		return fail(stderr, err)
@@ -1676,6 +1749,62 @@ func identityFromBoard(board *formations.BoardDocument) archonBoardIdentity {
 		Rev:   board.Rev,
 		ETag:  board.ETag,
 	}
+}
+
+func runWorkflowInspect(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("workflow inspect", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	jsonOut := fs.Bool("json", false, "write JSON")
+	if err := fs.Parse(reorderFlags(args, map[string]bool{"json": true})); err != nil {
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(stderr, "usage: archon workflow inspect <pack-dir> [--json]")
+		return 2
+	}
+	pack, err := formations.LoadWorkflowPack(fs.Arg(0))
+	if err != nil {
+		return fail(stderr, err)
+	}
+	if *jsonOut {
+		return writeJSON(stdout, pack)
+	}
+	fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", pack.ID, pack.Version, pack.Title, pack.License)
+	return 0
+}
+
+func runWorkflowInstantiate(store *formations.Store, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("workflow instantiate", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	title := fs.String("title", "", "board title")
+	goal := fs.String("goal", "", "mission goal")
+	updatedBy := fs.String("updated-by", "agent:archon", "update actor")
+	jsonOut := fs.Bool("json", false, "write JSON")
+	if err := fs.Parse(reorderFlags(args, map[string]bool{"json": true})); err != nil {
+		return 2
+	}
+	if fs.NArg() != 2 || strings.TrimSpace(*title) == "" || strings.TrimSpace(*goal) == "" {
+		fmt.Fprintln(stderr, "usage: archon workflow instantiate <pack-dir> <slug> --title <title> --goal <goal> [--json]")
+		return 2
+	}
+	result, err := store.InstantiateWorkflowPack(fs.Arg(0), formations.WorkflowInstantiateRequest{
+		Slug:      fs.Arg(1),
+		Title:     *title,
+		Goal:      *goal,
+		UpdatedBy: *updatedBy,
+	})
+	if err != nil {
+		return failJSON(stderr, err, *jsonOut, "workflow", fs.Arg(1))
+	}
+	result.Board.TOML = ""
+	if result.Layout != nil {
+		result.Layout.TOML = ""
+	}
+	if *jsonOut {
+		return writeJSON(stdout, result)
+	}
+	fmt.Fprintf(stdout, "instantiated %s@%s as %s\n", result.Pack.ID, result.Pack.Version, result.Board.Slug)
+	return 0
 }
 
 func runBoardNew(store *formations.Store, args []string, stdout, stderr io.Writer) int {

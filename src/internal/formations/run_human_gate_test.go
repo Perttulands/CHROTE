@@ -2,6 +2,7 @@ package formations
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -75,6 +76,16 @@ func TestS5HumanGateVerdictRequiresResumeToDispatchPassWire(t *testing.T) {
 		t.Fatalf("run mission: %v", err)
 	}
 	executor.calls = nil
+	beforeInvalid := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
+	if _, err := engine.RecordHumanGateVerdict(status.RunID, HumanGateVerdictRequest{
+		GateID: "gate_review", Verdict: "maybe", Reason: "not a decision", Actor: "human:perttu",
+	}); err == nil || !strings.Contains(err.Error(), "pass or fail") {
+		t.Fatalf("invalid human verdict error = %v, want pass-or-fail rejection", err)
+	}
+	afterInvalid := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
+	if len(afterInvalid) != len(beforeInvalid) {
+		t.Fatalf("invalid human verdict appended events: before=%d after=%d", len(beforeInvalid), len(afterInvalid))
+	}
 	status, err = engine.RecordHumanGateVerdict(status.RunID, HumanGateVerdictRequest{
 		GateID:  "gate_review",
 		Verdict: "pass",
@@ -429,6 +440,9 @@ func TestS5HumanGateFailPushbackResumeReDispatchesWork(t *testing.T) {
 	}
 	if got, want := executor.nodeIDs(), []string{"fmn_work"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("executor nodes after fail-pushback resume = %v, want work re-dispatched", got)
+	}
+	if len(executor.calls[0].Inputs) == 0 || executor.calls[0].Inputs[0].GateFeedback != "revise the draft" {
+		t.Fatalf("pushback inputs = %+v, want exact human feedback", executor.calls[0].Inputs)
 	}
 
 	status, err = engine.RecordHumanGateVerdict(status.RunID, HumanGateVerdictRequest{

@@ -38,6 +38,7 @@ operation should have an equivalent or composable `archon` operation, and every
 ```text
 archon agent      list | inspect | new | edit | spawn | attach | retire
 archon board      list | inspect | new | validate | export
+archon workflow   inspect | instantiate
 archon formation  create | inspect | assign | unassign | wire | unwire | add-input | add-output | set-brief | run
 archon mission    create | inspect | list | run
 archon gate       create | update | inspect | judge | approve | reject | route
@@ -91,11 +92,38 @@ as the board model:
   gates do not execute legacy command strings.
 - `--command-argv`, `--command-shell`, and legacy `--command` are mutually
   exclusive.
+- Whole argv elements may be `{{run.id}}`, `{{gate.id}}`, or
+  `{{input.artifactRef}}`. Embedded placeholders and free-form `{{input.ref}}` argv
+  are rejected. The executable remains fixed operator-authored text. Artifact refs
+  must name an existing regular file beneath the real workspace, are expanded as
+  canonical absolute paths, and cannot select an interpreter program, command
+  wrapper, or code-loading argument (including through executable symlinks).
+  Resolved values remain literal argv and never enter a shell.
+
+## Scorecard-gate flags
+
+`archon gate create` and `archon gate update` author built-in scorecard policy
+with `--score-threshold`, `--require-no-must-fix`,
+`--required-reviewers critic,brand`, and
+`--reviewer-weights critic=0.6,brand=0.4`. `--clear-scorecard-policy` removes
+all scorecard fields on update; changing a gate to a non-scorecard kind clears
+stale scorecard policy as well. Archon recomputes the weighted score from routed
+schema-1 JSON; agent-claimed composites are non-authoritative.
+
+## Workflow-pack commands
+
+- `archon workflow inspect <pack-dir> --json` validates the manifest, board,
+  optional layout, license file, and source-tree digest without mutating the
+  workspace.
+- `archon workflow instantiate <pack-dir> <slug> --title <title> --goal <goal>
+  --json` installs the exact pack version, freshens graph ids, records pack
+  provenance, and writes the normal board/layout files.
 
 ## Examples
 
 ```bash
 archon board list --json
+archon workflow instantiate ./formation-packs/open-design-web design-pass --title "Design pass" --goal "Build a responsive prototype" --json
 archon agent list --assignable --json
 archon formation create default peer --title "review pair" --json
 archon formation assign default fmn_review_pair --slot slot_reviewer --agent codex-reviewer --json

@@ -2,6 +2,7 @@ package formations
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -134,6 +135,7 @@ func TestScriptGateEvaluatorRejectsShellInterpreterInArgvMode(t *testing.T) {
 		{name: "bash", argv: []string{"bash", "-lc", "touch " + pwned}},
 		{name: "bin-sh", argv: []string{"/bin/sh", "-c", "touch " + pwned}},
 		{name: "env-bash", argv: []string{"env", "bash", "-lc", "touch " + pwned}},
+		{name: "env-options-bash", argv: []string{"env", "-i", "SAFE=1", "bash", "-lc", "touch " + pwned}},
 		{name: "busybox-sh", argv: []string{"busybox", "sh", "-c", "touch " + pwned}},
 		{name: "symlink", argv: []string{shellLink, "-c", "touch " + pwned}},
 		{name: "powershell", argv: []string{"powershell.exe", "-Command", "New-Item " + pwned}},
@@ -254,6 +256,148 @@ exit 3
 	}
 	if result.Verdict != "fail" || result.PerKind["lint"] != "fail" || !strings.Contains(result.Reason, "exit status 3") {
 		t.Fatalf("result = %+v, want fail with exit status", result)
+	}
+}
+
+func TestScriptGateEvaluatorExpandsOnlyWholeSafeContextArguments(t *testing.T) {
+	dir := t.TempDir()
+	argsPath := filepath.Join(dir, "args.txt")
+	artifactPath := filepath.Join(dir, "site", "index.html")
+	if err := os.MkdirAll(filepath.Dir(artifactPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifactPath, []byte("ok"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	helper := writeScriptGateHelper(t, dir, `#!/bin/sh
+printf '%s\n' "$@" > "$1"
+`)
+	evaluator := ScriptGateEvaluator{Workspace: dir, Timeout: time.Second}
+	result, err := evaluator.EvaluateGate(GateEvaluation{
+		RunID:  "run_123",
+		GateID: "gate_quality",
+		Kinds:  []string{"script"},
+		CommandArgv: []string{
+			helper,
+			argsPath,
+			"{{run.id}}",
+			"{{gate.id}}",
+			"{{input.artifactRef}}",
+		},
+		Input: RunInputRef{Ref: "artifact://design", ArtifactRef: "site/index.html"},
+	})
+	if err != nil {
+		t.Fatalf("evaluate contextual argv: %v", err)
+	}
+	if result.Verdict != "pass" {
+		t.Fatalf("result = %+v, want pass", result)
+	}
+	args := readTestFile(t, argsPath)
+	for _, want := range []string{"run_123", "gate_quality", artifactPath} {
+		if !strings.Contains(args, want) {
+			t.Fatalf("args = %q, missing %q", args, want)
+		}
+	}
+
+	result, err = evaluator.EvaluateGate(GateEvaluation{
+		Kinds:       []string{"script"},
+		CommandArgv: []string{helper, argsPath, "prefix-{{input.ref}}"},
+		Input:       RunInputRef{Ref: "literal;touch pwned"},
+	})
+	if err != nil {
+		t.Fatalf("evaluate partial placeholder: %v", err)
+	}
+	if result.Verdict != "fail" || !strings.Contains(result.Reason, "whole argument") {
+		t.Fatalf("partial placeholder result = %+v, want fail", result)
+	}
+
+	for _, executable := range []string{"{{input.ref}}", "{{input.artifactRef}}"} {
+		result, err = evaluator.EvaluateGate(GateEvaluation{
+			Kinds:       []string{"script"},
+			CommandArgv: []string{executable, argsPath},
+			Input:       RunInputRef{Ref: helper, ArtifactRef: helper},
+		})
+		if err != nil {
+			t.Fatalf("evaluate executable placeholder %s: %v", executable, err)
+		}
+		if result.Verdict != "fail" || !strings.Contains(result.Reason, "executable must be fixed") {
+			t.Fatalf("executable placeholder %s result = %+v, want fail", executable, result)
+		}
+	}
+}
+
+func TestScriptGateEvaluatorRejectsUnsafeRuntimePathArguments(t *testing.T) {
+	workspace := t.TempDir()
+	outside := t.TempDir()
+	outsideFile := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(outsideFile, []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	insideFile := filepath.Join(workspace, "site", "index.html")
+	if err := os.MkdirAll(filepath.Dir(insideFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(insideFile, []byte("ok"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(workspace, "site", "outside.html")
+	if err := os.Symlink(outsideFile, link); err != nil {
+		t.Fatal(err)
+	}
+
+	evaluator := ScriptGateEvaluator{Workspace: workspace, Timeout: time.Second}
+	for _, tc := range []struct {
+		name        string
+		placeholder string
+		input       RunInputRef
+		want        string
+	}{
+		{name: "absolute artifact", placeholder: "{{input.artifactRef}}", input: RunInputRef{ArtifactRef: outsideFile}, want: "workspace-relative"},
+		{name: "parent artifact", placeholder: "{{input.artifactRef}}", input: RunInputRef{ArtifactRef: filepath.Join("..", filepath.Base(outside), "secret.txt")}, want: "outside workspace"},
+		{name: "symlink artifact", placeholder: "{{input.artifactRef}}", input: RunInputRef{ArtifactRef: "site/outside.html"}, want: "outside workspace"},
+		{name: "unconstrained input ref", placeholder: "{{input.ref}}", input: RunInputRef{Ref: "../../secret"}, want: "not allowed in argv"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := evaluator.EvaluateGate(GateEvaluation{
+				Kinds: []string{"script"}, CommandArgv: []string{"/usr/bin/printf", tc.placeholder}, Input: tc.input,
+			})
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+			if result.Verdict != "fail" || !strings.Contains(result.Reason, tc.want) {
+				t.Fatalf("result = %+v, want fail containing %q", result, tc.want)
+			}
+		})
+	}
+
+	result, err := evaluator.EvaluateGate(GateEvaluation{
+		Kinds: []string{"script"}, CommandArgv: []string{"/usr/bin/printf", "{{input.artifactRef}}"}, Input: RunInputRef{ArtifactRef: "site/index.html"},
+	})
+	if err != nil || result.Verdict != "pass" {
+		t.Fatalf("safe artifact result=%+v err=%v, want pass", result, err)
+	}
+	pythonPath, err := exec.LookPath("python3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pythonLink := filepath.Join(workspace, "validator-link")
+	if err := os.Symlink(pythonPath, pythonLink); err != nil {
+		t.Fatal(err)
+	}
+	for _, argv := range [][]string{
+		{"python3", "{{input.artifactRef}}"},
+		{"python3", "-c", "{{input.artifactRef}}"},
+		{"env", "python3", "{{input.artifactRef}}"},
+		{"env", "-i", "python3", "{{input.artifactRef}}"},
+		{pythonLink, "{{input.artifactRef}}"},
+		{"awk", "-f", "{{input.artifactRef}}"},
+	} {
+		result, err = evaluator.EvaluateGate(GateEvaluation{
+			Kinds: []string{"script"}, CommandArgv: argv, Input: RunInputRef{ArtifactRef: "site/index.html"},
+		})
+		if err != nil || result.Verdict != "fail" || !strings.Contains(result.Reason, "interpreter program") {
+			t.Fatalf("interpreter argv=%v result=%+v err=%v, want safety failure", argv, result, err)
+		}
 	}
 }
 

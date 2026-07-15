@@ -328,6 +328,40 @@ func TestS5EngineResumeOpenDispatchRecordsReattachErrorWithoutResend(t *testing.
 	}
 }
 
+func TestS5EngineResumeOpenDispatchPersistsReattachErrorAsRecoverableBlock(t *testing.T) {
+	store, started := startS4DispatchRun(t)
+	dispatcher := NewSlotDispatcher(store, &fakeDispatchAdapter{})
+	lease, err := dispatcher.DispatchSlot(started.RunID, SlotDispatchRequest{
+		NodeID: "fmn_research", SlotID: "slot_research", AgentID: "scout", Harness: "openai-codex",
+		SessionStem: "scout", SessionRef: "tmux:scout", Prompt: "Do the work", Attempt: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dispatcher.CompleteFromCapture(started.RunID, lease.DispatchID, "still working"); !errors.Is(err, ErrDispatchTimeout) {
+		t.Fatalf("capture error = %v, want timeout", err)
+	}
+	boom := errors.New("tmux capture failed")
+	executor := &fakeReattachExecutor{reattachErr: boom}
+	engine := NewRunEngine(store, nil, executor)
+	status, err := engine.ResumeRun(started.RunID, RunResumeRequest{Actor: "agent:test", Mode: "reattach", Reason: "recover"})
+	if err != nil {
+		t.Fatalf("resume returned transient reattach error instead of projection: %v", err)
+	}
+	if status.Status != RunStatusBlocked || !status.ResumeAllowed || status.Final {
+		t.Fatalf("status = %+v, want recoverable blocked projection", status)
+	}
+	events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
+	errEvent := lastEventOfType(t, events, RunEventError)
+	if errEvent.Data["code"] != "dispatch_reattach_failed" || !strings.Contains(stringFromEventData(errEvent, "message"), boom.Error()) {
+		t.Fatalf("reattach error event = %+v, want durable original error", errEvent)
+	}
+	blocked := lastEventOfType(t, events, RunEventBlocked)
+	if len(openDispatchRefsFromEvent(blocked)) != 1 {
+		t.Fatalf("blocked event = %+v, want original dispatch metadata for retry", blocked)
+	}
+}
+
 func TestS5EngineResumeOpenDispatchReattachesCompletedCapture(t *testing.T) {
 	store, started := startS4DispatchRun(t)
 	dispatcher := NewSlotDispatcher(store, &fakeDispatchAdapter{})
@@ -376,6 +410,123 @@ func TestS5EngineResumeOpenDispatchReattachesCompletedCapture(t *testing.T) {
 		if event.Type == RunEventError && event.Data["code"] == "dispatch_reattach_failed" {
 			t.Fatalf("events = %#v, did not expect dispatch_reattach_failed", events)
 		}
+	}
+}
+
+func TestS5EngineResumeReattachedOutputStillRequiresVerification(t *testing.T) {
+	store, personas := s4RunFixture(t)
+	store.Now = fixedClock()
+	personas.Now = fixedClock()
+	createS4Persona(t, personas, "scout")
+	writeFixture(t, store.BoardPath("session-search"), s4VerificationBoardFixture("block"))
+	board, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, err := store.StartRun("session-search", RunStartRequest{
+		MissionID: "mis_showcase", Actor: "agent:test", ExpectedBoardETag: board.ETag, ExpectedBoardRev: board.Rev,
+		Personas: personas, Limits: RunLimits{MaxDispatch: 5, MaxAttempts: 2},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := RunInputRef{EdgeID: "edge_mission_work", FromNodeID: "mis_showcase", FromPortID: "out", ToPortID: "port_work_in", Text: "mission"}
+	if err := store.AppendRunEvent(started.RunID, RunEvent{
+		Type: RunEventNodeStarted, NodeID: "fmn_work", Attempt: 1,
+		Data: map[string]any{"nodeKind": "formation", "inputRefs": []RunInputRef{input}, "reason": "initial"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	dispatcher := NewSlotDispatcher(store, &fakeDispatchAdapter{})
+	lease, err := dispatcher.DispatchSlot(started.RunID, SlotDispatchRequest{
+		NodeID: "fmn_work", SlotID: "slot_work", AgentID: "scout", Harness: "openai-codex",
+		SessionStem: "scout", SessionRef: "tmux:scout", Prompt: "Do the work", Attempt: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dispatcher.CompleteFromCapture(started.RunID, lease.DispatchID, "still working"); !errors.Is(err, ErrDispatchTimeout) {
+		t.Fatalf("capture error = %v, want timeout", err)
+	}
+	executor := &fakeReattachExecutor{result: FormationExecutionResult{
+		Status: "done", Text: "reattached work", Outputs: map[string]FormationOutputPayload{"port_work_out": {Text: "reattached work"}},
+	}}
+	verification := &fakeVerificationEvaluator{verdicts: []string{"fail"}}
+	engine := NewRunEngine(store, personas, executor)
+	engine.SetVerificationEvaluator(verification)
+	status, err := engine.ResumeRun(started.RunID, RunResumeRequest{Actor: "agent:test", Mode: "reattach", Reason: "recover verified work"})
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if status.Status != RunStatusBlocked || status.Final {
+		t.Fatalf("status = %+v, want verification block", status)
+	}
+	events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
+	if got := countEventsForNode(events, RunEventVerificationVerdict, "fmn_work"); got != 1 {
+		t.Fatalf("verification verdict count = %d, want 1", got)
+	}
+	if got := countEventsForNode(events, RunEventNodeOutput, "fmn_work"); got != 0 {
+		t.Fatalf("reattached node output count = %d, verification failure must not publish output", got)
+	}
+}
+
+func TestS5EngineResumeReattachedJudgeRestartsEnclosingGate(t *testing.T) {
+	store, personas := s4RunFixture(t)
+	store.Now = fixedClock()
+	personas.Now = fixedClock()
+	createS4Persona(t, personas, "scout")
+	writeFixture(t, store.BoardPath("session-search"), s4JudgeChainRunBoardFixture())
+	board, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, err := store.StartRun("session-search", RunStartRequest{
+		MissionID: "mis_showcase", Actor: "agent:test", ExpectedBoardETag: board.ETag, ExpectedBoardRev: board.Rev,
+		Personas: personas, Limits: RunLimits{MaxDispatch: 8, MaxAttempts: 2},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := RunInputRef{EdgeID: "edge_work_gate", FromNodeID: "fmn_work", FromPortID: "port_work_out", ToPortID: "in", Text: "work"}
+	if err := store.AppendRunEvent(started.RunID, RunEvent{
+		Type: RunEventNodeStarted, NodeID: "fmn_j1", Attempt: 1,
+		Data: map[string]any{"nodeKind": "formation", "inputRefs": []RunInputRef{input}, "reason": "judge"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	dispatcher := NewSlotDispatcher(store, &fakeDispatchAdapter{})
+	lease, err := dispatcher.DispatchSlot(started.RunID, SlotDispatchRequest{
+		NodeID: "fmn_j1", SlotID: "slot_j1", AgentID: "scout", Harness: "openai-codex",
+		SessionStem: "scout", SessionRef: "tmux:scout", Prompt: "Judge", Phase: "execute", Attempt: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dispatcher.CompleteFromCapture(started.RunID, lease.DispatchID, "still working"); !errors.Is(err, ErrDispatchTimeout) {
+		t.Fatalf("capture error = %v, want timeout", err)
+	}
+	executor := &fakeReattachExecutor{result: FormationExecutionResult{
+		Status: "done", Text: "captured judge", Outputs: map[string]FormationOutputPayload{"port_j1_out": {Text: "captured judge"}},
+	}}
+	engine := NewRunEngine(store, personas, executor)
+	status, err := engine.ResumeRun(started.RunID, RunResumeRequest{Actor: "agent:test", Mode: "reattach", Reason: "recover judge"})
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if status.Status != RunStatusBlocked || !status.ResumeAllowed || status.Final {
+		t.Fatalf("status = %+v, want recoverable gate replay block", status)
+	}
+	events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
+	errEvent := lastEventOfType(t, events, RunEventError)
+	if errEvent.Data["code"] != "judge_dispatch_replay_required" {
+		t.Fatalf("judge recovery error = %+v", errEvent)
+	}
+	if got := countEventsForNode(events, RunEventNodeOutput, "fmn_j1"); got != 0 {
+		t.Fatalf("judge node output count = %d, reattached judge must not enter ordinary graph replay", got)
+	}
+	blocked := lastEventOfType(t, events, RunEventBlocked)
+	if len(openDispatchRefsFromEvent(blocked)) != 0 {
+		t.Fatalf("judge replay block retained stale open dispatch: %+v", blocked)
 	}
 }
 
@@ -507,6 +658,146 @@ func TestS5EngineResumeReplaysNewerGateInputOnSameEdge(t *testing.T) {
 	}
 	if got, want := executor.nodeIDs(), []string{"fmn_ship"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("executor nodes = %v, want %v", got, want)
+	}
+}
+
+func TestS5EngineResumeReplaysCrashWindowFailPushback(t *testing.T) {
+	store, personas := s4RunFixture(t)
+	store.Now = fixedClock()
+	personas.Now = fixedClock()
+	createS4Persona(t, personas, "scout")
+	writeFixture(t, store.BoardPath("session-search"), s4GateBoardFixture(true))
+	board, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, err := store.StartRun("session-search", RunStartRequest{
+		MissionID: "mis_showcase", Actor: "agent:test", ExpectedBoardETag: board.ETag, ExpectedBoardRev: board.Rev,
+		Personas: personas, Limits: RunLimits{MaxDispatch: 8, MaxAttempts: 3},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []RunEvent{
+		{Type: RunEventNodeStarted, NodeID: "fmn_work", Attempt: 1},
+		{Type: RunEventNodeOutput, NodeID: "fmn_work", Data: formationOutputEventData(FormationExecutionResult{Status: "done", Outputs: map[string]FormationOutputPayload{"port_work_out": {Text: "crash-window output"}}})},
+		{Type: RunEventBlocked, NodeID: "fmn_work", Data: map[string]any{"reason": "crashed before gate evaluation", "resumeAllowed": true, "resumePolicy": "explicit"}},
+	} {
+		if err := store.AppendRunEvent(started.RunID, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	executor := &fakeRunExecutor{}
+	evaluator := &fakeGateEvaluator{verdicts: []string{"fail", "pass"}}
+	engine := NewRunEngine(store, personas, executor)
+	engine.SetGateEvaluator(evaluator)
+	status, err := engine.ResumeRun(started.RunID, RunResumeRequest{Actor: "agent:test", Mode: "reattach", Reason: "recover gate delivery"})
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if status.Status != RunStatusSucceeded || !status.Final {
+		t.Fatalf("status = %+v, want succeeded after pushback rerun", status)
+	}
+	if got, want := executor.nodeIDs(), []string{"fmn_work", "fmn_ship"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("executor nodes = %v, want %v", got, want)
+	}
+	if len(executor.calls[0].Inputs) == 0 || !strings.Contains(executor.calls[0].Inputs[0].GateFeedback, "fake fail") {
+		t.Fatalf("rerun inputs = %+v, want gate pushback", executor.calls[0].Inputs)
+	}
+}
+
+func TestS5EngineResumeTerminalPassWaitsForPendingParallelSibling(t *testing.T) {
+	store, personas := s4RunFixture(t)
+	store.Now = fixedClock()
+	personas.Now = fixedClock()
+	createS4Persona(t, personas, "scout")
+	writeFixture(t, store.BoardPath("session-search"), parallelTerminalPassBoardFixture())
+	board, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, err := store.StartRun("session-search", RunStartRequest{
+		MissionID: "mis_showcase", Actor: "agent:test", ExpectedBoardETag: board.ETag, ExpectedBoardRev: board.Rev,
+		Personas: personas, Limits: RunLimits{MaxDispatch: 5, MaxAttempts: 2},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workInput := RunInputRef{EdgeID: "edge_work_gate", FromNodeID: "fmn_work", FromPortID: "port_work_out", ToPortID: "in", Text: "work"}
+	for _, event := range []RunEvent{
+		{Type: RunEventNodeStarted, NodeID: "mis_showcase", MissionID: "mis_showcase"},
+		{Type: RunEventNodeOutput, NodeID: "mis_showcase", MissionID: "mis_showcase", Data: formationOutputEventData(FormationExecutionResult{Status: "done", Outputs: map[string]FormationOutputPayload{"out": {Text: "mission"}}})},
+		{Type: RunEventNodeStarted, NodeID: "fmn_work", Attempt: 1},
+		{Type: RunEventNodeOutput, NodeID: "fmn_work", Data: formationOutputEventData(FormationExecutionResult{Status: "done", Outputs: map[string]FormationOutputPayload{"port_work_out": {Text: "work"}}})},
+		{Type: RunEventGateEvaluating, GateID: "gate_review", NodeID: "gate_review", Data: map[string]any{"inputRef": workInput}},
+		{Type: RunEventGateVerdict, GateID: "gate_review", NodeID: "gate_review", Data: map[string]any{"verdict": "pass", "routePort": "pass", "routedEdges": []string{}, "reason": "terminal pass", "inputRef": workInput}},
+		{Type: RunEventBlocked, NodeID: "fmn_side", Data: map[string]any{"reason": "dispatch limit before sibling", "resumeAllowed": true, "resumePolicy": "explicit"}},
+	} {
+		if err := store.AppendRunEvent(started.RunID, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	executor := &fakeRunExecutor{}
+	engine := NewRunEngine(store, personas, executor)
+	status, err := engine.ResumeRun(started.RunID, RunResumeRequest{Actor: "agent:test", Mode: "reattach", Reason: "finish sibling"})
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if status.Status != RunStatusSucceeded || !status.Final {
+		t.Fatalf("status = %+v, want succeeded", status)
+	}
+	if got, want := executor.nodeIDs(), []string{"fmn_side"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("executor nodes = %v, want pending sibling %v", got, want)
+	}
+}
+
+func TestS5EngineResumeParallelSiblingCannotMaskTerminalGateFailure(t *testing.T) {
+	store, personas := s4RunFixture(t)
+	store.Now = fixedClock()
+	personas.Now = fixedClock()
+	createS4Persona(t, personas, "scout")
+	writeFixture(t, store.BoardPath("session-search"), parallelTerminalPassBoardFixture())
+	board, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, err := store.StartRun("session-search", RunStartRequest{
+		MissionID: "mis_showcase", Actor: "agent:test", ExpectedBoardETag: board.ETag, ExpectedBoardRev: board.Rev,
+		Personas: personas, Limits: RunLimits{MaxDispatch: 5, MaxAttempts: 2},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workInput := RunInputRef{EdgeID: "edge_work_gate", FromNodeID: "fmn_work", FromPortID: "port_work_out", ToPortID: "in", Text: "work"}
+	for _, event := range []RunEvent{
+		{Type: RunEventNodeStarted, NodeID: "mis_showcase", MissionID: "mis_showcase"},
+		{Type: RunEventNodeOutput, NodeID: "mis_showcase", MissionID: "mis_showcase", Data: formationOutputEventData(FormationExecutionResult{Status: "done", Outputs: map[string]FormationOutputPayload{"out": {Text: "mission"}}})},
+		{Type: RunEventNodeStarted, NodeID: "fmn_work", Attempt: 1},
+		{Type: RunEventNodeOutput, NodeID: "fmn_work", Data: formationOutputEventData(FormationExecutionResult{Status: "done", Outputs: map[string]FormationOutputPayload{"port_work_out": {Text: "work"}}})},
+		{Type: RunEventGateEvaluating, GateID: "gate_review", NodeID: "gate_review", Data: map[string]any{"inputRef": workInput}},
+		{Type: RunEventGateVerdict, GateID: "gate_review", NodeID: "gate_review", Data: map[string]any{"verdict": "fail", "routePort": "none", "routedEdges": []string{}, "reason": "terminal failure", "inputRef": workInput}},
+		{Type: RunEventBlocked, NodeID: "fmn_side", Data: map[string]any{"reason": "dispatch limit before sibling", "resumeAllowed": true, "resumePolicy": "explicit"}},
+	} {
+		if err := store.AppendRunEvent(started.RunID, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	executor := &fakeRunExecutor{}
+	engine := NewRunEngine(store, personas, executor)
+	status, err := engine.ResumeRun(started.RunID, RunResumeRequest{Actor: "agent:test", Mode: "reattach", Reason: "finish sibling"})
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if status.Status != RunStatusBlocked || status.Final {
+		t.Fatalf("status = %+v, terminal fail must remain blocked after sibling runs", status)
+	}
+	if got, want := executor.nodeIDs(), []string{"fmn_side"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("executor nodes = %v, want pending sibling %v", got, want)
+	}
+	events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
+	errEvent := lastEventOfType(t, events, RunEventError)
+	if errEvent.Data["code"] != "resume_incomplete_graph" {
+		t.Fatalf("completion error = %+v, want unresolved branch block", errEvent)
 	}
 }
 
@@ -687,6 +978,73 @@ func TestS5EngineResumeHonorsMaxAttemptsFromOriginalRun(t *testing.T) {
 	}
 }
 
+func parallelTerminalPassBoardFixture() string {
+	return `schema = 1
+id = "brd_parallel"
+slug = "session-search"
+title = "Parallel terminal"
+rev = 1
+
+[[mission]]
+id = "mis_showcase"
+title = "Showcase"
+goal = "Finish both branches"
+
+[[formation]]
+id = "fmn_work"
+type = "solo"
+title = "Work"
+[[formation.input]]
+id = "port_work_in"
+label = "Input"
+[[formation.output]]
+id = "port_work_out"
+label = "Output"
+[[formation.slot]]
+id = "slot_work"
+label = "Worker"
+controller = false
+agentId = "scout"
+harness = "openai-codex"
+
+[[formation]]
+id = "fmn_side"
+type = "solo"
+title = "Side"
+[[formation.input]]
+id = "port_side_in"
+label = "Input"
+[[formation.output]]
+id = "port_side_out"
+label = "Output"
+[[formation.slot]]
+id = "slot_side"
+label = "Side worker"
+controller = false
+agentId = "scout"
+harness = "openai-codex"
+
+[[gate]]
+id = "gate_review"
+title = "Review"
+kinds = ["code"]
+criterion = "Pass"
+
+[[connection]]
+id = "edge_mission_work"
+from = "mis_showcase:out"
+to = "fmn_work:port_work_in"
+[[connection]]
+id = "edge_mission_side"
+from = "mis_showcase:out"
+to = "fmn_side:port_side_in"
+[[connection]]
+id = "edge_work_gate"
+from = "fmn_work:port_work_out"
+to = "gate_review:in"
+`
+}
+
 func terminalSimpleGateBoardFixture() string {
 	return strings.Replace(s4GateBoardFixture(false), `
 [[connection]]
@@ -729,6 +1087,7 @@ func countEventsForNode(events []RunEvent, eventType, nodeID string) int {
 
 type fakeReattachExecutor struct {
 	result         FormationExecutionResult
+	reattachErr    error
 	executeResults map[string]FormationExecutionResult
 	reattachCalls  []FormationReattachRequest
 }
@@ -744,7 +1103,7 @@ func (f *fakeReattachExecutor) ExecuteFormation(req FormationExecution) (Formati
 
 func (f *fakeReattachExecutor) ReattachFormationDispatch(req FormationReattachRequest) (FormationExecutionResult, error) {
 	f.reattachCalls = append(f.reattachCalls, req)
-	return f.result, nil
+	return f.result, f.reattachErr
 }
 
 func lastEventOfType(t *testing.T, events []RunEvent, eventType string) RunEvent {

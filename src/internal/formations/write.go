@@ -7,7 +7,10 @@ import (
 	"syscall"
 )
 
-var lockRegistry sync.Map
+var (
+	lockRegistry  sync.Map
+	syncDirectory = fsyncDir
+)
 
 const (
 	sharedDirMode  = os.ModeSetgid | 0o770
@@ -101,6 +104,10 @@ func writeAtomic(path string, raw []byte) error {
 		_ = tmp.Close()
 		return err
 	}
+	if err := tmp.Chmod(sharedFileMode); err != nil {
+		_ = tmp.Close()
+		return err
+	}
 	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
 		return err
@@ -108,14 +115,53 @@ func writeAtomic(path string, raw []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmpPath, sharedFileMode); err != nil {
-		return err
-	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		return err
 	}
 	cleanup = false
-	return fsyncDir(dir)
+	return syncDirectory(dir)
+}
+
+// writeAtomicNoReplace reports whether the destination link became visible.
+// A non-nil error with published=true is a post-publication durability error.
+func writeAtomicNoReplace(path string, raw []byte) (published bool, err error) {
+	dir := filepath.Dir(path)
+	if err := ensureSharedDir(dir); err != nil {
+		return false, err
+	}
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return false, err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.Write(raw); err != nil {
+		_ = tmp.Close()
+		return false, err
+	}
+	if err := tmp.Chmod(sharedFileMode); err != nil {
+		_ = tmp.Close()
+		return false, err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return false, err
+	}
+	if err := tmp.Close(); err != nil {
+		return false, err
+	}
+	// Linking a fully-written temp file is an atomic no-replace publication on
+	// the same filesystem. Unlike Rename, it cannot overwrite a racing writer.
+	if err := os.Link(tmpPath, path); err != nil {
+		if os.IsExist(err) {
+			return false, ErrAlreadyExists
+		}
+		return false, err
+	}
+	if err := syncDirectory(dir); err != nil {
+		return true, err
+	}
+	return true, nil
 }
 
 func fsyncDir(dir string) error {

@@ -611,6 +611,126 @@ to = "gate_review:in"
 	}
 }
 
+func TestArchonWorkflowInspectInstantiateAndValidate(t *testing.T) {
+	workspace := t.TempDir()
+	runner := &fakeTmux{live: map[string]bool{}}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	packRoot := filepath.Clean(filepath.Join(cwd, "..", "..", "..", "formation-packs", "open-design-web"))
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "workflow", "inspect", packRoot, "--json")
+	if code != 0 {
+		t.Fatalf("workflow inspect code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	if !strings.Contains(stdout, `"id": "open-design-web"`) || !strings.Contains(stdout, `"license": "Apache-2.0"`) {
+		t.Fatalf("workflow inspect output = %s", stdout)
+	}
+
+	stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "workflow", "instantiate", packRoot, "command-center", "--title", "Command Center", "--goal", "Build a calm command center", "--json")
+	if code != 0 {
+		t.Fatalf("workflow instantiate code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var created formations.WorkflowInstantiation
+	if err := json.Unmarshal([]byte(stdout), &created); err != nil {
+		t.Fatalf("decode workflow instantiate JSON: %v\n%s", err, stdout)
+	}
+	if created.Board == nil || created.Board.Slug != "command-center" || created.Board.Title != "Command Center" || created.Board.TOML != "" {
+		t.Fatalf("workflow instantiate result = %+v", created)
+	}
+	if created.Layout == nil || created.Layout.TOML != "" || created.InstalledRoot == "" {
+		t.Fatalf("workflow layout/install result = %+v", created)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, created.InstalledRoot, "LICENSE")); err != nil {
+		t.Fatalf("installed workflow license: %v", err)
+	}
+
+	stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "board", "validate", "command-center", "--json")
+	if code != 0 {
+		t.Fatalf("instantiated board validate code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var report struct {
+		Errors []formations.BoardFinding `json:"errors"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatalf("decode board validate JSON: %v\n%s", err, stdout)
+	}
+	if len(report.Errors) != 0 {
+		t.Fatalf("board validate output = %s", stdout)
+	}
+}
+
+func TestArchonGateCreatePersistsScorecardPolicy(t *testing.T) {
+	workspace := t.TempDir()
+	runner := &fakeTmux{live: map[string]bool{}}
+	if _, stderr, code := runArchon(t, runner, "--workspace", workspace, "board", "new", "jury", "--title", "Jury"); code != 0 {
+		t.Fatalf("board new code=%d stderr=%s", code, stderr)
+	}
+	stdout, stderr, code := runArchon(t, runner,
+		"--workspace", workspace,
+		"gate", "create", "jury",
+		"--title", "Quality",
+		"--kinds", "scorecard",
+		"--score-threshold", "8",
+		"--require-no-must-fix",
+		"--required-reviewers", "critic,brand",
+		"--reviewer-weights", "critic=0.6,brand=0.4",
+		"--json",
+	)
+	if code != 0 {
+		t.Fatalf("scorecard gate create code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	board, err := formations.NewStore(workspace).ReadBoard("jury")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	if len(board.Gates) != 1 {
+		t.Fatalf("gates = %+v, want one", board.Gates)
+	}
+	gate := board.Gates[0]
+	if gate.ScoreThreshold != 8 || !gate.RequireNoMustFix || strings.Join(gate.RequiredReviewers, ",") != "critic,brand" || strings.Join(gate.ReviewerWeights, ",") != "critic=0.6,brand=0.4" {
+		t.Fatalf("scorecard gate = %+v", gate)
+	}
+	stdout, stderr, code = runArchon(t, runner,
+		"--workspace", workspace,
+		"gate", "update", "jury", gate.ID,
+		"--kinds", "code",
+		"--clear-scorecard-policy",
+		"--json",
+	)
+	if code != 0 {
+		t.Fatalf("scorecard policy clear code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	board, err = formations.NewStore(workspace).ReadBoard("jury")
+	if err != nil {
+		t.Fatalf("read cleared board: %v", err)
+	}
+	gate = board.Gates[0]
+	if gate.ScoreThreshold != 0 || gate.RequireNoMustFix || len(gate.RequiredReviewers) != 0 || len(gate.ReviewerWeights) != 0 || strings.Join(gate.Kinds, ",") != "code" {
+		t.Fatalf("cleared gate = %+v", gate)
+	}
+	raw := readArchonFile(t, formations.NewStore(workspace).BoardPath("jury"))
+	for _, stale := range []string{"scoreThreshold", "requireNoMustFix", "requiredReviewers", "reviewerWeights"} {
+		if strings.Contains(raw, stale) {
+			t.Fatalf("cleared board retained %q:\n%s", stale, raw)
+		}
+	}
+	beforeInvalid := raw
+	_, stderr, code = runArchon(t, runner,
+		"--workspace", workspace,
+		"gate", "update", "jury", gate.ID,
+		"--kinds", "code",
+		"--score-threshold", "8",
+	)
+	if code == 0 || !strings.Contains(stderr, "scorecard policy requires") {
+		t.Fatalf("invalid policy update code=%d stderr=%s", code, stderr)
+	}
+	if after := readArchonFile(t, formations.NewStore(workspace).BoardPath("jury")); after != beforeInvalid {
+		t.Fatalf("invalid policy update changed board:\n%s", after)
+	}
+}
+
 func TestArchonBoardNewCreatesDurableBoardJSONAndText(t *testing.T) {
 	workspace := t.TempDir()
 	store := formations.NewStore(workspace)
