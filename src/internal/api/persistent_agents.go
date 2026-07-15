@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -20,6 +21,27 @@ import (
 
 const defaultPersistentAgentsFile = "/srv/data/chrote/persistent-agents/agents.json"
 
+const (
+	PersistentAgentStateStarting         = "starting"
+	PersistentAgentStateHealthy          = "healthy"
+	PersistentAgentStateNeedsInteraction = "needs_interaction"
+	PersistentAgentStateWrongIdentity    = "wrong_identity"
+	PersistentAgentStateBackoff          = "backoff"
+	PersistentAgentStateFailed           = "failed"
+
+	persistentAgentPaneTailLines         = 80
+	persistentAgentMaxLaunchFailures     = 3
+	persistentAgentInitialBackoff        = time.Minute
+	persistentAgentMaxBackoff            = 5 * time.Minute
+	persistentAgentEnableMaxRequestBytes = 256 << 10
+	persistentAgentHermesModule          = "hermes_cli.main"
+	persistentAgentHermesExecutableTail  = "/.hermes/hermes-agent-current/venv/bin/python"
+)
+
+var persistentAgentNow = func() time.Time {
+	return time.Now().UTC()
+}
+
 func defaultPersistentAgentsPath() string {
 	if override := strings.TrimSpace(os.Getenv("CHROTE_PERSISTENT_AGENTS_PATH")); override != "" {
 		return override
@@ -31,30 +53,35 @@ func defaultPersistentAgentsPath() string {
 // Codex/Claude session. tmux is disposable transport; this record says the
 // agent transcript should stay running under the named tmux session.
 type PersistentAgentEntry struct {
-	Name           string `json:"name"`
-	UnixUser       string `json:"unixUser,omitempty"`
-	Identity       string `json:"identity,omitempty"`
-	AgentKind      string `json:"agentKind"`
-	AgentSessionID string `json:"agentSessionId"`
-	ResumeCommand  string `json:"resumeCommand"`
-	CWD            string `json:"cwd,omitempty"`
-	TranscriptPath string `json:"transcriptPath,omitempty"`
-	CreatedAt      string `json:"createdAt"`
-	UpdatedAt      string `json:"updatedAt"`
-	LastCheckAt    string `json:"lastCheckAt,omitempty"`
-	LastRestartAt  string `json:"lastRestartAt,omitempty"`
-	LastError      string `json:"lastError,omitempty"`
+	Name                      string                      `json:"name"`
+	UnixUser                  string                      `json:"unixUser,omitempty"`
+	Identity                  string                      `json:"identity,omitempty"`
+	AgentKind                 string                      `json:"agentKind"`
+	AgentSessionID            string                      `json:"agentSessionId"`
+	ResumeCommand             string                      `json:"resumeCommand"`
+	CWD                       string                      `json:"cwd,omitempty"`
+	TranscriptPath            string                      `json:"transcriptPath,omitempty"`
+	RecoveryDescriptor        *WorkloadRecoveryDescriptor `json:"recoveryDescriptor,omitempty"`
+	State                     string                      `json:"state,omitempty"`
+	ConsecutiveLaunchFailures int                         `json:"consecutiveLaunchFailures,omitempty"`
+	NextRetryAt               string                      `json:"nextRetryAt,omitempty"`
+	CreatedAt                 string                      `json:"createdAt"`
+	UpdatedAt                 string                      `json:"updatedAt"`
+	LastCheckAt               string                      `json:"lastCheckAt,omitempty"`
+	LastRestartAt             string                      `json:"lastRestartAt,omitempty"`
+	LastError                 string                      `json:"lastError,omitempty"`
 }
 
 // EnablePersistentAgentRequest is the request body for making a live session supervised.
 type EnablePersistentAgentRequest struct {
-	UnixUser       string `json:"unixUser,omitempty"`
-	NewName        string `json:"newName,omitempty"`
-	Identity       string `json:"identity,omitempty"`
-	AgentKind      string `json:"agentKind"`
-	AgentSessionID string `json:"agentSessionId"`
-	CWD            string `json:"cwd,omitempty"`
-	TranscriptPath string `json:"transcriptPath,omitempty"`
+	UnixUser           string                      `json:"unixUser,omitempty"`
+	NewName            string                      `json:"newName,omitempty"`
+	Identity           string                      `json:"identity,omitempty"`
+	AgentKind          string                      `json:"agentKind"`
+	AgentSessionID     string                      `json:"agentSessionId"`
+	CWD                string                      `json:"cwd,omitempty"`
+	TranscriptPath     string                      `json:"transcriptPath,omitempty"`
+	RecoveryDescriptor *WorkloadRecoveryDescriptor `json:"recoveryDescriptor,omitempty"`
 }
 
 // PersistentAgentReconcileResult describes one desired-state reconciliation decision.
@@ -84,6 +111,10 @@ func persistentAgentKey(name, unixUser string) string {
 	return strings.TrimSpace(unixUser) + "\x00" + strings.TrimSpace(name)
 }
 
+func persistentAgentOwnerRef(unixUser, sessionName string) string {
+	return "persistent:" + sessionBankOwnerRef(unixUser, sessionName)
+}
+
 func sanitizePersistentIdentity(value string) string {
 	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
 	if len(value) > 240 {
@@ -92,22 +123,172 @@ func sanitizePersistentIdentity(value string) string {
 	return value
 }
 
+func sanitizePersistentAgentState(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case PersistentAgentStateStarting:
+		return PersistentAgentStateStarting
+	case PersistentAgentStateHealthy:
+		return PersistentAgentStateHealthy
+	case PersistentAgentStateNeedsInteraction:
+		return PersistentAgentStateNeedsInteraction
+	case PersistentAgentStateWrongIdentity:
+		return PersistentAgentStateWrongIdentity
+	case PersistentAgentStateBackoff:
+		return PersistentAgentStateBackoff
+	case PersistentAgentStateFailed:
+		return PersistentAgentStateFailed
+	default:
+		return ""
+	}
+}
+
+func sanitizePersistentRetryTimestamp(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if _, err := time.Parse(time.RFC3339, value); err != nil {
+		return ""
+	}
+	return value
+}
+
+func storedHermesResumeCommandLooksCanonical(command, profile, sessionID string) bool {
+	if strings.ContainsAny(command, "\x00\n\r") {
+		return false
+	}
+	tokens := strings.Fields(command)
+	if len(tokens) != 9 {
+		return false
+	}
+	executable := filepath.Clean(tokens[0])
+	if !filepath.IsAbs(executable) || !strings.HasSuffix(executable, persistentAgentHermesExecutableTail) {
+		return false
+	}
+	want := []string{"-m", persistentAgentHermesModule, "--profile", profile, "--resume", sessionID, "--tui", "--yolo"}
+	for i, token := range want {
+		if tokens[i+1] != token {
+			return false
+		}
+	}
+	return true
+}
+
+func canonicalPersistentAgentDescriptor(name, unixUser, ownerHome string, raw WorkloadRecoveryDescriptor) (WorkloadRecoveryDescriptor, error) {
+	desc, err := CanonicalizeWorkloadRecoveryDescriptor(raw, ownerHome)
+	if err != nil {
+		return WorkloadRecoveryDescriptor{}, err
+	}
+	if desc.Mode == RecoveryModeManaged || desc.Owner.Kind == RecoveryOwnerExternalManager {
+		return WorkloadRecoveryDescriptor{}, fmt.Errorf("managed descriptors cannot be made persistent")
+	}
+	if desc.Mode != RecoveryModeAgent || desc.Agent == nil {
+		return WorkloadRecoveryDescriptor{}, fmt.Errorf("persistent agents require an agent recovery descriptor")
+	}
+	if desc.Owner.Kind != RecoveryOwnerPersistentAgent {
+		return WorkloadRecoveryDescriptor{}, fmt.Errorf("persistent agents require a persistent_agent recovery owner")
+	}
+	expectedOwnerRef := persistentAgentOwnerRef(unixUser, name)
+	if desc.Owner.Ref != expectedOwnerRef {
+		return WorkloadRecoveryDescriptor{}, fmt.Errorf("recovery owner ref %q does not match target %q", desc.Owner.Ref, expectedOwnerRef)
+	}
+	if !desc.Owner.MayRestart {
+		return WorkloadRecoveryDescriptor{}, fmt.Errorf("persistent agent recovery owner must be restartable")
+	}
+	if desc.Topology.SessionName != "" && desc.Topology.SessionName != name {
+		return WorkloadRecoveryDescriptor{}, fmt.Errorf("recovery descriptor targets session %q, want %q", desc.Topology.SessionName, name)
+	}
+	if desc.Topology.SessionName == "" {
+		desc.Topology.SessionName = name
+	}
+	cwd, err := canonicalOwnerHomePath(desc.Topology.PaneCurrentPath, "", ownerHome)
+	if err != nil {
+		return WorkloadRecoveryDescriptor{}, fmt.Errorf("persistent agent topology cwd: %w", err)
+	}
+	desc.Topology.PaneCurrentPath = cwd
+	return desc, nil
+}
+
+func persistentDescriptorFromLegacyFields(name, unixUser, kind, sessionID, cwd string) WorkloadRecoveryDescriptor {
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	return WorkloadRecoveryDescriptor{
+		Mode: RecoveryModeAgent,
+		Owner: WorkloadRecoveryOwner{
+			Kind:       RecoveryOwnerPersistentAgent,
+			Ref:        persistentAgentOwnerRef(unixUser, name),
+			MayRestart: true,
+		},
+		Topology: WorkloadRecoveryTopology{
+			SessionName:     name,
+			WindowIndex:     0,
+			PaneIndex:       0,
+			PaneCurrentPath: strings.TrimSpace(cwd),
+		},
+		WorkloadKind: kind,
+		Agent: &WorkloadRecoveryAgent{
+			Kind:            kind,
+			NativeSessionID: strings.TrimSpace(sessionID),
+		},
+		EvidenceSource: RecoveryEvidenceStateDB,
+		Confidence:     RecoveryConfidenceHigh,
+	}
+}
+
+func persistentDescriptorCommand(desc WorkloadRecoveryDescriptor, ownerHome string) (string, bool) {
+	if command, ok := desc.CanonicalCommand(ownerHome); ok {
+		return command, true
+	}
+	if desc.Agent == nil {
+		return "", false
+	}
+	return canonicalAgentResumeCommand(desc.Agent.Kind, desc.Agent.NativeSessionID)
+}
+
 func sanitizePersistentAgentEntry(entry PersistentAgentEntry) (PersistentAgentEntry, bool) {
 	entry.Name = strings.TrimSpace(entry.Name)
 	entry.UnixUser = strings.TrimSpace(entry.UnixUser)
 	if valid, _ := core.ValidateSessionName(entry.Name, "session name"); !valid {
 		return PersistentAgentEntry{}, false
 	}
+	entry.Identity = sanitizePersistentIdentity(entry.Identity)
+	entry.CWD = sanitizeRecoveryPath(entry.CWD, true)
+	entry.TranscriptPath = sanitizeRecoveryPath(entry.TranscriptPath, false)
+	entry.State = sanitizePersistentAgentState(entry.State)
+	if entry.ConsecutiveLaunchFailures < 0 {
+		entry.ConsecutiveLaunchFailures = 0
+	}
+	entry.NextRetryAt = sanitizePersistentRetryTimestamp(entry.NextRetryAt)
+	if entry.State != PersistentAgentStateBackoff {
+		entry.NextRetryAt = ""
+	}
+	if entry.State != PersistentAgentStateBackoff && entry.State != PersistentAgentStateFailed {
+		entry.ConsecutiveLaunchFailures = 0
+	}
+	if entry.RecoveryDescriptor != nil {
+		desc, err := canonicalPersistentAgentDescriptor(entry.Name, entry.UnixUser, "/", *entry.RecoveryDescriptor)
+		if err != nil {
+			return PersistentAgentEntry{}, false
+		}
+		entry.RecoveryDescriptor = &desc
+		entry.AgentKind = desc.Agent.Kind
+		entry.AgentSessionID = desc.Agent.NativeSessionID
+		entry.CWD = desc.Topology.PaneCurrentPath
+		switch desc.Agent.Kind {
+		case RecoveryAgentCodex, RecoveryAgentClaude:
+			command, _ := canonicalAgentResumeCommand(desc.Agent.Kind, desc.Agent.NativeSessionID)
+			entry.ResumeCommand = command
+		case RecoveryAgentHermes:
+			entry.ResumeCommand = ""
+		}
+		return entry, true
+	}
 	command, ok := canonicalAgentResumeCommand(entry.AgentKind, entry.AgentSessionID)
 	if !ok {
 		return PersistentAgentEntry{}, false
 	}
-	entry.Identity = sanitizePersistentIdentity(entry.Identity)
 	entry.AgentKind = strings.ToLower(strings.TrimSpace(entry.AgentKind))
 	entry.AgentSessionID = strings.TrimSpace(entry.AgentSessionID)
 	entry.ResumeCommand = command
-	entry.CWD = sanitizeRecoveryPath(entry.CWD, true)
-	entry.TranscriptPath = sanitizeRecoveryPath(entry.TranscriptPath, false)
 	return entry, true
 }
 
@@ -123,6 +304,26 @@ func sanitizePersistentAgentEntries(entries []PersistentAgentEntry) []Persistent
 	return result
 }
 
+func validatePersistentAgentEntries(entries []PersistentAgentEntry) ([]PersistentAgentEntry, error) {
+	result := make([]PersistentAgentEntry, 0, len(entries))
+	seen := map[string]int{}
+	for i, entry := range entries {
+		rawName := strings.TrimSpace(entry.Name)
+		rawUser := strings.TrimSpace(entry.UnixUser)
+		sanitized, ok := sanitizePersistentAgentEntry(entry)
+		if !ok {
+			return nil, fmt.Errorf("invalid persistent agent record %d for %q/%q", i, rawUser, rawName)
+		}
+		key := persistentAgentKey(sanitized.Name, sanitized.UnixUser)
+		if first, ok := seen[key]; ok {
+			return nil, fmt.Errorf("duplicate persistent agent record %d for %q/%q; first seen at record %d", i, sanitized.UnixUser, sanitized.Name, first)
+		}
+		seen[key] = i
+		result = append(result, sanitized)
+	}
+	return result, nil
+}
+
 func (s *persistentAgentStore) Read() ([]PersistentAgentEntry, error) {
 	if s == nil {
 		return []PersistentAgentEntry{}, nil
@@ -133,10 +334,10 @@ func (s *persistentAgentStore) Read() ([]PersistentAgentEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	return sanitizePersistentAgentEntries(entries), nil
+	return validatePersistentAgentEntries(entries)
 }
 
-func (s *persistentAgentStore) Upsert(name, unixUser string, req EnablePersistentAgentRequest) (PersistentAgentEntry, error) {
+func (s *persistentAgentStore) Upsert(name, unixUser string, req EnablePersistentAgentRequest, ownerHome string) (PersistentAgentEntry, error) {
 	if s == nil {
 		return PersistentAgentEntry{}, fmt.Errorf("persistent agent store is unavailable")
 	}
@@ -145,39 +346,62 @@ func (s *persistentAgentStore) Upsert(name, unixUser string, req EnablePersisten
 	if valid, errMsg := core.ValidateSessionName(name, "session name"); !valid {
 		return PersistentAgentEntry{}, fmt.Errorf("%s", errMsg)
 	}
-	command, ok := canonicalAgentResumeCommand(req.AgentKind, req.AgentSessionID)
+	ownerHome = filepath.Clean(strings.TrimSpace(ownerHome))
+	if !filepath.IsAbs(ownerHome) {
+		return PersistentAgentEntry{}, fmt.Errorf("trusted owner home is required for persistent agent recovery")
+	}
+	var descriptor WorkloadRecoveryDescriptor
+	var err error
+	if req.RecoveryDescriptor != nil {
+		descriptor, err = canonicalPersistentAgentDescriptor(name, unixUser, ownerHome, *req.RecoveryDescriptor)
+		if err != nil {
+			return PersistentAgentEntry{}, err
+		}
+	} else {
+		descriptor, err = canonicalPersistentAgentDescriptor(name, unixUser, ownerHome, persistentDescriptorFromLegacyFields(name, unixUser, req.AgentKind, req.AgentSessionID, req.CWD))
+		if err != nil {
+			return PersistentAgentEntry{}, fmt.Errorf("unsafe or unsupported agent persistence metadata")
+		}
+	}
+	command, ok := persistentDescriptorCommand(descriptor, ownerHome)
 	if !ok {
-		return PersistentAgentEntry{}, fmt.Errorf("unsafe or unsupported agent persistence metadata")
+		return PersistentAgentEntry{}, fmt.Errorf("persistent agent descriptor has no canonical command")
 	}
-	cwd := sanitizeRecoveryPath(req.CWD, true)
-	if strings.TrimSpace(req.CWD) != "" && cwd == "" {
-		return PersistentAgentEntry{}, fmt.Errorf("unsafe persistence working directory")
+	storedCommand := command
+	if descriptor.Agent.Kind == RecoveryAgentHermes {
+		storedCommand = ""
 	}
+	cwd := descriptor.Topology.PaneCurrentPath
 	transcript := sanitizeRecoveryPath(req.TranscriptPath, false)
 	if strings.TrimSpace(req.TranscriptPath) != "" && transcript == "" {
 		return PersistentAgentEntry{}, fmt.Errorf("unsafe transcript path")
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := persistentAgentNow().Format(time.RFC3339)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	entries, err := s.loadLocked()
 	if err != nil {
 		return PersistentAgentEntry{}, err
 	}
-	entries = sanitizePersistentAgentEntries(entries)
+	entries, err = validatePersistentAgentEntries(entries)
+	if err != nil {
+		return PersistentAgentEntry{}, err
+	}
 	key := persistentAgentKey(name, unixUser)
 	entry := PersistentAgentEntry{
-		Name:           name,
-		UnixUser:       unixUser,
-		Identity:       sanitizePersistentIdentity(req.Identity),
-		AgentKind:      strings.ToLower(strings.TrimSpace(req.AgentKind)),
-		AgentSessionID: strings.TrimSpace(req.AgentSessionID),
-		ResumeCommand:  command,
-		CWD:            cwd,
-		TranscriptPath: transcript,
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		Name:               name,
+		UnixUser:           unixUser,
+		Identity:           sanitizePersistentIdentity(req.Identity),
+		AgentKind:          descriptor.Agent.Kind,
+		AgentSessionID:     descriptor.Agent.NativeSessionID,
+		ResumeCommand:      storedCommand,
+		CWD:                cwd,
+		TranscriptPath:     transcript,
+		RecoveryDescriptor: &descriptor,
+		State:              PersistentAgentStateHealthy,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 	updated := false
 	for i, existing := range entries {
@@ -190,7 +414,6 @@ func (s *persistentAgentStore) Upsert(name, unixUser string, req EnablePersisten
 		}
 		entry.LastCheckAt = existing.LastCheckAt
 		entry.LastRestartAt = existing.LastRestartAt
-		entry.LastError = existing.LastError
 		entries[i] = entry
 		updated = true
 		break
@@ -202,6 +425,20 @@ func (s *persistentAgentStore) Upsert(name, unixUser string, req EnablePersisten
 		return PersistentAgentEntry{}, err
 	}
 	return entry, nil
+}
+
+func (s *persistentAgentStore) EnsureTargetAvailable(name, unixUser string) error {
+	if s == nil {
+		return nil
+	}
+	exists, err := s.IsPersistent(name, unixUser)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return fmt.Errorf("persistent target %q already exists for user %q", strings.TrimSpace(name), strings.TrimSpace(unixUser))
+	}
+	return nil
 }
 
 func (s *persistentAgentStore) Forget(name, unixUser string) (bool, error) {
@@ -219,7 +456,10 @@ func (s *persistentAgentStore) Forget(name, unixUser string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	entries = sanitizePersistentAgentEntries(entries)
+	entries, err = validatePersistentAgentEntries(entries)
+	if err != nil {
+		return false, err
+	}
 	key := persistentAgentKey(name, unixUser)
 	filtered := make([]PersistentAgentEntry, 0, len(entries))
 	removed := false
@@ -261,15 +501,28 @@ func (s *persistentAgentStore) Rename(oldName, newName, unixUser string) error {
 	if err != nil {
 		return err
 	}
-	entries = sanitizePersistentAgentEntries(entries)
+	entries, err = validatePersistentAgentEntries(entries)
+	if err != nil {
+		return err
+	}
 	oldKey := persistentAgentKey(oldName, unixUser)
+	newKey := persistentAgentKey(newName, unixUser)
+	for _, entry := range entries {
+		if persistentAgentKey(entry.Name, entry.UnixUser) == newKey {
+			return fmt.Errorf("persistent target %q already exists for user %q", newName, unixUser)
+		}
+	}
 	updated := false
 	for i, entry := range entries {
 		if persistentAgentKey(entry.Name, entry.UnixUser) != oldKey {
 			continue
 		}
 		entry.Name = newName
-		entry.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		if entry.RecoveryDescriptor != nil {
+			entry.RecoveryDescriptor.Owner.Ref = persistentAgentOwnerRef(unixUser, newName)
+			entry.RecoveryDescriptor.Topology.SessionName = newName
+		}
+		entry.UpdatedAt = persistentAgentNow().Format(time.RFC3339)
 		entries[i] = entry
 		updated = true
 		break
@@ -375,14 +628,17 @@ func (s *persistentAgentStore) UpdateStatus(name, unixUser, action, errText stri
 	if s == nil {
 		return nil
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := persistentAgentNow().Format(time.RFC3339)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	entries, err := s.loadLocked()
 	if err != nil {
 		return err
 	}
-	entries = sanitizePersistentAgentEntries(entries)
+	entries, err = validatePersistentAgentEntries(entries)
+	if err != nil {
+		return err
+	}
 	key := persistentAgentKey(name, unixUser)
 	for i, entry := range entries {
 		if persistentAgentKey(entry.Name, entry.UnixUser) != key {
@@ -391,13 +647,87 @@ func (s *persistentAgentStore) UpdateStatus(name, unixUser, action, errText stri
 		entry.LastCheckAt = now
 		entry.UpdatedAt = now
 		entry.LastError = strings.TrimSpace(errText)
-		if action == "recreated" || action == "restarted" {
+		switch action {
+		case "ok", PersistentAgentStateHealthy:
+			entry.State = PersistentAgentStateHealthy
+			entry.ConsecutiveLaunchFailures = 0
+			entry.NextRetryAt = ""
+		case "recreated", "restarted", PersistentAgentStateStarting:
+			entry.State = PersistentAgentStateStarting
+			entry.ConsecutiveLaunchFailures = 0
+			entry.NextRetryAt = ""
 			entry.LastRestartAt = now
+		case PersistentAgentStateNeedsInteraction:
+			entry.State = PersistentAgentStateNeedsInteraction
+			entry.NextRetryAt = ""
+		case PersistentAgentStateWrongIdentity:
+			entry.State = PersistentAgentStateWrongIdentity
+			entry.NextRetryAt = ""
+		case PersistentAgentStateFailed:
+			entry.State = PersistentAgentStateFailed
+			entry.NextRetryAt = ""
 		}
 		entries[i] = entry
 		break
 	}
 	return s.saveLocked(entries)
+}
+
+func persistentAgentBackoffDelay(failures int) time.Duration {
+	if failures < 1 {
+		failures = 1
+	}
+	delay := persistentAgentInitialBackoff
+	for i := 1; i < failures; i++ {
+		delay *= 2
+		if delay >= persistentAgentMaxBackoff {
+			return persistentAgentMaxBackoff
+		}
+	}
+	return delay
+}
+
+func (s *persistentAgentStore) RecordLaunchFailure(name, unixUser, errText string) (PersistentAgentEntry, error) {
+	if s == nil {
+		return PersistentAgentEntry{}, nil
+	}
+	nowTime := persistentAgentNow()
+	now := nowTime.Format(time.RFC3339)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entries, err := s.loadLocked()
+	if err != nil {
+		return PersistentAgentEntry{}, err
+	}
+	entries, err = validatePersistentAgentEntries(entries)
+	if err != nil {
+		return PersistentAgentEntry{}, err
+	}
+	key := persistentAgentKey(name, unixUser)
+	var updated PersistentAgentEntry
+	for i, entry := range entries {
+		if persistentAgentKey(entry.Name, entry.UnixUser) != key {
+			continue
+		}
+		entry.LastCheckAt = now
+		entry.UpdatedAt = now
+		entry.LastError = strings.TrimSpace(errText)
+		entry.ConsecutiveLaunchFailures++
+		if entry.ConsecutiveLaunchFailures >= persistentAgentMaxLaunchFailures {
+			entry.State = PersistentAgentStateFailed
+			entry.NextRetryAt = ""
+		} else {
+			entry.State = PersistentAgentStateBackoff
+			entry.NextRetryAt = nowTime.Add(persistentAgentBackoffDelay(entry.ConsecutiveLaunchFailures)).Format(time.RFC3339)
+		}
+		entries[i] = entry
+		updated = entry
+		break
+	}
+	if err := s.saveLocked(entries); err != nil {
+		return PersistentAgentEntry{}, err
+	}
+	return updated, nil
 }
 
 func (s *persistentAgentStore) loadLocked() ([]PersistentAgentEntry, error) {
@@ -419,7 +749,11 @@ func (s *persistentAgentStore) loadLocked() ([]PersistentAgentEntry, error) {
 }
 
 func (s *persistentAgentStore) saveLocked(entries []PersistentAgentEntry) error {
-	entries = sanitizePersistentAgentEntries(entries)
+	var err error
+	entries, err = validatePersistentAgentEntries(entries)
+	if err != nil {
+		return err
+	}
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].UnixUser != entries[j].UnixUser {
 			return entries[i].UnixUser < entries[j].UnixUser
@@ -434,6 +768,9 @@ func (s *persistentAgentStore) saveLocked(entries []PersistentAgentEntry) error 
 	dir := filepath.Dir(s.path)
 	if err := os.MkdirAll(dir, 0o2770); err != nil {
 		return err
+	}
+	if info, err := os.Stat(dir); err == nil && info.Mode().Perm()&0o200 == 0 {
+		return fmt.Errorf("persistent agent store directory is not writable: %s", dir)
 	}
 	_ = os.Chmod(dir, 0o2770)
 	tmp, err := os.CreateTemp(dir, ".tmp-persistent-agents-*.json")
@@ -494,6 +831,10 @@ func matchesAgentCommand(command, kind string) bool {
 	return false
 }
 
+func managedHermesPythonPath(ownerHome string) string {
+	return filepath.Join(filepath.Clean(strings.TrimSpace(ownerHome)), ".hermes", "hermes-agent-current", "venv", "bin", "python")
+}
+
 func argvContainsAgentExecutable(args, kind string) bool {
 	kind = strings.ToLower(strings.TrimSpace(kind))
 	for _, token := range strings.Fields(args) {
@@ -516,6 +857,78 @@ func processLooksLikeAgent(command, args, kind string) bool {
 		return false
 	}
 	return argvContainsAgentExecutable(args, kind)
+}
+
+func tokenAfterFlag(tokens []string, flag string) (string, bool, bool) {
+	found := ""
+	count := 0
+	for i := 0; i < len(tokens); i++ {
+		token := normalizeProcessArgToken(tokens[i])
+		if strings.HasPrefix(token, flag+"=") {
+			value := strings.TrimPrefix(token, flag+"=")
+			if value != "" {
+				found = value
+				count++
+			}
+			continue
+		}
+		if token != flag || i+1 >= len(tokens) {
+			continue
+		}
+		value := normalizeProcessArgToken(tokens[i+1])
+		if value != "" {
+			found = value
+			count++
+		}
+		i++
+	}
+	return found, count > 0, count > 1
+}
+
+func inferHermesMetadataFromArgs(args, ownerHome string) (inferredPersistentAgentMetadata, bool, bool, error) {
+	ownerHome = filepath.Clean(strings.TrimSpace(ownerHome))
+	if !filepath.IsAbs(ownerHome) {
+		return inferredPersistentAgentMetadata{}, false, false, nil
+	}
+	tokens := strings.Fields(args)
+	if len(tokens) == 0 {
+		return inferredPersistentAgentMetadata{}, false, false, nil
+	}
+	executable := filepath.Clean(strings.Trim(normalizeProcessArgToken(tokens[0]), `"`))
+	if executable != managedHermesPythonPath(ownerHome) {
+		return inferredPersistentAgentMetadata{}, false, false, nil
+	}
+	foundModule := false
+	for i := 0; i+1 < len(tokens); i++ {
+		if normalizeProcessArgToken(tokens[i]) == "-m" && normalizeProcessArgToken(tokens[i+1]) == persistentAgentHermesModule {
+			foundModule = true
+			break
+		}
+	}
+	if !foundModule {
+		return inferredPersistentAgentMetadata{}, false, false, nil
+	}
+	profile, hasProfile, multiProfile := tokenAfterFlag(tokens, "--profile")
+	resumeID, hasResume, multiResume := tokenAfterFlag(tokens, "--resume")
+	if multiProfile || multiResume {
+		return inferredPersistentAgentMetadata{}, true, false, fmt.Errorf("hermes process has multiple profile or resume identities")
+	}
+	if !hasProfile || !recoveryHermesProfileRegex.MatchString(profile) {
+		return inferredPersistentAgentMetadata{}, true, false, fmt.Errorf("hermes profile is missing or malformed")
+	}
+	if !hasResume {
+		return inferredPersistentAgentMetadata{Kind: RecoveryAgentHermes, HermesProfile: profile, Source: "process", Confidence: RecoveryConfidenceLow}, true, false, nil
+	}
+	if !recoveryNativeIDRegex.MatchString(resumeID) {
+		return inferredPersistentAgentMetadata{}, true, false, fmt.Errorf("hermes resume id is malformed")
+	}
+	return inferredPersistentAgentMetadata{
+		Kind:          RecoveryAgentHermes,
+		SessionID:     resumeID,
+		HermesProfile: profile,
+		Source:        "process",
+		Confidence:    RecoveryConfidenceHigh,
+	}, true, true, nil
 }
 
 type processInfo struct {
@@ -597,10 +1010,15 @@ func processTreeForPane(infos []processInfo, panePID string) []processInfo {
 }
 
 type inferredPersistentAgentMetadata struct {
-	Kind       string
-	SessionID  string
-	Source     string
-	Confidence string
+	Kind          string
+	SessionID     string
+	HermesProfile string
+	Source        string
+	Confidence    string
+}
+
+func persistentAgentIdentityKey(metadata inferredPersistentAgentMetadata) string {
+	return metadata.Kind + "\x00" + metadata.SessionID + "\x00" + metadata.HermesProfile
 }
 
 type persistentAgentOwnerProbeResponse struct {
@@ -679,23 +1097,54 @@ func inferAgentSessionIDFromArgs(kind, args string) string {
 }
 
 func inferPersistentAgentMetadataInTable(infos []processInfo, panePID, requestedKind string) (inferredPersistentAgentMetadata, bool, bool) {
+	metadata, foundAgent, foundSessionID, _ := inferPersistentAgentMetadataInTableForOwner(infos, panePID, requestedKind, "")
+	return metadata, foundAgent, foundSessionID
+}
+
+func inferPersistentAgentMetadataInTableForOwner(infos []processInfo, panePID, requestedKind, ownerHome string) (inferredPersistentAgentMetadata, bool, bool, error) {
 	requestedKind = strings.ToLower(strings.TrimSpace(requestedKind))
 	foundAgent := false
+	var partial inferredPersistentAgentMetadata
+	candidates := map[string]inferredPersistentAgentMetadata{}
 	for _, info := range processTreeForPane(infos, panePID) {
 		for _, kind := range []string{"codex", "claude"} {
-			if requestedKind != "" && requestedKind != kind {
-				continue
-			}
 			if !processLooksLikeAgent(info.comm, info.args, kind) {
 				continue
 			}
-			foundAgent = true
+			if requestedKind == "" || requestedKind == kind {
+				foundAgent = true
+			}
 			if sessionID := inferAgentSessionIDFromArgs(kind, info.args); sessionID != "" {
-				return inferredPersistentAgentMetadata{Kind: kind, SessionID: sessionID, Source: "process"}, true, true
+				metadata := inferredPersistentAgentMetadata{Kind: kind, SessionID: sessionID, Source: "process", Confidence: RecoveryConfidenceHigh}
+				candidates[persistentAgentIdentityKey(metadata)] = metadata
+			}
+		}
+		metadata, foundHermes, foundSessionID, err := inferHermesMetadataFromArgs(info.args, ownerHome)
+		if err != nil {
+			if requestedKind == "" || requestedKind == RecoveryAgentHermes {
+				return inferredPersistentAgentMetadata{}, true, false, err
+			}
+			return inferredPersistentAgentMetadata{}, foundAgent, false, err
+		}
+		if foundHermes {
+			if requestedKind == "" || requestedKind == RecoveryAgentHermes {
+				foundAgent = true
+				partial = metadata
+			}
+			if foundSessionID {
+				candidates[persistentAgentIdentityKey(metadata)] = metadata
 			}
 		}
 	}
-	return inferredPersistentAgentMetadata{}, foundAgent, false
+	if len(candidates) > 1 {
+		return inferredPersistentAgentMetadata{}, foundAgent, false, fmt.Errorf("multiple identified agent identities found in pane process tree")
+	}
+	for _, metadata := range candidates {
+		if requestedKind == "" || metadata.Kind == requestedKind {
+			return metadata, true, true, nil
+		}
+	}
+	return partial, foundAgent, false, nil
 }
 
 const persistentAgentOwnerProbeResultPrefix = "CHROTE_PROBE_RESULT "
@@ -722,10 +1171,8 @@ def env_b64(name):
 def emit(obj):
     print(PREFIX + json.dumps(obj, separators=(",", ":")), flush=True)
 
-probe_cwd = env_b64("CHROTE_PROBE_CWD")
 requested_kind = env_b64("CHROTE_PROBE_KIND").strip().lower()
 pane_pid = env_b64("CHROTE_PROBE_PANE_PID").strip()
-home = pathlib.Path.home()
 
 def kind_allowed(kind):
     return not requested_kind or requested_kind == kind
@@ -767,7 +1214,8 @@ def process_descendants(root_pid):
         queue.extend(children.get(pid, []))
     return result
 
-def fd_candidate():
+def fd_candidates():
+    candidates = []
     for pid in process_descendants(pane_pid):
         fd_dir = pathlib.Path("/proc") / pid / "fd"
         try:
@@ -781,84 +1229,19 @@ def fd_candidate():
                 continue
             candidate = classify_transcript_path(target)
             if candidate:
-                return candidate
-    return None
+                candidates.append(candidate)
+    return candidates
 
-def read_json_lines(path, limit):
-    try:
-        with path.open("r", encoding="utf-8", errors="replace") as handle:
-            for index, line in enumerate(handle):
-                if index >= limit:
-                    break
-                try:
-                    yield json.loads(line)
-                except Exception:
-                    continue
-    except Exception:
-        return
-
-def codex_file_candidates():
-    root = home / ".codex" / "sessions"
-    if not root.exists() or not kind_allowed("codex"):
-        return []
-    paths = [p for p in root.glob("**/*.jsonl") if p.is_file()]
-    paths.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
-    result = []
-    for path in paths[:200]:
-        match = UUID_RE.search(path.name)
-        session_id = match.group(0) if match else ""
-        cwd = ""
-        for item in read_json_lines(path, 30):
-            payload = item.get("payload") if isinstance(item, dict) else None
-            if isinstance(payload, dict):
-                session_id = str(payload.get("id") or session_id)
-                cwd = str(payload.get("cwd") or cwd)
-            if session_id and cwd:
-                break
-        if session_id and (not probe_cwd or cwd == probe_cwd):
-            result.append((path.stat().st_mtime, {"kind": "codex", "sessionId": session_id, "confidence": "low"}))
-    return result
-
-def claude_file_candidates():
-    root = home / ".claude" / "projects"
-    if not root.exists() or not kind_allowed("claude"):
-        return []
-    paths = [p for p in root.glob("**/*.jsonl") if p.is_file()]
-    paths.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
-    result = []
-    for path in paths[:200]:
-        match = UUID_RE.search(path.name)
-        session_id = match.group(0) if match else ""
-        cwd = ""
-        for item in read_json_lines(path, 120):
-            if isinstance(item, dict):
-                session_id = str(item.get("sessionId") or session_id)
-                cwd = str(item.get("cwd") or cwd)
-            if session_id and cwd:
-                break
-        if session_id and (not probe_cwd or cwd == probe_cwd):
-            result.append((path.stat().st_mtime, {"kind": "claude", "sessionId": session_id, "confidence": "low"}))
-    return result
-
-candidate = fd_candidate()
-if candidate:
-    emit(candidate)
+candidates = {}
+for candidate in fd_candidates():
+    key = (candidate.get("kind", ""), candidate.get("sessionId", ""))
+    candidates[key] = candidate
+if len(candidates) == 1:
+    emit(next(iter(candidates.values())))
+elif len(candidates) == 0:
+    emit({"error": "owner probe found no matching open agent transcript"})
 else:
-    candidates = codex_file_candidates() + claude_file_candidates()
-    candidates.sort(key=lambda item: item[0], reverse=True)
-    unique = []
-    seen = set()
-    for _, item in candidates:
-        key = (item["kind"], item["sessionId"])
-        if key not in seen:
-            seen.add(key)
-            unique.append(item)
-    if len(unique) == 1:
-        emit(unique[0])
-    elif len(unique) > 1:
-        emit({"error": "owner probe found multiple matching agent transcripts"})
-    else:
-        emit({"error": "owner probe found no matching agent transcript"})
+    emit({"error": "owner probe found multiple open agent transcripts"})
 PY
 printf '\nCHROTE_PROBE_DONE\n'
 sleep 2
@@ -871,29 +1254,44 @@ func encodeProbeEnv(name, value string) string {
 }
 
 func parsePersistentAgentOwnerProbeOutput(raw string) (inferredPersistentAgentMetadata, error) {
-	var last persistentAgentOwnerProbeResponse
-	found := false
+	results := map[string]persistentAgentOwnerProbeResponse{}
+	var probeErrors []string
 	for _, line := range strings.Split(raw, "\n") {
 		line = strings.TrimSpace(line)
 		payload, ok := strings.CutPrefix(line, persistentAgentOwnerProbeResultPrefix)
 		if !ok {
 			continue
 		}
-		found = true
-		if err := json.Unmarshal([]byte(payload), &last); err != nil {
+		var result persistentAgentOwnerProbeResponse
+		if err := json.Unmarshal([]byte(payload), &result); err != nil {
 			return inferredPersistentAgentMetadata{}, fmt.Errorf("owner probe returned invalid metadata")
 		}
+		if strings.TrimSpace(result.Error) != "" {
+			probeErrors = append(probeErrors, strings.TrimSpace(result.Error))
+			continue
+		}
+		result.Kind = strings.ToLower(strings.TrimSpace(result.Kind))
+		result.SessionID = strings.TrimSpace(result.SessionID)
+		if _, ok := canonicalAgentResumeCommand(result.Kind, result.SessionID); !ok {
+			return inferredPersistentAgentMetadata{}, fmt.Errorf("owner probe returned unsafe or unsupported metadata")
+		}
+		results[result.Kind+"\x00"+result.SessionID] = result
 	}
-	if !found {
+	if len(results) == 0 && len(probeErrors) == 0 {
 		return inferredPersistentAgentMetadata{}, fmt.Errorf("owner probe did not return metadata")
 	}
-	if strings.TrimSpace(last.Error) != "" {
-		return inferredPersistentAgentMetadata{}, fmt.Errorf("%s", strings.TrimSpace(last.Error))
+	if len(results) == 0 {
+		return inferredPersistentAgentMetadata{}, fmt.Errorf("%s", probeErrors[len(probeErrors)-1])
 	}
-	last.Kind = strings.ToLower(strings.TrimSpace(last.Kind))
-	last.SessionID = strings.TrimSpace(last.SessionID)
-	if _, ok := canonicalAgentResumeCommand(last.Kind, last.SessionID); !ok {
-		return inferredPersistentAgentMetadata{}, fmt.Errorf("owner probe returned unsafe or unsupported metadata")
+	if len(probeErrors) > 0 {
+		return inferredPersistentAgentMetadata{}, fmt.Errorf("owner probe returned both metadata and errors")
+	}
+	if len(results) > 1 {
+		return inferredPersistentAgentMetadata{}, fmt.Errorf("owner probe found multiple open agent transcripts")
+	}
+	var last persistentAgentOwnerProbeResponse
+	for _, result := range results {
+		last = result
 	}
 	confidence := strings.ToLower(strings.TrimSpace(last.Confidence))
 	if confidence == "" {
@@ -954,18 +1352,24 @@ func (h *TmuxHandler) inferPersistentAgentMetadata(ctx context.Context, target t
 	if err != nil {
 		return inferredPersistentAgentMetadata{}, err
 	}
-	metadata, foundAgent, foundSessionID := inferPersistentAgentMetadataInTable(infos, pane.PID, requestedKind)
+	metadata, foundAgent, foundSessionID, inferErr := inferPersistentAgentMetadataInTableForOwner(infos, pane.PID, requestedKind, target.ownerHome)
+	if inferErr != nil {
+		return inferredPersistentAgentMetadata{}, inferErr
+	}
 	if foundSessionID {
 		return metadata, nil
 	}
 	if foundAgent {
+		if strings.EqualFold(strings.TrimSpace(requestedKind), RecoveryAgentHermes) || metadata.Kind == RecoveryAgentHermes {
+			return inferredPersistentAgentMetadata{}, fmt.Errorf("hermes resume id is required and must be unique")
+		}
 		metadata, probeErr := probePersistentAgentOwnerMetadata(ctx, h, target, pane, requestedKind)
 		if probeErr == nil {
 			return metadata, nil
 		}
 		return inferredPersistentAgentMetadata{}, fmt.Errorf("could not infer Codex/Claude session id: live agent process has no resume session id in its arguments and owner probe failed: %w", probeErr)
 	}
-	return inferredPersistentAgentMetadata{}, fmt.Errorf("could not infer Codex/Claude session id: session is not running a supported live agent")
+	return inferredPersistentAgentMetadata{}, fmt.Errorf("could not infer Codex/Claude/Hermes session id: session is not running a supported live agent")
 }
 
 func processTreeContainsAgent(ctx context.Context, panePID, kind string) (bool, error) {
@@ -1005,6 +1409,207 @@ func persistenceWorkDir(entry PersistentAgentEntry, target tmuxTarget) string {
 	return core.GetWorkDir()
 }
 
+func persistentDescriptorFromMetadata(name, unixUser string, pane paneInspection, metadata inferredPersistentAgentMetadata) WorkloadRecoveryDescriptor {
+	desc := persistentDescriptorFromLegacyFields(name, unixUser, metadata.Kind, metadata.SessionID, pane.CWD)
+	desc.EvidenceSource = RecoveryEvidenceArgv
+	desc.Confidence = RecoveryConfidenceHigh
+	if desc.Agent != nil {
+		desc.Agent.HermesProfile = metadata.HermesProfile
+	}
+	return desc
+}
+
+func persistentDescriptorForEntry(entry PersistentAgentEntry, ownerHome string) (WorkloadRecoveryDescriptor, error) {
+	if entry.RecoveryDescriptor != nil {
+		return canonicalPersistentAgentDescriptor(entry.Name, entry.UnixUser, ownerHome, *entry.RecoveryDescriptor)
+	}
+	return canonicalPersistentAgentDescriptor(entry.Name, entry.UnixUser, ownerHome, persistentDescriptorFromLegacyFields(entry.Name, entry.UnixUser, entry.AgentKind, entry.AgentSessionID, entry.CWD))
+}
+
+func persistentSessionBankConflict(entry SessionBankEntry, ownerHome string) error {
+	if len(entry.RecoveryPlan) == 0 {
+		return nil
+	}
+	expectedSessionBankRef := sessionBankOwnerRef(entry.UnixUser, entry.Name)
+	owners := map[string]bool{}
+	for i, raw := range entry.RecoveryPlan {
+		desc, err := CanonicalizeWorkloadRecoveryDescriptor(raw, ownerHome)
+		if err != nil {
+			return fmt.Errorf("session bank recovery plan descriptor %d is unsafe: %w", i, err)
+		}
+		ownerKey := desc.Owner.Kind + "\x00" + desc.Owner.Ref
+		owners[ownerKey] = true
+		if len(owners) > 1 {
+			return fmt.Errorf("session bank recovery plan has conflicting recovery owners")
+		}
+		if desc.Owner.Kind == RecoveryOwnerSessionBank && desc.Owner.Ref == expectedSessionBankRef {
+			return fmt.Errorf("session bank owns recovery for %s", expectedSessionBankRef)
+		}
+		if desc.Owner.Kind == RecoveryOwnerExternalManager || desc.Mode == RecoveryModeManaged {
+			return fmt.Errorf("external manager owns recovery for %s", expectedSessionBankRef)
+		}
+	}
+	return nil
+}
+
+func (h *TmuxHandler) ensurePersistentAgentOwnershipAvailable(name, unixUser, ownerHome string) error {
+	if h == nil || h.bank == nil {
+		return nil
+	}
+	entry, found, err := h.bank.Find(name, unixUser)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return nil
+	}
+	return persistentSessionBankConflict(entry, ownerHome)
+}
+
+func persistentMetadataMatchesDescriptor(metadata inferredPersistentAgentMetadata, desc WorkloadRecoveryDescriptor) bool {
+	if desc.Agent == nil {
+		return false
+	}
+	if metadata.Kind != desc.Agent.Kind || metadata.SessionID != desc.Agent.NativeSessionID {
+		return false
+	}
+	if desc.Agent.Kind == RecoveryAgentHermes && metadata.HermesProfile != desc.Agent.HermesProfile {
+		return false
+	}
+	return true
+}
+
+func persistentMetadataWrongIdentityMessage(metadata inferredPersistentAgentMetadata, desc WorkloadRecoveryDescriptor) string {
+	if desc.Agent == nil {
+		return "wrong identity: missing expected agent descriptor"
+	}
+	if metadata.Kind == "" {
+		return fmt.Sprintf("wrong identity: %s process has unknown identity", desc.Agent.Kind)
+	}
+	if metadata.SessionID == "" {
+		return fmt.Sprintf("wrong identity: %s process has unknown identity", metadata.Kind)
+	}
+	if desc.Agent.Kind == RecoveryAgentHermes && metadata.HermesProfile != desc.Agent.HermesProfile {
+		return fmt.Sprintf("wrong identity: hermes profile %q, want %q", metadata.HermesProfile, desc.Agent.HermesProfile)
+	}
+	return fmt.Sprintf("wrong identity: %s session %q, want %q", metadata.Kind, metadata.SessionID, desc.Agent.NativeSessionID)
+}
+
+func persistentProcessKindLive(ctx context.Context, pane paneInspection, desc WorkloadRecoveryDescriptor) (bool, error) {
+	if desc.Agent == nil {
+		return false, nil
+	}
+	if desc.Agent.Kind == RecoveryAgentHermes {
+		if strings.EqualFold(filepath.Base(pane.Command), "python") || strings.EqualFold(filepath.Base(pane.Command), "python3") {
+			return true, nil
+		}
+		return false, nil
+	}
+	return agentProcessLive(ctx, pane, desc.Agent.Kind)
+}
+
+func (h *TmuxHandler) verifyPersistentDescriptorForLivePane(ctx context.Context, target tmuxTarget, pane paneInspection, desc WorkloadRecoveryDescriptor, inferred bool) error {
+	if desc.Agent == nil {
+		return fmt.Errorf("persistent agent descriptor is missing agent identity")
+	}
+	infos, err := readPersistentAgentProcessTable(ctx)
+	if err != nil {
+		return fmt.Errorf("could not inspect session process tree: %w", err)
+	}
+	metadata, foundAgent, foundSessionID, inferErr := inferPersistentAgentMetadataInTableForOwner(infos, pane.PID, desc.Agent.Kind, target.ownerHome)
+	if inferErr != nil {
+		return inferErr
+	}
+	if foundSessionID {
+		if persistentMetadataMatchesDescriptor(metadata, desc) {
+			return nil
+		}
+		return fmt.Errorf("%s", persistentMetadataWrongIdentityMessage(metadata, desc))
+	}
+	if foundAgent {
+		if desc.Agent.Kind == RecoveryAgentHermes {
+			return fmt.Errorf("hermes resume id is required and must be unique")
+		}
+		probed, probeErr := probePersistentAgentOwnerMetadata(ctx, h, target, pane, desc.Agent.Kind)
+		if probeErr != nil {
+			return fmt.Errorf("could not prove exact %s identity: %w", desc.Agent.Kind, probeErr)
+		}
+		if persistentMetadataMatchesDescriptor(probed, desc) {
+			return nil
+		}
+		return fmt.Errorf("%s", persistentMetadataWrongIdentityMessage(probed, desc))
+	}
+	if desc.Agent.Kind == RecoveryAgentHermes {
+		return fmt.Errorf("session is not running Hermes")
+	}
+	if inferred {
+		return fmt.Errorf("could not prove exact %s identity", desc.Agent.Kind)
+	}
+	return fmt.Errorf("session is running %q, not %s", pane.Command, desc.Agent.Kind)
+}
+
+func detectPersistentInteraction(tail string) (string, bool) {
+	lower := strings.ToLower(tail)
+	checks := []struct {
+		kind     string
+		patterns []string
+	}{
+		{kind: "update", patterns: []string{"update available", "please update", "run codex update", "new version"}},
+		{kind: "hook approval", patterns: []string{"hook approval", "allow this hook", "approve hook", "hook required"}},
+		{kind: "trust", patterns: []string{"do you trust", "trust this workspace", "untrusted workspace", "trust the authors"}},
+		{kind: "migration", patterns: []string{"migration required", "first-run migration", "first run migration", "first-run", "first run", "migrate"}},
+	}
+	for _, check := range checks {
+		for _, pattern := range check.patterns {
+			if strings.Contains(lower, pattern) {
+				return check.kind, true
+			}
+		}
+	}
+	return "", false
+}
+
+func (h *TmuxHandler) capturePersistentPaneTail(ctx context.Context, target tmuxTarget, sessionName string) string {
+	if h == nil {
+		return ""
+	}
+	output, err := h.runTmuxOnSocketContext(ctx, target.socket, "capture-pane", "-p", "-J", "-S", fmt.Sprintf("-%d", persistentAgentPaneTailLines), "-t", sessionName)
+	if err != nil {
+		return ""
+	}
+	return output
+}
+
+type persistentLiveStatus struct {
+	action  string
+	message string
+	noAgent bool
+}
+
+func (h *TmuxHandler) inspectPersistentLiveStatus(ctx context.Context, target tmuxTarget, entry PersistentAgentEntry, desc WorkloadRecoveryDescriptor, pane paneInspection) persistentLiveStatus {
+	if kind, ok := detectPersistentInteraction(h.capturePersistentPaneTail(ctx, target, entry.Name)); ok {
+		return persistentLiveStatus{action: PersistentAgentStateNeedsInteraction, message: "blocked-needs-interaction: " + kind}
+	}
+	infos, err := readPersistentAgentProcessTable(ctx)
+	if err != nil {
+		return persistentLiveStatus{action: "error", message: err.Error()}
+	}
+	metadata, foundAgent, foundSessionID, inferErr := inferPersistentAgentMetadataInTableForOwner(infos, pane.PID, desc.Agent.Kind, target.ownerHome)
+	if inferErr != nil {
+		return persistentLiveStatus{action: PersistentAgentStateWrongIdentity, message: inferErr.Error()}
+	}
+	if foundSessionID {
+		if persistentMetadataMatchesDescriptor(metadata, desc) {
+			return persistentLiveStatus{action: "ok"}
+		}
+		return persistentLiveStatus{action: PersistentAgentStateWrongIdentity, message: persistentMetadataWrongIdentityMessage(metadata, desc)}
+	}
+	if foundAgent {
+		return persistentLiveStatus{action: PersistentAgentStateWrongIdentity, message: persistentMetadataWrongIdentityMessage(metadata, desc)}
+	}
+	return persistentLiveStatus{action: "missing", noAgent: true}
+}
+
 // EnablePersistentAgent handles POST /api/tmux/sessions/{name}/persistence.
 func (h *TmuxHandler) EnablePersistentAgent(w http.ResponseWriter, r *http.Request) {
 	sessionName := strings.TrimSpace(r.PathValue("name"))
@@ -1014,7 +1619,11 @@ func (h *TmuxHandler) EnablePersistentAgent(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var req EnablePersistentAgentRequest
-	if err := decodeOptionalJSONBody(r, &req); err != nil {
+	if err := decodeOptionalJSONBodyLimited(w, r, &req, persistentAgentEnableMaxRequestBytes); err != nil {
+		if errors.Is(err, errRecoveryRequestBodyTooLarge) {
+			core.WriteError(w, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", fmt.Sprintf("Persistent agent request body exceeds %d bytes", persistentAgentEnableMaxRequestBytes))
+			return
+		}
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON body")
 		return
 	}
@@ -1037,47 +1646,99 @@ func (h *TmuxHandler) EnablePersistentAgent(w http.ResponseWriter, r *http.Reque
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", targetErr.Error())
 		return
 	}
+	ownerHome, ownerHomeErr := trustedSessionBankOwnerHome(target)
+	if ownerHomeErr != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", ownerHomeErr.Error())
+		return
+	}
+	h.persistentMu.Lock()
+	defer h.persistentMu.Unlock()
+	var descriptor WorkloadRecoveryDescriptor
+	descriptorReady := false
+	if req.RecoveryDescriptor != nil {
+		var err error
+		descriptor, err = canonicalPersistentAgentDescriptor(newName, unixUser, ownerHome, *req.RecoveryDescriptor)
+		if err != nil {
+			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+			return
+		}
+		descriptorReady = true
+	}
+	if err := h.ensurePersistentAgentOwnershipAvailable(sessionName, unixUser, ownerHome); err != nil {
+		core.WriteError(w, http.StatusConflict, "PERSISTENT_AGENT_OWNERSHIP_CONFLICT", err.Error())
+		return
+	}
+	if newName != sessionName {
+		if h.persistent != nil {
+			sourcePersistent, err := h.persistent.IsPersistent(sessionName, unixUser)
+			if err != nil {
+				core.WriteError(w, http.StatusInternalServerError, "PERSISTENT_AGENT_ERROR", err.Error())
+				return
+			}
+			if sourcePersistent {
+				core.WriteError(w, http.StatusConflict, "PERSISTENT_AGENT_SOURCE_EXISTS", "Persistent source sessions must be renamed through the session rename endpoint")
+				return
+			}
+		}
+		if err := h.ensurePersistentAgentOwnershipAvailable(newName, unixUser, ownerHome); err != nil {
+			core.WriteError(w, http.StatusConflict, "PERSISTENT_AGENT_OWNERSHIP_CONFLICT", err.Error())
+			return
+		}
+		if h.persistent != nil {
+			if err := h.persistent.EnsureTargetAvailable(newName, unixUser); err != nil {
+				core.WriteError(w, http.StatusConflict, "PERSISTENT_AGENT_TARGET_EXISTS", err.Error())
+				return
+			}
+		}
+	}
 	pane, err := h.inspectSessionPane(r.Context(), target.socket, sessionName)
 	if err != nil {
 		core.WriteError(w, http.StatusBadRequest, "TMUX_ERROR", err.Error())
 		return
 	}
-	if strings.TrimSpace(req.AgentKind) == "" || strings.TrimSpace(req.AgentSessionID) == "" {
+	inferred := false
+	if !descriptorReady && (strings.TrimSpace(req.AgentKind) == "" || strings.TrimSpace(req.AgentSessionID) == "") {
 		metadata, err := h.inferPersistentAgentMetadata(r.Context(), target, pane, req.AgentKind)
 		if err != nil {
 			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", capitalizeFirst(err.Error()))
 			return
 		}
-		if strings.TrimSpace(req.AgentKind) == "" {
-			req.AgentKind = metadata.Kind
-		}
-		if strings.TrimSpace(req.AgentSessionID) == "" {
-			req.AgentSessionID = metadata.SessionID
-		}
+		descriptor = persistentDescriptorFromMetadata(newName, unixUser, pane, metadata)
+		descriptorReady = true
+		inferred = true
 	}
-	if _, ok := canonicalAgentResumeCommand(req.AgentKind, req.AgentSessionID); !ok {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Unsafe or unsupported agent persistence metadata")
-		return
+	if !descriptorReady {
+		descriptor = persistentDescriptorFromLegacyFields(newName, unixUser, req.AgentKind, req.AgentSessionID, pane.CWD)
+		descriptorReady = true
 	}
-	agentLive, err := agentProcessLive(r.Context(), pane, req.AgentKind)
+	descriptor, err = canonicalPersistentAgentDescriptor(newName, unixUser, ownerHome, descriptor)
 	if err != nil {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Could not inspect session process tree: "+err.Error())
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		return
 	}
-	if !agentLive {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", fmt.Sprintf("Session is running %q, not %s", pane.Command, strings.ToLower(strings.TrimSpace(req.AgentKind))))
+	if strings.TrimSpace(req.CWD) != "" {
+		requestCWD, cwdErr := canonicalOwnerHomePath(req.CWD, "", ownerHome)
+		if cwdErr != nil {
+			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Request CWD is unsafe: "+cwdErr.Error())
+			return
+		}
+		if requestCWD != descriptor.Topology.PaneCurrentPath {
+			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", fmt.Sprintf("Request CWD %q does not match recovery descriptor topology cwd %q", requestCWD, descriptor.Topology.PaneCurrentPath))
+			return
+		}
+	}
+	if !inferred {
+		err = h.verifyPersistentDescriptorForLivePane(r.Context(), target, pane, descriptor, false)
+	}
+	if err != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", capitalizeFirst(err.Error()))
 		return
 	}
-	if strings.TrimSpace(req.CWD) == "" {
-		req.CWD = pane.CWD
-	}
-	if strings.TrimSpace(req.CWD) == "" {
-		req.CWD = target.workDir
-	}
-	if strings.TrimSpace(req.CWD) == "" {
-		req.CWD = core.GetWorkDir()
-	}
-	entry, err := h.persistent.Upsert(newName, unixUser, req)
+	req.CWD = descriptor.Topology.PaneCurrentPath
+	req.AgentKind = descriptor.Agent.Kind
+	req.AgentSessionID = descriptor.Agent.NativeSessionID
+	req.RecoveryDescriptor = &descriptor
+	entry, err := h.persistent.Upsert(newName, unixUser, req, ownerHome)
 	if err != nil {
 		core.WriteError(w, http.StatusBadRequest, "PERSISTENT_AGENT_ERROR", err.Error())
 		return
@@ -1116,6 +1777,8 @@ func (h *TmuxHandler) DisablePersistentAgent(w http.ResponseWriter, r *http.Requ
 	if r != nil {
 		unixUser = strings.TrimSpace(r.URL.Query().Get("unixUser"))
 	}
+	h.persistentMu.Lock()
+	defer h.persistentMu.Unlock()
 	removed, err := h.persistent.Forget(sessionName, unixUser)
 	if err != nil {
 		core.WriteError(w, http.StatusInternalServerError, "PERSISTENT_AGENT_ERROR", err.Error())
@@ -1132,12 +1795,12 @@ func (h *TmuxHandler) DisablePersistentAgent(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-func (h *TmuxHandler) revivePersistentAgent(ctx context.Context, entry PersistentAgentEntry, target tmuxTarget) error {
-	workDir := persistenceWorkDir(entry, target)
+func (h *TmuxHandler) revivePersistentAgent(ctx context.Context, entry PersistentAgentEntry, target tmuxTarget, desc WorkloadRecoveryDescriptor) error {
+	workDir := strings.TrimSpace(desc.Topology.PaneCurrentPath)
 	if workDir == "" {
 		return fmt.Errorf("no persistence working directory available")
 	}
-	resumeCommand, ok := canonicalAgentResumeCommand(entry.AgentKind, entry.AgentSessionID)
+	resumeCommand, ok := persistentDescriptorCommand(desc, target.ownerHome)
 	if !ok {
 		return fmt.Errorf("unsafe or unsupported persistent agent metadata")
 	}
@@ -1157,12 +1820,25 @@ func (h *TmuxHandler) revivePersistentAgent(ctx context.Context, entry Persisten
 	return nil
 }
 
+func persistentAgentBackoffActive(entry PersistentAgentEntry) bool {
+	if entry.State != PersistentAgentStateBackoff || strings.TrimSpace(entry.NextRetryAt) == "" {
+		return false
+	}
+	nextRetry, err := time.Parse(time.RFC3339, entry.NextRetryAt)
+	if err != nil {
+		return false
+	}
+	return persistentAgentNow().Before(nextRetry)
+}
+
 // ReconcilePersistentAgents applies desired state once. Tests call this directly;
 // the server also runs it periodically in the background.
 func (h *TmuxHandler) ReconcilePersistentAgents(ctx context.Context) ([]PersistentAgentReconcileResult, error) {
 	if h == nil || h.persistent == nil {
 		return []PersistentAgentReconcileResult{}, nil
 	}
+	h.persistentMu.Lock()
+	defer h.persistentMu.Unlock()
 	entries, err := h.persistent.Read()
 	if err != nil {
 		return nil, err
@@ -1176,6 +1852,18 @@ func (h *TmuxHandler) ReconcilePersistentAgents(ctx context.Context) ([]Persiste
 			AgentSessionID: entry.AgentSessionID,
 			Action:         "ok",
 		}
+		if entry.State == PersistentAgentStateFailed {
+			result.Action = PersistentAgentStateFailed
+			result.Error = entry.LastError
+			results = append(results, result)
+			continue
+		}
+		if persistentAgentBackoffActive(entry) {
+			result.Action = PersistentAgentStateBackoff
+			result.Error = entry.LastError
+			results = append(results, result)
+			continue
+		}
 		target, targetErr := h.targetForUnixUser(entry.UnixUser)
 		if targetErr != nil {
 			result.Action = "error"
@@ -1184,21 +1872,45 @@ func (h *TmuxHandler) ReconcilePersistentAgents(ctx context.Context) ([]Persiste
 			results = append(results, result)
 			continue
 		}
-		if _, ok := canonicalAgentResumeCommand(entry.AgentKind, entry.AgentSessionID); !ok {
+		ownerHome, ownerHomeErr := trustedSessionBankOwnerHome(target)
+		if ownerHomeErr != nil {
 			result.Action = "error"
-			result.Error = "unsafe or unsupported persistent agent metadata"
+			result.Error = ownerHomeErr.Error()
 			_ = h.persistent.UpdateStatus(entry.Name, entry.UnixUser, result.Action, result.Error)
 			results = append(results, result)
 			continue
 		}
-		if _, err := h.runTmuxOnSocketContext(ctx, target.socket, "has-session", "-t", entry.Name); err != nil {
-			if reviveErr := h.revivePersistentAgent(ctx, entry, target); reviveErr != nil {
-				result.Action = "error"
+		desc, descErr := persistentDescriptorForEntry(entry, ownerHome)
+		if descErr != nil {
+			result.Action = "error"
+			result.Error = "unsafe or unsupported persistent agent metadata: " + descErr.Error()
+			_ = h.persistent.UpdateStatus(entry.Name, entry.UnixUser, result.Action, result.Error)
+			results = append(results, result)
+			continue
+		}
+		result.AgentKind = desc.Agent.Kind
+		result.AgentSessionID = desc.Agent.NativeSessionID
+		exists, existsErr := h.tmuxSessionExists(ctx, target.socket, entry.Name)
+		if existsErr != nil {
+			result.Action = "error"
+			result.Error = existsErr.Error()
+			_ = h.persistent.UpdateStatus(entry.Name, entry.UnixUser, result.Action, result.Error)
+			results = append(results, result)
+			continue
+		}
+		if !exists {
+			if reviveErr := h.revivePersistentAgent(ctx, entry, target, desc); reviveErr != nil {
+				updated, _ := h.persistent.RecordLaunchFailure(entry.Name, entry.UnixUser, reviveErr.Error())
+				if updated.State == PersistentAgentStateFailed {
+					result.Action = PersistentAgentStateFailed
+				} else {
+					result.Action = PersistentAgentStateBackoff
+				}
 				result.Error = reviveErr.Error()
 			} else {
 				result.Action = "recreated"
+				_ = h.persistent.UpdateStatus(entry.Name, entry.UnixUser, result.Action, "")
 			}
-			_ = h.persistent.UpdateStatus(entry.Name, entry.UnixUser, result.Action, result.Error)
 			results = append(results, result)
 			continue
 		}
@@ -1210,27 +1922,49 @@ func (h *TmuxHandler) ReconcilePersistentAgents(ctx context.Context) ([]Persiste
 			results = append(results, result)
 			continue
 		}
-		live, err := agentProcessLive(ctx, pane, entry.AgentKind)
-		if err != nil {
+		status := h.inspectPersistentLiveStatus(ctx, target, entry, desc, pane)
+		switch status.action {
+		case "ok":
+			result.Action = "ok"
+			_ = h.persistent.UpdateStatus(entry.Name, entry.UnixUser, result.Action, "")
+			results = append(results, result)
+			continue
+		case PersistentAgentStateNeedsInteraction, PersistentAgentStateWrongIdentity:
+			result.Action = status.action
+			result.Error = status.message
+			_ = h.persistent.UpdateStatus(entry.Name, entry.UnixUser, result.Action, result.Error)
+			results = append(results, result)
+			continue
+		case "error":
 			result.Action = "error"
-			result.Error = err.Error()
+			result.Error = status.message
 			_ = h.persistent.UpdateStatus(entry.Name, entry.UnixUser, result.Action, result.Error)
 			results = append(results, result)
 			continue
 		}
-		if !live {
-			_, _ = h.runTmuxOnSocketContext(ctx, target.socket, "kill-session", "-t", entry.Name)
-			if reviveErr := h.revivePersistentAgent(ctx, entry, target); reviveErr != nil {
+		if status.noAgent {
+			if _, killErr := h.runTmuxOnSocketContext(ctx, target.socket, "kill-session", "-t", entry.Name); killErr != nil && !isTmuxMissingTargetError(killErr) {
 				result.Action = "error"
+				result.Error = killErr.Error()
+				_ = h.persistent.UpdateStatus(entry.Name, entry.UnixUser, result.Action, result.Error)
+				results = append(results, result)
+				continue
+			}
+			if reviveErr := h.revivePersistentAgent(ctx, entry, target, desc); reviveErr != nil {
+				updated, _ := h.persistent.RecordLaunchFailure(entry.Name, entry.UnixUser, reviveErr.Error())
+				if updated.State == PersistentAgentStateFailed {
+					result.Action = PersistentAgentStateFailed
+				} else {
+					result.Action = PersistentAgentStateBackoff
+				}
 				result.Error = reviveErr.Error()
 			} else {
 				result.Action = "restarted"
+				_ = h.persistent.UpdateStatus(entry.Name, entry.UnixUser, result.Action, "")
 			}
-			_ = h.persistent.UpdateStatus(entry.Name, entry.UnixUser, result.Action, result.Error)
 			results = append(results, result)
 			continue
 		}
-		_ = h.persistent.UpdateStatus(entry.Name, entry.UnixUser, result.Action, "")
 		results = append(results, result)
 	}
 	return results, nil

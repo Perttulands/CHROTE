@@ -28,12 +28,13 @@ import (
 
 // TmuxHandler handles tmux-related API endpoints
 type TmuxHandler struct {
-	cache      *sessionsCache
-	colorRegex *regexp.Regexp
-	socket     string
-	workDir    string
-	bank       *sessionBankStore
-	persistent *persistentAgentStore
+	cache        *sessionsCache
+	colorRegex   *regexp.Regexp
+	socket       string
+	workDir      string
+	bank         *sessionBankStore
+	persistent   *persistentAgentStore
+	persistentMu sync.Mutex
 }
 
 type sessionsCache struct {
@@ -291,6 +292,11 @@ func targetFromRequest(h *TmuxHandler, r *http.Request, bodyUnixUser string) (tm
 
 const defaultSessionBankFile = "/srv/data/chrote/session-bank/sessions.json"
 const defaultSessionDropsDir = "/srv/data/chrote/session-drops"
+const reservedInternalSessionPrefix = "chrote-probe-"
+
+func isReservedInternalSessionName(name string) bool {
+	return strings.HasPrefix(strings.TrimSpace(name), reservedInternalSessionPrefix)
+}
 
 func defaultSessionBankPath() string {
 	if override := strings.TrimSpace(os.Getenv("CHROTE_SESSION_BANK_PATH")); override != "" {
@@ -485,6 +491,9 @@ func recoveryKindForStoredPlan(plan []WorkloadRecoveryDescriptor) string {
 func sanitizeSessionBankEntry(entry SessionBankEntry) (SessionBankEntry, bool) {
 	entry.Name = strings.TrimSpace(entry.Name)
 	entry.UnixUser = strings.TrimSpace(entry.UnixUser)
+	if isReservedInternalSessionName(entry.Name) {
+		return SessionBankEntry{}, false
+	}
 	if valid, _ := core.ValidateSessionName(entry.Name, "session name"); !valid {
 		return SessionBankEntry{}, false
 	}
@@ -1050,6 +1059,9 @@ func parseSessionsOutput(output string, unixUser string) []core.Session {
 			nameIndex = 1
 		}
 		name := parts[nameIndex]
+		if isReservedInternalSessionName(name) {
+			continue
+		}
 		windows, _ := strconv.Atoi(parts[nameIndex+1]) //nolint:errcheck // defaults to 0 on parse failure, corrected to 1 below
 		if windows == 0 {
 			windows = 1
@@ -2041,6 +2053,10 @@ func (h *TmuxHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", errMsg)
 			return
 		}
+		if isReservedInternalSessionName(name) {
+			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Session name is reserved for internal CHROTE use")
+			return
+		}
 	}
 
 	target, targetErr := targetFromRequest(h, r, req.UnixUser)
@@ -2220,6 +2236,10 @@ func (h *TmuxHandler) RenameSession(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", errMsg)
 		return
 	}
+	if isReservedInternalSessionName(oldName) {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Session name is reserved for internal CHROTE use")
+		return
+	}
 
 	var req RenameSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -2232,21 +2252,66 @@ func (h *TmuxHandler) RenameSession(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", errMsg)
 		return
 	}
+	if isReservedInternalSessionName(req.NewName) {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Session name is reserved for internal CHROTE use")
+		return
+	}
 
 	target, targetErr := targetFromRequest(h, r, "")
 	if targetErr != nil {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", targetErr.Error())
 		return
 	}
-
-	_, err := h.runTmuxOnSocket(target.socket, "rename-session", "-t", oldName, req.NewName)
-	if err != nil {
-		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
-		return
-	}
+	h.persistentMu.Lock()
+	defer h.persistentMu.Unlock()
+	sourcePersistent := false
 	if h.persistent != nil {
+		var persistentErr error
+		sourcePersistent, persistentErr = h.persistent.IsPersistent(oldName, target.unixUser)
+		if persistentErr != nil {
+			core.WriteError(w, http.StatusInternalServerError, "PERSISTENT_AGENT_ERROR", persistentErr.Error())
+			return
+		}
+	}
+	if oldName != req.NewName {
+		ownerHome, ownerHomeErr := trustedSessionBankOwnerHome(target)
+		if ownerHomeErr != nil {
+			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", ownerHomeErr.Error())
+			return
+		}
+		if err := h.ensurePersistentAgentOwnershipAvailable(oldName, target.unixUser, ownerHome); err != nil {
+			core.WriteError(w, http.StatusConflict, "PERSISTENT_AGENT_OWNERSHIP_CONFLICT", err.Error())
+			return
+		}
+		if err := h.ensurePersistentAgentOwnershipAvailable(req.NewName, target.unixUser, ownerHome); err != nil {
+			core.WriteError(w, http.StatusConflict, "PERSISTENT_AGENT_OWNERSHIP_CONFLICT", err.Error())
+			return
+		}
+		if h.persistent != nil {
+			if err := h.persistent.EnsureTargetAvailable(req.NewName, target.unixUser); err != nil {
+				core.WriteError(w, http.StatusConflict, "PERSISTENT_AGENT_TARGET_EXISTS", err.Error())
+				return
+			}
+		}
+	}
+
+	if sourcePersistent {
 		if err := h.persistent.Rename(oldName, req.NewName, target.unixUser); err != nil {
 			core.WriteError(w, http.StatusInternalServerError, "PERSISTENT_AGENT_ERROR", err.Error())
+			return
+		}
+		if _, err := h.runTmuxOnSocket(target.socket, "rename-session", "-t", oldName, req.NewName); err != nil {
+			if rollbackErr := h.persistent.Rename(req.NewName, oldName, target.unixUser); rollbackErr != nil {
+				core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", errors.Join(fmt.Errorf("tmux rename failed: %w", err), fmt.Errorf("persistent rollback failed: %w", rollbackErr)).Error())
+				return
+			}
+			core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
+			return
+		}
+	} else {
+		_, err := h.runTmuxOnSocket(target.socket, "rename-session", "-t", oldName, req.NewName)
+		if err != nil {
+			core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
 			return
 		}
 	}

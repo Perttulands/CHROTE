@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/chrote/server/internal/core"
 )
@@ -161,6 +162,409 @@ func TestTmuxHandler_RenameSession_InvalidNewName(t *testing.T) {
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Errorf("Status code = %d, expected %d", recorder.Code, http.StatusBadRequest)
+	}
+}
+
+func TestTmuxHandler_RenameSessionRejectsPersistentTargetCollisionBeforeTmux(t *testing.T) {
+	tmpDir := t.TempDir()
+	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")
+	argsPath := installPersistentAgentScriptedTmux(t, "")
+	writePersistentAgentRawSeed(t, persistentPath, []map[string]any{
+		persistentAgentRawEntry("codex-target", "alice", RecoveryAgentCodex, persistentTestCodexID, ""),
+	})
+	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+
+	handler := NewTmuxHandler()
+	body := RenameSessionRequest{NewName: "codex-target"}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPatch, "/api/tmux/sessions/codex-alpha?unixUser=alice", bytes.NewBuffer(bodyBytes))
+	req.SetPathValue("name", "codex-alpha")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	handler.RenameSession(recorder, req)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusConflict, recorder.Body.String())
+	}
+	if got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)); len(got) != 0 {
+		t.Fatalf("tmux calls = %#v, want no tmux side effects before persistent target collision", got)
+	}
+	rawEntries := readPersistentAgentRawEntries(t, persistentPath)
+	if len(rawEntries) != 1 || rawEntries[0]["name"] != "codex-target" {
+		t.Fatalf("persistent store mutated on rename collision: %#v", rawEntries)
+	}
+}
+
+func TestTmuxHandler_RenameSessionRejectsSessionBankOwnedSourceBeforeTmux(t *testing.T) {
+	tmpDir := t.TempDir()
+	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")
+	bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
+	argsPath := installPersistentAgentScriptedTmux(t, "")
+	plan := []WorkloadRecoveryDescriptor{
+		sessionBankAgentDescriptor("codex-alpha", "alice", RecoveryAgentCodex, persistentTestCodexID, "", 0, 0, "%1", "agents", "b25f,80x24,0,0", "/home/alice/project"),
+	}
+	bankSeed := sessionBankEntryWithRecoveryPlanJSON(t, "codex-alpha", "alice", 1, plan)
+	writeBankSeedRaw(t, bankPath, bankSeed)
+	writePersistentAgentRawSeed(t, persistentPath, []map[string]any{
+		persistentAgentRawEntry("codex-other", "alice", RecoveryAgentCodex, persistentTestCodexID, ""),
+	})
+	persistentBefore, err := os.ReadFile(persistentPath)
+	if err != nil {
+		t.Fatalf("read persistent seed: %v", err)
+	}
+	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+
+	handler := NewTmuxHandler()
+	body := RenameSessionRequest{NewName: "codex-renamed"}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPatch, "/api/tmux/sessions/codex-alpha?unixUser=alice", bytes.NewBuffer(bodyBytes))
+	req.SetPathValue("name", "codex-alpha")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	handler.RenameSession(recorder, req)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusConflict, recorder.Body.String())
+	}
+	if !strings.Contains(strings.ToLower(recorder.Body.String()), "session bank") {
+		t.Fatalf("error body = %s, want Session Bank ownership conflict", recorder.Body.String())
+	}
+	if got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)); len(got) != 0 {
+		t.Fatalf("tmux calls = %#v, want no tmux side effects before source ownership conflict", got)
+	}
+	bankAfter, err := os.ReadFile(bankPath)
+	if err != nil {
+		t.Fatalf("read bank after rename rejection: %v", err)
+	}
+	persistentAfter, err := os.ReadFile(persistentPath)
+	if err != nil {
+		t.Fatalf("read persistent after rename rejection: %v", err)
+	}
+	if !bytes.Equal(bankAfter, bankSeed) {
+		t.Fatalf("bank store mutated on rejected source rename:\nbefore=%s\nafter=%s", bankSeed, bankAfter)
+	}
+	if !bytes.Equal(persistentAfter, persistentBefore) {
+		t.Fatalf("persistent store mutated on rejected source rename:\nbefore=%s\nafter=%s", persistentBefore, persistentAfter)
+	}
+}
+
+func TestTmuxHandler_RenameSessionRejectsSessionBankOwnedTargetBeforeTmux(t *testing.T) {
+	tmpDir := t.TempDir()
+	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")
+	bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
+	argsPath := installPersistentAgentScriptedTmux(t, "")
+	plan := []WorkloadRecoveryDescriptor{
+		sessionBankAgentDescriptor("codex-renamed", "alice", RecoveryAgentCodex, persistentTestCodexID, "", 0, 0, "%1", "agents", "b25f,80x24,0,0", "/home/alice/project"),
+	}
+	bankSeed := sessionBankEntryWithRecoveryPlanJSON(t, "codex-renamed", "alice", 1, plan)
+	writeBankSeedRaw(t, bankPath, bankSeed)
+	writePersistentAgentRawSeed(t, persistentPath, []map[string]any{
+		persistentAgentRawEntry("codex-other", "alice", RecoveryAgentCodex, persistentTestCodexID, ""),
+	})
+	persistentBefore, err := os.ReadFile(persistentPath)
+	if err != nil {
+		t.Fatalf("read persistent seed: %v", err)
+	}
+	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+
+	handler := NewTmuxHandler()
+	body := RenameSessionRequest{NewName: "codex-renamed"}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPatch, "/api/tmux/sessions/codex-alpha?unixUser=alice", bytes.NewBuffer(bodyBytes))
+	req.SetPathValue("name", "codex-alpha")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	handler.RenameSession(recorder, req)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusConflict, recorder.Body.String())
+	}
+	if !strings.Contains(strings.ToLower(recorder.Body.String()), "session bank") {
+		t.Fatalf("error body = %s, want Session Bank ownership conflict", recorder.Body.String())
+	}
+	if got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)); len(got) != 0 {
+		t.Fatalf("tmux calls = %#v, want no tmux side effects before target ownership conflict", got)
+	}
+	bankAfter, err := os.ReadFile(bankPath)
+	if err != nil {
+		t.Fatalf("read bank after rename rejection: %v", err)
+	}
+	persistentAfter, err := os.ReadFile(persistentPath)
+	if err != nil {
+		t.Fatalf("read persistent after rename rejection: %v", err)
+	}
+	if !bytes.Equal(bankAfter, bankSeed) {
+		t.Fatalf("bank store mutated on rejected target rename:\nbefore=%s\nafter=%s", bankSeed, bankAfter)
+	}
+	if !bytes.Equal(persistentAfter, persistentBefore) {
+		t.Fatalf("persistent store mutated on rejected target rename:\nbefore=%s\nafter=%s", persistentBefore, persistentAfter)
+	}
+}
+
+func TestTmuxHandler_RenamePersistentSessionStoreFailureDoesNotCallTmux(t *testing.T) {
+	tmpDir := t.TempDir()
+	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")
+	argsPath := installPersistentAgentScriptedTmux(t, "")
+	writePersistentAgentRawSeed(t, persistentPath, []map[string]any{
+		persistentAgentRawEntry("codex-alpha", "alice", RecoveryAgentCodex, persistentTestCodexID, ""),
+	})
+	before, err := os.ReadFile(persistentPath)
+	if err != nil {
+		t.Fatalf("read persistent seed: %v", err)
+	}
+	persistentDir := filepath.Dir(persistentPath)
+	if err := os.Chmod(persistentDir, 0o500); err != nil {
+		t.Fatalf("chmod persistent dir read-only: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(persistentDir, 0o700) })
+	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+
+	handler := NewTmuxHandler()
+	body := RenameSessionRequest{NewName: "codex-renamed"}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPatch, "/api/tmux/sessions/codex-alpha?unixUser=alice", bytes.NewBuffer(bodyBytes))
+	req.SetPathValue("name", "codex-alpha")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	handler.RenameSession(recorder, req)
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusInternalServerError, recorder.Body.String())
+	}
+	if got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)); len(got) != 0 {
+		t.Fatalf("tmux calls = %#v, want no tmux rename after persistent store write failure", got)
+	}
+	after, err := os.ReadFile(persistentPath)
+	if err != nil {
+		t.Fatalf("read persistent after rejected rename: %v", err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatalf("persistent store mutated after failed store write:\nbefore=%s\nafter=%s", before, after)
+	}
+}
+
+func TestTmuxHandler_RenamePersistentSessionReportsRollbackFailureWhenTmuxRenameFails(t *testing.T) {
+	tmpDir := t.TempDir()
+	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")
+	persistentDir := filepath.Dir(persistentPath)
+	argsPath := installPersistentAgentScriptedTmux(t, `
+case "$*" in
+  *rename-session*)
+    chmod 500 "$PERSISTENT_DIR"
+    echo 'rename failed' >&2
+    exit 1
+    ;;
+esac
+`)
+	writePersistentAgentRawSeed(t, persistentPath, []map[string]any{
+		persistentAgentRawEntry("codex-alpha", "alice", RecoveryAgentCodex, persistentTestCodexID, ""),
+	})
+	t.Setenv("PERSISTENT_DIR", persistentDir)
+	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+	t.Cleanup(func() { _ = os.Chmod(persistentDir, 0o700) })
+
+	handler := NewTmuxHandler()
+	body := RenameSessionRequest{NewName: "codex-renamed"}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPatch, "/api/tmux/sessions/codex-alpha?unixUser=alice", bytes.NewBuffer(bodyBytes))
+	req.SetPathValue("name", "codex-alpha")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	handler.RenameSession(recorder, req)
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusInternalServerError, recorder.Body.String())
+	}
+	if !strings.Contains(strings.ToLower(recorder.Body.String()), "rollback") {
+		t.Fatalf("error body = %s, want combined rollback failure", recorder.Body.String())
+	}
+	if got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)); len(got) == 0 || !containsArg(got[0], "rename-session") {
+		t.Fatalf("tmux calls = %#v, want attempted rename-session", got)
+	}
+}
+
+func TestTmuxHandler_ReconcileWaitsForPersistentRenameTransaction(t *testing.T) {
+	tmpDir := t.TempDir()
+	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")
+	startedPath := filepath.Join(tmpDir, "rename-started")
+	releasePath := filepath.Join(tmpDir, "rename-release")
+	argsPath := installPersistentAgentScriptedTmux(t, `
+case "$*" in
+  *rename-session*)
+    : > "$RENAME_STARTED"
+    while [ ! -f "$RENAME_RELEASE" ]; do sleep 0.02; done
+    exit 0
+    ;;
+  *"has-session -t codex-alpha"*)
+    if [ -f "$RENAME_STARTED" ] && [ ! -f "$RENAME_RELEASE" ]; then
+      echo "can't find session: codex-alpha" >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+  *"has-session -t codex-renamed"*)
+    if [ -f "$RENAME_RELEASE" ]; then exit 0; fi
+    echo "can't find session: codex-renamed" >&2
+    exit 1
+    ;;
+  *display-message*) printf '42:node:/home/alice/project\n' ;;
+  *capture-pane*) printf 'Codex ready\n' ;;
+  *new-session*) echo 'unexpected early recreate' >&2; exit 1 ;;
+esac
+`)
+	writePersistentAgentRawSeed(t, persistentPath, []map[string]any{
+		persistentAgentRawEntry("codex-alpha", "alice", RecoveryAgentCodex, persistentTestCodexID, ""),
+	})
+	t.Setenv("RENAME_STARTED", startedPath)
+	t.Setenv("RENAME_RELEASE", releasePath)
+	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+	installProcessTable(t, []processInfo{{pid: "42", ppid: "1", comm: "node", args: "node /usr/bin/codex resume " + persistentTestCodexID}})
+
+	handler := NewTmuxHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	body := RenameSessionRequest{NewName: "codex-renamed"}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPatch, "/api/tmux/sessions/codex-alpha?unixUser=alice", bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+
+	renameDone := make(chan int, 1)
+	go func() {
+		recorder := httptest.NewRecorder()
+		mux.ServeHTTP(recorder, req)
+		renameDone <- recorder.Code
+	}()
+	waitForTestFile(t, startedPath)
+
+	reconcileDone := make(chan []PersistentAgentReconcileResult, 1)
+	go func() {
+		results, err := handler.ReconcilePersistentAgents(context.Background())
+		if err != nil {
+			t.Errorf("reconcile persistent agents: %v", err)
+		}
+		reconcileDone <- results
+	}()
+
+	select {
+	case results := <-reconcileDone:
+		t.Fatalf("reconcile completed before rename transaction released: %+v", results)
+	case <-time.After(100 * time.Millisecond):
+	}
+	calls := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath))
+	for _, call := range calls {
+		if containsArg(call, "new-session") {
+			t.Fatalf("reconcile recreated during blocked rename transaction: %#v", calls)
+		}
+	}
+	if err := os.WriteFile(releasePath, []byte("go"), 0o600); err != nil {
+		t.Fatalf("release rename: %v", err)
+	}
+	if code := <-renameDone; code != http.StatusOK {
+		t.Fatalf("rename status code = %d, expected %d", code, http.StatusOK)
+	}
+	results := <-reconcileDone
+	if len(results) != 1 || results[0].Action != "ok" {
+		t.Fatalf("reconcile results = %+v, want ok after rename release", results)
+	}
+}
+
+func TestTmuxHandler_ListSessionsFiltersReservedProbeSessionsFromPublicAndBank(t *testing.T) {
+	tmpDir := t.TempDir()
+	bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
+	installPersistentAgentScriptedTmux(t, `
+case "$*" in
+  *list-sessions*) printf '$1:chrote-probe-123:1:0\n$2:work:1:0\n' ;;
+esac
+`)
+	t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+
+	handler := NewTmuxHandler()
+	recorder := httptest.NewRecorder()
+	handler.ListSessions(recorder, httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var response SessionsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(response.Sessions) != 1 || response.Sessions[0].Name != "work" {
+		t.Fatalf("sessions = %+v, want only non-reserved work session", response.Sessions)
+	}
+	if len(response.Banked) != 1 || response.Banked[0].Name != "work" {
+		t.Fatalf("banked = %+v, want only non-reserved work session", response.Banked)
+	}
+	raw, err := os.ReadFile(bankPath)
+	if err != nil {
+		t.Fatalf("read bank snapshot: %v", err)
+	}
+	if bytes.Contains(raw, []byte("chrote-probe-123")) {
+		t.Fatalf("reserved probe session leaked into bank snapshot: %s", raw)
+	}
+}
+
+func TestTmuxHandler_CreateAndRenameRejectReservedInternalSessionNames(t *testing.T) {
+	tmpDir := t.TempDir()
+	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")
+	argsPath := installPersistentAgentScriptedTmux(t, "")
+	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+
+	handler := NewTmuxHandler()
+	createBody := bytes.NewBufferString(`{"name":"chrote-probe-user","unixUser":"alice"}`)
+	createReq := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions", createBody)
+	createReq.Header.Set("Content-Type", "application/json")
+	createRec := httptest.NewRecorder()
+	handler.CreateSession(createRec, createReq)
+	if createRec.Code != http.StatusBadRequest {
+		t.Fatalf("create status code = %d, expected %d; body=%s", createRec.Code, http.StatusBadRequest, createRec.Body.String())
+	}
+
+	renameBody := RenameSessionRequest{NewName: "chrote-probe-renamed"}
+	renameBytes, _ := json.Marshal(renameBody)
+	renameReq := httptest.NewRequest(http.MethodPatch, "/api/tmux/sessions/work?unixUser=alice", bytes.NewBuffer(renameBytes))
+	renameReq.SetPathValue("name", "work")
+	renameReq.Header.Set("Content-Type", "application/json")
+	renameRec := httptest.NewRecorder()
+	handler.RenameSession(renameRec, renameReq)
+	if renameRec.Code != http.StatusBadRequest {
+		t.Fatalf("rename status code = %d, expected %d; body=%s", renameRec.Code, http.StatusBadRequest, renameRec.Body.String())
+	}
+	if got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)); len(got) != 0 {
+		t.Fatalf("tmux calls = %#v, want reserved-name rejection before tmux", got)
 	}
 }
 
@@ -841,6 +1245,7 @@ func TestTmuxHandler_SessionBankKeepsRestartResumeHints(t *testing.T) {
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
 
 	handler := NewTmuxHandler()
 	req := httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil)
@@ -904,7 +1309,7 @@ func TestTmuxHandler_EnablePersistentAgentRenamesStoresAndAnnotatesLiveSession(t
 	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")
 	argsPath := installPersistentAgentScriptedTmux(t, `
 case "$*" in
-  *display-message*) printf 'codex:/home/alice/project\n' ;;
+  *display-message*) printf '42:node:/home/alice/project\n' ;;
   *list-sessions*) printf '$7:codex-vw-codex1:1:0\n' ;;
 esac
 `)
@@ -912,7 +1317,14 @@ esac
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
 	const sessionID = "019f45ec-f88b-7f70-88dc-b5b99a9e94c6"
+	installProcessTable(t, []processInfo{{
+		pid:  "42",
+		ppid: "1",
+		comm: "node",
+		args: "node /usr/bin/codex resume " + sessionID,
+	}})
 
 	handler := NewTmuxHandler()
 	mux := http.NewServeMux()
@@ -972,6 +1384,7 @@ esac
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
 	const sessionID = "019f45ec-f88b-7f70-88dc-b5b99a9e94c6"
 	originalReadProcessTable := readPersistentAgentProcessTable
 	readPersistentAgentProcessTable = func(context.Context) ([]processInfo, error) {
@@ -1017,6 +1430,7 @@ esac
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
 	const sessionID = "019f45ec-f88b-7f70-88dc-b5b99a9e94c6"
 	originalReadProcessTable := readPersistentAgentProcessTable
 	readPersistentAgentProcessTable = func(context.Context) ([]processInfo, error) {
@@ -1065,6 +1479,7 @@ esac
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
 	originalReadProcessTable := readPersistentAgentProcessTable
 	readPersistentAgentProcessTable = func(context.Context) ([]processInfo, error) {
 		return []processInfo{{pid: "42", ppid: "1", comm: "node", args: "node /usr/bin/codex --no-alt-screen"}}, nil
@@ -1109,6 +1524,7 @@ esac
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
 	writePersistentAgentSeed(t, persistentPath, []PersistentAgentEntry{{
 		Name:           "codex-alpha",
 		UnixUser:       "alice",
@@ -1155,6 +1571,7 @@ esac
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
 
 	handler := NewTmuxHandler()
 	mux := http.NewServeMux()
@@ -1216,6 +1633,7 @@ esac
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
 	const sessionID = "019f45ec-f88b-7f70-88dc-b5b99a9e94c6"
 	writePersistentAgentSeed(t, persistentPath, []PersistentAgentEntry{{
 		Name:           "codex-alpha",
@@ -1265,6 +1683,7 @@ esac
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
 	const sessionID = "019f45ec-f88b-7f70-88dc-b5b99a9e94c6"
 	writePersistentAgentSeed(t, persistentPath, []PersistentAgentEntry{{
 		Name:           "codex-alpha",
@@ -1279,8 +1698,8 @@ esac
 	if err != nil {
 		t.Fatalf("reconcile persistent agents: %v", err)
 	}
-	if len(results) != 1 || results[0].Action != "error" || !strings.Contains(results[0].Error, "MouseDown3Pane") {
-		t.Fatalf("reconcile results = %+v, want menu-removal error", results)
+	if len(results) != 1 || results[0].Action != "backoff" || !strings.Contains(results[0].Error, "MouseDown3Pane") {
+		t.Fatalf("reconcile results = %+v, want menu-removal backoff", results)
 	}
 	want := [][]string{
 		{"-S", "/tmp/tmux-a", "has-session", "-t", "codex-alpha"},
@@ -3173,6 +3592,18 @@ func normalizeArgvTmuxCreationTokens(calls [][]string) [][]string {
 		}
 	}
 	return normalized
+}
+
+func waitForTestFile(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", path)
 }
 
 func writePersistentAgentSeed(t *testing.T, path string, entries []PersistentAgentEntry) {
