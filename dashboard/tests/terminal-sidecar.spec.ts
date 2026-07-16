@@ -20,6 +20,34 @@ async function openFreshTerminal(page: Page, viewport?: { width: number; height:
 }
 
 test.describe('terminal workspace sidecar', () => {
+  test('keeps an untouched fresh sidecar closed across reload', async ({ page }) => {
+    await openFreshTerminal(page, { width: 1280, height: 800 })
+    const dock = page.locator('.terminal-workspace-dock[data-active="true"]')
+    const sessionsTrigger = page.getByRole('button', { name: 'Sessions sidecar', exact: true })
+
+    await expect(dock.locator('.session-panel, .terminal-files-panel')).toHaveCount(0)
+    await expect(sessionsTrigger).toHaveAttribute('aria-pressed', 'false')
+    await page.reload()
+
+    await expect(sessionsTrigger).toBeVisible()
+    await expect(sessionsTrigger).toHaveAttribute('aria-pressed', 'false')
+    await expect(dock.locator('.session-panel, .terminal-files-panel')).toHaveCount(0)
+    await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('chrote.workspaceDock.v2') || '{}')
+      ?.workspaces?.terminal1?.activeSidecar)).toBe(null)
+  })
+
+  test('opens Sessions and focuses its filter when slash is pressed while closed', async ({ page }) => {
+    await openFreshTerminal(page, { width: 1280, height: 800 })
+    const sessionsTrigger = page.getByRole('button', { name: 'Sessions sidecar', exact: true })
+    await expect(sessionsTrigger).toHaveAttribute('aria-expanded', 'false')
+
+    await page.keyboard.press('/')
+
+    await expect(sessionsTrigger).toHaveAttribute('aria-expanded', 'true')
+    await expect(page.locator('.session-panel.sidecar-overlay')).toBeVisible()
+    await expect(page.locator('.session-search-input')).toBeFocused()
+  })
+
   test('keeps closed and overlay sidecars out of terminal layout width, then pins explicitly', async ({ page }) => {
     await openFreshTerminal(page, { width: 1280, height: 800 })
 
@@ -58,7 +86,7 @@ test.describe('terminal workspace sidecar', () => {
     const dock = page.locator('.terminal-workspace-dock[data-active="true"]')
     const terminal = dock.locator('.terminal-area')
     const initial = await box(terminal)
-    const sessionsTrigger = page.getByRole('button', { name: 'Sessions sidecar' })
+    const sessionsTrigger = page.getByRole('button', { name: 'Sessions sidecar', exact: true })
     const filesTrigger = page.getByRole('button', { name: 'Files sidecar' })
 
     await expect(sessionsTrigger.locator('.terminal-sidecar-label')).toHaveCSS('display', 'none')

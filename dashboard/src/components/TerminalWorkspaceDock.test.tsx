@@ -71,6 +71,20 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
     mocks.narrow = false
   })
 
+  it('persists a fresh closed default before later legacy dashboard writes can reopen Sessions', () => {
+    const firstMount = renderDock()
+    expect(screen.queryByTestId('sessions-panel')).not.toBeInTheDocument()
+    firstMount.unmount()
+
+    localStorage.setItem('chrote-dashboard-state', JSON.stringify({ sidebarCollapsed: false }))
+    renderDock()
+
+    expect(screen.queryByTestId('sessions-panel')).not.toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem('chrote.workspaceDock.v2') || '{}')).toMatchObject({
+      workspaces: { terminal1: { activeSidecar: null, sidecarPinned: false } },
+    })
+  })
+
   it('opens, switches, and closes exactly one sidecar from a stable switcher', () => {
     const { container } = renderDock()
     const sessions = screen.getByRole('button', { name: /Sessions sidecar/i })

@@ -14,10 +14,24 @@ function isDashboardChrome(target: HTMLElement): boolean {
 export function useKeyboardShortcuts({ onShowHelp, isHelpOpen }: KeyboardShortcutsConfig) {
   const { closeFloatingModal, floatingSession } = useSession()
 
-  const focusSearchBox = useCallback(() => {
-    const searchInput = document.querySelector('.session-search-input') as HTMLInputElement | null
-    searchInput?.focus()
-    searchInput?.select()
+  const focusSearchBox = useCallback((): boolean => {
+    const activeDock = document.querySelector('.terminal-workspace-dock[data-active="true"]')
+    if (!activeDock) return false
+
+    const focusVisibleSearch = () => {
+      const searchInput = activeDock.querySelector('.session-search-input') as HTMLInputElement | null
+      searchInput?.focus()
+      searchInput?.select()
+      return searchInput !== null
+    }
+
+    if (focusVisibleSearch()) return true
+
+    const sessionsTrigger = activeDock.querySelector('button[aria-label="Sessions sidecar"]') as HTMLButtonElement | null
+    if (!sessionsTrigger) return false
+    sessionsTrigger.click()
+    queueMicrotask(focusVisibleSearch)
+    return true
   }, [])
 
   useEffect(() => {
@@ -40,9 +54,8 @@ export function useKeyboardShortcuts({ onShowHelp, isHelpOpen }: KeyboardShortcu
         return
       }
 
-      if (event.key === '/' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      if (event.key === '/' && !event.ctrlKey && !event.metaKey && !event.altKey && focusSearchBox()) {
         event.preventDefault()
-        focusSearchBox()
       }
     }
 

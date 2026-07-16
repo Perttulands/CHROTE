@@ -59,12 +59,12 @@ function TerminalWorkspaceDock({
   const filesPanelId = `${workspaceId}-files-sidecar`
 
   const updateDockState = useCallback((update: (previous: WorkspaceDockState) => WorkspaceDockState) => {
-    setDockState(previous => {
-      const next = update(previous)
-      writeWorkspaceDockState(workspaceId, next)
-      return next
-    })
-  }, [workspaceId])
+    setDockState(previous => update(previous))
+  }, [])
+
+  useEffect(() => {
+    writeWorkspaceDockState(workspaceId, dockState)
+  }, [dockState, workspaceId])
 
   const toggleSidecar = useCallback((sidecar: Exclude<WorkspaceSidecar, null>) => {
     updateDockState(previous => previous.activeSidecar === sidecar
