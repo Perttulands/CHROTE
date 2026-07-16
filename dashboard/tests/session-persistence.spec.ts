@@ -1,6 +1,7 @@
 
 import { test, expect, Page } from './fixtures'
 import { mockApiRoutes } from './mock-api'
+import { openSessionsSidecar } from './helpers'
 
 // Copied from dashboard.spec.ts
 async function dragAndDrop(page: Page, sourceSelector: string, targetSelector: string) {
@@ -34,6 +35,7 @@ test.describe('Session Persistence', () => {
     await mockApiRoutes(page)
     await page.goto('/')
     await page.waitForSelector('.dashboard')
+    await openSessionsSidecar(page)
 
     // 2. Drag a session to the first window
     // We target "hq-deacon" from the session panel

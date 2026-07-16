@@ -485,17 +485,19 @@ test.describe('Filebrowser Tab Navigation', () => {
   })
 
   test('should switch to Files tab and back to Terminal', async ({ page }) => {
-    // Initially on Terminal tab
-    await expect(page.locator('.session-panel')).toBeVisible()
+    // Initially on Terminal tab with sidecars closed
+    await expect(page.getByRole('button', { name: 'Sessions sidecar' })).toBeVisible()
+    await expect(page.locator('.session-panel')).toHaveCount(0)
 
     // Switch to Files
     await page.click('.tab:has-text("Files")')
     await expect(page.locator('.files-view')).toBeVisible()
-    await expect(page.locator('.session-panel')).not.toBeVisible()
+    await expect(page.locator('.terminal-area:visible')).toHaveCount(0)
 
     // Switch back to Terminal
     await page.click('.tab:has-text("Terminal")')
-    await expect(page.locator('.session-panel')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Sessions sidecar' })).toBeVisible()
+    await expect(page.locator('.terminal-area:visible')).toBeVisible()
     await expect(page.locator('.files-view')).not.toBeVisible()
   })
 

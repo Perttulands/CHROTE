@@ -434,8 +434,9 @@ export interface DashboardActions {
   closeSendToSession: () => void
   sendToSession: (sessionName: string, payload: SendToSessionPayload, unixUser?: LaunchUser) => Promise<boolean>
 
-  // Session click handler
+  // Session row clicks always preview; assignment navigation is an explicit secondary action.
   handleSessionClick: (sessionName: string) => void
+  focusSessionAssignment: (sessionName: string) => void
 
   // Refresh sessions from API
   refreshSessions: () => Promise<void>

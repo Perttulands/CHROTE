@@ -8,6 +8,7 @@ const mockState = vi.hoisted(() => ({
   openFloatingModal: vi.fn(),
   openSendToSession: vi.fn(),
   handleSessionClick: vi.fn(),
+  focusSessionAssignment: vi.fn(),
   addSessionToWindow: vi.fn(),
   removeSessionFromWindow: vi.fn(),
   makeSessionPersistent: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock('../context/SessionContext', () => ({
   useSession: () => ({
     assignedSessions: mockState.assignedSessions,
     handleSessionClick: mockState.handleSessionClick,
+    focusSessionAssignment: mockState.focusSessionAssignment,
     deleteSession: vi.fn(),
     renameSession: vi.fn(),
     workspaces: {
@@ -60,6 +62,7 @@ describe('SessionItem user badge and context actions', () => {
     mockState.openFloatingModal.mockClear()
     mockState.openSendToSession.mockClear()
     mockState.handleSessionClick.mockClear()
+    mockState.focusSessionAssignment.mockClear()
     mockState.addSessionToWindow.mockClear()
     mockState.removeSessionFromWindow.mockClear()
     mockState.makeSessionPersistent.mockClear()
@@ -113,6 +116,10 @@ describe('SessionItem user badge and context actions', () => {
       .map(child => child.textContent)
 
     expect(rowText.slice(0, 3)).toEqual(['A', 'T1 W1', 'alice-shell'])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Focus assigned window T1 W1' }))
+    expect(mockState.focusSessionAssignment).toHaveBeenCalledWith('alice-shell')
+    expect(mockState.handleSessionClick).not.toHaveBeenCalled()
   })
 
   it('offers peek and attach actions in the session context menu', () => {

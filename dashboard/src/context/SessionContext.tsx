@@ -1073,15 +1073,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [addToast])
 
   const handleSessionClick = useCallback((sessionName: string) => {
+    openFloatingModal(sessionName)
+  }, [openFloatingModal])
+
+  const focusSessionAssignment = useCallback((sessionName: string) => {
     const assignment = assignedSessions.get(sessionName)
-    if (assignment) {
-      revealWindow(assignment.workspaceId, assignment.windowId)
-      setActiveSession(assignment.workspaceId, assignment.windowId, sessionName)
-      setFocusedWindowKey(`${assignment.workspaceId}-${assignment.windowId}`)
-    } else {
-      openFloatingModal(sessionName)
-    }
-  }, [assignedSessions, openFloatingModal, revealWindow, setActiveSession])
+    if (!assignment) return
+    revealWindow(assignment.workspaceId, assignment.windowId)
+    setActiveSession(assignment.workspaceId, assignment.windowId, sessionName)
+    setFocusedWindowKey(`${assignment.workspaceId}-${assignment.windowId}`)
+  }, [assignedSessions, revealWindow, setActiveSession])
 
   const updateSettings = useCallback((newSettings: Partial<UserSettings>) => {
     setSettings(prev => {
@@ -1339,6 +1340,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     closeSendToSession,
     sendToSession,
     handleSessionClick,
+    focusSessionAssignment,
     refreshSessions,
     createSession,
     deleteSession,
@@ -1387,6 +1389,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     closeSendToSession,
     sendToSession,
     handleSessionClick,
+    focusSessionAssignment,
     refreshSessions,
     createSession,
     deleteSession,

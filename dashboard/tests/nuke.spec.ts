@@ -1,5 +1,6 @@
 import { test, expect } from './fixtures'
 import { mockApiRoutes, mockSessions } from './mock-api'
+import { openSessionsSidecar } from './helpers'
 
 // Build a sessions payload that includes the protected 'chrote-chat' session
 const sessionsWithProtected = {
@@ -21,6 +22,7 @@ test.describe('Nuke All (pol-9783)', () => {
     await mockApiRoutes(page)
     await page.goto('/')
     await page.waitForSelector('.dashboard')
+    await openSessionsSidecar(page)
     await page.waitForSelector('.session-item')
     await page.getByRole('button', { name: 'Settings' }).click()
     await page.waitForSelector('.settings-view')

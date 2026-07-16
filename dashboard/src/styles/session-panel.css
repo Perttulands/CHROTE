@@ -5,77 +5,46 @@
   width: var(--session-panel-width, 260px);
   flex: 0 0 var(--session-panel-width, 260px);
   min-width: 0;
+  min-height: 0;
   background-color: var(--surface-primary);
   border-right: 1px solid var(--divider);
   display: flex;
   flex-direction: column;
-  transition: width 0.2s ease, flex-basis 0.2s ease;
   position: relative;
+  z-index: 7;
 }
 
-.dock-panel.collapsed {
-  width: var(--dock-panel-rail-width, 24px);
-  flex-basis: var(--dock-panel-rail-width, 24px);
+.session-panel.collapsed {
+  display: none;
+  width: 0;
+  flex-basis: 0;
 }
 
 .session-panel-header {
+  min-height: 45px;
   display: flex;
   align-items: center;
   padding: 8px;
   border-bottom: 1px solid var(--divider);
-  gap: 8px;
-}
-
-.dock-panel.collapsed .dock-panel-header {
-  height: 100%;
-  padding: 0;
-  align-items: center;
-  justify-content: center;
-  border-bottom: 0;
-  overflow: hidden;
-}
-
-.dock-toggle-btn {
-  display: inline-flex;
-  align-items: center;
-  min-height: 28px;
-  white-space: nowrap;
-}
-
-.dock-toggle-content {
-  display: inline-flex;
-  align-items: center;
   gap: 6px;
 }
 
-.dock-panel.collapsed .dock-toggle-btn {
-  position: absolute;
-  inset: 0;
-  display: block;
-  width: 100%;
-  height: 100%;
-  min-height: 0;
+.terminal-sidecar-title {
+  margin-right: auto;
+  color: var(--text-primary);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sidecar-pin-btn,
+.sidecar-close-btn {
+  width: 28px;
+  height: 28px;
   padding: 0;
-  border: 0;
-  overflow: hidden;
-}
-
-.dock-panel.collapsed .dock-toggle-content {
-  position: absolute;
-  top: 10px;
-  right: 5px;
-  gap: 4px;
-  transform: rotate(-90deg);
-  transform-origin: top right;
-}
-
-.dock-panel.collapsed .dock-toggle-btn:hover,
-.dock-panel.collapsed .dock-toggle-btn:focus-visible {
-  background: var(--accent-light);
-}
-
-.dock-toggle-chevron {
-  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .dock-resizer {
@@ -284,9 +253,20 @@
   height: 18px;
   padding: 0 6px;
   border-radius: 2px;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
   font-size: 10px;
   letter-spacing: 0;
   white-space: nowrap;
+  cursor: pointer;
+}
+
+.window-location-chip:hover,
+.window-location-chip:focus-visible {
+  border-color: var(--accent);
+  color: var(--text-primary);
+  outline: none;
 }
 
 .unix-user-badge {

@@ -1,5 +1,6 @@
 import { test, expect, Page } from './fixtures'
 import { mockFileApiRoutes, mockSessions } from './mock-api'
+import { openSessionsSidecar } from './helpers'
 
 /**
  * Helper: set up API mocks that also handle DELETE and PATCH (rename) for sessions.
@@ -106,6 +107,7 @@ test.describe('Session Context Menu', () => {
     await mockApiRoutesWithMutations(page)
     await page.goto('/')
     await page.waitForSelector('.dashboard')
+    await openSessionsSidecar(page)
     await page.waitForSelector('.session-item')
   })
 

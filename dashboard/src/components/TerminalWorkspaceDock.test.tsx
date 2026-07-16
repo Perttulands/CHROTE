@@ -1,91 +1,172 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import TerminalWorkspaceDock from './TerminalWorkspaceDock'
+import { writeWorkspaceDockState } from './workspaceFilesState'
+
+const mocks = vi.hoisted(() => ({
+  narrow: false,
+  sessions: [{ name: 'shell' }, { name: 'codex' }],
+}))
+
+vi.mock('../hooks/useMediaQuery', () => ({
+  useMediaQuery: () => mocks.narrow,
+}))
+
+vi.mock('../context/SessionContext', () => ({
+  useSession: () => ({ sessions: mocks.sessions }),
+}))
 
 vi.mock('./SessionPanel', () => ({
-  default: ({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) => (
-    <aside data-testid="sessions-panel" data-collapsed={String(collapsed)}>
-      <button type="button" onClick={onToggle}>{collapsed ? 'Expand Sessions panel' : 'Collapse Sessions panel'}</button>
+  default: (props: {
+    collapsed: boolean
+    pinned: boolean
+    canPin: boolean
+    panelId: string
+    onTogglePin: () => void
+    onClose: () => void
+  }) => props.collapsed ? null : (
+    <aside id={props.panelId} data-testid="sessions-panel" data-pinned={String(props.pinned)}>
+      {props.canPin && <button onClick={props.onTogglePin}>Pin sessions</button>}
+      <button onClick={props.onClose}>Close sessions</button>
     </aside>
   ),
 }))
 
 vi.mock('./TerminalFilesPanel', () => ({
-  default: ({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) => (
-    <aside data-testid="files-panel" data-collapsed={String(collapsed)}>
-      <button type="button" onClick={onToggle}>{collapsed ? 'Expand Files panel' : 'Collapse Files panel'}</button>
+  default: (props: {
+    collapsed: boolean
+    pinned: boolean
+    canPin: boolean
+    panelId: string
+    onTogglePin: () => void
+    onClose: () => void
+  }) => props.collapsed ? null : (
+    <aside id={props.panelId} data-testid="files-panel" data-pinned={String(props.pinned)}>
+      {props.canPin && <button onClick={props.onTogglePin}>Pin files</button>}
+      <button onClick={props.onClose}>Close files</button>
     </aside>
   ),
 }))
 
 vi.mock('./TerminalArea', () => ({
-  default: ({ workspaceId }: { workspaceId: string }) => <main data-testid="terminal-area">{workspaceId}</main>,
+  default: ({ sidecarControls }: { sidecarControls?: React.ReactNode }) => (
+    <main data-testid="terminal-area">{sidecarControls}</main>
+  ),
 }))
 
-describe('TerminalWorkspaceDock', () => {
-  beforeEach(() => window.localStorage.clear())
+function renderDock() {
+  return render(
+    <TerminalWorkspaceDock
+      workspaceId="terminal1"
+      active
+      onOpenSessionBankSettings={vi.fn()}
+      onOpenInFiles={vi.fn()}
+    />,
+  )
+}
 
-  it('supports Sessions, Files, both, and neither without coupling the toggles', () => {
-    render(
-      <TerminalWorkspaceDock
-        workspaceId="terminal1"
-        active
-        onOpenSessionBankSettings={vi.fn()}
-        onOpenInFiles={vi.fn()}
-      />,
-    )
-
-    expect(screen.getByTestId('sessions-panel')).toHaveAttribute('data-collapsed', 'false')
-    expect(screen.getByTestId('files-panel')).toHaveAttribute('data-collapsed', 'true')
-
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Files panel' }))
-    expect(screen.getByTestId('sessions-panel')).toHaveAttribute('data-collapsed', 'false')
-    expect(screen.getByTestId('files-panel')).toHaveAttribute('data-collapsed', 'false')
-
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse Sessions panel' }))
-    expect(screen.getByTestId('sessions-panel')).toHaveAttribute('data-collapsed', 'true')
-    expect(screen.getByTestId('files-panel')).toHaveAttribute('data-collapsed', 'false')
-
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse Files panel' }))
-    expect(screen.getByTestId('sessions-panel')).toHaveAttribute('data-collapsed', 'true')
-    expect(screen.getByTestId('files-panel')).toHaveAttribute('data-collapsed', 'true')
-
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Sessions panel' }))
-    expect(screen.getByTestId('sessions-panel')).toHaveAttribute('data-collapsed', 'false')
-    expect(screen.getByTestId('files-panel')).toHaveAttribute('data-collapsed', 'true')
+describe('TerminalWorkspaceDock sidecar state machine', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    mocks.narrow = false
   })
 
-  it('restores panel layout independently for each terminal workspace', () => {
-    const first = render(
-      <TerminalWorkspaceDock
-        workspaceId="terminal1"
-        active
-        onOpenSessionBankSettings={vi.fn()}
-        onOpenInFiles={vi.fn()}
-      />,
-    )
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Files panel' }))
-    first.unmount()
+  it('opens, switches, and closes exactly one sidecar from a stable switcher', () => {
+    const { container } = renderDock()
+    const sessions = screen.getByRole('button', { name: /Sessions sidecar/i })
+    const files = screen.getByRole('button', { name: /Files sidecar/i })
 
-    const second = render(
-      <TerminalWorkspaceDock
-        workspaceId="terminal2"
-        active
-        onOpenSessionBankSettings={vi.fn()}
-        onOpenInFiles={vi.fn()}
-      />,
-    )
-    expect(screen.getByTestId('files-panel')).toHaveAttribute('data-collapsed', 'true')
-    second.unmount()
+    expect(sessions).toHaveAttribute('aria-pressed', 'false')
+    expect(files).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByTestId('sessions-panel')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('files-panel')).not.toBeInTheDocument()
 
-    render(
-      <TerminalWorkspaceDock
-        workspaceId="terminal1"
-        active
-        onOpenSessionBankSettings={vi.fn()}
-        onOpenInFiles={vi.fn()}
-      />,
-    )
-    expect(screen.getByTestId('files-panel')).toHaveAttribute('data-collapsed', 'false')
+    fireEvent.click(sessions)
+    expect(sessions).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('sessions-panel')).toHaveAttribute('data-pinned', 'false')
+    expect(screen.queryByTestId('files-panel')).not.toBeInTheDocument()
+    expect(container.querySelector('.terminal-sidecar-dismiss')).toBeInTheDocument()
+
+    fireEvent.click(files)
+    expect(files).toHaveAttribute('aria-pressed', 'true')
+    expect(sessions).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByTestId('sessions-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('files-panel')).toBeInTheDocument()
+
+    fireEvent.click(files)
+    expect(files).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByTestId('files-panel')).not.toBeInTheDocument()
+    expect(container.querySelector('.terminal-sidecar-dismiss')).not.toBeInTheDocument()
+  })
+
+  it('pins only on desktop and closes an unpinned sidecar through Escape or the dismiss layer', () => {
+    const { container } = renderDock()
+    fireEvent.click(screen.getByRole('button', { name: /Sessions sidecar/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Pin sessions' }))
+
+    expect(screen.getByTestId('sessions-panel')).toHaveAttribute('data-pinned', 'true')
+    expect(container.querySelector('.terminal-sidecar-dismiss')).not.toBeInTheDocument()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.getByTestId('sessions-panel')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pin sessions' }))
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByTestId('sessions-panel')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Files sidecar/i }))
+    fireEvent.click(container.querySelector('.terminal-sidecar-dismiss')!)
+    expect(screen.queryByTestId('files-panel')).not.toBeInTheDocument()
+  })
+
+  it('ignores hidden keep-alive dialogs for Escape while deferring to a visible dialog', () => {
+    const { container } = renderDock()
+    const hiddenHost = document.createElement('div')
+    const dialog = document.createElement('section')
+    hiddenHost.style.display = 'none'
+    dialog.setAttribute('role', 'dialog')
+    Object.defineProperty(dialog, 'getClientRects', {
+      configurable: true,
+      value: () => [{ width: 100, height: 100 }],
+    })
+    hiddenHost.append(dialog)
+    document.body.append(hiddenHost)
+
+    try {
+      fireEvent.click(screen.getByRole('button', { name: /Sessions sidecar/i }))
+      fireEvent.keyDown(window, { key: 'Escape' })
+      expect(screen.queryByTestId('sessions-panel')).not.toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: /Sessions sidecar/i }))
+      hiddenHost.style.display = 'block'
+      fireEvent.keyDown(window, { key: 'Escape' })
+      expect(screen.getByTestId('sessions-panel')).toBeInTheDocument()
+
+      hiddenHost.remove()
+      fireEvent.keyDown(window, { key: 'Escape' })
+      expect(screen.queryByTestId('sessions-panel')).not.toBeInTheDocument()
+      expect(container.querySelector('.terminal-sidecar-dismiss')).not.toBeInTheDocument()
+    } finally {
+      hiddenHost.remove()
+    }
+  })
+
+  it('forces a stored desktop pin into overlay presentation on narrow viewports without losing the stored preference', () => {
+    writeWorkspaceDockState('terminal1', {
+      activeSidecar: 'sessions',
+      sidecarPinned: true,
+      sessionsWidth: 300,
+      filesWidth: 360,
+    })
+    mocks.narrow = true
+
+    const { container } = renderDock()
+    expect(screen.getByTestId('sessions-panel')).toHaveAttribute('data-pinned', 'false')
+    expect(screen.queryByRole('button', { name: 'Pin sessions' })).not.toBeInTheDocument()
+    expect(container.querySelector('.terminal-sidecar-dismiss')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sessions sidecar' }).querySelector('.terminal-sidecar-label')).toBeInTheDocument()
+
+    expect(JSON.parse(localStorage.getItem('chrote.workspaceDock.v2') || '{}')).toMatchObject({
+      workspaces: { terminal1: { activeSidecar: 'sessions', sidecarPinned: true } },
+    })
   })
 })

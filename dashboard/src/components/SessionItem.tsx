@@ -75,9 +75,10 @@ function persistentPrompt(session: TmuxSession): string {
 }
 
 function SessionItem({ session }: SessionItemProps) {
-  const { assignedSessions, handleSessionClick, deleteSession, renameSession, makeSessionPersistent, makeSessionMortal, workspaces, addSessionToWindow, removeSessionFromWindow, openFloatingModal, openSendToSession, settings } = useSession()
+  const { assignedSessions, handleSessionClick, focusSessionAssignment, deleteSession, renameSession, makeSessionPersistent, makeSessionMortal, workspaces, addSessionToWindow, removeSessionFromWindow, openFloatingModal, openSendToSession, settings } = useSession()
   const sessionKey = getSessionKey(session.name, session.unixUser)
-  const assignment = assignedSessions.get(sessionKey) ?? assignedSessions.get(session.name)
+  const assignmentKey = assignedSessions.has(sessionKey) ? sessionKey : session.name
+  const assignment = assignedSessions.get(assignmentKey)
   const isAssigned = !!assignment
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({ show: false, x: 0, y: 0 })
   const contextMenuPosition = useViewportMenuPosition<HTMLDivElement>(
@@ -325,12 +326,19 @@ function SessionItem({ session }: SessionItemProps) {
           </span>
         )}
         {assignment && (
-          <span
+          <button
+            type="button"
             className="window-badge window-location-chip"
-            title={`Assigned to ${locationLabel}`}
+            title={`Focus ${locationLabel}`}
+            aria-label={`Focus assigned window ${locationLabel}`}
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              focusSessionAssignment(assignmentKey)
+            }}
           >
             {locationLabel}
-          </span>
+          </button>
         )}
         {session.persistent && (
           <span className="persistent-agent-lock" aria-label="Persistent agent" title={persistentAgentTitle}>
