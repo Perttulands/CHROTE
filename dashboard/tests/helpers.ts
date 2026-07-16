@@ -184,6 +184,36 @@ export function visibleArea(page: Page): Locator {
 }
 
 // ---------------------------------------------------------------------------
+// Terminal workspace sidecar
+// ---------------------------------------------------------------------------
+
+/**
+ * Open the Sessions sidecar for tests that exercise session rows. Pin it on
+ * desktop by default so terminal targets remain directly interactive; narrow
+ * viewports intentionally remain overlay-only.
+ */
+export async function openSessionsSidecar(
+  page: Page,
+  options: { pin?: boolean } = {},
+): Promise<void> {
+  const { pin = true } = options;
+  const trigger = page.getByRole('button', { name: 'Sessions sidecar', exact: true });
+  await trigger.waitFor({ state: 'visible' });
+  if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click();
+
+  const panel = page.locator('.session-panel');
+  await panel.waitFor({ state: 'visible' });
+
+  if (pin) {
+    const pinButton = page.getByRole('button', { name: 'Pin Sessions sidecar' });
+    if (await pinButton.count() > 0 && await pinButton.isVisible()) {
+      await pinButton.click();
+      await panel.waitFor({ state: 'visible' });
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Drag-and-drop (dnd-kit compatible)
 // ---------------------------------------------------------------------------
 

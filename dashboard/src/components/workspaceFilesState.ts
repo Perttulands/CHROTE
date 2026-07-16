@@ -31,14 +31,17 @@ export interface WorkspaceFilesState {
   fileViewStates: Record<string, FileViewState>
 }
 
+export type WorkspaceSidecar = 'sessions' | 'files' | null
+
 export interface WorkspaceDockState {
-  sessionsCollapsed: boolean
-  filesCollapsed: boolean
+  activeSidecar: WorkspaceSidecar
+  sidecarPinned: boolean
   sessionsWidth: number
   filesWidth: number
 }
 
-const DOCK_STORAGE_KEY = 'chrote.workspaceDock.v1'
+const DOCK_STORAGE_KEY = 'chrote.workspaceDock.v2'
+const LEGACY_DOCK_STORAGE_KEY = 'chrote.workspaceDock.v1'
 const FILES_STORAGE_KEY = 'chrote.workspaceFiles.v1'
 
 export const DEFAULT_FILE_VIEW_STATE: FileViewState = {
@@ -51,8 +54,8 @@ export const DEFAULT_FILE_VIEW_STATE: FileViewState = {
 }
 
 export const DEFAULT_WORKSPACE_DOCK_STATE: WorkspaceDockState = {
-  sessionsCollapsed: false,
-  filesCollapsed: true,
+  activeSidecar: null,
+  sidecarPinned: false,
   sessionsWidth: 260,
   filesWidth: 320,
 }
@@ -76,12 +79,12 @@ function finiteNumber(value: unknown, fallback: number, min: number, max: number
     : fallback
 }
 
-function readStorageMap(key: string): Record<string, unknown> {
+function readStorageMap(key: string, expectedVersion = 1): Record<string, unknown> {
   if (typeof window === 'undefined') return {}
   try {
     const parsed: unknown = JSON.parse(window.localStorage.getItem(key) || '{}')
     if (!isRecord(parsed)) return {}
-    if (parsed.version === 1 && isRecord(parsed.workspaces)) return parsed.workspaces
+    if (parsed.version === expectedVersion && isRecord(parsed.workspaces)) return parsed.workspaces
     if (parsed.version !== undefined) return {}
     return parsed // Migrate the original unwrapped v1 draft on the next write.
   } catch {
@@ -89,11 +92,11 @@ function readStorageMap(key: string): Record<string, unknown> {
   }
 }
 
-function writeStorageMap(key: string, workspaceId: WorkspaceId, value: unknown): void {
+function writeStorageMap(key: string, workspaceId: WorkspaceId, value: unknown, version = 1): void {
   if (typeof window === 'undefined') return
   try {
-    const stored = readStorageMap(key)
-    window.localStorage.setItem(key, JSON.stringify({ version: 1, workspaces: { ...stored, [workspaceId]: value } }))
+    const stored = readStorageMap(key, version)
+    window.localStorage.setItem(key, JSON.stringify({ version, workspaces: { ...stored, [workspaceId]: value } }))
   } catch {
     // Private mode/quota failures must not make the terminal workspace unusable.
   }
@@ -129,37 +132,67 @@ function sanitizePeek(value: unknown): WorkspaceFilePeekState | null {
   }
 }
 
-function readLegacySidebarCollapsed(workspaceId: WorkspaceId): boolean {
-  if (typeof window === 'undefined' || workspaceId !== 'terminal1') return false
+function readLegacySidebarCollapsed(workspaceId: WorkspaceId): boolean | null {
+  if (typeof window === 'undefined' || workspaceId !== 'terminal1') return null
   try {
     const parsed: unknown = JSON.parse(window.localStorage.getItem('chrote-dashboard-state') || '{}')
-    return isRecord(parsed) && parsed.sidebarCollapsed === true
+    return isRecord(parsed) && typeof parsed.sidebarCollapsed === 'boolean' ? parsed.sidebarCollapsed : null
   } catch {
-    return false
+    return null
   }
 }
 
 export function readWorkspaceDockState(workspaceId: WorkspaceId): WorkspaceDockState {
-  const raw = readStorageMap(DOCK_STORAGE_KEY)[workspaceId]
-  if (!isRecord(raw)) return {
-    ...DEFAULT_WORKSPACE_DOCK_STATE,
-    sessionsCollapsed: readLegacySidebarCollapsed(workspaceId),
+  const raw = readStorageMap(DOCK_STORAGE_KEY, 2)[workspaceId]
+  if (isRecord(raw)) {
+    const activeSidecar = raw.activeSidecar === 'sessions' || raw.activeSidecar === 'files'
+      ? raw.activeSidecar
+      : null
+    return {
+      activeSidecar,
+      sidecarPinned: activeSidecar !== null && raw.sidecarPinned === true,
+      sessionsWidth: finiteNumber(raw.sessionsWidth, DEFAULT_WORKSPACE_DOCK_STATE.sessionsWidth, 220, 480),
+      filesWidth: finiteNumber(raw.filesWidth, DEFAULT_WORKSPACE_DOCK_STATE.filesWidth, 240, 560),
+    }
   }
-  return {
-    sessionsCollapsed: raw.sessionsCollapsed === true,
-    filesCollapsed: raw.filesCollapsed !== false,
-    sessionsWidth: finiteNumber(raw.sessionsWidth, DEFAULT_WORKSPACE_DOCK_STATE.sessionsWidth, 220, 480),
-    filesWidth: finiteNumber(raw.filesWidth, DEFAULT_WORKSPACE_DOCK_STATE.filesWidth, 240, 560),
+
+  const legacy = readStorageMap(LEGACY_DOCK_STORAGE_KEY)[workspaceId]
+  if (isRecord(legacy)) {
+    const activeSidecar: WorkspaceSidecar = legacy.sessionsCollapsed !== true
+      ? 'sessions'
+      : legacy.filesCollapsed === false
+        ? 'files'
+        : null
+    return {
+      activeSidecar,
+      sidecarPinned: activeSidecar !== null,
+      sessionsWidth: finiteNumber(legacy.sessionsWidth, DEFAULT_WORKSPACE_DOCK_STATE.sessionsWidth, 220, 480),
+      filesWidth: finiteNumber(legacy.filesWidth, DEFAULT_WORKSPACE_DOCK_STATE.filesWidth, 240, 560),
+    }
   }
+
+  const legacySidebarCollapsed = readLegacySidebarCollapsed(workspaceId)
+  if (legacySidebarCollapsed !== null) {
+    return {
+      ...DEFAULT_WORKSPACE_DOCK_STATE,
+      activeSidecar: legacySidebarCollapsed ? null : 'sessions',
+      sidecarPinned: !legacySidebarCollapsed,
+    }
+  }
+
+  return { ...DEFAULT_WORKSPACE_DOCK_STATE }
 }
 
 export function writeWorkspaceDockState(workspaceId: WorkspaceId, state: WorkspaceDockState): void {
+  const activeSidecar = state.activeSidecar === 'sessions' || state.activeSidecar === 'files'
+    ? state.activeSidecar
+    : null
   writeStorageMap(DOCK_STORAGE_KEY, workspaceId, {
-    sessionsCollapsed: state.sessionsCollapsed,
-    filesCollapsed: state.filesCollapsed,
+    activeSidecar,
+    sidecarPinned: activeSidecar !== null && state.sidecarPinned,
     sessionsWidth: finiteNumber(state.sessionsWidth, DEFAULT_WORKSPACE_DOCK_STATE.sessionsWidth, 220, 480),
     filesWidth: finiteNumber(state.filesWidth, DEFAULT_WORKSPACE_DOCK_STATE.filesWidth, 240, 560),
-  })
+  }, 2)
 }
 
 export function readWorkspaceFilesState(workspaceId: WorkspaceId): WorkspaceFilesState {

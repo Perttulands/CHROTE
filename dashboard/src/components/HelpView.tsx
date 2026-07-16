@@ -180,8 +180,8 @@ function TerminalsSection() {
 function SessionsSection() {
   return (
     <div className="help-section-content">
-      <h2>Session Panel</h2>
-      <p className="help-intro">The left sidebar lists all tmux sessions.</p>
+      <h2>Session Sidecar</h2>
+      <p className="help-intro">Use the Sessions button in the terminal toolbar to open or close the workspace sidecar.</p>
 
       <div className="help-card">
         <h3>Click vs Drag</h3>
@@ -190,7 +190,7 @@ function SessionsSection() {
             <span className="help-control-icon">&#x1F441;</span>
             <div>
               <strong>Click a session row</strong>
-              <p>Assigned sessions open their workspace and frame; unassigned sessions open an interactive temporary Peek terminal.</p>
+              <p>Open an interactive temporary Peek terminal without changing its workspace assignment. Click the location chip to focus an attached frame.</p>
             </div>
           </div>
           <div className="help-control-item">

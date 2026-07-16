@@ -1,5 +1,6 @@
 import { test, expect, Page } from './fixtures'
 import { mockApiRoutes } from './mock-api'
+import { openSessionsSidecar } from './helpers'
 
 // Helper function to perform drag-and-drop with dnd-kit
 // dnd-kit requires a minimum drag distance to activate
@@ -41,6 +42,7 @@ test.describe('Arena Dashboard', () => {
     await page.goto('/')
     // Wait for initial render
     await page.waitForSelector('.dashboard')
+    await openSessionsSidecar(page)
   })
 
   test.describe('Session Panel', () => {
@@ -75,61 +77,18 @@ test.describe('Arena Dashboard', () => {
       await expect(page.locator('.window-location-chip')).toHaveCount(0)
     })
 
-    test('renders Sessions and Files as matching slim rails with direct Refit access', async ({ page }) => {
-      const sessions = page.locator('.session-panel')
-      const files = page.locator('.terminal-files-panel')
-      await expect(sessions).not.toHaveClass(/collapsed/)
-      await expect(files).toHaveClass(/collapsed/)
+    test('closes the active sidecar from its stable trigger and reopens it as an overlay', async ({ page }) => {
+      const panel = page.locator('.session-panel')
+      await expect(panel).toHaveClass(/sidecar-pinned/)
 
-      await page.getByRole('button', { name: 'Collapse Sessions panel' }).click()
-      await expect(sessions).toHaveClass(/collapsed/)
-      await expect(sessions).toHaveCSS('width', '24px')
-      await expect(files).toHaveCSS('width', '24px')
+      await page.getByRole('button', { name: 'Sessions sidecar', exact: true }).click()
+      await expect(panel).toHaveCount(0)
 
-      const layoutFontSize = await page.locator('.terminal-area:visible .layout-label').first().evaluate(element => getComputedStyle(element).fontSize)
-      for (const [label, panel] of [['Sessions', sessions], ['Files', files]] as const) {
-        const toggle = page.getByRole('button', { name: `Expand ${label} panel` })
-        await expect(toggle).toBeVisible()
-        await expect(toggle).toHaveCSS('font-size', layoutFontSize)
-        await expect(toggle).toContainText('>>')
-        const panelBox = await panel.boundingBox()
-        const toggleBox = await toggle.boundingBox()
-        const contentBox = await toggle.locator('.dock-toggle-content').boundingBox()
-        const labelBox = await toggle.locator('.dock-toggle-label').boundingBox()
-        const chevronBox = await toggle.locator('.dock-toggle-chevron').boundingBox()
-        expect(panelBox).toBeTruthy()
-        expect(toggleBox).toBeTruthy()
-        expect(contentBox).toBeTruthy()
-        expect(labelBox).toBeTruthy()
-        expect(chevronBox).toBeTruthy()
-        expect(Math.abs(toggleBox!.x - panelBox!.x)).toBeLessThan(1)
-        expect(Math.abs(toggleBox!.y - panelBox!.y)).toBeLessThan(1)
-        expect(Math.abs(toggleBox!.width - panelBox!.width)).toBeLessThanOrEqual(1)
-        expect(Math.abs(toggleBox!.height - panelBox!.height)).toBeLessThan(1)
-        expect(contentBox!.y - panelBox!.y).toBeGreaterThanOrEqual(8)
-        expect(contentBox!.y - panelBox!.y).toBeLessThanOrEqual(16)
-        expect(Math.abs((labelBox!.x + labelBox!.width / 2) - (chevronBox!.x + chevronBox!.width / 2))).toBeLessThan(2)
-      }
-
-      for (const [label, panel] of [['Sessions', sessions], ['Files', files]] as const) {
-        const railToggle = page.getByRole('button', { name: `Expand ${label} panel` })
-        const railToggleBox = await railToggle.boundingBox()
-        expect(railToggleBox).toBeTruthy()
-        await railToggle.click({ position: { x: railToggleBox!.width / 2, y: railToggleBox!.height - 8 } })
-        await expect(panel).not.toHaveClass(/collapsed/)
-        await page.getByRole('button', { name: `Collapse ${label} panel` }).click()
-        await expect(panel).toHaveClass(/collapsed/)
-      }
-
-      const sessionTransition = await sessions.evaluate(element => getComputedStyle(element).transitionProperty)
-      const filesTransition = await files.evaluate(element => getComputedStyle(element).transitionProperty)
-      expect(sessionTransition).toBe(filesTransition)
-      expect(sessionTransition).toContain('width')
-      expect(sessionTransition).toContain('flex-basis')
-      await expect(page.getByRole('button', { name: 'Refit terminal layout' })).toBeVisible()
+      await page.getByRole('button', { name: 'Sessions sidecar', exact: true }).click()
+      await expect(page.locator('.session-panel')).toHaveClass(/sidecar-overlay/)
     })
 
-    test('keeps Sessions and Files rails independent and opens one non-modal file Peek', async ({ page }) => {
+    test('switches one pinned sidecar between Sessions and Files and opens one non-modal file Peek', async ({ page }) => {
       await page.route(/.*\/api\/files\/resources(?:\/.*)?$/, async route => {
         await route.fulfill({
           status: 200,
@@ -140,24 +99,18 @@ test.describe('Arena Dashboard', () => {
           }),
         })
       })
-      const sessions = page.locator('.session-panel')
-      const files = page.locator('.terminal-files-panel')
-
-      await expect(sessions).not.toHaveClass(/collapsed/)
-      await expect(files).toHaveClass(/collapsed/)
+      await expect(page.locator('.session-panel')).toHaveClass(/sidecar-pinned/)
+      await expect(page.locator('.terminal-files-panel')).toHaveCount(0)
 
       await dragAndDrop(page, '.session-item:has-text("hq-mayor")', '.terminal-window')
       const terminalFrame = page.locator('iframe[title^="Terminal -"]').first()
       await expect(terminalFrame).toBeAttached()
       await terminalFrame.evaluate(element => { element.setAttribute('data-dock-identity', 'preserved') })
 
-      await page.getByRole('button', { name: 'Expand Files panel' }).click()
-      await expect(files).not.toHaveClass(/collapsed/)
-      await expect(sessions).not.toHaveClass(/collapsed/)
-
-      await page.getByRole('button', { name: 'Collapse Sessions panel' }).click()
-      await expect(sessions).toHaveClass(/collapsed/)
-      await expect(files).not.toHaveClass(/collapsed/)
+      await page.getByRole('button', { name: 'Files sidecar', exact: true }).click()
+      const files = page.locator('.terminal-files-panel')
+      await expect(page.locator('.session-panel')).toHaveCount(0)
+      await expect(files).toHaveClass(/sidecar-pinned/)
 
       await page.getByRole('treeitem', { name: /File readme\.txt/ }).click()
       const peek = page.getByRole('dialog', { name: /File Peek: readme\.txt/ })
@@ -166,9 +119,9 @@ test.describe('Arena Dashboard', () => {
       await page.getByRole('button', { name: 'Close file Peek' }).click()
       await expect(peek).toHaveCount(0)
 
-      await page.getByRole('button', { name: 'Collapse Files panel' }).click()
-      await expect(files).toHaveClass(/collapsed/)
-      await expect(sessions).toHaveClass(/collapsed/)
+      await page.getByRole('button', { name: 'Files sidecar', exact: true }).click()
+      await expect(files).toHaveCount(0)
+      await expect(page.locator('.session-panel')).toHaveCount(0)
       await expect(terminalFrame).toHaveAttribute('data-dock-identity', 'preserved')
     })
 
@@ -408,32 +361,28 @@ test.describe('Arena Dashboard', () => {
       await expect(page.locator('.floating-modal')).not.toBeVisible()
     })
 
-    test('should focus assigned session instead of opening modal', async ({ page }) => {
+    test('opens Peek for an assigned row and focuses only from its location chip', async ({ page }) => {
       await page.waitForSelector('.session-item')
 
       const targetWindow = page.locator('.terminal-window').first()
 
-      // Assign sessions first
       await dragAndDrop(page, '.session-item:has-text("jack")', '.terminal-window')
       await dragAndDrop(page, '.session-item:has-text("joe")', '.terminal-window')
-
-      // Wait for tags
       await expect(targetWindow.locator('.session-tag')).toHaveCount(2)
 
-      // Click on joe tag to make it active
       const joeTag = targetWindow.locator('.session-tag').nth(1)
       await joeTag.locator('.tag-name').click()
       await expect(joeTag).toHaveClass(/active/)
 
-      // Now click on jack in sidebar (already assigned)
-      await page.click('.session-item:has-text("jack")')
+      const jackRow = page.locator('.session-item:has-text("jack")')
+      await jackRow.locator('.session-name').click()
+      await expect(page.locator('.floating-modal')).toBeVisible()
+      await expect(joeTag).toHaveClass(/active/)
 
-      // Modal should NOT open
-      await expect(page.locator('.floating-modal')).not.toBeVisible()
-
-      // Jack tag should be active now
-      const jackTag = targetWindow.locator('.session-tag').first()
-      await expect(jackTag).toHaveClass(/active/)
+      await page.keyboard.press('Escape')
+      await expect(page.locator('.floating-modal')).toHaveCount(0)
+      await jackRow.locator('.window-location-chip').click()
+      await expect(targetWindow.locator('.session-tag').first()).toHaveClass(/active/)
     })
   })
 
@@ -579,18 +528,17 @@ test.describe('Arena Dashboard', () => {
       await expect(page.locator('.terminal-window').first().locator('.tag-name')).toContainText('jack')
     })
 
-    test('should persist collapsed sidebar state', async ({ page }) => {
-      // Collapse sidebar
-      await page.click('.toggle-btn')
-      await expect(page.locator('.session-panel')).toHaveClass(/collapsed/)
+    test('persists a closed workspace sidecar', async ({ page }) => {
+      await page.getByRole('button', { name: 'Sessions sidecar', exact: true }).click()
+      await expect(page.locator('.session-panel')).toHaveCount(0)
+      await expect(page.getByRole('button', { name: 'Sessions sidecar', exact: true })).toHaveAttribute('aria-expanded', 'false')
 
-      // Reload
       await page.reload()
       await mockApiRoutes(page)
       await page.waitForSelector('.dashboard')
 
-      // Should still be collapsed
-      await expect(page.locator('.session-panel')).toHaveClass(/collapsed/)
+      await expect(page.locator('.session-panel')).toHaveCount(0)
+      await expect(page.getByRole('button', { name: 'Sessions sidecar', exact: true })).toHaveAttribute('aria-expanded', 'false')
     })
   })
 })

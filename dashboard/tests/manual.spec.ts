@@ -33,7 +33,7 @@ test.describe('Dashboard Help View', () => {
     await expect(page.locator('.help-section-content h2')).toContainText('Terminal Panes')
 
     await page.click('.help-nav-item:has-text("Sessions")')
-    await expect(page.locator('.help-section-content h2')).toContainText('Session Panel')
+    await expect(page.locator('.help-section-content h2')).toContainText('Session Sidecar')
 
     await page.click('.help-nav-item:has-text("Files")')
     await expect(page.locator('.help-section-content h2')).toContainText('File Browser')
@@ -46,7 +46,8 @@ test.describe('Dashboard Help View', () => {
     await openDashboardHelp(page)
     await page.locator('.tab').filter({ hasText: /^Terminal$/ }).click()
 
-    await expect(page.locator('.session-panel')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Sessions sidecar' })).toBeVisible()
+    await expect(page.locator('.session-panel')).toHaveCount(0)
     await expect(page.locator('.terminal-area:visible')).toBeVisible()
   })
 })

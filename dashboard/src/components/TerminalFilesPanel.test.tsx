@@ -65,7 +65,11 @@ describe('TerminalFilesPanel', () => {
         workspaceId="terminal1"
         collapsed={false}
         width={320}
-        onToggle={vi.fn()}
+        pinned={false}
+        canPin
+        panelId="terminal1-files-sidecar"
+        onTogglePin={vi.fn()}
+        onClose={vi.fn()}
         onWidthChange={vi.fn()}
         onOpenInFiles={openInFiles}
       />,
@@ -94,14 +98,19 @@ describe('TerminalFilesPanel', () => {
     expect(openInFiles).toHaveBeenCalledWith('/srv/chrote/README.md')
   })
 
-  it('retains tree state when Peek closes and exposes its own labeled collapse control', async () => {
-    const toggle = vi.fn()
+  it('retains tree state when Peek closes and exposes sidecar pin and close controls', async () => {
+    const togglePin = vi.fn()
+    const close = vi.fn()
     render(
       <TerminalFilesPanel
         workspaceId="terminal1"
         collapsed={false}
         width={320}
-        onToggle={toggle}
+        pinned={false}
+        canPin
+        panelId="terminal1-files-sidecar"
+        onTogglePin={togglePin}
+        onClose={close}
         onWidthChange={vi.fn()}
         onOpenInFiles={vi.fn()}
       />,
@@ -114,8 +123,10 @@ describe('TerminalFilesPanel', () => {
     expect(screen.queryByRole('dialog', { name: /File Peek/ })).not.toBeInTheDocument()
     expect(screen.getByRole('treeitem', { name: /README\.md/ })).toHaveAttribute('aria-selected', 'true')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse Files panel' }))
-    expect(toggle).toHaveBeenCalledOnce()
+    fireEvent.click(screen.getByRole('button', { name: 'Pin Files sidecar' }))
+    expect(togglePin).toHaveBeenCalledOnce()
+    fireEvent.click(screen.getByRole('button', { name: 'Close Files sidecar' }))
+    expect(close).toHaveBeenCalledOnce()
     await waitFor(() => {
       const stored = JSON.parse(window.localStorage.getItem('chrote.workspaceFiles.v1') || '{}')
       expect(stored.version).toBe(1)
@@ -130,7 +141,11 @@ describe('TerminalFilesPanel', () => {
         workspaceId="terminal1"
         collapsed={false}
         width={320}
-        onToggle={vi.fn()}
+        pinned={false}
+        canPin
+        panelId="terminal1-files-sidecar"
+        onTogglePin={vi.fn()}
+        onClose={vi.fn()}
         onWidthChange={vi.fn()}
         onOpenInFiles={vi.fn()}
       />,

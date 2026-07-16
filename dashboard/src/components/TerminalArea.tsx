@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
+import type { ReactNode } from 'react'
 import { useSession } from '../context/SessionContext'
 import TerminalWindow from './TerminalWindow'
 import DismissiblePanel from './DismissiblePanel'
@@ -11,9 +12,10 @@ import { useIframePool } from './IframePool'
 interface TerminalAreaProps {
   workspaceId: WorkspaceId
   active?: boolean
+  sidecarControls?: ReactNode
 }
 
-function TerminalArea({ workspaceId, active = true }: TerminalAreaProps) {
+function TerminalArea({ workspaceId, active = true, sidecarControls }: TerminalAreaProps) {
   const { workspaces, setWindowCount, clearStaleSessionsFromWindow, isDragging, sessions, windowRevealRequest } = useSession()
   const pool = useIframePool()
   const workspace = workspaces[workspaceId]
@@ -101,8 +103,10 @@ function TerminalArea({ workspaceId, active = true }: TerminalAreaProps) {
     <div className="terminal-area">
       <div
         className="terminal-area-controls"
-        aria-label="Terminal layout controls"
+        aria-label="Terminal workspace controls"
       >
+        {sidecarControls}
+        {sidecarControls && <span className="terminal-controls-divider" aria-hidden="true" />}
         {isMobile ? (
           <>
             <span className="layout-label">View:</span>

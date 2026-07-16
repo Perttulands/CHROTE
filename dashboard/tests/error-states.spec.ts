@@ -1,5 +1,6 @@
 import { test, expect, allowBrowserConsoleMessage, type Route } from './fixtures'
 import { mockApiRoutes, mockFileApiRoutes, mockSessions } from './mock-api'
+import { openSessionsSidecar } from './helpers'
 
 /**
  * pol-0281: Error state E2E tests
@@ -35,6 +36,7 @@ test.describe('Error States', () => {
 
       await page.goto('/')
       await page.waitForSelector('.dashboard')
+      await openSessionsSidecar(page)
       await page.waitForSelector('.session-panel')
 
       // Find the "New Session" button in an empty window
@@ -73,6 +75,7 @@ test.describe('Error States', () => {
 
       await page.goto('/')
       await page.waitForSelector('.dashboard')
+      await openSessionsSidecar(page)
 
       const createBtn = page.locator('.create-session-btn').first()
       await expect(createBtn).toBeVisible()
@@ -117,6 +120,7 @@ test.describe('Error States', () => {
 
       await page.goto('/')
       await page.waitForSelector('.dashboard')
+      await openSessionsSidecar(page)
 
       const createBtn = page.locator('.create-session-btn').first()
       await expect(createBtn).toBeVisible()
@@ -233,6 +237,7 @@ test.describe('Error States', () => {
 
       await page.goto('/')
       await page.waitForSelector('.dashboard')
+      await openSessionsSidecar(page)
 
       // Wait for at least one poll cycle to complete (and fail) by checking
       // that the bound sessions from localStorage are rendered in the DOM
@@ -307,6 +312,7 @@ test.describe('Error States', () => {
 
       await page.goto('/')
       await page.waitForSelector('.dashboard')
+      await openSessionsSidecar(page)
 
       // Wait for sessions to load from API
       await page.waitForSelector('.session-panel')

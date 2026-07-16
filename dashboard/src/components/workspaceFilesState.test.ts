@@ -11,22 +11,36 @@ import {
 describe('workspace Files persistence', () => {
   beforeEach(() => window.localStorage.clear())
 
-  it('keeps dock visibility and widths isolated per terminal workspace', () => {
+  it('keeps sidecar mode, pinning, and widths isolated per terminal workspace', () => {
     writeWorkspaceDockState('terminal1', {
-      sessionsCollapsed: true,
-      filesCollapsed: false,
+      activeSidecar: 'files',
+      sidecarPinned: true,
       sessionsWidth: 300,
       filesWidth: 360,
     })
 
     expect(readWorkspaceDockState('terminal1')).toEqual({
-      sessionsCollapsed: true,
-      filesCollapsed: false,
+      activeSidecar: 'files',
+      sidecarPinned: true,
       sessionsWidth: 300,
       filesWidth: 360,
     })
     expect(readWorkspaceDockState('terminal2')).toEqual(DEFAULT_WORKSPACE_DOCK_STATE)
-    expect(JSON.parse(localStorage.getItem('chrote.workspaceDock.v1') || '{}')).toMatchObject({
+    expect(JSON.parse(localStorage.getItem('chrote.workspaceDock.v2') || '{}')).toMatchObject({
+      version: 2,
+      workspaces: {
+        terminal1: {
+          activeSidecar: 'files',
+          sidecarPinned: true,
+          sessionsWidth: 300,
+          filesWidth: 360,
+        },
+      },
+    })
+  })
+
+  it('migrates the old independent rails into one deterministic pinned sidecar', () => {
+    window.localStorage.setItem('chrote.workspaceDock.v1', JSON.stringify({
       version: 1,
       workspaces: {
         terminal1: {
@@ -35,15 +49,34 @@ describe('workspace Files persistence', () => {
           sessionsWidth: 300,
           filesWidth: 360,
         },
+        terminal2: {
+          sessionsCollapsed: false,
+          filesCollapsed: false,
+          sessionsWidth: 280,
+          filesWidth: 340,
+        },
       },
+    }))
+
+    expect(readWorkspaceDockState('terminal1')).toEqual({
+      activeSidecar: 'files',
+      sidecarPinned: true,
+      sessionsWidth: 300,
+      filesWidth: 360,
+    })
+    expect(readWorkspaceDockState('terminal2')).toEqual({
+      activeSidecar: 'sessions',
+      sidecarPinned: true,
+      sessionsWidth: 280,
+      filesWidth: 340,
     })
   })
 
   it('migrates the legacy global sidebar collapse only into Terminal 1', () => {
-    window.localStorage.setItem('chrote-dashboard-state', JSON.stringify({ sidebarCollapsed: true }))
+    window.localStorage.setItem('chrote-dashboard-state', JSON.stringify({ sidebarCollapsed: false }))
 
-    expect(readWorkspaceDockState('terminal1').sessionsCollapsed).toBe(true)
-    expect(readWorkspaceDockState('terminal2').sessionsCollapsed).toBe(false)
+    expect(readWorkspaceDockState('terminal1')).toMatchObject({ activeSidecar: 'sessions', sidecarPinned: true })
+    expect(readWorkspaceDockState('terminal2')).toEqual(DEFAULT_WORKSPACE_DOCK_STATE)
   })
 
   it('keeps navigation, tree, Peek, and viewer state isolated per terminal workspace', () => {

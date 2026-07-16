@@ -2473,20 +2473,34 @@ describe('canonical terminal layout invariants', () => {
     expect(savedClaims).toHaveLength(1)
   })
 
-  it('reveals, activates, and focuses an assigned hidden session when its row is clicked', () => {
+  it('opens Peek for an assigned hidden session row without navigating or mutating its assignment', () => {
     const { result } = renderSession()
 
     act(() => {
-      result.current.setWindowCount('terminal2', 1)
-    })
-    act(() => {
       result.current.addSessionToWindow('terminal2', 'terminal2-window-3', 'hidden', 'alice')
-    })
-    act(() => {
       result.current.setWindowCount('terminal2', 1)
     })
+    const before = result.current.workspaces.terminal2
+
     act(() => {
       result.current.handleSessionClick('alice:hidden')
+    })
+
+    expect(result.current.floatingSession).toBe('alice:hidden')
+    expect(result.current.workspaces.terminal2).toEqual(before)
+    expect(result.current.focusedWindowKey).toBeNull()
+    expect(result.current.windowRevealRequest).toBeNull()
+  })
+
+  it('reveals, activates, and focuses an assigned hidden session through its explicit location action', () => {
+    const { result } = renderSession()
+
+    act(() => {
+      result.current.addSessionToWindow('terminal2', 'terminal2-window-3', 'hidden', 'alice')
+      result.current.setWindowCount('terminal2', 1)
+    })
+    act(() => {
+      result.current.focusSessionAssignment('alice:hidden')
     })
 
     expect(result.current.workspaces.terminal2.windowCount).toBe(4)

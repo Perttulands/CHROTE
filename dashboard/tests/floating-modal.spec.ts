@@ -1,5 +1,6 @@
 import { test, expect } from './fixtures'
 import { mockApiRoutes } from './mock-api'
+import { openSessionsSidecar } from './helpers'
 
 const terminalRoutePattern = /.*\/terminal\/?.*/
 
@@ -15,6 +16,7 @@ test.describe('Floating Modal (pol-9a4a)', () => {
     })
     await page.goto('/')
     await page.waitForSelector('.dashboard')
+    await openSessionsSidecar(page, { pin: false })
     await page.waitForSelector('.session-item')
 
     // Open modal by clicking an unassigned session
@@ -61,6 +63,7 @@ test.describe('Floating Modal (pol-9a4a)', () => {
     })
     await page.goto('/')
     await page.waitForSelector('.dashboard')
+    await openSessionsSidecar(page, { pin: false })
     await page.waitForSelector('.session-item')
 
     // Open modal
@@ -91,6 +94,7 @@ test.describe('Floating Modal (pol-9a4a)', () => {
 
     await page.goto('/')
     await page.waitForSelector('.dashboard')
+    await openSessionsSidecar(page, { pin: false })
     await page.waitForSelector('.session-item')
 
     // Open modal
@@ -115,6 +119,7 @@ test.describe('Floating Modal (pol-9a4a)', () => {
     })
     await page.goto('/')
     await page.waitForSelector('.dashboard')
+    await openSessionsSidecar(page, { pin: false })
     await page.waitForSelector('.session-item')
 
     // Navigate to settings and change font size

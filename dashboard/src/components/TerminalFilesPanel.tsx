@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, FormEvent, PointerEvent as ReactPointerEvent } from 'react'
+import { Pin, PinOff, X } from 'lucide-react'
 import { useSession } from '../context/SessionContext'
 import { getSessionKey, getSessionNameFromKey, type WorkspaceId } from '../types'
 import { copyTextToClipboard } from '../utils/clipboard'
 import FileTree from './FileTree'
 import FileViewer, { normalizeFilePath } from './FileViewer'
-import DockPanelToggle from './DockPanelToggle'
 import type { FileItem } from './FilesView/types'
 import {
   DEFAULT_FILE_VIEW_STATE,
@@ -20,7 +20,11 @@ interface TerminalFilesPanelProps {
   workspaceId: WorkspaceId
   collapsed: boolean
   width: number
-  onToggle: () => void
+  pinned: boolean
+  canPin: boolean
+  panelId: string
+  onTogglePin: () => void
+  onClose: () => void
   onWidthChange: (width: number) => void
   onOpenInFiles: (path: string) => void
 }
@@ -211,7 +215,11 @@ function TerminalFilesPanel({
   workspaceId,
   collapsed,
   width,
-  onToggle,
+  pinned,
+  canPin,
+  panelId,
+  onTogglePin,
+  onClose,
   onWidthChange,
   onOpenInFiles,
 }: TerminalFilesPanelProps) {
@@ -329,12 +337,14 @@ function TerminalFilesPanel({
 
   return (
     <aside
-      className={`terminal-files-panel dock-panel ${collapsed ? 'collapsed' : ''}`}
+      id={panelId}
+      className={`terminal-files-panel ${collapsed ? 'collapsed' : ''} ${pinned ? 'sidecar-pinned' : 'sidecar-overlay'}`}
       style={panelStyle}
       data-workspace-files={workspaceId}
+      aria-label="Files sidecar"
     >
-      <header className="terminal-files-header dock-panel-header">
-        <DockPanelToggle label="Files" collapsed={collapsed} onToggle={onToggle} />
+      <header className="terminal-files-header">
+        <strong className="terminal-sidecar-title">Files</strong>
         {!collapsed && (
           <>
             {sessionCwd && <button type="button" className="terminal-files-cwd" onClick={() => navigateTo(sessionCwd)}>CWD</button>}
@@ -346,6 +356,27 @@ function TerminalFilesPanel({
               onClick={() => setRefreshToken(previous => previous + 1)}
             >
               ↻
+            </button>
+            {canPin && (
+              <button
+                type="button"
+                className="sidecar-pin-btn"
+                aria-label={pinned ? 'Unpin Files sidecar' : 'Pin Files sidecar'}
+                title={pinned ? 'Unpin sidecar' : 'Pin sidecar'}
+                aria-pressed={pinned}
+                onClick={onTogglePin}
+              >
+                {pinned ? <PinOff size={15} aria-hidden="true" /> : <Pin size={15} aria-hidden="true" />}
+              </button>
+            )}
+            <button
+              type="button"
+              className="sidecar-close-btn"
+              aria-label="Close Files sidecar"
+              title="Close sidecar"
+              onClick={onClose}
+            >
+              <X size={16} aria-hidden="true" />
             </button>
           </>
         )}

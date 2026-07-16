@@ -45,7 +45,7 @@ function mockResizeObserver() {
   vi.stubGlobal('ResizeObserver', ResizeObserverMock)
 }
 
-describe('dashboard V1 baseline', () => {
+describe('dashboard terminal baseline', () => {
   beforeEach(() => {
     localStorage.clear()
     mockMatchMedia(false)
@@ -53,7 +53,7 @@ describe('dashboard V1 baseline', () => {
     mockFetch()
   })
 
-  it('renders the V1 session panel when uiV2 is unset', async () => {
+  it('renders the stable sidecar switcher with both panels closed when uiV2 is unset', async () => {
     localStorage.removeItem('chrote-ui-v2')
     const { default: App } = await import('../App')
 
@@ -63,12 +63,11 @@ describe('dashboard V1 baseline', () => {
       </ToastProvider>
     )
 
-    expect(await screen.findByText('Getting Started')).toBeInTheDocument()
-    expect(screen.getByText('Sessions')).toBeInTheDocument()
-    expect(container.querySelector('.add-btn')).not.toBeNull()
-    expect(container.querySelector('.refresh-btn')).not.toBeNull()
+    expect(await screen.findByRole('button', { name: 'Sessions sidecar' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Files sidecar' })).toBeInTheDocument()
+    expect(container.querySelector('.session-panel')).toBeNull()
+    expect(container.querySelector('.terminal-files-panel')).toBeNull()
     expect(container.querySelector('.sp-action-btn')).toBeNull()
-    expect(screen.queryByText('No Sessions Yet')).not.toBeInTheDocument()
   })
 })
 

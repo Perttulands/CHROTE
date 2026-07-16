@@ -1,5 +1,6 @@
 import { test, expect, Page } from './fixtures'
 import { mockApiRoutes } from './mock-api'
+import { openSessionsSidecar } from './helpers'
 
 // Helper: open the presets panel via the tab bar button
 async function openPresetsPanel(page: Page) {
@@ -80,6 +81,7 @@ test.describe('Layout Presets', () => {
     })
     await page.goto('/')
     await page.waitForSelector('.dashboard')
+    await openSessionsSidecar(page)
   })
 
   test('should save current layout as preset', async ({ page }) => {

@@ -1,12 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react'
+import { Pin, PinOff, X } from 'lucide-react'
 import { useSession } from '../context/SessionContext'
 import { getDefaultLaunchUser, getGroupPriority, getTerminalUserInitial } from '../types'
 import type { WorkspaceId } from '../types'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
-import { useMediaQuery } from '../hooks/useMediaQuery'
 import SessionGroup from './SessionGroup'
-import DockPanelToggle from './DockPanelToggle'
 import DismissiblePanel from './DismissiblePanel'
 import { summarizeSessionBankCapabilities } from '../sessionBankRecovery'
 
@@ -15,7 +14,11 @@ type SessionPanelProps = {
   activeWorkspaceId: WorkspaceId
   collapsed?: boolean
   width?: number
-  onToggle?: () => void
+  pinned?: boolean
+  canPin?: boolean
+  panelId?: string
+  onTogglePin?: () => void
+  onClose?: () => void
   onWidthChange?: (width: number) => void
 }
 
@@ -24,20 +27,22 @@ function SessionPanel({
   activeWorkspaceId,
   collapsed,
   width = 260,
-  onToggle,
+  pinned = false,
+  canPin = true,
+  panelId,
+  onTogglePin,
+  onClose,
   onWidthChange,
 }: SessionPanelProps) {
-  const { groupedSessions, loading, error, sidebarCollapsed, toggleSidebar, refreshSessions, createSession: createSessionAction, sessionBank, terminalUsers } = useSession()
+  const { groupedSessions, loading, error, sidebarCollapsed, refreshSessions, createSession: createSessionAction, sessionBank, terminalUsers } = useSession()
   const isCollapsed = collapsed ?? sidebarCollapsed
-  const handleToggle = onToggle ?? toggleSidebar
   const [creating, setCreating] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
   const [newSessionMenu, setNewSessionMenu] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 })
   const [namedSessionPopup, setNamedSessionPopup] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 })
   const [namedSessionName, setNamedSessionName] = useState('')
   const [namedSessionUser, setNamedSessionUser] = useState('')
-  const isMobile = useMediaQuery('(max-width: 768px)')
-  const autoCollapsedForMobile = useRef(false)
+
   const newSessionMenuPosition = useViewportMenuPosition<HTMLDivElement>(
     newSessionMenu.show ? { x: newSessionMenu.x, y: newSessionMenu.y } : null,
     { estimatedSize: { width: 190, height: 130 } },
@@ -74,16 +79,38 @@ function SessionPanel({
     summarizeSessionBankCapabilities(sessionBank.filter(session => !session.live))
   ), [sessionBank])
 
-  useEffect(() => {
-    if (!isMobile) {
-      autoCollapsedForMobile.current = false
-      return
-    }
-    if (autoCollapsedForMobile.current) return
-    autoCollapsedForMobile.current = true
-    if (!isCollapsed) handleToggle()
-  }, [handleToggle, isCollapsed, isMobile])
   const closeNewSessionMenu = () => setNewSessionMenu({ show: false, x: 0, y: 0 })
+
+  useEffect(() => {
+    if (!newSessionMenu.show) return
+    const close = (event: MouseEvent) => {
+      if (newSessionMenuPosition.ref.current?.contains(event.target as Node)) return
+      setNewSessionMenu({ show: false, x: 0, y: 0 })
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [newSessionMenu.show])
+
+  useEffect(() => {
+    if (!namedSessionPopup.show) return
+    const close = (event: MouseEvent) => {
+      if (namedSessionPopupPosition.ref.current?.contains(event.target as Node)) return
+      setNamedSessionPopup({ show: false, x: 0, y: 0 })
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [namedSessionPopup.show])
+
+  useEffect(() => {
+    if (!newSessionMenu.show && !namedSessionPopup.show) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      setNewSessionMenu({ show: false, x: 0, y: 0 })
+      setNamedSessionPopup({ show: false, x: 0, y: 0 })
+    }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [namedSessionPopup.show, newSessionMenu.show])
 
   const createSessionForUser = async (unixUser?: string, explicitName?: string) => {
     closeNewSessionMenu()
@@ -144,9 +171,14 @@ function SessionPanel({
   const panelStyle = isCollapsed ? undefined : ({ '--session-panel-width': `${width}px` } as CSSProperties)
 
   return (
-    <div className={`session-panel dock-panel ${isCollapsed ? 'collapsed' : ''}`} style={panelStyle}>
-      <div className="session-panel-header dock-panel-header">
-        <DockPanelToggle label="Sessions" collapsed={isCollapsed} onToggle={handleToggle} />
+    <div
+      id={panelId}
+      className={`session-panel ${isCollapsed ? 'collapsed' : ''} ${pinned ? 'sidecar-pinned' : 'sidecar-overlay'}`}
+      style={panelStyle}
+      aria-label="Sessions sidecar"
+    >
+      <div className="session-panel-header">
+        <strong className="terminal-sidecar-title">Sessions</strong>
         {!isCollapsed && (
           <>
             <button
@@ -172,6 +204,29 @@ function SessionPanel({
             <button className="refresh-btn" onClick={refreshSessions} title="Refresh sessions">
               ↻
             </button>
+            {canPin && onTogglePin && (
+              <button
+                type="button"
+                className="toggle-btn sidecar-pin-btn"
+                aria-label={pinned ? 'Unpin Sessions sidecar' : 'Pin Sessions sidecar'}
+                title={pinned ? 'Unpin sidecar' : 'Pin sidecar'}
+                aria-pressed={pinned}
+                onClick={onTogglePin}
+              >
+                {pinned ? <PinOff size={15} aria-hidden="true" /> : <Pin size={15} aria-hidden="true" />}
+              </button>
+            )}
+            {onClose && (
+              <button
+                type="button"
+                className="toggle-btn sidecar-close-btn"
+                aria-label="Close Sessions sidecar"
+                title="Close sidecar"
+                onClick={onClose}
+              >
+                <X size={16} aria-hidden="true" />
+              </button>
+            )}
           </>
         )}
       </div>

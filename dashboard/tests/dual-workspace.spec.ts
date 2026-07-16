@@ -1,5 +1,6 @@
 import { test, expect, Page } from './fixtures'
 import { mockApiRoutes } from './mock-api'
+import { openSessionsSidecar } from './helpers'
 
 /**
  * Dual workspace (Terminal 1 / Terminal 2) interaction tests.
@@ -60,6 +61,10 @@ test.describe('Dual Workspace: Terminal 1 & Terminal 2', () => {
     })
     await page.goto('/')
     await page.waitForSelector('.dashboard')
+    await openSessionsSidecar(page)
+    await page.getByRole('button', { name: 'Terminal 2', exact: true }).click()
+    await openSessionsSidecar(page)
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click()
     await page.waitForSelector('.session-item')
   })
 

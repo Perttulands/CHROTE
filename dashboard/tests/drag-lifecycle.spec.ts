@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from './fixtures'
 import { mockApiRoutes, mockSessions } from './mock-api'
+import { openSessionsSidecar } from './helpers'
 
 const dragSessions = {
   ...mockSessions,
@@ -91,6 +92,7 @@ test.describe('terminal drag lifecycle', () => {
   test.beforeEach(async ({ page }) => {
     await mockApiRoutes(page, { sessionsResponse: dragSessions })
     await page.goto('/')
+    await openSessionsSidecar(page)
     await page.waitForSelector('.session-panel .session-item')
   })
 
@@ -326,7 +328,8 @@ test.describe('terminal drag lifecycle', () => {
   test('narrow Chromium view renders no drag overlay inside display-none mobile frames', async ({ page }) => {
     await page.setViewportSize({ width: 700, height: 900 })
     await expect(page.getByText('View:').first()).toBeVisible()
-    await page.getByRole('button', { name: 'Expand Sessions panel' }).click()
+    await expect(page.locator('.session-panel')).toHaveClass(/sidecar-overlay/)
+    await expect(page.getByRole('button', { name: 'Pin Sessions sidecar' })).toHaveCount(0)
     await expect(page.locator('.session-panel .session-item').first()).toBeVisible()
     await page.waitForTimeout(250)
 

@@ -399,8 +399,9 @@ test.describe('Settings View', () => {
       // 1. Window count (scoped to terminal1 workspace — terminal2 also renders in DOM)
       await expect(page.locator('[data-workspace="terminal1"] .terminal-window')).toHaveCount(4)
 
-      // 2. Sidebar collapsed
-      await expect(page.locator('.session-panel')).toHaveClass(/collapsed/)
+      // 2. Legacy collapsed sidebar migrates to a closed sidecar
+      await expect(page.locator('.session-panel')).toHaveCount(0)
+      await expect(page.getByRole('button', { name: 'Sessions sidecar' })).toHaveAttribute('aria-expanded', 'false')
 
       // 3. Theme
       const dataTheme = await page.evaluate(() => document.documentElement.getAttribute('data-theme'))

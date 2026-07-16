@@ -1,5 +1,6 @@
 import { test, expect, Page } from './fixtures'
 import { mockApiRoutes, mockSessions } from './mock-api'
+import { openSessionsSidecar } from './helpers'
 
 const terminalRoutePattern = /.*\/terminal\/?.*/
 
@@ -56,6 +57,7 @@ test.describe('Rename Propagation (pol-ace3)', () => {
     })
     await page.goto('/')
     await page.waitForSelector('.dashboard')
+    await openSessionsSidecar(page)
     await page.waitForSelector('.session-item')
   })
 
