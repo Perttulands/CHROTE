@@ -571,19 +571,21 @@ describe('SettingsView Beads project paths', () => {
     mockUseSession.mockReturnValue(sessionReturn(updateSettings, {
       settings: {
         ...settings,
-        beadsProjectPaths: ['/home/perttu/chrote'],
+        beadsProjectPaths: ['/home/operator/chrote'],
       },
     }))
 
     render(<SettingsView />)
 
+    expect(screen.getByLabelText('Beads project path')).toHaveAttribute('placeholder', '/workspace/project')
+
     fireEvent.change(screen.getByLabelText('Beads project path'), {
-      target: { value: ' /home/tavern/velvetwood/ ' },
+      target: { value: ' /home/secondary/velvetwood/ ' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Add Path' }))
 
     expect(updateSettings).toHaveBeenCalledWith({
-      beadsProjectPaths: ['/home/perttu/chrote', '/home/tavern/velvetwood'],
+      beadsProjectPaths: ['/home/operator/chrote', '/home/secondary/velvetwood'],
     })
   })
 
@@ -592,14 +594,14 @@ describe('SettingsView Beads project paths', () => {
     mockUseSession.mockReturnValue(sessionReturn(updateSettings, {
       settings: {
         ...settings,
-        beadsProjectPaths: ['/home/tavern/velvetwood'],
+        beadsProjectPaths: ['/home/secondary/velvetwood'],
       },
     }))
 
     render(<SettingsView />)
 
     fireEvent.change(screen.getByLabelText('Beads project path'), {
-      target: { value: '/home/tavern/velvetwood/' },
+      target: { value: '/home/secondary/velvetwood/' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Add Path' }))
 
@@ -611,16 +613,16 @@ describe('SettingsView Beads project paths', () => {
     mockUseSession.mockReturnValue(sessionReturn(updateSettings, {
       settings: {
         ...settings,
-        beadsProjectPaths: ['/home/perttu/chrote', '/home/tavern/velvetwood'],
+        beadsProjectPaths: ['/home/operator/chrote', '/home/secondary/velvetwood'],
       },
     }))
 
     render(<SettingsView />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Remove /home/tavern/velvetwood' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove /home/secondary/velvetwood' }))
 
     expect(updateSettings).toHaveBeenCalledWith({
-      beadsProjectPaths: ['/home/perttu/chrote'],
+      beadsProjectPaths: ['/home/operator/chrote'],
     })
   })
 })

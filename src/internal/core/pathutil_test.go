@@ -161,7 +161,7 @@ func TestGetAllowedRoots_RootDominatesOtherRoots(t *testing.T) {
 		os.Unsetenv("CHROTE_ROOTS")
 		ResetConfigForTesting()
 	}()
-	os.Setenv("CHROTE_ROOTS", "/, /srv, /home/perttu")
+	os.Setenv("CHROTE_ROOTS", "/, /srv, /home/operator")
 	ResetConfigForTesting()
 
 	got := GetAllowedRoots()

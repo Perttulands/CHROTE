@@ -96,13 +96,13 @@ default = "claude-code"
 id           = "claude-code"
 session_stem = "susie" # default is card.id when omitted on the default variant
 launch       = "claude --session susie"
-source       = "/home/perttu/chrote/CLAUDE.md"
+source       = "/workspace/chrote/CLAUDE.md"
 
 [[harness.variant]]
 id           = "openai-codex"
 session_stem = "codex-susie"
 launch       = "codex --session codex-susie"
-source       = "/home/perttu/.codex/config.toml"
+source       = "~/.codex/config.toml"
 
 [identity]
 soul   = "~/.hermes/profiles/susie/SOUL.md"

@@ -248,8 +248,8 @@ func TestFilesHandlerRootReadPolicyBlocksSensitivePaths(t *testing.T) {
 	for _, path := range []string{
 		"/proc/self/environ",
 		"/etc/chrote/chrote-srv.env",
-		"/home/perttu/.config/gh/hosts.yml",
-		"/home/perttu/.ssh/config",
+		"/home/operator/.config/gh/hosts.yml",
+		"/home/operator/.ssh/config",
 	} {
 		t.Run(path, func(t *testing.T) {
 			result := handler.resolveSafePath(path)

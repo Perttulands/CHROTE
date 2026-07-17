@@ -1,99 +1,117 @@
 # Contributing to CHROTE
 
-Thank you for your interest in contributing to CHROTE!
+CHROTE is private-infrastructure software with terminal-grade reach. Small,
+reviewable, verified changes beat ambitious mush.
 
-## Getting Started
+## Before changing code
 
-1. Fork the repository
-2. Clone your fork: `git clone https://github.com/YOUR_USERNAME/CHROTE.git`
-3. Create a branch: `git checkout -b feature/your-feature-name`
+1. Read [`AGENTS.md`](AGENTS.md) for repository working rules.
+2. Read [`docs/source-truth-index.md`](docs/source-truth-index.md) and the spec
+   that owns the behavior you plan to change.
+3. Inspect nearby callers, state owners, tests, and existing UI patterns.
+4. Define done before editing. If behavior changes, start with a failing test.
 
-## Development Setup
+Do not mix unrelated cleanup, host-local deployment configuration, or private
+operator data into a product change.
 
-### Quick Start (Recommended)
+## Development prerequisites
 
-The easiest way to get a development environment:
+- Go 1.26.5+
+- Node.js 20.19+ or 22.12+
+- npm
+- Python 3 for documentation and recovery-tool checks
+- tmux and ttyd only for approved live terminal integration work
 
-```powershell
-# From PowerShell in the CHROTE directory
-.\Chrote-Toggle.ps1 -Setup
-```
-
-This sets up everything automatically. See [README.md](README.md) for details.
-
-### Manual Setup / Prerequisites
-
-If setting up manually:
-- Go 1.23+
-- Node.js 20+
-- WSL2 (for Windows) or Linux
-- tmux
-- ttyd
-
-### Building from Source
+## Setup
 
 ```bash
-# Inside the CHROTE workspace
-cd /path/to/chrote
+git clone https://github.com/Perttulands/CHROTE.git
+cd CHROTE
 
-# Build the dashboard
 cd dashboard
-npm install
-npm run build
-cp -r dist ../src/internal/dashboard/
-
-# Build the server
+npm ci
 cd ../src
-go build -o ../chrote-server ./cmd/server
-
-# Restart only the intended service lane to pick up changes.
-systemctl restart chrote-srv.service        # /srv proving lane: /srv/chrote, /srv/data/chrote, 8095/7686
-systemctl --user restart chrote.service     # legacy rollback lane: /home/perttu/chrote, 8094/7683
+go mod download
 ```
 
-### Running Tests
+## Stable local gates
+
+Run the narrow test first while developing, then the relevant broader gates.
+Before opening a pull request, reproduce the repository contract:
 
 ```bash
-cd src
-test -z "$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
-go test ./...
-go vet ./...
-go test -race ./...
-go test -cover ./...
+# Documentation and source-truth contract
+python3 scripts/doc-lint.py
 
-cd ../dashboard
-npm ci
+# Dashboard
+cd dashboard
 npm run lint
-npm run build
 npm run test:unit -- --coverage
 npm audit --audit-level=moderate
-npm test
+npm test -- --project=chromium
+cd ..
+
+# Build the exact dashboard embedded by Go
+./scripts/build-embedded-dashboard.sh
+diff -qr dashboard/dist src/internal/dashboard/dist
+
+# Go
+cd src
+test -z "$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
+go vet ./...
+go test ./...
+go test -race ./...
+go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+go build -o /tmp/chrote-server-contributor ./cmd/server
+go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 -mode=binary /tmp/chrote-server-contributor
 ```
 
-## Code Style
+If you changed workload-recovery tooling, also run its Python test suite from the
+repository root:
 
-- Go: Follow standard Go conventions (`gofmt`, `go vet`)
-- TypeScript/React: `npm run lint`, `npm run build`, and `npm run test:unit -- --coverage` are the current static/unit gates.
-- Commit messages: Use clear, descriptive messages
+```bash
+python3 -m unittest discover -s scripts/tmux-recovery -p 'test_*.py'
+```
 
-## Pull Request Process
+Live browser/terminal tests are separate because they operate an actual CHROTE
+backend and tmux substrate. Run them only against an approved disposable or
+operator-controlled instance.
 
-1. Ensure the backend gates pass: `cd src && test -z "$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))" && go vet ./... && go test ./... && go test -race ./...`
-2. Ensure the dashboard gates pass: `cd dashboard && npm run lint && npm run build && npm run test:unit -- --coverage && npm audit --audit-level=moderate && npm test`
-3. Run backend coverage when changing backend behavior: `cd src && go test -cover ./...`
-4. Update documentation if needed
-5. Submit a pull request with a clear description of changes
+## Documentation rules
 
-## Reporting Issues
+- `PRD.md` owns the current product and roadmap boundary.
+- `FORMATIONS.md`, `ARCHON.md`, `DATA-MODEL.md`, and `DESIGN-SYSTEM.md` own their
+  declared contracts.
+- Public docs describe generic supported behavior, not one maintainer's service
+  names, home paths, sockets, ports, or rollback layout.
+- Archive material is context, not authority.
+- README prose should sound like CHROTE, not generated launch copy.
+- Public screenshots must contain no terminal transcripts, credentials, private
+  paths, personal usernames, Tavern content, or sensitive issue/session names.
 
-- Use GitHub Issues for bugs and feature requests
-- Include steps to reproduce for bugs
-- Check existing issues before creating duplicates
+## Pull requests
 
-## Security
+1. Branch from current `main`.
+2. Keep the diff focused.
+3. Add tests that prove changed behavior.
+4. Run the relevant gates after the final edit.
+5. Check `git diff --check` and `git status`.
+6. Describe the operator outcome, important boundaries, and exact verification.
+7. Use the protected pull-request flow; do not force-push public `main`.
 
-For security vulnerabilities, please see [SECURITY.md](SECURITY.md).
+Never weaken or skip a failing test to make CI green. Fix the behavior, fix an
+incorrect test with evidence, or report the blocker plainly.
 
-## License
+## Reporting bugs
 
-By contributing, you agree that your contributions will be licensed under the MIT License.
+Include:
+
+- expected and actual behavior;
+- CHROTE commit/version and browser;
+- minimal reproduction steps;
+- relevant logs with secrets, private paths, terminal contents, and identities
+  removed;
+- screenshots only when sanitized.
+
+Use the private security-advisory path for vulnerabilities rather than posting
+exploit details publicly.

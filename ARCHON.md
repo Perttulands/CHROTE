@@ -8,11 +8,13 @@ enforced_by: scripts/doc-lint.py
 
 # Archon CLI Spec
 
-Status: **Active core source of truth**.
+Status: **Active source of truth for an unreleased experimental CLI**.
 
-`archon` is the command surface for CHROTE Formations. It is how humans, agents,
-scripts, and higher-level coordinators author, inspect, run, recover, and decide
-against the same model the dashboard renders.
+`archon` is the experimental command surface for CHROTE Formations. It is how
+humans, agents, scripts, and higher-level coordinators author, inspect, run,
+recover, and decide against the same model the dashboard renders. These
+contracts describe development on `main`; they do not claim availability in the
+latest tagged CHROTE alpha.
 
 ## Purpose
 

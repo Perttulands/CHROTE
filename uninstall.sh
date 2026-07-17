@@ -1,60 +1,112 @@
-#!/bin/bash
-# CHROTE Uninstaller
-set -eo pipefail
+#!/usr/bin/env bash
+set -euo pipefail
 
-INSTALL_DIR="$HOME/.local/bin"
-CONFIG_DIR="$HOME/.chrote"
-SERVICE_DIR="$HOME/.config/systemd/user"
+PREFIX="${CHROTE_INSTALL_PREFIX:-$HOME/.local}"
+CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
+STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
+SERVICE_DIR="${CHROTE_SERVICE_DIR:-$CONFIG_HOME/systemd/user}"
+MANAGE_SYSTEMD=1
+ASSUME_YES=0
+PURGE_STATE=0
+PURGE_PRIVATE_CONFIG=0
 
-# Colors
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-NC='\033[0m'
+usage() {
+  cat <<'EOF'
+Usage: ./uninstall.sh [options]
 
-log() { echo -e "${CYAN}[CHROTE]${NC} $1"; }
-success() { echo -e "${GREEN}[CHROTE]${NC} $1"; }
-warn() { echo -e "${YELLOW}[CHROTE]${NC} $1"; }
+Options:
+  --prefix PATH           Installation prefix (default: $HOME/.local)
+  --no-systemd            Do not stop, disable, or reload the user service manager
+  --purge-state           Remove CHROTE state under XDG_STATE_HOME
+  --purge-private-config  Remove secrets.env as well as managed config
+  -y, --yes               Do not prompt
+  -h, --help              Show this help
 
-echo ""
-echo -e "${CYAN}================================${NC}"
-echo -e "${CYAN}   CHROTE Uninstaller${NC}"
-echo -e "${CYAN}================================${NC}"
-echo ""
+The configured workspace is never deleted.
+EOF
+}
 
-# Confirm
-read -p "This will remove CHROTE. Continue? (y/N) " -n 1 -r
-echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "Cancelled."
-    exit 0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --prefix)
+      [ "$#" -ge 2 ] || { echo "--prefix requires a path" >&2; exit 2; }
+      PREFIX="$2"
+      shift 2
+      ;;
+    --no-systemd)
+      MANAGE_SYSTEMD=0
+      shift
+      ;;
+    --purge-state)
+      PURGE_STATE=1
+      shift
+      ;;
+    --purge-private-config)
+      PURGE_PRIVATE_CONFIG=1
+      shift
+      ;;
+    -y|--yes)
+      ASSUME_YES=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "unknown option: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+PREFIX="$(realpath -m -- "$PREFIX")"
+CONFIG_HOME="$(realpath -m -- "$CONFIG_HOME")"
+STATE_HOME="$(realpath -m -- "$STATE_HOME")"
+SERVICE_DIR="$(realpath -m -- "$SERVICE_DIR")"
+
+if [ "$ASSUME_YES" -ne 1 ]; then
+  read -r -p "Remove CHROTE executables and user service? [y/N] " reply
+  [[ "$reply" =~ ^[Yy]$ ]] || { echo "Cancelled."; exit 0; }
 fi
 
-# Stop services
-log "Stopping services..."
-# REASON: services may not exist or already be stopped; failure is non-fatal
-systemctl --user stop chrote chrote-ttyd 2>/dev/null || true
-systemctl --user disable chrote chrote-ttyd 2>/dev/null || true
+if [ "$MANAGE_SYSTEMD" -eq 1 ]; then
+  command -v systemctl >/dev/null 2>&1 || { echo "systemctl is required unless --no-systemd is used" >&2; exit 1; }
+  systemctl --user disable --now chrote.service 2>/dev/null || true
+fi
 
-# Remove service files
-log "Removing service files..."
-rm -f "$SERVICE_DIR/chrote.service"
-rm -f "$SERVICE_DIR/chrote-ttyd.service"
-# REASON: systemctl may not be available; failure is non-fatal during uninstall
-systemctl --user daemon-reload 2>/dev/null || true
+rm -f \
+  "$PREFIX/bin/chrote-server" \
+  "$PREFIX/bin/ttyd" \
+  "$PREFIX/lib/chrote/terminal-launch.sh" \
+  "$SERVICE_DIR/chrote.service" \
+  "$CONFIG_HOME/chrote/chrote.env"
 
-# Remove binaries
-log "Removing binaries..."
-rm -f "$INSTALL_DIR/chrote-server"
-rm -f "$INSTALL_DIR/ttyd"
+rmdir "$PREFIX/lib/chrote" 2>/dev/null || true
+rmdir "$PREFIX/lib" 2>/dev/null || true
 
-# Remove config
-log "Removing configuration..."
-rm -rf "$CONFIG_DIR"
+if [ "$PURGE_PRIVATE_CONFIG" -eq 1 ]; then
+  rm -f "$CONFIG_HOME/chrote/secrets.env"
+fi
+rmdir "$CONFIG_HOME/chrote" 2>/dev/null || true
 
-echo ""
-success "CHROTE has been uninstalled."
-echo ""
-warn "Note: Your workspace directory was NOT removed."
-warn "Remove it manually if no longer needed."
-echo ""
+if [ "$PURGE_STATE" -eq 1 ]; then
+  rm -rf "$STATE_HOME/chrote"
+fi
+
+if [ "$MANAGE_SYSTEMD" -eq 1 ]; then
+  systemctl --user daemon-reload
+fi
+
+printf '[CHROTE] Removed executables, managed config, and user unit.\n'
+printf '[CHROTE] Workspace preserved.\n'
+if [ "$PURGE_STATE" -eq 1 ]; then
+  printf '[CHROTE] State removed: %s\n' "$STATE_HOME/chrote"
+else
+  printf '[CHROTE] State preserved: %s\n' "$STATE_HOME/chrote"
+fi
+if [ "$PURGE_PRIVATE_CONFIG" -eq 1 ]; then
+  printf '[CHROTE] Private overrides removed: %s\n' "$CONFIG_HOME/chrote/secrets.env"
+else
+  printf '[CHROTE] Private overrides preserved: %s\n' "$CONFIG_HOME/chrote/secrets.env"
+fi

@@ -1,51 +1,74 @@
-# Components
+# CHROTE Components
 
-Active components in a CHROTE install:
+This is the public component map. Machine-specific service names, paths, socket
+ACLs, and rollback layouts belong in private operator configuration.
 
-| Component | Role |
-| --- | --- |
-| Go server | HTTP API, embedded dashboard, terminal proxy |
-| React dashboard | Browser cockpit UI |
-| tmux | Durable terminal/session substrate |
-| ttyd | Browser terminal transport behind CHROTE |
-| bd | Modern Beads issue source |
-| beads_viewer `bv` | Optional graph-aware Beads TUI sidecar |
-| Tailscale Serve | Tailnet-only HTTPS access |
+## Core runtime
 
-Current service lanes:
-
-| Lane | Source | State | Ports |
-| --- | --- | --- | --- |
-| `/srv` proving lane | `/srv/chrote` with data under `/srv/data/chrote` | system unit `chrote-srv.service` | HTTP `8095`, ttyd `7686` |
-| legacy rollback lane | `/home/perttu/chrote` | user unit `chrote.service` | HTTP `8094`, ttyd `7683` |
-
-Services Platform V1 components:
-
-| Component | Source | CHROTE role |
+| Component | Role | Required? |
 | --- | --- | --- |
-| TTS Gateway | configured upstream | Full TTS console for health, queue/messages, status, playback, voices, and enqueue actions |
-| Context Citadel | configured upstream | Operator console for context document list/read/edit/save/history and grounded questions |
-| Service adapter config | CHROTE process env | Server-side service URLs and tokens; browser clients call CHROTE proxies only |
+| Go server | HTTP API, embedded dashboard, terminal proxy, recovery, scheduling, and optional experimental runtimes | Yes |
+| React dashboard | Browser cockpit served from the Go binary | Yes |
+| tmux | Durable terminal and process substrate | Yes for terminal workspaces |
+| ttyd | Browser terminal transport behind CHROTE | Yes for interactive terminals |
+| Host filesystem | Files, schedules, recovery state, and experimental definitions when used | Yes |
 
-Service adapter environment:
+The browser is a client of this runtime. It is not the durable source of truth.
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `CHROTE_TTS_URL` | `http://127.0.0.1:3100` | TTS Gateway base URL |
-| `CHROTE_CONTEXT_API_URL` | `http://127.0.0.1:3200` | Context Citadel base URL |
-| `CHROTE_CONTEXT_API_TOKEN` | unset | Optional bearer token injected by the Go server for Context Citadel requests |
+## Built-in cockpit surfaces
 
-The `/srv` proving lane keeps private values in `/srv/chrote/config/chrote.env`
-and the installed system units read `/etc/chrote/chrote-srv.env`. The legacy
-rollback user unit may load `~/.config/chrote/services.env`. These files are not
-tracked components and must not contain values in docs or diffs.
-
-Not active in this install:
-
-| Component | Status |
+| Surface | Backing capability |
 | --- | --- |
-| Gastown | Not installed or assumed |
-| Old BV web proxy | Removed; use `bv` inside tmux instead |
-| Ralph | Removed from active UI |
-| Teams harness launcher | Roadmap only; topology ideas are documented for later |
-| ChroteChat/Clawdbot | Not active; proxy-operator idea is documented for later |
+| Terminal 1-3 | Independent layouts over durable tmux sessions |
+| Sessions/Files sidecar | Session discovery, Peek, assignment navigation, and workspace-local files |
+| Files | Configured-root file operations and terminal handoff |
+| Agents | Agent/persona/session observability and mission context |
+| Beads | Configured `bd` workspaces and issue data |
+| Formations (experimental, unreleased) | Boards, missions, ports, gates, connections, and run ledgers in development builds |
+| Scheduled | Scheduled-task definitions, locks, runs, and history |
+| Server | Health, resources, runtime events, and bounded system history |
+| Settings | Appearance, terminal behavior, Session Bank, flags, and advanced recovery |
+
+## Optional integrations
+
+| Component | CHROTE role |
+| --- | --- |
+| `bd` | Beads issue source; configured workspaces remain authoritative |
+| `bv` | Optional graph-aware Beads TUI launched inside a terminal |
+| TTS Gateway adapter | Optional Services console; no upstream or credentials are bundled |
+| Context Citadel adapter | Optional adapter code; no current authentication or upstream is bundled |
+| Tailscale or equivalent | Private HTTPS/network access outside localhost |
+| Persistent-agent supervisor | Explicit lifecycle control for configured long-running agents |
+
+Optional integrations must degrade clearly when unavailable. They must not make
+the core dashboard fail to load.
+
+## Formations execution environments
+
+Development builds that include Formations expose one file-backed authoring and
+run-inspection surface. Formations remains unreleased. Executor promotion is a
+separate safety ladder inside that experiment:
+
+1. deterministic lab executor;
+2. isolated tmux executor;
+3. explicitly promoted live tmux executor.
+
+The executor never gains permission to create or kill unrelated sessions merely
+because the Formations UI is available. See [`FORMATIONS.md`](FORMATIONS.md) and
+[`ARCHON.md`](ARCHON.md).
+
+## Trust boundary
+
+CHROTE runs with the Unix permissions of its service identity. Configured file
+roots constrain CHROTE file APIs; they do not sandbox tmux agents. Service URLs,
+tokens, socket mappings, and executable paths are private runtime configuration.
+See [`SECURITY.md`](SECURITY.md).
+
+## Not bundled or assumed
+
+- Gastown
+- Ralph
+- a hosted identity provider
+- a general-purpose IDE
+- autonomous agent-to-agent chat
+- a mandatory cloud service

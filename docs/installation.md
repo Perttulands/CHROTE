@@ -1,115 +1,204 @@
-# Installation
+# Installing CHROTE
 
-This guide documents the current `/srv` CHROTE proving service. Use the legacy
-user service only when explicitly doing rollback work.
+CHROTE v2 is alpha. The canonical public installation is a **same-user Linux or
+WSL user service built from the checked-out source**. This keeps the installed
+binary tied to an inspectable commit instead of silently selecting an older
+prerelease artifact.
 
-## Runtime
+The installer does not use `sudo`, create a dedicated Unix user, or start a
+second ttyd service. The Go server owns one loopback ttyd child and connects to
+the installing user's normal tmux server.
 
-Active `/srv` lane:
+## Requirements
 
-```bash
-systemctl status chrote-srv.service --no-pager
-curl http://127.0.0.1:8095/api/health
-```
+- Linux or WSL with user systemd available
+- Go 1.26.5+
+- Node.js 20.19+ or 22.12+
+- npm
+- tmux
+- curl
+- Git
 
-Service shape:
+`ttyd` 1.7.7 is copied from the current `PATH` or downloaded into the user
+prefix when absent.
 
-```text
-source: /srv/chrote
-data: /srv/data/chrote
-unit: chrote-srv.service
-HTTP: 127.0.0.1:8095
-ttyd: 127.0.0.1:7686
-```
-
-Legacy rollback lane, not the active install target:
-
-```text
-source: /home/perttu/chrote
-unit: chrote.service
-HTTP: 127.0.0.1:8094
-ttyd: 127.0.0.1:7683
-```
-
-## Rebuild
-
-Build from the intended `/srv` checkout and restart only the `/srv` lane when
-deployment is explicitly approved.
+## Install
 
 ```bash
-cd /srv/chrote/dashboard
-npm ci
-npm run build
-
-cd /srv/chrote
-rm -rf src/internal/dashboard/dist
-cp -r dashboard/dist src/internal/dashboard/dist
-
-cd /srv/chrote/src
-go test ./...
-go build -o ../chrote-server ./cmd/server
-systemctl restart chrote-srv.service
+git clone https://github.com/Perttulands/CHROTE.git
+cd CHROTE
+./install.sh
 ```
 
-## Service Configuration
+Defaults:
 
-Private runtime values belong in a service env file, not in git:
+| Setting | Default |
+| --- | --- |
+| Dashboard | `http://127.0.0.1:8094` |
+| ttyd child | `127.0.0.1:7683` |
+| Workspace/file root | `$HOME` |
+| Binary prefix | `$HOME/.local` |
+| Managed config | `$XDG_CONFIG_HOME/chrote/chrote.env` or `$HOME/.config/chrote/chrote.env` |
+| Private overrides | `$XDG_CONFIG_HOME/chrote/secrets.env` |
+| Durable state | `$XDG_STATE_HOME/chrote` or `$HOME/.local/state/chrote` |
+| User unit | `$XDG_CONFIG_HOME/systemd/user/chrote.service` |
 
-```text
-/srv/chrote/config/chrote.env
-/etc/chrote/chrote-srv.env
-```
+The installer:
 
-Typical `/srv` values:
+1. builds the dashboard and exact embedded Go binary from the checkout;
+2. injects the version from `VERSION`;
+3. installs `chrote-server`, ttyd, and `terminal-launch.sh` under the user prefix;
+4. writes XDG-scoped state paths for Session Bank, persistent agents, schedules,
+   recovery status, and agent cards;
+5. writes one `chrote.service` user unit;
+6. enables, starts, and health-checks the service.
 
-```text
-HOST=127.0.0.1
-PORT=8095
-TTYD_PORT=7686
-CHROTE_WORKDIR=<workspace-root>
-CHROTE_ROOTS=<workspace-root>
-CHROTE_BEADS_WORKSPACES=<workspace-root>
-CHROTE_BD_COMMAND=bd
-CHROTE_SESSION_BANK_PATH=/srv/data/chrote/session-bank/sessions.json
-CHROTE_PERSISTENT_AGENTS_PATH=/srv/data/chrote/persistent-agents/agents.json
-CHROTE_SESSION_DROPS_DIR=/srv/data/chrote/session-drops
-CHROTE_MANAGED_RECOVERY_STATUS_PATH=/srv/data/chrote/tmux-recovery/managed-status.json
-```
+No workspace files are copied into CHROTE state.
 
-Do not print or commit secrets from service env files.
+## Choose a narrower workspace
 
-## Managed Recovery Status
-
-Externally managed workloads are read-only in CHROTE. They stay out of Session
-Bank and Persistent desired-state stores, and CHROTE must not restart them.
-
-The restore-side owner can publish a strict managed-status registry:
+Giving CHROTE all of `$HOME` is convenient but broad. Prefer a dedicated
+workspace when practical:
 
 ```bash
-scripts/tmux-recovery/restore.py \
-  --api-url http://127.0.0.1:8095 \
-  --manifest <accepted-manifest.json> \
-  --managed-status-output /srv/data/chrote/tmux-recovery/managed-status.json \
-  ...
+./install.sh --workspace "$HOME/work"
 ```
 
-The output file is atomically replaced with mode `0600`. It contains only
-identity, external owner, manager kind/ref, storage/source kind, and health
-status. It must not contain descriptors, argv, env, tokens, or restart
-instructions. CHROTE rejects the registry if the path is a symlink, is not a
-regular file, or is group/world-readable or writable. It intentionally does not
-require the same UID for the writer and `chrote-srv.service`; use the configured
-path as the trust boundary and keep the parent directory writable only by the
-trusted owner-side publisher and service administration.
+That path becomes:
 
-## Rollback Lane
+- `CHROTE_ROOTS`
+- `CHROTE_WRITE_ROOTS`
+- `CHROTE_WORKDIR`
+- the default tmux working directory
+- the initial Beads discovery root
+- the Formations workspace
 
-Use this only for legacy rollback checks:
+Configured roots constrain CHROTE file APIs. They do not sandbox commands or AI
+agents running in tmux.
+
+## Custom ports or prefix
 
 ```bash
-systemctl --user status chrote.service --no-pager
+./install.sh \
+  --workspace "$HOME/work" \
+  --port 8094 \
+  --ttyd-port 7683 \
+  --prefix "$HOME/.local"
+```
+
+The dashboard and ttyd ports must differ. Both remain loopback-only.
+
+## Verify
+
+```bash
+systemctl --user status chrote.service
 curl http://127.0.0.1:8094/api/health
 ```
 
-Do not restart `chrote.service` while working on the `/srv` lane unless the task
-explicitly says legacy, rollback, or `8094`.
+Open `http://127.0.0.1:8094` and create or select a tmux session. CHROTE runs as
+the same Unix user and sees that user's normal tmux server by default.
+
+To test without changing systemd state, packaging and contributors may use:
+
+```bash
+./install.sh --no-systemd --no-start
+```
+
+That still writes the unit and install layout but does not reload, enable, or
+start the user service.
+
+## Configure optional capabilities
+
+Edit the managed non-secret values in:
+
+```text
+~/.config/chrote/chrote.env
+```
+
+Put optional tokens and private service URLs in:
+
+```text
+~/.config/chrote/secrets.env
+```
+
+Then reload:
+
+```bash
+systemctl --user restart chrote.service
+```
+
+Common advanced settings are documented in [`.env.example`](../.env.example).
+Cross-user terminal sockets, persistent-agent supervisors, Formations tmux
+execution, and script gates require deliberate host setup. They are not enabled
+by the generic installer.
+
+## Upgrade
+
+```bash
+cd CHROTE
+git pull --ff-only
+./install.sh
+```
+
+The installer rebuilds from the checked-out commit, atomically replaces the
+managed binary, rewrites managed non-secret configuration, preserves
+`secrets.env` and durable state, then restarts and health-checks the user service.
+
+Review release notes and `git diff` before upgrading alpha builds.
+
+## Uninstall
+
+```bash
+./uninstall.sh
+```
+
+The default uninstall removes:
+
+- managed CHROTE and ttyd executables;
+- the managed terminal launcher;
+- `chrote.service`;
+- managed `chrote.env`.
+
+It preserves:
+
+- the configured workspace;
+- CHROTE durable state;
+- `secrets.env`.
+
+Explicit cleanup is available:
+
+```bash
+./uninstall.sh --purge-state --purge-private-config
+```
+
+The workspace is never deleted.
+
+## Source build without installation
+
+```bash
+npm ci --prefix dashboard
+./scripts/build-embedded-dashboard.sh
+
+cd src
+GOTOOLCHAIN=go1.26.5 go test ./...
+version="$(tr -d '\r\n' < ../VERSION)"
+GOTOOLCHAIN=go1.26.5 go build \
+  -trimpath \
+  -ldflags "-X main.Version=$version" \
+  -o ../chrote-server \
+  ./cmd/server
+
+cd ..
+./chrote-server
+```
+
+Do not build a release from stale embedded assets. The canonical embed script and
+`diff -qr dashboard/dist src/internal/dashboard/dist` must agree first.
+
+## Remote access
+
+CHROTE has no application login. Treat network access as shell access.
+
+Keep the server on loopback and put remote access behind an operator-controlled
+private network and HTTPS, such as Tailscale Serve. See
+[`SECURITY.md`](../SECURITY.md).

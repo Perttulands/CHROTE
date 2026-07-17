@@ -25,7 +25,7 @@ import (
 )
 
 // Version is set at build time or defaults to dev
-var Version = "0.2.0"
+var Version = "2.0.0-alpha.2-dev"
 
 const (
 	defaultBindHost   = "127.0.0.1"

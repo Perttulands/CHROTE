@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('./BeadsView/hooks', () => ({
   useProjects: () => ({
     projects: [
-      { name: 'chrote', path: '/home/perttu/chrote', beadsPath: '/home/perttu/chrote/.beads', source: 'configured' },
+      { name: 'chrote', path: '/home/operator/chrote', beadsPath: '/home/operator/chrote/.beads', source: 'configured' },
     ],
     loading: false,
     error: null,
@@ -115,12 +115,12 @@ describe('BeadsView context menus', () => {
     const menu = document.querySelector('.beads-context-menu') as HTMLElement
 
     fireEvent.click(within(menu).getByRole('button', { name: 'Copy Active Project Path' }))
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('/home/perttu/chrote')
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('/home/operator/chrote')
 
     fireEvent.contextMenu(statusStrip)
     const secondMenu = document.querySelector('.beads-context-menu') as HTMLElement
     fireEvent.click(within(secondMenu).getByRole('button', { name: 'Open Project in Files' }))
-    expect(openProjectInFiles).toHaveBeenCalledWith('/home/perttu/chrote')
+    expect(openProjectInFiles).toHaveBeenCalledWith('/home/operator/chrote')
 
     fireEvent.contextMenu(statusStrip)
     const thirdMenu = document.querySelector('.beads-context-menu') as HTMLElement

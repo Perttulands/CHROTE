@@ -157,8 +157,8 @@ curl -sS http://127.0.0.1:8094/api/health
 curl -sS http://127.0.0.1:8094/api/tmux/sessions
 curl -sS http://127.0.0.1:8094/api/oracle/status
 curl -sS http://127.0.0.1:8094/api/beads/health
-cd /home/perttu/chrote/src && go test ./...
-cd /home/perttu/chrote/dashboard && npm run test:unit && npm run build
+cd /workspace/chrote/src && go test ./...
+cd /workspace/chrote/dashboard && npm run test:unit && npm run build
 ```
 
 Backend behavior-risk flags must be server/env controlled. localStorage flags are fine for UI visibility but not enough for mutation safety.

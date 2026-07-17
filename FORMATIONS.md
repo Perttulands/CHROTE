@@ -8,11 +8,13 @@ enforced_by: scripts/doc-lint.py
 
 # CHROTE Formations Spec
 
-Status: **Active core source of truth**.
+Status: **Active source of truth for an unreleased experimental subsystem**.
 
-Formations is CHROTE's spatial model for organizing AI agents into missions,
-teams, gates, and recoverable runs. It pairs with `ARCHON.md` for the CLI surface
-and `DATA-MODEL.md` for persistence and event formats.
+Formations is CHROTE's experimental spatial model for organizing AI agents into
+missions, teams, gates, and recoverable runs. It pairs with `ARCHON.md` for the
+CLI surface and `DATA-MODEL.md` for persistence and event formats. These
+contracts describe development on `main`; they do not claim availability in the
+latest tagged CHROTE alpha.
 
 ## One-sentence definition
 
@@ -100,12 +102,13 @@ evidence.
    sidecars, not board definitions.
 6. **Execution context fails loud.** Missing or ambiguous sessions, harnesses,
    checks, cwd, or agents cannot silently substitute.
-7. **Formations is always-on.** It is a permanent first-class surface, not a
-   feature flag. The only Formations env vars are the executor safety ladder
+7. **Availability inside experimental builds is not release status.** Builds
+   that include Formations expose one coherent surface rather than a partial
+   feature-flag matrix. The only Formations env vars are the executor safety ladder
    (`CHROTE_FORMATIONS_LAB_*` / `CHROTE_FORMATIONS_TMUX_*` /
    `CHROTE_FORMATIONS_SCRIPT_GATES` / `CHROTE_FORMATIONS_GATE_*` /
    `CHROTE_FORMATIONS_TMUX_PROD_SMOKE`), which gate execution-environment
-   or gate-adapter promotion, never feature availability.
+   or gate-adapter promotion. Public release promotion is a separate decision.
 8. **Beads can anchor missions; it is not the graph store.**
 9. **No command-execution landmines.** Free-text criteria never become implicit
    shell execution. Executable script gates require explicit operator-authored

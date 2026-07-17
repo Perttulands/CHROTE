@@ -231,7 +231,7 @@ func TestArchonAgentNewClaudeCodeDefaultsLaunchAndSpawnUsesIt(t *testing.T) {
 	agentsDir := t.TempDir()
 	t.Setenv("CHROTE_AGENTS_DIR", agentsDir)
 	runner := &fakeTmux{live: map[string]bool{}}
-	wantLaunch := "HOME=/home/perttu claude --dangerously-skip-permissions --effort=\"max\""
+	wantLaunch := "claude --dangerously-skip-permissions --effort=\"max\""
 
 	stdout, stderr, code := runArchon(t, runner, "agent", "new", "clauder", "--kind", "specialist", "--harness", "claude-code", "--json")
 	if code != 0 {

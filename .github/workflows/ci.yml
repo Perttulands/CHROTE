@@ -18,12 +18,15 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.26.5'
           cache-dependency-path: src/go.sum
 
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      - name: Documentation contract
+        run: python3 scripts/doc-lint.py
 
       - name: Dashboard install dependencies
         run: |
@@ -31,12 +34,7 @@ jobs:
           npm ci
 
       - name: Dashboard build embedded assets
-        run: |
-          cd dashboard
-          npm run build
-          rm -rf ../src/internal/dashboard/dist
-          cp -r dist ../src/internal/dashboard/
-          find ../src/internal/dashboard/dist -type d -empty -delete
+        run: ./scripts/build-embedded-dashboard.sh
 
       - name: Go format
         run: |
@@ -68,6 +66,11 @@ jobs:
           go test -coverprofile=coverage.out ./...
           go tool cover -func=coverage.out
 
+      - name: Go vulnerability scan
+        run: |
+          cd src
+          go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+
       - name: Dashboard lint
         run: |
           cd dashboard
@@ -95,9 +98,11 @@ jobs:
 
       - name: Release package smoke
         run: |
-          rm -rf src/internal/dashboard/dist
-          cp -r dashboard/dist src/internal/dashboard/
-          find src/internal/dashboard/dist -type d -empty -delete
           cd src
           go test ./...
-          go build -o /tmp/chrote-server-ci ./cmd/server
+          version="$(tr -d '\r\n' < ../VERSION)"
+          go build -trimpath -ldflags "-X main.Version=$version" -o /tmp/chrote-server-ci ./cmd/server
+          go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 -mode=binary /tmp/chrote-server-ci
+
+      - name: Public installer smoke
+        run: ./scripts/test-public-install.sh /tmp/chrote-server-ci

@@ -1,98 +1,182 @@
-# Troubleshooting
+# Troubleshooting CHROTE
 
-## Service
+Start at the boundary that is actually failing. Do not reboot WSL, kill tmux, or
+wipe browser state as a first move.
+
+## 1. Is the user service healthy?
 
 ```bash
-# /srv proving lane: /srv/chrote, /srv/data/chrote, 8095/7686
-systemctl status chrote-srv.service --no-pager
-journalctl -u chrote-srv.service -n 100 --no-pager
-journalctl -u chrote-srv.service -f
-
-# legacy rollback lane: /home/perttu/chrote, 8094/7683
 systemctl --user status chrote.service
 journalctl --user -u chrote.service -n 100 --no-pager
-journalctl --user -u chrote.service -f
+curl -v http://127.0.0.1:8094/api/health
 ```
 
-Restart:
+Expected health shape:
+
+```json
+{"status":"ok","timestamp":"...","version":"2.0.0-alpha.2-dev"}
+```
+
+A tagged release reports its tag-derived version instead of the development
+suffix.
+
+If the port was customized, read `PORT` from
+`~/.config/chrote/chrote.env` and use that value.
+
+## 2. Dashboard loads, but terminals fail
+
+CHROTE starts and proxies one loopback ttyd child. Check the service log for:
+
+- `Started ttyd on port ...`
+- `failed to start ttyd`
+- `Terminal proxy error`
+- `tmux session ... is not available`
+
+Verify the installed pieces:
 
 ```bash
-systemctl restart chrote-srv.service        # /srv proving lane
-systemctl --user restart chrote.service     # legacy rollback lane
+command -v tmux
+~/.local/bin/ttyd --version
+test -x ~/.local/lib/chrote/terminal-launch.sh
 ```
 
-## Health
+Then verify the same user's tmux server:
 
 ```bash
-CHROTE_URL=http://127.0.0.1:8095      # /srv proving lane
-# CHROTE_URL=http://127.0.0.1:8094    # legacy rollback lane
-
-curl "$CHROTE_URL/api/health"
-curl "$CHROTE_URL/api/tmux/sessions"
-curl "$CHROTE_URL/api/oracle/status"
-curl "$CHROTE_URL/api/beads/health"
+tmux list-sessions
+curl http://127.0.0.1:8094/api/tmux/sessions
 ```
 
-## Tailscale
+A fresh install uses the installing user's normal tmux server. If you configured
+`CHROTE_DEFAULT_TMUX_SOCKET` or cross-user socket mappings, verify the exact
+socket path and filesystem permissions. CHROTE intentionally fails loud instead
+of falling back to a different user's ambient server.
+
+Do **not** kill a healthy tmux server merely because the browser terminal is
+broken. tmux owns the durable work; ttyd and CHROTE are replaceable clients.
+
+## 3. Port already in use
 
 ```bash
-tailscale serve status
+ss -ltnp | grep -E ':(8094|7683)\b'
 ```
 
-Expected route shape:
-
-```text
-https://<tailnet-host>:8445/
-|-- / proxy http://127.0.0.1:8095
-```
-
-## Terminal
-
-The `/srv` proving lane reads per-user tmux socket mappings from private
-runtime config. The Perttu legacy rollback lane uses this interactive socket:
+Choose unused loopback ports and reinstall:
 
 ```bash
-TMUX_TMPDIR=/run/user/1000/chrote-tmux tmux ls
+./install.sh --port 8096 --ttyd-port 7685
 ```
 
-If the dashboard has no sessions:
+The dashboard and ttyd ports must differ.
+
+## 4. Files view is empty or denied
+
+Inspect the configured roots:
 
 ```bash
-TMUX_TMPDIR=/run/user/1000/chrote-tmux tmux new-session -d -s main -c "$HOME"
+grep -E '^CHROTE_(ROOTS|WRITE_ROOTS|WORKDIR)=' ~/.config/chrote/chrote.env
 ```
 
-The ttyd listener should be loopback-only:
+Rules:
+
+- requested paths must resolve under `CHROTE_ROOTS`;
+- mutations must also remain under `CHROTE_WRITE_ROOTS`;
+- symlink resolution must not escape those roots;
+- the CHROTE Unix user still needs ordinary filesystem permission.
+
+Re-run the installer with the intended workspace instead of widening roots to
+`/` as a debugging shortcut:
 
 ```bash
-ss -ltnp | grep 7683
-ss -ltnp | grep 7686
+./install.sh --workspace "$HOME/work"
 ```
 
-## Beads
+## 5. Beads is unavailable
 
 ```bash
-cd <workspace-root>
-bd --json list | head
-curl "$CHROTE_URL/api/beads/issues?path=<workspace-root>"
+command -v bd
+bd version
+curl http://127.0.0.1:8094/api/beads/health
 ```
 
-If Beads fails in CHROTE but works in a shell, check `CHROTE_BD_COMMAND` in
-`chrote-srv.service` for the `/srv` proving lane or in `chrote.service` for the
-legacy rollback lane.
-If a workspace is missing from the Beads selector, check `CHROTE_BEADS_WORKSPACES`.
-Those paths are separate from `CHROTE_ROOTS`; adding `/srv` there does not widen Files view access.
+If `bd` is outside the service `PATH`, set an absolute `CHROTE_BD_COMMAND` in
+`chrote.env`. Configure `CHROTE_BEADS_WORKSPACES` to actual Beads roots.
 
-## Frontend Changes
+`bv` is optional. Its absence must not break Beads API or dashboard operation.
 
-Production CHROTE serves embedded dashboard assets. After frontend edits:
+## 6. Services show degraded
+
+Services cards are optional adapters. No upstream service, URL, or credential is
+bundled with CHROTE, and a degraded card does not mean the core is unhealthy.
+
+- Put private URLs/tokens in `~/.config/chrote/secrets.env`.
+- Restart `chrote.service` after changing server-side environment.
+- Check the upstream directly from the host without printing tokens.
+- Never paste bearer values into browser storage, screenshots, issues, or logs.
+
+## 7. Formations exists but cannot execute
+
+That is often correct. Formations authoring and run inspection are always
+available; execution promotion is separately gated.
+
+1. Start with the deterministic lab executor.
+2. Use an isolated temp tmux socket for executor dogfood.
+3. Promote to a live socket only with explicit configuration and an approved
+   operator boundary.
+
+Check `FORMATIONS.md` and the relevant ledger events. Do not enable script gates
+or live tmux execution merely to make a button look green.
+
+## 8. Recovery entries are limited or blocked
+
+Session Bank distinguishes supported typed recovery from unmanaged or unsafe
+entries.
+
+- `Recover workload` appears only when CHROTE has a valid typed descriptor.
+- Managed external supervisors remain read-only unless their contract permits a
+  restart action.
+- Arbitrary shell state cannot be reconstructed safely.
+- Recovery failures should appear in the API response, supervisor status, or
+  durable recovery evidence.
+
+Use explicit Refit/reconnect actions before deleting stale sessions. Bulk
+session destruction is an advanced emergency action in Settings.
+
+## 9. Scheduled task is stuck
+
+Inspect the Scheduled view and service logs for lock age, last run, and failure
+history. CHROTE may reclaim a stale lock according to its scheduling contract;
+it must not silently double-run a task with a fresh lock.
+
+Do not delete lock/state files until you understand whether another process is
+still running.
+
+## 10. Browser state looks stale
+
+First:
+
+1. hard refresh;
+2. verify `/api/health` reports the expected build version;
+3. check whether a service worker or reverse proxy is caching old assets;
+4. compare the loaded asset names with the current embedded build.
+
+Only then consider clearing CHROTE local storage. Local storage owns presentation
+preferences and workspace assignments; clearing it should not kill tmux sessions
+or delete host files, but it will reset layout state.
+
+## 11. Reinstall without losing work
 
 ```bash
-cd /path/to/chrote/dashboard
-npm run build
-cd /path/to/chrote
-rm -rf src/internal/dashboard/dist
-cp -r dashboard/dist src/internal/dashboard/dist
-cd src
-go build -o ../chrote-server ./cmd/server
-systemctl restart chrote-srv.service
+cd CHROTE
+./install.sh
 ```
+
+Reinstall preserves the configured workspace, XDG state, and `secrets.env`.
+Uninstall also preserves them by default:
+
+```bash
+./uninstall.sh
+```
+
+Never use `--purge-state` unless you deliberately want to remove Session Bank,
+schedules, persistent-agent definitions, and other CHROTE-owned state.

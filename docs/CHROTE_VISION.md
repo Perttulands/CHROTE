@@ -4,41 +4,46 @@ CHROTE is a private cockpit for durable host-owned work.
 
 The browser is disposable. The work is not.
 
-## Canonical Source
+## Canonical source
 
-`../PRD.md` is the canonical product source for current behavior, Services
-Platform V1, and roadmap boundaries. This document preserves the concise vision
-and should not drift into a second product spec.
+[`../PRD.md`](../PRD.md) is the canonical product source for current behavior and
+roadmap boundaries. This document preserves the short version and should not
+become a second product spec.
 
-## Operating Principle
+## Operating principle
 
-Everything important runs on the Ubuntu host:
+Everything important stays on the configured Linux or WSL host:
 
-- terminals
-- AI agents
-- dev servers
-- builds
-- tests
-- logs
-- Beads
-- runtime state
-- selected `/srv` services
+- terminals and tmux sessions;
+- AI agents and their native harness state;
+- files, dev servers, builds, tests, and logs;
+- Beads workspaces;
+- schedules, recovery plans, and runtime history;
+- experimental Formations definitions, missions, gates, and run ledgers when in use;
+- explicitly configured local services.
 
-CHROTE gives the human one browser-based control surface for that host state.
+CHROTE gives the human one browser-based control surface for that state. The
+browser is glass, not the vault.
 
-## Product Direction
+## Product direction
 
-CHROTE is moving in stages:
+CHROTE grows only where it improves the operator's ability to understand,
+recover, and deliberately coordinate host-owned work:
 
-1. Durable workspace cockpit: tmux, terminals, files, Beads, and agent session
-   observability.
-2. Services platform: first-class operator views for selected `/srv` services,
-   currently TTS Gateway and Context Citadel.
-3. Meta-harness: reusable, auditable orchestration for multiple AI harnesses and
-   tools.
-4. Agent Teams: team topology, typed collaboration workflows, and Beads-backed
-   coordination once the substrate is stable.
+1. **Durable cockpit:** three terminal workspaces, unified Sessions/Files
+   sidecars, Files, Beads, Agents, scheduling, server health, and recovery.
+2. **Local capability surface:** explicit adapters for services that earn a
+   first-class operator workflow.
+3. **Auditable orchestration experiment:** file-backed Formations, missions,
+   ports, gates, run ledgers, and controlled executor promotion, without calling
+   the experiment shipped before its release gate passes.
+4. **Agent teams:** stronger ownership, reservations, handoffs, and human
+   approval once those contracts are proven under real use.
 
-See `meta-harness-desired-state.md` and
-`agent-collaboration-primitives.md` for roadmap ideas. Those documents describe
-future direction, not active runtime commitments.
+CHROTE should not become a pile of dashboards for things that are already better
+in a terminal. It should make durable work legible without stealing ownership
+from the tools and files that created it.
+
+See [`meta-harness-desired-state.md`](meta-harness-desired-state.md) and
+[`agent-collaboration-primitives.md`](agent-collaboration-primitives.md) for
+roadmap ideas. They are exploration, not active runtime promises.

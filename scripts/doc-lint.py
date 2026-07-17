@@ -7,9 +7,11 @@ without dragging dirty Archon/Formations implementation work into doc cleanup.
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
+from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -27,33 +29,67 @@ REQUIRED_FRONTMATTER = {
     "enforced_by": "scripts/doc-lint.py",
 }
 INDEX_PATH = Path("docs/source-truth-index.md")
-LANE_AWARE_DOCS = [
+PUBLIC_PRODUCT_DOCS = [
     "README.md",
+    "AGENTS.md",
+    "CLAUDE.md",
     "SECURITY.md",
     "CONTRIBUTING.md",
     "PRD.md",
     "COMPONENTS.md",
-    "CLAUDE.md",
-    "AGENTS.md",
-    "docs/troubleshooting.md",
+    "docs/CHROTE_VISION.md",
     "docs/TEST_STRATEGY.md",
+    "docs/installation.md",
+    "docs/troubleshooting.md",
+    "docs/adr/0004-mission-rooms-agent-team-ledgers.md",
     "dashboard/README.md",
+    "scripts/tmux-recovery/README.md",
+    "Perttus_vision_for_agent_orchestration/spec/contracts.md",
 ]
-LANE_TOKENS = {
-    "srv": [
-        "/srv/chrote",
-        "/srv/data/chrote",
-        "chrote-srv.service",
-        "8095",
-        "7686",
-    ],
-    "legacy": [
-        "/home/perttu/chrote",
-        "chrote.service",
-        "8094",
-        "7683",
-    ],
-}
+HOST_LOCAL_TOKENS = [
+    "/srv/chrote",
+    "/srv/data/chrote",
+    "chrote-srv.service",
+    "proving lane",
+    "legacy rollback lane",
+]
+HOST_LOCAL_PATTERNS = [
+    (
+        re.compile(r"/home/(?!chrote(?:/|$)|operator(?:/|$)|secondary(?:/|$))[^/\s]+/chrote"),
+        "/home/<private-user>/chrote",
+    ),
+]
+SHIPPED_VIEW_LABELS = [
+    "Terminal 1",
+    "Terminal 2",
+    "Terminal 3",
+    "Files",
+    "Agents",
+    "Beads",
+    "Services",
+    "Scheduled",
+    "Server",
+    "Settings",
+]
+EXPERIMENTAL_VIEW_LABELS = ["Formations (experimental, unreleased)"]
+README_ASSETS = [
+    "docs/assets/readme/terminal-agents.png",
+    "docs/assets/readme/beads-kanban.png",
+    "docs/assets/readme/attach-hermes-workflow.mp4",
+]
+STALE_ROOT_MEDIA = [
+    "screenshot 1.png",
+    "file system.png",
+    "kanban.png",
+    "BV_insession.png",
+    "Themes.png",
+    "chat_new.png",
+]
+GO_BASELINE = "1.26.5"
+NODE_BASELINE_DOC = "Node.js 20.19+ or 22.12+"
+NODE_ENGINE_RANGE = "^20.19.0 || >=22.12.0"
+GOVULNCHECK_VERSION = "v1.6.0"
+DEVELOPMENT_VERSION = "2.0.0-alpha.2-dev"
 INTENTIONALLY_ABSENT = [
     "CHROTE.md",
     "SPEC-CHANGELOG.md",
@@ -127,6 +163,8 @@ def check_active_spec_frontmatter(errors: list[str]) -> None:
 def check_enforced_by_paths(errors: list[str]) -> None:
     pattern = re.compile(r"^\s*enforced_by\s*:\s*(.+?)\s*$")
     for path in tracked_markdown_files():
+        if not path.exists():
+            continue
         try:
             lines = path.read_text(encoding="utf-8").splitlines()
         except UnicodeDecodeError:
@@ -180,6 +218,33 @@ def check_source_truth_index(errors: list[str]) -> None:
             continue
         if not target.exists():
             fail(errors, f"{INDEX_PATH.as_posix()}: broken local link: {match.group(1)}")
+
+
+def check_active_local_links(errors: list[str]) -> None:
+    link_pattern = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
+    skipped_dirs = {"archive", "plans"}
+    for path in tracked_markdown_files():
+        if not path.exists():
+            continue
+        rel_path = path.relative_to(ROOT)
+        if any(part in skipped_dirs for part in rel_path.parts):
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for match in link_pattern.finditer(text):
+            raw = match.group(1).strip()
+            target_text = raw.split("#", 1)[0].strip()
+            if not target_text or target_text.startswith(("http://", "https://", "mailto:")):
+                continue
+            if target_text.startswith("<") and target_text.endswith(">"):
+                target_text = target_text[1:-1]
+            target = (path.parent / unquote(target_text)).resolve()
+            try:
+                target.relative_to(ROOT.resolve())
+            except ValueError:
+                fail(errors, f"{rel(path)}: local link escapes repository: {raw}")
+                continue
+            if not target.exists():
+                fail(errors, f"{rel(path)}: broken local link: {raw}")
 
 
 def theme_ids_from_types(errors: list[str]) -> list[str]:
@@ -243,19 +308,143 @@ def check_security_runtime_facts(errors: list[str]) -> None:
             fail(errors, f"SECURITY.md: stale runtime/security text remains: {token!r}")
 
 
-def check_service_lane_docs(errors: list[str]) -> None:
-    for rel_path in LANE_AWARE_DOCS:
+def check_public_docs_are_host_neutral(errors: list[str]) -> None:
+    for rel_path in PUBLIC_PRODUCT_DOCS:
+        if not (ROOT / rel_path).exists():
+            fail(errors, f"missing public product doc: {rel_path}")
+
+    for path in tracked_markdown_files():
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for token in HOST_LOCAL_TOKENS:
+            if token in text:
+                fail(errors, f"{rel(path)}: contains host-local operator detail {token!r}")
+        for pattern, label in HOST_LOCAL_PATTERNS:
+            if pattern.search(text):
+                fail(errors, f"{rel(path)}: contains host-local operator path matching {label}")
+
+
+def check_current_product_views(errors: list[str]) -> None:
+    path = ROOT / "PRD.md"
+    if not path.exists():
+        fail(errors, "PRD.md missing")
+        return
+    text = path.read_text(encoding="utf-8")
+    missing_shipped = [label for label in SHIPPED_VIEW_LABELS if f"| {label} |" not in text]
+    if missing_shipped:
+        fail(errors, f"PRD.md: current view table is missing shipped views {missing_shipped}")
+    missing_experimental = [
+        label for label in EXPERIMENTAL_VIEW_LABELS if f"| {label} |" not in text
+    ]
+    if missing_experimental:
+        fail(errors, f"PRD.md: current view table is missing experimental labels {missing_experimental}")
+
+    formations = (ROOT / "FORMATIONS.md").read_text(encoding="utf-8")
+    archon = (ROOT / "ARCHON.md").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    if "unreleased experimental subsystem" not in formations:
+        fail(errors, "FORMATIONS.md: missing unreleased experimental status")
+    if "unreleased experimental CLI" not in archon:
+        fail(errors, "ARCHON.md: missing unreleased experimental status")
+    if "**experimental and\nunreleased**" not in readme:
+        fail(errors, "README.md: missing explicit experimental and unreleased Formations boundary")
+
+
+def check_readme_media(errors: list[str]) -> None:
+    path = ROOT / "README.md"
+    if not path.exists():
+        fail(errors, "README.md missing")
+        return
+    text = path.read_text(encoding="utf-8")
+    for rel_path in README_ASSETS:
+        asset = ROOT / rel_path
+        if rel_path not in text:
+            fail(errors, f"README.md: missing approved media reference {rel_path}")
+        if not asset.is_file() or asset.stat().st_size == 0:
+            fail(errors, f"missing or empty approved README media: {rel_path}")
+    remaining = [rel_path for rel_path in STALE_ROOT_MEDIA if (ROOT / rel_path).exists()]
+    if remaining:
+        fail(errors, f"stale root media should remain removed: {remaining}")
+
+
+def check_repository_links(errors: list[str]) -> None:
+    path = ROOT / "CHANGELOG.md"
+    if not path.exists():
+        fail(errors, "CHANGELOG.md missing")
+        return
+    if "github.com/user/chrote" in path.read_text(encoding="utf-8"):
+        fail(errors, "CHANGELOG.md: placeholder github.com/user/chrote links remain")
+
+
+def check_toolchain_contract(errors: list[str]) -> None:
+    required_tokens = {
+        "src/go.mod": f"go {GO_BASELINE}",
+        ".github/workflows/ci.yml": f"go-version: '{GO_BASELINE}'",
+        ".github/workflows/release.yml": f"go-version: '{GO_BASELINE}'",
+        "CONTRIBUTING.md": f"Go {GO_BASELINE}+",
+        "docs/TEST_STRATEGY.md": f"Go {GO_BASELINE}",
+    }
+    for rel_path, token in required_tokens.items():
         path = ROOT / rel_path
         if not path.exists():
-            fail(errors, f"missing lane-aware doc: {rel_path}")
+            fail(errors, f"missing toolchain contract file: {rel_path}")
             continue
-        text = path.read_text(encoding="utf-8")
-        missing_srv = [token for token in LANE_TOKENS["srv"] if token not in text]
-        if missing_srv:
-            fail(errors, f"{rel_path}: missing /srv proving lane facts {missing_srv}")
-        legacy_present = any(token in text for token in LANE_TOKENS["legacy"])
-        if legacy_present and "legacy rollback" not in text:
-            fail(errors, f"{rel_path}: legacy runtime facts must be labeled as legacy rollback")
+        if token not in path.read_text(encoding="utf-8"):
+            fail(errors, f"{rel_path}: missing patched Go baseline token {token!r}")
+
+    for rel_path in ["README.md", "CONTRIBUTING.md", "docs/installation.md", "docs/TEST_STRATEGY.md"]:
+        text = (ROOT / rel_path).read_text(encoding="utf-8")
+        if NODE_BASELINE_DOC not in text:
+            fail(errors, f"{rel_path}: missing Node baseline token {NODE_BASELINE_DOC!r}")
+
+    scanner = f"golang.org/x/vuln/cmd/govulncheck@{GOVULNCHECK_VERSION}"
+    for rel_path in [".github/workflows/ci.yml", ".github/workflows/release.yml"]:
+        text = (ROOT / rel_path).read_text(encoding="utf-8")
+        if scanner not in text:
+            fail(errors, f"{rel_path}: missing pinned vulnerability scanner {scanner}")
+        if "-mode=binary" not in text:
+            fail(errors, f"{rel_path}: missing release-binary vulnerability scan")
+
+
+def check_version_contract(errors: list[str]) -> None:
+    required_tokens = {
+        "VERSION": DEVELOPMENT_VERSION,
+        "src/cmd/server/main.go": f'var Version = "{DEVELOPMENT_VERSION}"',
+        "src/internal/api/health.go": f'version: "{DEVELOPMENT_VERSION}"',
+        ".github/workflows/ci.yml": "-X main.Version=$version",
+        ".github/workflows/release.yml": "-X main.Version=$release_version",
+    }
+    for rel_path, token in required_tokens.items():
+        path = ROOT / rel_path
+        if token not in path.read_text(encoding="utf-8"):
+            fail(errors, f"{rel_path}: missing version contract token {token!r}")
+
+    dashboard_package = json.loads((ROOT / "dashboard/package.json").read_text(encoding="utf-8"))
+    dashboard_lock = json.loads((ROOT / "dashboard/package-lock.json").read_text(encoding="utf-8"))
+    if dashboard_package.get("version") != DEVELOPMENT_VERSION:
+        fail(errors, "dashboard/package.json: version must match VERSION")
+    if dashboard_package.get("private") is not True:
+        fail(errors, "dashboard/package.json: embedded dashboard package must remain private")
+    if dashboard_package.get("engines", {}).get("node") != NODE_ENGINE_RANGE:
+        fail(errors, "dashboard/package.json: Node engine range must match the supported baseline")
+    if dashboard_lock.get("version") != DEVELOPMENT_VERSION:
+        fail(errors, "dashboard/package-lock.json: root version must match VERSION")
+    lock_package = dashboard_lock.get("packages", {}).get("", {})
+    if lock_package.get("version") != DEVELOPMENT_VERSION:
+        fail(errors, "dashboard/package-lock.json: package metadata version must match VERSION")
+    if lock_package.get("engines", {}).get("node") != NODE_ENGINE_RANGE:
+        fail(errors, "dashboard/package-lock.json: Node engine range must match package.json")
+
+    release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    if 'release_version="${GITHUB_REF_NAME#v}"' not in release:
+        fail(errors, ".github/workflows/release.yml: release version must derive from the pushed tag")
+    if 'source_version="$(tr -d \'\\r\\n\' < VERSION)"' not in release or 'if [ "$source_version" != "$release_version" ]' not in release:
+        fail(errors, ".github/workflows/release.yml: pushed tag must match VERSION before publishing")
+    if "dist/SHA256SUMS" not in release or "sha256sum chrote-server-linux-amd64 chrote-server-linux-arm64" not in release:
+        fail(errors, ".github/workflows/release.yml: release binaries must publish a SHA256SUMS file")
+    if re.search(r"^\s+(?:install|uninstall)\.sh\s*$", release, re.MULTILINE):
+        fail(errors, ".github/workflows/release.yml: checkout-dependent scripts must not be standalone release assets")
 
 
 def main() -> int:
@@ -263,9 +452,15 @@ def main() -> int:
     check_active_spec_frontmatter(errors)
     check_enforced_by_paths(errors)
     check_source_truth_index(errors)
+    check_active_local_links(errors)
     check_theme_docs(errors)
     check_security_runtime_facts(errors)
-    check_service_lane_docs(errors)
+    check_public_docs_are_host_neutral(errors)
+    check_current_product_views(errors)
+    check_readme_media(errors)
+    check_repository_links(errors)
+    check_toolchain_contract(errors)
+    check_version_contract(errors)
 
     if errors:
         print("doc-lint: FAIL")
@@ -275,6 +470,7 @@ def main() -> int:
     print("doc-lint: PASS")
     print(f"checked active specs: {', '.join(ACTIVE_SPECS)}")
     print(f"checked source-truth index: {INDEX_PATH.as_posix()}")
+    print("checked active local Markdown links and approved README media")
     return 0
 
 
