@@ -173,6 +173,47 @@ run_failed
 run_succeeded
 ```
 
+### Redacted-run evidence and recovery
+
+`Redact=true` distinguishes an execution-authoritative value from durable run
+evidence. A fresh attempt may hold and route the authoritative raw value only in
+live ephemeral memory; the value is not persisted for replay. Redaction markers,
+hashes, display summaries, and safe ref metadata are evidence and never valid
+substitutes for a graph input.
+
+The durable redaction boundary covers ledger fields, verifier and per-kind
+feedback, captures, reports, artifact contents, output refs and their targets,
+derived evidence, and errors. Ref metadata may persist only when its target has
+already been sanitized or replaced and resolves inside an authorized root. Raw
+executor capture is cleanup-owned transient material, not accepted evidence.
+Before any persistent path can contain raw bytes, a durable pending-redaction
+record is written and fsynced with ownership of that exact target. Its internal
+cleanup locator is the only metadata allowed to point temporarily at an
+unsanitized target and is never exposed as an output ref or graph input.
+Recovery replaces each target idempotently and preserves valid redacted evidence
+byte-for-byte. `run_succeeded` is invalid while any run-owned target remains
+pending.
+
+Recovery may reattach the exact unresolved attempt when the qualified session
+target is proven and no prompt is resent. It may also finish pending cleanup or
+reconcile work that needs no discarded raw value. A pending cleanup target or
+other durable evidence cannot reconstruct graph input. If a new dispatch
+requires an authoritative value that redaction discarded, the next terminal
+event is:
+
+```text
+type: run_failed
+data.code: redacted_input_unavailable
+data.reason: redacted_input_unavailable
+data.unrecoverable: true
+data.relatedSeq: <source event sequence whose raw value was required>
+data.final: true
+```
+
+That run cannot resume and cannot increment its epoch. A retry creates a new run
+with newly supplied authoritative input. See ADR-0005 for the decision and
+enforcement boundary.
+
 ## Revision and concurrency
 
 - APIs should expose revision/etag values for mutable resources.

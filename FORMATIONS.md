@@ -153,7 +153,39 @@ symlink-escaped, non-regular, non-text, or oversized refs block loudly. `ref` is
 not a general host-file read capability, and these root checks are not an OS
 sandbox: tmux agents still run with the host Unix user's permissions. Treat
 output text, refs, filenames, and hydrated artifact content as durable non-secret
-run evidence.
+run evidence. `Redact=true` runs use the stricter boundary below.
+
+## Redacted runs and replay
+
+A `Redact=true` run separates execution-authoritative values from durable
+evidence. Fresh execution may route a raw value only from the live attempt's
+ephemeral in-memory state. The ledger, verifier and per-kind feedback, captures,
+reports, artifact contents, output refs and their targets, derived evidence, and
+errors must not retain that value. A safe ref may remain only after its target is
+sanitized or replaced inside an authorized root.
+
+Redaction markers, hashes, and display summaries explain what was removed; they
+are never graph inputs. Raw executor capture may exist only as cleanup-owned
+transient material. Before a persistent path can contain raw bytes, a durable
+pending-redaction obligation is written and fsynced for that exact target. Its
+internal cleanup locator is never exposed as an output ref or graph input.
+Cleanup and recovery are idempotent, and no run can become final-successful
+while a capture, report, or artifact remains pending redaction.
+
+Recovery may reattach the same unresolved attempt without redispatch when its
+qualified session identity is proven. It may finish pending cleanup or continue
+other work only when no discarded authoritative value is required. Pending
+cleanup targets and other evidence are never sources for reconstructing graph
+input. If a future dispatch needs raw input that redaction intentionally
+discarded, append terminal `type=run_failed` with
+`data.code=redacted_input_unavailable`,
+`data.reason=redacted_input_unavailable`, `data.unrecoverable=true`, and
+`data.final=true`; `data.relatedSeq` identifies the exact source event whose raw
+value was required. The run cannot resume or open another epoch; retry means a
+new run with newly supplied authoritative input. Never dispatch a redaction
+marker or summary in its place.
+
+ADR-0005 defines this boundary and its rejected alternatives.
 
 ## Interaction model
 
@@ -200,8 +232,9 @@ A correct run model:
 7. Gates evaluate code, human, or formation judges and route pass/fail/pushback.
 8. Timeouts, missing sessions, sentinel failures, ambiguous checks, and blocked
    gates record loud events.
-9. Runs can be inspected, followed, resumed, or aborted from `archon` and
-   reflected in the UI.
+9. Runs can be inspected, followed, aborted, and—when their terminal state and
+   evidence contract permit it—resumed from `archon` and reflected in the UI.
+   `run_failed(redacted_input_unavailable)` is final and cannot resume.
 
 Watching is optional. Recovery must not depend on a browser tab staying open.
 

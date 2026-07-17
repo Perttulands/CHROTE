@@ -366,8 +366,13 @@ forward-compatible readers, but the required keys below must be present.
 | `run_succeeded` | `summaryRef`, `outputRefs`, `artifactRefs`, `final=true` |
 
 `promptRef`, `textRef`, `reportRef`, and `summaryRef` may point to files under
-`<run-id>.refs/` when payloads are large or redacted. If `redact` is true, the
-payload keeps hashes and refs but may omit full prompt or reply text.
+`<run-id>.refs/` when payloads are large. If `redact` is true, durable payloads
+may keep a hash, but a ref may remain only after its target is sanitized or
+replaced inside an authorized root. A ref to unsanitized prompt, reply, report,
+or artifact content is invalid even when the ledger omits the inline text. The
+run-private pending-redaction registry is the only temporary exception: its
+cleanup locator is written and fsynced before raw bytes reach the target and is
+never exposed as an output ref or graph input.
 
 Structured payload fields use these shapes:
 
@@ -395,21 +400,35 @@ Replay handles an open dispatch lease as follows:
 
 1. If a matching `slot_result` exists, the slot is complete and is never
    redispatched.
-2. If the recorded `sessionRef` is live, the engine reattaches capture and
-   waits for a matching sentinel or idle-timeout result.
+2. If the recorded qualified `sessionRef` is live and the reconciler proves it
+   still identifies the same unresolved dispatch and attempt, the engine
+   reattaches capture and waits for that attempt's matching sentinel or
+   idle-timeout result.
 3. If capture proves the agent finished while the engine was down, append
    `slot_result` from captured output.
 4. If the session is missing, dead, ambiguous, or capture cannot be reattached,
-   append `error` and then `run_blocked`.
-5. Never send the original prompt a second time without an explicit operator
-   resume that appends `run_resumed`, advances the epoch, and creates a new
+   append `error` and determine whether continuation requires a discarded
+   execution-authoritative value.
+5. For an ordinary recoverable boundary, append `run_blocked`. An explicit
+   operator resume may append `run_resumed`, advance the epoch, and create a new
    `slot_dispatch`.
+6. For `Redact=true`, if continuation requires a raw value that was
+   intentionally not persisted, append `run_failed` with
+   `code=redacted_input_unavailable`,
+   `reason=redacted_input_unavailable`, `unrecoverable=true`, `relatedSeq` set to
+   the exact source event whose authoritative value was required, and
+   `final=true`. Do not append `run_blocked`, open another epoch, or dispatch a
+   marker, hash, summary, pending cleanup target, capture, report, or artifact
+   as input.
+7. Never send the original prompt a second time except through a valid explicit
+   resume of a genuinely blocked, resumable run.
 
 Automatic replay or process reconnect does not advance the epoch. It may append
-`slot_result` for a proven completed dispatch, or `error` followed by
-`run_blocked` when recovery cannot be proven. Explicit resume from a blocked run
-always advances the epoch, even when the first resumed action is reattaching
-capture rather than redispatching.
+`slot_result` for a proven completed dispatch. When recovery cannot be proven,
+it appends `error` followed by either resumable `run_blocked` or the terminal
+redacted-input failure above. Explicit resume from a blocked run always advances
+the epoch, even when the first resumed action is reattaching capture rather than
+redispatching; a final redacted-input failure rejects resume.
 
 Adapter output is data only. Captured text, sentinels, artifact paths, and
 escalation reasons are recorded and parsed; they are never executed.
@@ -434,8 +453,9 @@ Run projection:
   reject further appends.
 - An open `slot_dispatch` without a result projects `running` with open
   dispatches from the ledger. If recovery cannot reattach or prove completion,
-  the reconciler appends `error` and `run_blocked`; only then does projection
-  become `blocked`.
+  the reconciler appends `error` and then either resumable `run_blocked` or
+  terminal `run_failed` with `code=redacted_input_unavailable` when a redacted
+  run cannot recover required raw input.
 
 Node projection:
 
