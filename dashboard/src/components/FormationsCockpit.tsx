@@ -35,8 +35,10 @@ import {
   runStatusFromResponse,
   upsertRunEvent,
 } from './formationsRunState'
-import { clampScale, displayLayoutFor, fallbackNodePosition, zoomTransform } from './formationsCanvas'
-import { GATE_SVG, PLAY_SVG, TYPE_TAG, agentColor, agentRole, agentState, initials } from './formationsCockpitVisuals'
+import { GRID, clampScale, displayLayoutFor, fallbackNodePosition, snapToGrid, tidyLayout, zoomTransform } from './formationsCanvas'
+import { GATE_SVG, PLAY_SVG, TYPE_TAG, agentRole, agentState, harnessGlyph, initials } from './formationsCockpitVisuals'
+import { useSessionOptional } from '../context/SessionContext'
+import { resolveFormationsTextSize } from '../types'
 import { connectionKind, findInputPortAt, findOutputPortAt, isTextEditingTarget, laneYFrom, splitList } from './formationsCockpitDom'
 import { routeJudgeWire, routeOrthoWire } from './formationsRouting'
 import type { ObstacleRect } from './formationsRouting'
@@ -92,6 +94,7 @@ type CockpitUndo =
   | { kind: 'deleteMission'; id: string }
   | { kind: 'assignSlot'; formationId: string; slotId: string; agentId: string; harness: string }
   | { kind: 'moveNode'; id: string; x: number; y: number }
+  | { kind: 'moveNodes'; nodes: { id: string; x: number; y: number }[] }
   | { kind: 'setLane'; edgeId: string; lane: string }
   | { kind: 'setGateJudge'; gateId: string; chain: string[] }
   | { kind: 'detachGateJudge'; gateId: string }
@@ -101,6 +104,8 @@ type CockpitUndo =
   | { kind: 'makeController'; formationId: string; slotId: string }
 
 export default function FormationsCockpit({ active = true }: { active?: boolean } = {}) {
+  const session = useSessionOptional()
+  const textSize = resolveFormationsTextSize(session?.settings.formationsTextSize)
   const [boards, setBoards] = useState<BoardSummary[]>([])
   const [selectedSlug, setSelectedSlug] = useState('')
   const [board, setBoard] = useState<BoardDocument | null>(null)
@@ -110,10 +115,11 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const [error, setError] = useState('')
   const [activeRun, setActiveRun] = useState<RunStatusProjection | null>(null)
   const [runEvents, setRunEvents] = useState<RunEvent[]>([])
-  const [ghost, setGhost] = useState<{ x: number; y: number; agentId: string } | null>(null)
+  const [ghost, setGhost] = useState<{ x: number; y: number; agentId: string; harness?: string } | null>(null)
   const [hoverSlot, setHoverSlot] = useState<string | null>(null)
   const [dragPos, setDragPos] = useState<{ id: string; x: number; y: number } | null>(null)
   const [wires, setWires] = useState<WirePath[]>([])
+  const [geometryTick, setGeometryTick] = useState(0)
   const [tempWire, setTempWire] = useState<{ ax: number; ay: number; bx: number; by: number; kind: WirePath['kind']; moving: 'a' | 'b' } | null>(null)
   const [hoverPort, setHoverPort] = useState<string | null>(null)
   const [gateGhost, setGateGhost] = useState<{ x: number; y: number } | null>(null)
@@ -358,7 +364,22 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       paths.push({ id: conn.id, d, kind, flowing })
     }
     setWires(paths)
-  }, [board, layout, view, dragPos, agents, nodeStates, hiddenWireId, laneDraft])
+  }, [board, layout, view, dragPos, agents, nodeStates, hiddenWireId, laneDraft, geometryTick])
+
+  // Cards ease into place (left/top transitions) and FIT glides the world
+  // transform; wires are measured from the DOM mid-flight, so re-measure once
+  // motion settles or the endpoints stay visually stale.
+  useEffect(() => {
+    const world = worldRef.current
+    if (!world) return
+    const onTransitionEnd = (event: TransitionEvent) => {
+      if (event.propertyName === 'left' || event.propertyName === 'top' || event.propertyName === 'transform') {
+        setGeometryTick(tick => tick + 1)
+      }
+    }
+    world.addEventListener('transitionend', onTransitionEnd)
+    return () => world.removeEventListener('transitionend', onTransitionEnd)
+  }, [])
 
   // ----- mutations -----
   const patchBoard = useCallback(async (patch: Record<string, unknown>): Promise<{ board: BoardDocument; layout: LayoutDocument | null } | null> => {
@@ -394,12 +415,12 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     }
   }, [])
 
-  const persistPosition = useCallback(async (id: string, x: number, y: number) => {
+  const persistPositions = useCallback(async (nodes: { id: string; x: number; y: number }[]) => {
     const currentBoard = boardRef.current
     const currentLayout = layoutRef.current
-    if (!currentBoard || !currentLayout) return
+    if (!currentBoard || !currentLayout || !nodes.length) return
     try {
-      const next = await patchBoardLayout(currentBoard.slug, currentLayout.etag, { nodes: [{ id, x, y }] })
+      const next = await patchBoardLayout(currentBoard.slug, currentLayout.etag, { nodes })
       layoutRef.current = next
       setLayout(next)
       setError('')
@@ -407,6 +428,10 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       setError(err instanceof Error ? err.message : 'Failed to save layout')
     }
   }, [])
+
+  const persistPosition = useCallback(async (id: string, x: number, y: number) => {
+    await persistPositions([{ id, x, y }])
+  }, [persistPositions])
 
   const closeMenu = useCallback(() => setMenu(null), [])
 
@@ -460,6 +485,10 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     }
     if (action.kind === 'moveNode') {
       await persistPosition(action.id, action.x, action.y)
+      return
+    }
+    if (action.kind === 'moveNodes') {
+      await persistPositions(action.nodes)
       return
     }
     if (action.kind === 'setLane') {
@@ -524,7 +553,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     }
     const result = await patchBoard(patch)
     if (!result) retry()
-  }, [patchBoard, patchLayoutEdge, persistPosition])
+  }, [patchBoard, patchLayoutEdge, persistPosition, persistPositions])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -843,7 +872,22 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   }, [activeRun, refreshRunEvents, selectedSlug])
 
   const createSolo = useCallback(() => {
-    void patchBoard({ createFormation: { type: 'solo', title: 'New formation', x: 200, y: 200 } })
+    // Land the new card where the operator is looking: center of the current
+    // viewport in world coordinates, snapped to the canvas grid. Collisions
+    // with existing cards are resolved by the display layout nudge.
+    const rect = viewportRef.current?.getBoundingClientRect()
+    const v = viewRef.current
+    const center = rect
+      ? { x: (rect.width / 2 - v.x) / (v.scale || 1) - 150, y: (rect.height / 2 - v.y) / (v.scale || 1) - 120 }
+      : { x: 200, y: 200 }
+    void patchBoard({
+      createFormation: {
+        type: 'solo',
+        title: 'New formation',
+        x: Math.max(GRID, snapToGrid(center.x)),
+        y: Math.max(GRID, snapToGrid(center.y)),
+      },
+    })
   }, [patchBoard])
 
   // ----- pan + zoom -----
@@ -916,6 +960,23 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     return () => window.cancelAnimationFrame(frame)
   }, [board, layout, fitView])
 
+  // Tidy: layered auto-arrange persisted through the layout sidecar (one bulk
+  // patch, one Ctrl+Z step back) so archon sees the same geometry the UI shows.
+  const tidyBoard = useCallback(() => {
+    const currentBoard = boardRef.current
+    if (!currentBoard) return
+    const layoutMap = new Map<string, LayoutNode>()
+    layoutRef.current?.nodes?.forEach(node => layoutMap.set(node.id, node))
+    const arranged = tidyLayout(currentBoard, layoutMap)
+    if (!arranged.length) return
+    const previous = arranged.map(node => {
+      const shown = displayLayoutByNode.get(node.id) || layoutMap.get(node.id)
+      return { id: node.id, x: shown?.x ?? node.x, y: shown?.y ?? node.y }
+    })
+    undoStack.current.push({ kind: 'moveNodes', nodes: previous })
+    void persistPositions(arranged.map(node => ({ id: node.id, x: node.x, y: node.y })))
+  }, [displayLayoutByNode, persistPositions])
+
   const screenToWorld = useCallback((clientX: number, clientY: number) => {
     const rect = viewportRef.current?.getBoundingClientRect()
     const v = viewRef.current
@@ -936,6 +997,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
         const d = dragNodeRef.current
         // 3px movement threshold so plain clicks don't jiggle cards (reference feel).
         if (!d.moved && Math.abs(event.clientX - d.startX) + Math.abs(event.clientY - d.startY) < 3) return
+        if (!d.moved) worldRef.current?.classList.add('nodedrag')
         d.moved = true
         const scale = viewRef.current.scale || 1
         const nx = d.originX + (event.clientX - d.startX) / scale
@@ -978,7 +1040,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       if (staffRef.current) {
         const staff = staffRef.current
         if (!staff.moved && Math.abs(event.clientX - staff.startX) + Math.abs(event.clientY - staff.startY) >= 6) staff.moved = true
-        setGhost({ x: event.clientX, y: event.clientY, agentId: staff.agentId })
+        setGhost({ x: event.clientX, y: event.clientY, agentId: staff.agentId, harness: staff.harness })
         const el = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null
         const slotEl = el?.closest<HTMLElement>('.slot')
         setHoverSlot(slotEl ? `${slotEl.dataset.fid}:${slotEl.dataset.sid}` : null)
@@ -992,10 +1054,12 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       if (dragNodeRef.current && dragNodeRef.current.pointerId === event.pointerId) {
         const d = dragNodeRef.current
         dragNodeRef.current = null
+        worldRef.current?.classList.remove('nodedrag')
         if (d.moved) {
           const scale = viewRef.current.scale || 1
           undoStack.current.push({ kind: 'moveNode', id: d.id, x: d.originX, y: d.originY })
-          void persistPosition(d.id, Math.round(d.originX + (event.clientX - d.startX) / scale), Math.round(d.originY + (event.clientY - d.startY) / scale))
+          // Release snaps to the visible dot grid so hand-placed cards line up.
+          void persistPosition(d.id, snapToGrid(d.originX + (event.clientX - d.startX) / scale), snapToGrid(d.originY + (event.clientY - d.startY) / scale))
         }
         setDragPos(null)
       }
@@ -1096,7 +1160,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     if (event.button !== 0) return
     event.stopPropagation()
     staffRef.current = { agentId, harness, fromSlot, startX: event.clientX, startY: event.clientY, moved: false }
-    setGhost({ x: event.clientX, y: event.clientY, agentId })
+    setGhost({ x: event.clientX, y: event.clientY, agentId, harness })
   }, [])
 
   const beginNodeDrag = useCallback((event: ReactPointerEvent, id: string, index: number) => {
@@ -1354,7 +1418,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
         <div className="slot-ring">
           {badge ? <span className="badge">{badge}</span> : null}
           {filled
-            ? <span className="face" style={{ background: agentColor(slot.agentId as string) }}>{initials(slot.agentId as string)}</span>
+            ? <span className="face">{harnessGlyph(slot.harness) ?? initials(slot.agentId as string)}</span>
             : <span className="plus">+</span>}
         </div>
         <div className="slot-label">{slot.label}</div>
@@ -1408,10 +1472,8 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const pendingHumanGateId = useMemo(() => openHumanGateId(runEvents), [runEvents])
 
   return (
-    <div className="fmx" data-testid="formations-view" data-cockpit="d7">
+    <div className="fmx" data-testid="formations-view" data-cockpit="d7" data-textsize={textSize}>
       <div className="topbar">
-        <div className="brand"><span className="nm">CHR<b>O</b>TE</span><span className="sub">Formations</span></div>
-        <div className="spacer" />
         <div className="boardpick">
           board
           <select value={selectedSlug} onChange={event => setSelectedSlug(event.target.value)} data-testid="board-picker" disabled={boards.length === 0}>
@@ -1420,22 +1482,25 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
           </select>
           {board ? <span className="rev">rev {board.rev}</span> : null}
         </div>
-        <div className="gatetoken" title="Drag onto the canvas to drop a gate" data-testid="gate-token" onPointerDown={beginGateToken}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M5 11V7a7 7 0 0114 0v4" /><rect x="4" y="11" width="16" height="9" rx="2" /></svg>
-          Gate
-        </div>
+        <div className="sep" />
         <button className="newbtn" onClick={createSolo} data-testid="new-formation" disabled={!board}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
           New formation
         </button>
-        <button className="helpbtn" title="Drag an agent from the roster into a slot to staff it.">?</button>
+        <div className="gatetoken" title="Drag onto the canvas to drop a gate" data-testid="gate-token" onPointerDown={beginGateToken}>
+          {GATE_SVG}
+          Gate
+        </div>
+        <div className="spacer" />
       </div>
 
       <div className="main">
         <aside className="roster" data-testid="agent-roster">
           <div className="roster-hd">
-            <div className="t">Agent roster</div>
-            <div className="s">{rosterAgents.length} catalog agents · {deployedAgentCount} deployed</div>
+            <div className="t">Agents</div>
+            <span className="s" data-testid="roster-count" title={`${rosterAgents.length} catalog agents · ${deployedAgentCount} deployed on this board`}>
+              {rosterAgents.length}{deployedAgentCount ? ` · ${deployedAgentCount} deployed` : ''}
+            </span>
           </div>
           <div className="roster-list">
             {rosterAgents.length === 0
@@ -1450,12 +1515,11 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
                     data-testid={`roster-agent-${agent.id}`}
                     onPointerDown={event => beginStaff(event, agent.id, agent.harnessDefault || '')}
                   >
-                    <span className="av" style={{ background: agentColor(agent.id) }}>{initials(agent.id)}</span>
+                    <span className="av">{harnessGlyph(agent.harnessDefault) ?? initials(agent.id)}</span>
                     <div className="ri">
                       <div className="n">{agent.displayName || agent.id}</div>
-                      <div className="r">{agentRole(agent)}</div>
+                      <div className="r">{agentRole(agent)}{agentState(agent) === 'idle' ? ' · idle' : ''}</div>
                     </div>
-                    <span className={`sd ${agentState(agent)}`} />
                   </div>
                 )
               })}
@@ -1659,6 +1723,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
           <div className="zoomctl">
             <button onClick={() => zoomBy(1.2)} title="Zoom in">+</button>
             <button onClick={() => zoomBy(1 / 1.2)} title="Zoom out">−</button>
+            <button onClick={tidyBoard} title="Arrange cards by graph flow (persists layout, Ctrl+Z to undo)" data-testid="tidy-layout">TIDY</button>
             <button onClick={() => fitView({ smooth: true })} title="Fit">FIT</button>
           </div>
           {error ? <div className="errbar" data-testid="formations-error">{error}</div> : null}
@@ -1797,7 +1862,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       ) : null}
 
       {ghost ? (
-        <div className="fmx-ghost" style={{ left: ghost.x, top: ghost.y, background: agentColor(ghost.agentId) }}>{initials(ghost.agentId)}</div>
+        <div className="fmx-ghost" style={{ left: ghost.x, top: ghost.y }}>{harnessGlyph(ghost.harness) ?? initials(ghost.agentId)}</div>
       ) : null}
       {gateGhost ? (
         <div className="gateghost" style={{ left: gateGhost.x, top: gateGhost.y }}>{GATE_SVG}</div>

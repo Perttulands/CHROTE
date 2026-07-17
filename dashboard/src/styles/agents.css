@@ -322,7 +322,8 @@
   display:flex;
   align-items:center;
   justify-content:center;
-  color:#0f0f0f;
+  background:var(--paper2);
+  color:var(--ink2);
   font-size:13px;
   font-weight:700;
   text-transform:uppercase;
@@ -353,29 +354,6 @@
   text-transform:uppercase;
   text-overflow:ellipsis;
   white-space:nowrap;
-}
-
-.agx .ragent .sd {
-  position:absolute;
-  top:11px;
-  right:9px;
-  width:8px;
-  height:8px;
-  border-radius:50%;
-}
-
-.agx .ragent .sd.on {
-  background:var(--sage);
-  box-shadow:0 0 6px rgba(74,222,128,.6);
-}
-
-.agx .ragent .sd.warn {
-  background:var(--gold);
-  box-shadow:0 0 6px rgba(251,146,60,.55);
-}
-
-.agx .ragent .sd.idle {
-  background:var(--dimmer);
 }
 
 .agx-chip-row {
@@ -505,11 +483,12 @@
 
 .agx .slot.filled .slot-ring {
   padding:3px;
-  background:radial-gradient(var(--sage),#2c7a4a);
+  border:2px solid var(--steel);
+  background:var(--card);
 }
 
 .agx .slot.filled.ctrl .slot-ring {
-  background:radial-gradient(var(--gold),#b3611f);
+  border-color:var(--gold);
 }
 
 .agx .slot.active .slot-ring,
@@ -525,9 +504,9 @@
 .agx .slot-ring .face {
   width:100%;
   height:100%;
-  border:2.5px solid var(--card);
   border-radius:50%;
-  color:#0f0f0f;
+  background:var(--paper2);
+  color:var(--ink);
   display:flex;
   align-items:center;
   justify-content:center;

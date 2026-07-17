@@ -308,8 +308,9 @@ test.describe('Formations cockpit — D7 reference parity', () => {
     const formationBox = await requiredBox(formation, 'D7 formation card')
     const gateBox = await requiredBox(gate, 'D7 gate card')
 
-    expect(topbarBox.height).toBeGreaterThanOrEqual(48)
-    expect(topbarBox.height).toBeLessThanOrEqual(72)
+    // Cockpit-density toolbar (no wordmark row): slimmer than the prototype's.
+    expect(topbarBox.height).toBeGreaterThanOrEqual(38)
+    expect(topbarBox.height).toBeLessThanOrEqual(64)
     expect(Math.round(rosterBox.width)).toBe(236)
     expect(Math.abs(rosterBox.y - topbarBox.bottom)).toBeLessThanOrEqual(2)
     expect(Math.abs(viewportBox.x - rosterBox.right)).toBeLessThanOrEqual(2)
@@ -628,7 +629,9 @@ test.describe('Formations cockpit — direct manipulation gestures', () => {
       const total = node.getTotalLength()
       const matrix = node.getScreenCTM()
       if (!matrix) throw new Error('wire path has no screen matrix')
-      for (const fraction of [0.2, 0.35, 0.5, 0.65, 0.8]) {
+      // Middle-out: points near a wire's ends fall into the 70px reconnect
+      // zones (beginWireDrag), and this helper's callers want the lane gesture.
+      for (const fraction of [0.5, 0.4, 0.6, 0.35, 0.65, 0.25, 0.75]) {
         const point = node.getPointAtLength(total * fraction)
         const screen = new DOMPoint(point.x, point.y).matrixTransform(matrix)
         const hit = document.elementFromPoint(screen.x, screen.y)
@@ -719,6 +722,29 @@ test.describe('Formations cockpit — direct manipulation gestures', () => {
     const gatePatch = layoutNodePatch('gate-review')
     expect(gatePatch?.x).toBeLessThan(gateStart.x)
     expect(gatePatch?.y).toBeGreaterThan(gateStart.y)
+  })
+
+  test('tidy arranges the whole board in one grid-aligned layout patch and undoes in one step', async ({ page }) => {
+    await page.getByTestId('tidy-layout').click()
+    const bulkPatch = () => layoutPatches.find(p => Array.isArray(p.nodes) && (p.nodes as unknown[]).length >= 3)
+    await expect.poll(() => bulkPatch()).toBeTruthy()
+    const nodes = bulkPatch()!.nodes as { id: string; x: number; y: number }[]
+    expect(nodes.map(n => n.id)).toEqual(expect.arrayContaining(['mission-smoke', 'formation-review', 'gate-review']))
+    for (const node of nodes) {
+      expect(node.x % 28).toBe(0)
+      expect(node.y % 28).toBe(0)
+    }
+    // Downstream nodes land in later columns than their source (the mock's
+    // only wire is formation-review → gate-review; the mission is unwired).
+    const byId = new Map(nodes.map(n => [n.id, n]))
+    expect(byId.get('gate-review')!.x).toBeGreaterThan(byId.get('formation-review')!.x)
+
+    const patchesBefore = layoutPatches.length
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Z' : 'Control+Z')
+    await expect.poll(() => layoutPatches.length).toBeGreaterThan(patchesBefore)
+    const undoPatch = layoutPatches[layoutPatches.length - 1]
+    expect(Array.isArray(undoPatch.nodes)).toBe(true)
+    expect((undoPatch.nodes as unknown[]).length).toBe(nodes.length)
   })
 
   test('local formation menu edits input through a popover and undo emits the inverse model operation', async ({ page }) => {

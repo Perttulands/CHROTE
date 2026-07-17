@@ -1420,3 +1420,9 @@ export function useSession(): DashboardContextType {
   }
   return context
 }
+
+/** Like useSession, but returns null outside a SessionProvider (e.g. isolated
+    component tests) so consumers can fall back to defaults. */
+export function useSessionOptional(): DashboardContextType | null {
+  return useContext(SessionContext)
+}
