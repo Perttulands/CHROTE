@@ -81,12 +81,12 @@ func TestFilesHandler_ResolveSafePath_RootAllowedRootCoversFilesystemChildren(t 
 func TestFilesHandler_ResolveSafePath_NormalizesBackslashSeparators(t *testing.T) {
 	handler := &FilesHandler{allowedRoots: []string{"/"}}
 
-	result := handler.resolveSafePath(`/home\perttu`)
+	result := handler.resolveSafePath(`/home\operator`)
 	if result.Error != "" || result.IsRoot {
 		t.Fatalf("resolveSafePath with backslashes = %+v, want allowed absolute path", result)
 	}
-	if result.Path != "/home/perttu" {
-		t.Fatalf("resolved path = %q, want /home/perttu", result.Path)
+	if result.Path != "/home/operator" {
+		t.Fatalf("resolved path = %q, want /home/operator", result.Path)
 	}
 }
 

@@ -319,7 +319,7 @@ describe('FilesView Markdown editor', () => {
 describe('FilesView saved path groups', () => {
   it('renders multiple pinned paths and collapses the pinned group independently', async () => {
     window.localStorage.setItem('chrote.files.pinnedPaths', JSON.stringify([
-      { path: '/home/perttu', kind: 'directory' },
+      { path: '/home/operator', kind: 'directory' },
       { path: '/srv', kind: 'directory' },
     ]))
     window.localStorage.setItem('chrote.files.recentPaths', JSON.stringify([
@@ -330,7 +330,7 @@ describe('FilesView saved path groups', () => {
 
     const pinnedToggle = await screen.findByRole('button', { name: /Pinned.*2/ })
     expect(pinnedToggle).toHaveAttribute('aria-expanded', 'true')
-    expect(screen.getByRole('button', { name: /perttu/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /operator/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /srv/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Recent.*1/ })).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByRole('button', { name: /hosts/ })).toBeInTheDocument()
@@ -349,7 +349,7 @@ describe('FilesView saved path groups', () => {
 
   it('restores collapsed Recent state from localStorage without collapsing Pinned', async () => {
     window.localStorage.setItem('chrote.files.pinnedPaths', JSON.stringify([
-      { path: '/home/perttu', kind: 'directory' },
+      { path: '/home/operator', kind: 'directory' },
     ]))
     window.localStorage.setItem('chrote.files.recentPaths', JSON.stringify([
       { path: '/etc/hosts', kind: 'file' },
@@ -362,7 +362,7 @@ describe('FilesView saved path groups', () => {
     render(<FilesView />)
 
     await waitFor(() => expect(screen.getByRole('button', { name: /Pinned.*1/ })).toHaveAttribute('aria-expanded', 'true'))
-    expect(screen.getByRole('button', { name: /perttu/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /operator/ })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Recent.*1/ })).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByRole('button', { name: /hosts/ })).not.toBeInTheDocument()
   })

@@ -1,153 +1,170 @@
-# Chrote Dashboard
+# CHROTE Dashboard
 
-React + TypeScript web UI for managing tmux sessions in the Chrote environment.
+React + TypeScript cockpit embedded in the CHROTE Go server.
 
-## Quick Start
+## Local development
+
+From `dashboard/`:
 
 ```bash
-npm install
-npm run dev      # Dev server at http://localhost:5173
-npm run lint     # ESLint static check
-npm run build    # Build to dist/ (embedded in Go binary)
+npm ci
+npm run dev
+npm run lint
+npm run test:unit
+npm test -- --project=chromium
+npm run build
 ```
 
-## Architecture
+The Vite development server defaults to `http://127.0.0.1:5173` and proxies API
+requests to the configured CHROTE backend. See `vite.config.ts` and
+`playwright.config.ts` rather than hard-coding a private deployment port in
+contributor docs.
 
-```
+## Shipped navigation
+
+The application shell currently exposes:
+
+- Terminal 1
+- Terminal 2
+- Terminal 3
+- Files
+- Agents
+- Beads
+- Formations
+- Services
+- Scheduled
+- Server (default-enabled feature flag)
+- Settings
+
+Help is an application-shell dialog, not a persistent tab.
+
+## Architecture map
+
+```text
 src/
-├── App.tsx              # Main app with DnD context
+├── App.tsx                         application shell and keep-alive view ownership
 ├── context/
-│   ├── SessionContext   # Global state (sessions, workspaces, drag state)
-│   └── ToastContext     # Toast notification state
+│   ├── SessionContext.tsx          sessions, workspaces, recovery, persistence
+│   └── ToastContext.tsx            operator notifications
 ├── components/
-│   ├── TabBar           # Terminal | Terminal 2 | Files | Beads | Settings | Help tabs
-│   ├── SessionPanel     # Left sidebar with session groups
-│   ├── TerminalArea     # 1-4 terminal windows grid
-│   ├── TerminalWindow   # Single terminal iframe + session tags
-│   ├── FloatingModal    # Pop-out terminal (xterm.js + WebSocket)
-│   ├── FilesView/       # Native file browser with error handling
-│   │   ├── index.tsx    # Main component
-│   │   ├── types.ts     # Types, error classes, path mapping
-│   │   ├── fileService.ts # API layer (no silent fallbacks)
-│   │   └── components/  # ErrorToast, etc.
-│   ├── SettingsView     # Theme and preferences
-│   ├── RoleBadge        # Gastown role badge display
-│   ├── ToastNotification # Toast notification UI
-│   ├── KeyboardShortcutsOverlay # Keyboard shortcuts help modal
-│   └── LayoutPresetsPanel # Save/load layout presets
-├── hooks/
-│   └── useKeyboardShortcuts # Global keyboard shortcuts
-├── utils/
-│   └── roleDetection    # Gastown agent role detection
-└── types.ts             # TypeScript interfaces
+│   ├── TabBar.tsx                  top-level navigation
+│   ├── TerminalArea.tsx            1-4 terminal-window workspace
+│   ├── TerminalWorkspaceDock.tsx   unified Sessions/Files sidecar owner
+│   ├── SessionPanel.tsx            grouped sessions, Peek, Session Bank link
+│   ├── TerminalWindow.tsx          assignment, location, and iframe surface
+│   ├── FilesView/                  full Files workspace
+│   ├── TerminalFilesPanel.tsx      terminal-companion Files sidecar
+│   ├── AgentsView.tsx              agent/persona and mission context
+│   ├── BeadsView.tsx               Beads workspace and issue surfaces
+│   ├── FormationsCockpit.tsx       board/mission/formation/gate cockpit
+│   ├── ServicesView.tsx            configured local service adapters
+│   ├── ScheduledTasksView.tsx      schedules and run history
+│   ├── ServerStatus.tsx            health, resources, and system history
+│   └── SettingsView.tsx            appearance, flags, Session Bank, recovery
+├── hooks/                          keyboard, drag, polling, and layout behavior
+├── utils/                          shared parsing and UI utilities
+└── types.ts                        dashboard contracts and persisted settings
 ```
 
-## Session Tracking
+## Terminal workspace contract
 
-Sessions are actual tmux sessions running inside WSL.
+Each of the three terminal tabs owns an independent workspace with one to four
+terminal windows.
 
-**How it works:**
-1. API server (`/api/tmux/sessions`) lists tmux sessions
-2. Dashboard polls API every 3 seconds
-3. Drag session from sidebar → terminal window assigns it
-4. Terminal iframe loads `/terminal/?arg=session-name`
-5. ttyd receives the arg and attaches to that tmux session
+Sessions and Files are peer views of a unified sidecar:
 
-**Key constraint:** Both ttyd and API must run as the same user to share the tmux socket.
+- closed by default;
+- zero permanent width while closed;
+- pinnable on wide layouts;
+- overlayed at `768px` and below;
+- independently persisted Sessions/Files widths per workspace.
 
-## Drag and Drop
+A session-row click means **Peek**. It does not detach, reassign, or alter the
+window assignment. Attached-window navigation uses the explicit location chip.
+The `/` shortcut opens Sessions for the active terminal workspace and focuses
+its search when no visible dialog or menu owns the key.
 
-Uses `@dnd-kit/core` for drag-and-drop:
+Do not duplicate dock ownership inside `TerminalWindow` or build a second Files
+sidebar. `TerminalWorkspaceDock` is the layout owner.
 
-- **Drag from sidebar** → Drop on window to assign session
-- **Drag session tag** → Move between windows or drop outside to remove
-- **Click session tag** → Switch active session in that window
+## State and lifecycle rules
 
-## Keyboard Shortcuts
+- Terminal iframe identity must survive tab switches and unrelated React renders.
+- Browser state stores presentation and assignment metadata, not durable process
+  state.
+- tmux sessions and host files remain authoritative.
+- Hidden keep-alive views must not steal keyboard events from visible dialogs.
+- Async views need explicit loading, empty, degraded, error, and stale states.
+- Destructive operations require visible operator intent and fail-loud feedback.
 
-Press `?` to see all shortcuts. Key bindings:
+See [`../docs/PRD-terminal-lifecycle.md`](../docs/PRD-terminal-lifecycle.md),
+[`../DESIGN-SYSTEM.md`](../DESIGN-SYSTEM.md), and
+[`../DATA-MODEL.md`](../DATA-MODEL.md).
 
-| Shortcut | Action |
-|----------|--------|
-| `?` | Show keyboard shortcuts help |
-| `/` | Focus session search box |
-| `Tab` | Toggle between Terminal 1 and Terminal 2 |
-| `1-4` | Focus window 1-4 (when on terminal tab) |
-| `Ctrl+S` | Toggle sidebar |
-| `Ctrl+N` | Create new session |
-| `Ctrl+1-9` | Load layout preset 1-9 |
-| `Escape` | Close floating modal or help overlay |
+## Files
 
-## Layout Presets
+The full Files view and terminal Files sidecar share file-service contracts but
+serve different jobs:
 
-Save and restore window layouts with session assignments:
+- **Files view:** browse, edit, compare, pin, and manage configured workspace
+  files.
+- **Files sidecar:** compact terminal companion for selecting and sending useful
+  context without turning the terminal layout into an IDE.
 
-- Click the grid icon (⊞) in the tab bar to open the presets panel
-- Save current layout with a custom name
-- Load presets to restore window configurations
-- Up to 10 presets can be saved (persisted to localStorage)
-- Quick-load with `Ctrl+1` through `Ctrl+9`
+Filesystem errors must remain visible. Never fall back silently to fake data or
+an unconstrained root.
 
-## Role Badges
+## Formations and Agents
 
-Sessions with Gastown agent role prefixes display colored badges:
+The Formations UI works against durable board/layout/run APIs. Tests must preserve
+mission reachability, typed ports, gate branches, revisions/ETags, explicit
+executor boundaries, and ledger-backed run state.
 
-| Role | Pattern | Badge | Description |
-|------|---------|-------|-------------|
-| Mayor | `hq-mayor`, `*-mayor` | 🎩 | Fox conductor |
-| Deacon | `hq-deacon`, `*-deacon` | 🐺 | Wolf in the engine room |
-| Witness | `*-witness` | 🦉 | Watchful owl |
-| Polecat | `*-polecat`, `*-pc-*` | 😺 | Transient worker |
-| Refinery | `*-refinery` | 🏭 | Industrial |
-| Crew | `*-crew-*` | 👷 | Established worker |
-
-## Toast Notifications
-
-The dashboard shows toast notifications for:
-- Session deletion confirmations
-- Session rename confirmations
-- Layout preset operations
-- Error messages
-
-## Terminal Connection
-
-Two modes:
-- **Iframe** (`TerminalWindow`): Uses ttyd with URL args for session switching
-- **WebSocket** (`FloatingModal`): Direct xterm.js connection, sends `tmux attach` command
-
-## API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/tmux/sessions` | GET | List all tmux sessions |
-| `/api/tmux/sessions` | POST | Create new session `{name?: string}` |
-| `/api/health` | GET | Health check |
+Agents is not just a tmux process list: it joins persona/session state with the
+selected board, mission, and active run where those exist. Missing optional data
+must degrade honestly.
 
 ## Testing
 
 ```bash
-npm run test:unit               # Run Vitest unit/component tests
-npm run test:unit -- --coverage # Generate Vitest coverage in coverage/
-npm run lint                    # Run ESLint
+# Static and component checks
+npm run lint
+npm run test:unit
+npm run test:unit -- --coverage
 npm audit --audit-level=moderate
-npm test                        # Run deterministic mocked Playwright tests
-npm run test:headed             # Run mocked Playwright tests with browser visible
-npm run test:ui                 # Interactive Playwright UI
+
+# Deterministic mocked browser suite
+npm test -- --project=chromium
+
+# Interactive debugging
+npm run test:headed
+npm run test:ui
 ```
 
-Live CHROTE backend and terminal integration specs are separated from the default gate:
+Live backend/terminal integration is intentionally separate from the default
+mocked browser gate:
 
 ```bash
-CHROTE_TEST_URL=http://127.0.0.1:8095 npm run test:live
+CHROTE_TEST_URL=http://127.0.0.1:8094 npm run test:live
 ```
 
-Live tests are operator-run only unless the runner has an approved CHROTE backend, tmux, and terminal proxy available at `CHROTE_TEST_URL`. The current `/srv` proving lane is `/srv/chrote` with data under `/srv/data/chrote`, `chrote-srv.service`, HTTP `8095`, and ttyd `7686`; use `http://127.0.0.1:8094` only for the legacy rollback lane.
+Run live tests only against an approved disposable or operator-controlled CHROTE
+instance. They are not a substitute for the deterministic suite.
 
-## Building
+## Production embedding
 
-After making changes:
+From the repository root:
 
 ```bash
-npm run build
-# The dist/ folder is embedded in the Go binary at build time
+./scripts/build-embedded-dashboard.sh
 ```
+
+That script builds the dashboard and replaces
+`src/internal/dashboard/dist` with the exact generated output. Verify parity
+before building a release binary:
+
+```bash
+diff -qr dashboard/dist src/internal/dashboard/dist
+```
+
+Do not hand-maintain embedded asset filenames.

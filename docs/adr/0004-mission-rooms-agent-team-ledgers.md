@@ -6,11 +6,11 @@ Accepted
 ## Context
 CHROTE previously deleted `ChroteChat`; the cockpit is not a generic chat app. The new requirement is different: humans and multiple agents need a durable place to coordinate real work, leave auditable evidence, and recover context without private tmux side channels.
 
-The architecture proposal in `/tmp/chrote-comms-architecture-proposal.md` framed the right primitive: append-only event streams bound to work objects, projected into a Slack-shaped reading surface. Two standalone dogfoods outside `/srv/chrote` tested that framing:
+The architecture proposal framed the right primitive: append-only event streams bound to work objects, projected into a Slack-shaped reading surface. Two standalone disposable dogfoods tested that framing:
 
 - `ctx-q8x.10` proved a one-human/four-agent room state model with ordinary posts, passive mentions, human Send without a second confirmation, and blocked automated nudges.
 - `ctx-q8x.11` ran five real Codex agents through a file-backed room and produced 72 contiguous events, 7 claims, 17 artifacts, and 18 passive mentions. It proved room posting works, but free-text ownership failed: several agents claimed overlapping UI-shell work.
-- The structured dogfood in `/srv/prototypes/chrote-agent-team-structured-dogfood-20260704-010611` added structured claims/reservations/projection and ended with 59 contiguous events, 5 agents, 5 claims, 4 done, 1 supervisor-cancelled stale claim, 28 artifacts, 0 open claims, 0 unaddressed mentions, 0 projection risks, and no tmux injections.
+- The structured dogfood added structured claims/reservations/projection and ended with 59 contiguous events, 5 agents, 5 claims, 4 done, 1 supervisor-cancelled stale claim, 28 artifacts, 0 open claims, 0 unaddressed mentions, 0 projection risks, and no tmux injections.
 
 The load-bearing problem is not chat UX. It is agent-team work ownership, provenance, and recovery.
 

@@ -2280,9 +2280,10 @@ class InstallScriptTest(unittest.TestCase):
             ]:
                 subprocess.run([str(prefix / "bin" / wrapper), "--help"], check=True, text=True, capture_output=True)
         text = script.read_text(encoding="utf-8")
-        forbidden = ["systemctl", "sudo", "/home/tavern", "~/.local"]
+        forbidden = ["systemctl", "sudo", "~/.local"]
         for token in forbidden:
             self.assertNotIn(token, text)
+        self.assertNotRegex(text, r"/home/[^/]+")
 
 
 class ProcEntry:

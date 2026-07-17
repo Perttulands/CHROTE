@@ -2,209 +2,219 @@
 
 ## Vision
 
-CHROTE is the private browser platform for host-owned agentic work.
+CHROTE is the private browser cockpit for host-owned agentic work.
 
-The long-term vision is one cockpit through which the human operator can
-orchestrate swarms of agents, drive agentic development work, inspect durable
-state, and support agent-to-agent collaboration across different harnesses.
+The host owns the terminals, agents, files, dev servers, builds, tests, Beads,
+and recovery state. Browsers and client devices are replaceable windows onto
+that work.
 
-The implementation path is staged:
+The browser is disposable. The work is not.
 
-1. Keep the durable workspace visible and recoverable.
-2. Add a Services platform for host-owned capabilities such as TTS and Context Citadel.
-3. Grow toward a deliberate meta-harness with recipes, teams, run ledgers, and
-   audited agent collaboration.
+## Product contract
 
-The browser is disposable. The Ubuntu host owns the work.
+CHROTE gives one trusted operator a coherent control surface over a configured
+Linux or WSL workspace. It keeps durable terminal work visible, makes local
+state inspectable, and adds explicit orchestration primitives without moving the
+source of truth into the browser.
 
-## Current Product
-
-CHROTE is currently the durable browser cockpit for a configured host
-development workspace.
-
-The host owns terminals, agents, files, dev servers, builds, tests, Beads, logs,
-and runtime state. Client devices only view and operate that state.
-
-### Current Goals
+### Current goals
 
 1. Make durable tmux sessions visible and controllable from a browser.
-2. Keep browser or device disconnects from killing important work.
-3. Provide file and Beads visibility in the same cockpit.
-4. Surface agent-like sessions without depending on a specific orchestrator.
-5. Wrap selected local services through CHROTE-owned server-side routes.
-6. Stay private to localhost and Tailscale unless explicitly changed.
-7. Keep file-backed Formations boards, runs, and agent authoring visible through
-   one shared dashboard/Archon model.
+2. Keep device disconnects and CHROTE restarts from silently killing important work.
+3. Put terminal sessions and relevant files beside each other without pretending
+   to be an IDE.
+4. Surface agent sessions, Beads work, scheduled tasks, services, and server
+   health in one cockpit.
+5. Keep experimental orchestration work explicit and isolated from the shipped
+   cockpit until it earns a release.
+6. Keep the deployment private to localhost or an operator-controlled private
+   network unless explicitly configured otherwise.
 
-### Current Non-Goals
+### Current non-goals
 
-- CHROTE is not an IDE.
-- CHROTE does not expose Windows as the workspace source of truth.
-- CHROTE does not replace `bd`.
-- CHROTE does not assume Gastown, Ralph, or vendored orchestrator components.
-- CHROTE does not currently own a general-purpose autonomous messaging or IPC
-  fabric. Explicit, bounded dispatch inside a user-authored Formations run is a
-  separate workflow contract.
+- CHROTE is not a hosted multi-tenant SaaS product.
+- CHROTE is not an OS sandbox or a security boundary around tmux agents.
+- CHROTE is not an IDE and does not make the browser the workspace source of truth.
+- CHROTE does not replace `tmux`, `bd`, Git, or the underlying AI harnesses.
+- CHROTE does not promise autonomous agent society, implicit agent-to-agent chat,
+  or magic recovery of arbitrary shell state.
+- CHROTE does not require Gastown, Ralph, or a single preferred agent harness.
 
-## Current Views
+## Current views
 
-| View | Purpose |
+| View | Operator job |
 | --- | --- |
-| Terminal | Attach panes to durable tmux sessions |
+| Terminal 1 | First independent terminal workspace with 1-4 durable tmux windows |
 | Terminal 2 | Second independent terminal workspace |
-| Files | Browse allowed host workspace files |
-| Agents | Observe agent-like tmux sessions |
-| Beads | Show modern `bd` project issues, ready work, health, and optional `bv` sidecar usage |
-| Formations | Author and inspect file-backed agent workflows and durable runs |
-| Services | Operate selected `/srv` services through CHROTE-owned proxies |
-| Settings | Theme, font, session behavior |
-| Help | Dashboard usage |
+| Terminal 3 | Third independent terminal workspace |
+| Files | Browse, inspect, edit, compare, and send configured workspace files |
+| Agents | Inspect agent personas/sessions and the mission/run context around them |
+| Beads | Inspect configured `bd` workspaces, issues, ready work, and health |
+| Formations | Develop and inspect file-backed orchestration contracts without presenting them as shipped product |
+| Services | Operate explicitly configured local service adapters through CHROTE-owned routes |
+| Scheduled | Inspect and manage CHROTE scheduled tasks and their run history |
+| Server | Inspect server health, resources, events, and recovery history |
+| Settings | Configure appearance, terminal behavior, Session Bank, feature flags, and recovery actions |
 
-## Formations foundation and accepted target
+Help and keyboard guidance are available from the application shell rather than
+as a separate persistent workspace.
 
-The current product already has file-backed boards with missions, agent
-formations, gates, stable connections/ports, Archon and API authoring, lab and
-tmux execution, and append-only run ledgers. That foundation is real but not the
-finished workflow cockpit.
+## Durable terminal workspace
 
-ADR-0006 accepts the next mixed-workflow model: fixed Mission entry, Formation agent
-execution, pure frozen-profile Tool transformation, and Gate evaluation/routing with
-typed named ports. Agent-first authoring, deterministic Tool steps, canonical
-node/attempt/artifact projection, typed gate feedback, and exact run-bound
-per-slot terminal Peek are active target work and are not implemented on current main.
-Current boards remain the compatibility base while those slices land behind
-their explicit validation and certification gates.
-Accepted runtime authority moves canonical ledgers, immutable graph/private
-bindings, sealed Tool inputs, and pending raw-redaction state under the
-writer-only Formations host-authority root, supplied explicitly and shared across
-lanes capable of `authoritySchema=2`, outside generic Files roots. Users see sanitized
-run/event/binding projections and currently authorized artifacts through the
-existing cockpit/File Peek surfaces; raw authority is neither browsable nor
-mutable through Files.
+### Terminal panes
 
-## Services Platform V1
+- Each terminal workspace owns its own layout, attached sessions, labels, and
+  sidecar state.
+- A workspace can show one to four terminal windows.
+- tmux remains the durable process/session substrate; CHROTE does not copy shell
+  state into browser storage.
+- Browser/device disconnects must not terminate tmux sessions.
+- Refit and recovery controls are explicit operator actions.
 
-The current Services stage makes selected local services legible and operable
-inside CHROTE.
+### Sessions and Files sidecar
 
-V1 services are:
+Sessions and Files are peer views of one terminal-workspace sidecar.
 
-| Service | Operator outcome |
-| --- | --- |
-| TTS Gateway | See agent voice messages, generation status, playback, backend/voice choices, and enqueue test messages |
-| Context Citadel | Read, edit, save, inspect history, and ask grounded questions over Markdown/Git-backed context files |
+- The sidecar is closed by default and reserves no permanent terminal width.
+- Wide layouts may pin it; narrow layouts overlay it.
+- Session row selection means **Peek**. It must not detach, reassign, or mutate
+  terminal-window assignment metadata.
+- Navigating an attached session occurs through its explicit location chip.
+- The active sidecar view, pin preference, and separate Sessions/Files widths
+  persist per terminal workspace.
+- The `/` shortcut opens Sessions for the active terminal workspace and focuses
+  its search when no visible dialog or menu owns the key.
 
-### Services Requirements
+### Session Bank and workload recovery
 
-- Add a top-level `Services` tab without disrupting existing terminal iframe
-  lifecycle behavior.
-- Keep service runtimes outside the browser and behind CHROTE-owned routes.
-- Proxy service access through CHROTE-owned API routes instead of making browser
-  code call raw service ports directly.
-- Keep Context Citadel bearer tokens server-side only.
-- Provide clear degraded states when a service is unavailable or not configured.
-- Keep Services v1 focused on TTS and Context Citadel.
-- Do not implement Agent Teams, recipes, autonomous agent messaging, or Gas City
-  orchestration as part of Services v1.
+- CHROTE records previously observed sessions so an operator can distinguish
+  live, offline, recoverable, and unmanaged work after a restart.
+- Typed recovery descriptors may reconstruct supported agent or command
+  workloads using canonical argument vectors and constrained paths.
+- Legacy or unsafe entries remain inspection-only or require explicit operator
+  action; CHROTE must not fabricate arbitrary shell recovery.
+- Recovery plans are host-owned state, not browser-local state.
+- Bulk destruction remains an advanced emergency action.
 
-### Service Configuration
+### Persistent agents
 
-CHROTE service adapters use localhost defaults and may be overridden by runtime
-environment variables:
+- Configured persistent agents expose lifecycle state such as running, backoff,
+  stopped, and failed.
+- CHROTE may start, stop, or retry a persistent agent only through explicit API
+  operations and configured supervisor/runtime contracts.
+- Persistent state does not imply autonomous authority to message, claim, or
+  mutate unrelated work.
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `CHROTE_TTS_URL` | `http://127.0.0.1:3100` | TTS Gateway upstream |
-| `CHROTE_CONTEXT_API_URL` | `http://127.0.0.1:3200` | Context Citadel upstream |
-| `CHROTE_CONTEXT_API_TOKEN` | unset | Server-side owner token for Context Citadel operations |
+## Files
 
-Secrets must live in private runtime configuration, not tracked docs. The
-`/srv` proving lane runs from `/srv/chrote` with data under `/srv/data/chrote`,
-system unit `chrote-srv.service`, HTTP `127.0.0.1:8095`, and ttyd `7686`.
-Its private environment is under `/srv/chrote/config/chrote.env` and the
-installed system unit reads `/etc/chrote/chrote-srv.env`.
+- File access is constrained to configured roots and the Unix permissions of the
+  CHROTE process.
+- The Files view is a terminal companion: browse, inspect, edit, compare, and
+  send context to a session without becoming a general-purpose IDE.
+- Symlinks and mutations must remain within configured roots after resolution.
+- Browser convenience does not weaken the host filesystem boundary.
 
-The legacy rollback lane runs from `/home/perttu/chrote`, user unit
-`chrote.service`, HTTP `127.0.0.1:8094`, ttyd `7683`, and may load
-`~/.config/chrote/services.env`.
+## Beads and agent observability
 
-## Runtime Requirements
+- CHROTE uses configured `bd` commands and JSON output.
+- Multiple Beads workspaces may be configured; absence of Beads is a degraded
+  integration, not a dashboard crash.
+- `bv` is optional and remains a terminal-side graph viewer, not CHROTE's issue
+  source of truth.
+- Agent observation is harness-neutral and may use configured session prefixes
+  and persona metadata.
+- Absence of agent sessions is normal.
 
-- Run the `/srv` proving lane as the dedicated `chrote` service identity.
-- Bind `/srv` CHROTE HTTP to `127.0.0.1:8095`.
-- Bind `/srv` ttyd to `127.0.0.1:7686`.
-- Read per-user tmux socket mappings from private runtime configuration.
-- Keep the legacy rollback lane available on `127.0.0.1:8094` and ttyd `7683` until cutover is proven.
-- Restrict file roots to configured workspace roots.
-- Expose the dashboard through a private access layer such as Tailscale Serve.
-- Keep all service adapters private to localhost or tailnet-safe routes.
+## Experimental Formations and missions
 
-## Agent Observability Requirements
+Formations is implemented on `main` as an unreleased experimental orchestration
+surface. Its presence in a development build is not a promise that it ships in
+the latest tagged alpha or belongs in the public quick-start path.
 
-- Detect sessions using configurable prefixes.
-- Show counts for total, working, idle, and Beads-linked agents.
-- Show last non-empty terminal lines.
-- Infer simple state from recent terminal output.
-- Extract modern Beads IDs such as `home-fv6.9`.
-- Treat absence of agent sessions as normal.
-- Treat absence of a default tmux server as normal.
+- Boards, layouts, personas, missions, formations, gates, connections, and run
+  ledgers remain durable host-owned files.
+- Inputs and outputs are typed ports; fan-in waits and fan-out follows explicit
+  output connections.
+- Gates produce explicit verdicts and ledger events.
+- Mission and formation runs are inspectable and resumable only within their
+  documented execution contract.
+- The deterministic lab executor is the safest proving environment.
+- Isolated and live tmux execution require explicit configuration and promotion;
+  Formations must not create or kill unrelated tmux sessions.
+- Formations is not a text-routing fallback and does not silently invent missing
+  connections, workers, or gate outcomes.
 
-## Beads Requirements
+`FORMATIONS.md`, `ARCHON.md`, and `DATA-MODEL.md` own the detailed experimental
+contracts. Promotion requires an explicit release decision, current media, and
+installer/runtime evidence.
 
-- Use configured `bd`.
-- Use `bd --json` output.
-- Do not require `bv` for dashboard operation.
-- Support `bv` as an optional TUI sidecar generated from modern `bd export`.
-- Detect configured Beads workspaces.
-- Provide issues, triage, and insights endpoints for the dashboard.
+## Services
 
-## Roadmap
+The Services view hosts adapters for explicitly configured local capabilities.
+The public build does not bundle an upstream service, service URL, or working
+credential. Adapter code in the tree is not evidence that an integration is
+configured or currently authenticated.
 
-### Phase 1 - Durable Cockpit
+- Browser code calls CHROTE-owned routes rather than raw upstream ports.
+- Tokens stay in server-side runtime configuration.
+- Missing or unhealthy upstream services render a clear degraded state.
+- Service adapters do not become hidden prerequisites for terminals, Files,
+  Beads, Formations, or Server health.
 
-Completed foundation. CHROTE exposes durable terminals, files, Beads, agent
-observability, and private tailnet access.
+## Scheduled tasks and Server status
 
-### Phase 2 - Services Platform
+- Scheduled tasks are stored as host-owned definitions with explicit enabled,
+  run, lock, and history state.
+- Stale locks may be diagnosed and recovered without silently double-running a
+  task.
+- Server status exposes health, resource observations, runtime events, and
+  bounded history useful for diagnosing restarts and degradation.
+- Telemetry is operational evidence, not an external analytics pipeline.
 
-Current phase. CHROTE is a component host for selected local services,
-starting with TTS Gateway and Context Citadel through server-side proxies.
+## Security and deployment boundary
 
-### Phase 3 - Service Expansion
+- Default HTTP binding is loopback-only.
+- CHROTE has no built-in application login. Anyone who can reach the dashboard is
+  inside the trusted operator boundary and can reach terminal-grade capabilities.
+- Remote access belongs behind operator-controlled private networking and HTTPS.
+- CORS configuration is not authentication.
+- File roots constrain CHROTE APIs; they do not sandbox tmux agents or their Unix
+  user.
+- Secrets live in private runtime configuration, never tracked docs or browser
+  storage.
 
-Later Services components may include image generation, Camofox browser
-automation, Ollama status, and Gas City read-only observation if they earn their
-place in the operator workflow.
+See `SECURITY.md` for the public security contract.
 
-### Phase 4 - Formations and Meta-Harness
+## Roadmap boundary
 
-The file-backed Formations foundation is present and under active stabilization.
-The accepted target coordinates interchangeable harnesses such as Codex, Claude
-Code, Pi, OpenCode, Hermes, and generic tmux agents through explicit adapters,
-mixed workflow nodes, run ledgers, and audited control surfaces. Tool steps,
-host-owned asynchronous coordination, full run inspection, and exact terminal
-Peek remain target behavior until their Beads and exact-candidate gates close.
+### Shipped foundation
 
-### Phase 5 - Agent Teams
+- Three durable terminal workspaces
+- Unified Sessions/Files sidecars
+- Files, Agents, Beads, Services, Scheduled, and Server views
+- Session Bank and typed workload recovery
 
-Planned later. Agent Teams should support role topology, safe session targeting,
-audited nudges/messages, durable transcripts, and human approval boundaries.
-This remains roadmap work until the adapter, ledger, safety, and recovery model
-are implemented.
+### Deliberate next steps
 
-## Acceptance Criteria
+- Promote Formations only after its authoring, execution, security, install, and
+  recovery contracts pass an explicit release gate
+- Broader clean-install and release portability
+- Stronger reusable harness adapters and run provenance
+- Better agent-team ownership, reservation, handoff, and human-approval flows
+- Additional local service adapters only when they earn a place in the operator workflow
 
-- `go test ./...` passes.
-- `npm run build` passes.
-- `chrote-srv.service` is active after restart for the `/srv` proving lane.
-- `chrote.service` remains the labeled legacy rollback lane until cutover is proven.
-- `/api/health` returns OK.
-- `/api/tmux/sessions` returns the CHROTE tmux session list.
-- `/api/oracle/status` returns OK even when no agents are running.
-- `/api/beads/health` reports modern `bd`.
-- Services routes report clear health/degraded states for TTS and Context Citadel.
-- Services UI can show TTS health/messages, enqueue voice output, play ready
-  messages, and show generation errors.
-- Services UI can list/read/save Context docs, show history, and ask grounded
-  questions when a server-side Context Citadel token is configured.
-- Tailscale Serve continues to expose `:8445` only to the tailnet.
+Roadmap text is not permission to claim unshipped behavior in the README.
+
+## Acceptance criteria
+
+- The embedded dashboard and Go API build from one reproducible source tree.
+- Go tests, race tests, vet, dashboard lint/unit/browser tests, dependency audits,
+  and documentation checks pass in CI.
+- `/api/health` returns a healthy response on a supported installation.
+- Terminal sessions survive browser disconnects.
+- Unknown or unavailable optional integrations degrade clearly.
+- File access remains under configured roots.
+- Recovery, Formations execution, and destructive actions fail loud at their
+  safety boundaries.
+- Public documentation describes supported generic installation and behavior,
+  not one operator's private host layout.

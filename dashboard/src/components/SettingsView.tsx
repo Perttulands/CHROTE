@@ -508,7 +508,7 @@ function SettingsView({ sessionBankFocusNonce = 0 }: SettingsViewProps = {}) {
               className="settings-input"
               value={projectPathInput}
               onChange={(event) => setProjectPathInput(event.target.value)}
-              placeholder="/home/tavern/velvetwood"
+              placeholder="/workspace/project"
             />
             <button
               type="submit"

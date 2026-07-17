@@ -25,6 +25,9 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Documentation contract
+        run: python3 scripts/doc-lint.py
+
       - name: Dashboard install dependencies
         run: |
           cd dashboard

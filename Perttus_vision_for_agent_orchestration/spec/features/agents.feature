@@ -4,7 +4,7 @@ Feature: Agents exist, are discoverable, and can be live-bound
   So that I can staff formations without Perttu naming sockets or hand-writing config
 
   Background:
-    Given a workspace at "/home/perttu/chrote"
+    Given a workspace at "/workspace/chrote"
     And the central persona home "~/agents/" contains the cards:
       | id     | kind       | tags                        | default harness | default sessionStem |
       | archon | archon     | framing, routing            | hermes          | archon              |

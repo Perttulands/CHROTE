@@ -30,7 +30,7 @@ Both packets use the same conceptual model. A **mission** is the entry point. It
   "id": "mission_01J9XF...",
   "title": "Improve session search",
   "objective": "Make session search fuzzy and keyboard-first",
-  "workspace": "/home/perttu/chrote",
+  "workspace": "/workspace/chrote",
   "status": "draft",
   "nodes": [
     {

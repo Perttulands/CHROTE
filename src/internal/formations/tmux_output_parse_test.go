@@ -26,11 +26,11 @@ func TestParseChroteOutputsDoesNotTreatFreeformJSONAsRoutedOutput(t *testing.T) 
 }
 
 func TestParseChroteOutputsRepairsTerminalWrappedJSONString(t *testing.T) {
-	_, outputs, err := parseChroteOutputs("{\n  \"port_report\": {\n    \"text\": \"done\",\n    \"ref\": \"/home/perttu/.formations/artifacts/run_123/\n  agents-tab-audit.md\"\n  }\n}")
+	_, outputs, err := parseChroteOutputs("{\n  \"port_report\": {\n    \"text\": \"done\",\n    \"ref\": \"/home/operator/.formations/artifacts/run_123/\n  agents-tab-audit.md\"\n  }\n}")
 	if err != nil {
 		t.Fatalf("parse wrapped outputs: %v", err)
 	}
-	if got, want := outputs["port_report"].Ref, "/home/perttu/.formations/artifacts/run_123/agents-tab-audit.md"; got != want {
+	if got, want := outputs["port_report"].Ref, "/home/operator/.formations/artifacts/run_123/agents-tab-audit.md"; got != want {
 		t.Fatalf("ref = %q, want %q", got, want)
 	}
 }
