@@ -72,10 +72,13 @@ free-space grid heuristic to place only the new node; explicit `--x` or `--y`
 keeps the supplied coordinates exact. Connection-aware neighbor placement
 remains target behavior and is not yet implemented.
 
-Current main also executes `mission run`, `formation run`, and `run resume`
-synchronously in an Archon-local engine, reads workspace run files directly,
-and implements `run abort` by appending final cancellation. That is compatibility
-behavior, not the accepted schema-2 ownership contract.
+Current Archon keeps schema-1 definition authoring and inspection, plus local
+schema-1 `run list`, `status`, `logs`, `follow`, and `ask` inspection. Runtime
+mutation verbs (`mission run`, `formation run`, `gate approve`, `gate reject`,
+`run resume`, and `run abort`) are deliberately non-authorizing: they fail at
+the runtime-authority boundary before board or run reads, artifact writes,
+dispatch, or tmux effects. They do not fall back to the local engine or private
+schema-2 ledgers.
 
 Schema-1 inline Formation verification is retired by ADR-0008. Archon inspection
 keeps legacy blocks legible, but authoring, run start, resume, and verdict entry
@@ -85,8 +88,9 @@ of the Formation to it,
 `formation remove-verification <board> <formation> --replacement-gate <gate>`
 is the compatibility-only removal operation. The named Gate must already exist
 and have that input connection; Archon never converts, creates or rewires the
-legacy block automatically. Historical runs remain inspectable and may still be
-terminated as canceled or failed without resuming legacy execution.
+legacy block automatically. Historical schema-1 runs remain inspectable through
+the read-only run commands. Current Archon cannot resume or terminate them;
+those verbs fail at the same non-authorizing runtime boundary.
 
 ADR-0007 accepts a different runtime boundary. Archon continues to author,
 validate, and inspect workflow definitions offline through the shared package.

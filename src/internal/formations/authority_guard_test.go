@@ -76,6 +76,71 @@ func TestGuardRuntimeWorkspaceAuthorityV1MatchesOpenedWorkspaceIdentity(t *testi
 	}
 }
 
+func TestGuardRuntimeWorkspaceAuthorityV1RejectsAuthorityRootWorkspaceOverlap(t *testing.T) {
+	tests := []struct {
+		name  string
+		paths func(*testing.T) (string, string)
+	}{
+		{
+			name: "authority root inside workspace",
+			paths: func(t *testing.T) (string, string) {
+				workspace := t.TempDir()
+				root := filepath.Join(workspace, ".host-private-formations")
+				if err := os.Mkdir(root, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				return root, workspace
+			},
+		},
+		{
+			name: "workspace inside authority root",
+			paths: func(t *testing.T) (string, string) {
+				root := t.TempDir()
+				workspace := filepath.Join(root, "workspace")
+				if err := os.Mkdir(workspace, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				return root, workspace
+			},
+		},
+		{
+			name: "authority root inside resolved workspace",
+			paths: func(t *testing.T) (string, string) {
+				base := t.TempDir()
+				resolvedWorkspace := filepath.Join(base, "resolved-workspace")
+				if err := os.Mkdir(resolvedWorkspace, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				configuredWorkspace := filepath.Join(base, "configured-workspace")
+				if err := os.Symlink(resolvedWorkspace, configuredWorkspace); err != nil {
+					t.Fatal(err)
+				}
+				root := filepath.Join(resolvedWorkspace, ".host-private-formations")
+				if err := os.Mkdir(root, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				return root, configuredWorkspace
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root, workspace := test.paths(t)
+			before := snapshotRuntimeAuthorityFixture(t, root, workspace)
+			result, err := GuardRuntimeWorkspaceAuthorityV1(root, workspace)
+			assertRuntimeGuardDisabled(t, result.Capability)
+			var guardErr *RuntimeAuthorityGuardError
+			if !errors.As(err, &guardErr) || guardErr.Stage != RuntimeAuthorityGuardStageRoot || guardErr.Code != RuntimeAuthorityGuardConflict {
+				t.Fatalf("overlapping authority root error = %#v, want typed root conflict", err)
+			}
+			if got := snapshotRuntimeAuthorityFixture(t, root, workspace); !reflect.DeepEqual(got, before) {
+				t.Fatalf("overlap rejection mutated state\nbefore: %#v\nafter:  %#v", before, got)
+			}
+		})
+	}
+}
+
 func TestGuardRuntimeWorkspaceAuthorityV1RejectsAliasAndChangedTarget(t *testing.T) {
 	t.Run("alias cannot select registered workspace", func(t *testing.T) {
 		fixture := newRuntimeAuthorityFixture(t)
