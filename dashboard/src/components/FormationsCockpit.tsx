@@ -35,12 +35,16 @@ import {
   runStatusFromResponse,
   upsertRunEvent,
 } from './formationsRunState'
-import { clampScale, displayLayoutFor, fallbackNodePosition, zoomTransform } from './formationsCanvas'
-import { GATE_SVG, PLAY_SVG, TYPE_TAG, agentColor, agentRole, agentState, initials } from './formationsCockpitVisuals'
+import { GRID, clampScale, displayLayoutFor, fallbackNodePosition, snapToGrid, tidyLayout, zoomTransform } from './formationsCanvas'
+import { GATE_SVG, PLAY_SVG, TYPE_TAG, agentRole, agentState, harnessGlyph, initials } from './formationsCockpitVisuals'
+import { useSessionOptional } from '../context/SessionContext'
+import { resolveFormationsTextSize } from '../types'
 import { connectionKind, findInputPortAt, findOutputPortAt, isTextEditingTarget, laneYFrom, splitList } from './formationsCockpitDom'
 import { routeJudgeWire, routeOrthoWire } from './formationsRouting'
 import type { ObstacleRect } from './formationsRouting'
 import { findAddedByID } from './formationsBoardModel'
+import { createFormationsInteractionOwner } from './formationsInteraction'
+import type { FormationsInteractionOwner } from './formationsInteraction'
 import type {
   AgentProjection,
   BoardConnection,
@@ -92,6 +96,7 @@ type CockpitUndo =
   | { kind: 'deleteMission'; id: string }
   | { kind: 'assignSlot'; formationId: string; slotId: string; agentId: string; harness: string }
   | { kind: 'moveNode'; id: string; x: number; y: number }
+  | { kind: 'moveNodes'; nodes: { id: string; x: number; y: number }[] }
   | { kind: 'setLane'; edgeId: string; lane: string }
   | { kind: 'setGateJudge'; gateId: string; chain: string[] }
   | { kind: 'detachGateJudge'; gateId: string }
@@ -101,6 +106,8 @@ type CockpitUndo =
   | { kind: 'makeController'; formationId: string; slotId: string }
 
 export default function FormationsCockpit({ active = true }: { active?: boolean } = {}) {
+  const session = useSessionOptional()
+  const textSize = resolveFormationsTextSize(session?.settings.formationsTextSize)
   const [boards, setBoards] = useState<BoardSummary[]>([])
   const [selectedSlug, setSelectedSlug] = useState('')
   const [board, setBoard] = useState<BoardDocument | null>(null)
@@ -110,10 +117,11 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const [error, setError] = useState('')
   const [activeRun, setActiveRun] = useState<RunStatusProjection | null>(null)
   const [runEvents, setRunEvents] = useState<RunEvent[]>([])
-  const [ghost, setGhost] = useState<{ x: number; y: number; agentId: string } | null>(null)
+  const [ghost, setGhost] = useState<{ x: number; y: number; agentId: string; harness?: string } | null>(null)
   const [hoverSlot, setHoverSlot] = useState<string | null>(null)
   const [dragPos, setDragPos] = useState<{ id: string; x: number; y: number } | null>(null)
   const [wires, setWires] = useState<WirePath[]>([])
+  const [geometryTick, setGeometryTick] = useState(0)
   const [tempWire, setTempWire] = useState<{ ax: number; ay: number; bx: number; by: number; kind: WirePath['kind']; moving: 'a' | 'b' } | null>(null)
   const [hoverPort, setHoverPort] = useState<string | null>(null)
   const [gateGhost, setGateGhost] = useState<{ x: number; y: number } | null>(null)
@@ -129,12 +137,9 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const worldRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<ViewTransform>(view)
-  const staffRef = useRef<DragStaff | null>(null)
-  const dragNodeRef = useRef<DragNode | null>(null)
-  const panRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(null)
-  const wireDragRef = useRef<WireDrag | null>(null)
-  const laneDragRef = useRef<LaneDrag | null>(null)
-  const gateDragRef = useRef<boolean>(false)
+  const interactionOwnerRef = useRef<FormationsInteractionOwner | null>(null)
+  if (!interactionOwnerRef.current) interactionOwnerRef.current = createFormationsInteractionOwner()
+  const interactionOwner = interactionOwnerRef.current
   const undoStack = useRef<CockpitUndo[]>([])
   const fittedBoardRef = useRef<string | null>(null)
   const judgeHoverRef = useRef<string | null>(null)
@@ -358,7 +363,22 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       paths.push({ id: conn.id, d, kind, flowing })
     }
     setWires(paths)
-  }, [board, layout, view, dragPos, agents, nodeStates, hiddenWireId, laneDraft])
+  }, [board, layout, view, dragPos, agents, nodeStates, hiddenWireId, laneDraft, geometryTick])
+
+  // Cards ease into place (left/top transitions) and FIT glides the world
+  // transform; wires are measured from the DOM mid-flight, so re-measure once
+  // motion settles or the endpoints stay visually stale.
+  useEffect(() => {
+    const world = worldRef.current
+    if (!world) return
+    const onTransitionEnd = (event: TransitionEvent) => {
+      if (event.propertyName === 'left' || event.propertyName === 'top' || event.propertyName === 'transform') {
+        setGeometryTick(tick => tick + 1)
+      }
+    }
+    world.addEventListener('transitionend', onTransitionEnd)
+    return () => world.removeEventListener('transitionend', onTransitionEnd)
+  }, [])
 
   // ----- mutations -----
   const patchBoard = useCallback(async (patch: Record<string, unknown>): Promise<{ board: BoardDocument; layout: LayoutDocument | null } | null> => {
@@ -394,12 +414,12 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     }
   }, [])
 
-  const persistPosition = useCallback(async (id: string, x: number, y: number) => {
+  const persistPositions = useCallback(async (nodes: { id: string; x: number; y: number }[]) => {
     const currentBoard = boardRef.current
     const currentLayout = layoutRef.current
-    if (!currentBoard || !currentLayout) return
+    if (!currentBoard || !currentLayout || !nodes.length) return
     try {
-      const next = await patchBoardLayout(currentBoard.slug, currentLayout.etag, { nodes: [{ id, x, y }] })
+      const next = await patchBoardLayout(currentBoard.slug, currentLayout.etag, { nodes })
       layoutRef.current = next
       setLayout(next)
       setError('')
@@ -407,6 +427,10 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       setError(err instanceof Error ? err.message : 'Failed to save layout')
     }
   }, [])
+
+  const persistPosition = useCallback(async (id: string, x: number, y: number) => {
+    await persistPositions([{ id, x, y }])
+  }, [persistPositions])
 
   const closeMenu = useCallback(() => setMenu(null), [])
 
@@ -460,6 +484,10 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     }
     if (action.kind === 'moveNode') {
       await persistPosition(action.id, action.x, action.y)
+      return
+    }
+    if (action.kind === 'moveNodes') {
+      await persistPositions(action.nodes)
       return
     }
     if (action.kind === 'setLane') {
@@ -524,7 +552,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     }
     const result = await patchBoard(patch)
     if (!result) retry()
-  }, [patchBoard, patchLayoutEdge, persistPosition])
+  }, [patchBoard, patchLayoutEdge, persistPosition, persistPositions])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -843,7 +871,22 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   }, [activeRun, refreshRunEvents, selectedSlug])
 
   const createSolo = useCallback(() => {
-    void patchBoard({ createFormation: { type: 'solo', title: 'New formation', x: 200, y: 200 } })
+    // Land the new card where the operator is looking: center of the current
+    // viewport in world coordinates, snapped to the canvas grid. Collisions
+    // with existing cards are resolved by the display layout nudge.
+    const rect = viewportRef.current?.getBoundingClientRect()
+    const v = viewRef.current
+    const center = rect
+      ? { x: (rect.width / 2 - v.x) / (v.scale || 1) - 150, y: (rect.height / 2 - v.y) / (v.scale || 1) - 120 }
+      : { x: 200, y: 200 }
+    void patchBoard({
+      createFormation: {
+        type: 'solo',
+        title: 'New formation',
+        x: Math.max(GRID, snapToGrid(center.x)),
+        y: Math.max(GRID, snapToGrid(center.y)),
+      },
+    })
   }, [patchBoard])
 
   // ----- pan + zoom -----
@@ -851,8 +894,18 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     if (event.button !== 0) return
     const target = event.target as HTMLElement
     if (target.closest('.formation,.gatecard,.missioncard,.zoomctl,.run-banner')) return
-    panRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, originX: viewRef.current.x, originY: viewRef.current.y }
-  }, [])
+    const pan = { startX: event.clientX, startY: event.clientY, originX: viewRef.current.x, originY: viewRef.current.y }
+    interactionOwner.begin({
+      kind: 'pan',
+      pointerId: event.pointerId,
+      project: pointer => {
+        setView(current => ({ ...current, x: pan.originX + (pointer.clientX - pan.startX), y: pan.originY + (pointer.clientY - pan.startY) }))
+        viewportRef.current?.classList.add('panning')
+      },
+      finalize: () => undefined,
+      cancel: () => viewportRef.current?.classList.remove('panning'),
+    })
+  }, [interactionOwner])
 
   // Native non-passive listener: React's onWheel is passive in the embedded
   // dashboard, so preventDefault there cannot stop the page from scrolling.
@@ -916,6 +969,23 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     return () => window.cancelAnimationFrame(frame)
   }, [board, layout, fitView])
 
+  // Tidy: layered auto-arrange persisted through the layout sidecar (one bulk
+  // patch, one Ctrl+Z step back) so archon sees the same geometry the UI shows.
+  const tidyBoard = useCallback(() => {
+    const currentBoard = boardRef.current
+    if (!currentBoard) return
+    const layoutMap = new Map<string, LayoutNode>()
+    layoutRef.current?.nodes?.forEach(node => layoutMap.set(node.id, node))
+    const arranged = tidyLayout(currentBoard, layoutMap)
+    if (!arranged.length) return
+    const previous = arranged.map(node => {
+      const shown = displayLayoutByNode.get(node.id) || layoutMap.get(node.id)
+      return { id: node.id, x: shown?.x ?? node.x, y: shown?.y ?? node.y }
+    })
+    undoStack.current.push({ kind: 'moveNodes', nodes: previous })
+    void persistPositions(arranged.map(node => ({ id: node.id, x: node.x, y: node.y })))
+  }, [displayLayoutByNode, persistPositions])
+
   const screenToWorld = useCallback((clientX: number, clientY: number) => {
     const rect = viewportRef.current?.getBoundingClientRect()
     const v = viewRef.current
@@ -923,151 +993,43 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     return { x: (clientX - rect.left - v.x) / (v.scale || 1), y: (clientY - rect.top - v.y) / (v.scale || 1) }
   }, [])
 
-  // ----- global pointer handling for pan, card/staff/wire/gate drags -----
-  useEffect(() => {
-    const onMove = (event: globalThis.PointerEvent) => {
-      if (panRef.current && panRef.current.pointerId === event.pointerId) {
-        const p = panRef.current
-        setView(current => ({ ...current, x: p.originX + (event.clientX - p.startX), y: p.originY + (event.clientY - p.startY) }))
-        viewportRef.current?.classList.add('panning')
-        return
-      }
-      if (dragNodeRef.current && dragNodeRef.current.pointerId === event.pointerId) {
-        const d = dragNodeRef.current
-        // 3px movement threshold so plain clicks don't jiggle cards (reference feel).
-        if (!d.moved && Math.abs(event.clientX - d.startX) + Math.abs(event.clientY - d.startY) < 3) return
-        d.moved = true
-        const scale = viewRef.current.scale || 1
-        const nx = d.originX + (event.clientX - d.startX) / scale
-        const ny = d.originY + (event.clientY - d.startY) / scale
-        setDragPos({ id: d.id, x: Math.round(nx), y: Math.round(ny) })
-        return
-      }
-      if (laneDragRef.current) {
-        const lane = laneDragRef.current
-        lane.moved = true
-        const w = screenToWorld(event.clientX, event.clientY)
-        setLaneDraft({ connectionId: lane.connectionId, y: Math.round(w.y) })
-        return
-      }
-      if (wireDragRef.current) {
-        const active = wireDragRef.current
-        const w = screenToWorld(event.clientX, event.clientY)
-        if (active.kind === 'judge') {
-          if (!active.moved && Math.abs(event.clientX - active.startX) + Math.abs(event.clientY - active.startY) < 4) return
-          active.moved = true
-          setTempWire(prev => (prev ? { ...prev, ax: w.x, ay: w.y } : prev))
-          const card = (document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null)?.closest<HTMLElement>('.formation')
-          setJudgeHover(card?.dataset.node && card.dataset.node !== active.gate.id ? card.dataset.node : null)
-          return
-        }
-        setTempWire(prev => (prev ? (prev.moving === 'a' ? { ...prev, ax: w.x, ay: w.y } : { ...prev, bx: w.x, by: w.y }) : prev))
-        if (active.kind === 'reconnect-source') {
-          const outPort = findOutputPortAt(event.clientX, event.clientY)
-          setHoverPort(outPort?.dataset.portOut ?? null)
-        } else {
-          const inPort = findInputPortAt(event.clientX, event.clientY)
-          setHoverPort(inPort?.dataset.portIn ?? (inPort?.dataset.gateJudgeSocket ? `${inPort.dataset.gateJudgeSocket}:judge` : null))
-        }
-        return
-      }
-      if (gateDragRef.current) {
-        setGateGhost({ x: event.clientX, y: event.clientY })
-        return
-      }
-      if (staffRef.current) {
-        const staff = staffRef.current
-        if (!staff.moved && Math.abs(event.clientX - staff.startX) + Math.abs(event.clientY - staff.startY) >= 6) staff.moved = true
-        setGhost({ x: event.clientX, y: event.clientY, agentId: staff.agentId })
-        const el = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null
+  // ----- one global owner for pan, card/staff/wire/gate/lane interactions -----
+  useLayoutEffect(() => {
+    const onMove = (event: globalThis.PointerEvent) => { interactionOwner.project(event) }
+    const onUp = (event: globalThis.PointerEvent) => { interactionOwner.finalize(event) }
+    const onCancel = (event: globalThis.PointerEvent) => { interactionOwner.cancel(event.pointerId) }
+    const onLostOwnership = () => { interactionOwner.cancel() }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
+    window.addEventListener('lostpointercapture', onCancel)
+    window.addEventListener('blur', onLostOwnership)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+      window.removeEventListener('lostpointercapture', onCancel)
+      window.removeEventListener('blur', onLostOwnership)
+      interactionOwner.cancel()
+    }
+  }, [interactionOwner])
+
+  const beginStaff = useCallback((event: ReactPointerEvent, agentId: string, harness: string, fromSlot?: DragStaff['fromSlot']) => {
+    if (event.button !== 0) return
+    event.stopPropagation()
+    const staff: DragStaff = { agentId, harness, fromSlot, startX: event.clientX, startY: event.clientY, moved: false }
+    interactionOwner.begin({
+      kind: 'staff',
+      pointerId: event.pointerId,
+      project: pointer => {
+        if (!staff.moved && Math.abs(pointer.clientX - staff.startX) + Math.abs(pointer.clientY - staff.startY) >= 6) staff.moved = true
+        setGhost({ x: pointer.clientX, y: pointer.clientY, agentId: staff.agentId, harness: staff.harness })
+        const el = document.elementFromPoint(pointer.clientX, pointer.clientY) as HTMLElement | null
         const slotEl = el?.closest<HTMLElement>('.slot')
         setHoverSlot(slotEl ? `${slotEl.dataset.fid}:${slotEl.dataset.sid}` : null)
-      }
-    }
-    const onUp = (event: globalThis.PointerEvent) => {
-      if (panRef.current && panRef.current.pointerId === event.pointerId) {
-        panRef.current = null
-        viewportRef.current?.classList.remove('panning')
-      }
-      if (dragNodeRef.current && dragNodeRef.current.pointerId === event.pointerId) {
-        const d = dragNodeRef.current
-        dragNodeRef.current = null
-        if (d.moved) {
-          const scale = viewRef.current.scale || 1
-          undoStack.current.push({ kind: 'moveNode', id: d.id, x: d.originX, y: d.originY })
-          void persistPosition(d.id, Math.round(d.originX + (event.clientX - d.startX) / scale), Math.round(d.originY + (event.clientY - d.startY) / scale))
-        }
-        setDragPos(null)
-      }
-      if (laneDragRef.current) {
-        const lane = laneDragRef.current
-        laneDragRef.current = null
-        if (lane.moved) {
-          const w = screenToWorld(event.clientX, event.clientY)
-          undoStack.current.push({ kind: 'setLane', edgeId: lane.connectionId, lane: lane.previousLane })
-          void patchLayoutEdge(lane.connectionId, `y:${Math.round(w.y)}`).then(() => setLaneDraft(null))
-        } else {
-          setLaneDraft(null)
-        }
-      }
-      if (wireDragRef.current) {
-        const active = wireDragRef.current
-        wireDragRef.current = null
-        setTempWire(null)
-        setHoverPort(null)
-        setHiddenWireId(null)
-        const hoveredJudge = judgeHoverRef.current
-        setJudgeHover(null)
-        if (active.kind === 'judge') {
-          const gate = active.gate
-          if (!active.moved) {
-            openJudgePickerRef.current?.(gate, event.clientX, event.clientY)
-          } else if (hoveredJudge) {
-            attachJudge(gate, [hoveredJudge])
-          } else {
-            // Dropped on empty canvas inside the viewport → spawn a judge there (reference just-works).
-            const rect = viewportRef.current?.getBoundingClientRect()
-            const overCard = (event.target as HTMLElement | null)?.closest?.('.formation,.gatecard,.missioncard,.ctxmenu,.pop')
-            const inView = rect && event.clientX > rect.left && event.clientX < rect.right && event.clientY > rect.top && event.clientY < rect.bottom
-            if (!overCard && inView) {
-              const w = screenToWorld(event.clientX, event.clientY)
-              void createJudgeFor(gate, 'solo', 'Judge', w.x - 100, w.y - 58)
-            }
-          }
-        } else if (active.kind === 'reconnect-source') {
-          const outPort = findOutputPortAt(event.clientX, event.clientY)
-          if (outPort?.dataset.portOut) void rewireSource(active.connection, outPort.dataset.portOut)
-        } else {
-          const target = findInputPortAt(event.clientX, event.clientY)
-          const judgeGateId = target?.dataset.gateJudgeSocket
-          if (judgeGateId) {
-            // Dropping an output onto a gate's judge socket makes it the judge (reference setJudgeReturn).
-            const gate = (boardRef.current?.gates || []).find(item => item.id === judgeGateId)
-            const fromEndpoint = active.kind === 'new' ? active.from : active.connection.from
-            const fromNodeId = fromEndpoint.split(':')[0]
-            const isFormation = boardRef.current?.formations.some(item => item.id === fromNodeId)
-            if (gate && isFormation) {
-              if (active.kind === 'reconnect-target') removeWire(active.connection)
-              attachJudge(gate, [fromNodeId])
-            }
-          } else if (target?.dataset.portIn) {
-            if (active.kind === 'new') wire(active.from, target.dataset.portIn)
-            else rewireTarget(active.connection, target.dataset.portIn)
-          }
-        }
-      }
-      if (gateDragRef.current) {
-        gateDragRef.current = false
-        const rect = viewportRef.current?.getBoundingClientRect()
-        if (rect && event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom) {
-          const w = screenToWorld(event.clientX, event.clientY)
-          void createGateAt(w.x, w.y)
-        }
-        setGateGhost(null)
-      }
-      if (staffRef.current) {
-        const staff = staffRef.current
-        const el = document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null
+      },
+      finalize: pointer => {
+        const el = document.elementFromPoint(pointer.clientX, pointer.clientY) as HTMLElement | null
         const slotEl = el?.closest<HTMLElement>('.slot')
         if (slotEl && slotEl.dataset.fid && slotEl.dataset.sid) {
           const f = boardRef.current?.formations.find(item => item.id === slotEl.dataset.fid)
@@ -1079,25 +1041,14 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
           const s = f?.slots.find(item => item.id === staff.fromSlot?.slotId)
           if (f && s) unassignSlot(f, s)
         }
-        staffRef.current = null
+      },
+      cancel: () => {
         setGhost(null)
         setHoverSlot(null)
-      }
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    return () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-    }
-  }, [assignSlot, attachJudge, createGateAt, createJudgeFor, patchLayoutEdge, persistPosition, removeWire, rewireSource, rewireTarget, screenToWorld, unassignSlot, wire])
-
-  const beginStaff = useCallback((event: ReactPointerEvent, agentId: string, harness: string, fromSlot?: DragStaff['fromSlot']) => {
-    if (event.button !== 0) return
-    event.stopPropagation()
-    staffRef.current = { agentId, harness, fromSlot, startX: event.clientX, startY: event.clientY, moved: false }
-    setGhost({ x: event.clientX, y: event.clientY, agentId })
-  }, [])
+      },
+    })
+    setGhost({ x: event.clientX, y: event.clientY, agentId, harness })
+  }, [assignSlot, interactionOwner, unassignSlot])
 
   const beginNodeDrag = useCallback((event: ReactPointerEvent, id: string, index: number) => {
     if (event.button !== 0) return
@@ -1105,8 +1056,33 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     if (target.closest('.port,.frun,.mrun')) return
     event.stopPropagation()
     const pos = positionOf(id, index)
-    dragNodeRef.current = { id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, originX: pos.x, originY: pos.y, moved: false }
-  }, [positionOf])
+    const drag: DragNode = { id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, originX: pos.x, originY: pos.y, moved: false }
+    interactionOwner.begin({
+      kind: 'node',
+      pointerId: event.pointerId,
+      project: pointer => {
+        // 3px movement threshold so plain clicks don't jiggle cards (reference feel).
+        if (!drag.moved && Math.abs(pointer.clientX - drag.startX) + Math.abs(pointer.clientY - drag.startY) < 3) return
+        if (!drag.moved) worldRef.current?.classList.add('nodedrag')
+        drag.moved = true
+        const scale = viewRef.current.scale || 1
+        const nx = drag.originX + (pointer.clientX - drag.startX) / scale
+        const ny = drag.originY + (pointer.clientY - drag.startY) / scale
+        setDragPos({ id: drag.id, x: Math.round(nx), y: Math.round(ny) })
+      },
+      finalize: pointer => {
+        if (!drag.moved) return
+        const scale = viewRef.current.scale || 1
+        undoStack.current.push({ kind: 'moveNode', id: drag.id, x: drag.originX, y: drag.originY })
+        // Release snaps to the visible dot grid so hand-placed cards line up.
+        void persistPosition(drag.id, snapToGrid(drag.originX + (pointer.clientX - drag.startX) / scale), snapToGrid(drag.originY + (pointer.clientY - drag.startY) / scale))
+      },
+      cancel: () => {
+        worldRef.current?.classList.remove('nodedrag')
+        setDragPos(null)
+      },
+    })
+  }, [interactionOwner, persistPosition, positionOf])
 
   const endpointWorldCenter = useCallback((endpoint: string, direction: 'out' | 'in') => {
     const world = worldRef.current
@@ -1125,20 +1101,93 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
 
   const portWorldCenter = useCallback((endpoint: string) => endpointWorldCenter(endpoint, 'out'), [endpointWorldCenter])
 
+  const ownWireDrag = useCallback((event: ReactPointerEvent<Element> | ReactMouseEvent<Element>, active: WireDrag) => {
+    const pointerId = 'pointerId' in event ? event.pointerId : 1
+    interactionOwner.begin({
+      kind: 'wire',
+      pointerId,
+      project: pointer => {
+        const w = screenToWorld(pointer.clientX, pointer.clientY)
+        if (active.kind === 'judge') {
+          if (!active.moved && Math.abs(pointer.clientX - active.startX) + Math.abs(pointer.clientY - active.startY) < 4) return
+          active.moved = true
+          setTempWire(prev => (prev ? { ...prev, ax: w.x, ay: w.y } : prev))
+          const card = (document.elementFromPoint(pointer.clientX, pointer.clientY) as HTMLElement | null)?.closest<HTMLElement>('.formation')
+          setJudgeHover(card?.dataset.node && card.dataset.node !== active.gate.id ? card.dataset.node : null)
+          return
+        }
+        setTempWire(prev => (prev ? (prev.moving === 'a' ? { ...prev, ax: w.x, ay: w.y } : { ...prev, bx: w.x, by: w.y }) : prev))
+        if (active.kind === 'reconnect-source') {
+          const outPort = findOutputPortAt(pointer.clientX, pointer.clientY)
+          setHoverPort(outPort?.dataset.portOut ?? null)
+        } else {
+          const inPort = findInputPortAt(pointer.clientX, pointer.clientY)
+          setHoverPort(inPort?.dataset.portIn ?? (inPort?.dataset.gateJudgeSocket ? `${inPort.dataset.gateJudgeSocket}:judge` : null))
+        }
+      },
+      finalize: pointer => {
+        const hoveredJudge = judgeHoverRef.current
+        if (active.kind === 'judge') {
+          const gate = active.gate
+          if (!active.moved) {
+            openJudgePickerRef.current?.(gate, pointer.clientX, pointer.clientY)
+          } else if (hoveredJudge) {
+            attachJudge(gate, [hoveredJudge])
+          } else {
+            // Dropped on empty canvas inside the viewport → spawn a judge there (reference just-works).
+            const rect = viewportRef.current?.getBoundingClientRect()
+            const overCard = (pointer.target as HTMLElement | null)?.closest?.('.formation,.gatecard,.missioncard,.ctxmenu,.pop')
+            const inView = rect && pointer.clientX > rect.left && pointer.clientX < rect.right && pointer.clientY > rect.top && pointer.clientY < rect.bottom
+            if (!overCard && inView) {
+              const w = screenToWorld(pointer.clientX, pointer.clientY)
+              void createJudgeFor(gate, 'solo', 'Judge', w.x - 100, w.y - 58)
+            }
+          }
+        } else if (active.kind === 'reconnect-source') {
+          const outPort = findOutputPortAt(pointer.clientX, pointer.clientY)
+          if (outPort?.dataset.portOut) void rewireSource(active.connection, outPort.dataset.portOut)
+        } else {
+          const target = findInputPortAt(pointer.clientX, pointer.clientY)
+          const judgeGateId = target?.dataset.gateJudgeSocket
+          if (judgeGateId) {
+            // Dropping an output onto a gate's judge socket makes it the judge (reference setJudgeReturn).
+            const gate = (boardRef.current?.gates || []).find(item => item.id === judgeGateId)
+            const fromEndpoint = active.kind === 'new' ? active.from : active.connection.from
+            const fromNodeId = fromEndpoint.split(':')[0]
+            const isFormation = boardRef.current?.formations.some(item => item.id === fromNodeId)
+            if (gate && isFormation) {
+              if (active.kind === 'reconnect-target') removeWire(active.connection)
+              attachJudge(gate, [fromNodeId])
+            }
+          } else if (target?.dataset.portIn) {
+            if (active.kind === 'new') wire(active.from, target.dataset.portIn)
+            else rewireTarget(active.connection, target.dataset.portIn)
+          }
+        }
+      },
+      cancel: () => {
+        setTempWire(null)
+        setHoverPort(null)
+        setHiddenWireId(null)
+        setJudgeHover(null)
+      },
+    })
+  }, [attachJudge, createJudgeFor, interactionOwner, removeWire, rewireSource, rewireTarget, screenToWorld, wire])
+
   const beginWire = useCallback((event: ReactPointerEvent, endpoint: string, kind: WirePath['kind']) => {
     if (event.button !== 0) return
     event.stopPropagation()
-    wireDragRef.current = { kind: 'new', from: endpoint, wireKind: kind }
+    ownWireDrag(event, { kind: 'new', from: endpoint, wireKind: kind })
     const start = portWorldCenter(endpoint)
     const w = screenToWorld(event.clientX, event.clientY)
     setTempWire(start ? { ax: start.x, ay: start.y, bx: w.x, by: w.y, kind, moving: 'b' } : { ax: w.x, ay: w.y, bx: w.x, by: w.y, kind, moving: 'b' })
-  }, [portWorldCenter, screenToWorld])
+  }, [ownWireDrag, portWorldCenter, screenToWorld])
 
   const beginReconnect = useCallback((event: ReactPointerEvent<HTMLElement> | ReactMouseEvent<HTMLElement>, connection: BoardConnection) => {
     if (event.button !== 0) return
-    if (wireDragRef.current) return
+    if (interactionOwner.projection()?.kind === 'wire') return
     event.stopPropagation()
-    wireDragRef.current = { kind: 'reconnect-target', connection }
+    ownWireDrag(event, { kind: 'reconnect-target', connection })
     setHiddenWireId(connection.id)
     const kind = connectionKind(connection)
     const start = endpointWorldCenter(connection.from, 'out')
@@ -1146,13 +1195,13 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     setTempWire(start
       ? { ax: start.x, ay: start.y, bx: w.x, by: w.y, kind, moving: 'b' }
       : { ax: w.x, ay: w.y, bx: w.x, by: w.y, kind, moving: 'b' })
-  }, [endpointWorldCenter, screenToWorld])
+  }, [endpointWorldCenter, interactionOwner, ownWireDrag, screenToWorld])
 
   const beginReconnectSource = useCallback((event: ReactPointerEvent<Element> | ReactMouseEvent<Element>, connection: BoardConnection) => {
     if (event.button !== 0) return
-    if (wireDragRef.current) return
+    if (interactionOwner.projection()?.kind === 'wire') return
     event.stopPropagation()
-    wireDragRef.current = { kind: 'reconnect-source', connection }
+    ownWireDrag(event, { kind: 'reconnect-source', connection })
     setHiddenWireId(connection.id)
     const kind = connectionKind(connection)
     const fixed = endpointWorldCenter(connection.to, 'in')
@@ -1160,20 +1209,20 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     setTempWire(fixed
       ? { ax: w.x, ay: w.y, bx: fixed.x, by: fixed.y, kind, moving: 'a' }
       : { ax: w.x, ay: w.y, bx: w.x, by: w.y, kind, moving: 'a' })
-  }, [endpointWorldCenter, screenToWorld])
+  }, [endpointWorldCenter, interactionOwner, ownWireDrag, screenToWorld])
 
   const beginJudgeDrag = useCallback((event: ReactPointerEvent<HTMLElement>, gate: GateNode) => {
     if (event.button !== 0) return
-    if (wireDragRef.current) return
+    if (interactionOwner.projection()?.kind === 'wire') return
     event.stopPropagation()
     event.preventDefault()
-    wireDragRef.current = { kind: 'judge', gate, moved: false, startX: event.clientX, startY: event.clientY }
+    ownWireDrag(event, { kind: 'judge', gate, moved: false, startX: event.clientX, startY: event.clientY })
     const start = endpointWorldCenter(`${gate.id}:judge`, 'out')
     const w = screenToWorld(event.clientX, event.clientY)
     setTempWire(start
       ? { ax: w.x, ay: w.y, bx: start.x, by: start.y, kind: 'judge', moving: 'a' }
       : { ax: w.x, ay: w.y, bx: w.x, by: w.y, kind: 'judge', moving: 'a' })
-  }, [endpointWorldCenter, screenToWorld])
+  }, [endpointWorldCenter, interactionOwner, ownWireDrag, screenToWorld])
 
   const captureConnectedInputDrag = useCallback((event: ReactPointerEvent<HTMLElement>) => {
     const target = event.target as HTMLElement
@@ -1191,7 +1240,8 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   /** Grab a committed wire: near an ENDPOINT reconnects that end; the MIDDLE hand-routes its lane (reference startWireDrag). */
   const beginWireDrag = useCallback((event: ReactPointerEvent<SVGPathElement>, connection: BoardConnection) => {
     if (event.button !== 0) return
-    if (wireDragRef.current || laneDragRef.current) return
+    const activeKind = interactionOwner.projection()?.kind
+    if (activeKind === 'wire' || activeKind === 'lane') return
     event.stopPropagation()
     const a = endpointWorldCenter(connection.from, 'out')
     const b = endpointWorldCenter(connection.to, 'in')
@@ -1204,16 +1254,44 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       if (dFrom < dTo && dFrom < near) return beginReconnectSource(event, connection)
     }
     const previousLane = layoutRef.current?.edges?.find(edge => edge.id === connection.id)?.lane || 'auto'
-    laneDragRef.current = { connectionId: connection.id, previousLane, moved: false }
-  }, [beginReconnect, beginReconnectSource, endpointWorldCenter, screenToWorld])
+    const lane: LaneDrag = { connectionId: connection.id, previousLane, moved: false }
+    interactionOwner.begin({
+      kind: 'lane',
+      pointerId: event.pointerId,
+      project: pointer => {
+        lane.moved = true
+        const projected = screenToWorld(pointer.clientX, pointer.clientY)
+        setLaneDraft({ connectionId: lane.connectionId, y: Math.round(projected.y) })
+      },
+      finalize: pointer => {
+        if (!lane.moved) return
+        const projected = screenToWorld(pointer.clientX, pointer.clientY)
+        undoStack.current.push({ kind: 'setLane', edgeId: lane.connectionId, lane: lane.previousLane })
+        void patchLayoutEdge(lane.connectionId, `y:${Math.round(projected.y)}`).then(() => setLaneDraft(null))
+      },
+      cancel: () => setLaneDraft(null),
+    })
+  }, [beginReconnect, beginReconnectSource, endpointWorldCenter, interactionOwner, patchLayoutEdge, screenToWorld])
 
   const beginGateToken = useCallback((event: ReactPointerEvent) => {
     if (event.button !== 0) return
     if (!boardRef.current) return
     event.preventDefault()
-    gateDragRef.current = true
+    interactionOwner.begin({
+      kind: 'gate',
+      pointerId: event.pointerId,
+      project: pointer => setGateGhost({ x: pointer.clientX, y: pointer.clientY }),
+      finalize: pointer => {
+        const rect = viewportRef.current?.getBoundingClientRect()
+        if (rect && pointer.clientX >= rect.left && pointer.clientX <= rect.right && pointer.clientY >= rect.top && pointer.clientY <= rect.bottom) {
+          const w = screenToWorld(pointer.clientX, pointer.clientY)
+          void createGateAt(w.x, w.y)
+        }
+      },
+      cancel: () => setGateGhost(null),
+    })
     setGateGhost({ x: event.clientX, y: event.clientY })
-  }, [])
+  }, [createGateAt, interactionOwner, screenToWorld])
 
   const gateHasJudge = useCallback((gateId: string): boolean => {
     return (boardRef.current?.connections || []).some(connection =>
@@ -1354,7 +1432,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
         <div className="slot-ring">
           {badge ? <span className="badge">{badge}</span> : null}
           {filled
-            ? <span className="face" style={{ background: agentColor(slot.agentId as string) }}>{initials(slot.agentId as string)}</span>
+            ? <span className="face">{harnessGlyph(slot.harness) ?? initials(slot.agentId as string)}</span>
             : <span className="plus">+</span>}
         </div>
         <div className="slot-label">{slot.label}</div>
@@ -1408,10 +1486,8 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const pendingHumanGateId = useMemo(() => openHumanGateId(runEvents), [runEvents])
 
   return (
-    <div className="fmx" data-testid="formations-view" data-cockpit="d7">
+    <div className="fmx" data-testid="formations-view" data-cockpit="d7" data-textsize={textSize}>
       <div className="topbar">
-        <div className="brand"><span className="nm">CHR<b>O</b>TE</span><span className="sub">Formations</span></div>
-        <div className="spacer" />
         <div className="boardpick">
           board
           <select value={selectedSlug} onChange={event => setSelectedSlug(event.target.value)} data-testid="board-picker" disabled={boards.length === 0}>
@@ -1420,22 +1496,25 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
           </select>
           {board ? <span className="rev">rev {board.rev}</span> : null}
         </div>
-        <div className="gatetoken" title="Drag onto the canvas to drop a gate" data-testid="gate-token" onPointerDown={beginGateToken}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M5 11V7a7 7 0 0114 0v4" /><rect x="4" y="11" width="16" height="9" rx="2" /></svg>
-          Gate
-        </div>
+        <div className="sep" />
         <button className="newbtn" onClick={createSolo} data-testid="new-formation" disabled={!board}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
           New formation
         </button>
-        <button className="helpbtn" title="Drag an agent from the roster into a slot to staff it.">?</button>
+        <div className="gatetoken" title="Drag onto the canvas to drop a gate" data-testid="gate-token" onPointerDown={beginGateToken}>
+          {GATE_SVG}
+          Gate
+        </div>
+        <div className="spacer" />
       </div>
 
       <div className="main">
         <aside className="roster" data-testid="agent-roster">
           <div className="roster-hd">
-            <div className="t">Agent roster</div>
-            <div className="s">{rosterAgents.length} catalog agents · {deployedAgentCount} deployed</div>
+            <div className="t">Agents</div>
+            <span className="s" data-testid="roster-count" title={`${rosterAgents.length} catalog agents · ${deployedAgentCount} deployed on this board`}>
+              {rosterAgents.length}{deployedAgentCount ? ` · ${deployedAgentCount} deployed` : ''}
+            </span>
           </div>
           <div className="roster-list">
             {rosterAgents.length === 0
@@ -1450,12 +1529,11 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
                     data-testid={`roster-agent-${agent.id}`}
                     onPointerDown={event => beginStaff(event, agent.id, agent.harnessDefault || '')}
                   >
-                    <span className="av" style={{ background: agentColor(agent.id) }}>{initials(agent.id)}</span>
+                    <span className="av">{harnessGlyph(agent.harnessDefault) ?? initials(agent.id)}</span>
                     <div className="ri">
                       <div className="n">{agent.displayName || agent.id}</div>
-                      <div className="r">{agentRole(agent)}</div>
+                      <div className="r">{agentRole(agent)}{agentState(agent) === 'idle' ? ' · idle' : ''}</div>
                     </div>
-                    <span className={`sd ${agentState(agent)}`} />
                   </div>
                 )
               })}
@@ -1659,6 +1737,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
           <div className="zoomctl">
             <button onClick={() => zoomBy(1.2)} title="Zoom in">+</button>
             <button onClick={() => zoomBy(1 / 1.2)} title="Zoom out">−</button>
+            <button onClick={tidyBoard} title="Arrange cards by graph flow (persists layout, Ctrl+Z to undo)" data-testid="tidy-layout">TIDY</button>
             <button onClick={() => fitView({ smooth: true })} title="Fit">FIT</button>
           </div>
           {error ? <div className="errbar" data-testid="formations-error">{error}</div> : null}
@@ -1797,7 +1876,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       ) : null}
 
       {ghost ? (
-        <div className="fmx-ghost" style={{ left: ghost.x, top: ghost.y, background: agentColor(ghost.agentId) }}>{initials(ghost.agentId)}</div>
+        <div className="fmx-ghost" style={{ left: ghost.x, top: ghost.y }}>{harnessGlyph(ghost.harness) ?? initials(ghost.agentId)}</div>
       ) : null}
       {gateGhost ? (
         <div className="gateghost" style={{ left: gateGhost.x, top: gateGhost.y }}>{GATE_SVG}</div>

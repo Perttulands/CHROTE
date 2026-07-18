@@ -120,6 +120,11 @@ describe('FormationsCockpit reference parity', () => {
     vi.restoreAllMocks()
   })
 
+  it('falls back to default text size outside a SessionProvider', async () => {
+    await renderCockpit()
+    expect(screen.getByTestId('formations-view')).toHaveAttribute('data-textsize', 'default')
+  })
+
   it('does not fabricate a starter board when no real boards exist', async () => {
     patches = installFetchMock({ emptyBoards: true })
     render(<FormationsCockpit />)
@@ -133,7 +138,7 @@ describe('FormationsCockpit reference parity', () => {
   it('shows only assignable persona cards in the formation staffing roster', async () => {
     await renderCockpit()
     const roster = screen.getByTestId('agent-roster')
-    expect(roster).toHaveTextContent('2 catalog agents')
+    expect(screen.getByTestId('roster-count')).toHaveTextContent('2')
     expect(roster).toHaveTextContent('Mason')
     expect(roster).toHaveTextContent('Hazel')
     expect(roster).not.toHaveTextContent('scratch')
@@ -227,5 +232,17 @@ describe('FormationsCockpit reference parity', () => {
       const removal = patches.map(patch => patch.body.deleteMission as { id?: string } | undefined).find(Boolean)
       expect(removal).toEqual(expect.objectContaining({ id: 'mis_showcase' }))
     })
+  })
+
+  it('cancels the active interaction when the cockpit unmounts', async () => {
+    const { container, unmount } = await renderCockpit()
+    const viewport = container.querySelector('.viewport') as HTMLElement
+
+    fireEvent.pointerDown(viewport, { button: 0, pointerId: 5, clientX: 800, clientY: 600 })
+    fireEvent.pointerMove(window, { pointerId: 5, clientX: 830, clientY: 620 })
+    expect(viewport).toHaveClass('panning')
+
+    unmount()
+    expect(viewport).not.toHaveClass('panning')
   })
 })

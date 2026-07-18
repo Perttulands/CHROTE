@@ -164,6 +164,13 @@ export interface UserSettings {
   tmuxAppearance: TmuxAppearance     // tmux color customization
   mouseScroll: boolean               // tmux mouse mode: scroll wheel scrolls history
   beadsProjectPaths?: string[]       // Manually added beads project paths
+  formationsTextSize?: FormationsTextSize // Formations cockpit text scale
+}
+
+export type FormationsTextSize = 'default' | 'large' | 'xlarge'
+
+export function resolveFormationsTextSize(value: unknown): FormationsTextSize {
+  return value === 'large' || value === 'xlarge' ? value : 'default'
 }
 
 export const DEFAULT_SETTINGS: UserSettings = {
@@ -180,6 +187,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   musicEnabled: false,
   tmuxAppearance: DEFAULT_TMUX_APPEARANCE,
   mouseScroll: true,
+  formationsTextSize: 'default',
 }
 
 export interface TmuxSession {

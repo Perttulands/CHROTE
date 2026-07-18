@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { useSession } from '../context/SessionContext'
 import { useToast } from '../context/ToastContext'
-import type { UserSettings, TmuxAppearance, WorkspaceId, LaunchUser } from '../types'
+import type { UserSettings, TmuxAppearance, WorkspaceId, LaunchUser, FormationsTextSize } from '../types'
+import { resolveFormationsTextSize } from '../types'
 import { TERMINAL_LABELS, TERMINAL_WORKSPACE_IDS, TMUX_PRESETS, defaultSessionPrefixForUser, defaultTerminalUserColor, getSessionPrefixForUser, getTerminalUserColor, normalizeTerminalUsers, resolveLaunchUser } from '../types'
 import FolderPickerModal from './FolderPickerModal'
 import SessionBankSection from './SessionBankSection'
@@ -106,6 +107,10 @@ function SettingsView({ sessionBankFocusNonce = 0 }: SettingsViewProps = {}) {
 
   const handleThemeChange = (theme: UserSettings['theme']) => {
     updateSettings({ theme })
+  }
+
+  const handleFormationsTextSizeChange = (formationsTextSize: FormationsTextSize) => {
+    updateSettings({ formationsTextSize })
   }
 
   const handleFontSizeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -226,6 +231,23 @@ function SettingsView({ sessionBankFocusNonce = 0 }: SettingsViewProps = {}) {
             <span>12px</span>
             <span>20px</span>
           </div>
+        </div>
+
+        <div className="settings-field">
+          <label className="settings-label">Formations text size</label>
+          <div className="settings-theme-options">
+            {(['default', 'large', 'xlarge'] as const).map(size => (
+              <button
+                key={size}
+                className={`theme-option ${resolveFormationsTextSize(settings.formationsTextSize) === size ? 'selected' : ''}`}
+                onClick={() => handleFormationsTextSizeChange(size)}
+                data-testid={`formations-textsize-${size}`}
+              >
+                {size === 'default' ? 'Default' : size === 'large' ? 'Large' : 'X-Large'}
+              </button>
+            ))}
+          </div>
+          <p className="settings-hint">Scales card titles, roster rows, and labels on the Formations board.</p>
         </div>
 
         <div className="settings-field">
