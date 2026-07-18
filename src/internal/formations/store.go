@@ -104,16 +104,26 @@ func NewStore(workspace string) *Store {
 	}
 }
 
+func (s *Store) workspaceRoot() string {
+	if s == nil {
+		return ""
+	}
+	if s.runtimeAuthority != nil {
+		return s.runtimeAuthority.configuredWorkspace
+	}
+	return s.Workspace
+}
+
 func (s *Store) BoardPath(slug string) string {
-	return filepath.Join(s.Workspace, ".formations", "boards", slug+".formation.toml")
+	return filepath.Join(s.workspaceRoot(), ".formations", "boards", slug+".formation.toml")
 }
 
 func (s *Store) LayoutPath(slug string) string {
-	return filepath.Join(s.Workspace, ".formations", "layout", slug+".layout.toml")
+	return filepath.Join(s.workspaceRoot(), ".formations", "layout", slug+".layout.toml")
 }
 
 func (s *Store) ListBoards() ([]BoardSummary, error) {
-	dir := filepath.Join(s.Workspace, ".formations", "boards")
+	dir := filepath.Join(s.workspaceRoot(), ".formations", "boards")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {

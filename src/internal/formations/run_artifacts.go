@@ -52,7 +52,7 @@ func validRunID(runID string) bool {
 }
 
 func (s *Store) workspaceAbsolutePath() (string, error) {
-	workspace, err := filepath.Abs(s.Workspace)
+	workspace, err := filepath.Abs(s.workspaceRoot())
 	if err != nil {
 		return "", err
 	}

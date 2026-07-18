@@ -424,8 +424,8 @@ func (e *TmuxFormationExecutor) resolveOutputRefPath(ref string) (string, error)
 		candidate = filepath.Clean(ref)
 	} else {
 		base := e.config.Cwd
-		if e.store != nil && strings.TrimSpace(e.store.Workspace) != "" {
-			base = e.store.Workspace
+		if e.store != nil && strings.TrimSpace(e.store.workspaceRoot()) != "" {
+			base = e.store.workspaceRoot()
 		}
 		candidate = filepath.Join(base, filepath.FromSlash(ref))
 	}
@@ -755,7 +755,7 @@ func (e *TmuxFormationExecutor) seedPeerPlane(req FormationExecution, peers []tm
 		return "", "", err
 	}
 	planeAbs := strings.TrimSuffix(ledgerPath, ".ndjson") + ".peer.md"
-	planeRel, err := filepath.Rel(e.store.Workspace, planeAbs)
+	planeRel, err := filepath.Rel(e.store.workspaceRoot(), planeAbs)
 	if err != nil {
 		return "", "", err
 	}
@@ -1323,7 +1323,7 @@ func (e *TmuxFormationExecutor) renderPromptWithContext(req FormationExecution, 
 		}
 	}
 	if len(req.Formation.Outputs) > 0 && e.store != nil {
-		artifactDir := filepath.Join(e.store.Workspace, ".formations", "artifacts", req.RunID)
+		artifactDir := filepath.Join(e.store.workspaceRoot(), ".formations", "artifacts", req.RunID)
 		b.WriteString("artifact directory for long routed outputs: " + artifactDir + "\n")
 		b.WriteString("If you use ref in chrote-outputs, create the file first under that artifact directory or another configured root path. Do not point ref at arbitrary host files or secrets.\n")
 	}

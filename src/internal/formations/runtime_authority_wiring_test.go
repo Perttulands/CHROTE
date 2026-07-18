@@ -56,24 +56,37 @@ func TestRuntimeStoreAuthorityBoundaryRemainsNonAuthorizingAfterExactMatch(t *te
 	}
 }
 
-func TestRuntimeStoreRejectsWorkspaceMutationAfterAuthorityBinding(t *testing.T) {
+func TestRuntimeStoreUsesImmutableWorkspaceAfterAuthorityBinding(t *testing.T) {
 	fixture := newRuntimeAuthorityFixture(t)
 	bindRuntimeAuthorityFixtureToOpenedWorkspace(t, &fixture, fixture.workspace)
 	otherWorkspace := t.TempDir()
 	before := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace, otherWorkspace)
 	store := NewRuntimeStore(fixture.workspace, filepath.Dir(fixture.root))
 
-	store.Workspace = otherWorkspace
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 100; i++ {
+			store.Workspace = otherWorkspace
+		}
+	}()
+	for i := 0; i < 100; i++ {
+		if got, want := store.BoardPath("bound"), filepath.Join(fixture.workspace, ".formations", "boards", "bound.formation.toml"); got != want {
+			t.Fatalf("runtime board path = %q, want immutable authority-bound path %q", got, want)
+		}
+		if got, err := store.workspaceAbsolutePath(); err != nil || got != fixture.workspace {
+			t.Fatalf("runtime workspace path = %q, %v, want immutable authority-bound path %q", got, err, fixture.workspace)
+		}
+	}
+	<-done
+
 	err := store.RequireRuntimeAuthority()
 	var authorityErr *RuntimeAuthorityNonAuthorizingError
-	if !errors.As(err, &authorityErr) || authorityErr.Reason != RuntimeAuthorityGuardRejected {
-		t.Fatalf("mutated runtime workspace error = %#v, want sanitized guard rejection", err)
-	}
-	if authorityErr.Stage != RuntimeAuthorityGuardStageRegistry || authorityErr.Code != RuntimeAuthorityGuardConflict {
-		t.Fatalf("mutated runtime workspace rejection = stage %q code %q, want registry conflict", authorityErr.Stage, authorityErr.Code)
+	if !errors.As(err, &authorityErr) || authorityErr.Reason != RuntimeAuthorityCapabilityDisabled {
+		t.Fatalf("runtime authority error after compatibility-field mutation = %#v, want bound non-authorizing capability", err)
 	}
 	if got := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace, otherWorkspace); !reflect.DeepEqual(got, before) {
-		t.Fatalf("mutated runtime workspace rejection changed state\nbefore: %#v\nafter:  %#v", before, got)
+		t.Fatalf("runtime workspace binding changed state\nbefore: %#v\nafter:  %#v", before, got)
 	}
 }
 
