@@ -1555,6 +1555,58 @@ to = "gate_review:in"
 	}
 }
 
+func TestRemoveFormationVerificationMigratesDescendantOnlyRepresentation(t *testing.T) {
+	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
+	raw := strings.Replace(
+		s4VerificationBoardFixture("block"),
+		"[formation.verification]",
+		"[formation.verification.extra]",
+		1,
+	)
+	raw += `
+[[gate]]
+id = "gate_review"
+title = "Review"
+kinds = ["human"]
+criterion = "Review the work"
+
+[[connection]]
+id = "edge_work_review"
+from = "fmn_work:port_work_out"
+to = "gate_review:in"
+`
+	writeFixture(t, store.BoardPath("session-search"), raw)
+	before, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read descendant-only verification board: %v", err)
+	}
+	formation, ok := findFormation(before.Formations, "fmn_work")
+	if !ok || formation.Verification == nil {
+		t.Fatalf("descendant-only verification inspection = %+v, want visible migration fence", formation.Verification)
+	}
+
+	after, err := store.RemoveFormationVerification("session-search", FormationVerificationRemovalRequest{
+		FormationID:       "fmn_work",
+		ReplacementGateID: "gate_review",
+		UpdatedBy:         "agent:test",
+	}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev})
+	if err != nil {
+		t.Fatalf("remove descendant-only verification: %v", err)
+	}
+	afterFormation, ok := findFormation(after.Formations, "fmn_work")
+	if !ok || afterFormation.Verification != nil {
+		t.Fatalf("verification after descendant-only removal = %+v, want removed", afterFormation.Verification)
+	}
+	afterRaw := readFile(t, store.BoardPath("session-search"))
+	if strings.Contains(afterRaw, "formation.verification") {
+		t.Fatalf("descendant-only verification survived explicit migration:\n%s", afterRaw)
+	}
+	if !strings.Contains(afterRaw, `id = "gate_review"`) {
+		t.Fatalf("replacement Gate was not preserved:\n%s", afterRaw)
+	}
+}
+
 func TestS3FormationBriefRejectsUnsafeNonEmptyBeadID(t *testing.T) {
 	for _, beadID := range []string{"nohyphen", "Home-123", "chlab/123", "../home-pfyv", "home-pfyv\n"} {
 		t.Run(beadID, func(t *testing.T) {

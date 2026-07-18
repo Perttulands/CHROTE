@@ -703,8 +703,29 @@ func (s *Store) RemoveFormationVerification(slug string, req FormationVerificati
 		if !ok {
 			return nil, ErrNotFound
 		}
-		_, _, ok = findFormationSection(lines, formationStart, formationEnd, "formation.verification")
-		if !ok {
+		verificationSections := 0
+		verificationFamilySections := 0
+		for i := formationStart + 1; i < formationEnd; i++ {
+			section, sectionOK := tomlLineSectionName(lines[i])
+			if !sectionOK {
+				continue
+			}
+			if section == "formation.verification" {
+				verificationSections++
+			}
+			if tomlSectionIsOrDescendsFrom(section, "formation.verification") {
+				verificationFamilySections++
+			}
+		}
+		if verificationSections > 1 {
+			return nil, fmt.Errorf(
+				"%w: formation %q has %d inline verification sections; repair the source before migration",
+				ErrLegacyInlineVerificationRequiresMigration,
+				req.FormationID,
+				verificationSections,
+			)
+		}
+		if verificationFamilySections == 0 {
 			if formation.Verification != nil {
 				return nil, fmt.Errorf(
 					"%w: formation %q uses a non-section inline verification representation; repair the source before migration",
@@ -713,21 +734,6 @@ func (s *Store) RemoveFormationVerification(slug string, req FormationVerificati
 				)
 			}
 			return nil, ErrNotFound
-		}
-		verificationSections := 0
-		for i := formationStart + 1; i < formationEnd; i++ {
-			section, sectionOK := tomlLineSectionName(lines[i])
-			if sectionOK && section == "formation.verification" {
-				verificationSections++
-			}
-		}
-		if verificationSections != 1 {
-			return nil, fmt.Errorf(
-				"%w: formation %q has %d inline verification sections; repair the source before migration",
-				ErrLegacyInlineVerificationRequiresMigration,
-				req.FormationID,
-				verificationSections,
-			)
 		}
 		// A TOML child table is part of its parent table even when another
 		// formation section appears between them. Remove the entire semantic
