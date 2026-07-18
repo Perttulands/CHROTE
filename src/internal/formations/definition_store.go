@@ -148,18 +148,18 @@ func (s *Store) listDefinitionNames(kind definitionKind) ([]string, error) {
 		return nil, definitionPathError(err)
 	}
 	defer directory.Close()
-	entries, err := directory.Readdir(-1)
+	names, err := directory.Readdirnames(-1)
 	if err != nil {
 		return nil, definitionPathError(err)
 	}
-	names := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), kind.suffix) {
+	definitions := make([]string, 0, len(names))
+	for _, name := range names {
+		if !strings.HasSuffix(name, kind.suffix) {
 			continue
 		}
-		names = append(names, entry.Name())
+		definitions = append(definitions, name)
 	}
-	return names, nil
+	return definitions, nil
 }
 
 func (f *definitionFile) read() ([]byte, os.FileInfo, error) {
