@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/chrote/server/internal/formations"
 )
@@ -392,8 +393,7 @@ func (s *Store) Export(roomRef, format, includePrivateFor string) (RoomExport, e
 }
 
 func (s *Store) readEvents(kind, id string) ([]rawEvent, error) {
-	path := filepath.Join(s.Workspace, ".formations", "comms", kind, id+".ndjson")
-	file, err := os.Open(path)
+	file, err := s.openRoomLedger(kind, id)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, ErrRoomNotFound
@@ -426,6 +426,75 @@ func (s *Store) readEvents(kind, id string) ([]rawEvent, error) {
 	}
 	sort.SliceStable(events, func(i, j int) bool { return events[i].Seq < events[j].Seq })
 	return events, nil
+}
+
+func (s *Store) openRoomLedger(kind, id string) (*os.File, error) {
+	if s == nil || !roomKindRE.MatchString(kind) || !roomIDRE.MatchString(id) || strings.Contains(id, "..") {
+		return nil, ErrInvalidRoomRef
+	}
+	workspace, err := filepath.Abs(s.Workspace)
+	if err != nil {
+		return nil, err
+	}
+	workspace = filepath.Clean(workspace)
+	// The configured workspace itself may be a compatibility symlink. Pin the
+	// opened root once, then refuse every descendant symlink relative to it.
+	fd, err := syscall.Open(workspace, syscall.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NONBLOCK|syscall.O_DIRECTORY, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: workspace, Err: err}
+	}
+	current := os.NewFile(uintptr(fd), workspace)
+	if current == nil {
+		_ = syscall.Close(fd)
+		return nil, errors.New("could not open mission room workspace")
+	}
+
+	components := []string{".formations", "comms", kind, id + ".ndjson"}
+	for index, component := range components {
+		directory := index < len(components)-1
+		next, openErr := openRoomLedgerComponentAt(current, component, directory)
+		_ = current.Close()
+		if openErr != nil {
+			return nil, openErr
+		}
+		current = next
+	}
+	return current, nil
+}
+
+func openRoomLedgerComponentAt(parent *os.File, name string, directory bool) (*os.File, error) {
+	if parent == nil || name == "" || name == "." || name == ".." || filepath.Base(name) != name || strings.ContainsRune(name, 0) {
+		return nil, errors.New("invalid mission room ledger component")
+	}
+	flags := syscall.O_RDONLY | syscall.O_CLOEXEC | syscall.O_NOFOLLOW | syscall.O_NONBLOCK
+	if directory {
+		flags |= syscall.O_DIRECTORY
+	}
+	fd, err := syscall.Openat(int(parent.Fd()), name, flags, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "openat", Path: name, Err: err}
+	}
+	file := os.NewFile(uintptr(fd), name)
+	if file == nil {
+		_ = syscall.Close(fd)
+		return nil, errors.New("could not open mission room ledger component")
+	}
+	if directory {
+		return file, nil
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	// A private ledger hard-linked into the workspace has no path evidence of
+	// its origin, so only single-link regular ledgers are readable here.
+	if !info.Mode().IsRegular() || !ok || stat.Nlink != 1 {
+		_ = file.Close()
+		return nil, errors.New("mission room ledger must be a single-link regular file")
+	}
+	return file, nil
 }
 
 func parseRoomRef(roomRef string) (string, string, error) {

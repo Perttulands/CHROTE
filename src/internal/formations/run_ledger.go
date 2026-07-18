@@ -146,11 +146,13 @@ func (s *Store) StartRun(slug string, req RunStartRequest) (*RunStartResult, err
 		return nil, err
 	}
 	boardPath := s.BoardPath(slug)
-	boardRaw, err := os.ReadFile(boardPath)
+	definition, err := s.openBoardDefinition(slug, false)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, ErrNotFound
-		}
+		return nil, err
+	}
+	defer definition.close()
+	boardRaw, err := definition.readBytes()
+	if err != nil {
 		return nil, err
 	}
 	board, err := parseBoard(boardRaw)

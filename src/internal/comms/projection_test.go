@@ -133,6 +133,83 @@ func TestProjectRoomRejectsUnsafeRefs(t *testing.T) {
 	}
 }
 
+func TestNonRunRoomReadersRejectExternalLedgerAliases(t *testing.T) {
+	for _, attack := range []string{"parent symlink", "final symlink", "hard link"} {
+		t.Run(attack, func(t *testing.T) {
+			base := t.TempDir()
+			workspace := filepath.Join(base, "workspace")
+			outside := filepath.Join(base, "outside")
+			if err := os.MkdirAll(workspace, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			externalLedger := filepath.Join(outside, "private.ndjson")
+			writeLedgerFixture(t, externalLedger, []map[string]any{
+				{"seq": 1, "kind": "room_post", "actor": "private", "text": "must not escape", "timestamp": "2026-07-19T00:00:00Z"},
+			})
+
+			ledgerDirectory := filepath.Join(workspace, ".formations", "comms", "project")
+			switch attack {
+			case "parent symlink":
+				externalComms := filepath.Join(outside, "comms")
+				writeLedgerFixture(t, filepath.Join(externalComms, "project", "dogfood.ndjson"), []map[string]any{
+					{"seq": 1, "kind": "room_post", "actor": "private", "text": "must not escape", "timestamp": "2026-07-19T00:00:00Z"},
+				})
+				if err := os.MkdirAll(filepath.Join(workspace, ".formations"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(externalComms, filepath.Join(workspace, ".formations", "comms")); err != nil {
+					t.Fatal(err)
+				}
+			case "final symlink":
+				if err := os.MkdirAll(ledgerDirectory, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(externalLedger, filepath.Join(ledgerDirectory, "dogfood.ndjson")); err != nil {
+					t.Fatal(err)
+				}
+			case "hard link":
+				if err := os.MkdirAll(ledgerDirectory, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Link(externalLedger, filepath.Join(ledgerDirectory, "dogfood.ndjson")); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			store := NewStore(workspace)
+			if events, err := store.readEvents("project", "dogfood"); err == nil || len(events) != 0 {
+				t.Fatalf("readEvents consumed external ledger: events=%+v err=%v", events, err)
+			}
+			if messages, err := store.Messages("project:dogfood", MessageOptions{}); err == nil || len(messages.Messages) != 0 {
+				t.Fatalf("Messages consumed external ledger: messages=%+v err=%v", messages, err)
+			}
+			if export, err := store.Export("project:dogfood", "ndjson", ""); err == nil || len(export.Events) != 0 || export.Markdown != "" {
+				t.Fatalf("Export consumed external ledger: export=%+v err=%v", export, err)
+			}
+		})
+	}
+}
+
+func TestNonRunRoomReaderAllowsConfiguredWorkspaceRootSymlink(t *testing.T) {
+	base := t.TempDir()
+	workspace := filepath.Join(base, "workspace")
+	writeRoomFixture(t, workspace, "project", "dogfood", []map[string]any{
+		{"seq": 1, "kind": "room_post", "actor": "Builder", "text": "workspace alias is valid", "timestamp": "2026-07-19T00:00:00Z"},
+	})
+	workspaceAlias := filepath.Join(base, "workspace-alias")
+	if err := os.Symlink(workspace, workspaceAlias); err != nil {
+		t.Fatal(err)
+	}
+
+	projection, err := NewStore(workspaceAlias).ProjectRoom("project:dogfood", ProjectionOptions{})
+	if err != nil {
+		t.Fatalf("ProjectRoom through configured workspace root symlink: %v", err)
+	}
+	if len(projection.Messages) != 1 || projection.Messages[0].Text != "workspace alias is valid" {
+		t.Fatalf("projection through workspace alias = %+v", projection.Messages)
+	}
+}
+
 func writeRoomFixture(t *testing.T, workspace, kind, id string, events []map[string]any) {
 	t.Helper()
 	path := filepath.Join(workspace, ".formations", "comms", kind, id+".ndjson")

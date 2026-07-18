@@ -2,8 +2,8 @@ package formations
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -282,10 +282,20 @@ func (s *Store) ResolveBoardSelector(selector string) (string, error) {
 	if len(matches) > 1 {
 		return "", fmt.Errorf("%w: board %q matched %d boards", ErrAmbiguousSelector, selector, len(matches))
 	}
-	if _, err := os.Stat(s.BoardPath(selector)); err == nil {
-		return selector, nil
-	} else if err != nil && !os.IsNotExist(err) {
+	definition, err := s.openBoardDefinition(selector, false)
+	if errors.Is(err, ErrNotFound) {
+		return "", ErrNotFound
+	}
+	if err != nil {
 		return "", err
+	}
+	defer definition.close()
+	exists, err := definition.exists()
+	if err != nil {
+		return "", err
+	}
+	if exists {
+		return selector, nil
 	}
 	return "", ErrNotFound
 }
@@ -302,14 +312,10 @@ func (s *Store) CreateFormation(slug string, req FormationCreateRequest, opts Wr
 		return nil, err
 	}
 
-	path := s.BoardPath(slug)
 	var result *FormationCreateResult
-	err = withFileLock(path, func() error {
-		raw, err := os.ReadFile(path)
+	err = s.withBoardDefinitionLock(slug, func(definition *definitionFile) error {
+		raw, err := definition.readBytes()
 		if err != nil {
-			if os.IsNotExist(err) {
-				return ErrNotFound
-			}
 			return err
 		}
 		current, err := parseBoard(raw)
@@ -332,7 +338,7 @@ func (s *Store) CreateFormation(slug string, req FormationCreateRequest, opts Wr
 		doc.setScalar("updatedAt", renderString(s.now().Format(time.RFC3339)))
 
 		nextRaw := appendFormationBlock(doc.bytes(), formation)
-		if err := writeAtomic(path, nextRaw); err != nil {
+		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
 		board, err := parseBoard(nextRaw)
@@ -366,15 +372,11 @@ func (s *Store) DeleteFormation(slug string, req FormationDeleteRequest, opts Wr
 	if opts.ExpectedETag == "" || opts.ExpectedRev == 0 {
 		return nil, ErrPreconditionRequired
 	}
-	path := s.BoardPath(slug)
 	deletedIDs := map[string]bool{req.ID: true}
 	var result *FormationDeleteResult
-	err := withFileLock(path, func() error {
-		raw, err := os.ReadFile(path)
+	err := s.withBoardDefinitionLock(slug, func(definition *definitionFile) error {
+		raw, err := definition.readBytes()
 		if err != nil {
-			if os.IsNotExist(err) {
-				return ErrNotFound
-			}
 			return err
 		}
 		current, err := parseBoard(raw)
@@ -401,7 +403,7 @@ func (s *Store) DeleteFormation(slug string, req FormationDeleteRequest, opts Wr
 			return ErrNotFound
 		}
 		nextRaw = deleteConnectionsTouchingNodes(nextRaw, deletedIDs)
-		if err := writeAtomic(path, nextRaw); err != nil {
+		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
 		board, err := parseBoard(nextRaw)
@@ -435,15 +437,11 @@ func (s *Store) DeleteGate(slug string, req GateDeleteRequest, opts WriteOptions
 	if opts.ExpectedETag == "" || opts.ExpectedRev == 0 {
 		return nil, ErrPreconditionRequired
 	}
-	path := s.BoardPath(slug)
 	deletedIDs := map[string]bool{req.ID: true}
 	var result *GateDeleteResult
-	err := withFileLock(path, func() error {
-		raw, err := os.ReadFile(path)
+	err := s.withBoardDefinitionLock(slug, func(definition *definitionFile) error {
+		raw, err := definition.readBytes()
 		if err != nil {
-			if os.IsNotExist(err) {
-				return ErrNotFound
-			}
 			return err
 		}
 		current, err := parseBoard(raw)
@@ -470,7 +468,7 @@ func (s *Store) DeleteGate(slug string, req GateDeleteRequest, opts WriteOptions
 			return ErrNotFound
 		}
 		nextRaw = deleteConnectionsTouchingNodes(nextRaw, deletedIDs)
-		if err := writeAtomic(path, nextRaw); err != nil {
+		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
 		board, err := parseBoard(nextRaw)
@@ -504,15 +502,11 @@ func (s *Store) DeleteMission(slug string, req MissionDeleteRequest, opts WriteO
 	if opts.ExpectedETag == "" || opts.ExpectedRev == 0 {
 		return nil, ErrPreconditionRequired
 	}
-	path := s.BoardPath(slug)
 	deletedIDs := map[string]bool{req.ID: true}
 	var result *MissionDeleteResult
-	err := withFileLock(path, func() error {
-		raw, err := os.ReadFile(path)
+	err := s.withBoardDefinitionLock(slug, func(definition *definitionFile) error {
+		raw, err := definition.readBytes()
 		if err != nil {
-			if os.IsNotExist(err) {
-				return ErrNotFound
-			}
 			return err
 		}
 		current, err := parseBoard(raw)
@@ -539,7 +533,7 @@ func (s *Store) DeleteMission(slug string, req MissionDeleteRequest, opts WriteO
 			return ErrNotFound
 		}
 		nextRaw = deleteConnectionsTouchingNodes(nextRaw, deletedIDs)
-		if err := writeAtomic(path, nextRaw); err != nil {
+		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
 		board, err := parseBoard(nextRaw)
@@ -805,14 +799,10 @@ func (s *Store) CreateGate(slug string, req GateCreateRequest, opts WriteOptions
 		Criterion: req.Criterion,
 	}
 
-	path := s.BoardPath(slug)
 	var result *GateCreateResult
-	err := withFileLock(path, func() error {
-		raw, err := os.ReadFile(path)
+	err := s.withBoardDefinitionLock(slug, func(definition *definitionFile) error {
+		raw, err := definition.readBytes()
 		if err != nil {
-			if os.IsNotExist(err) {
-				return ErrNotFound
-			}
 			return err
 		}
 		current, err := parseBoard(raw)
@@ -834,7 +824,7 @@ func (s *Store) CreateGate(slug string, req GateCreateRequest, opts WriteOptions
 		doc.setScalar("updatedAt", renderString(s.now().Format(time.RFC3339)))
 
 		nextRaw := appendGateBlock(doc.bytes(), gate)
-		if err := writeAtomic(path, nextRaw); err != nil {
+		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
 		board, err := parseBoard(nextRaw)
@@ -945,14 +935,10 @@ func (s *Store) CreateMission(slug string, req MissionCreateRequest, opts WriteO
 		BeadID: req.BeadID,
 	}
 
-	path := s.BoardPath(slug)
 	var result *MissionCreateResult
-	err := withFileLock(path, func() error {
-		raw, err := os.ReadFile(path)
+	err := s.withBoardDefinitionLock(slug, func(definition *definitionFile) error {
+		raw, err := definition.readBytes()
 		if err != nil {
-			if os.IsNotExist(err) {
-				return ErrNotFound
-			}
 			return err
 		}
 		current, err := parseBoard(raw)
@@ -974,7 +960,7 @@ func (s *Store) CreateMission(slug string, req MissionCreateRequest, opts WriteO
 		doc.setScalar("updatedAt", renderString(s.now().Format(time.RFC3339)))
 
 		nextRaw := appendMissionBlock(doc.bytes(), mission)
-		if err := writeAtomic(path, nextRaw); err != nil {
+		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
 		board, err := parseBoard(nextRaw)
@@ -1153,14 +1139,13 @@ func (s *Store) updateLayoutNodes(slug string, nodes []LayoutNode, board *BoardD
 	if opts.ExpectedETag == "" {
 		return nil, ErrPreconditionRequired
 	}
-	path := s.LayoutPath(slug)
 	var layout *LayoutDocument
-	err := withFileLock(path, func() error {
+	err := s.withLayoutDefinitionLock(slug, func(definition *definitionFile) error {
 		recreatingMissing := false
-		raw, err := os.ReadFile(path)
+		raw, err := definition.readBytes()
 		switch {
 		case err == nil:
-		case os.IsNotExist(err) && opts.ExpectedETag == "*":
+		case errors.Is(err, ErrNotFound) && opts.ExpectedETag == "*":
 			if board == nil {
 				board, err = s.ReadBoard(slug)
 				if err != nil {
@@ -1169,7 +1154,7 @@ func (s *Store) updateLayoutNodes(slug string, nodes []LayoutNode, board *BoardD
 			}
 			raw = []byte("schema = 1\nboardId = " + renderString(board.ID) + "\nboardRev = " + renderInt(board.Rev) + "\nupdatedAt = " + renderString(s.now().Format(time.RFC3339)) + "\n")
 			recreatingMissing = true
-		case os.IsNotExist(err):
+		case errors.Is(err, ErrNotFound):
 			return ErrNotFound
 		default:
 			return err
@@ -1191,7 +1176,7 @@ func (s *Store) updateLayoutNodes(slug string, nodes []LayoutNode, board *BoardD
 		}
 		doc.setScalar("updatedAt", renderString(s.now().Format(time.RFC3339)))
 		nextRaw := patchLayoutNodeBlocks(doc.bytes(), nodes)
-		if err := writeAtomic(path, nextRaw); err != nil {
+		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
 		layout, err = parseLayout(nextRaw)
@@ -1210,14 +1195,10 @@ func (s *Store) UpdateLayoutEdges(slug string, edges []LayoutEdge, opts WriteOpt
 	if opts.ExpectedETag == "" {
 		return nil, ErrPreconditionRequired
 	}
-	path := s.LayoutPath(slug)
 	var layout *LayoutDocument
-	err := withFileLock(path, func() error {
-		raw, err := os.ReadFile(path)
+	err := s.withLayoutDefinitionLock(slug, func(definition *definitionFile) error {
+		raw, err := definition.readBytes()
 		if err != nil {
-			if os.IsNotExist(err) {
-				return ErrNotFound
-			}
 			return err
 		}
 		current, err := parseLayout(raw)
@@ -1233,7 +1214,7 @@ func (s *Store) UpdateLayoutEdges(slug string, edges []LayoutEdge, opts WriteOpt
 		}
 		doc.setScalar("updatedAt", renderString(s.now().Format(time.RFC3339)))
 		nextRaw := patchLayoutEdgeBlocks(doc.bytes(), edges)
-		if err := writeAtomic(path, nextRaw); err != nil {
+		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
 		layout, err = parseLayout(nextRaw)
@@ -1252,14 +1233,10 @@ func (s *Store) updateBoardDefinition(slug, updatedBy string, opts WriteOptions,
 	if opts.ExpectedETag == "" || opts.ExpectedRev == 0 {
 		return nil, ErrPreconditionRequired
 	}
-	path := s.BoardPath(slug)
 	var next *BoardDocument
-	err := withFileLock(path, func() error {
-		raw, err := os.ReadFile(path)
+	err := s.withBoardDefinitionLock(slug, func(definition *definitionFile) error {
+		raw, err := definition.readBytes()
 		if err != nil {
-			if os.IsNotExist(err) {
-				return ErrNotFound
-			}
 			return err
 		}
 		current, err := parseBoard(raw)
@@ -1283,7 +1260,7 @@ func (s *Store) updateBoardDefinition(slug, updatedBy string, opts WriteOptions,
 		if err != nil {
 			return err
 		}
-		if err := writeAtomic(path, nextRaw); err != nil {
+		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
 		next, err = parseBoard(nextRaw)
@@ -1726,13 +1703,12 @@ func setGateFormationKind(lines []tomlLine, gateStart, gateEnd int, present bool
 }
 
 func (s *Store) upsertLayoutNode(slug, boardID string, boardRev int, node LayoutNode) (*LayoutDocument, error) {
-	path := s.LayoutPath(slug)
 	var layout *LayoutDocument
-	err := withFileLock(path, func() error {
-		raw, err := os.ReadFile(path)
+	err := s.withLayoutDefinitionLock(slug, func(definition *definitionFile) error {
+		raw, err := definition.readBytes()
 		switch {
 		case err == nil:
-		case os.IsNotExist(err):
+		case errors.Is(err, ErrNotFound):
 			raw = []byte("schema = 1\nboardId = " + renderString(boardID) + "\nboardRev = " + renderInt(boardRev) + "\nupdatedAt = " + renderString(s.now().Format(time.RFC3339)) + "\n")
 		default:
 			return err
@@ -1750,7 +1726,7 @@ func (s *Store) upsertLayoutNode(slug, boardID string, boardRev int, node Layout
 		doc.setScalar("updatedAt", renderString(s.now().Format(time.RFC3339)))
 
 		nextRaw := appendLayoutNodeBlock(doc.bytes(), node)
-		if err := writeAtomic(path, nextRaw); err != nil {
+		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
 		layout, err = parseLayout(nextRaw)
@@ -1763,13 +1739,12 @@ func (s *Store) upsertLayoutNode(slug, boardID string, boardRev int, node Layout
 }
 
 func (s *Store) deleteLayoutNodes(slug, boardID string, boardRev int, nodeIDs map[string]bool) (*LayoutDocument, error) {
-	path := s.LayoutPath(slug)
 	var layout *LayoutDocument
-	err := withFileLock(path, func() error {
-		raw, err := os.ReadFile(path)
+	err := s.withLayoutDefinitionLock(slug, func(definition *definitionFile) error {
+		raw, err := definition.readBytes()
 		switch {
 		case err == nil:
-		case os.IsNotExist(err):
+		case errors.Is(err, ErrNotFound):
 			layout = &LayoutDocument{
 				Schema:   CurrentSchema,
 				BoardID:  boardID,
@@ -1793,7 +1768,7 @@ func (s *Store) deleteLayoutNodes(slug, boardID string, boardRev int, nodeIDs ma
 		doc.setScalar("updatedAt", renderString(s.now().Format(time.RFC3339)))
 
 		nextRaw := deleteLayoutNodeBlocks(doc.bytes(), nodeIDs)
-		if err := writeAtomic(path, nextRaw); err != nil {
+		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
 		layout, err = parseLayout(nextRaw)
