@@ -1,14 +1,12 @@
 package formations
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -185,10 +183,18 @@ func (s *Store) StartRun(slug string, req RunStartRequest) (*RunStartResult, err
 	snapshotPath := runArtifactPath(slug, runID, ".snapshot.toml")
 	bindingsPath := runArtifactPath(slug, runID, ".bindings.toml")
 
-	if err := writeAtomic(filepath.Join(s.Workspace, snapshotPath), boardRaw); err != nil {
+	if int64(len(boardRaw)) > runtimeAuthorityMaxRecordBytes {
+		return nil, fmt.Errorf("%w: run snapshot exceeds byte limit", ErrRunLedgerInvalid)
+	}
+	runDirectory, err := s.openRunArtifactDirectory(slug, true)
+	if err != nil {
 		return nil, err
 	}
-	if err := writeAtomic(filepath.Join(s.Workspace, bindingsPath), []byte(renderRunBindings(runID, board, mission, bindings))); err != nil {
+	defer runDirectory.close()
+	if err := writeRunArtifactExclusiveAt(runDirectory, runID+".snapshot.toml", boardRaw); err != nil {
+		return nil, err
+	}
+	if err := writeRunArtifactExclusiveAt(runDirectory, runID+".bindings.toml", []byte(renderRunBindings(runID, board, mission, bindings))); err != nil {
 		return nil, err
 	}
 
@@ -223,7 +229,7 @@ func (s *Store) StartRun(slug string, req RunStartRequest) (*RunStartResult, err
 			"limits":           req.Limits,
 		},
 	}
-	if err := writeInitialRunEvent(filepath.Join(s.Workspace, ledgerPath), event); err != nil {
+	if err := writeInitialRunEventAt(runDirectory, runID, event); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -244,13 +250,14 @@ func (s *Store) appendRunEventWithSnapshot(runID string, event RunEvent) (*Board
 	if event.Type == RunEventVerificationVerdict {
 		return nil, fmt.Errorf("%w: new verification_verdict events are retired; use an explicit Gate", ErrLegacyInlineVerificationRequiresMigration)
 	}
-	ledgerPath, err := s.findRunLedger(runID)
+	ledger, err := s.openRunLedger(runID, true)
 	if err != nil {
 		return nil, err
 	}
+	defer ledger.close()
 	var snapshot *BoardDocument
-	err = withFileLock(ledgerPath, func() error {
-		events, err := readRunEventsFile(ledgerPath)
+	err = ledger.withLock(func() error {
+		events, err := classifyAndReadRunEvents(ledger.file, runID)
 		if err != nil {
 			return err
 		}
@@ -262,9 +269,12 @@ func (s *Store) appendRunEventWithSnapshot(runID string, event RunEvent) (*Board
 		}
 		first := events[0]
 		last := events[len(events)-1]
+		if err := s.validateRunSnapshotIdentity(first, runID, ledger); err != nil {
+			return err
+		}
 		var validatedSnapshot *BoardDocument
 		if event.Type != RunEventCanceled && event.Type != RunEventFailed {
-			validatedSnapshot, err = s.readRunSnapshot(first, runID, ledgerPath)
+			validatedSnapshot, err = s.readRunSnapshot(first, runID, ledger)
 			if err != nil {
 				return err
 			}
@@ -313,7 +323,7 @@ func (s *Store) appendRunEventWithSnapshot(runID string, event RunEvent) (*Board
 		if event.Epoch == 0 && last.Epoch != 0 {
 			event.Epoch = last.Epoch
 		}
-		if err := appendRunEventLine(ledgerPath, event); err != nil {
+		if err := appendRunEventToFile(ledger.file, ledger.directory.file, event); err != nil {
 			return err
 		}
 		snapshot = validatedSnapshot
@@ -337,13 +347,14 @@ func (s *Store) resumeRunWithSnapshot(runID string, req RunResumeRequest) (*RunS
 	if err := s.RequireRuntimeAuthority(); err != nil {
 		return nil, nil, err
 	}
-	ledgerPath, err := s.findRunLedger(runID)
+	ledger, err := s.openRunLedger(runID, true)
 	if err != nil {
 		return nil, nil, err
 	}
+	defer ledger.close()
 	var snapshot *BoardDocument
-	if err := withFileLock(ledgerPath, func() error {
-		events, err := readRunEventsFile(ledgerPath)
+	if err := ledger.withLock(func() error {
+		events, err := classifyAndReadRunEvents(ledger.file, runID)
 		if err != nil {
 			return err
 		}
@@ -355,7 +366,7 @@ func (s *Store) resumeRunWithSnapshot(runID string, req RunResumeRequest) (*RunS
 		}
 		first := events[0]
 		last := events[len(events)-1]
-		runSnapshot, err := s.readRunSnapshot(first, runID, ledgerPath)
+		runSnapshot, err := s.readRunSnapshot(first, runID, ledger)
 		if err != nil {
 			return err
 		}
@@ -397,7 +408,7 @@ func (s *Store) resumeRunWithSnapshot(runID string, req RunResumeRequest) (*RunS
 			Epoch:     last.Epoch + 1,
 			Data:      data,
 		}
-		if err := appendRunEventLine(ledgerPath, event); err != nil {
+		if err := appendRunEventToFile(ledger.file, ledger.directory.file, event); err != nil {
 			return err
 		}
 		snapshot = runSnapshot
@@ -412,64 +423,45 @@ func (s *Store) resumeRunWithSnapshot(runID string, req RunResumeRequest) (*RunS
 	return status, snapshot, nil
 }
 
-func (s *Store) readRunSnapshot(started RunEvent, expectedRunID, ledgerPath string) (*BoardDocument, error) {
+func (s *Store) validateRunSnapshotIdentity(started RunEvent, expectedRunID string, ledger *runLedgerHandle) error {
 	snapshotPath := stringFromEventData(started, "snapshot")
 	boardSlug := stringFromEventData(started, "boardSlug")
-	if validateSlug(boardSlug) != nil || started.RunID != expectedRunID {
-		return nil, ErrRunLedgerInvalid
+	if ledger == nil || ledger.directory == nil || validateSlug(boardSlug) != nil || started.RunID != expectedRunID || ledger.runID != expectedRunID {
+		return ErrRunLedgerInvalid
 	}
-	expectedLedgerPath := filepath.Join(s.Workspace, runArtifactPath(boardSlug, expectedRunID, ".ndjson"))
 	expectedSnapshotPath := runArtifactPath(boardSlug, expectedRunID, ".snapshot.toml")
-	if ledgerPath != expectedLedgerPath || snapshotPath != expectedSnapshotPath {
-		return nil, ErrRunLedgerInvalid
+	if ledger.directory.slug != boardSlug || snapshotPath != expectedSnapshotPath {
+		return ErrRunLedgerInvalid
 	}
-	snapshotFile, err := s.openRunSnapshot(boardSlug, expectedRunID)
-	if err != nil {
-		return nil, fmt.Errorf("%w: snapshot open failed: %v", ErrRunLedgerInvalid, err)
+	return nil
+}
+
+func (s *Store) readRunSnapshot(started RunEvent, expectedRunID string, ledger *runLedgerHandle) (*BoardDocument, error) {
+	if err := s.validateRunSnapshotIdentity(started, expectedRunID, ledger); err != nil {
+		return nil, err
 	}
-	defer snapshotFile.Close()
-	snapshotRaw, err := io.ReadAll(snapshotFile)
+	snapshotRaw, err := readRuntimeAuthorityFileAt(ledger.directory.file, expectedRunID+".snapshot.toml", runtimeAuthorityMaxRecordBytes)
 	if err != nil {
 		return nil, fmt.Errorf("%w: snapshot read failed: %v", ErrRunLedgerInvalid, err)
 	}
 	board, err := parseBoard(snapshotRaw)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: snapshot parse failed: %v", ErrRunLedgerInvalid, err)
 	}
+	boardSlug := stringFromEventData(started, "boardSlug")
 	if board.ID != started.BoardID || board.Slug != boardSlug || board.Rev != started.BoardRev {
 		return nil, ErrRunLedgerInvalid
 	}
 	return board, nil
 }
 
-func (s *Store) openRunSnapshot(boardSlug, runID string) (*os.File, error) {
-	workspace, err := filepath.Abs(s.Workspace)
-	if err != nil {
-		return nil, err
-	}
-	current, err := openRuntimeAuthorityRoot(workspace)
-	if err != nil {
-		return nil, err
-	}
-	for _, component := range []string{".formations", "runs", boardSlug} {
-		next, openErr := openRuntimeAuthorityDirectoryAt(current, component)
-		_ = current.Close()
-		if openErr != nil {
-			return nil, openErr
-		}
-		current = next
-	}
-	snapshot, err := openRuntimeAuthorityFileAt(current, runID+".snapshot.toml")
-	_ = current.Close()
-	return snapshot, err
-}
-
 func (s *Store) ProjectRun(runID string) (*RunStatusProjection, error) {
-	ledgerPath, err := s.findRunLedger(runID)
+	ledger, err := s.openRunLedger(runID, false)
 	if err != nil {
 		return nil, err
 	}
-	events, err := readRunEventsFile(ledgerPath)
+	defer ledger.close()
+	events, err := classifyAndReadRunEvents(ledger.file, runID)
 	if err != nil {
 		return nil, err
 	}
@@ -554,45 +546,19 @@ func unresolvedWaitingNodes(events []RunEvent) []string {
 }
 
 func (s *Store) ReadRunEvents(runID string) ([]RunEvent, error) {
-	ledgerPath, err := s.findRunLedger(runID)
+	ledger, err := s.openRunLedger(runID, false)
 	if err != nil {
 		return nil, err
 	}
-	return readRunEventsFile(ledgerPath)
+	defer ledger.close()
+	return classifyAndReadRunEvents(ledger.file, runID)
 }
 
 func (s *Store) ListRuns(filter RunListFilter) ([]RunStatusProjection, error) {
-	root := filepath.Join(s.Workspace, ".formations", "runs")
-	seen := map[string]string{}
-	runIDs := []string{}
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return err
-		}
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".ndjson") {
-			return nil
-		}
-		runID := strings.TrimSuffix(entry.Name(), ".ndjson")
-		if !strings.HasPrefix(runID, "run_") {
-			return nil
-		}
-		if previous, ok := seen[runID]; ok {
-			return fmt.Errorf("%w: run id %q appears in multiple ledgers: %s and %s", ErrRunLedgerInvalid, runID, previous, path)
-		}
-		seen[runID] = path
-		runIDs = append(runIDs, runID)
-		return nil
-	})
+	runIDs, err := s.listRunIDs()
 	if err != nil {
-		if os.IsNotExist(err) {
-			return []RunStatusProjection{}, nil
-		}
 		return nil, err
 	}
-	sort.Strings(runIDs)
 	runs := make([]RunStatusProjection, 0, len(runIDs))
 	for _, runID := range runIDs {
 		status, err := s.ProjectRun(runID)
@@ -643,105 +609,72 @@ func (s *Store) ProjectRunNodeReport(runID, nodeID string) (*RunNodeReport, erro
 }
 
 func writeInitialRunEvent(path string, event RunEvent) error {
-	return withFileLock(path, func() error {
-		if _, err := os.Stat(path); err == nil {
-			return ErrConflict
-		} else if err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return appendRunEventLine(path, event)
-	})
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	absolute = filepath.Clean(absolute)
+	directory, err := openOrCreateAbsoluteDirectory(filepath.Dir(absolute))
+	if err != nil {
+		return fmt.Errorf("%w: open run directory: %v", ErrRunLedgerInvalid, err)
+	}
+	defer directory.close()
+	runID := strings.TrimSuffix(filepath.Base(absolute), ".ndjson")
+	return writeInitialRunEventAt(directory, runID, event)
 }
 
 func appendRunEventLine(path string, event RunEvent) error {
-	if event.Type == "" {
-		return fmt.Errorf("%w: event type required", ErrInvalidSlug)
-	}
-	if err := ensureSharedDir(filepath.Dir(path)); err != nil {
-		return err
-	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, sharedFileMode)
+	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return err
 	}
-	if err := ensureSharedFile(path); err != nil {
-		_ = file.Close()
-		return err
+	absolute = filepath.Clean(absolute)
+	directory, err := openOrCreateAbsoluteDirectory(filepath.Dir(absolute))
+	if err != nil {
+		return fmt.Errorf("%w: open run directory: %v", ErrRunLedgerInvalid, err)
 	}
-	encoder := json.NewEncoder(file)
-	if err := encoder.Encode(event); err != nil {
-		_ = file.Close()
-		return err
+	defer directory.close()
+	file, err := openRunArtifactFileAt(directory.file, filepath.Base(absolute), syscall.O_RDWR|syscall.O_APPEND, true)
+	if err != nil {
+		return fmt.Errorf("%w: open run ledger: %v", ErrRunLedgerInvalid, err)
 	}
-	if err := file.Sync(); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	return fsyncDir(filepath.Dir(path))
+	defer file.Close()
+	return appendRunEventToFile(file, directory.file, event)
 }
 
 func readRunEventsFile(path string) ([]RunEvent, error) {
-	raw, err := os.ReadFile(path)
+	absolute, err := filepath.Abs(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, ErrNotFound
-		}
 		return nil, err
 	}
-	body := strings.TrimSpace(string(raw))
-	if body == "" {
-		return nil, nil
-	}
-	lines := strings.Split(body, "\n")
-	events := make([]RunEvent, 0, len(lines))
-	for _, line := range lines {
-		var event RunEvent
-		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrRunLedgerInvalid, err)
+	absolute = filepath.Clean(absolute)
+	directoryFile, err := openRuntimeAuthorityRoot(filepath.Dir(absolute))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, ErrNotFound
 		}
-		events = append(events, event)
+		return nil, fmt.Errorf("%w: open run directory: %v", ErrRunLedgerInvalid, err)
 	}
-	return events, nil
+	defer directoryFile.Close()
+	file, err := openRunArtifactFileAt(directoryFile, filepath.Base(absolute), syscall.O_RDONLY, false)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("%w: open run ledger: %v", ErrRunLedgerInvalid, err)
+	}
+	defer file.Close()
+	runID := strings.TrimSuffix(filepath.Base(absolute), ".ndjson")
+	return classifyAndReadRunEvents(file, runID)
 }
 
 func (s *Store) findRunLedger(runID string) (string, error) {
-	if !strings.HasPrefix(runID, "run_") || strings.ContainsAny(runID, `/\`) || strings.Contains(runID, "..") {
-		return "", ErrInvalidSlug
-	}
-	root := filepath.Join(s.Workspace, ".formations", "runs")
-	var matches []string
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return err
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		if entry.Name() == runID+".ndjson" {
-			matches = append(matches, path)
-		}
-		return nil
-	})
+	ledger, err := s.openRunLedger(runID, false)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return "", ErrNotFound
-		}
 		return "", err
 	}
-	if len(matches) == 0 {
-		return "", ErrNotFound
-	}
-	if len(matches) > 1 {
-		sort.Strings(matches)
-		return "", fmt.Errorf("%w: run id %q appears in multiple ledgers", ErrRunLedgerInvalid, runID)
-	}
-	return matches[0], nil
+	defer ledger.close()
+	return ledger.path, nil
 }
 
 func resolveRunBindings(board *BoardDocument, personas *PersonaStore) ([]runBinding, error) {

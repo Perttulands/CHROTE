@@ -3,7 +3,6 @@ package formations
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -166,7 +165,7 @@ func (e *RunEngine) RunMission(slug string, req RunStartRequest) (*RunStatusProj
 	if err != nil {
 		return nil, err
 	}
-	runBoard, err := e.readRunBoard(started.SnapshotPath)
+	runBoard, err := e.readRunBoard(started.RunID)
 	if err != nil {
 		return nil, err
 	}
@@ -537,10 +536,19 @@ func (e *RunEngine) startFormationRun(slug string, board *BoardDocument, formati
 	ledgerPath := runArtifactPath(slug, runID, ".ndjson")
 	snapshotPath := runArtifactPath(slug, runID, ".snapshot.toml")
 	bindingsPath := runArtifactPath(slug, runID, ".bindings.toml")
-	if err := writeAtomic(filepath.Join(e.store.Workspace, snapshotPath), []byte(board.TOML)); err != nil {
+	boardRaw := []byte(board.TOML)
+	if int64(len(boardRaw)) > runtimeAuthorityMaxRecordBytes {
+		return nil, MissionNode{}, RunInputRef{}, fmt.Errorf("%w: run snapshot exceeds byte limit", ErrRunLedgerInvalid)
+	}
+	runDirectory, err := e.store.openRunArtifactDirectory(slug, true)
+	if err != nil {
 		return nil, MissionNode{}, RunInputRef{}, err
 	}
-	if err := writeAtomic(filepath.Join(e.store.Workspace, bindingsPath), []byte(renderRunBindings(runID, board, mission, bindings))); err != nil {
+	defer runDirectory.close()
+	if err := writeRunArtifactExclusiveAt(runDirectory, runID+".snapshot.toml", boardRaw); err != nil {
+		return nil, MissionNode{}, RunInputRef{}, err
+	}
+	if err := writeRunArtifactExclusiveAt(runDirectory, runID+".bindings.toml", []byte(renderRunBindings(runID, board, mission, bindings))); err != nil {
 		return nil, MissionNode{}, RunInputRef{}, err
 	}
 	started := &RunStartResult{
@@ -576,7 +584,7 @@ func (e *RunEngine) startFormationRun(slug string, board *BoardDocument, formati
 			"formationId":      formation.ID,
 		},
 	}
-	if err := writeInitialRunEvent(filepath.Join(e.store.Workspace, ledgerPath), event); err != nil {
+	if err := writeInitialRunEventAt(runDirectory, runID, event); err != nil {
 		return nil, MissionNode{}, RunInputRef{}, err
 	}
 	seedInput := RunInputRef{
@@ -967,12 +975,20 @@ func gateVerdictRoutes(board *BoardDocument, event RunEvent, gateID, routePort s
 	return routes
 }
 
-func (e *RunEngine) readRunBoard(snapshotPath string) (*BoardDocument, error) {
-	raw, err := os.ReadFile(filepath.Join(e.store.Workspace, snapshotPath))
+func (e *RunEngine) readRunBoard(runID string) (*BoardDocument, error) {
+	ledger, err := e.store.openRunLedger(runID, false)
+	if err != nil {
+		return nil, fmt.Errorf("%w: open run ledger: %v", ErrRunLedgerInvalid, err)
+	}
+	defer ledger.close()
+	events, err := classifyAndReadRunEvents(ledger.file, runID)
 	if err != nil {
 		return nil, err
 	}
-	return parseBoard(raw)
+	if len(events) == 0 {
+		return nil, ErrRunLedgerInvalid
+	}
+	return e.store.readRunSnapshot(events[0], runID, ledger)
 }
 
 func (e *RunEngine) executeSnapshot(runID string, board *BoardDocument, mission MissionNode, limits RunLimits) error {

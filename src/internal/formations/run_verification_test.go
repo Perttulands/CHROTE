@@ -9,6 +9,8 @@ import (
 	"testing"
 )
 
+const legacyRunEventTimestamp = "2026-06-03T17:00:00Z"
+
 func TestS4JudgeChainVerdictRoutesGate(t *testing.T) {
 	store, personas := s4RunFixture(t)
 	store.Now = fixedClock()
@@ -270,7 +272,7 @@ func TestLegacyInlineVerificationResumeRejectsBeforeRunResumedAppend(t *testing.
 	ledger := runArtifactPath("session-search", runID, ".ndjson")
 	writeFixture(t, filepath.Join(store.Workspace, snapshot), raw)
 	if err := writeInitialRunEvent(filepath.Join(store.Workspace, ledger), RunEvent{
-		RunID: runID, Seq: 1, Type: RunEventStarted, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
+		Timestamp: legacyRunEventTimestamp, RunID: runID, Seq: 1, Type: RunEventStarted, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
 		MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{
 			"boardSlug": "session-search", "snapshot": snapshot, "limits": RunLimits{MaxDispatch: 5, MaxAttempts: 2},
 		},
@@ -278,7 +280,7 @@ func TestLegacyInlineVerificationResumeRejectsBeforeRunResumedAppend(t *testing.
 		t.Fatalf("write legacy run start: %v", err)
 	}
 	if err := appendRunEventLine(filepath.Join(store.Workspace, ledger), RunEvent{
-		RunID: runID, Seq: 2, Type: RunEventBlocked, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
+		Timestamp: legacyRunEventTimestamp, RunID: runID, Seq: 2, Type: RunEventBlocked, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
 		MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{
 			"reason": "legacy interruption", "resumeAllowed": true, "resumePolicy": "explicit",
 		},
@@ -322,7 +324,7 @@ func TestLegacyInlineVerificationHumanVerdictRejectsBeforeLedgerMutation(t *test
 	ledger := runArtifactPath("session-search", runID, ".ndjson")
 	writeFixture(t, filepath.Join(store.Workspace, snapshot), raw)
 	if err := writeInitialRunEvent(filepath.Join(store.Workspace, ledger), RunEvent{
-		RunID: runID, Seq: 1, Type: RunEventStarted, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
+		Timestamp: legacyRunEventTimestamp, RunID: runID, Seq: 1, Type: RunEventStarted, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
 		MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{
 			"boardSlug": "session-search", "snapshot": snapshot, "limits": RunLimits{MaxDispatch: 5, MaxAttempts: 2},
 		},
@@ -330,7 +332,7 @@ func TestLegacyInlineVerificationHumanVerdictRejectsBeforeLedgerMutation(t *test
 		t.Fatalf("write legacy run start: %v", err)
 	}
 	if err := appendRunEventLine(filepath.Join(store.Workspace, ledger), RunEvent{
-		RunID: runID, Seq: 2, Type: RunEventHumanInputRequested, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
+		Timestamp: legacyRunEventTimestamp, RunID: runID, Seq: 2, Type: RunEventHumanInputRequested, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
 		MissionID: "mis_showcase", Actor: "agent:test", GateID: "gate_review", NodeID: "gate_review",
 		Data: map[string]any{"prompt": "Good enough to ship", "requestedBy": "gate_review"},
 	}); err != nil {
@@ -376,7 +378,7 @@ func TestLegacyInlineVerificationHumanVerdictRejectsForgedSnapshotBeforeReadOrMu
 		t.Fatalf("write forged run start: %v", err)
 	}
 	if err := appendRunEventLine(ledger, RunEvent{
-		RunID: runID, Seq: 2, Type: RunEventHumanInputRequested, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
+		Timestamp: legacyRunEventTimestamp, RunID: runID, Seq: 2, Type: RunEventHumanInputRequested, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
 		MissionID: "mis_showcase", Actor: "agent:test", GateID: "gate_review", NodeID: "gate_review",
 		Data: map[string]any{"prompt": "Review", "requestedBy": "gate_review"},
 	}); err != nil {
@@ -409,7 +411,7 @@ func TestLegacyInlineVerificationRawResumeAppendIsRejectedButCancelClosesRun(t *
 	ledger := filepath.Join(store.Workspace, runArtifactPath("session-search", runID, ".ndjson"))
 	writeFixture(t, filepath.Join(store.Workspace, snapshot), raw)
 	if err := writeInitialRunEvent(ledger, RunEvent{
-		RunID: runID, Seq: 1, Type: RunEventStarted, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
+		Timestamp: legacyRunEventTimestamp, RunID: runID, Seq: 1, Type: RunEventStarted, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
 		MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{
 			"boardSlug": "session-search", "snapshot": snapshot,
 		},
@@ -417,7 +419,7 @@ func TestLegacyInlineVerificationRawResumeAppendIsRejectedButCancelClosesRun(t *
 		t.Fatalf("write legacy run start: %v", err)
 	}
 	if err := appendRunEventLine(ledger, RunEvent{
-		RunID: runID, Seq: 2, Type: RunEventBlocked, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
+		Timestamp: legacyRunEventTimestamp, RunID: runID, Seq: 2, Type: RunEventBlocked, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
 		MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{
 			"reason": "legacy interruption", "resumeAllowed": true, "resumePolicy": "explicit",
 		},
@@ -476,7 +478,7 @@ func TestLegacyInlineVerificationTerminalContainmentIgnoresUnavailableSnapshot(t
 				}
 			}
 			if err := writeInitialRunEvent(ledger, RunEvent{
-				RunID: runID, Seq: 1, Type: RunEventStarted, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
+				Timestamp: legacyRunEventTimestamp, RunID: runID, Seq: 1, Type: RunEventStarted, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
 				MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{
 					"boardSlug": "session-search", "snapshot": snapshot,
 				},
@@ -484,7 +486,7 @@ func TestLegacyInlineVerificationTerminalContainmentIgnoresUnavailableSnapshot(t
 				t.Fatalf("write legacy run start: %v", err)
 			}
 			if err := appendRunEventLine(ledger, RunEvent{
-				RunID: runID, Seq: 2, Type: RunEventBlocked, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
+				Timestamp: legacyRunEventTimestamp, RunID: runID, Seq: 2, Type: RunEventBlocked, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
 				MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{
 					"reason": "legacy interruption", "resumeAllowed": true, "resumePolicy": "explicit",
 				},
@@ -516,7 +518,7 @@ func TestRunSnapshotReadRejectsNoncanonicalLedgerPath(t *testing.T) {
 	ledger := filepath.Join(store.Workspace, runArtifactPath("session-search", runID, ".ndjson"))
 	writeFixture(t, filepath.Join(store.Workspace, noncanonicalSnapshot), raw)
 	if err := writeInitialRunEvent(ledger, RunEvent{
-		RunID: runID, Seq: 1, Type: RunEventStarted, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
+		Timestamp: legacyRunEventTimestamp, RunID: runID, Seq: 1, Type: RunEventStarted, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
 		MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{
 			"boardSlug": "session-search", "snapshot": noncanonicalSnapshot,
 		},
@@ -542,9 +544,10 @@ func TestRunSnapshotReadRejectsNoncanonicalLedgerPath(t *testing.T) {
 
 func TestRunSnapshotReadRejectsLedgerControlledIdentityBeforeMutation(t *testing.T) {
 	tests := []struct {
-		name       string
-		ledgerSlug string
-		setup      func(t *testing.T, store *Store, requestedRunID string) RunEvent
+		name          string
+		ledgerSlug    string
+		rejectsOnRead bool
+		setup         func(t *testing.T, store *Store, requestedRunID string) RunEvent
 	}{
 		{
 			name: "traversal board slug",
@@ -567,7 +570,8 @@ func TestRunSnapshotReadRejectsLedgerControlledIdentityBeforeMutation(t *testing
 			},
 		},
 		{
-			name: "first event run id differs from ledger",
+			name:          "first event run id differs from ledger",
+			rejectsOnRead: true,
 			setup: func(t *testing.T, store *Store, _ string) RunEvent {
 				t.Helper()
 				startedRunID := newPrefixedID("run")
@@ -631,7 +635,21 @@ func TestRunSnapshotReadRejectsLedgerControlledIdentityBeforeMutation(t *testing
 			if err := writeInitialRunEvent(ledger, started); err != nil {
 				t.Fatalf("write forged run start: %v", err)
 			}
+			ledgerBefore := readFile(t, ledger)
 			before, err := store.ReadRunEvents(requestedRunID)
+			if test.rejectsOnRead {
+				if !errors.Is(err, ErrRunLedgerInvalid) {
+					t.Fatalf("read forged run error = %v, want ErrRunLedgerInvalid", err)
+				}
+				err = store.AppendRunEvent(requestedRunID, RunEvent{Type: RunEventNodeStarted, NodeID: "fmn_work"})
+				if !errors.Is(err, ErrRunLedgerInvalid) {
+					t.Fatalf("forged snapshot append error = %v, want ErrRunLedgerInvalid", err)
+				}
+				if after := readFile(t, ledger); after != ledgerBefore {
+					t.Fatalf("forged identity rejection mutated ledger bytes")
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("read forged run: %v", err)
 			}
@@ -652,7 +670,7 @@ func TestRunSnapshotReadRejectsLedgerControlledIdentityBeforeMutation(t *testing
 
 func runStartedFixture(runID, boardSlug, snapshot string) RunEvent {
 	return RunEvent{
-		RunID: runID, Seq: 1, Type: RunEventStarted, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
+		Timestamp: legacyRunEventTimestamp, RunID: runID, Seq: 1, Type: RunEventStarted, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
 		MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{
 			"boardSlug": boardSlug, "snapshot": snapshot,
 		},
@@ -693,19 +711,19 @@ func TestNewLegacyVerificationVerdictAppendIsRejectedButHistoricalEvidenceProjec
 	historicalRunID := newPrefixedID("run")
 	historicalLedger := filepath.Join(store.Workspace, runArtifactPath("session-search", historicalRunID, ".ndjson"))
 	if err := writeInitialRunEvent(historicalLedger, RunEvent{
-		RunID: historicalRunID, Seq: 1, Type: RunEventStarted, BoardID: "brd_showcase", BoardRev: 7,
+		Timestamp: legacyRunEventTimestamp, RunID: historicalRunID, Seq: 1, Type: RunEventStarted, BoardID: "brd_showcase", BoardRev: 7,
 		MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{"boardSlug": "session-search"},
 	}); err != nil {
 		t.Fatalf("write historical start: %v", err)
 	}
 	if err := appendRunEventLine(historicalLedger, RunEvent{
-		RunID: historicalRunID, Seq: 2, Type: RunEventVerificationVerdict, NodeID: "fmn_old",
+		Timestamp: legacyRunEventTimestamp, RunID: historicalRunID, Seq: 2, Type: RunEventVerificationVerdict, Actor: "agent:test", NodeID: "fmn_old",
 		Data: map[string]any{"verificationId": "ver_old", "verdict": "fail"},
 	}); err != nil {
 		t.Fatalf("write historical verification evidence: %v", err)
 	}
 	if err := appendRunEventLine(historicalLedger, RunEvent{
-		RunID: historicalRunID, Seq: 3, Type: RunEventSucceeded, Data: map[string]any{"final": true},
+		Timestamp: legacyRunEventTimestamp, RunID: historicalRunID, Seq: 3, Type: RunEventSucceeded, Actor: "agent:test", Data: map[string]any{"final": true},
 	}); err != nil {
 		t.Fatalf("write historical final event: %v", err)
 	}
