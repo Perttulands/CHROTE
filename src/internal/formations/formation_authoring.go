@@ -32,6 +32,18 @@ type FormationCreateResult struct {
 	Formation FormationNode   `json:"formation"`
 }
 
+type GateCreateResult struct {
+	Board  *BoardDocument  `json:"board"`
+	Layout *LayoutDocument `json:"layout"`
+	Gate   GateNode        `json:"gate"`
+}
+
+type MissionCreateResult struct {
+	Board   *BoardDocument  `json:"board"`
+	Layout  *LayoutDocument `json:"layout"`
+	Mission MissionNode     `json:"mission"`
+}
+
 type FormationDeleteRequest struct {
 	ID        string
 	UpdatedBy string
@@ -705,9 +717,15 @@ func (s *Store) RemoveFormationVerification(slug string, req FormationVerificati
 	})
 }
 
-func (s *Store) CreateGate(slug string, req GateCreateRequest, opts WriteOptions) (*BoardDocument, error) {
+func (s *Store) CreateGate(slug string, req GateCreateRequest, opts WriteOptions) (*GateCreateResult, error) {
 	if err := validateGateCommandMode(req.Command, req.CommandArgv, req.CommandShell); err != nil {
 		return nil, err
+	}
+	if err := validateSlug(slug); err != nil {
+		return nil, err
+	}
+	if opts.ExpectedETag == "" || opts.ExpectedRev == 0 {
+		return nil, ErrPreconditionRequired
 	}
 	kinds := req.Kinds
 	if len(kinds) == 0 {
@@ -727,16 +745,58 @@ func (s *Store) CreateGate(slug string, req GateCreateRequest, opts WriteOptions
 		CommandCWD:   req.CommandCWD,
 		CommandShell: req.CommandShell,
 	}
-	board, err := s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, _ *BoardDocument) ([]byte, error) {
-		return appendGateBlock(raw, gate), nil
+
+	path := s.BoardPath(slug)
+	var result *GateCreateResult
+	err := withFileLock(path, func() error {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return ErrNotFound
+			}
+			return err
+		}
+		current, err := parseBoard(raw)
+		if err != nil {
+			return err
+		}
+		if opts.ExpectedETag != current.ETag || opts.ExpectedRev != current.Rev {
+			return ErrConflict
+		}
+
+		doc := parseTOMLDocument(raw)
+		if current.Schema < CurrentSchema {
+			doc.setScalar("schema", renderInt(CurrentSchema))
+		}
+		if req.UpdatedBy != "" {
+			doc.setScalar("updatedBy", renderString(req.UpdatedBy))
+		}
+		doc.setScalar("rev", renderInt(current.Rev+1))
+		doc.setScalar("updatedAt", renderString(s.now().Format(time.RFC3339)))
+
+		nextRaw := appendGateBlock(doc.bytes(), gate)
+		if err := writeAtomic(path, nextRaw); err != nil {
+			return err
+		}
+		board, err := parseBoard(nextRaw)
+		if err != nil {
+			return err
+		}
+		layout, err := s.upsertLayoutNode(slug, board.ID, board.Rev, LayoutNode{ID: gate.ID, X: req.X, Y: req.Y})
+		if err != nil {
+			return err
+		}
+		result = &GateCreateResult{
+			Board:  board,
+			Layout: layout,
+			Gate:   gate,
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.upsertLayoutNode(slug, board.ID, board.Rev, LayoutNode{ID: gate.ID, X: req.X, Y: req.Y}); err != nil {
-		return nil, err
-	}
-	return board, nil
+	return result, nil
 }
 
 func (s *Store) UpdateGate(slug string, req GateUpdateRequest, opts WriteOptions) (*BoardDocument, error) {
@@ -824,9 +884,15 @@ func (s *Store) DetachGateJudge(slug string, req GateJudgeRequest, opts WriteOpt
 	})
 }
 
-func (s *Store) CreateMission(slug string, req MissionCreateRequest, opts WriteOptions) (*BoardDocument, error) {
+func (s *Store) CreateMission(slug string, req MissionCreateRequest, opts WriteOptions) (*MissionCreateResult, error) {
 	if !isSafeBeadsIssueID(req.BeadID) {
 		return nil, fmt.Errorf("%w: mission beadId must be a safe Beads issue id", ErrInvalidSlug)
+	}
+	if err := validateSlug(slug); err != nil {
+		return nil, err
+	}
+	if opts.ExpectedETag == "" || opts.ExpectedRev == 0 {
+		return nil, ErrPreconditionRequired
 	}
 	title := req.Title
 	if title == "" {
@@ -838,16 +904,58 @@ func (s *Store) CreateMission(slug string, req MissionCreateRequest, opts WriteO
 		Goal:   req.Goal,
 		BeadID: req.BeadID,
 	}
-	board, err := s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, _ *BoardDocument) ([]byte, error) {
-		return appendMissionBlock(raw, mission), nil
+
+	path := s.BoardPath(slug)
+	var result *MissionCreateResult
+	err := withFileLock(path, func() error {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return ErrNotFound
+			}
+			return err
+		}
+		current, err := parseBoard(raw)
+		if err != nil {
+			return err
+		}
+		if opts.ExpectedETag != current.ETag || opts.ExpectedRev != current.Rev {
+			return ErrConflict
+		}
+
+		doc := parseTOMLDocument(raw)
+		if current.Schema < CurrentSchema {
+			doc.setScalar("schema", renderInt(CurrentSchema))
+		}
+		if req.UpdatedBy != "" {
+			doc.setScalar("updatedBy", renderString(req.UpdatedBy))
+		}
+		doc.setScalar("rev", renderInt(current.Rev+1))
+		doc.setScalar("updatedAt", renderString(s.now().Format(time.RFC3339)))
+
+		nextRaw := appendMissionBlock(doc.bytes(), mission)
+		if err := writeAtomic(path, nextRaw); err != nil {
+			return err
+		}
+		board, err := parseBoard(nextRaw)
+		if err != nil {
+			return err
+		}
+		layout, err := s.upsertLayoutNode(slug, board.ID, board.Rev, LayoutNode{ID: mission.ID, X: req.X, Y: req.Y})
+		if err != nil {
+			return err
+		}
+		result = &MissionCreateResult{
+			Board:   board,
+			Layout:  layout,
+			Mission: mission,
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.upsertLayoutNode(slug, board.ID, board.Rev, LayoutNode{ID: mission.ID, X: req.X, Y: req.Y}); err != nil {
-		return nil, err
-	}
-	return board, nil
+	return result, nil
 }
 
 func (s *Store) AddFormationPort(slug string, req FormationPortRequest, opts WriteOptions) (*BoardDocument, error) {
@@ -995,6 +1103,10 @@ func (s *Store) RewireFormationTarget(slug string, req FormationRewireRequest, o
 }
 
 func (s *Store) UpdateLayoutNodes(slug string, nodes []LayoutNode, opts WriteOptions) (*LayoutDocument, error) {
+	return s.updateLayoutNodes(slug, nodes, nil, opts)
+}
+
+func (s *Store) updateLayoutNodes(slug string, nodes []LayoutNode, board *BoardDocument, opts WriteOptions) (*LayoutDocument, error) {
 	if err := validateSlug(slug); err != nil {
 		return nil, err
 	}
@@ -1009,9 +1121,11 @@ func (s *Store) UpdateLayoutNodes(slug string, nodes []LayoutNode, opts WriteOpt
 		switch {
 		case err == nil:
 		case os.IsNotExist(err) && opts.ExpectedETag == "*":
-			board, err := s.ReadBoard(slug)
-			if err != nil {
-				return err
+			if board == nil {
+				board, err = s.ReadBoard(slug)
+				if err != nil {
+					return err
+				}
 			}
 			raw = []byte("schema = 1\nboardId = " + renderString(board.ID) + "\nboardRev = " + renderInt(board.Rev) + "\nupdatedAt = " + renderString(s.now().Format(time.RFC3339)) + "\n")
 			recreatingMissing = true
@@ -1030,6 +1144,10 @@ func (s *Store) UpdateLayoutNodes(slug string, nodes []LayoutNode, opts WriteOpt
 		doc := parseTOMLDocument(raw)
 		if current.Schema < CurrentSchema {
 			doc.setScalar("schema", renderInt(CurrentSchema))
+		}
+		if board != nil {
+			doc.setScalar("boardId", renderString(board.ID))
+			doc.setScalar("boardRev", renderInt(board.Rev))
 		}
 		doc.setScalar("updatedAt", renderString(s.now().Format(time.RFC3339)))
 		nextRaw := patchLayoutNodeBlocks(doc.bytes(), nodes)

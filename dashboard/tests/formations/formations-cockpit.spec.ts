@@ -342,7 +342,7 @@ test.describe('Formations cockpit — D7 reference parity', () => {
 })
 
 test.describe('Formations cockpit — layout safety', () => {
-  test('normalizes bad saved coordinates so first-render cards do not overlap', async ({ page }) => {
+  test('renders intentionally overlapping saved coordinates verbatim', async ({ page }) => {
     await mockApiRoutes(page)
     await mockFormationsApiRoutes(page, {
       layout: {
@@ -355,24 +355,12 @@ test.describe('Formations cockpit — layout safety', () => {
     await page.getByRole('button', { name: 'Formations' }).click()
     await expect(page.getByTestId('formations-view')).toBeVisible()
 
-    const boxes = await page.locator('.fmx .world .formation,.fmx .world .gatecard,.fmx .world .missioncard').evaluateAll(elements => elements.map(element => {
-      const rect = element.getBoundingClientRect()
-      return {
-        id: (element as HTMLElement).dataset.testid || element.getAttribute('data-testid') || element.className,
-        left: rect.left,
-        right: rect.right,
-        top: rect.top,
-        bottom: rect.bottom,
-      }
-    }))
-    expect(boxes.length).toBe(mockFormationsBoard.missions.length + mockFormationsBoard.formations.length + mockFormationsBoard.gates.length)
-    for (let i = 0; i < boxes.length; i += 1) {
-      for (let j = i + 1; j < boxes.length; j += 1) {
-        const xOverlap = Math.max(0, Math.min(boxes[i].right, boxes[j].right) - Math.max(boxes[i].left, boxes[j].left))
-        const yOverlap = Math.max(0, Math.min(boxes[i].bottom, boxes[j].bottom) - Math.max(boxes[i].top, boxes[j].top))
-        expect(xOverlap * yOverlap, `${JSON.stringify({ a: boxes[i], b: boxes[j], xOverlap, yOverlap })}`).toBe(0)
-      }
-    }
+    const positions = await page.locator('.fmx .world .formation,.fmx .world .gatecard,.fmx .world .missioncard').evaluateAll(elements => elements.map(element => ({
+      left: (element as HTMLElement).style.left,
+      top: (element as HTMLElement).style.top,
+    })))
+    expect(positions).toHaveLength(mockFormationsBoard.missions.length + mockFormationsBoard.formations.length + mockFormationsBoard.gates.length)
+    expect(new Set(positions.map(position => `${position.left}:${position.top}`))).toEqual(new Set(['220px:160px']))
   })
 })
 
@@ -701,6 +689,42 @@ test.describe('Formations cockpit — direct manipulation gestures', () => {
     await expect.poll(() => patches.find(p => 'createGate' in p)).toBeTruthy()
   })
 
+  test('canvas Mission form submits the authored fields and a required Bead ID', async ({ page }) => {
+    const viewport = page.locator('.fmx .viewport')
+    const vbox = await requiredBox(viewport, 'formations viewport')
+    await viewport.evaluate((element, point) => {
+      element.dispatchEvent(new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        button: 2,
+        clientX: point.clientX,
+        clientY: point.clientY,
+      }))
+    }, {
+      clientX: vbox.x + vbox.width * 0.7,
+      clientY: vbox.y + vbox.height * 0.7,
+    })
+    await page.getByRole('menuitem', { name: 'Mission' }).click()
+
+    await expect(page.getByRole('dialog', { name: 'Create mission' })).toBeVisible()
+    expect(patches.filter(patch => 'createMission' in patch)).toEqual([])
+    await page.getByLabel('Mission title').fill('Plan release')
+    await page.getByLabel('Mission goal').fill('Ship the reduced candidate')
+    await page.getByLabel('Mission Bead ID').fill('home-vdki.34.1')
+    await page.getByRole('button', { name: 'Create mission' }).click()
+
+    await expect.poll(() => patches.find(patch => 'createMission' in patch)).toBeTruthy()
+    const create = patches.find(patch => 'createMission' in patch)?.createMission as Record<string, unknown>
+    expect(create).toMatchObject({
+      title: 'Plan release',
+      goal: 'Ship the reduced candidate',
+      beadId: 'home-vdki.34.1',
+    })
+    expect(create.x).toEqual(expect.any(Number))
+    expect(create.y).toEqual(expect.any(Number))
+    await expect(page.getByRole('dialog', { name: 'Create mission' })).toHaveCount(0)
+  })
+
   test('node-drag: moving mission, formation, and gate cards persists layout node patches', async ({ page }) => {
     const mission = page.getByTestId('mission-node-mission-smoke')
     const missionStart = await nodeStylePosition(mission)
@@ -829,27 +853,16 @@ test.describe('Formations cockpit — direct manipulation gestures', () => {
     expect(patches).toEqual([])
   })
 
-  test('tidy arranges the whole board in one grid-aligned layout patch and undoes in one step', async ({ page }) => {
-    await page.getByTestId('tidy-layout').click()
-    const bulkPatch = () => layoutPatches.find(p => Array.isArray(p.nodes) && (p.nodes as unknown[]).length >= 3)
-    await expect.poll(() => bulkPatch()).toBeTruthy()
-    const nodes = bulkPatch()!.nodes as { id: string; x: number; y: number }[]
-    expect(nodes.map(n => n.id)).toEqual(expect.arrayContaining(['mission-smoke', 'formation-review', 'gate-review']))
-    for (const node of nodes) {
-      expect(node.x % 28).toBe(0)
-      expect(node.y % 28).toBe(0)
-    }
-    // Downstream nodes land in later columns than their source (the mock's
-    // only wire is formation-review → gate-review; the mission is unwired).
-    const byId = new Map(nodes.map(n => [n.id, n]))
-    expect(byId.get('gate-review')!.x).toBeGreaterThan(byId.get('formation-review')!.x)
+  test('Arrange invokes the shared layout operation and undoes in one step', async ({ page }) => {
+    await page.getByTestId('arrange-layout').click()
+    await expect.poll(() => layoutPatches.find(p => p.arrange === true)).toBeTruthy()
 
     const patchesBefore = layoutPatches.length
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Z' : 'Control+Z')
     await expect.poll(() => layoutPatches.length).toBeGreaterThan(patchesBefore)
     const undoPatch = layoutPatches[layoutPatches.length - 1]
     expect(Array.isArray(undoPatch.nodes)).toBe(true)
-    expect((undoPatch.nodes as unknown[]).length).toBe(nodes.length)
+    expect((undoPatch.nodes as unknown[]).length).toBe(mockFormationsLayout.nodes.length + 1)
   })
 
   test('local formation menu edits input through a popover and undo emits the inverse model operation', async ({ page }) => {

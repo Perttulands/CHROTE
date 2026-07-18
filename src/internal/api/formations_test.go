@@ -580,6 +580,70 @@ updatedAt = "2026-06-03T16:00:00Z"
 	}
 }
 
+func TestFormationsHandlerExplicitArrangeUsesSharedLayoutOperation(t *testing.T) {
+	store := formations.NewStore(t.TempDir())
+	store.Now = fixedFormationsAPIClock()
+	writeFormationsAPIFixture(t, store.BoardPath("arrange"), `schema = 1
+id = "brd_arrange"
+slug = "arrange"
+title = "Arrange"
+rev = 2
+
+[[mission]]
+id = "mis_start"
+title = "Start"
+
+[[formation]]
+id = "fmn_finish"
+type = "solo"
+title = "Finish"
+
+[[connection]]
+id = "edge_start_finish"
+from = "mis_start:out"
+to = "fmn_finish:in"
+`)
+	writeFormationsAPIFixture(t, store.LayoutPath("arrange"), `schema = 1
+boardId = "brd_arrange"
+boardRev = 2
+
+[[node]]
+id = "mis_start"
+x = 500
+y = 500
+
+[[node]]
+id = "fmn_finish"
+x = 100
+y = 100
+`)
+	layout, err := store.ReadLayout("arrange")
+	if err != nil {
+		t.Fatalf("read layout: %v", err)
+	}
+	handler := NewFormationsHandlerWithStore(store)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/arrange/layout", bytes.NewBufferString(`{"arrange":true}`))
+	req.Header.Set("If-Match", layout.ETag)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	arranged, err := store.ReadLayout("arrange")
+	if err != nil {
+		t.Fatalf("read arranged layout: %v", err)
+	}
+	byID := map[string]formations.LayoutNode{}
+	for _, node := range arranged.Nodes {
+		byID[node.ID] = node
+	}
+	if byID["mis_start"].X >= byID["fmn_finish"].X {
+		t.Fatalf("explicit arrange did not order connected nodes: %+v", byID)
+	}
+}
+
 func TestFormationsHandlerS2RecreatesDeletedLayoutSidecarOnLayoutMove(t *testing.T) {
 	store := formations.NewStore(t.TempDir())
 	store.Now = fixedFormationsAPIClock()
@@ -940,7 +1004,7 @@ updatedAt = "2026-06-03T16:00:00Z"
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
-	req := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/session-search", bytes.NewBufferString(`{"createGate":{"title":"Review gate","kinds":["code","human"],"criterion":"Research is sound.","commandArgv":["npm","run","lint"],"commandCwd":"dashboard"},"expectedRev":7,"updatedBy":"agent:test"}`))
+	req := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/session-search", bytes.NewBufferString(`{"createGate":{"title":"Review gate","kinds":["code","human"],"criterion":"Research is sound.","commandArgv":["npm","run","lint"],"commandCwd":"dashboard","x":420,"y":280},"expectedRev":7,"updatedBy":"agent:test"}`))
 	req.Header.Set("If-Match", board.ETag)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -952,6 +1016,23 @@ updatedAt = "2026-06-03T16:00:00Z"
 		!bytes.Contains(rec.Body.Bytes(), []byte(`"commandCwd":"dashboard"`)) ||
 		bytes.Contains(rec.Body.Bytes(), []byte("verdict")) || bytes.Contains(rec.Body.Bytes(), []byte("onFail")) {
 		t.Fatalf("gate response wrong: %s", rec.Body.String())
+	}
+	var response struct {
+		Data struct {
+			Board  formations.BoardDocument  `json:"board"`
+			Layout formations.LayoutDocument `json:"layout"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode gate response: %v\n%s", err, rec.Body.String())
+	}
+	if len(response.Data.Board.Gates) != 1 || len(response.Data.Layout.Nodes) != 1 {
+		t.Fatalf("gate create response = %+v, want board and fresh layout", response.Data)
+	}
+	created := response.Data.Board.Gates[0]
+	placed := response.Data.Layout.Nodes[0]
+	if placed.ID != created.ID || placed.X != 420 || placed.Y != 280 || response.Data.Layout.ETag == "" {
+		t.Fatalf("gate layout = %+v, want fresh created-node position and ETag", response.Data.Layout)
 	}
 }
 
@@ -1020,7 +1101,7 @@ updatedAt = "2026-06-03T16:00:00Z"
 	handler := NewFormationsHandlerWithStore(store)
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
-	req := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/session-search", bytes.NewBufferString(`{"createMission":{"title":"Showcase","goal":"Build it","beadId":"chlab-123"},"expectedRev":7,"updatedBy":"agent:test"}`))
+	req := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/session-search", bytes.NewBufferString(`{"createMission":{"title":"Showcase","goal":"Build it","beadId":"chlab-123","x":196,"y":308},"expectedRev":7,"updatedBy":"agent:test"}`))
 	req.Header.Set("If-Match", board.ETag)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -1029,6 +1110,23 @@ updatedAt = "2026-06-03T16:00:00Z"
 	}
 	if !bytes.Contains(rec.Body.Bytes(), []byte(`"beadId":"chlab-123"`)) || bytes.Contains(rec.Body.Bytes(), []byte("chain")) {
 		t.Fatalf("mission response wrong: %s", rec.Body.String())
+	}
+	var response struct {
+		Data struct {
+			Board  formations.BoardDocument  `json:"board"`
+			Layout formations.LayoutDocument `json:"layout"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode mission response: %v\n%s", err, rec.Body.String())
+	}
+	if len(response.Data.Board.Missions) != 1 || len(response.Data.Layout.Nodes) != 1 {
+		t.Fatalf("mission create response = %+v, want board and fresh layout", response.Data)
+	}
+	created := response.Data.Board.Missions[0]
+	placed := response.Data.Layout.Nodes[0]
+	if placed.ID != created.ID || placed.X != 196 || placed.Y != 308 || response.Data.Layout.ETag == "" {
+		t.Fatalf("mission layout = %+v, want fresh created-node position and ETag", response.Data.Layout)
 	}
 }
 

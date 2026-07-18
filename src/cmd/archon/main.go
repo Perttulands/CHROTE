@@ -160,6 +160,8 @@ func run(args []string, stdout, stderr io.Writer, runner tmuxRunner) int {
 			return runBoardInspect(store, args[2:], stdout, stderr)
 		case "validate":
 			return runBoardValidate(store, args[2:], stdout, stderr)
+		case "arrange":
+			return runBoardArrange(store, args[2:], stdout, stderr)
 		default:
 			fmt.Fprintf(stderr, "unknown board command %q\n", args[1])
 			return 2
@@ -528,11 +530,15 @@ func runFormationCreate(store *formations.Store, args []string, stdout, stderr i
 	if err != nil {
 		return fail(stderr, err)
 	}
+	createX, createY, err := resolveCreateCoordinates(store, slug, fs, *x, *y)
+	if err != nil {
+		return fail(stderr, err)
+	}
 	result, err := store.CreateFormation(slug, formations.FormationCreateRequest{
 		Type:      fs.Arg(1),
 		Title:     *title,
-		X:         *x,
-		Y:         *y,
+		X:         createX,
+		Y:         createY,
 		UpdatedBy: *updatedBy,
 	}, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
 	if err != nil {
@@ -545,6 +551,23 @@ func runFormationCreate(store *formations.Store, args []string, stdout, stderr i
 	}
 	fmt.Fprintf(stdout, "created %s\n", result.Formation.ID)
 	return 0
+}
+
+func resolveCreateCoordinates(store *formations.Store, slug string, fs *flag.FlagSet, x, y int) (int, int, error) {
+	explicit := false
+	fs.Visit(func(current *flag.Flag) {
+		if current.Name == "x" || current.Name == "y" {
+			explicit = true
+		}
+	})
+	if explicit {
+		return x, y, nil
+	}
+	position, err := store.FindFreeLayoutPosition(slug, x, y)
+	if err != nil {
+		return 0, 0, err
+	}
+	return position.X, position.Y, nil
 }
 
 func runFormationAssign(store *formations.Store, args []string, stdout, stderr io.Writer) int {
@@ -775,6 +798,10 @@ func runGateCreate(store *formations.Store, args []string, stdout, stderr io.Wri
 	if err != nil {
 		return fail(stderr, err)
 	}
+	createX, createY, err := resolveCreateCoordinates(store, slug, fs, *x, *y)
+	if err != nil {
+		return fail(stderr, err)
+	}
 	result, err := store.CreateGate(slug, formations.GateCreateRequest{
 		Title:        *title,
 		Kinds:        splitCSV(*kinds),
@@ -783,16 +810,16 @@ func runGateCreate(store *formations.Store, args []string, stdout, stderr io.Wri
 		CommandArgv:  splitCSV(*commandArgv),
 		CommandCWD:   *commandCWD,
 		CommandShell: *commandShell,
-		X:            *x,
-		Y:            *y,
+		X:            createX,
+		Y:            createY,
 		UpdatedBy:    *updatedBy,
 	}, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
 	if err != nil {
 		return fail(stderr, err)
 	}
-	result.TOML = ""
+	result.Board.TOML = ""
 	if *jsonOut {
-		return writeJSON(stdout, result)
+		return writeJSON(stdout, result.Board)
 	}
 	fmt.Fprintln(stdout, "created gate")
 	return 0
@@ -963,20 +990,24 @@ func runMissionCreate(store *formations.Store, args []string, stdout, stderr io.
 	if err != nil {
 		return fail(stderr, err)
 	}
+	createX, createY, err := resolveCreateCoordinates(store, slug, fs, *x, *y)
+	if err != nil {
+		return fail(stderr, err)
+	}
 	result, err := store.CreateMission(slug, formations.MissionCreateRequest{
 		Title:     *title,
 		Goal:      *goal,
 		BeadID:    *beadID,
-		X:         *x,
-		Y:         *y,
+		X:         createX,
+		Y:         createY,
 		UpdatedBy: *updatedBy,
 	}, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
 	if err != nil {
 		return fail(stderr, err)
 	}
-	result.TOML = ""
+	result.Board.TOML = ""
 	if *jsonOut {
-		return writeJSON(stdout, result)
+		return writeJSON(stdout, result.Board)
 	}
 	fmt.Fprintln(stdout, "created mission")
 	return 0
@@ -1795,6 +1826,39 @@ func runBoardValidate(store *formations.Store, args []string, stdout, stderr io.
 	if len(report.Errors) > 0 {
 		return 1
 	}
+	return 0
+}
+
+func runBoardArrange(store *formations.Store, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("board arrange", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	jsonOut := fs.Bool("json", false, "write JSON")
+	if err := fs.Parse(reorderFlags(args, map[string]bool{"json": true})); err != nil {
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(stderr, "usage: archon board arrange <board> [--json]")
+		return 2
+	}
+	slug, err := store.ResolveBoardSelector(fs.Arg(0))
+	if err != nil {
+		return failSelector(stderr, err, *jsonOut, "board", fs.Arg(0))
+	}
+	expectedETag := "*"
+	if current, err := store.ReadLayout(slug); err == nil {
+		expectedETag = current.ETag
+	} else if !errors.Is(err, formations.ErrNotFound) {
+		return fail(stderr, err)
+	}
+	layout, err := store.ArrangeLayout(slug, formations.WriteOptions{ExpectedETag: expectedETag})
+	if err != nil {
+		return fail(stderr, err)
+	}
+	layout.TOML = ""
+	if *jsonOut {
+		return writeJSON(stdout, layout)
+	}
+	fmt.Fprintf(stdout, "arranged %s\n", slug)
 	return 0
 }
 

@@ -3,7 +3,7 @@ import { isOptionalSafeBeadsIssueID, isSafeBeadsIssueID } from './formationsBead
 
 describe('Formations Beads issue id validation', () => {
   it('accepts safe project-local Beads issue ids', () => {
-    for (const beadID of ['home-pfyv', 'home-vdki.8', 'chlab-123', 'srv-abc.2', 'bd-204']) {
+    for (const beadID of ['home-pfyv', 'home-vdki.8', 'home-vdki.34.1', 'chlab-123', 'srv-abc.2', 'bd-204']) {
       expect(isSafeBeadsIssueID(beadID)).toBe(true)
     }
   })

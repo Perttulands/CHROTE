@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { BoardDocument, LayoutNode } from './formationsTypes'
-import { GRID, clampScale, defaultPosition, displayLayoutFor, endpointNodeId, screenPointToWorld, snapToGrid, tidyLayout, visibleWirePath, zoomTransform } from './formationsCanvas'
+import { GRID, clampScale, defaultPosition, displayLayoutFor, endpointNodeId, freeGridPosition, screenPointToWorld, snapToGrid, visibleWirePath, zoomTransform } from './formationsCanvas'
 
 describe('formations canvas helpers', () => {
   it('computes stable grid-aligned default positions for starter nodes', () => {
@@ -41,7 +41,7 @@ describe('formations canvas helpers', () => {
     }
   })
 
-  it('spreads cards stacked on identical coordinates onto grid-aligned spots', () => {
+  it('renders intentionally overlapping persisted coordinates verbatim', () => {
     const board = {
       missions: [{ id: 'mis_a' }],
       formations: [
@@ -55,54 +55,17 @@ describe('formations canvas helpers', () => {
     )
     const resolved = displayLayoutFor(board, layoutByNode)
     const positions = ['mis_a', 'fmn_a', 'fmn_b'].map(id => resolved.get(id)!)
-    expect(new Set(positions.map(p => `${p.x}:${p.y}`)).size).toBe(3)
-    // Nudged cards land on the visible grid; the first keeps its authored spot.
-    expect(positions[0]).toEqual({ id: 'mis_a', x: 220, y: 160 })
-    expect(positions[1].x % GRID).toBe(0)
-    expect(positions[2].x % GRID).toBe(0)
+    expect(positions).toEqual([
+      { id: 'mis_a', x: 220, y: 160 },
+      { id: 'fmn_a', x: 220, y: 160 },
+      { id: 'fmn_b', x: 220, y: 160 },
+    ])
   })
 
-  it('tidyLayout arranges columns by graph depth with grid-aligned, non-overlapping rows', () => {
-    const board = {
-      missions: [{ id: 'mis_a' }],
-      formations: [
-        { id: 'fmn_build', type: 'peer', slots: [{}, {}] },
-        { id: 'fmn_report', type: 'solo', slots: [{}] },
-      ],
-      gates: [{ id: 'gate_check' }],
-      connections: [
-        { id: 'c1', from: 'mis_a:out', to: 'fmn_build:in' },
-        { id: 'c2', from: 'fmn_build:out', to: 'gate_check:in' },
-        { id: 'c3', from: 'gate_check:pass', to: 'fmn_report:in' },
-      ],
-    } as unknown as BoardDocument
-    const arranged = tidyLayout(board, new Map())
-    const byId = new Map(arranged.map(node => [node.id, node]))
-    expect(arranged).toHaveLength(4)
-    for (const node of arranged) {
-      expect(node.x % GRID).toBe(0)
-      expect(node.y % GRID).toBe(0)
-    }
-    // Depth ordering: mission → formation → gate → downstream formation.
-    expect(byId.get('mis_a')!.x).toBeLessThan(byId.get('fmn_build')!.x)
-    expect(byId.get('fmn_build')!.x).toBeLessThan(byId.get('gate_check')!.x)
-    expect(byId.get('gate_check')!.x).toBeLessThan(byId.get('fmn_report')!.x)
-    // Deterministic and stable across calls.
-    expect(tidyLayout(board, new Map())).toEqual(arranged)
-  })
-
-  it('tidyLayout survives judge-style cycles without infinite recursion', () => {
-    const board = {
-      missions: [],
-      formations: [{ id: 'fmn_judge', type: 'solo', slots: [{}] }],
-      gates: [{ id: 'gate_final' }],
-      connections: [
-        { id: 'c1', from: 'gate_final:judge', to: 'fmn_judge:in' },
-        { id: 'c2', from: 'fmn_judge:out', to: 'gate_final:judge-return' },
-      ],
-    } as unknown as BoardDocument
-    const arranged = tidyLayout(board, new Map())
-    expect(arranged).toHaveLength(2)
+  it('places only a newly created node onto nearby free grid space', () => {
+    const occupied = [{ x: 224, y: 168 }, { x: 560, y: 168 }]
+    expect(freeGridPosition({ x: 220, y: 160 }, occupied)).toEqual({ x: 896, y: 168 })
+    expect(occupied).toEqual([{ x: 224, y: 168 }, { x: 560, y: 168 }])
   })
 
   it('extracts node ids from stable endpoint addresses', () => {

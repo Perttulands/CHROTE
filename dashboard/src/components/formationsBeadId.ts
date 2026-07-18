@@ -1,4 +1,4 @@
-const safeBeadsIssueIDPattern = /^[a-z][a-z0-9]*-[a-z0-9]+(\.[0-9]+)?$/
+const safeBeadsIssueIDPattern = /^[a-z][a-z0-9]*-[a-z0-9]+(\.[0-9]+)*$/
 
 export function isSafeBeadsIssueID(value: string): boolean {
   return safeBeadsIssueIDPattern.test(value)

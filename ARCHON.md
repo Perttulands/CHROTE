@@ -51,7 +51,7 @@ close.
 
 ```text
 archon agent      list | inspect | new | edit | spawn | attach | retire
-archon board      new | list | inspect | validate
+archon board      new | list | inspect | validate | arrange
 archon formation  create | list | inspect | assign | unassign | set-brief | add-input | add-output | wire | unwire | run
 archon gate       create | update | judge | approve | reject
 archon mission    create | list | inspect | wire | run
@@ -62,12 +62,14 @@ This list describes the current binary. `board export`, Gate inspection/routing
 helpers, `verify`, and `doctor` remain directional command ideas, not available
 verbs.
 
-The accepted authoring target also adds explicit `archon board arrange`. Creating
-a node may place only that new element through the shared connection-aware,
-free-space, grid-snap heuristic. No authoring, validation, inspection, save,
-runtime, replay, or reconnect command may rearrange existing coordinates;
-full-board layout changes only when the user or authoring agent invokes
-`board arrange`.
+`archon board arrange` is the explicit whole-board layout mutation and uses the
+same server-owned deterministic operation as the UI Arrange action. No
+authoring, validation, inspection, save, runtime, replay, or reconnect command
+may rearrange existing coordinates. When neither coordinate is supplied,
+current Formation, Gate, and Mission create verbs use one shared, bounded
+free-space grid heuristic to place only the new node; explicit `--x` or `--y`
+keeps the supplied coordinates exact. Connection-aware neighbor placement
+remains target behavior and is not yet implemented.
 
 Current main also executes `mission run`, `formation run`, and `run resume`
 synchronously in an Archon-local engine, reads workspace run files directly,

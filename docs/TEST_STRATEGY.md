@@ -246,7 +246,7 @@ cd /path/to/chrote/dashboard
 npm run test:formations
 ```
 
-This command discovers the complete mocked `dashboard/tests/formations/` directory. An empty or undiscoverable suite is a failure; no fixed test count is part of the contract.
+This command discovers the complete mocked `dashboard/tests/formations/` directory. In CI, Playwright also emits a JSON report and `scripts/assert-playwright-executed.mjs` rejects both zero discovered tests and an all-skipped suite. No fixed test count is part of the contract, so adding or removing intentional coverage does not require updating a sentinel count. The verifier and CI wiring are covered by `node --test scripts/ci-lane-contract.test.mjs`.
 
 ### Run Built-server Contract Tests
 
@@ -268,7 +268,7 @@ cd ..
 CHROTE_SERVER_BINARY="$PWD/chrote-server-ci" scripts/test-built-server-contract.sh
 ```
 
-The wrapper allocates a disposable port, starts the built binary with `-start-ttyd=false`, pins tmux and all writable state to a test-owned artifact directory, seeds an isolated Formations board, and runs only `dashboard/tests/contract/`. It prints the retained artifact directory; on failure, inspect `server.log`, `workspace/.formations`, `dashboard/playwright-report`, and `dashboard/test-results`.
+The wrapper allocates a disposable port, starts the built binary with `-start-ttyd=false`, pins tmux and all writable state to a test-owned artifact directory, seeds an isolated Formations board, and runs only `dashboard/tests/contract/`. The server starts under an empty environment with only a bounded allowlist restored. This prevents inherited Formations lab, tmux, script-gate, `DEDICATED`, or `PROD_SMOKE` settings from selecting an executor; the wrapper explicitly disables those opt-ins and owns the Formations roots and socket paths. It prints the retained artifact directory; on failure, inspect `server.log`, `workspace/.formations`, `dashboard/playwright-report`, and `dashboard/test-results`.
 
 ### Run Live Backend Integration Tests
 
@@ -466,7 +466,7 @@ go test ./...
 go build -o /tmp/chrote-server-ci ./cmd/server
 ```
 
-CI also runs `npm run test:formations` as its own mandatory job and builds a fresh embedded Go server for `scripts/test-built-server-contract.sh`. Both jobs upload Playwright reports, screenshots, and traces on failure; the built-server job also uploads its server log and disposable Formations state.
+CI also runs `npm run test:formations` as its own mandatory job, rejects zero/all-skipped discovery from the JSON report, and builds a fresh embedded Go server for `scripts/test-built-server-contract.sh`. Both jobs upload Playwright reports, screenshots, and traces on failure; the Formations job also uploads its JSON execution report, and the built-server job uploads its server log and disposable Formations state.
 
 The release workflow also uses Go 1.23 and Node 20. It runs the same Go format/vet/test/race assumptions, dashboard lint/build/unit-coverage/audit, copies the fresh dashboard `dist` into `src/internal/dashboard/dist`, and performs an embedded-dashboard Go build smoke before producing tag artifacts.
 

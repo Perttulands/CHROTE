@@ -35,7 +35,7 @@ import {
   runStatusFromResponse,
   upsertRunEvent,
 } from './formationsRunState'
-import { GRID, clampScale, displayLayoutFor, fallbackNodePosition, snapToGrid, tidyLayout, zoomTransform } from './formationsCanvas'
+import { clampScale, displayLayoutFor, fallbackNodePosition, freeGridPosition, snapToGrid, zoomTransform } from './formationsCanvas'
 import { GATE_SVG, PLAY_SVG, TYPE_TAG, agentRole, agentState, harnessGlyph, initials } from './formationsCockpitVisuals'
 import { useSessionOptional } from '../context/SessionContext'
 import { resolveFormationsTextSize } from '../types'
@@ -43,6 +43,7 @@ import { connectionKind, findInputPortAt, findOutputPortAt, isTextEditingTarget,
 import { routeJudgeWire, routeOrthoWire } from './formationsRouting'
 import type { ObstacleRect } from './formationsRouting'
 import { findAddedByID } from './formationsBoardModel'
+import { isSafeBeadsIssueID } from './formationsBeadId'
 import { createFormationsInteractionOwner } from './formationsInteraction'
 import type { FormationsInteractionOwner } from './formationsInteraction'
 import type {
@@ -76,6 +77,7 @@ type LaneDrag = { connectionId: string; previousLane: string; moved: boolean }
 type MenuItem = { label: string; action?: () => void; destructive?: boolean; disabled?: boolean; head?: boolean }
 type MenuState = { label: string; x: number; y: number; items: MenuItem[] }
 type VerificationEditorState = { formationId: string; title: string; kinds: string[]; criterion: string; onFail: 'block' | 'pushback' }
+type MissionEditorState = { title: string; goal: string; beadId: string; x: number; y: number }
 type BriefEditorState = {
   formationId: string
   title: string
@@ -126,6 +128,9 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const [hoverPort, setHoverPort] = useState<string | null>(null)
   const [gateGhost, setGateGhost] = useState<{ x: number; y: number } | null>(null)
   const [menu, setMenu] = useState<MenuState | null>(null)
+  const [missionEditor, setMissionEditor] = useState<MissionEditorState | null>(null)
+  const [missionEditorError, setMissionEditorError] = useState('')
+  const [missionEditorSaving, setMissionEditorSaving] = useState(false)
   const [briefEditor, setBriefEditor] = useState<BriefEditorState | null>(null)
   const [verificationEditor, setVerificationEditor] = useState<VerificationEditorState | null>(null)
   const [hiddenWireId, setHiddenWireId] = useState<string | null>(null)
@@ -291,6 +296,10 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     if (node) return { x: node.x, y: node.y }
     return fallbackNodePosition(index)
   }, [displayLayoutByNode, dragPos])
+
+  const placementForNewNode = useCallback((x: number, y: number) => (
+    freeGridPosition({ x, y }, [...displayLayoutByNode.values()])
+  ), [displayLayoutByNode])
 
   const nodeStates = useMemo(() => projectNodeStates(runEvents, activeRun), [runEvents, activeRun])
 
@@ -603,21 +612,13 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   }, [patchBoard])
 
   const createGateAt = useCallback(async (worldX: number, worldY: number) => {
+    const placement = placementForNewNode(worldX, worldY)
     const before = boardRef.current
-    const result = await patchBoard({ createGate: { title: 'Review gate', kinds: ['code'], criterion: '', x: Math.round(worldX), y: Math.round(worldY) } })
+    const result = await patchBoard({ createGate: { title: 'Review gate', kinds: ['code'], criterion: '', x: placement.x, y: placement.y } })
     if (!before || !result) return
     const gate = findAddedByID(before.gates || [], result.board.gates || [])
     if (gate) undoStack.current.push({ kind: 'deleteGate', id: gate.id })
-    const placementEtag = result.layout?.etag || layoutRef.current?.etag
-    if (gate && placementEtag) {
-      try {
-        const next = await patchBoardLayout(result.board.slug, placementEtag, { nodes: [{ id: gate.id, x: Math.round(worldX), y: Math.round(worldY) }] })
-        setLayout(next)
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to place gate')
-      }
-    }
-  }, [patchBoard])
+  }, [patchBoard, placementForNewNode])
 
   const assignSlot = useCallback((formation: FormationNode, slot: FormationSlot, agentId: string, harness: string) => {
     undoStack.current.push({ kind: 'assignSlot', formationId: formation.id, slotId: slot.id, agentId: slot.agentId || '', harness: slot.harness || '' })
@@ -638,21 +639,65 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   }, [patchBoard])
 
   const createFormationAt = useCallback(async (type: FormationNode['type'], title: string, x: number, y: number): Promise<FormationNode | null> => {
+    const placement = placementForNewNode(x, y)
     const before = boardRef.current
-    const result = await patchBoard({ createFormation: { type, title, x: Math.round(x), y: Math.round(y) } })
+    const result = await patchBoard({ createFormation: { type, title, x: placement.x, y: placement.y } })
     if (!before || !result) return null
     const created = findAddedByID(before.formations || [], result.board.formations || [])
     if (created) undoStack.current.push({ kind: 'deleteFormation', id: created.id })
     return created ?? null
-  }, [patchBoard])
+  }, [patchBoard, placementForNewNode])
 
-  const createMissionAt = useCallback(async (x: number, y: number) => {
+  const createMissionAt = useCallback((x: number, y: number) => {
+    setMissionEditor({ title: 'New mission', goal: '', beadId: '', x, y })
+    setMissionEditorError('')
+    setMissionEditorSaving(false)
+  }, [])
+
+  const closeMissionEditor = useCallback(() => {
+    if (missionEditorSaving) return
+    setMissionEditor(null)
+    setMissionEditorError('')
+  }, [missionEditorSaving])
+
+  const saveMissionEditor = useCallback(async () => {
+    if (!missionEditor || missionEditorSaving) return
+    const beadId = missionEditor.beadId.trim()
+    if (!isSafeBeadsIssueID(beadId)) {
+      setMissionEditorError('Enter a Beads issue ID such as ctx-ug7.25.')
+      return
+    }
+    const placement = placementForNewNode(missionEditor.x, missionEditor.y)
     const before = boardRef.current
-    const result = await patchBoard({ createMission: { title: 'New mission', goal: '', x: Math.round(x), y: Math.round(y) } })
-    if (!before || !result) return
+    if (!before) return
+    setMissionEditorError('')
+    setMissionEditorSaving(true)
+    const result = await patchBoard({
+      createMission: {
+        title: missionEditor.title.trim() || 'New mission',
+        goal: missionEditor.goal.trim(),
+        beadId,
+        x: placement.x,
+        y: placement.y,
+      },
+    })
+    setMissionEditorSaving(false)
+    if (!result) return
     const created = findAddedByID(before.missions || [], result.board.missions || [])
     if (created) undoStack.current.push({ kind: 'deleteMission', id: created.id })
-  }, [patchBoard])
+    setMissionEditor(null)
+  }, [missionEditor, missionEditorSaving, patchBoard, placementForNewNode])
+
+  useEffect(() => {
+    if (!missionEditor || missionEditorSaving) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      closeMissionEditor()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [closeMissionEditor, missionEditor, missionEditorSaving])
 
   const deleteFormationOp = useCallback((formation: FormationNode) => {
     void patchBoard({ deleteFormation: { id: formation.id } })
@@ -871,23 +916,23 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   }, [activeRun, refreshRunEvents, selectedSlug])
 
   const createSolo = useCallback(() => {
-    // Land the new card where the operator is looking: center of the current
-    // viewport in world coordinates, snapped to the canvas grid. Collisions
-    // with existing cards are resolved by the display layout nudge.
+    // Land only the new card near the viewport center on free grid space.
+    // Existing authored coordinates remain untouched.
     const rect = viewportRef.current?.getBoundingClientRect()
     const v = viewRef.current
     const center = rect
       ? { x: (rect.width / 2 - v.x) / (v.scale || 1) - 150, y: (rect.height / 2 - v.y) / (v.scale || 1) - 120 }
       : { x: 200, y: 200 }
+    const placement = placementForNewNode(center.x, center.y)
     void patchBoard({
       createFormation: {
         type: 'solo',
         title: 'New formation',
-        x: Math.max(GRID, snapToGrid(center.x)),
-        y: Math.max(GRID, snapToGrid(center.y)),
+        x: placement.x,
+        y: placement.y,
       },
     })
-  }, [patchBoard])
+  }, [patchBoard, placementForNewNode])
 
   // ----- pan + zoom -----
   const onViewportPointerDown = useCallback((event: ReactPointerEvent) => {
@@ -969,22 +1014,22 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     return () => window.cancelAnimationFrame(frame)
   }, [board, layout, fitView])
 
-  // Tidy: layered auto-arrange persisted through the layout sidecar (one bulk
-  // patch, one Ctrl+Z step back) so archon sees the same geometry the UI shows.
-  const tidyBoard = useCallback(() => {
+  const arrangeBoard = useCallback(async () => {
     const currentBoard = boardRef.current
-    if (!currentBoard) return
-    const layoutMap = new Map<string, LayoutNode>()
-    layoutRef.current?.nodes?.forEach(node => layoutMap.set(node.id, node))
-    const arranged = tidyLayout(currentBoard, layoutMap)
-    if (!arranged.length) return
-    const previous = arranged.map(node => {
-      const shown = displayLayoutByNode.get(node.id) || layoutMap.get(node.id)
-      return { id: node.id, x: shown?.x ?? node.x, y: shown?.y ?? node.y }
-    })
+    const currentLayout = layoutRef.current
+    if (!currentBoard || !currentLayout) return
+    const previous = currentLayout.nodes.map(node => ({ id: node.id, x: node.x, y: node.y }))
     undoStack.current.push({ kind: 'moveNodes', nodes: previous })
-    void persistPositions(arranged.map(node => ({ id: node.id, x: node.x, y: node.y })))
-  }, [displayLayoutByNode, persistPositions])
+    try {
+      const next = await patchBoardLayout(currentBoard.slug, currentLayout.etag, { arrange: true })
+      layoutRef.current = next
+      setLayout(next)
+      setError('')
+    } catch (err) {
+      undoStack.current.pop()
+      setError(err instanceof Error ? err.message : 'Failed to arrange layout')
+    }
+  }, [])
 
   const screenToWorld = useCallback((clientX: number, clientY: number) => {
     const rect = viewportRef.current?.getBoundingClientRect()
@@ -1403,7 +1448,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       x: event.clientX,
       y: event.clientY,
       items: [
-        { label: 'Mission', action: () => void createMissionAt(w.x, w.y) },
+        { label: 'Mission', action: () => createMissionAt(w.x, w.y) },
         { label: 'Solo formation', action: () => void createFormationAt('solo', 'New formation', w.x, w.y) },
         { label: 'Peer formation', action: () => void createFormationAt('peer', 'New peers', w.x, w.y) },
         { label: 'Flow formation', action: () => void createFormationAt('flow', 'New flow', w.x, w.y) },
@@ -1737,12 +1782,75 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
           <div className="zoomctl">
             <button onClick={() => zoomBy(1.2)} title="Zoom in">+</button>
             <button onClick={() => zoomBy(1 / 1.2)} title="Zoom out">−</button>
-            <button onClick={tidyBoard} title="Arrange cards by graph flow (persists layout, Ctrl+Z to undo)" data-testid="tidy-layout">TIDY</button>
+            <button onClick={() => void arrangeBoard()} title="Arrange cards by graph flow (persists layout, Ctrl+Z to undo)" data-testid="arrange-layout">ARRANGE</button>
             <button onClick={() => fitView({ smooth: true })} title="Fit">FIT</button>
           </div>
           {error ? <div className="errbar" data-testid="formations-error">{error}</div> : null}
         </div>
       </div>
+
+      {missionEditor ? (
+        <div
+          className="pop"
+          role="dialog"
+          aria-label="Create mission"
+          onPointerDown={event => event.stopPropagation()}
+        >
+          <div className="pop-head">
+            <span className="pt">Create mission</span>
+            <button className="x" type="button" aria-label="Close mission creator" disabled={missionEditorSaving} onClick={closeMissionEditor}>x</button>
+          </div>
+          <form
+            className="pop-body"
+            onSubmit={event => {
+              event.preventDefault()
+              void saveMissionEditor()
+            }}
+          >
+            <label htmlFor="cockpit-mission-title">Title</label>
+            <input
+              id="cockpit-mission-title"
+              className="f"
+              aria-label="Mission title"
+              value={missionEditor.title}
+              onChange={event => setMissionEditor(current => current ? { ...current, title: event.target.value } : current)}
+            />
+            <label htmlFor="cockpit-mission-goal">Goal</label>
+            <textarea
+              id="cockpit-mission-goal"
+              aria-label="Mission goal"
+              value={missionEditor.goal}
+              onChange={event => setMissionEditor(current => current ? { ...current, goal: event.target.value } : current)}
+            />
+            <label htmlFor="cockpit-mission-bead">Bead ID</label>
+            <input
+              id="cockpit-mission-bead"
+              className="f"
+              aria-label="Mission Bead ID"
+              aria-invalid={missionEditorError ? true : undefined}
+              aria-describedby="cockpit-mission-bead-help"
+              autoCapitalize="none"
+              spellCheck={false}
+              value={missionEditor.beadId}
+              onChange={event => {
+                setMissionEditor(current => current ? { ...current, beadId: event.target.value } : current)
+                if (missionEditorError) setMissionEditorError('')
+              }}
+            />
+            <p
+              id="cockpit-mission-bead-help"
+              className={`field-note${missionEditorError ? ' error' : ''}`}
+              role={missionEditorError ? 'alert' : undefined}
+            >
+              {missionEditorError || 'Required. Copy a Bead ID from the Beads tab, for example ctx-ug7.25.'}
+            </p>
+            <div className="pop-actions">
+              <button className="cancel" type="button" aria-label="Cancel mission creation" disabled={missionEditorSaving} onClick={closeMissionEditor}>Cancel</button>
+              <button className="save" type="submit" disabled={missionEditorSaving}>{missionEditorSaving ? 'Creating…' : 'Create mission'}</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
 
       {briefEditor ? (
         <div

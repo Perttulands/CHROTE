@@ -593,6 +593,300 @@ title = "Research"
 	}
 }
 
+func TestArrangeLayoutUsesGraphDepthWithoutChangingBoardDefinition(t *testing.T) {
+	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
+	writeFixture(t, store.BoardPath("arrange"), `schema = 1
+id = "brd_arrange"
+slug = "arrange"
+title = "Arrange"
+rev = 4
+
+[[mission]]
+id = "mis_start"
+title = "Start"
+
+[[formation]]
+id = "fmn_build"
+type = "solo"
+title = "Build"
+
+[[gate]]
+id = "gate_check"
+title = "Check"
+kinds = ["human"]
+
+[[connection]]
+id = "edge_start_build"
+from = "mis_start:out"
+to = "fmn_build:in"
+
+[[connection]]
+id = "edge_build_check"
+from = "fmn_build:out"
+to = "gate_check:in"
+`)
+	writeFixture(t, store.LayoutPath("arrange"), `schema = 1
+boardId = "brd_arrange"
+boardRev = 4
+
+[[node]]
+id = "mis_start"
+x = 500
+y = 500
+
+[[node]]
+id = "fmn_build"
+x = 100
+y = 100
+
+[[node]]
+id = "gate_check"
+x = 300
+y = 300
+`)
+	boardBefore := readFile(t, store.BoardPath("arrange"))
+	layoutBefore, err := store.ReadLayout("arrange")
+	if err != nil {
+		t.Fatalf("read layout: %v", err)
+	}
+
+	arranged, err := store.ArrangeLayout("arrange", WriteOptions{ExpectedETag: layoutBefore.ETag})
+	if err != nil {
+		t.Fatalf("arrange layout: %v", err)
+	}
+	byID := map[string]LayoutNode{}
+	for _, node := range arranged.Nodes {
+		byID[node.ID] = node
+		if node.X%28 != 0 || node.Y%28 != 0 {
+			t.Fatalf("node is not grid aligned: %+v", node)
+		}
+	}
+	if !(byID["mis_start"].X < byID["fmn_build"].X && byID["fmn_build"].X < byID["gate_check"].X) {
+		t.Fatalf("arranged graph depth is not left-to-right: %+v", byID)
+	}
+	if got := readFile(t, store.BoardPath("arrange")); got != boardBefore {
+		t.Fatalf("arrange changed board definition:\n%s", got)
+	}
+
+	again, err := store.ArrangeLayout("arrange", WriteOptions{ExpectedETag: arranged.ETag})
+	if err != nil {
+		t.Fatalf("repeat arrange: %v", err)
+	}
+	if len(again.Nodes) != len(arranged.Nodes) {
+		t.Fatalf("repeat arrange node count = %d, want %d", len(again.Nodes), len(arranged.Nodes))
+	}
+	for index := range arranged.Nodes {
+		if again.Nodes[index] != arranged.Nodes[index] {
+			t.Fatalf("repeat arrange changed node %d: first=%+v second=%+v", index, arranged.Nodes[index], again.Nodes[index])
+		}
+	}
+}
+
+func TestArrangeLayoutRefreshesStaleBoardRevisionAfterDefinitionEdit(t *testing.T) {
+	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
+	writeFixture(t, store.BoardPath("arrange-stale"), `schema = 1
+id = "brd_arrange_stale"
+slug = "arrange-stale"
+title = "Arrange stale"
+rev = 4
+
+[[gate]]
+id = "gate_check"
+title = "Check"
+kinds = ["human"]
+`)
+	writeFixture(t, store.LayoutPath("arrange-stale"), `schema = 1
+boardId = "brd_arrange_stale"
+boardRev = 4
+
+[[node]]
+id = "gate_check"
+x = 300
+y = 300
+`)
+
+	boardBefore, err := store.ReadBoard("arrange-stale")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	boardAfter, err := store.UpdateGate("arrange-stale", GateUpdateRequest{
+		GateID: "gate_check",
+		Title:  "Check updated",
+	}, WriteOptions{ExpectedETag: boardBefore.ETag, ExpectedRev: boardBefore.Rev})
+	if err != nil {
+		t.Fatalf("update gate definition: %v", err)
+	}
+	staleLayout, err := store.ReadLayout("arrange-stale")
+	if err != nil {
+		t.Fatalf("read stale layout: %v", err)
+	}
+	if staleLayout.BoardRev == boardAfter.Rev {
+		t.Fatalf("definition edit unexpectedly refreshed layout boardRev = %d", staleLayout.BoardRev)
+	}
+
+	arranged, err := store.ArrangeLayout("arrange-stale", WriteOptions{ExpectedETag: staleLayout.ETag})
+	if err != nil {
+		t.Fatalf("arrange stale layout: %v", err)
+	}
+	if arranged.BoardID != boardAfter.ID || arranged.BoardRev != boardAfter.Rev {
+		t.Fatalf("arranged layout board ref = %s rev %d, want %s rev %d", arranged.BoardID, arranged.BoardRev, boardAfter.ID, boardAfter.Rev)
+	}
+}
+
+func TestArrangeLayoutSerializesBoardEditsThroughLayoutPersistence(t *testing.T) {
+	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
+	writeFixture(t, store.BoardPath("arrange-serial"), `schema = 1
+id = "brd_arrange_serial"
+slug = "arrange-serial"
+title = "Arrange serial"
+rev = 3
+
+[[formation]]
+id = "fmn_first"
+type = "solo"
+title = "First"
+
+[[formation.input]]
+id = "in"
+label = "Input"
+
+[[formation.output]]
+id = "out"
+label = "Output"
+
+[[formation]]
+id = "fmn_second"
+type = "solo"
+title = "Second"
+
+[[formation.input]]
+id = "in"
+label = "Input"
+
+[[formation.output]]
+id = "out"
+label = "Output"
+`)
+	writeFixture(t, store.LayoutPath("arrange-serial"), `schema = 1
+boardId = "brd_arrange_serial"
+boardRev = 3
+
+[[node]]
+id = "fmn_first"
+x = 500
+y = 500
+
+[[node]]
+id = "fmn_second"
+x = 100
+y = 100
+`)
+	boardBefore, err := store.ReadBoard("arrange-serial")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	layoutBefore, err := store.ReadLayout("arrange-serial")
+	if err != nil {
+		t.Fatalf("read layout: %v", err)
+	}
+
+	layoutLocked := make(chan struct{})
+	releaseLayout := make(chan struct{})
+	layoutLockDone := make(chan error, 1)
+	go func() {
+		layoutLockDone <- withFileLock(store.LayoutPath("arrange-serial"), func() error {
+			close(layoutLocked)
+			<-releaseLayout
+			return nil
+		})
+	}()
+	<-layoutLocked
+
+	type arrangeOutcome struct {
+		layout *LayoutDocument
+		err    error
+	}
+	arrangeDone := make(chan arrangeOutcome, 1)
+	go func() {
+		layout, err := store.ArrangeLayout("arrange-serial", WriteOptions{ExpectedETag: layoutBefore.ETag})
+		arrangeDone <- arrangeOutcome{layout: layout, err: err}
+	}()
+
+	boardLock := mutexFor(store.BoardPath("arrange-serial") + ".lock")
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if !boardLock.TryLock() {
+			break
+		}
+		boardLock.Unlock()
+		if time.Now().After(deadline) {
+			close(releaseLayout)
+			outcome := <-arrangeDone
+			t.Fatalf("ArrangeLayout did not hold the board lock while waiting to persist layout: %v", outcome.err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	type wireOutcome struct {
+		board *BoardDocument
+		err   error
+	}
+	wireDone := make(chan wireOutcome, 1)
+	go func() {
+		board, err := store.WireFormationPorts("arrange-serial", FormationWireRequest{
+			From:      "fmn_first:out",
+			To:        "fmn_second:in",
+			UpdatedBy: "agent:test",
+		}, WriteOptions{ExpectedETag: boardBefore.ETag, ExpectedRev: boardBefore.Rev})
+		wireDone <- wireOutcome{board: board, err: err}
+	}()
+	select {
+	case outcome := <-wireDone:
+		close(releaseLayout)
+		<-arrangeDone
+		t.Fatalf("concurrent wire completed inside Arrange critical section: %v", outcome.err)
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	close(releaseLayout)
+	arranged := <-arrangeDone
+	if err := <-layoutLockDone; err != nil {
+		t.Fatalf("hold layout lock: %v", err)
+	}
+	if arranged.err != nil {
+		t.Fatalf("arrange layout: %v", arranged.err)
+	}
+	if arranged.layout.BoardRev != boardBefore.Rev {
+		t.Fatalf("arranged boardRev = %d, want serialized rev %d", arranged.layout.BoardRev, boardBefore.Rev)
+	}
+	wired := <-wireDone
+	if wired.err != nil {
+		t.Fatalf("wire after arrange: %v", wired.err)
+	}
+	if wired.board.Rev != boardBefore.Rev+1 {
+		t.Fatalf("wired board rev = %d, want %d", wired.board.Rev, boardBefore.Rev+1)
+	}
+
+	staleLayout, err := store.ReadLayout("arrange-serial")
+	if err != nil {
+		t.Fatalf("read stale layout: %v", err)
+	}
+	rearranged, err := store.ArrangeLayout("arrange-serial", WriteOptions{ExpectedETag: staleLayout.ETag})
+	if err != nil {
+		t.Fatalf("arrange wired graph: %v", err)
+	}
+	byID := map[string]LayoutNode{}
+	for _, node := range rearranged.Nodes {
+		byID[node.ID] = node
+	}
+	if rearranged.BoardRev != wired.board.Rev || byID["fmn_first"].X >= byID["fmn_second"].X {
+		t.Fatalf("rearranged wired graph = rev %d nodes %+v, want current rev and left-to-right depth", rearranged.BoardRev, byID)
+	}
+}
+
 func TestUpdateLayoutNodesWildcardOnlyRecreatesMissingLayoutSidecar(t *testing.T) {
 	store := NewStore(t.TempDir())
 	store.Now = fixedClock()
@@ -1314,7 +1608,7 @@ func TestS3GatePersistsKindsCriterionWithoutVerdictOrOnFail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read board: %v", err)
 	}
-	after, err := store.CreateGate("session-search", GateCreateRequest{
+	result, err := store.CreateGate("session-search", GateCreateRequest{
 		Title:       "Review gate",
 		Kinds:       []string{"code", "human"},
 		Criterion:   "Research is sound and safe to build.",
@@ -1327,8 +1621,12 @@ func TestS3GatePersistsKindsCriterionWithoutVerdictOrOnFail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create gate: %v", err)
 	}
+	after := result.Board
 	if len(after.Gates) != 1 || after.Gates[0].Title != "Review gate" || strings.Join(after.Gates[0].Kinds, ",") != "code,human" {
 		t.Fatalf("gates = %+v, want review gate with code,human", after.Gates)
+	}
+	if result.Gate.ID != after.Gates[0].ID {
+		t.Fatalf("created gate = %+v, want exact board gate %+v", result.Gate, after.Gates[0])
 	}
 	raw := readFile(t, store.BoardPath("session-search"))
 	if strings.Contains(raw, "verdict") || strings.Contains(raw, "onFail") {
@@ -1346,15 +1644,87 @@ func TestS3GatePersistsKindsCriterionWithoutVerdictOrOnFail(t *testing.T) {
 	if strings.Contains(raw, `command = "npm run lint"`) {
 		t.Fatalf("gate command persisted as legacy shell string:\n%s", raw)
 	}
-	layout, err := store.ReadLayout("session-search")
-	if err != nil {
-		t.Fatalf("read gate layout: %v", err)
-	}
+	layout := result.Layout
 	if layout.BoardRev != after.Rev {
 		t.Fatalf("layout boardRev = %d, want %d", layout.BoardRev, after.Rev)
 	}
 	if len(layout.Nodes) != 1 || layout.Nodes[0].ID != after.Gates[0].ID || layout.Nodes[0].X != 410 || layout.Nodes[0].Y != 220 {
 		t.Fatalf("layout nodes = %+v, want created gate at 410,220", layout.Nodes)
+	}
+}
+
+func TestCreateGateHoldsBoardLockUntilCoherentLayoutResult(t *testing.T) {
+	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
+	writeFixture(t, store.BoardPath("session-search"), minimalBoard("session-search", 7))
+	before, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+
+	layoutLocked := make(chan struct{})
+	releaseLayout := make(chan struct{})
+	layoutLockDone := make(chan error, 1)
+	go func() {
+		layoutLockDone <- withFileLock(store.LayoutPath("session-search"), func() error {
+			close(layoutLocked)
+			<-releaseLayout
+			return nil
+		})
+	}()
+	<-layoutLocked
+
+	type createOutcome struct {
+		result *GateCreateResult
+		err    error
+	}
+	createDone := make(chan createOutcome, 1)
+	go func() {
+		result, err := store.CreateGate("session-search", GateCreateRequest{
+			Title:     "Coherent gate",
+			Kinds:     []string{"code"},
+			X:         448,
+			Y:         280,
+			UpdatedBy: "agent:test",
+		}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev})
+		createDone <- createOutcome{result: result, err: err}
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		current, readErr := store.ReadBoard("session-search")
+		if readErr == nil && current.Rev == before.Rev+1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			close(releaseLayout)
+			outcome := <-createDone
+			t.Fatalf("gate board write did not reach blocked layout upsert: readErr=%v createErr=%v", readErr, outcome.err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	boardLock := mutexFor(store.BoardPath("session-search") + ".lock")
+	boardLockHeld := !boardLock.TryLock()
+	if !boardLockHeld {
+		boardLock.Unlock()
+	}
+	close(releaseLayout)
+	outcome := <-createDone
+	if err := <-layoutLockDone; err != nil {
+		t.Fatalf("hold layout lock: %v", err)
+	}
+	if outcome.err != nil {
+		t.Fatalf("create gate: %v", outcome.err)
+	}
+	if !boardLockHeld {
+		t.Fatal("CreateGate released the board lock before its layout upsert completed")
+	}
+	if outcome.result.Board.Rev != outcome.result.Layout.BoardRev {
+		t.Fatalf("returned board rev %d and layout boardRev %d are incoherent", outcome.result.Board.Rev, outcome.result.Layout.BoardRev)
+	}
+	if len(outcome.result.Layout.Nodes) != 1 || outcome.result.Layout.Nodes[0].ID != outcome.result.Gate.ID {
+		t.Fatalf("returned layout nodes = %+v, want exact created gate %q", outcome.result.Layout.Nodes, outcome.result.Gate.ID)
 	}
 }
 
@@ -1366,7 +1736,7 @@ func TestS3GateFailBehaviorIsOnlyWiring(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read board: %v", err)
 	}
-	withGate, err := store.CreateGate("session-search", GateCreateRequest{
+	withGateResult, err := store.CreateGate("session-search", GateCreateRequest{
 		Title:     "Review gate",
 		Kinds:     []string{"code"},
 		Criterion: "Check it.",
@@ -1375,6 +1745,7 @@ func TestS3GateFailBehaviorIsOnlyWiring(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create gate: %v", err)
 	}
+	withGate := withGateResult.Board
 	gateID := withGate.Gates[0].ID
 	after, err := store.WireFormationPorts("session-search", FormationWireRequest{
 		From:      gateID + ":fail",
@@ -1495,7 +1866,7 @@ func TestS3MissionCreateAcceptsProjectBeadIDAndSingleOut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read board: %v", err)
 	}
-	after, err := store.CreateMission("session-search", MissionCreateRequest{
+	result, err := store.CreateMission("session-search", MissionCreateRequest{
 		Title:     "Showcase site",
 		Goal:      "Build the showcase",
 		BeadID:    "home-vdki.34.1",
@@ -1506,8 +1877,12 @@ func TestS3MissionCreateAcceptsProjectBeadIDAndSingleOut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create mission: %v", err)
 	}
+	after := result.Board
 	if len(after.Missions) != 1 || !strings.HasPrefix(after.Missions[0].ID, "mis_") || after.Missions[0].BeadID != "home-vdki.34.1" {
 		t.Fatalf("missions = %+v, want one project-backed mission", after.Missions)
+	}
+	if result.Mission.ID != after.Missions[0].ID {
+		t.Fatalf("created mission = %+v, want exact board mission %+v", result.Mission, after.Missions[0])
 	}
 	raw := readFile(t, store.BoardPath("session-search"))
 	if strings.Contains(raw, "chain") || strings.Count(raw, "out") != 0 {
@@ -1516,10 +1891,7 @@ func TestS3MissionCreateAcceptsProjectBeadIDAndSingleOut(t *testing.T) {
 	if strings.Contains(raw, "x = 150") || strings.Contains(raw, "y = 90") {
 		t.Fatalf("mission layout coordinates leaked into board definition:\n%s", raw)
 	}
-	layout, err := store.ReadLayout("session-search")
-	if err != nil {
-		t.Fatalf("read mission layout: %v", err)
-	}
+	layout := result.Layout
 	if layout.BoardRev != after.Rev {
 		t.Fatalf("layout boardRev = %d, want %d", layout.BoardRev, after.Rev)
 	}
