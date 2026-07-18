@@ -1,11 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/chrote/server/internal/core"
@@ -44,28 +46,44 @@ type formationsHumanGateVerdictRequest struct {
 }
 
 type formationsBoardPatchRequest struct {
-	Title              *string                              `json:"title"`
-	CreateFormation    *formationsCreateFormationRequest    `json:"createFormation"`
-	DeleteFormation    *formationsDeleteFormationRequest    `json:"deleteFormation"`
-	DeleteGate         *formationsDeleteGateRequest         `json:"deleteGate"`
-	DeleteMission      *formationsDeleteMissionRequest      `json:"deleteMission"`
-	AssignSlot         *formationsAssignSlotRequest         `json:"assignSlot"`
-	MakeController     *formationsMakeControllerRequest     `json:"makeController"`
-	SetBrief           *formationsSetBriefRequest           `json:"setBrief"`
-	ClearBrief         *formationsClearBriefRequest         `json:"clearBrief"`
-	SetVerification    *formationsSetVerificationRequest    `json:"setVerification"`
-	RemoveVerification *formationsRemoveVerificationRequest `json:"removeVerification"`
-	AddPort            *formationsAddPortRequest            `json:"addPort"`
-	RemovePort         *formationsRemovePortRequest         `json:"removePort"`
-	WireConnection     *formationsWireConnectionRequest     `json:"wireConnection"`
-	UnwireConnection   *formationsWireConnectionRequest     `json:"unwireConnection"`
-	RewireConnection   *formationsRewireConnectionRequest   `json:"rewireConnection"`
-	CreateGate         *formationsCreateGateRequest         `json:"createGate"`
-	SetGateJudge       *formationsSetGateJudgeRequest       `json:"setGateJudge"`
-	DetachGateJudge    *formationsDetachGateJudgeRequest    `json:"detachGateJudge"`
-	CreateMission      *formationsCreateMissionRequest      `json:"createMission"`
-	ExpectedRev        int                                  `json:"expectedRev"`
-	UpdatedBy          string                               `json:"updatedBy"`
+	Title                      *string                              `json:"title"`
+	CreateFormation            *formationsCreateFormationRequest    `json:"createFormation"`
+	DeleteFormation            *formationsDeleteFormationRequest    `json:"deleteFormation"`
+	DeleteGate                 *formationsDeleteGateRequest         `json:"deleteGate"`
+	DeleteMission              *formationsDeleteMissionRequest      `json:"deleteMission"`
+	AssignSlot                 *formationsAssignSlotRequest         `json:"assignSlot"`
+	MakeController             *formationsMakeControllerRequest     `json:"makeController"`
+	SetBrief                   *formationsSetBriefRequest           `json:"setBrief"`
+	ClearBrief                 *formationsClearBriefRequest         `json:"clearBrief"`
+	SetVerification            *formationsSetVerificationRequest    `json:"setVerification"`
+	RemoveVerification         *formationsRemoveVerificationRequest `json:"removeVerification"`
+	AddPort                    *formationsAddPortRequest            `json:"addPort"`
+	RemovePort                 *formationsRemovePortRequest         `json:"removePort"`
+	WireConnection             *formationsWireConnectionRequest     `json:"wireConnection"`
+	UnwireConnection           *formationsWireConnectionRequest     `json:"unwireConnection"`
+	RewireConnection           *formationsRewireConnectionRequest   `json:"rewireConnection"`
+	CreateGate                 *formationsCreateGateRequest         `json:"createGate"`
+	SetGateJudge               *formationsSetGateJudgeRequest       `json:"setGateJudge"`
+	DetachGateJudge            *formationsDetachGateJudgeRequest    `json:"detachGateJudge"`
+	CreateMission              *formationsCreateMissionRequest      `json:"createMission"`
+	LegacyCommandFieldsPresent bool                                 `json:"-"`
+	ExpectedRev                int                                  `json:"expectedRev"`
+	UpdatedBy                  string                               `json:"updatedBy"`
+}
+
+func (request *formationsBoardPatchRequest) UnmarshalJSON(raw []byte) error {
+	type requestFields formationsBoardPatchRequest
+	var decoded requestFields
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return err
+	}
+	legacyFieldsPresent, err := patchContainsLegacyGateCommandFields(raw)
+	if err != nil {
+		return err
+	}
+	*request = formationsBoardPatchRequest(decoded)
+	request.LegacyCommandFieldsPresent = legacyFieldsPresent
+	return nil
 }
 
 type formationsCreateFormationRequest struct {
@@ -178,6 +196,127 @@ type formationsCreateGateRequest struct {
 	UpdatedBy    string   `json:"updatedBy"`
 }
 
+func patchContainsLegacyGateCommandFields(raw []byte) (bool, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	opening, err := decoder.Token()
+	if err != nil {
+		return false, err
+	}
+	if delimiter, ok := opening.(json.Delim); !ok || delimiter != '{' {
+		return false, fmt.Errorf("board patch must be a JSON object")
+	}
+	found := false
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return false, err
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return false, fmt.Errorf("board patch key must be a string")
+		}
+		if strings.EqualFold(key, "createGate") {
+			legacyFieldsPresent, err := scanLegacyGateCommandFields(decoder)
+			if err != nil {
+				return false, err
+			}
+			found = found || legacyFieldsPresent
+			continue
+		}
+		if err := skipJSONValue(decoder); err != nil {
+			return false, err
+		}
+	}
+	closing, err := decoder.Token()
+	if err != nil {
+		return false, err
+	}
+	if delimiter, ok := closing.(json.Delim); !ok || delimiter != '}' {
+		return false, fmt.Errorf("board patch object is not closed")
+	}
+	return found, nil
+}
+
+func scanLegacyGateCommandFields(decoder *json.Decoder) (bool, error) {
+	opening, err := decoder.Token()
+	if err != nil {
+		return false, err
+	}
+	delimiter, isContainer := opening.(json.Delim)
+	if !isContainer {
+		return false, nil
+	}
+	if delimiter != '{' {
+		if err := skipJSONContainer(decoder, delimiter); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	found := false
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return false, err
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return false, fmt.Errorf("createGate key must be a string")
+		}
+		for _, legacyField := range []string{"command", "commandArgv", "commandCwd", "commandShell"} {
+			if strings.EqualFold(key, legacyField) {
+				found = true
+				break
+			}
+		}
+		if err := skipJSONValue(decoder); err != nil {
+			return false, err
+		}
+	}
+	closing, err := decoder.Token()
+	if err != nil {
+		return false, err
+	}
+	if closeDelimiter, ok := closing.(json.Delim); !ok || closeDelimiter != '}' {
+		return false, fmt.Errorf("createGate object is not closed")
+	}
+	return found, nil
+}
+
+func skipJSONValue(decoder *json.Decoder) error {
+	value, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	if delimiter, ok := value.(json.Delim); ok {
+		return skipJSONContainer(decoder, delimiter)
+	}
+	return nil
+}
+
+func skipJSONContainer(decoder *json.Decoder, opening json.Delim) error {
+	switch opening {
+	case '{':
+		for decoder.More() {
+			if _, err := decoder.Token(); err != nil {
+				return err
+			}
+			if err := skipJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+	case '[':
+		for decoder.More() {
+			if err := skipJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+	default:
+		return fmt.Errorf("unsupported JSON delimiter %q", opening)
+	}
+	_, err := decoder.Token()
+	return err
+}
+
 type formationsSetGateJudgeRequest struct {
 	GateID      string   `json:"gateId"`
 	Chain       []string `json:"chain"`
@@ -229,9 +368,7 @@ func NewFormationsHandlerWithStores(store *formations.Store, personas *formation
 }
 
 func (h *FormationsHandler) newRunEngine(boundary string) *formations.RunEngine {
-	engine := formations.NewRunEngine(h.store, h.personas, formations.NewConfiguredFormationExecutorFromEnv(h.store, h.personas, boundary))
-	engine.SetGateEvaluator(formations.NewConfiguredGateEvaluatorFromEnv(h.store.Workspace))
-	return engine
+	return formations.NewRunEngine(h.store, h.personas, formations.NewConfiguredFormationExecutorFromEnv(h.store, h.personas, boundary))
 }
 
 func (h *FormationsHandler) RegisterRoutes(mux *http.ServeMux) {
@@ -493,6 +630,10 @@ func (h *FormationsHandler) GetBoardChanges(w http.ResponseWriter, r *http.Reque
 func (h *FormationsHandler) PatchBoard(w http.ResponseWriter, r *http.Request) {
 	var request formationsBoardPatchRequest
 	if !decodeJSONBody(w, r, &request) {
+		return
+	}
+	if request.LegacyCommandFieldsPresent {
+		writeFormationsError(w, formations.ErrLegacyScriptGateRequiresFencedMigration)
 		return
 	}
 	slug, err := h.store.ResolveBoardSelector(r.PathValue("board"))
@@ -795,16 +936,17 @@ func (h *FormationsHandler) PatchBoard(w http.ResponseWriter, r *http.Request) {
 	if request.CreateGate != nil {
 		gate := request.CreateGate
 		result, err := h.store.CreateGate(slug, formations.GateCreateRequest{
-			Title:        gate.Title,
-			Kinds:        gate.Kinds,
-			Criterion:    gate.Criterion,
-			Command:      gate.Command,
-			CommandArgv:  gate.CommandArgv,
-			CommandCWD:   gate.CommandCWD,
-			CommandShell: gate.CommandShell,
-			X:            gate.X,
-			Y:            gate.Y,
-			UpdatedBy:    patchUpdatedBy(request.UpdatedBy, gate.UpdatedBy),
+			Title:                      gate.Title,
+			Kinds:                      gate.Kinds,
+			Criterion:                  gate.Criterion,
+			Command:                    gate.Command,
+			CommandArgv:                gate.CommandArgv,
+			CommandCWD:                 gate.CommandCWD,
+			CommandShell:               gate.CommandShell,
+			LegacyCommandFieldsPresent: request.LegacyCommandFieldsPresent,
+			X:                          gate.X,
+			Y:                          gate.Y,
+			UpdatedBy:                  patchUpdatedBy(request.UpdatedBy, gate.UpdatedBy),
 		}, formations.WriteOptions{
 			ExpectedETag: r.Header.Get("If-Match"),
 			ExpectedRev:  patchExpectedRev(request.ExpectedRev, gate.ExpectedRev),
@@ -1002,6 +1144,8 @@ func writeFormationsError(w http.ResponseWriter, err error) {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid formation slug")
 	case errors.Is(err, formations.ErrUnsupportedSchema):
 		core.WriteError(w, http.StatusUnprocessableEntity, "UNSUPPORTED_SCHEMA", err.Error())
+	case errors.Is(err, formations.ErrLegacyScriptGateRequiresFencedMigration):
+		core.WriteError(w, http.StatusUnprocessableEntity, formations.LegacyScriptGateMigrationCode, err.Error())
 	default:
 		core.WriteError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
 	}

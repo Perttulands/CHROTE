@@ -34,18 +34,19 @@ close.
 5. Do not silently invent agents or sessions.
 6. Keep ids stable and visible.
 7. Prefer exact commands over conversational interpretation.
-8. Never turn free-text criteria into implicit shell commands. Script gates use
-   `--command-argv` by default; `--command-shell` is the explicit shell opt-in.
+8. Never turn free-text criteria into implicit shell commands. Legacy Gate
+   command flags remain parseable compatibility inputs, but every authored
+   command field is rejected before mutation or execution.
 9. Reject a second producer for any input port. Joins use distinct stable
    required ports and do not imply a merge order.
 10. Preserve the evaluated exact authorized payload/provenance on Gate pass and
     keep verdict or feedback separate from work output. One failed Gate sequence creates one
     stable feedback object; pushback is a route action to an exact source
     attempt, not another verdict.
-11. Treat Script Gates as evaluators. Deterministic Tool transformation uses a
-    pure host-owned profile whose exact version/hash, parameters, policy, and
-    content-addressed execution bundle are frozen for the run; it is not an
-    inline board command.
+11. Gates remain pure evaluators. Gate-owned argv/shell process execution is
+    retired. Deterministic process-backed transformation belongs to a future
+    Tool step using a host-owned profile whose exact version/hash, parameters,
+    policy, and content-addressed execution bundle are frozen for the run.
 
 ## Current command groups
 
@@ -105,13 +106,27 @@ target flags and transport wiring land with `ctx-ug7.6`; this current-command
 inventory remains unchanged until then.
 
 ADR-0006 accepts agent-first authoring for a mixed Mission → Formation → Tool →
-Gate workflow. There is no `archon tool` group today. Tool profile authoring,
-validation, packaging, and the exact command spelling belong to `ctx-ug7.8`,
-`ctx-ug7.11`, and `ctx-ug7.13`; this spec must not imply they already ship.
-Likewise, current argv/shell Script Gates are schema-1 compatibility behavior.
-Schema-2 code Gates use frozen pure in-process evaluator profiles; migrating a
-command-backed Gate fails loud until the process-fence or retirement decision in
-`ctx-ug7.16` lands.
+Gate workflow. There is no `archon tool` group today. Non-executing Tool
+definition, descriptor, board-authoring, and validation foundations belong to
+`ctx-ug7.8.1`; certified host-private implementation packaging and execution
+belong to `ctx-ug7.8`; agent authoring UX and exact command spelling belong to
+`ctx-ug7.11` and `ctx-ug7.13`. This spec must not imply they already ship.
+Legacy `command`, `commandArgv`, `commandShell`, and `commandCwd` Gate fields are
+schema-1 inspection and migration-plan inputs only, including authored empty
+values. Gate-owned process execution is retired. Board validation reports
+`legacy_script_gate_requires_fenced_migration`; a selected Mission start or
+resume reports the same error before any run mutation when its executable root
+contains such a Gate. Unreachable Gates and Gates outside an isolated Formation
+root remain board-validation errors but do not block that selected run.
+
+Before Tool profiles land, the migration projection is deliberately
+non-authorizing: `ready=false`, `applySupported=false`, and no raw command value,
+resolved executable/cwd, generated Tool id, or inferred profile appears in it.
+`ctx-ug7.8.1` owns non-executing Tool definitions, registry descriptors, and
+board authoring. `ctx-ug7.8` owns certified host-private implementations and
+runtime execution. `ctx-ug7.30` owns pure code-Gate profiles and the later
+explicit Tool-plus-pure-Gate apply path; this spec does not claim any of those
+command surfaces ship.
 
 ## Output modes
 
@@ -212,25 +227,28 @@ Resolution must surface:
   diverge. Runtime command/effect writes go only through the current fenced
   coordinator; a package file lock is not execution authority.
 
-## Script-gate command flags
+## Retired Script-gate command flags
 
-`archon gate create` and `archon gate update` use the same command-mode contract
-as the board model:
+`archon gate create` and `archon gate update` still recognize the historical
+command flags so old automation fails deterministically instead of being
+misparsed. They are rejected compatibility inputs, not executable forms:
 
-- `--command-argv npm,run,lint` is the default executable form. CHROTE passes the
-  argv literally and does not insert a shell.
-- `--command-cwd dashboard` optionally sets the command working directory. It
-  must resolve under the Formations workspace. This is a cwd guard, not a
-  filesystem sandbox.
-- `--command-shell 'npm run lint'` is the explicit shell opt-in.
-- `--command 'npm run lint'` stores legacy compatibility metadata only; script
-  gates do not execute legacy command strings.
-- `--command-argv`, `--command-shell`, and legacy `--command` are mutually
-  exclusive.
+- `--command-argv npm,run,lint`, `--command-shell 'npm run lint'`, legacy
+  `--command 'npm run lint'`, and `--command-cwd dashboard` each fail with
+  `legacy_script_gate_requires_fenced_migration` before board or layout mutation.
+- An explicit empty value still counts as authored legacy field presence.
+- Mutually inconsistent legacy modes remain invalid; Archon never tokenizes a
+  legacy command, parses a shell string into argv, resolves an executable/cwd,
+  or infers a host profile.
+- `archon board inspect --json` remains the authorized source-definition view.
+  `archon board validate --json` exposes the non-mutating migration inspection,
+  including source field names and affected edge ids but no raw values.
 
-Script Gates return verdict, reason, and evidence metadata only. They do not
-emit transformed workflow output and must not be used as a substitute for the
-future host-profile Tool step.
+The intended future shape is a host-profile Tool whose declared output feeds a
+pure code Gate. The Gate evaluates and passes through that exact Tool output, not
+the pre-Tool payload. Future migration must therefore validate the explicit
+profile, parameter, port, media, and downstream mapping or leave the legacy
+board byte-identical and fail loud.
 
 ## Examples
 
@@ -241,7 +259,7 @@ archon formation create default peer --title "review pair" --json
 archon formation assign default fmn_review_pair --slot slot_reviewer --agent codex-reviewer --json
 archon mission wire default mis_home_vdki fmn_review_pair:port_review_in --json
 archon formation wire default fmn_review_pair:port_review_out gate_final_review:in --json
-archon gate create default --kinds lint --criterion "lint passes" --command-argv npm,run,lint --command-cwd dashboard --json
+archon gate create default --kinds human --criterion "review passes" --json
 archon mission run default --mission mis_home_vdki --json
 archon run status run_20260605_001 --json
 archon gate approve run_20260605_001 gate_final_review --reason "passes owner check" --json

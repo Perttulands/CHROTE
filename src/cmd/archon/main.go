@@ -257,9 +257,7 @@ func run(args []string, stdout, stderr io.Writer, runner tmuxRunner) int {
 }
 
 func newArchonRunEngine(store *formations.Store, personas *formations.PersonaStore, boundary string) *formations.RunEngine {
-	engine := formations.NewRunEngine(store, personas, formations.NewConfiguredFormationExecutorFromEnv(store, personas, boundary))
-	engine.SetGateEvaluator(formations.NewConfiguredGateEvaluatorFromEnv(store.Workspace))
-	return engine
+	return formations.NewRunEngine(store, personas, formations.NewConfiguredFormationExecutorFromEnv(store, personas, boundary))
 }
 
 func parseGlobalArgs(args []string, stderr io.Writer) (archonConfig, []string, bool) {
@@ -775,10 +773,10 @@ func runGateCreate(store *formations.Store, args []string, stdout, stderr io.Wri
 	title := fs.String("title", "Review gate", "gate title")
 	kinds := fs.String("kinds", "code", "comma-separated gate kinds")
 	criterion := fs.String("criterion", "", "gate criterion")
-	command := fs.String("command", "", "legacy script/lint gate command string (stored but not executable by script gates)")
-	commandArgv := fs.String("command-argv", "", "comma-separated argv command for script/lint gates, e.g. npm,run,lint")
-	commandCWD := fs.String("command-cwd", "", "command working directory relative to workspace")
-	commandShell := fs.String("command-shell", "", "explicit shell command for script/lint gates")
+	command := fs.String("command", "", "retired legacy Gate field; new writes fail with a migration error")
+	commandArgv := fs.String("command-argv", "", "retired legacy Gate argv; new writes fail with a migration error")
+	commandCWD := fs.String("command-cwd", "", "retired legacy Gate cwd; new writes fail with a migration error")
+	commandShell := fs.String("command-shell", "", "retired legacy Gate shell command; new writes fail with a migration error")
 	x := fs.Int("x", 0, "layout x coordinate")
 	y := fs.Int("y", 0, "layout y coordinate")
 	updatedBy := fs.String("updated-by", "agent:archon", "update actor")
@@ -803,16 +801,17 @@ func runGateCreate(store *formations.Store, args []string, stdout, stderr io.Wri
 		return fail(stderr, err)
 	}
 	result, err := store.CreateGate(slug, formations.GateCreateRequest{
-		Title:        *title,
-		Kinds:        splitCSV(*kinds),
-		Criterion:    *criterion,
-		Command:      *command,
-		CommandArgv:  splitCSV(*commandArgv),
-		CommandCWD:   *commandCWD,
-		CommandShell: *commandShell,
-		X:            createX,
-		Y:            createY,
-		UpdatedBy:    *updatedBy,
+		Title:                      *title,
+		Kinds:                      splitCSV(*kinds),
+		Criterion:                  *criterion,
+		Command:                    *command,
+		CommandArgv:                splitCSV(*commandArgv),
+		CommandCWD:                 *commandCWD,
+		CommandShell:               *commandShell,
+		LegacyCommandFieldsPresent: legacyGateCommandFlagPresent(fs),
+		X:                          createX,
+		Y:                          createY,
+		UpdatedBy:                  *updatedBy,
 	}, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
 	if err != nil {
 		return fail(stderr, err)
@@ -831,10 +830,10 @@ func runGateUpdate(store *formations.Store, args []string, stdout, stderr io.Wri
 	title := fs.String("title", "", "gate title")
 	kinds := fs.String("kinds", "", "comma-separated gate kinds")
 	criterion := fs.String("criterion", "", "gate criterion")
-	command := fs.String("command", "", "legacy script/lint gate command string (stored but not executable by script gates)")
-	commandArgv := fs.String("command-argv", "", "comma-separated argv command for script/lint gates, e.g. npm,run,lint")
-	commandCWD := fs.String("command-cwd", "", "command working directory relative to workspace")
-	commandShell := fs.String("command-shell", "", "explicit shell command for script/lint gates")
+	command := fs.String("command", "", "retired legacy Gate field; new writes fail with a migration error")
+	commandArgv := fs.String("command-argv", "", "retired legacy Gate argv; new writes fail with a migration error")
+	commandCWD := fs.String("command-cwd", "", "retired legacy Gate cwd; new writes fail with a migration error")
+	commandShell := fs.String("command-shell", "", "retired legacy Gate shell command; new writes fail with a migration error")
 	updatedBy := fs.String("updated-by", "agent:archon", "update actor")
 	jsonOut := fs.Bool("json", false, "write JSON")
 	if err := fs.Parse(reorderFlags(args, map[string]bool{"json": true})); err != nil {
@@ -861,15 +860,16 @@ func runGateUpdate(store *formations.Store, args []string, stdout, stderr io.Wri
 		updateKinds = splitCSV(*kinds)
 	}
 	result, err := store.UpdateGate(slug, formations.GateUpdateRequest{
-		GateID:       gateID,
-		Title:        *title,
-		Kinds:        updateKinds,
-		Criterion:    *criterion,
-		Command:      *command,
-		CommandArgv:  splitCSV(*commandArgv),
-		CommandCWD:   *commandCWD,
-		CommandShell: *commandShell,
-		UpdatedBy:    *updatedBy,
+		GateID:                     gateID,
+		Title:                      *title,
+		Kinds:                      updateKinds,
+		Criterion:                  *criterion,
+		Command:                    *command,
+		CommandArgv:                splitCSV(*commandArgv),
+		CommandCWD:                 *commandCWD,
+		CommandShell:               *commandShell,
+		LegacyCommandFieldsPresent: legacyGateCommandFlagPresent(fs),
+		UpdatedBy:                  *updatedBy,
 	}, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
 	if err != nil {
 		return fail(stderr, err)
@@ -880,6 +880,17 @@ func runGateUpdate(store *formations.Store, args []string, stdout, stderr io.Wri
 	}
 	fmt.Fprintln(stdout, "updated gate")
 	return 0
+}
+
+func legacyGateCommandFlagPresent(fs *flag.FlagSet) bool {
+	present := false
+	fs.Visit(func(current *flag.Flag) {
+		switch current.Name {
+		case "command", "command-argv", "command-cwd", "command-shell":
+			present = true
+		}
+	})
+	return present
 }
 
 func runGateJudge(store *formations.Store, args []string, stdout, stderr io.Writer) int {
@@ -2112,6 +2123,8 @@ func archonErrorCode(err error) string {
 		return "precondition_required"
 	case errors.Is(err, formations.ErrUnsupportedSchema):
 		return "unsupported_schema"
+	case errors.Is(err, formations.ErrLegacyScriptGateRequiresFencedMigration):
+		return formations.LegacyScriptGateMigrationCode
 	case errors.Is(err, formations.ErrRunFinal):
 		return "run_final"
 	case errors.Is(err, formations.ErrRunLedgerInvalid):

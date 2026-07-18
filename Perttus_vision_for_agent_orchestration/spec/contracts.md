@@ -308,16 +308,70 @@ attempt. Redacted loss first records bounded Gate/attempt/input context, but its
 terminal failure keeps the source input sequence as provenance and
 `failureCause={kind=none}` as required by ADR-0005. Both exactly dispose every
 open attempt, slot dispatch, and Tool lease. Neither path emits a kind result,
-verdict, or route. A profile that needs an OS process is rejected until a
-separate ledger-before-spawn process-fence or retirement decision in
-`ctx-ug7.16` lands. Current schema-1
-`commandArgv`/explicit `commandShell` Script Gates remain compatibility behavior,
-but a board containing them is not safely normalizable to schema 2 and fails
-with `legacy_script_gate_requires_fenced_migration` rather than inheriting Tool
-replay semantics.
+verdict, or route. A code-Gate profile that needs an OS process is rejected.
+Gate-owned process evaluation is retired.
 
-The accepted target adds a bounded Tool node. The exact profile registry and
-packaging belong to `ctx-ug7.8`; board-authored commands are not Tool profiles.
+Authored presence of any schema-1 Gate command field—`command`, `commandArgv`,
+`commandShell`, or `commandCwd`, including explicitly empty values—is preserved
+for source inspection and migration planning only. Presence comes from the
+source field, not a reconstructed non-empty value. Whole-board validation emits
+`legacy_script_gate_requires_fenced_migration`; legacy-string-only and cwd-only
+definitions receive the same finding because the writer cannot silently drop or
+interpret them. They may also be `gate_not_routable` when no human or
+formation-judge route exists.
+
+Selected-root preflight is narrower than whole-board validation. A Mission start
+walks its complete possible executable subgraph, including both Gate branches
+and judge chains of reachable Gates, and returns
+`legacy_script_gate_requires_fenced_migration` before any snapshot, binding,
+ledger, `run_started`, evaluator, or process mutation when that root contains a
+legacy command Gate. Resume checks the same root in the frozen snapshot before
+`run_resumed`. Unreachable command Gates remain validation errors but do not
+block that Mission. An isolated Formation root contains only that Formation and
+its canonical brief seed and never traverses downstream board edges, so a Gate
+elsewhere does not block it.
+
+Before Tool profiles exist, the only migration surface is this closed,
+non-authorizing inspection projection:
+
+```text
+LegacyScriptGateMigrationInspection {
+  schema: 1
+  boardId: string
+  boardRev: integer
+  boardETag: string
+  gateId: string
+  sourceMode: legacy_string | argv | shell | cwd_only | conflict | empty_present
+  sourceFields: [command | commandArgv | commandShell | commandCwd] // sorted field names
+  incomingEdgeIds: string[] // stable order
+  outgoingEdgeIds: string[] // stable order
+  code: "legacy_script_gate_requires_fenced_migration"
+  targetKind: "tool_plus_pure_gate"
+  ready: false
+  applySupported: false
+  requirements: [
+    "host_owned_tool_profile",
+    "pure_gate_evaluator_profile",
+    "explicit_parameter_mapping",
+    "port_media_compatibility",
+    "atomic_cas_rewire"
+  ]
+}
+```
+
+The projection never contains raw command values, resolved executable/cwd or
+environment, generated Tool ids/ports, inferred parameters, or a suggested
+profile. Board ETag/revision is a future compare-and-swap precondition, never
+apply authority. API definition inspection may return this projection beside
+the source board. `archon board inspect --json` remains the authorized source
+view, and `archon board validate --json` returns the same typed migration details.
+No migration mutation verb or endpoint exists before the Tool foundation and
+runtime authority.
+
+The accepted target adds a bounded Tool node. Non-executing Tool definitions,
+registry descriptors, and board authoring belong to `ctx-ug7.8.1`; certified
+host-private implementation packaging and runtime execution belong to
+`ctx-ug7.8`. Board-authored commands are not Tool profiles.
 
 ```toml
 [[tool]]
@@ -369,6 +423,20 @@ required/role semantics. Every `work` port also declares a non-empty
 `acceptedMediaTypes` subset of `text/plain`, `text/markdown`, and
 `application/json`; incompatible media rejects before attempt start. Full JSON
 Schema remains deferred.
+
+After `ctx-ug7.8.1` provides non-executing Tool definitions and registry
+descriptors, and `ctx-ug7.8` provides certified host-private implementations and
+runtime execution, `ctx-ug7.30` provides pure code-Gate profiles and the future
+explicit migration apply. That apply may insert one Tool before the existing
+Gate. The caller must
+select the Tool and pure-Gate profiles and provide modeled parameters and port
+mapping; the writer atomically verifies board ETag/revision, profile identity,
+media/downstream compatibility, and every affected edge. It preserves the Gate
+id/title/criterion, judge relationships, pass/fail outgoing edges, and existing
+layout; only the new Tool receives placement. The Gate evaluates and forwards
+the exact Tool output, not the pre-Tool payload, so arbitrary legacy command
+semantics are never inferred. Unprovable mapping leaves the source bytes
+unchanged and fails loud.
 
 Missions retain fixed port `out` as the only run-start output in this phase. The
 authored objective is encoded as `mission-objective-utf8-v1`: bounded UTF-8 with

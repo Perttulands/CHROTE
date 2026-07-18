@@ -145,28 +145,30 @@ type FormationRewireRequest struct {
 }
 
 type GateCreateRequest struct {
-	Title        string
-	Kinds        []string
-	Criterion    string
-	Command      string // legacy string form: parseable, but not executable by script gates
-	CommandArgv  []string
-	CommandCWD   string
-	CommandShell string
-	X            int
-	Y            int
-	UpdatedBy    string
+	Title                      string
+	Kinds                      []string
+	Criterion                  string
+	Command                    string // legacy inspection-only compatibility input
+	CommandArgv                []string
+	CommandCWD                 string
+	CommandShell               string
+	LegacyCommandFieldsPresent bool
+	X                          int
+	Y                          int
+	UpdatedBy                  string
 }
 
 type GateUpdateRequest struct {
-	GateID       string
-	Title        string
-	Kinds        []string
-	Criterion    string
-	Command      string // legacy string form: parseable, but not executable by script gates
-	CommandArgv  []string
-	CommandCWD   string
-	CommandShell string
-	UpdatedBy    string
+	GateID                     string
+	Title                      string
+	Kinds                      []string
+	Criterion                  string
+	Command                    string // legacy inspection-only compatibility input
+	CommandArgv                []string
+	CommandCWD                 string
+	CommandShell               string
+	LegacyCommandFieldsPresent bool
+	UpdatedBy                  string
 }
 
 type GateJudgeRequest struct {
@@ -229,14 +231,16 @@ type BoardConnection struct {
 }
 
 type GateNode struct {
-	ID           string   `json:"id"`
-	Title        string   `json:"title"`
-	Kinds        []string `json:"kinds"`
-	Criterion    string   `json:"criterion"`
-	Command      string   `json:"command,omitempty"` // legacy string form: parseable, but not executable by script gates
-	CommandArgv  []string `json:"commandArgv,omitempty"`
-	CommandCWD   string   `json:"commandCwd,omitempty"`
-	CommandShell string   `json:"commandShell,omitempty"`
+	ID                    string                               `json:"id"`
+	Title                 string                               `json:"title"`
+	Kinds                 []string                             `json:"kinds"`
+	Criterion             string                               `json:"criterion"`
+	Command               string                               `json:"command,omitempty"` // legacy inspection-only metadata
+	CommandArgv           []string                             `json:"commandArgv,omitempty"`
+	CommandCWD            string                               `json:"commandCwd,omitempty"`
+	CommandShell          string                               `json:"commandShell,omitempty"`
+	LegacyScriptMigration *LegacyScriptGateMigrationInspection `json:"legacyScriptMigration,omitempty"`
+	legacyCommandFields   map[string]int
 }
 
 type MissionNode struct {
@@ -718,7 +722,7 @@ func (s *Store) RemoveFormationVerification(slug string, req FormationVerificati
 }
 
 func (s *Store) CreateGate(slug string, req GateCreateRequest, opts WriteOptions) (*GateCreateResult, error) {
-	if err := validateGateCommandMode(req.Command, req.CommandArgv, req.CommandShell); err != nil {
+	if err := rejectLegacyScriptGateWrite(req.LegacyCommandFieldsPresent, req.Command, req.CommandArgv, req.CommandCWD, req.CommandShell); err != nil {
 		return nil, err
 	}
 	if err := validateSlug(slug); err != nil {
@@ -736,14 +740,10 @@ func (s *Store) CreateGate(slug string, req GateCreateRequest, opts WriteOptions
 		title = "Review gate"
 	}
 	gate := GateNode{
-		ID:           newPrefixedID("gate"),
-		Title:        title,
-		Kinds:        kinds,
-		Criterion:    req.Criterion,
-		Command:      req.Command,
-		CommandArgv:  append([]string(nil), req.CommandArgv...),
-		CommandCWD:   req.CommandCWD,
-		CommandShell: req.CommandShell,
+		ID:        newPrefixedID("gate"),
+		Title:     title,
+		Kinds:     kinds,
+		Criterion: req.Criterion,
 	}
 
 	path := s.BoardPath(slug)
@@ -803,7 +803,7 @@ func (s *Store) UpdateGate(slug string, req GateUpdateRequest, opts WriteOptions
 	if req.GateID == "" {
 		return nil, ErrNotFound
 	}
-	if err := validateGateCommandMode(req.Command, req.CommandArgv, req.CommandShell); err != nil {
+	if err := rejectLegacyScriptGateWrite(req.LegacyCommandFieldsPresent, req.Command, req.CommandArgv, req.CommandCWD, req.CommandShell); err != nil {
 		return nil, err
 	}
 	return s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, _ *BoardDocument) ([]byte, error) {
@@ -820,25 +820,6 @@ func (s *Store) UpdateGate(slug string, req GateUpdateRequest, opts WriteOptions
 		}
 		if req.Criterion != "" {
 			lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "criterion", renderString(req.Criterion))
-		}
-		if req.Command != "" {
-			lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "command", renderString(req.Command))
-			lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, "commandArgv")
-			lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, "commandShell")
-			lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, "commandCwd")
-		}
-		if len(req.CommandArgv) > 0 {
-			lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "commandArgv", renderStringArray(req.CommandArgv))
-			lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, "command")
-			lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, "commandShell")
-		}
-		if req.CommandCWD != "" {
-			lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "commandCwd", renderString(req.CommandCWD))
-		}
-		if req.CommandShell != "" {
-			lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "commandShell", renderString(req.CommandShell))
-			lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, "command")
-			lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, "commandArgv")
 		}
 		return renderTOMLLines(lines), nil
 	})
@@ -1507,23 +1488,6 @@ func appendConnectionBlock(raw []byte, connection BoardConnection) []byte {
 	return []byte(b.String())
 }
 
-func validateGateCommandMode(command string, commandArgv []string, commandShell string) error {
-	modes := 0
-	if strings.TrimSpace(command) != "" {
-		modes++
-	}
-	if len(commandArgv) > 0 {
-		modes++
-	}
-	if strings.TrimSpace(commandShell) != "" {
-		modes++
-	}
-	if modes > 1 {
-		return fmt.Errorf("%w: gate command must use only one of legacy command, commandArgv, or commandShell", ErrConflict)
-	}
-	return nil
-}
-
 func appendGateBlock(raw []byte, gate GateNode) []byte {
 	var b strings.Builder
 	b.Write(raw)
@@ -1539,18 +1503,6 @@ func appendGateBlock(raw []byte, gate GateNode) []byte {
 	b.WriteString("title = " + renderString(gate.Title) + "\n")
 	b.WriteString("kinds = " + renderStringArray(gate.Kinds) + "\n")
 	b.WriteString("criterion = " + renderString(gate.Criterion) + "\n")
-	if gate.Command != "" {
-		b.WriteString("command = " + renderString(gate.Command) + "\n")
-	}
-	if len(gate.CommandArgv) > 0 {
-		b.WriteString("commandArgv = " + renderStringArray(gate.CommandArgv) + "\n")
-	}
-	if gate.CommandCWD != "" {
-		b.WriteString("commandCwd = " + renderString(gate.CommandCWD) + "\n")
-	}
-	if gate.CommandShell != "" {
-		b.WriteString("commandShell = " + renderString(gate.CommandShell) + "\n")
-	}
 	return []byte(b.String())
 }
 
@@ -2361,7 +2313,7 @@ func parseGateNodes(raw []byte) []GateNode {
 		trimmed := strings.TrimSpace(line.body)
 		switch trimmed {
 		case "[[gate]]":
-			gates = append(gates, GateNode{})
+			gates = append(gates, GateNode{legacyCommandFields: map[string]int{}})
 			current = &gates[len(gates)-1]
 			active = true
 			continue
@@ -2388,12 +2340,16 @@ func parseGateNodes(raw []byte) []GateNode {
 		case "criterion":
 			current.Criterion = value
 		case "command":
+			current.legacyCommandFields[key]++
 			current.Command = value
 		case "commandArgv":
+			current.legacyCommandFields[key]++
 			current.CommandArgv = parseStringArray(value)
 		case "commandCwd":
+			current.legacyCommandFields[key]++
 			current.CommandCWD = value
 		case "commandShell":
+			current.legacyCommandFields[key]++
 			current.CommandShell = value
 		}
 	}

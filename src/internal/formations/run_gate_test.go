@@ -1,6 +1,7 @@
 package formations
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -126,7 +127,7 @@ func TestS4GateFailWirePushesBackWithAttemptLimit(t *testing.T) {
 	}
 }
 
-func TestS4GateEvaluationReceivesPersistedCommandArgv(t *testing.T) {
+func TestS4GateEvaluationRejectsPersistedCommandArgvBeforeEvaluator(t *testing.T) {
 	store, personas := s4RunFixture(t)
 	store.Now = fixedClock()
 	personas.Now = fixedClock()
@@ -147,19 +148,13 @@ func TestS4GateEvaluationReceivesPersistedCommandArgv(t *testing.T) {
 		ExpectedBoardRev:  board.Rev,
 		Limits:            RunLimits{MaxDispatch: 5, MaxAttempts: 2},
 	})
-	if err != nil {
-		t.Fatalf("run mission: %v", err)
+	if !errors.Is(err, ErrLegacyScriptGateRequiresFencedMigration) {
+		t.Fatalf("run mission error = %v, want ErrLegacyScriptGateRequiresFencedMigration", err)
 	}
-	if len(evaluator.calls) != 1 {
-		t.Fatalf("gate calls = %+v, want one call", evaluator.calls)
+	if len(evaluator.calls) != 0 {
+		t.Fatalf("gate calls = %+v, want none before migration", evaluator.calls)
 	}
-	call := evaluator.calls[0]
-	if !reflect.DeepEqual(call.CommandArgv, []string{"npm", "run", "lint"}) || call.CommandCWD != "dashboard" {
-		t.Fatalf("gate call command = %+v, want persisted argv/cwd", call)
-	}
-	if call.Command != "" || call.Criterion != "touch should-not-run" {
-		t.Fatalf("gate call mixed criterion into command: %+v", call)
-	}
+	assertNoRunArtifacts(t, store, "session-search")
 }
 
 func TestS4RunLimitsRecordAndStop(t *testing.T) {

@@ -165,6 +165,9 @@ func (s *Store) StartRun(slug string, req RunStartRequest) (*RunStartResult, err
 	if !ok {
 		return nil, fmt.Errorf("%w: mission %q", ErrNotFound, req.MissionID)
 	}
+	if err := rejectLegacyScriptGateForMission(board, mission.ID); err != nil {
+		return nil, err
+	}
 	bindings, err := resolveRunBindings(board, req.Personas)
 	if err != nil {
 		return nil, err
@@ -237,15 +240,26 @@ func (s *Store) AppendRunEvent(runID string, event RunEvent) error {
 		}
 		first := events[0]
 		last := events[len(events)-1]
+		if event.Type != RunEventCanceled && event.Type != RunEventFailed {
+			snapshot, err := s.readRunSnapshot(first)
+			if err != nil {
+				return err
+			}
+			if err := rejectLegacyScriptGateForRun(snapshot, first, &event); err != nil {
+				return err
+			}
+		}
 		if last.Type == RunEventBlocked {
-			if event.Type != RunEventResumed {
+			if event.Type != RunEventResumed && event.Type != RunEventCanceled && event.Type != RunEventFailed {
 				return ErrRunEpochBlocked
 			}
-			if !boolFromEventData(last, "resumeAllowed") {
-				return ErrRunResumeNotAllowed
-			}
-			if event.Epoch == 0 {
-				event.Epoch = last.Epoch + 1
+			if event.Type == RunEventResumed {
+				if !boolFromEventData(last, "resumeAllowed") {
+					return ErrRunResumeNotAllowed
+				}
+				if event.Epoch == 0 {
+					event.Epoch = last.Epoch + 1
+				}
 			}
 		} else if event.Type == RunEventResumed {
 			return ErrRunResumeNotAllowed
@@ -295,6 +309,13 @@ func (s *Store) ResumeRun(runID string, req RunResumeRequest) (*RunStatusProject
 		}
 		first := events[0]
 		last := events[len(events)-1]
+		snapshot, err := s.readRunSnapshot(first)
+		if err != nil {
+			return err
+		}
+		if err := rejectLegacyScriptGateForRun(snapshot, first, nil); err != nil {
+			return err
+		}
 		if last.Type != RunEventBlocked || !boolFromEventData(last, "resumeAllowed") {
 			return ErrRunResumeNotAllowed
 		}
@@ -332,6 +353,25 @@ func (s *Store) ResumeRun(runID string, req RunResumeRequest) (*RunStatusProject
 		return nil, err
 	}
 	return s.ProjectRun(runID)
+}
+
+func (s *Store) readRunSnapshot(started RunEvent) (*BoardDocument, error) {
+	snapshotPath := stringFromEventData(started, "snapshot")
+	if snapshotPath == "" {
+		return nil, ErrRunLedgerInvalid
+	}
+	snapshotRaw, err := os.ReadFile(filepath.Join(s.Workspace, snapshotPath))
+	if err != nil {
+		return nil, err
+	}
+	board, err := parseBoard(snapshotRaw)
+	if err != nil {
+		return nil, err
+	}
+	if board.ID != started.BoardID || board.Rev != started.BoardRev {
+		return nil, ErrRunLedgerInvalid
+	}
+	return board, nil
 }
 
 func (s *Store) ProjectRun(runID string) (*RunStatusProjection, error) {

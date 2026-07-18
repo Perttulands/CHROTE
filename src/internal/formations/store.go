@@ -439,7 +439,7 @@ func parseBoard(raw []byte) (*BoardDocument, error) {
 	if schema > CurrentSchema {
 		return nil, fmt.Errorf("%w: schema %d", ErrUnsupportedSchema, schema)
 	}
-	return &BoardDocument{
+	board := &BoardDocument{
 		Schema:      schema,
 		ID:          doc.stringValue("id"),
 		Slug:        doc.stringValue("slug"),
@@ -453,7 +453,9 @@ func parseBoard(raw []byte) (*BoardDocument, error) {
 		Connections: parseBoardConnections(raw),
 		ETag:        etag(raw),
 		TOML:        string(raw),
-	}, nil
+	}
+	populateLegacyScriptGateMigrationInspections(board)
+	return board, nil
 }
 
 func parseLayout(raw []byte) (*LayoutDocument, error) {

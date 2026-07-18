@@ -85,16 +85,12 @@ type FormationOutputPayload struct {
 }
 
 type GateEvaluation struct {
-	RunID        string
-	GateID       string
-	Title        string
-	Kinds        []string
-	Criterion    string
-	Command      string // legacy string form: parseable, but not executable by script gates
-	CommandArgv  []string
-	CommandCWD   string
-	CommandShell string
-	Input        RunInputRef
+	RunID     string
+	GateID    string
+	Title     string
+	Kinds     []string
+	Criterion string
+	Input     RunInputRef
 }
 
 type GateEvaluationResult struct {
@@ -177,6 +173,9 @@ func (e *RunEngine) RunMission(slug string, req RunStartRequest) (*RunStatusProj
 	mission, ok := findMission(board, req.MissionID)
 	if !ok {
 		return nil, fmt.Errorf("%w: mission %q", ErrNotFound, req.MissionID)
+	}
+	if err := rejectLegacyScriptGateForMission(board, mission.ID); err != nil {
+		return nil, err
 	}
 	if len(outgoingConnections(board.Connections, mission.ID)) == 0 {
 		return nil, fmt.Errorf("%w: wire the mission to a step", ErrConflict)
@@ -1450,16 +1449,12 @@ func (e *RunEngine) evaluateGate(runID string, board *BoardDocument, gates map[s
 		return errRunStopped
 	}
 	result, err := e.evaluateGateResult(board, evaluationGate, GateEvaluation{
-		RunID:        runID,
-		GateID:       gate.ID,
-		Title:        gate.Title,
-		Kinds:        evaluationGate.Kinds,
-		Criterion:    gate.Criterion,
-		Command:      gate.Command,
-		CommandArgv:  append([]string(nil), gate.CommandArgv...),
-		CommandCWD:   gate.CommandCWD,
-		CommandShell: gate.CommandShell,
-		Input:        input,
+		RunID:     runID,
+		GateID:    gate.ID,
+		Title:     gate.Title,
+		Kinds:     evaluationGate.Kinds,
+		Criterion: gate.Criterion,
+		Input:     input,
 	}, limits)
 	if err != nil {
 		return err

@@ -1362,15 +1362,6 @@ func runSlotExecutionError(code, message, boundary string, cause error, nodeID, 
 	}
 }
 
-func operatorOptInAllowed(raw string) bool {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "1", "true", "yes", "allow", "allow-live", "prod-smoke":
-		return true
-	default:
-		return false
-	}
-}
-
 func safeTmuxSessionName(name string) bool {
 	if name == "" {
 		return false

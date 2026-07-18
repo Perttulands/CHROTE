@@ -46,7 +46,7 @@ These docs are useful and current enough to consult, but they do not override th
 | [`docs/adr/`](adr/) | Accepted architectural decisions; narrower than the active specs |
 | [`docs/adr/0001-formations-run-recovery-contract.md`](adr/0001-formations-run-recovery-contract.md) | Accepted epoch/recovery base; amended by ADR-0006 for node/resource recovery and ADR-0007 for coordinator ownership |
 | [`docs/adr/0005-formations-redacted-run-replay.md`](adr/0005-formations-redacted-run-replay.md) | Accepted redacted-run evidence and replay boundary |
-| [`docs/adr/0006-formations-workflow-node-contract.md`](adr/0006-formations-workflow-node-contract.md) | Accepted mixed-workflow node, port, gate, artifact, and run-bound session target; explicitly not fully implemented |
+| [`docs/adr/0006-formations-workflow-node-contract.md`](adr/0006-formations-workflow-node-contract.md) | Accepted mixed-workflow node, port, gate, artifact, and run-bound session target, including retired Gate-owned process execution and non-mutating legacy migration inspection; explicitly not fully implemented |
 | [`docs/adr/0007-formations-execution-authority.md`](adr/0007-formations-execution-authority.md) | Accepted sole-coordinator, shared-cockpit session-pool/full-Peek, explicit-arrange, command receipt, writer-fence, admission, failure-reconciliation, result-release, and guarded authority-schema target; explicitly not fully implemented and fail-closed on stock tmux pending `ctx-ug7.21` through `ctx-ug7.23` |
 
 ## Formations historical/reference packet

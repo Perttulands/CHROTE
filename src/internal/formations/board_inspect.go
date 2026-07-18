@@ -3,7 +3,6 @@ package formations
 import (
 	"fmt"
 	"sort"
-	"strings"
 )
 
 // Finding codes reported by ValidateBoard. They are stable strings so CLI and
@@ -14,14 +13,16 @@ const (
 	FindingInvalidFormationType = "invalid_formation_type"
 	FindingMissionCount         = "mission_count"
 	FindingMissionNotRunnable   = "mission_not_runnable"
+	FindingLegacyScriptGate     = LegacyScriptGateMigrationCode
 )
 
 // BoardFinding is a single structural problem located on the board. NodeID names
 // the offending node, or the edge id for connection problems.
 type BoardFinding struct {
-	Code    string `json:"code"`
-	NodeID  string `json:"nodeId"`
-	Message string `json:"message"`
+	Code    string                               `json:"code"`
+	NodeID  string                               `json:"nodeId"`
+	Message string                               `json:"message"`
+	Details *LegacyScriptGateMigrationInspection `json:"details,omitempty"`
 }
 
 // BoardValidationReport separates blocking errors from advisory warnings.
@@ -59,14 +60,22 @@ func ValidateBoard(board *BoardDocument) BoardValidationReport {
 
 	for _, gate := range board.Gates {
 		hasJudgeChain := len(judgeChainForGate(board, gate.ID)) > 0
-		hasScriptCommand := len(gate.CommandArgv) > 0 || strings.TrimSpace(gate.CommandShell) != ""
+		hasScriptCommand := gateHasLegacyScriptCommand(gate)
 		nonHumanKinds := withoutGateKind(gate.Kinds, "human")
 		isHumanOnlyGate := len(nonHumanKinds) == 0 && hasGateKind(gate.Kinds, "human")
-		if !hasJudgeChain && !hasScriptCommand && !isHumanOnlyGate {
+		if hasScriptCommand {
+			report.Errors = append(report.Errors, BoardFinding{
+				Code:    FindingLegacyScriptGate,
+				NodeID:  gate.ID,
+				Message: legacyScriptGateMigrationError(gate.ID).Error(),
+				Details: gate.LegacyScriptMigration,
+			})
+		}
+		if !hasJudgeChain && !isHumanOnlyGate {
 			report.Errors = append(report.Errors, BoardFinding{
 				Code:    FindingGateNotRoutable,
 				NodeID:  gate.ID,
-				Message: fmt.Sprintf("gate %q has no judge chain, command argv/shell, or human-only kind, so the board cannot route it; attach a judge chain, set a script command, or make it a human-only gate", gate.ID),
+				Message: fmt.Sprintf("gate %q has no judge chain or human-only kind, so the current board cannot route it; attach a judge chain or make it a human-only gate", gate.ID),
 			})
 		}
 	}

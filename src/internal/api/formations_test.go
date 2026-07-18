@@ -404,6 +404,85 @@ func TestFormationsHandlerStartRunRequiresExactlyOneTargetAndHonorsFormationPrec
 	}
 }
 
+func TestFormationsHandlerLegacyScriptGateInspectionStartAndResumeBoundary(t *testing.T) {
+	t.Run("inspection and mission start", func(t *testing.T) {
+		store := formations.NewStore(t.TempDir())
+		personas := formations.NewPersonaStore(t.TempDir())
+		if _, err := personas.CreatePersona(formations.CreatePersonaRequest{ID: "scout", Kind: "specialist", Harness: "openai-codex"}); err != nil {
+			t.Fatalf("create persona: %v", err)
+		}
+		writeFormationsAPIFixture(t, store.BoardPath("session-search"), formationsAPILegacyScriptGateBoardFixture())
+		handler := NewFormationsHandlerWithStores(store, personas)
+		mux := http.NewServeMux()
+		handler.RegisterRoutes(mux)
+
+		inspectRec := httptest.NewRecorder()
+		mux.ServeHTTP(inspectRec, httptest.NewRequest(http.MethodGet, "/api/formations/boards/session-search", nil))
+		if inspectRec.Code != http.StatusOK || !strings.Contains(inspectRec.Body.String(), `"legacyScriptMigration"`) || !strings.Contains(inspectRec.Body.String(), `"sourceMode":"argv"`) {
+			t.Fatalf("legacy inspection status=%d body=%s", inspectRec.Code, inspectRec.Body.String())
+		}
+
+		startRec := httptest.NewRecorder()
+		mux.ServeHTTP(startRec, httptest.NewRequest(http.MethodPost, "/api/formations/runs", bytes.NewBufferString(`{"board":"session-search","missionId":"mis_showcase","actor":"agent:test"}`)))
+		if startRec.Code != http.StatusUnprocessableEntity || !strings.Contains(startRec.Body.String(), `"code":"legacy_script_gate_requires_fenced_migration"`) {
+			t.Fatalf("legacy mission start status=%d body=%s, want 422 stable code", startRec.Code, startRec.Body.String())
+		}
+		if entries, err := os.ReadDir(filepath.Join(store.Workspace, ".formations", "runs", "session-search")); err == nil && len(entries) != 0 {
+			t.Fatalf("rejected API start wrote run artifacts: %v", entries)
+		} else if err != nil && !os.IsNotExist(err) {
+			t.Fatalf("read run artifacts: %v", err)
+		}
+
+		formationRec := httptest.NewRecorder()
+		mux.ServeHTTP(formationRec, httptest.NewRequest(http.MethodPost, "/api/formations/runs", bytes.NewBufferString(`{"board":"session-search","formationId":"fmn_work","actor":"agent:test"}`)))
+		if formationRec.Code != http.StatusOK || strings.Contains(formationRec.Body.String(), formations.LegacyScriptGateMigrationCode) {
+			t.Fatalf("isolated formation status=%d body=%s, want root-scoped non-migration result", formationRec.Code, formationRec.Body.String())
+		}
+	})
+
+	t.Run("resume", func(t *testing.T) {
+		store := formations.NewStore(t.TempDir())
+		personas := formations.NewPersonaStore(t.TempDir())
+		if _, err := personas.CreatePersona(formations.CreatePersonaRequest{ID: "scout", Kind: "specialist", Harness: "openai-codex"}); err != nil {
+			t.Fatalf("create persona: %v", err)
+		}
+		cleanBoard := strings.Replace(formationsAPILegacyScriptGateBoardFixture(), `commandArgv = ["npm", "run", "lint"]`+"\n"+`commandCwd = "dashboard"`+"\n", "", 1)
+		writeFormationsAPIFixture(t, store.BoardPath("session-search"), cleanBoard)
+		board, err := store.ReadBoard("session-search")
+		if err != nil {
+			t.Fatalf("read board: %v", err)
+		}
+		started, err := store.StartRun("session-search", formations.RunStartRequest{MissionID: "mis_showcase", ExpectedBoardETag: board.ETag, ExpectedBoardRev: board.Rev, Personas: personas})
+		if err != nil {
+			t.Fatalf("start historical run: %v", err)
+		}
+		if err := store.AppendRunEvent(started.RunID, formations.RunEvent{Type: formations.RunEventBlocked, Data: map[string]any{"resumeAllowed": true}}); err != nil {
+			t.Fatalf("block historical run: %v", err)
+		}
+		writeFormationsAPIFixture(t, filepath.Join(store.Workspace, started.SnapshotPath), formationsAPILegacyScriptGateBoardFixture())
+		ledgerPath := filepath.Join(store.Workspace, started.LedgerPath)
+		before, err := os.ReadFile(ledgerPath)
+		if err != nil {
+			t.Fatalf("read ledger before resume: %v", err)
+		}
+		handler := NewFormationsHandlerWithStores(store, personas)
+		mux := http.NewServeMux()
+		handler.RegisterRoutes(mux)
+		resumeRec := httptest.NewRecorder()
+		mux.ServeHTTP(resumeRec, httptest.NewRequest(http.MethodPost, "/api/formations/runs/"+started.RunID+"/resume", bytes.NewBufferString(`{"actor":"agent:test"}`)))
+		if resumeRec.Code != http.StatusUnprocessableEntity || !strings.Contains(resumeRec.Body.String(), `"code":"legacy_script_gate_requires_fenced_migration"`) {
+			t.Fatalf("legacy resume status=%d body=%s, want 422 stable code", resumeRec.Code, resumeRec.Body.String())
+		}
+		after, err := os.ReadFile(ledgerPath)
+		if err != nil {
+			t.Fatalf("read ledger after resume: %v", err)
+		}
+		if !bytes.Equal(after, before) {
+			t.Fatalf("rejected API resume changed ledger bytes")
+		}
+	})
+}
+
 func TestFormationsHandlerS3DeletesGateAndMissionThroughBoardPatch(t *testing.T) {
 	store := formations.NewStore(t.TempDir())
 	store.Now = fixedFormationsAPIClock()
@@ -1004,7 +1083,7 @@ updatedAt = "2026-06-03T16:00:00Z"
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
-	req := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/session-search", bytes.NewBufferString(`{"createGate":{"title":"Review gate","kinds":["code","human"],"criterion":"Research is sound.","commandArgv":["npm","run","lint"],"commandCwd":"dashboard","x":420,"y":280},"expectedRev":7,"updatedBy":"agent:test"}`))
+	req := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/session-search", bytes.NewBufferString(`{"createGate":{"title":"Review gate","kinds":["code","human"],"criterion":"Research is sound.","x":420,"y":280},"expectedRev":7,"updatedBy":"agent:test"}`))
 	req.Header.Set("If-Match", board.ETag)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -1012,8 +1091,8 @@ updatedAt = "2026-06-03T16:00:00Z"
 		t.Fatalf("gate create status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 	if !bytes.Contains(rec.Body.Bytes(), []byte(`"kinds":["code","human"]`)) ||
-		!bytes.Contains(rec.Body.Bytes(), []byte(`"commandArgv":["npm","run","lint"]`)) ||
-		!bytes.Contains(rec.Body.Bytes(), []byte(`"commandCwd":"dashboard"`)) ||
+		bytes.Contains(rec.Body.Bytes(), []byte(`"commandArgv"`)) ||
+		bytes.Contains(rec.Body.Bytes(), []byte(`"commandShell"`)) ||
 		bytes.Contains(rec.Body.Bytes(), []byte("verdict")) || bytes.Contains(rec.Body.Bytes(), []byte("onFail")) {
 		t.Fatalf("gate response wrong: %s", rec.Body.String())
 	}
@@ -1033,6 +1112,101 @@ updatedAt = "2026-06-03T16:00:00Z"
 	placed := response.Data.Layout.Nodes[0]
 	if placed.ID != created.ID || placed.X != 420 || placed.Y != 280 || response.Data.Layout.ETag == "" {
 		t.Fatalf("gate layout = %+v, want fresh created-node position and ETag", response.Data.Layout)
+	}
+}
+
+func TestS3GateRejectsLegacyScriptCommandAuthoringWithoutMutation(t *testing.T) {
+	store := formations.NewStore(t.TempDir())
+	writeFormationsAPIFixture(t, store.BoardPath("session-search"), `schema = 1
+id = "brd_01J9_sesssearch"
+slug = "session-search"
+title = "Improve session search"
+rev = 7
+`)
+	board, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	before := readFormationsAPIFile(t, store.BoardPath("session-search"))
+	handler := NewFormationsHandlerWithStore(store)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/session-search", bytes.NewBufferString(`{"createGate":{"title":"Legacy lint","kinds":["code"],"criterion":"Lint passes","commandArgv":["npm","run","lint"],"commandCwd":"dashboard"},"expectedRev":7}`))
+	req.Header.Set("If-Match", board.ETag)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), `"code":"legacy_script_gate_requires_fenced_migration"`) {
+		t.Fatalf("legacy gate create status = %d body=%s, want 422 stable code", rec.Code, rec.Body.String())
+	}
+	if after := readFormationsAPIFile(t, store.BoardPath("session-search")); after != before {
+		t.Fatalf("rejected API gate create changed board bytes\n--- before ---\n%s\n--- after ---\n%s", before, after)
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, "/api/formations/boards/session-search", bytes.NewBufferString(`{"createGate":{"title":"Legacy lint","kinds":["code"],"criterion":"Lint passes","commandShell":""},"expectedRev":7}`))
+	req.Header.Set("If-Match", board.ETag)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), `"code":"legacy_script_gate_requires_fenced_migration"`) {
+		t.Fatalf("empty legacy field status = %d body=%s, want 422 stable code", rec.Code, rec.Body.String())
+	}
+	if after := readFormationsAPIFile(t, store.BoardPath("session-search")); after != before {
+		t.Fatalf("rejected empty API gate field changed board bytes")
+	}
+
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "null field", body: `{"createGate":{"title":"Legacy lint","kinds":["code"],"criterion":"Lint passes","command":null},"expectedRev":7}`},
+		{name: "duplicate ending in null", body: `{"createGate":{"title":"Legacy lint","kinds":["code"],"criterion":"Lint passes","commandShell":"printf ok","commandShell":null},"expectedRev":7}`},
+		{name: "case variant empty field", body: `{"createGate":{"title":"Legacy lint","kinds":["code"],"criterion":"Lint passes","CommandShell":""},"expectedRev":7}`},
+		{name: "case variant null field", body: `{"createGate":{"title":"Legacy lint","kinds":["code"],"criterion":"Lint passes","COMMAND":null},"expectedRev":7}`},
+		{name: "duplicate create gate ending in null", body: `{"createGate":{"title":"Legacy lint","commandShell":"printf ok"},"createGate":null,"title":"Must not change","expectedRev":7}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/session-search", bytes.NewBufferString(tc.body))
+			req.Header.Set("If-Match", board.ETag)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), `"code":"legacy_script_gate_requires_fenced_migration"`) {
+				t.Fatalf("legacy field status = %d body=%s, want 422 stable code", rec.Code, rec.Body.String())
+			}
+			if after := readFormationsAPIFile(t, store.BoardPath("session-search")); after != before {
+				t.Fatalf("rejected API legacy field changed board bytes")
+			}
+		})
+	}
+
+	req = httptest.NewRequest(http.MethodPatch, "/api/formations/boards/session-search", bytes.NewBufferString(`{"title":"Must not change","expectedRev":7} {"createGate":{"command":"legacy"}}`))
+	req.Header.Set("If-Match", board.ETag)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("trailing JSON status = %d body=%s, want 400", rec.Code, rec.Body.String())
+	}
+	if after := readFormationsAPIFile(t, store.BoardPath("session-search")); after != before {
+		t.Fatalf("trailing JSON changed board bytes")
+	}
+
+	writeFormationsAPIFixture(t, store.LayoutPath("session-search"), `schema = 1
+boardId = "brd_01J9_sesssearch"
+boardRev = 7
+updatedAt = "2026-06-03T16:00:00Z"
+`)
+	beforeLayout := readFormationsAPIFile(t, store.LayoutPath("session-search"))
+	req = httptest.NewRequest(http.MethodPatch, "/api/formations/boards/session-search", bytes.NewBufferString(`{"createFormation":{"type":"solo","title":"Must not be created"},"createGate":{"title":"Legacy lint","commandShell":"touch should-not-run"},"expectedRev":7}`))
+	req.Header.Set("If-Match", board.ETag)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), `"code":"legacy_script_gate_requires_fenced_migration"`) {
+		t.Fatalf("mixed legacy patch status = %d body=%s, want 422 stable code", rec.Code, rec.Body.String())
+	}
+	if after := readFormationsAPIFile(t, store.BoardPath("session-search")); after != before {
+		t.Fatalf("rejected mixed API patch changed board bytes")
+	}
+	if after := readFormationsAPIFile(t, store.LayoutPath("session-search")); after != beforeLayout {
+		t.Fatalf("rejected mixed API patch changed layout bytes")
 	}
 }
 
@@ -1529,6 +1703,31 @@ id = "edge_work_ship"
 from = "fmn_work:port_work_out"
 to = "fmn_ship:port_ship_in"
 `
+}
+
+func formationsAPILegacyScriptGateBoardFixture() string {
+	return strings.Replace(formationsAPIS5CascadeBoardFixture(), `[[connection]]
+id = "edge_work_ship"
+from = "fmn_work:port_work_out"
+to = "fmn_ship:port_ship_in"
+`, `[[gate]]
+id = "gate_lint"
+title = "Legacy lint"
+kinds = ["code"]
+criterion = "Lint passes"
+commandArgv = ["npm", "run", "lint"]
+commandCwd = "dashboard"
+
+[[connection]]
+id = "edge_work_gate"
+from = "fmn_work:port_work_out"
+to = "gate_lint:in"
+
+[[connection]]
+id = "edge_gate_ship"
+from = "gate_lint:pass"
+to = "fmn_ship:port_ship_in"
+`, 1)
 }
 
 func formationsAPIS5HumanGateBoardFixture() string {
