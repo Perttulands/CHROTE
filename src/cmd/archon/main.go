@@ -119,6 +119,12 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer, runner tmuxRunner) int {
+	return runWithRuntimeStoreFactory(args, stdout, stderr, runner, func(workspace string) *formations.Store {
+		return formations.NewRuntimeStore(workspace, "")
+	})
+}
+
+func runWithRuntimeStoreFactory(args []string, stdout, stderr io.Writer, runner tmuxRunner, runtimeStore func(string) *formations.Store) int {
 	config, args, ok := parseGlobalArgs(args, stderr)
 	if !ok {
 		return 2
@@ -181,6 +187,8 @@ func run(args []string, stdout, stderr io.Writer, runner tmuxRunner) int {
 			return runFormationUnassign(store, args[2:], stdout, stderr)
 		case "set-brief":
 			return runFormationSetBrief(store, args[2:], stdout, stderr)
+		case "remove-verification":
+			return runFormationRemoveVerification(store, args[2:], stdout, stderr)
 		case "add-input":
 			return runFormationAddPort(store, args[2:], stdout, stderr, formations.FormationPortInput)
 		case "add-output":
@@ -190,7 +198,7 @@ func run(args []string, stdout, stderr io.Writer, runner tmuxRunner) int {
 		case "unwire":
 			return runFormationWire(store, args[2:], stdout, stderr, true)
 		case "run":
-			return runFormationRun(store, args[2:], stdout, stderr)
+			return runFormationRun(runtimeStore(config.Workspace), args[2:], stdout, stderr)
 		default:
 			fmt.Fprintf(stderr, "unknown formation command %q\n", args[1])
 			return 2
@@ -205,9 +213,9 @@ func run(args []string, stdout, stderr io.Writer, runner tmuxRunner) int {
 		case "judge":
 			return runGateJudge(store, args[2:], stdout, stderr)
 		case "approve":
-			return runGateVerdict(store, args[2:], stdout, stderr, "pass")
+			return runGateVerdict(runtimeStore(config.Workspace), args[2:], stdout, stderr, "pass")
 		case "reject":
-			return runGateVerdict(store, args[2:], stdout, stderr, "fail")
+			return runGateVerdict(runtimeStore(config.Workspace), args[2:], stdout, stderr, "fail")
 		default:
 			fmt.Fprintf(stderr, "unknown gate command %q\n", args[1])
 			return 2
@@ -224,7 +232,7 @@ func run(args []string, stdout, stderr io.Writer, runner tmuxRunner) int {
 		case "wire":
 			return runMissionWire(store, args[2:], stdout, stderr)
 		case "run":
-			return runMissionRun(store, args[2:], stdout, stderr)
+			return runMissionRun(runtimeStore(config.Workspace), args[2:], stdout, stderr)
 		default:
 			fmt.Fprintf(stderr, "unknown mission command %q\n", args[1])
 			return 2
@@ -241,9 +249,9 @@ func run(args []string, stdout, stderr io.Writer, runner tmuxRunner) int {
 		case "follow":
 			return runFollow(store, args[2:], stdout, stderr)
 		case "resume":
-			return runResume(store, args[2:], stdout, stderr)
+			return runResume(runtimeStore(config.Workspace), args[2:], stdout, stderr)
 		case "abort":
-			return runAbort(store, args[2:], stdout, stderr)
+			return runAbort(runtimeStore(config.Workspace), args[2:], stdout, stderr)
 		case "ask":
 			return runAsk(store, args[2:], stdout, stderr)
 		default:
@@ -257,9 +265,7 @@ func run(args []string, stdout, stderr io.Writer, runner tmuxRunner) int {
 }
 
 func newArchonRunEngine(store *formations.Store, personas *formations.PersonaStore, boundary string) *formations.RunEngine {
-	engine := formations.NewRunEngine(store, personas, formations.NewConfiguredFormationExecutorFromEnv(store, personas, boundary))
-	engine.SetGateEvaluator(formations.NewConfiguredGateEvaluatorFromEnv(store.Workspace))
-	return engine
+	return formations.NewRunEngine(store, personas, formations.NewConfiguredFormationExecutorFromEnv(store, personas, boundary))
 }
 
 func parseGlobalArgs(args []string, stderr io.Writer) (archonConfig, []string, bool) {
@@ -681,6 +687,39 @@ func runFormationSetBrief(store *formations.Store, args []string, stdout, stderr
 	return 0
 }
 
+func runFormationRemoveVerification(store *formations.Store, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("formation remove-verification", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	replacementGate := fs.String("replacement-gate", "", "explicit Gate already wired from the Formation")
+	updatedBy := fs.String("updated-by", "agent:archon", "update actor")
+	jsonOut := fs.Bool("json", false, "write JSON")
+	if err := fs.Parse(reorderFlags(args, map[string]bool{"json": true})); err != nil {
+		return 2
+	}
+	if fs.NArg() != 2 {
+		fmt.Fprintln(stderr, "usage: archon formation remove-verification <board> <formation> --replacement-gate <gate> [--json]")
+		return 2
+	}
+	slug, board, formationID, err := resolveFormationCommandTarget(store, fs.Arg(0), fs.Arg(1))
+	if err != nil {
+		return failSelector(stderr, err, *jsonOut, "formation", fs.Arg(1))
+	}
+	result, err := store.RemoveFormationVerification(slug, formations.FormationVerificationRemovalRequest{
+		FormationID:       formationID,
+		ReplacementGateID: *replacementGate,
+		UpdatedBy:         *updatedBy,
+	}, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
+	if err != nil {
+		return failJSON(stderr, err, *jsonOut, "formation", formationID)
+	}
+	result.TOML = ""
+	if *jsonOut {
+		return writeJSON(stdout, result)
+	}
+	fmt.Fprintf(stdout, "removed legacy inline verification from %s\n", formationID)
+	return 0
+}
+
 func runFormationAddPort(store *formations.Store, args []string, stdout, stderr io.Writer, direction string) int {
 	name := "formation add-input"
 	if direction == formations.FormationPortOutput {
@@ -775,10 +814,10 @@ func runGateCreate(store *formations.Store, args []string, stdout, stderr io.Wri
 	title := fs.String("title", "Review gate", "gate title")
 	kinds := fs.String("kinds", "code", "comma-separated gate kinds")
 	criterion := fs.String("criterion", "", "gate criterion")
-	command := fs.String("command", "", "legacy script/lint gate command string (stored but not executable by script gates)")
-	commandArgv := fs.String("command-argv", "", "comma-separated argv command for script/lint gates, e.g. npm,run,lint")
-	commandCWD := fs.String("command-cwd", "", "command working directory relative to workspace")
-	commandShell := fs.String("command-shell", "", "explicit shell command for script/lint gates")
+	command := fs.String("command", "", "retired legacy Gate field; new writes fail with a migration error")
+	commandArgv := fs.String("command-argv", "", "retired legacy Gate argv; new writes fail with a migration error")
+	commandCWD := fs.String("command-cwd", "", "retired legacy Gate cwd; new writes fail with a migration error")
+	commandShell := fs.String("command-shell", "", "retired legacy Gate shell command; new writes fail with a migration error")
 	x := fs.Int("x", 0, "layout x coordinate")
 	y := fs.Int("y", 0, "layout y coordinate")
 	updatedBy := fs.String("updated-by", "agent:archon", "update actor")
@@ -803,16 +842,17 @@ func runGateCreate(store *formations.Store, args []string, stdout, stderr io.Wri
 		return fail(stderr, err)
 	}
 	result, err := store.CreateGate(slug, formations.GateCreateRequest{
-		Title:        *title,
-		Kinds:        splitCSV(*kinds),
-		Criterion:    *criterion,
-		Command:      *command,
-		CommandArgv:  splitCSV(*commandArgv),
-		CommandCWD:   *commandCWD,
-		CommandShell: *commandShell,
-		X:            createX,
-		Y:            createY,
-		UpdatedBy:    *updatedBy,
+		Title:                      *title,
+		Kinds:                      splitCSV(*kinds),
+		Criterion:                  *criterion,
+		Command:                    *command,
+		CommandArgv:                splitCSV(*commandArgv),
+		CommandCWD:                 *commandCWD,
+		CommandShell:               *commandShell,
+		LegacyCommandFieldsPresent: legacyGateCommandFlagPresent(fs),
+		X:                          createX,
+		Y:                          createY,
+		UpdatedBy:                  *updatedBy,
 	}, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
 	if err != nil {
 		return fail(stderr, err)
@@ -831,10 +871,10 @@ func runGateUpdate(store *formations.Store, args []string, stdout, stderr io.Wri
 	title := fs.String("title", "", "gate title")
 	kinds := fs.String("kinds", "", "comma-separated gate kinds")
 	criterion := fs.String("criterion", "", "gate criterion")
-	command := fs.String("command", "", "legacy script/lint gate command string (stored but not executable by script gates)")
-	commandArgv := fs.String("command-argv", "", "comma-separated argv command for script/lint gates, e.g. npm,run,lint")
-	commandCWD := fs.String("command-cwd", "", "command working directory relative to workspace")
-	commandShell := fs.String("command-shell", "", "explicit shell command for script/lint gates")
+	command := fs.String("command", "", "retired legacy Gate field; new writes fail with a migration error")
+	commandArgv := fs.String("command-argv", "", "retired legacy Gate argv; new writes fail with a migration error")
+	commandCWD := fs.String("command-cwd", "", "retired legacy Gate cwd; new writes fail with a migration error")
+	commandShell := fs.String("command-shell", "", "retired legacy Gate shell command; new writes fail with a migration error")
 	updatedBy := fs.String("updated-by", "agent:archon", "update actor")
 	jsonOut := fs.Bool("json", false, "write JSON")
 	if err := fs.Parse(reorderFlags(args, map[string]bool{"json": true})); err != nil {
@@ -861,15 +901,16 @@ func runGateUpdate(store *formations.Store, args []string, stdout, stderr io.Wri
 		updateKinds = splitCSV(*kinds)
 	}
 	result, err := store.UpdateGate(slug, formations.GateUpdateRequest{
-		GateID:       gateID,
-		Title:        *title,
-		Kinds:        updateKinds,
-		Criterion:    *criterion,
-		Command:      *command,
-		CommandArgv:  splitCSV(*commandArgv),
-		CommandCWD:   *commandCWD,
-		CommandShell: *commandShell,
-		UpdatedBy:    *updatedBy,
+		GateID:                     gateID,
+		Title:                      *title,
+		Kinds:                      updateKinds,
+		Criterion:                  *criterion,
+		Command:                    *command,
+		CommandArgv:                splitCSV(*commandArgv),
+		CommandCWD:                 *commandCWD,
+		CommandShell:               *commandShell,
+		LegacyCommandFieldsPresent: legacyGateCommandFlagPresent(fs),
+		UpdatedBy:                  *updatedBy,
 	}, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
 	if err != nil {
 		return fail(stderr, err)
@@ -880,6 +921,17 @@ func runGateUpdate(store *formations.Store, args []string, stdout, stderr io.Wri
 	}
 	fmt.Fprintln(stdout, "updated gate")
 	return 0
+}
+
+func legacyGateCommandFlagPresent(fs *flag.FlagSet) bool {
+	present := false
+	fs.Visit(func(current *flag.Flag) {
+		switch current.Name {
+		case "command", "command-argv", "command-cwd", "command-shell":
+			present = true
+		}
+	})
+	return present
 }
 
 func runGateJudge(store *formations.Store, args []string, stdout, stderr io.Writer) int {
@@ -946,6 +998,9 @@ func runGateVerdict(store *formations.Store, args []string, stdout, stderr io.Wr
 	if fs.NArg() != 2 {
 		fmt.Fprintln(stderr, "usage: archon gate approve|reject <runId> <gateId> [--reason text] [--json]")
 		return 2
+	}
+	if err := store.RequireRuntimeAuthority(); err != nil {
+		return failJSON(stderr, err, *jsonOut, "run", fs.Arg(0))
 	}
 	personas := formations.NewPersonaStore(formations.DefaultAgentsDir())
 	engine := newArchonRunEngine(store, personas, "archon")
@@ -1145,6 +1200,9 @@ func runMissionRun(store *formations.Store, args []string, stdout, stderr io.Wri
 		fmt.Fprintln(stderr, "usage: archon mission run <board> [--mission <mission>] [--json]")
 		return 2
 	}
+	if err := store.RequireRuntimeAuthority(); err != nil {
+		return failJSON(stderr, err, *jsonOut, "run", fs.Arg(0))
+	}
 	slug, err := store.ResolveBoardSelector(fs.Arg(0))
 	if err != nil {
 		return failSelector(stderr, err, *jsonOut, "board", fs.Arg(0))
@@ -1202,6 +1260,9 @@ func runFormationRun(store *formations.Store, args []string, stdout, stderr io.W
 	if fs.NArg() != 2 {
 		fmt.Fprintln(stderr, "usage: archon formation run <board> <formation> [--json]")
 		return 2
+	}
+	if err := store.RequireRuntimeAuthority(); err != nil {
+		return failJSON(stderr, err, *jsonOut, "run", fs.Arg(1))
 	}
 	slug, _, formationID, err := resolveFormationCommandTarget(store, fs.Arg(0), fs.Arg(1))
 	if err != nil {
@@ -2098,6 +2159,8 @@ func archonErrorFromError(err error, boundary, selector string) archonErrorRespo
 
 func archonErrorCode(err error) string {
 	switch {
+	case errors.Is(err, formations.ErrRuntimeAuthorityNonAuthorizing):
+		return "runtime_authority_non_authorizing"
 	case errors.Is(err, formations.ErrAmbiguousSelector):
 		return "ambiguous_selector"
 	case errors.Is(err, formations.ErrNotFound):
@@ -2112,6 +2175,10 @@ func archonErrorCode(err error) string {
 		return "precondition_required"
 	case errors.Is(err, formations.ErrUnsupportedSchema):
 		return "unsupported_schema"
+	case errors.Is(err, formations.ErrLegacyScriptGateRequiresFencedMigration):
+		return formations.LegacyScriptGateMigrationCode
+	case errors.Is(err, formations.ErrLegacyInlineVerificationRequiresMigration):
+		return formations.LegacyInlineVerificationMigrationCode
 	case errors.Is(err, formations.ErrRunFinal):
 		return "run_final"
 	case errors.Is(err, formations.ErrRunLedgerInvalid):

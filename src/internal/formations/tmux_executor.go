@@ -20,6 +20,7 @@ const (
 	defaultTmuxOutputCapBytes = 8192
 	defaultTmuxTimeoutSeconds = 30
 	formationsDogfoodRoot     = "/tmp"
+	peerPlaneMaxBytes         = 1 << 20
 )
 
 var (
@@ -116,6 +117,18 @@ type tmuxSlotBinding struct {
 	SessionName string
 }
 
+type peerPlaneHandle struct {
+	ledger       *runLedgerHandle
+	name         string
+	relativePath string
+}
+
+func (h *peerPlaneHandle) close() {
+	if h != nil && h.ledger != nil {
+		h.ledger.close()
+	}
+}
+
 func (o tmuxSlotOutput) summary() string {
 	return fmt.Sprintf("tmux harness completed for agent %s harness %s sessionRef %s artifact %s", o.AgentID, o.Harness, o.SessionRef, o.Artifact)
 }
@@ -123,6 +136,9 @@ func (o tmuxSlotOutput) summary() string {
 func (e *TmuxFormationExecutor) ExecuteFormation(req FormationExecution) (FormationExecutionResult, error) {
 	if e == nil || e.store == nil {
 		return FormationExecutionResult{}, runExecutionError("missing_executor", "tmux executor store is not configured", "executor", ErrRunExecutorUnavailable)
+	}
+	if err := e.store.RequireRuntimeAuthority(); err != nil {
+		return FormationExecutionResult{}, err
 	}
 	if err := e.validateConfiguredBoundary(); err != nil {
 		return FormationExecutionResult{}, err
@@ -158,6 +174,9 @@ func (e *TmuxFormationExecutor) ExecuteFormation(req FormationExecution) (Format
 func (e *TmuxFormationExecutor) ReattachFormationDispatch(req FormationReattachRequest) (FormationExecutionResult, error) {
 	if e == nil || e.store == nil {
 		return FormationExecutionResult{}, runExecutionError("missing_executor", "tmux executor store is not configured", "executor", ErrRunExecutorUnavailable)
+	}
+	if err := e.store.RequireRuntimeAuthority(); err != nil {
+		return FormationExecutionResult{}, err
 	}
 	if err := e.validateConfiguredBoundary(); err != nil {
 		return FormationExecutionResult{}, err
@@ -270,32 +289,33 @@ func (e *TmuxFormationExecutor) executePeerFormation(req FormationExecution) (Fo
 		}
 		bindings = append(bindings, binding)
 	}
-	planeRel, planeAbs, err := e.seedPeerPlane(req, bindings)
+	plane, err := e.seedPeerPlane(req, bindings)
 	if err != nil {
 		return FormationExecutionResult{}, err
 	}
-	if err := e.appendPeerPlaneEvent(req, planeRel, bindings); err != nil {
+	defer plane.close()
+	if err := e.appendPeerPlaneEvent(req, plane.relativePath, bindings); err != nil {
 		return FormationExecutionResult{}, err
 	}
 
 	for i, peer := range peers {
-		output, err := e.executeSlot(req, peer, allowed, dispatcher, "peer-turn", e.peerTurnExtraLines(planeRel, bindings, bindings[i], false))
+		output, err := e.executeSlot(req, peer, allowed, dispatcher, "peer-turn", e.peerTurnExtraLines(plane.relativePath, bindings, bindings[i], false))
 		if err != nil {
 			return FormationExecutionResult{}, err
 		}
-		if err := e.appendPeerPlaneOutput(planeAbs, output); err != nil {
+		if err := e.appendPeerPlaneOutput(plane, output); err != nil {
 			return FormationExecutionResult{}, err
 		}
 	}
 
 	facilitator := peers[0]
 	facilitatorBinding := bindings[0]
-	facilitatorExtra := append(e.peerTurnExtraLines(planeRel, bindings, facilitatorBinding, true), outputContractExtraLines(req.Formation)...)
+	facilitatorExtra := append(e.peerTurnExtraLines(plane.relativePath, bindings, facilitatorBinding, true), outputContractExtraLines(req.Formation)...)
 	final, err := e.executeSlot(req, facilitator, allowed, dispatcher, "peer-facilitator", facilitatorExtra)
 	if err != nil {
 		return FormationExecutionResult{}, err
 	}
-	if err := e.appendPeerPlaneOutput(planeAbs, final); err != nil {
+	if err := e.appendPeerPlaneOutput(plane, final); err != nil {
 		return FormationExecutionResult{}, err
 	}
 	text := final.Text
@@ -418,8 +438,8 @@ func (e *TmuxFormationExecutor) resolveOutputRefPath(ref string) (string, error)
 		candidate = filepath.Clean(ref)
 	} else {
 		base := e.config.Cwd
-		if e.store != nil && strings.TrimSpace(e.store.Workspace) != "" {
-			base = e.store.Workspace
+		if e.store != nil && strings.TrimSpace(e.store.workspaceRoot()) != "" {
+			base = e.store.workspaceRoot()
 		}
 		candidate = filepath.Join(base, filepath.FromSlash(ref))
 	}
@@ -743,17 +763,22 @@ func peerFormationSlots(formation FormationNode) ([]FormationSlot, error) {
 	return peers, nil
 }
 
-func (e *TmuxFormationExecutor) seedPeerPlane(req FormationExecution, peers []tmuxSlotBinding) (string, string, error) {
-	ledgerPath, err := e.store.findRunLedger(req.RunID)
+func (e *TmuxFormationExecutor) seedPeerPlane(req FormationExecution, peers []tmuxSlotBinding) (*peerPlaneHandle, error) {
+	ledger, err := e.store.openRunLedger(req.RunID, false)
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
-	planeAbs := strings.TrimSuffix(ledgerPath, ".ndjson") + ".peer.md"
-	planeRel, err := filepath.Rel(e.store.Workspace, planeAbs)
-	if err != nil {
-		return "", "", err
+	plane := &peerPlaneHandle{
+		ledger:       ledger,
+		name:         req.RunID + ".peer.md",
+		relativePath: runArtifactPath(ledger.directory.slug, req.RunID, ".peer.md"),
 	}
-	planeRel = filepath.ToSlash(planeRel)
+	complete := false
+	defer func() {
+		if !complete {
+			plane.close()
+		}
+	}()
 	var b strings.Builder
 	b.WriteString("# Peer Plane\n\n")
 	b.WriteString("run: " + req.RunID + "\n")
@@ -776,10 +801,11 @@ func (e *TmuxFormationExecutor) seedPeerPlane(req FormationExecution, peers []tm
 	}
 	b.WriteString("\n## Seed\n")
 	b.WriteString("Start by adding one concrete contribution, then read and respond to what the other peer adds.\n")
-	if err := writeAtomic(planeAbs, []byte(b.String())); err != nil {
-		return "", "", err
+	if err := writeRunArtifactAtomicAt(ledger.directory, plane.name, []byte(b.String()), peerPlaneMaxBytes); err != nil {
+		return nil, err
 	}
-	return planeRel, planeAbs, nil
+	complete = true
+	return plane, nil
 }
 
 func (e *TmuxFormationExecutor) appendPeerPlaneEvent(req FormationExecution, planeRel string, peers []tmuxSlotBinding) error {
@@ -808,13 +834,11 @@ func (e *TmuxFormationExecutor) appendPeerPlaneEvent(req FormationExecution, pla
 	})
 }
 
-func (e *TmuxFormationExecutor) appendPeerPlaneOutput(planeAbs string, output tmuxSlotOutput) error {
-	raw, err := os.ReadFile(planeAbs)
-	if err != nil {
-		return err
+func (e *TmuxFormationExecutor) appendPeerPlaneOutput(plane *peerPlaneHandle, output tmuxSlotOutput) error {
+	if plane == nil || plane.ledger == nil || plane.ledger.directory == nil {
+		return ErrRunLedgerInvalid
 	}
 	var b strings.Builder
-	b.Write(raw)
 	b.WriteString("\n## ")
 	if output.Phase == "peer-facilitator" {
 		b.WriteString("Temporary facilitator synthesis")
@@ -826,7 +850,7 @@ func (e *TmuxFormationExecutor) appendPeerPlaneOutput(planeAbs string, output tm
 	b.WriteString("artifact: " + output.Artifact + "\n\n")
 	b.WriteString(redactLedgerText(strings.TrimSpace(output.Text)))
 	b.WriteString("\n")
-	return writeAtomic(planeAbs, []byte(b.String()))
+	return appendRunArtifactAt(plane.ledger.directory, plane.name, []byte(b.String()), peerPlaneMaxBytes)
 }
 
 func (e *TmuxFormationExecutor) peerTurnExtraLines(planeRel string, peers []tmuxSlotBinding, self tmuxSlotBinding, facilitator bool) []string {
@@ -1317,7 +1341,7 @@ func (e *TmuxFormationExecutor) renderPromptWithContext(req FormationExecution, 
 		}
 	}
 	if len(req.Formation.Outputs) > 0 && e.store != nil {
-		artifactDir := filepath.Join(e.store.Workspace, ".formations", "artifacts", req.RunID)
+		artifactDir := filepath.Join(e.store.workspaceRoot(), ".formations", "artifacts", req.RunID)
 		b.WriteString("artifact directory for long routed outputs: " + artifactDir + "\n")
 		b.WriteString("If you use ref in chrote-outputs, create the file first under that artifact directory or another configured root path. Do not point ref at arbitrary host files or secrets.\n")
 	}
@@ -1359,15 +1383,6 @@ func runSlotExecutionError(code, message, boundary string, cause error, nodeID, 
 		NodeID:     nodeID,
 		SlotID:     slotID,
 		DispatchID: dispatchID,
-	}
-}
-
-func operatorOptInAllowed(raw string) bool {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "1", "true", "yes", "allow", "allow-live", "prod-smoke":
-		return true
-	default:
-		return false
 	}
 }
 

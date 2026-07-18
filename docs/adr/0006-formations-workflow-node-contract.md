@@ -295,8 +295,9 @@ delivered input on a taken path makes success invalid. Earlier `node_waiting`
 counts remain inspection evidence and cannot leave a final node actively
 waiting.
 Effectful Tool profiles are
-deferred. Arbitrary board-authored commands remain Script Gate configuration
-and cannot be relabelled as a Tool step.
+deferred. Arbitrary board-authored Gate commands remain schema-1
+inspection/migration-plan input and cannot be executed or relabelled as a Tool
+step.
 
 For `Redact=true`, ADR-0005 tightens this order: before any persistent Tool
 target or public lease exists, the private pending-redaction registry records and
@@ -578,11 +579,16 @@ validation and run preflight reject it until it is rewired to a typed feedback
 data port or the evaluated source's `retry_control` port. Legacy annotated-work
 pushback is never inferred.
 
-Schema-1 inline Formation verification also remains inspectable but cannot be
-normalized into schema-2 execution. Its existing verdict has no exact
-attempt/output identity or replay-safe block/revision closer. Validation and run
-preflight fail `legacy_inline_verification_requires_migration`, and schema-2
-emits no `verification_verdict`; `ctx-ug7.17` owns definition or retirement.
+ADR-0008 retires schema-1 inline Formation verification. It remains inspectable
+but cannot be normalized into execution because its existing verdict has no
+exact attempt/output identity or replay-safe block/revision closer. Validation,
+Mission start, isolated Formation start, and resume fail
+`legacy_inline_verification_requires_migration` before artifacts or work. New
+definitions and `verification_verdict` events are rejected; historical records
+remain non-authorizing evidence. Compatibility removal must name an existing
+replacement Gate already wired from a named output of the Formation; it neither
+creates nor rewires that Gate. Historical cancellation and failure remain
+available as non-executing terminal containment.
 
 Run start does not mutate a schema-1 canonical board. If it has no degraded
 legacy features, preflight writes a normalized schema-2 immutable run snapshot and
@@ -631,11 +637,45 @@ first appends Gate-scoped `error(code=gate_input_integrity_failed)`, then termin
 `failureCause={kind=error,errorSeq}` so the exact Gate attempt fails. Redacted
 loss first records bounded Gate/attempt/input context but keeps the source input
 sequence as provenance and `failureCause={kind=none}` under ADR-0005. Both exactly
-dispose every open attempt/slot/Tool authority; neither emits result/verdict/route. Current
-schema-1 argv/shell Script Gates are not safely normalizable
-and fail `legacy_script_gate_requires_fenced_migration`; process-backed Gate
-evaluation is owned by `ctx-ug7.16` and deferred until it has an explicit fence
-or is retired.
+dispose every open attempt/slot/Tool authority; neither emits result/verdict/route.
+
+Gate-owned process evaluation is retired. Authored presence of any schema-1
+Gate command field—`command`, `commandArgv`, `commandShell`, or `commandCwd`,
+including an explicitly empty value—is inspectable but not safely normalizable.
+The writer does not create or update these fields. Whole-board validation reports
+`legacy_script_gate_requires_fenced_migration`; an inert legacy string or
+cwd-only field receives that same finding because dropping or interpreting it
+would be a silent migration. It may separately be `gate_not_routable`.
+
+Mission preflight checks the selected Mission's complete possible executable
+subgraph, including both Gate branches and reachable judge chains. A reachable
+legacy command Gate fails `legacy_script_gate_requires_fenced_migration` before
+snapshot, binding, ledger, `run_started`, evaluator, or process mutation. Resume
+checks that same selected root in the immutable run snapshot and returns the same
+error before `run_resumed`. An unreachable legacy Gate remains a validation
+error but does not block that Mission. An isolated Formation root does not
+traverse board edges, so legacy Gates elsewhere on the board do not block it.
+
+Before Tool profiles exist, migration is inspection only. Its closed projection
+binds board id/revision/ETag, Gate id, source mode, present field names, affected
+edge ids, the stable error, `targetKind=tool_plus_pure_gate`, `ready=false`,
+`applySupported=false`, and the unmet profile/mapping/CAS requirements. It
+contains no raw command values, resolved executable/cwd/environment, generated
+Tool ids/ports, inferred parameters, or suggested profile. Board inspection
+remains the authorized exact source-definition view; validation and API
+inspection may expose this non-authorizing plan beside it.
+
+`ctx-ug7.8.1` owns non-executing Tool definitions, registry descriptors, and
+board authoring. `ctx-ug7.8` owns certified host-private implementation
+packaging and runtime execution. `ctx-ug7.30` owns pure code-Gate profiles and
+the future explicit apply. Such an apply may preserve the
+Gate id/title/criterion, judge relationships,
+pass/fail edges, and existing layout while inserting one newly placed Tool only
+after explicit Tool and pure-Gate profile selection plus parameter, port, media,
+downstream, and compare-and-swap validation. The Gate then evaluates and passes
+through the exact Tool output, not the Tool's upstream input. If that payload
+mapping cannot be proven, the source definition remains byte-identical and the
+migration fails loud.
 
 An executable Gate's persisted `kinds` array is a non-empty, duplicate-free
 subset of `code`, `formation`, and `human`; preflight rejects empty, duplicate,
@@ -1089,6 +1129,12 @@ while deliberately allowing same-session context reuse.
   differences and gives the canvas no trustworthy visual vocabulary.
 - **Use Script Gates as Tool steps:** rejected. Evaluation and transformation
   have different payload, replay, and side-effect semantics.
+- **Retain Gate-owned argv/shell execution behind a process fence:** rejected.
+  It would duplicate the Tool supervisor/profile authority while keeping
+  transformation-shaped process work hidden inside an evaluator.
+- **Infer a Tool profile or argv from legacy command text:** rejected. A board
+  cannot choose executable authority, and a Tool-to-Gate composition evaluates
+  and forwards Tool output rather than the original input.
 - **Allow many producers on one input:** rejected. Merge order and provenance
   become implicit; explicit ports make joins inspectable.
 - **Route judge output as work by default:** rejected. It silently replaces the
@@ -1114,6 +1160,11 @@ while deliberately allowing same-session context reuse.
 Current boards remain readable, but new mixed-workflow behavior needs schema,
 validation, and projection work. Tool profiles become a host-owned registry
 rather than convenient inline commands and are pure in the first slice.
+Legacy command-backed Gates become degraded definitions whose command fields
+are read-only until an explicit certified Tool-plus-pure-Gate migration can
+prove its payload mapping. Non-command title, kinds, or criterion edits may
+preserve those source fields byte-for-byte; some arbitrary commands therefore
+have no automatic migration.
 Correction loops require explicit port roles and exact-attempt refs. Artifact
 refs gain stable artifact and root identity. Exact session inspection requires per-slot binding
 authority plus safe projections and must surface when an old target is stale.
@@ -1145,7 +1196,9 @@ ADR-0007.
   replay. Gate fixtures reject evaluator-bundle/policy substitution. Artifact
   fixtures reject missing identity, root escape, symlinks, hash/size drift,
   revoked historical refs, and unsafe evidence refs.
-- `ctx-ug7.8` owns Tool profiles; `ctx-7i1` owns canonical run projection,
+- `ctx-ug7.8.1` owns non-executing Tool definitions, registry descriptors, and
+  board authoring; `ctx-ug7.8` owns certified host-private implementation
+  packaging and runtime execution; `ctx-7i1` owns canonical run projection,
   baseline hash/validation state, and safe operator-influence state;
   `ctx-ug7.9` and `ctx-ug7.10` own inspection and the post-occupancy exact Peek
   capability/steering protocol;
@@ -1169,11 +1222,14 @@ ADR-0007.
   owner of sanitized event/binding/artifact projection and historical/SSE
   revocation; coordinator/API entrypoints must consume it and never bypass it.
   `ctx-ug7.8` implements sealed Tool inputs and the certified deterministic
-  sandbox.
-- `ctx-ug7.16` owns fail-closed schema-2 handling and the fence-or-retire
-  decision for process-backed Script Gates. `ctx-ug7.17` owns fail-closed
-  schema-2 handling and the define-or-retire decision for inline Formation
-  verification. Until each closes, its legacy shape is inspection/migration
-  input only.
+  runtime sandbox.
+- `ctx-ug7.16` enforces the accepted retirement of Gate-owned process execution,
+  stable selected-root start/resume fences, and non-mutating migration
+  inspection. `ctx-ug7.8.1` owns non-executing Tool definitions, registry
+  descriptors, and board authoring; `ctx-ug7.8` owns certified host-private
+  implementation packaging and runtime execution; `ctx-ug7.30` owns pure
+  code-Gate profiles and the later explicit apply. ADR-0008 and `ctx-ug7.17` retire
+  inline Formation verification in favor of explicit Gates; its legacy shape is
+  inspection and replacement-Gate-bound removal input only.
 - `ctx-8o9`, `ctx-ug7.5`, and `ctx-ug7.15` own CI and exact-candidate
   certification. `scripts/doc-lint.py` remains the active-spec hygiene gate.

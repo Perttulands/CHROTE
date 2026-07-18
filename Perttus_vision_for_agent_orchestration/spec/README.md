@@ -127,6 +127,22 @@ offline. Run start/resume/cancel/verdict and run list/status/log/follow require
 the coordinator's sanitized API projection; Archon does not read private run
 authority or fall back to a local engine.
 
+Historical Gate flags `--command`, `--command-argv`, `--command-shell`, and
+`--command-cwd` remain recognized only so old callers receive the stable
+`legacy_script_gate_requires_fenced_migration` rejection. They never authorize a
+Gate-owned process or a definition mutation. `archon board inspect --json`
+exposes the authorized source definition; `archon board validate --json` exposes
+only the non-mutating migration inspection with source field names and affected
+edge ids, `ready=false`, and `applySupported=false`, never raw command values or
+an inferred profile. Tool authoring/profile commands do not ship yet.
+
+The accepted future direction is an explicit host-profile Tool whose declared
+output feeds a pure code Gate. `ctx-ug7.8.1` owns non-executing Tool definitions,
+registry descriptors, and board authoring; `ctx-ug7.8` owns certified
+host-private implementations and runtime execution. `ctx-ug7.30` owns pure
+code-Gate profiles and the later apply path. No current command may silently
+convert argv/shell text into that composition.
+
 Agent tag flags target `[card].tags`: `--capable`, `--add-capability`, and
 `--remove-capability` operate on bare capability tags, while `--personality x`
 stores `personality:x` alongside reserved `focus:` and `taste:` facets.
@@ -160,10 +176,14 @@ existing user arrangement.
   accepted-target `tool_` · `slot_` · `gate_` · legacy schema-1 `ver_` verification · `port_` · `edge_` · `run_` · private `wsa_` workspace authority · client `cmd_` runtime command. `wsa_` and `cmd_` use canonical uppercase ULID grammar `^(wsa|cmd)_[0-7][0-9A-HJKMNP-TV-Z]{25}$`; command ids are validated before path construction. Ids round-trip
   files↔CLI↔UI; edits are diffs against existing ids, never full rewrites.
 
-Schema-1 inline verification is read-only compatibility/migration input. The
-schema-2 CLI and UI do not author, configure, or remove it; validation fails
-`legacy_inline_verification_requires_migration` until `ctx-ug7.17` defines or
-retires the feature.
+ADR-0008 retires schema-1 inline verification. It is read-only compatibility
+input except for an explicit destructive removal that names an existing
+replacement Gate already wired from a named output of the Formation. CLI and UI
+never add, configure, save, execute, create, or silently rewire that migration;
+validation and every new run/resume path fail
+`legacy_inline_verification_requires_migration` before artifacts or work.
+Historical cancellation and failure remain available as non-executing terminal
+containment.
 
 ## Ledger event vocabulary (NDJSON, append-only; status is projected)
 

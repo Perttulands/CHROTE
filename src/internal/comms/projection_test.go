@@ -2,9 +2,12 @@ package comms
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/chrote/server/internal/formations"
 )
 
 func TestProjectRoomBuildsCanonicalProjectionFromLedger(t *testing.T) {
@@ -108,11 +111,123 @@ func TestProjectRunRoomProjectsFinalFormationsLedgerAsReadOnlySource(t *testing.
 	}
 }
 
+func TestProjectRunRoomAllowsConfiguredWorkspaceRootSymlink(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	workspaceAlias := filepath.Join(root, "workspace-alias")
+	writeRunLedgerFixture(t, workspace, "demo", "run_abc123", []map[string]any{
+		{"seq": 1, "type": "run_started", "actor": "Perttu", "ts": "2026-07-04T01:00:01Z", "runId": "run_abc123", "boardId": "brd_demo", "boardRev": 3, "missionId": "mission_ui", "data": map[string]any{"boardSlug": "demo"}},
+		{"seq": 2, "type": "run_succeeded", "actor": "room-system", "ts": "2026-07-04T01:00:02Z", "runId": "run_abc123", "data": map[string]any{"summary": "green"}},
+	})
+	if err := os.Symlink(workspace, workspaceAlias); err != nil {
+		t.Fatalf("symlink configured workspace: %v", err)
+	}
+
+	projection, err := NewStore(workspaceAlias).ProjectRoom("run:run_abc123", ProjectionOptions{})
+	if err != nil {
+		t.Fatalf("ProjectRoom through configured workspace symlink: %v", err)
+	}
+	if projection.RoomID != "run_abc123" || projection.Source.RunStatus != "succeeded" || !projection.Source.RunFinal {
+		t.Fatalf("run projection through configured workspace symlink = %+v", projection)
+	}
+}
+
+func TestProjectRunRoomDoesNotAdoptSchema2WorkspaceLedger(t *testing.T) {
+	workspace := t.TempDir()
+	runID := "run_01KXNP6VY3227H78329V52CKF8"
+	writeRunLedgerFixture(t, workspace, "demo", runID, []map[string]any{
+		{"schema": 2, "authoritySchema": 2, "writerFence": 1, "seq": 1, "type": "run_started", "actor": "agent:test", "ts": "2026-07-18T00:00:00Z", "runId": runID, "data": map[string]any{"boardSlug": "demo"}},
+	})
+	store := NewStoreWithFormations(workspace, formations.NewStore(workspace))
+
+	projection, err := store.ProjectRoom("run:"+runID, ProjectionOptions{})
+	if !errors.Is(err, formations.ErrRuntimeAuthorityNonAuthorizing) {
+		t.Fatalf("schema-2 run projection = %+v err=%v, want typed non-authorizing rejection", projection, err)
+	}
+}
+
 func TestProjectRoomRejectsUnsafeRefs(t *testing.T) {
 	workspace := t.TempDir()
 	store := NewStore(workspace)
 	if _, err := store.ProjectRoom("project:../evil", ProjectionOptions{}); err == nil {
 		t.Fatal("unsafe room ref accepted")
+	}
+}
+
+func TestNonRunRoomReadersRejectExternalLedgerAliases(t *testing.T) {
+	for _, attack := range []string{"parent symlink", "final symlink", "hard link"} {
+		t.Run(attack, func(t *testing.T) {
+			base := t.TempDir()
+			workspace := filepath.Join(base, "workspace")
+			outside := filepath.Join(base, "outside")
+			if err := os.MkdirAll(workspace, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			externalLedger := filepath.Join(outside, "private.ndjson")
+			writeLedgerFixture(t, externalLedger, []map[string]any{
+				{"seq": 1, "kind": "room_post", "actor": "private", "text": "must not escape", "timestamp": "2026-07-19T00:00:00Z"},
+			})
+
+			ledgerDirectory := filepath.Join(workspace, ".formations", "comms", "project")
+			switch attack {
+			case "parent symlink":
+				externalComms := filepath.Join(outside, "comms")
+				writeLedgerFixture(t, filepath.Join(externalComms, "project", "dogfood.ndjson"), []map[string]any{
+					{"seq": 1, "kind": "room_post", "actor": "private", "text": "must not escape", "timestamp": "2026-07-19T00:00:00Z"},
+				})
+				if err := os.MkdirAll(filepath.Join(workspace, ".formations"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(externalComms, filepath.Join(workspace, ".formations", "comms")); err != nil {
+					t.Fatal(err)
+				}
+			case "final symlink":
+				if err := os.MkdirAll(ledgerDirectory, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(externalLedger, filepath.Join(ledgerDirectory, "dogfood.ndjson")); err != nil {
+					t.Fatal(err)
+				}
+			case "hard link":
+				if err := os.MkdirAll(ledgerDirectory, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Link(externalLedger, filepath.Join(ledgerDirectory, "dogfood.ndjson")); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			store := NewStore(workspace)
+			if events, err := store.readEvents("project", "dogfood"); err == nil || len(events) != 0 {
+				t.Fatalf("readEvents consumed external ledger: events=%+v err=%v", events, err)
+			}
+			if messages, err := store.Messages("project:dogfood", MessageOptions{}); err == nil || len(messages.Messages) != 0 {
+				t.Fatalf("Messages consumed external ledger: messages=%+v err=%v", messages, err)
+			}
+			if export, err := store.Export("project:dogfood", "ndjson", ""); err == nil || len(export.Events) != 0 || export.Markdown != "" {
+				t.Fatalf("Export consumed external ledger: export=%+v err=%v", export, err)
+			}
+		})
+	}
+}
+
+func TestNonRunRoomReaderAllowsConfiguredWorkspaceRootSymlink(t *testing.T) {
+	base := t.TempDir()
+	workspace := filepath.Join(base, "workspace")
+	writeRoomFixture(t, workspace, "project", "dogfood", []map[string]any{
+		{"seq": 1, "kind": "room_post", "actor": "Builder", "text": "workspace alias is valid", "timestamp": "2026-07-19T00:00:00Z"},
+	})
+	workspaceAlias := filepath.Join(base, "workspace-alias")
+	if err := os.Symlink(workspace, workspaceAlias); err != nil {
+		t.Fatal(err)
+	}
+
+	projection, err := NewStore(workspaceAlias).ProjectRoom("project:dogfood", ProjectionOptions{})
+	if err != nil {
+		t.Fatalf("ProjectRoom through configured workspace root symlink: %v", err)
+	}
+	if len(projection.Messages) != 1 || projection.Messages[0].Text != "workspace alias is valid" {
+		t.Fatalf("projection through workspace alias = %+v", projection.Messages)
 	}
 }
 

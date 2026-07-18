@@ -237,6 +237,71 @@ func GuardRuntimeAuthorityV1(workspacesRoot string) (RuntimeAuthorityGuardResult
 	return result, nil
 }
 
+// GuardRuntimeWorkspaceAuthorityV1 validates the host-private authority domain
+// bound to one configured workspace. A successful read remains deliberately
+// non-authorizing until the coordinator owns execution and fencing.
+func GuardRuntimeWorkspaceAuthorityV1(formationsDataRoot, configuredWorkspace string) (RuntimeAuthorityGuardResult, error) {
+	result := RuntimeAuthorityGuardResult{Capability: disabledRuntimeAuthorityCapability()}
+	if err := validateRuntimeAuthorityRootPath(formationsDataRoot); err != nil {
+		return result, runtimeGuardError(RuntimeAuthorityGuardStageRoot, RuntimeAuthorityGuardNoncanonical, "", err)
+	}
+	identity, err := openRuntimeWorkspaceIdentity(configuredWorkspace)
+	if err != nil {
+		code := RuntimeAuthorityGuardMalformed
+		switch {
+		case errors.Is(err, errRuntimeNoncanonical):
+			code = RuntimeAuthorityGuardNoncanonical
+		case errors.Is(err, os.ErrNotExist):
+			code = RuntimeAuthorityGuardMissing
+		}
+		return result, runtimeGuardError(RuntimeAuthorityGuardStageRegistry, code, "", err)
+	}
+	authorityRoot, err := openRuntimeAuthorityRoot(formationsDataRoot)
+	if err != nil {
+		code := RuntimeAuthorityGuardNoncanonical
+		if errors.Is(err, os.ErrNotExist) {
+			code = RuntimeAuthorityGuardMissing
+		}
+		return result, runtimeGuardError(RuntimeAuthorityGuardStageRoot, code, "", err)
+	}
+	defer authorityRoot.Close()
+	if err := validateRuntimeAuthorityWorkspaceIsolation(formationsDataRoot, authorityRoot, identity); err != nil {
+		code := runtimeGuardValidationCode(err)
+		if errors.Is(err, os.ErrNotExist) {
+			code = RuntimeAuthorityGuardMissing
+		}
+		return result, runtimeGuardError(RuntimeAuthorityGuardStageRoot, code, "", err)
+	}
+
+	workspacesRoot := filepath.Join(formationsDataRoot, "workspaces")
+	rootDir, err := openRuntimeAuthorityDirectoryAt(authorityRoot, "workspaces")
+	if err != nil {
+		code := RuntimeAuthorityGuardNoncanonical
+		if errors.Is(err, os.ErrNotExist) {
+			code = RuntimeAuthorityGuardMissing
+		}
+		return result, runtimeGuardError(RuntimeAuthorityGuardStageRoot, code, "", err)
+	}
+	registry, err := readRuntimeWorkspaceRegistry(rootDir, workspacesRoot)
+	if err != nil {
+		rootDir.Close()
+		return result, err
+	}
+	defer rootDir.Close()
+	entry, err := matchRuntimeWorkspaceRegistryEntry(registry, identity)
+	if err != nil {
+		code := runtimeGuardValidationCode(err)
+		if errors.Is(err, os.ErrNotExist) {
+			code = RuntimeAuthorityGuardMissing
+		}
+		return result, runtimeGuardError(RuntimeAuthorityGuardStageRegistry, code, "registry.private.json", err)
+	}
+	if err := validateRuntimeAuthorityEntry(rootDir, workspacesRoot, entry, &result.Ledgers); err != nil {
+		return RuntimeAuthorityGuardResult{Capability: disabledRuntimeAuthorityCapability()}, err
+	}
+	return result, nil
+}
+
 func disabledRuntimeAuthorityCapability() RuntimeAuthorityCapability {
 	return RuntimeAuthorityCapability{
 		ID:              RuntimeAuthorityGuardCapabilityV1,
@@ -245,27 +310,11 @@ func disabledRuntimeAuthorityCapability() RuntimeAuthorityCapability {
 }
 
 func guardRuntimeAuthorityV1(workspacesRoot string) (RuntimeAuthorityLedgerSummary, error) {
-	rootDir, err := openRuntimeAuthorityRoot(workspacesRoot)
+	rootDir, registry, err := openRuntimeWorkspaceRegistry(workspacesRoot)
 	if err != nil {
-		code := RuntimeAuthorityGuardNoncanonical
-		if errors.Is(err, os.ErrNotExist) {
-			code = RuntimeAuthorityGuardMissing
-		}
-		return RuntimeAuthorityLedgerSummary{}, runtimeGuardError(RuntimeAuthorityGuardStageRoot, code, "", err)
+		return RuntimeAuthorityLedgerSummary{}, err
 	}
 	defer rootDir.Close()
-	registryPath := filepath.Join(workspacesRoot, "registry.private.json")
-	registryRaw, err := readRuntimeAuthorityFileAt(rootDir, "registry.private.json", runtimeAuthorityMaxRecordBytes)
-	if err != nil {
-		return RuntimeAuthorityLedgerSummary{}, runtimeGuardFileError(RuntimeAuthorityGuardStageRegistry, workspacesRoot, registryPath, err)
-	}
-	var registry runtimeWorkspaceRegistry
-	if err := decodeRuntimeAuthorityJSON(registryRaw, &registry); err != nil {
-		return RuntimeAuthorityLedgerSummary{}, runtimeGuardDecodeError(RuntimeAuthorityGuardStageRegistry, workspacesRoot, registryPath, err)
-	}
-	if err := validateRuntimeWorkspaceRegistry(&registry); err != nil {
-		return RuntimeAuthorityLedgerSummary{}, runtimeGuardError(RuntimeAuthorityGuardStageRegistry, runtimeGuardValidationCode(err), "registry.private.json", err)
-	}
 
 	var ledgers RuntimeAuthorityLedgerSummary
 	for _, entry := range *registry.Entries {
@@ -276,11 +325,208 @@ func guardRuntimeAuthorityV1(workspacesRoot string) (RuntimeAuthorityLedgerSumma
 	return ledgers, nil
 }
 
+func openRuntimeWorkspaceRegistry(workspacesRoot string) (*os.File, runtimeWorkspaceRegistry, error) {
+	rootDir, err := openRuntimeAuthorityRoot(workspacesRoot)
+	if err != nil {
+		code := RuntimeAuthorityGuardNoncanonical
+		if errors.Is(err, os.ErrNotExist) {
+			code = RuntimeAuthorityGuardMissing
+		}
+		return nil, runtimeWorkspaceRegistry{}, runtimeGuardError(RuntimeAuthorityGuardStageRoot, code, "", err)
+	}
+	registry, err := readRuntimeWorkspaceRegistry(rootDir, workspacesRoot)
+	if err != nil {
+		rootDir.Close()
+		return nil, runtimeWorkspaceRegistry{}, err
+	}
+	return rootDir, registry, nil
+}
+
+func readRuntimeWorkspaceRegistry(rootDir *os.File, workspacesRoot string) (runtimeWorkspaceRegistry, error) {
+	registryPath := filepath.Join(workspacesRoot, "registry.private.json")
+	registryRaw, err := readRuntimeAuthorityFileAt(rootDir, "registry.private.json", runtimeAuthorityMaxRecordBytes)
+	if err != nil {
+		return runtimeWorkspaceRegistry{}, runtimeGuardFileError(RuntimeAuthorityGuardStageRegistry, workspacesRoot, registryPath, err)
+	}
+	var registry runtimeWorkspaceRegistry
+	if err := decodeRuntimeAuthorityJSON(registryRaw, &registry); err != nil {
+		return runtimeWorkspaceRegistry{}, runtimeGuardDecodeError(RuntimeAuthorityGuardStageRegistry, workspacesRoot, registryPath, err)
+	}
+	if err := validateRuntimeWorkspaceRegistry(&registry); err != nil {
+		return runtimeWorkspaceRegistry{}, runtimeGuardError(RuntimeAuthorityGuardStageRegistry, runtimeGuardValidationCode(err), "registry.private.json", err)
+	}
+	return registry, nil
+}
+
+type runtimeWorkspaceIdentity struct {
+	configuredPath string
+	resolvedPath   string
+	device         uint64
+	inode          uint64
+	rootHash       string
+}
+
+func openRuntimeWorkspaceIdentity(configuredWorkspace string) (runtimeWorkspaceIdentity, error) {
+	configuredPath := filepath.ToSlash(filepath.Clean(configuredWorkspace))
+	if err := validateRuntimeConfiguredPath(configuredPath); err != nil {
+		return runtimeWorkspaceIdentity{}, err
+	}
+	fd, err := syscall.Open(configuredPath, syscall.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NONBLOCK|syscall.O_DIRECTORY, 0)
+	if err != nil {
+		return runtimeWorkspaceIdentity{}, err
+	}
+	workspace := os.NewFile(uintptr(fd), configuredPath)
+	if workspace == nil {
+		_ = syscall.Close(fd)
+		return runtimeWorkspaceIdentity{}, errRuntimeNoncanonical
+	}
+	defer workspace.Close()
+	info, err := workspace.Stat()
+	if err != nil {
+		return runtimeWorkspaceIdentity{}, err
+	}
+	if !info.IsDir() {
+		return runtimeWorkspaceIdentity{}, errRuntimeNoncanonical
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return runtimeWorkspaceIdentity{}, errRuntimeNoncanonical
+	}
+	resolvedPath, err := os.Readlink(fmt.Sprintf("/proc/self/fd/%d", workspace.Fd()))
+	if err != nil {
+		return runtimeWorkspaceIdentity{}, err
+	}
+	resolvedPath = filepath.ToSlash(resolvedPath)
+	if err := validateRuntimeConfiguredPath(resolvedPath); err != nil {
+		return runtimeWorkspaceIdentity{}, err
+	}
+	identity := runtimeWorkspaceIdentity{
+		configuredPath: configuredPath,
+		resolvedPath:   resolvedPath,
+		device:         uint64(stat.Dev),
+		inode:          stat.Ino,
+	}
+	identity.rootHash = runtimeWorkspaceIdentityHash(identity)
+	return identity, nil
+}
+
+func runtimeWorkspaceIdentityHash(identity runtimeWorkspaceIdentity) string {
+	var canonical bytes.Buffer
+	canonical.WriteString(`{"configuredPath":`)
+	writeRuntimeCanonicalJSONString(&canonical, identity.configuredPath)
+	canonical.WriteString(`,"device":`)
+	writeRuntimeCanonicalJSONString(&canonical, strconv.FormatUint(identity.device, 10))
+	canonical.WriteString(`,"inode":`)
+	writeRuntimeCanonicalJSONString(&canonical, strconv.FormatUint(identity.inode, 10))
+	canonical.WriteString(`,"resolvedPath":`)
+	writeRuntimeCanonicalJSONString(&canonical, identity.resolvedPath)
+	canonical.WriteByte('}')
+	return runtimeSHA256Hex(canonical.Bytes())
+}
+
+func writeRuntimeCanonicalJSONString(output *bytes.Buffer, value string) {
+	const hexDigits = "0123456789abcdef"
+	output.WriteByte('"')
+	for _, character := range value {
+		switch character {
+		case '"', '\\':
+			output.WriteByte('\\')
+			output.WriteRune(character)
+		case '\b':
+			output.WriteString(`\b`)
+		case '\t':
+			output.WriteString(`\t`)
+		case '\n':
+			output.WriteString(`\n`)
+		case '\f':
+			output.WriteString(`\f`)
+		case '\r':
+			output.WriteString(`\r`)
+		default:
+			if character < 0x20 {
+				output.WriteString(`\u00`)
+				output.WriteByte(hexDigits[byte(character)>>4])
+				output.WriteByte(hexDigits[byte(character)&0x0f])
+			} else {
+				output.WriteRune(character)
+			}
+		}
+	}
+	output.WriteByte('"')
+}
+
+func matchRuntimeWorkspaceRegistryEntry(registry runtimeWorkspaceRegistry, identity runtimeWorkspaceIdentity) (runtimeWorkspaceRegistryEntry, error) {
+	for _, entry := range *registry.Entries {
+		if entry.ConfiguredPath == identity.configuredPath {
+			if entry.decodedDevice != identity.device || entry.decodedInode != identity.inode || entry.WorkspaceRootIdentityHash != identity.rootHash {
+				return runtimeWorkspaceRegistryEntry{}, errRuntimeIntegrityMismatch
+			}
+			return entry, nil
+		}
+	}
+	for _, entry := range *registry.Entries {
+		if (entry.decodedDevice == identity.device && entry.decodedInode == identity.inode) || entry.WorkspaceRootIdentityHash == identity.rootHash {
+			return runtimeWorkspaceRegistryEntry{}, errRuntimeConflict
+		}
+	}
+	return runtimeWorkspaceRegistryEntry{}, os.ErrNotExist
+}
+
 func validateRuntimeAuthorityRootPath(root string) error {
 	if root == "" || !filepath.IsAbs(root) || filepath.Clean(root) != root || (root != string(filepath.Separator) && strings.HasSuffix(root, string(filepath.Separator))) {
 		return errors.New("authority root must be an absolute clean path")
 	}
 	return nil
+}
+
+func validateRuntimeAuthorityWorkspaceIsolation(formationsDataRoot string, root *os.File, identity runtimeWorkspaceIdentity) error {
+	for _, workspacePath := range []string{identity.configuredPath, identity.resolvedPath} {
+		if runtimePathsOverlap(formationsDataRoot, filepath.FromSlash(workspacePath)) {
+			return errRuntimeConflict
+		}
+	}
+	if root == nil {
+		return errRuntimeNoncanonical
+	}
+	info, err := root.Stat()
+	if err != nil {
+		return err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return errRuntimeNoncanonical
+	}
+	if uint64(stat.Dev) == identity.device && stat.Ino == identity.inode {
+		return errRuntimeConflict
+	}
+	resolvedRoot, err := os.Readlink(fmt.Sprintf("/proc/self/fd/%d", root.Fd()))
+	if err != nil {
+		return err
+	}
+	if !filepath.IsAbs(resolvedRoot) || filepath.Clean(resolvedRoot) != resolvedRoot {
+		return errRuntimeNoncanonical
+	}
+	if filepath.ToSlash(resolvedRoot) != filepath.ToSlash(formationsDataRoot) {
+		return errRuntimeConflict
+	}
+	for _, workspacePath := range []string{identity.configuredPath, identity.resolvedPath} {
+		if runtimePathsOverlap(resolvedRoot, filepath.FromSlash(workspacePath)) {
+			return errRuntimeConflict
+		}
+	}
+	return nil
+}
+
+func runtimePathsOverlap(left, right string) bool {
+	return runtimePathContains(left, right) || runtimePathContains(right, left)
+}
+
+func runtimePathContains(root, target string) bool {
+	relative, err := filepath.Rel(root, target)
+	if err != nil || filepath.IsAbs(relative) {
+		return false
+	}
+	return relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)))
 }
 
 func validateRuntimeWorkspaceRegistry(registry *runtimeWorkspaceRegistry) error {
@@ -615,6 +861,12 @@ func recordRuntimeAuthorityLedgerClass(summary *RuntimeAuthorityLedgerSummary, c
 }
 
 func classifyRuntimeAuthorityLedger(input io.Reader, expectedAuthoritySchema uint64, expectedRunID string) (RuntimeAuthorityInputClass, error) {
+	return classifyRuntimeAuthorityLedgerWithVisitor(input, expectedAuthoritySchema, expectedRunID, nil)
+}
+
+type runtimeAuthorityLedgerVisitor func(line []byte) error
+
+func classifyRuntimeAuthorityLedgerWithVisitor(input io.Reader, expectedAuthoritySchema uint64, expectedRunID string, visit runtimeAuthorityLedgerVisitor) (RuntimeAuthorityInputClass, error) {
 	reader := bufio.NewReaderSize(input, runtimeAuthorityMaxEventBytes+1)
 	var class RuntimeAuthorityInputClass
 	var runID string
@@ -714,6 +966,11 @@ func classifyRuntimeAuthorityLedger(input io.Reader, expectedAuthoritySchema uin
 		if lineClass == RuntimeAuthoritySchema1Inspection {
 			if authoritySchemaPresent || writerFencePresent {
 				return "", runtimeDecodeError{code: RuntimeAuthorityGuardMixedSchema, err: errRuntimeMixedSchema}
+			}
+			if visit != nil {
+				if err := visit(line); err != nil {
+					return "", err
+				}
 			}
 			continue
 		}

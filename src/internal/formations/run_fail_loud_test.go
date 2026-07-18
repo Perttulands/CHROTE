@@ -89,48 +89,6 @@ func TestRunEngineMissingGateEvaluatorBlocksInsteadOfPassing(t *testing.T) {
 	}
 }
 
-func TestRunEngineMissingVerificationEvaluatorBlocksInsteadOfPassing(t *testing.T) {
-	store, personas := s4RunFixture(t)
-	store.Now = fixedClock()
-	personas.Now = fixedClock()
-	createS4Persona(t, personas, "scout")
-	writeFixture(t, store.BoardPath("session-search"), s4VerificationBoardFixture("block"))
-	board, err := store.ReadBoard("session-search")
-	if err != nil {
-		t.Fatalf("read board: %v", err)
-	}
-	executor := &fakeRunExecutor{}
-	engine := NewRunEngine(store, personas, executor)
-
-	status, err := engine.RunMission("session-search", RunStartRequest{
-		MissionID:         "mis_showcase",
-		Actor:             "agent:test",
-		ExpectedBoardETag: board.ETag,
-		ExpectedBoardRev:  board.Rev,
-		Limits:            RunLimits{MaxDispatch: 5, MaxAttempts: 2},
-	})
-	if err != nil {
-		t.Fatalf("run mission: %v", err)
-	}
-	if status.Status != RunStatusBlocked {
-		t.Fatalf("status = %+v, want blocked when verification evaluator is missing", status)
-	}
-	if got, want := executor.nodeIDs(), []string{"fmn_work"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("executor nodes = %v, want only verified formation attempt", got)
-	}
-	events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
-	errEvent := eventOfType(t, events, RunEventError)
-	if errEvent.Data["code"] != "missing_verification_evaluator" {
-		t.Fatalf("run_error data = %#v, want missing_verification_evaluator", errEvent.Data)
-	}
-	if eventsContainType(events, RunEventVerificationVerdict) {
-		t.Fatalf("events include verification verdict despite missing evaluator: %#v", events)
-	}
-	if events[len(events)-1].Type != RunEventBlocked {
-		t.Fatalf("last event = %s, want run_blocked", events[len(events)-1].Type)
-	}
-}
-
 func TestRunEngineWallClockLimitBlocksSlowExecutor(t *testing.T) {
 	store, personas := s4RunFixture(t)
 	store.Now = fixedClock()

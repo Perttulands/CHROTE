@@ -467,6 +467,7 @@ CHROTE_ROOTS=<workspace-root>
 CHROTE_WRITE_ROOTS=<comma-separated mutation roots>
 CHROTE_FILE_DENY_PATHS=<extra comma-separated sensitive roots>
 CHROTE_MAX_UPLOAD_BYTES=67108864
+CHROTE_FORMATIONS_DATA_ROOT=<host-private-formations-root>
 CHROTE_BEADS_WORKSPACES=<workspace-root>
 CHROTE_BD_COMMAND=bd
 CHROTE_AGENT_PREFIXES=claude-,codex,opencode,agent-
@@ -474,6 +475,10 @@ CHROTE_TTS_URL=http://127.0.0.1:3100
 CHROTE_CONTEXT_API_URL=http://127.0.0.1:3200
 CHROTE_MANAGED_RECOVERY_STATUS_PATH=/srv/data/chrote/tmux-recovery/managed-status.json
 ```
+
+`CHROTE_FORMATIONS_DATA_ROOT` is an explicit host-private authority root. It is
+not derived from `CHROTE_WORKDIR` or `CHROTE_ROOTS`, and CHROTE excludes both
+its configured path and canonical aliases from the generic Files API.
 
 Private service adapter values live outside the repo:
 

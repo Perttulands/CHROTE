@@ -653,8 +653,9 @@ boundary has one durable recovery answer.
   `arrange` seam; no runtime or recovery path may rearrange user layout.
 - `ctx-rul` uses disposable sockets only as dogfood isolation and must state that
   production uses the shared cockpit pool.
-- `ctx-ug7.16` and `ctx-ug7.17` must bump authority schema if retained legacy
-  behavior introduces new process/evaluator or revision authority.
+- `ctx-ug7.16` must bump authority schema if retained Script Gate behavior adds
+  process/evaluator authority. ADR-0008 retires inline Formation verification,
+  so `ctx-ug7.17` adds no authority and requires no bump.
 - `ctx-ug7.5` certifies the foundation reader guard and stabilization candidate;
   `ctx-ug7.15` certifies cross-version rejection, projection-only exclusion,
   shared-resolver topology, baseline loss, steering races, and the complete exact

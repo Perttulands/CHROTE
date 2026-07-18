@@ -1036,18 +1036,19 @@ A board definition contains structural state:
 - formations;
 - accepted-target Tool steps that reference host-owned versioned profiles (not
   implemented on current main);
-- gates, including `kinds` and `criterion`; current schema-1 compatibility may
-  contain structured Script Gate command fields (`commandArgv` or explicit
-  `commandShell`, plus optional `commandCwd`), while accepted schema-2 code
-  Gates instead reference pure host-owned evaluator profiles;
+- gates, including `kinds` and `criterion`; schema-1 compatibility definitions
+  may contain `command`, `commandArgv`, `commandShell`, or `commandCwd` only as
+  read-only inspection/migration-plan input, while schema-2 code Gates reference
+  pure host-owned evaluator profiles and never own a process;
 - slots;
 - accepted-target stable named ports with direction, accepted payload kind,
   allowlisted `acceptedMediaTypes` for `work`, required flag, and `data` or
   `retry_control` role;
 - accepted-target connections with explicit schema-2 `workflow` or reserved
   `judge` channel;
-- schema-1 verification/check specs, retained for inspection but rejected from
-  schema-2 execution until `ctx-ug7.17` defines or retires them.
+- retired schema-1 inline verification/check specs, retained for inspection and
+  replacement-Gate-bound removal but rejected from every new execution path by
+  ADR-0008.
 
 All workflow payload ports are directional. A Gate's reserved `judge` socket is
 an evaluation-control relationship rather than a typed payload port; it permits
@@ -1092,15 +1093,83 @@ records Gate-scoped `error(code=gate_evaluator_error)`, never a kind
 result/verdict/route, so
 an evaluator cannot wedge run wall-clock finality. Certification includes repeat
 vectors with expected `decision-result-jcs-v1` verdict/reason/evidence hashes.
-A schema-1 argv/shell Script
-Gate is unsafe to normalize and fails
-`legacy_script_gate_requires_fenced_migration` until the process-fence or
-retirement work in `ctx-ug7.16` lands.
-Likewise, schema-1 inline Formation verification is not safely normalizable: its
+Gate-owned argv/shell execution is retired. Authored presence of any schema-1
+Gate command field—including `command`, `commandArgv`, `commandShell`,
+`commandCwd`, and explicitly empty values—is unsafe to normalize and yields the
+stable validation finding `legacy_script_gate_requires_fenced_migration`.
+Presence is determined from the source definition, not reconstructed from
+non-empty decoded values. An inert legacy string or cwd-only entry receives the
+same finding because silently dropping or interpreting it would be a migration.
+It may also be `gate_not_routable` when it has no human or formation-judge route.
+
+Mission preflight applies this fence only to the selected Mission's complete
+possible executable subgraph, including every possible pass/fail branch and the
+judge chain of each reachable Gate. Resume checks the same selected root in the
+frozen run snapshot before appending `run_resumed`. A reachable legacy command
+Gate returns `legacy_script_gate_requires_fenced_migration` before snapshot,
+binding, ledger, event, evaluator, or process mutation. An unreachable legacy
+Gate remains a whole-board validation error but does not block that Mission.
+An isolated Formation root contains only the Formation and its canonical brief
+seed; it does not traverse downstream board edges, so a legacy Gate elsewhere
+does not block the isolated run.
+
+The pre-Tool migration surface is one non-authorizing projection:
+
+```text
+LegacyScriptGateMigrationInspection {
+  schema: 1
+  boardId: string
+  boardRev: integer
+  boardETag: string
+  gateId: string
+  sourceMode: legacy_string | argv | shell | cwd_only | conflict | empty_present
+  sourceFields: [command | commandArgv | commandShell | commandCwd] // sorted, presence only
+  incomingEdgeIds: string[] // stable order
+  outgoingEdgeIds: string[] // stable order
+  code: "legacy_script_gate_requires_fenced_migration"
+  targetKind: "tool_plus_pure_gate"
+  ready: false
+  applySupported: false
+  requirements: [
+    "host_owned_tool_profile",
+    "pure_gate_evaluator_profile",
+    "explicit_parameter_mapping",
+    "port_media_compatibility",
+    "atomic_cas_rewire"
+  ]
+}
+```
+
+This projection never contains raw command values, a resolved executable/cwd or
+environment, generated Tool ids/ports, inferred parameters, or a suggested
+profile. The board ETag/revision is the later compare-and-swap boundary, not
+authorization to apply. API board inspection may expose this projection beside
+the source definition, and `archon board validate --json` exposes the same typed
+details while `archon board inspect --json` remains the authorized source view.
+
+`ctx-ug7.8.1` owns non-executing Tool definitions, registry descriptors, and
+board validation; `ctx-ug7.8` owns their certified host-private implementations
+and runtime execution. `ctx-ug7.30` owns pure code-Gate profiles and the future
+explicit apply. That apply may insert a Tool before the existing Gate only
+after the caller selects certified Tool and pure-Gate profiles and the
+writer validates parameters, port media, and
+downstream payload compatibility atomically. It preserves the Gate id, title,
+criterion, judge relationships, pass/fail outgoing edges, and existing layout;
+only the new Tool receives placement. Because a Gate passes through the exact
+Tool output it evaluates rather than the pre-Tool payload, arbitrary legacy
+commands cannot be automatically relabelled or claimed equivalent. An
+unprovable mapping fails without changing source bytes.
+
+Likewise, schema-1 inline Formation verification is retired by ADR-0008 because its
 verdict lacks exact attempt/output identity and replay-safe revision finality.
-Schema-2 validation and run preflight fail
-`legacy_inline_verification_requires_migration`; schema-2 emits no
-`verification_verdict` until `ctx-ug7.17` defines or retires the feature.
+Validation, Mission start, isolated Formation start, and resume fail
+`legacy_inline_verification_requires_migration` before artifacts or work. New
+definitions and `verification_verdict` events are rejected; historical state is
+inspection evidence only. Compatibility removal names `replacementGateId`; the
+shared writer verifies that the Gate already exists and that a named output of
+the Formation is already connected to its input. Removal never creates or
+rewires a Gate. Historical cancellation and failure remain permitted terminal
+containment and do not authorize evaluation, routing, resume or dispatch.
 
 ADR-0006 graph typing is board schema 2. Schema-1 Formation inputs normalize in
 memory to `kind=work`, `acceptedMediaTypes=["text/plain", "text/markdown",
@@ -2071,7 +2140,9 @@ run_succeeded
 ```
 
 Schema-1 `verification_verdict` remains legacy inspection evidence only and is
-not accepted in a schema-2 ledger.
+not accepted as a new append. It never routes work, resumes a run, or opens a
+revision attempt. A historical run may still append its normal terminal
+`run_canceled` or `run_failed` event without evaluating the retired check.
 
 ### Redacted-run evidence and recovery
 

@@ -272,13 +272,17 @@ Preflight writes a normalized schema-2 immutable run snapshot, records
 `sourceBoardSchema=1` and `snapshotSchema=2`, and executes only that snapshot.
 Unsafe normalization rejects before `run_started`.
 
-Schema-1 inline `formation.verification` remains inspectable compatibility
-state, but it is not safely normalizable because its verdict lacks exact
-attempt/output identity and replay-safe block/revision finality. A board that
-contains it fails schema-2 validation and run preflight with
-`legacy_inline_verification_requires_migration`. The schema-2 writer does not
-emit `verification_verdict`; definition or retirement is owned by
-`ctx-ug7.17`.
+ADR-0008 retires schema-1 inline `formation.verification`. It remains inspectable
+compatibility state, but it is not safely normalizable because its verdict lacks
+exact attempt/output identity and replay-safe block/revision finality. A board
+that contains it fails validation, Mission start, isolated Formation start, and
+resume with `legacy_inline_verification_requires_migration` before artifacts or
+work. New definitions and `verification_verdict` appends are rejected;
+historical records remain non-authorizing evidence. Migration means explicitly
+creating a replacement Gate, wiring a named Formation output to its input and
+naming that Gate as `replacementGateId` when explicitly removing the legacy
+block. A historical run may still be canceled or failed without evaluating,
+routing, resuming or dispatching the retired check.
 
 A schema-2 `code` Gate references a host-owned, versioned, certified
 deterministic in-process evaluator profile plus modeled non-secret parameters.
@@ -308,16 +312,70 @@ attempt. Redacted loss first records bounded Gate/attempt/input context, but its
 terminal failure keeps the source input sequence as provenance and
 `failureCause={kind=none}` as required by ADR-0005. Both exactly dispose every
 open attempt, slot dispatch, and Tool lease. Neither path emits a kind result,
-verdict, or route. A profile that needs an OS process is rejected until a
-separate ledger-before-spawn process-fence or retirement decision in
-`ctx-ug7.16` lands. Current schema-1
-`commandArgv`/explicit `commandShell` Script Gates remain compatibility behavior,
-but a board containing them is not safely normalizable to schema 2 and fails
-with `legacy_script_gate_requires_fenced_migration` rather than inheriting Tool
-replay semantics.
+verdict, or route. A code-Gate profile that needs an OS process is rejected.
+Gate-owned process evaluation is retired.
 
-The accepted target adds a bounded Tool node. The exact profile registry and
-packaging belong to `ctx-ug7.8`; board-authored commands are not Tool profiles.
+Authored presence of any schema-1 Gate command field—`command`, `commandArgv`,
+`commandShell`, or `commandCwd`, including explicitly empty values—is preserved
+for source inspection and migration planning only. Presence comes from the
+source field, not a reconstructed non-empty value. Whole-board validation emits
+`legacy_script_gate_requires_fenced_migration`; legacy-string-only and cwd-only
+definitions receive the same finding because the writer cannot silently drop or
+interpret them. They may also be `gate_not_routable` when no human or
+formation-judge route exists.
+
+Selected-root preflight is narrower than whole-board validation. A Mission start
+walks its complete possible executable subgraph, including both Gate branches
+and judge chains of reachable Gates, and returns
+`legacy_script_gate_requires_fenced_migration` before any snapshot, binding,
+ledger, `run_started`, evaluator, or process mutation when that root contains a
+legacy command Gate. Resume checks the same root in the frozen snapshot before
+`run_resumed`. Unreachable command Gates remain validation errors but do not
+block that Mission. An isolated Formation root contains only that Formation and
+its canonical brief seed and never traverses downstream board edges, so a Gate
+elsewhere does not block it.
+
+Before Tool profiles exist, the only migration surface is this closed,
+non-authorizing inspection projection:
+
+```text
+LegacyScriptGateMigrationInspection {
+  schema: 1
+  boardId: string
+  boardRev: integer
+  boardETag: string
+  gateId: string
+  sourceMode: legacy_string | argv | shell | cwd_only | conflict | empty_present
+  sourceFields: [command | commandArgv | commandShell | commandCwd] // sorted field names
+  incomingEdgeIds: string[] // stable order
+  outgoingEdgeIds: string[] // stable order
+  code: "legacy_script_gate_requires_fenced_migration"
+  targetKind: "tool_plus_pure_gate"
+  ready: false
+  applySupported: false
+  requirements: [
+    "host_owned_tool_profile",
+    "pure_gate_evaluator_profile",
+    "explicit_parameter_mapping",
+    "port_media_compatibility",
+    "atomic_cas_rewire"
+  ]
+}
+```
+
+The projection never contains raw command values, resolved executable/cwd or
+environment, generated Tool ids/ports, inferred parameters, or a suggested
+profile. Board ETag/revision is a future compare-and-swap precondition, never
+apply authority. API definition inspection may return this projection beside
+the source board. `archon board inspect --json` remains the authorized source
+view, and `archon board validate --json` returns the same typed migration details.
+No migration mutation verb or endpoint exists before the Tool foundation and
+runtime authority.
+
+The accepted target adds a bounded Tool node. Non-executing Tool definitions,
+registry descriptors, and board authoring belong to `ctx-ug7.8.1`; certified
+host-private implementation packaging and runtime execution belong to
+`ctx-ug7.8`. Board-authored commands are not Tool profiles.
 
 ```toml
 [[tool]]
@@ -369,6 +427,20 @@ required/role semantics. Every `work` port also declares a non-empty
 `acceptedMediaTypes` subset of `text/plain`, `text/markdown`, and
 `application/json`; incompatible media rejects before attempt start. Full JSON
 Schema remains deferred.
+
+After `ctx-ug7.8.1` provides non-executing Tool definitions and registry
+descriptors, and `ctx-ug7.8` provides certified host-private implementations and
+runtime execution, `ctx-ug7.30` provides pure code-Gate profiles and the future
+explicit migration apply. That apply may insert one Tool before the existing
+Gate. The caller must
+select the Tool and pure-Gate profiles and provide modeled parameters and port
+mapping; the writer atomically verifies board ETag/revision, profile identity,
+media/downstream compatibility, and every affected edge. It preserves the Gate
+id/title/criterion, judge relationships, pass/fail outgoing edges, and existing
+layout; only the new Tool receives placement. The Gate evaluates and forwards
+the exact Tool output, not the pre-Tool payload, so arbitrary legacy command
+semantics are never inferred. Unprovable mapping leaves the source bytes
+unchanged and fails loud.
 
 Missions retain fixed port `out` as the only run-start output in this phase. The
 authored objective is encoded as `mission-objective-utf8-v1`: bounded UTF-8 with
@@ -2867,12 +2939,17 @@ Node projection:
   project the canonical all-of Gate state for that attempt. A waiting request
   routes nothing; one aggregate verdict closes evaluation and provides the only
   route. A schema-1 `verification_verdict` remains legacy inspection evidence
-  only and is never accepted into a schema-2 ledger.
+  only and is never accepted as a new append or as routing/revision authority.
 
 ## API Surface
 
 The API is the shared UI/CLI contract. Board and layout write endpoints use
-`If-Match` with the relevant ETag/revision. Persona-card edits use the shared
+`If-Match` with the relevant ETag/revision. The retired inline-verification
+removal patch is exactly
+`removeVerification: {formationId, replacementGateId}`. The named Gate must
+already exist on the current board and receive an existing connection from a
+named output of that Formation; rejection changes neither board nor layout.
+Persona-card edits use the shared
 writer's stale-read conflict detection. Write conflicts return `409`.
 Every runtime mutation requires a client-stable `commandId`; its canonical
 request hash is journaled privately, and the response is the durable applied or
@@ -2889,7 +2966,7 @@ private ledger directly.
 | `PATCH /api/agents/{agentId}` | Edit modeled card fields while preserving unknown fields. |
 | `GET /api/formations/boards` | List boards by id, slug, title, and rev. |
 | `GET /api/formations/boards/{boardIdOrSlug}` | Read board definition plus ETag. |
-| `PATCH /api/formations/boards/{boardId}` | Field/id-addressed board mutations. |
+| `PATCH /api/formations/boards/{boardId}` | Field/id-addressed board mutations, including replacement-Gate-bound legacy verification removal. |
 | `GET /api/formations/boards/{boardId}/layout` | Read layout sidecar plus ETag. |
 | `PATCH /api/formations/boards/{boardId}/layout` | Layout-only mutations by stable ids. |
 | `POST /api/formations/runs` | Journal a `start` command, preflight, fsync private authority and `run_started`, then return the durable receipt/run id without waiting for graph execution; full-queue rejection is durable before run creation. |
@@ -2929,8 +3006,9 @@ a narrower target.
 These are real design topics but not required to unblock S1/S2:
 
 - Implicit Oracle prefix-stripping for legacy sessions not declared in cards.
-- Gate-level `--onfail`; S0 used fail wiring and kept `onFail` only on legacy
-  inline verification. Schema-2 now rejects that shape pending `ctx-ug7.17`.
+- Gate-level `--onfail`; S0 used fail wiring and kept `onFail` only on retired
+  inline verification. ADR-0008 requires a named, already-wired replacement
+  Gate and never infers a route from that legacy field.
 - General-purpose error-routing ports; the first mixed-workflow contract stops
   `unavailable` and `error` outcomes loudly.
 - A second reusable formation-definition registry; embedded nodes and explicit

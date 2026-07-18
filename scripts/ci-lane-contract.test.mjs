@@ -62,7 +62,7 @@ test('built-server wrapper owns its environment, roots, socket, and port', () =>
   assert.match(wrapper, /CHROTE_FORMATIONS_TMUX_ROOTS="\$workspace"/)
   assert.match(wrapper, /CHROTE_FORMATIONS_TMUX_DEDICATED= \\/)
   assert.match(wrapper, /CHROTE_FORMATIONS_TMUX_PROD_SMOKE= \\/)
-  assert.match(wrapper, /CHROTE_FORMATIONS_SCRIPT_GATES= \\/)
+  assert.doesNotMatch(wrapper, /CHROTE_FORMATIONS_SCRIPT_GATES/)
   assert.match(wrapper, /CHROTE_DEFAULT_TMUX_SOCKET="\$artifact_root\/tmux\/default"/)
   assert.match(wrapper, /port="\$\(python3 -c '[^']*s\.bind\(\("127\.0\.0\.1", 0\)\)[^']*'\)"/)
   assert.match(wrapper, /-port "\$port"/)

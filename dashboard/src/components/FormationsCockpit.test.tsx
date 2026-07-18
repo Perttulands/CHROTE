@@ -13,6 +13,7 @@ const judgeFormation = {
   inputs: [{ id: 'port_judge_in', label: 'Input' }],
   outputs: [{ id: 'port_judge_out', label: 'Output' }],
   slots: [{ id: 'slot_judge', label: 'Judge' }],
+  verification: undefined,
 }
 
 const formation = {
@@ -72,10 +73,20 @@ const agents = [
 ]
 
 type RecordedPatch = { url: string; body: Record<string, unknown> }
+type TestBoard = ReturnType<typeof makeBoard>
+type TestRunEvent = { runId: string; seq: number; type: string; nodeId?: string; data?: Record<string, unknown> }
 
-function installFetchMock(options: { emptyBoards?: boolean; freshCreateLayout?: boolean; missionCreateFailure?: boolean } = {}) {
+function installFetchMock(options: {
+  emptyBoards?: boolean
+  freshCreateLayout?: boolean
+  missionCreateFailure?: boolean
+  removalFailure?: boolean
+  boards?: TestBoard[]
+  runEvents?: TestRunEvent[]
+} = {}) {
   const patches: RecordedPatch[] = []
-  let board = makeBoard()
+  const availableBoards = options.boards?.length ? options.boards : [makeBoard()]
+  let board = availableBoards[0]
   let currentLayout = layout
   ;(globalThis as Record<string, unknown>).fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
@@ -113,6 +124,9 @@ function installFetchMock(options: { emptyBoards?: boolean; freshCreateLayout?: 
         }
         return respond({ board, layout: currentLayout }, 'board-etag-2')
       }
+      if (!url.endsWith('/layout') && body.removeVerification && options.removalFailure) {
+        return reject('Legacy verification migration failed')
+      }
       if (options.freshCreateLayout && !url.endsWith('/layout') && body.createGate) {
         const requested = body.createGate as { title: string; kinds: string[]; criterion: string }
         const created = { id: 'gate_created', title: requested.title, kinds: requested.kinds, criterion: requested.criterion }
@@ -129,10 +143,17 @@ function installFetchMock(options: { emptyBoards?: boolean; freshCreateLayout?: 
       if (url.endsWith('/layout')) return respond({ layout: currentLayout }, 'layout-etag-2')
       return respond({ board }, 'board-etag-2')
     }
-    if (url === '/api/formations/boards') return respond({ boards: options.emptyBoards ? [] : [{ slug: board.slug, title: board.title }] })
+    if (/\/api\/formations\/runs\/[^/]+\/events$/.test(url)) return respond({ events: options.runEvents || [] })
+    if (/\/api\/formations\/runs\/[^/]+$/.test(url)) {
+      return respond({ status: { runId: 'run_legacy', status: 'succeeded', final: true, boardSlug: board.slug, missionId: mission.id, eventCount: options.runEvents?.length || 0 } })
+    }
+    if (url === '/api/formations/boards') return respond({ boards: options.emptyBoards ? [] : availableBoards.map(item => ({ slug: item.slug, title: item.title })) })
     if (url.includes('/changes')) return respond({ signal: { changed: false } })
     if (url.endsWith('/layout')) return respond({ layout: currentLayout }, 'layout-etag')
-    if (url.includes('/api/formations/boards/')) return respond({ board }, 'board-etag')
+    if (url.includes('/api/formations/boards/')) {
+      const requested = availableBoards.find(item => url.includes(`/boards/${item.slug}`)) || board
+      return respond({ board: requested }, requested.etag)
+    }
     if (url === '/api/agents') return respond({ agents })
     return respond({})
   }) as unknown as typeof fetch
@@ -321,18 +342,128 @@ describe('FormationsCockpit reference parity', () => {
     })
   })
 
-  it('edits verification through the verify band editor', async () => {
+  it('shows legacy inline verification as read-only migration input', async () => {
+    await renderCockpit()
+    const band = screen.getByRole('button', { name: 'Inspect legacy verification for Frame' })
+    expect(band).toBe(screen.getByTestId('verify-band-fmn_frame'))
+    fireEvent.click(band)
+    const dialog = await screen.findByRole('dialog', { name: 'Legacy verification · Frame' })
+		expect(dialog).toHaveTextContent('Tests pass')
+		expect(dialog).toHaveTextContent('Create and wire an explicit Gate')
+		expect(screen.queryByRole('button', { name: 'Save verification' })).toBeNull()
+		expect(screen.getByLabelText('Replacement Gate')).toHaveValue('')
+		expect(screen.getByRole('button', { name: 'Remove legacy verification' })).toBeDisabled()
+		fireEvent.change(screen.getByLabelText('Replacement Gate'), { target: { value: 'gate_review' } })
+		fireEvent.click(screen.getByRole('button', { name: 'Remove legacy verification' }))
+    await waitFor(() => {
+      const removal = patches.map(patch => patch.body.removeVerification as { formationId?: string; replacementGateId?: string } | undefined).find(Boolean)
+      expect(removal).toEqual({ formationId: 'fmn_frame', replacementGateId: 'gate_review' })
+    })
+    expect(patches.some(patch => patch.body.setVerification)).toBe(false)
+    expect(dialog).not.toBeInTheDocument()
+  })
+
+  it('does not offer new inline verification authoring', async () => {
+    await renderCockpit()
+    fireEvent.contextMenu(screen.getByTestId('formation-node-fmn_judge'))
+    const menu = await screen.findByRole('menu', { name: 'Formation actions' })
+    expect(menu).not.toHaveTextContent('Add verification')
+  })
+
+  it('routes legacy removal through the migration dialog and keeps it open on failure', async () => {
+    patches = installFetchMock({ removalFailure: true })
+    await renderCockpit()
+    fireEvent.contextMenu(screen.getByTestId('formation-node-fmn_frame'))
+    const menu = await screen.findByRole('menu', { name: 'Formation actions' })
+    expect(menu).not.toHaveTextContent('Remove legacy verification')
+		fireEvent.click(screen.getByRole('menuitem', { name: 'Migrate legacy verification' }))
+		const dialog = await screen.findByRole('dialog', { name: 'Legacy verification · Frame' })
+		fireEvent.change(screen.getByLabelText('Replacement Gate'), { target: { value: 'gate_review' } })
+		fireEvent.click(screen.getByRole('button', { name: 'Remove legacy verification' }))
+    expect(await screen.findByTestId('formations-error')).toHaveTextContent('Legacy verification migration failed')
+    expect(dialog).toBeInTheDocument()
+  })
+
+  it('renders partial legacy verification without inventing missing evidence', async () => {
+    const partialBoard = makeBoard()
+    partialBoard.formations = [
+      { ...formation, verification: { id: 'ver_partial' } as typeof formation.verification },
+      judgeFormation,
+    ]
+    patches = installFetchMock({ boards: [partialBoard] })
+    await renderCockpit()
+    const band = screen.getByTestId('verify-band-fmn_frame')
+    expect(band).toHaveTextContent('checks not recorded')
+    fireEvent.click(band)
+    const dialog = await screen.findByRole('dialog', { name: 'Legacy verification · Frame' })
+    expect(dialog).toHaveTextContent('No criterion recorded')
+		expect(dialog).toHaveTextContent('No failure policy recorded')
+	})
+
+	it('requires an explicit choice when multiple replacement Gates are wired', async () => {
+		const multiGateBoard = makeBoard()
+		multiGateBoard.gates = [
+			...multiGateBoard.gates,
+			{ id: 'gate_backup', title: 'Backup review', kinds: ['human'], criterion: 'Review again' },
+		]
+		multiGateBoard.connections = [
+			...multiGateBoard.connections,
+			{ id: 'edge_frame_backup', from: 'fmn_frame:port_frame_out', to: 'gate_backup:in' },
+		]
+		patches = installFetchMock({ boards: [multiGateBoard] })
+		await renderCockpit()
+		fireEvent.click(screen.getByTestId('verify-band-fmn_frame'))
+		await screen.findByRole('dialog', { name: 'Legacy verification · Frame' })
+		const replacement = screen.getByLabelText('Replacement Gate')
+		expect(replacement).toHaveValue('')
+		expect(screen.getByRole('button', { name: 'Remove legacy verification' })).toBeDisabled()
+		fireEvent.change(replacement, { target: { value: 'gate_backup' } })
+		fireEvent.click(screen.getByRole('button', { name: 'Remove legacy verification' }))
+		await waitFor(() => {
+			const removal = patches.map(patch => patch.body.removeVerification as { replacementGateId?: string } | undefined).find(Boolean)
+			expect(removal).toEqual(expect.objectContaining({ replacementGateId: 'gate_backup' }))
+		})
+	})
+
+	it('requires an explicitly wired replacement Gate before removal', async () => {
+    const unwiredBoard = makeBoard()
+    unwiredBoard.gates = []
+    unwiredBoard.connections = unwiredBoard.connections.filter(connection => !connection.to.startsWith('gate_review:') && !connection.from.startsWith('gate_review:'))
+    patches = installFetchMock({ boards: [unwiredBoard] })
     await renderCockpit()
     fireEvent.click(screen.getByTestId('verify-band-fmn_frame'))
-    const dialog = await screen.findByRole('dialog', { name: 'Verification · Frame' })
-    fireEvent.change(screen.getByLabelText('Criterion for Frame'), { target: { value: 'lint passes' } })
-    fireEvent.change(screen.getByLabelText('On fail for Frame'), { target: { value: 'pushback' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save verification' }))
-    await waitFor(() => {
-      const verification = patches.map(patch => patch.body.setVerification as { criterion?: string; onFail?: string } | undefined).find(Boolean)
-      expect(verification).toEqual(expect.objectContaining({ criterion: 'lint passes', onFail: 'pushback' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Legacy verification · Frame' })
+    expect(dialog).toHaveTextContent('Wire an explicit Gate from a Formation output before removal')
+    expect(screen.getByRole('button', { name: 'Remove legacy verification' })).toBeDisabled()
+    expect(patches.filter(patch => patch.body.removeVerification)).toEqual([])
+  })
+
+  it('closes a legacy migration dialog when the selected board changes', async () => {
+    const secondBoard = { ...makeBoard(), id: 'brd_second', slug: 'second-board', title: 'Second board', etag: 'second-etag' }
+    patches = installFetchMock({ boards: [makeBoard(), secondBoard] })
+    await renderCockpit()
+    fireEvent.click(screen.getByTestId('verify-band-fmn_frame'))
+    await screen.findByRole('dialog', { name: 'Legacy verification · Frame' })
+    fireEvent.change(screen.getByTestId('board-picker'), { target: { value: 'second-board' } })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Legacy verification · Frame' })).toBeNull())
+    expect(patches.filter(patch => patch.body.removeVerification)).toEqual([])
+  })
+
+  it('labels historical verification verdicts as non-authorizing evidence', async () => {
+    localStorage.setItem('chrote-formations-active-run-test-board', 'run_legacy')
+    patches = installFetchMock({
+      runEvents: [
+        { runId: 'run_legacy', seq: 1, type: 'node_output', nodeId: 'fmn_frame' },
+        { runId: 'run_legacy', seq: 2, type: 'verification_verdict', nodeId: 'fmn_frame', data: { verdict: 'fail', feedback: 'do not render raw feedback' } },
+      ],
     })
-    expect(dialog).not.toBeInTheDocument()
+    await renderCockpit()
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/formations/runs/run_legacy/events', expect.anything()))
+    fireEvent.click(screen.getByTestId('verify-band-fmn_frame'))
+    const dialog = await screen.findByRole('dialog', { name: 'Legacy verification · Frame' })
+    expect(dialog).toHaveTextContent('Legacy verification evidence · non-authorizing')
+    expect(dialog).toHaveTextContent('seq 2 · fail')
+    expect(dialog).not.toHaveTextContent('do not render raw feedback')
   })
 
   it('detaches the judge from the gate context menu', async () => {

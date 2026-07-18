@@ -67,6 +67,41 @@ reviewerNotes = "preserve me"
 	}
 }
 
+func TestBoardWriterUsesDecodedIdentityForQuotedRootKeys(t *testing.T) {
+	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
+	writeFixture(t, store.BoardPath("session-search"),
+		"schema = 1\n"+
+			"id = \"brd_01J9_sesssearch\"\n"+
+			"slug = \"session-search\"\n"+
+			"title = \"Improve session search\"\n"+
+			"rev = 7\n"+
+			"updatedBy = \"agent:archon\"\n"+
+			"\"updatedAt\" = \"2026-06-03T16:00:00Z\"\n",
+	)
+	before, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	after, err := store.UpdateBoardMetadata("session-search", BoardMetadataPatch{
+		Title:     stringPtr("Improve session search quickly"),
+		UpdatedBy: "agent:test",
+	}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev})
+	if err != nil {
+		t.Fatalf("update board: %v", err)
+	}
+	if after.UpdatedAt != "2026-06-03T17:00:00Z" {
+		t.Fatalf("updatedAt = %q, want fixed update time through quoted key identity", after.UpdatedAt)
+	}
+	raw := readFile(t, store.BoardPath("session-search"))
+	if strings.Count(raw, "updatedAt") != 1 {
+		t.Fatalf("writer created duplicate semantic updatedAt keys:\n%s", raw)
+	}
+	if !strings.Contains(raw, "\"updatedAt\" = \"2026-06-03T17:00:00Z\"") {
+		t.Fatalf("writer did not update the existing quoted root key:\n%s", raw)
+	}
+}
+
 func TestBoardStructuralWriteRequiresMatchingETagAndBumpsRevision(t *testing.T) {
 	store := NewStore(t.TempDir())
 	store.Now = fixedClock()
@@ -1058,7 +1093,7 @@ beadId = "home-7kc4.1"
 files = ["README.md"]
 links = ["https://example.invalid"]
 
-[[formation.verification]]
+[formation.verification]
 id = "ver_frame"
 kinds = ["code"]
 criterion = "Tests pass"
@@ -1127,9 +1162,22 @@ lane = "220"
 		t.Fatalf("brief block still present after clear:\n%s", got)
 	}
 
-	removedVerification, err := store.RemoveFormationVerification("session-search", FormationVerificationRemovalRequest{
+	rawBeforeRemoval := readFile(t, store.BoardPath("session-search"))
+	_, err = store.RemoveFormationVerification("session-search", FormationVerificationRemovalRequest{
 		FormationID: "fmn_frame",
 		UpdatedBy:   "agent:test",
+	}, WriteOptions{ExpectedETag: clearedBrief.ETag, ExpectedRev: clearedBrief.Rev})
+	if err == nil || !strings.Contains(err.Error(), "legacy_inline_verification_requires_migration") {
+		t.Fatalf("remove without replacement Gate error = %v, want migration rejection", err)
+	}
+	if rawAfterRejection := readFile(t, store.BoardPath("session-search")); rawAfterRejection != rawBeforeRemoval {
+		t.Fatalf("rejected compatibility removal changed board\nbefore:\n%s\nafter:\n%s", rawBeforeRemoval, rawAfterRejection)
+	}
+
+	removedVerification, err := store.RemoveFormationVerification("session-search", FormationVerificationRemovalRequest{
+		FormationID:       "fmn_frame",
+		ReplacementGateID: "gate_review",
+		UpdatedBy:         "agent:test",
 	}, WriteOptions{ExpectedETag: clearedBrief.ETag, ExpectedRev: clearedBrief.Rev})
 	if err != nil {
 		t.Fatalf("remove verification inverse: %v", err)
@@ -1303,7 +1351,7 @@ controller = false
 	}
 }
 
-func TestS3BriefAndVerificationPersistProjectBeadAndOnFail(t *testing.T) {
+func TestS3BriefPersistsAndInlineVerificationWriterFailsWithoutMutation(t *testing.T) {
 	store := NewStore(t.TempDir())
 	store.Now = fixedClock()
 	writeFixture(t, store.BoardPath("session-search"), `schema = 1
@@ -1334,37 +1382,228 @@ title = "Ship"
 	if err != nil {
 		t.Fatalf("set brief: %v", err)
 	}
-	after, err := store.SetFormationVerification("session-search", FormationVerificationRequest{
+	rawBeforeVerification := readFile(t, store.BoardPath("session-search"))
+	_, err = store.SetFormationVerification("session-search", FormationVerificationRequest{
 		FormationID: "fmn_ship",
 		Kinds:       []string{"code", "human"},
 		Criterion:   "Tests pass and the handoff is clear.",
 		OnFail:      "pushback",
 		UpdatedBy:   "agent:test",
 	}, WriteOptions{ExpectedETag: withBrief.ETag, ExpectedRev: withBrief.Rev})
-	if err != nil {
-		t.Fatalf("set verification: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "legacy_inline_verification_requires_migration") {
+		t.Fatalf("set verification error = %v, want stable migration rejection", err)
 	}
-
+	after, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board after rejected verification: %v", err)
+	}
 	formation := after.Formations[0]
 	if formation.Brief == nil || formation.Brief.Goal != "Ship the change" || formation.Brief.BeadID != "srv-abc.2" {
 		t.Fatalf("brief = %+v, want goal and project bead", formation.Brief)
 	}
-	if formation.Verification == nil || !strings.HasPrefix(formation.Verification.ID, "ver_") || formation.Verification.OnFail != "pushback" {
-		t.Fatalf("verification = %+v, want ver_ id and onFail pushback", formation.Verification)
+	if formation.Verification != nil {
+		t.Fatalf("verification = %+v, want retired writer to leave it absent", formation.Verification)
 	}
 	raw := readFile(t, store.BoardPath("session-search"))
+	if raw != rawBeforeVerification {
+		t.Fatalf("rejected verification write changed board\nbefore:\n%s\nafter:\n%s", rawBeforeVerification, raw)
+	}
 	for _, want := range []string{
 		`customFuture = "keep me"`,
 		`[formation.brief]`,
 		`beadId = "srv-abc.2"`,
 		`files = ["src/SessionPanel.tsx"]`,
 		`links = ["https://example.com/spec"]`,
-		`[formation.verification]`,
-		`onFail = "pushback"`,
 	} {
 		if !strings.Contains(raw, want) {
 			t.Fatalf("board TOML missing %q:\n%s", want, raw)
 		}
+	}
+}
+
+func TestRemoveFormationVerificationRejectsDuplicateLegacySectionsWithoutMutation(t *testing.T) {
+	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
+	writeFixture(t, store.BoardPath("duplicate-verification"), `schema = 1
+id = "brd_duplicate_verification"
+slug = "duplicate-verification"
+title = "Duplicate verification"
+rev = 7
+updatedAt = "2026-06-03T16:00:00Z"
+
+[[formation]]
+id = "fmn_work"
+type = "solo"
+title = "Work"
+
+[[formation.output]]
+id = "port_work_out"
+label = "Output"
+
+[formation.verification]
+id = "ver_first"
+kinds = ["code"]
+criterion = "First check"
+onFail = "block"
+
+[formation.verification]
+id = "ver_second"
+kinds = ["human"]
+criterion = "Second check"
+onFail = "pushback"
+
+[[gate]]
+id = "gate_review"
+title = "Review"
+kinds = ["human"]
+criterion = "Review the work"
+
+[[connection]]
+id = "edge_work_review"
+from = "fmn_work:port_work_out"
+to = "gate_review:in"
+`)
+	before, err := store.ReadBoard("duplicate-verification")
+	if err != nil {
+		t.Fatalf("read duplicate verification board: %v", err)
+	}
+	rawBefore := readFile(t, store.BoardPath("duplicate-verification"))
+
+	_, err = store.RemoveFormationVerification("duplicate-verification", FormationVerificationRemovalRequest{
+		FormationID:       "fmn_work",
+		ReplacementGateID: "gate_review",
+		UpdatedBy:         "agent:test",
+	}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev})
+	if err == nil || !strings.Contains(err.Error(), LegacyInlineVerificationMigrationCode) {
+		t.Fatalf("duplicate verification removal error = %v, want migration rejection", err)
+	}
+	if rawAfter := readFile(t, store.BoardPath("duplicate-verification")); rawAfter != rawBefore {
+		t.Fatalf("duplicate verification rejection changed board\nbefore:\n%s\nafter:\n%s", rawBefore, rawAfter)
+	}
+}
+
+func TestRemoveFormationVerificationDeletesSemanticDescendantTables(t *testing.T) {
+	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
+	writeFixture(t, store.BoardPath("verification-descendant"), `schema = 1
+id = "brd_verification_descendant"
+slug = "verification-descendant"
+title = "Verification descendant"
+rev = 7
+updatedAt = "2026-06-03T16:00:00Z"
+
+[[formation]]
+id = "fmn_work"
+type = "solo"
+title = "Work"
+
+[[formation.output]]
+id = "port_work_out"
+label = "Output"
+
+[formation.verification]
+id = "ver_work"
+kinds = ["code"]
+criterion = "Check the work"
+onFail = "block"
+
+[formation.brief]
+goal = "Preserve this sibling section"
+
+[formation.verification.extra]
+futureField = "must leave with its retired parent"
+
+[[gate]]
+id = "gate_review"
+title = "Review"
+kinds = ["human"]
+criterion = "Review the work"
+
+[[connection]]
+id = "edge_work_review"
+from = "fmn_work:port_work_out"
+to = "gate_review:in"
+`)
+	before, err := store.ReadBoard("verification-descendant")
+	if err != nil {
+		t.Fatalf("read verification descendant board: %v", err)
+	}
+	if verification := before.Formations[0].Verification; verification == nil || verification.ID != "ver_work" || verification.Criterion != "Check the work" {
+		t.Fatalf("legacy verification inspection = %+v, want populated parent fields preserved", verification)
+	}
+
+	after, err := store.RemoveFormationVerification("verification-descendant", FormationVerificationRemovalRequest{
+		FormationID:       "fmn_work",
+		ReplacementGateID: "gate_review",
+		UpdatedBy:         "agent:test",
+	}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev})
+	if err != nil {
+		t.Fatalf("remove verification with descendant table: %v", err)
+	}
+	if after.Formations[0].Verification != nil {
+		t.Fatalf("verification after removal = %+v, want removed", after.Formations[0].Verification)
+	}
+	raw := readFile(t, store.BoardPath("verification-descendant"))
+	if strings.Contains(raw, "formation.verification") || strings.Contains(raw, "futureField") {
+		t.Fatalf("retired verification descendant survived explicit removal:\n%s", raw)
+	}
+	if !strings.Contains(raw, `id = "gate_review"`) {
+		t.Fatalf("replacement Gate was not preserved:\n%s", raw)
+	}
+	if !strings.Contains(raw, `goal = "Preserve this sibling section"`) {
+		t.Fatalf("unrelated Formation section was not preserved:\n%s", raw)
+	}
+}
+
+func TestRemoveFormationVerificationMigratesDescendantOnlyRepresentation(t *testing.T) {
+	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
+	raw := strings.Replace(
+		s4VerificationBoardFixture("block"),
+		"[formation.verification]",
+		"[formation.verification.extra]",
+		1,
+	)
+	raw += `
+[[gate]]
+id = "gate_review"
+title = "Review"
+kinds = ["human"]
+criterion = "Review the work"
+
+[[connection]]
+id = "edge_work_review"
+from = "fmn_work:port_work_out"
+to = "gate_review:in"
+`
+	writeFixture(t, store.BoardPath("session-search"), raw)
+	before, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read descendant-only verification board: %v", err)
+	}
+	formation, ok := findFormation(before.Formations, "fmn_work")
+	if !ok || formation.Verification == nil {
+		t.Fatalf("descendant-only verification inspection = %+v, want visible migration fence", formation.Verification)
+	}
+
+	after, err := store.RemoveFormationVerification("session-search", FormationVerificationRemovalRequest{
+		FormationID:       "fmn_work",
+		ReplacementGateID: "gate_review",
+		UpdatedBy:         "agent:test",
+	}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev})
+	if err != nil {
+		t.Fatalf("remove descendant-only verification: %v", err)
+	}
+	afterFormation, ok := findFormation(after.Formations, "fmn_work")
+	if !ok || afterFormation.Verification != nil {
+		t.Fatalf("verification after descendant-only removal = %+v, want removed", afterFormation.Verification)
+	}
+	afterRaw := readFile(t, store.BoardPath("session-search"))
+	if strings.Contains(afterRaw, "formation.verification") {
+		t.Fatalf("descendant-only verification survived explicit migration:\n%s", afterRaw)
+	}
+	if !strings.Contains(afterRaw, `id = "gate_review"`) {
+		t.Fatalf("replacement Gate was not preserved:\n%s", afterRaw)
 	}
 }
 
@@ -1609,14 +1848,12 @@ func TestS3GatePersistsKindsCriterionWithoutVerdictOrOnFail(t *testing.T) {
 		t.Fatalf("read board: %v", err)
 	}
 	result, err := store.CreateGate("session-search", GateCreateRequest{
-		Title:       "Review gate",
-		Kinds:       []string{"code", "human"},
-		Criterion:   "Research is sound and safe to build.",
-		CommandArgv: []string{"npm", "run", "lint"},
-		CommandCWD:  "dashboard",
-		X:           410,
-		Y:           220,
-		UpdatedBy:   "agent:test",
+		Title:     "Review gate",
+		Kinds:     []string{"code", "human"},
+		Criterion: "Research is sound and safe to build.",
+		X:         410,
+		Y:         220,
+		UpdatedBy: "agent:test",
 	}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev})
 	if err != nil {
 		t.Fatalf("create gate: %v", err)
@@ -1635,14 +1872,8 @@ func TestS3GatePersistsKindsCriterionWithoutVerdictOrOnFail(t *testing.T) {
 	if strings.Contains(raw, "x = 410") || strings.Contains(raw, "y = 220") {
 		t.Fatalf("gate layout coordinates leaked into board definition:\n%s", raw)
 	}
-	if !strings.Contains(raw, `commandArgv = ["npm", "run", "lint"]`) {
-		t.Fatalf("gate command argv did not persist in board definition:\n%s", raw)
-	}
-	if !strings.Contains(raw, `commandCwd = "dashboard"`) {
-		t.Fatalf("gate command cwd did not persist in board definition:\n%s", raw)
-	}
-	if strings.Contains(raw, `command = "npm run lint"`) {
-		t.Fatalf("gate command persisted as legacy shell string:\n%s", raw)
+	if strings.Contains(raw, "command") {
+		t.Fatalf("pure gate unexpectedly persisted legacy command fields:\n%s", raw)
 	}
 	layout := result.Layout
 	if layout.BoardRev != after.Rev {

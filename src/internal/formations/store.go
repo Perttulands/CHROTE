@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -28,6 +27,8 @@ var (
 type Store struct {
 	Workspace string
 	Now       func() time.Time
+
+	runtimeAuthority *runtimeAuthorityBoundary
 }
 
 type BoardDocument struct {
@@ -93,6 +94,8 @@ type WriteOptions struct {
 	ExpectedRev  int
 }
 
+// NewStore constructs the schema-1 compatibility and offline-definition store.
+// Production runtime wiring must use NewRuntimeStore.
 func NewStore(workspace string) *Store {
 	return &Store{
 		Workspace: workspace,
@@ -102,30 +105,33 @@ func NewStore(workspace string) *Store {
 	}
 }
 
+func (s *Store) workspaceRoot() string {
+	if s == nil {
+		return ""
+	}
+	if s.runtimeAuthority != nil {
+		return s.runtimeAuthority.configuredWorkspace
+	}
+	return s.Workspace
+}
+
 func (s *Store) BoardPath(slug string) string {
-	return filepath.Join(s.Workspace, ".formations", "boards", slug+".formation.toml")
+	return filepath.Join(s.workspaceRoot(), ".formations", "boards", slug+".formation.toml")
 }
 
 func (s *Store) LayoutPath(slug string) string {
-	return filepath.Join(s.Workspace, ".formations", "layout", slug+".layout.toml")
+	return filepath.Join(s.workspaceRoot(), ".formations", "layout", slug+".layout.toml")
 }
 
 func (s *Store) ListBoards() ([]BoardSummary, error) {
-	dir := filepath.Join(s.Workspace, ".formations", "boards")
-	entries, err := os.ReadDir(dir)
+	names, err := s.listDefinitionNames(boardDefinitionKind)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return []BoardSummary{}, nil
-		}
 		return nil, err
 	}
 
-	boards := make([]BoardSummary, 0, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".formation.toml") {
-			continue
-		}
-		slug := strings.TrimSuffix(entry.Name(), ".formation.toml")
+	boards := make([]BoardSummary, 0, len(names))
+	for _, name := range names {
+		slug := strings.TrimSuffix(name, boardDefinitionKind.suffix)
 		board, err := s.ReadBoard(slug)
 		if err != nil {
 			return nil, err
@@ -148,7 +154,7 @@ func (s *Store) ReadBoard(slug string) (*BoardDocument, error) {
 	if err := validateSlug(slug); err != nil {
 		return nil, err
 	}
-	return s.readBoardPath(s.BoardPath(slug))
+	return s.readBoardDefinition(slug)
 }
 
 func (s *Store) CreateBoard(req BoardCreateRequest) (*BoardDocument, error) {
@@ -159,16 +165,17 @@ func (s *Store) CreateBoard(req BoardCreateRequest) (*BoardDocument, error) {
 	if title == "" {
 		return nil, fmt.Errorf("%w: board title is required", ErrInvalidSlug)
 	}
-	path := s.BoardPath(req.Slug)
 	var created *BoardDocument
-	err := withFileLock(path, func() error {
-		if _, err := os.Stat(path); err == nil {
-			return ErrAlreadyExists
-		} else if err != nil && !os.IsNotExist(err) {
+	err := s.withBoardDefinitionLock(req.Slug, func(definition *definitionFile) error {
+		exists, err := definition.exists()
+		if err != nil {
 			return err
 		}
+		if exists {
+			return ErrAlreadyExists
+		}
 		raw := renderBoard(req.Slug, title, strings.TrimSpace(req.UpdatedBy), s.now())
-		if err := writeAtomic(path, raw); err != nil {
+		if err := definition.writeAtomic(raw); err != nil {
 			return err
 		}
 		board, err := parseBoard(raw)
@@ -188,22 +195,16 @@ func (s *Store) BoardChangeSince(slug, previousETag string) (*BoardChangeSignal,
 	if err := validateSlug(slug); err != nil {
 		return nil, err
 	}
-	path := s.BoardPath(slug)
-	raw, err := os.ReadFile(path)
+	definition, err := s.openBoardDefinition(slug, false)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, ErrNotFound
-		}
+		return nil, err
+	}
+	defer definition.close()
+	raw, stat, err := definition.read()
+	if err != nil {
 		return nil, err
 	}
 	if _, err := parseBoard(raw); err != nil {
-		return nil, err
-	}
-	stat, err := os.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, ErrNotFound
-		}
 		return nil, err
 	}
 	currentETag := etag(raw)
@@ -228,14 +229,10 @@ func (s *Store) UpdateBoardMetadata(slug string, patch BoardMetadataPatch, opts 
 	if opts.ExpectedETag == "" || opts.ExpectedRev == 0 {
 		return nil, ErrPreconditionRequired
 	}
-	path := s.BoardPath(slug)
 	var next *BoardDocument
-	err := withFileLock(path, func() error {
-		raw, err := os.ReadFile(path)
+	err := s.withBoardDefinitionLock(slug, func(definition *definitionFile) error {
+		raw, err := definition.readBytes()
 		if err != nil {
-			if os.IsNotExist(err) {
-				return ErrNotFound
-			}
 			return err
 		}
 		current, err := parseBoard(raw)
@@ -263,7 +260,7 @@ func (s *Store) UpdateBoardMetadata(slug string, patch BoardMetadataPatch, opts 
 		doc.setScalar("updatedAt", renderString(s.now().Format(time.RFC3339)))
 
 		nextRaw := doc.bytes()
-		if err := writeAtomic(path, nextRaw); err != nil {
+		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
 		next, err = parseBoard(nextRaw)
@@ -279,7 +276,7 @@ func (s *Store) ReadLayout(slug string) (*LayoutDocument, error) {
 	if err := validateSlug(slug); err != nil {
 		return nil, err
 	}
-	return s.readLayoutPath(s.LayoutPath(slug))
+	return s.readLayoutDefinition(slug)
 }
 
 func (s *Store) UpdateLayoutMetadata(slug string, patch LayoutMetadataPatch, opts WriteOptions) (*LayoutDocument, error) {
@@ -289,14 +286,10 @@ func (s *Store) UpdateLayoutMetadata(slug string, patch LayoutMetadataPatch, opt
 	if opts.ExpectedETag == "" {
 		return nil, ErrPreconditionRequired
 	}
-	path := s.LayoutPath(slug)
 	var next *LayoutDocument
-	err := withFileLock(path, func() error {
-		raw, err := os.ReadFile(path)
+	err := s.withLayoutDefinitionLock(slug, func(definition *definitionFile) error {
+		raw, err := definition.readBytes()
 		if err != nil {
-			if os.IsNotExist(err) {
-				return ErrNotFound
-			}
 			return err
 		}
 		current, err := parseLayout(raw)
@@ -318,7 +311,7 @@ func (s *Store) UpdateLayoutMetadata(slug string, patch LayoutMetadataPatch, opt
 		doc.setScalar("updatedAt", renderString(when.UTC().Format(time.RFC3339)))
 
 		nextRaw := doc.bytes()
-		if err := writeAtomic(path, nextRaw); err != nil {
+		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
 		next, err = parseLayout(nextRaw)
@@ -337,12 +330,14 @@ func (s *Store) now() time.Time {
 	return s.Now().UTC()
 }
 
-func (s *Store) readBoardPath(path string) (*BoardDocument, error) {
-	raw, err := os.ReadFile(path)
+func (s *Store) readBoardDefinition(slug string) (*BoardDocument, error) {
+	definition, err := s.openBoardDefinition(slug, false)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, ErrNotFound
-		}
+		return nil, err
+	}
+	defer definition.close()
+	raw, err := definition.readBytes()
+	if err != nil {
 		return nil, err
 	}
 	current, err := parseBoard(raw)
@@ -354,12 +349,9 @@ func (s *Store) readBoardPath(path string) (*BoardDocument, error) {
 	}
 
 	var migrated *BoardDocument
-	err = withFileLock(path, func() error {
-		lockedRaw, err := os.ReadFile(path)
+	err = definition.withLock(func(definition *definitionFile) error {
+		lockedRaw, err := definition.readBytes()
 		if err != nil {
-			if os.IsNotExist(err) {
-				return ErrNotFound
-			}
 			return err
 		}
 		lockedCurrent, err := parseBoard(lockedRaw)
@@ -373,7 +365,7 @@ func (s *Store) readBoardPath(path string) (*BoardDocument, error) {
 		doc := parseTOMLDocument(lockedRaw)
 		doc.setScalar("schema", renderInt(CurrentSchema))
 		migratedRaw := doc.bytes()
-		if err := writeAtomic(path, migratedRaw); err != nil {
+		if err := definition.writeAtomic(migratedRaw); err != nil {
 			return err
 		}
 		migrated, err = parseBoard(migratedRaw)
@@ -385,12 +377,14 @@ func (s *Store) readBoardPath(path string) (*BoardDocument, error) {
 	return migrated, nil
 }
 
-func (s *Store) readLayoutPath(path string) (*LayoutDocument, error) {
-	raw, err := os.ReadFile(path)
+func (s *Store) readLayoutDefinition(slug string) (*LayoutDocument, error) {
+	definition, err := s.openLayoutDefinition(slug, false)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, ErrNotFound
-		}
+		return nil, err
+	}
+	defer definition.close()
+	raw, err := definition.readBytes()
+	if err != nil {
 		return nil, err
 	}
 	current, err := parseLayout(raw)
@@ -402,12 +396,9 @@ func (s *Store) readLayoutPath(path string) (*LayoutDocument, error) {
 	}
 
 	var migrated *LayoutDocument
-	err = withFileLock(path, func() error {
-		lockedRaw, err := os.ReadFile(path)
+	err = definition.withLock(func(definition *definitionFile) error {
+		lockedRaw, err := definition.readBytes()
 		if err != nil {
-			if os.IsNotExist(err) {
-				return ErrNotFound
-			}
 			return err
 		}
 		lockedCurrent, err := parseLayout(lockedRaw)
@@ -421,7 +412,7 @@ func (s *Store) readLayoutPath(path string) (*LayoutDocument, error) {
 		doc := parseTOMLDocument(lockedRaw)
 		doc.setScalar("schema", renderInt(CurrentSchema))
 		migratedRaw := doc.bytes()
-		if err := writeAtomic(path, migratedRaw); err != nil {
+		if err := definition.writeAtomic(migratedRaw); err != nil {
 			return err
 		}
 		migrated, err = parseLayout(migratedRaw)
@@ -439,7 +430,7 @@ func parseBoard(raw []byte) (*BoardDocument, error) {
 	if schema > CurrentSchema {
 		return nil, fmt.Errorf("%w: schema %d", ErrUnsupportedSchema, schema)
 	}
-	return &BoardDocument{
+	board := &BoardDocument{
 		Schema:      schema,
 		ID:          doc.stringValue("id"),
 		Slug:        doc.stringValue("slug"),
@@ -453,7 +444,9 @@ func parseBoard(raw []byte) (*BoardDocument, error) {
 		Connections: parseBoardConnections(raw),
 		ETag:        etag(raw),
 		TOML:        string(raw),
-	}, nil
+	}
+	populateLegacyScriptGateMigrationInspections(board)
+	return board, nil
 }
 
 func parseLayout(raw []byte) (*LayoutDocument, error) {

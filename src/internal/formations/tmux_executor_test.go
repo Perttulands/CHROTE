@@ -888,6 +888,130 @@ func TestTmuxPeerFormationUsesSharedPlaneAndFacilitatorSynthesis(t *testing.T) {
 	}
 }
 
+func TestPeerPlaneAppendStaysOnPinnedRunDirectoryAfterPathSwap(t *testing.T) {
+	executor, req, runDirectory := peerPlaneSecurityFixture(t)
+	plane, err := executor.seedPeerPlane(req, nil)
+	if err != nil {
+		t.Fatalf("seed peer plane: %v", err)
+	}
+	defer plane.close()
+	if got, want := plane.relativePath, runArtifactPath("session-search", req.RunID, ".peer.md"); got != want {
+		t.Fatalf("peer plane relative path = %q, want %q", got, want)
+	}
+	detachedDirectory := runDirectory + ".detached"
+	if err := os.Rename(runDirectory, detachedDirectory); err != nil {
+		t.Fatalf("detach pinned run directory: %v", err)
+	}
+	if err := os.MkdirAll(runDirectory, 0o770); err != nil {
+		t.Fatalf("create replacement run directory: %v", err)
+	}
+	replacementPlane := filepath.Join(runDirectory, req.RunID+".peer.md")
+	const replacementBefore = "replacement directory must not receive peer output\n"
+	writeFixture(t, replacementPlane, replacementBefore)
+
+	if err := executor.appendPeerPlaneOutput(plane, tmuxSlotOutput{
+		SlotID: "slot_peer", AgentID: "peer-a", Phase: "peer-turn", Text: "PINNED-PEER-CONTRIBUTION",
+	}); err != nil {
+		t.Fatalf("append through pinned run directory: %v", err)
+	}
+	if got := readFile(t, replacementPlane); got != replacementBefore {
+		t.Fatalf("replacement run directory was mutated: %q", got)
+	}
+	detachedPlane := filepath.Join(detachedDirectory, req.RunID+".peer.md")
+	if got := readFile(t, detachedPlane); !strings.Contains(got, "PINNED-PEER-CONTRIBUTION") {
+		t.Fatalf("pinned peer plane missing contribution:\n%s", got)
+	}
+}
+
+func TestPeerPlaneAppendRejectsSymlinkAndHardlinkSubstitution(t *testing.T) {
+	tests := []struct {
+		name       string
+		substitute func(t *testing.T, victimPath, planePath string)
+	}{
+		{
+			name: "symlink",
+			substitute: func(t *testing.T, victimPath, planePath string) {
+				t.Helper()
+				if err := os.Symlink(victimPath, planePath); err != nil {
+					t.Fatalf("substitute peer plane symlink: %v", err)
+				}
+			},
+		},
+		{
+			name: "hardlink",
+			substitute: func(t *testing.T, victimPath, planePath string) {
+				t.Helper()
+				if err := os.Link(victimPath, planePath); err != nil {
+					t.Fatalf("substitute peer plane hardlink: %v", err)
+				}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			executor, req, runDirectory := peerPlaneSecurityFixture(t)
+			plane, err := executor.seedPeerPlane(req, nil)
+			if err != nil {
+				t.Fatalf("seed peer plane: %v", err)
+			}
+			defer plane.close()
+			planePath := filepath.Join(runDirectory, req.RunID+".peer.md")
+			if err := os.Remove(planePath); err != nil {
+				t.Fatalf("remove seeded peer plane: %v", err)
+			}
+			victimPath := filepath.Join(t.TempDir(), "peer-plane-victim")
+			const victimBefore = "private victim content\n"
+			writeFixture(t, victimPath, victimBefore)
+			test.substitute(t, victimPath, planePath)
+
+			err = executor.appendPeerPlaneOutput(plane, tmuxSlotOutput{
+				SlotID: "slot_peer", AgentID: "peer-a", Phase: "peer-turn", Text: "must be rejected",
+			})
+			if !errors.Is(err, ErrRunLedgerInvalid) {
+				t.Fatalf("append through %s error = %v, want ErrRunLedgerInvalid", test.name, err)
+			}
+			if got := readFile(t, victimPath); got != victimBefore {
+				t.Fatalf("rejected %s append mutated victim: %q", test.name, got)
+			}
+		})
+	}
+}
+
+func TestPeerPlaneAppendRejectsAggregateByteOverflowWithoutMutation(t *testing.T) {
+	executor, req, runDirectory := peerPlaneSecurityFixture(t)
+	plane, err := executor.seedPeerPlane(req, nil)
+	if err != nil {
+		t.Fatalf("seed peer plane: %v", err)
+	}
+	defer plane.close()
+	planePath := filepath.Join(runDirectory, req.RunID+".peer.md")
+	before := strings.Repeat("x", peerPlaneMaxBytes)
+	writeFixture(t, planePath, before)
+
+	err = executor.appendPeerPlaneOutput(plane, tmuxSlotOutput{
+		SlotID: "slot_peer", AgentID: "peer-a", Phase: "peer-turn", Text: "one byte too many",
+	})
+	if !errors.Is(err, ErrRunLedgerInvalid) {
+		t.Fatalf("append beyond peer plane byte cap error = %v, want ErrRunLedgerInvalid", err)
+	}
+	if got := readFile(t, planePath); got != before {
+		t.Fatalf("rejected oversized peer append mutated plane")
+	}
+}
+
+func peerPlaneSecurityFixture(t *testing.T) (*TmuxFormationExecutor, FormationExecution, string) {
+	t.Helper()
+	workspace := t.TempDir()
+	store := NewStore(workspace)
+	runID := newPrefixedID("run")
+	ledgerPath := filepath.Join(workspace, runArtifactPath("session-search", runID, ".ndjson"))
+	writeFixture(t, ledgerPath, string(testRunLedgerBytes(t, testRunStartedEvent(runID, "session-search"))))
+	executor := newTmuxFormationExecutorWithClient(store, nil, tmuxTestConfig(t), &fakeTmuxHarnessClient{})
+	return executor, FormationExecution{
+		RunID: runID, NodeID: "fmn_peer", Brief: FormationBrief{Goal: "Coordinate safely"},
+	}, filepath.Dir(ledgerPath)
+}
+
 func TestTmuxOrchestratedFormationGivesLeaderToolPacketWithoutPreDispatchingWorkers(t *testing.T) {
 	store, personas := s4RunFixture(t)
 	store.Now = fixedClock()

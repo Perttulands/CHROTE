@@ -62,10 +62,8 @@ controller = true
 [[gate]]
 id = "gate_review"
 title = "Script review"
-kinds = ["script"]
+kinds = ["human"]
 criterion = "Run the gate"
-commandArgv = ["./gate.sh"]
-commandCwd = "."
 
 [[connection]]
 id = "edge_mission_work"
@@ -168,7 +166,7 @@ criterion = "An operator confirms the result is real"
 	}
 }
 
-func TestValidateBoardRequiresExecutableRouteForMixedHumanScriptGate(t *testing.T) {
+func TestValidateBoardRequiresExecutableRouteForMixedHumanCodeGate(t *testing.T) {
 	raw := cleanValidateBoardFixture() + `
 [[gate]]
 id = "gate_mixed"
@@ -179,21 +177,28 @@ criterion = "Automated checks pass and a human confirms"
 	report := ValidateBoard(mustParseValidateBoardFixture(t, raw))
 	unroutable := findBoardFindings(report.Errors, FindingGateNotRoutable)
 	if len(unroutable) != 1 || unroutable[0].NodeID != "gate_mixed" {
-		t.Fatalf("mixed human/script gate findings = %+v, want gate_mixed unroutable", unroutable)
+		t.Fatalf("mixed human/code gate findings = %+v, want gate_mixed unroutable", unroutable)
 	}
 }
 
 func TestValidateBoardScriptCommandForms(t *testing.T) {
-	shellBoard := strings.Replace(cleanValidateBoardFixture(), `commandArgv = ["./gate.sh"]`, `commandShell = "./gate.sh"`, 1)
-	if report := ValidateBoard(mustParseValidateBoardFixture(t, shellBoard)); len(findBoardFindings(report.Errors, FindingGateNotRoutable)) != 0 {
-		t.Fatalf("commandShell gate was reported unroutable: %+v", report.Errors)
+	shellBoard := strings.Replace(cleanValidateBoardFixture(), `kinds = ["human"]`, `kinds = ["code"]`, 1)
+	shellBoard = strings.Replace(shellBoard, `criterion = "Run the gate"`, `criterion = "Run the gate"`+"\n"+`commandShell = "./gate.sh"`, 1)
+	report := ValidateBoard(mustParseValidateBoardFixture(t, shellBoard))
+	migrations := findBoardFindings(report.Errors, FindingLegacyScriptGate)
+	if len(migrations) != 1 || migrations[0].Details == nil || migrations[0].Details.SourceMode != "shell" {
+		t.Fatalf("commandShell migration findings = %+v, want one shell plan", migrations)
 	}
-
-	legacyOnly := strings.Replace(cleanValidateBoardFixture(), `commandArgv = ["./gate.sh"]`, `command = "./gate.sh"`, 1)
-	report := ValidateBoard(mustParseValidateBoardFixture(t, legacyOnly))
 	unroutable := findBoardFindings(report.Errors, FindingGateNotRoutable)
 	if len(unroutable) != 1 || unroutable[0].NodeID != "gate_review" {
-		t.Fatalf("legacy command findings = %+v, want gate_review unroutable", unroutable)
+		t.Fatalf("commandShell unroutable findings = %+v, want separate gate_review finding", unroutable)
+	}
+
+	legacyOnly := strings.Replace(cleanValidateBoardFixture(), `criterion = "Run the gate"`, `criterion = "Run the gate"`+"\n"+`command = "./gate.sh"`, 1)
+	report = ValidateBoard(mustParseValidateBoardFixture(t, legacyOnly))
+	migrations = findBoardFindings(report.Errors, FindingLegacyScriptGate)
+	if len(migrations) != 1 || migrations[0].Details == nil || migrations[0].Details.SourceMode != "legacy_string" {
+		t.Fatalf("legacy command migration findings = %+v, want one legacy_string plan", migrations)
 	}
 }
 
@@ -208,6 +213,30 @@ title = "Bogus"
 	bad := findBoardFindings(report.Errors, FindingInvalidFormationType)
 	if len(bad) != 1 || bad[0].NodeID != "fmn_bogus" {
 		t.Fatalf("invalid-formation-type errors = %+v, want fmn_bogus", bad)
+	}
+}
+
+func TestValidateBoardReportsLegacyInlineVerificationAsMigrationRequired(t *testing.T) {
+	raw := strings.Replace(cleanValidateBoardFixture(), `[[formation.output]]
+id = "port_work_out"
+label = "Output"
+`, `[[formation.output]]
+id = "port_work_out"
+label = "Output"
+
+[formation.verification]
+id = "ver_work"
+kinds = ["code"]
+criterion = "Tests pass"
+onFail = "block"
+`, 1)
+	report := ValidateBoard(mustParseValidateBoardFixture(t, raw))
+	legacy := findBoardFindings(report.Errors, "legacy_inline_verification_requires_migration")
+	if len(legacy) != 1 || legacy[0].NodeID != "fmn_work" {
+		t.Fatalf("legacy inline verification findings = %+v, want fmn_work migration error", legacy)
+	}
+	if !strings.Contains(legacy[0].Message, "explicit Gate") {
+		t.Fatalf("legacy inline verification message = %q, want explicit Gate guidance", legacy[0].Message)
 	}
 }
 

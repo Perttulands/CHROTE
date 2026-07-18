@@ -268,7 +268,7 @@ cd ..
 CHROTE_SERVER_BINARY="$PWD/chrote-server-ci" scripts/test-built-server-contract.sh
 ```
 
-The wrapper allocates a disposable port, starts the built binary with `-start-ttyd=false`, pins tmux and all writable state to a test-owned artifact directory, seeds an isolated Formations board, and runs only `dashboard/tests/contract/`. The server starts under an empty environment with only a bounded allowlist restored. This prevents inherited Formations lab, tmux, script-gate, `DEDICATED`, or `PROD_SMOKE` settings from selecting an executor; the wrapper explicitly disables those opt-ins and owns the Formations roots and socket paths. It prints the retained artifact directory; on failure, inspect `server.log`, `workspace/.formations`, `dashboard/playwright-report`, and `dashboard/test-results`.
+The wrapper allocates a disposable port, starts the built binary with `-start-ttyd=false`, pins tmux and all writable state to a test-owned artifact directory, seeds an isolated Formations board, and runs only `dashboard/tests/contract/`. The server starts under an empty environment with only a bounded allowlist restored. This prevents inherited Formations lab, tmux, `DEDICATED`, or `PROD_SMOKE` settings from selecting an executor; the wrapper explicitly disables those opt-ins and owns the Formations roots and socket paths. Historical Script-Gate settings are omitted and authorize nothing. It prints the retained artifact directory; on failure, inspect `server.log`, `workspace/.formations`, `dashboard/playwright-report`, and `dashboard/test-results`.
 
 ### Run Live Backend Integration Tests
 

@@ -61,6 +61,9 @@ func ParseEscalationSentinel(captured, runID string) (EscalationSentinel, bool) 
 }
 
 func (s *Store) RecordEscalationFromCapture(runID, nodeID, captured string) (bool, error) {
+	if err := s.RequireRuntimeAuthority(); err != nil {
+		return false, err
+	}
 	sentinel, ok := ParseEscalationSentinel(captured, runID)
 	if !ok {
 		return false, nil

@@ -78,7 +78,6 @@ CHROTE_FORMATIONS_TMUX_ROOTS="$workspace" \
 CHROTE_FORMATIONS_TMUX_SESSION_PREFIX=contract- \
 CHROTE_FORMATIONS_TMUX_DEDICATED= \
 CHROTE_FORMATIONS_TMUX_PROD_SMOKE= \
-CHROTE_FORMATIONS_SCRIPT_GATES= \
   "$server_binary" -host 127.0.0.1 -port "$port" -start-ttyd=false >"$server_log" 2>&1 &
 server_pid=$!
 

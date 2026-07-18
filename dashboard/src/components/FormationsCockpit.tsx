@@ -76,7 +76,19 @@ type WireDrag =
 type LaneDrag = { connectionId: string; previousLane: string; moved: boolean }
 type MenuItem = { label: string; action?: () => void; destructive?: boolean; disabled?: boolean; head?: boolean }
 type MenuState = { label: string; x: number; y: number; items: MenuItem[] }
-type VerificationEditorState = { formationId: string; title: string; kinds: string[]; criterion: string; onFail: 'block' | 'pushback' }
+type LegacyVerificationState = {
+  boardSlug: string
+  boardRev: number
+  boardETag: string
+  formationId: string
+  verificationId: string
+  title: string
+  kinds: string[]
+  criterion: string
+  onFail: string
+  replacementGateIds: string[]
+  replacementGateId: string
+}
 type MissionEditorState = { title: string; goal: string; beadId: string; x: number; y: number }
 type BriefEditorState = {
   formationId: string
@@ -102,8 +114,6 @@ type CockpitUndo =
   | { kind: 'setLane'; edgeId: string; lane: string }
   | { kind: 'setGateJudge'; gateId: string; chain: string[] }
   | { kind: 'detachGateJudge'; gateId: string }
-  | { kind: 'setVerification'; formationId: string; kinds: string[]; criterion: string; onFail: string }
-  | { kind: 'removeVerification'; formationId: string }
   | { kind: 'removePort'; formationId: string; portId: string }
   | { kind: 'makeController'; formationId: string; slotId: string }
 
@@ -132,7 +142,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const [missionEditorError, setMissionEditorError] = useState('')
   const [missionEditorSaving, setMissionEditorSaving] = useState(false)
   const [briefEditor, setBriefEditor] = useState<BriefEditorState | null>(null)
-  const [verificationEditor, setVerificationEditor] = useState<VerificationEditorState | null>(null)
+  const [legacyVerification, setLegacyVerification] = useState<LegacyVerificationState | null>(null)
   const [hiddenWireId, setHiddenWireId] = useState<string | null>(null)
   const [judgeHover, setJudgeHover] = useState<string | null>(null)
   const [laneDraft, setLaneDraft] = useState<{ connectionId: string; y: number } | null>(null)
@@ -154,6 +164,8 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   useEffect(() => { boardRef.current = board }, [board])
   useEffect(() => { layoutRef.current = layout }, [layout])
   useEffect(() => { judgeHoverRef.current = judgeHover }, [judgeHover])
+
+  useEffect(() => { setLegacyVerification(null) }, [selectedSlug])
 
   // ----- data loading -----
   useEffect(() => {
@@ -546,12 +558,6 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       case 'detachGateJudge':
         patch = { detachGateJudge: { gateId: action.gateId } }
         break
-      case 'setVerification':
-        patch = { setVerification: { formationId: action.formationId, kinds: action.kinds, criterion: action.criterion, onFail: action.onFail } }
-        break
-      case 'removeVerification':
-        patch = { removeVerification: { formationId: action.formationId } }
-        break
       case 'removePort':
         patch = { removePort: { formationId: action.formationId, portId: action.portId } }
         break
@@ -727,55 +733,44 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     void patchBoard({ removePort: { formationId: formation.id, portId } })
   }, [patchBoard])
 
-  const removeVerificationOp = useCallback((formation: FormationNode) => {
-    const previous = formation.verification
-    if (previous) {
-      undoStack.current.push({
-        kind: 'setVerification',
-        formationId: formation.id,
-        kinds: previous.kinds || [],
-        criterion: previous.criterion || '',
-        onFail: previous.onFail || 'block',
-      })
+  const removeLegacyVerification = useCallback(async () => {
+    if (!legacyVerification?.replacementGateId) return
+    const current = boardRef.current
+    if (!current || current.slug !== legacyVerification.boardSlug || current.rev !== legacyVerification.boardRev || current.etag !== legacyVerification.boardETag) {
+      setError('Board changed while legacy verification was open. Reopen migration to continue.')
+      return
     }
-    void patchBoard({ removeVerification: { formationId: formation.id } })
-  }, [patchBoard])
-
-  const openVerificationEditor = useCallback((formation: FormationNode) => {
-    setMenu(null)
-    setVerificationEditor({
-      formationId: formation.id,
-      title: formation.title,
-      kinds: formation.verification?.kinds?.length ? [...formation.verification.kinds] : ['code'],
-      criterion: formation.verification?.criterion || '',
-      onFail: formation.verification?.onFail === 'pushback' ? 'pushback' : 'block',
-    })
-  }, [])
-
-  const saveVerificationEditor = useCallback(async () => {
-    if (!verificationEditor) return
-    const formation = boardRef.current?.formations.find(item => item.id === verificationEditor.formationId)
-    if (formation?.verification) {
-      undoStack.current.push({
-        kind: 'setVerification',
-        formationId: formation.id,
-        kinds: formation.verification.kinds || [],
-        criterion: formation.verification.criterion || '',
-        onFail: formation.verification.onFail || 'block',
-      })
-    } else if (formation) {
-      undoStack.current.push({ kind: 'removeVerification', formationId: formation.id })
-    }
-    await patchBoard({
-      setVerification: {
-        formationId: verificationEditor.formationId,
-        kinds: verificationEditor.kinds.length ? verificationEditor.kinds : ['code'],
-        criterion: verificationEditor.criterion.trim(),
-        onFail: verificationEditor.onFail,
+    const result = await patchBoard({
+      removeVerification: {
+        formationId: legacyVerification.formationId,
+        replacementGateId: legacyVerification.replacementGateId,
       },
     })
-    setVerificationEditor(null)
-  }, [patchBoard, verificationEditor])
+    if (result) setLegacyVerification(null)
+  }, [legacyVerification, patchBoard])
+
+  const openLegacyVerification = useCallback((formation: FormationNode) => {
+    const current = boardRef.current
+    if (!formation.verification || !current) return
+    const outputEndpoints = new Set(formation.outputs.map(output => `${formation.id}:${output.id}`))
+    const replacementGateIds = (current.gates || [])
+      .filter(gate => current.connections.some(connection => outputEndpoints.has(connection.from) && connection.to === `${gate.id}:in`))
+      .map(gate => gate.id)
+    setMenu(null)
+    setLegacyVerification({
+      boardSlug: current.slug,
+      boardRev: current.rev,
+      boardETag: current.etag,
+      formationId: formation.id,
+      verificationId: formation.verification.id || '',
+      title: formation.title,
+      kinds: formation.verification.kinds?.length ? [...formation.verification.kinds] : [],
+      criterion: formation.verification.criterion || '',
+      onFail: formation.verification.onFail || '',
+      replacementGateIds,
+      replacementGateId: '',
+    })
+  }, [])
 
   /** Reconstruct the gate's judge chain from persisted `<gateId>:judge` edges. */
   const judgeChainOf = useCallback((gateId: string): string[] => {
@@ -1349,11 +1344,12 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       { label: 'Set input', action: () => openBriefEditor(formation) },
       { label: 'Add input port', action: () => void addPortOp(formation, 'in') },
       { label: 'Add output port', action: () => void addPortOp(formation, 'out') },
-      { label: formation.verification ? 'Configure verification' : 'Add verification', action: () => openVerificationEditor(formation) },
-      ...(formation.verification ? [{ label: 'Remove verification', destructive: true, action: () => removeVerificationOp(formation) }] : []),
+      ...(formation.verification ? [
+        { label: 'Migrate legacy verification', action: () => openLegacyVerification(formation) },
+      ] : []),
       { label: 'Delete formation', destructive: true, action: () => deleteFormationOp(formation) },
     ])
-  }, [addPortOp, deleteFormationOp, openBriefEditor, openMenu, openVerificationEditor, removeVerificationOp, runFormation])
+  }, [addPortOp, deleteFormationOp, openBriefEditor, openLegacyVerification, openMenu, runFormation])
 
   const slotMenu = useCallback((event: ReactMouseEvent<HTMLElement>, formation: FormationNode, slot: FormationSlot) => {
     const items: MenuItem[] = []
@@ -1690,20 +1686,27 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
                   </div>
                   <div className="fstatus">{state && state !== 'done' ? state : ''}</div>
                   <div className="fbody" onPointerDown={event => beginNodeDrag(event, formation.id, index)}>{renderBody(formation)}</div>
-                  <div
-                    className={`verify-band${formation.verification ? '' : ' empty'}`}
-                    data-gate={formation.verification?.id}
-                    data-testid={`verify-band-${formation.id}`}
-                    onClick={() => openVerificationEditor(formation)}
-                    onContextMenu={event => openMenu(event, 'Verification', [
-                      { label: formation.verification ? 'Configure verification' : 'Add verification', action: () => openVerificationEditor(formation) },
-                      ...(formation.verification ? [{ label: 'Remove verification', destructive: true, action: () => removeVerificationOp(formation) }] : []),
-                    ])}
-                  >
-                    <span className="vico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6z" /><path d="M9 12l2 2 4-4" /></svg></span>
-                    <span className="vlabel">{formation.verification ? 'verify' : '+ verify'}</span>
-                    {formation.verification ? <span className="vkinds">{formation.verification.kinds.join(' · ')} · {formation.verification.criterion}</span> : null}
-                  </div>
+                  {formation.verification ? (
+                    <button
+                      type="button"
+                      className="verify-band legacy"
+                      data-gate={formation.verification.id}
+                      data-testid={`verify-band-${formation.id}`}
+                      aria-label={`Inspect legacy verification for ${formation.title}`}
+                      onClick={() => openLegacyVerification(formation)}
+                      onContextMenu={event => openMenu(event, 'Legacy verification', [
+                        { label: 'Migrate legacy verification', action: () => openLegacyVerification(formation) },
+                      ])}
+                    >
+                      <span className="vico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6z" /><path d="M12 8v5M12 16h.01" /></svg></span>
+                      <span className="vlabel">legacy verify</span>
+                      <span className="vkinds">{[
+                        formation.verification.kinds?.length ? formation.verification.kinds.join(' · ') : 'checks not recorded',
+                        formation.verification.criterion || 'criterion not recorded',
+                        formation.verification.onFail || 'failure policy not recorded',
+                      ].join(' · ')}</span>
+                    </button>
+                  ) : null}
                   {formation.outputs.map((port, portIndex) => {
                     const endpoint = `${formation.id}:${port.id}`
                     return (
@@ -1900,56 +1903,62 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
         </div>
       ) : null}
 
-      {verificationEditor ? (
+      {legacyVerification ? (
         <div
           className="pop"
           role="dialog"
-          aria-label={`Verification · ${verificationEditor.title}`}
+          aria-label={`Legacy verification · ${legacyVerification.title}`}
           onPointerDown={event => event.stopPropagation()}
         >
           <div className="pop-head">
-            <span className="pt">Verification · {verificationEditor.title}</span>
-            <button className="x" type="button" aria-label="Close verification editor" onClick={() => setVerificationEditor(null)}>x</button>
+            <span className="pt">Legacy verification · {legacyVerification.title}</span>
+            <button className="x" type="button" aria-label="Close legacy verification" onClick={() => setLegacyVerification(null)}>x</button>
           </div>
           <div className="pop-body">
             <label>Checks</label>
-            <div className="chiprow">
-              {(['code', 'human', 'formation'] as const).map(kind => (
-                <label key={kind} className="kindchip">
-                  <input
-                    type="checkbox"
-                    aria-label={`Verification kind ${kind}`}
-                    checked={verificationEditor.kinds.includes(kind)}
-                    onChange={event => setVerificationEditor(current => {
-                      if (!current) return current
-                      const kinds = event.target.checked
-                        ? [...current.kinds, kind]
-                        : current.kinds.filter(item => item !== kind)
-                      return { ...current, kinds }
-                    })}
-                  />
-                  {kind}
-                </label>
-              ))}
+            <div className="legacy-value">{legacyVerification.kinds.length ? legacyVerification.kinds.join(' · ') : 'No checks recorded'}</div>
+            <label>Criterion</label>
+            <div className="legacy-value criterion">{legacyVerification.criterion || 'No criterion recorded'}</div>
+            <label>Legacy failure policy</label>
+            <div className="legacy-value">{legacyVerification.onFail || 'No failure policy recorded'}</div>
+            <p className="legacy-note">Inline verification is retired because its verdict cannot be tied safely to an exact Formation attempt and output. Create and wire an explicit Gate to make the check, result, and route visible, then remove this legacy block.</p>
+            {legacyVerification.replacementGateIds.length ? (
+              <>
+                <label htmlFor="legacy-replacement-gate">Replacement Gate</label>
+                <select
+                  id="legacy-replacement-gate"
+                  className="legacy-select"
+                  value={legacyVerification.replacementGateId}
+                  onChange={event => setLegacyVerification(current => current ? { ...current, replacementGateId: event.target.value } : null)}
+                >
+                  <option value="" disabled>Choose a wired Gate…</option>
+                  {legacyVerification.replacementGateIds.map(gateId => (
+                    <option key={gateId} value={gateId}>{board?.gates?.find(gate => gate.id === gateId)?.title || gateId}</option>
+                  ))}
+                </select>
+              </>
+            ) : (
+              <p className="legacy-missing-gate">Wire an explicit Gate from a Formation output before removal.</p>
+            )}
+            {runEvents.some(event => event.type === 'verification_verdict' && event.nodeId === legacyVerification.formationId) ? (
+              <div className="legacy-evidence">
+                <div className="legacy-evidence-title">Legacy verification evidence · non-authorizing</div>
+                {runEvents
+                  .filter(event => event.type === 'verification_verdict' && event.nodeId === legacyVerification.formationId)
+                  .map(event => <div key={event.seq}>seq {event.seq} · {typeof event.data?.verdict === 'string' ? event.data.verdict : 'verdict not recorded'}</div>)}
+              </div>
+            ) : null}
+            <div className="pop-actions">
+              <button className="cancel" type="button" onClick={() => setLegacyVerification(null)}>Keep for inspection</button>
+              <button
+                className="retire"
+                type="button"
+                disabled={!legacyVerification.replacementGateId}
+                onClick={() => void removeLegacyVerification()}
+              >
+                Remove legacy verification
+              </button>
             </div>
-            <label htmlFor="cockpit-verification-criterion">Criterion</label>
-            <textarea
-              id="cockpit-verification-criterion"
-              aria-label={`Criterion for ${verificationEditor.title}`}
-              value={verificationEditor.criterion}
-              onChange={event => setVerificationEditor(current => current ? { ...current, criterion: event.target.value } : current)}
-            />
-            <label htmlFor="cockpit-verification-onfail">On fail</label>
-            <select
-              id="cockpit-verification-onfail"
-              aria-label={`On fail for ${verificationEditor.title}`}
-              value={verificationEditor.onFail}
-              onChange={event => setVerificationEditor(current => current ? { ...current, onFail: event.target.value === 'pushback' ? 'pushback' : 'block' } : current)}
-            >
-              <option value="block">block — stop the run</option>
-              <option value="pushback">pushback — return to agents with feedback</option>
-            </select>
-            <button className="save" type="button" onClick={() => void saveVerificationEditor()}>Save verification</button>
           </div>
         </div>
       ) : null}

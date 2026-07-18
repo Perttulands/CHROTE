@@ -2,8 +2,8 @@ package formations
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -114,8 +114,9 @@ type FormationVerificationRequest struct {
 }
 
 type FormationVerificationRemovalRequest struct {
-	FormationID string
-	UpdatedBy   string
+	FormationID       string
+	ReplacementGateID string
+	UpdatedBy         string
 }
 
 type FormationPortRequest struct {
@@ -145,28 +146,30 @@ type FormationRewireRequest struct {
 }
 
 type GateCreateRequest struct {
-	Title        string
-	Kinds        []string
-	Criterion    string
-	Command      string // legacy string form: parseable, but not executable by script gates
-	CommandArgv  []string
-	CommandCWD   string
-	CommandShell string
-	X            int
-	Y            int
-	UpdatedBy    string
+	Title                      string
+	Kinds                      []string
+	Criterion                  string
+	Command                    string // legacy inspection-only compatibility input
+	CommandArgv                []string
+	CommandCWD                 string
+	CommandShell               string
+	LegacyCommandFieldsPresent bool
+	X                          int
+	Y                          int
+	UpdatedBy                  string
 }
 
 type GateUpdateRequest struct {
-	GateID       string
-	Title        string
-	Kinds        []string
-	Criterion    string
-	Command      string // legacy string form: parseable, but not executable by script gates
-	CommandArgv  []string
-	CommandCWD   string
-	CommandShell string
-	UpdatedBy    string
+	GateID                     string
+	Title                      string
+	Kinds                      []string
+	Criterion                  string
+	Command                    string // legacy inspection-only compatibility input
+	CommandArgv                []string
+	CommandCWD                 string
+	CommandShell               string
+	LegacyCommandFieldsPresent bool
+	UpdatedBy                  string
 }
 
 type GateJudgeRequest struct {
@@ -229,14 +232,16 @@ type BoardConnection struct {
 }
 
 type GateNode struct {
-	ID           string   `json:"id"`
-	Title        string   `json:"title"`
-	Kinds        []string `json:"kinds"`
-	Criterion    string   `json:"criterion"`
-	Command      string   `json:"command,omitempty"` // legacy string form: parseable, but not executable by script gates
-	CommandArgv  []string `json:"commandArgv,omitempty"`
-	CommandCWD   string   `json:"commandCwd,omitempty"`
-	CommandShell string   `json:"commandShell,omitempty"`
+	ID                    string                               `json:"id"`
+	Title                 string                               `json:"title"`
+	Kinds                 []string                             `json:"kinds"`
+	Criterion             string                               `json:"criterion"`
+	Command               string                               `json:"command,omitempty"` // legacy inspection-only metadata
+	CommandArgv           []string                             `json:"commandArgv,omitempty"`
+	CommandCWD            string                               `json:"commandCwd,omitempty"`
+	CommandShell          string                               `json:"commandShell,omitempty"`
+	LegacyScriptMigration *LegacyScriptGateMigrationInspection `json:"legacyScriptMigration,omitempty"`
+	legacyCommandFields   map[string]int
 }
 
 type MissionNode struct {
@@ -277,10 +282,20 @@ func (s *Store) ResolveBoardSelector(selector string) (string, error) {
 	if len(matches) > 1 {
 		return "", fmt.Errorf("%w: board %q matched %d boards", ErrAmbiguousSelector, selector, len(matches))
 	}
-	if _, err := os.Stat(s.BoardPath(selector)); err == nil {
-		return selector, nil
-	} else if err != nil && !os.IsNotExist(err) {
+	definition, err := s.openBoardDefinition(selector, false)
+	if errors.Is(err, ErrNotFound) {
+		return "", ErrNotFound
+	}
+	if err != nil {
 		return "", err
+	}
+	defer definition.close()
+	exists, err := definition.exists()
+	if err != nil {
+		return "", err
+	}
+	if exists {
+		return selector, nil
 	}
 	return "", ErrNotFound
 }
@@ -297,14 +312,10 @@ func (s *Store) CreateFormation(slug string, req FormationCreateRequest, opts Wr
 		return nil, err
 	}
 
-	path := s.BoardPath(slug)
 	var result *FormationCreateResult
-	err = withFileLock(path, func() error {
-		raw, err := os.ReadFile(path)
+	err = s.withBoardDefinitionLock(slug, func(definition *definitionFile) error {
+		raw, err := definition.readBytes()
 		if err != nil {
-			if os.IsNotExist(err) {
-				return ErrNotFound
-			}
 			return err
 		}
 		current, err := parseBoard(raw)
@@ -327,7 +338,7 @@ func (s *Store) CreateFormation(slug string, req FormationCreateRequest, opts Wr
 		doc.setScalar("updatedAt", renderString(s.now().Format(time.RFC3339)))
 
 		nextRaw := appendFormationBlock(doc.bytes(), formation)
-		if err := writeAtomic(path, nextRaw); err != nil {
+		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
 		board, err := parseBoard(nextRaw)
@@ -361,15 +372,11 @@ func (s *Store) DeleteFormation(slug string, req FormationDeleteRequest, opts Wr
 	if opts.ExpectedETag == "" || opts.ExpectedRev == 0 {
 		return nil, ErrPreconditionRequired
 	}
-	path := s.BoardPath(slug)
 	deletedIDs := map[string]bool{req.ID: true}
 	var result *FormationDeleteResult
-	err := withFileLock(path, func() error {
-		raw, err := os.ReadFile(path)
+	err := s.withBoardDefinitionLock(slug, func(definition *definitionFile) error {
+		raw, err := definition.readBytes()
 		if err != nil {
-			if os.IsNotExist(err) {
-				return ErrNotFound
-			}
 			return err
 		}
 		current, err := parseBoard(raw)
@@ -396,7 +403,7 @@ func (s *Store) DeleteFormation(slug string, req FormationDeleteRequest, opts Wr
 			return ErrNotFound
 		}
 		nextRaw = deleteConnectionsTouchingNodes(nextRaw, deletedIDs)
-		if err := writeAtomic(path, nextRaw); err != nil {
+		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
 		board, err := parseBoard(nextRaw)
@@ -430,15 +437,11 @@ func (s *Store) DeleteGate(slug string, req GateDeleteRequest, opts WriteOptions
 	if opts.ExpectedETag == "" || opts.ExpectedRev == 0 {
 		return nil, ErrPreconditionRequired
 	}
-	path := s.BoardPath(slug)
 	deletedIDs := map[string]bool{req.ID: true}
 	var result *GateDeleteResult
-	err := withFileLock(path, func() error {
-		raw, err := os.ReadFile(path)
+	err := s.withBoardDefinitionLock(slug, func(definition *definitionFile) error {
+		raw, err := definition.readBytes()
 		if err != nil {
-			if os.IsNotExist(err) {
-				return ErrNotFound
-			}
 			return err
 		}
 		current, err := parseBoard(raw)
@@ -465,7 +468,7 @@ func (s *Store) DeleteGate(slug string, req GateDeleteRequest, opts WriteOptions
 			return ErrNotFound
 		}
 		nextRaw = deleteConnectionsTouchingNodes(nextRaw, deletedIDs)
-		if err := writeAtomic(path, nextRaw); err != nil {
+		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
 		board, err := parseBoard(nextRaw)
@@ -499,15 +502,11 @@ func (s *Store) DeleteMission(slug string, req MissionDeleteRequest, opts WriteO
 	if opts.ExpectedETag == "" || opts.ExpectedRev == 0 {
 		return nil, ErrPreconditionRequired
 	}
-	path := s.BoardPath(slug)
 	deletedIDs := map[string]bool{req.ID: true}
 	var result *MissionDeleteResult
-	err := withFileLock(path, func() error {
-		raw, err := os.ReadFile(path)
+	err := s.withBoardDefinitionLock(slug, func(definition *definitionFile) error {
+		raw, err := definition.readBytes()
 		if err != nil {
-			if os.IsNotExist(err) {
-				return ErrNotFound
-			}
 			return err
 		}
 		current, err := parseBoard(raw)
@@ -534,7 +533,7 @@ func (s *Store) DeleteMission(slug string, req MissionDeleteRequest, opts WriteO
 			return ErrNotFound
 		}
 		nextRaw = deleteConnectionsTouchingNodes(nextRaw, deletedIDs)
-		if err := writeAtomic(path, nextRaw); err != nil {
+		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
 		board, err := parseBoard(nextRaw)
@@ -602,7 +601,7 @@ func (s *Store) SetFormationController(slug string, req FormationControllerReque
 		}
 		found := false
 		for i := formationStart + 1; i < formationEnd; i++ {
-			section, ok := tomlSectionName(lines[i].body)
+			section, ok := tomlLineSectionName(lines[i])
 			if !ok || section != "formation.slot" {
 				continue
 			}
@@ -668,57 +667,115 @@ func (s *Store) ClearFormationBrief(slug string, req FormationBriefClearRequest,
 }
 
 func (s *Store) SetFormationVerification(slug string, req FormationVerificationRequest, opts WriteOptions) (*BoardDocument, error) {
-	if req.FormationID == "" {
-		return nil, ErrNotFound
-	}
-	if req.OnFail != "block" && req.OnFail != "pushback" {
-		return nil, fmt.Errorf("%w: verification onFail must be block or pushback", ErrInvalidSlug)
-	}
-	return s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, _ *BoardDocument) ([]byte, error) {
-		lines := splitLines(raw)
-		formationStart, formationEnd, ok := findFormationBlockByID(lines, req.FormationID)
-		if !ok {
-			return nil, ErrNotFound
-		}
-		verificationStart, verificationEnd, ok := findFormationSection(lines, formationStart, formationEnd, "formation.verification")
-		if !ok {
-			insertAt := formationEnd
-			lines = insertTomLLines(lines, insertAt, renderVerificationSection(req, newPrefixedID("ver")))
-			return renderTOMLLines(lines), nil
-		}
-		id := scalarInBlock(lines, verificationStart+1, verificationEnd, "id")
-		if id == "" {
-			id = newPrefixedID("ver")
-		}
-		lines = setScalarInLineRange(lines, verificationStart+1, verificationEnd, "id", renderString(id))
-		lines = setScalarInLineRange(lines, verificationStart+1, verificationEnd, "kinds", renderStringArray(req.Kinds))
-		lines = setScalarInLineRange(lines, verificationStart+1, verificationEnd, "criterion", renderString(req.Criterion))
-		lines = setScalarInLineRange(lines, verificationStart+1, verificationEnd, "onFail", renderString(req.OnFail))
-		return renderTOMLLines(lines), nil
-	})
+	return nil, fmt.Errorf(
+		"%w: formation %q cannot author retired inline verification; create and wire an explicit Gate instead",
+		ErrLegacyInlineVerificationRequiresMigration,
+		req.FormationID,
+	)
 }
 
 func (s *Store) RemoveFormationVerification(slug string, req FormationVerificationRemovalRequest, opts WriteOptions) (*BoardDocument, error) {
 	if req.FormationID == "" {
 		return nil, ErrNotFound
 	}
-	return s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, _ *BoardDocument) ([]byte, error) {
+	if req.ReplacementGateID == "" {
+		return nil, fmt.Errorf("%w: replacement Gate is required before removing inline verification", ErrLegacyInlineVerificationRequiresMigration)
+	}
+	return s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, board *BoardDocument) ([]byte, error) {
+		formation, formationOK := findFormation(board.Formations, req.FormationID)
+		_, gateOK := findGate(board.Gates, req.ReplacementGateID)
+		if !formationOK || !gateOK || !formationOutputWiresToGate(board.Connections, formation, req.ReplacementGateID) {
+			return nil, fmt.Errorf(
+				"%w: replacement Gate %q must exist and be wired from formation %q before removing inline verification",
+				ErrLegacyInlineVerificationRequiresMigration,
+				req.ReplacementGateID,
+				req.FormationID,
+			)
+		}
 		lines := splitLines(raw)
 		formationStart, formationEnd, ok := findFormationBlockByID(lines, req.FormationID)
 		if !ok {
 			return nil, ErrNotFound
 		}
-		verificationStart, verificationEnd, ok := findFormationSection(lines, formationStart, formationEnd, "formation.verification")
-		if !ok {
+		verificationSections := 0
+		verificationFamilySections := 0
+		for i := formationStart + 1; i < formationEnd; i++ {
+			section, sectionOK := tomlLineSectionName(lines[i])
+			if !sectionOK {
+				continue
+			}
+			if section == "formation.verification" {
+				verificationSections++
+			}
+			if tomlSectionIsOrDescendsFrom(section, "formation.verification") {
+				verificationFamilySections++
+			}
+		}
+		if verificationSections > 1 {
+			return nil, fmt.Errorf(
+				"%w: formation %q has %d inline verification sections; repair the source before migration",
+				ErrLegacyInlineVerificationRequiresMigration,
+				req.FormationID,
+				verificationSections,
+			)
+		}
+		if verificationFamilySections == 0 {
+			if formation.Verification != nil {
+				return nil, fmt.Errorf(
+					"%w: formation %q uses a non-section inline verification representation; repair the source before migration",
+					ErrLegacyInlineVerificationRequiresMigration,
+					req.FormationID,
+				)
+			}
 			return nil, ErrNotFound
 		}
-		lines = append(lines[:verificationStart], lines[verificationEnd:]...)
-		return renderTOMLLines(lines), nil
+		// A TOML child table is part of its parent table even when another
+		// formation section appears between them. Remove the entire semantic
+		// verification family so retired authority cannot survive invisibly.
+		for i := formationEnd - 1; i > formationStart; i-- {
+			section, sectionOK := tomlLineSectionName(lines[i])
+			if !sectionOK || !tomlSectionIsOrDescendsFrom(section, "formation.verification") {
+				continue
+			}
+			end := tomlBlockEnd(lines, i)
+			if end > formationEnd {
+				end = formationEnd
+			}
+			lines = append(lines[:i], lines[end:]...)
+			formationEnd -= end - i
+		}
+		nextRaw := renderTOMLLines(lines)
+		nextBoard, err := parseBoard(nextRaw)
+		if err != nil {
+			return nil, err
+		}
+		nextFormation, nextFormationOK := findFormation(nextBoard.Formations, req.FormationID)
+		if !nextFormationOK || nextFormation.Verification != nil {
+			return nil, fmt.Errorf(
+				"%w: formation %q still contains inline verification after removal",
+				ErrLegacyInlineVerificationRequiresMigration,
+				req.FormationID,
+			)
+		}
+		return nextRaw, nil
 	})
 }
 
+func formationOutputWiresToGate(connections []BoardConnection, formation FormationNode, gateID string) bool {
+	for _, output := range formation.Outputs {
+		from := formation.ID + ":" + output.ID
+		to := gateID + ":in"
+		for _, connection := range connections {
+			if connection.From == from && connection.To == to {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (s *Store) CreateGate(slug string, req GateCreateRequest, opts WriteOptions) (*GateCreateResult, error) {
-	if err := validateGateCommandMode(req.Command, req.CommandArgv, req.CommandShell); err != nil {
+	if err := rejectLegacyScriptGateWrite(req.LegacyCommandFieldsPresent, req.Command, req.CommandArgv, req.CommandCWD, req.CommandShell); err != nil {
 		return nil, err
 	}
 	if err := validateSlug(slug); err != nil {
@@ -736,24 +793,16 @@ func (s *Store) CreateGate(slug string, req GateCreateRequest, opts WriteOptions
 		title = "Review gate"
 	}
 	gate := GateNode{
-		ID:           newPrefixedID("gate"),
-		Title:        title,
-		Kinds:        kinds,
-		Criterion:    req.Criterion,
-		Command:      req.Command,
-		CommandArgv:  append([]string(nil), req.CommandArgv...),
-		CommandCWD:   req.CommandCWD,
-		CommandShell: req.CommandShell,
+		ID:        newPrefixedID("gate"),
+		Title:     title,
+		Kinds:     kinds,
+		Criterion: req.Criterion,
 	}
 
-	path := s.BoardPath(slug)
 	var result *GateCreateResult
-	err := withFileLock(path, func() error {
-		raw, err := os.ReadFile(path)
+	err := s.withBoardDefinitionLock(slug, func(definition *definitionFile) error {
+		raw, err := definition.readBytes()
 		if err != nil {
-			if os.IsNotExist(err) {
-				return ErrNotFound
-			}
 			return err
 		}
 		current, err := parseBoard(raw)
@@ -775,7 +824,7 @@ func (s *Store) CreateGate(slug string, req GateCreateRequest, opts WriteOptions
 		doc.setScalar("updatedAt", renderString(s.now().Format(time.RFC3339)))
 
 		nextRaw := appendGateBlock(doc.bytes(), gate)
-		if err := writeAtomic(path, nextRaw); err != nil {
+		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
 		board, err := parseBoard(nextRaw)
@@ -803,7 +852,7 @@ func (s *Store) UpdateGate(slug string, req GateUpdateRequest, opts WriteOptions
 	if req.GateID == "" {
 		return nil, ErrNotFound
 	}
-	if err := validateGateCommandMode(req.Command, req.CommandArgv, req.CommandShell); err != nil {
+	if err := rejectLegacyScriptGateWrite(req.LegacyCommandFieldsPresent, req.Command, req.CommandArgv, req.CommandCWD, req.CommandShell); err != nil {
 		return nil, err
 	}
 	return s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, _ *BoardDocument) ([]byte, error) {
@@ -820,25 +869,6 @@ func (s *Store) UpdateGate(slug string, req GateUpdateRequest, opts WriteOptions
 		}
 		if req.Criterion != "" {
 			lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "criterion", renderString(req.Criterion))
-		}
-		if req.Command != "" {
-			lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "command", renderString(req.Command))
-			lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, "commandArgv")
-			lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, "commandShell")
-			lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, "commandCwd")
-		}
-		if len(req.CommandArgv) > 0 {
-			lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "commandArgv", renderStringArray(req.CommandArgv))
-			lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, "command")
-			lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, "commandShell")
-		}
-		if req.CommandCWD != "" {
-			lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "commandCwd", renderString(req.CommandCWD))
-		}
-		if req.CommandShell != "" {
-			lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "commandShell", renderString(req.CommandShell))
-			lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, "command")
-			lines = removeScalarInLineRange(lines, gateStart+1, gateEnd, "commandArgv")
 		}
 		return renderTOMLLines(lines), nil
 	})
@@ -905,14 +935,10 @@ func (s *Store) CreateMission(slug string, req MissionCreateRequest, opts WriteO
 		BeadID: req.BeadID,
 	}
 
-	path := s.BoardPath(slug)
 	var result *MissionCreateResult
-	err := withFileLock(path, func() error {
-		raw, err := os.ReadFile(path)
+	err := s.withBoardDefinitionLock(slug, func(definition *definitionFile) error {
+		raw, err := definition.readBytes()
 		if err != nil {
-			if os.IsNotExist(err) {
-				return ErrNotFound
-			}
 			return err
 		}
 		current, err := parseBoard(raw)
@@ -934,7 +960,7 @@ func (s *Store) CreateMission(slug string, req MissionCreateRequest, opts WriteO
 		doc.setScalar("updatedAt", renderString(s.now().Format(time.RFC3339)))
 
 		nextRaw := appendMissionBlock(doc.bytes(), mission)
-		if err := writeAtomic(path, nextRaw); err != nil {
+		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
 		board, err := parseBoard(nextRaw)
@@ -1113,14 +1139,13 @@ func (s *Store) updateLayoutNodes(slug string, nodes []LayoutNode, board *BoardD
 	if opts.ExpectedETag == "" {
 		return nil, ErrPreconditionRequired
 	}
-	path := s.LayoutPath(slug)
 	var layout *LayoutDocument
-	err := withFileLock(path, func() error {
+	err := s.withLayoutDefinitionLock(slug, func(definition *definitionFile) error {
 		recreatingMissing := false
-		raw, err := os.ReadFile(path)
+		raw, err := definition.readBytes()
 		switch {
 		case err == nil:
-		case os.IsNotExist(err) && opts.ExpectedETag == "*":
+		case errors.Is(err, ErrNotFound) && opts.ExpectedETag == "*":
 			if board == nil {
 				board, err = s.ReadBoard(slug)
 				if err != nil {
@@ -1129,7 +1154,7 @@ func (s *Store) updateLayoutNodes(slug string, nodes []LayoutNode, board *BoardD
 			}
 			raw = []byte("schema = 1\nboardId = " + renderString(board.ID) + "\nboardRev = " + renderInt(board.Rev) + "\nupdatedAt = " + renderString(s.now().Format(time.RFC3339)) + "\n")
 			recreatingMissing = true
-		case os.IsNotExist(err):
+		case errors.Is(err, ErrNotFound):
 			return ErrNotFound
 		default:
 			return err
@@ -1151,7 +1176,7 @@ func (s *Store) updateLayoutNodes(slug string, nodes []LayoutNode, board *BoardD
 		}
 		doc.setScalar("updatedAt", renderString(s.now().Format(time.RFC3339)))
 		nextRaw := patchLayoutNodeBlocks(doc.bytes(), nodes)
-		if err := writeAtomic(path, nextRaw); err != nil {
+		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
 		layout, err = parseLayout(nextRaw)
@@ -1170,14 +1195,10 @@ func (s *Store) UpdateLayoutEdges(slug string, edges []LayoutEdge, opts WriteOpt
 	if opts.ExpectedETag == "" {
 		return nil, ErrPreconditionRequired
 	}
-	path := s.LayoutPath(slug)
 	var layout *LayoutDocument
-	err := withFileLock(path, func() error {
-		raw, err := os.ReadFile(path)
+	err := s.withLayoutDefinitionLock(slug, func(definition *definitionFile) error {
+		raw, err := definition.readBytes()
 		if err != nil {
-			if os.IsNotExist(err) {
-				return ErrNotFound
-			}
 			return err
 		}
 		current, err := parseLayout(raw)
@@ -1193,7 +1214,7 @@ func (s *Store) UpdateLayoutEdges(slug string, edges []LayoutEdge, opts WriteOpt
 		}
 		doc.setScalar("updatedAt", renderString(s.now().Format(time.RFC3339)))
 		nextRaw := patchLayoutEdgeBlocks(doc.bytes(), edges)
-		if err := writeAtomic(path, nextRaw); err != nil {
+		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
 		layout, err = parseLayout(nextRaw)
@@ -1212,14 +1233,10 @@ func (s *Store) updateBoardDefinition(slug, updatedBy string, opts WriteOptions,
 	if opts.ExpectedETag == "" || opts.ExpectedRev == 0 {
 		return nil, ErrPreconditionRequired
 	}
-	path := s.BoardPath(slug)
 	var next *BoardDocument
-	err := withFileLock(path, func() error {
-		raw, err := os.ReadFile(path)
+	err := s.withBoardDefinitionLock(slug, func(definition *definitionFile) error {
+		raw, err := definition.readBytes()
 		if err != nil {
-			if os.IsNotExist(err) {
-				return ErrNotFound
-			}
 			return err
 		}
 		current, err := parseBoard(raw)
@@ -1243,7 +1260,7 @@ func (s *Store) updateBoardDefinition(slug, updatedBy string, opts WriteOptions,
 		if err != nil {
 			return err
 		}
-		if err := writeAtomic(path, nextRaw); err != nil {
+		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
 		next, err = parseBoard(nextRaw)
@@ -1382,7 +1399,7 @@ func appendFormationBlock(raw []byte, formation FormationNode) []byte {
 func deleteFormationBlock(raw []byte, formationID string) ([]byte, bool) {
 	lines := splitLines(raw)
 	for i := 0; i < len(lines); i++ {
-		section, ok := tomlSectionName(lines[i].body)
+		section, ok := tomlLineSectionName(lines[i])
 		if !ok || section != "formation" {
 			continue
 		}
@@ -1407,7 +1424,7 @@ func deleteMissionBlock(raw []byte, missionID string) ([]byte, bool) {
 func deleteTopLevelBlockByID(raw []byte, sectionName, id string) ([]byte, bool) {
 	lines := splitLines(raw)
 	for i := 0; i < len(lines); i++ {
-		section, ok := tomlSectionName(lines[i].body)
+		section, ok := tomlLineSectionName(lines[i])
 		if !ok || section != sectionName {
 			continue
 		}
@@ -1423,8 +1440,11 @@ func deleteTopLevelBlockByID(raw []byte, sectionName, id string) ([]byte, bool) 
 
 func formationBlockEnd(lines []tomlLine, start int) int {
 	for j := start + 1; j < len(lines); j++ {
-		section, ok := tomlSectionName(lines[j].body)
+		section, ok := tomlLineSectionName(lines[j])
 		if !ok {
+			if isTOMLHeader(lines[j]) {
+				return j
+			}
 			continue
 		}
 		if section == "formation" || !strings.HasPrefix(section, "formation.") {
@@ -1437,7 +1457,7 @@ func formationBlockEnd(lines []tomlLine, start int) int {
 func deleteConnectionsTouchingNodes(raw []byte, nodeIDs map[string]bool) []byte {
 	lines := splitLines(raw)
 	for i := 0; i < len(lines); {
-		section, ok := tomlSectionName(lines[i].body)
+		section, ok := tomlLineSectionName(lines[i])
 		if !ok || section != "connection" {
 			i++
 			continue
@@ -1457,7 +1477,7 @@ func deleteConnectionsTouchingNodes(raw []byte, nodeIDs map[string]bool) []byte 
 func deleteConnectionsTouchingEndpoints(raw []byte, endpoints map[string]bool) []byte {
 	lines := splitLines(raw)
 	for i := 0; i < len(lines); {
-		section, ok := tomlSectionName(lines[i].body)
+		section, ok := tomlLineSectionName(lines[i])
 		if !ok || section != "connection" {
 			i++
 			continue
@@ -1477,7 +1497,7 @@ func deleteConnectionsTouchingEndpoints(raw []byte, endpoints map[string]bool) [
 func deleteConnectionByEndpoints(raw []byte, from, to string) ([]byte, bool) {
 	lines := splitLines(raw)
 	for i := 0; i < len(lines); i++ {
-		section, ok := tomlSectionName(lines[i].body)
+		section, ok := tomlLineSectionName(lines[i])
 		if !ok || section != "connection" {
 			continue
 		}
@@ -1507,23 +1527,6 @@ func appendConnectionBlock(raw []byte, connection BoardConnection) []byte {
 	return []byte(b.String())
 }
 
-func validateGateCommandMode(command string, commandArgv []string, commandShell string) error {
-	modes := 0
-	if strings.TrimSpace(command) != "" {
-		modes++
-	}
-	if len(commandArgv) > 0 {
-		modes++
-	}
-	if strings.TrimSpace(commandShell) != "" {
-		modes++
-	}
-	if modes > 1 {
-		return fmt.Errorf("%w: gate command must use only one of legacy command, commandArgv, or commandShell", ErrConflict)
-	}
-	return nil
-}
-
 func appendGateBlock(raw []byte, gate GateNode) []byte {
 	var b strings.Builder
 	b.Write(raw)
@@ -1539,18 +1542,6 @@ func appendGateBlock(raw []byte, gate GateNode) []byte {
 	b.WriteString("title = " + renderString(gate.Title) + "\n")
 	b.WriteString("kinds = " + renderStringArray(gate.Kinds) + "\n")
 	b.WriteString("criterion = " + renderString(gate.Criterion) + "\n")
-	if gate.Command != "" {
-		b.WriteString("command = " + renderString(gate.Command) + "\n")
-	}
-	if len(gate.CommandArgv) > 0 {
-		b.WriteString("commandArgv = " + renderStringArray(gate.CommandArgv) + "\n")
-	}
-	if gate.CommandCWD != "" {
-		b.WriteString("commandCwd = " + renderString(gate.CommandCWD) + "\n")
-	}
-	if gate.CommandShell != "" {
-		b.WriteString("commandShell = " + renderString(gate.CommandShell) + "\n")
-	}
 	return []byte(b.String())
 }
 
@@ -1576,7 +1567,7 @@ func deleteGateJudgeConnections(raw []byte, gateID string) []byte {
 	endpoint := gateID + ":judge"
 	lines := splitLines(raw)
 	for i := 0; i < len(lines); {
-		section, ok := tomlSectionName(lines[i].body)
+		section, ok := tomlLineSectionName(lines[i])
 		if !ok || section != "connection" {
 			i++
 			continue
@@ -1676,7 +1667,7 @@ func firstFormationPortEndpoint(raw []byte, formationID, direction string) (stri
 		sectionName = "formation.output"
 	}
 	for i := formationStart + 1; i < formationEnd; i++ {
-		section, ok := tomlSectionName(lines[i].body)
+		section, ok := tomlLineSectionName(lines[i])
 		if !ok || section != sectionName {
 			continue
 		}
@@ -1712,13 +1703,12 @@ func setGateFormationKind(lines []tomlLine, gateStart, gateEnd int, present bool
 }
 
 func (s *Store) upsertLayoutNode(slug, boardID string, boardRev int, node LayoutNode) (*LayoutDocument, error) {
-	path := s.LayoutPath(slug)
 	var layout *LayoutDocument
-	err := withFileLock(path, func() error {
-		raw, err := os.ReadFile(path)
+	err := s.withLayoutDefinitionLock(slug, func(definition *definitionFile) error {
+		raw, err := definition.readBytes()
 		switch {
 		case err == nil:
-		case os.IsNotExist(err):
+		case errors.Is(err, ErrNotFound):
 			raw = []byte("schema = 1\nboardId = " + renderString(boardID) + "\nboardRev = " + renderInt(boardRev) + "\nupdatedAt = " + renderString(s.now().Format(time.RFC3339)) + "\n")
 		default:
 			return err
@@ -1736,7 +1726,7 @@ func (s *Store) upsertLayoutNode(slug, boardID string, boardRev int, node Layout
 		doc.setScalar("updatedAt", renderString(s.now().Format(time.RFC3339)))
 
 		nextRaw := appendLayoutNodeBlock(doc.bytes(), node)
-		if err := writeAtomic(path, nextRaw); err != nil {
+		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
 		layout, err = parseLayout(nextRaw)
@@ -1749,13 +1739,12 @@ func (s *Store) upsertLayoutNode(slug, boardID string, boardRev int, node Layout
 }
 
 func (s *Store) deleteLayoutNodes(slug, boardID string, boardRev int, nodeIDs map[string]bool) (*LayoutDocument, error) {
-	path := s.LayoutPath(slug)
 	var layout *LayoutDocument
-	err := withFileLock(path, func() error {
-		raw, err := os.ReadFile(path)
+	err := s.withLayoutDefinitionLock(slug, func(definition *definitionFile) error {
+		raw, err := definition.readBytes()
 		switch {
 		case err == nil:
-		case os.IsNotExist(err):
+		case errors.Is(err, ErrNotFound):
 			layout = &LayoutDocument{
 				Schema:   CurrentSchema,
 				BoardID:  boardID,
@@ -1779,7 +1768,7 @@ func (s *Store) deleteLayoutNodes(slug, boardID string, boardRev int, nodeIDs ma
 		doc.setScalar("updatedAt", renderString(s.now().Format(time.RFC3339)))
 
 		nextRaw := deleteLayoutNodeBlocks(doc.bytes(), nodeIDs)
-		if err := writeAtomic(path, nextRaw); err != nil {
+		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
 		layout, err = parseLayout(nextRaw)
@@ -1818,12 +1807,13 @@ func patchLayoutNodeBlocks(raw []byte, patches []LayoutNode) []byte {
 		}
 	}
 	for i := 0; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i].body) != "[[node]]" {
+		section, isSection := tomlLineSectionName(lines[i])
+		if !isSection || !strings.HasPrefix(strings.TrimSpace(lines[i].body), "[[") || section != "node" {
 			continue
 		}
 		end := len(lines)
 		for j := i + 1; j < len(lines); j++ {
-			if strings.HasPrefix(strings.TrimSpace(lines[j].body), "[") {
+			if isTOMLHeader(lines[j]) {
 				end = j
 				break
 			}
@@ -1864,7 +1854,7 @@ func patchLayoutEdgeBlocks(raw []byte, patches []LayoutEdge) []byte {
 		}
 	}
 	for i := 0; i < len(lines); i++ {
-		section, ok := tomlSectionName(lines[i].body)
+		section, ok := tomlLineSectionName(lines[i])
 		if !ok || section != "edge" {
 			continue
 		}
@@ -1906,7 +1896,7 @@ func appendLayoutEdgeBlock(raw []byte, edge LayoutEdge) []byte {
 func deleteLayoutNodeBlocks(raw []byte, nodeIDs map[string]bool) []byte {
 	lines := splitLines(raw)
 	for i := 0; i < len(lines); {
-		section, ok := tomlSectionName(lines[i].body)
+		section, ok := tomlLineSectionName(lines[i])
 		if !ok || section != "node" {
 			i++
 			continue
@@ -1924,7 +1914,7 @@ func deleteLayoutNodeBlocks(raw []byte, nodeIDs map[string]bool) []byte {
 
 func tomlBlockEnd(lines []tomlLine, start int) int {
 	for j := start + 1; j < len(lines); j++ {
-		if _, ok := tomlSectionName(lines[j].body); ok {
+		if _, ok := tomlLineSectionName(lines[j]); ok || isTOMLHeader(lines[j]) {
 			return j
 		}
 	}
@@ -1933,7 +1923,7 @@ func tomlBlockEnd(lines []tomlLine, start int) int {
 
 func scalarInBlock(lines []tomlLine, start, end int, key string) string {
 	for i := start; i < end && i < len(lines); i++ {
-		if _, ok := tomlSectionName(lines[i].body); ok {
+		if _, ok := tomlLineSectionName(lines[i]); ok || isTOMLHeader(lines[i]) {
 			break
 		}
 		fieldKey, value, ok := tomlKeyValue(lines[i].body)
@@ -1946,21 +1936,196 @@ func scalarInBlock(lines []tomlLine, start, end int, key string) string {
 
 func tomlSectionName(line string) (string, bool) {
 	trimmed := strings.TrimSpace(line)
+	openWidth := 1
+	closeWidth := 1
 	if strings.HasPrefix(trimmed, "[[") {
-		end := strings.Index(trimmed, "]]")
-		if end < 0 {
-			return "", false
-		}
-		return strings.TrimSpace(trimmed[2:end]), true
+		openWidth = 2
+		closeWidth = 2
+	} else if !strings.HasPrefix(trimmed, "[") {
+		return "", false
 	}
-	if strings.HasPrefix(trimmed, "[") {
-		end := strings.Index(trimmed, "]")
-		if end < 0 {
-			return "", false
-		}
-		return strings.TrimSpace(trimmed[1:end]), true
+	end := tomlHeaderEnd(trimmed, openWidth, closeWidth)
+	if end < 0 {
+		return "", false
 	}
-	return "", false
+	tail := strings.TrimSpace(trimmed[end+closeWidth:])
+	if tail != "" && !strings.HasPrefix(tail, "#") {
+		return "", false
+	}
+	path, ok := parseTOMLKeyPath(trimmed[openWidth:end])
+	if !ok {
+		return "", false
+	}
+	return canonicalTOMLKeyPath(path), true
+}
+
+func tomlHeaderEnd(line string, openWidth, closeWidth int) int {
+	inBasicString := false
+	inLiteralString := false
+	escaped := false
+	for i := openWidth; i < len(line); i++ {
+		ch := line[i]
+		switch {
+		case escaped:
+			escaped = false
+		case inBasicString && ch == '\\':
+			escaped = true
+		case !inLiteralString && ch == '"':
+			inBasicString = !inBasicString
+		case !inBasicString && ch == '\'':
+			inLiteralString = !inLiteralString
+		case !inBasicString && !inLiteralString && ch == ']':
+			if closeWidth == 1 || (i+1 < len(line) && line[i+1] == ']') {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func parseTOMLKeyPath(raw string) ([]string, bool) {
+	var path []string
+	for i := 0; ; {
+		for i < len(raw) && (raw[i] == ' ' || raw[i] == '\t') {
+			i++
+		}
+		if i >= len(raw) {
+			return nil, false
+		}
+		var segment string
+		switch raw[i] {
+		case '"':
+			start := i
+			i++
+			closed := false
+			escaped := false
+			for i < len(raw) {
+				ch := raw[i]
+				i++
+				if escaped {
+					escaped = false
+					continue
+				}
+				if ch == '\\' {
+					escaped = true
+					continue
+				}
+				if ch == '"' {
+					closed = true
+					break
+				}
+			}
+			if !closed {
+				return nil, false
+			}
+			unquoted, err := strconv.Unquote(raw[start:i])
+			if err != nil {
+				return nil, false
+			}
+			segment = unquoted
+		case '\'':
+			i++
+			start := i
+			for i < len(raw) && raw[i] != '\'' {
+				i++
+			}
+			if i >= len(raw) {
+				return nil, false
+			}
+			segment = raw[start:i]
+			i++
+		default:
+			start := i
+			for i < len(raw) && isBareTOMLKeyByte(raw[i]) {
+				i++
+			}
+			if start == i {
+				return nil, false
+			}
+			segment = raw[start:i]
+		}
+		path = append(path, segment)
+		for i < len(raw) && (raw[i] == ' ' || raw[i] == '\t') {
+			i++
+		}
+		if i == len(raw) {
+			return path, true
+		}
+		if raw[i] != '.' {
+			return nil, false
+		}
+		i++
+	}
+}
+
+func canonicalTOMLKeyPath(path []string) string {
+	segments := make([]string, len(path))
+	for i, segment := range path {
+		if segment != "" && isBareTOMLKey(segment) {
+			segments[i] = segment
+		} else {
+			segments[i] = strconv.Quote(segment)
+		}
+	}
+	return strings.Join(segments, ".")
+}
+
+func isBareTOMLKey(key string) bool {
+	for i := 0; i < len(key); i++ {
+		if !isBareTOMLKeyByte(key[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func isBareTOMLKeyByte(ch byte) bool {
+	return ch >= 'a' && ch <= 'z' ||
+		ch >= 'A' && ch <= 'Z' ||
+		ch >= '0' && ch <= '9' ||
+		ch == '_' ||
+		ch == '-'
+}
+
+func tomlAssignmentIndex(line string) int {
+	inBasicString := false
+	inLiteralString := false
+	escaped := false
+	for i := 0; i < len(line); i++ {
+		ch := line[i]
+		switch {
+		case escaped:
+			escaped = false
+		case inBasicString && ch == '\\':
+			escaped = true
+		case !inLiteralString && ch == '"':
+			inBasicString = !inBasicString
+		case !inBasicString && ch == '\'':
+			inLiteralString = !inLiteralString
+		case !inBasicString && !inLiteralString && ch == '#':
+			return -1
+		case !inBasicString && !inLiteralString && ch == '=':
+			return i
+		}
+	}
+	return -1
+}
+
+func tomlLineSectionName(line tomlLine) (string, bool) {
+	if line.valueContinuation {
+		return "", false
+	}
+	return tomlSectionName(line.body)
+}
+
+func tomlSectionIsOrDescendsFrom(section, parent string) bool {
+	// Section names are canonical key paths here. A literal dot inside one
+	// segment stays quoted, so the separator boundary cannot alias it.
+	return section == parent || strings.HasPrefix(section, parent+".")
+}
+
+func isTOMLHeader(line tomlLine) bool {
+	return !line.valueContinuation && strings.HasPrefix(strings.TrimSpace(line.body), "[")
 }
 
 func endpointNodeID(endpoint string) string {
@@ -1969,7 +2134,7 @@ func endpointNodeID(endpoint string) string {
 
 func findFormationBlockByID(lines []tomlLine, formationID string) (int, int, bool) {
 	for i := 0; i < len(lines); i++ {
-		section, ok := tomlSectionName(lines[i].body)
+		section, ok := tomlLineSectionName(lines[i])
 		if !ok || section != "formation" {
 			continue
 		}
@@ -1983,7 +2148,7 @@ func findFormationBlockByID(lines []tomlLine, formationID string) (int, int, boo
 
 func findGateBlockByID(lines []tomlLine, gateID string) (int, int, bool) {
 	for i := 0; i < len(lines); i++ {
-		section, ok := tomlSectionName(lines[i].body)
+		section, ok := tomlLineSectionName(lines[i])
 		if !ok || section != "gate" {
 			continue
 		}
@@ -1997,7 +2162,7 @@ func findGateBlockByID(lines []tomlLine, gateID string) (int, int, bool) {
 
 func findMissionBlockByID(lines []tomlLine, missionID string) (int, int, bool) {
 	for i := 0; i < len(lines); i++ {
-		section, ok := tomlSectionName(lines[i].body)
+		section, ok := tomlLineSectionName(lines[i])
 		if !ok || section != "mission" {
 			continue
 		}
@@ -2011,7 +2176,7 @@ func findMissionBlockByID(lines []tomlLine, missionID string) (int, int, bool) {
 
 func formationHeaderScalar(lines []tomlLine, start, end int, key string) string {
 	for i := start + 1; i < end && i < len(lines); i++ {
-		if _, ok := tomlSectionName(lines[i].body); ok {
+		if _, ok := tomlLineSectionName(lines[i]); ok || isTOMLHeader(lines[i]) {
 			break
 		}
 		fieldKey, value, ok := tomlKeyValue(lines[i].body)
@@ -2024,7 +2189,7 @@ func formationHeaderScalar(lines []tomlLine, start, end int, key string) string 
 
 func formationHeaderEnd(lines []tomlLine, start, end int) int {
 	for i := start + 1; i < end && i < len(lines); i++ {
-		if _, ok := tomlSectionName(lines[i].body); ok {
+		if _, ok := tomlLineSectionName(lines[i]); ok || isTOMLHeader(lines[i]) {
 			return i
 		}
 	}
@@ -2033,7 +2198,7 @@ func formationHeaderEnd(lines []tomlLine, start, end int) int {
 
 func findFormationSection(lines []tomlLine, formationStart, formationEnd int, sectionName string) (int, int, bool) {
 	for i := formationStart + 1; i < formationEnd; i++ {
-		section, ok := tomlSectionName(lines[i].body)
+		section, ok := tomlLineSectionName(lines[i])
 		if !ok || section != sectionName {
 			continue
 		}
@@ -2048,7 +2213,7 @@ func findFormationSection(lines []tomlLine, formationStart, formationEnd int, se
 
 func findFormationSlotBlock(lines []tomlLine, formationStart, formationEnd int, slotID string) (int, int, bool) {
 	for i := formationStart + 1; i < formationEnd; i++ {
-		section, ok := tomlSectionName(lines[i].body)
+		section, ok := tomlLineSectionName(lines[i])
 		if !ok || section != "formation.slot" {
 			continue
 		}
@@ -2063,7 +2228,7 @@ func findFormationSlotBlock(lines []tomlLine, formationStart, formationEnd int, 
 
 func findFormationPortBlock(lines []tomlLine, formationStart, formationEnd int, portID string) (int, int, bool) {
 	for i := formationStart + 1; i < formationEnd; i++ {
-		section, ok := tomlSectionName(lines[i].body)
+		section, ok := tomlLineSectionName(lines[i])
 		if !ok || (section != "formation.input" && section != "formation.output") {
 			continue
 		}
@@ -2087,7 +2252,7 @@ func endpointAllowsDirection(raw []byte, endpoint, direction string) (string, bo
 		if !ok {
 			return "", false
 		}
-		section, ok := tomlSectionName(lines[portStart].body)
+		section, ok := tomlLineSectionName(lines[portStart])
 		if !ok {
 			return "", false
 		}
@@ -2147,16 +2312,6 @@ func renderBriefSection(req FormationBriefRequest) []tomlLine {
 	return lines
 }
 
-func renderVerificationSection(req FormationVerificationRequest, id string) []tomlLine {
-	return []tomlLine{
-		{body: "[formation.verification]", newline: "\n"},
-		{body: "id = " + renderString(id), newline: "\n"},
-		{body: "kinds = " + renderStringArray(req.Kinds), newline: "\n"},
-		{body: "criterion = " + renderString(req.Criterion), newline: "\n"},
-		{body: "onFail = " + renderString(req.OnFail), newline: "\n"},
-	}
-}
-
 func setScalarInLineRange(lines []tomlLine, start, end int, key, renderedValue string) []tomlLine {
 	for i := start; i < end && i < len(lines); i++ {
 		fieldKey, _, ok := tomlKeyValue(lines[i].body)
@@ -2200,47 +2355,63 @@ func parseFormationNodes(raw []byte) []FormationNode {
 	var active string
 	for _, line := range splitLines(raw) {
 		trimmed := strings.TrimSpace(line.body)
-		switch trimmed {
-		case "[[formation]]":
+		section, isSection := tomlLineSectionName(line)
+		isArraySection := strings.HasPrefix(trimmed, "[[")
+		switch {
+		case isSection && isArraySection && section == "formation":
 			formations = append(formations, FormationNode{})
 			current = &formations[len(formations)-1]
 			active = "formation"
 			continue
-		case "[[formation.input]]":
+		case isSection && isArraySection && section == "formation.input":
 			if current != nil {
 				current.Inputs = append(current.Inputs, FormationPort{})
 				active = "input"
 			}
 			continue
-		case "[[formation.output]]":
+		case isSection && isArraySection && section == "formation.output":
 			if current != nil {
 				current.Outputs = append(current.Outputs, FormationPort{})
 				active = "output"
 			}
 			continue
-		case "[[formation.slot]]":
+		case isSection && isArraySection && section == "formation.slot":
 			if current != nil {
 				current.Slots = append(current.Slots, FormationSlot{})
 				active = "slot"
 			}
 			continue
-		case "[formation.brief]":
+		case isSection && !isArraySection && section == "formation.brief":
 			if current != nil {
 				current.Brief = &FormationBrief{}
 				active = "brief"
 			}
 			continue
-		case "[formation.verification]":
+		case isSection && !isArraySection && section == "formation.verification":
 			if current != nil {
 				current.Verification = &FormationVerification{}
 				active = "verification"
 			}
 			continue
-		default:
-			if strings.HasPrefix(trimmed, "[") {
+		case isSection && tomlSectionIsOrDescendsFrom(section, "formation.verification"):
+			if current != nil {
+				// Any descendant implicitly creates the verification parent in
+				// TOML. Its presence alone must retain the migration fence.
+				if current.Verification == nil {
+					current.Verification = &FormationVerification{}
+				}
 				active = ""
-				continue
 			}
+			continue
+		case isSection:
+			active = ""
+			continue
+		case isTOMLHeader(line):
+			active = ""
+			continue
+		}
+		if line.valueContinuation {
+			continue
 		}
 		if current == nil {
 			continue
@@ -2258,6 +2429,12 @@ func parseFormationNodes(raw []byte) []FormationNode {
 				current.Type = value
 			case "title":
 				current.Title = value
+			case "verification":
+				applyFormationVerificationField(current, "", value)
+			default:
+				if strings.HasPrefix(key, "verification.") {
+					applyFormationVerificationField(current, strings.TrimPrefix(key, "verification."), value)
+				}
 			}
 		case "input":
 			port := &current.Inputs[len(current.Inputs)-1]
@@ -2301,19 +2478,26 @@ func parseFormationNodes(raw []byte) []FormationNode {
 				current.Brief.Links = parseStringArray(value)
 			}
 		case "verification":
-			switch key {
-			case "id":
-				current.Verification.ID = value
-			case "kinds":
-				current.Verification.Kinds = parseStringArray(value)
-			case "criterion":
-				current.Verification.Criterion = value
-			case "onFail":
-				current.Verification.OnFail = value
-			}
+			applyFormationVerificationField(current, key, value)
 		}
 	}
 	return formations
+}
+
+func applyFormationVerificationField(formation *FormationNode, key, value string) {
+	if formation.Verification == nil {
+		formation.Verification = &FormationVerification{}
+	}
+	switch key {
+	case "id":
+		formation.Verification.ID = value
+	case "kinds":
+		formation.Verification.Kinds = parseStringArray(value)
+	case "criterion":
+		formation.Verification.Criterion = value
+	case "onFail":
+		formation.Verification.OnFail = value
+	}
 }
 
 func parseBoardConnections(raw []byte) []BoardConnection {
@@ -2322,17 +2506,20 @@ func parseBoardConnections(raw []byte) []BoardConnection {
 	active := false
 	for _, line := range splitLines(raw) {
 		trimmed := strings.TrimSpace(line.body)
-		switch trimmed {
-		case "[[connection]]":
+		section, isSection := tomlLineSectionName(line)
+		isArraySection := strings.HasPrefix(trimmed, "[[")
+		switch {
+		case isSection && isArraySection && section == "connection":
 			connections = append(connections, BoardConnection{})
 			current = &connections[len(connections)-1]
 			active = true
 			continue
-		default:
-			if strings.HasPrefix(trimmed, "[") {
-				active = false
-				continue
-			}
+		case isTOMLHeader(line):
+			active = false
+			continue
+		}
+		if line.valueContinuation {
+			continue
 		}
 		if !active || current == nil {
 			continue
@@ -2359,17 +2546,20 @@ func parseGateNodes(raw []byte) []GateNode {
 	active := false
 	for _, line := range splitLines(raw) {
 		trimmed := strings.TrimSpace(line.body)
-		switch trimmed {
-		case "[[gate]]":
-			gates = append(gates, GateNode{})
+		section, isSection := tomlLineSectionName(line)
+		isArraySection := strings.HasPrefix(trimmed, "[[")
+		switch {
+		case isSection && isArraySection && section == "gate":
+			gates = append(gates, GateNode{legacyCommandFields: map[string]int{}})
 			current = &gates[len(gates)-1]
 			active = true
 			continue
-		default:
-			if strings.HasPrefix(trimmed, "[") {
-				active = false
-				continue
-			}
+		case isTOMLHeader(line):
+			active = false
+			continue
+		}
+		if line.valueContinuation {
+			continue
 		}
 		if !active || current == nil {
 			continue
@@ -2388,12 +2578,16 @@ func parseGateNodes(raw []byte) []GateNode {
 		case "criterion":
 			current.Criterion = value
 		case "command":
+			current.legacyCommandFields[key]++
 			current.Command = value
 		case "commandArgv":
+			current.legacyCommandFields[key]++
 			current.CommandArgv = parseStringArray(value)
 		case "commandCwd":
+			current.legacyCommandFields[key]++
 			current.CommandCWD = value
 		case "commandShell":
+			current.legacyCommandFields[key]++
 			current.CommandShell = value
 		}
 	}
@@ -2406,17 +2600,20 @@ func parseMissionNodes(raw []byte) []MissionNode {
 	active := false
 	for _, line := range splitLines(raw) {
 		trimmed := strings.TrimSpace(line.body)
-		switch trimmed {
-		case "[[mission]]":
+		section, isSection := tomlLineSectionName(line)
+		isArraySection := strings.HasPrefix(trimmed, "[[")
+		switch {
+		case isSection && isArraySection && section == "mission":
 			missions = append(missions, MissionNode{})
 			current = &missions[len(missions)-1]
 			active = true
 			continue
-		default:
-			if strings.HasPrefix(trimmed, "[") {
-				active = false
-				continue
-			}
+		case isTOMLHeader(line):
+			active = false
+			continue
+		}
+		if line.valueContinuation {
+			continue
 		}
 		if !active || current == nil {
 			continue
@@ -2445,17 +2642,20 @@ func parseLayoutNodes(raw []byte) []LayoutNode {
 	active := false
 	for _, line := range splitLines(raw) {
 		trimmed := strings.TrimSpace(line.body)
-		switch trimmed {
-		case "[[node]]":
+		section, isSection := tomlLineSectionName(line)
+		isArraySection := strings.HasPrefix(trimmed, "[[")
+		switch {
+		case isSection && isArraySection && section == "node":
 			nodes = append(nodes, LayoutNode{})
 			current = &nodes[len(nodes)-1]
 			active = true
 			continue
-		default:
-			if strings.HasPrefix(trimmed, "[") {
-				active = false
-				continue
-			}
+		case isTOMLHeader(line):
+			active = false
+			continue
+		}
+		if line.valueContinuation {
+			continue
 		}
 		if !active || current == nil {
 			continue
@@ -2482,17 +2682,20 @@ func parseLayoutEdges(raw []byte) []LayoutEdge {
 	active := false
 	for _, line := range splitLines(raw) {
 		trimmed := strings.TrimSpace(line.body)
-		switch trimmed {
-		case "[[edge]]":
+		section, isSection := tomlLineSectionName(line)
+		isArraySection := strings.HasPrefix(trimmed, "[[")
+		switch {
+		case isSection && isArraySection && section == "edge":
 			edges = append(edges, LayoutEdge{})
 			current = &edges[len(edges)-1]
 			active = true
 			continue
-		default:
-			if strings.HasPrefix(trimmed, "[") {
-				active = false
-				continue
-			}
+		case isTOMLHeader(line):
+			active = false
+			continue
+		}
+		if line.valueContinuation {
+			continue
 		}
 		if !active || current == nil {
 			continue
@@ -2512,15 +2715,20 @@ func parseLayoutEdges(raw []byte) []LayoutEdge {
 }
 
 func tomlKeyValue(line string) (string, string, bool) {
-	eq := strings.Index(line, "=")
+	eq := tomlAssignmentIndex(line)
 	if eq < 0 {
 		return "", "", false
 	}
-	key := strings.TrimSpace(line[:eq])
-	if key == "" {
+	path, ok := parseTOMLKeyPath(line[:eq])
+	if !ok {
 		return "", "", false
 	}
-	value := strings.TrimSpace(valuePart(line))
+	key := canonicalTOMLKeyPath(path)
+	valuePart := line[eq+1:]
+	if comment := commentIndex(valuePart); comment >= 0 {
+		valuePart = valuePart[:comment]
+	}
+	value := strings.TrimSpace(valuePart)
 	if unquoted, err := strconv.Unquote(value); err == nil {
 		value = unquoted
 	}

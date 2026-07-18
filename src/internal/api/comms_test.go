@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/chrote/server/internal/comms"
+	"github.com/chrote/server/internal/formations"
 )
 
 func TestCommsHandlerProjectionUsesSuccessEnvelopeAndCanonicalModel(t *testing.T) {
@@ -106,6 +107,30 @@ func TestCommsHandlerDoesNotRegisterWriterRoutes(t *testing.T) {
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/comms/rooms/project:dogfood/messages", nil))
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("POST messages status = %d, want 405 to keep first slice read-only", rec.Code)
+	}
+}
+
+func TestCommsHandlerReturnsSafeNonAuthorizingErrorForSchema2Run(t *testing.T) {
+	workspace := t.TempDir()
+	runID := "run_01KXNP6VY3227H78329V52CKF8"
+	ledger := filepath.Join(workspace, ".formations", "runs", "demo", runID+".ndjson")
+	if err := os.MkdirAll(filepath.Dir(ledger), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ledger, []byte(`{"schema":2,"authoritySchema":2,"writerFence":1,"ts":"2026-07-18T00:00:00Z","runId":"`+runID+`","seq":1,"type":"run_started","actor":"agent:test","data":{"boardSlug":"demo"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewCommsHandlerWithStore(comms.NewStoreWithFormations(workspace, formations.NewStore(workspace)))
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/comms/rooms/run:"+runID+"/projection", nil))
+	if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), `"code":"RUNTIME_AUTHORITY_NON_AUTHORIZING"`) {
+		t.Fatalf("schema-2 comms status/body = %d %s, want safe 503", recorder.Code, recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), workspace) || strings.Contains(recorder.Body.String(), "wsa_") {
+		t.Fatalf("schema-2 comms error leaked private identity: %s", recorder.Body.String())
 	}
 }
 

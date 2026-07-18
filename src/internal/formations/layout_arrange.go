@@ -2,7 +2,6 @@ package formations
 
 import (
 	"errors"
-	"os"
 	"sort"
 	"strings"
 )
@@ -25,14 +24,10 @@ func (s *Store) ArrangeLayout(slug string, opts WriteOptions) (*LayoutDocument, 
 	if opts.ExpectedETag == "" {
 		return nil, ErrPreconditionRequired
 	}
-	path := s.BoardPath(slug)
 	var arranged *LayoutDocument
-	err := withFileLock(path, func() error {
-		raw, err := os.ReadFile(path)
+	err := s.withBoardDefinitionLock(slug, func(definition *definitionFile) error {
+		raw, err := definition.readBytes()
 		if err != nil {
-			if os.IsNotExist(err) {
-				return ErrNotFound
-			}
 			return err
 		}
 		board, err := parseBoard(raw)

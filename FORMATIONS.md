@@ -79,7 +79,7 @@ and judgment of each turn to the agents while making scheduling auditable.
 | Port | Stable named input/output address with a declared payload kind |
 | Payload | Typed work, gate feedback, unavailable result, or error routed through a port |
 | Gate | Human/code/judge evaluator and router; never a transformation step |
-| Verification | Schema-1 inline check retained for inspection; schema-2 execution is deferred |
+| Verification | Retired schema-1 inline check retained only for compatibility inspection and replacement-Gate-bound removal |
 | Run | Execution instance that binds slots, dispatches work, records events, and projects state |
 | Ledger | Append-only event history for a run |
 
@@ -89,6 +89,9 @@ Current main implements Mission, Formation, and Gate nodes, stable Formation
 ports, fixed Mission/Gate ports, file-backed connections, agent execution, and
 run ledgers. It does not implement Tool nodes, typed port kinds, exact
 pass-through provenance, typed gate feedback, or exact run-bound pane targets.
+Legacy Gate command fields remain readable for source inspection and migration
+planning, but Gate-owned argv/shell execution and new command-field authoring are
+retired.
 Its API and Archon each construct a synchronous local run engine, its `abort`
 paths append final cancellation directly, and its workspace run files are not
 yet the accepted ownership/security boundary.
@@ -194,11 +197,15 @@ safely normalizable schema-1 board may start from an immutable normalized
 schema-2 run snapshot without rewriting the canonical board; source/snapshot
 schema are recorded. Schema-1 runs are inspect-only and resume returns
 `legacy_run_requires_new_run`.
-Schema-1 inline Formation verification is also inspection-only for schema-2.
-Its existing verdict lacks exact attempt/output and replay-safe revision
-identity, so validation and run preflight fail
-`legacy_inline_verification_requires_migration` until `ctx-ug7.17` defines or
-retires it. Schema-2 emits no `verification_verdict`.
+Schema-1 inline Formation verification is retired by ADR-0008. Its existing
+verdict lacks exact attempt/output and replay-safe revision identity, so
+validation, Mission start, isolated Formation start, and resume fail
+`legacy_inline_verification_requires_migration` before run artifacts or work.
+New definitions and `verification_verdict` events are rejected; historical
+definitions and verdicts remain inspection evidence only. Authors create a
+replacement Gate, wire a named Formation output to it, then name that Gate in
+the explicit removal request. Cancellation and failure may still close a
+historical run without resuming, routing or dispatching legacy verification.
 
 Schema 2 includes ADR-0007 command identity, workspace/fence authority, the
 hash-bound Formation result, root projections, and authored-config manifest
@@ -236,19 +243,17 @@ ledgers.
    busy, attached, stale, or already leased sessions, harnesses, checks, cwd, or
    agents cannot silently substitute or fall back to a Formations-only source.
 7. **Formations is always-on.** It is a permanent first-class surface, not a
-   feature flag. The only Formations env vars are the executor safety ladder
-   (`CHROTE_FORMATIONS_LAB_*` / `CHROTE_FORMATIONS_TMUX_*` /
-   `CHROTE_FORMATIONS_SCRIPT_GATES` / `CHROTE_FORMATIONS_GATE_*`), which gate
-   disposable execution environments or gate adapters, never feature
-   availability or production cockpit access.
+   feature flag. The executor safety ladder uses
+   `CHROTE_FORMATIONS_LAB_*` / `CHROTE_FORMATIONS_TMUX_*` for disposable
+   execution environments, never feature availability or production cockpit
+   access. Historical Script-Gate environment variables authorize nothing.
 8. **Beads can anchor missions; it is not the graph store.**
-9. **No command-execution landmines.** Free-text criteria never become implicit
-   shell execution. Executable script gates require explicit operator-authored
-   command config and guardrails: `commandArgv` is the default form; CHROTE
-   passes argv literally and does not insert a shell. `commandCwd` is a cwd guard
-   under the workspace, not a filesystem sandbox. `commandShell` is the explicit
-   shell opt-in. Legacy `command` strings are parseable for old boards but are
-   not executable by script gates.
+9. **No Gate-owned command execution.** Free-text criteria never become shell
+   execution. Authored presence of legacy `command`, `commandArgv`,
+   `commandShell`, or `commandCwd`—including empty values—is read-only
+   inspection/migration-plan input and fails
+   `legacy_script_gate_requires_fenced_migration` before authoring or execution.
+   CHROTE does not resolve, normalize, or run it.
 10. **Ports carry concrete payloads.** Connections route the payload attached to
     their source output port. Every output-producing Mission, Formation, or Tool
     node emits `node_output.outputs` keyed by stable output port ids; missing,
@@ -648,10 +653,33 @@ An accepted code result is RFC 8785 canonical UTF-8 JSON over exactly
 `{verdict,reason,evidence}` with no unknown keys/trailing newline and preserved
 evidence order. `gate_kind_result.resultSha256` hashes those exact bytes; replay
 cannot substitute another serializer.
-Current schema-1 argv/shell Script Gates do not silently inherit this safety:
-schema-2 normalization rejects them with
-`legacy_script_gate_requires_fenced_migration` until the process-fence or
-retirement work in `ctx-ug7.16` lands.
+Gate-owned argv/shell process evaluation is retired. Authored presence of any
+legacy Gate command field (`command`, `commandArgv`, `commandShell`, or
+`commandCwd`), even an empty value, remains inspectable but is not safely
+normalizable. Board validation reports
+`legacy_script_gate_requires_fenced_migration`. Mission preflight and resume
+report the same stable error before `run_started` or `run_resumed` only when the
+frozen selected Mission root can reach that Gate. Unreachable legacy Gates and
+all Gates outside an isolated Formation root remain board-validation errors but
+do not block that selected run.
+
+The inspection projection is non-mutating and non-authorizing. It records board
+identity/revision/ETag, Gate id, source mode and field names, affected edge ids,
+the stable error, `targetKind=tool_plus_pure_gate`, `ready=false`,
+`applySupported=false`, and closed unmet requirements. It never copies raw
+command values, resolves executable/cwd/environment, generates Tool ids or
+ports, or suggests a profile. A future explicit apply depends on non-executing
+Tool definitions and registry descriptors owned by `ctx-ug7.8.1`, certified
+host-private Tool implementations and runtime execution owned by `ctx-ug7.8`,
+and pure code-Gate profiles plus the migration write surface owned by
+`ctx-ug7.30`. Until all three land, no apply surface exists.
+
+The future composition is Tool → pure code Gate. The Gate evaluates and forwards
+the exact Tool output, not the Tool's upstream input, so the eventual apply must
+explicitly validate profile/parameter/port/media/downstream compatibility while
+preserving Gate identity, criterion, judge relationships, pass/fail edges, and
+existing layout. If that mapping cannot be proven, the source board remains
+unchanged and migration fails loud.
 
 An executable Gate declares a non-empty, duplicate-free subset of `code`,
 `formation`, and `human`; preflight rejects empty, duplicate, or unknown values
@@ -944,7 +972,8 @@ The reference interaction model is permissive direct manipulation:
 - drag agents from roster into slots;
 - create missions, formations, gates, and templates from the canvas;
 - edit briefs and explicit Gates through local popovers; legacy inline
-  verification remains read-only until `ctx-ug7.17` resolves it;
+  verification opens a read-only migration view whose removal action requires
+  an already-wired replacement Gate;
 - connect, reconnect, route, and remove wires directly;
 - place only newly created elements heuristically and run full layout only from
   the explicit Arrange action; never auto-arrange existing user work;
@@ -1013,9 +1042,8 @@ Watching is optional. Recovery must not depend on a browser tab staying open.
 
 ## Execution environments
 
-Formations execution promotes through explicit execution environments and gate
-adapters. Each step up is an explicit configuration decision, never a silent
-fallback.
+Formations execution promotes through explicit execution environments. Each
+step up is an explicit configuration decision, never a silent fallback.
 
 1. **Lab.** `CHROTE_FORMATIONS_LAB_*` configures a deterministic executor that
    synthesizes outputs and sentinels with no tmux involvement. Full run-engine,
@@ -1030,19 +1058,12 @@ fallback.
    observed between-call retargets fail closed, but same-UID dogfood remains a
    trusted test boundary rather than construction-level isolation. It must not
    be treated as the production session-pool design or certification.
-3. **Script gates.** `CHROTE_FORMATIONS_SCRIPT_GATES` enables operator-authored
-   script/lint/code gate commands. Script gates execute `commandArgv` literally
-   without a CHROTE-inserted shell, inside the board workspace or a `commandCwd`
-   that resolves under that workspace. This is a cwd guard, not a filesystem
-   sandbox. A shell is allowed only with explicit `commandShell`.
-   Legacy `command` text is stored for compatibility but deliberately fails if
-   no structured command is present. Output caps, timeouts, redaction, and
-   fail-loud gate verdicts apply. Script Gates return verdict/evidence only;
-   they are not deterministic Tool transformation steps.
-   This is current schema-1 compatibility behavior. Accepted schema-2 execution
-   instead requires the pure in-process code-Gate profile contract above;
-   command-backed migration fails loud until process fencing is separately
-   implemented.
+3. **Retired Script-gate process path.** No environment flag enables Gate-owned
+   argv/shell execution. Legacy Gate command fields are inspectable only and
+   produce the stable migration error at validation, selected-root preflight,
+   and selected-root resume. Process-backed deterministic work belongs to a
+   future host-profile Tool under `ctx-ug7.8`; code Gates remain certified pure
+   in-process evaluators.
 4. **Shared cockpit execution (accepted contract, currently unavailable).**
    Production Formations must consume the same Terminal inventory resolver and
    session pool as Terminal tabs. The stock tmux adapter cannot yet arbitrate
@@ -1089,7 +1110,7 @@ Formations is working when:
 - CLI changes appear in the UI without structural drift;
 - run state is visible on the graph, not buried only in logs;
 - explicit Gates can block, pass, fail, drive wired correction, or delegate
-  judgment without granting legacy inline verification schema-2 authority;
+  judgment; retired inline verification has no execution or routing authority;
 - failures leave durable evidence and recovery handles;
 - mixed Mission/Formation/Tool/Gate workflows expose named inputs, outputs,
   artifacts, and typed failure/feedback without semantic drift;

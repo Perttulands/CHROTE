@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -525,7 +526,7 @@ y = 112
 	}
 }
 
-func TestArchonGateCreateAndUpdatePersistStructuredScriptCommand(t *testing.T) {
+func TestArchonGateCreateAndUpdateRejectLegacyScriptCommands(t *testing.T) {
 	workspace := t.TempDir()
 	store := formations.NewStore(workspace)
 	writeArchonFile(t, store.BoardPath("session-search"), `schema = 1
@@ -536,45 +537,263 @@ rev = 7
 updatedAt = "2026-06-03T16:00:00Z"
 `)
 	runner := &fakeTmux{live: map[string]bool{}}
+	before := readArchonFile(t, store.BoardPath("session-search"))
 
 	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "gate", "create", "session-search", "--kinds", "lint", "--criterion", "Lint passes", "--command-argv", "npm,run,lint", "--command-cwd", "dashboard", "--json")
+	if code == 0 || !strings.Contains(stderr, formations.LegacyScriptGateMigrationCode) {
+		t.Fatalf("legacy argv create code=%d stderr=%s stdout=%s, want stable migration error", code, stderr, stdout)
+	}
+	if raw := readArchonFile(t, store.BoardPath("session-search")); raw != before {
+		t.Fatalf("rejected argv create changed board bytes\n--- before ---\n%s\n--- after ---\n%s", before, raw)
+	}
+
+	stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "gate", "create", "session-search", "--command-shell", "printf ok", "--json")
+	if code == 0 || !strings.Contains(stderr, formations.LegacyScriptGateMigrationCode) {
+		t.Fatalf("legacy shell create code=%d stderr=%s stdout=%s, want stable migration error", code, stderr, stdout)
+	}
+	if raw := readArchonFile(t, store.BoardPath("session-search")); raw != before {
+		t.Fatalf("rejected shell create changed board bytes\n--- before ---\n%s\n--- after ---\n%s", before, raw)
+	}
+
+	stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "gate", "create", "session-search", "--command-shell", "", "--json")
+	if code == 0 || !strings.Contains(stderr, formations.LegacyScriptGateMigrationCode) {
+		t.Fatalf("empty legacy field create code=%d stderr=%s stdout=%s, want stable migration error", code, stderr, stdout)
+	}
+	if raw := readArchonFile(t, store.BoardPath("session-search")); raw != before {
+		t.Fatalf("rejected empty Gate field changed board bytes")
+	}
+
+	stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "gate", "create", "session-search", "--kinds", "code", "--criterion", "Pure review", "--json")
 	if code != 0 {
-		t.Fatalf("gate create code=%d stderr=%s stdout=%s", code, stderr, stdout)
+		t.Fatalf("pure gate create code=%d stderr=%s stdout=%s", code, stderr, stdout)
 	}
 	var created formations.BoardDocument
 	if err := json.Unmarshal([]byte(stdout), &created); err != nil {
-		t.Fatalf("decode gate create JSON: %v\n%s", err, stdout)
+		t.Fatalf("decode pure gate create JSON: %v\n%s", err, stdout)
 	}
-	if len(created.Gates) != 1 || !strings.Contains(stdout, `"commandArgv": [`) || !strings.Contains(stdout, `"commandCwd": "dashboard"`) {
-		t.Fatalf("gate create JSON missing structured command: %s", stdout)
+	if len(created.Gates) != 1 {
+		t.Fatalf("pure gate create = %+v, want one gate", created.Gates)
 	}
-	raw := readArchonFile(t, store.BoardPath("session-search"))
-	if !strings.Contains(raw, `commandArgv = ["npm", "run", "lint"]`) || !strings.Contains(raw, `commandCwd = "dashboard"`) || strings.Contains(raw, `command = "npm run lint"`) {
-		t.Fatalf("gate create TOML missing structured argv/cwd or persisted legacy command:\n%s", raw)
-	}
-
 	gateID := created.Gates[0].ID
+	before = readArchonFile(t, store.BoardPath("session-search"))
 	stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "gate", "update", "session-search", gateID, "--command-shell", "printf ok", "--command-cwd", "dashboard", "--json")
-	if code != 0 {
-		t.Fatalf("gate update code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	if code == 0 || !strings.Contains(stderr, formations.LegacyScriptGateMigrationCode) {
+		t.Fatalf("legacy shell update code=%d stderr=%s stdout=%s, want stable migration error", code, stderr, stdout)
 	}
-	raw = readArchonFile(t, store.BoardPath("session-search"))
-	if !strings.Contains(raw, `commandShell = "printf ok"`) || strings.Contains(raw, `commandArgv =`) || strings.Contains(raw, `command =`) {
-		t.Fatalf("gate update TOML did not switch cleanly to explicit shell command:\n%s", raw)
+	if raw := readArchonFile(t, store.BoardPath("session-search")); raw != before {
+		t.Fatalf("rejected shell update changed board bytes\n--- before ---\n%s\n--- after ---\n%s", before, raw)
 	}
 
 	stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "gate", "update", "session-search", gateID, "--command", "legacy only", "--json")
-	if code != 0 {
-		t.Fatalf("legacy gate update code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	if code == 0 || !strings.Contains(stderr, formations.LegacyScriptGateMigrationCode) {
+		t.Fatalf("legacy string update code=%d stderr=%s stdout=%s, want stable migration error", code, stderr, stdout)
 	}
-	raw = readArchonFile(t, store.BoardPath("session-search"))
-	if !strings.Contains(raw, `command = "legacy only"`) || strings.Contains(raw, `commandShell =`) || strings.Contains(raw, `commandArgv =`) || strings.Contains(raw, `commandCwd =`) {
-		t.Fatalf("legacy command update did not clear executable fields:\n%s", raw)
+	if raw := readArchonFile(t, store.BoardPath("session-search")); raw != before {
+		t.Fatalf("rejected legacy update changed board bytes\n--- before ---\n%s\n--- after ---\n%s", before, raw)
 	}
 
-	_, stderr, code = runArchon(t, runner, "--workspace", workspace, "gate", "create", "session-search", "--command-argv", "npm,run,lint", "--command-shell", "printf ok")
-	if code == 0 || !strings.Contains(stderr, "gate command must use only one") {
-		t.Fatalf("mixed command mode create code=%d stderr=%s", code, stderr)
+	_, stderr, code = runArchon(t, runner, "--workspace", workspace, "gate", "create", "session-search", "--command-argv", "npm,run,lint", "--command-shell", "printf ok", "--json")
+	if code == 0 || !strings.Contains(stderr, formations.LegacyScriptGateMigrationCode) {
+		t.Fatalf("mixed command mode create code=%d stderr=%s, want stable migration error", code, stderr)
+	}
+}
+
+func TestArchonLegacyScriptGateInspectionStartAndResumeBoundary(t *testing.T) {
+	t.Run("inspection and mission start", func(t *testing.T) {
+		workspace := t.TempDir()
+		agentsDir := t.TempDir()
+		t.Setenv("CHROTE_AGENTS_DIR", agentsDir)
+		personas := formations.NewPersonaStore(agentsDir)
+		if _, err := personas.CreatePersona(formations.CreatePersonaRequest{ID: "scout", Kind: "specialist", Harness: "openai-codex"}); err != nil {
+			t.Fatalf("create persona: %v", err)
+		}
+		store := formations.NewStore(workspace)
+		writeArchonFile(t, store.BoardPath("session-search"), archonLegacyScriptGateBoardFixture())
+		runner := &fakeTmux{live: map[string]bool{}}
+
+		stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "board", "validate", "session-search", "--json")
+		if code != 1 || !strings.Contains(stdout, formations.LegacyScriptGateMigrationCode) || !strings.Contains(stdout, `"targetKind": "tool_plus_pure_gate"`) || strings.Contains(stdout, "npm") {
+			t.Fatalf("board validate code=%d stderr=%s stdout=%s, want non-mutating migration plan without raw command", code, stderr, stdout)
+		}
+		stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "board", "inspect", "session-search", "--json")
+		if code != 0 || !strings.Contains(stdout, `"commandArgv": [`) || !strings.Contains(stdout, `"legacyScriptMigration"`) {
+			t.Fatalf("board inspect code=%d stderr=%s stdout=%s, want exact source plus migration inspection", code, stderr, stdout)
+		}
+
+		stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "mission", "run", "session-search", "--json")
+		if code == 0 || !strings.Contains(stderr, formations.LegacyScriptGateMigrationCode) {
+			t.Fatalf("legacy mission run code=%d stderr=%s stdout=%s, want stable migration error", code, stderr, stdout)
+		}
+		if entries, err := os.ReadDir(filepath.Join(workspace, ".formations", "runs", "session-search")); err == nil && len(entries) != 0 {
+			t.Fatalf("rejected Archon mission run wrote artifacts: %v", entries)
+		} else if err != nil && !os.IsNotExist(err) {
+			t.Fatalf("read run artifacts: %v", err)
+		}
+
+		stdout, stderr, code = runArchon(t, runner, "--workspace", workspace, "formation", "run", "session-search", "work", "--json")
+		if code != 0 || strings.Contains(stderr+stdout, formations.LegacyScriptGateMigrationCode) {
+			t.Fatalf("isolated formation code=%d stderr=%s stdout=%s, want root-scoped non-migration result", code, stderr, stdout)
+		}
+	})
+
+	t.Run("resume", func(t *testing.T) {
+		workspace := t.TempDir()
+		agentsDir := t.TempDir()
+		t.Setenv("CHROTE_AGENTS_DIR", agentsDir)
+		personas := formations.NewPersonaStore(agentsDir)
+		if _, err := personas.CreatePersona(formations.CreatePersonaRequest{ID: "scout", Kind: "specialist", Harness: "openai-codex"}); err != nil {
+			t.Fatalf("create persona: %v", err)
+		}
+		store := formations.NewStore(workspace)
+		cleanBoard := strings.Replace(archonLegacyScriptGateBoardFixture(), `commandArgv = ["npm", "run", "lint"]`+"\n"+`commandCwd = "dashboard"`+"\n", "", 1)
+		writeArchonFile(t, store.BoardPath("session-search"), cleanBoard)
+		board, err := store.ReadBoard("session-search")
+		if err != nil {
+			t.Fatalf("read board: %v", err)
+		}
+		started, err := store.StartRun("session-search", formations.RunStartRequest{MissionID: "mis_showcase", ExpectedBoardETag: board.ETag, ExpectedBoardRev: board.Rev, Personas: personas})
+		if err != nil {
+			t.Fatalf("start historical run: %v", err)
+		}
+		if err := store.AppendRunEvent(started.RunID, formations.RunEvent{Type: formations.RunEventBlocked, Data: map[string]any{"resumeAllowed": true}}); err != nil {
+			t.Fatalf("block historical run: %v", err)
+		}
+		writeArchonFile(t, filepath.Join(workspace, started.SnapshotPath), archonLegacyScriptGateBoardFixture())
+		ledgerPath := filepath.Join(workspace, started.LedgerPath)
+		before := readArchonFile(t, ledgerPath)
+		runner := &fakeTmux{live: map[string]bool{}}
+		stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "run", "resume", started.RunID, "--json")
+		if code == 0 || !strings.Contains(stderr, formations.LegacyScriptGateMigrationCode) {
+			t.Fatalf("legacy resume code=%d stderr=%s stdout=%s, want stable migration error", code, stderr, stdout)
+		}
+		if after := readArchonFile(t, ledgerPath); after != before {
+			t.Fatalf("rejected Archon resume changed ledger bytes")
+		}
+	})
+}
+
+func TestArchonLegacyInlineVerificationRunsFailBeforeArtifacts(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("legacy-inline"), `schema = 1
+id = "brd_legacy_inline"
+slug = "legacy-inline"
+title = "Legacy inline verification"
+rev = 7
+updatedAt = "2026-06-03T16:00:00Z"
+
+[[mission]]
+id = "mis_main"
+title = "Main"
+goal = "Ship it"
+beadId = "ctx-ug7.17"
+
+[[formation]]
+id = "fmn_work"
+type = "solo"
+title = "Work"
+
+[[formation.input]]
+id = "port_work_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_work_out"
+label = "Output"
+
+[formation.verification]
+id = "ver_work"
+kinds = ["code"]
+criterion = "Tests pass"
+onFail = "block"
+
+[[gate]]
+id = "gate_migrated"
+title = "Migrated check"
+kinds = ["code"]
+criterion = "Tests pass"
+
+[[connection]]
+id = "edge_main_work"
+from = "mis_main:out"
+to = "fmn_work:port_work_in"
+
+[[connection]]
+id = "edge_work_gate"
+from = "fmn_work:port_work_out"
+to = "gate_migrated:in"
+`)
+	legacyRaw := readArchonFile(t, store.BoardPath("legacy-inline"))
+	runner := &fakeTmux{live: map[string]bool{}}
+	commands := [][]string{
+		{"--workspace", workspace, "mission", "run", "legacy-inline", "--json"},
+		{"--workspace", workspace, "formation", "run", "legacy-inline", "fmn_work", "--json"},
+	}
+	for _, command := range commands {
+		stdout, stderr, code := runArchon(t, runner, command...)
+		if code == 0 || stdout != "" {
+			t.Fatalf("command %v code=%d stdout=%q stderr=%s, want JSON error only", command, code, stdout, stderr)
+		}
+		if !strings.Contains(stderr, `"code": "legacy_inline_verification_requires_migration"`) {
+			t.Fatalf("command %v stderr missing stable migration code: %s", command, stderr)
+		}
+	}
+	runsDir := filepath.Join(workspace, ".formations", "runs", "legacy-inline")
+	entries, err := os.ReadDir(runsDir)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read runs directory: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("run artifacts = %+v, want none before Archon rejection", entries)
+	}
+	inspectOut, inspectErr, inspectCode := runArchon(t, runner, "--workspace", workspace, "formation", "inspect", "legacy-inline", "--json")
+	if inspectCode != 0 || inspectErr != "" || !strings.Contains(inspectOut, `"verification"`) || !strings.Contains(inspectOut, `"criterion": "Tests pass"`) {
+		t.Fatalf("legacy inspection code=%d stdout=%s stderr=%s, want readable verification", inspectCode, inspectOut, inspectErr)
+	}
+	_, missingReplacementErr, missingReplacementCode := runArchon(t, runner, "--workspace", workspace, "formation", "remove-verification", "legacy-inline", "fmn_work", "--json")
+	if missingReplacementCode == 0 || !strings.Contains(missingReplacementErr, `"code": "legacy_inline_verification_requires_migration"`) {
+		t.Fatalf("remove without replacement Gate code=%d stderr=%s, want stable migration rejection", missingReplacementCode, missingReplacementErr)
+	}
+	removeOut, removeErr, removeCode := runArchon(t, runner, "--workspace", workspace, "formation", "remove-verification", "legacy-inline", "fmn_work", "--replacement-gate", "gate_migrated", "--json")
+	if removeCode != 0 || removeErr != "" {
+		t.Fatalf("remove legacy verification code=%d stdout=%s stderr=%s", removeCode, removeOut, removeErr)
+	}
+	after, err := store.ReadBoard("legacy-inline")
+	if err != nil {
+		t.Fatalf("read board after compatibility removal: %v", err)
+	}
+	if after.Formations[0].Verification != nil {
+		t.Fatalf("verification after explicit removal = %+v, want absent", after.Formations[0].Verification)
+	}
+	afterRaw := readArchonFile(t, store.BoardPath("legacy-inline"))
+	if !strings.Contains(afterRaw, `id = "gate_migrated"`) || !strings.Contains(afterRaw, `to = "gate_migrated:in"`) {
+		t.Fatalf("explicit migration changed replacement Gate or wiring:\n%s", afterRaw)
+	}
+	started, err := store.StartRun("legacy-inline", formations.RunStartRequest{
+		MissionID: "mis_main", Actor: "agent:test", ExpectedBoardETag: after.ETag, ExpectedBoardRev: after.Rev,
+	})
+	if err != nil {
+		t.Fatalf("start historical compatibility run: %v", err)
+	}
+	if err := store.AppendRunEvent(started.RunID, formations.RunEvent{Type: formations.RunEventBlocked, Data: map[string]any{
+		"reason": "legacy interruption", "resumeAllowed": true, "resumePolicy": "explicit",
+	}}); err != nil {
+		t.Fatalf("block historical compatibility run: %v", err)
+	}
+	legacyResumeRaw := strings.Replace(legacyRaw, "rev = 7", "rev = "+strconv.Itoa(after.Rev), 1)
+	writeArchonFile(t, filepath.Join(workspace, started.SnapshotPath), legacyResumeRaw)
+	ledgerPath := filepath.Join(workspace, started.LedgerPath)
+	beforeResume := readArchonFile(t, ledgerPath)
+	resumeOut, resumeErr, resumeCode := runArchon(t, runner, "--workspace", workspace, "run", "resume", started.RunID, "--json")
+	if resumeCode == 0 || resumeOut != "" || !strings.Contains(resumeErr, `"code": "legacy_inline_verification_requires_migration"`) {
+		t.Fatalf("legacy resume code=%d stdout=%s stderr=%s, want stable migration error", resumeCode, resumeOut, resumeErr)
+	}
+	if afterResume := readArchonFile(t, ledgerPath); afterResume != beforeResume {
+		t.Fatalf("rejected Archon resume changed ledger\nbefore:\n%s\nafter:\n%s", beforeResume, afterResume)
+	}
+	abortOut, abortErr, abortCode := runArchon(t, runner, "--workspace", workspace, "run", "abort", started.RunID, "--reason", "retire legacy run", "--json")
+	if abortCode != 0 || abortErr != "" || !strings.Contains(abortOut, `"status": "canceled"`) || !strings.Contains(abortOut, `"final": true`) {
+		t.Fatalf("legacy abort code=%d stdout=%s stderr=%s, want final canceled", abortCode, abortOut, abortErr)
 	}
 }
 
@@ -2356,7 +2575,10 @@ func runArchon(t *testing.T, runner *fakeTmux, args ...string) (string, string, 
 	t.Helper()
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := run(args, &stdout, &stderr, runner)
+	// Historic CLI behavior tests use the explicit schema-1 compatibility
+	// library seam. Production run() is separately covered and always installs
+	// the non-authorizing runtime boundary.
+	code := runWithRuntimeStoreFactory(args, &stdout, &stderr, runner, formations.NewStore)
 	return stdout.String(), stderr.String(), code
 }
 
@@ -2746,6 +2968,31 @@ id = "edge_mission_work"
 from = "mis_showcase:out"
 to = "fmn_work:port_work_in"
 `
+}
+
+func archonLegacyScriptGateBoardFixture() string {
+	return strings.Replace(archonS4BoardFixture(), `[[connection]]
+id = "edge_mission_work"
+from = "mis_showcase:out"
+to = "fmn_work:port_work_in"
+`, `[[gate]]
+id = "gate_lint"
+title = "Legacy lint"
+kinds = ["code"]
+criterion = "Lint passes"
+commandArgv = ["npm", "run", "lint"]
+commandCwd = "dashboard"
+
+[[connection]]
+id = "edge_mission_gate"
+from = "mis_showcase:out"
+to = "gate_lint:in"
+
+[[connection]]
+id = "edge_gate_work"
+from = "gate_lint:pass"
+to = "fmn_work:port_work_in"
+`, 1)
 }
 
 func archonS5CascadeBoardFixture() string {

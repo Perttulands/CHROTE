@@ -67,8 +67,69 @@ Feature: Gates and judges — checkpoints that route work and can be judged by f
     And network, secrets, undeclared host reads, spawn, and host writes are denied
     And locale/timezone are normalized, clock/entropy are frozen or denied, and repeat vectors match expected result hashes
     And a profile requiring an OS process is rejected before "run_started"
-    And a schema-1 argv/shell Script Gate fails schema-2 normalization with "legacy_script_gate_requires_fenced_migration"
-    And that rejection writes no "run_started" or Gate evaluation event
+    And Gate-owned argv/shell process evaluation is retired
+
+  @file @security
+  Scenario Outline: Every authored legacy Gate command field is inspection-only
+    Given a schema-1 Gate contains authored field <field> even when its value is empty
+    When the board is read and validated
+    Then source inspection preserves that field without executing or rewriting it
+    And validation reports "legacy_script_gate_requires_fenced_migration" for that Gate
+    And an inert legacy string or cwd-only Gate receives the same migration finding
+    And "gate_not_routable" is reported separately when the Gate has no human or formation-judge route
+    And no executable, cwd, environment, argv, or profile is resolved or inferred
+    Examples:
+      | field          |
+      | command        |
+      | commandArgv    |
+      | commandShell   |
+      | commandCwd     |
+
+  @file @security
+  Scenario: A reachable legacy command Gate fences one selected Mission root
+    Given a selected Mission can reach a Gate with a legacy command field on a possible pass or fail branch
+    When that Mission starts or its frozen snapshot resumes
+    Then it fails with "legacy_script_gate_requires_fenced_migration" before "run_started" or "run_resumed"
+    And no snapshot, binding, ledger, Gate evaluation, process, verdict, or route is produced
+    And reachable judge chains are included in the selected-root check
+
+  @file @security
+  Scenario: Legacy command findings outside the selected root do not broaden execution preflight
+    Given board validation reports a legacy command Gate
+    And that Gate is unreachable from the selected Mission
+    When the selected Mission starts
+    Then the whole-board validation finding remains visible
+    But that unreachable Gate does not block the selected Mission
+
+  @file @security
+  Scenario: An isolated Formation root does not traverse legacy command Gates
+    Given board validation reports a legacy command Gate outside an isolated Formation root
+    When I run that isolated Formation
+    Then downstream board edges are not traversed
+    And the legacy Gate does not block the isolated Formation root
+
+  @cli @api @file @security
+  Scenario: Legacy Gate migration is a non-mutating plan before Tool profiles exist
+    Given a legacy command Gate remains in the source board
+    When API inspection or "archon board validate --json" describes migration
+    Then the plan binds board id, revision, ETag, Gate id, source mode, source field names, and affected edge ids
+    And it records "code=legacy_script_gate_requires_fenced_migration"
+    And it records "targetKind=tool_plus_pure_gate", "ready=false", and "applySupported=false"
+    And it lists the host Tool profile, pure Gate profile, explicit mapping, media compatibility, and atomic CAS requirements
+    And it contains no raw command value, resolved executable or cwd, environment, generated Tool id or port, parameters, or suggested profile
+    And no migration mutation verb or endpoint is available
+
+  @file @security
+  Scenario: A later explicit Tool-to-pure-Gate migration never infers legacy command semantics
+    Given ctx-ug7.8.1 has supplied non-executing Tool definitions and registry descriptors
+    And ctx-ug7.8 has supplied certified host-private implementations and runtime execution
+    And ctx-ug7.30 has supplied certified pure code-Gate profiles and the explicit apply
+    When a future caller explicitly selects Tool and pure-Gate profiles, parameters, and port mapping
+    Then one atomic compare-and-swap validates every affected edge and downstream media contract
+    And the existing Gate id, title, criterion, judge relationships, pass/fail edges, and layout are preserved
+    And only the inserted Tool receives new-node placement
+    And the Gate evaluates and forwards the exact Tool output rather than the pre-Tool payload
+    But an unprovable mapping leaves the source bytes unchanged and fails loud
 
   @file @security
   Scenario Outline: A code Gate evaluator cannot wedge the coordinator

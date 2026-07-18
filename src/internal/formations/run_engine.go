@@ -3,7 +3,6 @@ package formations
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -11,11 +10,10 @@ import (
 )
 
 var (
-	errRunStopped                       = errors.New("formations run stopped")
-	ErrRunExecutorUnavailable           = errors.New("formations run executor unavailable")
-	ErrGateEvaluatorUnavailable         = errors.New("formations gate evaluator unavailable")
-	ErrVerificationEvaluatorUnavailable = errors.New("formations verification evaluator unavailable")
-	ErrRunWallClockExceeded             = errors.New("formations run wall clock exceeded")
+	errRunStopped               = errors.New("formations run stopped")
+	ErrRunExecutorUnavailable   = errors.New("formations run executor unavailable")
+	ErrGateEvaluatorUnavailable = errors.New("formations gate evaluator unavailable")
+	ErrRunWallClockExceeded     = errors.New("formations run wall clock exceeded")
 )
 
 type FormationExecutor interface {
@@ -42,16 +40,11 @@ type GateEvaluator interface {
 	EvaluateGate(GateEvaluation) (GateEvaluationResult, error)
 }
 
-type VerificationEvaluator interface {
-	EvaluateVerification(VerificationEvaluation) (VerificationEvaluationResult, error)
-}
-
 type RunEngine struct {
-	store                 *Store
-	personas              *PersonaStore
-	executor              FormationExecutor
-	gateEvaluator         GateEvaluator
-	verificationEvaluator VerificationEvaluator
+	store         *Store
+	personas      *PersonaStore
+	executor      FormationExecutor
+	gateEvaluator GateEvaluator
 }
 
 type FormationRunRequest struct {
@@ -85,16 +78,12 @@ type FormationOutputPayload struct {
 }
 
 type GateEvaluation struct {
-	RunID        string
-	GateID       string
-	Title        string
-	Kinds        []string
-	Criterion    string
-	Command      string // legacy string form: parseable, but not executable by script gates
-	CommandArgv  []string
-	CommandCWD   string
-	CommandShell string
-	Input        RunInputRef
+	RunID     string
+	GateID    string
+	Title     string
+	Kinds     []string
+	Criterion string
+	Input     RunInputRef
 }
 
 type GateEvaluationResult struct {
@@ -108,23 +97,6 @@ type HumanGateVerdictRequest struct {
 	Verdict string
 	Reason  string
 	Actor   string
-}
-
-type VerificationEvaluation struct {
-	RunID          string
-	NodeID         string
-	VerificationID string
-	Kinds          []string
-	Criterion      string
-	OnFail         string
-	OutputText     string
-	Attempt        int
-}
-
-type VerificationEvaluationResult struct {
-	Verdict  string
-	Feedback string
-	PerKind  map[string]string
 }
 
 type RunInputRef struct {
@@ -162,21 +134,26 @@ func (e *RunEngine) SetGateEvaluator(evaluator GateEvaluator) {
 	e.gateEvaluator = evaluator
 }
 
-func (e *RunEngine) SetVerificationEvaluator(evaluator VerificationEvaluator) {
-	e.verificationEvaluator = evaluator
-}
-
 func (e *RunEngine) RunMission(slug string, req RunStartRequest) (*RunStatusProjection, error) {
 	if e == nil || e.store == nil {
 		return nil, fmt.Errorf("%w: run engine store required", ErrNotFound)
+	}
+	if err := e.store.RequireRuntimeAuthority(); err != nil {
+		return nil, err
 	}
 	board, err := e.store.ReadBoard(slug)
 	if err != nil {
 		return nil, err
 	}
+	if err := rejectLegacyInlineVerification(board); err != nil {
+		return nil, err
+	}
 	mission, ok := findMission(board, req.MissionID)
 	if !ok {
 		return nil, fmt.Errorf("%w: mission %q", ErrNotFound, req.MissionID)
+	}
+	if err := rejectLegacyScriptGateForMission(board, mission.ID); err != nil {
+		return nil, err
 	}
 	if len(outgoingConnections(board.Connections, mission.ID)) == 0 {
 		return nil, fmt.Errorf("%w: wire the mission to a step", ErrConflict)
@@ -188,7 +165,7 @@ func (e *RunEngine) RunMission(slug string, req RunStartRequest) (*RunStatusProj
 	if err != nil {
 		return nil, err
 	}
-	runBoard, err := e.readRunBoard(started.SnapshotPath)
+	runBoard, err := e.readRunBoard(started.RunID)
 	if err != nil {
 		return nil, err
 	}
@@ -206,8 +183,14 @@ func (e *RunEngine) RunFormation(slug, formationID string, req FormationRunReque
 	if e == nil || e.store == nil {
 		return nil, fmt.Errorf("%w: run engine store required", ErrNotFound)
 	}
+	if err := e.store.RequireRuntimeAuthority(); err != nil {
+		return nil, err
+	}
 	board, err := e.store.ReadBoard(slug)
 	if err != nil {
+		return nil, err
+	}
+	if err := rejectLegacyInlineVerification(board); err != nil {
 		return nil, err
 	}
 	formation, ok := findFormation(board.Formations, formationID)
@@ -287,7 +270,11 @@ func (e *RunEngine) ResumeRun(runID string, req RunResumeRequest) (*RunStatusPro
 	if e == nil || e.store == nil {
 		return nil, fmt.Errorf("%w: run engine store required", ErrNotFound)
 	}
-	if _, err := e.store.ResumeRun(runID, req); err != nil {
+	if err := e.store.RequireRuntimeAuthority(); err != nil {
+		return nil, err
+	}
+	_, board, err := e.store.resumeRunWithSnapshot(runID, req)
+	if err != nil {
 		return nil, err
 	}
 	events, err := e.store.ReadRunEvents(runID)
@@ -300,11 +287,6 @@ func (e *RunEngine) ResumeRun(runID string, req RunResumeRequest) (*RunStatusPro
 	resumeEvent := events[len(events)-1]
 	if openDispatches := openDispatchRefsFromEvent(resumeEvent); len(openDispatches) > 0 {
 		openDispatches = enrichOpenDispatchRefs(events, openDispatches)
-		started := events[0]
-		board, err := e.readRunBoard(stringFromEventData(started, "snapshot"))
-		if err != nil {
-			return nil, err
-		}
 		handled, err := e.reattachOpenDispatches(runID, board, openDispatches)
 		if err != nil {
 			return nil, err
@@ -321,10 +303,6 @@ func (e *RunEngine) ResumeRun(runID string, req RunResumeRequest) (*RunStatusPro
 		}
 	}
 	started := events[0]
-	board, err := e.readRunBoard(stringFromEventData(started, "snapshot"))
-	if err != nil {
-		return nil, err
-	}
 	mission, ok := findMission(board, started.MissionID)
 	if !ok {
 		return nil, fmt.Errorf("%w: mission %q", ErrNotFound, started.MissionID)
@@ -339,6 +317,9 @@ func (e *RunEngine) RecordHumanGateVerdict(runID string, req HumanGateVerdictReq
 	if e == nil || e.store == nil {
 		return nil, fmt.Errorf("%w: run engine store required", ErrNotFound)
 	}
+	if err := e.store.RequireRuntimeAuthority(); err != nil {
+		return nil, err
+	}
 	events, err := e.store.ReadRunEvents(runID)
 	if err != nil {
 		return nil, err
@@ -352,7 +333,7 @@ func (e *RunEngine) RecordHumanGateVerdict(runID string, req HumanGateVerdictReq
 	}
 	verdict := normalizeGateVerdict(req.Verdict)
 	actor := defaultRunActor(req.Actor)
-	if err := e.store.AppendRunEvent(runID, RunEvent{
+	board, err := e.store.appendRunEventWithSnapshot(runID, RunEvent{
 		Type:   RunEventHumanVerdictRecorded,
 		Actor:  actor,
 		GateID: req.GateID,
@@ -365,12 +346,12 @@ func (e *RunEngine) RecordHumanGateVerdict(runID string, req HumanGateVerdictReq
 			"requestedSeq": requestEvent.Seq,
 			"decidedBy":    actor,
 		},
-	}); err != nil {
-		return nil, err
-	}
-	board, err := e.readRunBoard(stringFromEventData(events[0], "snapshot"))
+	})
 	if err != nil {
 		return nil, err
+	}
+	if board == nil {
+		return nil, ErrRunLedgerInvalid
 	}
 	gate, ok := findGate(board.Gates, req.GateID)
 	if !ok {
@@ -532,6 +513,9 @@ func (e *RunEngine) appendOpenDispatchReattachFailure(runID string, refs []openD
 }
 
 func (e *RunEngine) startFormationRun(slug string, board *BoardDocument, formation FormationNode, actor string, personas *PersonaStore, limits RunLimits) (*RunStartResult, MissionNode, RunInputRef, error) {
+	if err := e.store.RequireRuntimeAuthority(); err != nil {
+		return nil, MissionNode{}, RunInputRef{}, err
+	}
 	bindings, err := resolveRunBindings(board, personas)
 	if err != nil {
 		return nil, MissionNode{}, RunInputRef{}, err
@@ -552,10 +536,19 @@ func (e *RunEngine) startFormationRun(slug string, board *BoardDocument, formati
 	ledgerPath := runArtifactPath(slug, runID, ".ndjson")
 	snapshotPath := runArtifactPath(slug, runID, ".snapshot.toml")
 	bindingsPath := runArtifactPath(slug, runID, ".bindings.toml")
-	if err := writeAtomic(filepath.Join(e.store.Workspace, snapshotPath), []byte(board.TOML)); err != nil {
+	boardRaw := []byte(board.TOML)
+	if int64(len(boardRaw)) > runtimeAuthorityMaxRecordBytes {
+		return nil, MissionNode{}, RunInputRef{}, fmt.Errorf("%w: run snapshot exceeds byte limit", ErrRunLedgerInvalid)
+	}
+	runDirectory, err := e.store.openRunArtifactDirectory(slug, true)
+	if err != nil {
 		return nil, MissionNode{}, RunInputRef{}, err
 	}
-	if err := writeAtomic(filepath.Join(e.store.Workspace, bindingsPath), []byte(renderRunBindings(runID, board, mission, bindings))); err != nil {
+	defer runDirectory.close()
+	if err := writeRunArtifactExclusiveAt(runDirectory, runID+".snapshot.toml", boardRaw); err != nil {
+		return nil, MissionNode{}, RunInputRef{}, err
+	}
+	if err := writeRunArtifactExclusiveAt(runDirectory, runID+".bindings.toml", []byte(renderRunBindings(runID, board, mission, bindings))); err != nil {
 		return nil, MissionNode{}, RunInputRef{}, err
 	}
 	started := &RunStartResult{
@@ -591,7 +584,7 @@ func (e *RunEngine) startFormationRun(slug string, board *BoardDocument, formati
 			"formationId":      formation.ID,
 		},
 	}
-	if err := writeInitialRunEvent(filepath.Join(e.store.Workspace, ledgerPath), event); err != nil {
+	if err := writeInitialRunEventAt(runDirectory, runID, event); err != nil {
 		return nil, MissionNode{}, RunInputRef{}, err
 	}
 	seedInput := RunInputRef{
@@ -709,16 +702,6 @@ func (e *RunEngine) resumeSnapshot(runID string, board *BoardDocument, mission M
 				return nil
 			}
 			return err
-		}
-		verificationAction, err := e.handleVerification(runID, formation, result, nextAttempt, limits, queued, &queue)
-		if err != nil {
-			return err
-		}
-		switch verificationAction {
-		case verificationRetry:
-			continue
-		case verificationStopped:
-			return nil
 		}
 		if err := e.store.AppendRunEvent(runID, RunEvent{
 			Type:   RunEventNodeOutput,
@@ -992,12 +975,20 @@ func gateVerdictRoutes(board *BoardDocument, event RunEvent, gateID, routePort s
 	return routes
 }
 
-func (e *RunEngine) readRunBoard(snapshotPath string) (*BoardDocument, error) {
-	raw, err := os.ReadFile(filepath.Join(e.store.Workspace, snapshotPath))
+func (e *RunEngine) readRunBoard(runID string) (*BoardDocument, error) {
+	ledger, err := e.store.openRunLedger(runID, false)
+	if err != nil {
+		return nil, fmt.Errorf("%w: open run ledger: %v", ErrRunLedgerInvalid, err)
+	}
+	defer ledger.close()
+	events, err := classifyAndReadRunEvents(ledger.file, runID)
 	if err != nil {
 		return nil, err
 	}
-	return parseBoard(raw)
+	if len(events) == 0 {
+		return nil, ErrRunLedgerInvalid
+	}
+	return e.store.readRunSnapshot(events[0], runID, ledger)
 }
 
 func (e *RunEngine) executeSnapshot(runID string, board *BoardDocument, mission MissionNode, limits RunLimits) error {
@@ -1117,16 +1108,6 @@ func (e *RunEngine) executeSnapshot(runID string, board *BoardDocument, mission 
 			}
 			return err
 		}
-		verificationAction, err := e.handleVerification(runID, formation, result, nextAttempt, limits, queued, &queue)
-		if err != nil {
-			return err
-		}
-		switch verificationAction {
-		case verificationRetry:
-			continue
-		case verificationStopped:
-			return nil
-		}
 		if err := e.store.AppendRunEvent(runID, RunEvent{
 			Type:   RunEventNodeOutput,
 			NodeID: nodeID,
@@ -1178,91 +1159,6 @@ func (e *RunEngine) executeFormation(req FormationExecution, limits RunLimits) (
 	case <-time.After(time.Duration(limits.WallClockSeconds) * time.Second):
 		return FormationExecutionResult{}, ErrRunWallClockExceeded
 	}
-}
-
-type verificationAction string
-
-const (
-	verificationContinue verificationAction = "continue"
-	verificationRetry    verificationAction = "retry"
-	verificationStopped  verificationAction = "stopped"
-)
-
-func (e *RunEngine) handleVerification(runID string, formation FormationNode, result FormationExecutionResult, attempt int, limits RunLimits, queued map[string]bool, queue *[]string) (verificationAction, error) {
-	if formation.Verification == nil {
-		return verificationContinue, nil
-	}
-	evaluation, err := e.evaluateVerification(VerificationEvaluation{
-		RunID:          runID,
-		NodeID:         formation.ID,
-		VerificationID: formation.Verification.ID,
-		Kinds:          formation.Verification.Kinds,
-		Criterion:      formation.Verification.Criterion,
-		OnFail:         formation.Verification.OnFail,
-		OutputText:     result.Text,
-		Attempt:        attempt,
-	})
-	if err != nil {
-		if errors.Is(err, errRunStopped) {
-			return verificationStopped, nil
-		}
-		return verificationStopped, err
-	}
-	verdict := normalizeVerificationVerdict(evaluation.Verdict)
-	if err := e.store.AppendRunEvent(runID, RunEvent{
-		Type:   RunEventVerificationVerdict,
-		NodeID: formation.ID,
-		Data: map[string]any{
-			"verificationId": formation.Verification.ID,
-			"verdict":        verdict,
-			"kinds":          formation.Verification.Kinds,
-			"criterion":      formation.Verification.Criterion,
-			"onFail":         formation.Verification.OnFail,
-			"feedback":       evaluation.Feedback,
-			"perKind":        evaluation.PerKind,
-		},
-	}); err != nil {
-		return verificationStopped, err
-	}
-	if verdict == "pass" {
-		return verificationContinue, nil
-	}
-	switch formation.Verification.OnFail {
-	case "pushback":
-		if attempt >= maxAttempts(limits) {
-			if err := e.appendErrorAndBlock(runID, "verification_pushback_exhausted", "verification pushback exhausted", "engine", formation.ID, "verification pushback exhausted"); err != nil {
-				return verificationStopped, err
-			}
-			return verificationStopped, nil
-		}
-		if !queued[formation.ID] {
-			queued[formation.ID] = true
-			*queue = append(*queue, formation.ID)
-		}
-		return verificationRetry, nil
-	default:
-		if err := e.appendRunBlocked(runID, "verification failed", formation.ID, ""); err != nil {
-			return verificationStopped, err
-		}
-		return verificationStopped, nil
-	}
-}
-
-func (e *RunEngine) evaluateVerification(req VerificationEvaluation) (VerificationEvaluationResult, error) {
-	if e.verificationEvaluator == nil {
-		if err := e.appendErrorAndBlock(req.RunID, "missing_verification_evaluator", "verification evaluator unavailable", "verification", req.NodeID, "verification evaluator unavailable"); err != nil {
-			return VerificationEvaluationResult{}, err
-		}
-		return VerificationEvaluationResult{}, errRunStopped
-	}
-	return e.verificationEvaluator.EvaluateVerification(req)
-}
-
-func normalizeVerificationVerdict(verdict string) string {
-	if verdict == "fail" {
-		return "fail"
-	}
-	return "pass"
 }
 
 func (e *RunEngine) ensureFormationOutputPayloads(runID string, formation FormationNode, result FormationExecutionResult) error {
@@ -1450,16 +1346,12 @@ func (e *RunEngine) evaluateGate(runID string, board *BoardDocument, gates map[s
 		return errRunStopped
 	}
 	result, err := e.evaluateGateResult(board, evaluationGate, GateEvaluation{
-		RunID:        runID,
-		GateID:       gate.ID,
-		Title:        gate.Title,
-		Kinds:        evaluationGate.Kinds,
-		Criterion:    gate.Criterion,
-		Command:      gate.Command,
-		CommandArgv:  append([]string(nil), gate.CommandArgv...),
-		CommandCWD:   gate.CommandCWD,
-		CommandShell: gate.CommandShell,
-		Input:        input,
+		RunID:     runID,
+		GateID:    gate.ID,
+		Title:     gate.Title,
+		Kinds:     evaluationGate.Kinds,
+		Criterion: gate.Criterion,
+		Input:     input,
 	}, limits)
 	if err != nil {
 		return err

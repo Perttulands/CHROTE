@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -8,7 +9,39 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/chrote/server/internal/core"
 )
+
+func TestRuntimeRoutesInstallNonAuthorizingHostPrivateStore(t *testing.T) {
+	core.ResetConfigForTesting()
+	t.Cleanup(core.ResetConfigForTesting)
+	workspace := t.TempDir()
+	t.Setenv("CHROTE_WORKDIR", workspace)
+	t.Setenv("CHROTE_ROOTS", workspace)
+	t.Setenv("CHROTE_PERSISTENT_AGENTS_DISABLE", "true")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	mux := http.NewServeMux()
+	_, _, stopHistory := registerRuntimeRoutes(mux, Config{
+		TtydPort:           1,
+		FormationsDataRoot: filepath.Join(t.TempDir(), "missing-private-root"),
+	}, ctx)
+	defer stopHistory()
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/formations/runs", bytes.NewBufferString(`{"board":"missing","missionId":"mission_missing"}`))
+	mux.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), `"code":"RUNTIME_AUTHORITY_NON_AUTHORIZING"`) {
+		t.Fatalf("runtime route status/body = %d %s, want safe non-authorizing 503", recorder.Code, recorder.Body.String())
+	}
+
+	definitions := httptest.NewRecorder()
+	mux.ServeHTTP(definitions, httptest.NewRequest(http.MethodGet, "/api/formations/boards", nil))
+	if definitions.Code != http.StatusOK {
+		t.Fatalf("definition route status = %d, want 200: %s", definitions.Code, definitions.Body.String())
+	}
+}
 
 // Formations is always-on: the agents and formations routes register
 // unconditionally now that the CHROTE_FORMATIONS feature gate has been retired.

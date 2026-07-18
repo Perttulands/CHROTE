@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/chrote/server/internal/core"
+	"github.com/chrote/server/internal/formations"
 )
 
 const (
@@ -38,7 +39,8 @@ type ServiceStatus struct {
 
 // ServicesCatalogResponse describes configured CHROTE service adapters.
 type ServicesCatalogResponse struct {
-	Services []ServiceStatus `json:"services"`
+	Services     []ServiceStatus `json:"services"`
+	Capabilities []string        `json:"capabilities"`
 }
 
 // ServicesHandler handles CHROTE-owned service adapter routes.
@@ -115,6 +117,7 @@ func (h *ServicesHandler) RegisterRoutes(mux *http.ServeMux) {
 // Catalog handles GET /api/services.
 func (h *ServicesHandler) Catalog(w http.ResponseWriter, r *http.Request) {
 	core.WriteSuccess(w, ServicesCatalogResponse{
+		Capabilities: []string{formations.RuntimeAuthorityGuardCapabilityV1},
 		Services: []ServiceStatus{
 			{
 				ID:         "tts",
