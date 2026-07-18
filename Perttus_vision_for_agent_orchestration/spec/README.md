@@ -80,6 +80,9 @@ archon agent spawn <id>
 archon agent attach <id>
 archon agent retire <id> [--force]
 
+# boards & layout (canvas.feature)
+archon board arrange <boardId|slug> [projected]       # explicit full-layout mutation
+
 # formations & slots (formations-and-slots.feature, connections.feature)
 archon formation create <boardId|slug> <type> --title "…"
 archon formation list [projected] | inspect <boardId|slug>
@@ -132,7 +135,10 @@ Wiring (`wire`/`unwire`) is the single verb for compatible workflow payload
 edges—Mission/Formation/Tool/Gate routing—and for the Gate's reserved `judge`
 evaluation-control relationship. The `judge` socket permits one send and one
 return and never carries downstream work. Node positions and hand-routed wire
-lanes are **UI/layout** only and have no CLI verbs in stage 1.
+lanes are **layout**, never structure. Creation may place only the new element
+through the shared heuristic. Full-board layout changes require the explicit UI
+Arrange action or accepted-target `archon board arrange`; no other verb mutates
+existing user arrangement.
 
 ---
 
@@ -162,11 +168,14 @@ retires the feature.
 ## Ledger event vocabulary (NDJSON, append-only; status is projected)
 
 ```
-run_started · run_activated · node_waiting · node_input_ignored · node_started · slot_binding_observed · slot_dispatch · slot_result ·
+run_started · run_activated · node_waiting · node_input_ignored · node_started · slot_binding_observed · slot_dispatch ·
+slot_peek_capability_issued · slot_steering_started · slot_steering_ended · slot_peek_capability_revoked ·
+slot_reconciliation_interrupt · slot_reconciliation_interrupt_outcome · slot_result ·
 formation_result · tool_dispatch · tool_process_launch · tool_result · node_output ·
 gate_evaluating · gate_kind_result · judge_result · judge_attempt_failed · gate_verdict · artifact_attached · artifact_observed ·
 escalation_raised · human_input_requested · human_verdict_recorded ·
-error · run_blocked · run_resumed · run_cancel_requested · run_canceled · run_failed · run_succeeded
+error · run_blocked · run_resumed · run_cancel_requested · run_canceled ·
+run_failure_reconciliation_started · run_failed · run_succeeded
 ```
 
 Every event uses the envelope in [`contracts.md`](contracts.md). `run_started`
@@ -181,8 +190,11 @@ An admitted run with only `run_started` projects `queued`; its unique fenced
 `run_activated` binds the exact immutable activation-policy revision/hash,
 projects `running`, and precedes graph/dispatch events.
 Every activated non-final run retains its `maxActiveRuns` slot through blocked,
-human-waiting, and canceling states until execution finality in this first
+human-waiting, canceling, and failing states until execution finality in this first
 contract.
+Every failure first fsyncs `run_failure_reconciliation_started`, which projects
+`failing` and freezes exact cause/resource snapshots; `run_failed` must name
+that start and byte-match its failure header while disposing those snapshots.
 Execution-final events are exactly `run_succeeded`, `run_failed`, and
 `run_canceled`. Non-authorizing binding/artifact observation events may follow for inspection, but
 cannot reopen an epoch, change outcome, or authorize dispatch. `run_blocked`

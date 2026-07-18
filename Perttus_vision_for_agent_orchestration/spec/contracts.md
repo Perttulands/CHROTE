@@ -585,9 +585,13 @@ id = "edge_01J9_gate"
 lane = "mid-2"
 ```
 
-`boardRev` lets the UI detect stale layout against a newer board. Missing layout
-entries auto-place. Extra layout entries for deleted nodes or edges are ignored
-and cleaned by the writer on the next layout save.
+`boardRev` lets the UI detect stale layout against a newer board. A missing entry
+for a new element receives only the shared connection-aware, bounded free-space,
+grid-snap placement heuristic. Existing coordinates and hand-routed lanes are
+never moved by load, create, connect, validate, save, run, replay, or reconnect;
+full-board movement occurs only through the explicit UI or Archon `arrange`
+operation. Extra layout entries for deleted nodes or edges are ignored and
+cleaned by the writer on the next layout save.
 
 Selected run/node, inspector state, and terminal Peek open/focus/tile/hide state
 and geometry are user-local dashboard presentation. They are not board or layout
@@ -596,7 +600,8 @@ authority. Each Peek resolves one exact slot dispatch's opaque
 `sessionTargetId` plus `dispatchId`, `targetLeaseId`, binding, and frozen target
 fingerprint; an attempt may expose several. Live run Peek is authorized only
 while that exact dispatch owns the matching active/unmatched occupancy record,
-or its exact non-authorizing terminal hold still occupies the unchanged pane.
+the run is non-final, and cancel/failure reconciliation has not begun. A
+terminal hold is non-authorizing run evidence and permits no run-bound input.
 A quarantine is ambiguous and never authorizes live run Peek. Once occupancy is
 replaced by a result/final release receipt, the target may be reused: the old run
 shows captured historical evidence or explicit `pane_moved_on`, never the
@@ -604,6 +609,68 @@ current live bytes as if they belonged to that attempt. The UI may separately
 offer **Open current session**, labeled outside run evidence. Peek must surface
 unavailable/stale rather than look up another session by name or trust the
 stable opaque handle alone.
+While that exact active occupancy remains valid, Peek is a full
+interactive user attach and may send literal input, including control
+characters, to steer or interrupt that agent. Formation attachment ownership
+begins only after the exact target-registry occupancy is fsynced. After the
+matching dispatch is durable, only a CHROTE-issued capability exact-matching
+run, dispatch, target lease, binding, and fingerprint may send Peek input.
+Only the latest fsynced issuance is valid. A later issuance requires prior
+clients/input drained and atomically invalidates every older token/generation;
+stale attach/input reaching the target boundary is foreign.
+Recovery suspends input until that capability exact-matches recovered occupancy
+under the current fence. Shared Terminal attach paths reject an occupied target
+unless they use that exact capability. The writer-private certified attachment
+monitor registration is armed and durable before occupancy is fsynced and then
+covers every attach/detach/target-selection, resize/reflow, history,
+pane-lifecycle/topology/other mutation, and input-capable tmux command/control
+route affecting the pane through release. A registered Peek
+connection is authorized only when all inbound bytes traverse the steering
+generation gate. A foreign event or lost monitor continuity durably records
+`session_target_foreign_attachment`, `session_target_foreign_input`, or
+`session_target_attachment_audit_unavailable`, revokes/drains Peek, and forbids
+`slot_result` and ordinary release. Foreign input is never reconstructed as a
+steering generation; only non-authorizing quiescence reconciliation may later
+release the hold/quarantine without promoting output. For a foreign or
+audit-lost latch, the sole release proof is exact pane-incarnation-gone; current
+client absence or a newly ready prompt cannot reconstruct the missing history.
+`session_target_foreign_input` and the `foreign_input` latch are the stable
+closed labels for any unregistered pane mutation or input, including history or
+pane lifecycle/topology changes.
+The private registry
+atomically replaces `state=active,interactionLatch=none` with
+`state=latched,interactionLatch=foreign_attachment|foreign_input|audit_lost`
+and the new journal-evidence hash before the rejected/observed effect can be
+forgotten. Recovery rebuilds that latch from the durable chain; an `error` event
+alone is never latch authority.
+
+Before the first input bytes are forwarded, the coordinator fsyncs
+`slot_steering_started` for the next monotonic generation without storing raw
+keystrokes. Result closure is forbidden until the channel is drained/released
+and `slot_steering_ended` closes that generation. A fresh certified turn-closure
+proof binds the latest generation and cannot be produced solely by user-writable
+pane bytes, an echoed sentinel, or generic prompt/ready text. Later accepted
+input opens a newer generation and invalidates earlier proof before result or is
+rejected after capability revocation. Safe inspection marks
+`operatorInfluenced` and generation/open state without input bytes. Literal user
+control input is steering; automatic workflow sends, retries, coordinator
+interrupts, and lifecycle transitions remain coordinator-only.
+
+Normal result closure, cancel/failure reconciliation, and finality serialize
+under the target occupancy. They first stop capability issuance, drain input,
+close an open generation with `reason=capability_revoked`, and fsync the unique
+irreversible `slot_peek_capability_revoked` event. The final closure proof binds
+that event, the latest closed generation, and a continuous attachment-audit
+proof. Every execution-final event rejects any issued capability, open input
+channel, open steering generation, or unmatched revocation state. Run-bound
+control never survives finality; a held session can be opened later only as a
+separately labeled non-run Terminal action after ordinary arbitration permits
+it.
+
+An active dispatch freezes the terminal grid recorded in its history baseline.
+Peek tile movement and resize change only the browser viewport and send no tmux
+resize/`SIGWINCH`; actual resize/reflow invalidates the baseline. Closing,
+moving, focusing, or tiling Peek never creates, kills, or rebinds tmux state.
 
 ## Workspace Runtime Authority And Commands
 
@@ -794,10 +861,15 @@ fsync. Migration holds both locks in parent-registry then workspace order.
 Torn/stale/conflicting published records authorize nothing, and a canonical
 immutable path is never a partial-file recovery surface.
 
-Every schema-2 JSON record/policy revision, writer-fence field, event/effect
-sequence, workspace-admission identity, and next counter is an integer in
+Every schema-2 JSON record/policy revision, writer-fence field, allocated
+event/effect sequence, workspace-admission identity, and next counter is an integer in
 `1..9007199254740991`. Allocation past that bound fails closed before mutation;
 rounding, wrap, and reuse are invalid.
+Closed reference fields that explicitly use absence sentinel `0` are the sole
+exception: `priorIssuedSeq`, `capabilityIssuedSeq`,
+`latestCapabilityIssuedSeq`, `originCancelRequestSeq`, and private-journal
+`routeSeq`. They are JSON-safe integers in
+`0..9007199254740991`; `0` never names or allocates an event.
 
 `run-command-jcs-v1` is RFC 8785 canonical UTF-8 JSON over exactly one of these
 closed objects with no unknown keys or trailing newline:
@@ -896,8 +968,9 @@ immediate or dequeued `run_activated` records the configured revision/hash used
 for activation.
 
 `activeCount` counts non-final ledgers with `run_activated`; `queuedCount` counts
-non-final `run_started` ledgers without it. `maxActiveRuns` alone gates
-activation. Before a fresh start may activate, existing queued runs activate by
+ledgers whose latest projected status is exactly `queued` (and therefore have no
+`run_activated`). Unactivated `canceling` or `failing` ledgers are not queued and
+can never activate. `maxActiveRuns` alone gates activation. Before a fresh start may activate, eligible queued runs activate by
 smallest `workspaceAdmissionSeq` while capacity remains. A new start may then
 append `run_started` plus immediate `run_activated` if capacity still exists,
 even when `maxQueuedRuns=0`. With no active slot, `maxQueuedRuns` alone gates the
@@ -918,7 +991,7 @@ consumes wall clock,
 and an expired queued run can fail without activation. Cleanup, cancellation,
 and recovery precede fresh activation.
 Every activated non-final ledger counts against `maxActiveRuns`, including while
-blocked, `waiting_human`, or canceling, and releases that slot only at an
+blocked, `waiting_human`, canceling, or failing, and releases that slot only at an
 execution-final event. This conservative first policy is reconstructible from
 the ledger without an unmodeled requeue transition.
 
@@ -1023,8 +1096,15 @@ run_blocked closes an epoch and may be resumed explicitly
 run_resumed opens the next epoch after an operator resume
 human_input_requested enters waiting_human until its exact decision or cancel
 run_cancel_requested enters canceling and forbids dispatch, replay, or resume
+run_failure_reconciliation_started enters failing and admits only reconciliation
 run_succeeded, run_failed, and run_canceled are final for execution
 ```
+
+Throughout this contract, wording that a condition "selects", "records", or
+"appends" `run_failed(...)` names the terminal outcome, not permission for a
+direct append. The writer must first fsync the unique
+`run_failure_reconciliation_started` and may append `run_failed` only through
+that frozen lifecycle.
 
 `seq` is monotonic for the whole run and never resets. `run_started` appears
 exactly once at `seq=1`. `epoch` starts at `0` and increments only when an
@@ -1059,7 +1139,10 @@ phase; a durable `formation_result`/`tool_result`
 with missing `node_output` materializes exact output from immutable result
 authority; and a durable
 `node_output` replays only missing routing/finality. A durable
-`run_cancel_requested` permits cancellation reconciliation only. None of these
+`run_cancel_requested` permits cancellation reconciliation only. A durable
+`run_failure_reconciliation_started` projects `failing` and resumes only its
+exact frozen cause/snapshots; it cannot choose a new cause, resume ordinary
+execution, or resend any durable slot-interrupt request. None of these
 paths reparses mutable capture, redispatches completed work, or lets the prior
 fence append or act. Historical origin-fence records remain valid inputs; every
 recovery mutation records the new current state fence while a repaired command
@@ -1123,7 +1206,32 @@ public bytes or replay handle; it is never adopted as a run.
 
 Run preflight returns one `SlotResolution` per selected declared slot; unassigned
 is `unresolved/agent_unassigned`. It starts only when every resolution is
-runnable. A successful run
+runnable. Production resolution calls the same Terminal-session resolver and
+configured inventory used by cockpit Terminal tabs. That inventory is the union
+of explicitly configured user/socket sources; no separate Formations production
+source or pool exists. Accumulated session context is intentionally reused. A
+persona stem matching more than one inventory source is ambiguous and fails
+loud; board files never choose a raw socket path. A matching candidate is
+runnable only when it is unleased, unattached, and the certified harness
+adapter's non-pane control channel proves a closed/ready turn for the exact
+fingerprint. Pane silence, prompt text, and quiet output are never readiness
+evidence. Stable unavailable reasons are `session_target_leased`,
+`session_target_attached`, `session_target_harness_busy` when the adapter
+certifies an open turn, and `session_target_readiness_unknown` when exact
+supported readiness evidence is missing, stale, unsupported, or non-unique;
+`session_target_attachment_audit_unavailable` means the complete certified
+client/input monitor cannot be armed.
+Unknown fails unavailable and creates no binding. Connected hidden CHROTE
+Terminal iframes count as attached, and slot binding never detaches them.
+The user may explicitly disconnect a CHROTE-owned presentation client before
+retrying, but cannot reclaim an external attachment or another run's lease. The
+final atomic acquisition rechecks registry state, attachments, fingerprint, and
+certified readiness under the target critical section and records a fresh
+one-shot `target-ready-proof-v1`; any failure sends nothing and uses the matching
+stable reason under `session_target_busy`. It never steals, creates, or selects
+an alternate target. Disposable inventories are isolated test,
+certification, and dogfood fixtures only; topology evidence registers one through
+the shared Terminal resolver for both consumers. A successful run
 then writes one host-private `RunSlotBinding` per slot with binding id,
 slot/agent/harness identity, card path/hash, and exact runtime target: adapter kind, tmux server/socket
 identity, session id/name, window id, pane id, resolved cwd/root, resolution
@@ -1145,7 +1253,17 @@ Preflight rejects two selected slots that resolve to the same private
 `targetKey` (and therefore the same `sessionTargetId`) with
 `duplicate_session_target` before `run_started`. Across
 runs, runnable resolution is not dispatch ownership: the host-wide target lease
-below is the atomic authority immediately before send.
+below is the atomic authority immediately before send. A frozen binding grants
+no attachment exception; Formation ownership begins only when the exact
+target-registry occupancy is fsynced. Any client already attached at that
+transition is competing. After the matching ledger dispatch is durable, only an
+exact run-bound Peek capability may attach as the run-owned exception. Shared
+Terminal attach paths reject ordinary attachment while occupancy exists. A
+certified writer-private monitor whose registration was armed before occupancy
+fsync accounts for every subsequent client event;
+foreign attachment/input or lost audit continuity latches the dispatch
+non-authorizing, revokes Peek, and forbids result/ordinary release pending exact
+quiescence reconciliation.
 
 The same private binding authority stores one `RunToolBinding` per reachable Tool:
 `toolBindingId`, node/profile ids, exact profile version/content SHA-256,
@@ -1211,14 +1329,20 @@ present.
 | Event type | Required payload |
 |---|---|
 | `run_started` | opaque `workspaceAuthorityId`, monotonic `workspaceAdmissionSeq`, exact `admissionPolicyRev`/`admissionPolicySha256`, `admissionCommandId`, `commandPayloadSha256`, `boardSlug`, `boardPath`, `sourceBoardSchema`, `snapshotSchema`, opaque `runAuthorityId`, `graphSnapshotSha256`, `privateBindingsSha256`, `bindingProjectionSha256`, `runRoot`, exact closed `rootInputProjection` classified `authored_config` with source kind, versioned encoding/media/SHA-256, and canonical `text`, `limits` (`maxDispatch`, `maxAttempts`, `wallClockSeconds`, `redact`); private paths never appear, and board/revision plus conditional Mission ids stay in the envelope |
-| `run_activated` | `workspaceAdmissionSeq`, exact configured `admissionPolicyRev`/`admissionPolicySha256`, `reason` (`immediate`, `dequeued`); unique per run, requires non-final `run_started`, consumes one active slot, and is fsynced before every graph/dispatch event |
+| `run_activated` | `workspaceAdmissionSeq`, exact configured `admissionPolicyRev`/`admissionPolicySha256`, `reason` (`immediate`, `dequeued`); unique per run, requires latest projected status exactly `queued`, consumes one active slot, and is fsynced before every graph/dispatch event; unactivated `canceling`/`failing` runs are ineligible |
 | `run_resumed` | `commandId`, `commandPayloadSha256`, `resumedFromSeq`, `resumedBy`, `resumeMode` (`reattach`, `retry-failed-producer`), bounded redaction-safe `reason`, `openDispatches`, exact `retryTargets`; `reattach` preserves the blocked event's exact unmatched-dispatch set and never creates a dispatch, while failed-producer retry requires `openDispatches=[]` and exactly one target |
 | `node_waiting` | `nodeId`, `neededInputs`, `readyInputs`, `totalInputs`, `waitingFor` (`edgeId` or `portId` list) |
 | `node_input_ignored` | `nodeId`, `toPortId`, `inputRef`, `reason` (`late_optional`, `duplicate_feedback`, `stale_feedback`, `mismatched_feedback`), `relatedAttempt` |
 | `node_started` | `nodeId`, `nodeKind` (`mission`, `formation`, `tool`, `gate`), `attempt`, `reason` (`initial`, `resume`, `pushback`, `revision-cycle`, `judge`); ordinary attempts require immutable durable `inputRefs`, judge attempts instead require `contextEncoding=judge-context-jcs-v1`, immutable `judgeContextSha256`/`priorResultSeqs`; optional `triggerFeedbackId`/`priorGateSeq` |
 | `slot_binding_observed` | `bindingId`, `slotId`, `sessionTargetId`, `health` (`runnable`, `unavailable`, `stale`), stable `reason`, `observedAt`, `relatedSeq` |
-| `slot_dispatch` | `dispatchId`, `targetLeaseId`, unique attempt-scoped `turnKey`, `turnPhase` (`solo`, `flow-step`, `peer-turn`, `peer-facilitator`, `leader-plan`, `leader-worker`, `leader-agentic`, or judge-specific), closed `turnInputs={nodeStartedSeq,priorTurnResults}` with exact ordered `{slotResultSeq,turnResultSha256}` entries, `nodeId`, `attempt`, `slotId`, `agentId`, `harness`, `bindingId`, `sessionTargetId`, `targetFingerprint`, `promptSha256`, boolean `nativeAck`, `recordedBeforeSend=true`; `nativeAck` is never adapter text, no prompt bytes/ref/path/authority id is durable, and the fingerprint is revalidated while holding the authority/target critical section immediately before the same already-hashed in-memory byte slice is sent at most once |
-| `slot_result` | `dispatchId`, `targetLeaseId`, matching `turnKey`/`turnPhase`, `nodeId`, `attempt`, `slotId`, `agentId`, `bindingId`, `sessionTargetId`, `targetFingerprint`, `status` (`ok`, `error`, `needs-review`), terminal `capturedRange`, exact `sentinel`, closed `turnClosureProof`, closed `turnResult`, `turnResultEncoding=slot-turn-result-jcs-v1`, `turnResultSha256`; the envelope's required turn key/phase/status exact-match the event, capture is parsed once, and referenced artifacts are registered before this event; bounded closed capture with a valid terminal sentinel but invalid outputs becomes the byte-exact `invalidFormationOutputsProjection` defined below with `outputs={}`, while timeout or unclosed output has no result/ordinary release |
+| `slot_dispatch` | `dispatchId`, `targetLeaseId`, unique attempt-scoped `turnKey`, `turnPhase` (`solo`, `flow-step`, `peer-turn`, `peer-facilitator`, `leader-plan`, `leader-worker`, `leader-agentic`, or judge-specific), closed `turnInputs={nodeStartedSeq,priorTurnResults}` with exact ordered `{slotResultSeq,turnResultSha256}` entries, `nodeId`, `attempt`, `slotId`, `agentId`, `harness`, `bindingId`, `sessionTargetId`, `targetFingerprint`, `dispatchInputBarrierEncoding=target-dispatch-input-barrier-v1`, host-private exact `dispatchInputBarrier`, `dispatchInputBarrierSha256`, `targetReadyProofEncoding=target-ready-proof-v1`, host-private exact `targetReadyProof`, `targetReadyProofSha256`, `paneHistoryBaselineEncoding=tmux-pane-history-baseline-v1`, host-private exact `paneHistoryBaseline`, `paneHistoryBaselineSha256`, `steeringGeneration="0"`, `promptSha256`, boolean `nativeAck`, `recordedBeforeSend=true`; `nativeAck` is never adapter text, no prompt or pane bytes/ref/path/authority id is durable, and the certified monitor drains its journal and installs the one-send input fence before the fresh ready proof/fingerprint/baseline are captured under the authority/target critical section; after event fsync only the same already-hashed in-memory prompt slice may consume that fence exactly once |
+| `slot_peek_capability_issued` | exact `dispatchId`, `targetLeaseId`, `bindingId`, `sessionTargetId`, `targetFingerprint`, monotonic unsigned-decimal-string `capabilityGeneration`, JSON-safe integer `priorIssuedSeq` (`0` iff first, otherwise the exact latest issuance), `issuedAt`; before a later issuance all clients/input for the prior issuance are closed/drained; event fsync atomically invalidates every earlier token/generation before the new token may be exposed, contains no token or routing secret, is valid only for active authorizing occupancy before cancel/failure/revocation, and only this latest issuance authorizes attach/detach/select metadata for its generation but no input bytes |
+| `slot_steering_started` | exact `dispatchId`, `targetLeaseId`, `bindingId`, `sessionTargetId`, `targetFingerprint`, exact latest `capabilityIssuedSeq`/`capabilityGeneration`, monotonic unsigned-decimal-string `steeringGeneration`, bounded safe `actor`, `startedAt`, `recordedBeforeInput=true`; unique open generation, fsynced before the first input bytes are forwarded, contains no input bytes/hash/text, and is valid only for the current exact target occupancy and latest issued run-bound Peek capability before any cancel/failure reconciliation or `slot_peek_capability_revoked` |
+| `slot_steering_ended` | exact `startedSeq`, `dispatchId`, `targetLeaseId`, `targetFingerprint`, matching `steeringGeneration`, `reason` (`released`, `disconnect`, `capability_revoked`, `recovered_revoked`), `endedAt`; appended only after the input channel is closed/drained, closes exactly one open generation, and does not itself prove turn closure |
+| `slot_peek_capability_revoked` | exact `dispatchId`, `targetLeaseId`, `bindingId`, `sessionTargetId`, `targetFingerprint`, latest `capabilityGeneration` (unsigned-decimal string, `"0"` when none), JSON-safe integer `capabilityIssuedSeq` (`0` when none), latest closed `steeringGeneration`, `reason` (`result_closure`, `cancel`, `failure`, `foreign_attachment`, `foreign_input`, `attachment_audit_lost`, `recovered_fence`), `revokedAt`, `inputClosed=true`; `foreign_input` is the closed compatibility class for any unregistered pane mutation or input; unique and irreversible for the dispatch, required before every result or final slot proof even when no capability was issued, fsynced only after new capability issuance is stopped and every client/input channel is closed/drained, requires any open generation to have a preceding matching `slot_steering_ended`, contains no capability token or input bytes, and forbids all later run-bound attach/input |
+| `slot_reconciliation_interrupt` | exact `dispatchId`, `targetLeaseId`, `bindingId`, `sessionTargetId`, `targetFingerprint`, `authorityKind` (`cancel` or `failure`), `authoritySeq`, `interruptEncoding=terminal-etx-v1`, `interruptSha256`, `recordedBeforeSend=true`; unique per dispatch and fsynced after Peek revocation but before any interrupt bytes; `authorityKind=cancel` iff `authoritySeq` names the same run's unique `run_cancel_requested`, while `failure` iff it names the same run's unique `run_failure_reconciliation_started`, and the exact dispatch must occur in that authority event's snapshot; after a cancel-origin failure start, every cancel-authorized request predates the start and is reused, while a still-open slot with no prior request may create only a failure-authorized request naming that start; it creates one exact coordinator-only fence permit and never authorizes resend |
+| `slot_reconciliation_interrupt_outcome` | exact `requestedSeq`, `dispatchId`, `targetLeaseId`, `targetFingerprint`, `outcome` (`sent`, `unavailable`, `unsupported`), `observedAt`; unique, appended after the one permitted adapter attempt, contains no adapter text, and is optional only when a crash leaves the already-attempted effect uncertain |
+| `slot_result` | `dispatchId`, `targetLeaseId`, matching `turnKey`/`turnPhase`, `nodeId`, `attempt`, `slotId`, `agentId`, `bindingId`, `sessionTargetId`, `targetFingerprint`, `paneHistoryBaselineEncoding`, `paneHistoryBaselineDispatchSeq`, matching `paneHistoryBaselineSha256`, exact `peekCapabilityRevokedSeq`, latest closed `steeringGeneration`, boolean `operatorInfluenced`, `status` (`ok`, `error`, `needs-review`), terminal `capturedRange`, exact `sentinel`, host-private exact `clientAttachmentAuditProof`, matching `clientAttachmentAuditProofSha256`, closed `turnClosureProof`, closed `turnResult`, `turnResultEncoding=slot-turn-result-jcs-v1`, `turnResultSha256`; `operatorInfluenced` is true iff this dispatch has at least one valid `slot_steering_started` (equivalently latest `steeringGeneration` is not `"0"`) and false only at generation `"0"`; the raw baseline token is not repeated, `capturedRange.start` exact-matches the dispatch boundary and its end is strictly later, and the certified closure proof exact-matches the baseline hash, irreversible capability revocation, latest steering generation, and continuous attachment-audit proof and is not satisfiable by pane bytes alone; the envelope's required turn key/phase/status exact-match the event, capture is parsed once, and referenced artifacts are registered before this event; bounded closed capture with a valid terminal sentinel but invalid outputs becomes the byte-exact `invalidFormationOutputsProjection` defined below with `outputs={}`, while timeout, unclosed steering, unrevoked capability, foreign/unknown attachment audit, lost baseline, or unclosed output has no result/ordinary release |
 | `formation_result` | `nodeId`, `attempt`, status (`done`, `needs-review`, `failed`), full durable safe canonical `outputs` map, exact-key `outputHashes`, optional `reportArtifactId`, stable-order `artifactIds` and `diffArtifactIds`, stable ascending `contributingSlotResultSeqs`, `resultEncoding=formation-result-jcs-v1`, `resultSha256`; exactly one after a complete successful schedule or its first non-`ok` result, deterministically derived from the completed prefix after output validation and prior non-Tool artifact registration; a pre-result resource block has no result |
 | `tool_dispatch` | `toolLeaseId`, `nodeId`, `attempt`, `toolBindingId`, `inputManifestSha256`, `inputHashes`, `profileSha256`, `parametersSha256`, `policySha256`, `determinismPolicySha256`, `executionBundleSha256`, private lease-root authority or redacted `redactionObligationId`, `recordedBeforeExecute=true` |
 | `tool_process_launch` | `toolLeaseId`, unique `launchId`, `nodeId`, `attempt`, monotonically increasing `generation` starting at 1, unique opaque non-PID `processScopeId`, opaque `deadlineAuthorityId`, `recordedBeforeSpawn=true`; private supervisor scope and immutable deadline-authority records are durable first, exact-match the open lease/launch tuple, and each launch consumes dispatch and wall-clock limits |
@@ -1236,9 +1360,10 @@ present.
 | `human_verdict_recorded` | `commandId`, `commandPayloadSha256`, `gateId`, `gateAttempt`, `nodeId`, `verdict` (`pass`, `fail`), bounded safe `reason`, `requestedSeq`, `decidedBy`; exactly once for the matching outstanding request |
 | `error` | `code`, bounded redaction-safe template `message` with no raw adapter/error text, `boundary` (`engine`, `writer`, `adapter`, `tmux`, `schema`, `operator`, `evaluator`), `errorScope` (`run`, `node`, `gate`, `slot`, `tool`), conditional graph identity, `recoverable`, `relatedSeq` |
 | `run_blocked` | stable bounded redaction-safe `reason`, `blockScope` (`run`, `node`, `gate`), conditional `blockedNodeId`/`blockedGateId`, `resumeAllowed`, `resumePolicy` (`retry_failed_producer`, `reattach_only`, `new_run_required`), `openDispatches`, `retryTargets`, conditional `nextEpoch`; exact policy invariants below are writer-enforced |
-| `run_cancel_requested` | `commandId`, `commandPayloadSha256`, bounded redaction-safe `reason`, `requestedBy`, exact `openNodeAttempts`, exact `openSlotDispatches`, exact `openToolLeases`; unique per run, appended/fsynced before cancellation work, and makes the writer reject new dispatches, launches, results, outputs/routing, ordinary replay/rerun, and resume |
+| `run_cancel_requested` | `commandId`, `commandPayloadSha256`, bounded redaction-safe `reason`, `requestedBy`, exact `openNodeAttempts`, exact `openSlotDispatches` including each capability/generation snapshot, exact `openToolLeases`; unique per run, appended/fsynced before cancellation work, and makes the writer reject new dispatches, launches, results, outputs/routing, ordinary replay/rerun, resume, or new Peek capability/input; the post-cancel execution allowlist is only steering drain/end, Peek revocation, reconciliation-interrupt request/outcome, target/Tool quiescence cleanup, `run_failure_reconciliation_started` escalation, and the matching final event |
 | `run_canceled` | `cancelRequestSeq`, bounded redaction-safe `reason`, `requestedBy`, exact `nodeAttemptDispositions`, exact `slotDispatchDispositions`, exact `reconciledToolLeases`, `final=true`; all three arrays exactly cover the named request snapshots |
-| `run_failed` | `code`, bounded redaction-safe `reason`, `unrecoverable`, `relatedSeq`, typed `failureCause`, exact `nodeAttemptDispositions` covering every still-open node attempt (possibly empty), exact `slotDispatchDispositions` covering every still-open slot dispatch (possibly empty), exact `toolLeaseDispositions` covering every still-open Tool lease (possibly empty), `final=true` |
+| `run_failure_reconciliation_started` | `originCancelRequestSeq` (`0` iff no prior cancel request; otherwise exact sequence of the run's unique `run_cancel_requested`), `code`, bounded redaction-safe `reason`, `unrecoverable`, `relatedSeq`, typed `failureCause`, exact `openNodeAttempts`, exact `openSlotDispatches` including capability/generation and prior interrupt request/outcome state, exact `openToolLeases`, `recordedBeforeReconciliation=true`; unique per run, fsynced before failure interrupts/cleanup, freezes the eventual failure cause/snapshots, and rejects results, outputs/routing, launches, resume, new capability/input, and another failure start; its closed allowlist is steering drain/end, Peek revocation, reconciliation-interrupt request/outcome, target/Tool quiescence cleanup, and the matching `run_failed` |
+| `run_failed` | exact `failureReconciliationSeq`, `code`, bounded redaction-safe `reason`, `unrecoverable`, `relatedSeq`, typed `failureCause`, exact `nodeAttemptDispositions`, exact `slotDispatchDispositions`, exact `toolLeaseDispositions`, `final=true`; cause/header fields byte-match the named start and all three arrays exactly cover its snapshots |
 | `run_succeeded` | optional `summaryArtifactId`, stable-order `outputArtifactIds`, `final=true`; every id is already durably registered, and the event is invalid while any node attempt, slot dispatch, Tool lease, or host target lease for this run remains open, or any never-started node has an input delivery on a taken path |
 
 Every allowlisted schema-2 free-form metadata string outside a typed
@@ -1479,8 +1604,220 @@ Structured payload fields use these shapes:
   `resultSha256` for both code-Gate and judge results hashes those exact bytes;
   encoding ids are frozen in run authority and replay cannot substitute another
   serializer.
-- `capturedRange`: `{sessionTargetId, start, end, startedAt, endedAt}` where
-  `start` and `end` are adapter-defined capture cursors, not executable text.
+- `attachment-audit-registration-v1`: writer-private RFC 8785 canonical UTF-8
+  JSON over exactly
+  `{monitorVersion,workspaceAuthorityId,writerFence,targetKeySha256,targetFingerprintSha256,sourceIdentitySha256,eventEpoch,startOffset,inputGateSha256}`.
+  `monitorVersion` is the literal `formations-tmux-input-fence-v1`;
+  `writerFence` is a positive JSON-safe integer and `startOffset` is an
+  unsigned-decimal uint64 string;
+  `eventEpoch` is canonical unpadded base64url for exactly 16 bytes; all hash
+  fields are 64 lowercase hex. The target-key/fingerprint hashes use their exact
+  private UTF-8 strings with no newline. `sourceIdentitySha256` commits to the
+  certified adapter's canonical tmux server/socket/pane input boundary, and
+  `inputGateSha256` commits to its enforceable route gate. The exact registration
+  and its anchored first `fence_transition` record are fsynced before occupancy;
+  `attachmentAuditRegistrationSha256` hashes these bytes and exact-matches the
+  target record. `startOffset` is that first record's offset, and its
+  `priorRecordSha256` is exactly this registration hash. There is no empty-chain
+  occupancy form.
+- `tmux-target-interaction-journal-v1`: a writer-private append-only hash chain
+  in the registration's continuity domain. Every fixed-shape record is RFC 8785
+  JSON over exactly
+  `{eventEpoch,offset,priorRecordSha256,eventKind,eventIdentitySha256,routeKind,routeSeq,targetStateSha256}`.
+  Epoch/offset use the registration grammar; hashes are 64 lowercase hex.
+  `eventIdentitySha256` hashes exactly the domain-separation bytes
+  `formations-interaction-event-v1` followed by one boundary-generated 32-byte
+  CSPRNG nonce. The nonce is never derived from or replaced by input bytes,
+  text, content hashes/digests, capability tokens, client ids, paths, terminal
+  bytes, or any reversible/guessable derivative. `targetStateSha256` hashes RFC
+  8785 canonical `target-interaction-state-v1` over exactly
+  `{targetFingerprintSha256,interactionLatch,fenceState}`. The latch is `none`,
+  `foreign_attachment`, `foreign_input`, or `audit_lost`; `fenceState` is
+  `registration`, `dispatch_permit`, `peek`, `reconciliation_permit`, `closure`,
+  `latched`, or `released`. It explicitly excludes all values prohibited above;
+  neither hash is content evidence.
+  `eventKind` is one of `attach`, `detach`, `select`, `resize`, `reflow`,
+  `history_clear`, `pane_respawn`, `pane_kill`, `pane_move`, `pane_join`,
+  `pane_break`, `pane_swap`, `target_mutation`, `input`, `dispatch_send`,
+  `peek_input`, `reconciliation_interrupt`, or `fence_transition`. Every
+  pane-affecting route not otherwise named is `target_mutation`, never omitted.
+  `routeKind` is `foreign`, `dispatch_prompt`,
+  `peek_attach`, `peek_steering`, `reconciliation_interrupt`, or `monitor`; `routeSeq` is the
+  exact authorizing ledger sequence as a JSON-safe positive integer, or `0` for
+  foreign/monitor events. The first record has `offset=startOffset` and
+  `priorRecordSha256=attachmentAuditRegistrationSha256`; each later offset is
+  the prior unsigned value plus one without wrap, and its predecessor hash
+  hashes the preceding exact record. The certified boundary appends/fsyncs
+  classification before allowing or rejecting the effect.
+- `target-interaction-audit-evidence-v1`: RFC 8785 canonical UTF-8 JSON over
+  exactly
+  `{registrationSha256,eventEpoch,startOffset,endOffset,terminalRecordSha256,foreignState}`,
+  where offsets use the grammar above and `foreignState` is exactly `none`,
+  `foreign_attachment`, `foreign_input`, or `audit_lost`.
+  Registration hash, epoch, and start offset must byte-match the named
+  registration; `endOffset >= startOffset`; and every record from start through
+  end is present with exact contiguous offset/predecessor linkage.
+  `terminalRecordSha256` hashes the exact canonical record at `endOffset`.
+  `foreignState=none` iff every validated record uses an authorized/monitor
+  route. Otherwise it is `audit_lost` for any continuity failure, or—when the
+  chain is intact—the first foreign record in offset order maps attach/detach/
+  select to `foreign_attachment` and mutation/input routes to `foreign_input`.
+  An `audit_lost` record commits to the last validated non-empty prefix and
+  cannot regain `none` in that registration epoch.
+  `monitorEvidenceSha256` hashes these exact bytes. Only `foreignState=none`
+  can support dispatch/result proof. The exact registration, journal chain,
+  evidence record, dispatch/closure barriers, and audit proof remain
+  writer-private authority through release-receipt and execution-final fsync;
+  recovery validates the chain and hashes rather than trusting a projection.
+- `target-ready-proof-v1`: RFC 8785 canonical UTF-8 JSON over exactly
+  `{targetFingerprintSha256,acquisitionChallengeSha256,dispatchInputBarrierSha256,harnessReadyEvidenceSha256}`
+  with no unknown keys or trailing newline. Every value is 64 lowercase hex
+  characters. `targetFingerprintSha256` hashes the exact UTF-8 bytes of the
+  frozen dispatch `targetFingerprint` string with no trailing newline; the
+  challenge is freshly generated for this atomic acquisition. The certified
+  adapter's non-pane control channel emits this one-shot proof only for a
+  closed/ready turn on that fingerprint. Pane bytes, silence, prompt text, an
+  unsupported adapter, or a replayed challenge cannot produce it;
+  `targetReadyProofSha256` hashes those exact canonical bytes.
+- `target-dispatch-input-barrier-v1`: RFC 8785 canonical UTF-8 JSON over exactly
+  `{dispatchId,targetLeaseId,targetFingerprintSha256,attachmentAuditRegistrationSha256,promptSha256,monitorEvidenceSha256}`
+  with no unknown keys or trailing newline; every SHA-256 is 64 lowercase hex.
+  Before this record is issued, the certified target monitor drains and
+  linearizes every client/input event since its pre-occupancy registration and
+  installs a per-target adapter fence. A foreign/unknown event before the
+  barrier fails without `slot_dispatch` or send. After the barrier, the fence
+  synchronously rejects or latches every attach/detach/target-selection,
+  resize/reflow, history clear, pane lifecycle/topology/other target mutation,
+  and input-capable route except one coordinator send whose exact
+  dispatch/lease/fingerprint and in-memory bytes match `promptSha256`; event
+  fsync precedes that one send. After the permit is consumed, the fence admits
+  only attach/detach/select metadata exact-matching the latest durable
+  `slot_peek_capability_issued`, exact latest-issuance steering-generation-gated Peek input, or
+  the unique durable reconciliation-interrupt permit defined below. Lost barrier continuity
+  leaves the dispatch unsent or unmatched and fails closed; it never authorizes
+  resend. `dispatchInputBarrierSha256` hashes the exact canonical record and
+  exact-matches the field in `target-ready-proof-v1`.
+- `tmux-pane-history-baseline-v1`: RFC 8785 canonical UTF-8 JSON over exactly
+  `{targetFingerprintSha256,historyEpoch,offset,cols,rows}` with no unknown keys
+  or trailing newline. The fingerprint is the same exact hash rule above;
+  `historyEpoch` is the canonical unpadded base64url encoding of exactly 16
+  bytes (therefore 22 characters);
+  `offset` is an unsigned decimal uint64 string with no leading zero except
+  `"0"`; and `cols`/`rows` are JSON integers in `1..65535`. It is bounded
+  host-private metadata, never pane/input/output bytes. The epoch identifies one
+  uninterrupted capture-cursor continuity domain for the exact pane
+  fingerprint; `paneHistoryBaselineSha256` hashes those exact canonical bytes.
+  Pane replacement, clear-history, or adapter restart without
+  durable cursor continuity changes the epoch. Trim past the baseline,
+  reset, resize/reflow, missing state, or a non-unique comparison produces
+  `capture_baseline_unavailable`; it cannot authorize parsing, `slot_result`, or
+  ordinary release.
+- `capture-cursor-v1`: exactly `{historyEpoch,offset}` using the baseline grammar.
+  A valid post-baseline capture has `capturedRange.start` byte-equal to the
+  dispatch cursor and `end` in the same epoch with a strictly greater offset.
+- `capturedRange`: `{sessionTargetId,start,end,startedAt,endedAt}` where `start`
+  and `end` are exact `capture-cursor-v1` values, not executable text.
+- `clientAttachmentAuditProof`: exactly
+  `{proofKind="tmux_clients_accounted",dispatchId,targetLeaseId,targetFingerprint,attachmentAuditRegistrationSha256,closureBarrierSha256,terminalCaptureEnd,monitorEvidenceSha256}`.
+  The certified writer-private monitor emits it only when its continuity from
+  durable occupancy through `terminalCaptureEnd` is intact and every observed
+  attach, detach, target-selection, resize/reflow, history,
+  pane-lifecycle/topology/other mutation, or input-capable tmux command/control
+  route affecting the pane belongs to one closed authorized route for that exact
+  occupancy: the barrier-bound one-shot coordinator prompt, the latest
+  CHROTE-registered Peek capability issuance for attach/detach/select metadata, a steering
+  generation whose inbound bytes terminate at the steering gate, or the
+  unique durable reconciliation-interrupt permit. Raw `send-keys`, paste-buffer,
+  control-mode, resize, select, attach, and equivalent bypasses are foreign.
+  Any superseded issuance/token/generation that reaches this boundary is also
+  foreign and latches the dispatch; it is never accepted as an older authorized
+  route after reconnect or restart.
+  Both SHA-256 fields are 64 lowercase hex; the registration hash
+  exact-matches the private target record armed before occupancy, and
+  `monitorEvidenceSha256` commits to the
+  private ordered client-event journal; raw client ids and capability tokens
+  never enter the ledger or projection. A foreign event, transient client,
+  unregistered input command, monitor restart without continuity, or non-unique observation cannot
+  produce this proof and durably latches the dispatch non-authorizing.
+  `clientAttachmentAuditProofSha256` hashes its RFC 8785 canonical UTF-8 JSON
+  with exactly the named keys and no trailing newline.
+- `target-interaction-closure-barrier-v1`: before the audit proof above is
+  issued, the certified monitor installs a per-target mutation/input fence and
+  linearizes/drains its private event journal through one RFC 8785 canonical
+  record exactly
+  `{dispatchId,targetLeaseId,targetFingerprintSha256,monitorEvidenceSha256,terminalCaptureEnd}`.
+  `closureBarrierSha256` hashes those exact bytes. Events before the barrier are
+  included in `monitorEvidenceSha256`; after it, every unregistered pane
+  mutation/input route is synchronously rejected or invalidates the proof before
+  publication. The fence remains in force through
+  `slot_result` and the registry transition to `result_committed`, or through
+  final proof and transition to `final_quiescent`/`terminal_hold`. Receipt fsync
+  is the release linearization point; a terminal hold retains the fence. Lost
+  fence/barrier continuity permits no stale proof or ordinary release and enters
+  quarantine unless exact pane-incarnation-gone proof makes further input
+  impossible.
+- `terminal-etx-v1` is exactly one byte `0x03`; `interruptSha256` hashes that
+  byte. `slot_reconciliation_interrupt` is the only coordinator lifecycle route
+  after dispatch. Its event must exact-match the current dispatch, target lease,
+  fingerprint, and durable cancel/failure authority before the certified fence
+  grants one permit. The permit is consumed at most once. A crash after intent
+  fsync never retries: a missing outcome projects `send_uncertain`, and exact
+  cancel/ready proof or pane-incarnation-gone proof is still required for
+  release.
+- `dispatch-cancel-ack-v1` is RFC 8785 canonical UTF-8 JSON over exactly
+  `{ackKind="turn_canceled",interruptRequestedSeq,dispatchId,targetLeaseId,targetFingerprintSha256}`;
+  `cancelAckSha256` hashes those exact bytes. `cancel-ready-evidence-v1` is the
+  same encoding over exactly
+  `{evidenceKind="harness_ready",interruptRequestedSeq,dispatchId,targetLeaseId,targetFingerprintSha256,terminalCaptureEnd}`;
+  `harnessReadyEvidenceSha256` hashes those bytes. Both originate on the
+  certified non-pane adapter channel after the unique interrupt permit; pane
+  text, silence, prompt-like output, or an outcome event alone cannot produce
+  them.
+- `TargetFinalQuiescenceProof` is one closed writer-private union with no unknown
+  keys. `proofKind="dispatch_cancel_ack"` is exactly
+  `{proofKind,dispatchId,targetLeaseId,targetFingerprint,steeringGeneration,peekCapabilityRevokedSeq,interruptRequestedSeq,cancelAckSha256,terminalCaptureEnd,harnessReadyEvidenceSha256,clientAttachmentAuditProof,clientAttachmentAuditProofSha256}`.
+  The nested audit proof exact-matches its hash, target, terminal end, and an
+  interaction-closure barrier held through `final_quiescent` receipt fsync; all
+  generation/revocation/interrupt fields exact-match the ledger. Alternatively,
+  `proofKind="pane_incarnation_gone"` is exactly
+  `{proofKind,targetKey,sessionTargetId,targetFingerprint,steeringGeneration,peekCapabilityRevokedSeq,observedAt}`.
+  The latter is valid only when a certified resolver observation under the
+  target lock proves that exact private key/fingerprint no longer exists;
+  `observedAt` is canonical UTC RFC 3339, and name/PID/current-client absence is
+  insufficient. A `final_quiescent` receipt stores the exact selected proof and
+  retains it through execution-final fsync.
+- A `result_committed` receipt contains the exact immutable `slot_result`
+  sequence, turn-closure proof, and exact writer-private
+  `clientAttachmentAuditProof` matching the result's durable copy/hash, plus one
+  closed `releaseProof`: either
+  `{proofKind="closure_barrier_held",closureBarrierSha256}` exact-matching the
+  audit proof whose input fence remained continuous through receipt fsync, or
+  `{proofKind="post_result_pane_incarnation_gone",targetKey,sessionTargetId,targetFingerprint,observedAt}`
+  proving the original pane incarnation is gone after a post-result barrier
+  fault. The latter never changes/reparses the already-fsynced result. No other
+  post-result reconciliation proof is accepted.
+- `turnClosureProof`: exactly
+  `{proofKind="harness_turn_closed",dispatchId,targetLeaseId,targetFingerprint,paneHistoryBaselineSha256,peekCapabilityRevokedSeq,steeringGeneration,sentinelSha256,terminalCaptureEnd,harnessReadyEvidenceSha256,clientAttachmentAuditProofSha256}`.
+  `steeringGeneration` uses the unsigned-decimal-uint64 grammar and
+  `terminalCaptureEnd` is the exact `capture-cursor-v1` end. The certified
+  adapter obtains ready/closed evidence through a channel not writable as pane
+  input; terminal text, echoed sentinel bytes, silence, or generic prompt text
+  cannot produce it. The proof is valid only while no steering generation is
+  open and all identity/hash/generation/cursor fields exact-match the dispatch
+  and candidate result under the held target occupancy. The named revocation is
+  unique and irreversible, and `clientAttachmentAuditProofSha256` hashes the
+  exact matching closed proof above. Missing audit continuity or foreign input
+  cannot be relabeled as operator steering and cannot close a result.
+  `sentinelSha256` hashes the exact UTF-8 bytes of the unique terminal sentinel
+  token selected by the bounded parser, from its first `<` through its final
+  `>` and excluding any line terminator; those bytes must be byte-equal to the
+  `slot_result.sentinel` string encoded as UTF-8. Any normalization, duplicate
+  candidate, trailing token bytes, or hash mismatch invalidates closure.
+- Raw `slot_dispatch` and `slot_result` events are writer-private authority.
+  Sanitized run/event/SSE/CLI/UI projections omit `dispatchInputBarrier`,
+  `targetReadyProof`, `paneHistoryBaseline`, and the client-attachment proof; they expose only the
+  corresponding encodings/hashes and closed validation state (`valid`,
+  `unavailable`, or `invalidated`).
 - `reportArtifactId`/`summaryArtifactId`: optional stable ids whose durable
   registration precedes the referencing event.
 - `artifactIds`, `diffArtifactIds`, and `outputArtifactIds`: stable-order arrays
@@ -1513,8 +1850,9 @@ Structured payload fields use these shapes:
   `human_verdict_recorded` returns it to `gate_evaluating` without opening a new
   attempt.
 - `openNodeAttempts`: stable `startSeq`-order array of `nodeAttemptSnapshot`
-  values that exactly equals all attempts open immediately before
-  `run_cancel_requested`. `node_started` opens an attempt. Matching
+  values that exactly equals all attempts open immediately before the lifecycle
+  event carrying the field: either `run_cancel_requested` or
+  `run_failure_reconciliation_started`. `node_started` opens an attempt. Matching
   `node_output` closes an ordinary Mission, Formation, or Tool attempt;
   `judge_result` or `judge_attempt_failed` closes a judge Formation attempt;
   `gate_verdict` closes a Gate attempt. A matching non-resumable Gate-scoped
@@ -1527,9 +1865,14 @@ Structured payload fields use these shapes:
   `canceled_non_authorizing` for exact coverage of the cancel-request snapshot.
   `run_failed` requires `failed_non_authorizing` for the one attempt, if any,
   resolved by `failureCause`, and `abandoned_non_authorizing` for every other
-  attempt open immediately before failure. It rejects missing, duplicate,
+  attempt in its named failure-reconciliation snapshot. It rejects missing, duplicate,
   extra, or identity-changing entries; a disposed `waiting_human` request
   cannot later accept a decision.
+- `failureHeader`: exactly
+  `{code,reason,unrecoverable,relatedSeq,failureCause}` with no unknown keys.
+  The five corresponding `run_failed` fields must be byte-equal to those on its
+  named `run_failure_reconciliation_started`; lifecycle-only origin/snapshot/
+  disposition fields are not part of this header.
 - `failureCause`: exactly one discriminated value: `{kind=slot,
   dispatchId}`, `{kind=tool, toolLeaseId}`, `{kind=error, errorSeq}`, or
   `{kind=none}`. A slot/Tool cause must identify the sole failed matching
@@ -1542,14 +1885,34 @@ Structured payload fields use these shapes:
   is collateral. `run_failed.relatedSeq` is context/provenance only—ADR-0005
   uses it for the source-value event—and never selects a failed attempt.
 - `openDispatches`: array of `{dispatchId, targetLeaseId, nodeId, attempt, slotId, agentId, bindingId,
-  sessionTargetId, targetFingerprint, dispatchSeq}`.
+  sessionTargetId, targetFingerprint, dispatchSeq, peekCapabilityState,
+  latestCapabilityGeneration, latestCapabilityIssuedSeq,
+  latestSteeringGeneration, openSteeringStartedSeq?, peekCapabilityRevokedSeq?,
+  interruptState, interruptRequestedSeq?, interruptOutcomeSeq?}`.
+  `peekCapabilityState` is exactly `none`, `issued`, `input_open`, or `revoked`;
+  capability generation is an unsigned-decimal string, and issued seq is `0`
+  only when no capability exists. The sequence fields must exact-match the
+  latest issuance, unique open steering generation, or irreversible revocation.
+  These are safe lifecycle facts, never capability tokens or input bytes.
+  `interruptState` is `none`, `requested`, `sent`, `unavailable`, or
+  `unsupported`; `requested` with no outcome is the crash-safe
+  `send_uncertain` state and never permits another request.
 - `openSlotDispatches`: stable `dispatchSeq`-order array with the exact
   `openDispatches` item shape that equals all unmatched slot dispatches
-  immediately before `run_cancel_requested`.
+  immediately before the lifecycle event carrying the field: either
+  `run_cancel_requested` or `run_failure_reconciliation_started`.
 - `slotDispatchDispositions`: stable `dispatchSeq`-order array preserving every
   open-dispatch field and adding `disposition`, `softInterrupt` (`sent`,
-  `unavailable`, or `unsupported`), and `targetLeaseState`
-  (`released_quiescent`, `terminal_hold`, or `quarantined`).
+  `send_uncertain`, `unavailable`, or `unsupported`), exact
+  `softInterruptRequestedSeq`, conditional `softInterruptOutcomeSeq`, and `targetLeaseState`
+  (`released_quiescent`, `terminal_hold`, or `quarantined`), plus
+  `finalPeekCapabilityState=revoked`, required `finalCapabilityGeneration`,
+  `finalCapabilityIssuedSeq`, `finalSteeringGeneration`, and
+  `finalPeekCapabilityRevokedSeq`. These final fields do not overwrite
+  the preserved request-time capability/generation fields. An
+  issued capability, open input channel, or open steering generation rejects
+  the disposition and finality. The final generation/sequence exact-match the
+  durable revocation event and the selected release/hold/quarantine proof.
   `released_quiescent` requires the
   exact target to be proven quiescent and its occupying host-registry record
   durably replaced by an exact non-occupying release receipt before finality.
@@ -1557,11 +1920,14 @@ Structured payload fields use these shapes:
   dispatchId, targetFingerprint, releaseKind=final_quiescent, proof}` across a crash until the
   final event is fsynced. Its proof is a closed writer-validated union: either
   an exact dispatch/lease/fingerprint-bound cancel acknowledgement followed by
-  certified harness-ready evidence and terminal capture boundary, or proof that
+  certified harness-ready evidence, terminal capture boundary, irreversible
+  capability revocation, and continuous client-attachment audit, or proof that
   the exact pane incarnation/fingerprint is gone. Sent Ctrl-C, silence, generic
   idle/prompt text, display name, bare PID, or an unknown proof kind is invalid.
   `terminal_hold` requires that exact record to be
-  durably marked non-authorizing and busy before finality; later
+  durably marked non-authorizing and busy with its Peek capability revoked and
+  all steering generations closed before finality; it permits no run-bound
+  input. Later
   non-authorizing reconciliation may release it only after proving quiescence.
   `quarantined` requires exact membership in a durable fail-closed
   `TargetQuarantine` reconstructed from missing/conflicting private state. That
@@ -1576,12 +1942,19 @@ Structured payload fields use these shapes:
   `disposition=failed_non_authorizing` for the dispatch selected by
   `failureCause.kind=slot` and
   `abandoned_non_authorizing` for every other dispatch; when no slot caused the
-  failure, all are abandoned. It exactly covers all dispatches still open
-  immediately before failure. The writer rejects missing, duplicate,
+  failure, all are abandoned. It exactly covers the dispatches in the named
+  failure-reconciliation snapshot. The writer rejects missing, duplicate,
   extra, or identity-changing entries; no disposition kills a tmux session.
-  `softInterrupt=sent` is valid only when the frozen binding/target is proven to
-  host that exact unresolved dispatch and attempt. Otherwise the engine records
-  `unavailable`/`unsupported` and sends no keystrokes to possibly unrelated work.
+  Every soft-interrupt disposition requires `softInterruptRequestedSeq` naming
+  the unique exact dispatch request authorized by either the cancel request or
+  failure-reconciliation start. `sent`, `unavailable`, and `unsupported` also
+  require `softInterruptOutcomeSeq` naming its matching unique outcome;
+  `send_uncertain` forbids an outcome sequence. `softInterrupt=sent` is valid only when the frozen binding/target is proven to
+  host that exact unresolved dispatch and attempt and the unique request/outcome
+  events prove the one permitted attempt. A durable request with no outcome after
+  crash is `send_uncertain`, is never retried, and carries only its request seq.
+  Otherwise the engine records `unavailable`/`unsupported` and sends no
+  keystrokes to possibly unrelated work.
   A sent interrupt is an outcome, never release proof; without a certified
   acknowledgement or pane-incarnation-gone proof the record remains held.
   A target lease whose exact `slot_result` is already fsynced is result-closed,
@@ -1610,16 +1983,17 @@ Structured payload fields use these shapes:
   generation, processScopeId, deadlineAuthorityId, launchSeq}` copied from the latest public launch
   for that lease. A lease without `tool_process_launch` omits `latestLaunch`.
 - `openToolLeases`: stable `dispatchSeq`-order array of `toolLeaseSnapshot`
-  values that exactly equals the open Tool leases immediately before
-  `run_cancel_requested`.
+  values that exactly equals the open Tool leases immediately before the
+  lifecycle event carrying the field: either `run_cancel_requested` or
+  `run_failure_reconciliation_started`.
 - `reconciledToolLeases`: stable `dispatchSeq`-order array preserving every
   field of the request's `openToolLeases` and adding exactly one `disposition`:
   `never_launched_cleaned` requires no `latestLaunch`, while
   `launch_fenced_cleaned` requires it. The writer rejects any missing,
   duplicate, extra, or changed lease/launch identity.
 - `toolLeaseDispositions`: stable `dispatchSeq`-order array preserving every
-  `toolLeaseSnapshot` field for the leases open immediately before `run_failed`
-  and adding `disposition=failed_private_cleanup_owned` for the lease selected
+  `toolLeaseSnapshot` field from the named failure-reconciliation snapshot and
+  adding `disposition=failed_private_cleanup_owned` for the lease selected
   by `failureCause.kind=tool` or `abandoned_private_cleanup_owned` otherwise.
   When no Tool caused
   the failure, every entry is abandoned. The writer rejects incomplete or
@@ -1987,7 +2361,19 @@ intent snapshots every open node attempt, slot dispatch, and Tool lease, stops n
 replay/rerun even if the coordinator crashes before cancellation completes. The
 writer also rejects new `tool_process_launch`, `tool_result`, `node_output`, edge
 routing, or other execution authority except cancellation reconciliation and its
-final event.
+final event. Each open-slot snapshot exact-captures capability state, latest
+steering generation, an optional open-generation sequence, and any prior
+revocation sequence. Cancellation then serializes under target occupancy: it
+stops new capability issuance/input, drains every input channel, closes an open
+generation with `slot_steering_ended(reason=capability_revoked)`, and fsyncs
+`slot_peek_capability_revoked(reason=cancel)` before soft interruption or final
+proof validation. Those drain/revocation events are cancellation reconciliation,
+not renewed execution authority. For an exact proven target, the writer then
+fsyncs the unique `slot_reconciliation_interrupt` bound to this cancel-request
+sequence and one `terminal-etx-v1` byte before the certified fence grants its
+one coordinator-only attempt. It appends the bounded outcome after the adapter
+returns. Recovery never retries a durable request, including when a crash leaves
+the outcome `send_uncertain`.
 Only the first accepted request appends this event; a repeated cancel, `abort`,
 or `stop` alias normalizes before hashing and is idempotent against the same
 canceling/final state. It cannot replace any snapshot.
@@ -1998,7 +2384,8 @@ later human decision is rejected.
 Active slot work is soft-interrupted without killing tmux sessions only when the
 frozen target is proven to host that exact unresolved dispatch/attempt; otherwise
 no keystroke is sent. Each dispatch receives a non-authorizing cancellation
-disposition with the interrupt outcome. A
+disposition with the exact interrupt request/outcome or crash-derived
+`send_uncertain`; none is release proof. A
 never-launched Tool lease is cleaned without execution. For each recorded Tool
 launch, the supervisor terminates and seals the matching scope, proves every
 descendant quiescent by the frozen deadline, and the coordinator cleans the root
@@ -2014,10 +2401,35 @@ deadline, the uniform complete-set selector above chooses the sole cause by
 retain private cleanup ownership. The post-final cleanup rule applies to every
 candidate.
 
+Every terminal failure first fsyncs one
+`run_failure_reconciliation_started` with the exact cause/header and complete
+open attempt/slot/Tool snapshots. That event stops new execution and Peek
+authority. Failure reconciliation drains/revokes Peek and uses only an exact
+one-shot `slot_reconciliation_interrupt`. Direct failure, and a cancel-origin
+slot with no prior request, uses failure authority naming that start event. A
+cancel-origin slot with a prior cancel-authorized request reuses that exact
+request instead. Both follow the same no-resend/outcome rules as cancellation.
+`run_failed` must byte-match the frozen cause/header and exactly dispose those
+snapshots. A crash resumes this reconciliation and never chooses a new cause or
+sends a second coordinator reconciliation interrupt to a slot.
+If cancellation escalates to failure (for example, Tool quiescence misses its
+deadline), `originCancelRequestSeq` names that request and the failure snapshot
+preserves every prior per-slot interrupt request/outcome. A slot with any durable
+cancel-authorized request—including missing outcome/`send_uncertain`—reuses it
+and receives no failure-authorized request; only a still-open slot with no prior
+request may receive one. The eventual failure disposition carries the preserved
+request/outcome and no second coordinator reconciliation interrupt request or
+send can occur. User steering remains a separate generation-gated input route.
+
 Every execution-final event revokes authority for every still-open node attempt,
-slot dispatch, and Tool lease. Before accepting one, the writer enumerates every
-occupying host target-registry record and non-occupying release receipt for the
-run. Each result-closed dispatch—one whose exact `slot_result` is already
+slot dispatch, Tool lease, and run-bound Peek capability. Before accepting one,
+the writer enumerates every occupying host target-registry record, non-occupying
+release receipt, issued/revoked Peek capability, input channel, and steering
+generation for the run. It rejects finality until each capability is absent or
+irreversibly revoked, every input channel is drained, every generation is
+closed, and each closure/final-quiescence proof exact-matches the latest closed
+generation and revocation sequence. Each result-closed dispatch—one whose exact
+`slot_result` is already
 fsynced—must have its exact durable `result_committed` receipt with certified
 turn-closure proof and cannot be
 omitted or represented at finality as a terminal hold, quarantine, or open slot
@@ -2067,26 +2479,52 @@ routing, replay, or rerun can follow.
 Tmux prompt/capture is serialized by a host-wide exclusive target registry keyed
 by private canonical `targetKey`; the one-to-one opaque `sessionTargetId` is its
 API handle, not an independently minted per-run key. Run ledgers remain
-independent but do not own a pane concurrently. Before `slot_dispatch`, the engine allocates `dispatchId`
-and unique `targetLeaseId`, atomically acquires and fsyncs exactly one private
-record `{targetKey, targetLeaseId, sessionTargetId, runId, dispatchId, bindingId, nodeId,
-attempt, slotId, targetFingerprint}`. Under that acquired lease and immediately
-before public dispatch/send, it exact-rechecks the frozen persona-card hash,
-harness/foreground-process start identity, cwd/root, and pane incarnation. Any
-drift appends a stale binding observation, releases the unsent orphan lease, and
-sends nothing. It also materializes every artifact-backed ordinary or judge
-Formation input through one authorized-root-relative no-follow open, validates
-regular identity, media type, size, and SHA-256 on that handle, and reads the
+independent but do not own a pane concurrently. Before target acquisition, the
+engine allocates `dispatchId` and unique `targetLeaseId`, materializes every
+artifact-backed ordinary or judge Formation input through one
+authorized-root-relative no-follow open, validates regular identity, media
+type, size, and SHA-256 on that handle, and composes/hashes the exact in-memory
 prompt bytes from that same handle without reopening. It never gives a mutable
 path as input authority. Non-redacted mismatch appends node-scoped
 `error(code=formation_input_integrity_failed)` and terminal failure with that
 error as `failureCause`; unavailable Redact=true bytes fail terminally with
-`redacted_input_unavailable`. Both send nothing and append no `slot_dispatch`.
-Only an exact match appends/fsyncs `slot_dispatch` with the same
-fingerprint before sending. A
-crash after private acquisition but before public dispatch is safe because no
-prompt could have been sent; recovery releases that exact orphan. A release
-never deletes its only proof before public finality. It atomically replaces the
+`redacted_input_unavailable`. Both send nothing and acquire no target.
+
+Only after exact input validation does it arm the certified monitor, atomically
+acquire, and fsync exactly one private
+record `{targetKey, targetLeaseId, sessionTargetId, runId, dispatchId, bindingId, nodeId,
+attempt, slotId, targetFingerprint, attachmentAuditRegistrationSha256,
+interactionLatch=none, monitorEvidenceSha256}` referencing the separately
+fsynced exact registration and anchored first `fence_transition` journal
+record. The certified client/input monitor registration and that non-empty
+chain genesis are armed before this occupancy
+fsync, so no post-occupancy interaction gap exists. Under that acquired lease and immediately
+before durable ledger dispatch/send, it exact-rechecks the frozen persona-card hash,
+harness/foreground-process start identity, cwd/root, and pane incarnation. Any
+drift appends a stale binding observation, releases the unsent orphan lease, and
+sends nothing. Every failure after fence preparation but before ledger dispatch
+atomically retires that exact unsent fence/permit with the occupancy release and
+fsyncs the registry parent; no input authority survives. Under the same critical section the certified monitor drains its
+journal, rejects any foreign/unknown event, and installs the exact
+`target-dispatch-input-barrier-v1` fence permitting only one send of the already
+hashed prompt. It then obtains a fresh one-shot `target-ready-proof-v1` bound to
+that barrier; active or unknown readiness releases the unsent orphan and sends
+nothing. It captures the exact `tmux-pane-history-baseline-v1` token
+and hash for the unchanged target. Prior accumulated history remains agent
+context, but result capture is anchored at the exact epoch/offset and cannot
+parse old history as this dispatch's sentinel or output. Lost/trimmed/reset or
+resize-invalidated continuity fails closed as specified above. Only an exact
+match appends/fsyncs `slot_dispatch` with the barrier, ready proof, fingerprint,
+and baseline before the adapter atomically consumes the one exact send permit.
+The fence rejects raw client/control input through the send linearization point;
+after the permit is consumed it admits only steering-generation-gated Peek
+input, capability-issued attach/detach/select metadata, or the unique
+reconciliation-interrupt permit. A
+crash after private acquisition but before durable ledger dispatch is safe because no
+prompt could have been sent; recovery exact-matches and atomically retires the
+prepared fence plus orphan occupancy. Missing/conflicting fence identity enters
+quarantine rather than dropping either state. A release
+never deletes its only proof before ledger finality. It atomically replaces the
 occupying record with a durable, non-authorizing, non-occupying release receipt
 under the same lease/dispatch identity. Receipts do not block a new acquisition
 on the key, but remain until this run's final event is fsynced. Any public
@@ -2101,7 +2539,8 @@ key until reconciliation proves all recorded candidate dispatches quiescent.
 Each unmatched candidate may report `targetLeaseState=quarantined` in its own
 final slot disposition. A result-closed candidate has no such disposition, so its
 quarantine must be proven quiescent and durably replaced by its exact
-`result_committed` release receipt with certified turn-closure proof before any execution-final event. If the
+`result_committed` release receipt with certified turn-closure proof and closed
+barrier-held or post-result-pane-gone `releaseProof` before any execution-final event. If the
 frozen canonical key itself is missing/corrupt, the arbiter creates a separate
 durable host-wide target-dispatch quarantine before reporting the ledger
 invalid. Its stable candidates preserve every available
@@ -2114,23 +2553,56 @@ Every dispatched prompt requires its completion sentinel to exact-match
 `runId`, `dispatchId`, and `targetLeaseId`; run id alone is insufficient. A
 sentinel is not sufficient while later bytes from the old turn remain possible.
 The matching `slot_result` repeats those identities/fingerprint and is accepted
-only when the sentinel is terminal in the bounded capture and a certified
-harness adapter proves return to a closed/ready turn for that fingerprint. The
-closed proof records terminal capture boundary and harness-ready evidence;
-silence or generic prompt text is insufficient. After that result is
+only after capability issuance is stopped, every input channel is drained, no
+steering generation is open, and the unique irreversible
+`slot_peek_capability_revoked` is durable. Its capture starts at the exact
+dispatch baseline, the sentinel is terminal, and a certified harness adapter
+proves return to a closed/ready turn for that fingerprint, baseline hash, latest
+closed steering generation, and revocation sequence. A certified attachment
+monitor must also prove continuous accounting of every client/input event from
+occupancy through the terminal capture boundary, with every event classified to
+one exact authorized route: barrier-bound workflow prompt, capability-issued
+attach/detach/select metadata, steering-generation-gated Peek input, or the
+durable one-shot reconciliation interrupt. Under the same target critical section it
+then installs the certified interaction-closure barrier, drains/linearizes the
+  monitor journal, and synchronously rejects every later unregistered attach,
+  select, resize/reflow, history, pane-lifecycle/topology/other mutation, or
+  input route at the adapter boundary. The closed
+proof binds that barrier. The closed proof comes from the certified
+adapter channel and cannot be fabricated solely by typed/echoed pane bytes;
+silence or generic prompt text is insufficient. Result validation and Peek input
+serialize under the target occupancy: later accepted input opens a newer
+generation and invalidates the proof, or input is rejected after capability
+revocation. A foreign client/input route (including one that disappears before
+validation) or lost attachment-monitor continuity records the stable slot error, revokes input,
+and permanently forbids `slot_result` for that dispatch. The writer rechecks the
+foreign/audit latch at the barrier linearization point before appending the
+result. After that result is
 fsynced, the registry lease may be atomically replaced by a
 `releaseKind=result_committed` receipt naming the exact result sequence and
-carrying that same turn-closure proof; success
+carrying that same turn-closure proof and exact durable attachment-audit proof plus
+`releaseProof={proofKind=closure_barrier_held,closureBarrierSha256}`. The input
+fence remains installed until the receipt fsyncs; that fsync is the target's
+release linearization point. The result is not consumable by `formation_result`,
+downstream routing, or finality until that receipt is durable. Success
 is forbidden until that transition is durable. If cancellation or failure is
 requested between result fsync and receipt creation, recovery completes that
-exact transition; if private identity is missing/conflicting, it first uses the
-result-closed quarantine path above and then replaces the proven-quiescent
-quarantine with the receipt. The result-closed dispatch is not open and receives
+exact transition. If the barrier/fence loses continuity or private identity is
+missing/conflicting after result fsync, the immutable result remains
+result-closed but uncommitted; the arbiter creates the result-closed quarantine
+and permits no consumption or finality. It may replace that quarantine with the
+exact `result_committed` receipt only if the original barrier is proven to have
+held through receipt fsync or exact post-result proof establishes that the old
+pane incarnation is gone. A post-result foreign event never reparses or changes
+the result. The result-closed dispatch is not open and receives
 no final slot disposition. Cancellation/failure may release an unmatched exact
-active record only after the old dispatch is proven quiescent. A correct-target
-interrupt alone is not proof. The closed admissible proof is either an exact
-dispatch/lease/fingerprint-bound cancel acknowledgement followed by certified
-harness-ready evidence at a terminal capture boundary, or private proof that
+active record only after Peek capability revocation is durable and the old
+dispatch is proven quiescent. A correct-target interrupt alone is not proof. The
+closed admissible proof is either the exact closed
+`TargetFinalQuiescenceProof.proofKind=dispatch_cancel_ack`, binding the unique
+interrupt request, revocation/generation, certified cancel acknowledgement,
+harness-ready evidence, terminal capture boundary, and continuous interaction
+audit under a closure fence held through receipt fsync, or private proof that
 the exact pane incarnation/fingerprint is gone. A replacement pane gets a new
 key/fingerprint and is never interrupted or released as the old target. Before
 finality, the engine either atomically replaces
@@ -2139,7 +2611,12 @@ that record with a `releaseKind=final_quiescent` receipt and reports
 non-authorizing terminal hold and reports
 `targetLeaseState=terminal_hold`; a missing/conflicting record instead reports
 the already-durable `targetLeaseState=quarantined`. Holds and quarantines remain
-busy until later non-authorizing reconciliation proves quiescence. A crash after
+busy, non-interactive, and without run-bound capability until later
+non-authorizing reconciliation proves quiescence. A foreign-attachment latch
+linearized before `slot_result` cannot take the result path; it enters
+hold/quarantine and later releases only after exact pane-incarnation-gone proof,
+without promoting output. A post-result barrier fault follows
+the result-closed quarantine rule above. A crash after
 receipt creation reuses that receipt to finish the same final disposition and
 never quarantines or re-interrupts the already released dispatch. No registry
 state or receipt expires by
@@ -2153,10 +2630,16 @@ state machine below; only a later exact closed-turn result or an execution-final
 slot disposition with a certified `final_quiescent` receipt, terminal hold, or quarantine can retire
 its authority.
 
-If another run loses the atomic acquisition race, no `slot_dispatch` or prompt
-is produced. Before `run_started`, preflight rejects `session_target_busy`.
-After start, the engine appends a node-scoped
-`error(code=session_target_busy)` for the exact attempt and terminal
+If atomic acquisition finds a lease, attachment, certified open turn, unknown
+readiness, or stale fingerprint, no `slot_dispatch` or prompt is produced.
+Preflight resolves unavailable with the exact stable reason
+`session_target_leased`, `session_target_attached`,
+`session_target_harness_busy`, `session_target_readiness_unknown`, or
+`session_target_attachment_audit_unavailable`, or `session_target_stale`.
+Acquisition repeats those checks with a fresh adapter
+challenge. After start, the engine appends `slot_binding_observed` with that
+reason, then a node-scoped `error(code=session_target_busy)` for the exact
+attempt and terminal
 `run_failed` with that error as `failureCause`, empty slot dispositions for the
 unsent work, and exact dispositions for every other open authority. A later run
 may use the target only after the prior registry lease/hold/quarantine is safely
@@ -2215,7 +2698,10 @@ Replay handles open dispatch leases as follows:
    old lease; replacement-target rebinding and unresolved-lease redispatch are
    never same-run operations.
 6. For `Redact=true`, if continuation requires a raw value that was
-   intentionally not persisted, append `run_failed` with
+   intentionally not persisted, fsync
+   `run_failure_reconciliation_started(originCancelRequestSeq=0)` with the exact
+   header/cause and complete open-resource snapshots, then append `run_failed`
+   naming that start with
    `code=redacted_input_unavailable`,
    `reason=redacted_input_unavailable`, `unrecoverable=true`, `relatedSeq` set to
    the exact source event whose authoritative value was required,
@@ -2258,8 +2744,10 @@ events; projection changes only after those events exist.
 Run projection:
 
 - `run_started` initializes status `queued`. Unique valid fenced `run_activated`
-  projects `running` and is required before graph/dispatch events; direct cancel
-  or final events may close queued work without activation.
+  projects `running` and is required before graph/dispatch events. Queued cancel
+  uses `run_cancel_requested` then `run_canceled`; queued failure uses
+  `run_failure_reconciliation_started` then `run_failed`. Neither path requires
+  activation.
 - `run_blocked` projects status `blocked` for its epoch and stops automatic
   dispatch. Explicit resume may append a higher-epoch event only when
   `resumeAllowed=true`, in which case `nextEpoch` is required;
@@ -2276,7 +2764,13 @@ Run projection:
 - `run_cancel_requested` projects status `canceling`. It rejects new dispatch,
   launch, result commit, node output/routing, ordinary recovery/rerun, and resume;
   replay may only continue cancellation reconciliation toward `run_canceled` or
-  terminal `run_failed`.
+  `run_failure_reconciliation_started` exact-naming that cancel request,
+  followed only by its matching terminal `run_failed`.
+- `run_failure_reconciliation_started` projects non-final status `failing`,
+  including when it escalates a prior cancel. It rejects ordinary execution and
+  admits only the exact frozen failure reconciliation toward `run_failed`; a
+  crash resumes those same snapshots and cannot return the run to `canceling`,
+  `running`, `blocked`, or `waiting_human`.
 - `run_succeeded`, `run_failed`, and `run_canceled` project final statuses and
   reject further execution events. Later binding/artifact observations may update
   inspection health only; they cannot change outcome or authorize work.
@@ -2441,6 +2935,5 @@ These are real design topics but not required to unblock S1/S2:
   `unavailable` and `error` outcomes loudly.
 - A second reusable formation-definition registry; embedded nodes and explicit
   copying remain the first contract.
-- Interactive keystroke forwarding inside canvas terminal popups.
 - Broad undo matrices for every S3/S4 mutation beyond the structural cases in
   `canvas.feature`.

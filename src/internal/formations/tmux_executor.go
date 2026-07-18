@@ -19,6 +19,7 @@ import (
 const (
 	defaultTmuxOutputCapBytes = 8192
 	defaultTmuxTimeoutSeconds = 30
+	formationsDogfoodRoot     = "/tmp"
 )
 
 var (
@@ -35,14 +36,14 @@ type TmuxExecutorConfig struct {
 	SessionPrefix  string
 	OutputCapBytes int
 	TimeoutSeconds int
-	ProdSmoke      bool
 }
 
 type TmuxFormationExecutor struct {
-	store    *Store
-	personas *PersonaStore
-	config   TmuxExecutorConfig
-	client   tmuxHarnessClient
+	store          *Store
+	personas       *PersonaStore
+	config         TmuxExecutorConfig
+	client         tmuxHarnessClient
+	socketIdentity os.FileInfo
 }
 
 type tmuxHarnessClient interface {
@@ -78,7 +79,6 @@ func TmuxExecutorConfigFromEnv() TmuxExecutorConfig {
 		SessionPrefix:  strings.TrimSpace(os.Getenv("CHROTE_FORMATIONS_TMUX_SESSION_PREFIX")),
 		OutputCapBytes: capBytes,
 		TimeoutSeconds: timeoutSeconds,
-		ProdSmoke:      tmuxProdSmokeAllowed(os.Getenv("CHROTE_FORMATIONS_TMUX_PROD_SMOKE")) || tmuxProdSmokeAllowed(os.Getenv("CHROTE_FORMATIONS_TMUX_DEDICATED")),
 	}
 }
 
@@ -177,6 +177,9 @@ func (e *TmuxFormationExecutor) ReattachFormationDispatch(req FormationReattachR
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(e.config.TimeoutSeconds)*time.Second)
 	defer cancel()
+	if err := e.validatePinnedTmuxSocket(); err != nil {
+		return FormationExecutionResult{}, withSlot(err, req.NodeID, req.SlotID, req.DispatchID)
+	}
 	captured, err := e.client.CapturePane(ctx, e.config.Socket, sessionName, e.config.OutputCapBytes+1)
 	if err != nil {
 		return FormationExecutionResult{}, runSlotExecutionError("reattach_capture_failed", redactLedgerText(err.Error()), "adapter", err, req.NodeID, req.SlotID, req.DispatchID)
@@ -630,6 +633,9 @@ func (e *TmuxFormationExecutor) executeSlot(req FormationExecution, slot Formati
 	if err != nil {
 		return tmuxSlotOutput{}, err
 	}
+	if err := e.validatePinnedTmuxSocket(); err != nil {
+		return tmuxSlotOutput{}, withSlot(err, req.NodeID, slot.ID, lease.DispatchID)
+	}
 	if err := e.client.SendPrompt(ctx, e.config.Socket, sessionName, lease.DispatchID, prompt); err != nil {
 		return tmuxSlotOutput{}, runSlotExecutionError("dispatch_failed", redactPromptFromLedgerText(err.Error(), prompt), "adapter", err, req.NodeID, slot.ID, lease.DispatchID)
 	}
@@ -1031,6 +1037,7 @@ func lastMatchingCompletionSentinelBounds(captured, runID string) (int, int) {
 }
 
 func (e *TmuxFormationExecutor) validateConfiguredBoundary() error {
+	e.socketIdentity = nil
 	if strings.TrimSpace(e.config.Socket) == "" {
 		return runExecutionError("missing_socket", "tmux executor socket is not configured", "executor", nil)
 	}
@@ -1039,6 +1046,12 @@ func (e *TmuxFormationExecutor) validateConfiguredBoundary() error {
 		return runExecutionError("invalid_socket", "tmux executor socket is invalid", "executor", err)
 	}
 	e.config.Socket = socket
+	if err := e.validateTmuxSocketPathBoundary(); err != nil {
+		return err
+	}
+	if err := e.pinTmuxSocketIdentity(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(e.config.SessionPrefix) == "" {
 		return runExecutionError("missing_session_prefix", "tmux executor session prefix is not configured", "executor", nil)
 	}
@@ -1055,6 +1068,9 @@ func (e *TmuxFormationExecutor) validateConfiguredBoundary() error {
 	if err != nil {
 		return runExecutionError("invalid_cwd", "tmux executor cwd is invalid", "executor", err)
 	}
+	if !pathResolvedWithinRoot(cwd, formationsDogfoodRoot) {
+		return runExecutionError("session_target_attachment_audit_unavailable", "stock tmux dogfood requires disposable socket and workspace roots", "executor", nil)
+	}
 	if info, err := os.Stat(cwd); err != nil || !info.IsDir() {
 		return runExecutionError("unavailable_cwd", "tmux executor cwd is unavailable", "executor", err)
 	}
@@ -1065,6 +1081,9 @@ func (e *TmuxFormationExecutor) validateConfiguredBoundary() error {
 		absRoot, err := filepath.Abs(root)
 		if err != nil {
 			return runExecutionError("invalid_root", "tmux executor root is invalid", "executor", err)
+		}
+		if !pathResolvedWithinRoot(absRoot, formationsDogfoodRoot) {
+			return runExecutionError("session_target_attachment_audit_unavailable", "stock tmux dogfood requires disposable socket and workspace roots", "executor", nil)
 		}
 		if info, err := os.Stat(absRoot); err != nil || !info.IsDir() {
 			return runExecutionError("unavailable_root", "tmux executor root is unavailable", "executor", err)
@@ -1078,20 +1097,52 @@ func (e *TmuxFormationExecutor) validateConfiguredBoundary() error {
 		return runExecutionError("cwd_outside_root", "tmux executor cwd is outside configured roots", "executor", nil)
 	}
 	e.config.Roots = roots
-	if !e.config.ProdSmoke {
-		if isDefaultTmuxSocket(socket) || !pathWithinRoot(socket, os.TempDir()) {
-			return runExecutionError("unsafe_socket", "tmux executor socket must be an isolated temp socket unless prod-smoke is explicitly enabled", "executor", nil)
-		}
-		for _, root := range append([]string{cwd}, roots...) {
-			if !pathWithinRoot(root, os.TempDir()) {
-				return runExecutionError("unsafe_root", "tmux executor roots must be isolated temp paths unless prod-smoke is explicitly enabled", "executor", nil)
-			}
-		}
+	return nil
+}
+
+func (e *TmuxFormationExecutor) validateTmuxSocketPathBoundary() error {
+	socket := e.config.Socket
+	if isDefaultTmuxSocket(socket) || isConfiguredCockpitTmuxSocket(socket) || !pathResolvedWithinRoot(socket, formationsDogfoodRoot) {
+		return runExecutionError("session_target_attachment_audit_unavailable", "stock tmux cannot certify attachment and input continuity for a cockpit session target", "executor", nil)
+	}
+	return nil
+}
+
+func (e *TmuxFormationExecutor) pinTmuxSocketIdentity() error {
+	info, err := os.Lstat(e.config.Socket)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 {
+		return runExecutionError("session_target_attachment_audit_unavailable", "disposable tmux socket identity is unavailable", "executor", err)
+	}
+	resolved, err := filepath.EvalSymlinks(e.config.Socket)
+	if err != nil || filepath.Clean(resolved) != filepath.Clean(e.config.Socket) {
+		return runExecutionError("session_target_attachment_audit_unavailable", "disposable tmux socket path is not stable", "executor", err)
+	}
+	e.socketIdentity = info
+	return nil
+}
+
+func (e *TmuxFormationExecutor) validatePinnedTmuxSocket() error {
+	if e.socketIdentity == nil {
+		return runExecutionError("session_target_attachment_audit_unavailable", "disposable tmux socket identity is not pinned", "executor", nil)
+	}
+	if err := e.validateTmuxSocketPathBoundary(); err != nil {
+		return err
+	}
+	info, err := os.Lstat(e.config.Socket)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !os.SameFile(e.socketIdentity, info) {
+		return runExecutionError("session_target_attachment_audit_unavailable", "disposable tmux socket identity changed", "executor", err)
+	}
+	resolved, err := filepath.EvalSymlinks(e.config.Socket)
+	if err != nil || filepath.Clean(resolved) != filepath.Clean(e.config.Socket) {
+		return runExecutionError("session_target_attachment_audit_unavailable", "disposable tmux socket path changed", "executor", err)
 	}
 	return nil
 }
 
 func (e *TmuxFormationExecutor) ensureSessionReady(ctx context.Context, sessionName string) error {
+	if err := e.validatePinnedTmuxSocket(); err != nil {
+		return err
+	}
 	sessions, err := e.client.ListSessions(ctx, e.config.Socket)
 	if err != nil {
 		return runExecutionError("tmux_unavailable", redactLedgerText(err.Error()), "adapter", err)
@@ -1108,6 +1159,9 @@ func (e *TmuxFormationExecutor) ensureSessionReady(ctx context.Context, sessionN
 	case 1:
 	default:
 		return runExecutionError("ambiguous_session", fmt.Sprintf("tmux session %q matched %d sessions on isolated socket", sessionName, matches), "adapter", nil)
+	}
+	if err := e.validatePinnedTmuxSocket(); err != nil {
+		return err
 	}
 	pane, err := e.client.DescribeActivePane(ctx, e.config.Socket, sessionName)
 	if err != nil {
@@ -1133,6 +1187,9 @@ func (e *TmuxFormationExecutor) ensureSessionReady(ctx context.Context, sessionN
 }
 
 func (e *TmuxFormationExecutor) countExistingCompletionSentinels(ctx context.Context, sessionName, runID string) (int, error) {
+	if err := e.validatePinnedTmuxSocket(); err != nil {
+		return 0, err
+	}
 	captured, err := e.client.CapturePane(ctx, e.config.Socket, sessionName, e.config.OutputCapBytes+1)
 	if err != nil {
 		code := "capture_failed"
@@ -1150,6 +1207,9 @@ func (e *TmuxFormationExecutor) countExistingCompletionSentinels(ctx context.Con
 func (e *TmuxFormationExecutor) waitForCompletion(ctx context.Context, sessionName, runID, prompt string, previousSentinels int) (string, error) {
 	deadline := time.Now().Add(time.Duration(e.config.TimeoutSeconds) * time.Second)
 	for {
+		if err := e.validatePinnedTmuxSocket(); err != nil {
+			return "", err
+		}
 		captured, err := e.client.CapturePane(ctx, e.config.Socket, sessionName, e.config.OutputCapBytes+1)
 		if err != nil {
 			code := "capture_failed"
@@ -1302,7 +1362,7 @@ func runSlotExecutionError(code, message, boundary string, cause error, nodeID, 
 	}
 }
 
-func tmuxProdSmokeAllowed(raw string) bool {
+func operatorOptInAllowed(raw string) bool {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "1", "true", "yes", "allow", "allow-live", "prod-smoke":
 		return true
@@ -1326,20 +1386,151 @@ func safeTmuxSessionName(name string) bool {
 
 func isDefaultTmuxSocket(socket string) bool {
 	candidates := []string{}
-	if tmpdir := strings.TrimSpace(os.Getenv("TMUX_TMPDIR")); tmpdir != "" {
-		candidates = append(candidates, filepath.Join(tmpdir, "default"))
+	if tmuxEnv := strings.TrimSpace(os.Getenv("TMUX")); tmuxEnv != "" {
+		if configured, _, ok := strings.Cut(tmuxEnv, ","); ok {
+			candidates = append(candidates, strings.TrimSpace(configured))
+		}
 	}
-	if xdg := strings.TrimSpace(os.Getenv("XDG_RUNTIME_DIR")); xdg != "" {
+	tmuxRoots := []string{formationsDogfoodRoot}
+	tmpdir := strings.TrimSpace(os.Getenv("TMUX_TMPDIR"))
+	xdg := strings.TrimSpace(os.Getenv("XDG_RUNTIME_DIR"))
+	if tmpdir != "" {
+		tmuxRoots = append(tmuxRoots, tmpdir)
+		candidates = append(candidates, filepath.Join(tmpdir, "default"))
+	} else if xdg != "" {
+		tmuxRoots = append(tmuxRoots, filepath.Join(xdg, "tmux"))
+	} else {
+		tmuxRoots = append(tmuxRoots, filepath.Join(formationsDogfoodRoot, fmt.Sprintf("tmux-%d", os.Getuid())))
+	}
+	if xdg != "" {
 		candidates = append(candidates, filepath.Join(xdg, "tmux", "default"))
 	}
-	candidates = append(candidates, filepath.Join(fmt.Sprintf("/tmp/tmux-%d", os.Getuid()), "default"))
+	for _, root := range tmuxRoots {
+		candidates = append(candidates, filepath.Join(root, fmt.Sprintf("tmux-%d", os.Getuid()), "default"))
+	}
 	for _, candidate := range candidates {
-		abs, err := filepath.Abs(candidate)
-		if err == nil && abs == socket {
+		if sameTmuxSocket(socket, candidate) {
+			return true
+		}
+	}
+	paths := []string{socket}
+	if resolved, err := filepath.EvalSymlinks(socket); err == nil {
+		paths = append(paths, resolved)
+	}
+	for _, root := range tmuxRoots {
+		for _, path := range paths {
+			if isCanonicalTmuxDefaultSocketPath(path, root) {
+				return true
+			}
+		}
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if !isNumericTmuxSocketDir(entry.Name()) {
+				continue
+			}
+			if sameTmuxSocket(socket, filepath.Join(root, entry.Name(), "default")) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isCanonicalTmuxDefaultSocketPath(path, root string) bool {
+	absPath, pathErr := filepath.Abs(path)
+	absRoot, rootErr := filepath.Abs(root)
+	if pathErr != nil || rootErr != nil {
+		return false
+	}
+	rel, err := filepath.Rel(absRoot, absPath)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	return len(parts) == 2 && isNumericTmuxSocketDir(parts[0]) && parts[1] == "default"
+}
+
+func isNumericTmuxSocketDir(name string) bool {
+	uid := strings.TrimPrefix(name, "tmux-")
+	if uid == "" || uid == name {
+		return false
+	}
+	for _, ch := range uid {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func isConfiguredCockpitTmuxSocket(socket string) bool {
+	candidates := []string{strings.TrimSpace(os.Getenv("CHROTE_DEFAULT_TMUX_SOCKET"))}
+	for _, item := range strings.Split(os.Getenv("CHROTE_TERMINAL_USER_SOCKETS"), ",") {
+		parts := strings.SplitN(item, "=", 2)
+		if len(parts) == 2 {
+			candidates = append(candidates, strings.TrimSpace(parts[1]))
+		}
+	}
+	for _, candidate := range candidates {
+		if candidate == "" {
+			continue
+		}
+		if sameTmuxSocket(socket, candidate) {
 			return true
 		}
 	}
 	return false
+}
+
+func sameTmuxSocket(left, right string) bool {
+	leftAbs, leftErr := filepath.Abs(left)
+	rightAbs, rightErr := filepath.Abs(right)
+	if leftErr != nil || rightErr != nil {
+		return false
+	}
+	if leftAbs == rightAbs {
+		return true
+	}
+	leftResolved, leftResolveErr := filepath.EvalSymlinks(leftAbs)
+	rightResolved, rightResolveErr := filepath.EvalSymlinks(rightAbs)
+	if leftResolveErr == nil && rightResolveErr == nil && leftResolved == rightResolved {
+		return true
+	}
+	leftInfo, leftStatErr := os.Stat(leftAbs)
+	rightInfo, rightStatErr := os.Stat(rightAbs)
+	return leftStatErr == nil && rightStatErr == nil && os.SameFile(leftInfo, rightInfo)
+}
+
+func pathResolvedWithinRoot(path, root string) bool {
+	absPath, pathErr := filepath.Abs(path)
+	absRoot, rootErr := filepath.Abs(root)
+	if pathErr != nil || rootErr != nil {
+		return false
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return false
+	}
+
+	var resolvedPath string
+	if _, err := os.Lstat(absPath); err == nil {
+		resolvedPath, err = filepath.EvalSymlinks(absPath)
+		if err != nil {
+			return false
+		}
+	} else if os.IsNotExist(err) {
+		resolvedParent, resolveErr := filepath.EvalSymlinks(filepath.Dir(absPath))
+		if resolveErr != nil {
+			return false
+		}
+		resolvedPath = filepath.Join(resolvedParent, filepath.Base(absPath))
+	} else {
+		return false
+	}
+	return pathWithinRoot(resolvedPath, resolvedRoot)
 }
 
 type realTmuxHarnessClient struct{}

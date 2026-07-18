@@ -24,7 +24,7 @@ type ScriptGateEvaluator struct {
 }
 
 func NewConfiguredGateEvaluatorFromEnv(workspace string) GateEvaluator {
-	if !tmuxProdSmokeAllowed(os.Getenv("CHROTE_FORMATIONS_SCRIPT_GATES")) {
+	if !operatorOptInAllowed(os.Getenv("CHROTE_FORMATIONS_SCRIPT_GATES")) {
 		return nil
 	}
 	timeout := defaultGateCommandTimeout

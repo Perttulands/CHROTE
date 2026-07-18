@@ -37,35 +37,266 @@ func TestConfiguredFormationExecutorFromEnvSelectsTmuxOnlyWhenHarnessesSet(t *te
 	}
 }
 
-func TestTmuxExecutorRefusesLiveChroteSocketUnlessProdSmoke(t *testing.T) {
+func TestTmuxExecutorRefusesConfiguredCockpitSocketEvenWithLegacyOptIns(t *testing.T) {
 	cfg := tmuxTestConfig(t)
 	cfg.Socket = "/run/user/1000/chrote-tmux/tmux-1000/default"
-	cfg.ProdSmoke = false
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "perttu=/run/user/1000/chrote-tmux/tmux-1000/default")
 
 	err := newTmuxFormationExecutorWithClient(nil, nil, cfg, &fakeTmuxHarnessClient{}).validateConfiguredBoundary()
 	var executionErr *RunExecutionError
 	if !errors.As(err, &executionErr) {
-		t.Fatalf("live socket error = %v, want RunExecutionError", err)
+		t.Fatalf("cockpit socket error = %v, want RunExecutionError", err)
 	}
-	if executionErr.Code != "unsafe_socket" || executionErr.Boundary != "executor" {
-		t.Fatalf("live socket error = %+v, want unsafe_socket/executor", executionErr)
+	if executionErr.Code != "session_target_attachment_audit_unavailable" || executionErr.Boundary != "executor" {
+		t.Fatalf("cockpit socket error = %+v, want session_target_attachment_audit_unavailable/executor", executionErr)
+	}
+}
+
+func TestTmuxExecutorLegacyOptInsCannotAuthorizeNonTempSocket(t *testing.T) {
+	for _, envName := range []string{
+		"CHROTE_FORMATIONS_TMUX_PROD_SMOKE",
+		"CHROTE_FORMATIONS_TMUX_DEDICATED",
+	} {
+		t.Run(envName, func(t *testing.T) {
+			clearExecutorEnv(t)
+			root := t.TempDir()
+			t.Setenv("CHROTE_FORMATIONS_TMUX_HARNESSES", "openai-codex")
+			t.Setenv("CHROTE_FORMATIONS_TMUX_SOCKET", "/run/chrote/formations-tmux/default")
+			t.Setenv("CHROTE_FORMATIONS_TMUX_CWD", root)
+			t.Setenv("CHROTE_FORMATIONS_TMUX_ROOTS", root)
+			t.Setenv("CHROTE_FORMATIONS_TMUX_SESSION_PREFIX", "tmux-")
+			t.Setenv(envName, "1")
+
+			store, personas := s4RunFixture(t)
+			client := &fakeTmuxHarnessClient{}
+			executor := newTmuxFormationExecutorWithClient(store, personas, TmuxExecutorConfigFromEnv(), client)
+			_, err := executor.ExecuteFormation(FormationExecution{})
+			var executionErr *RunExecutionError
+			if !errors.As(err, &executionErr) {
+				t.Fatalf("legacy opt-in error = %v, want RunExecutionError", err)
+			}
+			if executionErr.Code != "session_target_attachment_audit_unavailable" {
+				t.Fatalf("legacy opt-in code = %q, want session_target_attachment_audit_unavailable", executionErr.Code)
+			}
+			if client.listCalls != 0 || client.describeCalls != 0 || client.sendCalls != 0 || client.captureCalls != 0 {
+				t.Fatalf("tmux client calls = list:%d describe:%d send:%d capture:%d, want all zero", client.listCalls, client.describeCalls, client.sendCalls, client.captureCalls)
+			}
+		})
+	}
+}
+
+func TestTmuxExecutorAllowsDisposableTempDogfood(t *testing.T) {
+	if err := newTmuxFormationExecutorWithClient(nil, nil, tmuxTestConfig(t), &fakeTmuxHarnessClient{}).validateConfiguredBoundary(); err != nil {
+		t.Fatalf("disposable temp dogfood validate error = %v, want allowed", err)
+	}
+}
+
+func TestTmuxExecutorRefusesCockpitSocketAlias(t *testing.T) {
+	root := t.TempDir()
+	cockpitSocket := filepath.Join(root, "cockpit.sock")
+	if err := os.WriteFile(cockpitSocket, []byte("socket identity fixture"), 0o600); err != nil {
+		t.Fatalf("write cockpit socket fixture: %v", err)
+	}
+	aliasSocket := filepath.Join(root, "alias.sock")
+	if err := os.Symlink(cockpitSocket, aliasSocket); err != nil {
+		t.Fatalf("symlink cockpit socket fixture: %v", err)
 	}
 
-	cfg.ProdSmoke = true
-	if err := newTmuxFormationExecutorWithClient(nil, nil, cfg, &fakeTmuxHarnessClient{}).validateConfiguredBoundary(); err != nil {
-		t.Fatalf("prod-smoke live socket validate error = %v, want allowed", err)
+	cfg := tmuxTestConfig(t)
+	cfg.Socket = aliasSocket
+	t.Setenv("CHROTE_DEFAULT_TMUX_SOCKET", cockpitSocket)
+
+	err := newTmuxFormationExecutorWithClient(nil, nil, cfg, &fakeTmuxHarnessClient{}).validateConfiguredBoundary()
+	var executionErr *RunExecutionError
+	if !errors.As(err, &executionErr) {
+		t.Fatalf("cockpit socket alias error = %v, want RunExecutionError", err)
+	}
+	if executionErr.Code != "session_target_attachment_audit_unavailable" {
+		t.Fatalf("cockpit socket alias code = %q, want session_target_attachment_audit_unavailable", executionErr.Code)
+	}
+}
+
+func TestTmuxExecutorDisposableBoundaryRejectsSymlinkEscapes(t *testing.T) {
+	t.Run("socket", func(t *testing.T) {
+		cfg := tmuxTestConfig(t)
+		aliasSocket := filepath.Join(filepath.Dir(cfg.Socket), "outside.sock")
+		if err := os.Symlink("/dev/null", aliasSocket); err != nil {
+			t.Fatalf("symlink outside socket fixture: %v", err)
+		}
+		cfg.Socket = aliasSocket
+		assertAttachmentAuditUnavailable(t, cfg)
+	})
+
+	t.Run("workspace root", func(t *testing.T) {
+		cfg := tmuxTestConfig(t)
+		aliasRoot := filepath.Join(t.TempDir(), "outside-root")
+		if err := os.Symlink("/srv", aliasRoot); err != nil {
+			t.Fatalf("symlink outside root fixture: %v", err)
+		}
+		cfg.Cwd = aliasRoot
+		cfg.Roots = []string{aliasRoot}
+		assertAttachmentAuditUnavailable(t, cfg)
+	})
+}
+
+func TestTmuxExecutorNonTempBoundaryWinsOverInvalidConfiguration(t *testing.T) {
+	t.Run("socket before missing cwd", func(t *testing.T) {
+		cfg := tmuxTestConfig(t)
+		cfg.Socket = "/run/chrote/formations-tmux/default"
+		cfg.Cwd = "/path-that-does-not-exist"
+		assertAttachmentAuditUnavailable(t, cfg)
+	})
+
+	t.Run("cwd before stat", func(t *testing.T) {
+		cfg := tmuxTestConfig(t)
+		cfg.Cwd = "/srv/path-that-does-not-exist"
+		cfg.Roots = []string{cfg.Cwd}
+		assertAttachmentAuditUnavailable(t, cfg)
+	})
+
+	t.Run("root before stat", func(t *testing.T) {
+		cfg := tmuxTestConfig(t)
+		cfg.Roots = []string{cfg.Cwd, "/srv/path-that-does-not-exist"}
+		assertAttachmentAuditUnavailable(t, cfg)
+	})
+}
+
+func TestTmuxExecutorRefusesImplicitTerminalUserDefaultSocketBeforeTmux(t *testing.T) {
+	socketRoot, err := os.MkdirTemp("/tmp", "tmux-")
+	if err != nil {
+		t.Fatalf("create implicit terminal socket root: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(socketRoot); err != nil {
+			t.Errorf("remove implicit terminal socket root: %v", err)
+		}
+	})
+
+	cfg := tmuxTestConfig(t)
+	cfg.Socket = filepath.Join(socketRoot, "default")
+	if err := os.WriteFile(cfg.Socket, []byte("implicit terminal socket fixture"), 0o600); err != nil {
+		t.Fatalf("write implicit terminal socket fixture: %v", err)
+	}
+	t.Setenv("CHROTE_TERMINAL_USERS", "configured-user-with-implicit-socket")
+	assertRunAttachmentAuditUnavailableBeforeTmux(t, cfg)
+}
+
+func TestTmuxExecutorRefusesTmuxTmpDirDefaultSocketBeforeTmux(t *testing.T) {
+	tmuxTmpRoot := t.TempDir()
+	socketRoot := filepath.Join(tmuxTmpRoot, fmt.Sprintf("tmux-%d", os.Getuid()))
+	if err := os.MkdirAll(socketRoot, 0o700); err != nil {
+		t.Fatalf("create TMUX_TMPDIR socket root: %v", err)
 	}
 
-	clearExecutorEnv(t)
-	t.Setenv("CHROTE_FORMATIONS_TMUX_PROD_SMOKE", "prod-smoke")
-	if !TmuxExecutorConfigFromEnv().ProdSmoke {
-		t.Fatal("CHROTE_FORMATIONS_TMUX_PROD_SMOKE=prod-smoke did not enable prod smoke config")
+	cfg := tmuxTestConfig(t)
+	cfg.Socket = filepath.Join(socketRoot, "default")
+	if err := os.WriteFile(cfg.Socket, []byte("TMUX_TMPDIR socket fixture"), 0o600); err != nil {
+		t.Fatalf("write TMUX_TMPDIR socket fixture: %v", err)
+	}
+	t.Setenv("TMUX_TMPDIR", tmuxTmpRoot)
+	assertRunAttachmentAuditUnavailableBeforeTmux(t, cfg)
+}
+
+func TestTmuxExecutorRefusesXDGDerivedDefaultSocketBeforeTmux(t *testing.T) {
+	xdgRoot := t.TempDir()
+	socketRoot := filepath.Join(xdgRoot, "tmux", fmt.Sprintf("tmux-%d", os.Getuid()))
+	if err := os.MkdirAll(socketRoot, 0o700); err != nil {
+		t.Fatalf("create XDG-derived socket root: %v", err)
 	}
 
-	clearExecutorEnv(t)
-	t.Setenv("CHROTE_FORMATIONS_TMUX_DEDICATED", "1")
-	if !TmuxExecutorConfigFromEnv().ProdSmoke {
-		t.Fatal("CHROTE_FORMATIONS_TMUX_DEDICATED=1 did not enable dedicated live tmux config")
+	cfg := tmuxTestConfig(t)
+	cfg.Socket = filepath.Join(socketRoot, "default")
+	if err := os.WriteFile(cfg.Socket, []byte("XDG-derived socket fixture"), 0o600); err != nil {
+		t.Fatalf("write XDG-derived socket fixture: %v", err)
+	}
+	t.Setenv("TMUX_TMPDIR", "")
+	t.Setenv("XDG_RUNTIME_DIR", xdgRoot)
+	assertRunAttachmentAuditUnavailableBeforeTmux(t, cfg)
+}
+
+func TestIsDefaultTmuxSocketIncludesCoreFallbackLayout(t *testing.T) {
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_TMPDIR", "")
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	socket := filepath.Join("/tmp", fmt.Sprintf("tmux-%d", os.Getuid()), fmt.Sprintf("tmux-%d", os.Getuid()), "default")
+	if !isDefaultTmuxSocket(socket) {
+		t.Fatalf("core fallback socket %q was not recognized as a default tmux socket", socket)
+	}
+}
+
+func TestTmuxExecutorDogfoodBoundaryIgnoresTMPDIR(t *testing.T) {
+	packageRoot, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get package root: %v", err)
+	}
+
+	cfg := tmuxTestConfig(t)
+	cfg.Socket = filepath.Join(packageRoot, "tmux_executor_test.go")
+	cfg.Cwd = packageRoot
+	cfg.Roots = []string{packageRoot}
+	t.Setenv("TMPDIR", packageRoot)
+	assertRunAttachmentAuditUnavailableBeforeTmux(t, cfg)
+}
+
+func TestTmuxExecutorRefusesSocketRetargetBeforeSend(t *testing.T) {
+	cfg := tmuxTestConfig(t)
+	client := &fakeTmuxHarnessClient{
+		sessions: []string{"tmux-scout"},
+		pane:     tmuxPaneState{CurrentPath: cfg.Cwd},
+	}
+	client.afterCapture = func(call int) {
+		if call != 1 {
+			return
+		}
+		if err := os.Remove(cfg.Socket); err != nil {
+			t.Fatalf("remove disposable socket fixture: %v", err)
+		}
+		if err := os.Symlink("/dev/null", cfg.Socket); err != nil {
+			t.Fatalf("retarget disposable socket fixture: %v", err)
+		}
+	}
+
+	status, events := runTmuxFormationForTestWithConfig(t, client, "", cfg)
+	if status.Status != RunStatusBlocked {
+		t.Fatalf("run status = %+v, want blocked", status)
+	}
+	errorEvent := eventOfType(t, events, RunEventError)
+	if errorEvent.Data["code"] != "session_target_attachment_audit_unavailable" {
+		t.Fatalf("run error code = %#v, want session_target_attachment_audit_unavailable", errorEvent.Data["code"])
+	}
+	if client.listCalls != 1 || client.describeCalls != 1 || client.captureCalls != 1 {
+		t.Fatalf("pre-retarget client calls = list:%d describe:%d capture:%d, want 1/1/1", client.listCalls, client.describeCalls, client.captureCalls)
+	}
+	if client.sendCalls != 0 {
+		t.Fatalf("send calls after socket retarget = %d, want zero", client.sendCalls)
+	}
+}
+
+func assertAttachmentAuditUnavailable(t *testing.T, cfg TmuxExecutorConfig) {
+	t.Helper()
+	err := newTmuxFormationExecutorWithClient(nil, nil, cfg, &fakeTmuxHarnessClient{}).validateConfiguredBoundary()
+	var executionErr *RunExecutionError
+	if !errors.As(err, &executionErr) {
+		t.Fatalf("disposable boundary error = %v, want RunExecutionError", err)
+	}
+	if executionErr.Code != "session_target_attachment_audit_unavailable" {
+		t.Fatalf("disposable boundary code = %q, want session_target_attachment_audit_unavailable", executionErr.Code)
+	}
+}
+
+func assertRunAttachmentAuditUnavailableBeforeTmux(t *testing.T, cfg TmuxExecutorConfig) {
+	t.Helper()
+	client := &fakeTmuxHarnessClient{}
+	status, events := runTmuxFormationForTestWithConfig(t, client, "", cfg)
+	if status.Status != RunStatusBlocked {
+		t.Fatalf("run status = %+v, want blocked", status)
+	}
+	errorEvent := eventOfType(t, events, RunEventError)
+	if errorEvent.Data["code"] != "session_target_attachment_audit_unavailable" {
+		t.Fatalf("run error code = %#v, want session_target_attachment_audit_unavailable", errorEvent.Data["code"])
+	}
+	if client.listCalls != 0 || client.describeCalls != 0 || client.sendCalls != 0 || client.captureCalls != 0 {
+		t.Fatalf("tmux client calls = list:%d describe:%d send:%d capture:%d, want all zero", client.listCalls, client.describeCalls, client.sendCalls, client.captureCalls)
 	}
 }
 
@@ -1089,6 +1320,11 @@ func countFakeTmuxCommands(t *testing.T, logPath string) int {
 
 func runTmuxFormationForTest(t *testing.T, client *fakeTmuxHarnessClient, board string) (*RunStatusProjection, []RunEvent) {
 	t.Helper()
+	return runTmuxFormationForTestWithConfig(t, client, board, tmuxTestConfig(t))
+}
+
+func runTmuxFormationForTestWithConfig(t *testing.T, client *fakeTmuxHarnessClient, board string, cfg TmuxExecutorConfig) (*RunStatusProjection, []RunEvent) {
+	t.Helper()
 	store, personas := s4RunFixture(t)
 	store.Now = fixedClock()
 	personas.Now = fixedClock()
@@ -1097,7 +1333,6 @@ func runTmuxFormationForTest(t *testing.T, client *fakeTmuxHarnessClient, board 
 		board = s4RunBoardFixture()
 	}
 	writeFixture(t, store.BoardPath("session-search"), board)
-	cfg := tmuxTestConfig(t)
 	if client.pane.CurrentPath == "" && !client.pane.Dead {
 		client.pane.CurrentPath = cfg.Cwd
 	}
@@ -1116,9 +1351,13 @@ func runTmuxFormationForTest(t *testing.T, client *fakeTmuxHarnessClient, board 
 func tmuxTestConfig(t *testing.T) TmuxExecutorConfig {
 	t.Helper()
 	root := t.TempDir()
+	socket := filepath.Join(root, "tmux.sock")
+	if err := os.WriteFile(socket, []byte("disposable tmux socket identity fixture"), 0o600); err != nil {
+		t.Fatalf("write disposable tmux socket fixture: %v", err)
+	}
 	return TmuxExecutorConfig{
 		Harnesses:      []string{"openai-codex"},
-		Socket:         filepath.Join(root, "tmux.sock"),
+		Socket:         socket,
 		Cwd:            root,
 		Roots:          []string{root},
 		SessionPrefix:  "tmux-",
@@ -1260,9 +1499,13 @@ type fakeTmuxHarnessClient struct {
 	awaitingCapture      bool
 	sendCalls            int
 	captureCalls         int
+	listCalls            int
+	describeCalls        int
+	afterCapture         func(call int)
 }
 
 func (f *fakeTmuxHarnessClient) ListSessions(context.Context, string) ([]string, error) {
+	f.listCalls++
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
@@ -1270,6 +1513,7 @@ func (f *fakeTmuxHarnessClient) ListSessions(context.Context, string) ([]string,
 }
 
 func (f *fakeTmuxHarnessClient) DescribeActivePane(context.Context, string, string) (tmuxPaneState, error) {
+	f.describeCalls++
 	if f.describeErr != nil {
 		return tmuxPaneState{}, f.describeErr
 	}
@@ -1292,6 +1536,9 @@ func (f *fakeTmuxHarnessClient) SendPrompt(_ context.Context, _, target, dispatc
 
 func (f *fakeTmuxHarnessClient) CapturePane(context.Context, string, string, int) (string, error) {
 	f.captureCalls++
+	if f.afterCapture != nil {
+		f.afterCapture(f.captureCalls)
+	}
 	if !f.awaitingCapture {
 		return f.paneText, nil
 	}

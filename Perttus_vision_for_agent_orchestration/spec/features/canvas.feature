@@ -41,6 +41,22 @@ Feature: The formations canvas — pan, zoom, arrange, and undo
     And the board definition file is unchanged
     And "archon formation inspect" shows no structural diff
 
+  @ui @cli @file @layout
+  Scenario: Only a new element receives automatic placement
+    Given the board has a hand-arranged persisted layout
+    When the UI or Archon creates one connected or unconnected element
+    Then only that new element receives connection-aware placement when it has a neighbor
+    And otherwise only that new element receives bounded free-space grid placement
+    And every existing node coordinate and hand-routed lane remains byte-for-byte unchanged
+
+  @ui @cli @file @layout
+  Scenario: Full arrangement is explicit
+    Given the board has a hand-arranged persisted layout
+    When I open, validate, save, run, replay, reconnect, or add a connection
+    Then no existing element is rearranged
+    When I explicitly invoke Arrange in the UI or the Archon arrange verb
+    Then the shared deterministic arrangement operation may update the full layout sidecar
+
   @ui @layout
   Scenario: Wires route around cards automatically, and re-route as nodes move
     Given two nodes with a card between them
@@ -51,7 +67,9 @@ Feature: The formations canvas — pan, zoom, arrange, and undo
   Scenario: Deleting the layout sidecar loses positions but never the graph
     Given a schema-1 board may contain a legacy inline verification
     When the layout sidecar is removed
-    Then nodes fall back to a default arrangement
+    Then nodes may render at deterministic fallback positions without writing them
+    And open, render, and save do not persist fallback positions for existing nodes
+    And only a later direct move, new-element creation, or explicit Arrange may write layout coordinates
     And every node, port, edge, brief, gate, and legacy verification still exists unchanged
 
   # ── Undo ────────────────────────────────────────────────────────────────────

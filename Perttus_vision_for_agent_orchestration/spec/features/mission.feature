@@ -31,7 +31,7 @@ Feature: Mission — the entry point that starts and frames a run
   Scenario: The mission panel lists every step reachable from the mission
     When I open the mission panel
     Then it lists the chain in order with a status dot per step
-    And the dots reflect each step's run status (idle/running/done/needs-review/blocked, gate pass/fail)
+    And the dots reflect each step's run status (idle/running/done/needs-review/blocked/waiting/canceling/failing, gate pass/fail)
     And an empty chain prompts me to wire the mission's output to a step
 
   @ui @cli

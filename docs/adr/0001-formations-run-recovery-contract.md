@@ -26,7 +26,8 @@ open an epoch, or authorize dispatch.
 ADR-0006 adds fsynced `run_cancel_requested` as a non-final `canceling` state that
 snapshots every open node attempt, slot dispatch, and Tool lease and forbids new
 execution authority while Tool scopes are fenced. Its final cancellation, or a
-terminal failure reached instead, disposes every open attempt so no final run
+replacement `run_failure_reconciliation_started` followed by its exact matching
+`run_failed`, disposes every open attempt so no final run
 still projects active evaluation or human wait. ADR-0006 also overlays
 never-started nodes in the frozen run root as canceled/abandoned, or `not_run`
 on a valid success when they were provably unreached; `node_waiting` remains

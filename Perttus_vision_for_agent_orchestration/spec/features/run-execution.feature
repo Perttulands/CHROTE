@@ -16,6 +16,9 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
     And one CHROTE server coordinator holds the current workspace lease and writer fence
     And it validated a supported immutable workspace bootstrap, mutable authority-schema high-water mark, and complete hash-matched current admission-policy chain to revision 1 before fence acquisition
     And no UI or Archon process has peer runtime-writer authority
+    And every "run_failed" exact-names one prior unique "run_failure_reconciliation_started" through "failureReconciliationSeq"
+    And that start projects non-final "failing", freezes the failure header and complete open-resource snapshots, and permits reconciliation only
+    And the final failure byte-matches that header and exactly disposes those snapshots
 
   # ── The cascade ─────────────────────────────────────────────────────────────
 
@@ -70,10 +73,11 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
     Given one current immutable hash-verified "workspace-admission-policy-jcs-v1" generation sets JSON-integer "maxActiveRuns" in 1..2147483647 and "maxQueuedRuns" in 0..2147483647
     And every generation has a JSON-safe positive revision and the exact prior-generation hash, while revision 1 uses an empty prior hash
     And schema-2 admission has no implicit policy default while closed revision-1 "state=disabled" rejects starts and pauses activation
-    And activated non-final runs retain active capacity through blocked, human-waiting, and canceling states
+    And activated non-final runs retain active capacity through blocked, human-waiting, canceling, and failing states
     When valid start commands A and B enter the one workspace admission critical section
     Then active count is non-final ledgers with "run_activated"
-    And queued count is non-final "run_started" ledgers without "run_activated"
+    And queued count is ledgers whose latest projected status is exactly "queued"
+    And an unactivated "canceling" or "failing" run is not queued and can never receive "run_activated"
     And each admitted "workspaceAdmissionSeq" counter is a JSON-safe positive integer advanced and fsynced before its event, allowing gaps but never reuse
     And "run_started" exact-matches the persisted admission-policy revision/hash used
     And every immediate or dequeued "run_activated" exact-matches the configured activation-policy revision/hash used
@@ -347,12 +351,41 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
     And the private canonical target key is one exact tmux server/pane incarnation
     And independent resolutions of that incarnation return the same opaque target id
     And it does not re-resolve the persona, session stem, or same-named session
-    And it atomically acquires and fsyncs the host-wide exclusive target lease before "slot_dispatch"
+    And it verifies and hashes the exact prompt bytes before target acquisition
+    And it fsyncs exact "attachment-audit-registration-v1" before atomically acquiring and fsyncing the host-wide exclusive target lease
+    And the first "fence_transition" interaction-journal record uses the registration's "startOffset" and exact registration hash as its predecessor and fsyncs before occupancy
+    And every audit evidence range exact-matches that registration, validates a non-empty contiguous chain through its terminal record hash, and can never return from "audit_lost" to "none"
+    And the certified boundary drains its chained interaction journal and installs "target-dispatch-input-barrier-v1" over that prompt hash
+    And it obtains a fresh certified "target-ready-proof-v1" bound to that dispatch barrier under the target critical section before "slot_dispatch"
     And while continuously holding the workspace authority and target critical sections it rechecks the current fence plus frozen card, harness/process, cwd/root, and pane fingerprint then performs the bounded send
     And takeover cannot allocate a new fence between that check and send
-    And it records binding, target, target-lease, and fingerprint in "slot_dispatch" before sending
+    And it records binding, target, target-lease, fingerprint, exact dispatch barrier/hash, target-ready proof/hash, exact "tmux-pane-history-baseline-v1" token, and baseline hash in writer-private "slot_dispatch" before sending
+    And only the exact hashed prompt may consume the one-send fence permit
+    And the baseline binds the fingerprint, capture epoch, byte offset, and frozen terminal grid without pane bytes
+    And sanitized projection exposes only baseline encoding, hash, and validation state
     And a Claude Code slot and a Codex slot are dispatched the same way (no special path)
     And a multi-slot formation may expose several exact session targets
+
+  @cli @security
+  Scenario: Stock owner-accessible tmux is unavailable without an enforceable input boundary
+    Given raw attach, select, resize, send-keys, paste, or control clients can bypass the Formations adapter
+    When preflight evaluates that stock target
+    Then it reports "session_target_attachment_audit_unavailable"
+    And no binding, occupancy, dispatch, prompt, or Peek capability is created
+
+  @cli @security @recovery
+  Scenario Outline: A mutation at the dispatch barrier cannot race prompt send
+    Given the certified journal is drained and the one-send dispatch fence is installed
+    When an unregistered "<mutation>" targets the pane before prompt permit consumption
+    Then the mutation is synchronously rejected or durably latches the dispatch before send
+    And no stale ready proof, baseline, slot_dispatch, or prompt is accepted
+    Examples:
+      | mutation        |
+      | attach/select   |
+      | resize/reflow   |
+      | history clear   |
+      | pane lifecycle/topology mutation |
+      | raw input       |
 
   @cli @security
   Scenario Outline: Same-pane authority drift sends no prompt
@@ -379,11 +412,71 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
   @cli
   Scenario: Completion is detected by an exactly attributed sentinel
     When an agent finishes and emits "<<<CHROTE-DONE run-id=... dispatch-id=... target-lease-id=... status=ok artifact=...>>>"
-    Then the engine records "slot_result" only after the sentinel is terminal in bounded capture and the certified harness proves the same fingerprint returned to a closed turn
-    And the result repeats the exact run, dispatch, target-lease, binding, target, fingerprint, and turn-closure proof
-    And only after that result is fsynced may occupancy be atomically replaced by a non-occupying "releaseKind=result_committed" receipt naming its result sequence and proof
+    Then the engine records "slot_result" only after capture starts at the exact dispatch baseline, input is drained, no steering generation is open, capability revocation is durable, the sentinel is terminal, and the certified harness proves the same fingerprint returned to a closed turn
+    And certified client/input audit continuously accounts for every mutation route since occupancy
+    And the closure barrier drains that journal and rejects every later unregistered mutation through receipt fsync
+    And the result repeats the exact run, dispatch, target-lease, binding, target, fingerprint, baseline dispatch/hash, capability-revocation sequence, latest closed steering generation, and turn-closure proof
+    And the certified proof cannot be produced solely by user-writable pane bytes or an echoed sentinel
+    And writer-private "slot_result" durably owns the exact audit proof and hash
+    And only after that result is fsynced may occupancy be atomically replaced by a non-occupying "releaseKind=result_committed" receipt naming its result sequence, proof, exact audit proof, and "closure_barrier_held" releaseProof
+    And the result is not consumable or routable before that receipt fsync
     And the receipt remains crash proof until execution-final fsync, then may be removed
     And a sentinel whose run, dispatch, or target-lease id does not match is ignored (prompt-injection safe)
+
+  @cli @security @recovery
+  Scenario Outline: Lost pane-history continuity cannot produce or release a result
+    Given "slot_dispatch" durably records one exact pane-history baseline
+    And before result capture the pane history boundary is "<change>"
+    When the coordinator evaluates completion
+    Then it records stable "capture_baseline_unavailable"
+    And no "slot_result" or ordinary release receipt is appended
+    And the target remains occupied, held, or quarantined for exact reconciliation
+    Examples:
+      | change                            |
+      | trimmed past the baseline         |
+      | cleared or reset                  |
+      | resized or reflowed               |
+      | replaced                          |
+      | ambiguous after adapter restart   |
+
+  @ui @cli @security
+  Scenario: Peek input cannot race or forge turn closure
+    Given exact target occupancy and "slot_dispatch" are durable
+    And "slot_peek_capability_issued" is fsynced before the run-bound Peek attaches to the active dispatch
+    When the user sends the first input bytes
+    Then "slot_steering_started" is fsynced first and result closure is disabled
+    When the input channel is drained and "slot_steering_ended" closes that generation
+    Then capability issuance stops and "slot_peek_capability_revoked" is fsynced
+    And only fresh certified proof bound to that revocation and generation can close the turn
+    And certified client-attachment audit accounts for every event since occupancy
+    And "operatorInfluenced" is true exactly when latest steering generation is non-zero
+    And a sentinel typed through Peek cannot close by itself
+    And input accepted after a proof invalidates it before result, otherwise revoked input is rejected
+
+  @cli @security @recovery
+  Scenario: Transient foreign attachment cannot hide outside steering generations
+    Given an exact target occupancy has continuous certified client monitoring
+    When an unregistered client attaches, types, and detaches before result validation
+    Or a raw tmux command/control route targets the pane outside the steering-generation gate
+    Then "session_target_foreign_attachment" or "session_target_foreign_input" latches the dispatch non-authorizing
+    And capability input is revoked and no foreign bytes become a steering generation
+    And no "slot_result" or ordinary release is appended
+    And only exact pane-incarnation-gone proof may clear the foreign-latched target
+
+  @cli @security @recovery
+  Scenario Outline: A mutation at the closure barrier cannot race result release
+    Given exact result capture, capability revocation, and the closure barrier are durable
+    When an unregistered "<mutation>" targets the pane before result_committed receipt fsync
+    Then the mutation is synchronously rejected or the result remains unconsumable in result-closed quarantine
+    And no stale closure_barrier_held releaseProof is accepted
+    And a lost barrier can release only after exact post-result pane-incarnation-gone proof
+    Examples:
+      | mutation        |
+      | attach/select   |
+      | resize/reflow   |
+      | history clear   |
+      | pane lifecycle/topology mutation |
+      | raw input       |
 
   @cli @security
   Scenario: A matching sentinel followed by old-turn output cannot release the pane
@@ -396,10 +489,13 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
 
   @cli @security
   Scenario: Final target release accepts only closed certified proof
-    Given cancellation sent Ctrl-C to the exact active dispatch
+    Given Peek capability revocation is durable for the exact active dispatch
+    And "slot_reconciliation_interrupt" is fsynced against the cancel/failure authority before one Ctrl-C attempt
+    And a crash after interrupt intent never resends and projects "send_uncertain" when outcome is absent
     When no exact cancel acknowledgement and harness-ready boundary is observed
     Then the target remains a non-authorizing terminal hold and is not reusable
-    When an exact dispatch/lease/fingerprint cancel acknowledgement and certified ready boundary are durable
+    And its Peek capability is revoked and the terminal hold permits no run-bound input
+    When an exact dispatch/lease/fingerprint cancel acknowledgement bound to that interrupt request, certified ready boundary, capability revocation, and continuous client/input audit barrier are durable
     Then occupancy may become a "final_quiescent" receipt with that proof
     But if the old pane incarnation dies, private pane-gone proof may release only that old key
     And a replacement pane has a new key/fingerprint and is never interrupted or released as the old target
@@ -416,13 +512,25 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
     Given run A holds the host-wide target lease for an exact pane
     When run B attempts to dispatch to that same "sessionTargetId"
     Then run B acquires no lease and sends no prompt
-    And it records loud "session_target_busy" before start or as terminal post-start failure
+    And preflight returns the specific stable unavailable reason "session_target_leased" before start
+    And after start "slot_binding_observed" preserves that reason before node error "session_target_busy" selects terminal failure
     And A's result or proven final quiescence must release the lease before a later run can use the pane
     And an unproven canceled or failed dispatch retains a non-authorizing terminal hold
 
+  @cli @security
+  Scenario: Unattached but active or unproven sessions are unavailable
+    Given a candidate target has no tmux client and no CHROTE target lease
+    When certified non-pane adapter evidence proves an open turn
+    Then preflight reports "session_target_harness_busy" and creates no binding
+    When exact closed/ready evidence is missing, stale, unsupported, or non-unique
+    Then preflight reports "session_target_readiness_unknown" and creates no binding
+    When complete client/input monitoring cannot be armed
+    Then preflight reports "session_target_attachment_audit_unavailable" and creates no binding
+    And final atomic acquisition repeats the certified-ready check before any dispatch or prompt
+
   @cli @file @security
   Scenario: Missing private lease state quarantines a possibly dispatched pane
-    Given an unmatched public "slot_dispatch" exists but its exact private lease is missing or conflicting
+    Given an unmatched ledger "slot_dispatch" exists but its exact private lease is missing or conflicting
     When recovery reconciles the frozen binding
     Then it atomically fsyncs a non-authorizing quarantine at the canonical target key before failure or finality
     And the quarantine preserves the expected dispatch/result and every conflicting occupant as separate exact candidates in stable run/dispatch/lease order
@@ -433,14 +541,14 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
 
   @cli @file @security
   Scenario: Finality waits for a result-closed target record
-    Given an exact "slot_result" is fsynced and its public dispatch is closed
+    Given an exact "slot_result" is fsynced and its ledger dispatch is closed
     But the matching host target-registry record is not yet durably released
     When success, cancellation, failure, or crash recovery attempts to finalize the run
     Then no execution-final event is accepted
-    And recovery atomically replaces occupancy with that exact result-closed "result_committed" receipt and certified turn-closure proof before finality
+    And recovery atomically replaces occupancy with that exact result-closed "result_committed" receipt, certified turn-closure proof, durable audit proof, and closed releaseProof before finality
     And the record is not represented as an open slot disposition, terminal hold, or final quarantine
     But missing or conflicting private state first creates a temporary fail-closed quarantine
-    And that candidate must be proven quiescent and replaced by the exact receipt before finality
+    And that candidate must prove the original barrier held or the exact post-result pane incarnation is gone before the exact receipt and finality
     And a crash reuses the receipt without another interrupt or quarantine
     And only then may the requested execution-final event append
     And the receipt may be removed only after that final event is fsynced
@@ -452,7 +560,7 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
     When the coordinator crashes before "run_canceled" or "run_failed" is fsynced
     Then a later run may acquire the now-unoccupied target without interleaving old work
     And recovery reuses the receipt for "targetLeaseState=released_quiescent"
-    And it sends no second interrupt and creates no quarantine for that old dispatch
+    And it sends no second coordinator reconciliation interrupt and creates no quarantine for that old dispatch
     And the same final disposition is fsynced before the receipt is removed
 
   # ── JOIN readiness ──────────────────────────────────────────────────────────
@@ -897,9 +1005,10 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
     When I run "archon run cancel run_01J9" with a stable command id and expected last sequence
     Then "run_cancel_requested" binds that command id/hash and is fsynced first with the exact open node attempts, slot dispatches, and Tool leases
     And each attempt snapshot preserves node/kind/attempt/start sequence and its latest durable phase/sequence
-    And each slot snapshot preserves dispatch/target-lease/node/attempt/slot/binding/target identity
+    And each slot snapshot preserves dispatch/target-lease/node/attempt/slot/binding/target identity plus exact Peek capability and steering state
     And each lease snapshot preserves node/attempt/dispatch identity plus its optional latest launch/scope/deadline-authority identity
-    And new dispatch/replay stops and the writer rejects launches, results, outputs, and routing
+    And new dispatch/replay and Peek input stop and the writer rejects launches, results, outputs, routing, and new capability issuance
+    And every Peek input channel drains, each open steering generation closes, and irreversible capability revocation fsyncs before final proof
     And active slots are soft-interrupted without killing tmux sessions
     And a soft interrupt is sent only to a target proven to host that exact unresolved dispatch and attempt
     And every snapshotted slot dispatch receives an exact canceled/non-authorizing disposition
@@ -911,8 +1020,34 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
     And each attempt, slot, or Tool reconciliation entry preserves its snapshot identity and adds one typed disposition
     And a repeated cancel is idempotent and replaces none of the original snapshots
     And "abort" or "stop" compatibility spelling normalizes to cancel before hashing and creates no second snapshot or state
-    And no further node or dispatch events are appended
+    And no further node, dispatch, steering, or capability events are appended
     But non-authorizing binding or artifact observations may still append for inspection
+
+  @cli @security @recovery
+  Scenario: Terminal failure freezes reconciliation before any slot interrupt
+    Given a run will fail with a closed slot, Tool, error, or none failure cause
+    When failure reconciliation begins
+    Then "run_failure_reconciliation_started" fsyncs that exact cause/header and complete open attempt, slot, and Tool snapshots first
+    And the run projects non-final status "failing"
+    And if it was activated, it retains its active capacity
+    And every failure-authorized "slot_reconciliation_interrupt" names that start sequence
+    And a crash resumes the same snapshots without choosing a new cause or resending an existing interrupt request
+    And "run_failed.failureReconciliationSeq" exact-names that start event
+    And its code, reason, unrecoverable flag, related sequence, and failure cause byte-match the frozen header
+    And its dispositions exactly cover all three frozen snapshots
+
+  @cli @security @recovery
+  Scenario: Cancel escalation to failure never sends a second coordinator interrupt
+    Given cancel reconciliation durably requested or attempted a slot interrupt
+    When Tool quiescence failure requires terminal "run_failed"
+    Then "run_failure_reconciliation_started.originCancelRequestSeq" exact-names the unique cancel request
+    And that start preserves the cancel-time slot identity and prior interrupt request/outcome
+    And the run projects "failing" rather than returning to "canceling"
+    And failure reconciliation reuses that request, including "send_uncertain"
+    And it creates a failure-authorized interrupt only for an open slot with no prior request
+    And no slot receives a second coordinator reconciliation interrupt request or send
+    And terminal "run_failed.failureReconciliationSeq" exact-names that failure start
+    And its header byte-matches the start and its dispositions exactly cover the frozen snapshots
 
   @cli @file
   Scenario: Success waits for the result-committed target release receipt
@@ -956,7 +1091,7 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
     Given "run_cancel_requested" is fsynced while a Tool lease remains open
     When the coordinator restarts before "run_canceled"
     Then the run projects "canceling" and no ordinary recovery or rerun occurs
-    And recovery continues only cancellation reconciliation toward "run_canceled" or terminal "run_failed"
+    And recovery continues only cancellation reconciliation toward "run_canceled" or a cancel-origin "run_failure_reconciliation_started" followed by its matching "run_failed"
     And after "run_canceled" every snapshotted attempt and slot projects canceled
     And restart rejects a late slot result and never projects that dispatch in flight
 
@@ -1059,6 +1194,7 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
     Then the run records the exact stable limit code as scoped "error"
     And terminal "run_failed" records "code=run_limit_exhausted" and that error as "failureCause"
     And "nodeAttemptDispositions", "slotDispatchDispositions", and "toolLeaseDispositions" exactly revoke every open authority
+    And finality rejects any issued Peek capability, undrained input channel, or open steering generation
     And a slot is soft-interrupted only on its proven exact target
     And Tool scopes retain private post-final fencing and cleanup ownership
     And late result, output, routing, replay, and resume are rejected

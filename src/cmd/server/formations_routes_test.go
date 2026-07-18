@@ -12,8 +12,9 @@ import (
 
 // Formations is always-on: the agents and formations routes register
 // unconditionally now that the CHROTE_FORMATIONS feature gate has been retired.
-// The executor safety ladder (CHROTE_FORMATIONS_LAB_*/TMUX_*/PROD_SMOKE) is a
-// separate boundary that still governs execution promotion, not API availability.
+// The executor safety ladder (CHROTE_FORMATIONS_LAB_*/TMUX_*) is a separate
+// boundary that governs disposable execution, not API availability or live
+// cockpit access.
 func TestFormationsRoutesAreAlwaysRegistered(t *testing.T) {
 	mux := http.NewServeMux()
 	registerRuntimeRoutes(mux, Config{TtydPort: 1}, context.Background())

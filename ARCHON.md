@@ -62,6 +62,13 @@ This list describes the current binary. `board export`, Gate inspection/routing
 helpers, `verify`, and `doctor` remain directional command ideas, not available
 verbs.
 
+The accepted authoring target also adds explicit `archon board arrange`. Creating
+a node may place only that new element through the shared connection-aware,
+free-space, grid-snap heuristic. No authoring, validation, inspection, save,
+runtime, replay, or reconnect command may rearrange existing coordinates;
+full-board layout changes only when the user or authoring agent invokes
+`board arrange`.
+
 Current main also executes `mission run`, `formation run`, and `run resume`
 synchronously in an Archon-local engine, reads workspace run files directly,
 and implements `run abort` by appending final cancellation. That is compatibility
@@ -120,6 +127,25 @@ does not yet consume a frozen exact binding.
 In the accepted target, assignment is staffing intent, not runnable proof.
 Before run start, each declared slot in the selected `runRoot` executable
 subgraph has a resolution state: unresolved, runnable, ambiguous, or unavailable.
+Production resolution calls the same Terminal-session resolver and configured
+inventory as cockpit Terminal tabs; the inventory may contain several explicit
+user/socket sources, but Archon never invents a Formations-only source. Reusing
+accumulated session context is intentional. The same persona stem in more than
+one source is ambiguous. A matching candidate is runnable only when unleased,
+unattached, and certified closed/ready for the exact fingerprint through the
+harness adapter's non-pane channel. Active work reports
+`session_target_harness_busy`; missing/ambiguous proof reports
+`session_target_readiness_unknown`; quiet pane text is never readiness, and
+incomplete client/input monitoring is
+`session_target_attachment_audit_unavailable`. All,
+and any connected hidden CHROTE Terminal iframe, are unavailable and fail
+loudly rather than being detached, stolen, or replaced. A user may explicitly
+disconnect a CHROTE-owned presentation client before retrying; binding itself
+never does so.
+Stock tmux on an owner-accessible raw socket is therefore unavailable until
+`ctx-ug7.21` selects, `ctx-ug7.22` implements, and `ctx-ug7.23` certifies an
+enforceable same-session-pool boundary; an Archon/CHROTE mutex alone is not
+certification.
 Only a runnable resolution becomes one host-private immutable `RunSlotBinding`
 plus a hash-linked safe projection with server-issued `sessionTargetId`. The
 private record freezes persona-card hash, exact tmux server/session/window/pane,
@@ -130,6 +156,31 @@ runnable, unavailable, or stale without changing that identity. A multi-slot
 attempt can expose several targets. Archon inspection and terminal Peek must use
 the target for the exact slot dispatch, never a fresh same-name lookup. A run
 never rebinds a slot to a different pane; replacement requires a new run.
+Each dispatch records a journal-drained one-send input barrier, its bound ready
+proof, and the closed `tmux-pane-history-baseline-v1` token/hash before send.
+The baseline binds the exact pane fingerprint, capture-continuity
+epoch, byte offset, and frozen terminal grid without pane bytes. Trim/reset,
+resize/reflow, restart without proven continuity, or ambiguity fails closed; the
+safe projection exposes only encoding/hash/validation state. An authorized Peek
+is a full interactive user attach and may send literal control input to steer or
+interrupt the exact agent. Only an exact CHROTE-issued capability after durable
+target occupancy may send. Its input generation is durable before forwarding,
+must close before result acceptance, and is bound into non-pane-forgeable turn
+closure proof. Archon inspection marks operator influence but exposes no raw
+keystrokes. Ordinary Terminal attachment is denied while occupied; a certified
+audit covers client, resize/reflow, history, pane-lifecycle/topology/other
+mutation, and input-capable tmux command/control routes, so any foreign
+attachment/mutation/input or lost continuity revokes Peek and fails closed
+without a result. Peek attach metadata is durable before attach.
+Only the latest fsynced issuance is valid; a newer issuance drains prior clients
+and invalidates every older token/generation before exposure.
+Result/cancel/failure closure drains input, closes steering, and durably revokes
+the capability. A coordinator interrupt has its own exact no-resend durable
+permit; terminal holds are
+non-interactive and no run-bound capability survives finality. This does not
+grant Archon or the browser a second automatic
+dispatch path. Tile movement and resizing are viewport-only while the dispatch
+is active; they send no tmux resize.
 Current main resolves by agent/harness/session stem and does not yet expose this
 exact target or freeze it for dispatch.
 
@@ -146,6 +197,9 @@ Resolution must surface:
 
 - Structural mutations update board definitions.
 - Layout mutations update layout sidecars.
+- New-element creation may add only that element's heuristic coordinates.
+  Existing coordinates change through direct user moves or explicit
+  `archon board arrange`, never as an implicit side effect of another verb.
 - In the ADR-0006/0007 accepted target, run events append through the sole writer
   to host-private ledgers outside generic Files roots; Archon reads sanitized
   projections, never raw authority. Current main still uses workspace run files,

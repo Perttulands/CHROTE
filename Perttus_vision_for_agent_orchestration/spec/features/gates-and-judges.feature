@@ -14,6 +14,9 @@ Feature: Gates and judges — checkpoints that route work and can be judged by f
     Given a board "session-search"
     And a gate "gate" with input "in", outputs "pass" and "fail", and a "judge" socket
     And "judge" is reserved evaluation control with at most one send and one return, never work routing
+    And every "run_failed" exact-names one prior unique "run_failure_reconciliation_started" through "failureReconciliationSeq"
+    And that start projects non-final "failing", freezes the failure header and complete open-resource snapshots, and permits reconciliation only
+    And the final failure byte-matches that header and exactly disposes those snapshots
 
   # ── Creating gates ──────────────────────────────────────────────────────────
 

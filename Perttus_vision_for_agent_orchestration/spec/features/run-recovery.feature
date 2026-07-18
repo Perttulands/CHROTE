@@ -12,6 +12,9 @@ Feature: Run recovery and fail-loud failure modes
     And run status is projected from the ledger, not stored separately
     And one CHROTE server coordinator holds the current workspace lease and writer fence
     And unsupported registry, bootstrap, workspace-authority, admission-policy, or ledger schema is strictly read-only before fence acquisition
+    And every "run_failed" exact-names one prior unique "run_failure_reconciliation_started" through "failureReconciliationSeq"
+    And that start projects non-final "failing", freezes the failure header and complete open-resource snapshots, and permits reconciliation only
+    And the final failure byte-matches that header and exactly disposes those snapshots
 
   # ── Recovery ────────────────────────────────────────────────────────────────
 
@@ -128,14 +131,17 @@ Feature: Run recovery and fail-loud failure modes
   Scenario: A proven explicit reattach continues without redispatch
     Given the ledger contains "slot_dispatch" for "slot_peer_a" with no matching "slot_result"
     When the recovery reconciler proves the current workspace fence and replays the ledger
-    Then the engine re-attaches capture only if the same unresolved attempt and qualified session target are proven live
+    Then the engine re-attaches capture only if the same unresolved attempt, qualified session target, exact chained interaction journal, and continuous client/input audit are proven live
+    And run-bound Peek input remains suspended until recovered capability and monitor state exact-match the current fence
     And it records a loud "error" if capture cannot be re-attached
     And the first block permits only one bounded "reattach_only" resume with the exact same open dispatch
     And while that block is current it rejects late "slot_result", "node_output", and routing
-    When I explicitly resume and capture proves the exact original sentinel plus certified closed-turn boundary
+    When I explicitly resume and capture proves the exact original sentinel plus certified closed-turn and client-audit boundaries
     Then that resume sends no prompt and creates no "slot_dispatch"
-    And it parses the bounded closed turn once and appends "slot_result" with the original turn identity and hashed immutable turn envelope
-    And occupancy becomes a durable "result_committed" release receipt carrying the exact turn-closure proof
+    And it drains input and fsyncs irreversible Peek capability revocation before result closure
+    And it installs the closure mutation/input barrier before appending "slot_result" with the original turn identity, exact audit proof, and hashed immutable turn envelope
+    And occupancy becomes a durable "result_committed" release receipt carrying the exact turn-closure proof, audit proof, and "closure_barrier_held" releaseProof
+    And no result is consumable before that receipt fsync
     And ordinary graph execution continues with no second block
 
   @cli
@@ -149,6 +155,17 @@ Feature: Run recovery and fail-loud failure modes
     And a separately started run is independent and does not close or supersede the old lease
     And no same-run action supersedes the lease or sends the original prompt again
 
+  @cli @security @recovery
+  Scenario: Recovery never trusts a stale result-to-receipt barrier
+    Given "slot_result" and its exact private audit proof are durable
+    But no "result_committed" receipt exists and closure-barrier continuity is lost
+    When recovery reconciles the target
+    Then the immutable result stays unconsumable in result-closed quarantine
+    And recovery does not invent "closure_barrier_held" from matching hashes
+    When certified observation proves the exact old pane incarnation is gone
+    Then the receipt may use only "post_result_pane_incarnation_gone" releaseProof
+    And recovery never reparses, changes, or redispatches the result
+
   @cli @security
   Scenario: Reattach reconciles all unmatched dispatches and retains only the unresolved subset
     Given dispatch A for node A and dispatch B for node B are both unmatched
@@ -159,8 +176,9 @@ Feature: Run recovery and fail-loud failure modes
     And the current block rejects late results, outputs, and routing for both dispatches
     When I explicitly resume that exact open-dispatch set
     Then the reattach epoch sends no prompt and creates no new dispatch
-    When A's exact sentinel and certified closed-turn boundary are proven but B remains unproven before the bounded pass ends
-    Then A's original closed-turn "slot_result" is fsynced and occupancy becomes its durable "result_committed" receipt with proof
+    When A's exact sentinel and certified closed-turn/client-audit boundaries are proven but B remains unproven before the bounded pass ends
+    Then A's Peek capability is durably revoked with every steering generation closed
+    And A's closure barrier remains continuous while its original closed-turn "slot_result" is fsynced and occupancy becomes its durable "result_committed" receipt with exact audit/release proof
     And the next "new_run_required" block contains only B
     And that block derives "blockScope=node" for node B with no "nextEpoch"
     And it cannot add or change a dispatch identity from the preceding set
@@ -218,7 +236,7 @@ Feature: Run recovery and fail-loud failure modes
     When the idle timeout elapses
     Then the ledger records "error" with "code=dispatch_idle_timeout" and "errorScope=slot"
     And no "slot_result" is appended
-    And the public dispatch and host target lease remain unmatched
+    And the ledger dispatch and host target lease remain unmatched
     And the run enters the bounded reattach path without resending a prompt
     And ordinary target transition is forbidden until an exact later result creates its "result_committed" receipt or finality records a "final_quiescent" receipt, terminal hold, or quarantine
     And the Archon can report the node "went dark"

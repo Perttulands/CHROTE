@@ -3,6 +3,16 @@
 Date: 2026-06-25
 Planning bead: `chrt-5p5h`
 
+> **Product-topology correction (2026-07-17):** the dedicated `/run` Formations
+> tmux socket described below is historical and no longer an executable
+> promotion path. Current dogfood uses only test-owned paths under fixed `/tmp`. It is
+> not the production Formations design. Production Formations
+> borrows eligible existing sessions through the same configured Terminal-session
+> resolver and inventory used by Terminal tabs, including its explicit user/socket
+> sources, with fail-loud busy/attached arbitration
+> and same-session-lineage evidence. ADR-0007 is authoritative where this older
+> plan differs.
+
 ## Success state
 
 A new CHROTE instance runs from `/srv` as a real local service, in parallel with the current `perttu` user service. The current service on `127.0.0.1:8094` remains untouched until the new one proves parity.
@@ -42,11 +52,15 @@ CHROTE_TERMINAL_USERS=perttu,tavern
 CHROTE_TERMINAL_USER_SOCKETS=perttu=/run/user/1000/chrote-tmux/tmux-1000/default,tavern=/tmp/tmux-1001/default
 CHROTE_TERMINAL_USER_WORKDIRS=perttu=/home/perttu,tavern=/home/tavern
 CHROTE_FORMATIONS_TMUX_SOCKET=/run/user/1000/chrote-formations-tmux/default
-CHROTE_FORMATIONS_TMUX_DEDICATED=1
 CHROTE_FORMATIONS_TMUX_CWD=/home/perttu
 CHROTE_FORMATIONS_TMUX_ROOTS=/home/perttu
 CHROTE_AGENTS_DIR currently defaults to the service user's home/agents unless set
 ```
+
+Those legacy Formations values describe the rollback unit's historical
+dedicated socket. They are not an accepted promotion path: current source
+rejects non-temporary Formations tmux sockets and roots, and no `DEDICATED` or
+`PROD_SMOKE` value grants live access.
 
 `/srv` currently has a Docker Compose stack for Camofox, TTS, Context Citadel, and Ollama. CHROTE is not currently part of that compose file. Because CHROTE needs host tmux sockets, ptys, ttyd, home/workspace files, and per-user ACLs, the first `/srv` deployment should be a host systemd service, not a container. Containerizing first would make tmux/socket/user boundaries worse, not cleaner.
 
@@ -87,7 +101,6 @@ Recommended layout:
 
 /run/chrote/                          # systemd RuntimeDirectory for sockets/ttyd helpers
 /run/chrote/tmux/                     # service-owned default tmux socket if needed
-/run/chrote/formations-tmux/          # service-owned dedicated Formations executor socket
 ```
 
 First parallel ports:
@@ -118,12 +131,9 @@ CHROTE_BEADS_WORKSPACES=/srv,/home/perttu/chrote,/home/perttu,/home/tavern,/home
 CHROTE_BEADS_AUTO_DISCOVER=0
 CHROTE_BD_COMMAND=/home/perttu/.local/bin/bd
 
-CHROTE_FORMATIONS_TMUX_SOCKET=/run/chrote/formations-tmux/default
-CHROTE_FORMATIONS_TMUX_DEDICATED=1
-CHROTE_FORMATIONS_TMUX_SESSION_PREFIX=mission-
-CHROTE_FORMATIONS_TMUX_CWD=/srv/data/chrote/workspace
-CHROTE_FORMATIONS_TMUX_ROOTS=/srv/data/chrote/workspace,/srv,/home/perttu/chrote
-CHROTE_FORMATIONS_TMUX_HARNESSES=openai-codex,claude-code
+# Do not configure the stock Formations tmux executor on the long-lived service.
+# Isolated dogfood injects CHROTE_FORMATIONS_TMUX_* only into a bounded test
+# process, with its socket, cwd, and roots all beneath one mktemp directory.
 
 CHROTE_TTS_URL=http://127.0.0.1:3100
 CHROTE_CONTEXT_API_URL=http://127.0.0.1:3200
@@ -365,7 +375,8 @@ Steps:
 4. Add a wrapper for CLI use, e.g. `/srv/chrote/bin/archon-srv`, that exports the same env as the service and runs `/srv/chrote/archon` or the built archon command.
 5. Decide executor mode:
    - `lab` mode for API/cockpit behavior proof with no agent credentials;
-   - service-owned dedicated tmux executor under `/run/chrote/formations-tmux/default` once the `chrote` user has explicitly provisioned Claude/Codex credentials/config;
+   - bounded tmux dogfood only in a test process whose socket, cwd, and roots all resolve under fixed `/tmp`; never configure that adapter on the long-lived service;
+   - the shared-cockpit production resolver only after the ADR-0007 input fence and coordinator integration are implemented and certified;
    - per-user execution only if CHROTE grows a first-class per-user formations executor model. Current env is single-socket, so pretending it is multi-user would be lying.
 
 Verification:

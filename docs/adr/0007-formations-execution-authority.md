@@ -25,6 +25,11 @@ can safely retry a response lost across a crash.
 The shared Formations package remains the only serializer for board, layout,
 and persona-definition mutations. UI and Archon may continue to author,
 validate, and inspect those workflow definitions without a running coordinator.
+New elements may receive the shared connection-aware placement heuristic, but
+no create, connect, validate, save, run, replay, or reconnect path may rearrange
+existing user coordinates. Full-board layout changes require the explicit UI or
+Archon `arrange` action; they are definition-side mutations, never coordinator
+recovery or execution side effects.
 
 For schema-2 runtime state, the CHROTE server coordinator is the sole semantic
 writer for one configured workspace. Start, resume, cancel, and human-verdict
@@ -38,6 +43,97 @@ A shared-package file lock remains a byte-integrity mechanism. It is not an
 execution lease, a fencing token, or permission for a peer process to dispatch.
 ADR-0006's host-wide per-target lease remains a separate resource arbiter: a
 current workspace owner still must acquire the exact target lease before send.
+
+Production target resolution uses the same configured Terminal-session resolver
+and inventory that powers cockpit Terminal tabs. That inventory is the union of
+the explicitly configured user/socket sources; Formations does not own a second
+production source or pool and does not require clean-room sessions. Accumulated
+agent context is an intended input to selection. A persona stem that matches
+more than one inventory source is ambiguous and fails loud rather than choosing
+a raw socket path. Reproducibility therefore means the same session lineage, not
+an empty session. Each dispatch binds the exact pane incarnation and ADR-0006's
+closed pane/history baseline in the writer-private ledger before send. The
+baseline distinguishes earlier history from post-baseline pane evidence
+associated with this dispatch; that later evidence may be operator-influenced
+and is not claimed to have sole-agent causality.
+
+A session that is ambiguous, stale, already leased, attached, or not certified
+closed/ready fails loudly at slot binding and final atomic acquisition; a hidden
+pooled iframe still counts as attached. Closed/ready means fresh proof for the
+exact fingerprint from the certified harness adapter's non-pane control channel,
+never quiet output, prompt text, or silence. A certified open turn reports
+`session_target_harness_busy`; missing or non-unique readiness evidence reports
+`session_target_readiness_unknown`; inability to arm complete client/input
+monitoring reports `session_target_attachment_audit_unavailable`. Binding never detaches a client. The user
+may explicitly disconnect a CHROTE-owned presentation client and retry, but
+cannot reclaim an external attachment or another run's lease. Formation
+attachment ownership begins only when the exact target-registry occupancy is
+fsynced, not when a slot binding is frozen. After the matching ledger dispatch
+is durable, an exact CHROTE-issued run-bound Peek capability is the sole
+authorized additional attachment. Shared Terminal attach paths deny an occupied
+target unless using that capability. Only the latest fsynced issuance is valid;
+a later issuance requires prior clients/input drained, atomically invalidates
+every older token/generation, and makes a superseded route reaching the target
+boundary foreign. A certified monitor accounts for every
+attach/detach/target-selection, resize/reflow, history,
+pane-lifecycle/topology/other mutation, and input-capable command/control route,
+including transient clients and raw tmux send-key routes; registered Peek bytes
+must terminate at the steering-generation gate. A foreign event or lost monitor
+continuity revokes Peek, forbids result/ordinary release, and holds
+or quarantines the target pending non-authorizing quiescence proof. Such a
+lost-history latch releases only on exact old-pane-incarnation-gone proof;
+current-client absence or a later ready turn is insufficient.
+This is an enforceable adapter boundary, not a CHROTE process mutex. Stock tmux
+on an owner-accessible raw socket permits independent `send-keys`, paste,
+control, select, attach, and resize commands and therefore cannot certify the
+boundary. Until `ctx-ug7.21` selects, `ctx-ug7.22` implements, and `ctx-ug7.23`
+certifies a same-session-pool enforcement primitive, that adapter reports
+`session_target_attachment_audit_unavailable` and sends nothing. Those gates do
+not authorize a Formations-only production socket or pool: Terminal tabs and
+Formations must still resolve the same target and lineage through the shared
+inventory.
+
+The legacy disposable adapter is trusted dogfood only. It rejects configured,
+default, non-`/tmp`, and symlink-escaped sockets, records the initial socket
+identity, and revalidates that identity before each adapter call so an observed
+between-call retarget fails before the next list, describe, capture, or send.
+That check is not a same-UID enforcement primitive: a dogfood process can still
+race inside a stock tmux command or use an owner-accessible raw socket directly.
+Consequently this adapter and its path checks cannot certify production access;
+only the `.21` through `.23` capability can do so.
+
+Peek is a full user-initiated interactive attach to the exact qualified live
+target. It may send literal input, including control characters, and steer or
+interrupt the agent. That human interaction is part of the same live session
+lineage, but it is not a second automatic workflow dispatcher: only the current
+fenced coordinator may perform workflow prompt sends, retries, coordinator
+interrupts, or lifecycle transitions. Input is serialized under the target
+occupancy through a monotonic steering generation: a generation is durable
+before its first bytes are forwarded, result closure waits until it is closed,
+and the certified non-pane-byte closure proof exact-matches the latest generation.
+Later input invalidates an earlier proof. Projection marks operator influence
+without persisting raw keystrokes. On restart, input stays suspended until the
+capability and recovered occupancy exact-match again.
+Normal closure, cancel/failure reconciliation, and finality first stop capability
+issuance, drain input, close any open generation, and durably record irreversible
+capability revocation. The certified boundary admits only the barrier-bound
+one-shot workflow prompt, metadata from a durable Peek capability issuance,
+generation-gated Peek bytes, and one exact ledger-before-send/no-resend
+reconciliation interrupt bound to the cancel request or frozen failure start.
+Closure proof binds revocation plus a continuous interaction audit and keeps a
+mutation/input fence through receipt fsync. A terminal hold is non-authorizing
+run evidence, not interactive run control; no run-bound input capability
+survives cancel/failure reconciliation or an execution-final event.
+
+The pane grid captured in the dispatch baseline remains frozen while the target
+is active. Peek tile movement/resize is viewport-only and cannot send tmux
+resize or `SIGWINCH`; a real resize, history clear/trim past the boundary,
+reflow, or otherwise unresolvable baseline fails closed without result or
+ordinary target release. Closing or moving Peek never creates, kills, or
+rebinds a session.
+Disposable workspaces, ports, sockets, and sessions remain mandatory isolation
+for certification and dogfood where specified; they do not define production
+session topology.
 
 ### Bind the workspace to one renewable owner and monotonic fence
 
@@ -151,10 +247,14 @@ non-authorizing and fails loud; a leftover temp file cannot outrank the last
 valid published generation. A canonical immutable path is never a partial-file
 recovery surface.
 
-Every schema-2 JSON record/policy revision, writer-fence field, event/effect
-sequence, workspace-admission identity, and next counter is an integer in
+Every schema-2 JSON record/policy revision, writer-fence field, allocated
+event/effect sequence, workspace-admission identity, and next counter is an integer in
 `1..9007199254740991`. Allocation that would exceed that range fails closed
 before mutation or effect; values are never rounded, wrapped, or reused.
+The only zero-valued sequence-reference sentinels are `priorIssuedSeq`,
+`capabilityIssuedSeq`, `latestCapabilityIssuedSeq`, and
+`originCancelRequestSeq`, plus private-journal `routeSeq`. Each is in `0..9007199254740991`, and `0` never names
+or allocates an event.
 
 The versioned foundation reader capability
 `formations.runtime-authority-read-guard.v1` has one explicit parser resource
@@ -260,9 +360,10 @@ revision/hash; `run_started` binds the admission generation, and every immediate
 or dequeued `run_activated` binds the configured generation used for activation.
 
 Under one workspace admission critical section, `activeCount` is the number of
-non-final ledgers with `run_activated`, and `queuedCount` is the number with
-`run_started` but no `run_activated`. `maxActiveRuns` alone gates activation.
-Before a fresh start may activate, the coordinator activates existing queued
+non-final ledgers with `run_activated`, and `queuedCount` is the number whose
+latest projected status is exactly `queued`. An unactivated `canceling` or
+`failing` run is not queued and can never activate. `maxActiveRuns` alone gates activation.
+Before a fresh start may activate, the coordinator activates eligible queued
 runs by smallest `workspaceAdmissionSeq` while capacity remains. It may then
 reserve and fsync a new admission sequence and append `run_started` plus immediate
 `run_activated` when capacity still exists, even when `maxQueuedRuns=0`. With no
@@ -277,7 +378,7 @@ sequence reuse is forbidden.
 
 `run_started` alone projects `queued`; the unique fenced `run_activated` projects
 `running` and is required before every graph/dispatch event. On capacity release,
-the coordinator activates the smallest queued admission sequence under the same
+the coordinator activates the smallest eligible queued admission sequence under the same
 lock before dispatch. Queue wait begins at admission and consumes wall-clock;
 an expired queued run may fail without activation. Restart derives both counts
 and FIFO order for current state from run ledgers and strict-validates every
@@ -288,9 +389,16 @@ Serialization correctness comes from the continuously held authority lock and
 the required contention/crash tests. Concurrent starts, `maxQueuedRuns=0`,
 cancellation, cleanup, and recovery use the same formula; reconciliation takes
 precedence over fresh activation.
+Every failure, including an expired queued run, first fsyncs
+`run_failure_reconciliation_started`, projects non-final `failing`, and freezes
+the exact `{code,reason,unrecoverable,relatedSeq,failureCause}` header plus all
+open-resource snapshots. `run_failed.failureReconciliationSeq` names that start,
+byte-matches the header, and exactly disposes those snapshots. Direct failure
+uses `originCancelRequestSeq=0`; cancel escalation exact-names its unique request,
+preserves prior slot-interrupt state, and never resends a durable request.
 In this first contract, activation consumes one `maxActiveRuns` slot until the
-run reaches an execution-final event, including while blocked or
-`waiting_human`. This conservative rule makes capacity reconstruction depend
+run reaches an execution-final event, including while blocked, `waiting_human`,
+canceling, or failing. This conservative rule makes capacity reconstruction depend
 only on the ledger. Releasing and durably requeueing non-final runs would require
 a later explicit lifecycle/schema decision.
 
@@ -409,6 +517,10 @@ The crash outcomes are fixed:
    input availability and all open-resource proofs.
 6. `run_cancel_requested` durable resumes cancellation reconciliation only.
    Ordinary recovery and dispatch remain forbidden.
+7. `run_failure_reconciliation_started` durable projects non-final `failing`
+   and resumes only its exact frozen cause/header and open-resource snapshots.
+   It cannot select another cause, return to ordinary execution/canceling, or
+   resend a durable slot-interrupt request, including one with no outcome.
 
 A private authority directory without valid seq-1 `run_started` remains a
 non-authorizing orphan. Only the current fenced owner may clean it. Recovery
@@ -475,6 +587,13 @@ authority.
   and would need its own schema, crash protocol, projection, and retention rules.
 - **Return only after execution finishes:** rejected. It couples run lifetime to
   client connectivity and leaves retry outcome ambiguous.
+- **Give Formations a separate clean production tmux pool:** rejected. The
+  cockpit pool and accumulated session context are intentional product inputs;
+  exact lineage/baselines and fail-loud arbitration provide the evidence and
+  safety boundary.
+- **Keep run Peek watch-only:** rejected. User steering is an explicit product
+  capability. Exact-target authorization and coordinator-only automatic
+  dispatch preserve the authority boundary without suppressing user input.
 - **Treat all registered private fields as forward-compatible:** rejected.
   Ignoring a field that changes authority can make an old reader dispatch or
   finalize incorrectly.
@@ -496,6 +615,13 @@ current counts/FIFO, but it cannot present a nonexistent global historical
 decision order as proof. Adding that forensic order requires a later explicit
 authority-schema decision.
 
+Session reuse means rerunning the same graph against a different lineage is not
+the same execution, and user steering can intentionally affect an in-flight
+agent. Operators gain continuity and direct control, while certification must
+prove exact target/baseline attribution and fail-loud busy or attached binding
+instead of claiming clean-room determinism. Disposable-socket tests still prove
+isolation, but cannot be cited as the production topology.
+
 In return, browser disconnects and process restarts do not duplicate work;
 stale processes cannot append or send; callers can retry safely; and every crash
 boundary has one durable recovery answer.
@@ -506,17 +632,33 @@ boundary has one durable recovery answer.
 - `ctx-ug7.18` implements the non-authorizing registry/bootstrap/workspace-
   authority/closed-envelope guard before schema-2 projection, fence acquisition,
   recovery, cleanup, or runtime mutation is enabled.
-- `ctx-7i1` owns the sole sanitized run/event/binding/artifact projection and
-  registers complete safe projection support; matching schema numbers alone are
-  insufficient.
-- `ctx-ug7.6` implements coordinator command admission, queueing, owner
-  lease/fencing, Formation result authority, crash reconciliation, cancel
-  normalization, and Archon/API parity.
+- `ctx-7i1` owns the sole sanitized run/event/binding/artifact projection,
+  baseline hash/validation state, steering generation, and operator-influence
+  view; exact baseline tokens, capabilities, and input stay private.
+- `ctx-ug7.6` is the coordinator integration and exact-candidate gate.
+  `ctx-ug7.6.1` owns workspace authority, command records, publication, and
+  fencing; `.6.2` owns asynchronous command admission and FIFO policy; `.6.3`
+  owns replay, results, failure/cancel reconciliation, and finality; `.6.4`
+  owns the shared Terminal resolver, occupancy, and pane/history lineage.
+- `ctx-ug7.10` implements the post-occupancy exact Peek capability, interactive
+  steering/closure protocol, frozen active grid, and no create/kill/rebind
+  behavior while preserving coordinator-only automatic dispatch.
+- `ctx-ug7.21` is the bounded same-pool fence decision/prototype; `.22`
+  implements the chosen primitive and `.23` adversarially certifies it through
+  the shared resolver. `.6.4` consumes only that certified capability, and
+  `.10` waits for `.6.4`. Foundation certification `.5` is intentionally not
+  blocked on production tmux proof and instead certifies the unavailable,
+  send-nothing boundary.
+- `ctx-ug7.14` implements new-element placement and the sole explicit full-board
+  `arrange` seam; no runtime or recovery path may rearrange user layout.
+- `ctx-rul` uses disposable sockets only as dogfood isolation and must state that
+  production uses the shared cockpit pool.
 - `ctx-ug7.16` and `ctx-ug7.17` must bump authority schema if retained legacy
   behavior introduces new process/evaluator or revision authority.
 - `ctx-ug7.5` certifies the foundation reader guard and stabilization candidate;
-  `ctx-ug7.15` certifies cross-version rejection, projection-only exclusion, and
-  the complete exact candidate.
+  `ctx-ug7.15` certifies cross-version rejection, projection-only exclusion,
+  shared-resolver topology, baseline loss, steering races, and the complete exact
+  candidate.
 - Tests include multi-process contention, stale fences, lost responses, command
   conflicts, bounded backpressure, subprocess kill/restart at every crash row,
   result-to-output replay, unsupported-schema readers, and docs parity.

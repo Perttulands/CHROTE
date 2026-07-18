@@ -305,7 +305,7 @@ fsyncs an obligation owning that exact lease root. Only then may public
 cleanup locator. The initial obligation is `pending` for generation 1, and the
 writer accepts a redacted `tool_process_launch` only when its generation matches
 that pending obligation. Process execution starts only after both writes. A crash
-after private creation but before public dispatch leaves an orphan with no
+after private creation but before ledger dispatch leaves an orphan with no
 executable lease; registry recovery cleans its exact root, deletes the entry,
 and fsyncs the directory without executing the Tool. Finalization
 sanitizes or removes raw targets, then fsyncs the private obligation from
@@ -768,6 +768,17 @@ constraint. They never store tmux socket, session, window, or pane targets.
 `assigned` therefore means only that structural assignment exists; it does not
 mean runnable.
 
+In production, Formations calls the same configured Terminal-session resolver
+and inventory shown by cockpit Terminal tabs. That inventory is the union of
+the explicitly configured user/socket sources; it may contain one or several
+tmux servers, but there is no separate Formations-only production source or
+pool. Reusing accumulated session context is intentional; the evidence contract
+is same-session-lineage, not a clean-room agent. A persona `session_stem` that
+matches targets in more than one inventory source is ambiguous and fails loud;
+the board never chooses a raw socket path. A disposable source may replace the
+inventory only when both Terminal tabs and Formations consume it through that
+same resolver in an explicitly isolated test, certification, or dogfood harness.
+
 At run start, the host produces a `SlotResolution` for each declared slot in the
 selected `runRoot` executable subgraph. An unassigned slot is `unresolved` with
 `reason=agent_unassigned`; assigned states are `unresolved`, `runnable`,
@@ -786,6 +797,65 @@ server-side. The fingerprint commits to adapter/harness, foreground-process
 start identity, cwd/root, and pane-incarnation evidence.
 Two selected slots resolving to the same `targetKey`/`sessionTargetId` reject before
 `run_started`; exact identity does not make interleaved use safe.
+Preflight also reports a matching candidate that is leased, attached, or not
+proven closed/ready as unavailable and creates no binding. The stable reasons
+are `session_target_leased`, `session_target_attached`,
+`session_target_harness_busy`, and `session_target_readiness_unknown`;
+ambiguity and fingerprint drift remain `session_target_ambiguous` and
+`session_target_stale`; inability to arm the complete certified client/input
+monitor is `session_target_attachment_audit_unavailable`. A candidate is not idle merely because pane output is
+quiet or prompt-like. It is ready only when the certified harness adapter's
+non-pane control channel proves a closed/ready turn for the exact current
+fingerprint. A certified open turn is `session_target_harness_busy`; missing,
+unsupported, stale, or non-unique evidence is
+`session_target_readiness_unknown`. Both are unavailable. Visible external
+clients and connected CHROTE Terminal clients, including hidden pooled iframes,
+count as attachments. Slot binding never detaches or reclaims them. The user may
+explicitly disconnect a CHROTE-owned presentation client before retrying; that
+separate presentation action cannot detach an external client or another run's
+lease. The observation is not a lease: immediately before send, atomic target
+acquisition repeats the registry, attachment, fingerprint, and certified-ready
+checks under the target critical section. It obtains a fresh one-shot
+`target-ready-proof-v1` bound to that acquisition and fails
+`session_target_busy` with the corresponding stable reason if any check no
+longer passes. It never steals, creates, or selects an alternate session.
+An in-process lock is not that monitor/fence. The stock owner-accessible tmux
+socket admits independent raw command clients, so it must return
+`session_target_attachment_audit_unavailable` until the same-pool enforcement
+decision in `ctx-ug7.21`, implementation in `ctx-ug7.22`, and certification in
+`ctx-ug7.23` are complete.
+
+For attachment arbitration, Formation ownership begins only after the exact
+target-registry occupancy is fsynced; a frozen `RunSlotBinding` alone grants no
+exception. After that occupancy and the matching durable ledger dispatch exist,
+only a CHROTE-issued run-bound Peek capability exact-matching run, dispatch,
+target lease, binding, and fingerprint is an authorized additional attachment.
+Only the latest fsynced issuance is valid. A later issuance requires prior
+clients/input drained and atomically invalidates every older token/generation;
+a superseded route reaching the target boundary is foreign.
+Shared Terminal attach paths reject the occupied target unless the request is
+converted to that exact Peek capability. Any other client remains foreign. The
+writer-private certified attachment-monitor registration is armed and durable
+before occupancy is fsynced, then observes every client attach, detach, target
+selection, resize/reflow, history, pane-lifecycle/topology/other mutation, and
+input-capable command/control connection affecting the pane
+through release, including transient clients and raw `send-keys`/paste-style
+routes. Its closed authorized-route union is only the one-shot barrier-bound
+workflow prompt, metadata attach from a durable Peek-capability issuance,
+generation-gated Peek bytes, and one exact ledger-before-send reconciliation
+interrupt. A registered Peek client counts as authorized only when its inbound
+bytes terminate at the coordinator's steering-generation gate. A foreign event
+or lost monitor continuity durably latches
+`session_target_foreign_attachment`, `session_target_foreign_input`, or
+`session_target_attachment_audit_unavailable`, revokes and drains Peek input,
+and makes the dispatch non-authorizing: it can produce neither `slot_result`
+nor an ordinary release. Raw foreign input is never retroactively classified as
+a steering generation. A foreign-input/attachment or lost-audit latch stays
+held/quarantined until exact pane-incarnation-gone proof; current-client absence
+cannot reconstruct history. Other closure/cancel-ack holds with continuous
+audit may use the exact final-quiescence proof below. No output is promoted. Recovery suspends Peek
+input until the capability, recovered occupancy, and attachment-monitor
+continuity are revalidated under the current fence.
 
 Across runs, the host owns one durable exclusive target lease per
 `targetKey`; `sessionTargetId` is its opaque API handle, not a per-run key.
@@ -799,20 +869,60 @@ as input authority. A non-redacted mismatch appends node-scoped
 error as the exact cause; unavailable Redact=true bytes follow ADR-0005's
 `redacted_input_unavailable` failure. Both occur before `slot_dispatch` and send
 nothing.
-Before public `slot_dispatch`, it allocates dispatch/target
+Before durable ledger `slot_dispatch`, it allocates dispatch/target
 lease ids and atomically acquires/fsyncs a private record binding the target,
-run, dispatch, binding, node, attempt, slot, and fingerprint. Under that lease
-and immediately before send it exact-rechecks card/harness/process/cwd/root/pane;
-drift records stale, releases the unsent orphan, and sends nothing. Only after the matching public
+run, dispatch, binding, node, attempt, slot, fingerprint, and the exact
+pre-occupancy `attachment-audit-registration-v1` hash. The registration and its
+first anchored `fence_transition` journal record fsync before occupancy, so no
+empty-chain or post-occupancy gap exists. Under that lease and
+immediately before send it exact-rechecks card/harness/process/cwd/root/pane;
+drift records stale, atomically retires the unsent fence/occupancy, and sends
+nothing. The certified boundary drains and linearizes its durable interaction
+journal, rejects a foreign/lost-audit latch, and installs one exact
+`target-dispatch-input-barrier-v1` permitting only the already-hashed prompt for
+this dispatch/lease/fingerprint. It then obtains `target-ready-proof-v1`, RFC
+8785 canonical JSON over exactly
+`{targetFingerprintSha256,acquisitionChallengeSha256,dispatchInputBarrierSha256,harnessReadyEvidenceSha256}`;
+all four values are 64 lowercase hex. The challenge is fresh and the certified
+adapter issues the proof only for a closed/ready turn on its non-pane control
+channel. Pane bytes, silence, prompt text, or an earlier proof cannot satisfy
+it. The host then captures one exact `tmux-pane-history-baseline-v1` and records
+the dispatch barrier/proof, ready proof/hash, baseline/hash, and prompt hash in
+writer-private `slot_dispatch` before the adapter consumes that one send permit.
+The fence synchronously rejects/latches attach, select, resize/reflow, history,
+pane-lifecycle/topology/other mutation, and raw input races through send; after send it admits only metadata-authorized Peek
+attach, steering-generation input, or one ledger-before-send reconciliation
+interrupt. Failure or crash before ledger dispatch atomically retires the exact
+unsent fence with occupancy; missing/conflicting fence state quarantines rather
+than reopening the pane.
+The baseline is RFC 8785 canonical JSON over exactly
+`{targetFingerprintSha256,historyEpoch,offset,cols,rows}`: exactly 64 lowercase
+hex fingerprint characters hashing the exact UTF-8 bytes of the dispatch's
+frozen `targetFingerprint` string with no trailing newline, the canonical
+unpadded base64url encoding of exactly 16 capture-continuity epoch bytes, an
+unsigned decimal 64-bit absolute byte offset string with
+no leading zero except `"0"`, and JSON-integer grid dimensions in `1..65535`.
+It contains no pane output or input bytes. The tmux adapter changes
+`historyEpoch` whenever it cannot prove continuous cursor identity, including
+pane replacement, history clear, or restart without durable cursor continuity.
+`capturedRange.start` must exact-match the baseline epoch/offset and its end must
+be strictly later. Trim past the boundary, reset, resize/reflow, missing cursor,
+or ambiguous comparison fails `capture_baseline_unavailable`; it permits no
+`slot_result` or ordinary release and follows the existing hold/quarantine
+reconciliation path. Older pane history can inform the agent but cannot be
+parsed as this dispatch's sentinel or output. Sanitized projections omit the
+exact token and expose only encoding, SHA-256, and validation state; a
+`slot_result` exact-references the dispatch sequence/hash rather than supplying
+another baseline value. Only after the matching durable ledger
 dispatch is fsynced may the adapter receive the same in-memory prompt byte slice
 whose SHA-256 the event records. It receives that slice at most once, then the
 coordinator discards it. No prompt bytes/ref/path/authority id is durable, and the
 hash cannot reconstruct or authorize resend. The prompt contains run, dispatch,
 and target-lease ids. The completion sentinel and `slot_result` must exact-match all three;
-run id alone is not attribution. A private lease without public dispatch is a
+run id alone is not attribution. A private lease without ledger dispatch is a
 safe unsent orphan. Release atomically replaces an occupying record with an
 exact durable non-occupying receipt; that receipt permits later acquisition but
-survives until this run's final event is fsynced. Any public dispatch lacking
+survives until this run's final event is fsynced. Any ledger dispatch lacking
 both its expected occupancy record and release receipt, or with conflicting private state,
 may already have sent: before failure/finality, the arbiter reconstructs or
 promotes a durable non-authorizing quarantine at its frozen `targetKey`. Its
@@ -821,31 +931,63 @@ identity/result and each conflicting occupant separately. It is
 never resent or restored as active authority. An unmatched dispatch may expose
 its exact candidate in its final slot disposition. A result-closed candidate has no
 open disposition, so its quarantine must be proven quiescent and replaced by an
-exact `result_committed` receipt carrying certified turn-closure proof before any final event. The key remains busy until every candidate dispatch is proven
+exact `result_committed` receipt carrying certified turn-closure proof plus a
+closed barrier-held or post-result-pane-gone release proof before any final
+event. The key remains busy until every candidate dispatch is proven
 quiescent. A missing/corrupt frozen key creates a separate durable host-wide
 quarantine with every available run/dispatch/lease/binding identity; its safety
 latch denies all target acquisition until operator repair and non-authorizing
 reconciliation remove every candidate.
 
-Normal completion requires an exact sentinel terminal in bounded capture plus a
-certified harness-ready/closed-turn proof for the frozen fingerprint; trailing
-old-turn output is not a result. It fsyncs `slot_result` before replacing
-occupancy with a `result_committed` receipt naming the result sequence and proof,
-and success waits for that receipt. Cancel/failure requested in this window completes the same
-result-closed transition first; it cannot convert or omit it. An unmatched
-canceled/failed dispatch replaces occupancy with a `final_quiescent` receipt
-only after either an exact dispatch/lease/fingerprint cancel acknowledgement
-plus certified ready boundary or proof that the old pane incarnation is gone;
+Normal completion first atomically stops capability issuance, drains any input
+channel, closes every open steering generation, and fsyncs one irreversible
+`slot_peek_capability_revoked` event for the dispatch. It then requires an exact
+sentinel terminal in bounded capture plus a certified harness-ready/closed-turn
+proof for the frozen fingerprint and a certified attachment-audit proof that
+continuously accounts for every client/input event since occupancy. Under the
+same target critical section the certified monitor drains/linearizes its event
+journal, installs a per-target mutation/input fence, and produces the closed interaction
+barrier bound into the proof. Pre-barrier foreign input prevents a result;
+post-barrier unregistered attach/select/resize/reflow/history/pane-lifecycle/
+topology/other mutation/input is rejected at the
+adapter boundary. The fence remains in
+force while `slot_result` fsyncs and until occupancy is replaced by a
+`result_committed` receipt naming the result sequence, proof, and exact
+barrier-held release proof. That receipt fsync is the release linearization
+point, and the result cannot contribute to Formation result/routing/finality
+before it. Trailing old-turn output is not a result. If fence/barrier continuity
+is lost after result fsync but before the receipt, the immutable result remains
+uncommitted in a result-closed quarantine; it may become the exact receipt only
+after proving the original barrier held or the old pane incarnation is gone.
+Cancel/failure requested in this window completes the same result-closed
+transition first; it cannot convert or omit it. An unmatched
+canceled/failed dispatch likewise stops capability issuance, drains input,
+closes any generation with `reason=capability_revoked`, and fsyncs capability
+revocation before interruption or proof validation. It fsyncs one exact
+`slot_reconciliation_interrupt` bound to the durable cancel request or
+failure-reconciliation start before the fence permits one `0x03` attempt; a
+crash after intent never resends, and a missing outcome is `send_uncertain`.
+It replaces occupancy with
+a `final_quiescent` receipt
+only after either the closed `dispatch_cancel_ack` proof exact-binds that
+interrupt request, capability revocation/generation, certified ready boundary,
+and continuous attachment-audit proof under the same input fence/barrier
+through the release transition, or proof
+that the old pane incarnation is gone;
+however, a dispatch already latched for foreign attachment/input or lost audit
+continuity cannot use the cancel/ready branch. Its sole release proof is exact
+old-pane-incarnation-gone because current readiness cannot reconstruct history;
 otherwise a non-authorizing terminal
-hold keeps the target busy until later proof. Its final slot disposition records
+hold retains the input fence and keeps the target busy until later proof. Its final slot disposition records
 `targetLeaseState=released_quiescent|terminal_hold|quarantined` only after the
 corresponding registry transition is durable. Registry state does not expire by
 time/name/PID; sent interrupt, silence, and generic prompt/idle text are not
 proof. A replacement pane has a new key/fingerprint and cannot be released or
 interrupted as the old target. A receipt is not occupancy, and crash recovery reuses it instead
-of quarantining or re-interrupting released work. A concurrent acquisition failure sends nothing and
-fails loud as `session_target_busy` (before run start when caught in preflight,
-or as terminal run failure for the exact post-start attempt).
+of quarantining or re-interrupting released work. A concurrent acquisition
+failure sends nothing. Preflight returns its specific stable unavailable reason;
+after run start, `slot_binding_observed` preserves that reason and the exact
+attempt fails with node-scoped `error(code=session_target_busy)`.
 An idle deadline without the exact three-part sentinel plus certified closed-turn proof records
 `dispatch_idle_timeout` as a slot error but no `slot_result`; the dispatch and
 target lease stay unmatched and enter bounded reattach. Timeout alone never
@@ -870,14 +1012,68 @@ same qualified pane, and a replacement pane requires a new run.
 Run inspection and terminal Peek use each dispatch binding recorded for the
 exact attempt plus its dispatch/target-lease ids and frozen fingerprint, not a
 fresh lookup by display label, session name, or opaque handle alone. Live run
-Peek requires that exact active/unmatched occupancy or its exact non-authorizing
-terminal hold on the unchanged pane. Quarantine is ambiguous and cannot open a
-live run view. After a result/final release receipt, the pane may be reused, so
+Peek input requires that exact active/unmatched occupancy while the run remains
+non-final and before cancel/failure reconciliation begins. A terminal hold is
+non-authorizing run evidence and permits no run-bound input, even before or
+after finality. Quarantine is ambiguous and cannot open a live run view. After
+a result/final release receipt, the pane may be reused, so
 the old attempt exposes captured history or explicit `pane_moved_on`; a separate
 Open current session action must be labeled as non-run context. Whether one or
 several terminals are open, focused, tiled, or hidden on the Formations board is
 user-local presentation state. It is not board structure, run truth, or tmux
 lifecycle authority.
+
+An authorized live Peek is a full interactive user attach and may send literal
+terminal input, including control characters, to steer or interrupt the agent
+on that exact session. This operator effect is allowed; it is distinct from an
+automatic workflow prompt, retry, coordinator interrupt, or lifecycle command
+and grants the browser no dispatch authority.
+
+Peek input is accepted only through the exact run-bound capability above and is
+serialized with result closure under the target occupancy. Before forwarding
+the first input, the coordinator fsyncs `slot_steering_started` with a new
+monotonic steering generation and no raw keystrokes. While that generation is
+open, result closure is forbidden. After the input channel is drained/released,
+the coordinator fsyncs `slot_steering_ended`, recaptures from the dispatch
+baseline, and obtains a fresh certified
+turn-closure proof bound to that generation. The proof must come from the
+certified adapter channel and cannot be satisfied solely by user-writable pane
+bytes, echoed sentinel text, or generic prompt/ready text. Concurrent later
+input either opens a newer generation and invalidates the proof before
+`slot_result`, or is rejected after the capability is revoked. Safe inspection
+marks the dispatch operator-influenced without storing input bytes.
+
+Cancel request, failure reconciliation, normal result closure, and every
+execution-final event serialize through the same lock. They stop new capability
+issuance, revoke the existing capability, drain its channel, close any open
+generation with `slot_steering_ended(reason=capability_revoked)`, and fsync
+`slot_peek_capability_revoked` before accepting closure or finality. Terminal
+failure first fsyncs its unique cause/snapshot-bearing
+`run_failure_reconciliation_started`, which projects non-final `failing` and
+admits only reconciliation. `run_failed.failureReconciliationSeq` must name that
+start, byte-match its exact
+`{code,reason,unrecoverable,relatedSeq,failureCause}` header, and dispose all
+three frozen snapshots exactly. A direct failure uses
+`originCancelRequestSeq=0`. When cancel escalates, that field exact-names the
+unique cancel request, the failure snapshot preserves cancel-time resource
+identities and prior interrupt request/outcome, and a missing outcome remains
+`send_uncertain`; failure reuses it and never sends a second coordinator
+reconciliation interrupt. Either
+authority may create only the exact no-resend reconciliation-interrupt permit above.
+Finality
+enumerates capability state as well as target records and rejects an issued
+capability, open input channel, open steering generation, or closure proof that
+does not bind the latest closed generation and revocation sequence. A held
+session may later be opened only through a separately labeled non-run Terminal
+action after ordinary target arbitration permits it; run authority never
+survives finality.
+
+Run-bound Peek uses the shared deferred/ephemeral iframe lifecycle, but an
+active dispatch freezes the pane grid recorded in its history baseline. Moving
+or resizing the tile changes only the browser viewport; it must not send a tmux
+resize or `SIGWINCH`. Any resize/reflow from another source invalidates the
+baseline as above. Closing, moving, focusing, or tiling Peek never creates,
+kills, or rebinds a tmux session.
 
 ## Rationale
 Four explicit kinds are enough to explain the workflow without creating a
@@ -885,7 +1081,8 @@ generic plugin framework. Typed ports make joins and failures deterministic.
 Pass-through and feedback semantics keep Gates honest: users can see the work
 that was evaluated, the verdict, and the correction request as separate facts.
 Run-bound targets make live inspection precise without putting ephemeral tmux
-identity into reusable board files.
+identity into reusable board files. Pane/history baselines preserve attribution
+while deliberately allowing same-session context reuse.
 
 ## Alternatives Considered
 - **One generic plugin node:** rejected. It hides execution and safety
@@ -948,19 +1145,27 @@ ADR-0007.
   replay. Gate fixtures reject evaluator-bundle/policy substitution. Artifact
   fixtures reject missing identity, root escape, symlinks, hash/size drift,
   revoked historical refs, and unsafe evidence refs.
-- `ctx-ug7.8` owns Tool profiles; `ctx-7i1` owns canonical run projection;
-  `ctx-ug7.9` and `ctx-ug7.10` own inspection and exact terminal Peek;
+- `ctx-ug7.8` owns Tool profiles; `ctx-7i1` owns canonical run projection,
+  baseline hash/validation state, and safe operator-influence state;
+  `ctx-ug7.9` and `ctx-ug7.10` own inspection and the post-occupancy exact Peek
+  capability/steering protocol;
   `ctx-ug7.11`, `ctx-ug7.13`, and `ctx-ug7.14` own Archon authoring, packaging,
   and the empty-workspace mixed-workflow E2E.
-- `ctx-ug7.6` owns the canonical target resolver, host-wide per-target arbiter,
-  private-before-public lease lifecycle, result-closed reconciliation, finality
-  accounting, certified closure proofs, acquisition-time fingerprint recheck,
-  Gate bundle replay, and timeout/complete-set reattach state machine.
+- `ctx-ug7.6` is the non-claimable coordinator integration epic.
+  `ctx-ug7.6.1` owns workspace authority, command records, publication, and
+  fencing; `.6.2` owns asynchronous command admission and FIFO policy; `.6.3`
+  owns replay, results, Gate-bundle replay, failure/cancel reconciliation,
+  finality accounting, and the timeout/complete-set reattach state machine;
+  `.6.4` owns the shared Terminal resolver, pooled-client arbitration,
+  host-wide per-target occupancy/lease lifecycle, exact baseline cursor, and
+  acquisition-time fingerprint recheck.
 - `ctx-ug7.4` defines the workspace command, owner-lease/fence,
-  `formation_result`, and authority-schema contracts. `ctx-ug7.6` implements
-  those contracts together with host-private hashed canonical run authority,
-  generic Files denial, pending-redaction isolation, binding integrity, and
-  coordinator enforcement. `ctx-7i1` is the sole implementation
+  `formation_result`, and authority-schema contracts. `.6.1` through `.6.4`
+  implement their split portions together with host-private hashed canonical
+  run authority, generic Files denial, pending-redaction isolation, binding
+  integrity, and coordinator enforcement. `ctx-ug7.10` alone implements the
+  post-occupancy Peek capability, steering-generation/result serialization,
+  and certified non-pane-forgeable closure protocol. `ctx-7i1` is the sole implementation
   owner of sanitized event/binding/artifact projection and historical/SSE
   revocation; coordinator/API entrypoints must consume it and never bypass it.
   `ctx-ug7.8` implements sealed Tool inputs and the certified deterministic

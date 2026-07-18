@@ -89,14 +89,19 @@ cleanup target, capture, report, artifact, marker, hash, or display summary is
 never an allowed source for reconstructing graph input.
 
 If a required value was intentionally discarded and cannot be proven available,
-the engine appends an event with `type=run_failed`,
+the engine first fsyncs `type=run_failure_reconciliation_started` with
+`data.originCancelRequestSeq=0`, the exact failure header/cause, and complete
+`data.openNodeAttempts`, `data.openSlotDispatches`, and `data.openToolLeases`.
+The run projects non-final `failing` while that frozen reconciliation completes.
+It then appends `type=run_failed` with `data.failureReconciliationSeq` naming the
+start event,
 `data.code=redacted_input_unavailable`,
 `data.reason=redacted_input_unavailable`, `data.unrecoverable=true`, and
 `data.final=true`. ADR-0006 additionally requires
 `data.failureCause={kind=none}` plus `data.nodeAttemptDispositions`,
 `data.slotDispatchDispositions`, and `data.toolLeaseDispositions` to exactly
-close every node attempt, slot dispatch, and Tool lease still open at failure,
-with empty arrays when there are none. `data.relatedSeq` names the exact source event whose
+dispose the three frozen snapshots, with empty arrays when there are none. The
+final header/cause must byte-match the start. `data.relatedSeq` names the exact source event whose
 execution-authoritative value was required but unavailable. This is terminal for
 the run: resume is rejected, no new epoch is opened, and no marker or summary is
 dispatched. Retrying the work requires a new run with newly supplied
