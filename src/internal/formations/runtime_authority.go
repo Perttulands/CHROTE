@@ -62,6 +62,14 @@ func (s *Store) RequireRuntimeAuthority() error {
 			Capability: disabledRuntimeAuthorityCapability(),
 		}
 	}
+	if s.Workspace != boundary.configuredWorkspace {
+		return &RuntimeAuthorityNonAuthorizingError{
+			Reason:     RuntimeAuthorityGuardRejected,
+			Stage:      RuntimeAuthorityGuardStageRegistry,
+			Code:       RuntimeAuthorityGuardConflict,
+			Capability: disabledRuntimeAuthorityCapability(),
+		}
+	}
 	result, err := GuardRuntimeWorkspaceAuthorityV1(boundary.formationsDataRoot, boundary.configuredWorkspace)
 	if err != nil {
 		rejection := &RuntimeAuthorityNonAuthorizingError{

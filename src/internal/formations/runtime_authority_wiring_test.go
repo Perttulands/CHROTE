@@ -56,6 +56,27 @@ func TestRuntimeStoreAuthorityBoundaryRemainsNonAuthorizingAfterExactMatch(t *te
 	}
 }
 
+func TestRuntimeStoreRejectsWorkspaceMutationAfterAuthorityBinding(t *testing.T) {
+	fixture := newRuntimeAuthorityFixture(t)
+	bindRuntimeAuthorityFixtureToOpenedWorkspace(t, &fixture, fixture.workspace)
+	otherWorkspace := t.TempDir()
+	before := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace, otherWorkspace)
+	store := NewRuntimeStore(fixture.workspace, filepath.Dir(fixture.root))
+
+	store.Workspace = otherWorkspace
+	err := store.RequireRuntimeAuthority()
+	var authorityErr *RuntimeAuthorityNonAuthorizingError
+	if !errors.As(err, &authorityErr) || authorityErr.Reason != RuntimeAuthorityGuardRejected {
+		t.Fatalf("mutated runtime workspace error = %#v, want sanitized guard rejection", err)
+	}
+	if authorityErr.Stage != RuntimeAuthorityGuardStageRegistry || authorityErr.Code != RuntimeAuthorityGuardConflict {
+		t.Fatalf("mutated runtime workspace rejection = stage %q code %q, want registry conflict", authorityErr.Stage, authorityErr.Code)
+	}
+	if got := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace, otherWorkspace); !reflect.DeepEqual(got, before) {
+		t.Fatalf("mutated runtime workspace rejection changed state\nbefore: %#v\nafter:  %#v", before, got)
+	}
+}
+
 func TestRuntimeAuthorityRejectionPrecedesEngineDispatchAndTmuxSideEffects(t *testing.T) {
 	workspace := t.TempDir()
 	store := NewRuntimeStore(workspace, filepath.Join(t.TempDir(), "missing-formations-data"))
