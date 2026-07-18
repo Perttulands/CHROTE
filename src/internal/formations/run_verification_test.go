@@ -1,7 +1,11 @@
 package formations
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -44,98 +48,357 @@ func TestS4JudgeChainVerdictRoutesGate(t *testing.T) {
 	}
 }
 
-func TestS4FormationVerificationBlockAndPushback(t *testing.T) {
-	t.Run("block stops before downstream formation", func(t *testing.T) {
-		store, personas := s4RunFixture(t)
-		store.Now = fixedClock()
-		personas.Now = fixedClock()
-		createS4Persona(t, personas, "scout")
-		writeFixture(t, store.BoardPath("session-search"), s4VerificationBoardFixture("block"))
-		board, err := store.ReadBoard("session-search")
-		if err != nil {
-			t.Fatalf("read board: %v", err)
-		}
-		executor := &fakeRunExecutor{}
-		engine := NewRunEngine(store, personas, executor)
-		engine.SetVerificationEvaluator(&fakeVerificationEvaluator{verdicts: []string{"fail"}})
+func TestLegacyInlineVerificationRejectsBeforeMissionAndFormationRunArtifacts(t *testing.T) {
+	for _, mode := range []string{"mission", "formation"} {
+		t.Run(mode, func(t *testing.T) {
+			store, personas := s4RunFixture(t)
+			store.Now = fixedClock()
+			personas.Now = fixedClock()
+			createS4Persona(t, personas, "scout")
+			writeFixture(t, store.BoardPath("session-search"), s4VerificationBoardFixture("block"))
+			board, err := store.ReadBoard("session-search")
+			if err != nil {
+				t.Fatalf("read board: %v", err)
+			}
+			executor := &fakeRunExecutor{}
+			engine := NewRunEngine(store, personas, executor)
 
-		status, err := engine.RunMission("session-search", RunStartRequest{
-			MissionID:         "mis_showcase",
-			Actor:             "agent:test",
-			ExpectedBoardETag: board.ETag,
-			ExpectedBoardRev:  board.Rev,
-			Limits:            RunLimits{MaxDispatch: 5, MaxAttempts: 2},
+			var runErr error
+			if mode == "mission" {
+				_, runErr = engine.RunMission("session-search", RunStartRequest{
+					MissionID:         "mis_showcase",
+					Actor:             "agent:test",
+					ExpectedBoardETag: board.ETag,
+					ExpectedBoardRev:  board.Rev,
+					Limits:            RunLimits{MaxDispatch: 5, MaxAttempts: 2},
+				})
+			} else {
+				_, runErr = engine.RunFormation("session-search", "fmn_work", FormationRunRequest{
+					Actor:  "agent:test",
+					Limits: RunLimits{MaxDispatch: 5, MaxAttempts: 2},
+				})
+			}
+			if runErr == nil || !strings.Contains(runErr.Error(), "legacy_inline_verification_requires_migration") {
+				t.Fatalf("run error = %v, want stable legacy inline verification migration code", runErr)
+			}
+			if len(executor.calls) != 0 {
+				t.Fatalf("executor calls = %+v, want no execution before compatibility preflight", executor.calls)
+			}
+			runsDir := filepath.Join(store.Workspace, ".formations", "runs", "session-search")
+			entries, readErr := os.ReadDir(runsDir)
+			if readErr != nil && !os.IsNotExist(readErr) {
+				t.Fatalf("read runs directory: %v", readErr)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("run artifacts = %+v, want none before migration rejection", entries)
+			}
 		})
-		if err != nil {
-			t.Fatalf("run mission: %v", err)
-		}
-		if status.Status != RunStatusBlocked {
-			t.Fatalf("status = %+v, want blocked by verification", status)
-		}
-		if got, want := executor.nodeIDs(), []string{"fmn_work"}; !reflect.DeepEqual(got, want) {
-			t.Fatalf("executor nodes = %v, want downstream formation skipped", got)
-		}
-		events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
-		verdict := eventOfType(t, events, RunEventVerificationVerdict)
-		if verdict.Data["verdict"] != "fail" || verdict.Data["onFail"] != "block" {
-			t.Fatalf("verification verdict = %+v, want fail/block", verdict)
-		}
-		if events[len(events)-1].Type != RunEventBlocked {
-			t.Fatalf("last event = %s, want run_blocked", events[len(events)-1].Type)
-		}
-	})
-
-	t.Run("pushback retries own formation until attempt limit", func(t *testing.T) {
-		store, personas := s4RunFixture(t)
-		store.Now = fixedClock()
-		personas.Now = fixedClock()
-		createS4Persona(t, personas, "scout")
-		writeFixture(t, store.BoardPath("session-search"), s4VerificationBoardFixture("pushback"))
-		board, err := store.ReadBoard("session-search")
-		if err != nil {
-			t.Fatalf("read board: %v", err)
-		}
-		executor := &fakeRunExecutor{}
-		engine := NewRunEngine(store, personas, executor)
-		engine.SetVerificationEvaluator(&fakeVerificationEvaluator{verdicts: []string{"fail", "fail"}})
-
-		status, err := engine.RunMission("session-search", RunStartRequest{
-			MissionID:         "mis_showcase",
-			Actor:             "agent:test",
-			ExpectedBoardETag: board.ETag,
-			ExpectedBoardRev:  board.Rev,
-			Limits:            RunLimits{MaxDispatch: 5, MaxAttempts: 2},
-		})
-		if err != nil {
-			t.Fatalf("run mission: %v", err)
-		}
-		if status.Status != RunStatusBlocked {
-			t.Fatalf("status = %+v, want blocked after verification pushback exhaustion", status)
-		}
-		if got, want := executor.nodeIDs(), []string{"fmn_work", "fmn_work"}; !reflect.DeepEqual(got, want) {
-			t.Fatalf("executor nodes = %v, want two own-formation attempts", got)
-		}
-		events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
-		errEvent := eventOfType(t, events, RunEventError)
-		if errEvent.Data["reason"] != "verification pushback exhausted" {
-			t.Fatalf("error data = %#v, want verification pushback exhausted", errEvent.Data)
-		}
-	})
-}
-
-type fakeVerificationEvaluator struct {
-	verdicts []string
-	calls    []VerificationEvaluation
-}
-
-func (f *fakeVerificationEvaluator) EvaluateVerification(req VerificationEvaluation) (VerificationEvaluationResult, error) {
-	f.calls = append(f.calls, req)
-	verdict := "pass"
-	if len(f.verdicts) > 0 {
-		verdict = f.verdicts[0]
-		f.verdicts = f.verdicts[1:]
 	}
-	return VerificationEvaluationResult{Verdict: verdict, Feedback: "fake " + verdict}, nil
+}
+
+func TestLegacyInlineVerificationResumeRejectsBeforeRunResumedAppend(t *testing.T) {
+	store, personas := s4RunFixture(t)
+	store.Now = fixedClock()
+	personas.Now = fixedClock()
+	createS4Persona(t, personas, "scout")
+	raw := s4VerificationBoardFixture("block")
+	writeFixture(t, store.BoardPath("session-search"), raw)
+
+	runID := newPrefixedID("run")
+	snapshot := runArtifactPath("session-search", runID, ".snapshot.toml")
+	ledger := runArtifactPath("session-search", runID, ".ndjson")
+	writeFixture(t, filepath.Join(store.Workspace, snapshot), raw)
+	if err := writeInitialRunEvent(filepath.Join(store.Workspace, ledger), RunEvent{
+		RunID: runID, Seq: 1, Type: RunEventStarted, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
+		MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{
+			"boardSlug": "session-search", "snapshot": snapshot, "limits": RunLimits{MaxDispatch: 5, MaxAttempts: 2},
+		},
+	}); err != nil {
+		t.Fatalf("write legacy run start: %v", err)
+	}
+	if err := appendRunEventLine(filepath.Join(store.Workspace, ledger), RunEvent{
+		RunID: runID, Seq: 2, Type: RunEventBlocked, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
+		MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{
+			"reason": "legacy interruption", "resumeAllowed": true, "resumePolicy": "explicit",
+		},
+	}); err != nil {
+		t.Fatalf("write legacy blocked event: %v", err)
+	}
+	before, err := store.ReadRunEvents(runID)
+	if err != nil {
+		t.Fatalf("read legacy events: %v", err)
+	}
+	executor := &fakeRunExecutor{}
+	engine := NewRunEngine(store, personas, executor)
+	_, err = engine.ResumeRun(runID, RunResumeRequest{Actor: "agent:test", Mode: "reattach"})
+	if err == nil || !strings.Contains(err.Error(), "legacy_inline_verification_requires_migration") {
+		t.Fatalf("resume error = %v, want stable legacy inline verification migration code", err)
+	}
+	after, readErr := store.ReadRunEvents(runID)
+	if readErr != nil {
+		t.Fatalf("read events after rejected resume: %v", readErr)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("rejected resume mutated ledger\nbefore=%+v\nafter=%+v", before, after)
+	}
+	if len(executor.calls) != 0 {
+		t.Fatalf("executor calls = %+v, want none on rejected legacy resume", executor.calls)
+	}
+}
+
+func TestLegacyInlineVerificationHumanVerdictRejectsBeforeLedgerMutation(t *testing.T) {
+	store, personas := s4RunFixture(t)
+	store.Now = fixedClock()
+	personas.Now = fixedClock()
+	raw := strings.Replace(
+		s5HumanGateBoardFixture(),
+		"controller = true\n\n[[gate]]",
+		"controller = true\n\n[formation.verification]\nid = \"ver_work\"\nkinds = [\"code\"]\ncriterion = \"Work is ready\"\nonFail = \"block\"\n\n[[gate]]",
+		1,
+	)
+	runID := newPrefixedID("run")
+	snapshot := runArtifactPath("session-search", runID, ".snapshot.toml")
+	ledger := runArtifactPath("session-search", runID, ".ndjson")
+	writeFixture(t, filepath.Join(store.Workspace, snapshot), raw)
+	if err := writeInitialRunEvent(filepath.Join(store.Workspace, ledger), RunEvent{
+		RunID: runID, Seq: 1, Type: RunEventStarted, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
+		MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{
+			"boardSlug": "session-search", "snapshot": snapshot, "limits": RunLimits{MaxDispatch: 5, MaxAttempts: 2},
+		},
+	}); err != nil {
+		t.Fatalf("write legacy run start: %v", err)
+	}
+	if err := appendRunEventLine(filepath.Join(store.Workspace, ledger), RunEvent{
+		RunID: runID, Seq: 2, Type: RunEventHumanInputRequested, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
+		MissionID: "mis_showcase", Actor: "agent:test", GateID: "gate_review", NodeID: "gate_review",
+		Data: map[string]any{"prompt": "Good enough to ship", "requestedBy": "gate_review"},
+	}); err != nil {
+		t.Fatalf("write legacy human request: %v", err)
+	}
+	before, err := store.ReadRunEvents(runID)
+	if err != nil {
+		t.Fatalf("read legacy events: %v", err)
+	}
+	engine := NewRunEngine(store, personas, &fakeRunExecutor{})
+	_, err = engine.RecordHumanGateVerdict(runID, HumanGateVerdictRequest{
+		GateID: "gate_review", Verdict: "pass", Actor: "human:perttu",
+	})
+	if err == nil || !strings.Contains(err.Error(), "legacy_inline_verification_requires_migration") {
+		t.Fatalf("human verdict error = %v, want stable legacy inline verification migration code", err)
+	}
+	after, readErr := store.ReadRunEvents(runID)
+	if readErr != nil {
+		t.Fatalf("read events after rejected human verdict: %v", readErr)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("rejected human verdict mutated ledger\nbefore=%+v\nafter=%+v", before, after)
+	}
+}
+
+func TestLegacyInlineVerificationRawResumeAppendIsRejectedButCancelClosesRun(t *testing.T) {
+	store, _ := s4RunFixture(t)
+	store.Now = fixedClock()
+	raw := s4VerificationBoardFixture("block")
+	runID := newPrefixedID("run")
+	snapshot := runArtifactPath("session-search", runID, ".snapshot.toml")
+	ledger := filepath.Join(store.Workspace, runArtifactPath("session-search", runID, ".ndjson"))
+	writeFixture(t, filepath.Join(store.Workspace, snapshot), raw)
+	if err := writeInitialRunEvent(ledger, RunEvent{
+		RunID: runID, Seq: 1, Type: RunEventStarted, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
+		MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{
+			"boardSlug": "session-search", "snapshot": snapshot,
+		},
+	}); err != nil {
+		t.Fatalf("write legacy run start: %v", err)
+	}
+	if err := appendRunEventLine(ledger, RunEvent{
+		RunID: runID, Seq: 2, Type: RunEventBlocked, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
+		MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{
+			"reason": "legacy interruption", "resumeAllowed": true, "resumePolicy": "explicit",
+		},
+	}); err != nil {
+		t.Fatalf("write legacy blocked event: %v", err)
+	}
+	before, err := store.ReadRunEvents(runID)
+	if err != nil {
+		t.Fatalf("read legacy run: %v", err)
+	}
+	err = store.AppendRunEvent(runID, RunEvent{Type: RunEventResumed, Actor: "agent:test"})
+	if err == nil || !strings.Contains(err.Error(), "legacy_inline_verification_requires_migration") {
+		t.Fatalf("raw resume append error = %v, want stable migration rejection", err)
+	}
+	after, readErr := store.ReadRunEvents(runID)
+	if readErr != nil {
+		t.Fatalf("read rejected raw resume: %v", readErr)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("rejected raw resume mutated ledger\nbefore=%+v\nafter=%+v", before, after)
+	}
+	if err := store.AppendRunEvent(runID, RunEvent{
+		Type: RunEventCanceled, Actor: "human:perttu", Data: map[string]any{"reason": "retire legacy run", "final": true},
+	}); err != nil {
+		t.Fatalf("cancel legacy blocked run: %v", err)
+	}
+	status, err := store.ProjectRun(runID)
+	if err != nil {
+		t.Fatalf("project canceled legacy run: %v", err)
+	}
+	if status.Status != RunStatusCanceled || !status.Final {
+		t.Fatalf("canceled legacy status = %+v, want final canceled", status)
+	}
+}
+
+func TestLegacyInlineVerificationTerminalContainmentIgnoresUnavailableSnapshot(t *testing.T) {
+	tests := []struct {
+		name       string
+		eventType  string
+		wantStatus string
+		corrupt    bool
+	}{
+		{name: "cancel with missing snapshot", eventType: RunEventCanceled, wantStatus: RunStatusCanceled},
+		{name: "fail with unreadable snapshot", eventType: RunEventFailed, wantStatus: RunStatusFailed, corrupt: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store, _ := s4RunFixture(t)
+			store.Now = fixedClock()
+			runID := newPrefixedID("run")
+			snapshot := runArtifactPath("session-search", runID, ".snapshot.toml")
+			ledger := filepath.Join(store.Workspace, runArtifactPath("session-search", runID, ".ndjson"))
+			if test.corrupt {
+				if err := os.MkdirAll(filepath.Join(store.Workspace, snapshot), 0o700); err != nil {
+					t.Fatalf("create unreadable snapshot directory: %v", err)
+				}
+			}
+			if err := writeInitialRunEvent(ledger, RunEvent{
+				RunID: runID, Seq: 1, Type: RunEventStarted, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
+				MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{
+					"boardSlug": "session-search", "snapshot": snapshot,
+				},
+			}); err != nil {
+				t.Fatalf("write legacy run start: %v", err)
+			}
+			if err := appendRunEventLine(ledger, RunEvent{
+				RunID: runID, Seq: 2, Type: RunEventBlocked, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
+				MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{
+					"reason": "legacy interruption", "resumeAllowed": true, "resumePolicy": "explicit",
+				},
+			}); err != nil {
+				t.Fatalf("write legacy blocked event: %v", err)
+			}
+			if err := store.AppendRunEvent(runID, RunEvent{
+				Type: test.eventType, Actor: "human:perttu", Data: map[string]any{"reason": "contain legacy run", "final": true},
+			}); err != nil {
+				t.Fatalf("append terminal containment event: %v", err)
+			}
+			status, err := store.ProjectRun(runID)
+			if err != nil {
+				t.Fatalf("project contained legacy run: %v", err)
+			}
+			if status.Status != test.wantStatus || !status.Final {
+				t.Fatalf("contained legacy status = %+v, want final %s", status, test.wantStatus)
+			}
+		})
+	}
+}
+
+func TestRunSnapshotReadRejectsNoncanonicalLedgerPath(t *testing.T) {
+	store, _ := s4RunFixture(t)
+	store.Now = fixedClock()
+	raw := s4MissionOnlyBoardFixture()
+	runID := newPrefixedID("run")
+	noncanonicalSnapshot := filepath.ToSlash(filepath.Join(".formations", "runs", "quarry", runID+".snapshot.toml"))
+	ledger := filepath.Join(store.Workspace, runArtifactPath("session-search", runID, ".ndjson"))
+	writeFixture(t, filepath.Join(store.Workspace, noncanonicalSnapshot), raw)
+	if err := writeInitialRunEvent(ledger, RunEvent{
+		RunID: runID, Seq: 1, Type: RunEventStarted, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
+		MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{
+			"boardSlug": "session-search", "snapshot": noncanonicalSnapshot,
+		},
+	}); err != nil {
+		t.Fatalf("write forged run start: %v", err)
+	}
+	before, err := store.ReadRunEvents(runID)
+	if err != nil {
+		t.Fatalf("read forged run: %v", err)
+	}
+	err = store.AppendRunEvent(runID, RunEvent{Type: RunEventNodeStarted, NodeID: "fmn_work"})
+	if !errors.Is(err, ErrRunLedgerInvalid) {
+		t.Fatalf("noncanonical snapshot append error = %v, want ErrRunLedgerInvalid", err)
+	}
+	after, readErr := store.ReadRunEvents(runID)
+	if readErr != nil {
+		t.Fatalf("read rejected forged run: %v", readErr)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("noncanonical snapshot rejection mutated ledger\nbefore=%+v\nafter=%+v", before, after)
+	}
+}
+
+func TestNewLegacyVerificationVerdictAppendIsRejectedButHistoricalEvidenceProjects(t *testing.T) {
+	store, _ := s4RunFixture(t)
+	store.Now = fixedClock()
+	raw := s4MissionOnlyBoardFixture()
+	writeFixture(t, store.BoardPath("session-search"), raw)
+	board, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	started, err := store.StartRun("session-search", RunStartRequest{
+		MissionID: "mis_showcase", Actor: "agent:test", ExpectedBoardETag: board.ETag, ExpectedBoardRev: board.Rev,
+	})
+	if err != nil {
+		t.Fatalf("start clean run: %v", err)
+	}
+	before, err := store.ReadRunEvents(started.RunID)
+	if err != nil {
+		t.Fatalf("read clean run: %v", err)
+	}
+	err = store.AppendRunEvent(started.RunID, RunEvent{Type: RunEventVerificationVerdict, NodeID: "fmn_old"})
+	if err == nil || !strings.Contains(err.Error(), "legacy_inline_verification_requires_migration") {
+		t.Fatalf("append verification verdict error = %v, want migration rejection", err)
+	}
+	after, err := store.ReadRunEvents(started.RunID)
+	if err != nil {
+		t.Fatalf("read rejected run: %v", err)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("rejected verification verdict mutated ledger\nbefore=%+v\nafter=%+v", before, after)
+	}
+
+	historicalRunID := newPrefixedID("run")
+	historicalLedger := filepath.Join(store.Workspace, runArtifactPath("session-search", historicalRunID, ".ndjson"))
+	if err := writeInitialRunEvent(historicalLedger, RunEvent{
+		RunID: historicalRunID, Seq: 1, Type: RunEventStarted, BoardID: "brd_showcase", BoardRev: 7,
+		MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{"boardSlug": "session-search"},
+	}); err != nil {
+		t.Fatalf("write historical start: %v", err)
+	}
+	if err := appendRunEventLine(historicalLedger, RunEvent{
+		RunID: historicalRunID, Seq: 2, Type: RunEventVerificationVerdict, NodeID: "fmn_old",
+		Data: map[string]any{"verificationId": "ver_old", "verdict": "fail"},
+	}); err != nil {
+		t.Fatalf("write historical verification evidence: %v", err)
+	}
+	if err := appendRunEventLine(historicalLedger, RunEvent{
+		RunID: historicalRunID, Seq: 3, Type: RunEventSucceeded, Data: map[string]any{"final": true},
+	}); err != nil {
+		t.Fatalf("write historical final event: %v", err)
+	}
+	events, err := store.ReadRunEvents(historicalRunID)
+	if err != nil {
+		t.Fatalf("read historical ledger: %v", err)
+	}
+	if len(events) != 3 || events[1].Type != RunEventVerificationVerdict {
+		t.Fatalf("historical events = %+v, want retained verification evidence", events)
+	}
+	projection, err := store.ProjectRun(historicalRunID)
+	if err != nil {
+		t.Fatalf("project historical ledger: %v", err)
+	}
+	if projection.Status != RunStatusSucceeded || !projection.Final {
+		t.Fatalf("historical projection = %+v, want final status determined by run_succeeded", projection)
+	}
 }
 
 func s4JudgeChainRunBoardFixture() string {

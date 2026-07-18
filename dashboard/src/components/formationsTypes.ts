@@ -27,10 +27,10 @@ export interface FormationBrief {
 }
 
 export interface FormationVerification {
-  id: string
-  kinds: string[]
-  criterion: string
-  onFail: 'block' | 'pushback'
+  id?: string
+  kinds?: string[]
+  criterion?: string
+  onFail?: string
 }
 
 export interface FormationNode {
@@ -159,11 +159,6 @@ export interface BriefDraft {
   links: string
 }
 
-export interface VerificationDraft {
-  criterion: string
-  onFail: 'block' | 'pushback'
-}
-
 export interface TerminalPopup {
   agentId: string
   title: string
@@ -189,7 +184,6 @@ export type UndoAction =
   | { kind: 'assignSlot'; formationId: string; slotId: string; agentId: string; harness: string }
   | { kind: 'makeController'; formationId: string; slotId: string }
   | { kind: 'setBrief'; formationId: string; brief?: FormationBrief }
-  | { kind: 'setVerification'; formationId: string; verification?: FormationVerification }
   | { kind: 'removePort'; formationId: string; portId: string }
   | { kind: 'unwireConnection'; from: string; to: string }
   | { kind: 'moveNode'; node: LayoutNode }

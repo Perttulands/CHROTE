@@ -114,8 +114,9 @@ type FormationVerificationRequest struct {
 }
 
 type FormationVerificationRemovalRequest struct {
-	FormationID string
-	UpdatedBy   string
+	FormationID       string
+	ReplacementGateID string
+	UpdatedBy         string
 }
 
 type FormationPortRequest struct {
@@ -672,41 +673,31 @@ func (s *Store) ClearFormationBrief(slug string, req FormationBriefClearRequest,
 }
 
 func (s *Store) SetFormationVerification(slug string, req FormationVerificationRequest, opts WriteOptions) (*BoardDocument, error) {
-	if req.FormationID == "" {
-		return nil, ErrNotFound
-	}
-	if req.OnFail != "block" && req.OnFail != "pushback" {
-		return nil, fmt.Errorf("%w: verification onFail must be block or pushback", ErrInvalidSlug)
-	}
-	return s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, _ *BoardDocument) ([]byte, error) {
-		lines := splitLines(raw)
-		formationStart, formationEnd, ok := findFormationBlockByID(lines, req.FormationID)
-		if !ok {
-			return nil, ErrNotFound
-		}
-		verificationStart, verificationEnd, ok := findFormationSection(lines, formationStart, formationEnd, "formation.verification")
-		if !ok {
-			insertAt := formationEnd
-			lines = insertTomLLines(lines, insertAt, renderVerificationSection(req, newPrefixedID("ver")))
-			return renderTOMLLines(lines), nil
-		}
-		id := scalarInBlock(lines, verificationStart+1, verificationEnd, "id")
-		if id == "" {
-			id = newPrefixedID("ver")
-		}
-		lines = setScalarInLineRange(lines, verificationStart+1, verificationEnd, "id", renderString(id))
-		lines = setScalarInLineRange(lines, verificationStart+1, verificationEnd, "kinds", renderStringArray(req.Kinds))
-		lines = setScalarInLineRange(lines, verificationStart+1, verificationEnd, "criterion", renderString(req.Criterion))
-		lines = setScalarInLineRange(lines, verificationStart+1, verificationEnd, "onFail", renderString(req.OnFail))
-		return renderTOMLLines(lines), nil
-	})
+	return nil, fmt.Errorf(
+		"%w: formation %q cannot author retired inline verification; create and wire an explicit Gate instead",
+		ErrLegacyInlineVerificationRequiresMigration,
+		req.FormationID,
+	)
 }
 
 func (s *Store) RemoveFormationVerification(slug string, req FormationVerificationRemovalRequest, opts WriteOptions) (*BoardDocument, error) {
 	if req.FormationID == "" {
 		return nil, ErrNotFound
 	}
-	return s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, _ *BoardDocument) ([]byte, error) {
+	if req.ReplacementGateID == "" {
+		return nil, fmt.Errorf("%w: replacement Gate is required before removing inline verification", ErrLegacyInlineVerificationRequiresMigration)
+	}
+	return s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, board *BoardDocument) ([]byte, error) {
+		formation, formationOK := findFormation(board.Formations, req.FormationID)
+		_, gateOK := findGate(board.Gates, req.ReplacementGateID)
+		if !formationOK || !gateOK || !formationOutputWiresToGate(board.Connections, formation, req.ReplacementGateID) {
+			return nil, fmt.Errorf(
+				"%w: replacement Gate %q must exist and be wired from formation %q before removing inline verification",
+				ErrLegacyInlineVerificationRequiresMigration,
+				req.ReplacementGateID,
+				req.FormationID,
+			)
+		}
 		lines := splitLines(raw)
 		formationStart, formationEnd, ok := findFormationBlockByID(lines, req.FormationID)
 		if !ok {
@@ -716,9 +707,50 @@ func (s *Store) RemoveFormationVerification(slug string, req FormationVerificati
 		if !ok {
 			return nil, ErrNotFound
 		}
+		verificationSections := 0
+		for i := formationStart + 1; i < formationEnd; i++ {
+			section, sectionOK := tomlSectionName(lines[i].body)
+			if sectionOK && section == "formation.verification" {
+				verificationSections++
+			}
+		}
+		if verificationSections != 1 {
+			return nil, fmt.Errorf(
+				"%w: formation %q has %d inline verification sections; repair the source before migration",
+				ErrLegacyInlineVerificationRequiresMigration,
+				req.FormationID,
+				verificationSections,
+			)
+		}
 		lines = append(lines[:verificationStart], lines[verificationEnd:]...)
-		return renderTOMLLines(lines), nil
+		nextRaw := renderTOMLLines(lines)
+		nextBoard, err := parseBoard(nextRaw)
+		if err != nil {
+			return nil, err
+		}
+		nextFormation, nextFormationOK := findFormation(nextBoard.Formations, req.FormationID)
+		if !nextFormationOK || nextFormation.Verification != nil {
+			return nil, fmt.Errorf(
+				"%w: formation %q still contains inline verification after removal",
+				ErrLegacyInlineVerificationRequiresMigration,
+				req.FormationID,
+			)
+		}
+		return nextRaw, nil
 	})
+}
+
+func formationOutputWiresToGate(connections []BoardConnection, formation FormationNode, gateID string) bool {
+	for _, output := range formation.Outputs {
+		from := formation.ID + ":" + output.ID
+		to := gateID + ":in"
+		for _, connection := range connections {
+			if connection.From == from && connection.To == to {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *Store) CreateGate(slug string, req GateCreateRequest, opts WriteOptions) (*GateCreateResult, error) {
@@ -2097,16 +2129,6 @@ func renderBriefSection(req FormationBriefRequest) []tomlLine {
 		{body: "links = " + renderStringArray(req.Links), newline: "\n"},
 	}
 	return lines
-}
-
-func renderVerificationSection(req FormationVerificationRequest, id string) []tomlLine {
-	return []tomlLine{
-		{body: "[formation.verification]", newline: "\n"},
-		{body: "id = " + renderString(id), newline: "\n"},
-		{body: "kinds = " + renderStringArray(req.Kinds), newline: "\n"},
-		{body: "criterion = " + renderString(req.Criterion), newline: "\n"},
-		{body: "onFail = " + renderString(req.OnFail), newline: "\n"},
-	}
 }
 
 func setScalarInLineRange(lines []tomlLine, start, end int, key, renderedValue string) []tomlLine {

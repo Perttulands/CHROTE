@@ -1046,8 +1046,9 @@ A board definition contains structural state:
   `retry_control` role;
 - accepted-target connections with explicit schema-2 `workflow` or reserved
   `judge` channel;
-- schema-1 verification/check specs, retained for inspection but rejected from
-  schema-2 execution until `ctx-ug7.17` defines or retires them.
+- retired schema-1 inline verification/check specs, retained for inspection and
+  replacement-Gate-bound removal but rejected from every new execution path by
+  ADR-0008.
 
 All workflow payload ports are directional. A Gate's reserved `judge` socket is
 an evaluation-control relationship rather than a typed payload port; it permits
@@ -1159,11 +1160,16 @@ Tool output it evaluates rather than the pre-Tool payload, arbitrary legacy
 commands cannot be automatically relabelled or claimed equivalent. An
 unprovable mapping fails without changing source bytes.
 
-Likewise, schema-1 inline Formation verification is not safely normalizable: its
+Likewise, schema-1 inline Formation verification is retired by ADR-0008 because its
 verdict lacks exact attempt/output identity and replay-safe revision finality.
-Schema-2 validation and run preflight fail
-`legacy_inline_verification_requires_migration`; schema-2 emits no
-`verification_verdict` until `ctx-ug7.17` defines or retires the feature.
+Validation, Mission start, isolated Formation start, and resume fail
+`legacy_inline_verification_requires_migration` before artifacts or work. New
+definitions and `verification_verdict` events are rejected; historical state is
+inspection evidence only. Compatibility removal names `replacementGateId`; the
+shared writer verifies that the Gate already exists and that a named output of
+the Formation is already connected to its input. Removal never creates or
+rewires a Gate. Historical cancellation and failure remain permitted terminal
+containment and do not authorize evaluation, routing, resume or dispatch.
 
 ADR-0006 graph typing is board schema 2. Schema-1 Formation inputs normalize in
 memory to `kind=work`, `acceptedMediaTypes=["text/plain", "text/markdown",
@@ -2134,7 +2140,9 @@ run_succeeded
 ```
 
 Schema-1 `verification_verdict` remains legacy inspection evidence only and is
-not accepted in a schema-2 ledger.
+not accepted as a new append. It never routes work, resumes a run, or opens a
+revision attempt. A historical run may still append its normal terminal
+`run_canceled` or `run_failed` event without evaluating the retired check.
 
 ### Redacted-run evidence and recovery
 

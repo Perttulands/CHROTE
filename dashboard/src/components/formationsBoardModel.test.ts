@@ -1,14 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
   cloneBrief,
-  cloneVerification,
   findAddedByID,
   findAddedPort,
   judgeChainWithReturn,
   undoBoardPatch,
   upsertNode,
 } from './formationsBoardModel'
-import type { BoardDocument, FormationBrief, FormationVerification, LayoutNode } from './formationsTypes'
+import type { BoardDocument, FormationBrief, LayoutNode } from './formationsTypes'
 
 describe('formations board model helpers', () => {
   it('upserts layout nodes without reordering unrelated nodes', () => {
@@ -75,17 +74,13 @@ describe('formations board model helpers', () => {
     expect(findAddedPort(before, after, 'formation-frame', 'input')).toEqual({ id: 'extra', label: 'extra' })
   })
 
-  it('clones mutable brief and verification arrays for undo snapshots', () => {
+  it('clones mutable brief arrays for undo snapshots', () => {
     const brief: FormationBrief = { goal: 'Ship', beadId: 'home-vdki.27', files: ['a.md'], links: ['https://example.test'] }
-    const verification: FormationVerification = { id: 'ver-1', kinds: ['code'], criterion: 'passes', onFail: 'block' }
     const briefClone = cloneBrief(brief)
-    const verificationClone = cloneVerification(verification)
 
     brief.files?.push('later.md')
-    verification.kinds.push('human')
 
     expect(briefClone.files).toEqual(['a.md'])
-    expect(verificationClone.kinds).toEqual(['code'])
   })
 
   it('preserves the existing judge entry chain when moving the return edge', () => {

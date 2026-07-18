@@ -4,7 +4,6 @@ import type {
   BoardUndoAction,
   FormationBrief,
   FormationPort,
-  FormationVerification,
   LayoutNode,
 } from './formationsTypes'
 
@@ -51,18 +50,6 @@ export function undoBoardPatch(action: BoardUndoAction): Record<string, unknown>
           links: action.brief.links || [],
         },
       }
-    case 'setVerification':
-      if (!action.verification) {
-        return { removeVerification: { formationId: action.formationId } }
-      }
-      return {
-        setVerification: {
-          formationId: action.formationId,
-          kinds: action.verification.kinds || ['code'],
-          criterion: action.verification.criterion || '',
-          onFail: action.verification.onFail,
-        },
-      }
     case 'removePort':
       return {
         removePort: {
@@ -99,15 +86,6 @@ export function cloneBrief(brief: FormationBrief): FormationBrief {
     beadId: brief.beadId || '',
     files: [...(brief.files || [])],
     links: [...(brief.links || [])],
-  }
-}
-
-export function cloneVerification(verification: FormationVerification): FormationVerification {
-  return {
-    id: verification.id,
-    kinds: [...(verification.kinds || [])],
-    criterion: verification.criterion,
-    onFail: verification.onFail,
   }
 }
 

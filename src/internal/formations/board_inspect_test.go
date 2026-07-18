@@ -216,6 +216,30 @@ title = "Bogus"
 	}
 }
 
+func TestValidateBoardReportsLegacyInlineVerificationAsMigrationRequired(t *testing.T) {
+	raw := strings.Replace(cleanValidateBoardFixture(), `[[formation.output]]
+id = "port_work_out"
+label = "Output"
+`, `[[formation.output]]
+id = "port_work_out"
+label = "Output"
+
+[formation.verification]
+id = "ver_work"
+kinds = ["code"]
+criterion = "Tests pass"
+onFail = "block"
+`, 1)
+	report := ValidateBoard(mustParseValidateBoardFixture(t, raw))
+	legacy := findBoardFindings(report.Errors, "legacy_inline_verification_requires_migration")
+	if len(legacy) != 1 || legacy[0].NodeID != "fmn_work" {
+		t.Fatalf("legacy inline verification findings = %+v, want fmn_work migration error", legacy)
+	}
+	if !strings.Contains(legacy[0].Message, "explicit Gate") {
+		t.Fatalf("legacy inline verification message = %q, want explicit Gate guidance", legacy[0].Message)
+	}
+}
+
 func TestValidateBoardReportsMissionCountAndRunnability(t *testing.T) {
 	noMission := strings.Replace(cleanValidateBoardFixture(), `[[mission]]
 id = "mis_main"

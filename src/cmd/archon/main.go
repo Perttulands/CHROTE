@@ -181,6 +181,8 @@ func run(args []string, stdout, stderr io.Writer, runner tmuxRunner) int {
 			return runFormationUnassign(store, args[2:], stdout, stderr)
 		case "set-brief":
 			return runFormationSetBrief(store, args[2:], stdout, stderr)
+		case "remove-verification":
+			return runFormationRemoveVerification(store, args[2:], stdout, stderr)
 		case "add-input":
 			return runFormationAddPort(store, args[2:], stdout, stderr, formations.FormationPortInput)
 		case "add-output":
@@ -676,6 +678,39 @@ func runFormationSetBrief(store *formations.Store, args []string, stdout, stderr
 		return writeJSON(stdout, result)
 	}
 	fmt.Fprintf(stdout, "updated brief for %s\n", formationID)
+	return 0
+}
+
+func runFormationRemoveVerification(store *formations.Store, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("formation remove-verification", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	replacementGate := fs.String("replacement-gate", "", "explicit Gate already wired from the Formation")
+	updatedBy := fs.String("updated-by", "agent:archon", "update actor")
+	jsonOut := fs.Bool("json", false, "write JSON")
+	if err := fs.Parse(reorderFlags(args, map[string]bool{"json": true})); err != nil {
+		return 2
+	}
+	if fs.NArg() != 2 {
+		fmt.Fprintln(stderr, "usage: archon formation remove-verification <board> <formation> --replacement-gate <gate> [--json]")
+		return 2
+	}
+	slug, board, formationID, err := resolveFormationCommandTarget(store, fs.Arg(0), fs.Arg(1))
+	if err != nil {
+		return failSelector(stderr, err, *jsonOut, "formation", fs.Arg(1))
+	}
+	result, err := store.RemoveFormationVerification(slug, formations.FormationVerificationRemovalRequest{
+		FormationID:       formationID,
+		ReplacementGateID: *replacementGate,
+		UpdatedBy:         *updatedBy,
+	}, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
+	if err != nil {
+		return failJSON(stderr, err, *jsonOut, "formation", formationID)
+	}
+	result.TOML = ""
+	if *jsonOut {
+		return writeJSON(stdout, result)
+	}
+	fmt.Fprintf(stdout, "removed legacy inline verification from %s\n", formationID)
 	return 0
 }
 
@@ -2125,6 +2160,8 @@ func archonErrorCode(err error) string {
 		return "unsupported_schema"
 	case errors.Is(err, formations.ErrLegacyScriptGateRequiresFencedMigration):
 		return formations.LegacyScriptGateMigrationCode
+	case errors.Is(err, formations.ErrLegacyInlineVerificationRequiresMigration):
+		return formations.LegacyInlineVerificationMigrationCode
 	case errors.Is(err, formations.ErrRunFinal):
 		return "run_final"
 	case errors.Is(err, formations.ErrRunLedgerInvalid):

@@ -6,6 +6,7 @@ import {
   runEventText,
   runStatusFromResponse,
   statusFromRunEvent,
+  projectNodeStates,
   upsertRunEvent,
 } from './formationsRunState'
 import type { RunEvent, RunStatusProjection } from './formationsTypes'
@@ -30,6 +31,15 @@ describe('formations run-state helpers', () => {
     expect(statusFromRunEvent({ runId: 'run_1', seq: 2, type: 'run_blocked' })).toBe('blocked')
     expect(statusFromRunEvent({ runId: 'run_1', seq: 3, type: 'run_succeeded' })).toBe('succeeded')
     expect(statusFromRunEvent({ runId: 'run_1', seq: 4, type: 'node_output' })).toBe('')
+  })
+
+  it('keeps historical inline-verification verdicts non-authorizing in node projection', () => {
+    const states = projectNodeStates([
+      { runId: 'run_1', seq: 1, type: 'node_output', nodeId: 'fmn_work', data: { status: 'done' } },
+      { runId: 'run_1', seq: 2, type: 'verification_verdict', nodeId: 'fmn_work', data: { verdict: 'fail' } },
+    ], null)
+
+    expect(states.get('fmn_work')).toBe('done')
   })
 
   it('extracts run text, report references, and resume affordance from events', () => {

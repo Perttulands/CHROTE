@@ -155,6 +155,9 @@ func (s *Store) StartRun(slug string, req RunStartRequest) (*RunStartResult, err
 	if err != nil {
 		return nil, err
 	}
+	if err := rejectLegacyInlineVerification(board); err != nil {
+		return nil, err
+	}
 	if req.ExpectedBoardETag != "" && req.ExpectedBoardETag != board.ETag {
 		return nil, ErrConflict
 	}
@@ -223,6 +226,9 @@ func (s *Store) StartRun(slug string, req RunStartRequest) (*RunStartResult, err
 }
 
 func (s *Store) AppendRunEvent(runID string, event RunEvent) error {
+	if event.Type == RunEventVerificationVerdict {
+		return fmt.Errorf("%w: new verification_verdict events are retired; use an explicit Gate", ErrLegacyInlineVerificationRequiresMigration)
+	}
 	ledgerPath, err := s.findRunLedger(runID)
 	if err != nil {
 		return err
@@ -246,6 +252,9 @@ func (s *Store) AppendRunEvent(runID string, event RunEvent) error {
 				return err
 			}
 			if err := rejectLegacyScriptGateForRun(snapshot, first, &event); err != nil {
+				return err
+			}
+			if err := rejectLegacyInlineVerification(snapshot); err != nil {
 				return err
 			}
 		}
@@ -316,6 +325,9 @@ func (s *Store) ResumeRun(runID string, req RunResumeRequest) (*RunStatusProject
 		if err := rejectLegacyScriptGateForRun(snapshot, first, nil); err != nil {
 			return err
 		}
+		if err := rejectLegacyInlineVerification(snapshot); err != nil {
+			return err
+		}
 		if last.Type != RunEventBlocked || !boolFromEventData(last, "resumeAllowed") {
 			return ErrRunResumeNotAllowed
 		}
@@ -357,7 +369,8 @@ func (s *Store) ResumeRun(runID string, req RunResumeRequest) (*RunStatusProject
 
 func (s *Store) readRunSnapshot(started RunEvent) (*BoardDocument, error) {
 	snapshotPath := stringFromEventData(started, "snapshot")
-	if snapshotPath == "" {
+	boardSlug := stringFromEventData(started, "boardSlug")
+	if snapshotPath == "" || boardSlug == "" || started.RunID == "" || snapshotPath != runArtifactPath(boardSlug, started.RunID, ".snapshot.toml") {
 		return nil, ErrRunLedgerInvalid
 	}
 	snapshotRaw, err := os.ReadFile(filepath.Join(s.Workspace, snapshotPath))

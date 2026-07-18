@@ -79,7 +79,7 @@ and judgment of each turn to the agents while making scheduling auditable.
 | Port | Stable named input/output address with a declared payload kind |
 | Payload | Typed work, gate feedback, unavailable result, or error routed through a port |
 | Gate | Human/code/judge evaluator and router; never a transformation step |
-| Verification | Schema-1 inline check retained for inspection; schema-2 execution is deferred |
+| Verification | Retired schema-1 inline check retained only for compatibility inspection and replacement-Gate-bound removal |
 | Run | Execution instance that binds slots, dispatches work, records events, and projects state |
 | Ledger | Append-only event history for a run |
 
@@ -197,11 +197,15 @@ safely normalizable schema-1 board may start from an immutable normalized
 schema-2 run snapshot without rewriting the canonical board; source/snapshot
 schema are recorded. Schema-1 runs are inspect-only and resume returns
 `legacy_run_requires_new_run`.
-Schema-1 inline Formation verification is also inspection-only for schema-2.
-Its existing verdict lacks exact attempt/output and replay-safe revision
-identity, so validation and run preflight fail
-`legacy_inline_verification_requires_migration` until `ctx-ug7.17` defines or
-retires it. Schema-2 emits no `verification_verdict`.
+Schema-1 inline Formation verification is retired by ADR-0008. Its existing
+verdict lacks exact attempt/output and replay-safe revision identity, so
+validation, Mission start, isolated Formation start, and resume fail
+`legacy_inline_verification_requires_migration` before run artifacts or work.
+New definitions and `verification_verdict` events are rejected; historical
+definitions and verdicts remain inspection evidence only. Authors create a
+replacement Gate, wire a named Formation output to it, then name that Gate in
+the explicit removal request. Cancellation and failure may still close a
+historical run without resuming, routing or dispatching legacy verification.
 
 Schema 2 includes ADR-0007 command identity, workspace/fence authority, the
 hash-bound Formation result, root projections, and authored-config manifest
@@ -968,7 +972,8 @@ The reference interaction model is permissive direct manipulation:
 - drag agents from roster into slots;
 - create missions, formations, gates, and templates from the canvas;
 - edit briefs and explicit Gates through local popovers; legacy inline
-  verification remains read-only until `ctx-ug7.17` resolves it;
+  verification opens a read-only migration view whose removal action requires
+  an already-wired replacement Gate;
 - connect, reconnect, route, and remove wires directly;
 - place only newly created elements heuristically and run full layout only from
   the explicit Arrange action; never auto-arrange existing user work;
@@ -1105,7 +1110,7 @@ Formations is working when:
 - CLI changes appear in the UI without structural drift;
 - run state is visible on the graph, not buried only in logs;
 - explicit Gates can block, pass, fail, drive wired correction, or delegate
-  judgment without granting legacy inline verification schema-2 authority;
+  judgment; retired inline verification has no execution or routing authority;
 - failures leave durable evidence and recovery handles;
 - mixed Mission/Formation/Tool/Gate workflows expose named inputs, outputs,
   artifacts, and typed failure/feedback without semantic drift;

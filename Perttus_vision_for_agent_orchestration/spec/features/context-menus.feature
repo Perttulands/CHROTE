@@ -46,7 +46,8 @@ Feature: Right-click anything — context menus expose the expected commands eve
     Given a schema-1 board contains an inline verification band
     When I right-click the verification band in schema-2 Formations
     Then its legacy configuration is inspectable but not authorable
-    And Add, Configure, and Remove verification actions are absent
+    And Add, Configure, and Save verification actions are absent
+    And destructive removal requires an existing replacement Gate already wired from a named output of that Formation
     And schema-2 validation still rejects "legacy_inline_verification_requires_migration"
 
   @ui

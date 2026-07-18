@@ -287,6 +287,20 @@ test.describe('Formations cockpit — D7 reference parity', () => {
     await expect(page.locator('.fmx .zoomctl')).toBeVisible()
   })
 
+  test('keeps legacy inline verification legible without offering authoring', async ({ page }) => {
+    const formation = mockFormationsBoard.formations[0]
+    const band = page.getByRole('button', { name: `Inspect legacy verification for ${formation.title}` })
+    await expect(band).toBeVisible()
+    await band.click()
+
+    const dialog = page.getByRole('dialog', { name: `Legacy verification · ${formation.title}` })
+    await expect(dialog).toContainText(formation.verification.criterion)
+    await expect(dialog).toContainText('Create and wire an explicit Gate')
+    await expect(dialog.getByRole('button', { name: 'Save verification' })).toHaveCount(0)
+    await expect(dialog.getByLabel('Replacement Gate')).toHaveValue(mockFormationsBoard.gates[0].id)
+    await expect(dialog.getByRole('button', { name: 'Remove legacy verification' })).toBeVisible()
+  })
+
   test('matches the 03-formations.html first-viewport cockpit geometry', async ({ page }) => {
     const cockpit = page.locator('.fmx[data-cockpit="d7"]')
     const topbar = page.locator('.fmx .topbar')

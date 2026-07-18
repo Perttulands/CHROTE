@@ -2,9 +2,11 @@
 
 > **Historical S0 implementation map.** The `home-7kc4.*` ownership and feature-
 > flag sequencing below describe the 2026-06-03 slice plan. Current root specs,
-> accepted ADR-0005/0006, `docs/source-truth-index.md`, and `ctx-ug7.*` Beads win.
-> In particular, inline verification is now schema-1 inspection/migration input
-> only until `ctx-ug7.17` defines or retires it.
+> accepted ADR-0005/0006/0007/0008, `docs/source-truth-index.md`, and
+> `ctx-ug7.*` Beads win.
+> In particular, ADR-0008 retires inline verification. Schema-1 state remains
+> inspection and replacement-Gate-bound removal input only; explicit Gates own
+> verification.
 
 This is the S0 acceptance map for `home-7kc4.1`. It pins how the
 behavioral spec in this directory is divided across the Formations child beads.

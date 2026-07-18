@@ -53,7 +53,7 @@ close.
 ```text
 archon agent      list | inspect | new | edit | spawn | attach | retire
 archon board      new | list | inspect | validate | arrange
-archon formation  create | list | inspect | assign | unassign | set-brief | add-input | add-output | wire | unwire | run
+archon formation  create | list | inspect | assign | unassign | set-brief | remove-verification | add-input | add-output | wire | unwire | run
 archon gate       create | update | judge | approve | reject
 archon mission    create | list | inspect | wire | run
 archon run        list | status | logs | follow | resume | abort | ask
@@ -76,6 +76,17 @@ Current main also executes `mission run`, `formation run`, and `run resume`
 synchronously in an Archon-local engine, reads workspace run files directly,
 and implements `run abort` by appending final cancellation. That is compatibility
 behavior, not the accepted schema-2 ownership contract.
+
+Schema-1 inline Formation verification is retired by ADR-0008. Archon inspection
+keeps legacy blocks legible, but authoring, run start, resume, and verdict entry
+fail `legacy_inline_verification_requires_migration` before artifacts or work.
+After an author explicitly creates a replacement Gate and wires a named output
+of the Formation to it,
+`formation remove-verification <board> <formation> --replacement-gate <gate>`
+is the compatibility-only removal operation. The named Gate must already exist
+and have that input connection; Archon never converts, creates or rewires the
+legacy block automatically. Historical runs remain inspectable and may still be
+terminated as canceled or failed without resuming legacy execution.
 
 ADR-0007 accepts a different runtime boundary. Archon continues to author,
 validate, and inspect workflow definitions offline through the shared package.

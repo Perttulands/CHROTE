@@ -579,11 +579,16 @@ validation and run preflight reject it until it is rewired to a typed feedback
 data port or the evaluated source's `retry_control` port. Legacy annotated-work
 pushback is never inferred.
 
-Schema-1 inline Formation verification also remains inspectable but cannot be
-normalized into schema-2 execution. Its existing verdict has no exact
-attempt/output identity or replay-safe block/revision closer. Validation and run
-preflight fail `legacy_inline_verification_requires_migration`, and schema-2
-emits no `verification_verdict`; `ctx-ug7.17` owns definition or retirement.
+ADR-0008 retires schema-1 inline Formation verification. It remains inspectable
+but cannot be normalized into execution because its existing verdict has no
+exact attempt/output identity or replay-safe block/revision closer. Validation,
+Mission start, isolated Formation start, and resume fail
+`legacy_inline_verification_requires_migration` before artifacts or work. New
+definitions and `verification_verdict` events are rejected; historical records
+remain non-authorizing evidence. Compatibility removal must name an existing
+replacement Gate already wired from a named output of the Formation; it neither
+creates nor rewires that Gate. Historical cancellation and failure remain
+available as non-executing terminal containment.
 
 Run start does not mutate a schema-1 canonical board. If it has no degraded
 legacy features, preflight writes a normalized schema-2 immutable run snapshot and
@@ -1223,9 +1228,8 @@ ADR-0007.
   inspection. `ctx-ug7.8.1` owns non-executing Tool definitions, registry
   descriptors, and board authoring; `ctx-ug7.8` owns certified host-private
   implementation packaging and runtime execution; `ctx-ug7.30` owns pure
-  code-Gate profiles and the later explicit apply.
-  `ctx-ug7.17` owns fail-closed
-  schema-2 handling and the define-or-retire decision for inline Formation
-  verification. Legacy shapes remain inspection/migration input only.
+  code-Gate profiles and the later explicit apply. ADR-0008 and `ctx-ug7.17` retire
+  inline Formation verification in favor of explicit Gates; its legacy shape is
+  inspection and replacement-Gate-bound removal input only.
 - `ctx-8o9`, `ctx-ug7.5`, and `ctx-ug7.15` own CI and exact-candidate
   certification. `scripts/doc-lint.py` remains the active-spec hygiene gate.

@@ -895,7 +895,7 @@ controller = false
 	}
 }
 
-func TestS3BriefAndVerificationPersistProjectBeadAndOnFail(t *testing.T) {
+func TestS3BriefPersistsAndInlineVerificationAPIWriteFailsWithoutMutation(t *testing.T) {
 	store := formations.NewStore(t.TempDir())
 	store.Now = fixedFormationsAPIClock()
 	writeFormationsAPIFixture(t, store.BoardPath("session-search"), `schema = 1
@@ -929,17 +929,286 @@ title = "Ship"
 	if err != nil {
 		t.Fatalf("read brief board: %v", err)
 	}
+	rawBeforeVerification := readFormationsAPIFile(t, store.BoardPath("session-search"))
 
 	verifyReq := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/session-search", bytes.NewBufferString(`{"setVerification":{"formationId":"fmn_ship","kinds":["code"],"criterion":"Tests pass.","onFail":"block"},"expectedRev":8,"updatedBy":"agent:test"}`))
 	verifyReq.Header.Set("If-Match", withBrief.ETag)
 	verifyRec := httptest.NewRecorder()
 	mux.ServeHTTP(verifyRec, verifyReq)
-	if verifyRec.Code != http.StatusOK {
-		t.Fatalf("verification status = %d, want %d: %s", verifyRec.Code, http.StatusOK, verifyRec.Body.String())
+	if verifyRec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("verification status = %d, want %d: %s", verifyRec.Code, http.StatusUnprocessableEntity, verifyRec.Body.String())
 	}
-	if !bytes.Contains(verifyRec.Body.Bytes(), []byte(`"beadId":"srv-abc.2"`)) || !bytes.Contains(verifyRec.Body.Bytes(), []byte(`"onFail":"block"`)) {
-		t.Fatalf("verification response missing brief/onFail: %s", verifyRec.Body.String())
+	if !bytes.Contains(verifyRec.Body.Bytes(), []byte(`"code":"legacy_inline_verification_requires_migration"`)) {
+		t.Fatalf("verification response missing stable migration code: %s", verifyRec.Body.String())
 	}
+	after, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board after rejected verification: %v", err)
+	}
+	if after.Rev != withBrief.Rev || after.ETag != withBrief.ETag {
+		t.Fatalf("rejected verification changed board identity: before rev/etag=%d/%s after=%d/%s", withBrief.Rev, withBrief.ETag, after.Rev, after.ETag)
+	}
+	if rawAfter := readFormationsAPIFile(t, store.BoardPath("session-search")); rawAfter != rawBeforeVerification {
+		t.Fatalf("rejected verification changed board bytes\nbefore:\n%s\nafter:\n%s", rawBeforeVerification, rawAfter)
+	}
+}
+
+func TestFormationsHandlerRejectsLegacyInlineVerificationRunsBeforeArtifacts(t *testing.T) {
+	store := formations.NewStore(t.TempDir())
+	store.Now = fixedFormationsAPIClock()
+	legacyRaw := formationsAPILegacyInlineVerificationFixture()
+	writeFormationsAPIFixture(t, store.BoardPath("legacy-inline"), legacyRaw)
+	handler := NewFormationsHandlerWithStore(store)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	for _, body := range []string{
+		`{"board":"legacy-inline","missionId":"mis_main","actor":"agent:test"}`,
+		`{"board":"legacy-inline","formationId":"fmn_work","actor":"agent:test"}`,
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/api/formations/runs", bytes.NewBufferString(body))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("start status = %d, want %d: %s", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+		}
+		if !bytes.Contains(rec.Body.Bytes(), []byte(`"code":"legacy_inline_verification_requires_migration"`)) {
+			t.Fatalf("start response missing stable migration code: %s", rec.Body.String())
+		}
+	}
+	runsDir := filepath.Join(store.Workspace, ".formations", "runs", "legacy-inline")
+	entries, err := os.ReadDir(runsDir)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read runs directory: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("run artifacts = %+v, want none before API rejection", entries)
+	}
+
+	cleanRaw := strings.Replace(legacyRaw, `[formation.verification]
+id = "ver_work"
+kinds = ["code"]
+criterion = "Tests pass"
+onFail = "block"
+
+`, "", 1)
+	writeFormationsAPIFixture(t, store.BoardPath("legacy-inline"), cleanRaw)
+	cleanBoard, err := store.ReadBoard("legacy-inline")
+	if err != nil {
+		t.Fatalf("read clean compatibility board: %v", err)
+	}
+	started, err := store.StartRun("legacy-inline", formations.RunStartRequest{
+		MissionID: "mis_main", Actor: "agent:test", ExpectedBoardETag: cleanBoard.ETag, ExpectedBoardRev: cleanBoard.Rev,
+	})
+	if err != nil {
+		t.Fatalf("start historical compatibility run: %v", err)
+	}
+	if err := store.AppendRunEvent(started.RunID, formations.RunEvent{Type: formations.RunEventBlocked, Data: map[string]any{
+		"reason": "legacy interruption", "resumeAllowed": true, "resumePolicy": "explicit",
+	}}); err != nil {
+		t.Fatalf("block historical compatibility run: %v", err)
+	}
+	writeFormationsAPIFixture(t, filepath.Join(store.Workspace, started.SnapshotPath), legacyRaw)
+	ledgerPath := filepath.Join(store.Workspace, started.LedgerPath)
+	beforeResume := readFormationsAPIFile(t, ledgerPath)
+	resumeReq := httptest.NewRequest(http.MethodPost, "/api/formations/runs/"+started.RunID+"/resume", bytes.NewBufferString(`{"actor":"agent:test","mode":"reattach"}`))
+	resumeRec := httptest.NewRecorder()
+	mux.ServeHTTP(resumeRec, resumeReq)
+	if resumeRec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("resume status = %d, want %d: %s", resumeRec.Code, http.StatusUnprocessableEntity, resumeRec.Body.String())
+	}
+	if !bytes.Contains(resumeRec.Body.Bytes(), []byte(`"code":"legacy_inline_verification_requires_migration"`)) {
+		t.Fatalf("resume response missing stable migration code: %s", resumeRec.Body.String())
+	}
+	if afterResume := readFormationsAPIFile(t, ledgerPath); afterResume != beforeResume {
+		t.Fatalf("rejected API resume changed ledger\nbefore:\n%s\nafter:\n%s", beforeResume, afterResume)
+	}
+	abortReq := httptest.NewRequest(http.MethodPost, "/api/formations/runs/"+started.RunID+"/abort", bytes.NewBufferString(`{"reason":"retire legacy run","requestedBy":"human:perttu"}`))
+	abortRec := httptest.NewRecorder()
+	mux.ServeHTTP(abortRec, abortReq)
+	if abortRec.Code != http.StatusOK || !bytes.Contains(abortRec.Body.Bytes(), []byte(`"status":"canceled"`)) || !bytes.Contains(abortRec.Body.Bytes(), []byte(`"final":true`)) {
+		t.Fatalf("abort legacy run status=%d body=%s, want final canceled", abortRec.Code, abortRec.Body.String())
+	}
+}
+
+func TestFormationsHandlerInspectsAndExplicitlyMigratesLegacyInlineVerification(t *testing.T) {
+	store := formations.NewStore(t.TempDir())
+	store.Now = fixedFormationsAPIClock()
+	writeFormationsAPIFixture(t, store.BoardPath("legacy-inline"), formationsAPILegacyInlineVerificationFixture())
+	handler := NewFormationsHandlerWithStore(store)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	inspectRec := httptest.NewRecorder()
+	mux.ServeHTTP(inspectRec, httptest.NewRequest(http.MethodGet, "/api/formations/boards/legacy-inline", nil))
+	if inspectRec.Code != http.StatusOK || !bytes.Contains(inspectRec.Body.Bytes(), []byte(`"verification"`)) || !bytes.Contains(inspectRec.Body.Bytes(), []byte(`"criterion":"Tests pass"`)) {
+		t.Fatalf("legacy inspection status=%d body=%s, want readable verification", inspectRec.Code, inspectRec.Body.String())
+	}
+	before, err := store.ReadBoard("legacy-inline")
+	if err != nil {
+		t.Fatalf("read legacy board: %v", err)
+	}
+	rawBefore := readFormationsAPIFile(t, store.BoardPath("legacy-inline"))
+
+	missingReq := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/legacy-inline", bytes.NewBufferString(`{"removeVerification":{"formationId":"fmn_work"},"expectedRev":7,"updatedBy":"agent:test"}`))
+	missingReq.Header.Set("If-Match", before.ETag)
+	missingRec := httptest.NewRecorder()
+	mux.ServeHTTP(missingRec, missingReq)
+	if missingRec.Code != http.StatusUnprocessableEntity || !bytes.Contains(missingRec.Body.Bytes(), []byte(`"code":"legacy_inline_verification_requires_migration"`)) {
+		t.Fatalf("missing replacement status=%d body=%s, want stable migration rejection", missingRec.Code, missingRec.Body.String())
+	}
+	if rawAfter := readFormationsAPIFile(t, store.BoardPath("legacy-inline")); rawAfter != rawBefore {
+		t.Fatalf("missing replacement changed board\nbefore:\n%s\nafter:\n%s", rawBefore, rawAfter)
+	}
+
+	removeReq := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/legacy-inline", bytes.NewBufferString(`{"removeVerification":{"formationId":"fmn_work","replacementGateId":"gate_migrated"},"expectedRev":7,"updatedBy":"agent:test"}`))
+	removeReq.Header.Set("If-Match", before.ETag)
+	removeRec := httptest.NewRecorder()
+	mux.ServeHTTP(removeRec, removeReq)
+	if removeRec.Code != http.StatusOK {
+		t.Fatalf("explicit migration status=%d body=%s", removeRec.Code, removeRec.Body.String())
+	}
+	after, err := store.ReadBoard("legacy-inline")
+	if err != nil {
+		t.Fatalf("read migrated board: %v", err)
+	}
+	if after.Formations[0].Verification != nil || len(after.Gates) != 1 || after.Gates[0].ID != "gate_migrated" || !hasAPIConnection(after.Connections, "fmn_work:port_work_out", "gate_migrated:in") {
+		t.Fatalf("explicit migration changed more than the legacy block: %+v", after)
+	}
+}
+
+func TestFormationsHandlerRejectsAmbiguousInlineVerificationPatchesBeforeMutation(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       string
+		wantStatus int
+		wantCode   string
+	}{
+		{
+			name:       "null set verification mixed with title",
+			body:       `{"setVerification":null,"title":"Must not change","expectedRev":7}`,
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   formations.LegacyInlineVerificationMigrationCode,
+		},
+		{
+			name:       "case variant set verification",
+			body:       `{"SetVerification":{"formationId":"fmn_work","kinds":["code"],"criterion":"Tests pass","onFail":"block"},"expectedRev":7}`,
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   formations.LegacyInlineVerificationMigrationCode,
+		},
+		{
+			name:       "duplicate set verification ending in null before another mutation",
+			body:       `{"setVerification":{"formationId":"fmn_work"},"setVerification":null,"createMission":{"title":"Must not exist","goal":"No mutation","beadId":"ctx-ug7.17"},"expectedRev":7}`,
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   formations.LegacyInlineVerificationMigrationCode,
+		},
+		{
+			name:       "remove verification mixed with title",
+			body:       `{"title":"Must not change","removeVerification":{"formationId":"fmn_work","replacementGateId":"gate_migrated"},"expectedRev":7}`,
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   formations.LegacyInlineVerificationMigrationCode,
+		},
+		{
+			name:       "duplicate remove verification ending in null",
+			body:       `{"removeVerification":{"formationId":"fmn_work","replacementGateId":"gate_migrated"},"removeVerification":null,"title":"Must not change","expectedRev":7}`,
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   formations.LegacyInlineVerificationMigrationCode,
+		},
+		{
+			name:       "case variant null remove verification",
+			body:       `{"RemoveVerification":null,"expectedRev":7}`,
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   formations.LegacyInlineVerificationMigrationCode,
+		},
+		{
+			name:       "trailing inline verification JSON",
+			body:       `{"title":"Must not change","expectedRev":7} {"setVerification":{"formationId":"fmn_work"}}`,
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := formations.NewStore(t.TempDir())
+			store.Now = fixedFormationsAPIClock()
+			writeFormationsAPIFixture(t, store.BoardPath("legacy-inline"), formationsAPILegacyInlineVerificationFixture())
+			before, err := store.ReadBoard("legacy-inline")
+			if err != nil {
+				t.Fatalf("read legacy board: %v", err)
+			}
+			rawBefore := readFormationsAPIFile(t, store.BoardPath("legacy-inline"))
+			handler := NewFormationsHandlerWithStore(store)
+			mux := http.NewServeMux()
+			handler.RegisterRoutes(mux)
+
+			req := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/legacy-inline", bytes.NewBufferString(test.body))
+			req.Header.Set("If-Match", before.ETag)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != test.wantStatus {
+				t.Fatalf("status = %d body=%s, want %d", rec.Code, rec.Body.String(), test.wantStatus)
+			}
+			if test.wantCode != "" && !strings.Contains(rec.Body.String(), `"code":"`+test.wantCode+`"`) {
+				t.Fatalf("body=%s, want stable code %s", rec.Body.String(), test.wantCode)
+			}
+			if rawAfter := readFormationsAPIFile(t, store.BoardPath("legacy-inline")); rawAfter != rawBefore {
+				t.Fatalf("rejected patch changed board\nbefore:\n%s\nafter:\n%s", rawBefore, rawAfter)
+			}
+			if _, err := os.Stat(store.LayoutPath("legacy-inline")); !os.IsNotExist(err) {
+				t.Fatalf("rejected patch created layout: %v", err)
+			}
+		})
+	}
+}
+
+func formationsAPILegacyInlineVerificationFixture() string {
+	return `schema = 1
+id = "brd_legacy_inline"
+slug = "legacy-inline"
+title = "Legacy inline verification"
+rev = 7
+updatedAt = "2026-06-03T16:00:00Z"
+
+[[mission]]
+id = "mis_main"
+title = "Main"
+goal = "Ship it"
+beadId = "ctx-ug7.17"
+
+[[formation]]
+id = "fmn_work"
+type = "solo"
+title = "Work"
+
+[[formation.input]]
+id = "port_work_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_work_out"
+label = "Output"
+
+[formation.verification]
+id = "ver_work"
+kinds = ["code"]
+criterion = "Tests pass"
+onFail = "block"
+
+[[gate]]
+id = "gate_migrated"
+title = "Migrated check"
+kinds = ["code"]
+criterion = "Tests pass"
+
+[[connection]]
+id = "edge_main_work"
+from = "mis_main:out"
+to = "fmn_work:port_work_in"
+
+[[connection]]
+id = "edge_work_gate"
+from = "fmn_work:port_work_out"
+to = "gate_migrated:in"
+`
 }
 
 func TestS3WireRejectsSelfDuplicateAndSecondInput(t *testing.T) {

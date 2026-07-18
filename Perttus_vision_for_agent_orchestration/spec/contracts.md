@@ -272,13 +272,17 @@ Preflight writes a normalized schema-2 immutable run snapshot, records
 `sourceBoardSchema=1` and `snapshotSchema=2`, and executes only that snapshot.
 Unsafe normalization rejects before `run_started`.
 
-Schema-1 inline `formation.verification` remains inspectable compatibility
-state, but it is not safely normalizable because its verdict lacks exact
-attempt/output identity and replay-safe block/revision finality. A board that
-contains it fails schema-2 validation and run preflight with
-`legacy_inline_verification_requires_migration`. The schema-2 writer does not
-emit `verification_verdict`; definition or retirement is owned by
-`ctx-ug7.17`.
+ADR-0008 retires schema-1 inline `formation.verification`. It remains inspectable
+compatibility state, but it is not safely normalizable because its verdict lacks
+exact attempt/output identity and replay-safe block/revision finality. A board
+that contains it fails validation, Mission start, isolated Formation start, and
+resume with `legacy_inline_verification_requires_migration` before artifacts or
+work. New definitions and `verification_verdict` appends are rejected;
+historical records remain non-authorizing evidence. Migration means explicitly
+creating a replacement Gate, wiring a named Formation output to its input and
+naming that Gate as `replacementGateId` when explicitly removing the legacy
+block. A historical run may still be canceled or failed without evaluating,
+routing, resuming or dispatching the retired check.
 
 A schema-2 `code` Gate references a host-owned, versioned, certified
 deterministic in-process evaluator profile plus modeled non-secret parameters.
@@ -2935,12 +2939,17 @@ Node projection:
   project the canonical all-of Gate state for that attempt. A waiting request
   routes nothing; one aggregate verdict closes evaluation and provides the only
   route. A schema-1 `verification_verdict` remains legacy inspection evidence
-  only and is never accepted into a schema-2 ledger.
+  only and is never accepted as a new append or as routing/revision authority.
 
 ## API Surface
 
 The API is the shared UI/CLI contract. Board and layout write endpoints use
-`If-Match` with the relevant ETag/revision. Persona-card edits use the shared
+`If-Match` with the relevant ETag/revision. The retired inline-verification
+removal patch is exactly
+`removeVerification: {formationId, replacementGateId}`. The named Gate must
+already exist on the current board and receive an existing connection from a
+named output of that Formation; rejection changes neither board nor layout.
+Persona-card edits use the shared
 writer's stale-read conflict detection. Write conflicts return `409`.
 Every runtime mutation requires a client-stable `commandId`; its canonical
 request hash is journaled privately, and the response is the durable applied or
@@ -2957,7 +2966,7 @@ private ledger directly.
 | `PATCH /api/agents/{agentId}` | Edit modeled card fields while preserving unknown fields. |
 | `GET /api/formations/boards` | List boards by id, slug, title, and rev. |
 | `GET /api/formations/boards/{boardIdOrSlug}` | Read board definition plus ETag. |
-| `PATCH /api/formations/boards/{boardId}` | Field/id-addressed board mutations. |
+| `PATCH /api/formations/boards/{boardId}` | Field/id-addressed board mutations, including replacement-Gate-bound legacy verification removal. |
 | `GET /api/formations/boards/{boardId}/layout` | Read layout sidecar plus ETag. |
 | `PATCH /api/formations/boards/{boardId}/layout` | Layout-only mutations by stable ids. |
 | `POST /api/formations/runs` | Journal a `start` command, preflight, fsync private authority and `run_started`, then return the durable receipt/run id without waiting for graph execution; full-queue rejection is durable before run creation. |
@@ -2997,8 +3006,9 @@ a narrower target.
 These are real design topics but not required to unblock S1/S2:
 
 - Implicit Oracle prefix-stripping for legacy sessions not declared in cards.
-- Gate-level `--onfail`; S0 used fail wiring and kept `onFail` only on legacy
-  inline verification. Schema-2 now rejects that shape pending `ctx-ug7.17`.
+- Gate-level `--onfail`; S0 used fail wiring and kept `onFail` only on retired
+  inline verification. ADR-0008 requires a named, already-wired replacement
+  Gate and never infers a route from that legacy field.
 - General-purpose error-routing ports; the first mixed-workflow contract stops
   `unavailable` and `error` outcomes loudly.
 - A second reusable formation-definition registry; embedded nodes and explicit

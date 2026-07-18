@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -669,6 +670,131 @@ func TestArchonLegacyScriptGateInspectionStartAndResumeBoundary(t *testing.T) {
 			t.Fatalf("rejected Archon resume changed ledger bytes")
 		}
 	})
+}
+
+func TestArchonLegacyInlineVerificationRunsFailBeforeArtifacts(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("legacy-inline"), `schema = 1
+id = "brd_legacy_inline"
+slug = "legacy-inline"
+title = "Legacy inline verification"
+rev = 7
+updatedAt = "2026-06-03T16:00:00Z"
+
+[[mission]]
+id = "mis_main"
+title = "Main"
+goal = "Ship it"
+beadId = "ctx-ug7.17"
+
+[[formation]]
+id = "fmn_work"
+type = "solo"
+title = "Work"
+
+[[formation.input]]
+id = "port_work_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_work_out"
+label = "Output"
+
+[formation.verification]
+id = "ver_work"
+kinds = ["code"]
+criterion = "Tests pass"
+onFail = "block"
+
+[[gate]]
+id = "gate_migrated"
+title = "Migrated check"
+kinds = ["code"]
+criterion = "Tests pass"
+
+[[connection]]
+id = "edge_main_work"
+from = "mis_main:out"
+to = "fmn_work:port_work_in"
+
+[[connection]]
+id = "edge_work_gate"
+from = "fmn_work:port_work_out"
+to = "gate_migrated:in"
+`)
+	legacyRaw := readArchonFile(t, store.BoardPath("legacy-inline"))
+	runner := &fakeTmux{live: map[string]bool{}}
+	commands := [][]string{
+		{"--workspace", workspace, "mission", "run", "legacy-inline", "--json"},
+		{"--workspace", workspace, "formation", "run", "legacy-inline", "fmn_work", "--json"},
+	}
+	for _, command := range commands {
+		stdout, stderr, code := runArchon(t, runner, command...)
+		if code == 0 || stdout != "" {
+			t.Fatalf("command %v code=%d stdout=%q stderr=%s, want JSON error only", command, code, stdout, stderr)
+		}
+		if !strings.Contains(stderr, `"code": "legacy_inline_verification_requires_migration"`) {
+			t.Fatalf("command %v stderr missing stable migration code: %s", command, stderr)
+		}
+	}
+	runsDir := filepath.Join(workspace, ".formations", "runs", "legacy-inline")
+	entries, err := os.ReadDir(runsDir)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read runs directory: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("run artifacts = %+v, want none before Archon rejection", entries)
+	}
+	inspectOut, inspectErr, inspectCode := runArchon(t, runner, "--workspace", workspace, "formation", "inspect", "legacy-inline", "--json")
+	if inspectCode != 0 || inspectErr != "" || !strings.Contains(inspectOut, `"verification"`) || !strings.Contains(inspectOut, `"criterion": "Tests pass"`) {
+		t.Fatalf("legacy inspection code=%d stdout=%s stderr=%s, want readable verification", inspectCode, inspectOut, inspectErr)
+	}
+	_, missingReplacementErr, missingReplacementCode := runArchon(t, runner, "--workspace", workspace, "formation", "remove-verification", "legacy-inline", "fmn_work", "--json")
+	if missingReplacementCode == 0 || !strings.Contains(missingReplacementErr, `"code": "legacy_inline_verification_requires_migration"`) {
+		t.Fatalf("remove without replacement Gate code=%d stderr=%s, want stable migration rejection", missingReplacementCode, missingReplacementErr)
+	}
+	removeOut, removeErr, removeCode := runArchon(t, runner, "--workspace", workspace, "formation", "remove-verification", "legacy-inline", "fmn_work", "--replacement-gate", "gate_migrated", "--json")
+	if removeCode != 0 || removeErr != "" {
+		t.Fatalf("remove legacy verification code=%d stdout=%s stderr=%s", removeCode, removeOut, removeErr)
+	}
+	after, err := store.ReadBoard("legacy-inline")
+	if err != nil {
+		t.Fatalf("read board after compatibility removal: %v", err)
+	}
+	if after.Formations[0].Verification != nil {
+		t.Fatalf("verification after explicit removal = %+v, want absent", after.Formations[0].Verification)
+	}
+	afterRaw := readArchonFile(t, store.BoardPath("legacy-inline"))
+	if !strings.Contains(afterRaw, `id = "gate_migrated"`) || !strings.Contains(afterRaw, `to = "gate_migrated:in"`) {
+		t.Fatalf("explicit migration changed replacement Gate or wiring:\n%s", afterRaw)
+	}
+	started, err := store.StartRun("legacy-inline", formations.RunStartRequest{
+		MissionID: "mis_main", Actor: "agent:test", ExpectedBoardETag: after.ETag, ExpectedBoardRev: after.Rev,
+	})
+	if err != nil {
+		t.Fatalf("start historical compatibility run: %v", err)
+	}
+	if err := store.AppendRunEvent(started.RunID, formations.RunEvent{Type: formations.RunEventBlocked, Data: map[string]any{
+		"reason": "legacy interruption", "resumeAllowed": true, "resumePolicy": "explicit",
+	}}); err != nil {
+		t.Fatalf("block historical compatibility run: %v", err)
+	}
+	legacyResumeRaw := strings.Replace(legacyRaw, "rev = 7", "rev = "+strconv.Itoa(after.Rev), 1)
+	writeArchonFile(t, filepath.Join(workspace, started.SnapshotPath), legacyResumeRaw)
+	ledgerPath := filepath.Join(workspace, started.LedgerPath)
+	beforeResume := readArchonFile(t, ledgerPath)
+	resumeOut, resumeErr, resumeCode := runArchon(t, runner, "--workspace", workspace, "run", "resume", started.RunID, "--json")
+	if resumeCode == 0 || resumeOut != "" || !strings.Contains(resumeErr, `"code": "legacy_inline_verification_requires_migration"`) {
+		t.Fatalf("legacy resume code=%d stdout=%s stderr=%s, want stable migration error", resumeCode, resumeOut, resumeErr)
+	}
+	if afterResume := readArchonFile(t, ledgerPath); afterResume != beforeResume {
+		t.Fatalf("rejected Archon resume changed ledger\nbefore:\n%s\nafter:\n%s", beforeResume, afterResume)
+	}
+	abortOut, abortErr, abortCode := runArchon(t, runner, "--workspace", workspace, "run", "abort", started.RunID, "--reason", "retire legacy run", "--json")
+	if abortCode != 0 || abortErr != "" || !strings.Contains(abortOut, `"status": "canceled"`) || !strings.Contains(abortOut, `"final": true`) {
+		t.Fatalf("legacy abort code=%d stdout=%s stderr=%s, want final canceled", abortCode, abortOut, abortErr)
+	}
 }
 
 func TestArchonBoardListAndInspectExposeDurableJSON(t *testing.T) {

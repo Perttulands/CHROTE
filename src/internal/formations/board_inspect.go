@@ -8,12 +8,13 @@ import (
 // Finding codes reported by ValidateBoard. They are stable strings so CLI and
 // API consumers can branch on them.
 const (
-	FindingDanglingConnection   = "dangling_connection"
-	FindingGateNotRoutable      = "gate_not_routable"
-	FindingInvalidFormationType = "invalid_formation_type"
-	FindingMissionCount         = "mission_count"
-	FindingMissionNotRunnable   = "mission_not_runnable"
-	FindingLegacyScriptGate     = LegacyScriptGateMigrationCode
+	FindingDanglingConnection                        = "dangling_connection"
+	FindingGateNotRoutable                           = "gate_not_routable"
+	FindingInvalidFormationType                      = "invalid_formation_type"
+	FindingLegacyScriptGate                          = LegacyScriptGateMigrationCode
+	FindingLegacyInlineVerificationRequiresMigration = LegacyInlineVerificationMigrationCode
+	FindingMissionCount                              = "mission_count"
+	FindingMissionNotRunnable                        = "mission_not_runnable"
 )
 
 // BoardFinding is a single structural problem located on the board. NodeID names
@@ -86,6 +87,13 @@ func ValidateBoard(board *BoardDocument) BoardValidationReport {
 				Code:    FindingInvalidFormationType,
 				NodeID:  formation.ID,
 				Message: fmt.Sprintf("formation %q has invalid type %q; valid types are %q, %q, %q, %q", formation.ID, formation.Type, FormationTypeSolo, FormationTypePeer, FormationTypeFlow, FormationTypeOrchestrated),
+			})
+		}
+		if formation.Verification != nil {
+			report.Errors = append(report.Errors, BoardFinding{
+				Code:    FindingLegacyInlineVerificationRequiresMigration,
+				NodeID:  formation.ID,
+				Message: fmt.Sprintf("formation %q uses retired inline verification; create and wire an explicit Gate, then remove the legacy verification", formation.ID),
 			})
 		}
 	}
