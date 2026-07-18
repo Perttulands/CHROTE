@@ -175,8 +175,8 @@
 .fmx .wires path.temp{stroke:var(--terra);stroke-dasharray:5 5;fill:none;stroke-width:2;}
 @keyframes fmx-dash{to{stroke-dashoffset:-28;}}
 
-/* mission card */
-.fmx .missioncard{position:absolute;width:236px;background:var(--card);border:1px solid var(--terra);border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.35);z-index:1;cursor:grab;transition:left .18s cubic-bezier(.2,.7,.3,1),top .18s cubic-bezier(.2,.7,.3,1);}
+/* Keep the workflow entry point operable when authored coordinates overlap. */
+.fmx .missioncard{position:absolute;width:236px;background:var(--card);border:1px solid var(--terra);border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.35);z-index:2;cursor:grab;transition:left .18s cubic-bezier(.2,.7,.3,1),top .18s cubic-bezier(.2,.7,.3,1);}
 .fmx .missioncard:active{cursor:grabbing;}
 .fmx .missioncard .mhd{display:flex;align-items:center;gap:10px;padding:12px 14px 6px;cursor:grab;}
 .fmx .missioncard .meyebrow{flex:1;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--terra);}

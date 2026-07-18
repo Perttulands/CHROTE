@@ -342,7 +342,7 @@ test.describe('Formations cockpit — D7 reference parity', () => {
 })
 
 test.describe('Formations cockpit — layout safety', () => {
-  test('renders intentionally overlapping saved coordinates verbatim', async ({ page }) => {
+  test('preserves overlapping saved coordinates while keeping the mission start control reachable', async ({ page }) => {
     await mockApiRoutes(page)
     await mockFormationsApiRoutes(page, {
       layout: {
@@ -361,6 +361,17 @@ test.describe('Formations cockpit — layout safety', () => {
     })))
     expect(positions).toHaveLength(mockFormationsBoard.missions.length + mockFormationsBoard.formations.length + mockFormationsBoard.gates.length)
     expect(new Set(positions.map(position => `${position.left}:${position.top}`))).toEqual(new Set(['220px:160px']))
+
+    const runButton = page.getByTestId(`run-mission-${mockFormationsBoard.missions[0].id}`)
+    const runBox = await requiredBox(runButton, 'overlapping mission Run control')
+    const hitTarget = await page.evaluate(({ x, y }) => {
+      const target = document.elementFromPoint(x, y)
+      return target?.closest<HTMLElement>('[data-testid]')?.dataset.testid ?? null
+    }, { x: runBox.centerX, y: runBox.centerY })
+    expect(hitTarget).toBe(`run-mission-${mockFormationsBoard.missions[0].id}`)
+
+    await runButton.click()
+    await expect(page.getByTestId('run-banner').locator('.badge')).toHaveText('blocked')
   })
 })
 
