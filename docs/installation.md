@@ -68,6 +68,7 @@ PORT=8095
 TTYD_PORT=7686
 CHROTE_WORKDIR=<workspace-root>
 CHROTE_ROOTS=<workspace-root>
+CHROTE_FORMATIONS_DATA_ROOT=/srv/data/chrote/formations
 CHROTE_BEADS_WORKSPACES=<workspace-root>
 CHROTE_BD_COMMAND=bd
 CHROTE_SESSION_BANK_PATH=/srv/data/chrote/session-bank/sessions.json
@@ -75,6 +76,10 @@ CHROTE_PERSISTENT_AGENTS_PATH=/srv/data/chrote/persistent-agents/agents.json
 CHROTE_SESSION_DROPS_DIR=/srv/data/chrote/session-drops
 CHROTE_MANAGED_RECOVERY_STATUS_PATH=/srv/data/chrote/tmux-recovery/managed-status.json
 ```
+
+Keep `CHROTE_FORMATIONS_DATA_ROOT` outside the workspace and generic Files
+roots. The server treats it as host-private authority state and denies its
+configured and canonical paths through the Files API.
 
 Do not print or commit secrets from service env files.
 

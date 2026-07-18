@@ -60,6 +60,8 @@ func TestGuardRuntimeWorkspaceAuthorityV1MatchesOpenedWorkspaceIdentity(t *testi
 	fixture := newRuntimeAuthorityFixture(t)
 	bindRuntimeAuthorityFixtureToOpenedWorkspace(t, &fixture, fixture.workspace)
 	before := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace)
+	t.Setenv("CHROTE_WORKDIR", filepath.Join(t.TempDir(), "workspace-bait"))
+	t.Setenv("CHROTE_ROOTS", filepath.Join(t.TempDir(), "roots-bait"))
 
 	result, err := GuardRuntimeWorkspaceAuthorityV1(filepath.Dir(fixture.root), fixture.workspace)
 	if err != nil {

@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 )
 
 func TestRuntimeStoreAuthorityBoundaryRemainsNonAuthorizingAfterExactMatch(t *testing.T) {
 	fixture := newRuntimeAuthorityFixture(t)
 	bindRuntimeAuthorityFixtureToOpenedWorkspace(t, &fixture, fixture.workspace)
+	before := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace)
 	store := NewRuntimeStore(fixture.workspace, filepath.Dir(fixture.root))
 
 	err := store.RequireRuntimeAuthority()
@@ -24,6 +27,9 @@ func TestRuntimeStoreAuthorityBoundaryRemainsNonAuthorizingAfterExactMatch(t *te
 	if authorityErr.Capability.ID != RuntimeAuthorityGuardCapabilityV1 || authorityErr.Capability.Execution {
 		t.Fatalf("runtime authority capability = %+v, want disabled guard capability", authorityErr.Capability)
 	}
+	if after := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace); !reflect.DeepEqual(after, before) {
+		t.Fatalf("non-authorizing runtime guard mutated state\nbefore: %#v\nafter:  %#v", before, after)
+	}
 	if err := NewStore(fixture.workspace).RequireRuntimeAuthority(); err != nil {
 		t.Fatalf("schema-1 compatibility store unexpectedly requires runtime authority: %v", err)
 	}
@@ -33,6 +39,20 @@ func TestRuntimeStoreAuthorityBoundaryRemainsNonAuthorizingAfterExactMatch(t *te
 	var whitespaceErr *RuntimeAuthorityNonAuthorizingError
 	if !errors.As(err, &whitespaceErr) || whitespaceErr.Reason != RuntimeAuthorityGuardRejected || whitespaceErr.Code != RuntimeAuthorityGuardNoncanonical {
 		t.Fatalf("whitespace-prefixed authority root = %#v, want noncanonical guard rejection", err)
+	}
+
+	writeAuthorityFixture(t, fixture.workspaceDB, []byte(`{"authoritySchema":2,"privatePath":"/do/not/expose"}`))
+	malformedBefore := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace)
+	err = store.RequireRuntimeAuthority()
+	var malformedErr *RuntimeAuthorityNonAuthorizingError
+	if !errors.As(err, &malformedErr) || malformedErr.Reason != RuntimeAuthorityGuardRejected {
+		t.Fatalf("malformed authority error = %#v, want sanitized guard rejection", err)
+	}
+	if message := err.Error(); message != ErrRuntimeAuthorityNonAuthorizing.Error() || strings.Contains(message, fixture.root) || strings.Contains(message, testWorkspaceAuthorityID) || strings.Contains(message, "privatePath") {
+		t.Fatalf("malformed authority error leaked private detail: %q", message)
+	}
+	if after := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace); !reflect.DeepEqual(after, malformedBefore) {
+		t.Fatalf("malformed authority rejection mutated state\nbefore: %#v\nafter:  %#v", malformedBefore, after)
 	}
 }
 
