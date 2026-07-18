@@ -61,6 +61,22 @@ func (s *Store) workspaceAbsolutePath() (string, error) {
 	return workspace, nil
 }
 
+func openRunWorkspaceRoot(workspace string) (*os.File, error) {
+	// The configured workspace itself may be a compatibility symlink. Pin that
+	// opened root once; openRunsDirectory fences every descendant with
+	// O_NOFOLLOW relative to this descriptor.
+	fd, err := syscall.Open(workspace, syscall.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NONBLOCK|syscall.O_DIRECTORY, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: workspace, Err: err}
+	}
+	root := os.NewFile(uintptr(fd), workspace)
+	if root == nil {
+		_ = syscall.Close(fd)
+		return nil, errors.New("could not open formations run workspace")
+	}
+	return root, nil
+}
+
 func openOrCreateRunArtifactDirectoryAt(parent *os.File, name string) (*os.File, error) {
 	directory, err := openRuntimeAuthorityDirectoryAt(parent, name)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -87,7 +103,7 @@ func (s *Store) openRunsDirectory(create bool) (*os.File, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	current, err := openRuntimeAuthorityRoot(workspace)
+	current, err := openRunWorkspaceRoot(workspace)
 	if err != nil {
 		return nil, "", err
 	}

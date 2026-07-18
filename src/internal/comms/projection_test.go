@@ -111,6 +111,27 @@ func TestProjectRunRoomProjectsFinalFormationsLedgerAsReadOnlySource(t *testing.
 	}
 }
 
+func TestProjectRunRoomAllowsConfiguredWorkspaceRootSymlink(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	workspaceAlias := filepath.Join(root, "workspace-alias")
+	writeRunLedgerFixture(t, workspace, "demo", "run_abc123", []map[string]any{
+		{"seq": 1, "type": "run_started", "actor": "Perttu", "ts": "2026-07-04T01:00:01Z", "runId": "run_abc123", "boardId": "brd_demo", "boardRev": 3, "missionId": "mission_ui", "data": map[string]any{"boardSlug": "demo"}},
+		{"seq": 2, "type": "run_succeeded", "actor": "room-system", "ts": "2026-07-04T01:00:02Z", "runId": "run_abc123", "data": map[string]any{"summary": "green"}},
+	})
+	if err := os.Symlink(workspace, workspaceAlias); err != nil {
+		t.Fatalf("symlink configured workspace: %v", err)
+	}
+
+	projection, err := NewStore(workspaceAlias).ProjectRoom("run:run_abc123", ProjectionOptions{})
+	if err != nil {
+		t.Fatalf("ProjectRoom through configured workspace symlink: %v", err)
+	}
+	if projection.RoomID != "run_abc123" || projection.Source.RunStatus != "succeeded" || !projection.Source.RunFinal {
+		t.Fatalf("run projection through configured workspace symlink = %+v", projection)
+	}
+}
+
 func TestProjectRunRoomDoesNotAdoptSchema2WorkspaceLedger(t *testing.T) {
 	workspace := t.TempDir()
 	runID := "run_01KXNP6VY3227H78329V52CKF8"

@@ -55,6 +55,109 @@ func TestRunLedgerClassificationAndLegacyDecodeConsumeSameBytes(t *testing.T) {
 	}
 }
 
+func TestConfiguredWorkspaceSymlinkStillSupportsRunInspection(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	workspaceAlias := filepath.Join(root, "workspace-alias")
+	runID := newPrefixedID("run")
+	events := testLegacyRunEvents(runID, "session-search")
+	ledgerPath := filepath.Join(workspace, runArtifactPath("session-search", runID, ".ndjson"))
+	writeFixture(t, ledgerPath, string(testRunLedgerBytes(t, events...)))
+	if err := os.Symlink(workspace, workspaceAlias); err != nil {
+		t.Fatalf("symlink configured workspace: %v", err)
+	}
+
+	store := NewStore(workspaceAlias)
+	gotEvents, err := store.ReadRunEvents(runID)
+	if err != nil {
+		t.Fatalf("read run through configured workspace symlink: %v", err)
+	}
+	if len(gotEvents) != len(events) {
+		t.Fatalf("event count = %d, want %d", len(gotEvents), len(events))
+	}
+	projection, err := store.ProjectRun(runID)
+	if err != nil {
+		t.Fatalf("project run through configured workspace symlink: %v", err)
+	}
+	if projection.RunID != runID || projection.BoardSlug != "session-search" || projection.Status != RunStatusBlocked {
+		t.Fatalf("projection through configured workspace symlink = %+v", projection)
+	}
+	runs, err := store.ListRuns(RunListFilter{})
+	if err != nil {
+		t.Fatalf("list runs through configured workspace symlink: %v", err)
+	}
+	if len(runs) != 1 || runs[0].RunID != runID {
+		t.Fatalf("listed runs through configured workspace symlink = %+v", runs)
+	}
+}
+
+func TestConfiguredWorkspaceSymlinkStillSupportsRunCreation(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	workspaceAlias := filepath.Join(root, "workspace-alias")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	if err := os.Symlink(workspace, workspaceAlias); err != nil {
+		t.Fatalf("symlink configured workspace: %v", err)
+	}
+	store := NewStore(workspaceAlias)
+	store.Now = fixedClock()
+	personas := NewPersonaStore(filepath.Join(root, "agents"))
+	personas.Now = fixedClock()
+	if _, err := personas.CreatePersona(CreatePersonaRequest{
+		ID: "scout", Kind: "specialist", Capabilities: []string{"research"}, Harness: "openai-codex",
+	}); err != nil {
+		t.Fatalf("create persona: %v", err)
+	}
+	writeFixture(t, store.BoardPath("session-search"), s4RunBoardFixture())
+	board, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board through configured workspace symlink: %v", err)
+	}
+
+	started, err := store.StartRun("session-search", RunStartRequest{
+		MissionID:         "mis_showcase",
+		Actor:             "agent:test",
+		ExpectedBoardETag: board.ETag,
+		ExpectedBoardRev:  board.Rev,
+		Personas:          personas,
+	})
+	if err != nil {
+		t.Fatalf("start run through configured workspace symlink: %v", err)
+	}
+	events, err := store.ReadRunEvents(started.RunID)
+	if err != nil {
+		t.Fatalf("read created run through configured workspace symlink: %v", err)
+	}
+	if len(events) != 1 || events[0].Type != RunEventStarted {
+		t.Fatalf("created run events = %+v", events)
+	}
+}
+
+func TestRunInspectionRejectsSymlinkedDescendantOfConfiguredWorkspace(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	externalRuns := filepath.Join(root, "external-runs")
+	runID := newPrefixedID("run")
+	externalLedger := filepath.Join(externalRuns, "session-search", runID+".ndjson")
+	ledgerBefore := testRunLedgerBytes(t, testRunStartedEvent(runID, "session-search"))
+	writeFixture(t, externalLedger, string(ledgerBefore))
+	if err := os.MkdirAll(filepath.Join(workspace, ".formations"), 0o755); err != nil {
+		t.Fatalf("create workspace formations directory: %v", err)
+	}
+	if err := os.Symlink(externalRuns, filepath.Join(workspace, ".formations", "runs")); err != nil {
+		t.Fatalf("symlink external runs directory: %v", err)
+	}
+
+	if _, err := NewStore(workspace).ReadRunEvents(runID); !errors.Is(err, ErrRunLedgerInvalid) {
+		t.Fatalf("read through descendant symlink error = %v, want ErrRunLedgerInvalid", err)
+	}
+	if got := readFile(t, externalLedger); got != string(ledgerBefore) {
+		t.Fatal("rejected descendant symlink read mutated external ledger")
+	}
+}
+
 func TestRunLedgerSymlinkCannotMutateVictimOnTerminalAppend(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "workspace")
