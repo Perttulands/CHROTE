@@ -96,6 +96,26 @@ function first<T>(items: unknown, label: string): T {
   return items[0] as T
 }
 
+function legacyRunEvent(runId: string, seq: number, type: string, fields: JsonObject = {}): JsonObject {
+  return {
+    ts: '2026-07-18T12:00:00Z',
+    runId,
+    seq,
+    type,
+    actor: 'agent:archon-fixture',
+    ...fields,
+  }
+}
+
+function writeLegacyRunState(workspace: string, runId: string, events: JsonObject[]) {
+  const runDir = path.join(workspace, '.formations', 'runs', 'poems')
+  fs.mkdirSync(runDir, { recursive: true })
+  fs.writeFileSync(
+    path.join(runDir, `${runId}.ndjson`),
+    `${events.map(event => JSON.stringify(event)).join('\n')}\n`,
+  )
+}
+
 export function createArchonPoemRoundTripFixture(): ArchonPoemRoundTripFixture {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'chrote-archon-poem-'))
   const agentsDir = path.join(workspace, 'agents')
@@ -142,13 +162,74 @@ export function createArchonPoemRoundTripFixture(): ArchonPoemRoundTripFixture {
   archon('formation', 'wire', 'poems', `${gate.id}:pass`, `${polish.id}:${polishInput.id}`, '--json')
   board = archon('board', 'inspect', 'poems', '--json')
 
-  const started = archon('mission', 'run', 'poems', '--mission', String(mission.id), '--json')
-  const runId = String(started.runId)
-  const startedStatus = (started.status && typeof started.status === 'object' ? started.status : started) as JsonObject
+  // Archon authors the graph, but production Archon runtime commands are
+  // deliberately non-authorizing. Seed a historical schema-1 ledger and use
+  // Archon's read-only status/log projection instead of inventing a local
+  // execution-authority fallback for this browser fixture.
+  const runId = 'run_archon_poem_fixture'
+  const startedState = [
+    legacyRunEvent(runId, 1, 'run_started', {
+      boardId: board.id,
+      boardRev: board.rev,
+      missionId: mission.id,
+      beadId: mission.beadId,
+      data: { boardSlug: 'poems' },
+    }),
+    legacyRunEvent(runId, 2, 'node_started', { nodeId: draft.id, data: { nodeKind: 'formation' } }),
+    legacyRunEvent(runId, 3, 'slot_dispatch', { nodeId: draft.id, slotId: draftSlot.id }),
+    legacyRunEvent(runId, 4, 'slot_result', { nodeId: draft.id, slotId: draftSlot.id }),
+    legacyRunEvent(runId, 5, 'node_output', {
+      nodeId: draft.id,
+      data: { status: 'done', text: 'A simple poem draft', reportRef: 'reports/draft.md' },
+    }),
+    legacyRunEvent(runId, 6, 'gate_evaluating', { nodeId: gate.id, gateId: gate.id }),
+    legacyRunEvent(runId, 7, 'human_input_requested', {
+      nodeId: gate.id,
+      gateId: gate.id,
+      data: { prompt: 'Draft is ready to polish' },
+    }),
+  ]
+  writeLegacyRunState(workspace, runId, startedState)
+  const startedStatus = archon('run', 'status', runId, '--json')
   const startedEvents = arrayCommand(archonBin, env, ['--workspace', workspace, 'run', 'logs', runId, '--json'])
-  const approvedStatus = archon('gate', 'approve', runId, String(gate.id), '--reason', 'draft approved', '--json')
+
+  const approvedState = [
+    ...startedState,
+    legacyRunEvent(runId, 8, 'human_verdict_recorded', {
+      nodeId: gate.id,
+      gateId: gate.id,
+      data: { verdict: 'pass', reason: 'draft approved' },
+    }),
+    legacyRunEvent(runId, 9, 'gate_verdict', {
+      nodeId: gate.id,
+      gateId: gate.id,
+      data: { verdict: 'pass', reason: 'draft approved', routePort: 'pass' },
+    }),
+    legacyRunEvent(runId, 10, 'run_blocked', {
+      nodeId: gate.id,
+      gateId: gate.id,
+      data: { reason: 'explicit resume required after human verdict', resumeAllowed: true },
+    }),
+  ]
+  writeLegacyRunState(workspace, runId, approvedState)
+  const approvedStatus = archon('run', 'status', runId, '--json')
   const approvedEvents = arrayCommand(archonBin, env, ['--workspace', workspace, 'run', 'logs', runId, '--json'])
-  const finalStatus = archon('run', 'resume', runId, '--reason', 'gate approved', '--json')
+
+  const finalState = [
+    ...approvedState,
+    legacyRunEvent(runId, 11, 'run_resumed', { epoch: 1, data: { reason: 'gate approved' } }),
+    legacyRunEvent(runId, 12, 'node_started', { nodeId: polish.id, epoch: 1, data: { nodeKind: 'formation' } }),
+    legacyRunEvent(runId, 13, 'slot_dispatch', { nodeId: polish.id, slotId: polishSlot.id, epoch: 1 }),
+    legacyRunEvent(runId, 14, 'slot_result', { nodeId: polish.id, slotId: polishSlot.id, epoch: 1 }),
+    legacyRunEvent(runId, 15, 'node_output', {
+      nodeId: polish.id,
+      epoch: 1,
+      data: { status: 'done', text: 'A polished simple poem', reportRef: 'reports/polished.md' },
+    }),
+    legacyRunEvent(runId, 16, 'run_succeeded', { epoch: 1, data: { final: true } }),
+  ]
+  writeLegacyRunState(workspace, runId, finalState)
+  const finalStatus = archon('run', 'status', runId, '--json')
   const finalEvents = arrayCommand(archonBin, env, ['--workspace', workspace, 'run', 'logs', runId, '--json'])
 
   return {
