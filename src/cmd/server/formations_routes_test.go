@@ -9,9 +9,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/chrote/server/internal/core"
 )
 
 func TestRuntimeRoutesInstallNonAuthorizingHostPrivateStore(t *testing.T) {
+	core.ResetConfigForTesting()
+	t.Cleanup(core.ResetConfigForTesting)
 	workspace := t.TempDir()
 	t.Setenv("CHROTE_WORKDIR", workspace)
 	t.Setenv("CHROTE_ROOTS", workspace)

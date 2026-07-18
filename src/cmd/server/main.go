@@ -177,11 +177,12 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Contex
 	agentsHandler := api.NewAgentsHandler(formations.DefaultAgentsDir(), oracleHandler)
 	agentsHandler.RegisterRoutes(mux)
 
-	formationsStore := formations.NewRuntimeStore(core.GetWorkDir(), config.FormationsDataRoot)
+	workspace := core.GetWorkDir()
+	formationsStore := formations.NewRuntimeStore(workspace, config.FormationsDataRoot)
 	formationsHandler := api.NewFormationsHandlerWithStore(formationsStore)
 	formationsHandler.RegisterRoutes(mux)
 
-	commsHandler := api.NewCommsHandlerWithStore(comms.NewStoreWithFormations(core.GetWorkDir(), formationsStore))
+	commsHandler := api.NewCommsHandlerWithStore(comms.NewStoreWithFormations(workspace, formationsStore))
 	commsHandler.RegisterRoutes(mux)
 
 	// Create terminal proxy
