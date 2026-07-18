@@ -1,7 +1,8 @@
 /* Pure visual helpers for the Formations cockpit: type taglines, inline SVG
-   glyphs, and deterministic agent-sphere colors/initials/role/state. Extracted
-   from FormationsCockpit so the component focuses on stateful canvas logic. */
+   glyphs, and agent initials/role/state. Extracted from FormationsCockpit so
+   the component focuses on stateful canvas logic. */
 import type { AgentProjection, FormationNode } from './formationsTypes'
+import { harnessIcon } from './harnessIcons'
 
 export const TYPE_TAG: Record<FormationNode['type'], string> = {
   solo: 'Do the thing.',
@@ -10,24 +11,23 @@ export const TYPE_TAG: Record<FormationNode['type'], string> = {
   orchestrated: 'One controller decides what happens next.',
 }
 
+/* Castle wall with an opening: gates are checkpoints work must pass through. */
 export const GATE_SVG = (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
-    <path d="M4 21V10a8 8 0 0116 0v11" />
-    <path d="M3 21h18M8 21V9M12 21V8M16 21V9" />
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+    <path d="M4 20V6h3.5v2.5h3V6h3v2.5h3V6H20v14" />
+    <path d="M9.5 20v-4a2.5 2.5 0 015 0v4" />
   </svg>
 )
+
+/* Harness product marks live in the shared library; this wrapper keeps the
+   cockpit's call sites stable. */
+export function harnessGlyph(harness: string | undefined | null): JSX.Element | null {
+  return harnessIcon(harness)
+}
 export const PLAY_SVG = (
   <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8z" /></svg>
 )
 
-function hashHue(id: string): number {
-  let h = 0
-  for (let i = 0; i < id.length; i += 1) h = (h * 31 + id.charCodeAt(i)) % 360
-  return h
-}
-export function agentColor(id: string): string {
-  return `radial-gradient(hsl(${hashHue(id)} 60% 62%), hsl(${hashHue(id)} 55% 34%))`
-}
 export function initials(id: string): string {
   const cleaned = id.replace(/[^a-zA-Z0-9]/g, '')
   return (cleaned.slice(0, 2) || '?').toUpperCase()

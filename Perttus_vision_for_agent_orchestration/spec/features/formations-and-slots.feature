@@ -93,11 +93,11 @@ Feature: Formations and slots — four coordination shapes staffed by live agent
     And the steps are renumbered in order
 
   @ui @file
-  Scenario: Duplicating a formation copies its shape and verification but not run output
-    Given a formation with a verification and a completed output
-    When I duplicate it
-    Then the copy has the same type, slots, and verification with fresh ids
-    And the copy has no output (output is produced by a run, never copied)
+  Scenario: Duplicating a formation with legacy verification fails closed
+    Given a schema-1 formation has inline verification and a completed output
+    When schema-2 Formations attempts to duplicate it
+    Then it fails "legacy_inline_verification_requires_migration"
+    And no board revision or copied formation is written
 
   # ── The brief (manual input) ────────────────────────────────────────────────
 

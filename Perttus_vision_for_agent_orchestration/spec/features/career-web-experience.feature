@@ -1,6 +1,6 @@
-# The whole-system acceptance scenario (vision §13, master-plan §11). It exercises the full stack
-# end-to-end through one touchpoint: factory → team → mission → cross-harness run → recovery →
-# escalation. If this passes behind the flags, the system "works".
+# Accepted-target illustrative whole-system scenario, with executable acceptance owned by
+# ctx-rul and ctx-ug7.14. It describes the intended file-backed Formations experience rather
+# than claiming that the current runtime already provides it.
 
 Feature: End-to-end — a web experience to support a job search, driven through the Archon
   As Perttu
@@ -8,7 +8,7 @@ Feature: End-to-end — a web experience to support a job search, driven through
   So that I access many specialists/harnesses without holding the coordination myself
 
   Background:
-    Given a workspace with persona cards and the formations system enabled behind its flags
+    Given a workspace with persona cards and the file-backed Formations model available as an always-on capability
 
   @e2e
   Scenario: One goal becomes a staffed, run, recovered, and judged mission
@@ -26,17 +26,24 @@ Feature: End-to-end — a web experience to support a job search, driven through
     When Perttu asks the Archon "what came back?"
     Then it answers in plain language from the ledger, and the Formations tab shows the same truth
 
-      When Perttu disconnects mid-run and returns
-      Then "archon run resume <runId>" (or the Archon) continues correctly with no completed step re-run
+    When Perttu disconnects mid-run and later reconnects
+    Then the coordinator continues the run independently while no browser is connected
+    And reconnecting restores observation of the same ledger-backed run
+    And no operator run resume is implied or issued solely because the browser disconnected
 
     When a specialist's pane is killed mid-run
     Then the ledger records a loud error and the Archon says that node went dark
 
-      When a gate needs Perttu's taste
-      Then it escalates / requests a human verdict, and "archon gate approve|reject <runId> <gateId>" routes it
+    When a gate needs Perttu's taste
+    Then it escalates and requests a human verdict
+    And "archon gate approve|reject <runId> <gateId>" records a human_verdict_recorded event
+    And the human_verdict_recorded event contributes to the Gate aggregate
+    And only the resulting aggregate gate_verdict routes the workflow
 
   @e2e
-  Scenario: Clean rollback after the demo
-    When "chrote-formations" is turned off and "CHROTE_FORMATIONS=off" with a restart
-    Then the dashboard and server behave exactly as before the system existed
-    And "rm -rf .formations/" leaves the workspace, code, sessions, and beads intact
+  Scenario: A code rollback preserves durable Formations evidence
+    Given the accepted-target Formations code has produced evidence under ".formations/"
+    When the operator reverts the code or deploys a prior CHROTE code version
+    Then the rollback preserves the existing ".formations/" evidence without deleting or rewriting it
+    And existing tmux sessions remain untouched
+    And existing Beads state remains untouched

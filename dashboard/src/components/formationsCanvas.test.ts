@@ -1,10 +1,71 @@
 import { describe, expect, it } from 'vitest'
-import { clampScale, defaultPosition, endpointNodeId, screenPointToWorld, visibleWirePath, zoomTransform } from './formationsCanvas'
+import type { BoardDocument, LayoutNode } from './formationsTypes'
+import { GRID, clampScale, defaultPosition, displayLayoutFor, endpointNodeId, freeGridPosition, screenPointToWorld, snapToGrid, visibleWirePath, zoomTransform } from './formationsCanvas'
 
 describe('formations canvas helpers', () => {
-  it('computes stable default positions for starter nodes', () => {
-    expect(defaultPosition(0)).toEqual({ id: '', x: 120, y: 120 })
-    expect(defaultPosition(1)).toEqual({ id: '', x: 400, y: 300 })
+  it('computes stable grid-aligned default positions for starter nodes', () => {
+    expect(defaultPosition(0)).toEqual({ id: '', x: 112, y: 112 })
+    expect(defaultPosition(1)).toEqual({ id: '', x: 392, y: 308 })
+    expect(defaultPosition(0).x % GRID).toBe(0)
+    expect(defaultPosition(1).y % GRID).toBe(0)
+  })
+
+  it('snaps values to the canvas grid', () => {
+    expect(snapToGrid(0)).toBe(0)
+    expect(snapToGrid(13)).toBe(0)
+    expect(snapToGrid(14)).toBe(28)
+    expect(snapToGrid(430)).toBe(420)
+  })
+
+  it('renders authored non-overlapping layouts verbatim (no phantom shoves)', () => {
+    // Mirrors an archon-authored board: missions left, a formation row, gates
+    // in their own top row. Every position must survive display untouched.
+    const board = {
+      missions: [{ id: 'mis_a' }, { id: 'mis_b' }],
+      formations: [
+        { id: 'fmn_orch', type: 'orchestrated', slots: [{}, {}, {}] },
+        { id: 'fmn_peer', type: 'peer', slots: [{}, {}] },
+        { id: 'fmn_solo', type: 'solo', slots: [{}] },
+      ],
+      gates: [{ id: 'gate_a' }, { id: 'gate_b' }],
+    } as unknown as BoardDocument
+    const authored: Array<[string, number, number]> = [
+      ['mis_a', 80, 80], ['mis_b', 80, 260],
+      ['fmn_orch', 420, 220], ['fmn_peer', 784, 220], ['fmn_solo', 1148, 220],
+      ['gate_a', 420, 56], ['gate_b', 784, 56],
+    ]
+    const layoutByNode = new Map<string, LayoutNode>(authored.map(([id, x, y]) => [id, { id, x, y }]))
+    const resolved = displayLayoutFor(board, layoutByNode)
+    for (const [id, x, y] of authored) {
+      expect(resolved.get(id)).toEqual({ id, x, y })
+    }
+  })
+
+  it('renders intentionally overlapping persisted coordinates verbatim', () => {
+    const board = {
+      missions: [{ id: 'mis_a' }],
+      formations: [
+        { id: 'fmn_a', type: 'solo', slots: [{}] },
+        { id: 'fmn_b', type: 'solo', slots: [{}] },
+      ],
+      gates: [],
+    } as unknown as BoardDocument
+    const layoutByNode = new Map<string, LayoutNode>(
+      ['mis_a', 'fmn_a', 'fmn_b'].map(id => [id, { id, x: 220, y: 160 }]),
+    )
+    const resolved = displayLayoutFor(board, layoutByNode)
+    const positions = ['mis_a', 'fmn_a', 'fmn_b'].map(id => resolved.get(id)!)
+    expect(positions).toEqual([
+      { id: 'mis_a', x: 220, y: 160 },
+      { id: 'fmn_a', x: 220, y: 160 },
+      { id: 'fmn_b', x: 220, y: 160 },
+    ])
+  })
+
+  it('places only a newly created node onto nearby free grid space', () => {
+    const occupied = [{ x: 224, y: 168 }, { x: 560, y: 168 }]
+    expect(freeGridPosition({ x: 220, y: 160 }, occupied)).toEqual({ x: 896, y: 168 })
+    expect(occupied).toEqual([{ x: 224, y: 168 }, { x: 560, y: 168 }])
   })
 
   it('extracts node ids from stable endpoint addresses', () => {

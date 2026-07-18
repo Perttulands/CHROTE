@@ -140,7 +140,7 @@ export async function patchBoardDocument<TExtra extends object = Record<string, 
   }
 }
 
-export async function patchBoardLayout(slug: string, etag: string, patch: { nodes?: LayoutNode[]; edges?: LayoutEdge[] }): Promise<LayoutDocument> {
+export async function patchBoardLayout(slug: string, etag: string, patch: { nodes?: LayoutNode[]; edges?: LayoutEdge[]; arrange?: boolean }): Promise<LayoutDocument> {
   const result = await fetchApi<{ layout: LayoutDocument }>(
     `/api/formations/boards/${encodeURIComponent(slug)}/layout`,
     {

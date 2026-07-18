@@ -308,8 +308,9 @@ test.describe('Formations cockpit — D7 reference parity', () => {
     const formationBox = await requiredBox(formation, 'D7 formation card')
     const gateBox = await requiredBox(gate, 'D7 gate card')
 
-    expect(topbarBox.height).toBeGreaterThanOrEqual(48)
-    expect(topbarBox.height).toBeLessThanOrEqual(72)
+    // Cockpit-density toolbar (no wordmark row): slimmer than the prototype's.
+    expect(topbarBox.height).toBeGreaterThanOrEqual(38)
+    expect(topbarBox.height).toBeLessThanOrEqual(64)
     expect(Math.round(rosterBox.width)).toBe(236)
     expect(Math.abs(rosterBox.y - topbarBox.bottom)).toBeLessThanOrEqual(2)
     expect(Math.abs(viewportBox.x - rosterBox.right)).toBeLessThanOrEqual(2)
@@ -341,7 +342,7 @@ test.describe('Formations cockpit — D7 reference parity', () => {
 })
 
 test.describe('Formations cockpit — layout safety', () => {
-  test('normalizes bad saved coordinates so first-render cards do not overlap', async ({ page }) => {
+  test('preserves overlapping saved coordinates while keeping the mission start control reachable', async ({ page }) => {
     await mockApiRoutes(page)
     await mockFormationsApiRoutes(page, {
       layout: {
@@ -354,24 +355,23 @@ test.describe('Formations cockpit — layout safety', () => {
     await page.getByRole('button', { name: 'Formations' }).click()
     await expect(page.getByTestId('formations-view')).toBeVisible()
 
-    const boxes = await page.locator('.fmx .world .formation,.fmx .world .gatecard,.fmx .world .missioncard').evaluateAll(elements => elements.map(element => {
-      const rect = element.getBoundingClientRect()
-      return {
-        id: (element as HTMLElement).dataset.testid || element.getAttribute('data-testid') || element.className,
-        left: rect.left,
-        right: rect.right,
-        top: rect.top,
-        bottom: rect.bottom,
-      }
-    }))
-    expect(boxes.length).toBe(mockFormationsBoard.missions.length + mockFormationsBoard.formations.length + mockFormationsBoard.gates.length)
-    for (let i = 0; i < boxes.length; i += 1) {
-      for (let j = i + 1; j < boxes.length; j += 1) {
-        const xOverlap = Math.max(0, Math.min(boxes[i].right, boxes[j].right) - Math.max(boxes[i].left, boxes[j].left))
-        const yOverlap = Math.max(0, Math.min(boxes[i].bottom, boxes[j].bottom) - Math.max(boxes[i].top, boxes[j].top))
-        expect(xOverlap * yOverlap, `${JSON.stringify({ a: boxes[i], b: boxes[j], xOverlap, yOverlap })}`).toBe(0)
-      }
-    }
+    const positions = await page.locator('.fmx .world .formation,.fmx .world .gatecard,.fmx .world .missioncard').evaluateAll(elements => elements.map(element => ({
+      left: (element as HTMLElement).style.left,
+      top: (element as HTMLElement).style.top,
+    })))
+    expect(positions).toHaveLength(mockFormationsBoard.missions.length + mockFormationsBoard.formations.length + mockFormationsBoard.gates.length)
+    expect(new Set(positions.map(position => `${position.left}:${position.top}`))).toEqual(new Set(['220px:160px']))
+
+    const runButton = page.getByTestId(`run-mission-${mockFormationsBoard.missions[0].id}`)
+    const runBox = await requiredBox(runButton, 'overlapping mission Run control')
+    const hitTarget = await page.evaluate(({ x, y }) => {
+      const target = document.elementFromPoint(x, y)
+      return target?.closest<HTMLElement>('[data-testid]')?.dataset.testid ?? null
+    }, { x: runBox.centerX, y: runBox.centerY })
+    expect(hitTarget).toBe(`run-mission-${mockFormationsBoard.missions[0].id}`)
+
+    await runButton.click()
+    await expect(page.getByTestId('run-banner').locator('.badge')).toHaveText('blocked')
   })
 })
 
@@ -623,12 +623,23 @@ test.describe('Formations cockpit — direct manipulation gestures', () => {
     await page.mouse.up()
   }
 
+  async function pointerCancel(page: import('@playwright/test').Page, clientX: number, clientY: number) {
+    await page.evaluate(({ clientX, clientY }) => {
+      window.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, pointerId: 1, clientX, clientY }))
+    }, { clientX, clientY })
+    // Release Playwright's physical mouse state. The pointerup must be inert
+    // because cancellation has already relinquished interaction ownership.
+    await page.mouse.up()
+  }
+
   async function visibleSvgPathPoint(path: import('@playwright/test').Locator) {
     return path.evaluate((node: SVGPathElement) => {
       const total = node.getTotalLength()
       const matrix = node.getScreenCTM()
       if (!matrix) throw new Error('wire path has no screen matrix')
-      for (const fraction of [0.2, 0.35, 0.5, 0.65, 0.8]) {
+      // Middle-out: points near a wire's ends fall into the 70px reconnect
+      // zones (beginWireDrag), and this helper's callers want the lane gesture.
+      for (const fraction of [0.5, 0.4, 0.6, 0.35, 0.65, 0.25, 0.75]) {
         const point = node.getPointAtLength(total * fraction)
         const screen = new DOMPoint(point.x, point.y).matrixTransform(matrix)
         const hit = document.elementFromPoint(screen.x, screen.y)
@@ -689,6 +700,42 @@ test.describe('Formations cockpit — direct manipulation gestures', () => {
     await expect.poll(() => patches.find(p => 'createGate' in p)).toBeTruthy()
   })
 
+  test('canvas Mission form submits the authored fields and a required Bead ID', async ({ page }) => {
+    const viewport = page.locator('.fmx .viewport')
+    const vbox = await requiredBox(viewport, 'formations viewport')
+    await viewport.evaluate((element, point) => {
+      element.dispatchEvent(new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        button: 2,
+        clientX: point.clientX,
+        clientY: point.clientY,
+      }))
+    }, {
+      clientX: vbox.x + vbox.width * 0.7,
+      clientY: vbox.y + vbox.height * 0.7,
+    })
+    await page.getByRole('menuitem', { name: 'Mission' }).click()
+
+    await expect(page.getByRole('dialog', { name: 'Create mission' })).toBeVisible()
+    expect(patches.filter(patch => 'createMission' in patch)).toEqual([])
+    await page.getByLabel('Mission title').fill('Plan release')
+    await page.getByLabel('Mission goal').fill('Ship the reduced candidate')
+    await page.getByLabel('Mission Bead ID').fill('home-vdki.34.1')
+    await page.getByRole('button', { name: 'Create mission' }).click()
+
+    await expect.poll(() => patches.find(patch => 'createMission' in patch)).toBeTruthy()
+    const create = patches.find(patch => 'createMission' in patch)?.createMission as Record<string, unknown>
+    expect(create).toMatchObject({
+      title: 'Plan release',
+      goal: 'Ship the reduced candidate',
+      beadId: 'home-vdki.34.1',
+    })
+    expect(create.x).toEqual(expect.any(Number))
+    expect(create.y).toEqual(expect.any(Number))
+    await expect(page.getByRole('dialog', { name: 'Create mission' })).toHaveCount(0)
+  })
+
   test('node-drag: moving mission, formation, and gate cards persists layout node patches', async ({ page }) => {
     const mission = page.getByTestId('mission-node-mission-smoke')
     const missionStart = await nodeStylePosition(mission)
@@ -719,6 +766,114 @@ test.describe('Formations cockpit — direct manipulation gestures', () => {
     const gatePatch = layoutNodePatch('gate-review')
     expect(gatePatch?.x).toBeLessThan(gateStart.x)
     expect(gatePatch?.y).toBeGreaterThan(gateStart.y)
+  })
+
+  test('pointercancel clears every gesture projection without committing a drop', async ({ page }) => {
+    const viewport = page.locator('.fmx .viewport')
+    const viewportBox = await requiredBox(viewport, 'formations viewport')
+
+    // Pan: cancellation relinquishes the viewport class.
+    const panStart = { x: viewportBox.x + viewportBox.width - 80, y: viewportBox.y + viewportBox.height - 80 }
+    await page.mouse.move(panStart.x, panStart.y)
+    await page.mouse.down()
+    await page.mouse.move(panStart.x + 32, panStart.y + 24)
+    await expect(viewport).toHaveClass(/panning/)
+    await pointerCancel(page, panStart.x + 32, panStart.y + 24)
+    await expect(viewport).not.toHaveClass(/panning/)
+
+    // Node: the transient position and drag class disappear without a layout PATCH.
+    const node = page.getByTestId('mission-node-mission-smoke')
+    const nodeStart = await nodeStylePosition(node)
+    const nodeHandle = await requiredBox(node.locator('.mtitle'), 'mission drag handle')
+    await page.mouse.move(nodeHandle.centerX, nodeHandle.centerY)
+    await page.mouse.down()
+    await page.mouse.move(nodeHandle.centerX + 70, nodeHandle.centerY + 36)
+    await expect(page.getByTestId('formations-world')).toHaveClass(/nodedrag/)
+    expect(await nodeStylePosition(node)).not.toEqual(nodeStart)
+    await pointerCancel(page, nodeHandle.centerX + 70, nodeHandle.centerY + 36)
+    await expect(page.getByTestId('formations-world')).not.toHaveClass(/nodedrag/)
+    expect(await nodeStylePosition(node)).toEqual(nodeStart)
+    expect(layoutPatches).toEqual([])
+
+    // Reconnect: the committed wire returns and temp/hover projections clear.
+    const connectedInput = page.locator('[data-port-in="gate-review:in"]')
+    const connectedInputBox = await requiredBox(connectedInput, 'connected gate input')
+    const reconnectTarget = page.locator('[data-port-in="formation-ship:in"]')
+    const reconnectTargetBox = await requiredBox(reconnectTarget, 'reconnect target')
+    await page.mouse.move(connectedInputBox.centerX, connectedInputBox.centerY)
+    await page.mouse.down()
+    await page.mouse.move(reconnectTargetBox.centerX, reconnectTargetBox.centerY)
+    await expect(page.locator('.fmx path.wire.temp')).toHaveCount(1)
+    await expect(page.getByTestId('formation-wire-conn-review-gate')).toHaveCount(0)
+    await expect(reconnectTarget).toHaveClass(/snaptarget/)
+    await pointerCancel(page, reconnectTargetBox.centerX, reconnectTargetBox.centerY)
+    await expect(page.locator('.fmx path.wire.temp')).toHaveCount(0)
+    await expect(page.getByTestId('formation-wire-conn-review-gate')).toHaveCount(1)
+    await expect(reconnectTarget).not.toHaveClass(/snaptarget/)
+    expect(patches).toEqual([])
+
+    // Judge-wire hover is owned by the same cancellable wire projection.
+    const judgeSocket = page.getByTestId('gate-judge-socket-gate-review')
+    const judgeSocketBox = await requiredBox(judgeSocket, 'judge socket')
+    const judgeTarget = page.getByTestId('formation-node-formation-ship')
+    const judgeTargetBox = await requiredBox(judgeTarget, 'judge formation target')
+    await page.mouse.move(judgeSocketBox.centerX, judgeSocketBox.centerY)
+    await page.mouse.down()
+    await page.mouse.move(judgeTargetBox.centerX, judgeTargetBox.centerY)
+    await expect(judgeTarget).toHaveClass(/judgehover/)
+    await pointerCancel(page, judgeTargetBox.centerX, judgeTargetBox.centerY)
+    await expect(page.locator('.fmx path.wire.temp')).toHaveCount(0)
+    await expect(judgeTarget).not.toHaveClass(/judgehover/)
+    expect(patches).toEqual([])
+
+    // Gate token: its screen-space ghost clears without createGate.
+    const gateTokenBox = await requiredBox(page.getByTestId('gate-token'), 'gate token')
+    const gateTarget = { x: viewportBox.x + viewportBox.width * 0.5, y: viewportBox.y + viewportBox.height * 0.7 }
+    await page.mouse.move(gateTokenBox.centerX, gateTokenBox.centerY)
+    await page.mouse.down()
+    await page.mouse.move(gateTarget.x, gateTarget.y)
+    await expect(page.locator('.fmx .gateghost')).toHaveCount(1)
+    await pointerCancel(page, gateTarget.x, gateTarget.y)
+    await expect(page.locator('.fmx .gateghost')).toHaveCount(0)
+    expect(patches).toEqual([])
+
+    // Lane: the draft route reverts without persisting an edge lane.
+    const wire = page.getByTestId('formation-wire-conn-review-gate')
+    const originalPath = await wire.getAttribute('d')
+    const wirePoint = await visibleSvgPathPoint(wire)
+    await page.mouse.move(wirePoint.x, wirePoint.y)
+    await page.mouse.down()
+    await page.mouse.move(wirePoint.x, wirePoint.y + 90)
+    await expect.poll(() => wire.getAttribute('d')).not.toBe(originalPath)
+    await pointerCancel(page, wirePoint.x, wirePoint.y + 90)
+    await expect(wire).toHaveAttribute('d', originalPath || '')
+    expect(layoutPatches).toEqual([])
+
+    // Staff: the ghost and slot hover clear without assigning the agent.
+    const slot = page.getByTestId('slot-formation-review-slot-reviewer')
+    const slotBox = await requiredBox(slot, 'staff target slot')
+    const rosterAgentBox = await requiredBox(page.getByTestId('roster-agent-codex'), 'roster agent')
+    await page.mouse.move(rosterAgentBox.centerX, rosterAgentBox.centerY)
+    await page.mouse.down()
+    await page.mouse.move(slotBox.centerX, slotBox.centerY)
+    await expect(page.locator('.fmx-ghost')).toHaveCount(1)
+    await expect(slot).toHaveClass(/snaptarget/)
+    await pointerCancel(page, slotBox.centerX, slotBox.centerY)
+    await expect(page.locator('.fmx-ghost')).toHaveCount(0)
+    await expect(slot).not.toHaveClass(/snaptarget/)
+    expect(patches).toEqual([])
+  })
+
+  test('Arrange invokes the shared layout operation and undoes in one step', async ({ page }) => {
+    await page.getByTestId('arrange-layout').click()
+    await expect.poll(() => layoutPatches.find(p => p.arrange === true)).toBeTruthy()
+
+    const patchesBefore = layoutPatches.length
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Z' : 'Control+Z')
+    await expect.poll(() => layoutPatches.length).toBeGreaterThan(patchesBefore)
+    const undoPatch = layoutPatches[layoutPatches.length - 1]
+    expect(Array.isArray(undoPatch.nodes)).toBe(true)
+    expect((undoPatch.nodes as unknown[]).length).toBe(mockFormationsLayout.nodes.length + 1)
   })
 
   test('local formation menu edits input through a popover and undo emits the inverse model operation', async ({ page }) => {

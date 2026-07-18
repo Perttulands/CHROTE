@@ -33,6 +33,8 @@ and runtime state. Client devices only view and operate that state.
 4. Surface agent-like sessions without depending on a specific orchestrator.
 5. Wrap selected local services through CHROTE-owned server-side routes.
 6. Stay private to localhost and Tailscale unless explicitly changed.
+7. Keep file-backed Formations boards, runs, and agent authoring visible through
+   one shared dashboard/Archon model.
 
 ### Current Non-Goals
 
@@ -40,7 +42,9 @@ and runtime state. Client devices only view and operate that state.
 - CHROTE does not expose Windows as the workspace source of truth.
 - CHROTE does not replace `bd`.
 - CHROTE does not assume Gastown, Ralph, or vendored orchestrator components.
-- CHROTE does not currently own agent-to-agent IPC or autonomous team routing.
+- CHROTE does not currently own a general-purpose autonomous messaging or IPC
+  fabric. Explicit, bounded dispatch inside a user-authored Formations run is a
+  separate workflow contract.
 
 ## Current Views
 
@@ -51,9 +55,31 @@ and runtime state. Client devices only view and operate that state.
 | Files | Browse allowed host workspace files |
 | Agents | Observe agent-like tmux sessions |
 | Beads | Show modern `bd` project issues, ready work, health, and optional `bv` sidecar usage |
+| Formations | Author and inspect file-backed agent workflows and durable runs |
 | Services | Operate selected `/srv` services through CHROTE-owned proxies |
 | Settings | Theme, font, session behavior |
 | Help | Dashboard usage |
+
+## Formations foundation and accepted target
+
+The current product already has file-backed boards with missions, agent
+formations, gates, stable connections/ports, Archon and API authoring, lab and
+tmux execution, and append-only run ledgers. That foundation is real but not the
+finished workflow cockpit.
+
+ADR-0006 accepts the next mixed-workflow model: fixed Mission entry, Formation agent
+execution, pure frozen-profile Tool transformation, and Gate evaluation/routing with
+typed named ports. Agent-first authoring, deterministic Tool steps, canonical
+node/attempt/artifact projection, typed gate feedback, and exact run-bound
+per-slot terminal Peek are active target work and are not implemented on current main.
+Current boards remain the compatibility base while those slices land behind
+their explicit validation and certification gates.
+Accepted runtime authority moves canonical ledgers, immutable graph/private
+bindings, sealed Tool inputs, and pending raw-redaction state under the
+writer-only CHROTE data root outside generic Files roots. Users see sanitized
+run/event/binding projections and currently authorized artifacts through the
+existing cockpit/File Peek surfaces; raw authority is neither browsable nor
+mutable through Files.
 
 ## Services Platform V1
 
@@ -149,11 +175,14 @@ Later Services components may include image generation, Camofox browser
 automation, Ollama status, and Gas City read-only observation if they earn their
 place in the operator workflow.
 
-### Phase 4 - Meta-Harness
+### Phase 4 - Formations and Meta-Harness
 
-Planned later. CHROTE should coordinate interchangeable harnesses such as Codex,
-Claude Code, Pi, OpenCode, Hermes, and generic tmux agents through explicit
-adapters, run ledgers, recipes, and audited control surfaces.
+The file-backed Formations foundation is present and under active stabilization.
+The accepted target coordinates interchangeable harnesses such as Codex, Claude
+Code, Pi, OpenCode, Hermes, and generic tmux agents through explicit adapters,
+mixed workflow nodes, run ledgers, and audited control surfaces. Tool steps,
+host-owned asynchronous coordination, full run inspection, and exact terminal
+Peek remain target behavior until their Beads and exact-candidate gates close.
 
 ### Phase 5 - Agent Teams
 

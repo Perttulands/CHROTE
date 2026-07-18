@@ -213,6 +213,7 @@ type formationsLayoutPatchRequest struct {
 	UpdatedAt string                  `json:"updatedAt"`
 	Nodes     []formations.LayoutNode `json:"nodes"`
 	Edges     []formations.LayoutEdge `json:"edges"`
+	Arrange   bool                    `json:"arrange"`
 }
 
 func NewFormationsHandler(workspace string) *FormationsHandler {
@@ -793,7 +794,7 @@ func (h *FormationsHandler) PatchBoard(w http.ResponseWriter, r *http.Request) {
 	}
 	if request.CreateGate != nil {
 		gate := request.CreateGate
-		board, err := h.store.CreateGate(slug, formations.GateCreateRequest{
+		result, err := h.store.CreateGate(slug, formations.GateCreateRequest{
 			Title:        gate.Title,
 			Kinds:        gate.Kinds,
 			Criterion:    gate.Criterion,
@@ -812,8 +813,8 @@ func (h *FormationsHandler) PatchBoard(w http.ResponseWriter, r *http.Request) {
 			writeFormationsError(w, err)
 			return
 		}
-		w.Header().Set("ETag", board.ETag)
-		core.WriteSuccess(w, map[string]interface{}{"board": board})
+		w.Header().Set("ETag", result.Board.ETag)
+		core.WriteSuccess(w, result)
 		return
 	}
 	if request.SetGateJudge != nil {
@@ -853,7 +854,7 @@ func (h *FormationsHandler) PatchBoard(w http.ResponseWriter, r *http.Request) {
 	}
 	if request.CreateMission != nil {
 		mission := request.CreateMission
-		board, err := h.store.CreateMission(slug, formations.MissionCreateRequest{
+		result, err := h.store.CreateMission(slug, formations.MissionCreateRequest{
 			Title:     mission.Title,
 			Goal:      mission.Goal,
 			BeadID:    mission.BeadID,
@@ -868,8 +869,8 @@ func (h *FormationsHandler) PatchBoard(w http.ResponseWriter, r *http.Request) {
 			writeFormationsError(w, err)
 			return
 		}
-		w.Header().Set("ETag", board.ETag)
-		core.WriteSuccess(w, map[string]interface{}{"board": board})
+		w.Header().Set("ETag", result.Board.ETag)
+		core.WriteSuccess(w, result)
 		return
 	}
 	board, err := h.store.UpdateBoardMetadata(slug, formations.BoardMetadataPatch{
@@ -913,6 +914,22 @@ func (h *FormationsHandler) PatchLayout(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var layout *formations.LayoutDocument
+	if request.Arrange {
+		if len(request.Nodes) > 0 || len(request.Edges) > 0 || request.UpdatedAt != "" {
+			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "arrange cannot be combined with other layout mutations")
+			return
+		}
+		layout, err = h.store.ArrangeLayout(slug, formations.WriteOptions{
+			ExpectedETag: r.Header.Get("If-Match"),
+		})
+		if err != nil {
+			writeFormationsError(w, err)
+			return
+		}
+		w.Header().Set("ETag", layout.ETag)
+		core.WriteSuccess(w, map[string]interface{}{"layout": layout})
+		return
+	}
 	if len(request.Nodes) > 0 {
 		layout, err = h.store.UpdateLayoutNodes(slug, request.Nodes, formations.WriteOptions{
 			ExpectedETag: r.Header.Get("If-Match"),

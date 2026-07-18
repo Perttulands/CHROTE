@@ -6,8 +6,10 @@ Accepted
 ## Context
 Formations definitions are durable local files edited by both the CHROTE server
 and future `archon` CLI verbs. They must preserve human-authored TOML comments
-and unknown fields, reject stale edits, and keep rollback as simple as deleting
-`.formations/`.
+and unknown fields and reject stale edits. Code rollback must preserve both the
+workspace `.formations/` tree and host-private canonical run authority under the
+CHROTE data root. Retention, migration, or deletion is a separate explicit
+operator action, never part of rollback.
 
 The main alternatives were:
 - let each client parse and rewrite TOML independently;
@@ -35,6 +37,8 @@ must take locks in deterministic board-then-layout order.
 The feature has one persistence contract for UI and CLI callers, and readers can
 trust that comments, unknown keys, and rollback boundaries are not accidental.
 Concurrent edits produce visible conflicts instead of lost updates.
+Reverting code does not delete or rewrite definition, artifact, ledger, binding,
+or private run-authority data.
 
 The trade-off is that the writer is more careful than a normal TOML
 marshal/unmarshal path. Future schema work must extend the shared patching

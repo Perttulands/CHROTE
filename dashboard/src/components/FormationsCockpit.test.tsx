@@ -73,9 +73,10 @@ const agents = [
 
 type RecordedPatch = { url: string; body: Record<string, unknown> }
 
-function installFetchMock(options: { emptyBoards?: boolean } = {}) {
+function installFetchMock(options: { emptyBoards?: boolean; freshCreateLayout?: boolean; missionCreateFailure?: boolean } = {}) {
   const patches: RecordedPatch[] = []
   let board = makeBoard()
+  let currentLayout = layout
   ;(globalThis as Record<string, unknown>).fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     const respond = (data: unknown, etag = '') => Promise.resolve({
@@ -84,16 +85,53 @@ function installFetchMock(options: { emptyBoards?: boolean } = {}) {
       json: () => Promise.resolve({ success: true, data }),
       text: () => Promise.resolve(''),
     })
+    const reject = (message: string) => Promise.resolve({
+      ok: false,
+      status: 400,
+      headers: { get: () => null },
+      json: () => Promise.resolve({ success: false, error: { code: 'BAD_REQUEST', message } }),
+      text: () => Promise.resolve(message),
+    })
     if (init?.method === 'PATCH') {
       const body = JSON.parse(String(init.body)) as Record<string, unknown>
       patches.push({ url, body })
+      if (!url.endsWith('/layout') && body.createMission) {
+        if (options.missionCreateFailure) return reject('Mission create failed')
+        const requested = body.createMission as { title: string; goal: string; beadId: string; x: number; y: number }
+        const created = {
+          id: 'mis_created',
+          title: requested.title,
+          goal: requested.goal,
+          beadId: requested.beadId,
+        }
+        board = { ...board, rev: board.rev + 1, missions: [...board.missions, created] }
+        currentLayout = {
+          ...currentLayout,
+          boardRev: board.rev,
+          etag: 'layout-mission-etag',
+          nodes: [...currentLayout.nodes, { id: created.id, x: requested.x, y: requested.y }],
+        }
+        return respond({ board, layout: currentLayout }, 'board-etag-2')
+      }
+      if (options.freshCreateLayout && !url.endsWith('/layout') && body.createGate) {
+        const requested = body.createGate as { title: string; kinds: string[]; criterion: string }
+        const created = { id: 'gate_created', title: requested.title, kinds: requested.kinds, criterion: requested.criterion }
+        board = { ...board, rev: board.rev + 1, gates: [...board.gates, created] }
+        currentLayout = {
+          ...currentLayout,
+          boardRev: board.rev,
+          etag: 'layout-created-etag',
+          nodes: [...currentLayout.nodes, { id: created.id, x: 1344, y: 784 }],
+        }
+        return respond({ board, layout: currentLayout }, 'board-etag-2')
+      }
       board = { ...board, rev: board.rev + 1 }
-      if (url.endsWith('/layout')) return respond({ layout }, 'layout-etag-2')
+      if (url.endsWith('/layout')) return respond({ layout: currentLayout }, 'layout-etag-2')
       return respond({ board }, 'board-etag-2')
     }
     if (url === '/api/formations/boards') return respond({ boards: options.emptyBoards ? [] : [{ slug: board.slug, title: board.title }] })
     if (url.includes('/changes')) return respond({ signal: { changed: false } })
-    if (url.endsWith('/layout')) return respond({ layout }, 'layout-etag')
+    if (url.endsWith('/layout')) return respond({ layout: currentLayout }, 'layout-etag')
     if (url.includes('/api/formations/boards/')) return respond({ board }, 'board-etag')
     if (url === '/api/agents') return respond({ agents })
     return respond({})
@@ -120,6 +158,11 @@ describe('FormationsCockpit reference parity', () => {
     vi.restoreAllMocks()
   })
 
+  it('falls back to default text size outside a SessionProvider', async () => {
+    await renderCockpit()
+    expect(screen.getByTestId('formations-view')).toHaveAttribute('data-textsize', 'default')
+  })
+
   it('does not fabricate a starter board when no real boards exist', async () => {
     patches = installFetchMock({ emptyBoards: true })
     render(<FormationsCockpit />)
@@ -133,7 +176,7 @@ describe('FormationsCockpit reference parity', () => {
   it('shows only assignable persona cards in the formation staffing roster', async () => {
     await renderCockpit()
     const roster = screen.getByTestId('agent-roster')
-    expect(roster).toHaveTextContent('2 catalog agents')
+    expect(screen.getByTestId('roster-count')).toHaveTextContent('2')
     expect(roster).toHaveTextContent('Mason')
     expect(roster).toHaveTextContent('Hazel')
     expect(roster).not.toHaveTextContent('scratch')
@@ -149,16 +192,99 @@ describe('FormationsCockpit reference parity', () => {
     expect(screen.getByTestId('gate-node-gate_review').className).toContain('hasjudge')
   })
 
-  it('opens a New menu on canvas right-click and creates a mission from it', async () => {
+  it('collects Mission fields and creates only after a safe Bead ID', async () => {
+    vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(1)
     const { container } = await renderCockpit()
     const viewport = container.querySelector('.viewport') as HTMLElement
     fireEvent.contextMenu(viewport, { clientX: 300, clientY: 300 })
     const menu = await screen.findByRole('menu', { name: 'New' })
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Mission' }))
-    await waitFor(() => {
-      expect(patches.some(patch => (patch.body.createMission as { title?: string } | undefined)?.title === 'New mission')).toBe(true)
-    })
+
+    const dialog = await screen.findByRole('dialog', { name: 'Create mission' })
     expect(menu).not.toBeInTheDocument()
+    expect(patches.filter(patch => patch.body.createMission)).toEqual([])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create mission' }))
+    expect(await screen.findByText('Enter a Beads issue ID such as ctx-ug7.25.')).toBeInTheDocument()
+    expect(screen.getByLabelText('Mission Bead ID')).toHaveAttribute('aria-invalid', 'true')
+    expect(patches.filter(patch => patch.body.createMission)).toEqual([])
+
+    fireEvent.change(screen.getByLabelText('Mission title'), { target: { value: '  Plan release  ' } })
+    fireEvent.change(screen.getByLabelText('Mission goal'), { target: { value: '  Ship reduced candidate  ' } })
+    fireEvent.change(screen.getByLabelText('Mission Bead ID'), { target: { value: ' home-vdki.34.1 ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create mission' }))
+
+    await waitFor(() => {
+      const create = patches.find(patch => patch.body.createMission)
+      expect(create?.body.createMission).toEqual({
+        title: 'Plan release',
+        goal: 'Ship reduced candidate',
+        beadId: 'home-vdki.34.1',
+        x: 1260,
+        y: 252,
+      })
+    })
+    expect(dialog).not.toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: 'z', ctrlKey: true })
+    await waitFor(() => {
+      expect(patches.some(patch => (patch.body.deleteMission as { id?: string } | undefined)?.id === 'mis_created')).toBe(true)
+    })
+  })
+
+  it('cancels Mission creation with Cancel and Escape without mutation', async () => {
+    const { container } = await renderCockpit()
+    const viewport = container.querySelector('.viewport') as HTMLElement
+
+    fireEvent.contextMenu(viewport, { clientX: 300, clientY: 300 })
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Mission' }))
+    await screen.findByRole('dialog', { name: 'Create mission' })
+    fireEvent.change(screen.getByLabelText('Mission title'), { target: { value: 'Discard me' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel mission creation' }))
+    expect(screen.queryByRole('dialog', { name: 'Create mission' })).toBeNull()
+
+    fireEvent.contextMenu(viewport, { clientX: 360, clientY: 360 })
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Mission' }))
+    await screen.findByRole('dialog', { name: 'Create mission' })
+    fireEvent.change(screen.getByLabelText('Mission goal'), { target: { value: 'Discard this too' } })
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Create mission' })).toBeNull())
+
+    expect(patches.filter(patch => patch.body.createMission)).toEqual([])
+  })
+
+  it('retains the Mission draft after the API rejects creation', async () => {
+    patches = installFetchMock({ missionCreateFailure: true })
+    const { container } = await renderCockpit()
+    const viewport = container.querySelector('.viewport') as HTMLElement
+    fireEvent.contextMenu(viewport, { clientX: 300, clientY: 300 })
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Mission' }))
+    await screen.findByRole('dialog', { name: 'Create mission' })
+
+    fireEvent.change(screen.getByLabelText('Mission title'), { target: { value: 'Plan release' } })
+    fireEvent.change(screen.getByLabelText('Mission goal'), { target: { value: 'Ship reduced candidate' } })
+    fireEvent.change(screen.getByLabelText('Mission Bead ID'), { target: { value: 'ctx-ug7.25' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create mission' }))
+
+    expect(await screen.findByTestId('formations-error')).toHaveTextContent('Mission create failed')
+    expect(screen.getByRole('dialog', { name: 'Create mission' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Mission title')).toHaveValue('Plan release')
+    expect(screen.getByLabelText('Mission goal')).toHaveValue('Ship reduced candidate')
+    expect(screen.getByLabelText('Mission Bead ID')).toHaveValue('ctx-ug7.25')
+  })
+
+  it('adopts a created gate layout without issuing a stale follow-up layout patch', async () => {
+    patches = installFetchMock({ freshCreateLayout: true })
+    const { container } = await renderCockpit()
+    const viewport = container.querySelector('.viewport') as HTMLElement
+    fireEvent.contextMenu(viewport, { clientX: 300, clientY: 300 })
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Gate' }))
+
+    const created = await screen.findByTestId('gate-node-gate_created')
+    await waitFor(() => {
+      expect(created).toHaveStyle({ left: '1344px', top: '784px' })
+    })
+    expect(patches.filter(patch => patch.url.endsWith('/layout'))).toEqual([])
   })
 
   it('dismisses context menus on Escape and outside pointerdown', async () => {
@@ -227,5 +353,28 @@ describe('FormationsCockpit reference parity', () => {
       const removal = patches.map(patch => patch.body.deleteMission as { id?: string } | undefined).find(Boolean)
       expect(removal).toEqual(expect.objectContaining({ id: 'mis_showcase' }))
     })
+  })
+
+  it('uses the shared explicit Arrange operation for whole-board movement', async () => {
+    await renderCockpit()
+    fireEvent.click(screen.getByTestId('arrange-layout'))
+    await waitFor(() => {
+      expect(patches).toContainEqual({
+        url: '/api/formations/boards/test-board/layout',
+        body: { arrange: true },
+      })
+    })
+  })
+
+  it('cancels the active interaction when the cockpit unmounts', async () => {
+    const { container, unmount } = await renderCockpit()
+    const viewport = container.querySelector('.viewport') as HTMLElement
+
+    fireEvent.pointerDown(viewport, { button: 0, pointerId: 5, clientX: 800, clientY: 600 })
+    fireEvent.pointerMove(window, { pointerId: 5, clientX: 830, clientY: 620 })
+    expect(viewport).toHaveClass('panning')
+
+    unmount()
+    expect(viewport).not.toHaveClass('panning')
   })
 })

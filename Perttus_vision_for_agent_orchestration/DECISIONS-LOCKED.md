@@ -1,9 +1,11 @@
-# Decisions Locked — CHROTE Formations / Agent Orchestration
+# Historical Locked Decisions — CHROTE Formations / Agent Orchestration
 
-> **Authoritative.** Recorded 2026-06-03 with Perttu. Where this document conflicts with any
-> sibling doc, **this wins**. It resolves the genuine contradictions that had accumulated across
-> the design packets (engine location, CLI name, first-slice definition, build order) and records
-> a methodology pivot Perttu made this session (UI + Gherkin as the behavioral source of truth).
+> **Historical decision packet.** Recorded 2026-06-03 with Perttu. It resolves the genuine
+> contradictions that had accumulated in that design session (engine location, CLI name,
+> first-slice definition, build order) and records the reasoning behind its methodology pivot.
+> It no longer overrides current root specs, current code, the
+> [source-truth index](../docs/source-truth-index.md), or later accepted ADRs. Where behavior has
+> changed, those newer sources win; this packet remains the rationale for the decisions below.
 >
 > Superseded framings are listed in §4. The vision interview
 > (`perttus_vision_for_agent_teams_and_orchestration.md`) and the conceptual model
@@ -99,14 +101,14 @@ but every gesture it exposes must "just work" and write through the shared packa
 | Area | Default |
 |---|---|
 | Definition format | **TOML** (`.formations/boards/*.formation.toml`), layout in a sidecar |
-| Ledger / run state | **append-only NDJSON** under `.formations/runs/<board>/` |
+| Ledger / run state | **append-only NDJSON** under writer-only CHROTE data root; APIs expose sanitized projections |
 | File layout | `.formations/` (sibling of `.beads/`) + central `~/agents/` for persona cards |
 | IDs | prefixed ULIDs (`brd_`, `mis_`, `fmn_`, `slot_`, `gate_`, `edge_`…); stable across round-trips |
 | The "one-id spine" | persona `id` = card filename = default tmux session stem = slot `agentId` = team ref = ledger key; explicit harness variants may declare their own `session_stem` while keeping `agentId` as the durable key |
 | Slot → session binding | **static** (`agentId`), resolve to live session at run; unavailable ⇒ **fail loud**, no silent substitution |
 | Single writer | the shared formations package is the only writer of definition files (CLI + UI both go through it) |
 | Ledger text | full prompt+reply text by default (localhost, single-user) + a per-run `redact` flag |
-| Fail-loud limits | per-run max-dispatch + wall-clock timeout that **record-and-stop** (not approval gates) |
+| Fail-loud limits | per-run max-dispatch + max-attempts + wall-clock timeout that **record-and-stop** (not approval gates) |
 | Beads | work tracking only — never the graph store or comms channel |
 | Notice board | **deferred** (stage-1 comms = inline brief + ledger + conversational status via the Archon) |
 | Reversibility | `chrote-formations` flag (default off) + `CHROTE_FORMATIONS` env; `rm -rf .formations/` is clean |

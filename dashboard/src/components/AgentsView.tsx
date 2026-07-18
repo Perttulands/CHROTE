@@ -24,7 +24,7 @@ import {
   runStatusFromResponse,
   upsertRunEvent,
 } from './formationsRunState'
-import { agentColor, agentRole, initials } from './formationsCockpitVisuals'
+import { agentRole, initials } from './formationsCockpitVisuals'
 import type {
   AgentProjection as FormationAgentProjection,
   BoardDocument,
@@ -922,8 +922,7 @@ function RosterGroup({
             aria-label={`Inspect ${name}`}
             onClick={() => onInspect(agent)}
           >
-            <span className={`sd ${status.liveness === 'live' ? 'on' : status.liveness === 'ambiguous' ? 'warn' : 'idle'}`} aria-label={status.liveness} />
-            <span className="av" style={{ background: agentColor(agent.id) }}>{initials(name)}</span>
+            <span className="av">{initials(name)}</span>
             <span className="ri">
               <span className="n">{name}</span>
               <span className="r">{agentRole(agent as FormationAgentProjection)}</span>
@@ -986,7 +985,7 @@ function FormationStaffingCard({
             >
               <span className="slot-ring">
                 {slot.controller && <span className="badge">C</span>}
-                {slot.agentId ? <span className="face" style={{ background: agentColor(slot.agentId) }}>{initials(assignedName || slot.agentId)}</span> : <span className="plus">+</span>}
+                {slot.agentId ? <span className="face">{initials(assignedName || slot.agentId)}</span> : <span className="plus">+</span>}
               </span>
               <span className="slot-label">{slot.label}</span>
               <span className="who">{slot.agentId ? assignedName : 'open'}</span>

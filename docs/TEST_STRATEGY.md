@@ -26,6 +26,8 @@ CHROTE uses this testing strategy:
 | **Backend** | Go testing | `src/**/*_test.go` | Unit tests, integration tests, API validation |
 | **Frontend Unit** | Vitest | `dashboard/src/**/*.test.ts(x)` | Component, hook, service, and utility tests |
 | **Frontend E2E** | Playwright | `dashboard/tests/*.spec.ts` | Mocked deterministic browser tests |
+| **Formations E2E** | Playwright | `dashboard/tests/formations/*.spec.ts` | Complete mocked Formations browser gate |
+| **Built-server contract** | Playwright | `dashboard/tests/contract/*.spec.ts` | Embedded assets and safe Formations API/UI boundary |
 | **Live Frontend Integration** | Playwright | `dashboard/tests/integration/*.spec.ts` | Explicit CHROTE backend/terminal smoke tests |
 
 ### Directory Structure
@@ -95,6 +97,18 @@ cd /path/to/chrote/dashboard && npm run test:unit -- --coverage
 
 # Frontend mocked browser tests
 cd /path/to/chrote/dashboard && npm test
+
+# Dedicated mocked Formations browser tests
+cd /path/to/chrote/dashboard && npm run test:formations
+
+# Build and run the disposable built-server browser/API contract
+cd /path/to/chrote/dashboard && npm ci && npm run build
+cd /path/to/chrote
+mkdir -p src/internal/dashboard/dist
+find src/internal/dashboard/dist -mindepth 1 -delete
+cp -a dashboard/dist/. src/internal/dashboard/dist/
+cd src && go build -o ../chrote-server-ci ./cmd/server && cd ..
+CHROTE_SERVER_BINARY="$PWD/chrote-server-ci" scripts/test-built-server-contract.sh
 
 # Live backend/terminal browser tests
 cd /path/to/chrote/dashboard && CHROTE_TEST_URL=http://127.0.0.1:8095 npm run test:live
@@ -221,9 +235,40 @@ cd /path/to/chrote/dashboard
 npm test
 ```
 
-The default Playwright suite is the mocked deterministic browser gate. It excludes `dashboard/tests/integration/**`.
+The default Playwright suite is the mocked deterministic browser gate. It excludes `dashboard/tests/integration/**`, `dashboard/tests/formations/**`, and `dashboard/tests/contract/**`; the latter two directories are mandatory separate CI lanes.
 
 When Playwright starts the local Vite dev server, it sets `CHROTE_PLAYWRIGHT_MOCKED=1`; `dashboard/vite.config.ts` disables backend proxying in that mode. Default browser tests must mock every `/api/**` and terminal request.
+
+### Run Dedicated Formations Tests
+
+```bash
+cd /path/to/chrote/dashboard
+npm run test:formations
+```
+
+This command discovers the complete mocked `dashboard/tests/formations/` directory. In CI, Playwright also emits a JSON report and `scripts/assert-playwright-executed.mjs` rejects both zero discovered tests and an all-skipped suite. No fixed test count is part of the contract, so adding or removing intentional coverage does not require updating a sentinel count. The verifier and CI wiring are covered by `node --test scripts/ci-lane-contract.test.mjs`.
+
+### Run Built-server Contract Tests
+
+Build the dashboard before the Go binary because the server embeds `src/internal/dashboard/dist`:
+
+```bash
+cd /path/to/chrote/dashboard
+npm ci
+npm run build
+
+cd /path/to/chrote
+mkdir -p src/internal/dashboard/dist
+find src/internal/dashboard/dist -mindepth 1 -delete
+cp -a dashboard/dist/. src/internal/dashboard/dist/
+cd src
+go build -o ../chrote-server-ci ./cmd/server
+cd ..
+
+CHROTE_SERVER_BINARY="$PWD/chrote-server-ci" scripts/test-built-server-contract.sh
+```
+
+The wrapper allocates a disposable port, starts the built binary with `-start-ttyd=false`, pins tmux and all writable state to a test-owned artifact directory, seeds an isolated Formations board, and runs only `dashboard/tests/contract/`. The server starts under an empty environment with only a bounded allowlist restored. This prevents inherited Formations lab, tmux, script-gate, `DEDICATED`, or `PROD_SMOKE` settings from selecting an executor; the wrapper explicitly disables those opt-ins and owns the Formations roots and socket paths. It prints the retained artifact directory; on failure, inspect `server.log`, `workspace/.formations`, `dashboard/playwright-report`, and `dashboard/test-results`.
 
 ### Run Live Backend Integration Tests
 
@@ -420,6 +465,8 @@ cd src
 go test ./...
 go build -o /tmp/chrote-server-ci ./cmd/server
 ```
+
+CI also runs `npm run test:formations` as its own mandatory job, rejects zero/all-skipped discovery from the JSON report, and builds a fresh embedded Go server for `scripts/test-built-server-contract.sh`. Both jobs upload Playwright reports, screenshots, and traces on failure; the Formations job also uploads its JSON execution report, and the built-server job uploads its server log and disposable Formations state.
 
 The release workflow also uses Go 1.23 and Node 20. It runs the same Go format/vet/test/race assumptions, dashboard lint/build/unit-coverage/audit, copies the fresh dashboard `dist` into `src/internal/dashboard/dist`, and performs an embedded-dashboard Go build smoke before producing tag artifacts.
 
@@ -641,6 +688,8 @@ echo "Test artifacts cleaned"
 | Frontend coverage | `cd /path/to/chrote/dashboard && npm run test:unit -- --coverage` |
 | Frontend dependency audit | `cd /path/to/chrote/dashboard && npm audit --audit-level=moderate` |
 | Frontend mocked browser tests | `cd /path/to/chrote/dashboard && npm test` |
+| Formations browser tests | `cd /path/to/chrote/dashboard && npm run test:formations` |
+| Built-server contract | Build/embed the dashboard and server, then run `CHROTE_SERVER_BINARY="$PWD/chrote-server-ci" scripts/test-built-server-contract.sh` |
 | Live backend browser tests | `cd /path/to/chrote/dashboard && CHROTE_TEST_URL=http://127.0.0.1:8095 npm run test:live` |
 | Backend verbose | `go test -v ./...` |
 | Backend coverage | `go test -cover ./...` |

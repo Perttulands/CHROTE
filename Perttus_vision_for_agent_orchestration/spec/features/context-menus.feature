@@ -28,7 +28,7 @@ Feature: Right-click anything — context menus expose the expected commands eve
   Scenario: Right-clicking a formation (card, header, or body whitespace) offers the full menu
     When I right-click a formation
     Then I can Run, Rename, Add slot/step (non-solo), Add input, Add output,
-      Add/Configure/Remove verification, Clear output, Set input, Duplicate, and Delete
+      Clear output, Set input, Duplicate, and Delete
 
   @ui
   Scenario: Right-clicking an input row offers input actions
@@ -42,10 +42,12 @@ Feature: Right-click anything — context menus expose the expected commands eve
     And I can always Add output, or Remove last output when more than one
 
   @ui
-  Scenario: Right-clicking the verification band offers verification actions
-    When I right-click the verification band
-    Then I can Add verification when none exists
-    And otherwise Configure or Remove it
+  Scenario: A legacy verification band is inspection-only
+    Given a schema-1 board contains an inline verification band
+    When I right-click the verification band in schema-2 Formations
+    Then its legacy configuration is inspectable but not authorable
+    And Add, Configure, and Remove verification actions are absent
+    And schema-2 validation still rejects "legacy_inline_verification_requires_migration"
 
   @ui
   Scenario: Right-clicking a slot offers assignment and slot actions

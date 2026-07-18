@@ -51,8 +51,9 @@ Feature: Escalation and human judgment — surfacing the few things that need Pe
   @cli
   Scenario: Perttu records a verdict to route the gate
     When I run "archon gate approve run_01J9 gate_01J9_review --reason 'direction is right'"
-    Then the ledger records "human_verdict_recorded" as pass and routes the pass wire
-    And "archon gate reject run_01J9 gate_01J9_review --reason ..." routes the fail wire instead
+    Then the ledger records "human_verdict_recorded" as pass for the exact waiting Gate attempt
+    And one aggregate "gate_verdict" records all declared kind results and alone routes the pass wire
+    And "archon gate reject run_01J9 gate_01J9_review --reason ..." contributes fail to that aggregate, whose verdict alone routes the fail wire
 
   @ui
   Scenario: The verdict can also be given from the tab

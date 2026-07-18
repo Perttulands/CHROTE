@@ -463,6 +463,68 @@ customFuture = "keep me"
 	}
 }
 
+func TestArchonCreateWithoutCoordinatesPlacesNodesWithoutOverlap(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("session-search"), `schema = 1
+id = "brd_01J9_sesssearch"
+slug = "session-search"
+title = "Improve session search"
+rev = 7
+
+[[gate]]
+id = "gate_existing"
+title = "Existing"
+kinds = ["human"]
+`)
+	writeArchonFile(t, store.LayoutPath("session-search"), `schema = 1
+boardId = "brd_01J9_sesssearch"
+boardRev = 7
+
+[[node]]
+id = "gate_existing"
+x = 112
+y = 112
+`)
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	commands := [][]string{
+		{"formation", "create", "session-search", "solo", "--title", "Draft"},
+		{"gate", "create", "session-search", "--title", "Review"},
+		{"mission", "create", "session-search", "--title", "Brief", "--goal", "Write it", "--bead", "ctx-placement"},
+	}
+	for _, command := range commands {
+		if stdout, stderr, code := runArchon(t, runner, append([]string{"--workspace", workspace}, command...)...); code != 0 {
+			t.Fatalf("%v code=%d stderr=%s stdout=%s", command, code, stderr, stdout)
+		}
+	}
+
+	layout, err := store.ReadLayout("session-search")
+	if err != nil {
+		t.Fatalf("read layout: %v", err)
+	}
+	if len(layout.Nodes) != 4 {
+		t.Fatalf("layout nodes = %+v, want existing plus three created nodes", layout.Nodes)
+	}
+	abs := func(value int) int {
+		if value < 0 {
+			return -value
+		}
+		return value
+	}
+	for index, node := range layout.Nodes {
+		if node.X%28 != 0 || node.Y%28 != 0 {
+			t.Fatalf("node is not grid aligned: %+v", node)
+		}
+		for prior := 0; prior < index; prior++ {
+			other := layout.Nodes[prior]
+			if abs(node.X-other.X) < 308 && abs(node.Y-other.Y) < 280 {
+				t.Fatalf("created nodes overlap: %+v and %+v", other, node)
+			}
+		}
+	}
+}
+
 func TestArchonGateCreateAndUpdatePersistStructuredScriptCommand(t *testing.T) {
 	workspace := t.TempDir()
 	store := formations.NewStore(workspace)
@@ -650,6 +712,60 @@ func TestArchonBoardNewCreatesDurableBoardJSONAndText(t *testing.T) {
 	}
 	if drafts.Title != "Drafts" || drafts.Rev != 1 || !strings.HasPrefix(drafts.ID, "brd_") {
 		t.Fatalf("text-created board = %+v, want persisted board", drafts)
+	}
+}
+
+func TestArchonBoardArrangeUsesSharedLayoutOperation(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("arrange"), `schema = 1
+id = "brd_arrange"
+slug = "arrange"
+title = "Arrange"
+rev = 2
+
+[[mission]]
+id = "mis_start"
+title = "Start"
+
+[[formation]]
+id = "fmn_finish"
+type = "solo"
+title = "Finish"
+
+[[connection]]
+id = "edge_start_finish"
+from = "mis_start:out"
+to = "fmn_finish:in"
+`)
+	writeArchonFile(t, store.LayoutPath("arrange"), `schema = 1
+boardId = "brd_arrange"
+boardRev = 2
+
+[[node]]
+id = "mis_start"
+x = 500
+y = 500
+
+[[node]]
+id = "fmn_finish"
+x = 100
+y = 100
+`)
+	stdout, stderr, code := runArchon(t, &fakeTmux{live: map[string]bool{}}, "--workspace", workspace, "board", "arrange", "arrange", "--json")
+	if code != 0 {
+		t.Fatalf("board arrange code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var arranged formations.LayoutDocument
+	if err := json.Unmarshal([]byte(stdout), &arranged); err != nil {
+		t.Fatalf("decode arranged layout: %v\n%s", err, stdout)
+	}
+	byID := map[string]formations.LayoutNode{}
+	for _, node := range arranged.Nodes {
+		byID[node.ID] = node
+	}
+	if byID["mis_start"].X >= byID["fmn_finish"].X {
+		t.Fatalf("archon arrange did not order connected nodes: %+v", byID)
 	}
 }
 

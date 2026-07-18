@@ -101,3 +101,98 @@ jobs:
           cd src
           go test ./...
           go build -o /tmp/chrote-server-ci ./cmd/server
+
+  formations-browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: CI lane contract tests
+        run: node --test scripts/ci-lane-contract.test.mjs
+
+      - name: Dashboard install dependencies
+        run: |
+          cd dashboard
+          npm ci
+
+      - name: Install Playwright browser
+        run: |
+          cd dashboard
+          npx playwright install --with-deps chromium
+
+      - name: Formations Playwright tests
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_FILE: ${{ runner.temp }}/formations-playwright.json
+        run: |
+          cd dashboard
+          npm run test:formations -- --reporter=line,json
+          node ../scripts/assert-playwright-executed.mjs "$PLAYWRIGHT_JSON_OUTPUT_FILE"
+
+      - name: Upload Formations browser failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: formations-browser-failure
+          path: |
+            dashboard/playwright-report
+            dashboard/test-results
+            ${{ runner.temp }}/formations-playwright.json
+          if-no-files-found: warn
+
+  built-server-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: src/go.sum
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Dashboard install dependencies
+        run: |
+          cd dashboard
+          npm ci
+
+      - name: Build dashboard and embedded Go server
+        run: |
+          cd dashboard
+          npm run build
+          cd ..
+          mkdir -p src/internal/dashboard/dist
+          find src/internal/dashboard/dist -mindepth 1 -delete
+          cp -a dashboard/dist/. src/internal/dashboard/dist/
+          cd src
+          go build -o ../chrote-server-ci ./cmd/server
+
+      - name: Install Playwright browser
+        run: |
+          cd dashboard
+          npx playwright install --with-deps chromium
+
+      - name: Built server browser/API contract
+        env:
+          CHROTE_CONTRACT_ARTIFACT_DIR: ${{ runner.temp }}/chrote-contract
+          CHROTE_SERVER_BINARY: ${{ github.workspace }}/chrote-server-ci
+        run: scripts/test-built-server-contract.sh
+
+      - name: Upload built server contract failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: built-server-contract-failure
+          path: |
+            dashboard/playwright-report
+            dashboard/test-results
+            ${{ runner.temp }}/chrote-contract/server.log
+            ${{ runner.temp }}/chrote-contract/workspace/.formations
+          include-hidden-files: true
+          if-no-files-found: warn

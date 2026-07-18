@@ -51,8 +51,11 @@ Feature: Briefs and outputs — the manual input to a formation and the produced
   @ui
   Scenario: A finished formation's output row opens a report
     Given "ship" has finished with status "done"
+    And its report, artifact, and diff fields contain only prior registered artifact ids
     When I click the output row (or right-click → Open report)
     Then a report popup shows the status, a human-readable report, artifacts, and diffs
+    And it consumes latest sanitized artifact projections rather than raw ledger refs or bytes
+    And File Peek revalidates every available descriptor before reading
 
   @ui
   Scenario: Diffs render as unified patches and artifacts as typed references
@@ -61,11 +64,13 @@ Feature: Briefs and outputs — the manual input to a formation and the produced
 
   @ui @file
   Scenario: Clearing an output removes only run state, never the definition
+    Given the definition may contain a schema-1 legacy verification
     When I clear the formation's output
     Then the produced output is gone
-    But the formation's slots, brief, and verification are untouched
+    But the formation's slots, brief, and legacy verification are untouched
 
     @cli
     Scenario: The same report is readable from the CLI
       When I run "archon run logs run_01J9 --node ship"
-      Then I get the same status, report, artifacts, and diffs from the ledger
+      Then I get the same status, report, artifacts, and diffs from sanitized current projections
+      And the CLI receives registered artifact ids and their latest authorized projections, never raw refs or private bytes
