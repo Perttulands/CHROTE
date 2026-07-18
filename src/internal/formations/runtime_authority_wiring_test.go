@@ -56,6 +56,27 @@ func TestRuntimeStoreAuthorityBoundaryRemainsNonAuthorizingAfterExactMatch(t *te
 	}
 }
 
+func TestMatchingRuntimeAuthorityRejectsBeforeEngineEffects(t *testing.T) {
+	fixture := newRuntimeAuthorityFixture(t)
+	bindRuntimeAuthorityFixtureToOpenedWorkspace(t, &fixture, fixture.workspace)
+	before := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace)
+	store := NewRuntimeStore(fixture.workspace, filepath.Dir(fixture.root))
+	executor := &countingFormationExecutor{}
+	engine := NewRunEngine(store, nil, executor)
+
+	_, err := engine.RunMission("missing", RunStartRequest{})
+	var authorityErr *RuntimeAuthorityNonAuthorizingError
+	if !errors.As(err, &authorityErr) || authorityErr.Reason != RuntimeAuthorityCapabilityDisabled {
+		t.Fatalf("matching authority run error = %#v, want disabled non-authorizing capability", err)
+	}
+	if executor.calls != 0 {
+		t.Fatalf("matching authority executor calls = %d, want zero", executor.calls)
+	}
+	if got := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace); !reflect.DeepEqual(got, before) {
+		t.Fatalf("matching authority engine rejection changed state\nbefore: %#v\nafter:  %#v", before, got)
+	}
+}
+
 func TestRuntimeStoreUsesImmutableWorkspaceAfterAuthorityBinding(t *testing.T) {
 	fixture := newRuntimeAuthorityFixture(t)
 	bindRuntimeAuthorityFixtureToOpenedWorkspace(t, &fixture, fixture.workspace)
