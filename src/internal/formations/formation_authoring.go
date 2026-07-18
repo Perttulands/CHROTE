@@ -2174,47 +2174,47 @@ func parseFormationNodes(raw []byte) []FormationNode {
 	var active string
 	for _, line := range splitLines(raw) {
 		trimmed := strings.TrimSpace(line.body)
-		switch trimmed {
-		case "[[formation]]":
+		section, isSection := tomlSectionName(line.body)
+		isArraySection := strings.HasPrefix(trimmed, "[[")
+		switch {
+		case isSection && isArraySection && section == "formation":
 			formations = append(formations, FormationNode{})
 			current = &formations[len(formations)-1]
 			active = "formation"
 			continue
-		case "[[formation.input]]":
+		case isSection && isArraySection && section == "formation.input":
 			if current != nil {
 				current.Inputs = append(current.Inputs, FormationPort{})
 				active = "input"
 			}
 			continue
-		case "[[formation.output]]":
+		case isSection && isArraySection && section == "formation.output":
 			if current != nil {
 				current.Outputs = append(current.Outputs, FormationPort{})
 				active = "output"
 			}
 			continue
-		case "[[formation.slot]]":
+		case isSection && isArraySection && section == "formation.slot":
 			if current != nil {
 				current.Slots = append(current.Slots, FormationSlot{})
 				active = "slot"
 			}
 			continue
-		case "[formation.brief]":
+		case isSection && !isArraySection && section == "formation.brief":
 			if current != nil {
 				current.Brief = &FormationBrief{}
 				active = "brief"
 			}
 			continue
-		case "[formation.verification]":
+		case isSection && !isArraySection && section == "formation.verification":
 			if current != nil {
 				current.Verification = &FormationVerification{}
 				active = "verification"
 			}
 			continue
-		default:
-			if strings.HasPrefix(trimmed, "[") {
-				active = ""
-				continue
-			}
+		case isSection:
+			active = ""
+			continue
 		}
 		if current == nil {
 			continue

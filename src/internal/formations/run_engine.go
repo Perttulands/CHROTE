@@ -265,7 +265,8 @@ func (e *RunEngine) ResumeRun(runID string, req RunResumeRequest) (*RunStatusPro
 	if e == nil || e.store == nil {
 		return nil, fmt.Errorf("%w: run engine store required", ErrNotFound)
 	}
-	if _, err := e.store.ResumeRun(runID, req); err != nil {
+	_, board, err := e.store.resumeRunWithSnapshot(runID, req)
+	if err != nil {
 		return nil, err
 	}
 	events, err := e.store.ReadRunEvents(runID)
@@ -278,11 +279,6 @@ func (e *RunEngine) ResumeRun(runID string, req RunResumeRequest) (*RunStatusPro
 	resumeEvent := events[len(events)-1]
 	if openDispatches := openDispatchRefsFromEvent(resumeEvent); len(openDispatches) > 0 {
 		openDispatches = enrichOpenDispatchRefs(events, openDispatches)
-		started := events[0]
-		board, err := e.readRunBoard(stringFromEventData(started, "snapshot"))
-		if err != nil {
-			return nil, err
-		}
 		handled, err := e.reattachOpenDispatches(runID, board, openDispatches)
 		if err != nil {
 			return nil, err
@@ -299,10 +295,6 @@ func (e *RunEngine) ResumeRun(runID string, req RunResumeRequest) (*RunStatusPro
 		}
 	}
 	started := events[0]
-	board, err := e.readRunBoard(stringFromEventData(started, "snapshot"))
-	if err != nil {
-		return nil, err
-	}
 	mission, ok := findMission(board, started.MissionID)
 	if !ok {
 		return nil, fmt.Errorf("%w: mission %q", ErrNotFound, started.MissionID)

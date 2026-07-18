@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -247,7 +248,7 @@ func (s *Store) AppendRunEvent(runID string, event RunEvent) error {
 		first := events[0]
 		last := events[len(events)-1]
 		if event.Type != RunEventCanceled && event.Type != RunEventFailed {
-			snapshot, err := s.readRunSnapshot(first)
+			snapshot, err := s.readRunSnapshot(first, runID, ledgerPath)
 			if err != nil {
 				return err
 			}
@@ -301,10 +302,16 @@ func (s *Store) AppendRunEvent(runID string, event RunEvent) error {
 }
 
 func (s *Store) ResumeRun(runID string, req RunResumeRequest) (*RunStatusProjection, error) {
+	status, _, err := s.resumeRunWithSnapshot(runID, req)
+	return status, err
+}
+
+func (s *Store) resumeRunWithSnapshot(runID string, req RunResumeRequest) (*RunStatusProjection, *BoardDocument, error) {
 	ledgerPath, err := s.findRunLedger(runID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	var snapshot *BoardDocument
 	if err := withFileLock(ledgerPath, func() error {
 		events, err := readRunEventsFile(ledgerPath)
 		if err != nil {
@@ -318,14 +325,14 @@ func (s *Store) ResumeRun(runID string, req RunResumeRequest) (*RunStatusProject
 		}
 		first := events[0]
 		last := events[len(events)-1]
-		snapshot, err := s.readRunSnapshot(first)
+		runSnapshot, err := s.readRunSnapshot(first, runID, ledgerPath)
 		if err != nil {
 			return err
 		}
-		if err := rejectLegacyScriptGateForRun(snapshot, first, nil); err != nil {
+		if err := rejectLegacyScriptGateForRun(runSnapshot, first, nil); err != nil {
 			return err
 		}
-		if err := rejectLegacyInlineVerification(snapshot); err != nil {
+		if err := rejectLegacyInlineVerification(runSnapshot); err != nil {
 			return err
 		}
 		if last.Type != RunEventBlocked || !boolFromEventData(last, "resumeAllowed") {
@@ -360,22 +367,40 @@ func (s *Store) ResumeRun(runID string, req RunResumeRequest) (*RunStatusProject
 			Epoch:     last.Epoch + 1,
 			Data:      data,
 		}
-		return appendRunEventLine(ledgerPath, event)
+		if err := appendRunEventLine(ledgerPath, event); err != nil {
+			return err
+		}
+		snapshot = runSnapshot
+		return nil
 	}); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return s.ProjectRun(runID)
+	status, err := s.ProjectRun(runID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return status, snapshot, nil
 }
 
-func (s *Store) readRunSnapshot(started RunEvent) (*BoardDocument, error) {
+func (s *Store) readRunSnapshot(started RunEvent, expectedRunID, ledgerPath string) (*BoardDocument, error) {
 	snapshotPath := stringFromEventData(started, "snapshot")
 	boardSlug := stringFromEventData(started, "boardSlug")
-	if snapshotPath == "" || boardSlug == "" || started.RunID == "" || snapshotPath != runArtifactPath(boardSlug, started.RunID, ".snapshot.toml") {
+	if validateSlug(boardSlug) != nil || started.RunID != expectedRunID {
 		return nil, ErrRunLedgerInvalid
 	}
-	snapshotRaw, err := os.ReadFile(filepath.Join(s.Workspace, snapshotPath))
+	expectedLedgerPath := filepath.Join(s.Workspace, runArtifactPath(boardSlug, expectedRunID, ".ndjson"))
+	expectedSnapshotPath := runArtifactPath(boardSlug, expectedRunID, ".snapshot.toml")
+	if ledgerPath != expectedLedgerPath || snapshotPath != expectedSnapshotPath {
+		return nil, ErrRunLedgerInvalid
+	}
+	snapshotFile, err := s.openRunSnapshot(boardSlug, expectedRunID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: snapshot open failed: %v", ErrRunLedgerInvalid, err)
+	}
+	defer snapshotFile.Close()
+	snapshotRaw, err := io.ReadAll(snapshotFile)
+	if err != nil {
+		return nil, fmt.Errorf("%w: snapshot read failed: %v", ErrRunLedgerInvalid, err)
 	}
 	board, err := parseBoard(snapshotRaw)
 	if err != nil {
@@ -385,6 +410,28 @@ func (s *Store) readRunSnapshot(started RunEvent) (*BoardDocument, error) {
 		return nil, ErrRunLedgerInvalid
 	}
 	return board, nil
+}
+
+func (s *Store) openRunSnapshot(boardSlug, runID string) (*os.File, error) {
+	workspace, err := filepath.Abs(s.Workspace)
+	if err != nil {
+		return nil, err
+	}
+	current, err := openRuntimeAuthorityRoot(workspace)
+	if err != nil {
+		return nil, err
+	}
+	for _, component := range []string{".formations", "runs", boardSlug} {
+		next, openErr := openRuntimeAuthorityDirectoryAt(current, component)
+		_ = current.Close()
+		if openErr != nil {
+			return nil, openErr
+		}
+		current = next
+	}
+	snapshot, err := openRuntimeAuthorityFileAt(current, runID+".snapshot.toml")
+	_ = current.Close()
+	return snapshot, err
 }
 
 func (s *Store) ProjectRun(runID string) (*RunStatusProjection, error) {
