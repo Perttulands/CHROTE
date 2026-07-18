@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/chrote/server/internal/core"
@@ -23,6 +25,137 @@ func TestFilesHandler_NewFilesHandler(t *testing.T) {
 	if len(handler.allowedRoots) != expectedRoots {
 		t.Errorf("Expected %d allowed roots, got %d", expectedRoots, len(handler.allowedRoots))
 	}
+}
+
+func TestFilesHandlerNewFilesHandlerUsesConfiguredFormationsDataRoot(t *testing.T) {
+	allowedRoot := t.TempDir()
+	privateRoot := filepath.Join(allowedRoot, "formations-private")
+	if err := os.Mkdir(privateRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	core.ResetConfigForTesting()
+	t.Cleanup(core.ResetConfigForTesting)
+	t.Setenv("CHROTE_ROOTS", allowedRoot)
+	t.Setenv("CHROTE_FORMATIONS_DATA_ROOT", privateRoot)
+
+	result := NewFilesHandler().resolveSafePath(privateRoot)
+	if result.Error != "Sensitive path not available in CHROTE Files" {
+		t.Fatalf("configured Formations root resolved as %#v, want protected root rejection", result)
+	}
+}
+
+func TestFilesHandlerFormationsDataRootDeniesConfiguredAndCanonicalAliases(t *testing.T) {
+	allowedRoot := t.TempDir()
+	privateRoot := filepath.Join(allowedRoot, "formations-private")
+	if err := os.Mkdir(privateRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(privateRoot, "authority.json"), []byte("private"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	configuredRoot := filepath.Join(allowedRoot, "configured-formations-root")
+	if err := os.Symlink(privateRoot, configuredRoot); err != nil {
+		t.Fatal(err)
+	}
+	aliasRoot := filepath.Join(allowedRoot, "another-formations-alias")
+	if err := os.Symlink(privateRoot, aliasRoot); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := newFilesHandlerForRoots(t, []string{allowedRoot}, configuredRoot)
+	for _, path := range []string{
+		configuredRoot,
+		filepath.Join(configuredRoot, "authority.json"),
+		privateRoot,
+		filepath.Join(privateRoot, "authority.json"),
+		aliasRoot,
+		filepath.Join(aliasRoot, "authority.json"),
+	} {
+		t.Run(path, func(t *testing.T) {
+			result := handler.resolveSafePath(path)
+			if result.Error != "Sensitive path not available in CHROTE Files" {
+				t.Fatalf("resolveSafePath(%q) = %#v, want protected Formations root rejection", path, result)
+			}
+		})
+	}
+
+	ordinaryPath := filepath.Join(allowedRoot, "ordinary.txt")
+	if err := os.WriteFile(ordinaryPath, []byte("visible"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if result := handler.resolveSafePath(ordinaryPath); result.Error != "" {
+		t.Fatalf("ordinary sibling rejected: %#v", result)
+	}
+	if result := handler.resolveMutationPath(aliasRoot); result.Error != "Sensitive path not available in CHROTE Files" {
+		t.Fatalf("resolveMutationPath(%q) = %#v, want protected symlink alias rejection", aliasRoot, result)
+	}
+}
+
+func TestFilesHandlerFormationsDataRootIsFilteredFromListings(t *testing.T) {
+	parentRoot := t.TempDir()
+	privateRoot := filepath.Join(parentRoot, "formations-private")
+	ordinaryRoot := filepath.Join(parentRoot, "ordinary")
+	for _, path := range []string{privateRoot, ordinaryRoot} {
+		if err := os.Mkdir(path, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	configuredRoot := filepath.Join(parentRoot, "configured-formations-root")
+	aliasRoot := filepath.Join(parentRoot, "another-formations-alias")
+	for _, path := range []string{configuredRoot, aliasRoot} {
+		if err := os.Symlink(privateRoot, path); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	handler := newFilesHandlerForRoots(t, []string{ordinaryRoot, configuredRoot, privateRoot, aliasRoot}, configuredRoot)
+	req := httptest.NewRequest(http.MethodGet, "/api/files/resources/", nil)
+	rec := httptest.NewRecorder()
+	handler.ListRoot(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ListRoot status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var rootResponse DirectoryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &rootResponse); err != nil {
+		t.Fatalf("decode root listing: %v", err)
+	}
+	if got := fileItemNames(rootResponse.Items); len(got) != 1 || got[0] != strings.TrimPrefix(ordinaryRoot, "/") {
+		t.Fatalf("root listing names = %q, want only ordinary root", got)
+	}
+
+	parentHandler := newFilesHandlerForRoots(t, []string{parentRoot}, configuredRoot)
+	parentReq := httptest.NewRequest(http.MethodGet, "/api/files/resources/ignored", nil)
+	parentReq.SetPathValue("path", strings.TrimPrefix(filepath.ToSlash(parentRoot), "/"))
+	parentRec := httptest.NewRecorder()
+	parentHandler.GetResource(parentRec, parentReq)
+	if parentRec.Code != http.StatusOK {
+		t.Fatalf("parent listing status = %d, want 200: %s", parentRec.Code, parentRec.Body.String())
+	}
+	var parentResponse DirectoryResponse
+	if err := json.Unmarshal(parentRec.Body.Bytes(), &parentResponse); err != nil {
+		t.Fatalf("decode parent listing: %v", err)
+	}
+	if got := fileItemNames(parentResponse.Items); len(got) != 1 || got[0] != "ordinary" {
+		t.Fatalf("parent listing names = %q, want only ordinary", got)
+	}
+}
+
+func newFilesHandlerForRoots(t *testing.T, allowedRoots []string, formationsDataRoot string) *FilesHandler {
+	t.Helper()
+	core.ResetConfigForTesting()
+	t.Cleanup(core.ResetConfigForTesting)
+	t.Setenv("CHROTE_ROOTS", strings.Join(allowedRoots, ","))
+	t.Setenv("CHROTE_WRITE_ROOTS", strings.Join(allowedRoots, ","))
+	return NewFilesHandlerWithFormationsDataRoot(formationsDataRoot)
+}
+
+func fileItemNames(items []FileItem) []string {
+	names := make([]string, 0, len(items))
+	for _, item := range items {
+		names = append(names, item.Name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func TestFilesHandler_ResolveSafePath_Root(t *testing.T) {

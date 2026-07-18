@@ -71,13 +71,54 @@ type SuccessResponse struct {
 
 // NewFilesHandler creates a new file API handler
 func NewFilesHandler() *FilesHandler {
+	return NewFilesHandlerWithFormationsDataRoot(strings.TrimSpace(os.Getenv("CHROTE_FORMATIONS_DATA_ROOT")))
+}
+
+// NewFilesHandlerWithFormationsDataRoot creates a file API handler that keeps
+// the supplied host-private Formations root outside the generic Files surface.
+func NewFilesHandlerWithFormationsDataRoot(formationsDataRoot string) *FilesHandler {
 	allowedRoots := core.GetAllowedRoots()
+	deniedRoots := append(defaultDeniedFileRoots(), configuredFileRoots("CHROTE_FILE_DENY_PATHS", nil)...)
+	deniedRoots = appendUniqueFileRoots(deniedRoots, canonicalFileRootAliases(formationsDataRoot)...)
 	return &FilesHandler{
 		allowedRoots:   allowedRoots,
 		writeRoots:     configuredFileRoots("CHROTE_WRITE_ROOTS", allowedRoots),
-		deniedRoots:    append(defaultDeniedFileRoots(), configuredFileRoots("CHROTE_FILE_DENY_PATHS", nil)...),
+		deniedRoots:    deniedRoots,
 		maxUploadBytes: configuredMaxUploadBytes(),
 	}
+}
+
+func canonicalFileRootAliases(root string) []string {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return nil
+	}
+	absolute, err := filepath.Abs(root)
+	if err != nil {
+		return nil
+	}
+	absolute = filepath.Clean(absolute)
+	aliases := []string{absolute}
+	canonical, err := canonicalPathAllowMissing(absolute)
+	if err == nil && canonical != absolute {
+		aliases = append(aliases, canonical)
+	}
+	return aliases
+}
+
+func appendUniqueFileRoots(roots []string, additions ...string) []string {
+	seen := make(map[string]bool, len(roots)+len(additions))
+	for _, root := range roots {
+		seen[root] = true
+	}
+	for _, root := range additions {
+		if root == "" || seen[root] {
+			continue
+		}
+		seen[root] = true
+		roots = append(roots, root)
+	}
+	return roots
 }
 
 func configuredFileRoots(name string, fallback []string) []string {
@@ -272,6 +313,13 @@ func (h *FilesHandler) resolveMutationPath(requestPath string) PathResult {
 		return PathResult{Error: "Sensitive path not available in CHROTE Files"}
 	}
 	operationPath := filepath.Join(resolvedParent, filepath.Base(normalized))
+	canonicalOperation, err := canonicalPathAllowMissing(operationPath)
+	if err != nil {
+		return PathResult{Error: "Invalid path"}
+	}
+	if h.isDeniedPath(operationPath) || h.isDeniedPath(canonicalOperation) {
+		return PathResult{Error: "Sensitive path not available in CHROTE Files"}
+	}
 	matchedRoot, allowed := isPathUnderAnyRoot(operationPath, h.allowedRoots)
 	if !allowed {
 		return PathResult{Error: "Path not allowed"}
@@ -297,15 +345,16 @@ func (h *FilesHandler) RegisterRoutes(mux *http.ServeMux) {
 
 // ListRoot handles GET /api/files/resources/ - root listing
 func (h *FilesHandler) ListRoot(w http.ResponseWriter, r *http.Request) {
-	if h.hasOnlyFilesystemRoot() {
+	allowedRoots := h.visibleAllowedRoots()
+	if hasOnlyFilesystemRoot(allowedRoots) {
 		h.writeDirectoryListing(w, string(os.PathSeparator))
 		return
 	}
 
-	items := make([]FileItem, len(h.allowedRoots))
+	items := make([]FileItem, len(allowedRoots))
 	now := time.Now().Format(time.RFC3339)
 
-	for i, root := range h.allowedRoots {
+	for i, root := range allowedRoots {
 		items[i] = FileItem{
 			Name:     strings.TrimPrefix(root, "/"),
 			Size:     0,
@@ -321,11 +370,31 @@ func (h *FilesHandler) ListRoot(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *FilesHandler) hasOnlyFilesystemRoot() bool {
-	if len(h.allowedRoots) != 1 {
+func (h *FilesHandler) visibleAllowedRoots() []string {
+	visible := make([]string, 0, len(h.allowedRoots))
+	for _, root := range h.allowedRoots {
+		absolute, err := filepath.Abs(root)
+		if err != nil {
+			continue
+		}
+		absolute = filepath.Clean(absolute)
+		if h.isDeniedPath(absolute) {
+			continue
+		}
+		canonical, err := canonicalPathAllowMissing(absolute)
+		if err != nil || h.isDeniedPath(canonical) {
+			continue
+		}
+		visible = append(visible, root)
+	}
+	return visible
+}
+
+func hasOnlyFilesystemRoot(roots []string) bool {
+	if len(roots) != 1 {
 		return false
 	}
-	absRoot, err := filepath.Abs(h.allowedRoots[0])
+	absRoot, err := filepath.Abs(roots[0])
 	if err != nil {
 		return false
 	}
