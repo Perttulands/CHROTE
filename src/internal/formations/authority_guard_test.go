@@ -141,6 +141,36 @@ func TestGuardRuntimeWorkspaceAuthorityV1RejectsAuthorityRootWorkspaceOverlap(t 
 	}
 }
 
+func TestRuntimeAuthorityWorkspaceIsolationRejectsRenamedOpenedRoot(t *testing.T) {
+	base := t.TempDir()
+	workspacePath := filepath.Join(base, "workspace")
+	rootPath := filepath.Join(base, "formations-data")
+	for _, path := range []string{workspacePath, rootPath} {
+		if err := os.Mkdir(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	workspace, err := openRuntimeWorkspaceIdentity(workspacePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := openRuntimeAuthorityRoot(rootPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if err := os.Rename(rootPath, rootPath+"-moved"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(rootPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := validateRuntimeAuthorityWorkspaceIsolation(rootPath, root, workspace); !errors.Is(err, errRuntimeConflict) {
+		t.Fatalf("renamed authority-root descriptor error = %v, want conflict", err)
+	}
+}
+
 func TestGuardRuntimeWorkspaceAuthorityV1RejectsAliasAndChangedTarget(t *testing.T) {
 	t.Run("alias cannot select registered workspace", func(t *testing.T) {
 		fixture := newRuntimeAuthorityFixture(t)

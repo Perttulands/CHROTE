@@ -503,9 +503,11 @@ func validateRuntimeAuthorityWorkspaceIsolation(formationsDataRoot string, root 
 	if err != nil {
 		return err
 	}
-	resolvedRoot = filepath.Clean(resolvedRoot)
-	if !filepath.IsAbs(resolvedRoot) || resolvedRoot != filepath.Clean(resolvedRoot) {
+	if !filepath.IsAbs(resolvedRoot) || filepath.Clean(resolvedRoot) != resolvedRoot {
 		return errRuntimeNoncanonical
+	}
+	if filepath.ToSlash(resolvedRoot) != filepath.ToSlash(formationsDataRoot) {
+		return errRuntimeConflict
 	}
 	for _, workspacePath := range []string{identity.configuredPath, identity.resolvedPath} {
 		if runtimePathsOverlap(resolvedRoot, filepath.FromSlash(workspacePath)) {
