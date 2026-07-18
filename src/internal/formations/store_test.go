@@ -67,6 +67,41 @@ reviewerNotes = "preserve me"
 	}
 }
 
+func TestBoardWriterUsesDecodedIdentityForQuotedRootKeys(t *testing.T) {
+	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
+	writeFixture(t, store.BoardPath("session-search"),
+		"schema = 1\n"+
+			"id = \"brd_01J9_sesssearch\"\n"+
+			"slug = \"session-search\"\n"+
+			"title = \"Improve session search\"\n"+
+			"rev = 7\n"+
+			"updatedBy = \"agent:archon\"\n"+
+			"\"updatedAt\" = \"2026-06-03T16:00:00Z\"\n",
+	)
+	before, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	after, err := store.UpdateBoardMetadata("session-search", BoardMetadataPatch{
+		Title:     stringPtr("Improve session search quickly"),
+		UpdatedBy: "agent:test",
+	}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev})
+	if err != nil {
+		t.Fatalf("update board: %v", err)
+	}
+	if after.UpdatedAt != "2026-06-03T17:00:00Z" {
+		t.Fatalf("updatedAt = %q, want fixed update time through quoted key identity", after.UpdatedAt)
+	}
+	raw := readFile(t, store.BoardPath("session-search"))
+	if strings.Count(raw, "updatedAt") != 1 {
+		t.Fatalf("writer created duplicate semantic updatedAt keys:\n%s", raw)
+	}
+	if !strings.Contains(raw, "\"updatedAt\" = \"2026-06-03T17:00:00Z\"") {
+		t.Fatalf("writer did not update the existing quoted root key:\n%s", raw)
+	}
+}
+
 func TestBoardStructuralWriteRequiresMatchingETagAndBumpsRevision(t *testing.T) {
 	store := NewStore(t.TempDir())
 	store.Now = fixedClock()

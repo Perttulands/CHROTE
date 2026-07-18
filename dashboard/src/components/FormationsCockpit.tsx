@@ -768,7 +768,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       criterion: formation.verification.criterion || '',
       onFail: formation.verification.onFail || '',
       replacementGateIds,
-      replacementGateId: replacementGateIds[0] || '',
+      replacementGateId: '',
     })
   }, [])
 
@@ -1931,6 +1931,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
                   value={legacyVerification.replacementGateId}
                   onChange={event => setLegacyVerification(current => current ? { ...current, replacementGateId: event.target.value } : null)}
                 >
+                  <option value="" disabled>Choose a wired Gate…</option>
                   {legacyVerification.replacementGateIds.map(gateId => (
                     <option key={gateId} value={gateId}>{board?.gates?.find(gate => gate.id === gateId)?.title || gateId}</option>
                   ))}

@@ -13,8 +13,9 @@ type tomlDocument struct {
 }
 
 type tomlLine struct {
-	body    string
-	newline string
+	body              string
+	newline           string
+	valueContinuation bool
 }
 
 func parseTOMLDocument(raw []byte) *tomlDocument {
@@ -26,12 +27,14 @@ func parseTOMLDocument(raw []byte) *tomlDocument {
 	}
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line.body)
-		if strings.HasPrefix(trimmed, "[") {
+		if !line.valueContinuation && strings.HasPrefix(trimmed, "[") {
 			doc.firstSection = i
 			break
 		}
-		if key, ok := topLevelKey(line.body); ok {
-			doc.fields[key] = i
+		if !line.valueContinuation {
+			if key, ok := topLevelKey(line.body); ok {
+				doc.fields[key] = i
+			}
 		}
 	}
 	return doc
@@ -59,7 +62,108 @@ func splitLines(raw []byte) []tomlLine {
 		}
 		lines = append(lines, tomlLine{body: line, newline: newline})
 	}
+	markTOMLValueContinuations(lines)
 	return lines
+}
+
+type tomlValueContinuationState struct {
+	arrayDepth       int
+	inlineTableDepth int
+	multilineQuote   byte
+}
+
+func (s tomlValueContinuationState) open() bool {
+	return s.arrayDepth > 0 || s.inlineTableDepth > 0 || s.multilineQuote != 0
+}
+
+func markTOMLValueContinuations(lines []tomlLine) {
+	var state tomlValueContinuationState
+	for i := range lines {
+		lines[i].valueContinuation = state.open()
+		body := lines[i].body
+		if !lines[i].valueContinuation {
+			trimmed := strings.TrimSpace(body)
+			if strings.HasPrefix(trimmed, "[") {
+				continue
+			}
+			assignment := tomlAssignmentIndex(body)
+			if assignment < 0 {
+				continue
+			}
+			body = body[assignment+1:]
+		}
+		scanTOMLValueContinuation(&state, body)
+	}
+}
+
+func scanTOMLValueContinuation(state *tomlValueContinuationState, line string) {
+	for i := 0; i < len(line); {
+		if state.multilineQuote != 0 {
+			delimiter := "\"\"\""
+			if state.multilineQuote == '\'' {
+				delimiter = "'''"
+			}
+			if strings.HasPrefix(line[i:], delimiter) {
+				state.multilineQuote = 0
+				i += len(delimiter)
+				continue
+			}
+			if state.multilineQuote == '"' && line[i] == '\\' {
+				i += 2
+				continue
+			}
+			i++
+			continue
+		}
+
+		switch {
+		case strings.HasPrefix(line[i:], "\"\"\""):
+			state.multilineQuote = '"'
+			i += 3
+		case strings.HasPrefix(line[i:], "'''"):
+			state.multilineQuote = '\''
+			i += 3
+		case line[i] == '"':
+			i = tomlStringEnd(line, i, '"')
+		case line[i] == '\'':
+			i = tomlStringEnd(line, i, '\'')
+		case line[i] == '#':
+			return
+		case line[i] == '[':
+			state.arrayDepth++
+			i++
+		case line[i] == ']':
+			if state.arrayDepth > 0 {
+				state.arrayDepth--
+			}
+			i++
+		case line[i] == '{':
+			state.inlineTableDepth++
+			i++
+		case line[i] == '}':
+			if state.inlineTableDepth > 0 {
+				state.inlineTableDepth--
+			}
+			i++
+		default:
+			i++
+		}
+	}
+}
+
+func tomlStringEnd(line string, start int, quote byte) int {
+	escaped := false
+	for i := start + 1; i < len(line); i++ {
+		switch {
+		case escaped:
+			escaped = false
+		case quote == '"' && line[i] == '\\':
+			escaped = true
+		case line[i] == quote:
+			return i + 1
+		}
+	}
+	return len(line)
 }
 
 func (d *tomlDocument) bytes() []byte {
@@ -111,10 +215,10 @@ func (d *tomlDocument) setScalar(key, renderedValue string) {
 	d.firstSection = len(d.lines)
 	for i, line := range d.lines {
 		trimmed := strings.TrimSpace(line.body)
-		if strings.HasPrefix(trimmed, "[") && d.firstSection == len(d.lines) {
+		if !line.valueContinuation && strings.HasPrefix(trimmed, "[") && d.firstSection == len(d.lines) {
 			d.firstSection = i
 		}
-		if i < d.firstSection {
+		if i < d.firstSection && !line.valueContinuation {
 			if fieldKey, ok := topLevelKey(line.body); ok {
 				d.fields[fieldKey] = i
 			}
@@ -127,25 +231,22 @@ func topLevelKey(line string) (string, bool) {
 	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 		return "", false
 	}
-	eq := strings.Index(line, "=")
+	eq := tomlAssignmentIndex(line)
 	if eq < 0 {
 		return "", false
 	}
-	key := strings.TrimSpace(line[:eq])
-	if key == "" {
+	path, ok := parseTOMLKeyPath(line[:eq])
+	if !ok {
 		return "", false
 	}
-	for _, r := range key {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
-			continue
-		}
+	if len(path) != 1 {
 		return "", false
 	}
-	return key, true
+	return canonicalTOMLKeyPath(path), true
 }
 
 func valuePart(line string) string {
-	eq := strings.Index(line, "=")
+	eq := tomlAssignmentIndex(line)
 	if eq < 0 {
 		return ""
 	}
@@ -157,7 +258,7 @@ func valuePart(line string) string {
 }
 
 func replaceScalarValue(line, renderedValue string) string {
-	eq := strings.Index(line, "=")
+	eq := tomlAssignmentIndex(line)
 	if eq < 0 {
 		return line
 	}

@@ -137,6 +137,53 @@ func TestLegacyScriptGateMalformedHeaderStopsFieldBleed(t *testing.T) {
 	}
 }
 
+func TestLegacyScriptGateAfterMultilineUnknownValueRemainsVisibleAndDeletesWholeBlock(t *testing.T) {
+	tests := []struct {
+		name  string
+		array string
+	}{
+		{name: "nested row with comma", array: "future = [\n  [1],\n]\n"},
+		{name: "nested final row without comma", array: "future = [\n  [1]\n]\n"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw := legacyScriptGateBoardFixture(test.array + "commandShell = \"npm run lint\"")
+			board := mustParseValidateBoardFixture(t, raw)
+			findings := findBoardFindings(ValidateBoard(board).Errors, LegacyScriptGateMigrationCode)
+			if len(findings) != 1 || findings[0].NodeID != "gate_review" {
+				t.Fatalf("migration findings = %+v, want multiline unknown value to preserve the command fence", findings)
+			}
+
+			nextRaw, deleted := deleteGateBlock([]byte(raw), "gate_review")
+			if !deleted {
+				t.Fatal("deleteGateBlock did not find Gate after multiline unknown value")
+			}
+			if strings.Contains(string(nextRaw), "future =") || strings.Contains(string(nextRaw), "commandShell") {
+				t.Fatalf("Gate deletion left a partial multiline block:\n%s", nextRaw)
+			}
+			nextBoard, err := parseBoard(nextRaw)
+			if err != nil {
+				t.Fatalf("parse board after whole-block deletion: %v", err)
+			}
+			if len(nextBoard.Gates) != 0 {
+				t.Fatalf("gates after delete = %+v, want none", nextBoard.Gates)
+			}
+		})
+	}
+}
+
+func TestLegacyScriptGateMultilineUnknownStringDoesNotInventCommand(t *testing.T) {
+	raw := legacyScriptGateBoardFixture(
+		"future = \"\"\"\n" +
+			"commandShell = \"this is string content\"\n" +
+			"\"\"\"",
+	)
+	board := mustParseValidateBoardFixture(t, raw)
+	if findings := findBoardFindings(ValidateBoard(board).Errors, LegacyScriptGateMigrationCode); len(findings) != 0 {
+		t.Fatalf("multiline string content invented a legacy command finding: %+v", findings)
+	}
+}
+
 func TestNewLegacyScriptGateCommandsAreRejectedWithoutMutation(t *testing.T) {
 	tests := []struct {
 		name string

@@ -297,8 +297,10 @@ test.describe('Formations cockpit — D7 reference parity', () => {
     await expect(dialog).toContainText(formation.verification.criterion)
     await expect(dialog).toContainText('Create and wire an explicit Gate')
     await expect(dialog.getByRole('button', { name: 'Save verification' })).toHaveCount(0)
-    await expect(dialog.getByLabel('Replacement Gate')).toHaveValue(mockFormationsBoard.gates[0].id)
-    await expect(dialog.getByRole('button', { name: 'Remove legacy verification' })).toBeVisible()
+    await expect(dialog.getByLabel('Replacement Gate')).toHaveValue('')
+    await expect(dialog.getByRole('button', { name: 'Remove legacy verification' })).toBeDisabled()
+    await dialog.getByLabel('Replacement Gate').selectOption(mockFormationsBoard.gates[0].id)
+    await expect(dialog.getByRole('button', { name: 'Remove legacy verification' })).toBeEnabled()
   })
 
   test('matches the 03-formations.html first-viewport cockpit geometry', async ({ page }) => {

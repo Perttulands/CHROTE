@@ -348,11 +348,13 @@ describe('FormationsCockpit reference parity', () => {
     expect(band).toBe(screen.getByTestId('verify-band-fmn_frame'))
     fireEvent.click(band)
     const dialog = await screen.findByRole('dialog', { name: 'Legacy verification · Frame' })
-    expect(dialog).toHaveTextContent('Tests pass')
-    expect(dialog).toHaveTextContent('Create and wire an explicit Gate')
-    expect(screen.queryByRole('button', { name: 'Save verification' })).toBeNull()
-    expect(screen.getByLabelText('Replacement Gate')).toHaveValue('gate_review')
-    fireEvent.click(screen.getByRole('button', { name: 'Remove legacy verification' }))
+		expect(dialog).toHaveTextContent('Tests pass')
+		expect(dialog).toHaveTextContent('Create and wire an explicit Gate')
+		expect(screen.queryByRole('button', { name: 'Save verification' })).toBeNull()
+		expect(screen.getByLabelText('Replacement Gate')).toHaveValue('')
+		expect(screen.getByRole('button', { name: 'Remove legacy verification' })).toBeDisabled()
+		fireEvent.change(screen.getByLabelText('Replacement Gate'), { target: { value: 'gate_review' } })
+		fireEvent.click(screen.getByRole('button', { name: 'Remove legacy verification' }))
     await waitFor(() => {
       const removal = patches.map(patch => patch.body.removeVerification as { formationId?: string; replacementGateId?: string } | undefined).find(Boolean)
       expect(removal).toEqual({ formationId: 'fmn_frame', replacementGateId: 'gate_review' })
@@ -374,9 +376,10 @@ describe('FormationsCockpit reference parity', () => {
     fireEvent.contextMenu(screen.getByTestId('formation-node-fmn_frame'))
     const menu = await screen.findByRole('menu', { name: 'Formation actions' })
     expect(menu).not.toHaveTextContent('Remove legacy verification')
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Migrate legacy verification' }))
-    const dialog = await screen.findByRole('dialog', { name: 'Legacy verification · Frame' })
-    fireEvent.click(screen.getByRole('button', { name: 'Remove legacy verification' }))
+		fireEvent.click(screen.getByRole('menuitem', { name: 'Migrate legacy verification' }))
+		const dialog = await screen.findByRole('dialog', { name: 'Legacy verification · Frame' })
+		fireEvent.change(screen.getByLabelText('Replacement Gate'), { target: { value: 'gate_review' } })
+		fireEvent.click(screen.getByRole('button', { name: 'Remove legacy verification' }))
     expect(await screen.findByTestId('formations-error')).toHaveTextContent('Legacy verification migration failed')
     expect(dialog).toBeInTheDocument()
   })
@@ -394,10 +397,35 @@ describe('FormationsCockpit reference parity', () => {
     fireEvent.click(band)
     const dialog = await screen.findByRole('dialog', { name: 'Legacy verification · Frame' })
     expect(dialog).toHaveTextContent('No criterion recorded')
-    expect(dialog).toHaveTextContent('No failure policy recorded')
-  })
+		expect(dialog).toHaveTextContent('No failure policy recorded')
+	})
 
-  it('requires an explicitly wired replacement Gate before removal', async () => {
+	it('requires an explicit choice when multiple replacement Gates are wired', async () => {
+		const multiGateBoard = makeBoard()
+		multiGateBoard.gates = [
+			...multiGateBoard.gates,
+			{ id: 'gate_backup', title: 'Backup review', kinds: ['human'], criterion: 'Review again' },
+		]
+		multiGateBoard.connections = [
+			...multiGateBoard.connections,
+			{ id: 'edge_frame_backup', from: 'fmn_frame:port_frame_out', to: 'gate_backup:in' },
+		]
+		patches = installFetchMock({ boards: [multiGateBoard] })
+		await renderCockpit()
+		fireEvent.click(screen.getByTestId('verify-band-fmn_frame'))
+		await screen.findByRole('dialog', { name: 'Legacy verification · Frame' })
+		const replacement = screen.getByLabelText('Replacement Gate')
+		expect(replacement).toHaveValue('')
+		expect(screen.getByRole('button', { name: 'Remove legacy verification' })).toBeDisabled()
+		fireEvent.change(replacement, { target: { value: 'gate_backup' } })
+		fireEvent.click(screen.getByRole('button', { name: 'Remove legacy verification' }))
+		await waitFor(() => {
+			const removal = patches.map(patch => patch.body.removeVerification as { replacementGateId?: string } | undefined).find(Boolean)
+			expect(removal).toEqual(expect.objectContaining({ replacementGateId: 'gate_backup' }))
+		})
+	})
+
+	it('requires an explicitly wired replacement Gate before removal', async () => {
     const unwiredBoard = makeBoard()
     unwiredBoard.gates = []
     unwiredBoard.connections = unwiredBoard.connections.filter(connection => !connection.to.startsWith('gate_review:') && !connection.from.startsWith('gate_review:'))

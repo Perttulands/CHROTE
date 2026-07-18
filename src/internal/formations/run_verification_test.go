@@ -144,6 +144,91 @@ func TestLegacyInlineVerificationHeaderVariantsRemainVisibleAndFailBeforeRun(t *
 	}
 }
 
+func TestLegacyInlineVerificationKeyVariantsRemainVisibleAndFailBeforeRun(t *testing.T) {
+	section := "[formation.verification]\n" +
+		"id = \"ver_work\"\n" +
+		"kinds = [\"code\"]\n" +
+		"criterion = \"Work is ready\"\n" +
+		"onFail = \"block\""
+	tests := []struct {
+		name         string
+		verification string
+	}{
+		{
+			name: "dotted keys",
+			verification: "verification.id = \"ver_work\"\n" +
+				"verification.kinds = [\"code\"]\n" +
+				"verification.criterion = \"Work is ready\"\n" +
+				"verification.onFail = \"block\"",
+		},
+		{
+			name:         "inline table",
+			verification: "verification = { id = \"ver_work\", kinds = [\"code\"], criterion = \"Work is ready\", onFail = \"block\" }",
+		},
+		{
+			name:         "quoted inline table key",
+			verification: "\"verification\" = { id = \"ver_work\", kinds = [\"code\"], criterion = \"Work is ready\", onFail = \"block\" }",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store, personas := s4RunFixture(t)
+			store.Now = fixedClock()
+			personas.Now = fixedClock()
+			createS4Persona(t, personas, "scout")
+			raw := strings.Replace(s4VerificationBoardFixture("block"), section, "", 1)
+			raw = strings.Replace(raw, "title = \"Work\"", "title = \"Work\"\n"+test.verification, 1)
+			raw += "\n[[gate]]\n" +
+				"id = \"gate_replacement\"\n" +
+				"title = \"Replacement review\"\n" +
+				"kinds = [\"human\"]\n" +
+				"criterion = \"Review the work\"\n\n" +
+				"[[connection]]\n" +
+				"id = \"edge_work_replacement\"\n" +
+				"from = \"fmn_work:port_work_out\"\n" +
+				"to = \"gate_replacement:in\"\n"
+			writeFixture(t, store.BoardPath("session-search"), raw)
+			board, err := store.ReadBoard("session-search")
+			if err != nil {
+				t.Fatalf("read legacy board: %v", err)
+			}
+			formation, ok := findFormation(board.Formations, "fmn_work")
+			if !ok || formation.Verification == nil {
+				t.Fatalf("legacy verification parsed as %+v, want visible compatibility input", formation.Verification)
+			}
+			if findings := findBoardFindings(ValidateBoard(board).Errors, LegacyInlineVerificationMigrationCode); len(findings) != 1 {
+				t.Fatalf("migration findings = %+v, want one fail-closed finding", findings)
+			}
+			beforeRaw := readFile(t, store.BoardPath("session-search"))
+			_, removeErr := store.RemoveFormationVerification("session-search", FormationVerificationRemovalRequest{
+				FormationID:       "fmn_work",
+				ReplacementGateID: "gate_replacement",
+				UpdatedBy:         "agent:test",
+			}, WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
+			if !errors.Is(removeErr, ErrLegacyInlineVerificationRequiresMigration) {
+				t.Fatalf("remove error = %v, want stable migration rejection for non-section representation", removeErr)
+			}
+			if afterRaw := readFile(t, store.BoardPath("session-search")); afterRaw != beforeRaw {
+				t.Fatalf("rejected removal mutated board\nbefore:\n%s\nafter:\n%s", beforeRaw, afterRaw)
+			}
+			engine := NewRunEngine(store, personas, &fakeRunExecutor{})
+			_, err = engine.RunMission("session-search", RunStartRequest{
+				MissionID: "mis_showcase", Actor: "agent:test", ExpectedBoardETag: board.ETag, ExpectedBoardRev: board.Rev,
+			})
+			if !errors.Is(err, ErrLegacyInlineVerificationRequiresMigration) {
+				t.Fatalf("run error = %v, want legacy migration rejection", err)
+			}
+			entries, readErr := os.ReadDir(filepath.Join(store.Workspace, ".formations", "runs", "session-search"))
+			if readErr != nil && !os.IsNotExist(readErr) {
+				t.Fatalf("read run artifacts: %v", readErr)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("run artifacts = %+v, want none before migration rejection", entries)
+			}
+		})
+	}
+}
+
 func TestLegacyInlineVerificationResumeRejectsBeforeRunResumedAppend(t *testing.T) {
 	store, personas := s4RunFixture(t)
 	store.Now = fixedClock()
