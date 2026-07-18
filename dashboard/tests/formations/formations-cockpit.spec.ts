@@ -1034,6 +1034,54 @@ test.describe('Formations cockpit — direct manipulation gestures', () => {
     expect(gatePatch?.y).toBeGreaterThan(gateStart.y)
   })
 
+  test('releases keyboard shortcuts while the keep-alive cockpit is hidden and restores them on return', async ({ page }) => {
+    const mission = page.getByTestId('mission-node-mission-smoke')
+    const missionHandle = mission.locator('.mtitle')
+    const missionBox = await requiredBox(missionHandle, 'mission drag handle')
+    await pointerDragFromPoint(page, missionBox.centerX, missionBox.centerY, missionBox.centerX + 84, missionBox.centerY + 36)
+    await expect.poll(() => layoutPatches.length).toBe(1)
+
+    const viewport = page.locator('.fmx .viewport')
+    const viewportBox = await requiredBox(viewport, 'formations viewport')
+    await viewport.evaluate((element, point) => {
+      element.dispatchEvent(new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        button: 2,
+        clientX: point.clientX,
+        clientY: point.clientY,
+      }))
+    }, {
+      clientX: viewportBox.x + viewportBox.width * 0.7,
+      clientY: viewportBox.y + viewportBox.height * 0.7,
+    })
+    await page.getByRole('menuitem', { name: 'Mission' }).click()
+    await expect(page.getByRole('dialog', { name: 'Create mission' })).toBeVisible()
+
+    await page.getByRole('button', { name: 'Settings' }).click()
+    await expect(page.getByTestId('formations-host')).toBeHidden()
+
+    const hiddenShortcutOwnership = await page.evaluate(() => {
+      const undo = new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true })
+      window.dispatchEvent(undo)
+      const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      window.dispatchEvent(escape)
+      return { undoPrevented: undo.defaultPrevented, escapePrevented: escape.defaultPrevented }
+    })
+    expect(hiddenShortcutOwnership).toEqual({ undoPrevented: false, escapePrevented: false })
+
+    await page.getByRole('button', { name: 'Formations' }).click()
+    await expect(page.getByTestId('formations-view')).toBeVisible()
+    expect(layoutPatches).toHaveLength(1)
+    await expect(page.getByRole('dialog', { name: 'Create mission' })).toBeVisible()
+
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('dialog', { name: 'Create mission' })).toHaveCount(0)
+
+    await page.keyboard.press('Control+z')
+    await expect.poll(() => layoutPatches.length).toBe(2)
+  })
+
   test('pointercancel clears every gesture projection without committing a drop', async ({ page }) => {
     const viewport = page.locator('.fmx .viewport')
     const viewportBox = await requiredBox(viewport, 'formations viewport')
