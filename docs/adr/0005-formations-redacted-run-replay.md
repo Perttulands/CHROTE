@@ -29,12 +29,36 @@ that value for later dispatch. Redaction markers, display summaries, hashes, and
 safe reference metadata are evidence only and must never be dispatched as a
 substitute for the raw value.
 
-The redaction boundary includes every run-owned durable surface: ledger payloads,
-verifier and per-kind feedback, captures, reports, artifact contents, output
-references and their targets, derived evidence, and error text. Reference
-metadata may remain only when its target is already sanitized or replaced,
-resolves inside an authorized root, and contains no raw value covered by the
-run's redaction policy.
+The redaction boundary includes every run-owned durable surface that can contain
+runtime or external values: ledger payloads, composed prompts, verifier and
+per-kind feedback, captures, reports, artifact contents, output references and
+their targets, derived evidence, and error text. Host-private Files denial is not
+a redaction exemption. Reference metadata may remain only when its target is
+already sanitized or replaced, resolves inside an authorized root, and contains
+no covered raw value.
+
+Already-durable, author-authored board configuration is an explicit narrow
+exception: canonical Mission objectives, Formation briefs, and Gate criteria
+may be copied exactly into the immutable private graph snapshot and typed ledger
+projections for deterministic replay. They are not
+runtime/external output, and the snapshot may intentionally outlive a later board
+edit or deletion. The private graph snapshot's embedded, hash-covered manifest
+classifies each exact field/node as `authored_config` with its closed source role,
+versioned encoding/media type, and SHA-256; missing/extra/mismatched entries and
+unclassified strings are not exempt. Mission output/unchanged deliveries and isolated
+Formation seed input may duplicate objective/brief bytes only through the
+closed `authored_config` root-derived payload projection that exact-matches
+`run_started.rootInputProjection`; a generic unclassified exact payload is not
+exempt. Human prompt and PASS/FAIL labels use only closed
+fixed-system templates and are not authored-configuration exceptions.
+A composed prompt or human prompt that interpolates runtime input, capture,
+output, evidence, or secrets remains covered even when it also includes exempt
+configuration.
+
+A slot prompt in a redacted run is composed into one in-memory byte slice. The
+writer fsyncs only its SHA-256 and dispatch identity before the adapter sends that
+same slice once, then discards it. No durable prompt authority stores raw bytes;
+the hash is evidence only and never permits reconstruction or resend.
 
 Raw executor capture may exist only as cleanup-owned transient material, not as
 accepted durable evidence or a replay store. Before any persistent path can
@@ -47,11 +71,20 @@ bytes and provenance rather than hashing or wrapping it again. A run cannot
 append `run_succeeded` while any run-owned capture, report, or artifact is
 pending redaction.
 
+A writer-private authority directory with no valid seq-1 `run_started` is not an
+admitted run and sends nothing. Startup recovery first sanitizes/removes every
+pending raw target and fsyncs its obligation, then idempotently deletes the orphan
+authority tree and parent-directory-fsyncs. If cleanup or identity cannot be
+proven, it quarantines the tree as non-authorizing and exposes no bytes or replay
+handle; it never promotes the orphan into a run.
+
 Recovery may reattach an unresolved dispatch only when it proves the same
 attempt and qualified session target and sends no new prompt. It may also finish
 pending redaction or other reconciliation that needs no discarded raw value.
-After replay, a new dispatch is allowed only when every required input is
-available under the ordinary non-secret durable-input contract. A pending
+After replay, a dispatch for a different node or a new whole-producer attempt is
+allowed only when every required input is available under the ordinary
+non-secret durable-input contract. It never supersedes or redispatches an
+unmatched lease. A pending
 cleanup target, capture, report, artifact, marker, hash, or display summary is
 never an allowed source for reconstructing graph input.
 
@@ -59,7 +92,11 @@ If a required value was intentionally discarded and cannot be proven available,
 the engine appends an event with `type=run_failed`,
 `data.code=redacted_input_unavailable`,
 `data.reason=redacted_input_unavailable`, `data.unrecoverable=true`, and
-`data.final=true`. `data.relatedSeq` names the exact source event whose
+`data.final=true`. ADR-0006 additionally requires
+`data.failureCause={kind=none}` plus `data.nodeAttemptDispositions`,
+`data.slotDispatchDispositions`, and `data.toolLeaseDispositions` to exactly
+close every node attempt, slot dispatch, and Tool lease still open at failure,
+with empty arrays when there are none. `data.relatedSeq` names the exact source event whose
 execution-authoritative value was required but unavailable. This is terminal for
 the run: resume is rejected, no new epoch is opened, and no marker or summary is
 dispatched. Retrying the work requires a new run with newly supplied
@@ -101,7 +138,12 @@ never succeed safely.
   capture ownership on every exit, the node-output-to-capture crash window, and
   idempotent `CHROTE-CAPTURE-REDACTED-V1` cleanup.
 - The regressions scan the ledger and every run-owned capture, report, artifact,
-  output target, derived field, and error for a generated raw fixture secret.
+  prompt, output target, derived field, and error for generated raw runtime fixture
+  values and dynamic prompt fragments. Separate fixtures prove every exact
+  objective/brief/criterion is classified `authored_config` with its canonical
+  hash, root-derived payload copies are restricted and exact-match the root
+  projection, fixed human-request templates contain no run data, and no generic
+  unclassified copy/string enters the exemption.
 - `ctx-ug7.5` certifies the stabilized foundation, and `ctx-ug7.15` repeats the
   boundary against the exact completed feature candidate.
 - `FORMATIONS.md` and `DATA-MODEL.md` carry the same replay and durable-evidence

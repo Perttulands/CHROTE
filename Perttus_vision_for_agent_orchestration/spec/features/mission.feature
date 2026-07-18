@@ -37,7 +37,9 @@ Feature: Mission — the entry point that starts and frames a run
   @ui @cli
   Scenario: Starting the mission runs the whole chain
     When I start the mission (panel button, mission start, or "archon mission run session-search")
-    Then the run cascades from the mission objective as the seed input (see run-execution.feature)
+    Then the objective is BOM-free UTF-8 with CRLF/CR normalized to LF and no other whitespace change
+    And it becomes one "mission-objective-utf8-v1" "text/markdown" seed with SHA-256 over those exact bytes
+    And the run cascades from that typed seed input (see run-execution.feature)
 
   @ui @file
   Scenario: Rename and delete a mission

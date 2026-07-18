@@ -25,17 +25,19 @@ Feature: Visibility — explainable on request, not a dashboard you must watch
       And these match what the Archon says
 
   @ui
-  Scenario: The Formations tab is optional inspection, default off
-    Given the "chrote-formations" flag is off
-    Then there is no tab and nothing about CHROTE changes
-    When the flag is on
-    Then the tab shows the mission list, the node graph (read), and a run timeline
+  Scenario: The Formations tab is optional to watch, not optional run authority
+    Given Formations is available as an always-on file-backed capability
+    When no browser has the tab open
+    Then admitted runs and durable ledgers continue unchanged
+    When I open the tab
+    Then it shows the mission list, node graph, and run timeline from that same truth
 
   @ui
   Scenario: Progressive disclosure — overview first, detail on demand
     When I view a mission
     Then I first see its chain and per-step status
     And I drill into a node to see its brief, slots, output, report, and diffs only when I ask
+    And report/diff detail resolves registered ids through the latest authorized "ArtifactProjection"
 
   @ui
   Scenario: The tab reflects external changes live-ish
@@ -45,5 +47,6 @@ Feature: Visibility — explainable on request, not a dashboard you must watch
   @ui @cli
   Scenario: A live run streams to whoever is watching, but watching is never required
     When a run is in progress
-    Then the tab streams events over SSE and the CLI can follow the ledger
+    Then the tab and CLI receive the same sanitized event projection over SSE/follow
+    And neither receives raw ledger bytes, private paths, or revoked artifact refs
     But the run proceeds and stays fully recoverable whether or not anyone is watching

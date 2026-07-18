@@ -1,21 +1,29 @@
 # CHROTE Formations — Behavioral Spec (S0)
 
-This `spec/` is the **behavioral source of truth** for the agent-orchestration system (per
-[DECISIONS-LOCKED.md](../DECISIONS-LOCKED.md), **D5**). The Gherkin `.feature` files describe **what
-the system does**; the `archon` CLI surface, the `/api/formations` + `/api/agents` surfaces, and the
-React UI are all **derived from these scenarios**, not designed separately.
+This `spec/` is the supporting **S0 behavioral baseline** for the agent-orchestration system. It
+preserves the Gherkin-first intent recorded in [DECISIONS-LOCKED.md](../DECISIONS-LOCKED.md), but it
+does not override current root specs, current code, the
+[source-truth index](../../docs/source-truth-index.md), or later accepted ADRs. Scenarios that
+conflict with ADR-0005 or ADR-0006 must be updated before they can serve as implementation
+acceptance.
 
-Two upstream sources ground every scenario:
+The Gherkin `.feature` files describe intended cross-surface behavior. The `archon` CLI,
+`/api/formations` + `/api/agents`, and React UI should converge on that behavior only after its
+status is reconciled with the current/accepted-target labels in the newer sources.
+
+Three historical inputs inform this packet:
 - **The vision** — `../perttus_vision_for_agent_teams_and_orchestration.md` (the why).
-- **The prototype** — `../03-formations.html` / `../03-formations.js` is the **canonical behavioral
-  reference for the canvas** (D7). Its header comment is itself a requirements doc; the interaction
-  scenarios here are extracted from its actual code, not imagined.
-- **The active contracts** — [`contracts.md`](contracts.md) is the live schema/API/addressing contract.
-  Archived design packets are background only.
+- **The prototype** — `../03-formations.html` / `../03-formations.js` is a visual
+  and interaction reference for the canvas. It does not override current graph,
+  persistence, runtime, or availability contracts.
+- **The supporting contracts** — [`contracts.md`](contracts.md) preserves the S0
+  schema/API/addressing baseline and accepted-target amendments. Current root
+  specs, code, the source-truth index, and later ADRs win on conflict.
 
-> Status: design-phase spec. Runner-agnostic `.feature` files. When implementation starts, wire
-> them to **godog** (Go engine/CLI) and **cucumber-js / playwright-bdd** (React UI). Relocatable
-> into the repo's test tree at that point.
+> Status: supporting historical/target packet. Current Formations implementation
+> already exists. These runner-agnostic `.feature` files become executable
+> acceptance only when an owning slice reconciles and wires them to the current
+> Go and dashboard test stacks.
 
 ---
 
@@ -39,19 +47,22 @@ files↔CLI↔UI (D7).
 
 ## The model in one breath
 
-A **mission** (entry point, bead-backed) seeds a goal into a directed graph of **formations**
-(coordination units: `solo` / `peer` / `flow` / `orchestrated`, holding **slots** that reference live
-agents, a **brief**, an optional in-line **verification**, and N **input** / N **output** ports) and
-**gates** (checkpoints with `in` / `pass` / `fail` / `judge`, combining `code` / `human` / `formation`
-checks). **Connections** are directed `output → input` edges. A **run** cascades work along the wires,
-waits at JOINs, routes at gates, can have a gate judged by **one formation or a chain of them**, and
-produces append-only **ledger** events that status is projected from.
+A **mission** emits one validated work payload from fixed `out` into a directed graph of
+**formations** (agent execution in `solo` / `peer` / `flow` / `orchestrated` coordination),
+accepted-target **Tools** (pure bounded transformations through frozen host-owned profiles), and
+**gates** (human/code/formation evaluation and routing). **Connections** bind one output producer to
+one exact input port; JOINs use multiple distinct required ports. A Gate pass preserves the evaluated
+work and provenance, while fail creates one stable typed `gate_feedback` object whose traversals may
+perform correction or exact-attempt pushback; formation-judge output is verdict metadata only. A
+**run** records immutable attempt inputs and append-only **ledger** events from which status is
+projected.
 
 ---
 
-## Derived `archon` CLI surface
+## Historical/projected `archon` CLI surface
 
-Read out of the scenarios; this is the consolidated list (not a separate design). Global flags:
+Read out of the scenarios; this is not an inventory of the current binary. See
+the current command list in [`../../ARCHON.md`](../../ARCHON.md). Global flags:
 `--json`, `--workspace`; fail-loud non-zero exits; idempotent where noted. Commands marked
 `[projected]` are intentionally not executable acceptance yet; the scenario lands with the owning slice
 before implementation.
@@ -83,7 +94,7 @@ archon formation rm <board> <formation> [projected]
 archon formation set-brief <board> <formation> [--goal "…"] [--bead bd-NNN] [--file p] [--remove-file p]
 archon formation run <board> <formation>          # single-node test run
 
-# gates & judges (gates-and-judges.feature, verification.feature, escalation.feature)
+# gates & judges (gates-and-judges.feature, escalation.feature)
 archon gate create <board> --kinds code,human --criterion "…"
 archon gate judge  <board> <gate> (--chain f1,f2,f3 | --detach)
 archon gate judge  <board> <gate> (--attach <formation> | --return <formation>:<port>) [projected]
@@ -91,9 +102,6 @@ archon gate duplicate <board> <gate> [projected]
 archon gate rm <board> <gate> [projected]
 archon gate approve <runId> <gateId> --reason "…"      # human verdict during a run
 archon gate reject  <runId> <gateId> --reason "…"
-archon verification add <board> <formation> --kinds … --criterion "…" [--onfail block|pushback]
-archon verification config <board> <formation> [projected]
-archon verification rm <board> <formation> [projected]
 
 # missions & runs (mission.feature, run-execution.feature, run-recovery.feature, visibility.feature)
 archon mission create <board> --title "…" --goal "…"          # bead-backed
@@ -111,66 +119,90 @@ Agent tag flags target `[card].tags`: `--capable`, `--add-capability`, and
 `--remove-capability` operate on bare capability tags, while `--personality x`
 stores `personality:x` alongside reserved `focus:` and `taste:` facets.
 
-Wiring (`wire`/`unwire`) is the single verb for all edges — mission→formation, formation→gate,
-gate `pass`/`fail`→next, and formation↔gate `judge`. Node positions and hand-routed wire lanes are
-**UI/layout** only and have no CLI verbs in stage 1.
+Wiring (`wire`/`unwire`) is the single verb for compatible workflow payload
+edges—Mission/Formation/Tool/Gate routing—and for the Gate's reserved `judge`
+evaluation-control relationship. The `judge` socket permits one send and one
+return and never carries downstream work. Node positions and hand-routed wire
+lanes are **UI/layout** only and have no CLI verbs in stage 1.
 
 ---
 
 ## Addressing, ids, and ports
 
-- **Connection address:** `<nodeId>:<portId>` → `<nodeId>:<portId>` (always output → input).
+- **Connection address:** `<nodeId>:<portId>` → `<nodeId>:<portId>`. Workflow
+  payload edges are always compatible output → declared input; `gate:judge` is
+  the named evaluation-control exception described above.
 - **Stable ids are real addresses:** board, node, slot, port, edge, and run mutations use the prefixed
   ids in [`contracts.md`](contracts.md). Slugs, titles, and aliases may resolve to ids before mutation,
   but persisted references use ids.
-- **Fixed ports:** gate = `in` / `pass` / `fail` / `judge`; mission = `out`. Formation input/output
-  ports are dynamic with stable ids.
+- **Fixed addresses:** Gate = `in` / `pass` / `fail` plus reserved control socket
+  `judge`; Mission = `out`. Formation and accepted-target Tool input/output
+  ports are directional, typed, and stable.
 - **Port aliases:** `in[N]` / `out[N]` in feature examples are documented shorthand for "the
   input/output port at creation-order N." The writer resolves the alias once to the stable `port_…` id
   and holds that id through reloads and port removals.
 - **ID prefixes (ULID-based, self-describing):** `brd_` board · `mis_` mission · `fmn_` formation ·
-  `slot_` · `gate_` · `ver_` verification · `port_` · `edge_` · `run_`. Ids round-trip
+  accepted-target `tool_` · `slot_` · `gate_` · legacy schema-1 `ver_` verification · `port_` · `edge_` · `run_`. Ids round-trip
   files↔CLI↔UI; edits are diffs against existing ids, never full rewrites.
+
+Schema-1 inline verification is read-only compatibility/migration input. The
+schema-2 CLI and UI do not author, configure, or remove it; validation fails
+`legacy_inline_verification_requires_migration` until `ctx-ug7.17` defines or
+retires the feature.
 
 ## Ledger event vocabulary (NDJSON, append-only; status is projected)
 
 ```
-run_started · node_waiting · node_started · slot_dispatch · slot_result · node_output ·
-gate_evaluating · gate_verdict · verification_verdict · artifact_attached ·
+run_started · node_waiting · node_input_ignored · node_started · slot_binding_observed · slot_dispatch · slot_result ·
+tool_dispatch · tool_process_launch · tool_result · node_output ·
+gate_evaluating · gate_kind_result · judge_result · judge_attempt_failed · gate_verdict · artifact_attached · artifact_observed ·
 escalation_raised · human_input_requested · human_verdict_recorded ·
-error · run_blocked · run_resumed · run_canceled · run_failed · run_succeeded
+error · run_blocked · run_resumed · run_cancel_requested · run_canceled · run_failed · run_succeeded
 ```
 
-Every event uses the envelope in [`contracts.md`](contracts.md). `run_started` includes run id, board id,
-board revision, board snapshot, binding snapshot, mission id, monotonic sequence, actor, and initial
-attempt/epoch. Final whole-run events are exactly `run_succeeded`, `run_failed`, and `run_canceled`.
-`run_blocked` stops the current epoch and can be resumed explicitly with `run_resumed`.
+Every event uses the envelope in [`contracts.md`](contracts.md). `run_started`
+includes run id, board id/revision, opaque authority id, exact graph/private-
+binding/safe-projection hashes, conditional Mission id, monotonic sequence,
+actor, and initial attempt/epoch; it exposes no private snapshot path or bytes.
+Execution-final events are exactly `run_succeeded`, `run_failed`, and
+`run_canceled`. Non-authorizing binding/artifact observation events may follow for inspection, but
+cannot reopen an epoch, change outcome, or authorize dispatch. `run_blocked`
+stops the current epoch; only a block with `resumeAllowed=true` can be resumed
+explicitly with `run_resumed`.
 
 ## Sentinels (completion + escalation over tmux, no native ACK)
 
 ```
-<<<CHROTE-DONE     run-id="…" status="ok|error" artifact="…">>>
+<<<CHROTE-DONE     run-id="…" dispatch-id="…" target-lease-id="…" status="ok|error" artifact="…">>>
 <<<CHROTE-ESCALATE run-id="…" reason="…">>>
 ```
-The run-id must match the active run (stray/fake markers are ignored). Captured pane text is recorded
-as **data**, never executed.
+A completion sentinel must exact-match the active run, dispatch, and host target
+lease; run id alone is insufficient. An escalation must match the active run.
+Stray/fake markers are ignored. Captured pane text is recorded as **data**,
+never executed.
 
-## File layout & flags
+## File layout and current availability
 
 ```
 ~/agents/<id>.toml                                  # central persona cards (cross-project)
 <workspace>/.formations/boards/<board>.formation.toml   # definition (structure) — TOML
 <workspace>/.formations/layout/<board>.layout.toml      # presentation (x/y, lanes) — sidecar
-<workspace>/.formations/runs/<board>/<run-id>.ndjson    # append-only run ledger
-<workspace>/.formations/runs/<board>/<run-id>.snapshot.toml
-<workspace>/.formations/runs/<board>/<run-id>.bindings.toml
-<workspace>/.formations/runs/<board>/<run-id>.refs/
-<workspace>/.formations/runs/<board>/latest.json        # regenerable cache
+<workspace>/.formations/artifacts/<run-id>/...          # registered sanitized files only
+<chrote-data>/formations/runs/<run-id>/events.ndjson    # writer-only canonical ledger
+<chrote-data>/formations/runs/<run-id>/graph.snapshot.toml
+<chrote-data>/formations/runs/<run-id>/bindings.private.toml
+<chrote-data>/formations/runs/<run-id>/refs/            # private materializations/raw obligations
 # .formations/board.ndjson (notice board) — DEFERRED
 ```
-Kill switches: `chrote-formations` (UI localStorage flag, default off) · `CHROTE_FORMATIONS` (server
-env, default off). `rm -rf .formations/` is a clean rollback. The shared formations package is the
-**single writer** of definition files.
+Canonical run authority is outside every generic Files root. Run APIs expose
+sanitized hash-linked projections; File Peek receives only currently authorized
+registered artifacts, never raw ledger/binding/ref paths.
+Formations is now always-on; the historical `chrote-formations` and
+`CHROTE_FORMATIONS` default-off flags are not current availability contracts.
+Executor-specific environment guards remain a safety ladder, not a product
+feature switch. Rollback preserves `.formations/` evidence and reverts code; it
+does not delete the canonical workspace data. The shared formations package is
+the **single writer** of definition files.
 
 ---
 
@@ -178,13 +210,13 @@ env, default off). `rm -rf .formations/` is a clean rollback. The shared formati
 
 | File | Covers |
 |---|---|
-| `contracts.md` | active schema/API/addressing/ledger contract |
+| `contracts.md` | supporting S0 schema/API/addressing/ledger baseline plus accepted-target amendments |
 | `agents.feature` | discovery (progressive disclosure), inspection, liveness via Oracle |
 | `agent-factory.feature` | create / introspect / evolve / spawn / attach / retire agents (D3) |
 | `formations-and-slots.feature` | the four types, slots, controller, staffing, briefs |
-| `connections.feature` | connect-anything output→input, reconnect, hand-route, JOIN, fan-out, dynamic ports |
+| `connections.feature` | compatible payload wiring, reconnect, hand-route, JOIN, fan-out, dynamic ports |
 | `gates-and-judges.feature` | gate kinds, pass/fail/block/pushback, **single + chained judges** |
-| `verification.feature` | in-formation check, kinds, block/pushback |
+| `verification.feature` | schema-1 inline-verification inspection and schema-2 fail-closed boundary |
 | `mission.feature` | entry point, chain, bead-backed, start |
 | `run-execution.feature` | cascade, JOIN readiness, gate routing, judge execution, outputs, cancel, limits |
 | `run-recovery.feature` | resume/replay, fail-loud binding/sentinel/limit failures |
@@ -193,14 +225,15 @@ env, default off). `rm -rf .formations/` is a clean rollback. The shared formati
 | `context-menus.feature` | right-click everything — the per-element menus |
 | `terminals.feature` | live agent terminals on the canvas |
 | `escalation.feature` | escalation sentinel → ledger → Archon; human verdicts |
-| `visibility.feature` | explainable-on-request; the optional read-only tab |
-| `reversibility-persistence.feature` | kill switches, atomic writes, single writer, schema versioning |
+| `visibility.feature` | historical explainability baseline; current Formations UI/root specs win on availability |
+| `reversibility-persistence.feature` | historical flag scenarios plus current atomic-write, single-writer, and schema-versioning baseline |
 | `career-web-experience.feature` | the whole-system end-to-end acceptance |
 
 ---
 
-## Next step
+## Current continuation
 
-With this spec and [`contracts.md`](contracts.md) as the contract, S1/S2 can start behind
-`chrote-formations` and `CHROTE_FORMATIONS`. Beads planning is a separate step outside this S0 cleanup.
-Nothing is committed to CHROTE runtime until a slice ships behind its flags.
+The historical S1/S2 sequencing has been superseded: current main already has a
+real Formations foundation. ADR-0005 and ADR-0006 constrain the stabilization and
+mixed-workflow slices tracked under Beads epic `ctx-ug7`. Each target becomes a
+current claim only after its owning implementation and certification gates pass.

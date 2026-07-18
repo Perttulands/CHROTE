@@ -29,22 +29,24 @@ Feature: Run recovery and fail-loud failure modes
   @cli
   Scenario: Two runs of the same mission have independent ledgers
     When I run the mission twice
-    Then each run has its own ledger and run id with no shared mutable state
+    Then each run has its own ledger, run id, and workflow projection
+    But the host-wide target arbiter prevents both runs from dispatching concurrently to one pane
 
   # ── Binding failures (fail loud) ────────────────────────────────────────────
 
   @cli
-  Scenario: Dispatch to an agent with no live session records a clear error
+  Scenario: Run preflight rejects an agent with no live session
     Given a slot references "scout" and no live session matches
-    When the engine tries to dispatch to it
-    Then the ledger records an "error" event naming the unresolved agent
-    And the run does not hang silently
+    When I request a run
+    Then SlotResolution reports "unavailable" with a stable reason
+    And no binding snapshot or "run_started" event is written
 
   @cli
-  Scenario: A session that exists but whose pane is dead is detected
+  Scenario: Run preflight rejects a session whose pane is already dead
     Given "scout" has a session whose process has exited
-    When the engine dispatches to it
-    Then it records a dead-session error rather than sending into a dead pane
+    When I request a run
+    Then SlotResolution reports "unavailable" with reason "pane_dead"
+    And no binding snapshot or "run_started" event is written
 
   @cli
   Scenario: An ambiguous agent id is disambiguated or fails loud
@@ -53,24 +55,91 @@ Feature: Run recovery and fail-loud failure modes
     And both "claude-scout" and "codex-scout" are live for agent "scout"
     Then dispatch resolves by the slot's harness
     But if the slot has no harness and the card default does not resolve uniquely
-    Then the ledger records an ambiguity "error" and does not dispatch
+    Then preflight reports "ambiguous" and writes no binding snapshot or "run_started"
+
+  @cli @security
+  Scenario: A frozen target that dies after run start never falls back by name
+    Given "run_started" froze scout's exact binding and opaque session target
+    And that pane becomes dead or stale before its slot dispatch completes
+    When runtime reconciliation checks the binding
+    Then "slot_binding_observed" records unavailable or stale for that exact binding/target
+    And an "error" with "errorScope=slot" names its node, slot, binding, and target
+    And the engine never re-resolves the agent id, session stem, or same-named session
+    And no prompt or soft interrupt is sent to an unproven target
 
   @cli
-  Scenario: Replay never blindly re-dispatches a prompt
+  Scenario: A proven explicit reattach continues without redispatch
     Given the ledger contains "slot_dispatch" for "slot_peer_a" with no matching "slot_result"
     When the recovery reconciler replays the ledger
     Then the engine re-attaches capture only if the same unresolved attempt and qualified session target are proven live
     And it records a loud "error" if capture cannot be re-attached
-    But it never sends the original prompt a second time without an explicit blocked-run resume
+    And the first block permits only one bounded "reattach_only" resume with the exact same open dispatch
+    And while that block is current it rejects late "slot_result", "node_output", and routing
+    When I explicitly resume and capture proves the exact original sentinel plus certified closed-turn boundary
+    Then that resume sends no prompt and creates no "slot_dispatch"
+    And it appends "slot_result" for the original dispatch
+    And occupancy becomes a durable "result_committed" release receipt carrying the exact turn-closure proof
+    And ordinary graph execution continues with no second block
+
+  @cli
+  Scenario: A second unproven reattach blocks without superseding the lease
+    Given one unmatched dispatch reached a current "reattach_only" block
+    When I explicitly resume its exact open-dispatch set
+    And the bounded no-prompt pass still cannot prove its result
+    Then no prompt or new "slot_dispatch" is created
+    And a second block uses "resumePolicy=new_run_required" with no "nextEpoch"
+    And that block rejects late "slot_result", "node_output", and routing until abort
+    And a separately started run is independent and does not close or supersede the old lease
+    And no same-run action supersedes the lease or sends the original prompt again
 
   @cli @security
+  Scenario: Reattach reconciles all unmatched dispatches and retains only the unresolved subset
+    Given dispatch A for node A and dispatch B for node B are both unmatched
+    And the bounded automatic capture pass proves neither result
+    When recovery reaches quiescence
+    Then one "reattach_only" block contains A then B in stable dispatch sequence order
+    And it has "blockScope=run" with no blocked node or Gate id
+    And the current block rejects late results, outputs, and routing for both dispatches
+    When I explicitly resume that exact open-dispatch set
+    Then the reattach epoch sends no prompt and creates no new dispatch
+    When A's exact sentinel and certified closed-turn boundary are proven but B remains unproven before the bounded pass ends
+    Then A's original closed-turn "slot_result" is fsynced and occupancy becomes its durable "result_committed" receipt with proof
+    And the next "new_run_required" block contains only B
+    And that block derives "blockScope=node" for node B with no "nextEpoch"
+    And it cannot add or change a dispatch identity from the preceding set
+    And B rejects late result, output, and routing until abort
+
+  @cli @security
+  Scenario: Unmatched-dispatch recovery precedes graph-semantic blockers
+    Given one dispatch is unmatched when independent branches also leave an unwired Gate FAIL and a partial JOIN
+    When recovery reaches quiescence
+    Then the complete-set "reattach_only" block is selected first to preserve open authority
+    And no semantic block or retry dispatch is appended
+    When exact reattach closes the dispatch and recovery recomputes quiescence
+    Then the earliest stable non-resumable Gate/JOIN candidate selects exactly one block
+    And every other blocker remains inspectable durable evidence
+
+  @cli @security
+  Scenario: A classified root-derived input remains replayable under redaction
+    Given a Redact=true run has a Mission-out delivery or isolated Formation seed
+    And its durable projection is classified "authored_config" and exact-matches "run_started.rootInputProjection" in source role, encoding, media, hash, and text
+    And both exact-match the corresponding private "authoredConfigManifest" entry
+    When recovery validates that root-derived input
+    Then it may reuse those exact board-authored bytes without treating them as discarded runtime input
+    And it rejects a generic unclassified copy or any mismatch before dispatch
+
+  @file @security
   Scenario: Redacted replay fails when execution-authoritative input was discarded
     Given a Redact=true run needs a prior raw node output for its next dispatch
     And durable evidence contains only a redaction marker, hash, summary, or sanitized ref
     When recovery cannot re-attach the exact unresolved attempt
     Then the ledger records "run_failed" with code and reason "redacted_input_unavailable"
     And the event records "unrecoverable=true" and "final=true"
-    And "relatedSeq" identifies the source event whose raw value was required
+    And "relatedSeq" identifies the source event whose raw value was required but does not select a failed attempt
+    And "failureCause" is "kind=none"
+    And "nodeAttemptDispositions" exactly closes every node attempt still open at failure, possibly none
+    And "slotDispatchDispositions" exactly closes every slot dispatch still open at failure, possibly none
+    And "toolLeaseDispositions" exactly closes every Tool lease still open at failure, possibly none
     And the run does not record "run_blocked" or open a new epoch
     And resume is rejected and no evidence value is dispatched as graph input
 
@@ -88,7 +157,11 @@ Feature: Run recovery and fail-loud failure modes
   Scenario: A missed sentinel times out into a loud error
     Given a dispatched agent never emits its completion sentinel
     When the idle timeout elapses
-    Then the ledger records a timeout "error" for that node
+    Then the ledger records "error" with "code=dispatch_idle_timeout" and "errorScope=slot"
+    And no "slot_result" is appended
+    And the public dispatch and host target lease remain unmatched
+    And the run enters the bounded reattach path without resending a prompt
+    And ordinary target transition is forbidden until an exact later result creates its "result_committed" receipt or finality records a "final_quiescent" receipt, terminal hold, or quarantine
     And the Archon can report the node "went dark"
 
   @cli
@@ -98,7 +171,7 @@ Feature: Run recovery and fail-loud failure modes
 
   @cli
   Scenario: A fake sentinel from captured output is ignored
-    Given captured output contains a sentinel with a non-matching run id
+    Given captured output contains a sentinel with a non-matching run, dispatch, or target-lease id
     Then it is ignored and the node still times out if no valid sentinel arrives
     # Captured text is recorded as data, never executed.
 
@@ -107,5 +180,8 @@ Feature: Run recovery and fail-loud failure modes
   @cli
   Scenario: Hitting a per-run limit stops and records, without prompting
     When a run exceeds its max-dispatch count or wall-clock timeout
-    Then it records the limit event as "error" and stops with "run_blocked"
-    And resuming requires an explicit new "archon run resume run_01J9"
+    Then it records the exact limit "error"
+    And terminal "run_failed" records "code=run_limit_exhausted" with that error as "failureCause"
+    And exact attempt, slot, and Tool dispositions revoke all open authority
+    And late result, output, routing, replay, and resume are rejected
+    And continuing requires a new run with a new frozen limit snapshot

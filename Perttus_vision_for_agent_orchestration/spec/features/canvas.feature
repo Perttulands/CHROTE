@@ -8,7 +8,7 @@ Feature: The formations canvas — pan, zoom, arrange, and undo
   So that the shape of the work is digestible without altering its structure
 
   Background:
-    Given the Formations tab is open behind the "chrote-formations" flag
+    Given the always-available Formations tab is open
     And a board with several formations, a gate, and a mission
 
   # ── Navigation ──────────────────────────────────────────────────────────────
@@ -49,9 +49,10 @@ Feature: The formations canvas — pan, zoom, arrange, and undo
 
   @file @layout
   Scenario: Deleting the layout sidecar loses positions but never the graph
+    Given a schema-1 board may contain a legacy inline verification
     When the layout sidecar is removed
     Then nodes fall back to a default arrangement
-    And every node, port, edge, brief, gate, and verification still exists
+    And every node, port, edge, brief, gate, and legacy verification still exists unchanged
 
   # ── Undo ────────────────────────────────────────────────────────────────────
 

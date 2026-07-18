@@ -37,7 +37,7 @@ Feature: Agents exist, are discoverable, and can be live-bound
 
   @ui
   Scenario: The Agents surface mirrors the roster
-    Given the chrote-formations flag is on
+    Given the always-available Formations surface is open
     When I open the Agents view
     Then I see a card per agent showing id, kind, and tags
     And clicking a card reveals its harness binding and source pointers

@@ -1,35 +1,40 @@
 # Captures the file contract (F1) + reversibility acceptance (DECISIONS-LOCKED §2, master-plan §10).
 # Definitions are TOML, ledger/board NDJSON; the shared formations package is the single writer;
-# every layer has a kill switch; unknown fields survive; schema is versioned.
+# rollback preserves evidence; unknown fields survive; schema is versioned.
 
-Feature: Reversibility and the file contract — safe, durable, and fully removable
+Feature: Reversibility and the file contract — safe, durable, and recoverable
   As the operator of a CHROTE install
-  I need the system to be file-canonical, single-writer, and one-flag-removable
+  I need the system to be file-canonical, single-writer, and code-rollback-safe
   So that it never corrupts state and "go back" is trivial
 
   Background:
     Given definitions live in "<workspace>/.formations/" (sibling of ".beads/")
+    And canonical run authority lives under "<chrote-data>/formations/" outside generic Files roots
     And persona cards live centrally in "~/agents/"
     And the shared formations package is the only writer of definition files
 
-  # ── Kill switches ───────────────────────────────────────────────────────────
+  # ── Rollback boundary ───────────────────────────────────────────────────────
 
   @ui
-  Scenario: The UI tab is gated by a default-off flag
-    Given "chrote-formations" is at its default (off)
-    Then the Formations tab does not mount and the dashboard behaves exactly as today
+  Scenario: The UI is not run-lifecycle authority
+    Given no browser has the Formations tab open
+    Then admitted runs and file-backed evidence remain available to the coordinator and CLI
 
   @cli
-  Scenario: The backend is gated by an env switch
-    Given "CHROTE_FORMATIONS=off" and the server restarted
-    Then "/api/formations/*" is not registered and no formations goroutine starts
-    And "go test ./..." is green, "/api/health" is OK, and all existing PRD acceptance still passes
+  Scenario: A prior code version does not delete durable evidence
+    Given Formations has produced evidence under ".formations/"
+    And Formations has produced canonical run authority under "<chrote-data>/formations/"
+    When the operator deploys or reverts to a prior CHROTE code version
+    Then existing ".formations/" data is preserved byte-for-byte
+    And existing "<chrote-data>/formations/" data is preserved byte-for-byte
+    And tmux sessions and Beads are untouched
 
   @file
-  Scenario: Removing the data is clean
-    When I "rm -rf <workspace>/.formations/"
-    Then the workspace, code, tmux sessions, and ".beads/" are untouched
-    And nothing about CHROTE's existing behavior changes
+  Scenario: Rollback never treats canonical data as disposable cache
+    When a code rollback is requested
+    Then no workflow deletes or rewrites "<workspace>/.formations/"
+    And no workflow deletes or rewrites "<chrote-data>/formations/"
+    And explicit evidence retention or migration remains a separate operator decision
 
   # ── File contract (F1) ──────────────────────────────────────────────────────
 
@@ -83,5 +88,6 @@ Feature: Reversibility and the file contract — safe, durable, and fully remova
   Scenario: Definition, layout, and run state are separate
     Then structure lives in the board definition
     And node x/y and wire lanes live in the layout sidecar
-    And run events live in the per-run NDJSON ledger
+    And canonical run events live in the writer-only per-run NDJSON ledger under the CHROTE data root outside generic Files roots
+    And the workspace exposes only definitions, layout, and authorized sanitized artifacts
     And a run finishing or a node being dragged never dirties the board definition

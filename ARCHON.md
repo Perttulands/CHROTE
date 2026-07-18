@@ -22,6 +22,10 @@ operation should have an equivalent or composable `archon` operation, and every
 
 ## CLI invariants
 
+Items 1-8 describe current constraints. Items 9-11 are ADR-0006 accepted-target
+constraints and must remain labeled target until their implementation gates
+close.
+
 1. Use the shared Go formations package for validation, writes, and run behavior.
 2. Emit JSON when `--json` is requested.
 3. Fail loud on missing boards, agents, sessions, ports, gates, cwd, checks, or
@@ -32,19 +36,40 @@ operation should have an equivalent or composable `archon` operation, and every
 7. Prefer exact commands over conversational interpretation.
 8. Never turn free-text criteria into implicit shell commands. Script gates use
    `--command-argv` by default; `--command-shell` is the explicit shell opt-in.
+9. Reject a second producer for any input port. Joins use distinct stable
+   required ports and do not imply a merge order.
+10. Preserve the evaluated exact authorized payload/provenance on Gate pass and
+    keep verdict or feedback separate from work output. One failed Gate sequence creates one
+    stable feedback object; pushback is a route action to an exact source
+    attempt, not another verdict.
+11. Treat Script Gates as evaluators. Deterministic Tool transformation uses a
+    pure host-owned profile whose exact version/hash, parameters, policy, and
+    content-addressed execution bundle are frozen for the run; it is not an
+    inline board command.
 
-## Command groups
+## Current command groups
 
 ```text
 archon agent      list | inspect | new | edit | spawn | attach | retire
-archon board      list | inspect | new | validate | export
-archon formation  create | inspect | assign | unassign | wire | unwire | add-input | add-output | set-brief | run
-archon mission    create | inspect | list | run
-archon gate       create | update | inspect | judge | approve | reject | route
-archon verify     add | config | remove | run
-archon run        list | status | logs | follow | resume | abort
-archon doctor     env | files | sessions | checks
+archon board      new | list | inspect | validate
+archon formation  create | list | inspect | assign | unassign | set-brief | add-input | add-output | wire | unwire | run
+archon gate       create | update | judge | approve | reject
+archon mission    create | list | inspect | wire | run
+archon run        list | status | logs | follow | resume | abort | ask
 ```
+
+This list describes the current binary. `board export`, Gate inspection/routing
+helpers, `verify`, and `doctor` remain directional command ideas, not available
+verbs.
+
+ADR-0006 accepts agent-first authoring for a mixed Mission → Formation → Tool →
+Gate workflow. There is no `archon tool` group today. Tool profile authoring,
+validation, packaging, and the exact command spelling belong to `ctx-ug7.8`,
+`ctx-ug7.11`, and `ctx-ug7.13`; this spec must not imply they already ship.
+Likewise, current argv/shell Script Gates are schema-1 compatibility behavior.
+Schema-2 code Gates use frozen pure in-process evaluator profiles; migrating a
+command-backed Gate fails loud until the process-fence or retirement decision in
+`ctx-ug7.16` lands.
 
 ## Output modes
 
@@ -55,8 +80,25 @@ archon doctor     env | files | sessions | checks
 
 ## Agent/persona resolution
 
-Slot assignment stores stable agent ids. Run dispatch resolves those ids to a
-selected harness/session at run time.
+Current main stores stable agent ids and harness/session-stem compatibility
+evidence, then re-reads mutable persona data and resolves again at dispatch. It
+does not yet consume a frozen exact binding.
+
+In the accepted target, assignment is staffing intent, not runnable proof.
+Before run start, each declared slot in the selected `runRoot` executable
+subgraph has a resolution state: unresolved, runnable, ambiguous, or unavailable.
+Only a runnable resolution becomes one host-private immutable `RunSlotBinding`
+plus a hash-linked safe projection with server-issued `sessionTargetId`. The
+private record freezes persona-card hash, exact tmux server/session/window/pane,
+cwd/root, harness/process-start identity, and target fingerprint. Immediately
+before send the acquired lease must still exact-match that fingerprint. After
+start, projected binding health is
+runnable, unavailable, or stale without changing that identity. A multi-slot
+attempt can expose several targets. Archon inspection and terminal Peek must use
+the target for the exact slot dispatch, never a fresh same-name lookup. A run
+never rebinds a slot to a different pane; replacement requires a new run.
+Current main resolves by agent/harness/session stem and does not yet expose this
+exact target or freeze it for dispatch.
 
 Resolution must surface:
 
@@ -65,13 +107,16 @@ Resolution must surface:
 - multiple compatible live sessions without a disambiguator;
 - stale session references;
 - unavailable cwd or file root;
-- missing permissions or feature flags.
+- missing permissions or a disabled executor adapter.
 
 ## Mutation rules
 
 - Structural mutations update board definitions.
 - Layout mutations update layout sidecars.
-- Run events append to run ledgers.
+- In the ADR-0006/0007 accepted target, run events append through the sole writer
+  to host-private ledgers outside generic Files roots; Archon reads sanitized
+  projections, never raw authority. Current main still uses workspace run files,
+  so that security boundary must land before this target is claimed implemented.
 - Undoable operations must record enough inverse intent to reverse the mutation
   without whole-board hacks.
 - All writes go through the shared writer so UI/API/CLI cannot diverge.
@@ -91,6 +136,10 @@ as the board model:
   gates do not execute legacy command strings.
 - `--command-argv`, `--command-shell`, and legacy `--command` are mutually
   exclusive.
+
+Script Gates return verdict, reason, and evidence metadata only. They do not
+emit transformed workflow output and must not be used as a substitute for the
+future host-profile Tool step.
 
 ## Examples
 

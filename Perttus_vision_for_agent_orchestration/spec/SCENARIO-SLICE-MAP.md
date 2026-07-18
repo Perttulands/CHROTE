@@ -1,9 +1,15 @@
 # CHROTE Formations - Scenario To Slice Map
 
+> **Historical S0 implementation map.** The `home-7kc4.*` ownership and feature-
+> flag sequencing below describe the 2026-06-03 slice plan. Current root specs,
+> accepted ADR-0005/0006, `docs/source-truth-index.md`, and `ctx-ug7.*` Beads win.
+> In particular, inline verification is now schema-1 inspection/migration input
+> only until `ctx-ug7.17` defines or retires it.
+
 This is the S0 acceptance map for `home-7kc4.1`. It pins how the
 behavioral spec in this directory is divided across the Formations child beads.
 
-Authoritative sources:
+Sources used by that historical plan:
 - `../DECISIONS-LOCKED.md` wins over sibling docs.
 - `../03-formations.html` and `../03-formations.js` are the canonical canvas
   behavior and visual reference. The React UI must be implemented fresh, not by

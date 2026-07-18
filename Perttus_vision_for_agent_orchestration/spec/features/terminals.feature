@@ -47,6 +47,16 @@ Feature: Live agent terminals on the canvas
     Then it indicates the session is not live rather than appearing connected
     # Fail loud: never present a dead session as attached.
 
+  @ui @security
+  Scenario: Run-bound Peek never shows newer work as an old attempt
+    Given an old slot dispatch records binding, target lease, opaque target, and frozen fingerprint
+    When that exact dispatch still owns active unmatched occupancy or its terminal hold on the unchanged pane
+    Then run-bound Peek may stream it read-only with the exact attempt identity
+    When occupancy becomes a release receipt, the pane is quarantined, or a later run reuses the target
+    Then the old attempt shows captured history, unavailable, or "pane_moved_on"
+    And it never labels current live bytes as evidence from the old run
+    And "Open current session" is a separate explicitly non-run action
+
   @ui
   Scenario: Closing a terminal never disrupts the underlying session
     When I close a terminal popup

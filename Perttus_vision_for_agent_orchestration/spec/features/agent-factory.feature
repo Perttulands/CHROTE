@@ -63,7 +63,7 @@ Feature: Build, evolve, and retire agents
 
   @ui @file
   Scenario: Author an agent from the UI through the same writer
-    Given the chrote-formations flag is on
+    Given the always-available Formations surface is open
     When I create an agent "writer" with capabilities "writing, voice" in the Agents view
     Then "~/agents/writer.toml" is written through the shared formations package
     And "archon agent inspect writer --json" returns exactly the fields the UI submitted
