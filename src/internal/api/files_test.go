@@ -620,6 +620,361 @@ func TestFilesHandlerRejectsOversizedUpload(t *testing.T) {
 	}
 }
 
+func TestFilesHandlerDownloadRejectsPrivateRootSwappedAfterPathValidation(t *testing.T) {
+	root := t.TempDir()
+	visible := filepath.Join(root, "visible")
+	private := filepath.Join(root, "formations-private")
+	writeFileFixture(t, filepath.Join(visible, "authority.json"), "public")
+	writeFileFixture(t, filepath.Join(private, "authority.json"), "private")
+
+	handler := newFilesHandlerForRoots(t, []string{root}, private)
+	handler.operationHook = swapPrivateRootAfterStage(t, "download", visible, private)
+	req := httptest.NewRequest(http.MethodGet, "/api/files/raw/ignored", nil)
+	req.SetPathValue("path", strings.TrimPrefix(filepath.ToSlash(filepath.Join(visible, "authority.json")), "/"))
+	rec := httptest.NewRecorder()
+
+	handler.DownloadFile(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 after private-root swap: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "private") {
+		t.Fatalf("private content escaped through download: %q", rec.Body.String())
+	}
+}
+
+func TestFilesHandlerListingRejectsPrivateRootSwappedAfterPathValidation(t *testing.T) {
+	root := t.TempDir()
+	visible := filepath.Join(root, "visible")
+	private := filepath.Join(root, "formations-private")
+	writeFileFixture(t, filepath.Join(visible, "notes.txt"), "public")
+	writeFileFixture(t, filepath.Join(private, "authority.json"), "private")
+
+	handler := newFilesHandlerForRoots(t, []string{root}, private)
+	handler.operationHook = swapPrivateRootAfterStage(t, "get", visible, private)
+	req := httptest.NewRequest(http.MethodGet, "/api/files/resources/ignored", nil)
+	req.SetPathValue("path", strings.TrimPrefix(filepath.ToSlash(visible), "/"))
+	rec := httptest.NewRecorder()
+
+	handler.GetResource(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 after private-root swap: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "authority.json") {
+		t.Fatalf("private listing escaped: %q", rec.Body.String())
+	}
+}
+
+func TestFilesHandlerCreateRejectsPrivateRootSwappedAfterPathValidation(t *testing.T) {
+	root := t.TempDir()
+	visible := filepath.Join(root, "visible")
+	private := filepath.Join(root, "formations-private")
+	if err := os.MkdirAll(visible, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(private, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := newFilesHandlerForRoots(t, []string{root}, private)
+	handler.operationHook = swapPrivateRootAfterStage(t, "create", visible, private)
+	target := filepath.Join(visible, "injected.txt")
+	req := httptest.NewRequest(http.MethodPost, "/api/files/resources/ignored", bytes.NewBufferString("must not enter private root"))
+	req.SetPathValue("path", strings.TrimPrefix(filepath.ToSlash(target), "/"))
+	rec := httptest.NewRecorder()
+
+	handler.CreateResource(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 after private-root swap: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("create reached swapped private root: %v", err)
+	}
+}
+
+func TestFilesHandlerDeleteRejectsPrivateRootSwappedAfterPathValidation(t *testing.T) {
+	root := t.TempDir()
+	visible := filepath.Join(root, "visible")
+	private := filepath.Join(root, "formations-private")
+	writeFileFixture(t, filepath.Join(visible, "victim.txt"), "public")
+	privateVictim := filepath.Join(private, "victim.txt")
+	writeFileFixture(t, privateVictim, "private")
+
+	handler := newFilesHandlerForRoots(t, []string{root}, private)
+	handler.operationHook = swapPrivateRootAfterStage(t, "delete", visible, private)
+	req := httptest.NewRequest(http.MethodDelete, "/api/files/resources/ignored", nil)
+	req.SetPathValue("path", strings.TrimPrefix(filepath.ToSlash(filepath.Join(visible, "victim.txt")), "/"))
+	rec := httptest.NewRecorder()
+
+	handler.DeleteResource(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 after private-root swap: %s", rec.Code, rec.Body.String())
+	}
+	content, err := os.ReadFile(filepath.Join(visible, "victim.txt"))
+	if err != nil || string(content) != "private" {
+		t.Fatalf("delete reached swapped private root: content=%q err=%v", content, err)
+	}
+}
+
+func TestFilesHandlerRenameRejectsPrivateRootSwappedAfterPathValidation(t *testing.T) {
+	root := t.TempDir()
+	visible := filepath.Join(root, "visible")
+	private := filepath.Join(root, "formations-private")
+	writeFileFixture(t, filepath.Join(visible, "source.txt"), "public")
+	privateSource := filepath.Join(private, "source.txt")
+	writeFileFixture(t, privateSource, "private")
+
+	handler := newFilesHandlerForRoots(t, []string{root}, private)
+	handler.operationHook = swapPrivateRootAfterStage(t, "rename", visible, private)
+	destination := filepath.Join(visible, "moved.txt")
+	body, err := json.Marshal(RenameRequest{Action: "rename", Destination: destination})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPatch, "/api/files/resources/ignored", bytes.NewReader(body))
+	req.SetPathValue("path", strings.TrimPrefix(filepath.ToSlash(filepath.Join(visible, "source.txt")), "/"))
+	rec := httptest.NewRecorder()
+
+	handler.RenameResource(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 after private-root swap: %s", rec.Code, rec.Body.String())
+	}
+	content, err := os.ReadFile(filepath.Join(visible, "source.txt"))
+	if err != nil || string(content) != "private" {
+		t.Fatalf("rename reached swapped private root: content=%q err=%v", content, err)
+	}
+	if _, err := os.Stat(destination); !os.IsNotExist(err) {
+		t.Fatalf("rename created destination inside private root: %v", err)
+	}
+}
+
+func TestFilesHandlerDownloadRejectsParentReplacedByOutboundSymlink(t *testing.T) {
+	root := t.TempDir()
+	visible := filepath.Join(root, "visible")
+	outside := t.TempDir()
+	writeFileFixture(t, filepath.Join(visible, "secret.txt"), "public")
+	writeFileFixture(t, filepath.Join(outside, "secret.txt"), "outside")
+
+	handler := &FilesHandler{
+		allowedRoots:   []string{root},
+		writeRoots:     []string{root},
+		deniedRoots:    defaultDeniedFileRoots(),
+		maxUploadBytes: defaultMaxUploadBytes,
+	}
+	handler.operationHook = replaceDirectoryWithSymlinkAfterStage(t, "download", visible, outside)
+	req := httptest.NewRequest(http.MethodGet, "/api/files/raw/ignored", nil)
+	req.SetPathValue("path", strings.TrimPrefix(filepath.ToSlash(filepath.Join(visible, "secret.txt")), "/"))
+	rec := httptest.NewRecorder()
+
+	handler.DownloadFile(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 after outbound symlink swap: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "outside") {
+		t.Fatalf("outbound content escaped through download: %q", rec.Body.String())
+	}
+}
+
+func TestFilesHandlerMutationsRejectParentReplacedByOutboundSymlink(t *testing.T) {
+	t.Run("create", func(t *testing.T) {
+		root := t.TempDir()
+		visible := filepath.Join(root, "visible")
+		outside := t.TempDir()
+		if err := os.MkdirAll(visible, 0755); err != nil {
+			t.Fatal(err)
+		}
+		handler := &FilesHandler{
+			allowedRoots:   []string{root},
+			writeRoots:     []string{root},
+			deniedRoots:    defaultDeniedFileRoots(),
+			maxUploadBytes: defaultMaxUploadBytes,
+		}
+		handler.operationHook = replaceDirectoryWithSymlinkAfterStage(t, "create", visible, outside)
+		req := httptest.NewRequest(http.MethodPost, "/api/files/resources/ignored", bytes.NewBufferString("outside"))
+		req.SetPathValue("path", strings.TrimPrefix(filepath.ToSlash(filepath.Join(visible, "injected.txt")), "/"))
+		rec := httptest.NewRecorder()
+
+		handler.CreateResource(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("create status = %d, want 403 after outbound symlink swap: %s", rec.Code, rec.Body.String())
+		}
+		if _, err := os.Stat(filepath.Join(outside, "injected.txt")); !os.IsNotExist(err) {
+			t.Fatalf("create escaped allowed root: %v", err)
+		}
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		root := t.TempDir()
+		visible := filepath.Join(root, "visible")
+		outside := t.TempDir()
+		writeFileFixture(t, filepath.Join(visible, "victim.txt"), "public")
+		outsideVictim := filepath.Join(outside, "victim.txt")
+		writeFileFixture(t, outsideVictim, "outside")
+		handler := &FilesHandler{
+			allowedRoots:   []string{root},
+			writeRoots:     []string{root},
+			deniedRoots:    defaultDeniedFileRoots(),
+			maxUploadBytes: defaultMaxUploadBytes,
+		}
+		handler.operationHook = replaceDirectoryWithSymlinkAfterStage(t, "delete", visible, outside)
+		req := httptest.NewRequest(http.MethodDelete, "/api/files/resources/ignored", nil)
+		req.SetPathValue("path", strings.TrimPrefix(filepath.ToSlash(filepath.Join(visible, "victim.txt")), "/"))
+		rec := httptest.NewRecorder()
+
+		handler.DeleteResource(rec, req)
+
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("delete status = %d, want 403 after outbound symlink swap: %s", rec.Code, rec.Body.String())
+		}
+		if got, err := os.ReadFile(outsideVictim); err != nil || string(got) != "outside" {
+			t.Fatalf("delete escaped allowed root: content=%q err=%v", got, err)
+		}
+	})
+}
+
+func TestFilesHandlerDownloadKeepsStableInRootSymlinkUseful(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target.txt")
+	writeFileFixture(t, target, "safe")
+	link := filepath.Join(root, "link.txt")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	handler := &FilesHandler{
+		allowedRoots:   []string{root},
+		writeRoots:     []string{root},
+		deniedRoots:    defaultDeniedFileRoots(),
+		maxUploadBytes: defaultMaxUploadBytes,
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/files/raw/ignored", nil)
+	req.SetPathValue("path", strings.TrimPrefix(filepath.ToSlash(link), "/"))
+	rec := httptest.NewRecorder()
+
+	handler.DownloadFile(rec, req)
+
+	if rec.Code != http.StatusOK || rec.Body.String() != "safe" {
+		t.Fatalf("stable in-root symlink download = %d %q, want 200 safe", rec.Code, rec.Body.String())
+	}
+}
+
+func TestFilesHandlerDownloadRejectsStaticPrivateRootAlias(t *testing.T) {
+	root := t.TempDir()
+	private := filepath.Join(root, "formations-private")
+	writeFileFixture(t, filepath.Join(private, "authority.json"), "private")
+	alias := filepath.Join(root, "formations-alias")
+	if err := os.Symlink(private, alias); err != nil {
+		t.Fatal(err)
+	}
+	handler := newFilesHandlerForRoots(t, []string{root}, private)
+	req := httptest.NewRequest(http.MethodGet, "/api/files/raw/ignored", nil)
+	req.SetPathValue("path", strings.TrimPrefix(filepath.ToSlash(filepath.Join(alias, "authority.json")), "/"))
+	rec := httptest.NewRecorder()
+
+	handler.DownloadFile(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("static private alias status = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestFilesHandlerDeleteRejectsPrivateRootSwappedIntoFinalDirectory(t *testing.T) {
+	root := t.TempDir()
+	visible := filepath.Join(root, "visible")
+	private := filepath.Join(root, "formations-private")
+	if err := os.MkdirAll(visible, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFileFixture(t, filepath.Join(private, "authority.json"), "private")
+	handler := newFilesHandlerForRoots(t, []string{root}, private)
+	handler.operationHook = swapPrivateRootAfterStage(t, "delete", visible, private)
+	req := httptest.NewRequest(http.MethodDelete, "/api/files/resources/ignored", nil)
+	req.SetPathValue("path", strings.TrimPrefix(filepath.ToSlash(visible), "/"))
+	rec := httptest.NewRecorder()
+
+	handler.DeleteResource(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 after final-directory swap: %s", rec.Code, rec.Body.String())
+	}
+	if got, err := os.ReadFile(filepath.Join(visible, "authority.json")); err != nil || string(got) != "private" {
+		t.Fatalf("delete traversed swapped private root: content=%q err=%v", got, err)
+	}
+}
+
+func TestFilesHandlerDeleteRecursesThroughPinnedDirectoryHandles(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "nested")
+	writeFileFixture(t, filepath.Join(target, "one", "two", "note.txt"), "delete")
+	handler := &FilesHandler{
+		allowedRoots:   []string{root},
+		writeRoots:     []string{root},
+		deniedRoots:    defaultDeniedFileRoots(),
+		maxUploadBytes: defaultMaxUploadBytes,
+	}
+	req := httptest.NewRequest(http.MethodDelete, "/api/files/resources/ignored", nil)
+	req.SetPathValue("path", strings.TrimPrefix(filepath.ToSlash(target), "/"))
+	rec := httptest.NewRecorder()
+
+	handler.DeleteResource(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("recursive descriptor delete status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("recursive descriptor delete left target: %v", err)
+	}
+}
+
+func writeFileFixture(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func swapPrivateRootAfterStage(t *testing.T, wantStage, visible, private string) func(string) {
+	t.Helper()
+	swapped := false
+	return func(stage string) {
+		if stage != wantStage || swapped {
+			return
+		}
+		swapped = true
+		if err := os.Rename(visible, visible+"-moved"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(private, visible); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func replaceDirectoryWithSymlinkAfterStage(t *testing.T, wantStage, visible, outside string) func(string) {
+	t.Helper()
+	replaced := false
+	return func(stage string) {
+		if stage != wantStage || replaced {
+			return
+		}
+		replaced = true
+		if err := os.Rename(visible, visible+"-moved"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, visible); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestFilesHandler_SuccessResponse(t *testing.T) {
 	resp := SuccessResponse{Success: true}
 	bytes, err := json.Marshal(resp)
