@@ -328,6 +328,17 @@ func TestListBoardsRejectsLinkedDefinition(t *testing.T) {
 	}
 }
 
+func TestListBoardsRejectsDefinitionShapedDirectory(t *testing.T) {
+	store := NewStore(t.TempDir())
+	if err := os.MkdirAll(store.BoardPath("directory"), 0o755); err != nil {
+		t.Fatalf("create definition-shaped directory: %v", err)
+	}
+
+	if _, err := store.ListBoards(); err == nil {
+		t.Fatal("list boards silently ignored definition-shaped directory")
+	}
+}
+
 func TestConfiguredWorkspaceSymlinkStillSupportsDefinitionPersistence(t *testing.T) {
 	root := t.TempDir()
 	actualWorkspace := filepath.Join(root, "actual-workspace")
