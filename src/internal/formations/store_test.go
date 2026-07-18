@@ -1482,6 +1482,79 @@ to = "gate_review:in"
 	}
 }
 
+func TestRemoveFormationVerificationDeletesSemanticDescendantTables(t *testing.T) {
+	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
+	writeFixture(t, store.BoardPath("verification-descendant"), `schema = 1
+id = "brd_verification_descendant"
+slug = "verification-descendant"
+title = "Verification descendant"
+rev = 7
+updatedAt = "2026-06-03T16:00:00Z"
+
+[[formation]]
+id = "fmn_work"
+type = "solo"
+title = "Work"
+
+[[formation.output]]
+id = "port_work_out"
+label = "Output"
+
+[formation.verification]
+id = "ver_work"
+kinds = ["code"]
+criterion = "Check the work"
+onFail = "block"
+
+[formation.brief]
+goal = "Preserve this sibling section"
+
+[formation.verification.extra]
+futureField = "must leave with its retired parent"
+
+[[gate]]
+id = "gate_review"
+title = "Review"
+kinds = ["human"]
+criterion = "Review the work"
+
+[[connection]]
+id = "edge_work_review"
+from = "fmn_work:port_work_out"
+to = "gate_review:in"
+`)
+	before, err := store.ReadBoard("verification-descendant")
+	if err != nil {
+		t.Fatalf("read verification descendant board: %v", err)
+	}
+	if verification := before.Formations[0].Verification; verification == nil || verification.ID != "ver_work" || verification.Criterion != "Check the work" {
+		t.Fatalf("legacy verification inspection = %+v, want populated parent fields preserved", verification)
+	}
+
+	after, err := store.RemoveFormationVerification("verification-descendant", FormationVerificationRemovalRequest{
+		FormationID:       "fmn_work",
+		ReplacementGateID: "gate_review",
+		UpdatedBy:         "agent:test",
+	}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev})
+	if err != nil {
+		t.Fatalf("remove verification with descendant table: %v", err)
+	}
+	if after.Formations[0].Verification != nil {
+		t.Fatalf("verification after removal = %+v, want removed", after.Formations[0].Verification)
+	}
+	raw := readFile(t, store.BoardPath("verification-descendant"))
+	if strings.Contains(raw, "formation.verification") || strings.Contains(raw, "futureField") {
+		t.Fatalf("retired verification descendant survived explicit removal:\n%s", raw)
+	}
+	if !strings.Contains(raw, `id = "gate_review"`) {
+		t.Fatalf("replacement Gate was not preserved:\n%s", raw)
+	}
+	if !strings.Contains(raw, `goal = "Preserve this sibling section"`) {
+		t.Fatalf("unrelated Formation section was not preserved:\n%s", raw)
+	}
+}
+
 func TestS3FormationBriefRejectsUnsafeNonEmptyBeadID(t *testing.T) {
 	for _, beadID := range []string{"nohyphen", "Home-123", "chlab/123", "../home-pfyv", "home-pfyv\n"} {
 		t.Run(beadID, func(t *testing.T) {

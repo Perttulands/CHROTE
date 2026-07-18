@@ -106,6 +106,9 @@ func TestLegacyInlineVerificationHeaderVariantsRemainVisibleAndFailBeforeRun(t *
 		{name: "spaced dotted path", header: "[ formation . verification ]"},
 		{name: "basic quoted path segment", header: `[formation."verification"]`},
 		{name: "literal quoted path segment", header: `[formation.'verification']`},
+		{name: "implicit parent from descendant table", header: `[formation.verification.extra]`},
+		{name: "implicit parent from quoted descendant table", header: `[formation."verification".extra]`},
+		{name: "implicit parent from descendant array table", header: `[[formation.verification.extra]]`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -141,6 +144,31 @@ func TestLegacyInlineVerificationHeaderVariantsRemainVisibleAndFailBeforeRun(t *
 				t.Fatalf("run artifacts = %+v, want none before migration rejection", entries)
 			}
 		})
+	}
+}
+
+func TestQuotedDottedVerificationSectionSegmentDoesNotAliasLegacyRoot(t *testing.T) {
+	store := NewStore(t.TempDir())
+	raw := strings.Replace(
+		s4VerificationBoardFixture("block"),
+		"[formation.verification]",
+		`[formation."verification.extra"]`,
+		1,
+	)
+	writeFixture(t, store.BoardPath("session-search"), raw)
+	board, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read quoted dotted section board: %v", err)
+	}
+	formation, ok := findFormation(board.Formations, "fmn_work")
+	if !ok {
+		t.Fatal("formation fmn_work not found")
+	}
+	if formation.Verification != nil {
+		t.Fatalf("quoted single segment aliased verification root: %+v", formation.Verification)
+	}
+	if findings := findBoardFindings(ValidateBoard(board).Errors, LegacyInlineVerificationMigrationCode); len(findings) != 0 {
+		t.Fatalf("quoted single segment migration findings = %+v, want none", findings)
 	}
 }
 

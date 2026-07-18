@@ -703,7 +703,7 @@ func (s *Store) RemoveFormationVerification(slug string, req FormationVerificati
 		if !ok {
 			return nil, ErrNotFound
 		}
-		verificationStart, verificationEnd, ok := findFormationSection(lines, formationStart, formationEnd, "formation.verification")
+		_, _, ok = findFormationSection(lines, formationStart, formationEnd, "formation.verification")
 		if !ok {
 			if formation.Verification != nil {
 				return nil, fmt.Errorf(
@@ -729,7 +729,21 @@ func (s *Store) RemoveFormationVerification(slug string, req FormationVerificati
 				verificationSections,
 			)
 		}
-		lines = append(lines[:verificationStart], lines[verificationEnd:]...)
+		// A TOML child table is part of its parent table even when another
+		// formation section appears between them. Remove the entire semantic
+		// verification family so retired authority cannot survive invisibly.
+		for i := formationEnd - 1; i > formationStart; i-- {
+			section, sectionOK := tomlLineSectionName(lines[i])
+			if !sectionOK || !tomlSectionIsOrDescendsFrom(section, "formation.verification") {
+				continue
+			}
+			end := tomlBlockEnd(lines, i)
+			if end > formationEnd {
+				end = formationEnd
+			}
+			lines = append(lines[:i], lines[end:]...)
+			formationEnd -= end - i
+		}
 		nextRaw := renderTOMLLines(lines)
 		nextBoard, err := parseBoard(nextRaw)
 		if err != nil {
@@ -2123,6 +2137,12 @@ func tomlLineSectionName(line tomlLine) (string, bool) {
 	return tomlSectionName(line.body)
 }
 
+func tomlSectionIsOrDescendsFrom(section, parent string) bool {
+	// Section names are canonical key paths here. A literal dot inside one
+	// segment stays quoted, so the separator boundary cannot alias it.
+	return section == parent || strings.HasPrefix(section, parent+".")
+}
+
 func isTOMLHeader(line tomlLine) bool {
 	return !line.valueContinuation && strings.HasPrefix(strings.TrimSpace(line.body), "[")
 }
@@ -2390,6 +2410,16 @@ func parseFormationNodes(raw []byte) []FormationNode {
 			if current != nil {
 				current.Verification = &FormationVerification{}
 				active = "verification"
+			}
+			continue
+		case isSection && tomlSectionIsOrDescendsFrom(section, "formation.verification"):
+			if current != nil {
+				// Any descendant implicitly creates the verification parent in
+				// TOML. Its presence alone must retain the migration fence.
+				if current.Verification == nil {
+					current.Verification = &FormationVerification{}
+				}
+				active = ""
 			}
 			continue
 		case isSection:
