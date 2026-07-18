@@ -278,17 +278,18 @@ func canonicalPathAllowMissing(path string) (string, error) {
 }
 
 func isPathUnderAnyRoot(path string, roots []string) (string, bool) {
+	matchedRoot := ""
 	for _, root := range roots {
 		absoluteRoot, err := filepath.Abs(root)
 		if err != nil {
 			continue
 		}
 		absoluteRoot = filepath.Clean(absoluteRoot)
-		if core.IsPathUnderRoot(path, absoluteRoot) {
-			return absoluteRoot, true
+		if core.IsPathUnderRoot(path, absoluteRoot) && len(absoluteRoot) > len(matchedRoot) {
+			matchedRoot = absoluteRoot
 		}
 	}
-	return "", false
+	return matchedRoot, matchedRoot != ""
 }
 
 func (h *FilesHandler) isDeniedPath(path string) bool {
@@ -297,6 +298,27 @@ func (h *FilesHandler) isDeniedPath(path string) bool {
 	}
 	_, denied := isPathUnderAnyRoot(path, h.deniedRoots)
 	return denied
+}
+
+func (h *FilesHandler) isDeniedMutationPath(path string) bool {
+	if h.isDeniedPath(path) {
+		return true
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return true
+	}
+	absolute = filepath.Clean(absolute)
+	for _, deniedRoot := range h.deniedRoots {
+		deniedAbsolute, err := filepath.Abs(deniedRoot)
+		if err != nil {
+			continue
+		}
+		if core.IsPathUnderRoot(filepath.Clean(deniedAbsolute), absolute) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeRequestPath(path string) string {
@@ -357,7 +379,7 @@ func (h *FilesHandler) resolveMutationPath(requestPath string) PathResult {
 	if !filepath.IsAbs(normalized) {
 		return PathResult{Error: "Path not allowed"}
 	}
-	if h.isDeniedPath(normalized) {
+	if h.isDeniedMutationPath(normalized) {
 		return PathResult{Error: "Sensitive path not available in CHROTE Files"}
 	}
 
@@ -373,7 +395,7 @@ func (h *FilesHandler) resolveMutationPath(requestPath string) PathResult {
 	if err != nil {
 		return PathResult{Error: "Invalid path"}
 	}
-	if h.isDeniedPath(operationPath) || h.isDeniedPath(canonicalOperation) {
+	if h.isDeniedMutationPath(operationPath) || h.isDeniedMutationPath(canonicalOperation) {
 		return PathResult{Error: "Sensitive path not available in CHROTE Files"}
 	}
 	matchedRoot, allowed := isPathUnderAnyRoot(operationPath, h.allowedRoots)

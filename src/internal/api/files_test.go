@@ -598,6 +598,120 @@ func TestFilesHandlerMutationCannotRemoveConfiguredWriteRoot(t *testing.T) {
 	}
 }
 
+func TestFilesHandlerMutationCannotMoveOrRemoveNestedConfiguredWriteRoot(t *testing.T) {
+	for _, order := range []struct {
+		name       string
+		writeRoots func(parent, child string) []string
+	}{
+		{name: "parent first", writeRoots: func(parent, child string) []string { return []string{parent, child} }},
+		{name: "child first", writeRoots: func(parent, child string) []string { return []string{child, parent} }},
+	} {
+		for _, action := range []string{"delete", "rename"} {
+			t.Run(order.name+"/"+action, func(t *testing.T) {
+				parent := t.TempDir()
+				child := filepath.Join(parent, "nested-write-root")
+				if err := os.Mkdir(child, 0755); err != nil {
+					t.Fatal(err)
+				}
+				handler := &FilesHandler{
+					allowedRoots:   []string{parent},
+					writeRoots:     order.writeRoots(parent, child),
+					maxUploadBytes: defaultMaxUploadBytes,
+				}
+
+				var req *http.Request
+				switch action {
+				case "delete":
+					req = httptest.NewRequest(http.MethodDelete, "/api/files/resources/ignored", nil)
+					req.SetPathValue("path", child)
+				case "rename":
+					destination := filepath.Join(parent, "moved-write-root")
+					body, err := json.Marshal(RenameRequest{Action: "rename", Destination: destination})
+					if err != nil {
+						t.Fatal(err)
+					}
+					req = httptest.NewRequest(http.MethodPatch, "/api/files/resources/ignored", bytes.NewReader(body))
+					req.SetPathValue("path", child)
+				}
+				rec := httptest.NewRecorder()
+
+				if action == "delete" {
+					handler.DeleteResource(rec, req)
+				} else {
+					handler.RenameResource(rec, req)
+				}
+
+				if rec.Code != http.StatusForbidden {
+					t.Fatalf("status = %d, want 403 for configured nested write root: %s", rec.Code, rec.Body.String())
+				}
+				if info, err := os.Stat(child); err != nil || !info.IsDir() {
+					t.Fatalf("nested write root was moved or removed: info=%v err=%v", info, err)
+				}
+			})
+		}
+	}
+}
+
+func TestFilesHandlerRenameRejectsAncestorOfDeniedRoot(t *testing.T) {
+	root := t.TempDir()
+	container := filepath.Join(root, "container")
+	privateRoot := filepath.Join(container, "formations-private")
+	writeFileFixture(t, filepath.Join(privateRoot, "authority.json"), "private")
+	handler := &FilesHandler{
+		allowedRoots:   []string{root},
+		writeRoots:     []string{root},
+		deniedRoots:    []string{privateRoot},
+		deniedRootIDs:  fileRootIdentities([]string{privateRoot}),
+		maxUploadBytes: defaultMaxUploadBytes,
+	}
+	destination := filepath.Join(root, "moved-container")
+	body, err := json.Marshal(RenameRequest{Action: "rename", Destination: destination})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPatch, "/api/files/resources/ignored", bytes.NewReader(body))
+	req.SetPathValue("path", container)
+	rec := httptest.NewRecorder()
+
+	handler.RenameResource(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 for ancestor of denied root: %s", rec.Code, rec.Body.String())
+	}
+	if got, err := os.ReadFile(filepath.Join(privateRoot, "authority.json")); err != nil || string(got) != "private" {
+		t.Fatalf("denied root was moved or changed: content=%q err=%v", got, err)
+	}
+	if _, err := os.Stat(destination); !os.IsNotExist(err) {
+		t.Fatalf("ancestor rename created destination: %v", err)
+	}
+}
+
+func TestFilesHandlerDeleteRejectsAncestorOfDeniedFile(t *testing.T) {
+	root := t.TempDir()
+	container := filepath.Join(root, "container")
+	deniedFile := filepath.Join(container, "authority.json")
+	writeFileFixture(t, deniedFile, "private")
+	handler := &FilesHandler{
+		allowedRoots:   []string{root},
+		writeRoots:     []string{root},
+		deniedRoots:    []string{deniedFile},
+		deniedRootIDs:  fileRootIdentities([]string{deniedFile}),
+		maxUploadBytes: defaultMaxUploadBytes,
+	}
+	req := httptest.NewRequest(http.MethodDelete, "/api/files/resources/ignored", nil)
+	req.SetPathValue("path", container)
+	rec := httptest.NewRecorder()
+
+	handler.DeleteResource(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 for ancestor of denied file: %s", rec.Code, rec.Body.String())
+	}
+	if got, err := os.ReadFile(deniedFile); err != nil || string(got) != "private" {
+		t.Fatalf("denied file was removed or changed: content=%q err=%v", got, err)
+	}
+}
+
 func TestFilesHandlerRejectsOversizedUpload(t *testing.T) {
 	root := t.TempDir()
 	handler := &FilesHandler{
