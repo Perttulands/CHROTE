@@ -404,6 +404,8 @@ type formationsLayoutPatchRequest struct {
 	Arrange   bool                    `json:"arrange"`
 }
 
+// NewFormationsHandler constructs a schema-1 compatibility handler. Production
+// server wiring must inject a runtime-authority Store with NewFormationsHandlerWithStore.
 func NewFormationsHandler(workspace string) *FormationsHandler {
 	return NewFormationsHandlerWithStores(formations.NewStore(workspace), formations.NewPersonaStore(formations.DefaultAgentsDir()))
 }

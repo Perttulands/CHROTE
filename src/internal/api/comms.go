@@ -14,6 +14,8 @@ type CommsHandler struct {
 	store *comms.Store
 }
 
+// NewCommsHandler constructs a schema-1 compatibility handler. Production
+// server wiring must inject the shared runtime-authority Formations store.
 func NewCommsHandler(workspace string) *CommsHandler {
 	return NewCommsHandlerWithStore(comms.NewStore(workspace))
 }

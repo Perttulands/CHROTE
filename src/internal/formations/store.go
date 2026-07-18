@@ -95,6 +95,8 @@ type WriteOptions struct {
 	ExpectedRev  int
 }
 
+// NewStore constructs the schema-1 compatibility and offline-definition store.
+// Production runtime wiring must use NewRuntimeStore.
 func NewStore(workspace string) *Store {
 	return &Store{
 		Workspace: workspace,

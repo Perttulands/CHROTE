@@ -201,6 +201,8 @@ type rawEvent struct {
 	Data       map[string]any `json:"data"`
 }
 
+// NewStore constructs the schema-1 compatibility projection store. Production
+// server wiring must use NewStoreWithFormations with its shared runtime Store.
 func NewStore(workspace string) *Store {
 	return NewStoreWithFormations(workspace, formations.NewStore(workspace))
 }
