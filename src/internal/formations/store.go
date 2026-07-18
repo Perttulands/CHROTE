@@ -28,6 +28,8 @@ var (
 type Store struct {
 	Workspace string
 	Now       func() time.Time
+
+	runtimeAuthority *runtimeAuthorityBoundary
 }
 
 type BoardDocument struct {

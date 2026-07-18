@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/chrote/server/internal/api"
+	"github.com/chrote/server/internal/comms"
 	"github.com/chrote/server/internal/core"
 	"github.com/chrote/server/internal/dashboard"
 	"github.com/chrote/server/internal/formations"
@@ -35,11 +36,12 @@ const (
 
 // Config holds server configuration
 type Config struct {
-	Host        string
-	Port        int
-	TtydPort    int
-	CORSOrigins []string
-	StartTtyd   bool
+	Host               string
+	Port               int
+	TtydPort           int
+	CORSOrigins        []string
+	StartTtyd          bool
+	FormationsDataRoot string
 }
 
 func main() {
@@ -61,6 +63,7 @@ func main() {
 	if port := os.Getenv("TTYD_PORT"); port != "" {
 		config.TtydPort = mustParsePort("TTYD_PORT", port)
 	}
+	config.FormationsDataRoot = os.Getenv("CHROTE_FORMATIONS_DATA_ROOT")
 	warnRemovedAccessTokenSetting()
 	if origins := os.Getenv("CORS_ORIGINS"); origins != "" {
 		config.CORSOrigins = strings.Split(origins, ",")
@@ -155,7 +158,7 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Contex
 	beadsHandler := api.NewBeadsHandler()
 	beadsHandler.RegisterRoutes(mux)
 
-	filesHandler := api.NewFilesHandler()
+	filesHandler := api.NewFilesHandlerWithFormationsDataRoot(config.FormationsDataRoot)
 	filesHandler.RegisterRoutes(mux)
 
 	healthHandler := api.NewHealthHandlerWithVersion(Version)
@@ -174,10 +177,11 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Contex
 	agentsHandler := api.NewAgentsHandler(formations.DefaultAgentsDir(), oracleHandler)
 	agentsHandler.RegisterRoutes(mux)
 
-	formationsHandler := api.NewFormationsHandler(core.GetWorkDir())
+	formationsStore := formations.NewRuntimeStore(core.GetWorkDir(), config.FormationsDataRoot)
+	formationsHandler := api.NewFormationsHandlerWithStore(formationsStore)
 	formationsHandler.RegisterRoutes(mux)
 
-	commsHandler := api.NewCommsHandler(core.GetWorkDir())
+	commsHandler := api.NewCommsHandlerWithStore(comms.NewStoreWithFormations(core.GetWorkDir(), formationsStore))
 	commsHandler.RegisterRoutes(mux)
 
 	// Create terminal proxy

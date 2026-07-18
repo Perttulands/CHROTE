@@ -11,8 +11,10 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 )
 
@@ -51,6 +53,146 @@ func TestGuardRuntimeAuthorityV1ValidDisabledFixtureIsNonAuthorizingAndReadOnly(
 		if _, statErr := os.Lstat(filepath.Join(fixture.root, lockName)); !os.IsNotExist(statErr) {
 			t.Fatalf("guard created or touched absent lock %q: %v", lockName, statErr)
 		}
+	}
+}
+
+func TestGuardRuntimeWorkspaceAuthorityV1MatchesOpenedWorkspaceIdentity(t *testing.T) {
+	fixture := newRuntimeAuthorityFixture(t)
+	bindRuntimeAuthorityFixtureToOpenedWorkspace(t, &fixture, fixture.workspace)
+	before := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace)
+
+	result, err := GuardRuntimeWorkspaceAuthorityV1(filepath.Dir(fixture.root), fixture.workspace)
+	if err != nil {
+		t.Fatalf("guard matching workspace authority: %v", err)
+	}
+	assertRuntimeGuardDisabled(t, result.Capability)
+	if result.Ledgers.Schema1Inspection != 0 || result.Ledgers.Schema2Guarded != 1 {
+		t.Fatalf("selected ledger summary = %+v, want one guarded schema-2 ledger", result.Ledgers)
+	}
+	if got := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace); !reflect.DeepEqual(got, before) {
+		t.Fatalf("workspace guard mutated state\nbefore: %#v\nafter:  %#v", before, got)
+	}
+}
+
+func TestGuardRuntimeWorkspaceAuthorityV1RejectsAliasAndChangedTarget(t *testing.T) {
+	t.Run("alias cannot select registered workspace", func(t *testing.T) {
+		fixture := newRuntimeAuthorityFixture(t)
+		bindRuntimeAuthorityFixtureToOpenedWorkspace(t, &fixture, fixture.workspace)
+		alias := filepath.Join(filepath.Dir(fixture.workspace), "workspace-alias")
+		if err := os.Symlink(fixture.workspace, alias); err != nil {
+			t.Fatal(err)
+		}
+		before := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace, alias)
+
+		result, err := GuardRuntimeWorkspaceAuthorityV1(filepath.Dir(fixture.root), alias)
+		if err == nil {
+			t.Fatal("workspace alias selected registered authority")
+		}
+		assertRuntimeGuardDisabled(t, result.Capability)
+		var guardErr *RuntimeAuthorityGuardError
+		if !errors.As(err, &guardErr) || guardErr.Stage != RuntimeAuthorityGuardStageRegistry || guardErr.Code != RuntimeAuthorityGuardConflict {
+			t.Fatalf("alias guard error = %#v, want typed registry conflict", err)
+		}
+		if got := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace, alias); !reflect.DeepEqual(got, before) {
+			t.Fatalf("alias rejection mutated state\nbefore: %#v\nafter:  %#v", before, got)
+		}
+	})
+
+	t.Run("changed symlink target cannot retain authority", func(t *testing.T) {
+		fixture := newRuntimeAuthorityFixture(t)
+		configured := filepath.Join(filepath.Dir(fixture.workspace), "configured-workspace")
+		if err := os.Symlink(fixture.workspace, configured); err != nil {
+			t.Fatal(err)
+		}
+		bindRuntimeAuthorityFixtureToOpenedWorkspace(t, &fixture, configured)
+		replacement := filepath.Join(filepath.Dir(fixture.workspace), "replacement-workspace")
+		if err := os.Mkdir(replacement, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(configured); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(replacement, configured); err != nil {
+			t.Fatal(err)
+		}
+		before := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace, configured, replacement)
+
+		result, err := GuardRuntimeWorkspaceAuthorityV1(filepath.Dir(fixture.root), configured)
+		if err == nil {
+			t.Fatal("changed workspace symlink target retained authority")
+		}
+		assertRuntimeGuardDisabled(t, result.Capability)
+		var guardErr *RuntimeAuthorityGuardError
+		if !errors.As(err, &guardErr) || guardErr.Stage != RuntimeAuthorityGuardStageRegistry || guardErr.Code != RuntimeAuthorityGuardIntegrityMismatch {
+			t.Fatalf("retarget guard error = %#v, want typed registry integrity mismatch", err)
+		}
+		if got := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace, configured, replacement); !reflect.DeepEqual(got, before) {
+			t.Fatalf("retarget rejection mutated state\nbefore: %#v\nafter:  %#v", before, got)
+		}
+	})
+}
+
+func TestGuardRuntimeWorkspaceAuthorityV1RejectsNonDirectoryTargetsWithoutOpeningStreams(t *testing.T) {
+	base := t.TempDir()
+	dataRoot := filepath.Join(base, "formations-data")
+	regular := filepath.Join(base, "regular")
+	if err := os.WriteFile(regular, []byte("sentinel"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fifo := filepath.Join(base, "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fifoAlias := filepath.Join(base, "fifo-alias")
+	if err := os.Symlink(fifo, fifoAlias); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, target := range []string{regular, fifo, fifoAlias, "/dev/null"} {
+		t.Run(filepath.Base(target), func(t *testing.T) {
+			result, err := GuardRuntimeWorkspaceAuthorityV1(dataRoot, target)
+			if err == nil {
+				t.Fatalf("non-directory workspace target %q was accepted", target)
+			}
+			assertRuntimeGuardDisabled(t, result.Capability)
+			var guardErr *RuntimeAuthorityGuardError
+			if !errors.As(err, &guardErr) || guardErr.Stage != RuntimeAuthorityGuardStageRegistry {
+				t.Fatalf("non-directory target error = %#v, want typed registry rejection", err)
+			}
+		})
+	}
+	if raw, err := os.ReadFile(regular); err != nil || string(raw) != "sentinel" {
+		t.Fatalf("regular target changed: raw=%q err=%v", raw, err)
+	}
+}
+
+func TestGuardRuntimeWorkspaceAuthorityV1ReportsMissingExactMapping(t *testing.T) {
+	fixture := newRuntimeAuthorityFixture(t)
+	bindRuntimeAuthorityFixtureToOpenedWorkspace(t, &fixture, fixture.workspace)
+	unregistered := filepath.Join(filepath.Dir(fixture.workspace), "unregistered-workspace")
+	if err := os.Mkdir(unregistered, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := GuardRuntimeWorkspaceAuthorityV1(filepath.Dir(fixture.root), unregistered)
+	assertRuntimeGuardDisabled(t, result.Capability)
+	var guardErr *RuntimeAuthorityGuardError
+	if !errors.As(err, &guardErr) || guardErr.Stage != RuntimeAuthorityGuardStageRegistry || guardErr.Code != RuntimeAuthorityGuardMissing {
+		t.Fatalf("unregistered workspace error = %#v, want typed registry missing", err)
+	}
+}
+
+func TestRuntimeWorkspaceIdentityHashUsesCanonicalUTF8JSONStringBytes(t *testing.T) {
+	separator := "\u2028"
+	identity := runtimeWorkspaceIdentity{
+		configuredPath: "/tmp/quo\"te&snow-雪" + separator + "\x01",
+		resolvedPath:   "/real/quo\"te&snow-雪" + separator + "\x01",
+		device:         7,
+		inode:          9,
+	}
+	canonical := `{"configuredPath":"/tmp/quo\"te&snow-雪` + separator + `\u0001","device":"7","inode":"9","resolvedPath":"/real/quo\"te&snow-雪` + separator + `\u0001"}`
+	if got, want := runtimeWorkspaceIdentityHash(identity), runtimeSHA256Hex([]byte(canonical)); got != want {
+		t.Fatalf("workspace identity hash = %s, want hash of exact canonical UTF-8 bytes %q (%s)", got, canonical, want)
 	}
 }
 
@@ -1519,6 +1661,60 @@ type runtimeAuthorityFixture struct {
 	workspaceDB    string
 	policyDir      string
 	ledger         string
+}
+
+func bindRuntimeAuthorityFixtureToOpenedWorkspace(t *testing.T, fixture *runtimeAuthorityFixture, configuredPath string) {
+	t.Helper()
+	workspace, err := os.Open(configuredPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workspace.Close()
+	info, err := workspace.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatalf("workspace stat type = %T, want *syscall.Stat_t", info.Sys())
+	}
+	resolvedPath, err := filepath.EvalSymlinks(configuredPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configuredPath = filepath.ToSlash(filepath.Clean(configuredPath))
+	resolvedPath = filepath.ToSlash(filepath.Clean(resolvedPath))
+	device := strconv.FormatUint(uint64(stat.Dev), 10)
+	inode := strconv.FormatUint(stat.Ino, 10)
+	rootIdentity := fmt.Sprintf(
+		`{"configuredPath":%q,"device":%q,"inode":%q,"resolvedPath":%q}`,
+		configuredPath,
+		device,
+		inode,
+		resolvedPath,
+	)
+	rootHash := sha256Hex([]byte(rootIdentity))
+	writeAuthorityFixture(t, fixture.registry, []byte(fmt.Sprintf(
+		`{"registrySchema":1,"recordRev":1,"entries":[{"workspaceAuthorityId":"%s","configuredPath":%q,"device":%q,"inode":%q,"workspaceRootIdentitySha256":"%s"}]}`,
+		testWorkspaceAuthorityID,
+		configuredPath,
+		device,
+		inode,
+		rootHash,
+	)))
+	writeAuthorityFixture(t, fixture.bootstrap, []byte(fmt.Sprintf(
+		`{"bootstrapSchema":1,"rootIdentityEncoding":"workspace-root-identity-v1","workspaceAuthorityId":"%s","workspaceRootIdentitySha256":"%s"}`,
+		testWorkspaceAuthorityID,
+		rootHash,
+	)))
+	writeAuthorityFixture(t, fixture.workspaceDB, []byte(fmt.Sprintf(
+		`{"recordRev":1,"authoritySchema":2,"workspaceAuthorityId":"%s","rootIdentityEncoding":"workspace-root-identity-v1","workspaceRootIdentitySha256":"%s","nextWriterFence":2,"nextAdmissionSeq":1,"admissionPolicyRef":{"policyRev":1,"policySha256":"%s"}}`,
+		testWorkspaceAuthorityID,
+		rootHash,
+		fixture.policyHash,
+	)))
+	fixture.configuredPath = configuredPath
+	fixture.rootHash = rootHash
 }
 
 func newRuntimeAuthorityFixture(t *testing.T) runtimeAuthorityFixture {

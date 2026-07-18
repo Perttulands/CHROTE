@@ -2,9 +2,12 @@ package comms
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/chrote/server/internal/formations"
 )
 
 func TestProjectRoomBuildsCanonicalProjectionFromLedger(t *testing.T) {
@@ -105,6 +108,20 @@ func TestProjectRunRoomProjectsFinalFormationsLedgerAsReadOnlySource(t *testing.
 	}
 	if projection.Messages[1].Type != "node_output" || projection.Messages[1].Metadata["nodeId"] != "fmn_ui" {
 		t.Fatalf("node output message = %+v", projection.Messages[1])
+	}
+}
+
+func TestProjectRunRoomDoesNotAdoptSchema2WorkspaceLedger(t *testing.T) {
+	workspace := t.TempDir()
+	runID := "run_01KXNP6VY3227H78329V52CKF8"
+	writeRunLedgerFixture(t, workspace, "demo", runID, []map[string]any{
+		{"schema": 2, "authoritySchema": 2, "writerFence": 1, "seq": 1, "type": "run_started", "actor": "agent:test", "ts": "2026-07-18T00:00:00Z", "runId": runID, "data": map[string]any{"boardSlug": "demo"}},
+	})
+	store := NewStoreWithFormations(workspace, formations.NewStore(workspace))
+
+	projection, err := store.ProjectRoom("run:"+runID, ProjectionOptions{})
+	if !errors.Is(err, formations.ErrRuntimeAuthorityNonAuthorizing) {
+		t.Fatalf("schema-2 run projection = %+v err=%v, want typed non-authorizing rejection", projection, err)
 	}
 }
 

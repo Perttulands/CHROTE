@@ -139,6 +139,9 @@ func (e *RunEngine) RunMission(slug string, req RunStartRequest) (*RunStatusProj
 	if e == nil || e.store == nil {
 		return nil, fmt.Errorf("%w: run engine store required", ErrNotFound)
 	}
+	if err := e.store.RequireRuntimeAuthority(); err != nil {
+		return nil, err
+	}
 	board, err := e.store.ReadBoard(slug)
 	if err != nil {
 		return nil, err
@@ -180,6 +183,9 @@ func (e *RunEngine) RunMission(slug string, req RunStartRequest) (*RunStatusProj
 func (e *RunEngine) RunFormation(slug, formationID string, req FormationRunRequest) (*RunStatusProjection, error) {
 	if e == nil || e.store == nil {
 		return nil, fmt.Errorf("%w: run engine store required", ErrNotFound)
+	}
+	if err := e.store.RequireRuntimeAuthority(); err != nil {
+		return nil, err
 	}
 	board, err := e.store.ReadBoard(slug)
 	if err != nil {
@@ -265,6 +271,9 @@ func (e *RunEngine) ResumeRun(runID string, req RunResumeRequest) (*RunStatusPro
 	if e == nil || e.store == nil {
 		return nil, fmt.Errorf("%w: run engine store required", ErrNotFound)
 	}
+	if err := e.store.RequireRuntimeAuthority(); err != nil {
+		return nil, err
+	}
 	_, board, err := e.store.resumeRunWithSnapshot(runID, req)
 	if err != nil {
 		return nil, err
@@ -308,6 +317,9 @@ func (e *RunEngine) ResumeRun(runID string, req RunResumeRequest) (*RunStatusPro
 func (e *RunEngine) RecordHumanGateVerdict(runID string, req HumanGateVerdictRequest) (*RunStatusProjection, error) {
 	if e == nil || e.store == nil {
 		return nil, fmt.Errorf("%w: run engine store required", ErrNotFound)
+	}
+	if err := e.store.RequireRuntimeAuthority(); err != nil {
+		return nil, err
 	}
 	events, err := e.store.ReadRunEvents(runID)
 	if err != nil {
@@ -502,6 +514,9 @@ func (e *RunEngine) appendOpenDispatchReattachFailure(runID string, refs []openD
 }
 
 func (e *RunEngine) startFormationRun(slug string, board *BoardDocument, formation FormationNode, actor string, personas *PersonaStore, limits RunLimits) (*RunStartResult, MissionNode, RunInputRef, error) {
+	if err := e.store.RequireRuntimeAuthority(); err != nil {
+		return nil, MissionNode{}, RunInputRef{}, err
+	}
 	bindings, err := resolveRunBindings(board, personas)
 	if err != nil {
 		return nil, MissionNode{}, RunInputRef{}, err

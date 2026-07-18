@@ -450,6 +450,10 @@ func (h *FormationsHandler) StartRun(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "exactly one of missionId or formationId is required")
 		return
 	}
+	if err := h.store.RequireRuntimeAuthority(); err != nil {
+		writeFormationsError(w, err)
+		return
+	}
 	slug, err := h.store.ResolveBoardSelector(request.Board)
 	if err != nil {
 		writeFormationsError(w, err)
@@ -1190,6 +1194,8 @@ func patchUpdatedBy(parent, child string) string {
 
 func writeFormationsError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, formations.ErrRuntimeAuthorityNonAuthorizing):
+		core.WriteError(w, http.StatusServiceUnavailable, "RUNTIME_AUTHORITY_NON_AUTHORIZING", "Formations runtime authority is unavailable")
 	case errors.Is(err, formations.ErrConflict):
 		core.WriteError(w, http.StatusConflict, "CONFLICT", "Formation definition changed; reload and retry")
 	case errors.Is(err, formations.ErrAmbiguousSelector):

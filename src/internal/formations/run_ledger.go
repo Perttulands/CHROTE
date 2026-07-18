@@ -141,6 +141,9 @@ type runBinding struct {
 }
 
 func (s *Store) StartRun(slug string, req RunStartRequest) (*RunStartResult, error) {
+	if err := s.RequireRuntimeAuthority(); err != nil {
+		return nil, err
+	}
 	if err := validateSlug(slug); err != nil {
 		return nil, err
 	}
@@ -227,11 +230,17 @@ func (s *Store) StartRun(slug string, req RunStartRequest) (*RunStartResult, err
 }
 
 func (s *Store) AppendRunEvent(runID string, event RunEvent) error {
+	if err := s.RequireRuntimeAuthority(); err != nil {
+		return err
+	}
 	_, err := s.appendRunEventWithSnapshot(runID, event)
 	return err
 }
 
 func (s *Store) appendRunEventWithSnapshot(runID string, event RunEvent) (*BoardDocument, error) {
+	if err := s.RequireRuntimeAuthority(); err != nil {
+		return nil, err
+	}
 	if event.Type == RunEventVerificationVerdict {
 		return nil, fmt.Errorf("%w: new verification_verdict events are retired; use an explicit Gate", ErrLegacyInlineVerificationRequiresMigration)
 	}
@@ -317,11 +326,17 @@ func (s *Store) appendRunEventWithSnapshot(runID string, event RunEvent) (*Board
 }
 
 func (s *Store) ResumeRun(runID string, req RunResumeRequest) (*RunStatusProjection, error) {
+	if err := s.RequireRuntimeAuthority(); err != nil {
+		return nil, err
+	}
 	status, _, err := s.resumeRunWithSnapshot(runID, req)
 	return status, err
 }
 
 func (s *Store) resumeRunWithSnapshot(runID string, req RunResumeRequest) (*RunStatusProjection, *BoardDocument, error) {
+	if err := s.RequireRuntimeAuthority(); err != nil {
+		return nil, nil, err
+	}
 	ledgerPath, err := s.findRunLedger(runID)
 	if err != nil {
 		return nil, nil, err

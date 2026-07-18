@@ -24,7 +24,8 @@ var (
 )
 
 type Store struct {
-	Workspace string
+	Workspace       string
+	formationsStore *formations.Store
 }
 
 type ProjectionOptions struct {
@@ -201,7 +202,11 @@ type rawEvent struct {
 }
 
 func NewStore(workspace string) *Store {
-	return &Store{Workspace: workspace}
+	return NewStoreWithFormations(workspace, formations.NewStore(workspace))
+}
+
+func NewStoreWithFormations(workspace string, formationsStore *formations.Store) *Store {
+	return &Store{Workspace: workspace, formationsStore: formationsStore}
 }
 
 func (s *Store) ProjectRoom(roomRef string, options ProjectionOptions) (RoomProjection, error) {
@@ -295,8 +300,10 @@ func (s *Store) ProjectRoom(roomRef string, options ProjectionOptions) (RoomProj
 }
 
 func (s *Store) projectRunRoom(roomRef, runID string, options ProjectionOptions) (RoomProjection, error) {
-	formationsStore := formations.NewStore(s.Workspace)
-	events, err := formationsStore.ReadRunEvents(runID)
+	if s == nil || s.formationsStore == nil {
+		return RoomProjection{}, ErrRoomNotFound
+	}
+	events, err := s.formationsStore.ReadRunEvents(runID)
 	if err != nil {
 		if errors.Is(err, formations.ErrNotFound) {
 			return RoomProjection{}, ErrRoomNotFound
@@ -306,7 +313,7 @@ func (s *Store) projectRunRoom(roomRef, runID string, options ProjectionOptions)
 		}
 		return RoomProjection{}, err
 	}
-	status, err := formationsStore.ProjectRun(runID)
+	status, err := s.formationsStore.ProjectRun(runID)
 	if err != nil {
 		if errors.Is(err, formations.ErrNotFound) {
 			return RoomProjection{}, ErrRoomNotFound

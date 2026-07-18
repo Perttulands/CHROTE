@@ -119,6 +119,12 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer, runner tmuxRunner) int {
+	return runWithRuntimeStoreFactory(args, stdout, stderr, runner, func(workspace string) *formations.Store {
+		return formations.NewRuntimeStore(workspace, "")
+	})
+}
+
+func runWithRuntimeStoreFactory(args []string, stdout, stderr io.Writer, runner tmuxRunner, runtimeStore func(string) *formations.Store) int {
 	config, args, ok := parseGlobalArgs(args, stderr)
 	if !ok {
 		return 2
@@ -192,7 +198,7 @@ func run(args []string, stdout, stderr io.Writer, runner tmuxRunner) int {
 		case "unwire":
 			return runFormationWire(store, args[2:], stdout, stderr, true)
 		case "run":
-			return runFormationRun(store, args[2:], stdout, stderr)
+			return runFormationRun(runtimeStore(config.Workspace), args[2:], stdout, stderr)
 		default:
 			fmt.Fprintf(stderr, "unknown formation command %q\n", args[1])
 			return 2
@@ -207,9 +213,9 @@ func run(args []string, stdout, stderr io.Writer, runner tmuxRunner) int {
 		case "judge":
 			return runGateJudge(store, args[2:], stdout, stderr)
 		case "approve":
-			return runGateVerdict(store, args[2:], stdout, stderr, "pass")
+			return runGateVerdict(runtimeStore(config.Workspace), args[2:], stdout, stderr, "pass")
 		case "reject":
-			return runGateVerdict(store, args[2:], stdout, stderr, "fail")
+			return runGateVerdict(runtimeStore(config.Workspace), args[2:], stdout, stderr, "fail")
 		default:
 			fmt.Fprintf(stderr, "unknown gate command %q\n", args[1])
 			return 2
@@ -226,7 +232,7 @@ func run(args []string, stdout, stderr io.Writer, runner tmuxRunner) int {
 		case "wire":
 			return runMissionWire(store, args[2:], stdout, stderr)
 		case "run":
-			return runMissionRun(store, args[2:], stdout, stderr)
+			return runMissionRun(runtimeStore(config.Workspace), args[2:], stdout, stderr)
 		default:
 			fmt.Fprintf(stderr, "unknown mission command %q\n", args[1])
 			return 2
@@ -243,9 +249,9 @@ func run(args []string, stdout, stderr io.Writer, runner tmuxRunner) int {
 		case "follow":
 			return runFollow(store, args[2:], stdout, stderr)
 		case "resume":
-			return runResume(store, args[2:], stdout, stderr)
+			return runResume(runtimeStore(config.Workspace), args[2:], stdout, stderr)
 		case "abort":
-			return runAbort(store, args[2:], stdout, stderr)
+			return runAbort(runtimeStore(config.Workspace), args[2:], stdout, stderr)
 		case "ask":
 			return runAsk(store, args[2:], stdout, stderr)
 		default:
@@ -993,6 +999,9 @@ func runGateVerdict(store *formations.Store, args []string, stdout, stderr io.Wr
 		fmt.Fprintln(stderr, "usage: archon gate approve|reject <runId> <gateId> [--reason text] [--json]")
 		return 2
 	}
+	if err := store.RequireRuntimeAuthority(); err != nil {
+		return failJSON(stderr, err, *jsonOut, "run", fs.Arg(0))
+	}
 	personas := formations.NewPersonaStore(formations.DefaultAgentsDir())
 	engine := newArchonRunEngine(store, personas, "archon")
 	status, err := engine.RecordHumanGateVerdict(fs.Arg(0), formations.HumanGateVerdictRequest{
@@ -1191,6 +1200,9 @@ func runMissionRun(store *formations.Store, args []string, stdout, stderr io.Wri
 		fmt.Fprintln(stderr, "usage: archon mission run <board> [--mission <mission>] [--json]")
 		return 2
 	}
+	if err := store.RequireRuntimeAuthority(); err != nil {
+		return failJSON(stderr, err, *jsonOut, "run", fs.Arg(0))
+	}
 	slug, err := store.ResolveBoardSelector(fs.Arg(0))
 	if err != nil {
 		return failSelector(stderr, err, *jsonOut, "board", fs.Arg(0))
@@ -1248,6 +1260,9 @@ func runFormationRun(store *formations.Store, args []string, stdout, stderr io.W
 	if fs.NArg() != 2 {
 		fmt.Fprintln(stderr, "usage: archon formation run <board> <formation> [--json]")
 		return 2
+	}
+	if err := store.RequireRuntimeAuthority(); err != nil {
+		return failJSON(stderr, err, *jsonOut, "run", fs.Arg(1))
 	}
 	slug, _, formationID, err := resolveFormationCommandTarget(store, fs.Arg(0), fs.Arg(1))
 	if err != nil {
@@ -2144,6 +2159,8 @@ func archonErrorFromError(err error, boundary, selector string) archonErrorRespo
 
 func archonErrorCode(err error) string {
 	switch {
+	case errors.Is(err, formations.ErrRuntimeAuthorityNonAuthorizing):
+		return "runtime_authority_non_authorizing"
 	case errors.Is(err, formations.ErrAmbiguousSelector):
 		return "ambiguous_selector"
 	case errors.Is(err, formations.ErrNotFound):

@@ -124,6 +124,9 @@ func (e *TmuxFormationExecutor) ExecuteFormation(req FormationExecution) (Format
 	if e == nil || e.store == nil {
 		return FormationExecutionResult{}, runExecutionError("missing_executor", "tmux executor store is not configured", "executor", ErrRunExecutorUnavailable)
 	}
+	if err := e.store.RequireRuntimeAuthority(); err != nil {
+		return FormationExecutionResult{}, err
+	}
 	if err := e.validateConfiguredBoundary(); err != nil {
 		return FormationExecutionResult{}, err
 	}
@@ -158,6 +161,9 @@ func (e *TmuxFormationExecutor) ExecuteFormation(req FormationExecution) (Format
 func (e *TmuxFormationExecutor) ReattachFormationDispatch(req FormationReattachRequest) (FormationExecutionResult, error) {
 	if e == nil || e.store == nil {
 		return FormationExecutionResult{}, runExecutionError("missing_executor", "tmux executor store is not configured", "executor", ErrRunExecutorUnavailable)
+	}
+	if err := e.store.RequireRuntimeAuthority(); err != nil {
+		return FormationExecutionResult{}, err
 	}
 	if err := e.validateConfiguredBoundary(); err != nil {
 		return FormationExecutionResult{}, err

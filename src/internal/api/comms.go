@@ -7,6 +7,7 @@ import (
 
 	"github.com/chrote/server/internal/comms"
 	"github.com/chrote/server/internal/core"
+	"github.com/chrote/server/internal/formations"
 )
 
 type CommsHandler struct {
@@ -75,6 +76,8 @@ func parseNonNegativeInt(raw string) int {
 
 func writeCommsError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, formations.ErrRuntimeAuthorityNonAuthorizing):
+		core.WriteError(w, http.StatusServiceUnavailable, "RUNTIME_AUTHORITY_NON_AUTHORIZING", "Formations runtime authority is unavailable")
 	case errors.Is(err, comms.ErrInvalidRoomRef):
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 	case errors.Is(err, comms.ErrRoomNotFound):
