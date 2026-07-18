@@ -156,6 +156,19 @@ sequence, workspace-admission identity, and next counter is an integer in
 `1..9007199254740991`. Allocation that would exceed that range fails closed
 before mutation or effect; values are never rounded, wrapped, or reused.
 
+The versioned foundation reader capability
+`formations.runtime-authority-read-guard.v1` has one explicit parser resource
+envelope: each closed JSON record and each NDJSON event is at most 1 MiB, and
+JSON container nesting is at most 64 levels. Exceeding either ceiling returns a
+typed non-authorizing rejection. These ceilings apply to one record or event,
+not to history: the guard streams directory enumeration, complete ledgers, and
+the complete admission-policy chain without a lower run-count, ledger-size, or
+policy-revision cutoff. Changing these parser ceilings requires a versioned
+guard capability and rollback certification; a matching authority schema alone
+does not widen them. Its successful result reports bounded per-class ledger
+counts, not an in-memory run-path inventory; exact sanitized run inventory and
+projection remain the projector's responsibility.
+
 ### Journal every runtime command before its effect
 
 The private workspace command journal accepts a closed `start`, `resume`,
