@@ -274,7 +274,9 @@ func TestLegacyInlineVerificationResumeRejectsBeforeRunResumedAppend(t *testing.
 	if err := writeInitialRunEvent(filepath.Join(store.Workspace, ledger), RunEvent{
 		Timestamp: legacyRunEventTimestamp, RunID: runID, Seq: 1, Type: RunEventStarted, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
 		MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{
-			"boardSlug": "session-search", "snapshot": snapshot, "limits": RunLimits{MaxDispatch: 5, MaxAttempts: 2},
+			"boardSlug": "session-search", "snapshot": snapshot,
+			"bindingsSnapshot": runArtifactPath("session-search", runID, ".bindings.toml"),
+			"limits":           RunLimits{MaxDispatch: 5, MaxAttempts: 2},
 		},
 	}); err != nil {
 		t.Fatalf("write legacy run start: %v", err)
@@ -326,7 +328,9 @@ func TestLegacyInlineVerificationHumanVerdictRejectsBeforeLedgerMutation(t *test
 	if err := writeInitialRunEvent(filepath.Join(store.Workspace, ledger), RunEvent{
 		Timestamp: legacyRunEventTimestamp, RunID: runID, Seq: 1, Type: RunEventStarted, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
 		MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{
-			"boardSlug": "session-search", "snapshot": snapshot, "limits": RunLimits{MaxDispatch: 5, MaxAttempts: 2},
+			"boardSlug": "session-search", "snapshot": snapshot,
+			"bindingsSnapshot": runArtifactPath("session-search", runID, ".bindings.toml"),
+			"limits":           RunLimits{MaxDispatch: 5, MaxAttempts: 2},
 		},
 	}); err != nil {
 		t.Fatalf("write legacy run start: %v", err)
@@ -414,6 +418,7 @@ func TestLegacyInlineVerificationRawResumeAppendIsRejectedButCancelClosesRun(t *
 		Timestamp: legacyRunEventTimestamp, RunID: runID, Seq: 1, Type: RunEventStarted, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
 		MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{
 			"boardSlug": "session-search", "snapshot": snapshot,
+			"bindingsSnapshot": runArtifactPath("session-search", runID, ".bindings.toml"),
 		},
 	}); err != nil {
 		t.Fatalf("write legacy run start: %v", err)
@@ -481,6 +486,7 @@ func TestLegacyInlineVerificationTerminalContainmentIgnoresUnavailableSnapshot(t
 				Timestamp: legacyRunEventTimestamp, RunID: runID, Seq: 1, Type: RunEventStarted, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
 				MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{
 					"boardSlug": "session-search", "snapshot": snapshot,
+					"bindingsSnapshot": runArtifactPath("session-search", runID, ".bindings.toml"),
 				},
 			}); err != nil {
 				t.Fatalf("write legacy run start: %v", err)
@@ -521,6 +527,7 @@ func TestRunSnapshotReadRejectsNoncanonicalLedgerPath(t *testing.T) {
 		Timestamp: legacyRunEventTimestamp, RunID: runID, Seq: 1, Type: RunEventStarted, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
 		MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{
 			"boardSlug": "session-search", "snapshot": noncanonicalSnapshot,
+			"bindingsSnapshot": runArtifactPath("session-search", runID, ".bindings.toml"),
 		},
 	}); err != nil {
 		t.Fatalf("write forged run start: %v", err)
@@ -673,6 +680,7 @@ func runStartedFixture(runID, boardSlug, snapshot string) RunEvent {
 		Timestamp: legacyRunEventTimestamp, RunID: runID, Seq: 1, Type: RunEventStarted, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
 		MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{
 			"boardSlug": boardSlug, "snapshot": snapshot,
+			"bindingsSnapshot": runArtifactPath(boardSlug, runID, ".bindings.toml"),
 		},
 	}
 }

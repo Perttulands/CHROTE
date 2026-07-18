@@ -1,13 +1,59 @@
 package formations
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+type interposingLedgerReadSeeker struct {
+	passes [][]byte
+	reader *bytes.Reader
+	seeks  int
+}
+
+func (r *interposingLedgerReadSeeker) Read(destination []byte) (int, error) {
+	if r.reader == nil {
+		return 0, io.EOF
+	}
+	return r.reader.Read(destination)
+}
+
+func (r *interposingLedgerReadSeeker) Seek(offset int64, whence int) (int64, error) {
+	if offset != 0 || whence != io.SeekStart {
+		return 0, errors.New("interposing ledger only supports rewind")
+	}
+	index := r.seeks
+	if index >= len(r.passes) {
+		index = len(r.passes) - 1
+	}
+	r.reader = bytes.NewReader(r.passes[index])
+	r.seeks++
+	return 0, nil
+}
+
+func TestRunLedgerClassificationAndLegacyDecodeConsumeSameBytes(t *testing.T) {
+	runID := newPrefixedID("run")
+	legacy := testRunLedgerBytes(t, testRunStartedEvent(runID, "session-search"))
+	schema2 := []byte(`{"schema":2,"authoritySchema":2,"writerFence":1,"ts":"2026-07-18T12:00:00Z","runId":"` + runID + `","seq":1,"type":"run_failed","actor":"agent:test"}` + "\n")
+	ledger := &interposingLedgerReadSeeker{passes: [][]byte{legacy, schema2}}
+
+	events, err := classifyAndReadRunEvents(ledger, runID)
+	if err != nil {
+		t.Fatalf("classify and decode interposed ledger: %v", err)
+	}
+	if ledger.seeks != 1 {
+		t.Fatalf("ledger rewind count = %d, want one classification/decode pass", ledger.seeks)
+	}
+	if len(events) != 1 || events[0].Type != RunEventStarted {
+		t.Fatalf("decoded events = %#v, want exact legacy bytes classified on first pass", events)
+	}
+}
 
 func TestRunLedgerSymlinkCannotMutateVictimOnTerminalAppend(t *testing.T) {
 	root := t.TempDir()
@@ -185,6 +231,83 @@ func TestRunSnapshotReaderIsBoundedBeforeAuthorizingAppend(t *testing.T) {
 	}
 }
 
+func TestRunSnapshotIdentityRequiresStartedEventAndCanonicalBindingsSnapshot(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(event *RunEvent, runID string)
+	}{
+		{
+			name: "first event must be run started",
+			mutate: func(event *RunEvent, _ string) {
+				event.Type = RunEventNodeStarted
+			},
+		},
+		{
+			name: "bindings snapshot is required",
+			mutate: func(event *RunEvent, _ string) {
+				delete(event.Data, "bindingsSnapshot")
+			},
+		},
+		{
+			name: "bindings snapshot must be canonical",
+			mutate: func(event *RunEvent, runID string) {
+				event.Data["bindingsSnapshot"] = runArtifactPath("other-board", runID, ".bindings.toml")
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store, _ := s4RunFixture(t)
+			store.Now = fixedClock()
+			runID := newPrefixedID("run")
+			ledgerPath := filepath.Join(store.Workspace, runArtifactPath("session-search", runID, ".ndjson"))
+			started := testRunStartedEvent(runID, "session-search")
+			started.Data["bindingsSnapshot"] = runArtifactPath("session-search", runID, ".bindings.toml")
+			test.mutate(&started, runID)
+			ledgerBefore := testRunLedgerBytes(t, started)
+			writeFixture(t, ledgerPath, string(ledgerBefore))
+
+			err := store.AppendRunEvent(runID, RunEvent{Type: RunEventCanceled, Actor: "human:test"})
+			if !errors.Is(err, ErrRunLedgerInvalid) {
+				t.Fatalf("append with forged first event error = %v, want ErrRunLedgerInvalid", err)
+			}
+			if got := readFile(t, ledgerPath); got != string(ledgerBefore) {
+				t.Fatalf("rejected first-event identity mutated ledger")
+			}
+		})
+	}
+}
+
+func TestRunSnapshotReaderRejectsHardlinkBeforeAuthorizingAppend(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	store := NewStore(workspace)
+	store.Now = fixedClock()
+	runID := newPrefixedID("run")
+	snapshotPath := filepath.Join(workspace, runArtifactPath("session-search", runID, ".snapshot.toml"))
+	ledgerPath := filepath.Join(workspace, runArtifactPath("session-search", runID, ".ndjson"))
+	victimPath := filepath.Join(root, "snapshot-victim.toml")
+	writeFixture(t, victimPath, s4MissionOnlyBoardFixture())
+	if err := os.MkdirAll(filepath.Dir(snapshotPath), 0o770); err != nil {
+		t.Fatalf("create snapshot directory: %v", err)
+	}
+	if err := os.Link(victimPath, snapshotPath); err != nil {
+		t.Fatalf("hardlink snapshot victim: %v", err)
+	}
+	started := testRunStartedEvent(runID, "session-search")
+	started.Data["bindingsSnapshot"] = runArtifactPath("session-search", runID, ".bindings.toml")
+	ledgerBefore := testRunLedgerBytes(t, started)
+	writeFixture(t, ledgerPath, string(ledgerBefore))
+
+	err := store.AppendRunEvent(runID, RunEvent{Type: RunEventNodeStarted, NodeID: "fmn_work"})
+	if !errors.Is(err, ErrRunLedgerInvalid) {
+		t.Fatalf("append with hardlinked snapshot error = %v, want ErrRunLedgerInvalid", err)
+	}
+	if got := readFile(t, ledgerPath); got != string(ledgerBefore) {
+		t.Fatalf("hardlinked snapshot rejection mutated ledger")
+	}
+}
+
 func TestSchema2RunLedgerNeverFallsThroughLegacyProjection(t *testing.T) {
 	store, _ := s4RunFixture(t)
 	runID := newPrefixedID("run")
@@ -297,8 +420,9 @@ func testRunStartedEvent(runID, boardSlug string) RunEvent {
 		BoardRev:  7,
 		MissionID: "mis_showcase",
 		Data: map[string]any{
-			"boardSlug": boardSlug,
-			"snapshot":  runArtifactPath(boardSlug, runID, ".snapshot.toml"),
+			"boardSlug":        boardSlug,
+			"snapshot":         runArtifactPath(boardSlug, runID, ".snapshot.toml"),
+			"bindingsSnapshot": runArtifactPath(boardSlug, runID, ".bindings.toml"),
 		},
 	}
 }

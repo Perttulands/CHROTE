@@ -20,6 +20,7 @@ const (
 	defaultTmuxOutputCapBytes = 8192
 	defaultTmuxTimeoutSeconds = 30
 	formationsDogfoodRoot     = "/tmp"
+	peerPlaneMaxBytes         = 1 << 20
 )
 
 var (
@@ -114,6 +115,18 @@ type tmuxSlotBinding struct {
 	Card        *PersonaCard
 	Variant     HarnessVariant
 	SessionName string
+}
+
+type peerPlaneHandle struct {
+	ledger       *runLedgerHandle
+	name         string
+	relativePath string
+}
+
+func (h *peerPlaneHandle) close() {
+	if h != nil && h.ledger != nil {
+		h.ledger.close()
+	}
 }
 
 func (o tmuxSlotOutput) summary() string {
@@ -276,32 +289,33 @@ func (e *TmuxFormationExecutor) executePeerFormation(req FormationExecution) (Fo
 		}
 		bindings = append(bindings, binding)
 	}
-	planeRel, planeAbs, err := e.seedPeerPlane(req, bindings)
+	plane, err := e.seedPeerPlane(req, bindings)
 	if err != nil {
 		return FormationExecutionResult{}, err
 	}
-	if err := e.appendPeerPlaneEvent(req, planeRel, bindings); err != nil {
+	defer plane.close()
+	if err := e.appendPeerPlaneEvent(req, plane.relativePath, bindings); err != nil {
 		return FormationExecutionResult{}, err
 	}
 
 	for i, peer := range peers {
-		output, err := e.executeSlot(req, peer, allowed, dispatcher, "peer-turn", e.peerTurnExtraLines(planeRel, bindings, bindings[i], false))
+		output, err := e.executeSlot(req, peer, allowed, dispatcher, "peer-turn", e.peerTurnExtraLines(plane.relativePath, bindings, bindings[i], false))
 		if err != nil {
 			return FormationExecutionResult{}, err
 		}
-		if err := e.appendPeerPlaneOutput(planeAbs, output); err != nil {
+		if err := e.appendPeerPlaneOutput(plane, output); err != nil {
 			return FormationExecutionResult{}, err
 		}
 	}
 
 	facilitator := peers[0]
 	facilitatorBinding := bindings[0]
-	facilitatorExtra := append(e.peerTurnExtraLines(planeRel, bindings, facilitatorBinding, true), outputContractExtraLines(req.Formation)...)
+	facilitatorExtra := append(e.peerTurnExtraLines(plane.relativePath, bindings, facilitatorBinding, true), outputContractExtraLines(req.Formation)...)
 	final, err := e.executeSlot(req, facilitator, allowed, dispatcher, "peer-facilitator", facilitatorExtra)
 	if err != nil {
 		return FormationExecutionResult{}, err
 	}
-	if err := e.appendPeerPlaneOutput(planeAbs, final); err != nil {
+	if err := e.appendPeerPlaneOutput(plane, final); err != nil {
 		return FormationExecutionResult{}, err
 	}
 	text := final.Text
@@ -749,17 +763,22 @@ func peerFormationSlots(formation FormationNode) ([]FormationSlot, error) {
 	return peers, nil
 }
 
-func (e *TmuxFormationExecutor) seedPeerPlane(req FormationExecution, peers []tmuxSlotBinding) (string, string, error) {
-	ledgerPath, err := e.store.findRunLedger(req.RunID)
+func (e *TmuxFormationExecutor) seedPeerPlane(req FormationExecution, peers []tmuxSlotBinding) (*peerPlaneHandle, error) {
+	ledger, err := e.store.openRunLedger(req.RunID, false)
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
-	planeAbs := strings.TrimSuffix(ledgerPath, ".ndjson") + ".peer.md"
-	planeRel, err := filepath.Rel(e.store.workspaceRoot(), planeAbs)
-	if err != nil {
-		return "", "", err
+	plane := &peerPlaneHandle{
+		ledger:       ledger,
+		name:         req.RunID + ".peer.md",
+		relativePath: runArtifactPath(ledger.directory.slug, req.RunID, ".peer.md"),
 	}
-	planeRel = filepath.ToSlash(planeRel)
+	complete := false
+	defer func() {
+		if !complete {
+			plane.close()
+		}
+	}()
 	var b strings.Builder
 	b.WriteString("# Peer Plane\n\n")
 	b.WriteString("run: " + req.RunID + "\n")
@@ -782,10 +801,11 @@ func (e *TmuxFormationExecutor) seedPeerPlane(req FormationExecution, peers []tm
 	}
 	b.WriteString("\n## Seed\n")
 	b.WriteString("Start by adding one concrete contribution, then read and respond to what the other peer adds.\n")
-	if err := writeAtomic(planeAbs, []byte(b.String())); err != nil {
-		return "", "", err
+	if err := writeRunArtifactAtomicAt(ledger.directory, plane.name, []byte(b.String()), peerPlaneMaxBytes); err != nil {
+		return nil, err
 	}
-	return planeRel, planeAbs, nil
+	complete = true
+	return plane, nil
 }
 
 func (e *TmuxFormationExecutor) appendPeerPlaneEvent(req FormationExecution, planeRel string, peers []tmuxSlotBinding) error {
@@ -814,13 +834,11 @@ func (e *TmuxFormationExecutor) appendPeerPlaneEvent(req FormationExecution, pla
 	})
 }
 
-func (e *TmuxFormationExecutor) appendPeerPlaneOutput(planeAbs string, output tmuxSlotOutput) error {
-	raw, err := os.ReadFile(planeAbs)
-	if err != nil {
-		return err
+func (e *TmuxFormationExecutor) appendPeerPlaneOutput(plane *peerPlaneHandle, output tmuxSlotOutput) error {
+	if plane == nil || plane.ledger == nil || plane.ledger.directory == nil {
+		return ErrRunLedgerInvalid
 	}
 	var b strings.Builder
-	b.Write(raw)
 	b.WriteString("\n## ")
 	if output.Phase == "peer-facilitator" {
 		b.WriteString("Temporary facilitator synthesis")
@@ -832,7 +850,7 @@ func (e *TmuxFormationExecutor) appendPeerPlaneOutput(planeAbs string, output tm
 	b.WriteString("artifact: " + output.Artifact + "\n\n")
 	b.WriteString(redactLedgerText(strings.TrimSpace(output.Text)))
 	b.WriteString("\n")
-	return writeAtomic(planeAbs, []byte(b.String()))
+	return appendRunArtifactAt(plane.ledger.directory, plane.name, []byte(b.String()), peerPlaneMaxBytes)
 }
 
 func (e *TmuxFormationExecutor) peerTurnExtraLines(planeRel string, peers []tmuxSlotBinding, self tmuxSlotBinding, facilitator bool) []string {

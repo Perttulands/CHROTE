@@ -861,6 +861,12 @@ func recordRuntimeAuthorityLedgerClass(summary *RuntimeAuthorityLedgerSummary, c
 }
 
 func classifyRuntimeAuthorityLedger(input io.Reader, expectedAuthoritySchema uint64, expectedRunID string) (RuntimeAuthorityInputClass, error) {
+	return classifyRuntimeAuthorityLedgerWithVisitor(input, expectedAuthoritySchema, expectedRunID, nil)
+}
+
+type runtimeAuthorityLedgerVisitor func(line []byte) error
+
+func classifyRuntimeAuthorityLedgerWithVisitor(input io.Reader, expectedAuthoritySchema uint64, expectedRunID string, visit runtimeAuthorityLedgerVisitor) (RuntimeAuthorityInputClass, error) {
 	reader := bufio.NewReaderSize(input, runtimeAuthorityMaxEventBytes+1)
 	var class RuntimeAuthorityInputClass
 	var runID string
@@ -960,6 +966,11 @@ func classifyRuntimeAuthorityLedger(input io.Reader, expectedAuthoritySchema uin
 		if lineClass == RuntimeAuthoritySchema1Inspection {
 			if authoritySchemaPresent || writerFencePresent {
 				return "", runtimeDecodeError{code: RuntimeAuthorityGuardMixedSchema, err: errRuntimeMixedSchema}
+			}
+			if visit != nil {
+				if err := visit(line); err != nil {
+					return "", err
+				}
 			}
 			continue
 		}

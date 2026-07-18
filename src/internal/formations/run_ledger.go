@@ -425,12 +425,14 @@ func (s *Store) resumeRunWithSnapshot(runID string, req RunResumeRequest) (*RunS
 
 func (s *Store) validateRunSnapshotIdentity(started RunEvent, expectedRunID string, ledger *runLedgerHandle) error {
 	snapshotPath := stringFromEventData(started, "snapshot")
+	bindingsSnapshotPath := stringFromEventData(started, "bindingsSnapshot")
 	boardSlug := stringFromEventData(started, "boardSlug")
-	if ledger == nil || ledger.directory == nil || validateSlug(boardSlug) != nil || started.RunID != expectedRunID || ledger.runID != expectedRunID {
+	if ledger == nil || ledger.directory == nil || started.Type != RunEventStarted || validateSlug(boardSlug) != nil || started.RunID != expectedRunID || ledger.runID != expectedRunID {
 		return ErrRunLedgerInvalid
 	}
 	expectedSnapshotPath := runArtifactPath(boardSlug, expectedRunID, ".snapshot.toml")
-	if ledger.directory.slug != boardSlug || snapshotPath != expectedSnapshotPath {
+	expectedBindingsSnapshotPath := runArtifactPath(boardSlug, expectedRunID, ".bindings.toml")
+	if ledger.directory.slug != boardSlug || snapshotPath != expectedSnapshotPath || bindingsSnapshotPath != expectedBindingsSnapshotPath {
 		return ErrRunLedgerInvalid
 	}
 	return nil
@@ -440,7 +442,7 @@ func (s *Store) readRunSnapshot(started RunEvent, expectedRunID string, ledger *
 	if err := s.validateRunSnapshotIdentity(started, expectedRunID, ledger); err != nil {
 		return nil, err
 	}
-	snapshotRaw, err := readRuntimeAuthorityFileAt(ledger.directory.file, expectedRunID+".snapshot.toml", runtimeAuthorityMaxRecordBytes)
+	snapshotRaw, err := readRunArtifactAt(ledger.directory, expectedRunID+".snapshot.toml", runtimeAuthorityMaxRecordBytes)
 	if err != nil {
 		return nil, fmt.Errorf("%w: snapshot read failed: %v", ErrRunLedgerInvalid, err)
 	}
@@ -666,15 +668,6 @@ func readRunEventsFile(path string) ([]RunEvent, error) {
 	defer file.Close()
 	runID := strings.TrimSuffix(filepath.Base(absolute), ".ndjson")
 	return classifyAndReadRunEvents(file, runID)
-}
-
-func (s *Store) findRunLedger(runID string) (string, error) {
-	ledger, err := s.openRunLedger(runID, false)
-	if err != nil {
-		return "", err
-	}
-	defer ledger.close()
-	return ledger.path, nil
 }
 
 func resolveRunBindings(board *BoardDocument, personas *PersonaStore) ([]runBinding, error) {

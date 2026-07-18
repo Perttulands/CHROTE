@@ -1,8 +1,6 @@
 package formations
 
 import (
-	"bufio"
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -214,6 +212,113 @@ func writeRunArtifactExclusiveAt(directory *runArtifactDirectory, name string, r
 	return nil
 }
 
+func writeRunArtifactAtomicAt(directory *runArtifactDirectory, name string, raw []byte, maximumBytes int) error {
+	if directory == nil || directory.file == nil || !runtimeAuthorityPathComponent(name) || maximumBytes < 0 || len(raw) > maximumBytes {
+		return fmt.Errorf("%w: run artifact exceeds byte limit", ErrRunLedgerInvalid)
+	}
+	validateTarget := func() error {
+		file, err := openRunArtifactFileAt(directory.file, name, syscall.O_RDONLY, false)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("%w: validate run artifact target: %v", ErrRunLedgerInvalid, err)
+		}
+		return file.Close()
+	}
+	if err := validateTarget(); err != nil {
+		return err
+	}
+
+	temporaryName := "." + name + "." + newPrefixedID("tmp")
+	temporary, err := openRunArtifactFileAt(directory.file, temporaryName, syscall.O_WRONLY|syscall.O_EXCL, true)
+	if err != nil {
+		return fmt.Errorf("%w: create run artifact temporary: %v", ErrRunLedgerInvalid, err)
+	}
+	temporaryExists := true
+	defer func() {
+		_ = temporary.Close()
+		if temporaryExists {
+			_ = syscall.Unlinkat(int(directory.file.Fd()), temporaryName)
+		}
+	}()
+	if _, err := temporary.Write(raw); err != nil {
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if err := validateTarget(); err != nil {
+		return err
+	}
+	if err := syscall.Renameat(int(directory.file.Fd()), temporaryName, int(directory.file.Fd()), name); err != nil {
+		return fmt.Errorf("%w: replace run artifact: %v", ErrRunLedgerInvalid, err)
+	}
+	temporaryExists = false
+	if err := directory.file.Sync(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func appendRunArtifactAt(directory *runArtifactDirectory, name string, raw []byte, maximumBytes int64) error {
+	if directory == nil || directory.file == nil || maximumBytes < 0 || int64(len(raw)) > maximumBytes {
+		return fmt.Errorf("%w: run artifact exceeds byte limit", ErrRunLedgerInvalid)
+	}
+	file, err := openRunArtifactFileAt(directory.file, name, syscall.O_WRONLY|syscall.O_APPEND, false)
+	if err != nil {
+		return fmt.Errorf("%w: open run artifact for append: %v", ErrRunLedgerInvalid, err)
+	}
+	defer file.Close()
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+		return fmt.Errorf("%w: lock run artifact for append: %v", ErrRunLedgerInvalid, err)
+	}
+	defer syscall.Flock(int(file.Fd()), syscall.LOCK_UN) //nolint:errcheck // best-effort unlock on return
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if info.Size() < 0 || info.Size() > maximumBytes-int64(len(raw)) {
+		return fmt.Errorf("%w: run artifact exceeds byte limit", ErrRunLedgerInvalid)
+	}
+	if _, err := file.Write(raw); err != nil {
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		return err
+	}
+	return directory.file.Sync()
+}
+
+func readRunArtifactAt(directory *runArtifactDirectory, name string, maximumBytes int64) ([]byte, error) {
+	if directory == nil || directory.file == nil || maximumBytes < 0 {
+		return nil, ErrRunLedgerInvalid
+	}
+	file, err := openRunArtifactFileAt(directory.file, name, syscall.O_RDONLY, false)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if info.Size() < 0 || info.Size() > maximumBytes {
+		return nil, errors.New("run artifact exceeds byte limit")
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, maximumBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) > maximumBytes {
+		return nil, errors.New("run artifact exceeds byte limit")
+	}
+	return raw, nil
+}
+
 func (s *Store) openRunLedger(runID string, writable bool) (*runLedgerHandle, error) {
 	if !validRunID(runID) {
 		return nil, ErrInvalidSlug
@@ -391,14 +496,22 @@ func (h *runLedgerHandle) withLock(fn func() error) error {
 	return withRunArtifactLock(h.directory, h.runID+".ndjson", h.path+".lock", fn)
 }
 
-func classifyAndReadRunEvents(file *os.File, expectedRunID string) ([]RunEvent, error) {
+func classifyAndReadRunEvents(file io.ReadSeeker, expectedRunID string) ([]RunEvent, error) {
 	if file == nil {
 		return nil, ErrRunLedgerInvalid
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return nil, fmt.Errorf("%w: seek run ledger: %v", ErrRunLedgerInvalid, err)
 	}
-	class, err := classifyRuntimeAuthorityLedger(file, runtimeAuthoritySchema, expectedRunID)
+	events := make([]RunEvent, 0)
+	class, err := classifyRuntimeAuthorityLedgerWithVisitor(file, runtimeAuthoritySchema, expectedRunID, func(line []byte) error {
+		var event RunEvent
+		if err := json.Unmarshal(line, &event); err != nil {
+			return runtimeDecodeError{code: RuntimeAuthorityGuardMalformed, err: err}
+		}
+		events = append(events, event)
+		return nil
+	})
 	if err != nil {
 		if runtimeAuthorityClassifierRequiresAuthority(err) {
 			return nil, fmt.Errorf("%w: %w: classify run ledger: %v", ErrRunLedgerInvalid, ErrRuntimeAuthorityNonAuthorizing, err)
@@ -407,28 +520,6 @@ func classifyAndReadRunEvents(file *os.File, expectedRunID string) ([]RunEvent, 
 	}
 	if class != RuntimeAuthoritySchema1Inspection {
 		return nil, fmt.Errorf("%w: %w: schema-2 ledger", ErrRunLedgerInvalid, ErrRuntimeAuthorityNonAuthorizing)
-	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return nil, fmt.Errorf("%w: seek run ledger: %v", ErrRunLedgerInvalid, err)
-	}
-	reader := bufio.NewReaderSize(file, runtimeAuthorityMaxEventBytes+1)
-	events := make([]RunEvent, 0)
-	for {
-		line, lineErr := readRuntimeAuthorityLedgerLine(reader)
-		if errors.Is(lineErr, io.EOF) {
-			break
-		}
-		if lineErr != nil {
-			return nil, fmt.Errorf("%w: read run ledger: %v", ErrRunLedgerInvalid, lineErr)
-		}
-		if len(bytes.TrimSpace(line)) == 0 {
-			return nil, fmt.Errorf("%w: blank run event", ErrRunLedgerInvalid)
-		}
-		var event RunEvent
-		if err := json.Unmarshal(line, &event); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrRunLedgerInvalid, err)
-		}
-		events = append(events, event)
 	}
 	return events, nil
 }
