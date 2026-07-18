@@ -997,8 +997,12 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       minX = Math.min(minX, x); minY = Math.min(minY, y)
       maxX = Math.max(maxX, x + r.width / scale); maxY = Math.max(maxY, y + r.height / scale)
     })
-    const pad = 64
-    const next = clampScale(Math.min(rect.width / (maxX - minX + pad * 2), rect.height / (maxY - minY + pad * 2)), 1)
+    const narrow = window.innerWidth <= 768
+    const pad = narrow ? 24 : 64
+    const fittedScale = clampScale(Math.min(rect.width / (maxX - minX + pad * 2), rect.height / (maxY - minY + pad * 2)), 1)
+    // Narrow screens are a readable pan/zoom surface, not a miniature overview.
+    // Keep cards at authored size and focus the leading edge of the saved board.
+    const next = narrow ? 1 : fittedScale
     // The FIT button glides via the .world.smooth transition (reference feel);
     // the initial auto-fit on board load snaps so geometry is stable immediately.
     if (options?.smooth) {
@@ -1007,8 +1011,8 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     }
     setView({
       scale: next,
-      x: (rect.width - (maxX - minX) * next) / 2 - minX * next,
-      y: (rect.height - (maxY - minY) * next) / 2 - minY * next,
+      x: narrow ? pad - minX * next : (rect.width - (maxX - minX) * next) / 2 - minX * next,
+      y: narrow ? pad - minY * next : (rect.height - (maxY - minY) * next) / 2 - minY * next,
     })
   }, [])
 
