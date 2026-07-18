@@ -44,9 +44,10 @@ These docs are useful and current enough to consult, but they do not override th
 | [`docs/installation.md`](installation.md) | Install/rebuild notes |
 | [`docs/troubleshooting.md`](troubleshooting.md) | Known operator fixes |
 | [`docs/adr/`](adr/) | Accepted architectural decisions; narrower than the active specs |
-| [`docs/adr/0001-formations-run-recovery-contract.md`](adr/0001-formations-run-recovery-contract.md) | Accepted epoch/recovery base; its blanket-resume rule is amended by ADR-0006 |
+| [`docs/adr/0001-formations-run-recovery-contract.md`](adr/0001-formations-run-recovery-contract.md) | Accepted epoch/recovery base; amended by ADR-0006 for node/resource recovery and ADR-0007 for coordinator ownership |
 | [`docs/adr/0005-formations-redacted-run-replay.md`](adr/0005-formations-redacted-run-replay.md) | Accepted redacted-run evidence and replay boundary |
 | [`docs/adr/0006-formations-workflow-node-contract.md`](adr/0006-formations-workflow-node-contract.md) | Accepted mixed-workflow node, port, gate, artifact, and run-bound session target; explicitly not fully implemented |
+| [`docs/adr/0007-formations-execution-authority.md`](adr/0007-formations-execution-authority.md) | Accepted sole-coordinator, single-record command receipt, writer-fence, persisted admission policy/queue, result-materialization, and guarded authority-schema target; explicitly not fully implemented |
 
 ## Formations historical/reference packet
 
@@ -55,7 +56,7 @@ The `Perttus_vision_for_agent_orchestration/` tree is valuable, but it is not a 
 | Path | Status |
 | --- | --- |
 | [`Perttus_vision_for_agent_orchestration/DECISIONS-LOCKED.md`](../Perttus_vision_for_agent_orchestration/DECISIONS-LOCKED.md) | Historical decision packet. Consult for why earlier pivots happened; current root specs win when behavior changed. |
-| [`Perttus_vision_for_agent_orchestration/spec/`](../Perttus_vision_for_agent_orchestration/spec/) | Supporting S0/BDD packet. Use as baseline acceptance/reference material, not as a replacement for current root specs or later accepted ADR-0005/0006 semantics. |
+| [`Perttus_vision_for_agent_orchestration/spec/`](../Perttus_vision_for_agent_orchestration/spec/) | Supporting S0/BDD packet. Use as baseline acceptance/reference material, not as a replacement for current root specs or later accepted ADR-0005/0006/0007 semantics. |
 | [`Perttus_vision_for_agent_orchestration/03-formations.html`](../Perttus_vision_for_agent_orchestration/03-formations.html) and [`03-formations.js`](../Perttus_vision_for_agent_orchestration/03-formations.js) | Visual/interaction reference for the cockpit feel. Root specs and current code decide current feature availability/runtime semantics. |
 | [`Perttus_vision_for_agent_orchestration/archive/`](../Perttus_vision_for_agent_orchestration/archive/) | Archive/superseded design material. Background only. |
 
@@ -91,6 +92,6 @@ Do not create stub docs just to satisfy old references.
 5. `SECURITY.md` names the current bind/port/auth environment variables.
 
 It deliberately does **not** yet enforce full `ARCHON.md` versus
-`src/cmd/archon/main.go` parity or the ADR-0006 model. Those belong to explicit
+`src/cmd/archon/main.go` parity or the ADR-0006/ADR-0007 models. Those belong to explicit
 CLI/API/model/projection fixtures and exact-candidate Beads, not a prose-only
 lint. Until those gates close, target sections must remain labeled honestly.

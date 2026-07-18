@@ -13,12 +13,15 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
     And the formations are staffed with live agent sessions
     And each run writes an append-only NDJSON ledger that status is projected from
     And ledger events use the envelope defined in "spec/contracts.md"
+    And one CHROTE server coordinator holds the current workspace lease and writer fence
+    And it validated a supported immutable workspace bootstrap, mutable authority-schema high-water mark, and complete hash-matched current admission-policy chain to revision 1 before fence acquisition
+    And no UI or Archon process has peer runtime-writer authority
 
   # ── The cascade ─────────────────────────────────────────────────────────────
 
   @ui @cli
   Scenario: Starting a mission cascades the whole reachable chain
-    When I run "archon mission run session-search" (or press the mission's start)
+    When I submit one stable start command id through "archon mission run session-search" (or press the mission's start)
     Then the engine resolves the sub-graph reachable from the mission
     And one "mission-objective-utf8-v1" "text/markdown" work payload is emitted from the mission's fixed "out" port
     And "run_started.rootInputProjection" is the exact closed "authored_config" shape with "sourceKind=mission_objective", "encoding=mission-objective-utf8-v1", "mediaType=text/markdown", exact SHA-256, and canonical "text"
@@ -28,9 +31,131 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
     And successful Mission, Formation, and Tool outputs flow on their workflow edges
     And Gates route only the verdict-selected pass or fail frontier
     And judge-channel edges never carry PortPayload
-    And the ledger records "run_started" with run id, board id, board rev, mission id, actor, seq 1, opaque authority id, and exact graph/private-binding/projection hashes
+    And the private command journal fsyncs the complete exact "run-command-jcs-v1" request plus hash and admitted/state fences before its effect
+    And the ledger records "run_started" with run id, board id, board rev, mission id, actor, seq 1, authority schema, workspace/run authority ids, admission command id/hash, admission sequence/policy revision/hash, current writer fence, and exact graph/private-binding/projection hashes
+    And the durable command receipt returns that same run id after "run_started" fsync without waiting for graph completion
+    And "run_started" alone projects "queued" while unique fenced "run_activated" binds its activation-policy revision/hash and projects "running" before graph/dispatch events
+    And admitted work survives client disconnect
     And output-producing workflow nodes record "node_started"/"node_output"
     And Gates and judge attempts record their dedicated evaluation/result events
+
+  @api @cli @file
+  Scenario Outline: Runtime command retries return one durable receipt
+    Given canonical runtime command "<command>" has command id "cmd_00000000000000000000000000" and request hash H
+    When the coordinator accepts that command
+    Then it fsyncs the private command record before "<effect>"
+    And "<effect>" exact-matches command id "cmd_00000000000000000000000000" and hash H
+    And the applied receipt's outcome fence exact-matches that effect while a rejection names its decision fence
+    And retrying "cmd_00000000000000000000000000" with hash H returns the original applied or rejected receipt without another effect
+    And retrying "cmd_00000000000000000000000000" with another hash fails "command_id_conflict" without ledger mutation or dispatch
+    Examples:
+      | command | effect                     |
+      | start   | run_started                |
+      | resume  | run_resumed                |
+      | cancel  | run_cancel_requested       |
+      | verdict | human_verdict_recorded     |
+
+  @api @file @security
+  Scenario: Runtime command canonicalization has one value domain
+    Given command ids match canonical uppercase ULID grammar "^cmd_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    And authority schema is integer 2, run-root kind is mission or formation, resume mode is reattach or retry-failed-producer, and verdict is pass or fail
+    And revisions and sequences are positive JSON safe integers
+    And each resolved limit is a positive 32-bit JSON integer while redact is boolean
+    And an absent ETag is empty while a present ETag is 64 lowercase hexadecimal characters
+    When a request has an unknown key, wrong JSON type, invalid enum, out-of-range value, or unsafe command id
+    Then it is rejected before journaling or command-path construction
+
+  @api @file
+  Scenario: Workspace admission is a bounded durable FIFO
+    Given one current immutable hash-verified "workspace-admission-policy-jcs-v1" generation sets JSON-integer "maxActiveRuns" in 1..2147483647 and "maxQueuedRuns" in 0..2147483647
+    And every generation has a JSON-safe positive revision and the exact prior-generation hash, while revision 1 uses an empty prior hash
+    And schema-2 admission has no implicit policy default while closed revision-1 "state=disabled" rejects starts and pauses activation
+    And activated non-final runs retain active capacity through blocked, human-waiting, and canceling states
+    When valid start commands A and B enter the one workspace admission critical section
+    Then active count is non-final ledgers with "run_activated"
+    And queued count is non-final "run_started" ledgers without "run_activated"
+    And each admitted "workspaceAdmissionSeq" counter is a JSON-safe positive integer advanced and fsynced before its event, allowing gaps but never reuse
+    And "run_started" exact-matches the persisted admission-policy revision/hash used
+    And every immediate or dequeued "run_activated" exact-matches the configured activation-policy revision/hash used
+    And their sequences fix FIFO order across restart
+    And queue wait begins at admission and counts against each run's wall-clock limit
+    And cancellation, cleanup, and recovery reconciliation precede fresh dispatch
+    When command C arrives while the queue is full
+    Then its journal records stable rejection "run_queue_full" before any run directory or "run_started"
+    And its terminal start record binds the exact decision-policy revision/hash
+    And replaying C returns that same rejection while a later attempt requires a new command id
+
+  @api @file @recovery
+  Scenario: Admission policy generations remain historically resolvable
+    Given the current WorkspaceAuthority references immutable policy generation P and its SHA-256
+    When the owner publishes generation P+1 with an exact expected P revision/hash
+    Then it stages and fsyncs the exact chained immutable generation before atomic no-replace install and current revision/hash ref replacement
+    And every generation named by a terminal start, "run_started", or "run_activated" remains retained and hash-verifiable
+    When a crash leaves P+1 durable before the current ref changes
+    Then P+1 is non-authorizing, an exact retry may complete the ref change, and conflicting bytes fail loud
+    And a stale expected current ref fails before creating another generation
+    When the current ref already names the exact requested P+1 whose prior hash is P
+    Then a lost-response retry returns the original success without another generation
+
+  @api @file
+  Scenario Outline: Admission policy limits reject fractional JSON numbers
+    Given a proposed configured policy sets "<field>" to JSON number "<value>"
+    When policy canonicalization validates its closed integer domain
+    Then publication fails before immutable staging or workspace-ref mutation
+    Examples:
+      | field           | value |
+      | maxActiveRuns   | 1.5   |
+      | maxQueuedRuns   | 0.5   |
+
+  @api @file
+  Scenario: Policy changes preserve activation progress and FIFO
+    Given older queued runs Q1 and Q2 precede fresh start C by workspace admission sequence
+    And a configured generation lowers "maxQueuedRuns" below the current queued count while active capacity becomes available
+    When admission and activation reconcile under the workspace lock
+    Then "maxActiveRuns" alone governs activation and Q1 activates before Q2 or C
+    And the reduced queue limit never blocks dequeue but blocks fresh queued admission while queued count is at or above that limit
+    When "maxActiveRuns" is lowered below active count
+    Then existing active runs continue and only new activation pauses until active count is below the active limit
+    And a fresh start never bypasses an older queued run when capacity is released
+    When a later configured generation raises "maxActiveRuns" above active count
+    Then existing queued runs activate oldest-first up to the new capacity before any fresh start activates
+
+  @api @file
+  Scenario: Disabled admission pauses without canceling admitted work
+    Given one active run and one queued run under a configured policy
+    When the owner publishes the next immutable "state=disabled" generation
+    Then the active run continues, the queued run remains queued with wall clock advancing, and no queued activation occurs
+    And a fresh start records "admission_disabled" with the exact decision-policy revision/hash before any run directory or event
+    When a later configured generation restores capacity
+    Then the oldest non-expired queued run activates first under that generation
+
+  @api @file
+  Scenario: Idle capacity works with a zero queue limit under concurrent starts
+    Given "maxActiveRuns=1" and "maxQueuedRuns=0" with no active run
+    When two start commands concurrently enter admission
+    Then one linearizes first and fsyncs "run_started" then "run_activated"
+    And the other records "run_queue_full" without a run directory or event
+    And restart derives one active run and zero queued runs from the same ledgers
+
+  @api @security
+  Scenario: Concurrent requests for one command id create one record and effect
+    Given two requests carry the same valid command id and canonical payload hash
+    When they race through the coordinator
+    Then create-if-absent journal admission under the authority lock has one durable linearization point
+    And both receive the same receipt with at most one semantic effect
+
+  @api @file @security
+  Scenario: One command file has closed request and terminal receipt variants
+    Given one valid canonical command payload contains the sole actor, kind, workspace, run, reason, mode or verdict, and precondition authority
+    When "commands/<commandId>.json" is pending
+    Then it has no run id, effect sequence, rejection code, outcome fence, or decision-policy ref
+    When that same record becomes applied
+    Then it has exactly run id, effect sequence, immutable outcome fence, and closed decision-policy ref or null, and its API receipt derives from that record
+    When it instead becomes rejected
+    Then it has exactly rejection code, immutable outcome fence, and closed decision-policy ref or null, and its API receipt derives from that record
+    And only terminal start records carry a non-null ref exact-matching the policy generation used
+    And no second actor, receipt file, or contradictory state-field combination is valid
+    And every duplicated command-effect event field exact-matches the stored hash-bound payload
 
   @file
   Scenario: Mission objective media incompatibility fails before admission
@@ -44,7 +169,9 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
   Scenario: Canonical run authority is writer-private and hash verified
     Given the workspace is a configured generic Files read/write root
     When a run is durably admitted
-    Then its canonical ledger, graph snapshot, private bindings, and private refs live under the CHROTE data root outside every Files root
+    Then its opaque workspace authority exact-matches "workspace-root-identity-v1" for the configured/opened root
+    And a path alias, changed symlink target, or same-named workspace cannot select or replace that authority
+    And its canonical ledger, graph snapshot, private bindings, and private refs live under the CHROTE data root outside every Files root
     And the graph snapshot embeds a stable "authoredConfigManifest" covered by "graphSnapshotSha256"
     And each manifest entry classifies and hashes exactly one Mission objective, whole Formation brief, or Gate criterion by source kind and node id
     And the generic Files API cannot list, read, write, rename, or delete any canonical authority path
@@ -54,6 +181,41 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
     And altered or missing admitted authority records an error then "run_failed" with code "run_authority_integrity_failed"
     And it sends or evaluates nothing
 
+  @file @security
+  Scenario: Concurrent workspace registration cannot split authority
+    Given no workspace authority is registered for one opened directory
+    When two coordinators concurrently register different configured aliases for that directory
+    Then the stable parent registry lock serializes the race before either authority-id lock is selected
+    And the private registry enforces uniqueness for cleaned configured spelling and opened device/inode identity
+    And exactly one fsynced authority mapping may exist
+    And the alias/conflict requires explicit migration and cannot execute under a second owner lock
+
+  @file @security
+  Scenario: Workspace identity hashes uint64 device and inode without rounding
+    Given the race-safe opened root has device or inode above the IEEE-754 exact integer range
+    When "workspace-root-identity-v1" is canonicalized
+    Then device and inode are unsigned base-10 JSON strings with no sign or leading zero
+    And the same opened handle supplies resolved path, device, and inode
+
+  @file
+  Scenario: Registry ordering has one exact comparator
+    Given registry entries include device strings "2" and "10" and valid non-ASCII configured paths
+    When the closed registry is canonicalized
+    Then device and inode compare as decoded unsigned integers so "2" sorts before "10"
+    And configured paths with equal numeric identities compare by their valid UTF-8 bytes
+
+  @file @security
+  Scenario: Fence allocation and mutable authority publication are crash safe
+    Given a supported coordinator holds the workspace owner lock
+    When it acquires or takes over ownership
+    Then it advances and fsyncs nextWriterFence before publishing owner.private.json
+    And a crash may leave a gap but restart never reuses that fence
+    And mutable registry generations publish under the parent registry lock
+    And mutable workspace, owner, and command records have increasing record revisions and publish under the owner lock by generation-checked temp fsync, atomic rename, and parent fsync
+    And immutable authority publishes only by same-directory staging fsync plus atomic no-replace install and parent fsync, never by writing its canonical path in place
+    And every revision, fence, and admission sequence is in "1..9007199254740991" and exhaustion fails before mutation
+    And a torn or conflicting published generation authorizes no projection or runtime effect
+
   @api @cli @security
   Scenario: Unknown event fields never bypass sanitized projection
     Given a private event contains an unknown key with unique fixture value "PRIVATE-X"
@@ -61,6 +223,19 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
     Then each event type emits only its registered safe-field allowlist
     And no public projection contains the unknown key or "PRIVATE-X"
     And a Redact=true writer rejects an unregistered or unclassified extension before append
+    And an extension that can change admission, identity, dispatch, result acceptance, routing, cleanup, cancellation, or finality requires an authority-schema bump
+    And matching schema numbers alone cannot enable semantic projection or runtime adoption
+    And an unsupported reader allocates no fence and performs no adoption, cleanup, quarantine, dispatch, result acceptance, execution mutation, or finality
+    And only a registered redaction-classified projection-only extension that cannot change public status, actions, bindings, artifacts, or execution may remain ignorable
+
+  @file @security
+  Scenario: Authority-schema upgrade advances the workspace high-water mark first
+    Given a supported current owner holds the owner lock and current fence
+    When it enables a newer authority schema
+    Then it atomically advances and fsyncs "workspace.private.json.authoritySchema" before any new-schema command, run, event, or private record
+    And that high-water mark never decreases
+    And a crash after advancement is read-only to an older reader rather than silently downgraded
+    And the new schema starts a new run while older ledgers retain their recorded semantics
 
   @file @security
   Scenario: Pending redacted bytes are never a generic Files surface
@@ -150,11 +325,13 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
   Scenario: A pre-admission authority orphan never becomes a run
     Given private snapshots and a pending raw-redaction target are fsynced
     But no valid seq-1 "run_started" exists
-    When startup recovery scans the authority root
+    When a replacement coordinator validates supported bootstrap then acquires and fsyncs a newer workspace fence
+    And it validates the orphan's workspace, command, and historical origin fence before claiming cleanup under its current state fence
     Then no prompt, Tool process, Gate evaluation, or run event is produced
     And the raw target is sanitized or removed and its obligation is fsynced first
     And the orphan tree is idempotently deleted with a parent-directory fsync
-    But unprovable cleanup or identity quarantines it as non-authorizing with no public bytes or replay handle
+    But an unsupported reader remains strictly read-only, while a supported current owner quarantines conflicting or unprovable identity as non-authorizing with no public bytes or replay handle
+    And a stale prior owner performs no cleanup or quarantine
 
   # ── Dispatch to live sessions (cross-harness is just dispatch — D4) ──────────
 
@@ -171,7 +348,8 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
     And independent resolutions of that incarnation return the same opaque target id
     And it does not re-resolve the persona, session stem, or same-named session
     And it atomically acquires and fsyncs the host-wide exclusive target lease before "slot_dispatch"
-    And under that lease it rechecks the frozen card, harness/process, cwd/root, and pane fingerprint immediately before sending
+    And while continuously holding the workspace authority and target critical sections it rechecks the current fence plus frozen card, harness/process, cwd/root, and pane fingerprint then performs the bounded send
+    And takeover cannot allocate a new fence between that check and send
     And it records binding, target, target-lease, and fingerprint in "slot_dispatch" before sending
     And a Claude Code slot and a Codex slot are dispatched the same way (no special path)
     And a multi-slot formation may expose several exact session targets
@@ -384,7 +562,13 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
   @ui @file
   Scenario: A finished node has a produced Output with status, report, artifacts, and diffs
     When a formation finishes
-    Then its Output has a status in {done, needs-review, blocked, failed}
+    Then every contributing closed turn has one fsynced "slot_result" with matching turn key/phase and a hashed "slot-turn-result-jcs-v1" payload/output envelope
+    And referenced non-Tool artifacts are registered before that slot result
+    And the immutable graph snapshot's formation-type rule deterministically selects one bounded turn schedule and deciding turn
+    And exactly one fsynced "formation_result" records the safe canonical "outputs", exact-key "outputHashes", result encoding/hash, already-registered artifact ids, and contributing slot-result sequences
+    And "node_output" exact-matches that result's sequence/hash, status, outputs, report, artifacts, and diffs
+    And recovery derives a missing Formation result from immutable turn envelopes or a missing node output from that result without reparsing capture or redispatching
+    And its Output has a status in {done, needs-review, failed}; pre-result resource blocking has no Formation result
     And "node_output.outputs[portId]" contains typed durable payload projections for declared output ports
     And every artifact projection keeps one stable artifact id
     And an available safe artifact names root id, relative ref, media type, size, and SHA-256
@@ -406,6 +590,73 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
     And public rendering resolves each id through its latest authorized artifact projection
     And an available report is readable while an unavailable, redacted, or expired report exposes metadata only
     And the Output lives in run state, never in the board definition
+
+  @file
+  Scenario Outline: Formation type fixes its terminal result producer
+    Given an ordinary "<type>" Formation has its persisted slot order frozen in the graph snapshot
+    When all required "<turns>" slot results are durable
+    Then "<terminal>" supplies Formation result status, outputs, output hashes, and report
+    And only that terminal turn has a non-empty declared-port output map while non-terminal turns use their turn payload
+    And artifact and diff ids are the stable first-seen union of contributing results in sequence order
+    Examples:
+      | type         | turns                                      | terminal                                      |
+      | solo         | sole slot                                  | sole slot                                     |
+      | flow         | ordered slots consuming the prior payload | last persisted slot                           |
+      | peer         | every peer then facilitator synthesis      | first persisted peer's peer-facilitator turn |
+      | orchestrated | controller plan, every worker, synthesis   | unique controller's leader-agentic turn      |
+
+  @file @security
+  Scenario Outline: Every Formation phase binds its complete ordered turn inputs
+    Given a "<phase>" dispatch belongs to one frozen Formation attempt
+    Then its closed "turnInputs.nodeStartedSeq" names that attempt's frozen ordered node inputs
+    And its ordered "turnInputs.priorTurnResults" is exactly "<prior>"
+    And every prior entry exact-matches one earlier slot-result sequence and turn-result hash
+    And missing, extra, duplicate, reordered, or hash-mismatched entries reject before dispatch
+    Examples:
+      | phase             | prior                                           |
+      | solo              | empty                                           |
+      | first flow-step   | empty                                           |
+      | later flow-step   | immediate predecessor                           |
+      | peer-turn         | empty                                           |
+      | peer-facilitator  | every peer-turn in persisted slot order         |
+      | leader-plan       | empty                                           |
+      | leader-worker     | leader-plan                                     |
+      | leader-agentic    | leader-plan then every worker in persisted order |
+
+  @file @security
+  Scenario Outline: The first non-ok Formation turn closes a deterministic prefix
+    Given an ordinary Formation has declared outputs A and B
+    When a required turn records "<slotStatus>"
+    Then no later required turn dispatches
+    And one Formation result has status "<resultStatus>" and the exact completed slot-result prefix
+    And every declared output repeats the same fixed non-routable "<payload>" projection
+    And node output delivers no edge
+    Examples:
+      | slotStatus   | resultStatus | payload                    |
+      | error        | failed       | normalized error turnPayload |
+      | needs-review | needs-review | formation_needs_review      |
+
+  @file @security
+  Scenario: Formation needs-review uses one byte-exact non-routable projection
+    When a required turn records "needs-review"
+    Then every declared output is exactly {availability="available", exact=true, payload={kind="unavailable", code="formation_needs_review", message="Formation requires review", retryable=true}}
+    And no locale, parser text, adapter text, or alternate message enters its output hashes
+
+  @file @security
+  Scenario: Closed invalid Formation output becomes a safe failed turn
+    Given bounded capture ends with an exact terminal sentinel but its declared output map is invalid
+    When the parser validates the closed capture once
+    Then it records "slot_result.status=error" with exactly {availability="available", exact=true, payload={kind="error", code="invalid_formation_outputs", message="Formation outputs do not match the declared ports", retryable=true}}, outputs empty, and no raw parser text
+    And the certified closed-turn proof permits ordinary result-committed release
+    But a timeout or unclosed output block records no slot result and retains unmatched or terminal-hold authority
+
+  @file @security
+  Scenario: Orchestrated and peer turns never bypass coordinator authority
+    Given a peer or orchestrated Formation uses its schema-2 bounded schedule
+    Then every peer, plan, worker, facilitator, and synthesis turn has a fenced slot dispatch, target lease, result, and cancel/recovery identity
+    And every dispatch binds its exact node-start sequence plus ordered prior slot-result sequences and hashes
+    And no agent directly prompts, captures, interrupts, or writes another Formation-bound tmux target
+    And no untracked shared chat or blackboard file is execution or replay authority
 
   @file @security
   Scenario: Artifact path swaps cannot race File Peek validation
@@ -430,6 +681,8 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
     When fresh execution routes that value to the next node
     Then "node_output" and "node_started.inputRefs" persist only stable ids, provenance, and redacted payload projections
     And the exact value exists only in paired in-memory execution refs
+    And it may survive safe slot-result, Formation-result, node-output, Gate, join, and dispatch fsyncs until every scheduled internal Formation consumer and every authorized taken-edge consumer sends once or becomes durably non-deliverable
+    And it is erased when no Gate/retry path retains it and always on cancellation, finality, or process loss
     And no marker, hash, summary, or sanitized replacement is a graph input
     And sanitized non-exact evidence exists only outside port output maps in bounded display or artifact fields
     And recovery without that live value records "run_failed" with code "redacted_input_unavailable"
@@ -606,7 +859,8 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
     When the graph becomes quiescent
     Then the Gate and run remain "waiting_human"
     And no "run_blocked" hides the human request
-    When the matching human decision contributes its kind result
+    When a journaled verdict command id/hash exact-matches the outstanding human-request sequence
+    And the matching human decision contributes its kind result
     And the aggregate "gate_verdict" closes and routes that Gate attempt
     And the graph becomes quiescent again
     Then the stable semantic blocker is selected before the retryable producer
@@ -615,8 +869,8 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
   Scenario: Explicit operator resume retries one whole failed producer safely
     Given the latest "run_blocked" names an exact retryable producer attempt
     And that attempt delivered no edges and its frozen authoritative inputs remain available
-    When I explicitly resume the run
-    Then "run_resumed" opens epoch N+1 with the exact recorded retry target
+    When I explicitly resume the run with one stable command id and the exact blocked sequence
+    Then "run_resumed" binds that command id/hash and opens epoch N+1 with the exact recorded retry target
     And it records "resumeMode=retry-failed-producer" and "openDispatches=[]"
     And "node_started" records reason "resume" and producer attempt N+1
     And it reuses the frozen input refs and unchanged slot or Tool binding
@@ -640,8 +894,8 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
 
   @cli
   Scenario: A run can be cancelled
-    When I run "archon run abort run_01J9"
-    Then "run_cancel_requested" is fsynced first with the exact open node attempts, slot dispatches, and Tool leases
+    When I run "archon run cancel run_01J9" with a stable command id and expected last sequence
+    Then "run_cancel_requested" binds that command id/hash and is fsynced first with the exact open node attempts, slot dispatches, and Tool leases
     And each attempt snapshot preserves node/kind/attempt/start sequence and its latest durable phase/sequence
     And each slot snapshot preserves dispatch/target-lease/node/attempt/slot/binding/target identity
     And each lease snapshot preserves node/attempt/dispatch identity plus its optional latest launch/scope/deadline-authority identity
@@ -655,7 +909,8 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
     And "run_canceled.cancelRequestSeq" names that unique request
     And "run_canceled" exactly reconciles the node attempts, slot dispatches, and Tool leases as the last accepted execution event
     And each attempt, slot, or Tool reconciliation entry preserves its snapshot identity and adds one typed disposition
-    And a repeated abort is idempotent and replaces none of the original snapshots
+    And a repeated cancel is idempotent and replaces none of the original snapshots
+    And "abort" or "stop" compatibility spelling normalizes to cancel before hashing and creates no second snapshot or state
     And no further node or dispatch events are appended
     But non-authorizing binding or artifact observations may still append for inspection
 
@@ -671,7 +926,7 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
   Scenario: Canceling a Gate waiting for a human closes the same attempt
     Given a Gate attempt has an outstanding "human_input_requested" and projects "waiting_human"
     And that Gate has no open slot dispatch or Tool lease
-    When I abort the run
+    When I cancel the run
     Then "run_cancel_requested.openNodeAttempts" contains that exact Gate attempt with phase "waiting_human"
     And "run_canceled.nodeAttemptDispositions" preserves its identity and adds "canceled_non_authorizing"
     And the Gate and run no longer project "waiting_human"
@@ -708,7 +963,7 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
   @cli @security
   Scenario: Cancellation fails closed when a Tool descendant cannot be fenced
     Given an open Tool launch has a descendant whose quiescence cannot be proven by the frozen deadline
-    When I abort the run
+    When I cancel the run
     Then "run_canceled" is not appended
     And terminal "run_failed" records code "tool_process_not_quiescent"
     And "failureCause" names the causative Tool lease

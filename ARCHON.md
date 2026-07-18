@@ -62,6 +62,39 @@ This list describes the current binary. `board export`, Gate inspection/routing
 helpers, `verify`, and `doctor` remain directional command ideas, not available
 verbs.
 
+Current main also executes `mission run`, `formation run`, and `run resume`
+synchronously in an Archon-local engine, reads workspace run files directly,
+and implements `run abort` by appending final cancellation. That is compatibility
+behavior, not the accepted schema-2 ownership contract.
+
+ADR-0007 accepts a different runtime boundary. Archon continues to author,
+validate, and inspect workflow definitions offline through the shared package.
+Run start, resume, cancel, verdict, list, status, logs, and follow instead use the
+fenced CHROTE coordinator and its sanitized projection; coordinator unavailability
+fails loud with no local engine or private-ledger fallback. Runtime mutations
+carry a stable `commandId` matching
+`^cmd_[0-7][0-9A-HJKMNP-TV-Z]{25}$` and a stored canonical payload/hash. Archon validates that id before
+transport/path use and canonicalizes resume modes to `reattach` or
+`retry-failed-producer`. The same id/hash returns
+the original durable receipt, while another payload conflicts without effect.
+One command record holds the request and becomes the closed terminal receipt;
+its immutable effect/decision fence remains distinct from any later takeover
+publication fence, and a terminal start receipt binds the exact immutable
+admission-policy revision/hash used. There is no second actor or receipt file.
+Start returns an admitted run id after `run_started` fsync and before long-running
+execution finishes.
+
+Schema-2 runtime remains disabled until the non-authorizing registry/bootstrap/
+workspace-authority guard, complete safe projection/coordinator capability set, and guarded rollback
+inventory are certified. A matching schema number does not authorize Archon to
+fall back or treat a private ledger as readable runtime state.
+
+Canonical target spelling is `archon run cancel`. Current `archon run abort`, and
+any compatibility `stop` spelling, normalize to `cancel` before command hashing
+and cannot create another request snapshot, event, or lifecycle state. Exact
+target flags and transport wiring land with `ctx-ug7.6`; this current-command
+inventory remains unchanged until then.
+
 ADR-0006 accepts agent-first authoring for a mixed Mission → Formation → Tool →
 Gate workflow. There is no `archon tool` group today. Tool profile authoring,
 validation, packaging, and the exact command spelling belong to `ctx-ug7.8`,
@@ -119,7 +152,9 @@ Resolution must surface:
   so that security boundary must land before this target is claimed implemented.
 - Undoable operations must record enough inverse intent to reverse the mutation
   without whole-board hacks.
-- All writes go through the shared writer so UI/API/CLI cannot diverge.
+- Definition writes go through the shared package writer so UI/API/CLI cannot
+  diverge. Runtime command/effect writes go only through the current fenced
+  coordinator; a package file lock is not execution authority.
 
 ## Script-gate command flags
 

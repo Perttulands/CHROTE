@@ -1,7 +1,7 @@
 # ADR-0001: Formations Run Recovery Contract
 
 ## Status
-Accepted; amended by ADR-0006
+Accepted; amended by ADR-0006 and ADR-0007
 
 ## Context
 Formations runs are append-only NDJSON ledgers driven through tmux sessions that
@@ -51,13 +51,47 @@ preserves the complete stable set of unmatched leases and sends no prompt. The
 current block rejects results/output/routing until exact resume; that epoch may
 prove and release individual results. If any remain unproven, a non-resumable
 block keeps only that subset; late results/output/routing are rejected and the
-run stays blocked until aborted. Node scope is valid only when the set belongs
+run stays blocked until canonically canceled. Node scope is valid only when the set belongs
 to one node; otherwise recovery uses run scope. A separately started run is
 independent and does not close or supersede an old lease. The engine never
 supersedes an unmatched lease or sends the same prompt again.
 
 Status projection is ledger-only. Live tmux inspection belongs to the recovery
 reconciler, which changes status by appending events to the ledger.
+
+ADR-0007 makes that reconciler the current fenced CHROTE workspace coordinator,
+not whichever API or CLI process opens the files. A client/browser disconnect
+does not transfer ownership or trigger recovery. Coordinator restart first
+validates the immutable supported workspace bootstrap and mutable current
+workspace authority-schema high-water mark, then reserves and fsyncs
+a newer monotonic `writerFence`; only then may it repair
+command receipts, reconcile admitted ledgers, reattach exact dispatches, clean
+or quarantine private obligations, or append another event. Prior monotonic
+origin-fence history remains valid; each recovery mutation records the current
+higher state fence. The authority lock remains held through fence validation and
+each bounded non-idempotent effect. Unsupported readers are strictly read-only.
+Per-file locks protect bytes and never confer this authority.
+
+Every schema-2 start/resume/cancel/verdict effect binds its durable command id
+and canonical payload hash; the journal also stores the complete canonical
+payload. The sole command record becomes its closed terminal receipt; a pending
+record after any matching effect is repaired without
+reapplication, using the current state-publication fence while preserving the
+effect's origin fence as the immutable receipt outcome. `run_started` is durable
+admission and binds its retained immutable policy revision/hash. It projects
+queued until the unique fenced `run_activated`, which binds the activation
+policy revision/hash; older queued work activates first. An activated non-final run retains its
+capacity slot through finality in this first contract. For ordinary workflow
+Formations, each `slot_result` stores one hashed canonical parsed turn envelope
+before target release, then one fsynced `formation_result` stores the complete
+safe canonical result before `node_output`. Recovery derives only from those
+immutable values, including after either a successful terminal or first non-`ok`
+deciding result, rather than reparsing mutable capture. ADR-0005 still ends a
+redacted run when later routing requires discarded raw output.
+
+The canonical lifecycle command is cancel. Current `abort`, plus any legacy
+`stop` spelling, becomes a compatibility alias normalized before command
+hashing and never forms another event or state.
 
 ## Consequences
 This keeps ledgers replayable, makes "what happened?" answerable from disk, and

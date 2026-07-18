@@ -21,14 +21,26 @@ canned terminals are not persistence or run contracts.
 <workspace>/.formations/boards/<slug>.formation.toml
 <workspace>/.formations/layout/<slug>.layout.toml
 <workspace>/.formations/artifacts/<run-id>/...  # registered sanitized files only
-<chrote-data>/formations/runs/<run-id>/events.ndjson
-<chrote-data>/formations/runs/<run-id>/graph.snapshot.toml
-<chrote-data>/formations/runs/<run-id>/bindings.private.toml
-<chrote-data>/formations/runs/<run-id>/refs/       # writer-only/private
+<chrote-data>/formations/workspaces/registry.lock
+<chrote-data>/formations/workspaces/registry.private.json
+<chrote-data>/formations/workspaces/<workspace-authority-id>/workspace.bootstrap.json
+<chrote-data>/formations/workspaces/<workspace-authority-id>/workspace.private.json
+<chrote-data>/formations/workspaces/<workspace-authority-id>/owner.lock
+<chrote-data>/formations/workspaces/<workspace-authority-id>/owner.private.json
+<chrote-data>/formations/workspaces/<workspace-authority-id>/admission-policies/<policy-rev>.json
+<chrote-data>/formations/workspaces/<workspace-authority-id>/commands/
+<chrote-data>/formations/workspaces/<workspace-authority-id>/runs/<run-id>/events.ndjson
+<chrote-data>/formations/workspaces/<workspace-authority-id>/runs/<run-id>/graph.snapshot.toml
+<chrote-data>/formations/workspaces/<workspace-authority-id>/runs/<run-id>/bindings.private.toml
+<chrote-data>/formations/workspaces/<workspace-authority-id>/runs/<run-id>/refs/
+<chrote-data>/formations/workspaces/<workspace-authority-id>/quarantine/
 ```
 
-The shared formations package is the only writer for persona cards, board, and
-layout files. The UI, `archon`, and agents all call that writer. Canonical run
+The shared formations package is the only serializer for persona cards, board,
+and layout files. The UI, `archon`, and agents all call that serializer. The
+fenced CHROTE server coordinator is the sole semantic writer for schema-2
+runtime authority; shared file locks protect bytes but grant no execution
+lease. Canonical run
 authority lives under the configured CHROTE data root outside every configured
 Files read/write root: append-only ledger, immutable graph snapshot, private
 binding authority, sealed Tool inputs, and pending raw-redaction roots. The
@@ -593,6 +605,327 @@ offer **Open current session**, labeled outside run evidence. Peek must surface
 unavailable/stale rather than look up another session by name or trust the
 stable opaque handle alone.
 
+## Workspace Runtime Authority And Commands
+
+Current main still constructs separate synchronous run engines in the API and
+Archon and writes run files below the workspace. The following ADR-0007 shapes
+are accepted schema-2 target state, not current-binary claims.
+
+```ts
+WorkspaceRegistry {
+  registrySchema: 1
+  recordRev: uint64
+  entries: WorkspaceRegistryEntry[]
+}
+
+WorkspaceRegistryEntry {
+  workspaceAuthorityId: string
+  configuredPath: string
+  device: string
+  inode: string
+  workspaceRootIdentitySha256: string
+}
+
+WorkspaceBootstrap {
+  bootstrapSchema: 1
+  workspaceAuthorityId: string
+  rootIdentityEncoding: "workspace-root-identity-v1"
+  workspaceRootIdentitySha256: string
+}
+
+WorkspaceAuthority {
+  recordRev: uint64
+  authoritySchema: uint64 // 2 for this target; monotonic high-water
+  workspaceAuthorityId: string
+  rootIdentityEncoding: "workspace-root-identity-v1"
+  workspaceRootIdentitySha256: string
+  nextWriterFence: uint64
+  nextAdmissionSeq: uint64
+  admissionPolicyRef: WorkspaceAdmissionPolicyRef
+}
+
+WorkspaceAdmissionPolicyRef {
+  policyRev: uint64
+  policySha256: string
+}
+
+WorkspaceAdmissionPolicy =
+  | { policySchema: 1, policyRev: uint64, priorPolicySha256: string,
+      state: "disabled" }
+  | { policySchema: 1, policyRev: uint64, priorPolicySha256: string,
+      state: "configured", maxActiveRuns: integer, maxQueuedRuns: integer }
+
+WorkspaceOwnerLease {
+  leaseSchema: 1
+  recordRev: uint64
+  workspaceAuthorityId: string
+  ownerInstanceId: string
+  writerFence: uint64
+  acquiredAt: string
+  renewedAt: string
+  leaseUntil: string
+}
+
+RunCommandRecordBase {
+  commandSchema: 1
+  recordRev: uint64
+  commandEncoding: "run-command-jcs-v1"
+  commandId: string
+  commandKind: "start" | "resume" | "cancel" | "verdict"
+  commandPayload: object
+  commandPayloadSha256: string
+  admittedWriterFence: uint64
+  stateWriterFence: uint64
+}
+
+RunCommandRecord =
+  | RunCommandRecordBase & { state: "pending" }
+  | RunCommandRecordBase & { state: "applied", runId: string, effectSeq: number,
+      outcomeWriterFence: uint64,
+      decisionAdmissionPolicyRef: WorkspaceAdmissionPolicyRef | null }
+  | RunCommandRecordBase & { state: "rejected", rejectionCode: string,
+      outcomeWriterFence: uint64,
+      decisionAdmissionPolicyRef: WorkspaceAdmissionPolicyRef | null }
+
+RunCommandReceipt =
+  | { commandId: string, commandPayloadSha256: string,
+      commandKind: "start" | "resume" | "cancel" | "verdict",
+      outcomeWriterFence: uint64, state: "applied", runId: string,
+      effectSeq: number,
+      decisionAdmissionPolicyRef: WorkspaceAdmissionPolicyRef | null }
+  | { commandId: string, commandPayloadSha256: string,
+      commandKind: "start" | "resume" | "cancel" | "verdict",
+      outcomeWriterFence: uint64, state: "rejected", rejectionCode: string,
+      decisionAdmissionPolicyRef: WorkspaceAdmissionPolicyRef | null }
+```
+
+`registry.private.json` is a closed schema-1 object. Its entries have exactly the
+fields above and sort by decoded unsigned numeric `device`, decoded unsigned
+numeric `inode`, then valid UTF-8 `configuredPath` bytewise. They use the same
+canonical path/device/inode rules as `workspace-root-identity-v1`. It is strict-validated
+under `registry.lock` before authority-id selection/creation; unknown schema/key,
+duplicate configured/opened identity, or conflicting mapping authorizes no
+mutation. Registry generations use the atomic mutable-file rule below.
+
+`workspace-bootstrap-jcs-v1` is RFC 8785 canonical UTF-8 JSON over exactly
+`{bootstrapSchema,workspaceAuthorityId,rootIdentityEncoding,
+workspaceRootIdentitySha256}` with no unknown keys or trailing newline. The
+published bootstrap is immutable. The separate mutable workspace authority
+record carries the current authority-schema high-water mark.
+The schema-2 target requires that value to be exactly `2`; a future supported
+authority schema changes the supported value without rewriting the immutable
+bootstrap, while an older reader rejects that higher value before mutation.
+
+`workspace-admission-policy-jcs-v1` is RFC 8785 canonical UTF-8 JSON over exactly
+one closed `WorkspaceAdmissionPolicy` variant with no unknown key or trailing
+newline. Revision 1 has `priorPolicySha256=""`; each later revision is exactly
+the previous revision plus one and names the previous generation's
+64-lowercase-hex SHA-256. Its immutable file is
+`admission-policies/<policyRev>.json`, using
+unsigned decimal with no leading zero. The current `WorkspaceAuthority` ref
+exact-matches that file; every referenced historical generation is retained and
+hash-verifiable.
+First registration creates/fsyncs disabled revision 1 before publishing the
+initial WorkspaceAuthority ref or parent registry mapping.
+
+`workspace-root-identity-v1` is RFC 8785 canonical UTF-8 JSON over exactly
+`{configuredPath,resolvedPath,device,inode}` with no unknown keys or trailing
+newline. Paths are absolute valid UTF-8 with NUL rejected, lexical dot segments
+removed, `/` separators, and no trailing slash except root. `configuredPath`
+retains the cleaned configured spelling; `resolvedPath`, device, and inode come
+from the same race-safe opened directory identity after symlink resolution.
+Device and inode are JSON strings matching `0|[1-9][0-9]*` and decode as
+`uint64`; they are never JSON numbers. The object stays private and
+`workspaceRootIdentitySha256` hashes those exact bytes.
+
+The opaque `workspaceAuthorityId` binds one exact configured/opened root
+identity and matches canonical uppercase ULID grammar
+`^wsa_[0-7][0-9A-HJKMNP-TV-Z]{25}$`, validated before directory construction. First registration holds a
+coordinator-local mutex plus the process-shared parent `registry.lock`
+before selecting an authority-id directory. The private registry enforces one
+mapping for both cleaned configured spelling and opened `(device,inode)`; aliases,
+changed targets, or conflicts require explicit migration. The new
+bootstrap/private directory is fsynced before its mapping and parent. Recovery
+may complete one unique exact creation, but never chooses between conflicts.
+
+Under a coordinator-local mutex plus private process-shared `owner.lock`, a
+process strict-validates the immutable closed bootstrap and mutable current
+workspace authority record plus its hash-matched immutable admission-policy
+generation and complete contiguous prior-hash chain to revision 1 before
+mutation. Missing generations, discontinuities, or cycles are invalid.
+Unsupported, missing, or conflicting bootstrap,
+workspace authority, or policy schema is strictly read-only: no fence, cleanup,
+quarantine, valid-run projection, or tmux action. Matching schema numbers alone do not enable schema-2;
+admission waits for the complete registered safe projector/coordinator and a
+certified guarded rollback set.
+
+A supported coordinator reserves the next `writerFence`, fsyncs the advanced
+counter, then publishes its renewable lease. Counter gaps are allowed and reuse
+is forbidden; elapsed lease time cannot bypass a still-held kernel lock. The
+same lock stays held from current lease/fence validation
+through every authority write+fsync and bounded non-idempotent send, Tool spawn,
+interrupt, cleanup, or quarantine call; takeover cannot race between check and
+effect. Lock order is parent registry (registration only), workspace authority,
+then host target arbiter; reverse acquisition is invalid. ADR-0006's per-target
+lease remains separately required.
+
+Historical event fences are monotonic non-decreasing allocated owner epochs; an
+older prefix remains valid after takeover. Fence regression, an unallocated
+fence, or a new append/effect not using the current fence is invalid. Private
+records preserve `originWriterFence`; a higher current owner reconciles through
+a new `stateWriterFence`. Immutable authority files are never written in place at
+their canonical paths. Under the governing lock, complete bytes go to a unique
+same-directory staging file, the file is fsynced, the canonical name is installed
+atomically with no-replace semantics, and the parent is fsynced. Exact existing
+bytes/hash make retry idempotent; mismatch conflicts and is never replaced. A
+pre-install crash leaves only a non-authorizing staging file; post-install
+recovery sees only complete bytes and repeats the parent fsync. Only the governing
+authority holder (registrar under `registry.lock` or current fenced owner under
+`owner.lock`) may remove a validated unreferenced staging file. Mutable registry
+generations publish under `registry.lock`;
+workspace authority/counter, owner-lease, and command-record generations publish
+under `owner.lock`. Immutable admission-policy generations publish under
+`owner.lock` before the current workspace ref changes. Each mutable record's
+`recordRev` starts at 1; every successful replacement is
+exactly the last published revision plus one and rejects a stale, skipped, or
+regressed predecessor. Each uses a
+generation-checked same-directory temp, file fsync, atomic rename, and parent
+fsync. Migration holds both locks in parent-registry then workspace order.
+Torn/stale/conflicting published records authorize nothing, and a canonical
+immutable path is never a partial-file recovery surface.
+
+Every schema-2 JSON record/policy revision, writer-fence field, event/effect
+sequence, workspace-admission identity, and next counter is an integer in
+`1..9007199254740991`. Allocation past that bound fails closed before mutation;
+rounding, wrap, and reuse are invalid.
+
+`run-command-jcs-v1` is RFC 8785 canonical UTF-8 JSON over exactly one of these
+closed objects with no unknown keys or trailing newline:
+
+```text
+start   = {kind,authoritySchema,actor,workspaceAuthorityId,boardId,runRoot,
+           expectedBoardRev,expectedBoardETag,limits}
+resume  = {kind,authoritySchema,actor,workspaceAuthorityId,runId,blockedSeq,
+           resumeMode,reason}
+cancel  = {kind,authoritySchema,actor,workspaceAuthorityId,runId,
+           expectedLastSeq,reason}
+verdict = {kind,authoritySchema,actor,workspaceAuthorityId,runId,gateId,
+           requestedSeq,verdict,reason}
+```
+
+`authoritySchema` is integer `2`. `runRoot` is exactly `{kind,nodeId}`, where
+kind is `mission` or `formation` and the stable id matches. `resumeMode` is
+`reattach` or `retry-failed-producer`, mapping respectively from block policies
+`reattach_only` and `retry_failed_producer`; verdict is `pass` or `fail`.
+Revisions/sequences are JSON integers in `1..9007199254740991`. `limits` always
+contains JSON-integer `maxDispatch`, `maxAttempts`, and `wallClockSeconds` in
+`1..2147483647` plus boolean `redact`. An absent ETag/reason normalizes to `""`;
+a present ETag is exactly 64 lowercase hexadecimal characters, and no other
+field is optional. Identifiers are resolved/validated before the request becomes
+journalable. Every SHA-256 field in these authority/command shapes is exactly 64
+lowercase hexadecimal characters except the explicitly empty revision-1
+`priorPolicySha256`. Actor is non-empty
+valid UTF-8 with BOM/NUL rejected, leading/trailing ASCII space and tab removed,
+and case otherwise preserved. Reason is valid
+UTF-8, rejects BOM/NUL,
+normalizes CRLF/CR to LF, trims leading/trailing ASCII space, tab, and LF, and
+is then bounded/redaction-checked. `commandId` and transport timing are outside
+the bytes. `commandId` matches canonical uppercase ULID grammar
+`^cmd_[0-7][0-9A-HJKMNP-TV-Z]{25}$`, validated before constructing the exact
+`<commandId>.json` path. `abort` and `stop` normalize to `kind=cancel` before
+hashing. Unknown keys, wrong types, non-canonical enums, out-of-range values, and
+invalid transport/schema input are never journalable.
+
+The private journal stores and fsyncs the complete canonical `commandPayload`
+plus hash before effect and recanonicalizes it on read. Its payload actor, kind,
+workspace/run, reason, mode/verdict, and precondition are the sole command
+authority; the record contains no duplicate actor. Lookup/create/update is
+serialized in the workspace authority critical section with create-if-absent
+semantics. A pending record starts with equal admitted/state fences and has no
+outcome fields; takeover may advance only `stateWriterFence`. The same
+`commands/<commandId>.json` record becomes the receipt: `applied` requires exactly
+`runId`, `effectSeq`, immutable `outcomeWriterFence`, and
+`decisionAdmissionPolicyRef`; `rejected` requires exactly `rejectionCode`, that
+outcome fence, and the decision policy ref. The ref names the exact generation
+used by every terminal start decision and is `null` for non-start commands.
+`RunCommandReceipt` is the closed API projection of that terminal record, not a
+second file. `stateWriterFence` names the fence that last published the command
+record; `outcomeWriterFence` separately and immutably names the effect event's
+origin fence or rejection decision fence. Fence F2 may repair an F1 effect with
+`stateWriterFence=F2` and `outcomeWriterFence=F1`. The same id/hash returns its durable
+receipt; the same id with another hash returns `command_id_conflict` without an
+effect. A different start id is a distinct request and may create another run.
+Each effect event exact-matches the journaled id/hash and every duplicated
+command-derived field, including envelope actor, workspace/run, reason,
+mode/verdict, and precondition. Resume consumes the
+named blocked sequence, verdict consumes the named outstanding human-request
+sequence, and only the first cancel command can establish the cancel snapshot;
+stale or duplicate semantic commands return stable typed receipts without a new
+event or side effect.
+Recovery resumes a pending start from its stored payload. A pending
+resume/cancel/verdict rechecks the exact named precondition and applies once only
+when still valid, otherwise records one stable rejection. A matching durable
+effect for any command kind repairs the applied receipt and is never reapplied;
+the repair uses the current state fence while preserving the event's origin
+fence as the outcome fence.
+
+For start, the owner fsyncs the pending command, immutable private run authority,
+and `run_started(seq=1)`; if immediate capacity is reserved it also fsyncs
+`run_activated` before linking the applied receipt and returning `runId`. Graph
+execution is asynchronous from that response.
+
+`maxActiveRuns` is a JSON integer in `1..2147483647`; `maxQueuedRuns` is a JSON
+integer in `0..2147483647`. In one admission critical section, the writer
+strict-validates the immutable generation named by
+`WorkspaceAuthority.admissionPolicyRef`. There is no implicit default: schema-2
+starts with closed `state=disabled` revision 1. Disabled rejects new starts as
+`admission_disabled` and pauses queued activation without canceling active or
+queued work; queue wall clocks continue. Only a configured generation admits or
+activates.
+
+An update binds its expected current revision/hash and exact canonical next
+bytes. Under `owner.lock`, it stages/fsyncs and atomically no-replace-installs the
+next immutable chained generation before advancing the workspace policy ref and
+workspace record revision. If the current ref remains the expected predecessor,
+an exact already-installed next generation is completed; if the ref already
+names that exact next generation whose prior hash is the expected ref, retry
+returns the original success. Every other stale ref or byte/hash conflict fails
+before mutation. Every terminal start command records the exact
+decision policy ref. `run_started` records the admission revision/hash, and every
+immediate or dequeued `run_activated` records the configured revision/hash used
+for activation.
+
+`activeCount` counts non-final ledgers with `run_activated`; `queuedCount` counts
+non-final `run_started` ledgers without it. `maxActiveRuns` alone gates
+activation. Before a fresh start may activate, existing queued runs activate by
+smallest `workspaceAdmissionSeq` while capacity remains. A new start may then
+append `run_started` plus immediate `run_activated` if capacity still exists,
+even when `maxQueuedRuns=0`. With no active slot, `maxQueuedRuns` alone gates the
+new queued admission: append only `run_started` when
+`queuedCount < maxQueuedRuns`; otherwise record `run_queue_full` with the
+decision policy ref before a run directory/event. Lowering `maxActiveRuns`
+blocks only new activation until active count fits; lowering `maxQueuedRuns`
+blocks only fresh queued admission while queue count is at or above the new
+limit and never blocks dequeue. Counter gaps are allowed and reuse is forbidden.
+`run_started` alone projects queued; unique `run_activated` projects running and
+is required before every graph/dispatch event. Restart recomputes exact counts/
+FIFO for current state from run ledgers and strict-validates every retained
+policy ref. Schema 2 has no workspace-global admission-decision sequence: refs
+attribute exact policy bytes but do not independently prove historical cross-run
+capacity interleaving. Concurrent starts still serialize under the authority
+critical section and are certified by contention/crash tests. Queue time
+consumes wall clock,
+and an expired queued run can fail without activation. Cleanup, cancellation,
+and recovery precede fresh activation.
+Every activated non-final ledger counts against `maxActiveRuns`, including while
+blocked, `waiting_human`, or canceling, and releases that slot only at an
+execution-final event. This conservative first policy is reconstructible from
+the ledger without an unmodeled requeue transition.
+
+Archon may author, validate, and inspect workflow definitions offline. All run
+commands and run list/status/log/follow require the coordinator's sanitized
+projection. Archon never reads private ledgers or falls back to a local engine.
+
 ## Run Ledger Envelope
 
 Each run is append-only NDJSON. Every line is one JSON object with this minimum
@@ -601,6 +934,8 @@ envelope:
 ```json
 {
   "schema": 2,
+  "authoritySchema": 2,
+  "writerFence": 42,
   "ts": "2026-06-03T16:05:00Z",
   "runId": "run_01J9...",
   "seq": 1,
@@ -613,9 +948,15 @@ envelope:
   "epoch": 0,
   "attempt": 0,
   "data": {
+    "workspaceAuthorityId": "wsa_01J9...",
+    "workspaceAdmissionSeq": 17,
+    "admissionPolicyRev": 3,
+    "admissionPolicySha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "admissionCommandId": "cmd_01J9...",
+    "commandPayloadSha256": "sha256:...",
     "boardSlug": "session-search",
     "boardPath": ".formations/boards/session-search.formation.toml",
-    "sourceBoardSchema": 1,
+    "sourceBoardSchema": 2,
     "snapshotSchema": 2,
     "runAuthorityId": "auth_01J9...",
     "graphSnapshotSha256": "sha256:...",
@@ -635,26 +976,49 @@ envelope:
 }
 ```
 
-All schema-2 events include `schema=2`, `ts`, `runId`, monotonic `seq`, `type`,
-and `actor`. Events
+All schema-2 ledger events include `schema=2`, supported `authoritySchema`,
+their origin `writerFence`, `ts`, `runId`, monotonic `seq`, `type`, and `actor`.
+Fences are monotonic non-decreasing allocated owner epochs; historical lower
+prefixes remain valid after takeover, while a regression/unallocated fence or a
+new append not using the current fence is invalid.
+Events
 that touch graph objects include the relevant `boardId`, `boardRev`, `missionId`,
 `nodeId`, `slotId`, `gateId`, `edgeId`, `attempt`, or `epoch`. `run_started`
 is the first event and must include top-level board id/revision plus opaque
-authority id, exact graph/private-binding/projection hashes, `runRoot`, typed
+workspace/run authority ids, admission command id/hash, durable admission
+sequence and admission-policy revision/hash, exact graph/private-binding/projection hashes, `runRoot`, typed
 authored-config root-input projection, and run id. `missionId` and optional `beadId` are top-level only
 for a Mission root, and `runRoot.nodeId` must equal that `missionId`; an isolated
 Formation root omits both.
+Each command-effect event exact-matches every duplicated command field in its
+stored hash-bound payload, including envelope actor, workspace/run identity,
+reason, mode/verdict, and precondition sequence.
 
 A ledger without `schema` is schema 1 and projects with its recorded legacy
 semantics. Schema-1 events are never reinterpreted as exact Gate pass-through,
 typed feedback, or schema-2 input refs. One ledger cannot mix event schemas.
+One schema-2 ledger also has one supported `authoritySchema`; an authority bump
+starts a new run and is never mixed into an existing ledger.
 Schema-1 runs remain inspectable but are not resumable by the schema-2 engine;
 resume fails with `legacy_run_requires_new_run`.
+Recognizing those numbers is not semantic support. Schema-2 admission remains
+disabled until the complete safe projector/coordinator capability set is
+registered and every runnable rollback binary honors the immutable bootstrap
+plus mutable workspace-authority guard; pre-guard binaries are prohibited
+runtime rollback targets.
+
+`WorkspaceAuthority.authoritySchema` is the monotonic high-water mark for the
+whole authority domain. An upgrade holds `owner.lock`, validates the current
+fence, and atomically advances/fsyncs that mark before any command, run, event, or
+private record with new semantics. It never decreases. A crash after advancement
+is safely unavailable to an older reader, not downgraded; a new schema starts a
+new run and older ledgers retain their original semantics.
 
 Run state is epoch-aware:
 
 ```text
-run_started seq=1, epoch=0
+run_started seq=1, epoch=0, projects queued
+run_activated appears at most once and projects running before graph/dispatch events
 run_blocked closes an epoch and may be resumed explicitly
 run_resumed opens the next epoch after an operator resume
 human_input_requested enters waiting_human until its exact decision or cancel
@@ -683,6 +1047,25 @@ sent. If the recovery reconciler sees a dispatch without a `slot_result`, it
 re-attaches capture or records a loud `error`; it never blindly re-delivers the
 prompt. See `docs/adr/0001-formations-run-recovery-contract.md`.
 
+Only a coordinator holding a newly fsynced current fence may recover. The crash
+matrix is closed: a pending start resumes bounded admission from its stored
+payload; pending resume/cancel/verdict recheck their exact precondition and apply
+once or reject durably; any durable matching command effect with a missing
+receipt repairs that applied receipt without reapplication; an uncertain
+`slot_dispatch` reattaches only; a successful scheduled-terminal or first
+non-`ok` deciding `slot_result` with missing `formation_result` derives that
+result once from immutable slot-turn envelopes and never dispatches the next
+phase; a durable `formation_result`/`tool_result`
+with missing `node_output` materializes exact output from immutable result
+authority; and a durable
+`node_output` replays only missing routing/finality. A durable
+`run_cancel_requested` permits cancellation reconciliation only. None of these
+paths reparses mutable capture, redispatches completed work, or lets the prior
+fence append or act. Historical origin-fence records remain valid inputs; every
+recovery mutation records the new current state fence while a repaired command
+receipt preserves the matched effect event's origin fence as its immutable
+outcome fence.
+
 ## Run Snapshot And Revision Rules
 
 In the accepted target, run start reads the current board definition and
@@ -698,7 +1081,7 @@ order preserved, and no trailing newline. Those exact bytes are the synthetic
 not seeded, downstream edges are not traversed, and every other required-input
 shape rejects before `run_started`. Preflight resolves every declared slot, Tool
 profile, and schema-2 code-Gate evaluator profile in that executable subgraph.
-Before appending `run_started`, the single writer creates and fsyncs one
+Before appending `run_started`, the current fenced coordinator creates and fsyncs one
 writer-only authority directory with write-once snapshots under the host-private CHROTE data root. It
 contains the canonical ledger, normalized graph snapshot, private bindings, and
 run-private refs; none is beneath a configured Files root. It computes SHA-256
@@ -728,11 +1111,15 @@ Human prompt and PASS/FAIL labels use only the closed fixed-system templates;
 dynamic human-request text is invalid as a durable event field.
 
 If startup finds a writer-private authority directory without a valid seq-1
-`run_started`, it is not a run and sends nothing. Recovery first cleans and
-fsyncs every pending-redaction obligation/raw target, then deletes the orphan
-tree idempotently and fsyncs its parent. Unprovable cleanup/identity quarantines
-the tree as non-authorizing with no public bytes or replay handle; it is never
-adopted as a run.
+`run_started`, it is not a run and sends nothing. Only the current owner, after
+acquiring/fsyncing a newer fence and validating that the orphan's immutable
+workspace, command, and `originWriterFence` belonged to the historical owner
+epoch, may claim cleanup with its current `stateWriterFence`. Recovery first cleans and fsyncs
+every understood pending-redaction obligation/raw target, then deletes the
+orphan tree idempotently and fsyncs its parent. Unsupported, conflicting, or
+unprovable cleanup/identity fails loud; only a supported current fenced owner may
+quarantine the tree as non-authorizing with no
+public bytes or replay handle; it is never adopted as a run.
 
 Run preflight returns one `SlotResolution` per selected declared slot; unassigned
 is `unresolved/agent_unassigned`. It starts only when every resolution is
@@ -806,28 +1193,37 @@ Runs never write persona cards, board definitions, or layout definitions.
 ## Event Payload Schemas
 
 Each event uses the envelope above. Fields listed here are inside `data` unless
-the envelope already names the field. Unknown `data` keys are allowed for
-forward-compatible private readers only when the writer extension is
-schema-registered and redaction-classified; Redact=true rejects an unregistered
-field before append. Public run-detail, bounded-event, SSE, CLI, and UI projection
+the envelope already names the field. Any event, private record, or field that
+can change admission, identity, dispatch, result acceptance, routing, cleanup,
+cancellation, or finality requires a supported authority-schema bump. An older
+or unsupported reader may consume only a separately certified sanitized
+projection; it never allocates a fence, adopts, cleans, quarantines, dispatches,
+accepts results, mutates execution state, or finalizes. Matching schema numbers
+alone do not grant support. A projection-only extension may remain ignorable only
+when it is schema-registered, redaction-classified, excluded from every public
+safe-field allowlist, and unable to change status, actions, bindings, artifacts,
+or execution. Redact=true rejects an unregistered field before append. Public
+run-detail, bounded-event, SSE, CLI, and UI projection
 uses an event-type safe-field allowlist and drops/rejects every unknown or private
 key rather than passing its value through. The required keys below must be
 present.
 
 | Event type | Required payload |
 |---|---|
-| `run_started` | `boardSlug`, `boardPath`, `sourceBoardSchema`, `snapshotSchema`, opaque `runAuthorityId`, `graphSnapshotSha256`, `privateBindingsSha256`, `bindingProjectionSha256`, `runRoot`, exact closed `rootInputProjection` classified `authored_config` with source kind, versioned encoding/media/SHA-256, and canonical `text`, `limits` (`maxDispatch`, `maxAttempts`, `wallClockSeconds`, `redact`); private paths never appear, and board/revision plus conditional Mission ids stay in the envelope |
-| `run_resumed` | `resumedFromSeq`, `resumedBy`, `resumeMode` (`reattach`, `retry-failed-producer`), bounded redaction-safe `reason`, `openDispatches`, exact `retryTargets`; `reattach` preserves the blocked event's exact unmatched-dispatch set and never creates a dispatch, while failed-producer retry requires `openDispatches=[]` and exactly one target |
+| `run_started` | opaque `workspaceAuthorityId`, monotonic `workspaceAdmissionSeq`, exact `admissionPolicyRev`/`admissionPolicySha256`, `admissionCommandId`, `commandPayloadSha256`, `boardSlug`, `boardPath`, `sourceBoardSchema`, `snapshotSchema`, opaque `runAuthorityId`, `graphSnapshotSha256`, `privateBindingsSha256`, `bindingProjectionSha256`, `runRoot`, exact closed `rootInputProjection` classified `authored_config` with source kind, versioned encoding/media/SHA-256, and canonical `text`, `limits` (`maxDispatch`, `maxAttempts`, `wallClockSeconds`, `redact`); private paths never appear, and board/revision plus conditional Mission ids stay in the envelope |
+| `run_activated` | `workspaceAdmissionSeq`, exact configured `admissionPolicyRev`/`admissionPolicySha256`, `reason` (`immediate`, `dequeued`); unique per run, requires non-final `run_started`, consumes one active slot, and is fsynced before every graph/dispatch event |
+| `run_resumed` | `commandId`, `commandPayloadSha256`, `resumedFromSeq`, `resumedBy`, `resumeMode` (`reattach`, `retry-failed-producer`), bounded redaction-safe `reason`, `openDispatches`, exact `retryTargets`; `reattach` preserves the blocked event's exact unmatched-dispatch set and never creates a dispatch, while failed-producer retry requires `openDispatches=[]` and exactly one target |
 | `node_waiting` | `nodeId`, `neededInputs`, `readyInputs`, `totalInputs`, `waitingFor` (`edgeId` or `portId` list) |
 | `node_input_ignored` | `nodeId`, `toPortId`, `inputRef`, `reason` (`late_optional`, `duplicate_feedback`, `stale_feedback`, `mismatched_feedback`), `relatedAttempt` |
 | `node_started` | `nodeId`, `nodeKind` (`mission`, `formation`, `tool`, `gate`), `attempt`, `reason` (`initial`, `resume`, `pushback`, `revision-cycle`, `judge`); ordinary attempts require immutable durable `inputRefs`, judge attempts instead require `contextEncoding=judge-context-jcs-v1`, immutable `judgeContextSha256`/`priorResultSeqs`; optional `triggerFeedbackId`/`priorGateSeq` |
 | `slot_binding_observed` | `bindingId`, `slotId`, `sessionTargetId`, `health` (`runnable`, `unavailable`, `stale`), stable `reason`, `observedAt`, `relatedSeq` |
-| `slot_dispatch` | `dispatchId`, `targetLeaseId`, `nodeId`, `attempt`, `slotId`, `agentId`, `harness`, `bindingId`, `sessionTargetId`, `targetFingerprint`, `promptSha256`, boolean `nativeAck`, `recordedBeforeSend=true`; `nativeAck` is never adapter text, no prompt bytes/ref/path/authority id is durable, and the fingerprint is revalidated under the acquired lease immediately before the same already-hashed in-memory byte slice is sent at most once |
-| `slot_result` | `dispatchId`, `targetLeaseId`, `nodeId`, `attempt`, `slotId`, `agentId`, `bindingId`, `sessionTargetId`, `targetFingerprint`, `status` (`ok`, `error`, `needs-review`), terminal `capturedRange`, artifact ids, exact `sentinel`, closed `turnClosureProof`; timeout or a sentinel followed by unclosed output is never a result |
+| `slot_dispatch` | `dispatchId`, `targetLeaseId`, unique attempt-scoped `turnKey`, `turnPhase` (`solo`, `flow-step`, `peer-turn`, `peer-facilitator`, `leader-plan`, `leader-worker`, `leader-agentic`, or judge-specific), closed `turnInputs={nodeStartedSeq,priorTurnResults}` with exact ordered `{slotResultSeq,turnResultSha256}` entries, `nodeId`, `attempt`, `slotId`, `agentId`, `harness`, `bindingId`, `sessionTargetId`, `targetFingerprint`, `promptSha256`, boolean `nativeAck`, `recordedBeforeSend=true`; `nativeAck` is never adapter text, no prompt bytes/ref/path/authority id is durable, and the fingerprint is revalidated while holding the authority/target critical section immediately before the same already-hashed in-memory byte slice is sent at most once |
+| `slot_result` | `dispatchId`, `targetLeaseId`, matching `turnKey`/`turnPhase`, `nodeId`, `attempt`, `slotId`, `agentId`, `bindingId`, `sessionTargetId`, `targetFingerprint`, `status` (`ok`, `error`, `needs-review`), terminal `capturedRange`, exact `sentinel`, closed `turnClosureProof`, closed `turnResult`, `turnResultEncoding=slot-turn-result-jcs-v1`, `turnResultSha256`; the envelope's required turn key/phase/status exact-match the event, capture is parsed once, and referenced artifacts are registered before this event; bounded closed capture with a valid terminal sentinel but invalid outputs becomes the byte-exact `invalidFormationOutputsProjection` defined below with `outputs={}`, while timeout or unclosed output has no result/ordinary release |
+| `formation_result` | `nodeId`, `attempt`, status (`done`, `needs-review`, `failed`), full durable safe canonical `outputs` map, exact-key `outputHashes`, optional `reportArtifactId`, stable-order `artifactIds` and `diffArtifactIds`, stable ascending `contributingSlotResultSeqs`, `resultEncoding=formation-result-jcs-v1`, `resultSha256`; exactly one after a complete successful schedule or its first non-`ok` result, deterministically derived from the completed prefix after output validation and prior non-Tool artifact registration; a pre-result resource block has no result |
 | `tool_dispatch` | `toolLeaseId`, `nodeId`, `attempt`, `toolBindingId`, `inputManifestSha256`, `inputHashes`, `profileSha256`, `parametersSha256`, `policySha256`, `determinismPolicySha256`, `executionBundleSha256`, private lease-root authority or redacted `redactionObligationId`, `recordedBeforeExecute=true` |
 | `tool_process_launch` | `toolLeaseId`, unique `launchId`, `nodeId`, `attempt`, monotonically increasing `generation` starting at 1, unique opaque non-PID `processScopeId`, opaque `deadlineAuthorityId`, `recordedBeforeSpawn=true`; private supervisor scope and immutable deadline-authority records are durable first, exact-match the open lease/launch tuple, and each launch consumes dispatch and wall-clock limits |
 | `tool_result` | `toolLeaseId`, `launchId`, `generation`, `nodeId`, `attempt`, `status` (`ok`, `error`, `timeout`), full durable canonical output-projection map with explicit exactness, `outputHashes`, authoritative new `artifactRegistrations`, `artifacts`, optional bounded non-routable `displayEvidence`, `timing`; one fsynced event atomically closes the lease/latest launch and registers its new artifact ids |
-| `node_output` | `nodeId`, `status` (`done`, `needs-review`, `blocked`, `failed`), durable `PayloadProjection` values keyed by stable output port id, optional `reportArtifactId`, stable-order `artifactIds` and `diffArtifactIds`, `producedBy`, `timing`, `deliveredEdges`; every top-level artifact id is already durably registered, and Mission `out` requires the exact classified `rootDerivedPayloadProjection` matching `run_started.rootInputProjection` |
+| `node_output` | `nodeId`, `status` (`done`, `needs-review`, `blocked`, `failed`), durable `PayloadProjection` values keyed by stable output port id, optional `reportArtifactId`, stable-order `artifactIds` and `diffArtifactIds`, `producedBy`, `timing`, `deliveredEdges`; every top-level artifact id is already durably registered, Mission `out` requires the exact classified `rootDerivedPayloadProjection` matching `run_started.rootInputProjection`, and an ordinary Formation requires exact `formationResultSeq`/`resultSha256` plus status/output/artifact fields byte-equal to that immutable result |
 | `gate_evaluating` | `gateId`, `gateAttempt`, `nodeId`, `kinds`, typed `criterionProjection` with `classification=authored_config`, `sourceKind=gate_criterion`, `encoding=gate-criterion-utf8-v1`, and `mediaType=text/plain`, `inputRef`, `judgeChain`, optional `revisionCycleId`/`triggerFeedbackId`/`priorGateSeq`; no dynamic value is interpolated into the durable criterion |
 | `gate_kind_result` | `gateId`, `gateAttempt`, `kind` (`code`, `formation`), strict `verdict` (`pass`, `fail`), bounded safe `reason`, typed `evidence`, `evaluatedInputRef`, `resultEncoding=decision-result-jcs-v1`, `resultSha256`, `relatedSeqs`; code additionally requires `gateBindingId`, `inputSha256`, `profileSha256`, `evaluatorBundleSha256`, `parametersSha256`, `policySha256`, `determinismPolicySha256`; unique per Gate attempt/kind and fsynced before the next kind |
 | `judge_result` | `gateId`, `gateAttempt`, `judgeNodeId`, `judgeAttempt`, `chainIndex`, `contextEncoding=judge-context-jcs-v1`, `contextSha256`, `priorResultSeqs`, strict `result`, `resultEncoding=decision-result-jcs-v1`, `resultSha256`; completes that judge Formation attempt and is fsynced before the next member dispatch |
@@ -837,10 +1233,10 @@ present.
 | `artifact_observed` | existing `artifactId`, `availability` (`available`, `unavailable`, `redacted`, `expired`), `artifact` required only for `available` with matching id and exact first-established descriptor, stable `errorCode` required for all other states, `observedAt`, `relatedSeq` |
 | `escalation_raised` | `trigger`, `severity` (`info`, `needs-attention`, `stop`), bounded redaction-safe `reason`, `source` (`system`, `agent`, `human`), `nodeId`, `gateId`, `blocks` |
 | `human_input_requested` | `gateId`, `gateAttempt`, `nodeId`, bounded closed fixed-system `promptProjection` using template `gate-human-verdict-v1`, exact closed fixed-system `choiceProjections` object keyed by `pass` and `fail`, `requestedBy`, `evaluatedInputRef`, exact `completedKindResultSeqs`; fields never interpolate runtime input/output/evidence/secrets, the request is unique for that Gate attempt and projects `waiting_human`, and it has no independent timeout or default verdict |
-| `human_verdict_recorded` | `gateId`, `gateAttempt`, `nodeId`, `verdict` (`pass`, `fail`), bounded safe `reason`, `requestedSeq`, `decidedBy`; exactly once for the matching outstanding request |
+| `human_verdict_recorded` | `commandId`, `commandPayloadSha256`, `gateId`, `gateAttempt`, `nodeId`, `verdict` (`pass`, `fail`), bounded safe `reason`, `requestedSeq`, `decidedBy`; exactly once for the matching outstanding request |
 | `error` | `code`, bounded redaction-safe template `message` with no raw adapter/error text, `boundary` (`engine`, `writer`, `adapter`, `tmux`, `schema`, `operator`, `evaluator`), `errorScope` (`run`, `node`, `gate`, `slot`, `tool`), conditional graph identity, `recoverable`, `relatedSeq` |
 | `run_blocked` | stable bounded redaction-safe `reason`, `blockScope` (`run`, `node`, `gate`), conditional `blockedNodeId`/`blockedGateId`, `resumeAllowed`, `resumePolicy` (`retry_failed_producer`, `reattach_only`, `new_run_required`), `openDispatches`, `retryTargets`, conditional `nextEpoch`; exact policy invariants below are writer-enforced |
-| `run_cancel_requested` | bounded redaction-safe `reason`, `requestedBy`, exact `openNodeAttempts`, exact `openSlotDispatches`, exact `openToolLeases`; unique per run, appended/fsynced before cancellation work, and makes the writer reject new dispatches, launches, results, outputs/routing, ordinary replay/rerun, and resume |
+| `run_cancel_requested` | `commandId`, `commandPayloadSha256`, bounded redaction-safe `reason`, `requestedBy`, exact `openNodeAttempts`, exact `openSlotDispatches`, exact `openToolLeases`; unique per run, appended/fsynced before cancellation work, and makes the writer reject new dispatches, launches, results, outputs/routing, ordinary replay/rerun, and resume |
 | `run_canceled` | `cancelRequestSeq`, bounded redaction-safe `reason`, `requestedBy`, exact `nodeAttemptDispositions`, exact `slotDispatchDispositions`, exact `reconciledToolLeases`, `final=true`; all three arrays exactly cover the named request snapshots |
 | `run_failed` | `code`, bounded redaction-safe `reason`, `unrecoverable`, `relatedSeq`, typed `failureCause`, exact `nodeAttemptDispositions` covering every still-open node attempt (possibly empty), exact `slotDispatchDispositions` covering every still-open slot dispatch (possibly empty), exact `toolLeaseDispositions` covering every still-open Tool lease (possibly empty), `final=true` |
 | `run_succeeded` | optional `summaryArtifactId`, stable-order `outputArtifactIds`, `final=true`; every id is already durably registered, and the event is invalid while any node attempt, slot dispatch, Tool lease, or host target lease for this run remains open, or any never-started node has an input delivery on a taken path |
@@ -961,6 +1357,18 @@ Structured payload fields use these shapes:
   `gate_feedback`; the root-derived form is durably routable only under its
   restricted provenance; exact `unavailable`/`error` outcomes remain
   non-delivered. The redacted form is evidence, never an input.
+- The two synthesized ordinary-Formation projections are byte-exact constants.
+  `formationNeedsReviewProjection` is exactly
+  `{availability="available",exact=true,payload={kind="unavailable",
+  code="formation_needs_review",message="Formation requires review",
+  retryable=true}}`. `invalidFormationOutputsProjection` is exactly
+  `{availability="available",exact=true,payload={kind="error",
+  code="invalid_formation_outputs",
+  message="Formation outputs do not match the declared ports",retryable=true}}`.
+  No locale, parser text, adapter text, or alternate message participates in
+  their canonical hashes. `retryable=true` makes either completed producer
+  eligible only for the existing explicit whole-producer retry selection after
+  quiescence; neither routes an edge or retries automatically.
 - `executionInputRef`: ephemeral `{durableInputRef, authoritativePayload}` used
   only during fresh execution; it is never written to the ledger or API.
 - `executionOutput`: ephemeral `{durableOutput, authoritativePayload}` under the
@@ -1010,6 +1418,37 @@ Structured payload fields use these shapes:
   routing authority.
 - `judgeResult`: exactly `{verdict, reason, evidence}` where `verdict` is `pass`
   or `fail`; it is bounded Gate metadata, not a workflow payload.
+- `turnInputs`: exactly `{nodeStartedSeq,priorTurnResults}` with no unknown keys.
+  `nodeStartedSeq` names the same Formation attempt's unique `node_started` and
+  therefore its frozen ordered input refs. `priorTurnResults` is an ordered array
+  of exactly `{slotResultSeq,turnResultSha256}`; every sequence names an earlier
+  result in that attempt and the hash exact-matches it. The fixed phase rule below
+  determines the complete array; missing, extra, duplicate, or reordered entries
+  are invalid before dispatch.
+- `slot-turn-result-jcs-v1`: RFC 8785 canonical UTF-8 JSON over exactly
+  `{turnKey,phase,status,turnPayload,outputs,reportArtifactId,artifactIds,
+  diffArtifactIds}` with no unknown keys or trailing newline. `turnKey`, `phase`,
+  `status`, and `turnPayload` are required, and phase exact-matches dispatch.
+  Missing optional `reportArtifactId` normalizes to `""`, missing `outputs` to `{}`, and
+  missing artifact arrays to `[]`. `turnPayload` and every output are durable
+  safe `PayloadProjection` values, output keys are stable declared port ids,
+  and arrays preserve stable order. `turnResultSha256` hashes those exact
+  canonical bytes. The parser builds this value once from the bounded closed
+  turn before `slot_result`; the immutable graph snapshot's fixed
+  formation-type rule consumes only ordered immutable turn results after a
+  crash.
+- `formation-result-jcs-v1`: RFC 8785 canonical UTF-8 JSON over exactly
+  `{status,outputs,outputHashes,reportArtifactId,artifactIds,diffArtifactIds,
+  contributingSlotResultSeqs}` with no unknown keys or trailing newline.
+  Missing optional id/array values normalize to `""`/`[]`; output object keys
+  are stable declared port ids, `outputHashes` has exactly the same keys, arrays
+  preserve their declared stable order, and every output is a durable safe
+  `PayloadProjection`. Status is exactly `done`, `needs-review`, or `failed` under
+  the fixed turn mapping. Each `outputHashes[portId]` is the SHA-256 of RFC 8785
+  canonical UTF-8 JSON for that exact closed `outputs[portId]` projection with
+  no trailing newline. `resultSha256` hashes
+  those exact bytes. Redact=true can retain only this safe projection; discarded
+  raw output is never reconstructed from the hash.
 - `gateKindResult`: exactly `{kind, verdict, reason, evidence,
   evaluatedInputRef, resultSha256, relatedSeqs}`. For `kind=code`,
   `relatedSeqs=[]` and the event also exact-matches its Gate binding/input/profile/
@@ -1210,7 +1649,7 @@ unavailable immediately on a failed check; the reconciler appends
 Exactly one durable registration source establishes each artifact id, initial
 projection, and source. Slot, Gate, and system artifacts use
 `artifact_attached`, appended and fsynced before any later `slot_result`,
-`node_output`, `judge_result`, `gate_verdict`, display evidence, diff, or
+`formation_result`, `node_output`, `judge_result`, `gate_verdict`, display evidence, diff, or
 `PortPayload` reference. New Tool artifacts use the sole same-event exception:
 `tool_result.artifactRegistrations`. Before accepting that event, the writer
 validates every new id, source, descriptor, and all same-event references; one
@@ -1221,6 +1660,57 @@ embedded projections are non-authoritative caches: at their event sequence they
 must equal the latest registered/observed projection and cannot establish or
 mutate identity. Later observations supersede projection without rewriting
 earlier events.
+
+For an ordinary workflow Formation, each bounded closed turn is parsed once and
+its exact durable payload/declared-output projections are fsynced in a hashed
+`slot-turn-result-jcs-v1` envelope before the target is released. The immutable
+graph snapshot fixes the turn rule: `solo` has one sole-slot terminal turn;
+`flow` runs slots in persisted order, each after the first consuming the prior
+turn payload, and its last slot is terminal; `peer` runs one turn per slot in
+persisted order then first-slot terminal `peer-facilitator`; `orchestrated` runs
+controller `leader-plan`, one `leader-worker` turn per non-controller slot in
+persisted order, then controller terminal `leader-agentic`. Every turn is a
+coordinator-owned leased dispatch carrying closed `turnInputs={nodeStartedSeq,
+priorTurnResults}`. The prior array contains exact ordered
+`{slotResultSeq,turnResultSha256}` values: empty for `solo`, first `flow-step`,
+each `peer-turn`, and `leader-plan`; only the immediate predecessor for later
+`flow-step`; every peer turn in persisted slot order for `peer-facilitator`;
+only `leader-plan` for each worker; and plan followed by every worker in
+persisted order for `leader-agentic`. Every phase also consumes the frozen node
+inputs named by `nodeStartedSeq`. No agent directly mutates another bound tmux
+target. Dynamic peer/leader scheduling requires an authority-schema bump.
+
+Only an `ok` terminal turn may carry a non-empty declared-port `outputs` map, and
+it must contain all and only declared outputs. Non-terminal and non-`ok` turns
+use `outputs={}`. All required `ok` turns map to `done`; first `error` stops and
+maps to `failed`, repeating its engine-normalized non-routable error
+`turnPayload` at every declared port; first `needs-review` stops and maps to
+`needs-review`, repeating exact `{availability="available",exact=true,
+payload={kind="unavailable",code="formation_needs_review",
+message="Formation requires review",retryable=true}}`. A bounded closed capture
+with valid terminal sentinel but invalid output schema becomes exact
+`{availability="available",exact=true,payload={kind="error",
+code="invalid_formation_outputs",message="Formation outputs do not match the declared ports",
+retryable=true}}` with `outputs={}`; timeout/unclosed output has no
+result or ordinary release. Pre-result resource block uses `run_blocked` without
+a Formation result. The completed successful schedule or first non-`ok` prefix
+and output validation precede one unique fsynced
+`formation_result` with the complete safe canonical `outputs` map,
+`outputHashes`, exact contributing sequences, and only artifact ids already
+registered under the rule above. The deciding last turn supplies the report;
+`artifactIds`/`diffArtifactIds` are the stable first-seen union over the prefix.
+`node_output` exact-matches its result
+sequence/hash, status, and output/artifact fields. If a crash occurs before the
+Formation result, the current fenced owner derives it once from the slot-turn
+envelopes; if it occurs after, the owner appends the missing output once. Neither
+path reparses capture or redispatches a completed slot. For Redact=true, a paired
+exact value may remain in process memory across safe result/output/Gate/join/
+dispatch fsyncs until every scheduled intra-Formation turn consumer and every
+taken-edge consumer has sent once or become durably non-deliverable and no
+Gate/retry path retains it; it is then erased, while
+cancellation/finality/process loss always discards it. Recovery needing that
+discarded projection terminates
+`redacted_input_unavailable` instead of reconstructing or substituting data.
 
 The raw writer-only ledger is never a browser authority surface. Run detail,
 bounded event, and SSE responses sanitize every historical artifact occurrence
@@ -1491,15 +1981,17 @@ redacted input appends the corresponding terminal error before private records
 are retired. Recovery never re-resolves the board's version constraint or
 substitutes a newer profile.
 
-Cancellation starts with an appended and fsynced `run_cancel_requested`. That
+Canonical cancel starts with an appended and fsynced
+`run_cancel_requested` bound to its command id/hash. That
 intent snapshots every open node attempt, slot dispatch, and Tool lease, stops new dispatch, and forbids ordinary
 replay/rerun even if the coordinator crashes before cancellation completes. The
 writer also rejects new `tool_process_launch`, `tool_result`, `node_output`, edge
 routing, or other execution authority except cancellation reconciliation and its
 final event.
-Only the first accepted request appends this event; a repeated abort is
-idempotent against the same canceling/final state and cannot replace any
-snapshot. `run_canceled.cancelRequestSeq` names that unique event. Every
+Only the first accepted request appends this event; a repeated cancel, `abort`,
+or `stop` alias normalizes before hashing and is idempotent against the same
+canceling/final state. It cannot replace any snapshot.
+`run_canceled.cancelRequestSeq` names that unique event. Every
 snapshotted attempt, including a Gate waiting for human input or evaluating
 without an open slot/Tool, receives a canceled/non-authorizing disposition; a
 later human decision is rejected.
@@ -1717,8 +2209,8 @@ Replay handles open dispatch leases as follows:
    `resumePolicy=new_run_required`, and no `nextEpoch`; derive node/run scope
    from `U'` by the same rule. The writer rejects added, changed, or already
    proven dispatch identities. That block revokes result, output, and routing
-   authority only for `U'`; it accepts only abort/finality and non-authorizing
-   inspection observations. The old run remains blocked until aborted. A
+   authority only for `U'`; it accepts only cancel/finality and non-authorizing
+   inspection observations. The old run remains blocked until canceled. A
    separately started run is independent and neither closes nor supersedes any
    old lease; replacement-target rebinding and unresolved-lease redispatch are
    never same-run operations.
@@ -1765,13 +2257,15 @@ events; projection changes only after those events exist.
 
 Run projection:
 
-- `run_started` initializes status `running`.
+- `run_started` initializes status `queued`. Unique valid fenced `run_activated`
+  projects `running` and is required before graph/dispatch events; direct cancel
+  or final events may close queued work without activation.
 - `run_blocked` projects status `blocked` for its epoch and stops automatic
   dispatch. Explicit resume may append a higher-epoch event only when
   `resumeAllowed=true`, in which case `nextEpoch` is required;
   `resumePolicy=new_run_required` omits `nextEpoch`, remains blocked, and rejects
   resume. When such a block retains non-empty `openDispatches`, it also revokes
-  those leases' result/output/routing authority; only abort/finality and
+  those leases' result/output/routing authority; only cancel/finality and
   non-authorizing inspection observations remain acceptable.
 - `run_resumed` projects status `running` for the new epoch and records the
   blocked sequence being resumed.
@@ -1835,7 +2329,11 @@ Node projection:
 - `slot_binding_observed` updates inspection health for the frozen binding and
   never changes its target identity.
 - `slot_dispatch` marks a slot in flight.
-- `slot_result` marks that slot complete, failed, or needs review.
+- `slot_result` marks that slot complete, failed, or needs review and supplies
+  its immutable parsed turn envelope for deterministic Formation continuation.
+- `formation_result` closes ordinary Formation aggregation and supplies the
+  exact status/output/artifact result from which a missing `node_output` is
+  materialized without capture reparse or redispatch.
 - `tool_dispatch` marks one pure Tool lease in flight.
 - `tool_process_launch` records one bounded, supervisor-fenced process generation
   before spawn; it does not close the lease.
@@ -1882,6 +2380,12 @@ Node projection:
 The API is the shared UI/CLI contract. Board and layout write endpoints use
 `If-Match` with the relevant ETag/revision. Persona-card edits use the shared
 writer's stale-read conflict detection. Write conflicts return `409`.
+Every runtime mutation requires a client-stable `commandId`; its canonical
+request hash is journaled privately, and the response is the durable applied or
+rejected receipt. The same id/hash returns that receipt, while the same id with
+another hash fails `command_id_conflict`. Runtime reads and mutations fail loud
+when this server is not the current workspace coordinator; no client reads the
+private ledger directly.
 
 | Route | Purpose |
 |---|---|
@@ -1894,13 +2398,15 @@ writer's stale-read conflict detection. Write conflicts return `409`.
 | `PATCH /api/formations/boards/{boardId}` | Field/id-addressed board mutations. |
 | `GET /api/formations/boards/{boardId}/layout` | Read layout sidecar plus ETag. |
 | `PATCH /api/formations/boards/{boardId}/layout` | Layout-only mutations by stable ids. |
-| `POST /api/formations/runs` | Start from a Mission/bead root or isolated Formation root; returns `runId`. |
+| `POST /api/formations/runs` | Journal a `start` command, preflight, fsync private authority and `run_started`, then return the durable receipt/run id without waiting for graph execution; full-queue rejection is durable before run creation. |
+| `GET /api/formations/runs` | List runs from the coordinator's bounded sanitized projection, including durable queued status/order. |
 | `GET /api/formations/runs/{runId}` | Project current status plus hash-linked safe binding/artifact projections from private authority; no raw route or private path. |
 | `GET /api/formations/runs/{runId}/events` | Bounded sanitized event projection; never raw ledger bytes/private paths, and every artifact id is hydrated through latest authorization. |
 | `GET /api/formations/runs/{runId}/stream?since=<seq>` | Sanitized SSE projection with `Last-Event-ID`; revoked artifact refs and private authority never replay. |
-| `POST /api/formations/runs/{runId}/abort` | Append/fsync cancellation intent, stop dispatch, soft-interrupt exact slots, replace target occupancy only with certified `final_quiescent` receipts or retain exact terminal holds/quarantines, and fence/clean Tool leases; finish with `run_canceled` or fail closed with `run_failed(code=tool_process_not_quiescent)`; never kills tmux sessions. |
-| `POST /api/formations/runs/{runId}/resume` | Resume an exact `retry_failed_producer` block or make the one bounded `reattach_only` attempt; human Gate decisions use their verdict endpoint in the same epoch, and unmatched leases are never redispatched. |
-| `POST /api/formations/runs/{runId}/gates/{gateId}/verdict` | Human verdict for one waiting gate instance. |
+| `POST /api/formations/runs/{runId}/cancel` | Journal canonical cancel, append/fsync cancellation intent, stop dispatch, soft-interrupt exact slots, reconcile target/Tool leases, and finish with `run_canceled` or fail closed with `run_failed(code=tool_process_not_quiescent)`; never kills tmux sessions. |
+| `POST /api/formations/runs/{runId}/abort` | Compatibility alias for `/cancel`; normalize before command hashing and never create a second cancel snapshot or state. |
+| `POST /api/formations/runs/{runId}/resume` | Journal resume for the exact blocked sequence, then resume one `retry_failed_producer` or bounded `reattach_only` path; unmatched leases are never redispatched. |
+| `POST /api/formations/runs/{runId}/gates/{gateId}/verdict` | Journal one verdict exact-matching the outstanding human-request sequence. |
 
 Run operations target `runId` once a run exists. Mission, Formation, or bead
 selectors are allowed only when they resolve to exactly one active run;

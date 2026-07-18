@@ -4,7 +4,7 @@ This `spec/` is the supporting **S0 behavioral baseline** for the agent-orchestr
 preserves the Gherkin-first intent recorded in [DECISIONS-LOCKED.md](../DECISIONS-LOCKED.md), but it
 does not override current root specs, current code, the
 [source-truth index](../../docs/source-truth-index.md), or later accepted ADRs. Scenarios that
-conflict with ADR-0005 or ADR-0006 must be updated before they can serve as implementation
+conflict with ADR-0005, ADR-0006, or ADR-0007 must be updated before they can serve as implementation
 acceptance.
 
 The Gherkin `.feature` files describe intended cross-surface behavior. The `archon` CLI,
@@ -34,14 +34,17 @@ Each scenario is tagged with the surface(s) it derives:
 | Tag | Meaning |
 |---|---|
 | `@cli` | An `archon` CLI behavior — read the verbs/flags out of these. |
+| `@api` | A coordinator HTTP/API behavior shared by CLI and UI clients. |
 | `@ui` | A React UI gesture/behavior (the prototype's interaction model). |
 | `@file` | A persisted-state guarantee (TOML definition / NDJSON ledger). |
+| `@security` | A fail-closed authority, redaction, or exposure boundary. |
 | `@layout` | A presentation-only effect (node x/y, wire lanes) — sidecar, never structure. |
 | `@e2e` | Whole-system acceptance. |
 
 A capability typically appears as a UI gesture **and** an equivalent `archon` verb **and** a file
-effect — because the UI and CLI are two clients of one writer (D1), and structure must round-trip
-files↔CLI↔UI (D7).
+effect. UI and Archon definition edits use the one shared definition serializer (D1), and structure
+must round-trip files↔CLI↔UI (D7). Schema-2 runtime commands instead go through ADR-0007's sole
+fenced workspace coordinator.
 
 ---
 
@@ -111,9 +114,15 @@ archon mission list [projected]
 archon run status <runId|unique-selector>
 archon run logs   <runId|unique-selector> [--node <id>] [--follow]
 archon run resume <runId>
-archon run abort  <runId>
+archon run cancel <runId> [projected]              # canonical target command
+archon run abort  <runId>                          # current spelling; target alias normalizes to cancel
 archon run list [projected]
 ```
+
+Workflow-definition authoring, validation, and inspection remain available
+offline. Run start/resume/cancel/verdict and run list/status/log/follow require
+the coordinator's sanitized API projection; Archon does not read private run
+authority or fall back to a local engine.
 
 Agent tag flags target `[card].tags`: `--capable`, `--add-capability`, and
 `--remove-capability` operate on bare capability tags, while `--personality x`
@@ -142,7 +151,7 @@ lanes are **UI/layout** only and have no CLI verbs in stage 1.
   input/output port at creation-order N." The writer resolves the alias once to the stable `port_…` id
   and holds that id through reloads and port removals.
 - **ID prefixes (ULID-based, self-describing):** `brd_` board · `mis_` mission · `fmn_` formation ·
-  accepted-target `tool_` · `slot_` · `gate_` · legacy schema-1 `ver_` verification · `port_` · `edge_` · `run_`. Ids round-trip
+  accepted-target `tool_` · `slot_` · `gate_` · legacy schema-1 `ver_` verification · `port_` · `edge_` · `run_` · private `wsa_` workspace authority · client `cmd_` runtime command. `wsa_` and `cmd_` use canonical uppercase ULID grammar `^(wsa|cmd)_[0-7][0-9A-HJKMNP-TV-Z]{25}$`; command ids are validated before path construction. Ids round-trip
   files↔CLI↔UI; edits are diffs against existing ids, never full rewrites.
 
 Schema-1 inline verification is read-only compatibility/migration input. The
@@ -153,17 +162,27 @@ retires the feature.
 ## Ledger event vocabulary (NDJSON, append-only; status is projected)
 
 ```
-run_started · node_waiting · node_input_ignored · node_started · slot_binding_observed · slot_dispatch · slot_result ·
-tool_dispatch · tool_process_launch · tool_result · node_output ·
+run_started · run_activated · node_waiting · node_input_ignored · node_started · slot_binding_observed · slot_dispatch · slot_result ·
+formation_result · tool_dispatch · tool_process_launch · tool_result · node_output ·
 gate_evaluating · gate_kind_result · judge_result · judge_attempt_failed · gate_verdict · artifact_attached · artifact_observed ·
 escalation_raised · human_input_requested · human_verdict_recorded ·
 error · run_blocked · run_resumed · run_cancel_requested · run_canceled · run_failed · run_succeeded
 ```
 
 Every event uses the envelope in [`contracts.md`](contracts.md). `run_started`
-includes run id, board id/revision, opaque authority id, exact graph/private-
-binding/safe-projection hashes, conditional Mission id, monotonic sequence,
-actor, and initial attempt/epoch; it exposes no private snapshot path or bytes.
+includes run id, board id/revision, opaque workspace/run authority ids,
+admission command id/hash, workspace admission sequence, current writer fence,
+exact admission-policy revision/hash, graph/private-binding/safe-projection hashes, conditional Mission id,
+monotonic event sequence, actor, and initial attempt/epoch; it exposes no
+private snapshot path or bytes. `formation_result` durably closes ordinary
+Formation aggregation before `node_output`, so recovery never reparses mutable
+capture or redispatches completed work.
+An admitted run with only `run_started` projects `queued`; its unique fenced
+`run_activated` binds the exact immutable activation-policy revision/hash,
+projects `running`, and precedes graph/dispatch events.
+Every activated non-final run retains its `maxActiveRuns` slot through blocked,
+human-waiting, and canceling states until execution finality in this first
+contract.
 Execution-final events are exactly `run_succeeded`, `run_failed`, and
 `run_canceled`. Non-authorizing binding/artifact observation events may follow for inspection, but
 cannot reopen an epoch, change outcome, or authorize dispatch. `run_blocked`
@@ -173,7 +192,7 @@ explicitly with `run_resumed`.
 ## Sentinels (completion + escalation over tmux, no native ACK)
 
 ```
-<<<CHROTE-DONE     run-id="…" dispatch-id="…" target-lease-id="…" status="ok|error" artifact="…">>>
+<<<CHROTE-DONE     run-id="…" dispatch-id="…" target-lease-id="…" status="ok|error|needs-review" artifact="…">>>
 <<<CHROTE-ESCALATE run-id="…" reason="…">>>
 ```
 A completion sentinel must exact-match the active run, dispatch, and host target
@@ -188,10 +207,19 @@ never executed.
 <workspace>/.formations/boards/<board>.formation.toml   # definition (structure) — TOML
 <workspace>/.formations/layout/<board>.layout.toml      # presentation (x/y, lanes) — sidecar
 <workspace>/.formations/artifacts/<run-id>/...          # registered sanitized files only
-<chrote-data>/formations/runs/<run-id>/events.ndjson    # writer-only canonical ledger
-<chrote-data>/formations/runs/<run-id>/graph.snapshot.toml
-<chrote-data>/formations/runs/<run-id>/bindings.private.toml
-<chrote-data>/formations/runs/<run-id>/refs/            # private materializations/raw obligations
+<chrote-data>/formations/workspaces/registry.lock
+<chrote-data>/formations/workspaces/registry.private.json
+<chrote-data>/formations/workspaces/<workspace-authority-id>/workspace.bootstrap.json
+<chrote-data>/formations/workspaces/<workspace-authority-id>/workspace.private.json
+<chrote-data>/formations/workspaces/<workspace-authority-id>/owner.lock
+<chrote-data>/formations/workspaces/<workspace-authority-id>/owner.private.json
+<chrote-data>/formations/workspaces/<workspace-authority-id>/admission-policies/<policy-rev>.json
+<chrote-data>/formations/workspaces/<workspace-authority-id>/commands/  # private command journal
+<chrote-data>/formations/workspaces/<workspace-authority-id>/runs/<run-id>/events.ndjson
+<chrote-data>/formations/workspaces/<workspace-authority-id>/runs/<run-id>/graph.snapshot.toml
+<chrote-data>/formations/workspaces/<workspace-authority-id>/runs/<run-id>/bindings.private.toml
+<chrote-data>/formations/workspaces/<workspace-authority-id>/runs/<run-id>/refs/
+<chrote-data>/formations/workspaces/<workspace-authority-id>/quarantine/
 # .formations/board.ndjson (notice board) — DEFERRED
 ```
 Canonical run authority is outside every generic Files root. Run APIs expose
@@ -202,7 +230,8 @@ Formations is now always-on; the historical `chrote-formations` and
 Executor-specific environment guards remain a safety ladder, not a product
 feature switch. Rollback preserves `.formations/` evidence and reverts code; it
 does not delete the canonical workspace data. The shared formations package is
-the **single writer** of definition files.
+the **single serializer** of definition files; the current fenced server
+coordinator is the sole semantic writer of schema-2 runtime authority.
 
 ---
 
@@ -234,6 +263,6 @@ the **single writer** of definition files.
 ## Current continuation
 
 The historical S1/S2 sequencing has been superseded: current main already has a
-real Formations foundation. ADR-0005 and ADR-0006 constrain the stabilization and
+real Formations foundation. ADR-0005, ADR-0006, and ADR-0007 constrain the stabilization and
 mixed-workflow slices tracked under Beads epic `ctx-ug7`. Each target becomes a
 current claim only after its owning implementation and certification gates pass.

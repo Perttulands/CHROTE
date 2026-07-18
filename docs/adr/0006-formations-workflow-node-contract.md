@@ -1,7 +1,7 @@
 # ADR-0006: Formations Has Four Explicit Workflow Node Kinds
 
 ## Status
-Accepted target; implementation is incomplete
+Accepted target; implementation is incomplete; runtime ownership amended by ADR-0007
 
 ## Context
 The current Formations board model has missions, agent formations, gates, stable
@@ -105,9 +105,10 @@ rechecks them. Generic Files cannot list, read, mutate, rename, or delete this
 tree. Run/event/SSE APIs expose sanitized projections, and only currently
 authorized registered artifacts may use the existing File Peek renderer. A
 same-named workspace file, altered export, raw ledger record, or pending cleanup
-locator is never authority. Planned ADR-0007 (`ctx-ug7.4`) will own the detailed
-single-writer admission/fencing decision; this ADR defines the accepted boundary,
-and `ctx-ug7.6` owns implementation.
+locator is never authority. ADR-0007 fixes one fenced workspace coordinator,
+durable command admission, bounded queueing, and authority-schema compatibility;
+this ADR defines the per-run/node/resource boundary, and `ctx-ug7.6` owns their
+combined implementation.
 
 The graph snapshot may copy exact Mission objectives, Formation briefs, and Gate
 criteria only when its embedded, hash-covered `authoredConfigManifest`
@@ -125,10 +126,31 @@ already durable in the board and may outlive later edits/deletion.
 Runtime/external values and composed prompts are never covered by the exception.
 
 A private authority directory without valid seq-1 `run_started` is not admitted
-and sends nothing. Startup recovery cleans/fsyncs every pending raw target and
+and sends nothing. A supported current fenced owner validates the historical
+origin fence, claims cleanup with its higher state fence, then cleans/fsyncs every pending raw target and
 obligation before deleting the orphan tree and fsyncing its parent. Unprovable
 cleanup/identity quarantines it as non-authorizing with no public bytes or replay
 handle; it is never adopted as a run.
+
+An ordinary Formation parses each bounded closed turn once and fsyncs its
+redaction-safe `slot-turn-result-jcs-v1` payload/output envelope and hash inside
+`slot_result` before releasing that target. From those immutable turn results
+and the immutable graph snapshot's fixed formation-type rule it derives one
+fsynced `formation_result`
+before `node_output`. That result carries the complete safe canonical `outputs`
+map, `outputHashes`, registered artifact identities, contributing `slot_result`
+sequence ids, and a hash over the closed `formation-result-jcs-v1` envelope.
+Recovery derives a missing result or materializes a missing
+`node_output` from that immutable result and never reparses mutable capture or
+resends completed work. ADR-0007 fixes the bounded solo/flow/peer/orchestrated
+turn schedules, exact ordered prior-result seq/hash inputs for every dispatch,
+coordinator-mediated worker dispatches, first-non-ok status mapping, and closed
+fixed needs-review/invalid-output projections. With Redact=true, only the safe
+projection is durable; a fresh paired raw value may survive safe fsyncs in
+process memory until all scheduled internal and taken-edge consumers send or
+become non-deliverable.
+If recovery later requires discarded raw bytes, the run terminates with
+`redacted_input_unavailable`.
 
 Tool definitions store only a stable profile id and version constraint plus
 modeled, non-secret parameters. Run start resolves and freezes the exact profile
@@ -219,7 +241,7 @@ freezes the complete set of launched Tool leases that miss their persisted
 deadline and sorts `(effectiveDeadlineAt, dispatchSeq, toolLeaseId)`. The first
 alone selects failure cause; all others are abandoned/private-cleanup-owned.
 Callback, process-exit, goroutine, and map order never decide.
-An abort first appends/fsyncs `run_cancel_requested`, whose exact open-attempt,
+Canonical cancel first appends/fsyncs `run_cancel_requested`, whose exact open-attempt,
 open-slot, and open-lease snapshots stop new dispatch/replay and make the writer reject new launches,
 results, outputs, routing, or other execution authority except cancellation
 reconciliation/finality. It soft-interrupts only a frozen target proven to host
@@ -237,6 +259,9 @@ failure and may continue fencing. Only after later quiescence may it remove or
 quarantine an unredacted root; a redacted root must be sanitized/removed and the
 cleanup fsynced before its obligation is deleted. Scope records are then deleted,
 with no promotion, result, rerun, or further execution event.
+Current `abort`, plus any legacy `stop` spelling, becomes a compatibility alias:
+the coordinator normalizes either to canonical cancel before request hashing,
+so an alias cannot create a second command or state transition.
 Every execution-final event revokes all remaining node-attempt, slot, and Tool
 authority. Before accepting finality, the writer enumerates every host target
 occupancy record and non-occupying release receipt for the run. A result-closed
@@ -900,7 +925,10 @@ This is accepted target behavior, not a claim that the current binary implements
 it. Current main has Mission, Formation, and Gate nodes; untyped formation ports;
 legacy output-ref fields; partial name-level session bindings; and no Tool node,
 typed feedback payload, exact pass-through provenance, or exact run-bound pane
-target.
+target. API and Archon also construct peer synchronous engines, persist run files
+inside the workspace, and lack the workspace command journal, owner fence,
+durable queue, and `formation_result` recovery boundary required here and by
+ADR-0007.
 
 ## Enforcement
 - Shared structural validation rejects unknown endpoints, incompatible payload
@@ -928,9 +956,11 @@ target.
   private-before-public lease lifecycle, result-closed reconciliation, finality
   accounting, certified closure proofs, acquisition-time fingerprint recheck,
   Gate bundle replay, and timeout/complete-set reattach state machine.
-- `ctx-ug7.4` defines, and `ctx-ug7.6` implements, host-private hashed canonical
-  run authority, generic Files denial, pending-redaction isolation, binding
-  integrity, and coordinator enforcement. `ctx-7i1` is the sole implementation
+- `ctx-ug7.4` defines the workspace command, owner-lease/fence,
+  `formation_result`, and authority-schema contracts. `ctx-ug7.6` implements
+  those contracts together with host-private hashed canonical run authority,
+  generic Files denial, pending-redaction isolation, binding integrity, and
+  coordinator enforcement. `ctx-7i1` is the sole implementation
   owner of sanitized event/binding/artifact projection and historical/SSE
   revocation; coordinator/API entrypoints must consume it and never bypass it.
   `ctx-ug7.8` implements sealed Tool inputs and the certified deterministic

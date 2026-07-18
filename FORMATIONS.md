@@ -27,16 +27,17 @@ AI organization:
 
 - persistent personas with identities, capabilities, harnesses, and standards;
 - temporary or reusable teams assembled for specific work;
-- work that must be started, observed, redirected, gated, resumed, or aborted;
+- work that must be started, observed, redirected, gated, resumed, or canceled;
 - human judgment entering at mission/gate/taste moments, not every substep;
 - agent-native automation that is scriptable and reproducible.
 
 Formations gives that organization a concrete operating model:
 
 - humans see and steer the work spatially in CHROTE;
-- agents and scripts author and execute the same work through `archon`;
-- both surfaces round-trip through the same files, shared Go package, and run
-  ledger.
+- agents and scripts author the same definitions through `archon` and submit
+  runtime commands to the CHROTE coordinator;
+- both surfaces round-trip definitions through the same files/shared Go package
+  and inspect the same sanitized canonical run projection.
 
 ## Collaboration model
 
@@ -47,30 +48,22 @@ CHROTE/Archon keeps the work reproducible, bounded, and observable.
 
 - `solo` is one agent working with a clear brief and output contract.
 - `flow` is ordered handoff where the sequence itself is the coordination model.
-- `peer` is collaborative work without hierarchy: agents share the brief, use a
-  shared run plane (for example an append-only chat/blackboard file) to converse,
-  inspect or critique each other's work as the available tools allow, and
-  converge on a synthesis or set of artifacts. Archon should seed the first turn
-  with the task and enough team context to get the group moving; peers then read
-  the shared plane, decide what to say or do next, write their contribution, and
-  may wait, inspect sibling sessions with scoped tools, or continue work. A
-  lightweight facilitator may nudge stuck peers, detect loops, or surface
-  problems, but it must not become a hidden hierarchy or fixed choreography.
-- `orchestrated` is leader-driven collaboration: one appointed agent owns team
-  coordination, but it should steer through practical affordances such as
-  prompting worker sessions, inspecting/capturing session state, collecting
-  artifacts, using monitors or subagents to surface key worker status, requesting
-  revisions, running or requesting checks, and deciding when the formation is
-  ready to finish. Those affordances may be native tools the agent already uses
-  well, such as `tmux` CLI against scoped session names, or Archon helpers where
-  formation context, lookup, provenance, or UI projection adds value.
+- Schema-2 `peer` v1 is one bounded deterministic collaborative round: each slot
+  contributes in persisted order, then the first persisted peer performs the
+  facilitator synthesis over those contributions. It has no untracked shared
+  chat file and no direct sibling-session mutation or capture.
+- Schema-2 `orchestrated` v1 is one bounded leader round: the unique controller
+  produces a plan, each non-controller slot performs one coordinator-dispatched
+  worker turn in persisted order, then the controller performs the terminal
+  synthesis. Every worker prompt, result, artifact, and target use ordinary
+  fenced coordinator/target-lease authority; the controller never drives another
+  bound tmux pane directly.
 
-Do not treat peer or orchestrated formations as a rigid choreography. Archon and
-the runtime provide the team roster, scoped session mapping, redaction/output
-caps, artifact collection, and ledger evidence; the agents supply the judgment
-about how to collaborate. Do not build Archon commands that merely duplicate
-standard terminal skills unless they add formation semantics, safety, or durable
-evidence.
+Richer agent-native peer conversation, shared planes, dynamic worker requests,
+revision loops, and scoped sibling inspection remain product direction, not this
+authority contract. They require an explicit versioned action/termination,
+redaction, and replay design before use. The bounded v1 still leaves the content
+and judgment of each turn to the agents while making scheduling auditable.
 
 ## Core nouns
 
@@ -96,7 +89,9 @@ Current main implements Mission, Formation, and Gate nodes, stable Formation
 ports, fixed Mission/Gate ports, file-backed connections, agent execution, and
 run ledgers. It does not implement Tool nodes, typed port kinds, exact
 pass-through provenance, typed gate feedback, or exact run-bound pane targets.
-Its workspace run files are not yet the accepted security boundary.
+Its API and Archon each construct a synchronous local run engine, its `abort`
+paths append final cancellation directly, and its workspace run files are not
+yet the accepted ownership/security boundary.
 
 ADR-0006 accepts those missing pieces as the mixed-workflow target. A board will
 combine Mission entry, Formation agent work, Tool transformation, and Gate
@@ -104,14 +99,15 @@ evaluation without reducing them to generic plugins. This section is a contract
 for the landing slices, not a claim that current main already supports Tool
 authoring or exact terminal Peek.
 
-In the accepted target, canonical ledger, graph snapshot, private bindings,
-sealed Tool inputs, and pending raw-redaction roots live under the writer-only
-CHROTE data root outside generic Files roots. `run_started` binds their exact
+In the accepted ADR-0007 target, one fenced CHROTE server coordinator is the sole
+semantic runtime writer for each configured workspace. Canonical command journal,
+ledger, graph snapshot, private bindings/results, sealed Tool inputs, and pending
+raw-redaction roots live under the writer-only CHROTE data root outside generic
+Files roots. `run_started` binds command/workspace/fence identity plus their exact
 hashes. Run/event APIs expose sanitized projections, and File Peek receives only
 currently authorized registered artifacts; a workspace substitute or historical
-revoked ref is never replay/read authority. This storage/ownership landing is
-the accepted target here; planned ADR-0007 (`ctx-ug7.4`) will own its detailed
-storage decision, and `ctx-ug7.6` owns coordinator enforcement.
+revoked ref is never replay/read authority. `ctx-ug7.6` owns coordinator
+enforcement.
 
 The private graph snapshot may copy exact Mission objectives, Formation briefs,
 and Gate criteria only when its embedded, hash-covered
@@ -129,10 +125,59 @@ Runtime/external values and every composed prompt remain inside redaction and ar
 never admitted through that exception.
 
 A private authority directory without a valid seq-1 `run_started` is not a run
-and sends nothing. Startup recovery first cleans/fsyncs every pending raw target
+and sends nothing. A supported current fenced owner first validates its historical
+origin fence, then records the cleanup claim with its higher state fence and
+cleans/fsyncs every pending raw target
 and obligation, then deletes the orphan tree and parent-directory-fsyncs; if
 cleanup/identity is unprovable it quarantines the tree as non-authorizing and
 never exposes or adopts it.
+
+Start, resume, cancel, and human-verdict requests carry a workspace-scoped stable
+`commandId` plus canonical payload hash. The same id/hash returns the original
+durable receipt; another hash conflicts without an effect. One
+`commands/<commandId>.json` record holds the canonical request and becomes the
+closed applied/rejected receipt; its immutable outcome fence may differ from the
+current record-publication fence after takeover repair, and there is no second
+actor or receipt file. Start returns its run
+id only after private authority and `run_started(seq=1)` are fsynced, not after
+long-running execution. Admission uses one explicitly configured, persisted,
+immutable hash-linked workspace policy generation; its closed initial state is
+disabled, there is no implicit active/queue default, and each start decision,
+`run_started`, and `run_activated` binds the exact generation used. Disabled
+rejects fresh starts and pauses queued activation without canceling admitted
+work. In one admission critical section, active count is
+non-final ledgers with `run_activated`; queued count is non-final `run_started`
+ledgers without it. Configured `maxActiveRuns` alone gates activation; older
+queued runs drain first, then remaining capacity may immediately append
+`run_activated` for a fresh start even when `maxQueuedRuns=0`.
+`maxQueuedRuns` alone gates a fresh queued admission. Both are closed JSON
+integer ranges. A full queue records stable `run_queue_full` with the policy ref
+before a run directory or event exists. Admission counters are fsynced before
+publication and never reused. Restart reconstructs current counts/FIFO from run
+ledgers. Policy refs explain the exact governing generation; schema 2 does not
+invent a workspace-global historical decision order that it does not persist.
+Queue wait counts against the immutable run wall clock. Browser or Archon
+disconnect cannot stop admitted work. `run_started` alone projects queued;
+`run_activated` projects running and precedes graph/dispatch events.
+Every activated non-final ledger counts against `maxActiveRuns`, including while
+blocked, `waiting_human`, or canceling, and releases that slot only at an
+execution-final event in this first contract.
+
+The coordinator holds one renewable workspace-owner lease with a strictly
+increasing `writerFence`. A stable parent registry lock prevents two authority
+ids for one configured or opened root. The private owner lock first validates
+the immutable bootstrap plus mutable workspace authority-schema high-water mark;
+unsupported readers remain strictly read-only and do
+not fence, clean, or quarantine. Supported owners reserve/fsync counters before
+publishing them, and hold that lock from current fence validation through every
+authority write or bounded non-idempotent send/spawn/interrupt/cleanup call, so
+takeover cannot race the effect. Historical fences form a monotonic prefix;
+recovery preserves origin fence and records its higher state fence. ADR-0006
+target leases remain separate host-resource ownership.
+Registry generations publish only under the parent registry lock; workspace,
+lease, and command generations publish only under the owner lock. Their revisions,
+fences, and admission sequences are JSON-safe positive integers; exhaustion fails
+closed rather than rounding, wrapping, or reusing identity.
 
 The target is board schema 2 and event schema 2. Schema-1 Formation ports remain
 readable with explicit in-memory defaults (`work`, the stable full initial
@@ -154,13 +199,29 @@ identity, so validation and run preflight fail
 `legacy_inline_verification_requires_migration` until `ctx-ug7.17` defines or
 retires it. Schema-2 emits no `verification_verdict`.
 
+Schema 2 includes ADR-0007 command identity, workspace/fence authority, the
+hash-bound Formation result, root projections, and authored-config manifest
+before first admission. Schema numbers alone grant no capability: admission
+waits for the complete projector/coordinator and a certified rollback set whose
+binaries all honor the bootstrap/workspace-authority guard; pre-guard binaries are prohibited
+runtime rollback targets. A later authority-changing extension requires a schema
+bump; an older reader may inspect only a certified safe projection and never
+fences, cleans, quarantines, executes, or finalizes. Registered projection-only private extensions remain non-authorizing
+and absent from all public projections.
+The mutable workspace authority schema is a monotonic high-water mark. An upgrade
+advances/fsyncs it under the current fence before new-schema authority is written;
+it never decreases, and a new schema starts a new run without reinterpreting old
+ledgers.
+
 ## Required invariants
 
-1. **One model, multiple surfaces.** UI gestures and `archon` verbs must use the
-   same files and shared Go package.
-2. **Files are canonical for persistence.** Browser state is not durable truth.
+1. **One model, multiple surfaces.** UI gestures and `archon` definition verbs
+   use the same files/shared package; runtime verbs submit to one coordinator.
+2. **Definitions and runtime have distinct authority.** Workspace files are
+   canonical for definitions; fenced private coordinator state is canonical for
+   schema-2 execution. Browser state is never durable truth.
 3. **Ledger is canonical for run history.** Status is projected from append-only
-   events.
+   events written under the current workspace fence.
 4. **Stable ids matter.** Node, port, edge, slot, agent, board, mission, tool,
    gate, and run ids must survive round-trips.
 5. **Layout is not structure.** Node positions and wire lanes live in layout
@@ -441,7 +502,48 @@ At normal completion, startup recovery, and cancellation, all Tool scopes that
 miss their persisted deadline are selected as one complete set ordered by
 `(effectiveDeadlineAt, dispatchSeq, toolLeaseId)`. The first alone is failure
 cause; callback/map/process-exit order never decides.
-Abort first fsyncs `run_cancel_requested`, whose open-attempt, open-slot, and
+
+Ordinary workflow Formations use the same result-before-output discipline without
+reparsing mutable capture. Each `slot_result` first fsyncs a closed, hashed
+`slot-turn-result-jcs-v1` payload/output envelope sufficient for the frozen
+formation-type rule. The schedule is sole terminal (`solo`), persisted-order
+handoff with last terminal (`flow`), persisted-order peer round plus first-peer
+facilitator (`peer`), or controller plan, persisted-order worker turns, and
+controller synthesis (`orchestrated`). Every turn is coordinator-dispatched.
+Each dispatch binds the same attempt's `nodeStartedSeq` and an exact ordered
+prior-result sequence/hash array: none for `solo`, first flow, peer contributions,
+or leader plan; the immediate predecessor for later flow; all peer contributions
+for facilitation; the plan for each worker; and plan then all workers for leader
+synthesis. Every phase also consumes the frozen node inputs named by that start
+event.
+
+Only an `ok` terminal turn may carry all and only declared outputs. Non-terminal
+and non-`ok` turns have `outputs={}`. All required `ok` turns map to `done`; first
+`error` stops and maps to `failed` with its normalized non-routable error at every
+declared port; first `needs-review` stops and maps to `needs-review` with fixed
+non-routable projection `{availability="available",exact=true,
+payload={kind="unavailable",code="formation_needs_review",
+message="Formation requires review",retryable=true}}`. Closed invalid output
+schema becomes `{availability="available",exact=true,payload={kind="error",
+code="invalid_formation_outputs",
+message="Formation outputs do not match the declared ports",retryable=true}}`.
+Timeout/unclosed output has no result or ordinary
+release. Pre-result resource blocks create no Formation result. The complete
+successful schedule or first non-`ok` prefix yields one result; its deciding turn
+supplies the report and artifact/diff ids are the stable first-seen union over
+that prefix. The result carries the complete
+durable safe `outputs` map, `outputHashes`,
+already-registered artifact ids, stable contributing slot-result sequences, and
+`formation-result-jcs-v1` result hash.
+`node_output` exact-matches that result sequence/hash. Recovery may append the
+missing output once from it. Fresh Redact=true execution may keep the paired raw
+value in process memory across safe result/output/Gate/join/dispatch fsyncs until
+all scheduled internal turn consumers and taken-edge consumers send once or
+become durably non-deliverable; it is then
+erased and is always lost at cancellation/finality/process loss. Recovery fails
+terminally when a required value was discarded.
+
+Canonical cancel first fsyncs `run_cancel_requested`, whose open-attempt, open-slot, and
 lease snapshots block new
 dispatch/replay and makes the writer reject launches, results, outputs, and
 routing except cancellation finality. It soft-interrupts only an exact unresolved
@@ -455,6 +557,9 @@ redacted root must be sanitized/removed and cleanup fsynced before deleting its
 obligation. Neither path may promote, record a result, or rerun. Cancellation
 also disposes every snapshotted node attempt, including a Gate waiting for human
 input, and rejects a later decision.
+Current main exposes `abort`; the accepted target adds canonical `cancel` and
+normalizes `abort`/`stop` aliases before command hashing. An alias never creates
+a second request snapshot, event, or lifecycle state.
 Every execution-final event revokes all open node-attempt, slot, and Tool
 authority. Success permits none; cancellation reconciles all three exact
 snapshots. Failure's typed `failureCause` selects one exact slot, Tool lease,
@@ -792,7 +897,7 @@ A correct run model:
 7. Gates evaluate code, human, or formation judges and route pass/fail/pushback.
 8. Timeouts, missing sessions, sentinel failures, ambiguous checks, and blocked
    gates record loud events.
-9. Runs can be inspected, followed, aborted, and—when their terminal state and
+9. Runs can be inspected, followed, canceled, and—when their terminal state and
    evidence contract permit it—resumed from `archon` and reflected in the UI.
    `run_failed(code=redacted_input_unavailable)` is final and cannot resume.
 
