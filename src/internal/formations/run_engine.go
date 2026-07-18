@@ -320,16 +320,9 @@ func (e *RunEngine) RecordHumanGateVerdict(runID string, req HumanGateVerdictReq
 	if !ok {
 		return nil, fmt.Errorf("%w: human gate request %q", ErrNotFound, req.GateID)
 	}
-	board, err := e.readRunBoard(stringFromEventData(events[0], "snapshot"))
-	if err != nil {
-		return nil, err
-	}
-	if err := rejectLegacyInlineVerification(board); err != nil {
-		return nil, err
-	}
 	verdict := normalizeGateVerdict(req.Verdict)
 	actor := defaultRunActor(req.Actor)
-	if err := e.store.AppendRunEvent(runID, RunEvent{
+	board, err := e.store.appendRunEventWithSnapshot(runID, RunEvent{
 		Type:   RunEventHumanVerdictRecorded,
 		Actor:  actor,
 		GateID: req.GateID,
@@ -342,8 +335,12 @@ func (e *RunEngine) RecordHumanGateVerdict(runID string, req HumanGateVerdictReq
 			"requestedSeq": requestEvent.Seq,
 			"decidedBy":    actor,
 		},
-	}); err != nil {
+	})
+	if err != nil {
 		return nil, err
+	}
+	if board == nil {
+		return nil, ErrRunLedgerInvalid
 	}
 	gate, ok := findGate(board.Gates, req.GateID)
 	if !ok {

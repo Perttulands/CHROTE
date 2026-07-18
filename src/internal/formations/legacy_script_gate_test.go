@@ -21,6 +21,8 @@ func TestLegacyScriptGateInspectionIsReadOnlyAndValidationFailsLoud(t *testing.T
 		{name: "legacy string", command: `command = "npm run lint"`, sourceMode: "legacy_string", sourceFields: "command"},
 		{name: "argv", command: `commandArgv = ["npm", "run", "lint"]` + "\n" + `commandCwd = "dashboard"`, sourceMode: "argv", sourceFields: "commandArgv,commandCwd"},
 		{name: "shell", command: `commandShell = "npm run lint"`, sourceMode: "shell", sourceFields: "commandShell"},
+		{name: "basic quoted shell key", command: `"commandShell" = "npm run lint"`, sourceMode: "shell", sourceFields: "commandShell"},
+		{name: "literal quoted argv key", command: `'commandArgv' = ["npm", "run", "lint"]`, sourceMode: "argv", sourceFields: "commandArgv"},
 		{name: "cwd without executable", command: `commandCwd = "dashboard"`, sourceMode: "cwd_only", sourceFields: "commandCwd"},
 		{name: "empty present", command: `commandArgv = []`, sourceMode: "empty_present", sourceFields: "commandArgv"},
 		{name: "conflicting modes", command: `commandArgv = ["npm", "run", "lint"]` + "\n" + `commandShell = "npm run lint"`, sourceMode: "conflict", sourceFields: "commandArgv,commandShell"},
@@ -63,6 +65,75 @@ func TestLegacyScriptGateInspectionIsReadOnlyAndValidationFailsLoud(t *testing.T
 				t.Fatalf("inspection TOML did not preserve %q", tt.command)
 			}
 		})
+	}
+}
+
+func TestLegacyScriptGateQuotedHeaderRemainsVisibleAndFailsClosed(t *testing.T) {
+	raw := strings.Replace(legacyScriptGateBoardFixture(`commandShell = "npm run lint"`), "[[gate]]", `[[ "gate" ]]`, 1)
+	board := mustParseValidateBoardFixture(t, raw)
+	if len(board.Gates) != 1 {
+		t.Fatalf("gates = %+v, want quoted Gate header to remain visible", board.Gates)
+	}
+	findings := findBoardFindings(ValidateBoard(board).Errors, LegacyScriptGateMigrationCode)
+	if len(findings) != 1 || findings[0].NodeID != "gate_review" {
+		t.Fatalf("migration findings = %+v, want one fail-closed quoted Gate finding", findings)
+	}
+}
+
+func TestLegacyFenceTOMLNamesFollowDecodedKeyIdentity(t *testing.T) {
+	headerTests := []struct {
+		name     string
+		line     string
+		want     string
+		wantOkay bool
+	}{
+		{name: "equivalent quoted segment", line: "[ formation . \"verification\" ]", want: "formation.verification", wantOkay: true},
+		{name: "quoted dotted segment stays distinct", line: "[\"formation.verification\"]", want: "\"formation.verification\"", wantOkay: true},
+		{name: "quoted closing bracket", line: "[\"formation]verification\"]", want: "\"formation]verification\"", wantOkay: true},
+		{name: "junk after header", line: "[formation.verification] trailing", wantOkay: false},
+		{name: "unterminated quoted header", line: "[formation.\"verification]", wantOkay: false},
+	}
+	for _, test := range headerTests {
+		t.Run("header/"+test.name, func(t *testing.T) {
+			got, ok := tomlSectionName(test.line)
+			if ok != test.wantOkay || got != test.want {
+				t.Fatalf("tomlSectionName(%q) = %q, %v; want %q, %v", test.line, got, ok, test.want, test.wantOkay)
+			}
+		})
+	}
+
+	keyTests := []struct {
+		name     string
+		line     string
+		wantKey  string
+		wantVal  string
+		wantOkay bool
+	}{
+		{name: "escaped equivalent key", line: "\"command\\u0053hell\" = \"npm run lint\"", wantKey: "commandShell", wantVal: "npm run lint", wantOkay: true},
+		{name: "equals inside quoted key", line: "\"command=Shell\" = \"not a command\"", wantKey: "\"command=Shell\"", wantVal: "not a command", wantOkay: true},
+		{name: "comment before assignment", line: "commandShell # = \"not an assignment\"", wantOkay: false},
+		{name: "unterminated quoted key", line: "\"commandShell = \"npm run lint\"", wantOkay: false},
+	}
+	for _, test := range keyTests {
+		t.Run("key/"+test.name, func(t *testing.T) {
+			gotKey, gotVal, ok := tomlKeyValue(test.line)
+			if ok != test.wantOkay || gotKey != test.wantKey || gotVal != test.wantVal {
+				t.Fatalf("tomlKeyValue(%q) = %q, %q, %v; want %q, %q, %v", test.line, gotKey, gotVal, ok, test.wantKey, test.wantVal, test.wantOkay)
+			}
+		})
+	}
+}
+
+func TestLegacyScriptGateMalformedHeaderStopsFieldBleed(t *testing.T) {
+	raw := strings.Replace(
+		legacyScriptGateBoardFixture(""),
+		"criterion = \"Pass the review\"\n",
+		"criterion = \"Pass the review\"\n[[unterminated\ncommandShell = \"npm run lint\"\n",
+		1,
+	)
+	board := mustParseValidateBoardFixture(t, raw)
+	if findings := findBoardFindings(ValidateBoard(board).Errors, LegacyScriptGateMigrationCode); len(findings) != 0 {
+		t.Fatalf("malformed next header leaked command fields into the previous Gate: %+v", findings)
 	}
 }
 

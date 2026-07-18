@@ -103,6 +103,9 @@ func TestLegacyInlineVerificationHeaderVariantsRemainVisibleAndFailBeforeRun(t *
 	}{
 		{name: "inline comment", header: "[formation.verification] # legacy"},
 		{name: "spaced header", header: "[ formation.verification ]"},
+		{name: "spaced dotted path", header: "[ formation . verification ]"},
+		{name: "basic quoted path segment", header: `[formation."verification"]`},
+		{name: "literal quoted path segment", header: `[formation.'verification']`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -237,6 +240,50 @@ func TestLegacyInlineVerificationHumanVerdictRejectsBeforeLedgerMutation(t *test
 	}
 	if !reflect.DeepEqual(after, before) {
 		t.Fatalf("rejected human verdict mutated ledger\nbefore=%+v\nafter=%+v", before, after)
+	}
+}
+
+func TestLegacyInlineVerificationHumanVerdictRejectsForgedSnapshotBeforeReadOrMutation(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	store := NewStore(workspace)
+	store.Now = fixedClock()
+	runID := newPrefixedID("run")
+	outside := filepath.Join(root, "forged.snapshot.toml")
+	writeFixture(t, outside, s4VerificationBoardFixture("block"))
+	forgedSnapshot, err := filepath.Rel(workspace, outside)
+	if err != nil {
+		t.Fatalf("derive forged snapshot path: %v", err)
+	}
+	ledger := filepath.Join(workspace, runArtifactPath("session-search", runID, ".ndjson"))
+	if err := writeInitialRunEvent(ledger, runStartedFixture(runID, "session-search", filepath.ToSlash(forgedSnapshot))); err != nil {
+		t.Fatalf("write forged run start: %v", err)
+	}
+	if err := appendRunEventLine(ledger, RunEvent{
+		RunID: runID, Seq: 2, Type: RunEventHumanInputRequested, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
+		MissionID: "mis_showcase", Actor: "agent:test", GateID: "gate_review", NodeID: "gate_review",
+		Data: map[string]any{"prompt": "Review", "requestedBy": "gate_review"},
+	}); err != nil {
+		t.Fatalf("write human request: %v", err)
+	}
+	before, err := store.ReadRunEvents(runID)
+	if err != nil {
+		t.Fatalf("read forged run: %v", err)
+	}
+	engine := NewRunEngine(store, NewPersonaStore(filepath.Join(root, "agents")), &fakeRunExecutor{})
+	_, err = engine.RecordHumanGateVerdict(runID, HumanGateVerdictRequest{GateID: "gate_review", Verdict: "pass", Actor: "human:test"})
+	if !errors.Is(err, ErrRunLedgerInvalid) {
+		t.Fatalf("forged human verdict error = %v, want ErrRunLedgerInvalid before snapshot read", err)
+	}
+	after, readErr := store.ReadRunEvents(runID)
+	if readErr != nil {
+		t.Fatalf("read rejected forged run: %v", readErr)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("forged human verdict mutated ledger\nbefore=%+v\nafter=%+v", before, after)
 	}
 }
 
@@ -382,8 +429,9 @@ func TestRunSnapshotReadRejectsNoncanonicalLedgerPath(t *testing.T) {
 
 func TestRunSnapshotReadRejectsLedgerControlledIdentityBeforeMutation(t *testing.T) {
 	tests := []struct {
-		name  string
-		setup func(t *testing.T, store *Store, requestedRunID string) RunEvent
+		name       string
+		ledgerSlug string
+		setup      func(t *testing.T, store *Store, requestedRunID string) RunEvent
 	}{
 		{
 			name: "traversal board slug",
@@ -440,6 +488,16 @@ func TestRunSnapshotReadRejectsLedgerControlledIdentityBeforeMutation(t *testing
 				return runStartedFixture(requestedRunID, "session-search", snapshot)
 			},
 		},
+		{
+			name:       "snapshot board slug differs from canonical run directory",
+			ledgerSlug: "other-board",
+			setup: func(t *testing.T, store *Store, requestedRunID string) RunEvent {
+				t.Helper()
+				snapshot := runArtifactPath("other-board", requestedRunID, ".snapshot.toml")
+				writeFixture(t, filepath.Join(store.Workspace, snapshot), s4MissionOnlyBoardFixture())
+				return runStartedFixture(requestedRunID, "other-board", snapshot)
+			},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -452,7 +510,11 @@ func TestRunSnapshotReadRejectsLedgerControlledIdentityBeforeMutation(t *testing
 			store.Now = fixedClock()
 			requestedRunID := newPrefixedID("run")
 			started := test.setup(t, store, requestedRunID)
-			ledger := filepath.Join(store.Workspace, runArtifactPath("session-search", requestedRunID, ".ndjson"))
+			ledgerSlug := test.ledgerSlug
+			if ledgerSlug == "" {
+				ledgerSlug = "session-search"
+			}
+			ledger := filepath.Join(store.Workspace, runArtifactPath(ledgerSlug, requestedRunID, ".ndjson"))
 			if err := writeInitialRunEvent(ledger, started); err != nil {
 				t.Fatalf("write forged run start: %v", err)
 			}

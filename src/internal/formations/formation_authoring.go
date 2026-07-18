@@ -1438,6 +1438,9 @@ func formationBlockEnd(lines []tomlLine, start int) int {
 	for j := start + 1; j < len(lines); j++ {
 		section, ok := tomlSectionName(lines[j].body)
 		if !ok {
+			if isTOMLHeaderLine(lines[j].body) {
+				return j
+			}
 			continue
 		}
 		if section == "formation" || !strings.HasPrefix(section, "formation.") {
@@ -1802,7 +1805,8 @@ func patchLayoutNodeBlocks(raw []byte, patches []LayoutNode) []byte {
 		}
 	}
 	for i := 0; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i].body) != "[[node]]" {
+		section, isSection := tomlSectionName(lines[i].body)
+		if !isSection || !strings.HasPrefix(strings.TrimSpace(lines[i].body), "[[") || section != "node" {
 			continue
 		}
 		end := len(lines)
@@ -1908,7 +1912,7 @@ func deleteLayoutNodeBlocks(raw []byte, nodeIDs map[string]bool) []byte {
 
 func tomlBlockEnd(lines []tomlLine, start int) int {
 	for j := start + 1; j < len(lines); j++ {
-		if _, ok := tomlSectionName(lines[j].body); ok {
+		if _, ok := tomlSectionName(lines[j].body); ok || isTOMLHeaderLine(lines[j].body) {
 			return j
 		}
 	}
@@ -1917,7 +1921,7 @@ func tomlBlockEnd(lines []tomlLine, start int) int {
 
 func scalarInBlock(lines []tomlLine, start, end int, key string) string {
 	for i := start; i < end && i < len(lines); i++ {
-		if _, ok := tomlSectionName(lines[i].body); ok {
+		if _, ok := tomlSectionName(lines[i].body); ok || isTOMLHeaderLine(lines[i].body) {
 			break
 		}
 		fieldKey, value, ok := tomlKeyValue(lines[i].body)
@@ -1930,21 +1934,183 @@ func scalarInBlock(lines []tomlLine, start, end int, key string) string {
 
 func tomlSectionName(line string) (string, bool) {
 	trimmed := strings.TrimSpace(line)
+	openWidth := 1
+	closeWidth := 1
 	if strings.HasPrefix(trimmed, "[[") {
-		end := strings.Index(trimmed, "]]")
-		if end < 0 {
-			return "", false
-		}
-		return strings.TrimSpace(trimmed[2:end]), true
+		openWidth = 2
+		closeWidth = 2
+	} else if !strings.HasPrefix(trimmed, "[") {
+		return "", false
 	}
-	if strings.HasPrefix(trimmed, "[") {
-		end := strings.Index(trimmed, "]")
-		if end < 0 {
-			return "", false
-		}
-		return strings.TrimSpace(trimmed[1:end]), true
+	end := tomlHeaderEnd(trimmed, openWidth, closeWidth)
+	if end < 0 {
+		return "", false
 	}
-	return "", false
+	tail := strings.TrimSpace(trimmed[end+closeWidth:])
+	if tail != "" && !strings.HasPrefix(tail, "#") {
+		return "", false
+	}
+	path, ok := parseTOMLKeyPath(trimmed[openWidth:end])
+	if !ok {
+		return "", false
+	}
+	return canonicalTOMLKeyPath(path), true
+}
+
+func tomlHeaderEnd(line string, openWidth, closeWidth int) int {
+	inBasicString := false
+	inLiteralString := false
+	escaped := false
+	for i := openWidth; i < len(line); i++ {
+		ch := line[i]
+		switch {
+		case escaped:
+			escaped = false
+		case inBasicString && ch == '\\':
+			escaped = true
+		case !inLiteralString && ch == '"':
+			inBasicString = !inBasicString
+		case !inBasicString && ch == '\'':
+			inLiteralString = !inLiteralString
+		case !inBasicString && !inLiteralString && ch == ']':
+			if closeWidth == 1 || (i+1 < len(line) && line[i+1] == ']') {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func parseTOMLKeyPath(raw string) ([]string, bool) {
+	var path []string
+	for i := 0; ; {
+		for i < len(raw) && (raw[i] == ' ' || raw[i] == '\t') {
+			i++
+		}
+		if i >= len(raw) {
+			return nil, false
+		}
+		var segment string
+		switch raw[i] {
+		case '"':
+			start := i
+			i++
+			closed := false
+			escaped := false
+			for i < len(raw) {
+				ch := raw[i]
+				i++
+				if escaped {
+					escaped = false
+					continue
+				}
+				if ch == '\\' {
+					escaped = true
+					continue
+				}
+				if ch == '"' {
+					closed = true
+					break
+				}
+			}
+			if !closed {
+				return nil, false
+			}
+			unquoted, err := strconv.Unquote(raw[start:i])
+			if err != nil {
+				return nil, false
+			}
+			segment = unquoted
+		case '\'':
+			i++
+			start := i
+			for i < len(raw) && raw[i] != '\'' {
+				i++
+			}
+			if i >= len(raw) {
+				return nil, false
+			}
+			segment = raw[start:i]
+			i++
+		default:
+			start := i
+			for i < len(raw) && isBareTOMLKeyByte(raw[i]) {
+				i++
+			}
+			if start == i {
+				return nil, false
+			}
+			segment = raw[start:i]
+		}
+		path = append(path, segment)
+		for i < len(raw) && (raw[i] == ' ' || raw[i] == '\t') {
+			i++
+		}
+		if i == len(raw) {
+			return path, true
+		}
+		if raw[i] != '.' {
+			return nil, false
+		}
+		i++
+	}
+}
+
+func canonicalTOMLKeyPath(path []string) string {
+	segments := make([]string, len(path))
+	for i, segment := range path {
+		if segment != "" && isBareTOMLKey(segment) {
+			segments[i] = segment
+		} else {
+			segments[i] = strconv.Quote(segment)
+		}
+	}
+	return strings.Join(segments, ".")
+}
+
+func isBareTOMLKey(key string) bool {
+	for i := 0; i < len(key); i++ {
+		if !isBareTOMLKeyByte(key[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func isBareTOMLKeyByte(ch byte) bool {
+	return ch >= 'a' && ch <= 'z' ||
+		ch >= 'A' && ch <= 'Z' ||
+		ch >= '0' && ch <= '9' ||
+		ch == '_' ||
+		ch == '-'
+}
+
+func tomlAssignmentIndex(line string) int {
+	inBasicString := false
+	inLiteralString := false
+	escaped := false
+	for i := 0; i < len(line); i++ {
+		ch := line[i]
+		switch {
+		case escaped:
+			escaped = false
+		case inBasicString && ch == '\\':
+			escaped = true
+		case !inLiteralString && ch == '"':
+			inBasicString = !inBasicString
+		case !inBasicString && ch == '\'':
+			inLiteralString = !inLiteralString
+		case !inBasicString && !inLiteralString && ch == '#':
+			return -1
+		case !inBasicString && !inLiteralString && ch == '=':
+			return i
+		}
+	}
+	return -1
+}
+
+func isTOMLHeaderLine(line string) bool {
+	return strings.HasPrefix(strings.TrimSpace(line), "[")
 }
 
 func endpointNodeID(endpoint string) string {
@@ -1995,7 +2161,7 @@ func findMissionBlockByID(lines []tomlLine, missionID string) (int, int, bool) {
 
 func formationHeaderScalar(lines []tomlLine, start, end int, key string) string {
 	for i := start + 1; i < end && i < len(lines); i++ {
-		if _, ok := tomlSectionName(lines[i].body); ok {
+		if _, ok := tomlSectionName(lines[i].body); ok || isTOMLHeaderLine(lines[i].body) {
 			break
 		}
 		fieldKey, value, ok := tomlKeyValue(lines[i].body)
@@ -2008,7 +2174,7 @@ func formationHeaderScalar(lines []tomlLine, start, end int, key string) string 
 
 func formationHeaderEnd(lines []tomlLine, start, end int) int {
 	for i := start + 1; i < end && i < len(lines); i++ {
-		if _, ok := tomlSectionName(lines[i].body); ok {
+		if _, ok := tomlSectionName(lines[i].body); ok || isTOMLHeaderLine(lines[i].body) {
 			return i
 		}
 	}
@@ -2215,6 +2381,9 @@ func parseFormationNodes(raw []byte) []FormationNode {
 		case isSection:
 			active = ""
 			continue
+		case isTOMLHeaderLine(line.body):
+			active = ""
+			continue
 		}
 		if current == nil {
 			continue
@@ -2296,17 +2465,17 @@ func parseBoardConnections(raw []byte) []BoardConnection {
 	active := false
 	for _, line := range splitLines(raw) {
 		trimmed := strings.TrimSpace(line.body)
-		switch trimmed {
-		case "[[connection]]":
+		section, isSection := tomlSectionName(line.body)
+		isArraySection := strings.HasPrefix(trimmed, "[[")
+		switch {
+		case isSection && isArraySection && section == "connection":
 			connections = append(connections, BoardConnection{})
 			current = &connections[len(connections)-1]
 			active = true
 			continue
-		default:
-			if strings.HasPrefix(trimmed, "[") {
-				active = false
-				continue
-			}
+		case isTOMLHeaderLine(line.body):
+			active = false
+			continue
 		}
 		if !active || current == nil {
 			continue
@@ -2333,17 +2502,17 @@ func parseGateNodes(raw []byte) []GateNode {
 	active := false
 	for _, line := range splitLines(raw) {
 		trimmed := strings.TrimSpace(line.body)
-		switch trimmed {
-		case "[[gate]]":
+		section, isSection := tomlSectionName(line.body)
+		isArraySection := strings.HasPrefix(trimmed, "[[")
+		switch {
+		case isSection && isArraySection && section == "gate":
 			gates = append(gates, GateNode{legacyCommandFields: map[string]int{}})
 			current = &gates[len(gates)-1]
 			active = true
 			continue
-		default:
-			if strings.HasPrefix(trimmed, "[") {
-				active = false
-				continue
-			}
+		case isTOMLHeaderLine(line.body):
+			active = false
+			continue
 		}
 		if !active || current == nil {
 			continue
@@ -2384,17 +2553,17 @@ func parseMissionNodes(raw []byte) []MissionNode {
 	active := false
 	for _, line := range splitLines(raw) {
 		trimmed := strings.TrimSpace(line.body)
-		switch trimmed {
-		case "[[mission]]":
+		section, isSection := tomlSectionName(line.body)
+		isArraySection := strings.HasPrefix(trimmed, "[[")
+		switch {
+		case isSection && isArraySection && section == "mission":
 			missions = append(missions, MissionNode{})
 			current = &missions[len(missions)-1]
 			active = true
 			continue
-		default:
-			if strings.HasPrefix(trimmed, "[") {
-				active = false
-				continue
-			}
+		case isTOMLHeaderLine(line.body):
+			active = false
+			continue
 		}
 		if !active || current == nil {
 			continue
@@ -2423,17 +2592,17 @@ func parseLayoutNodes(raw []byte) []LayoutNode {
 	active := false
 	for _, line := range splitLines(raw) {
 		trimmed := strings.TrimSpace(line.body)
-		switch trimmed {
-		case "[[node]]":
+		section, isSection := tomlSectionName(line.body)
+		isArraySection := strings.HasPrefix(trimmed, "[[")
+		switch {
+		case isSection && isArraySection && section == "node":
 			nodes = append(nodes, LayoutNode{})
 			current = &nodes[len(nodes)-1]
 			active = true
 			continue
-		default:
-			if strings.HasPrefix(trimmed, "[") {
-				active = false
-				continue
-			}
+		case isTOMLHeaderLine(line.body):
+			active = false
+			continue
 		}
 		if !active || current == nil {
 			continue
@@ -2460,17 +2629,17 @@ func parseLayoutEdges(raw []byte) []LayoutEdge {
 	active := false
 	for _, line := range splitLines(raw) {
 		trimmed := strings.TrimSpace(line.body)
-		switch trimmed {
-		case "[[edge]]":
+		section, isSection := tomlSectionName(line.body)
+		isArraySection := strings.HasPrefix(trimmed, "[[")
+		switch {
+		case isSection && isArraySection && section == "edge":
 			edges = append(edges, LayoutEdge{})
 			current = &edges[len(edges)-1]
 			active = true
 			continue
-		default:
-			if strings.HasPrefix(trimmed, "[") {
-				active = false
-				continue
-			}
+		case isTOMLHeaderLine(line.body):
+			active = false
+			continue
 		}
 		if !active || current == nil {
 			continue
@@ -2490,15 +2659,20 @@ func parseLayoutEdges(raw []byte) []LayoutEdge {
 }
 
 func tomlKeyValue(line string) (string, string, bool) {
-	eq := strings.Index(line, "=")
+	eq := tomlAssignmentIndex(line)
 	if eq < 0 {
 		return "", "", false
 	}
-	key := strings.TrimSpace(line[:eq])
-	if key == "" {
+	path, ok := parseTOMLKeyPath(line[:eq])
+	if !ok {
 		return "", "", false
 	}
-	value := strings.TrimSpace(valuePart(line))
+	key := canonicalTOMLKeyPath(path)
+	valuePart := line[eq+1:]
+	if comment := commentIndex(valuePart); comment >= 0 {
+		valuePart = valuePart[:comment]
+	}
+	value := strings.TrimSpace(valuePart)
 	if unquoted, err := strconv.Unquote(value); err == nil {
 		value = unquoted
 	}

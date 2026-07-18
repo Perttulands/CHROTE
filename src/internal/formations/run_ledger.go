@@ -227,14 +227,20 @@ func (s *Store) StartRun(slug string, req RunStartRequest) (*RunStartResult, err
 }
 
 func (s *Store) AppendRunEvent(runID string, event RunEvent) error {
+	_, err := s.appendRunEventWithSnapshot(runID, event)
+	return err
+}
+
+func (s *Store) appendRunEventWithSnapshot(runID string, event RunEvent) (*BoardDocument, error) {
 	if event.Type == RunEventVerificationVerdict {
-		return fmt.Errorf("%w: new verification_verdict events are retired; use an explicit Gate", ErrLegacyInlineVerificationRequiresMigration)
+		return nil, fmt.Errorf("%w: new verification_verdict events are retired; use an explicit Gate", ErrLegacyInlineVerificationRequiresMigration)
 	}
 	ledgerPath, err := s.findRunLedger(runID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return withFileLock(ledgerPath, func() error {
+	var snapshot *BoardDocument
+	err = withFileLock(ledgerPath, func() error {
 		events, err := readRunEventsFile(ledgerPath)
 		if err != nil {
 			return err
@@ -247,15 +253,16 @@ func (s *Store) AppendRunEvent(runID string, event RunEvent) error {
 		}
 		first := events[0]
 		last := events[len(events)-1]
+		var validatedSnapshot *BoardDocument
 		if event.Type != RunEventCanceled && event.Type != RunEventFailed {
-			snapshot, err := s.readRunSnapshot(first, runID, ledgerPath)
+			validatedSnapshot, err = s.readRunSnapshot(first, runID, ledgerPath)
 			if err != nil {
 				return err
 			}
-			if err := rejectLegacyScriptGateForRun(snapshot, first, &event); err != nil {
+			if err := rejectLegacyScriptGateForRun(validatedSnapshot, first, &event); err != nil {
 				return err
 			}
-			if err := rejectLegacyInlineVerification(snapshot); err != nil {
+			if err := rejectLegacyInlineVerification(validatedSnapshot); err != nil {
 				return err
 			}
 		}
@@ -297,8 +304,16 @@ func (s *Store) AppendRunEvent(runID string, event RunEvent) error {
 		if event.Epoch == 0 && last.Epoch != 0 {
 			event.Epoch = last.Epoch
 		}
-		return appendRunEventLine(ledgerPath, event)
+		if err := appendRunEventLine(ledgerPath, event); err != nil {
+			return err
+		}
+		snapshot = validatedSnapshot
+		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return snapshot, nil
 }
 
 func (s *Store) ResumeRun(runID string, req RunResumeRequest) (*RunStatusProjection, error) {
@@ -406,7 +421,7 @@ func (s *Store) readRunSnapshot(started RunEvent, expectedRunID, ledgerPath stri
 	if err != nil {
 		return nil, err
 	}
-	if board.ID != started.BoardID || board.Rev != started.BoardRev {
+	if board.ID != started.BoardID || board.Slug != boardSlug || board.Rev != started.BoardRev {
 		return nil, ErrRunLedgerInvalid
 	}
 	return board, nil
