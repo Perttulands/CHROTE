@@ -1,0 +1,7 @@
+schema = 1
+id = "brd_ci_contract"
+slug = "ci-contract"
+title = "CI Contract Board"
+rev = 1
+updatedBy = "agent:ci-contract"
+updatedAt = "2026-07-18T00:00:00Z"

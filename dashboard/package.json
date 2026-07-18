@@ -8,6 +8,7 @@
     "preview": "vite preview",
     "test": "env -u NO_COLOR playwright test",
     "test:formations": "env -u NO_COLOR CHROTE_PLAYWRIGHT_FORMATIONS=1 playwright test tests/formations",
+    "test:server-contract": "env -u NO_COLOR CHROTE_PLAYWRIGHT_SERVER_CONTRACT=1 playwright test tests/contract",
     "test:live": "env -u NO_COLOR CHROTE_PLAYWRIGHT_LIVE=1 playwright test tests/integration",
     "test:unit": "vitest run",
     "test:ui": "env -u NO_COLOR playwright test --ui",
