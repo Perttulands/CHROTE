@@ -384,6 +384,152 @@ func TestWorkspaceAuthorityOwnerDomainStrictValidatesBootstrapWorkspaceAndComple
 	}
 }
 
+func TestWorkspaceAuthorityOwnerDomainRepinsEverySelectedNamedIdentityBeforeCallback(t *testing.T) {
+	tests := []struct {
+		name       string
+		openedName string
+		path       func(workspaceAuthorityOwnerDomainFixture) string
+	}{
+		{name: "authority directory", openedName: testInitialRegistrationAuthorityID, path: func(f workspaceAuthorityOwnerDomainFixture) string { return f.authorityDir }},
+		{name: "owner lock", openedName: "owner.lock", path: func(f workspaceAuthorityOwnerDomainFixture) string { return f.ownerLock }},
+		{name: "bootstrap", openedName: "workspace.bootstrap.json", path: func(f workspaceAuthorityOwnerDomainFixture) string { return f.bootstrap }},
+		{name: "workspace authority", openedName: "workspace.private.json", path: func(f workspaceAuthorityOwnerDomainFixture) string { return f.workspaceAuthority }},
+		{name: "policy directory", openedName: "admission-policies", path: func(f workspaceAuthorityOwnerDomainFixture) string { return f.policyDir }},
+		{name: "current policy", openedName: "3.json", path: func(f workspaceAuthorityOwnerDomainFixture) string { return filepath.Join(f.policyDir, "3.json") }},
+		{name: "prior policy revision 2", openedName: "2.json", path: func(f workspaceAuthorityOwnerDomainFixture) string { return filepath.Join(f.policyDir, "2.json") }},
+		{name: "prior policy revision 1", openedName: "1.json", path: func(f workspaceAuthorityOwnerDomainFixture) string { return filepath.Join(f.policyDir, "1.json") }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newWorkspaceAuthorityOwnerDomainFixture(t)
+			paths := workspaceAuthorityOwnerDomainPaths(fixture)
+			descriptorCountBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, paths...).total
+			registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate())
+			productionValidate := registrar.ops.validatePrivateNode
+			mutated := false
+			movedPath := ""
+			var afterInjection map[string]workspaceAuthorityTopologyEntry
+			registrar.ops.validatePrivateNode = func(opened *os.File, expectedUID uint32) error {
+				if err := productionValidate(opened, expectedUID); err != nil {
+					return err
+				}
+				if !mutated && opened.Name() == test.openedName {
+					mutated = true
+					path := test.path(fixture)
+					movedPath = path + ".opened-generation"
+					if err := replaceWorkspaceAuthorityOwnerDomainNamedNode(path, movedPath); err != nil {
+						return err
+					}
+					afterInjection = snapshotWorkspaceAuthorityTopology(t, fixture.base)
+				}
+				return nil
+			}
+			callbackCalls := 0
+			err := registrar.withWorkspaceAuthorityOwnerDomain(fixture.workspace, func(workspaceAuthorityOwnerDomainScope) error {
+				callbackCalls++
+				return nil
+			})
+			if err == nil || callbackCalls != 0 {
+				t.Fatalf("named-identity replacement result = %v, callback calls %d; want fail before callback", err, callbackCalls)
+			}
+			if !mutated || afterInjection == nil {
+				t.Fatalf("named-identity replacement hook for %q was not reached", test.openedName)
+			}
+			if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, afterInjection) {
+				t.Fatalf("owner-domain rejection changed injected named-identity topology\nafter injection: %#v\nafter return:    %#v", afterInjection, after)
+			}
+			paths = append(paths, movedPath)
+			if afterCount := snapshotWorkspaceAuthorityOpenDescriptors(t, paths...).total; afterCount != descriptorCountBefore {
+				t.Fatalf("named-identity rejection descriptor count = %d, want baseline %d", afterCount, descriptorCountBefore)
+			}
+			assertWorkspaceAuthorityOwnerDomainLockPathReleasedIfRegular(t, fixture.registryLock)
+			assertWorkspaceAuthorityOwnerDomainLockPathReleasedIfRegular(t, fixture.ownerLock)
+			if test.openedName == "owner.lock" {
+				assertWorkspaceAuthorityOwnerDomainLockPathReleasedIfRegular(t, movedPath)
+			}
+			if test.openedName == testInitialRegistrationAuthorityID {
+				assertWorkspaceAuthorityOwnerDomainLockPathReleasedIfRegular(t, filepath.Join(movedPath, "owner.lock"))
+			}
+		})
+	}
+}
+
+func TestWorkspaceAuthorityOwnerDomainCallbackErrorAndPanicReleaseEpoch(t *testing.T) {
+	t.Run("callback error", func(t *testing.T) {
+		fixture := newWorkspaceAuthorityOwnerDomainFixture(t)
+		paths := workspaceAuthorityOwnerDomainPaths(fixture)
+		before := snapshotWorkspaceAuthorityTopology(t, fixture.base)
+		descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, paths...)
+		registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate())
+		injected := errors.New("injected owner-domain callback failure")
+		callbackCalls := 0
+		err := registrar.withWorkspaceAuthorityOwnerDomain(fixture.workspace, func(workspaceAuthorityOwnerDomainScope) error {
+			callbackCalls++
+			if err := tryWorkspaceAuthorityExclusiveLock(fixture.ownerLock); !errors.Is(err, syscall.EWOULDBLOCK) {
+				t.Fatalf("owner lock during failing callback = %v, want would-block", err)
+			}
+			return injected
+		})
+		if !errors.Is(err, injected) || callbackCalls != 1 {
+			t.Fatalf("callback failure result = %v, calls %d; want injected error and one call", err, callbackCalls)
+		}
+		assertWorkspaceAuthorityOwnerDomainUnchanged(t, fixture, before)
+		assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, paths...)
+		assertWorkspaceAuthorityOwnerDomainLocksReleased(t, fixture)
+		assertWorkspaceAuthorityOwnerDomainRetrySucceeds(t, registrar, fixture)
+	})
+
+	t.Run("callback panic", func(t *testing.T) {
+		fixture := newWorkspaceAuthorityOwnerDomainFixture(t)
+		paths := workspaceAuthorityOwnerDomainPaths(fixture)
+		before := snapshotWorkspaceAuthorityTopology(t, fixture.base)
+		descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, paths...)
+		registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate())
+		const panicValue = "injected owner-domain callback panic"
+		callbackCalls := 0
+		var recovered any
+		func() {
+			defer func() { recovered = recover() }()
+			_ = registrar.withWorkspaceAuthorityOwnerDomain(fixture.workspace, func(workspaceAuthorityOwnerDomainScope) error {
+				callbackCalls++
+				if err := tryWorkspaceAuthorityExclusiveLock(fixture.ownerLock); !errors.Is(err, syscall.EWOULDBLOCK) {
+					t.Fatalf("owner lock during panicking callback = %v, want would-block", err)
+				}
+				panic(panicValue)
+			})
+		}()
+		if recovered != panicValue || callbackCalls != 1 {
+			t.Fatalf("callback panic recovered = %#v, calls %d; want %q and one call", recovered, callbackCalls, panicValue)
+		}
+		assertWorkspaceAuthorityOwnerDomainUnchanged(t, fixture, before)
+		assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, paths...)
+		assertWorkspaceAuthorityOwnerDomainLocksReleased(t, fixture)
+		assertWorkspaceAuthorityOwnerDomainRetrySucceeds(t, registrar, fixture)
+	})
+}
+
+func TestWorkspaceAuthorityOwnerDomainRejectsNilReceiverAndCallbackWithoutMutation(t *testing.T) {
+	fixture := newWorkspaceAuthorityOwnerDomainFixture(t)
+	before := snapshotWorkspaceAuthorityTopology(t, fixture.base)
+	var nilRegistrar *workspaceAuthorityRegistrar
+	callbackCalls := 0
+	if err := nilRegistrar.withWorkspaceAuthorityOwnerDomain(fixture.workspace, func(workspaceAuthorityOwnerDomainScope) error {
+		callbackCalls++
+		return nil
+	}); err == nil {
+		t.Fatal("nil owner-domain registrar accepted callback")
+	}
+	registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate())
+	if err := registrar.withWorkspaceAuthorityOwnerDomain(fixture.workspace, nil); err == nil {
+		t.Fatal("owner-domain registrar accepted nil callback")
+	}
+	if callbackCalls != 0 {
+		t.Fatalf("nil-input owner-domain callback calls = %d, want zero", callbackCalls)
+	}
+	assertWorkspaceAuthorityOwnerDomainUnchanged(t, fixture, before)
+	assertWorkspaceAuthorityOwnerDomainLocksReleased(t, fixture)
+}
+
 type workspaceAuthorityOwnerDomainFixture struct {
 	workspaceAuthorityInitialRegistrationFixture
 	policyRaw map[uint64][]byte
@@ -510,4 +656,65 @@ func replaceWorkspaceAuthorityOwnerDomainRaw(t *testing.T, path, old, replacemen
 		t.Fatalf("owner-domain fixture occurrence count for %q in %q = %d, want exactly one", old, raw, count)
 	}
 	writePrivateAuthorityTestFile(t, path, []byte(strings.Replace(string(raw), old, replacement, 1)))
+}
+
+func replaceWorkspaceAuthorityOwnerDomainNamedNode(path, movedPath string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	var raw []byte
+	if info.Mode().IsRegular() {
+		raw, err = os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+	}
+	if err := os.Rename(path, movedPath); err != nil {
+		return err
+	}
+	if info.IsDir() {
+		if err := os.Mkdir(path, 0o700); err != nil {
+			return err
+		}
+		return os.Chmod(path, 0o700)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("cannot replace non-file owner-domain node %q", path)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
+}
+
+func assertWorkspaceAuthorityOwnerDomainLockPathReleasedIfRegular(t *testing.T, path string) {
+	t.Helper()
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) || (err == nil && !info.Mode().IsRegular()) {
+		return
+	}
+	if err != nil {
+		t.Fatalf("inspect owner-domain lock path %q: %v", path, err)
+	}
+	if err := tryWorkspaceAuthorityExclusiveLock(path); err != nil {
+		t.Fatalf("owner-domain lock path %q remained held: %v", path, err)
+	}
+}
+
+func assertWorkspaceAuthorityOwnerDomainRetrySucceeds(t *testing.T, registrar *workspaceAuthorityRegistrar, fixture workspaceAuthorityOwnerDomainFixture) {
+	t.Helper()
+	retryCalls := 0
+	if err := registrar.withWorkspaceAuthorityOwnerDomain(fixture.workspace, func(scope workspaceAuthorityOwnerDomainScope) error {
+		retryCalls++
+		if scope.workspaceAuthorityID() != testInitialRegistrationAuthorityID {
+			return errRuntimeIntegrityMismatch
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("owner-domain retry after callback exit: %v", err)
+	}
+	if retryCalls != 1 {
+		t.Fatalf("owner-domain retry callback calls = %d, want one", retryCalls)
+	}
 }
