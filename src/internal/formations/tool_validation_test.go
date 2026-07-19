@@ -483,9 +483,47 @@ to = "tool_normalize:port_tool_in"
 	if dangling := findBoardFindings(report.Errors, FindingDanglingConnection); len(dangling) != 0 {
 		t.Fatalf("known Mission and Tool endpoints produced dangling findings: %+v", dangling)
 	}
-	if len(report.Errors) == 0 {
-		t.Fatal("Mission text/markdown output was accepted by the application/json-only Tool input")
+	mediaFindings := findBoardFindings(report.Errors, FindingIncompatibleMedia)
+	if len(mediaFindings) != 1 || len(report.Errors) != 1 {
+		t.Fatalf("Mission text/markdown to application/json-only Tool findings = %+v, want one stable media-incompatibility error", report.Errors)
 	}
+}
+
+func TestToolStructuralRoutingRequiresCompleteProducerMediaSubset(t *testing.T) {
+	baseRaw := toolStructuralDraftBoardFixture() + `
+[[gate]]
+id = "gate_media"
+title = "Inspect media"
+kinds = ["human"]
+criterion = "Confirm the payload"
+`
+
+	t.Run("overlap without subset rejects", func(t *testing.T) {
+		raw := baseRaw + `
+[[connection]]
+id = "edge_gate_tool_media_overlap"
+from = "gate_media:pass"
+to = "tool_normalize:port_tool_in"
+`
+		report := ValidateBoard(mustParseValidateBoardFixture(t, raw))
+		if dangling := findBoardFindings(report.Errors, FindingDanglingConnection); len(dangling) != 0 {
+			t.Fatalf("known Gate and Tool endpoints produced dangling findings: %+v", dangling)
+		}
+		mediaFindings := findBoardFindings(report.Errors, FindingIncompatibleMedia)
+		if len(mediaFindings) != 1 || len(report.Errors) != 1 {
+			t.Fatalf("Gate full-set output to JSON-only Tool findings = %+v, want one stable media-incompatibility error", report.Errors)
+		}
+	})
+
+	t.Run("proper subset accepts", func(t *testing.T) {
+		raw := baseRaw + `
+[[connection]]
+id = "edge_tool_gate_media_subset"
+from = "tool_normalize:port_tool_out"
+to = "gate_media:in"
+`
+		assertToolStructuralBoardAccepted(t, raw, "Tool JSON output routed to full-set Gate input")
+	})
 }
 
 func TestToolStructuralValidateBoardChecksEveryToolDefinition(t *testing.T) {
