@@ -44,11 +44,12 @@ func (scope workspaceAuthorityRegistrationObservation) workspaceIdentity() runti
 }
 
 type workspaceAuthorityRegistrationOps struct {
-	openWorkspace                 func(string) (*os.File, error)
-	validatePrivateNode           func(*os.File, uint32) error
-	generateWorkspaceAuthorityID  func() (string, error)
-	observeInitialRegistration    func(string) error
-	syncInitialAuthorityDirectory func(*os.File) error
+	openWorkspace                      func(string) (*os.File, error)
+	validatePrivateNode                func(*os.File, uint32) error
+	generateWorkspaceAuthorityID       func() (string, error)
+	observeInitialRegistration         func(string) error
+	syncInitialAuthorityDirectory      func(*os.File) error
+	syncWorkspaceRegistrationDirectory func(*os.File) error
 }
 
 type workspaceAuthorityRegistrar struct {
@@ -85,6 +86,12 @@ func newWorkspaceAuthorityRegistrar(hostRoot string, expectedUID uint32, gate wo
 				}
 				return directory.Sync()
 			},
+			syncWorkspaceRegistrationDirectory: func(directory *os.File) error {
+				if directory == nil {
+					return errRuntimeNoncanonical
+				}
+				return directory.Sync()
+			},
 		},
 	}
 }
@@ -106,7 +113,8 @@ func (registrar *workspaceAuthorityRegistrar) register(configuredWorkspace strin
 		registrar.ops.validatePrivateNode == nil ||
 		registrar.ops.generateWorkspaceAuthorityID == nil ||
 		registrar.ops.observeInitialRegistration == nil ||
-		registrar.ops.syncInitialAuthorityDirectory == nil {
+		registrar.ops.syncInitialAuthorityDirectory == nil ||
+		registrar.ops.syncWorkspaceRegistrationDirectory == nil {
 		return errRuntimeNoncanonical
 	}
 
@@ -181,6 +189,9 @@ func (registrar *workspaceAuthorityRegistrar) register(configuredWorkspace strin
 			}
 			entry, matchErr := matchRuntimeWorkspaceRegistryEntry(projectedRegistry, identity)
 			if matchErr == nil {
+				if err := registrar.ops.syncWorkspaceRegistrationDirectory(workspaces); err != nil {
+					return err
+				}
 				return callback(workspaceAuthorityRegistrationObservation{
 					identity:             identity,
 					lockDevice:           lockDevice,
@@ -245,6 +256,9 @@ func (registrar *workspaceAuthorityRegistrar) register(configuredWorkspace strin
 			})
 			if err != nil {
 				return err
+			}
+			if int64(len(nextRegistryRaw)) > runtimeAuthorityMaxRecordBytes {
+				return errRuntimeOutOfRange
 			}
 
 			policyRaw := []byte(`{"policyRev":1,"policySchema":1,"priorPolicySha256":"","state":"disabled"}`)
