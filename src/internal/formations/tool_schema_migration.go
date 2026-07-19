@@ -172,6 +172,10 @@ func toolSchemaMigrationScanBoard(lines []tomlLine) (*toolSchemaMigrationScan, e
 		"required":           true,
 		"role":               true,
 	}
+	ownedConnectionFields := map[string]bool{"channel": true}
+	if err := toolSchemaMigrationRejectOwnedDescendantHeaders(lines, ownedPortFields, ownedConnectionFields); err != nil {
+		return nil, err
+	}
 
 	for index := 0; index < len(lines); index++ {
 		section, ok := tomlLineSectionName(lines[index])
@@ -245,7 +249,7 @@ func toolSchemaMigrationScanBoard(lines []tomlLine) (*toolSchemaMigrationScan, e
 			continue
 		}
 		end := tomlBlockEnd(lines, index)
-		fields, err := toolSchemaMigrationCollectFields(lines, index+1, end, map[string]bool{"channel": true})
+		fields, err := toolSchemaMigrationCollectFields(lines, index+1, end, ownedConnectionFields)
 		if err != nil {
 			return nil, err
 		}
@@ -259,6 +263,27 @@ func toolSchemaMigrationScanBoard(lines []tomlLine) (*toolSchemaMigrationScan, e
 		index = end - 1
 	}
 	return scan, nil
+}
+
+func toolSchemaMigrationRejectOwnedDescendantHeaders(lines []tomlLine, ownedPortFields, ownedConnectionFields map[string]bool) error {
+	for _, line := range lines {
+		section, ok := tomlLineSectionName(line)
+		if !ok {
+			continue
+		}
+		path, ok := parseTOMLKeyPath(section)
+		if !ok {
+			continue
+		}
+		if len(path) > 2 && path[0] == "formation" &&
+			(path[1] == "input" || path[1] == "output") && ownedPortFields[path[2]] {
+			return fmt.Errorf("nested migration-owned field %q", path[2])
+		}
+		if len(path) > 1 && path[0] == "connection" && ownedConnectionFields[path[1]] {
+			return fmt.Errorf("nested migration-owned field %q", path[1])
+		}
+	}
+	return nil
 }
 
 func toolSchemaMigrationArraySection(line tomlLine) bool {
@@ -519,15 +544,15 @@ func toolSchemaMigrationValidateOwnedField(fields map[string][]string, key, want
 }
 
 func toolSchemaMigrationAddInsertion(lines []tomlLine, insertions map[int][]tomlLine, index int, body string) {
+	if index == len(lines) && index > 0 && lines[index-1].newline == "" {
+		index--
+	}
 	newline := "\n"
 	for previous := index - 1; previous >= 0; previous-- {
 		if lines[previous].newline != "" {
 			newline = lines[previous].newline
 			break
 		}
-	}
-	if index == len(lines) && index > 0 && lines[index-1].newline == "" {
-		lines[index-1].newline = newline
 	}
 	insertions[index] = append(insertions[index], tomlLine{body: body, newline: newline})
 }
