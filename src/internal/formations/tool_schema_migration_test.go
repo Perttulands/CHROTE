@@ -137,10 +137,14 @@ label = "Input"
 [[formation.output]]
 id = "port_work_out"
 label = "Output"`)
+	wantSource := append([]byte(nil), raw...)
 
 	migrated, err := migrateBoardToToolSchema(raw)
 	if err != nil {
 		t.Fatalf("migrate schema-1 board without final LF: %v", err)
+	}
+	if got := toolSchemaMigrationWithoutOwnedFields(migrated, renderInt(NewBoardSchema)); !bytes.Equal(got, wantSource) {
+		t.Fatalf("EOF migration rewrote bytes outside schema/owned fields:\n got %q\nwant %q", got, wantSource)
 	}
 	assertToolSchemaMigrationPortDefaults(t, migrated, "port_work_in", FormationPortInput)
 	assertToolSchemaMigrationPortDefaults(t, migrated, "port_work_out", FormationPortOutput)
@@ -156,6 +160,44 @@ label = "Output"`)
 func TestToolSchemaMigrationRejectsSchemaOneWithPreexistingTool(t *testing.T) {
 	raw := replaceToolSchemaMigrationFixture(t, toolStructuralDraftBoardFixture(), "schema = 2", "schema = 1")
 	assertToolSchemaMigrationRejected(t, raw, nil, "")
+}
+
+func TestToolSchemaMigrationRejectsOwnedDescendantTableHeaders(t *testing.T) {
+	base := toolSchemaMigrationLegacyFixture()
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{
+			name: "Formation input direction descendant",
+			raw: replaceToolSchemaMigrationFixture(t, base,
+				`label = "Work input"`,
+				`label = "Work input"
+[formation.input.direction]
+note = "shadow"`),
+		},
+		{
+			name: "Formation output encoded direction descendant",
+			raw: replaceToolSchemaMigrationFixture(t, base,
+				`label = "Work result" # output label`,
+				`label = "Work result" # output label
+[formation.output."d\u0069rection"]
+note = "shadow"`),
+		},
+		{
+			name: "connection encoded channel descendant",
+			raw: replaceToolSchemaMigrationFixture(t, base,
+				`x_route_note = "keep" # unknown safe connection field`,
+				`x_route_note = "keep" # unknown safe connection field
+[connection."ch\u0061nnel"]
+note = "shadow"`),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertToolSchemaMigrationRejected(t, tt.raw, nil, "")
+		})
+	}
 }
 
 func TestToolSchemaMigrationKeepsCanonicalSchemaTwoByteStable(t *testing.T) {
