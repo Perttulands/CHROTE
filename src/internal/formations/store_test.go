@@ -955,6 +955,107 @@ y = 300
 	}
 }
 
+func TestArrangeLayoutIncludesToolsInExplicitGraphProjection(t *testing.T) {
+	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
+	boardRaw := `schema = 2
+id = "brd_arrange_tool"
+slug = "arrange-tool"
+title = "Arrange Tool"
+rev = 4
+
+[[mission]]
+id = "mis_start"
+title = "Start"
+
+` + toolStructuralJSONNormalizeToolBlock("tool_normalize", "Normalize report", "port_tool_in", "port_tool_out") + `
+[[formation]]
+id = "fmn_finish"
+type = "solo"
+title = "Finish"
+
+[[formation.input]]
+id = "in"
+label = "Input"
+
+[[formation.output]]
+id = "out"
+label = "Output"
+
+[[connection]]
+id = "edge_start_tool"
+from = "mis_start:out"
+to = "tool_normalize:port_tool_in"
+
+[[connection]]
+id = "edge_tool_finish"
+from = "tool_normalize:port_tool_out"
+to = "fmn_finish:in"
+`
+	layoutRaw := `schema = 1
+boardId = "brd_arrange_tool"
+boardRev = 4
+
+[[node]]
+id = "mis_start"
+x = 700
+y = 500
+
+[[node]]
+id = "fmn_finish"
+x = 300
+y = 100
+`
+	writeFixture(t, store.BoardPath("arrange-tool"), boardRaw)
+	writeFixture(t, store.LayoutPath("arrange-tool"), layoutRaw)
+	layoutBefore, err := store.ReadLayout("arrange-tool")
+	if err != nil {
+		t.Fatalf("read Tool layout: %v", err)
+	}
+
+	// Arrangement is a read-only legibility projection of authored graph shape;
+	// execution compatibility is validated by a different boundary.
+	arranged, err := store.ArrangeLayout("arrange-tool", WriteOptions{ExpectedETag: layoutBefore.ETag})
+	if err != nil {
+		t.Fatalf("arrange Tool layout: %v", err)
+	}
+	byID := make(map[string]LayoutNode, len(arranged.Nodes))
+	for _, node := range arranged.Nodes {
+		byID[node.ID] = node
+		if node.X%formationLayoutGrid != 0 || node.Y%formationLayoutGrid != 0 {
+			t.Fatalf("arranged node is not grid aligned: %+v", node)
+		}
+	}
+	mission, missionOK := byID["mis_start"]
+	tool, toolOK := byID["tool_normalize"]
+	formation, formationOK := byID["fmn_finish"]
+	if !missionOK || !toolOK || !formationOK {
+		t.Fatalf("arranged board inventory = %+v, want Mission, Tool, and Formation", byID)
+	}
+	if !(mission.X < tool.X && tool.X < formation.X) {
+		t.Fatalf("arranged Tool graph depth is not left-to-right: %+v", byID)
+	}
+	if got := readFile(t, store.BoardPath("arrange-tool")); got != boardRaw {
+		t.Fatalf("Tool arrangement changed board bytes:\n%s", got)
+	}
+
+	again, err := store.ArrangeLayout("arrange-tool", WriteOptions{ExpectedETag: arranged.ETag})
+	if err != nil {
+		t.Fatalf("repeat Tool arrangement: %v", err)
+	}
+	if len(again.Nodes) != len(arranged.Nodes) {
+		t.Fatalf("repeat Tool arrangement node count = %d, want %d", len(again.Nodes), len(arranged.Nodes))
+	}
+	for index := range arranged.Nodes {
+		if again.Nodes[index] != arranged.Nodes[index] {
+			t.Fatalf("repeat Tool arrangement changed node %d: first=%+v second=%+v", index, arranged.Nodes[index], again.Nodes[index])
+		}
+	}
+	if got := readFile(t, store.BoardPath("arrange-tool")); got != boardRaw {
+		t.Fatalf("repeat Tool arrangement changed board bytes:\n%s", got)
+	}
+}
+
 func TestArrangeLayoutRefreshesStaleBoardRevisionAfterDefinitionEdit(t *testing.T) {
 	store := NewStore(t.TempDir())
 	store.Now = fixedClock()
