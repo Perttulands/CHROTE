@@ -112,6 +112,37 @@ func TestToolSchemaMigrationKeepsCanonicalSchemaTwoByteStable(t *testing.T) {
 	}
 }
 
+func TestToolSchemaMigrationAcceptsOnlyExactSchemaOneOrCanonicalSchemaTwo(t *testing.T) {
+	base := toolSchemaMigrationLegacyFixture()
+	schemaLine := `schema = 1 # compatibility schema`
+	tests := []struct {
+		name      string
+		raw       string
+		wantError error
+	}{
+		{name: "schema zero", raw: replaceToolSchemaMigrationFixture(t, base, schemaLine, `schema = 0`)},
+		{name: "negative schema", raw: replaceToolSchemaMigrationFixture(t, base, schemaLine, `schema = -1`)},
+		{name: "missing schema", raw: replaceToolSchemaMigrationFixture(t, base, schemaLine+"\n", "")},
+		{name: "leading-zero schema one", raw: replaceToolSchemaMigrationFixture(t, base, schemaLine, `schema = 01`)},
+		{name: "signed schema one", raw: replaceToolSchemaMigrationFixture(t, base, schemaLine, `schema = +1`)},
+		{name: "quoted schema one", raw: replaceToolSchemaMigrationFixture(t, base, schemaLine, `schema = "1"`)},
+		{name: "floating schema one", raw: replaceToolSchemaMigrationFixture(t, base, schemaLine, `schema = 1.0`)},
+		{name: "duplicate schema", raw: replaceToolSchemaMigrationFixture(t, base, schemaLine, "schema = 1\nschema = 1")},
+		{name: "schema two missing canonical owned fields", raw: replaceToolSchemaMigrationFixture(t, base, schemaLine, `schema = 2`)},
+		{name: "noncanonical schema two", raw: replaceToolSchemaMigrationFixture(t, base, schemaLine, `schema = +2`)},
+		{
+			name:      "future schema",
+			raw:       replaceToolSchemaMigrationFixture(t, base, schemaLine, `schema = 3`),
+			wantError: ErrUnsupportedSchema,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertToolSchemaMigrationRejected(t, tt.raw, tt.wantError, "")
+		})
+	}
+}
+
 func TestToolSchemaMigrationReusesOnlyExactOwnedFieldsAndRejectsCollisions(t *testing.T) {
 	base := toolSchemaMigrationLegacyFixture()
 	inputLabel := `label = "Work input"`
@@ -185,13 +216,19 @@ from = "gate_review:judge"`)
 		{name: "conflicting input media", raw: withInputFields(`acceptedMediaTypes = ["application/json"]`)},
 		{name: "conflicting input required", raw: withInputFields(`required = false`)},
 		{name: "conflicting input role", raw: withInputFields(`role = "retry_control"`)},
-		{name: "duplicate input field", raw: withInputFields("direction = \"input\"\ndirection = \"input\"")},
+		{name: "duplicate input direction", raw: withInputFields("direction = \"input\"\ndirection = \"input\"")},
+		{name: "duplicate input kind", raw: withInputFields("kind = \"work\"\nkind = \"work\"")},
+		{name: "duplicate input media", raw: withInputFields("acceptedMediaTypes = [\"text/plain\", \"text/markdown\", \"application/json\"]\nacceptedMediaTypes = [\"text/plain\", \"text/markdown\", \"application/json\"]")},
+		{name: "duplicate input required", raw: withInputFields("required = true\nrequired = true")},
+		{name: "duplicate input role", raw: withInputFields("role = \"data\"\nrole = \"data\"")},
 		{name: "conflicting output direction", raw: withOutputFields(`direction = "input"`)},
 		{name: "conflicting output kind", raw: withOutputFields(`kind = "gate_feedback"`)},
 		{name: "conflicting output media", raw: withOutputFields(`acceptedMediaTypes = ["application/json"]`)},
 		{name: "output carries input-only required", raw: withOutputFields(`required = true`)},
 		{name: "output carries input-only role", raw: withOutputFields(`role = "data"`)},
-		{name: "duplicate output field", raw: withOutputFields("kind = \"work\"\nkind = \"work\"")},
+		{name: "duplicate output direction", raw: withOutputFields("direction = \"output\"\ndirection = \"output\"")},
+		{name: "duplicate output kind", raw: withOutputFields("kind = \"work\"\nkind = \"work\"")},
+		{name: "duplicate output media", raw: withOutputFields("acceptedMediaTypes = [\"text/plain\", \"text/markdown\", \"application/json\"]\nacceptedMediaTypes = [\"text/plain\", \"text/markdown\", \"application/json\"]")},
 		{
 			name: "workflow edge claims judge channel",
 			raw: replaceToolSchemaMigrationFixture(t, base, edgeStart, `[[connection]]
@@ -229,11 +266,28 @@ func TestToolSchemaMigrationRejectsUnsafeLegacyShapesBeforeProducingCandidate(t 
 
 [[formation]]
 id = "fmn_feedback"`
+	judgeSend := `[[connection]]
+id = "edge_judge_send"
+from = "gate_review:judge"
+to = "fmn_judge_a:port_judge_a_in"
+`
+	judgeMid := `[[connection]]
+id = "edge_judge_mid"
+from = "fmn_judge_a:port_judge_a_out"
+to = "fmn_judge_b:port_judge_b_in"
+`
 	judgeReturn := `[[connection]]
 id = "edge_judge_return"
 from = "fmn_judge_b:port_judge_b_out"
 to = "gate_review:judge"
 `
+	withoutJudgeBlocks := func(blocks ...string) string {
+		raw := base
+		for _, block := range blocks {
+			raw = replaceToolSchemaMigrationFixture(t, raw, block, "")
+		}
+		return raw
+	}
 
 	tests := []struct {
 		name      string
@@ -286,17 +340,88 @@ to = "fmn_feedback:port_feedback_in"
 			wantCode: "legacy_fail_route_requires_migration",
 		},
 		{
-			name:     "unpaired Gate judge send",
+			name:     "unpaired Gate judge send path missing return",
 			raw:      replaceToolSchemaMigrationFixture(t, base, judgeReturn, ""),
 			wantCode: "legacy_judge_channel_requires_migration",
 		},
 		{
-			name: "branched judge Formation endpoint",
+			name:     "unpaired Gate judge return",
+			raw:      withoutJudgeBlocks(judgeSend, judgeMid),
+			wantCode: "legacy_judge_channel_requires_migration",
+		},
+		{
+			name: "multiple Gate judge sends",
+			raw: base + `
+[[connection]]
+id = "edge_judge_second_send"
+from = "gate_review:judge"
+to = "fmn_feedback:port_feedback_in"
+`,
+			wantCode: "legacy_judge_channel_requires_migration",
+		},
+		{
+			name: "multiple Gate judge returns",
+			raw: base + `
+[[connection]]
+id = "edge_judge_second_return"
+from = "fmn_feedback:port_feedback_out"
+to = "gate_review:judge"
+`,
+			wantCode: "legacy_judge_channel_requires_migration",
+		},
+		{
+			name: "non-Formation judge hop",
+			raw: withoutJudgeBlocks(judgeSend, judgeMid, judgeReturn) + `
+[[gate]]
+id = "gate_nonformation_hop"
+title = "Not a Formation judge"
+kinds = ["human"]
+criterion = "Must not enter a judge chain"
+
+[[connection]]
+id = "edge_judge_nonformation_send"
+from = "gate_review:judge"
+to = "gate_nonformation_hop:in"
+
+[[connection]]
+id = "edge_judge_nonformation_return"
+from = "gate_nonformation_hop:pass"
+to = "gate_review:judge"
+`,
+			wantCode: "legacy_judge_channel_requires_migration",
+		},
+		{
+			name:     "disconnected judge chain",
+			raw:      replaceToolSchemaMigrationFixture(t, base, judgeMid, ""),
+			wantCode: "legacy_judge_channel_requires_migration",
+		},
+		{
+			name: "cyclic judge chain",
+			raw: base + `
+[[connection]]
+id = "edge_judge_cycle"
+from = "fmn_judge_b:port_judge_b_out"
+to = "fmn_judge_a:port_judge_a_in"
+`,
+			wantCode: "legacy_judge_channel_requires_migration",
+		},
+		{
+			name: "output-side judge endpoint cross-use",
 			raw: base + `
 [[connection]]
 id = "edge_judge_cross_use"
 from = "fmn_judge_a:port_judge_a_out"
 to = "fmn_feedback:port_feedback_in"
+`,
+			wantCode: "legacy_judge_channel_requires_migration",
+		},
+		{
+			name: "input-side judge endpoint cross-use",
+			raw: base + `
+[[connection]]
+id = "edge_judge_side_entry"
+from = "fmn_feedback:port_feedback_out"
+to = "fmn_judge_b:port_judge_b_in"
 `,
 			wantCode: "legacy_judge_channel_requires_migration",
 		},
@@ -315,7 +440,7 @@ func assertToolSchemaMigrationRejected(t *testing.T, source string, wantError er
 	wantSource := append([]byte(nil), raw...)
 	candidate, err := migrateBoardToToolSchema(raw)
 	if err == nil {
-		t.Fatalf("unsafe schema-1 board produced candidate %q", candidate)
+		t.Fatalf("unsafe board produced %d candidate bytes", len(candidate))
 	}
 	if wantError != nil && !errors.Is(err, wantError) {
 		t.Fatalf("migration error = %v, want %v", err, wantError)
