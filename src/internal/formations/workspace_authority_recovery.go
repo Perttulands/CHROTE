@@ -86,8 +86,9 @@ func (registrar *workspaceAuthorityRegistrar) selectWorkspaceAuthorityRecoveryCa
 		return nil, err
 	}
 	sort.Strings(names)
+	complete := false
 	defer func() {
-		if err != nil && selected != nil {
+		if !complete && selected != nil {
 			selected.close()
 			selected = nil
 		}
@@ -112,6 +113,7 @@ func (registrar *workspaceAuthorityRegistrar) selectWorkspaceAuthorityRecoveryCa
 		}
 		selected = candidate
 	}
+	complete = true
 	return selected, nil
 }
 
@@ -210,12 +212,11 @@ func (transaction *workspaceAuthorityRecoveryTransaction) complete() error {
 		if err != nil {
 			return err
 		}
-		if err := transaction.registrar.ops.validatePrivateNode(ownerLock, transaction.registrar.expectedUID); err != nil {
-			ownerLock.Close()
-			return err
-		}
 	}
 	defer ownerLock.Close()
+	if err := transaction.registrar.ops.validatePrivateNode(ownerLock, transaction.registrar.expectedUID); err != nil {
+		return err
+	}
 	if err := syscall.Flock(int(ownerLock.Fd()), syscall.LOCK_EX); err != nil {
 		return err
 	}
@@ -292,10 +293,6 @@ func (transaction *workspaceAuthorityRecoveryTransaction) openOwnerLock() (*os.F
 	if err != nil {
 		return nil, true, fmt.Errorf("%w: open orphan owner lock: %v", errRuntimeIntegrityMismatch, err)
 	}
-	if err := transaction.registrar.ops.validatePrivateNode(ownerLock, transaction.registrar.expectedUID); err != nil {
-		ownerLock.Close()
-		return nil, true, err
-	}
 	return ownerLock, true, nil
 }
 
@@ -308,8 +305,9 @@ func (transaction *workspaceAuthorityRecoveryTransaction) preflightInitialState(
 		return nil, fmt.Errorf("%w: reopen selected orphan workspace authority: %v", errRuntimeIntegrityMismatch, err)
 	}
 	state = &workspaceAuthorityRecoveryInitialState{directory: directory}
+	complete := false
 	defer func() {
-		if err != nil {
+		if !complete {
 			state.close()
 			state = nil
 		}
@@ -406,6 +404,7 @@ func (transaction *workspaceAuthorityRecoveryTransaction) preflightInitialState(
 	if err := state.validateNamed(transaction); err != nil {
 		return state, err
 	}
+	complete = true
 	return state, nil
 }
 
