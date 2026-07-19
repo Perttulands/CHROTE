@@ -470,7 +470,7 @@ func projectCard(card PersonaCard, live []LiveAgentSession) AgentProjection {
 func parsePersonaCard(expectedID string, raw []byte) (*PersonaCard, error) {
 	parser := newPersonaParser(raw)
 	schema := parser.schema
-	if schema > CurrentSchema {
+	if schema > CurrentPersonaSchema {
 		return nil, fmt.Errorf("%w: schema %d", ErrUnsupportedSchema, schema)
 	}
 	card := &PersonaCard{
@@ -607,7 +607,7 @@ func renderPersona(req CreatePersonaRequest, harness, sessionStem string, tags [
 		displayName = req.ID
 	}
 	var b strings.Builder
-	b.WriteString("schema = 1\n\n")
+	b.WriteString("schema = " + renderInt(CurrentPersonaSchema) + "\n\n")
 	b.WriteString("[card]\n")
 	b.WriteString("id = " + renderString(req.ID) + "\n")
 	b.WriteString("display_name = " + renderString(displayName) + "\n")

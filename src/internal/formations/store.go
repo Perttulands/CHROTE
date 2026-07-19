@@ -13,7 +13,12 @@ import (
 	"time"
 )
 
-const CurrentSchema = 1
+const (
+	CurrentBoardSchema   = 2
+	CurrentLayoutSchema  = 1
+	NewBoardSchema       = 1
+	CurrentPersonaSchema = 1
+)
 
 var (
 	ErrConflict             = errors.New("formations conflict")
@@ -247,9 +252,6 @@ func (s *Store) UpdateBoardMetadata(slug string, patch BoardMetadataPatch, opts 
 		}
 
 		doc := parseTOMLDocument(raw)
-		if current.Schema < CurrentSchema {
-			doc.setScalar("schema", renderInt(CurrentSchema))
-		}
 		if patch.Title != nil {
 			doc.setScalar("title", renderString(*patch.Title))
 		}
@@ -305,8 +307,8 @@ func (s *Store) UpdateLayoutMetadata(slug string, patch LayoutMetadataPatch, opt
 			when = s.now()
 		}
 		doc := parseTOMLDocument(raw)
-		if current.Schema < CurrentSchema {
-			doc.setScalar("schema", renderInt(CurrentSchema))
+		if current.Schema < CurrentLayoutSchema {
+			doc.setScalar("schema", renderInt(CurrentLayoutSchema))
 		}
 		doc.setScalar("updatedAt", renderString(when.UTC().Format(time.RFC3339)))
 
@@ -340,41 +342,7 @@ func (s *Store) readBoardDefinition(slug string) (*BoardDocument, error) {
 	if err != nil {
 		return nil, err
 	}
-	current, err := parseBoard(raw)
-	if err != nil {
-		return nil, err
-	}
-	if current.Schema >= CurrentSchema {
-		return current, nil
-	}
-
-	var migrated *BoardDocument
-	err = definition.withLock(func(definition *definitionFile) error {
-		lockedRaw, err := definition.readBytes()
-		if err != nil {
-			return err
-		}
-		lockedCurrent, err := parseBoard(lockedRaw)
-		if err != nil {
-			return err
-		}
-		if lockedCurrent.Schema >= CurrentSchema {
-			migrated = lockedCurrent
-			return nil
-		}
-		doc := parseTOMLDocument(lockedRaw)
-		doc.setScalar("schema", renderInt(CurrentSchema))
-		migratedRaw := doc.bytes()
-		if err := definition.writeAtomic(migratedRaw); err != nil {
-			return err
-		}
-		migrated, err = parseBoard(migratedRaw)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	return migrated, nil
+	return parseBoard(raw)
 }
 
 func (s *Store) readLayoutDefinition(slug string) (*LayoutDocument, error) {
@@ -387,47 +355,13 @@ func (s *Store) readLayoutDefinition(slug string) (*LayoutDocument, error) {
 	if err != nil {
 		return nil, err
 	}
-	current, err := parseLayout(raw)
-	if err != nil {
-		return nil, err
-	}
-	if current.Schema >= CurrentSchema {
-		return current, nil
-	}
-
-	var migrated *LayoutDocument
-	err = definition.withLock(func(definition *definitionFile) error {
-		lockedRaw, err := definition.readBytes()
-		if err != nil {
-			return err
-		}
-		lockedCurrent, err := parseLayout(lockedRaw)
-		if err != nil {
-			return err
-		}
-		if lockedCurrent.Schema >= CurrentSchema {
-			migrated = lockedCurrent
-			return nil
-		}
-		doc := parseTOMLDocument(lockedRaw)
-		doc.setScalar("schema", renderInt(CurrentSchema))
-		migratedRaw := doc.bytes()
-		if err := definition.writeAtomic(migratedRaw); err != nil {
-			return err
-		}
-		migrated, err = parseLayout(migratedRaw)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	return migrated, nil
+	return parseLayout(raw)
 }
 
 func parseBoard(raw []byte) (*BoardDocument, error) {
 	doc := parseTOMLDocument(raw)
 	schema := doc.intValue("schema")
-	if schema > CurrentSchema {
+	if schema > CurrentBoardSchema {
 		return nil, fmt.Errorf("%w: schema %d", ErrUnsupportedSchema, schema)
 	}
 	board := &BoardDocument{
@@ -452,7 +386,7 @@ func parseBoard(raw []byte) (*BoardDocument, error) {
 func parseLayout(raw []byte) (*LayoutDocument, error) {
 	doc := parseTOMLDocument(raw)
 	schema := doc.intValue("schema")
-	if schema > CurrentSchema {
+	if schema > CurrentLayoutSchema {
 		return nil, fmt.Errorf("%w: schema %d", ErrUnsupportedSchema, schema)
 	}
 	return &LayoutDocument{
@@ -492,7 +426,7 @@ func renderInt(v int) string {
 
 func renderBoard(slug, title, updatedBy string, updatedAt time.Time) []byte {
 	var b strings.Builder
-	b.WriteString("schema = " + renderInt(CurrentSchema) + "\n")
+	b.WriteString("schema = " + renderInt(NewBoardSchema) + "\n")
 	b.WriteString("id = " + renderString(newPrefixedID("brd")) + "\n")
 	b.WriteString("slug = " + renderString(slug) + "\n")
 	b.WriteString("title = " + renderString(title) + "\n")

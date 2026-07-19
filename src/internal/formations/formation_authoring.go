@@ -327,9 +327,6 @@ func (s *Store) CreateFormation(slug string, req FormationCreateRequest, opts Wr
 		}
 
 		doc := parseTOMLDocument(raw)
-		if current.Schema < CurrentSchema {
-			doc.setScalar("schema", renderInt(CurrentSchema))
-		}
 		if req.UpdatedBy != "" {
 			doc.setScalar("updatedBy", renderString(req.UpdatedBy))
 		}
@@ -388,9 +385,6 @@ func (s *Store) DeleteFormation(slug string, req FormationDeleteRequest, opts Wr
 		}
 
 		doc := parseTOMLDocument(raw)
-		if current.Schema < CurrentSchema {
-			doc.setScalar("schema", renderInt(CurrentSchema))
-		}
 		if req.UpdatedBy != "" {
 			doc.setScalar("updatedBy", renderString(req.UpdatedBy))
 		}
@@ -453,9 +447,6 @@ func (s *Store) DeleteGate(slug string, req GateDeleteRequest, opts WriteOptions
 		}
 
 		doc := parseTOMLDocument(raw)
-		if current.Schema < CurrentSchema {
-			doc.setScalar("schema", renderInt(CurrentSchema))
-		}
 		if req.UpdatedBy != "" {
 			doc.setScalar("updatedBy", renderString(req.UpdatedBy))
 		}
@@ -518,9 +509,6 @@ func (s *Store) DeleteMission(slug string, req MissionDeleteRequest, opts WriteO
 		}
 
 		doc := parseTOMLDocument(raw)
-		if current.Schema < CurrentSchema {
-			doc.setScalar("schema", renderInt(CurrentSchema))
-		}
 		if req.UpdatedBy != "" {
 			doc.setScalar("updatedBy", renderString(req.UpdatedBy))
 		}
@@ -814,9 +802,6 @@ func (s *Store) CreateGate(slug string, req GateCreateRequest, opts WriteOptions
 		}
 
 		doc := parseTOMLDocument(raw)
-		if current.Schema < CurrentSchema {
-			doc.setScalar("schema", renderInt(CurrentSchema))
-		}
 		if req.UpdatedBy != "" {
 			doc.setScalar("updatedBy", renderString(req.UpdatedBy))
 		}
@@ -950,9 +935,6 @@ func (s *Store) CreateMission(slug string, req MissionCreateRequest, opts WriteO
 		}
 
 		doc := parseTOMLDocument(raw)
-		if current.Schema < CurrentSchema {
-			doc.setScalar("schema", renderInt(CurrentSchema))
-		}
 		if req.UpdatedBy != "" {
 			doc.setScalar("updatedBy", renderString(req.UpdatedBy))
 		}
@@ -1152,7 +1134,7 @@ func (s *Store) updateLayoutNodes(slug string, nodes []LayoutNode, board *BoardD
 					return err
 				}
 			}
-			raw = []byte("schema = 1\nboardId = " + renderString(board.ID) + "\nboardRev = " + renderInt(board.Rev) + "\nupdatedAt = " + renderString(s.now().Format(time.RFC3339)) + "\n")
+			raw = []byte("schema = " + renderInt(CurrentLayoutSchema) + "\nboardId = " + renderString(board.ID) + "\nboardRev = " + renderInt(board.Rev) + "\nupdatedAt = " + renderString(s.now().Format(time.RFC3339)) + "\n")
 			recreatingMissing = true
 		case errors.Is(err, ErrNotFound):
 			return ErrNotFound
@@ -1167,8 +1149,8 @@ func (s *Store) updateLayoutNodes(slug string, nodes []LayoutNode, board *BoardD
 			return ErrConflict
 		}
 		doc := parseTOMLDocument(raw)
-		if current.Schema < CurrentSchema {
-			doc.setScalar("schema", renderInt(CurrentSchema))
+		if current.Schema < CurrentLayoutSchema {
+			doc.setScalar("schema", renderInt(CurrentLayoutSchema))
 		}
 		if board != nil {
 			doc.setScalar("boardId", renderString(board.ID))
@@ -1209,8 +1191,8 @@ func (s *Store) UpdateLayoutEdges(slug string, edges []LayoutEdge, opts WriteOpt
 			return ErrConflict
 		}
 		doc := parseTOMLDocument(raw)
-		if current.Schema < CurrentSchema {
-			doc.setScalar("schema", renderInt(CurrentSchema))
+		if current.Schema < CurrentLayoutSchema {
+			doc.setScalar("schema", renderInt(CurrentLayoutSchema))
 		}
 		doc.setScalar("updatedAt", renderString(s.now().Format(time.RFC3339)))
 		nextRaw := patchLayoutEdgeBlocks(doc.bytes(), edges)
@@ -1248,9 +1230,6 @@ func (s *Store) updateBoardDefinition(slug, updatedBy string, opts WriteOptions,
 		}
 
 		doc := parseTOMLDocument(raw)
-		if current.Schema < CurrentSchema {
-			doc.setScalar("schema", renderInt(CurrentSchema))
-		}
 		if updatedBy != "" {
 			doc.setScalar("updatedBy", renderString(updatedBy))
 		}
@@ -1709,7 +1688,7 @@ func (s *Store) upsertLayoutNode(slug, boardID string, boardRev int, node Layout
 		switch {
 		case err == nil:
 		case errors.Is(err, ErrNotFound):
-			raw = []byte("schema = 1\nboardId = " + renderString(boardID) + "\nboardRev = " + renderInt(boardRev) + "\nupdatedAt = " + renderString(s.now().Format(time.RFC3339)) + "\n")
+			raw = []byte("schema = " + renderInt(CurrentLayoutSchema) + "\nboardId = " + renderString(boardID) + "\nboardRev = " + renderInt(boardRev) + "\nupdatedAt = " + renderString(s.now().Format(time.RFC3339)) + "\n")
 		default:
 			return err
 		}
@@ -1718,8 +1697,8 @@ func (s *Store) upsertLayoutNode(slug, boardID string, boardRev int, node Layout
 			return err
 		}
 		doc := parseTOMLDocument(raw)
-		if current.Schema < CurrentSchema {
-			doc.setScalar("schema", renderInt(CurrentSchema))
+		if current.Schema < CurrentLayoutSchema {
+			doc.setScalar("schema", renderInt(CurrentLayoutSchema))
 		}
 		doc.setScalar("boardId", renderString(boardID))
 		doc.setScalar("boardRev", renderInt(boardRev))
@@ -1746,7 +1725,7 @@ func (s *Store) deleteLayoutNodes(slug, boardID string, boardRev int, nodeIDs ma
 		case err == nil:
 		case errors.Is(err, ErrNotFound):
 			layout = &LayoutDocument{
-				Schema:   CurrentSchema,
+				Schema:   CurrentLayoutSchema,
 				BoardID:  boardID,
 				BoardRev: boardRev,
 				Nodes:    []LayoutNode{},
@@ -1760,8 +1739,8 @@ func (s *Store) deleteLayoutNodes(slug, boardID string, boardRev int, nodeIDs ma
 			return err
 		}
 		doc := parseTOMLDocument(raw)
-		if current.Schema < CurrentSchema {
-			doc.setScalar("schema", renderInt(CurrentSchema))
+		if current.Schema < CurrentLayoutSchema {
+			doc.setScalar("schema", renderInt(CurrentLayoutSchema))
 		}
 		doc.setScalar("boardId", renderString(boardID))
 		doc.setScalar("boardRev", renderInt(boardRev))
