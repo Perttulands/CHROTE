@@ -59,6 +59,9 @@ func migrateBoardToToolSchema(raw []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if schema == NewBoardSchema && len(board.Tools) != 0 {
+		return nil, fmt.Errorf("board schema %d cannot contain Tool definitions", schema)
+	}
 	for _, gate := range board.Gates {
 		if gateHasLegacyScriptCommand(gate) {
 			return nil, legacyScriptGateMigrationError(gate.ID)
@@ -130,6 +133,9 @@ func toolSchemaMigrationReadSchema(lines []tomlLine) (int, int, error) {
 		count++
 		parsedKey, literal, present, err := parseToolAssignment(line.body)
 		if err != nil || !present || parsedKey != "schema" {
+			return 0, -1, fmt.Errorf("invalid formations schema")
+		}
+		if strings.HasPrefix(literal, "0x") || strings.HasPrefix(literal, "0o") || strings.HasPrefix(literal, "0b") {
 			return 0, -1, fmt.Errorf("invalid formations schema")
 		}
 		schema, err = parseToolInteger(literal)
@@ -265,10 +271,18 @@ func toolSchemaMigrationCollectFields(lines []tomlLine, start, end int, owned ma
 		if lines[index].valueContinuation {
 			continue
 		}
-		key, _, ok := tomlKeyValue(lines[index].body)
-		if !ok || !owned[key] {
+		assignment := tomlAssignmentIndex(lines[index].body)
+		if assignment < 0 {
 			continue
 		}
+		path, ok := parseTOMLKeyPath(lines[index].body[:assignment])
+		if !ok || len(path) == 0 || !owned[path[0]] {
+			continue
+		}
+		if len(path) != 1 {
+			return nil, fmt.Errorf("nested migration-owned field %q", path[0])
+		}
+		key := path[0]
 		parsedKey, literal, present, err := parseToolAssignment(lines[index].body)
 		if err != nil || !present || parsedKey != key {
 			return nil, fmt.Errorf("invalid migration-owned field %q", key)
@@ -506,8 +520,14 @@ func toolSchemaMigrationValidateOwnedField(fields map[string][]string, key, want
 
 func toolSchemaMigrationAddInsertion(lines []tomlLine, insertions map[int][]tomlLine, index int, body string) {
 	newline := "\n"
-	if index > 0 && index-1 < len(lines) && lines[index-1].newline != "" {
-		newline = lines[index-1].newline
+	for previous := index - 1; previous >= 0; previous-- {
+		if lines[previous].newline != "" {
+			newline = lines[previous].newline
+			break
+		}
+	}
+	if index == len(lines) && index > 0 && lines[index-1].newline == "" {
+		lines[index-1].newline = newline
 	}
 	insertions[index] = append(insertions[index], tomlLine{body: body, newline: newline})
 }
