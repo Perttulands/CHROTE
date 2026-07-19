@@ -204,6 +204,13 @@ func TestDefinitionPairAcquiresBoardThenLayoutAndHoldsBothThroughPublication(t *
 	if err := store.withLayoutDefinitionLock(slug, func(*definitionFile) error { return nil }); err != nil {
 		t.Fatalf("initialize layout lock: %v", err)
 	}
+	layoutMutex := mutexFor(store.LayoutPath(slug) + ".lock")
+	layoutMutex.Lock()
+	var releaseForeignLayoutMutex sync.Once
+	releaseLayoutMutex := func() {
+		releaseForeignLayoutMutex.Do(layoutMutex.Unlock)
+	}
+	t.Cleanup(releaseLayoutMutex)
 	foreignLayout := startPeerProcessDefinitionFlockHolderForTest(t, store.LayoutPath(slug)+".lock")
 
 	request := definitionPairRequestForTest(oldBoard, oldLayout, newBoard, pairPresentContentForTest(newLayout))
@@ -241,6 +248,7 @@ func TestDefinitionPairAcquiresBoardThenLayoutAndHoldsBothThroughPublication(t *
 	publicationDrained := false
 	t.Cleanup(func() {
 		authorizeRelease()
+		releaseLayoutMutex()
 		if err := foreignLayout.releaseAndWait(); err != nil {
 			t.Errorf("cleanup foreign layout owner: %v", err)
 		}
@@ -256,9 +264,29 @@ func TestDefinitionPairAcquiresBoardThenLayoutAndHoldsBothThroughPublication(t *
 	})
 
 	waitForDefinitionPairMutexHeldForTest(t, store.BoardPath(slug)+".lock", "publisher board")
-	waitForDefinitionPairMutexHeldForTest(t, store.LayoutPath(slug)+".lock", "publisher layout")
-	consumedPublication, err := waitForDefinitionPairForeignFlockBlockForTest(
+	consumedPublication, err := waitForDefinitionPairForeignOwnerBlockForTest(
 		"runDefinitionPairPublicationBehindForeignFlockForTest",
+		"[sync.Mutex.Lock]",
+		"sync.(*Mutex).Lock",
+		"foreign layout mutex",
+		forbiddenPhase,
+		publishDone,
+	)
+	publicationDrained = consumedPublication
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pairMutexHeldForTest(store.BoardPath(slug) + ".lock") {
+		t.Fatal("publisher released board mutex while waiting for layout mutex")
+	}
+
+	releaseLayoutMutex()
+	waitForDefinitionPairMutexHeldForTest(t, store.LayoutPath(slug)+".lock", "publisher layout")
+	consumedPublication, err = waitForDefinitionPairForeignOwnerBlockForTest(
+		"runDefinitionPairPublicationBehindForeignFlockForTest",
+		"[syscall]",
+		"syscall.Flock",
+		"foreign layout flock",
 		forbiddenPhase,
 		publishDone,
 	)
@@ -1743,8 +1771,11 @@ func waitForDefinitionPairGoroutineBlockForTest(t *testing.T, function, blockedS
 	}
 }
 
-func waitForDefinitionPairForeignFlockBlockForTest(
+func waitForDefinitionPairForeignOwnerBlockForTest(
 	function string,
+	blockedState string,
+	blockedFrame string,
+	description string,
 	forbiddenPhase <-chan string,
 	publishDone <-chan error,
 ) (bool, error) {
@@ -1756,23 +1787,26 @@ func waitForDefinitionPairForeignFlockBlockForTest(
 		buffer, snapshot, blocked = definitionPairGoroutineBlockSnapshotForTest(
 			buffer,
 			function,
-			"[syscall]",
-			"syscall.Flock",
+			blockedState,
+			blockedFrame,
 		)
 		if blocked == 1 {
 			return false, nil
 		}
 		select {
 		case phase := <-forbiddenPhase:
-			return false, fmt.Errorf("pair publication reached %q while another process owned layout flock", phase)
+			return false, fmt.Errorf("pair publication reached %q while blocked by %s", phase, description)
 		case err := <-publishDone:
-			return true, fmt.Errorf("pair publication returned before waiting on the foreign layout flock: %v", err)
+			return true, fmt.Errorf("pair publication returned before waiting on the %s: %v", description, err)
 		default:
 		}
 		if time.Now().After(deadline) {
 			return false, fmt.Errorf(
-				"timed out waiting for %s in state [syscall] with frame syscall.Flock\nfinal goroutine snapshot:\n%s",
+				"timed out waiting for %s behind %s in state %s with frame %s\nfinal goroutine snapshot:\n%s",
 				function,
+				description,
+				blockedState,
+				blockedFrame,
 				snapshot,
 			)
 		}
