@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"syscall"
 	"testing"
+	"time"
 )
 
 func TestWorkspaceAuthorityRegistrationIdentityUsesOneOpenedDirectory(t *testing.T) {
@@ -473,6 +474,166 @@ func TestWorkspaceAuthorityCapabilityRejectsBeforeRegistryLockSelection(t *testi
 	}
 }
 
+func TestWorkspaceAuthorityRegistryLookupClassifiesIdentityWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name      string
+		registry  func(runtimeWorkspaceIdentity) workspaceRegistryJCSV1
+		mutateRaw func([]byte) []byte
+		wantEntry bool
+		wantError error
+	}{
+		{
+			name: "exact configured and opened identity",
+			registry: func(identity runtimeWorkspaceIdentity) workspaceRegistryJCSV1 {
+				return workspaceRegistryWithIdentity(identity, testWorkspaceAuthorityID)
+			},
+			wantEntry: true,
+		},
+		{
+			name: "unregistered configured and opened identity",
+			registry: func(runtimeWorkspaceIdentity) workspaceRegistryJCSV1 {
+				return workspaceRegistryJCSV1{Entries: []workspaceRegistryEntryJCSV1{}, RecordRev: 1, RegistrySchema: 1}
+			},
+		},
+		{
+			name: "configured spelling changed target",
+			registry: func(identity runtimeWorkspaceIdentity) workspaceRegistryJCSV1 {
+				record := workspaceRegistryWithIdentity(identity, testWorkspaceAuthorityID)
+				record.Entries[0].Inode = strconv.FormatUint(identity.inode+1, 10)
+				return record
+			},
+			wantError: errRuntimeIntegrityMismatch,
+		},
+		{
+			name: "different alias names opened identity",
+			registry: func(identity runtimeWorkspaceIdentity) workspaceRegistryJCSV1 {
+				record := workspaceRegistryWithIdentity(identity, testWorkspaceAuthorityID)
+				record.Entries[0].ConfiguredPath = identity.configuredPath + "-registered-alias"
+				return record
+			},
+			wantError: errRuntimeConflict,
+		},
+		{
+			name: "noncanonical registry bytes",
+			registry: func(identity runtimeWorkspaceIdentity) workspaceRegistryJCSV1 {
+				return workspaceRegistryWithIdentity(identity, testWorkspaceAuthorityID)
+			},
+			mutateRaw: func(raw []byte) []byte {
+				return append(raw, '\n')
+			},
+			wantError: errRuntimeNoncanonical,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			base := t.TempDir()
+			workspace := filepath.Join(base, "workspace")
+			if err := os.Mkdir(workspace, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			identity, err := openRuntimeWorkspaceIdentity(workspace)
+			if err != nil {
+				t.Fatal(err)
+			}
+			record := test.registry(identity)
+			raw, err := encodeWorkspaceRegistryJCSV1(record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.mutateRaw != nil {
+				raw = test.mutateRaw(raw)
+			}
+			hostRoot := filepath.Join(base, "authority")
+			workspacesRoot, _ := prepareWorkspaceAuthorityRegistrationRoot(t, hostRoot, workspaceRegistryJCSV1{
+				Entries:        []workspaceRegistryEntryJCSV1{},
+				RecordRev:      1,
+				RegistrySchema: 1,
+			})
+			writePrivateAuthorityTestFile(t, filepath.Join(workspacesRoot, "registry.private.json"), raw)
+			before := snapshotWorkspaceAuthorityTopology(t, base)
+
+			registrar := newWorkspaceAuthorityRegistrar(hostRoot, uint32(os.Geteuid()), newWorkspaceAuthorityCapabilityGate())
+			inspection, err := registrar.inspect(workspace)
+			if test.wantError != nil {
+				if inspection != nil {
+					closeWorkspaceAuthorityInspection(t, inspection)
+				}
+				if !errors.Is(err, test.wantError) {
+					t.Fatalf("registry lookup error = %v, want %v", err, test.wantError)
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if (inspection.entry != nil) != test.wantEntry {
+					closeWorkspaceAuthorityInspection(t, inspection)
+					t.Fatalf("registry match entry = %+v, want present=%t", inspection.entry, test.wantEntry)
+				}
+				if test.wantEntry && inspection.entry.WorkspaceAuthorityID != testWorkspaceAuthorityID {
+					closeWorkspaceAuthorityInspection(t, inspection)
+					t.Fatalf("matched workspace authority id = %q, want %q", inspection.entry.WorkspaceAuthorityID, testWorkspaceAuthorityID)
+				}
+				closeWorkspaceAuthorityInspection(t, inspection)
+			}
+			if after := snapshotWorkspaceAuthorityTopology(t, base); !reflect.DeepEqual(after, before) {
+				t.Fatalf("registry lookup changed topology\nbefore: %#v\nafter:  %#v", before, after)
+			}
+		})
+	}
+}
+
+func TestWorkspaceAuthorityRegistryCriticalSectionSerializesLocally(t *testing.T) {
+	fixture := newWorkspaceAuthorityRegistrationFixture(t, workspaceRegistryJCSV1{
+		Entries:        []workspaceRegistryEntryJCSV1{},
+		RecordRev:      1,
+		RegistrySchema: 1,
+	})
+	registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate())
+	first, err := registrar.inspect(fixture.workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstClosed := false
+	t.Cleanup(func() {
+		if !firstClosed {
+			_ = first.close()
+		}
+	})
+
+	attempted := make(chan struct{})
+	result := make(chan error, 1)
+	go func() {
+		close(attempted)
+		second, err := registrar.inspect(fixture.workspace)
+		if second != nil {
+			if closeErr := second.close(); err == nil {
+				err = closeErr
+			}
+		}
+		result <- err
+	}()
+	<-attempted
+	select {
+	case err := <-result:
+		t.Fatalf("second local registry inspection entered before first released: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	if err := first.close(); err != nil {
+		t.Fatal(err)
+	}
+	firstClosed = true
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("second local registry inspection after release: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("second local registry inspection did not enter after release")
+	}
+}
+
 type workspaceAuthorityRegistrationFixture struct {
 	base           string
 	hostRoot       string
@@ -522,6 +683,20 @@ func prepareWorkspaceAuthorityRegistrationRoot(t *testing.T, hostRoot string, re
 	}
 	writePrivateAuthorityTestFile(t, filepath.Join(workspacesRoot, "registry.private.json"), raw)
 	return workspacesRoot, registryLock
+}
+
+func workspaceRegistryWithIdentity(identity runtimeWorkspaceIdentity, workspaceAuthorityID string) workspaceRegistryJCSV1 {
+	return workspaceRegistryJCSV1{
+		Entries: []workspaceRegistryEntryJCSV1{{
+			ConfiguredPath:              identity.configuredPath,
+			Device:                      strconv.FormatUint(identity.device, 10),
+			Inode:                       strconv.FormatUint(identity.inode, 10),
+			WorkspaceAuthorityID:        workspaceAuthorityID,
+			WorkspaceRootIdentitySHA256: identity.rootHash,
+		}},
+		RecordRev:      1,
+		RegistrySchema: 1,
+	}
 }
 
 func writePrivateAuthorityTestFile(t *testing.T, path string, raw []byte) {
