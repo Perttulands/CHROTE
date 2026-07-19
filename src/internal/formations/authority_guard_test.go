@@ -1558,15 +1558,50 @@ func TestGuardRuntimeAuthorityV1RejectsHardLinkedAuthorityRecords(t *testing.T) 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newRuntimeAuthorityFixture(t)
+			target := test.target(fixture)
 			// A second link inside the workspace would bypass the Generic Files
 			// authority-root deny boundary while naming the same authority bytes.
 			escaped := filepath.Join(fixture.workspace, "escaped-"+strings.ReplaceAll(test.name, " ", "-"))
-			if err := os.Link(test.target(fixture), escaped); err != nil {
+			if err := os.Link(target, escaped); err != nil {
 				t.Fatal(err)
 			}
+			before := authorityHardLinkIdentity(t, target, escaped)
 			assertRuntimeGuardRejectsUnchanged(t, fixture, test.stage)
+			after := authorityHardLinkIdentity(t, target, escaped)
+			if after != before {
+				t.Fatalf("hard-link identity changed during rejection: before %+v, after %+v", before, after)
+			}
 		})
 	}
+}
+
+type authorityHardLinkStat struct {
+	device uint64
+	inode  uint64
+	links  uint64
+}
+
+func authorityHardLinkIdentity(t *testing.T, target, escaped string) authorityHardLinkStat {
+	t.Helper()
+	targetInfo, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	escapedInfo, err := os.Stat(escaped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(targetInfo, escapedInfo) {
+		t.Fatal("escaped path does not name the authority target inode")
+	}
+	stat, ok := targetInfo.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatalf("hard-link stat type = %T, want *syscall.Stat_t", targetInfo.Sys())
+	}
+	if stat.Nlink != 2 {
+		t.Fatalf("hard-link count = %d, want 2", stat.Nlink)
+	}
+	return authorityHardLinkStat{device: uint64(stat.Dev), inode: stat.Ino, links: stat.Nlink}
 }
 
 func TestGuardRuntimeAuthorityV1RejectsSymlinkedAuthorityDirectories(t *testing.T) {
