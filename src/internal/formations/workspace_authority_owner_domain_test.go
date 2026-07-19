@@ -101,6 +101,11 @@ func TestWorkspaceAuthorityOwnerDomainUsesExactMappedIdentityAndStaysReadOnly(t 
 
 func TestWorkspaceAuthorityOwnerDomainCapabilityPairRejectsBeforeOwnerPathSelection(t *testing.T) {
 	fixture := newWorkspaceAuthorityOwnerDomainFixture(t)
+	// A missing owner lock would be the first path-selection failure if the
+	// binary-owned pair were checked too late. Unsupported capability must win.
+	if err := os.Remove(fixture.ownerLock); err != nil {
+		t.Fatal(err)
+	}
 	before := snapshotWorkspaceAuthorityTopology(t, fixture.base)
 	descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, workspaceAuthorityOwnerDomainPaths(fixture)...)
 	gate := newWorkspaceAuthorityCapabilityGate()
