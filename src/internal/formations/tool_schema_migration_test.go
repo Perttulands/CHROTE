@@ -114,6 +114,50 @@ func TestToolSchemaMigrationNormalizesSafeLegacyGraphOnceWithoutOwningRevision(t
 	}
 }
 
+func TestToolSchemaMigrationSeparatesOwnedEOFInsertionsAfterUnterminatedLine(t *testing.T) {
+	raw := []byte(`schema = 1
+id = "brd_tool_eof"
+slug = "tool-eof"
+title = "Tool EOF migration"
+rev = 1
+
+[[mission]]
+id = "mis_main"
+title = "Main"
+
+[[formation]]
+id = "fmn_work"
+type = "solo"
+title = "Work"
+
+[[formation.input]]
+id = "port_work_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_work_out"
+label = "Output"`)
+
+	migrated, err := migrateBoardToToolSchema(raw)
+	if err != nil {
+		t.Fatalf("migrate schema-1 board without final LF: %v", err)
+	}
+	assertToolSchemaMigrationPortDefaults(t, migrated, "port_work_in", FormationPortInput)
+	assertToolSchemaMigrationPortDefaults(t, migrated, "port_work_out", FormationPortOutput)
+	again, err := migrateBoardToToolSchema(migrated)
+	if err != nil {
+		t.Fatalf("repeat schema migration after EOF insertion: %v", err)
+	}
+	if !bytes.Equal(again, migrated) {
+		t.Fatalf("EOF migration was not byte-idempotent:\n got %q\nwant %q", again, migrated)
+	}
+}
+
+func TestToolSchemaMigrationRejectsSchemaOneWithPreexistingTool(t *testing.T) {
+	raw := replaceToolSchemaMigrationFixture(t, toolStructuralDraftBoardFixture(), "schema = 2", "schema = 1")
+	assertToolSchemaMigrationRejected(t, raw, nil, "")
+}
+
 func TestToolSchemaMigrationKeepsCanonicalSchemaTwoByteStable(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -196,6 +240,8 @@ func TestToolSchemaMigrationAcceptsValidSignedSchemaIntegers(t *testing.T) {
 func TestToolSchemaMigrationAcceptsOnlyExactSchemaOneOrCanonicalSchemaTwo(t *testing.T) {
 	base := toolSchemaMigrationLegacyFixture()
 	schemaLine := `schema = 1 # compatibility schema`
+	canonical := toolSchemaMigrationCanonicalFixture()
+	canonicalSchemaLine := `schema = 2 # canonical schema`
 	tests := []struct {
 		name      string
 		raw       string
@@ -205,6 +251,9 @@ func TestToolSchemaMigrationAcceptsOnlyExactSchemaOneOrCanonicalSchemaTwo(t *tes
 		{name: "negative schema", raw: replaceToolSchemaMigrationFixture(t, base, schemaLine, `schema = -1`)},
 		{name: "missing schema", raw: replaceToolSchemaMigrationFixture(t, base, schemaLine+"\n", "")},
 		{name: "leading-zero schema one", raw: replaceToolSchemaMigrationFixture(t, base, schemaLine, `schema = 01`)},
+		{name: "hexadecimal schema two", raw: replaceToolSchemaMigrationFixture(t, canonical, canonicalSchemaLine, `schema = 0x2`)},
+		{name: "octal schema two", raw: replaceToolSchemaMigrationFixture(t, canonical, canonicalSchemaLine, `schema = 0o2`)},
+		{name: "binary schema two", raw: replaceToolSchemaMigrationFixture(t, canonical, canonicalSchemaLine, `schema = 0b10`)},
 		{name: "quoted schema one", raw: replaceToolSchemaMigrationFixture(t, base, schemaLine, `schema = "1"`)},
 		{name: "floating schema one", raw: replaceToolSchemaMigrationFixture(t, base, schemaLine, `schema = 1.0`)},
 		{name: "duplicate schema", raw: replaceToolSchemaMigrationFixture(t, base, schemaLine, "schema = 1\nschema = 1")},
@@ -391,6 +440,8 @@ from = "gate_review:judge"`)
 		{name: "duplicate output direction", raw: withOutputFields("direction = \"output\"\ndirection = \"output\"")},
 		{name: "duplicate output kind", raw: withOutputFields("kind = \"work\"\nkind = \"work\"")},
 		{name: "duplicate output media", raw: withOutputFields("acceptedMediaTypes = [\"text/plain\", \"text/markdown\", \"application/json\"]\nacceptedMediaTypes = [\"text/plain\", \"text/markdown\", \"application/json\"]")},
+		{name: "nested input direction", raw: withInputFields(`direction.note = "shadow"`)},
+		{name: "encoded nested input direction", raw: withInputFields(`"direction".note = "shadow"`)},
 		{
 			name: "workflow edge claims judge channel",
 			raw: replaceToolSchemaMigrationFixture(t, base, edgeStart, `[[connection]]
@@ -411,6 +462,20 @@ from = "gate_review:judge"`),
 id = "edge_start"
 channel = "workflow"
 channel = "workflow"
+from = "mis_main:out"`),
+		},
+		{
+			name: "nested connection channel",
+			raw: replaceToolSchemaMigrationFixture(t, base, edgeStart, `[[connection]]
+id = "edge_start"
+channel.note = "shadow"
+from = "mis_main:out"`),
+		},
+		{
+			name: "encoded nested connection channel",
+			raw: replaceToolSchemaMigrationFixture(t, base, edgeStart, `[[connection]]
+id = "edge_start"
+"channel".note = "shadow"
 from = "mis_main:out"`),
 		},
 	}
