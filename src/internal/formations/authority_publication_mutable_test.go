@@ -138,7 +138,7 @@ func TestAuthorityPublisherMutableRequiresExactGeneration(t *testing.T) {
 	}
 }
 
-func TestAuthorityPublisherMutableReplacesOneGenerationAndRetriesExactly(t *testing.T) {
+func TestAuthorityPublisherMutableReplacesOneGenerationAndRejectsConsumedPredecessor(t *testing.T) {
 	directory, path := openAuthorityTestDirectory(t)
 	publisher, err := newAuthorityPublisher(directory, uint32(os.Geteuid()), nil)
 	if err != nil {
@@ -172,11 +172,15 @@ func TestAuthorityPublisherMutableReplacesOneGenerationAndRetriesExactly(t *test
 	assertAuthorityTestFile(t, filepath.Join(path, "workspace.private.json"), secondRaw)
 
 	retryStat := authorityTestFileStat(t, filepath.Join(path, "workspace.private.json"))
-	if retry, err := publisher.publishMutable("workspace.private.json", &first, secondRaw, testAuthorityMutableRevision); err != nil || retry != second {
-		t.Fatalf("retry second generation = %+v, %v; want %+v", retry, err, second)
+	if _, err := publisher.publishMutable("workspace.private.json", &first, secondRaw, testAuthorityMutableRevision); !errors.Is(err, errRuntimeConflict) {
+		t.Fatalf("consumed predecessor retry error = %v, want conflict", err)
+	}
+	falsePredecessor := authorityGeneration{recordRev: first.recordRev, sha256: strings.Repeat("0", 64)}
+	if _, err := publisher.publishMutable("workspace.private.json", &falsePredecessor, secondRaw, testAuthorityMutableRevision); !errors.Is(err, errRuntimeConflict) {
+		t.Fatalf("false predecessor exact-next error = %v, want conflict", err)
 	}
 	if after := authorityTestFileStat(t, filepath.Join(path, "workspace.private.json")); after.Ino != retryStat.Ino {
-		t.Fatalf("exact mutable retry replaced inode: before %d, after %d", retryStat.Ino, after.Ino)
+		t.Fatalf("consumed predecessor retry replaced inode: before %d, after %d", retryStat.Ino, after.Ino)
 	}
 
 	conflictingSecond := testAuthorityMutableRaw(2, "conflicting second")
@@ -257,6 +261,117 @@ func TestAuthorityPublisherMutableRechecksGenerationBeforeRename(t *testing.T) {
 	}
 }
 
+func TestAuthorityPublisherRejectsChangedStageBeforeInstall(t *testing.T) {
+	mutations := []struct {
+		name   string
+		mutate func(*testing.T, string)
+	}{
+		{
+			name: "hard link",
+			mutate: func(t *testing.T, stage string) {
+				if err := os.Link(stage, filepath.Join(t.TempDir(), "escaped-stage")); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "changed mode",
+			mutate: func(t *testing.T, stage string) {
+				if err := os.Chmod(stage, 0o640); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "changed bytes",
+			mutate: func(t *testing.T, stage string) {
+				if err := os.WriteFile(stage, []byte("attacker-controlled staged bytes"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "rebound path",
+			mutate: func(t *testing.T, stage string) {
+				if err := os.Rename(stage, stage+".detached"); err != nil {
+					t.Fatal(err)
+				}
+				writeAuthorityFixture(t, stage, []byte("replacement stage bytes"))
+			},
+		},
+	}
+	operations := []struct {
+		name string
+		step authorityPublicationStep
+		run  func(*testing.T, *authorityPublisher, string) error
+	}{
+		{
+			name: "immutable",
+			step: authorityPublicationStageSynced,
+			run: func(t *testing.T, publisher *authorityPublisher, path string) error {
+				_, err := publisher.publishImmutable("bootstrap.json", []byte("requested immutable bytes"))
+				if _, statErr := os.Lstat(filepath.Join(path, "bootstrap.json")); !errors.Is(statErr, os.ErrNotExist) {
+					t.Fatalf("changed stage exposed immutable canonical: %v", statErr)
+				}
+				return err
+			},
+		},
+		{
+			name: "mutable",
+			step: authorityPublicationMutableStageSynced,
+			run: func(t *testing.T, publisher *authorityPublisher, path string) error {
+				firstRaw := testAuthorityMutableRaw(1, "first")
+				first, err := publisher.publishMutable("workspace.private.json", nil, firstRaw, testAuthorityMutableRevision)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = publisher.publishMutable("workspace.private.json", &first, testAuthorityMutableRaw(2, "second"), testAuthorityMutableRevision)
+				assertAuthorityTestFile(t, filepath.Join(path, "workspace.private.json"), firstRaw)
+				return err
+			},
+		},
+	}
+
+	for _, operation := range operations {
+		for _, mutation := range mutations {
+			t.Run(operation.name+"/"+mutation.name, func(t *testing.T) {
+				directory, path := openAuthorityTestDirectory(t)
+				publisher, err := newAuthorityPublisher(directory, uint32(os.Geteuid()), nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				publisher.hook = func(step authorityPublicationStep) error {
+					if step == operation.step {
+						mutation.mutate(t, findAuthorityStagePath(t, path))
+					}
+					return nil
+				}
+				if err := operation.run(t, publisher, path); !errors.Is(err, errRuntimeIntegrityMismatch) {
+					t.Fatalf("changed stage error = %v, want integrity mismatch", err)
+				}
+			})
+		}
+	}
+}
+
+func findAuthorityStagePath(t *testing.T, directory string) string {
+	t.Helper()
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stages []string
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".authority-stage-") && !strings.HasSuffix(entry.Name(), ".detached") {
+			stages = append(stages, filepath.Join(directory, entry.Name()))
+		}
+	}
+	if len(stages) != 1 {
+		t.Fatalf("authority stages = %q, want one", stages)
+	}
+	return stages[0]
+}
+
 func TestAuthorityPublisherMutableFsyncOrderAndFailures(t *testing.T) {
 	t.Run("ordered generation replacement", func(t *testing.T) {
 		directory, _ := openAuthorityTestDirectory(t)
@@ -318,7 +433,7 @@ func TestAuthorityPublisherMutableFsyncOrderAndFailures(t *testing.T) {
 		assertAuthorityTestDirectoryEntries(t, directory, "workspace.private.json")
 	})
 
-	t.Run("directory sync failure leaves complete retryable next generation", func(t *testing.T) {
+	t.Run("directory sync failure requires authoritative reread", func(t *testing.T) {
 		directory, path := openAuthorityTestDirectory(t)
 		publisher, first, _ := newInitializedMutablePublisher(t, directory)
 		realSync := publisher.ops.syncDirectory
@@ -333,8 +448,12 @@ func TestAuthorityPublisherMutableFsyncOrderAndFailures(t *testing.T) {
 		assertAuthorityTestDirectoryEntries(t, directory, "workspace.private.json")
 
 		publisher.ops.syncDirectory = realSync
-		if _, err := publisher.publishMutable("workspace.private.json", &first, secondRaw, testAuthorityMutableRevision); err != nil {
-			t.Fatalf("retry complete next generation after directory sync failure: %v", err)
+		if _, err := publisher.publishMutable("workspace.private.json", &first, secondRaw, testAuthorityMutableRevision); !errors.Is(err, errRuntimeConflict) {
+			t.Fatalf("retry with consumed predecessor error = %v, want conflict", err)
+		}
+		current, exists, err := publisher.readMutable("workspace.private.json", testAuthorityMutableRevision)
+		if err != nil || !exists || current.generation != testAuthorityGeneration(2, secondRaw) {
+			t.Fatalf("authoritative reread = %+v, %t, %v", current.generation, exists, err)
 		}
 	})
 }
