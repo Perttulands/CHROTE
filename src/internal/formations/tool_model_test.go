@@ -174,7 +174,29 @@ func TestToolBasicStringEscapesPreserveAllowedControlValues(t *testing.T) {
 	}
 }
 
+func TestToolBasicStringsRejectRawTOMLForbiddenControls(t *testing.T) {
+	for _, control := range toolTOMLForbiddenControls() {
+		t.Run(fmt.Sprintf("U+%04X", control), func(t *testing.T) {
+			literal := "\"" + string(control) + "\""
+			if _, err := parseToolParameterScalar(literal); err == nil {
+				t.Fatalf("Tool basic string accepted raw TOML-forbidden control U+%04X", control)
+			}
+		})
+	}
+}
+
 func TestToolLiteralStringsRejectRawTOMLForbiddenControls(t *testing.T) {
+	for _, control := range toolTOMLForbiddenControls() {
+		t.Run(fmt.Sprintf("U+%04X", control), func(t *testing.T) {
+			literal := "'" + string(control) + "'"
+			if _, err := parseToolParameterScalar(literal); err == nil {
+				t.Fatalf("Tool literal string accepted raw TOML-forbidden control U+%04X", control)
+			}
+		})
+	}
+}
+
+func toolTOMLForbiddenControls() []rune {
 	var controls []rune
 	for control := rune(0x01); control <= 0x08; control++ {
 		controls = append(controls, control)
@@ -183,15 +205,20 @@ func TestToolLiteralStringsRejectRawTOMLForbiddenControls(t *testing.T) {
 		controls = append(controls, control)
 	}
 	controls = append(controls, 0x7f)
+	return controls
+}
 
-	for _, control := range controls {
-		t.Run(fmt.Sprintf("U+%04X", control), func(t *testing.T) {
-			literal := "'" + string(control) + "'"
-			if _, err := parseToolParameterScalar(literal); err == nil {
-				t.Fatalf("Tool literal string accepted raw TOML-forbidden control U+%04X", control)
-			}
-		})
+func TestToolBoardParserRejectsRawBasicControlWithoutMutation(t *testing.T) {
+	raw := strings.Replace(
+		frozenJSONNormalizeBoardFixture(),
+		`title = "Normalize report"`,
+		"title = \"Normalize"+string(rune(0x01))+" report\"",
+		1,
+	)
+	if raw == frozenJSONNormalizeBoardFixture() {
+		t.Fatal("raw basic-control fixture replacement did not apply")
 	}
+	assertToolBoardReadRejectedWithoutMutation(t, raw, "raw basic-string control U+0001")
 }
 
 func TestToolBoardParserRejectsRawLiteralControlsAcrossRoutesWithoutMutation(t *testing.T) {
@@ -407,7 +434,7 @@ func TestToolBoardParserRejectsClosedShapeViolationsWithoutMutation(t *testing.T
 	}
 }
 
-func TestToolBoardParserFencesTopLevelToolNamespaceBeforeLaterNodeWithoutMutation(t *testing.T) {
+func TestToolBoardParserFencesTopLevelToolNamespaceWithAndWithoutLaterNodeWithoutMutation(t *testing.T) {
 	tests := []struct {
 		name       string
 		definition string
@@ -436,16 +463,23 @@ func TestToolBoardParserFencesTopLevelToolNamespaceBeforeLaterNodeWithoutMutatio
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			raw := strings.Replace(
-				frozenJSONNormalizeBoardFixture(),
-				"\n[[tool]]\n",
-				"\n"+tt.definition+"\n\n[[tool]]\n",
-				1,
-			)
-			if raw == frozenJSONNormalizeBoardFixture() {
-				t.Fatalf("Tool namespace fixture insertion %q did not apply", tt.name)
-			}
-			assertToolBoardReadRejectedWithoutMutation(t, raw, tt.name)
+			t.Run("before later Tool node", func(t *testing.T) {
+				raw := strings.Replace(
+					frozenJSONNormalizeBoardFixture(),
+					"\n[[tool]]\n",
+					"\n"+tt.definition+"\n\n[[tool]]\n",
+					1,
+				)
+				if raw == frozenJSONNormalizeBoardFixture() {
+					t.Fatalf("Tool namespace fixture insertion %q did not apply", tt.name)
+				}
+				assertToolBoardReadRejectedWithoutMutation(t, raw, tt.name+" before later Tool node")
+			})
+
+			t.Run("Tool-free schema-2 board", func(t *testing.T) {
+				raw := toolFreeSchemaTwoBoardFixture() + tt.definition + "\n"
+				assertToolBoardReadRejectedWithoutMutation(t, raw, tt.name+" on Tool-free schema-2 board")
+			})
 		})
 	}
 }
@@ -503,6 +537,16 @@ func TestToolBoardParserRejectsGoOnlyEscapedShapeAliasesWithoutMutation(t *testi
 			name: "quoted header cannot alias Tool node",
 			old:  `[[tool]]`,
 			new:  `[["to\x6fl"]]`,
+		},
+		{
+			name: "quoted child header cannot alias Tool params",
+			old:  `[tool.params]`,
+			new:  `[tool."\x70arams"]`,
+		},
+		{
+			name: "quoted parameter key cannot alias mode",
+			old:  `mode = "strict"`,
+			new:  `"\x6dode" = "strict"`,
 		},
 	}
 
@@ -659,5 +703,17 @@ label = "Normalized report"
 direction = "output"
 kind = "work"
 acceptedMediaTypes = ["application/json"]
+`
+}
+
+func toolFreeSchemaTwoBoardFixture() string {
+	return `schema = 2
+id = "brd_01J9_tool_model"
+slug = "tool-model"
+title = "Tool model"
+rev = 4
+updatedBy = "agent:test"
+updatedAt = "2026-07-19T10:00:00Z"
+
 `
 }
