@@ -126,6 +126,126 @@ func TestWorkspaceAuthorityCrashRecoveryExcludesRegisteredMalformedSiblingBefore
 	}
 }
 
+func TestWorkspaceAuthorityFreshRegistrationRepinsAfterSafeForeignRecoveryScan(t *testing.T) {
+	tests := []struct {
+		name     string
+		retarget string
+	}{
+		{name: "configured workspace replaced", retarget: "workspace"},
+		{name: "workspaces root replaced", retarget: "workspaces"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newWorkspaceAuthorityInitialRegistrationFixture(t)
+			foreign := filepath.Join(fixture.workspacesRoot, testWorkspaceAuthorityRecoveryForeignID)
+			createWorkspaceAuthorityRecoveryDirectory(t, foreign)
+			foreignBootstrap := filepath.Join(foreign, "workspace.bootstrap.json")
+			writePrivateAuthorityTestFile(t, foreignBootstrap, workspaceAuthorityRecoveryBootstrapRaw(
+				testWorkspaceAuthorityRecoveryForeignID,
+				strings.Repeat("f", 64),
+			))
+			originalBootstrap, err := os.Stat(foreignBootstrap)
+			if err != nil {
+				t.Fatal(err)
+			}
+			moved := fixture.workspace + ".retargeted"
+			if test.retarget == "workspaces" {
+				moved = fixture.workspacesRoot + ".retargeted"
+			}
+			paths := append(workspaceAuthorityInitialRegistrationPaths(fixture), moved)
+			if test.retarget == "workspaces" {
+				paths = append(paths, filepath.Join(moved, "registry.lock"))
+			}
+			descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, paths...)
+			productionOps := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate()).ops
+			attacked := false
+			var attackTopology map[string]workspaceAuthorityTopologyEntry
+			performAttack := func() {
+				attacked = true
+				switch test.retarget {
+				case "workspace":
+					if err := os.Rename(fixture.workspace, moved); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Mkdir(fixture.workspace, 0o700); err != nil {
+						t.Fatal(err)
+					}
+				case "workspaces":
+					if err := os.Rename(fixture.workspacesRoot, moved); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Mkdir(fixture.workspacesRoot, 0o700); err != nil {
+						t.Fatal(err)
+					}
+				default:
+					t.Fatalf("unknown fresh-registration retarget %q", test.retarget)
+				}
+				attackTopology = snapshotWorkspaceAuthorityTopology(t, fixture.base)
+			}
+
+			generated := 0
+			observed := 0
+			callbackCalls := 0
+			registrar := newWorkspaceAuthorityRegistrarForTest(
+				fixture.hostRoot,
+				fixture.ownerUID,
+				newWorkspaceAuthorityCapabilityGate(),
+				workspaceAuthorityRegistrationTestOps{
+					generateWorkspaceAuthorityID: func() (string, error) {
+						generated++
+						return testWorkspaceAuthorityRecoveryFreshID, nil
+					},
+					validatePrivateNode: func(opened *os.File, expectedUID uint32) error {
+						if err := productionOps.validatePrivateNode(opened, expectedUID); err != nil {
+							return err
+						}
+						if attacked {
+							return nil
+						}
+						info, err := opened.Stat()
+						if err != nil {
+							return err
+						}
+						if os.SameFile(info, originalBootstrap) {
+							performAttack()
+						}
+						return nil
+					},
+					observeInitialRegistration: func(string) error {
+						observed++
+						return nil
+					},
+				},
+			)
+			err = registrar.register(fixture.workspace, func(workspaceAuthorityRegistrationScope) error {
+				callbackCalls++
+				return nil
+			})
+			if err == nil {
+				t.Fatal("fresh registration accepted retargeted global pins after safe foreign recovery scan")
+			}
+			if !attacked {
+				t.Fatal("safe foreign recovery scan never reached deterministic global retarget injection")
+			}
+			if generated != 0 || observed != 0 || callbackCalls != 0 {
+				t.Fatalf("retargeted fresh fallback generator/steps/callback = %d/%d/%d, want 0/0/0", generated, observed, callbackCalls)
+			}
+			if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, attackTopology) {
+				t.Fatalf("fresh fallback mutated after %s retarget\nattack: %#v\nafter:  %#v", test.retarget, attackTopology, after)
+			}
+			registryLock := fixture.registryLock
+			if test.retarget == "workspaces" {
+				registryLock = filepath.Join(moved, "registry.lock")
+			}
+			if err := tryWorkspaceAuthorityExclusiveLock(registryLock); err != nil {
+				t.Fatalf("retargeted fresh fallback leaked registry lock: %v", err)
+			}
+			assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, paths...)
+		})
+	}
+}
+
 func TestWorkspaceAuthorityCrashRecoverySafeDecoysPermitFreshRegistration(t *testing.T) {
 	fixture := newWorkspaceAuthorityInitialRegistrationFixture(t)
 	preBootstrap := filepath.Join(fixture.workspacesRoot, testWorkspaceAuthorityRecoveryPreBootstrapID)
@@ -967,6 +1087,138 @@ func TestWorkspaceAuthorityCrashRecoveryFencesValidatedInitialRecordRetargetsBef
 			}
 			if err := tryWorkspaceAuthorityExclusiveLock(fixture.ownerLock); err != nil {
 				t.Fatalf("validated-record retarget recovery leaked owner lock: %v", err)
+			}
+			assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, paths...)
+		})
+	}
+}
+
+func TestWorkspaceAuthorityCrashRecoveryFencesOwnerRetargetBeforeDownstreamPublication(t *testing.T) {
+	tests := []struct {
+		name    string
+		prefix  workspaceAuthorityRecoveryPrefix
+		trigger string
+		steps   []string
+	}{
+		{
+			name:    "before missing policy and workspace publication",
+			prefix:  workspaceAuthorityRecoveryOwnerLock,
+			trigger: "owner-acquired",
+			steps:   []string{testInitialRegistrationOwnerLockAcquired},
+		},
+		{
+			name:    "after authority directory sync before registry publication",
+			prefix:  workspaceAuthorityRecoveryWorkspace,
+			trigger: "authority-synced",
+			steps: []string{
+				testInitialRegistrationOwnerLockAcquired,
+				testInitialRegistrationAuthorityDirectorySynced,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newWorkspaceAuthorityInitialRegistrationFixture(t)
+			installWorkspaceAuthorityRecoveryPrefix(t, fixture, test.prefix)
+			originalDirectory, err := os.Stat(fixture.authorityDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			originalOwner, err := os.Stat(fixture.ownerLock)
+			if err != nil {
+				t.Fatal(err)
+			}
+			movedOwner := filepath.Join(fixture.base, "retargeted-owner.lock")
+			paths := append(workspaceAuthorityInitialRegistrationPaths(fixture), movedOwner)
+			descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, paths...)
+			productionOps := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate()).ops
+			boundaryObserved := false
+			ownerValidatedAfterBoundary := false
+			attacked := false
+			replacementLockable := false
+			var attackTopology map[string]workspaceAuthorityTopologyEntry
+			performAttack := func() {
+				attacked = true
+				if err := os.Rename(fixture.ownerLock, movedOwner); err != nil {
+					t.Fatal(err)
+				}
+				writePrivateAuthorityTestFile(t, fixture.ownerLock, nil)
+				if err := tryWorkspaceAuthorityExclusiveLock(fixture.ownerLock); err != nil {
+					t.Fatalf("replacement owner lock was not independently lockable during original lock hold: %v", err)
+				}
+				replacementLockable = true
+				attackTopology = snapshotWorkspaceAuthorityTopology(t, fixture.base)
+			}
+
+			generated := 0
+			steps := []string{}
+			callbackCalls := 0
+			registrar := newWorkspaceAuthorityRegistrarForTest(
+				fixture.hostRoot,
+				fixture.ownerUID,
+				newWorkspaceAuthorityCapabilityGate(),
+				workspaceAuthorityRegistrationTestOps{
+					generateWorkspaceAuthorityID: func() (string, error) {
+						generated++
+						return testInitialRegistrationAuthorityID, nil
+					},
+					validatePrivateNode: func(opened *os.File, expectedUID uint32) error {
+						if err := productionOps.validatePrivateNode(opened, expectedUID); err != nil {
+							return err
+						}
+						info, err := opened.Stat()
+						if err != nil {
+							return err
+						}
+						if boundaryObserved && os.SameFile(info, originalOwner) {
+							ownerValidatedAfterBoundary = true
+							return nil
+						}
+						if !attacked && ownerValidatedAfterBoundary && os.SameFile(info, originalDirectory) {
+							performAttack()
+						}
+						return nil
+					},
+					observeInitialRegistration: func(step string) error {
+						steps = append(steps, step)
+						switch test.trigger {
+						case "owner-acquired":
+							if step == testInitialRegistrationOwnerLockAcquired {
+								boundaryObserved = true
+							}
+						case "authority-synced":
+							if step == testInitialRegistrationAuthorityDirectorySynced {
+								boundaryObserved = true
+							}
+						default:
+							t.Fatalf("unknown owner-retarget trigger %q", test.trigger)
+						}
+						return nil
+					},
+				},
+			)
+			err = registrar.register(fixture.workspace, func(workspaceAuthorityRegistrationScope) error {
+				callbackCalls++
+				return nil
+			})
+			if err == nil {
+				t.Fatal("owner-retargeted recovery was accepted")
+			}
+			if !attacked || !replacementLockable {
+				t.Fatalf("owner-retarget injection attacked=%t replacement-lockable=%t, want true/true", attacked, replacementLockable)
+			}
+			if generated != 0 || callbackCalls != 0 || !reflect.DeepEqual(steps, test.steps) {
+				t.Fatalf("owner-retarget recovery generator/steps/callback = %d/%#v/%d, want 0/%#v/0", generated, steps, callbackCalls, test.steps)
+			}
+			if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, attackTopology) {
+				t.Fatalf("recovery mutated after owner retarget\nattack: %#v\nafter:  %#v", attackTopology, after)
+			}
+			assertWorkspaceAuthorityInitialRegistrationRegistryUnchanged(t, fixture, "owner-retargeted recovery")
+			for _, lockPath := range []string{fixture.ownerLock, movedOwner, fixture.registryLock} {
+				if err := tryWorkspaceAuthorityExclusiveLock(lockPath); err != nil {
+					t.Fatalf("owner-retargeted recovery leaked lock %q: %v", lockPath, err)
+				}
 			}
 			assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, paths...)
 		})
