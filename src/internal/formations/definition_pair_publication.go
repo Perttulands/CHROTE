@@ -297,8 +297,29 @@ func publishStagedDefinitionPair(
 	fault func(string) error,
 ) (error, bool) {
 	mutated := false
+	checkFirstMutation := func() error {
+		if mutated {
+			return nil
+		}
+		state, err := readDefinitionPairState(board, layout)
+		if err != nil {
+			return err
+		}
+		if !equalDefinitionPairStateIdentity(
+			definitionPairStateIdentityOf(state),
+			definitionPairStateIdentityOf(oldState),
+		) {
+			return ErrConflict
+		}
+		return nil
+	}
 	if newState.layout.present {
-		if err := renameDefinitionPairStage(stages.newLayout, "publish:layout:rename", fault); err != nil {
+		if err := renameDefinitionPairStageWithPrecondition(
+			stages.newLayout,
+			"publish:layout:rename",
+			fault,
+			checkFirstMutation,
+		); err != nil {
 			return err, mutated
 		}
 		mutated = true
@@ -311,6 +332,9 @@ func publishStagedDefinitionPair(
 	} else {
 		if oldState.layout.present {
 			if err := runDefinitionPairFault(fault, "publish:layout:unlink"); err != nil {
+				return err, mutated
+			}
+			if err := checkFirstMutation(); err != nil {
 				return err, mutated
 			}
 			if err := syscall.Unlinkat(int(layout.directory.Fd()), layout.name); err != nil {
@@ -326,7 +350,12 @@ func publishStagedDefinitionPair(
 		}
 	}
 
-	if err := renameDefinitionPairStage(stages.newBoard, "publish:board:rename", fault); err != nil {
+	if err := renameDefinitionPairStageWithPrecondition(
+		stages.newBoard,
+		"publish:board:rename",
+		fault,
+		checkFirstMutation,
+	); err != nil {
 		return err, mutated
 	}
 	mutated = true
@@ -368,8 +397,12 @@ func reconcileDefinitionPair(
 	case equalDefinitionPairStateIdentity(identity, newIdentity),
 		equalDefinitionPairIdentity(identity.board, oldIdentity.board) &&
 			equalDefinitionPairIdentity(identity.layout, newIdentity.layout):
-		if reconcileDefinitionPairToNew(board, layout, oldState, newState, stages, fault) == nil {
+		reconcileErr := reconcileDefinitionPairToNew(board, layout, oldState, newState, stages, fault)
+		if reconcileErr == nil {
 			return nil
+		}
+		if errors.Is(reconcileErr, errDefinitionPublicationUncertain) {
+			return errDefinitionPublicationUncertain
 		}
 		state, err = readDefinitionPairState(board, layout)
 		if err != nil || !contractedDefinitionPairState(state, oldState, newState) {
@@ -424,9 +457,17 @@ func reconcileDefinitionPairToNew(
 	if err != nil {
 		return err
 	}
+	stateIdentity := definitionPairStateIdentityOf(state)
+	oldIdentity := definitionPairStateIdentityOf(oldState)
+	newIdentity := definitionPairStateIdentityOf(newState)
+	if !equalDefinitionPairIdentity(stateIdentity.layout, newIdentity.layout) ||
+		(!equalDefinitionPairIdentity(stateIdentity.board, oldIdentity.board) &&
+			!equalDefinitionPairIdentity(stateIdentity.board, newIdentity.board)) {
+		return errDefinitionPublicationUncertain
+	}
 	if !equalDefinitionPairIdentity(
-		definitionPairIdentityOfBoard(state.board),
-		definitionPairIdentityOfBoard(newState.board),
+		stateIdentity.board,
+		newIdentity.board,
 	) {
 		if err := renameDefinitionPairStage(stages.newBoard, "reconcile:new:board:rename", fault); err != nil {
 			return err
@@ -472,10 +513,18 @@ func reconcileDefinitionPairToOld(
 	if err != nil {
 		return err
 	}
+	stateIdentity := definitionPairStateIdentityOf(state)
+	oldIdentity := definitionPairStateIdentityOf(oldState)
+	newIdentity := definitionPairStateIdentityOf(newState)
+	if !equalDefinitionPairIdentity(stateIdentity.board, oldIdentity.board) ||
+		(!equalDefinitionPairIdentity(stateIdentity.layout, oldIdentity.layout) &&
+			!equalDefinitionPairIdentity(stateIdentity.layout, newIdentity.layout)) {
+		return errDefinitionPublicationUncertain
+	}
 	if oldState.layout.present {
 		if !equalDefinitionPairIdentity(
-			definitionPairIdentityOfContent(state.layout),
-			definitionPairIdentityOfContent(oldState.layout),
+			stateIdentity.layout,
+			oldIdentity.layout,
 		) {
 			if err := renameDefinitionPairStage(stages.oldLayout, "reconcile:old:layout:rename", fault); err != nil {
 				return err
@@ -504,6 +553,15 @@ func reconcileDefinitionPairToOld(
 }
 
 func renameDefinitionPairStage(stage *definitionPairStage, step string, fault func(string) error) error {
+	return renameDefinitionPairStageWithPrecondition(stage, step, fault, nil)
+}
+
+func renameDefinitionPairStageWithPrecondition(
+	stage *definitionPairStage,
+	step string,
+	fault func(string) error,
+	precondition func() error,
+) error {
 	if stage == nil || !stage.available {
 		return errors.New("paired definition stage is unavailable")
 	}
@@ -512,6 +570,11 @@ func renameDefinitionPairStage(stage *definitionPairStage, step string, fault fu
 	}
 	if err := runDefinitionPairFault(fault, step); err != nil {
 		return err
+	}
+	if precondition != nil {
+		if err := precondition(); err != nil {
+			return err
+		}
 	}
 	if err := syscall.Renameat(
 		int(stage.definition.directory.Fd()),
