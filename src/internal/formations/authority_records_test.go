@@ -264,6 +264,7 @@ func TestRunCommandRecordCodecRejectsStatePayloadAndHashContradictions(t *testin
 	startPending := testAuthorityCommandRecordRawFor(1, nil, "start", startPayload, "pending")
 	startPrior := authorityGeneration{recordRev: 1, sha256: runtimeSHA256Hex(startPending)}
 	startApplied := testAuthorityCommandRecordRawFor(2, &startPrior, "start", startPayload, "applied")
+	startRejected := testAuthorityCommandRecordRawFor(2, &startPrior, "start", startPayload, "rejected")
 	payloadHash := runtimeSHA256Hex(cancelPayload)
 
 	tests := []struct {
@@ -289,9 +290,13 @@ func TestRunCommandRecordCodecRejectsStatePayloadAndHashContradictions(t *testin
 		{name: "rejected missing rejection code", raw: testAuthorityRemoveField(rejected, `,"rejectionCode":"rejected"`)},
 		{name: "rejected has effect sequence", raw: testAuthorityInsertBefore(rejected, `,"outcomeWriterFence":`, `,"effectSeq":1`)},
 		{name: "rejected has run id", raw: testAuthorityInsertBefore(rejected, `,"state":`, `,"runId":"`+testAuthorityRecordRunID+`"`)},
+		{name: "start rejected missing decision generation", raw: testAuthorityReplaceOnce(startRejected, []byte(`"decisionAdmissionPolicyRef":`+testAuthorityAdmissionPolicyRefJSON()), []byte(`"decisionAdmissionPolicyRef":null`))},
 		{name: "non start rejected has decision generation", raw: testAuthorityReplaceOnce(rejected, []byte(`"decisionAdmissionPolicyRef":null`), []byte(`"decisionAdmissionPolicyRef":`+testAuthorityAdmissionPolicyRefJSON()))},
 		{name: "outer kind mismatches payload", raw: testAuthorityCommandRecordRawFor(1, nil, "resume", cancelPayload, "pending")},
 		{name: "payload hash mismatch", raw: testAuthorityReplaceOnce(pending, []byte(`"commandPayloadSha256":"`+payloadHash+`"`), []byte(`"commandPayloadSha256":"`+strings.Repeat("0", 64)+`"`))},
+		{name: "start payload missing run root", raw: testAuthorityCommandRecordRawFor(1, nil, "start", testAuthorityRemoveField(startPayload, `,"runRoot":{"kind":"mission","nodeId":"mis_01J9_improve"}`), "pending")},
+		{name: "resume payload missing resume mode", raw: testAuthorityCommandRecordRawFor(1, nil, "resume", testAuthorityRemoveField(testAuthorityCommandPayloadByKind("resume"), `,"resumeMode":"retry-failed-producer"`), "pending")},
+		{name: "verdict payload missing gate id", raw: testAuthorityCommandRecordRawFor(1, nil, "verdict", testAuthorityRemoveField(testAuthorityCommandPayloadByKind("verdict"), `,"gateId":"gate_review"`), "pending")},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
