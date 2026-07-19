@@ -282,6 +282,73 @@ func TestToolBoardParserRejectsBareStringFieldsWithoutMutation(t *testing.T) {
 	}
 }
 
+func TestToolBoardParserRejectsClosedShapeViolationsWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name string
+		old  string
+		new  string
+	}{
+		{
+			name: "duplicate node field",
+			old:  "title = \"Normalize report\"\n",
+			new:  "title = \"Normalize report\"\ntitle = \"Shadow title\"\n",
+		},
+		{
+			name: "unknown node field",
+			old:  "profileVersion = \"1\"\n",
+			new:  "profileVersion = \"1\"\ncommand = \"forbidden\"\n",
+		},
+		{
+			name: "duplicate port field",
+			old:  "label = \"Report\"\n",
+			new:  "label = \"Report\"\nlabel = \"Shadow label\"\n",
+		},
+		{
+			name: "unknown port field",
+			old:  "role = \"data\"\n",
+			new:  "role = \"data\"\ncommand = \"forbidden\"\n",
+		},
+		{
+			name: "unknown Tool child section",
+			old:  "[tool.params]\nmode = \"strict\"\n",
+			new:  "[tool.params]\nmode = \"strict\"\n\n[tool.runtime]\ncommand = \"forbidden\"\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := strings.Replace(frozenJSONNormalizeBoardFixture(), tt.old, tt.new, 1)
+			if raw == frozenJSONNormalizeBoardFixture() {
+				t.Fatalf("closed-shape fixture replacement %q did not apply", tt.name)
+			}
+			assertToolBoardReadRejectedWithoutMutation(t, raw, tt.name)
+		})
+	}
+}
+
+func assertToolBoardReadRejectedWithoutMutation(t *testing.T, raw, name string) {
+	t.Helper()
+	store := NewStore(t.TempDir())
+	path := store.BoardPath("tool-model")
+	writeFixture(t, path, raw)
+	wantIdentity := operativeFileIdentityForTest(t, path)
+
+	_, firstErr := store.ReadBoard("tool-model")
+	if firstErr == nil {
+		t.Fatalf("ReadBoard accepted %s", name)
+	}
+	_, secondErr := store.ReadBoard("tool-model")
+	if secondErr == nil || secondErr.Error() != firstErr.Error() {
+		t.Fatalf("%s error was not deterministic: first=%v second=%v", name, firstErr, secondErr)
+	}
+	if got := readFile(t, path); got != raw {
+		t.Fatalf("rejected %s changed canonical bytes:\n got %q\nwant %q", name, got, raw)
+	}
+	if got := operativeFileIdentityForTest(t, path); got != wantIdentity {
+		t.Fatalf("rejected %s replaced operative file identity = %v, want %v", name, got, wantIdentity)
+	}
+}
+
 func TestToolBoardParserRejectsInvalidParameterForms(t *testing.T) {
 	tests := []struct {
 		name          string
