@@ -223,12 +223,27 @@ func TestDefinitionPairDurablyPreflightsCanonicalPairBeforeIdentityCAS(t *testin
 
 			request := definitionPairRequestForTest(oldBoard, test.oldLayout, newBoard, pairAbsentContentForTest())
 			request.expected.board.sha256 = etag([]byte("stale board identity"))
+			validated := false
+			syncBeforeValidation := false
+			request.validate = func(current, candidate definitionPairState) error {
+				validated = true
+				return nil
+			}
 			var steps []string
 			if err := store.publishDefinitionPair(slug, request, func(step string) error {
+				if strings.HasPrefix(step, "preflight:") && !validated {
+					syncBeforeValidation = true
+				}
 				steps = append(steps, step)
 				return nil
 			}); !errors.Is(err, ErrConflict) {
 				t.Fatalf("stale identity error = %v, want ErrConflict", err)
+			}
+			if !validated {
+				t.Fatal("stale expected identity bypassed current/candidate validation")
+			}
+			if syncBeforeValidation {
+				t.Fatalf("canonical preflight sync ran before current/candidate validation; steps=%v", steps)
 			}
 
 			assertPairStepObservedForTest(t, steps, pairStepPreflightBoardFileSyncForTest)
@@ -253,6 +268,87 @@ func TestDefinitionPairDurablyPreflightsCanonicalPairBeforeIdentityCAS(t *testin
 				t.Fatalf("stale CAS mutated layout:\n%s", got)
 			}
 		})
+	}
+}
+
+func TestDefinitionPairPreflightSyncFailureLeavesExactOldPairWithoutStaging(t *testing.T) {
+	tests := []struct {
+		name      string
+		oldLayout []byte
+		failSteps []string
+	}{
+		{
+			name:      "present layout",
+			oldLayout: pairLayoutFixture(1, "old"),
+			failSteps: []string{
+				pairStepPreflightBoardFileSyncForTest,
+				pairStepPreflightLayoutFileSyncForTest,
+				pairStepPreflightBoardDirSyncForTest,
+				pairStepPreflightLayoutDirSyncForTest,
+			},
+		},
+		{
+			name:      "absent layout",
+			oldLayout: nil,
+			failSteps: []string{
+				pairStepPreflightBoardFileSyncForTest,
+				pairStepPreflightBoardDirSyncForTest,
+				pairStepPreflightLayoutDirSyncForTest,
+			},
+		},
+	}
+	for _, test := range tests {
+		for _, failStep := range test.failSteps {
+			t.Run(test.name+"/"+failStep, func(t *testing.T) {
+				store := NewStore(t.TempDir())
+				slug := "pair-preflight-failure"
+				oldBoard := pairBoardFixture(slug, 1, "Old")
+				newBoard := pairBoardFixture(slug, 2, "New")
+				newLayout := pairAbsentContentForTest()
+				writeFixture(t, store.BoardPath(slug), string(oldBoard))
+				if test.oldLayout != nil {
+					writeFixture(t, store.LayoutPath(slug), string(test.oldLayout))
+					newLayout = pairPresentContentForTest(pairLayoutFixture(2, "new"))
+				}
+
+				injected := errors.New("injected canonical preflight sync failure")
+				failed := false
+				validated := false
+				var steps []string
+				request := definitionPairRequestForTest(oldBoard, test.oldLayout, newBoard, newLayout)
+				request.validate = func(current, candidate definitionPairState) error {
+					validated = true
+					return nil
+				}
+				err := store.publishDefinitionPair(slug, request, func(step string) error {
+					steps = append(steps, step)
+					if step == failStep && !failed {
+						failed = true
+						return injected
+					}
+					return nil
+				})
+				if !errors.Is(err, injected) {
+					t.Fatalf("preflight failure error = %v, want injected error", err)
+				}
+				if !failed {
+					t.Fatalf("preflight failure point %q was not reached; steps=%v", failStep, steps)
+				}
+				if !validated {
+					t.Fatal("preflight I/O started before validating the reopened canonical pair")
+				}
+				for _, step := range steps {
+					if strings.HasPrefix(step, "stage:") || strings.HasPrefix(step, "publish:") {
+						t.Fatalf("preflight failure reached %q; steps=%v", step, steps)
+					}
+				}
+				layout := pairAbsentContentForTest()
+				if test.oldLayout != nil {
+					layout = pairPresentContentForTest(test.oldLayout)
+				}
+				assertPairFilesForTest(t, store, slug, oldBoard, layout)
+			})
+		}
 	}
 }
 
