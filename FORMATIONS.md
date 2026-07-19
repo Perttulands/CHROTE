@@ -183,11 +183,16 @@ lease, and command generations publish only under the owner lock. Their revision
 fences, and admission sequences are JSON-safe positive integers; exhaustion fails
 closed rather than rounding, wrapping, or reusing identity.
 
-The target is board schema 2 and event schema 2. Schema-1 Formation ports remain
-readable with explicit in-memory defaults (`work`, the stable full initial
+The target is `CurrentBoardSchema=2`, `CurrentLayoutSchema=1`,
+`NewBoardSchema=1`, and event schema 2. Schema-1 Formation ports remain readable
+with explicit in-memory defaults (`work`, the stable full initial
 `acceptedMediaTypes` set of `text/plain`, `text/markdown`, and
-`application/json`, plus required `data` inputs) and are written only by an
-atomic schema-2 migration. Fixed Mission `out` accepts only `text/markdown`;
+`application/json`, plus required `data` inputs). Pure reads never write;
+Tool-free new boards remain schema 1; ordinary non-Tool writes preserve schema;
+and only the first successful Tool creation writes the canonical schema-2
+migration. Board schema 2 is monotonic: deleting the final Tool never downgrades
+it, and Tool update/delete remain schema 2. Fixed Mission `out` accepts only
+`text/markdown`;
 Gate `in`/`pass` work ports use the full set. Gate `fail` is `gate_feedback` and has no media set. A
 legacy fail edge into a work
 input loads as degraded for inspection but cannot validate or run until rewired;
@@ -444,9 +449,11 @@ cannot recover an older readable ref.
 
 ## Tool profile contract
 
-A board stores a Tool profile id/version constraint and modeled non-secret
-parameters, never executable text. Run start freezes the resolved profile
-version/content hash, normalized parameters/hash, effective policy and
+A board stores one exact immutable `(profileId, profileVersion)` tuple and
+modeled non-secret parameters, never executable text. Lookup is exact tuple
+equality with no ranges, aliases, defaults, fallback, or latest selection. Run
+start later freezes that exact tuple plus the matching profile content hash,
+normalized parameters/hash, effective policy and
 determinism-policy hashes, and
 immutable execution-bundle hash in a `RunToolBinding` inside host-private run
 authority. The content-addressed bundle covers executable,
@@ -454,6 +461,29 @@ script/toolchain identity, argv template, cwd contract, normalized non-secret
 allowlisted environment values, supervisor/fence policy, and limits; a mutable
 path is not an identity. Preflight rejects a reachable Tool before `run_started`
 when the frozen supervisor/fence policy is unavailable.
+
+Non-executing Tool authoring keeps layout schema 1. The first successful Tool
+creation is the only board schema-1-to-2 authoring migration; update changes only
+title and the complete parameter map. Delete removes the Tool, every incident
+board connection, its layout node, and every incident layout routing entry while
+keeping board schema 2. Create and delete hold board then layout locks, validate
+revision/ETag CAS, and stage and fsync every present member of exact old/old and
+new/new identities before the first canonical rename. Each identity member is
+explicitly absent or SHA-256 over exact bytes; absent is not an empty file. Any
+earlier validation, migration, serialization,
+staging, or fsync failure leaves canonical board and layout bytes unchanged.
+Publication renames layout first and board last because layout is non-authorizing
+and the board is graph authority.
+
+After the first rename, an I/O error is synchronously reconciled by exact hashes
+under both locks to old/old (ordinary failure) or new/new (success). A mixed pair
+never returns ordinary failure. Failure to establish either pair returns
+`definition_publication_uncertain`, blocks further board mutation, and requires
+explicit locked recovery and re-read. Cross-file crash/power-loss atomicity is
+not claimed without a future journal; layout-new/board-old still projects the
+old board. Extra layout entries are ignored and missing entries receive only the
+normal non-authorizing placement heuristic, so layout exposes no Tool authority.
+
 The first Tool class is certified deterministic: network, secrets, undeclared
 host reads, and external writes are denied; locale/timezone are normalized;
 clock/entropy are frozen or denied; and repeat vectors fix expected output
