@@ -16,15 +16,15 @@ func TestToolBoardParserProjectsFrozenJSONNormalizeDefinition(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read schema-2 Tool board: %v", err)
 	}
-	if len(board.Tools) != 1 {
-		t.Fatalf("Tool count = %d, want 1", len(board.Tools))
+	if len(board.Tools) != 2 {
+		t.Fatalf("Tool count = %d, want 2", len(board.Tools))
 	}
 
-	gotJSON, err := json.Marshal(board.Tools[0])
+	gotJSON, err := json.Marshal(board.Tools)
 	if err != nil {
 		t.Fatalf("marshal Tool projection: %v", err)
 	}
-	wantJSON := []byte(`{
+	wantJSON := []byte(`[{
 		"id":"tool_01J9_normalize",
 		"title":"Normalize report",
 		"profileId":"json.normalize",
@@ -48,7 +48,31 @@ func TestToolBoardParserProjectsFrozenJSONNormalizeDefinition(t *testing.T) {
 			"kind":"work",
 			"acceptedMediaTypes":["application/json"]
 		}]
-	}`)
+	},{
+		"id":"tool_01J9_normalize_archive",
+		"title":"Normalize archive",
+		"profileId":"json.normalize",
+		"profileVersion":"1",
+		"params":{"mode":"strict"},
+		"inputs":[{
+			"id":"port_01J9_normalize_archive_in",
+			"name":"input",
+			"label":"Report",
+			"direction":"input",
+			"kind":"work",
+			"acceptedMediaTypes":["application/json"],
+			"required":true,
+			"role":"data"
+		}],
+		"outputs":[{
+			"id":"port_01J9_normalize_archive_out",
+			"name":"output",
+			"label":"Normalized report",
+			"direction":"output",
+			"kind":"work",
+			"acceptedMediaTypes":["application/json"]
+		}]
+	}]`)
 
 	var got, want any
 	if err := json.Unmarshal(gotJSON, &got); err != nil {
@@ -85,6 +109,45 @@ func TestToolBoardParserPreservesSourceIdentity(t *testing.T) {
 	}
 }
 
+func TestToolParameterScalarParserAcceptsFrozenDomain(t *testing.T) {
+	tests := []struct {
+		name     string
+		literal  string
+		wantJSON string
+	}{
+		{name: "string", literal: `"strict"`, wantJSON: `"strict"`},
+		{name: "boolean", literal: "true", wantJSON: "true"},
+		{name: "minimum safe integer", literal: "-9007199254740991", wantJSON: "-9007199254740991"},
+		{name: "maximum safe integer", literal: "9007199254740991", wantJSON: "9007199254740991"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseToolParameterScalar(tt.literal)
+			if err != nil {
+				t.Fatalf("parse approved Tool parameter scalar %q: %v", tt.literal, err)
+			}
+			gotJSON, err := json.Marshal(got)
+			if err != nil {
+				t.Fatalf("marshal approved Tool parameter scalar %q: %v", tt.literal, err)
+			}
+			if string(gotJSON) != tt.wantJSON {
+				t.Fatalf("Tool parameter scalar %q projected as %s, want %s", tt.literal, gotJSON, tt.wantJSON)
+			}
+		})
+	}
+}
+
+func TestToolParameterScalarParserRejectsBothUnsafeIntegerBounds(t *testing.T) {
+	for _, literal := range []string{"-9007199254740992", "9007199254740992"} {
+		t.Run(literal, func(t *testing.T) {
+			if _, err := parseToolParameterScalar(literal); err == nil {
+				t.Fatalf("Tool parameter scalar parser accepted unsafe integer %s", literal)
+			}
+		})
+	}
+}
+
 func TestToolBoardParserRejectsInvalidParameterForms(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -95,8 +158,10 @@ func TestToolBoardParserRejectsInvalidParameterForms(t *testing.T) {
 		{name: "array", params: "[tool.params]\nmode = [\"strict\"]\n"},
 		{name: "inline table", params: "[tool.params]\nmode = { value = \"strict\" }\n"},
 		{name: "nested table", params: "[tool.params.mode]\nvalue = \"strict\"\n"},
+		{name: "dotted nested value", params: "[tool.params]\nmode.value = \"strict\"\n"},
 		{name: "duplicate key", params: "[tool.params]\nmode = \"strict\"\nmode = \"strict\"\n"},
-		{name: "unsafe integer", params: "[tool.params]\nmode = 9007199254740992\n"},
+		{name: "unsafe negative integer", params: "[tool.params]\nmode = -9007199254740992\n"},
+		{name: "unsafe positive integer", params: "[tool.params]\nmode = 9007199254740992\n"},
 	}
 
 	for _, tt := range tests {
@@ -160,6 +225,33 @@ role = "data"
 
 [[tool.output]]
 id = "port_01J9_normalize_out"
+name = "output"
+label = "Normalized report"
+direction = "output"
+kind = "work"
+acceptedMediaTypes = ["application/json"]
+
+[[tool]]
+id = "tool_01J9_normalize_archive"
+title = "Normalize archive"
+profileId = "json.normalize"
+profileVersion = "1"
+
+[tool.params]
+mode = "strict"
+
+[[tool.input]]
+id = "port_01J9_normalize_archive_in"
+name = "input"
+label = "Report"
+direction = "input"
+kind = "work"
+acceptedMediaTypes = ["application/json"]
+required = true
+role = "data"
+
+[[tool.output]]
+id = "port_01J9_normalize_archive_out"
 name = "output"
 label = "Normalized report"
 direction = "output"
