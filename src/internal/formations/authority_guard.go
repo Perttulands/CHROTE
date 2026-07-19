@@ -238,21 +238,8 @@ var runtimeAuthorityClosedJSONKeys = map[reflect.Type]map[string]struct{}{
 	reflect.TypeOf(runCommandRootWire{}): runtimeAuthorityJSONKeySet(
 		"kind", "nodeId",
 	),
-	reflect.TypeOf(runtimeWorkspaceRegistry{}): runtimeAuthorityJSONKeySet(
-		"registrySchema", "recordRev", "entries",
-	),
-	reflect.TypeOf(runtimeWorkspaceRegistryEntry{}): runtimeAuthorityJSONKeySet(
-		"workspaceAuthorityId", "configuredPath", "device", "inode", "workspaceRootIdentitySha256",
-	),
 	reflect.TypeOf(runtimeWorkspaceBootstrap{}): runtimeAuthorityJSONKeySet(
 		"bootstrapSchema", "workspaceAuthorityId", "rootIdentityEncoding", "workspaceRootIdentitySha256",
-	),
-	reflect.TypeOf(runtimeWorkspaceAuthority{}): runtimeAuthorityJSONKeySet(
-		"recordRev", "authoritySchema", "workspaceAuthorityId", "rootIdentityEncoding", "workspaceRootIdentitySha256",
-		"nextWriterFence", "nextAdmissionSeq", "admissionPolicyRef",
-	),
-	reflect.TypeOf(runtimeWorkspaceAdmissionPolicyRef{}): runtimeAuthorityJSONKeySet(
-		"policyRev", "policySha256",
 	),
 	reflect.TypeOf(runtimeWorkspaceAdmissionPolicy{}): runtimeAuthorityJSONKeySet(
 		"policySchema", "policyRev", "priorPolicySha256", "state", "maxActiveRuns", "maxQueuedRuns",
@@ -392,14 +379,33 @@ func readRuntimeWorkspaceRegistry(rootDir *os.File, workspacesRoot string) (runt
 	if err != nil {
 		return runtimeWorkspaceRegistry{}, runtimeGuardFileError(RuntimeAuthorityGuardStageRegistry, workspacesRoot, registryPath, err)
 	}
-	var registry runtimeWorkspaceRegistry
-	if err := decodeRuntimeAuthorityJSON(registryRaw, &registry); err != nil {
+	strictRegistry, err := decodeWorkspaceRegistryJCSV1(registryRaw)
+	if err != nil {
 		return runtimeWorkspaceRegistry{}, runtimeGuardDecodeError(RuntimeAuthorityGuardStageRegistry, workspacesRoot, registryPath, err)
 	}
+	registry := projectRuntimeWorkspaceRegistry(strictRegistry)
 	if err := validateRuntimeWorkspaceRegistry(&registry); err != nil {
 		return runtimeWorkspaceRegistry{}, runtimeGuardError(RuntimeAuthorityGuardStageRegistry, runtimeGuardValidationCode(err), "registry.private.json", err)
 	}
 	return registry, nil
+}
+
+func projectRuntimeWorkspaceRegistry(record workspaceRegistryJCSV1) runtimeWorkspaceRegistry {
+	entries := make([]runtimeWorkspaceRegistryEntry, len(record.Entries))
+	for index, entry := range record.Entries {
+		entries[index] = runtimeWorkspaceRegistryEntry{
+			WorkspaceAuthorityID:      entry.WorkspaceAuthorityID,
+			ConfiguredPath:            entry.ConfiguredPath,
+			Device:                    entry.Device,
+			Inode:                     entry.Inode,
+			WorkspaceRootIdentityHash: entry.WorkspaceRootIdentitySHA256,
+		}
+	}
+	return runtimeWorkspaceRegistry{
+		RegistrySchema: json.Number(strconv.FormatUint(record.RegistrySchema, 10)),
+		RecordRev:      json.Number(strconv.FormatUint(record.RecordRev, 10)),
+		Entries:        &entries,
+	}
 }
 
 type runtimeWorkspaceIdentity struct {
@@ -673,10 +679,11 @@ func validateRuntimeAuthorityDomain(workspacesRoot, authorityPath string, author
 	if err != nil {
 		return runtimeGuardFileError(RuntimeAuthorityGuardStageWorkspaceAuthority, workspacesRoot, workspacePath, err)
 	}
-	var workspaceAuthority runtimeWorkspaceAuthority
-	if err := decodeRuntimeAuthorityJSON(workspaceRaw, &workspaceAuthority); err != nil {
+	strictWorkspaceAuthority, err := decodeWorkspaceAuthorityJCSV1(workspaceRaw)
+	if err != nil {
 		return runtimeGuardDecodeError(RuntimeAuthorityGuardStageWorkspaceAuthority, workspacesRoot, workspacePath, err)
 	}
+	workspaceAuthority := projectRuntimeWorkspaceAuthority(strictWorkspaceAuthority)
 	if err := validateRuntimeWorkspaceAuthority(workspaceAuthority, entry); err != nil {
 		return runtimeGuardError(RuntimeAuthorityGuardStageWorkspaceAuthority, runtimeGuardValidationCode(err), runtimeGuardRelativePath(workspacesRoot, workspacePath), err)
 	}
@@ -684,6 +691,22 @@ func validateRuntimeAuthorityDomain(workspacesRoot, authorityPath string, author
 		return err
 	}
 	return nil
+}
+
+func projectRuntimeWorkspaceAuthority(record workspaceAuthorityJCSV1) runtimeWorkspaceAuthority {
+	return runtimeWorkspaceAuthority{
+		RecordRev:                 json.Number(strconv.FormatUint(record.RecordRev, 10)),
+		AuthoritySchema:           json.Number(strconv.FormatUint(record.AuthoritySchema, 10)),
+		WorkspaceAuthorityID:      record.WorkspaceAuthorityID,
+		RootIdentityEncoding:      record.RootIdentityEncoding,
+		WorkspaceRootIdentityHash: record.WorkspaceRootIdentitySHA256,
+		NextWriterFence:           json.Number(strconv.FormatUint(record.NextWriterFence, 10)),
+		NextAdmissionSeq:          json.Number(strconv.FormatUint(record.NextAdmissionSeq, 10)),
+		AdmissionPolicyRef: runtimeWorkspaceAdmissionPolicyRef{
+			PolicyRev:    json.Number(strconv.FormatUint(record.AdmissionPolicyRef.PolicyRev, 10)),
+			PolicySHA256: record.AdmissionPolicyRef.PolicySHA256,
+		},
+	}
 }
 
 func validateRuntimeBootstrap(raw []byte, bootstrap runtimeWorkspaceBootstrap, entry runtimeWorkspaceRegistryEntry) error {
@@ -1478,7 +1501,7 @@ func runtimeGuardValidationCode(err error) RuntimeAuthorityGuardCode {
 }
 
 func runtimeGuardDecodeError(stage RuntimeAuthorityGuardStage, root, path string, err error) error {
-	code := RuntimeAuthorityGuardMalformed
+	code := runtimeGuardValidationCode(err)
 	var decodeErr runtimeDecodeError
 	if errors.As(err, &decodeErr) {
 		code = decodeErr.code

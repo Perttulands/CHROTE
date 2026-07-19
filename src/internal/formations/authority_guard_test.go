@@ -550,7 +550,11 @@ func TestGuardRuntimeAuthorityV1ClassifiesMalformedJSONSeparatelyFromDuplicateKe
 		{
 			name: "truncated JSON",
 			mutate: func(t *testing.T, fixture runtimeAuthorityFixture) {
-				replaceAuthorityFixture(t, fixture.registry, `}]}`, `}]`)
+				raw, err := os.ReadFile(fixture.registry)
+				if err != nil {
+					t.Fatal(err)
+				}
+				writeAuthorityFixture(t, fixture.registry, raw[:len(raw)-1])
 			},
 		},
 		{
@@ -1564,28 +1568,17 @@ func TestGuardRuntimeAuthorityV1RejectsFieldPermissiveRunEventWouldIgnore(t *tes
 	}
 }
 
-func TestGuardRuntimeAuthorityV1AcceptsNoncanonicalWhitespaceOnlyForMutableRecords(t *testing.T) {
+func TestGuardRuntimeAuthorityV1RejectsNoncanonicalWhitespaceForMutableRecords(t *testing.T) {
 	fixture := newRuntimeAuthorityFixture(t)
-	registry := fmt.Sprintf(
-		"{\n  \"entries\": [{\"workspaceAuthorityId\":\"%s\",\"configuredPath\":%q,\"device\":\"123\",\"inode\":\"456\",\"workspaceRootIdentitySha256\":\"%s\"}],\n  \"recordRev\": 1,\n  \"registrySchema\": 1\n}\n",
-		testWorkspaceAuthorityID,
-		fixture.configuredPath,
-		fixture.rootHash,
-	)
-	workspace := fmt.Sprintf(
-		"{\n  \"admissionPolicyRef\": {\"policySha256\":\"%s\",\"policyRev\":1},\n  \"nextAdmissionSeq\":1,\n  \"nextWriterFence\":2,\n  \"workspaceRootIdentitySha256\":\"%s\",\n  \"rootIdentityEncoding\":\"workspace-root-identity-v1\",\n  \"workspaceAuthorityId\":\"%s\",\n  \"authoritySchema\":2,\n  \"recordRev\":1\n}\n",
-		fixture.policyHash,
-		fixture.rootHash,
-		testWorkspaceAuthorityID,
-	)
-	writeAuthorityFixture(t, fixture.registry, []byte(registry))
-	writeAuthorityFixture(t, fixture.workspaceDB, []byte(workspace))
-
-	result, err := GuardRuntimeAuthorityV1(fixture.root)
+	registryRaw, err := os.ReadFile(fixture.registry)
 	if err != nil {
-		t.Fatalf("guard invented canonical-byte requirement for mutable records: %v", err)
+		t.Fatal(err)
 	}
-	assertRuntimeGuardDisabled(t, result.Capability)
+	writeAuthorityFixture(t, fixture.registry, append([]byte(" "), registryRaw...))
+	guardErr := assertRuntimeGuardRejectsUnchanged(t, fixture, RuntimeAuthorityGuardStageRegistry)
+	if guardErr.Code != RuntimeAuthorityGuardNoncanonical {
+		t.Fatalf("guard code = %q, want noncanonical for mutable record whitespace", guardErr.Code)
+	}
 }
 
 func TestGuardRuntimeAuthorityV1UsesOnlyExplicitRoot(t *testing.T) {
@@ -2006,11 +1999,11 @@ func bindRuntimeAuthorityFixtureToOpenedWorkspace(t *testing.T, fixture *runtime
 	)
 	rootHash := sha256Hex([]byte(rootIdentity))
 	writeAuthorityFixture(t, fixture.registry, []byte(fmt.Sprintf(
-		`{"registrySchema":1,"recordRev":1,"entries":[{"workspaceAuthorityId":"%s","configuredPath":%q,"device":%q,"inode":%q,"workspaceRootIdentitySha256":"%s"}]}`,
-		testWorkspaceAuthorityID,
+		`{"entries":[{"configuredPath":%q,"device":%q,"inode":%q,"workspaceAuthorityId":"%s","workspaceRootIdentitySha256":"%s"}],"priorGeneration":null,"recordRev":1,"registrySchema":1}`,
 		configuredPath,
 		device,
 		inode,
+		testWorkspaceAuthorityID,
 		rootHash,
 	)))
 	writeAuthorityFixture(t, fixture.bootstrap, []byte(fmt.Sprintf(
@@ -2019,10 +2012,10 @@ func bindRuntimeAuthorityFixtureToOpenedWorkspace(t *testing.T, fixture *runtime
 		rootHash,
 	)))
 	writeAuthorityFixture(t, fixture.workspaceDB, []byte(fmt.Sprintf(
-		`{"recordRev":1,"authoritySchema":2,"workspaceAuthorityId":"%s","rootIdentityEncoding":"workspace-root-identity-v1","workspaceRootIdentitySha256":"%s","nextWriterFence":2,"nextAdmissionSeq":1,"admissionPolicyRef":{"policyRev":1,"policySha256":"%s"}}`,
+		`{"admissionPolicyRef":{"policyRev":1,"policySha256":"%s"},"authoritySchema":2,"nextAdmissionSeq":1,"nextWriterFence":2,"priorGeneration":null,"recordRev":1,"rootIdentityEncoding":"workspace-root-identity-v1","workspaceAuthorityId":"%s","workspaceRootIdentitySha256":"%s"}`,
+		fixture.policyHash,
 		testWorkspaceAuthorityID,
 		rootHash,
-		fixture.policyHash,
 	)))
 	fixture.configuredPath = configuredPath
 	fixture.rootHash = rootHash
@@ -2052,8 +2045,8 @@ func newRuntimeAuthorityFixture(t *testing.T) runtimeAuthorityFixture {
 	workspacePath := filepath.Join(authority, "workspace.private.json")
 
 	writeAuthorityFixture(t, registryPath, []byte(fmt.Sprintf(
-		`{"registrySchema":1,"recordRev":1,"entries":[{"workspaceAuthorityId":"%s","configuredPath":%q,"device":"123","inode":"456","workspaceRootIdentitySha256":"%s"}]}`,
-		testWorkspaceAuthorityID, configuredPath, rootHash,
+		`{"entries":[{"configuredPath":%q,"device":"123","inode":"456","workspaceAuthorityId":"%s","workspaceRootIdentitySha256":"%s"}],"priorGeneration":null,"recordRev":1,"registrySchema":1}`,
+		configuredPath, testWorkspaceAuthorityID, rootHash,
 	)))
 	writeAuthorityFixture(t, bootstrapPath, []byte(fmt.Sprintf(
 		`{"bootstrapSchema":1,"rootIdentityEncoding":"workspace-root-identity-v1","workspaceAuthorityId":"%s","workspaceRootIdentitySha256":"%s"}`,
@@ -2061,8 +2054,8 @@ func newRuntimeAuthorityFixture(t *testing.T) runtimeAuthorityFixture {
 	)))
 	writeAuthorityFixture(t, filepath.Join(policyDir, "1.json"), policy)
 	writeAuthorityFixture(t, workspacePath, []byte(fmt.Sprintf(
-		`{"recordRev":1,"authoritySchema":2,"workspaceAuthorityId":"%s","rootIdentityEncoding":"workspace-root-identity-v1","workspaceRootIdentitySha256":"%s","nextWriterFence":2,"nextAdmissionSeq":1,"admissionPolicyRef":{"policyRev":1,"policySha256":"%s"}}`,
-		testWorkspaceAuthorityID, rootHash, policyHash,
+		`{"admissionPolicyRef":{"policyRev":1,"policySha256":"%s"},"authoritySchema":2,"nextAdmissionSeq":1,"nextWriterFence":2,"priorGeneration":null,"recordRev":1,"rootIdentityEncoding":"workspace-root-identity-v1","workspaceAuthorityId":"%s","workspaceRootIdentitySha256":"%s"}`,
+		policyHash, testWorkspaceAuthorityID, rootHash,
 	)))
 	writeAuthorityFixture(t, ledger, []byte(fmt.Sprintf(
 		`{"schema":2,"authoritySchema":2,"writerFence":1,"ts":"2026-07-18T00:00:00Z","runId":"%s","seq":1,"type":"run_started","actor":"agent:test","data":{}}`+"\n",
@@ -2095,14 +2088,22 @@ func setRuntimeAuthorityCurrentPolicy(t *testing.T, fixture runtimeAuthorityFixt
 	t.Helper()
 	policyHash := sha256Hex(policy)
 	writeAuthorityFixture(t, filepath.Join(fixture.policyDir, fmt.Sprintf("%d.json", revision)), policy)
-	writeAuthorityFixture(t, fixture.workspaceDB, []byte(fmt.Sprintf(
-		`{"recordRev":%d,"authoritySchema":2,"workspaceAuthorityId":"%s","rootIdentityEncoding":"workspace-root-identity-v1","workspaceRootIdentitySha256":"%s","nextWriterFence":2,"nextAdmissionSeq":1,"admissionPolicyRef":{"policyRev":%d,"policySha256":"%s"}}`,
-		revision,
-		testWorkspaceAuthorityID,
-		fixture.rootHash,
-		revision,
-		policyHash,
-	)))
+	currentRaw, err := os.ReadFile(fixture.workspaceDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := decodeWorkspaceAuthorityJCSV1(currentRaw)
+	if err != nil {
+		t.Fatalf("decode current workspace authority fixture: %v", err)
+	}
+	current.PriorGeneration = &authorityGeneration{recordRev: current.RecordRev, sha256: sha256Hex(currentRaw)}
+	current.RecordRev++
+	current.AdmissionPolicyRef = workspaceAdmissionPolicyRefJCSV1{PolicyRev: uint64(revision), PolicySHA256: policyHash}
+	nextRaw, err := encodeWorkspaceAuthorityJCSV1(current)
+	if err != nil {
+		t.Fatalf("encode next workspace authority fixture: %v", err)
+	}
+	writeAuthorityFixture(t, fixture.workspaceDB, nextRaw)
 }
 
 func schema2AuthorityEvent(runID string, sequence, writerFence, authoritySchema int) []byte {
