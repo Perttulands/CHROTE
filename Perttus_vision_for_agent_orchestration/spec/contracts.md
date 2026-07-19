@@ -1419,22 +1419,22 @@ envelope:
     "admissionPolicyRev": 3,
     "admissionPolicySha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     "admissionCommandId": "cmd_01J9...",
-    "commandPayloadSha256": "sha256:...",
+    "commandPayloadSha256": "1111111111111111111111111111111111111111111111111111111111111111",
     "boardSlug": "session-search",
     "boardPath": ".formations/boards/session-search.formation.toml",
     "sourceBoardSchema": 2,
     "snapshotSchema": 2,
     "runAuthorityId": "auth_01J9...",
-    "graphSnapshotSha256": "sha256:...",
-    "privateBindingsSha256": "sha256:...",
-    "bindingProjectionSha256": "sha256:...",
+    "graphSnapshotSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "privateBindingsSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "bindingProjectionSha256": "4444444444444444444444444444444444444444444444444444444444444444",
     "runRoot": {"kind": "mission", "nodeId": "mis_01J9_improve"},
     "rootInputProjection": {
       "classification": "authored_config",
       "sourceKind": "mission_objective",
       "encoding": "mission-objective-utf8-v1",
       "mediaType": "text/markdown",
-      "sha256": "sha256:...",
+      "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
       "text": "Make session search fuzzy and keyboard-first"
     },
     "limits": {"maxDispatch": 20, "maxAttempts": 3, "wallClockSeconds": 1800, "redact": false}
@@ -2396,8 +2396,8 @@ Structured payload fields use these shapes:
 - `retryTargets`: stable node-order array of `{nodeId, attempt, outputPortIds,
   outcomeSeqs, deliveredEdges=[]}`. Each entry names one whole failed producer
   attempt and lists all of that attempt's unsuccessful declared outputs in
-  stable port order; selective port replay is not implied. Schema 2 permits exactly one
-  entry. It is the first unresolved retry failure under the deterministic
+  stable port order; selective port replay is not implied. Ledger event schema 2
+  permits exactly one entry. It is the first unresolved retry failure under the deterministic
   selection rule below, not an arbitrary choice by a coordinator.
 
 Artifact projection remains replay-deterministic. It uses the latest

@@ -130,14 +130,22 @@ Feature: Reversibility and the file contract — safe, durable, and recoverable
     Then the change is detected (mtime/fsnotify) and surfaced as a reload signal
 
   @file
-  Scenario Outline: Schema is versioned — refuse newer, up-migrate older
-    Given a file with schema version "<v>"
+  Scenario Outline: Definition schema reads are versioned and non-mutating
+    Given a board or layout file with schema version "<v>"
     Then the package "<behavior>"
     Examples:
-      | v       | behavior                                            |
-      | current | reads normally                                      |
-      | older   | up-migrates on read, preserving content             |
-      | newer   | refuses to load and fails loud (never silent guess) |
+      | v       | behavior                                                                  |
+      | current | reads normally without rewriting canonical bytes                         |
+      | older   | normalizes only in memory for inspection; canonical bytes remain unchanged |
+      | newer   | refuses to load and fails loud (never silent guess)                       |
+
+  @file
+  Scenario: Only first Tool creation persists a board-schema migration
+    Given a schema-1 board that is safely normalizable and a schema-1 layout
+    When either definition is read or inspected
+    Then both canonical files remain byte-for-byte unchanged
+    When the first Tool is created successfully
+    Then the board is written once as board schema 2 and the layout remains schema 1
 
   # ── Separation of concerns ──────────────────────────────────────────────────
 
