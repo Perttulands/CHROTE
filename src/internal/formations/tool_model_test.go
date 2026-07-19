@@ -448,6 +448,14 @@ func TestToolBoardParserFencesTopLevelToolNamespaceWithAndWithoutLaterNodeWithou
 			definition: `tool = { runtime = { command = "forbidden" } }`,
 		},
 		{
+			name:       "Go hexadecimal quoted Tool root alias",
+			definition: `"\x74ool" = { runtime = { command = "forbidden" } }`,
+		},
+		{
+			name:       "Go octal quoted Tool root alias",
+			definition: `"\164ool" = { runtime = { command = "forbidden" } }`,
+		},
+		{
 			name:       "unterminated Tool child header",
 			definition: "[tool.runtime\ncommand = \"forbidden\"",
 		},
@@ -458,6 +466,14 @@ func TestToolBoardParserFencesTopLevelToolNamespaceWithAndWithoutLaterNodeWithou
 		{
 			name:       "Tool child header with trailing bytes",
 			definition: "[tool.runtime] trailing\ncommand = \"forbidden\"",
+		},
+		{
+			name:       "TOML-encoded unterminated Tool header",
+			definition: `["\u0074ool.runtime`,
+		},
+		{
+			name:       "Go-encoded unterminated Tool header",
+			definition: `["\x74ool.runtime`,
 		},
 	}
 
@@ -479,6 +495,69 @@ func TestToolBoardParserFencesTopLevelToolNamespaceWithAndWithoutLaterNodeWithou
 			t.Run("Tool-free schema-2 board", func(t *testing.T) {
 				raw := toolFreeSchemaTwoBoardFixture() + tt.definition + "\n"
 				assertToolBoardReadRejectedWithoutMutation(t, raw, tt.name+" on Tool-free schema-2 board")
+			})
+		})
+	}
+}
+
+func TestToolBoardParserPreservesValidToolboxDefinitionsWithAndWithoutLaterNode(t *testing.T) {
+	tests := []struct {
+		name       string
+		definition string
+	}{
+		{
+			name:       "bare root assignment",
+			definition: `toolbox = { note = "unrelated" }`,
+		},
+		{
+			name:       "basic root assignment",
+			definition: `"toolbox" = { note = "unrelated" }`,
+		},
+		{
+			name:       "literal root assignment",
+			definition: `'toolbox' = { note = "unrelated" }`,
+		},
+		{
+			name:       "bare header",
+			definition: "[toolbox]\nnote = \"unrelated\"",
+		},
+		{
+			name:       "basic header",
+			definition: "[\"toolbox\"]\nnote = \"unrelated\"",
+		},
+		{
+			name:       "literal header",
+			definition: "['toolbox']\nnote = \"unrelated\"",
+		},
+	}
+
+	withTools, err := parseBoard([]byte(frozenJSONNormalizeBoardFixture()))
+	if err != nil {
+		t.Fatalf("parse canonical Tool fixture: %v", err)
+	}
+	withoutTools, err := parseBoard([]byte(toolFreeSchemaTwoBoardFixture()))
+	if err != nil {
+		t.Fatalf("parse canonical Tool-free fixture: %v", err)
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Run("before later Tool node", func(t *testing.T) {
+				raw := strings.Replace(
+					frozenJSONNormalizeBoardFixture(),
+					"\n[[tool]]\n",
+					"\n"+tt.definition+"\n\n[[tool]]\n",
+					1,
+				)
+				if raw == frozenJSONNormalizeBoardFixture() {
+					t.Fatalf("toolbox fixture insertion %q did not apply", tt.name)
+				}
+				assertToolBoardReadPreservesProjection(t, raw, withTools.Tools, tt.name+" before later Tool node")
+			})
+
+			t.Run("Tool-free schema-2 board", func(t *testing.T) {
+				raw := toolFreeSchemaTwoBoardFixture() + tt.definition + "\n"
+				assertToolBoardReadPreservesProjection(t, raw, withoutTools.Tools, tt.name+" on Tool-free schema-2 board")
 			})
 		})
 	}
@@ -581,6 +660,31 @@ func assertToolBoardReadRejectedWithoutMutation(t *testing.T, raw, name string) 
 	}
 	if got := operativeFileIdentityForTest(t, path); got != wantIdentity {
 		t.Fatalf("rejected %s replaced operative file identity = %v, want %v", name, got, wantIdentity)
+	}
+}
+
+func assertToolBoardReadPreservesProjection(t *testing.T, raw string, wantTools []ToolNode, name string) {
+	t.Helper()
+	store := NewStore(t.TempDir())
+	path := store.BoardPath("tool-model")
+	writeFixture(t, path, raw)
+	wantIdentity := operativeFileIdentityForTest(t, path)
+
+	board, err := store.ReadBoard("tool-model")
+	if err != nil {
+		t.Fatalf("ReadBoard rejected valid %s: %v", name, err)
+	}
+	if !reflect.DeepEqual(board.Tools, wantTools) {
+		t.Fatalf("valid %s changed Tool projection = %#v, want %#v", name, board.Tools, wantTools)
+	}
+	if board.TOML != raw || board.ETag != etag([]byte(raw)) {
+		t.Fatalf("valid %s changed source identity: TOML=%q ETag=%q", name, board.TOML, board.ETag)
+	}
+	if got := readFile(t, path); got != raw {
+		t.Fatalf("reading valid %s changed canonical bytes:\n got %q\nwant %q", name, got, raw)
+	}
+	if got := operativeFileIdentityForTest(t, path); got != wantIdentity {
+		t.Fatalf("reading valid %s replaced operative file identity = %v, want %v", name, got, wantIdentity)
 	}
 }
 
