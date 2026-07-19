@@ -246,6 +246,42 @@ func TestWorkspaceRootIdentityV1UsesCanonicalStringsBeyondJSONSafeInteger(t *tes
 	}
 }
 
+func TestWorkspaceAuthorityRegistrationScopeIsClosedValueOnlyObservationInterface(t *testing.T) {
+	scopeType := reflect.TypeOf((*workspaceAuthorityRegistrationScope)(nil)).Elem()
+	if scopeType.Kind() != reflect.Interface {
+		t.Fatalf("registration scope kind = %s, want interface", scopeType.Kind())
+	}
+	if scopeType.Name() != "workspaceAuthorityRegistrationScope" || scopeType.PkgPath() == "" {
+		t.Fatalf("registration scope identity = %s from %q, want named unexported package interface", scopeType.Name(), scopeType.PkgPath())
+	}
+	wantMethods := []struct {
+		name      string
+		signature reflect.Type
+	}{
+		{name: "matchedWorkspaceAuthorityID", signature: reflect.TypeOf((func() (string, bool))(nil))},
+		{name: "registryLockIdentity", signature: reflect.TypeOf((func() (uint64, uint64))(nil))},
+		{name: "workspaceIdentity", signature: reflect.TypeOf((func() runtimeWorkspaceIdentity)(nil))},
+	}
+	if scopeType.NumMethod() != len(wantMethods) {
+		t.Fatalf("registration scope method count = %d, want exact closed set of %d", scopeType.NumMethod(), len(wantMethods))
+	}
+	for index, want := range wantMethods {
+		method := scopeType.Method(index)
+		if method.Name != want.name || method.Type != want.signature {
+			t.Fatalf("registration scope method %d = %s %s, want %s %s", index, method.Name, method.Type, want.name, want.signature)
+		}
+		if method.PkgPath == "" || method.Func.IsValid() {
+			t.Fatalf("registration scope method %s must remain unexported interface-only: package=%q func-valid=%t", method.Name, method.PkgPath, method.Func.IsValid())
+		}
+		for output := 0; output < method.Type.NumOut(); output++ {
+			kind := method.Type.Out(output).Kind()
+			if kind == reflect.Pointer || kind == reflect.UnsafePointer || kind == reflect.Func || kind == reflect.Chan || kind == reflect.Interface {
+				t.Fatalf("registration scope method %s exposes live/resource-bearing output %s", method.Name, method.Type.Out(output))
+			}
+		}
+	}
+}
+
 func TestWorkspaceAuthorityRegistrationCleansConfiguredSpellingAndRejectsInvalidPathGrammar(t *testing.T) {
 	fixture := newWorkspaceAuthorityRegistrationFixture(t, workspaceRegistryJCSV1{
 		Entries:        []workspaceRegistryEntryJCSV1{},
@@ -259,6 +295,8 @@ func TestWorkspaceAuthorityRegistrationCleansConfiguredSpellingAndRejectsInvalid
 		t.Fatal(err)
 	}
 	unclean := filepath.Join(noise, "..", filepath.Base(fixture.workspace))
+	descriptorPaths := workspaceAuthorityRegistrationFixturePaths(fixture)
+	cleanDescriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, descriptorPaths...)
 	var configuredPath string
 	callbackCalls := 0
 	err := registrar.inspect(unclean, func(scope workspaceAuthorityRegistrationScope) error {
@@ -275,6 +313,7 @@ func TestWorkspaceAuthorityRegistrationCleansConfiguredSpellingAndRejectsInvalid
 	if got, want := configuredPath, filepath.ToSlash(filepath.Clean(unclean)); got != want {
 		t.Fatalf("cleaned configured spelling = %q, want %q", got, want)
 	}
+	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, cleanDescriptorsBefore, descriptorPaths...)
 
 	for _, configured := range []string{
 		"relative/workspace",
@@ -284,6 +323,7 @@ func TestWorkspaceAuthorityRegistrationCleansConfiguredSpellingAndRejectsInvalid
 	} {
 		t.Run(strconv.Quote(configured), func(t *testing.T) {
 			before := snapshotWorkspaceAuthorityTopology(t, fixture.base)
+			descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, descriptorPaths...)
 			callbackCalls := 0
 			err := registrar.inspect(configured, func(workspaceAuthorityRegistrationScope) error {
 				callbackCalls++
@@ -298,6 +338,7 @@ func TestWorkspaceAuthorityRegistrationCleansConfiguredSpellingAndRejectsInvalid
 			if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, before) {
 				t.Fatalf("invalid configured path changed authority topology\nbefore: %#v\nafter:  %#v", before, after)
 			}
+			assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, descriptorPaths...)
 		})
 	}
 }
@@ -1406,6 +1447,169 @@ func TestWorkspaceAuthorityRegistryLookupClassifiesIdentityWithoutMutation(t *te
 	}
 }
 
+func TestWorkspaceAuthorityRegistrationUsesCertifiedStrictRegistryDecoderWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name     string
+		wantCode RuntimeAuthorityGuardCode
+		mutate   func(*testing.T, []byte) []byte
+	}{
+		{
+			name:     "unknown top-level key",
+			wantCode: RuntimeAuthorityGuardUnknownKey,
+			mutate: func(t *testing.T, raw []byte) []byte {
+				return replaceWorkspaceAuthorityRegistryRawExactlyOnce(t, raw, `,"priorGeneration":`, `,"futureTopLevel":true,"priorGeneration":`)
+			},
+		},
+		{
+			name:     "unknown nested entry key",
+			wantCode: RuntimeAuthorityGuardUnknownKey,
+			mutate: func(t *testing.T, raw []byte) []byte {
+				return replaceWorkspaceAuthorityRegistryRawExactlyOnce(t, raw, `,"device":`, `,"futureNested":true,"device":`)
+			},
+		},
+		{
+			name:     "duplicate top-level key",
+			wantCode: RuntimeAuthorityGuardDuplicateKey,
+			mutate: func(t *testing.T, raw []byte) []byte {
+				return replaceWorkspaceAuthorityRegistryRawExactlyOnce(t, raw, `,"recordRev":`, `,"recordRev":1,"recordRev":`)
+			},
+		},
+		{
+			name:     "duplicate nested entry key",
+			wantCode: RuntimeAuthorityGuardDuplicateKey,
+			mutate: func(t *testing.T, raw []byte) []byte {
+				return replaceWorkspaceAuthorityRegistryRawExactlyOnce(t, raw, `,"device":`, `,"device":"0","device":`)
+			},
+		},
+		{
+			name:     "unsupported registry schema",
+			wantCode: RuntimeAuthorityGuardUnsupportedSchema,
+			mutate: func(t *testing.T, raw []byte) []byte {
+				return replaceWorkspaceAuthorityRegistryRawExactlyOnce(t, raw, `"registrySchema":1}`, `"registrySchema":2}`)
+			},
+		},
+		{
+			name:     "null entries",
+			wantCode: RuntimeAuthorityGuardMalformed,
+			mutate: func(t *testing.T, raw []byte) []byte {
+				return replaceWorkspaceAuthorityRegistryEntries(t, raw, "null")
+			},
+		},
+		{
+			name:     "wrong entries type",
+			wantCode: RuntimeAuthorityGuardMalformed,
+			mutate: func(t *testing.T, raw []byte) []byte {
+				return replaceWorkspaceAuthorityRegistryEntries(t, raw, `{}`)
+			},
+		},
+		{
+			name:     "malformed JSON",
+			wantCode: RuntimeAuthorityGuardMalformed,
+			mutate: func(*testing.T, []byte) []byte {
+				return []byte(`{"entries":]}`)
+			},
+		},
+		{
+			name:     "truncated JSON",
+			wantCode: RuntimeAuthorityGuardMalformed,
+			mutate: func(t *testing.T, raw []byte) []byte {
+				if len(raw) < 2 {
+					t.Fatal("canonical registry fixture unexpectedly empty")
+				}
+				return append([]byte(nil), raw[:len(raw)-1]...)
+			},
+		},
+		{
+			name:     "noncanonical top-level key order",
+			wantCode: RuntimeAuthorityGuardNoncanonical,
+			mutate: func(t *testing.T, raw []byte) []byte {
+				const prefix = `{`
+				const suffix = `,"registrySchema":1}`
+				text := string(raw)
+				if !strings.HasPrefix(text, prefix) || !strings.HasSuffix(text, suffix) {
+					t.Fatalf("canonical registry fixture = %q, want expected object prefix/suffix", raw)
+				}
+				body := text[len(prefix) : len(text)-len(suffix)]
+				return []byte(`{"registrySchema":1,` + body + `}`)
+			},
+		},
+		{
+			name:     "noncanonical whitespace",
+			wantCode: RuntimeAuthorityGuardNoncanonical,
+			mutate: func(_ *testing.T, raw []byte) []byte {
+				return append([]byte(" \t"), raw...)
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			base := t.TempDir()
+			workspace := filepath.Join(base, "workspace")
+			if err := os.Mkdir(workspace, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			identity := testWorkspaceAuthorityIdentityAtPath(t, workspace).identity
+			canonical, err := encodeWorkspaceRegistryJCSV1(workspaceRegistryWithIdentity(identity, testWorkspaceAuthorityID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw := test.mutate(t, canonical)
+			if _, err := decodeWorkspaceRegistryJCSV1(raw); err == nil {
+				t.Fatal("certified registry decoder accepted strict rejection fixture")
+			} else if code := workspaceAuthorityRegistrationErrorCode(err); code != test.wantCode {
+				t.Fatalf("certified registry decoder code = %q, want %q", code, test.wantCode)
+			}
+
+			hostRoot := filepath.Join(base, "authority")
+			workspacesRoot, registryLock := prepareWorkspaceAuthorityRegistrationRoot(t, hostRoot, workspaceRegistryJCSV1{
+				Entries:        []workspaceRegistryEntryJCSV1{},
+				RecordRev:      1,
+				RegistrySchema: 1,
+			})
+			registry := filepath.Join(workspacesRoot, "registry.private.json")
+			writePrivateAuthorityTestFile(t, registry, raw)
+			beforeRaw, err := os.ReadFile(registry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := snapshotWorkspaceAuthorityTopology(t, base)
+			descriptorPaths := []string{hostRoot, workspacesRoot, registryLock, registry, workspace}
+			descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, descriptorPaths...)
+
+			registrar := newWorkspaceAuthorityRegistrar(hostRoot, uint32(os.Geteuid()), newWorkspaceAuthorityCapabilityGate())
+			callbackCalls := 0
+			err = registrar.inspect(workspace, func(workspaceAuthorityRegistrationScope) error {
+				callbackCalls++
+				return nil
+			})
+			if err == nil {
+				t.Fatal("registrar accepted registry bytes rejected by certified decoder")
+			}
+			if code := workspaceAuthorityRegistrationErrorCode(err); code != test.wantCode {
+				t.Fatalf("registrar registry error code = %q, want certified decoder code %q: %v", code, test.wantCode, err)
+			}
+			if callbackCalls != 0 {
+				t.Fatalf("strict registry rejection callback calls = %d, want zero", callbackCalls)
+			}
+			afterRaw, readErr := os.ReadFile(registry)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if !reflect.DeepEqual(afterRaw, beforeRaw) {
+				t.Fatalf("strict registry rejection changed bytes\nbefore: %q\nafter:  %q", beforeRaw, afterRaw)
+			}
+			if after := snapshotWorkspaceAuthorityTopology(t, base); !reflect.DeepEqual(after, before) {
+				t.Fatalf("strict registry rejection changed byte/mtime/ctime topology\nbefore: %#v\nafter:  %#v", before, after)
+			}
+			if err := tryWorkspaceAuthorityExclusiveLock(registryLock); err != nil {
+				t.Fatalf("strict registry rejection leaked registry lock: %v", err)
+			}
+			assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, descriptorPaths...)
+		})
+	}
+}
+
 func TestWorkspaceAuthorityRegistryCriticalSectionSerializesLocally(t *testing.T) {
 	fixture := newWorkspaceAuthorityRegistrationFixture(t, workspaceRegistryJCSV1{
 		Entries:        []workspaceRegistryEntryJCSV1{},
@@ -1434,7 +1638,13 @@ func TestWorkspaceAuthorityRegistryCriticalSectionSerializesLocally(t *testing.T
 			return nil
 		})
 	}()
-	<-firstEntered
+	select {
+	case <-firstEntered:
+	case err := <-firstResult:
+		t.Fatalf("first local registry scope returned before entering its callback: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("first local registry callback did not enter within bounded wait")
+	}
 	if got, want := <-firstLockIdentity, workspaceAuthorityLockIdentityAtPath(t, fixture.registryLock); got != want {
 		t.Fatalf("local holder registry lock identity = %+v, want exact named inode %+v", got, want)
 	}
@@ -1551,6 +1761,69 @@ func TestWorkspaceAuthorityRegistrationScopeReleasesDescriptorsAndLockAfterCallb
 	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, descriptorPaths...)
 }
 
+func TestWorkspaceAuthorityRegistrationScopeReleasesDescriptorsAndLockAfterCallbackPanic(t *testing.T) {
+	fixture := newWorkspaceAuthorityRegistrationFixture(t, workspaceRegistryJCSV1{
+		Entries:        []workspaceRegistryEntryJCSV1{},
+		RecordRev:      1,
+		RegistrySchema: 1,
+	})
+	descriptorPaths := workspaceAuthorityRegistrationFixturePaths(fixture)
+	descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, descriptorPaths...)
+	registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate())
+	wantPanic := errors.New("test registration callback panic")
+	callbackCalls := 0
+	returned := false
+	var returnedErr error
+	var recovered any
+	func() {
+		defer func() {
+			recovered = recover()
+		}()
+		returnedErr = registrar.inspect(fixture.workspace, func(workspaceAuthorityRegistrationScope) error {
+			callbackCalls++
+			panic(wantPanic)
+		})
+		returned = true
+	}()
+	if returned {
+		t.Fatalf("registration callback panic was swallowed as return %v", returnedErr)
+	}
+	if recovered != wantPanic {
+		t.Fatalf("registration callback recovered panic = %#v, want exact sentinel %#v", recovered, wantPanic)
+	}
+	if callbackCalls != 1 {
+		t.Fatalf("panicking registration callback calls = %d, want exactly one", callbackCalls)
+	}
+	if err := tryWorkspaceAuthorityExclusiveLock(fixture.registryLock); err != nil {
+		t.Fatalf("registration callback panic leaked registry lock: %v", err)
+	}
+	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, descriptorPaths...)
+
+	retryCalls := 0
+	retryResult := make(chan error, 1)
+	go func() {
+		retryResult <- registrar.inspect(fixture.workspace, func(workspaceAuthorityRegistrationScope) error {
+			retryCalls++
+			return nil
+		})
+	}()
+	select {
+	case err := <-retryResult:
+		if err != nil {
+			t.Fatalf("registration retry after callback panic: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("registration retry remained blocked after callback panic")
+	}
+	if retryCalls != 1 {
+		t.Fatalf("registration retry after panic callback calls = %d, want exactly one", retryCalls)
+	}
+	if err := tryWorkspaceAuthorityExclusiveLock(fixture.registryLock); err != nil {
+		t.Fatalf("registration retry after panic leaked registry lock: %v", err)
+	}
+	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, descriptorPaths...)
+}
+
 type workspaceAuthorityRegistrationFixture struct {
 	base           string
 	hostRoot       string
@@ -1564,6 +1837,51 @@ type workspaceAuthorityRegistrationFixture struct {
 type workspaceAuthorityRegistrationTestOps struct {
 	openWorkspace       func(string) (*os.File, error)
 	validatePrivateNode func(*os.File, uint32) error
+}
+
+func newWorkspaceAuthorityRegistrarForTest(hostRoot string, expectedUID uint32, gate workspaceAuthorityCapabilityGate, overrides workspaceAuthorityRegistrationTestOps) *workspaceAuthorityRegistrar {
+	registrar := newWorkspaceAuthorityRegistrar(hostRoot, expectedUID, gate)
+	ops := registrar.ops
+	if overrides.openWorkspace != nil {
+		ops.openWorkspace = overrides.openWorkspace
+	}
+	if overrides.validatePrivateNode != nil {
+		ops.validatePrivateNode = overrides.validatePrivateNode
+	}
+	registrar.ops = ops
+	return registrar
+}
+
+func workspaceAuthorityRegistrationErrorCode(err error) RuntimeAuthorityGuardCode {
+	var decodeErr runtimeDecodeError
+	if errors.As(err, &decodeErr) {
+		return decodeErr.code
+	}
+	return runtimeGuardValidationCode(err)
+}
+
+func replaceWorkspaceAuthorityRegistryRawExactlyOnce(t *testing.T, raw []byte, old, replacement string) []byte {
+	t.Helper()
+	text := string(raw)
+	if count := strings.Count(text, old); count != 1 {
+		t.Fatalf("registry fixture occurrence count for %q = %d, want exactly one in %q", old, count, raw)
+	}
+	return []byte(strings.Replace(text, old, replacement, 1))
+}
+
+func replaceWorkspaceAuthorityRegistryEntries(t *testing.T, raw []byte, replacement string) []byte {
+	t.Helper()
+	const prefix = `{"entries":`
+	const nextField = `,"priorGeneration":`
+	text := string(raw)
+	if !strings.HasPrefix(text, prefix) {
+		t.Fatalf("registry fixture = %q, want entries first", raw)
+	}
+	next := strings.Index(text, nextField)
+	if next < len(prefix) {
+		t.Fatalf("registry fixture = %q, want priorGeneration after entries", raw)
+	}
+	return []byte(prefix + replacement + text[next:])
 }
 
 type workspaceAuthorityOpenDescriptorSnapshot struct {
