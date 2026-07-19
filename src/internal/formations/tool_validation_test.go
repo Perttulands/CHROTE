@@ -471,6 +471,25 @@ func TestToolStructuralEndpointsHonorToolPortDirection(t *testing.T) {
 	}
 }
 
+func TestToolStructuralValidateBoardChecksEveryToolDefinition(t *testing.T) {
+	baselineRaw := toolStructuralDuplicateProducerBoardFixture(false)
+	targetBlock := toolStructuralJSONNormalizeToolBlock("tool_target", "Target", "port_target_in", "port_target_out")
+	invalidTargetBlock := replaceToolStructuralFixture(t, targetBlock, `mode = "strict"`, `mode = "lenient"`)
+	invalidRaw := replaceToolStructuralFixture(t, baselineRaw, targetBlock, invalidTargetBlock)
+
+	baselineReport := ValidateBoard(mustParseValidateBoardFixture(t, baselineRaw))
+	if len(baselineReport.Errors) != 0 {
+		t.Fatalf("otherwise-valid three-Tool baseline has structural errors: %+v", baselineReport.Errors)
+	}
+	report := ValidateBoard(mustParseValidateBoardFixture(t, invalidRaw))
+	if dangling := findBoardFindings(report.Errors, FindingDanglingConnection); len(dangling) != 0 {
+		t.Fatalf("descriptor-invalid third Tool introduced unrelated dangling errors: %+v", dangling)
+	}
+	if len(report.Errors) <= len(baselineReport.Errors) {
+		t.Fatalf("descriptor-invalid third Tool added no whole-board error: baseline=%+v invalid=%+v", baselineReport.Errors, report.Errors)
+	}
+}
+
 func TestToolStructuralSecondProducerToToolInputRejectsCandidateAndWholeBoard(t *testing.T) {
 	existing := []BoardConnection{{ID: "edge_first", From: "tool_source_a:port_source_a_out", To: "tool_target:port_target_in"}}
 	candidate := BoardConnection{ID: "edge_second", From: "tool_source_b:port_source_b_out", To: "tool_target:port_target_in"}
