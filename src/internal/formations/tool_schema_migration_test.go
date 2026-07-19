@@ -157,6 +157,59 @@ label = "Output"`)
 	}
 }
 
+func TestToolSchemaMigrationPreservesUnterminatedMultilineEOFValue(t *testing.T) {
+	raw := []byte(`schema = 1
+id = "brd_tool_multiline_eof"
+slug = "tool-multiline-eof"
+title = "Tool multiline EOF migration"
+rev = 1
+
+[[mission]]
+id = "mis_main"
+title = "Main"
+
+[[formation]]
+id = "fmn_work"
+type = "solo"
+title = "Work"
+
+[[formation.input]]
+id = "port_work_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_work_out"
+label = "Output"
+x_extension = [
+  "first",
+  "second",
+]`)
+	wantSource := append([]byte(nil), raw...)
+	if _, err := parseBoard(raw); err != nil {
+		t.Fatalf("parse valid schema-1 multiline EOF source: %v", err)
+	}
+
+	migrated, err := migrateBoardToToolSchema(raw)
+	if err != nil {
+		t.Fatalf("migrate schema-1 multiline EOF source: %v", err)
+	}
+	if _, err := parseBoard(migrated); err != nil {
+		t.Fatalf("parse migrated multiline EOF board: %v", err)
+	}
+	assertToolSchemaMigrationPortDefaults(t, migrated, "port_work_in", FormationPortInput)
+	assertToolSchemaMigrationPortDefaults(t, migrated, "port_work_out", FormationPortOutput)
+	if got := toolSchemaMigrationWithoutOwnedFields(migrated, renderInt(NewBoardSchema)); !bytes.Equal(got, wantSource) {
+		t.Fatalf("multiline EOF migration rewrote bytes outside schema/owned fields:\n got %q\nwant %q", got, wantSource)
+	}
+	again, err := migrateBoardToToolSchema(migrated)
+	if err != nil {
+		t.Fatalf("repeat multiline EOF migration: %v", err)
+	}
+	if !bytes.Equal(again, migrated) {
+		t.Fatalf("multiline EOF migration was not byte-idempotent:\n got %q\nwant %q", again, migrated)
+	}
+}
+
 func TestToolSchemaMigrationRejectsSchemaOneWithPreexistingTool(t *testing.T) {
 	raw := replaceToolSchemaMigrationFixture(t, toolStructuralDraftBoardFixture(), "schema = 2", "schema = 1")
 	assertToolSchemaMigrationRejected(t, raw, nil, "")
