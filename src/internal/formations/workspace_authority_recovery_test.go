@@ -79,6 +79,53 @@ func TestWorkspaceAuthorityCrashRecoveryIgnoresPreBootstrapAndCanonicalForeignRo
 	}
 }
 
+func TestWorkspaceAuthorityCrashRecoveryExcludesRegisteredMalformedSiblingBeforeOrphanClassification(t *testing.T) {
+	fixture := newWorkspaceAuthorityInitialRegistrationFixture(t)
+	registeredEntry := workspaceRegistryEntryJCSV1{
+		ConfiguredPath:              "/registered/foreign",
+		Device:                      strconv.FormatUint(^uint64(0), 10),
+		Inode:                       "1",
+		WorkspaceAuthorityID:        testWorkspaceAuthorityRecoveryForeignID,
+		WorkspaceRootIdentitySHA256: strings.Repeat("f", 64),
+	}
+	initialRegistry, err := decodeWorkspaceRegistryJCSV1(fixture.initialRegistryRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialRegistry.Entries = append(initialRegistry.Entries, registeredEntry)
+	initialRaw, err := encodeWorkspaceRegistryJCSV1(initialRegistry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writePrivateAuthorityTestFile(t, fixture.registry, initialRaw)
+	fixture.initialRegistryRaw = initialRaw
+	fixture.initialRegistryNode = snapshotWorkspaceAuthorityTopology(t, fixture.registry)[fixture.registry]
+
+	finalRegistry, err := decodeWorkspaceRegistryJCSV1(fixture.finalRegistryRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	finalRegistry.Entries = append(finalRegistry.Entries, registeredEntry)
+	fixture.finalRegistryRaw = workspaceAuthorityInitialRegistrationRegistryRaw(
+		t,
+		finalRegistry.Entries,
+		finalRegistry.RecordRev,
+		&authorityGeneration{recordRev: initialRegistry.RecordRev, sha256: testWorkspaceAuthoritySHA256(initialRaw)},
+	)
+
+	registeredSibling := filepath.Join(fixture.workspacesRoot, testWorkspaceAuthorityRecoveryForeignID)
+	createWorkspaceAuthorityRecoveryDirectory(t, registeredSibling)
+	writePrivateAuthorityTestFile(t, filepath.Join(registeredSibling, "workspace.bootstrap.json"), []byte("{"))
+	registeredBefore := snapshotWorkspaceAuthorityTopology(t, registeredSibling)
+	present := installWorkspaceAuthorityRecoveryPrefix(t, fixture, workspaceAuthorityRecoveryBootstrapOnly)
+	stable := snapshotWorkspaceAuthorityRecoveryFiles(t, present...)
+
+	assertWorkspaceAuthorityRecoverySucceeds(t, fixture, workspaceAuthorityRecoveryBootstrapOnly, stable)
+	if after := snapshotWorkspaceAuthorityTopology(t, registeredSibling); !reflect.DeepEqual(after, registeredBefore) {
+		t.Fatalf("orphan recovery changed registered malformed sibling\nbefore: %#v\nafter:  %#v", registeredBefore, after)
+	}
+}
+
 func TestWorkspaceAuthorityCrashRecoverySafeDecoysPermitFreshRegistration(t *testing.T) {
 	fixture := newWorkspaceAuthorityInitialRegistrationFixture(t)
 	preBootstrap := filepath.Join(fixture.workspacesRoot, testWorkspaceAuthorityRecoveryPreBootstrapID)
@@ -366,6 +413,21 @@ func TestWorkspaceAuthorityCrashRecoveryPreflightsWorkspaceConflictBeforeCreatin
 	assertWorkspaceAuthorityRecoveryRejectsBeforeOwnerSelection(t, fixture, fixture.base)
 	if _, err := os.Lstat(fixture.ownerLock); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("bootstrap-only recovery workspace conflict owner lock = %v, want absent", err)
+	}
+}
+
+func TestWorkspaceAuthorityCrashRecoveryPreflightsUnsafeWorkspaceSymlinkBeforeCreatingMissingOwnerLock(t *testing.T) {
+	fixture := newWorkspaceAuthorityInitialRegistrationFixture(t)
+	installWorkspaceAuthorityRecoveryPrefix(t, fixture, workspaceAuthorityRecoveryBootstrapOnly)
+	external := filepath.Join(fixture.base, "external-workspace-authority-symlink-target")
+	writePrivateAuthorityTestFile(t, external, fixture.workspaceRaw)
+	if err := os.Symlink(external, fixture.workspaceAuthority); err != nil {
+		t.Fatal(err)
+	}
+
+	assertWorkspaceAuthorityRecoveryRejectsBeforeOwnerSelection(t, fixture, fixture.base)
+	if _, err := os.Lstat(fixture.ownerLock); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("bootstrap-only recovery unsafe workspace owner lock = %v, want absent", err)
 	}
 }
 
