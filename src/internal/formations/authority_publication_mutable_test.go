@@ -354,6 +354,59 @@ func TestAuthorityPublisherRejectsChangedStageBeforeInstall(t *testing.T) {
 	}
 }
 
+func TestAuthorityPublisherRejectsCanonicalMutationAtPostInstallHook(t *testing.T) {
+	operations := []struct {
+		name      string
+		step      authorityPublicationStep
+		canonical string
+		run       func(*testing.T, *authorityPublisher) error
+	}{
+		{
+			name:      "immutable",
+			step:      authorityPublicationInstalled,
+			canonical: "bootstrap.json",
+			run: func(_ *testing.T, publisher *authorityPublisher) error {
+				_, err := publisher.publishImmutable("bootstrap.json", []byte("requested immutable bytes"))
+				return err
+			},
+		},
+		{
+			name:      "mutable",
+			step:      authorityPublicationMutableReplaced,
+			canonical: "workspace.private.json",
+			run: func(t *testing.T, publisher *authorityPublisher) error {
+				firstRaw := testAuthorityMutableRaw(1, "first")
+				first, err := publisher.publishMutable("workspace.private.json", nil, firstRaw, testAuthorityMutableRevision)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = publisher.publishMutable("workspace.private.json", &first, testAuthorityMutableRaw(2, "second"), testAuthorityMutableRevision)
+				return err
+			},
+		},
+	}
+
+	for _, operation := range operations {
+		t.Run(operation.name, func(t *testing.T) {
+			directory, path := openAuthorityTestDirectory(t)
+			canonical := filepath.Join(path, operation.canonical)
+			publisher, err := newAuthorityPublisher(directory, uint32(os.Geteuid()), func(step authorityPublicationStep) error {
+				if step == operation.step {
+					return os.WriteFile(canonical, []byte("post-install attacker bytes"), authorityPrivateFileMode)
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if err := operation.run(t, publisher); !errors.Is(err, errRuntimeIntegrityMismatch) || !errors.Is(err, errAuthorityDurabilityUncertain) {
+				t.Fatalf("post-install canonical mutation error = %v, want integrity-mismatch durability-uncertain error", err)
+			}
+		})
+	}
+}
+
 func findAuthorityStagePath(t *testing.T, directory string) string {
 	t.Helper()
 	entries, err := os.ReadDir(directory)
