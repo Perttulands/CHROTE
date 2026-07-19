@@ -1323,20 +1323,31 @@ first canonical rename, the writer validates revision/ETag CAS, computes the
 exact old/old and new/new board/layout identities, and stages and fsyncs every
 present old and new representation. Each identity member is either the explicit
 absent state or SHA-256 over exact bytes; a missing original layout is not an
-empty file. Validation, legacy, CAS, serialization, staging, or
+empty file. Restoring absent layout means unlink/no-file plus layout-parent
+fsync. Validation, legacy, CAS, serialization, staging, or
 fsync failure before that rename leaves both canonical files byte-identical.
 Publication renames layout first and board last because layout-only entries are
 ignored and non-authorizing while the board is graph authority.
 
 After the first rename, an I/O error triggers synchronous exact-hash
-reconciliation under both locks. Exact old/old returns the ordinary failure;
-exact new/new reports success. A mixed pair never returns ordinary failure. If
-neither pair can be established, stable `definition_publication_uncertain`
-blocks further mutation of that board until explicit locked recovery and
-re-read. Cross-file crash/power-loss atomicity is not claimed without a future
-journal. A possible layout-new/board-old state projects the old board: extra
-layout entries are ignored and missing entries receive only the normal
-non-authorizing placement heuristic. Layout exposes no Tool authority.
+reconciliation under both locks. Exact hashes alone are insufficient. Old/old
+returns ordinary failure only after every present canonical file and both parent
+directories fsync, using the absent-layout rule above. New/new reports success
+only after both canonical files and both parent directories fsync. A mixed pair
+or failed sync returns stable `definition_publication_uncertain`, never ordinary
+failure or success. Without a journal this is not a durable mutation block, but
+automatic retry is forbidden. The next explicit Tool mutation reopens and
+validates the canonical pair and fsyncs every present member and both parents
+under both locks before evaluating CAS.
+
+Cross-file crash/power-loss atomicity is not claimed without a future journal.
+A possible layout-new/board-old state projects the old board. UI/graph
+projection joins positions and lanes only for ids in that board; missing entries
+receive only the normal non-authorizing placement heuristic, and the next
+successful Tool mutation filters inert extras. During reconciliation against the
+operation's staged identities, board-new/layout-old is invalid and unexpected
+under the ordered protocol; ordinary stale layout remains non-authorizing
+presentation state. Layout raw entries grant no node or Tool authority.
 
 Schema-1 edges touching `gate:judge` normalize to `channel=judge` only when they
 form one unambiguous linear Formation-only send/return chain. Ambiguous or
