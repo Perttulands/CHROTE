@@ -274,12 +274,49 @@ func TestWorkspaceAuthorityRegistrationScopeIsClosedValueOnlyObservationInterfac
 			t.Fatalf("registration scope method %s must remain unexported interface-only: package=%q func-valid=%t", method.Name, method.PkgPath, method.Func.IsValid())
 		}
 		for output := 0; output < method.Type.NumOut(); output++ {
-			kind := method.Type.Out(output).Kind()
-			if kind == reflect.Pointer || kind == reflect.UnsafePointer || kind == reflect.Func || kind == reflect.Chan || kind == reflect.Interface {
-				t.Fatalf("registration scope method %s exposes live/resource-bearing output %s", method.Name, method.Type.Out(output))
-			}
+			assertWorkspaceAuthorityValueOnlyTypeGraph(t, method.Type.Out(output), fmt.Sprintf("registration scope method %s result %d", method.Name, output))
 		}
 	}
+}
+
+func assertWorkspaceAuthorityValueOnlyTypeGraph(t *testing.T, root reflect.Type, rootPath string) {
+	t.Helper()
+	visited := map[reflect.Type]bool{}
+	active := map[reflect.Type]bool{}
+	var visit func(reflect.Type, string)
+	visit = func(current reflect.Type, path string) {
+		if current == nil {
+			t.Fatalf("%s exposes an invalid return type", path)
+		}
+		if visited[current] || active[current] {
+			return
+		}
+		switch current.Kind() {
+		case reflect.Bool,
+			reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+			reflect.Float32, reflect.Float64,
+			reflect.Complex64, reflect.Complex128,
+			reflect.String:
+			visited[current] = true
+		case reflect.Array:
+			active[current] = true
+			visit(current.Elem(), fmt.Sprintf("%s array element", path))
+			delete(active, current)
+			visited[current] = true
+		case reflect.Struct:
+			active[current] = true
+			for fieldIndex := 0; fieldIndex < current.NumField(); fieldIndex++ {
+				field := current.Field(fieldIndex)
+				visit(field.Type, path+"."+field.Name)
+			}
+			delete(active, current)
+			visited[current] = true
+		default:
+			t.Fatalf("%s exposes resource/reference-bearing kind %s through type %s", path, current.Kind(), current)
+		}
+	}
+	visit(root, rootPath)
 }
 
 func TestWorkspaceAuthorityRegistrationCleansConfiguredSpellingAndRejectsInvalidPathGrammar(t *testing.T) {
