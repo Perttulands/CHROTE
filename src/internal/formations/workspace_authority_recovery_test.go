@@ -215,6 +215,44 @@ func TestWorkspaceAuthorityCrashRecoveryRejectsTwoExactCurrentRootMatchesWithout
 	assertWorkspaceAuthorityRecoveryRejectsBeforeOwnerSelection(t, fixture, fixture.base)
 }
 
+func TestWorkspaceAuthorityCrashRecoveryScansPastExactMatchForFatalSibling(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*testing.T, workspaceAuthorityInitialRegistrationFixture, string)
+	}{
+		{
+			name: "malformed bootstrap sibling",
+			setup: func(t *testing.T, fixture workspaceAuthorityInitialRegistrationFixture, sibling string) {
+				writePrivateAuthorityTestFile(t, filepath.Join(sibling, "workspace.bootstrap.json"), []byte("{"))
+			},
+		},
+		{
+			name: "unsafe canonical foreign-root sibling",
+			setup: func(t *testing.T, fixture workspaceAuthorityInitialRegistrationFixture, sibling string) {
+				bootstrap := filepath.Join(sibling, "workspace.bootstrap.json")
+				writePrivateAuthorityTestFile(t, bootstrap, workspaceAuthorityRecoveryBootstrapRaw(
+					testWorkspaceAuthorityRecoveryForeignID,
+					strings.Repeat("f", 64),
+				))
+				if err := os.Chmod(bootstrap, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newWorkspaceAuthorityInitialRegistrationFixture(t)
+			installWorkspaceAuthorityRecoveryPrefix(t, fixture, workspaceAuthorityRecoveryBootstrapOnly)
+			sibling := filepath.Join(fixture.workspacesRoot, testWorkspaceAuthorityRecoveryForeignID)
+			createWorkspaceAuthorityRecoveryDirectory(t, sibling)
+			test.setup(t, fixture, sibling)
+			assertWorkspaceAuthorityRecoveryRejectsBeforeOwnerSelection(t, fixture, fixture.base)
+		})
+	}
+}
+
 func TestWorkspaceAuthorityCrashRecoveryRejectsUnclassifiableBootstrapWithoutMutation(t *testing.T) {
 	canonical := func(authorityID, rootHash string) []byte {
 		return workspaceAuthorityRecoveryBootstrapRaw(authorityID, rootHash)
@@ -319,6 +357,18 @@ func TestWorkspaceAuthorityCrashRecoveryRejectsConflictingPresentInitialBytesBef
 	}
 }
 
+func TestWorkspaceAuthorityCrashRecoveryPreflightsWorkspaceConflictBeforeCreatingMissingOwnerLock(t *testing.T) {
+	fixture := newWorkspaceAuthorityInitialRegistrationFixture(t)
+	installWorkspaceAuthorityRecoveryPrefix(t, fixture, workspaceAuthorityRecoveryBootstrapOnly)
+	conflicting := bytes.Replace(fixture.workspaceRaw, []byte(`"nextAdmissionSeq":1`), []byte(`"nextAdmissionSeq":2`), 1)
+	writePrivateAuthorityTestFile(t, fixture.workspaceAuthority, conflicting)
+
+	assertWorkspaceAuthorityRecoveryRejectsBeforeOwnerSelection(t, fixture, fixture.base)
+	if _, err := os.Lstat(fixture.ownerLock); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("bootstrap-only recovery workspace conflict owner lock = %v, want absent", err)
+	}
+}
+
 func TestWorkspaceAuthorityCrashRecoveryRejectsRegistryBoundsBeforeOwnerAcquisition(t *testing.T) {
 	t.Run("exhausted registry revision", func(t *testing.T) {
 		fixture := newWorkspaceAuthorityInitialRegistrationFixture(t)
@@ -396,41 +446,11 @@ func TestWorkspaceAuthorityCrashRecoveryRejectsRegistryBoundsBeforeOwnerAcquisit
 	})
 }
 
-func TestWorkspaceAuthorityCrashRecoveryRejectsUnknownSelectedEntriesWithoutCleanup(t *testing.T) {
-	tests := []struct {
-		name  string
-		setup func(*testing.T, workspaceAuthorityInitialRegistrationFixture)
-	}{
-		{
-			name: "leftover-looking authority stage",
-			setup: func(t *testing.T, fixture workspaceAuthorityInitialRegistrationFixture) {
-				installWorkspaceAuthorityRecoveryPrefix(t, fixture, workspaceAuthorityRecoveryOwnerLock)
-				writePrivateAuthorityTestFile(t, filepath.Join(fixture.authorityDir, ".authority-stage-00112233445566778899aabbccddeeff"), []byte("leftover"))
-			},
-		},
-		{
-			name: "leftover-looking admission policy stage",
-			setup: func(t *testing.T, fixture workspaceAuthorityInitialRegistrationFixture) {
-				installWorkspaceAuthorityRecoveryPrefix(t, fixture, workspaceAuthorityRecoveryPolicy)
-				writePrivateAuthorityTestFile(t, filepath.Join(fixture.policyDir, ".authority-stage-00112233445566778899aabbccddeeff"), []byte("leftover"))
-			},
-		},
-		{
-			name: "extra admission policy generation",
-			setup: func(t *testing.T, fixture workspaceAuthorityInitialRegistrationFixture) {
-				installWorkspaceAuthorityRecoveryPrefix(t, fixture, workspaceAuthorityRecoveryPolicy)
-				writePrivateAuthorityTestFile(t, filepath.Join(fixture.policyDir, "2.json"), []byte("unexpected generation"))
-			},
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			fixture := newWorkspaceAuthorityInitialRegistrationFixture(t)
-			test.setup(t, fixture)
-			assertWorkspaceAuthorityRecoveryRejectsSelectedUnchanged(t, fixture, fixture.base)
-		})
-	}
+func TestWorkspaceAuthorityCrashRecoveryRejectsAdditionalPolicyGenerationUnchanged(t *testing.T) {
+	fixture := newWorkspaceAuthorityInitialRegistrationFixture(t)
+	installWorkspaceAuthorityRecoveryPrefix(t, fixture, workspaceAuthorityRecoveryPolicy)
+	writePrivateAuthorityTestFile(t, filepath.Join(fixture.policyDir, "2.json"), []byte("unexpected generation"))
+	assertWorkspaceAuthorityRecoveryRejectsSelectedUnchanged(t, fixture, fixture.base)
 }
 
 func TestWorkspaceAuthorityCrashRecoveryRejectsUnsafeCandidateAndInitialStateTopology(t *testing.T) {
@@ -765,6 +785,126 @@ func TestWorkspaceAuthorityCrashRecoveryFencesCandidateAndBootstrapRetargets(t *
 						t.Fatalf("retargeted recovery leaked owner lock %q: %v", lockPath, err)
 					}
 				}
+			}
+			assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, paths...)
+		})
+	}
+}
+
+func TestWorkspaceAuthorityCrashRecoveryFencesValidatedInitialRecordRetargetsBeforeDownstreamMutation(t *testing.T) {
+	tests := []struct {
+		name                       string
+		prefix                     workspaceAuthorityRecoveryPrefix
+		targetPath                 func(workspaceAuthorityInitialRegistrationFixture) string
+		targetRaw                  func(workspaceAuthorityInitialRegistrationFixture) []byte
+		assertNoDownstreamMutation func(*testing.T, workspaceAuthorityInitialRegistrationFixture)
+	}{
+		{
+			name:       "policy replacement before missing workspace creation",
+			prefix:     workspaceAuthorityRecoveryPolicy,
+			targetPath: func(fixture workspaceAuthorityInitialRegistrationFixture) string { return fixture.policy },
+			targetRaw:  func(fixture workspaceAuthorityInitialRegistrationFixture) []byte { return fixture.policyRaw },
+			assertNoDownstreamMutation: func(t *testing.T, fixture workspaceAuthorityInitialRegistrationFixture) {
+				if _, err := os.Lstat(fixture.workspaceAuthority); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("policy-retarget recovery workspace authority = %v, want absent", err)
+				}
+			},
+		},
+		{
+			name:       "workspace replacement before registry mapping",
+			prefix:     workspaceAuthorityRecoveryWorkspace,
+			targetPath: func(fixture workspaceAuthorityInitialRegistrationFixture) string { return fixture.workspaceAuthority },
+			targetRaw:  func(fixture workspaceAuthorityInitialRegistrationFixture) []byte { return fixture.workspaceRaw },
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newWorkspaceAuthorityInitialRegistrationFixture(t)
+			installWorkspaceAuthorityRecoveryPrefix(t, fixture, test.prefix)
+			target := test.targetPath(fixture)
+			originalTarget, err := os.Stat(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			retargeted := filepath.Join(fixture.base, "retargeted-"+filepath.Base(target))
+			paths := append(workspaceAuthorityInitialRegistrationPaths(fixture), retargeted)
+			descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, paths...)
+			productionOps := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate()).ops
+			attacked := false
+			var attackTopology map[string]workspaceAuthorityTopologyEntry
+
+			generated := 0
+			steps := []string{}
+			callbackCalls := 0
+			registrar := newWorkspaceAuthorityRegistrarForTest(
+				fixture.hostRoot,
+				fixture.ownerUID,
+				newWorkspaceAuthorityCapabilityGate(),
+				workspaceAuthorityRegistrationTestOps{
+					generateWorkspaceAuthorityID: func() (string, error) {
+						generated++
+						return testInitialRegistrationAuthorityID, nil
+					},
+					validatePrivateNode: func(opened *os.File, expectedUID uint32) error {
+						if err := productionOps.validatePrivateNode(opened, expectedUID); err != nil {
+							return err
+						}
+						if attacked {
+							return nil
+						}
+						info, err := opened.Stat()
+						if err != nil {
+							return err
+						}
+						if !os.SameFile(info, originalTarget) {
+							return nil
+						}
+						attacked = true
+						if err := os.Rename(target, retargeted); err != nil {
+							t.Fatal(err)
+						}
+						writePrivateAuthorityTestFile(t, target, test.targetRaw(fixture))
+						attackTopology = snapshotWorkspaceAuthorityTopology(t, fixture.base)
+						return nil
+					},
+					observeInitialRegistration: func(step string) error {
+						steps = append(steps, step)
+						assertWorkspaceAuthorityInitialRegistrationRegistryLockHeld(t, fixture)
+						if step == testInitialRegistrationOwnerLockAcquired {
+							assertWorkspaceAuthorityInitialRegistrationOwnerLockHeld(t, fixture)
+						}
+						return nil
+					},
+				},
+			)
+
+			err = registrar.register(fixture.workspace, func(workspaceAuthorityRegistrationScope) error {
+				callbackCalls++
+				return nil
+			})
+			if err == nil {
+				t.Fatal("recovery accepted a replacement of an already validated initial record")
+			}
+			if !attacked {
+				t.Fatal("recovery never validated the initial record needed for deterministic retarget injection")
+			}
+			wantSteps := []string{testInitialRegistrationOwnerLockAcquired}
+			if generated != 0 || callbackCalls != 0 || !reflect.DeepEqual(steps, wantSteps) {
+				t.Fatalf("validated-record retarget generator/steps/callback = %d/%#v/%d, want 0/%#v/0", generated, steps, callbackCalls, wantSteps)
+			}
+			if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, attackTopology) {
+				t.Fatalf("recovery mutated after validated-record retarget\nattack: %#v\nafter:  %#v", attackTopology, after)
+			}
+			assertWorkspaceAuthorityInitialRegistrationRegistryUnchanged(t, fixture, "validated-record retarget recovery")
+			if test.assertNoDownstreamMutation != nil {
+				test.assertNoDownstreamMutation(t, fixture)
+			}
+			if err := tryWorkspaceAuthorityExclusiveLock(fixture.registryLock); err != nil {
+				t.Fatalf("validated-record retarget recovery leaked registry lock: %v", err)
+			}
+			if err := tryWorkspaceAuthorityExclusiveLock(fixture.ownerLock); err != nil {
+				t.Fatalf("validated-record retarget recovery leaked owner lock: %v", err)
 			}
 			assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, paths...)
 		})

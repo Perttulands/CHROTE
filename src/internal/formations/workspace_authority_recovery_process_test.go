@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"syscall"
 	"testing"
@@ -21,15 +21,15 @@ const (
 	workspaceAuthorityRecoveryOwnerLockReadyFD        = uintptr(3)
 	workspaceAuthorityRecoveryOwnerLockReleaseFD      = uintptr(4)
 	workspaceAuthorityRecoveryOwnerLockProcessTimeout = 10 * time.Second
-	workspaceAuthorityRecoveryOwnerLockReturnWindow   = time.Second
 )
 
-func TestWorkspaceAuthorityCrashRecoveryOwnerLockContentionFailsWithoutRepair(t *testing.T) {
+func TestWorkspaceAuthorityCrashRecoveryOwnerLockContentionBlocksUnderRegistryThenCompletes(t *testing.T) {
 	fixture := newWorkspaceAuthorityInitialRegistrationFixture(t)
-	installWorkspaceAuthorityRecoveryPrefix(t, fixture, workspaceAuthorityRecoveryOwnerLock)
-	before := snapshotWorkspaceAuthorityTopology(t, fixture.base)
+	present := installWorkspaceAuthorityRecoveryPrefix(t, fixture, workspaceAuthorityRecoveryOwnerLock)
+	stable := snapshotWorkspaceAuthorityRecoveryFiles(t, present...)
 	paths := workspaceAuthorityInitialRegistrationPaths(fixture)
 	descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, paths...)
+	productionOps := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate()).ops
 
 	holder := startWorkspaceAuthorityRecoveryOwnerLockHelper(t, fixture.ownerLock)
 	holder.waitReady(t)
@@ -38,8 +38,25 @@ func TestWorkspaceAuthorityCrashRecoveryOwnerLockContentionFailsWithoutRepair(t 
 	}
 
 	generated := 0
-	observed := 0
+	steps := []string{}
 	callbackCalls := 0
+	syncCalls := 0
+	lockHeld := func(path, label string) error {
+		if err := tryWorkspaceAuthorityExclusiveLock(path); !errors.Is(err, syscall.EWOULDBLOCK) {
+			return fmt.Errorf("%s lock probe = %v, want would-block", label, err)
+		}
+		return nil
+	}
+	registryRawEquals := func(want []byte, context string) error {
+		raw, err := os.ReadFile(fixture.registry)
+		if err != nil {
+			return fmt.Errorf("%s read registry: %w", context, err)
+		}
+		if !bytes.Equal(raw, want) {
+			return fmt.Errorf("%s registry bytes = %s, want %s", context, raw, want)
+		}
+		return nil
+	}
 	registrar := newWorkspaceAuthorityRegistrarForTest(
 		fixture.hostRoot,
 		fixture.ownerUID,
@@ -47,55 +64,120 @@ func TestWorkspaceAuthorityCrashRecoveryOwnerLockContentionFailsWithoutRepair(t 
 		workspaceAuthorityRegistrationTestOps{
 			generateWorkspaceAuthorityID: func() (string, error) {
 				generated++
-				return testInitialRegistrationAuthorityID, nil
+				return "", errors.New("owner-lock recovery selected the id generator")
 			},
-			observeInitialRegistration: func(string) error {
-				observed++
-				return nil
+			observeInitialRegistration: func(step string) error {
+				steps = append(steps, step)
+				if err := lockHeld(fixture.registryLock, "recovery registry"); err != nil {
+					return err
+				}
+				if err := lockHeld(fixture.ownerLock, "recovery owner"); err != nil {
+					return err
+				}
+				if step == testInitialRegistrationRegistryPublished {
+					return registryRawEquals(fixture.finalRegistryRaw, "registry publication observer")
+				}
+				return registryRawEquals(fixture.initialRegistryRaw, "pre-publication recovery observer")
+			},
+			syncInitialAuthorityDirectory: func(directory *os.File) error {
+				syncCalls++
+				if err := lockHeld(fixture.registryLock, "recovery registry at authority sync"); err != nil {
+					return err
+				}
+				if err := lockHeld(fixture.ownerLock, "recovery owner at authority sync"); err != nil {
+					return err
+				}
+				openedInfo, err := directory.Stat()
+				if err != nil {
+					return err
+				}
+				namedInfo, err := os.Stat(fixture.authorityDir)
+				if err != nil {
+					return err
+				}
+				if !os.SameFile(openedInfo, namedInfo) {
+					return errors.New("recovery synced a directory other than the pinned selected candidate")
+				}
+				if err := registryRawEquals(fixture.initialRegistryRaw, "authority-directory sync"); err != nil {
+					return err
+				}
+				return productionOps.syncInitialAuthorityDirectory(directory)
 			},
 		},
 	)
 	result := make(chan error, 1)
 	go func() {
-		result <- registrar.register(fixture.workspace, func(workspaceAuthorityRegistrationScope) error {
+		result <- registrar.register(fixture.workspace, func(scope workspaceAuthorityRegistrationScope) error {
 			callbackCalls++
-			return nil
+			if scope == nil {
+				return errors.New("owner-lock recovery callback received nil scope")
+			}
+			gotID, matched := scope.matchedWorkspaceAuthorityID()
+			if !matched || gotID != testInitialRegistrationAuthorityID {
+				return fmt.Errorf("owner-lock recovery callback mapping = %q, matched=%t", gotID, matched)
+			}
+			if gotIdentity := scope.workspaceIdentity(); gotIdentity != fixture.identity {
+				return fmt.Errorf("owner-lock recovery callback identity = %+v, want %+v", gotIdentity, fixture.identity)
+			}
+			if err := lockHeld(fixture.registryLock, "recovery callback registry"); err != nil {
+				return err
+			}
+			return registryRawEquals(fixture.finalRegistryRaw, "recovery callback")
 		})
 	}()
 
+	orderDeadline := time.NewTimer(workspaceAuthorityRecoveryOwnerLockProcessTimeout)
+	defer orderDeadline.Stop()
+	orderProbe := time.NewTicker(10 * time.Millisecond)
+	defer orderProbe.Stop()
+	registryHeldWhileOwnerBlocked := false
+	for !registryHeldWhileOwnerBlocked {
+		select {
+		case registrationErr := <-result:
+			holder.releaseAndWait(t)
+			t.Fatalf("owner-lock recovery returned before holder release: %v", registrationErr)
+		case <-orderProbe.C:
+			err := tryWorkspaceAuthorityExclusiveLock(fixture.registryLock)
+			switch {
+			case errors.Is(err, syscall.EWOULDBLOCK):
+				registryHeldWhileOwnerBlocked = true
+			case err != nil:
+				holder.releaseAndWait(t)
+				t.Fatalf("probe owner-blocked recovery registry lock: %v", err)
+			}
+		case <-orderDeadline.C:
+			holder.releaseAndWait(t)
+			t.Fatal("owner-lock recovery did not retain registry lock while blocked on the process-held owner lock")
+		}
+	}
+	select {
+	case registrationErr := <-result:
+		holder.releaseAndWait(t)
+		t.Fatalf("owner-lock recovery returned while the owner lock remained process-held: %v", registrationErr)
+	default:
+	}
+
+	holder.releaseAndWait(t)
 	var registrationErr error
-	returnedBeforeRelease := false
 	select {
 	case registrationErr = <-result:
-		returnedBeforeRelease = true
-	case <-time.After(workspaceAuthorityRecoveryOwnerLockReturnWindow):
-		if err := tryWorkspaceAuthorityExclusiveLock(fixture.registryLock); !errors.Is(err, syscall.EWOULDBLOCK) {
-			t.Errorf("owner-lock-blocked recovery registry lock probe = %v, want would-block under registry->owner order", err)
-		}
+	case <-time.After(workspaceAuthorityRecoveryOwnerLockProcessTimeout):
+		t.Fatal("owner-lock recovery did not complete after holder release")
 	}
-	holder.releaseAndWait(t)
-	if !returnedBeforeRelease {
-		select {
-		case registrationErr = <-result:
-		case <-time.After(workspaceAuthorityRecoveryOwnerLockProcessTimeout):
-			t.Fatal("owner-lock-contended recovery did not return after holder release")
-		}
-		t.Fatal("owner-lock-contended recovery blocked instead of failing loud before holder release")
+	if registrationErr != nil {
+		t.Fatalf("owner-lock recovery after holder release: %v", registrationErr)
 	}
-	if registrationErr == nil {
-		t.Fatal("owner-lock-contended recovery reported success")
+	if generated != 0 || callbackCalls != 1 || syncCalls != 1 {
+		t.Fatalf("owner-lock recovery generator/callback/authority-sync calls = %d/%d/%d, want 0/1/1", generated, callbackCalls, syncCalls)
 	}
-	if generated != 0 || observed != 0 || callbackCalls != 0 {
-		t.Fatalf("owner-lock-contention generator/initial-step/callback calls = %d/%d/%d, want 0/0/0", generated, observed, callbackCalls)
-	}
-	if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, before) {
-		t.Fatalf("owner-lock contention changed registry predecessor or selected candidate\nbefore: %#v\nafter:  %#v", before, after)
-	}
+	assertWorkspaceAuthorityRecoveryStepOrder(t, workspaceAuthorityRecoveryOwnerLock, steps)
+	assertWorkspaceAuthorityRecoveryFilesStable(t, stable)
+	assertWorkspaceAuthorityRecoveryFinalState(t, fixture)
 	if err := tryWorkspaceAuthorityExclusiveLock(fixture.registryLock); err != nil {
-		t.Fatalf("owner-lock contention leaked registry lock: %v", err)
+		t.Fatalf("owner-lock recovery leaked registry lock: %v", err)
 	}
 	if err := tryWorkspaceAuthorityExclusiveLock(fixture.ownerLock); err != nil {
-		t.Fatalf("owner-lock contention leaked owner lock after holder exit: %v", err)
+		t.Fatalf("owner-lock recovery leaked owner lock after holder exit: %v", err)
 	}
 	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, paths...)
 }
