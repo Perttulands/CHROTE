@@ -101,8 +101,8 @@ func (s *Store) openDefinitionDirectoryWithLeafParentSync(
 	}
 	components := []string{".formations", kind.directory}
 	for index, component := range components {
-		next, created, openErr := openDefinitionDirectoryAtTracked(current, component, create)
-		if openErr == nil && created && index == len(components)-1 && beforeParentSync != nil {
+		next, openErr := openDefinitionDirectoryAt(current, component, create)
+		if openErr == nil && index == len(components)-1 && beforeParentSync != nil {
 			openErr = beforeParentSync()
 			if openErr == nil {
 				openErr = current.Sync()
@@ -121,33 +121,26 @@ func (s *Store) openDefinitionDirectoryWithLeafParentSync(
 }
 
 func openDefinitionDirectoryAt(parent *os.File, name string, create bool) (*os.File, error) {
-	directory, _, err := openDefinitionDirectoryAtTracked(parent, name, create)
-	return directory, err
-}
-
-func openDefinitionDirectoryAtTracked(parent *os.File, name string, create bool) (*os.File, bool, error) {
 	directory, err := openRuntimeAuthorityDirectoryAt(parent, name)
 	if err != nil && (!create || !errors.Is(err, os.ErrNotExist)) {
-		return nil, false, err
+		return nil, err
 	}
-	created := false
 	if errors.Is(err, os.ErrNotExist) {
-		created = true
 		if err := syscall.Mkdirat(int(parent.Fd()), name, definitionDirectoryMode); err != nil && !errors.Is(err, syscall.EEXIST) {
-			return nil, false, &os.PathError{Op: "mkdirat", Path: name, Err: err}
+			return nil, &os.PathError{Op: "mkdirat", Path: name, Err: err}
 		}
 		directory, err = openRuntimeAuthorityDirectoryAt(parent, name)
 		if err != nil {
-			return nil, false, err
+			return nil, err
 		}
 	}
 	if create {
 		if err := ensureDefinitionDirectoryMode(directory, name); err != nil {
 			_ = directory.Close()
-			return nil, false, err
+			return nil, err
 		}
 	}
-	return directory, created, nil
+	return directory, nil
 }
 
 func ensureDefinitionDirectoryMode(directory *os.File, name string) error {
