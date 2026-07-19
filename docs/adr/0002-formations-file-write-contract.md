@@ -3,6 +3,11 @@
 ## Status
 Accepted
 
+Amended by ADR-0007. The historical `CHROTE data root` placement below is
+superseded for canonical run authority by the lane-independent Formations
+host-authority root supplied through `CHROTE_FORMATIONS_DATA_ROOT`; this ADR's
+definition-write contract is unchanged.
+
 ## Context
 Formations definitions are durable local files edited by both the CHROTE server
 and future `archon` CLI verbs. They must preserve human-authored TOML comments

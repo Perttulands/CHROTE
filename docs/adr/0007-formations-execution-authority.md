@@ -31,7 +31,8 @@ existing user coordinates. Full-board layout changes require the explicit UI or
 Archon `arrange` action; they are definition-side mutations, never coordinator
 recovery or execution side effects.
 
-For schema-2 runtime state, the CHROTE server coordinator is the sole semantic
+For runtime state governed by `WorkspaceAuthority.authoritySchema=2`, the CHROTE
+server coordinator is the sole semantic
 writer for one configured workspace. Start, resume, cancel, and human-verdict
 commands are submitted to it. Archon never falls back to a local run engine and
 never reads the writer-private ledger directly. Run list, status, logs, follow,
@@ -146,10 +147,11 @@ migration; an identity mismatch fails closed.
 The id matches canonical uppercase ULID grammar
 `^wsa_[0-7][0-9A-HJKMNP-TV-Z]{25}$` and is validated before directory construction.
 
-For schema 2, the existing explicit `CHROTE_FORMATIONS_DATA_ROOT` server
+For `WorkspaceAuthority.authoritySchema=2`, the existing explicit
+`CHROTE_FORMATIONS_DATA_ROOT` server
 configuration seam supplies `<formations-host-authority-root>`. It is one stable,
-absolute, once-opened root shared by every schema-2-capable CHROTE lane on the
-host. It is not derived from a lane's service data directory, a workspace, a
+absolute, once-opened root shared by every CHROTE lane capable of that authority
+schema on the host. It is not derived from a lane's service data directory, a workspace, a
 Files root, caller input, or ambient working directory, and there is no per-lane
 fallback. Independent injected private roots are test fixtures only: two lanes
 using different roots are non-production and cannot claim host-wide authority.
@@ -213,32 +215,32 @@ mutable `workspace.private.json` separately carries the current
 `authoritySchema` as a monotonic high-water mark for every command, run, and
 private record in that workspace authority domain.
 
-A process first takes the combined coordinator-local mutex and process-shared
-`owner.lock`, then strict-validates the closed bootstrap and current workspace
+The `authoritySchema=2` Phase-B capability registry is immutable binary-owned code, never a
+persisted workspace record and never selected by a board. Its complete required
+set is the bytewise-ordered pair
+`formations.runtime-authority-read-guard.v1`, then
+`formations.workspace-authority.v1`. The complete pair validates before an
+`owner.lock` path is selected or taken and before fence allocation. The
+read-guard capability remains non-authorizing. The workspace-authority
+capability authorizes only workspace registration, private publication, owner
+lease and fence, and command-journal foundation work; semantic projection, run
+reconciliation, cleanup, quarantine, and execution remain false and
+unavailable. A missing, duplicate, unknown, or unsupported required capability
+fails before any owner-lock selection or owner/fence mutation.
+
+A process then takes the combined coordinator-local mutex and process-shared
+`owner.lock` and strict-validates the closed bootstrap and current workspace
 authority record plus its exact hash-matched current immutable admission-policy
 generation and complete contiguous prior-hash chain to revision 1 without
 mutation. A missing generation, hash/revision discontinuity, or cycle is invalid.
 An unsupported, missing, or conflicting bootstrap, workspace authority, or
 policy schema causes lock release and remains strictly
 read-only: it does not allocate a fence, clean, quarantine, project a run as
-valid, or touch tmux. Matching schema
-numbers are not by themselves a capability grant. Schema-2 admission stays
-disabled until the complete safe projector and coordinator/reconciler are
-registered and every runnable rollback binary is certified to honor this
-bootstrap-and-workspace guard; binaries older than that guard are not
-runtime-safe rollback targets.
-
-The schema-2 Phase-B capability registry is immutable binary-owned code, never a
-persisted workspace record and never selected by a board. Its complete required
-set is the bytewise-ordered pair
-`formations.runtime-authority-read-guard.v1`, then
-`formations.workspace-authority.v1`. Both ids validate before owner-lock
-selection or fence allocation. The read-guard capability remains
-non-authorizing. The workspace-authority capability authorizes only workspace
-registration, private publication, owner lease and fence, and command-journal
-foundation work; semantic projection, run reconciliation, cleanup, quarantine,
-and execution remain false and unavailable. A missing, duplicate, unknown, or
-unsupported required capability fails before any owner or fence mutation.
+valid, or touch tmux. Matching schema numbers are not by themselves a capability
+grant. Admission under `authoritySchema=2` stays disabled until the complete safe
+projector and coordinator/reconciler are registered and every runnable rollback
+binary is certified to honor this bootstrap-and-workspace guard; binaries older
+than that guard are not runtime-safe rollback targets.
 
 Only then may a coordinator reserve a strictly increasing `writerFence`, fsync
 the advanced counter, and publish the renewable host-local owner lease. A crash
@@ -264,7 +266,7 @@ renewed, fails `stale_workspace_fence` and performs no operation.
 Lock order is host registry (registration only), workspace owner, then
 host target arbiter; no path acquires them in reverse.
 
-Every schema-2 ledger event records its origin `writerFence`. Valid history is a
+Every ledger event with event schema 2 records its origin `writerFence`. Valid history is a
 monotonic non-decreasing sequence of allocated owner epochs: an older prefix
 remains authoritative after takeover. A lower fence after a higher event, an
 unallocated fence, or a new append/effect not using the current fence is invalid.
@@ -338,7 +340,7 @@ non-authorizing and fails loud; a leftover temp file cannot outrank the last
 valid published generation. A canonical immutable path is never a partial-file
 recovery surface.
 
-Every schema-2 JSON record/policy revision, writer-fence field, allocated
+Every JSON record/policy revision governed by `authoritySchema=2`, writer-fence field, allocated
 event/effect sequence, workspace-admission identity, and next counter is an integer in
 `1..9007199254740991`. Allocation that would exceed that range fails closed
 before mutation or effect; values are never rounded, wrapped, or reused.
@@ -493,7 +495,7 @@ the coordinator activates the smallest eligible queued admission sequence under 
 lock before dispatch. Queue wait begins at admission and consumes wall-clock;
 an expired queued run may fail without activation. Restart derives both counts
 and FIFO order for current state from run ledgers and strict-validates every
-retained policy ref. Schema 2 has no workspace-global admission-decision sequence:
+retained policy ref. `authoritySchema=2` has no workspace-global admission-decision sequence:
 policy refs attribute an individual decision to exact policy bytes but do not
 independently prove the historical cross-run interleaving of capacity changes.
 Serialization correctness comes from the continuously held authority lock and
@@ -642,9 +644,9 @@ replay handle, send, or adoption.
 
 ### Version authority changes; ignore only projection-only extensions
 
-Schema-2 includes the command identity, workspace authority, writer fence,
+Ledger event schema 2 includes the command identity, workspace authority, writer fence,
 Formation result, root-input projection, and authored-configuration manifest in
-its required authority semantics before the first schema-2 run is admitted.
+its required authority semantics before the first event-schema-2 run is admitted.
 
 Admission is gated on the immutable workspace bootstrap, the current mutable
 workspace authority-schema high-water mark, and a certified rollback set in
@@ -731,8 +733,9 @@ every retried transition independently verifiable.
 Runtime commands require a reachable coordinator and stable command ids. Queue
 capacity can reject starts before admission, and a code rollback may become
 inspection-only for newer authority schemas. Pre-bootstrap-guard binaries are
-not rollback candidates for a schema-2 workspace. Workspace moves need explicit
-identity migration. Every schema-2-capable lane must receive the same explicit
+not rollback candidates for a workspace at `authoritySchema=2`. Workspace moves
+need explicit identity migration. Every lane capable of that authority schema
+must receive the same explicit
 host-authority root and run under the dedicated service UID; changing either is
 separate operational migration work. A still-held owner kernel lock fails closed
 until the owner exits or an operator intervenes, while a released lock permits a
@@ -760,7 +763,7 @@ boundary has one durable recovery answer.
 - `ctx-phz` implements the ADR-0005 pending-redaction and cleanup primitives
   against this private owner boundary.
 - `ctx-ug7.18` implements the non-authorizing registry/bootstrap/workspace-
-  authority/closed-envelope guard before schema-2 projection, fence acquisition,
+  authority/closed-envelope guard before event-schema-2 projection, fence acquisition,
   recovery, cleanup, or runtime mutation is enabled.
 - `ctx-ug7.36` freezes the code-owned capability pair, shared host root,
   dedicated-writer trust, kernel-lock/lease semantics, run bootstrap, and

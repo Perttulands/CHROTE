@@ -108,7 +108,7 @@ ledger, graph snapshot, private bindings/results, sealed Tool inputs, and pendin
 raw-redaction roots live below one writer-only, lane-independent
 `<formations-host-authority-root>/workspaces/` outside generic Files roots. The
 existing explicit `CHROTE_FORMATIONS_DATA_ROOT` server configuration supplies
-that stable absolute root to every schema-2-capable lane; it is never derived
+that stable absolute root to every lane capable of `authoritySchema=2`; it is never derived
 from a lane's service data directory and has no per-lane production fallback.
 Each private run has one immutable `run.bootstrap.json` that exact-selects the
 graph snapshot and private bindings by encoding and SHA-256 before `run_started`
@@ -117,7 +117,7 @@ Peek receives only currently authorized registered artifacts; a workspace
 substitute, stray snapshot, or historical revoked ref is never replay/read
 authority. `ctx-ug7.6` owns coordinator enforcement.
 
-Schema-2 foundation support is an immutable code-owned capability registry, not
+`authoritySchema=2` foundation support is an immutable code-owned capability registry, not
 workspace data or a board choice. Its complete bytewise-ordered pair is
 `formations.runtime-authority-read-guard.v1`, then
 `formations.workspace-authority.v1`, validated before owner-lock selection or
@@ -182,7 +182,7 @@ eligible queued runs drain first, then remaining capacity may immediately append
 integer ranges. A full queue records stable `run_queue_full` with the policy ref
 before a run directory or event exists. Admission counters are fsynced before
 publication and never reused. Restart reconstructs current counts/FIFO from run
-ledgers. Policy refs explain the exact governing generation; schema 2 does not
+ledgers. Policy refs explain the exact governing generation; `authoritySchema=2` does not
 invent a workspace-global historical decision order that it does not persist.
 Queue wait counts against the immutable run wall clock. Browser or Archon
 disconnect cannot stop admitted work. `run_started` alone projects queued;
@@ -224,18 +224,23 @@ This contract authorizes no shipped/live record migration. Revisions, fences,
 and admission sequences are JSON-safe positive integers; exhaustion fails closed
 rather than rounding, wrapping, or reusing identity.
 
-The target is board schema 2 and event schema 2. Schema-1 Formation ports remain
-readable with explicit in-memory defaults (`work`, the stable full initial
+The target is `CurrentBoardSchema=2`, `CurrentLayoutSchema=1`,
+`NewBoardSchema=1`, and ledger event schema 2. Schema-1 Formation ports remain readable
+with explicit in-memory defaults (`work`, the stable full initial
 `acceptedMediaTypes` set of `text/plain`, `text/markdown`, and
-`application/json`, plus required `data` inputs) and are written only by an
-atomic schema-2 migration. Fixed Mission `out` accepts only `text/markdown`;
+`application/json`, plus required `data` inputs). Pure reads never write;
+Tool-free new boards remain schema 1; ordinary non-Tool writes preserve schema;
+and only the first successful Tool creation writes the canonical board-schema-2
+migration. Board schema 2 is monotonic: deleting the final Tool never downgrades
+it, and Tool update/delete remain board schema 2. Fixed Mission `out` accepts only
+`text/markdown`;
 Gate `in`/`pass` work ports use the full set. Gate `fail` is `gate_feedback` and has no media set. A
 legacy fail edge into a work
 input loads as degraded for inspection but cannot validate or run until rewired;
 annotated-work pushback is never inferred. Old ledgers project with their
 recorded schema-1 semantics and are never reinterpreted as typed feedback. A
 safely normalizable schema-1 board may start from an immutable normalized
-schema-2 run snapshot without rewriting the canonical board; source/snapshot
+board-schema-2 run snapshot without rewriting the canonical board; source/snapshot
 schema are recorded. Schema-1 runs are inspect-only and resume returns
 `legacy_run_requires_new_run`.
 Schema-1 inline Formation verification is retired by ADR-0008. Its existing
@@ -248,7 +253,7 @@ replacement Gate, wire a named Formation output to it, then name that Gate in
 the explicit removal request. Cancellation and failure may still close a
 historical run without resuming, routing or dispatching legacy verification.
 
-Schema 2 includes ADR-0007 command identity, workspace/fence authority, the
+Ledger event schema 2 includes ADR-0007 command identity, workspace/fence authority, the
 hash-bound Formation result, root projections, and authored-config manifest
 before first admission. Schema numbers alone grant no capability: admission
 waits for the complete projector/coordinator and a certified rollback set whose
@@ -268,7 +273,7 @@ ledgers.
    use the same files/shared package; runtime verbs submit to one coordinator.
 2. **Definitions and runtime have distinct authority.** Workspace files are
    canonical for definitions; fenced private coordinator state is canonical for
-   schema-2 execution. Browser state is never durable truth.
+   event-schema-2 execution. Browser state is never durable truth.
 3. **Ledger is canonical for run history.** Status is projected from append-only
    events written under the current workspace fence.
 4. **Stable ids matter.** Node, port, edge, slot, agent, board, mission, tool,
@@ -445,7 +450,7 @@ emitters write the full payload to a text artifact and provide a compatibility
 ```
 
 The accepted writer resolves that private compatibility input, durably registers
-the safe descriptor, and records its stable `artifactId` in schema-2 fields. The
+the safe descriptor, and records its stable `artifactId` in ledger-event-schema-2 fields. The
 routable payload may then use that registered descriptor:
 
 ```json
@@ -485,9 +490,11 @@ cannot recover an older readable ref.
 
 ## Tool profile contract
 
-A board stores a Tool profile id/version constraint and modeled non-secret
-parameters, never executable text. Run start freezes the resolved profile
-version/content hash, normalized parameters/hash, effective policy and
+A board stores one exact immutable `(profileId, profileVersion)` tuple and
+modeled non-secret parameters, never executable text. Lookup is exact tuple
+equality with no ranges, aliases, defaults, fallback, or latest selection. Run
+start later freezes that exact tuple plus the matching profile content hash,
+normalized parameters/hash, effective policy and
 determinism-policy hashes, and
 immutable execution-bundle hash in a `RunToolBinding` inside host-private run
 authority. The content-addressed bundle covers executable,
@@ -495,6 +502,45 @@ script/toolchain identity, argv template, cwd contract, normalized non-secret
 allowlisted environment values, supervisor/fence policy, and limits; a mutable
 path is not an identity. Preflight rejects a reachable Tool before `run_started`
 when the frozen supervisor/fence policy is unavailable.
+
+Non-executing Tool authoring keeps layout schema 1. The first successful Tool
+creation is the only board schema-1-to-2 authoring migration; update changes only
+title and the complete parameter map. Delete removes the Tool, every incident
+board connection, its layout node, and every incident layout routing entry while
+keeping board schema 2. Create and delete hold board then layout locks, validate
+revision/ETag CAS, and stage and fsync every present member of exact old/old and
+new/new identities before publication. Each identity member is
+explicitly absent or SHA-256 over exact bytes; absent is not an empty file.
+Restoring absent layout means unlink/no-file plus layout-parent fsync. Any
+earlier validation, migration, serialization,
+staging, or fsync failure leaves canonical board and layout bytes unchanged.
+Publication renames/installs layout (or establishes its no-file state), fsyncs
+the present canonical layout file or confirms absence and fsyncs its parent, and
+only then renames/installs board and fsyncs the canonical board file and parent.
+Layout is non-authorizing and the board is graph authority.
+
+After the first rename, an I/O error is synchronously reconciled under both
+locks. Exact hashes alone are insufficient. Old/old returns ordinary failure
+only after every present canonical file and both parent directories fsync, using
+the absent-layout rule above. New/new reports success only after both canonical
+files and both parent directories fsync in layout-before-board order. Rollback
+after board publication restores/fsyncs the old board before the old layout. Any
+mixed pair or failed sync returns `definition_publication_uncertain`, never
+ordinary failure or success. Without a
+journal this is not a durable mutation block, but automatic retry is forbidden.
+The next explicit Tool mutation reopens and validates the canonical pair and
+fsyncs every present member and both parents under both locks before CAS.
+
+Cross-file crash/power-loss atomicity is not claimed without a future journal.
+The durable crash states are old/old, layout-new/board-old, or new/new;
+board-new/layout-old cannot arise from publication or reverse-order rollback.
+Layout-new/board-old projects the old board. UI/graph projection joins positions
+and lanes only for ids in that board; missing entries receive only the normal
+non-authorizing placement heuristic, and the next successful Tool mutation
+filters inert extras. Ordinary stale layout remains non-authorizing presentation
+state.
+Layout raw entries grant no node or Tool authority.
+
 The first Tool class is certified deterministic: network, secrets, undeclared
 host reads, and external writes are denied; locale/timezone are normalized;
 clock/entropy are frozen or denied; and repeat vectors fix expected output

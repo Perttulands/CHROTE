@@ -797,9 +797,9 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
 
   @file
   Scenario: A pure Tool run freezes its executable profile contract
-    Given a Tool references a host-owned profile id, version constraint, and non-secret parameters
+    Given a Tool references one exact authored "(profileId, profileVersion)" tuple and non-secret parameters
     When the run starts
-    Then it freezes the exact profile version/content hash, parameters, effective policy, determinism policy, and execution-bundle hash
+    Then it freezes that exact authored tuple, its matching profile content hash, parameters, effective policy, determinism policy, and execution-bundle hash
     And the bundle covers executable, toolchain/script, argv, cwd, normalized non-secret environment values, supervisor/fence policy, and limits
     And the host-private binding authority stores them as one "RunToolBinding"
     And preflight rejects before "run_started" if the frozen supervisor/fence policy is unavailable

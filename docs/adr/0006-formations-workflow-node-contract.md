@@ -98,8 +98,10 @@ designed later if copying proves insufficient.
 
 Canonical run authority is writer-private. The append-only ledger, normalized
 graph snapshot, private bindings, sealed Tool inputs, and pending raw-redaction
-state live under the configured CHROTE data root outside every generic Files
-read/write root. `run_started` stores an opaque authority id plus exact graph,
+state live under the lane-independent Formations host-authority root supplied by
+the explicit `CHROTE_FORMATIONS_DATA_ROOT` server configuration, outside every
+generic Files read/write root. Tool private runtime state follows that same root;
+it is never derived from a lane's service data directory. `run_started` stores an opaque authority id plus exact graph,
 private-binding, and safe-projection SHA-256 values; every execution/recovery read
 rechecks them. Generic Files cannot list, read, mutate, rename, or delete this
 tree. Run/event/SSE APIs expose sanitized projections, and only currently
@@ -152,10 +154,187 @@ become non-deliverable.
 If recovery later requires discarded raw bytes, the run terminates with
 `redacted_input_unavailable`.
 
-Tool definitions store only a stable profile id and version constraint plus
-modeled, non-secret parameters. Run start resolves and freezes the exact profile
-version, profile content hash, parameters, effective policy and
-determinism-policy hashes, and immutable
+### Non-executing Tool authoring foundation
+
+`ctx-ug7.8.1` adds definition, authoring, validation, and projection only. Until
+the certified runtime slice lands, `tool_execution_unavailable` is the sole
+non-executing Tool runtime code. The API maps it to HTTP 422 and Archon JSON
+returns the same lowercase code. There is no isolated Tool-run endpoint.
+
+Definition-side selected-root validation parses the board, resolves the requested
+Mission or isolated Formation root, and applies existing structural and legacy-
+migration validation first. It then scans that root's complete possible graph. A Mission scan includes
+both Gate branches and reachable judge chains; an isolated Formation scan does
+not traverse unrelated downstream board nodes. If the selected root contains a
+Tool, validation returns `tool_execution_unavailable` before command submission
+or coordinator authority resolution. This error precedes only a global
+coordinator/runtime-authority-unavailable error; malformed-definition and legacy-
+migration validation retain their earlier precedence. Rejection occurs before
+snapshot, binding, ledger, artifact, evaluator, executor, or process mutation.
+
+Tool identity is exact and immutable. `profileId` is case-sensitive ASCII, at
+most 128 bytes, and matches
+`^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$`. `profileVersion` is an opaque,
+case-sensitive ASCII token matching
+`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`. Registry lookup is exact tuple equality on
+`(profileId, profileVersion)` with no ranges, aliases, defaults, fallback, or
+latest selection. Port and parameter machine names match
+`^[a-z][a-z0-9_]{0,63}$`.
+
+The registry is private, compiled, immutable, and data-only. It exposes only
+deterministic lookup/list copies and has no runtime registration API. Its closed
+shapes are:
+
+```text
+ToolProfileDescriptor {
+  profileId: string
+  profileVersion: string
+  displayName: string
+  ports: ToolPortDescriptor[]       // ordered
+  parameters: ToolParameterSpec[]   // ordered
+}
+
+ToolPortDescriptor {
+  name: string
+  label: string
+  direction: "input" | "output"
+  kind: "work"
+  acceptedMediaTypes: string[]
+  required?: boolean   // present only for input
+  role?: "data"        // present only for input
+}
+
+ToolParameterSpec {
+  name: string
+  label: string
+  type: "string" | "boolean" | "integer"
+  required: boolean
+  enum?: string[]
+  minBytes?: integer
+  maxBytes?: integer
+  minimum?: integer
+  maximum?: integer
+}
+```
+
+String specs alone may use `enum` and `minBytes`/`maxBytes`; integer specs alone
+require `minimum`/`maximum`; boolean specs carry none of those constraint fields.
+Unknown or irrelevant fields reject. A descriptor cannot represent callbacks or
+interfaces; executable, argv, shell, cwd, environment, path, bundle, or limits;
+secrets; network or effects; runtime capability; defaults; or unmodeled
+metadata. Board-authored data therefore never selects process authority.
+
+A board-generated port `id` is instance identity, descriptor `name` is stable
+semantic binding identity, and `label` is display-only. Tool board ports
+reproduce descriptor order and exact name, direction, kind, ordered duplicate-
+free `acceptedMediaTypes`, plus the exact presence and value of input
+`required`/`role`. Clients never author Tool ports independently; creation
+derives them from the descriptor. This slice's update surface changes only the
+title and complete parameter map. The profile tuple and ports are immutable;
+replacement is deferred.
+
+A Tool has at most 16 parameters. RFC 8785 canonical JSON for the complete
+parameter object is at most 4096 bytes. Values are only valid UTF-8 NUL-free
+strings, booleans, or JSON-safe integers in
+`[-9007199254740991,9007199254740991]`; TOML floats, datetimes, arrays, tables,
+and nested values reject. Every key must be descriptor-declared and satisfy its
+enum, byte-length, or range constraint. Registry compilation rejects any
+lowercase machine name containing `secret`, `credential`, `token`, `password`,
+or `passwd`, and rejects these exact reserved authority names: `api_key`,
+`apikey`, `private_key`, `access_key`, `executable`, `exec`, `command`, `cmd`,
+`argv`, `shell`, `cwd`, `env`, `environment`, `path`, `bundle`, `limits`,
+`network`, and `effects`.
+
+Descriptor binding compares ordered media arrays exactly. Shared routing treats
+media arrays as sets and requires the producer's complete possible media set to
+be a subset of the consumer set; nonempty intersection is insufficient. Work-
+port arrays are nonempty, duplicate-free, and contain only `text/plain`,
+`text/markdown`, or `application/json`.
+
+Schema ownership is split exactly as `CurrentBoardSchema=2`,
+`CurrentLayoutSchema=1`, and `NewBoardSchema=1`. Pure board and layout reads
+never write. Empty and Tool-free new boards remain schema 1, and ordinary
+non-Tool mutations preserve the board's existing schema. Board schema 2 is
+monotonic: deleting the last Tool never downgrades it, and Tool updates and
+deletes remain board schema 2. Under board/layout locks and revision/ETag CAS, the
+first successful Tool creation on a schema-1 board first rejects ambiguous
+legacy fail or judge routes, inline verification, and every legacy script-Gate
+shape before staging. It then publishes one content-preserving board-file
+replacement that writes typed Formation defaults, explicit safe
+`workflow`/`judge` channels, `schema=2`, and the Tool with one revision
+increment. Layout remains schema 1; only the new Tool receives heuristic
+connection-aware, bounded free-space, grid-snap placement, and existing
+coordinates never move. Tool update changes only title and the complete
+parameter map. Tool delete removes the Tool, every incident board connection,
+its layout node, and every incident layout routing entry.
+
+Create and delete hold the board lock and then the layout lock through
+publication. Before publication, the writer computes and
+validates the exact old/old and new/new board/layout identities and stages and
+fsyncs every present old and new representation. Each identity member is either
+the explicit absent state or SHA-256 over the exact bytes; a missing original
+layout is not treated as an empty file. Restoring that predecessor means
+unlinking any canonical layout, confirming the no-file state, and fsyncing the
+layout parent directory. Validation, legacy, revision/ETag CAS,
+serialization, staging, or fsync failure before the first canonical rename
+leaves both canonical files byte-identical. Publication then follows one durable
+order: rename/install the staged layout (or establish its canonical no-file
+state), fsync the present canonical layout file or confirm absence and fsync the
+layout parent, only then rename/install the staged board, and finally fsync the
+canonical board file and board parent. Layout-only entries are ignored and grant
+no graph or Tool authority, while the board remains graph authority.
+
+After the first rename, an I/O error triggers synchronous reconciliation under
+both locks using those exact staged and canonical identities. Exact hashes alone
+never close reconciliation. Old/old returns the ordinary failure only after
+every present canonical file and both parent directories fsync; restored layout
+absence uses the unlink/no-file plus layout-parent-fsync rule above. New/new
+reports success only after the layout state and parent are durable before the
+board file and parent. If reconciliation rolls back after board publication, it
+restores and fsyncs the old board before restoring the old layout, preserving the
+same durable-state order in reverse. A mixed pair or any failed file/directory
+sync never returns an ordinary failure or success. If reconciliation cannot
+complete either exact outcome, it returns stable
+`definition_publication_uncertain`.
+
+Without a journal, uncertainty is not a durable mutation block. It forbids an
+automatic retry. The next explicit Tool mutation holds both locks, reopens and
+validates the current canonical board/layout pair, fsyncs every present member
+and both parent directories, and only then evaluates revision/ETag CAS. The UI
+and graph projection join positions and lanes only for node and connection ids
+present in the current board; the next successful Tool mutation filters inert
+layout extras. A possible layout-new/board-old crash state therefore projects
+the old board, with missing entries receiving only the normal non-authorizing
+placement heuristic. The protocol's durable crash states are exactly old/old,
+layout-new/board-old, or new/new; board-new/layout-old cannot arise from its
+publication or reverse-order rollback. This does not reclassify ordinary stale
+layout as graph state. Layout raw entries grant no node or Tool
+authority. This protocol does not claim cross-file crash or power-loss atomicity
+without a future journal. A schema-1 reader rejects board schema 2.
+
+The initial and only descriptor is exactly:
+
+```text
+profileId      = "json.normalize"
+profileVersion = "1"
+displayName    = "Normalize JSON"
+
+input port:  name="input", label="Report", direction="input", kind="work",
+             acceptedMediaTypes=["application/json"], required=true, role="data"
+output port: name="output", label="Normalized report", direction="output", kind="work",
+             acceptedMediaTypes=["application/json"]
+parameter:   name="mode", label="Mode", type="string", required=true,
+             enum=["strict"], minBytes=6, maxBytes=6
+```
+
+`json.normalize@1` freezes authoring and validation shape only; it claims no
+algorithm, runner, or output. The linter identifier, ports, parameters, media,
+sealed source/result contract, and descriptor are absent and reserved for a
+future owner product-direction decision. No placeholder is inferred here.
+
+The later executing Tool contract freezes the exact profile version token,
+profile content hash, parameters, effective policy and determinism-policy
+hashes, and immutable
 execution-bundle hash as one `RunToolBinding` per Tool in private run authority.
 The execution bundle is content-addressed over executable,
 script/toolchain identity, argv template, isolated-cwd contract, normalized
@@ -565,14 +744,16 @@ The current `FormationOutputPayload` fields (`text`, `ref`, `reportRef`, and
 inputs while the canonical writer is introduced. Bare refs terminate before
 schema-2 append; they are not four routing models or public authority.
 
-These semantics use board schema 2 and run-event schema 2. A schema-1 Formation
+These execution semantics use board schema 2 and run-event schema 2. The
+non-executing authoring boundary above separately fixes board schema 2, layout
+schema 1, and new-board schema 1. A schema-1 Formation
 input normalizes on read to `kind=work`, the stable full initial
 `acceptedMediaTypes` set, `required=true`, and `role=data`; a schema-1 output
 normalizes to `kind=work` with that same media set. Fixed Mission `out` accepts
 only `text/markdown`; Gate `in`/`pass` work ports use the full set. Gate `fail` is `gate_feedback` and has
 no media set. Inspection does not rewrite the file.
-The first schema-2 structural mutation performs one atomic, content-preserving
-migration and writes the defaults explicitly. A legacy Gate fail edge targeting
+The first successful Tool creation is the board-schema-2 structural mutation defined
+above; ordinary non-Tool writes never perform that migration. A legacy Gate fail edge targeting
 a work input loads as degraded with
 `legacy_fail_route_requires_migration`; inspection remains possible, but board
 validation and run preflight reject it until it is rewired to a typed feedback
@@ -1155,11 +1336,27 @@ while deliberately allowing same-session context reuse.
   validation unambiguous until a real port-keyed initialization need appears.
 - **Adopt full JSON Schema and arbitrary binaries now:** rejected. The bounded
   text/JSON and safe-ref envelope is sufficient for the first mixed workflow.
+- **Resolve a profile range, alias, default, fallback, or latest version:**
+  rejected. Exact immutable tuple lookup prevents authoring and replay from
+  changing meaning when the registry changes.
+- **Bind Tool ports by ordinal or display label:** rejected. Reordering or copy
+  changes would silently change semantic wiring; stable machine names bind the
+  descriptor while generated ids bind the board instance.
+- **Treat nonempty media intersection as compatibility:** rejected. A producer
+  could still emit a media type the consumer rejects, so its complete possible
+  set must be a subset of the consumer set.
+- **Guess the coding-mission linter descriptor:** rejected. Its identifier,
+  ports, parameters, media, and sealed source/result contract remain a future
+  owner product-direction decision.
 
 ## Consequences
 Current boards remain readable, but new mixed-workflow behavior needs schema,
 validation, and projection work. Tool profiles become a host-owned registry
 rather than convenient inline commands and are pure in the first slice.
+The first registry is deliberately one non-executing `json.normalize@1`
+authoring descriptor. It grants no runner or process authority, and Tool roots
+fail `tool_execution_unavailable` until the later runtime slice lands. The
+linter surface is not part of this decision.
 Legacy command-backed Gates become degraded definitions whose command fields
 are read-only until an explicit certified Tool-plus-pure-Gate migration can
 prove its payload mapping. Non-command title, kinds, or criterion edits may
@@ -1196,6 +1393,18 @@ ADR-0007.
   replay. Gate fixtures reject evaluator-bundle/policy substitution. Artifact
   fixtures reject missing identity, root escape, symlinks, hash/size drift,
   revoked historical refs, and unsafe evidence refs.
+- Non-executing Tool fixtures freeze the exact descriptor shapes and sole
+  `json.normalize@1` entry; exact tuple/name/port/media/parameter validation;
+  schema-1 read byte identity; board/layout schema separation; content-
+  preserving first-Tool migration; monotonic board-schema-2 update/delete; exact
+  incident-edge cleanup; pre-rename byte identity; layout-first publication;
+  file-and-parent-fsynced reconciliation; absent-layout restoration; explicit
+  uncertain-state recovery preflight; board-authoritative layout filtering;
+  heuristic-only placement; API/Archon parity; and HTTP 422/lowercase
+  `tool_execution_unavailable` before global runtime authority or effects.
+  Repository checks prove this slice adds no runtime registration, callback,
+  executable/process, tmux, launch, lease, recovery, or artifact authority and
+  no speculative linter descriptor.
 - `ctx-ug7.8.1` owns non-executing Tool definitions, registry descriptors, and
   board authoring; `ctx-ug7.8` owns certified host-private implementation
   packaging and runtime execution; `ctx-7i1` owns canonical run projection,
