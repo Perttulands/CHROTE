@@ -551,46 +551,38 @@ to = "tool_normalize:port_tool_in"
 }
 
 func TestToolStructuralJudgeRelationshipRejectsToolCrossUse(t *testing.T) {
+	if FindingInvalidJudgeRelationship != "invalid_judge_relationship" {
+		t.Fatalf("invalid judge relationship finding code = %q", FindingInvalidJudgeRelationship)
+	}
+	baseline := ValidateBoard(mustParseValidateBoardFixture(t, toolStructuralWriterBoardFixture()))
+	if len(baseline.Errors) != 0 {
+		t.Fatalf("shared Tool writer baseline has structural errors: %+v", baseline.Errors)
+	}
+
 	tests := []struct {
 		name       string
-		companion  string
 		connection string
 	}{
 		{
 			name: "Tool output into Gate judge",
-			companion: `[[connection]]
-id = "edge_gate_judge_formation"
-from = "gate_judge:judge"
-to = "fmn_judge:port_judge_in"
-`,
 			connection: `[[connection]]
 id = "edge_tool_gate_judge"
 from = "tool_normalize:port_tool_out"
-to = "gate_judge:judge"
+to = "gate_candidate:judge"
 `,
 		},
 		{
 			name: "Gate judge into Tool input",
-			companion: `[[connection]]
-id = "edge_gate_judge_formation"
-from = "gate_judge:judge"
-to = "fmn_judge:port_judge_in"
-
-[[connection]]
-id = "edge_formation_gate_judge"
-from = "fmn_judge:port_judge_out"
-to = "gate_judge:judge"
-`,
 			connection: `[[connection]]
 id = "edge_gate_judge_tool"
-from = "gate_judge:judge"
+from = "gate_candidate:judge"
 to = "tool_normalize:port_tool_in"
 `,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			report := ValidateBoard(mustParseValidateBoardFixture(t, toolStructuralWriterBoardFixture()+"\n"+tt.companion+"\n"+tt.connection))
+			report := ValidateBoard(mustParseValidateBoardFixture(t, toolStructuralWriterBoardFixture()+"\n"+tt.connection))
 			if dangling := findBoardFindings(report.Errors, FindingDanglingConnection); len(dangling) != 0 {
 				t.Fatalf("known Tool and Gate judge endpoints produced dangling findings: %+v", dangling)
 			}
@@ -617,9 +609,9 @@ func TestToolStructuralWritersRejectIncompatibleConnectionsWithoutPublication(t 
 		to         string
 	}{
 		{
-			name: "wire media mismatch",
+			name: "wire overlap without media subset",
 			raw:  toolStructuralWriterBoardFixture(),
-			from: "mis_main:out",
+			from: "gate_primary:pass",
 			to:   "tool_normalize:port_tool_in",
 		},
 		{
@@ -632,24 +624,36 @@ func TestToolStructuralWritersRejectIncompatibleConnectionsWithoutPublication(t 
 			name: "wire Tool output into Gate judge",
 			raw:  toolStructuralWriterBoardFixture(),
 			from: "tool_normalize:port_tool_out",
-			to:   "gate_judge:judge",
+			to:   "gate_candidate:judge",
 		},
 		{
 			name: "wire Gate judge into Tool input",
 			raw:  toolStructuralWriterBoardFixture(),
-			from: "gate_judge:judge",
+			from: "gate_candidate:judge",
 			to:   "tool_normalize:port_tool_in",
 		},
 		{
-			name: "rewire media mismatch",
+			name: "rewire overlap without media subset",
 			raw: toolStructuralWriterBoardFixture() + `
 [[connection]]
-id = "edge_mission_gate"
-from = "mis_main:out"
-to = "gate_primary:in"
+id = "edge_gate_pass_gate"
+from = "gate_primary:pass"
+to = "gate_secondary:in"
 `,
-			from:       "mis_main:out",
-			previousTo: "gate_primary:in",
+			from:       "gate_primary:pass",
+			previousTo: "gate_secondary:in",
+			to:         "tool_normalize:port_tool_in",
+		},
+		{
+			name: "rewire payload kind mismatch",
+			raw: toolStructuralWriterBoardFixture() + `
+[[connection]]
+id = "edge_gate_fail_feedback"
+from = "gate_primary:fail"
+to = "fmn_feedback:port_feedback_in"
+`,
+			from:       "gate_primary:fail",
+			previousTo: "fmn_feedback:port_feedback_in",
 			to:         "tool_normalize:port_tool_in",
 		},
 		{
@@ -662,16 +666,11 @@ to = "gate_primary:in"
 `,
 			from:       "tool_normalize:port_tool_out",
 			previousTo: "gate_primary:in",
-			to:         "gate_judge:judge",
+			to:         "gate_candidate:judge",
 		},
 		{
-			name: "rewire Gate judge into Tool input",
-			raw: toolStructuralWriterBoardFixture() + `
-[[connection]]
-id = "edge_gate_judge_formation"
-from = "gate_judge:judge"
-to = "fmn_judge:port_judge_in"
-`,
+			name:       "rewire Gate judge into Tool input",
+			raw:        toolStructuralWriterBoardFixture(),
 			from:       "gate_judge:judge",
 			previousTo: "fmn_judge:port_judge_in",
 			to:         "tool_normalize:port_tool_in",
@@ -1047,6 +1046,18 @@ label = "Input"
 id = "port_judge_out"
 label = "Output"
 
+[[formation]]
+id = "fmn_feedback"
+type = "solo"
+title = "Feedback receiver"
+
+[[formation.input]]
+id = "port_feedback_in"
+label = "Feedback"
+kind = "gate_feedback"
+required = false
+role = "retry_control"
+
 [[gate]]
 id = "gate_primary"
 title = "Primary gate"
@@ -1064,6 +1075,22 @@ id = "gate_judge"
 title = "Formation judge"
 kinds = ["formation"]
 criterion = "Judge the payload"
+
+[[gate]]
+id = "gate_candidate"
+title = "Human judge-endpoint control"
+kinds = ["human"]
+criterion = "Confirm the payload"
+
+[[connection]]
+id = "edge_gate_judge_formation"
+from = "gate_judge:judge"
+to = "fmn_judge:port_judge_in"
+
+[[connection]]
+id = "edge_formation_gate_judge"
+from = "fmn_judge:port_judge_out"
+to = "gate_judge:judge"
 `
 }
 
