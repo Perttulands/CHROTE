@@ -471,6 +471,23 @@ func TestToolStructuralEndpointsHonorToolPortDirection(t *testing.T) {
 	}
 }
 
+func TestToolStructuralMissionOutputMediaMustBeAcceptedByToolInput(t *testing.T) {
+	raw := toolStructuralDraftBoardFixture() + `
+[[connection]]
+id = "edge_mission_tool_media_mismatch"
+from = "mis_main:out"
+to = "tool_normalize:port_tool_in"
+`
+	board := mustParseValidateBoardFixture(t, raw)
+	report := ValidateBoard(board)
+	if dangling := findBoardFindings(report.Errors, FindingDanglingConnection); len(dangling) != 0 {
+		t.Fatalf("known Mission and Tool endpoints produced dangling findings: %+v", dangling)
+	}
+	if len(report.Errors) == 0 {
+		t.Fatal("Mission text/markdown output was accepted by the application/json-only Tool input")
+	}
+}
+
 func TestToolStructuralValidateBoardChecksEveryToolDefinition(t *testing.T) {
 	baselineRaw := toolStructuralDuplicateProducerBoardFixture(false)
 	targetBlock := toolStructuralJSONNormalizeToolBlock("tool_target", "Target", "port_target_in", "port_target_out")
