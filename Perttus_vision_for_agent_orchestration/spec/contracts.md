@@ -1177,8 +1177,23 @@ directory. The private registry enforces one mapping for both cleaned configured
 spelling and the once-opened `(device,inode)` identity; that shared mapping
 selects one `workspaceAuthorityId` and its corresponding `owner.lock`. Aliases,
 changed targets, second mappings, or conflicts require explicit migration. The new
-bootstrap/private directory is fsynced before its mapping and parent. Recovery
-may complete one unique exact creation, but never chooses between conflicts.
+bootstrap/private directory is fsynced before its mapping and parent.
+
+While the process-shared registry lock and pinned opened-workspace identity are
+held, recovery has one sole selector: exactly one unregistered private
+authority-id directory whose basename matches the canonical id grammar and
+whose immutable `workspace.bootstrap.json` strict-exact-matches
+`workspace-bootstrap-jcs-v1`, names the same `workspaceAuthorityId`, and carries
+`workspaceRootIdentitySha256` equal to the SHA-256 of the currently pinned
+`workspace-root-identity-v1` bytes. Directory order, lexical name alone, mtime,
+partial private state, and other files provide no selection authority. While
+retaining the registry lock, the registrar creates or opens that candidate's
+exact `owner.lock`, acquires it, and only then may exact-retry or publish missing
+disabled admission-policy revision 1 and `workspace.private.json` revision 1.
+The authority directory is fsynced before the registry mapping publishes last.
+More than one matching bootstrap, conflicting present bytes, or unsafe candidate
+topology rejects without repair. An unregistered directory without a valid
+matching bootstrap remains non-authorizing and byte/topology-unchanged.
 
 Under a coordinator-local mutex plus private process-shared `owner.lock`, a
 process strict-validates the immutable closed bootstrap and mutable current

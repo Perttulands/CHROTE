@@ -945,9 +945,19 @@ First registration holds a coordinator-local mutex plus the shared host
 an authority-id directory. `registry.private.json` enforces one mapping for both
 the cleaned configured spelling and the once-opened `(device,inode)` identity, so
 aliases cannot create separate owner locks. The new bootstrap/private directory
-is fsynced before its mapping and parent are fsynced. One unique exact
-unregistered creation may be completed after a crash; duplicate/conflicting
-identity fails loud and authorizes nothing.
+is fsynced before its mapping and parent are fsynced. While the registry lock
+and pinned opened-workspace identity are held, the sole crash-recovery selector
+is exactly one unregistered valid authority-id directory whose basename equals
+the `workspaceAuthorityId` in an immutable strict-exact
+`workspace-bootstrap-jcs-v1` and whose embedded
+`workspaceRootIdentitySha256` equals the SHA-256 of the pinned
+`workspace-root-identity-v1` bytes. Names alone, order, mtime, partial private
+state, and other files never select a candidate. Under registry then owner lock,
+the registrar may exact-retry missing disabled policy revision 1 and
+`workspace.private.json` revision 1, fsync the authority directory, and publish
+the registry mapping last. Multiple matching bootstraps, conflicting present
+bytes, or unsafe candidate topology fail without repair. Pre-bootstrap
+directories remain non-authorizing and byte/topology-unchanged.
 `workspaceAuthorityId` is server-issued and matches canonical uppercase ULID
 grammar `^wsa_[0-7][0-9A-HJKMNP-TV-Z]{25}$`, validated before directory
 construction.

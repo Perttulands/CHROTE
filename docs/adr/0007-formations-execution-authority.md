@@ -186,9 +186,26 @@ registry maps that identity to one authority id. An alias, changed target, secon
 mapping, or conflicting orphan requires explicit migration and cannot create a
 second owner domain. That shared mapping selects the corresponding `owner.lock`.
 Creation fsyncs the new bootstrap/private directory before
-publishing the registry mapping and fsyncing its parent. Recovery may complete
-one unique exact unregistered creation; a conflict is non-authorizing and fails
-loud without choosing either directory.
+publishing the registry mapping and fsyncing its parent.
+
+While the host registry lock and pinned opened-workspace identity are held,
+crash recovery has one sole selector: exactly one unregistered private
+authority-id directory whose basename is a valid `workspaceAuthorityId` and
+whose immutable `workspace.bootstrap.json` strict-exact-matches
+`workspace-bootstrap-jcs-v1`, names that same authority id, and carries
+`workspaceRootIdentitySha256` equal to the SHA-256 of the currently pinned
+`workspace-root-identity-v1` bytes. Directory order, a name by itself, mtime,
+partial private state, and other files grant no selection authority. An
+unregistered directory without a valid matching bootstrap remains
+non-authorizing and byte/topology-unchanged.
+
+While retaining the registry lock, the registrar creates or opens the selected
+candidate's exact `owner.lock`, acquires it, and only then may exact-retry or
+publish missing disabled admission-policy revision 1 and
+`workspace.private.json` revision 1. It fsyncs the authority directory before
+publishing the registry mapping last. More than one matching bootstrap,
+conflicting present bytes, or unsafe candidate topology is non-authorizing and
+fails without repair.
 The registry entries are exactly `{workspaceAuthorityId,configuredPath,device,
 inode,workspaceRootIdentitySha256}`, sorted by decoded unsigned numeric `device`,
 decoded unsigned numeric `inode`, then valid UTF-8 `configuredPath` bytewise;
@@ -706,6 +723,10 @@ every retried transition independently verifiable.
   rejected. It reduces crash availability without strengthening exclusion.
 - **Treat content-addressed graph and binding files as self-selecting:** rejected.
   Stray complete files do not choose one authoritative pair for a run.
+- **Select an unregistered workspace authority by directory order, lexical name,
+  mtime, partial private state, or repairable-looking contents:** rejected. Only
+  one strict canonical immutable bootstrap bound to the pinned workspace
+  identity can select crash completion.
 - **Treat same-UID agents as isolated by private modes:** rejected. Unix modes do
   not isolate processes that share the writer UID.
 - **Accept exact desired bytes after a false or consumed predecessor:** rejected.
@@ -740,6 +761,9 @@ host-authority root and run under the dedicated service UID; changing either is
 separate operational migration work. A still-held owner kernel lock fails closed
 until the owner exits or an operator intervenes, while a released lock permits a
 higher-fence takeover without waiting for stale lease time.
+Pre-bootstrap, conflicting, multiple-match, and unsafe unregistered authority
+directories remain non-authorizing and require explicit operator remediation or
+migration; the registrar neither guesses nor cleans them.
 Because an activated blocked or human-waiting run retains capacity in this first
 contract, operators may need a larger `maxActiveRuns`; releasing that capacity
 requires an explicit durable requeue design.
@@ -769,8 +793,11 @@ boundary has one durable recovery answer.
   dedicated-writer trust, kernel-lock/lease semantics, run bootstrap, and
   authenticated mutable predecessor. `ctx-ug7.6.1` must test each boundary,
   including live effective-UID plus opened-file `st_uid` checks and rejection of
-  legacy/non-canonical mutable bytes, before its workspace-authority capability
-  can authorize foundation work.
+  legacy/non-canonical mutable bytes, plus sole-bootstrap selection,
+  registry-to-owner lock order, exact single-candidate completion, and
+  zero-mutation rejection of multiple, conflicting, unsafe, and pre-bootstrap
+  directories, before its workspace-authority capability can authorize
+  foundation work.
 - `ctx-7i1` owns the sole sanitized run/event/binding/artifact projection,
   baseline hash/validation state, steering generation, and operator-influence
   view; exact baseline tokens, capabilities, and input stay private.

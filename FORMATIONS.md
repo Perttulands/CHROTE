@@ -203,6 +203,16 @@ authority write or bounded non-idempotent send/spawn/interrupt/cleanup call, so
 takeover cannot race the effect. Historical fences form a monotonic prefix;
 recovery preserves origin fence and records its higher state fence. ADR-0006
 target leases remain separate host-resource ownership.
+Crash completion of an unregistered workspace-authority directory has one sole
+selector while the host registry lock and pinned opened-workspace identity are
+held: exactly one valid authority-id directory whose immutable
+`workspace.bootstrap.json` strict-exact-matches `workspace-bootstrap-jcs-v1`,
+names that directory's id, and embeds the SHA-256 of the pinned
+`workspace-root-identity-v1` bytes. The registrar then holds registry followed
+by owner lock while exact-retrying missing initial private state, fsyncs the
+authority directory, and publishes the registry mapping last. Multiple matches,
+conflicting present bytes, or unsafe candidate topology fail without repair;
+pre-bootstrap directories stay non-authorizing and byte/topology-unchanged.
 Registry generations publish only under the host registry lock; workspace,
 lease, and command generations publish only under the owner lock. The mutable
 records are complete closed RFC 8785 JSON in their sole target encodings:
