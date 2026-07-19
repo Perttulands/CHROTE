@@ -691,7 +691,7 @@ bytes/replay handle; recovery never adopts it as a run.
 
 Current main still lets the API and Archon construct separate synchronous run
 engines and writes run files under the workspace. The following ADR-0007 shapes
-are accepted schema-2 target state, not a claim about the current binary.
+are accepted `authoritySchema=2` target state, not a claim about the current binary.
 
 ```ts
 AuthorityGenerationRef {
@@ -812,16 +812,17 @@ RunBootstrap {
 }
 ```
 
-For schema 2, the existing explicit `CHROTE_FORMATIONS_DATA_ROOT` server
+For `WorkspaceAuthority.authoritySchema=2`, the existing explicit
+`CHROTE_FORMATIONS_DATA_ROOT` server
 configuration supplies `<formations-host-authority-root>`. It is one stable
-absolute root, opened once and shared by every schema-2-capable CHROTE lane on
+absolute root, opened once and shared by every CHROTE lane capable of that authority schema on
 the host. It is never derived from a lane's service data directory, workspace,
 Files roots, caller input, or ambient working directory, and there is no per-lane
 production fallback. Independently injected roots are test fixtures only. This
 target authorizes no live path, configuration, service, deployment, or UID
 migration.
 
-The immutable code-owned schema-2 foundation capability registry is not
+The immutable code-owned `authoritySchema=2` foundation capability registry is not
 persisted workspace truth and cannot be selected by a board. Its complete
 bytewise-ordered set is `formations.runtime-authority-read-guard.v1`, then
 `formations.workspace-authority.v1`. Both validate before owner-lock selection
@@ -902,7 +903,7 @@ inspection evidence only.
 workspaceRootIdentitySha256}` with no unknown keys or trailing newline. The
 published bootstrap is immutable. Current authority compatibility lives in the
 separate mutable `workspace.private.json.authoritySchema` high-water mark.
-The schema-2 target requires that value to be exactly `2`; a future supported
+The `authoritySchema=2` target requires that value to be exactly `2`; a future supported
 authority schema changes the supported value without rewriting the immutable
 bootstrap, while an older reader rejects that higher value before mutation.
 
@@ -1020,7 +1021,7 @@ to revision 1. Missing generations, discontinuities, or cycles are invalid.
 Unsupported, missing, or conflicting bootstrap, workspace authority, mutable
 predecessor, or policy schema is strictly read-only: no fence, projection-as-
 valid, cleanup, quarantine, or tmux action. Matching schema numbers alone do not
-enable schema-2 semantics.
+enable `authoritySchema=2` semantics.
 
 A process with `formations.workspace-authority.v1` may reserve the next fence,
 fsync the advanced counter, and publish its lease for foundation work; counter
@@ -1070,7 +1071,7 @@ fail loud; a temp file never outranks the last valid record, and a canonical
 immutable path is never a partial-file recovery surface.
 A shared-package file lock protects bytes only and grants no runtime authority.
 
-Every schema-2 JSON record/policy revision, writer-fence field, allocated
+Every JSON record/policy revision governed by `authoritySchema=2`, writer-fence field, allocated
 event/effect sequence, workspace-admission identity, and next counter is an integer in
 `1..9007199254740991`. Allocation past that bound fails closed before mutation;
 rounding, wrap, and reuse are invalid.
@@ -1100,7 +1101,7 @@ outcome fence.
 integer in `0..2147483647`. Under the workspace admission lock, the writer
 strict-validates the immutable policy generation named by
 `WorkspaceAuthority.admissionPolicyRef`; there is no implicit default, and
-schema-2 authority starts with the closed `state=disabled` revision 1. Disabled
+`authoritySchema=2` authority starts with the closed `state=disabled` revision 1. Disabled
 rejects new starts as `admission_disabled` and pauses queued activation without
 canceling active or queued work; queue wall clocks continue. Admission and
 activation resume only after an operator publishes a configured generation.
@@ -1137,7 +1138,7 @@ forbidden.
 `run_started` alone projects queued; the unique `run_activated` projects running
 and is required before graph/dispatch events. Restart recomputes exact counts/order
 for current state from run ledgers and strict-validates every retained policy
-ref. Schema 2 has no workspace-global admission-decision sequence: a policy ref
+ref. `authoritySchema=2` has no workspace-global admission-decision sequence: a policy ref
 attributes exact policy bytes but does not independently prove historical
 cross-run capacity interleaving. Concurrent starts still serialize under the one
 authority critical section and are certified by contention/crash tests. Queue
@@ -1307,12 +1308,12 @@ accepts only `text/markdown`; Gate `in`/`pass` work ports use the full set. Gate
 new boards remain schema 1 and ordinary non-Tool writes preserve their existing
 schema. Only the first successful Tool creation migrates a schema-1 canonical
 board and writes those defaults. Board schema 2 is monotonic: deleting the final
-Tool never downgrades it, and Tool update/delete remain schema 2. A
+Tool never downgrades it, and Tool update/delete remain board schema 2. A
 legacy Gate fail edge into a
 work input remains inspectable in degraded state but cannot validate or run
 until explicitly rewired; annotated-work pushback is not preserved implicitly.
 A safely normalizable schema-1 board may start without canonical mutation:
-preflight writes a normalized schema-2 run snapshot and records source/snapshot
+preflight writes a normalized board-schema-2 run snapshot and records source/snapshot
 schema. Unsafe normalization rejects before `run_started`.
 
 Tool update changes only title and the complete parameter map. Tool delete
@@ -1326,28 +1327,34 @@ absent state or SHA-256 over exact bytes; a missing original layout is not an
 empty file. Restoring absent layout means unlink/no-file plus layout-parent
 fsync. Validation, legacy, CAS, serialization, staging, or
 fsync failure before that rename leaves both canonical files byte-identical.
-Publication renames layout first and board last because layout-only entries are
-ignored and non-authorizing while the board is graph authority.
+Publication renames/installs layout (or establishes its no-file state), fsyncs
+the present canonical layout file or confirms absence and fsyncs its parent, and
+only then renames/installs board and fsyncs the canonical board file and parent.
+Layout-only entries are ignored and non-authorizing while the board is graph
+authority.
 
 After the first rename, an I/O error triggers synchronous exact-hash
 reconciliation under both locks. Exact hashes alone are insufficient. Old/old
 returns ordinary failure only after every present canonical file and both parent
 directories fsync, using the absent-layout rule above. New/new reports success
-only after both canonical files and both parent directories fsync. A mixed pair
-or failed sync returns stable `definition_publication_uncertain`, never ordinary
-failure or success. Without a journal this is not a durable mutation block, but
+only after both canonical files and both parent directories fsync in layout-
+before-board order. Rollback after board publication restores/fsyncs the old
+board before the old layout. A mixed pair or failed sync returns stable
+`definition_publication_uncertain`, never ordinary failure or success. Without a
+journal this is not a durable mutation block, but
 automatic retry is forbidden. The next explicit Tool mutation reopens and
 validates the canonical pair and fsyncs every present member and both parents
 under both locks before evaluating CAS.
 
 Cross-file crash/power-loss atomicity is not claimed without a future journal.
-A possible layout-new/board-old state projects the old board. UI/graph
+The durable crash states are old/old, layout-new/board-old, or new/new;
+board-new/layout-old cannot arise from publication or reverse-order rollback. A
+possible layout-new/board-old state projects the old board. UI/graph
 projection joins positions and lanes only for ids in that board; missing entries
 receive only the normal non-authorizing placement heuristic, and the next
-successful Tool mutation filters inert extras. During reconciliation against the
-operation's staged identities, board-new/layout-old is invalid and unexpected
-under the ordered protocol; ordinary stale layout remains non-authorizing
-presentation state. Layout raw entries grant no node or Tool authority.
+successful Tool mutation filters inert extras. Ordinary stale layout remains
+non-authorizing presentation state. Layout raw entries grant no node or Tool
+authority.
 
 Schema-1 edges touching `gate:judge` normalize to `channel=judge` only when they
 form one unambiguous linear Formation-only send/return chain. Ambiguous or
@@ -1639,7 +1646,7 @@ Discarded authoritative values cannot be reconstructed or rerun from hashes.
 
 Run ledgers are append-only NDJSON. Event payloads are versioned and should be
 sufficient to reconstruct projected state, immutable attempt inputs, and
-recovery handles. Every schema-2 ledger event carries its origin `writerFence`.
+recovery handles. Every ledger event with event schema 2 carries its origin `writerFence`.
 Valid event fences are monotonic non-decreasing allocated owner epochs; prior
 prefixes remain valid after takeover. A lower fence after a higher event, an
 unallocated fence, or a new append/effect not using the current fence is invalid.
@@ -1686,7 +1693,7 @@ declaration is projected as schema 1 with its original compatibility semantics;
 schemas never mix within one ledger and old events are never reinterpreted as
 typed feedback/pass-through. Schema-1 runs are inspect-only under the schema-2
 engine; resume returns `legacy_run_requires_new_run`.
-Schema 2 includes the ADR-0007 command, workspace, fence, Formation-result,
+Ledger event schema 2 includes the ADR-0007 command, workspace, fence, Formation-result,
 root-projection, and authored-config-manifest semantics before its first
 admission. Schema-number recognition alone cannot enable it: admission waits for
 the complete safe projector/coordinator and a certified rollback set in which

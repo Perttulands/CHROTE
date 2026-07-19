@@ -39,7 +39,7 @@ canned terminals are not persistence or run contracts.
 
 The shared formations package is the only serializer for persona cards, board,
 and layout files. The UI, `archon`, and agents all call that serializer. The
-fenced CHROTE server coordinator is the sole semantic writer for schema-2
+fenced CHROTE server coordinator is the sole semantic writer for `authoritySchema=2`
 runtime authority; shared file locks protect bytes but grant no execution
 lease. Canonical run authority lives under the configured Formations
 host-authority root outside every configured
@@ -415,16 +415,18 @@ acceptedMediaTypes = ["application/json"]
 Until `ctx-ug7.8` supplies the certified runtime, `tool_execution_unavailable`
 is the sole non-executing Tool runtime code. The API maps it to HTTP 422 and
 Archon JSON returns the same lowercase code. There is no isolated Tool-run
-endpoint. Run admission parses the board, resolves the requested Mission or
-isolated Formation root, and applies existing structural and legacy-migration
-validation first. It then scans the selected root's complete possible graph. A
+endpoint. Definition-side selected-root validation parses the board, resolves
+the requested Mission or isolated Formation root, and applies existing
+structural and legacy-migration validation first. It then scans the selected
+root's complete possible graph. A
 Mission scan includes both Gate branches and reachable judge chains; an isolated
 Formation scan does not traverse unrelated downstream board nodes. A selected
-root containing a Tool returns `tool_execution_unavailable`, and only after that
-check may admission check global runtime authority. This precedence applies only
-against the global authority error; malformed definitions and legacy migration
-errors retain their existing precedence. Rejection occurs before snapshot,
-binding, ledger, artifact, evaluator, executor, or process mutation.
+root containing a Tool returns `tool_execution_unavailable` before command
+submission or coordinator authority resolution. This error precedes only a
+global coordinator/runtime-authority-unavailable error; malformed-definition
+and legacy-migration validation retain their earlier precedence. Rejection
+occurs before snapshot, binding, ledger, artifact, evaluator, executor, or
+process mutation.
 
 Tool identity is exact and immutable. `profileId` is case-sensitive ASCII, at
 most 128 bytes, and matches
@@ -523,27 +525,33 @@ parameter map. Tool delete removes the Tool, every incident board connection,
 its layout node, and every incident layout routing entry.
 
 Create and delete hold the board lock and then the layout lock through
-publication. Before the first canonical rename, the writer computes and
+publication. Before publication, the writer computes and
 validates the exact old/old and new/new board/layout identities and stages and
 fsyncs every present old and new representation. Each identity member is either
 the explicit absent state or SHA-256 over the exact bytes; a missing original
 layout is not treated as an empty file. Restoring that predecessor means
 unlinking any canonical layout, confirming the no-file state, and fsyncing the
 layout parent directory. Validation, legacy, revision/ETag CAS,
-serialization, staging, or fsync failure before that rename leaves both
-canonical files byte-identical. Publication renames layout first and board last:
-layout-only entries are ignored and grant no graph or Tool authority, while the
-board remains graph authority.
+serialization, staging, or fsync failure before the first canonical rename
+leaves both canonical files byte-identical. Publication then follows one durable
+order: rename/install the staged layout (or establish its canonical no-file
+state), fsync the present canonical layout file or confirm absence and fsync the
+layout parent, only then rename/install the staged board, and finally fsync the
+canonical board file and board parent. Layout-only entries are ignored and grant
+no graph or Tool authority, while the board remains graph authority.
 
 After the first rename, an I/O error triggers synchronous reconciliation under
 both locks using those exact staged and canonical identities. Exact hashes alone
 never close reconciliation. Old/old returns the ordinary failure only after
 every present canonical file and both parent directories fsync; restored layout
 absence uses the unlink/no-file plus layout-parent-fsync rule above. New/new
-reports success only after both canonical files and both parent directories
-fsync. A mixed pair or any failed file/directory sync never returns an ordinary
-failure or success. If reconciliation cannot complete either exact outcome, it
-returns stable `definition_publication_uncertain`.
+reports success only after the layout state and parent are durable before the
+board file and parent. If reconciliation rolls back after board publication, it
+restores and fsyncs the old board before restoring the old layout, preserving the
+same durable-state order in reverse. A mixed pair or any failed file/directory
+sync never returns an ordinary failure or success. If reconciliation cannot
+complete either exact outcome, it returns stable
+`definition_publication_uncertain`.
 
 Without a journal, uncertainty is not a durable mutation block. It forbids an
 automatic retry. The next explicit Tool mutation holds both locks, reopens and
@@ -554,9 +562,10 @@ present in the current board; the next successful Tool mutation filters inert
 layout extras. A possible layout-new/board-old crash state therefore projects
 the old board, with missing entries receiving only the normal non-authorizing
 placement heuristic. During reconciliation against that operation's staged
-identities, board-new/layout-old is invalid and unexpected under the ordered
-publication protocol; this does not reclassify ordinary stale layout as graph
-state. Layout raw entries grant no node or Tool
+identities, the durable crash states are exactly old/old,
+layout-new/board-old, or new/new; board-new/layout-old cannot arise from the
+publication protocol or reverse-order rollback. This does not reclassify
+ordinary stale layout as graph state. Layout raw entries grant no node or Tool
 authority. This protocol does not claim cross-file crash or power-loss atomicity
 without a future journal. A schema-1 reader rejects board schema 2.
 
@@ -926,7 +935,7 @@ moving, focusing, or tiling Peek never creates, kills, or rebinds tmux state.
 
 Current main still constructs separate synchronous run engines in the API and
 Archon and writes run files below the workspace. The following ADR-0007 shapes
-are accepted schema-2 target state, not current-binary claims.
+are accepted `authoritySchema=2` target state, not current-binary claims.
 
 ```ts
 AuthorityGenerationRef {
@@ -1036,9 +1045,10 @@ RunBootstrap {
 }
 ```
 
-For schema 2, the existing explicit `CHROTE_FORMATIONS_DATA_ROOT` server
+For `WorkspaceAuthority.authoritySchema=2`, the existing explicit
+`CHROTE_FORMATIONS_DATA_ROOT` server
 configuration seam supplies `<formations-host-authority-root>`. It is one stable
-absolute root, opened once and shared by every schema-2-capable CHROTE lane on
+absolute root, opened once and shared by every CHROTE lane capable of that authority schema on
 the host. It is never derived from a lane's service data directory, workspace,
 Files roots, caller input, or ambient working directory, and there is no per-lane
 fallback. Independent injected private roots are tests only: lanes using
@@ -1047,7 +1057,7 @@ server configuration/provisioning layer supplies the root; `ctx-ug7.15` owns
 publication and active/retained inventory. This contract authorizes no live path,
 service, deployment, configuration, or UID migration.
 
-The immutable code-owned schema-2 Phase-B capability registry is never persisted
+The immutable code-owned `authoritySchema=2` Phase-B capability registry is never persisted
 as workspace truth or selected by a board. Its complete required set is the
 bytewise-ordered pair `formations.runtime-authority-read-guard.v1`, then
 `formations.workspace-authority.v1`. Both ids validate before owner-lock
@@ -1132,7 +1142,7 @@ inspection evidence only.
 workspaceRootIdentitySha256}` with no unknown keys or trailing newline. The
 published bootstrap is immutable. The separate mutable workspace authority
 record carries the current authority-schema high-water mark.
-The schema-2 target requires that value to be exactly `2`; a future supported
+The `authoritySchema=2` target requires that value to be exactly `2`; a future supported
 authority schema changes the supported value without rewriting the immutable
 bootstrap, while an older reader rejects that higher value before mutation.
 
@@ -1177,7 +1187,7 @@ generation and complete contiguous prior-hash chain to revision 1 before
 mutation. Missing generations, discontinuities, or cycles are invalid.
 Unsupported, missing, or conflicting bootstrap,
 workspace authority, or policy schema is strictly read-only: no fence, cleanup,
-quarantine, valid-run projection, or tmux action. Matching schema numbers alone do not enable schema-2;
+quarantine, valid-run projection, or tmux action. Matching schema numbers alone do not enable `authoritySchema=2`;
 admission waits for the complete registered safe projector/coordinator and a
 certified guarded rollback set.
 
@@ -1225,7 +1235,7 @@ fsync. Migration holds both locks in parent-registry then workspace order.
 Torn/stale/conflicting published records authorize nothing, and a canonical
 immutable path is never a partial-file recovery surface.
 
-Every schema-2 JSON record/policy revision, writer-fence field, allocated
+Every JSON record/policy revision governed by `authoritySchema=2`, writer-fence field, allocated
 event/effect sequence, workspace-admission identity, and next counter is an integer in
 `1..9007199254740991`. Allocation past that bound fails closed before mutation;
 rounding, wrap, and reuse are invalid.
@@ -1313,7 +1323,7 @@ execution is asynchronous from that response.
 `maxActiveRuns` is a JSON integer in `1..2147483647`; `maxQueuedRuns` is a JSON
 integer in `0..2147483647`. In one admission critical section, the writer
 strict-validates the immutable generation named by
-`WorkspaceAuthority.admissionPolicyRef`. There is no implicit default: schema-2
+`WorkspaceAuthority.admissionPolicyRef`. There is no implicit default: `authoritySchema=2`
 starts with closed `state=disabled` revision 1. Disabled rejects new starts as
 `admission_disabled` and pauses queued activation without canceling active or
 queued work; queue wall clocks continue. Only a configured generation admits or
@@ -1347,7 +1357,7 @@ limit and never blocks dequeue. Counter gaps are allowed and reuse is forbidden.
 `run_started` alone projects queued; unique `run_activated` projects running and
 is required before every graph/dispatch event. Restart recomputes exact counts/
 FIFO for current state from run ledgers and strict-validates every retained
-policy ref. Schema 2 has no workspace-global admission-decision sequence: refs
+policy ref. `authoritySchema=2` has no workspace-global admission-decision sequence: refs
 attribute exact policy bytes but do not independently prove historical cross-run
 capacity interleaving. Concurrent starts still serialize under the authority
 critical section and are certified by contention/crash tests. Queue time

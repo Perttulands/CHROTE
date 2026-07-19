@@ -77,7 +77,7 @@ their explicit validation and certification gates.
 Accepted runtime authority moves canonical ledgers, immutable graph/private
 bindings, sealed Tool inputs, and pending raw-redaction state under the
 writer-only Formations host-authority root, supplied explicitly and shared across
-schema-2-capable lanes, outside generic Files roots. Users see sanitized
+lanes capable of `authoritySchema=2`, outside generic Files roots. Users see sanitized
 run/event/binding projections and currently authorized artifacts through the
 existing cockpit/File Peek surfaces; raw authority is neither browsable nor
 mutable through Files.
