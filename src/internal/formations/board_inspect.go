@@ -15,6 +15,11 @@ const (
 	FindingLegacyInlineVerificationRequiresMigration = LegacyInlineVerificationMigrationCode
 	FindingMissionCount                              = "mission_count"
 	FindingMissionNotRunnable                        = "mission_not_runnable"
+	FindingInvalidTool                               = "invalid_tool"
+	FindingDuplicateNodeID                           = "duplicate_node_id"
+	FindingDuplicateInputProducer                    = "duplicate_input_producer"
+	FindingIncompatibleMedia                         = "incompatible_media"
+	FindingIncompatiblePayloadKind                   = "incompatible_payload_kind"
 )
 
 // BoardFinding is a single structural problem located on the board. NodeID names
@@ -57,6 +62,36 @@ func ValidateBoard(board *BoardDocument) BoardValidationReport {
 				Message: fmt.Sprintf("connection %q has a broken 'to' endpoint %q: it does not reference an existing node input", connection.ID, connection.To),
 			})
 		}
+		producerKind, producerMedia, producerIsTool, producerOK := endpointPayloadContract(board, connection.From, FormationPortOutput)
+		consumerKind, consumerMedia, consumerIsTool, consumerOK := endpointPayloadContract(board, connection.To, FormationPortInput)
+		if (producerIsTool || consumerIsTool) && producerOK && consumerOK {
+			switch {
+			case producerKind != consumerKind:
+				report.Errors = append(report.Errors, BoardFinding{
+					Code:    FindingIncompatiblePayloadKind,
+					NodeID:  connection.ID,
+					Message: fmt.Sprintf("connection %q routes payload kind %q to input %q, which accepts %q", connection.ID, producerKind, connection.To, consumerKind),
+				})
+			case producerKind == "work" && !toolMediaSubset(producerMedia, consumerMedia):
+				report.Errors = append(report.Errors, BoardFinding{
+					Code:    FindingIncompatibleMedia,
+					NodeID:  connection.ID,
+					Message: fmt.Sprintf("connection %q routes producer media %v to input %q, which accepts %v", connection.ID, producerMedia, connection.To, consumerMedia),
+				})
+			}
+		}
+	}
+	inputProducers := make(map[string]string, len(board.Connections))
+	for _, connection := range board.Connections {
+		if first, exists := inputProducers[connection.To]; exists {
+			report.Errors = append(report.Errors, BoardFinding{
+				Code:    FindingDuplicateInputProducer,
+				NodeID:  connection.ID,
+				Message: fmt.Sprintf("connection %q is a second producer for input %q; it is already produced by connection %q", connection.ID, connection.To, first),
+			})
+			continue
+		}
+		inputProducers[connection.To] = connection.ID
 	}
 
 	for _, gate := range board.Gates {
@@ -94,6 +129,52 @@ func ValidateBoard(board *BoardDocument) BoardValidationReport {
 				Code:    FindingLegacyInlineVerificationRequiresMigration,
 				NodeID:  formation.ID,
 				Message: fmt.Sprintf("formation %q uses retired inline verification; create and wire an explicit Gate, then remove the legacy verification", formation.ID),
+			})
+		}
+	}
+
+	seenNodeIDs := make(map[string]string, len(board.Missions)+len(board.Formations)+len(board.Gates)+len(board.Tools))
+	for _, mission := range board.Missions {
+		seenNodeIDs[mission.ID] = "Mission"
+	}
+	for _, formation := range board.Formations {
+		seenNodeIDs[formation.ID] = "Formation"
+	}
+	for _, gate := range board.Gates {
+		seenNodeIDs[gate.ID] = "Gate"
+	}
+	for _, tool := range board.Tools {
+		if firstKind, exists := seenNodeIDs[tool.ID]; tool.ID != "" && exists {
+			report.Errors = append(report.Errors, BoardFinding{
+				Code:    FindingDuplicateNodeID,
+				NodeID:  tool.ID,
+				Message: fmt.Sprintf("Tool node id %q duplicates an existing %s node id", tool.ID, firstKind),
+			})
+		} else if tool.ID != "" {
+			seenNodeIDs[tool.ID] = "Tool"
+		}
+		if board.Schema != CurrentBoardSchema {
+			report.Errors = append(report.Errors, BoardFinding{
+				Code:    FindingInvalidTool,
+				NodeID:  tool.ID,
+				Message: fmt.Sprintf("Tool %q requires board schema %d", tool.ID, CurrentBoardSchema),
+			})
+			continue
+		}
+		descriptor, ok := LookupToolProfileDescriptor(tool.ProfileID, tool.ProfileVersion)
+		if !ok {
+			report.Errors = append(report.Errors, BoardFinding{
+				Code:    FindingInvalidTool,
+				NodeID:  tool.ID,
+				Message: fmt.Sprintf("Tool %q uses unknown profile tuple %q@%q", tool.ID, tool.ProfileID, tool.ProfileVersion),
+			})
+			continue
+		}
+		if err := validateToolNodeAgainstDescriptor(tool, descriptor); err != nil {
+			report.Errors = append(report.Errors, BoardFinding{
+				Code:    FindingInvalidTool,
+				NodeID:  tool.ID,
+				Message: err.Error(),
 			})
 		}
 	}

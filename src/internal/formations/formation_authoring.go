@@ -2314,6 +2314,9 @@ func endpointAllowsDirection(raw []byte, endpoint, direction string) (string, bo
 	if _, _, ok := findMissionBlockByID(lines, nodeID); ok {
 		return nodeID, portID == "out" && direction == FormationPortOutput
 	}
+	if toolEndpointAllowsDirection(raw, nodeID, portID, direction) {
+		return nodeID, true
+	}
 	return "", false
 }
 
