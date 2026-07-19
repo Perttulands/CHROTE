@@ -252,7 +252,7 @@ func TestCreateBoardWritesMinimalDurableBoard(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create board: %v", err)
 	}
-	if board.Schema != CurrentSchema || board.Slug != "poems" || board.Title != "Poems" || board.Rev != 1 || !strings.HasPrefix(board.ID, "brd_") || board.ETag == "" {
+	if board.Schema != NewBoardSchema || board.Slug != "poems" || board.Title != "Poems" || board.Rev != 1 || !strings.HasPrefix(board.ID, "brd_") || board.ETag == "" {
 		t.Fatalf("created board = %+v, want durable board identity", board)
 	}
 	if board.UpdatedBy != "agent:test" || board.UpdatedAt != "2026-06-03T17:00:00Z" {
@@ -295,71 +295,113 @@ func TestCreateBoardValidatesSlugAndTitle(t *testing.T) {
 	}
 }
 
-func TestSchemaVersionRefusesNewerAndMigratesOlderPreservingContent(t *testing.T) {
+func TestDefinitionSchemaLifecyclesAreIndependent(t *testing.T) {
+	if CurrentBoardSchema != 2 {
+		t.Fatalf("CurrentBoardSchema = %d, want 2 for Tool-capable boards", CurrentBoardSchema)
+	}
+	if CurrentLayoutSchema != 1 {
+		t.Fatalf("CurrentLayoutSchema = %d, want 1 because Tool support does not migrate layout", CurrentLayoutSchema)
+	}
+	if NewBoardSchema != 1 {
+		t.Fatalf("NewBoardSchema = %d, want 1 so Tool-free boards stay on the compatibility schema", NewBoardSchema)
+	}
+}
+
+func TestSchemaOneBoardInspectionNeverPublishesMigration(t *testing.T) {
 	store := NewStore(t.TempDir())
-	store.Now = fixedClock()
-	writeFixture(t, store.BoardPath("future"), `schema = 99
-id = "brd_future"
-slug = "future"
-title = "Future"
-rev = 1
-`)
-	if _, err := store.ReadBoard("future"); !errors.Is(err, ErrUnsupportedSchema) {
-		t.Fatalf("future schema error = %v, want ErrUnsupportedSchema", err)
+	raw := minimalBoard("inspect-only", 1)
+	writeFixture(t, store.BoardPath("inspect-only"), raw)
+	wantETag := etag([]byte(raw))
+
+	board, err := store.ReadBoard("inspect-only")
+	if err != nil {
+		t.Fatalf("read schema-1 board: %v", err)
+	}
+	if board.Schema != NewBoardSchema {
+		t.Fatalf("read board schema = %d, want stored schema %d", board.Schema, NewBoardSchema)
+	}
+	if board.ETag != wantETag || board.TOML != raw {
+		t.Fatalf("inspection projection changed source identity: ETag=%q want %q TOML=%q want %q", board.ETag, wantETag, board.TOML, raw)
 	}
 
-	writeFixture(t, store.BoardPath("old"), `schema = 0
-id = "brd_old"
-slug = "old"
-title = "Old"
-rev = 1
-legacyKey = "keep"
-`)
-	old, err := store.ReadBoard("old")
-	if err != nil {
-		t.Fatalf("read old schema: %v", err)
+	_ = ValidateBoard(board)
+	if board.ETag != wantETag {
+		t.Fatalf("ValidateBoard changed board ETag = %q, want %q", board.ETag, wantETag)
 	}
-	if old.Schema != CurrentSchema {
-		t.Fatalf("read old schema = %d, want migrated schema %d", old.Schema, CurrentSchema)
+	if got := readFile(t, store.BoardPath("inspect-only")); got != raw {
+		t.Fatalf("ReadBoard/ValidateBoard published an implicit migration:\n got %q\nwant %q", got, raw)
 	}
-	migrated := readFile(t, store.BoardPath("old"))
-	for _, want := range []string{`schema = 1`, `legacyKey = "keep"`} {
-		if !strings.Contains(migrated, want) {
-			t.Fatalf("read-time migration lost %q:\n%s", want, migrated)
-		}
-	}
-	after, err := store.UpdateBoardMetadata("old", BoardMetadataPatch{
-		Title:     stringPtr("Old migrated"),
-		UpdatedBy: "agent:test",
-	}, WriteOptions{ExpectedETag: old.ETag, ExpectedRev: old.Rev})
-	if err != nil {
-		t.Fatalf("update old schema: %v", err)
-	}
-	if after.Schema != CurrentSchema {
-		t.Fatalf("schema after migration = %d, want %d", after.Schema, CurrentSchema)
-	}
-	got := readFile(t, store.BoardPath("old"))
-	for _, want := range []string{`schema = 1`, `legacyKey = "keep"`} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("old schema migration lost %q:\n%s", want, got)
-		}
-	}
+}
 
-	writeFixture(t, store.LayoutPath("old"), `schema = 0
-boardId = "brd_old"
+func TestSchemaOneLayoutInspectionNeverPublishesMigration(t *testing.T) {
+	store := NewStore(t.TempDir())
+	raw := `schema = 1
+boardId = "brd_inspect_only"
 boardRev = 1
 updatedAt = "2026-06-03T16:02:00Z"
 layoutNote = "keep"
-`)
-	layout, err := store.ReadLayout("old")
+`
+	writeFixture(t, store.LayoutPath("inspect-only"), raw)
+	wantETag := etag([]byte(raw))
+
+	layout, err := store.ReadLayout("inspect-only")
 	if err != nil {
-		t.Fatalf("read old layout schema: %v", err)
+		t.Fatalf("read schema-1 layout: %v", err)
 	}
-	if layout.Schema != CurrentSchema {
-		t.Fatalf("layout schema after read = %d, want %d", layout.Schema, CurrentSchema)
+	if layout.Schema != CurrentLayoutSchema {
+		t.Fatalf("read layout schema = %d, want %d", layout.Schema, CurrentLayoutSchema)
 	}
-	if got := readFile(t, store.LayoutPath("old")); !strings.Contains(got, `layoutNote = "keep"`) || !strings.Contains(got, `schema = 1`) {
-		t.Fatalf("layout read-time migration did not preserve content:\n%s", got)
+	if layout.ETag != wantETag || layout.TOML != raw {
+		t.Fatalf("layout inspection changed source identity: ETag=%q want %q TOML=%q want %q", layout.ETag, wantETag, layout.TOML, raw)
+	}
+	if got := readFile(t, store.LayoutPath("inspect-only")); got != raw {
+		t.Fatalf("ReadLayout published an implicit migration:\n got %q\nwant %q", got, raw)
+	}
+}
+
+func TestDefinitionReadersRejectOnlyVersionsNewerThanTheirOwnSchema(t *testing.T) {
+	store := NewStore(t.TempDir())
+	writeFixture(t, store.BoardPath("future-board"), `schema = 3
+id = "brd_future"
+slug = "future-board"
+title = "Future board"
+rev = 1
+`)
+	if _, err := store.ReadBoard("future-board"); !errors.Is(err, ErrUnsupportedSchema) {
+		t.Fatalf("schema-3 board error = %v, want ErrUnsupportedSchema above CurrentBoardSchema", err)
+	}
+
+	writeFixture(t, store.LayoutPath("future-layout"), `schema = 2
+boardId = "brd_future"
+boardRev = 1
+updatedAt = "2026-06-03T16:02:00Z"
+`)
+	if _, err := store.ReadLayout("future-layout"); !errors.Is(err, ErrUnsupportedSchema) {
+		t.Fatalf("schema-2 layout error = %v, want ErrUnsupportedSchema above CurrentLayoutSchema", err)
+	}
+}
+
+func TestOrdinaryBoardMetadataWritePreservesSchemaOne(t *testing.T) {
+	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
+	writeFixture(t, store.BoardPath("metadata-only"), minimalBoard("metadata-only", 1))
+
+	before, err := store.ReadBoard("metadata-only")
+	if err != nil {
+		t.Fatalf("read schema-1 board: %v", err)
+	}
+	after, err := store.UpdateBoardMetadata("metadata-only", BoardMetadataPatch{
+		Title:     stringPtr("Metadata changed"),
+		UpdatedBy: "agent:test",
+	}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev})
+	if err != nil {
+		t.Fatalf("update schema-1 board metadata: %v", err)
+	}
+	if after.Schema != NewBoardSchema {
+		t.Fatalf("ordinary metadata write changed schema = %d, want preserved schema %d", after.Schema, NewBoardSchema)
+	}
+	if got := readFile(t, store.BoardPath("metadata-only")); !strings.Contains(got, "schema = 1\n") || strings.Contains(got, "schema = 2\n") {
+		t.Fatalf("ordinary metadata write migrated Tool-free board:\n%s", got)
 	}
 }
 
