@@ -41,8 +41,11 @@ func (scope workspaceAuthorityRegistrationObservation) workspaceIdentity() runti
 }
 
 type workspaceAuthorityRegistrationOps struct {
-	openWorkspace       func(string) (*os.File, error)
-	validatePrivateNode func(*os.File, uint32) error
+	openWorkspace                 func(string) (*os.File, error)
+	validatePrivateNode           func(*os.File, uint32) error
+	generateWorkspaceAuthorityID  func() (string, error)
+	observeInitialRegistration    func(string) error
+	syncInitialAuthorityDirectory func(*os.File) error
 }
 
 type workspaceAuthorityRegistrar struct {
@@ -61,6 +64,16 @@ func newWorkspaceAuthorityRegistrar(hostRoot string, expectedUID uint32, gate wo
 		ops: workspaceAuthorityRegistrationOps{
 			openWorkspace:       openWorkspaceAuthorityRegistrationDirectory,
 			validatePrivateNode: validateWorkspaceAuthorityRegistrationPrivateNode,
+			generateWorkspaceAuthorityID: func() (string, error) {
+				return newPrefixedID("wsa"), nil
+			},
+			observeInitialRegistration: func(string) error { return nil },
+			syncInitialAuthorityDirectory: func(directory *os.File) error {
+				if directory == nil {
+					return errRuntimeNoncanonical
+				}
+				return directory.Sync()
+			},
 		},
 	}
 }
