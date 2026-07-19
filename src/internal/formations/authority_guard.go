@@ -194,6 +194,50 @@ type runtimeEventEnvelope struct {
 }
 
 var runtimeAuthorityClosedJSONKeys = map[reflect.Type]map[string]struct{}{
+	reflect.TypeOf(authorityGenerationWire{}): runtimeAuthorityJSONKeySet(
+		"recordRev", "sha256",
+	),
+	reflect.TypeOf(workspaceRegistryWire{}): runtimeAuthorityJSONKeySet(
+		"entries", "priorGeneration", "recordRev", "registrySchema",
+	),
+	reflect.TypeOf(workspaceRegistryEntryWire{}): runtimeAuthorityJSONKeySet(
+		"configuredPath", "device", "inode", "workspaceAuthorityId", "workspaceRootIdentitySha256",
+	),
+	reflect.TypeOf(workspaceAdmissionPolicyRefWire{}): runtimeAuthorityJSONKeySet(
+		"policyRev", "policySha256",
+	),
+	reflect.TypeOf(workspaceAuthorityWire{}): runtimeAuthorityJSONKeySet(
+		"admissionPolicyRef", "authoritySchema", "nextAdmissionSeq", "nextWriterFence", "priorGeneration", "recordRev",
+		"rootIdentityEncoding", "workspaceAuthorityId", "workspaceRootIdentitySha256",
+	),
+	reflect.TypeOf(workspaceOwnerLeaseWire{}): runtimeAuthorityJSONKeySet(
+		"acquiredAt", "leaseSchema", "leaseUntil", "ownerInstanceId", "priorGeneration", "recordRev", "renewedAt",
+		"workspaceAuthorityId", "writerFence",
+	),
+	reflect.TypeOf(runCommandRecordWire{}): runtimeAuthorityJSONKeySet(
+		"admittedWriterFence", "commandEncoding", "commandId", "commandKind", "commandPayload", "commandPayloadSha256",
+		"commandSchema", "decisionAdmissionPolicyRef", "effectSeq", "outcomeWriterFence", "priorGeneration", "recordRev",
+		"rejectionCode", "runId", "state", "stateWriterFence",
+	),
+	reflect.TypeOf(runCommandStartWire{}): runtimeAuthorityJSONKeySet(
+		"actor", "authoritySchema", "boardId", "expectedBoardETag", "expectedBoardRev", "kind", "limits", "runRoot",
+		"workspaceAuthorityId",
+	),
+	reflect.TypeOf(runCommandResumeWire{}): runtimeAuthorityJSONKeySet(
+		"actor", "authoritySchema", "blockedSeq", "kind", "reason", "resumeMode", "runId", "workspaceAuthorityId",
+	),
+	reflect.TypeOf(runCommandCancelWire{}): runtimeAuthorityJSONKeySet(
+		"actor", "authoritySchema", "expectedLastSeq", "kind", "reason", "runId", "workspaceAuthorityId",
+	),
+	reflect.TypeOf(runCommandVerdictWire{}): runtimeAuthorityJSONKeySet(
+		"actor", "authoritySchema", "gateId", "kind", "reason", "requestedSeq", "runId", "verdict", "workspaceAuthorityId",
+	),
+	reflect.TypeOf(runCommandLimitsWire{}): runtimeAuthorityJSONKeySet(
+		"maxAttempts", "maxDispatch", "redact", "wallClockSeconds",
+	),
+	reflect.TypeOf(runCommandRootWire{}): runtimeAuthorityJSONKeySet(
+		"kind", "nodeId",
+	),
 	reflect.TypeOf(runtimeWorkspaceRegistry{}): runtimeAuthorityJSONKeySet(
 		"registrySchema", "recordRev", "entries",
 	),

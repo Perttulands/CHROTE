@@ -3,9 +3,7 @@ package formations
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"regexp"
 	"strconv"
 	"strings"
@@ -1057,29 +1055,7 @@ func decodeAuthorityRecordJSON(raw []byte, destination any) error {
 	if int64(len(raw)) > runtimeAuthorityMaxRecordBytes {
 		return fmt.Errorf("%w: authority record exceeds byte limit", errRuntimeOutOfRange)
 	}
-	if len(raw) == 0 || !utf8.Valid(raw) || !json.Valid(raw) {
-		return authorityRecordInvalid("invalid authority JSON")
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil {
-		return authorityRecordInvalid(err.Error())
-	}
-	if err := ensureAuthorityRecordJSONEOF(decoder); err != nil {
-		return authorityRecordInvalid(err.Error())
-	}
-	return nil
-}
-
-func ensureAuthorityRecordJSONEOF(decoder *json.Decoder) error {
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return errors.New("authority JSON contains multiple values")
-		}
-		return err
-	}
-	return nil
+	return decodeRuntimeAuthorityJSON(raw, destination)
 }
 
 func validateWorkspaceAdmissionPolicyRef(ref workspaceAdmissionPolicyRefJCSV1) error {
