@@ -478,6 +478,31 @@ func TestAuthorityPublisherImmutableHookBoundariesRemainRetryable(t *testing.T) 
 	}
 }
 
+func TestAuthorityPublisherRevalidatesPrivateDirectoryBeforeInstall(t *testing.T) {
+	directory, path := openAuthorityTestDirectory(t)
+	publisher, err := newAuthorityPublisher(directory, uint32(os.Geteuid()), func(step authorityPublicationStep) error {
+		if step == authorityPublicationStageSynced {
+			return os.Chmod(path, 0o750)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o700) })
+
+	if _, err := publisher.publishImmutable("bootstrap.json", []byte("sentinel")); !errors.Is(err, errRuntimeIntegrityMismatch) {
+		t.Fatalf("changed private directory error = %v, want integrity mismatch", err)
+	}
+	if err := os.Chmod(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(path, "bootstrap.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("directory-mode race exposed canonical file: %v", err)
+	}
+	assertAuthorityTestDirectoryEntries(t, directory)
+}
+
 func openAuthorityTestDirectory(t *testing.T) (*os.File, string) {
 	t.Helper()
 	path := t.TempDir()

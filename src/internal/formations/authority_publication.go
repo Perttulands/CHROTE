@@ -26,12 +26,31 @@ type authorityContentRef struct {
 	size   int64
 }
 
+type authorityGeneration struct {
+	recordRev uint64
+	sha256    string
+}
+
+// authorityRevisionFunc strictly validates the complete closed record before
+// returning its persisted recordRev.
+type authorityRevisionFunc func([]byte) (uint64, error)
+
+type authorityFileGeneration struct {
+	generation authorityGeneration
+	device     uint64
+	inode      uint64
+	size       int64
+	raw        []byte
+}
+
 type authorityPublicationStep string
 
 const (
-	authorityPublicationStageSynced     authorityPublicationStep = "stage_synced"
-	authorityPublicationInstalled       authorityPublicationStep = "installed"
-	authorityPublicationDirectorySynced authorityPublicationStep = "directory_synced"
+	authorityPublicationStageSynced        authorityPublicationStep = "stage_synced"
+	authorityPublicationInstalled          authorityPublicationStep = "installed"
+	authorityPublicationMutableStageSynced authorityPublicationStep = "mutable_stage_synced"
+	authorityPublicationMutableReplaced    authorityPublicationStep = "mutable_replaced"
+	authorityPublicationDirectorySynced    authorityPublicationStep = "directory_synced"
 )
 
 type authorityPublicationHook func(authorityPublicationStep) error
@@ -40,8 +59,11 @@ type authorityPublicationOps struct {
 	syncFile         func(*os.File) error
 	syncDirectory    func(*os.File) error
 	installNoReplace func(int, string, string) error
+	replace          func(int, string, string) error
 }
 
+// authorityPublisher enforces publication integrity; it does not replace the
+// registry or owner lock that the caller must hold for the complete operation.
 type authorityPublisher struct {
 	directory *os.File
 	ownerUID  uint32
@@ -59,6 +81,9 @@ func newAuthorityPublisher(directory *os.File, ownerUID uint32, hook authorityPu
 			syncDirectory: func(file *os.File) error { return file.Sync() },
 			installNoReplace: func(directoryFD int, stage, canonical string) error {
 				return unix.Renameat2(directoryFD, stage, directoryFD, canonical, unix.RENAME_NOREPLACE)
+			},
+			replace: func(directoryFD int, temporary, canonical string) error {
+				return syscall.Renameat(directoryFD, temporary, directoryFD, canonical)
 			},
 		},
 	}
@@ -91,36 +116,16 @@ func (p *authorityPublisher) publishImmutable(name string, raw []byte) (authorit
 		return ref, nil
 	}
 
-	stageName, err := newAuthorityPublicationStageName()
+	stage, err := p.stage(raw, authorityPublicationStageSynced)
 	if err != nil {
 		return authorityContentRef{}, err
 	}
-	stage, err := openAuthorityPrivateFileAt(p.directory, stageName, syscall.O_WRONLY, true, p.ownerUID)
-	if err != nil {
-		return authorityContentRef{}, err
-	}
-	stageExists := true
-	defer func() {
-		_ = stage.Close()
-		if stageExists {
-			_ = syscall.Unlinkat(int(p.directory.Fd()), stageName)
-		}
-	}()
-
-	if _, err := stage.Write(raw); err != nil {
-		return authorityContentRef{}, err
-	}
-	if err := p.ops.syncFile(stage); err != nil {
-		return authorityContentRef{}, err
-	}
-	if err := validateAuthorityPrivateFile(stage, p.ownerUID); err != nil {
-		return authorityContentRef{}, err
-	}
-	if err := p.runHook(authorityPublicationStageSynced); err != nil {
+	defer stage.cleanup()
+	if err := p.validateDirectory(); err != nil {
 		return authorityContentRef{}, err
 	}
 
-	err = p.ops.installNoReplace(int(p.directory.Fd()), stageName, name)
+	err = p.ops.installNoReplace(int(p.directory.Fd()), stage.name, name)
 	if err != nil {
 		exact, exists, matchErr := p.immutableMatches(name, raw)
 		if matchErr != nil {
@@ -140,7 +145,7 @@ func (p *authorityPublisher) publishImmutable(name string, raw []byte) (authorit
 		}
 		return authorityContentRef{}, fmt.Errorf("install immutable authority file: %w", err)
 	}
-	stageExists = false
+	stage.installed = true
 	if err := p.runHook(authorityPublicationInstalled); err != nil {
 		return authorityContentRef{}, err
 	}
@@ -148,6 +153,203 @@ func (p *authorityPublisher) publishImmutable(name string, raw []byte) (authorit
 		return authorityContentRef{}, err
 	}
 	return ref, nil
+}
+
+func (p *authorityPublisher) publishMutable(name string, expected *authorityGeneration, raw []byte, revisionOf authorityRevisionFunc) (authorityGeneration, error) {
+	if p == nil || p.directory == nil || !runtimeAuthorityPathComponent(name) || revisionOf == nil {
+		return authorityGeneration{}, errRuntimeNoncanonical
+	}
+	if int64(len(raw)) > runtimeAuthorityMaxRecordBytes {
+		return authorityGeneration{}, errRuntimeOutOfRange
+	}
+	if err := p.validateDirectory(); err != nil {
+		return authorityGeneration{}, err
+	}
+	if expected != nil {
+		if expected.recordRev == 0 || expected.recordRev > runtimeAuthorityMaxJSONInteger {
+			return authorityGeneration{}, errRuntimeOutOfRange
+		}
+		if !runtimeSHA256Pattern.MatchString(expected.sha256) {
+			return authorityGeneration{}, errRuntimeNoncanonical
+		}
+		if expected.recordRev == runtimeAuthorityMaxJSONInteger {
+			return authorityGeneration{}, errRuntimeOutOfRange
+		}
+	}
+	nextRevision, err := revisionOf(raw)
+	if err != nil {
+		return authorityGeneration{}, err
+	}
+	if nextRevision == 0 || nextRevision > runtimeAuthorityMaxJSONInteger {
+		return authorityGeneration{}, errRuntimeOutOfRange
+	}
+	next := authorityGeneration{recordRev: nextRevision, sha256: runtimeSHA256Hex(raw)}
+	if expected == nil {
+		if nextRevision != 1 {
+			return authorityGeneration{}, errRuntimeConflict
+		}
+		if _, err := p.publishImmutable(name, raw); err != nil {
+			return authorityGeneration{}, err
+		}
+		return next, nil
+	}
+	if nextRevision != expected.recordRev+1 {
+		return authorityGeneration{}, errRuntimeConflict
+	}
+
+	current, exists, err := p.readMutable(name, revisionOf)
+	if err != nil {
+		return authorityGeneration{}, err
+	}
+	if !exists {
+		return authorityGeneration{}, errRuntimeConflict
+	}
+	if current.generation == next && bytes.Equal(current.raw, raw) {
+		if err := p.syncDirectory(); err != nil {
+			return authorityGeneration{}, err
+		}
+		return next, nil
+	}
+	if current.generation != *expected {
+		return authorityGeneration{}, errRuntimeConflict
+	}
+
+	stage, err := p.stage(raw, authorityPublicationMutableStageSynced)
+	if err != nil {
+		return authorityGeneration{}, err
+	}
+	defer stage.cleanup()
+
+	rechecked, exists, err := p.readMutable(name, revisionOf)
+	if err != nil {
+		return authorityGeneration{}, err
+	}
+	if !exists || !sameAuthorityFileGeneration(current, rechecked) {
+		return authorityGeneration{}, errRuntimeConflict
+	}
+	if err := p.validateDirectory(); err != nil {
+		return authorityGeneration{}, err
+	}
+	if err := p.ops.replace(int(p.directory.Fd()), stage.name, name); err != nil {
+		return authorityGeneration{}, fmt.Errorf("replace mutable authority file: %w", err)
+	}
+	stage.installed = true
+	if err := p.runHook(authorityPublicationMutableReplaced); err != nil {
+		return authorityGeneration{}, err
+	}
+	if err := p.syncDirectory(); err != nil {
+		return authorityGeneration{}, err
+	}
+	return next, nil
+}
+
+func (p *authorityPublisher) readMutable(name string, revisionOf authorityRevisionFunc) (authorityFileGeneration, bool, error) {
+	file, err := openAuthorityPrivateFileAt(p.directory, name, syscall.O_RDONLY, false, p.ownerUID)
+	if errors.Is(err, os.ErrNotExist) {
+		return authorityFileGeneration{}, false, nil
+	}
+	if err != nil {
+		return authorityFileGeneration{}, true, fmt.Errorf("%w: unsafe mutable authority target: %v", errRuntimeIntegrityMismatch, err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return authorityFileGeneration{}, true, err
+	}
+	if info.Size() < 0 || info.Size() > runtimeAuthorityMaxRecordBytes {
+		return authorityFileGeneration{}, true, errRuntimeOutOfRange
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, runtimeAuthorityMaxRecordBytes+1))
+	if err != nil {
+		return authorityFileGeneration{}, true, err
+	}
+	if int64(len(raw)) > runtimeAuthorityMaxRecordBytes {
+		return authorityFileGeneration{}, true, errRuntimeOutOfRange
+	}
+	revision, err := revisionOf(raw)
+	if err != nil {
+		return authorityFileGeneration{}, true, err
+	}
+	if revision == 0 || revision > runtimeAuthorityMaxJSONInteger {
+		return authorityFileGeneration{}, true, errRuntimeOutOfRange
+	}
+	if err := validateAuthorityPrivateFile(file, p.ownerUID); err != nil {
+		return authorityFileGeneration{}, true, err
+	}
+	info, err = file.Stat()
+	if err != nil {
+		return authorityFileGeneration{}, true, err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return authorityFileGeneration{}, true, errRuntimeIntegrityMismatch
+	}
+	return authorityFileGeneration{
+		generation: authorityGeneration{recordRev: revision, sha256: runtimeSHA256Hex(raw)},
+		device:     uint64(stat.Dev),
+		inode:      stat.Ino,
+		size:       info.Size(),
+		raw:        raw,
+	}, true, nil
+}
+
+func sameAuthorityFileGeneration(left, right authorityFileGeneration) bool {
+	return left.generation == right.generation &&
+		left.device == right.device &&
+		left.inode == right.inode &&
+		left.size == right.size &&
+		bytes.Equal(left.raw, right.raw)
+}
+
+type authorityStagedFile struct {
+	publisher *authorityPublisher
+	file      *os.File
+	name      string
+	installed bool
+}
+
+func (p *authorityPublisher) stage(raw []byte, syncedStep authorityPublicationStep) (*authorityStagedFile, error) {
+	name, err := newAuthorityPublicationStageName()
+	if err != nil {
+		return nil, err
+	}
+	file, err := openAuthorityPrivateFileAt(p.directory, name, syscall.O_WRONLY, true, p.ownerUID)
+	if err != nil {
+		return nil, err
+	}
+	stage := &authorityStagedFile{publisher: p, file: file, name: name}
+	complete := false
+	defer func() {
+		if !complete {
+			stage.cleanup()
+		}
+	}()
+	if _, err := file.Write(raw); err != nil {
+		return nil, err
+	}
+	if err := p.ops.syncFile(file); err != nil {
+		return nil, err
+	}
+	if err := validateAuthorityPrivateFile(file, p.ownerUID); err != nil {
+		return nil, err
+	}
+	if err := p.runHook(syncedStep); err != nil {
+		return nil, err
+	}
+	complete = true
+	return stage, nil
+}
+
+func (s *authorityStagedFile) cleanup() {
+	if s == nil {
+		return
+	}
+	if s.file != nil {
+		_ = s.file.Close()
+	}
+	if !s.installed && s.publisher != nil && s.publisher.directory != nil {
+		_ = syscall.Unlinkat(int(s.publisher.directory.Fd()), s.name)
+	}
 }
 
 func (p *authorityPublisher) immutableMatches(name string, raw []byte) (bool, bool, error) {
@@ -189,6 +391,9 @@ func (p *authorityPublisher) validateDirectory() error {
 }
 
 func (p *authorityPublisher) syncDirectory() error {
+	if err := p.validateDirectory(); err != nil {
+		return err
+	}
 	if err := p.ops.syncDirectory(p.directory); err != nil {
 		return err
 	}

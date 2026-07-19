@@ -13,6 +13,18 @@ import (
 )
 
 func TestAuthorityPublisherMutableRequiresExactGeneration(t *testing.T) {
+	t.Run("initial generation starts at one", func(t *testing.T) {
+		directory, _ := openAuthorityTestDirectory(t)
+		publisher, err := newAuthorityPublisher(directory, uint32(os.Geteuid()), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := publisher.publishMutable("workspace.private.json", nil, testAuthorityMutableRaw(2, "skipped initial"), testAuthorityMutableRevision); !errors.Is(err, errRuntimeConflict) {
+			t.Fatalf("skipped initial revision error = %v, want conflict", err)
+		}
+		assertAuthorityTestDirectoryEntries(t, directory)
+	})
+
 	tests := []struct {
 		name         string
 		expected     func([]byte) authorityGeneration
@@ -28,6 +40,14 @@ func TestAuthorityPublisherMutableRequiresExactGeneration(t *testing.T) {
 			},
 			next:      testAuthorityMutableRaw(2, "next"),
 			wantError: errRuntimeConflict,
+		},
+		{
+			name: "noncanonical expected hash",
+			expected: func(first []byte) authorityGeneration {
+				return authorityGeneration{recordRev: 1, sha256: "not-a-sha256"}
+			},
+			next:      testAuthorityMutableRaw(2, "next"),
+			wantError: errRuntimeNoncanonical,
 		},
 		{
 			name: "wrong current revision",
@@ -60,6 +80,12 @@ func TestAuthorityPublisherMutableRequiresExactGeneration(t *testing.T) {
 			expected:  func(first []byte) authorityGeneration { return testAuthorityGeneration(1, first) },
 			next:      []byte("not a revisioned record"),
 			wantError: errRuntimeNoncanonical,
+		},
+		{
+			name:      "oversize next record",
+			expected:  func(first []byte) authorityGeneration { return testAuthorityGeneration(1, first) },
+			next:      bytes.Repeat([]byte("x"), int(runtimeAuthorityMaxRecordBytes)+1),
+			wantError: errRuntimeOutOfRange,
 		},
 		{
 			name:         "missing expected generation",
@@ -168,9 +194,9 @@ func TestAuthorityPublisherMutableRechecksGenerationBeforeRename(t *testing.T) {
 	}{
 		{
 			name: "replaced current inode",
-			mutate: func(t *testing.T, canonical string, _ []byte) {
+			mutate: func(t *testing.T, canonical string, current []byte) {
 				replacement := canonical + ".replacement"
-				writeAuthorityFixture(t, replacement, testAuthorityMutableRaw(7, "foreign replacement"))
+				writeAuthorityFixture(t, replacement, current)
 				if err := os.Rename(replacement, canonical); err != nil {
 					t.Fatal(err)
 				}
