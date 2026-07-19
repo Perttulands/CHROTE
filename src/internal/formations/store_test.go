@@ -512,6 +512,94 @@ func TestOrdinaryBoardMetadataWritePreservesSchemaOne(t *testing.T) {
 	}
 }
 
+func TestOrdinaryNonToolWritersPreserveSchemaOne(t *testing.T) {
+	const slug = "schema-one-writers"
+	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
+	writeFixture(t, store.BoardPath(slug), minimalBoard(slug, 1))
+
+	assertSchemaOne := func(step string, board *BoardDocument) {
+		t.Helper()
+		if board.Schema != 1 {
+			t.Fatalf("%s returned schema = %d, want preserved schema 1", step, board.Schema)
+		}
+		persisted, err := parseBoard([]byte(readFile(t, store.BoardPath(slug))))
+		if err != nil {
+			t.Fatalf("%s parse persisted board: %v", step, err)
+		}
+		if persisted.Schema != 1 {
+			t.Fatalf("%s persisted schema = %d, want preserved schema 1", step, persisted.Schema)
+		}
+	}
+
+	current, err := store.ReadBoard(slug)
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+
+	formation, err := store.CreateFormation(slug, FormationCreateRequest{
+		Type: FormationTypeSolo, X: 100, Y: 100, UpdatedBy: "agent:test",
+	}, WriteOptions{ExpectedETag: current.ETag, ExpectedRev: current.Rev})
+	if err != nil {
+		t.Fatalf("create formation: %v", err)
+	}
+	current = formation.Board
+	assertSchemaOne("create formation", current)
+
+	gate, err := store.CreateGate(slug, GateCreateRequest{
+		Kinds: []string{"human"}, X: 300, Y: 100, UpdatedBy: "agent:test",
+	}, WriteOptions{ExpectedETag: current.ETag, ExpectedRev: current.Rev})
+	if err != nil {
+		t.Fatalf("create gate: %v", err)
+	}
+	current = gate.Board
+	assertSchemaOne("create gate", current)
+
+	mission, err := store.CreateMission(slug, MissionCreateRequest{
+		Goal: "Exercise schema preservation", BeadID: "home-7kc4.5", X: 500, Y: 100, UpdatedBy: "agent:test",
+	}, WriteOptions{ExpectedETag: current.ETag, ExpectedRev: current.Rev})
+	if err != nil {
+		t.Fatalf("create mission: %v", err)
+	}
+	current = mission.Board
+	assertSchemaOne("create mission", current)
+
+	current, err = store.WireFormationPorts(slug, FormationWireRequest{
+		From: formation.Formation.ID + ":" + formation.Formation.Outputs[0].ID,
+		To:   gate.Gate.ID + ":in", UpdatedBy: "agent:test",
+	}, WriteOptions{ExpectedETag: current.ETag, ExpectedRev: current.Rev})
+	if err != nil {
+		t.Fatalf("wire formation to gate: %v", err)
+	}
+	assertSchemaOne("shared wire update", current)
+
+	deletedMission, err := store.DeleteMission(slug, MissionDeleteRequest{
+		ID: mission.Mission.ID, UpdatedBy: "agent:test",
+	}, WriteOptions{ExpectedETag: current.ETag, ExpectedRev: current.Rev})
+	if err != nil {
+		t.Fatalf("delete mission: %v", err)
+	}
+	current = deletedMission.Board
+	assertSchemaOne("delete mission", current)
+
+	deletedGate, err := store.DeleteGate(slug, GateDeleteRequest{
+		ID: gate.Gate.ID, UpdatedBy: "agent:test",
+	}, WriteOptions{ExpectedETag: current.ETag, ExpectedRev: current.Rev})
+	if err != nil {
+		t.Fatalf("delete gate: %v", err)
+	}
+	current = deletedGate.Board
+	assertSchemaOne("delete gate", current)
+
+	deletedFormation, err := store.DeleteFormation(slug, FormationDeleteRequest{
+		ID: formation.Formation.ID, UpdatedBy: "agent:test",
+	}, WriteOptions{ExpectedETag: current.ETag, ExpectedRev: current.Rev})
+	if err != nil {
+		t.Fatalf("delete formation: %v", err)
+	}
+	assertSchemaOne("delete formation", deletedFormation.Board)
+}
+
 func TestBoardChangeSignalDetectsExternalEdit(t *testing.T) {
 	store := NewStore(t.TempDir())
 	writeFixture(t, store.BoardPath("session-search"), minimalBoard("session-search", 7))
