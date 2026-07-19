@@ -20,6 +20,7 @@ import (
 const (
 	workspaceAuthorityOwnerDomainLockHelperEnv   = "CHROTE_TEST_WORKSPACE_AUTHORITY_OWNER_DOMAIN_LOCK_HELPER"
 	workspaceAuthorityOwnerDomainLockPathEnv     = "CHROTE_TEST_WORKSPACE_AUTHORITY_OWNER_DOMAIN_LOCK_PATH"
+	workspaceAuthorityOwnerDomainAutoReleaseEnv  = "CHROTE_TEST_WORKSPACE_AUTHORITY_OWNER_DOMAIN_AUTO_RELEASE"
 	workspaceAuthorityOwnerDomainLockAttemptedFD = uintptr(3)
 	workspaceAuthorityOwnerDomainLockReadyFD     = uintptr(4)
 	workspaceAuthorityOwnerDomainLockReleaseFD   = uintptr(5)
@@ -220,6 +221,73 @@ func TestWorkspaceAuthorityOwnerDomainRejectsRetargetedGlobalPinsAfterOwnerConte
 	}
 }
 
+func TestWorkspaceAuthorityOwnerDomainHoldsOneProcessOwnerEpochAcrossValidationAndCallback(t *testing.T) {
+	fixture := newWorkspaceAuthorityOwnerDomainFixture(t)
+	paths := workspaceAuthorityOwnerDomainPaths(fixture)
+	before := snapshotWorkspaceAuthorityTopology(t, fixture.base)
+	descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, paths...)
+	registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate())
+	productionValidate := registrar.ops.validatePrivateNode
+	wantValidated := map[string]bool{
+		"workspace.bootstrap.json": false,
+		"workspace.private.json":   false,
+		"admission-policies":       false,
+		"3.json":                   false,
+		"2.json":                   false,
+		"1.json":                   false,
+	}
+	var ownerContender *workspaceAuthorityLockHelper
+	registrar.ops.validatePrivateNode = func(opened *os.File, expectedUID uint32) error {
+		if err := productionValidate(opened, expectedUID); err != nil {
+			return err
+		}
+		if _, ok := wantValidated[opened.Name()]; !ok {
+			return nil
+		}
+		if ownerContender == nil {
+			ownerContender = startWorkspaceAuthorityOwnerDomainAutoReleaseLockHelper(t, fixture.ownerLock)
+			ownerContender.waitAttempted(t)
+		}
+		ownerContender.assertNotReadyBeforeRelease(t)
+		wantValidated[opened.Name()] = true
+		return nil
+	}
+	callbackCalls := 0
+	err := registrar.withWorkspaceAuthorityOwnerDomain(fixture.workspace, func(workspaceAuthorityOwnerDomainScope) error {
+		callbackCalls++
+		if ownerContender == nil {
+			t.Fatal("owner-domain callback ran before any closed-state validation")
+		}
+		ownerContender.assertNotReadyBeforeRelease(t)
+		return nil
+	})
+	if ownerContender == nil {
+		t.Fatalf("owner-domain validation result = %v without starting the process contender", err)
+	}
+	gotOwner := ownerContender.waitReady(t, workspaceAuthorityLockProcessTimeout)
+	wantOwner := workspaceAuthorityLockIdentityAtPath(t, fixture.ownerLock)
+	if gotOwner != wantOwner {
+		t.Fatalf("continuous owner-epoch contender acquired lock %+v, want exact mapped owner %+v", gotOwner, wantOwner)
+	}
+	ownerContender.waitAfterAutomaticRelease(t)
+	if err != nil {
+		t.Fatalf("continuous process owner epoch: %v", err)
+	}
+	if callbackCalls != 1 {
+		t.Fatalf("continuous owner-epoch callback calls = %d, want one", callbackCalls)
+	}
+	for name, validated := range wantValidated {
+		if !validated {
+			t.Errorf("continuous owner epoch did not reach closed-state validation %q", name)
+		}
+	}
+	if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, before) {
+		t.Fatalf("continuous owner-epoch proof changed authority topology\nbefore: %#v\nafter:  %#v", before, after)
+	}
+	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, paths...)
+	assertWorkspaceAuthorityOwnerDomainLocksReleased(t, fixture)
+}
+
 func TestWorkspaceAuthorityOwnerDomainReleasesRegistryWhileProcessOwnerEpochRemainsExclusive(t *testing.T) {
 	fixture := newWorkspaceAuthorityOwnerDomainFixture(t)
 	paths := workspaceAuthorityOwnerDomainPaths(fixture)
@@ -318,6 +386,9 @@ func TestWorkspaceAuthorityOwnerDomainProcessOwnerLockHelper(t *testing.T) {
 	if _, err := ready.Write(payload[:]); err != nil {
 		t.Fatalf("signal acquired owner-domain lock: %v", err)
 	}
+	if os.Getenv(workspaceAuthorityOwnerDomainAutoReleaseEnv) != "" {
+		return
+	}
 	if err := release.SetReadDeadline(time.Now().Add(workspaceAuthorityLockProcessTimeout)); err != nil {
 		t.Fatal(err)
 	}
@@ -328,6 +399,16 @@ func TestWorkspaceAuthorityOwnerDomainProcessOwnerLockHelper(t *testing.T) {
 }
 
 func startWorkspaceAuthorityOwnerDomainLockHelper(t *testing.T, ownerLock string) *workspaceAuthorityLockHelper {
+	t.Helper()
+	return startWorkspaceAuthorityOwnerDomainLockHelperMode(t, ownerLock, false)
+}
+
+func startWorkspaceAuthorityOwnerDomainAutoReleaseLockHelper(t *testing.T, ownerLock string) *workspaceAuthorityLockHelper {
+	t.Helper()
+	return startWorkspaceAuthorityOwnerDomainLockHelperMode(t, ownerLock, true)
+}
+
+func startWorkspaceAuthorityOwnerDomainLockHelperMode(t *testing.T, ownerLock string, autoRelease bool) *workspaceAuthorityLockHelper {
 	t.Helper()
 	executable, err := os.Executable()
 	if err != nil {
@@ -358,6 +439,9 @@ func startWorkspaceAuthorityOwnerDomainLockHelper(t *testing.T, ownerLock string
 		workspaceAuthorityOwnerDomainLockHelperEnv+"=1",
 		workspaceAuthorityOwnerDomainLockPathEnv+"="+ownerLock,
 	)
+	if autoRelease {
+		command.Env = append(command.Env, workspaceAuthorityOwnerDomainAutoReleaseEnv+"=1")
+	}
 	command.ExtraFiles = []*os.File{attemptedWriter, readyWriter, releaseReader}
 	command.Stdout = output
 	command.Stderr = output
@@ -386,10 +470,35 @@ func startWorkspaceAuthorityOwnerDomainLockHelper(t *testing.T, ownerLock string
 	return helper
 }
 
+func (helper *workspaceAuthorityLockHelper) waitAfterAutomaticRelease(t *testing.T) {
+	t.Helper()
+	if helper.waited {
+		return
+	}
+	if err := helper.release.Close(); err != nil {
+		helper.fail(t, "close automatic owner-lock release pipe", err)
+	}
+	helper.release = nil
+	if err := helper.command.Wait(); err != nil {
+		helper.fail(t, "wait for automatic owner-lock helper", err)
+	}
+	helper.waited = true
+	helper.cancel()
+	if err := helper.attempted.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+		helper.fail(t, "close automatic owner-lock attempted pipe", err)
+	}
+	helper.attempted = nil
+	if err := helper.ready.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+		helper.fail(t, "close automatic owner-lock ready pipe", err)
+	}
+	helper.ready = nil
+}
+
 func workspaceAuthorityOwnerDomainLockHelperBaseEnvironment() []string {
 	blocked := map[string]bool{
-		workspaceAuthorityOwnerDomainLockHelperEnv: true,
-		workspaceAuthorityOwnerDomainLockPathEnv:   true,
+		workspaceAuthorityOwnerDomainLockHelperEnv:  true,
+		workspaceAuthorityOwnerDomainLockPathEnv:    true,
+		workspaceAuthorityOwnerDomainAutoReleaseEnv: true,
 	}
 	environment := make([]string, 0, len(os.Environ()))
 	for _, entry := range os.Environ() {
