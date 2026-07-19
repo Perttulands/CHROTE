@@ -13,7 +13,7 @@ import (
 	"github.com/chrote/server/internal/core"
 )
 
-func TestRuntimeRoutesInstallNonAuthorizingHostPrivateStore(t *testing.T) {
+func TestRuntimeRoutesInstallDefinitionPreflightAndNonAuthorizingStore(t *testing.T) {
 	core.ResetConfigForTesting()
 	t.Cleanup(core.ResetConfigForTesting)
 	workspace := t.TempDir()
@@ -32,8 +32,14 @@ func TestRuntimeRoutesInstallNonAuthorizingHostPrivateStore(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/formations/runs", bytes.NewBufferString(`{"board":"missing","missionId":"mission_missing"}`))
 	mux.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), `"code":"RUNTIME_AUTHORITY_NON_AUTHORIZING"`) {
-		t.Fatalf("runtime route status/body = %d %s, want safe non-authorizing 503", recorder.Code, recorder.Body.String())
+	if recorder.Code != http.StatusNotFound || !strings.Contains(recorder.Body.String(), `"code":"NOT_FOUND"`) {
+		t.Fatalf("runtime start status/body = %d %s, want definition-first 404", recorder.Code, recorder.Body.String())
+	}
+
+	resume := httptest.NewRecorder()
+	mux.ServeHTTP(resume, httptest.NewRequest(http.MethodPost, "/api/formations/runs/run_missing/resume", bytes.NewBufferString(`{}`)))
+	if resume.Code != http.StatusServiceUnavailable || !strings.Contains(resume.Body.String(), `"code":"RUNTIME_AUTHORITY_NON_AUTHORIZING"`) {
+		t.Fatalf("runtime resume status/body = %d %s, want safe non-authorizing 503", resume.Code, resume.Body.String())
 	}
 
 	definitions := httptest.NewRecorder()
