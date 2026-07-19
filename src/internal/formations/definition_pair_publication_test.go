@@ -212,6 +212,10 @@ func TestDefinitionPairAcquiresBoardThenLayoutAndHoldsBothThroughPublication(t *
 	}
 	t.Cleanup(releaseLayoutMutex)
 	foreignLayout := startPeerProcessDefinitionFlockHolderForTest(t, store.LayoutPath(slug)+".lock")
+	boardEpoch := newDefinitionPairBoardOwnerEpochContendersForTest(
+		t,
+		store.BoardPath(slug)+".lock",
+	)
 
 	request := definitionPairRequestForTest(oldBoard, oldLayout, newBoard, pairPresentContentForTest(newLayout))
 	locksHeldAtPublication := make(chan [2]bool, 1)
@@ -221,20 +225,24 @@ func TestDefinitionPairAcquiresBoardThenLayoutAndHoldsBothThroughPublication(t *
 	authorizeRelease := func() {
 		authorizeForeignRelease.Do(func() { close(foreignReleaseAuthorized) })
 	}
-	reportPhase := func(phase string) {
+	reportPhase := func(phase string) error {
+		if boardEpoch != nil {
+			if err := boardEpoch.requireBlocked(phase); err != nil {
+				return err
+			}
+		}
 		select {
 		case <-foreignReleaseAuthorized:
-			return
+			return nil
 		case forbiddenPhase <- phase:
+			return nil
 		}
 	}
 	request.validate = func(current, candidate definitionPairState) error {
-		reportPhase("validate")
-		return nil
+		return reportPhase("validate")
 	}
 	request.cas = func(current definitionPairState) error {
-		reportPhase("cas")
-		return nil
+		return reportPhase("cas")
 	}
 	publishDone := make(chan error, 1)
 	go runDefinitionPairPublicationBehindForeignFlockForTest(
@@ -247,6 +255,7 @@ func TestDefinitionPairAcquiresBoardThenLayoutAndHoldsBothThroughPublication(t *
 	)
 	publicationDrained := false
 	t.Cleanup(func() {
+		boardEpoch.cleanup()
 		authorizeRelease()
 		releaseLayoutMutex()
 		if err := foreignLayout.releaseAndWait(); err != nil {
@@ -279,9 +288,18 @@ func TestDefinitionPairAcquiresBoardThenLayoutAndHoldsBothThroughPublication(t *
 	if !pairMutexHeldForTest(store.BoardPath(slug) + ".lock") {
 		t.Fatal("publisher released board mutex while waiting for layout mutex")
 	}
+	if err := boardEpoch.arm(); err != nil {
+		t.Fatalf("arm pre-validation board owner-epoch contenders: %v", err)
+	}
+	if err := boardEpoch.requireBlocked("foreign layout mutex barrier"); err != nil {
+		t.Fatal(err)
+	}
 
 	releaseLayoutMutex()
 	waitForDefinitionPairMutexHeldForTest(t, store.LayoutPath(slug)+".lock", "publisher layout")
+	if err := boardEpoch.requireBlocked("foreign layout flock barrier setup"); err != nil {
+		t.Fatal(err)
+	}
 	consumedPublication, err = waitForDefinitionPairForeignOwnerBlockForTest(
 		"runDefinitionPairPublicationBehindForeignFlockForTest",
 		"[syscall]",
@@ -306,6 +324,7 @@ func TestDefinitionPairAcquiresBoardThenLayoutAndHoldsBothThroughPublication(t *
 	if err != nil {
 		t.Fatalf("publish after releasing layout lock: %v", err)
 	}
+	boardEpoch.releaseAndRequireEntry(t)
 	select {
 	case held := <-locksHeldAtPublication:
 		if !held[0] || !held[1] {
@@ -1262,12 +1281,14 @@ func runDefinitionPairPublicationBehindForeignFlockForTest(
 	store *Store,
 	slug string,
 	request definitionPairPublicationRequest,
-	reportPhase func(string),
+	reportPhase func(string) error,
 	locksHeldAtPublication chan<- [2]bool,
 	done chan<- error,
 ) {
 	done <- store.publishDefinitionPair(slug, request, func(step string) error {
-		reportPhase(step)
+		if err := reportPhase(step); err != nil {
+			return err
+		}
 		if step == pairStepPublishLayoutRenameForTest {
 			locksHeldAtPublication <- [2]bool{
 				pairMutexHeldForTest(store.BoardPath(slug) + ".lock"),
@@ -1365,6 +1386,117 @@ func waitForDefinitionPairPathForTest(t *testing.T, path string, process *peerPr
 			t.Fatalf("timed out waiting for %s", description)
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+type definitionPairBoardOwnerEpochContendersForTest struct {
+	boardLock    string
+	controlRoot  string
+	mutex        *sync.Mutex
+	mutexArmed   chan struct{}
+	mutexEntered chan struct{}
+	mutexRelease chan struct{}
+	mutexOnce    sync.Once
+	flock        *peerProcessDefinitionFlockContenderForTest
+	armOnce      sync.Once
+	armErr       error
+}
+
+func newDefinitionPairBoardOwnerEpochContendersForTest(t *testing.T, boardLock string) *definitionPairBoardOwnerEpochContendersForTest {
+	t.Helper()
+	contenders := &definitionPairBoardOwnerEpochContendersForTest{
+		boardLock:    boardLock,
+		controlRoot:  t.TempDir(),
+		mutex:        mutexFor(boardLock),
+		mutexArmed:   make(chan struct{}),
+		mutexEntered: make(chan struct{}),
+		mutexRelease: make(chan struct{}),
+	}
+	t.Cleanup(contenders.cleanup)
+	return contenders
+}
+
+func (c *definitionPairBoardOwnerEpochContendersForTest) arm() error {
+	c.armOnce.Do(func() {
+		go c.contendMutex()
+		select {
+		case <-c.mutexArmed:
+		case <-time.After(2 * time.Second):
+			c.armErr = errors.New("timed out arming pre-validation board mutex contender")
+			return
+		}
+		if c.armErr = waitForDefinitionPairGoroutineBlocksForTest(
+			"(*definitionPairBoardOwnerEpochContendersForTest).contendMutex",
+			"[sync.Mutex.Lock]",
+			"sync.(*Mutex).Lock",
+			1,
+		); c.armErr != nil {
+			return
+		}
+		c.flock, c.armErr = startPeerProcessDefinitionFlockContenderForTest(
+			c.controlRoot,
+			"prevalidation-board",
+			c.boardLock,
+		)
+	})
+	return c.armErr
+}
+
+//go:noinline
+func (c *definitionPairBoardOwnerEpochContendersForTest) contendMutex() {
+	close(c.mutexArmed)
+	c.mutex.Lock()
+	close(c.mutexEntered)
+	<-c.mutexRelease
+	c.mutex.Unlock()
+}
+
+func (c *definitionPairBoardOwnerEpochContendersForTest) requireBlocked(phase string) error {
+	select {
+	case <-c.mutexEntered:
+		return fmt.Errorf("board mutex contender entered before publication returned at %s", phase)
+	default:
+	}
+	if c.flock == nil {
+		return fmt.Errorf("board flock contender was not armed at %s", phase)
+	}
+	if entered, err := c.flock.entered(); err != nil {
+		return fmt.Errorf("inspect board flock contender at %s: %w", phase, err)
+	} else if entered {
+		return fmt.Errorf("board flock contender entered before publication returned at %s", phase)
+	}
+	select {
+	case <-c.flock.finished:
+		return fmt.Errorf("board flock contender exited before publication returned at %s: %v", phase, c.flock.waitErr)
+	default:
+	}
+	return nil
+}
+
+func (c *definitionPairBoardOwnerEpochContendersForTest) releaseAndRequireEntry(t *testing.T) {
+	t.Helper()
+	select {
+	case <-c.mutexEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("pre-validation board mutex contender did not enter after publication")
+	}
+	if c.flock == nil {
+		t.Fatal("pre-validation board flock contender was not armed")
+	}
+	if err := c.flock.waitForEntry(); err != nil {
+		t.Fatalf("pre-validation board flock contender did not enter after publication: %v", err)
+	}
+	c.cleanup()
+	if err := c.flock.wait(); err != nil {
+		t.Fatalf("pre-validation board flock contender: %v", err)
+	}
+}
+
+func (c *definitionPairBoardOwnerEpochContendersForTest) cleanup() {
+	c.mutexOnce.Do(func() { close(c.mutexRelease) })
+	if c.flock != nil {
+		c.flock.release()
+		_ = c.flock.wait()
 	}
 }
 
@@ -1692,7 +1824,8 @@ func startPeerProcessDefinitionFlockContenderForTest(controlRoot, member, lockPa
 		close(contender.finished)
 	}()
 	if err := contender.waitForPath(contender.armedPath, "arm"); err != nil {
-		contender.release()
+		_ = contender.command.Process.Kill()
+		<-contender.finished
 		return nil, err
 	}
 	return contender, nil
