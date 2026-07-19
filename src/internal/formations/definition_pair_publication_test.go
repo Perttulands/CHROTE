@@ -271,6 +271,63 @@ func TestDefinitionPairDurablyPreflightsCanonicalPairBeforeIdentityCAS(t *testin
 	}
 }
 
+func TestDefinitionPairRevisionCASRunsAfterValidationAndCanonicalDurability(t *testing.T) {
+	store := NewStore(t.TempDir())
+	slug := "pair-revision-cas"
+	oldBoard := pairBoardFixture(slug, 1, "Old")
+	oldLayout := pairLayoutFixture(1, "old")
+	newBoard := pairBoardFixture(slug, 2, "New")
+	newLayout := pairLayoutFixture(2, "new")
+	writeFixture(t, store.BoardPath(slug), string(oldBoard))
+	writeFixture(t, store.LayoutPath(slug), string(oldLayout))
+
+	validated := false
+	casCalled := false
+	casBeforeDurability := false
+	var steps []string
+	request := definitionPairRequestForTest(oldBoard, oldLayout, newBoard, pairPresentContentForTest(newLayout))
+	request.validate = func(current, candidate definitionPairState) error {
+		validated = true
+		return nil
+	}
+	request.cas = func(current definitionPairState) error {
+		casCalled = true
+		for _, required := range []string{
+			pairStepPreflightBoardFileSyncForTest,
+			pairStepPreflightLayoutFileSyncForTest,
+			pairStepPreflightBoardDirSyncForTest,
+			pairStepPreflightLayoutDirSyncForTest,
+		} {
+			if !pairStepObservedForTest(steps, required) {
+				casBeforeDurability = true
+			}
+		}
+		return ErrConflict
+	}
+	err := store.publishDefinitionPair(slug, request, func(step string) error {
+		if !validated {
+			t.Fatalf("canonical I/O %q ran before current/candidate validation", step)
+		}
+		steps = append(steps, step)
+		return nil
+	})
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("revision CAS error = %v, want ErrConflict", err)
+	}
+	if !casCalled {
+		t.Fatal("pair publication omitted revision CAS after exact identity preflight")
+	}
+	if casBeforeDurability {
+		t.Fatalf("revision CAS ran before every canonical file and parent sync; steps=%v", steps)
+	}
+	for _, step := range steps {
+		if strings.HasPrefix(step, "stage:") || strings.HasPrefix(step, "publish:") {
+			t.Fatalf("failed revision CAS reached %q; steps=%v", step, steps)
+		}
+	}
+	assertPairFilesForTest(t, store, slug, oldBoard, pairPresentContentForTest(oldLayout))
+}
+
 func TestDefinitionPairPreflightSyncFailureLeavesExactOldPairWithoutStaging(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -579,6 +636,84 @@ func TestDefinitionPairCanonicalPreflightReusesNoFollowSingleLinkSecurity(t *tes
 	}
 }
 
+func TestDefinitionPairLocksReuseNoFollowSingleLinkSecurity(t *testing.T) {
+	tests := []struct {
+		name   string
+		member string
+		attack string
+	}{
+		{name: "board lock symlink", member: "board", attack: "symlink"},
+		{name: "board lock hardlink", member: "board", attack: "hardlink"},
+		{name: "layout lock symlink", member: "layout", attack: "symlink"},
+		{name: "layout lock hardlink", member: "layout", attack: "hardlink"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			store := NewStore(filepath.Join(root, "workspace"))
+			slug := "pair-lock-security"
+			oldBoard := pairBoardFixture(slug, 1, "Old")
+			oldLayout := pairLayoutFixture(1, "old")
+			newBoard := pairBoardFixture(slug, 2, "New")
+			newLayout := pairLayoutFixture(2, "new")
+			writeFixture(t, store.BoardPath(slug), string(oldBoard))
+			writeFixture(t, store.LayoutPath(slug), string(oldLayout))
+
+			lockPath := store.BoardPath(slug) + ".lock"
+			if test.member == "layout" {
+				lockPath = store.LayoutPath(slug) + ".lock"
+			}
+			victim := filepath.Join(root, "host-private-"+test.member+"-lock")
+			victimRaw := "private lock authority\n"
+			if err := os.WriteFile(victim, []byte(victimRaw), 0o600); err != nil {
+				t.Fatalf("write private lock: %v", err)
+			}
+			switch test.attack {
+			case "symlink":
+				if err := os.Symlink(victim, lockPath); err != nil {
+					t.Fatalf("symlink private lock: %v", err)
+				}
+			case "hardlink":
+				if err := os.Link(victim, lockPath); err != nil {
+					t.Fatalf("hardlink private lock: %v", err)
+				}
+			}
+
+			request := definitionPairRequestForTest(oldBoard, oldLayout, newBoard, pairPresentContentForTest(newLayout))
+			if err := store.publishDefinitionPair(slug, request, nil); err == nil {
+				t.Fatalf("pair publication accepted %s", test.name)
+			}
+			assertPairFilesForTest(t, store, slug, oldBoard, pairPresentContentForTest(oldLayout))
+			if got := readFile(t, victim); got != victimRaw {
+				t.Fatalf("rejected lock substitution mutated private bytes: %q", got)
+			}
+			victimInfo, err := os.Stat(victim)
+			if err != nil {
+				t.Fatalf("stat private lock: %v", err)
+			}
+			if got := victimInfo.Mode().Perm(); got != 0o600 {
+				t.Fatalf("rejected lock substitution changed private mode to %04o", got)
+			}
+			linkInfo, err := os.Lstat(lockPath)
+			if err != nil {
+				t.Fatalf("lstat rejected lock binding: %v", err)
+			}
+			if test.attack == "symlink" && linkInfo.Mode()&os.ModeSymlink == 0 {
+				t.Fatalf("rejected lock symlink was replaced with mode %v", linkInfo.Mode())
+			}
+			if test.attack == "hardlink" {
+				lockInfo, err := os.Stat(lockPath)
+				if err != nil {
+					t.Fatalf("stat rejected lock hardlink: %v", err)
+				}
+				if !os.SameFile(victimInfo, lockInfo) {
+					t.Fatal("rejected lock hardlink was replaced")
+				}
+			}
+		})
+	}
+}
+
 func definitionPairRequestForTest(oldBoard, oldLayout, newBoard []byte, newLayout definitionPairContent) definitionPairPublicationRequest {
 	request := definitionPairPublicationRequest{
 		expected: definitionPairStateIdentity{
@@ -592,6 +727,7 @@ func definitionPairRequestForTest(oldBoard, oldLayout, newBoard []byte, newLayou
 			layout: newLayout,
 		},
 		validate: func(current, candidate definitionPairState) error { return nil },
+		cas:      func(current definitionPairState) error { return nil },
 	}
 	if oldLayout != nil {
 		request.expected.layout.sha256 = etag(oldLayout)
