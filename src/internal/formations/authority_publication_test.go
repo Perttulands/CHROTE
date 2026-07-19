@@ -330,8 +330,8 @@ func TestAuthorityPublisherImmutableFsyncOrderAndFailures(t *testing.T) {
 		publisher.ops.syncDirectory = func(*os.File) error { return injected }
 		raw := []byte("complete immutable bytes\n")
 
-		if _, err := publisher.publishImmutable("bootstrap.json", raw); !errors.Is(err, injected) {
-			t.Fatalf("directory sync failure = %v, want injected error", err)
+		if _, err := publisher.publishImmutable("bootstrap.json", raw); !errors.Is(err, injected) || !errors.Is(err, errAuthorityDurabilityUncertain) {
+			t.Fatalf("directory sync failure = %v, want injected durability-uncertain error", err)
 		}
 		assertAuthorityTestFile(t, filepath.Join(path, "bootstrap.json"), raw)
 		assertAuthorityTestDirectoryEntries(t, directory, "bootstrap.json")
@@ -452,8 +452,8 @@ func TestAuthorityPublisherImmutableHookBoundariesRemainRetryable(t *testing.T) 
 			raw := []byte("complete immutable bytes\n")
 			canonical := filepath.Join(path, "bootstrap.json")
 
-			if _, err := publisher.publishImmutable("bootstrap.json", raw); !errors.Is(err, injected) {
-				t.Fatalf("hook boundary error = %v, want injected error", err)
+			if _, err := publisher.publishImmutable("bootstrap.json", raw); !errors.Is(err, injected) || (test.wantCanonical && !errors.Is(err, errAuthorityDurabilityUncertain)) {
+				t.Fatalf("hook boundary error = %v, want injected error with committed-state classification %t", err, test.wantCanonical)
 			}
 			if !seen {
 				t.Fatalf("publication did not reach hook %q", test.failAt)

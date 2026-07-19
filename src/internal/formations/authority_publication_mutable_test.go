@@ -441,8 +441,8 @@ func TestAuthorityPublisherMutableFsyncOrderAndFailures(t *testing.T) {
 		publisher.ops.syncDirectory = func(*os.File) error { return injected }
 		secondRaw := testAuthorityMutableRaw(2, "second")
 
-		if _, err := publisher.publishMutable("workspace.private.json", &first, secondRaw, testAuthorityMutableRevision); !errors.Is(err, injected) {
-			t.Fatalf("mutable directory sync failure = %v, want injected error", err)
+		if _, err := publisher.publishMutable("workspace.private.json", &first, secondRaw, testAuthorityMutableRevision); !errors.Is(err, injected) || !errors.Is(err, errAuthorityDurabilityUncertain) {
+			t.Fatalf("mutable directory sync failure = %v, want injected durability-uncertain error", err)
 		}
 		assertAuthorityTestFile(t, filepath.Join(path, "workspace.private.json"), secondRaw)
 		assertAuthorityTestDirectoryEntries(t, directory, "workspace.private.json")
