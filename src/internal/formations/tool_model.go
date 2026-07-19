@@ -44,6 +44,7 @@ func parseToolNodes(raw []byte) ([]ToolNode, error) {
 	var tools []ToolNode
 	var current *ToolNode
 	active := toolSectionNone
+	atTopLevel := true
 	paramsSeen := false
 	var fieldsSeen map[string]bool
 
@@ -52,6 +53,7 @@ func parseToolNodes(raw []byte) ([]ToolNode, error) {
 		section, isSection := tomlLineSectionName(line)
 		isArraySection := strings.HasPrefix(trimmed, "[[")
 		if isSection {
+			atTopLevel = false
 			switch section {
 			case "tool":
 				if !isArraySection {
@@ -93,9 +95,16 @@ func parseToolNodes(raw []byte) ([]ToolNode, error) {
 			continue
 		}
 		if isTOMLHeader(line) {
+			if malformedTOMLHeaderTargetsTool(line.body) {
+				return nil, fmt.Errorf("invalid Tool section")
+			}
+			atTopLevel = false
 			active = toolSectionNone
 			fieldsSeen = nil
 			continue
+		}
+		if atTopLevel && topLevelAssignmentTargetsTool(line) {
+			return nil, fmt.Errorf("invalid Tool definition")
 		}
 		if line.valueContinuation || current == nil {
 			continue
@@ -122,6 +131,78 @@ func parseToolNodes(raw []byte) ([]ToolNode, error) {
 	}
 
 	return tools, nil
+}
+
+func topLevelAssignmentTargetsTool(line tomlLine) bool {
+	if line.valueContinuation {
+		return false
+	}
+	eq := tomlAssignmentIndex(line.body)
+	if eq < 0 {
+		return false
+	}
+	path, ok := parseTOMLKeyPath(line.body[:eq])
+	return ok && len(path) > 0 && path[0] == "tool"
+}
+
+func malformedTOMLHeaderTargetsTool(line string) bool {
+	header := strings.TrimSpace(line)
+	if strings.HasPrefix(header, "[[") {
+		header = header[2:]
+	} else if strings.HasPrefix(header, "[") {
+		header = header[1:]
+	} else {
+		return false
+	}
+	header = strings.TrimLeft(header, " \t")
+	if header == "" {
+		return false
+	}
+
+	switch header[0] {
+	case '"':
+		end := basicQuotedSegmentEnd(header)
+		if end < 0 {
+			return rawSegmentStartsWithTool(header[1:])
+		}
+		literal := header[:end+1]
+		if segment, ok := parseTOMLBasicString(literal); ok && segment == "tool" {
+			return true
+		}
+		segment, err := strconv.Unquote(literal)
+		return err == nil && segment == "tool"
+	case '\'':
+		end := strings.IndexByte(header[1:], '\'')
+		if end < 0 {
+			return rawSegmentStartsWithTool(header[1:])
+		}
+		return header[1:1+end] == "tool"
+	default:
+		end := 0
+		for end < len(header) && isBareTOMLKeyByte(header[end]) {
+			end++
+		}
+		return header[:end] == "tool"
+	}
+}
+
+func basicQuotedSegmentEnd(value string) int {
+	escaped := false
+	for i := 1; i < len(value); i++ {
+		switch {
+		case escaped:
+			escaped = false
+		case value[i] == '\\':
+			escaped = true
+		case value[i] == '"':
+			return i
+		}
+	}
+	return -1
+}
+
+func rawSegmentStartsWithTool(value string) bool {
+	return strings.HasPrefix(value, "tool") && (len(value) == len("tool") || !isBareTOMLKeyByte(value[len("tool")]))
 }
 
 func parseToolParameterLine(params map[string]any, line string) error {
@@ -181,36 +262,8 @@ func parseToolParameterScalar(literal string) (any, error) {
 }
 
 func parseToolBasicString(literal string) (string, error) {
-	if len(literal) < 2 || literal[len(literal)-1] != '"' {
-		return "", fmt.Errorf("invalid Tool string")
-	}
-	body := literal[1 : len(literal)-1]
-	for i := 0; i < len(body); i++ {
-		if body[i] != '\\' {
-			continue
-		}
-		i++
-		if i >= len(body) {
-			return "", fmt.Errorf("invalid Tool string")
-		}
-		switch body[i] {
-		case 'b', 't', 'n', 'f', 'r', '"', '\\':
-		case 'u':
-			if i+4 >= len(body) || !toolHexDigits(body[i+1:i+5]) {
-				return "", fmt.Errorf("invalid Tool string")
-			}
-			i += 4
-		case 'U':
-			if i+8 >= len(body) || !toolHexDigits(body[i+1:i+9]) {
-				return "", fmt.Errorf("invalid Tool string")
-			}
-			i += 8
-		default:
-			return "", fmt.Errorf("invalid Tool string")
-		}
-	}
-	value, err := strconv.Unquote(literal)
-	if err != nil || !validToolString(value) {
+	value, ok := parseTOMLBasicString(literal)
+	if !ok || !validToolString(value) {
 		return "", fmt.Errorf("invalid Tool string")
 	}
 	return value, nil
@@ -221,7 +274,7 @@ func parseToolLiteralString(literal string) (string, error) {
 		return "", fmt.Errorf("invalid Tool string")
 	}
 	value := literal[1 : len(literal)-1]
-	if strings.ContainsRune(value, '\'') || strings.ContainsAny(value, "\r\n") || !validToolString(value) {
+	if strings.ContainsRune(value, '\'') || strings.ContainsAny(value, "\r\n") || containsTOMLForbiddenRawControl(value) || !validToolString(value) {
 		return "", fmt.Errorf("invalid Tool string")
 	}
 	return value, nil
@@ -229,15 +282,6 @@ func parseToolLiteralString(literal string) (string, error) {
 
 func validToolString(value string) bool {
 	return utf8.ValidString(value) && strings.IndexByte(value, 0) < 0
-}
-
-func toolHexDigits(value string) bool {
-	for i := 0; i < len(value); i++ {
-		if !toolDigitForBase(value[i], 16) {
-			return false
-		}
-	}
-	return true
 }
 
 func parseToolInteger(literal string) (int64, error) {

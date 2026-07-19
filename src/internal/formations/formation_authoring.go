@@ -1962,6 +1962,62 @@ func tomlHeaderEnd(line string, openWidth, closeWidth int) int {
 	return -1
 }
 
+func parseTOMLBasicString(literal string) (string, bool) {
+	if len(literal) < 2 || literal[0] != '"' || literal[len(literal)-1] != '"' {
+		return "", false
+	}
+	body := literal[1 : len(literal)-1]
+	if containsTOMLForbiddenRawControl(body) {
+		return "", false
+	}
+	for i := 0; i < len(body); i++ {
+		if body[i] != '\\' {
+			continue
+		}
+		i++
+		if i >= len(body) {
+			return "", false
+		}
+		switch body[i] {
+		case 'b', 't', 'n', 'f', 'r', '"', '\\':
+		case 'u':
+			if i+4 >= len(body) || !isTOMLHex(body[i+1:i+5]) {
+				return "", false
+			}
+			i += 4
+		case 'U':
+			if i+8 >= len(body) || !isTOMLHex(body[i+1:i+9]) {
+				return "", false
+			}
+			i += 8
+		default:
+			return "", false
+		}
+	}
+	value, err := strconv.Unquote(literal)
+	return value, err == nil
+}
+
+func containsTOMLForbiddenRawControl(value string) bool {
+	for i := 0; i < len(value); i++ {
+		if value[i] <= 0x08 || value[i] >= 0x0b && value[i] <= 0x1f || value[i] == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+func isTOMLHex(value string) bool {
+	for i := 0; i < len(value); i++ {
+		if !((value[i] >= '0' && value[i] <= '9') ||
+			(value[i] >= 'a' && value[i] <= 'f') ||
+			(value[i] >= 'A' && value[i] <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
 func parseTOMLKeyPath(raw string) ([]string, bool) {
 	var path []string
 	for i := 0; ; {
@@ -1997,8 +2053,8 @@ func parseTOMLKeyPath(raw string) ([]string, bool) {
 			if !closed {
 				return nil, false
 			}
-			unquoted, err := strconv.Unquote(raw[start:i])
-			if err != nil {
+			unquoted, ok := parseTOMLBasicString(raw[start:i])
+			if !ok {
 				return nil, false
 			}
 			segment = unquoted
