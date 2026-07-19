@@ -2,6 +2,7 @@ package formations
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -549,6 +550,175 @@ to = "tool_normalize:port_tool_in"
 	}
 }
 
+func TestToolStructuralJudgeRelationshipRejectsToolCrossUse(t *testing.T) {
+	tests := []struct {
+		name       string
+		companion  string
+		connection string
+	}{
+		{
+			name: "Tool output into Gate judge",
+			companion: `[[connection]]
+id = "edge_gate_judge_formation"
+from = "gate_judge:judge"
+to = "fmn_judge:port_judge_in"
+`,
+			connection: `[[connection]]
+id = "edge_tool_gate_judge"
+from = "tool_normalize:port_tool_out"
+to = "gate_judge:judge"
+`,
+		},
+		{
+			name: "Gate judge into Tool input",
+			companion: `[[connection]]
+id = "edge_gate_judge_formation"
+from = "gate_judge:judge"
+to = "fmn_judge:port_judge_in"
+
+[[connection]]
+id = "edge_formation_gate_judge"
+from = "fmn_judge:port_judge_out"
+to = "gate_judge:judge"
+`,
+			connection: `[[connection]]
+id = "edge_gate_judge_tool"
+from = "gate_judge:judge"
+to = "tool_normalize:port_tool_in"
+`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			report := ValidateBoard(mustParseValidateBoardFixture(t, toolStructuralWriterBoardFixture()+"\n"+tt.companion+"\n"+tt.connection))
+			if dangling := findBoardFindings(report.Errors, FindingDanglingConnection); len(dangling) != 0 {
+				t.Fatalf("known Tool and Gate judge endpoints produced dangling findings: %+v", dangling)
+			}
+			judgeFindings := findBoardFindings(report.Errors, FindingInvalidJudgeRelationship)
+			if len(judgeFindings) != 1 {
+				t.Fatalf("Tool/Gate judge cross-use findings = %+v, want one invalid-judge-relationship error", report.Errors)
+			}
+			if wrongKind := findBoardFindings(report.Errors, FindingIncompatiblePayloadKind); len(wrongKind) != 0 {
+				t.Fatalf("judge control was misreported as a payload-kind mismatch: %+v", wrongKind)
+			}
+			if wrongMedia := findBoardFindings(report.Errors, FindingIncompatibleMedia); len(wrongMedia) != 0 {
+				t.Fatalf("judge control was misreported as a media mismatch: %+v", wrongMedia)
+			}
+		})
+	}
+}
+
+func TestToolStructuralWritersRejectIncompatibleConnectionsWithoutPublication(t *testing.T) {
+	tests := []struct {
+		name       string
+		raw        string
+		from       string
+		previousTo string
+		to         string
+	}{
+		{
+			name: "wire media mismatch",
+			raw:  toolStructuralWriterBoardFixture(),
+			from: "mis_main:out",
+			to:   "tool_normalize:port_tool_in",
+		},
+		{
+			name: "wire payload kind mismatch",
+			raw:  toolStructuralWriterBoardFixture(),
+			from: "gate_primary:fail",
+			to:   "tool_normalize:port_tool_in",
+		},
+		{
+			name: "wire Tool output into Gate judge",
+			raw:  toolStructuralWriterBoardFixture(),
+			from: "tool_normalize:port_tool_out",
+			to:   "gate_judge:judge",
+		},
+		{
+			name: "wire Gate judge into Tool input",
+			raw:  toolStructuralWriterBoardFixture(),
+			from: "gate_judge:judge",
+			to:   "tool_normalize:port_tool_in",
+		},
+		{
+			name: "rewire media mismatch",
+			raw: toolStructuralWriterBoardFixture() + `
+[[connection]]
+id = "edge_mission_gate"
+from = "mis_main:out"
+to = "gate_primary:in"
+`,
+			from:       "mis_main:out",
+			previousTo: "gate_primary:in",
+			to:         "tool_normalize:port_tool_in",
+		},
+		{
+			name: "rewire Tool output into Gate judge",
+			raw: toolStructuralWriterBoardFixture() + `
+[[connection]]
+id = "edge_tool_gate"
+from = "tool_normalize:port_tool_out"
+to = "gate_primary:in"
+`,
+			from:       "tool_normalize:port_tool_out",
+			previousTo: "gate_primary:in",
+			to:         "gate_judge:judge",
+		},
+		{
+			name: "rewire Gate judge into Tool input",
+			raw: toolStructuralWriterBoardFixture() + `
+[[connection]]
+id = "edge_gate_judge_formation"
+from = "gate_judge:judge"
+to = "fmn_judge:port_judge_in"
+`,
+			from:       "gate_judge:judge",
+			previousTo: "fmn_judge:port_judge_in",
+			to:         "tool_normalize:port_tool_in",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertToolStructuralWriterRejectedWithoutPublication(t, tt.raw, tt.from, tt.previousTo, tt.to)
+		})
+	}
+}
+
+func TestToolStructuralWritersKeepCompatibleToolConnections(t *testing.T) {
+	t.Run("wire proper media subset", func(t *testing.T) {
+		store, before := toolStructuralWriterStore(t, toolStructuralWriterBoardFixture())
+		after, err := store.WireFormationPorts("tool-structural", FormationWireRequest{
+			From: "tool_normalize:port_tool_out", To: "gate_primary:in", UpdatedBy: "agent:test",
+		}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev})
+		if err != nil {
+			t.Fatalf("wire compatible Tool output: %v", err)
+		}
+		if !hasConnection(after.Connections, "tool_normalize:port_tool_out", "gate_primary:in") {
+			t.Fatalf("compatible Tool connection was not published: %+v", after.Connections)
+		}
+	})
+
+	t.Run("rewire proper media subset", func(t *testing.T) {
+		raw := toolStructuralWriterBoardFixture() + `
+[[connection]]
+id = "edge_tool_gate"
+from = "tool_normalize:port_tool_out"
+to = "gate_primary:in"
+`
+		store, before := toolStructuralWriterStore(t, raw)
+		after, err := store.RewireFormationTarget("tool-structural", FormationRewireRequest{
+			From: "tool_normalize:port_tool_out", PreviousTo: "gate_primary:in", To: "gate_secondary:in", UpdatedBy: "agent:test",
+		}, WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev})
+		if err != nil {
+			t.Fatalf("rewire compatible Tool output: %v", err)
+		}
+		if hasConnection(after.Connections, "tool_normalize:port_tool_out", "gate_primary:in") ||
+			!hasConnection(after.Connections, "tool_normalize:port_tool_out", "gate_secondary:in") {
+			t.Fatalf("compatible Tool rewire was not published exactly once: %+v", after.Connections)
+		}
+	})
+}
+
 func TestToolStructuralValidateBoardChecksEveryToolDefinition(t *testing.T) {
 	baselineRaw := toolStructuralDuplicateProducerBoardFixture(false)
 	targetBlock := toolStructuralJSONNormalizeToolBlock("tool_target", "Target", "port_target_in", "port_target_out")
@@ -654,6 +824,47 @@ func assertToolStructuralFileIdentity(t *testing.T, path, wantRaw string, wantId
 	if got := operativeFileIdentityForTest(t, path); got != wantIdentity {
 		t.Fatalf("structural validation replaced operative identity for %s = %v, want %v", path, got, wantIdentity)
 	}
+}
+
+func assertToolStructuralWriterRejectedWithoutPublication(
+	t *testing.T,
+	raw string,
+	from string,
+	previousTo string,
+	to string,
+) {
+	t.Helper()
+	store, before := toolStructuralWriterStore(t, raw)
+	path := store.BoardPath("tool-structural")
+	wantRaw := readFile(t, path)
+	wantIdentity := operativeFileIdentityForTest(t, path)
+	opts := WriteOptions{ExpectedETag: before.ETag, ExpectedRev: before.Rev}
+	var err error
+	if previousTo == "" {
+		_, err = store.WireFormationPorts("tool-structural", FormationWireRequest{
+			From: from, To: to, UpdatedBy: "agent:test",
+		}, opts)
+	} else {
+		_, err = store.RewireFormationTarget("tool-structural", FormationRewireRequest{
+			From: from, PreviousTo: previousTo, To: to, UpdatedBy: "agent:test",
+		}, opts)
+	}
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("incompatible Tool connection error = %v, want ErrConflict", err)
+	}
+	assertToolStructuralFileIdentity(t, path, wantRaw, wantIdentity)
+}
+
+func toolStructuralWriterStore(t *testing.T, raw string) (*Store, *BoardDocument) {
+	t.Helper()
+	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
+	writeFixture(t, store.BoardPath("tool-structural"), raw)
+	before, err := store.ReadBoard("tool-structural")
+	if err != nil {
+		t.Fatalf("read Tool writer fixture: %v", err)
+	}
+	return store, before
 }
 
 func replaceToolStructuralFixture(t *testing.T, raw, old, replacement string) string {
@@ -819,6 +1030,41 @@ goal = "Normalize the report"
 beadId = "home-test"
 
 ` + toolStructuralPrimaryToolBlock()
+}
+
+func toolStructuralWriterBoardFixture() string {
+	return toolStructuralDraftBoardFixture() + `
+[[formation]]
+id = "fmn_judge"
+type = "solo"
+title = "Judge"
+
+[[formation.input]]
+id = "port_judge_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_judge_out"
+label = "Output"
+
+[[gate]]
+id = "gate_primary"
+title = "Primary gate"
+kinds = ["human"]
+criterion = "Confirm the payload"
+
+[[gate]]
+id = "gate_secondary"
+title = "Secondary gate"
+kinds = ["human"]
+criterion = "Confirm the payload"
+
+[[gate]]
+id = "gate_judge"
+title = "Formation judge"
+kinds = ["formation"]
+criterion = "Judge the payload"
+`
 }
 
 func toolStructuralDuplicateProducerBoardFixture(includeSecondProducer bool) string {
