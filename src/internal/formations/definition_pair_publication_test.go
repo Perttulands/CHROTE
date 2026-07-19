@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -39,6 +41,7 @@ const (
 	pairStepPublishLayoutUnlinkForTest       = "publish:layout:unlink"
 	pairStepPublishLayoutAbsentForTest       = "publish:layout:absence-check"
 	pairStepPublishBoardRenameForTest        = "publish:board:rename"
+	pairStepPublishBoardDirSyncedForTest     = "publish:board:dir-synced"
 )
 
 func TestDefinitionPairIdentityKeepsAbsentLayoutDistinctFromPresentEmptyBytes(t *testing.T) {
@@ -198,68 +201,81 @@ func TestDefinitionPairAcquiresBoardThenLayoutAndHoldsBothThroughPublication(t *
 	writeFixture(t, store.BoardPath(slug), string(oldBoard))
 	writeFixture(t, store.LayoutPath(slug), string(oldLayout))
 
-	layoutHeld := make(chan struct{})
-	releaseLayout := make(chan struct{})
-	layoutDone := make(chan error, 1)
-	go func() {
-		layoutDone <- store.withLayoutDefinitionLock(slug, func(*definitionFile) error {
-			close(layoutHeld)
-			<-releaseLayout
-			return nil
-		})
-	}()
-	<-layoutHeld
+	if err := store.withLayoutDefinitionLock(slug, func(*definitionFile) error { return nil }); err != nil {
+		t.Fatalf("initialize layout lock: %v", err)
+	}
+	foreignLayout := startPeerProcessDefinitionFlockHolderForTest(t, store.LayoutPath(slug)+".lock")
 
 	request := definitionPairRequestForTest(oldBoard, oldLayout, newBoard, pairPresentContentForTest(newLayout))
 	locksHeldAtPublication := make(chan [2]bool, 1)
-	callbackReached := make(chan string, 1)
+	forbiddenPhase := make(chan string)
+	foreignReleaseAuthorized := make(chan struct{})
+	var authorizeForeignRelease sync.Once
+	authorizeRelease := func() {
+		authorizeForeignRelease.Do(func() { close(foreignReleaseAuthorized) })
+	}
+	reportPhase := func(phase string) {
+		select {
+		case <-foreignReleaseAuthorized:
+			return
+		case forbiddenPhase <- phase:
+		}
+	}
+	request.validate = func(current, candidate definitionPairState) error {
+		reportPhase("validate")
+		return nil
+	}
+	request.cas = func(current definitionPairState) error {
+		reportPhase("cas")
+		return nil
+	}
 	publishDone := make(chan error, 1)
-	go func() {
-		publishDone <- store.publishDefinitionPair(slug, request, func(step string) error {
-			select {
-			case callbackReached <- step:
-			default:
-			}
-			if step == pairStepPublishLayoutRenameForTest {
-				locksHeldAtPublication <- [2]bool{
-					pairMutexHeldForTest(store.BoardPath(slug) + ".lock"),
-					pairMutexHeldForTest(store.LayoutPath(slug) + ".lock"),
-				}
-			}
-			return nil
-		})
-	}()
+	go runDefinitionPairPublicationBehindForeignFlockForTest(
+		store,
+		slug,
+		request,
+		reportPhase,
+		locksHeldAtPublication,
+		publishDone,
+	)
+	publicationDrained := false
+	t.Cleanup(func() {
+		authorizeRelease()
+		if err := foreignLayout.releaseAndWait(); err != nil {
+			t.Errorf("cleanup foreign layout owner: %v", err)
+		}
+		if publicationDrained {
+			return
+		}
+		select {
+		case <-publishDone:
+			publicationDrained = true
+		case <-time.After(2 * time.Second):
+			t.Error("cleanup timed out draining pair publication")
+		}
+	})
 
-	boardMutex := mutexFor(store.BoardPath(slug) + ".lock")
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		if !boardMutex.TryLock() {
-			break
-		}
-		boardMutex.Unlock()
-		if time.Now().After(deadline) {
-			close(releaseLayout)
-			t.Fatalf("pair publication did not acquire board lock before waiting for layout: %v", <-publishDone)
-		}
-		time.Sleep(time.Millisecond)
+	waitForDefinitionPairMutexHeldForTest(t, store.BoardPath(slug)+".lock", "publisher board")
+	waitForDefinitionPairMutexHeldForTest(t, store.LayoutPath(slug)+".lock", "publisher layout")
+	consumedPublication, err := waitForDefinitionPairForeignFlockBlockForTest(
+		"runDefinitionPairPublicationBehindForeignFlockForTest",
+		forbiddenPhase,
+		publishDone,
+	)
+	publicationDrained = consumedPublication
+	if err != nil {
+		t.Fatal(err)
 	}
+
+	authorizeRelease()
+	foreignLayout.release(t)
 	select {
-	case err := <-publishDone:
-		close(releaseLayout)
-		t.Fatalf("pair publication bypassed held layout lock: %v", err)
-	case step := <-callbackReached:
-		close(releaseLayout)
-		<-layoutDone
-		<-publishDone
-		t.Fatalf("pair publication reached %q while another goroutine owned layout lock", step)
-	case <-time.After(25 * time.Millisecond):
+	case err = <-publishDone:
+		publicationDrained = true
+	case <-time.After(2 * time.Second):
+		t.Fatal("pair publication did not return after releasing the foreign layout flock")
 	}
-
-	close(releaseLayout)
-	if err := <-layoutDone; err != nil {
-		t.Fatalf("held layout lock: %v", err)
-	}
-	if err := <-publishDone; err != nil {
+	if err != nil {
 		t.Fatalf("publish after releasing layout lock: %v", err)
 	}
 	select {
@@ -269,6 +285,52 @@ func TestDefinitionPairAcquiresBoardThenLayoutAndHoldsBothThroughPublication(t *
 		}
 	default:
 		t.Fatal("pair publication never reached layout rename checkpoint")
+	}
+}
+
+func TestDefinitionPairHoldsContinuousMutexOwnerEpochThroughSuccessfulPublication(t *testing.T) {
+	store := NewStore(t.TempDir())
+	slug := "pair-mutex-owner-epoch"
+	oldBoard := pairBoardFixture(slug, 1, "Old")
+	oldLayout := pairLayoutFixture(1, "old")
+	newBoard := pairBoardFixture(slug, 2, "New")
+	newLayout := pairLayoutFixture(2, "new")
+	writeFixture(t, store.BoardPath(slug), string(oldBoard))
+	writeFixture(t, store.LayoutPath(slug), string(oldLayout))
+
+	contenders := newDefinitionPairOwnerEpochContendersForTest(
+		t,
+		store.BoardPath(slug)+".lock",
+		store.LayoutPath(slug)+".lock",
+	)
+	request := definitionPairRequestForTest(oldBoard, oldLayout, newBoard, pairPresentContentForTest(newLayout))
+	request.validate = func(current, candidate definitionPairState) error {
+		return contenders.arm()
+	}
+	request.cas = func(current definitionPairState) error {
+		return contenders.requireBlocked("cas")
+	}
+	terminalDurability := false
+	done := make(chan error, 1)
+	go func() {
+		done <- store.publishDefinitionPair(slug, request, func(step string) error {
+			if err := contenders.requireBlocked(step); err != nil {
+				return err
+			}
+			if step == pairStepPublishBoardDirSyncedForTest {
+				terminalDurability = true
+			}
+			return nil
+		})
+	}()
+
+	err := waitForDefinitionPairPublicationForTest(t, done, contenders)
+	contenders.releaseAndRequireEntry(t)
+	if err != nil {
+		t.Fatalf("publish under continuous mutex contenders: %v", err)
+	}
+	if !terminalDurability {
+		t.Fatal("publication returned without a post-board-parent-fsync milestone")
 	}
 }
 
@@ -919,7 +981,7 @@ func TestDefinitionPairHoldsBothAdvisoryFlocksAgainstPeerProcessThroughFinalBoar
 	probedFinalDurability := false
 	request := definitionPairRequestForTest(oldBoard, oldLayout, newBoard, pairPresentContentForTest(newLayout))
 	err := store.publishDefinitionPair(slug, request, func(step string) error {
-		if step == pairStepPublishBoardDirSyncForTest {
+		if step == pairStepPublishBoardDirSyncedForTest {
 			probedFinalDurability = true
 			assertPeerProcessDefinitionFlocksBlockedForTest(
 				t,
@@ -933,8 +995,99 @@ func TestDefinitionPairHoldsBothAdvisoryFlocksAgainstPeerProcessThroughFinalBoar
 		t.Fatalf("publish while probing advisory locks: %v", err)
 	}
 	if !probedFinalDurability {
-		t.Fatal("publication omitted final board-directory durability checkpoint")
+		t.Fatal("publication omitted post-board-parent-fsync durability milestone")
 	}
+}
+
+func TestDefinitionPairPeerProcessFlockHolder(t *testing.T) {
+	if os.Getenv("CHROTE_TEST_DEFINITION_PAIR_FLOCK_HOLDER") != "1" {
+		return
+	}
+	lockPath := os.Getenv("CHROTE_TEST_DEFINITION_PAIR_HELD_LOCK")
+	readyPath := os.Getenv("CHROTE_TEST_DEFINITION_PAIR_HOLDER_READY")
+	releasePath := os.Getenv("CHROTE_TEST_DEFINITION_PAIR_HOLDER_RELEASE")
+	fd, err := syscall.Open(lockPath, syscall.O_RDWR|syscall.O_CLOEXEC|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		t.Fatalf("open foreign definition lock: %v", err)
+	}
+	defer syscall.Close(fd) //nolint:errcheck // subprocess exit also closes the descriptor
+	if err := syscall.Flock(fd, syscall.LOCK_EX); err != nil {
+		t.Fatalf("hold foreign definition flock: %v", err)
+	}
+	defer syscall.Flock(fd, syscall.LOCK_UN) //nolint:errcheck // best-effort test cleanup
+	if err := os.WriteFile(readyPath, []byte("ready\n"), 0o600); err != nil {
+		t.Fatalf("publish foreign flock readiness: %v", err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(releasePath); err == nil {
+			return
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("inspect foreign flock release: %v", err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting to release foreign definition flock")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestDefinitionPairPeerProcessFlockContender(t *testing.T) {
+	if os.Getenv("CHROTE_TEST_DEFINITION_PAIR_FLOCK_CONTENDER") != "1" {
+		return
+	}
+	lockPath := os.Getenv("CHROTE_TEST_DEFINITION_PAIR_CONTENDED_LOCK")
+	armedPath := os.Getenv("CHROTE_TEST_DEFINITION_PAIR_CONTENDER_ARMED")
+	enteredPath := os.Getenv("CHROTE_TEST_DEFINITION_PAIR_CONTENDER_ENTERED")
+	releasePath := os.Getenv("CHROTE_TEST_DEFINITION_PAIR_CONTENDER_RELEASE")
+	fd, err := syscall.Open(lockPath, syscall.O_RDWR|syscall.O_CLOEXEC|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		t.Fatalf("open contended definition lock: %v", err)
+	}
+	defer syscall.Close(fd) //nolint:errcheck // subprocess exit also closes the descriptor
+	if err := syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB); err == nil {
+		_ = syscall.Flock(fd, syscall.LOCK_UN)
+		t.Fatal("definition flock contender acquired before reporting a blocked owner epoch")
+	} else if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+		t.Fatalf("probe contended definition flock: %v", err)
+	}
+	acquired := make(chan error, 1)
+	go blockDefinitionPairFlockContenderForTest(fd, acquired)
+	if err := waitForDefinitionPairGoroutineBlocksForTest(
+		"blockDefinitionPairFlockContenderForTest",
+		"[syscall]",
+		"syscall.Flock",
+		1,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(armedPath, []byte("armed\n"), 0o600); err != nil {
+		t.Fatalf("publish definition flock contender readiness: %v", err)
+	}
+	if err := <-acquired; err != nil {
+		t.Fatalf("enter contended definition flock: %v", err)
+	}
+	defer syscall.Flock(fd, syscall.LOCK_UN) //nolint:errcheck // best-effort test cleanup
+	if err := os.WriteFile(enteredPath, []byte("entered\n"), 0o600); err != nil {
+		t.Fatalf("publish definition flock contender entry: %v", err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(releasePath); err == nil {
+			return
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("inspect definition flock contender release: %v", err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting to release definition flock contender")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+//go:noinline
+func blockDefinitionPairFlockContenderForTest(fd int, acquired chan<- error) {
+	acquired <- syscall.Flock(fd, syscall.LOCK_EX)
 }
 
 func TestDefinitionPairPeerProcessFlockProbe(t *testing.T) {
@@ -1074,4 +1227,615 @@ func assertPeerProcessDefinitionFlocksBlockedForTest(t *testing.T, boardLock, la
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("peer-process definition flock probe: %v\n%s", err, output)
 	}
+}
+
+//go:noinline
+func runDefinitionPairPublicationBehindForeignFlockForTest(
+	store *Store,
+	slug string,
+	request definitionPairPublicationRequest,
+	reportPhase func(string),
+	locksHeldAtPublication chan<- [2]bool,
+	done chan<- error,
+) {
+	done <- store.publishDefinitionPair(slug, request, func(step string) error {
+		reportPhase(step)
+		if step == pairStepPublishLayoutRenameForTest {
+			locksHeldAtPublication <- [2]bool{
+				pairMutexHeldForTest(store.BoardPath(slug) + ".lock"),
+				pairMutexHeldForTest(store.LayoutPath(slug) + ".lock"),
+			}
+		}
+		return nil
+	})
+}
+
+type peerProcessDefinitionFlockHolderForTest struct {
+	command     *exec.Cmd
+	releasePath string
+	done        chan struct{}
+	waitErr     error
+	releaseOnce sync.Once
+	releaseErr  error
+}
+
+func startPeerProcessDefinitionFlockHolderForTest(t *testing.T, lockPath string) *peerProcessDefinitionFlockHolderForTest {
+	t.Helper()
+	controlDir := t.TempDir()
+	readyPath := filepath.Join(controlDir, "ready")
+	releasePath := filepath.Join(controlDir, "release")
+	command := exec.Command(os.Args[0], "-test.run=^TestDefinitionPairPeerProcessFlockHolder$")
+	command.Env = append(os.Environ(),
+		"CHROTE_TEST_DEFINITION_PAIR_FLOCK_HOLDER=1",
+		"CHROTE_TEST_DEFINITION_PAIR_HELD_LOCK="+lockPath,
+		"CHROTE_TEST_DEFINITION_PAIR_HOLDER_READY="+readyPath,
+		"CHROTE_TEST_DEFINITION_PAIR_HOLDER_RELEASE="+releasePath,
+	)
+	if err := command.Start(); err != nil {
+		t.Fatalf("start foreign definition flock holder: %v", err)
+	}
+	holder := &peerProcessDefinitionFlockHolderForTest{
+		command:     command,
+		releasePath: releasePath,
+		done:        make(chan struct{}),
+	}
+	go func() {
+		holder.waitErr = command.Wait()
+		close(holder.done)
+	}()
+	t.Cleanup(func() {
+		if err := holder.releaseAndWait(); err != nil {
+			t.Errorf("cleanup foreign definition flock holder: %v", err)
+		}
+	})
+	waitForDefinitionPairPathForTest(t, readyPath, holder, "foreign definition flock readiness")
+	return holder
+}
+
+func (h *peerProcessDefinitionFlockHolderForTest) release(t *testing.T) {
+	t.Helper()
+	if err := h.releaseAndWait(); err != nil {
+		t.Fatalf("foreign definition flock holder: %v", err)
+	}
+}
+
+func (h *peerProcessDefinitionFlockHolderForTest) releaseAndWait() error {
+	h.releaseOnce.Do(func() {
+		h.releaseErr = os.WriteFile(h.releasePath, []byte("release\n"), 0o600)
+	})
+	if h.releaseErr != nil {
+		return h.releaseErr
+	}
+	select {
+	case <-h.done:
+		return h.waitErr
+	case <-time.After(2 * time.Second):
+		_ = h.command.Process.Kill()
+		<-h.done
+		if h.waitErr != nil {
+			return h.waitErr
+		}
+		return errors.New("foreign definition flock holder did not release")
+	}
+}
+
+func waitForDefinitionPairPathForTest(t *testing.T, path string, process *peerProcessDefinitionFlockHolderForTest, description string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return
+		} else if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s: %v", description, err)
+		}
+		select {
+		case <-process.done:
+			t.Fatalf("%s process exited early: %v", description, process.waitErr)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", description)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+type definitionPairMutexContendersForTest struct {
+	board         *sync.Mutex
+	layout        *sync.Mutex
+	boardArmed    chan struct{}
+	layoutArmed   chan struct{}
+	boardEntered  chan struct{}
+	layoutEntered chan struct{}
+	release       chan struct{}
+	released      sync.Once
+	armOnce       sync.Once
+	armErr        error
+}
+
+type definitionPairOwnerEpochContendersForTest struct {
+	mutex *definitionPairMutexContendersForTest
+	flock *definitionPairFlockContendersForTest
+}
+
+func newDefinitionPairOwnerEpochContendersForTest(t *testing.T, boardLock, layoutLock string) *definitionPairOwnerEpochContendersForTest {
+	t.Helper()
+	contenders := &definitionPairOwnerEpochContendersForTest{
+		mutex: newDefinitionPairMutexContendersForTest(
+			mutexFor(boardLock),
+			mutexFor(layoutLock),
+		),
+		flock: newDefinitionPairFlockContendersForTest(t.TempDir(), boardLock, layoutLock),
+	}
+	t.Cleanup(contenders.cleanup)
+	return contenders
+}
+
+func (c *definitionPairOwnerEpochContendersForTest) arm() error {
+	if err := c.mutex.arm(); err != nil {
+		return err
+	}
+	return c.flock.arm()
+}
+
+func (c *definitionPairOwnerEpochContendersForTest) requireBlocked(phase string) error {
+	if err := c.mutex.requireBlocked(phase); err != nil {
+		return err
+	}
+	return c.flock.requireBlocked(phase)
+}
+
+func (c *definitionPairOwnerEpochContendersForTest) releaseAndRequireEntry(t *testing.T) {
+	t.Helper()
+	c.mutex.releaseAndRequireEntry(t)
+	c.flock.releaseAndRequireEntry(t)
+}
+
+func (c *definitionPairOwnerEpochContendersForTest) forceRelease() {
+	c.mutex.released.Do(func() { close(c.mutex.release) })
+	c.flock.forceRelease()
+}
+
+func (c *definitionPairOwnerEpochContendersForTest) cleanup() {
+	c.forceRelease()
+	c.flock.waitForExit()
+}
+
+func (c *definitionPairOwnerEpochContendersForTest) enteredBeforeTerminal() string {
+	if member := c.mutex.enteredMember(); member != "" {
+		return member + " mutex"
+	}
+	if member := c.flock.enteredMember(); member != "" {
+		return member + " flock"
+	}
+	return ""
+}
+
+func newDefinitionPairMutexContendersForTest(board, layout *sync.Mutex) *definitionPairMutexContendersForTest {
+	return &definitionPairMutexContendersForTest{
+		board:         board,
+		layout:        layout,
+		boardArmed:    make(chan struct{}),
+		layoutArmed:   make(chan struct{}),
+		boardEntered:  make(chan struct{}),
+		layoutEntered: make(chan struct{}),
+		release:       make(chan struct{}),
+	}
+}
+
+func (c *definitionPairMutexContendersForTest) arm() error {
+	c.armOnce.Do(func() {
+		go c.contendBoard()
+		go c.contendLayout()
+		for _, armed := range []<-chan struct{}{c.boardArmed, c.layoutArmed} {
+			select {
+			case <-armed:
+			case <-time.After(2 * time.Second):
+				c.armErr = errors.New("timed out arming definition-pair mutex contender")
+				return
+			}
+		}
+		if c.armErr = waitForDefinitionPairGoroutineBlocksForTest(
+			"(*definitionPairMutexContendersForTest).contendBoard",
+			"[sync.Mutex.Lock]",
+			"sync.(*Mutex).Lock",
+			1,
+		); c.armErr != nil {
+			return
+		}
+		c.armErr = waitForDefinitionPairGoroutineBlocksForTest(
+			"(*definitionPairMutexContendersForTest).contendLayout",
+			"[sync.Mutex.Lock]",
+			"sync.(*Mutex).Lock",
+			1,
+		)
+	})
+	return c.armErr
+}
+
+//go:noinline
+func (c *definitionPairMutexContendersForTest) contendBoard() {
+	close(c.boardArmed)
+	c.board.Lock()
+	close(c.boardEntered)
+	<-c.release
+	c.board.Unlock()
+}
+
+//go:noinline
+func (c *definitionPairMutexContendersForTest) contendLayout() {
+	close(c.layoutArmed)
+	c.layout.Lock()
+	close(c.layoutEntered)
+	<-c.release
+	c.layout.Unlock()
+}
+
+func (c *definitionPairMutexContendersForTest) requireBlocked(phase string) error {
+	if member := c.enteredMember(); member != "" {
+		return fmt.Errorf("%s mutex contender entered before terminal durability at %s", member, phase)
+	}
+	return nil
+}
+
+func (c *definitionPairMutexContendersForTest) releaseAndRequireEntry(t *testing.T) {
+	t.Helper()
+	for _, contender := range []struct {
+		member  string
+		entered <-chan struct{}
+	}{
+		{member: "board", entered: c.boardEntered},
+		{member: "layout", entered: c.layoutEntered},
+	} {
+		select {
+		case <-contender.entered:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s definition-pair mutex contender did not enter after publication", contender.member)
+		}
+	}
+	c.released.Do(func() { close(c.release) })
+}
+
+func (c *definitionPairMutexContendersForTest) enteredMember() string {
+	select {
+	case <-c.boardEntered:
+		return "board"
+	default:
+	}
+	select {
+	case <-c.layoutEntered:
+		return "layout"
+	default:
+	}
+	return ""
+}
+
+func waitForDefinitionPairPublicationForTest(t *testing.T, done <-chan error, contenders *definitionPairOwnerEpochContendersForTest) error {
+	t.Helper()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(5 * time.Second):
+		entered := contenders.enteredBeforeTerminal()
+		contenders.forceRelease()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+		}
+		if entered != "" {
+			t.Fatalf("publication deadlocked after %s mutex contender entered during the owner epoch", entered)
+		}
+		t.Fatal("publication deadlocked while definition-pair mutex contenders were armed")
+		return nil
+	}
+}
+
+type definitionPairFlockContendersForTest struct {
+	controlRoot string
+	boardLock   string
+	layoutLock  string
+	board       *peerProcessDefinitionFlockContenderForTest
+	layout      *peerProcessDefinitionFlockContenderForTest
+	armOnce     sync.Once
+	armErr      error
+}
+
+func newDefinitionPairFlockContendersForTest(controlRoot, boardLock, layoutLock string) *definitionPairFlockContendersForTest {
+	return &definitionPairFlockContendersForTest{
+		controlRoot: controlRoot,
+		boardLock:   boardLock,
+		layoutLock:  layoutLock,
+	}
+}
+
+func (c *definitionPairFlockContendersForTest) arm() error {
+	c.armOnce.Do(func() {
+		c.board, c.armErr = startPeerProcessDefinitionFlockContenderForTest(c.controlRoot, "board", c.boardLock)
+		if c.armErr != nil {
+			return
+		}
+		c.layout, c.armErr = startPeerProcessDefinitionFlockContenderForTest(c.controlRoot, "layout", c.layoutLock)
+	})
+	return c.armErr
+}
+
+func (c *definitionPairFlockContendersForTest) requireBlocked(phase string) error {
+	for _, contender := range []*peerProcessDefinitionFlockContenderForTest{c.board, c.layout} {
+		if contender == nil {
+			return fmt.Errorf("definition flock contender was not armed at %s", phase)
+		}
+		if entered, err := contender.entered(); err != nil {
+			return fmt.Errorf("inspect %s flock contender at %s: %w", contender.member, phase, err)
+		} else if entered {
+			return fmt.Errorf("%s flock contender entered before terminal durability at %s", contender.member, phase)
+		}
+		select {
+		case <-contender.finished:
+			return fmt.Errorf("%s flock contender exited before terminal durability at %s: %v", contender.member, phase, contender.waitErr)
+		default:
+		}
+	}
+	return nil
+}
+
+func (c *definitionPairFlockContendersForTest) enteredMember() string {
+	for _, contender := range []*peerProcessDefinitionFlockContenderForTest{c.board, c.layout} {
+		if contender == nil {
+			continue
+		}
+		entered, _ := contender.entered()
+		if entered {
+			return contender.member
+		}
+	}
+	return ""
+}
+
+func (c *definitionPairFlockContendersForTest) releaseAndRequireEntry(t *testing.T) {
+	t.Helper()
+	for _, contender := range []*peerProcessDefinitionFlockContenderForTest{c.board, c.layout} {
+		if contender == nil {
+			t.Fatal("definition flock contender was not armed")
+		}
+		if err := contender.waitForEntry(); err != nil {
+			t.Fatalf("%s definition flock contender did not enter after publication: %v", contender.member, err)
+		}
+	}
+	c.forceRelease()
+	for _, contender := range []*peerProcessDefinitionFlockContenderForTest{c.board, c.layout} {
+		if err := contender.wait(); err != nil {
+			t.Fatalf("%s definition flock contender: %v", contender.member, err)
+		}
+	}
+}
+
+func (c *definitionPairFlockContendersForTest) forceRelease() {
+	for _, contender := range []*peerProcessDefinitionFlockContenderForTest{c.board, c.layout} {
+		if contender != nil {
+			contender.release()
+		}
+	}
+}
+
+func (c *definitionPairFlockContendersForTest) waitForExit() {
+	for _, contender := range []*peerProcessDefinitionFlockContenderForTest{c.board, c.layout} {
+		if contender != nil {
+			_ = contender.wait()
+		}
+	}
+}
+
+type peerProcessDefinitionFlockContenderForTest struct {
+	member      string
+	command     *exec.Cmd
+	armedPath   string
+	enteredPath string
+	releasePath string
+	finished    chan struct{}
+	waitErr     error
+	releaseOnce sync.Once
+}
+
+func startPeerProcessDefinitionFlockContenderForTest(controlRoot, member, lockPath string) (*peerProcessDefinitionFlockContenderForTest, error) {
+	controlDir := filepath.Join(controlRoot, member)
+	if err := os.Mkdir(controlDir, 0o700); err != nil {
+		return nil, err
+	}
+	contender := &peerProcessDefinitionFlockContenderForTest{
+		member:      member,
+		armedPath:   filepath.Join(controlDir, "armed"),
+		enteredPath: filepath.Join(controlDir, "entered"),
+		releasePath: filepath.Join(controlDir, "release"),
+		finished:    make(chan struct{}),
+	}
+	contender.command = exec.Command(os.Args[0], "-test.run=^TestDefinitionPairPeerProcessFlockContender$")
+	contender.command.Env = append(os.Environ(),
+		"CHROTE_TEST_DEFINITION_PAIR_FLOCK_CONTENDER=1",
+		"CHROTE_TEST_DEFINITION_PAIR_CONTENDED_LOCK="+lockPath,
+		"CHROTE_TEST_DEFINITION_PAIR_CONTENDER_ARMED="+contender.armedPath,
+		"CHROTE_TEST_DEFINITION_PAIR_CONTENDER_ENTERED="+contender.enteredPath,
+		"CHROTE_TEST_DEFINITION_PAIR_CONTENDER_RELEASE="+contender.releasePath,
+	)
+	if err := contender.command.Start(); err != nil {
+		return nil, err
+	}
+	go func() {
+		contender.waitErr = contender.command.Wait()
+		close(contender.finished)
+	}()
+	if err := contender.waitForPath(contender.armedPath, "arm"); err != nil {
+		contender.release()
+		return nil, err
+	}
+	return contender, nil
+}
+
+func (c *peerProcessDefinitionFlockContenderForTest) entered() (bool, error) {
+	_, err := os.Stat(c.enteredPath)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
+}
+
+func (c *peerProcessDefinitionFlockContenderForTest) waitForEntry() error {
+	return c.waitForPath(c.enteredPath, "enter")
+}
+
+func (c *peerProcessDefinitionFlockContenderForTest) waitForPath(path, action string) error {
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		select {
+		case <-c.finished:
+			return fmt.Errorf("process exited before it could %s: %v", action, c.waitErr)
+		default:
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting to %s", action)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func (c *peerProcessDefinitionFlockContenderForTest) release() {
+	c.releaseOnce.Do(func() {
+		_ = os.WriteFile(c.releasePath, []byte("release\n"), 0o600)
+	})
+}
+
+func (c *peerProcessDefinitionFlockContenderForTest) wait() error {
+	select {
+	case <-c.finished:
+		return c.waitErr
+	case <-time.After(2 * time.Second):
+		_ = c.command.Process.Kill()
+		<-c.finished
+		return errors.New("timed out waiting for contender process exit")
+	}
+}
+
+func waitForDefinitionPairMutexHeldForTest(t *testing.T, lockPath, description string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if pairMutexHeldForTest(lockPath) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s mutex acquisition", description)
+		}
+		runtime.Gosched()
+	}
+}
+
+func waitForDefinitionPairGoroutineBlockForTest(t *testing.T, function, blockedState, blockedFrame string) {
+	t.Helper()
+	if err := waitForDefinitionPairGoroutineBlocksForTest(function, blockedState, blockedFrame, 1); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func waitForDefinitionPairForeignFlockBlockForTest(
+	function string,
+	forbiddenPhase <-chan string,
+	publishDone <-chan error,
+) (bool, error) {
+	deadline := time.Now().Add(2 * time.Second)
+	buffer := make([]byte, 64<<10)
+	var snapshot string
+	for {
+		var blocked int
+		buffer, snapshot, blocked = definitionPairGoroutineBlockSnapshotForTest(
+			buffer,
+			function,
+			"[syscall]",
+			"syscall.Flock",
+		)
+		if blocked == 1 {
+			return false, nil
+		}
+		select {
+		case phase := <-forbiddenPhase:
+			return false, fmt.Errorf("pair publication reached %q while another process owned layout flock", phase)
+		case err := <-publishDone:
+			return true, fmt.Errorf("pair publication returned before waiting on the foreign layout flock: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			return false, fmt.Errorf(
+				"timed out waiting for %s in state [syscall] with frame syscall.Flock\nfinal goroutine snapshot:\n%s",
+				function,
+				snapshot,
+			)
+		}
+		runtime.Gosched()
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func waitForDefinitionPairGoroutineBlocksForTest(function, blockedState, blockedFrame string, want int) error {
+	deadline := time.Now().Add(2 * time.Second)
+	buffer := make([]byte, 64<<10)
+	var snapshot string
+	for {
+		var blocked int
+		buffer, snapshot, blocked = definitionPairGoroutineBlockSnapshotForTest(
+			buffer,
+			function,
+			blockedState,
+			blockedFrame,
+		)
+		if blocked >= want {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf(
+				"timed out waiting for %d %s goroutine(s) in state %s with frame %s; found %d\nfinal goroutine snapshot:\n%s",
+				want,
+				function,
+				blockedState,
+				blockedFrame,
+				blocked,
+				snapshot,
+			)
+		}
+		runtime.Gosched()
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func definitionPairGoroutineBlockSnapshotForTest(
+	buffer []byte,
+	function string,
+	blockedState string,
+	blockedFrame string,
+) ([]byte, string, int) {
+	var length int
+	for {
+		length = runtime.Stack(buffer, true)
+		if length < len(buffer) {
+			break
+		}
+		buffer = make([]byte, len(buffer)*2)
+	}
+	snapshot := string(buffer[:length])
+	blocked := 0
+	for _, stack := range strings.Split(snapshot, "\n\n") {
+		lines := strings.SplitN(stack, "\n", 2)
+		if len(lines) == 2 &&
+			strings.Contains(lines[0], blockedState) &&
+			strings.Contains(lines[1], function) &&
+			strings.Contains(lines[1], blockedFrame) {
+			blocked++
+		}
+	}
+	return buffer, snapshot, blocked
 }

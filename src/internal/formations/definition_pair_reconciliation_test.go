@@ -13,20 +13,22 @@ const (
 	pairStepPublishBoardFileSyncForTest  = "publish:board:file-sync"
 	pairStepPublishBoardDirSyncForTest   = "publish:board:dir-sync"
 
-	pairStepReconcileNewLayoutAbsentForTest   = "reconcile:new:layout:absence-check"
-	pairStepReconcileNewLayoutFileSyncForTest = "reconcile:new:layout:file-sync"
-	pairStepReconcileNewLayoutDirSyncForTest  = "reconcile:new:layout:dir-sync"
-	pairStepReconcileNewBoardRenameForTest    = "reconcile:new:board:rename"
-	pairStepReconcileNewBoardFileSyncForTest  = "reconcile:new:board:file-sync"
-	pairStepReconcileNewBoardDirSyncForTest   = "reconcile:new:board:dir-sync"
-	pairStepReconcileOldBoardRenameForTest    = "reconcile:old:board:rename"
-	pairStepReconcileOldBoardFileSyncForTest  = "reconcile:old:board:file-sync"
-	pairStepReconcileOldBoardDirSyncForTest   = "reconcile:old:board:dir-sync"
-	pairStepReconcileOldLayoutRenameForTest   = "reconcile:old:layout:rename"
-	pairStepReconcileOldLayoutUnlinkForTest   = "reconcile:old:layout:unlink"
-	pairStepReconcileOldLayoutAbsentForTest   = "reconcile:old:layout:absence-check"
-	pairStepReconcileOldLayoutFileSyncForTest = "reconcile:old:layout:file-sync"
-	pairStepReconcileOldLayoutDirSyncForTest  = "reconcile:old:layout:dir-sync"
+	pairStepReconcileNewLayoutAbsentForTest    = "reconcile:new:layout:absence-check"
+	pairStepReconcileNewLayoutFileSyncForTest  = "reconcile:new:layout:file-sync"
+	pairStepReconcileNewLayoutDirSyncForTest   = "reconcile:new:layout:dir-sync"
+	pairStepReconcileNewBoardRenameForTest     = "reconcile:new:board:rename"
+	pairStepReconcileNewBoardFileSyncForTest   = "reconcile:new:board:file-sync"
+	pairStepReconcileNewBoardDirSyncForTest    = "reconcile:new:board:dir-sync"
+	pairStepReconcileNewBoardDirSyncedForTest  = "reconcile:new:board:dir-synced"
+	pairStepReconcileOldBoardRenameForTest     = "reconcile:old:board:rename"
+	pairStepReconcileOldBoardFileSyncForTest   = "reconcile:old:board:file-sync"
+	pairStepReconcileOldBoardDirSyncForTest    = "reconcile:old:board:dir-sync"
+	pairStepReconcileOldLayoutRenameForTest    = "reconcile:old:layout:rename"
+	pairStepReconcileOldLayoutUnlinkForTest    = "reconcile:old:layout:unlink"
+	pairStepReconcileOldLayoutAbsentForTest    = "reconcile:old:layout:absence-check"
+	pairStepReconcileOldLayoutFileSyncForTest  = "reconcile:old:layout:file-sync"
+	pairStepReconcileOldLayoutDirSyncForTest   = "reconcile:old:layout:dir-sync"
+	pairStepReconcileOldLayoutDirSyncedForTest = "reconcile:old:layout:dir-synced"
 )
 
 func TestDefinitionPairPublishesDurableLayoutBeforeBoard(t *testing.T) {
@@ -55,6 +57,7 @@ func TestDefinitionPairPublishesDurableLayoutBeforeBoard(t *testing.T) {
 		pairStepPublishBoardRenameForTest,
 		pairStepPublishBoardFileSyncForTest,
 		pairStepPublishBoardDirSyncForTest,
+		pairStepPublishBoardDirSyncedForTest,
 	)
 	assertPairFilesForTest(t, store, slug, newBoard, pairPresentContentForTest(newLayout))
 }
@@ -84,6 +87,7 @@ func TestDefinitionPairPublishesLayoutAbsenceDurablyBeforeBoard(t *testing.T) {
 		pairStepPublishBoardRenameForTest,
 		pairStepPublishBoardFileSyncForTest,
 		pairStepPublishBoardDirSyncForTest,
+		pairStepPublishBoardDirSyncedForTest,
 	)
 	if pairStepObservedForTest(steps, pairStepPublishLayoutFileSyncForTest) {
 		t.Fatalf("absent candidate layout was file-synced; steps=%v", steps)
@@ -404,6 +408,7 @@ func TestDefinitionPairPostUnlinkFailureReconcilesToDurablePresentOldOrAbsentNew
 					pairStepReconcileNewLayoutDirSyncForTest,
 					pairStepReconcileNewBoardFileSyncForTest,
 					pairStepReconcileNewBoardDirSyncForTest,
+					pairStepReconcileNewBoardDirSyncedForTest,
 				)
 			default:
 				t.Fatalf("post-unlink reconciliation returned mixed/unknown pair: board=%q layout=%q layoutErr=%v error=%v steps=%v", gotBoard, layoutRaw, layoutErr, err, steps)
@@ -425,6 +430,7 @@ func TestDefinitionPairRollbackAfterBoardPublicationRestoresBoardBeforeLayout(t 
 	injected := errors.New("board publication durability failed")
 	rollForwardUnavailable := errors.New("forced rollback path")
 	failed := false
+	probedTerminalDurability := false
 	var steps []string
 	request := definitionPairRequestForTest(oldBoard, oldLayout, newBoard, pairPresentContentForTest(newLayout))
 	err := store.publishDefinitionPair(slug, request, func(step string) error {
@@ -436,6 +442,14 @@ func TestDefinitionPairRollbackAfterBoardPublicationRestoresBoardBeforeLayout(t 
 		if strings.HasPrefix(step, "reconcile:new:") {
 			return rollForwardUnavailable
 		}
+		if step == pairStepReconcileOldLayoutDirSyncedForTest {
+			probedTerminalDurability = true
+			assertPeerProcessDefinitionFlocksBlockedForTest(
+				t,
+				store.BoardPath(slug)+".lock",
+				store.LayoutPath(slug)+".lock",
+			)
+		}
 		return nil
 	})
 	if !failed {
@@ -443,6 +457,9 @@ func TestDefinitionPairRollbackAfterBoardPublicationRestoresBoardBeforeLayout(t 
 	}
 	if !errors.Is(err, injected) {
 		t.Fatalf("durable rollback error = %v, want original publication error", err)
+	}
+	if !probedTerminalDurability {
+		t.Fatal("rollback returned without a post-old-layout-parent-fsync milestone")
 	}
 	assertPairFilesForTest(t, store, slug, oldBoard, pairPresentContentForTest(oldLayout))
 	assertPairPartialOrderForTest(t, steps,
@@ -452,6 +469,7 @@ func TestDefinitionPairRollbackAfterBoardPublicationRestoresBoardBeforeLayout(t 
 		pairStepReconcileOldLayoutRenameForTest,
 		pairStepReconcileOldLayoutFileSyncForTest,
 		pairStepReconcileOldLayoutDirSyncForTest,
+		pairStepReconcileOldLayoutDirSyncedForTest,
 	)
 }
 
@@ -489,6 +507,7 @@ func TestDefinitionPairRollbackRestoresAbsentOldLayoutAfterOldBoardIsDurable(t *
 		pairStepReconcileOldLayoutUnlinkForTest,
 		pairStepReconcileOldLayoutAbsentForTest,
 		pairStepReconcileOldLayoutDirSyncForTest,
+		pairStepReconcileOldLayoutDirSyncedForTest,
 	)
 	if pairStepObservedForTest(steps, pairStepReconcileOldLayoutFileSyncForTest) {
 		t.Fatalf("absent predecessor layout was file-synced; steps=%v", steps)
@@ -507,6 +526,7 @@ func TestDefinitionPairRollForwardReportsSuccessOnlyAfterNewPairIsDurable(t *tes
 
 	injected := errors.New("board durability failed")
 	failed := false
+	probedTerminalDurability := false
 	var steps []string
 	request := definitionPairRequestForTest(oldBoard, oldLayout, newBoard, pairPresentContentForTest(newLayout))
 	err := store.publishDefinitionPair(slug, request, func(step string) error {
@@ -518,13 +538,108 @@ func TestDefinitionPairRollForwardReportsSuccessOnlyAfterNewPairIsDurable(t *tes
 		if strings.HasPrefix(step, "reconcile:old:") {
 			return errors.New("force roll-forward path")
 		}
+		if step == pairStepReconcileNewBoardDirSyncedForTest {
+			probedTerminalDurability = true
+			assertPeerProcessDefinitionFlocksBlockedForTest(
+				t,
+				store.BoardPath(slug)+".lock",
+				store.LayoutPath(slug)+".lock",
+			)
+		}
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("durable roll-forward returned error: %v", err)
 	}
+	if !probedTerminalDurability {
+		t.Fatal("roll-forward returned without a post-new-board-parent-fsync milestone")
+	}
 	assertPairFilesForTest(t, store, slug, newBoard, pairPresentContentForTest(newLayout))
 	assertPairReconciliationDurabilityForTest(t, steps, "new")
+}
+
+func TestDefinitionPairHoldsContinuousMutexOwnerEpochThroughReconciliation(t *testing.T) {
+	tests := []struct {
+		name         string
+		forcedPrefix string
+		terminalStep string
+		wantOriginal bool
+	}{
+		{
+			name:         "rollback old old",
+			forcedPrefix: "reconcile:new:",
+			terminalStep: pairStepReconcileOldLayoutDirSyncedForTest,
+			wantOriginal: true,
+		},
+		{
+			name:         "roll forward new new",
+			forcedPrefix: "reconcile:old:",
+			terminalStep: pairStepReconcileNewBoardDirSyncedForTest,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := NewStore(t.TempDir())
+			slug := "pair-reconciliation-owner-epoch"
+			oldBoard := pairBoardFixture(slug, 1, "Old")
+			oldLayout := pairLayoutFixture(1, "old")
+			newBoard := pairBoardFixture(slug, 2, "New")
+			newLayout := pairLayoutFixture(2, "new")
+			writeFixture(t, store.BoardPath(slug), string(oldBoard))
+			writeFixture(t, store.LayoutPath(slug), string(oldLayout))
+
+			contenders := newDefinitionPairOwnerEpochContendersForTest(
+				t,
+				store.BoardPath(slug)+".lock",
+				store.LayoutPath(slug)+".lock",
+			)
+			request := definitionPairRequestForTest(oldBoard, oldLayout, newBoard, pairPresentContentForTest(newLayout))
+			request.validate = func(current, candidate definitionPairState) error {
+				return contenders.arm()
+			}
+			request.cas = func(current definitionPairState) error {
+				return contenders.requireBlocked("cas")
+			}
+			injected := errors.New("force reconciliation owner-epoch proof")
+			failed := false
+			terminalDurability := false
+			done := make(chan error, 1)
+			go func() {
+				done <- store.publishDefinitionPair(slug, request, func(step string) error {
+					if err := contenders.requireBlocked(step); err != nil {
+						return err
+					}
+					if step == pairStepPublishBoardFileSyncForTest && !failed {
+						failed = true
+						return injected
+					}
+					if strings.HasPrefix(step, test.forcedPrefix) {
+						return errors.New("force opposite reconciliation outcome")
+					}
+					if step == test.terminalStep {
+						terminalDurability = true
+					}
+					return nil
+				})
+			}()
+
+			err := waitForDefinitionPairPublicationForTest(t, done, contenders)
+			contenders.releaseAndRequireEntry(t)
+			if !failed {
+				t.Fatal("owner-epoch proof never entered reconciliation")
+			}
+			if !terminalDurability {
+				t.Fatalf("reconciliation returned without terminal durability milestone %q", test.terminalStep)
+			}
+			if test.wantOriginal {
+				if !errors.Is(err, injected) {
+					t.Fatalf("rollback error = %v, want original failure", err)
+				}
+			} else if err != nil {
+				t.Fatalf("roll-forward error = %v, want success", err)
+			}
+		})
+	}
 }
 
 func TestDefinitionPairRollForwardConfirmsAbsentNewLayoutBeforeBoardDurability(t *testing.T) {
@@ -560,6 +675,7 @@ func TestDefinitionPairRollForwardConfirmsAbsentNewLayoutBeforeBoardDurability(t
 		pairStepReconcileNewLayoutDirSyncForTest,
 		pairStepReconcileNewBoardFileSyncForTest,
 		pairStepReconcileNewBoardDirSyncForTest,
+		pairStepReconcileNewBoardDirSyncedForTest,
 	)
 	if pairStepObservedForTest(steps, pairStepReconcileNewLayoutFileSyncForTest) {
 		t.Fatalf("absent new layout was file-synced during reconciliation; steps=%v", steps)
@@ -945,6 +1061,7 @@ func assertPairReconciliationDurabilityForTest(t *testing.T, steps []string, sta
 			pairStepReconcileNewLayoutDirSyncForTest,
 			pairStepReconcileNewBoardFileSyncForTest,
 			pairStepReconcileNewBoardDirSyncForTest,
+			pairStepReconcileNewBoardDirSyncedForTest,
 		)
 		return
 	}
@@ -953,6 +1070,7 @@ func assertPairReconciliationDurabilityForTest(t *testing.T, steps []string, sta
 		pairStepReconcileOldBoardDirSyncForTest,
 		pairStepReconcileOldLayoutFileSyncForTest,
 		pairStepReconcileOldLayoutDirSyncForTest,
+		pairStepReconcileOldLayoutDirSyncedForTest,
 	} {
 		assertPairStepObservedForTest(t, steps, required)
 	}
