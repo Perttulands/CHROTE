@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -22,6 +24,88 @@ const (
 	workspaceAuthorityOwnerDomainLockReadyFD     = uintptr(4)
 	workspaceAuthorityOwnerDomainLockReleaseFD   = uintptr(5)
 )
+
+func TestWorkspaceAuthorityOwnerDomainRetainsRegistryUntilMappedOwnerLockIsAcquired(t *testing.T) {
+	fixture := newWorkspaceAuthorityOwnerDomainFixture(t)
+	paths := workspaceAuthorityOwnerDomainPaths(fixture)
+	before := snapshotWorkspaceAuthorityTopology(t, fixture.base)
+	descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, paths...)
+
+	ownerHolder := startWorkspaceAuthorityOwnerDomainLockHelper(t, fixture.ownerLock)
+	ownerHolder.waitAttempted(t)
+	if got, want := ownerHolder.waitReady(t, workspaceAuthorityLockProcessTimeout), workspaceAuthorityLockIdentityAtPath(t, fixture.ownerLock); got != want {
+		t.Fatalf("process holder acquired owner lock %+v, want %+v", got, want)
+	}
+
+	registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate())
+	productionValidate := registrar.ops.validatePrivateNode
+	ownerSelected := make(chan struct{})
+	var selectedOnce sync.Once
+	registrar.ops.validatePrivateNode = func(opened *os.File, expectedUID uint32) error {
+		if err := productionValidate(opened, expectedUID); err != nil {
+			return err
+		}
+		if opened.Name() == "owner.lock" {
+			selectedOnce.Do(func() { close(ownerSelected) })
+		}
+		return nil
+	}
+	callbackEntered := make(chan struct{})
+	releaseCallback := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseCallback) }) }
+	t.Cleanup(release)
+	result := make(chan error, 1)
+	go func() {
+		result <- registrar.withWorkspaceAuthorityOwnerDomain(fixture.workspace, func(workspaceAuthorityOwnerDomainScope) error {
+			close(callbackEntered)
+			<-releaseCallback
+			return nil
+		})
+	}()
+
+	select {
+	case <-ownerSelected:
+	case <-time.After(workspaceAuthorityLockProcessTimeout):
+		t.Fatal("owner-domain acquisition did not select the mapped owner lock")
+	}
+	select {
+	case <-callbackEntered:
+		t.Fatal("owner-domain callback entered while another process still held owner.lock")
+	case <-time.After(workspaceAuthorityLockExclusionWindow):
+	}
+	if err := tryWorkspaceAuthorityExclusiveLock(fixture.registryLock); !errors.Is(err, syscall.EWOULDBLOCK) {
+		t.Fatalf("registry lock while owner-domain acquisition blocked = %v, want would-block", err)
+	}
+
+	ownerHolder.releaseAndWait(t)
+	select {
+	case <-callbackEntered:
+	case <-time.After(workspaceAuthorityLockProcessTimeout):
+		t.Fatal("owner-domain callback did not enter after mapped owner lock became available")
+	}
+	if err := tryWorkspaceAuthorityExclusiveLock(fixture.registryLock); err != nil {
+		t.Fatalf("registry lock after owner epoch began = %v, want released", err)
+	}
+	if err := tryWorkspaceAuthorityExclusiveLock(fixture.ownerLock); !errors.Is(err, syscall.EWOULDBLOCK) {
+		t.Fatalf("owner lock after owner epoch began = %v, want would-block", err)
+	}
+	release()
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("owner-domain acquisition after process contention: %v", err)
+		}
+	case <-time.After(workspaceAuthorityLockProcessTimeout):
+		t.Fatal("owner-domain acquisition did not return after callback release")
+	}
+
+	if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, before) {
+		t.Fatalf("blocked owner-domain acquisition changed authority topology\nbefore: %#v\nafter:  %#v", before, after)
+	}
+	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, paths...)
+	assertWorkspaceAuthorityOwnerDomainLocksReleased(t, fixture)
+}
 
 func TestWorkspaceAuthorityOwnerDomainReleasesRegistryWhileProcessOwnerEpochRemainsExclusive(t *testing.T) {
 	fixture := newWorkspaceAuthorityOwnerDomainFixture(t)
