@@ -1,7 +1,6 @@
 package formations
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -164,6 +163,227 @@ func TestWorkspaceAuthorityOwnerDomainUsesRegistryMappingWithoutDirectoryFallbac
 	})
 }
 
+func TestWorkspaceAuthorityOwnerDomainRejectsMissingClosedStateWithoutRepair(t *testing.T) {
+	tests := []struct {
+		name   string
+		remove func(workspaceAuthorityOwnerDomainFixture) error
+	}{
+		{name: "registry lock", remove: func(fixture workspaceAuthorityOwnerDomainFixture) error { return os.Remove(fixture.registryLock) }},
+		{name: "private registry", remove: func(fixture workspaceAuthorityOwnerDomainFixture) error { return os.Remove(fixture.registry) }},
+		{name: "authority directory", remove: func(fixture workspaceAuthorityOwnerDomainFixture) error { return os.RemoveAll(fixture.authorityDir) }},
+		{name: "owner lock", remove: func(fixture workspaceAuthorityOwnerDomainFixture) error { return os.Remove(fixture.ownerLock) }},
+		{name: "bootstrap", remove: func(fixture workspaceAuthorityOwnerDomainFixture) error { return os.Remove(fixture.bootstrap) }},
+		{name: "workspace authority", remove: func(fixture workspaceAuthorityOwnerDomainFixture) error { return os.Remove(fixture.workspaceAuthority) }},
+		{name: "policy directory", remove: func(fixture workspaceAuthorityOwnerDomainFixture) error { return os.RemoveAll(fixture.policyDir) }},
+		{name: "current policy", remove: func(fixture workspaceAuthorityOwnerDomainFixture) error {
+			return os.Remove(filepath.Join(fixture.policyDir, "3.json"))
+		}},
+		{name: "prior policy revision 2", remove: func(fixture workspaceAuthorityOwnerDomainFixture) error {
+			return os.Remove(filepath.Join(fixture.policyDir, "2.json"))
+		}},
+		{name: "prior policy revision 1", remove: func(fixture workspaceAuthorityOwnerDomainFixture) error {
+			return os.Remove(filepath.Join(fixture.policyDir, "1.json"))
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newWorkspaceAuthorityOwnerDomainFixture(t)
+			if err := test.remove(fixture); err != nil {
+				t.Fatal(err)
+			}
+			assertWorkspaceAuthorityOwnerDomainRejectedReadOnly(t, fixture, newWorkspaceAuthorityCapabilityGate())
+		})
+	}
+}
+
+func TestWorkspaceAuthorityOwnerDomainRejectsUnsafePrivateTopologyWithoutRepair(t *testing.T) {
+	t.Run("symlinks", func(t *testing.T) {
+		tests := []struct {
+			name       string
+			target     func(workspaceAuthorityOwnerDomainFixture) string
+			linkTarget func(workspaceAuthorityOwnerDomainFixture) string
+		}{
+			{name: "authority directory", target: func(f workspaceAuthorityOwnerDomainFixture) string { return f.authorityDir }, linkTarget: func(f workspaceAuthorityOwnerDomainFixture) string { return f.workspace }},
+			{name: "owner lock", target: func(f workspaceAuthorityOwnerDomainFixture) string { return f.ownerLock }, linkTarget: func(f workspaceAuthorityOwnerDomainFixture) string { return f.registryLock }},
+			{name: "bootstrap", target: func(f workspaceAuthorityOwnerDomainFixture) string { return f.bootstrap }, linkTarget: func(f workspaceAuthorityOwnerDomainFixture) string { return f.registry }},
+			{name: "workspace authority", target: func(f workspaceAuthorityOwnerDomainFixture) string { return f.workspaceAuthority }, linkTarget: func(f workspaceAuthorityOwnerDomainFixture) string { return f.registry }},
+			{name: "policy directory", target: func(f workspaceAuthorityOwnerDomainFixture) string { return f.policyDir }, linkTarget: func(f workspaceAuthorityOwnerDomainFixture) string { return f.workspace }},
+			{name: "current policy", target: func(f workspaceAuthorityOwnerDomainFixture) string { return filepath.Join(f.policyDir, "3.json") }, linkTarget: func(f workspaceAuthorityOwnerDomainFixture) string { return f.registry }},
+			{name: "prior policy", target: func(f workspaceAuthorityOwnerDomainFixture) string { return filepath.Join(f.policyDir, "2.json") }, linkTarget: func(f workspaceAuthorityOwnerDomainFixture) string { return f.registry }},
+		}
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				fixture := newWorkspaceAuthorityOwnerDomainFixture(t)
+				path := test.target(fixture)
+				if info, err := os.Lstat(path); err != nil {
+					t.Fatal(err)
+				} else if info.IsDir() {
+					if err := os.RemoveAll(path); err != nil {
+						t.Fatal(err)
+					}
+				} else if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(test.linkTarget(fixture), path); err != nil {
+					t.Fatal(err)
+				}
+				assertWorkspaceAuthorityOwnerDomainRejectedReadOnly(t, fixture, newWorkspaceAuthorityCapabilityGate())
+			})
+		}
+	})
+
+	t.Run("hard links", func(t *testing.T) {
+		tests := []struct {
+			name string
+			path func(workspaceAuthorityOwnerDomainFixture) string
+		}{
+			{name: "owner lock", path: func(f workspaceAuthorityOwnerDomainFixture) string { return f.ownerLock }},
+			{name: "bootstrap", path: func(f workspaceAuthorityOwnerDomainFixture) string { return f.bootstrap }},
+			{name: "workspace authority", path: func(f workspaceAuthorityOwnerDomainFixture) string { return f.workspaceAuthority }},
+			{name: "current policy", path: func(f workspaceAuthorityOwnerDomainFixture) string { return filepath.Join(f.policyDir, "3.json") }},
+			{name: "prior policy", path: func(f workspaceAuthorityOwnerDomainFixture) string { return filepath.Join(f.policyDir, "2.json") }},
+		}
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				fixture := newWorkspaceAuthorityOwnerDomainFixture(t)
+				path := test.path(fixture)
+				if err := os.Link(path, path+".second-link"); err != nil {
+					t.Fatal(err)
+				}
+				assertWorkspaceAuthorityOwnerDomainRejectedReadOnly(t, fixture, newWorkspaceAuthorityCapabilityGate())
+			})
+		}
+	})
+
+	t.Run("wrong modes", func(t *testing.T) {
+		tests := []struct {
+			name string
+			path func(workspaceAuthorityOwnerDomainFixture) string
+			mode os.FileMode
+		}{
+			{name: "host root", path: func(f workspaceAuthorityOwnerDomainFixture) string { return f.hostRoot }, mode: 0o755},
+			{name: "workspaces root", path: func(f workspaceAuthorityOwnerDomainFixture) string { return f.workspacesRoot }, mode: 0o755},
+			{name: "registry lock", path: func(f workspaceAuthorityOwnerDomainFixture) string { return f.registryLock }, mode: 0o640},
+			{name: "private registry", path: func(f workspaceAuthorityOwnerDomainFixture) string { return f.registry }, mode: 0o640},
+			{name: "authority directory", path: func(f workspaceAuthorityOwnerDomainFixture) string { return f.authorityDir }, mode: 0o755},
+			{name: "owner lock", path: func(f workspaceAuthorityOwnerDomainFixture) string { return f.ownerLock }, mode: 0o640},
+			{name: "bootstrap", path: func(f workspaceAuthorityOwnerDomainFixture) string { return f.bootstrap }, mode: 0o640},
+			{name: "workspace authority", path: func(f workspaceAuthorityOwnerDomainFixture) string { return f.workspaceAuthority }, mode: 0o640},
+			{name: "policy directory", path: func(f workspaceAuthorityOwnerDomainFixture) string { return f.policyDir }, mode: 0o755},
+			{name: "current policy", path: func(f workspaceAuthorityOwnerDomainFixture) string { return filepath.Join(f.policyDir, "3.json") }, mode: 0o640},
+			{name: "prior policy", path: func(f workspaceAuthorityOwnerDomainFixture) string { return filepath.Join(f.policyDir, "2.json") }, mode: 0o640},
+		}
+		for _, test := range tests {
+			t.Run(test.name, func(t *testing.T) {
+				fixture := newWorkspaceAuthorityOwnerDomainFixture(t)
+				if err := os.Chmod(test.path(fixture), test.mode); err != nil {
+					t.Fatal(err)
+				}
+				assertWorkspaceAuthorityOwnerDomainRejectedReadOnly(t, fixture, newWorkspaceAuthorityCapabilityGate())
+			})
+		}
+	})
+
+	t.Run("wrong writer uid", func(t *testing.T) {
+		fixture := newWorkspaceAuthorityOwnerDomainFixture(t)
+		paths := workspaceAuthorityOwnerDomainPaths(fixture)
+		before := snapshotWorkspaceAuthorityTopology(t, fixture.base)
+		descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, paths...)
+		registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID^1, newWorkspaceAuthorityCapabilityGate())
+		callbackCalls := 0
+		err := registrar.withWorkspaceAuthorityOwnerDomain(fixture.workspace, func(workspaceAuthorityOwnerDomainScope) error {
+			callbackCalls++
+			return nil
+		})
+		if err == nil || callbackCalls != 0 {
+			t.Fatalf("wrong-uid owner-domain result = %v, callback calls %d; want fail before callback", err, callbackCalls)
+		}
+		assertWorkspaceAuthorityOwnerDomainUnchanged(t, fixture, before)
+		assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, paths...)
+	})
+
+	t.Run("nonempty owner lock", func(t *testing.T) {
+		fixture := newWorkspaceAuthorityOwnerDomainFixture(t)
+		writePrivateAuthorityTestFile(t, fixture.ownerLock, []byte("not-lock-state"))
+		assertWorkspaceAuthorityOwnerDomainRejectedReadOnly(t, fixture, newWorkspaceAuthorityCapabilityGate())
+	})
+}
+
+func TestWorkspaceAuthorityOwnerDomainStrictValidatesBootstrapWorkspaceAndCompletePolicyChain(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*testing.T, workspaceAuthorityOwnerDomainFixture)
+	}{
+		{name: "bootstrap unsupported schema", mutate: func(t *testing.T, f workspaceAuthorityOwnerDomainFixture) {
+			replaceWorkspaceAuthorityOwnerDomainRaw(t, f.bootstrap, `"bootstrapSchema":1`, `"bootstrapSchema":2`)
+		}},
+		{name: "bootstrap wrong authority id", mutate: func(t *testing.T, f workspaceAuthorityOwnerDomainFixture) {
+			replaceWorkspaceAuthorityOwnerDomainRaw(t, f.bootstrap, testInitialRegistrationAuthorityID, testAuthorityRecordWorkspaceID2)
+		}},
+		{name: "bootstrap wrong root hash", mutate: func(t *testing.T, f workspaceAuthorityOwnerDomainFixture) {
+			replaceWorkspaceAuthorityOwnerDomainRaw(t, f.bootstrap, f.identity.rootHash, strings.Repeat("b", 64))
+		}},
+		{name: "bootstrap noncanonical bytes", mutate: func(t *testing.T, f workspaceAuthorityOwnerDomainFixture) {
+			replaceWorkspaceAuthorityOwnerDomainRaw(t, f.bootstrap, `{"bootstrapSchema":1`, `{ "bootstrapSchema":1`)
+		}},
+		{name: "workspace unsupported schema", mutate: func(t *testing.T, f workspaceAuthorityOwnerDomainFixture) {
+			replaceWorkspaceAuthorityOwnerDomainRaw(t, f.workspaceAuthority, `"authoritySchema":2`, `"authoritySchema":3`)
+		}},
+		{name: "workspace wrong authority id", mutate: func(t *testing.T, f workspaceAuthorityOwnerDomainFixture) {
+			replaceWorkspaceAuthorityOwnerDomainRaw(t, f.workspaceAuthority, testInitialRegistrationAuthorityID, testAuthorityRecordWorkspaceID2)
+		}},
+		{name: "workspace wrong root hash", mutate: func(t *testing.T, f workspaceAuthorityOwnerDomainFixture) {
+			replaceWorkspaceAuthorityOwnerDomainRaw(t, f.workspaceAuthority, f.identity.rootHash, strings.Repeat("b", 64))
+		}},
+		{name: "workspace missing prior generation", mutate: func(t *testing.T, f workspaceAuthorityOwnerDomainFixture) {
+			raw := readWorkspaceAuthorityInitialRegistrationFile(t, f.workspaceAuthority)
+			start := strings.Index(string(raw), `,"priorGeneration":`)
+			end := strings.Index(string(raw), `,"recordRev":`)
+			if start < 0 || end <= start {
+				t.Fatalf("workspace fixture missing prior-generation field: %s", raw)
+			}
+			writePrivateAuthorityTestFile(t, f.workspaceAuthority, append(append([]byte(nil), raw[:start]...), raw[end:]...))
+		}},
+		{name: "workspace current policy revision missing", mutate: func(t *testing.T, f workspaceAuthorityOwnerDomainFixture) {
+			replaceWorkspaceAuthorityOwnerDomainRaw(t, f.workspaceAuthority, `"policyRev":3`, `"policyRev":4`)
+		}},
+		{name: "workspace current policy hash mismatch", mutate: func(t *testing.T, f workspaceAuthorityOwnerDomainFixture) {
+			replaceWorkspaceAuthorityOwnerDomainRaw(t, f.workspaceAuthority, runtimeSHA256Hex(f.policyRaw[3]), strings.Repeat("b", 64))
+		}},
+		{name: "current policy unsupported schema", mutate: func(t *testing.T, f workspaceAuthorityOwnerDomainFixture) {
+			replaceWorkspaceAuthorityOwnerDomainRaw(t, filepath.Join(f.policyDir, "3.json"), `"policySchema":1`, `"policySchema":2`)
+		}},
+		{name: "current policy revision mismatch", mutate: func(t *testing.T, f workspaceAuthorityOwnerDomainFixture) {
+			replaceWorkspaceAuthorityOwnerDomainRaw(t, filepath.Join(f.policyDir, "3.json"), `"policyRev":3`, `"policyRev":2`)
+		}},
+		{name: "current policy hash changed", mutate: func(t *testing.T, f workspaceAuthorityOwnerDomainFixture) {
+			replaceWorkspaceAuthorityOwnerDomainRaw(t, filepath.Join(f.policyDir, "3.json"), `"state":"disabled"`, `"state":"configured"`)
+		}},
+		{name: "current to prior hash discontinuity", mutate: func(t *testing.T, f workspaceAuthorityOwnerDomainFixture) {
+			replaceWorkspaceAuthorityOwnerDomainRaw(t, filepath.Join(f.policyDir, "3.json"), runtimeSHA256Hex(f.policyRaw[2]), strings.Repeat("b", 64))
+		}},
+		{name: "prior revision 2 unsupported schema", mutate: func(t *testing.T, f workspaceAuthorityOwnerDomainFixture) {
+			replaceWorkspaceAuthorityOwnerDomainRaw(t, filepath.Join(f.policyDir, "2.json"), `"policySchema":1`, `"policySchema":2`)
+		}},
+		{name: "prior revision 2 discontinuity", mutate: func(t *testing.T, f workspaceAuthorityOwnerDomainFixture) {
+			replaceWorkspaceAuthorityOwnerDomainRaw(t, filepath.Join(f.policyDir, "2.json"), runtimeSHA256Hex(f.policyRaw[1]), strings.Repeat("b", 64))
+		}},
+		{name: "revision 1 has predecessor", mutate: func(t *testing.T, f workspaceAuthorityOwnerDomainFixture) {
+			replaceWorkspaceAuthorityOwnerDomainRaw(t, filepath.Join(f.policyDir, "1.json"), `"priorPolicySha256":""`, `"priorPolicySha256":"`+strings.Repeat("b", 64)+`"`)
+		}},
+		{name: "prior policy noncanonical bytes", mutate: func(t *testing.T, f workspaceAuthorityOwnerDomainFixture) {
+			replaceWorkspaceAuthorityOwnerDomainRaw(t, filepath.Join(f.policyDir, "2.json"), `{"maxActiveRuns":2`, `{ "maxActiveRuns":2`)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newWorkspaceAuthorityOwnerDomainFixture(t)
+			test.mutate(t, fixture)
+			assertWorkspaceAuthorityOwnerDomainRejectedReadOnly(t, fixture, newWorkspaceAuthorityCapabilityGate())
+		})
+	}
+}
+
 type workspaceAuthorityOwnerDomainFixture struct {
 	workspaceAuthorityInitialRegistrationFixture
 	policyRaw map[uint64][]byte
@@ -253,9 +473,6 @@ func assertWorkspaceAuthorityOwnerDomainUnchanged(t *testing.T, fixture workspac
 	if _, err := os.Lstat(filepath.Join(fixture.authorityDir, "owner.private.json")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("read-only owner-domain operation created owner.private.json: %v", err)
 	}
-	if raw := readWorkspaceAuthorityInitialRegistrationFile(t, fixture.workspaceAuthority); !bytes.Equal(raw, fixture.workspaceRaw) {
-		t.Fatalf("read-only owner-domain operation changed workspace counters/bytes\n got: %s\nwant: %s", raw, fixture.workspaceRaw)
-	}
 	err := filepath.WalkDir(fixture.base, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -272,10 +489,25 @@ func assertWorkspaceAuthorityOwnerDomainUnchanged(t *testing.T, fixture workspac
 
 func assertWorkspaceAuthorityOwnerDomainLocksReleased(t *testing.T, fixture workspaceAuthorityOwnerDomainFixture) {
 	t.Helper()
-	if err := tryWorkspaceAuthorityExclusiveLock(fixture.registryLock); err != nil {
-		t.Fatalf("owner-domain operation leaked registry lock: %v", err)
+	for _, lockPath := range []string{fixture.registryLock, fixture.ownerLock} {
+		info, err := os.Lstat(lockPath)
+		if errors.Is(err, os.ErrNotExist) || (err == nil && !info.Mode().IsRegular()) {
+			continue
+		}
+		if err != nil {
+			t.Fatalf("inspect owner-domain lock %q after operation: %v", lockPath, err)
+		}
+		if err := tryWorkspaceAuthorityExclusiveLock(lockPath); err != nil {
+			t.Fatalf("owner-domain operation leaked lock %q: %v", lockPath, err)
+		}
 	}
-	if err := tryWorkspaceAuthorityExclusiveLock(fixture.ownerLock); err != nil {
-		t.Fatalf("owner-domain operation leaked owner lock: %v", err)
+}
+
+func replaceWorkspaceAuthorityOwnerDomainRaw(t *testing.T, path, old, replacement string) {
+	t.Helper()
+	raw := readWorkspaceAuthorityInitialRegistrationFile(t, path)
+	if count := strings.Count(string(raw), old); count != 1 {
+		t.Fatalf("owner-domain fixture occurrence count for %q in %q = %d, want exactly one", old, raw, count)
 	}
+	writePrivateAuthorityTestFile(t, path, []byte(strings.Replace(string(raw), old, replacement, 1)))
 }
