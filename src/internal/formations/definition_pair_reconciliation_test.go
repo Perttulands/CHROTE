@@ -265,20 +265,32 @@ func TestDefinitionPairPostRenameFailureReconcilesToOneExactDurablePair(t *testi
 			injected := errors.New("injected after first rename")
 			failed := false
 			var steps []string
-			locksHeldDuringReconciliation := true
+			locksHeldThroughout := true
 			reconciled := false
 			request := definitionPairRequestForTest(oldBoard, oldLayout, newBoard, pairPresentContentForTest(newLayout))
+			request.validate = func(current, candidate definitionPairState) error {
+				locksHeldThroughout = locksHeldThroughout &&
+					pairMutexHeldForTest(store.BoardPath(slug)+".lock") &&
+					pairMutexHeldForTest(store.LayoutPath(slug)+".lock")
+				return nil
+			}
+			request.cas = func(current definitionPairState) error {
+				locksHeldThroughout = locksHeldThroughout &&
+					pairMutexHeldForTest(store.BoardPath(slug)+".lock") &&
+					pairMutexHeldForTest(store.LayoutPath(slug)+".lock")
+				return nil
+			}
 			err := store.publishDefinitionPair(slug, request, func(step string) error {
 				steps = append(steps, step)
+				locksHeldThroughout = locksHeldThroughout &&
+					pairMutexHeldForTest(store.BoardPath(slug)+".lock") &&
+					pairMutexHeldForTest(store.LayoutPath(slug)+".lock")
 				if step == failStep && !failed {
 					failed = true
 					return injected
 				}
 				if strings.HasPrefix(step, "reconcile:") {
 					reconciled = true
-					locksHeldDuringReconciliation = locksHeldDuringReconciliation &&
-						pairMutexHeldForTest(store.BoardPath(slug)+".lock") &&
-						pairMutexHeldForTest(store.LayoutPath(slug)+".lock")
 				}
 				return nil
 			})
@@ -288,8 +300,8 @@ func TestDefinitionPairPostRenameFailureReconcilesToOneExactDurablePair(t *testi
 			if !reconciled {
 				t.Fatalf("post-rename failure returned without synchronous reconciliation; steps=%v", steps)
 			}
-			if !locksHeldDuringReconciliation {
-				t.Fatalf("reconciliation released a definition lock; steps=%v", steps)
+			if !locksHeldThroughout {
+				t.Fatalf("publication or reconciliation released a definition lock before return; steps=%v", steps)
 			}
 
 			gotBoard := readFile(t, store.BoardPath(slug))
@@ -818,37 +830,43 @@ func TestDefinitionPairUnreconciledMixedStateReturnsStableUncertainWithoutAutoma
 	}
 }
 
-func TestDefinitionPairMutationAfterUncertaintyReopensDurablePairBeforeCASAndIsNotBlocked(t *testing.T) {
-	store := NewStore(t.TempDir())
-	slug := "pair-after-uncertain"
-	oldBoard := pairBoardFixture(slug, 1, "Old")
-	oldLayout := pairLayoutFixture(1, "old")
-	mixedBoard := pairBoardFixture(slug, 2, "Mixed candidate")
-	mixedLayout := pairLayoutFixture(2, "mixed candidate")
-	finalBoard := pairBoardFixture(slug, 3, "Explicit retry")
-	finalLayout := pairLayoutFixture(3, "explicit retry")
-	writeFixture(t, store.BoardPath(slug), string(oldBoard))
-	writeFixture(t, store.LayoutPath(slug), string(oldLayout))
-
-	failedInitial := false
-	firstRequest := definitionPairRequestForTest(oldBoard, oldLayout, mixedBoard, pairPresentContentForTest(mixedLayout))
-	err := store.publishDefinitionPair(slug, firstRequest, func(step string) error {
-		if step == pairStepPublishLayoutFileSyncForTest && !failedInitial {
-			failedInitial = true
-			return errors.New("leave contracted mixed crash state")
-		}
-		if strings.HasPrefix(step, "reconcile:") {
-			return errors.New("reconciliation unavailable")
-		}
+func TestDefinitionPairFirstExactMutationAfterUncertaintyIsNotBlocked(t *testing.T) {
+	fixture := newUncertainDefinitionPairFixtureForTest(t, "pair-after-uncertain-exact")
+	explicitRequest := definitionPairRequestForTest(
+		fixture.oldBoard,
+		fixture.mixedLayout,
+		fixture.finalBoard,
+		pairPresentContentForTest(fixture.finalLayout),
+	)
+	var steps []string
+	if err := fixture.store.publishDefinitionPair(fixture.slug, explicitRequest, func(step string) error {
+		steps = append(steps, step)
 		return nil
-	})
-	assertDefinitionPublicationUncertainForTest(t, err)
-	assertPairFilesForTest(t, store, slug, oldBoard, pairPresentContentForTest(mixedLayout))
+	}); err != nil {
+		t.Fatalf("first exact mutation after uncertainty remained blocked: %v", err)
+	}
+	for _, required := range []string{
+		pairStepPreflightBoardFileSyncForTest,
+		pairStepPreflightLayoutFileSyncForTest,
+		pairStepPreflightBoardDirSyncForTest,
+		pairStepPreflightLayoutDirSyncForTest,
+	} {
+		assertPairStepObservedForTest(t, steps, required)
+	}
+	assertPairFilesForTest(t, fixture.store, fixture.slug, fixture.finalBoard, pairPresentContentForTest(fixture.finalLayout))
+}
 
-	staleRequest := definitionPairRequestForTest(oldBoard, mixedLayout, finalBoard, pairPresentContentForTest(finalLayout))
+func TestDefinitionPairFirstStaleMutationAfterIndependentUncertaintyPreflightsThenConflicts(t *testing.T) {
+	fixture := newUncertainDefinitionPairFixtureForTest(t, "pair-after-uncertain-stale")
+	staleRequest := definitionPairRequestForTest(
+		fixture.oldBoard,
+		fixture.mixedLayout,
+		fixture.finalBoard,
+		pairPresentContentForTest(fixture.finalLayout),
+	)
 	staleRequest.expected.board.sha256 = etag([]byte("stale after uncertainty"))
 	var staleSteps []string
-	if err := store.publishDefinitionPair(slug, staleRequest, func(step string) error {
+	if err := fixture.store.publishDefinitionPair(fixture.slug, staleRequest, func(step string) error {
 		staleSteps = append(staleSteps, step)
 		return nil
 	}); !errors.Is(err, ErrConflict) {
@@ -867,12 +885,52 @@ func TestDefinitionPairMutationAfterUncertaintyReopensDurablePairBeforeCASAndIsN
 			t.Fatalf("post-uncertainty stale CAS reached %q; steps=%v", step, staleSteps)
 		}
 	}
+	assertPairFilesForTest(t, fixture.store, fixture.slug, fixture.oldBoard, pairPresentContentForTest(fixture.mixedLayout))
+}
 
-	explicitRequest := definitionPairRequestForTest(oldBoard, mixedLayout, finalBoard, pairPresentContentForTest(finalLayout))
-	if err := store.publishDefinitionPair(slug, explicitRequest, nil); err != nil {
-		t.Fatalf("explicit mutation after uncertainty remained blocked: %v", err)
+type uncertainDefinitionPairFixtureForTest struct {
+	store       *Store
+	slug        string
+	oldBoard    []byte
+	mixedLayout []byte
+	finalBoard  []byte
+	finalLayout []byte
+}
+
+func newUncertainDefinitionPairFixtureForTest(t *testing.T, slug string) uncertainDefinitionPairFixtureForTest {
+	t.Helper()
+	store := NewStore(t.TempDir())
+	oldBoard := pairBoardFixture(slug, 1, "Old")
+	oldLayout := pairLayoutFixture(1, "old")
+	mixedBoard := pairBoardFixture(slug, 2, "Mixed candidate")
+	mixedLayout := pairLayoutFixture(2, "mixed candidate")
+	finalBoard := pairBoardFixture(slug, 3, "Explicit retry")
+	finalLayout := pairLayoutFixture(3, "explicit retry")
+	writeFixture(t, store.BoardPath(slug), string(oldBoard))
+	writeFixture(t, store.LayoutPath(slug), string(oldLayout))
+
+	failedInitial := false
+	request := definitionPairRequestForTest(oldBoard, oldLayout, mixedBoard, pairPresentContentForTest(mixedLayout))
+	err := store.publishDefinitionPair(slug, request, func(step string) error {
+		if step == pairStepPublishLayoutFileSyncForTest && !failedInitial {
+			failedInitial = true
+			return errors.New("leave contracted mixed crash state")
+		}
+		if strings.HasPrefix(step, "reconcile:") {
+			return errors.New("reconciliation unavailable")
+		}
+		return nil
+	})
+	assertDefinitionPublicationUncertainForTest(t, err)
+	assertPairFilesForTest(t, store, slug, oldBoard, pairPresentContentForTest(mixedLayout))
+	return uncertainDefinitionPairFixtureForTest{
+		store:       store,
+		slug:        slug,
+		oldBoard:    oldBoard,
+		mixedLayout: mixedLayout,
+		finalBoard:  finalBoard,
+		finalLayout: finalLayout,
 	}
-	assertPairFilesForTest(t, store, slug, finalBoard, pairPresentContentForTest(finalLayout))
 }
 
 type pairCrashForTest struct {
