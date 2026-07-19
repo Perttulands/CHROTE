@@ -749,7 +749,7 @@ func validateRunCommandRecordJCSV1(record runCommandRecordJCSV1, canonicalPayloa
 	}
 	switch record.State {
 	case "pending":
-		if record.DecisionAdmissionPolicyRef != nil || record.EffectSeq != 0 || record.OutcomeWriterFence != 0 || record.RejectionCode != "" || record.RunID != "" {
+		if (record.RecordRev == 1 && record.StateWriterFence != record.AdmittedWriterFence) || record.DecisionAdmissionPolicyRef != nil || record.EffectSeq != 0 || record.OutcomeWriterFence != 0 || record.RejectionCode != "" || record.RunID != "" {
 			return fmt.Errorf("%w: pending command state", errRuntimeConflict)
 		}
 	case "applied":
@@ -779,8 +779,8 @@ func validateAuthorityOutcome(record runCommandRecordJCSV1) error {
 	if err := validateAuthorityPositiveSafeInteger(record.OutcomeWriterFence, "outcome writer fence"); err != nil {
 		return err
 	}
-	if record.OutcomeWriterFence > record.StateWriterFence {
-		return fmt.Errorf("%w: outcome fence exceeds state fence", errRuntimeConflict)
+	if record.OutcomeWriterFence < record.AdmittedWriterFence || record.OutcomeWriterFence > record.StateWriterFence {
+		return fmt.Errorf("%w: outcome fence is outside the admitted state interval", errRuntimeConflict)
 	}
 	if record.CommandKind == "start" {
 		if record.DecisionAdmissionPolicyRef == nil {
