@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -304,6 +305,102 @@ func TestDefinitionSchemaLifecyclesAreIndependent(t *testing.T) {
 	}
 	if NewBoardSchema != 1 {
 		t.Fatalf("NewBoardSchema = %d, want 1 so Tool-free boards stay on the compatibility schema", NewBoardSchema)
+	}
+}
+
+func TestToolFreeSchemaTwoBoardRemainsValidAndReadOnly(t *testing.T) {
+	store := NewStore(t.TempDir())
+	raw := `schema = 2
+id = "brd_tool_deleted"
+slug = "tool-deleted"
+title = "Tool deleted"
+rev = 4
+updatedBy = "agent:test"
+updatedAt = "2026-07-19T08:00:00Z"
+`
+	path := store.BoardPath("tool-deleted")
+	writeFixture(t, path, raw)
+	wantETag := etag([]byte(raw))
+	wantIdentity := operativeFileIdentityForTest(t, path)
+
+	board, err := store.ReadBoard("tool-deleted")
+	if err != nil {
+		t.Fatalf("read Tool-free schema-2 board: %v", err)
+	}
+	if board.Schema != CurrentBoardSchema {
+		t.Errorf("Tool-free board schema = %d, want monotonic schema %d", board.Schema, CurrentBoardSchema)
+	}
+	if board.ETag != wantETag || board.TOML != raw {
+		t.Errorf("schema-2 projection changed source identity: ETag=%q want %q TOML=%q want %q", board.ETag, wantETag, board.TOML, raw)
+	}
+	if got := readFile(t, path); got != raw {
+		t.Errorf("schema-2 inspection changed canonical bytes:\n got %q\nwant %q", got, raw)
+	}
+	if got := operativeFileIdentityForTest(t, path); got != wantIdentity {
+		t.Errorf("schema-2 inspection replaced operative file identity = %v, want %v", got, wantIdentity)
+	}
+}
+
+func TestSchemaZeroBoardInspectionNeverPublishesMigration(t *testing.T) {
+	store := NewStore(t.TempDir())
+	raw := `schema = 0
+id = "brd_schema_zero"
+slug = "schema-zero"
+title = "Schema zero"
+rev = 1
+legacyKey = "keep"
+`
+	path := store.BoardPath("schema-zero")
+	writeFixture(t, path, raw)
+	wantETag := etag([]byte(raw))
+	wantIdentity := operativeFileIdentityForTest(t, path)
+
+	board, err := store.ReadBoard("schema-zero")
+	if err != nil {
+		t.Fatalf("inspect accepted schema-0 board: %v", err)
+	}
+	if board.Schema != 0 {
+		t.Errorf("schema-0 board inspection returned schema = %d, want source schema 0", board.Schema)
+	}
+	if board.ETag != wantETag || board.TOML != raw {
+		t.Errorf("schema-0 board projection changed source identity: ETag=%q want %q TOML=%q want %q", board.ETag, wantETag, board.TOML, raw)
+	}
+	if got := readFile(t, path); got != raw {
+		t.Errorf("schema-0 board inspection published a migration:\n got %q\nwant %q", got, raw)
+	}
+	if got := operativeFileIdentityForTest(t, path); got != wantIdentity {
+		t.Errorf("schema-0 board inspection replaced operative file identity = %v, want %v", got, wantIdentity)
+	}
+}
+
+func TestSchemaZeroLayoutInspectionNeverPublishesMigration(t *testing.T) {
+	store := NewStore(t.TempDir())
+	raw := `schema = 0
+boardId = "brd_schema_zero"
+boardRev = 1
+updatedAt = "2026-06-03T16:02:00Z"
+layoutNote = "keep"
+`
+	path := store.LayoutPath("schema-zero")
+	writeFixture(t, path, raw)
+	wantETag := etag([]byte(raw))
+	wantIdentity := operativeFileIdentityForTest(t, path)
+
+	layout, err := store.ReadLayout("schema-zero")
+	if err != nil {
+		t.Fatalf("inspect accepted schema-0 layout: %v", err)
+	}
+	if layout.Schema != 0 {
+		t.Errorf("schema-0 layout inspection returned schema = %d, want source schema 0", layout.Schema)
+	}
+	if layout.ETag != wantETag || layout.TOML != raw {
+		t.Errorf("schema-0 layout projection changed source identity: ETag=%q want %q TOML=%q want %q", layout.ETag, wantETag, layout.TOML, raw)
+	}
+	if got := readFile(t, path); got != raw {
+		t.Errorf("schema-0 layout inspection published a migration:\n got %q\nwant %q", got, raw)
+	}
+	if got := operativeFileIdentityForTest(t, path); got != wantIdentity {
+		t.Errorf("schema-0 layout inspection replaced operative file identity = %v, want %v", got, wantIdentity)
 	}
 }
 
@@ -2263,6 +2360,19 @@ func readFile(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(b)
+}
+
+func operativeFileIdentityForTest(t *testing.T, path string) [2]uint64 {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatalf("stat type for %s = %T, want *syscall.Stat_t", path, info.Sys())
+	}
+	return [2]uint64{uint64(stat.Dev), stat.Ino}
 }
 
 func minimalBoard(slug string, rev int) string {
