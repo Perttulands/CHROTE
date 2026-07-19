@@ -47,6 +47,7 @@ type BoardDocument struct {
 	Missions    []MissionNode     `json:"missions,omitempty"`
 	Formations  []FormationNode   `json:"formations,omitempty"`
 	Gates       []GateNode        `json:"gates,omitempty"`
+	Tools       []ToolNode        `json:"tools,omitempty"`
 	Connections []BoardConnection `json:"connections,omitempty"`
 	ETag        string            `json:"etag"`
 	TOML        string            `json:"toml,omitempty"`
@@ -364,6 +365,10 @@ func parseBoard(raw []byte) (*BoardDocument, error) {
 	if schema > CurrentBoardSchema {
 		return nil, fmt.Errorf("%w: schema %d", ErrUnsupportedSchema, schema)
 	}
+	tools, err := parseToolNodes(raw)
+	if err != nil {
+		return nil, err
+	}
 	board := &BoardDocument{
 		Schema:      schema,
 		ID:          doc.stringValue("id"),
@@ -375,6 +380,7 @@ func parseBoard(raw []byte) (*BoardDocument, error) {
 		Missions:    parseMissionNodes(raw),
 		Formations:  parseFormationNodes(raw),
 		Gates:       parseGateNodes(raw),
+		Tools:       tools,
 		Connections: parseBoardConnections(raw),
 		ETag:        etag(raw),
 		TOML:        string(raw),
