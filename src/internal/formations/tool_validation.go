@@ -306,6 +306,55 @@ func endpointPayloadContract(board *BoardDocument, endpoint, direction string) (
 	return "", nil, false, false
 }
 
+func toolConnectionCompatibilityFinding(board *BoardDocument, connection BoardConnection) (BoardFinding, bool) {
+	if board == nil {
+		return BoardFinding{}, false
+	}
+
+	producerKind, producerMedia, producerIsTool, producerOK := endpointPayloadContract(board, connection.From, FormationPortOutput)
+	consumerKind, consumerMedia, consumerIsTool, consumerOK := endpointPayloadContract(board, connection.To, FormationPortInput)
+	toolProducesToJudge := producerIsTool && producerOK && isGateJudgeEndpoint(board, connection.To)
+	judgeProducesToTool := consumerIsTool && consumerOK && isGateJudgeEndpoint(board, connection.From)
+	if toolProducesToJudge || judgeProducesToTool {
+		return BoardFinding{
+			Code:    FindingInvalidJudgeRelationship,
+			NodeID:  connection.ID,
+			Message: fmt.Sprintf("connection %q cannot route a Tool endpoint through Gate judge endpoint", connection.ID),
+		}, true
+	}
+	if !(producerIsTool || consumerIsTool) || !producerOK || !consumerOK {
+		return BoardFinding{}, false
+	}
+	if producerKind != consumerKind {
+		return BoardFinding{
+			Code:    FindingIncompatiblePayloadKind,
+			NodeID:  connection.ID,
+			Message: fmt.Sprintf("connection %q routes payload kind %q to input %q, which accepts %q", connection.ID, producerKind, connection.To, consumerKind),
+		}, true
+	}
+	if producerKind == "work" && !toolMediaSubset(producerMedia, consumerMedia) {
+		return BoardFinding{
+			Code:    FindingIncompatibleMedia,
+			NodeID:  connection.ID,
+			Message: fmt.Sprintf("connection %q routes producer media %v to input %q, which accepts %v", connection.ID, producerMedia, connection.To, consumerMedia),
+		}, true
+	}
+	return BoardFinding{}, false
+}
+
+func isGateJudgeEndpoint(board *BoardDocument, endpoint string) bool {
+	nodeID, portID, ok := splitEndpoint(endpoint)
+	if !ok || portID != "judge" {
+		return false
+	}
+	for _, gate := range board.Gates {
+		if gate.ID == nodeID {
+			return true
+		}
+	}
+	return false
+}
+
 func allToolWorkMediaTypes() []string {
 	return []string{"text/plain", "text/markdown", "application/json"}
 }

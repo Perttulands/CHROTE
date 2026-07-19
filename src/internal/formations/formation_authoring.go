@@ -1045,11 +1045,15 @@ func (s *Store) WireFormationPorts(slug string, req FormationWireRequest, opts W
 				return nil, ErrConflict
 			}
 		}
-		return appendConnectionBlock(raw, BoardConnection{
-			ID:   newPrefixedID("edge"),
+		candidate := BoardConnection{
 			From: req.From,
 			To:   req.To,
-		}), nil
+		}
+		if _, incompatible := toolConnectionCompatibilityFinding(current, candidate); incompatible {
+			return nil, ErrConflict
+		}
+		candidate.ID = newPrefixedID("edge")
+		return appendConnectionBlock(raw, candidate), nil
 	})
 }
 
@@ -1098,15 +1102,19 @@ func (s *Store) RewireFormationTarget(slug string, req FormationRewireRequest, o
 		if !hasOriginal {
 			return nil, ErrNotFound
 		}
+		candidate := BoardConnection{
+			From: req.From,
+			To:   req.To,
+		}
+		if _, incompatible := toolConnectionCompatibilityFinding(current, candidate); incompatible {
+			return nil, ErrConflict
+		}
 		nextRaw, deleted := deleteConnectionByEndpoints(raw, req.From, req.PreviousTo)
 		if !deleted {
 			return nil, ErrNotFound
 		}
-		return appendConnectionBlock(nextRaw, BoardConnection{
-			ID:   newPrefixedID("edge"),
-			From: req.From,
-			To:   req.To,
-		}), nil
+		candidate.ID = newPrefixedID("edge")
+		return appendConnectionBlock(nextRaw, candidate), nil
 	})
 }
 

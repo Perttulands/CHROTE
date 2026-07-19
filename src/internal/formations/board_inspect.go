@@ -20,6 +20,7 @@ const (
 	FindingDuplicateInputProducer                    = "duplicate_input_producer"
 	FindingIncompatibleMedia                         = "incompatible_media"
 	FindingIncompatiblePayloadKind                   = "incompatible_payload_kind"
+	FindingInvalidJudgeRelationship                  = "invalid_judge_relationship"
 )
 
 // BoardFinding is a single structural problem located on the board. NodeID names
@@ -62,23 +63,8 @@ func ValidateBoard(board *BoardDocument) BoardValidationReport {
 				Message: fmt.Sprintf("connection %q has a broken 'to' endpoint %q: it does not reference an existing node input", connection.ID, connection.To),
 			})
 		}
-		producerKind, producerMedia, producerIsTool, producerOK := endpointPayloadContract(board, connection.From, FormationPortOutput)
-		consumerKind, consumerMedia, consumerIsTool, consumerOK := endpointPayloadContract(board, connection.To, FormationPortInput)
-		if (producerIsTool || consumerIsTool) && producerOK && consumerOK {
-			switch {
-			case producerKind != consumerKind:
-				report.Errors = append(report.Errors, BoardFinding{
-					Code:    FindingIncompatiblePayloadKind,
-					NodeID:  connection.ID,
-					Message: fmt.Sprintf("connection %q routes payload kind %q to input %q, which accepts %q", connection.ID, producerKind, connection.To, consumerKind),
-				})
-			case producerKind == "work" && !toolMediaSubset(producerMedia, consumerMedia):
-				report.Errors = append(report.Errors, BoardFinding{
-					Code:    FindingIncompatibleMedia,
-					NodeID:  connection.ID,
-					Message: fmt.Sprintf("connection %q routes producer media %v to input %q, which accepts %v", connection.ID, producerMedia, connection.To, consumerMedia),
-				})
-			}
+		if finding, incompatible := toolConnectionCompatibilityFinding(board, connection); incompatible {
+			report.Errors = append(report.Errors, finding)
 		}
 	}
 	inputProducers := make(map[string]string, len(board.Connections))
