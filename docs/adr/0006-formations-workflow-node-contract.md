@@ -271,24 +271,38 @@ publication. Before the first canonical rename, the writer computes and
 validates the exact old/old and new/new board/layout identities and stages and
 fsyncs every present old and new representation. Each identity member is either
 the explicit absent state or SHA-256 over the exact bytes; a missing original
-layout is not treated as an empty file. Validation, legacy, revision/ETag CAS,
+layout is not treated as an empty file. Restoring that predecessor means
+unlinking any canonical layout, confirming the no-file state, and fsyncing the
+layout parent directory. Validation, legacy, revision/ETag CAS,
 serialization, staging, or fsync failure before that rename leaves both
 canonical files byte-identical. Publication renames layout first and board last:
 layout-only entries are ignored and grant no graph or Tool authority, while the
 board remains graph authority.
 
 After the first rename, an I/O error triggers synchronous reconciliation under
-both locks using those exact staged and canonical identities. The writer
-must establish exact old/old, in which case it returns the ordinary failure, or
-exact new/new, in which case it reports success. It never returns an ordinary
-failure for a mixed pair. If it cannot establish either pair, it returns stable
-`definition_publication_uncertain`, blocks further mutation of that board, and
-requires explicit locked recovery and re-read before mutation can resume. This
-protocol does not claim cross-file crash or power-loss atomicity without a
-future journal. A possible layout-new/board-old crash state projects the old
-board: extra layout entries are ignored and missing entries receive only the
-normal non-authorizing placement heuristic. Layout exposes no Tool authority. A
-schema-1 reader rejects board schema 2.
+both locks using those exact staged and canonical identities. Exact hashes alone
+never close reconciliation. Old/old returns the ordinary failure only after
+every present canonical file and both parent directories fsync; restored layout
+absence uses the unlink/no-file plus layout-parent-fsync rule above. New/new
+reports success only after both canonical files and both parent directories
+fsync. A mixed pair or any failed file/directory sync never returns an ordinary
+failure or success. If reconciliation cannot complete either exact outcome, it
+returns stable `definition_publication_uncertain`.
+
+Without a journal, uncertainty is not a durable mutation block. It forbids an
+automatic retry. The next explicit Tool mutation holds both locks, reopens and
+validates the current canonical board/layout pair, fsyncs every present member
+and both parent directories, and only then evaluates revision/ETag CAS. The UI
+and graph projection join positions and lanes only for node and connection ids
+present in the current board; the next successful Tool mutation filters inert
+layout extras. A possible layout-new/board-old crash state therefore projects
+the old board, with missing entries receiving only the normal non-authorizing
+placement heuristic. During reconciliation against that operation's staged
+identities, board-new/layout-old is invalid and unexpected under the ordered
+publication protocol; this does not reclassify ordinary stale layout as graph
+state. Layout raw entries grant no node or Tool
+authority. This protocol does not claim cross-file crash or power-loss atomicity
+without a future journal. A schema-1 reader rejects board schema 2.
 
 The initial and only descriptor is exactly:
 
@@ -1376,8 +1390,9 @@ ADR-0007.
   schema-1 read byte identity; board/layout schema separation; content-
   preserving first-Tool migration; monotonic schema-2 update/delete; exact
   incident-edge cleanup; pre-rename byte identity; layout-first publication;
-  hash reconciliation and fail-loud uncertain-state fencing; heuristic-only
-  placement; API/Archon parity; and HTTP 422/lowercase
+  file-and-parent-fsynced reconciliation; absent-layout restoration; explicit
+  uncertain-state recovery preflight; board-authoritative layout filtering;
+  heuristic-only placement; API/Archon parity; and HTTP 422/lowercase
   `tool_execution_unavailable` before global runtime authority or effects.
   Repository checks prove this slice adds no runtime registration, callback,
   executable/process, tmux, launch, lease, recovery, or artifact authority and

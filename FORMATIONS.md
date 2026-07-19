@@ -469,20 +469,31 @@ board connection, its layout node, and every incident layout routing entry while
 keeping board schema 2. Create and delete hold board then layout locks, validate
 revision/ETag CAS, and stage and fsync every present member of exact old/old and
 new/new identities before the first canonical rename. Each identity member is
-explicitly absent or SHA-256 over exact bytes; absent is not an empty file. Any
+explicitly absent or SHA-256 over exact bytes; absent is not an empty file.
+Restoring absent layout means unlink/no-file plus layout-parent fsync. Any
 earlier validation, migration, serialization,
 staging, or fsync failure leaves canonical board and layout bytes unchanged.
 Publication renames layout first and board last because layout is non-authorizing
 and the board is graph authority.
 
-After the first rename, an I/O error is synchronously reconciled by exact hashes
-under both locks to old/old (ordinary failure) or new/new (success). A mixed pair
-never returns ordinary failure. Failure to establish either pair returns
-`definition_publication_uncertain`, blocks further board mutation, and requires
-explicit locked recovery and re-read. Cross-file crash/power-loss atomicity is
-not claimed without a future journal; layout-new/board-old still projects the
-old board. Extra layout entries are ignored and missing entries receive only the
-normal non-authorizing placement heuristic, so layout exposes no Tool authority.
+After the first rename, an I/O error is synchronously reconciled under both
+locks. Exact hashes alone are insufficient. Old/old returns ordinary failure
+only after every present canonical file and both parent directories fsync, using
+the absent-layout rule above. New/new reports success only after both canonical
+files and both parent directories fsync. Any mixed pair or failed sync returns
+`definition_publication_uncertain`, never ordinary failure or success. Without a
+journal this is not a durable mutation block, but automatic retry is forbidden.
+The next explicit Tool mutation reopens and validates the canonical pair and
+fsyncs every present member and both parents under both locks before CAS.
+
+Cross-file crash/power-loss atomicity is not claimed without a future journal.
+Layout-new/board-old projects the old board. UI/graph projection joins positions
+and lanes only for ids in that board; missing entries receive only the normal
+non-authorizing placement heuristic, and the next successful Tool mutation
+filters inert extras. During reconciliation against the operation's staged
+identities, board-new/layout-old is invalid and unexpected under this ordered
+protocol; ordinary stale layout remains non-authorizing presentation state.
+Layout raw entries grant no node or Tool authority.
 
 The first Tool class is certified deterministic: network, secrets, undeclared
 host reads, and external writes are denied; locale/timezone are normalized;
