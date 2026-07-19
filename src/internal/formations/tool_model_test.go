@@ -2,6 +2,7 @@ package formations
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -143,6 +144,86 @@ func TestToolParameterScalarParserAcceptsFrozenDomain(t *testing.T) {
 			if string(gotJSON) != tt.wantJSON {
 				t.Fatalf("Tool parameter scalar %q projected as %s, want %s", tt.literal, gotJSON, tt.wantJSON)
 			}
+		})
+	}
+}
+
+func TestToolBasicStringEscapesPreserveAllowedControlValues(t *testing.T) {
+	tests := []struct {
+		name    string
+		literal string
+		want    string
+	}{
+		{name: "backspace", literal: `"\b"`, want: "\b"},
+		{name: "tab", literal: `"\t"`, want: "\t"},
+		{name: "line feed", literal: `"\n"`, want: "\n"},
+		{name: "form feed", literal: `"\f"`, want: "\f"},
+		{name: "carriage return", literal: `"\r"`, want: "\r"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseToolParameterScalar(tt.literal)
+			if err != nil {
+				t.Fatalf("parse approved escaped Tool control %q: %v", tt.literal, err)
+			}
+			if got != tt.want {
+				t.Fatalf("escaped Tool control %q projected as %#v, want %#v", tt.literal, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestToolLiteralStringsRejectRawTOMLForbiddenControls(t *testing.T) {
+	var controls []rune
+	for control := rune(0x01); control <= 0x08; control++ {
+		controls = append(controls, control)
+	}
+	for control := rune(0x0b); control <= 0x1f; control++ {
+		controls = append(controls, control)
+	}
+	controls = append(controls, 0x7f)
+
+	for _, control := range controls {
+		t.Run(fmt.Sprintf("U+%04X", control), func(t *testing.T) {
+			literal := "'" + string(control) + "'"
+			if _, err := parseToolParameterScalar(literal); err == nil {
+				t.Fatalf("Tool literal string accepted raw TOML-forbidden control U+%04X", control)
+			}
+		})
+	}
+}
+
+func TestToolBoardParserRejectsRawLiteralControlsAcrossRoutesWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name string
+		old  string
+		new  string
+	}{
+		{
+			name: "node field U+0001",
+			old:  `title = "Normalize report"`,
+			new:  "title = 'Normalize" + string(rune(0x01)) + " report'",
+		},
+		{
+			name: "parameter U+000B",
+			old:  `mode = "strict"`,
+			new:  "mode = 'strict" + string(rune(0x0b)) + "'",
+		},
+		{
+			name: "port media type U+007F",
+			old:  `acceptedMediaTypes = ["application/json"]`,
+			new:  "acceptedMediaTypes = ['application" + string(rune(0x7f)) + "/json']",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := strings.Replace(frozenJSONNormalizeBoardFixture(), tt.old, tt.new, 1)
+			if raw == frozenJSONNormalizeBoardFixture() {
+				t.Fatalf("raw-control fixture replacement %q did not apply", tt.name)
+			}
+			assertToolBoardReadRejectedWithoutMutation(t, raw, tt.name)
 		})
 	}
 }
@@ -320,6 +401,116 @@ func TestToolBoardParserRejectsClosedShapeViolationsWithoutMutation(t *testing.T
 			raw := strings.Replace(frozenJSONNormalizeBoardFixture(), tt.old, tt.new, 1)
 			if raw == frozenJSONNormalizeBoardFixture() {
 				t.Fatalf("closed-shape fixture replacement %q did not apply", tt.name)
+			}
+			assertToolBoardReadRejectedWithoutMutation(t, raw, tt.name)
+		})
+	}
+}
+
+func TestToolBoardParserFencesTopLevelToolNamespaceBeforeLaterNodeWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name       string
+		definition string
+	}{
+		{
+			name:       "dotted Tool definition",
+			definition: `tool.runtime.command = "forbidden"`,
+		},
+		{
+			name:       "inline Tool table",
+			definition: `tool = { runtime = { command = "forbidden" } }`,
+		},
+		{
+			name:       "unterminated Tool child header",
+			definition: "[tool.runtime\ncommand = \"forbidden\"",
+		},
+		{
+			name:       "mismatched Tool array header",
+			definition: "[[tool]\ncommand = \"forbidden\"",
+		},
+		{
+			name:       "Tool child header with trailing bytes",
+			definition: "[tool.runtime] trailing\ncommand = \"forbidden\"",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := strings.Replace(
+				frozenJSONNormalizeBoardFixture(),
+				"\n[[tool]]\n",
+				"\n"+tt.definition+"\n\n[[tool]]\n",
+				1,
+			)
+			if raw == frozenJSONNormalizeBoardFixture() {
+				t.Fatalf("Tool namespace fixture insertion %q did not apply", tt.name)
+			}
+			assertToolBoardReadRejectedWithoutMutation(t, raw, tt.name)
+		})
+	}
+}
+
+func TestToolBoardParserIgnoresGenuineUnrelatedValidSection(t *testing.T) {
+	raw := strings.Replace(
+		frozenJSONNormalizeBoardFixture(),
+		"\n[[tool]]\n",
+		"\n[metadata]\ntool = { note = \"not Tool authority\" }\nruntime.command = \"informational\"\n\n[[tool]]\n",
+		1,
+	)
+	if raw == frozenJSONNormalizeBoardFixture() {
+		t.Fatal("unrelated-section fixture insertion did not apply")
+	}
+
+	store := NewStore(t.TempDir())
+	path := store.BoardPath("tool-model")
+	writeFixture(t, path, raw)
+	wantIdentity := operativeFileIdentityForTest(t, path)
+	want, err := parseBoard([]byte(frozenJSONNormalizeBoardFixture()))
+	if err != nil {
+		t.Fatalf("parse canonical Tool fixture: %v", err)
+	}
+
+	got, err := store.ReadBoard("tool-model")
+	if err != nil {
+		t.Fatalf("valid unrelated section interfered with Tool projection: %v", err)
+	}
+	if !reflect.DeepEqual(got.Tools, want.Tools) {
+		t.Fatalf("valid unrelated section changed Tool projection = %#v, want %#v", got.Tools, want.Tools)
+	}
+	if got.TOML != raw || got.ETag != etag([]byte(raw)) {
+		t.Fatalf("valid unrelated section changed source identity: TOML=%q ETag=%q", got.TOML, got.ETag)
+	}
+	if gotRaw := readFile(t, path); gotRaw != raw {
+		t.Fatalf("reading valid unrelated section changed canonical bytes:\n got %q\nwant %q", gotRaw, raw)
+	}
+	if gotIdentity := operativeFileIdentityForTest(t, path); gotIdentity != wantIdentity {
+		t.Fatalf("reading valid unrelated section replaced operative file identity = %v, want %v", gotIdentity, wantIdentity)
+	}
+}
+
+func TestToolBoardParserRejectsGoOnlyEscapedShapeAliasesWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name string
+		old  string
+		new  string
+	}{
+		{
+			name: "quoted key cannot alias Tool id",
+			old:  `id = "tool_01J9_normalize"`,
+			new:  `"\x69d" = "tool_01J9_normalize"`,
+		},
+		{
+			name: "quoted header cannot alias Tool node",
+			old:  `[[tool]]`,
+			new:  `[["to\x6fl"]]`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := strings.Replace(frozenJSONNormalizeBoardFixture(), tt.old, tt.new, 1)
+			if raw == frozenJSONNormalizeBoardFixture() {
+				t.Fatalf("Go-only escape fixture replacement %q did not apply", tt.name)
 			}
 			assertToolBoardReadRejectedWithoutMutation(t, raw, tt.name)
 		})
