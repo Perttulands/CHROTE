@@ -266,6 +266,8 @@ func TestRunCommandRecordCodecRejectsStatePayloadAndHashContradictions(t *testin
 	startApplied := testAuthorityCommandRecordRawFor(2, &startPrior, "start", startPayload, "applied")
 	startRejected := testAuthorityCommandRecordRawFor(2, &startPrior, "start", startPayload, "rejected")
 	payloadHash := runtimeSHA256Hex(cancelPayload)
+	initialFenceMismatch := testAuthorityReplaceOnce(pending, []byte(`"stateWriterFence":1`), []byte(`"stateWriterFence":2`))
+	outcomeBeforeAdmission := testAuthorityReplaceOnce(applied, []byte(`"admittedWriterFence":1`), []byte(`"admittedWriterFence":2`))
 
 	tests := []struct {
 		name string
@@ -278,6 +280,7 @@ func TestRunCommandRecordCodecRejectsStatePayloadAndHashContradictions(t *testin
 		{name: "pending has outcome fence", raw: testAuthorityInsertBefore(pending, `,"priorGeneration":`, `,"outcomeWriterFence":1`)},
 		{name: "pending has run id", raw: testAuthorityInsertBefore(pending, `,"state":`, `,"runId":"`+testAuthorityRecordRunID+`"`)},
 		{name: "pending has rejection code", raw: testAuthorityInsertBefore(pending, `,"state":`, `,"rejectionCode":"extra"`)},
+		{name: "initial pending fences differ", raw: initialFenceMismatch},
 		{name: "applied missing decision ref", raw: testAuthorityRemoveField(applied, `,"decisionAdmissionPolicyRef":null`)},
 		{name: "applied missing effect sequence", raw: testAuthorityRemoveField(applied, `,"effectSeq":1`)},
 		{name: "applied missing outcome fence", raw: testAuthorityRemoveField(applied, `,"outcomeWriterFence":1`)},
@@ -285,6 +288,7 @@ func TestRunCommandRecordCodecRejectsStatePayloadAndHashContradictions(t *testin
 		{name: "applied has rejection code", raw: testAuthorityReplaceOnce(applied, []byte(`,"recordRev":2,"runId":`), []byte(`,"recordRev":2,"rejectionCode":"extra","runId":`))},
 		{name: "start applied missing decision generation", raw: testAuthorityReplaceOnce(startApplied, []byte(`"decisionAdmissionPolicyRef":`+testAuthorityAdmissionPolicyRefJSON()), []byte(`"decisionAdmissionPolicyRef":null`))},
 		{name: "non start applied has decision generation", raw: testAuthorityReplaceOnce(applied, []byte(`"decisionAdmissionPolicyRef":null`), []byte(`"decisionAdmissionPolicyRef":`+testAuthorityAdmissionPolicyRefJSON()))},
+		{name: "outcome fence precedes admission", raw: outcomeBeforeAdmission},
 		{name: "rejected missing decision ref", raw: testAuthorityRemoveField(rejected, `,"decisionAdmissionPolicyRef":null`)},
 		{name: "rejected missing outcome fence", raw: testAuthorityRemoveField(rejected, `,"outcomeWriterFence":1`)},
 		{name: "rejected missing rejection code", raw: testAuthorityRemoveField(rejected, `,"rejectionCode":"rejected"`)},
