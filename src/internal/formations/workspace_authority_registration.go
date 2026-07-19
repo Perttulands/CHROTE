@@ -214,6 +214,12 @@ func (registrar *workspaceAuthorityRegistrar) register(configuredWorkspace strin
 			if recoveryCandidate != nil {
 				defer recoveryCandidate.close()
 			}
+			if err := validateWorkspaceAuthorityRegistrationPins(registrar.hostRoot, root, workspaces, registryLock, registry, identity, workspace); err != nil {
+				return err
+			}
+			if err := validateRuntimeAuthorityWorkspaceIsolation(registrar.hostRoot, root, identity); err != nil {
+				return err
+			}
 			authorityID := ""
 			if recoveryCandidate != nil {
 				authorityID = recoveryCandidate.authorityID

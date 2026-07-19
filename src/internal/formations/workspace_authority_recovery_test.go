@@ -126,13 +126,15 @@ func TestWorkspaceAuthorityCrashRecoveryExcludesRegisteredMalformedSiblingBefore
 	}
 }
 
-func TestWorkspaceAuthorityFreshRegistrationRepinsAfterSafeForeignRecoveryScan(t *testing.T) {
+func TestWorkspaceAuthorityRegistrationRepinsAfterRecoveryScan(t *testing.T) {
 	tests := []struct {
-		name     string
-		retarget string
+		name       string
+		retarget   string
+		exactMatch bool
 	}{
 		{name: "configured workspace replaced", retarget: "workspace"},
 		{name: "workspaces root replaced", retarget: "workspaces"},
+		{name: "exact candidate descriptors released after configured workspace replacement", retarget: "workspace", exactMatch: true},
 	}
 
 	for _, test := range tests {
@@ -141,9 +143,13 @@ func TestWorkspaceAuthorityFreshRegistrationRepinsAfterSafeForeignRecoveryScan(t
 			foreign := filepath.Join(fixture.workspacesRoot, testWorkspaceAuthorityRecoveryForeignID)
 			createWorkspaceAuthorityRecoveryDirectory(t, foreign)
 			foreignBootstrap := filepath.Join(foreign, "workspace.bootstrap.json")
+			rootHash := strings.Repeat("f", 64)
+			if test.exactMatch {
+				rootHash = fixture.identity.rootHash
+			}
 			writePrivateAuthorityTestFile(t, foreignBootstrap, workspaceAuthorityRecoveryBootstrapRaw(
 				testWorkspaceAuthorityRecoveryForeignID,
-				strings.Repeat("f", 64),
+				rootHash,
 			))
 			originalBootstrap, err := os.Stat(foreignBootstrap)
 			if err != nil {

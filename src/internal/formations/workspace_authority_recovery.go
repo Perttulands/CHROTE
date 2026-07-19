@@ -236,7 +236,7 @@ func (transaction *workspaceAuthorityRecoveryTransaction) complete() error {
 		return err
 	}
 	defer initial.close()
-	if err := transaction.publishMissingInitialState(initial); err != nil {
+	if err := transaction.publishMissingInitialState(initial, ownerLock); err != nil {
 		return err
 	}
 
@@ -248,6 +248,12 @@ func (transaction *workspaceAuthorityRecoveryTransaction) complete() error {
 	if !finalState.policyPresent || !finalState.workspacePresent {
 		return errRuntimeIntegrityMismatch
 	}
+	if err := finalState.validateNamed(transaction); err != nil {
+		return err
+	}
+	if err := transaction.validatePins(ownerLock); err != nil {
+		return err
+	}
 	if err := transaction.registrar.ops.syncInitialAuthorityDirectory(transaction.candidate.directory); err != nil {
 		return err
 	}
@@ -258,6 +264,9 @@ func (transaction *workspaceAuthorityRecoveryTransaction) complete() error {
 		return err
 	}
 	if err := finalState.validateNamed(transaction); err != nil {
+		return err
+	}
+	if err := transaction.validatePins(ownerLock); err != nil {
 		return err
 	}
 
@@ -408,14 +417,17 @@ func (transaction *workspaceAuthorityRecoveryTransaction) preflightInitialState(
 	return state, nil
 }
 
-func (transaction *workspaceAuthorityRecoveryTransaction) publishMissingInitialState(state *workspaceAuthorityRecoveryInitialState) error {
-	if state == nil {
+func (transaction *workspaceAuthorityRecoveryTransaction) publishMissingInitialState(
+	state *workspaceAuthorityRecoveryInitialState,
+	ownerLock *os.File,
+) error {
+	if state == nil || ownerLock == nil {
 		return errRuntimeNoncanonical
 	}
-	if err := transaction.validatePins(nil); err != nil {
+	if err := state.validateNamed(transaction); err != nil {
 		return err
 	}
-	if err := state.validateNamed(transaction); err != nil {
+	if err := transaction.validatePins(ownerLock); err != nil {
 		return err
 	}
 	policyDirectory := state.policyDirectory
@@ -435,6 +447,17 @@ func (transaction *workspaceAuthorityRecoveryTransaction) publishMissingInitialS
 			createdPolicyDirectory = true
 			defer policyDirectory.Close()
 		}
+		if err := state.validateNamed(transaction); err != nil {
+			return err
+		}
+		if createdPolicyDirectory {
+			if err := workspaceAuthorityRecoveryOpenedMatchesNamed(policyDirectory, transaction.candidate.directory, "admission-policies"); err != nil {
+				return err
+			}
+		}
+		if err := transaction.validatePins(ownerLock); err != nil {
+			return err
+		}
 		policyPublisher, err := newAuthorityPublisher(policyDirectory, transaction.registrar.expectedUID, nil)
 		if err != nil {
 			return err
@@ -447,9 +470,6 @@ func (transaction *workspaceAuthorityRecoveryTransaction) publishMissingInitialS
 		}
 	}
 	if !state.workspacePresent {
-		if err := transaction.validatePins(nil); err != nil {
-			return err
-		}
 		if err := state.validateNamed(transaction); err != nil {
 			return err
 		}
@@ -457,6 +477,9 @@ func (transaction *workspaceAuthorityRecoveryTransaction) publishMissingInitialS
 			if err := workspaceAuthorityRecoveryOpenedMatchesNamed(policyDirectory, transaction.candidate.directory, "admission-policies"); err != nil {
 				return err
 			}
+		}
+		if err := transaction.validatePins(ownerLock); err != nil {
+			return err
 		}
 		authorityPublisher, err := newAuthorityPublisher(transaction.candidate.directory, transaction.registrar.expectedUID, nil)
 		if err != nil {
