@@ -65,6 +65,7 @@ func TestWorkspaceAuthorityOwnerDomainUsesExactMappedIdentityAndStaysReadOnly(t 
 		if scope == nil {
 			t.Fatal("owner-domain callback received nil scope")
 		}
+		assertWorkspaceAuthorityOwnerDomainScopeValueIsClosed(t, scope, fixture)
 		if got := scope.workspaceAuthorityID(); got != testInitialRegistrationAuthorityID {
 			t.Fatalf("owner-domain authority id = %q, want mapped id %q", got, testInitialRegistrationAuthorityID)
 		}
@@ -93,6 +94,57 @@ func TestWorkspaceAuthorityOwnerDomainUsesExactMappedIdentityAndStaysReadOnly(t 
 	}
 	if callbackCalls != 1 {
 		t.Fatalf("owner-domain callback calls = %d, want exactly one", callbackCalls)
+	}
+	assertWorkspaceAuthorityOwnerDomainUnchanged(t, fixture, before)
+	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, paths...)
+	assertWorkspaceAuthorityOwnerDomainLocksReleased(t, fixture)
+}
+
+func TestWorkspaceAuthorityOwnerDomainValidatesClosedStateOnlyUnderOwnerLock(t *testing.T) {
+	fixture := newWorkspaceAuthorityOwnerDomainFixture(t)
+	paths := workspaceAuthorityOwnerDomainPaths(fixture)
+	before := snapshotWorkspaceAuthorityTopology(t, fixture.base)
+	descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, paths...)
+	registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate())
+	productionValidate := registrar.ops.validatePrivateNode
+	wantValidated := map[string]bool{
+		"workspace.bootstrap.json": false,
+		"workspace.private.json":   false,
+		"admission-policies":       false,
+		"3.json":                   false,
+		"2.json":                   false,
+		"1.json":                   false,
+	}
+	registrar.ops.validatePrivateNode = func(opened *os.File, expectedUID uint32) error {
+		if err := productionValidate(opened, expectedUID); err != nil {
+			return err
+		}
+		if _, ok := wantValidated[opened.Name()]; !ok {
+			return nil
+		}
+		if err := tryWorkspaceAuthorityExclusiveLock(fixture.ownerLock); !errors.Is(err, syscall.EWOULDBLOCK) {
+			return fmt.Errorf("validate %s owner-lock probe = %v, want would-block", opened.Name(), err)
+		}
+		if err := tryWorkspaceAuthorityExclusiveLock(fixture.registryLock); err != nil {
+			return fmt.Errorf("validate %s registry-lock probe = %v, want released", opened.Name(), err)
+		}
+		wantValidated[opened.Name()] = true
+		return nil
+	}
+	callbackCalls := 0
+	if err := registrar.withWorkspaceAuthorityOwnerDomain(fixture.workspace, func(workspaceAuthorityOwnerDomainScope) error {
+		callbackCalls++
+		return nil
+	}); err != nil {
+		t.Fatalf("validate closed owner-domain state under owner lock: %v", err)
+	}
+	if callbackCalls != 1 {
+		t.Fatalf("closed owner-domain validation callback calls = %d, want one", callbackCalls)
+	}
+	for name, validated := range wantValidated {
+		if !validated {
+			t.Errorf("closed owner-domain state %q was not validated under owner lock", name)
+		}
 	}
 	assertWorkspaceAuthorityOwnerDomainUnchanged(t, fixture, before)
 	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, paths...)
@@ -592,6 +644,50 @@ func workspaceAuthorityOwnerDomainPaths(fixture workspaceAuthorityOwnerDomainFix
 		filepath.Join(fixture.policyDir, "3.json"),
 	)
 	return paths
+}
+
+func assertWorkspaceAuthorityOwnerDomainScopeValueIsClosed(t *testing.T, scope workspaceAuthorityOwnerDomainScope, fixture workspaceAuthorityOwnerDomainFixture) {
+	t.Helper()
+	value := reflect.ValueOf(scope)
+	typeOf := value.Type()
+	if value.Kind() != reflect.Struct || typeOf.Name() == "" || typeOf.PkgPath() == "" {
+		t.Fatalf("owner-domain dynamic scope = %v (%s), want private named non-pointer value struct", typeOf, value.Kind())
+	}
+	wantStrings := map[string]int{
+		testInitialRegistrationAuthorityID: 1,
+		fixture.identity.rootHash:          1,
+	}
+	wantUint64s := map[uint64]int{}
+	for _, number := range []uint64{
+		fixture.identity.device,
+		fixture.identity.inode,
+		workspaceAuthorityLockIdentityAtPath(t, fixture.ownerLock).device,
+		workspaceAuthorityLockIdentityAtPath(t, fixture.ownerLock).inode,
+	} {
+		wantUint64s[number]++
+	}
+	if typeOf.NumField() != 6 {
+		t.Fatalf("owner-domain dynamic scope fields = %d, want six closed scalar values", typeOf.NumField())
+	}
+	gotStrings := map[string]int{}
+	gotUint64s := map[uint64]int{}
+	for index := 0; index < typeOf.NumField(); index++ {
+		field := typeOf.Field(index)
+		if field.PkgPath == "" || field.Tag != "" {
+			t.Fatalf("owner-domain dynamic scope field %s must be unexported and tag-free: exported=%t tag=%q", field.Name, field.PkgPath == "", field.Tag)
+		}
+		switch field.Type.Kind() {
+		case reflect.String:
+			gotStrings[value.Field(index).String()]++
+		case reflect.Uint64:
+			gotUint64s[value.Field(index).Uint()]++
+		default:
+			t.Fatalf("owner-domain dynamic scope field %s kind = %s, want only closed string/uint64 values", field.Name, field.Type.Kind())
+		}
+	}
+	if !reflect.DeepEqual(gotStrings, wantStrings) || !reflect.DeepEqual(gotUint64s, wantUint64s) {
+		t.Fatalf("owner-domain dynamic scope values = strings %#v uint64s %#v, want strings %#v uint64s %#v", gotStrings, gotUint64s, wantStrings, wantUint64s)
+	}
 }
 
 func assertWorkspaceAuthorityOwnerDomainRejectedReadOnly(t *testing.T, fixture workspaceAuthorityOwnerDomainFixture, gate workspaceAuthorityCapabilityGate) {
