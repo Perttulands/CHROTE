@@ -1189,10 +1189,13 @@ In the accepted target, executable preflight requires a complete judge channel
 if and only if `gate.kinds` contains `formation`; drafts may temporarily retain a
 half-edge or kind/channel mismatch while being authored.
 
-An accepted-target Tool board entry stores a profile id/version constraint and
-modeled non-secret parameters. Run start freezes the resolved profile
-version/hash, parameters, effective policy hash, and content-addressed execution
-bundle hash. The first Tool profile class is pure and certified deterministic.
+An accepted-target Tool board entry stores one exact immutable
+`(profileId, profileVersion)` tuple and modeled non-secret parameters. Registry
+lookup is exact tuple equality with no ranges, aliases, defaults, fallback, or
+latest selection. Run start later freezes that exact tuple plus the matching
+profile content hash, parameters, effective policy hash, and content-addressed
+execution bundle hash. The first Tool profile class is pure and certified
+deterministic.
 Its closed sandbox permits only the sealed input set, frozen bundle/parameters/
 policy, and one empty run-private output root. Network, secrets, undeclared
 environment or filesystem reads, and external writes are denied; locale and
@@ -1294,19 +1297,46 @@ the Formation is already connected to its input. Removal never creates or
 rewires a Gate. Historical cancellation and failure remain permitted terminal
 containment and do not authorize evaluation, routing, resume or dispatch.
 
-ADR-0006 graph typing is board schema 2. Schema-1 Formation inputs normalize in
+ADR-0006 fixes `CurrentBoardSchema=2`, `CurrentLayoutSchema=1`, and
+`NewBoardSchema=1`. Schema-1 Formation inputs normalize in
 memory to `kind=work`, `acceptedMediaTypes=["text/plain", "text/markdown",
 "application/json"]`, `required=true`, `role=data`; outputs normalize to
 `kind=work` with that same stable full initial media set. Fixed Mission `out`
 accepts only `text/markdown`; Gate `in`/`pass` work ports use the full set. Gate `fail` is
-`gate_feedback` and has no media set. Read/inspect does not rewrite. The first
-structural schema-2 write migrates atomically and writes those defaults. A
+`gate_feedback` and has no media set. Read/inspect does not rewrite. Tool-free
+new boards remain schema 1 and ordinary non-Tool writes preserve their existing
+schema. Only the first successful Tool creation migrates a schema-1 canonical
+board and writes those defaults. Board schema 2 is monotonic: deleting the final
+Tool never downgrades it, and Tool update/delete remain schema 2. A
 legacy Gate fail edge into a
 work input remains inspectable in degraded state but cannot validate or run
 until explicitly rewired; annotated-work pushback is not preserved implicitly.
 A safely normalizable schema-1 board may start without canonical mutation:
 preflight writes a normalized schema-2 run snapshot and records source/snapshot
 schema. Unsafe normalization rejects before `run_started`.
+
+Tool update changes only title and the complete parameter map. Tool delete
+removes the Tool, every incident board connection, its layout node, and every
+incident layout routing entry while keeping board schema 2 and layout schema 1.
+Create and delete hold board then layout locks through publication. Before the
+first canonical rename, the writer validates revision/ETag CAS, computes the
+exact old/old and new/new board/layout identities, and stages and fsyncs every
+present old and new representation. Each identity member is either the explicit
+absent state or SHA-256 over exact bytes; a missing original layout is not an
+empty file. Validation, legacy, CAS, serialization, staging, or
+fsync failure before that rename leaves both canonical files byte-identical.
+Publication renames layout first and board last because layout-only entries are
+ignored and non-authorizing while the board is graph authority.
+
+After the first rename, an I/O error triggers synchronous exact-hash
+reconciliation under both locks. Exact old/old returns the ordinary failure;
+exact new/new reports success. A mixed pair never returns ordinary failure. If
+neither pair can be established, stable `definition_publication_uncertain`
+blocks further mutation of that board until explicit locked recovery and
+re-read. Cross-file crash/power-loss atomicity is not claimed without a future
+journal. A possible layout-new/board-old state projects the old board: extra
+layout entries are ignored and missing entries receive only the normal
+non-authorizing placement heuristic. Layout exposes no Tool authority.
 
 Schema-1 edges touching `gate:judge` normalize to `channel=judge` only when they
 form one unambiguous linear Formation-only send/return chain. Ambiguous or
@@ -1361,8 +1391,9 @@ consume the frozen per-slot binding and must not re-resolve a mutable persona
 card into a different target.
 
 The private binding authority writes one `RunToolBinding` per reachable Tool with
-its resolved exact profile version/content hash, normalized parameters/hash, and
-effective-policy, determinism-policy, and execution-bundle hashes. The content-addressed bundle covers
+its authored exact `(profileId, profileVersion)` tuple, matching profile content
+hash, normalized parameters/hash, and effective-policy, determinism-policy, and
+execution-bundle hashes. The content-addressed bundle covers
 executable/script/toolchain identity, argv template, cwd contract, normalized
 non-secret allowlisted environment values, supervisor/fence policy, and limits;
 a host path alone is insufficient. Run preflight rejects a reachable Tool before

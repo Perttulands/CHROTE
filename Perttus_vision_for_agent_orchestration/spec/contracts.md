@@ -256,7 +256,8 @@ Gate `fail` is `gate_feedback` and has no media set. Read/inspect does not rewri
 `CurrentBoardSchema=2`, `CurrentLayoutSchema=1`, and `NewBoardSchema=1`; the
 first successful Tool creation is the only authoring mutation that migrates a
 schema-1 board and writes these defaults explicitly. Ordinary non-Tool mutations
-preserve the existing board schema.
+preserve the existing board schema. Board schema 2 is monotonic: deleting the
+last Tool never downgrades it, and Tool updates and deletes remain schema 2.
 
 A schema-1 Gate fail edge into a work input loads in degraded inspection state
 with `legacy_fail_route_requires_migration`. Structural read succeeds, but board
@@ -507,19 +508,43 @@ port arrays are nonempty, duplicate-free, and contain only `text/plain`,
 Schema ownership is split exactly as `CurrentBoardSchema=2`,
 `CurrentLayoutSchema=1`, and `NewBoardSchema=1`. Pure board and layout reads
 never write. Empty and Tool-free new boards remain schema 1, and ordinary
-non-Tool mutations preserve the board's existing schema. Under board/layout
-locks and revision/ETag CAS, the first successful Tool creation on a schema-1
-board first rejects ambiguous legacy fail or judge routes, inline verification,
-and every legacy script-Gate shape before staging. It then publishes one
-content-preserving board-file replacement that writes typed Formation defaults,
-explicit safe `workflow`/`judge` channels, `schema=2`, and the Tool with one
-revision increment. Layout remains schema 1; only the new Tool receives heuristic
+non-Tool mutations preserve the board's existing schema. Board schema 2 is
+monotonic: deleting the last Tool never downgrades it, and Tool updates and
+deletes remain schema 2. Under board/layout locks and revision/ETag CAS, the
+first successful Tool creation on a schema-1 board first rejects ambiguous
+legacy fail or judge routes, inline verification, and every legacy script-Gate
+shape before staging. It then publishes one content-preserving board-file
+replacement that writes typed Formation defaults, explicit safe
+`workflow`/`judge` channels, `schema=2`, and the Tool with one revision
+increment. Layout remains schema 1; only the new Tool receives heuristic
 connection-aware, bounded free-space, grid-snap placement, and existing
-coordinates never move. The writer computes, validates, and stages both board
-and layout bytes before publication and restores original
-bytes for an ordinary returned failure, so invalid, CAS, or write failures leave
-both files byte-identical. This contract does not claim cross-file power-loss
-atomicity without a future journal. A schema-1 reader rejects board schema 2.
+coordinates never move. Tool update changes only title and the complete
+parameter map. Tool delete removes the Tool, every incident board connection,
+its layout node, and every incident layout routing entry.
+
+Create and delete hold the board lock and then the layout lock through
+publication. Before the first canonical rename, the writer computes and
+validates the exact old/old and new/new board/layout identities and stages and
+fsyncs every present old and new representation. Each identity member is either
+the explicit absent state or SHA-256 over the exact bytes; a missing original
+layout is not treated as an empty file. Validation, legacy, revision/ETag CAS,
+serialization, staging, or fsync failure before that rename leaves both
+canonical files byte-identical. Publication renames layout first and board last:
+layout-only entries are ignored and grant no graph or Tool authority, while the
+board remains graph authority.
+
+After the first rename, an I/O error triggers synchronous reconciliation under
+both locks using those exact staged and canonical identities. The writer
+must establish exact old/old, in which case it returns the ordinary failure, or
+exact new/new, in which case it reports success. It never returns an ordinary
+failure for a mixed pair. If it cannot establish either pair, it returns stable
+`definition_publication_uncertain`, blocks further mutation of that board, and
+requires explicit locked recovery and re-read before mutation can resume. This
+protocol does not claim cross-file crash or power-loss atomicity without a
+future journal. A possible layout-new/board-old crash state projects the old
+board: extra layout entries are ignored and missing entries receive only the
+normal non-authorizing placement heuristic. Layout exposes no Tool authority. A
+schema-1 reader rejects board schema 2.
 
 The initial and only catalog entry is exactly:
 
@@ -541,10 +566,12 @@ algorithm, runner, or output. The linter identifier, ports, parameters, media,
 sealed source/result contract, and descriptor are absent and reserved for a
 future owner product-direction decision. No placeholder is inferred here.
 
-Tool definitions store one exact immutable profile identity/version token plus
-modeled non-secret parameters. Run start freezes that exact profile version and
-content hash, parameters, effective policy hash, and content-addressed execution-bundle
-hash. The bundle covers executable/script/toolchain identity, argv template, cwd
+Tool definitions store one exact immutable `(profileId, profileVersion)` tuple
+plus modeled non-secret parameters. There are no ranges, aliases, defaults,
+fallbacks, or latest selection. Run start later freezes that exact tuple and the
+matching profile content hash, parameters, effective policy hash, and
+content-addressed execution-bundle hash. The bundle covers
+executable/script/toolchain identity, argv template, cwd
 contract, normalized non-secret allowlisted environment values,
 supervisor/fence policy, and limits. The first profile class is certified pure
 and deterministic: network, secrets, undeclared environment/filesystem reads,
@@ -1615,9 +1642,10 @@ determinism-policy SHA-256 values, and immutable execution-bundle SHA-256. The c
 script/toolchain identity, argv template, cwd contract, normalized non-secret
 allowlisted environment values, supervisor/fence policy, and limits; a mutable
 host path is not execution identity.
-The board snapshot keeps the authored constraint; the resolved binding is
-execution authority. Preflight rejects a reachable Tool before `run_started` if
-the frozen supervisor/fence policy is unavailable.
+The board snapshot keeps the authored exact `(profileId, profileVersion)` tuple;
+the later frozen binding adds the matching profile content hash and is execution
+authority. Preflight rejects a reachable Tool before `run_started` if the frozen
+supervisor/fence policy is unavailable.
 
 The private authority also stores one `RunGateBinding` per reachable schema-2
 code Gate: `gateBindingId`, Gate/profile ids, exact profile version/content
@@ -3268,8 +3296,9 @@ a narrower target.
 7. Use optimistic revision/ETag conflict handling; never clobber silently.
    Persona-card edits must detect stale reads or concurrent file changes and
    fail loud rather than overwriting.
-8. Refuse newer schema versions; up-migrate older versions only with content
-   preservation tests.
+8. Refuse newer schema versions. Migrate older versions only where the current
+   schema contract explicitly authorizes it and content-preservation tests pass;
+   board schema 1 to 2 migrates only on the first successful Tool creation.
 9. Runs never write persona cards, board definitions, or layout definitions.
 
 ## Deferred From S0
