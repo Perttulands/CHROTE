@@ -21,6 +21,7 @@ const (
 	pairStepStageNewLayoutFileSyncForTest  = "stage:new-layout:file-sync"
 	pairStepPublishLayoutRenameForTest     = "publish:layout:rename"
 	pairStepPublishLayoutUnlinkForTest     = "publish:layout:unlink"
+	pairStepPublishLayoutAbsentForTest     = "publish:layout:absence-check"
 	pairStepPublishBoardRenameForTest      = "publish:board:rename"
 )
 
@@ -316,7 +317,7 @@ func TestDefinitionPairSkipsAbsentRepresentationsWithoutInventingEmptyStages(t *
 			t.Fatalf("absent layout produced stage sync %q; steps=%v", forbidden, steps)
 		}
 	}
-	assertPairStepObservedForTest(t, steps, pairStepPublishLayoutUnlinkForTest)
+	assertPairStepObservedForTest(t, steps, pairStepPublishLayoutAbsentForTest)
 	if _, err := os.Lstat(store.LayoutPath(slug)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("absent candidate layout became a file: %v", err)
 	}
