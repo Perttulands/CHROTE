@@ -407,8 +407,10 @@ layoutNote = "keep"
 func TestSchemaOneBoardInspectionNeverPublishesMigration(t *testing.T) {
 	store := NewStore(t.TempDir())
 	raw := minimalBoard("inspect-only", 1)
-	writeFixture(t, store.BoardPath("inspect-only"), raw)
+	path := store.BoardPath("inspect-only")
+	writeFixture(t, path, raw)
 	wantETag := etag([]byte(raw))
+	wantIdentity := operativeFileIdentityForTest(t, path)
 
 	board, err := store.ReadBoard("inspect-only")
 	if err != nil {
@@ -425,8 +427,11 @@ func TestSchemaOneBoardInspectionNeverPublishesMigration(t *testing.T) {
 	if board.ETag != wantETag {
 		t.Fatalf("ValidateBoard changed board ETag = %q, want %q", board.ETag, wantETag)
 	}
-	if got := readFile(t, store.BoardPath("inspect-only")); got != raw {
+	if got := readFile(t, path); got != raw {
 		t.Fatalf("ReadBoard/ValidateBoard published an implicit migration:\n got %q\nwant %q", got, raw)
+	}
+	if got := operativeFileIdentityForTest(t, path); got != wantIdentity {
+		t.Fatalf("ReadBoard/ValidateBoard replaced operative file identity = %v, want %v", got, wantIdentity)
 	}
 }
 
@@ -438,8 +443,10 @@ boardRev = 1
 updatedAt = "2026-06-03T16:02:00Z"
 layoutNote = "keep"
 `
-	writeFixture(t, store.LayoutPath("inspect-only"), raw)
+	path := store.LayoutPath("inspect-only")
+	writeFixture(t, path, raw)
 	wantETag := etag([]byte(raw))
+	wantIdentity := operativeFileIdentityForTest(t, path)
 
 	layout, err := store.ReadLayout("inspect-only")
 	if err != nil {
@@ -451,8 +458,11 @@ layoutNote = "keep"
 	if layout.ETag != wantETag || layout.TOML != raw {
 		t.Fatalf("layout inspection changed source identity: ETag=%q want %q TOML=%q want %q", layout.ETag, wantETag, layout.TOML, raw)
 	}
-	if got := readFile(t, store.LayoutPath("inspect-only")); got != raw {
+	if got := readFile(t, path); got != raw {
 		t.Fatalf("ReadLayout published an implicit migration:\n got %q\nwant %q", got, raw)
+	}
+	if got := operativeFileIdentityForTest(t, path); got != wantIdentity {
+		t.Fatalf("ReadLayout replaced operative file identity = %v, want %v", got, wantIdentity)
 	}
 }
 
