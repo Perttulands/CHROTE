@@ -44,6 +44,31 @@ export interface FormationNode {
   verification?: FormationVerification
 }
 
+export type ToolParameterValue = string | boolean | number
+
+interface ToolPortBase {
+  id: string
+  name: string
+  label: string
+  kind: 'work'
+  acceptedMediaTypes: string[]
+}
+
+export type ToolPort = ToolPortBase & (
+  | { direction: 'input'; required?: boolean; role?: 'data' }
+  | { direction: 'output'; required?: never; role?: never }
+)
+
+export interface ToolNode {
+  id: string
+  title: string
+  profileId: string
+  profileVersion: string
+  params: Record<string, ToolParameterValue>
+  inputs: ToolPort[]
+  outputs: ToolPort[]
+}
+
 export interface BoardConnection {
   id: string
   from: string
@@ -59,6 +84,7 @@ export interface BoardDocument {
   missions?: MissionNode[]
   formations: FormationNode[]
   gates?: GateNode[]
+  tools?: ToolNode[]
   connections: BoardConnection[]
 }
 

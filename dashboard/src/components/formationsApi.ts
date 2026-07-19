@@ -52,6 +52,7 @@ export function normalizeBoard(board: BoardDocument, etag = ''): BoardDocument {
     missions: board.missions || [],
     formations: board.formations || [],
     gates: board.gates || [],
+    tools: board.tools || [],
     connections: board.connections || [],
   }
 }

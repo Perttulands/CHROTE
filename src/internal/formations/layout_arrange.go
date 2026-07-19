@@ -52,7 +52,7 @@ func (s *Store) ArrangeLayout(slug string, opts WriteOptions) (*LayoutDocument, 
 }
 
 func arrangedLayoutNodes(board *BoardDocument) []LayoutNode {
-	items := make([]arrangementItem, 0, len(board.Missions)+len(board.Formations)+len(board.Gates))
+	items := make([]arrangementItem, 0, len(board.Missions)+len(board.Formations)+len(board.Gates)+len(board.Tools))
 	for _, mission := range board.Missions {
 		items = append(items, arrangementItem{id: mission.ID, kind: "mission"})
 	}
@@ -61,6 +61,9 @@ func arrangedLayoutNodes(board *BoardDocument) []LayoutNode {
 	}
 	for _, gate := range board.Gates {
 		items = append(items, arrangementItem{id: gate.ID, kind: "gate"})
+	}
+	for _, tool := range board.Tools {
+		items = append(items, arrangementItem{id: tool.ID, kind: "tool"})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].id < items[j].id })
 	if len(items) == 0 {
