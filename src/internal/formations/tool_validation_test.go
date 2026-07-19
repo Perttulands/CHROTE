@@ -7,9 +7,14 @@ import (
 	"testing"
 )
 
+type toolStructuralPortMutationCase struct {
+	name   string
+	mutate func(*testing.T, string) string
+}
+
 func TestToolStructuralSchemaOneInspectionPreservesSourceAndLayoutBeforeRejection(t *testing.T) {
 	store := NewStore(t.TempDir())
-	raw := strings.Replace(toolStructuralConnectedBoardFixture(), "schema = 2", "schema = 1", 1)
+	raw := replaceToolStructuralFixture(t, toolStructuralDraftBoardFixture(), "schema = 2", "schema = 1")
 	layoutRaw := toolStructuralLayoutFixture()
 	boardPath := store.BoardPath("tool-structural")
 	layoutPath := store.LayoutPath("tool-structural")
@@ -41,7 +46,8 @@ func TestToolStructuralSchemaOneInspectionPreservesSourceAndLayoutBeforeRejectio
 }
 
 func TestToolStructuralValidSchemaTwoAndUnrelatedBoardsRemainAccepted(t *testing.T) {
-	assertToolStructuralBoardAccepted(t, toolStructuralConnectedBoardFixture(), "valid schema-2 json.normalize@1 board")
+	assertToolStructuralDefinitionAccepted(t, toolStructuralDraftBoardFixture(), "valid schema-2 json.normalize@1 draft")
+	assertToolStructuralBoardAccepted(t, toolStructuralDraftBoardFixture(), "valid schema-2 json.normalize@1 draft board")
 	assertToolStructuralBoardAccepted(t, cleanValidateBoardFixture(), "unrelated schema-1 Tool-free board")
 }
 
@@ -61,42 +67,40 @@ func TestToolStructuralRegistryTupleMustResolveExactly(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			raw := replaceToolStructuralFixture(t, toolStructuralConnectedBoardFixture(), tt.old, tt.new)
+			raw := mutateToolStructuralPrimaryToolBlock(t, toolStructuralDraftBoardFixture(), tt.old, tt.new)
 			assertToolStructuralBoardRejected(t, raw, tt.name)
 		})
 	}
 }
 
 func TestToolStructuralJSONNormalizePortsBindFrozenShapeButNotLabels(t *testing.T) {
-	labelsChanged := strings.NewReplacer(
-		`label = "Report"`, `label = "Operator-selected source"`,
-		`label = "Normalized report"`, `label = "Operator-selected result"`,
-	).Replace(toolStructuralConnectedBoardFixture())
-	assertToolStructuralBoardAccepted(t, labelsChanged, "display-only Tool labels")
+	labelsChanged := mutateToolStructuralPortBlock(
+		t,
+		toolStructuralDraftBoardFixture(),
+		toolStructuralPrimaryInputBlock,
+		`label = "Report"`,
+		`label = "Operator-selected source"`,
+	)
+	labelsChanged = mutateToolStructuralPortBlock(
+		t,
+		labelsChanged,
+		toolStructuralPrimaryOutputBlock,
+		`label = "Normalized report"`,
+		`label = "Operator-selected result"`,
+	)
+	assertToolStructuralDefinitionAccepted(t, labelsChanged, "display-only Tool labels")
 
-	tests := []struct {
-		name string
-		old  string
-		new  string
-	}{
+	tests := []toolStructuralPortMutationCase{
 		{
 			name: "missing input port",
-			old: `[[tool.input]]
-id = "port_tool_in"
-name = "input"
-label = "Report"
-direction = "input"
-kind = "work"
-acceptedMediaTypes = ["application/json"]
-required = true
-role = "data"
-
-`,
+			mutate: func(t *testing.T, raw string) string {
+				return replaceToolStructuralFixture(t, raw, toolStructuralPrimaryInputBlock, "")
+			},
 		},
 		{
-			name: "extra port changes descriptor sequence",
-			old:  `[[tool.output]]`,
-			new: `[[tool.input]]
+			name: "extra input port",
+			mutate: func(t *testing.T, raw string) string {
+				return replaceToolStructuralFixture(t, raw, toolStructuralPrimaryInputBlock, toolStructuralPrimaryInputBlock+`[[tool.input]]
 id = "port_tool_extra"
 name = "extra"
 label = "Extra"
@@ -106,40 +110,110 @@ acceptedMediaTypes = ["application/json"]
 required = false
 role = "data"
 
-[[tool.output]]`,
+				`)
+			},
 		},
-		{name: "semantic name", old: `name = "input"`, new: `name = "source"`},
-		{name: "direction", old: `direction = "input"`, new: `direction = "output"`},
-		{name: "kind", old: `kind = "work"`, new: `kind = "gate_feedback"`},
-		{name: "media value", old: `acceptedMediaTypes = ["application/json"]`, new: `acceptedMediaTypes = ["text/plain"]`},
-		{name: "media cardinality", old: `acceptedMediaTypes = ["application/json"]`, new: `acceptedMediaTypes = ["application/json", "text/plain"]`},
-		{name: "required presence", old: "required = true\n", new: ""},
-		{name: "required value", old: `required = true`, new: `required = false`},
-		{name: "role presence", old: "role = \"data\"\n", new: ""},
-		{name: "role value", old: `role = "data"`, new: `role = "retry_control"`},
+		{
+			name: "missing output port",
+			mutate: func(t *testing.T, raw string) string {
+				return replaceToolStructuralFixture(t, raw, toolStructuralPrimaryOutputBlock, "")
+			},
+		},
+		{
+			name: "extra output port",
+			mutate: func(t *testing.T, raw string) string {
+				return replaceToolStructuralFixture(t, raw, toolStructuralPrimaryOutputBlock, toolStructuralPrimaryOutputBlock+`[[tool.output]]
+id = "port_tool_extra_out"
+name = "extra_output"
+label = "Extra output"
+direction = "output"
+kind = "work"
+acceptedMediaTypes = ["application/json"]
+
+`)
+			},
+		},
+		toolStructuralPortMutation("input semantic name", toolStructuralPrimaryInputBlock, `name = "input"`, `name = "source"`),
+		toolStructuralPortMutation("input direction", toolStructuralPrimaryInputBlock, `direction = "input"`, `direction = "output"`),
+		toolStructuralPortMutation("input kind", toolStructuralPrimaryInputBlock, `kind = "work"`, `kind = "gate_feedback"`),
+		toolStructuralPortMutation("input media value", toolStructuralPrimaryInputBlock, `acceptedMediaTypes = ["application/json"]`, `acceptedMediaTypes = ["text/plain"]`),
+		toolStructuralPortMutation("input media cardinality", toolStructuralPrimaryInputBlock, `acceptedMediaTypes = ["application/json"]`, `acceptedMediaTypes = ["application/json", "text/plain"]`),
+		toolStructuralPortMutation("input required presence", toolStructuralPrimaryInputBlock, "required = true\n", ""),
+		toolStructuralPortMutation("input required value", toolStructuralPrimaryInputBlock, `required = true`, `required = false`),
+		toolStructuralPortMutation("input role presence", toolStructuralPrimaryInputBlock, "role = \"data\"\n", ""),
+		toolStructuralPortMutation("input role value", toolStructuralPrimaryInputBlock, `role = "data"`, `role = "retry_control"`),
+		toolStructuralPortMutation("output semantic name", toolStructuralPrimaryOutputBlock, `name = "output"`, `name = "result"`),
+		toolStructuralPortMutation("output direction", toolStructuralPrimaryOutputBlock, `direction = "output"`, `direction = "input"`),
+		toolStructuralPortMutation("output kind", toolStructuralPrimaryOutputBlock, `kind = "work"`, `kind = "gate_feedback"`),
+		toolStructuralPortMutation("output media value", toolStructuralPrimaryOutputBlock, `acceptedMediaTypes = ["application/json"]`, `acceptedMediaTypes = ["text/plain"]`),
+		toolStructuralPortMutation("output media cardinality", toolStructuralPrimaryOutputBlock, `acceptedMediaTypes = ["application/json"]`, `acceptedMediaTypes = ["application/json", "text/plain"]`),
+		toolStructuralPortMutation("output required presence", toolStructuralPrimaryOutputBlock, "acceptedMediaTypes = [\"application/json\"]\n", "acceptedMediaTypes = [\"application/json\"]\nrequired = false\n"),
+		toolStructuralPortMutation("output role presence", toolStructuralPrimaryOutputBlock, "acceptedMediaTypes = [\"application/json\"]\n", "acceptedMediaTypes = [\"application/json\"]\nrole = \"data\"\n"),
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			raw := replaceToolStructuralFixture(t, toolStructuralConnectedBoardFixture(), tt.old, tt.new)
-			assertToolStructuralBoardRejected(t, raw, tt.name)
+			raw := tt.mutate(t, toolStructuralDraftBoardFixture())
+			assertToolStructuralDefinitionRejected(t, raw, tt.name)
 		})
 	}
 }
 
 func TestToolStructuralIDsAreUniqueOnlyAtTheirAuthorityScope(t *testing.T) {
-	tests := []struct {
+	definitionTests := []struct {
 		name string
 		raw  string
 	}{
 		{
-			name: "empty port id",
-			raw:  replaceToolStructuralFixture(t, toolStructuralIsolatedNodesFixture(), `id = "port_tool_in"`, `id = ""`),
+			name: "empty Tool id",
+			raw: mutateToolStructuralPrimaryToolBlock(
+				t,
+				toolStructuralDraftBoardFixture(),
+				`id = "tool_normalize"`,
+				`id = ""`,
+			),
+		},
+		{
+			name: "empty input port id",
+			raw: mutateToolStructuralPortBlock(
+				t,
+				toolStructuralDraftBoardFixture(),
+				toolStructuralPrimaryInputBlock,
+				`id = "port_tool_in"`,
+				`id = ""`,
+			),
+		},
+		{
+			name: "empty output port id",
+			raw: mutateToolStructuralPortBlock(
+				t,
+				toolStructuralDraftBoardFixture(),
+				toolStructuralPrimaryOutputBlock,
+				`id = "port_tool_out"`,
+				`id = ""`,
+			),
 		},
 		{
 			name: "duplicate port id within Tool",
-			raw:  replaceToolStructuralFixture(t, toolStructuralIsolatedNodesFixture(), `id = "port_tool_out"`, `id = "port_tool_in"`),
+			raw: mutateToolStructuralPortBlock(
+				t,
+				toolStructuralDraftBoardFixture(),
+				toolStructuralPrimaryOutputBlock,
+				`id = "port_tool_out"`,
+				`id = "port_tool_in"`,
+			),
 		},
+	}
+	for _, tt := range definitionTests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertToolStructuralDefinitionRejected(t, tt.raw, tt.name)
+		})
+	}
+
+	boardTests := []struct {
+		name string
+		raw  string
+	}{
 		{
 			name: "duplicate Tool id",
 			raw: toolStructuralIsolatedNodesFixture() + `
@@ -172,7 +246,7 @@ acceptedMediaTypes = ["application/json"]
 `,
 		},
 	}
-	for _, tt := range tests {
+	for _, tt := range boardTests {
 		t.Run(tt.name, func(t *testing.T) {
 			assertToolStructuralBoardRejected(t, tt.raw, tt.name)
 		})
@@ -218,21 +292,20 @@ acceptedMediaTypes = ["application/json"]
 
 func TestToolStructuralJSONNormalizeParametersAreCompleteAndStrict(t *testing.T) {
 	tests := []struct {
-		name string
-		old  string
-		new  string
+		name  string
+		block string
 	}{
-		{name: "missing required mode", old: "mode = \"strict\"\n", new: ""},
-		{name: "unknown parameter", old: "mode = \"strict\"\n", new: "mode = \"strict\"\nextra = true\n"},
-		{name: "wrong boolean scalar", old: `mode = "strict"`, new: `mode = true`},
-		{name: "wrong integer scalar", old: `mode = "strict"`, new: `mode = 1`},
-		{name: "out of domain", old: `mode = "strict"`, new: `mode = "lenient"`},
+		{name: "missing required mode", block: "[tool.params]\n\n"},
+		{name: "unknown parameter", block: "[tool.params]\nmode = \"strict\"\nextra = true\n\n"},
+		{name: "wrong boolean scalar", block: "[tool.params]\nmode = true\n\n"},
+		{name: "wrong integer scalar", block: "[tool.params]\nmode = 1\n\n"},
+		{name: "out of domain", block: "[tool.params]\nmode = \"lenient\"\n\n"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			raw := replaceToolStructuralFixture(t, toolStructuralConnectedBoardFixture(), tt.old, tt.new)
-			assertToolStructuralBoardRejected(t, raw, tt.name)
+			raw := replaceToolStructuralFixture(t, toolStructuralDraftBoardFixture(), toolStructuralPrimaryParamsBlock, tt.block)
+			assertToolStructuralDefinitionRejected(t, raw, tt.name)
 		})
 	}
 }
@@ -248,8 +321,25 @@ func TestToolStructuralGenericParameterTypesAndConstraints(t *testing.T) {
 		"enabled": true,
 		"limit":   int64(2),
 	}
-	if err := validateToolNodeAgainstDescriptor(toolStructuralGenericNode(descriptor, valid), descriptor); err != nil {
-		t.Fatalf("valid generic scalar parameters rejected: %v", err)
+	validTests := []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "optional parameter omitted", mutate: func(map[string]any) {}},
+		{name: "boolean false", mutate: func(params map[string]any) { params["enabled"] = false }},
+		{name: "exact string minimum", mutate: func(params map[string]any) { params["text"] = "xy" }},
+		{name: "exact string maximum", mutate: func(params map[string]any) { params["text"] = "data" }},
+		{name: "exact integer minimum", mutate: func(params map[string]any) { params["limit"] = int64(-2) }},
+		{name: "exact integer maximum", mutate: func(params map[string]any) { params["limit"] = int64(2) }},
+	}
+	for _, tt := range validTests {
+		t.Run(tt.name, func(t *testing.T) {
+			params := cloneToolStructuralParams(valid)
+			tt.mutate(params)
+			if err := validateToolNodeAgainstDescriptor(toolStructuralGenericNode(descriptor, params), descriptor); err != nil {
+				t.Fatalf("valid generic scalar parameters rejected: %v", err)
+			}
+		})
 	}
 
 	tests := []struct {
@@ -260,6 +350,8 @@ func TestToolStructuralGenericParameterTypesAndConstraints(t *testing.T) {
 		{name: "string type", key: "text", value: true},
 		{name: "string minimum bytes", key: "text", value: "x"},
 		{name: "string maximum bytes", key: "text", value: "abcde"},
+		{name: "string NUL within byte limits", key: "text", value: "a\x00"},
+		{name: "string invalid UTF-8 within byte limits", key: "text", value: string([]byte{'a', 0xff})},
 		{name: "string enum", key: "mode", value: "loose"},
 		{name: "boolean type", key: "enabled", value: "true"},
 		{name: "integer type", key: "limit", value: "2"},
@@ -315,19 +407,46 @@ func TestToolStructuralGlobalParameterLimits(t *testing.T) {
 			}},
 		}
 		const scalarObjectOverhead = len(`{"payload":""}`)
-		atLimit := strings.Repeat("x", 4096-scalarObjectOverhead)
+		// RFC 8785 leaves '<' unescaped. encoding/json's default HTML escaping
+		// expands it to "\\u003c", so this boundary catches the wrong encoder.
+		atLimit := strings.Repeat("<", 4096-scalarObjectOverhead)
 		if err := validateToolNodeAgainstDescriptor(toolStructuralGenericNode(descriptor, map[string]any{"payload": atLimit}), descriptor); err != nil {
 			t.Fatalf("4096-byte RFC8785 scalar parameter object rejected: %v", err)
 		}
-		overLimit := atLimit + "x"
+		overLimit := atLimit + "<"
 		if err := validateToolNodeAgainstDescriptor(toolStructuralGenericNode(descriptor, map[string]any{"payload": overLimit}), descriptor); err == nil {
 			t.Fatal("4097-byte RFC8785 scalar parameter object passed the frozen 4096-byte maximum")
 		}
 	})
 }
 
+func TestToolStructuralGenericPortBindingPreservesSameDirectionOrder(t *testing.T) {
+	descriptor := toolStructuralOrderedPortDescriptor()
+	if err := validateToolProfileDescriptor(descriptor); err != nil {
+		t.Fatalf("ordered-port descriptor is not contract-valid: %v", err)
+	}
+	node := toolStructuralGenericNode(descriptor, map[string]any{})
+	node.Inputs = []ToolPort{
+		toolStructuralPortFromDescriptor("port_primary", descriptor.Ports[0]),
+		toolStructuralPortFromDescriptor("port_context", descriptor.Ports[1]),
+	}
+	node.Outputs = []ToolPort{
+		toolStructuralPortFromDescriptor("port_result", descriptor.Ports[2]),
+	}
+	if err := validateToolNodeAgainstDescriptor(node, descriptor); err != nil {
+		t.Fatalf("descriptor-ordered generic Tool ports rejected: %v", err)
+	}
+
+	reordered := node
+	reordered.Inputs = append([]ToolPort(nil), node.Inputs...)
+	reordered.Inputs[0], reordered.Inputs[1] = reordered.Inputs[1], reordered.Inputs[0]
+	if err := validateToolNodeAgainstDescriptor(reordered, descriptor); err == nil {
+		t.Fatal("Tool inputs reordered against the descriptor were accepted")
+	}
+}
+
 func TestToolStructuralEndpointsHonorToolPortDirection(t *testing.T) {
-	raw := []byte(toolStructuralConnectedBoardFixture())
+	raw := []byte(toolStructuralDraftBoardFixture())
 	tests := []struct {
 		name      string
 		endpoint  string
@@ -353,34 +472,25 @@ func TestToolStructuralEndpointsHonorToolPortDirection(t *testing.T) {
 }
 
 func TestToolStructuralSecondProducerToToolInputRejectsCandidateAndWholeBoard(t *testing.T) {
-	existing := []BoardConnection{{ID: "edge_first", From: "mis_main:out", To: "tool_normalize:port_tool_in"}}
-	candidate := BoardConnection{ID: "edge_second", From: "fmn_source:port_source_out", To: "tool_normalize:port_tool_in"}
+	existing := []BoardConnection{{ID: "edge_first", From: "tool_source_a:port_source_a_out", To: "tool_target:port_target_in"}}
+	candidate := BoardConnection{ID: "edge_second", From: "tool_source_b:port_source_b_out", To: "tool_target:port_target_in"}
 	if exists, err := validateConnectionCandidate(existing, candidate); err == nil || exists {
 		t.Fatalf("second producer candidate = exists %v, err %v; want structural conflict", exists, err)
 	}
 
-	raw := toolStructuralConnectedBoardFixture() + `
-[[formation]]
-id = "fmn_source"
-type = "solo"
-title = "Independent source"
-
-[[formation.output]]
-id = "port_source_out"
-label = "Output"
-
-[[formation.slot]]
-id = "slot_source"
-label = "Source"
-agentId = "scout"
-harness = "openai-codex"
-controller = true
-
-[[connection]]
-id = "edge_second_tool_producer"
-from = "fmn_source:port_source_out"
-to = "tool_normalize:port_tool_in"
-`
+	baselineRaw := toolStructuralDuplicateProducerBoardFixture(false)
+	raw := toolStructuralDuplicateProducerBoardFixture(true)
+	for _, candidateRaw := range []string{baselineRaw, raw} {
+		report := ValidateBoard(mustParseValidateBoardFixture(t, candidateRaw))
+		if dangling := findBoardFindings(report.Errors, FindingDanglingConnection); len(dangling) != 0 {
+			t.Fatalf("Tool-output candidate endpoints were not structurally recognized: %+v", dangling)
+		}
+	}
+	baselineReport := ValidateBoard(mustParseValidateBoardFixture(t, baselineRaw))
+	report := ValidateBoard(mustParseValidateBoardFixture(t, raw))
+	if len(report.Errors) <= len(baselineReport.Errors) {
+		t.Fatalf("second Tool producer added no whole-board error: baseline=%+v duplicate=%+v", baselineReport.Errors, report.Errors)
+	}
 	assertToolStructuralBoardRejected(t, raw, "whole board with two producers for one Tool input")
 }
 
@@ -393,6 +503,39 @@ func assertToolStructuralBoardAccepted(t *testing.T, raw, name string) {
 	if report := ValidateBoard(board); len(report.Errors) != 0 {
 		t.Fatalf("structural validation rejected %s: %+v", name, report.Errors)
 	}
+}
+
+func assertToolStructuralDefinitionAccepted(t *testing.T, raw, name string) {
+	t.Helper()
+	tool, descriptor := mustToolStructuralDefinition(t, raw, name)
+	if err := validateToolNodeAgainstDescriptor(tool, descriptor); err != nil {
+		t.Fatalf("structural validation rejected %s: %v", name, err)
+	}
+}
+
+func assertToolStructuralDefinitionRejected(t *testing.T, raw, name string) {
+	t.Helper()
+	tool, descriptor := mustToolStructuralDefinition(t, raw, name)
+	if err := validateToolNodeAgainstDescriptor(tool, descriptor); err == nil {
+		t.Fatalf("structural validation accepted %s", name)
+	}
+}
+
+func mustToolStructuralDefinition(t *testing.T, raw, name string) (ToolNode, ToolProfileDescriptor) {
+	t.Helper()
+	board, err := parseBoard([]byte(raw))
+	if err != nil {
+		t.Fatalf("inspection parser rejected %s before structural validation: %v", name, err)
+	}
+	if len(board.Tools) != 1 {
+		t.Fatalf("%s parsed Tool count = %d, want 1", name, len(board.Tools))
+	}
+	tool := board.Tools[0]
+	descriptor, ok := LookupToolProfileDescriptor(tool.ProfileID, tool.ProfileVersion)
+	if !ok {
+		t.Fatalf("%s uses missing descriptor %q@%q", name, tool.ProfileID, tool.ProfileVersion)
+	}
+	return tool, descriptor
 }
 
 func assertToolStructuralBoardRejected(t *testing.T, raw, name string) {
@@ -424,6 +567,28 @@ func replaceToolStructuralFixture(t *testing.T, raw, old, replacement string) st
 	return strings.Replace(raw, old, replacement, 1)
 }
 
+func mutateToolStructuralPrimaryToolBlock(t *testing.T, raw, old, replacement string) string {
+	t.Helper()
+	block := toolStructuralPrimaryToolBlock()
+	mutated := replaceToolStructuralFixture(t, block, old, replacement)
+	return replaceToolStructuralFixture(t, raw, block, mutated)
+}
+
+func mutateToolStructuralPortBlock(t *testing.T, raw, block, old, replacement string) string {
+	t.Helper()
+	mutated := replaceToolStructuralFixture(t, block, old, replacement)
+	return replaceToolStructuralFixture(t, raw, block, mutated)
+}
+
+func toolStructuralPortMutation(name, block, old, replacement string) toolStructuralPortMutationCase {
+	return toolStructuralPortMutationCase{
+		name: name,
+		mutate: func(t *testing.T, raw string) string {
+			return mutateToolStructuralPortBlock(t, raw, block, old, replacement)
+		},
+	}
+}
+
 func cloneToolStructuralParams(params map[string]any) map[string]any {
 	clone := make(map[string]any, len(params))
 	for name, value := range params {
@@ -442,6 +607,54 @@ func toolStructuralGenericNode(descriptor ToolProfileDescriptor, params map[stri
 	}
 }
 
+func toolStructuralPortFromDescriptor(id string, descriptor ToolPortDescriptor) ToolPort {
+	return ToolPort{
+		ID:                 id,
+		Name:               descriptor.Name,
+		Label:              descriptor.Label,
+		Direction:          descriptor.Direction,
+		Kind:               descriptor.Kind,
+		AcceptedMediaTypes: append([]string(nil), descriptor.AcceptedMediaTypes...),
+		Required:           cloneToolBool(descriptor.Required),
+		Role:               cloneToolString(descriptor.Role),
+	}
+}
+
+func toolStructuralOrderedPortDescriptor() ToolProfileDescriptor {
+	return ToolProfileDescriptor{
+		ProfileID:      "test.ordered",
+		ProfileVersion: "1",
+		DisplayName:    "Ordered port validation fixture",
+		Ports: []ToolPortDescriptor{
+			{
+				Name:               "primary",
+				Label:              "Primary",
+				Direction:          "input",
+				Kind:               "work",
+				AcceptedMediaTypes: []string{"application/json"},
+				Required:           toolDescriptorBool(true),
+				Role:               toolDescriptorString("data"),
+			},
+			{
+				Name:               "context",
+				Label:              "Context",
+				Direction:          "input",
+				Kind:               "work",
+				AcceptedMediaTypes: []string{"application/json"},
+				Required:           toolDescriptorBool(false),
+				Role:               toolDescriptorString("data"),
+			},
+			{
+				Name:               "result",
+				Label:              "Result",
+				Direction:          "output",
+				Kind:               "work",
+				AcceptedMediaTypes: []string{"application/json"},
+			},
+		},
+	}
+}
+
 func toolStructuralScalarDescriptor() ToolProfileDescriptor {
 	return ToolProfileDescriptor{
 		ProfileID:      "test.scalar",
@@ -452,11 +665,48 @@ func toolStructuralScalarDescriptor() ToolProfileDescriptor {
 			{Name: "mode", Label: "Mode", Type: "string", Required: true, Enum: []string{"strict"}},
 			{Name: "enabled", Label: "Enabled", Type: "boolean", Required: true},
 			{Name: "limit", Label: "Limit", Type: "integer", Required: true, Minimum: toolDescriptorInteger(-2), Maximum: toolDescriptorInteger(2)},
+			{Name: "note", Label: "Note", Type: "string", Required: false, MaxBytes: toolDescriptorInteger(4)},
 		},
 	}
 }
 
-func toolStructuralConnectedBoardFixture() string {
+const toolStructuralPrimaryParamsBlock = `[tool.params]
+mode = "strict"
+
+`
+
+const toolStructuralPrimaryInputBlock = `[[tool.input]]
+id = "port_tool_in"
+name = "input"
+label = "Report"
+direction = "input"
+kind = "work"
+acceptedMediaTypes = ["application/json"]
+required = true
+role = "data"
+
+`
+
+const toolStructuralPrimaryOutputBlock = `[[tool.output]]
+id = "port_tool_out"
+name = "output"
+label = "Normalized report"
+direction = "output"
+kind = "work"
+acceptedMediaTypes = ["application/json"]
+`
+
+func toolStructuralPrimaryToolBlock() string {
+	return `[[tool]]
+id = "tool_normalize"
+title = "Normalize report"
+profileId = "json.normalize"
+profileVersion = "1"
+
+` + toolStructuralPrimaryParamsBlock + toolStructuralPrimaryInputBlock + toolStructuralPrimaryOutputBlock
+}
+
+func toolStructuralDraftBoardFixture() string {
 	return `schema = 2
 id = "brd_tool_structural"
 slug = "tool-structural"
@@ -471,9 +721,47 @@ title = "Main"
 goal = "Normalize the report"
 beadId = "home-test"
 
-[[tool]]
-id = "tool_normalize"
-title = "Normalize report"
+` + toolStructuralPrimaryToolBlock()
+}
+
+func toolStructuralDuplicateProducerBoardFixture(includeSecondProducer bool) string {
+	raw := `schema = 2
+id = "brd_tool_duplicate_producer"
+slug = "tool-duplicate-producer"
+title = "Tool duplicate producer validation"
+rev = 1
+
+[[mission]]
+id = "mis_main"
+title = "Main"
+goal = "Inspect duplicate Tool producers"
+beadId = "home-test"
+
+`
+	raw += toolStructuralJSONNormalizeToolBlock("tool_source_a", "Source A", "port_source_a_in", "port_source_a_out")
+	raw += toolStructuralJSONNormalizeToolBlock("tool_source_b", "Source B", "port_source_b_in", "port_source_b_out")
+	raw += toolStructuralJSONNormalizeToolBlock("tool_target", "Target", "port_target_in", "port_target_out")
+	raw += `
+[[connection]]
+id = "edge_first"
+from = "tool_source_a:port_source_a_out"
+to = "tool_target:port_target_in"
+`
+	if includeSecondProducer {
+		raw += `
+[[connection]]
+id = "edge_second"
+from = "tool_source_b:port_source_b_out"
+to = "tool_target:port_target_in"
+`
+	}
+	return raw
+}
+
+func toolStructuralJSONNormalizeToolBlock(id, title, inputID, outputID string) string {
+	return fmt.Sprintf(`[[tool]]
+id = %q
+title = %q
 profileId = "json.normalize"
 profileVersion = "1"
 
@@ -481,7 +769,7 @@ profileVersion = "1"
 mode = "strict"
 
 [[tool.input]]
-id = "port_tool_in"
+id = %q
 name = "input"
 label = "Report"
 direction = "input"
@@ -491,43 +779,14 @@ required = true
 role = "data"
 
 [[tool.output]]
-id = "port_tool_out"
+id = %q
 name = "output"
 label = "Normalized report"
 direction = "output"
 kind = "work"
 acceptedMediaTypes = ["application/json"]
 
-[[formation]]
-id = "fmn_sink"
-type = "solo"
-title = "Use result"
-
-[[formation.input]]
-id = "port_sink_in"
-label = "Input"
-
-[[formation.output]]
-id = "port_sink_out"
-label = "Output"
-
-[[formation.slot]]
-id = "slot_sink"
-label = "Worker"
-agentId = "scout"
-harness = "openai-codex"
-controller = true
-
-[[connection]]
-id = "edge_mission_tool"
-from = "mis_main:out"
-to = "tool_normalize:port_tool_in"
-
-[[connection]]
-id = "edge_tool_sink"
-from = "tool_normalize:port_tool_out"
-to = "fmn_sink:port_sink_in"
-`
+`, id, title, inputID, outputID)
 }
 
 func toolStructuralIsolatedNodesFixture() string {
