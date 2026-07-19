@@ -252,9 +252,11 @@ Formation input normalizes in memory to `direction=input`, `kind=work`,
 `role=data`; an output normalizes to `direction=output`, `kind=work` with the
   same media set. Fixed Mission `out` accepts only `text/markdown` in this phase;
   Gate `in`/`pass` work ports use the full set;
-Gate `fail` is `gate_feedback` and has no media set. Read/inspect does not rewrite. The
-first schema-2 structural mutation performs one atomic content-preserving
-migration and writes these defaults explicitly.
+Gate `fail` is `gate_feedback` and has no media set. Read/inspect does not rewrite.
+`CurrentBoardSchema=2`, `CurrentLayoutSchema=1`, and `NewBoardSchema=1`; the
+first successful Tool creation is the only authoring mutation that migrates a
+schema-1 board and writes these defaults explicitly. Ordinary non-Tool mutations
+preserve the existing board schema.
 
 A schema-1 Gate fail edge into a work input loads in degraded inspection state
 with `legacy_fail_route_requires_migration`. Structural read succeeds, but board
@@ -390,6 +392,7 @@ mode = "strict"
 
 [[tool.input]]
 id       = "port_01J9_normalize_in"
+name     = "input"
 label    = "Report"
 direction = "input"
 kind     = "work"
@@ -399,15 +402,148 @@ role     = "data"
 
 [[tool.output]]
 id    = "port_01J9_normalize_out"
+name  = "output"
 label = "Normalized report"
 direction = "output"
 kind  = "work"
 acceptedMediaTypes = ["application/json"]
 ```
 
-Tool definitions store only profile identity/version constraint plus modeled
-non-secret parameters. Run start freezes the resolved profile version/content
-hash, parameters, effective policy hash, and content-addressed execution-bundle
+### Non-executing Tool descriptor and authoring freeze
+
+Until `ctx-ug7.8` supplies the certified runtime, `tool_execution_unavailable`
+is the sole non-executing Tool runtime code. The API maps it to HTTP 422 and
+Archon JSON returns the same lowercase code. There is no isolated Tool-run
+endpoint. Run admission parses the board, resolves the requested Mission or
+isolated Formation root, and applies existing structural and legacy-migration
+validation first. It then scans the selected root's complete possible graph. A
+Mission scan includes both Gate branches and reachable judge chains; an isolated
+Formation scan does not traverse unrelated downstream board nodes. A selected
+root containing a Tool returns `tool_execution_unavailable`, and only after that
+check may admission check global runtime authority. This precedence applies only
+against the global authority error; malformed definitions and legacy migration
+errors retain their existing precedence. Rejection occurs before snapshot,
+binding, ledger, artifact, evaluator, executor, or process mutation.
+
+Tool identity is exact and immutable. `profileId` is case-sensitive ASCII, at
+most 128 bytes, and matches
+`^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$`. `profileVersion` is an opaque,
+case-sensitive ASCII token matching
+`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`. Registry lookup is exact tuple equality on
+`(profileId, profileVersion)` with no ranges, aliases, defaults, fallback, or
+latest selection. Port and parameter machine names match
+`^[a-z][a-z0-9_]{0,63}$`.
+
+The registry is private, compiled, immutable, and data-only. It exposes only
+deterministic lookup/list copies and has no runtime registration API. Its exact
+closed shapes are:
+
+```text
+ToolProfileDescriptor {
+  profileId: string
+  profileVersion: string
+  displayName: string
+  ports: ToolPortDescriptor[]       // ordered
+  parameters: ToolParameterSpec[]   // ordered
+}
+
+ToolPortDescriptor {
+  name: string
+  label: string
+  direction: "input" | "output"
+  kind: "work"
+  acceptedMediaTypes: string[]
+  required?: boolean   // present only for input
+  role?: "data"        // present only for input
+}
+
+ToolParameterSpec {
+  name: string
+  label: string
+  type: "string" | "boolean" | "integer"
+  required: boolean
+  enum?: string[]
+  minBytes?: integer
+  maxBytes?: integer
+  minimum?: integer
+  maximum?: integer
+}
+```
+
+String specs alone may use `enum` and `minBytes`/`maxBytes`; integer specs alone
+require `minimum`/`maximum`; boolean specs carry none of those constraint fields.
+Unknown or irrelevant fields reject. A descriptor cannot represent callbacks or
+interfaces; executable, argv, shell, cwd, environment, path, bundle, or limits;
+secrets; network or effects; runtime capability; defaults; or unmodeled
+metadata. Board-authored data therefore never selects process authority.
+
+A board-generated port `id` is instance identity, descriptor `name` is stable
+semantic binding identity, and `label` is display-only. Tool board ports
+reproduce descriptor order and exact name, direction, kind, ordered duplicate-
+free `acceptedMediaTypes`, plus exact presence and value of input
+`required`/`role`. Clients never author Tool ports independently; Tool creation
+derives them from the descriptor. This slice's update surface changes only title
+and the complete parameter map. The profile tuple and ports are immutable;
+replacement is deferred.
+
+A Tool has at most 16 parameters. RFC 8785 canonical JSON for the complete
+parameter object is at most 4096 bytes. Values are only valid UTF-8 NUL-free
+strings, booleans, or JSON-safe integers in
+`[-9007199254740991,9007199254740991]`; TOML floats, datetimes, arrays, tables,
+and nested values reject. Every key must be descriptor-declared and satisfy its
+enum, byte-length, or range constraint. Registry compilation rejects any
+lowercase machine name containing `secret`, `credential`, `token`, `password`,
+or `passwd`, and rejects these exact reserved authority names: `api_key`,
+`apikey`, `private_key`, `access_key`, `executable`, `exec`, `command`, `cmd`,
+`argv`, `shell`, `cwd`, `env`, `environment`, `path`, `bundle`, `limits`,
+`network`, and `effects`.
+
+Descriptor binding compares ordered media arrays exactly. Shared routing treats
+media arrays as sets and requires the producer's complete possible media set to
+be a subset of the consumer set; nonempty intersection is insufficient. Work-
+port arrays are nonempty, duplicate-free, and contain only `text/plain`,
+`text/markdown`, or `application/json`.
+
+Schema ownership is split exactly as `CurrentBoardSchema=2`,
+`CurrentLayoutSchema=1`, and `NewBoardSchema=1`. Pure board and layout reads
+never write. Empty and Tool-free new boards remain schema 1, and ordinary
+non-Tool mutations preserve the board's existing schema. Under board/layout
+locks and revision/ETag CAS, the first successful Tool creation on a schema-1
+board first rejects ambiguous legacy fail or judge routes, inline verification,
+and every legacy script-Gate shape before staging. It then publishes one
+content-preserving board-file replacement that writes typed Formation defaults,
+explicit safe `workflow`/`judge` channels, `schema=2`, and the Tool with one
+revision increment. Layout remains schema 1; only the new Tool receives heuristic
+connection-aware, bounded free-space, grid-snap placement, and existing
+coordinates never move. The writer computes, validates, and stages both board
+and layout bytes before publication and restores original
+bytes for an ordinary returned failure, so invalid, CAS, or write failures leave
+both files byte-identical. This contract does not claim cross-file power-loss
+atomicity without a future journal. A schema-1 reader rejects board schema 2.
+
+The initial and only catalog entry is exactly:
+
+```text
+profileId      = "json.normalize"
+profileVersion = "1"
+displayName    = "Normalize JSON"
+
+input port:  name="input", label="Report", direction="input", kind="work",
+             acceptedMediaTypes=["application/json"], required=true, role="data"
+output port: name="output", label="Normalized report", direction="output", kind="work",
+             acceptedMediaTypes=["application/json"]
+parameter:   name="mode", label="Mode", type="string", required=true,
+             enum=["strict"], minBytes=6, maxBytes=6
+```
+
+`json.normalize@1` freezes authoring and validation shape only; it claims no
+algorithm, runner, or output. The linter identifier, ports, parameters, media,
+sealed source/result contract, and descriptor are absent and reserved for a
+future owner product-direction decision. No placeholder is inferred here.
+
+Tool definitions store one exact immutable profile identity/version token plus
+modeled non-secret parameters. Run start freezes that exact profile version and
+content hash, parameters, effective policy hash, and content-addressed execution-bundle
 hash. The bundle covers executable/script/toolchain identity, argv template, cwd
 contract, normalized non-secret allowlisted environment values,
 supervisor/fence policy, and limits. The first profile class is certified pure
@@ -2559,7 +2695,7 @@ terminal non-rerun event is fsynced; only then is it deleted and its parent
 directory fsynced. Thus a crash on either side of the decision always leaves an
 authoritative scope for the latest recorded launch. Any mismatch or discarded
 redacted input appends the corresponding terminal error before private records
-are retired. Recovery never re-resolves the board's version constraint or
+are retired. Recovery never re-resolves the board's exact version token or
 substitutes a newer profile.
 
 Canonical cancel starts with an appended and fsynced
