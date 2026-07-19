@@ -100,19 +100,8 @@ func parseToolNodes(raw []byte) ([]ToolNode, error) {
 				return nil, err
 			}
 		case toolSectionNode:
-			key, value, ok := tomlKeyValue(line.body)
-			if !ok {
-				continue
-			}
-			switch key {
-			case "id":
-				current.ID = value
-			case "title":
-				current.Title = value
-			case "profileId":
-				current.ProfileID = value
-			case "profileVersion":
-				current.ProfileVersion = value
+			if err := applyToolNodeLine(current, line.body); err != nil {
+				return nil, err
 			}
 		case toolSectionInput:
 			if err := applyToolPortLine(&current.Inputs[len(current.Inputs)-1], line.body); err != nil {
@@ -129,23 +118,17 @@ func parseToolNodes(raw []byte) ([]ToolNode, error) {
 }
 
 func parseToolParameterLine(params map[string]any, line string) error {
-	trimmed := strings.TrimSpace(line)
-	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+	key, literal, present, err := parseToolAssignment(line)
+	if err != nil {
+		return err
+	}
+	if !present {
 		return nil
 	}
-	eq := tomlAssignmentIndex(line)
-	if eq < 0 {
-		return fmt.Errorf("invalid Tool parameter assignment")
-	}
-	path, ok := parseTOMLKeyPath(line[:eq])
-	if !ok || len(path) != 1 {
-		return fmt.Errorf("nested Tool parameters are not supported")
-	}
-	key := path[0]
 	if _, exists := params[key]; exists {
 		return fmt.Errorf("duplicate Tool parameter %q", key)
 	}
-	value, err := parseToolParameterScalar(toolParameterValuePart(line, eq))
+	value, err := parseToolParameterScalar(literal)
 	if err != nil {
 		return err
 	}
@@ -153,24 +136,33 @@ func parseToolParameterLine(params map[string]any, line string) error {
 	return nil
 }
 
+func parseToolAssignment(line string) (string, string, bool, error) {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		return "", "", false, nil
+	}
+	eq := tomlAssignmentIndex(line)
+	if eq < 0 {
+		return "", "", false, fmt.Errorf("invalid Tool assignment")
+	}
+	path, ok := parseTOMLKeyPath(line[:eq])
+	if !ok || len(path) != 1 {
+		return "", "", false, fmt.Errorf("nested Tool fields are not supported")
+	}
+	literal := strings.TrimSpace(toolValuePart(line, eq))
+	if literal == "" {
+		return "", "", false, fmt.Errorf("invalid Tool assignment")
+	}
+	return path[0], literal, true, nil
+}
+
 func parseToolParameterScalar(literal string) (any, error) {
 	literal = strings.TrimSpace(literal)
-	if len(literal) >= 2 && literal[0] == '"' && literal[len(literal)-1] == '"' {
-		value, err := strconv.Unquote(literal)
-		if err != nil {
-			return nil, fmt.Errorf("invalid Tool parameter string")
-		}
-		if !utf8.ValidString(value) || strings.IndexByte(value, 0) >= 0 {
-			return nil, fmt.Errorf("invalid Tool parameter string")
-		}
-		return value, nil
+	if strings.HasPrefix(literal, "\"") {
+		return parseToolBasicString(literal)
 	}
-	if len(literal) >= 2 && literal[0] == '\'' && literal[len(literal)-1] == '\'' {
-		value := literal[1 : len(literal)-1]
-		if strings.ContainsRune(value, '\'') || strings.ContainsAny(value, "\r\n") || !utf8.ValidString(value) || strings.IndexByte(value, 0) >= 0 {
-			return nil, fmt.Errorf("invalid Tool parameter string")
-		}
-		return value, nil
+	if strings.HasPrefix(literal, "'") {
+		return parseToolLiteralString(literal)
 	}
 	if literal == "true" {
 		return true, nil
@@ -178,14 +170,146 @@ func parseToolParameterScalar(literal string) (any, error) {
 	if literal == "false" {
 		return false, nil
 	}
-	value, err := strconv.ParseInt(literal, 10, 64)
-	if err != nil || value < -maxToolParameterInteger || value > maxToolParameterInteger {
-		return nil, fmt.Errorf("invalid Tool parameter scalar")
+	return parseToolInteger(literal)
+}
+
+func parseToolBasicString(literal string) (string, error) {
+	if len(literal) < 2 || literal[len(literal)-1] != '"' {
+		return "", fmt.Errorf("invalid Tool string")
+	}
+	body := literal[1 : len(literal)-1]
+	for i := 0; i < len(body); i++ {
+		if body[i] != '\\' {
+			continue
+		}
+		i++
+		if i >= len(body) {
+			return "", fmt.Errorf("invalid Tool string")
+		}
+		switch body[i] {
+		case 'b', 't', 'n', 'f', 'r', '"', '\\':
+		case 'u':
+			if i+4 >= len(body) || !toolHexDigits(body[i+1:i+5]) {
+				return "", fmt.Errorf("invalid Tool string")
+			}
+			i += 4
+		case 'U':
+			if i+8 >= len(body) || !toolHexDigits(body[i+1:i+9]) {
+				return "", fmt.Errorf("invalid Tool string")
+			}
+			i += 8
+		default:
+			return "", fmt.Errorf("invalid Tool string")
+		}
+	}
+	value, err := strconv.Unquote(literal)
+	if err != nil || !validToolString(value) {
+		return "", fmt.Errorf("invalid Tool string")
 	}
 	return value, nil
 }
 
-func toolParameterValuePart(line string, eq int) string {
+func parseToolLiteralString(literal string) (string, error) {
+	if len(literal) < 2 || literal[len(literal)-1] != '\'' {
+		return "", fmt.Errorf("invalid Tool string")
+	}
+	value := literal[1 : len(literal)-1]
+	if strings.ContainsRune(value, '\'') || strings.ContainsAny(value, "\r\n") || !validToolString(value) {
+		return "", fmt.Errorf("invalid Tool string")
+	}
+	return value, nil
+}
+
+func validToolString(value string) bool {
+	return utf8.ValidString(value) && strings.IndexByte(value, 0) < 0
+}
+
+func toolHexDigits(value string) bool {
+	for i := 0; i < len(value); i++ {
+		if !toolDigitForBase(value[i], 16) {
+			return false
+		}
+	}
+	return true
+}
+
+func parseToolInteger(literal string) (int64, error) {
+	if literal == "" {
+		return 0, fmt.Errorf("invalid Tool integer")
+	}
+	if strings.HasPrefix(literal, "0x") {
+		return parseToolPrefixedInteger(literal[2:], 16)
+	}
+	if strings.HasPrefix(literal, "0o") {
+		return parseToolPrefixedInteger(literal[2:], 8)
+	}
+	if strings.HasPrefix(literal, "0b") {
+		return parseToolPrefixedInteger(literal[2:], 2)
+	}
+
+	sign := ""
+	digits := literal
+	if literal[0] == '+' || literal[0] == '-' {
+		sign = literal[:1]
+		digits = literal[1:]
+	}
+	normalized, err := normalizeToolDigits(digits, 10)
+	if err != nil || len(normalized) > 1 && normalized[0] == '0' {
+		return 0, fmt.Errorf("invalid Tool integer")
+	}
+	value, err := strconv.ParseInt(sign+normalized, 10, 64)
+	if err != nil || value < -maxToolParameterInteger || value > maxToolParameterInteger {
+		return 0, fmt.Errorf("invalid Tool integer")
+	}
+	return value, nil
+}
+
+func parseToolPrefixedInteger(digits string, base int) (int64, error) {
+	normalized, err := normalizeToolDigits(digits, base)
+	if err != nil {
+		return 0, fmt.Errorf("invalid Tool integer")
+	}
+	value, err := strconv.ParseUint(normalized, base, 64)
+	if err != nil || value > uint64(maxToolParameterInteger) {
+		return 0, fmt.Errorf("invalid Tool integer")
+	}
+	return int64(value), nil
+}
+
+func normalizeToolDigits(digits string, base int) (string, error) {
+	if digits == "" {
+		return "", fmt.Errorf("invalid Tool integer")
+	}
+	var normalized strings.Builder
+	for i := 0; i < len(digits); i++ {
+		if digits[i] == '_' {
+			if i == 0 || i+1 == len(digits) || !toolDigitForBase(digits[i-1], base) || !toolDigitForBase(digits[i+1], base) {
+				return "", fmt.Errorf("invalid Tool integer")
+			}
+			continue
+		}
+		if !toolDigitForBase(digits[i], base) {
+			return "", fmt.Errorf("invalid Tool integer")
+		}
+		normalized.WriteByte(digits[i])
+	}
+	return normalized.String(), nil
+}
+
+func toolDigitForBase(ch byte, base int) bool {
+	switch {
+	case ch >= '0' && ch <= '9':
+		return int(ch-'0') < base
+	case ch >= 'a' && ch <= 'f':
+		return base == 16
+	case ch >= 'A' && ch <= 'F':
+		return base == 16
+	default:
+		return false
+	}
+}
+
+func toolValuePart(line string, eq int) string {
 	value := line[eq+1:]
 	inBasicString := false
 	inLiteralString := false
@@ -207,37 +331,159 @@ func toolParameterValuePart(line string, eq int) string {
 	return value
 }
 
-func applyToolPortLine(port *ToolPort, line string) error {
-	key, value, ok := tomlKeyValue(line)
-	if !ok {
+func applyToolNodeLine(node *ToolNode, line string) error {
+	key, literal, present, err := parseToolAssignment(line)
+	if err != nil {
+		return err
+	}
+	if !present {
 		return nil
+	}
+	if key != "id" && key != "title" && key != "profileId" && key != "profileVersion" {
+		return nil
+	}
+	value, err := parseToolString(literal)
+	if err != nil {
+		return err
 	}
 	switch key {
 	case "id":
-		port.ID = value
-	case "name":
-		port.Name = value
-	case "label":
-		port.Label = value
-	case "direction":
-		port.Direction = value
-	case "kind":
-		port.Kind = value
-	case "acceptedMediaTypes":
-		port.AcceptedMediaTypes = parseStringArray(value)
-	case "required":
-		var required bool
-		switch strings.TrimSpace(valuePart(line)) {
-		case "true":
-			required = true
-		case "false":
-			required = false
-		default:
-			return fmt.Errorf("invalid Tool port required field")
-		}
-		port.Required = &required
-	case "role":
-		port.Role = &value
+		node.ID = value
+	case "title":
+		node.Title = value
+	case "profileId":
+		node.ProfileID = value
+	case "profileVersion":
+		node.ProfileVersion = value
 	}
 	return nil
+}
+
+func applyToolPortLine(port *ToolPort, line string) error {
+	key, literal, present, err := parseToolAssignment(line)
+	if err != nil {
+		return err
+	}
+	if !present {
+		return nil
+	}
+	switch key {
+	case "id", "name", "label", "direction", "kind", "role":
+		value, err := parseToolString(literal)
+		if err != nil {
+			return err
+		}
+		switch key {
+		case "id":
+			port.ID = value
+		case "name":
+			port.Name = value
+		case "label":
+			port.Label = value
+		case "direction":
+			port.Direction = value
+		case "kind":
+			port.Kind = value
+		case "role":
+			port.Role = &value
+		}
+	case "acceptedMediaTypes":
+		values, err := parseToolStringArray(literal)
+		if err != nil {
+			return err
+		}
+		port.AcceptedMediaTypes = values
+	case "required":
+		required, err := parseToolBoolean(literal)
+		if err != nil {
+			return err
+		}
+		port.Required = &required
+	}
+	return nil
+}
+
+func parseToolString(literal string) (string, error) {
+	value, err := parseToolParameterScalar(literal)
+	if err != nil {
+		return "", err
+	}
+	stringValue, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("Tool field must be a string")
+	}
+	return stringValue, nil
+}
+
+func parseToolBoolean(literal string) (bool, error) {
+	value, err := parseToolParameterScalar(literal)
+	if err != nil {
+		return false, err
+	}
+	boolValue, ok := value.(bool)
+	if !ok {
+		return false, fmt.Errorf("Tool field must be a boolean")
+	}
+	return boolValue, nil
+}
+
+func parseToolStringArray(literal string) ([]string, error) {
+	literal = strings.TrimSpace(literal)
+	if len(literal) < 2 || literal[0] != '[' || literal[len(literal)-1] != ']' {
+		return nil, fmt.Errorf("Tool field must be a string array")
+	}
+	body := strings.TrimSpace(literal[1 : len(literal)-1])
+	if body == "" {
+		return []string{}, nil
+	}
+	items, err := splitToolArrayItems(body)
+	if err != nil {
+		return nil, err
+	}
+	values := make([]string, 0, len(items))
+	for _, item := range items {
+		value, err := parseToolString(strings.TrimSpace(item))
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, value)
+	}
+	return values, nil
+}
+
+func splitToolArrayItems(body string) ([]string, error) {
+	var items []string
+	start := 0
+	inBasicString := false
+	inLiteralString := false
+	escaped := false
+	for i := 0; i < len(body); i++ {
+		switch {
+		case escaped:
+			escaped = false
+		case inBasicString && body[i] == '\\':
+			escaped = true
+		case !inLiteralString && body[i] == '"':
+			inBasicString = !inBasicString
+		case !inBasicString && body[i] == '\'':
+			inLiteralString = !inLiteralString
+		case !inBasicString && !inLiteralString && body[i] == ',':
+			item := strings.TrimSpace(body[start:i])
+			if item == "" {
+				return nil, fmt.Errorf("invalid Tool string array")
+			}
+			items = append(items, item)
+			start = i + 1
+		}
+	}
+	if escaped || inBasicString || inLiteralString {
+		return nil, fmt.Errorf("invalid Tool string array")
+	}
+	last := strings.TrimSpace(body[start:])
+	if last != "" {
+		items = append(items, last)
+	} else if len(items) == 0 {
+		return nil, fmt.Errorf("invalid Tool string array")
+	}
+	return items, nil
 }
