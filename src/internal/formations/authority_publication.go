@@ -151,10 +151,10 @@ func (p *authorityPublisher) publishImmutable(name string, raw []byte) (authorit
 		return authorityContentRef{}, fmt.Errorf("install immutable authority file: %w", err)
 	}
 	stage.installed = true
-	if err := stage.validateInstalled(name, raw); err != nil {
+	if err := p.runHook(authorityPublicationInstalled); err != nil {
 		return authorityContentRef{}, authorityDurabilityUncertain(err)
 	}
-	if err := p.runHook(authorityPublicationInstalled); err != nil {
+	if err := stage.validateInstalled(name, raw); err != nil {
 		return authorityContentRef{}, authorityDurabilityUncertain(err)
 	}
 	if err := p.syncDirectory(); err != nil {
@@ -239,10 +239,10 @@ func (p *authorityPublisher) publishMutable(name string, expected *authorityGene
 		return authorityGeneration{}, fmt.Errorf("replace mutable authority file: %w", err)
 	}
 	stage.installed = true
-	if err := stage.validateInstalled(name, raw); err != nil {
+	if err := p.runHook(authorityPublicationMutableReplaced); err != nil {
 		return authorityGeneration{}, authorityDurabilityUncertain(err)
 	}
-	if err := p.runHook(authorityPublicationMutableReplaced); err != nil {
+	if err := stage.validateInstalled(name, raw); err != nil {
 		return authorityGeneration{}, authorityDurabilityUncertain(err)
 	}
 	if err := p.syncDirectory(); err != nil {
