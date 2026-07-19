@@ -574,7 +574,11 @@ func encodeRunCommandRecordJCSV1(record runCommandRecordJCSV1) ([]byte, error) {
 	return output.Bytes(), nil
 }
 
-func validateAuthorityRecordTransition(recordRev uint64, priorGeneration, expectedGeneration *authorityGeneration) error {
+// authenticateAuthorityRecordPredecessor verifies only the structural generation
+// link and the caller-supplied exact predecessor; it does not validate family
+// lifecycle transitions. WorkspaceAuthority, lease, and registry old-to-new
+// state machines belong to B3; command-journal lifecycle validation belongs to C.
+func authenticateAuthorityRecordPredecessor(recordRev uint64, priorGeneration, expectedGeneration *authorityGeneration) error {
 	if err := validateAuthorityRecordLink(recordRev, priorGeneration); err != nil {
 		return err
 	}

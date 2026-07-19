@@ -42,8 +42,8 @@ func TestAuthorityMutableRecordCodecsRoundTripOnlyExactNamedEncoding(t *testing.
 			if !bytes.Equal(first.encoded, firstRaw) {
 				t.Fatalf("revision 1 round trip changed frozen %s bytes\n got: %s\nwant: %s", codec.name, first.encoded, firstRaw)
 			}
-			if err := validateAuthorityRecordTransition(first.recordRev, first.priorGeneration, nil); err != nil {
-				t.Fatalf("initial transition with explicit null predecessor: %v", err)
+			if err := authenticateAuthorityRecordPredecessor(first.recordRev, first.priorGeneration, nil); err != nil {
+				t.Fatalf("authenticate initial record with explicit null predecessor: %v", err)
 			}
 
 			predecessor := authorityGeneration{recordRev: 1, sha256: runtimeSHA256Hex(firstRaw)}
@@ -58,8 +58,8 @@ func TestAuthorityMutableRecordCodecsRoundTripOnlyExactNamedEncoding(t *testing.
 			if !bytes.Equal(second.encoded, secondRaw) {
 				t.Fatalf("revision 2 round trip changed frozen %s bytes\n got: %s\nwant: %s", codec.name, second.encoded, secondRaw)
 			}
-			if err := validateAuthorityRecordTransition(second.recordRev, second.priorGeneration, &predecessor); err != nil {
-				t.Fatalf("exact predecessor transition: %v", err)
+			if err := authenticateAuthorityRecordPredecessor(second.recordRev, second.priorGeneration, &predecessor); err != nil {
+				t.Fatalf("authenticate exact predecessor: %v", err)
 			}
 		})
 	}
@@ -104,13 +104,13 @@ func TestAuthorityMutableRecordCodecsRejectUnauditableBytes(t *testing.T) {
 
 			second, err := codec.roundTrip(secondRaw)
 			if err != nil {
-				t.Fatalf("decode canonical revision 2 for transition checks: %v", err)
+				t.Fatalf("decode canonical revision 2 for predecessor checks: %v", err)
 			}
 			wrongRecord, err := codec.roundTrip(codec.recordRaw(2, &wrongHash))
 			if err != nil {
 				t.Fatalf("decode structurally canonical revision 2 before predecessor authentication: %v", err)
 			}
-			if err := validateAuthorityRecordTransition(wrongRecord.recordRev, wrongRecord.priorGeneration, &predecessor); err == nil {
+			if err := authenticateAuthorityRecordPredecessor(wrongRecord.recordRev, wrongRecord.priorGeneration, &predecessor); err == nil {
 				t.Fatalf("accepted record with wrong predecessor hash: record %+v, expected %+v", wrongRecord.priorGeneration, predecessor)
 			}
 			for _, test := range []struct {
@@ -122,7 +122,7 @@ func TestAuthorityMutableRecordCodecsRejectUnauditableBytes(t *testing.T) {
 				{name: "wrong caller predecessor hash", expected: &wrongHash},
 			} {
 				t.Run(test.name, func(t *testing.T) {
-					if err := validateAuthorityRecordTransition(second.recordRev, second.priorGeneration, test.expected); err == nil {
+					if err := authenticateAuthorityRecordPredecessor(second.recordRev, second.priorGeneration, test.expected); err == nil {
 						t.Fatalf("accepted unauthenticated predecessor: record %+v, expected %+v", second.priorGeneration, test.expected)
 					}
 				})
