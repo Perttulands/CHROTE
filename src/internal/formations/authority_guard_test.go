@@ -1542,6 +1542,33 @@ func TestGuardRuntimeAuthorityV1RejectsSymlinkedAuthorityRecords(t *testing.T) {
 	}
 }
 
+func TestGuardRuntimeAuthorityV1RejectsHardLinkedAuthorityRecords(t *testing.T) {
+	tests := []struct {
+		name   string
+		stage  RuntimeAuthorityGuardStage
+		target func(runtimeAuthorityFixture) string
+	}{
+		{name: "registry", stage: RuntimeAuthorityGuardStageRegistry, target: func(f runtimeAuthorityFixture) string { return f.registry }},
+		{name: "bootstrap", stage: RuntimeAuthorityGuardStageBootstrap, target: func(f runtimeAuthorityFixture) string { return f.bootstrap }},
+		{name: "workspace authority", stage: RuntimeAuthorityGuardStageWorkspaceAuthority, target: func(f runtimeAuthorityFixture) string { return f.workspaceDB }},
+		{name: "policy", stage: RuntimeAuthorityGuardStageAdmissionPolicy, target: func(f runtimeAuthorityFixture) string { return filepath.Join(f.policyDir, "1.json") }},
+		{name: "event ledger", stage: RuntimeAuthorityGuardStageEventEnvelope, target: func(f runtimeAuthorityFixture) string { return f.ledger }},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newRuntimeAuthorityFixture(t)
+			// A second link inside the workspace would bypass the Generic Files
+			// authority-root deny boundary while naming the same authority bytes.
+			escaped := filepath.Join(fixture.workspace, "escaped-"+strings.ReplaceAll(test.name, " ", "-"))
+			if err := os.Link(test.target(fixture), escaped); err != nil {
+				t.Fatal(err)
+			}
+			assertRuntimeGuardRejectsUnchanged(t, fixture, test.stage)
+		})
+	}
+}
+
 func TestGuardRuntimeAuthorityV1RejectsSymlinkedAuthorityDirectories(t *testing.T) {
 	tests := []struct {
 		name   string
