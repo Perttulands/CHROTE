@@ -115,18 +115,43 @@ func TestToolSchemaMigrationNormalizesSafeLegacyGraphOnceWithoutOwningRevision(t
 }
 
 func TestToolSchemaMigrationKeepsCanonicalSchemaTwoByteStable(t *testing.T) {
-	raw := []byte(toolSchemaMigrationCanonicalFixture())
-	wantSource := append([]byte(nil), raw...)
+	tests := []struct {
+		name           string
+		raw            string
+		judgeFormation string
+	}{
+		{name: "ordinary workflow", raw: toolSchemaMigrationCanonicalFixture()},
+		{name: "Formation judge", raw: toolSchemaMigrationCanonicalJudgeFixture(), judgeFormation: "fmn_judge"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := []byte(tt.raw)
+			wantSource := append([]byte(nil), raw...)
+			source, err := parseBoard(raw)
+			if err != nil {
+				t.Fatalf("parse canonical schema-2 board: %v", err)
+			}
+			if report := ValidateBoard(source); len(report.Errors) != 0 {
+				t.Fatalf("canonical schema-2 board has structural errors: %+v", report.Errors)
+			}
+			if tt.judgeFormation != "" {
+				chain := judgeChainForGate(source, "gate_review")
+				if len(chain) != 1 || chain[0].ID != tt.judgeFormation {
+					t.Fatalf("canonical Formation judge chain = %+v, want [%s]", chain, tt.judgeFormation)
+				}
+			}
 
-	migrated, err := migrateBoardToToolSchema(raw)
-	if err != nil {
-		t.Fatalf("accept canonical schema-2 board: %v", err)
-	}
-	if !bytes.Equal(migrated, wantSource) {
-		t.Fatalf("canonical schema-2 migration was not an exact no-op:\n got %q\nwant %q", migrated, wantSource)
-	}
-	if !bytes.Equal(raw, wantSource) {
-		t.Fatal("canonical schema-2 check mutated its source buffer")
+			migrated, err := migrateBoardToToolSchema(raw)
+			if err != nil {
+				t.Fatalf("accept canonical schema-2 board: %v", err)
+			}
+			if !bytes.Equal(migrated, wantSource) {
+				t.Fatalf("canonical schema-2 migration was not an exact no-op:\n got %q\nwant %q", migrated, wantSource)
+			}
+			if !bytes.Equal(raw, wantSource) {
+				t.Fatal("canonical schema-2 check mutated its source buffer")
+			}
+		})
 	}
 }
 
@@ -398,6 +423,7 @@ from = "mis_main:out"`),
 
 func TestToolSchemaMigrationRejectsEveryOwnedFieldCollisionOnCanonicalSchemaTwo(t *testing.T) {
 	base := toolSchemaMigrationCanonicalFixture()
+	judgeBase := toolSchemaMigrationCanonicalJudgeFixture()
 	inputField := func(key, replacement string) string {
 		return replaceToolSchemaMigrationPortField(t, base, "port_work_in", key, replacement)
 	}
@@ -411,6 +437,11 @@ func TestToolSchemaMigrationRejectsEveryOwnedFieldCollisionOnCanonicalSchemaTwo(
 		name string
 		raw  string
 	}{
+		{name: "missing input direction", raw: inputField("direction", "")},
+		{name: "missing input kind", raw: inputField("kind", "")},
+		{name: "missing input acceptedMediaTypes", raw: inputField("acceptedMediaTypes", "")},
+		{name: "missing input required", raw: inputField("required", "")},
+		{name: "missing input role", raw: inputField("role", "")},
 		{name: "wrong input direction", raw: inputField("direction", `direction = "output"`)},
 		{name: "wrong input kind", raw: inputField("kind", `kind = "gate_feedback"`)},
 		{name: "wrong input media", raw: inputField("acceptedMediaTypes", `acceptedMediaTypes = ["application/json"]`)},
@@ -421,6 +452,9 @@ func TestToolSchemaMigrationRejectsEveryOwnedFieldCollisionOnCanonicalSchemaTwo(
 		{name: "duplicate input media", raw: inputField("acceptedMediaTypes", "acceptedMediaTypes = [\"text/plain\", \"text/markdown\", \"application/json\"]\nacceptedMediaTypes = [\"text/plain\", \"text/markdown\", \"application/json\"]")},
 		{name: "duplicate input required", raw: inputField("required", "required = true\nrequired = true")},
 		{name: "duplicate input role", raw: inputField("role", "role = \"data\"\nrole = \"data\"")},
+		{name: "missing output direction", raw: outputField("direction", "")},
+		{name: "missing output kind", raw: outputField("kind", "")},
+		{name: "missing output acceptedMediaTypes", raw: outputField("acceptedMediaTypes", "")},
 		{name: "wrong output direction", raw: outputField("direction", `direction = "input"`)},
 		{name: "wrong output kind", raw: outputField("kind", `kind = "gate_feedback"`)},
 		{name: "wrong output media", raw: outputField("acceptedMediaTypes", `acceptedMediaTypes = ["application/json"]`)},
@@ -432,12 +466,28 @@ func TestToolSchemaMigrationRejectsEveryOwnedFieldCollisionOnCanonicalSchemaTwo(
 		{name: "duplicate output required", raw: outputFieldsAfterLabel("required = true\nrequired = true")},
 		{name: "duplicate output role", raw: outputFieldsAfterLabel("role = \"data\"\nrole = \"data\"")},
 		{
+			name: "missing workflow connection channel",
+			raw:  replaceToolSchemaMigrationFixture(t, base, "channel = \"workflow\"\n", ""),
+		},
+		{
 			name: "wrong connection channel",
 			raw:  replaceToolSchemaMigrationFixture(t, base, `channel = "workflow"`, `channel = "judge"`),
 		},
 		{
 			name: "duplicate connection channel",
 			raw:  replaceToolSchemaMigrationFixture(t, base, `channel = "workflow"`, "channel = \"workflow\"\nchannel = \"workflow\""),
+		},
+		{
+			name: "missing judge connection channel",
+			raw: replaceToolSchemaMigrationFixture(t, judgeBase,
+				"id = \"edge_judge_send\"\nchannel = \"judge\"\n",
+				"id = \"edge_judge_send\"\n"),
+		},
+		{
+			name: "judge connection claims workflow channel",
+			raw: replaceToolSchemaMigrationFixture(t, judgeBase,
+				"id = \"edge_judge_send\"\nchannel = \"judge\"\n",
+				"id = \"edge_judge_send\"\nchannel = \"workflow\"\n"),
 		},
 	}
 	for _, tt := range tests {
@@ -1005,5 +1055,65 @@ to = "fmn_work:port_work_in"
 
 [x_extension]
 note = "already canonical"
+`
+}
+
+func toolSchemaMigrationCanonicalJudgeFixture() string {
+	return `schema = 2
+id = "brd_tool_schema_two_judge"
+slug = "tool-schema-two-judge"
+title = "Canonical Formation judge"
+rev = 3
+
+[[mission]]
+id = "mis_main"
+title = "Main"
+goal = "Judge canonical work"
+beadId = "ctx-test"
+
+[[formation]]
+id = "fmn_judge"
+type = "solo"
+title = "Judge"
+
+[[formation.input]]
+id = "port_judge_in"
+label = "Judge input"
+direction = "input"
+kind = "work"
+acceptedMediaTypes = ["text/plain", "text/markdown", "application/json"]
+required = true
+role = "data"
+
+[[formation.output]]
+id = "port_judge_out"
+label = "Judge output"
+direction = "output"
+kind = "work"
+acceptedMediaTypes = ["text/plain", "text/markdown", "application/json"]
+
+[[gate]]
+id = "gate_review"
+title = "Review"
+kinds = ["formation"]
+criterion = "Judge the work"
+
+[[connection]]
+id = "edge_start"
+channel = "workflow"
+from = "mis_main:out"
+to = "gate_review:in"
+
+[[connection]]
+id = "edge_judge_send"
+channel = "judge"
+from = "gate_review:judge"
+to = "fmn_judge:port_judge_in"
+
+[[connection]]
+id = "edge_judge_return"
+channel = "judge"
+from = "fmn_judge:port_judge_out"
+to = "gate_review:judge"
 `
 }
