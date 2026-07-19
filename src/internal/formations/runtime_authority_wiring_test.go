@@ -59,7 +59,11 @@ func TestRuntimeStoreAuthorityBoundaryRemainsNonAuthorizingAfterExactMatch(t *te
 func TestMatchingRuntimeAuthorityRejectsBeforeEngineEffects(t *testing.T) {
 	fixture := newRuntimeAuthorityFixture(t)
 	bindRuntimeAuthorityFixtureToOpenedWorkspace(t, &fixture, fixture.workspace)
-	writeFixture(t, filepath.Join(fixture.workspace, ".formations", "boards", "session-search.formation.toml"), s4RunBoardFixture())
+	boardPath := filepath.Join(fixture.workspace, ".formations", "boards", "session-search.formation.toml")
+	writeFixture(t, boardPath, s4RunBoardFixture())
+	if err := os.Chmod(filepath.Dir(boardPath), os.FileMode(0o770)|os.ModeSetgid); err != nil {
+		t.Fatalf("set definition fixture mode: %v", err)
+	}
 	before := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace)
 	store := NewRuntimeStore(fixture.workspace, filepath.Dir(fixture.root))
 	executor := &countingFormationExecutor{}

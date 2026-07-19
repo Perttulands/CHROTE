@@ -139,9 +139,6 @@ type runBinding struct {
 }
 
 func (s *Store) StartRun(slug string, req RunStartRequest) (*RunStartResult, error) {
-	if err := s.RequireRuntimeAuthority(); err != nil {
-		return nil, err
-	}
 	if err := validateSlug(slug); err != nil {
 		return nil, err
 	}
@@ -173,6 +170,9 @@ func (s *Store) StartRun(slug string, req RunStartRequest) (*RunStartResult, err
 		return nil, fmt.Errorf("%w: mission %q", ErrNotFound, req.MissionID)
 	}
 	if err := rejectLegacyScriptGateForMission(board, mission.ID); err != nil {
+		return nil, err
+	}
+	if err := s.RequireRuntimeAuthority(); err != nil {
 		return nil, err
 	}
 	bindings, err := resolveRunBindings(board, req.Personas)

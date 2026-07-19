@@ -138,9 +138,6 @@ func (e *RunEngine) RunMission(slug string, req RunStartRequest) (*RunStatusProj
 	if e == nil || e.store == nil {
 		return nil, fmt.Errorf("%w: run engine store required", ErrNotFound)
 	}
-	if err := e.store.RequireRuntimeAuthority(); err != nil {
-		return nil, err
-	}
 	board, err := e.store.ReadBoard(slug)
 	if err != nil {
 		return nil, err
@@ -182,9 +179,6 @@ func (e *RunEngine) RunMission(slug string, req RunStartRequest) (*RunStatusProj
 func (e *RunEngine) RunFormation(slug, formationID string, req FormationRunRequest) (*RunStatusProjection, error) {
 	if e == nil || e.store == nil {
 		return nil, fmt.Errorf("%w: run engine store required", ErrNotFound)
-	}
-	if err := e.store.RequireRuntimeAuthority(); err != nil {
-		return nil, err
 	}
 	board, err := e.store.ReadBoard(slug)
 	if err != nil {

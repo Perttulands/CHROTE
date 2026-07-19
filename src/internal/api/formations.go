@@ -452,10 +452,6 @@ func (h *FormationsHandler) StartRun(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "exactly one of missionId or formationId is required")
 		return
 	}
-	if err := h.store.RequireRuntimeAuthority(); err != nil {
-		writeFormationsError(w, err)
-		return
-	}
 	slug, err := h.store.ResolveBoardSelector(request.Board)
 	if err != nil {
 		writeFormationsError(w, err)

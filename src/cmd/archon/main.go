@@ -1200,9 +1200,6 @@ func runMissionRun(store *formations.Store, args []string, stdout, stderr io.Wri
 		fmt.Fprintln(stderr, "usage: archon mission run <board> [--mission <mission>] [--json]")
 		return 2
 	}
-	if err := store.RequireRuntimeAuthority(); err != nil {
-		return failJSON(stderr, err, *jsonOut, "run", fs.Arg(0))
-	}
 	slug, err := store.ResolveBoardSelector(fs.Arg(0))
 	if err != nil {
 		return failSelector(stderr, err, *jsonOut, "board", fs.Arg(0))
@@ -1260,9 +1257,6 @@ func runFormationRun(store *formations.Store, args []string, stdout, stderr io.W
 	if fs.NArg() != 2 {
 		fmt.Fprintln(stderr, "usage: archon formation run <board> <formation> [--json]")
 		return 2
-	}
-	if err := store.RequireRuntimeAuthority(); err != nil {
-		return failJSON(stderr, err, *jsonOut, "run", fs.Arg(1))
 	}
 	slug, _, formationID, err := resolveFormationCommandTarget(store, fs.Arg(0), fs.Arg(1))
 	if err != nil {
