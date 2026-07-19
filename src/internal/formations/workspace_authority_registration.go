@@ -296,6 +296,32 @@ func (registrar *workspaceAuthorityRegistrar) register(configuredWorkspace strin
 			bootstrap.WriteString(`,"workspaceRootIdentitySha256":`)
 			writeRuntimeCanonicalJSONString(&bootstrap, identity.rootHash)
 			bootstrap.WriteByte('}')
+			if recoveryCandidate != nil {
+				transaction := workspaceAuthorityRecoveryTransaction{
+					registrar:         registrar,
+					root:              root,
+					workspaces:        workspaces,
+					registryLock:      registryLock,
+					registry:          registry,
+					workspace:         workspace,
+					identity:          identity,
+					candidate:         recoveryCandidate,
+					currentGeneration: currentGeneration,
+					nextRegistryRaw:   nextRegistryRaw,
+					policyRaw:         policyRaw,
+					workspaceRaw:      workspaceRaw,
+				}
+				if err := transaction.complete(); err != nil {
+					return err
+				}
+				return callback(workspaceAuthorityRegistrationObservation{
+					identity:             identity,
+					lockDevice:           lockDevice,
+					lockInode:            lockInode,
+					workspaceAuthorityID: authorityID,
+					matched:              true,
+				})
+			}
 
 			authorityDirectory, err := createWorkspaceAuthorityRegistrationDirectory(workspaces, authorityID, registrar.expectedUID, registrar.ops.validatePrivateNode)
 			if err != nil {
