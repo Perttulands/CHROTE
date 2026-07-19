@@ -73,6 +73,9 @@ func (p *authorityPublisher) publishImmutable(name string, raw []byte) (authorit
 	if p == nil || p.directory == nil || !runtimeAuthorityPathComponent(name) {
 		return authorityContentRef{}, errRuntimeNoncanonical
 	}
+	if int64(len(raw)) > runtimeAuthorityMaxRecordBytes {
+		return authorityContentRef{}, errRuntimeOutOfRange
+	}
 	if err := p.validateDirectory(); err != nil {
 		return authorityContentRef{}, err
 	}
