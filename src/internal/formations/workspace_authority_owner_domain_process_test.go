@@ -50,7 +50,7 @@ func TestWorkspaceAuthorityOwnerDomainRetainsRegistryUntilMappedOwnerLockIsAcqui
 		}
 		return nil
 	}
-	callbackEntered := make(chan struct{})
+	callbackEntered := make(chan bool, 1)
 	releaseCallback := make(chan struct{})
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(releaseCallback) }) }
@@ -58,7 +58,11 @@ func TestWorkspaceAuthorityOwnerDomainRetainsRegistryUntilMappedOwnerLockIsAcqui
 	result := make(chan error, 1)
 	go func() {
 		result <- registrar.withWorkspaceAuthorityOwnerDomain(fixture.workspace, func(workspaceAuthorityOwnerDomainScope) error {
-			close(callbackEntered)
+			localHeld := !registrar.local.TryLock()
+			if !localHeld {
+				registrar.local.Unlock()
+			}
+			callbackEntered <- localHeld
 			<-releaseCallback
 			return nil
 		})
@@ -77,10 +81,17 @@ func TestWorkspaceAuthorityOwnerDomainRetainsRegistryUntilMappedOwnerLockIsAcqui
 	if err := tryWorkspaceAuthorityExclusiveLock(fixture.registryLock); !errors.Is(err, syscall.EWOULDBLOCK) {
 		t.Fatalf("registry lock while owner-domain acquisition blocked = %v, want would-block", err)
 	}
+	if registrar.local.TryLock() {
+		registrar.local.Unlock()
+		t.Fatal("coordinator-local mutex was released while owner-domain acquisition waited for owner.lock")
+	}
 
 	ownerHolder.releaseAndWait(t)
 	select {
-	case <-callbackEntered:
+	case localHeld := <-callbackEntered:
+		if !localHeld {
+			t.Fatal("coordinator-local mutex was not held during the owner-domain callback")
+		}
 	case <-time.After(workspaceAuthorityLockProcessTimeout):
 		t.Fatal("owner-domain callback did not enter after mapped owner lock became available")
 	}
@@ -99,12 +110,114 @@ func TestWorkspaceAuthorityOwnerDomainRetainsRegistryUntilMappedOwnerLockIsAcqui
 	case <-time.After(workspaceAuthorityLockProcessTimeout):
 		t.Fatal("owner-domain acquisition did not return after callback release")
 	}
+	if !registrar.local.TryLock() {
+		t.Fatal("coordinator-local mutex remained held after owner-domain callback returned")
+	}
+	registrar.local.Unlock()
 
 	if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, before) {
 		t.Fatalf("blocked owner-domain acquisition changed authority topology\nbefore: %#v\nafter:  %#v", before, after)
 	}
 	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, paths...)
 	assertWorkspaceAuthorityOwnerDomainLocksReleased(t, fixture)
+}
+
+func TestWorkspaceAuthorityOwnerDomainRejectsRetargetedGlobalPinsAfterOwnerContention(t *testing.T) {
+	tests := []struct {
+		name string
+		path func(workspaceAuthorityOwnerDomainFixture) string
+	}{
+		{name: "configured workspace", path: func(f workspaceAuthorityOwnerDomainFixture) string { return f.workspace }},
+		{name: "host authority root", path: func(f workspaceAuthorityOwnerDomainFixture) string { return f.hostRoot }},
+		{name: "workspaces root", path: func(f workspaceAuthorityOwnerDomainFixture) string { return f.workspacesRoot }},
+		{name: "registry lock", path: func(f workspaceAuthorityOwnerDomainFixture) string { return f.registryLock }},
+		{name: "private registry", path: func(f workspaceAuthorityOwnerDomainFixture) string { return f.registry }},
+		{name: "mapped authority directory", path: func(f workspaceAuthorityOwnerDomainFixture) string { return f.authorityDir }},
+		{name: "mapped owner lock", path: func(f workspaceAuthorityOwnerDomainFixture) string { return f.ownerLock }},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newWorkspaceAuthorityOwnerDomainFixture(t)
+			targetPath := test.path(fixture)
+			movedPath := targetPath + ".opened-generation"
+			paths := append(workspaceAuthorityOwnerDomainPaths(fixture), movedPath)
+			descriptorCountBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, paths...).total
+
+			ownerHolder := startWorkspaceAuthorityOwnerDomainLockHelper(t, fixture.ownerLock)
+			ownerHolder.waitAttempted(t)
+			if got, want := ownerHolder.waitReady(t, workspaceAuthorityLockProcessTimeout), workspaceAuthorityLockIdentityAtPath(t, fixture.ownerLock); got != want {
+				t.Fatalf("process holder acquired owner lock %+v, want %+v", got, want)
+			}
+
+			registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate())
+			productionValidate := registrar.ops.validatePrivateNode
+			ownerSelected := make(chan struct{})
+			var selectedOnce sync.Once
+			registrar.ops.validatePrivateNode = func(opened *os.File, expectedUID uint32) error {
+				if err := productionValidate(opened, expectedUID); err != nil {
+					return err
+				}
+				if opened.Name() == "owner.lock" {
+					selectedOnce.Do(func() { close(ownerSelected) })
+				}
+				return nil
+			}
+			callbackEntered := make(chan struct{}, 1)
+			type ownerDomainResult struct {
+				err           error
+				callbackCalls int
+			}
+			result := make(chan ownerDomainResult, 1)
+			go func() {
+				callbackCalls := 0
+				err := registrar.withWorkspaceAuthorityOwnerDomain(fixture.workspace, func(workspaceAuthorityOwnerDomainScope) error {
+					callbackCalls++
+					callbackEntered <- struct{}{}
+					return nil
+				})
+				result <- ownerDomainResult{err: err, callbackCalls: callbackCalls}
+			}()
+
+			select {
+			case <-ownerSelected:
+			case <-time.After(workspaceAuthorityLockProcessTimeout):
+				t.Fatal("owner-domain acquisition did not select owner.lock before global-pin replacement")
+			}
+			if err := replaceWorkspaceAuthorityOwnerDomainNamedNode(targetPath, movedPath); err != nil {
+				t.Fatal(err)
+			}
+			afterInjection := snapshotWorkspaceAuthorityTopology(t, fixture.base)
+			select {
+			case <-callbackEntered:
+				t.Fatal("owner-domain callback entered before contended owner.lock was released")
+			case <-time.After(workspaceAuthorityLockExclusionWindow):
+			}
+
+			ownerHolder.releaseAndWait(t)
+			var got ownerDomainResult
+			select {
+			case got = <-result:
+			case <-time.After(workspaceAuthorityLockProcessTimeout):
+				t.Fatal("owner-domain acquisition did not reject the retargeted global pin")
+			}
+			if got.err == nil || got.callbackCalls != 0 {
+				t.Fatalf("retargeted global pin result = %v, callback calls %d; want rejection before callback", got.err, got.callbackCalls)
+			}
+			if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, afterInjection) {
+				t.Fatalf("owner-domain rejection changed retargeted global-pin topology\nafter injection: %#v\nafter return:    %#v", afterInjection, after)
+			}
+			if afterCount := snapshotWorkspaceAuthorityOpenDescriptors(t, paths...).total; afterCount != descriptorCountBefore {
+				t.Fatalf("retargeted global-pin descriptor count = %d, want baseline %d", afterCount, descriptorCountBefore)
+			}
+			registryLockPath := workspaceAuthorityOwnerDomainPathAfterReplacement(t, fixture.registryLock, targetPath, movedPath)
+			ownerLockPath := workspaceAuthorityOwnerDomainPathAfterReplacement(t, fixture.ownerLock, targetPath, movedPath)
+			assertWorkspaceAuthorityOwnerDomainLockPathReleasedIfRegular(t, registryLockPath)
+			assertWorkspaceAuthorityOwnerDomainLockPathReleasedIfRegular(t, ownerLockPath)
+			assertWorkspaceAuthorityOwnerDomainLockPathReleasedIfRegular(t, fixture.registryLock)
+			assertWorkspaceAuthorityOwnerDomainLockPathReleasedIfRegular(t, fixture.ownerLock)
+		})
+	}
 }
 
 func TestWorkspaceAuthorityOwnerDomainReleasesRegistryWhileProcessOwnerEpochRemainsExclusive(t *testing.T) {
@@ -286,4 +399,19 @@ func workspaceAuthorityOwnerDomainLockHelperBaseEnvironment() []string {
 		}
 	}
 	return environment
+}
+
+func workspaceAuthorityOwnerDomainPathAfterReplacement(t *testing.T, originalPath, replacedPath, movedPath string) string {
+	t.Helper()
+	relative, err := filepath.Rel(replacedPath, originalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if relative == "." {
+		return movedPath
+	}
+	if relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
+		return filepath.Join(movedPath, relative)
+	}
+	return originalPath
 }

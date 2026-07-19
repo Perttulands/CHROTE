@@ -3,6 +3,7 @@ package formations
 import (
 	"errors"
 	"fmt"
+	"go/token"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -511,6 +512,51 @@ func TestWorkspaceAuthorityOwnerDomainRepinsEverySelectedNamedIdentityBeforeCall
 	}
 }
 
+func TestWorkspaceAuthorityOwnerDomainRepinsOwnerAfterClosedStateValidationBeforeCallback(t *testing.T) {
+	fixture := newWorkspaceAuthorityOwnerDomainFixture(t)
+	paths := workspaceAuthorityOwnerDomainPaths(fixture)
+	descriptorCountBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, paths...).total
+	registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate())
+	productionValidate := registrar.ops.validatePrivateNode
+	movedOwnerLock := fixture.ownerLock + ".opened-generation"
+	mutated := false
+	var afterInjection map[string]workspaceAuthorityTopologyEntry
+	registrar.ops.validatePrivateNode = func(opened *os.File, expectedUID uint32) error {
+		if err := productionValidate(opened, expectedUID); err != nil {
+			return err
+		}
+		if !mutated && opened.Name() == "1.json" {
+			mutated = true
+			if err := replaceWorkspaceAuthorityOwnerDomainNamedNode(fixture.ownerLock, movedOwnerLock); err != nil {
+				return err
+			}
+			afterInjection = snapshotWorkspaceAuthorityTopology(t, fixture.base)
+		}
+		return nil
+	}
+	callbackCalls := 0
+	err := registrar.withWorkspaceAuthorityOwnerDomain(fixture.workspace, func(workspaceAuthorityOwnerDomainScope) error {
+		callbackCalls++
+		return nil
+	})
+	if err == nil || callbackCalls != 0 {
+		t.Fatalf("late owner-lock replacement result = %v, callback calls %d; want fail before callback", err, callbackCalls)
+	}
+	if !mutated || afterInjection == nil {
+		t.Fatal("owner-domain validation never reached the late policy hook")
+	}
+	if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, afterInjection) {
+		t.Fatalf("owner-domain rejection changed late owner-lock replacement topology\nafter injection: %#v\nafter return:    %#v", afterInjection, after)
+	}
+	paths = append(paths, movedOwnerLock)
+	if afterCount := snapshotWorkspaceAuthorityOpenDescriptors(t, paths...).total; afterCount != descriptorCountBefore {
+		t.Fatalf("late owner-lock replacement descriptor count = %d, want baseline %d", afterCount, descriptorCountBefore)
+	}
+	assertWorkspaceAuthorityOwnerDomainLockPathReleasedIfRegular(t, fixture.registryLock)
+	assertWorkspaceAuthorityOwnerDomainLockPathReleasedIfRegular(t, fixture.ownerLock)
+	assertWorkspaceAuthorityOwnerDomainLockPathReleasedIfRegular(t, movedOwnerLock)
+}
+
 func TestWorkspaceAuthorityOwnerDomainCallbackErrorAndPanicReleaseEpoch(t *testing.T) {
 	t.Run("callback error", func(t *testing.T) {
 		fixture := newWorkspaceAuthorityOwnerDomainFixture(t)
@@ -649,8 +695,11 @@ func workspaceAuthorityOwnerDomainPaths(fixture workspaceAuthorityOwnerDomainFix
 func assertWorkspaceAuthorityOwnerDomainScopeValueIsClosed(t *testing.T, scope workspaceAuthorityOwnerDomainScope, fixture workspaceAuthorityOwnerDomainFixture) {
 	t.Helper()
 	value := reflect.ValueOf(scope)
+	if !value.IsValid() {
+		t.Fatal("owner-domain dynamic scope is nil")
+	}
 	typeOf := value.Type()
-	if value.Kind() != reflect.Struct || typeOf.Name() == "" || typeOf.PkgPath() == "" {
+	if value.Kind() != reflect.Struct || typeOf.Name() == "" || typeOf.PkgPath() == "" || token.IsExported(typeOf.Name()) {
 		t.Fatalf("owner-domain dynamic scope = %v (%s), want private named non-pointer value struct", typeOf, value.Kind())
 	}
 	wantStrings := map[string]int{
@@ -666,25 +715,37 @@ func assertWorkspaceAuthorityOwnerDomainScopeValueIsClosed(t *testing.T, scope w
 	} {
 		wantUint64s[number]++
 	}
-	if typeOf.NumField() != 6 {
-		t.Fatalf("owner-domain dynamic scope fields = %d, want six closed scalar values", typeOf.NumField())
-	}
 	gotStrings := map[string]int{}
 	gotUint64s := map[uint64]int{}
-	for index := 0; index < typeOf.NumField(); index++ {
-		field := typeOf.Field(index)
-		if field.PkgPath == "" || field.Tag != "" {
-			t.Fatalf("owner-domain dynamic scope field %s must be unexported and tag-free: exported=%t tag=%q", field.Name, field.PkgPath == "", field.Tag)
+	var collectClosedScalars func(reflect.Value, string)
+	collectClosedScalars = func(current reflect.Value, fieldPath string) {
+		currentType := current.Type()
+		if current.Kind() != reflect.Struct || currentType.NumField() == 0 {
+			t.Fatalf("owner-domain dynamic scope field %s = %v (%s), want non-empty closed value struct", fieldPath, currentType, current.Kind())
 		}
-		switch field.Type.Kind() {
-		case reflect.String:
-			gotStrings[value.Field(index).String()]++
-		case reflect.Uint64:
-			gotUint64s[value.Field(index).Uint()]++
-		default:
-			t.Fatalf("owner-domain dynamic scope field %s kind = %s, want only closed string/uint64 values", field.Name, field.Type.Kind())
+		if currentType.Name() != "" && (currentType.PkgPath() != typeOf.PkgPath() || token.IsExported(currentType.Name())) {
+			t.Fatalf("owner-domain dynamic scope field %s type = %v, want private local value type", fieldPath, currentType)
+		}
+		for index := 0; index < currentType.NumField(); index++ {
+			field := currentType.Field(index)
+			childPath := fieldPath + "." + field.Name
+			if field.PkgPath == "" || field.Tag != "" {
+				t.Fatalf("owner-domain dynamic scope field %s must be unexported and tag-free: exported=%t tag=%q", childPath, field.PkgPath == "", field.Tag)
+			}
+			child := current.Field(index)
+			switch child.Kind() {
+			case reflect.Struct:
+				collectClosedScalars(child, childPath)
+			case reflect.String:
+				gotStrings[child.String()]++
+			case reflect.Uint64:
+				gotUint64s[child.Uint()]++
+			default:
+				t.Fatalf("owner-domain dynamic scope field %s kind = %s, want only nested private value structs and closed string/uint64 leaves", childPath, child.Kind())
+			}
 		}
 	}
+	collectClosedScalars(value, typeOf.Name())
 	if !reflect.DeepEqual(gotStrings, wantStrings) || !reflect.DeepEqual(gotUint64s, wantUint64s) {
 		t.Fatalf("owner-domain dynamic scope values = strings %#v uint64s %#v, want strings %#v uint64s %#v", gotStrings, gotUint64s, wantStrings, wantUint64s)
 	}
