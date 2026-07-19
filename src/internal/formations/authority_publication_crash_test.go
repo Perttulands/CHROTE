@@ -186,6 +186,9 @@ func recoverAuthorityPublication(t *testing.T, directory *os.File, operation str
 		if err != nil || !exists || current.generation != testAuthorityGeneration(2, secondRaw) {
 			t.Fatalf("mutable authoritative reread = %+v, %t, %v", current.generation, exists, err)
 		}
+		if err := publisher.syncDirectory(); err != nil {
+			t.Fatalf("complete mutable recovery directory sync: %v", err)
+		}
 	case operation == "mutable":
 		first := testAuthorityGeneration(1, firstRaw)
 		if _, err := publisher.publishMutable("workspace.private.json", &first, secondRaw, testAuthorityMutableRevision); err != nil {
