@@ -145,7 +145,7 @@ func parseToolParameterLine(params map[string]any, line string) error {
 	if _, exists := params[key]; exists {
 		return fmt.Errorf("duplicate Tool parameter %q", key)
 	}
-	value, err := parseToolParameterScalar(valuePart(line))
+	value, err := parseToolParameterScalar(toolParameterValuePart(line, eq))
 	if err != nil {
 		return err
 	}
@@ -155,8 +155,19 @@ func parseToolParameterLine(params map[string]any, line string) error {
 
 func parseToolParameterScalar(literal string) (any, error) {
 	literal = strings.TrimSpace(literal)
-	if value, err := strconv.Unquote(literal); err == nil {
+	if len(literal) >= 2 && literal[0] == '"' && literal[len(literal)-1] == '"' {
+		value, err := strconv.Unquote(literal)
+		if err != nil {
+			return nil, fmt.Errorf("invalid Tool parameter string")
+		}
 		if !utf8.ValidString(value) || strings.IndexByte(value, 0) >= 0 {
+			return nil, fmt.Errorf("invalid Tool parameter string")
+		}
+		return value, nil
+	}
+	if len(literal) >= 2 && literal[0] == '\'' && literal[len(literal)-1] == '\'' {
+		value := literal[1 : len(literal)-1]
+		if strings.ContainsRune(value, '\'') || strings.ContainsAny(value, "\r\n") || !utf8.ValidString(value) || strings.IndexByte(value, 0) >= 0 {
 			return nil, fmt.Errorf("invalid Tool parameter string")
 		}
 		return value, nil
@@ -172,6 +183,28 @@ func parseToolParameterScalar(literal string) (any, error) {
 		return nil, fmt.Errorf("invalid Tool parameter scalar")
 	}
 	return value, nil
+}
+
+func toolParameterValuePart(line string, eq int) string {
+	value := line[eq+1:]
+	inBasicString := false
+	inLiteralString := false
+	escaped := false
+	for i := 0; i < len(value); i++ {
+		switch {
+		case escaped:
+			escaped = false
+		case inBasicString && value[i] == '\\':
+			escaped = true
+		case !inLiteralString && value[i] == '"':
+			inBasicString = !inBasicString
+		case !inBasicString && value[i] == '\'':
+			inLiteralString = !inLiteralString
+		case !inBasicString && !inLiteralString && value[i] == '#':
+			return value[:i]
+		}
+	}
+	return value
 }
 
 func applyToolPortLine(port *ToolPort, line string) error {
@@ -193,8 +226,13 @@ func applyToolPortLine(port *ToolPort, line string) error {
 	case "acceptedMediaTypes":
 		port.AcceptedMediaTypes = parseStringArray(value)
 	case "required":
-		required, err := strconv.ParseBool(value)
-		if err != nil {
+		var required bool
+		switch strings.TrimSpace(valuePart(line)) {
+		case "true":
+			required = true
+		case "false":
+			required = false
+		default:
 			return fmt.Errorf("invalid Tool port required field")
 		}
 		port.Required = &required
