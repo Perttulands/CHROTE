@@ -134,6 +134,12 @@ func TestWorkspaceAuthorityInitialRegistrationDefaultOpsGenerateCanonicalUniqueI
 	if err := registrar.ops.syncInitialAuthorityDirectory(closed); err == nil {
 		t.Fatal("production authority-directory sync accepted a closed descriptor; want real file.Sync-backed failure")
 	}
+	if registrar.ops.syncWorkspaceRegistrationDirectory == nil {
+		t.Fatal("normal workspace-authority registrar has no workspace-registration directory-sync operation")
+	}
+	if err := registrar.ops.syncWorkspaceRegistrationDirectory(closed); err == nil {
+		t.Fatal("production workspace-registration directory sync accepted a closed descriptor; want real file.Sync-backed failure")
+	}
 }
 
 func TestWorkspaceAuthorityRegistrationExistingMappingIsReadOnlyIdempotent(t *testing.T) {
@@ -188,6 +194,239 @@ func TestWorkspaceAuthorityRegistrationExistingMappingIsReadOnlyIdempotent(t *te
 	}
 	if err := tryWorkspaceAuthorityExclusiveLock(fixture.ownerLock); err != nil {
 		t.Fatalf("idempotent registration leaked owner lock: %v", err)
+	}
+	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, paths...)
+}
+
+func TestWorkspaceAuthorityRegistrationExactMappingCompletesAmbiguousParentDurabilityBeforeCallback(t *testing.T) {
+	fixture := newWorkspaceAuthorityInitialRegistrationFixture(t)
+	installWorkspaceAuthorityInitialRegistrationPrivateState(t, fixture)
+	predecessorRegistry := workspaceAuthorityInitialRegistrationStat(t, fixture.registry)
+	postRenameRegistry := fixture.registry + ".post-rename"
+	writePrivateAuthorityTestFile(t, postRenameRegistry, fixture.mappedRegistryRaw)
+	if err := os.Rename(postRenameRegistry, fixture.registry); err != nil {
+		t.Fatal(err)
+	}
+	// Deliberately do not sync workspacesRoot: this is the visible
+	// post-rename/pre-parent-fsync state a retry must close before success.
+	visibleRegistry := workspaceAuthorityInitialRegistrationStat(t, fixture.registry)
+	if visibleRegistry.inode == predecessorRegistry.inode {
+		t.Fatalf("ambiguous registry setup kept predecessor inode %d; want visible atomic replacement", predecessorRegistry.inode)
+	}
+	assertWorkspaceAuthorityInitialRegistrationPrivateStateExceptRegistry(t, fixture)
+	assertWorkspaceAuthorityInitialRegistrationFile(t, fixture.registry, fixture.mappedRegistryRaw, fixture.ownerUID)
+
+	before := snapshotWorkspaceAuthorityTopology(t, fixture.base)
+	paths := workspaceAuthorityInitialRegistrationPaths(fixture)
+	descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, paths...)
+	injected := errors.New("injected workspaces-parent sync failure")
+	generated := 0
+	initialPublicationSteps := 0
+	initialDirectorySyncs := 0
+	workspaceRegistrationSyncs := 0
+	callbackCalls := 0
+	registrar := newWorkspaceAuthorityRegistrarForTest(
+		fixture.hostRoot,
+		fixture.ownerUID,
+		newWorkspaceAuthorityCapabilityGate(),
+		workspaceAuthorityRegistrationTestOps{
+			generateWorkspaceAuthorityID: func() (string, error) {
+				generated++
+				return testAuthorityRecordWorkspaceID2, nil
+			},
+			observeInitialRegistration: func(string) error {
+				initialPublicationSteps++
+				return nil
+			},
+			syncInitialAuthorityDirectory: func(*os.File) error {
+				initialDirectorySyncs++
+				return nil
+			},
+			syncWorkspaceRegistrationDirectory: func(directory *os.File) error {
+				workspaceRegistrationSyncs++
+				openedInfo, err := directory.Stat()
+				if err != nil {
+					t.Fatal(err)
+				}
+				namedInfo, err := os.Stat(fixture.workspacesRoot)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !os.SameFile(openedInfo, namedInfo) {
+					t.Fatalf("mapping durability sync used descriptor for %v, want operative %v", openedInfo, namedInfo)
+				}
+				assertWorkspaceAuthorityInitialRegistrationRegistryLockHeld(t, fixture)
+				if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, before) {
+					t.Fatalf("mapping durability sync began after private mutation\nbefore: %#v\nafter:  %#v", before, after)
+				}
+				if workspaceRegistrationSyncs == 1 {
+					return injected
+				}
+				return directory.Sync()
+			},
+		},
+	)
+
+	err := registrar.register(fixture.workspace, func(workspaceAuthorityRegistrationScope) error {
+		callbackCalls++
+		return nil
+	})
+	if !errors.Is(err, injected) {
+		t.Fatalf("ambiguous mapping parent-sync error = %v, want injected sentinel", err)
+	}
+	if callbackCalls != 0 {
+		t.Fatalf("ambiguous mapping callback calls after failed durability barrier = %d, want zero", callbackCalls)
+	}
+	if generated != 0 || initialPublicationSteps != 0 || initialDirectorySyncs != 0 {
+		t.Fatalf("ambiguous mapping generator/initial-step/initial-sync calls = %d/%d/%d, want 0/0/0", generated, initialPublicationSteps, initialDirectorySyncs)
+	}
+	if workspaceRegistrationSyncs != 1 {
+		t.Fatalf("ambiguous mapping parent-sync calls after failure = %d, want exactly one", workspaceRegistrationSyncs)
+	}
+	if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, before) {
+		t.Fatalf("failed mapping durability barrier changed registry bytes, inode, or private topology\nbefore: %#v\nafter:  %#v", before, after)
+	}
+	if err := tryWorkspaceAuthorityExclusiveLock(fixture.registryLock); err != nil {
+		t.Fatalf("failed mapping durability barrier leaked registry lock: %v", err)
+	}
+	if err := tryWorkspaceAuthorityExclusiveLock(fixture.ownerLock); err != nil {
+		t.Fatalf("failed mapping durability barrier leaked owner lock: %v", err)
+	}
+	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, paths...)
+
+	err = registrar.register(fixture.workspace, func(scope workspaceAuthorityRegistrationScope) error {
+		callbackCalls++
+		if workspaceRegistrationSyncs != 2 {
+			t.Fatalf("mapping callback ran before successful parent durability barrier: sync calls = %d, want 2", workspaceRegistrationSyncs)
+		}
+		assertWorkspaceAuthorityInitialRegistrationScope(t, scope, fixture.identity, testInitialRegistrationAuthorityID)
+		assertWorkspaceAuthorityInitialRegistrationRegistryLockHeld(t, fixture)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("retry completing ambiguous mapping parent durability: %v", err)
+	}
+	if callbackCalls != 1 || workspaceRegistrationSyncs != 2 {
+		t.Fatalf("successful durability retry callback/parent-sync calls = %d/%d, want 1/2", callbackCalls, workspaceRegistrationSyncs)
+	}
+	if generated != 0 || initialPublicationSteps != 0 || initialDirectorySyncs != 0 {
+		t.Fatalf("successful durability retry generator/initial-step/initial-sync calls = %d/%d/%d, want 0/0/0", generated, initialPublicationSteps, initialDirectorySyncs)
+	}
+	if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, before) {
+		t.Fatalf("successful mapping durability retry changed registry bytes, inode, or private topology\nbefore: %#v\nafter:  %#v", before, after)
+	}
+	if err := tryWorkspaceAuthorityExclusiveLock(fixture.registryLock); err != nil {
+		t.Fatalf("successful mapping durability retry leaked registry lock: %v", err)
+	}
+	if err := tryWorkspaceAuthorityExclusiveLock(fixture.ownerLock); err != nil {
+		t.Fatalf("successful mapping durability retry leaked owner lock: %v", err)
+	}
+	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, paths...)
+}
+
+func TestWorkspaceAuthorityInitialRegistrationRejectsOversizeNextRegistryBeforePrivateMutation(t *testing.T) {
+	fixture := newWorkspaceAuthorityInitialRegistrationFixture(t)
+	// A valid predecessor may fit while its canonical append does not. The
+	// append must be size-checked before creating orphanable private state.
+	paddingEntry := workspaceRegistryEntryJCSV1{
+		ConfiguredPath:              "/padding",
+		Device:                      "0",
+		Inode:                       "0",
+		WorkspaceAuthorityID:        testAuthorityRecordWorkspaceID2,
+		WorkspaceRootIdentitySHA256: strings.Repeat("d", 64),
+	}
+	nearLimit := workspaceRegistryJCSV1{
+		Entries:        []workspaceRegistryEntryJCSV1{paddingEntry},
+		RecordRev:      1,
+		RegistrySchema: 1,
+	}
+	nearLimitRaw, err := encodeWorkspaceRegistryJCSV1(nearLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paddingBytes := int(runtimeAuthorityMaxRecordBytes) - 1 - len(nearLimitRaw)
+	if paddingBytes <= 0 {
+		t.Fatalf("near-limit registry fixture has no padding budget: base=%d limit=%d", len(nearLimitRaw), runtimeAuthorityMaxRecordBytes)
+	}
+	nearLimit.Entries[0].ConfiguredPath += strings.Repeat("p", paddingBytes)
+	nearLimitRaw, err = encodeWorkspaceRegistryJCSV1(nearLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := int64(len(nearLimitRaw)), runtimeAuthorityMaxRecordBytes-1; got != want {
+		t.Fatalf("near-limit registry fixture bytes = %d, want %d", got, want)
+	}
+
+	nextEntries := append([]workspaceRegistryEntryJCSV1(nil), nearLimit.Entries...)
+	nextEntries = append(nextEntries, workspaceRegistryEntryJCSV1{
+		ConfiguredPath:              fixture.identity.configuredPath,
+		Device:                      strconv.FormatUint(fixture.identity.device, 10),
+		Inode:                       strconv.FormatUint(fixture.identity.inode, 10),
+		WorkspaceAuthorityID:        testInitialRegistrationAuthorityID,
+		WorkspaceRootIdentitySHA256: fixture.identity.rootHash,
+	})
+	nextRaw, err := encodeWorkspaceRegistryJCSV1(workspaceRegistryJCSV1{
+		Entries: nextEntries,
+		PriorGeneration: &authorityGeneration{
+			recordRev: 1,
+			sha256:    testWorkspaceAuthoritySHA256(nearLimitRaw),
+		},
+		RecordRev:      2,
+		RegistrySchema: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if int64(len(nextRaw)) <= runtimeAuthorityMaxRecordBytes {
+		t.Fatalf("appended registry fixture bytes = %d, want above %d", len(nextRaw), runtimeAuthorityMaxRecordBytes)
+	}
+
+	writePrivateAuthorityTestFile(t, fixture.registry, nearLimitRaw)
+	before := snapshotWorkspaceAuthorityTopology(t, fixture.base)
+	paths := workspaceAuthorityInitialRegistrationPaths(fixture)
+	descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, paths...)
+	generated := 0
+	initialPublicationSteps := 0
+	initialDirectorySyncs := 0
+	callbackCalls := 0
+	registrar := newWorkspaceAuthorityRegistrarForTest(
+		fixture.hostRoot,
+		fixture.ownerUID,
+		newWorkspaceAuthorityCapabilityGate(),
+		workspaceAuthorityRegistrationTestOps{
+			generateWorkspaceAuthorityID: func() (string, error) {
+				generated++
+				return testInitialRegistrationAuthorityID, nil
+			},
+			observeInitialRegistration: func(string) error {
+				initialPublicationSteps++
+				return nil
+			},
+			syncInitialAuthorityDirectory: func(*os.File) error {
+				initialDirectorySyncs++
+				return nil
+			},
+		},
+	)
+
+	err = registrar.register(fixture.workspace, func(workspaceAuthorityRegistrationScope) error {
+		callbackCalls++
+		return nil
+	})
+	if !errors.Is(err, errRuntimeOutOfRange) {
+		t.Fatalf("oversize appended registry error = %v, want %v", err, errRuntimeOutOfRange)
+	}
+	if generated > 1 {
+		t.Fatalf("oversize appended registry id generator calls = %d, want at most one size-computation input", generated)
+	}
+	if initialPublicationSteps != 0 || initialDirectorySyncs != 0 || callbackCalls != 0 {
+		t.Fatalf("oversize appended registry publication-step/directory-sync/callback calls = %d/%d/%d, want 0/0/0 before private mutation", initialPublicationSteps, initialDirectorySyncs, callbackCalls)
+	}
+	if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, before) {
+		t.Fatalf("oversize appended registry changed predecessor bytes, inode, or private topology\nbefore: %#v\nafter:  %#v", before, after)
+	}
+	if err := tryWorkspaceAuthorityExclusiveLock(fixture.registryLock); err != nil {
+		t.Fatalf("oversize appended registry path leaked registry lock: %v", err)
 	}
 	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, paths...)
 }
