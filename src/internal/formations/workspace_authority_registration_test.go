@@ -1,7 +1,6 @@
 package formations
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -23,66 +22,173 @@ func TestWorkspaceAuthorityRegistrationIdentityUsesOneOpenedDirectory(t *testing
 		RecordRev:      1,
 		RegistrySchema: 1,
 	})
+	configuredWorkspace := filepath.Join(fixture.base, "configured-workspace")
+	if err := os.Symlink(fixture.workspace, configuredWorkspace); err != nil {
+		t.Fatal(err)
+	}
+	wantIdentity := testWorkspaceAuthorityIdentityAtPath(t, configuredWorkspace)
+	openDescriptorsBefore := countWorkspaceAuthorityDescriptors(t, fixture.workspace)
+	openCalls := 0
+	var openedDescriptor uintptr
+	openWorkspace := func(configuredPath string) (*os.File, error) {
+		openCalls++
+		if got, want := configuredPath, filepath.ToSlash(filepath.Clean(configuredWorkspace)); got != want {
+			return nil, fmt.Errorf("workspace opener path = %q, want cleaned configured path %q", got, want)
+		}
+		workspace, err := openWorkspaceAuthorityTestDirectory(configuredPath)
+		if err == nil {
+			openedDescriptor = workspace.Fd()
+		}
+		return workspace, err
+	}
 	registrar := newWorkspaceAuthorityRegistrar(
 		fixture.hostRoot,
 		fixture.ownerUID,
 		newWorkspaceAuthorityCapabilityGate(),
+		openWorkspace,
+		nil,
 	)
 
-	inspection, err := registrar.inspect(fixture.workspace)
+	inspection, err := registrar.inspect(configuredWorkspace)
 	if err != nil {
 		t.Fatalf("inspect unregistered workspace identity: %v", err)
 	}
-	defer closeWorkspaceAuthorityInspection(t, inspection)
-
-	workspaceInfo, err := inspection.workspace.Stat()
-	if err != nil {
-		t.Fatal(err)
+	closed := false
+	t.Cleanup(func() {
+		if !closed {
+			_ = inspection.close()
+		}
+	})
+	if openCalls != 1 {
+		t.Fatalf("workspace directory opener calls = %d, want exactly one", openCalls)
 	}
-	workspaceStat, ok := workspaceInfo.Sys().(*syscall.Stat_t)
-	if !ok {
-		t.Fatalf("workspace stat type = %T, want *syscall.Stat_t", workspaceInfo.Sys())
+	if got, want := countWorkspaceAuthorityDescriptors(t, fixture.workspace), openDescriptorsBefore+1; got != want {
+		t.Fatalf("retained workspace descriptors = %d, want %d after one injected open", got, want)
 	}
-	resolvedPath, err := os.Readlink(fmt.Sprintf("/proc/self/fd/%d", inspection.workspace.Fd()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	configuredPath := filepath.ToSlash(filepath.Clean(fixture.workspace))
-	resolvedPath = filepath.ToSlash(resolvedPath)
-	if inspection.identity.configuredPath != configuredPath ||
-		inspection.identity.resolvedPath != resolvedPath ||
-		inspection.identity.device != uint64(workspaceStat.Dev) ||
-		inspection.identity.inode != workspaceStat.Ino {
-		t.Fatalf("opened workspace identity = %+v, want configured=%q resolved=%q device=%d inode=%d",
-			inspection.identity, configuredPath, resolvedPath, uint64(workspaceStat.Dev), workspaceStat.Ino)
-	}
-
-	configuredJSON, err := json.Marshal(configuredPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resolvedJSON, err := json.Marshal(resolvedPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantRaw := []byte(fmt.Sprintf(
-		`{"configuredPath":%s,"device":%q,"inode":%q,"resolvedPath":%s}`,
-		configuredJSON,
-		strconv.FormatUint(uint64(workspaceStat.Dev), 10),
-		strconv.FormatUint(workspaceStat.Ino, 10),
-		resolvedJSON,
-	))
-	if !bytes.Equal(inspection.identityRaw, wantRaw) {
-		t.Fatalf("workspace-root-identity-v1 bytes\n got: %s\nwant: %s", inspection.identityRaw, wantRaw)
-	}
-	if inspection.identity.rootHash != runtimeSHA256Hex(wantRaw) {
-		t.Fatalf("workspace identity hash = %q, want SHA-256 %q", inspection.identity.rootHash, runtimeSHA256Hex(wantRaw))
-	}
-	if inspection.entry != nil {
-		t.Fatalf("unregistered workspace matched registry entry %+v", inspection.entry)
+	inspection.observePinnedWorkspace(func(workspace *os.File, identity runtimeWorkspaceIdentity) {
+		if workspace.Fd() != openedDescriptor {
+			t.Fatalf("retained workspace descriptor = %d, want injected descriptor %d", workspace.Fd(), openedDescriptor)
+		}
+		workspaceInfo, statErr := workspace.Stat()
+		if statErr != nil {
+			t.Fatal(statErr)
+		}
+		if !os.SameFile(workspaceInfo, wantIdentity.info) {
+			t.Fatalf("retained workspace descriptor identifies %v, want pre-open identity %v", workspaceInfo, wantIdentity.info)
+		}
+		if identity.configuredPath != wantIdentity.identity.configuredPath ||
+			identity.resolvedPath != wantIdentity.identity.resolvedPath ||
+			identity.device != wantIdentity.identity.device ||
+			identity.inode != wantIdentity.identity.inode ||
+			identity.rootHash != wantIdentity.identity.rootHash {
+			t.Fatalf("opened workspace identity = %+v, want independent pre-open identity %+v", identity, wantIdentity.identity)
+		}
+	})
+	if authorityID, matched := inspection.matchedWorkspaceAuthorityID(); matched {
+		t.Fatalf("unregistered workspace matched registry authority %q", authorityID)
 	}
 	if err := inspection.validatePinnedPaths(); err != nil {
 		t.Fatalf("freshly opened workspace/root binding rejected: %v", err)
+	}
+	if err := inspection.close(); err != nil {
+		t.Fatal(err)
+	}
+	closed = true
+	if got := countWorkspaceAuthorityDescriptors(t, fixture.workspace); got != openDescriptorsBefore {
+		t.Fatalf("workspace descriptors after inspection close = %d, want original %d", got, openDescriptorsBefore)
+	}
+}
+
+func TestWorkspaceAuthorityRegistrationDerivesIdentityFromOpenedDirectoryBeforeRetargetFence(t *testing.T) {
+	fixture := newWorkspaceAuthorityRegistrationFixture(t, workspaceRegistryJCSV1{
+		Entries:        []workspaceRegistryEntryJCSV1{},
+		RecordRev:      1,
+		RegistrySchema: 1,
+	})
+	configuredWorkspace := filepath.Join(fixture.base, "configured-workspace")
+	if err := os.Symlink(fixture.workspace, configuredWorkspace); err != nil {
+		t.Fatal(err)
+	}
+	replacementWorkspace := filepath.Join(fixture.base, "replacement-workspace")
+	if err := os.Mkdir(replacementWorkspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	wantIdentity := testWorkspaceAuthorityIdentityAtPath(t, configuredWorkspace)
+	openDescriptorsBefore := countWorkspaceAuthorityDescriptors(t, fixture.workspace)
+	openCalls := 0
+	var openedDescriptor uintptr
+	openWorkspace := func(configuredPath string) (*os.File, error) {
+		openCalls++
+		workspace, err := openWorkspaceAuthorityTestDirectory(configuredPath)
+		if err != nil {
+			return nil, err
+		}
+		openedDescriptor = workspace.Fd()
+		if err := os.Remove(configuredPath); err != nil {
+			workspace.Close()
+			return nil, err
+		}
+		if err := os.Symlink(replacementWorkspace, configuredPath); err != nil {
+			workspace.Close()
+			return nil, err
+		}
+		return workspace, nil
+	}
+	registrar := newWorkspaceAuthorityRegistrar(
+		fixture.hostRoot,
+		fixture.ownerUID,
+		newWorkspaceAuthorityCapabilityGate(),
+		openWorkspace,
+		nil,
+	)
+	inspection, err := registrar.inspect(configuredWorkspace)
+	if err != nil {
+		t.Fatalf("inspect identity across controlled configured-path retarget: %v", err)
+	}
+	closed := false
+	t.Cleanup(func() {
+		if !closed {
+			_ = inspection.close()
+		}
+	})
+	if openCalls != 1 {
+		t.Fatalf("workspace directory opener calls across retarget = %d, want exactly one", openCalls)
+	}
+	inspection.observePinnedWorkspace(func(workspace *os.File, identity runtimeWorkspaceIdentity) {
+		if workspace.Fd() != openedDescriptor {
+			t.Fatalf("retarget inspection retained descriptor %d, want injected descriptor %d", workspace.Fd(), openedDescriptor)
+		}
+		if identity.configuredPath != wantIdentity.identity.configuredPath ||
+			identity.resolvedPath != wantIdentity.identity.resolvedPath ||
+			identity.device != wantIdentity.identity.device ||
+			identity.inode != wantIdentity.identity.inode ||
+			identity.rootHash != wantIdentity.identity.rootHash {
+			t.Fatalf("retarget inspection identity = %+v, want sole pre-retarget opened identity %+v", identity, wantIdentity.identity)
+		}
+	})
+	if got, want := countWorkspaceAuthorityDescriptors(t, fixture.workspace), openDescriptorsBefore+1; got != want {
+		t.Fatalf("retarget inspection descriptors for original workspace = %d, want %d", got, want)
+	}
+	replacementInfo, err := os.Stat(configuredWorkspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(replacementInfo, wantIdentity.info) {
+		t.Fatal("controlled opener did not retarget configured workspace before returning")
+	}
+	beforeRejection := snapshotWorkspaceAuthorityTopology(t, fixture.base)
+	if err := inspection.validatePinnedPaths(); !errors.Is(err, errRuntimeIntegrityMismatch) {
+		t.Fatalf("controlled retarget validation error = %v, want integrity mismatch", err)
+	}
+	if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, beforeRejection) {
+		t.Fatalf("controlled retarget rejection changed topology\nbefore: %#v\nafter:  %#v", beforeRejection, after)
+	}
+	if err := inspection.close(); err != nil {
+		t.Fatal(err)
+	}
+	closed = true
+	if got := countWorkspaceAuthorityDescriptors(t, fixture.workspace); got != openDescriptorsBefore {
+		t.Fatalf("original workspace descriptors after retarget inspection close = %d, want %d", got, openDescriptorsBefore)
 	}
 }
 
@@ -96,12 +202,9 @@ func TestWorkspaceRootIdentityV1UsesCanonicalStringsBeyondJSONSafeInteger(t *tes
 	}
 	want := []byte(`{"configuredPath":"/tmp/quo\"te&snow-雪` + separator + `\u0001","device":"18446744073709551615","inode":"9007199254740992","resolvedPath":"/real/quo\"te&snow-雪` + separator + `\u0001"}`)
 
-	got := canonicalRuntimeWorkspaceIdentity(identity)
-	if !bytes.Equal(got, want) {
-		t.Fatalf("workspace-root-identity-v1 bytes\n got: %s\nwant: %s", got, want)
-	}
-	if hash := runtimeWorkspaceIdentityHash(identity); hash != runtimeSHA256Hex(want) {
-		t.Fatalf("workspace identity hash = %q, want %q", hash, runtimeSHA256Hex(want))
+	wantHash := testWorkspaceAuthoritySHA256(want)
+	if hash := runtimeWorkspaceIdentityHash(identity); hash != wantHash {
+		t.Fatalf("workspace-root-identity-v1 hash = %q, want standard-library SHA-256 of exact JCS bytes %q", hash, wantHash)
 	}
 }
 
@@ -111,7 +214,7 @@ func TestWorkspaceAuthorityRegistrationCleansConfiguredSpellingAndRejectsInvalid
 		RecordRev:      1,
 		RegistrySchema: 1,
 	})
-	registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate())
+	registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate(), nil, nil)
 
 	noise := filepath.Join(filepath.Dir(fixture.workspace), "noise")
 	if err := os.Mkdir(noise, 0o700); err != nil {
@@ -122,7 +225,11 @@ func TestWorkspaceAuthorityRegistrationCleansConfiguredSpellingAndRejectsInvalid
 	if err != nil {
 		t.Fatalf("inspect cleaned configured spelling: %v", err)
 	}
-	if got, want := inspection.identity.configuredPath, filepath.ToSlash(filepath.Clean(unclean)); got != want {
+	var configuredPath string
+	inspection.observePinnedWorkspace(func(_ *os.File, identity runtimeWorkspaceIdentity) {
+		configuredPath = identity.configuredPath
+	})
+	if got, want := configuredPath, filepath.ToSlash(filepath.Clean(unclean)); got != want {
 		closeWorkspaceAuthorityInspection(t, inspection)
 		t.Fatalf("cleaned configured spelling = %q, want %q", got, want)
 	}
@@ -132,6 +239,7 @@ func TestWorkspaceAuthorityRegistrationCleansConfiguredSpellingAndRejectsInvalid
 		"relative/workspace",
 		fixture.workspace + "\x00suffix",
 		fixture.workspace + `\alias`,
+		fixture.workspace + string([]byte{0xff}),
 	} {
 		t.Run(strconv.Quote(configured), func(t *testing.T) {
 			before := snapshotWorkspaceAuthorityTopology(t, fixture.base)
@@ -163,16 +271,19 @@ func TestWorkspaceAuthorityRegistrationRejectsRetargetedConfiguredWorkspaceBefor
 	if err := os.Mkdir(replacement, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate())
+	registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate(), nil, nil)
 	inspection, err := registrar.inspect(configured)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer closeWorkspaceAuthorityInspection(t, inspection)
-	originalInfo, err := inspection.workspace.Stat()
-	if err != nil {
-		t.Fatal(err)
-	}
+	var originalInfo os.FileInfo
+	inspection.observePinnedWorkspace(func(workspace *os.File, _ runtimeWorkspaceIdentity) {
+		originalInfo, err = workspace.Stat()
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
 
 	if err := os.Remove(configured); err != nil {
 		t.Fatal(err)
@@ -184,10 +295,13 @@ func TestWorkspaceAuthorityRegistrationRejectsRetargetedConfiguredWorkspaceBefor
 	if err := inspection.validatePinnedPaths(); !errors.Is(err, errRuntimeIntegrityMismatch) {
 		t.Fatalf("retargeted configured workspace error = %v, want integrity mismatch", err)
 	}
-	openedInfo, err := inspection.workspace.Stat()
-	if err != nil {
-		t.Fatal(err)
-	}
+	var openedInfo os.FileInfo
+	inspection.observePinnedWorkspace(func(workspace *os.File, _ runtimeWorkspaceIdentity) {
+		openedInfo, err = workspace.Stat()
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
 	if !os.SameFile(originalInfo, openedInfo) {
 		t.Fatal("pinned workspace descriptor changed after configured symlink retarget")
 	}
@@ -212,12 +326,54 @@ func TestWorkspaceAuthorityRegistrationRequiresPrivatePinnedRootAndRegistryLock(
 			},
 		},
 		{
+			name: "host root special bits",
+			mutate: func(t *testing.T, fixture *workspaceAuthorityRegistrationFixture) []string {
+				if err := os.Chmod(fixture.hostRoot, os.ModeSetgid|0o700); err != nil {
+					t.Fatal(err)
+				}
+				return nil
+			},
+		},
+		{
 			name: "workspaces root wrong mode",
 			mutate: func(t *testing.T, fixture *workspaceAuthorityRegistrationFixture) []string {
 				if err := os.Chmod(fixture.workspacesRoot, 0o750); err != nil {
 					t.Fatal(err)
 				}
 				return nil
+			},
+		},
+		{
+			name: "workspaces root special bits",
+			mutate: func(t *testing.T, fixture *workspaceAuthorityRegistrationFixture) []string {
+				if err := os.Chmod(fixture.workspacesRoot, os.ModeSetgid|0o700); err != nil {
+					t.Fatal(err)
+				}
+				return nil
+			},
+		},
+		{
+			name: "workspaces root symlink",
+			mutate: func(t *testing.T, fixture *workspaceAuthorityRegistrationFixture) []string {
+				victim := filepath.Join(fixture.base, "workspaces-root-victim")
+				if err := os.Rename(fixture.workspacesRoot, victim); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(victim, fixture.workspacesRoot); err != nil {
+					t.Fatal(err)
+				}
+				return []string{victim}
+			},
+		},
+		{
+			name: "workspaces root regular file",
+			mutate: func(t *testing.T, fixture *workspaceAuthorityRegistrationFixture) []string {
+				victim := filepath.Join(fixture.base, "workspaces-root-directory")
+				if err := os.Rename(fixture.workspacesRoot, victim); err != nil {
+					t.Fatal(err)
+				}
+				writePrivateAuthorityTestFile(t, fixture.workspacesRoot, []byte("not-a-directory"))
+				return []string{victim}
 			},
 		},
 		{
@@ -286,7 +442,72 @@ func TestWorkspaceAuthorityRegistrationRequiresPrivatePinnedRootAndRegistryLock(
 			},
 		},
 		{
-			name:   "wrong expected uid",
+			name: "registry private wrong mode",
+			mutate: func(t *testing.T, fixture *workspaceAuthorityRegistrationFixture) []string {
+				if err := os.Chmod(fixture.registry, 0o640); err != nil {
+					t.Fatal(err)
+				}
+				return nil
+			},
+		},
+		{
+			name: "registry private special bits",
+			mutate: func(t *testing.T, fixture *workspaceAuthorityRegistrationFixture) []string {
+				if err := os.Chmod(fixture.registry, os.ModeSetgid|0o600); err != nil {
+					t.Fatal(err)
+				}
+				return nil
+			},
+		},
+		{
+			name: "registry private hard link",
+			mutate: func(t *testing.T, fixture *workspaceAuthorityRegistrationFixture) []string {
+				escaped := filepath.Join(fixture.workspace, "escaped-registry-private")
+				if err := os.Link(fixture.registry, escaped); err != nil {
+					t.Fatal(err)
+				}
+				return []string{fixture.workspace}
+			},
+		},
+		{
+			name: "registry private symlink",
+			mutate: func(t *testing.T, fixture *workspaceAuthorityRegistrationFixture) []string {
+				victim := filepath.Join(fixture.base, "registry-private-victim")
+				if err := os.Rename(fixture.registry, victim); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(victim, fixture.registry); err != nil {
+					t.Fatal(err)
+				}
+				return []string{victim}
+			},
+		},
+		{
+			name: "registry private directory",
+			mutate: func(t *testing.T, fixture *workspaceAuthorityRegistrationFixture) []string {
+				if err := os.Remove(fixture.registry); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(fixture.registry, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				return nil
+			},
+		},
+		{
+			name: "registry private fifo",
+			mutate: func(t *testing.T, fixture *workspaceAuthorityRegistrationFixture) []string {
+				if err := os.Remove(fixture.registry); err != nil {
+					t.Fatal(err)
+				}
+				if err := syscall.Mkfifo(fixture.registry, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return nil
+			},
+		},
+		{
+			name:   "all private nodes wrong expected uid",
 			mutate: func(*testing.T, *workspaceAuthorityRegistrationFixture) []string { return nil },
 			expectedUID: func(owner uint32) uint32 {
 				return owner ^ 1
@@ -309,7 +530,7 @@ func TestWorkspaceAuthorityRegistrationRequiresPrivatePinnedRootAndRegistryLock(
 			roots := append([]string{fixture.base}, extraRoots...)
 			before := snapshotWorkspaceAuthorityTopology(t, roots...)
 
-			registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, expectedUID, newWorkspaceAuthorityCapabilityGate())
+			registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, expectedUID, newWorkspaceAuthorityCapabilityGate(), nil, nil)
 			inspection, err := registrar.inspect(fixture.workspace)
 			if inspection != nil {
 				closeWorkspaceAuthorityInspection(t, inspection)
@@ -324,7 +545,121 @@ func TestWorkspaceAuthorityRegistrationRequiresPrivatePinnedRootAndRegistryLock(
 	}
 }
 
+func TestWorkspaceAuthorityRegistrationRoutesExpectedWriterUIDThroughEveryPrivateNode(t *testing.T) {
+	fixture := newWorkspaceAuthorityRegistrationFixture(t, workspaceRegistryJCSV1{
+		Entries:        []workspaceRegistryEntryJCSV1{},
+		RecordRev:      1,
+		RegistrySchema: 1,
+	})
+	components := []struct {
+		name string
+		path string
+	}{
+		{name: "host root", path: fixture.hostRoot},
+		{name: "workspaces root", path: fixture.workspacesRoot},
+		{name: "registry lock", path: fixture.registryLock},
+		{name: "registry private", path: fixture.registry},
+	}
+
+	for _, component := range components {
+		t.Run(component.name, func(t *testing.T) {
+			wantInfo, err := os.Lstat(component.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := snapshotWorkspaceAuthorityTopology(t, fixture.base)
+			validatedTarget := 0
+			validatePrivateNode := func(opened *os.File, expectedUID uint32) error {
+				if expectedUID != fixture.ownerUID {
+					return fmt.Errorf("private-node validator received uid %d, want dedicated writer uid %d", expectedUID, fixture.ownerUID)
+				}
+				info, statErr := opened.Stat()
+				if statErr != nil {
+					return statErr
+				}
+				if os.SameFile(info, wantInfo) {
+					validatedTarget++
+					return fmt.Errorf("%w: injected %s uid mismatch", errRuntimeIntegrityMismatch, component.name)
+				}
+				return nil
+			}
+			registrar := newWorkspaceAuthorityRegistrar(
+				fixture.hostRoot,
+				fixture.ownerUID,
+				newWorkspaceAuthorityCapabilityGate(),
+				nil,
+				validatePrivateNode,
+			)
+			inspection, err := registrar.inspect(fixture.workspace)
+			if inspection != nil {
+				closeWorkspaceAuthorityInspection(t, inspection)
+			}
+			if !errors.Is(err, errRuntimeIntegrityMismatch) {
+				t.Fatalf("injected %s uid mismatch error = %v, want integrity mismatch", component.name, err)
+			}
+			if validatedTarget != 1 {
+				t.Fatalf("%s expected-writer-uid validation calls = %d, want exactly one", component.name, validatedTarget)
+			}
+			if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, before) {
+				t.Fatalf("%s uid rejection changed topology\nbefore: %#v\nafter:  %#v", component.name, before, after)
+			}
+		})
+	}
+}
+
 func TestWorkspaceAuthorityRegistrationRejectsSymlinkedOrRenamedHostRoot(t *testing.T) {
+	t.Run("non-directory host root", func(t *testing.T) {
+		fixture := newWorkspaceAuthorityRegistrationFixture(t, workspaceRegistryJCSV1{
+			Entries:        []workspaceRegistryEntryJCSV1{},
+			RecordRev:      1,
+			RegistrySchema: 1,
+		})
+		realRoot := fixture.hostRoot + ".directory"
+		if err := os.Rename(fixture.hostRoot, realRoot); err != nil {
+			t.Fatal(err)
+		}
+		writePrivateAuthorityTestFile(t, fixture.hostRoot, []byte("not-a-directory"))
+		before := snapshotWorkspaceAuthorityTopology(t, fixture.base)
+		registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate(), nil, nil)
+		inspection, err := registrar.inspect(fixture.workspace)
+		if inspection != nil {
+			closeWorkspaceAuthorityInspection(t, inspection)
+		}
+		if err == nil {
+			t.Fatal("registration accepted a non-directory host root")
+		}
+		if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, before) {
+			t.Fatalf("host-root type rejection changed topology\nbefore: %#v\nafter:  %#v", before, after)
+		}
+	})
+
+	t.Run("symlinked host root", func(t *testing.T) {
+		fixture := newWorkspaceAuthorityRegistrationFixture(t, workspaceRegistryJCSV1{
+			Entries:        []workspaceRegistryEntryJCSV1{},
+			RecordRev:      1,
+			RegistrySchema: 1,
+		})
+		realRoot := fixture.hostRoot + ".real"
+		if err := os.Rename(fixture.hostRoot, realRoot); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(realRoot, fixture.hostRoot); err != nil {
+			t.Fatal(err)
+		}
+		before := snapshotWorkspaceAuthorityTopology(t, fixture.base)
+		registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate(), nil, nil)
+		inspection, err := registrar.inspect(fixture.workspace)
+		if inspection != nil {
+			closeWorkspaceAuthorityInspection(t, inspection)
+		}
+		if err == nil {
+			t.Fatal("registration followed a symlinked host root")
+		}
+		if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, before) {
+			t.Fatalf("host-root symlink rejection changed topology\nbefore: %#v\nafter:  %#v", before, after)
+		}
+	})
+
 	t.Run("symlinked ancestor", func(t *testing.T) {
 		fixture := newWorkspaceAuthorityRegistrationFixture(t, workspaceRegistryJCSV1{
 			Entries:        []workspaceRegistryEntryJCSV1{},
@@ -340,7 +675,7 @@ func TestWorkspaceAuthorityRegistrationRejectsSymlinkedOrRenamedHostRoot(t *test
 			t.Fatal(err)
 		}
 		before := snapshotWorkspaceAuthorityTopology(t, ancestor, realAncestor)
-		registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate())
+		registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate(), nil, nil)
 		inspection, err := registrar.inspect(fixture.workspace)
 		if inspection != nil {
 			closeWorkspaceAuthorityInspection(t, inspection)
@@ -359,7 +694,7 @@ func TestWorkspaceAuthorityRegistrationRejectsSymlinkedOrRenamedHostRoot(t *test
 			RecordRev:      1,
 			RegistrySchema: 1,
 		})
-		registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate())
+		registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate(), nil, nil)
 		inspection, err := registrar.inspect(fixture.workspace)
 		if err != nil {
 			t.Fatal(err)
@@ -383,10 +718,50 @@ func TestWorkspaceAuthorityRegistrationRejectsSymlinkedOrRenamedHostRoot(t *test
 	})
 }
 
+func TestWorkspaceAuthorityRegistrationRejectsReplacedWorkspacesRoot(t *testing.T) {
+	fixture := newWorkspaceAuthorityRegistrationFixture(t, workspaceRegistryJCSV1{
+		Entries:        []workspaceRegistryEntryJCSV1{},
+		RecordRev:      1,
+		RegistrySchema: 1,
+	})
+	registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate(), nil, nil)
+	inspection, err := registrar.inspect(fixture.workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeWorkspaceAuthorityInspection(t, inspection)
+
+	movedWorkspaces := fixture.workspacesRoot + ".opened"
+	if err := os.Rename(fixture.workspacesRoot, movedWorkspaces); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(fixture.workspacesRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writePrivateAuthorityTestFile(t, fixture.registryLock, nil)
+	replacementRegistry, err := encodeWorkspaceRegistryJCSV1(workspaceRegistryJCSV1{
+		Entries:        []workspaceRegistryEntryJCSV1{},
+		RecordRev:      1,
+		RegistrySchema: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writePrivateAuthorityTestFile(t, fixture.registry, replacementRegistry)
+	before := snapshotWorkspaceAuthorityTopology(t, fixture.hostRoot, movedWorkspaces)
+	if err := inspection.validatePinnedPaths(); !errors.Is(err, errRuntimeIntegrityMismatch) {
+		t.Fatalf("replaced workspaces root error = %v, want integrity mismatch", err)
+	}
+	if after := snapshotWorkspaceAuthorityTopology(t, fixture.hostRoot, movedWorkspaces); !reflect.DeepEqual(after, before) {
+		t.Fatalf("workspaces-root replacement rejection changed topology\nbefore: %#v\nafter:  %#v", before, after)
+	}
+}
+
 func TestWorkspaceAuthorityRegistrationRejectsAuthorityWorkspaceOverlap(t *testing.T) {
 	tests := []struct {
-		name  string
-		paths func(*testing.T) (string, string)
+		name         string
+		paths        func(*testing.T) (string, string)
+		afterPrepare func(*testing.T, string, string)
 	}{
 		{
 			name: "authority root inside workspace",
@@ -399,12 +774,45 @@ func TestWorkspaceAuthorityRegistrationRejectsAuthorityWorkspaceOverlap(t *testi
 		{
 			name: "workspace inside authority root",
 			paths: func(t *testing.T) (string, string) {
-				hostRoot := t.TempDir()
-				workspace := filepath.Join(hostRoot, "workspace")
+				base := t.TempDir()
+				hostRoot := filepath.Join(base, "authority")
+				return hostRoot, filepath.Join(hostRoot, "workspace")
+			},
+			afterPrepare: func(t *testing.T, _, workspace string) {
 				if err := os.Mkdir(workspace, 0o700); err != nil {
 					t.Fatal(err)
 				}
-				return hostRoot, workspace
+			},
+		},
+		{
+			name: "workspace configured alias resolves inside authority root",
+			paths: func(t *testing.T) (string, string) {
+				base := t.TempDir()
+				return filepath.Join(base, "authority"), filepath.Join(base, "configured-workspace")
+			},
+			afterPrepare: func(t *testing.T, hostRoot, workspace string) {
+				resolvedWorkspace := filepath.Join(hostRoot, "resolved-workspace")
+				if err := os.Mkdir(resolvedWorkspace, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(resolvedWorkspace, workspace); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "authority root is inside resolved workspace",
+			paths: func(t *testing.T) (string, string) {
+				base := t.TempDir()
+				resolvedWorkspace := filepath.Join(base, "resolved-workspace")
+				if err := os.Mkdir(resolvedWorkspace, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				workspace := filepath.Join(base, "configured-workspace")
+				if err := os.Symlink(resolvedWorkspace, workspace); err != nil {
+					t.Fatal(err)
+				}
+				return filepath.Join(resolvedWorkspace, "authority"), workspace
 			},
 		},
 	}
@@ -417,8 +825,11 @@ func TestWorkspaceAuthorityRegistrationRejectsAuthorityWorkspaceOverlap(t *testi
 				RecordRev:      1,
 				RegistrySchema: 1,
 			})
+			if test.afterPrepare != nil {
+				test.afterPrepare(t, hostRoot, workspace)
+			}
 			before := snapshotWorkspaceAuthorityTopology(t, hostRoot, workspace)
-			registrar := newWorkspaceAuthorityRegistrar(hostRoot, uint32(os.Geteuid()), newWorkspaceAuthorityCapabilityGate())
+			registrar := newWorkspaceAuthorityRegistrar(hostRoot, uint32(os.Geteuid()), newWorkspaceAuthorityCapabilityGate(), nil, nil)
 			inspection, err := registrar.inspect(workspace)
 			if inspection != nil {
 				closeWorkspaceAuthorityInspection(t, inspection)
@@ -458,7 +869,7 @@ func TestWorkspaceAuthorityCapabilityRejectsBeforeRegistryLockSelection(t *testi
 	before := snapshotWorkspaceAuthorityTopology(t, base)
 
 	invalidGate := workspaceAuthorityCapabilityGate{capabilities: []workspaceAuthorityCapability{{id: RuntimeAuthorityGuardCapabilityV1}}}
-	registrar := newWorkspaceAuthorityRegistrar(hostRoot, uint32(os.Geteuid()), invalidGate)
+	registrar := newWorkspaceAuthorityRegistrar(hostRoot, uint32(os.Geteuid()), invalidGate, nil, nil)
 	inspection, err := registrar.inspect(workspace)
 	if inspection != nil {
 		closeWorkspaceAuthorityInspection(t, inspection)
@@ -532,10 +943,7 @@ func TestWorkspaceAuthorityRegistryLookupClassifiesIdentityWithoutMutation(t *te
 			if err := os.Mkdir(workspace, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			identity, err := openRuntimeWorkspaceIdentity(workspace)
-			if err != nil {
-				t.Fatal(err)
-			}
+			identity := testWorkspaceAuthorityIdentityAtPath(t, workspace).identity
 			record := test.registry(identity)
 			raw, err := encodeWorkspaceRegistryJCSV1(record)
 			if err != nil {
@@ -553,7 +961,7 @@ func TestWorkspaceAuthorityRegistryLookupClassifiesIdentityWithoutMutation(t *te
 			writePrivateAuthorityTestFile(t, filepath.Join(workspacesRoot, "registry.private.json"), raw)
 			before := snapshotWorkspaceAuthorityTopology(t, base)
 
-			registrar := newWorkspaceAuthorityRegistrar(hostRoot, uint32(os.Geteuid()), newWorkspaceAuthorityCapabilityGate())
+			registrar := newWorkspaceAuthorityRegistrar(hostRoot, uint32(os.Geteuid()), newWorkspaceAuthorityCapabilityGate(), nil, nil)
 			inspection, err := registrar.inspect(workspace)
 			if test.wantError != nil {
 				if inspection != nil {
@@ -566,13 +974,14 @@ func TestWorkspaceAuthorityRegistryLookupClassifiesIdentityWithoutMutation(t *te
 				if err != nil {
 					t.Fatal(err)
 				}
-				if (inspection.entry != nil) != test.wantEntry {
+				authorityID, matched := inspection.matchedWorkspaceAuthorityID()
+				if matched != test.wantEntry {
 					closeWorkspaceAuthorityInspection(t, inspection)
-					t.Fatalf("registry match entry = %+v, want present=%t", inspection.entry, test.wantEntry)
+					t.Fatalf("registry match authority id = %q, present=%t, want present=%t", authorityID, matched, test.wantEntry)
 				}
-				if test.wantEntry && inspection.entry.WorkspaceAuthorityID != testWorkspaceAuthorityID {
+				if test.wantEntry && authorityID != testWorkspaceAuthorityID {
 					closeWorkspaceAuthorityInspection(t, inspection)
-					t.Fatalf("matched workspace authority id = %q, want %q", inspection.entry.WorkspaceAuthorityID, testWorkspaceAuthorityID)
+					t.Fatalf("matched workspace authority id = %q, want %q", authorityID, testWorkspaceAuthorityID)
 				}
 				closeWorkspaceAuthorityInspection(t, inspection)
 			}
@@ -589,7 +998,7 @@ func TestWorkspaceAuthorityRegistryCriticalSectionSerializesLocally(t *testing.T
 		RecordRev:      1,
 		RegistrySchema: 1,
 	})
-	registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate())
+	registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate(), nil, nil)
 	first, err := registrar.inspect(fixture.workspace)
 	if err != nil {
 		t.Fatal(err)
@@ -642,6 +1051,100 @@ type workspaceAuthorityRegistrationFixture struct {
 	registry       string
 	workspace      string
 	ownerUID       uint32
+}
+
+type testWorkspaceAuthorityIdentity struct {
+	identity runtimeWorkspaceIdentity
+	info     os.FileInfo
+}
+
+func testWorkspaceAuthorityIdentityAtPath(t *testing.T, configuredWorkspace string) testWorkspaceAuthorityIdentity {
+	t.Helper()
+	configuredPath := filepath.ToSlash(filepath.Clean(configuredWorkspace))
+	resolvedPath, err := filepath.EvalSymlinks(configuredWorkspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedPath = filepath.ToSlash(filepath.Clean(resolvedPath))
+	info, err := os.Stat(configuredWorkspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatalf("workspace stat type = %T, want *syscall.Stat_t", info.Sys())
+	}
+	identity := runtimeWorkspaceIdentity{
+		configuredPath: configuredPath,
+		resolvedPath:   resolvedPath,
+		device:         uint64(stat.Dev),
+		inode:          stat.Ino,
+	}
+	identity.rootHash = testWorkspaceAuthoritySHA256(testWorkspaceAuthorityIdentityJCS(t, identity))
+	return testWorkspaceAuthorityIdentity{identity: identity, info: info}
+}
+
+func testWorkspaceAuthorityIdentityJCS(t *testing.T, identity runtimeWorkspaceIdentity) []byte {
+	t.Helper()
+	configuredJSON, err := json.Marshal(identity.configuredPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedJSON, err := json.Marshal(identity.resolvedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return []byte(fmt.Sprintf(
+		`{"configuredPath":%s,"device":%q,"inode":%q,"resolvedPath":%s}`,
+		configuredJSON,
+		strconv.FormatUint(identity.device, 10),
+		strconv.FormatUint(identity.inode, 10),
+		resolvedJSON,
+	))
+}
+
+func testWorkspaceAuthoritySHA256(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+func openWorkspaceAuthorityTestDirectory(configuredPath string) (*os.File, error) {
+	fd, err := syscall.Open(configuredPath, syscall.O_RDONLY|syscall.O_CLOEXEC|syscall.O_NONBLOCK|syscall.O_DIRECTORY, 0)
+	if err != nil {
+		return nil, err
+	}
+	workspace := os.NewFile(uintptr(fd), configuredPath)
+	if workspace == nil {
+		_ = syscall.Close(fd)
+		return nil, errRuntimeNoncanonical
+	}
+	return workspace, nil
+}
+
+func countWorkspaceAuthorityDescriptors(t *testing.T, workspacePath string) int {
+	t.Helper()
+	want, err := os.Stat(workspacePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, entry := range entries {
+		info, statErr := os.Stat(filepath.Join("/proc/self/fd", entry.Name()))
+		if errors.Is(statErr, os.ErrNotExist) {
+			continue
+		}
+		if statErr != nil {
+			t.Fatal(statErr)
+		}
+		if os.SameFile(info, want) {
+			count++
+		}
+	}
+	return count
 }
 
 func newWorkspaceAuthorityRegistrationFixture(t *testing.T, registry workspaceRegistryJCSV1) workspaceAuthorityRegistrationFixture {

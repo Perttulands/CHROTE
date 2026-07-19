@@ -80,7 +80,7 @@ func TestWorkspaceAuthorityRegistryLockProcessHelper(t *testing.T) {
 	if _, err := attempted.Write([]byte{1}); err != nil {
 		t.Fatalf("signal registry lock attempt: %v", err)
 	}
-	registrar := newWorkspaceAuthorityRegistrar(hostRoot, uint32(os.Geteuid()), newWorkspaceAuthorityCapabilityGate())
+	registrar := newWorkspaceAuthorityRegistrar(hostRoot, uint32(os.Geteuid()), newWorkspaceAuthorityCapabilityGate(), nil, nil)
 	inspection, err := registrar.inspect(workspace)
 	if err != nil {
 		t.Fatalf("acquire process-shared registry critical section: %v", err)
@@ -91,15 +91,18 @@ func TestWorkspaceAuthorityRegistryLockProcessHelper(t *testing.T) {
 		}
 	}()
 
-	lockInfo, err := inspection.registryLock.Stat()
-	if err != nil {
-		t.Fatal(err)
-	}
-	lockStat, ok := lockInfo.Sys().(*syscall.Stat_t)
-	if !ok {
-		t.Fatalf("registry lock stat type = %T, want *syscall.Stat_t", lockInfo.Sys())
-	}
-	identity := workspaceAuthorityLockIdentity{device: uint64(lockStat.Dev), inode: lockStat.Ino}
+	var identity workspaceAuthorityLockIdentity
+	inspection.observeRegistryLock(func(registryLock *os.File) {
+		lockInfo, statErr := registryLock.Stat()
+		if statErr != nil {
+			t.Fatal(statErr)
+		}
+		lockStat, ok := lockInfo.Sys().(*syscall.Stat_t)
+		if !ok {
+			t.Fatalf("registry lock stat type = %T, want *syscall.Stat_t", lockInfo.Sys())
+		}
+		identity = workspaceAuthorityLockIdentity{device: uint64(lockStat.Dev), inode: lockStat.Ino}
+	})
 	var payload [16]byte
 	binary.BigEndian.PutUint64(payload[:8], identity.device)
 	binary.BigEndian.PutUint64(payload[8:], identity.inode)
