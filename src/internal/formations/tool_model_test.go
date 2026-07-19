@@ -164,7 +164,7 @@ func TestToolBoardParserRejectsInvalidParameterForms(t *testing.T) {
 		{name: "duplicate key", params: "[tool.params]\nmode = \"strict\"\nmode = \"strict\"\n"},
 		{name: "unsafe negative integer", params: "[tool.params]\nmode = -9007199254740992\n"},
 		{name: "unsafe positive integer", params: "[tool.params]\nmode = 9007199254740992\n"},
-		{name: "second sibling missing required params", params: "", secondSibling: true},
+		{name: "second sibling invalid scalar", params: "[tool.params]\nmode = 1.5\n", secondSibling: true},
 	}
 
 	for _, tt := range tests {
