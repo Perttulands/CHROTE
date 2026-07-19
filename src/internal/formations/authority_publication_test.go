@@ -343,6 +343,141 @@ func TestAuthorityPublisherImmutableFsyncOrderAndFailures(t *testing.T) {
 	})
 }
 
+func TestAuthorityPublisherImmutableEnforcesReaderEnvelope(t *testing.T) {
+	t.Run("exact limit", func(t *testing.T) {
+		directory, path := openAuthorityTestDirectory(t)
+		publisher, err := newAuthorityPublisher(directory, uint32(os.Geteuid()), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw := bytes.Repeat([]byte("x"), int(runtimeAuthorityMaxRecordBytes))
+
+		ref, err := publisher.publishImmutable("maximum.json", raw)
+		if err != nil {
+			t.Fatalf("publish exact reader envelope: %v", err)
+		}
+		if ref.size != runtimeAuthorityMaxRecordBytes {
+			t.Fatalf("exact-limit ref size = %d, want %d", ref.size, runtimeAuthorityMaxRecordBytes)
+		}
+		assertAuthorityTestFile(t, filepath.Join(path, "maximum.json"), raw)
+	})
+
+	t.Run("one byte above limit", func(t *testing.T) {
+		directory, path := openAuthorityTestDirectory(t)
+		publisher, err := newAuthorityPublisher(directory, uint32(os.Geteuid()), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before := snapshotRuntimeAuthorityFixture(t, path)
+		raw := bytes.Repeat([]byte("x"), int(runtimeAuthorityMaxRecordBytes)+1)
+
+		if _, err := publisher.publishImmutable("oversize.json", raw); !errors.Is(err, errRuntimeOutOfRange) {
+			t.Fatalf("oversize publication error = %v, want out of range", err)
+		}
+		if after := snapshotRuntimeAuthorityFixture(t, path); !reflect.DeepEqual(after, before) {
+			t.Fatalf("oversize rejection mutated directory\nbefore: %#v\nafter:  %#v", before, after)
+		}
+		assertAuthorityTestDirectoryEntries(t, directory)
+	})
+}
+
+func TestAuthorityPublisherRealNoReplacePreservesRacingWinner(t *testing.T) {
+	tests := []struct {
+		name      string
+		winner    []byte
+		wantError error
+	}{
+		{name: "exact winner", winner: []byte("requested immutable bytes\n")},
+		{name: "different winner", winner: []byte("different winner bytes\n"), wantError: errRuntimeConflict},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			directory, path := openAuthorityTestDirectory(t)
+			canonical := filepath.Join(path, "bootstrap.json")
+			var winnerStat *syscall.Stat_t
+			publisher, err := newAuthorityPublisher(directory, uint32(os.Geteuid()), func(step authorityPublicationStep) error {
+				if step == authorityPublicationStageSynced {
+					writeAuthorityFixture(t, canonical, test.winner)
+					winnerStat = authorityTestFileStat(t, canonical)
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			_, err = publisher.publishImmutable("bootstrap.json", []byte("requested immutable bytes\n"))
+			if !errors.Is(err, test.wantError) {
+				t.Fatalf("real no-replace race error = %v, want %v", err, test.wantError)
+			}
+			if winnerStat == nil {
+				t.Fatal("stage-synced hook did not install competing winner")
+			}
+			if after := authorityTestFileStat(t, canonical); after.Ino != winnerStat.Ino || after.Dev != winnerStat.Dev {
+				t.Fatalf("real no-replace replaced winner inode: before %+v, after %+v", winnerStat, after)
+			}
+			assertAuthorityTestFile(t, canonical, test.winner)
+			assertAuthorityTestDirectoryEntries(t, directory, "bootstrap.json")
+		})
+	}
+}
+
+func TestAuthorityPublisherImmutableHookBoundariesRemainRetryable(t *testing.T) {
+	tests := []struct {
+		name          string
+		failAt        authorityPublicationStep
+		wantCanonical bool
+	}{
+		{name: "after stage sync", failAt: authorityPublicationStageSynced},
+		{name: "after install", failAt: authorityPublicationInstalled, wantCanonical: true},
+		{name: "after directory sync", failAt: authorityPublicationDirectorySynced, wantCanonical: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			directory, path := openAuthorityTestDirectory(t)
+			injected := errors.New("injected publication boundary failure")
+			seen := false
+			publisher, err := newAuthorityPublisher(directory, uint32(os.Geteuid()), func(step authorityPublicationStep) error {
+				if step == test.failAt {
+					seen = true
+					return injected
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw := []byte("complete immutable bytes\n")
+			canonical := filepath.Join(path, "bootstrap.json")
+
+			if _, err := publisher.publishImmutable("bootstrap.json", raw); !errors.Is(err, injected) {
+				t.Fatalf("hook boundary error = %v, want injected error", err)
+			}
+			if !seen {
+				t.Fatalf("publication did not reach hook %q", test.failAt)
+			}
+			if test.wantCanonical {
+				assertAuthorityTestFile(t, canonical, raw)
+				assertAuthorityTestDirectoryEntries(t, directory, "bootstrap.json")
+				retry, err := newAuthorityPublisher(directory, uint32(os.Geteuid()), nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := retry.publishImmutable("bootstrap.json", raw); err != nil {
+					t.Fatalf("retry after hook boundary: %v", err)
+				}
+			} else {
+				if _, err := os.Lstat(canonical); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("pre-install hook exposed canonical: %v", err)
+				}
+				assertAuthorityTestDirectoryEntries(t, directory)
+			}
+		})
+	}
+}
+
 func openAuthorityTestDirectory(t *testing.T) (*os.File, string) {
 	t.Helper()
 	path := t.TempDir()
