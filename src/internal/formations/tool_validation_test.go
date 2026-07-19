@@ -526,6 +526,29 @@ to = "gate_media:in"
 	})
 }
 
+func TestToolStructuralToolInputRejectsGateFeedbackKind(t *testing.T) {
+	raw := toolStructuralDraftBoardFixture() + `
+[[gate]]
+id = "gate_feedback"
+title = "Inspect feedback"
+kinds = ["human"]
+criterion = "Confirm the payload"
+
+[[connection]]
+id = "edge_gate_feedback_tool_work"
+from = "gate_feedback:fail"
+to = "tool_normalize:port_tool_in"
+`
+	report := ValidateBoard(mustParseValidateBoardFixture(t, raw))
+	if dangling := findBoardFindings(report.Errors, FindingDanglingConnection); len(dangling) != 0 {
+		t.Fatalf("known Gate fail and Tool input endpoints produced dangling findings: %+v", dangling)
+	}
+	kindFindings := findBoardFindings(report.Errors, FindingIncompatiblePayloadKind)
+	if len(kindFindings) != 1 || len(report.Errors) != 1 {
+		t.Fatalf("Gate feedback to Tool work input findings = %+v, want one stable payload-kind incompatibility error", report.Errors)
+	}
+}
+
 func TestToolStructuralValidateBoardChecksEveryToolDefinition(t *testing.T) {
 	baselineRaw := toolStructuralDuplicateProducerBoardFixture(false)
 	targetBlock := toolStructuralJSONNormalizeToolBlock("tool_target", "Target", "port_target_in", "port_target_out")
