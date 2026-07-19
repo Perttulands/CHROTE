@@ -157,16 +157,21 @@ The server configuration and provisioning layer supplies this root; `ctx-ug7.15`
 owns publication and active/retained inventory. This decision authorizes no live
 path migration, service change, deployment, or UID migration.
 
-Writer trust is the dedicated CHROTE service UID. Before private authority, the
-process certifies that its effective UID equals the provisioned writer UID and
-that the opened host root, private directories, files, and lock files are owned
-by that UID with exact directory mode `0700`, exact regular-file mode `0600`, no
-special mode bits, and link count one for files. Same-UID agent processes are
-outside the supported topology because Unix modes cannot isolate peer processes
-sharing a UID; agents must not run as the service UID. The current `/srv` service
-uses `User=chrote`, but this ADR does not authorize a UID or configuration
-migration. Tests may inject their own dedicated expected UID and disposable
-roots. No UID is persisted in authority JSON.
+Writer trust is the dedicated CHROTE service UID. Production provisioning names
+that account in the tracked `services/chrote-srv.service` unit as `User=chrote`;
+the service manager and kernel resolve the account and launch the coordinator
+with its effective UID. Server construction passes that kernel effective UID as
+the numeric writer identity to the authority library, which checks the live
+effective UID and the `st_uid` of the opened host root, private directories,
+files, and lock files. No board, authority file, caller value, environment
+variable, or separately configurable numeric UID may self-assert writer trust.
+The required modes are exact directory mode `0700`, exact regular-file mode
+`0600`, no special mode bits, and link count one for files. Same-UID agent
+processes are outside the supported topology because Unix modes cannot isolate
+peer processes sharing a UID; agents must not run as the service UID. Tests may
+inject an expected UID and disposable root, but production uses only the
+provisioned account plus kernel credential. No UID is persisted in authority
+JSON, and this ADR authorizes no UID or service-configuration migration.
 
 First registration is serialized by a coordinator-local mutex plus the
 process-shared host registry lock at the stable
@@ -282,11 +287,28 @@ workspace counter/authority, owner-lease, and command-record generations publish
 under `owner.lock`. Immutable admission-policy generations publish under
 `owner.lock` before the current workspace ref changes. Each mutable record starts
 at `recordRev=1`. Every overwrite-style mutable JSON record (`WorkspaceRegistry`,
-`WorkspaceAuthority`, `WorkspaceOwnerLease`, and `RunCommandRecordBase`) carries
-the closed field `priorGeneration`, exactly `null` or
-`{recordRev,sha256}`. Revision 1 requires `null`; revision N greater than 1
-requires `recordRev=N-1` and the 64-lowercase-hex SHA-256 of the exact canonical
-revision N-1 bytes. Immutable admission-policy generations retain only their
+`WorkspaceAuthority`, `WorkspaceOwnerLease`, and `RunCommandRecord`) carries the
+closed field `priorGeneration`, exactly `null` or `{recordRev,sha256}`. Revision 1
+requires `null`; revision N greater than 1 requires `recordRev=N-1`. Their sole
+accepted target encodings are respectively `workspace-registry-jcs-v1`,
+`workspace-authority-jcs-v1`, `workspace-owner-lease-jcs-v1`, and
+`run-command-record-jcs-v1`. Each encoding is the complete closed corresponding
+JSON record (one exact state variant for a command record), serialized as RFC
+8785 canonical UTF-8 with no BOM, insignificant JSON whitespace, or trailing
+newline. The closed path-to-encoding map is
+`registry.private.json=workspace-registry-jcs-v1`,
+`workspace.private.json=workspace-authority-jcs-v1`,
+`owner.private.json=workspace-owner-lease-jcs-v1`, and
+`commands/<commandId>.json=run-command-record-jcs-v1`.
+No persisted encoding discriminator is added. `priorGeneration.sha256` is the
+64-lowercase-hex SHA-256 of the exact complete previous-generation bytes in that
+same named encoding.
+
+`RunCommandRecord.commandPayload` remains the closed `run-command-jcs-v1` JSON
+object. Its payload hash is computed from those canonical payload bytes; the
+object is then embedded as JSON and the complete containing command record is
+re-encoded as `run-command-record-jcs-v1`, never stored as an opaque string or
+pre-encoded byte field. Immutable admission-policy generations retain only their
 existing `priorPolicySha256` chain. Every successful replacement is exactly the
 last published revision plus one and rejects a stale, skipped, or regressed
 predecessor. The caller's expected predecessor must exact-match the closed next
@@ -294,7 +316,21 @@ record's `priorGeneration`. Only that authenticated binding permits an exact-nex
 retry after canonical replacement. Desired-state idempotency with a false or
 stale predecessor remains rejected; without record-specific proof the
 format-neutral publisher rejects a consumed predecessor and recovery rereads
-authoritative current state. Each replacement uses a
+authoritative current state.
+
+These four encodings are the only accepted target encodings for their mutable
+record families. Where a record carries `registrySchema`, `leaseSchema`, or
+`commandSchema`, that value is exactly `1`; `WorkspaceAuthority.authoritySchema`
+is exactly `2` for this target. Pre-freeze or experimental records that reuse
+those schemas or the target workspace-authority shape but omit required
+`priorGeneration` are malformed, non-authorizing, and never auto-upgraded. This
+decision authorizes no migration of shipped or live records and no deployment.
+Before `formations.workspace-authority.v1` may authorize foundation work, the
+guard must make every permissively decoded or non-canonical legacy form
+non-authorizing, including bytes that do not exact-match the named encoding and
+records missing required `priorGeneration`; compatibility parsing may expose
+inspection evidence only.
+Each replacement uses a
 generation-checked same-directory temp file, file fsync, atomic rename, and
 parent-directory fsync. Migration holds both locks in the declared parent-then-
 workspace order. A torn, missing, stale, or conflicting published record is
@@ -728,8 +764,10 @@ boundary has one durable recovery answer.
   recovery, cleanup, or runtime mutation is enabled.
 - `ctx-ug7.36` freezes the code-owned capability pair, shared host root,
   dedicated-writer trust, kernel-lock/lease semantics, run bootstrap, and
-  authenticated mutable predecessor. `ctx-ug7.6.1` must test each boundary before
-  its workspace-authority capability can authorize foundation work.
+  authenticated mutable predecessor. `ctx-ug7.6.1` must test each boundary,
+  including live effective-UID plus opened-file `st_uid` checks and rejection of
+  legacy/non-canonical mutable bytes, before its workspace-authority capability
+  can authorize foundation work.
 - `ctx-7i1` owns the sole sanitized run/event/binding/artifact projection,
   baseline hash/validation state, steering generation, and operator-influence
   view; exact baseline tokens, capabilities, and input stay private.
