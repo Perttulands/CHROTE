@@ -76,6 +76,14 @@ func (s *Store) openDefinition(kind definitionKind, slug string, createDirectory
 }
 
 func (s *Store) openDefinitionDirectory(kind definitionKind, create bool) (*os.File, error) {
+	return s.openDefinitionDirectoryWithLeafParentSync(kind, create, nil)
+}
+
+func (s *Store) openDefinitionDirectoryWithLeafParentSync(
+	kind definitionKind,
+	create bool,
+	beforeParentSync func() error,
+) (*os.File, error) {
 	workspace, err := filepath.Abs(s.workspaceRoot())
 	if err != nil {
 		return nil, err
@@ -91,10 +99,20 @@ func (s *Store) openDefinitionDirectory(kind definitionKind, create bool) (*os.F
 		_ = syscall.Close(fd)
 		return nil, errors.New("could not open formations workspace")
 	}
-	for _, component := range []string{".formations", kind.directory} {
-		next, openErr := openDefinitionDirectoryAt(current, component, create)
+	components := []string{".formations", kind.directory}
+	for index, component := range components {
+		next, created, openErr := openDefinitionDirectoryAtTracked(current, component, create)
+		if openErr == nil && created && index == len(components)-1 && beforeParentSync != nil {
+			openErr = beforeParentSync()
+			if openErr == nil {
+				openErr = current.Sync()
+			}
+		}
 		_ = current.Close()
 		if openErr != nil {
+			if next != nil {
+				_ = next.Close()
+			}
 			return nil, openErr
 		}
 		current = next
@@ -103,26 +121,33 @@ func (s *Store) openDefinitionDirectory(kind definitionKind, create bool) (*os.F
 }
 
 func openDefinitionDirectoryAt(parent *os.File, name string, create bool) (*os.File, error) {
+	directory, _, err := openDefinitionDirectoryAtTracked(parent, name, create)
+	return directory, err
+}
+
+func openDefinitionDirectoryAtTracked(parent *os.File, name string, create bool) (*os.File, bool, error) {
 	directory, err := openRuntimeAuthorityDirectoryAt(parent, name)
 	if err != nil && (!create || !errors.Is(err, os.ErrNotExist)) {
-		return nil, err
+		return nil, false, err
 	}
+	created := false
 	if errors.Is(err, os.ErrNotExist) {
+		created = true
 		if err := syscall.Mkdirat(int(parent.Fd()), name, definitionDirectoryMode); err != nil && !errors.Is(err, syscall.EEXIST) {
-			return nil, &os.PathError{Op: "mkdirat", Path: name, Err: err}
+			return nil, false, &os.PathError{Op: "mkdirat", Path: name, Err: err}
 		}
 		directory, err = openRuntimeAuthorityDirectoryAt(parent, name)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
 	if create {
 		if err := ensureDefinitionDirectoryMode(directory, name); err != nil {
 			_ = directory.Close()
-			return nil, err
+			return nil, false, err
 		}
 	}
-	return directory, nil
+	return directory, created, nil
 }
 
 func ensureDefinitionDirectoryMode(directory *os.File, name string) error {
