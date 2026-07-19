@@ -546,6 +546,9 @@ func toolSchemaMigrationValidateOwnedField(fields map[string][]string, key, want
 func toolSchemaMigrationAddInsertion(lines []tomlLine, insertions map[int][]tomlLine, index int, body string) {
 	if index == len(lines) && index > 0 && lines[index-1].newline == "" {
 		index--
+		for index > 0 && lines[index].valueContinuation {
+			index--
+		}
 	}
 	newline := "\n"
 	for previous := index - 1; previous >= 0; previous-- {
