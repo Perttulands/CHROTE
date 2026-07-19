@@ -2,6 +2,7 @@ package formations
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -164,6 +165,38 @@ func TestAuthorityMutableRecordCodecsRejectNestedClosedShapeViolations(t *testin
 		t.Run(test.name, func(t *testing.T) {
 			if _, err := testAuthorityCodecByName(test.codecName).roundTrip(test.raw); err == nil {
 				t.Fatalf("accepted nested non-authorizing bytes: %s", test.raw)
+			}
+		})
+	}
+}
+
+func TestAuthorityRecordDecodeUsesSharedJSONDepthLimit(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		containerDepth int
+		wantCode       RuntimeAuthorityGuardCode
+	}{
+		{name: "container depth 64 is accepted", containerDepth: 64},
+		{name: "container depth 65 is rejected", containerDepth: 65, wantCode: RuntimeAuthorityGuardOutOfRange},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var wire runCommandRecordWire
+			err := decodeAuthorityRecordJSON(testAuthorityRecordAtContainerDepth(test.containerDepth), &wire)
+			if test.wantCode == "" {
+				if err != nil {
+					t.Fatalf("decode container depth %d: %v", test.containerDepth, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("accepted container depth %d; want %s", test.containerDepth, test.wantCode)
+			}
+			var decodeErr runtimeDecodeError
+			if !errors.As(err, &decodeErr) {
+				t.Fatalf("decode container depth %d error type = %T; want runtimeDecodeError", test.containerDepth, err)
+			}
+			if decodeErr.code != test.wantCode {
+				t.Fatalf("decode container depth %d code = %s; want %s", test.containerDepth, decodeErr.code, test.wantCode)
 			}
 		})
 	}
@@ -355,6 +388,11 @@ func testAuthorityRecordCodecs() []testAuthorityCodec {
 			roundTrip: testAuthorityCommandCodecRoundTrip,
 		},
 	}
+}
+
+func testAuthorityRecordAtContainerDepth(containerDepth int) []byte {
+	nestedArrayCount := containerDepth - 1 // The record object is the first container.
+	return []byte(`{"commandPayload":` + strings.Repeat("[", nestedArrayCount) + `null` + strings.Repeat("]", nestedArrayCount) + `}`)
 }
 
 func testAuthorityCommandCodecRoundTrip(raw []byte) (testAuthorityCodecResult, error) {
