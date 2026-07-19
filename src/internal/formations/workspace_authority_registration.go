@@ -207,16 +207,28 @@ func (registrar *workspaceAuthorityRegistrar) register(configuredWorkspace strin
 				return errRuntimeOutOfRange
 			}
 
-			authorityID, err := registrar.ops.generateWorkspaceAuthorityID()
+			recoveryCandidate, err := registrar.selectWorkspaceAuthorityRecoveryCandidate(workspaces, strictRegistry, identity)
 			if err != nil {
 				return err
 			}
-			if !runtimeWorkspaceAuthorityIDPattern.MatchString(authorityID) {
-				return errRuntimeNoncanonical
+			if recoveryCandidate != nil {
+				defer recoveryCandidate.close()
 			}
-			for _, existing := range strictRegistry.Entries {
-				if existing.WorkspaceAuthorityID == authorityID {
-					return fmt.Errorf("%w: workspace authority id is already registered", errRuntimeConflict)
+			authorityID := ""
+			if recoveryCandidate != nil {
+				authorityID = recoveryCandidate.authorityID
+			} else {
+				authorityID, err = registrar.ops.generateWorkspaceAuthorityID()
+				if err != nil {
+					return err
+				}
+				if !runtimeWorkspaceAuthorityIDPattern.MatchString(authorityID) {
+					return errRuntimeNoncanonical
+				}
+				for _, existing := range strictRegistry.Entries {
+					if existing.WorkspaceAuthorityID == authorityID {
+						return fmt.Errorf("%w: workspace authority id is already registered", errRuntimeConflict)
+					}
 				}
 			}
 
