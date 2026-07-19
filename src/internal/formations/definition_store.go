@@ -186,6 +186,9 @@ func (f *definitionFile) read() ([]byte, os.FileInfo, error) {
 		return nil, nil, definitionPathError(err)
 	}
 	defer file.Close()
+	if err := ensureDefinitionDirectoryMode(f.directory, filepath.Dir(f.path)); err != nil {
+		return nil, nil, definitionPathError(err)
+	}
 	info, err := file.Stat()
 	if err != nil {
 		return nil, nil, definitionPathError(err)
