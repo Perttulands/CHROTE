@@ -1,6 +1,8 @@
 package formations
 
 import (
+	"encoding"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,6 +15,13 @@ func TestWorkspaceAuthorityCapabilityRegistryIsExactCodeOwnedOrderedPair(t *test
 		field := descriptorType.Field(index)
 		if field.PkgPath == "" || field.Tag.Get("json") != "" {
 			t.Fatalf("capability descriptor field %s is public or persisted: %+v", field.Name, field)
+		}
+	}
+	jsonMarshaler := reflect.TypeOf((*json.Marshaler)(nil)).Elem()
+	textMarshaler := reflect.TypeOf((*encoding.TextMarshaler)(nil)).Elem()
+	for _, candidateType := range []reflect.Type{descriptorType, reflect.PointerTo(descriptorType)} {
+		if candidateType.Implements(jsonMarshaler) || candidateType.Implements(textMarshaler) {
+			t.Fatalf("internal capability descriptor %s implements custom serialization", candidateType)
 		}
 	}
 	want := []workspaceAuthorityCapability{
@@ -32,8 +41,19 @@ func TestWorkspaceAuthorityCapabilityRegistryIsExactCodeOwnedOrderedPair(t *test
 	if !reflect.DeepEqual(gate.capabilities, want) {
 		t.Fatalf("code-owned workspace authority capabilities = %#v, want exact ordered pair %#v", gate.capabilities, want)
 	}
-	if err := gate.beforeMutation(func() error { return nil }); err != nil {
+	effectPath := filepath.Join(t.TempDir(), "foundation-effect")
+	effectCalls := 0
+	if err := gate.beforeMutation(func() error {
+		effectCalls++
+		return os.WriteFile(effectPath, []byte("workspace-authority-foundation"), 0o600)
+	}); err != nil {
 		t.Fatalf("exact code-owned capability pair rejected before foundation callback: %v", err)
+	}
+	if effectCalls != 1 {
+		t.Fatalf("exact capability pair foundation callback calls = %d, want exactly one", effectCalls)
+	}
+	if effect, err := os.ReadFile(effectPath); err != nil || string(effect) != "workspace-authority-foundation" {
+		t.Fatalf("exact capability pair foundation effect = %q, %v", effect, err)
 	}
 	gate.capabilities[0].id = "mutated-test-copy"
 	if fresh := newWorkspaceAuthorityCapabilityGate().capabilities; !reflect.DeepEqual(fresh, want) {
@@ -43,22 +63,56 @@ func TestWorkspaceAuthorityCapabilityRegistryIsExactCodeOwnedOrderedPair(t *test
 
 func TestWorkspaceAuthorityCapabilityGateRejectsBeforeMutation(t *testing.T) {
 	canonical := cloneWorkspaceAuthorityCapabilities(newWorkspaceAuthorityCapabilityGate().capabilities)
-	tests := []struct {
+	type capabilityCase struct {
 		name         string
 		capabilities []workspaceAuthorityCapability
-	}{
+	}
+	tests := []capabilityCase{
 		{name: "missing read guard", capabilities: cloneWorkspaceAuthorityCapabilities(canonical[1:])},
 		{name: "missing workspace authority", capabilities: cloneWorkspaceAuthorityCapabilities(canonical[:1])},
 		{name: "duplicate capability", capabilities: append(cloneWorkspaceAuthorityCapabilities(canonical), canonical[1])},
 		{name: "unknown capability", capabilities: append(cloneWorkspaceAuthorityCapabilities(canonical), workspaceAuthorityCapability{id: "formations.unknown.v1"})},
 		{name: "wrong order", capabilities: []workspaceAuthorityCapability{canonical[1], canonical[0]}},
-		{name: "read guard becomes authorizing", capabilities: mutateWorkspaceAuthorityCapability(canonical, 0, func(capability *workspaceAuthorityCapability) { capability.fencing = true })},
-		{name: "workspace authority omits command journal", capabilities: mutateWorkspaceAuthorityCapability(canonical, 1, func(capability *workspaceAuthorityCapability) { capability.commandJournal = false })},
-		{name: "workspace authority gains semantic projection", capabilities: mutateWorkspaceAuthorityCapability(canonical, 1, func(capability *workspaceAuthorityCapability) { capability.semanticProjection = true })},
-		{name: "workspace authority gains reconciliation", capabilities: mutateWorkspaceAuthorityCapability(canonical, 1, func(capability *workspaceAuthorityCapability) { capability.reconciliation = true })},
-		{name: "workspace authority gains cleanup", capabilities: mutateWorkspaceAuthorityCapability(canonical, 1, func(capability *workspaceAuthorityCapability) { capability.cleanup = true })},
-		{name: "workspace authority gains quarantine", capabilities: mutateWorkspaceAuthorityCapability(canonical, 1, func(capability *workspaceAuthorityCapability) { capability.quarantine = true })},
-		{name: "workspace authority gains execution", capabilities: mutateWorkspaceAuthorityCapability(canonical, 1, func(capability *workspaceAuthorityCapability) { capability.execution = true })},
+	}
+	fields := []struct {
+		name     string
+		required bool
+		set      func(*workspaceAuthorityCapability, bool)
+	}{
+		{name: "registration", required: true, set: func(capability *workspaceAuthorityCapability, value bool) { capability.registration = value }},
+		{name: "private publication", required: true, set: func(capability *workspaceAuthorityCapability, value bool) { capability.privatePublication = value }},
+		{name: "owner lease", required: true, set: func(capability *workspaceAuthorityCapability, value bool) { capability.ownerLease = value }},
+		{name: "fencing", required: true, set: func(capability *workspaceAuthorityCapability, value bool) { capability.fencing = value }},
+		{name: "command journal", required: true, set: func(capability *workspaceAuthorityCapability, value bool) { capability.commandJournal = value }},
+		{name: "semantic projection", set: func(capability *workspaceAuthorityCapability, value bool) { capability.semanticProjection = value }},
+		{name: "reconciliation", set: func(capability *workspaceAuthorityCapability, value bool) { capability.reconciliation = value }},
+		{name: "cleanup", set: func(capability *workspaceAuthorityCapability, value bool) { capability.cleanup = value }},
+		{name: "quarantine", set: func(capability *workspaceAuthorityCapability, value bool) { capability.quarantine = value }},
+		{name: "execution", set: func(capability *workspaceAuthorityCapability, value bool) { capability.execution = value }},
+	}
+	for _, field := range fields {
+		field := field
+		tests = append(tests, capabilityCase{
+			name: "read guard authorizes " + field.name,
+			capabilities: mutateWorkspaceAuthorityCapability(canonical, 0, func(capability *workspaceAuthorityCapability) {
+				field.set(capability, true)
+			}),
+		})
+		if field.required {
+			tests = append(tests, capabilityCase{
+				name: "workspace authority omits " + field.name,
+				capabilities: mutateWorkspaceAuthorityCapability(canonical, 1, func(capability *workspaceAuthorityCapability) {
+					field.set(capability, false)
+				}),
+			})
+			continue
+		}
+		tests = append(tests, capabilityCase{
+			name: "workspace authority gains " + field.name,
+			capabilities: mutateWorkspaceAuthorityCapability(canonical, 1, func(capability *workspaceAuthorityCapability) {
+				field.set(capability, true)
+			}),
+		})
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

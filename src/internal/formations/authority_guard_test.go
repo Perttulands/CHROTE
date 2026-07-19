@@ -96,11 +96,13 @@ func TestGuardRuntimeWorkspaceAuthorityV1UsesFrozenMutableRecordCodecs(t *testin
 	tests := []struct {
 		name   string
 		stage  RuntimeAuthorityGuardStage
+		code   RuntimeAuthorityGuardCode
 		mutate func(*testing.T, runtimeAuthorityFixture, []byte, []byte)
 	}{
 		{
 			name:  "pre-freeze registry missing prior generation",
 			stage: RuntimeAuthorityGuardStageRegistry,
+			code:  RuntimeAuthorityGuardMalformed,
 			mutate: func(t *testing.T, fixture runtimeAuthorityFixture, registryRaw, _ []byte) {
 				writeAuthorityFixture(t, fixture.registry, testAuthorityRemovePriorGeneration(registryRaw, "null"))
 			},
@@ -108,6 +110,7 @@ func TestGuardRuntimeWorkspaceAuthorityV1UsesFrozenMutableRecordCodecs(t *testin
 		{
 			name:  "noncanonical registry key order",
 			stage: RuntimeAuthorityGuardStageRegistry,
+			code:  RuntimeAuthorityGuardNoncanonical,
 			mutate: func(t *testing.T, fixture runtimeAuthorityFixture, registryRaw, _ []byte) {
 				writeAuthorityFixture(t, fixture.registry, testAuthorityMoveRecordRevFirst(registryRaw))
 			},
@@ -115,6 +118,7 @@ func TestGuardRuntimeWorkspaceAuthorityV1UsesFrozenMutableRecordCodecs(t *testin
 		{
 			name:  "noncanonical registry whitespace",
 			stage: RuntimeAuthorityGuardStageRegistry,
+			code:  RuntimeAuthorityGuardNoncanonical,
 			mutate: func(t *testing.T, fixture runtimeAuthorityFixture, registryRaw, _ []byte) {
 				writeAuthorityFixture(t, fixture.registry, append([]byte(" "), registryRaw...))
 			},
@@ -122,6 +126,7 @@ func TestGuardRuntimeWorkspaceAuthorityV1UsesFrozenMutableRecordCodecs(t *testin
 		{
 			name:  "pre-freeze workspace authority missing prior generation",
 			stage: RuntimeAuthorityGuardStageWorkspaceAuthority,
+			code:  RuntimeAuthorityGuardMalformed,
 			mutate: func(t *testing.T, fixture runtimeAuthorityFixture, _, workspaceRaw []byte) {
 				writeAuthorityFixture(t, fixture.workspaceDB, testAuthorityRemovePriorGeneration(workspaceRaw, "null"))
 			},
@@ -129,6 +134,7 @@ func TestGuardRuntimeWorkspaceAuthorityV1UsesFrozenMutableRecordCodecs(t *testin
 		{
 			name:  "noncanonical workspace authority key order",
 			stage: RuntimeAuthorityGuardStageWorkspaceAuthority,
+			code:  RuntimeAuthorityGuardNoncanonical,
 			mutate: func(t *testing.T, fixture runtimeAuthorityFixture, _, workspaceRaw []byte) {
 				writeAuthorityFixture(t, fixture.workspaceDB, testAuthorityMoveRecordRevFirst(workspaceRaw))
 			},
@@ -136,6 +142,7 @@ func TestGuardRuntimeWorkspaceAuthorityV1UsesFrozenMutableRecordCodecs(t *testin
 		{
 			name:  "noncanonical workspace authority trailing newline",
 			stage: RuntimeAuthorityGuardStageWorkspaceAuthority,
+			code:  RuntimeAuthorityGuardNoncanonical,
 			mutate: func(t *testing.T, fixture runtimeAuthorityFixture, _, workspaceRaw []byte) {
 				writeAuthorityFixture(t, fixture.workspaceDB, append(append([]byte(nil), workspaceRaw...), '\n'))
 			},
@@ -155,8 +162,8 @@ func TestGuardRuntimeWorkspaceAuthorityV1UsesFrozenMutableRecordCodecs(t *testin
 			}
 			assertRuntimeGuardDisabled(t, result.Capability)
 			var guardErr *RuntimeAuthorityGuardError
-			if !errors.As(err, &guardErr) || guardErr.Stage != test.stage {
-				t.Fatalf("guard error = %#v, want typed %s rejection", err, test.stage)
+			if !errors.As(err, &guardErr) || guardErr.Stage != test.stage || guardErr.Code != test.code {
+				t.Fatalf("guard error = %#v, want typed %s/%s rejection", err, test.stage, test.code)
 			}
 			if got := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace); !reflect.DeepEqual(got, before) {
 				t.Fatalf("rejected mutable record changed authority state\nbefore: %#v\nafter:  %#v", before, got)
