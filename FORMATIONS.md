@@ -105,12 +105,36 @@ authoring or exact terminal Peek.
 In the accepted ADR-0007 target, one fenced CHROTE server coordinator is the sole
 semantic runtime writer for each configured workspace. Canonical command journal,
 ledger, graph snapshot, private bindings/results, sealed Tool inputs, and pending
-raw-redaction roots live under the writer-only CHROTE data root outside generic
-Files roots. `run_started` binds command/workspace/fence identity plus their exact
-hashes. Run/event APIs expose sanitized projections, and File Peek receives only
-currently authorized registered artifacts; a workspace substitute or historical
-revoked ref is never replay/read authority. `ctx-ug7.6` owns coordinator
-enforcement.
+raw-redaction roots live below one writer-only, lane-independent
+`<formations-host-authority-root>/workspaces/` outside generic Files roots. The
+existing explicit `CHROTE_FORMATIONS_DATA_ROOT` server configuration supplies
+that stable absolute root to every schema-2-capable lane; it is never derived
+from a lane's service data directory and has no per-lane production fallback.
+Each private run has one immutable `run.bootstrap.json` that exact-selects the
+graph snapshot and private bindings by encoding and SHA-256 before `run_started`
+can bind their identity. Run/event APIs expose sanitized projections, and File
+Peek receives only currently authorized registered artifacts; a workspace
+substitute, stray snapshot, or historical revoked ref is never replay/read
+authority. `ctx-ug7.6` owns coordinator enforcement.
+
+Schema-2 foundation support is an immutable code-owned capability registry, not
+workspace data or a board choice. Its complete bytewise-ordered pair is
+`formations.runtime-authority-read-guard.v1`, then
+`formations.workspace-authority.v1`, validated before owner-lock selection or
+fence allocation. The read guard is non-authorizing. The workspace-authority
+capability authorizes only registration, private publication, owner lease/fence,
+and command-journal foundation work; projection, reconciliation, cleanup,
+quarantine, and execution remain unavailable until their later gates close.
+
+Production writer trust comes from the dedicated service account provisioned by
+the tracked `services/chrote-srv.service` unit as `User=chrote`. The service
+manager and kernel resolve that account; server construction passes and checks
+the process's live kernel effective UID against the `st_uid` owner identity of
+private roots, files, and locks. No board, file, caller value, environment
+variable, or separately configurable numeric UID can self-assert writer trust. Same-UID agent
+processes are unsupported because private file modes cannot isolate them. Tests
+may inject an expected UID and disposable root; this target authorizes no live
+path, deployment, service-configuration, or UID migration.
 
 The private graph snapshot may copy exact Mission objectives, Formation briefs,
 and Gate criteria only when its embedded, hash-covered
@@ -168,8 +192,9 @@ blocked, `waiting_human`, canceling, or failing, and releases that slot only at 
 execution-final event in this first contract.
 
 The coordinator holds one renewable workspace-owner lease with a strictly
-increasing `writerFence`. A stable parent registry lock prevents two authority
-ids for one configured or opened root. The private owner lock first validates
+increasing `writerFence`. One host registry lock under the shared authority root
+prevents two authority ids for one configured or opened root. The private owner
+lock first validates
 the immutable bootstrap plus mutable workspace authority-schema high-water mark;
 unsupported readers remain strictly read-only and do
 not fence, clean, or quarantine. Supported owners reserve/fsync counters before
@@ -178,10 +203,26 @@ authority write or bounded non-idempotent send/spawn/interrupt/cleanup call, so
 takeover cannot race the effect. Historical fences form a monotonic prefix;
 recovery preserves origin fence and records its higher state fence. ADR-0006
 target leases remain separate host-resource ownership.
-Registry generations publish only under the parent registry lock; workspace,
-lease, and command generations publish only under the owner lock. Their revisions,
-fences, and admission sequences are JSON-safe positive integers; exhaustion fails
-closed rather than rounding, wrapping, or reusing identity.
+Registry generations publish only under the host registry lock; workspace,
+lease, and command generations publish only under the owner lock. The mutable
+records are complete closed RFC 8785 JSON in their sole target encodings:
+`workspace-registry-jcs-v1`, `workspace-authority-jcs-v1`,
+`workspace-owner-lease-jcs-v1`, and `run-command-record-jcs-v1`. Each carries
+required `priorGeneration`; revision 1 uses `null`, and every later revision
+exact-binds the complete previous bytes in the same named encoding by revision
+and SHA-256. Only that authenticated expected predecessor permits exact-next
+retry. The closed map is `registry.private.json=workspace-registry-jcs-v1`,
+`workspace.private.json=workspace-authority-jcs-v1`,
+`owner.private.json=workspace-owner-lease-jcs-v1`, and
+`commands/<commandId>.json=run-command-record-jcs-v1`. A pre-freeze/experimental
+record that reuses the target schema while omitting `priorGeneration`, or any
+permissively decoded legacy bytes that do not exact-match the named encoding, is
+malformed, non-authorizing, and not auto-upgraded. Compatibility parsing may
+expose inspection evidence only; it cannot enable
+`formations.workspace-authority.v1`.
+This contract authorizes no shipped/live record migration. Revisions, fences,
+and admission sequences are JSON-safe positive integers; exhaustion fails closed
+rather than rounding, wrapping, or reusing identity.
 
 The target is board schema 2 and event schema 2. Schema-1 Formation ports remain
 readable with explicit in-memory defaults (`work`, the stable full initial

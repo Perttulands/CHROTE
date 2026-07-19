@@ -8,8 +8,8 @@ Formations definitions are durable local files edited by both the CHROTE server
 and future `archon` CLI verbs. They must preserve human-authored TOML comments
 and unknown fields and reject stale edits. Code rollback must preserve both the
 workspace `.formations/` tree and host-private canonical run authority under the
-CHROTE data root. Retention, migration, or deletion is a separate explicit
-operator action, never part of rollback.
+Formations host-authority root. Retention, migration, or deletion is a separate
+explicit operator action, never part of rollback.
 
 The main alternatives were:
 - let each client parse and rewrite TOML independently;

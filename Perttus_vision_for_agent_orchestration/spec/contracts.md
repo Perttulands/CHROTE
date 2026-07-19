@@ -881,15 +881,21 @@ reconciliation, cleanup, quarantine, and execution remain false and unavailable.
 A missing, duplicate, unknown, or unsupported required capability rejects before
 owner or fence mutation.
 
-Writer trust is the dedicated CHROTE service UID. Before private authority, the
-process certifies that its effective UID equals the provisioned writer UID and
-that the opened host root, private directories, files, and locks are owned by
-that UID with exact directory mode `0700`, exact regular-file mode `0600`, no
-special bits, and file link count one. Same-UID agent processes are outside the
-supported topology because modes cannot isolate peers sharing a UID; agents must
-not run as the service UID. The current `/srv` service uses `User=chrote`, but no
-UID or configuration migration is authorized here. Tests may inject a dedicated
-expected UID and disposable root. The UID is not persisted in authority JSON.
+Writer trust is the dedicated CHROTE service UID. Production provisioning names
+that account in the tracked `services/chrote-srv.service` unit as `User=chrote`;
+the service manager and kernel resolve the account and launch the coordinator
+with its effective UID. Server construction passes that kernel effective UID as
+the numeric writer identity to the authority library, which checks the live
+effective UID and `st_uid` of the opened host root, private directories, files,
+and locks. No board, authority file, caller value, environment variable, or
+separately configurable numeric UID may self-assert writer trust. Required modes
+are exact directory mode `0700`, exact regular-file mode `0600`, no special bits,
+and file link count one. Same-UID agent processes are outside the supported
+topology because modes cannot isolate peers sharing a UID; agents must not run as
+the service UID. Tests may inject an expected UID and disposable root, but
+production uses only the provisioned account plus kernel credential. The UID is
+not persisted in authority JSON, and this contract authorizes no UID or service-
+configuration migration.
 
 `registry.private.json` is a closed schema-1 object. Its entries have exactly the
 fields above and sort by decoded unsigned numeric `device`, decoded unsigned
@@ -901,17 +907,48 @@ duplicate configured/opened identity, or conflicting mapping authorizes no
 mutation. Registry generations use the atomic mutable-file rule below.
 
 Every overwrite-style mutable JSON record (`WorkspaceRegistry`,
-`WorkspaceAuthority`, `WorkspaceOwnerLease`, and `RunCommandRecordBase`) includes
-the closed `priorGeneration` field, exactly `null` or
-`{recordRev,sha256}`. Revision 1 requires `null`. Revision N greater than 1
-requires `recordRev=N-1` and the 64-lowercase-hex SHA-256 of the exact canonical
-revision N-1 bytes. Immutable admission-policy generations keep their existing
-`priorPolicySha256` chain and do not duplicate this field. A caller's expected
-predecessor must exact-match the next closed record's `priorGeneration`; only
-that authenticated binding permits exact-next retry after canonical replacement.
-Desired-state idempotency with a false or stale predecessor remains rejected.
-Without record-specific proof, the format-neutral generic publisher rejects a
-consumed predecessor and recovery rereads authoritative current state.
+`WorkspaceAuthority`, `WorkspaceOwnerLease`, and `RunCommandRecord`) includes the
+closed `priorGeneration` field, exactly `null` or `{recordRev,sha256}`. Revision 1
+requires `null`; revision N greater than 1 requires `recordRev=N-1`. Their sole
+accepted target encodings are respectively `workspace-registry-jcs-v1`,
+`workspace-authority-jcs-v1`, `workspace-owner-lease-jcs-v1`, and
+`run-command-record-jcs-v1`. Each encoding is the complete closed corresponding
+JSON record (one exact state variant for a command record), serialized as RFC
+8785 canonical UTF-8 with no BOM, insignificant JSON whitespace, or trailing
+newline. The closed path-to-encoding map is
+`registry.private.json=workspace-registry-jcs-v1`,
+`workspace.private.json=workspace-authority-jcs-v1`,
+`owner.private.json=workspace-owner-lease-jcs-v1`, and
+`commands/<commandId>.json=run-command-record-jcs-v1`.
+No persisted encoding discriminator is added. `priorGeneration.sha256` is the
+64-lowercase-hex SHA-256 of the exact complete previous-generation bytes in that
+same named encoding.
+
+`RunCommandRecord.commandPayload` remains the closed `run-command-jcs-v1` JSON
+object. Its payload hash is computed from those canonical payload bytes; the
+object is then embedded as JSON and the complete containing command record is
+re-encoded as `run-command-record-jcs-v1`, never stored as an opaque string or
+pre-encoded byte field. Immutable admission-policy generations keep their
+existing `priorPolicySha256` chain and do not duplicate this field. A caller's
+expected predecessor must exact-match the next closed record's
+`priorGeneration`; only that authenticated binding permits exact-next retry
+after canonical replacement. Desired-state idempotency with a false or stale
+predecessor remains rejected. Without record-specific proof, the format-neutral
+generic publisher rejects a consumed predecessor and recovery rereads
+authoritative current state.
+
+These four encodings are the only accepted target encodings for their mutable
+record families. Where a record carries `registrySchema`, `leaseSchema`, or
+`commandSchema`, that value is exactly `1`; `WorkspaceAuthority.authoritySchema`
+is exactly `2` for this target. Pre-freeze or experimental records that reuse
+those schemas or the target workspace-authority shape but omit required
+`priorGeneration` are malformed, non-authorizing, and never auto-upgraded. This
+contract authorizes no migration of shipped or live records and no deployment.
+Before `formations.workspace-authority.v1` may authorize foundation work, the
+guard must make every permissively decoded or non-canonical legacy form
+non-authorizing, including bytes that do not exact-match the named encoding and
+records missing required `priorGeneration`; compatibility parsing may expose
+inspection evidence only.
 
 `workspace-bootstrap-jcs-v1` is RFC 8785 canonical UTF-8 JSON over exactly
 `{bootstrapSchema,workspaceAuthorityId,rootIdentityEncoding,
