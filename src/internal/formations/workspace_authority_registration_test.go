@@ -11,23 +11,25 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
 )
 
 func TestWorkspaceAuthorityRegistrationIdentityUsesOneOpenedDirectory(t *testing.T) {
-	fixture := newWorkspaceAuthorityRegistrationFixture(t, workspaceRegistryJCSV1{
-		Entries:        []workspaceRegistryEntryJCSV1{},
-		RecordRev:      1,
-		RegistrySchema: 1,
-	})
-	configuredWorkspace := filepath.Join(fixture.base, "configured-workspace")
-	if err := os.Symlink(fixture.workspace, configuredWorkspace); err != nil {
+	base := t.TempDir()
+	workspace := filepath.Join(base, "workspace")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configuredWorkspace := filepath.Join(base, "configured-workspace")
+	if err := os.Symlink(workspace, configuredWorkspace); err != nil {
 		t.Fatal(err)
 	}
 	wantIdentity := testWorkspaceAuthorityIdentityAtPath(t, configuredWorkspace)
-	openDescriptorsBefore := countWorkspaceAuthorityDescriptors(t, fixture.workspace)
+	openDescriptorsBefore := countWorkspaceAuthorityDescriptors(t, workspace)
+	descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, workspace)
 	openCalls := 0
 	var openedDescriptor uintptr
 	openWorkspace := func(configuredPath string) (*os.File, error) {
@@ -41,35 +43,13 @@ func TestWorkspaceAuthorityRegistrationIdentityUsesOneOpenedDirectory(t *testing
 		}
 		return workspace, err
 	}
-	registrar := newWorkspaceAuthorityRegistrar(
-		fixture.hostRoot,
-		fixture.ownerUID,
-		newWorkspaceAuthorityCapabilityGate(),
-		openWorkspace,
-		nil,
-	)
-
-	inspection, err := registrar.inspect(configuredWorkspace)
-	if err != nil {
-		t.Fatalf("inspect unregistered workspace identity: %v", err)
-	}
-	closed := false
-	t.Cleanup(func() {
-		if !closed {
-			_ = inspection.close()
+	callbackCalls := 0
+	err := withOpenedWorkspaceAuthorityIdentity(configuredWorkspace, openWorkspace, func(opened *os.File, identity runtimeWorkspaceIdentity) error {
+		callbackCalls++
+		if opened.Fd() != openedDescriptor {
+			t.Fatalf("retained workspace descriptor = %d, want injected descriptor %d", opened.Fd(), openedDescriptor)
 		}
-	})
-	if openCalls != 1 {
-		t.Fatalf("workspace directory opener calls = %d, want exactly one", openCalls)
-	}
-	if got, want := countWorkspaceAuthorityDescriptors(t, fixture.workspace), openDescriptorsBefore+1; got != want {
-		t.Fatalf("retained workspace descriptors = %d, want %d after one injected open", got, want)
-	}
-	inspection.observePinnedWorkspace(func(workspace *os.File, identity runtimeWorkspaceIdentity) {
-		if workspace.Fd() != openedDescriptor {
-			t.Fatalf("retained workspace descriptor = %d, want injected descriptor %d", workspace.Fd(), openedDescriptor)
-		}
-		workspaceInfo, statErr := workspace.Stat()
+		workspaceInfo, statErr := opened.Stat()
 		if statErr != nil {
 			t.Fatal(statErr)
 		}
@@ -83,20 +63,24 @@ func TestWorkspaceAuthorityRegistrationIdentityUsesOneOpenedDirectory(t *testing
 			identity.rootHash != wantIdentity.identity.rootHash {
 			t.Fatalf("opened workspace identity = %+v, want independent pre-open identity %+v", identity, wantIdentity.identity)
 		}
+		if got, want := countWorkspaceAuthorityDescriptors(t, workspace), openDescriptorsBefore+1; got != want {
+			t.Fatalf("retained workspace descriptors = %d, want %d during scoped identity callback", got, want)
+		}
+		return nil
 	})
-	if authorityID, matched := inspection.matchedWorkspaceAuthorityID(); matched {
-		t.Fatalf("unregistered workspace matched registry authority %q", authorityID)
+	if err != nil {
+		t.Fatalf("derive scoped workspace identity: %v", err)
 	}
-	if err := inspection.validatePinnedPaths(); err != nil {
-		t.Fatalf("freshly opened workspace/root binding rejected: %v", err)
+	if openCalls != 1 {
+		t.Fatalf("workspace directory opener calls = %d, want exactly one", openCalls)
 	}
-	if err := inspection.close(); err != nil {
-		t.Fatal(err)
+	if callbackCalls != 1 {
+		t.Fatalf("scoped workspace identity callback calls = %d, want exactly one", callbackCalls)
 	}
-	closed = true
-	if got := countWorkspaceAuthorityDescriptors(t, fixture.workspace); got != openDescriptorsBefore {
+	if got := countWorkspaceAuthorityDescriptors(t, workspace); got != openDescriptorsBefore {
 		t.Fatalf("workspace descriptors after inspection close = %d, want original %d", got, openDescriptorsBefore)
 	}
+	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, workspace)
 }
 
 func TestWorkspaceAuthorityRegistrationDerivesIdentityFromOpenedDirectoryBeforeRetargetFence(t *testing.T) {
@@ -115,6 +99,7 @@ func TestWorkspaceAuthorityRegistrationDerivesIdentityFromOpenedDirectoryBeforeR
 	}
 	wantIdentity := testWorkspaceAuthorityIdentityAtPath(t, configuredWorkspace)
 	openDescriptorsBefore := countWorkspaceAuthorityDescriptors(t, fixture.workspace)
+	descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, fixture.workspace)
 	openCalls := 0
 	var openedDescriptor uintptr
 	openWorkspace := func(configuredPath string) (*os.File, error) {
@@ -134,40 +119,32 @@ func TestWorkspaceAuthorityRegistrationDerivesIdentityFromOpenedDirectoryBeforeR
 		}
 		return workspace, nil
 	}
-	registrar := newWorkspaceAuthorityRegistrar(
-		fixture.hostRoot,
-		fixture.ownerUID,
-		newWorkspaceAuthorityCapabilityGate(),
-		openWorkspace,
-		nil,
-	)
-	inspection, err := registrar.inspect(configuredWorkspace)
-	if err != nil {
-		t.Fatalf("inspect identity across controlled configured-path retarget: %v", err)
-	}
-	closed := false
-	t.Cleanup(func() {
-		if !closed {
-			_ = inspection.close()
-		}
-	})
-	if openCalls != 1 {
-		t.Fatalf("workspace directory opener calls across retarget = %d, want exactly one", openCalls)
-	}
-	inspection.observePinnedWorkspace(func(workspace *os.File, identity runtimeWorkspaceIdentity) {
+	callbackCalls := 0
+	err := withOpenedWorkspaceAuthorityIdentity(configuredWorkspace, openWorkspace, func(workspace *os.File, identity runtimeWorkspaceIdentity) error {
+		callbackCalls++
 		if workspace.Fd() != openedDescriptor {
-			t.Fatalf("retarget inspection retained descriptor %d, want injected descriptor %d", workspace.Fd(), openedDescriptor)
+			t.Fatalf("retarget identity scope descriptor %d, want injected descriptor %d", workspace.Fd(), openedDescriptor)
 		}
 		if identity.configuredPath != wantIdentity.identity.configuredPath ||
 			identity.resolvedPath != wantIdentity.identity.resolvedPath ||
 			identity.device != wantIdentity.identity.device ||
 			identity.inode != wantIdentity.identity.inode ||
 			identity.rootHash != wantIdentity.identity.rootHash {
-			t.Fatalf("retarget inspection identity = %+v, want sole pre-retarget opened identity %+v", identity, wantIdentity.identity)
+			t.Fatalf("retarget identity scope = %+v, want sole pre-retarget opened identity %+v", identity, wantIdentity.identity)
 		}
+		if got, want := countWorkspaceAuthorityDescriptors(t, fixture.workspace), openDescriptorsBefore+1; got != want {
+			t.Fatalf("retarget identity scope descriptors for original workspace = %d, want %d", got, want)
+		}
+		return nil
 	})
-	if got, want := countWorkspaceAuthorityDescriptors(t, fixture.workspace), openDescriptorsBefore+1; got != want {
-		t.Fatalf("retarget inspection descriptors for original workspace = %d, want %d", got, want)
+	if err != nil {
+		t.Fatalf("derive identity across controlled configured-path retarget: %v", err)
+	}
+	if openCalls != 1 {
+		t.Fatalf("workspace directory opener calls across retarget = %d, want exactly one", openCalls)
+	}
+	if callbackCalls != 1 {
+		t.Fatalf("retarget identity callback calls = %d, want exactly one", callbackCalls)
 	}
 	replacementInfo, err := os.Stat(configuredWorkspace)
 	if err != nil {
@@ -176,20 +153,81 @@ func TestWorkspaceAuthorityRegistrationDerivesIdentityFromOpenedDirectoryBeforeR
 	if os.SameFile(replacementInfo, wantIdentity.info) {
 		t.Fatal("controlled opener did not retarget configured workspace before returning")
 	}
-	beforeRejection := snapshotWorkspaceAuthorityTopology(t, fixture.base)
-	if err := inspection.validatePinnedPaths(); !errors.Is(err, errRuntimeIntegrityMismatch) {
-		t.Fatalf("controlled retarget validation error = %v, want integrity mismatch", err)
+	if got := countWorkspaceAuthorityDescriptors(t, fixture.workspace); got != openDescriptorsBefore {
+		t.Fatalf("original workspace descriptors after retarget identity scope = %d, want %d", got, openDescriptorsBefore)
 	}
-	if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, beforeRejection) {
-		t.Fatalf("controlled retarget rejection changed topology\nbefore: %#v\nafter:  %#v", beforeRejection, after)
+	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, fixture.workspace)
+}
+
+func TestWorkspaceAuthorityRegistrationIdentityFollowsRetargetBeforeInjectedOpen(t *testing.T) {
+	base := t.TempDir()
+	originalWorkspace := filepath.Join(base, "original-workspace")
+	replacementWorkspace := filepath.Join(base, "replacement-workspace")
+	for _, path := range []string{originalWorkspace, replacementWorkspace} {
+		if err := os.Mkdir(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := inspection.close(); err != nil {
+	configuredWorkspace := filepath.Join(base, "configured-workspace")
+	if err := os.Symlink(originalWorkspace, configuredWorkspace); err != nil {
 		t.Fatal(err)
 	}
-	closed = true
-	if got := countWorkspaceAuthorityDescriptors(t, fixture.workspace); got != openDescriptorsBefore {
-		t.Fatalf("original workspace descriptors after retarget inspection close = %d, want %d", got, openDescriptorsBefore)
+	originalInfo, err := os.Stat(configuredWorkspace)
+	if err != nil {
+		t.Fatal(err)
 	}
+	openDescriptorsBefore := countWorkspaceAuthorityDescriptors(t, replacementWorkspace)
+	descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, originalWorkspace, replacementWorkspace)
+	openCalls := 0
+	var openedDescriptor uintptr
+	var wantIdentity runtimeWorkspaceIdentity
+	openWorkspace := func(configuredPath string) (*os.File, error) {
+		openCalls++
+		if err := os.Remove(configuredPath); err != nil {
+			return nil, err
+		}
+		if err := os.Symlink(replacementWorkspace, configuredPath); err != nil {
+			return nil, err
+		}
+		workspace, err := openWorkspaceAuthorityTestDirectory(configuredPath)
+		if err != nil {
+			return nil, err
+		}
+		openedDescriptor = workspace.Fd()
+		wantIdentity = testWorkspaceAuthorityIdentityFromOpened(t, configuredPath, workspace)
+		return workspace, nil
+	}
+	callbackCalls := 0
+	err = withOpenedWorkspaceAuthorityIdentity(configuredWorkspace, openWorkspace, func(workspace *os.File, identity runtimeWorkspaceIdentity) error {
+		callbackCalls++
+		if workspace.Fd() != openedDescriptor {
+			t.Fatalf("pre-open retarget scope descriptor %d, want injected descriptor %d", workspace.Fd(), openedDescriptor)
+		}
+		openedInfo, statErr := workspace.Stat()
+		if statErr != nil {
+			t.Fatal(statErr)
+		}
+		if os.SameFile(openedInfo, originalInfo) {
+			t.Fatal("pre-open retarget identity remained bound to original configured target")
+		}
+		if identity != wantIdentity {
+			t.Fatalf("pre-open retarget identity = %+v, want independently captured replacement FD identity %+v", identity, wantIdentity)
+		}
+		if got, want := countWorkspaceAuthorityDescriptors(t, replacementWorkspace), openDescriptorsBefore+1; got != want {
+			t.Fatalf("pre-open retarget replacement descriptors = %d, want %d during callback", got, want)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("derive identity after controlled pre-open retarget: %v", err)
+	}
+	if openCalls != 1 || callbackCalls != 1 {
+		t.Fatalf("pre-open retarget opener/callback calls = %d/%d, want 1/1", openCalls, callbackCalls)
+	}
+	if got := countWorkspaceAuthorityDescriptors(t, replacementWorkspace); got != openDescriptorsBefore {
+		t.Fatalf("replacement workspace descriptors after pre-open retarget identity scope = %d, want %d", got, openDescriptorsBefore)
+	}
+	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, originalWorkspace, replacementWorkspace)
 }
 
 func TestWorkspaceRootIdentityV1UsesCanonicalStringsBeyondJSONSafeInteger(t *testing.T) {
@@ -214,26 +252,29 @@ func TestWorkspaceAuthorityRegistrationCleansConfiguredSpellingAndRejectsInvalid
 		RecordRev:      1,
 		RegistrySchema: 1,
 	})
-	registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate(), nil, nil)
+	registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate())
 
 	noise := filepath.Join(filepath.Dir(fixture.workspace), "noise")
 	if err := os.Mkdir(noise, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	unclean := filepath.Join(noise, "..", filepath.Base(fixture.workspace))
-	inspection, err := registrar.inspect(unclean)
+	var configuredPath string
+	callbackCalls := 0
+	err := registrar.inspect(unclean, func(scope workspaceAuthorityRegistrationScope) error {
+		callbackCalls++
+		configuredPath = scope.workspaceIdentity().configuredPath
+		return nil
+	})
 	if err != nil {
 		t.Fatalf("inspect cleaned configured spelling: %v", err)
 	}
-	var configuredPath string
-	inspection.observePinnedWorkspace(func(_ *os.File, identity runtimeWorkspaceIdentity) {
-		configuredPath = identity.configuredPath
-	})
+	if callbackCalls != 1 {
+		t.Fatalf("clean configured path callback calls = %d, want exactly one", callbackCalls)
+	}
 	if got, want := configuredPath, filepath.ToSlash(filepath.Clean(unclean)); got != want {
-		closeWorkspaceAuthorityInspection(t, inspection)
 		t.Fatalf("cleaned configured spelling = %q, want %q", got, want)
 	}
-	closeWorkspaceAuthorityInspection(t, inspection)
 
 	for _, configured := range []string{
 		"relative/workspace",
@@ -243,12 +284,16 @@ func TestWorkspaceAuthorityRegistrationCleansConfiguredSpellingAndRejectsInvalid
 	} {
 		t.Run(strconv.Quote(configured), func(t *testing.T) {
 			before := snapshotWorkspaceAuthorityTopology(t, fixture.base)
-			inspection, err := registrar.inspect(configured)
-			if inspection != nil {
-				closeWorkspaceAuthorityInspection(t, inspection)
-			}
+			callbackCalls := 0
+			err := registrar.inspect(configured, func(workspaceAuthorityRegistrationScope) error {
+				callbackCalls++
+				return nil
+			})
 			if err == nil || !errors.Is(err, errRuntimeNoncanonical) {
 				t.Fatalf("invalid configured path error = %v, want noncanonical", err)
+			}
+			if callbackCalls != 0 {
+				t.Fatalf("invalid configured path callback calls = %d, want zero", callbackCalls)
 			}
 			if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, before) {
 				t.Fatalf("invalid configured path changed authority topology\nbefore: %#v\nafter:  %#v", before, after)
@@ -271,43 +316,50 @@ func TestWorkspaceAuthorityRegistrationRejectsRetargetedConfiguredWorkspaceBefor
 	if err := os.Mkdir(replacement, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate(), nil, nil)
-	inspection, err := registrar.inspect(configured)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer closeWorkspaceAuthorityInspection(t, inspection)
-	var originalInfo os.FileInfo
-	inspection.observePinnedWorkspace(func(workspace *os.File, _ runtimeWorkspaceIdentity) {
-		originalInfo, err = workspace.Stat()
+	openDescriptorsBefore := countWorkspaceAuthorityDescriptors(t, fixture.workspace)
+	descriptorPaths := workspaceAuthorityRegistrationFixturePaths(fixture)
+	descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, descriptorPaths...)
+	openCalls := 0
+	var beforeRejection map[string]workspaceAuthorityTopologyEntry
+	openWorkspace := func(configuredPath string) (*os.File, error) {
+		openCalls++
+		workspace, err := openWorkspaceAuthorityTestDirectory(configuredPath)
 		if err != nil {
-			t.Fatal(err)
+			return nil, err
 		}
+		if err := os.Remove(configuredPath); err != nil {
+			workspace.Close()
+			return nil, err
+		}
+		if err := os.Symlink(replacement, configuredPath); err != nil {
+			workspace.Close()
+			return nil, err
+		}
+		beforeRejection = snapshotWorkspaceAuthorityTopology(t, fixture.base)
+		return workspace, nil
+	}
+	registrar := newWorkspaceAuthorityRegistrarForTest(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate(), workspaceAuthorityRegistrationTestOps{openWorkspace: openWorkspace})
+	callbackCalls := 0
+	err := registrar.inspect(configured, func(workspaceAuthorityRegistrationScope) error {
+		callbackCalls++
+		return nil
 	})
-
-	if err := os.Remove(configured); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(replacement, configured); err != nil {
-		t.Fatal(err)
-	}
-	beforeRejection := snapshotWorkspaceAuthorityTopology(t, fixture.base)
-	if err := inspection.validatePinnedPaths(); !errors.Is(err, errRuntimeIntegrityMismatch) {
+	if !errors.Is(err, errRuntimeIntegrityMismatch) {
 		t.Fatalf("retargeted configured workspace error = %v, want integrity mismatch", err)
 	}
-	var openedInfo os.FileInfo
-	inspection.observePinnedWorkspace(func(workspace *os.File, _ runtimeWorkspaceIdentity) {
-		openedInfo, err = workspace.Stat()
-		if err != nil {
-			t.Fatal(err)
-		}
-	})
-	if !os.SameFile(originalInfo, openedInfo) {
-		t.Fatal("pinned workspace descriptor changed after configured symlink retarget")
+	if callbackCalls != 0 {
+		t.Fatalf("retargeted configured workspace callback calls = %d, want zero before critical-section callback", callbackCalls)
+	}
+	if openCalls != 1 {
+		t.Fatalf("retargeted configured workspace opener calls = %d, want exactly one", openCalls)
 	}
 	if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, beforeRejection) {
 		t.Fatalf("retarget rejection changed authority topology\nbefore: %#v\nafter:  %#v", beforeRejection, after)
 	}
+	if got := countWorkspaceAuthorityDescriptors(t, fixture.workspace); got != openDescriptorsBefore {
+		t.Fatalf("original workspace descriptors after registrar retarget rejection = %d, want %d", got, openDescriptorsBefore)
+	}
+	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, descriptorPaths...)
 }
 
 func TestWorkspaceAuthorityRegistrationRequiresPrivatePinnedRootAndRegistryLock(t *testing.T) {
@@ -529,18 +581,74 @@ func TestWorkspaceAuthorityRegistrationRequiresPrivatePinnedRootAndRegistryLock(
 			}
 			roots := append([]string{fixture.base}, extraRoots...)
 			before := snapshotWorkspaceAuthorityTopology(t, roots...)
+			descriptorPaths := workspaceAuthorityRegistrationFixturePaths(fixture)
+			descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, descriptorPaths...)
 
-			registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, expectedUID, newWorkspaceAuthorityCapabilityGate(), nil, nil)
-			inspection, err := registrar.inspect(fixture.workspace)
-			if inspection != nil {
-				closeWorkspaceAuthorityInspection(t, inspection)
-			}
+			registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, expectedUID, newWorkspaceAuthorityCapabilityGate())
+			callbackCalls := 0
+			err := registrar.inspect(fixture.workspace, func(workspaceAuthorityRegistrationScope) error {
+				callbackCalls++
+				return nil
+			})
 			if err == nil || !errors.Is(err, errRuntimeIntegrityMismatch) {
 				t.Fatalf("unsafe private root/lock error = %v, want integrity mismatch", err)
+			}
+			if callbackCalls != 0 {
+				t.Fatalf("unsafe private root/lock callback calls = %d, want zero", callbackCalls)
 			}
 			if after := snapshotWorkspaceAuthorityTopology(t, roots...); !reflect.DeepEqual(after, before) {
 				t.Fatalf("private root/lock rejection changed topology\nbefore: %#v\nafter:  %#v", before, after)
 			}
+			assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, descriptorPaths...)
+		})
+	}
+}
+
+func TestWorkspaceAuthorityRegistrationRequiresEveryPreprovisionedNodeWithoutCreatingIt(t *testing.T) {
+	tests := []struct {
+		name string
+		path func(workspaceAuthorityRegistrationFixture) string
+	}{
+		{name: "host root missing", path: func(fixture workspaceAuthorityRegistrationFixture) string { return fixture.hostRoot }},
+		{name: "workspaces root missing", path: func(fixture workspaceAuthorityRegistrationFixture) string { return fixture.workspacesRoot }},
+		{name: "registry lock missing", path: func(fixture workspaceAuthorityRegistrationFixture) string { return fixture.registryLock }},
+		{name: "registry private missing", path: func(fixture workspaceAuthorityRegistrationFixture) string { return fixture.registry }},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newWorkspaceAuthorityRegistrationFixture(t, workspaceRegistryJCSV1{
+				Entries:        []workspaceRegistryEntryJCSV1{},
+				RecordRev:      1,
+				RegistrySchema: 1,
+			})
+			missingPath := test.path(fixture)
+			movedPath := missingPath + ".preprovisioned"
+			if err := os.Rename(missingPath, movedPath); err != nil {
+				t.Fatal(err)
+			}
+			before := snapshotWorkspaceAuthorityTopology(t, fixture.base)
+			descriptorPaths := workspaceAuthorityRegistrationFixturePaths(fixture)
+			descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, descriptorPaths...)
+			registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate())
+			callbackCalls := 0
+			err := registrar.inspect(fixture.workspace, func(workspaceAuthorityRegistrationScope) error {
+				callbackCalls++
+				return nil
+			})
+			if !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("%s error = %v, want missing preprovisioned node", test.name, err)
+			}
+			if callbackCalls != 0 {
+				t.Fatalf("%s callback calls = %d, want zero", test.name, callbackCalls)
+			}
+			if _, statErr := os.Lstat(missingPath); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("%s was recreated at %q: %v", test.name, missingPath, statErr)
+			}
+			if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, before) {
+				t.Fatalf("%s rejection changed topology\nbefore: %#v\nafter:  %#v", test.name, before, after)
+			}
+			assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, descriptorPaths...)
 		})
 	}
 }
@@ -568,6 +676,8 @@ func TestWorkspaceAuthorityRegistrationRoutesExpectedWriterUIDThroughEveryPrivat
 				t.Fatal(err)
 			}
 			before := snapshotWorkspaceAuthorityTopology(t, fixture.base)
+			descriptorPaths := workspaceAuthorityRegistrationFixturePaths(fixture)
+			descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, descriptorPaths...)
 			validatedTarget := 0
 			validatePrivateNode := func(opened *os.File, expectedUID uint32) error {
 				if expectedUID != fixture.ownerUID {
@@ -583,19 +693,22 @@ func TestWorkspaceAuthorityRegistrationRoutesExpectedWriterUIDThroughEveryPrivat
 				}
 				return nil
 			}
-			registrar := newWorkspaceAuthorityRegistrar(
+			registrar := newWorkspaceAuthorityRegistrarForTest(
 				fixture.hostRoot,
 				fixture.ownerUID,
 				newWorkspaceAuthorityCapabilityGate(),
-				nil,
-				validatePrivateNode,
+				workspaceAuthorityRegistrationTestOps{validatePrivateNode: validatePrivateNode},
 			)
-			inspection, err := registrar.inspect(fixture.workspace)
-			if inspection != nil {
-				closeWorkspaceAuthorityInspection(t, inspection)
-			}
+			callbackCalls := 0
+			err = registrar.inspect(fixture.workspace, func(workspaceAuthorityRegistrationScope) error {
+				callbackCalls++
+				return nil
+			})
 			if !errors.Is(err, errRuntimeIntegrityMismatch) {
 				t.Fatalf("injected %s uid mismatch error = %v, want integrity mismatch", component.name, err)
+			}
+			if callbackCalls != 0 {
+				t.Fatalf("injected %s uid mismatch callback calls = %d, want zero", component.name, callbackCalls)
 			}
 			if validatedTarget != 1 {
 				t.Fatalf("%s expected-writer-uid validation calls = %d, want exactly one", component.name, validatedTarget)
@@ -603,6 +716,7 @@ func TestWorkspaceAuthorityRegistrationRoutesExpectedWriterUIDThroughEveryPrivat
 			if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, before) {
 				t.Fatalf("%s uid rejection changed topology\nbefore: %#v\nafter:  %#v", component.name, before, after)
 			}
+			assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, descriptorPaths...)
 		})
 	}
 }
@@ -620,17 +734,24 @@ func TestWorkspaceAuthorityRegistrationRejectsSymlinkedOrRenamedHostRoot(t *test
 		}
 		writePrivateAuthorityTestFile(t, fixture.hostRoot, []byte("not-a-directory"))
 		before := snapshotWorkspaceAuthorityTopology(t, fixture.base)
-		registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate(), nil, nil)
-		inspection, err := registrar.inspect(fixture.workspace)
-		if inspection != nil {
-			closeWorkspaceAuthorityInspection(t, inspection)
-		}
+		descriptorPaths := workspaceAuthorityRegistrationFixturePaths(fixture)
+		descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, descriptorPaths...)
+		registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate())
+		callbackCalls := 0
+		err := registrar.inspect(fixture.workspace, func(workspaceAuthorityRegistrationScope) error {
+			callbackCalls++
+			return nil
+		})
 		if err == nil {
 			t.Fatal("registration accepted a non-directory host root")
+		}
+		if callbackCalls != 0 {
+			t.Fatalf("non-directory host-root callback calls = %d, want zero", callbackCalls)
 		}
 		if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, before) {
 			t.Fatalf("host-root type rejection changed topology\nbefore: %#v\nafter:  %#v", before, after)
 		}
+		assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, descriptorPaths...)
 	})
 
 	t.Run("symlinked host root", func(t *testing.T) {
@@ -647,17 +768,24 @@ func TestWorkspaceAuthorityRegistrationRejectsSymlinkedOrRenamedHostRoot(t *test
 			t.Fatal(err)
 		}
 		before := snapshotWorkspaceAuthorityTopology(t, fixture.base)
-		registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate(), nil, nil)
-		inspection, err := registrar.inspect(fixture.workspace)
-		if inspection != nil {
-			closeWorkspaceAuthorityInspection(t, inspection)
-		}
+		descriptorPaths := workspaceAuthorityRegistrationFixturePaths(fixture)
+		descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, descriptorPaths...)
+		registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate())
+		callbackCalls := 0
+		err := registrar.inspect(fixture.workspace, func(workspaceAuthorityRegistrationScope) error {
+			callbackCalls++
+			return nil
+		})
 		if err == nil {
 			t.Fatal("registration followed a symlinked host root")
+		}
+		if callbackCalls != 0 {
+			t.Fatalf("symlinked host-root callback calls = %d, want zero", callbackCalls)
 		}
 		if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, before) {
 			t.Fatalf("host-root symlink rejection changed topology\nbefore: %#v\nafter:  %#v", before, after)
 		}
+		assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, descriptorPaths...)
 	})
 
 	t.Run("symlinked ancestor", func(t *testing.T) {
@@ -675,17 +803,24 @@ func TestWorkspaceAuthorityRegistrationRejectsSymlinkedOrRenamedHostRoot(t *test
 			t.Fatal(err)
 		}
 		before := snapshotWorkspaceAuthorityTopology(t, ancestor, realAncestor)
-		registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate(), nil, nil)
-		inspection, err := registrar.inspect(fixture.workspace)
-		if inspection != nil {
-			closeWorkspaceAuthorityInspection(t, inspection)
-		}
+		descriptorPaths := workspaceAuthorityRegistrationFixturePaths(fixture)
+		descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, descriptorPaths...)
+		registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate())
+		callbackCalls := 0
+		err := registrar.inspect(fixture.workspace, func(workspaceAuthorityRegistrationScope) error {
+			callbackCalls++
+			return nil
+		})
 		if err == nil {
 			t.Fatal("registration followed a symlinked host-root ancestor")
+		}
+		if callbackCalls != 0 {
+			t.Fatalf("symlinked host-root ancestor callback calls = %d, want zero", callbackCalls)
 		}
 		if after := snapshotWorkspaceAuthorityTopology(t, ancestor, realAncestor); !reflect.DeepEqual(after, before) {
 			t.Fatalf("ancestor-symlink rejection changed topology\nbefore: %#v\nafter:  %#v", before, after)
 		}
+		assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, descriptorPaths...)
 	})
 
 	t.Run("opened root renamed and replaced", func(t *testing.T) {
@@ -694,27 +829,42 @@ func TestWorkspaceAuthorityRegistrationRejectsSymlinkedOrRenamedHostRoot(t *test
 			RecordRev:      1,
 			RegistrySchema: 1,
 		})
-		registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate(), nil, nil)
-		inspection, err := registrar.inspect(fixture.workspace)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer closeWorkspaceAuthorityInspection(t, inspection)
-
 		movedRoot := fixture.hostRoot + ".opened"
-		if err := os.Rename(fixture.hostRoot, movedRoot); err != nil {
-			t.Fatal(err)
+		descriptorPaths := workspaceAuthorityRegistrationFixturePaths(fixture)
+		descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, descriptorPaths...)
+		var beforeRejection map[string]workspaceAuthorityTopologyEntry
+		openWorkspace := func(configuredPath string) (*os.File, error) {
+			workspace, err := openWorkspaceAuthorityTestDirectory(configuredPath)
+			if err != nil {
+				return nil, err
+			}
+			if err := os.Rename(fixture.hostRoot, movedRoot); err != nil {
+				workspace.Close()
+				return nil, err
+			}
+			if err := os.Mkdir(fixture.hostRoot, 0o700); err != nil {
+				workspace.Close()
+				return nil, err
+			}
+			beforeRejection = snapshotWorkspaceAuthorityTopology(t, fixture.hostRoot, movedRoot)
+			return workspace, nil
 		}
-		if err := os.Mkdir(fixture.hostRoot, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		before := snapshotWorkspaceAuthorityTopology(t, fixture.hostRoot, movedRoot)
-		if err := inspection.validatePinnedPaths(); !errors.Is(err, errRuntimeIntegrityMismatch) {
+		registrar := newWorkspaceAuthorityRegistrarForTest(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate(), workspaceAuthorityRegistrationTestOps{openWorkspace: openWorkspace})
+		callbackCalls := 0
+		err := registrar.inspect(fixture.workspace, func(workspaceAuthorityRegistrationScope) error {
+			callbackCalls++
+			return nil
+		})
+		if !errors.Is(err, errRuntimeIntegrityMismatch) {
 			t.Fatalf("renamed host root error = %v, want integrity mismatch", err)
 		}
-		if after := snapshotWorkspaceAuthorityTopology(t, fixture.hostRoot, movedRoot); !reflect.DeepEqual(after, before) {
-			t.Fatalf("renamed-root rejection changed topology\nbefore: %#v\nafter:  %#v", before, after)
+		if callbackCalls != 0 {
+			t.Fatalf("renamed host-root callback calls = %d, want zero", callbackCalls)
 		}
+		if after := snapshotWorkspaceAuthorityTopology(t, fixture.hostRoot, movedRoot); !reflect.DeepEqual(after, beforeRejection) {
+			t.Fatalf("renamed-root rejection changed topology\nbefore: %#v\nafter:  %#v", beforeRejection, after)
+		}
+		assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, descriptorPaths...)
 	})
 }
 
@@ -724,36 +874,148 @@ func TestWorkspaceAuthorityRegistrationRejectsReplacedWorkspacesRoot(t *testing.
 		RecordRev:      1,
 		RegistrySchema: 1,
 	})
-	registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate(), nil, nil)
-	inspection, err := registrar.inspect(fixture.workspace)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer closeWorkspaceAuthorityInspection(t, inspection)
-
 	movedWorkspaces := fixture.workspacesRoot + ".opened"
-	if err := os.Rename(fixture.workspacesRoot, movedWorkspaces); err != nil {
-		t.Fatal(err)
+	descriptorPaths := workspaceAuthorityRegistrationFixturePaths(fixture)
+	descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, descriptorPaths...)
+	var beforeRejection map[string]workspaceAuthorityTopologyEntry
+	openWorkspace := func(configuredPath string) (*os.File, error) {
+		workspace, err := openWorkspaceAuthorityTestDirectory(configuredPath)
+		if err != nil {
+			return nil, err
+		}
+		if err := os.Rename(fixture.workspacesRoot, movedWorkspaces); err != nil {
+			workspace.Close()
+			return nil, err
+		}
+		if err := os.Mkdir(fixture.workspacesRoot, 0o700); err != nil {
+			workspace.Close()
+			return nil, err
+		}
+		writePrivateAuthorityTestFile(t, fixture.registryLock, nil)
+		replacementRegistry, encodeErr := encodeWorkspaceRegistryJCSV1(workspaceRegistryJCSV1{
+			Entries:        []workspaceRegistryEntryJCSV1{},
+			RecordRev:      1,
+			RegistrySchema: 1,
+		})
+		if encodeErr != nil {
+			workspace.Close()
+			return nil, encodeErr
+		}
+		writePrivateAuthorityTestFile(t, fixture.registry, replacementRegistry)
+		beforeRejection = snapshotWorkspaceAuthorityTopology(t, fixture.hostRoot, movedWorkspaces)
+		return workspace, nil
 	}
-	if err := os.Mkdir(fixture.workspacesRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	writePrivateAuthorityTestFile(t, fixture.registryLock, nil)
-	replacementRegistry, err := encodeWorkspaceRegistryJCSV1(workspaceRegistryJCSV1{
-		Entries:        []workspaceRegistryEntryJCSV1{},
-		RecordRev:      1,
-		RegistrySchema: 1,
+	registrar := newWorkspaceAuthorityRegistrarForTest(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate(), workspaceAuthorityRegistrationTestOps{openWorkspace: openWorkspace})
+	callbackCalls := 0
+	err := registrar.inspect(fixture.workspace, func(workspaceAuthorityRegistrationScope) error {
+		callbackCalls++
+		return nil
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	writePrivateAuthorityTestFile(t, fixture.registry, replacementRegistry)
-	before := snapshotWorkspaceAuthorityTopology(t, fixture.hostRoot, movedWorkspaces)
-	if err := inspection.validatePinnedPaths(); !errors.Is(err, errRuntimeIntegrityMismatch) {
+	if !errors.Is(err, errRuntimeIntegrityMismatch) {
 		t.Fatalf("replaced workspaces root error = %v, want integrity mismatch", err)
 	}
-	if after := snapshotWorkspaceAuthorityTopology(t, fixture.hostRoot, movedWorkspaces); !reflect.DeepEqual(after, before) {
-		t.Fatalf("workspaces-root replacement rejection changed topology\nbefore: %#v\nafter:  %#v", before, after)
+	if callbackCalls != 0 {
+		t.Fatalf("replaced workspaces-root callback calls = %d, want zero", callbackCalls)
+	}
+	if after := snapshotWorkspaceAuthorityTopology(t, fixture.hostRoot, movedWorkspaces); !reflect.DeepEqual(after, beforeRejection) {
+		t.Fatalf("workspaces-root replacement rejection changed topology\nbefore: %#v\nafter:  %#v", beforeRejection, after)
+	}
+	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, descriptorPaths...)
+}
+
+func TestWorkspaceAuthorityRegistrationRejectsReplacedRegistryNodesBeforeCallback(t *testing.T) {
+	tests := []struct {
+		name           string
+		target         func(workspaceAuthorityRegistrationFixture) string
+		replace        func(*testing.T, string, string)
+		proveSplitLock bool
+	}{
+		{
+			name:   "registry lock",
+			target: func(fixture workspaceAuthorityRegistrationFixture) string { return fixture.registryLock },
+			replace: func(t *testing.T, _, namedPath string) {
+				writePrivateAuthorityTestFile(t, namedPath, nil)
+			},
+			proveSplitLock: true,
+		},
+		{
+			name:   "registry private",
+			target: func(fixture workspaceAuthorityRegistrationFixture) string { return fixture.registry },
+			replace: func(t *testing.T, movedPath, namedPath string) {
+				raw, err := os.ReadFile(movedPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				writePrivateAuthorityTestFile(t, namedPath, raw)
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newWorkspaceAuthorityRegistrationFixture(t, workspaceRegistryJCSV1{
+				Entries:        []workspaceRegistryEntryJCSV1{},
+				RecordRev:      1,
+				RegistrySchema: 1,
+			})
+			targetPath := test.target(fixture)
+			movedPath := targetPath + ".opened"
+			descriptorPaths := workspaceAuthorityRegistrationFixturePaths(fixture)
+			descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, descriptorPaths...)
+			openCalls := 0
+			var beforeRejection map[string]workspaceAuthorityTopologyEntry
+			splitLockProved := false
+			openWorkspace := func(configuredPath string) (*os.File, error) {
+				openCalls++
+				workspace, err := openWorkspaceAuthorityTestDirectory(configuredPath)
+				if err != nil {
+					return nil, err
+				}
+				if err := os.Rename(targetPath, movedPath); err != nil {
+					workspace.Close()
+					return nil, err
+				}
+				test.replace(t, movedPath, targetPath)
+				if test.proveSplitLock {
+					if err := tryWorkspaceAuthorityExclusiveLock(targetPath); err != nil {
+						workspace.Close()
+						return nil, fmt.Errorf("replacement registry lock should expose a distinct lock domain: %w", err)
+					}
+					splitLockProved = true
+				}
+				beforeRejection = snapshotWorkspaceAuthorityTopology(t, fixture.base)
+				return workspace, nil
+			}
+			registrar := newWorkspaceAuthorityRegistrarForTest(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate(), workspaceAuthorityRegistrationTestOps{openWorkspace: openWorkspace})
+			callbackCalls := 0
+			err := registrar.inspect(fixture.workspace, func(workspaceAuthorityRegistrationScope) error {
+				callbackCalls++
+				return nil
+			})
+			if !errors.Is(err, errRuntimeIntegrityMismatch) {
+				t.Fatalf("replaced %s error = %v, want integrity mismatch", test.name, err)
+			}
+			if callbackCalls != 0 {
+				t.Fatalf("replaced %s callback calls = %d, want zero", test.name, callbackCalls)
+			}
+			if openCalls != 1 {
+				t.Fatalf("replaced %s workspace opener calls = %d, want exactly one", test.name, openCalls)
+			}
+			if test.proveSplitLock && !splitLockProved {
+				t.Fatal("registry lock replacement did not prove the named path selected a distinct lock inode")
+			}
+			if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, beforeRejection) {
+				t.Fatalf("replaced %s rejection changed topology\nbefore: %#v\nafter:  %#v", test.name, beforeRejection, after)
+			}
+			for _, lockPath := range []string{fixture.registryLock, movedPath} {
+				if test.proveSplitLock {
+					if err := tryWorkspaceAuthorityExclusiveLock(lockPath); err != nil {
+						t.Fatalf("registry scope leaked lock on %q after rejection: %v", lockPath, err)
+					}
+				}
+			}
+			assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, descriptorPaths...)
+		})
 	}
 }
 
@@ -829,19 +1091,66 @@ func TestWorkspaceAuthorityRegistrationRejectsAuthorityWorkspaceOverlap(t *testi
 				test.afterPrepare(t, hostRoot, workspace)
 			}
 			before := snapshotWorkspaceAuthorityTopology(t, hostRoot, workspace)
-			registrar := newWorkspaceAuthorityRegistrar(hostRoot, uint32(os.Geteuid()), newWorkspaceAuthorityCapabilityGate(), nil, nil)
-			inspection, err := registrar.inspect(workspace)
-			if inspection != nil {
-				closeWorkspaceAuthorityInspection(t, inspection)
-			}
+			descriptorPaths := []string{hostRoot, filepath.Join(hostRoot, "workspaces"), filepath.Join(hostRoot, "workspaces", "registry.lock"), filepath.Join(hostRoot, "workspaces", "registry.private.json"), workspace}
+			descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, descriptorPaths...)
+			registrar := newWorkspaceAuthorityRegistrar(hostRoot, uint32(os.Geteuid()), newWorkspaceAuthorityCapabilityGate())
+			callbackCalls := 0
+			err := registrar.inspect(workspace, func(workspaceAuthorityRegistrationScope) error {
+				callbackCalls++
+				return nil
+			})
 			if !errors.Is(err, errRuntimeConflict) {
 				t.Fatalf("overlapping authority/workspace error = %v, want conflict", err)
+			}
+			if callbackCalls != 0 {
+				t.Fatalf("overlapping authority/workspace callback calls = %d, want zero", callbackCalls)
 			}
 			if after := snapshotWorkspaceAuthorityTopology(t, hostRoot, workspace); !reflect.DeepEqual(after, before) {
 				t.Fatalf("overlap rejection changed topology\nbefore: %#v\nafter:  %#v", before, after)
 			}
+			assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, descriptorPaths...)
 		})
 	}
+}
+
+func TestWorkspaceAuthorityRegistrationAcceptsConfiguredAndResolvedSiblingPrefix(t *testing.T) {
+	base := t.TempDir()
+	hostRoot := filepath.Join(base, "workspace-authority")
+	prepareWorkspaceAuthorityRegistrationRoot(t, hostRoot, workspaceRegistryJCSV1{
+		Entries:        []workspaceRegistryEntryJCSV1{},
+		RecordRev:      1,
+		RegistrySchema: 1,
+	})
+	workspace := filepath.Join(base, "workspace")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configuredWorkspace := filepath.Join(base, "configured-workspace")
+	if err := os.Symlink(workspace, configuredWorkspace); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotWorkspaceAuthorityTopology(t, base)
+	descriptorPaths := []string{hostRoot, filepath.Join(hostRoot, "workspaces"), filepath.Join(hostRoot, "workspaces", "registry.lock"), filepath.Join(hostRoot, "workspaces", "registry.private.json"), workspace}
+	descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, descriptorPaths...)
+	registrar := newWorkspaceAuthorityRegistrar(hostRoot, uint32(os.Geteuid()), newWorkspaceAuthorityCapabilityGate())
+	callbackCalls := 0
+	err := registrar.inspect(configuredWorkspace, func(scope workspaceAuthorityRegistrationScope) error {
+		callbackCalls++
+		if authorityID, matched := scope.matchedWorkspaceAuthorityID(); matched {
+			t.Fatalf("unregistered sibling-prefix workspace matched authority %q", authorityID)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("sibling-prefix workspace inspection: %v", err)
+	}
+	if callbackCalls != 1 {
+		t.Fatalf("sibling-prefix workspace callback calls = %d, want exactly one", callbackCalls)
+	}
+	if after := snapshotWorkspaceAuthorityTopology(t, base); !reflect.DeepEqual(after, before) {
+		t.Fatalf("sibling-prefix workspace inspection changed topology\nbefore: %#v\nafter:  %#v", before, after)
+	}
+	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, descriptorPaths...)
 }
 
 func TestWorkspaceAuthorityCapabilityRejectsBeforeRegistryLockSelection(t *testing.T) {
@@ -867,15 +1176,21 @@ func TestWorkspaceAuthorityCapabilityRejectsBeforeRegistryLockSelection(t *testi
 	}
 	writePrivateAuthorityTestFile(t, filepath.Join(workspacesRoot, "registry.private.json"), registryRaw)
 	before := snapshotWorkspaceAuthorityTopology(t, base)
+	descriptorPaths := []string{hostRoot, workspacesRoot, filepath.Join(workspacesRoot, "registry.private.json"), workspace}
+	descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, descriptorPaths...)
 
 	invalidGate := workspaceAuthorityCapabilityGate{capabilities: []workspaceAuthorityCapability{{id: RuntimeAuthorityGuardCapabilityV1}}}
-	registrar := newWorkspaceAuthorityRegistrar(hostRoot, uint32(os.Geteuid()), invalidGate, nil, nil)
-	inspection, err := registrar.inspect(workspace)
-	if inspection != nil {
-		closeWorkspaceAuthorityInspection(t, inspection)
-	}
+	registrar := newWorkspaceAuthorityRegistrar(hostRoot, uint32(os.Geteuid()), invalidGate)
+	callbackCalls := 0
+	err = registrar.inspect(workspace, func(workspaceAuthorityRegistrationScope) error {
+		callbackCalls++
+		return nil
+	})
 	if !errors.Is(err, errRuntimeUnsupportedSchema) {
 		t.Fatalf("invalid capability error = %v, want unsupported schema before missing lock", err)
+	}
+	if callbackCalls != 0 {
+		t.Fatalf("invalid capability callback calls = %d, want zero", callbackCalls)
 	}
 	if _, statErr := os.Lstat(filepath.Join(workspacesRoot, "registry.lock")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("invalid capability selected or created registry lock: %v", statErr)
@@ -883,6 +1198,75 @@ func TestWorkspaceAuthorityCapabilityRejectsBeforeRegistryLockSelection(t *testi
 	if after := snapshotWorkspaceAuthorityTopology(t, base); !reflect.DeepEqual(after, before) {
 		t.Fatalf("capability rejection changed topology\nbefore: %#v\nafter:  %#v", before, after)
 	}
+	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, descriptorPaths...)
+}
+
+func TestWorkspaceAuthorityRegistryLockSpansPrivateValidationIdentityAndScopedCallback(t *testing.T) {
+	fixture := newWorkspaceAuthorityRegistrationFixture(t, workspaceRegistryJCSV1{
+		Entries:        []workspaceRegistryEntryJCSV1{},
+		RecordRev:      1,
+		RegistrySchema: 1,
+	})
+	descriptorPaths := workspaceAuthorityRegistrationFixturePaths(fixture)
+	descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, descriptorPaths...)
+	wantLock := workspaceAuthorityLockIdentityAtPath(t, fixture.registryLock)
+	registryInfo, err := os.Lstat(fixture.registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registryValidationLocked := false
+	validatePrivateNode := func(opened *os.File, expectedUID uint32) error {
+		info, statErr := opened.Stat()
+		if statErr != nil {
+			return statErr
+		}
+		if os.SameFile(info, registryInfo) {
+			if lockErr := tryWorkspaceAuthorityExclusiveLock(fixture.registryLock); !errors.Is(lockErr, syscall.EWOULDBLOCK) {
+				return fmt.Errorf("registry lock during registry.private validation = %v, want would-block", lockErr)
+			}
+			registryValidationLocked = true
+		}
+		return validateWorkspaceAuthorityTestPrivateNode(opened, expectedUID)
+	}
+	identityOpenLocked := false
+	openWorkspace := func(configuredPath string) (*os.File, error) {
+		if lockErr := tryWorkspaceAuthorityExclusiveLock(fixture.registryLock); !errors.Is(lockErr, syscall.EWOULDBLOCK) {
+			return nil, fmt.Errorf("registry lock during workspace identity open = %v, want would-block", lockErr)
+		}
+		identityOpenLocked = true
+		return openWorkspaceAuthorityTestDirectory(configuredPath)
+	}
+	registrar := newWorkspaceAuthorityRegistrarForTest(
+		fixture.hostRoot,
+		fixture.ownerUID,
+		newWorkspaceAuthorityCapabilityGate(),
+		workspaceAuthorityRegistrationTestOps{openWorkspace: openWorkspace, validatePrivateNode: validatePrivateNode},
+	)
+	callbackCalls := 0
+	err = registrar.inspect(fixture.workspace, func(scope workspaceAuthorityRegistrationScope) error {
+		callbackCalls++
+		device, inode := scope.registryLockIdentity()
+		if got := (workspaceAuthorityLockIdentity{device: device, inode: inode}); got != wantLock {
+			return fmt.Errorf("scoped registry lock identity = %+v, want named inode %+v", got, wantLock)
+		}
+		if lockErr := tryWorkspaceAuthorityExclusiveLock(fixture.registryLock); !errors.Is(lockErr, syscall.EWOULDBLOCK) {
+			return fmt.Errorf("registry lock during authorized callback = %v, want would-block", lockErr)
+		}
+		if authorityID, matched := scope.matchedWorkspaceAuthorityID(); matched {
+			return fmt.Errorf("empty registry matched authority %q", authorityID)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("registry lock scope proof: %v", err)
+	}
+	if !registryValidationLocked || !identityOpenLocked || callbackCalls != 1 {
+		t.Fatalf("registry lock scope checkpoints validation/open/callback = %t/%t/%d, want true/true/1", registryValidationLocked, identityOpenLocked, callbackCalls)
+	}
+	if err := tryWorkspaceAuthorityExclusiveLock(fixture.registryLock); err != nil {
+		t.Fatalf("registry lock remained held after scoped callback: %v", err)
+	}
+	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, descriptorPaths...)
 }
 
 func TestWorkspaceAuthorityRegistryLookupClassifiesIdentityWithoutMutation(t *testing.T) {
@@ -911,6 +1295,27 @@ func TestWorkspaceAuthorityRegistryLookupClassifiesIdentityWithoutMutation(t *te
 			registry: func(identity runtimeWorkspaceIdentity) workspaceRegistryJCSV1 {
 				record := workspaceRegistryWithIdentity(identity, testWorkspaceAuthorityID)
 				record.Entries[0].Inode = strconv.FormatUint(identity.inode+1, 10)
+				return record
+			},
+			wantError: errRuntimeIntegrityMismatch,
+		},
+		{
+			name: "configured spelling changed device only",
+			registry: func(identity runtimeWorkspaceIdentity) workspaceRegistryJCSV1 {
+				record := workspaceRegistryWithIdentity(identity, testWorkspaceAuthorityID)
+				record.Entries[0].Device = strconv.FormatUint(identity.device+1, 10)
+				return record
+			},
+			wantError: errRuntimeIntegrityMismatch,
+		},
+		{
+			name: "configured spelling changed root identity hash only",
+			registry: func(identity runtimeWorkspaceIdentity) workspaceRegistryJCSV1 {
+				record := workspaceRegistryWithIdentity(identity, testWorkspaceAuthorityID)
+				record.Entries[0].WorkspaceRootIdentitySHA256 = strings.Repeat("f", 64)
+				if record.Entries[0].WorkspaceRootIdentitySHA256 == identity.rootHash {
+					record.Entries[0].WorkspaceRootIdentitySHA256 = strings.Repeat("e", 64)
+				}
 				return record
 			},
 			wantError: errRuntimeIntegrityMismatch,
@@ -953,41 +1358,50 @@ func TestWorkspaceAuthorityRegistryLookupClassifiesIdentityWithoutMutation(t *te
 				raw = test.mutateRaw(raw)
 			}
 			hostRoot := filepath.Join(base, "authority")
-			workspacesRoot, _ := prepareWorkspaceAuthorityRegistrationRoot(t, hostRoot, workspaceRegistryJCSV1{
+			workspacesRoot, registryLock := prepareWorkspaceAuthorityRegistrationRoot(t, hostRoot, workspaceRegistryJCSV1{
 				Entries:        []workspaceRegistryEntryJCSV1{},
 				RecordRev:      1,
 				RegistrySchema: 1,
 			})
 			writePrivateAuthorityTestFile(t, filepath.Join(workspacesRoot, "registry.private.json"), raw)
 			before := snapshotWorkspaceAuthorityTopology(t, base)
+			descriptorPaths := []string{hostRoot, workspacesRoot, registryLock, filepath.Join(workspacesRoot, "registry.private.json"), workspace}
+			descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, descriptorPaths...)
 
-			registrar := newWorkspaceAuthorityRegistrar(hostRoot, uint32(os.Geteuid()), newWorkspaceAuthorityCapabilityGate(), nil, nil)
-			inspection, err := registrar.inspect(workspace)
+			registrar := newWorkspaceAuthorityRegistrar(hostRoot, uint32(os.Geteuid()), newWorkspaceAuthorityCapabilityGate())
+			callbackCalls := 0
+			var authorityID string
+			var matched bool
+			err = registrar.inspect(workspace, func(scope workspaceAuthorityRegistrationScope) error {
+				callbackCalls++
+				authorityID, matched = scope.matchedWorkspaceAuthorityID()
+				return nil
+			})
 			if test.wantError != nil {
-				if inspection != nil {
-					closeWorkspaceAuthorityInspection(t, inspection)
-				}
 				if !errors.Is(err, test.wantError) {
 					t.Fatalf("registry lookup error = %v, want %v", err, test.wantError)
+				}
+				if callbackCalls != 0 {
+					t.Fatalf("invalid registry callback calls = %d, want zero", callbackCalls)
 				}
 			} else {
 				if err != nil {
 					t.Fatal(err)
 				}
-				authorityID, matched := inspection.matchedWorkspaceAuthorityID()
+				if callbackCalls != 1 {
+					t.Fatalf("valid registry callback calls = %d, want exactly one", callbackCalls)
+				}
 				if matched != test.wantEntry {
-					closeWorkspaceAuthorityInspection(t, inspection)
 					t.Fatalf("registry match authority id = %q, present=%t, want present=%t", authorityID, matched, test.wantEntry)
 				}
 				if test.wantEntry && authorityID != testWorkspaceAuthorityID {
-					closeWorkspaceAuthorityInspection(t, inspection)
 					t.Fatalf("matched workspace authority id = %q, want %q", authorityID, testWorkspaceAuthorityID)
 				}
-				closeWorkspaceAuthorityInspection(t, inspection)
 			}
 			if after := snapshotWorkspaceAuthorityTopology(t, base); !reflect.DeepEqual(after, before) {
 				t.Fatalf("registry lookup changed topology\nbefore: %#v\nafter:  %#v", before, after)
 			}
+			assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, descriptorPaths...)
 		})
 	}
 }
@@ -998,49 +1412,143 @@ func TestWorkspaceAuthorityRegistryCriticalSectionSerializesLocally(t *testing.T
 		RecordRev:      1,
 		RegistrySchema: 1,
 	})
-	registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate(), nil, nil)
-	first, err := registrar.inspect(fixture.workspace)
-	if err != nil {
-		t.Fatal(err)
-	}
-	firstClosed := false
+	registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate())
+	descriptorPaths := workspaceAuthorityRegistrationFixturePaths(fixture)
+	descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, descriptorPaths...)
+	firstEntered := make(chan struct{})
+	firstLockIdentity := make(chan workspaceAuthorityLockIdentity, 1)
+	firstRelease := make(chan struct{})
+	firstReleased := false
 	t.Cleanup(func() {
-		if !firstClosed {
-			_ = first.close()
+		if !firstReleased {
+			close(firstRelease)
 		}
 	})
-
-	attempted := make(chan struct{})
-	result := make(chan error, 1)
+	firstResult := make(chan error, 1)
 	go func() {
-		close(attempted)
-		second, err := registrar.inspect(fixture.workspace)
-		if second != nil {
-			if closeErr := second.close(); err == nil {
-				err = closeErr
-			}
-		}
-		result <- err
+		firstResult <- registrar.inspect(fixture.workspace, func(scope workspaceAuthorityRegistrationScope) error {
+			device, inode := scope.registryLockIdentity()
+			firstLockIdentity <- workspaceAuthorityLockIdentity{device: device, inode: inode}
+			close(firstEntered)
+			<-firstRelease
+			return nil
+		})
 	}()
-	<-attempted
+	<-firstEntered
+	if got, want := <-firstLockIdentity, workspaceAuthorityLockIdentityAtPath(t, fixture.registryLock); got != want {
+		t.Fatalf("local holder registry lock identity = %+v, want exact named inode %+v", got, want)
+	}
+	if err := tryWorkspaceAuthorityExclusiveLock(fixture.registryLock); !errors.Is(err, syscall.EWOULDBLOCK) {
+		t.Fatalf("independent nonblocking flock while local holder callback active = %v, want would-block", err)
+	}
+
+	secondAttempted := make(chan struct{})
+	secondEntered := make(chan struct{})
+	secondResult := make(chan error, 1)
+	go func() {
+		close(secondAttempted)
+		secondResult <- registrar.inspect(fixture.workspace, func(workspaceAuthorityRegistrationScope) error {
+			close(secondEntered)
+			return nil
+		})
+	}()
+	<-secondAttempted
 	select {
-	case err := <-result:
-		t.Fatalf("second local registry inspection entered before first released: %v", err)
+	case <-secondEntered:
+		t.Fatal("second local registry callback entered before first callback returned")
+	case err := <-secondResult:
+		t.Fatalf("second local registry scope returned before first callback released: %v", err)
 	case <-time.After(150 * time.Millisecond):
 	}
 
-	if err := first.close(); err != nil {
-		t.Fatal(err)
-	}
-	firstClosed = true
+	close(firstRelease)
+	firstReleased = true
 	select {
-	case err := <-result:
+	case err := <-firstResult:
 		if err != nil {
-			t.Fatalf("second local registry inspection after release: %v", err)
+			t.Fatalf("first local registry scope after callback release: %v", err)
 		}
 	case <-time.After(3 * time.Second):
-		t.Fatal("second local registry inspection did not enter after release")
+		t.Fatal("first local registry scope did not return after callback release")
 	}
+	secondResultConsumed := false
+	select {
+	case <-secondEntered:
+	case err := <-secondResult:
+		secondResultConsumed = true
+		if err != nil {
+			t.Fatalf("second local registry scope after release: %v", err)
+		}
+		select {
+		case <-secondEntered:
+		default:
+			t.Fatal("second local registry scope returned without entering its callback")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("second local registry callback did not enter after first callback returned")
+	}
+	if !secondResultConsumed {
+		select {
+		case err := <-secondResult:
+			if err != nil {
+				t.Fatalf("second local registry scope after release: %v", err)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("second local registry scope did not return after callback")
+		}
+	}
+	if err := tryWorkspaceAuthorityExclusiveLock(fixture.registryLock); err != nil {
+		t.Fatalf("local registry scope leaked lock after callbacks: %v", err)
+	}
+	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, descriptorPaths...)
+}
+
+func TestWorkspaceAuthorityRegistrationScopeReleasesDescriptorsAndLockAfterCallbackError(t *testing.T) {
+	fixture := newWorkspaceAuthorityRegistrationFixture(t, workspaceRegistryJCSV1{
+		Entries:        []workspaceRegistryEntryJCSV1{},
+		RecordRev:      1,
+		RegistrySchema: 1,
+	})
+	descriptorPaths := workspaceAuthorityRegistrationFixturePaths(fixture)
+	descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, descriptorPaths...)
+	registrar := newWorkspaceAuthorityRegistrar(fixture.hostRoot, fixture.ownerUID, newWorkspaceAuthorityCapabilityGate())
+	wantError := errors.New("test registration callback failure")
+	callbackCalls := 0
+	err := registrar.inspect(fixture.workspace, func(workspaceAuthorityRegistrationScope) error {
+		callbackCalls++
+		return wantError
+	})
+	if !errors.Is(err, wantError) {
+		t.Fatalf("registration callback error = %v, want propagated sentinel", err)
+	}
+	if callbackCalls != 1 {
+		t.Fatalf("failing registration callback calls = %d, want exactly one", callbackCalls)
+	}
+	if err := tryWorkspaceAuthorityExclusiveLock(fixture.registryLock); err != nil {
+		t.Fatalf("registration callback error leaked registry lock: %v", err)
+	}
+	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, descriptorPaths...)
+
+	retryCalls := 0
+	retryResult := make(chan error, 1)
+	go func() {
+		retryResult <- registrar.inspect(fixture.workspace, func(workspaceAuthorityRegistrationScope) error {
+			retryCalls++
+			return nil
+		})
+	}()
+	select {
+	case err := <-retryResult:
+		if err != nil {
+			t.Fatalf("registration retry after callback error: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("registration retry remained blocked after callback error")
+	}
+	if retryCalls != 1 {
+		t.Fatalf("registration retry callback calls = %d, want exactly one", retryCalls)
+	}
+	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, descriptorPaths...)
 }
 
 type workspaceAuthorityRegistrationFixture struct {
@@ -1051,6 +1559,63 @@ type workspaceAuthorityRegistrationFixture struct {
 	registry       string
 	workspace      string
 	ownerUID       uint32
+}
+
+type workspaceAuthorityRegistrationTestOps struct {
+	openWorkspace       func(string) (*os.File, error)
+	validatePrivateNode func(*os.File, uint32) error
+}
+
+type workspaceAuthorityOpenDescriptorSnapshot struct {
+	total  int
+	byPath map[string]int
+}
+
+func workspaceAuthorityRegistrationFixturePaths(fixture workspaceAuthorityRegistrationFixture) []string {
+	return []string{fixture.hostRoot, fixture.workspacesRoot, fixture.registryLock, fixture.registry, fixture.workspace}
+}
+
+func snapshotWorkspaceAuthorityOpenDescriptors(t *testing.T, paths ...string) workspaceAuthorityOpenDescriptorSnapshot {
+	t.Helper()
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	openInfos := make([]os.FileInfo, 0, len(entries))
+	for _, entry := range entries {
+		info, statErr := os.Stat(filepath.Join("/proc/self/fd", entry.Name()))
+		if errors.Is(statErr, os.ErrNotExist) {
+			continue
+		}
+		if statErr != nil {
+			t.Fatal(statErr)
+		}
+		openInfos = append(openInfos, info)
+	}
+	snapshot := workspaceAuthorityOpenDescriptorSnapshot{total: len(openInfos), byPath: map[string]int{}}
+	for _, path := range paths {
+		want, statErr := os.Stat(path)
+		if errors.Is(statErr, os.ErrNotExist) || errors.Is(statErr, syscall.ENOTDIR) {
+			continue
+		}
+		if statErr != nil {
+			t.Fatal(statErr)
+		}
+		for _, info := range openInfos {
+			if os.SameFile(info, want) {
+				snapshot.byPath[path]++
+			}
+		}
+	}
+	return snapshot
+}
+
+func assertWorkspaceAuthorityOpenDescriptorsUnchanged(t *testing.T, before workspaceAuthorityOpenDescriptorSnapshot, paths ...string) {
+	t.Helper()
+	after := snapshotWorkspaceAuthorityOpenDescriptors(t, paths...)
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("workspace-authority descriptor leak\nbefore: %#v\nafter:  %#v", before, after)
+	}
 }
 
 type testWorkspaceAuthorityIdentity struct {
@@ -1082,6 +1647,30 @@ func testWorkspaceAuthorityIdentityAtPath(t *testing.T, configuredWorkspace stri
 	}
 	identity.rootHash = testWorkspaceAuthoritySHA256(testWorkspaceAuthorityIdentityJCS(t, identity))
 	return testWorkspaceAuthorityIdentity{identity: identity, info: info}
+}
+
+func testWorkspaceAuthorityIdentityFromOpened(t *testing.T, configuredWorkspace string, workspace *os.File) runtimeWorkspaceIdentity {
+	t.Helper()
+	info, err := workspace.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatalf("opened workspace stat type = %T, want *syscall.Stat_t", info.Sys())
+	}
+	resolvedPath, err := os.Readlink(fmt.Sprintf("/proc/self/fd/%d", workspace.Fd()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := runtimeWorkspaceIdentity{
+		configuredPath: filepath.ToSlash(filepath.Clean(configuredWorkspace)),
+		resolvedPath:   filepath.ToSlash(resolvedPath),
+		device:         uint64(stat.Dev),
+		inode:          stat.Ino,
+	}
+	identity.rootHash = testWorkspaceAuthoritySHA256(testWorkspaceAuthorityIdentityJCS(t, identity))
+	return identity
 }
 
 func testWorkspaceAuthorityIdentityJCS(t *testing.T, identity runtimeWorkspaceIdentity) []byte {
@@ -1119,6 +1708,27 @@ func openWorkspaceAuthorityTestDirectory(configuredPath string) (*os.File, error
 		return nil, errRuntimeNoncanonical
 	}
 	return workspace, nil
+}
+
+func validateWorkspaceAuthorityTestPrivateNode(opened *os.File, expectedUID uint32) error {
+	if opened == nil {
+		return errRuntimeNoncanonical
+	}
+	info, err := opened.Stat()
+	if err != nil {
+		return err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != expectedUID {
+		return errRuntimeIntegrityMismatch
+	}
+	if info.IsDir() {
+		if !authorityPrivateModeIsExact(info.Mode(), authorityPrivateDirectoryMode) {
+			return errRuntimeIntegrityMismatch
+		}
+		return nil
+	}
+	return validateAuthorityPrivateFile(opened, expectedUID)
 }
 
 func countWorkspaceAuthorityDescriptors(t *testing.T, workspacePath string) int {
@@ -1212,16 +1822,6 @@ func writePrivateAuthorityTestFile(t *testing.T, path string, raw []byte) {
 	}
 }
 
-func closeWorkspaceAuthorityInspection(t *testing.T, inspection interface{ close() error }) {
-	t.Helper()
-	if inspection == nil {
-		return
-	}
-	if err := inspection.close(); err != nil {
-		t.Fatalf("close workspace authority registry inspection: %v", err)
-	}
-}
-
 type workspaceAuthorityTopologyEntry struct {
 	mode   os.FileMode
 	uid    uint32
@@ -1229,6 +1829,8 @@ type workspaceAuthorityTopologyEntry struct {
 	inode  uint64
 	links  uint64
 	size   int64
+	mtime  int64
+	ctime  int64
 	hash   string
 	target string
 }
@@ -1256,6 +1858,8 @@ func snapshotWorkspaceAuthorityTopology(t *testing.T, roots ...string) map[strin
 				inode:  stat.Ino,
 				links:  uint64(stat.Nlink),
 				size:   info.Size(),
+				mtime:  info.ModTime().UnixNano(),
+				ctime:  stat.Ctim.Sec*int64(time.Second) + stat.Ctim.Nsec,
 			}
 			switch {
 			case info.Mode()&os.ModeSymlink != 0:

@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -27,16 +29,29 @@ const (
 )
 
 func TestWorkspaceAuthorityRegistryCriticalSectionSerializesAcrossProcesses(t *testing.T) {
+	t.Setenv(workspaceAuthorityLockHelperEnv, "stale-parent-value")
+	t.Setenv(workspaceAuthorityLockRootEnv, "relative/poison-root")
+	t.Setenv(workspaceAuthorityLockWorkspaceEnv, "relative/poison-workspace")
+	warmWorkspaceAuthorityPipeDeadlines(t)
 	fixture := newWorkspaceAuthorityRegistrationFixture(t, workspaceRegistryJCSV1{
 		Entries:        []workspaceRegistryEntryJCSV1{},
 		RecordRev:      1,
 		RegistrySchema: 1,
 	})
+	descriptorPaths := workspaceAuthorityRegistrationFixturePaths(fixture)
+	descriptorsBefore := snapshotWorkspaceAuthorityOpenDescriptors(t, descriptorPaths...)
 	before := snapshotWorkspaceAuthorityTopology(t, fixture.base)
 
 	holder := startWorkspaceAuthorityLockHelper(t, fixture.hostRoot, fixture.workspace)
 	holder.waitAttempted(t)
 	holderLock := holder.waitReady(t, workspaceAuthorityLockProcessTimeout)
+	pathLock := workspaceAuthorityLockIdentityAtPath(t, fixture.registryLock)
+	if holderLock != pathLock {
+		t.Fatalf("holder registry lock identity = %+v, want exact named inode %+v", holderLock, pathLock)
+	}
+	if err := tryWorkspaceAuthorityExclusiveLock(fixture.registryLock); !errors.Is(err, syscall.EWOULDBLOCK) {
+		t.Fatalf("independent nonblocking flock while holder callback active = %v, want would-block", err)
+	}
 
 	contender := startWorkspaceAuthorityLockHelper(t, fixture.hostRoot, fixture.workspace)
 	contender.waitAttempted(t)
@@ -47,14 +62,39 @@ func TestWorkspaceAuthorityRegistryCriticalSectionSerializesAcrossProcesses(t *t
 	if contenderLock != holderLock {
 		t.Fatalf("processes serialized on different registry lock inodes: holder=%+v contender=%+v", holderLock, contenderLock)
 	}
-	pathLock := workspaceAuthorityLockIdentityAtPath(t, fixture.registryLock)
-	if holderLock != pathLock {
-		t.Fatalf("process registry lock identity = %+v, want named lock identity %+v", holderLock, pathLock)
+	if err := tryWorkspaceAuthorityExclusiveLock(fixture.registryLock); !errors.Is(err, syscall.EWOULDBLOCK) {
+		t.Fatalf("independent nonblocking flock while contender callback active = %v, want would-block", err)
 	}
 	contender.releaseAndWait(t)
 
 	if after := snapshotWorkspaceAuthorityTopology(t, fixture.base); !reflect.DeepEqual(after, before) {
 		t.Fatalf("cross-process registry locking changed authority topology\nbefore: %#v\nafter:  %#v", before, after)
+	}
+	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, descriptorPaths...)
+}
+
+func warmWorkspaceAuthorityPipeDeadlines(t *testing.T) {
+	t.Helper()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reader.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		reader.Close()
+		writer.Close()
+		t.Fatal(err)
+	}
+	if err := reader.SetReadDeadline(time.Time{}); err != nil {
+		reader.Close()
+		writer.Close()
+		t.Fatal(err)
+	}
+	if err := reader.Close(); err != nil {
+		writer.Close()
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -80,41 +120,27 @@ func TestWorkspaceAuthorityRegistryLockProcessHelper(t *testing.T) {
 	if _, err := attempted.Write([]byte{1}); err != nil {
 		t.Fatalf("signal registry lock attempt: %v", err)
 	}
-	registrar := newWorkspaceAuthorityRegistrar(hostRoot, uint32(os.Geteuid()), newWorkspaceAuthorityCapabilityGate(), nil, nil)
-	inspection, err := registrar.inspect(workspace)
-	if err != nil {
-		t.Fatalf("acquire process-shared registry critical section: %v", err)
-	}
-	defer func() {
-		if err := inspection.close(); err != nil {
-			t.Errorf("close process registry inspection: %v", err)
+	registrar := newWorkspaceAuthorityRegistrar(hostRoot, uint32(os.Geteuid()), newWorkspaceAuthorityCapabilityGate())
+	err := registrar.inspect(workspace, func(scope workspaceAuthorityRegistrationScope) error {
+		device, inode := scope.registryLockIdentity()
+		identity := workspaceAuthorityLockIdentity{device: device, inode: inode}
+		var payload [16]byte
+		binary.BigEndian.PutUint64(payload[:8], identity.device)
+		binary.BigEndian.PutUint64(payload[8:], identity.inode)
+		if _, err := ready.Write(payload[:]); err != nil {
+			return fmt.Errorf("signal acquired registry lock: %w", err)
 		}
-	}()
-
-	var identity workspaceAuthorityLockIdentity
-	inspection.observeRegistryLock(func(registryLock *os.File) {
-		lockInfo, statErr := registryLock.Stat()
-		if statErr != nil {
-			t.Fatal(statErr)
+		if err := release.SetReadDeadline(time.Now().Add(workspaceAuthorityLockProcessTimeout)); err != nil {
+			return err
 		}
-		lockStat, ok := lockInfo.Sys().(*syscall.Stat_t)
-		if !ok {
-			t.Fatalf("registry lock stat type = %T, want *syscall.Stat_t", lockInfo.Sys())
+		var signal [1]byte
+		if _, err := io.ReadFull(release, signal[:]); err != nil {
+			return fmt.Errorf("wait for registry lock release signal: %w", err)
 		}
-		identity = workspaceAuthorityLockIdentity{device: uint64(lockStat.Dev), inode: lockStat.Ino}
+		return nil
 	})
-	var payload [16]byte
-	binary.BigEndian.PutUint64(payload[:8], identity.device)
-	binary.BigEndian.PutUint64(payload[8:], identity.inode)
-	if _, err := ready.Write(payload[:]); err != nil {
-		t.Fatalf("signal acquired registry lock: %v", err)
-	}
-	if err := release.SetReadDeadline(time.Now().Add(workspaceAuthorityLockProcessTimeout)); err != nil {
-		t.Fatal(err)
-	}
-	var signal [1]byte
-	if _, err := io.ReadFull(release, signal[:]); err != nil {
-		t.Fatalf("wait for registry lock release signal: %v", err)
+	if err != nil {
+		t.Fatalf("process-shared registry critical section: %v", err)
 	}
 }
 
@@ -160,7 +186,7 @@ func startWorkspaceAuthorityLockHelper(t *testing.T, hostRoot, workspace string)
 	ctx, cancel := context.WithTimeout(context.Background(), workspaceAuthorityLockProcessTimeout)
 	output := &bytes.Buffer{}
 	command := exec.CommandContext(ctx, executable, "-test.run=^TestWorkspaceAuthorityRegistryLockProcessHelper$", "-test.count=1")
-	command.Env = append(os.Environ(),
+	command.Env = append(workspaceAuthorityLockHelperBaseEnvironment(),
 		workspaceAuthorityLockHelperEnv+"=1",
 		workspaceAuthorityLockRootEnv+"="+hostRoot,
 		workspaceAuthorityLockWorkspaceEnv+"="+workspace,
@@ -191,6 +217,22 @@ func startWorkspaceAuthorityLockHelper(t *testing.T, hostRoot, workspace string)
 	}
 	t.Cleanup(func() { helper.cleanup() })
 	return helper
+}
+
+func workspaceAuthorityLockHelperBaseEnvironment() []string {
+	blocked := map[string]bool{
+		workspaceAuthorityLockHelperEnv:    true,
+		workspaceAuthorityLockRootEnv:      true,
+		workspaceAuthorityLockWorkspaceEnv: true,
+	}
+	environment := make([]string, 0, len(os.Environ()))
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		if !blocked[name] {
+			environment = append(environment, entry)
+		}
+	}
+	return environment
 }
 
 func (helper *workspaceAuthorityLockHelper) waitAttempted(t *testing.T) {
@@ -249,6 +291,15 @@ func (helper *workspaceAuthorityLockHelper) releaseAndWait(t *testing.T) {
 	}
 	helper.waited = true
 	helper.cancel()
+	if err := helper.attempted.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+		helper.fail(t, "close registry lock attempted pipe", err)
+	}
+	helper.attempted = nil
+	if err := helper.ready.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+		helper.fail(t, "close registry lock ready pipe", err)
+	}
+	helper.ready = nil
+	helper.release = nil
 }
 
 func (helper *workspaceAuthorityLockHelper) fail(t *testing.T, operation string, err error) {
@@ -298,4 +349,16 @@ func workspaceAuthorityLockIdentityAtPath(t *testing.T, path string) workspaceAu
 		t.Fatalf("registry lock stat type = %T, want *syscall.Stat_t", info.Sys())
 	}
 	return workspaceAuthorityLockIdentity{device: uint64(stat.Dev), inode: stat.Ino}
+}
+
+func tryWorkspaceAuthorityExclusiveLock(path string) error {
+	lock, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return err
+	}
+	return syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
 }
