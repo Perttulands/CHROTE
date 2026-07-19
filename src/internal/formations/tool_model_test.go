@@ -116,10 +116,16 @@ func TestToolParameterScalarParserAcceptsFrozenDomain(t *testing.T) {
 		wantJSON string
 	}{
 		{name: "string", literal: `"strict"`, wantJSON: `"strict"`},
+		{name: "basic string escape", literal: `"line\nnext"`, wantJSON: `"line\nnext"`},
 		{name: "literal string", literal: `'strict'`, wantJSON: `"strict"`},
 		{name: "literal string with hash", literal: `'strict#mode'`, wantJSON: `"strict#mode"`},
 		{name: "boolean true", literal: "true", wantJSON: "true"},
 		{name: "boolean false", literal: "false", wantJSON: "false"},
+		{name: "signed decimal", literal: "+42", wantJSON: "42"},
+		{name: "decimal separators", literal: "9_007_199_254_740_991", wantJSON: "9007199254740991"},
+		{name: "hexadecimal", literal: "0x00_ff", wantJSON: "255"},
+		{name: "octal", literal: "0o17", wantJSON: "15"},
+		{name: "binary", literal: "0b1010", wantJSON: "10"},
 		{name: "minimum safe integer", literal: "-9007199254740991", wantJSON: "-9007199254740991"},
 		{name: "maximum safe integer", literal: "9007199254740991", wantJSON: "9007199254740991"},
 	}
@@ -138,6 +144,43 @@ func TestToolParameterScalarParserAcceptsFrozenDomain(t *testing.T) {
 				t.Fatalf("Tool parameter scalar %q projected as %s, want %s", tt.literal, gotJSON, tt.wantJSON)
 			}
 		})
+	}
+}
+
+func TestToolBoardParserProjectsLiteralStringFields(t *testing.T) {
+	raw := strings.NewReplacer(
+		`id = "tool_01J9_normalize"`, `id = 'tool_01J9_normalize'`,
+		`id = "tool_01J9_normalize_archive"`, `id = 'tool_01J9_normalize_archive'`,
+		`title = "Normalize report"`, `title = 'Normalize report'`,
+		`title = "Normalize archive"`, `title = 'Normalize archive'`,
+		`profileId = "json.normalize"`, `profileId = 'json.normalize'`,
+		`profileVersion = "1"`, `profileVersion = '1'`,
+		`mode = "strict"`, `mode = 'strict'`,
+		`id = "port_01J9_normalize_in"`, `id = 'port_01J9_normalize_in'`,
+		`id = "port_01J9_normalize_out"`, `id = 'port_01J9_normalize_out'`,
+		`id = "port_01J9_normalize_archive_in"`, `id = 'port_01J9_normalize_archive_in'`,
+		`id = "port_01J9_normalize_archive_out"`, `id = 'port_01J9_normalize_archive_out'`,
+		`name = "input"`, `name = 'input'`,
+		`name = "output"`, `name = 'output'`,
+		`label = "Report"`, `label = 'Report'`,
+		`label = "Normalized report"`, `label = 'Normalized report'`,
+		`direction = "input"`, `direction = 'input'`,
+		`direction = "output"`, `direction = 'output'`,
+		`kind = "work"`, `kind = 'work'`,
+		`acceptedMediaTypes = ["application/json"]`, `acceptedMediaTypes = ['application/json']`,
+		`role = "data"`, `role = 'data'`,
+	).Replace(frozenJSONNormalizeBoardFixture())
+
+	want, err := parseBoard([]byte(frozenJSONNormalizeBoardFixture()))
+	if err != nil {
+		t.Fatalf("parse basic-string Tool fixture: %v", err)
+	}
+	got, err := parseBoard([]byte(raw))
+	if err != nil {
+		t.Fatalf("parse literal-string Tool fixture: %v", err)
+	}
+	if !reflect.DeepEqual(got.Tools, want.Tools) {
+		t.Fatalf("literal-string Tool projection = %#v, want %#v", got.Tools, want.Tools)
 	}
 }
 
@@ -160,6 +203,16 @@ func TestToolParameterScalarParserRejectsBothUnsafeIntegerBounds(t *testing.T) {
 		t.Run(literal, func(t *testing.T) {
 			if _, err := parseToolParameterScalar(literal); err == nil {
 				t.Fatalf("Tool parameter scalar parser accepted unsafe integer %s", literal)
+			}
+		})
+	}
+}
+
+func TestToolParameterScalarParserRejectsInvalidTOMLLexemes(t *testing.T) {
+	for _, literal := range []string{`"\x41"`, "01", "-0x1", "1__0"} {
+		t.Run(literal, func(t *testing.T) {
+			if _, err := parseToolParameterScalar(literal); err == nil {
+				t.Fatalf("Tool parameter scalar parser accepted invalid TOML lexeme %s", literal)
 			}
 		})
 	}
@@ -192,6 +245,43 @@ func TestToolBoardParserRejectsNonTOMLRequiredBooleansWithoutMutation(t *testing
 	}
 }
 
+func TestToolBoardParserRejectsBareStringFieldsWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name string
+		old  string
+		new  string
+	}{
+		{name: "node profile", old: `profileId = "json.normalize"`, new: `profileId = json.normalize`},
+		{name: "port label", old: `label = "Report"`, new: `label = Report`},
+		{name: "media item", old: `acceptedMediaTypes = ["application/json"]`, new: `acceptedMediaTypes = [application/json]`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewStore(t.TempDir())
+			raw := strings.Replace(frozenJSONNormalizeBoardFixture(), tt.old, tt.new, 1)
+			path := store.BoardPath("tool-model")
+			writeFixture(t, path, raw)
+			wantIdentity := operativeFileIdentityForTest(t, path)
+
+			_, firstErr := store.ReadBoard("tool-model")
+			if firstErr == nil {
+				t.Fatalf("ReadBoard accepted bare Tool %s string", tt.name)
+			}
+			_, secondErr := store.ReadBoard("tool-model")
+			if secondErr == nil || secondErr.Error() != firstErr.Error() {
+				t.Fatalf("bare Tool %s error was not deterministic: first=%v second=%v", tt.name, firstErr, secondErr)
+			}
+			if got := readFile(t, path); got != raw {
+				t.Fatalf("rejected bare Tool %s changed canonical bytes:\n got %q\nwant %q", tt.name, got, raw)
+			}
+			if got := operativeFileIdentityForTest(t, path); got != wantIdentity {
+				t.Fatalf("rejected bare Tool %s replaced operative file identity = %v, want %v", tt.name, got, wantIdentity)
+			}
+		})
+	}
+}
+
 func TestToolBoardParserRejectsInvalidParameterForms(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -205,6 +295,9 @@ func TestToolBoardParserRejectsInvalidParameterForms(t *testing.T) {
 		{name: "nested table", params: "[tool.params.mode]\nvalue = \"strict\"\n"},
 		{name: "dotted nested value", params: "[tool.params]\nmode.value = \"strict\"\n"},
 		{name: "duplicate key", params: "[tool.params]\nmode = \"strict\"\nmode = \"strict\"\n"},
+		{name: "Go-only string escape", params: "[tool.params]\nmode = \"\\x41\"\n"},
+		{name: "leading-zero decimal", params: "[tool.params]\nmode = 01\n"},
+		{name: "signed hexadecimal", params: "[tool.params]\nmode = -0x1\n"},
 		{name: "unsafe negative integer", params: "[tool.params]\nmode = -9007199254740992\n"},
 		{name: "unsafe positive integer", params: "[tool.params]\nmode = 9007199254740992\n"},
 		{name: "second sibling invalid scalar", params: "[tool.params]\nmode = 1.5\n", secondSibling: true},
