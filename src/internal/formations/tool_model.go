@@ -142,7 +142,19 @@ func topLevelAssignmentTargetsTool(line tomlLine) bool {
 		return false
 	}
 	path, ok := parseTOMLKeyPath(line.body[:eq])
-	return ok && len(path) > 0 && path[0] == "tool"
+	if ok {
+		return len(path) > 0 && path[0] == "tool"
+	}
+	return malformedBasicQuotedRootAssignmentTargetsTool(line.body[:eq])
+}
+
+func malformedBasicQuotedRootAssignmentTargetsTool(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if !strings.HasPrefix(raw, "\"") {
+		return false
+	}
+	end := basicQuotedSegmentEnd(raw)
+	return end >= 0 && basicQuotedSegmentTargetsTool(raw[:end+1])
 }
 
 func malformedTOMLHeaderTargetsTool(line string) bool {
@@ -163,14 +175,9 @@ func malformedTOMLHeaderTargetsTool(line string) bool {
 	case '"':
 		end := basicQuotedSegmentEnd(header)
 		if end < 0 {
-			return rawSegmentStartsWithTool(header[1:])
+			return unterminatedBasicHeaderSegmentTargetsTool(header[1:])
 		}
-		literal := header[:end+1]
-		if segment, ok := parseTOMLBasicString(literal); ok && segment == "tool" {
-			return true
-		}
-		segment, err := strconv.Unquote(literal)
-		return err == nil && segment == "tool"
+		return basicQuotedSegmentTargetsTool(header[:end+1])
 	case '\'':
 		end := strings.IndexByte(header[1:], '\'')
 		if end < 0 {
@@ -184,6 +191,24 @@ func malformedTOMLHeaderTargetsTool(line string) bool {
 		}
 		return header[:end] == "tool"
 	}
+}
+
+func unterminatedBasicHeaderSegmentTargetsTool(raw string) bool {
+	if rawSegmentStartsWithTool(raw) {
+		return true
+	}
+	if dot := strings.IndexByte(raw, '.'); dot >= 0 {
+		raw = raw[:dot]
+	}
+	return basicQuotedSegmentTargetsTool("\"" + raw + "\"")
+}
+
+func basicQuotedSegmentTargetsTool(literal string) bool {
+	if segment, ok := parseTOMLBasicString(literal); ok {
+		return segment == "tool"
+	}
+	segment, err := strconv.Unquote(literal)
+	return err == nil && segment == "tool"
 }
 
 func basicQuotedSegmentEnd(value string) int {
