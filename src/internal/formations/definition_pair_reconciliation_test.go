@@ -193,6 +193,96 @@ func TestDefinitionPairPreFirstRenameIOFailureReturnsOrdinaryErrorWithoutReconci
 	}
 }
 
+func TestDefinitionPairFirstCanonicalMutationRepinsBothMembersBeforeWriting(t *testing.T) {
+	tests := []struct {
+		name             string
+		oldLayoutPresent bool
+		newLayoutPresent bool
+		mutationStep     string
+		changedMember    string
+	}{
+		{
+			name:             "present to present layout rename preserves a third board",
+			oldLayoutPresent: true,
+			newLayoutPresent: true,
+			mutationStep:     pairStepPublishLayoutRenameForTest,
+			changedMember:    "board",
+		},
+		{
+			name:             "present to absent layout unlink preserves a third board",
+			oldLayoutPresent: true,
+			mutationStep:     pairStepPublishLayoutUnlinkForTest,
+			changedMember:    "board",
+		},
+		{
+			name:          "absent to absent board rename preserves a third layout",
+			mutationStep:  pairStepPublishBoardRenameForTest,
+			changedMember: "layout",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := NewStore(t.TempDir())
+			slug := "pair-first-mutation-repin"
+			oldBoard := pairBoardFixture(slug, 1, "Old")
+			oldLayoutRaw := pairLayoutFixture(1, "old")
+			newBoard := pairBoardFixture(slug, 2, "New")
+			newLayoutRaw := pairLayoutFixture(2, "new")
+			thirdBoard := pairBoardFixture(slug, 3, "Independent")
+			thirdLayout := pairLayoutFixture(3, "independent")
+			writeFixture(t, store.BoardPath(slug), string(oldBoard))
+
+			var oldLayout []byte
+			if test.oldLayoutPresent {
+				oldLayout = oldLayoutRaw
+				writeFixture(t, store.LayoutPath(slug), string(oldLayout))
+			}
+			newLayout := pairAbsentContentForTest()
+			if test.newLayoutPresent {
+				newLayout = pairPresentContentForTest(newLayoutRaw)
+			}
+
+			var steps []string
+			hookReached := false
+			request := definitionPairRequestForTest(oldBoard, oldLayout, newBoard, newLayout)
+			err := store.publishDefinitionPair(slug, request, func(step string) error {
+				steps = append(steps, step)
+				if step != test.mutationStep || hookReached {
+					return nil
+				}
+				hookReached = true
+				switch test.changedMember {
+				case "board":
+					writeFixture(t, store.BoardPath(slug), string(thirdBoard))
+				case "layout":
+					writeFixture(t, store.LayoutPath(slug), string(thirdLayout))
+				default:
+					t.Fatalf("unknown changed member %q", test.changedMember)
+				}
+				return nil
+			})
+
+			if !hookReached {
+				t.Fatalf("first canonical mutation hook %q was not reached; steps=%v", test.mutationStep, steps)
+			}
+			if !errors.Is(err, ErrConflict) {
+				t.Errorf("publication error = %v, want ErrConflict after the pinned pair changed", err)
+			}
+			for _, step := range steps {
+				if strings.HasPrefix(step, "reconcile:") {
+					t.Errorf("pre-mutation lost-update conflict entered reconciliation at %q; steps=%v", step, steps)
+				}
+			}
+
+			if test.changedMember == "board" {
+				assertPairFilesForTest(t, store, slug, thirdBoard, pairPresentContentForTest(oldLayoutRaw))
+			} else {
+				assertPairFilesForTest(t, store, slug, oldBoard, pairPresentContentForTest(thirdLayout))
+			}
+		})
+	}
+}
+
 func TestDefinitionPairAbsentLayoutCrashNeverExposesBoardNewWithLayoutOld(t *testing.T) {
 	tests := []struct {
 		crashStep  string
@@ -323,6 +413,170 @@ func TestDefinitionPairPostRenameFailureReconcilesToOneExactDurablePair(t *testi
 				assertPairReconciliationDurabilityForTest(t, steps, "new")
 			default:
 				t.Fatalf("reconciliation returned from mixed/unknown pair: board=%q layout=%q error=%v steps=%v", gotBoard, gotLayout, err, steps)
+			}
+		})
+	}
+}
+
+func TestDefinitionPairRollForwardRejectsHalfwayReclassificationBeforeBoardRepair(t *testing.T) {
+	tests := []struct {
+		name             string
+		reclassification string
+	}{
+		{
+			name:             "unknown third board",
+			reclassification: "third-board",
+		},
+		{
+			name:             "opposite old old contracted pair",
+			reclassification: "old-pair",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := NewStore(t.TempDir())
+			slug := "pair-roll-forward-reclassification"
+			oldBoard := pairBoardFixture(slug, 1, "Old")
+			oldLayout := pairLayoutFixture(1, "old")
+			newBoard := pairBoardFixture(slug, 2, "New")
+			newLayout := pairLayoutFixture(2, "new")
+			thirdBoard := pairBoardFixture(slug, 3, "Independent")
+			writeFixture(t, store.BoardPath(slug), string(oldBoard))
+			writeFixture(t, store.LayoutPath(slug), string(oldLayout))
+
+			initialFailure := errors.New("enter roll-forward after layout publication")
+			failedPublication := false
+			reclassified := false
+			var steps []string
+			request := definitionPairRequestForTest(oldBoard, oldLayout, newBoard, pairPresentContentForTest(newLayout))
+			err := store.publishDefinitionPair(slug, request, func(step string) error {
+				steps = append(steps, step)
+				if step == pairStepPublishBoardRenameForTest && !failedPublication {
+					failedPublication = true
+					return initialFailure
+				}
+				if step == pairStepReconcileNewLayoutDirSyncForTest && !reclassified {
+					reclassified = true
+					switch test.reclassification {
+					case "third-board":
+						writeFixture(t, store.BoardPath(slug), string(thirdBoard))
+					case "old-pair":
+						// Old/old is inside the contracted union, but it is the
+						// opposite of the exact old-board/new-layout halfway state.
+						writeFixture(t, store.LayoutPath(slug), string(oldLayout))
+					default:
+						t.Fatalf("unknown reclassification %q", test.reclassification)
+					}
+				}
+				return nil
+			})
+
+			if !failedPublication || !reclassified {
+				t.Fatalf("roll-forward reclassification hooks were not both reached; steps=%v", steps)
+			}
+			assertDefinitionPublicationUncertainForTest(t, err)
+			for _, forbidden := range []string{
+				pairStepReconcileNewBoardRenameForTest,
+				pairStepReconcileNewBoardFileSyncForTest,
+			} {
+				if pairStepObservedForTest(steps, forbidden) {
+					t.Errorf("directionally reclassified roll-forward repaired the board at %q; steps=%v", forbidden, steps)
+				}
+			}
+
+			if test.reclassification == "third-board" {
+				assertPairFilesForTest(t, store, slug, thirdBoard, pairPresentContentForTest(newLayout))
+			} else {
+				assertPairFilesForTest(t, store, slug, oldBoard, pairPresentContentForTest(oldLayout))
+			}
+		})
+	}
+}
+
+func TestDefinitionPairRollbackRejectsHalfwayReclassificationBeforeLayoutRepair(t *testing.T) {
+	tests := []struct {
+		name             string
+		oldLayoutPresent bool
+		reclassification string
+	}{
+		{
+			name:             "unknown third layout",
+			oldLayoutPresent: true,
+			reclassification: "third-layout",
+		},
+		{
+			name:             "opposite new new contracted pair",
+			reclassification: "new-pair",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := NewStore(t.TempDir())
+			slug := "pair-rollback-reclassification"
+			oldBoard := pairBoardFixture(slug, 1, "Old")
+			oldLayoutRaw := pairLayoutFixture(1, "old")
+			newBoard := pairBoardFixture(slug, 2, "New")
+			newLayout := pairLayoutFixture(2, "new")
+			thirdLayout := pairLayoutFixture(3, "independent")
+			writeFixture(t, store.BoardPath(slug), string(oldBoard))
+
+			var oldLayout []byte
+			if test.oldLayoutPresent {
+				oldLayout = oldLayoutRaw
+				writeFixture(t, store.LayoutPath(slug), string(oldLayout))
+			}
+
+			initialFailure := errors.New("enter reconciliation after board publication")
+			rollForwardUnavailable := errors.New("force rollback from exact new pair")
+			failedPublication := false
+			failedRollForward := false
+			reclassified := false
+			var steps []string
+			request := definitionPairRequestForTest(oldBoard, oldLayout, newBoard, pairPresentContentForTest(newLayout))
+			err := store.publishDefinitionPair(slug, request, func(step string) error {
+				steps = append(steps, step)
+				if step == pairStepPublishBoardFileSyncForTest && !failedPublication {
+					failedPublication = true
+					return initialFailure
+				}
+				if step == pairStepReconcileNewLayoutFileSyncForTest && !failedRollForward {
+					failedRollForward = true
+					return rollForwardUnavailable
+				}
+				if step == pairStepReconcileOldBoardDirSyncForTest && !reclassified {
+					reclassified = true
+					switch test.reclassification {
+					case "third-layout":
+						writeFixture(t, store.LayoutPath(slug), string(thirdLayout))
+					case "new-pair":
+						// New/new is inside the contracted union, but it is the
+						// opposite of the exact old-board/new-layout halfway state.
+						writeFixture(t, store.BoardPath(slug), string(newBoard))
+					default:
+						t.Fatalf("unknown reclassification %q", test.reclassification)
+					}
+				}
+				return nil
+			})
+
+			if !failedPublication || !failedRollForward || !reclassified {
+				t.Fatalf("rollback reclassification hooks were not all reached; steps=%v", steps)
+			}
+			assertDefinitionPublicationUncertainForTest(t, err)
+			for _, forbidden := range []string{
+				pairStepReconcileOldLayoutRenameForTest,
+				pairStepReconcileOldLayoutUnlinkForTest,
+				pairStepReconcileOldLayoutFileSyncForTest,
+			} {
+				if pairStepObservedForTest(steps, forbidden) {
+					t.Errorf("directionally reclassified rollback repaired the layout at %q; steps=%v", forbidden, steps)
+				}
+			}
+
+			if test.reclassification == "third-layout" {
+				assertPairFilesForTest(t, store, slug, oldBoard, pairPresentContentForTest(thirdLayout))
+			} else {
+				assertPairFilesForTest(t, store, slug, newBoard, pairPresentContentForTest(newLayout))
 			}
 		})
 	}
