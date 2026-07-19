@@ -32,7 +32,6 @@ func TestWorkspaceAuthorityRegistryCriticalSectionSerializesAcrossProcesses(t *t
 	t.Setenv(workspaceAuthorityLockHelperEnv, "stale-parent-value")
 	t.Setenv(workspaceAuthorityLockRootEnv, "relative/poison-root")
 	t.Setenv(workspaceAuthorityLockWorkspaceEnv, "relative/poison-workspace")
-	warmWorkspaceAuthorityPipeDeadlines(t)
 	fixture := newWorkspaceAuthorityRegistrationFixture(t, workspaceRegistryJCSV1{
 		Entries:        []workspaceRegistryEntryJCSV1{},
 		RecordRev:      1,
@@ -73,31 +72,6 @@ func TestWorkspaceAuthorityRegistryCriticalSectionSerializesAcrossProcesses(t *t
 	assertWorkspaceAuthorityOpenDescriptorsUnchanged(t, descriptorsBefore, descriptorPaths...)
 }
 
-func warmWorkspaceAuthorityPipeDeadlines(t *testing.T) {
-	t.Helper()
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := reader.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
-		reader.Close()
-		writer.Close()
-		t.Fatal(err)
-	}
-	if err := reader.SetReadDeadline(time.Time{}); err != nil {
-		reader.Close()
-		writer.Close()
-		t.Fatal(err)
-	}
-	if err := reader.Close(); err != nil {
-		writer.Close()
-		t.Fatal(err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestWorkspaceAuthorityRegistryLockProcessHelper(t *testing.T) {
 	if os.Getenv(workspaceAuthorityLockHelperEnv) == "" {
 		return
@@ -109,6 +83,9 @@ func TestWorkspaceAuthorityRegistryLockProcessHelper(t *testing.T) {
 	}
 	attempted := os.NewFile(workspaceAuthorityLockAttemptedFD, "workspace-authority-lock-attempted")
 	ready := os.NewFile(workspaceAuthorityLockReadyFD, "workspace-authority-lock-ready")
+	if err := syscall.SetNonblock(int(workspaceAuthorityLockReleaseFD), true); err != nil {
+		t.Fatalf("make registry lock release pipe pollable: %v", err)
+	}
 	release := os.NewFile(workspaceAuthorityLockReleaseFD, "workspace-authority-lock-release")
 	if attempted == nil || ready == nil || release == nil {
 		t.Fatal("workspace authority lock helper missing synchronization pipe")
