@@ -1316,6 +1316,11 @@ func openRuntimeAuthorityComponentAt(parent *os.File, name string, directory boo
 			file.Close()
 			return nil, errors.New("authority record is not a regular file")
 		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || stat.Nlink != 1 {
+			file.Close()
+			return nil, errors.New("authority record must have exactly one link")
+		}
 	}
 	return file, nil
 }
