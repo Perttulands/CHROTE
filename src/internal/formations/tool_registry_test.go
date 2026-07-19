@@ -495,20 +495,44 @@ func assertToolRegistryTypeHasNoCustomSerialization(t *testing.T, valueType refl
 	jsonUnmarshaler := reflect.TypeOf((*json.Unmarshaler)(nil)).Elem()
 	textMarshaler := reflect.TypeOf((*encoding.TextMarshaler)(nil)).Elem()
 	textUnmarshaler := reflect.TypeOf((*encoding.TextUnmarshaler)(nil)).Elem()
-	for _, candidate := range []reflect.Type{valueType, reflect.PointerTo(valueType)} {
-		if candidate.Implements(jsonMarshaler) {
-			t.Fatalf("closed Tool registry shape %s implements json.Marshaler", candidate)
+	visited := make(map[reflect.Type]bool)
+	var inspect func(reflect.Type, string)
+	inspect = func(candidateType reflect.Type, path string) {
+		if visited[candidateType] {
+			return
 		}
-		if candidate.Implements(jsonUnmarshaler) {
-			t.Fatalf("closed Tool registry shape %s implements json.Unmarshaler", candidate)
+		visited[candidateType] = true
+
+		candidates := []reflect.Type{candidateType}
+		if candidateType.Kind() != reflect.Pointer {
+			candidates = append(candidates, reflect.PointerTo(candidateType))
 		}
-		if candidate.Implements(textMarshaler) {
-			t.Fatalf("closed Tool registry shape %s implements encoding.TextMarshaler", candidate)
+		for _, candidate := range candidates {
+			if candidate.Implements(jsonMarshaler) {
+				t.Fatalf("closed Tool registry shape %s (%s) implements json.Marshaler", path, candidate)
+			}
+			if candidate.Implements(jsonUnmarshaler) {
+				t.Fatalf("closed Tool registry shape %s (%s) implements json.Unmarshaler", path, candidate)
+			}
+			if candidate.Implements(textMarshaler) {
+				t.Fatalf("closed Tool registry shape %s (%s) implements encoding.TextMarshaler", path, candidate)
+			}
+			if candidate.Implements(textUnmarshaler) {
+				t.Fatalf("closed Tool registry shape %s (%s) implements encoding.TextUnmarshaler", path, candidate)
+			}
 		}
-		if candidate.Implements(textUnmarshaler) {
-			t.Fatalf("closed Tool registry shape %s implements encoding.TextUnmarshaler", candidate)
+
+		switch candidateType.Kind() {
+		case reflect.Pointer, reflect.Slice, reflect.Array:
+			inspect(candidateType.Elem(), path+"[]")
+		case reflect.Struct:
+			for index := 0; index < candidateType.NumField(); index++ {
+				field := candidateType.Field(index)
+				inspect(field.Type, path+"."+field.Name)
+			}
 		}
 	}
+	inspect(valueType, valueType.Name())
 }
 
 func frozenJSONNormalizeToolProfileDescriptor(t *testing.T) ToolProfileDescriptor {
@@ -522,9 +546,9 @@ func frozenJSONNormalizeToolProfileDescriptor(t *testing.T) ToolProfileDescripto
 }
 
 func contractValidBoundaryToolProfileDescriptor() ToolProfileDescriptor {
-	boundaryName := "a" + strings.Repeat("b", 63)
+	boundaryName := "a1" + strings.Repeat("b", 62)
 	descriptor := ToolProfileDescriptor{
-		ProfileID:      "a." + strings.Repeat("b", 126),
+		ProfileID:      "a1.b2" + strings.Repeat("b", 123),
 		ProfileVersion: "A._-" + strings.Repeat("b", 60),
 		DisplayName:    "Boundary profile fixture",
 		Ports: []ToolPortDescriptor{
@@ -542,6 +566,22 @@ func contractValidBoundaryToolProfileDescriptor() ToolProfileDescriptor {
 				Kind:               "work",
 				AcceptedMediaTypes: []string{"text/plain"},
 				Required:           toolRegistryBoolPointer(false),
+				Role:               toolRegistryStringPointer("data"),
+			},
+			{
+				Name:               "required1",
+				Label:              "Required without role",
+				Direction:          "input",
+				Kind:               "work",
+				AcceptedMediaTypes: []string{"text/plain"},
+				Required:           toolRegistryBoolPointer(true),
+			},
+			{
+				Name:               "role2",
+				Label:              "Role without required",
+				Direction:          "input",
+				Kind:               "work",
+				AcceptedMediaTypes: []string{"text/markdown"},
 				Role:               toolRegistryStringPointer("data"),
 			},
 			{
