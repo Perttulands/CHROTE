@@ -1872,8 +1872,11 @@ type workspaceAuthorityRegistrationFixture struct {
 }
 
 type workspaceAuthorityRegistrationTestOps struct {
-	openWorkspace       func(string) (*os.File, error)
-	validatePrivateNode func(*os.File, uint32) error
+	openWorkspace                 func(string) (*os.File, error)
+	validatePrivateNode           func(*os.File, uint32) error
+	generateWorkspaceAuthorityID  func() (string, error)
+	observeInitialRegistration    func(string) error
+	syncInitialAuthorityDirectory func(*os.File) error
 }
 
 func newWorkspaceAuthorityRegistrarForTest(hostRoot string, expectedUID uint32, gate workspaceAuthorityCapabilityGate, overrides workspaceAuthorityRegistrationTestOps) *workspaceAuthorityRegistrar {
@@ -1884,6 +1887,15 @@ func newWorkspaceAuthorityRegistrarForTest(hostRoot string, expectedUID uint32, 
 	}
 	if overrides.validatePrivateNode != nil {
 		ops.validatePrivateNode = overrides.validatePrivateNode
+	}
+	if overrides.generateWorkspaceAuthorityID != nil {
+		ops.generateWorkspaceAuthorityID = overrides.generateWorkspaceAuthorityID
+	}
+	if overrides.observeInitialRegistration != nil {
+		ops.observeInitialRegistration = overrides.observeInitialRegistration
+	}
+	if overrides.syncInitialAuthorityDirectory != nil {
+		ops.syncInitialAuthorityDirectory = overrides.syncInitialAuthorityDirectory
 	}
 	registrar.ops = ops
 	return registrar
