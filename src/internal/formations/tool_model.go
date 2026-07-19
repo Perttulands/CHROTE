@@ -45,6 +45,7 @@ func parseToolNodes(raw []byte) ([]ToolNode, error) {
 	var current *ToolNode
 	active := toolSectionNone
 	paramsSeen := false
+	var fieldsSeen map[string]bool
 
 	for _, line := range splitLines(raw) {
 		trimmed := strings.TrimSpace(line.body)
@@ -60,34 +61,40 @@ func parseToolNodes(raw []byte) ([]ToolNode, error) {
 				current = &tools[len(tools)-1]
 				active = toolSectionNode
 				paramsSeen = false
+				fieldsSeen = make(map[string]bool)
 			case "tool.params":
 				if isArraySection || current == nil || paramsSeen {
 					return nil, fmt.Errorf("invalid Tool parameter section")
 				}
 				active = toolSectionParams
 				paramsSeen = true
+				fieldsSeen = nil
 			case "tool.input":
 				if !isArraySection || current == nil {
 					return nil, fmt.Errorf("invalid Tool input section")
 				}
 				current.Inputs = append(current.Inputs, ToolPort{})
 				active = toolSectionInput
+				fieldsSeen = make(map[string]bool)
 			case "tool.output":
 				if !isArraySection || current == nil {
 					return nil, fmt.Errorf("invalid Tool output section")
 				}
 				current.Outputs = append(current.Outputs, ToolPort{})
 				active = toolSectionOutput
+				fieldsSeen = make(map[string]bool)
 			default:
-				if tomlSectionIsOrDescendsFrom(section, "tool.params") {
-					return nil, fmt.Errorf("nested Tool parameters are not supported")
+				if tomlSectionIsOrDescendsFrom(section, "tool") {
+					return nil, fmt.Errorf("unknown Tool section")
 				}
 				active = toolSectionNone
+				fieldsSeen = nil
 			}
 			continue
 		}
 		if isTOMLHeader(line) {
 			active = toolSectionNone
+			fieldsSeen = nil
 			continue
 		}
 		if line.valueContinuation || current == nil {
@@ -100,15 +107,15 @@ func parseToolNodes(raw []byte) ([]ToolNode, error) {
 				return nil, err
 			}
 		case toolSectionNode:
-			if err := applyToolNodeLine(current, line.body); err != nil {
+			if err := applyToolNodeLine(current, fieldsSeen, line.body); err != nil {
 				return nil, err
 			}
 		case toolSectionInput:
-			if err := applyToolPortLine(&current.Inputs[len(current.Inputs)-1], line.body); err != nil {
+			if err := applyToolPortLine(&current.Inputs[len(current.Inputs)-1], fieldsSeen, line.body); err != nil {
 				return nil, err
 			}
 		case toolSectionOutput:
-			if err := applyToolPortLine(&current.Outputs[len(current.Outputs)-1], line.body); err != nil {
+			if err := applyToolPortLine(&current.Outputs[len(current.Outputs)-1], fieldsSeen, line.body); err != nil {
 				return nil, err
 			}
 		}
@@ -331,7 +338,7 @@ func toolValuePart(line string, eq int) string {
 	return value
 }
 
-func applyToolNodeLine(node *ToolNode, line string) error {
+func applyToolNodeLine(node *ToolNode, fieldsSeen map[string]bool, line string) error {
 	key, literal, present, err := parseToolAssignment(line)
 	if err != nil {
 		return err
@@ -339,8 +346,12 @@ func applyToolNodeLine(node *ToolNode, line string) error {
 	if !present {
 		return nil
 	}
+	if fieldsSeen[key] {
+		return fmt.Errorf("duplicate Tool field %q", key)
+	}
+	fieldsSeen[key] = true
 	if key != "id" && key != "title" && key != "profileId" && key != "profileVersion" {
-		return nil
+		return fmt.Errorf("unknown Tool field %q", key)
 	}
 	value, err := parseToolString(literal)
 	if err != nil {
@@ -359,7 +370,7 @@ func applyToolNodeLine(node *ToolNode, line string) error {
 	return nil
 }
 
-func applyToolPortLine(port *ToolPort, line string) error {
+func applyToolPortLine(port *ToolPort, fieldsSeen map[string]bool, line string) error {
 	key, literal, present, err := parseToolAssignment(line)
 	if err != nil {
 		return err
@@ -367,6 +378,10 @@ func applyToolPortLine(port *ToolPort, line string) error {
 	if !present {
 		return nil
 	}
+	if fieldsSeen[key] {
+		return fmt.Errorf("duplicate Tool port field %q", key)
+	}
+	fieldsSeen[key] = true
 	switch key {
 	case "id", "name", "label", "direction", "kind", "role":
 		value, err := parseToolString(literal)
@@ -399,6 +414,8 @@ func applyToolPortLine(port *ToolPort, line string) error {
 			return err
 		}
 		port.Required = &required
+	default:
+		return fmt.Errorf("unknown Tool port field %q", key)
 	}
 	return nil
 }
