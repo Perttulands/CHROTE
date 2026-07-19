@@ -8,6 +8,24 @@ import (
 	"testing"
 )
 
+const toolSchemaMigrationJudgeSendBlock = `[[connection]]
+id = "edge_judge_send"
+from = "gate_review:judge"
+to = "fmn_judge_a:port_judge_a_in"
+`
+
+const toolSchemaMigrationJudgeMidBlock = `[[connection]]
+id = "edge_judge_mid"
+from = "fmn_judge_a:port_judge_a_out"
+to = "fmn_judge_b:port_judge_b_in"
+`
+
+const toolSchemaMigrationJudgeReturnBlock = `[[connection]]
+id = "edge_judge_return"
+from = "fmn_judge_b:port_judge_b_out"
+to = "gate_review:judge"
+`
+
 func TestToolSchemaMigrationNormalizesSafeLegacyGraphOnceWithoutOwningRevision(t *testing.T) {
 	raw := []byte(toolSchemaMigrationLegacyFixture())
 	wantSource := append([]byte(nil), raw...)
@@ -73,7 +91,7 @@ func TestToolSchemaMigrationNormalizesSafeLegacyGraphOnceWithoutOwningRevision(t
 		assertToolSchemaMigrationConnectionChannel(t, migrated, connection.id, connection.channel)
 	}
 
-	if got := toolSchemaMigrationWithoutOwnedFields(migrated); !bytes.Equal(got, wantSource) {
+	if got := toolSchemaMigrationWithoutOwnedFields(migrated, renderInt(NewBoardSchema)); !bytes.Equal(got, wantSource) {
 		t.Fatalf("schema migration rewrote bytes outside schema/typed-port/channel fields:\n got %q\nwant %q", got, wantSource)
 	}
 	board, err := parseBoard(migrated)
@@ -112,6 +130,44 @@ func TestToolSchemaMigrationKeepsCanonicalSchemaTwoByteStable(t *testing.T) {
 	}
 }
 
+func TestToolSchemaMigrationAcceptsValidSignedSchemaIntegers(t *testing.T) {
+	t.Run("+1 migrates", func(t *testing.T) {
+		base := toolSchemaMigrationLegacyFixture()
+		plusOne := replaceToolSchemaMigrationFixture(t, base, `schema = 1 # compatibility schema`, `schema = +1 # compatibility schema`)
+		migrated, err := migrateBoardToToolSchema([]byte(plusOne))
+		if err != nil {
+			t.Fatalf("migrate valid TOML +1 schema: %v", err)
+		}
+		if got := parseTOMLDocument(migrated).intValue("schema"); got != CurrentBoardSchema {
+			t.Fatalf("migrated +1 schema = %d, want %d", got, CurrentBoardSchema)
+		}
+		assertToolSchemaMigrationPortDefaults(t, migrated, "port_work_in", FormationPortInput)
+		assertToolSchemaMigrationPortDefaults(t, migrated, "port_work_out", FormationPortOutput)
+		assertToolSchemaMigrationConnectionChannel(t, migrated, "edge_start", "workflow")
+		assertToolSchemaMigrationConnectionChannel(t, migrated, "edge_judge_send", "judge")
+		assertToolSchemaMigrationConnectionChannel(t, migrated, "edge_judge_return", "judge")
+		if got := toolSchemaMigrationWithoutOwnedFields(migrated, "+1"); !bytes.Equal(got, []byte(plusOne)) {
+			t.Fatalf("+1 migration rewrote bytes outside owned fields:\n got %q\nwant %q", got, plusOne)
+		}
+	})
+
+	t.Run("+2 canonical no-op", func(t *testing.T) {
+		plusTwo := replaceToolSchemaMigrationFixture(
+			t,
+			toolSchemaMigrationCanonicalFixture(),
+			`schema = 2 # canonical schema`,
+			`schema = +2 # canonical schema`,
+		)
+		stable, err := migrateBoardToToolSchema([]byte(plusTwo))
+		if err != nil {
+			t.Fatalf("accept valid TOML +2 schema: %v", err)
+		}
+		if !bytes.Equal(stable, []byte(plusTwo)) {
+			t.Fatalf("canonical +2 schema was not byte-stable:\n got %q\nwant %q", stable, plusTwo)
+		}
+	})
+}
+
 func TestToolSchemaMigrationAcceptsOnlyExactSchemaOneOrCanonicalSchemaTwo(t *testing.T) {
 	base := toolSchemaMigrationLegacyFixture()
 	schemaLine := `schema = 1 # compatibility schema`
@@ -124,12 +180,10 @@ func TestToolSchemaMigrationAcceptsOnlyExactSchemaOneOrCanonicalSchemaTwo(t *tes
 		{name: "negative schema", raw: replaceToolSchemaMigrationFixture(t, base, schemaLine, `schema = -1`)},
 		{name: "missing schema", raw: replaceToolSchemaMigrationFixture(t, base, schemaLine+"\n", "")},
 		{name: "leading-zero schema one", raw: replaceToolSchemaMigrationFixture(t, base, schemaLine, `schema = 01`)},
-		{name: "signed schema one", raw: replaceToolSchemaMigrationFixture(t, base, schemaLine, `schema = +1`)},
 		{name: "quoted schema one", raw: replaceToolSchemaMigrationFixture(t, base, schemaLine, `schema = "1"`)},
 		{name: "floating schema one", raw: replaceToolSchemaMigrationFixture(t, base, schemaLine, `schema = 1.0`)},
 		{name: "duplicate schema", raw: replaceToolSchemaMigrationFixture(t, base, schemaLine, "schema = 1\nschema = 1")},
 		{name: "schema two missing canonical owned fields", raw: replaceToolSchemaMigrationFixture(t, base, schemaLine, `schema = 2`)},
-		{name: "noncanonical schema two", raw: replaceToolSchemaMigrationFixture(t, base, schemaLine, `schema = +2`)},
 		{
 			name:      "future schema",
 			raw:       replaceToolSchemaMigrationFixture(t, base, schemaLine, `schema = 3`),
@@ -139,6 +193,89 @@ func TestToolSchemaMigrationAcceptsOnlyExactSchemaOneOrCanonicalSchemaTwo(t *tes
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assertToolSchemaMigrationRejected(t, tt.raw, tt.wantError, "")
+		})
+	}
+}
+
+func TestToolSchemaMigrationAcceptsHumanOnlyAndSingleFormationJudgeTopologies(t *testing.T) {
+	base := toolSchemaMigrationLegacyFixture()
+	humanOnly := removeToolSchemaMigrationFixtureBlocks(
+		t,
+		base,
+		toolSchemaMigrationJudgeSendBlock,
+		toolSchemaMigrationJudgeMidBlock,
+		toolSchemaMigrationJudgeReturnBlock,
+	)
+	humanOnly = replaceToolSchemaMigrationFixture(t, humanOnly, `kinds = ["human", "formation"]`, `kinds = ["human"]`)
+
+	singleJudge := removeToolSchemaMigrationFixtureBlocks(
+		t,
+		base,
+		toolSchemaMigrationJudgeMidBlock,
+		toolSchemaMigrationJudgeReturnBlock,
+	) + `
+[[connection]]
+id = "edge_judge_single_return"
+from = "fmn_judge_a:port_judge_a_out"
+to = "gate_review:judge"
+`
+
+	tests := []struct {
+		name          string
+		raw           string
+		judgeChain    []string
+		judgeEdgeIDs  []string
+		workflowEdges []string
+	}{
+		{
+			name:          "human-only Gate without judge edges",
+			raw:           humanOnly,
+			workflowEdges: []string{"edge_start", "edge_review"},
+		},
+		{
+			name:          "one-Formation judge send and return",
+			raw:           singleJudge,
+			judgeChain:    []string{"fmn_judge_a"},
+			judgeEdgeIDs:  []string{"edge_judge_send", "edge_judge_single_return"},
+			workflowEdges: []string{"edge_start", "edge_review"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			source, err := parseBoard([]byte(tt.raw))
+			if err != nil {
+				t.Fatalf("parse safe source: %v", err)
+			}
+			if report := ValidateBoard(source); len(report.Errors) != 0 {
+				t.Fatalf("safe source has structural errors: %+v", report.Errors)
+			}
+			chain := judgeChainForGate(source, "gate_review")
+			if len(chain) != len(tt.judgeChain) {
+				t.Fatalf("source judge chain = %+v, want ids %v", chain, tt.judgeChain)
+			}
+			for i, wantID := range tt.judgeChain {
+				if chain[i].ID != wantID {
+					t.Fatalf("source judge chain[%d] = %q, want %q", i, chain[i].ID, wantID)
+				}
+			}
+
+			migrated, err := migrateBoardToToolSchema([]byte(tt.raw))
+			if err != nil {
+				t.Fatalf("migrate safe topology: %v", err)
+			}
+			for _, edgeID := range tt.workflowEdges {
+				assertToolSchemaMigrationConnectionChannel(t, migrated, edgeID, "workflow")
+			}
+			for _, edgeID := range tt.judgeEdgeIDs {
+				assertToolSchemaMigrationConnectionChannel(t, migrated, edgeID, "judge")
+			}
+			again, err := migrateBoardToToolSchema(migrated)
+			if err != nil {
+				t.Fatalf("repeat safe topology migration: %v", err)
+			}
+			if !bytes.Equal(again, migrated) {
+				t.Fatal("safe topology migration was not byte-idempotent")
+			}
 		})
 	}
 }
@@ -259,6 +396,57 @@ from = "mis_main:out"`),
 	}
 }
 
+func TestToolSchemaMigrationRejectsEveryOwnedFieldCollisionOnCanonicalSchemaTwo(t *testing.T) {
+	base := toolSchemaMigrationCanonicalFixture()
+	inputField := func(key, replacement string) string {
+		return replaceToolSchemaMigrationPortField(t, base, "port_work_in", key, replacement)
+	}
+	outputField := func(key, replacement string) string {
+		return replaceToolSchemaMigrationPortField(t, base, "port_work_out", key, replacement)
+	}
+	outputFieldsAfterLabel := func(fields string) string {
+		return outputField("label", "label = \"Work output\"\n"+fields)
+	}
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{name: "wrong input direction", raw: inputField("direction", `direction = "output"`)},
+		{name: "wrong input kind", raw: inputField("kind", `kind = "gate_feedback"`)},
+		{name: "wrong input media", raw: inputField("acceptedMediaTypes", `acceptedMediaTypes = ["application/json"]`)},
+		{name: "wrong input required", raw: inputField("required", `required = false`)},
+		{name: "wrong input role", raw: inputField("role", `role = "retry_control"`)},
+		{name: "duplicate input direction", raw: inputField("direction", "direction = \"input\"\ndirection = \"input\"")},
+		{name: "duplicate input kind", raw: inputField("kind", "kind = \"work\"\nkind = \"work\"")},
+		{name: "duplicate input media", raw: inputField("acceptedMediaTypes", "acceptedMediaTypes = [\"text/plain\", \"text/markdown\", \"application/json\"]\nacceptedMediaTypes = [\"text/plain\", \"text/markdown\", \"application/json\"]")},
+		{name: "duplicate input required", raw: inputField("required", "required = true\nrequired = true")},
+		{name: "duplicate input role", raw: inputField("role", "role = \"data\"\nrole = \"data\"")},
+		{name: "wrong output direction", raw: outputField("direction", `direction = "input"`)},
+		{name: "wrong output kind", raw: outputField("kind", `kind = "gate_feedback"`)},
+		{name: "wrong output media", raw: outputField("acceptedMediaTypes", `acceptedMediaTypes = ["application/json"]`)},
+		{name: "output carries required", raw: outputFieldsAfterLabel(`required = true`)},
+		{name: "output carries role", raw: outputFieldsAfterLabel(`role = "data"`)},
+		{name: "duplicate output direction", raw: outputField("direction", "direction = \"output\"\ndirection = \"output\"")},
+		{name: "duplicate output kind", raw: outputField("kind", "kind = \"work\"\nkind = \"work\"")},
+		{name: "duplicate output media", raw: outputField("acceptedMediaTypes", "acceptedMediaTypes = [\"text/plain\", \"text/markdown\", \"application/json\"]\nacceptedMediaTypes = [\"text/plain\", \"text/markdown\", \"application/json\"]")},
+		{name: "duplicate output required", raw: outputFieldsAfterLabel("required = true\nrequired = true")},
+		{name: "duplicate output role", raw: outputFieldsAfterLabel("role = \"data\"\nrole = \"data\"")},
+		{
+			name: "wrong connection channel",
+			raw:  replaceToolSchemaMigrationFixture(t, base, `channel = "workflow"`, `channel = "judge"`),
+		},
+		{
+			name: "duplicate connection channel",
+			raw:  replaceToolSchemaMigrationFixture(t, base, `channel = "workflow"`, "channel = \"workflow\"\nchannel = \"workflow\""),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertToolSchemaMigrationRejected(t, tt.raw, nil, "")
+		})
+	}
+}
+
 func TestToolSchemaMigrationRejectsUnsafeLegacyShapesBeforeProducingCandidate(t *testing.T) {
 	base := toolSchemaMigrationLegacyFixture()
 	gateCriterion := `criterion = "Review the work" # criterion comment`
@@ -266,28 +454,15 @@ func TestToolSchemaMigrationRejectsUnsafeLegacyShapesBeforeProducingCandidate(t 
 
 [[formation]]
 id = "fmn_feedback"`
-	judgeSend := `[[connection]]
-id = "edge_judge_send"
-from = "gate_review:judge"
-to = "fmn_judge_a:port_judge_a_in"
-`
-	judgeMid := `[[connection]]
-id = "edge_judge_mid"
-from = "fmn_judge_a:port_judge_a_out"
-to = "fmn_judge_b:port_judge_b_in"
-`
-	judgeReturn := `[[connection]]
-id = "edge_judge_return"
-from = "fmn_judge_b:port_judge_b_out"
-to = "gate_review:judge"
-`
 	withoutJudgeBlocks := func(blocks ...string) string {
-		raw := base
-		for _, block := range blocks {
-			raw = replaceToolSchemaMigrationFixture(t, raw, block, "")
-		}
-		return raw
+		return removeToolSchemaMigrationFixtureBlocks(t, base, blocks...)
 	}
+	humanOnlyNoJudge := withoutJudgeBlocks(
+		toolSchemaMigrationJudgeSendBlock,
+		toolSchemaMigrationJudgeMidBlock,
+		toolSchemaMigrationJudgeReturnBlock,
+	)
+	humanOnlyNoJudge = replaceToolSchemaMigrationFixture(t, humanOnlyNoJudge, `kinds = ["human", "formation"]`, `kinds = ["human"]`)
 
 	tests := []struct {
 		name      string
@@ -341,12 +516,47 @@ to = "fmn_feedback:port_feedback_in"
 		},
 		{
 			name:     "unpaired Gate judge send path missing return",
-			raw:      replaceToolSchemaMigrationFixture(t, base, judgeReturn, ""),
+			raw:      replaceToolSchemaMigrationFixture(t, base, toolSchemaMigrationJudgeReturnBlock, ""),
 			wantCode: "legacy_judge_channel_requires_migration",
 		},
 		{
 			name:     "unpaired Gate judge return",
-			raw:      withoutJudgeBlocks(judgeSend, judgeMid),
+			raw:      withoutJudgeBlocks(toolSchemaMigrationJudgeSendBlock, toolSchemaMigrationJudgeMidBlock),
+			wantCode: "legacy_judge_channel_requires_migration",
+		},
+		{
+			name:     "judge chain lacks formation kind",
+			raw:      replaceToolSchemaMigrationFixture(t, base, `kinds = ["human", "formation"]`, `kinds = ["human"]`),
+			wantCode: "legacy_judge_channel_requires_migration",
+		},
+		{
+			name: "formation kind lacks complete judge chain",
+			raw: withoutJudgeBlocks(
+				toolSchemaMigrationJudgeSendBlock,
+				toolSchemaMigrationJudgeMidBlock,
+				toolSchemaMigrationJudgeReturnBlock,
+			),
+			wantCode: "legacy_judge_channel_requires_migration",
+		},
+		{
+			name: "malformed later Gate formation discriminator",
+			raw: humanOnlyNoJudge + `
+[[gate]]
+id = "gate_later_malformed"
+title = "Malformed later Gate"
+kinds = "formation"
+criterion = "Must not borrow the prior Gate discriminator"
+
+[[connection]]
+id = "edge_later_judge_send"
+from = "gate_later_malformed:judge"
+to = "fmn_judge_a:port_judge_a_in"
+
+[[connection]]
+id = "edge_later_judge_return"
+from = "fmn_judge_a:port_judge_a_out"
+to = "gate_later_malformed:judge"
+`,
 			wantCode: "legacy_judge_channel_requires_migration",
 		},
 		{
@@ -371,7 +581,7 @@ to = "gate_review:judge"
 		},
 		{
 			name: "non-Formation judge hop",
-			raw: withoutJudgeBlocks(judgeSend, judgeMid, judgeReturn) + `
+			raw: withoutJudgeBlocks(toolSchemaMigrationJudgeSendBlock, toolSchemaMigrationJudgeMidBlock, toolSchemaMigrationJudgeReturnBlock) + `
 [[gate]]
 id = "gate_nonformation_hop"
 title = "Not a Formation judge"
@@ -392,7 +602,7 @@ to = "gate_review:judge"
 		},
 		{
 			name:     "disconnected judge chain",
-			raw:      replaceToolSchemaMigrationFixture(t, base, judgeMid, ""),
+			raw:      replaceToolSchemaMigrationFixture(t, base, toolSchemaMigrationJudgeMidBlock, ""),
 			wantCode: "legacy_judge_channel_requires_migration",
 		},
 		{
@@ -540,7 +750,7 @@ func toolSchemaMigrationBlockValues(lines []tomlLine, start, end int) map[string
 	return values
 }
 
-func toolSchemaMigrationWithoutOwnedFields(raw []byte) []byte {
+func toolSchemaMigrationWithoutOwnedFields(raw []byte, sourceSchema string) []byte {
 	lines := splitLines(raw)
 	filtered := make([]tomlLine, 0, len(lines))
 	activeSection := ""
@@ -557,7 +767,7 @@ func toolSchemaMigrationWithoutOwnedFields(raw []byte) []byte {
 		}
 		key, _, ok := tomlKeyValue(line.body)
 		if ok && activeSection == "" && key == "schema" {
-			line.body = replaceScalarValue(line.body, renderInt(NewBoardSchema))
+			line.body = replaceScalarValue(line.body, sourceSchema)
 		}
 		if ok && (activeSection == "formation.input" || activeSection == "formation.output") {
 			switch key {
@@ -588,6 +798,60 @@ func replaceToolSchemaMigrationFixture(t *testing.T, raw, old, replacement strin
 		t.Fatalf("migration fixture replacement target %q count = %d, want 1", old, count)
 	}
 	return strings.Replace(raw, old, replacement, 1)
+}
+
+func replaceToolSchemaMigrationPortField(t *testing.T, raw, portID, key, replacement string) string {
+	t.Helper()
+	lines := splitLines([]byte(raw))
+	portMatches := 0
+	fieldIndex := -1
+	for i := range lines {
+		section, ok := tomlLineSectionName(lines[i])
+		if !ok || (section != "formation.input" && section != "formation.output") {
+			continue
+		}
+		end := tomlBlockEnd(lines, i)
+		if scalarInBlock(lines, i+1, end, "id") != portID {
+			continue
+		}
+		portMatches++
+		for j := i + 1; j < end; j++ {
+			fieldKey, _, ok := tomlKeyValue(lines[j].body)
+			if !ok || fieldKey != key {
+				continue
+			}
+			if fieldIndex >= 0 {
+				t.Fatalf("port %q has duplicate source field %q", portID, key)
+			}
+			fieldIndex = j
+		}
+	}
+	if portMatches != 1 || fieldIndex < 0 {
+		t.Fatalf("port %q matches = %d and field %q index = %d, want one existing field", portID, portMatches, key, fieldIndex)
+	}
+
+	bodies := strings.Split(replacement, "\n")
+	replacementLines := make([]tomlLine, len(bodies))
+	for i, body := range bodies {
+		newline := "\n"
+		if i == len(bodies)-1 {
+			newline = lines[fieldIndex].newline
+		}
+		replacementLines[i] = tomlLine{body: body, newline: newline}
+	}
+	next := make([]tomlLine, 0, len(lines)-1+len(replacementLines))
+	next = append(next, lines[:fieldIndex]...)
+	next = append(next, replacementLines...)
+	next = append(next, lines[fieldIndex+1:]...)
+	return string(renderTOMLLines(next))
+}
+
+func removeToolSchemaMigrationFixtureBlocks(t *testing.T, raw string, blocks ...string) string {
+	t.Helper()
+	for _, block := range blocks {
+		raw = replaceToolSchemaMigrationFixture(t, raw, block, "")
+	}
+	return raw
 }
 
 func toolSchemaMigrationLegacyFixture() string {
