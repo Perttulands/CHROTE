@@ -116,6 +116,8 @@ func TestToolParameterScalarParserAcceptsFrozenDomain(t *testing.T) {
 		wantJSON string
 	}{
 		{name: "string", literal: `"strict"`, wantJSON: `"strict"`},
+		{name: "literal string", literal: `'strict'`, wantJSON: `"strict"`},
+		{name: "literal string with hash", literal: `'strict#mode'`, wantJSON: `"strict#mode"`},
 		{name: "boolean true", literal: "true", wantJSON: "true"},
 		{name: "boolean false", literal: "false", wantJSON: "false"},
 		{name: "minimum safe integer", literal: "-9007199254740991", wantJSON: "-9007199254740991"},
@@ -139,11 +141,52 @@ func TestToolParameterScalarParserAcceptsFrozenDomain(t *testing.T) {
 	}
 }
 
+func TestToolParameterLinePreservesHashInsideLiteralString(t *testing.T) {
+	params := make(map[string]any)
+	if err := parseToolParameterLine(params, "mode = 'strict#mode' # trailing comment"); err != nil {
+		t.Fatalf("parse Tool literal-string parameter line: %v", err)
+	}
+	gotJSON, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("marshal Tool literal-string parameter map: %v", err)
+	}
+	if got, want := string(gotJSON), `{"mode":"strict#mode"}`; got != want {
+		t.Fatalf("Tool literal-string parameter map = %s, want %s", got, want)
+	}
+}
+
 func TestToolParameterScalarParserRejectsBothUnsafeIntegerBounds(t *testing.T) {
 	for _, literal := range []string{"-9007199254740992", "9007199254740992"} {
 		t.Run(literal, func(t *testing.T) {
 			if _, err := parseToolParameterScalar(literal); err == nil {
 				t.Fatalf("Tool parameter scalar parser accepted unsafe integer %s", literal)
+			}
+		})
+	}
+}
+
+func TestToolBoardParserRejectsNonTOMLRequiredBooleansWithoutMutation(t *testing.T) {
+	for _, literal := range []string{"1", "TRUE", `"true"`} {
+		t.Run(literal, func(t *testing.T) {
+			store := NewStore(t.TempDir())
+			raw := strings.Replace(frozenJSONNormalizeBoardFixture(), "required = true\n", "required = "+literal+"\n", 1)
+			path := store.BoardPath("tool-model")
+			writeFixture(t, path, raw)
+			wantIdentity := operativeFileIdentityForTest(t, path)
+
+			_, firstErr := store.ReadBoard("tool-model")
+			if firstErr == nil {
+				t.Fatalf("ReadBoard accepted non-TOML required boolean %s", literal)
+			}
+			_, secondErr := store.ReadBoard("tool-model")
+			if secondErr == nil || secondErr.Error() != firstErr.Error() {
+				t.Fatalf("required boolean %s error was not deterministic: first=%v second=%v", literal, firstErr, secondErr)
+			}
+			if got := readFile(t, path); got != raw {
+				t.Fatalf("rejected required boolean %s changed canonical bytes:\n got %q\nwant %q", literal, got, raw)
+			}
+			if got := operativeFileIdentityForTest(t, path); got != wantIdentity {
+				t.Fatalf("rejected required boolean %s replaced operative file identity = %v, want %v", literal, got, wantIdentity)
 			}
 		})
 	}
