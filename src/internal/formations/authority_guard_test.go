@@ -1601,7 +1601,7 @@ func authorityHardLinkIdentity(t *testing.T, target, escaped string) authorityHa
 	if stat.Nlink != 2 {
 		t.Fatalf("hard-link count = %d, want 2", stat.Nlink)
 	}
-	return authorityHardLinkStat{device: uint64(stat.Dev), inode: stat.Ino, links: stat.Nlink}
+	return authorityHardLinkStat{device: uint64(stat.Dev), inode: stat.Ino, links: uint64(stat.Nlink)}
 }
 
 func TestGuardRuntimeAuthorityV1RejectsSymlinkedAuthorityDirectories(t *testing.T) {
