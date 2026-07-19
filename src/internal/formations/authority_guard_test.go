@@ -76,6 +76,96 @@ func TestGuardRuntimeWorkspaceAuthorityV1MatchesOpenedWorkspaceIdentity(t *testi
 	}
 }
 
+func TestGuardRuntimeWorkspaceAuthorityV1UsesFrozenMutableRecordCodecs(t *testing.T) {
+	t.Run("canonical revision one records are accepted", func(t *testing.T) {
+		fixture := newRuntimeAuthorityFixture(t)
+		bindRuntimeAuthorityFixtureToOpenedWorkspace(t, &fixture, fixture.workspace)
+		installStrictMutableAuthorityFixture(t, fixture)
+		before := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace)
+
+		result, err := GuardRuntimeWorkspaceAuthorityV1(filepath.Dir(fixture.root), fixture.workspace)
+		if err != nil {
+			t.Fatalf("guard canonical mutable records: %v", err)
+		}
+		assertRuntimeGuardDisabled(t, result.Capability)
+		if got := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace); !reflect.DeepEqual(got, before) {
+			t.Fatalf("canonical guard changed authority state\nbefore: %#v\nafter:  %#v", before, got)
+		}
+	})
+
+	tests := []struct {
+		name   string
+		stage  RuntimeAuthorityGuardStage
+		mutate func(*testing.T, runtimeAuthorityFixture, []byte, []byte)
+	}{
+		{
+			name:  "pre-freeze registry missing prior generation",
+			stage: RuntimeAuthorityGuardStageRegistry,
+			mutate: func(t *testing.T, fixture runtimeAuthorityFixture, registryRaw, _ []byte) {
+				writeAuthorityFixture(t, fixture.registry, testAuthorityRemovePriorGeneration(registryRaw, "null"))
+			},
+		},
+		{
+			name:  "noncanonical registry key order",
+			stage: RuntimeAuthorityGuardStageRegistry,
+			mutate: func(t *testing.T, fixture runtimeAuthorityFixture, registryRaw, _ []byte) {
+				writeAuthorityFixture(t, fixture.registry, testAuthorityMoveRecordRevFirst(registryRaw))
+			},
+		},
+		{
+			name:  "noncanonical registry whitespace",
+			stage: RuntimeAuthorityGuardStageRegistry,
+			mutate: func(t *testing.T, fixture runtimeAuthorityFixture, registryRaw, _ []byte) {
+				writeAuthorityFixture(t, fixture.registry, append([]byte(" "), registryRaw...))
+			},
+		},
+		{
+			name:  "pre-freeze workspace authority missing prior generation",
+			stage: RuntimeAuthorityGuardStageWorkspaceAuthority,
+			mutate: func(t *testing.T, fixture runtimeAuthorityFixture, _, workspaceRaw []byte) {
+				writeAuthorityFixture(t, fixture.workspaceDB, testAuthorityRemovePriorGeneration(workspaceRaw, "null"))
+			},
+		},
+		{
+			name:  "noncanonical workspace authority key order",
+			stage: RuntimeAuthorityGuardStageWorkspaceAuthority,
+			mutate: func(t *testing.T, fixture runtimeAuthorityFixture, _, workspaceRaw []byte) {
+				writeAuthorityFixture(t, fixture.workspaceDB, testAuthorityMoveRecordRevFirst(workspaceRaw))
+			},
+		},
+		{
+			name:  "noncanonical workspace authority trailing newline",
+			stage: RuntimeAuthorityGuardStageWorkspaceAuthority,
+			mutate: func(t *testing.T, fixture runtimeAuthorityFixture, _, workspaceRaw []byte) {
+				writeAuthorityFixture(t, fixture.workspaceDB, append(append([]byte(nil), workspaceRaw...), '\n'))
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newRuntimeAuthorityFixture(t)
+			bindRuntimeAuthorityFixtureToOpenedWorkspace(t, &fixture, fixture.workspace)
+			registryRaw, workspaceRaw := installStrictMutableAuthorityFixture(t, fixture)
+			test.mutate(t, fixture, registryRaw, workspaceRaw)
+			before := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace)
+
+			result, err := GuardRuntimeWorkspaceAuthorityV1(filepath.Dir(fixture.root), fixture.workspace)
+			if err == nil {
+				t.Fatalf("guard accepted non-authorizing mutable record bytes")
+			}
+			assertRuntimeGuardDisabled(t, result.Capability)
+			var guardErr *RuntimeAuthorityGuardError
+			if !errors.As(err, &guardErr) || guardErr.Stage != test.stage {
+				t.Fatalf("guard error = %#v, want typed %s rejection", err, test.stage)
+			}
+			if got := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace); !reflect.DeepEqual(got, before) {
+				t.Fatalf("rejected mutable record changed authority state\nbefore: %#v\nafter:  %#v", before, got)
+			}
+			assertRuntimeAuthorityLocksAbsent(t, fixture)
+		})
+	}
+}
+
 func TestGuardRuntimeWorkspaceAuthorityV1RejectsAuthorityRootWorkspaceOverlap(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -1820,6 +1910,61 @@ type runtimeAuthorityFixture struct {
 	workspaceDB    string
 	policyDir      string
 	ledger         string
+}
+
+func installStrictMutableAuthorityFixture(t *testing.T, fixture runtimeAuthorityFixture) ([]byte, []byte) {
+	t.Helper()
+	identity, err := openRuntimeWorkspaceIdentity(fixture.workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registryRaw, err := encodeWorkspaceRegistryJCSV1(workspaceRegistryJCSV1{
+		Entries: []workspaceRegistryEntryJCSV1{{
+			ConfiguredPath:              identity.configuredPath,
+			Device:                      strconv.FormatUint(identity.device, 10),
+			Inode:                       strconv.FormatUint(identity.inode, 10),
+			WorkspaceAuthorityID:        testWorkspaceAuthorityID,
+			WorkspaceRootIdentitySHA256: identity.rootHash,
+		}},
+		PriorGeneration: nil,
+		RecordRev:       1,
+		RegistrySchema:  1,
+	})
+	if err != nil {
+		t.Fatalf("encode strict registry fixture: %v", err)
+	}
+	workspaceRaw, err := encodeWorkspaceAuthorityJCSV1(workspaceAuthorityJCSV1{
+		AdmissionPolicyRef: workspaceAdmissionPolicyRefJCSV1{
+			PolicyRev:    1,
+			PolicySHA256: fixture.policyHash,
+		},
+		AuthoritySchema:             2,
+		NextAdmissionSeq:            1,
+		NextWriterFence:             2,
+		PriorGeneration:             nil,
+		RecordRev:                   1,
+		RootIdentityEncoding:        "workspace-root-identity-v1",
+		WorkspaceAuthorityID:        testWorkspaceAuthorityID,
+		WorkspaceRootIdentitySHA256: identity.rootHash,
+	})
+	if err != nil {
+		t.Fatalf("encode strict workspace authority fixture: %v", err)
+	}
+	writeAuthorityFixture(t, fixture.registry, registryRaw)
+	writeAuthorityFixture(t, fixture.workspaceDB, workspaceRaw)
+	return registryRaw, workspaceRaw
+}
+
+func assertRuntimeAuthorityLocksAbsent(t *testing.T, fixture runtimeAuthorityFixture) {
+	t.Helper()
+	for _, path := range []string{
+		filepath.Join(fixture.root, "registry.lock"),
+		filepath.Join(fixture.authority, "owner.lock"),
+	} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("runtime authority rejection selected or created lock %q: %v", path, err)
+		}
+	}
 }
 
 func bindRuntimeAuthorityFixtureToOpenedWorkspace(t *testing.T, fixture *runtimeAuthorityFixture, configuredPath string) {
