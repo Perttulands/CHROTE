@@ -116,7 +116,8 @@ func TestToolParameterScalarParserAcceptsFrozenDomain(t *testing.T) {
 		wantJSON string
 	}{
 		{name: "string", literal: `"strict"`, wantJSON: `"strict"`},
-		{name: "boolean", literal: "true", wantJSON: "true"},
+		{name: "boolean true", literal: "true", wantJSON: "true"},
+		{name: "boolean false", literal: "false", wantJSON: "false"},
 		{name: "minimum safe integer", literal: "-9007199254740991", wantJSON: "-9007199254740991"},
 		{name: "maximum safe integer", literal: "9007199254740991", wantJSON: "9007199254740991"},
 	}
@@ -150,8 +151,9 @@ func TestToolParameterScalarParserRejectsBothUnsafeIntegerBounds(t *testing.T) {
 
 func TestToolBoardParserRejectsInvalidParameterForms(t *testing.T) {
 	tests := []struct {
-		name   string
-		params string
+		name          string
+		params        string
+		secondSibling bool
 	}{
 		{name: "float", params: "[tool.params]\nmode = 1.5\n"},
 		{name: "datetime", params: "[tool.params]\nmode = 1979-05-27T07:32:00Z\n"},
@@ -162,17 +164,23 @@ func TestToolBoardParserRejectsInvalidParameterForms(t *testing.T) {
 		{name: "duplicate key", params: "[tool.params]\nmode = \"strict\"\nmode = \"strict\"\n"},
 		{name: "unsafe negative integer", params: "[tool.params]\nmode = -9007199254740992\n"},
 		{name: "unsafe positive integer", params: "[tool.params]\nmode = 9007199254740992\n"},
+		{name: "second sibling missing required params", params: "", secondSibling: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			store := NewStore(t.TempDir())
-			raw := strings.Replace(
-				frozenJSONNormalizeBoardFixture(),
-				"[tool.params]\nmode = \"strict\"\n",
-				tt.params,
-				1,
-			)
+			const frozenParams = "[tool.params]\nmode = \"strict\"\n"
+			raw := frozenJSONNormalizeBoardFixture()
+			if count := strings.Count(raw, frozenParams); count != 2 {
+				t.Fatalf("frozen Tool fixture parameter section count = %d, want 2", count)
+			}
+			if tt.secondSibling {
+				index := strings.LastIndex(raw, frozenParams)
+				raw = raw[:index] + tt.params + raw[index+len(frozenParams):]
+			} else {
+				raw = strings.Replace(raw, frozenParams, tt.params, 1)
+			}
 			path := store.BoardPath("tool-model")
 			writeFixture(t, path, raw)
 			wantIdentity := operativeFileIdentityForTest(t, path)
