@@ -13,8 +13,8 @@ func TestWorkspaceAuthorityCapabilityRegistryIsExactCodeOwnedOrderedPair(t *test
 	descriptorType := reflect.TypeOf(workspaceAuthorityCapability{})
 	for index := 0; index < descriptorType.NumField(); index++ {
 		field := descriptorType.Field(index)
-		if field.PkgPath == "" || field.Tag.Get("json") != "" {
-			t.Fatalf("capability descriptor field %s is public or persisted: %+v", field.Name, field)
+		if field.PkgPath == "" || field.Tag != "" {
+			t.Fatalf("capability descriptor field %s must be unexported and tag-free: exported=%t tag=%q", field.Name, field.PkgPath == "", field.Tag)
 		}
 	}
 	jsonMarshaler := reflect.TypeOf((*json.Marshaler)(nil)).Elem()
