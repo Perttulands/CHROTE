@@ -181,6 +181,12 @@ func TestDefinitionPairValidatesPinnedCurrentAndCandidateBytesWhileBothLocksAreH
 
 	if err := store.publishDefinitionPair(slug, request, func(step string) error {
 		assertPairMutexHeldForTest(t, store.BoardPath(slug)+".lock", "board at "+step)
+		if step == pairStepPreflightLayoutParentSyncForTest {
+			if pairMutexHeldForTest(store.LayoutPath(slug) + ".lock") {
+				t.Fatal("layout mutex was held during the pre-layout-lock parent durability prerequisite")
+			}
+			return nil
+		}
 		assertPairMutexHeldForTest(t, store.LayoutPath(slug)+".lock", "layout at "+step)
 		return nil
 	}); err != nil {
@@ -361,8 +367,10 @@ func TestDefinitionPairHoldsContinuousMutexOwnerEpochThroughSuccessfulPublicatio
 	done := make(chan error, 1)
 	go func() {
 		done <- store.publishDefinitionPair(slug, request, func(step string) error {
-			if err := contenders.requireBlocked(step); err != nil {
-				return err
+			if step != pairStepPreflightLayoutParentSyncForTest {
+				if err := contenders.requireBlocked(step); err != nil {
+					return err
+				}
 			}
 			if step == pairStepPublishBoardDirSyncedForTest {
 				terminalDurability = true
@@ -388,7 +396,7 @@ func TestDefinitionPairDurablyPreflightsCanonicalPairBeforeIdentityCAS(t *testin
 		wantFileSync   bool
 		wantParentSync bool
 	}{
-		{name: "present layout", oldLayout: pairLayoutFixture(1, "old"), wantFileSync: true},
+		{name: "present layout", oldLayout: pairLayoutFixture(1, "old"), wantFileSync: true, wantParentSync: true},
 		{name: "absent layout", oldLayout: nil, wantFileSync: false, wantParentSync: true},
 	}
 	for _, test := range tests {
@@ -434,7 +442,7 @@ func TestDefinitionPairDurablyPreflightsCanonicalPairBeforeIdentityCAS(t *testin
 				t.Fatalf("layout file sync observed = %t, want %t; steps=%v", got, test.wantFileSync, steps)
 			}
 			if got := pairStepObservedForTest(steps, pairStepPreflightLayoutParentSyncForTest); got != test.wantParentSync {
-				t.Fatalf("new layout-directory parent sync observed = %t, want %t; steps=%v", got, test.wantParentSync, steps)
+				t.Fatalf("layout-directory parent sync observed = %t, want %t; steps=%v", got, test.wantParentSync, steps)
 			}
 			for _, step := range steps {
 				if strings.HasPrefix(step, "stage:") || strings.HasPrefix(step, "publish:") {
@@ -477,6 +485,7 @@ func TestDefinitionPairRevisionCASRunsAfterValidationAndCanonicalDurability(t *t
 	request.cas = func(current definitionPairState) error {
 		casCalled = true
 		for _, required := range []string{
+			pairStepPreflightLayoutParentSyncForTest,
 			pairStepPreflightBoardFileSyncForTest,
 			pairStepPreflightLayoutFileSyncForTest,
 			pairStepPreflightBoardDirSyncForTest,
@@ -489,7 +498,7 @@ func TestDefinitionPairRevisionCASRunsAfterValidationAndCanonicalDurability(t *t
 		return ErrConflict
 	}
 	err := store.publishDefinitionPair(slug, request, func(step string) error {
-		if !validated {
+		if step != pairStepPreflightLayoutParentSyncForTest && !validated {
 			t.Fatalf("canonical I/O %q ran before current/candidate validation", step)
 		}
 		steps = append(steps, step)
@@ -576,6 +585,97 @@ func TestDefinitionPairDurablyPublishesNewLayoutDirectoryBeforeUsingIt(t *testin
 			assertPairFilesForTest(t, store, slug, newBoard, pairPresentContentForTest(newLayout))
 		})
 	}
+}
+
+func TestDefinitionPairRetriesLayoutDirectoryParentDurabilityAfterFailedFirstSync(t *testing.T) {
+	store := NewStore(t.TempDir())
+	slug := "pair-layout-parent-retry"
+	oldBoard := pairBoardFixture(slug, 1, "Old")
+	newBoard := pairBoardFixture(slug, 2, "New")
+	newLayout := pairLayoutFixture(2, "new")
+	writeFixture(t, store.BoardPath(slug), string(oldBoard))
+
+	var events []string
+	request := definitionPairRequestForTest(oldBoard, nil, newBoard, pairPresentContentForTest(newLayout))
+	request.validate = func(current, candidate definitionPairState) error {
+		events = append(events, "validate")
+		return nil
+	}
+
+	injected := errors.New("layout parent durability failed")
+	err := store.publishDefinitionPair(slug, request, func(step string) error {
+		events = append(events, step)
+		if step == pairStepPreflightLayoutParentSyncForTest {
+			return injected
+		}
+		return nil
+	})
+	if !errors.Is(err, injected) {
+		t.Fatalf("first parent durability error = %v, want injected failure", err)
+	}
+	if len(events) != 1 || events[0] != pairStepPreflightLayoutParentSyncForTest {
+		t.Fatalf("first failed attempt crossed validation or later pair I/O: events=%v", events)
+	}
+	assertPairFilesForTest(t, store, slug, oldBoard, pairAbsentContentForTest())
+
+	events = nil
+	err = store.publishDefinitionPair(slug, request, func(step string) error {
+		events = append(events, step)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("retry same explicit pair request: %v", err)
+	}
+	if len(events) == 0 || events[0] != pairStepPreflightLayoutParentSyncForTest {
+		t.Errorf("retry first event = %v, want layout-parent durability before validation or pair I/O", events)
+	}
+	if pairStepCountForTest(events, pairStepPreflightLayoutParentSyncForTest) != 1 {
+		t.Errorf("retry layout-parent durability count != 1; events=%v", events)
+	}
+	if pairStepCountForTest(events, "validate") != 1 {
+		t.Errorf("retry validation count != 1; events=%v", events)
+	}
+	assertPairFilesForTest(t, store, slug, newBoard, pairPresentContentForTest(newLayout))
+}
+
+func TestDefinitionPairSyncsExistingEmptyLayoutDirectoryParentBeforeValidation(t *testing.T) {
+	store := NewStore(t.TempDir())
+	slug := "pair-existing-empty-layout-directory"
+	oldBoard := pairBoardFixture(slug, 1, "Old")
+	newBoard := pairBoardFixture(slug, 2, "New")
+	newLayout := pairLayoutFixture(2, "new")
+	writeFixture(t, store.BoardPath(slug), string(oldBoard))
+	layoutDirectory := filepath.Dir(store.LayoutPath(slug))
+	if err := os.Mkdir(layoutDirectory, 0o770); err != nil {
+		t.Fatalf("pre-create empty layout directory: %v", err)
+	}
+	if _, err := os.Lstat(store.LayoutPath(slug)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("layout file precondition = %v, want absent in pre-existing directory", err)
+	}
+
+	var events []string
+	request := definitionPairRequestForTest(oldBoard, nil, newBoard, pairPresentContentForTest(newLayout))
+	request.validate = func(current, candidate definitionPairState) error {
+		events = append(events, "validate")
+		return nil
+	}
+	err := store.publishDefinitionPair(slug, request, func(step string) error {
+		events = append(events, step)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("publish through pre-existing empty layout directory: %v", err)
+	}
+	if len(events) == 0 || events[0] != pairStepPreflightLayoutParentSyncForTest {
+		t.Errorf("first event = %v, want pre-existing layout-directory parent durability before validation or pair I/O", events)
+	}
+	if pairStepCountForTest(events, pairStepPreflightLayoutParentSyncForTest) != 1 {
+		t.Errorf("pre-existing layout-directory parent durability count != 1; events=%v", events)
+	}
+	if pairStepCountForTest(events, "validate") != 1 {
+		t.Errorf("pre-existing layout-directory validation count != 1; events=%v", events)
+	}
+	assertPairFilesForTest(t, store, slug, newBoard, pairPresentContentForTest(newLayout))
 }
 
 func TestDefinitionPairPreflightSyncFailureLeavesExactOldPairWithoutStaging(t *testing.T) {
@@ -1286,8 +1386,10 @@ func runDefinitionPairPublicationBehindForeignFlockForTest(
 	done chan<- error,
 ) {
 	done <- store.publishDefinitionPair(slug, request, func(step string) error {
-		if err := reportPhase(step); err != nil {
-			return err
+		if step != pairStepPreflightLayoutParentSyncForTest {
+			if err := reportPhase(step); err != nil {
+				return err
+			}
 		}
 		if step == pairStepPublishLayoutRenameForTest {
 			locksHeldAtPublication <- [2]bool{

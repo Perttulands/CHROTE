@@ -376,9 +376,15 @@ func TestDefinitionPairPostRenameFailureReconcilesToOneExactDurablePair(t *testi
 			}
 			err := store.publishDefinitionPair(slug, request, func(step string) error {
 				steps = append(steps, step)
-				locksHeldThroughout = locksHeldThroughout &&
-					pairMutexHeldForTest(store.BoardPath(slug)+".lock") &&
-					pairMutexHeldForTest(store.LayoutPath(slug)+".lock")
+				if step == pairStepPreflightLayoutParentSyncForTest {
+					locksHeldThroughout = locksHeldThroughout &&
+						pairMutexHeldForTest(store.BoardPath(slug)+".lock") &&
+						!pairMutexHeldForTest(store.LayoutPath(slug)+".lock")
+				} else {
+					locksHeldThroughout = locksHeldThroughout &&
+						pairMutexHeldForTest(store.BoardPath(slug)+".lock") &&
+						pairMutexHeldForTest(store.LayoutPath(slug)+".lock")
+				}
 				if step == failStep && !failed {
 					failed = true
 					return injected
@@ -395,7 +401,7 @@ func TestDefinitionPairPostRenameFailureReconcilesToOneExactDurablePair(t *testi
 				t.Fatalf("post-rename failure returned without synchronous reconciliation; steps=%v", steps)
 			}
 			if !locksHeldThroughout {
-				t.Fatalf("publication or reconciliation released a definition lock before return; steps=%v", steps)
+				t.Fatalf("publication or reconciliation violated the required definition lock shape; steps=%v", steps)
 			}
 
 			gotBoard := readFile(t, store.BoardPath(slug))
@@ -860,8 +866,10 @@ func TestDefinitionPairHoldsContinuousMutexOwnerEpochThroughReconciliation(t *te
 			done := make(chan error, 1)
 			go func() {
 				done <- store.publishDefinitionPair(slug, request, func(step string) error {
-					if err := contenders.requireBlocked(step); err != nil {
-						return err
+					if step != pairStepPreflightLayoutParentSyncForTest {
+						if err := contenders.requireBlocked(step); err != nil {
+							return err
+						}
 					}
 					if step == pairStepPublishBoardFileSyncForTest && !failed {
 						failed = true
