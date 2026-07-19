@@ -27,7 +27,7 @@ or narrower docs, but they should not contradict this file.
 | formation boards | `.formations/boards/` | TOML structural definitions |
 | formation layout | `.formations/layout/` | TOML sidecars for visual placement/routing |
 | agent personas | configured persona roots | TOML cards with stable ids and harness variants |
-| canonical run authority (accepted target) | fenced CHROTE coordinator under the configured data root outside every Files root | Workspace command journal, writer-only ledger, immutable graph snapshot, private binding/result authority, raw pending-redaction state, and run-private Tool materializations |
+| canonical run authority (accepted target) | fenced CHROTE coordinator under one configured lane-independent Formations host-authority root outside every Files root | Workspace command journal, writer-only ledger, immutable graph snapshot and run bootstrap, private binding/result authority, raw pending-redaction state, and run-private Tool materializations |
 | run inspection | canonical projection APIs plus authorized `.formations/artifacts/` files | Sanitized events, opaque binding projection, and registered safe artifacts; never replay authority |
 | target occupancy, quarantine, and release receipts (accepted target) | host runtime state | Durable exclusive occupancy plus crash-safe release proof by canonical private target across runs; never browser authority |
 | Formations terminal/inspector view | dashboard local state | Selection, Peek visibility, geometry, focus, and tiling; never workflow truth |
@@ -637,11 +637,12 @@ agents/ or CHROTE_AGENTS_DIR/
   <agent-id>.toml
 ```
 
-Canonical accepted-target run state instead lives under the configured CHROTE
-data root, outside every configured Files read/write root:
+Canonical accepted-target run state instead lives under one configured
+lane-independent Formations host-authority root, outside every configured Files
+read/write root:
 
 ```text
-<chrote-data>/formations/workspaces/
+<formations-host-authority-root>/workspaces/
   registry.lock
   registry.private.json
   <workspace-authority-id>/
@@ -652,6 +653,7 @@ data root, outside every configured Files read/write root:
     admission-policies/<policy-rev>.json
     commands/<command-id>.json
     runs/<run-id>/
+      run.bootstrap.json
       events.ndjson
       graph.snapshot.toml
       bindings.private.toml
@@ -689,12 +691,18 @@ bytes/replay handle; recovery never adopts it as a run.
 
 Current main still lets the API and Archon construct separate synchronous run
 engines and writes run files under the workspace. The following ADR-0007 shapes
-are accepted schema-2 target state, not a claim about the current binary.
+are accepted `authoritySchema=2` target state, not a claim about the current binary.
 
 ```ts
+AuthorityGenerationRef {
+  recordRev: uint64
+  sha256: string
+}
+
 WorkspaceRegistry {
   registrySchema: 1
   recordRev: uint64
+  priorGeneration: AuthorityGenerationRef | null
   entries: WorkspaceRegistryEntry[]
 }
 
@@ -715,6 +723,7 @@ WorkspaceBootstrap {
 
 WorkspaceAuthority {
   recordRev: uint64
+  priorGeneration: AuthorityGenerationRef | null
   authoritySchema: uint64             // 2 for this target; monotonic high-water
   workspaceAuthorityId: string       // opaque, server-issued, caller cannot choose
   rootIdentityEncoding: "workspace-root-identity-v1"
@@ -739,6 +748,7 @@ WorkspaceAdmissionPolicy =
 WorkspaceOwnerLease {
   leaseSchema: 1
   recordRev: uint64
+  priorGeneration: AuthorityGenerationRef | null
   workspaceAuthorityId: string
   ownerInstanceId: string             // private process/boot identity
   writerFence: uint64
@@ -750,6 +760,7 @@ WorkspaceOwnerLease {
 RunCommandRecordBase {
   commandSchema: 1
   recordRev: uint64
+  priorGeneration: AuthorityGenerationRef | null
   commandEncoding: "run-command-jcs-v1"
   commandId: string                   // ^cmd_[0-7][0-9A-HJKMNP-TV-Z]{25}$
   commandKind: "start" | "resume" | "cancel" | "verdict"
@@ -788,23 +799,111 @@ RunCommandReceipt =
       rejectionCode: string
       decisionAdmissionPolicyRef: WorkspaceAdmissionPolicyRef | null
     }
+
+RunBootstrap {
+  runBootstrapSchema: 1
+  workspaceAuthorityId: string
+  runId: string
+  runAuthorityId: string
+  graphSnapshotEncoding: "run-graph-snapshot-toml-v1"
+  graphSnapshotSha256: string
+  privateBindingsEncoding: "run-private-bindings-toml-v1"
+  privateBindingsSha256: string
+}
 ```
+
+For `WorkspaceAuthority.authoritySchema=2`, the existing explicit
+`CHROTE_FORMATIONS_DATA_ROOT` server
+configuration supplies `<formations-host-authority-root>`. It is one stable
+absolute root, opened once and shared by every CHROTE lane capable of that authority schema on
+the host. It is never derived from a lane's service data directory, workspace,
+Files roots, caller input, or ambient working directory, and there is no per-lane
+production fallback. Independently injected roots are test fixtures only. This
+target authorizes no live path, configuration, service, deployment, or UID
+migration.
+
+The immutable code-owned `authoritySchema=2` foundation capability registry is not
+persisted workspace truth and cannot be selected by a board. Its complete
+bytewise-ordered set is `formations.runtime-authority-read-guard.v1`, then
+`formations.workspace-authority.v1`. Both validate before owner-lock selection
+or fence allocation. The first is non-authorizing; the second authorizes only
+workspace registration, private publication, owner lease/fence, and command-
+journal foundation work. Semantic projection, run reconciliation, cleanup,
+quarantine, and execution remain unavailable. A missing, duplicate, unknown, or
+unsupported required capability rejects before owner or fence mutation.
+
+Writer trust is the dedicated CHROTE service UID. Production provisioning names
+that account in the tracked `services/chrote-srv.service` unit as `User=chrote`;
+the service manager and kernel resolve the account and launch the coordinator
+with its effective UID. Server construction passes that kernel effective UID as
+the numeric writer identity to the authority library, which checks the live
+effective UID and `st_uid` of the opened host root, private directories, files,
+and locks. No board, authority file, caller value, environment variable, or
+separately configurable numeric UID may self-assert writer trust. Required modes
+are exact directory mode `0700`, exact regular-file mode `0600`, no special bits,
+and file link count one. Same-UID agent processes are unsupported because modes
+cannot isolate peers sharing a UID. Tests may inject an expected UID and
+disposable root; production uses only the provisioned account plus kernel
+credential. No UID is persisted in authority JSON.
 
 `registry.private.json` is a closed schema-1 object. Its entries have exactly the
 fields above and sort by decoded unsigned numeric `device`, decoded unsigned
 numeric `inode`, then valid UTF-8 `configuredPath` bytewise. They use the same
 canonical path/device/inode rules as `workspace-root-identity-v1`. A reader strict-validates
-the registry under `registry.lock` before selecting or creating an authority id;
+the registry under the shared host `registry.lock` before selecting or creating
+an authority id;
 unknown schema/key, duplicate configured/opened identity, or conflicting mapping
 authorizes no mutation. Registry generations use the atomic mutable-file rule
 below.
+
+Every overwrite-style mutable JSON record (`WorkspaceRegistry`,
+`WorkspaceAuthority`, `WorkspaceOwnerLease`, and `RunCommandRecord`) includes the
+closed `priorGeneration` field, exactly `null` or `{recordRev,sha256}`. Revision 1
+requires `null`; revision N greater than 1 requires `recordRev=N-1`. Their sole
+accepted target encodings are respectively `workspace-registry-jcs-v1`,
+`workspace-authority-jcs-v1`, `workspace-owner-lease-jcs-v1`, and
+`run-command-record-jcs-v1`. Each encoding is the complete closed corresponding
+JSON record (one exact state variant for a command record), serialized as RFC
+8785 canonical UTF-8 with no BOM, insignificant JSON whitespace, or trailing
+newline. The closed path-to-encoding map is
+`registry.private.json=workspace-registry-jcs-v1`,
+`workspace.private.json=workspace-authority-jcs-v1`,
+`owner.private.json=workspace-owner-lease-jcs-v1`, and
+`commands/<commandId>.json=run-command-record-jcs-v1`.
+No persisted encoding discriminator is added. `priorGeneration.sha256` is the
+64-lowercase-hex SHA-256 of the exact complete previous-generation bytes in that
+same named encoding.
+
+`RunCommandRecord.commandPayload` remains the closed `run-command-jcs-v1` JSON
+object. Its payload hash is computed from those canonical payload bytes; the
+object is then embedded as JSON and the complete containing command record is
+re-encoded as `run-command-record-jcs-v1`, never stored as an opaque string or
+pre-encoded byte field. Immutable admission policies retain only their existing
+`priorPolicySha256` chain. A caller's expected predecessor must exact-match the
+closed next record's `priorGeneration`; only that authenticated binding permits
+exact-next retry after canonical replacement. Desired-state idempotency with a
+false or stale predecessor remains rejected, and a format-neutral publisher
+without record-specific proof rejects a consumed predecessor.
+
+These four encodings are the only accepted target encodings for their mutable
+record families. Where a record carries `registrySchema`, `leaseSchema`, or
+`commandSchema`, that value is exactly `1`; `WorkspaceAuthority.authoritySchema`
+is exactly `2` for this target. Pre-freeze or experimental records that reuse
+those schemas or the target workspace-authority shape but omit required
+`priorGeneration` are malformed, non-authorizing, and never auto-upgraded. This
+contract authorizes no migration of shipped or live records and no deployment.
+Before `formations.workspace-authority.v1` may authorize foundation work, the
+guard must make every permissively decoded or non-canonical legacy form
+non-authorizing, including bytes that do not exact-match the named encoding and
+records missing required `priorGeneration`; compatibility parsing may expose
+inspection evidence only.
 
 `workspace-bootstrap-jcs-v1` is RFC 8785 canonical UTF-8 JSON over exactly
 `{bootstrapSchema,workspaceAuthorityId,rootIdentityEncoding,
 workspaceRootIdentitySha256}` with no unknown keys or trailing newline. The
 published bootstrap is immutable. Current authority compatibility lives in the
 separate mutable `workspace.private.json.authoritySchema` high-water mark.
-The schema-2 target requires that value to be exactly `2`; a future supported
+The `authoritySchema=2` target requires that value to be exactly `2`; a future supported
 authority schema changes the supported value without rewriting the immutable
 bootstrap, while an older reader rejects that higher value before mutation.
 
@@ -830,13 +929,25 @@ Device and inode are JSON strings matching `0|[1-9][0-9]*` and must decode as
 `uint64`; they are not JSON numbers. The object remains private and
 `workspaceRootIdentitySha256` hashes those exact bytes.
 
-First registration holds a coordinator-local mutex plus `registry.lock` before selecting an authority-id
-directory. `registry.private.json` enforces one mapping for both the cleaned
-configured spelling and the opened `(device,inode)` identity, so aliases cannot
-create separate owner locks. The new bootstrap/private directory is fsynced
-before its mapping and parent are fsynced. One unique exact unregistered creation
-may be completed after a crash; duplicate/conflicting identity fails loud and
-authorizes nothing.
+`run-bootstrap-jcs-v1` is RFC 8785 canonical UTF-8 JSON over exactly
+`{runBootstrapSchema,workspaceAuthorityId,runId,runAuthorityId,
+graphSnapshotEncoding,graphSnapshotSha256,privateBindingsEncoding,
+privateBindingsSha256}`, with no unknown key, BOM, insignificant JSON whitespace, or
+trailing newline. `runBootstrapSchema=1`; graph and private-binding encodings are
+respectively `run-graph-snapshot-toml-v1` and
+`run-private-bindings-toml-v1`. Both hashes are 64 lowercase hexadecimal
+characters. The complete graph and private-binding files publish immutably
+before `runs/<run-id>/run.bootstrap.json`; only that immutable bootstrap selects
+the authoritative pair, so stray complete files authorize nothing.
+
+First registration holds a coordinator-local mutex plus the shared host
+`registry.lock` at `<formations-host-authority-root>/workspaces/` before selecting
+an authority-id directory. `registry.private.json` enforces one mapping for both
+the cleaned configured spelling and the once-opened `(device,inode)` identity, so
+aliases cannot create separate owner locks. The new bootstrap/private directory
+is fsynced before its mapping and parent are fsynced. One unique exact
+unregistered creation may be completed after a crash; duplicate/conflicting
+identity fails loud and authorizes nothing.
 `workspaceAuthorityId` is server-issued and matches canonical uppercase ULID
 grammar `^wsa_[0-7][0-9A-HJKMNP-TV-Z]{25}$`, validated before directory
 construction.
@@ -901,23 +1012,35 @@ may therefore repair an F1 effect by publishing the record with
 `stateWriterFence=F2` and `outcomeWriterFence=F1`. The same id/hash returns the same receipt; another hash fails
 `command_id_conflict` before effect.
 
-Before fence allocation, a process holds a coordinator-local mutex plus
-process-shared `owner.lock` and strict-validates the immutable closed bootstrap
-plus the mutable current `WorkspaceAuthority` and its hash-matched immutable
-admission-policy generation plus the complete contiguous prior-hash chain to
-revision 1. Missing generations, discontinuities, or cycles are invalid.
-Unsupported, missing, or conflicting bootstrap,
-workspace authority, or policy schema is strictly read-only: no fence,
-projection-as-valid, cleanup, quarantine, or tmux action. Matching schema numbers alone do not enable schema-2
-semantics. Only a registered complete projector/coordinator may reserve a fence,
-fsync the advanced counter, and then publish its lease; counter gaps are allowed
-and reuse is forbidden. Elapsed lease time cannot bypass a still-held kernel
-owner lock.
+After the complete ordered foundation capability pair validates, a process holds
+a coordinator-local mutex plus process-shared `owner.lock` and strict-validates
+the immutable closed bootstrap plus the mutable current `WorkspaceAuthority`, its
+authenticated mutable-generation chain, and its hash-matched immutable
+admission-policy generation plus the complete contiguous prior-policy-hash chain
+to revision 1. Missing generations, discontinuities, or cycles are invalid.
+Unsupported, missing, or conflicting bootstrap, workspace authority, mutable
+predecessor, or policy schema is strictly read-only: no fence, projection-as-
+valid, cleanup, quarantine, or tmux action. Matching schema numbers alone do not
+enable `authoritySchema=2` semantics.
+
+A process with `formations.workspace-authority.v1` may reserve the next fence,
+fsync the advanced counter, and publish its lease for foundation work; counter
+gaps are allowed and reuse is forbidden. `owner.lock` stays held continuously
+for the owner epoch and is the exclusion truth. `owner.private.json` is evidence
+and fencing, not an availability veto after kernel-lock release. `acquiredAt`,
+`renewedAt`, and `leaseUntil` are canonical UTC `time.RFC3339Nano` strings using
+`Z`; parsing and UTC-formatting must reproduce the exact bytes, and
+`acquiredAt <= renewedAt < leaseUntil`. A holder at `leaseUntil` renews before
+authority work. Once the kernel lock is released, including by crash, a successor
+may allocate and publish a strictly higher fence without waiting for the old
+wall-clock lease. Time never bypasses a still-held kernel lock. The foundation
+capability still grants no valid run projection, cleanup, quarantine, execution,
+or tmux action.
 
 The owner lock remains held from current lease/fence validation through each
 authority write+fsync or bounded non-idempotent send, spawn, interrupt, cleanup,
 or quarantine call. Takeover cannot interleave between check and effect. Valid
-lock order is parent registry (registration only), workspace authority, then
+lock order is host registry (registration only), workspace owner, then
 host target arbiter; reverse acquisition is invalid. Valid
 historical event fences are monotonic non-decreasing allocated owner epochs; an
 older prefix survives takeover. Fence regression, an unallocated fence, or a new
@@ -940,14 +1063,15 @@ policy generations are immutable and publish under `owner.lock` before the
 current workspace reference changes. Each mutable record has
 a `recordRev` starting at 1; every successful replacement is exactly the last
 published revision plus one and rejects a stale, skipped, or regressed
-predecessor. Each uses a generation-checked same-directory
+predecessor, with the exact named-encoding `priorGeneration` authentication
+above. Each uses a generation-checked same-directory
 temp, file fsync, atomic rename, and parent fsync. Migration holds both locks in
-parent-registry then workspace order. Torn/stale/conflicting published records
+host-registry then workspace-owner order. Torn/stale/conflicting published records
 fail loud; a temp file never outranks the last valid record, and a canonical
 immutable path is never a partial-file recovery surface.
 A shared-package file lock protects bytes only and grants no runtime authority.
 
-Every schema-2 JSON record/policy revision, writer-fence field, allocated
+Every JSON record/policy revision governed by `authoritySchema=2`, writer-fence field, allocated
 event/effect sequence, workspace-admission identity, and next counter is an integer in
 `1..9007199254740991`. Allocation past that bound fails closed before mutation;
 rounding, wrap, and reuse are invalid.
@@ -977,7 +1101,7 @@ outcome fence.
 integer in `0..2147483647`. Under the workspace admission lock, the writer
 strict-validates the immutable policy generation named by
 `WorkspaceAuthority.admissionPolicyRef`; there is no implicit default, and
-schema-2 authority starts with the closed `state=disabled` revision 1. Disabled
+`authoritySchema=2` authority starts with the closed `state=disabled` revision 1. Disabled
 rejects new starts as `admission_disabled` and pauses queued activation without
 canceling active or queued work; queue wall clocks continue. Admission and
 activation resume only after an operator publishes a configured generation.
@@ -1014,7 +1138,7 @@ forbidden.
 `run_started` alone projects queued; the unique `run_activated` projects running
 and is required before graph/dispatch events. Restart recomputes exact counts/order
 for current state from run ledgers and strict-validates every retained policy
-ref. Schema 2 has no workspace-global admission-decision sequence: a policy ref
+ref. `authoritySchema=2` has no workspace-global admission-decision sequence: a policy ref
 attributes exact policy bytes but does not independently prove historical
 cross-run capacity interleaving. Concurrent starts still serialize under the one
 authority critical section and are certified by contention/crash tests. Queue
@@ -1184,12 +1308,12 @@ accepts only `text/markdown`; Gate `in`/`pass` work ports use the full set. Gate
 new boards remain schema 1 and ordinary non-Tool writes preserve their existing
 schema. Only the first successful Tool creation migrates a schema-1 canonical
 board and writes those defaults. Board schema 2 is monotonic: deleting the final
-Tool never downgrades it, and Tool update/delete remain schema 2. A
+Tool never downgrades it, and Tool update/delete remain board schema 2. A
 legacy Gate fail edge into a
 work input remains inspectable in degraded state but cannot validate or run
 until explicitly rewired; annotated-work pushback is not preserved implicitly.
 A safely normalizable schema-1 board may start without canonical mutation:
-preflight writes a normalized schema-2 run snapshot and records source/snapshot
+preflight writes a normalized board-schema-2 run snapshot and records source/snapshot
 schema. Unsafe normalization rejects before `run_started`.
 
 Tool update changes only title and the complete parameter map. Tool delete
@@ -1203,28 +1327,34 @@ absent state or SHA-256 over exact bytes; a missing original layout is not an
 empty file. Restoring absent layout means unlink/no-file plus layout-parent
 fsync. Validation, legacy, CAS, serialization, staging, or
 fsync failure before that rename leaves both canonical files byte-identical.
-Publication renames layout first and board last because layout-only entries are
-ignored and non-authorizing while the board is graph authority.
+Publication renames/installs layout (or establishes its no-file state), fsyncs
+the present canonical layout file or confirms absence and fsyncs its parent, and
+only then renames/installs board and fsyncs the canonical board file and parent.
+Layout-only entries are ignored and non-authorizing while the board is graph
+authority.
 
 After the first rename, an I/O error triggers synchronous exact-hash
 reconciliation under both locks. Exact hashes alone are insufficient. Old/old
 returns ordinary failure only after every present canonical file and both parent
 directories fsync, using the absent-layout rule above. New/new reports success
-only after both canonical files and both parent directories fsync. A mixed pair
-or failed sync returns stable `definition_publication_uncertain`, never ordinary
-failure or success. Without a journal this is not a durable mutation block, but
+only after both canonical files and both parent directories fsync in layout-
+before-board order. Rollback after board publication restores/fsyncs the old
+board before the old layout. A mixed pair or failed sync returns stable
+`definition_publication_uncertain`, never ordinary failure or success. Without a
+journal this is not a durable mutation block, but
 automatic retry is forbidden. The next explicit Tool mutation reopens and
 validates the canonical pair and fsyncs every present member and both parents
 under both locks before evaluating CAS.
 
 Cross-file crash/power-loss atomicity is not claimed without a future journal.
-A possible layout-new/board-old state projects the old board. UI/graph
+The durable crash states are old/old, layout-new/board-old, or new/new;
+board-new/layout-old cannot arise from publication or reverse-order rollback. A
+possible layout-new/board-old state projects the old board. UI/graph
 projection joins positions and lanes only for ids in that board; missing entries
 receive only the normal non-authorizing placement heuristic, and the next
-successful Tool mutation filters inert extras. During reconciliation against the
-operation's staged identities, board-new/layout-old is invalid and unexpected
-under the ordered protocol; ordinary stale layout remains non-authorizing
-presentation state. Layout raw entries grant no node or Tool authority.
+successful Tool mutation filters inert extras. Ordinary stale layout remains
+non-authorizing presentation state. Layout raw entries grant no node or Tool
+authority.
 
 Schema-1 edges touching `gate:judge` normalize to `channel=judge` only when they
 form one unambiguous linear Formation-only send/return chain. Ambiguous or
@@ -1516,7 +1646,7 @@ Discarded authoritative values cannot be reconstructed or rerun from hashes.
 
 Run ledgers are append-only NDJSON. Event payloads are versioned and should be
 sufficient to reconstruct projected state, immutable attempt inputs, and
-recovery handles. Every schema-2 ledger event carries its origin `writerFence`.
+recovery handles. Every ledger event with event schema 2 carries its origin `writerFence`.
 Valid event fences are monotonic non-decreasing allocated owner epochs; prior
 prefixes remain valid after takeover. A lower fence after a higher event, an
 unallocated fence, or a new append/effect not using the current fence is invalid.
@@ -1563,7 +1693,7 @@ declaration is projected as schema 1 with its original compatibility semantics;
 schemas never mix within one ledger and old events are never reinterpreted as
 typed feedback/pass-through. Schema-1 runs are inspect-only under the schema-2
 engine; resume returns `legacy_run_requires_new_run`.
-Schema 2 includes the ADR-0007 command, workspace, fence, Formation-result,
+Ledger event schema 2 includes the ADR-0007 command, workspace, fence, Formation-result,
 root-projection, and authored-config-manifest semantics before its first
 admission. Schema-number recognition alone cannot enable it: admission waits for
 the complete safe projector/coordinator and a certified rollback set in which

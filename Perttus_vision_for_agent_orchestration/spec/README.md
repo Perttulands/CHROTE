@@ -239,19 +239,20 @@ never executed.
 <workspace>/.formations/boards/<board>.formation.toml   # definition (structure) — TOML
 <workspace>/.formations/layout/<board>.layout.toml      # presentation (x/y, lanes) — sidecar
 <workspace>/.formations/artifacts/<run-id>/...          # registered sanitized files only
-<chrote-data>/formations/workspaces/registry.lock
-<chrote-data>/formations/workspaces/registry.private.json
-<chrote-data>/formations/workspaces/<workspace-authority-id>/workspace.bootstrap.json
-<chrote-data>/formations/workspaces/<workspace-authority-id>/workspace.private.json
-<chrote-data>/formations/workspaces/<workspace-authority-id>/owner.lock
-<chrote-data>/formations/workspaces/<workspace-authority-id>/owner.private.json
-<chrote-data>/formations/workspaces/<workspace-authority-id>/admission-policies/<policy-rev>.json
-<chrote-data>/formations/workspaces/<workspace-authority-id>/commands/  # private command journal
-<chrote-data>/formations/workspaces/<workspace-authority-id>/runs/<run-id>/events.ndjson
-<chrote-data>/formations/workspaces/<workspace-authority-id>/runs/<run-id>/graph.snapshot.toml
-<chrote-data>/formations/workspaces/<workspace-authority-id>/runs/<run-id>/bindings.private.toml
-<chrote-data>/formations/workspaces/<workspace-authority-id>/runs/<run-id>/refs/
-<chrote-data>/formations/workspaces/<workspace-authority-id>/quarantine/
+<formations-host-authority-root>/workspaces/registry.lock
+<formations-host-authority-root>/workspaces/registry.private.json
+<formations-host-authority-root>/workspaces/<workspace-authority-id>/workspace.bootstrap.json
+<formations-host-authority-root>/workspaces/<workspace-authority-id>/workspace.private.json
+<formations-host-authority-root>/workspaces/<workspace-authority-id>/owner.lock
+<formations-host-authority-root>/workspaces/<workspace-authority-id>/owner.private.json
+<formations-host-authority-root>/workspaces/<workspace-authority-id>/admission-policies/<policy-rev>.json
+<formations-host-authority-root>/workspaces/<workspace-authority-id>/commands/  # private command journal
+<formations-host-authority-root>/workspaces/<workspace-authority-id>/runs/<run-id>/run.bootstrap.json
+<formations-host-authority-root>/workspaces/<workspace-authority-id>/runs/<run-id>/events.ndjson
+<formations-host-authority-root>/workspaces/<workspace-authority-id>/runs/<run-id>/graph.snapshot.toml
+<formations-host-authority-root>/workspaces/<workspace-authority-id>/runs/<run-id>/bindings.private.toml
+<formations-host-authority-root>/workspaces/<workspace-authority-id>/runs/<run-id>/refs/
+<formations-host-authority-root>/workspaces/<workspace-authority-id>/quarantine/
 # .formations/board.ndjson (notice board) — DEFERRED
 ```
 Canonical run authority is outside every generic Files root. Run APIs expose

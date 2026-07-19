@@ -98,8 +98,10 @@ designed later if copying proves insufficient.
 
 Canonical run authority is writer-private. The append-only ledger, normalized
 graph snapshot, private bindings, sealed Tool inputs, and pending raw-redaction
-state live under the configured CHROTE data root outside every generic Files
-read/write root. `run_started` stores an opaque authority id plus exact graph,
+state live under the lane-independent Formations host-authority root supplied by
+the explicit `CHROTE_FORMATIONS_DATA_ROOT` server configuration, outside every
+generic Files read/write root. Tool private runtime state follows that same root;
+it is never derived from a lane's service data directory. `run_started` stores an opaque authority id plus exact graph,
 private-binding, and safe-projection SHA-256 values; every execution/recovery read
 rechecks them. Generic Files cannot list, read, mutate, rename, or delete this
 tree. Run/event/SSE APIs expose sanitized projections, and only currently
@@ -159,16 +161,16 @@ the certified runtime slice lands, `tool_execution_unavailable` is the sole
 non-executing Tool runtime code. The API maps it to HTTP 422 and Archon JSON
 returns the same lowercase code. There is no isolated Tool-run endpoint.
 
-Run admission parses the board, resolves the requested Mission or isolated
-Formation root, and applies existing structural and legacy-migration validation
-first. It then scans that root's complete possible graph. A Mission scan includes
+Definition-side selected-root validation parses the board, resolves the requested
+Mission or isolated Formation root, and applies existing structural and legacy-
+migration validation first. It then scans that root's complete possible graph. A Mission scan includes
 both Gate branches and reachable judge chains; an isolated Formation scan does
 not traverse unrelated downstream board nodes. If the selected root contains a
-Tool, admission returns `tool_execution_unavailable`, and only after that check
-may it check global runtime authority. This precedence applies only against the
-global authority error; malformed definitions and legacy migration errors retain
-their existing precedence. Rejection occurs before snapshot, binding, ledger,
-artifact, evaluator, executor, or process mutation.
+Tool, validation returns `tool_execution_unavailable` before command submission
+or coordinator authority resolution. This error precedes only a global
+coordinator/runtime-authority-unavailable error; malformed-definition and legacy-
+migration validation retain their earlier precedence. Rejection occurs before
+snapshot, binding, ledger, artifact, evaluator, executor, or process mutation.
 
 Tool identity is exact and immutable. `profileId` is case-sensitive ASCII, at
 most 128 bytes, and matches
@@ -254,7 +256,7 @@ Schema ownership is split exactly as `CurrentBoardSchema=2`,
 never write. Empty and Tool-free new boards remain schema 1, and ordinary
 non-Tool mutations preserve the board's existing schema. Board schema 2 is
 monotonic: deleting the last Tool never downgrades it, and Tool updates and
-deletes remain schema 2. Under board/layout locks and revision/ETag CAS, the
+deletes remain board schema 2. Under board/layout locks and revision/ETag CAS, the
 first successful Tool creation on a schema-1 board first rejects ambiguous
 legacy fail or judge routes, inline verification, and every legacy script-Gate
 shape before staging. It then publishes one content-preserving board-file
@@ -267,27 +269,33 @@ parameter map. Tool delete removes the Tool, every incident board connection,
 its layout node, and every incident layout routing entry.
 
 Create and delete hold the board lock and then the layout lock through
-publication. Before the first canonical rename, the writer computes and
+publication. Before publication, the writer computes and
 validates the exact old/old and new/new board/layout identities and stages and
 fsyncs every present old and new representation. Each identity member is either
 the explicit absent state or SHA-256 over the exact bytes; a missing original
 layout is not treated as an empty file. Restoring that predecessor means
 unlinking any canonical layout, confirming the no-file state, and fsyncing the
 layout parent directory. Validation, legacy, revision/ETag CAS,
-serialization, staging, or fsync failure before that rename leaves both
-canonical files byte-identical. Publication renames layout first and board last:
-layout-only entries are ignored and grant no graph or Tool authority, while the
-board remains graph authority.
+serialization, staging, or fsync failure before the first canonical rename
+leaves both canonical files byte-identical. Publication then follows one durable
+order: rename/install the staged layout (or establish its canonical no-file
+state), fsync the present canonical layout file or confirm absence and fsync the
+layout parent, only then rename/install the staged board, and finally fsync the
+canonical board file and board parent. Layout-only entries are ignored and grant
+no graph or Tool authority, while the board remains graph authority.
 
 After the first rename, an I/O error triggers synchronous reconciliation under
 both locks using those exact staged and canonical identities. Exact hashes alone
 never close reconciliation. Old/old returns the ordinary failure only after
 every present canonical file and both parent directories fsync; restored layout
 absence uses the unlink/no-file plus layout-parent-fsync rule above. New/new
-reports success only after both canonical files and both parent directories
-fsync. A mixed pair or any failed file/directory sync never returns an ordinary
-failure or success. If reconciliation cannot complete either exact outcome, it
-returns stable `definition_publication_uncertain`.
+reports success only after the layout state and parent are durable before the
+board file and parent. If reconciliation rolls back after board publication, it
+restores and fsyncs the old board before restoring the old layout, preserving the
+same durable-state order in reverse. A mixed pair or any failed file/directory
+sync never returns an ordinary failure or success. If reconciliation cannot
+complete either exact outcome, it returns stable
+`definition_publication_uncertain`.
 
 Without a journal, uncertainty is not a durable mutation block. It forbids an
 automatic retry. The next explicit Tool mutation holds both locks, reopens and
@@ -297,10 +305,10 @@ and graph projection join positions and lanes only for node and connection ids
 present in the current board; the next successful Tool mutation filters inert
 layout extras. A possible layout-new/board-old crash state therefore projects
 the old board, with missing entries receiving only the normal non-authorizing
-placement heuristic. During reconciliation against that operation's staged
-identities, board-new/layout-old is invalid and unexpected under the ordered
-publication protocol; this does not reclassify ordinary stale layout as graph
-state. Layout raw entries grant no node or Tool
+placement heuristic. The protocol's durable crash states are exactly old/old,
+layout-new/board-old, or new/new; board-new/layout-old cannot arise from its
+publication or reverse-order rollback. This does not reclassify ordinary stale
+layout as graph state. Layout raw entries grant no node or Tool
 authority. This protocol does not claim cross-file crash or power-loss atomicity
 without a future journal. A schema-1 reader rejects board schema 2.
 
@@ -744,7 +752,7 @@ input normalizes on read to `kind=work`, the stable full initial
 normalizes to `kind=work` with that same media set. Fixed Mission `out` accepts
 only `text/markdown`; Gate `in`/`pass` work ports use the full set. Gate `fail` is `gate_feedback` and has
 no media set. Inspection does not rewrite the file.
-The first successful Tool creation is the schema-2 structural mutation defined
+The first successful Tool creation is the board-schema-2 structural mutation defined
 above; ordinary non-Tool writes never perform that migration. A legacy Gate fail edge targeting
 a work input loads as degraded with
 `legacy_fail_route_requires_migration`; inspection remains possible, but board
@@ -1388,7 +1396,7 @@ ADR-0007.
 - Non-executing Tool fixtures freeze the exact descriptor shapes and sole
   `json.normalize@1` entry; exact tuple/name/port/media/parameter validation;
   schema-1 read byte identity; board/layout schema separation; content-
-  preserving first-Tool migration; monotonic schema-2 update/delete; exact
+  preserving first-Tool migration; monotonic board-schema-2 update/delete; exact
   incident-edge cleanup; pre-rename byte identity; layout-first publication;
   file-and-parent-fsynced reconciliation; absent-layout restoration; explicit
   uncertain-state recovery preflight; board-authoritative layout filtering;
