@@ -728,10 +728,12 @@ func deleteToolIncidentConnections(raw []byte, connections []BoardConnection, to
 	}
 
 	lines := splitLines(raw)
+	filtered := make([]tomlLine, 0, len(lines))
 	currentConnectionID := ""
 	for index := 0; index < len(lines); {
 		section, ok := tomlLineSectionName(lines[index])
 		if !ok {
+			filtered = append(filtered, lines[index])
 			index++
 			continue
 		}
@@ -743,12 +745,17 @@ func deleteToolIncidentConnections(raw []byte, connections []BoardConnection, to
 		}
 		ownedDescendant := section != "connection" && tomlSectionIsOrDescendsFrom(section, "connection")
 		if incidentIDs[currentConnectionID] && (isConnectionRoot || ownedDescendant) {
-			lines = append(lines[:index], lines[end:]...)
-			continue
+			for _, line := range lines[index:end] {
+				if toolLayoutTrivia(line) {
+					filtered = append(filtered, line)
+				}
+			}
+		} else {
+			filtered = append(filtered, lines[index:end]...)
 		}
 		index = end
 	}
-	return renderTOMLLines(lines)
+	return renderTOMLLines(filtered)
 }
 
 func toolStringScalarInBlock(lines []tomlLine, start, end int, key string) string {
