@@ -2712,7 +2712,9 @@ func parseLayoutNodes(raw []byte) []LayoutNode {
 		}
 		switch key {
 		case "id":
-			current.ID = value
+			if identity, ok := parseLayoutStringField(line.body); ok {
+				current.ID = identity
+			}
 		case "x":
 			if coordinate, ok := parseLayoutCoordinate(value); ok {
 				current.X = coordinate
@@ -2727,7 +2729,7 @@ func parseLayoutNodes(raw []byte) []LayoutNode {
 }
 
 func parseLayoutCoordinate(value string) (int, bool) {
-	coordinate, err := parseToolInteger(value)
+	coordinate, err := parseTOMLInteger(value)
 	if err != nil {
 		return 0, false
 	}
@@ -2759,18 +2761,31 @@ func parseLayoutEdges(raw []byte) []LayoutEdge {
 		if !active || current == nil {
 			continue
 		}
-		key, value, ok := tomlKeyValue(line.body)
+		key, _, ok := tomlKeyValue(line.body)
 		if !ok {
 			continue
 		}
 		switch key {
 		case "id":
-			current.ID = value
+			if identity, ok := parseLayoutStringField(line.body); ok {
+				current.ID = identity
+			}
 		case "lane":
-			current.Lane = value
+			if lane, ok := parseLayoutStringField(line.body); ok {
+				current.Lane = lane
+			}
 		}
 	}
 	return edges
+}
+
+func parseLayoutStringField(line string) (string, bool) {
+	_, literal, present, err := parseToolAssignment(line)
+	if err != nil || !present {
+		return "", false
+	}
+	value, err := parseToolString(literal)
+	return value, err == nil
 }
 
 func tomlKeyValue(line string) (string, string, bool) {

@@ -310,17 +310,25 @@ func validToolString(value string) bool {
 }
 
 func parseToolInteger(literal string) (int64, error) {
-	if literal == "" {
+	value, err := parseTOMLInteger(literal)
+	if err != nil || value < -maxToolParameterInteger || value > maxToolParameterInteger {
 		return 0, fmt.Errorf("invalid Tool integer")
 	}
+	return value, nil
+}
+
+func parseTOMLInteger(literal string) (int64, error) {
+	if literal == "" {
+		return 0, fmt.Errorf("invalid TOML integer")
+	}
 	if strings.HasPrefix(literal, "0x") {
-		return parseToolPrefixedInteger(literal[2:], 16)
+		return parseTOMLPrefixedInteger(literal[2:], 16)
 	}
 	if strings.HasPrefix(literal, "0o") {
-		return parseToolPrefixedInteger(literal[2:], 8)
+		return parseTOMLPrefixedInteger(literal[2:], 8)
 	}
 	if strings.HasPrefix(literal, "0b") {
-		return parseToolPrefixedInteger(literal[2:], 2)
+		return parseTOMLPrefixedInteger(literal[2:], 2)
 	}
 
 	sign := ""
@@ -331,23 +339,24 @@ func parseToolInteger(literal string) (int64, error) {
 	}
 	normalized, err := normalizeToolDigits(digits, 10)
 	if err != nil || len(normalized) > 1 && normalized[0] == '0' {
-		return 0, fmt.Errorf("invalid Tool integer")
+		return 0, fmt.Errorf("invalid TOML integer")
 	}
 	value, err := strconv.ParseInt(sign+normalized, 10, 64)
-	if err != nil || value < -maxToolParameterInteger || value > maxToolParameterInteger {
-		return 0, fmt.Errorf("invalid Tool integer")
+	if err != nil {
+		return 0, fmt.Errorf("invalid TOML integer")
 	}
 	return value, nil
 }
 
-func parseToolPrefixedInteger(digits string, base int) (int64, error) {
+func parseTOMLPrefixedInteger(digits string, base int) (int64, error) {
 	normalized, err := normalizeToolDigits(digits, base)
 	if err != nil {
-		return 0, fmt.Errorf("invalid Tool integer")
+		return 0, fmt.Errorf("invalid TOML integer")
 	}
 	value, err := strconv.ParseUint(normalized, base, 64)
-	if err != nil || value > uint64(maxToolParameterInteger) {
-		return 0, fmt.Errorf("invalid Tool integer")
+	const maxInt64 = int64(^uint64(0) >> 1)
+	if err != nil || value > uint64(maxInt64) {
+		return 0, fmt.Errorf("invalid TOML integer")
 	}
 	return int64(value), nil
 }

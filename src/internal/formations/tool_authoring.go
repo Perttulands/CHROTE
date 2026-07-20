@@ -659,7 +659,7 @@ func parseToolLayoutCoordinateField(block *toolLayoutOwnedBlock, field, raw stri
 	if err != nil || !present {
 		return fmt.Errorf("invalid_layout_coordinate: malformed %s coordinate", field)
 	}
-	value, err := parseToolInteger(literal)
+	value, err := parseTOMLInteger(literal)
 	if err != nil || !validToolLayoutCoordinate(value) {
 		return fmt.Errorf("invalid_layout_coordinate: %s coordinate is outside signed 32-bit bounds", field)
 	}
