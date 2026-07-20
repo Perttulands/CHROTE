@@ -446,6 +446,34 @@ func TestCreateToolRejectsMalformedOrOrphanedOwnedLayoutSourceWithoutMutation(t 
 	}
 }
 
+func TestCreateToolRejectsMalformedUnknownLayoutValuesWithoutMutation(t *testing.T) {
+	const slug = "tool-layout-unknown-values"
+	tests := []struct {
+		name string
+		tail string
+	}{
+		{name: "invalid basic string escape", tail: "x_owner = \"\\q\"\n"},
+		{name: "unterminated array", tail: "x_owner = [\n"},
+		{name: "duplicate unknown key", tail: "x_owner = 1\nx_owner = 2\n"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := newToolAuthoringStore(t)
+			boardRaw := toolAuthoringBoardFixture(slug, 2, true, "")
+			layoutRaw := "schema = 1\nboardId = \"brd_tool-layout-unknown-values\"\nboardRev = 2\n" + test.tail
+			writeFixture(t, store.BoardPath(slug), boardRaw)
+			writeFixture(t, store.LayoutPath(slug), layoutRaw)
+			board, layout := toolAuthoringReadPair(t, store, slug)
+
+			_, err := store.CreateTool(slug, toolAuthoringCreateRequest(ToolPlacement{}), toolAuthoringPresentOptions(board, layout))
+			if err == nil || !strings.Contains(err.Error(), "invalid_layout_owned_source") {
+				t.Fatalf("malformed unknown layout value error = %v, want invalid_layout_owned_source", err)
+			}
+			assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, &layoutRaw)
+		})
+	}
+}
+
 func TestCreateToolRejectsMalformedDuplicateOrCompetingLayoutIdentityFieldsWithoutMutation(t *testing.T) {
 	const slug = "tool-layout-reserved-fields"
 	tests := []struct {
@@ -509,6 +537,9 @@ x_owner = { note = "keep", rank = 7 } # unknown valid root
 	}
 	if !strings.Contains(result.Layout.TOML, `x_owner = { note = "keep", rank = 7 } # unknown valid root`) {
 		t.Fatalf("unknown valid top-level layout field changed:\n%s", result.Layout.TOML)
+	}
+	if count := strings.Count(result.Layout.TOML, "[[node]]"); count != 1 {
+		t.Fatalf("created layout node count = %d, want exactly one:\n%s", count, result.Layout.TOML)
 	}
 }
 
