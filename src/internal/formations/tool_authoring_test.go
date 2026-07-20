@@ -417,10 +417,15 @@ func TestCreateToolRejectsMalformedOrOrphanedOwnedLayoutSourceWithoutMutation(t 
 	}{
 		{name: "unclosed node array header", tail: "[[node]\nid = \"mis_main\"\nx = 1\ny = 2\n"},
 		{name: "edge header trailing text", tail: "[[edge]] trailing\nid = \"edge_stale\"\nlane = \"north\"\n"},
+		{name: "escaped basic-quoted node header", tail: "[[\"no\\u0064e\"\nid = \"mis_main\"\nx = 1\ny = 2\n"},
+		{name: "unterminated literal-quoted edge header", tail: "[['edge\nid = \"edge_stale\"\nlane = \"north\"\n"},
+		{name: "malformed unrelated header", tail: "[layout-extension\nnote = \"invalid TOML\"\n"},
 		{name: "orphan node descendant", tail: "[node.meta]\nnote = \"no owning node\"\n"},
 		{name: "competing edge descendant under node", tail: "[[node]]\nid = \"mis_main\"\nx = 1\ny = 2\n[edge.meta]\nnote = \"wrong owner\"\n"},
 		{name: "top-level node root assignment", tail: "node = \"reserved authority root\"\n"},
 		{name: "top-level edge root assignment", tail: "edge = \"reserved authority root\"\n"},
+		{name: "malformed key-path assignment", tail: "\"layout\\q\" = 1\n"},
+		{name: "invalid nonassignment line", tail: "this is not valid TOML\n"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -438,6 +443,72 @@ func TestCreateToolRejectsMalformedOrOrphanedOwnedLayoutSourceWithoutMutation(t 
 			}
 			assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, &layoutRaw)
 		})
+	}
+}
+
+func TestCreateToolRejectsMalformedDuplicateOrCompetingLayoutIdentityFieldsWithoutMutation(t *testing.T) {
+	const slug = "tool-layout-reserved-fields"
+	tests := []struct {
+		name   string
+		layout string
+	}{
+		{name: "duplicate boardId first mismatched last correct", layout: "schema = 1\nboardId = \"brd_other\"\nboardId = \"brd_tool-layout-reserved-fields\"\nboardRev = 2\n"},
+		{name: "duplicate schema first wrong last correct", layout: "schema = 2\nschema = 1\nboardId = \"brd_tool-layout-reserved-fields\"\nboardRev = 2\n"},
+		{name: "duplicate boardRev", layout: "schema = 1\nboardId = \"brd_tool-layout-reserved-fields\"\nboardRev = 1\nboardRev = 2\n"},
+		{name: "duplicate updatedAt", layout: "schema = 1\nboardId = \"brd_tool-layout-reserved-fields\"\nboardRev = 2\nupdatedAt = \"first\"\nupdatedAt = \"second\"\n"},
+		{name: "missing schema", layout: "boardId = \"brd_tool-layout-reserved-fields\"\nboardRev = 2\n"},
+		{name: "missing boardId", layout: "schema = 1\nboardRev = 2\n"},
+		{name: "schema leading zero", layout: "schema = 01\nboardId = \"brd_tool-layout-reserved-fields\"\nboardRev = 2\n"},
+		{name: "unquoted boardId", layout: "schema = 1\nboardId = brd_tool-layout-reserved-fields\nboardRev = 2\n"},
+		{name: "hex boardRev", layout: "schema = 1\nboardId = \"brd_tool-layout-reserved-fields\"\nboardRev = 0x2\n"},
+		{name: "unquoted updatedAt", layout: "schema = 1\nboardId = \"brd_tool-layout-reserved-fields\"\nboardRev = 2\nupdatedAt = invalid-timestamp\n"},
+		{name: "dotted schema root", layout: "schema = 1\nschema.extension = 1\nboardId = \"brd_tool-layout-reserved-fields\"\nboardRev = 2\n"},
+		{name: "dotted boardId root", layout: "schema = 1\nboardId = \"brd_tool-layout-reserved-fields\"\nboardId.extension = \"x\"\nboardRev = 2\n"},
+		{name: "dotted boardRev root", layout: "schema = 1\nboardId = \"brd_tool-layout-reserved-fields\"\nboardRev = 2\nboardRev.extension = 3\n"},
+		{name: "dotted updatedAt root", layout: "schema = 1\nboardId = \"brd_tool-layout-reserved-fields\"\nboardRev = 2\nupdatedAt.extension = \"x\"\n"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := newToolAuthoringStore(t)
+			boardRaw := toolAuthoringBoardFixture(slug, 2, true, "")
+			writeFixture(t, store.BoardPath(slug), boardRaw)
+			writeFixture(t, store.LayoutPath(slug), test.layout)
+			board, layout := toolAuthoringReadPair(t, store, slug)
+
+			_, err := store.CreateTool(slug, toolAuthoringCreateRequest(ToolPlacement{}), toolAuthoringPresentOptions(board, layout))
+			if err == nil || !strings.Contains(err.Error(), "invalid_layout_identity") {
+				t.Fatalf("reserved layout identity error = %v, want invalid_layout_identity", err)
+			}
+			layoutRaw := test.layout
+			assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, &layoutRaw)
+		})
+	}
+}
+
+func TestCreateToolPreservesUnknownValidTopLevelLayoutFields(t *testing.T) {
+	store := newToolAuthoringStore(t)
+	slug := "tool-layout-unknown-root"
+	boardRaw := toolAuthoringBoardFixture(slug, 2, true, "")
+	layoutRaw := `schema = 1
+boardId = "brd_tool-layout-unknown-root"
+boardRev = 2
+x_owner = { note = "keep", rank = 7 } # unknown valid root
+`
+	writeFixture(t, store.BoardPath(slug), boardRaw)
+	writeFixture(t, store.LayoutPath(slug), layoutRaw)
+	board, layout := toolAuthoringReadPair(t, store, slug)
+	x, y := 700, 560
+
+	result, err := store.CreateTool(
+		slug,
+		toolAuthoringCreateRequest(ToolPlacement{X: &x, Y: &y}),
+		toolAuthoringPresentOptions(board, layout),
+	)
+	if err != nil {
+		t.Fatalf("create Tool with unknown valid layout root: %v", err)
+	}
+	if !strings.Contains(result.Layout.TOML, `x_owner = { note = "keep", rank = 7 } # unknown valid root`) {
+		t.Fatalf("unknown valid top-level layout field changed:\n%s", result.Layout.TOML)
 	}
 }
 
@@ -939,14 +1010,15 @@ func TestCreateToolRejectsOutOfSigned32BitPersistedCoordinatesWithoutMutation(t 
 	}
 }
 
-func TestCreateToolRejectsPersistedCoordinatesOutsideCanonicalDecimalProjection(t *testing.T) {
+func TestCreateToolProjectsFullTOMLIntegerCoordinatesWithoutRewritingSource(t *testing.T) {
 	tests := []struct {
 		name       string
 		coordinate string
+		wantX      int
 	}{
-		{name: "hexadecimal", coordinate: "x = 0x70\ny = 112"},
-		{name: "underscored", coordinate: "x = 1_12\ny = 112"},
-		{name: "explicit plus", coordinate: "x = +112\ny = 112"},
+		{name: "hexadecimal", coordinate: "x = 0x70\ny = 112", wantX: 112},
+		{name: "underscored", coordinate: "x = 1_12\ny = 112", wantX: 112},
+		{name: "explicit plus", coordinate: "x = +112\ny = 112", wantX: 112},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -958,15 +1030,21 @@ func TestCreateToolRejectsPersistedCoordinatesOutsideCanonicalDecimalProjection(
 			writeFixture(t, store.LayoutPath(slug), layoutRaw)
 			board, layout := toolAuthoringReadPair(t, store, slug)
 
-			_, err := store.CreateTool(
+			result, err := store.CreateTool(
 				slug,
 				toolAuthoringCreateRequest(ToolPlacement{PredecessorNodeID: "mis_main"}),
 				toolAuthoringPresentOptions(board, layout),
 			)
-			if err == nil || !strings.Contains(err.Error(), "invalid_layout_coordinate") {
-				t.Fatalf("noncanonical persisted coordinate error = %v, want invalid_layout_coordinate", err)
+			if err != nil {
+				t.Fatalf("create Tool from valid TOML integer coordinates: %v", err)
 			}
-			assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, &layoutRaw)
+			retained, found := toolAuthoringLayoutNode(result.Layout.Nodes, "mis_main")
+			if !found || retained.X != test.wantX || retained.Y != 112 {
+				t.Fatalf("projected retained coordinate = %#v found=%t, want %d,112", retained, found, test.wantX)
+			}
+			if !strings.Contains(result.Layout.TOML, test.coordinate) {
+				t.Fatalf("valid TOML coordinate source was rewritten:\n%s", result.Layout.TOML)
+			}
 		})
 	}
 }
