@@ -971,6 +971,71 @@ func TestCreateToolRejectsPersistedCoordinatesOutsideCanonicalDecimalProjection(
 	}
 }
 
+func TestCreateToolHeuristicUsesCheckedMathAtSigned32PersistedBoundaries(t *testing.T) {
+	store := newToolAuthoringStore(t)
+	slug := "tool-persisted-coordinate-boundary"
+	boardRaw := toolAuthoringBoardFixture(slug, 4, true,
+		toolStructuralJSONNormalizeToolBlock("tool_existing", "Existing", "port_existing_in", "port_existing_out"))
+	layoutRaw := `schema = 1
+boardId = "brd_tool-persisted-coordinate-boundary"
+boardRev = 4
+
+[[node]]
+id = "mis_main"
+x = 2147483647
+y = -2147483648
+
+[[node]]
+id = "tool_existing"
+x = -2147483648
+y = 2147483647
+`
+	writeFixture(t, store.BoardPath(slug), boardRaw)
+	writeFixture(t, store.LayoutPath(slug), layoutRaw)
+	board, layout := toolAuthoringReadPair(t, store, slug)
+
+	result, err := store.CreateTool(
+		slug,
+		toolAuthoringCreateRequest(ToolPlacement{PredecessorNodeID: "mis_main", SuccessorNodeID: "tool_existing"}),
+		toolAuthoringPresentOptions(board, layout),
+	)
+	if err != nil {
+		t.Fatalf("create Tool from signed-32 boundary midpoint: %v", err)
+	}
+	position, found := toolAuthoringLayoutNode(result.Layout.Nodes, result.Tool.ID)
+	if !found || position.X != 112 || position.Y != 112 {
+		t.Fatalf("signed-32 boundary midpoint = %#v found=%t, want clamped 112,112", position, found)
+	}
+}
+
+func TestCreateToolRejectsHeuristicStepOutsideSigned32WithoutMutation(t *testing.T) {
+	store := newToolAuthoringStore(t)
+	slug := "tool-persisted-coordinate-step"
+	boardRaw := toolAuthoringBoardFixture(slug, 2, true, "")
+	layoutRaw := `schema = 1
+boardId = "brd_tool-persisted-coordinate-step"
+boardRev = 2
+
+[[node]]
+id = "mis_main"
+x = 2147483647
+y = 112
+`
+	writeFixture(t, store.BoardPath(slug), boardRaw)
+	writeFixture(t, store.LayoutPath(slug), layoutRaw)
+	board, layout := toolAuthoringReadPair(t, store, slug)
+
+	_, err := store.CreateTool(
+		slug,
+		toolAuthoringCreateRequest(ToolPlacement{PredecessorNodeID: "mis_main"}),
+		toolAuthoringPresentOptions(board, layout),
+	)
+	if err == nil || !strings.Contains(err.Error(), "invalid_layout_coordinate") {
+		t.Fatalf("out-of-range heuristic step error = %v, want invalid_layout_coordinate", err)
+	}
+	assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, &layoutRaw)
+}
+
 func TestCreateToolPreservesOpaqueEdgeFieldsNamedXAndY(t *testing.T) {
 	store := newToolAuthoringStore(t)
 	slug := "tool-layout-edge-extension"
