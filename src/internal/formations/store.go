@@ -33,7 +33,8 @@ type Store struct {
 	Workspace string
 	Now       func() time.Time
 
-	runtimeAuthority *runtimeAuthorityBoundary
+	runtimeAuthority    *runtimeAuthorityBoundary
+	newToolDefinitionID func(string) string
 }
 
 type BoardDocument struct {
