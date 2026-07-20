@@ -146,7 +146,7 @@ func (e *RunEngine) RunMission(slug string, req RunStartRequest) (*RunStatusProj
 	if !ok {
 		return nil, fmt.Errorf("%w: mission %q", ErrNotFound, req.MissionID)
 	}
-	if err := preflightMissionDefinition(board, mission.ID); err != nil {
+	if err := preflightMissionMigrations(board, mission.ID, reachableNodeIDs(board, mission.ID)); err != nil {
 		return nil, err
 	}
 	if len(outgoingConnections(board.Connections, mission.ID)) == 0 {
