@@ -34,6 +34,7 @@ type definitionPairState struct {
 type definitionPairPublicationRequest struct {
 	expected  definitionPairStateIdentity
 	candidate definitionPairState
+	build     func(definitionPairState) (definitionPairState, error)
 	validate  func(definitionPairState, definitionPairState) error
 	cas       func(definitionPairState) error
 }
@@ -112,6 +113,13 @@ func publishDefinitionPairLocked(
 	current, err := readDefinitionPairState(board, layout)
 	if err != nil {
 		return err
+	}
+	if request.build != nil {
+		candidate, err := request.build(cloneDefinitionPairState(current))
+		if err != nil {
+			return err
+		}
+		request.candidate = cloneDefinitionPairState(candidate)
 	}
 	if request.validate != nil {
 		if err := request.validate(
