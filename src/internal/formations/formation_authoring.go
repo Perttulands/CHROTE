@@ -2570,17 +2570,24 @@ func parseBoardConnections(raw []byte) []BoardConnection {
 		if !active || current == nil {
 			continue
 		}
-		key, value, ok := tomlKeyValue(line.body)
-		if !ok {
+		key, literal, present, err := parseToolAssignment(line.body)
+		if err != nil || !present {
 			continue
 		}
 		switch key {
-		case "id":
-			current.ID = value
-		case "from":
-			current.From = value
-		case "to":
-			current.To = value
+		case "id", "from", "to":
+			value, err := parseToolString(literal)
+			if err != nil {
+				continue
+			}
+			switch key {
+			case "id":
+				current.ID = value
+			case "from":
+				current.From = value
+			case "to":
+				current.To = value
+			}
 		}
 	}
 	return connections

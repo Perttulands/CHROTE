@@ -560,7 +560,7 @@ func (s *Store) buildToolDeleteCandidate(
 	if !deleted {
 		return definitionPairState{}, ErrNotFound
 	}
-	nextBoardRaw = deleteConnectionsTouchingNodes(nextBoardRaw, map[string]bool{req.ID: true})
+	nextBoardRaw = deleteToolIncidentConnections(nextBoardRaw, board.Connections, req.ID)
 	doc := parseTOMLDocument(nextBoardRaw)
 	updatedAt := s.now().Format(time.RFC3339)
 	if req.UpdatedBy != "" {
@@ -714,6 +714,34 @@ func deleteToolBlock(raw []byte, toolID string) ([]byte, bool) {
 	}
 	lines = append(lines[:start], lines[end:]...)
 	return renderTOMLLines(lines), true
+}
+
+func deleteToolIncidentConnections(raw []byte, connections []BoardConnection, toolID string) []byte {
+	incidentIDs := make(map[string]bool)
+	for _, connection := range connections {
+		if endpointNodeID(connection.From) == toolID || endpointNodeID(connection.To) == toolID {
+			incidentIDs[connection.ID] = true
+		}
+	}
+	if len(incidentIDs) == 0 {
+		return raw
+	}
+
+	lines := splitLines(raw)
+	for index := 0; index < len(lines); {
+		section, ok := tomlLineSectionName(lines[index])
+		if !ok || section != "connection" {
+			index++
+			continue
+		}
+		end := tomlBlockEnd(lines, index)
+		if incidentIDs[toolStringScalarInBlock(lines, index+1, end, "id")] {
+			lines = append(lines[:index], lines[end:]...)
+			continue
+		}
+		index = end
+	}
+	return renderTOMLLines(lines)
 }
 
 func toolStringScalarInBlock(lines []tomlLine, start, end int, key string) string {
