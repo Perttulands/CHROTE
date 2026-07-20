@@ -18,12 +18,14 @@ import (
 )
 
 type fakeTmux struct {
-	live    map[string]bool
-	spawned []string
-	attach  []string
+	live             map[string]bool
+	liveSessionCalls int
+	spawned          []string
+	attach           []string
 }
 
 func (f *fakeTmux) LiveSessions() ([]formations.LiveAgentSession, error) {
+	f.liveSessionCalls++
 	live := make([]formations.LiveAgentSession, 0, len(f.live))
 	for name := range f.live {
 		live = append(live, formations.LiveAgentSession{Name: name, Status: "live"})
@@ -1166,6 +1168,227 @@ to = "fmn_polish:port_polish_in"
 		if strings.Contains(stdout, browserOnly) {
 			t.Fatalf("mission inspect leaked browser-only/raw field %q: %s", browserOnly, stdout)
 		}
+	}
+}
+
+func TestArchonMissionInspectProjectsReachableToolWithoutRunAdmission(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("reports"), `schema = 2
+id = "brd_reports"
+slug = "reports"
+title = "Reports"
+rev = 4
+updatedAt = "2026-07-20T00:00:00Z"
+viewport = "browser-only"
+undoStack = "browser-only"
+
+[[mission]]
+id = "mis_report"
+title = "Prepare report"
+goal = "Prepare a markdown report"
+beadId = "ctx-ug7.8.1"
+
+[[tool]]
+id = "tool_before"
+title = "Unwired before"
+profileId = "json.normalize"
+profileVersion = "1"
+
+[tool.params]
+mode = "strict"
+
+[[tool.input]]
+id = "port_before_input"
+name = "input"
+label = "Before input"
+direction = "input"
+kind = "work"
+acceptedMediaTypes = ["application/json"]
+required = true
+role = "data"
+
+[[tool.output]]
+id = "port_before_output"
+name = "output"
+label = "Before output"
+direction = "output"
+kind = "work"
+acceptedMediaTypes = ["application/json"]
+
+[[tool]]
+id = "tool_normalize"
+title = "Normalize report"
+profileId = "json.normalize"
+profileVersion = "1"
+
+[tool.params]
+mode = "strict"
+
+[[tool.input]]
+id = "port_tool_input"
+name = "input"
+label = "Report"
+direction = "input"
+kind = "work"
+acceptedMediaTypes = ["application/json"]
+required = true
+role = "data"
+
+[[tool.output]]
+id = "port_tool_output"
+name = "output"
+label = "Normalized report"
+direction = "output"
+kind = "work"
+acceptedMediaTypes = ["application/json"]
+
+[[tool]]
+id = "tool_after"
+title = "Unwired after"
+profileId = "json.normalize"
+profileVersion = "1"
+
+[tool.params]
+mode = "strict"
+
+[[tool.input]]
+id = "port_after_input"
+name = "input"
+label = "After input"
+direction = "input"
+kind = "work"
+acceptedMediaTypes = ["application/json"]
+required = true
+role = "data"
+
+[[tool.output]]
+id = "port_after_output"
+name = "output"
+label = "After output"
+direction = "output"
+kind = "work"
+acceptedMediaTypes = ["application/json"]
+
+[[gate]]
+id = "gate_review"
+title = "Review normalized report"
+kinds = ["human"]
+criterion = "The normalized report is ready"
+
+[[connection]]
+id = "edge_mission_tool"
+from = "mis_report:out"
+to = "tool_normalize:port_tool_input"
+
+[[connection]]
+id = "edge_tool_gate"
+from = "tool_normalize:port_tool_output"
+to = "gate_review:in"
+`)
+	writeArchonFile(t, store.LayoutPath("reports"), `schema = 1
+boardId = "brd_reports"
+boardRev = 4
+updatedAt = "2026-07-20T00:00:00Z"
+
+[[node]]
+id = "mis_report"
+x = 80
+y = 100
+
+[[node]]
+id = "tool_normalize"
+x = 400
+y = 100
+
+[[node]]
+id = "gate_review"
+x = 760
+y = 100
+`)
+	boardBefore := readArchonFile(t, store.BoardPath("reports"))
+	layoutBefore := readArchonFile(t, store.LayoutPath("reports"))
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "--workspace", workspace, "mission", "inspect", "reports", "prepare-report", "--json")
+	if code != 0 || stderr != "" {
+		t.Fatalf("mission inspect code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var inspect struct {
+		Board       archonBoardIdentity          `json:"board"`
+		Mission     formations.MissionNode       `json:"mission"`
+		Chain       []archonMissionChainNode     `json:"chain"`
+		Connections []formations.BoardConnection `json:"connections"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &inspect); err != nil {
+		t.Fatalf("decode mission inspect: %v\n%s", err, stdout)
+	}
+	var rawInspect struct {
+		Chain []map[string]json.RawMessage `json:"chain"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &rawInspect); err != nil {
+		t.Fatalf("decode raw mission chain: %v\n%s", err, stdout)
+	}
+	if inspect.Board.ID != "brd_reports" || inspect.Board.Slug != "reports" || inspect.Board.Rev != 4 || inspect.Board.ETag == "" || inspect.Mission.ID != "mis_report" {
+		t.Fatalf("mission inspect identity = board=%+v mission=%+v", inspect.Board, inspect.Mission)
+	}
+	if len(inspect.Chain) != 2 {
+		t.Fatalf("mission inspect chain = %+v, want Tool then Gate", inspect.Chain)
+	}
+	if got := inspect.Chain[0]; got.ID != "tool_normalize" || got.Kind != "tool" || got.Title != "Normalize report" || got.Type != "" || got.Depth != 1 {
+		t.Fatalf("mission inspect Tool = %+v", got)
+	}
+	if got := inspect.Chain[1]; got.ID != "gate_review" || got.Kind != "gate" || got.Title != "Review normalized report" || got.Type != "" || got.Depth != 2 {
+		t.Fatalf("mission inspect Gate = %+v", got)
+	}
+	wantConnections := []formations.BoardConnection{
+		{ID: "edge_mission_tool", From: "mis_report:out", To: "tool_normalize:port_tool_input"},
+		{ID: "edge_tool_gate", From: "tool_normalize:port_tool_output", To: "gate_review:in"},
+	}
+	if len(inspect.Connections) != len(wantConnections) {
+		t.Fatalf("mission inspect connections = %+v", inspect.Connections)
+	}
+	for index, want := range wantConnections {
+		got := inspect.Connections[index]
+		if got.ID != want.ID || got.From != want.From || got.To != want.To {
+			t.Fatalf("mission inspect connection %d = %+v, want %+v", index, got, want)
+		}
+	}
+	if len(rawInspect.Chain) != 2 {
+		t.Fatalf("raw mission chain = %+v, want two nodes", rawInspect.Chain)
+	}
+	allowedChainKeys := map[string]bool{"id": true, "kind": true, "title": true, "depth": true}
+	for index, node := range rawInspect.Chain {
+		if len(node) != len(allowedChainKeys) {
+			t.Fatalf("mission chain node %d keys = %+v, want exact generic projection", index, node)
+		}
+		for key := range node {
+			if !allowedChainKeys[key] {
+				t.Fatalf("mission chain node %d leaked field %q", index, key)
+			}
+		}
+	}
+	for _, forbidden := range []string{"toml", "viewport", "undoStack", "profileId", "profileVersion", "params", "inputs", "outputs", "acceptedMediaTypes", "required", "role", "direction"} {
+		if strings.Contains(stdout, forbidden) {
+			t.Fatalf("mission inspect leaked raw/browser-only Tool field %q: %s", forbidden, stdout)
+		}
+	}
+	if got := readArchonFile(t, store.BoardPath("reports")); got != boardBefore {
+		t.Fatalf("mission inspect changed board bytes:\n%s", got)
+	}
+	if got := readArchonFile(t, store.LayoutPath("reports")); got != layoutBefore {
+		t.Fatalf("mission inspect changed layout bytes:\n%s", got)
+	}
+	runsPath := filepath.Join(workspace, ".formations", "runs")
+	if entries, err := os.ReadDir(runsPath); err == nil {
+		if len(entries) != 0 {
+			t.Fatalf("mission inspect created run artifacts: %+v", entries)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("inspect runs directory: %v", err)
+	}
+	if runner.liveSessionCalls != 0 || len(runner.spawned) != 0 || len(runner.attach) != 0 {
+		t.Fatalf("mission inspect reached tmux: live=%d spawned=%v attach=%v", runner.liveSessionCalls, runner.spawned, runner.attach)
 	}
 }
 
