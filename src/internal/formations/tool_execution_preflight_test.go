@@ -3,6 +3,7 @@ package formations
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -92,6 +93,15 @@ func TestToolExecutionPreflightUsesApprovedSelectedMissionOrder(t *testing.T) {
 			wantText: `unknown profile tuple "json.normalize"@"999"`,
 		},
 		{
+			name: "known descriptor parameters validate before unavailable",
+			board: toolExecutionPreflightHeader() +
+				validTool +
+				strings.Replace(toolExecutionPreflightTool("tool_invalid", "1"), `mode = "strict"`, `mode = "lenient"`, 1) +
+				toolExecutionPreflightConnection("edge_valid_first", "workflow", "mis_main:out", "tool_valid:port_tool_valid_in") +
+				toolExecutionPreflightConnection("edge_invalid_second", "workflow", "mis_main:out", "tool_invalid:port_tool_invalid_in"),
+			wantText: `Tool "tool_invalid" parameter "mode": is outside the allowed enum`,
+		},
+		{
 			name: "engine capability fence precedes media and authority",
 			board: toolExecutionPreflightHeader() +
 				validTool +
@@ -170,11 +180,27 @@ func TestToolExecutionPreflightTraversesEveryMissionBranchButNotIsolatedDownstre
 			want: ErrRuntimeAuthorityNonAuthorizing,
 		},
 		{
-			name: "downstream invalid Tool is outside isolated Formation root",
+			name: "unrelated inline verification is outside Mission root",
 			board: toolExecutionPreflightHeader() +
 				toolExecutionPreflightFormation("fmn_work", false) +
+				toolExecutionPreflightFormation("fmn_legacy", true) +
+				toolExecutionPreflightConnection("edge_start", "workflow", "mis_main:out", "fmn_work:port_fmn_work_in"),
+			want: ErrRuntimeAuthorityNonAuthorizing,
+		},
+		{
+			name: "downstream invalid Tool is outside isolated Formation root",
+			board: toolExecutionPreflightHeader() +
+				toolExecutionPreflightIsolatedFormation("fmn_work") +
 				toolExecutionPreflightTool("tool_valid", "999") +
 				toolExecutionPreflightConnection("edge_tool", "workflow", "fmn_work:port_fmn_work_out", "tool_valid:port_tool_valid_in"),
+			formation: "fmn_work",
+			want:      ErrRuntimeAuthorityNonAuthorizing,
+		},
+		{
+			name: "unrelated inline verification is outside isolated Formation root",
+			board: toolExecutionPreflightHeader() +
+				toolExecutionPreflightIsolatedFormation("fmn_work") +
+				toolExecutionPreflightFormation("fmn_legacy", true),
 			formation: "fmn_work",
 			want:      ErrRuntimeAuthorityNonAuthorizing,
 		},
@@ -215,6 +241,10 @@ func assertToolExecutionPreflightNoEffects(t *testing.T, workspace string, execu
 	}
 	if matches := mustGlob(t, filepath.Join(workspace, ".formations", "runs", "*")); len(matches) != 0 {
 		t.Fatalf("preflight rejection created run artifacts: %v", matches)
+	}
+	runsRoot := filepath.Join(workspace, ".formations", "runs")
+	if _, err := os.Stat(runsRoot); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("preflight rejection created durable runs root %q: %v", runsRoot, err)
 	}
 }
 
@@ -267,6 +297,35 @@ kind = "work"
 acceptedMediaTypes = ["text/plain", "text/markdown", "application/json"]
 %s
 `, id, "port_"+id+"_in", "port_"+id+"_out", verification)
+}
+
+func toolExecutionPreflightIsolatedFormation(id string) string {
+	return fmt.Sprintf(`[[formation]]
+id = %q
+type = "solo"
+title = "Isolated Formation"
+
+[formation.brief]
+goal = "Execute one isolated Formation"
+beadId = "ctx-ug7.8.1"
+
+[[formation.input]]
+id = %q
+label = "Input"
+direction = "input"
+kind = "work"
+acceptedMediaTypes = ["application/json"]
+required = true
+role = "data"
+
+[[formation.output]]
+id = %q
+label = "Output"
+direction = "output"
+kind = "work"
+acceptedMediaTypes = ["text/plain", "text/markdown", "application/json"]
+
+`, id, "port_"+id+"_in", "port_"+id+"_out")
 }
 
 func toolExecutionPreflightGate(id string, legacyScript bool, kind string) string {
