@@ -559,12 +559,12 @@ filters inert extras. Ordinary stale layout remains non-authorizing presentation
 state.
 Layout raw entries grant no node or Tool authority.
 
-The first Tool class is certified deterministic: network, secrets, undeclared
-host reads, and external writes are denied; locale/timezone are normalized;
-clock/entropy are frozen or denied; and repeat vectors fix expected output
-hashes. Before dispatch, exact inputs are copied into one sealed,
-content-addressed read-only set under the host-private run root; spawn and replay
-never reopen the mutable source. Each Tool lease id is unique
+The accepted first executing Tool class must be certified deterministic:
+network, secrets, undeclared host reads, and external writes are denied;
+locale/timezone are normalized; clock/entropy are frozen or denied; and repeat
+vectors fix expected output hashes. Before dispatch, exact inputs are copied
+into one sealed, content-addressed read-only set under the host-private run root;
+spawn and replay never reopen the mutable source. Each Tool lease id is unique
 within the run and maps one-to-one to a node attempt. Before process execution,
 `tool_dispatch` is fsynced with that lease id, input-manifest and
 input/profile/parameter/policy/determinism-policy/execution-bundle hashes, and private lease-root or

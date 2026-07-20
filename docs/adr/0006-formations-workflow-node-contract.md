@@ -4,22 +4,22 @@
 Accepted target; implementation is incomplete; runtime ownership amended by ADR-0007
 
 ## Context
-The current Formations board model has missions, agent formations, gates, stable
-formation ports, file-backed connections, and run ledgers. It can execute useful
-agent graphs, but it does not yet define the full mixed-workflow contract needed
-for agent-first authoring and inspection.
+At adoption, the Formations board model had missions, agent formations, gates,
+stable formation ports, file-backed connections, and run ledgers. It could
+execute useful agent graphs, but it did not yet define the full mixed-workflow
+contract needed for agent-first authoring and inspection.
 
 Several ambiguities are load-bearing:
 
-- there is no deterministic Tool node, so a script gate can be mistaken for a
+- there was no deterministic Tool node, so a script gate could be mistaken for a
   general transformation step;
-- formation ports are named, but their accepted payload kind is implicit;
-- writer operations reject a second edge to one input, while malformed files do
-  not yet receive the same whole-board preflight;
-- gate pass and fail routes can rewrite provenance or forward ordinary work
+- formation ports were named, but their accepted payload kind was implicit;
+- writer operations rejected a second edge to one input, while malformed files
+  did not yet receive the same whole-board preflight;
+- gate pass and fail routes could rewrite provenance or forward ordinary work
   without distinguishing verdict feedback;
-- judge prose can be confused with the payload being judged;
-- board slot assignments and runtime tmux targets can look equally runnable even
+- judge prose could be confused with the payload being judged;
+- board slot assignments and runtime tmux targets could look equally runnable even
   though only the latter identify a live pane.
 
 A generic plugin-node schema would hide these differences from Archon and the
@@ -163,11 +163,17 @@ returns the same lowercase code. There is no isolated Tool-run endpoint.
 
 Definition-side selected-root validation parses the board, resolves the requested
 Mission or isolated Formation root, and applies existing structural and legacy-
-migration validation first. It then scans that root's complete possible graph. A Mission scan includes
-both Gate branches and reachable judge chains; an isolated Formation scan does
-not traverse unrelated downstream board nodes. If the selected root contains a
-Tool, validation returns `tool_execution_unavailable` before command submission
-or coordinator authority resolution. This error precedes only a global
+migration validation first. After those root-scoped migration checks, the
+authoritative Mission Store reopens the source and evaluates requested ETag and
+revision CAS before full reachable Tool-descriptor validation or the unavailable
+sentinel. A stale Mission request therefore returns the existing conflict rather
+than Tool semantics.
+
+A Mission scan includes both Gate branches and reachable judge chains. Every
+selected reachable Tool must match its exact descriptor before a valid Tool
+causes `tool_execution_unavailable`. An isolated Formation scan is the singleton
+Formation root: there is no isolated Tool-run endpoint, and it does not traverse
+downstream or unrelated board nodes. The Tool error precedes only a global
 coordinator/runtime-authority-unavailable error; malformed-definition and legacy-
 migration validation retain their earlier precedence. Rejection occurs before
 snapshot, binding, ledger, artifact, evaluator, executor, or process mutation.
@@ -1350,13 +1356,13 @@ while deliberately allowing same-session context reuse.
   owner product-direction decision.
 
 ## Consequences
-Current boards remain readable, but new mixed-workflow behavior needs schema,
-validation, and projection work. Tool profiles become a host-owned registry
-rather than convenient inline commands and are pure in the first slice.
-The first registry is deliberately one non-executing `json.normalize@1`
-authoring descriptor. It grants no runner or process authority, and Tool roots
-fail `tool_execution_unavailable` until the later runtime slice lands. The
-linter surface is not part of this decision.
+Current boards remain readable. The landed non-executing foundation adds schema,
+validation, authoring, and projection for Tool definitions. Tool profiles are a
+host-owned registry rather than convenient inline commands, and the first
+registry is deliberately one data-only `json.normalize@1` authoring descriptor.
+It grants no runner or process authority, and selected Mission graphs containing
+a Tool fail `tool_execution_unavailable` until the later runtime slice lands.
+The linter surface is not part of this decision.
 Legacy command-backed Gates become degraded definitions whose command fields
 are read-only until an explicit certified Tool-plus-pure-Gate migration can
 prove its payload mapping. Non-command title, kinds, or criterion edits may
@@ -1366,14 +1372,14 @@ Correction loops require explicit port roles and exact-attempt refs. Artifact
 refs gain stable artifact and root identity. Exact session inspection requires per-slot binding
 authority plus safe projections and must surface when an old target is stale.
 
-This is accepted target behavior, not a claim that the current binary implements
-it. Current main has Mission, Formation, and Gate nodes; untyped formation ports;
-legacy output-ref fields; partial name-level session bindings; and no Tool node,
-typed feedback payload, exact pass-through provenance, or exact run-bound pane
-target. API and Archon also construct peer synchronous engines, persist run files
-inside the workspace, and lack the workspace command journal, owner fence,
-durable queue, and `formation_result` recovery boundary required here and by
-ADR-0007.
+This ADR remains only partially implemented. The current binary now provides
+non-executing Tool definitions, exact descriptor lookup, schema-2 Tool/normalized
+workflow ports, Store/API/Archon authoring, dashboard projection, and the
+selected-Mission start fence. It still lacks Tool execution, typed feedback at
+runtime, exact pass-through provenance, and exact run-bound pane targets. API
+and Archon also construct peer synchronous engines, persist run files inside the
+workspace, and lack the workspace command journal, owner fence, durable queue,
+and `formation_result` recovery boundary required here and by ADR-0007.
 
 ## Enforcement
 - Shared structural validation rejects unknown endpoints, incompatible payload

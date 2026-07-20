@@ -80,10 +80,13 @@ boards. The first Tool create is the only schema-1-to-2 definition-authoring
 migration; Tool update/delete require and preserve schema 2. Local schema-1
 `run list`, `status`, `logs`, `follow`, and `ask` remain inspection-only.
 Runtime mutation verbs (`mission run`, `formation run`, `gate approve`,
-`gate reject`, `run resume`, and `run abort`) are deliberately
-non-authorizing: they fail at the runtime-authority boundary before board or run
-reads, artifact writes, dispatch, or tmux effects. They do not fall back to the
-local engine or private schema-2 ledgers.
+`gate reject`, `run resume`, and `run abort`) remain deliberately
+non-authorizing. Mission/Formation start first reads the selected definition and
+applies root, migration, and Tool fences; authoritative Mission start also
+evaluates CAS before Tool semantics. A surviving start then fails at the
+runtime-authority boundary. Verdict, resume, abort, and surviving start fail
+before run-private reads, artifact writes, dispatch, or tmux effects. None
+falls back to the local engine or private schema-2 ledgers.
 
 Schema-1 inline Formation verification is retired by ADR-0008. Archon inspection
 keeps legacy blocks legible, but authoring, run start, resume, and verdict entry
@@ -165,14 +168,14 @@ resume reports the same error before any run mutation when its executable root
 contains such a Gate. Unreachable Gates and Gates outside an isolated Formation
 root remain board-validation errors but do not block that selected run.
 
-Before Tool profiles land, the migration projection is deliberately
-non-authorizing: `ready=false`, `applySupported=false`, and no raw command value,
-resolved executable/cwd, generated Tool id, or inferred profile appears in it.
-`ctx-ug7.8.1` owns non-executing Tool definitions, registry descriptors, and
-board authoring. `ctx-ug7.8` owns certified host-private implementations and
-runtime execution. `ctx-ug7.30` owns pure code-Gate profiles and the later
-explicit Tool-plus-pure-Gate apply path; this spec does not claim any of those
-command surfaces ship.
+The legacy Script-Gate migration projection remains deliberately
+non-authorizing after the first Tool descriptor lands: `ready=false`,
+`applySupported=false`, and no raw command value, resolved executable/cwd,
+generated Tool id, or inferred profile appears in it. The current Tool command
+group only authors definitions. `ctx-ug7.8` owns certified host-private
+implementations and runtime execution. `ctx-ug7.30` owns pure code-Gate profiles
+and the later explicit Tool-plus-pure-Gate apply path; no migration-apply or
+Tool-runtime command surface ships here.
 
 ## Output modes
 

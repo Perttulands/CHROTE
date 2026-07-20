@@ -1202,12 +1202,12 @@ isolated Tool-run endpoint; an isolated Formation root does not traverse
 downstream Tools. Run start later freezes that exact tuple plus the matching
 profile content hash, parameters, effective policy hash, and content-addressed
 execution bundle hash. The first executing Tool profile class is pure and
-certified deterministic.
-Its closed sandbox permits only the sealed input set, frozen bundle/parameters/
+must be certified deterministic.
+Its closed sandbox must permit only the sealed input set, frozen bundle/parameters/
 policy, and one empty run-private output root. Network, secrets, undeclared
 environment or filesystem reads, and external writes are denied; locale and
 timezone are normalized; clock and entropy are denied or supplied by a frozen
-deterministic provider. Profile admission includes repeat-run vectors with
+deterministic provider. Profile admission must include repeat-run vectors with
 expected output hashes. Effectful or uncertified profiles are rejected rather
 than hidden behind an ambiguous replay flag.
 
