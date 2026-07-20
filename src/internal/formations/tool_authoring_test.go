@@ -455,41 +455,42 @@ func TestCreateToolRejectsMismatchedMalformedAndDuplicateLayoutIDs(t *testing.T)
 func TestCreateToolRejectsStructuralInvalidBoardsWithoutMutation(t *testing.T) {
 	validTool := toolStructuralJSONNormalizeToolBlock("tool_existing", "Existing", "port_existing_in", "port_existing_out")
 	tests := []struct {
-		name string
-		tail string
+		name       string
+		tail       string
+		wantMarker string
 	}{
-		{name: "empty node id", tail: `[[gate]]
+		{name: "empty node id", wantMarker: "invalid_node_id", tail: `[[gate]]
 id = ""
 title = "Broken"
 kinds = ["human"]
 criterion = "Confirm"
 `},
-		{name: "duplicate node id", tail: validTool + `[[gate]]
+		{name: "duplicate node id", wantMarker: FindingDuplicateNodeID, tail: validTool + `[[gate]]
 id = "tool_existing"
 title = "Duplicate"
 kinds = ["human"]
 criterion = "Confirm"
 `},
-		{name: "duplicate port id", tail: strings.Replace(validTool, `id = "port_existing_out"`, `id = "port_existing_in"`, 1)},
-		{name: "empty edge id", tail: validTool + `[[connection]]
+		{name: "duplicate port id", wantMarker: "duplicate_port_id", tail: strings.Replace(validTool, `id = "port_existing_out"`, `id = "port_existing_in"`, 1)},
+		{name: "empty edge id", wantMarker: "invalid_edge_id", tail: validTool + `[[connection]]
 id = ""
 channel = "workflow"
 from = "tool_existing:port_existing_out"
 to = "tool_existing:port_existing_in"
 `},
-		{name: "dangling edge", tail: validTool + `[[connection]]
+		{name: "dangling edge", wantMarker: FindingDanglingConnection, tail: validTool + `[[connection]]
 id = "edge_dangling"
 channel = "workflow"
 from = "tool_existing:port_existing_out"
 to = "ghost:input"
 `},
-		{name: "incompatible media", tail: validTool + `[[connection]]
+		{name: "incompatible media", wantMarker: FindingIncompatibleMedia, tail: validTool + `[[connection]]
 id = "edge_media"
 channel = "workflow"
 from = "mis_main:out"
 to = "tool_existing:port_existing_in"
 `},
-		{name: "Tool judge misuse", tail: validTool + `[[gate]]
+		{name: "Tool judge misuse", wantMarker: FindingInvalidJudgeRelationship, tail: validTool + `[[gate]]
 id = "gate_review"
 title = "Review"
 kinds = ["formation"]
@@ -501,7 +502,7 @@ channel = "judge"
 from = "tool_existing:port_existing_out"
 to = "gate_review:judge"
 `},
-		{name: "duplicate edge id", tail: validTool +
+		{name: "duplicate edge id", wantMarker: "duplicate_edge_id", tail: validTool +
 			toolStructuralJSONNormalizeToolBlock("tool_left", "Left", "port_left_in", "port_left_out") +
 			toolStructuralJSONNormalizeToolBlock("tool_right", "Right", "port_right_in", "port_right_out") + `[[connection]]
 id = "edge_duplicate"
@@ -515,7 +516,7 @@ channel = "workflow"
 from = "tool_left:port_left_out"
 to = "tool_right:port_right_in"
 `},
-		{name: "duplicate producer", tail: validTool +
+		{name: "duplicate producer", wantMarker: FindingDuplicateInputProducer, tail: validTool +
 			toolStructuralJSONNormalizeToolBlock("tool_source", "Source", "port_source_in", "port_source_out") +
 			toolStructuralJSONNormalizeToolBlock("tool_target", "Target", "port_target_in", "port_target_out") + `[[connection]]
 id = "edge_first"
@@ -540,8 +541,12 @@ to = "tool_target:port_target_in"
 			if err != nil {
 				t.Fatalf("inspection parse should remain readable before structural authoring rejection: %v", err)
 			}
-			if _, err := store.CreateTool(slug, toolAuthoringCreateRequest(ToolPlacement{}), toolAuthoringAbsentOptions(board)); err == nil {
+			_, err = store.CreateTool(slug, toolAuthoringCreateRequest(ToolPlacement{}), toolAuthoringAbsentOptions(board))
+			if err == nil {
 				t.Fatal("structural-invalid board accepted Tool mutation")
+			}
+			if !strings.Contains(err.Error(), test.wantMarker) {
+				t.Fatalf("structural rejection = %v, want marker %q", err, test.wantMarker)
 			}
 			assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, nil)
 		})
