@@ -505,11 +505,29 @@ func findToolBlockByID(lines []tomlLine, toolID string) (int, int, bool) {
 			continue
 		}
 		end := toolBlockEnd(lines, index)
-		if scalarInBlock(lines, index+1, end, "id") == toolID {
+		if toolStringScalarInBlock(lines, index+1, end, "id") == toolID {
 			return index, end, true
 		}
 	}
 	return 0, 0, false
+}
+
+func toolStringScalarInBlock(lines []tomlLine, start, end int, key string) string {
+	for index := start; index < end && index < len(lines); index++ {
+		if _, ok := tomlLineSectionName(lines[index]); ok || isTOMLHeader(lines[index]) {
+			break
+		}
+		field, literal, present, err := parseToolAssignment(lines[index].body)
+		if err != nil || !present || field != key {
+			continue
+		}
+		value, err := parseToolString(literal)
+		if err == nil {
+			return value
+		}
+		return ""
+	}
+	return ""
 }
 
 func toolBlockEnd(lines []tomlLine, start int) int {
