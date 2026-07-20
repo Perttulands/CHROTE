@@ -474,6 +474,35 @@ func TestCreateToolRejectsMalformedUnknownLayoutValuesWithoutMutation(t *testing
 	}
 }
 
+func TestCreateToolRejectsMalformedUnknownBoardTOMLWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name string
+		tail string
+	}{
+		{name: "invalid unknown string escape", tail: "[unknown_extension]\nvalue = \"\\q\"\n"},
+		{name: "unterminated unknown array", tail: "[unknown_extension]\nvalue = [\n"},
+		{name: "duplicate unknown key", tail: "[unknown_extension]\nvalue = 1\nvalue = 2\n"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := newToolAuthoringStore(t)
+			slug := "tool-create-malformed-source"
+			boardRaw := toolAuthoringBoardFixture(slug, 2, true, test.tail)
+			writeFixture(t, store.BoardPath(slug), boardRaw)
+			before, err := store.ReadBoard(slug)
+			if err != nil {
+				t.Fatalf("inspection must expose malformed unknown source before authoring rejection: %v", err)
+			}
+
+			_, err = store.CreateTool(slug, toolAuthoringCreateRequest(ToolPlacement{}), toolAuthoringAbsentOptions(before))
+			if err == nil || !strings.Contains(err.Error(), "invalid_board_source") {
+				t.Fatalf("malformed unknown board source error = %v, want invalid_board_source", err)
+			}
+			assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, nil)
+		})
+	}
+}
+
 func TestCreateToolRejectsMalformedDuplicateOrCompetingLayoutIdentityFieldsWithoutMutation(t *testing.T) {
 	const slug = "tool-layout-reserved-fields"
 	tests := []struct {

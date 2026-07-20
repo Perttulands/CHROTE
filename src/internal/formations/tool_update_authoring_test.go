@@ -224,6 +224,32 @@ func TestUpdateToolFindsValidLiteralStringToolIDAndPersistsCanonicalBoard(t *tes
 	}
 }
 
+func TestUpdateToolPreservesSameValueTitleSource(t *testing.T) {
+	store := newToolAuthoringStore(t)
+	slug := "tool-update-same-title"
+	boardRaw := toolAuthoringBoardFixture(slug, 3, true, toolUpdateTargetBlock())
+	boardRaw = strings.Replace(boardRaw, `title = "Original target" # preserve title comment`, `title = "\u004friginal target" # preserve title comment`, 1)
+	writeFixture(t, store.BoardPath(slug), boardRaw)
+	before, err := store.ReadBoard(slug)
+	if err != nil {
+		t.Fatalf("read escaped-title Tool source: %v", err)
+	}
+	title := "Original target"
+
+	result, err := store.UpdateTool(
+		slug,
+		ToolUpdateRequest{ToolID: "tool_target", Title: &title},
+		toolAuthoringAbsentOptions(before),
+	)
+	if err != nil {
+		t.Fatalf("update same-value Tool title: %v", err)
+	}
+	if !strings.Contains(result.Board.TOML, `title = "\u004friginal target" # preserve title comment`) {
+		t.Fatalf("same-value title update rewrote source:\n%s", result.Board.TOML)
+	}
+	assertToolUpdatePersistedResult(t, store, slug, result)
+}
+
 func TestPatchToolUpdateBoundsChangedParametersToParameterSection(t *testing.T) {
 	raw := []byte(toolUpdateTargetBlock())
 	before := ToolNode{ID: "tool_target", Params: map[string]any{"mode": "strict"}}
@@ -586,6 +612,66 @@ func TestUpdateToolRejectsInvalidBoardOrLayoutAuthorityWithoutMutation(t *testin
 				t.Fatalf("invalid authority error = %v, want marker %q", err, test.wantMarker)
 			}
 			assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, layoutRaw)
+		})
+	}
+}
+
+func TestUpdateToolRejectsMalformedUnknownBoardTOMLWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name string
+		tail string
+	}{
+		{name: "invalid unknown string escape", tail: "[unknown_extension]\nvalue = \"\\q\"\n"},
+		{name: "unterminated unknown array", tail: "[unknown_extension]\nvalue = [\n"},
+		{name: "duplicate unknown key", tail: "[unknown_extension]\nvalue = 1\nvalue = 2\n"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := newToolAuthoringStore(t)
+			slug := "tool-update-malformed-source"
+			boardRaw := toolAuthoringBoardFixture(slug, 3, true, toolUpdateTargetBlock()) + test.tail
+			writeFixture(t, store.BoardPath(slug), boardRaw)
+			before, err := store.ReadBoard(slug)
+			if err != nil {
+				t.Fatalf("inspection must expose malformed unknown source before authoring rejection: %v", err)
+			}
+			title := "Must not publish"
+
+			_, err = store.UpdateTool(slug, ToolUpdateRequest{ToolID: "tool_target", Title: &title}, toolAuthoringAbsentOptions(before))
+			if err == nil || !strings.Contains(err.Error(), "invalid_board_source") {
+				t.Fatalf("malformed unknown board source error = %v, want invalid_board_source", err)
+			}
+			assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, nil)
+		})
+	}
+}
+
+func TestUpdateToolRejectsSchemaTwoMigrationAuthorityGapsWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name   string
+		remove string
+	}{
+		{name: "missing Formation input direction", remove: "direction = \"input\"\n"},
+		{name: "missing connection channel", remove: "channel = \"workflow\"\n"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := newToolAuthoringStore(t)
+			slug := "tool-schema-two"
+			boardRaw := toolSchemaMigrationCanonicalFixture() + toolUpdateTargetBlock()
+			boardRaw = strings.Replace(boardRaw, test.remove, "", 1)
+			writeFixture(t, store.BoardPath(slug), boardRaw)
+			before, err := store.ReadBoard(slug)
+			if err != nil {
+				t.Fatalf("read migration-authority gap fixture: %v", err)
+			}
+			title := "Must not publish"
+
+			_, err = store.UpdateTool(slug, ToolUpdateRequest{ToolID: "tool_target", Title: &title}, toolAuthoringAbsentOptions(before))
+			if err == nil || !strings.Contains(err.Error(), "missing migration-owned field") {
+				t.Fatalf("migration-authority gap error = %v, want missing migration-owned field", err)
+			}
+			assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, nil)
 		})
 	}
 }
