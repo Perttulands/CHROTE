@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +14,8 @@ import (
 func TestCreateToolMigratesSchemaOneAndDerivesExactDescriptorShape(t *testing.T) {
 	store := newToolAuthoringStore(t)
 	slug := "tool-migration"
-	writeFixture(t, store.BoardPath(slug), toolSchemaMigrationLegacyFixture())
+	source := toolSchemaMigrationLegacyFixture()
+	writeFixture(t, store.BoardPath(slug), source)
 	before, err := store.ReadBoard(slug)
 	if err != nil {
 		t.Fatalf("read schema-1 source: %v", err)
@@ -53,6 +55,50 @@ func TestCreateToolMigratesSchemaOneAndDerivesExactDescriptorShape(t *testing.T)
 		!strings.Contains(result.Board.TOML, `channel = "judge"`) ||
 		!strings.Contains(result.Board.TOML, `acceptedMediaTypes = ["text/plain", "text/markdown", "application/json"]`) {
 		t.Fatalf("schema migration did not preserve extension and add typed defaults:\n%s", result.Board.TOML)
+	}
+	if got, want := toolAuthoringCoreNodeIDs(result.Board), toolAuthoringCoreNodeIDs(before); !reflect.DeepEqual(got, want) {
+		t.Fatalf("first-Tool migration changed retained node ids/order: got %v want %v", got, want)
+	}
+	if len(result.Board.Connections) != len(before.Connections) {
+		t.Fatalf("first-Tool migration connection count = %d, want %d", len(result.Board.Connections), len(before.Connections))
+	}
+	for index, want := range before.Connections {
+		got := result.Board.Connections[index]
+		if got.ID != want.ID || got.From != want.From || got.To != want.To {
+			t.Fatalf("first-Tool migration changed connection %d identity/endpoints: got %#v want %#v", index, got, want)
+		}
+	}
+	retainedSpans := []string{
+		`x_owner = "keep" # unknown top-level field`,
+		`[[mission]]
+id = "mis_main"
+title = "Main"
+goal = "Review the work"
+beadId = "ctx-test"
+x_mission_note = "keep"`,
+		`[[formation]]
+id = "fmn_work" # stable Formation id
+type = "solo"
+title = "Worker"`,
+		`x_port_hint = "keep" # unknown safe port field`,
+		`[[connection]]
+id = "edge_start"
+from = "mis_main:out"
+to = "fmn_work:port_work_in"
+x_route_note = "keep" # unknown safe connection field`,
+		`[x_extension]
+note = "keep this table byte-for-byte"`,
+	}
+	previous := -1
+	for _, span := range retainedSpans {
+		index := strings.Index(result.Board.TOML, span)
+		if index < 0 {
+			t.Fatalf("first-Tool migration did not retain exact source span %q:\n%s", span, result.Board.TOML)
+		}
+		if index <= previous {
+			t.Fatalf("first-Tool migration reordered retained span %q", span)
+		}
+		previous = index
 	}
 }
 
@@ -109,6 +155,160 @@ y = 29`
 	}
 	if result.Layout.BoardRev != result.Board.Rev {
 		t.Fatalf("layout boardRev = %d, want %d", result.Layout.BoardRev, result.Board.Rev)
+	}
+}
+
+func TestCreateToolSchemaTwoExactPlacementBumpsOnceWithoutChangingConnections(t *testing.T) {
+	store := newToolAuthoringStore(t)
+	slug := "tool-schema-two-exact"
+	boardRaw := toolAuthoringBoardFixture(slug, 9, true, toolAuthoringConnectedToolsTail())
+	writeFixture(t, store.BoardPath(slug), boardRaw)
+	before, err := store.ReadBoard(slug)
+	if err != nil {
+		t.Fatalf("read schema-2 board: %v", err)
+	}
+	x, y := 901, 317
+
+	result, err := store.CreateTool(
+		slug,
+		toolAuthoringCreateRequest(ToolPlacement{X: &x, Y: &y}),
+		toolAuthoringAbsentOptions(before),
+	)
+	if err != nil {
+		t.Fatalf("create Tool on schema-2 board: %v", err)
+	}
+	if result.Board.Schema != CurrentBoardSchema || result.Board.Rev != before.Rev+1 {
+		t.Fatalf("schema-2 create schema/rev = %d/%d, want %d/%d", result.Board.Schema, result.Board.Rev, CurrentBoardSchema, before.Rev+1)
+	}
+	if !reflect.DeepEqual(result.Board.Connections, before.Connections) {
+		t.Fatalf("schema-2 create changed existing connections:\n got %#v\nwant %#v", result.Board.Connections, before.Connections)
+	}
+	for _, connection := range result.Board.Connections {
+		if strings.Contains(connection.From, result.Tool.ID+":") || strings.Contains(connection.To, result.Tool.ID+":") {
+			t.Fatalf("schema-2 exact placement implicitly wired new Tool: %#v", connection)
+		}
+	}
+	const retainedConnection = `[[connection]]
+id = "edge_existing"
+channel = "workflow"
+from = "tool_source:port_source_out"
+to = "tool_target:port_target_in"
+x_connection_note = "keep exact"`
+	if !strings.Contains(result.Board.TOML, retainedConnection) {
+		t.Fatalf("schema-2 create rewrote retained connection source:\n%s", result.Board.TOML)
+	}
+	if result.Layout == nil || len(result.Layout.Nodes) != 1 || result.Layout.Nodes[0] != (LayoutNode{ID: result.Tool.ID, X: x, Y: y}) {
+		t.Fatalf("exact absent-layout placement = %#v, want only new Tool at %d,%d", result.Layout, x, y)
+	}
+}
+
+func TestCreateToolPresentLayoutPreservesAuthoritativeSpansAndRelativeOrder(t *testing.T) {
+	store := newToolAuthoringStore(t)
+	slug := "tool-layout-source"
+	boardRaw := toolAuthoringBoardFixture(slug, 5, true, toolAuthoringConnectedToolsTail())
+	layoutRaw := `schema = 1 # preserve top comment
+boardId = "brd_tool-layout-source"
+boardRev = 5 # preserve revision comment
+updatedAt = "2026-07-19T00:00:00Z"
+
+[[edge]]
+# authoritative edge deliberately precedes nodes
+id = "edge_existing"
+lane = "north-by-northwest" # keep unusual lane
+
+[[node]]
+# inert node should disappear
+id = "stale_node"
+x = 999
+y = 999
+
+[[node]]
+# retained target deliberately precedes mission and source
+id = "tool_target"
+x = 1400 # keep target x
+y = 420
+
+[[node]]
+# retained mission comment
+id = "mis_main"
+x = 84
+y = 196 # keep mission y
+
+[[edge]]
+# inert edge should disappear
+id = "stale_edge"
+lane = "stale"
+
+[[node]]
+# retained source is last among authored nodes
+id = "tool_source"
+x = 700
+y = 420 # keep source y
+`
+	writeFixture(t, store.BoardPath(slug), boardRaw)
+	writeFixture(t, store.LayoutPath(slug), layoutRaw)
+	board, layout := toolAuthoringReadPair(t, store, slug)
+	x, y := 2072, 532
+
+	result, err := store.CreateTool(
+		slug,
+		toolAuthoringCreateRequest(ToolPlacement{X: &x, Y: &y}),
+		toolAuthoringPresentOptions(board, layout),
+	)
+	if err != nil {
+		t.Fatalf("create Tool in source-rich layout: %v", err)
+	}
+	if strings.Contains(result.Layout.TOML, `id = "stale_node"`) || strings.Contains(result.Layout.TOML, `id = "stale_edge"`) {
+		t.Fatalf("source-rich layout retained inert blocks:\n%s", result.Layout.TOML)
+	}
+	wantNodeIDs := []string{"mis_main", "tool_source", "tool_target", result.Tool.ID}
+	gotNodeIDs := make([]string, 0, len(result.Layout.Nodes))
+	for _, node := range result.Layout.Nodes {
+		gotNodeIDs = append(gotNodeIDs, node.ID)
+	}
+	sort.Strings(wantNodeIDs)
+	sort.Strings(gotNodeIDs)
+	if !reflect.DeepEqual(gotNodeIDs, wantNodeIDs) {
+		t.Fatalf("filtered layout node ids = %v, want exact board-authoritative set %v", gotNodeIDs, wantNodeIDs)
+	}
+	if got := result.Layout.Edges; len(got) != 1 || got[0] != (LayoutEdge{ID: "edge_existing", Lane: "north-by-northwest"}) {
+		t.Fatalf("filtered layout edges = %#v, want exact authoritative edge", got)
+	}
+	retainedSpans := []string{
+		`[[edge]]
+# authoritative edge deliberately precedes nodes
+id = "edge_existing"
+lane = "north-by-northwest" # keep unusual lane`,
+		`[[node]]
+# retained target deliberately precedes mission and source
+id = "tool_target"
+x = 1400 # keep target x
+y = 420`,
+		`[[node]]
+# retained mission comment
+id = "mis_main"
+x = 84
+y = 196 # keep mission y`,
+		`[[node]]
+# retained source is last among authored nodes
+id = "tool_source"
+x = 700
+y = 420 # keep source y`,
+		`[[node]]
+id = "` + result.Tool.ID + `"
+x = 2072
+y = 532`,
+	}
+	previous := -1
+	for _, span := range retainedSpans {
+		index := strings.Index(result.Layout.TOML, span)
+		if index < 0 {
+			t.Fatalf("present-layout create did not retain exact source span %q:\n%s", span, result.Layout.TOML)
+		}
+		if index <= previous {
+			t.Fatalf("present-layout create reordered retained source span %q", span)
+		}
+		previous = index
 	}
 }
 
@@ -267,6 +467,77 @@ y = 999
 	}
 }
 
+func TestCreateToolOwnsDescriptorOrderedGloballyUniqueIDsAcrossCreates(t *testing.T) {
+	store := newToolAuthoringStore(t)
+	type generatedID struct {
+		prefix string
+		id     string
+	}
+	sequence := []generatedID{
+		{prefix: "tool", id: "tool_first"},
+		{prefix: "port", id: "port_first_input"},
+		{prefix: "port", id: "port_first_output"},
+		{prefix: "tool", id: "tool_second"},
+		{prefix: "port", id: "port_second_input"},
+		{prefix: "port", id: "port_second_output"},
+	}
+	generated := 0
+	store.newToolDefinitionID = func(prefix string) string {
+		if generated >= len(sequence) {
+			t.Fatalf("Tool create exhausted the approved id sequence with extra prefix %q", prefix)
+		}
+		next := sequence[generated]
+		if prefix != next.prefix {
+			t.Fatalf("generated id call %d prefix = %q, want descriptor-ordered %q", generated, prefix, next.prefix)
+		}
+		generated++
+		return next.id
+	}
+	slug := "tool-id-ownership"
+	writeFixture(t, store.BoardPath(slug), toolAuthoringBoardFixture(slug, 2, true, ""))
+	board, err := store.ReadBoard(slug)
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+
+	first, err := store.CreateTool(slug, toolAuthoringCreateRequest(ToolPlacement{}), toolAuthoringAbsentOptions(board))
+	if err != nil {
+		t.Fatalf("create first Tool with forced ids: %v", err)
+	}
+	if first.Tool.ID != "tool_first" || len(first.Tool.Inputs) != 1 || first.Tool.Inputs[0].ID != "port_first_input" ||
+		len(first.Tool.Outputs) != 1 || first.Tool.Outputs[0].ID != "port_first_output" {
+		t.Fatalf("first Tool descriptor-order ids = %#v", first.Tool)
+	}
+	second, err := store.CreateTool(slug, toolAuthoringCreateRequest(ToolPlacement{}), toolAuthoringPresentOptions(first.Board, first.Layout))
+	if err != nil {
+		t.Fatalf("create second Tool with forced ids: %v", err)
+	}
+	if second.Tool.ID != "tool_second" || len(second.Tool.Inputs) != 1 || second.Tool.Inputs[0].ID != "port_second_input" ||
+		len(second.Tool.Outputs) != 1 || second.Tool.Outputs[0].ID != "port_second_output" {
+		t.Fatalf("second Tool descriptor-order ids = %#v", second.Tool)
+	}
+	if generated != len(sequence) {
+		t.Fatalf("Tool creates consumed %d generated ids, want exact sequence length %d", generated, len(sequence))
+	}
+
+	seen := map[string]string{"mis_main": "Mission"}
+	for _, tool := range second.Board.Tools {
+		if owner, exists := seen[tool.ID]; exists {
+			t.Fatalf("Tool id %q duplicates %s", tool.ID, owner)
+		}
+		seen[tool.ID] = "Tool"
+		for _, port := range append(append([]ToolPort(nil), tool.Inputs...), tool.Outputs...) {
+			if owner, exists := seen[port.ID]; exists {
+				t.Fatalf("Tool port id %q duplicates %s", port.ID, owner)
+			}
+			seen[port.ID] = "Tool port"
+		}
+	}
+	if len(seen) != 7 {
+		t.Fatalf("board-global id set = %v, want Mission plus two Tools and four ports", seen)
+	}
+}
+
 func TestCreateToolHonorsExactBoardAndLayoutPreconditions(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -295,6 +566,25 @@ func TestCreateToolHonorsExactBoardAndLayoutPreconditions(t *testing.T) {
 			assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, &layoutRaw)
 		})
 	}
+}
+
+func TestCreateToolRejectsExpectedPresentWhenLayoutIsActuallyAbsent(t *testing.T) {
+	store := newToolAuthoringStore(t)
+	slug := "tool-create-actual-layout-absent"
+	boardRaw := toolAuthoringBoardFixture(slug, 2, true, "")
+	writeFixture(t, store.BoardPath(slug), boardRaw)
+	board, err := store.ReadBoard(slug)
+	if err != nil {
+		t.Fatalf("read board with absent layout: %v", err)
+	}
+	opts := toolAuthoringAbsentOptions(board)
+	opts.Layout = &LayoutWriteExpectation{State: LayoutWritePresent, ETag: strings.Repeat("a", 64)}
+
+	_, err = store.CreateTool(slug, toolAuthoringCreateRequest(ToolPlacement{}), opts)
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("actual-absent/expected-present error = %v, want ErrConflict", err)
+	}
+	assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, nil)
 }
 
 func TestCreateToolRequiresOneClosedLayoutExpectation(t *testing.T) {
@@ -427,13 +717,17 @@ command = "./unsafe.sh"
 
 func TestCreateToolRejectsMismatchedMalformedAndDuplicateLayoutIDs(t *testing.T) {
 	tests := []struct {
-		name   string
-		layout string
+		name       string
+		layout     string
+		wantMarker string
 	}{
-		{name: "board mismatch", layout: "schema = 1\nboardId = \"brd_other\"\nboardRev = 2\n"},
-		{name: "missing node id", layout: "schema = 1\nboardId = \"brd_tool-layout-invalid\"\nboardRev = 2\n\n[[node]]\nx = 1\ny = 2\n"},
-		{name: "duplicate node id", layout: "schema = 1\nboardId = \"brd_tool-layout-invalid\"\nboardRev = 2\n\n[[node]]\nid = \"mis_main\"\nx = 1\ny = 2\n\n[[node]]\nid = \"mis_main\"\nx = 3\ny = 4\n"},
-		{name: "duplicate edge id", layout: "schema = 1\nboardId = \"brd_tool-layout-invalid\"\nboardRev = 2\n\n[[edge]]\nid = \"edge_stale\"\nlane = \"a\"\n\n[[edge]]\nid = \"edge_stale\"\nlane = \"b\"\n"},
+		{name: "board mismatch", wantMarker: ErrConflict.Error(), layout: "schema = 1\nboardId = \"brd_other\"\nboardRev = 2\n"},
+		{name: "missing node id", wantMarker: "invalid_layout_id", layout: "schema = 1\nboardId = \"brd_tool-layout-invalid\"\nboardRev = 2\n\n[[node]]\nx = 1\ny = 2\n"},
+		{name: "malformed node id", wantMarker: "invalid_layout_id", layout: "schema = 1\nboardId = \"brd_tool-layout-invalid\"\nboardRev = 2\n\n[[node]]\nid = []\nx = 1\ny = 2\n"},
+		{name: "missing edge id", wantMarker: "invalid_layout_id", layout: "schema = 1\nboardId = \"brd_tool-layout-invalid\"\nboardRev = 2\n\n[[edge]]\nlane = \"a\"\n"},
+		{name: "malformed edge id", wantMarker: "invalid_layout_id", layout: "schema = 1\nboardId = \"brd_tool-layout-invalid\"\nboardRev = 2\n\n[[edge]]\nid = []\nlane = \"a\"\n"},
+		{name: "duplicate node id", wantMarker: "duplicate_layout_id", layout: "schema = 1\nboardId = \"brd_tool-layout-invalid\"\nboardRev = 2\n\n[[node]]\nid = \"mis_main\"\nx = 1\ny = 2\n\n[[node]]\nid = \"mis_main\"\nx = 3\ny = 4\n"},
+		{name: "duplicate edge id", wantMarker: "duplicate_layout_id", layout: "schema = 1\nboardId = \"brd_tool-layout-invalid\"\nboardRev = 2\n\n[[edge]]\nid = \"edge_stale\"\nlane = \"a\"\n\n[[edge]]\nid = \"edge_stale\"\nlane = \"b\"\n"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -443,8 +737,12 @@ func TestCreateToolRejectsMismatchedMalformedAndDuplicateLayoutIDs(t *testing.T)
 			writeFixture(t, store.BoardPath(slug), boardRaw)
 			writeFixture(t, store.LayoutPath(slug), test.layout)
 			board, layout := toolAuthoringReadPair(t, store, slug)
-			if _, err := store.CreateTool(slug, toolAuthoringCreateRequest(ToolPlacement{}), toolAuthoringPresentOptions(board, layout)); err == nil {
+			_, err := store.CreateTool(slug, toolAuthoringCreateRequest(ToolPlacement{}), toolAuthoringPresentOptions(board, layout))
+			if err == nil {
 				t.Fatal("invalid layout accepted")
+			}
+			if !strings.Contains(err.Error(), test.wantMarker) {
+				t.Fatalf("invalid layout error = %v, want marker %q", err, test.wantMarker)
 			}
 			layoutRaw := test.layout
 			assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, &layoutRaw)
@@ -589,6 +887,31 @@ beadId = "ctx-test"
 		raw += "\n"
 	}
 	return raw + tail
+}
+
+func toolAuthoringConnectedToolsTail() string {
+	return toolStructuralJSONNormalizeToolBlock("tool_source", "Source", "port_source_in", "port_source_out") +
+		toolStructuralJSONNormalizeToolBlock("tool_target", "Target", "port_target_in", "port_target_out") + `[[connection]]
+id = "edge_existing"
+channel = "workflow"
+from = "tool_source:port_source_out"
+to = "tool_target:port_target_in"
+x_connection_note = "keep exact"
+`
+}
+
+func toolAuthoringCoreNodeIDs(board *BoardDocument) []string {
+	ids := make([]string, 0, len(board.Missions)+len(board.Formations)+len(board.Gates))
+	for _, mission := range board.Missions {
+		ids = append(ids, "Mission:"+mission.ID)
+	}
+	for _, formation := range board.Formations {
+		ids = append(ids, "Formation:"+formation.ID)
+	}
+	for _, gate := range board.Gates {
+		ids = append(ids, "Gate:"+gate.ID)
+	}
+	return ids
 }
 
 func toolAuthoringCreateRequest(placement ToolPlacement) ToolCreateRequest {
