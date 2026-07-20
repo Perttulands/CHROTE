@@ -921,6 +921,50 @@ func TestFormationsHandlerToolCRUDRejectsInvalidUnicodeBeforePairMutation(t *tes
 	}
 }
 
+func TestFormationsHandlerToolBadRequestPrecedesInvalidUnicode(t *testing.T) {
+	tests := []struct {
+		name string
+		body func(*formationsAPIToolAuthoringHarness) string
+	}{
+		{
+			name: "numeric update title plus surrogate actor",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return fmt.Sprintf(
+					`{"updateTool":{"id":"tool_normalize","title":7},"expectedRev":%d,"layoutExpectation":%s,"updatedBy":"agent:\uD800"}`,
+					h.board.Rev,
+					h.layoutExpectationJSON(),
+				)
+			},
+		},
+		{
+			name: "wrong-shape layout expectation plus surrogate title",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return fmt.Sprintf(
+					`{"updateTool":{"id":"tool_normalize","title":"Unicode \uD800"},"expectedRev":%d,"layoutExpectation":[],"updatedBy":"agent:api-test"}`,
+					h.board.Rev,
+				)
+			},
+		},
+		{
+			name: "non-object update operation containing surrogate",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return h.validFrame(`"updateTool":"Unicode \uD800"`)
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			harness := newFormationsAPIToolAuthoringHarness(t, true)
+			beforeBoard := readFormationsAPIFile(t, harness.store.BoardPath(harness.slug))
+			beforeLayout := readFormationsAPIFile(t, harness.store.LayoutPath(harness.slug))
+			recorder := harness.patch(test.body(harness), harness.board.ETag)
+			assertFormationsAPIToolError(t, recorder, http.StatusBadRequest, "BAD_REQUEST")
+			assertFormationsAPIToolPairBytes(t, harness, beforeBoard, beforeLayout)
+		})
+	}
+}
+
 func TestFormationsHandlerToolUnicodeGrammarPrecedesMissingPreconditions(t *testing.T) {
 	rawInvalidUTF8 := string([]byte{0xff})
 	for _, test := range []struct {
