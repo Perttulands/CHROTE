@@ -474,19 +474,27 @@ type toolLayoutOwnedBlock struct {
 }
 
 func validateToolMutationLayout(raw []byte, layout *LayoutDocument, boardID string) ([]toolLayoutOwnedBlock, error) {
-	if layout == nil || layout.Schema != CurrentLayoutSchema {
+	if layout == nil {
+		return nil, fmt.Errorf("invalid_layout_schema: Tool mutation requires layout schema %d", CurrentLayoutSchema)
+	}
+	blocks, err := parseToolLayoutOwnedBlocks(raw)
+	if err != nil {
+		return nil, err
+	}
+	if layout.Schema != CurrentLayoutSchema {
 		return nil, fmt.Errorf("invalid_layout_schema: Tool mutation requires layout schema %d", CurrentLayoutSchema)
 	}
 	if layout.BoardID != boardID {
 		return nil, fmt.Errorf("%w: layout board %q does not match %q", ErrConflict, layout.BoardID, boardID)
 	}
-	return parseToolLayoutOwnedBlocks(raw)
+	return blocks, nil
 }
 
 func parseToolLayoutOwnedBlocks(raw []byte) ([]toolLayoutOwnedBlock, error) {
 	lines := splitLines(raw)
 	seen := map[string]map[string]bool{"node": {}, "edge": {}}
 	var blocks []toolLayoutOwnedBlock
+	reservedCounts := map[string]int{"schema": 0, "boardId": 0, "boardRev": 0, "updatedAt": 0}
 	active := -1
 	rootFields := false
 	topLevel := true
@@ -520,11 +528,7 @@ func parseToolLayoutOwnedBlocks(raw []byte) ([]toolLayoutOwnedBlock, error) {
 		if strings.HasPrefix(trimmed, "[") {
 			section, ok := tomlLineSectionName(line)
 			if !ok {
-				if active >= 0 || toolLayoutHeaderLooksOwned(trimmed) {
-					return nil, fmt.Errorf("invalid_layout_owned_source: malformed layout-owned header")
-				}
-				topLevel = false
-				continue
+				return nil, fmt.Errorf("invalid_layout_owned_source: malformed layout header")
 			}
 			topLevel = false
 			kind := toolLayoutOwnedSectionKind(section)
@@ -555,14 +559,28 @@ func parseToolLayoutOwnedBlocks(raw []byte) ([]toolLayoutOwnedBlock, error) {
 
 		assignment := tomlAssignmentIndex(line.body)
 		if assignment < 0 {
-			continue
+			return nil, fmt.Errorf("invalid_layout_owned_source: invalid nonassignment layout source")
 		}
 		path, valid := parseTOMLKeyPath(line.body[:assignment])
 		if !valid {
-			continue
+			return nil, fmt.Errorf("invalid_layout_owned_source: malformed layout assignment key")
 		}
-		if topLevel && len(path) > 0 && (path[0] == "node" || path[0] == "edge") {
-			return nil, fmt.Errorf("invalid_layout_owned_source: top-level %s assignment competes with layout authority", path[0])
+		if topLevel && len(path) > 0 {
+			if _, reserved := reservedCounts[path[0]]; reserved {
+				if len(path) != 1 {
+					return nil, fmt.Errorf("invalid_layout_identity: dotted %s root competes with layout identity", path[0])
+				}
+				reservedCounts[path[0]]++
+				if reservedCounts[path[0]] != 1 {
+					return nil, fmt.Errorf("invalid_layout_identity: duplicate %s field", path[0])
+				}
+				if err := validateToolLayoutReservedField(path[0], line.body); err != nil {
+					return nil, err
+				}
+			}
+			if path[0] == "node" || path[0] == "edge" {
+				return nil, fmt.Errorf("invalid_layout_owned_source: top-level %s assignment competes with layout authority", path[0])
+			}
 		}
 		if active < 0 || !rootFields || len(path) != 1 {
 			continue
@@ -591,6 +609,13 @@ func parseToolLayoutOwnedBlocks(raw []byte) ([]toolLayoutOwnedBlock, error) {
 	if err := finishActive(len(lines)); err != nil {
 		return nil, err
 	}
+	if reservedCounts["schema"] != 1 || reservedCounts["boardId"] != 1 {
+		return nil, fmt.Errorf(
+			"invalid_layout_identity: schema fields = %d, boardId fields = %d; want exactly one each",
+			reservedCounts["schema"],
+			reservedCounts["boardId"],
+		)
+	}
 	return blocks, nil
 }
 
@@ -603,16 +628,24 @@ func toolLayoutOwnedSectionKind(section string) string {
 	return ""
 }
 
-func toolLayoutHeaderLooksOwned(header string) bool {
-	candidate := strings.TrimLeft(strings.TrimSpace(header), "[ \t")
-	for _, prefix := range []string{"node", "edge", `"node"`, `"edge"`, `'node'`, `'edge'`} {
-		if !strings.HasPrefix(candidate, prefix) {
-			continue
-		}
-		rest := candidate[len(prefix):]
-		return rest == "" || strings.ContainsRune(".] \t", rune(rest[0]))
+func validateToolLayoutReservedField(field, raw string) error {
+	key, literal, present, err := parseToolAssignment(raw)
+	if err != nil || !present || key != field {
+		return fmt.Errorf("invalid_layout_identity: malformed %s field", field)
 	}
-	return false
+	switch field {
+	case "schema", "boardRev":
+		value, err := strconv.ParseInt(literal, 10, 64)
+		if err != nil || strconv.FormatInt(value, 10) != literal {
+			return fmt.Errorf("invalid_layout_identity: malformed %s integer", field)
+		}
+	case "boardId", "updatedAt":
+		value, ok := parseTOMLBasicString(literal)
+		if !ok || !validToolString(value) {
+			return fmt.Errorf("invalid_layout_identity: malformed %s string", field)
+		}
+	}
+	return nil
 }
 
 func parseToolLayoutCoordinateField(block *toolLayoutOwnedBlock, field, raw string) error {
@@ -620,8 +653,8 @@ func parseToolLayoutCoordinateField(block *toolLayoutOwnedBlock, field, raw stri
 	if err != nil || !present {
 		return fmt.Errorf("invalid_layout_coordinate: malformed %s coordinate", field)
 	}
-	value, err := strconv.ParseInt(literal, 10, 32)
-	if err != nil || strconv.FormatInt(value, 10) != literal || !validToolLayoutCoordinate(value) {
+	value, err := parseToolInteger(literal)
+	if err != nil || !validToolLayoutCoordinate(value) {
 		return fmt.Errorf("invalid_layout_coordinate: %s coordinate is outside signed 32-bit bounds", field)
 	}
 	switch field {

@@ -2714,12 +2714,25 @@ func parseLayoutNodes(raw []byte) []LayoutNode {
 		case "id":
 			current.ID = value
 		case "x":
-			current.X, _ = strconv.Atoi(value)
+			if coordinate, ok := parseLayoutCoordinate(value); ok {
+				current.X = coordinate
+			}
 		case "y":
-			current.Y, _ = strconv.Atoi(value)
+			if coordinate, ok := parseLayoutCoordinate(value); ok {
+				current.Y = coordinate
+			}
 		}
 	}
 	return nodes
+}
+
+func parseLayoutCoordinate(value string) (int, bool) {
+	coordinate, err := parseToolInteger(value)
+	if err != nil {
+		return 0, false
+	}
+	projected := int(coordinate)
+	return projected, int64(projected) == coordinate
 }
 
 func parseLayoutEdges(raw []byte) []LayoutEdge {
