@@ -466,6 +466,20 @@ layoutNote = "keep"
 	}
 }
 
+func TestLayoutCoordinateProjectionUsesHostIntegerBoundsNotToolParameterBounds(t *testing.T) {
+	wide := maxToolParameterInteger + 1
+	projected, ok := parseLayoutCoordinate(strconv.FormatInt(wide, 10))
+	if strconv.IntSize == 64 {
+		if !ok || int64(projected) != wide {
+			t.Fatalf("wide host-int layout coordinate projection = %d, %v; want %d, true", projected, ok, wide)
+		}
+		return
+	}
+	if ok {
+		t.Fatalf("out-of-range host-int layout coordinate unexpectedly projected as %d", projected)
+	}
+}
+
 func TestDefinitionReadersRejectOnlyVersionsNewerThanTheirOwnSchema(t *testing.T) {
 	store := NewStore(t.TempDir())
 	writeFixture(t, store.BoardPath("future-board"), `schema = 3

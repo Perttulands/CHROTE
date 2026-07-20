@@ -543,6 +543,48 @@ x_owner = { note = "keep", rank = 7 } # unknown valid root
 	}
 }
 
+func TestCreateToolProjectsRetainedLiteralStringLayoutIdentity(t *testing.T) {
+	store := newToolAuthoringStore(t)
+	slug := "tool-layout-literal-identity"
+	boardRaw := toolAuthoringBoardFixture(slug, 2, true, toolAuthoringConnectedToolsTail())
+	layoutRaw := `schema = 1
+boardId = "brd_tool-layout-literal-identity"
+boardRev = 2
+
+[[node]]
+id = 'mis_main'
+x = 112
+y = 224
+
+[[edge]]
+id = 'edge_existing'
+lane = 'review'
+`
+	writeFixture(t, store.BoardPath(slug), boardRaw)
+	writeFixture(t, store.LayoutPath(slug), layoutRaw)
+	board, layout := toolAuthoringReadPair(t, store, slug)
+
+	result, err := store.CreateTool(
+		slug,
+		toolAuthoringCreateRequest(ToolPlacement{}),
+		toolAuthoringPresentOptions(board, layout),
+	)
+	if err != nil {
+		t.Fatalf("create Tool with literal-string layout identity: %v", err)
+	}
+	if _, ok := toolAuthoringLayoutNode(result.Layout.Nodes, "mis_main"); !ok {
+		t.Fatalf("retained literal-string node identity was not projected: %#v", result.Layout.Nodes)
+	}
+	if len(result.Layout.Edges) != 1 || result.Layout.Edges[0].ID != "edge_existing" || result.Layout.Edges[0].Lane != "review" {
+		t.Fatalf("retained literal-string edge projection = %#v", result.Layout.Edges)
+	}
+	for _, retained := range []string{"id = 'mis_main'", "id = 'edge_existing'", "lane = 'review'"} {
+		if !strings.Contains(result.Layout.TOML, retained) {
+			t.Fatalf("literal-string layout source changed; missing %q:\n%s", retained, result.Layout.TOML)
+		}
+	}
+}
+
 func TestCreateToolHeuristicUsesLockedPredecessorAndSuccessorWithoutMovingOrWiring(t *testing.T) {
 	store := newToolAuthoringStore(t)
 	slug := "tool-hints"
