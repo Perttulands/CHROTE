@@ -59,6 +59,9 @@ func (s *Store) CreateTool(slug string, req ToolCreateRequest, opts ToolWriteOpt
 	if req.Params == nil {
 		return nil, fmt.Errorf("Tool parameter object is required")
 	}
+	if err := validateToolUpdatedBy(req.UpdatedBy); err != nil {
+		return nil, err
+	}
 	descriptor, ok := LookupToolProfileDescriptor(req.ProfileID, req.ProfileVersion)
 	if !ok {
 		return nil, fmt.Errorf("unknown Tool profile tuple %q@%q", req.ProfileID, req.ProfileVersion)
@@ -141,10 +144,29 @@ func validateToolPlacementUnion(placement ToolPlacement) error {
 	if hasX && hasHints {
 		return fmt.Errorf("Tool placement must use exact coordinates or heuristic hints, not both")
 	}
+	if hasX && (!validToolLayoutCoordinate(int64(*placement.X)) || !validToolLayoutCoordinate(int64(*placement.Y))) {
+		return fmt.Errorf("invalid_layout_coordinate: Tool exact placement is outside signed 32-bit bounds")
+	}
 	if !hasX && placement.PredecessorNodeID != "" && placement.PredecessorNodeID == placement.SuccessorNodeID {
 		return fmt.Errorf("Tool placement predecessor and successor must differ")
 	}
 	return nil
+}
+
+func validateToolUpdatedBy(updatedBy string) error {
+	if updatedBy == "" {
+		return nil
+	}
+	rendered := renderString(updatedBy)
+	parsed, ok := parseTOMLBasicString(rendered)
+	if !ok || parsed != updatedBy {
+		return fmt.Errorf("invalid_tool_updated_by: UpdatedBy is not a TOML basic string")
+	}
+	return nil
+}
+
+func validToolLayoutCoordinate(value int64) bool {
+	return value >= -1<<31 && value <= 1<<31-1
 }
 
 func (s *Store) buildToolCreateCandidate(
