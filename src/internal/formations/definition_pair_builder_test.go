@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDefinitionPairBuilderSeesExactPinnedPairUnderBothLocks(t *testing.T) {
@@ -45,6 +46,95 @@ func TestDefinitionPairBuilderSeesExactPinnedPairUnderBothLocks(t *testing.T) {
 		t.Fatal("pair publication skipped candidate builder")
 	}
 	assertPairFilesForTest(t, store, slug, newBoard, pairPresentContentForTest(newLayout))
+}
+
+func TestDefinitionPairBuilderReadsPostWaitPairWithBothPeerProcessFlocksHeld(t *testing.T) {
+	store := NewStore(t.TempDir())
+	slug := "pair-builder-post-wait"
+	initialBoard := pairBoardFixture(slug, 1, "Initial")
+	initialLayout := pairLayoutFixture(1, "initial")
+	postWaitBoard := pairBoardFixture(slug, 2, "Cooperating writer")
+	postWaitLayout := pairLayoutFixture(2, "cooperating-writer")
+	newBoard := pairBoardFixture(slug, 3, "Builder")
+	newLayout := pairLayoutFixture(3, "builder")
+	writeFixture(t, store.BoardPath(slug), string(initialBoard))
+	writeFixture(t, store.LayoutPath(slug), string(initialLayout))
+
+	request := definitionPairRequestForTest(postWaitBoard, postWaitLayout, nil, pairAbsentContentForTest())
+	request.build = func(current definitionPairState) (definitionPairState, error) {
+		if string(current.board) != string(postWaitBoard) || !current.layout.present || string(current.layout.raw) != string(postWaitLayout) {
+			return definitionPairState{}, fmt.Errorf("builder current pair = %#v, want cooperating writer's post-wait bytes", current)
+		}
+		assertPeerProcessDefinitionFlocksBlockedForTest(
+			t,
+			store.BoardPath(slug)+".lock",
+			store.LayoutPath(slug)+".lock",
+		)
+		return definitionPairState{
+			board:  append([]byte(nil), newBoard...),
+			layout: pairPresentContentForTest(newLayout),
+		}, nil
+	}
+
+	done := make(chan error, 1)
+	err := store.withBoardDefinitionLock(slug, func(board *definitionFile) error {
+		return store.withLayoutDefinitionLock(slug, func(layout *definitionFile) error {
+			go runDefinitionPairBuilderPublicationForTest(store, slug, request, done)
+			waitForDefinitionPairGoroutineBlockForTest(
+				t,
+				"runDefinitionPairBuilderPublicationForTest",
+				"[sync.Mutex.Lock]",
+				"sync.(*Mutex).Lock",
+			)
+			if err := board.writeAtomic(postWaitBoard); err != nil {
+				return fmt.Errorf("publish cooperating board: %w", err)
+			}
+			if err := layout.writeAtomic(postWaitLayout); err != nil {
+				return fmt.Errorf("publish cooperating layout: %w", err)
+			}
+			return nil
+		})
+	})
+	if err != nil {
+		t.Fatalf("publish cooperating pair while builder waits: %v", err)
+	}
+	select {
+	case err = <-done:
+		if err != nil {
+			t.Fatalf("publish builder-derived post-wait pair: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for post-wait builder publication")
+	}
+	assertPairFilesForTest(t, store, slug, newBoard, pairPresentContentForTest(newLayout))
+}
+
+func TestDefinitionPairRejectsCompetingSuppliedAndBuiltCandidates(t *testing.T) {
+	store := NewStore(t.TempDir())
+	slug := "pair-builder-source-union"
+	oldBoard := pairBoardFixture(slug, 1, "Old")
+	oldLayout := pairLayoutFixture(1, "old")
+	suppliedBoard := pairBoardFixture(slug, 2, "Supplied")
+	suppliedLayout := pairLayoutFixture(2, "supplied")
+	builtBoard := pairBoardFixture(slug, 2, "Built")
+	builtLayout := pairLayoutFixture(2, "built")
+	writeFixture(t, store.BoardPath(slug), string(oldBoard))
+	writeFixture(t, store.LayoutPath(slug), string(oldLayout))
+
+	built := false
+	request := definitionPairRequestForTest(oldBoard, oldLayout, suppliedBoard, pairPresentContentForTest(suppliedLayout))
+	request.build = func(current definitionPairState) (definitionPairState, error) {
+		built = true
+		return definitionPairState{board: builtBoard, layout: pairPresentContentForTest(builtLayout)}, nil
+	}
+	err := store.publishDefinitionPair(slug, request, nil)
+	if err == nil || !strings.Contains(err.Error(), "exactly one candidate source") {
+		t.Errorf("competing candidate sources error = %v, want closed-source-union rejection", err)
+	}
+	if built {
+		t.Error("competing candidate sources reached the builder")
+	}
+	assertPairFilesForTest(t, store, slug, oldBoard, pairPresentContentForTest(oldLayout))
 }
 
 func TestDefinitionPairBuilderFailureCannotReachStagingOrCanonicalMutation(t *testing.T) {
@@ -130,4 +220,14 @@ func TestDefinitionPairBuilderCannotAliasPinnedOrPublishedPairBuffers(t *testing
 		t.Fatalf("publish builder-derived pair through clone boundaries: %v", err)
 	}
 	assertPairFilesForTest(t, store, slug, newBoard, pairPresentContentForTest(newLayout))
+}
+
+//go:noinline
+func runDefinitionPairBuilderPublicationForTest(
+	store *Store,
+	slug string,
+	request definitionPairPublicationRequest,
+	done chan<- error,
+) {
+	done <- store.publishDefinitionPair(slug, request, nil)
 }
