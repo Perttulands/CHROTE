@@ -123,6 +123,65 @@ to = "tool_normalize:port_tool_in"
 `
 }
 
+func TestFormationsRuntimeAPIMissionCASPrecedesToolPreflight(t *testing.T) {
+	tests := []struct {
+		name    string
+		board   string
+		body    string
+		ifMatch func(*formations.BoardDocument) string
+	}{
+		{
+			name:  "stale ETag precedes unavailable Tool",
+			board: formationsAPIRuntimeToolBoardFixture(),
+			body:  `{"board":"tool-parity","missionId":"mis_main","expectedRev":4}`,
+			ifMatch: func(*formations.BoardDocument) string {
+				return "stale-etag"
+			},
+		},
+		{
+			name:  "stale revision precedes invalid Tool descriptor",
+			board: strings.Replace(formationsAPIRuntimeToolBoardFixture(), `mode = "strict"`, `mode = "normal"`, 1),
+			body:  `{"board":"tool-parity","missionId":"mis_main","expectedRev":5}`,
+			ifMatch: func(board *formations.BoardDocument) string {
+				return board.ETag
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			privateRoot := filepath.Join(t.TempDir(), "wsa_private_authority")
+			store := formations.NewRuntimeStore(workspace, privateRoot)
+			writeFormationsAPIFixture(t, store.BoardPath("tool-parity"), test.board)
+			board, err := store.ReadBoard("tool-parity")
+			if err != nil {
+				t.Fatalf("read Tool preflight board: %v", err)
+			}
+			tmuxCapture := installRuntimeAuthorityAPITmuxTripwire(t, workspace)
+			handler := NewFormationsHandlerWithStore(store)
+			mux := http.NewServeMux()
+			handler.RegisterRoutes(mux)
+
+			request := httptest.NewRequest(http.MethodPost, "/api/formations/runs", strings.NewReader(test.body))
+			request.Header.Set("If-Match", test.ifMatch(board))
+			recorder := httptest.NewRecorder()
+			mux.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusConflict {
+				t.Fatalf("status = %d, want 409: %s", recorder.Code, recorder.Body.String())
+			}
+			body := recorder.Body.String()
+			if !strings.Contains(body, `"code":"CONFLICT"`) ||
+				strings.Contains(body, formations.ToolExecutionUnavailableCode) ||
+				strings.Contains(body, formations.FindingInvalidTool) ||
+				strings.Contains(body, "RUNTIME_AUTHORITY_NON_AUTHORIZING") {
+				t.Fatalf("authoritative conflict was masked: %s", body)
+			}
+			assertRuntimeAuthorityAPIResponseIsPrivate(t, body, workspace, privateRoot)
+			assertNoRuntimeAuthorityAPIEffects(t, workspace, tmuxCapture)
+		})
+	}
+}
+
 func TestFormationsRuntimeAPIResumeAbortAndVerdictRemainAuthorityFirst(t *testing.T) {
 	workspace := t.TempDir()
 	privateRoot := filepath.Join(t.TempDir(), "wsa_private_authority")

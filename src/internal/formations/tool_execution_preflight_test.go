@@ -222,6 +222,50 @@ func TestToolExecutionPreflightTraversesEveryMissionBranchButNotIsolatedDownstre
 	}
 }
 
+func TestToolExecutionPreflightPreservesMissionCASPrecedence(t *testing.T) {
+	tests := []struct {
+		name       string
+		board      string
+		requestFor func(*BoardDocument) RunStartRequest
+	}{
+		{
+			name: "stale ETag precedes unavailable Tool",
+			board: toolExecutionPreflightHeader() +
+				toolExecutionPreflightTool("tool_valid", "1") +
+				toolExecutionPreflightConnection("edge_tool", "workflow", "mis_main:out", "tool_valid:port_tool_valid_in"),
+			requestFor: func(board *BoardDocument) RunStartRequest {
+				return RunStartRequest{MissionID: "mis_main", ExpectedBoardETag: "stale-etag", ExpectedBoardRev: board.Rev}
+			},
+		},
+		{
+			name: "stale revision precedes invalid Tool descriptor",
+			board: toolExecutionPreflightHeader() +
+				strings.Replace(toolExecutionPreflightTool("tool_invalid", "1"), `mode = "strict"`, `mode = "normal"`, 1) +
+				toolExecutionPreflightConnection("edge_tool", "workflow", "mis_main:out", "tool_invalid:port_tool_invalid_in"),
+			requestFor: func(board *BoardDocument) RunStartRequest {
+				return RunStartRequest{MissionID: "mis_main", ExpectedBoardETag: board.ETag, ExpectedBoardRev: board.Rev + 1}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store, engine, executor, evaluator := newToolExecutionPreflightHarness(t, test.board)
+			board, err := store.ReadBoard("tool-preflight")
+			if err != nil {
+				t.Fatalf("read Tool preflight board: %v", err)
+			}
+			_, err = engine.RunMission("tool-preflight", test.requestFor(board))
+			if !errors.Is(err, ErrConflict) {
+				t.Fatalf("stale Mission start error = %v, want authoritative ErrConflict", err)
+			}
+			if errors.Is(err, ErrToolExecutionUnavailable) || strings.Contains(fmt.Sprint(err), FindingInvalidTool) {
+				t.Fatalf("Tool semantics masked authoritative CAS: %v", err)
+			}
+			assertToolExecutionPreflightNoEffects(t, store.Workspace, executor, evaluator)
+		})
+	}
+}
+
 func newToolExecutionPreflightHarness(t *testing.T, board string) (*Store, *RunEngine, *countingFormationExecutor, *countingGateEvaluator) {
 	t.Helper()
 	workspace := t.TempDir()
