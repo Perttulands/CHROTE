@@ -3,15 +3,15 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/chrote/server/internal/core"
 	"github.com/chrote/server/internal/formations"
+	"github.com/chrote/server/internal/jsonstrict"
 )
 
 type formationsToolParameters struct {
@@ -20,74 +20,11 @@ type formationsToolParameters struct {
 }
 
 func inspectToolFrameUnicode(raw []byte) (bool, error) {
-	if !utf8.Valid(raw) {
-		return false, fmt.Errorf("Tool frame must use valid UTF-8")
+	err := jsonstrict.ValidateUnicode(raw)
+	if errors.Is(err, jsonstrict.ErrInvalidSurrogate) {
+		return true, nil
 	}
-	for index := 0; index < len(raw); index++ {
-		if raw[index] != '"' {
-			continue
-		}
-		index++
-		closed := false
-		for index < len(raw) {
-			if raw[index] == '"' {
-				closed = true
-				break
-			}
-			if raw[index] != '\\' {
-				index++
-				continue
-			}
-			if index+1 >= len(raw) {
-				return false, fmt.Errorf("unterminated JSON escape")
-			}
-			if raw[index+1] != 'u' {
-				index += 2
-				continue
-			}
-			value, ok := parseToolFrameUnicodeEscape(raw[index:])
-			if !ok {
-				return false, fmt.Errorf("invalid JSON Unicode escape")
-			}
-			switch {
-			case value >= 0xd800 && value <= 0xdbff:
-				low, ok := parseToolFrameUnicodeEscape(raw[index+6:])
-				if !ok || low < 0xdc00 || low > 0xdfff {
-					return true, nil
-				}
-				index += 12
-			case value >= 0xdc00 && value <= 0xdfff:
-				return true, nil
-			default:
-				index += 6
-			}
-		}
-		if !closed {
-			return false, fmt.Errorf("unterminated JSON string")
-		}
-	}
-	return false, nil
-}
-
-func parseToolFrameUnicodeEscape(raw []byte) (uint16, bool) {
-	if len(raw) < 6 || raw[0] != '\\' || raw[1] != 'u' {
-		return 0, false
-	}
-	var value uint16
-	for _, digit := range raw[2:6] {
-		value <<= 4
-		switch {
-		case digit >= '0' && digit <= '9':
-			value += uint16(digit - '0')
-		case digit >= 'a' && digit <= 'f':
-			value += uint16(digit-'a') + 10
-		case digit >= 'A' && digit <= 'F':
-			value += uint16(digit-'A') + 10
-		default:
-			return 0, false
-		}
-	}
-	return value, true
+	return false, err
 }
 
 func (parameters *formationsToolParameters) UnmarshalJSON(raw []byte) error {
@@ -95,28 +32,13 @@ func (parameters *formationsToolParameters) UnmarshalJSON(raw []byte) error {
 	if err != nil {
 		return err
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	var decoded map[string]any
-	if err := decoder.Decode(&decoded); err != nil {
-		return err
+	values, err := formations.ParseToolParametersJSON(raw)
+	if err != nil {
+		parameters.Invalid = true
+		return nil
 	}
-	parameters.Values = make(map[string]any, len(decoded))
+	parameters.Values = values
 	parameters.Invalid = presence.Invalid
-	for name, value := range decoded {
-		switch typed := value.(type) {
-		case json.Number:
-			integer, err := strconv.ParseInt(typed.String(), 10, 64)
-			if err != nil {
-				parameters.Invalid = true
-				parameters.Values[name] = nil
-				continue
-			}
-			parameters.Values[name] = integer
-		default:
-			parameters.Values[name] = value
-		}
-	}
 	return nil
 }
 

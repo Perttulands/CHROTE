@@ -1,14 +1,10 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"strconv"
-	"strings"
-	"unicode/utf8"
 
 	"github.com/chrote/server/internal/formations"
 )
@@ -302,126 +298,13 @@ func archonToolProfileSelector(profileID, profileVersion string) string {
 }
 
 func parseArchonToolParametersJSON(raw string) (map[string]any, error) {
-	if !utf8.ValidString(raw) {
-		return nil, invalidArchonToolParameters("must use valid UTF-8")
-	}
-	if err := rejectArchonToolInvalidJSONSurrogates([]byte(raw)); err != nil {
-		return nil, invalidArchonToolParameters("contains an invalid Unicode surrogate pair")
-	}
-
-	decoder := json.NewDecoder(strings.NewReader(raw))
-	decoder.UseNumber()
-	first, err := decoder.Token()
+	values, err := formations.ParseToolParametersJSON([]byte(raw))
 	if err != nil {
-		return nil, invalidArchonToolParameters("must be one JSON object")
-	}
-	if delimiter, ok := first.(json.Delim); !ok || delimiter != '{' {
-		return nil, invalidArchonToolParameters("must be one JSON object")
-	}
-
-	values := make(map[string]any)
-	seen := make(map[string]bool)
-	for decoder.More() {
-		keyToken, err := decoder.Token()
-		if err != nil {
-			return nil, invalidArchonToolParameters("contains invalid JSON")
-		}
-		key, ok := keyToken.(string)
-		if !ok {
-			return nil, invalidArchonToolParameters("contains a non-string key")
-		}
-		if seen[key] {
-			return nil, invalidArchonToolParameters("contains a duplicate key")
-		}
-		seen[key] = true
-
-		valueToken, err := decoder.Token()
-		if err != nil {
-			return nil, invalidArchonToolParameters("contains invalid JSON")
-		}
-		switch value := valueToken.(type) {
-		case string, bool:
-			values[key] = value
-		case json.Number:
-			integer, err := strconv.ParseInt(value.String(), 10, 64)
-			if err != nil {
-				return nil, invalidArchonToolParameters("integer values must fit signed 64-bit decimal form")
-			}
-			values[key] = integer
-		default:
-			return nil, invalidArchonToolParameters("values must be string, boolean, or integer scalars")
-		}
-	}
-	end, err := decoder.Token()
-	if err != nil || end != json.Delim('}') {
-		return nil, invalidArchonToolParameters("contains invalid JSON")
-	}
-	if _, err := decoder.Token(); err != io.EOF {
-		return nil, invalidArchonToolParameters("must not contain trailing JSON")
+		return nil, invalidArchonToolParameters("must be one duplicate-free JSON object of string, boolean, or signed 64-bit integer values")
 	}
 	return values, nil
 }
 
 func invalidArchonToolParameters(message string) error {
 	return fmt.Errorf("%w: Tool params JSON %s", formations.ErrInvalidToolMutation, message)
-}
-
-func rejectArchonToolInvalidJSONSurrogates(raw []byte) error {
-	for index := 0; index < len(raw); index++ {
-		if raw[index] != '"' {
-			continue
-		}
-		for index++; index < len(raw); index++ {
-			switch raw[index] {
-			case '"':
-				goto nextString
-			case '\\':
-				index++
-				if index >= len(raw) || raw[index] != 'u' {
-					continue
-				}
-				first, ok := archonToolJSONHexCodeUnit(raw, index+1)
-				if !ok {
-					continue
-				}
-				index += 4
-				switch {
-				case first >= 0xd800 && first <= 0xdbff:
-					if index+6 >= len(raw) || raw[index+1] != '\\' || raw[index+2] != 'u' {
-						return fmt.Errorf("unpaired high surrogate")
-					}
-					second, ok := archonToolJSONHexCodeUnit(raw, index+3)
-					if !ok || second < 0xdc00 || second > 0xdfff {
-						return fmt.Errorf("unpaired high surrogate")
-					}
-					index += 6
-				case first >= 0xdc00 && first <= 0xdfff:
-					return fmt.Errorf("unpaired low surrogate")
-				}
-			}
-		}
-	nextString:
-	}
-	return nil
-}
-
-func archonToolJSONHexCodeUnit(raw []byte, start int) (uint16, bool) {
-	if start+4 > len(raw) {
-		return 0, false
-	}
-	var value uint16
-	for _, digit := range raw[start : start+4] {
-		value <<= 4
-		switch {
-		case digit >= '0' && digit <= '9':
-			value += uint16(digit - '0')
-		case digit >= 'a' && digit <= 'f':
-			value += uint16(digit-'a') + 10
-		case digit >= 'A' && digit <= 'F':
-			value += uint16(digit-'A') + 10
-		default:
-			return 0, false
-		}
-	}
-	return value, true
 }
