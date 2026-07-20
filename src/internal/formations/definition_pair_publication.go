@@ -9,7 +9,9 @@ import (
 	"syscall"
 )
 
-var errDefinitionPublicationUncertain = errors.New("definition_publication_uncertain")
+var ErrDefinitionPublicationUncertain = errors.New("definition_publication_uncertain")
+
+var errDefinitionPublicationUncertain = ErrDefinitionPublicationUncertain
 
 type definitionPairContent struct {
 	present bool
