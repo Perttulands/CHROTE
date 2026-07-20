@@ -1040,6 +1040,38 @@ func TestFormationsHandlerToolCRUDAcceptsIntentionalUnicode(t *testing.T) {
 	}
 }
 
+func TestFormationsHandlerToolCRUDPreservesIntentionalReplacementRuneOperationSemantics(t *testing.T) {
+	t.Run("create title publishes canonical replacement rune", func(t *testing.T) {
+		harness := newFormationsAPIToolAuthoringHarness(t, false)
+		body := harness.validFrame(
+			`"createTool":{"profileId":"json.normalize","profileVersion":"1","title":"Created \uFFFD","params":{"mode":"strict"},"placement":{}}`,
+		)
+		recorder := harness.patch(body, harness.board.ETag)
+		response := assertFormationsAPIToolMutationSuccess(t, harness, recorder, true)
+		if response.Data.Tool.ID == "" || response.Data.Tool.Title != "Created �" {
+			t.Fatalf("created replacement-rune Tool = %#v, want generated id and exact decoded title", response.Data.Tool)
+		}
+		persisted, err := harness.store.ReadBoard(harness.slug)
+		if err != nil {
+			t.Fatalf("read replacement-rune create board: %v", err)
+		}
+		persistedTool, found := formationsAPIToolBoardTool(persisted, response.Data.Tool.ID)
+		if !found || persistedTool.Title != "Created �" {
+			t.Fatalf("persisted replacement-rune Tool title = %q found=%t, want exact decoded title", persistedTool.Title, found)
+		}
+	})
+
+	t.Run("delete nonempty replacement-rune id remains not found", func(t *testing.T) {
+		harness := newFormationsAPIToolAuthoringHarness(t, true)
+		beforeBoard := readFormationsAPIFile(t, harness.store.BoardPath(harness.slug))
+		beforeLayout := readFormationsAPIFile(t, harness.store.LayoutPath(harness.slug))
+		body := harness.validFrame(`"deleteTool":{"id":"tool_\uFFFD"}`)
+		recorder := harness.patch(body, harness.board.ETag)
+		assertFormationsAPIToolError(t, recorder, http.StatusNotFound, "NOT_FOUND")
+		assertFormationsAPIToolPairBytes(t, harness, beforeBoard, beforeLayout)
+	})
+}
+
 func TestFormationsHandlerToolCRUDPreservesStoreErrorIdentity(t *testing.T) {
 	tests := []struct {
 		name       string
