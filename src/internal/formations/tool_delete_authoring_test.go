@@ -264,6 +264,7 @@ channel = "workflow"
 from = "tool_source:port_source_out"
 to = "tool_target:port_target_in"
 
+# this comment documents the unrelated retained table
 [board_audit]
 note = "preserve unrelated exact"
 
@@ -273,6 +274,7 @@ marker = "delete late incident descendant"
 [[connection.metadata.trace]]
 marker = "delete late incident descendant AoT"
 
+# this comment documents the owner-reset retained connection
 [[connection]]
 id = "edge_keep_after"
 channel = "workflow"
@@ -321,8 +323,15 @@ marker = "preserve literal dotted table"
 		}
 	}
 	for _, retainedSource := range []string{
-		`[board_audit]
+		`# this comment documents the unrelated retained table
+[board_audit]
 note = "preserve unrelated exact"`,
+		`# this comment documents the owner-reset retained connection
+[[connection]]
+id = "edge_keep_after"
+channel = "workflow"
+from = "tool_keep:port_keep_out"
+to = "tool_after:port_after_in"`,
 		`[retained_audit]
 note = "preserve after owner reset"
 
