@@ -2,6 +2,7 @@ package formations
 
 import (
 	"fmt"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -43,6 +44,19 @@ type ToolCreateRequest struct {
 }
 
 type ToolCreateResult struct {
+	Board  *BoardDocument  `json:"board"`
+	Layout *LayoutDocument `json:"layout"`
+	Tool   ToolNode        `json:"tool"`
+}
+
+type ToolUpdateRequest struct {
+	ToolID    string
+	Title     *string
+	Params    *map[string]any
+	UpdatedBy string
+}
+
+type ToolUpdateResult struct {
 	Board  *BoardDocument  `json:"board"`
 	Layout *LayoutDocument `json:"layout"`
 	Tool   ToolNode        `json:"tool"`
@@ -115,6 +129,77 @@ func (s *Store) CreateTool(slug string, req ToolCreateRequest, opts ToolWriteOpt
 		return nil, err
 	}
 	return &ToolCreateResult{Board: board, Layout: layout, Tool: created}, nil
+}
+
+func (s *Store) UpdateTool(slug string, req ToolUpdateRequest, opts ToolWriteOptions) (*ToolUpdateResult, error) {
+	if err := validateSlug(slug); err != nil {
+		return nil, err
+	}
+	if err := validateToolWriteOptions(opts); err != nil {
+		return nil, err
+	}
+	if req.ToolID == "" {
+		return nil, ErrNotFound
+	}
+	if req.Title == nil && req.Params == nil {
+		return nil, fmt.Errorf("Tool update requires title and/or parameters")
+	}
+	if req.Title != nil && strings.TrimSpace(*req.Title) == "" {
+		return nil, fmt.Errorf("Tool title is required")
+	}
+	if req.Params != nil && *req.Params == nil {
+		return nil, fmt.Errorf("Tool parameter object is required")
+	}
+	if err := validateToolUpdatedBy(req.UpdatedBy); err != nil {
+		return nil, err
+	}
+
+	expected := definitionPairStateIdentity{
+		board: definitionPairIdentity{present: true, sha256: opts.Board.ExpectedETag},
+		layout: definitionPairIdentity{
+			present: opts.Layout.State == LayoutWritePresent,
+			sha256:  opts.Layout.ETag,
+		},
+	}
+	var candidate definitionPairState
+	var updated ToolNode
+	request := definitionPairPublicationRequest{
+		expected: expected,
+		build: func(current definitionPairState) (definitionPairState, error) {
+			built, tool, err := s.buildToolUpdateCandidate(slug, current, req)
+			if err != nil {
+				return definitionPairState{}, err
+			}
+			candidate = cloneDefinitionPairState(built)
+			updated = tool
+			return built, nil
+		},
+		cas: func(current definitionPairState) error {
+			board, err := parseBoard(current.board)
+			if err != nil {
+				return err
+			}
+			if board.Rev != opts.Board.ExpectedRev {
+				return ErrConflict
+			}
+			return nil
+		},
+	}
+	if err := s.publishDefinitionPair(slug, request, nil); err != nil {
+		return nil, err
+	}
+	board, err := parseBoard(candidate.board)
+	if err != nil {
+		return nil, err
+	}
+	var layout *LayoutDocument
+	if candidate.layout.present {
+		layout, err = parseLayout(candidate.layout.raw)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &ToolUpdateResult{Board: board, Layout: layout, Tool: updated}, nil
 }
 
 func validateToolWriteOptions(opts ToolWriteOptions) error {
@@ -258,6 +343,99 @@ func (s *Store) buildToolCreateCandidate(
 	}, tool, nil
 }
 
+func (s *Store) buildToolUpdateCandidate(
+	slug string,
+	current definitionPairState,
+	req ToolUpdateRequest,
+) (definitionPairState, ToolNode, error) {
+	board, err := parseBoard(current.board)
+	if err != nil {
+		return definitionPairState{}, ToolNode{}, err
+	}
+	if err := validateToolMutationBoard(board, slug); err != nil {
+		return definitionPairState{}, ToolNode{}, err
+	}
+
+	tool, found := toolNodeByID(board, req.ToolID)
+	if !found {
+		return definitionPairState{}, ToolNode{}, ErrNotFound
+	}
+	descriptor, ok := LookupToolProfileDescriptor(tool.ProfileID, tool.ProfileVersion)
+	if !ok {
+		return definitionPairState{}, ToolNode{}, fmt.Errorf("unknown Tool profile tuple %q@%q", tool.ProfileID, tool.ProfileVersion)
+	}
+	updated := tool
+	if req.Title != nil {
+		updated.Title = *req.Title
+	}
+	if req.Params != nil {
+		updated.Params = cloneToolParameters(*req.Params)
+	}
+	if err := validateToolNodeAgainstDescriptor(updated, descriptor); err != nil {
+		return definitionPairState{}, ToolNode{}, err
+	}
+
+	if current.layout.present {
+		layout, err := parseLayout(current.layout.raw)
+		if err != nil {
+			return definitionPairState{}, ToolNode{}, err
+		}
+		if _, err := validateToolMutationLayout(current.layout.raw, layout, board.ID); err != nil {
+			return definitionPairState{}, ToolNode{}, err
+		}
+	}
+
+	nextBoardRaw, err := patchToolUpdate(current.board, tool, updated, req)
+	if err != nil {
+		return definitionPairState{}, ToolNode{}, err
+	}
+	doc := parseTOMLDocument(nextBoardRaw)
+	updatedAt := s.now().Format(time.RFC3339)
+	if req.UpdatedBy != "" {
+		doc.setScalar("updatedBy", renderString(req.UpdatedBy))
+	}
+	doc.setScalar("rev", renderInt(board.Rev+1))
+	doc.setScalar("updatedAt", renderString(updatedAt))
+	nextBoardRaw = doc.bytes()
+	nextBoard, err := parseBoard(nextBoardRaw)
+	if err != nil {
+		return definitionPairState{}, ToolNode{}, err
+	}
+	if err := validateToolMutationBoard(nextBoard, slug); err != nil {
+		return definitionPairState{}, ToolNode{}, err
+	}
+	updated, found = toolNodeByID(nextBoard, req.ToolID)
+	if !found {
+		return definitionPairState{}, ToolNode{}, ErrNotFound
+	}
+
+	next := definitionPairState{board: nextBoardRaw}
+	if current.layout.present {
+		nextLayoutRaw, err := updatePresentToolLayoutAuthority(current.layout.raw, nextBoard, "", updatedAt)
+		if err != nil {
+			return definitionPairState{}, ToolNode{}, err
+		}
+		nextLayout, err := parseLayout(nextLayoutRaw)
+		if err != nil {
+			return definitionPairState{}, ToolNode{}, err
+		}
+		if _, err := validateToolMutationLayout(nextLayoutRaw, nextLayout, nextBoard.ID); err != nil {
+			return definitionPairState{}, ToolNode{}, err
+		}
+		next.layout = definitionPairContent{present: true, raw: nextLayoutRaw}
+	}
+	return next, updated, nil
+}
+
+func toolNodeByID(board *BoardDocument, id string) (ToolNode, bool) {
+	for _, tool := range board.Tools {
+		if tool.ID == id {
+			return tool, true
+		}
+	}
+	return ToolNode{}, false
+}
+
 func (s *Store) newToolNode(req ToolCreateRequest, descriptor ToolProfileDescriptor) ToolNode {
 	tool := ToolNode{
 		ID:             s.nextToolDefinitionID("tool"),
@@ -299,6 +477,111 @@ func cloneToolParameters(parameters map[string]any) map[string]any {
 		cloned[name] = value
 	}
 	return cloned
+}
+
+func patchToolUpdate(raw []byte, before, after ToolNode, req ToolUpdateRequest) ([]byte, error) {
+	lines := splitLines(raw)
+	start, end, ok := findToolBlockByID(lines, before.ID)
+	if !ok {
+		return nil, ErrNotFound
+	}
+	if req.Title != nil {
+		lines = setScalarInLineRange(lines, start+1, end, "title", renderString(after.Title))
+	}
+	if req.Params != nil && !reflect.DeepEqual(before.Params, after.Params) {
+		var err error
+		lines, err = replaceToolParameterSection(lines, start, end, after.Params)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return renderTOMLLines(lines), nil
+}
+
+func findToolBlockByID(lines []tomlLine, toolID string) (int, int, bool) {
+	for index := 0; index < len(lines); index++ {
+		section, ok := tomlLineSectionName(lines[index])
+		if !ok || section != "tool" || !strings.HasPrefix(strings.TrimSpace(lines[index].body), "[[") {
+			continue
+		}
+		end := toolBlockEnd(lines, index)
+		if scalarInBlock(lines, index+1, end, "id") == toolID {
+			return index, end, true
+		}
+	}
+	return 0, 0, false
+}
+
+func toolBlockEnd(lines []tomlLine, start int) int {
+	for index := start + 1; index < len(lines); index++ {
+		section, ok := tomlLineSectionName(lines[index])
+		if !ok {
+			if isTOMLHeader(lines[index]) {
+				return index
+			}
+			continue
+		}
+		if section == "tool" || !tomlSectionIsOrDescendsFrom(section, "tool") {
+			return index
+		}
+	}
+	return len(lines)
+}
+
+func replaceToolParameterSection(lines []tomlLine, toolStart, toolEnd int, parameters map[string]any) ([]tomlLine, error) {
+	sectionStart := -1
+	sectionEnd := -1
+	for index := toolStart + 1; index < toolEnd; index++ {
+		section, ok := tomlLineSectionName(lines[index])
+		if !ok || section != "tool.params" || strings.HasPrefix(strings.TrimSpace(lines[index].body), "[[") {
+			continue
+		}
+		sectionStart = index
+		sectionEnd = tomlBlockEnd(lines, index)
+		if sectionEnd > toolEnd {
+			sectionEnd = toolEnd
+		}
+		break
+	}
+	if sectionStart < 0 {
+		return nil, fmt.Errorf("invalid Tool parameter section")
+	}
+
+	seen := make(map[string]bool, len(parameters))
+	body := make([]tomlLine, 0, sectionEnd-sectionStart-1+len(parameters))
+	for _, line := range lines[sectionStart+1 : sectionEnd] {
+		key, _, present, err := parseToolAssignment(line.body)
+		if err != nil {
+			return nil, err
+		}
+		if !present {
+			body = append(body, line)
+			continue
+		}
+		value, keep := parameters[key]
+		if !keep {
+			continue
+		}
+		line.body = replaceScalarValue(line.body, renderToolParameter(value))
+		body = append(body, line)
+		seen[key] = true
+	}
+	names := make([]string, 0, len(parameters))
+	for name := range parameters {
+		if !seen[name] {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		body = append(body, tomlLine{body: name + " = " + renderToolParameter(parameters[name]), newline: "\n"})
+	}
+
+	next := make([]tomlLine, 0, len(lines)-(sectionEnd-sectionStart-1)+len(body))
+	next = append(next, lines[:sectionStart+1]...)
+	next = append(next, body...)
+	next = append(next, lines[sectionEnd:]...)
+	return next, nil
 }
 
 func appendToolBlock(raw []byte, tool ToolNode) []byte {
@@ -921,15 +1204,23 @@ func invalidToolLayoutCoordinateError() error {
 }
 
 func updatePresentToolLayout(raw []byte, board *BoardDocument, newToolID string, position LayoutNode, updatedAt string) ([]byte, error) {
+	filtered, err := updatePresentToolLayoutAuthority(raw, board, newToolID, updatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return appendLayoutNodeBlock(filtered, position), nil
+}
+
+func updatePresentToolLayoutAuthority(raw []byte, board *BoardDocument, excludedNodeID, updatedAt string) ([]byte, error) {
 	blocks, err := parseToolLayoutOwnedBlocks(raw)
 	if err != nil {
 		return nil, err
 	}
 	nodeIDs, edgeIDs := toolBoardAuthorityIDs(board)
-	filtered := filterToolLayoutBlocks(raw, blocks, nodeIDs, edgeIDs, newToolID)
+	filtered := filterToolLayoutBlocks(raw, blocks, nodeIDs, edgeIDs, excludedNodeID)
 	filtered = setToolLayoutScalarPreservingLeadingTrivia(filtered, "boardRev", renderInt(board.Rev))
 	filtered = setToolLayoutScalarPreservingLeadingTrivia(filtered, "updatedAt", renderString(updatedAt))
-	return appendLayoutNodeBlock(filtered, position), nil
+	return filtered, nil
 }
 
 func setToolLayoutScalarPreservingLeadingTrivia(raw []byte, key, renderedValue string) []byte {
