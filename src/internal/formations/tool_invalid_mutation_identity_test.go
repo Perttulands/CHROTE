@@ -50,6 +50,15 @@ func TestToolMutationValidationUsesDedicatedSentinel(t *testing.T) {
 			},
 		},
 		{
+			name: "invalid create partial coordinates",
+			run: func(store *Store, slug string, board *BoardDocument) error {
+				x := 112
+				request := toolAuthoringCreateRequest(ToolPlacement{X: &x})
+				_, err := store.CreateTool(slug, request, toolAuthoringAbsentOptions(board))
+				return err
+			},
+		},
+		{
 			name: "unknown create predecessor",
 			run: func(store *Store, slug string, board *BoardDocument) error {
 				request := toolAuthoringCreateRequest(ToolPlacement{PredecessorNodeID: "node_missing"})
@@ -78,6 +87,21 @@ func TestToolMutationValidationUsesDedicatedSentinel(t *testing.T) {
 			name: "invalid update candidate",
 			run: func(store *Store, slug string, board *BoardDocument) error {
 				params := map[string]any{"mode": "relaxed"}
+				_, err := store.UpdateTool(slug, ToolUpdateRequest{ToolID: "tool_target", Params: &params}, toolAuthoringAbsentOptions(board))
+				return err
+			},
+		},
+		{
+			name: "invalid update no-op",
+			run: func(store *Store, slug string, board *BoardDocument) error {
+				_, err := store.UpdateTool(slug, ToolUpdateRequest{ToolID: "tool_target"}, toolAuthoringAbsentOptions(board))
+				return err
+			},
+		},
+		{
+			name: "invalid update nil parameter replacement",
+			run: func(store *Store, slug string, board *BoardDocument) error {
+				var params map[string]any
 				_, err := store.UpdateTool(slug, ToolUpdateRequest{ToolID: "tool_target", Params: &params}, toolAuthoringAbsentOptions(board))
 				return err
 			},

@@ -188,6 +188,7 @@ func TestFormationsHandlerToolCRUDPublishesCanonicalPairs(t *testing.T) {
 				harness.layoutExpectationJSON(),
 			)
 			recorder := harness.patch(body, harness.board.ETag)
+			assertFormationsAPIToolResultKeys(t, recorder.Body.Bytes(), test.wantTool)
 			if test.wantNullLayoutJSON {
 				assertFormationsAPIToolNullDataLayout(t, recorder.Body.Bytes())
 			}
@@ -245,6 +246,14 @@ func TestFormationsHandlerToolCRUDRejectsInvalidFramesBeforePairMutation(t *test
 			name: "cross-distinct Tool operations",
 			body: func(h *formationsAPIToolAuthoringHarness) string {
 				return h.validFrame(`"createTool":{"profileId":"json.normalize","profileVersion":"1","title":"Must not create","params":{"mode":"strict"},"placement":{}},"deleteTool":{"id":"tool_normalize"}`)
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+		{
+			name: "Tool operation rejects unknown top-level field",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return h.validFrame(`"deleteTool":{"id":"tool_normalize"},"unexpected":true`)
 			},
 			wantStatus: http.StatusUnprocessableEntity,
 			wantCode:   "INVALID_TOOL_MUTATION",
@@ -320,6 +329,14 @@ func TestFormationsHandlerToolCRUDRejectsInvalidFramesBeforePairMutation(t *test
 			wantCode:   "INVALID_TOOL_MUTATION",
 		},
 		{
+			name: "update id empty",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return h.validFrame(`"updateTool":{"id":"","title":"Empty id"}`)
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+		{
 			name: "update title wrong type",
 			body: func(h *formationsAPIToolAuthoringHarness) string {
 				return h.validFrame(`"updateTool":{"id":"tool_normalize","title":7}`)
@@ -347,6 +364,14 @@ func TestFormationsHandlerToolCRUDRejectsInvalidFramesBeforePairMutation(t *test
 			name: "update rejects nested layout expectation",
 			body: func(h *formationsAPIToolAuthoringHarness) string {
 				return h.validFrame(`"updateTool":{"id":"tool_normalize","title":"Nested precondition","layoutExpectation":{"state":"absent"}}`)
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+		{
+			name: "update rejects unknown field",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return h.validFrame(`"updateTool":{"id":"tool_normalize","title":"Unknown field","unexpected":true}`)
 			},
 			wantStatus: http.StatusUnprocessableEntity,
 			wantCode:   "INVALID_TOOL_MUTATION",
@@ -432,6 +457,14 @@ func TestFormationsHandlerToolCRUDRejectsInvalidFramesBeforePairMutation(t *test
 			wantCode:   "INVALID_TOOL_MUTATION",
 		},
 		{
+			name: "create placement rejects unknown field",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return h.validFrame(`"createTool":{"profileId":"json.normalize","profileVersion":"1","title":"Unknown placement field","params":{"mode":"strict"},"placement":{"unexpected":true}}`)
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+		{
 			name: "create placement x null",
 			body: func(h *formationsAPIToolAuthoringHarness) string {
 				return h.validFrame(`"createTool":{"profileId":"json.normalize","profileVersion":"1","title":"Null x","params":{"mode":"strict"},"placement":{"x":null,"y":2}}`)
@@ -496,6 +529,22 @@ func TestFormationsHandlerToolCRUDRejectsInvalidFramesBeforePairMutation(t *test
 			wantCode:   "INVALID_TOOL_MUTATION",
 		},
 		{
+			name: "delete id empty",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return h.validFrame(`"deleteTool":{"id":""}`)
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+		{
+			name: "delete rejects unknown field",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return h.validFrame(`"deleteTool":{"id":"tool_normalize","unexpected":true}`)
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+		{
 			name: "delete rejects duplicate id",
 			body: func(h *formationsAPIToolAuthoringHarness) string {
 				return h.validFrame(`"deleteTool":{"id":"tool_normalize","id":"tool_sink"}`)
@@ -539,6 +588,14 @@ func TestFormationsHandlerToolCRUDRejectsInvalidFramesBeforePairMutation(t *test
 			name: "absent layout expectation rejects empty ETag",
 			body: func(h *formationsAPIToolAuthoringHarness) string {
 				return fmt.Sprintf(`{"deleteTool":{"id":"tool_normalize"},"expectedRev":%d,"layoutExpectation":{"state":"absent","etag":""}}`, h.board.Rev)
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+		{
+			name: "absent layout expectation rejects nonempty ETag",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return fmt.Sprintf(`{"deleteTool":{"id":"tool_normalize"},"expectedRev":%d,"layoutExpectation":{"state":"absent","etag":"%s"}}`, h.board.Rev, h.layout.ETag)
 			},
 			wantStatus: http.StatusUnprocessableEntity,
 			wantCode:   "INVALID_TOOL_MUTATION",
@@ -616,9 +673,41 @@ func TestFormationsHandlerToolCRUDRejectsInvalidFramesBeforePairMutation(t *test
 			wantCode:   "INVALID_TOOL_MUTATION",
 		},
 		{
+			name: "layout expectation rejects unknown field",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return fmt.Sprintf(`{"deleteTool":{"id":"tool_normalize"},"expectedRev":%d,"layoutExpectation":{"state":"present","etag":"%s","unexpected":true}}`, h.board.Rev, h.layout.ETag)
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+		{
+			name: "layout expectation rejects unknown state",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return fmt.Sprintf(`{"deleteTool":{"id":"tool_normalize"},"expectedRev":%d,"layoutExpectation":{"state":"unknown","etag":"%s"}}`, h.board.Rev, h.layout.ETag)
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+		{
 			name: "missing expected revision",
 			body: func(h *formationsAPIToolAuthoringHarness) string {
 				return fmt.Sprintf(`{"deleteTool":{"id":"tool_normalize"},"layoutExpectation":%s}`, h.layoutExpectationJSON())
+			},
+			wantStatus: http.StatusPreconditionRequired,
+			wantCode:   "PRECONDITION_REQUIRED",
+		},
+		{
+			name: "zero expected revision",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return fmt.Sprintf(`{"deleteTool":{"id":"tool_normalize"},"expectedRev":0,"layoutExpectation":%s}`, h.layoutExpectationJSON())
+			},
+			wantStatus: http.StatusPreconditionRequired,
+			wantCode:   "PRECONDITION_REQUIRED",
+		},
+		{
+			name: "null expected revision",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return fmt.Sprintf(`{"deleteTool":{"id":"tool_normalize"},"expectedRev":null,"layoutExpectation":%s}`, h.layoutExpectationJSON())
 			},
 			wantStatus: http.StatusPreconditionRequired,
 			wantCode:   "PRECONDITION_REQUIRED",
@@ -1036,6 +1125,29 @@ func assertFormationsAPIToolNullDataLayout(t *testing.T, body []byte) {
 	raw, found := envelope.Data["layout"]
 	if !found || !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 		t.Fatalf("Tool mutation data.layout = %s found=%t, want explicit null in data object: %s", raw, found, body)
+	}
+}
+
+func assertFormationsAPIToolResultKeys(t *testing.T, body []byte, wantTool bool) {
+	t.Helper()
+	var envelope struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatalf("decode Tool mutation result shape: %v\n%s", err, body)
+	}
+	want := map[string]bool{"board": true, "layout": true}
+	if wantTool {
+		want["tool"] = true
+	} else {
+		want["toolId"] = true
+	}
+	got := make(map[string]bool, len(envelope.Data))
+	for key := range envelope.Data {
+		got[key] = true
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Tool mutation data keys = %#v, want exact %#v", got, want)
 	}
 }
 
