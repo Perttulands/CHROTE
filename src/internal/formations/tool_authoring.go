@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 const (
@@ -615,6 +617,10 @@ func parseToolLayoutOwnedBlocks(raw []byte) ([]toolLayoutOwnedBlock, error) {
 			reservedCounts["schema"],
 			reservedCounts["boardId"],
 		)
+	}
+	var document map[string]any
+	if err := toml.Unmarshal(raw, &document); err != nil {
+		return nil, fmt.Errorf("invalid_layout_owned_source: malformed layout TOML: %w", err)
 	}
 	return blocks, nil
 }
