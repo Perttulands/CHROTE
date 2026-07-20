@@ -85,10 +85,19 @@ and judgment of each turn to the agents while making scheduling auditable.
 
 ## Current implementation and accepted target
 
-Current main implements Mission, Formation, and Gate nodes, stable Formation
-ports, fixed Mission/Gate ports, file-backed connections, agent execution, and
-run ledgers. It does not implement Tool nodes, typed port kinds, exact
-pass-through provenance, typed gate feedback, or exact run-bound pane targets.
+Current implementation provides Mission, Formation, Gate, and non-executing Tool
+definitions, schema-2 typed ports and connections, file-backed graph/layout
+state, agent execution, and run ledgers. The closed initial Tool catalog is the
+data-only `json.normalize@1` descriptor. Store, API, and Archon provide Tool
+definition CRUD/projection; shared validation, wiring, and explicit Arrange
+include Tool nodes; and the dashboard renders Tool cards, ports, connections,
+parameters, and unavailable state. No Tool runner or result authority exists. A
+selected Mission graph containing a Tool fails
+`tool_execution_unavailable` before snapshot, binding, ledger, dispatch,
+process, tmux, or artifact mutation. There is no isolated Tool-run endpoint;
+isolated Formation runs do not traverse downstream Tools. Exact Tool
+pass-through provenance, typed gate feedback at runtime, and exact run-bound
+pane targets remain target work.
 Legacy Gate command fields remain readable for source inspection and migration
 planning, but Gate-owned argv/shell execution and new command-field authoring are
 retired.
@@ -99,8 +108,8 @@ yet the accepted ownership/security boundary.
 ADR-0006 accepts those missing pieces as the mixed-workflow target. A board will
 combine Mission entry, Formation agent work, Tool transformation, and Gate
 evaluation without reducing them to generic plugins. This section is a contract
-for the landing slices, not a claim that current main already supports Tool
-authoring or exact terminal Peek.
+for the landing slices: current Tool authoring is deliberately non-executing,
+and exact terminal Peek remains unavailable.
 
 In the accepted ADR-0007 target, one fenced CHROTE server coordinator is the sole
 semantic runtime writer for each configured workspace. Canonical command journal,
@@ -492,16 +501,25 @@ cannot recover an older readable ref.
 
 A board stores one exact immutable `(profileId, profileVersion)` tuple and
 modeled non-secret parameters, never executable text. Lookup is exact tuple
-equality with no ranges, aliases, defaults, fallback, or latest selection. Run
-start later freezes that exact tuple plus the matching profile content hash,
+equality with no ranges, aliases, defaults, fallback, or latest selection. The
+current closed registry contains only the data-only `json.normalize@1`
+descriptor: declared ports, bounded parameter schema, profile metadata, and
+projection labels, with no executable path, argv, shell, cwd, environment,
+secret, callback, or process constructor. Run start later freezes that exact
+tuple plus the matching profile content hash,
 normalized parameters/hash, effective policy and
 determinism-policy hashes, and
 immutable execution-bundle hash in a `RunToolBinding` inside host-private run
 authority. The content-addressed bundle covers executable,
 script/toolchain identity, argv template, cwd contract, normalized non-secret
 allowlisted environment values, supervisor/fence policy, and limits; a mutable
-path is not an identity. Preflight rejects a reachable Tool before `run_started`
-when the frozen supervisor/fence policy is unavailable.
+path is not an identity. Until that runtime lands, Mission preflight first
+validates every selected reachable Tool against the exact current descriptor
+and then returns `tool_execution_unavailable`. The authoritative Mission Store
+evaluates revision/ETag CAS before this semantic fence. Disconnected Tools do
+not broaden a selected Mission. There is no isolated Tool-run endpoint, and
+isolated Formation execution keeps its singleton root without traversing
+downstream Tools.
 
 Non-executing Tool authoring keeps layout schema 1. The first successful Tool
 creation is the only board schema-1-to-2 authoring migration; update changes only
@@ -1068,11 +1086,11 @@ The reference interaction model is permissive direct manipulation:
 - project run status onto cards, gates, wires, and outputs;
 - support undo for structural mutations.
 
-Current main does not yet meet the layout invariant: `displayLayoutFor` nudges
-persisted overlapping coordinates during render. `ctx-n4x` owns removing that
-display-time rewrite, adding creation-only placement, and proving that
-render/open/save leave existing coordinates unchanged until direct manipulation
-or explicit Arrange.
+Current `displayLayoutFor` renders persisted coordinates verbatim, including
+intentional overlaps. Missing positions receive only a non-authorizing display
+fallback. Creation-time placement writes only the new element; render, open,
+save, connect, validate, run, replay, and reconnect never move existing user
+arrangement. Full-board reflow occurs only through explicit Arrange.
 
 Product principle:
 
@@ -1149,7 +1167,8 @@ step up is an explicit configuration decision, never a silent fallback.
    argv/shell execution. Legacy Gate command fields are inspectable only and
    produce the stable migration error at validation, selected-root preflight,
    and selected-root resume. Process-backed deterministic work belongs to a
-   future host-profile Tool under `ctx-ug7.8`; code Gates remain certified pure
+   future execution implementation under `ctx-ug7.8`; current host-profile Tool
+   definitions are non-executing, and code Gates remain certified pure
    in-process evaluators.
 4. **Shared cockpit execution (accepted contract, currently unavailable).**
    Production Formations must consume the same Terminal inventory resolver and

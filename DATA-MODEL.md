@@ -1158,17 +1158,17 @@ A board definition contains structural state:
 - missions with fixed `out` as the single run-start payload address in this
   phase;
 - formations;
-- accepted-target Tool steps that reference host-owned versioned profiles (not
-  implemented on current main);
+- schema-2 Tool definitions that reference exact host-owned versioned profile
+  descriptors; current definitions are non-executing;
 - gates, including `kinds` and `criterion`; schema-1 compatibility definitions
   may contain `command`, `commandArgv`, `commandShell`, or `commandCwd` only as
   read-only inspection/migration-plan input, while schema-2 code Gates reference
   pure host-owned evaluator profiles and never own a process;
 - slots;
-- accepted-target stable named ports with direction, accepted payload kind,
+- schema-2 stable named ports with direction, accepted payload kind,
   allowlisted `acceptedMediaTypes` for `work`, required flag, and `data` or
   `retry_control` role;
-- accepted-target connections with explicit schema-2 `workflow` or reserved
+- connections with explicit schema-2 `workflow` or reserved
   `judge` channel;
 - retired schema-1 inline verification/check specs, retained for inspection and
   replacement-Gate-bound removal but rejected from every new execution path by
@@ -1190,13 +1190,19 @@ In the accepted target, executable preflight requires a complete judge channel
 if and only if `gate.kinds` contains `formation`; drafts may temporarily retain a
 half-edge or kind/channel mismatch while being authored.
 
-An accepted-target Tool board entry stores one exact immutable
+A current schema-2 Tool board entry stores one exact immutable
 `(profileId, profileVersion)` tuple and modeled non-secret parameters. Registry
 lookup is exact tuple equality with no ranges, aliases, defaults, fallback, or
-latest selection. Run start later freezes that exact tuple plus the matching
+latest selection. The closed initial registry exposes only the data-only
+`json.normalize@1` descriptor and cannot select an executable, argv, shell,
+cwd, environment, secret, callback, or process constructor. Until Tool runtime
+lands, a selected Mission graph containing a Tool fails
+`tool_execution_unavailable` before run artifacts or effects. There is no
+isolated Tool-run endpoint; an isolated Formation root does not traverse
+downstream Tools. Run start later freezes that exact tuple plus the matching
 profile content hash, parameters, effective policy hash, and content-addressed
-execution bundle hash. The first Tool profile class is pure and certified
-deterministic.
+execution bundle hash. The first executing Tool profile class is pure and
+certified deterministic.
 Its closed sandbox permits only the sealed input set, frozen bundle/parameters/
 policy, and one empty run-private output root. Network, secrets, undeclared
 environment or filesystem reads, and external writes are denied; locale and
