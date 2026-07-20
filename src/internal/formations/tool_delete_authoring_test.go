@@ -544,13 +544,13 @@ func toolDeleteConnectedBoardFixture(slug string, rev int) string {
 id = "edge_into_target"
 channel = "workflow"
 from = "tool_source:port_source_out"
-to = "tool_target:port_target_in"
+to = 'tool_target:port_target_in'
 x_connection_note = "remove incoming"
 
 [[connection]]
 id = "edge_from_target"
 channel = "workflow"
-from = "tool_target:port_target_out"
+from = 'tool_target:port_target_out'
 to = "tool_sink:port_sink_in"
 x_connection_note = "remove outgoing"
 
