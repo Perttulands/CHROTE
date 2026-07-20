@@ -92,9 +92,25 @@ func TestToolMutationValidationUsesDedicatedSentinel(t *testing.T) {
 			},
 		},
 		{
+			name: "invalid update empty id",
+			run: func(store *Store, slug string, board *BoardDocument) error {
+				title := "Valid title"
+				_, err := store.UpdateTool(slug, ToolUpdateRequest{ToolID: "", Title: &title}, toolAuthoringAbsentOptions(board))
+				return err
+			},
+		},
+		{
 			name: "invalid update no-op",
 			run: func(store *Store, slug string, board *BoardDocument) error {
 				_, err := store.UpdateTool(slug, ToolUpdateRequest{ToolID: "tool_target"}, toolAuthoringAbsentOptions(board))
+				return err
+			},
+		},
+		{
+			name: "invalid update blank title",
+			run: func(store *Store, slug string, board *BoardDocument) error {
+				title := " \t"
+				_, err := store.UpdateTool(slug, ToolUpdateRequest{ToolID: "tool_target", Title: &title}, toolAuthoringAbsentOptions(board))
 				return err
 			},
 		},
@@ -118,6 +134,13 @@ func TestToolMutationValidationUsesDedicatedSentinel(t *testing.T) {
 			name: "invalid delete actor",
 			run: func(store *Store, slug string, board *BoardDocument) error {
 				_, err := store.DeleteTool(slug, ToolDeleteRequest{ID: "tool_target", UpdatedBy: "agent\a"}, toolAuthoringAbsentOptions(board))
+				return err
+			},
+		},
+		{
+			name: "invalid delete empty id",
+			run: func(store *Store, slug string, board *BoardDocument) error {
+				_, err := store.DeleteTool(slug, ToolDeleteRequest{ID: ""}, toolAuthoringAbsentOptions(board))
 				return err
 			},
 		},
