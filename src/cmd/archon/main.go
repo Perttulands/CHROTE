@@ -2451,6 +2451,16 @@ func chainNodeByID(board *formations.BoardDocument, nodeID string, depth int) (a
 			}, true
 		}
 	}
+	for _, tool := range board.Tools {
+		if tool.ID == nodeID {
+			return archonMissionChainNode{
+				ID:    tool.ID,
+				Kind:  "tool",
+				Title: tool.Title,
+				Depth: depth,
+			}, true
+		}
+	}
 	return archonMissionChainNode{}, false
 }
 
