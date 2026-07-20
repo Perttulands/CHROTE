@@ -1,6 +1,7 @@
 package formations
 
 import (
+	"bytes"
 	"fmt"
 	"reflect"
 	"sort"
@@ -262,6 +263,9 @@ func (s *Store) buildToolCreateCandidate(
 	req ToolCreateRequest,
 	descriptor ToolProfileDescriptor,
 ) (definitionPairState, ToolNode, error) {
+	if err := validateToolMutationBoardSource(current.board); err != nil {
+		return definitionPairState{}, ToolNode{}, err
+	}
 	inspected, err := parseBoard(current.board)
 	if err != nil {
 		return definitionPairState{}, ToolNode{}, err
@@ -312,6 +316,13 @@ func (s *Store) buildToolCreateCandidate(
 	doc.setScalar("rev", renderInt(board.Rev+1))
 	doc.setScalar("updatedAt", renderString(updatedAt))
 	nextBoardRaw := appendToolBlock(doc.bytes(), tool)
+	if err := validateToolMutationBoardSource(nextBoardRaw); err != nil {
+		return definitionPairState{}, ToolNode{}, err
+	}
+	nextBoardRaw, err = validateToolSchemaTwoMigrationAuthority(nextBoardRaw)
+	if err != nil {
+		return definitionPairState{}, ToolNode{}, err
+	}
 	nextBoard, err := parseBoard(nextBoardRaw)
 	if err != nil {
 		return definitionPairState{}, ToolNode{}, err
@@ -348,11 +359,18 @@ func (s *Store) buildToolUpdateCandidate(
 	current definitionPairState,
 	req ToolUpdateRequest,
 ) (definitionPairState, ToolNode, error) {
+	if err := validateToolMutationBoardSource(current.board); err != nil {
+		return definitionPairState{}, ToolNode{}, err
+	}
 	board, err := parseBoard(current.board)
 	if err != nil {
 		return definitionPairState{}, ToolNode{}, err
 	}
 	if err := validateToolMutationBoard(board, slug); err != nil {
+		return definitionPairState{}, ToolNode{}, err
+	}
+	validatedBoardRaw, err := validateToolSchemaTwoMigrationAuthority(current.board)
+	if err != nil {
 		return definitionPairState{}, ToolNode{}, err
 	}
 
@@ -385,7 +403,7 @@ func (s *Store) buildToolUpdateCandidate(
 		}
 	}
 
-	nextBoardRaw, err := patchToolUpdate(current.board, tool, updated, req)
+	nextBoardRaw, err := patchToolUpdate(validatedBoardRaw, tool, updated, req)
 	if err != nil {
 		return definitionPairState{}, ToolNode{}, err
 	}
@@ -397,6 +415,13 @@ func (s *Store) buildToolUpdateCandidate(
 	doc.setScalar("rev", renderInt(board.Rev+1))
 	doc.setScalar("updatedAt", renderString(updatedAt))
 	nextBoardRaw = doc.bytes()
+	if err := validateToolMutationBoardSource(nextBoardRaw); err != nil {
+		return definitionPairState{}, ToolNode{}, err
+	}
+	nextBoardRaw, err = validateToolSchemaTwoMigrationAuthority(nextBoardRaw)
+	if err != nil {
+		return definitionPairState{}, ToolNode{}, err
+	}
 	nextBoard, err := parseBoard(nextBoardRaw)
 	if err != nil {
 		return definitionPairState{}, ToolNode{}, err
@@ -485,7 +510,7 @@ func patchToolUpdate(raw []byte, before, after ToolNode, req ToolUpdateRequest) 
 	if !ok {
 		return nil, ErrNotFound
 	}
-	if req.Title != nil {
+	if req.Title != nil && before.Title != after.Title {
 		lines = setScalarInLineRange(lines, start+1, end, "title", renderString(after.Title))
 	}
 	if req.Params != nil && !reflect.DeepEqual(before.Params, after.Params) {
@@ -496,6 +521,25 @@ func patchToolUpdate(raw []byte, before, after ToolNode, req ToolUpdateRequest) 
 		}
 	}
 	return renderTOMLLines(lines), nil
+}
+
+func validateToolMutationBoardSource(raw []byte) error {
+	var document map[string]any
+	if err := toml.Unmarshal(raw, &document); err != nil {
+		return fmt.Errorf("invalid_board_source: malformed board TOML: %w", err)
+	}
+	return nil
+}
+
+func validateToolSchemaTwoMigrationAuthority(raw []byte) ([]byte, error) {
+	validated, err := migrateBoardToToolSchema(raw)
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(validated, raw) {
+		return nil, fmt.Errorf("Tool mutation requires board schema %d", CurrentBoardSchema)
+	}
+	return validated, nil
 }
 
 func findToolBlockByID(lines []tomlLine, toolID string) (int, int, bool) {
