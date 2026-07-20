@@ -734,7 +734,7 @@ func deleteToolIncidentConnections(raw []byte, connections []BoardConnection, to
 			index++
 			continue
 		}
-		end := tomlBlockEnd(lines, index)
+		end := toolConnectionBlockEnd(lines, index)
 		if incidentIDs[toolStringScalarInBlock(lines, index+1, end, "id")] {
 			lines = append(lines[:index], lines[end:]...)
 			continue
@@ -742,6 +742,22 @@ func deleteToolIncidentConnections(raw []byte, connections []BoardConnection, to
 		index = end
 	}
 	return renderTOMLLines(lines)
+}
+
+func toolConnectionBlockEnd(lines []tomlLine, start int) int {
+	for index := start + 1; index < len(lines); index++ {
+		section, ok := tomlLineSectionName(lines[index])
+		if !ok {
+			if isTOMLHeader(lines[index]) {
+				return index
+			}
+			continue
+		}
+		if section == "connection" || !tomlSectionIsOrDescendsFrom(section, "connection") {
+			return index
+		}
+	}
+	return len(lines)
 }
 
 func toolStringScalarInBlock(lines []tomlLine, start, end int, key string) string {
