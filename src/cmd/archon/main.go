@@ -130,7 +130,7 @@ func runWithRuntimeStoreFactory(args []string, stdout, stderr io.Writer, runner 
 		return 2
 	}
 	if len(args) < 2 {
-		fmt.Fprintln(stderr, "usage: archon <agent|board|formation|gate|mission|run> <command>")
+		fmt.Fprintln(stderr, "usage: archon <agent|board|formation|gate|mission|tool|run> <command>")
 		return 2
 	}
 	switch args[0] {
@@ -235,6 +235,21 @@ func runWithRuntimeStoreFactory(args []string, stdout, stderr io.Writer, runner 
 			return runMissionRun(runtimeStore(config.Workspace), args[2:], stdout, stderr)
 		default:
 			fmt.Fprintf(stderr, "unknown mission command %q\n", args[1])
+			return 2
+		}
+	case "tool":
+		store := formations.NewStore(config.Workspace)
+		switch args[1] {
+		case "create":
+			return runToolCreate(store, args[2:], stdout, stderr)
+		case "update":
+			return runToolUpdate(store, args[2:], stdout, stderr)
+		case "delete":
+			return runToolDelete(store, args[2:], stdout, stderr)
+		case "inspect":
+			return runToolInspect(store, args[2:], stdout, stderr)
+		default:
+			fmt.Fprintf(stderr, "unknown tool command %q\n", args[1])
 			return 2
 		}
 	case "run":
@@ -2118,7 +2133,7 @@ func writeNDJSON(w io.Writer, value interface{}) error {
 }
 
 func fail(stderr io.Writer, err error) int {
-	fmt.Fprintln(stderr, err)
+	fmt.Fprintln(stderr, archonErrorMessage(err))
 	return 1
 }
 
@@ -2145,14 +2160,25 @@ func failRunStreamError(stdout, stderr io.Writer, err error, jsonOut bool, bound
 func archonErrorFromError(err error, boundary, selector string) archonErrorResponse {
 	return archonErrorResponse{
 		Code:     archonErrorCode(err),
-		Message:  err.Error(),
+		Message:  archonErrorMessage(err),
 		Boundary: boundary,
 		Selector: selector,
 	}
 }
 
+func archonErrorMessage(err error) string {
+	if errors.Is(err, formations.ErrDefinitionPublicationUncertain) {
+		return "Reload both board and layout before any explicit retry"
+	}
+	return err.Error()
+}
+
 func archonErrorCode(err error) string {
 	switch {
+	case errors.Is(err, formations.ErrDefinitionPublicationUncertain):
+		return "definition_publication_uncertain"
+	case errors.Is(err, formations.ErrInvalidToolMutation):
+		return "invalid_tool_mutation"
 	case errors.Is(err, formations.ErrRuntimeAuthorityNonAuthorizing):
 		return "runtime_authority_non_authorizing"
 	case errors.Is(err, formations.ErrAmbiguousSelector):
