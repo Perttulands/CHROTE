@@ -790,7 +790,7 @@ func TestFormationsHandlerToolCRUDRejectsInvalidUnicodeBeforePairMutation(t *tes
 	tests := []struct {
 		name       string
 		jsonValue  string
-		actor      bool
+		target     string
 		wantStatus int
 		wantCode   string
 	}{
@@ -803,7 +803,21 @@ func TestFormationsHandlerToolCRUDRejectsInvalidUnicodeBeforePairMutation(t *tes
 		{
 			name:       "raw invalid UTF-8 actor",
 			jsonValue:  `"agent:` + rawInvalidUTF8 + `"`,
-			actor:      true,
+			target:     "actor",
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "BAD_REQUEST",
+		},
+		{
+			name:       "raw invalid UTF-8 create title",
+			jsonValue:  `"Raw create ` + rawInvalidUTF8 + `"`,
+			target:     "create title",
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "BAD_REQUEST",
+		},
+		{
+			name:       "raw invalid UTF-8 delete id",
+			jsonValue:  `"tool_` + rawInvalidUTF8 + `"`,
+			target:     "delete id",
 			wantStatus: http.StatusBadRequest,
 			wantCode:   "BAD_REQUEST",
 		},
@@ -816,7 +830,21 @@ func TestFormationsHandlerToolCRUDRejectsInvalidUnicodeBeforePairMutation(t *tes
 		{
 			name:       "lone high surrogate actor",
 			jsonValue:  `"agent:\uD800"`,
-			actor:      true,
+			target:     "actor",
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+		{
+			name:       "lone high surrogate create title",
+			jsonValue:  `"Unicode create \uD800"`,
+			target:     "create title",
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+		{
+			name:       "lone high surrogate delete id",
+			jsonValue:  `"tool_\uD800"`,
+			target:     "delete id",
 			wantStatus: http.StatusUnprocessableEntity,
 			wantCode:   "INVALID_TOOL_MUTATION",
 		},
@@ -829,7 +857,7 @@ func TestFormationsHandlerToolCRUDRejectsInvalidUnicodeBeforePairMutation(t *tes
 		{
 			name:       "lone low surrogate actor",
 			jsonValue:  `"agent:\uDC00"`,
-			actor:      true,
+			target:     "actor",
 			wantStatus: http.StatusUnprocessableEntity,
 			wantCode:   "INVALID_TOOL_MUTATION",
 		},
@@ -842,7 +870,19 @@ func TestFormationsHandlerToolCRUDRejectsInvalidUnicodeBeforePairMutation(t *tes
 		{
 			name:       "mispaired surrogate actor",
 			jsonValue:  `"agent:\uD800\u0041"`,
-			actor:      true,
+			target:     "actor",
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+		{
+			name:       "high surrogate followed by high surrogate",
+			jsonValue:  `"Unicode \uD800\uD801"`,
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+		{
+			name:       "high surrogate followed by escaped literal low surrogate",
+			jsonValue:  `"Unicode \uD800\\uDC00"`,
 			wantStatus: http.StatusUnprocessableEntity,
 			wantCode:   "INVALID_TOOL_MUTATION",
 		},
@@ -854,17 +894,60 @@ func TestFormationsHandlerToolCRUDRejectsInvalidUnicodeBeforePairMutation(t *tes
 			beforeBoard := readFormationsAPIFile(t, harness.store.BoardPath(harness.slug))
 			beforeLayout := readFormationsAPIFile(t, harness.store.LayoutPath(harness.slug))
 			var body string
-			if test.actor {
+			switch test.target {
+			case "actor":
 				body = fmt.Sprintf(
 					`{"updateTool":{"id":"tool_normalize","title":"Unicode actor must not persist"},"expectedRev":%d,"layoutExpectation":%s,"updatedBy":%s}`,
 					harness.board.Rev,
 					harness.layoutExpectationJSON(),
 					test.jsonValue,
 				)
-			} else {
+			case "create title":
+				body = harness.validFrame(fmt.Sprintf(
+					`"createTool":{"profileId":"json.normalize","profileVersion":"1","title":%s,"params":{"mode":"strict"},"placement":{}}`,
+					test.jsonValue,
+				))
+			case "delete id":
+				body = harness.validFrame(fmt.Sprintf(`"deleteTool":{"id":%s}`, test.jsonValue))
+			case "":
 				body = harness.validFrame(fmt.Sprintf(`"updateTool":{"id":"tool_normalize","title":%s}`, test.jsonValue))
+			default:
+				t.Fatalf("unknown Unicode test target %q", test.target)
 			}
 			recorder := harness.patch(body, harness.board.ETag)
+			assertFormationsAPIToolError(t, recorder, test.wantStatus, test.wantCode)
+			assertFormationsAPIToolPairBytes(t, harness, beforeBoard, beforeLayout)
+		})
+	}
+}
+
+func TestFormationsHandlerToolUnicodeGrammarPrecedesMissingPreconditions(t *testing.T) {
+	rawInvalidUTF8 := string([]byte{0xff})
+	for _, test := range []struct {
+		name       string
+		jsonValue  string
+		wantStatus int
+		wantCode   string
+	}{
+		{
+			name:       "raw invalid UTF-8",
+			jsonValue:  `"Raw ` + rawInvalidUTF8 + `"`,
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "BAD_REQUEST",
+		},
+		{
+			name:       "lone surrogate",
+			jsonValue:  `"Unicode \uD800"`,
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			harness := newFormationsAPIToolAuthoringHarness(t, true)
+			beforeBoard := readFormationsAPIFile(t, harness.store.BoardPath(harness.slug))
+			beforeLayout := readFormationsAPIFile(t, harness.store.LayoutPath(harness.slug))
+			body := harness.validFrame(fmt.Sprintf(`"updateTool":{"id":"tool_normalize","title":%s}`, test.jsonValue))
+			recorder := harness.patch(body, "")
 			assertFormationsAPIToolError(t, recorder, test.wantStatus, test.wantCode)
 			assertFormationsAPIToolPairBytes(t, harness, beforeBoard, beforeLayout)
 		})
@@ -895,6 +978,18 @@ func TestFormationsHandlerToolCRUDAcceptsIntentionalUnicode(t *testing.T) {
 			name:          "escaped backslash surrogate text title",
 			jsonValue:     `"Unicode \\uD800"`,
 			wantTitle:     `Unicode \uD800`,
+			wantUpdatedBy: "agent:api-test",
+		},
+		{
+			name:          "escaped active BMP title",
+			jsonValue:     `"Unicode \u03A9"`,
+			wantTitle:     "Unicode Ω",
+			wantUpdatedBy: "agent:api-test",
+		},
+		{
+			name:          "escaped replacement rune title",
+			jsonValue:     `"Unicode \uFFFD"`,
+			wantTitle:     "Unicode �",
 			wantUpdatedBy: "agent:api-test",
 		},
 		{
@@ -1092,18 +1187,24 @@ func TestFormationsHandlerToolGrammarDoesNotChangeLegacyPatchSemantics(t *testin
 	t.Run("unknown layout expectation shapes remain compatible", func(t *testing.T) {
 		for _, test := range []struct {
 			name  string
-			shape string
+			key   string
+			value string
 		}{
-			{name: "array", shape: `[]`},
-			{name: "string", shape: `"legacy opaque"`},
+			{name: "array", key: "layoutExpectation", value: `[]`},
+			{name: "string", key: "layoutExpectation", value: `"legacy opaque"`},
+			{name: "number", key: "layoutExpectation", value: `7`},
+			{name: "boolean", key: "layoutExpectation", value: `true`},
+			{name: "object with wrong nested types", key: "layoutExpectation", value: `{"state":[],"etag":7}`},
+			{name: "case alias", key: "LayoutExpectation", value: `[]`},
 		} {
 			t.Run(test.name, func(t *testing.T) {
 				harness := newFormationsAPIToolAuthoringHarness(t, false)
 				body := fmt.Sprintf(
-					`{"title":"Legacy shape %s","expectedRev":%d,"updatedBy":"agent:api-test","layoutExpectation":%s}`,
+					`{"title":"Legacy shape %s","expectedRev":%d,"updatedBy":"agent:api-test",%q:%s}`,
 					test.name,
 					harness.board.Rev,
-					test.shape,
+					test.key,
+					test.value,
 				)
 				recorder := harness.patch(body, harness.board.ETag)
 				response := assertFormationsAPIToolMutationSuccess(t, harness, recorder, false)

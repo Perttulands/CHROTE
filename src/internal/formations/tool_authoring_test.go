@@ -1107,6 +1107,12 @@ func TestCreateToolRejectsOutOfSigned32BitPersistedCoordinatesWithoutMutation(t 
 			if err == nil || !strings.Contains(err.Error(), "invalid_layout_coordinate") {
 				t.Fatalf("out-of-range persisted coordinate error = %v, want invalid_layout_coordinate", err)
 			}
+			if errors.Is(err, ErrInvalidToolMutation) {
+				t.Fatalf("out-of-range persisted coordinate error %v was classified as ErrInvalidToolMutation", err)
+			}
+			if errors.Is(err, ErrConflict) {
+				t.Fatalf("out-of-range persisted coordinate error %v was classified as ErrConflict", err)
+			}
 			assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, &layoutRaw)
 		})
 	}
