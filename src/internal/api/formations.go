@@ -89,15 +89,11 @@ func (request *formationsBoardPatchRequest) UnmarshalJSON(raw []byte) error {
 	if err != nil {
 		return err
 	}
+	invalidToolSurrogate := false
 	if presence.ToolOperationOccurrences > 0 {
-		invalidSurrogate, err := inspectToolFrameUnicode(raw)
+		invalidToolSurrogate, err = inspectToolFrameUnicode(raw)
 		if err != nil {
 			return err
-		}
-		if invalidSurrogate {
-			request.ToolOperationOccurrences = presence.ToolOperationOccurrences
-			request.ToolFrameInvalid = true
-			return nil
 		}
 	}
 
@@ -122,7 +118,7 @@ func (request *formationsBoardPatchRequest) UnmarshalJSON(raw []byte) error {
 	request.RemoveVerificationOccurrences = presence.RemoveVerificationOccurrences
 	request.MutationOccurrences = presence.MutationOccurrences
 	request.ToolOperationOccurrences = presence.ToolOperationOccurrences
-	request.ToolFrameInvalid = presence.ToolFrameInvalid
+	request.ToolFrameInvalid = presence.ToolFrameInvalid || invalidToolSurrogate
 	request.ExpectedRevOccurrences = presence.ExpectedRevOccurrences
 	request.LayoutExpectationOccurrences = presence.LayoutExpectationOccurrences
 	request.UpdatedByOccurrences = presence.UpdatedByOccurrences
