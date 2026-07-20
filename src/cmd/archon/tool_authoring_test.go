@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"reflect"
 	"strings"
@@ -312,6 +313,7 @@ func TestArchonToolUpdatePreservesPresentOrAbsentLayoutState(t *testing.T) {
 	}{
 		{name: "no authored field"},
 		{name: "explicit blank title", flags: []string{"--title", " \t"}},
+		{name: "explicit empty title with valid parameters", flags: []string{"--title", "", "--params-json", `{"mode":"strict"}`}},
 	}
 	for _, test := range invalid {
 		t.Run(test.name, func(t *testing.T) {
@@ -375,6 +377,9 @@ func TestArchonToolDeletePreservesPresentOrAbsentLayoutState(t *testing.T) {
 				if result.Layout == nil {
 					t.Fatal("present-layout Tool delete returned nil layout")
 				}
+				if result.Layout.BoardRev != result.Board.Rev {
+					t.Fatalf("deleted pair revisions = board %d layout %d, want exact parity", result.Board.Rev, result.Layout.BoardRev)
+				}
 				if _, found := archonToolLayoutNode(result.Layout, result.ToolID); found {
 					t.Fatalf("deleted Tool layout node remains: %#v", result.Layout.Nodes)
 				}
@@ -421,6 +426,18 @@ func TestArchonToolInspectIsReadOnlyAndSelectorSafe(t *testing.T) {
 				t.Fatalf("decode Tool inspect board identity %q: %v\n%s", selector, err, stdout)
 			}
 			assertArchonToolExactJSONKeys(t, boardIdentity, "id", "slug", "title", "rev", "etag")
+			var toolProjection map[string]json.RawMessage
+			if err := json.Unmarshal(topLevel["tool"], &toolProjection); err != nil {
+				t.Fatalf("decode Tool inspect projection %q: %v\n%s", selector, err, stdout)
+			}
+			assertArchonToolExactJSONKeys(t, toolProjection, "id", "title", "profileId", "profileVersion", "params", "inputs", "outputs")
+			var params map[string]json.RawMessage
+			if err := json.Unmarshal(toolProjection["params"], &params); err != nil {
+				t.Fatalf("decode Tool inspect parameters %q: %v\n%s", selector, err, stdout)
+			}
+			assertArchonToolExactJSONKeys(t, params, "mode")
+			assertArchonToolPortProjectionKeys(t, toolProjection["inputs"], []string{"id", "name", "label", "direction", "kind", "acceptedMediaTypes", "required", "role"})
+			assertArchonToolPortProjectionKeys(t, toolProjection["outputs"], []string{"id", "name", "label", "direction", "kind", "acceptedMediaTypes"})
 			var response struct {
 				Board archonBoardIdentity `json:"board"`
 				Tool  formations.ToolNode `json:"tool"`
@@ -551,7 +568,7 @@ func TestArchonToolTextOutputIsStableAndCarriesGeneratedIdentity(t *testing.T) {
 		t.Fatalf("Tool update text code=%d stdout=%q stderr=%q", code, stdout, stderr)
 	}
 	stdout, stderr, code = harness.run(t, "tool", "inspect", harness.slug, toolID)
-	if code != 0 || stderr != "" || !reflect.DeepEqual(strings.Fields(stdout), []string{toolID, "Text", "Renamed", "json.normalize@1"}) {
+	if code != 0 || stderr != "" || stdout != toolID+"\tText Renamed\tjson.normalize@1\n" {
 		t.Fatalf("Tool inspect text code=%d stdout=%q stderr=%q", code, stdout, stderr)
 	}
 	stdout, stderr, code = harness.run(t, "tool", "delete", harness.slug, toolID)
@@ -610,6 +627,9 @@ func TestParseArchonToolParametersJSONFramesOneExactScalarObject(t *testing.T) {
 		{name: "raw invalid UTF-8", raw: invalidUTF8},
 		{name: "unpaired high surrogate", raw: `{"mode":"\uD800"}`},
 		{name: "unpaired low surrogate", raw: `{"mode":"\uDC00"}`},
+		{name: "unpaired high surrogate key", raw: `{"\uD800":"strict"}`},
+		{name: "unpaired low surrogate key", raw: `{"\uDC00":"strict"}`},
+		{name: "mispaired surrogate key", raw: `{"\uD800\uD800":"strict"}`},
 	}
 	for _, test := range invalid {
 		t.Run(test.name, func(t *testing.T) {
@@ -706,6 +726,34 @@ func TestArchonToolProfileAndUpdateParameterMappingsCannotBeIgnored(t *testing.T
 	}
 }
 
+func TestArchonToolRejectedUpdateKeepsAbsentLayoutAbsentAndBoardIdentity(t *testing.T) {
+	harness := newArchonToolAuthoringHarness(t, false, false)
+	beforeRaw := readArchonFile(t, harness.store.BoardPath(harness.slug))
+	beforeInfo, err := os.Stat(harness.store.BoardPath(harness.slug))
+	if err != nil {
+		t.Fatalf("stat absent-layout Tool board before rejection: %v", err)
+	}
+	stdout, stderr, code := harness.run(
+		t,
+		"tool", "update", harness.slug, "tool_normalize",
+		"--title", "Valid title must not publish",
+		"--params-json", "",
+		"--json",
+	)
+	assertArchonToolJSONError(t, stdout, stderr, code, "invalid_tool_mutation", "tool", "tool_normalize")
+	if afterRaw := readArchonFile(t, harness.store.BoardPath(harness.slug)); afterRaw != beforeRaw {
+		t.Fatalf("rejected absent-layout Tool update changed board bytes:\n%s", afterRaw)
+	}
+	afterInfo, err := os.Stat(harness.store.BoardPath(harness.slug))
+	if err != nil {
+		t.Fatalf("stat absent-layout Tool board after rejection: %v", err)
+	}
+	if !os.SameFile(beforeInfo, afterInfo) || beforeInfo.Mode() != afterInfo.Mode() || !beforeInfo.ModTime().Equal(afterInfo.ModTime()) {
+		t.Fatalf("rejected absent-layout Tool update changed board identity: before=%v after=%v", beforeInfo, afterInfo)
+	}
+	assertArchonToolLayoutAbsent(t, harness)
+}
+
 func TestArchonToolUsageAndStableErrorCodes(t *testing.T) {
 	harness := newArchonToolAuthoringHarness(t, true, false)
 	usage := []struct {
@@ -755,6 +803,90 @@ func TestArchonToolUsageAndStableErrorCodes(t *testing.T) {
 	}
 }
 
+func TestArchonToolMutationCommandsRedactPublicationUncertainty(t *testing.T) {
+	type commandCase struct {
+		name     string
+		selector string
+		args     []string
+		run      func(*archonToolFaultStore, []string, io.Writer, io.Writer) int
+	}
+	harness := newArchonToolAuthoringHarness(t, true, false)
+	private := fmt.Errorf("private reconciliation detail: %w", formations.ErrDefinitionPublicationUncertain)
+	store := &archonToolFaultStore{Store: harness.store, err: private}
+	commands := []commandCase{
+		{
+			name:     "create",
+			selector: "json.normalize@1",
+			args:     []string{harness.slug, "--profile-id", "json.normalize", "--profile-version", "1", "--title", "Uncertain create", "--params-json", `{"mode":"strict"}`},
+			run: func(store *archonToolFaultStore, args []string, stdout, stderr io.Writer) int {
+				return runToolCreate(store, args, stdout, stderr)
+			},
+		},
+		{
+			name:     "update",
+			selector: "tool_normalize",
+			args:     []string{harness.slug, "tool_normalize", "--title", "Uncertain update"},
+			run: func(store *archonToolFaultStore, args []string, stdout, stderr io.Writer) int {
+				return runToolUpdate(store, args, stdout, stderr)
+			},
+		},
+		{
+			name:     "delete",
+			selector: "tool_normalize",
+			args:     []string{harness.slug, "tool_normalize"},
+			run: func(store *archonToolFaultStore, args []string, stdout, stderr io.Writer) int {
+				return runToolDelete(store, args, stdout, stderr)
+			},
+		},
+	}
+	before := snapshotArchonToolParityTree(t, harness.workspace)
+	for _, command := range commands {
+		for _, jsonOut := range []bool{false, true} {
+			mode := "text"
+			if jsonOut {
+				mode = "json"
+			}
+			t.Run(command.name+" "+mode, func(t *testing.T) {
+				args := append([]string(nil), command.args...)
+				if jsonOut {
+					args = append(args, "--json")
+				}
+				var stdout bytes.Buffer
+				var stderr bytes.Buffer
+				if code := command.run(store, args, &stdout, &stderr); code != 1 || stdout.Len() != 0 {
+					t.Fatalf("uncertain Tool %s %s code=%d stdout=%q stderr=%q", command.name, mode, code, stdout.String(), stderr.String())
+				}
+				if jsonOut {
+					var response archonErrorResponse
+					if err := json.Unmarshal(stderr.Bytes(), &response); err != nil {
+						t.Fatalf("decode uncertain Tool %s error: %v\n%s", command.name, err, stderr.String())
+					}
+					if response.Code != "definition_publication_uncertain" || response.Message != "Reload both board and layout before any explicit retry" ||
+						response.Boundary != "tool" || response.Selector != command.selector {
+						t.Fatalf("uncertain Tool %s JSON error = %#v", command.name, response)
+					}
+				} else if stderr.String() != "Reload both board and layout before any explicit retry\n" {
+					t.Fatalf("uncertain Tool %s text error = %q", command.name, stderr.String())
+				}
+				if strings.Contains(stderr.String(), "private reconciliation") || strings.Contains(stderr.String(), formations.ErrDefinitionPublicationUncertain.Error()) {
+					t.Fatalf("uncertain Tool %s leaked private error: %q", command.name, stderr.String())
+				}
+			})
+		}
+	}
+	if after := snapshotArchonToolParityTree(t, harness.workspace); !reflect.DeepEqual(after, before) {
+		t.Fatalf("uncertain Tool commands changed definition pair:\n before=%#v\n after=%#v", before, after)
+	}
+}
+
+func TestArchonToolAppearsInTopLevelUsage(t *testing.T) {
+	harness := newArchonToolAuthoringHarness(t, true, false)
+	stdout, stderr, code := harness.run(t)
+	if code != 2 || stdout != "" || !strings.Contains(stderr, "<agent|board|formation|gate|mission|tool|run>") {
+		t.Fatalf("top-level usage code=%d stdout=%q stderr=%q, want Tool noun", code, stdout, stderr)
+	}
+}
+
 func TestArchonToolUsageRejectsMisplacedPlacementAndPublicCASFlagsWithoutMutation(t *testing.T) {
 	tests := []struct {
 		name string
@@ -788,6 +920,18 @@ func TestArchonToolUsageRejectsMisplacedPlacementAndPublicCASFlagsWithoutMutatio
 			name: "expected revision flag",
 			args: func(slug string) []string {
 				return []string{"tool", "update", slug, "tool_normalize", "--title", "No public CAS", "--expected-rev", "4"}
+			},
+		},
+		{
+			name: "create expected etag flag",
+			args: func(slug string) []string {
+				return []string{"tool", "create", slug, "--profile-id", "json.normalize", "--profile-version", "1", "--title", "No public CAS", "--params-json", `{"mode":"strict"}`, "--expected-etag", "etag"}
+			},
+		},
+		{
+			name: "delete expected etag flag",
+			args: func(slug string) []string {
+				return []string{"tool", "delete", slug, "tool_normalize", "--expected-etag", "etag"}
 			},
 		},
 		{
@@ -835,6 +979,23 @@ type archonToolAuthoringHarness struct {
 	slug      string
 	store     *formations.Store
 	runner    *fakeTmux
+}
+
+type archonToolFaultStore struct {
+	*formations.Store
+	err error
+}
+
+func (s *archonToolFaultStore) CreateTool(string, formations.ToolCreateRequest, formations.ToolWriteOptions) (*formations.ToolCreateResult, error) {
+	return nil, s.err
+}
+
+func (s *archonToolFaultStore) UpdateTool(string, formations.ToolUpdateRequest, formations.ToolWriteOptions) (*formations.ToolUpdateResult, error) {
+	return nil, s.err
+}
+
+func (s *archonToolFaultStore) DeleteTool(string, formations.ToolDeleteRequest, formations.ToolWriteOptions) (*formations.ToolDeleteResult, error) {
+	return nil, s.err
 }
 
 type archonToolPairFileIdentity struct {
@@ -956,6 +1117,18 @@ func assertArchonToolExactJSONKeys(t *testing.T, object map[string]json.RawMessa
 			t.Fatalf("unexpected JSON key %q; want exactly %v", key, want)
 		}
 	}
+}
+
+func assertArchonToolPortProjectionKeys(t *testing.T, raw json.RawMessage, want []string) {
+	t.Helper()
+	var ports []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &ports); err != nil {
+		t.Fatalf("decode Tool port projection: %v\n%s", err, raw)
+	}
+	if len(ports) != 1 {
+		t.Fatalf("Tool port projection count = %d, want 1", len(ports))
+	}
+	assertArchonToolExactJSONKeys(t, ports[0], want...)
 }
 
 func mustReadArchonToolBoard(t *testing.T, store *formations.Store, slug string) *formations.BoardDocument {
