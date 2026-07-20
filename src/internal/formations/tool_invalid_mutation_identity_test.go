@@ -2,7 +2,8 @@ package formations
 
 import (
 	"errors"
-	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -31,10 +32,68 @@ func TestToolMutationValidationUsesDedicatedSentinel(t *testing.T) {
 			},
 		},
 		{
+			name: "invalid create title",
+			run: func(store *Store, slug string, board *BoardDocument) error {
+				request := toolAuthoringCreateRequest(ToolPlacement{})
+				request.Title = " \t"
+				_, err := store.CreateTool(slug, request, toolAuthoringAbsentOptions(board))
+				return err
+			},
+		},
+		{
+			name: "invalid create placement union",
+			run: func(store *Store, slug string, board *BoardDocument) error {
+				x, y := 112, 224
+				request := toolAuthoringCreateRequest(ToolPlacement{X: &x, Y: &y, PredecessorNodeID: "mis_main"})
+				_, err := store.CreateTool(slug, request, toolAuthoringAbsentOptions(board))
+				return err
+			},
+		},
+		{
+			name: "unknown create predecessor",
+			run: func(store *Store, slug string, board *BoardDocument) error {
+				request := toolAuthoringCreateRequest(ToolPlacement{PredecessorNodeID: "node_missing"})
+				_, err := store.CreateTool(slug, request, toolAuthoringAbsentOptions(board))
+				return err
+			},
+		},
+		{
+			name: "unknown create successor",
+			run: func(store *Store, slug string, board *BoardDocument) error {
+				request := toolAuthoringCreateRequest(ToolPlacement{SuccessorNodeID: "node_missing"})
+				_, err := store.CreateTool(slug, request, toolAuthoringAbsentOptions(board))
+				return err
+			},
+		},
+		{
+			name: "invalid create actor",
+			run: func(store *Store, slug string, board *BoardDocument) error {
+				request := toolAuthoringCreateRequest(ToolPlacement{})
+				request.UpdatedBy = "agent\a"
+				_, err := store.CreateTool(slug, request, toolAuthoringAbsentOptions(board))
+				return err
+			},
+		},
+		{
 			name: "invalid update candidate",
 			run: func(store *Store, slug string, board *BoardDocument) error {
 				params := map[string]any{"mode": "relaxed"}
 				_, err := store.UpdateTool(slug, ToolUpdateRequest{ToolID: "tool_target", Params: &params}, toolAuthoringAbsentOptions(board))
+				return err
+			},
+		},
+		{
+			name: "invalid update actor",
+			run: func(store *Store, slug string, board *BoardDocument) error {
+				title := "Valid title"
+				_, err := store.UpdateTool(slug, ToolUpdateRequest{ToolID: "tool_target", Title: &title, UpdatedBy: "agent\a"}, toolAuthoringAbsentOptions(board))
+				return err
+			},
+		},
+		{
+			name: "invalid delete actor",
+			run: func(store *Store, slug string, board *BoardDocument) error {
+				_, err := store.DeleteTool(slug, ToolDeleteRequest{ID: "tool_target", UpdatedBy: "agent\a"}, toolAuthoringAbsentOptions(board))
 				return err
 			},
 		},
@@ -54,6 +113,78 @@ func TestToolMutationValidationUsesDedicatedSentinel(t *testing.T) {
 			err = test.run(store, slug, board)
 			if err == nil || !errors.Is(err, ErrInvalidToolMutation) {
 				t.Fatalf("Tool validation error = %v, want errors.Is(ErrInvalidToolMutation)", err)
+			}
+			assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, nil)
+		})
+	}
+}
+
+func TestToolMutationIOErrorsRemainDistinctFromValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*Store, string, *BoardDocument) error
+	}{
+		{
+			name: "create",
+			run: func(store *Store, slug string, board *BoardDocument) error {
+				_, err := store.CreateTool(slug, toolAuthoringCreateRequest(ToolPlacement{}), toolAuthoringAbsentOptions(board))
+				return err
+			},
+		},
+		{
+			name: "update",
+			run: func(store *Store, slug string, board *BoardDocument) error {
+				title := "Valid update"
+				_, err := store.UpdateTool(slug, ToolUpdateRequest{ToolID: "tool_target", Title: &title}, toolAuthoringAbsentOptions(board))
+				return err
+			},
+		},
+		{
+			name: "delete",
+			run: func(store *Store, slug string, board *BoardDocument) error {
+				_, err := store.DeleteTool(slug, ToolDeleteRequest{ID: "tool_target"}, toolAuthoringAbsentOptions(board))
+				return err
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := newToolAuthoringStore(t)
+			slug := "tool-io-identity"
+			boardRaw := toolAuthoringBoardFixture(slug, 5, true, toolUpdateTargetBlock())
+			writeFixture(t, store.BoardPath(slug), boardRaw)
+			board, err := store.ReadBoard(slug)
+			if err != nil {
+				t.Fatalf("read Tool I/O source: %v", err)
+			}
+
+			directory := filepath.Dir(store.BoardPath(slug))
+			info, err := os.Stat(directory)
+			if err != nil {
+				t.Fatalf("stat Tool definition directory: %v", err)
+			}
+			restoreMode := info.Mode().Perm() | info.Mode()&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky)
+			restored := false
+			defer func() {
+				if !restored {
+					_ = os.Chmod(directory, restoreMode)
+				}
+			}()
+			if err := os.Chmod(directory, 0); err != nil {
+				t.Fatalf("make Tool definition directory non-writable: %v", err)
+			}
+			mutationErr := test.run(store, slug, board)
+			if err := os.Chmod(directory, restoreMode); err != nil {
+				t.Fatalf("restore Tool definition directory permissions: %v", err)
+			}
+			restored = true
+
+			if mutationErr == nil {
+				t.Fatal("Tool mutation unexpectedly published through a non-writable definition directory")
+			}
+			if errors.Is(mutationErr, ErrInvalidToolMutation) {
+				t.Fatalf("Tool I/O error %v was classified as validation", mutationErr)
 			}
 			assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, nil)
 		})
@@ -174,10 +305,5 @@ func TestToolMutationValidationSentinelPreservesNonValidationIdentity(t *testing
 			t.Fatalf("malformed current layout error %v was classified as candidate validation", err)
 		}
 		assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, &layoutRaw)
-	})
-
-	t.Run("publication uncertainty remains distinct", func(t *testing.T) {
-		err := fmt.Errorf("publication context: %w", ErrDefinitionPublicationUncertain)
-		assertDistinct(t, err, ErrDefinitionPublicationUncertain)
 	})
 }

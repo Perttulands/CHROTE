@@ -66,11 +66,14 @@ func TestFormationsHandlerToolCRUDPublishesCanonicalPairs(t *testing.T) {
 				if !found || position.X != 123 || position.Y != -456 {
 					t.Fatalf("created Tool position = %#v found=%t, want 123,-456", position, found)
 				}
-				if len(response.Data.Layout.Nodes) < len(harness.layout.Nodes) {
+				if len(response.Data.Layout.Nodes) != len(harness.layout.Nodes)+1 {
 					t.Fatalf("exact create layout nodes = %#v, want retained nodes plus created Tool", response.Data.Layout.Nodes)
 				}
-				if !reflect.DeepEqual(response.Data.Layout.Nodes[:len(harness.layout.Nodes)], harness.layout.Nodes) {
-					t.Fatalf("exact create moved retained nodes:\n got  %#v\n want %#v", response.Data.Layout.Nodes, harness.layout.Nodes)
+				for _, retained := range harness.layout.Nodes {
+					got, retainedFound := formationsAPIToolLayoutNode(response.Data.Layout, retained.ID)
+					if !retainedFound || !reflect.DeepEqual(got, retained) {
+						t.Fatalf("exact create moved retained node %q: got %#v found=%t want %#v", retained.ID, got, retainedFound, retained)
+					}
 				}
 				if !reflect.DeepEqual(response.Data.Board.Connections, harness.board.Connections) {
 					t.Fatalf("create implicitly wired Tool: %#v", response.Data.Board.Connections)
@@ -92,31 +95,36 @@ func TestFormationsHandlerToolCRUDPublishesCanonicalPairs(t *testing.T) {
 			},
 		},
 		{
-			name:       "present predecessor-successor heuristic create",
-			withLayout: true,
-			operation:  `"createTool":{"profileId":"json.normalize","profileVersion":"1","title":"Created between hints","params":{"mode":"strict"},"placement":{"predecessorNodeId":"tool_sink","successorNodeId":"gate_review"}}`,
-			wantLayout: true,
-			wantTool:   true,
-			assertResult: func(t *testing.T, harness *formationsAPIToolAuthoringHarness, response formationsAPIToolMutationEnvelope) {
-				if len(response.Data.Layout.Nodes) != len(harness.layout.Nodes)+1 {
-					t.Fatalf("hint create layout node count = %d, want retained nodes plus one", len(response.Data.Layout.Nodes))
-				}
-				if _, found := formationsAPIToolLayoutNode(response.Data.Layout, response.Data.Tool.ID); !found {
-					t.Fatalf("hint create omitted new Tool placement: %#v", response.Data.Layout.Nodes)
-				}
-				for _, retained := range harness.layout.Nodes {
-					got, found := formationsAPIToolLayoutNode(response.Data.Layout, retained.ID)
-					if !found || !reflect.DeepEqual(got, retained) {
-						t.Fatalf("hint create moved retained node %q: got %#v found=%t want %#v", retained.ID, got, found, retained)
-					}
-				}
-				if !reflect.DeepEqual(response.Data.Layout.Edges, harness.layout.Edges) {
-					t.Fatalf("hint create changed retained layout edges: got %#v want %#v", response.Data.Layout.Edges, harness.layout.Edges)
-				}
-				if !reflect.DeepEqual(response.Data.Board.Connections, harness.board.Connections) {
-					t.Fatalf("hint create implicitly wired Tool: %#v", response.Data.Board.Connections)
-				}
-			},
+			name:         "present default-heuristic create",
+			withLayout:   true,
+			operation:    `"createTool":{"profileId":"json.normalize","profileVersion":"1","title":"Created default present","params":{"mode":"strict"},"placement":{}}`,
+			wantLayout:   true,
+			wantTool:     true,
+			assertResult: assertFormationsAPIToolHintPlacement(112, 112),
+		},
+		{
+			name:         "present predecessor-only heuristic create",
+			withLayout:   true,
+			operation:    `"createTool":{"profileId":"json.normalize","profileVersion":"1","title":"Created after hint","params":{"mode":"strict"},"placement":{"predecessorNodeId":"tool_sink"}}`,
+			wantLayout:   true,
+			wantTool:     true,
+			assertResult: assertFormationsAPIToolHintPlacement(1064, 420),
+		},
+		{
+			name:         "present successor-only heuristic create",
+			withLayout:   true,
+			operation:    `"createTool":{"profileId":"json.normalize","profileVersion":"1","title":"Created before hint","params":{"mode":"strict"},"placement":{"successorNodeId":"gate_review"}}`,
+			wantLayout:   true,
+			wantTool:     true,
+			assertResult: assertFormationsAPIToolHintPlacement(1120, 420),
+		},
+		{
+			name:         "present predecessor-successor heuristic create",
+			withLayout:   true,
+			operation:    `"createTool":{"profileId":"json.normalize","profileVersion":"1","title":"Created between hints","params":{"mode":"strict"},"placement":{"predecessorNodeId":"tool_sink","successorNodeId":"gate_review"}}`,
+			wantLayout:   true,
+			wantTool:     true,
+			assertResult: assertFormationsAPIToolHintPlacement(1036, 420),
 		},
 		{
 			name:       "present title-only update",
@@ -189,6 +197,31 @@ func TestFormationsHandlerToolCRUDPublishesCanonicalPairs(t *testing.T) {
 			}
 			test.assertResult(t, harness, response)
 		})
+	}
+}
+
+func assertFormationsAPIToolHintPlacement(wantX, wantY int) func(*testing.T, *formationsAPIToolAuthoringHarness, formationsAPIToolMutationEnvelope) {
+	return func(t *testing.T, harness *formationsAPIToolAuthoringHarness, response formationsAPIToolMutationEnvelope) {
+		t.Helper()
+		if len(response.Data.Layout.Nodes) != len(harness.layout.Nodes)+1 {
+			t.Fatalf("hint create layout node count = %d, want retained nodes plus one", len(response.Data.Layout.Nodes))
+		}
+		position, found := formationsAPIToolLayoutNode(response.Data.Layout, response.Data.Tool.ID)
+		if !found || position.X != wantX || position.Y != wantY {
+			t.Fatalf("hint create position = %#v found=%t, want %d,%d", position, found, wantX, wantY)
+		}
+		for _, retained := range harness.layout.Nodes {
+			got, retainedFound := formationsAPIToolLayoutNode(response.Data.Layout, retained.ID)
+			if !retainedFound || !reflect.DeepEqual(got, retained) {
+				t.Fatalf("hint create moved retained node %q: got %#v found=%t want %#v", retained.ID, got, retainedFound, retained)
+			}
+		}
+		if !reflect.DeepEqual(response.Data.Layout.Edges, harness.layout.Edges) {
+			t.Fatalf("hint create changed retained layout edges: got %#v want %#v", response.Data.Layout.Edges, harness.layout.Edges)
+		}
+		if !reflect.DeepEqual(response.Data.Board.Connections, harness.board.Connections) {
+			t.Fatalf("hint create implicitly wired Tool: %#v", response.Data.Board.Connections)
+		}
 	}
 }
 
@@ -271,6 +304,54 @@ func TestFormationsHandlerToolCRUDRejectsInvalidFramesBeforePairMutation(t *test
 			wantCode:   "INVALID_TOOL_MUTATION",
 		},
 		{
+			name: "update omits id",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return h.validFrame(`"updateTool":{"title":"Missing id"}`)
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+		{
+			name: "update id null",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return h.validFrame(`"updateTool":{"id":null,"title":"Null id"}`)
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+		{
+			name: "update title wrong type",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return h.validFrame(`"updateTool":{"id":"tool_normalize","title":7}`)
+			},
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "BAD_REQUEST",
+		},
+		{
+			name: "update params wrong type",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return h.validFrame(`"updateTool":{"id":"tool_normalize","params":[]}`)
+			},
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "BAD_REQUEST",
+		},
+		{
+			name: "update rejects nested expected revision",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return h.validFrame(fmt.Sprintf(`"updateTool":{"id":"tool_normalize","title":"Nested precondition","expectedRev":%d}`, h.board.Rev))
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+		{
+			name: "update rejects nested layout expectation",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return h.validFrame(`"updateTool":{"id":"tool_normalize","title":"Nested precondition","layoutExpectation":{"state":"absent"}}`)
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+		{
 			name: "update title null despite params",
 			body: func(h *formationsAPIToolAuthoringHarness) string {
 				return h.validFrame(`"updateTool":{"id":"tool_normalize","title":null,"params":{"mode":"strict"}}`)
@@ -314,6 +395,38 @@ func TestFormationsHandlerToolCRUDRejectsInvalidFramesBeforePairMutation(t *test
 			name: "create placement null",
 			body: func(h *formationsAPIToolAuthoringHarness) string {
 				return h.validFrame(`"createTool":{"profileId":"json.normalize","profileVersion":"1","title":"Null placement","params":{"mode":"strict"},"placement":null}`)
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+		{
+			name: "create predecessor hint null",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return h.validFrame(`"createTool":{"profileId":"json.normalize","profileVersion":"1","title":"Null hint","params":{"mode":"strict"},"placement":{"predecessorNodeId":null}}`)
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+		{
+			name: "create coordinate wrong type",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return h.validFrame(`"createTool":{"profileId":"json.normalize","profileVersion":"1","title":"Wrong coordinate","params":{"mode":"strict"},"placement":{"x":"1","y":2}}`)
+			},
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "BAD_REQUEST",
+		},
+		{
+			name: "create params wrong type",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return h.validFrame(`"createTool":{"profileId":"json.normalize","profileVersion":"1","title":"Wrong params","params":[],"placement":{}}`)
+			},
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "BAD_REQUEST",
+		},
+		{
+			name: "create rejects strict extra field",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return h.validFrame(`"createTool":{"profileId":"json.normalize","profileVersion":"1","title":"Extra field","params":{"mode":"strict"},"placement":{},"unexpected":true}`)
 			},
 			wantStatus: http.StatusUnprocessableEntity,
 			wantCode:   "INVALID_TOOL_MUTATION",
@@ -367,6 +480,22 @@ func TestFormationsHandlerToolCRUDRejectsInvalidFramesBeforePairMutation(t *test
 			wantCode:   "INVALID_TOOL_MUTATION",
 		},
 		{
+			name: "delete omits id",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return h.validFrame(`"deleteTool":{}`)
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+		{
+			name: "delete id null",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return h.validFrame(`"deleteTool":{"id":null}`)
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+		{
 			name: "delete rejects duplicate id",
 			body: func(h *formationsAPIToolAuthoringHarness) string {
 				return h.validFrame(`"deleteTool":{"id":"tool_normalize","id":"tool_sink"}`)
@@ -415,12 +544,60 @@ func TestFormationsHandlerToolCRUDRejectsInvalidFramesBeforePairMutation(t *test
 			wantCode:   "INVALID_TOOL_MUTATION",
 		},
 		{
+			name: "present layout expectation requires ETag",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return fmt.Sprintf(`{"deleteTool":{"id":"tool_normalize"},"expectedRev":%d,"layoutExpectation":{"state":"present"}}`, h.board.Rev)
+			},
+			wantStatus: http.StatusPreconditionRequired,
+			wantCode:   "PRECONDITION_REQUIRED",
+		},
+		{
+			name: "present layout expectation rejects null ETag",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return fmt.Sprintf(`{"deleteTool":{"id":"tool_normalize"},"expectedRev":%d,"layoutExpectation":{"state":"present","etag":null}}`, h.board.Rev)
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+		{
+			name: "present layout expectation rejects empty ETag",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return fmt.Sprintf(`{"deleteTool":{"id":"tool_normalize"},"expectedRev":%d,"layoutExpectation":{"state":"present","etag":""}}`, h.board.Rev)
+			},
+			wantStatus: http.StatusPreconditionRequired,
+			wantCode:   "PRECONDITION_REQUIRED",
+		},
+		{
+			name: "layout expectation requires state",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return fmt.Sprintf(`{"deleteTool":{"id":"tool_normalize"},"expectedRev":%d,"layoutExpectation":{"etag":"%s"}}`, h.board.Rev, h.layout.ETag)
+			},
+			wantStatus: http.StatusPreconditionRequired,
+			wantCode:   "PRECONDITION_REQUIRED",
+		},
+		{
 			name: "layout expectation rejects null state",
 			body: func(h *formationsAPIToolAuthoringHarness) string {
 				return fmt.Sprintf(`{"deleteTool":{"id":"tool_normalize"},"expectedRev":%d,"layoutExpectation":{"state":null}}`, h.board.Rev)
 			},
 			wantStatus: http.StatusUnprocessableEntity,
 			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+		{
+			name: "layout expectation state wrong type",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return fmt.Sprintf(`{"deleteTool":{"id":"tool_normalize"},"expectedRev":%d,"layoutExpectation":{"state":1,"etag":"%s"}}`, h.board.Rev, h.layout.ETag)
+			},
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "BAD_REQUEST",
+		},
+		{
+			name: "layout expectation ETag wrong type",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return fmt.Sprintf(`{"deleteTool":{"id":"tool_normalize"},"expectedRev":%d,"layoutExpectation":{"state":"present","etag":1}}`, h.board.Rev)
+			},
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "BAD_REQUEST",
 		},
 		{
 			name: "layout expectation rejects duplicate state",
@@ -600,6 +777,22 @@ func TestFormationsHandlerToolCRUDPreservesStoreErrorIdentity(t *testing.T) {
 			wantStatus: http.StatusUnprocessableEntity,
 			wantCode:   "INVALID_TOOL_MUTATION",
 		},
+		{
+			name: "unknown Tool placement predecessor",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return h.validFrame(`"createTool":{"profileId":"json.normalize","profileVersion":"1","title":"Unknown predecessor","params":{"mode":"strict"},"placement":{"predecessorNodeId":"node_missing"}}`)
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+		{
+			name: "unknown Tool placement successor",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return h.validFrame(`"createTool":{"profileId":"json.normalize","profileVersion":"1","title":"Unknown successor","params":{"mode":"strict"},"placement":{"successorNodeId":"node_missing"}}`)
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
 	}
 
 	for _, test := range tests {
@@ -678,6 +871,15 @@ func TestFormationsHandlerMapsWrappedInvalidToolMutation(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	writeFormationsError(recorder, fmt.Errorf("candidate detail: %w", formations.ErrInvalidToolMutation))
 	assertFormationsAPIToolError(t, recorder, http.StatusUnprocessableEntity, "INVALID_TOOL_MUTATION")
+}
+
+func TestFormationsHandlerPublicationUncertaintyPrecedesInvalidToolMutation(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	writeFormationsError(recorder, errors.Join(
+		fmt.Errorf("candidate detail: %w", formations.ErrInvalidToolMutation),
+		fmt.Errorf("publication detail: %w", formations.ErrDefinitionPublicationUncertain),
+	))
+	assertFormationsAPIToolError(t, recorder, http.StatusServiceUnavailable, "DEFINITION_PUBLICATION_UNCERTAIN")
 }
 
 func TestFormationsHandlerDoesNotClassifyGenericToolErrorAsValidation(t *testing.T) {
