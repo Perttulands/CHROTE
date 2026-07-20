@@ -728,36 +728,27 @@ func deleteToolIncidentConnections(raw []byte, connections []BoardConnection, to
 	}
 
 	lines := splitLines(raw)
+	currentConnectionID := ""
 	for index := 0; index < len(lines); {
 		section, ok := tomlLineSectionName(lines[index])
-		if !ok || section != "connection" {
+		if !ok {
 			index++
 			continue
 		}
-		end := toolConnectionBlockEnd(lines, index)
-		if incidentIDs[toolStringScalarInBlock(lines, index+1, end, "id")] {
+		end := tomlBlockEnd(lines, index)
+		isArraySection := strings.HasPrefix(strings.TrimSpace(lines[index].body), "[[")
+		isConnectionRoot := section == "connection" && isArraySection
+		if isConnectionRoot {
+			currentConnectionID = toolStringScalarInBlock(lines, index+1, end, "id")
+		}
+		ownedDescendant := section != "connection" && tomlSectionIsOrDescendsFrom(section, "connection")
+		if incidentIDs[currentConnectionID] && (isConnectionRoot || ownedDescendant) {
 			lines = append(lines[:index], lines[end:]...)
 			continue
 		}
 		index = end
 	}
 	return renderTOMLLines(lines)
-}
-
-func toolConnectionBlockEnd(lines []tomlLine, start int) int {
-	for index := start + 1; index < len(lines); index++ {
-		section, ok := tomlLineSectionName(lines[index])
-		if !ok {
-			if isTOMLHeader(lines[index]) {
-				return index
-			}
-			continue
-		}
-		if section == "connection" || !tomlSectionIsOrDescendsFrom(section, "connection") {
-			return index
-		}
-	}
-	return len(lines)
 }
 
 func toolStringScalarInBlock(lines []tomlLine, start, end int, key string) string {
