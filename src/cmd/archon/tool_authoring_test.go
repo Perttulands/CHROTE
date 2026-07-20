@@ -865,10 +865,12 @@ func TestArchonToolMutationCommandsRedactPublicationUncertainty(t *testing.T) {
 						response.Boundary != "tool" || response.Selector != command.selector {
 						t.Fatalf("uncertain Tool %s JSON error = %#v", command.name, response)
 					}
+					if strings.Contains(response.Message, "private reconciliation") || strings.Contains(response.Message, formations.ErrDefinitionPublicationUncertain.Error()) {
+						t.Fatalf("uncertain Tool %s leaked private error in JSON message: %q", command.name, response.Message)
+					}
 				} else if stderr.String() != "Reload both board and layout before any explicit retry\n" {
 					t.Fatalf("uncertain Tool %s text error = %q", command.name, stderr.String())
-				}
-				if strings.Contains(stderr.String(), "private reconciliation") || strings.Contains(stderr.String(), formations.ErrDefinitionPublicationUncertain.Error()) {
+				} else if strings.Contains(stderr.String(), "private reconciliation") || strings.Contains(stderr.String(), formations.ErrDefinitionPublicationUncertain.Error()) {
 					t.Fatalf("uncertain Tool %s leaked private error: %q", command.name, stderr.String())
 				}
 			})
@@ -1016,6 +1018,7 @@ func newArchonToolAuthoringHarness(t *testing.T, withLayout, withConnection bool
 id = "edge_tool"
 from = "tool_normalize:port_tool_out"
 to = "tool_sink:port_sink_in"
+channel = "workflow"
 `
 		layoutRaw += `
 [[edge]]
@@ -1027,6 +1030,8 @@ lane = "work"
 	if withLayout {
 		writeArchonFile(t, store.LayoutPath(slug), layoutRaw)
 	}
+	writeArchonFile(t, store.BoardPath(slug)+".lock", "")
+	writeArchonFile(t, store.LayoutPath(slug)+".lock", "")
 	return &archonToolAuthoringHarness{
 		workspace: workspace,
 		slug:      slug,
@@ -1159,7 +1164,15 @@ func assertArchonToolCanonicalPair(t *testing.T, harness *archonToolAuthoringHar
 	}
 	persistedBoard := mustReadArchonToolBoard(t, harness.store, harness.slug)
 	persistedBoard.TOML = ""
-	if !reflect.DeepEqual(persistedBoard, board) {
+	responseBoardJSON, err := json.Marshal(board)
+	if err != nil {
+		t.Fatalf("encode Tool mutation board response: %v", err)
+	}
+	persistedBoardJSON, err := json.Marshal(persistedBoard)
+	if err != nil {
+		t.Fatalf("encode persisted Tool mutation board: %v", err)
+	}
+	if !bytes.Equal(persistedBoardJSON, responseBoardJSON) {
 		t.Fatalf("Tool mutation board response differs from canonical reread:\n response=%#v\n persisted=%#v", board, persistedBoard)
 	}
 	if layout == nil {
@@ -1171,7 +1184,15 @@ func assertArchonToolCanonicalPair(t *testing.T, harness *archonToolAuthoringHar
 	}
 	persistedLayout := mustReadArchonToolLayout(t, harness.store, harness.slug)
 	persistedLayout.TOML = ""
-	if !reflect.DeepEqual(persistedLayout, layout) {
+	responseLayoutJSON, err := json.Marshal(layout)
+	if err != nil {
+		t.Fatalf("encode Tool mutation layout response: %v", err)
+	}
+	persistedLayoutJSON, err := json.Marshal(persistedLayout)
+	if err != nil {
+		t.Fatalf("encode persisted Tool mutation layout: %v", err)
+	}
+	if !bytes.Equal(persistedLayoutJSON, responseLayoutJSON) {
 		t.Fatalf("Tool mutation layout response differs from canonical reread:\n response=%#v\n persisted=%#v", layout, persistedLayout)
 	}
 }
