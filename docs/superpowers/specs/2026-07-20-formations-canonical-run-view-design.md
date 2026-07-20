@@ -135,7 +135,7 @@ RunView {
   attempts: RunAttemptView[]
   gates: RunGateView[]
   outputs: RunOutputView[]
-  artifacts: RunArtifactView[]
+  artifacts: ArtifactProjection[]
   blocks: RunBlockView[]
   escalations: RunEscalationView[]
   sessions: RunSessionView[]
@@ -160,7 +160,11 @@ RunGateView {
   reason?, evidence[]
 }
 RunOutputView { nodeId, attempt, portId, outcomeSeq, payloadProjection }
-RunArtifactView { artifactId, source, registrationSeq, availability, errorCode?, descriptor? }
+SafeArtifactRef { artifactId, rootId, ref, mediaType, sizeBytes, sha256 }
+ArtifactProjection =
+  | { artifactId, availability: "available", name, artifact: SafeArtifactRef }
+  | { artifactId, availability: "unavailable" | "redacted" | "expired",
+      name, errorCode }
 RunBlockView {
   seq, epoch, scope, nodeId?, gateId?, code?, reason, resumeAllowed,
   resumePolicy, nextEpoch?, openDispatches[]
@@ -241,7 +245,7 @@ The outcome fence is immutable even if a later writer fence repaired publication
 allowlist is the applicable subset of `seq`, `type`, `ts`, `runId`, `actor`,
 graph ids, `epoch`, and `attempt`; `data` uses a closed decoder and a separate
 public allowlist for that exact known event type. Artifact occurrences carry an
-`artifactId` hydrated to the latest `RunArtifactView`.
+`artifactId` hydrated to the latest `ArtifactProjection`.
 
 `RunNodeView` contains node id/kind, projected status/finality disposition,
 latest attempt, readiness counts, and references to its attempts, outputs,
@@ -260,11 +264,14 @@ is never presented as routable work. The fixed `formation_needs_review` and
 `invalid_formation_outputs` projections must byte-for-byte match the frozen
 constants, including message, retryability, and hashes.
 
-`RunArtifactView` contains stable artifact id, registered source identity,
-availability, and a stable error code when unavailable. Only `available` may
-contain the latest validated `{rootId, ref, mediaType, size, sha256}` descriptor.
-`unavailable`, `redacted`, or `expired` omits every readable ref.
-Its state derives only from the latest durable registration or observation.
+The artifacts collection embeds the frozen `ArtifactProjection` union exactly.
+The available variant contains `{artifactId, availability:"available", name,
+artifact:SafeArtifactRef}`; `SafeArtifactRef` is exactly `{artifactId, rootId,
+ref, mediaType, sizeBytes, sha256}` and its nested `artifactId` must equal the
+projection's top-level `artifactId`. The unavailable, redacted, and expired
+variants contain exactly `{artifactId, availability, name, errorCode}` and no
+readable ref. State derives only from the latest durable registration or
+observation.
 
 `RunBlockView` and `RunEscalationView` retain their source sequence, safe graph
 identity, closed code/severity/source/trigger fields, bounded safe reason, and
@@ -323,8 +330,9 @@ The control event is not a ledger event and grants no authority. The response
 then closes; this design adds no live-follow loop.
 
 All historical event artifact occurrences are hydrated after reduction through
-the latest authorization. A formerly readable descriptor never survives in an
-older event after the latest state becomes unavailable, redacted, or expired.
+the latest authorization. A formerly readable `ArtifactProjection` never
+survives in an older event after the latest state becomes unavailable,
+redacted, or expired.
 
 ## Single recovery vocabulary
 
@@ -367,17 +375,20 @@ only known immutable fixed-system template ids; unknown ids reject.
 
 Artifact open uses optimistic reauthorization:
 
-1. Project the run at cursor C1 and require the latest artifact state to be
-   `available` with descriptor D.
-2. Open D once root-relative with no-follow semantics; validate regular identity,
-   media, size, and SHA-256; read the bounded bytes once.
+1. Project the run at cursor C1 and require the exact latest
+   `ArtifactProjection` P1 to be the `available` variant with
+   `artifact:SafeArtifactRef` D and equal top-level/nested `artifactId`.
+2. Open D once root-relative with no-follow semantics; validate regular-file
+   identity, media type, `sizeBytes`, and SHA-256; read the bounded bytes once.
 3. Re-project from canonical authority.
-4. Require the latest artifact still to be `available` with the identical
-   descriptor D. The successful second projection is the authorization linearization point.
+4. Require the latest `ArtifactProjection` P2 to be exactly field-equal to P1,
+   including an identical D across `artifactId`, `rootId`, `ref`, `mediaType`,
+   `sizeBytes`, and `sha256`. The successful second projection is the
+   authorization linearization point.
 5. Render only the already verified buffer, or the same verified handle when
    buffering is inapplicable. Never reopen the path.
 
-Any failure or descriptor/state change discards the bytes and fails the open.
+Any failure or projection/ref change discards the bytes and fails the open.
 The reconciler may later append an observation, but the read endpoint never
 mutates projection truth.
 
