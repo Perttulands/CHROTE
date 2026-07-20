@@ -96,7 +96,7 @@ func TestToolExecutionPreflightUsesApprovedSelectedMissionOrder(t *testing.T) {
 			name: "known descriptor parameters validate before unavailable",
 			board: toolExecutionPreflightHeader() +
 				validTool +
-				strings.Replace(toolExecutionPreflightTool("tool_invalid", "1"), `mode = "strict"`, `mode = "lenient"`, 1) +
+				strings.Replace(toolExecutionPreflightTool("tool_invalid", "1"), `mode = "strict"`, `mode = "normal"`, 1) +
 				toolExecutionPreflightConnection("edge_valid_first", "workflow", "mis_main:out", "tool_valid:port_tool_valid_in") +
 				toolExecutionPreflightConnection("edge_invalid_second", "workflow", "mis_main:out", "tool_invalid:port_tool_invalid_in"),
 			wantText: `Tool "tool_invalid" parameter "mode": is outside the allowed enum`,

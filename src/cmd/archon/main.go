@@ -2179,6 +2179,8 @@ func archonErrorCode(err error) string {
 		return "definition_publication_uncertain"
 	case errors.Is(err, formations.ErrInvalidToolMutation):
 		return "invalid_tool_mutation"
+	case errors.Is(err, formations.ErrToolExecutionUnavailable):
+		return formations.ToolExecutionUnavailableCode
 	case errors.Is(err, formations.ErrRuntimeAuthorityNonAuthorizing):
 		return "runtime_authority_non_authorizing"
 	case errors.Is(err, formations.ErrAmbiguousSelector):

@@ -10,10 +10,17 @@ const LegacyInlineVerificationMigrationCode = "legacy_inline_verification_requir
 var ErrLegacyInlineVerificationRequiresMigration = errors.New(LegacyInlineVerificationMigrationCode)
 
 func rejectLegacyInlineVerification(board *BoardDocument) error {
+	return rejectLegacyInlineVerificationForNodes(board, nil)
+}
+
+func rejectLegacyInlineVerificationForNodes(board *BoardDocument, selected map[string]bool) error {
 	if board == nil {
 		return nil
 	}
 	for _, formation := range board.Formations {
+		if selected != nil && !selected[formation.ID] {
+			continue
+		}
 		if formation.Verification == nil {
 			continue
 		}

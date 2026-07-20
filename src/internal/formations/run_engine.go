@@ -142,14 +142,11 @@ func (e *RunEngine) RunMission(slug string, req RunStartRequest) (*RunStatusProj
 	if err != nil {
 		return nil, err
 	}
-	if err := rejectLegacyInlineVerification(board); err != nil {
-		return nil, err
-	}
 	mission, ok := findMission(board, req.MissionID)
 	if !ok {
 		return nil, fmt.Errorf("%w: mission %q", ErrNotFound, req.MissionID)
 	}
-	if err := rejectLegacyScriptGateForMission(board, mission.ID); err != nil {
+	if err := preflightMissionDefinition(board, mission.ID); err != nil {
 		return nil, err
 	}
 	if len(outgoingConnections(board.Connections, mission.ID)) == 0 {
@@ -184,12 +181,12 @@ func (e *RunEngine) RunFormation(slug, formationID string, req FormationRunReque
 	if err != nil {
 		return nil, err
 	}
-	if err := rejectLegacyInlineVerification(board); err != nil {
-		return nil, err
-	}
 	formation, ok := findFormation(board.Formations, formationID)
 	if !ok {
 		return nil, fmt.Errorf("%w: formation %q", ErrNotFound, formationID)
+	}
+	if err := preflightIsolatedFormationDefinition(board, formation.ID); err != nil {
+		return nil, err
 	}
 	personas := req.Personas
 	if personas == nil {
