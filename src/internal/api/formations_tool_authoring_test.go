@@ -37,12 +37,18 @@ type formationsAPIToolMutationEnvelope struct {
 	} `json:"error"`
 }
 
+const (
+	formationsAPIToolBoardSourceSentinel  = `x_api_tool_source_sentinel = "keep"`
+	formationsAPIToolLayoutSourceSentinel = `x_api_layout_source_sentinel = "keep"`
+)
+
 func TestFormationsHandlerToolCRUDPublishesCanonicalPairs(t *testing.T) {
 	tests := []struct {
 		name               string
 		withLayout         bool
 		operation          string
 		wantLayout         bool
+		wantTool           bool
 		wantNullLayoutJSON bool
 		assertResult       func(*testing.T, *formationsAPIToolAuthoringHarness, formationsAPIToolMutationEnvelope)
 	}{
@@ -51,6 +57,7 @@ func TestFormationsHandlerToolCRUDPublishesCanonicalPairs(t *testing.T) {
 			withLayout: true,
 			operation:  `"createTool":{"profileId":"json.normalize","profileVersion":"1","title":"Created exact","params":{"mode":"strict"},"placement":{"x":123,"y":-456}}`,
 			wantLayout: true,
+			wantTool:   true,
 			assertResult: func(t *testing.T, harness *formationsAPIToolAuthoringHarness, response formationsAPIToolMutationEnvelope) {
 				if response.Data.Tool.ID == "" || response.Data.Tool.Title != "Created exact" {
 					t.Fatalf("created Tool = %#v, want generated id and exact title", response.Data.Tool)
@@ -74,6 +81,7 @@ func TestFormationsHandlerToolCRUDPublishesCanonicalPairs(t *testing.T) {
 			name:       "absent default-heuristic create",
 			operation:  `"createTool":{"profileId":"json.normalize","profileVersion":"1","title":"Created heuristic","params":{"mode":"strict"},"placement":{}}`,
 			wantLayout: true,
+			wantTool:   true,
 			assertResult: func(t *testing.T, harness *formationsAPIToolAuthoringHarness, response formationsAPIToolMutationEnvelope) {
 				if response.Data.Tool.ID == "" || len(response.Data.Layout.Nodes) != 1 || response.Data.Layout.Nodes[0].ID != response.Data.Tool.ID {
 					t.Fatalf("absent-layout create result = tool %#v layout %#v", response.Data.Tool, response.Data.Layout)
@@ -84,10 +92,38 @@ func TestFormationsHandlerToolCRUDPublishesCanonicalPairs(t *testing.T) {
 			},
 		},
 		{
+			name:       "present predecessor-successor heuristic create",
+			withLayout: true,
+			operation:  `"createTool":{"profileId":"json.normalize","profileVersion":"1","title":"Created between hints","params":{"mode":"strict"},"placement":{"predecessorNodeId":"tool_sink","successorNodeId":"gate_review"}}`,
+			wantLayout: true,
+			wantTool:   true,
+			assertResult: func(t *testing.T, harness *formationsAPIToolAuthoringHarness, response formationsAPIToolMutationEnvelope) {
+				if len(response.Data.Layout.Nodes) != len(harness.layout.Nodes)+1 {
+					t.Fatalf("hint create layout node count = %d, want retained nodes plus one", len(response.Data.Layout.Nodes))
+				}
+				if _, found := formationsAPIToolLayoutNode(response.Data.Layout, response.Data.Tool.ID); !found {
+					t.Fatalf("hint create omitted new Tool placement: %#v", response.Data.Layout.Nodes)
+				}
+				for _, retained := range harness.layout.Nodes {
+					got, found := formationsAPIToolLayoutNode(response.Data.Layout, retained.ID)
+					if !found || !reflect.DeepEqual(got, retained) {
+						t.Fatalf("hint create moved retained node %q: got %#v found=%t want %#v", retained.ID, got, found, retained)
+					}
+				}
+				if !reflect.DeepEqual(response.Data.Layout.Edges, harness.layout.Edges) {
+					t.Fatalf("hint create changed retained layout edges: got %#v want %#v", response.Data.Layout.Edges, harness.layout.Edges)
+				}
+				if !reflect.DeepEqual(response.Data.Board.Connections, harness.board.Connections) {
+					t.Fatalf("hint create implicitly wired Tool: %#v", response.Data.Board.Connections)
+				}
+			},
+		},
+		{
 			name:       "present title-only update",
 			withLayout: true,
 			operation:  `"updateTool":{"id":"tool_normalize","title":"Renamed through API"}`,
 			wantLayout: true,
+			wantTool:   true,
 			assertResult: func(t *testing.T, harness *formationsAPIToolAuthoringHarness, response formationsAPIToolMutationEnvelope) {
 				if response.Data.Tool.Title != "Renamed through API" || response.Data.Tool.Params["mode"] != "strict" {
 					t.Fatalf("title-only update = %#v", response.Data.Tool)
@@ -100,6 +136,7 @@ func TestFormationsHandlerToolCRUDPublishesCanonicalPairs(t *testing.T) {
 		{
 			name:               "absent params-only update",
 			operation:          `"updateTool":{"id":"tool_normalize","params":{"mode":"strict"}}`,
+			wantTool:           true,
 			wantNullLayoutJSON: true,
 			assertResult: func(t *testing.T, _ *formationsAPIToolAuthoringHarness, response formationsAPIToolMutationEnvelope) {
 				if response.Data.Tool.Title != "Normalize report" || response.Data.Tool.Params["mode"] != "strict" {
@@ -143,10 +180,13 @@ func TestFormationsHandlerToolCRUDPublishesCanonicalPairs(t *testing.T) {
 				harness.layoutExpectationJSON(),
 			)
 			recorder := harness.patch(body, harness.board.ETag)
-			if test.wantNullLayoutJSON && !bytes.Contains(recorder.Body.Bytes(), []byte(`"layout":null`)) {
-				t.Fatalf("absent-layout Tool mutation body omitted explicit layout null: %s", recorder.Body.String())
+			if test.wantNullLayoutJSON {
+				assertFormationsAPIToolNullDataLayout(t, recorder.Body.Bytes())
 			}
 			response := assertFormationsAPIToolMutationSuccess(t, harness, recorder, test.wantLayout)
+			if test.wantTool && response.Data.Tool.ID == "" {
+				t.Fatalf("Tool create/update returned zero Tool: %s", recorder.Body.String())
+			}
 			test.assertResult(t, harness, response)
 		})
 	}
@@ -164,6 +204,14 @@ func TestFormationsHandlerToolCRUDRejectsInvalidFramesBeforePairMutation(t *test
 			name: "duplicate Tool operation",
 			body: func(h *formationsAPIToolAuthoringHarness) string {
 				return h.validFrame(`"deleteTool":{"id":"tool_normalize"},"deleteTool":{"id":"tool_sink"}`)
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+		{
+			name: "cross-distinct Tool operations",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return h.validFrame(`"createTool":{"profileId":"json.normalize","profileVersion":"1","title":"Must not create","params":{"mode":"strict"},"placement":{}},"deleteTool":{"id":"tool_normalize"}`)
 			},
 			wantStatus: http.StatusUnprocessableEntity,
 			wantCode:   "INVALID_TOOL_MUTATION",
@@ -287,6 +335,14 @@ func TestFormationsHandlerToolCRUDRejectsInvalidFramesBeforePairMutation(t *test
 			wantCode:   "INVALID_TOOL_MUTATION",
 		},
 		{
+			name: "create placement both coordinates null",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return h.validFrame(`"createTool":{"profileId":"json.normalize","profileVersion":"1","title":"Null coordinates","params":{"mode":"strict"},"placement":{"x":null,"y":null}}`)
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "INVALID_TOOL_MUTATION",
+		},
+		{
 			name: "duplicate exact coordinate",
 			body: func(h *formationsAPIToolAuthoringHarness) string {
 				return h.validFrame(`"createTool":{"profileId":"json.normalize","profileVersion":"1","title":"Duplicate x","params":{"mode":"strict"},"placement":{"x":1,"x":2,"y":3}}`)
@@ -391,6 +447,14 @@ func TestFormationsHandlerToolCRUDRejectsInvalidFramesBeforePairMutation(t *test
 			wantCode:   "PRECONDITION_REQUIRED",
 		},
 		{
+			name: "wrong-type expected revision",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return fmt.Sprintf(`{"deleteTool":{"id":"tool_normalize"},"expectedRev":"%d","layoutExpectation":%s}`, h.board.Rev, h.layoutExpectationJSON())
+			},
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "BAD_REQUEST",
+		},
+		{
 			name: "missing layout expectation",
 			body: func(h *formationsAPIToolAuthoringHarness) string {
 				return fmt.Sprintf(`{"deleteTool":{"id":"tool_normalize"},"expectedRev":%d}`, h.board.Rev)
@@ -414,6 +478,14 @@ func TestFormationsHandlerToolCRUDRejectsInvalidFramesBeforePairMutation(t *test
 			},
 			wantStatus: http.StatusPreconditionRequired,
 			wantCode:   "PRECONDITION_REQUIRED",
+		},
+		{
+			name: "wrong-type layout expectation",
+			body: func(h *formationsAPIToolAuthoringHarness) string {
+				return fmt.Sprintf(`{"deleteTool":{"id":"tool_normalize"},"expectedRev":%d,"layoutExpectation":[]}`, h.board.Rev)
+			},
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "BAD_REQUEST",
 		},
 		{
 			name:       "non-object Tool payload",
@@ -619,9 +691,9 @@ func newFormationsAPIToolAuthoringHarness(t *testing.T, withLayout bool) *format
 	const slug = "tool-parity"
 	store := formations.NewStore(t.TempDir())
 	store.Now = fixedFormationsAPIClock()
-	writeFormationsAPIFixture(t, store.BoardPath(slug), formationsAPIToolParityBoardFixture())
+	writeFormationsAPIFixture(t, store.BoardPath(slug), formationsAPIToolAuthoringBoardFixture())
 	if withLayout {
-		writeFormationsAPIFixture(t, store.LayoutPath(slug), formationsAPIToolParityLayoutFixture())
+		writeFormationsAPIFixture(t, store.LayoutPath(slug), formationsAPIToolAuthoringLayoutFixture())
 	}
 	board, err := store.ReadBoard(slug)
 	if err != nil {
@@ -638,6 +710,24 @@ func newFormationsAPIToolAuthoringHarness(t *testing.T, withLayout bool) *format
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 	return &formationsAPIToolAuthoringHarness{store: store, mux: mux, board: board, layout: layout, slug: slug}
+}
+
+func formationsAPIToolAuthoringBoardFixture() string {
+	return strings.Replace(
+		formationsAPIToolParityBoardFixture(),
+		"\n\n[[mission]]",
+		"\n"+formationsAPIToolBoardSourceSentinel+"\n\n[[mission]]",
+		1,
+	)
+}
+
+func formationsAPIToolAuthoringLayoutFixture() string {
+	return strings.Replace(
+		formationsAPIToolParityLayoutFixture(),
+		"\n\n[[node]]",
+		"\n"+formationsAPIToolLayoutSourceSentinel+"\n\n[[node]]",
+		1,
+	)
 }
 
 func (h *formationsAPIToolAuthoringHarness) layoutExpectationJSON() string {
@@ -682,9 +772,12 @@ func assertFormationsAPIToolMutationSuccess(
 		t.Fatalf("Tool mutation header ETag = %q, board ETag = %q", got, response.Data.Board.ETag)
 	}
 	for name := range recorder.Header() {
-		if strings.Contains(strings.ToLower(name), "layout") {
-			t.Fatalf("Tool mutation returned forbidden layout identity header %q", name)
+		if strings.Contains(strings.ToLower(name), "etag") && !strings.EqualFold(name, "ETag") {
+			t.Fatalf("Tool mutation returned second ETag-like identity header %q", name)
 		}
+	}
+	if response.Data.Board.Rev != harness.board.Rev+1 {
+		t.Fatalf("Tool mutation board rev = %d, want one bump from %d", response.Data.Board.Rev, harness.board.Rev)
 	}
 	persistedBoard, err := harness.store.ReadBoard(harness.slug)
 	if err != nil {
@@ -714,6 +807,9 @@ func assertFormationsAPIToolMutationSuccess(
 		if response.Data.Layout == nil {
 			t.Fatalf("Tool mutation response omitted present canonical layout")
 		}
+		if response.Data.Layout.BoardRev != response.Data.Board.Rev {
+			t.Fatalf("Tool mutation layout boardRev = %d, board rev = %d", response.Data.Layout.BoardRev, response.Data.Board.Rev)
+		}
 		assertFormationsAPIToolCanonicalJSON(t, "layout", response.Data.Layout, persistedLayout)
 	} else {
 		if response.Data.Layout != nil {
@@ -723,7 +819,55 @@ func assertFormationsAPIToolMutationSuccess(
 			t.Fatalf("absent-layout Tool mutation materialized layout: %v", err)
 		}
 	}
+	assertFormationsAPIToolRetainedSentinels(t, harness, response)
 	return response
+}
+
+func assertFormationsAPIToolNullDataLayout(t *testing.T, body []byte) {
+	t.Helper()
+	var envelope struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatalf("decode Tool mutation raw response: %v\n%s", err, body)
+	}
+	raw, found := envelope.Data["layout"]
+	if !found || !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		t.Fatalf("Tool mutation data.layout = %s found=%t, want explicit null in data object: %s", raw, found, body)
+	}
+}
+
+func assertFormationsAPIToolRetainedSentinels(
+	t *testing.T,
+	harness *formationsAPIToolAuthoringHarness,
+	response formationsAPIToolMutationEnvelope,
+) {
+	t.Helper()
+	if !strings.Contains(response.Data.Board.TOML, formationsAPIToolBoardSourceSentinel) {
+		t.Fatalf("Tool mutation dropped board source sentinel:\n%s", response.Data.Board.TOML)
+	}
+	missionFound := false
+	for _, mission := range response.Data.Board.Missions {
+		missionFound = missionFound || mission.ID == "mis_main"
+	}
+	gateFound := false
+	for _, gate := range response.Data.Board.Gates {
+		gateFound = gateFound || gate.ID == "gate_review"
+	}
+	if !missionFound || !gateFound || !formationsAPIToolBoardHasTool(response.Data.Board, "tool_sink") {
+		t.Fatalf("Tool mutation dropped retained inventory: missions=%#v gates=%#v tools=%#v", response.Data.Board.Missions, response.Data.Board.Gates, response.Data.Board.Tools)
+	}
+	if harness.layout == nil {
+		return
+	}
+	if response.Data.Layout == nil || !strings.Contains(response.Data.Layout.TOML, formationsAPIToolLayoutSourceSentinel) {
+		t.Fatalf("Tool mutation dropped retained layout source sentinel: %#v", response.Data.Layout)
+	}
+	for _, id := range []string{"mis_main", "tool_sink", "gate_review"} {
+		if _, found := formationsAPIToolLayoutNode(response.Data.Layout, id); !found {
+			t.Fatalf("Tool mutation dropped retained layout inventory %q: %#v", id, response.Data.Layout.Nodes)
+		}
+	}
 }
 
 func assertFormationsAPIToolCanonicalJSON(t *testing.T, kind string, got, want any) {
