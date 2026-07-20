@@ -1213,7 +1213,55 @@ y = 112
 	if err == nil || !strings.Contains(err.Error(), "invalid_layout_coordinate") {
 		t.Fatalf("out-of-range heuristic step error = %v, want invalid_layout_coordinate", err)
 	}
+	if !errors.Is(err, ErrInvalidToolMutation) {
+		t.Fatalf("out-of-range heuristic step error = %v, want errors.Is(ErrInvalidToolMutation)", err)
+	}
+	if errors.Is(err, ErrConflict) {
+		t.Fatalf("out-of-range heuristic step error %v was classified as ErrConflict", err)
+	}
 	assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, &layoutRaw)
+}
+
+func TestCreateToolNoFreeHeuristicPositionRemainsConflict(t *testing.T) {
+	store := newToolAuthoringStore(t)
+	slug := "tool-no-free-position"
+	var boardTail strings.Builder
+	var layoutRaw strings.Builder
+	layoutRaw.WriteString("schema = 1\nboardId = \"brd_" + slug + "\"\nboardRev = 5\n")
+	x, y := layoutPlacementMin, layoutPlacementMin
+	for index := 0; index < layoutPlacementMaxAttempts; index++ {
+		toolID := fmt.Sprintf("tool_occupied_%02d", index)
+		boardTail.WriteString(toolStructuralJSONNormalizeToolBlock(
+			toolID,
+			fmt.Sprintf("Occupied %02d", index),
+			fmt.Sprintf("port_occupied_%02d_in", index),
+			fmt.Sprintf("port_occupied_%02d_out", index),
+		))
+		fmt.Fprintf(&layoutRaw, "\n[[node]]\nid = %q\nx = %d\ny = %d\n", toolID, x, y)
+		x += layoutPlacementStep
+		if x > layoutPlacementWrapX {
+			x = layoutPlacementMin
+			y += layoutPlacementStep
+		}
+	}
+	boardRaw := toolAuthoringBoardFixture(slug, 5, false, boardTail.String())
+	layout := layoutRaw.String()
+	writeFixture(t, store.BoardPath(slug), boardRaw)
+	writeFixture(t, store.LayoutPath(slug), layout)
+	board, layoutDocument := toolAuthoringReadPair(t, store, slug)
+
+	_, err := store.CreateTool(
+		slug,
+		toolAuthoringCreateRequest(ToolPlacement{}),
+		toolAuthoringPresentOptions(board, layoutDocument),
+	)
+	if err == nil || !errors.Is(err, ErrConflict) {
+		t.Fatalf("exhausted heuristic placement error = %v, want ErrConflict", err)
+	}
+	if errors.Is(err, ErrInvalidToolMutation) {
+		t.Fatalf("exhausted heuristic placement error %v was classified as ErrInvalidToolMutation", err)
+	}
+	assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, &layout)
 }
 
 func TestCreateToolPreservesOpaqueEdgeFieldsNamedXAndY(t *testing.T) {

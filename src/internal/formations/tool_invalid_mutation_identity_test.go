@@ -10,8 +10,9 @@ import (
 
 func TestToolMutationValidationUsesDedicatedSentinel(t *testing.T) {
 	tests := []struct {
-		name string
-		run  func(*Store, string, *BoardDocument) error
+		name           string
+		rejectNotFound bool
+		run            func(*Store, string, *BoardDocument) error
 	}{
 		{
 			name: "invalid create tuple",
@@ -92,7 +93,8 @@ func TestToolMutationValidationUsesDedicatedSentinel(t *testing.T) {
 			},
 		},
 		{
-			name: "invalid update empty id",
+			name:           "invalid update empty id",
+			rejectNotFound: true,
 			run: func(store *Store, slug string, board *BoardDocument) error {
 				title := "Valid title"
 				_, err := store.UpdateTool(slug, ToolUpdateRequest{ToolID: "", Title: &title}, toolAuthoringAbsentOptions(board))
@@ -138,7 +140,8 @@ func TestToolMutationValidationUsesDedicatedSentinel(t *testing.T) {
 			},
 		},
 		{
-			name: "invalid delete empty id",
+			name:           "invalid delete empty id",
+			rejectNotFound: true,
 			run: func(store *Store, slug string, board *BoardDocument) error {
 				_, err := store.DeleteTool(slug, ToolDeleteRequest{ID: ""}, toolAuthoringAbsentOptions(board))
 				return err
@@ -160,6 +163,9 @@ func TestToolMutationValidationUsesDedicatedSentinel(t *testing.T) {
 			err = test.run(store, slug, board)
 			if err == nil || !errors.Is(err, ErrInvalidToolMutation) {
 				t.Fatalf("Tool validation error = %v, want errors.Is(ErrInvalidToolMutation)", err)
+			}
+			if test.rejectNotFound && errors.Is(err, ErrNotFound) {
+				t.Fatalf("Tool validation error %v retained ErrNotFound identity", err)
 			}
 			assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, nil)
 		})
@@ -276,6 +282,20 @@ func TestToolMutationValidationSentinelPreservesNonValidationIdentity(t *testing
 		}
 		title := "Missing"
 		_, err = store.UpdateTool(slug, ToolUpdateRequest{ToolID: "tool_missing", Title: &title}, toolAuthoringAbsentOptions(board))
+		assertDistinct(t, err, ErrNotFound)
+		assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, nil)
+	})
+
+	t.Run("delete not found", func(t *testing.T) {
+		store := newToolAuthoringStore(t)
+		slug := "tool-delete-identity-not-found"
+		boardRaw := toolAuthoringBoardFixture(slug, 5, true, toolUpdateTargetBlock())
+		writeFixture(t, store.BoardPath(slug), boardRaw)
+		board, err := store.ReadBoard(slug)
+		if err != nil {
+			t.Fatalf("read delete not-found source: %v", err)
+		}
+		_, err = store.DeleteTool(slug, ToolDeleteRequest{ID: "tool_missing"}, toolAuthoringAbsentOptions(board))
 		assertDistinct(t, err, ErrNotFound)
 		assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, nil)
 	})
