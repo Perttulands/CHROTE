@@ -72,6 +72,14 @@ func TestFormationsRuntimeAPIStartDefinitionErrorsPrecedeUnavailableAuthority(t 
 			wantStatus: http.StatusUnprocessableEntity,
 			wantCode:   formations.LegacyInlineVerificationMigrationCode,
 		},
+		{
+			name:       "Mission reaches non-executing Tool",
+			slug:       "tool-parity",
+			board:      formationsAPIRuntimeToolBoardFixture(),
+			body:       `{"board":"tool-parity","missionId":"mis_main"}`,
+			wantStatus: http.StatusUnprocessableEntity,
+			wantCode:   "tool_execution_unavailable",
+		},
 	}
 
 	for _, test := range tests {
@@ -103,6 +111,16 @@ func TestFormationsRuntimeAPIStartDefinitionErrorsPrecedeUnavailableAuthority(t 
 			assertNoRuntimeAuthorityAPIEffects(t, workspace, tmuxCapture)
 		})
 	}
+}
+
+func formationsAPIRuntimeToolBoardFixture() string {
+	return formationsAPIToolParityBoardFixture() + `
+[[connection]]
+id = "edge_mission_tool"
+channel = "workflow"
+from = "mis_main:out"
+to = "tool_normalize:port_tool_in"
+`
 }
 
 func TestFormationsRuntimeAPIResumeAbortAndVerdictRemainAuthorityFirst(t *testing.T) {

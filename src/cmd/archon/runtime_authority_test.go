@@ -63,6 +63,13 @@ func TestArchonNewRunStartDefinitionErrorsPrecedeUnavailableAuthority(t *testing
 			args:     []string{"formation", "run", "session-search", "fmn_work", "--json"},
 			wantCode: formations.LegacyInlineVerificationMigrationCode,
 		},
+		{
+			name:     "Mission reaches non-executing Tool",
+			slug:     "tool-parity",
+			board:    archonRuntimeAuthorityToolBoardFixture(),
+			args:     []string{"mission", "run", "tool-parity", "--mission", "mis_main", "--json"},
+			wantCode: "tool_execution_unavailable",
+		},
 	}
 
 	for _, test := range tests {
@@ -94,6 +101,16 @@ func TestArchonNewRunStartDefinitionErrorsPrecedeUnavailableAuthority(t *testing
 			assertNoArchonRuntimeAuthorityEffects(t, workspace, tmuxCapture, runner)
 		})
 	}
+}
+
+func archonRuntimeAuthorityToolBoardFixture() string {
+	return archonToolParityBoardFixture() + `
+[[connection]]
+id = "edge_mission_tool"
+channel = "workflow"
+from = "mis_main:out"
+to = "tool_normalize:port_tool_in"
+`
 }
 
 func TestArchonResumeAbortAndVerdictRemainAuthorityFirst(t *testing.T) {
