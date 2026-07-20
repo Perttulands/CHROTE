@@ -1340,7 +1340,7 @@ func assertPairReconciliationDurabilityForTest(t *testing.T, steps []string, sta
 
 func assertDefinitionPublicationUncertainForTest(t *testing.T, err error) {
 	t.Helper()
-	if !errors.Is(err, errDefinitionPublicationUncertain) {
+	if !errors.Is(err, ErrDefinitionPublicationUncertain) {
 		t.Fatalf("publication error = %v, want stable definition_publication_uncertain", err)
 	}
 	if err == nil || !strings.Contains(err.Error(), "definition_publication_uncertain") {
