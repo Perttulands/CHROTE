@@ -939,6 +939,75 @@ func TestCreateToolRejectsOutOfSigned32BitPersistedCoordinatesWithoutMutation(t 
 	}
 }
 
+func TestCreateToolRejectsPersistedCoordinatesOutsideCanonicalDecimalProjection(t *testing.T) {
+	tests := []struct {
+		name       string
+		coordinate string
+	}{
+		{name: "hexadecimal", coordinate: "x = 0x70\ny = 112"},
+		{name: "underscored", coordinate: "x = 1_12\ny = 112"},
+		{name: "explicit plus", coordinate: "x = +112\ny = 112"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := newToolAuthoringStore(t)
+			slug := "tool-persisted-coordinate-decimal"
+			boardRaw := toolAuthoringBoardFixture(slug, 2, true, "")
+			layoutRaw := "schema = 1\nboardId = \"brd_tool-persisted-coordinate-decimal\"\nboardRev = 2\n\n[[node]]\nid = \"mis_main\"\n" + test.coordinate + "\n"
+			writeFixture(t, store.BoardPath(slug), boardRaw)
+			writeFixture(t, store.LayoutPath(slug), layoutRaw)
+			board, layout := toolAuthoringReadPair(t, store, slug)
+
+			_, err := store.CreateTool(
+				slug,
+				toolAuthoringCreateRequest(ToolPlacement{PredecessorNodeID: "mis_main"}),
+				toolAuthoringPresentOptions(board, layout),
+			)
+			if err == nil || !strings.Contains(err.Error(), "invalid_layout_coordinate") {
+				t.Fatalf("noncanonical persisted coordinate error = %v, want invalid_layout_coordinate", err)
+			}
+			assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, &layoutRaw)
+		})
+	}
+}
+
+func TestCreateToolPreservesOpaqueEdgeFieldsNamedXAndY(t *testing.T) {
+	store := newToolAuthoringStore(t)
+	slug := "tool-layout-edge-extension"
+	boardRaw := toolAuthoringBoardFixture(slug, 5, true, toolAuthoringConnectedToolsTail())
+	layoutRaw := `schema = 1
+boardId = "brd_tool-layout-edge-extension"
+boardRev = 5
+
+[[edge]]
+id = "edge_existing"
+lane = "north"
+x = "opaque edge extension"
+y = [1, 2, 3]
+`
+	writeFixture(t, store.BoardPath(slug), boardRaw)
+	writeFixture(t, store.LayoutPath(slug), layoutRaw)
+	board, layout := toolAuthoringReadPair(t, store, slug)
+	x, y := 700, 560
+
+	result, err := store.CreateTool(
+		slug,
+		toolAuthoringCreateRequest(ToolPlacement{X: &x, Y: &y}),
+		toolAuthoringPresentOptions(board, layout),
+	)
+	if err != nil {
+		t.Fatalf("create Tool beside edge x/y extensions: %v", err)
+	}
+	const retained = `[[edge]]
+id = "edge_existing"
+lane = "north"
+x = "opaque edge extension"
+y = [1, 2, 3]`
+	if !strings.Contains(result.Layout.TOML, retained) {
+		t.Fatalf("edge x/y extension source changed:\n%s", result.Layout.TOML)
+	}
+}
+
 func TestCreateToolLeavesMissingRetainedCoordinatesAbsent(t *testing.T) {
 	store := newToolAuthoringStore(t)
 	slug := "tool-missing-retained-coordinates"
