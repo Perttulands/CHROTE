@@ -490,6 +490,18 @@ channel = "workflow"
 from = "mis_main:out"
 to = "tool_existing:port_existing_in"
 `},
+		{name: "incompatible payload kind", wantMarker: FindingIncompatiblePayloadKind, tail: validTool + `[[gate]]
+id = "gate_feedback"
+title = "Feedback"
+kinds = ["human"]
+criterion = "Confirm"
+
+[[connection]]
+id = "edge_kind"
+channel = "workflow"
+from = "gate_feedback:fail"
+to = "tool_existing:port_existing_in"
+`},
 		{name: "Tool judge misuse", wantMarker: FindingInvalidJudgeRelationship, tail: validTool + `[[gate]]
 id = "gate_review"
 title = "Review"
