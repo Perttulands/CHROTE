@@ -197,16 +197,18 @@ func (s *Store) buildToolCreateCandidate(
 	}
 
 	var layout *LayoutDocument
+	var layoutBlocks []toolLayoutOwnedBlock
 	if current.layout.present {
 		layout, err = parseLayout(current.layout.raw)
 		if err != nil {
 			return definitionPairState{}, ToolNode{}, err
 		}
-		if err := validateToolMutationLayout(current.layout.raw, layout, board.ID); err != nil {
+		layoutBlocks, err = validateToolMutationLayout(current.layout.raw, layout, board.ID)
+		if err != nil {
 			return definitionPairState{}, ToolNode{}, err
 		}
 	}
-	position, err := toolCreatePosition(req.Placement, board, layout)
+	position, err := toolCreatePosition(req.Placement, board, layoutBlocks)
 	if err != nil {
 		return definitionPairState{}, ToolNode{}, err
 	}
@@ -245,7 +247,7 @@ func (s *Store) buildToolCreateCandidate(
 	if err != nil {
 		return definitionPairState{}, ToolNode{}, err
 	}
-	if err := validateToolMutationLayout(nextLayoutRaw, nextLayout, nextBoard.ID); err != nil {
+	if _, err := validateToolMutationLayout(nextLayoutRaw, nextLayout, nextBoard.ID); err != nil {
 		return definitionPairState{}, ToolNode{}, err
 	}
 	return definitionPairState{
@@ -460,75 +462,196 @@ func validToolDefinitionID(id string) bool {
 }
 
 type toolLayoutOwnedBlock struct {
-	start int
-	end   int
-	kind  string
-	id    string
+	start   int
+	end     int
+	kind    string
+	id      string
+	idCount int
+	x       int64
+	y       int64
+	hasX    bool
+	hasY    bool
 }
 
-func validateToolMutationLayout(raw []byte, layout *LayoutDocument, boardID string) error {
+func validateToolMutationLayout(raw []byte, layout *LayoutDocument, boardID string) ([]toolLayoutOwnedBlock, error) {
 	if layout == nil || layout.Schema != CurrentLayoutSchema {
-		return fmt.Errorf("invalid_layout_schema: Tool mutation requires layout schema %d", CurrentLayoutSchema)
+		return nil, fmt.Errorf("invalid_layout_schema: Tool mutation requires layout schema %d", CurrentLayoutSchema)
 	}
 	if layout.BoardID != boardID {
-		return fmt.Errorf("%w: layout board %q does not match %q", ErrConflict, layout.BoardID, boardID)
+		return nil, fmt.Errorf("%w: layout board %q does not match %q", ErrConflict, layout.BoardID, boardID)
 	}
-	_, err := parseToolLayoutOwnedBlocks(raw)
-	return err
+	return parseToolLayoutOwnedBlocks(raw)
 }
 
 func parseToolLayoutOwnedBlocks(raw []byte) ([]toolLayoutOwnedBlock, error) {
 	lines := splitLines(raw)
 	seen := map[string]map[string]bool{"node": {}, "edge": {}}
 	var blocks []toolLayoutOwnedBlock
+	active := -1
+	rootFields := false
+	topLevel := true
+	finishActive := func(end int) error {
+		if active < 0 {
+			return nil
+		}
+		block := &blocks[active]
+		block.end = end
+		if block.idCount != 1 || !validToolDefinitionID(block.id) {
+			return fmt.Errorf("invalid_layout_id: %s id fields = %d", block.kind, block.idCount)
+		}
+		if seen[block.kind][block.id] {
+			return fmt.Errorf("duplicate_layout_id: %s id %q is duplicated", block.kind, block.id)
+		}
+		seen[block.kind][block.id] = true
+		active = -1
+		rootFields = false
+		return nil
+	}
+
 	for index := 0; index < len(lines); index++ {
-		section, ok := tomlLineSectionName(lines[index])
-		if !ok || section != "node" && section != "edge" {
+		line := lines[index]
+		if line.valueContinuation {
 			continue
 		}
-		if !strings.HasPrefix(strings.TrimSpace(lines[index].body), "[[") {
-			return nil, fmt.Errorf("invalid_layout_id: layout %s must be an array block", section)
+		trimmed := strings.TrimSpace(line.body)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
 		}
-		end := tomlBlockEnd(lines, index)
-		id := ""
-		count := 0
-		for field := index + 1; field < end; field++ {
-			assignment := tomlAssignmentIndex(lines[field].body)
-			if assignment < 0 {
+		if strings.HasPrefix(trimmed, "[") {
+			section, ok := tomlLineSectionName(line)
+			if !ok {
+				if active >= 0 || toolLayoutHeaderLooksOwned(trimmed) {
+					return nil, fmt.Errorf("invalid_layout_owned_source: malformed layout-owned header")
+				}
+				topLevel = false
 				continue
 			}
-			path, valid := parseTOMLKeyPath(lines[field].body[:assignment])
-			if !valid || len(path) != 1 || path[0] != "id" {
+			topLevel = false
+			kind := toolLayoutOwnedSectionKind(section)
+			if kind == "" {
+				if err := finishActive(index); err != nil {
+					return nil, err
+				}
 				continue
 			}
-			_, literal, present, err := parseToolAssignment(lines[field].body)
+			if section == kind {
+				if !strings.HasPrefix(trimmed, "[[") {
+					return nil, fmt.Errorf("invalid_layout_owned_source: layout %s root must be an array block", kind)
+				}
+				if err := finishActive(index); err != nil {
+					return nil, err
+				}
+				blocks = append(blocks, toolLayoutOwnedBlock{start: index, end: len(lines), kind: kind})
+				active = len(blocks) - 1
+				rootFields = true
+				continue
+			}
+			if active < 0 || blocks[active].kind != kind {
+				return nil, fmt.Errorf("invalid_layout_owned_source: orphan or competing %s descendant", kind)
+			}
+			rootFields = false
+			continue
+		}
+
+		assignment := tomlAssignmentIndex(line.body)
+		if assignment < 0 {
+			continue
+		}
+		path, valid := parseTOMLKeyPath(line.body[:assignment])
+		if !valid {
+			continue
+		}
+		if topLevel && len(path) > 0 && (path[0] == "node" || path[0] == "edge") {
+			return nil, fmt.Errorf("invalid_layout_owned_source: top-level %s assignment competes with layout authority", path[0])
+		}
+		if active < 0 || !rootFields || len(path) != 1 {
+			continue
+		}
+		block := &blocks[active]
+		switch path[0] {
+		case "id":
+			_, literal, present, err := parseToolAssignment(line.body)
 			if err != nil || !present {
-				return nil, fmt.Errorf("invalid_layout_id: malformed %s id", section)
+				return nil, fmt.Errorf("invalid_layout_id: malformed %s id", block.kind)
 			}
-			id, err = parseToolString(literal)
+			block.id, err = parseToolString(literal)
 			if err != nil {
-				return nil, fmt.Errorf("invalid_layout_id: malformed %s id", section)
+				return nil, fmt.Errorf("invalid_layout_id: malformed %s id", block.kind)
 			}
-			count++
+			block.idCount++
+		case "x", "y":
+			if block.kind != "node" {
+				continue
+			}
+			if err := parseToolLayoutCoordinateField(block, path[0], line.body); err != nil {
+				return nil, err
+			}
 		}
-		if count != 1 || !validToolDefinitionID(id) {
-			return nil, fmt.Errorf("invalid_layout_id: %s id fields = %d", section, count)
-		}
-		if seen[section][id] {
-			return nil, fmt.Errorf("duplicate_layout_id: %s id %q is duplicated", section, id)
-		}
-		seen[section][id] = true
-		blocks = append(blocks, toolLayoutOwnedBlock{start: index, end: end, kind: section, id: id})
-		index = end - 1
+	}
+	if err := finishActive(len(lines)); err != nil {
+		return nil, err
 	}
 	return blocks, nil
 }
 
-func toolCreatePosition(placement ToolPlacement, board *BoardDocument, layout *LayoutDocument) (LayoutNode, error) {
+func toolLayoutOwnedSectionKind(section string) string {
+	for _, kind := range []string{"node", "edge"} {
+		if tomlSectionIsOrDescendsFrom(section, kind) {
+			return kind
+		}
+	}
+	return ""
+}
+
+func toolLayoutHeaderLooksOwned(header string) bool {
+	candidate := strings.TrimLeft(strings.TrimSpace(header), "[ \t")
+	for _, prefix := range []string{"node", "edge", `"node"`, `"edge"`, `'node'`, `'edge'`} {
+		if !strings.HasPrefix(candidate, prefix) {
+			continue
+		}
+		rest := candidate[len(prefix):]
+		return rest == "" || strings.ContainsRune(".] \t", rune(rest[0]))
+	}
+	return false
+}
+
+func parseToolLayoutCoordinateField(block *toolLayoutOwnedBlock, field, raw string) error {
+	_, literal, present, err := parseToolAssignment(raw)
+	if err != nil || !present {
+		return fmt.Errorf("invalid_layout_coordinate: malformed %s coordinate", field)
+	}
+	value, err := strconv.ParseInt(literal, 10, 32)
+	if err != nil || strconv.FormatInt(value, 10) != literal || !validToolLayoutCoordinate(value) {
+		return fmt.Errorf("invalid_layout_coordinate: %s coordinate is outside signed 32-bit bounds", field)
+	}
+	switch field {
+	case "x":
+		if block.hasX {
+			return fmt.Errorf("invalid_layout_coordinate: duplicate x coordinate")
+		}
+		block.x, block.hasX = value, true
+	case "y":
+		if block.hasY {
+			return fmt.Errorf("invalid_layout_coordinate: duplicate y coordinate")
+		}
+		block.y, block.hasY = value, true
+	}
+	return nil
+}
+
+type toolLayoutPosition struct {
+	x int64
+	y int64
+}
+
+func toolCreatePosition(placement ToolPlacement, board *BoardDocument, blocks []toolLayoutOwnedBlock) (LayoutNode, error) {
 	if placement.X != nil {
 		return LayoutNode{X: *placement.X, Y: *placement.Y}, nil
 	}
-	positions := toolBoardPositions(board, layout)
+	positions, err := toolBoardPositions(board, blocks)
+	if err != nil {
+		return LayoutNode{}, err
+	}
 	predecessor, hasPredecessor := positions[placement.PredecessorNodeID]
 	successor, hasSuccessor := positions[placement.SuccessorNodeID]
 	if placement.PredecessorNodeID != "" && !hasPredecessor {
@@ -537,67 +660,225 @@ func toolCreatePosition(placement ToolPlacement, board *BoardDocument, layout *L
 	if placement.SuccessorNodeID != "" && !hasSuccessor {
 		return LayoutNode{}, fmt.Errorf("unknown Tool placement successor %q", placement.SuccessorNodeID)
 	}
-	desiredX, desiredY := layoutPlacementMin, layoutPlacementMin
+	desiredX, desiredY := int64(layoutPlacementMin), int64(layoutPlacementMin)
 	switch {
 	case hasPredecessor && hasSuccessor:
-		desiredX = (predecessor.X + successor.X) / 2
-		desiredY = (predecessor.Y + successor.Y) / 2
+		desiredX, err = checkedToolLayoutMidpoint(predecessor.x, successor.x)
+		if err != nil {
+			return LayoutNode{}, err
+		}
+		desiredY, err = checkedToolLayoutMidpoint(predecessor.y, successor.y)
+		if err != nil {
+			return LayoutNode{}, err
+		}
 	case hasPredecessor:
-		desiredX = predecessor.X + layoutPlacementStep
-		desiredY = predecessor.Y
+		desiredX, err = checkedToolLayoutAdd(predecessor.x, int64(layoutPlacementStep))
+		if err != nil {
+			return LayoutNode{}, err
+		}
+		desiredY = predecessor.y
 	case hasSuccessor:
-		desiredX = successor.X - layoutPlacementStep
-		desiredY = successor.Y
+		desiredX, err = checkedToolLayoutAdd(successor.x, -int64(layoutPlacementStep))
+		if err != nil {
+			return LayoutNode{}, err
+		}
+		desiredY = successor.y
 	}
-	occupied := make([]LayoutNode, 0, len(positions))
+	occupied := make([]toolLayoutPosition, 0, len(positions))
 	for _, position := range positions {
 		occupied = append(occupied, position)
 	}
-	x := maxInt(layoutPlacementMin, snapLayoutPosition(desiredX))
-	y := maxInt(layoutPlacementMin, snapLayoutPosition(desiredY))
+	x, err := snapToolLayoutPosition(desiredX)
+	if err != nil {
+		return LayoutNode{}, err
+	}
+	y, err := snapToolLayoutPosition(desiredY)
+	if err != nil {
+		return LayoutNode{}, err
+	}
+	x = maxToolLayoutPosition(int64(layoutPlacementMin), x)
+	y = maxToolLayoutPosition(int64(layoutPlacementMin), y)
 	for attempt := 0; attempt < layoutPlacementMaxAttempts; attempt++ {
-		if !layoutPositionCollides(x, y, occupied) {
-			return LayoutNode{X: x, Y: y}, nil
+		collides, err := toolLayoutPositionCollides(x, y, occupied)
+		if err != nil {
+			return LayoutNode{}, err
 		}
-		x += layoutPlacementStep
-		if x > layoutPlacementWrapX {
-			x = layoutPlacementMin
-			y += layoutPlacementStep
+		if !collides {
+			if !validToolLayoutCoordinate(x) || !validToolLayoutCoordinate(y) {
+				return LayoutNode{}, invalidToolLayoutCoordinateError()
+			}
+			return LayoutNode{X: int(x), Y: int(y)}, nil
+		}
+		x, err = checkedToolLayoutAdd(x, int64(layoutPlacementStep))
+		if err != nil {
+			return LayoutNode{}, err
+		}
+		if x > int64(layoutPlacementWrapX) {
+			x = int64(layoutPlacementMin)
+			y, err = checkedToolLayoutAdd(y, int64(layoutPlacementStep))
+			if err != nil {
+				return LayoutNode{}, err
+			}
 		}
 	}
 	return LayoutNode{}, fmt.Errorf("%w: no free layout position within bounded search", ErrConflict)
 }
 
-func toolBoardPositions(board *BoardDocument, layout *LayoutDocument) map[string]LayoutNode {
-	persisted := make(map[string]LayoutNode)
-	if layout != nil {
-		for _, node := range layout.Nodes {
-			persisted[node.ID] = node
+func toolBoardPositions(board *BoardDocument, blocks []toolLayoutOwnedBlock) (map[string]toolLayoutPosition, error) {
+	persisted := make(map[string]toolLayoutPosition)
+	for _, block := range blocks {
+		if block.kind == "node" && block.hasX && block.hasY {
+			persisted[block.id] = toolLayoutPosition{x: block.x, y: block.y}
 		}
 	}
-	positions := make(map[string]LayoutNode, len(board.Missions)+len(board.Formations)+len(board.Gates)+len(board.Tools))
-	index := 0
-	add := func(id string) {
+	positions := make(map[string]toolLayoutPosition, len(board.Missions)+len(board.Formations)+len(board.Gates)+len(board.Tools))
+	index := int64(0)
+	add := func(id string) error {
 		position, ok := persisted[id]
 		if !ok {
-			position = LayoutNode{ID: id, X: 140 + index*308, Y: 168 + (index%2)*196}
+			xOffset, err := checkedToolLayoutMultiply(index, 308)
+			if err != nil {
+				return err
+			}
+			x, err := checkedToolLayoutAdd(140, xOffset)
+			if err != nil {
+				return err
+			}
+			yOffset, err := checkedToolLayoutMultiply(index%2, 196)
+			if err != nil {
+				return err
+			}
+			y, err := checkedToolLayoutAdd(168, yOffset)
+			if err != nil {
+				return err
+			}
+			if !validToolLayoutCoordinate(x) || !validToolLayoutCoordinate(y) {
+				return invalidToolLayoutCoordinateError()
+			}
+			position = toolLayoutPosition{x: x, y: y}
 		}
 		positions[id] = position
-		index++
+		var err error
+		index, err = checkedToolLayoutAdd(index, 1)
+		return err
 	}
 	for _, mission := range board.Missions {
-		add(mission.ID)
+		if err := add(mission.ID); err != nil {
+			return nil, err
+		}
 	}
 	for _, formation := range board.Formations {
-		add(formation.ID)
+		if err := add(formation.ID); err != nil {
+			return nil, err
+		}
 	}
 	for _, gate := range board.Gates {
-		add(gate.ID)
+		if err := add(gate.ID); err != nil {
+			return nil, err
+		}
 	}
 	for _, tool := range board.Tools {
-		add(tool.ID)
+		if err := add(tool.ID); err != nil {
+			return nil, err
+		}
 	}
-	return positions
+	return positions, nil
+}
+
+func checkedToolLayoutMidpoint(left, right int64) (int64, error) {
+	sum, err := checkedToolLayoutAdd(left, right)
+	if err != nil {
+		return 0, err
+	}
+	return sum / 2, nil
+}
+
+func checkedToolLayoutAdd(left, right int64) (int64, error) {
+	const maxInt64 = int64(^uint64(0) >> 1)
+	const minInt64 = -maxInt64 - 1
+	if right > 0 && left > maxInt64-right || right < 0 && left < minInt64-right {
+		return 0, invalidToolLayoutCoordinateError()
+	}
+	return left + right, nil
+}
+
+func checkedToolLayoutMultiply(left, right int64) (int64, error) {
+	if left == 0 || right == 0 {
+		return 0, nil
+	}
+	const maxInt64 = int64(^uint64(0) >> 1)
+	const minInt64 = -maxInt64 - 1
+	if left == -1 && right == minInt64 || right == -1 && left == minInt64 {
+		return 0, invalidToolLayoutCoordinateError()
+	}
+	result := left * right
+	if result/right != left {
+		return 0, invalidToolLayoutCoordinateError()
+	}
+	return result, nil
+}
+
+func snapToolLayoutPosition(value int64) (int64, error) {
+	grid := int64(layoutPlacementGrid)
+	quotient := value / grid
+	remainder := value % grid
+	var err error
+	switch {
+	case remainder >= grid/2:
+		quotient, err = checkedToolLayoutAdd(quotient, 1)
+	case remainder <= -grid/2:
+		quotient, err = checkedToolLayoutAdd(quotient, -1)
+	}
+	if err != nil {
+		return 0, err
+	}
+	return checkedToolLayoutMultiply(quotient, grid)
+}
+
+func toolLayoutPositionCollides(x, y int64, occupied []toolLayoutPosition) (bool, error) {
+	for _, position := range occupied {
+		distanceX, err := toolLayoutAbsoluteDistance(position.x, x)
+		if err != nil {
+			return false, err
+		}
+		distanceY, err := toolLayoutAbsoluteDistance(position.y, y)
+		if err != nil {
+			return false, err
+		}
+		if distanceX < int64(layoutPlacementWidth) && distanceY < int64(layoutPlacementHeight) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func toolLayoutAbsoluteDistance(left, right int64) (int64, error) {
+	const minInt64 = -int64(^uint64(0)>>1) - 1
+	if right == minInt64 {
+		return 0, invalidToolLayoutCoordinateError()
+	}
+	difference, err := checkedToolLayoutAdd(left, -right)
+	if err != nil {
+		return 0, err
+	}
+	if difference == minInt64 {
+		return 0, invalidToolLayoutCoordinateError()
+	}
+	if difference < 0 {
+		difference = -difference
+	}
+	return difference, nil
+}
+
+func maxToolLayoutPosition(left, right int64) int64 {
+	if left > right {
+		return left
+	}
+	return right
+}
+
+func invalidToolLayoutCoordinateError() error {
+	return fmt.Errorf("invalid_layout_coordinate: layout coordinate arithmetic is unsafe")
 }
 
 func updatePresentToolLayout(raw []byte, board *BoardDocument, newToolID string, position LayoutNode, updatedAt string) ([]byte, error) {
@@ -607,10 +888,26 @@ func updatePresentToolLayout(raw []byte, board *BoardDocument, newToolID string,
 	}
 	nodeIDs, edgeIDs := toolBoardAuthorityIDs(board)
 	filtered := filterToolLayoutBlocks(raw, blocks, nodeIDs, edgeIDs, newToolID)
-	doc := parseTOMLDocument(filtered)
-	doc.setScalar("boardRev", renderInt(board.Rev))
-	doc.setScalar("updatedAt", renderString(updatedAt))
-	return appendLayoutNodeBlock(doc.bytes(), position), nil
+	filtered = setToolLayoutScalarPreservingLeadingTrivia(filtered, "boardRev", renderInt(board.Rev))
+	filtered = setToolLayoutScalarPreservingLeadingTrivia(filtered, "updatedAt", renderString(updatedAt))
+	return appendLayoutNodeBlock(filtered, position), nil
+}
+
+func setToolLayoutScalarPreservingLeadingTrivia(raw []byte, key, renderedValue string) []byte {
+	doc := parseTOMLDocument(raw)
+	if _, exists := doc.fields[key]; exists {
+		doc.setScalar(key, renderedValue)
+		return doc.bytes()
+	}
+	insertAt := doc.firstSection
+	for insertAt > 0 && toolLayoutTrivia(doc.lines[insertAt-1]) {
+		insertAt--
+	}
+	line := tomlLine{body: key + " = " + renderedValue, newline: "\n"}
+	doc.lines = append(doc.lines, tomlLine{})
+	copy(doc.lines[insertAt+1:], doc.lines[insertAt:])
+	doc.lines[insertAt] = line
+	return doc.bytes()
 }
 
 func filterToolLayoutBlocks(raw []byte, blocks []toolLayoutOwnedBlock, nodeIDs, edgeIDs map[string]bool, excludedNodeID string) []byte {
@@ -631,10 +928,21 @@ func filterToolLayoutBlocks(raw []byte, blocks []toolLayoutOwnedBlock, nodeIDs, 
 			block.kind == "edge" && edgeIDs[block.id]
 		if keep {
 			filtered = append(filtered, lines[block.start:block.end]...)
+		} else {
+			for _, line := range lines[block.start:block.end] {
+				if toolLayoutTrivia(line) {
+					filtered = append(filtered, line)
+				}
+			}
 		}
 		index = block.end
 	}
 	return renderTOMLLines(filtered)
+}
+
+func toolLayoutTrivia(line tomlLine) bool {
+	trimmed := strings.TrimSpace(line.body)
+	return !line.valueContinuation && (trimmed == "" || strings.HasPrefix(trimmed, "#"))
 }
 
 func toolBoardAuthorityIDs(board *BoardDocument) (map[string]bool, map[string]bool) {
