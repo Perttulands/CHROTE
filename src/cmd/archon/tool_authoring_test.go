@@ -58,6 +58,7 @@ func TestArchonToolCreatePublishesCanonicalPairWithoutReflowOrImplicitWiring(t *
 			if code != 0 || stderr != "" {
 				t.Fatalf("tool create code=%d stdout=%s stderr=%s", code, stdout, stderr)
 			}
+			assertArchonToolJSONRootKeys(t, stdout, "board", "layout", "tool")
 
 			var result formations.ToolCreateResult
 			if err := json.Unmarshal([]byte(stdout), &result); err != nil {
@@ -91,6 +92,13 @@ func TestArchonToolCreatePublishesCanonicalPairWithoutReflowOrImplicitWiring(t *
 			if test.exact && (createdPosition.X != test.wantX || createdPosition.Y != test.wantY) {
 				t.Fatalf("created Tool position = %#v, want %d,%d", createdPosition, test.wantX, test.wantY)
 			}
+			wantNodes := []formations.LayoutNode{createdPosition}
+			var wantEdges []formations.LayoutEdge
+			if beforeLayout != nil {
+				wantNodes = append(append([]formations.LayoutNode(nil), beforeLayout.Nodes...), createdPosition)
+				wantEdges = beforeLayout.Edges
+			}
+			assertArchonToolLayoutInventory(t, result.Layout, wantNodes, wantEdges)
 			if strings.Contains(stdout, `"toml"`) || result.Board.TOML != "" || result.Layout.TOML != "" {
 				t.Fatalf("Tool create leaked raw TOML: %s", stdout)
 			}
@@ -99,14 +107,66 @@ func TestArchonToolCreatePublishesCanonicalPairWithoutReflowOrImplicitWiring(t *
 	}
 }
 
+func TestArchonToolCreateMigratesSchemaOneBoardOnItsFirstTool(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	const slug = "first-tool"
+	writeArchonFile(t, store.BoardPath(slug), `schema = 1
+id = "brd_first_tool"
+slug = "first-tool"
+title = "First Tool"
+rev = 1
+x_schema_one_sentinel = "keep"
+`)
+	harness := &archonToolAuthoringHarness{
+		workspace: workspace,
+		slug:      slug,
+		store:     store,
+		runner:    &fakeTmux{live: map[string]bool{}},
+	}
+	stdout, stderr, code := harness.run(
+		t,
+		"tool", "create", slug,
+		"--profile-id", "json.normalize",
+		"--profile-version", "1",
+		"--title", "First normalized step",
+		"--params-json", `{"mode":"strict"}`,
+		"--json",
+	)
+	if code != 0 || stderr != "" {
+		t.Fatalf("first Tool schema-1 create code=%d stdout=%s stderr=%s", code, stdout, stderr)
+	}
+	var result formations.ToolCreateResult
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("decode first Tool schema-1 create: %v\n%s", err, stdout)
+	}
+	if result.Board == nil || result.Board.Schema != formations.CurrentBoardSchema || result.Board.Rev != 2 ||
+		len(result.Board.Tools) != 1 || result.Board.Tools[0].ID != result.Tool.ID {
+		t.Fatalf("first Tool migrated board = %#v, Tool=%#v", result.Board, result.Tool)
+	}
+	if result.Layout == nil || result.Layout.BoardID != result.Board.ID || result.Layout.BoardRev != result.Board.Rev {
+		t.Fatalf("first Tool migrated layout = %#v, board=%#v", result.Layout, result.Board)
+	}
+	position, found := archonToolLayoutNode(result.Layout, result.Tool.ID)
+	if !found {
+		t.Fatalf("first Tool has no layout node: %#v", result.Layout.Nodes)
+	}
+	assertArchonToolLayoutInventory(t, result.Layout, []formations.LayoutNode{position}, nil)
+	if raw := readArchonFile(t, store.BoardPath(slug)); !strings.Contains(raw, `x_schema_one_sentinel = "keep"`) {
+		t.Fatalf("first Tool migration dropped schema-1 retained source:\n%s", raw)
+	}
+	assertArchonToolCanonicalPair(t, harness, result.Board, result.Layout)
+}
+
 func TestArchonToolCreatePlacementUnionIsStoreValidatedAndNeverReflowsExistingNodes(t *testing.T) {
 	validHints := []struct {
-		name  string
-		flags []string
+		name         string
+		flags        []string
+		wantX, wantY int
 	}{
-		{name: "predecessor only", flags: []string{"--predecessor-node-id", "tool_sink"}},
-		{name: "successor only", flags: []string{"--successor-node-id", "gate_review"}},
-		{name: "predecessor and successor", flags: []string{"--predecessor-node-id", "tool_sink", "--successor-node-id", "gate_review"}},
+		{name: "predecessor only", flags: []string{"--predecessor-node-id", "tool_sink"}, wantX: 1064, wantY: 420},
+		{name: "successor only", flags: []string{"--successor-node-id", "gate_review"}, wantX: 1120, wantY: 420},
+		{name: "predecessor and successor", flags: []string{"--predecessor-node-id", "tool_sink", "--successor-node-id", "gate_review"}, wantX: 1036, wantY: 420},
 	}
 	for _, test := range validHints {
 		t.Run(test.name+" places only the new node", func(t *testing.T) {
@@ -133,13 +193,20 @@ func TestArchonToolCreatePlacementUnionIsStoreValidatedAndNeverReflowsExistingNo
 			if result.Layout == nil {
 				t.Fatalf("hinted Tool create layout is nil: %#v", result)
 			}
-			if _, found := archonToolLayoutNode(result.Layout, result.Tool.ID); !found {
+			position, found := archonToolLayoutNode(result.Layout, result.Tool.ID)
+			if !found {
 				t.Fatalf("hinted Tool %q has no new layout node: %#v", result.Tool.ID, result.Layout.Nodes)
 			}
+			if position.X != test.wantX || position.Y != test.wantY {
+				t.Fatalf("hinted Tool position = %#v, want %d,%d", position, test.wantX, test.wantY)
+			}
 			assertArchonToolRetainedLayoutNodes(t, beforeLayout, result.Layout, nil)
+			wantNodes := append(append([]formations.LayoutNode(nil), beforeLayout.Nodes...), position)
+			assertArchonToolLayoutInventory(t, result.Layout, wantNodes, beforeLayout.Edges)
 			if !reflect.DeepEqual(result.Board.Connections, beforeBoard.Connections) {
 				t.Fatalf("placement hints implicitly wired the Tool:\n before=%#v\n after=%#v", beforeBoard.Connections, result.Board.Connections)
 			}
+			assertArchonToolCanonicalPair(t, harness, result.Board, result.Layout)
 		})
 	}
 
@@ -158,6 +225,7 @@ func TestArchonToolCreatePlacementUnionIsStoreValidatedAndNeverReflowsExistingNo
 		t.Run(test.name, func(t *testing.T) {
 			harness := newArchonToolAuthoringHarness(t, true, false)
 			before := snapshotArchonToolParityTree(t, harness.workspace)
+			beforeFiles := snapshotArchonToolPairFileIdentity(t, harness)
 			args := []string{
 				"tool", "create", harness.slug,
 				"--profile-id", "json.normalize",
@@ -172,6 +240,7 @@ func TestArchonToolCreatePlacementUnionIsStoreValidatedAndNeverReflowsExistingNo
 			if after := snapshotArchonToolParityTree(t, harness.workspace); !reflect.DeepEqual(after, before) {
 				t.Fatalf("invalid placement changed definition pair:\n before=%#v\n after=%#v", before, after)
 			}
+			assertArchonToolPairFileIdentity(t, harness, beforeFiles)
 		})
 	}
 }
@@ -210,6 +279,7 @@ func TestArchonToolUpdatePreservesPresentOrAbsentLayoutState(t *testing.T) {
 			if code != 0 || stderr != "" {
 				t.Fatalf("Tool update code=%d stdout=%s stderr=%s", code, stdout, stderr)
 			}
+			assertArchonToolJSONRootKeys(t, stdout, "board", "layout", "tool")
 			var result formations.ToolUpdateResult
 			if err := json.Unmarshal([]byte(stdout), &result); err != nil {
 				t.Fatalf("decode Tool update result: %v\n%s", err, stdout)
@@ -225,6 +295,7 @@ func TestArchonToolUpdatePreservesPresentOrAbsentLayoutState(t *testing.T) {
 					t.Fatalf("present update layout = %#v, want boardRev %d", result.Layout, result.Board.Rev)
 				}
 				assertArchonToolRetainedLayoutNodes(t, beforeLayout, result.Layout, nil)
+				assertArchonToolLayoutInventory(t, result.Layout, beforeLayout.Nodes, beforeLayout.Edges)
 			} else {
 				if result.Layout != nil || !strings.Contains(stdout, `"layout": null`) {
 					t.Fatalf("absent-layout update output = %s, want explicit layout:null", stdout)
@@ -246,6 +317,7 @@ func TestArchonToolUpdatePreservesPresentOrAbsentLayoutState(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			harness := newArchonToolAuthoringHarness(t, true, false)
 			before := snapshotArchonToolParityTree(t, harness.workspace)
+			beforeFiles := snapshotArchonToolPairFileIdentity(t, harness)
 			args := []string{"tool", "update", harness.slug, "tool_normalize", "--json"}
 			args = append(args, test.flags...)
 			stdout, stderr, code := harness.run(t, args...)
@@ -253,6 +325,7 @@ func TestArchonToolUpdatePreservesPresentOrAbsentLayoutState(t *testing.T) {
 			if after := snapshotArchonToolParityTree(t, harness.workspace); !reflect.DeepEqual(after, before) {
 				t.Fatalf("invalid Tool update changed definition pair:\n before=%#v\n after=%#v", before, after)
 			}
+			assertArchonToolPairFileIdentity(t, harness, beforeFiles)
 		})
 	}
 }
@@ -280,6 +353,7 @@ func TestArchonToolDeletePreservesPresentOrAbsentLayoutState(t *testing.T) {
 			if code != 0 || stderr != "" {
 				t.Fatalf("Tool delete code=%d stdout=%s stderr=%s", code, stdout, stderr)
 			}
+			assertArchonToolJSONRootKeys(t, stdout, "board", "layout", "toolId")
 			var result formations.ToolDeleteResult
 			if err := json.Unmarshal([]byte(stdout), &result); err != nil {
 				t.Fatalf("decode Tool delete result: %v\n%s", err, stdout)
@@ -310,6 +384,13 @@ func TestArchonToolDeletePreservesPresentOrAbsentLayoutState(t *testing.T) {
 					}
 				}
 				assertArchonToolRetainedLayoutNodes(t, beforeLayout, result.Layout, map[string]bool{"tool_normalize": true})
+				wantNodes := make([]formations.LayoutNode, 0, len(beforeLayout.Nodes)-1)
+				for _, node := range beforeLayout.Nodes {
+					if node.ID != "tool_normalize" {
+						wantNodes = append(wantNodes, node)
+					}
+				}
+				assertArchonToolLayoutInventory(t, result.Layout, wantNodes, nil)
 			} else {
 				if result.Layout != nil || !strings.Contains(stdout, `"layout": null`) {
 					t.Fatalf("absent-layout delete output = %s, want explicit layout:null", stdout)
@@ -330,6 +411,16 @@ func TestArchonToolInspectIsReadOnlyAndSelectorSafe(t *testing.T) {
 			if code != 0 || stderr != "" {
 				t.Fatalf("Tool inspect %q code=%d stdout=%s stderr=%s", selector, code, stdout, stderr)
 			}
+			var topLevel map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(stdout), &topLevel); err != nil {
+				t.Fatalf("decode Tool inspect top level %q: %v\n%s", selector, err, stdout)
+			}
+			assertArchonToolExactJSONKeys(t, topLevel, "board", "tool")
+			var boardIdentity map[string]json.RawMessage
+			if err := json.Unmarshal(topLevel["board"], &boardIdentity); err != nil {
+				t.Fatalf("decode Tool inspect board identity %q: %v\n%s", selector, err, stdout)
+			}
+			assertArchonToolExactJSONKeys(t, boardIdentity, "id", "slug", "title", "rev", "etag")
 			var response struct {
 				Board archonBoardIdentity `json:"board"`
 				Tool  formations.ToolNode `json:"tool"`
@@ -337,13 +428,19 @@ func TestArchonToolInspectIsReadOnlyAndSelectorSafe(t *testing.T) {
 			if err := json.Unmarshal([]byte(stdout), &response); err != nil {
 				t.Fatalf("decode Tool inspect %q: %v\n%s", selector, err, stdout)
 			}
-			if response.Board.ID != "brd_tool_parity" || response.Board.Slug != harness.slug || response.Board.Rev != 4 || response.Board.ETag == "" {
+			if response.Board.ID != "brd_tool_parity" || response.Board.Slug != harness.slug || response.Board.Title != "Tool parity" || response.Board.Rev != 4 || response.Board.ETag == "" {
 				t.Fatalf("Tool inspect board identity = %#v", response.Board)
 			}
 			if response.Tool.ID != "tool_normalize" || response.Tool.Title != "Normalize report" ||
 				response.Tool.ProfileID != "json.normalize" || response.Tool.ProfileVersion != "1" ||
 				response.Tool.Params["mode"] != "strict" || len(response.Tool.Inputs) != 1 || len(response.Tool.Outputs) != 1 {
 				t.Fatalf("Tool inspect projection = %#v", response.Tool)
+			}
+			lower := strings.ToLower(stdout)
+			for _, forbidden := range []string{`"toml"`, `"raw"`, `"runtime"`, `"session"`, `"authority"`, `"executable"`, `"command"`, `"argv"`, `"shell"`, `"cwd"`, `"env"`} {
+				if strings.Contains(lower, forbidden) {
+					t.Fatalf("Tool inspect leaked forbidden %s vocabulary: %s", forbidden, stdout)
+				}
 			}
 		})
 	}
@@ -371,6 +468,66 @@ func TestArchonToolInspectIsReadOnlyAndSelectorSafe(t *testing.T) {
 	})
 }
 
+func TestArchonToolUpdateAndDeleteShareExactTitleMissingAndAmbiguousSelectors(t *testing.T) {
+	for _, verb := range []string{"update", "delete"} {
+		t.Run(verb, func(t *testing.T) {
+			command := func(slug, selector string) []string {
+				args := []string{"tool", verb, slug, selector}
+				if verb == "update" {
+					args = append(args, "--title", "Selected by exact title")
+				}
+				return append(args, "--json")
+			}
+
+			t.Run("exact title", func(t *testing.T) {
+				harness := newArchonToolAuthoringHarness(t, true, false)
+				stdout, stderr, code := harness.run(t, command(harness.slug, "Normalize report")...)
+				if code != 0 || stderr != "" {
+					t.Fatalf("Tool %s exact-title selector code=%d stdout=%s stderr=%s", verb, code, stdout, stderr)
+				}
+				var response struct {
+					Tool   formations.ToolNode `json:"tool"`
+					ToolID string              `json:"toolId"`
+				}
+				if err := json.Unmarshal([]byte(stdout), &response); err != nil {
+					t.Fatalf("decode Tool %s exact-title result: %v\n%s", verb, err, stdout)
+				}
+				selectedID := response.Tool.ID
+				if verb == "delete" {
+					selectedID = response.ToolID
+				}
+				if selectedID != "tool_normalize" {
+					t.Fatalf("Tool %s exact-title selected %q, want tool_normalize", verb, selectedID)
+				}
+			})
+
+			t.Run("missing", func(t *testing.T) {
+				harness := newArchonToolAuthoringHarness(t, true, false)
+				before := snapshotArchonToolParityTree(t, harness.workspace)
+				stdout, stderr, code := harness.run(t, command(harness.slug, "tool_missing")...)
+				assertArchonToolJSONError(t, stdout, stderr, code, "not_found", "tool", "tool_missing")
+				if after := snapshotArchonToolParityTree(t, harness.workspace); !reflect.DeepEqual(after, before) {
+					t.Fatalf("missing Tool %s selector changed definition pair:\n before=%#v\n after=%#v", verb, before, after)
+				}
+			})
+
+			t.Run("ambiguous", func(t *testing.T) {
+				harness := newArchonToolAuthoringHarness(t, true, false)
+				raw := archonToolParityBoardFixture()
+				raw = strings.Replace(raw, `title = "Normalize report"`, `title = "Same Tool"`, 1)
+				raw = strings.Replace(raw, `title = "Receive normalized report"`, `title = "Same Tool"`, 1)
+				writeArchonFile(t, harness.store.BoardPath(harness.slug), raw)
+				before := snapshotArchonToolParityTree(t, harness.workspace)
+				stdout, stderr, code := harness.run(t, command(harness.slug, "Same Tool")...)
+				assertArchonToolJSONError(t, stdout, stderr, code, "ambiguous_selector", "tool", "Same Tool")
+				if after := snapshotArchonToolParityTree(t, harness.workspace); !reflect.DeepEqual(after, before) {
+					t.Fatalf("ambiguous Tool %s selector changed definition pair:\n before=%#v\n after=%#v", verb, before, after)
+				}
+			})
+		})
+	}
+}
+
 func TestArchonToolTextOutputIsStableAndCarriesGeneratedIdentity(t *testing.T) {
 	harness := newArchonToolAuthoringHarness(t, false, false)
 	stdout, stderr, code := harness.run(
@@ -394,12 +551,72 @@ func TestArchonToolTextOutputIsStableAndCarriesGeneratedIdentity(t *testing.T) {
 		t.Fatalf("Tool update text code=%d stdout=%q stderr=%q", code, stdout, stderr)
 	}
 	stdout, stderr, code = harness.run(t, "tool", "inspect", harness.slug, toolID)
-	if code != 0 || stderr != "" || stdout != toolID+"\tText Renamed\tjson.normalize@1\n" {
+	if code != 0 || stderr != "" || !reflect.DeepEqual(strings.Fields(stdout), []string{toolID, "Text", "Renamed", "json.normalize@1"}) {
 		t.Fatalf("Tool inspect text code=%d stdout=%q stderr=%q", code, stdout, stderr)
 	}
 	stdout, stderr, code = harness.run(t, "tool", "delete", harness.slug, toolID)
 	if code != 0 || stderr != "" || stdout != "deleted "+toolID+"\n" {
 		t.Fatalf("Tool delete text code=%d stdout=%q stderr=%q", code, stdout, stderr)
+	}
+}
+
+func TestParseArchonToolParametersJSONFramesOneExactScalarObject(t *testing.T) {
+	valid := []struct {
+		name string
+		raw  string
+		want map[string]any
+	}{
+		{name: "empty object", raw: `{}`, want: map[string]any{}},
+		{
+			name: "string boolean and int64 endpoints",
+			raw:  `{"text":"literal","flag":false,"minimum":-9223372036854775808,"maximum":9223372036854775807}`,
+			want: map[string]any{"text": "literal", "flag": false, "minimum": int64(-9223372036854775808), "maximum": int64(9223372036854775807)},
+		},
+		{
+			name: "valid surrogate pair and intentional replacement character",
+			raw:  `{"emoji":"\uD83D\uDE00","replacement":"\uFFFD"}`,
+			want: map[string]any{"emoji": "😀", "replacement": "�"},
+		},
+	}
+	for _, test := range valid {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := parseArchonToolParametersJSON(test.raw)
+			if err != nil {
+				t.Fatalf("parse valid Tool parameter object: %v", err)
+			}
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("Tool parameters = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+
+	invalidUTF8 := string([]byte{'{', '"', 'x', '"', ':', '"', 0xff, '"', '}'})
+	invalid := []struct {
+		name string
+		raw  string
+	}{
+		{name: "empty input"},
+		{name: "array root", raw: `[]`},
+		{name: "string root", raw: `"not an object"`},
+		{name: "null root", raw: `null`},
+		{name: "trailing JSON", raw: `{} {}`},
+		{name: "duplicate decoded key", raw: `{"mode":"strict","\u006dode":"strict"}`},
+		{name: "nested object", raw: `{"mode":{"value":"strict"}}`},
+		{name: "nested array", raw: `{"mode":["strict"]}`},
+		{name: "null value", raw: `{"mode":null}`},
+		{name: "float", raw: `{"count":1.0}`},
+		{name: "exponent", raw: `{"count":1e0}`},
+		{name: "int64 overflow", raw: `{"count":9223372036854775808}`},
+		{name: "raw invalid UTF-8", raw: invalidUTF8},
+		{name: "unpaired high surrogate", raw: `{"mode":"\uD800"}`},
+		{name: "unpaired low surrogate", raw: `{"mode":"\uDC00"}`},
+	}
+	for _, test := range invalid {
+		t.Run(test.name, func(t *testing.T) {
+			if got, err := parseArchonToolParametersJSON(test.raw); err == nil {
+				t.Fatalf("invalid Tool parameter frame parsed as %#v", got)
+			}
+		})
 	}
 }
 
@@ -417,6 +634,7 @@ func TestArchonToolParameterErrorsAreStructuredAndLeaveThePairUntouched(t *testi
 		t.Run(test.name, func(t *testing.T) {
 			harness := newArchonToolAuthoringHarness(t, true, false)
 			before := snapshotArchonToolParityTree(t, harness.workspace)
+			beforeFiles := snapshotArchonToolPairFileIdentity(t, harness)
 			stdout, stderr, code := harness.run(
 				t,
 				"tool", "create", harness.slug,
@@ -429,6 +647,60 @@ func TestArchonToolParameterErrorsAreStructuredAndLeaveThePairUntouched(t *testi
 			assertArchonToolJSONError(t, stdout, stderr, code, "invalid_tool_mutation", "tool", "json.normalize@1")
 			if after := snapshotArchonToolParityTree(t, harness.workspace); !reflect.DeepEqual(after, before) {
 				t.Fatalf("invalid Tool parameters changed definition pair:\n before=%#v\n after=%#v", before, after)
+			}
+			assertArchonToolPairFileIdentity(t, harness, beforeFiles)
+		})
+	}
+}
+
+func TestArchonToolProfileAndUpdateParameterMappingsCannotBeIgnored(t *testing.T) {
+	unknownTuples := []struct {
+		name, profileID, profileVersion string
+	}{
+		{name: "unknown profile", profileID: "json.unknown", profileVersion: "1"},
+		{name: "unknown version", profileID: "json.normalize", profileVersion: "999"},
+	}
+	for _, test := range unknownTuples {
+		t.Run(test.name, func(t *testing.T) {
+			harness := newArchonToolAuthoringHarness(t, true, false)
+			before := snapshotArchonToolParityTree(t, harness.workspace)
+			stdout, stderr, code := harness.run(
+				t,
+				"tool", "create", harness.slug,
+				"--profile-id", test.profileID,
+				"--profile-version", test.profileVersion,
+				"--title", "Unknown tuple must not persist",
+				"--params-json", `{"mode":"strict"}`,
+				"--json",
+			)
+			assertArchonToolJSONError(t, stdout, stderr, code, "invalid_tool_mutation", "tool", test.profileID+"@"+test.profileVersion)
+			if after := snapshotArchonToolParityTree(t, harness.workspace); !reflect.DeepEqual(after, before) {
+				t.Fatalf("unknown Tool tuple changed definition pair:\n before=%#v\n after=%#v", before, after)
+			}
+		})
+	}
+
+	invalidUpdates := []struct {
+		name, params string
+	}{
+		{name: "valid title with invalid parameter value", params: `{"mode":"lenient"}`},
+		{name: "valid title with explicit empty parameters", params: `{}`},
+		{name: "valid title with malformed empty parameter frame", params: ``},
+	}
+	for _, test := range invalidUpdates {
+		t.Run(test.name, func(t *testing.T) {
+			harness := newArchonToolAuthoringHarness(t, true, false)
+			before := snapshotArchonToolParityTree(t, harness.workspace)
+			stdout, stderr, code := harness.run(
+				t,
+				"tool", "update", harness.slug, "tool_normalize",
+				"--title", "Valid replacement title",
+				"--params-json", test.params,
+				"--json",
+			)
+			assertArchonToolJSONError(t, stdout, stderr, code, "invalid_tool_mutation", "tool", "tool_normalize")
+			if after := snapshotArchonToolParityTree(t, harness.workspace); !reflect.DeepEqual(after, before) {
+				t.Fatalf("invalid Tool update parameters changed definition pair:\n before=%#v\n after=%#v", before, after)
 			}
 		})
 	}
@@ -483,11 +755,91 @@ func TestArchonToolUsageAndStableErrorCodes(t *testing.T) {
 	}
 }
 
+func TestArchonToolUsageRejectsMisplacedPlacementAndPublicCASFlagsWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name string
+		args func(string) []string
+	}{
+		{
+			name: "update exact placement",
+			args: func(slug string) []string {
+				return []string{"tool", "update", slug, "tool_normalize", "--title", "No move", "--x", "10", "--y", "20"}
+			},
+		},
+		{
+			name: "update heuristic placement",
+			args: func(slug string) []string {
+				return []string{"tool", "update", slug, "tool_normalize", "--title", "No move", "--predecessor-node-id", "tool_sink"}
+			},
+		},
+		{
+			name: "delete exact placement",
+			args: func(slug string) []string {
+				return []string{"tool", "delete", slug, "tool_normalize", "--x", "10", "--y", "20"}
+			},
+		},
+		{
+			name: "delete heuristic placement",
+			args: func(slug string) []string {
+				return []string{"tool", "delete", slug, "tool_normalize", "--successor-node-id", "gate_review"}
+			},
+		},
+		{
+			name: "expected revision flag",
+			args: func(slug string) []string {
+				return []string{"tool", "update", slug, "tool_normalize", "--title", "No public CAS", "--expected-rev", "4"}
+			},
+		},
+		{
+			name: "expected board etag flag",
+			args: func(slug string) []string {
+				return []string{"tool", "update", slug, "tool_normalize", "--title", "No public CAS", "--expected-etag", "etag"}
+			},
+		},
+		{
+			name: "layout state flag",
+			args: func(slug string) []string {
+				return []string{"tool", "update", slug, "tool_normalize", "--title", "No public CAS", "--layout-state", "present"}
+			},
+		},
+		{
+			name: "layout etag flag",
+			args: func(slug string) []string {
+				return []string{"tool", "update", slug, "tool_normalize", "--title", "No public CAS", "--layout-etag", "etag"}
+			},
+		},
+		{
+			name: "HTTP if-match flag",
+			args: func(slug string) []string {
+				return []string{"tool", "update", slug, "tool_normalize", "--title", "No public CAS", "--if-match", "etag"}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			harness := newArchonToolAuthoringHarness(t, true, false)
+			before := snapshotArchonToolParityTree(t, harness.workspace)
+			stdout, stderr, code := harness.run(t, test.args(harness.slug)...)
+			if code != 2 || stdout != "" || !strings.Contains(stderr, "flag provided but not defined") {
+				t.Fatalf("rejected Tool flag code=%d stdout=%q stderr=%q, want usage exit 2", code, stdout, stderr)
+			}
+			if after := snapshotArchonToolParityTree(t, harness.workspace); !reflect.DeepEqual(after, before) {
+				t.Fatalf("rejected Tool flag changed definition pair:\n before=%#v\n after=%#v", before, after)
+			}
+		})
+	}
+}
+
 type archonToolAuthoringHarness struct {
 	workspace string
 	slug      string
 	store     *formations.Store
 	runner    *fakeTmux
+}
+
+type archonToolPairFileIdentity struct {
+	board  os.FileInfo
+	layout os.FileInfo
 }
 
 func newArchonToolAuthoringHarness(t *testing.T, withLayout, withConnection bool) *archonToolAuthoringHarness {
@@ -541,6 +893,32 @@ func (h *archonToolAuthoringHarness) run(t *testing.T, args ...string) (string, 
 	return stdout.String(), stderr.String(), code
 }
 
+func snapshotArchonToolPairFileIdentity(t *testing.T, harness *archonToolAuthoringHarness) archonToolPairFileIdentity {
+	t.Helper()
+	board, err := os.Stat(harness.store.BoardPath(harness.slug))
+	if err != nil {
+		t.Fatalf("stat Tool board identity: %v", err)
+	}
+	layout, err := os.Stat(harness.store.LayoutPath(harness.slug))
+	if err != nil {
+		t.Fatalf("stat Tool layout identity: %v", err)
+	}
+	return archonToolPairFileIdentity{board: board, layout: layout}
+}
+
+func assertArchonToolPairFileIdentity(t *testing.T, harness *archonToolAuthoringHarness, before archonToolPairFileIdentity) {
+	t.Helper()
+	after := snapshotArchonToolPairFileIdentity(t, harness)
+	for name, pair := range map[string][2]os.FileInfo{
+		"board":  {before.board, after.board},
+		"layout": {before.layout, after.layout},
+	} {
+		if !os.SameFile(pair[0], pair[1]) || pair[0].Mode() != pair[1].Mode() || !pair[0].ModTime().Equal(pair[1].ModTime()) {
+			t.Fatalf("rejected Tool command changed %s file identity: before=%v after=%v", name, pair[0], pair[1])
+		}
+	}
+}
+
 func assertArchonToolJSONError(t *testing.T, stdout, stderr string, code int, wantCode, wantBoundary, wantSelector string) {
 	t.Helper()
 	if code != 1 || stdout != "" {
@@ -552,6 +930,31 @@ func assertArchonToolJSONError(t *testing.T, stdout, stderr string, code int, wa
 	}
 	if response.Code != wantCode || response.Boundary != wantBoundary || response.Selector != wantSelector || response.Message == "" {
 		t.Fatalf("Tool JSON error = %#v, want code=%q boundary=%q selector=%q", response, wantCode, wantBoundary, wantSelector)
+	}
+}
+
+func assertArchonToolJSONRootKeys(t *testing.T, raw string, want ...string) {
+	t.Helper()
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &object); err != nil {
+		t.Fatalf("decode Tool JSON root: %v\n%s", err, raw)
+	}
+	assertArchonToolExactJSONKeys(t, object, want...)
+}
+
+func assertArchonToolExactJSONKeys(t *testing.T, object map[string]json.RawMessage, want ...string) {
+	t.Helper()
+	wantSet := make(map[string]bool, len(want))
+	for _, key := range want {
+		wantSet[key] = true
+	}
+	if len(object) != len(wantSet) {
+		t.Fatalf("JSON keys = %v, want exactly %v", reflect.ValueOf(object).MapKeys(), want)
+	}
+	for key := range object {
+		if !wantSet[key] {
+			t.Fatalf("unexpected JSON key %q; want exactly %v", key, want)
+		}
 	}
 }
 
@@ -637,4 +1040,36 @@ func archonToolLayoutNode(layout *formations.LayoutDocument, id string) (formati
 		}
 	}
 	return formations.LayoutNode{}, false
+}
+
+func assertArchonToolLayoutInventory(
+	t *testing.T,
+	layout *formations.LayoutDocument,
+	wantNodes []formations.LayoutNode,
+	wantEdges []formations.LayoutEdge,
+) {
+	t.Helper()
+	if layout == nil {
+		t.Fatal("Tool mutation returned nil layout inventory")
+	}
+	if !reflect.DeepEqual(layout.Nodes, wantNodes) {
+		t.Fatalf("Tool layout nodes/order = %#v, want %#v", layout.Nodes, wantNodes)
+	}
+	if !reflect.DeepEqual(layout.Edges, wantEdges) {
+		t.Fatalf("Tool layout edges/order = %#v, want %#v", layout.Edges, wantEdges)
+	}
+	seenNodes := make(map[string]bool, len(layout.Nodes))
+	for _, node := range layout.Nodes {
+		if seenNodes[node.ID] {
+			t.Fatalf("Tool layout contains duplicate node id %q: %#v", node.ID, layout.Nodes)
+		}
+		seenNodes[node.ID] = true
+	}
+	seenEdges := make(map[string]bool, len(layout.Edges))
+	for _, edge := range layout.Edges {
+		if seenEdges[edge.ID] {
+			t.Fatalf("Tool layout contains duplicate edge id %q: %#v", edge.ID, layout.Edges)
+		}
+		seenEdges[edge.ID] = true
+	}
 }
