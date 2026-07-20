@@ -6,6 +6,7 @@ import (
 	"os"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -309,6 +310,134 @@ y = 532`,
 			t.Fatalf("present-layout create reordered retained source span %q", span)
 		}
 		previous = index
+	}
+}
+
+func TestCreateToolFiltersOwnedLayoutSubtreesWithoutReattachingStaleDescendants(t *testing.T) {
+	store := newToolAuthoringStore(t)
+	slug := "tool-layout-owned-subtrees"
+	boardRaw := toolAuthoringBoardFixture(slug, 3, true, "")
+	layoutRaw := `schema = 1
+boardId = "brd_tool-layout-owned-subtrees"
+boardRev = 3
+
+[[node]]
+id = "stale_node"
+x = 999
+y = 999
+[node.meta]
+note = "stale descendant must disappear"
+
+# leading retained comment must survive stale subtree filtering
+[[node]]
+id = "mis_main"
+x = 140
+y = 280
+[node.meta]
+note = "retained descendant stays exact"
+[node.meta.nested]
+token = "retained nested source"
+`
+	writeFixture(t, store.BoardPath(slug), boardRaw)
+	writeFixture(t, store.LayoutPath(slug), layoutRaw)
+	board, layout := toolAuthoringReadPair(t, store, slug)
+	x, y := 700, 560
+
+	result, err := store.CreateTool(
+		slug,
+		toolAuthoringCreateRequest(ToolPlacement{X: &x, Y: &y}),
+		toolAuthoringPresentOptions(board, layout),
+	)
+	if err != nil {
+		t.Fatalf("create Tool while filtering layout subtrees: %v", err)
+	}
+	if strings.Contains(result.Layout.TOML, "stale_node") || strings.Contains(result.Layout.TOML, "stale descendant must disappear") {
+		t.Fatalf("stale node descendant source survived filtering:\n%s", result.Layout.TOML)
+	}
+	const retained = `# leading retained comment must survive stale subtree filtering
+[[node]]
+id = "mis_main"
+x = 140
+y = 280
+[node.meta]
+note = "retained descendant stays exact"
+[node.meta.nested]
+token = "retained nested source"`
+	if !strings.Contains(result.Layout.TOML, retained) {
+		t.Fatalf("retained layout subtree source changed:\n%s", result.Layout.TOML)
+	}
+}
+
+func TestCreateToolPreservesCommentLeadingRetainedBlockAfterFlatStaleBlock(t *testing.T) {
+	store := newToolAuthoringStore(t)
+	slug := "tool-layout-leading-comment"
+	boardRaw := toolAuthoringBoardFixture(slug, 3, true, "")
+	layoutRaw := `schema = 1
+boardId = "brd_tool-layout-leading-comment"
+boardRev = 3
+
+[[node]]
+id = "stale_node"
+x = 999
+y = 999
+
+# this comment documents the retained Mission
+[[node]]
+id = "mis_main"
+x = 140
+y = 280
+`
+	writeFixture(t, store.BoardPath(slug), boardRaw)
+	writeFixture(t, store.LayoutPath(slug), layoutRaw)
+	board, layout := toolAuthoringReadPair(t, store, slug)
+	x, y := 700, 560
+
+	result, err := store.CreateTool(
+		slug,
+		toolAuthoringCreateRequest(ToolPlacement{X: &x, Y: &y}),
+		toolAuthoringPresentOptions(board, layout),
+	)
+	if err != nil {
+		t.Fatalf("create Tool after flat stale layout node: %v", err)
+	}
+	const retained = `# this comment documents the retained Mission
+[[node]]
+id = "mis_main"
+x = 140
+y = 280`
+	if !strings.Contains(result.Layout.TOML, retained) {
+		t.Fatalf("stale filtering dropped retained-leading comment:\n%s", result.Layout.TOML)
+	}
+}
+
+func TestCreateToolRejectsMalformedOrOrphanedOwnedLayoutSourceWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name string
+		tail string
+	}{
+		{name: "unclosed node array header", tail: "[[node]\nid = \"mis_main\"\nx = 1\ny = 2\n"},
+		{name: "edge header trailing text", tail: "[[edge]] trailing\nid = \"edge_stale\"\nlane = \"north\"\n"},
+		{name: "orphan node descendant", tail: "[node.meta]\nnote = \"no owning node\"\n"},
+		{name: "competing edge descendant under node", tail: "[[node]]\nid = \"mis_main\"\nx = 1\ny = 2\n[edge.meta]\nnote = \"wrong owner\"\n"},
+		{name: "top-level node root assignment", tail: "node = \"reserved authority root\"\n"},
+		{name: "top-level edge root assignment", tail: "edge = \"reserved authority root\"\n"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := newToolAuthoringStore(t)
+			slug := "tool-layout-owned-source"
+			boardRaw := toolAuthoringBoardFixture(slug, 2, true, "")
+			layoutRaw := "schema = 1\nboardId = \"brd_tool-layout-owned-source\"\nboardRev = 2\n\n" + test.tail
+			writeFixture(t, store.BoardPath(slug), boardRaw)
+			writeFixture(t, store.LayoutPath(slug), layoutRaw)
+			board, layout := toolAuthoringReadPair(t, store, slug)
+
+			_, err := store.CreateTool(slug, toolAuthoringCreateRequest(ToolPlacement{}), toolAuthoringPresentOptions(board, layout))
+			if err == nil || !strings.Contains(err.Error(), "invalid_layout_owned_source") {
+				t.Fatalf("malformed/orphaned owned layout error = %v, want invalid_layout_owned_source", err)
+			}
+			assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, &layoutRaw)
+		})
 	}
 }
 
@@ -684,6 +813,162 @@ func TestCreateToolRejectsInvalidAuthoringInputsWithoutMutation(t *testing.T) {
 			}
 			assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, nil)
 		})
+	}
+}
+
+func TestCreateToolRejectsUpdatedByThatCannotRoundTripAsTOMLWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name      string
+		updatedBy string
+	}{
+		{name: "Go bell escape", updatedBy: "agent:\a"},
+		{name: "Go vertical-tab escape", updatedBy: "agent:\v"},
+		{name: "Go hex escape", updatedBy: "agent:" + string([]byte{0x01})},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := newToolAuthoringStore(t)
+			slug := "tool-invalid-updated-by"
+			boardRaw := toolAuthoringBoardFixture(slug, 2, true, "")
+			writeFixture(t, store.BoardPath(slug), boardRaw)
+			board, err := store.ReadBoard(slug)
+			if err != nil {
+				t.Fatalf("read board: %v", err)
+			}
+			req := toolAuthoringCreateRequest(ToolPlacement{})
+			req.UpdatedBy = test.updatedBy
+
+			_, err = store.CreateTool(slug, req, toolAuthoringAbsentOptions(board))
+			if err == nil || !strings.Contains(err.Error(), "invalid_tool_updated_by") {
+				t.Fatalf("non-TOML UpdatedBy error = %v, want invalid_tool_updated_by", err)
+			}
+			assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, nil)
+		})
+	}
+}
+
+func TestCreateToolRejectsOutOfSigned32BitExactCoordinatesWithoutMutation(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("host int cannot represent the out-of-range exact-coordinate contract cases")
+	}
+	maxInt := int(^uint(0) >> 1)
+	minInt := -maxInt - 1
+	tests := []struct {
+		name string
+		x    int
+		y    int
+	}{
+		{name: "maximum host int x", x: maxInt, y: 112},
+		{name: "minimum host int y", x: 112, y: minInt},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := newToolAuthoringStore(t)
+			slug := "tool-exact-coordinate-range"
+			boardRaw := toolAuthoringBoardFixture(slug, 2, true, "")
+			writeFixture(t, store.BoardPath(slug), boardRaw)
+			board, err := store.ReadBoard(slug)
+			if err != nil {
+				t.Fatalf("read board: %v", err)
+			}
+
+			_, err = store.CreateTool(
+				slug,
+				toolAuthoringCreateRequest(ToolPlacement{X: &test.x, Y: &test.y}),
+				toolAuthoringAbsentOptions(board),
+			)
+			if err == nil || !strings.Contains(err.Error(), "invalid_layout_coordinate") {
+				t.Fatalf("out-of-range exact coordinate error = %v, want invalid_layout_coordinate", err)
+			}
+			assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, nil)
+		})
+	}
+}
+
+func TestCreateToolAcceptsInclusiveSigned32BitExactCoordinateBoundary(t *testing.T) {
+	store := newToolAuthoringStore(t)
+	slug := "tool-exact-coordinate-boundary"
+	writeFixture(t, store.BoardPath(slug), toolAuthoringBoardFixture(slug, 2, true, ""))
+	board, err := store.ReadBoard(slug)
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	x, y := int(1<<31-1), int(-1<<31)
+
+	result, err := store.CreateTool(
+		slug,
+		toolAuthoringCreateRequest(ToolPlacement{X: &x, Y: &y}),
+		toolAuthoringAbsentOptions(board),
+	)
+	if err != nil {
+		t.Fatalf("create Tool at inclusive signed-32 boundary: %v", err)
+	}
+	if result.Layout == nil || len(result.Layout.Nodes) != 1 || result.Layout.Nodes[0] != (LayoutNode{ID: result.Tool.ID, X: x, Y: y}) {
+		t.Fatalf("signed-32 boundary placement = %#v", result.Layout)
+	}
+}
+
+func TestCreateToolRejectsOutOfSigned32BitPersistedCoordinatesWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name       string
+		coordinate string
+	}{
+		{name: "x above maximum", coordinate: "x = 2147483648\ny = 112"},
+		{name: "y below minimum", coordinate: "x = 112\ny = -2147483649"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := newToolAuthoringStore(t)
+			slug := "tool-persisted-coordinate-range"
+			boardRaw := toolAuthoringBoardFixture(slug, 2, true, "")
+			layoutRaw := "schema = 1\nboardId = \"brd_tool-persisted-coordinate-range\"\nboardRev = 2\n\n[[node]]\nid = \"mis_main\"\n" + test.coordinate + "\n"
+			writeFixture(t, store.BoardPath(slug), boardRaw)
+			writeFixture(t, store.LayoutPath(slug), layoutRaw)
+			board, layout := toolAuthoringReadPair(t, store, slug)
+
+			_, err := store.CreateTool(
+				slug,
+				toolAuthoringCreateRequest(ToolPlacement{PredecessorNodeID: "mis_main"}),
+				toolAuthoringPresentOptions(board, layout),
+			)
+			if err == nil || !strings.Contains(err.Error(), "invalid_layout_coordinate") {
+				t.Fatalf("out-of-range persisted coordinate error = %v, want invalid_layout_coordinate", err)
+			}
+			assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, &layoutRaw)
+		})
+	}
+}
+
+func TestCreateToolLeavesMissingRetainedCoordinatesAbsent(t *testing.T) {
+	store := newToolAuthoringStore(t)
+	slug := "tool-missing-retained-coordinates"
+	boardRaw := toolAuthoringBoardFixture(slug, 2, true, "")
+	layoutRaw := `schema = 1
+boardId = "brd_tool-missing-retained-coordinates"
+boardRev = 2
+
+[[node]]
+id = "mis_main"
+# x and y are deliberately absent
+`
+	writeFixture(t, store.BoardPath(slug), boardRaw)
+	writeFixture(t, store.LayoutPath(slug), layoutRaw)
+	board, layout := toolAuthoringReadPair(t, store, slug)
+	x, y := 500, 600
+
+	result, err := store.CreateTool(
+		slug,
+		toolAuthoringCreateRequest(ToolPlacement{X: &x, Y: &y}),
+		toolAuthoringPresentOptions(board, layout),
+	)
+	if err != nil {
+		t.Fatalf("create Tool beside retained node with missing coordinates: %v", err)
+	}
+	const retained = `[[node]]
+id = "mis_main"
+# x and y are deliberately absent`
+	if !strings.Contains(result.Layout.TOML, retained) {
+		t.Fatalf("create filled or rewrote missing retained coordinates:\n%s", result.Layout.TOML)
 	}
 }
 
