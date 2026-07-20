@@ -12,6 +12,7 @@ func TestUpdateToolPresentLayoutChangesOnlyAuthoredFieldsAndFiltersStaleAuthorit
 	store := newToolAuthoringStore(t)
 	slug := "tool-update-present"
 	boardRaw := toolUpdateConnectedBoardFixture(slug, 7)
+	boardRaw = strings.Replace(boardRaw, "schema = 2\n", "schema = 2 # preserve schema source\nx_board_owner = 'keep exact' # preserve root extension\n", 1)
 	layoutRaw := `schema = 1 # preserve schema comment
 boardId = "brd_tool-update-present"
 boardRev = 7 # preserve revision comment
@@ -74,6 +75,9 @@ note = "preserve this table exactly"
 	if result.Board.Rev != beforeBoard.Rev+1 || result.Layout.BoardRev != result.Board.Rev {
 		t.Fatalf("paired update revisions = board %d layout %d, want %d", result.Board.Rev, result.Layout.BoardRev, beforeBoard.Rev+1)
 	}
+	if result.Board.Schema != CurrentBoardSchema {
+		t.Fatalf("Tool update changed schema = %d, want %d", result.Board.Schema, CurrentBoardSchema)
+	}
 	if result.Board.UpdatedBy != "agent:update-test" || result.Board.UpdatedAt != "2026-07-20T08:30:00Z" || result.Layout.UpdatedAt != result.Board.UpdatedAt {
 		t.Fatalf("paired update provenance = board %#v layout %#v", result.Board, result.Layout)
 	}
@@ -95,6 +99,30 @@ note = "preserve this table exactly"
 	if !strings.Contains(result.Board.TOML, `title = "Renamed target" # preserve title comment`) ||
 		!strings.Contains(result.Board.TOML, `mode = "\u0073trict" # preserve parameter comment`) {
 		t.Fatalf("update did not preserve authored Tool source around the changed title/equal replacement params:\n%s", result.Board.TOML)
+	}
+	untouchedBoardSpans := []string{
+		"schema = 2 # preserve schema source\n" +
+			"x_board_owner = 'keep exact' # preserve root extension",
+		`profileId = "json.normalize" # immutable profile id
+profileVersion = "1" # immutable exact version`,
+		`[[tool.output]]
+id = "port_target_out"
+name = "output"
+label = "Normalized report"
+direction = "output"
+kind = "work"
+acceptedMediaTypes = ["application/json"]`,
+		`[[connection]]
+id = "edge_existing"
+channel = "workflow"
+from = "tool_source:port_source_out"
+to = "tool_target:port_target_in"
+x_connection_note = "preserve exact"`,
+	}
+	for _, span := range untouchedBoardSpans {
+		if !strings.Contains(result.Board.TOML, span) {
+			t.Fatalf("update changed untouched board source %q:\n%s", span, result.Board.TOML)
+		}
 	}
 	const immutablePortSpan = `[[tool.input]]
 id = "port_target_in" # immutable generated input id
@@ -153,6 +181,111 @@ note = "preserve this table exactly"`,
 		!strings.Contains(result.Layout.TOML, `updatedAt = "2026-07-20T08:30:00Z" # preserve timestamp comment`) {
 		t.Fatalf("update did not advance layout identity in place:\n%s", result.Layout.TOML)
 	}
+	for _, span := range []string{
+		"schema = 1 # preserve schema comment",
+		`x_layout_owner = "keep"`,
+	} {
+		if !strings.Contains(result.Layout.TOML, span) {
+			t.Fatalf("update changed untouched layout root source %q:\n%s", span, result.Layout.TOML)
+		}
+	}
+	assertToolUpdatePersistedResult(t, store, slug, result)
+}
+
+func TestUpdateToolFindsValidLiteralStringToolIDAndPersistsCanonicalBoard(t *testing.T) {
+	store := newToolAuthoringStore(t)
+	slug := "tool-update-literal-id"
+	boardRaw := toolAuthoringBoardFixture(slug, 3, true, toolUpdateTargetBlock())
+	boardRaw = strings.Replace(boardRaw, `id = "tool_target" # immutable generated Tool id`, `id = 'tool_target' # immutable generated Tool id`, 1)
+	writeFixture(t, store.BoardPath(slug), boardRaw)
+	before, err := store.ReadBoard(slug)
+	if err != nil {
+		t.Fatalf("read literal-string Tool source: %v", err)
+	}
+	title := "Literal id updated"
+
+	result, err := store.UpdateTool(
+		slug,
+		ToolUpdateRequest{ToolID: "tool_target", Title: &title},
+		toolAuthoringAbsentOptions(before),
+	)
+	if err != nil {
+		t.Fatalf("update literal-string Tool id: %v", err)
+	}
+	if !strings.Contains(result.Board.TOML, `id = 'tool_target' # immutable generated Tool id`) {
+		t.Fatalf("update rewrote literal-string Tool id source:\n%s", result.Board.TOML)
+	}
+	persisted, err := store.ReadBoard(slug)
+	if err != nil {
+		t.Fatalf("read persisted literal-id update: %v", err)
+	}
+	if persisted.TOML != result.Board.TOML || persisted.ETag != result.Board.ETag {
+		t.Fatalf("returned update was not the canonical board:\n returned %#v\npersisted %#v", result.Board, persisted)
+	}
+}
+
+func TestPatchToolUpdateBoundsChangedParametersToParameterSection(t *testing.T) {
+	raw := []byte(toolUpdateTargetBlock())
+	before := ToolNode{ID: "tool_target", Params: map[string]any{"mode": "strict"}}
+	after := before
+	after.Params = map[string]any{"mode": "lenient"}
+	replacement := map[string]any{"mode": "lenient"}
+
+	patched, err := patchToolUpdate(raw, before, after, ToolUpdateRequest{ToolID: before.ID, Params: &replacement})
+	if err != nil {
+		t.Fatalf("patch changed complete Tool parameters: %v", err)
+	}
+	if !strings.Contains(string(patched), `mode = "lenient" # preserve parameter comment`) {
+		t.Fatalf("changed parameter was not published in place:\n%s", patched)
+	}
+	for _, immutable := range []string{
+		`[[tool.input]]`,
+		`id = "port_target_in" # immutable generated input id`,
+		`[[tool.output]]`,
+		`id = "port_target_out"`,
+	} {
+		if strings.Count(string(patched), immutable) != 1 {
+			t.Fatalf("parameter replacement damaged immutable Tool source %q:\n%s", immutable, patched)
+		}
+	}
+}
+
+func TestUpdateToolPreservesPlacedTargetCoordinatesExactly(t *testing.T) {
+	store := newToolAuthoringStore(t)
+	slug := "tool-update-placed"
+	boardRaw := toolAuthoringBoardFixture(slug, 3, true, toolUpdateTargetBlock())
+	layoutRaw := `schema = 1
+boardId = "brd_tool-update-placed"
+boardRev = 3
+
+# the user placed this Tool; UPDATE must never reflow it
+[[node]]
+id = "tool_target"
+x = 0x70
+y = +224
+`
+	writeFixture(t, store.BoardPath(slug), boardRaw)
+	writeFixture(t, store.LayoutPath(slug), layoutRaw)
+	board, layout := toolAuthoringReadPair(t, store, slug)
+	title := "Placed target renamed"
+
+	result, err := store.UpdateTool(
+		slug,
+		ToolUpdateRequest{ToolID: "tool_target", Title: &title},
+		toolAuthoringPresentOptions(board, layout),
+	)
+	if err != nil {
+		t.Fatalf("update placed Tool: %v", err)
+	}
+	const retained = `# the user placed this Tool; UPDATE must never reflow it
+[[node]]
+id = "tool_target"
+x = 0x70
+y = +224`
+	if !strings.Contains(result.Layout.TOML, retained) {
+		t.Fatalf("update moved or rewrote user-placed Tool coordinates:\n%s", result.Layout.TOML)
+	}
+	assertToolUpdatePersistedResult(t, store, slug, result)
 }
 
 func TestUpdateToolPresenceAwareTitleAndCompleteParamsKeepAbsentLayoutAbsent(t *testing.T) {
@@ -212,6 +345,10 @@ func TestUpdateToolPresenceAwareTitleAndCompleteParamsKeepAbsentLayoutAbsent(t *
 			if result.Board.Rev != before.Rev+1 || !reflect.DeepEqual(result.Tool, updated) {
 				t.Fatalf("absent-layout update result = %#v", result)
 			}
+			if result.Board.Schema != CurrentBoardSchema || result.Board.UpdatedBy != "agent:update-test" || result.Board.UpdatedAt != "2026-07-20T08:30:00Z" {
+				t.Fatalf("absent-layout update metadata = %#v", result.Board)
+			}
+			assertToolUpdatePersistedResult(t, store, slug, result)
 		})
 	}
 }
@@ -243,6 +380,7 @@ criterion = ""
 	if len(updated.Inputs) != 1 || updated.Inputs[0].Required == nil || !*updated.Inputs[0].Required {
 		t.Fatalf("draft update did not retain unwired required Tool input: %#v", updated.Inputs)
 	}
+	assertToolUpdatePersistedResult(t, store, slug, result)
 }
 
 func TestUpdateToolRejectsInvalidPatchOrTargetWithoutMutation(t *testing.T) {
@@ -376,6 +514,82 @@ func TestUpdateToolRequiresExactClosedPairCASWithoutMutation(t *testing.T) {
 	})
 }
 
+func TestUpdateToolRejectsInvalidBoardOrLayoutAuthorityWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name       string
+		board      func(string) string
+		layout     func(string) *string
+		wantMarker string
+	}{
+		{
+			name: "schema one cannot authorize Tool update",
+			board: func(slug string) string {
+				return strings.Replace(toolAuthoringBoardFixture(slug, 3, true, toolUpdateTargetBlock()), "schema = 2\n", "schema = 1\n", 1)
+			},
+			wantMarker: "schema 2",
+		},
+		{
+			name: "unknown existing Tool tuple",
+			board: func(slug string) string {
+				return strings.Replace(toolAuthoringBoardFixture(slug, 3, true, toolUpdateTargetBlock()), `profileVersion = "1"`, `profileVersion = "2"`, 1)
+			},
+			wantMarker: "invalid_tool",
+		},
+		{
+			name:  "layout board mismatch",
+			board: func(slug string) string { return toolAuthoringBoardFixture(slug, 3, true, toolUpdateTargetBlock()) },
+			layout: func(string) *string {
+				value := "schema = 1\nboardId = \"brd_other\"\nboardRev = 3\n"
+				return &value
+			},
+			wantMarker: "does not match",
+		},
+		{
+			name:  "duplicate layout node id",
+			board: func(slug string) string { return toolAuthoringBoardFixture(slug, 3, true, toolUpdateTargetBlock()) },
+			layout: func(slug string) *string {
+				value := "schema = 1\nboardId = \"brd_" + slug + "\"\nboardRev = 3\n\n[[node]]\nid = \"tool_target\"\nx = 1\ny = 2\n\n[[node]]\nid = \"tool_target\"\nx = 3\ny = 4\n"
+				return &value
+			},
+			wantMarker: "duplicate_layout_id",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := newToolAuthoringStore(t)
+			slug := "tool-update-authority"
+			boardRaw := test.board(slug)
+			var layoutRaw *string
+			if test.layout != nil {
+				layoutRaw = test.layout(slug)
+			}
+			writeFixture(t, store.BoardPath(slug), boardRaw)
+			before, err := store.ReadBoard(slug)
+			if err != nil {
+				t.Fatalf("read invalid authority fixture: %v", err)
+			}
+			var opts ToolWriteOptions
+			if layoutRaw == nil {
+				opts = toolAuthoringAbsentOptions(before)
+			} else {
+				writeFixture(t, store.LayoutPath(slug), *layoutRaw)
+				layout, err := store.ReadLayout(slug)
+				if err != nil {
+					t.Fatalf("read invalid layout fixture: %v", err)
+				}
+				opts = toolAuthoringPresentOptions(before, layout)
+			}
+			title := "Must not publish"
+
+			_, err = store.UpdateTool(slug, ToolUpdateRequest{ToolID: "tool_target", Title: &title}, opts)
+			if err == nil || !strings.Contains(err.Error(), test.wantMarker) {
+				t.Fatalf("invalid authority error = %v, want marker %q", err, test.wantMarker)
+			}
+			assertToolAuthoringPairUnchanged(t, store, slug, boardRaw, layoutRaw)
+		})
+	}
+}
+
 func toolUpdateConnectedBoardFixture(slug string, rev int) string {
 	return toolAuthoringBoardFixture(slug, rev, true,
 		toolStructuralJSONNormalizeToolBlock("tool_source", "Source", "port_source_in", "port_source_out")+
@@ -448,4 +662,28 @@ func toolUpdateLayoutOwnedBlock(t *testing.T, raw, kind, id string) string {
 	}
 	t.Fatalf("layout %s block %q missing:\n%s", kind, id, raw)
 	return ""
+}
+
+func assertToolUpdatePersistedResult(t *testing.T, store *Store, slug string, result *ToolUpdateResult) {
+	t.Helper()
+	persistedBoard, err := store.ReadBoard(slug)
+	if err != nil {
+		t.Fatalf("read persisted Tool update board: %v", err)
+	}
+	if result == nil || result.Board == nil || persistedBoard.TOML != result.Board.TOML || persistedBoard.ETag != result.Board.ETag {
+		t.Fatalf("returned Tool update board is not canonical:\n returned %#v\npersisted %#v", result, persistedBoard)
+	}
+	if result.Layout == nil {
+		if _, err := os.Lstat(store.LayoutPath(slug)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("absent Tool update layout became canonical: %v", err)
+		}
+		return
+	}
+	persistedLayout, err := store.ReadLayout(slug)
+	if err != nil {
+		t.Fatalf("read persisted Tool update layout: %v", err)
+	}
+	if persistedLayout.TOML != result.Layout.TOML || persistedLayout.ETag != result.Layout.ETag {
+		t.Fatalf("returned Tool update layout is not canonical:\n returned %#v\npersisted %#v", result.Layout, persistedLayout)
+	}
 }
