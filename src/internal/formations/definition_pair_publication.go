@@ -61,6 +61,9 @@ func (s *Store) publishDefinitionPair(
 	if err := validateSlug(slug); err != nil {
 		return err
 	}
+	if definitionPairCandidateSupplied(request.candidate) == (request.build != nil) {
+		return errors.New("definition pair requires exactly one candidate source")
+	}
 	request.candidate = cloneDefinitionPairState(request.candidate)
 
 	board, err := s.openBoardDefinition(slug, false)
@@ -102,6 +105,10 @@ func (s *Store) publishDefinitionPair(
 			return publishDefinitionPairLocked(board, layout, request, fault)
 		})
 	})
+}
+
+func definitionPairCandidateSupplied(candidate definitionPairState) bool {
+	return candidate.board != nil || candidate.layout.present || candidate.layout.raw != nil
 }
 
 func publishDefinitionPairLocked(
