@@ -241,6 +241,103 @@ note = "preserve this table exactly"`,
 	assertToolDeletePersistedResult(t, store, slug, result)
 }
 
+func TestDeleteToolRemovesReopenedIncidentConnectionDescendantsWithoutMovingUnrelatedTables(t *testing.T) {
+	store := newToolAuthoringStore(t)
+	slug := "tool-delete-reopened-connection"
+	boardRaw := toolAuthoringBoardFixture(
+		slug,
+		4,
+		true,
+		toolStructuralJSONNormalizeToolBlock("tool_source", "Source", "port_source_in", "port_source_out")+
+			toolStructuralJSONNormalizeToolBlock("tool_keep", "Keep", "port_keep_in", "port_keep_out")+
+			toolStructuralJSONNormalizeToolBlock("tool_after", "After", "port_after_in", "port_after_out")+
+			toolUpdateTargetBlock()+
+			`[[connection]]
+id = "edge_keep"
+channel = "workflow"
+from = "tool_source:port_source_out"
+to = "tool_keep:port_keep_in"
+
+[[connection]]
+id = "edge_into_target"
+channel = "workflow"
+from = "tool_source:port_source_out"
+to = "tool_target:port_target_in"
+
+[board_audit]
+note = "preserve unrelated exact"
+
+[connection."metadata"]
+marker = "delete late incident descendant"
+
+[[connection.metadata.trace]]
+marker = "delete late incident descendant AoT"
+
+[[connection]]
+id = "edge_keep_after"
+channel = "workflow"
+from = "tool_keep:port_keep_out"
+to = "tool_after:port_after_in"
+
+[retained_audit]
+note = "preserve after owner reset"
+
+[connection.metadata]
+marker = "preserve retained reopened descendant"
+
+["connection.metadata"]
+marker = "preserve literal dotted table"
+`,
+	)
+	if err := validateToolMutationBoardSource([]byte(boardRaw)); err != nil {
+		t.Fatalf("reopened incident connection fixture is not valid TOML: %v", err)
+	}
+	writeFixture(t, store.BoardPath(slug), boardRaw)
+	before, err := store.ReadBoard(slug)
+	if err != nil {
+		t.Fatalf("read reopened incident connection source: %v", err)
+	}
+
+	result, err := store.DeleteTool(
+		slug,
+		ToolDeleteRequest{ID: "tool_target"},
+		toolAuthoringAbsentOptions(before),
+	)
+	if err != nil {
+		t.Fatalf("delete Tool with reopened incident connection descendants: %v", err)
+	}
+	if len(result.Board.Connections) != 2 ||
+		result.Board.Connections[0].ID != "edge_keep" ||
+		result.Board.Connections[1].ID != "edge_keep_after" {
+		t.Fatalf("connections after delete = %#v, want edge_keep then edge_keep_after", result.Board.Connections)
+	}
+	for _, deletedSource := range []string{
+		`id = "edge_into_target"`,
+		`marker = "delete late incident descendant"`,
+		`marker = "delete late incident descendant AoT"`,
+	} {
+		if strings.Contains(result.Board.TOML, deletedSource) {
+			t.Fatalf("delete retained reopened incident source %q:\n%s", deletedSource, result.Board.TOML)
+		}
+	}
+	for _, retainedSource := range []string{
+		`[board_audit]
+note = "preserve unrelated exact"`,
+		`[retained_audit]
+note = "preserve after owner reset"
+
+[connection.metadata]
+marker = "preserve retained reopened descendant"`,
+		`["connection.metadata"]
+marker = "preserve literal dotted table"`,
+	} {
+		if !strings.Contains(result.Board.TOML, retainedSource) {
+			t.Fatalf("delete changed unrelated source %q:\n%s", retainedSource, result.Board.TOML)
+		}
+	}
+	assertToolDeletePersistedResult(t, store, slug, result)
+}
+
 func TestDeleteToolFindsLiteralStringIDAndDeletingLastToolNeverDowngradesSchema(t *testing.T) {
 	store := newToolAuthoringStore(t)
 	slug := "tool-delete-literal-id"
