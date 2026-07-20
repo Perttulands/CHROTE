@@ -85,14 +85,36 @@ type formationsBoardPatchRequest struct {
 }
 
 func (request *formationsBoardPatchRequest) UnmarshalJSON(raw []byte) error {
-	type requestFields formationsBoardPatchRequest
-	var decoded requestFields
-	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return err
-	}
 	presence, err := inspectBoardPatchPresence(raw)
 	if err != nil {
 		return err
+	}
+	if presence.ToolOperationOccurrences > 0 {
+		invalidSurrogate, err := inspectToolFrameUnicode(raw)
+		if err != nil {
+			return err
+		}
+		if invalidSurrogate {
+			request.ToolOperationOccurrences = presence.ToolOperationOccurrences
+			request.ToolFrameInvalid = true
+			return nil
+		}
+	}
+
+	type requestFields formationsBoardPatchRequest
+	var decoded requestFields
+	if presence.ToolOperationOccurrences == 0 {
+		legacy := struct {
+			*requestFields
+			LayoutExpectation json.RawMessage `json:"layoutExpectation"`
+		}{requestFields: &decoded}
+		if err := json.Unmarshal(raw, &legacy); err != nil {
+			return err
+		}
+	} else {
+		if err := json.Unmarshal(raw, &decoded); err != nil {
+			return err
+		}
 	}
 	*request = formationsBoardPatchRequest(decoded)
 	request.LegacyCommandFieldsPresent = presence.LegacyCommandFieldsPresent

@@ -446,7 +446,7 @@ func TestDeleteToolRejectsInvalidRequestTargetOrBoardWithoutMutation(t *testing.
 			name:    "missing target id",
 			board:   func(slug string) string { return toolAuthoringBoardFixture(slug, 3, true, toolUpdateTargetBlock()) },
 			request: ToolDeleteRequest{},
-			wantIs:  ErrNotFound,
+			wantIs:  ErrInvalidToolMutation,
 		},
 		{
 			name:    "unknown target id",

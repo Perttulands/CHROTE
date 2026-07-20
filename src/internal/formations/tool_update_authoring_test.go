@@ -440,7 +440,7 @@ func TestUpdateToolRejectsInvalidPatchOrTargetWithoutMutation(t *testing.T) {
 		{name: "missing target id", request: func() ToolUpdateRequest {
 			title := "No target"
 			return ToolUpdateRequest{Title: &title}
-		}, wantIs: ErrNotFound},
+		}, wantIs: ErrInvalidToolMutation},
 		{name: "unknown target id", request: func() ToolUpdateRequest {
 			title := "No target"
 			return ToolUpdateRequest{ToolID: "tool_missing", Title: &title}

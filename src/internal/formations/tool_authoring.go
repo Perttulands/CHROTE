@@ -2,6 +2,7 @@ package formations
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
@@ -334,7 +335,7 @@ func validateToolRequestedParameters(toolID string, parameters map[string]any, d
 }
 
 func toolMutationValidationError(err error) error {
-	return fmt.Errorf("%w: %w", ErrInvalidToolMutation, err)
+	return fmt.Errorf("%w: %v", ErrInvalidToolMutation, err)
 }
 
 func validateToolUpdatedBy(updatedBy string) error {
@@ -397,7 +398,10 @@ func (s *Store) buildToolCreateCandidate(
 	}
 	position, err := toolCreatePosition(req.Placement, board, layoutBlocks)
 	if err != nil {
-		return definitionPairState{}, ToolNode{}, err
+		if errors.Is(err, ErrConflict) || errors.Is(err, ErrInvalidToolMutation) {
+			return definitionPairState{}, ToolNode{}, err
+		}
+		return definitionPairState{}, ToolNode{}, toolMutationValidationError(err)
 	}
 	tool := s.newToolNode(req, descriptor)
 	if err := validateToolNodeAgainstDescriptor(tool, descriptor); err != nil {
