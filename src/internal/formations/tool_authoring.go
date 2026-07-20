@@ -63,6 +63,17 @@ type ToolUpdateResult struct {
 	Tool   ToolNode        `json:"tool"`
 }
 
+type ToolDeleteRequest struct {
+	ID        string
+	UpdatedBy string
+}
+
+type ToolDeleteResult struct {
+	Board  *BoardDocument  `json:"board"`
+	Layout *LayoutDocument `json:"layout"`
+	ToolID string          `json:"toolId"`
+}
+
 func (s *Store) CreateTool(slug string, req ToolCreateRequest, opts ToolWriteOptions) (*ToolCreateResult, error) {
 	if err := validateSlug(slug); err != nil {
 		return nil, err
@@ -201,6 +212,66 @@ func (s *Store) UpdateTool(slug string, req ToolUpdateRequest, opts ToolWriteOpt
 		}
 	}
 	return &ToolUpdateResult{Board: board, Layout: layout, Tool: updated}, nil
+}
+
+func (s *Store) DeleteTool(slug string, req ToolDeleteRequest, opts ToolWriteOptions) (*ToolDeleteResult, error) {
+	if err := validateSlug(slug); err != nil {
+		return nil, err
+	}
+	if err := validateToolWriteOptions(opts); err != nil {
+		return nil, err
+	}
+	if req.ID == "" {
+		return nil, ErrNotFound
+	}
+	if err := validateToolUpdatedBy(req.UpdatedBy); err != nil {
+		return nil, err
+	}
+
+	expected := definitionPairStateIdentity{
+		board: definitionPairIdentity{present: true, sha256: opts.Board.ExpectedETag},
+		layout: definitionPairIdentity{
+			present: opts.Layout.State == LayoutWritePresent,
+			sha256:  opts.Layout.ETag,
+		},
+	}
+	var candidate definitionPairState
+	request := definitionPairPublicationRequest{
+		expected: expected,
+		build: func(current definitionPairState) (definitionPairState, error) {
+			built, err := s.buildToolDeleteCandidate(slug, current, req)
+			if err != nil {
+				return definitionPairState{}, err
+			}
+			candidate = cloneDefinitionPairState(built)
+			return built, nil
+		},
+		cas: func(current definitionPairState) error {
+			board, err := parseBoard(current.board)
+			if err != nil {
+				return err
+			}
+			if board.Rev != opts.Board.ExpectedRev {
+				return ErrConflict
+			}
+			return nil
+		},
+	}
+	if err := s.publishDefinitionPair(slug, request, nil); err != nil {
+		return nil, err
+	}
+	board, err := parseBoard(candidate.board)
+	if err != nil {
+		return nil, err
+	}
+	var layout *LayoutDocument
+	if candidate.layout.present {
+		layout, err = parseLayout(candidate.layout.raw)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &ToolDeleteResult{Board: board, Layout: layout, ToolID: req.ID}, nil
 }
 
 func validateToolWriteOptions(opts ToolWriteOptions) error {
@@ -452,6 +523,85 @@ func (s *Store) buildToolUpdateCandidate(
 	return next, updated, nil
 }
 
+func (s *Store) buildToolDeleteCandidate(
+	slug string,
+	current definitionPairState,
+	req ToolDeleteRequest,
+) (definitionPairState, error) {
+	if err := validateToolMutationBoardSource(current.board); err != nil {
+		return definitionPairState{}, err
+	}
+	board, err := parseBoard(current.board)
+	if err != nil {
+		return definitionPairState{}, err
+	}
+	if err := validateToolMutationBoard(board, slug); err != nil {
+		return definitionPairState{}, err
+	}
+	validatedBoardRaw, err := validateToolSchemaTwoMigrationAuthority(current.board)
+	if err != nil {
+		return definitionPairState{}, err
+	}
+	if _, found := toolNodeByID(board, req.ID); !found {
+		return definitionPairState{}, ErrNotFound
+	}
+
+	if current.layout.present {
+		layout, err := parseLayout(current.layout.raw)
+		if err != nil {
+			return definitionPairState{}, err
+		}
+		if _, err := validateToolMutationLayout(current.layout.raw, layout, board.ID); err != nil {
+			return definitionPairState{}, err
+		}
+	}
+
+	nextBoardRaw, deleted := deleteToolBlock(validatedBoardRaw, req.ID)
+	if !deleted {
+		return definitionPairState{}, ErrNotFound
+	}
+	nextBoardRaw = deleteConnectionsTouchingNodes(nextBoardRaw, map[string]bool{req.ID: true})
+	doc := parseTOMLDocument(nextBoardRaw)
+	updatedAt := s.now().Format(time.RFC3339)
+	if req.UpdatedBy != "" {
+		doc.setScalar("updatedBy", renderString(req.UpdatedBy))
+	}
+	doc.setScalar("rev", renderInt(board.Rev+1))
+	doc.setScalar("updatedAt", renderString(updatedAt))
+	nextBoardRaw = doc.bytes()
+	if err := validateToolMutationBoardSource(nextBoardRaw); err != nil {
+		return definitionPairState{}, err
+	}
+	nextBoardRaw, err = validateToolSchemaTwoMigrationAuthority(nextBoardRaw)
+	if err != nil {
+		return definitionPairState{}, err
+	}
+	nextBoard, err := parseBoard(nextBoardRaw)
+	if err != nil {
+		return definitionPairState{}, err
+	}
+	if err := validateToolMutationBoard(nextBoard, slug); err != nil {
+		return definitionPairState{}, err
+	}
+
+	next := definitionPairState{board: nextBoardRaw}
+	if current.layout.present {
+		nextLayoutRaw, err := updatePresentToolLayoutAuthority(current.layout.raw, nextBoard, "", updatedAt)
+		if err != nil {
+			return definitionPairState{}, err
+		}
+		nextLayout, err := parseLayout(nextLayoutRaw)
+		if err != nil {
+			return definitionPairState{}, err
+		}
+		if _, err := validateToolMutationLayout(nextLayoutRaw, nextLayout, nextBoard.ID); err != nil {
+			return definitionPairState{}, err
+		}
+		next.layout = definitionPairContent{present: true, raw: nextLayoutRaw}
+	}
+	return next, nil
+}
+
 func toolNodeByID(board *BoardDocument, id string) (ToolNode, bool) {
 	for _, tool := range board.Tools {
 		if tool.ID == id {
@@ -554,6 +704,16 @@ func findToolBlockByID(lines []tomlLine, toolID string) (int, int, bool) {
 		}
 	}
 	return 0, 0, false
+}
+
+func deleteToolBlock(raw []byte, toolID string) ([]byte, bool) {
+	lines := splitLines(raw)
+	start, end, found := findToolBlockByID(lines, toolID)
+	if !found {
+		return raw, false
+	}
+	lines = append(lines[:start], lines[end:]...)
+	return renderTOMLLines(lines), true
 }
 
 func toolStringScalarInBlock(lines []tomlLine, start, end int, key string) string {
