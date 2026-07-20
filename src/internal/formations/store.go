@@ -27,6 +27,7 @@ var (
 	ErrNotFound             = errors.New("formations file not found")
 	ErrPreconditionRequired = errors.New("formations write precondition required")
 	ErrUnsupportedSchema    = errors.New("unsupported formations schema")
+	ErrInvalidToolMutation  = errors.New("invalid_tool_mutation")
 )
 
 type Store struct {

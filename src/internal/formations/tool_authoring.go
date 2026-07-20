@@ -81,21 +81,24 @@ func (s *Store) CreateTool(slug string, req ToolCreateRequest, opts ToolWriteOpt
 	if err := validateToolWriteOptions(opts); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(req.Title) == "" {
-		return nil, fmt.Errorf("Tool title is required")
+	if err := validateToolTitle(req.Title); err != nil {
+		return nil, toolMutationValidationError(err)
 	}
 	if req.Params == nil {
-		return nil, fmt.Errorf("Tool parameter object is required")
+		return nil, toolMutationValidationError(fmt.Errorf("Tool parameter object is required"))
 	}
 	if err := validateToolUpdatedBy(req.UpdatedBy); err != nil {
-		return nil, err
+		return nil, toolMutationValidationError(err)
 	}
 	descriptor, ok := LookupToolProfileDescriptor(req.ProfileID, req.ProfileVersion)
 	if !ok {
-		return nil, fmt.Errorf("unknown Tool profile tuple %q@%q", req.ProfileID, req.ProfileVersion)
+		return nil, toolMutationValidationError(fmt.Errorf("unknown Tool profile tuple %q@%q", req.ProfileID, req.ProfileVersion))
 	}
 	if err := validateToolPlacementUnion(req.Placement); err != nil {
-		return nil, err
+		return nil, toolMutationValidationError(err)
+	}
+	if err := validateToolRequestedParameters("", req.Params, descriptor); err != nil {
+		return nil, toolMutationValidationError(err)
 	}
 
 	expected := definitionPairStateIdentity{
@@ -151,19 +154,21 @@ func (s *Store) UpdateTool(slug string, req ToolUpdateRequest, opts ToolWriteOpt
 		return nil, err
 	}
 	if req.ToolID == "" {
-		return nil, ErrNotFound
+		return nil, toolMutationValidationError(ErrNotFound)
 	}
 	if req.Title == nil && req.Params == nil {
-		return nil, fmt.Errorf("Tool update requires title and/or parameters")
+		return nil, toolMutationValidationError(fmt.Errorf("Tool update requires title and/or parameters"))
 	}
-	if req.Title != nil && strings.TrimSpace(*req.Title) == "" {
-		return nil, fmt.Errorf("Tool title is required")
+	if req.Title != nil {
+		if err := validateToolTitle(*req.Title); err != nil {
+			return nil, toolMutationValidationError(err)
+		}
 	}
 	if req.Params != nil && *req.Params == nil {
-		return nil, fmt.Errorf("Tool parameter object is required")
+		return nil, toolMutationValidationError(fmt.Errorf("Tool parameter object is required"))
 	}
 	if err := validateToolUpdatedBy(req.UpdatedBy); err != nil {
-		return nil, err
+		return nil, toolMutationValidationError(err)
 	}
 
 	expected := definitionPairStateIdentity{
@@ -222,10 +227,10 @@ func (s *Store) DeleteTool(slug string, req ToolDeleteRequest, opts ToolWriteOpt
 		return nil, err
 	}
 	if req.ID == "" {
-		return nil, ErrNotFound
+		return nil, toolMutationValidationError(ErrNotFound)
 	}
 	if err := validateToolUpdatedBy(req.UpdatedBy); err != nil {
-		return nil, err
+		return nil, toolMutationValidationError(err)
 	}
 
 	expected := definitionPairStateIdentity{
@@ -310,6 +315,26 @@ func validateToolPlacementUnion(placement ToolPlacement) error {
 		return fmt.Errorf("Tool placement predecessor and successor must differ")
 	}
 	return nil
+}
+
+func validateToolTitle(title string) error {
+	if strings.TrimSpace(title) == "" {
+		return fmt.Errorf("Tool title is required")
+	}
+	rendered := renderString(title)
+	parsed, ok := parseTOMLBasicString(rendered)
+	if !ok || parsed != title {
+		return fmt.Errorf("invalid_tool_title: Tool title is not a TOML basic string")
+	}
+	return nil
+}
+
+func validateToolRequestedParameters(toolID string, parameters map[string]any, descriptor ToolProfileDescriptor) error {
+	return validateToolParametersAgainstDescriptor(ToolNode{ID: toolID, Params: parameters}, descriptor.Parameters)
+}
+
+func toolMutationValidationError(err error) error {
+	return fmt.Errorf("%w: %w", ErrInvalidToolMutation, err)
 }
 
 func validateToolUpdatedBy(updatedBy string) error {
@@ -453,6 +478,11 @@ func (s *Store) buildToolUpdateCandidate(
 	if !ok {
 		return definitionPairState{}, ToolNode{}, fmt.Errorf("unknown Tool profile tuple %q@%q", tool.ProfileID, tool.ProfileVersion)
 	}
+	if req.Params != nil {
+		if err := validateToolRequestedParameters(req.ToolID, *req.Params, descriptor); err != nil {
+			return definitionPairState{}, ToolNode{}, toolMutationValidationError(err)
+		}
+	}
 	updated := tool
 	if req.Title != nil {
 		updated.Title = *req.Title
@@ -461,7 +491,7 @@ func (s *Store) buildToolUpdateCandidate(
 		updated.Params = cloneToolParameters(*req.Params)
 	}
 	if err := validateToolNodeAgainstDescriptor(updated, descriptor); err != nil {
-		return definitionPairState{}, ToolNode{}, err
+		return definitionPairState{}, ToolNode{}, toolMutationValidationError(err)
 	}
 
 	if current.layout.present {
@@ -1241,10 +1271,10 @@ func toolCreatePosition(placement ToolPlacement, board *BoardDocument, blocks []
 	predecessor, hasPredecessor := positions[placement.PredecessorNodeID]
 	successor, hasSuccessor := positions[placement.SuccessorNodeID]
 	if placement.PredecessorNodeID != "" && !hasPredecessor {
-		return LayoutNode{}, fmt.Errorf("unknown Tool placement predecessor %q", placement.PredecessorNodeID)
+		return LayoutNode{}, toolMutationValidationError(fmt.Errorf("unknown Tool placement predecessor %q", placement.PredecessorNodeID))
 	}
 	if placement.SuccessorNodeID != "" && !hasSuccessor {
-		return LayoutNode{}, fmt.Errorf("unknown Tool placement successor %q", placement.SuccessorNodeID)
+		return LayoutNode{}, toolMutationValidationError(fmt.Errorf("unknown Tool placement successor %q", placement.SuccessorNodeID))
 	}
 	desiredX, desiredY := int64(layoutPlacementMin), int64(layoutPlacementMin)
 	switch {
