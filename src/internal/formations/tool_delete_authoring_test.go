@@ -18,6 +18,9 @@ func TestDeleteToolPresentLayoutRemovesOwnedDefinitionAndFiltersLayoutAuthority(
 		"schema = 2 # preserve schema source\nx_board_owner = 'keep exact' # preserve root extension\n",
 		1,
 	)
+	if err := validateToolMutationBoardSource([]byte(boardRaw)); err != nil {
+		t.Fatalf("nested connection delete fixture is not valid TOML: %v", err)
+	}
 	layoutRaw := `schema = 1 # preserve schema comment
 boardId = "brd_tool-delete-present"
 boardRev = 7 # preserve revision comment
@@ -136,6 +139,8 @@ note = "preserve this table exactly"
 		`id = "port_target_out"`,
 		`id = "edge_into_target"`,
 		`id = "edge_from_target"`,
+		`marker = "delete incoming subtree"`,
+		`marker = "delete outgoing subtree"`,
 	} {
 		if strings.Contains(result.Board.TOML, deletedSource) {
 			t.Fatalf("delete retained owned target source %q:\n%s", deletedSource, result.Board.TOML)
@@ -152,7 +157,13 @@ id = "edge_keep"
 channel = "workflow"
 from = "tool_source:port_source_out"
 to = "tool_keep:port_keep_in"
-x_connection_note = "preserve exact"`,
+x_connection_note = "preserve exact"
+
+[connection.metadata]
+note = 'retain nested exact'
+
+[connection.metadata.route]
+lane = "center"`,
 	}
 	for _, span := range retainedBoardSpans {
 		if !strings.Contains(result.Board.TOML, span) {
@@ -547,12 +558,11 @@ from = "tool_source:port_source_out"
 to = 'tool_target:port_target_in'
 x_connection_note = "remove incoming"
 
-[[connection]]
-id = "edge_from_target"
-channel = "workflow"
-from = 'tool_target:port_target_out'
-to = "tool_sink:port_sink_in"
-x_connection_note = "remove outgoing"
+[connection.metadata]
+marker = "delete incoming subtree"
+
+[connection.metadata.trace]
+depth = 1
 
 [[connection]]
 id = "edge_keep"
@@ -560,6 +570,25 @@ channel = "workflow"
 from = "tool_source:port_source_out"
 to = "tool_keep:port_keep_in"
 x_connection_note = "preserve exact"
+
+[connection.metadata]
+note = 'retain nested exact'
+
+[connection.metadata.route]
+lane = "center"
+
+[[connection]]
+id = "edge_from_target"
+channel = "workflow"
+from = 'tool_target:port_target_out'
+to = "tool_sink:port_sink_in"
+x_connection_note = "remove outgoing"
+
+[connection.metadata]
+marker = "delete outgoing subtree"
+
+[connection.metadata.trace]
+depth = 2
 `,
 	)
 }
