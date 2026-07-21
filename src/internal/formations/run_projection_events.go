@@ -1300,7 +1300,7 @@ type SafeSchema2RunBlockedData struct {
 	ResumePolicy   string                    `json:"resumePolicy"`
 	OpenDispatches []SafeSchema2OpenDispatch `json:"openDispatches"`
 	RetryTargets   []SafeRetryTarget         `json:"retryTargets"`
-	NextEpoch      uint64                    `json:"nextEpoch"`
+	NextEpoch      uint64                    `json:"nextEpoch,omitempty"`
 }
 type SafeSchema2RunCancelRequestedData struct {
 	CommandID            string                    `json:"commandId"`

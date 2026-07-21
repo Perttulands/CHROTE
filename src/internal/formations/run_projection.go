@@ -1938,7 +1938,22 @@ func validateAndNormalizeSchema2Data(eventType string, data map[string]json.RawM
 		if err := replaceProjectionData(data, "retryTargets", retryTargets); err != nil {
 			return err
 		}
-		if eventType == "run_blocked" {
+		if eventType == "run_resumed" {
+			decoded, err := decodeTypedData[SafeSchema2RunResumedData](data)
+			if err != nil {
+				return errors.New("invalid run resume")
+			}
+			switch decoded.ResumeMode {
+			case "retry-failed-producer":
+				if len(decoded.OpenDispatches) != 0 || len(retryTargets) != 1 {
+					return errors.New("invalid retry resume")
+				}
+			case "reattach":
+				if len(decoded.OpenDispatches) == 0 || len(retryTargets) != 0 {
+					return errors.New("invalid reattach resume")
+				}
+			}
+		} else {
 			decoded, err := decodeTypedData[SafeSchema2RunBlockedData](data)
 			if err != nil || !projectionBoundedText(decoded.Reason, false) || !projectionValueIn(decoded.BlockScope, "run", "node", "gate") || !projectionValueIn(decoded.ResumePolicy, "retry_failed_producer", "reattach_only", "new_run_required") {
 				return errors.New("invalid run block")
@@ -1947,14 +1962,15 @@ func validateAndNormalizeSchema2Data(eventType string, data map[string]json.RawM
 				return errors.New("invalid run block identity")
 			}
 			if decoded.ResumePolicy == "retry_failed_producer" {
-				if !decoded.ResumeAllowed || decoded.BlockScope != "node" || !projectionSafeSequence(decoded.NextEpoch) || len(retryTargets) != 1 {
+				if !decoded.ResumeAllowed || decoded.BlockScope != "node" || !projectionSafeSequence(decoded.NextEpoch) || len(decoded.OpenDispatches) != 0 || len(retryTargets) != 1 {
 					return errors.New("invalid retry block")
 				}
-			} else if decoded.ResumePolicy == "new_run_required" && decoded.ResumeAllowed || decoded.ResumePolicy == "reattach_only" && !decoded.ResumeAllowed {
-				return errors.New("invalid block resume policy")
-			}
-			if decoded.BlockScope == "node" && !projectionSafeSequence(decoded.NextEpoch) {
-				return errors.New("invalid block epoch")
+			} else if decoded.ResumePolicy == "reattach_only" {
+				if !decoded.ResumeAllowed || !projectionSafeSequence(decoded.NextEpoch) || len(decoded.OpenDispatches) == 0 || len(retryTargets) != 0 {
+					return errors.New("invalid reattach block")
+				}
+			} else if decoded.ResumeAllowed || len(retryTargets) != 0 {
+				return errors.New("invalid new-run block")
 			}
 		}
 	case "node_waiting":
@@ -2866,11 +2882,15 @@ func validateSchema2DataPresence(eventType string, data map[string]json.RawMessa
 		case "node":
 			required["blockedNodeId"] = true
 			delete(forbidden, "blockedNodeId")
-			required["nextEpoch"] = true
-			delete(forbidden, "nextEpoch")
 		case "gate":
 			required["blockedGateId"] = true
 			delete(forbidden, "blockedGateId")
+			delete(forbidden, "blockedNodeId")
+		}
+		switch rawProjectionString(data, "resumePolicy") {
+		case "retry_failed_producer", "reattach_only":
+			required["nextEpoch"] = true
+			delete(forbidden, "nextEpoch")
 		}
 	}
 
@@ -3047,6 +3067,9 @@ type projectionState struct {
 	bindings        map[string]schema2Binding
 	health          map[string]SafeSchema2SlotBindingObservedData
 	lastBlockJSON   []byte
+	lastBlockRetry  []byte
+	lastBlockSeq    uint64
+	lastBlockPolicy string
 	terminal        bool
 }
 
@@ -3559,9 +3582,23 @@ func reduceSchema2Event(state *projectionState, raw rawProjectionEvent, safe Saf
 		if err := verifyEventCommand(event.Data.CommandID, event.Data.CommandPayloadSHA256, raw.envelope.Seq, commands); err != nil {
 			return err
 		}
+		if state.view.Status != "blocked" || event.Data.ResumedFromSeq != state.lastBlockSeq {
+			return projectionError(ErrRunProjectionInvalid, "resume does not name current block")
+		}
+		expectedMode := map[string]string{
+			"reattach_only":         "reattach",
+			"retry_failed_producer": "retry-failed-producer",
+		}[state.lastBlockPolicy]
+		if expectedMode == "" || event.Data.ResumeMode != expectedMode {
+			return projectionError(ErrRunProjectionInvalid, "resume mode differs from block")
+		}
 		carry, _ := json.Marshal(event.Data.OpenDispatches)
 		if !bytes.Equal(carry, state.lastBlockJSON) {
 			return projectionError(ErrRunProjectionInvalid, "resume carry differs from block")
+		}
+		retry, _ := json.Marshal(event.Data.RetryTargets)
+		if !bytes.Equal(retry, state.lastBlockRetry) {
+			return projectionError(ErrRunProjectionInvalid, "resume retry targets differ from block")
 		}
 		state.view.Status = "running"
 	case SafeSchema2HumanVerdictRecordedEvent:
@@ -4616,6 +4653,9 @@ func (state *projectionState) appendSchema2Block(raw rawProjectionEvent, data Sa
 		ResumePolicy: data.ResumePolicy, NextEpoch: data.NextEpoch, OpenDispatches: dispatches,
 	})
 	state.lastBlockJSON, _ = json.Marshal(data.OpenDispatches)
+	state.lastBlockRetry, _ = json.Marshal(data.RetryTargets)
+	state.lastBlockSeq = raw.envelope.Seq
+	state.lastBlockPolicy = data.ResumePolicy
 }
 
 func artifactProjectionID(artifact ArtifactProjection) string {
