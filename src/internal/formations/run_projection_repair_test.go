@@ -791,39 +791,90 @@ func TestProjectCanonicalRunValidatesEverySchema2AuthorityDocument(t *testing.T)
 
 func TestProjectCanonicalRunRejectsDuplicateAuthorityJSONMembers(t *testing.T) {
 	for _, test := range []struct {
-		name string
-		role CanonicalInputRole
-		key  string
+		name      string
+		duplicate func(*testing.T, CanonicalRunReadInput) CanonicalRunReadInput
 	}{
-		{name: "registry", role: CanonicalInputRoleSchema2WorkspaceRegistry, key: "registrySchema"},
-		{name: "bootstrap", role: CanonicalInputRoleSchema2WorkspaceBootstrap, key: "bootstrapSchema"},
-		{name: "authority", role: CanonicalInputRoleSchema2WorkspaceAuthority, key: "authoritySchema"},
-		{name: "run bootstrap", role: CanonicalInputRoleSchema2RunBootstrap, key: "runBootstrapSchema"},
-		{name: "command", role: CanonicalInputRoleSchema2CommandRecord, key: "commandSchema"},
+		{name: "registry", duplicate: func(t *testing.T, input CanonicalRunReadInput) CanonicalRunReadInput {
+			return schema2RepairDuplicateRoleJSONMember(t, input, CanonicalInputRoleSchema2WorkspaceRegistry, 0, "registrySchema")
+		}},
+		{name: "bootstrap", duplicate: func(t *testing.T, input CanonicalRunReadInput) CanonicalRunReadInput {
+			return schema2RepairDuplicateRoleJSONMember(t, input, CanonicalInputRoleSchema2WorkspaceBootstrap, 0, "bootstrapSchema")
+		}},
+		{name: "authority", duplicate: func(t *testing.T, input CanonicalRunReadInput) CanonicalRunReadInput {
+			return schema2RepairDuplicateRoleJSONMember(t, input, CanonicalInputRoleSchema2WorkspaceAuthority, 0, "authoritySchema")
+		}},
+		{name: "admission policy", duplicate: func(t *testing.T, input CanonicalRunReadInput) CanonicalRunReadInput {
+			index := schema2RepairRoleDocumentIndex(input, CanonicalInputRoleSchema2AdmissionPolicy, 1)
+			if index < 0 {
+				t.Fatal("configured admission policy fixture missing")
+			}
+			policy := schema2RepairDuplicateTopLevelJSONMember(t, input.Documents[index].Bytes, "policySchema")
+			return schema2RepairReplaceConfiguredPolicyAndReferences(t, input, policy)
+		}},
+		{name: "run bootstrap", duplicate: func(t *testing.T, input CanonicalRunReadInput) CanonicalRunReadInput {
+			return schema2RepairDuplicateRoleJSONMember(t, input, CanonicalInputRoleSchema2RunBootstrap, 0, "runBootstrapSchema")
+		}},
+		{name: "ledger", duplicate: func(t *testing.T, input CanonicalRunReadInput) CanonicalRunReadInput {
+			index := schema2RepairRoleDocumentIndex(input, CanonicalInputRoleSchema2Ledger, 0)
+			if index < 0 {
+				t.Fatal("schema-2 ledger fixture missing")
+			}
+			ledger := input.Documents[index].Bytes
+			lineEnd := bytes.IndexByte(ledger, '\n')
+			if lineEnd < 0 {
+				t.Fatalf("schema-2 ledger fixture has no complete row: %q", ledger)
+			}
+			first := schema2RepairDuplicateTopLevelJSONMember(t, ledger[:lineEnd], "schema")
+			duplicate := append(append([]byte(nil), first...), ledger[lineEnd:]...)
+			input.Documents[index] = canonicalInputDocument(CanonicalInputRoleSchema2Ledger, duplicate)
+			return input
+		}},
+		{name: "command", duplicate: func(t *testing.T, input CanonicalRunReadInput) CanonicalRunReadInput {
+			return schema2RepairDuplicateRoleJSONMember(t, input, CanonicalInputRoleSchema2CommandRecord, 0, "commandSchema")
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			input := schema2ProjectionInput(t, true)
-			document := canonicalDocumentByRole(t, input, test.role).Bytes
-			needle := []byte(`"` + test.key + `":`)
-			index := bytes.Index(document, needle)
-			if index < 0 {
-				t.Fatalf("fixture lacks duplicate target %q: %s", test.key, document)
-			}
-			valueStart := index + len(needle)
-			valueEnd := bytes.IndexByte(document[valueStart:], ',')
-			if valueEnd < 0 {
-				t.Fatalf("fixture key %q has no following comma: %s", test.key, document)
-			}
-			value := document[valueStart : valueStart+valueEnd]
-			duplicate := append([]byte(nil), document[:valueStart+valueEnd+1]...)
-			duplicate = append(duplicate, []byte(`"`+test.key+`":`)...)
-			duplicate = append(duplicate, value...)
-			duplicate = append(duplicate, ',')
-			duplicate = append(duplicate, document[valueStart+valueEnd+1:]...)
-			input = replaceCanonicalDocument(t, input, test.role, duplicate)
+			input = test.duplicate(t, input)
 			schema2RepairRequireProjectionInvalid(t, input, "duplicate "+test.name+" JSON member")
 		})
 	}
+}
+
+func schema2RepairDuplicateRoleJSONMember(t *testing.T, input CanonicalRunReadInput, role CanonicalInputRole, occurrence int, key string) CanonicalRunReadInput {
+	t.Helper()
+	index := schema2RepairRoleDocumentIndex(input, role, occurrence)
+	if index < 0 {
+		t.Fatalf("fixture lacks %s occurrence %d", role, occurrence)
+	}
+	duplicate := schema2RepairDuplicateTopLevelJSONMember(t, input.Documents[index].Bytes, key)
+	input.Documents[index] = canonicalInputDocument(role, duplicate)
+	return input
+}
+
+func schema2RepairDuplicateTopLevelJSONMember(t *testing.T, raw []byte, key string) []byte {
+	t.Helper()
+	object := decodeCanonicalObject(t, raw)
+	value, ok := object[key]
+	if !ok {
+		t.Fatalf("fixture lacks duplicate target %q: %s", key, raw)
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) < 2 || trimmed[0] != '{' || trimmed[len(trimmed)-1] != '}' {
+		t.Fatalf("duplicate target %q is not a complete JSON object: %s", key, raw)
+	}
+	keyJSON := canonicalJSON(t, key)
+	valueJSON := canonicalJSON(t, value)
+	duplicate := append([]byte(nil), trimmed[:len(trimmed)-1]...)
+	duplicate = append(duplicate, ',')
+	duplicate = append(duplicate, keyJSON...)
+	duplicate = append(duplicate, ':')
+	duplicate = append(duplicate, valueJSON...)
+	duplicate = append(duplicate, '}')
+	if !json.Valid(duplicate) {
+		t.Fatalf("duplicate target %q produced invalid JSON: %s", key, duplicate)
+	}
+	return duplicate
 }
 
 func TestProjectCanonicalRunValidatesAdmissionPolicyClosedSemantics(t *testing.T) {
