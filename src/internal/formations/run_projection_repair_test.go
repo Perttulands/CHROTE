@@ -1650,12 +1650,7 @@ func schema2RepairFormationResultData() map[string]any {
 		"artifactIds": []any{}, "diffArtifactIds": []any{}, "contributingSlotResultSeqs": []any{10},
 		"resultEncoding": "formation-result-jcs-v1",
 	}
-	result := map[string]any{
-		"status": data["status"], "outputs": data["outputs"], "outputHashes": data["outputHashes"],
-		"reportArtifactId": data["reportArtifactId"], "artifactIds": data["artifactIds"], "diffArtifactIds": data["diffArtifactIds"],
-		"contributingSlotResultSeqs": data["contributingSlotResultSeqs"],
-	}
-	data["resultSha256"] = projectionSHA256(mustMarshalJSONNoTest(result))
+	schema2SecondRepairNormalizeFormationResult(data)
 	return data
 }
 
@@ -1691,7 +1686,7 @@ func schema2RepairToolResultData() map[string]any {
 func schema2RepairNodeOutputData(nodeID string) map[string]any {
 	return map[string]any{
 		"nodeId": nodeID, "status": "done", "outputs": map[string]any{"out": schema2RepairWorkProjection("done")},
-		"reportArtifactId": "", "artifactIds": []any{}, "diffArtifactIds": []any{},
+		"reportArtifactId": "artifact_report", "artifactIds": []any{}, "diffArtifactIds": []any{},
 		"producedBy":     map[string]any{"kind": "mission", "outcomeSeq": 19},
 		"timing":         map[string]any{"startedAt": "2026-07-20T10:00:00Z", "finishedAt": "2026-07-20T10:00:01Z", "durationMs": 1000},
 		"deliveredEdges": []any{},
@@ -1706,7 +1701,8 @@ func schema2RepairGateEvaluatingData() map[string]any {
 			"classification": "authored_config", "sourceKind": "gate_criterion", "encoding": "gate-criterion-utf8-v1",
 			"mediaType": "text/plain", "sha256": projectionSHA256([]byte(criterion)), "text": criterion,
 		},
-		"inputRef": schema2RepairInputRef(), "judgeChain": []any{}, "revisionCycleId": "", "triggerFeedbackId": "", "priorGateSeq": 0,
+		"inputRef": schema2RepairInputRef(), "judgeChain": []any{},
+		"revisionCycleId": "revision_01KXNP6VY3227H78329V52CKF8", "triggerFeedbackId": "feedback_01KXNP6VY3227H78329V52CKF8", "priorGateSeq": 18,
 	}
 }
 

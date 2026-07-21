@@ -93,28 +93,230 @@ func schema2SecondRepairRequireAllowlistedPublicData(t *testing.T, eventType str
 	}
 }
 
-func TestProjectCanonicalRunSchema2OptionalPublicDataMayBeAbsent(t *testing.T) {
-	for _, test := range []struct {
-		eventType string
-		key       string
-	}{
-		{eventType: "formation_result", key: "reportArtifactId"},
-		{eventType: "tool_result", key: "displayEvidence"},
-		{eventType: "node_output", key: "reportArtifactId"},
-		{eventType: "gate_evaluating", key: "revisionCycleId"},
-		{eventType: "gate_evaluating", key: "triggerFeedbackId"},
-		{eventType: "gate_evaluating", key: "priorGateSeq"},
-		{eventType: "run_succeeded", key: "summaryArtifactId"},
-	} {
-		t.Run(test.eventType+"/absent_"+test.key, func(t *testing.T) {
+type schema2SecondRepairOptionalPublicCase struct {
+	eventType        string
+	key              string
+	valid            any
+	invalid          any
+	absentNormalized any
+	normalize        func(map[string]any) string
+}
+
+func TestProjectCanonicalRunSchema2OptionalPublicDataMatrix(t *testing.T) {
+	cases := []schema2SecondRepairOptionalPublicCase{
+		{eventType: "node_started", key: "triggerFeedbackId", valid: "feedback_01KXNP6VY3227H78329V52CKF8", invalid: "not an id"},
+		{eventType: "node_started", key: "priorGateSeq", valid: uint64(18), invalid: uint64(0)},
+		{eventType: "formation_result", key: "reportArtifactId", valid: "artifact_report", invalid: "not an id", absentNormalized: "", normalize: schema2SecondRepairNormalizeFormationResult},
+		{eventType: "tool_result", key: "displayEvidence", valid: []any{map[string]any{"kind": "text", "text": "clean"}}, invalid: []any{map[string]any{"kind": "socket", "text": "private"}}},
+		{eventType: "node_output", key: "reportArtifactId", valid: "artifact_report", invalid: "not an id"},
+		{eventType: "gate_evaluating", key: "revisionCycleId", valid: "revision_01KXNP6VY3227H78329V52CKF8", invalid: "not an id"},
+		{eventType: "gate_evaluating", key: "triggerFeedbackId", valid: "feedback_01KXNP6VY3227H78329V52CKF8", invalid: "not an id"},
+		{eventType: "gate_evaluating", key: "priorGateSeq", valid: uint64(18), invalid: uint64(0)},
+		{eventType: "run_succeeded", key: "summaryArtifactId", valid: "artifact_summary", invalid: "not an id"},
+	}
+	if len(cases) != 9 {
+		t.Fatalf("top-level optional matrix has %d rows, want 9", len(cases))
+	}
+
+	for _, test := range cases {
+		name := test.eventType + "/" + test.key
+		t.Run(name+"/absent", func(t *testing.T) {
 			data := schema2SecondRepairFixture(t, test.eventType)
-			delete(data, test.key)
-			_, err := schema2SecondRepairSanitize(test.eventType, data)
-			if err != nil {
-				t.Fatalf("optional %s.%s omission rejected: %v", test.eventType, test.key, err)
+			if _, present := data[test.key]; test.normalize == nil && present {
+				t.Fatalf("ordinary %s fixture carries absent optional placeholder", name)
 			}
+			delete(data, test.key)
+			if test.normalize != nil {
+				test.normalize(data)
+			}
+			safe, err := schema2SecondRepairSanitize(test.eventType, data)
+			if err != nil {
+				t.Fatalf("optional %s omission rejected: %v", name, err)
+			}
+			public := schema2SecondRepairPublicData(t, safe)
+			if test.normalize == nil {
+				schema2SecondRepairRequireJSONMemberAbsent(t, public, test.key)
+				return
+			}
+			schema2SecondRepairRequireExactJSONMember(t, public, test.key, test.absentNormalized)
+		})
+
+		t.Run(name+"/valid_present", func(t *testing.T) {
+			data := schema2SecondRepairFixture(t, test.eventType)
+			data[test.key] = cloneAny(test.valid)
+			if test.normalize != nil {
+				test.normalize(data)
+			}
+			safe, err := schema2SecondRepairSanitize(test.eventType, data)
+			if err != nil {
+				t.Fatalf("valid optional %s rejected: %v", name, err)
+			}
+			schema2SecondRepairRequireExactJSONMember(t, schema2SecondRepairPublicData(t, safe), test.key, test.valid)
+		})
+
+		t.Run(name+"/invalid_present", func(t *testing.T) {
+			data := schema2SecondRepairFixture(t, test.eventType)
+			data[test.key] = cloneAny(test.invalid)
+			if test.normalize != nil {
+				test.normalize(data)
+			}
+			schema2SecondRepairRequirePublicRejection(t, test.eventType, data)
 		})
 	}
+
+}
+
+func TestProjectCanonicalRunSchema2FormationResultDefaultsBindNormalizedHash(t *testing.T) {
+	cases := []struct {
+		key     string
+		valid   any
+		invalid any
+		zero    any
+	}{
+		{key: "reportArtifactId", valid: "artifact_report", invalid: "not an id", zero: ""},
+		{key: "artifactIds", valid: []any{"artifact_report"}, invalid: []any{"not an id"}, zero: []any{}},
+		{key: "diffArtifactIds", valid: []any{"artifact_diff"}, invalid: []any{"artifact_diff", "artifact_diff"}, zero: []any{}},
+		{key: "contributingSlotResultSeqs", valid: []any{10, 12}, invalid: []any{12, 10}, zero: []any{}},
+	}
+
+	for _, test := range cases {
+		t.Run(test.key+"/absent_normalizes", func(t *testing.T) {
+			data := schema2RepairFormationResultData()
+			delete(data, test.key)
+			wantHash := schema2SecondRepairNormalizeFormationResult(data)
+			safe, err := schema2SecondRepairSanitize("formation_result", data)
+			if err != nil {
+				t.Fatalf("formation result missing optional %s rejected: %v", test.key, err)
+			}
+			public := schema2SecondRepairPublicData(t, safe)
+			schema2SecondRepairRequireExactJSONMember(t, public, test.key, test.zero)
+			schema2SecondRepairRequireExactJSONMember(t, public, "resultSha256", wantHash)
+		})
+
+		t.Run(test.key+"/valid_present", func(t *testing.T) {
+			data := schema2RepairFormationResultData()
+			data[test.key] = cloneAny(test.valid)
+			wantHash := schema2SecondRepairNormalizeFormationResult(data)
+			safe, err := schema2SecondRepairSanitize("formation_result", data)
+			if err != nil {
+				t.Fatalf("formation result valid optional %s rejected: %v", test.key, err)
+			}
+			public := schema2SecondRepairPublicData(t, safe)
+			schema2SecondRepairRequireExactJSONMember(t, public, test.key, test.valid)
+			schema2SecondRepairRequireExactJSONMember(t, public, "resultSha256", wantHash)
+		})
+
+		t.Run(test.key+"/invalid_present", func(t *testing.T) {
+			data := schema2RepairFormationResultData()
+			data[test.key] = cloneAny(test.invalid)
+			schema2SecondRepairNormalizeFormationResult(data)
+			schema2SecondRepairRequirePublicRejection(t, "formation_result", data)
+		})
+	}
+
+	t.Run("omissions_reject_non_normalized_hash", func(t *testing.T) {
+		data := schema2RepairFormationResultData()
+		for _, key := range []string{"reportArtifactId", "artifactIds", "diffArtifactIds", "contributingSlotResultSeqs"} {
+			delete(data, key)
+		}
+		incomplete := map[string]any{"status": data["status"], "outputs": data["outputs"], "outputHashes": data["outputHashes"]}
+		data["resultSha256"] = projectionSHA256(mustMarshalJSONNoTest(incomplete))
+		schema2SecondRepairRequirePublicRejection(t, "formation_result", data)
+	})
+}
+
+func TestProjectCanonicalRunSchema2SlotTurnResultDefaultsBindNormalizedHash(t *testing.T) {
+	cases := []struct {
+		key     string
+		valid   any
+		invalid any
+		zero    any
+	}{
+		{key: "reportArtifactId", valid: "artifact_report", invalid: "not an id", zero: ""},
+		{key: "outputs", valid: map[string]any{"port_out": schema2RepairWorkProjection("done")}, invalid: map[string]any{"../private": schema2RepairWorkProjection("private")}, zero: map[string]any{}},
+		{key: "artifactIds", valid: []any{"artifact_report"}, invalid: []any{"not an id"}, zero: []any{}},
+		{key: "diffArtifactIds", valid: []any{"artifact_diff"}, invalid: []any{"artifact_diff", "artifact_diff"}, zero: []any{}},
+	}
+
+	for _, test := range cases {
+		t.Run(test.key+"/absent_normalizes", func(t *testing.T) {
+			data := schema2RepairSlotResultData(t)
+			delete(data["turnResult"].(map[string]any), test.key)
+			wantHash := schema2SecondRepairNormalizeSlotTurnResult(data)
+			safe, err := schema2SecondRepairSanitize("slot_result", data)
+			if err != nil {
+				t.Fatalf("slot turn result missing optional %s rejected: %v", test.key, err)
+			}
+			public := schema2SecondRepairPublicData(t, safe)
+			turnResult := schema2SecondRepairJSONObject(t, public["turnResult"])
+			schema2SecondRepairRequireExactJSONMember(t, turnResult, test.key, test.zero)
+			schema2SecondRepairRequireExactJSONMember(t, public, "turnResultSha256", wantHash)
+		})
+
+		t.Run(test.key+"/valid_present", func(t *testing.T) {
+			data := schema2RepairSlotResultData(t)
+			data["turnResult"].(map[string]any)[test.key] = cloneAny(test.valid)
+			wantHash := schema2SecondRepairNormalizeSlotTurnResult(data)
+			safe, err := schema2SecondRepairSanitize("slot_result", data)
+			if err != nil {
+				t.Fatalf("slot turn result valid optional %s rejected: %v", test.key, err)
+			}
+			public := schema2SecondRepairPublicData(t, safe)
+			turnResult := schema2SecondRepairJSONObject(t, public["turnResult"])
+			schema2SecondRepairRequireExactJSONMember(t, turnResult, test.key, test.valid)
+			schema2SecondRepairRequireExactJSONMember(t, public, "turnResultSha256", wantHash)
+		})
+
+		t.Run(test.key+"/invalid_present", func(t *testing.T) {
+			data := schema2RepairSlotResultData(t)
+			data["turnResult"].(map[string]any)[test.key] = cloneAny(test.invalid)
+			schema2SecondRepairNormalizeSlotTurnResult(data)
+			schema2SecondRepairRequirePublicRejection(t, "slot_result", data)
+		})
+	}
+
+	t.Run("omissions_reject_non_normalized_hash", func(t *testing.T) {
+		data := schema2RepairSlotResultData(t)
+		turnResult := data["turnResult"].(map[string]any)
+		for _, key := range []string{"outputs", "reportArtifactId", "artifactIds", "diffArtifactIds"} {
+			delete(turnResult, key)
+		}
+		data["turnResultSha256"] = projectionSHA256(mustMarshalJSONNoTest(turnResult))
+		schema2SecondRepairRequirePublicRejection(t, "slot_result", data)
+	})
+}
+
+func TestProjectCanonicalRunSchema2GateFeedbackRevisionCycleOptionalMatrix(t *testing.T) {
+	const key = "revisionCycleId"
+
+	t.Run("absent", func(t *testing.T) {
+		data := schema2RepairGateVerdictData()
+		delete(data["feedbackPayload"].(map[string]any), key)
+		safe, err := schema2SecondRepairSanitize("gate_verdict", data)
+		if err != nil {
+			t.Fatalf("gate feedback optional %s omission rejected: %v", key, err)
+		}
+		feedback := schema2SecondRepairJSONObject(t, schema2SecondRepairPublicData(t, safe)["feedbackPayload"])
+		schema2SecondRepairRequireJSONMemberAbsent(t, feedback, key)
+	})
+
+	t.Run("valid_present", func(t *testing.T) {
+		data := schema2RepairGateVerdictData()
+		const revisionCycleID = "revision_01KXNP6VY3227H78329V52CKF8"
+		data["feedbackPayload"].(map[string]any)[key] = revisionCycleID
+		safe, err := schema2SecondRepairSanitize("gate_verdict", data)
+		if err != nil {
+			t.Fatalf("valid gate feedback optional %s rejected: %v", key, err)
+		}
+		feedback := schema2SecondRepairJSONObject(t, schema2SecondRepairPublicData(t, safe)["feedbackPayload"])
+		schema2SecondRepairRequireExactJSONMember(t, feedback, key, revisionCycleID)
+	})
+
+	t.Run("invalid_present", func(t *testing.T) {
+		data := schema2RepairGateVerdictData()
+		data["feedbackPayload"].(map[string]any)[key] = "not an id"
+		schema2SecondRepairRequirePublicRejection(t, "gate_verdict", data)
+	})
 }
 
 func TestProjectCanonicalRunSchema2NodeWaitingUsesDataIdentity(t *testing.T) {
@@ -239,7 +441,13 @@ func schema2SecondRepairRequirednessCases(t *testing.T) []schema2SecondRepairCas
 		if conditional[eventType] {
 			continue
 		}
-		result = append(result, schema2SecondRepairCase{name: eventType, eventType: eventType, data: schema2SecondRepairFixture(t, eventType), required: required[eventType]})
+		data := schema2SecondRepairFixture(t, eventType)
+		if eventType == "tool_result" {
+			// Requiredness needs a valid-present optional variant so its required
+			// field leaves execute while the ordinary fixture remains absent.
+			data["displayEvidence"] = []any{}
+		}
+		result = append(result, schema2SecondRepairCase{name: eventType, eventType: eventType, data: data, required: required[eventType]})
 	}
 
 	ordinaryStart := schema2SecondRepairFixture(t, "node_started")
@@ -380,11 +588,19 @@ func schema2SecondRepairFixture(t *testing.T, eventType string) map[string]any {
 	case "tool_process_launch":
 		return schema2RepairToolProcessLaunchData()
 	case "tool_result":
-		return schema2RepairToolResultData()
+		data := schema2RepairToolResultData()
+		delete(data, "displayEvidence")
+		return data
 	case "node_output":
-		return schema2RepairNodeOutputData(projectionTestMissionID)
+		data := schema2RepairNodeOutputData(projectionTestMissionID)
+		delete(data, "reportArtifactId")
+		return data
 	case "gate_evaluating":
-		return schema2RepairGateEvaluatingData()
+		data := schema2RepairGateEvaluatingData()
+		delete(data, "revisionCycleId")
+		delete(data, "triggerFeedbackId")
+		delete(data, "priorGateSeq")
+		return data
 	case "gate_kind_result":
 		return schema2RepairGateKindResultData()
 	case "judge_result":
@@ -417,7 +633,7 @@ func schema2SecondRepairFixture(t *testing.T, eventType string) map[string]any {
 	case "run_failed":
 		return schema2RepairRunFailedData(t)
 	case "run_succeeded":
-		return map[string]any{"summaryArtifactId": "", "outputArtifactIds": []any{}, "final": true}
+		return map[string]any{"outputArtifactIds": []any{}, "final": true}
 	default:
 		t.Fatalf("missing schema-2 fixture for %s", eventType)
 		return nil
@@ -473,7 +689,7 @@ func schema2SecondRepairPublicRequiredKeys() map[string][]string {
 	}
 	for eventType, optional := range map[string][]string{
 		"node_started":     {"triggerFeedbackId", "priorGateSeq"},
-		"formation_result": {"reportArtifactId"},
+		"formation_result": {"reportArtifactId", "artifactIds", "diffArtifactIds", "contributingSlotResultSeqs"},
 		"tool_result":      {"displayEvidence"},
 		"node_output":      {"reportArtifactId"},
 		"gate_evaluating":  {"revisionCycleId", "triggerFeedbackId", "priorGateSeq"},
@@ -627,6 +843,84 @@ func schema2SecondRepairSanitize(eventType string, data map[string]any) (SafeRun
 		return nil, err
 	}
 	return sanitizeSchema2Event(raw)
+}
+
+func schema2SecondRepairPublicData(t *testing.T, safe SafeRunEvent) map[string]json.RawMessage {
+	t.Helper()
+	var encoded struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(mustMarshalJSON(t, safe), &encoded); err != nil {
+		t.Fatalf("decode sanitized event: %v", err)
+	}
+	return encoded.Data
+}
+
+func schema2SecondRepairJSONObject(t *testing.T, raw json.RawMessage) map[string]json.RawMessage {
+	t.Helper()
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil {
+		t.Fatalf("decode projected JSON object: %v", err)
+	}
+	return object
+}
+
+func schema2SecondRepairRequireJSONMemberAbsent(t *testing.T, object map[string]json.RawMessage, key string) {
+	t.Helper()
+	if raw, ok := object[key]; ok {
+		t.Fatalf("projected optional %s = %s, want member absent", key, raw)
+	}
+}
+
+func schema2SecondRepairRequireExactJSONMember(t *testing.T, object map[string]json.RawMessage, key string, want any) {
+	t.Helper()
+	raw, ok := object[key]
+	if !ok {
+		t.Fatalf("projected normalized/present optional %s is absent", key)
+	}
+	wantRaw := mustMarshalJSON(t, want)
+	if string(raw) != string(wantRaw) {
+		t.Fatalf("projected optional %s = %s, want exact %s", key, raw, wantRaw)
+	}
+}
+
+func schema2SecondRepairNormalizeFormationResult(data map[string]any) string {
+	normalized := map[string]any{
+		"status":                     data["status"],
+		"outputs":                    data["outputs"],
+		"outputHashes":               data["outputHashes"],
+		"reportArtifactId":           schema2SecondRepairValueOrDefault(data, "reportArtifactId", ""),
+		"artifactIds":                schema2SecondRepairValueOrDefault(data, "artifactIds", []any{}),
+		"diffArtifactIds":            schema2SecondRepairValueOrDefault(data, "diffArtifactIds", []any{}),
+		"contributingSlotResultSeqs": schema2SecondRepairValueOrDefault(data, "contributingSlotResultSeqs", []any{}),
+	}
+	hash := projectionSHA256(mustMarshalJSONNoTest(normalized))
+	data["resultSha256"] = hash
+	return hash
+}
+
+func schema2SecondRepairNormalizeSlotTurnResult(data map[string]any) string {
+	turnResult := data["turnResult"].(map[string]any)
+	normalized := map[string]any{
+		"turnKey":          turnResult["turnKey"],
+		"phase":            turnResult["phase"],
+		"status":           turnResult["status"],
+		"turnPayload":      turnResult["turnPayload"],
+		"outputs":          schema2SecondRepairValueOrDefault(turnResult, "outputs", map[string]any{}),
+		"reportArtifactId": schema2SecondRepairValueOrDefault(turnResult, "reportArtifactId", ""),
+		"artifactIds":      schema2SecondRepairValueOrDefault(turnResult, "artifactIds", []any{}),
+		"diffArtifactIds":  schema2SecondRepairValueOrDefault(turnResult, "diffArtifactIds", []any{}),
+	}
+	hash := projectionSHA256(mustMarshalJSONNoTest(normalized))
+	data["turnResultSha256"] = hash
+	return hash
+}
+
+func schema2SecondRepairValueOrDefault(object map[string]any, key string, fallback any) any {
+	if value, ok := object[key]; ok {
+		return value
+	}
+	return fallback
 }
 
 func schema2SecondRepairRequirePublicRejection(t *testing.T, eventType string, data map[string]any) {
