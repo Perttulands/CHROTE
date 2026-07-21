@@ -319,6 +319,29 @@ func TestProjectCanonicalRunSchema2GateFeedbackRevisionCycleOptionalMatrix(t *te
 	})
 }
 
+func TestProjectCanonicalRunSchema2GateVerdictFeedbackIsConditional(t *testing.T) {
+	t.Run("fail_requires_feedback", func(t *testing.T) {
+		data := schema2RepairGateVerdictData()
+		delete(data, "feedbackPayload")
+		schema2SecondRepairRequirePublicRejection(t, "gate_verdict", data)
+	})
+
+	t.Run("pass_omits_feedback", func(t *testing.T) {
+		data := schema2SecondRepairGateVerdictPassData()
+		safe, err := schema2SecondRepairSanitize("gate_verdict", data)
+		if err != nil {
+			t.Fatalf("PASS gate verdict without feedback rejected: %v", err)
+		}
+		schema2SecondRepairRequireJSONMemberAbsent(t, schema2SecondRepairPublicData(t, safe), "feedbackPayload")
+	})
+
+	t.Run("pass_rejects_feedback", func(t *testing.T) {
+		data := schema2SecondRepairGateVerdictPassData()
+		data["feedbackPayload"] = cloneAny(schema2RepairGateVerdictData()["feedbackPayload"])
+		schema2SecondRepairRequirePublicRejection(t, "gate_verdict", data)
+	})
+}
+
 func TestProjectCanonicalRunSchema2NodeWaitingUsesDataIdentity(t *testing.T) {
 	valid := map[string]any{
 		"nodeId": projectionTestMissionID, "neededInputs": 1, "readyInputs": 0, "totalInputs": 1,
@@ -429,7 +452,7 @@ func schema2SecondRepairRequirednessCases(t *testing.T) []schema2SecondRepairCas
 	t.Helper()
 	required := schema2SecondRepairPublicRequiredKeys()
 	conditional := map[string]bool{
-		"node_started": true, "gate_kind_result": true, "artifact_observed": true, "error": true, "run_blocked": true,
+		"node_started": true, "gate_kind_result": true, "gate_verdict": true, "artifact_observed": true, "error": true, "run_blocked": true,
 	}
 	result := make([]schema2SecondRepairCase, 0, 46)
 	eventTypes := make([]string, 0, len(required))
@@ -476,6 +499,18 @@ func schema2SecondRepairRequirednessCases(t *testing.T) []schema2SecondRepairCas
 		name: "gate_kind_result/formation", eventType: "gate_kind_result", data: formationGate,
 		required:  []string{"gateId", "gateAttempt", "kind", "verdict", "reason", "evidence", "evaluatedInputRef", "resultEncoding", "resultSha256", "relatedSeqs"},
 		forbidden: []string{"gateBindingId", "inputSha256", "profileSha256", "evaluatorBundleSha256", "parametersSha256", "policySha256", "determinismPolicySha256"},
+	})
+
+	failVerdict := schema2RepairGateVerdictData()
+	result = append(result, schema2SecondRepairCase{
+		name: "gate_verdict/fail", eventType: "gate_verdict", data: failVerdict,
+		required: required["gate_verdict"],
+	})
+	passVerdict := schema2SecondRepairGateVerdictPassData()
+	result = append(result, schema2SecondRepairCase{
+		name: "gate_verdict/pass", eventType: "gate_verdict", data: passVerdict,
+		required:  withoutSecondRepairStrings(required["gate_verdict"], "feedbackPayload"),
+		forbidden: []string{"feedbackPayload"},
 	})
 
 	availableObserved := schema2SecondRepairFixture(t, "artifact_observed")
@@ -914,6 +949,17 @@ func schema2SecondRepairNormalizeSlotTurnResult(data map[string]any) string {
 	hash := projectionSHA256(mustMarshalJSONNoTest(normalized))
 	data["turnResultSha256"] = hash
 	return hash
+}
+
+func schema2SecondRepairGateVerdictPassData() map[string]any {
+	data := schema2RepairGateVerdictData()
+	data["verdict"] = "pass"
+	data["perKind"] = map[string]any{"code": "pass", "human": "pass"}
+	data["kindResultSeqs"] = map[string]any{"code": 18, "human": 19}
+	data["routePort"] = "pass"
+	data["reason"] = "approved"
+	delete(data, "feedbackPayload")
+	return data
 }
 
 func schema2SecondRepairValueOrDefault(object map[string]any, key string, fallback any) any {
