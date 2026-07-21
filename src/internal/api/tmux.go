@@ -28,14 +28,37 @@ import (
 
 // TmuxHandler handles tmux-related API endpoints
 type TmuxHandler struct {
-	cache        *sessionsCache
-	colorRegex   *regexp.Regexp
-	socket       string
-	workDir      string
-	bank         *sessionBankStore
-	persistent   *persistentAgentStore
-	managed      *managedRecoveryStatusStore
-	persistentMu sync.Mutex
+	cache      *sessionsCache
+	colorRegex *regexp.Regexp
+	socket     string
+	workDir    string
+	bank       *sessionBankStore
+	persistent *persistentAgentStore
+	managed    *managedRecoveryStatusStore
+	// recoveryMu serializes recovery-owner checks with the store or tmux
+	// mutation that makes the winning claim observable.
+	recoveryMu sync.Mutex
+}
+
+type recoveryOwnershipConflict struct {
+	OwnerKind string
+	OwnerRef  string
+}
+
+func (e *recoveryOwnershipConflict) Error() string {
+	if e == nil {
+		return "recovery ownership conflict"
+	}
+	return fmt.Sprintf("%s owns recovery: owner kind %q, ref %q", strings.ReplaceAll(e.OwnerKind, "_", " "), e.OwnerKind, e.OwnerRef)
+}
+
+func writeRecoveryOwnershipError(w http.ResponseWriter, conflictCode, failureCode string, err error) {
+	var conflict *recoveryOwnershipConflict
+	if errors.As(err, &conflict) {
+		core.WriteError(w, http.StatusConflict, conflictCode, conflict.Error())
+		return
+	}
+	core.WriteError(w, http.StatusInternalServerError, failureCode, err.Error())
 }
 
 type sessionsCache struct {
@@ -522,6 +545,46 @@ func sessionBankOwnerRef(unixUser, sessionName string) string {
 		return sessionName
 	}
 	return unixUser + "/" + sessionName
+}
+
+func (h *TmuxHandler) ensureExternalRecoveryOwnershipAvailable(name, unixUser string) error {
+	if h == nil || h.managed == nil {
+		return nil
+	}
+	entries, err := h.managed.Read()
+	if err != nil {
+		return fmt.Errorf("managed status registry: %w", err)
+	}
+	key := sessionBankKey(name, unixUser)
+	for _, entry := range entries {
+		if sessionBankKey(entry.Name, entry.UnixUser) == key {
+			return &recoveryOwnershipConflict{OwnerKind: entry.Owner.Kind, OwnerRef: entry.Owner.Ref}
+		}
+	}
+	return nil
+}
+
+func (h *TmuxHandler) ensureSessionBankOwnershipAvailable(name, unixUser string) error {
+	if h == nil {
+		return nil
+	}
+	if err := h.ensureExternalRecoveryOwnershipAvailable(name, unixUser); err != nil {
+		return err
+	}
+	if h.persistent == nil {
+		return nil
+	}
+	found, err := h.persistent.IsPersistent(name, unixUser)
+	if err != nil {
+		return fmt.Errorf("persistent agent store: %w", err)
+	}
+	if found {
+		return &recoveryOwnershipConflict{
+			OwnerKind: RecoveryOwnerPersistentAgent,
+			OwnerRef:  persistentAgentOwnerRef(unixUser, name),
+		}
+	}
+	return nil
 }
 
 func trustedSessionBankOwnerHome(target tmuxTarget) (string, error) {
@@ -1419,10 +1482,6 @@ func (h *TmuxHandler) RestoreBankedSessionEntry(w http.ResponseWriter, r *http.R
 		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", "Session bank is unavailable")
 		return
 	}
-	if err := h.ensureManagedRecoveryOwnershipAvailable(sessionName, unixUser); err != nil {
-		core.WriteError(w, http.StatusConflict, "SESSION_BANK_OWNERSHIP_CONFLICT", err.Error())
-		return
-	}
 
 	var entry SessionBankEntry
 	if err := decodeOptionalJSONBodyLimited(w, r, &entry, sessionBankRecoveryMaxRequestBytes); err != nil {
@@ -1459,6 +1518,12 @@ func (h *TmuxHandler) RestoreBankedSessionEntry(w http.ResponseWriter, r *http.R
 			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", ownerHomeErr.Error())
 			return
 		}
+	}
+	h.recoveryMu.Lock()
+	defer h.recoveryMu.Unlock()
+	if err := h.ensureSessionBankOwnershipAvailable(sessionName, unixUser); err != nil {
+		writeRecoveryOwnershipError(w, "SESSION_BANK_OWNERSHIP_CONFLICT", "SESSION_BANK_ERROR", err)
+		return
 	}
 	restored, err := h.bank.RestoreEntry(sessionName, unixUser, entry, ownerHome)
 	if err != nil {
@@ -1873,10 +1938,6 @@ func (h *TmuxHandler) UpdateBankedRecovery(w http.ResponseWriter, r *http.Reques
 		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", "Session bank is unavailable")
 		return
 	}
-	if err := h.ensureManagedRecoveryOwnershipAvailable(sessionName, unixUser); err != nil {
-		core.WriteError(w, http.StatusConflict, "SESSION_BANK_OWNERSHIP_CONFLICT", err.Error())
-		return
-	}
 	ownerHome := ""
 	if len(req.RecoveryPlan) > 0 {
 		target, targetErr := h.targetForUnixUser(unixUser)
@@ -1890,6 +1951,12 @@ func (h *TmuxHandler) UpdateBankedRecovery(w http.ResponseWriter, r *http.Reques
 			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", ownerHomeErr.Error())
 			return
 		}
+	}
+	h.recoveryMu.Lock()
+	defer h.recoveryMu.Unlock()
+	if err := h.ensureSessionBankOwnershipAvailable(sessionName, unixUser); err != nil {
+		writeRecoveryOwnershipError(w, "SESSION_BANK_OWNERSHIP_CONFLICT", "SESSION_BANK_ERROR", err)
+		return
 	}
 	entry, err := h.bank.UpsertRecovery(sessionName, unixUser, req, ownerHome)
 	if err != nil {
@@ -1939,8 +2006,10 @@ func (h *TmuxHandler) RecoverBankedSession(w http.ResponseWriter, r *http.Reques
 		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", "Session bank is unavailable")
 		return
 	}
-	if err := h.ensureManagedRecoveryOwnershipAvailable(sessionName, unixUser); err != nil {
-		core.WriteError(w, http.StatusConflict, "SESSION_BANK_OWNERSHIP_CONFLICT", err.Error())
+	h.recoveryMu.Lock()
+	defer h.recoveryMu.Unlock()
+	if err := h.ensureSessionBankOwnershipAvailable(sessionName, unixUser); err != nil {
+		writeRecoveryOwnershipError(w, "SESSION_BANK_OWNERSHIP_CONFLICT", "SESSION_BANK_ERROR", err)
 		return
 	}
 	entry, found, err := h.bank.Find(sessionName, unixUser)
@@ -2529,18 +2598,18 @@ func (h *TmuxHandler) RenameSession(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", targetErr.Error())
 		return
 	}
-	if err := h.ensureManagedRecoveryOwnershipAvailable(oldName, target.unixUser); err != nil {
-		core.WriteError(w, http.StatusConflict, "SESSION_OWNERSHIP_CONFLICT", err.Error())
+	h.recoveryMu.Lock()
+	defer h.recoveryMu.Unlock()
+	if err := h.ensureExternalRecoveryOwnershipAvailable(oldName, target.unixUser); err != nil {
+		writeRecoveryOwnershipError(w, "SESSION_OWNERSHIP_CONFLICT", "PERSISTENT_AGENT_ERROR", err)
 		return
 	}
 	if oldName != req.NewName {
-		if err := h.ensureManagedRecoveryOwnershipAvailable(req.NewName, target.unixUser); err != nil {
-			core.WriteError(w, http.StatusConflict, "SESSION_OWNERSHIP_CONFLICT", err.Error())
+		if err := h.ensureExternalRecoveryOwnershipAvailable(req.NewName, target.unixUser); err != nil {
+			writeRecoveryOwnershipError(w, "SESSION_OWNERSHIP_CONFLICT", "PERSISTENT_AGENT_ERROR", err)
 			return
 		}
 	}
-	h.persistentMu.Lock()
-	defer h.persistentMu.Unlock()
 	sourcePersistent := false
 	if h.persistent != nil {
 		var persistentErr error
@@ -2557,11 +2626,11 @@ func (h *TmuxHandler) RenameSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := h.ensurePersistentAgentOwnershipAvailable(oldName, target.unixUser, ownerHome); err != nil {
-			core.WriteError(w, http.StatusConflict, "PERSISTENT_AGENT_OWNERSHIP_CONFLICT", err.Error())
+			writeRecoveryOwnershipError(w, "PERSISTENT_AGENT_OWNERSHIP_CONFLICT", "PERSISTENT_AGENT_ERROR", err)
 			return
 		}
 		if err := h.ensurePersistentAgentOwnershipAvailable(req.NewName, target.unixUser, ownerHome); err != nil {
-			core.WriteError(w, http.StatusConflict, "PERSISTENT_AGENT_OWNERSHIP_CONFLICT", err.Error())
+			writeRecoveryOwnershipError(w, "PERSISTENT_AGENT_OWNERSHIP_CONFLICT", "PERSISTENT_AGENT_ERROR", err)
 			return
 		}
 		if h.persistent != nil {
