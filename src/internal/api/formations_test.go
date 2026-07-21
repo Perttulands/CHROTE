@@ -2,6 +2,8 @@ package api
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -90,6 +92,38 @@ updatedAt = "2026-06-03T16:00:00Z"
 
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusConflict, rec.Body.String())
+	}
+}
+
+func TestFormationsHandlerMapsInvalidDefinitionSourceBeforeMutation(t *testing.T) {
+	store := formations.NewStore(t.TempDir())
+	raw := `schema = 1
+id = "brd_invalid_source"
+slug = "invalid-source"
+title = "Invalid source"
+rev = 7
+updatedAt = "2026-07-21T12:00:00Z"
+
+[[gate]]
+id = "gate_review"
+title = "Review"
+kinds = ["human"]
+criterion = 42
+`
+	writeFormationsAPIFixture(t, store.BoardPath("invalid-source"), raw)
+
+	handler := NewFormationsHandlerWithStore(store)
+	req := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/invalid-source", bytes.NewBufferString(`{"title":"must not persist","expectedRev":7}`))
+	req.SetPathValue("board", "invalid-source")
+	digest := sha256.Sum256([]byte(raw))
+	req.Header.Set("If-Match", hex.EncodeToString(digest[:]))
+	rec := httptest.NewRecorder()
+
+	handler.PatchBoard(rec, req)
+
+	assertFormationsAPIToolError(t, rec, http.StatusUnprocessableEntity, "INVALID_DEFINITION_SOURCE")
+	if got := readFormationsAPIFile(t, store.BoardPath("invalid-source")); got != raw {
+		t.Fatalf("rejected API write changed board bytes:\n got %q\nwant %q", got, raw)
 	}
 }
 

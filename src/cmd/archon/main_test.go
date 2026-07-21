@@ -1047,6 +1047,47 @@ rev = 2
 	}
 }
 
+func TestArchonMapsInvalidDefinitionSourceBeforeMutation(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	raw := `schema = 1
+id = "brd_invalid_source"
+slug = "invalid-source"
+title = "Invalid source"
+rev = 7
+updatedAt = "2026-07-21T12:00:00Z"
+
+[[gate]]
+id = "gate_review"
+title = "Review"
+kinds = ["human"]
+criterion = 42
+`
+	writeArchonFile(t, store.BoardPath("invalid-source"), raw)
+
+	_, stderr, code := runArchon(
+		t,
+		&fakeTmux{live: map[string]bool{}},
+		"--workspace", workspace,
+		"gate", "update", "invalid-source", "gate_review",
+		"--title", "must not persist",
+		"--json",
+	)
+	if code == 0 {
+		t.Fatalf("invalid definition source unexpectedly accepted: %s", stderr)
+	}
+	var response archonErrorResponse
+	if err := json.Unmarshal([]byte(stderr), &response); err != nil {
+		t.Fatalf("decode invalid definition error: %v\nstderr=%s", err, stderr)
+	}
+	if response.Code != "invalid_definition_source" || response.Boundary != "board" || response.Selector != "invalid-source" {
+		t.Fatalf("structured error = %+v, want stable invalid_definition_source board envelope", response)
+	}
+	if got := readArchonFile(t, store.BoardPath("invalid-source")); got != raw {
+		t.Fatalf("rejected Archon write changed board bytes:\n got %q\nwant %q", got, raw)
+	}
+}
+
 func TestArchonMissionListAndInspectExposeReachableChain(t *testing.T) {
 	workspace := t.TempDir()
 	store := formations.NewStore(workspace)
