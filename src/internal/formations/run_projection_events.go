@@ -242,7 +242,6 @@ type RunAttemptView struct {
 
 type SafeGateEvidence struct {
 	Kind       string `json:"kind"`
-	Reason     string `json:"reason,omitempty"`
 	ArtifactID string `json:"artifactId,omitempty"`
 	Seq        uint64 `json:"seq,omitempty"`
 	Text       string `json:"text,omitempty"`

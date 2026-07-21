@@ -3422,7 +3422,10 @@ func reduceSchema2Event(state *projectionState, raw rawProjectionEvent, safe Saf
 		state.view.Audit.ActivationPolicyRev = event.Data.AdmissionPolicyRev
 		state.view.Audit.ActivationPolicySHA256 = event.Data.AdmissionPolicySHA256
 	case SafeSchema2NodeWaitingEvent:
-		node := state.node(raw.envelope.NodeID)
+		if raw.envelope.NodeID != event.Data.NodeID {
+			return projectionError(ErrRunProjectionInvalid, "waiting node identity mismatch")
+		}
+		node := state.node(event.Data.NodeID)
 		if node == nil {
 			return projectionError(ErrRunProjectionInvalid, "unknown waiting node")
 		}
