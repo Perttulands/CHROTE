@@ -88,6 +88,8 @@ type LegacyVerificationState = {
   onFail: string
   replacementGateIds: string[]
   replacementGateId: string
+  pending: boolean
+  error: string
 }
 type MissionEditorState = { title: string; goal: string; beadId: string; x: number; y: number }
 type BriefEditorState = {
@@ -143,6 +145,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const [missionEditorSaving, setMissionEditorSaving] = useState(false)
   const [briefEditor, setBriefEditor] = useState<BriefEditorState | null>(null)
   const [legacyVerification, setLegacyVerification] = useState<LegacyVerificationState | null>(null)
+  const legacyVerificationOpen = legacyVerification !== null
   const [inspectedToolId, setInspectedToolId] = useState<string | null>(null)
   const [hiddenWireId, setHiddenWireId] = useState<string | null>(null)
   const [judgeHover, setJudgeHover] = useState<string | null>(null)
@@ -160,6 +163,11 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const fittedBoardRef = useRef<string | null>(null)
   const judgeHoverRef = useRef<string | null>(null)
   const openJudgePickerRef = useRef<((gate: GateNode, x: number, y: number) => void) | null>(null)
+  const legacyVerificationTriggerRef = useRef<HTMLElement | null>(null)
+  const legacyVerificationInitialFocusRef = useRef<HTMLButtonElement | null>(null)
+  const legacyVerificationWasOpenRef = useRef(false)
+  const legacyVerificationPendingRef = useRef(false)
+  const legacyVerificationRequestRef = useRef<symbol | null>(null)
 
   viewRef.current = view
   useEffect(() => { boardRef.current = board }, [board])
@@ -167,9 +175,24 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   useEffect(() => { judgeHoverRef.current = judgeHover }, [judgeHover])
 
   useEffect(() => {
+    legacyVerificationRequestRef.current = null
+    legacyVerificationPendingRef.current = false
     setLegacyVerification(null)
     setInspectedToolId(null)
   }, [selectedSlug])
+
+  useLayoutEffect(() => {
+    if (legacyVerificationOpen) {
+      legacyVerificationWasOpenRef.current = true
+      legacyVerificationInitialFocusRef.current?.focus({ preventScroll: true })
+      return
+    }
+    if (!legacyVerificationWasOpenRef.current) return
+    legacyVerificationWasOpenRef.current = false
+    const trigger = legacyVerificationTriggerRef.current
+    legacyVerificationTriggerRef.current = null
+    if (trigger?.isConnected) trigger.focus({ preventScroll: true })
+  }, [legacyVerificationOpen])
 
   // ----- data loading -----
   useEffect(() => {
@@ -745,29 +768,64 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     void patchBoard({ removePort: { formationId: formation.id, portId } })
   }, [patchBoard])
 
+  const closeLegacyVerification = useCallback(() => {
+    if (legacyVerificationPendingRef.current) return
+    setLegacyVerification(null)
+  }, [])
+
+  useEffect(() => {
+    if (!active || !legacyVerificationOpen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      closeLegacyVerification()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [active, closeLegacyVerification, legacyVerificationOpen])
+
   const removeLegacyVerification = useCallback(async () => {
-    if (!legacyVerification?.replacementGateId) return
+    if (!legacyVerification?.replacementGateId || legacyVerificationPendingRef.current) return
     const current = boardRef.current
     if (!current || current.slug !== legacyVerification.boardSlug || current.rev !== legacyVerification.boardRev || current.etag !== legacyVerification.boardETag) {
       setError('Board changed while legacy verification was open. Reopen migration to continue.')
+      setLegacyVerification(open => open ? { ...open, error: 'Could not remove legacy verification. Reopen migration from the current board and try again.' } : open)
       return
     }
+    legacyVerificationPendingRef.current = true
+    const request = Symbol('remove-legacy-verification')
+    legacyVerificationRequestRef.current = request
+    setLegacyVerification(open => open ? { ...open, pending: true, error: '' } : open)
     const result = await patchBoard({
       removeVerification: {
         formationId: legacyVerification.formationId,
         replacementGateId: legacyVerification.replacementGateId,
       },
     })
-    if (result) setLegacyVerification(null)
+    if (legacyVerificationRequestRef.current !== request) return
+    legacyVerificationRequestRef.current = null
+    legacyVerificationPendingRef.current = false
+    if (result) {
+      setLegacyVerification(null)
+      return
+    }
+    setLegacyVerification(open => open ? {
+      ...open,
+      pending: false,
+      error: 'Could not remove legacy verification. Review the current board before trying again.',
+    } : open)
   }, [legacyVerification, patchBoard])
 
-  const openLegacyVerification = useCallback((formation: FormationNode) => {
+  const openLegacyVerification = useCallback((formation: FormationNode, trigger?: HTMLElement) => {
     const current = boardRef.current
     if (!formation.verification || !current) return
     const outputEndpoints = new Set(formation.outputs.map(output => `${formation.id}:${output.id}`))
     const replacementGateIds = (current.gates || [])
       .filter(gate => current.connections.some(connection => outputEndpoints.has(connection.from) && connection.to === `${gate.id}:in`))
       .map(gate => gate.id)
+    legacyVerificationTriggerRef.current = trigger || (document.activeElement instanceof HTMLElement ? document.activeElement : null)
+    legacyVerificationRequestRef.current = null
+    legacyVerificationPendingRef.current = false
     setMenu(null)
     setLegacyVerification({
       boardSlug: current.slug,
@@ -781,6 +839,8 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       onFail: formation.verification.onFail || '',
       replacementGateIds,
       replacementGateId: '',
+      pending: false,
+      error: '',
     })
   }, [])
 
@@ -1709,10 +1769,13 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
                       data-gate={formation.verification.id}
                       data-testid={`verify-band-${formation.id}`}
                       aria-label={`Inspect legacy verification for ${formation.title}`}
-                      onClick={() => openLegacyVerification(formation)}
-                      onContextMenu={event => openMenu(event, 'Legacy verification', [
-                        { label: 'Migrate legacy verification', action: () => openLegacyVerification(formation) },
-                      ])}
+                      onClick={event => openLegacyVerification(formation, event.currentTarget)}
+                      onContextMenu={event => {
+                        const trigger = event.currentTarget
+                        openMenu(event, 'Legacy verification', [
+                          { label: 'Migrate legacy verification', action: () => openLegacyVerification(formation, trigger) },
+                        ])
+                      }}
                     >
                       <span className="vico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9"><path d="M12 3l7 3v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9V6z" /><path d="M12 8v5M12 16h.01" /></svg></span>
                       <span className="vlabel">legacy verify</span>
@@ -2086,12 +2149,22 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
         <div
           className="pop"
           role="dialog"
+          aria-modal="true"
           aria-label={`Legacy verification · ${legacyVerification.title}`}
+          aria-describedby="legacy-verification-warning"
+          aria-busy={legacyVerification.pending}
           onPointerDown={event => event.stopPropagation()}
         >
           <div className="pop-head">
             <span className="pt">Legacy verification · {legacyVerification.title}</span>
-            <button className="x" type="button" aria-label="Close legacy verification" onClick={() => setLegacyVerification(null)}>x</button>
+            <button
+              ref={legacyVerificationInitialFocusRef}
+              className="x"
+              type="button"
+              aria-label="Close legacy verification"
+              disabled={legacyVerification.pending}
+              onClick={closeLegacyVerification}
+            >x</button>
           </div>
           <div className="pop-body">
             <label>Checks</label>
@@ -2100,7 +2173,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
             <div className="legacy-value criterion">{legacyVerification.criterion || 'No criterion recorded'}</div>
             <label>Legacy failure policy</label>
             <div className="legacy-value">{legacyVerification.onFail || 'No failure policy recorded'}</div>
-            <p className="legacy-note">Inline verification is retired because its verdict cannot be tied safely to an exact Formation attempt and output. Create and wire an explicit Gate to make the check, result, and route visible, then remove this legacy block.</p>
+            <p id="legacy-verification-warning" className="legacy-note">Inline verification is retired because its verdict cannot be tied safely to an exact Formation attempt and output. Create and wire an explicit Gate to make the check, result, and route visible, then remove this legacy block.</p>
             {legacyVerification.replacementGateIds.length ? (
               <>
                 <label htmlFor="legacy-replacement-gate">Replacement Gate</label>
@@ -2108,7 +2181,8 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
                   id="legacy-replacement-gate"
                   className="legacy-select"
                   value={legacyVerification.replacementGateId}
-                  onChange={event => setLegacyVerification(current => current ? { ...current, replacementGateId: event.target.value } : null)}
+                  disabled={legacyVerification.pending}
+                  onChange={event => setLegacyVerification(current => current ? { ...current, replacementGateId: event.target.value, error: '' } : null)}
                 >
                   <option value="" disabled>Choose a wired Gate…</option>
                   {legacyVerification.replacementGateIds.map(gateId => (
@@ -2119,6 +2193,8 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
             ) : (
               <p className="legacy-missing-gate">Wire an explicit Gate from a Formation output before removal.</p>
             )}
+            {legacyVerification.pending ? <div className="legacy-note" role="status">Removing legacy verification…</div> : null}
+            {legacyVerification.error ? <div className="legacy-missing-gate" role="alert">{legacyVerification.error}</div> : null}
             {runEvents.some(event => event.type === 'verification_verdict' && event.nodeId === legacyVerification.formationId) ? (
               <div className="legacy-evidence">
                 <div className="legacy-evidence-title">Legacy verification evidence · non-authorizing</div>
@@ -2128,11 +2204,11 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
               </div>
             ) : null}
             <div className="pop-actions">
-              <button className="cancel" type="button" onClick={() => setLegacyVerification(null)}>Keep for inspection</button>
+              <button className="cancel" type="button" disabled={legacyVerification.pending} onClick={closeLegacyVerification}>Keep for inspection</button>
               <button
                 className="retire"
                 type="button"
-                disabled={!legacyVerification.replacementGateId}
+                disabled={legacyVerification.pending || !legacyVerification.replacementGateId}
                 onClick={() => void removeLegacyVerification()}
               >
                 Remove legacy verification
