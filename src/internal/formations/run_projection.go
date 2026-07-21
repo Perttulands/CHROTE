@@ -2741,6 +2741,9 @@ func projectSchema1Run(runID string, documents canonicalDocuments) (CanonicalRun
 	if err := initializeSchema1Identity(&state, started); err != nil {
 		return CanonicalRunProjection{}, err
 	}
+	if err := state.restrictToRunRoot(state.view.Identity.RunRoot); err != nil {
+		return CanonicalRunProjection{}, err
+	}
 	firstRecord := firstLedgerRecord(ledger.Bytes)
 	state.view.Generation = projectionGeneration(runID, projectionSHA(firstRecord), oneDocument(documents, CanonicalInputRoleSchema1GraphSnapshot).SHA256, oneDocument(documents, CanonicalInputRoleSchema1BindingsSnapshot).SHA256)
 	projected := make([]projectedEvent, 0, len(events))
@@ -2845,6 +2848,9 @@ func projectSchema2Run(runID string, documents canonicalDocuments) (CanonicalRun
 	state.view.Generation = projectionGeneration(runID, authorityID, graphHash, bindingsHash, started.Data.AdmissionCommandID)
 	state.view.Status = "queued"
 	state.view.Identity = RunIdentity{BoardID: started.BoardID, BoardSlug: started.Data.BoardSlug, BoardRev: started.BoardRev, RunRoot: started.Data.RunRoot, MissionID: started.MissionID, BeadID: started.BeadID, Epoch: started.Epoch, Redact: started.Data.Limits.Redact}
+	if err := state.restrictToRunRoot(state.view.Identity.RunRoot); err != nil {
+		return CanonicalRunProjection{}, err
+	}
 	authoritySchema := uint64(2)
 	state.view.Audit = RunAudit{EventSchema: 2, AuthoritySchema: &authoritySchema, StartSeq: 1, AdmissionCommandID: started.Data.AdmissionCommandID, CommandPayloadSHA256: started.Data.CommandPayloadSHA256, WorkspaceAdmissionSeq: started.Data.WorkspaceAdmissionSeq, AdmissionPolicyRev: authority.AdmissionPolicyRef.PolicyRev, AdmissionPolicySHA256: authority.AdmissionPolicyRef.PolicySHA256, GraphSnapshotSHA256: graphHash, BindingProjectionSHA256: started.Data.BindingProjectionSHA256}
 	projected := make([]projectedEvent, 0, len(events))
@@ -2914,6 +2920,51 @@ func newProjectionState(runID string, source CanonicalRunSource, board *BoardDoc
 	return state
 }
 
+func (state *projectionState) restrictToRunRoot(root RunRoot) error {
+	rootNode := state.node(root.NodeID)
+	if rootNode == nil || rootNode.Kind != root.Kind {
+		return projectionError(ErrRunProjectionInvalid, "unknown run root")
+	}
+	reachable := map[string]bool{root.NodeID: true}
+	queue := []string{root.NodeID}
+	for len(queue) != 0 {
+		from := queue[0]
+		queue = queue[1:]
+		for _, connection := range state.board.Connections {
+			if projectionConnectionNodeID(connection.From) != from {
+				continue
+			}
+			to := projectionConnectionNodeID(connection.To)
+			if reachable[to] {
+				continue
+			}
+			if _, exists := state.nodeIndex[to]; !exists {
+				continue
+			}
+			reachable[to] = true
+			queue = append(queue, to)
+		}
+	}
+	nodes := make([]RunNodeView, 0, len(reachable))
+	state.nodeIndex = make(map[string]int, len(reachable))
+	for _, node := range state.view.Nodes {
+		if !reachable[node.NodeID] {
+			continue
+		}
+		state.nodeIndex[node.NodeID] = len(nodes)
+		nodes = append(nodes, node)
+	}
+	state.view.Nodes = nodes
+	return nil
+}
+
+func projectionConnectionNodeID(endpoint string) string {
+	if index := strings.IndexByte(endpoint, ':'); index >= 0 {
+		return endpoint[:index]
+	}
+	return endpoint
+}
+
 func reduceSchema1Event(state *projectionState, raw rawProjectionEvent, safe SafeRunEvent) error {
 	state.view.Cursor = raw.envelope.Seq
 	state.view.Audit.ConsumedEventCount++
@@ -2931,7 +2982,9 @@ func reduceSchema1Event(state *projectionState, raw rawProjectionEvent, safe Saf
 		node.Status = "waiting"
 		node.Readiness = RunReadiness{NeededInputs: event.Data.NeededInputs, ReadyInputs: event.Data.ReadyInputs, TotalInputs: event.Data.TotalInputs, WaitingFor: append([]string(nil), event.Data.WaitingFor...)}
 	case SafeSchema1NodeStartedEvent:
-		state.startAttempt(raw.envelope.NodeID, raw.envelope.Attempt, raw.envelope.Seq, event.Data.InputRefs)
+		if state.startAttempt(raw.envelope.NodeID, raw.envelope.Attempt, raw.envelope.Seq, event.Data.InputRefs) == nil {
+			return projectionError(ErrRunProjectionInvalid, "invalid node start")
+		}
 	case SafeSchema1NodeOutputEvent:
 		if err := state.completeSchema1Node(raw, event.Data); err != nil {
 			return err
@@ -2960,8 +3013,14 @@ func reduceSchema1Event(state *projectionState, raw rawProjectionEvent, safe Saf
 		gate.RequestSeq = raw.envelope.Seq
 		state.view.Status = "waiting_human"
 	case SafeSchema1EscalationRaisedEvent:
+		if !state.selectedStructuralScope(event.Data.NodeID, event.Data.GateID) {
+			return projectionError(ErrRunProjectionInvalid, "escalation outside selected graph")
+		}
 		state.view.Escalations = append(state.view.Escalations, RunEscalationView{Seq: raw.envelope.Seq, NodeID: emptyToZero(event.Data.NodeID), GateID: emptyToZero(event.Data.GateID), Severity: event.Data.Severity, Reason: event.Data.Reason, Source: event.Data.Source, Trigger: event.Data.Trigger, Blocks: event.Data.Blocks})
 	case SafeSchema1RunBlockedEvent:
+		if !state.selectedStructuralScope(event.Data.BlockedNodeID, event.Data.BlockedGateID) {
+			return projectionError(ErrRunProjectionInvalid, "block outside selected graph")
+		}
 		state.view.Status = "blocked"
 		state.appendSchema1Block(raw, event.Data)
 	case SafeSchema1RunResumedEvent:
@@ -3010,24 +3069,124 @@ func reduceSchema2Event(state *projectionState, raw rawProjectionEvent, safe Saf
 		node.Status = "waiting"
 		node.Readiness = RunReadiness{NeededInputs: event.Data.NeededInputs, ReadyInputs: event.Data.ReadyInputs, TotalInputs: event.Data.TotalInputs, WaitingFor: append([]string(nil), event.Data.WaitingFor...)}
 	case SafeSchema2NodeStartedEvent:
-		state.startAttempt(event.Data.NodeID, event.Data.Attempt, raw.envelope.Seq, event.Data.InputRefs)
+		if state.startAttempt(event.Data.NodeID, event.Data.Attempt, raw.envelope.Seq, event.Data.InputRefs) == nil {
+			return projectionError(ErrRunProjectionInvalid, "invalid node start")
+		}
 	case SafeSchema2SlotBindingObservedEvent:
 		state.health[event.Data.BindingID] = event.Data
 	case SafeSchema2SlotDispatchEvent:
 		if err := state.addSchema2Dispatch(raw, event.Data); err != nil {
 			return err
 		}
+	case SafeSchema2SlotPeekCapabilityIssuedEvent:
+		session := state.sessionByDispatch(event.Data.DispatchID)
+		if session == nil {
+			return projectionError(ErrRunProjectionInvalid, "capability without session")
+		}
+		session.PeekCapability = RunSessionPeekCapability{State: "issued", IssuedSeq: raw.envelope.Seq, Generation: event.Data.CapabilityGeneration}
+	case SafeSchema2SlotSteeringStartedEvent:
+		session := state.sessionByDispatch(event.Data.DispatchID)
+		if session == nil {
+			return projectionError(ErrRunProjectionInvalid, "steering without session")
+		}
+		started := raw.envelope.Seq
+		session.PeekCapability.State = "input_open"
+		session.Steering = RunSessionSteering{State: "open", Generation: event.Data.SteeringGeneration, StartedSeq: &started}
+	case SafeSchema2SlotSteeringEndedEvent:
+		session := state.sessionByDispatch(event.Data.DispatchID)
+		if session == nil {
+			return projectionError(ErrRunProjectionInvalid, "steering end without session")
+		}
+		session.PeekCapability.State = "issued"
+		session.Steering = RunSessionSteering{State: "closed", Generation: event.Data.SteeringGeneration}
 	case SafeSchema2SlotPeekCapabilityRevokedEvent:
 		state.revokedDispatch[event.Data.DispatchID] = raw.envelope.Seq
 		state.setSessionCapability(event.Data.DispatchID, "revoked", event.Data.CapabilityIssuedSeq, event.Data.CapabilityGeneration)
+	case SafeSchema2SlotReconciliationInterruptEvent:
+		session := state.sessionByDispatch(event.Data.DispatchID)
+		if session == nil {
+			return projectionError(ErrRunProjectionInvalid, "reconciliation interrupt without session")
+		}
+		session.Occupancy.State = "held"
+	case SafeSchema2SlotReconciliationInterruptOutcomeEvent:
+		session := state.sessionByDispatch(event.Data.DispatchID)
+		if session == nil {
+			return projectionError(ErrRunProjectionInvalid, "reconciliation outcome without session")
+		}
+		session.Occupancy.State = "held"
+		if event.Data.Outcome != "sent" {
+			session.Occupancy.State = "quarantined"
+		}
 	case SafeSchema2SlotResultEvent:
 		state.matchedDispatch[event.Data.DispatchID] = true
 		state.setSessionOperatorInfluenced(event.Data.DispatchID, event.Data.OperatorInfluenced)
+	case SafeSchema2FormationResultEvent:
+		if err := state.completeSchema2Attempt(event.Data.NodeID, event.Data.Attempt, event.Data.Status, raw.envelope.Seq, event.Data.Outputs); err != nil {
+			return err
+		}
+	case SafeSchema2ToolDispatchEvent:
+		if state.startAttempt(event.Data.NodeID, event.Data.Attempt, raw.envelope.Seq, nil) == nil {
+			return projectionError(ErrRunProjectionInvalid, "invalid tool dispatch attempt")
+		}
+	case SafeSchema2ToolResultEvent:
+		status := "failed"
+		if event.Data.Status == "ok" {
+			status = "done"
+		}
+		if err := state.completeSchema2Attempt(event.Data.NodeID, event.Data.Attempt, status, raw.envelope.Seq, event.Data.Outputs); err != nil {
+			return err
+		}
+	case SafeSchema2NodeOutputEvent:
+		node := state.node(event.Data.NodeID)
+		if node == nil || node.LatestAttempt == 0 {
+			return projectionError(ErrRunProjectionInvalid, "output without node attempt")
+		}
+		if err := state.completeSchema2Attempt(event.Data.NodeID, node.LatestAttempt, event.Data.Status, raw.envelope.Seq, event.Data.Outputs); err != nil {
+			return err
+		}
+	case SafeSchema2GateEvaluatingEvent:
+		if err := state.startSchema2Gate(event.Data.GateID, event.Data.GateAttempt, raw.envelope.Seq); err != nil {
+			return err
+		}
+	case SafeSchema2GateKindResultEvent:
+		gate := state.existingGate(event.Data.GateID, event.Data.GateAttempt)
+		if gate == nil {
+			return projectionError(ErrRunProjectionInvalid, "gate result without evaluation")
+		}
+		gate.Evidence = append(gate.Evidence, SafeGateEvidence{Kind: event.Data.Kind, Reason: event.Data.Reason})
+	case SafeSchema2JudgeResultEvent:
+		if err := state.completeSchema2Attempt(event.Data.JudgeNodeID, event.Data.JudgeAttempt, "done", raw.envelope.Seq, nil); err != nil {
+			return err
+		}
+		gate := state.existingGate(event.Data.GateID, event.Data.GateAttempt)
+		if gate == nil {
+			return projectionError(ErrRunProjectionInvalid, "judge result without gate")
+		}
+		gate.Evidence = append(gate.Evidence, SafeGateEvidence{Kind: "judge", Reason: event.Data.Result.Reason})
+	case SafeSchema2JudgeAttemptFailedEvent:
+		if err := state.completeSchema2Attempt(event.Data.JudgeNodeID, event.Data.JudgeAttempt, "failed", raw.envelope.Seq, nil); err != nil {
+			return err
+		}
+		gate := state.existingGate(event.Data.GateID, event.Data.GateAttempt)
+		gateNode := state.node(event.Data.GateID)
+		if gate == nil || gateNode == nil {
+			return projectionError(ErrRunProjectionInvalid, "judge failure without gate")
+		}
+		gate.Status, gate.Reason = "blocked", event.Data.Reason
+		gateNode.Status = "blocked"
+	case SafeSchema2GateVerdictEvent:
+		if state.existingGate(event.Data.GateID, event.Data.GateAttempt) == nil {
+			return projectionError(ErrRunProjectionInvalid, "gate verdict without evaluation")
+		}
+		state.finishGate(event.Data.GateID, event.Data.GateAttempt, raw.envelope.Seq, event.Data.Verdict, event.Data.Reason)
 	case SafeSchema2ArtifactAttachedEvent:
 		state.upsertArtifact(event.Data.ArtifactProjection)
 	case SafeSchema2ArtifactObservedEvent:
 		state.observeArtifact(event.Data)
 	case SafeSchema2RunBlockedEvent:
+		if !state.selectedStructuralScope(event.Data.BlockedNodeID, event.Data.BlockedGateID) {
+			return projectionError(ErrRunProjectionInvalid, "block outside selected graph")
+		}
 		if err := state.validateSchema2OpenDispatches(event.Data.OpenDispatches); err != nil {
 			return err
 		}
@@ -3043,9 +3202,51 @@ func reduceSchema2Event(state *projectionState, raw rawProjectionEvent, safe Saf
 		}
 		state.view.Status = "running"
 	case SafeSchema2HumanVerdictRecordedEvent:
-		if err := verifyEventCommand(event.Data.CommandID, event.Data.CommandPayloadSHA256, raw.envelope.Seq, commands); err != nil {
-			return err
+		if len(commands) != 0 {
+			if err := verifyEventCommand(event.Data.CommandID, event.Data.CommandPayloadSHA256, raw.envelope.Seq, commands); err != nil {
+				return err
+			}
 		}
+		gate := state.existingGate(event.Data.GateID, event.Data.GateAttempt)
+		node := state.node(event.Data.GateID)
+		attempt := state.existingAttempt(event.Data.GateID, event.Data.GateAttempt)
+		if gate == nil || node == nil || attempt == nil {
+			return projectionError(ErrRunProjectionInvalid, "human verdict without request")
+		}
+		state.view.Status = "running"
+		gate.Status = "evaluating"
+		node.Status = "running"
+		attempt.Status = "running"
+	case SafeSchema2HumanInputRequestedEvent:
+		gate := state.existingGate(event.Data.GateID, event.Data.GateAttempt)
+		node := state.node(event.Data.GateID)
+		attempt := state.existingAttempt(event.Data.GateID, event.Data.GateAttempt)
+		if gate == nil || node == nil || attempt == nil {
+			return projectionError(ErrRunProjectionInvalid, "human request without gate")
+		}
+		state.view.Status = "waiting_human"
+		gate.Status, gate.RequestSeq = "waiting_human", raw.envelope.Seq
+		node.Status = "waiting_human"
+		attempt.Status = "waiting_human"
+	case SafeSchema2EscalationRaisedEvent:
+		if !state.selectedStructuralScope(event.Data.NodeID, event.Data.GateID) {
+			return projectionError(ErrRunProjectionInvalid, "escalation outside selected graph")
+		}
+		state.view.Escalations = append(state.view.Escalations, RunEscalationView{Seq: raw.envelope.Seq, NodeID: event.Data.NodeID, GateID: event.Data.GateID, Severity: event.Data.Severity, Reason: event.Data.Reason, Source: event.Data.Source, Trigger: event.Data.Trigger, Blocks: event.Data.Blocks})
+	case SafeSchema2ErrorEvent:
+		if event.Data.ErrorScope != "node" {
+			break
+		}
+		node := state.node(event.Data.NodeID)
+		if node == nil || node.LatestAttempt == 0 {
+			return projectionError(ErrRunProjectionInvalid, "scoped error outside selected attempt")
+		}
+		attempt := state.existingAttempt(event.Data.NodeID, node.LatestAttempt)
+		if attempt == nil {
+			return projectionError(ErrRunProjectionInvalid, "scoped error without attempt")
+		}
+		node.Status = "blocked"
+		attempt.Status = "blocked"
 	case SafeSchema2RunCancelRequestedEvent:
 		if err := verifyEventCommand(event.Data.CommandID, event.Data.CommandPayloadSHA256, raw.envelope.Seq, commands); err != nil {
 			return err
@@ -3073,6 +3274,10 @@ func (state *projectionState) node(nodeID string) *RunNodeView {
 	return &state.view.Nodes[index]
 }
 
+func (state *projectionState) selectedStructuralScope(nodeID, gateID string) bool {
+	return (nodeID == "" || state.node(nodeID) != nil) && (gateID == "" || state.node(gateID) != nil)
+}
+
 func projectionAttemptKey(nodeID string, attempt uint64) string {
 	return nodeID + "/" + strconv.FormatUint(attempt, 10)
 }
@@ -3084,7 +3289,9 @@ func (state *projectionState) startAttempt(nodeID string, attempt, sequence uint
 	}
 	key := projectionAttemptKey(nodeID, attempt)
 	if index, exists := state.attemptIndex[key]; exists {
-		return &state.view.Attempts[index]
+		view := &state.view.Attempts[index]
+		state.addAttemptRef(node, view)
+		return view
 	}
 	copyInputs := append([]SafeInputIdentity(nil), inputs...)
 	state.attemptIndex[key] = len(state.view.Attempts)
@@ -3095,7 +3302,19 @@ func (state *projectionState) startAttempt(nodeID string, attempt, sequence uint
 	node.Status = "running"
 	node.LatestAttempt = attempt
 	node.Readiness = RunReadiness{NeededInputs: uint64(len(inputs)), ReadyInputs: uint64(len(inputs)), TotalInputs: uint64(len(inputs)), WaitingFor: []string{}}
-	return &state.view.Attempts[len(state.view.Attempts)-1]
+	view := &state.view.Attempts[len(state.view.Attempts)-1]
+	state.addAttemptRef(node, view)
+	return view
+}
+
+func (state *projectionState) addAttemptRef(node *RunNodeView, attempt *RunAttemptView) {
+	ref := RunAttemptRef{NodeID: attempt.NodeID, Attempt: attempt.Attempt}
+	for _, existing := range node.Attempts {
+		if existing == ref {
+			return
+		}
+	}
+	node.Attempts = append(node.Attempts, ref)
 }
 
 func (state *projectionState) ensureAttempt(nodeID string, attempt uint64) *RunAttemptView {
@@ -3104,6 +3323,85 @@ func (state *projectionState) ensureAttempt(nodeID string, attempt uint64) *RunA
 		return &state.view.Attempts[index]
 	}
 	return state.startAttempt(nodeID, attempt, 0, []SafeInputIdentity{})
+}
+
+func (state *projectionState) existingAttempt(nodeID string, attempt uint64) *RunAttemptView {
+	if index, ok := state.attemptIndex[projectionAttemptKey(nodeID, attempt)]; ok {
+		return &state.view.Attempts[index]
+	}
+	return nil
+}
+
+func (state *projectionState) completeSchema2Attempt(nodeID string, attempt uint64, status string, sequence uint64, outputs SafePayloadProjections) error {
+	node := state.node(nodeID)
+	view := state.existingAttempt(nodeID, attempt)
+	if node == nil || view == nil {
+		return projectionError(ErrRunProjectionInvalid, "result without selected attempt")
+	}
+	node.Status, node.FinalDisposition = status, status
+	view.Status, view.Disposition, view.CompletedSeq = status, status, sequence
+	state.appendProjectedOutputs(nodeID, attempt, sequence, outputs)
+	return nil
+}
+
+func (state *projectionState) appendProjectedOutputs(nodeID string, attempt, sequence uint64, outputs SafePayloadProjections) {
+	ordered := state.outputPortIDs(nodeID)
+	seen := make(map[string]bool, len(outputs))
+	for _, portID := range ordered {
+		payload, ok := outputs[portID]
+		if !ok {
+			continue
+		}
+		seen[portID] = true
+		state.upsertProjectedOutput(nodeID, attempt, portID, sequence, payload)
+	}
+	extras := make([]string, 0, len(outputs)-len(seen))
+	for portID := range outputs {
+		if !seen[portID] {
+			extras = append(extras, portID)
+		}
+	}
+	sort.Strings(extras)
+	for _, portID := range extras {
+		state.upsertProjectedOutput(nodeID, attempt, portID, sequence, outputs[portID])
+	}
+}
+
+func (state *projectionState) upsertProjectedOutput(nodeID string, attempt uint64, portID string, sequence uint64, payload PayloadProjection) {
+	ref := RunOutputRef{NodeID: nodeID, Attempt: attempt, PortID: portID}
+	for index := range state.view.Outputs {
+		output := &state.view.Outputs[index]
+		if output.NodeID == nodeID && output.Attempt == attempt && output.PortID == portID {
+			output.OutcomeSeq, output.PayloadProjection = sequence, payload
+			state.addOutputRef(ref)
+			return
+		}
+	}
+	state.view.Outputs = append(state.view.Outputs, RunOutputView{NodeID: nodeID, Attempt: attempt, PortID: portID, OutcomeSeq: sequence, PayloadProjection: payload})
+	state.addOutputRef(ref)
+}
+
+func (state *projectionState) addOutputRef(ref RunOutputRef) {
+	if node := state.node(ref.NodeID); node != nil {
+		found := false
+		for _, existing := range node.Outputs {
+			if existing == ref {
+				found = true
+				break
+			}
+		}
+		if !found {
+			node.Outputs = append(node.Outputs, ref)
+		}
+	}
+	if view := state.existingAttempt(ref.NodeID, ref.Attempt); view != nil {
+		for _, existing := range view.Outputs {
+			if existing == ref {
+				return
+			}
+		}
+		view.Outputs = append(view.Outputs, ref)
+	}
 }
 
 func (state *projectionState) completeSchema1Node(raw rawProjectionEvent, data SafeSchema1NodeOutputData) error {
@@ -3177,10 +3475,7 @@ func (state *projectionState) outputPortIDs(nodeID string) []string {
 }
 
 func (state *projectionState) appendOutput(nodeID string, attempt uint64, portID string, sequence uint64, text string) {
-	state.view.Outputs = append(state.view.Outputs, RunOutputView{
-		NodeID: nodeID, Attempt: attempt, PortID: portID, OutcomeSeq: sequence,
-		PayloadProjection: PayloadProjection{Availability: "available", Exact: true, Payload: PayloadValue{Kind: "work", MediaType: "text/plain", Text: text}},
-	})
+	state.upsertProjectedOutput(nodeID, attempt, portID, sequence, PayloadProjection{Availability: "available", Exact: true, Payload: PayloadValue{Kind: "work", MediaType: "text/plain", Text: text}})
 }
 
 func (state *projectionState) startGate(gateID string, attempt, sequence uint64, _ SafeInputIdentity) {
@@ -3199,6 +3494,9 @@ func (state *projectionState) startGate(gateID string, attempt, sequence uint64,
 	state.gateIndex[key] = len(state.view.Gates)
 	state.view.Gates = append(state.view.Gates, RunGateView{GateID: gateID, Attempt: attempt, Status: "evaluating", EvaluatingSeq: sequence, Evidence: []SafeGateEvidence{}})
 	node.Status = "evaluating"
+	ref := RunGateRef{GateID: gateID, Attempt: attempt}
+	node.Gates = append(node.Gates, ref)
+	owner.Gate = &ref
 }
 
 func (state *projectionState) ensureGate(gateID string, attempt uint64) *RunGateView {
@@ -3209,6 +3507,27 @@ func (state *projectionState) ensureGate(gateID string, attempt uint64) *RunGate
 	state.startGate(gateID, attempt, 0, SafeInputIdentity{})
 	if index, ok := state.gateIndex[key]; ok {
 		return &state.view.Gates[index]
+	}
+	return nil
+}
+
+func (state *projectionState) existingGate(gateID string, attempt uint64) *RunGateView {
+	if index, ok := state.gateIndex[projectionAttemptKey(gateID, attempt)]; ok {
+		return &state.view.Gates[index]
+	}
+	return nil
+}
+
+func (state *projectionState) startSchema2Gate(gateID string, attempt, sequence uint64) error {
+	if state.node(gateID) == nil || attempt == 0 || attempt > MaxJSONSafeInteger {
+		return projectionError(ErrRunProjectionInvalid, "invalid gate evaluation")
+	}
+	if state.startAttempt(gateID, attempt, sequence, nil) == nil {
+		return projectionError(ErrRunProjectionInvalid, "invalid gate evaluation")
+	}
+	state.startGate(gateID, attempt, sequence, SafeInputIdentity{})
+	if state.existingGate(gateID, attempt) == nil {
+		return projectionError(ErrRunProjectionInvalid, "invalid gate evaluation")
 	}
 	return nil
 }
@@ -3832,7 +4151,9 @@ func (state *projectionState) addSchema2Dispatch(raw rawProjectionEvent, dispatc
 	if !ok || health.SessionTargetID != dispatch.SessionTargetID || health.SlotID != dispatch.SlotID {
 		return projectionError(ErrRunProjectionInvalid, "dispatch without runnable binding observation")
 	}
-	state.ensureAttempt(dispatch.NodeID, dispatch.Attempt)
+	if state.ensureAttempt(dispatch.NodeID, dispatch.Attempt) == nil {
+		return projectionError(ErrRunProjectionInvalid, "dispatch outside selected graph")
+	}
 	state.view.Sessions = append(state.view.Sessions, RunSessionView{
 		BindingID: dispatch.BindingID, NodeID: dispatch.NodeID, Attempt: dispatch.Attempt, SlotID: dispatch.SlotID,
 		DispatchID: dispatch.DispatchID, TargetLeaseID: dispatch.TargetLeaseID, SessionTargetID: dispatch.SessionTargetID,
