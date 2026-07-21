@@ -42,6 +42,7 @@ function SendToSessionModal() {
   const [selectedPane, setSelectedPane] = useState('')
   const [panesLoading, setPanesLoading] = useState(false)
   const [panesFailed, setPanesFailed] = useState(false)
+  const [deliveryUnknown, setDeliveryUnknown] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const activeTargetKeyRef = useRef<string | null>(null)
   const activeSendRef = useRef<symbol | null>(null)
@@ -75,6 +76,7 @@ function SendToSessionModal() {
     setSelectedPane('')
     setPanesLoading(Boolean(target && !target.unresolvedBare))
     setPanesFailed(Boolean(target?.unresolvedBare))
+    setDeliveryUnknown(false)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [sendToSessionPrefill, sendToSessionRequestId, target?.key])
 
@@ -135,13 +137,13 @@ function SendToSessionModal() {
   )
 
   const handleSend = useCallback(async () => {
-    if (!target || target.unresolvedBare || sending || !selectedPaneTarget) return
+    if (!target || target.unresolvedBare || sending || deliveryUnknown || !selectedPaneTarget) return
     if (!text.trim() && files.length === 0) return
     const sendToken = Symbol(target.key)
     activeSendRef.current = sendToken
     setSending(true)
     try {
-      const ok = await sendToSession(target.name, {
+      const outcome = await sendToSession(target.name, {
         text,
         files,
         submit,
@@ -150,9 +152,9 @@ function SendToSessionModal() {
         panePid: selectedPaneTarget.panePid,
         serverPid: selectedPaneTarget.serverPid,
       }, target.unixUser)
-      if (ok && activeTargetKeyRef.current === target.key && activeSendRef.current === sendToken) {
+      if (outcome === 'sent' && activeTargetKeyRef.current === target.key && activeSendRef.current === sendToken) {
         closeSendToSession()
-      } else if (!ok && activeTargetKeyRef.current === target.key && activeSendRef.current === sendToken) {
+      } else if (outcome === 'failed' && activeTargetKeyRef.current === target.key && activeSendRef.current === sendToken) {
         setPanes([])
         setSelectedPane('')
         setPanesFailed(false)
@@ -167,6 +169,8 @@ function SendToSessionModal() {
             setSelectedPane(refreshed.length === 1 ? refreshed[0].pane : '')
           }
         }
+      } else if (outcome === 'unknown' && activeTargetKeyRef.current === target.key && activeSendRef.current === sendToken) {
+        setDeliveryUnknown(true)
       }
     } finally {
       if (activeSendRef.current === sendToken) {
@@ -174,7 +178,7 @@ function SendToSessionModal() {
         setSending(false)
       }
     }
-  }, [closeSendToSession, files, listSessionPanes, selectedPaneTarget, sendToSession, sending, submit, target, text])
+  }, [closeSendToSession, deliveryUnknown, files, listSessionPanes, selectedPaneTarget, sendToSession, sending, submit, target, text])
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent) => {
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
@@ -187,7 +191,7 @@ function SendToSessionModal() {
 
   if (!target) return null
 
-  const canSend = Boolean(text.trim() || files.length > 0) && Boolean(selectedPaneTarget) && !target.unresolvedBare && !panesLoading && !sending
+  const canSend = Boolean(text.trim() || files.length > 0) && Boolean(selectedPaneTarget) && !target.unresolvedBare && !panesLoading && !sending && !deliveryUnknown
 
   return (
     <div className="send-session-overlay" onClick={closeSendToSession}>
@@ -217,6 +221,11 @@ function SendToSessionModal() {
             {target.unresolvedBare
               ? 'Session target is ambiguous or missing; open a user-qualified session target.'
               : 'Unable to resolve a safe target pane.'}
+          </p>
+        )}
+        {deliveryUnknown && (
+          <p className="send-session-pane-status send-session-pane-error" role="alert">
+            This payload may already have been delivered. Inspect the exact pane, then close and reopen this dialog before retrying.
           </p>
         )}
         {!panesLoading && !panesFailed && panes.length === 1 && (
