@@ -1,6 +1,6 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useSession } from '../context/SessionContext'
-import { getSessionKey, getSessionNameFromKey, getSessionUserFromKey, type TmuxSession } from '../types'
+import { getSessionKey, getSessionNameFromKey, getSessionUserFromKey, type SendSessionPane, type TmuxSession } from '../types'
 import { detectAgentRole } from '../utils/roleDetection'
 
 function formatBytes(bytes: number): string {
@@ -19,6 +19,11 @@ function defaultSubmitForSession(session: TmuxSession | undefined): boolean {
   return Boolean(session.persistent || session.persistentAgentKind || detectAgentRole(session.name))
 }
 
+function paneLabel(pane: SendSessionPane): string {
+  const details = [pane.windowName, pane.currentCommand, pane.currentPath].filter(Boolean)
+  return `${pane.pane}${pane.active ? ' · active' : ''}${details.length > 0 ? ` · ${details.join(' · ')}` : ''}`
+}
+
 function SendToSessionModal() {
   const {
     sendToSessionTarget,
@@ -26,12 +31,17 @@ function SendToSessionModal() {
     sendToSessionRequestId,
     sessions,
     closeSendToSession,
+    listSessionPanes,
     sendToSession,
   } = useSession()
   const [text, setText] = useState('')
   const [files, setFiles] = useState<File[]>([])
   const [submit, setSubmit] = useState(false)
   const [sending, setSending] = useState(false)
+  const [panes, setPanes] = useState<SendSessionPane[]>([])
+  const [selectedPane, setSelectedPane] = useState('')
+  const [panesLoading, setPanesLoading] = useState(false)
+  const [panesFailed, setPanesFailed] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const activeTargetKeyRef = useRef<string | null>(null)
   const activeSendRef = useRef<symbol | null>(null)
@@ -46,8 +56,9 @@ function SendToSessionModal() {
       ? sessions.filter(item => getSessionKey(item.name, item.unixUser) === sendToSessionTarget)
       : sessions.filter(item => item.name === displayName)
     const session = matching.length === 1 ? matching[0] : undefined
+    const unresolvedBare = !keyUser && matching.length !== 1
     const unixUser = session?.unixUser ?? keyUser
-    return { key: sendToSessionTarget, name: displayName, unixUser, session }
+    return { key: sendToSessionTarget, name: displayName, unixUser, session, unresolvedBare }
   }, [sendToSessionTarget, sessions])
 
   activeTargetKeyRef.current = target?.key ?? null
@@ -60,12 +71,41 @@ function SendToSessionModal() {
     setFiles([])
     setSubmit(defaultSubmitRef.current)
     setSending(false)
+    setPanes([])
+    setSelectedPane('')
+    setPanesLoading(Boolean(target && !target.unresolvedBare))
+    setPanesFailed(Boolean(target?.unresolvedBare))
     if (fileInputRef.current) fileInputRef.current.value = ''
   }, [sendToSessionPrefill, sendToSessionRequestId, target?.key])
 
   useLayoutEffect(() => {
     if (!submitTouchedRef.current) setSubmit(defaultSubmitRef.current)
   }, [target?.session])
+
+  useEffect(() => {
+    if (!target) return
+    if (target.unresolvedBare) {
+      setPanes([])
+      setSelectedPane('')
+      setPanesLoading(false)
+      setPanesFailed(true)
+      return
+    }
+    setPanesLoading(true)
+    setPanesFailed(false)
+    let current = true
+    void listSessionPanes(target.name, target.unixUser).then(result => {
+      if (!current) return
+      setPanesLoading(false)
+      if (!result) {
+        setPanesFailed(true)
+        return
+      }
+      setPanes(result)
+      setSelectedPane(result.length === 1 ? result[0].pane : '')
+    })
+    return () => { current = false }
+  }, [listSessionPanes, sendToSessionRequestId, target?.key, target?.name, target?.unixUser, target?.unresolvedBare])
 
   const addFiles = useCallback((incoming: File[]) => {
     if (incoming.length === 0) return
@@ -89,16 +129,44 @@ function SendToSessionModal() {
     setFiles(prev => prev.filter((_, idx) => idx !== index))
   }, [])
 
+  const selectedPaneTarget = useMemo(
+    () => panes.find(pane => pane.pane === selectedPane),
+    [panes, selectedPane],
+  )
+
   const handleSend = useCallback(async () => {
-    if (!target || sending) return
+    if (!target || target.unresolvedBare || sending || !selectedPaneTarget) return
     if (!text.trim() && files.length === 0) return
     const sendToken = Symbol(target.key)
     activeSendRef.current = sendToken
     setSending(true)
     try {
-      const ok = await sendToSession(target.name, { text, files, submit }, target.unixUser)
+      const ok = await sendToSession(target.name, {
+        text,
+        files,
+        submit,
+        pane: selectedPaneTarget.pane,
+        sessionId: selectedPaneTarget.sessionId,
+        panePid: selectedPaneTarget.panePid,
+        serverPid: selectedPaneTarget.serverPid,
+      }, target.unixUser)
       if (ok && activeTargetKeyRef.current === target.key && activeSendRef.current === sendToken) {
         closeSendToSession()
+      } else if (!ok && activeTargetKeyRef.current === target.key && activeSendRef.current === sendToken) {
+        setPanes([])
+        setSelectedPane('')
+        setPanesFailed(false)
+        setPanesLoading(true)
+        const refreshed = await listSessionPanes(target.name, target.unixUser)
+        if (activeTargetKeyRef.current === target.key && activeSendRef.current === sendToken) {
+          setPanesLoading(false)
+          if (!refreshed) {
+            setPanesFailed(true)
+          } else {
+            setPanes(refreshed)
+            setSelectedPane(refreshed.length === 1 ? refreshed[0].pane : '')
+          }
+        }
       }
     } finally {
       if (activeSendRef.current === sendToken) {
@@ -106,7 +174,7 @@ function SendToSessionModal() {
         setSending(false)
       }
     }
-  }, [closeSendToSession, files, sendToSession, sending, submit, target, text])
+  }, [closeSendToSession, files, listSessionPanes, selectedPaneTarget, sendToSession, sending, submit, target, text])
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent) => {
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
@@ -119,7 +187,7 @@ function SendToSessionModal() {
 
   if (!target) return null
 
-  const canSend = Boolean(text.trim() || files.length > 0) && !sending
+  const canSend = Boolean(text.trim() || files.length > 0) && Boolean(selectedPaneTarget) && !target.unresolvedBare && !panesLoading && !sending
 
   return (
     <div className="send-session-overlay" onClick={closeSendToSession}>
@@ -140,8 +208,34 @@ function SendToSessionModal() {
         </header>
 
         <p className="send-session-disclaimer">
-          Sent text and files are stored on disk until removed.
+          Sent text and files are retained for seven days by default and cleaned automatically in the background.
         </p>
+
+        {panesLoading && <p className="send-session-pane-status" role="status">Resolving target panes…</p>}
+        {panesFailed && (
+          <p className="send-session-pane-status send-session-pane-error" role="alert">
+            {target.unresolvedBare
+              ? 'Session target is ambiguous or missing; open a user-qualified session target.'
+              : 'Unable to resolve a safe target pane.'}
+          </p>
+        )}
+        {!panesLoading && !panesFailed && panes.length === 1 && (
+          <p className="send-session-pane-status">Target pane: <strong>{paneLabel(panes[0])}</strong></p>
+        )}
+        {!panesLoading && !panesFailed && panes.length > 1 && (
+          <label className="send-session-label" htmlFor="send-session-pane">
+            Target pane
+            <select
+              id="send-session-pane"
+              className="send-session-pane-select"
+              value={selectedPane}
+              onChange={event => setSelectedPane(event.target.value)}
+            >
+              <option value="">Select an exact pane…</option>
+              {panes.map(pane => <option key={pane.pane} value={pane.pane}>{paneLabel(pane)}</option>)}
+            </select>
+          </label>
+        )}
 
         <label className="send-session-label" htmlFor="send-session-text">
           Message to send

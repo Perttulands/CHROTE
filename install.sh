@@ -273,6 +273,8 @@ main() {
   require_command install
   require_command realpath
   require_command tmux
+  # Send to Session uses POSIX ACLs so only the target Unix user can read drops.
+  require_command setfacl
   if [ "$MANAGE_SYSTEMD" -eq 1 ]; then
     require_command systemctl
   fi
