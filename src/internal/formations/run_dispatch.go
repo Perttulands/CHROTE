@@ -124,14 +124,14 @@ func (d *SlotDispatcher) CompleteFromCapture(runID, dispatchID, captured string)
 	if err := d.store.RequireRuntimeAuthority(); err != nil {
 		return err
 	}
+	dispatch := d.dispatchEvent(runID, dispatchID)
 	sentinel, ok := ParseCompletionSentinel(captured, runID)
 	if !ok {
-		if err := d.appendDispatchErrorAndBlock(runID, dispatchID, "", "", "completion_sentinel_timeout", "completion sentinel timeout", "adapter"); err != nil {
+		if err := d.appendDispatchErrorAndBlock(runID, dispatchID, dispatch.NodeID, dispatch.SlotID, "completion_sentinel_timeout", "completion sentinel timeout", "adapter"); err != nil {
 			return err
 		}
 		return ErrDispatchTimeout
 	}
-	dispatch := d.dispatchEvent(runID, dispatchID)
 	if dispatch.Type == "" {
 		message := fmt.Sprintf("unknown dispatch %q", dispatchID)
 		if err := d.appendDispatchErrorAndBlock(runID, dispatchID, "", "", "unknown_dispatch", message, "adapter"); err != nil {
@@ -246,22 +246,31 @@ func (d *SlotDispatcher) appendDispatchErrorAndBlock(runID, dispatchID, nodeID, 
 	}); err != nil {
 		return err
 	}
+	openDispatches := []map[string]any{}
+	if nodeID != "" && slotID != "" {
+		openDispatches = append(openDispatches, map[string]any{
+			"dispatchId":  dispatchID,
+			"nodeId":      nodeID,
+			"slotId":      slotID,
+			"dispatchSeq": 0,
+		})
+	}
 	return d.store.AppendRunEvent(runID, RunEvent{
 		Type:   RunEventBlocked,
 		NodeID: nodeID,
 		SlotID: slotID,
 		Data: map[string]any{
-			"reason":        message,
-			"blockedNodeId": nodeID,
-			"resumeAllowed": true,
-			"resumePolicy":  "explicit",
-			"openDispatches": []map[string]any{{
-				"dispatchId":  dispatchID,
-				"nodeId":      nodeID,
-				"slotId":      slotID,
-				"dispatchSeq": 0,
-			}},
-			"nextEpoch": 1,
+			"reason":         message,
+			"code":           code,
+			"boundary":       boundary,
+			"blockedNodeId":  nodeID,
+			"blockedGateId":  "",
+			"waitingNodes":   []string{},
+			"recoverable":    true,
+			"resumeAllowed":  true,
+			"resumePolicy":   "explicit",
+			"openDispatches": openDispatches,
+			"nextEpoch":      1,
 		},
 	})
 }
