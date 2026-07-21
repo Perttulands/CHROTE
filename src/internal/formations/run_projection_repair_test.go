@@ -23,59 +23,103 @@ func TestProjectCanonicalRunSchema2StructuralArmsAreNeverAuditOnly(t *testing.T)
 	}
 
 	tests := []struct {
-		name      string
-		prepare   func(*projectionState)
-		eventType string
-		data      map[string]any
-		envelope  func(map[string]any)
+		name        string
+		prepare     func(*projectionState)
+		eventType   string
+		data        map[string]any
+		envelope    func(map[string]any)
+		want        func(*projectionState)
+		historyOnly bool
 	}{
 		{
 			name: "formation result closes its attempt and materializes outputs", prepare: startSchema2RepairAttempt(projectionTestFormationID, "formation"),
 			eventType: "formation_result", data: schema2RepairFormationResultData(),
+			want: func(state *projectionState) {
+				schema2RepairCompleteAttempt(state, projectionTestFormationID, 1, "done", 20)
+				schema2RepairAppendOutput(state, projectionTestFormationID, 1, "port_out", 20, schema2RepairPayload("formation output"))
+			},
 		},
 		{
-			name: "tool dispatch opens tool attempt state", prepare: startSchema2RepairAttempt("tool_normalize", "tool"),
+			name:      "tool dispatch opens tool attempt state",
 			eventType: "tool_dispatch", data: schema2RepairToolDispatchData(),
+			want: func(state *projectionState) { schema2RepairStartAttempt(state, "tool_normalize", "tool", 1, 20) },
 		},
 		{
-			name: "tool process launch advances tool state", prepare: startSchema2RepairAttempt("tool_normalize", "tool"),
+			name: "tool process launch is deliberately non-structural typed history", prepare: startSchema2RepairAttempt("tool_normalize", "tool"),
 			eventType: "tool_process_launch", data: schema2RepairToolProcessLaunchData(),
+			historyOnly: true,
 		},
 		{
 			name: "tool result closes tool attempt and materializes outputs", prepare: startSchema2RepairAttempt("tool_normalize", "tool"),
 			eventType: "tool_result", data: schema2RepairToolResultData(),
+			want: func(state *projectionState) {
+				schema2RepairCompleteAttempt(state, "tool_normalize", 1, "done", 20)
+				schema2RepairAppendOutput(state, "tool_normalize", 1, "port_tool_out", 20, schema2RepairPayload(`{"normalized":true}`))
+			},
 		},
 		{
 			name: "node output closes the named attempt and materializes outputs", prepare: startSchema2RepairAttempt(projectionTestMissionID, "mission"),
 			eventType: "node_output", data: schema2RepairNodeOutputData(projectionTestMissionID),
+			want: func(state *projectionState) {
+				schema2RepairCompleteAttempt(state, projectionTestMissionID, 1, "done", 20)
+				schema2RepairAppendOutput(state, projectionTestMissionID, 1, "out", 20, schema2RepairPayload("done"))
+			},
 		},
 		{
-			name: "gate evaluating opens gate state", prepare: startSchema2RepairAttempt(projectionTestGateID, "gate"),
+			name:      "gate evaluating opens gate state",
 			eventType: "gate_evaluating", data: schema2RepairGateEvaluatingData(),
+			want: func(state *projectionState) { schema2RepairStartGate(state, projectionTestGateID, 1, 20) },
 		},
 		{
 			name: "gate kind result retains typed evidence", prepare: prepareSchema2RepairGate,
 			eventType: "gate_kind_result", data: schema2RepairGateKindResultData(),
+			want: func(state *projectionState) {
+				state.ensureGate(projectionTestGateID, 1).Evidence = append(state.ensureGate(projectionTestGateID, 1).Evidence, SafeGateEvidence{Kind: "code", Reason: "lint passed"})
+			},
 		},
 		{
-			name: "judge result advances gate evidence", prepare: prepareSchema2RepairGate,
+			name: "judge result closes only the judge attempt and advances gate evidence", prepare: prepareSchema2RepairJudgeGate,
 			eventType: "judge_result", data: schema2RepairJudgeResultData(),
+			want: func(state *projectionState) {
+				schema2RepairCompleteAttempt(state, projectionTestFormationID, 1, "done", 20)
+				state.ensureGate(projectionTestGateID, 1).Evidence = append(state.ensureGate(projectionTestGateID, 1).Evidence, SafeGateEvidence{Kind: "judge", Reason: "approved"})
+			},
 		},
 		{
-			name: "judge attempt failure advances gate evidence", prepare: prepareSchema2RepairGate,
+			name: "judge attempt failure fails the judge and blocks the gate", prepare: prepareSchema2RepairJudgeGate,
 			eventType: "judge_attempt_failed", data: schema2RepairJudgeAttemptFailedData(),
+			want: func(state *projectionState) {
+				schema2RepairCompleteAttempt(state, projectionTestFormationID, 1, "failed", 20)
+				gate := state.ensureGate(projectionTestGateID, 1)
+				gate.Status, gate.Reason = "blocked", "invalid result"
+				state.node(projectionTestGateID).Status = "blocked"
+			},
 		},
 		{
 			name: "gate verdict closes the gate attempt", prepare: prepareSchema2RepairGate,
 			eventType: "gate_verdict", data: schema2RepairGateVerdictData(),
+			want: func(state *projectionState) { state.finishGate(projectionTestGateID, 1, 20, "fail", "needs revision") },
 		},
 		{
 			name: "human request marks gate and attempt waiting", prepare: prepareSchema2RepairGate,
 			eventType: "human_input_requested", data: schema2RepairHumanRequestData(),
+			want: func(state *projectionState) {
+				state.view.Status = "waiting_human"
+				gate := state.ensureGate(projectionTestGateID, 1)
+				gate.Status, gate.RequestSeq = "waiting_human", 20
+				state.node(projectionTestGateID).Status = "waiting_human"
+				schema2RepairAttempt(state, projectionTestGateID, 1).Status = "waiting_human"
+			},
 		},
 		{
 			name: "human verdict returns the gate to evaluation", prepare: prepareSchema2RepairHumanGate,
 			eventType: "human_verdict_recorded", data: schema2RepairHumanVerdictData(),
+			want: func(state *projectionState) {
+				state.view.Status = "running"
+				state.ensureGate(projectionTestGateID, 1).Status = "evaluating"
+				state.node(projectionTestGateID).Status = "running"
+				schema2RepairAttempt(state, projectionTestGateID, 1).Status = "running"
+			},
 		},
 		{
 			name: "escalation is retained structurally", prepare: startSchema2RepairAttempt(projectionTestFormationID, "formation"),
@@ -83,19 +127,27 @@ func TestProjectCanonicalRunSchema2StructuralArmsAreNeverAuditOnly(t *testing.T)
 				"trigger": "operator_review", "severity": "needs-attention", "reason": "review", "source": "agent",
 				"nodeId": projectionTestFormationID, "gateId": "", "blocks": true,
 			},
+			want: func(state *projectionState) {
+				state.view.Escalations = append(state.view.Escalations, RunEscalationView{Seq: 20, NodeID: projectionTestFormationID, Severity: "needs-attention", Reason: "review", Source: "agent", Trigger: "operator_review", Blocks: true})
+			},
 		},
 		{
-			name: "node input ignored changes readiness evidence", prepare: startSchema2RepairAttempt(projectionTestFormationID, "formation"),
+			name: "node input ignored is deliberately non-structural typed history", prepare: startSchema2RepairAttempt(projectionTestFormationID, "formation"),
 			eventType: "node_input_ignored", data: map[string]any{
 				"nodeId": projectionTestFormationID, "toPortId": "port_in", "inputRef": schema2RepairInputRef(),
 				"reason": "closed_turn", "relatedAttempt": 1,
 			},
+			historyOnly: true,
 		},
 		{
 			name: "scoped error changes the affected attempt", prepare: startSchema2RepairAttempt(projectionTestFormationID, "formation"),
 			eventType: "error", data: map[string]any{
 				"code": "dispatch_failed", "message": "dispatch failed", "boundary": "dispatcher", "errorScope": "node",
 				"nodeId": projectionTestFormationID, "recoverable": true, "relatedSeq": 2,
+			},
+			want: func(state *projectionState) {
+				state.node(projectionTestFormationID).Status = "blocked"
+				schema2RepairAttempt(state, projectionTestFormationID, 1).Status = "blocked"
 			},
 		},
 	}
@@ -108,7 +160,11 @@ func TestProjectCanonicalRunSchema2StructuralArmsAreNeverAuditOnly(t *testing.T)
 			if test.prepare != nil {
 				test.prepare(&state)
 			}
-			before := schema2RepairStructuralFingerprint(t, state.view)
+			before := schema2RepairCloneView(t, state.view)
+			want := schema2RepairCloneState(t, state)
+			if test.want != nil {
+				test.want(&want)
+			}
 			data := schema2RepairReducerData(test.eventType, cloneAny(test.data).(map[string]any))
 			event := schema2Event(projectionTestRunID, 20, test.eventType, data)
 			delete(event, "missionId")
@@ -120,9 +176,17 @@ func TestProjectCanonicalRunSchema2StructuralArmsAreNeverAuditOnly(t *testing.T)
 			if err := reduceSchema2Event(&state, raw, safe, map[string]RunCommandReceipt{}); err != nil {
 				t.Fatalf("reduce admitted %s: %v", test.eventType, err)
 			}
-			after := schema2RepairStructuralFingerprint(t, state.view)
-			if bytes.Equal(before, after) {
-				t.Fatalf("%s was consumed as audit-only; structural view did not change: %s", test.eventType, after)
+			schema2RepairAssertTypedHistory(t, safe, test.eventType, data)
+			gotFingerprint := schema2RepairStructuralFingerprint(t, state.view)
+			if test.historyOnly {
+				if wantFingerprint := schema2RepairStructuralFingerprint(t, before); !bytes.Equal(gotFingerprint, wantFingerprint) {
+					t.Fatalf("%s must preserve the frozen structural view\ngot:  %s\nwant: %s", test.eventType, gotFingerprint, wantFingerprint)
+				}
+				return
+			}
+			wantFingerprint := schema2RepairStructuralFingerprint(t, want.view)
+			if !bytes.Equal(gotFingerprint, wantFingerprint) {
+				t.Fatalf("%s structural postcondition mismatch\ngot:  %s\nwant: %s", test.eventType, gotFingerprint, wantFingerprint)
 			}
 		})
 	}
@@ -155,6 +219,36 @@ func TestProjectCanonicalRunRejectsInvalidSchema2StartAttempt(t *testing.T) {
 	}
 }
 
+func TestProjectCanonicalRunRejectsInvalidSchema1StartAttempt(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		nodeID  string
+		attempt uint64
+	}{
+		{name: "unknown node", nodeID: "fmn_missing", attempt: 1},
+		{name: "zero attempt", nodeID: projectionTestFormationID, attempt: 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			state := newProjectionState(projectionTestRunID, CanonicalRunSourceSchema1, &BoardDocument{Formations: []FormationNode{{ID: projectionTestFormationID}}})
+			event := schema1Event(projectionTestRunID, 2, "node_started", map[string]any{"inputRefs": []any{}})
+			event["nodeId"], event["attempt"] = test.nodeID, test.attempt
+			raw, err := decodeProjectionEvent(canonicalJSON(t, event), CanonicalRunSourceSchema1, projectionTestRunID)
+			if err != nil {
+				t.Fatalf("decode invalid-start fixture: %v", err)
+			}
+			safe, err := sanitizeSchema1Event(raw)
+			if err != nil {
+				t.Fatalf("sanitize invalid-start fixture: %v", err)
+			}
+			if err := reduceSchema1Event(&state, raw, safe); err == nil {
+				t.Fatalf("schema-1 invalid startAttempt node=%q attempt=%d was silently consumed", test.nodeID, test.attempt)
+			} else {
+				requireProjectionError(t, err, ErrRunProjectionInvalid)
+			}
+		})
+	}
+}
+
 func TestProjectCanonicalRunSchema2SessionAuthorityArmsAreNeverAuditOnly(t *testing.T) {
 	dispatchID := "dsp_01KXNP6VY3227H78329V52CKF8"
 	leaseID := "lease_01KXNP6VY3227H78329V52CKF8"
@@ -164,34 +258,47 @@ func TestProjectCanonicalRunSchema2SessionAuthorityArmsAreNeverAuditOnly(t *test
 		eventType string
 		data      map[string]any
 		prepare   func(*RunSessionView)
+		want      func(*RunSessionView)
 	}{
 		{name: "peek capability issuance updates session capability", eventType: "slot_peek_capability_issued", data: map[string]any{
 			"dispatchId": dispatchID, "targetLeaseId": leaseID, "bindingId": "binding_worker", "sessionTargetId": "target_worker",
 			"targetFingerprint": fingerprint, "capabilityGeneration": "1", "priorIssuedSeq": 0, "issuedAt": "2026-07-20T10:00:19Z",
+		}, want: func(session *RunSessionView) {
+			session.PeekCapability = RunSessionPeekCapability{State: "issued", IssuedSeq: 20, Generation: "1"}
 		}},
-		{name: "steering start opens session steering", eventType: "slot_steering_started", data: map[string]any{
+		{name: "steering start opens only the named session steering generation", eventType: "slot_steering_started", prepare: func(session *RunSessionView) {
+			session.PeekCapability = RunSessionPeekCapability{State: "issued", IssuedSeq: 18, Generation: "1"}
+		}, data: map[string]any{
 			"dispatchId": dispatchID, "targetLeaseId": leaseID, "bindingId": "binding_worker", "sessionTargetId": "target_worker",
 			"targetFingerprint": fingerprint, "capabilityIssuedSeq": 18, "capabilityGeneration": "1", "steeringGeneration": "1",
 			"actor": "human:test", "startedAt": "2026-07-20T10:00:19Z", "recordedBeforeInput": true,
+		}, want: func(session *RunSessionView) {
+			started := uint64(20)
+			session.PeekCapability.State = "input_open"
+			session.Steering = RunSessionSteering{State: "open", Generation: "1", StartedSeq: &started}
 		}},
 		{name: "steering end closes session steering", eventType: "slot_steering_ended", prepare: func(session *RunSessionView) {
 			started := uint64(18)
+			session.PeekCapability = RunSessionPeekCapability{State: "input_open", IssuedSeq: 17, Generation: "1"}
 			session.Steering = RunSessionSteering{State: "open", Generation: "1", StartedSeq: &started}
 		}, data: map[string]any{
 			"startedSeq": 18, "dispatchId": dispatchID, "targetLeaseId": leaseID, "targetFingerprint": fingerprint,
 			"steeringGeneration": "1", "reason": "complete", "endedAt": "2026-07-20T10:00:19Z",
+		}, want: func(session *RunSessionView) {
+			session.PeekCapability.State = "issued"
+			session.Steering = RunSessionSteering{State: "closed", Generation: "1"}
 		}},
 		{name: "reconciliation interrupt updates session occupancy", eventType: "slot_reconciliation_interrupt", data: map[string]any{
 			"dispatchId": dispatchID, "targetLeaseId": leaseID, "bindingId": "binding_worker", "sessionTargetId": "target_worker",
 			"targetFingerprint": fingerprint, "authorityKind": "failure", "authoritySeq": 18,
 			"interruptEncoding": "slot-reconciliation-interrupt-v1", "interruptSha256": strings.Repeat("b", 64), "recordedBeforeSend": true,
-		}},
+		}, want: func(session *RunSessionView) { session.Occupancy.State = "held" }},
 		{name: "reconciliation outcome updates session occupancy", eventType: "slot_reconciliation_interrupt_outcome", prepare: func(session *RunSessionView) {
 			session.Occupancy.State = "held"
 		}, data: map[string]any{
 			"requestedSeq": 18, "dispatchId": dispatchID, "targetLeaseId": leaseID, "targetFingerprint": fingerprint,
-			"outcome": "interrupted", "observedAt": "2026-07-20T10:00:19Z",
-		}},
+			"outcome": "unavailable", "observedAt": "2026-07-20T10:00:19Z",
+		}, want: func(session *RunSessionView) { session.Occupancy.State = "quarantined" }},
 	}
 
 	for _, test := range tests {
@@ -213,7 +320,8 @@ func TestProjectCanonicalRunSchema2SessionAuthorityArmsAreNeverAuditOnly(t *test
 			if test.prepare != nil {
 				test.prepare(&state.view.Sessions[0])
 			}
-			before := schema2RepairStructuralFingerprint(t, state.view)
+			want := schema2RepairCloneState(t, state)
+			test.want(&want.view.Sessions[0])
 			event := schema2Event(projectionTestRunID, 20, test.eventType, cloneAny(test.data).(map[string]any))
 			delete(event, "missionId")
 			delete(event, "beadId")
@@ -221,9 +329,11 @@ func TestProjectCanonicalRunSchema2SessionAuthorityArmsAreNeverAuditOnly(t *test
 			if err := reduceSchema2Event(&state, raw, safe, nil); err != nil {
 				t.Fatalf("reduce admitted %s: %v", test.eventType, err)
 			}
-			after := schema2RepairStructuralFingerprint(t, state.view)
-			if bytes.Equal(before, after) {
-				t.Fatalf("%s was consumed as audit-only; session did not change", test.eventType)
+			schema2RepairAssertTypedHistory(t, safe, test.eventType, test.data)
+			gotFingerprint := schema2RepairStructuralFingerprint(t, state.view)
+			wantFingerprint := schema2RepairStructuralFingerprint(t, want.view)
+			if !bytes.Equal(gotFingerprint, wantFingerprint) {
+				t.Fatalf("%s session postcondition mismatch\ngot:  %s\nwant: %s", test.eventType, gotFingerprint, wantFingerprint)
 			}
 		})
 	}
@@ -510,16 +620,18 @@ func TestProjectCommandReceiptPreservesFullUint64WriterFences(t *testing.T) {
 
 func startSchema2RepairAttempt(nodeID, kind string) func(*projectionState) {
 	return func(state *projectionState) {
-		state.startAttempt(nodeID, 1, 2, []SafeInputIdentity{})
-		if node := state.node(nodeID); node != nil {
-			node.Kind = kind
-		}
+		schema2RepairStartAttempt(state, nodeID, kind, 1, 2)
 	}
 }
 
 func prepareSchema2RepairGate(state *projectionState) {
-	startSchema2RepairAttempt(projectionTestGateID, "gate")(state)
-	state.startGate(projectionTestGateID, 1, 3, SafeInputIdentity{})
+	schema2RepairStartAttempt(state, projectionTestGateID, "gate", 1, 2)
+	schema2RepairStartGate(state, projectionTestGateID, 1, 3)
+}
+
+func prepareSchema2RepairJudgeGate(state *projectionState) {
+	prepareSchema2RepairGate(state)
+	schema2RepairStartAttempt(state, projectionTestFormationID, "formation", 1, 4)
 }
 
 func prepareSchema2RepairHumanGate(state *projectionState) {
@@ -535,6 +647,106 @@ func schema2RepairStructuralFingerprint(t *testing.T, view RunView) []byte {
 	view.Audit = RunAudit{}
 	view.Identity.Epoch = 0
 	return mustMarshalJSON(t, view)
+}
+
+func schema2RepairCloneView(t *testing.T, view RunView) RunView {
+	t.Helper()
+	var result RunView
+	if err := json.Unmarshal(mustMarshalJSON(t, view), &result); err != nil {
+		t.Fatalf("clone run view: %v", err)
+	}
+	return result
+}
+
+func schema2RepairCloneState(t *testing.T, state projectionState) projectionState {
+	t.Helper()
+	result := state
+	result.view = schema2RepairCloneView(t, state.view)
+	result.nodeIndex = schema2RepairCloneIndex(state.nodeIndex)
+	result.attemptIndex = schema2RepairCloneIndex(state.attemptIndex)
+	result.gateIndex = schema2RepairCloneIndex(state.gateIndex)
+	return result
+}
+
+func schema2RepairCloneIndex(source map[string]int) map[string]int {
+	result := make(map[string]int, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
+}
+
+func schema2RepairStartAttempt(state *projectionState, nodeID, kind string, attempt, sequence uint64) {
+	view := state.startAttempt(nodeID, attempt, sequence, []SafeInputIdentity{})
+	if view == nil {
+		return
+	}
+	node := state.node(nodeID)
+	node.Kind = kind
+	ref := RunAttemptRef{NodeID: nodeID, Attempt: attempt}
+	for _, existing := range node.Attempts {
+		if existing == ref {
+			return
+		}
+	}
+	node.Attempts = append(node.Attempts, ref)
+}
+
+func schema2RepairStartGate(state *projectionState, gateID string, attempt, sequence uint64) {
+	schema2RepairStartAttempt(state, gateID, "gate", attempt, sequence)
+	state.startGate(gateID, attempt, sequence, SafeInputIdentity{})
+	ref := RunGateRef{GateID: gateID, Attempt: attempt}
+	node := state.node(gateID)
+	if node != nil {
+		node.Gates = []RunGateRef{ref}
+	}
+	if attemptView := schema2RepairAttempt(state, gateID, attempt); attemptView != nil {
+		attemptView.Gate = &ref
+	}
+}
+
+func schema2RepairCompleteAttempt(state *projectionState, nodeID string, attempt uint64, status string, sequence uint64) {
+	node := state.node(nodeID)
+	node.Status, node.FinalDisposition = status, status
+	view := schema2RepairAttempt(state, nodeID, attempt)
+	view.Status, view.Disposition, view.CompletedSeq = status, status, sequence
+}
+
+func schema2RepairAttempt(state *projectionState, nodeID string, attempt uint64) *RunAttemptView {
+	index, ok := state.attemptIndex[projectionAttemptKey(nodeID, attempt)]
+	if !ok {
+		return nil
+	}
+	return &state.view.Attempts[index]
+}
+
+func schema2RepairAppendOutput(state *projectionState, nodeID string, attempt uint64, portID string, sequence uint64, payload PayloadProjection) {
+	ref := RunOutputRef{NodeID: nodeID, Attempt: attempt, PortID: portID}
+	state.view.Outputs = append(state.view.Outputs, RunOutputView{NodeID: nodeID, Attempt: attempt, PortID: portID, OutcomeSeq: sequence, PayloadProjection: payload})
+	state.node(nodeID).Outputs = append(state.node(nodeID).Outputs, ref)
+	schema2RepairAttempt(state, nodeID, attempt).Outputs = append(schema2RepairAttempt(state, nodeID, attempt).Outputs, ref)
+}
+
+func schema2RepairPayload(text string) PayloadProjection {
+	return PayloadProjection{Availability: "available", Exact: true, Payload: PayloadValue{Kind: "work", MediaType: "text/plain", Text: text}}
+}
+
+func schema2RepairAssertTypedHistory(t *testing.T, safe SafeRunEvent, eventType string, wantData map[string]any) {
+	t.Helper()
+	typeOf := reflect.TypeOf(safe)
+	if typeOf.Kind() != reflect.Struct || !strings.HasPrefix(typeOf.Name(), "SafeSchema2") || !strings.HasSuffix(typeOf.Name(), "Event") {
+		t.Fatalf("%s did not produce a concrete typed schema-2 event: %T", eventType, safe)
+	}
+	var exposed map[string]any
+	if err := json.Unmarshal(mustMarshalJSON(t, safe), &exposed); err != nil {
+		t.Fatalf("decode exposed %s event: %v", eventType, err)
+	}
+	if exposed["type"] != eventType {
+		t.Fatalf("typed event literal = %#v, want %q", exposed["type"], eventType)
+	}
+	if got, want := canonicalJSON(t, exposed["data"]), canonicalJSON(t, wantData); !bytes.Equal(got, want) {
+		t.Fatalf("typed %s public payload mismatch\ngot:  %s\nwant: %s", eventType, got, want)
+	}
 }
 
 func schema2RepairDecodeSafeEvent(t *testing.T, event map[string]any) (rawProjectionEvent, SafeRunEvent) {
