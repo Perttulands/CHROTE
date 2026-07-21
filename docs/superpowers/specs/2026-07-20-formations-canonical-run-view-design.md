@@ -37,7 +37,16 @@ canonical authority provider
         v
 CanonicalRunAuthorityReader (physical and integrity boundary)
         |
-        +-- immutable CanonicalRunReadInput --> ProjectRunView --> RunView
+        +-- immutable CanonicalRunReadInput --> ProjectCanonicalRun
+        |                                      (one semantic reducer)
+        |                                               |
+        |                       +-----------------------+------------------+
+        |                       |                                          |
+        |                       v                                          v
+        |              ProjectRunView                            ProjectRunEventPage
+        |                       |                                          |
+        |                       v                                          v
+        |                    RunView                                RunEventPage
         |
         `-- immutable CanonicalCommandReadInput --> ProjectCommandReceipt
                                                         |
@@ -94,11 +103,23 @@ self-authorize production schema-2 reads before `ctx-ug7.6.1` lands.
 
 ### Pure projectors
 
-`ProjectRunView(CanonicalRunReadInput) -> RunView` is the sole semantic reducer.
-It performs schema-specific decoding, complete semantic validation, status and
-finality reduction, result/linkage parity validation, recovery-state derivation,
-sanitization, latest-artifact hydration, and action derivation. It has no
+`ProjectCanonicalRun(CanonicalRunReadInput) -> CanonicalRunProjection` is the
+sole semantic reducer. It performs schema-specific decoding, complete semantic
+validation, status and finality reduction, result/linkage parity validation,
+recovery-state derivation, event sanitization, latest-artifact hydration, and
+action derivation. It replays the complete immutable canonical input. Its
+`CanonicalRunProjection` result is private projector state containing the
+graph/run-limit-bounded structural view plus the sanitized canonical event
+stream; it is not a public contract, cache, or second store. The reducer has no
 filesystem, clock, tmux, network, local-storage, or mutation dependency.
+
+`ProjectRunView(CanonicalRunProjection) -> RunView` selects only the current
+structural state and never embeds event history.
+`ProjectRunEventPage(CanonicalRunProjection, since, limit) -> RunEventPage`
+selects one bounded page from the same private sanitized stream. Both are pure
+selectors over the one semantic reduction. Adapters may invoke the reducer per
+immutable read, but semantic validation, reduction, sanitization, and artifact
+hydration must not be reimplemented in either selector.
 
 `ProjectCommandReceipt(CanonicalCommandReadInput) -> RunCommandReceipt` is a
 separate pure projection because a rejected start has no run. It accepts only a
@@ -130,7 +151,6 @@ RunView {
   reconcileCondition: CoordinatorReconcileCondition | null
   identity: RunIdentity
   audit: RunAudit
-  events: SafeRunEvent[]
   nodes: RunNodeView[]
   attempts: RunAttemptView[]
   gates: RunGateView[]
@@ -197,7 +217,6 @@ unsigned decimal strings rather than being converted to JSON numbers.
 
 Object member order is not semantic. Collection order is semantic and stable:
 
-- `events`: ascending canonical ledger `seq`;
 - `nodes`: frozen selected-root graph order, then `nodeId` only as a defensive
   tie-breaker;
 - `attempts`: node order, then ascending `attempt`;
@@ -208,6 +227,8 @@ Object member order is not semantic. Collection order is semantic and stable:
 - `sessions`: node order, attempt, frozen slot order, then dispatch sequence;
 - `actions`: `cancel`, `resume`, `verdict`, `peek`, then the corresponding graph,
   attempt, slot, and source-sequence order.
+
+`RunEventPage.events` is ordered by ascending canonical ledger `seq`.
 
 Schema-1 compatibility populates only fields its ledger can honestly establish;
 missing schema-2-only data uses an absent optional field or an explicit closed
@@ -241,7 +262,8 @@ The outcome fence is immutable even if a later writer fence repaired publication
 
 ### Run, node, Gate, output, and artifact views
 
-`SafeRunEvent` is a discriminated union, not `map[string]any`. Its common
+`SafeRunEvent` is a discriminated union used only in `RunEventPage` and replay
+transport, not in `RunView`. Its common
 allowlist is the applicable subset of `seq`, `type`, `ts`, `runId`, `actor`,
 graph ids, `epoch`, and `attempt`; `data` uses a closed decoder and a separate
 public allowlist for that exact known event type. Artifact occurrences carry an
@@ -316,18 +338,55 @@ label, or live tmux observation creates an action.
 
 ## Cursor and event transport
 
-`cursor` is the highest canonical ledger sequence consumed, not the last public
-event emitted. A registered projection-only event may be omitted from `events`
-but still advances the cursor. Event responses always return `{runId, cursor,
-events}`, including `events=[]` after filtering.
+`RunView.cursor` is the latest canonical sequence consumed by the complete
+structural view. Detail polling never embeds event history in `RunView`.
 
-Replay-only SSE follows the same reduction. Each emitted safe event uses its
+The separate public page is:
+
+```ts
+RunEventPage {
+  schema: "formations.run-events.v1"
+  runId: string
+  cursor: JsonSafeInteger
+  hasMore: boolean
+  events: SafeRunEvent[]
+}
+```
+
+The request is `since` plus `limit`. `since` is the last-consumed cursor in
+`0..9007199254740991`, so eligible canonical events satisfy `seq > since`;
+`limit` defaults to `200` and is rejected unless it is in `1..200`. The limit
+bounds canonical events scanned, not safe events emitted. A
+registered projection-only event consumes one scan slot, is omitted, and
+advances the page cursor. `cursor` is the highest canonical sequence consumed by
+this page, or the requested `since` if nothing was consumed. `hasMore` is true
+when the immutable snapshot has a higher canonical sequence than `cursor`.
+
+The JSON encoding of `RunEventPage` is capped at `1 MiB` (`1 << 20` bytes).
+Before consuming an event that would exceed the cap, the projector ends a
+non-empty page without advancing over that event. If one sanitized event cannot
+fit in an otherwise empty page, projection fails closed with a typed projection
+resource-limit error. This byte cap applies to the page projection; the API
+success envelope adds only its fixed bounded wrapper.
+
+Before returning `CanonicalRunProjection`, the sole reducer validates every
+emitted safe event in a singleton complete `RunEventPage` with its real run id
+and cursor. Therefore an individually oversized safe event rejects the immutable
+projection before an adapter writes an events or SSE response; adapters do not
+need a second full-replay preflight.
+
+The events endpoint returns exactly one page. Replay-only SSE reads one
+immutable snapshot, emits the same sanitized events in bounded internal pages,
+and never accumulates the complete replay. Each emitted safe event uses its
 canonical sequence as the SSE id. At the end of every replay response, the
 adapter emits a sanitized transport-only `cursor` control event whose SSE id and
-data cursor both equal the consumed sequence. This advances `Last-Event-ID`
-across an omitted extension-only tail, including when no safe events remain.
-The control event is not a ledger event and grants no authority. The response
-then closes; this design adds no live-follow loop.
+data cursor both equal the final consumed page cursor. If no canonical sequence
+is consumed, including when the requested `since` is greater than the snapshot's
+latest sequence, that cursor remains the requested `since`; SSE never regresses
+the resume token to a lower snapshot high-water. This also advances
+`Last-Event-ID` across an omitted extension-only tail when no safe events remain.
+The control event is not a ledger event and grants no authority.
+The response then closes; this design adds no live-follow loop.
 
 All historical event artifact occurrences are hydrated after reduction through
 the latest authorization. A formerly readable `ArtifactProjection` never
@@ -394,11 +453,12 @@ mutates projection truth.
 
 ## Consumer migration
 
-Migration precedes deletion. API list/detail/status, mutation receipts,
-escalations, events, replay-only SSE, and artifact open consume `RunView` or
-`RunCommandReceipt`. Archon status/list/logs/follow/ask and the existing Comms
-Formations-run projection consume the same abstractions. Existing response fields
-may remain temporarily only as adapters derived from the canonical projection.
+Migration precedes deletion. API list/detail/status and escalations consume
+`RunView`; mutation receipts consume `RunCommandReceipt`; events and replay-only
+SSE consume `RunEventPage`; artifact open consumes the optimistic canonical open
+flow. Archon status/list/logs/follow/ask and the existing Comms Formations-run
+projection consume the same abstractions. Existing response fields may remain
+temporarily only as adapters derived from the selected canonical projection.
 Duplicate consumer scans are removed only after fixture parity.
 
 ### DATA CONTRACT — engineering review
@@ -406,7 +466,8 @@ Duplicate consumer scans are removed only after fixture parity.
 One dashboard controller owns:
 
 - initial restore and polling from `RunView`;
-- cursor replacement/merge, rejecting a same-sequence mismatch;
+- a separate bounded `RunEventPage` catch-up cursor, page replacement/merge, and
+  rejection of a same-sequence event mismatch;
 - the local-storage run-id hint, which selects a fetch candidate but never
   supplies status, authority, session identity, or an action;
 - normalized nodes, attempts, Gates, outputs, artifacts, sessions, and actions;
@@ -423,8 +484,9 @@ Parity tests cover API/Archon/Comms/controller equality; schema-1 supported
 ledgers; queued, running, blocked, resumed, waiting, canceling, failing, and final
 runs; multiple attempts; failed Gates; exact/redacted outputs; artifact
 revocation; session/baseline/Peek states; omitted extension tails and empty event
-pages; JSON-safe maximum identities; all recovery predicates and precedence;
-and whole-view rejection for every integrity class.
+pages; scan-limit and encoded-byte event-page bounds; an individually oversized
+sanitized event; JSON-safe maximum identities; all recovery predicates and
+precedence; and whole-view rejection for every integrity class.
 
 ### UX-OWNER: Perttu
 
@@ -445,7 +507,7 @@ in place except that it consumes the canonical data controller.
 The reviewed implementation plan will create executable child Beads. It will
 retain four RED-first milestones and use fresh implementer/reviewer cycles:
 
-1. Projector kernel and parity.
+1. Projector kernel, bounded event-page contract, and parity.
 2. Authority security, sanitization, and artifact authorization/open.
 3. Consumer adapters, split into separately reviewed tasks:
    - API status/list/detail, mutation receipts, and escalations;
@@ -474,3 +536,6 @@ untouched. No Context Citadel project-local architecture write is required.
 
 This checkpoint performs no push, PR, merge, deployment, service action, live
 runtime action, or tmux action.
+
+This event/detail refinement is governed by ADR-0006, ADR-0007, and this approved
+design. It does not create a new ADR or architectural authority.
