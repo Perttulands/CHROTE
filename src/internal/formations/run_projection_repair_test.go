@@ -599,6 +599,137 @@ func TestSchema2NestedProjectionClosedEnumsAcceptEveryFrozenLiteral(t *testing.T
 	}
 }
 
+func TestSchema2RemainingNestedProjectionFamiliesAreClosed(t *testing.T) {
+	tests := []struct {
+		name      string
+		eventType string
+		valid     map[string]any
+		mutate    func(map[string]any)
+	}{
+		{name: "turn result requires turn key", eventType: "slot_result", valid: schema2RepairSlotResultData(t), mutate: func(data map[string]any) {
+			delete(data["turnResult"].(map[string]any), "turnKey")
+		}},
+		{name: "turn result rejects unknown member", eventType: "slot_result", valid: schema2RepairSlotResultData(t), mutate: func(data map[string]any) {
+			data["turnResult"].(map[string]any)["capture"] = "private"
+		}},
+		{name: "turn result phase must match dispatch", eventType: "slot_result", valid: schema2RepairSlotResultData(t), mutate: func(data map[string]any) {
+			data["turnResult"].(map[string]any)["phase"] = "solo"
+		}},
+		{name: "turn result status is closed", eventType: "slot_result", valid: schema2RepairSlotResultData(t), mutate: func(data map[string]any) {
+			data["turnResult"].(map[string]any)["status"] = "maybe"
+		}},
+		{name: "turn result hash matches canonical nested value", eventType: "slot_result", valid: schema2RepairSlotResultData(t), mutate: func(data map[string]any) {
+			data["turnResult"].(map[string]any)["reportArtifactId"] = "artifact_changed"
+		}},
+		{name: "turn result output payload is closed", eventType: "slot_result", valid: schema2RepairSlotResultData(t), mutate: func(data map[string]any) {
+			data["turnResult"].(map[string]any)["outputs"] = map[string]any{"port_out": map[string]any{"availability": "available", "exact": true, "payload": map[string]any{"kind": "work", "mediaType": "text/plain", "text": "ok", "token": "private"}}}
+		}},
+		{name: "formation result requires outputs", eventType: "formation_result", valid: schema2RepairFormationResultData(), mutate: func(data map[string]any) {
+			delete(data, "outputs")
+		}},
+		{name: "formation result status is closed", eventType: "formation_result", valid: schema2RepairFormationResultData(), mutate: func(data map[string]any) {
+			data["status"] = "maybe"
+		}},
+		{name: "formation output hash keys match outputs", eventType: "formation_result", valid: schema2RepairFormationResultData(), mutate: func(data map[string]any) {
+			data["outputHashes"] = map[string]any{"port_other": strings.Repeat("a", 64)}
+		}},
+		{name: "formation output hash matches canonical projection", eventType: "formation_result", valid: schema2RepairFormationResultData(), mutate: func(data map[string]any) {
+			data["outputHashes"].(map[string]any)["port_out"] = strings.Repeat("a", 64)
+		}},
+		{name: "formation contributing result sequences are unique ascending", eventType: "formation_result", valid: schema2RepairFormationResultData(), mutate: func(data map[string]any) {
+			data["contributingSlotResultSeqs"] = []any{10, 10}
+		}},
+		{name: "formation result hash matches canonical result", eventType: "formation_result", valid: schema2RepairFormationResultData(), mutate: func(data map[string]any) {
+			data["reportArtifactId"] = "artifact_changed"
+		}},
+		{name: "retry target requires node id", eventType: "run_blocked", valid: schema2RepairRetryBlockData(), mutate: func(data map[string]any) {
+			delete(data["retryTargets"].([]any)[0].(map[string]any), "nodeId")
+		}},
+		{name: "retry target rejects unknown member", eventType: "run_blocked", valid: schema2RepairRetryBlockData(), mutate: func(data map[string]any) {
+			data["retryTargets"].([]any)[0].(map[string]any)["selectivePortReplay"] = true
+		}},
+		{name: "retry target requires stable unique output ports", eventType: "run_blocked", valid: schema2RepairRetryBlockData(), mutate: func(data map[string]any) {
+			data["retryTargets"].([]any)[0].(map[string]any)["outputPortIds"] = []any{"port_out", "port_out"}
+		}},
+		{name: "retry target forbids delivered edges", eventType: "run_resumed", valid: schema2RepairRetryResumeData(), mutate: func(data map[string]any) {
+			data["retryTargets"].([]any)[0].(map[string]any)["deliveredEdges"] = []any{"edge_forbidden"}
+		}},
+		{name: "gate per-kind map rejects undeclared values", eventType: "gate_verdict", valid: schema2RepairGateVerdictData(), mutate: func(data map[string]any) {
+			data["perKind"].(map[string]any)["code"] = "maybe"
+		}},
+		{name: "gate result sequence map requires declared key set", eventType: "gate_verdict", valid: schema2RepairGateVerdictData(), mutate: func(data map[string]any) {
+			delete(data["kindResultSeqs"].(map[string]any), "human")
+		}},
+		{name: "cancel node snapshot requires exact phase sequence", eventType: "run_cancel_requested", valid: schema2RepairCancelRequestedData(t), mutate: func(data map[string]any) {
+			delete(data["openNodeAttempts"].([]any)[0].(map[string]any), "phaseSeq")
+		}},
+		{name: "cancel node snapshot phase is closed", eventType: "run_cancel_requested", valid: schema2RepairCancelRequestedData(t), mutate: func(data map[string]any) {
+			data["openNodeAttempts"].([]any)[0].(map[string]any)["phase"] = "unknown"
+		}},
+		{name: "cancel slot snapshot is closed", eventType: "run_cancel_requested", valid: schema2RepairCancelRequestedData(t), mutate: func(data map[string]any) {
+			data["openSlotDispatches"].([]any)[0].(map[string]any)["targetKey"] = "private"
+		}},
+		{name: "cancel tool snapshot requires dispatch sequence", eventType: "run_cancel_requested", valid: schema2RepairCancelRequestedData(t), mutate: func(data map[string]any) {
+			delete(data["openToolLeases"].([]any)[0].(map[string]any), "dispatchSeq")
+		}},
+		{name: "tool latest launch is closed", eventType: "run_failure_reconciliation_started", valid: schema2RepairFailureStartedData(t, map[string]any{"kind": "none"}), mutate: func(data map[string]any) {
+			data["openToolLeases"].([]any)[0].(map[string]any)["latestLaunch"].(map[string]any)["pid"] = 123
+		}},
+		{name: "failure cause requires its discriminant identity", eventType: "run_failure_reconciliation_started", valid: schema2RepairFailureStartedData(t, map[string]any{"kind": "slot", "dispatchId": "dsp_01KXNP6VY3227H78329V52CKF8"}), mutate: func(data map[string]any) {
+			delete(data["failureCause"].(map[string]any), "dispatchId")
+		}},
+		{name: "failure cause rejects mixed identities", eventType: "run_failure_reconciliation_started", valid: schema2RepairFailureStartedData(t, map[string]any{"kind": "none"}), mutate: func(data map[string]any) {
+			data["failureCause"].(map[string]any)["toolLeaseId"] = "toollease_01KXNP6VY3227H78329V52CKF8"
+		}},
+		{name: "canceled node disposition is exact", eventType: "run_canceled", valid: schema2RepairRunCanceledData(t), mutate: func(data map[string]any) {
+			data["nodeAttemptDispositions"].([]any)[0].(map[string]any)["disposition"] = "failed_non_authorizing"
+		}},
+		{name: "canceled slot disposition is closed", eventType: "run_canceled", valid: schema2RepairRunCanceledData(t), mutate: func(data map[string]any) {
+			data["slotDispatchDispositions"].([]any)[0].(map[string]any)["releaseProof"] = "private"
+		}},
+		{name: "canceled reconciled tool disposition is exact", eventType: "run_canceled", valid: schema2RepairRunCanceledData(t), mutate: func(data map[string]any) {
+			data["reconciledToolLeases"].([]any)[0].(map[string]any)["disposition"] = "launch_fenced_cleaned"
+		}},
+		{name: "failed tool disposition is closed", eventType: "run_failed", valid: schema2RepairRunFailedData(t), mutate: func(data map[string]any) {
+			data["toolLeaseDispositions"].([]any)[0].(map[string]any)["disposition"] = "cleaned"
+		}},
+		{name: "failed event must be final", eventType: "run_failed", valid: schema2RepairRunFailedData(t), mutate: func(data map[string]any) {
+			data["final"] = false
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			valid := schema2Event(projectionTestRunID, 20, test.eventType, cloneAny(test.valid).(map[string]any))
+			schema2RepairDecodeSafeEvent(t, valid)
+			invalid := cloneAny(valid).(map[string]any)
+			test.mutate(invalid["data"].(map[string]any))
+			raw, err := decodeProjectionEvent(canonicalJSON(t, invalid), CanonicalRunSourceSchema2, projectionTestRunID)
+			if err != nil {
+				t.Fatalf("invalid %s nested fixture failed before sanitizer: %v", test.eventType, err)
+			}
+			if safe, err := sanitizeSchema2Event(raw); err == nil {
+				t.Fatalf("invalid %s nested projection was exposed: %#v", test.eventType, safe)
+			}
+		})
+	}
+}
+
+func TestSchema2FailureCauseAcceptsEveryFrozenDiscriminant(t *testing.T) {
+	causes := []map[string]any{
+		{"kind": "slot", "dispatchId": "dsp_01KXNP6VY3227H78329V52CKF8"},
+		{"kind": "tool", "toolLeaseId": "toollease_01KXNP6VY3227H78329V52CKF8"},
+		{"kind": "error", "errorSeq": 18},
+		{"kind": "none"},
+	}
+	for _, cause := range causes {
+		t.Run(cause["kind"].(string), func(t *testing.T) {
+			event := schema2Event(projectionTestRunID, 20, "run_failure_reconciliation_started", schema2RepairFailureStartedData(t, cause))
+			schema2RepairDecodeSafeEvent(t, event)
+		})
+	}
+}
+
 func TestProjectCanonicalRunValidatesEverySchema2AuthorityDocument(t *testing.T) {
 	base := schema2ProjectionInput(t, true)
 	tests := []struct {
@@ -1157,7 +1288,7 @@ func schema2RepairUnsafePublicTypePaths(current reflect.Type, prefix []string, s
 	if path == "" {
 		path = current.String()
 	}
-	if current == reflect.TypeOf((*ArtifactProjection)(nil)).Elem() || current == reflect.TypeOf((*SafeOpenDispatch)(nil)).Elem() {
+	if current == reflect.TypeOf((*ArtifactProjection)(nil)).Elem() || current == reflect.TypeOf((*SafeOpenDispatch)(nil)).Elem() || current == reflect.TypeOf((*SafeSchema1RunStartedData)(nil)).Elem() {
 		return nil
 	}
 	if current.Kind() == reflect.Interface {
@@ -1173,6 +1304,9 @@ func schema2RepairUnsafePublicTypePaths(current reflect.Type, prefix []string, s
 		return schema2RepairUnsafePublicTypePaths(current.Elem(), append(prefix, "[]"), seen)
 	}
 	if current.Kind() == reflect.Map {
+		if current.Name() == "" {
+			return []string{path + " (unnamed raw map)"}
+		}
 		if current.Key().Kind() != reflect.String {
 			return []string{path + " (non-string map key)"}
 		}
@@ -1245,12 +1379,19 @@ func schema2RepairReducerData(eventType string, data map[string]any) map[string]
 
 func schema2RepairFormationResultData() map[string]any {
 	output := schema2RepairWorkProjection("formation output")
-	return map[string]any{
+	data := map[string]any{
 		"nodeId": projectionTestFormationID, "attempt": 1, "status": "done", "outputs": map[string]any{"port_out": output},
 		"outputHashes": map[string]any{"port_out": projectionSHA256(mustMarshalJSONNoTest(output))}, "reportArtifactId": "",
 		"artifactIds": []any{}, "diffArtifactIds": []any{}, "contributingSlotResultSeqs": []any{10},
-		"resultEncoding": "formation-result-jcs-v1", "resultSha256": strings.Repeat("a", 64),
+		"resultEncoding": "formation-result-jcs-v1",
 	}
+	result := map[string]any{
+		"status": data["status"], "outputs": data["outputs"], "outputHashes": data["outputHashes"],
+		"reportArtifactId": data["reportArtifactId"], "artifactIds": data["artifactIds"], "diffArtifactIds": data["diffArtifactIds"],
+		"contributingSlotResultSeqs": data["contributingSlotResultSeqs"],
+	}
+	data["resultSha256"] = projectionSHA256(mustMarshalJSONNoTest(result))
+	return data
 }
 
 func schema2RepairToolDispatchData() map[string]any {
@@ -1448,6 +1589,124 @@ func schema2RepairArtifactAttachedData() map[string]any {
 	return map[string]any{
 		"artifactProjection": schema2RepairAvailableArtifactProjection(),
 		"source":             map[string]any{"kind": "gate", "gateId": projectionTestGateID, "gateAttempt": 1},
+	}
+}
+
+func schema2RepairSlotResultData(t *testing.T) map[string]any {
+	t.Helper()
+	events := schema2MatchedReviewerEvents(t)
+	return cloneAny(events[len(events)-1]["data"]).(map[string]any)
+}
+
+func schema2RepairRetryTarget() map[string]any {
+	return map[string]any{
+		"nodeId": projectionTestFormationID, "attempt": 1, "outputPortIds": []any{"port_out"},
+		"outcomeSeqs": []any{19}, "deliveredEdges": []any{},
+	}
+}
+
+func schema2RepairRetryBlockData() map[string]any {
+	return map[string]any{
+		"reason": "retry producer", "blockScope": "node", "blockedNodeId": projectionTestFormationID,
+		"resumeAllowed": true, "resumePolicy": "retry_failed_producer", "openDispatches": []any{},
+		"retryTargets": []any{schema2RepairRetryTarget()}, "nextEpoch": 1,
+	}
+}
+
+func schema2RepairRetryResumeData() map[string]any {
+	return map[string]any{
+		"commandId": projectionTestOtherCmdID, "commandPayloadSha256": strings.Repeat("a", 64), "resumedFromSeq": 19,
+		"resumedBy": "human:test", "resumeMode": "retry-failed-producer", "reason": "retry producer",
+		"openDispatches": []any{}, "retryTargets": []any{schema2RepairRetryTarget()},
+	}
+}
+
+func schema2RepairNodeAttemptSnapshot() map[string]any {
+	return map[string]any{
+		"nodeId": projectionTestFormationID, "nodeKind": "formation", "attempt": 1,
+		"startSeq": 3, "phase": "started", "phaseSeq": 3,
+	}
+}
+
+func schema2RepairOpenDispatchSnapshot(t *testing.T) map[string]any {
+	t.Helper()
+	_, dispatches := schema2OpenDispatchLifecycleInput(t, false)
+	return cloneAny(dispatches[0]).(map[string]any)
+}
+
+func schema2RepairToolLeaseSnapshot(launched bool) map[string]any {
+	result := map[string]any{
+		"toolLeaseId": "toollease_01KXNP6VY3227H78329V52CKF8", "nodeId": "tool_normalize", "attempt": 1, "dispatchSeq": 12,
+	}
+	if launched {
+		result["latestLaunch"] = map[string]any{
+			"launchId": "launch_01KXNP6VY3227H78329V52CKF8", "generation": "1", "processScopeId": "process_scope_1",
+			"deadlineAuthorityId": "deadline_authority_1", "launchSeq": 13,
+		}
+	}
+	return result
+}
+
+func schema2RepairCancelRequestedData(t *testing.T) map[string]any {
+	t.Helper()
+	return map[string]any{
+		"commandId": projectionTestOtherCmdID, "commandPayloadSha256": strings.Repeat("a", 64), "reason": "stop", "requestedBy": "human:test",
+		"openNodeAttempts":   []any{schema2RepairNodeAttemptSnapshot()},
+		"openSlotDispatches": []any{schema2RepairOpenDispatchSnapshot(t)},
+		"openToolLeases":     []any{schema2RepairToolLeaseSnapshot(false)},
+	}
+}
+
+func schema2RepairFailureStartedData(t *testing.T, cause map[string]any) map[string]any {
+	t.Helper()
+	return map[string]any{
+		"originCancelRequestSeq": 0, "code": "engine_failed", "reason": "engine failed", "unrecoverable": true, "relatedSeq": 18,
+		"failureCause": cloneAny(cause), "openNodeAttempts": []any{schema2RepairNodeAttemptSnapshot()},
+		"openSlotDispatches": []any{schema2RepairOpenDispatchSnapshot(t)}, "openToolLeases": []any{schema2RepairToolLeaseSnapshot(true)},
+		"recordedBeforeReconciliation": true,
+	}
+}
+
+func schema2RepairSlotDisposition(t *testing.T, disposition string) map[string]any {
+	t.Helper()
+	result := schema2RepairOpenDispatchSnapshot(t)
+	result["disposition"] = disposition
+	result["softInterrupt"] = "unavailable"
+	result["softInterruptRequestedSeq"] = 16
+	result["softInterruptOutcomeSeq"] = 17
+	result["targetLeaseState"] = "quarantined"
+	result["finalPeekCapabilityState"] = "revoked"
+	result["finalCapabilityGeneration"] = "0"
+	result["finalCapabilityIssuedSeq"] = 0
+	result["finalSteeringGeneration"] = "0"
+	result["finalPeekCapabilityRevokedSeq"] = 18
+	return result
+}
+
+func schema2RepairRunCanceledData(t *testing.T) map[string]any {
+	t.Helper()
+	node := schema2RepairNodeAttemptSnapshot()
+	node["disposition"] = "canceled_non_authorizing"
+	tool := schema2RepairToolLeaseSnapshot(false)
+	tool["disposition"] = "never_launched_cleaned"
+	return map[string]any{
+		"cancelRequestSeq": 15, "reason": "stop", "requestedBy": "human:test",
+		"nodeAttemptDispositions": []any{node}, "slotDispatchDispositions": []any{schema2RepairSlotDisposition(t, "canceled_non_authorizing")},
+		"reconciledToolLeases": []any{tool}, "final": true,
+	}
+}
+
+func schema2RepairRunFailedData(t *testing.T) map[string]any {
+	t.Helper()
+	node := schema2RepairNodeAttemptSnapshot()
+	node["disposition"] = "abandoned_non_authorizing"
+	tool := schema2RepairToolLeaseSnapshot(true)
+	tool["disposition"] = "abandoned_private_cleanup_owned"
+	return map[string]any{
+		"failureReconciliationSeq": 15, "code": "engine_failed", "reason": "engine failed", "unrecoverable": true, "relatedSeq": 18,
+		"failureCause": map[string]any{"kind": "none"}, "nodeAttemptDispositions": []any{node},
+		"slotDispatchDispositions": []any{schema2RepairSlotDisposition(t, "abandoned_non_authorizing")},
+		"toolLeaseDispositions":    []any{tool}, "final": true,
 	}
 }
 
