@@ -1444,6 +1444,12 @@ func persistentDescriptorForEntry(entry PersistentAgentEntry, ownerHome string) 
 
 func persistentSessionBankConflict(entry SessionBankEntry, ownerHome string) error {
 	if len(entry.RecoveryPlan) == 0 {
+		if _, ok := canonicalAgentResumeCommand(entry.AgentKind, entry.AgentSessionID); ok {
+			return &recoveryOwnershipConflict{
+				OwnerKind: RecoveryOwnerSessionBank,
+				OwnerRef:  sessionBankOwnerRef(entry.UnixUser, entry.Name),
+			}
+		}
 		return nil
 	}
 	expectedSessionBankRef := sessionBankOwnerRef(entry.UnixUser, entry.Name)
@@ -1459,10 +1465,10 @@ func persistentSessionBankConflict(entry SessionBankEntry, ownerHome string) err
 			return fmt.Errorf("session bank recovery plan has conflicting recovery owners")
 		}
 		if desc.Owner.Kind == RecoveryOwnerSessionBank && desc.Owner.Ref == expectedSessionBankRef {
-			return fmt.Errorf("session bank owns recovery for %s", expectedSessionBankRef)
+			return &recoveryOwnershipConflict{OwnerKind: desc.Owner.Kind, OwnerRef: desc.Owner.Ref}
 		}
 		if desc.Owner.Kind == RecoveryOwnerExternalManager || desc.Mode == RecoveryModeManaged {
-			return fmt.Errorf("external manager owns recovery for %s", expectedSessionBankRef)
+			return &recoveryOwnershipConflict{OwnerKind: desc.Owner.Kind, OwnerRef: desc.Owner.Ref}
 		}
 	}
 	return nil
@@ -1472,7 +1478,7 @@ func (h *TmuxHandler) ensurePersistentAgentOwnershipAvailable(name, unixUser, ow
 	if h == nil {
 		return nil
 	}
-	if err := h.ensureManagedRecoveryOwnershipAvailable(name, unixUser); err != nil {
+	if err := h.ensureExternalRecoveryOwnershipAvailable(name, unixUser); err != nil {
 		return err
 	}
 	if h.bank == nil {
@@ -1480,7 +1486,7 @@ func (h *TmuxHandler) ensurePersistentAgentOwnershipAvailable(name, unixUser, ow
 	}
 	entry, found, err := h.bank.Find(name, unixUser)
 	if err != nil {
-		return err
+		return fmt.Errorf("session bank: %w", err)
 	}
 	if !found {
 		return nil
@@ -1673,8 +1679,8 @@ func (h *TmuxHandler) EnablePersistentAgent(w http.ResponseWriter, r *http.Reque
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", ownerHomeErr.Error())
 		return
 	}
-	h.persistentMu.Lock()
-	defer h.persistentMu.Unlock()
+	h.recoveryMu.Lock()
+	defer h.recoveryMu.Unlock()
 	var descriptor WorkloadRecoveryDescriptor
 	descriptorReady := false
 	if req.RecoveryDescriptor != nil {
@@ -1687,7 +1693,7 @@ func (h *TmuxHandler) EnablePersistentAgent(w http.ResponseWriter, r *http.Reque
 		descriptorReady = true
 	}
 	if err := h.ensurePersistentAgentOwnershipAvailable(sessionName, unixUser, ownerHome); err != nil {
-		core.WriteError(w, http.StatusConflict, "PERSISTENT_AGENT_OWNERSHIP_CONFLICT", err.Error())
+		writeRecoveryOwnershipError(w, "PERSISTENT_AGENT_OWNERSHIP_CONFLICT", "PERSISTENT_AGENT_ERROR", err)
 		return
 	}
 	if newName != sessionName {
@@ -1703,7 +1709,7 @@ func (h *TmuxHandler) EnablePersistentAgent(w http.ResponseWriter, r *http.Reque
 			}
 		}
 		if err := h.ensurePersistentAgentOwnershipAvailable(newName, unixUser, ownerHome); err != nil {
-			core.WriteError(w, http.StatusConflict, "PERSISTENT_AGENT_OWNERSHIP_CONFLICT", err.Error())
+			writeRecoveryOwnershipError(w, "PERSISTENT_AGENT_OWNERSHIP_CONFLICT", "PERSISTENT_AGENT_ERROR", err)
 			return
 		}
 		if h.persistent != nil {
@@ -1799,8 +1805,8 @@ func (h *TmuxHandler) DisablePersistentAgent(w http.ResponseWriter, r *http.Requ
 	if r != nil {
 		unixUser = strings.TrimSpace(r.URL.Query().Get("unixUser"))
 	}
-	h.persistentMu.Lock()
-	defer h.persistentMu.Unlock()
+	h.recoveryMu.Lock()
+	defer h.recoveryMu.Unlock()
 	removed, err := h.persistent.Forget(sessionName, unixUser)
 	if err != nil {
 		core.WriteError(w, http.StatusInternalServerError, "PERSISTENT_AGENT_ERROR", err.Error())
@@ -1859,8 +1865,8 @@ func (h *TmuxHandler) ReconcilePersistentAgents(ctx context.Context) ([]Persiste
 	if h == nil || h.persistent == nil {
 		return []PersistentAgentReconcileResult{}, nil
 	}
-	h.persistentMu.Lock()
-	defer h.persistentMu.Unlock()
+	h.recoveryMu.Lock()
+	defer h.recoveryMu.Unlock()
 	entries, err := h.persistent.Read()
 	if err != nil {
 		return nil, err
