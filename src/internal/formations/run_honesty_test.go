@@ -32,11 +32,11 @@ func TestS4ReachableJoinWithUnavailableInputDoesNotFalselySucceed(t *testing.T) 
 		ExpectedBoardRev:  board.Rev,
 		Limits:            RunLimits{MaxDispatch: 10, WallClockSeconds: 60},
 	})
-	events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
-	assertSchema1WaitingNodeIDs(t, lastEventOfType(t, events, RunEventBlocked), "fmn_join")
 	if err != nil {
 		t.Fatalf("run mission: %v", err)
 	}
+	events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
+	assertSchema1WaitingNodeIDs(t, lastEventOfType(t, events, RunEventBlocked), "fmn_join")
 
 	// Primary honesty assertion: the run must NOT report success.
 	if status.Status == RunStatusSucceeded {

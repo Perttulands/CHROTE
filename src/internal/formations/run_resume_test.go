@@ -308,7 +308,7 @@ func TestS5EngineResumeOpenDispatchRecordsReattachErrorWithoutResend(t *testing.
 	if err := dispatcher.CompleteFromCapture(started.RunID, lease.DispatchID, "<<<CHROTE-DONE run-id=wrong status=ok artifact=fake>>>"); !errors.Is(err, ErrDispatchTimeout) {
 		t.Fatalf("complete with mismatched sentinel error = %v, want ErrDispatchTimeout", err)
 	}
-	assertSchema1DispatchFailureRows(t, readRunEvents(t, findOnlyRunLedger(t, store, "session-search")), lease.DispatchID, lease.NodeID, lease.SlotID, true)
+	assertSchema1DispatchFailureRows(t, readRunEvents(t, findOnlyRunLedger(t, store, "session-search")), lease.DispatchID, lease.NodeID, lease.SlotID, "completion_sentinel_timeout", "completion sentinel timeout", "adapter", true)
 	if len(adapter.sent) != 1 {
 		t.Fatalf("initial adapter sends = %d, want one original send", len(adapter.sent))
 	}
@@ -354,7 +354,7 @@ func TestS5EngineResumeOpenDispatchReattachesCompletedCapture(t *testing.T) {
 	if err := dispatcher.CompleteFromCapture(started.RunID, lease.DispatchID, "still working"); !errors.Is(err, ErrDispatchTimeout) {
 		t.Fatalf("complete without sentinel error = %v, want ErrDispatchTimeout", err)
 	}
-	assertSchema1DispatchFailureRows(t, readRunEvents(t, findOnlyRunLedger(t, store, "session-search")), lease.DispatchID, lease.NodeID, lease.SlotID, true)
+	assertSchema1DispatchFailureRows(t, readRunEvents(t, findOnlyRunLedger(t, store, "session-search")), lease.DispatchID, lease.NodeID, lease.SlotID, "completion_sentinel_timeout", "completion sentinel timeout", "adapter", true)
 
 	executor := &fakeReattachExecutor{result: FormationExecutionResult{
 		Status:    "done",
@@ -425,7 +425,7 @@ func TestS5EngineResumeOpenDispatchRoutesReattachedOutputThroughGate(t *testing.
 	if err := dispatcher.CompleteFromCapture(started.RunID, lease.DispatchID, "still working"); !errors.Is(err, ErrDispatchTimeout) {
 		t.Fatalf("complete without sentinel error = %v, want ErrDispatchTimeout", err)
 	}
-	assertSchema1DispatchFailureRows(t, readRunEvents(t, findOnlyRunLedger(t, store, "session-search")), lease.DispatchID, lease.NodeID, lease.SlotID, true)
+	assertSchema1DispatchFailureRows(t, readRunEvents(t, findOnlyRunLedger(t, store, "session-search")), lease.DispatchID, lease.NodeID, lease.SlotID, "completion_sentinel_timeout", "completion sentinel timeout", "adapter", true)
 	executor := &fakeReattachExecutor{
 		result: FormationExecutionResult{
 			Status: "done",
