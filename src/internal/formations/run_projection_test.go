@@ -200,6 +200,218 @@ func TestProjectCanonicalRunStructuralTransitions(t *testing.T) {
 	}
 }
 
+func TestProjectCanonicalRunStructuralTransitionSubstructuresAndOrdering(t *testing.T) {
+	t.Run("start identity nodes and audit", func(t *testing.T) {
+		view := ProjectRunView(mustProjectCanonicalFixture(t, schema1ProjectionInput(t, schema1StartedEvent(projectionTestRunID))))
+		assertExactJSONValue(t, "start identity", view.Identity, map[string]any{
+			"boardId": projectionTestBoardID, "boardSlug": projectionTestBoardSlug, "boardRev": 7,
+			"runRoot":   map[string]any{"kind": "mission", "nodeId": projectionTestMissionID},
+			"missionId": projectionTestMissionID, "beadId": "ctx-7i1.1", "epoch": 0, "redact": false,
+		})
+		assertExactJSONValue(t, "start audit", view.Audit, map[string]any{"eventSchema": 1, "startSeq": 1, "consumedEventCount": 1})
+		assertStringOrder(t, "frozen graph node order", projectedNodeIDs(view), []string{projectionTestMissionID, projectionTestFormationID, projectionTestGateID})
+	})
+
+	t.Run("schema 2 start and activation audit", func(t *testing.T) {
+		for _, activated := range []bool{false, true} {
+			input := schema2ProjectionInput(t, activated)
+			view := ProjectRunView(mustProjectCanonicalFixture(t, input))
+			events := canonicalLedgerEvents(t, input)
+			started := events[0]["data"].(map[string]any)
+			want := map[string]any{
+				"eventSchema": 2, "authoritySchema": 2, "startSeq": 1, "consumedEventCount": len(events),
+				"admissionCommandId": started["admissionCommandId"], "commandPayloadSha256": started["commandPayloadSha256"],
+				"workspaceAdmissionSeq": 1, "admissionPolicyRev": 1, "admissionPolicySha256": started["admissionPolicySha256"],
+				"latestWriterFence": 1, "graphSnapshotSha256": started["graphSnapshotSha256"],
+				"bindingProjectionSha256": started["bindingProjectionSha256"],
+			}
+			if activated {
+				want["activationPolicyRev"] = 1
+				want["activationPolicySha256"] = started["admissionPolicySha256"]
+			}
+			assertExactJSONValue(t, fmt.Sprintf("schema 2 activated=%v audit", activated), view.Audit, want)
+		}
+	})
+
+	t.Run("node waiting", func(t *testing.T) {
+		view := ProjectRunView(mustProjectCanonicalFixture(t, schema1ProjectionInput(t,
+			schema1StartedEvent(projectionTestRunID),
+			schema1Event(projectionTestRunID, 2, RunEventNodeWaiting, map[string]any{
+				"neededInputs": 1, "readyInputs": 0, "totalInputs": 1, "waitingFor": []string{"edge_root_work"},
+			}),
+		)))
+		assertExactJSONValue(t, "waiting node", findProjectedNode(t, view, projectionTestFormationID), map[string]any{
+			"nodeId": projectionTestFormationID, "kind": "formation", "status": "waiting",
+			"readiness": map[string]any{"neededInputs": 1, "readyInputs": 0, "totalInputs": 1, "waitingFor": []string{"edge_root_work"}},
+			"attempts":  []any{}, "outputs": []any{}, "gates": []any{}, "sessions": []any{},
+		})
+		assertExactJSONValue(t, "waiting audit", view.Audit, map[string]any{"eventSchema": 1, "startSeq": 1, "consumedEventCount": 2})
+	})
+
+	t.Run("node start", func(t *testing.T) {
+		view := ProjectRunView(mustProjectCanonicalFixture(t, schema1ProjectionInput(t,
+			schema1StartedEvent(projectionTestRunID), schema1NodeStartedEvent(projectionTestRunID, 2),
+		)))
+		inputRef := map[string]any{"edgeId": "edge_root_work", "fromNodeId": projectionTestMissionID, "fromPortId": "out", "toPortId": "port_in", "outputSeq": 1}
+		attemptRef := map[string]any{"nodeId": projectionTestFormationID, "attempt": 1}
+		assertExactJSONValue(t, "started node", findProjectedNode(t, view, projectionTestFormationID), map[string]any{
+			"nodeId": projectionTestFormationID, "kind": "formation", "status": "running", "latestAttempt": 1,
+			"readiness": map[string]any{"neededInputs": 1, "readyInputs": 1, "totalInputs": 1, "waitingFor": []string{}},
+			"attempts":  []any{attemptRef}, "outputs": []any{}, "gates": []any{}, "sessions": []any{},
+		})
+		assertExactJSONValue(t, "started attempt", findProjectedAttempt(t, view, projectionTestFormationID, 1), map[string]any{
+			"nodeId": projectionTestFormationID, "attempt": 1, "status": "running", "startedSeq": 2,
+			"inputRefs": []any{inputRef}, "slots": []any{}, "outputs": []any{},
+		})
+		assertAttemptOrder(t, view, []string{projectionTestFormationID + "/1"})
+	})
+
+	t.Run("node terminal output and dispositions", func(t *testing.T) {
+		view := ProjectRunView(mustProjectCanonicalFixture(t, schema1ProjectionInput(t,
+			schema1StartedEvent(projectionTestRunID), schema1NodeStartedEvent(projectionTestRunID, 2), schema1NodeOutputEvent(projectionTestRunID, 3, "done"),
+		)))
+		inputRef := map[string]any{"edgeId": "edge_root_work", "fromNodeId": projectionTestMissionID, "fromPortId": "out", "toPortId": "port_in", "outputSeq": 1}
+		outputRef := map[string]any{"nodeId": projectionTestFormationID, "attempt": 1, "portId": "port_out"}
+		assertExactJSONValue(t, "terminal node", findProjectedNode(t, view, projectionTestFormationID), map[string]any{
+			"nodeId": projectionTestFormationID, "kind": "formation", "status": "done", "finalDisposition": "done", "latestAttempt": 1,
+			"readiness": map[string]any{"neededInputs": 1, "readyInputs": 1, "totalInputs": 1, "waitingFor": []string{}},
+			"attempts":  []any{map[string]any{"nodeId": projectionTestFormationID, "attempt": 1}}, "outputs": []any{outputRef}, "gates": []any{}, "sessions": []any{},
+		})
+		assertExactJSONValue(t, "terminal attempt", findProjectedAttempt(t, view, projectionTestFormationID, 1), map[string]any{
+			"nodeId": projectionTestFormationID, "attempt": 1, "status": "done", "startedSeq": 2, "completedSeq": 3,
+			"inputRefs": []any{inputRef}, "slots": []any{}, "outputs": []any{outputRef}, "disposition": "done",
+		})
+		assertExactJSONValue(t, "terminal output", findProjectedOutput(t, view, projectionTestFormationID, 1, "port_out"), map[string]any{
+			"nodeId": projectionTestFormationID, "attempt": 1, "portId": "port_out", "outcomeSeq": 3,
+			"payloadProjection": map[string]any{"availability": "available", "exact": true, "payload": map[string]any{"kind": "work", "mediaType": "text/plain", "text": "done"}},
+		})
+		assertOutputOrder(t, view, []string{projectionTestFormationID + "/1/port_out"})
+	})
+
+	t.Run("gate open and verdict", func(t *testing.T) {
+		open := ProjectRunView(mustProjectCanonicalFixture(t, schema1ProjectionInput(t,
+			schema1StartedEvent(projectionTestRunID), schema1GateEvaluatingEvent(projectionTestRunID, 2),
+		)))
+		assertExactJSONValue(t, "open gate", findProjectedGate(t, open, projectionTestGateID), map[string]any{
+			"gateId": projectionTestGateID, "attempt": 1, "status": "evaluating", "evaluatingSeq": 2, "evidence": []any{},
+		})
+		assertGateOrder(t, open, []string{projectionTestGateID + "/1"})
+
+		verdict := ProjectRunView(mustProjectCanonicalFixture(t, schema1ProjectionInput(t,
+			schema1StartedEvent(projectionTestRunID), schema1GateEvaluatingEvent(projectionTestRunID, 2), schema1GateVerdictEvent(projectionTestRunID, 3, "pass"),
+		)))
+		assertExactJSONValue(t, "verdict gate", findProjectedGate(t, verdict, projectionTestGateID), map[string]any{
+			"gateId": projectionTestGateID, "attempt": 1, "status": "passed", "evaluatingSeq": 2, "verdictSeq": 3,
+			"verdict": "pass", "reason": "reviewed", "evidence": []any{},
+		})
+	})
+
+	t.Run("escalation block resume and stable order", func(t *testing.T) {
+		dispatches := []any{
+			map[string]any{"dispatchId": "dispatch-b", "nodeId": projectionTestFormationID, "slotId": "slot_reviewer"},
+			map[string]any{"dispatchId": "dispatch-a", "nodeId": projectionTestFormationID, "slotId": "slot_worker", "dispatchSeq": 0},
+		}
+		secondBlock := schema1BlockedEvent(projectionTestRunID, 6, true, []any{})
+		secondBlock["epoch"] = uint64(1)
+		secondBlock["data"].(map[string]any)["nextEpoch"] = uint64(2)
+		resumedView := ProjectRunView(mustProjectCanonicalFixture(t, schema1ProjectionInput(t,
+			schema1StartedEvent(projectionTestRunID),
+			schema1EscalationEvent(projectionTestRunID, 2, true),
+			schema1BlockedEvent(projectionTestRunID, 3, true, dispatches),
+			schema1ResumedEvent(projectionTestRunID, 4, 3, dispatches),
+		)))
+		if resumedView.Status != "running" || resumedView.Final {
+			t.Fatalf("resume overlay status/final = %q/%v, want running/false", resumedView.Status, resumedView.Final)
+		}
+		assertExactJSONValue(t, "resumed retained escalation", resumedView.Escalations, []any{map[string]any{
+			"seq": 2, "nodeId": projectionTestFormationID, "severity": "needs-attention", "reason": "operator review", "source": "agent", "trigger": "sentinel", "blocks": true,
+		}})
+		assertExactJSONValue(t, "resumed retained block", resumedView.Blocks, []any{map[string]any{
+			"seq": 3, "epoch": 0, "scope": "node", "nodeId": projectionTestFormationID, "code": "operator_review", "reason": "blocked",
+			"resumeAllowed": true, "resumePolicy": "explicit", "nextEpoch": 1, "openDispatches": dispatches,
+		}})
+		assertExactJSONValue(t, "resumed audit", resumedView.Audit, map[string]any{"eventSchema": 1, "startSeq": 1, "consumedEventCount": 4})
+		view := ProjectRunView(mustProjectCanonicalFixture(t, schema1ProjectionInput(t,
+			schema1StartedEvent(projectionTestRunID),
+			schema1EscalationEvent(projectionTestRunID, 2, true),
+			schema1BlockedEvent(projectionTestRunID, 3, true, dispatches),
+			schema1ResumedEvent(projectionTestRunID, 4, 3, dispatches),
+			schema1Event(projectionTestRunID, 5, RunEventEscalationRaised, map[string]any{
+				"trigger": "policy", "severity": "info", "reason": "second", "source": "system", "nodeId": "", "gateId": projectionTestGateID, "blocks": false,
+			}),
+			secondBlock,
+		)))
+		assertExactJSONValue(t, "first escalation", view.Escalations[0], map[string]any{
+			"seq": 2, "nodeId": projectionTestFormationID, "severity": "needs-attention", "reason": "operator review", "source": "agent", "trigger": "sentinel", "blocks": true,
+		})
+		assertExactJSONValue(t, "second escalation", view.Escalations[1], map[string]any{
+			"seq": 5, "gateId": projectionTestGateID, "severity": "info", "reason": "second", "source": "system", "trigger": "policy", "blocks": false,
+		})
+		assertExactJSONValue(t, "first block", view.Blocks[0], map[string]any{
+			"seq": 3, "epoch": 0, "scope": "node", "nodeId": projectionTestFormationID, "code": "operator_review", "reason": "blocked",
+			"resumeAllowed": true, "resumePolicy": "explicit", "nextEpoch": 1, "openDispatches": dispatches,
+		})
+		assertExactJSONValue(t, "second block", view.Blocks[1], map[string]any{
+			"seq": 6, "epoch": 1, "scope": "node", "nodeId": projectionTestFormationID, "code": "operator_review", "reason": "blocked",
+			"resumeAllowed": true, "resumePolicy": "explicit", "nextEpoch": 2, "openDispatches": []any{},
+		})
+		assertUint64Order(t, "block source order", blockSequences(view), []uint64{3, 6})
+		assertUint64Order(t, "escalation source order", escalationSequences(view), []uint64{2, 5})
+		assertExactJSONValue(t, "resume identity", view.Identity, map[string]any{
+			"boardId": projectionTestBoardID, "boardSlug": projectionTestBoardSlug, "boardRev": 7,
+			"runRoot":   map[string]any{"kind": "mission", "nodeId": projectionTestMissionID},
+			"missionId": projectionTestMissionID, "beadId": "ctx-7i1.1", "epoch": 1, "redact": false,
+		})
+		assertExactJSONValue(t, "resume/block audit", view.Audit, map[string]any{"eventSchema": 1, "startSeq": 1, "consumedEventCount": 6})
+	})
+
+	t.Run("cancel and failure apply exact attempt dispositions", func(t *testing.T) {
+		for _, test := range []struct {
+			eventType   string
+			status      string
+			disposition string
+			data        map[string]any
+		}{
+			{RunEventCanceled, "canceled", "canceled", map[string]any{"reason": "operator stop", "requestedBy": "human:test", "softInterruptedSlots": []string{}, "final": true}},
+			{RunEventFailed, "failed", "failed", map[string]any{"code": "projection_fixture", "reason": "failed", "boundary": "engine", "recoverable": false, "relatedSeq": 2, "final": true}},
+		} {
+			view := ProjectRunView(mustProjectCanonicalFixture(t, schema1ProjectionInput(t,
+				schema1StartedEvent(projectionTestRunID), schema1NodeStartedEvent(projectionTestRunID, 2), schema1Event(projectionTestRunID, 3, test.eventType, test.data),
+			)))
+			if view.Status != test.status || !view.Final {
+				t.Fatalf("%s status/final = %q/%v", test.eventType, view.Status, view.Final)
+			}
+			node := findProjectedNode(t, view, projectionTestFormationID)
+			assertExactJSONValue(t, test.eventType+" node", node, map[string]any{
+				"nodeId": projectionTestFormationID, "kind": "formation", "status": test.status, "finalDisposition": test.disposition, "latestAttempt": 1,
+				"readiness": map[string]any{"neededInputs": 1, "readyInputs": 1, "totalInputs": 1, "waitingFor": []string{}},
+				"attempts":  []any{map[string]any{"nodeId": projectionTestFormationID, "attempt": 1}}, "outputs": []any{}, "gates": []any{}, "sessions": []any{},
+			})
+			assertExactJSONValue(t, test.eventType+" attempt", findProjectedAttempt(t, view, projectionTestFormationID, 1), map[string]any{
+				"nodeId": projectionTestFormationID, "attempt": 1, "status": test.status, "startedSeq": 2, "completedSeq": 3,
+				"inputRefs": []any{map[string]any{"edgeId": "edge_root_work", "fromNodeId": projectionTestMissionID, "fromPortId": "out", "toPortId": "port_in", "outputSeq": 1}},
+				"slots":     []any{}, "outputs": []any{}, "disposition": test.disposition,
+			})
+			assertExactJSONValue(t, test.eventType+" audit", view.Audit, map[string]any{"eventSchema": 1, "startSeq": 1, "consumedEventCount": 3})
+		}
+	})
+
+	t.Run("success preserves completed dispositions and output refs", func(t *testing.T) {
+		view := ProjectRunView(mustProjectCanonicalFixture(t, schema1ProjectionInput(t,
+			schema1StartedEvent(projectionTestRunID), schema1NodeStartedEvent(projectionTestRunID, 2), schema1NodeOutputEvent(projectionTestRunID, 3, "done"),
+			schema1Event(projectionTestRunID, 4, RunEventSucceeded, map[string]any{"final": true}),
+		)))
+		if view.Status != "succeeded" || !view.Final {
+			t.Fatalf("success status/final = %q/%v", view.Status, view.Final)
+		}
+		node := findProjectedNode(t, view, projectionTestFormationID)
+		if node.Status != "done" || len(node.Outputs) != 1 {
+			t.Fatalf("success changed completed node projection: %+v", node)
+		}
+		assertExactJSONValue(t, "success audit", view.Audit, map[string]any{"eventSchema": 1, "startSeq": 1, "consumedEventCount": 4})
+	})
+}
+
 func TestProjectCanonicalRunSchema2ActivateAndArtifactTransitions(t *testing.T) {
 	queued := mustProjectCanonicalFixture(t, schema2ProjectionInput(t, false))
 	queuedView := ProjectRunView(queued)
@@ -226,34 +438,53 @@ func TestProjectCanonicalRunSchema2ActivateAndArtifactTransitions(t *testing.T) 
 			"sha256":     projectionSHA256([]byte("{}")),
 		},
 	}
+	availableProjection := mustProjectCanonicalFixture(t, schema2ProjectionInput(t, true,
+		schema2Event(projectionTestRunID, 3, "artifact_attached", map[string]any{
+			"artifactProjection": available, "source": map[string]any{"kind": "system", "sourceId": "projection-test"},
+		}),
+	))
+	assertExactJSONValue(t, "available artifact projection", ProjectRunView(availableProjection).Artifacts[0], available)
+
+	secondAvailable := map[string]any{
+		"artifactId": "art_01KXNP6VY3227H78329V52CKF9", "availability": "available", "name": "trace",
+		"artifact": map[string]any{
+			"artifactId": "art_01KXNP6VY3227H78329V52CKF9", "rootId": "root_workspace", "ref": "artifacts/trace.txt",
+			"mediaType": "text/plain", "sizeBytes": 5, "sha256": projectionSHA256([]byte("trace")),
+		},
+	}
 	extra := []map[string]any{
 		schema2Event(projectionTestRunID, 3, "artifact_attached", map[string]any{
 			"artifactProjection": available,
-			"source":             map[string]any{"kind": "system"},
+			"source":             map[string]any{"kind": "system", "sourceId": "projection-test"},
 		}),
-		schema2Event(projectionTestRunID, 4, "artifact_observed", map[string]any{
+		schema2Event(projectionTestRunID, 4, "artifact_attached", map[string]any{
+			"artifactProjection": secondAvailable,
+			"source":             map[string]any{"kind": "system", "sourceId": "projection-test"},
+		}),
+		schema2Event(projectionTestRunID, 5, "artifact_observed", map[string]any{
 			"artifactId":   "art_01KXNP6VY3227H78329V52CKF8",
 			"availability": "redacted",
 			"errorCode":    "policy_redacted",
-			"observedAt":   "2026-07-20T10:00:03Z",
+			"observedAt":   "2026-07-20T10:00:04Z",
 			"relatedSeq":   3,
 		}),
 	}
 	projection := mustProjectCanonicalFixture(t, schema2ProjectionInput(t, true, extra...))
 	view := ProjectRunView(projection)
-	if len(view.Artifacts) != 1 {
-		t.Fatalf("artifacts = %#v, want one latest projection", view.Artifacts)
+	if len(view.Artifacts) != 2 {
+		t.Fatalf("artifacts = %#v, want two projections in first-registration order", view.Artifacts)
 	}
-	raw := mustMarshalJSON(t, view.Artifacts[0])
-	if !bytes.Contains(raw, []byte(`"availability":"redacted"`)) || bytes.Contains(raw, []byte(`"ref"`)) {
-		t.Fatalf("latest artifact did not revoke historical readability: %s", raw)
-	}
+	assertExactJSONValue(t, "revoked artifact projection", view.Artifacts[0], map[string]any{
+		"artifactId": "art_01KXNP6VY3227H78329V52CKF8", "availability": "redacted", "name": "report", "errorCode": "policy_redacted",
+	})
+	assertExactJSONValue(t, "second available artifact projection", view.Artifacts[1], secondAvailable)
+	assertStringOrder(t, "artifact first-registration order", projectedArtifactIDs(view), []string{"art_01KXNP6VY3227H78329V52CKF8", "art_01KXNP6VY3227H78329V52CKF9"})
 	page := mustProjectEventPage(t, projection, 0, RunPageMaximumLimit)
-	for _, event := range page.Events {
-		eventRaw := mustMarshalJSON(t, event)
-		if bytes.Contains(eventRaw, []byte(`"availability":"available"`)) {
-			t.Fatalf("historical event retained superseded available artifact: %s", eventRaw)
-		}
+	firstArtifact := eventDataMember(t, page.Events[2], "artifactProjection")
+	if !jsonBytesEqual(firstArtifact, mustMarshalJSON(t, map[string]any{
+		"artifactId": "art_01KXNP6VY3227H78329V52CKF8", "availability": "redacted", "name": "report", "errorCode": "policy_redacted",
+	})) {
+		t.Fatalf("historical event retained superseded artifact state: %s", firstArtifact)
 	}
 }
 
@@ -459,6 +690,8 @@ func TestProjectCanonicalRunValidatesInputRolesAndOwnsBytes(t *testing.T) {
 func TestProjectCanonicalRunRequiresCompleteAdmissionPolicyChain(t *testing.T) {
 	valid := schema2InputWithTwoPolicies(t)
 	mustProjectCanonicalFixture(t, valid)
+	assertSchema2SelectedPolicyLinkage(t, valid, 2)
+	assertSchema2SelectedPolicyLinkage(t, schema2ProjectionInput(t, true), 1)
 
 	for _, test := range []struct {
 		name   string
@@ -479,8 +712,8 @@ func TestProjectCanonicalRunRequiresCompleteAdmissionPolicyChain(t *testing.T) {
 		{name: "unreferenced extra revision", mutate: func(input *CanonicalRunReadInput) {
 			prior := canonicalDocumentsByRole(*input, CanonicalInputRoleSchema2AdmissionPolicy)[1]
 			extra := canonicalJSON(t, map[string]any{
-				"policySchema": 1, "policyRev": 3, "priorPolicySha256": prior.SHA256, "state": "disabled",
-				"maxActiveRuns": 0, "maxQueuedRuns": 0,
+				"policySchema": 1, "policyRev": 3, "priorPolicySha256": prior.SHA256, "state": "configured",
+				"maxActiveRuns": 3, "maxQueuedRuns": 3,
 			})
 			input.Documents = append(input.Documents, canonicalInputDocument(CanonicalInputRoleSchema2AdmissionPolicy, extra))
 		}},
@@ -573,6 +806,92 @@ func TestProjectRunViewAndEventPageDefensivelyCopyEveryPopulatedFamily(t *testin
 	}
 	if got := mustMarshalJSON(t, mustProjectEventPage(t, projection, 0, RunPageMaximumLimit)); !bytes.Equal(got, wantPage) {
 		t.Fatalf("RunEventPage mutation leaked into projection\nwant: %s\ngot:  %s", wantPage, got)
+	}
+}
+
+func TestProjectRunViewAndEventPageDefensiveCopiesAreFamilyComplete(t *testing.T) {
+	dispatches := []any{map[string]any{
+		"dispatchId": "dispatch-a", "nodeId": projectionTestFormationID, "slotId": "slot_worker", "dispatchSeq": 2,
+	}}
+	structuralProjection := mustProjectCanonicalFixture(t, schema1ProjectionInput(t,
+		schema1StartedEvent(projectionTestRunID),
+		schema1NodeStartedEvent(projectionTestRunID, 2),
+		schema1NodeOutputEvent(projectionTestRunID, 3, "done"),
+		schema1GateEvaluatingEvent(projectionTestRunID, 4),
+		schema1GateVerdictEvent(projectionTestRunID, 5, "pass"),
+		schema1EscalationEvent(projectionTestRunID, 6, true),
+		schema1BlockedEvent(projectionTestRunID, 7, true, dispatches),
+	))
+	wantStructuralView := mustMarshalJSON(t, ProjectRunView(structuralProjection))
+	mutated := ProjectRunView(structuralProjection)
+	if len(mutated.Nodes) == 0 || len(mutated.Attempts) == 0 || len(mutated.Gates) == 0 || len(mutated.Outputs) == 0 || len(mutated.Blocks) == 0 ||
+		len(mutated.Blocks[0].OpenDispatches) == 0 || len(mutated.Escalations) == 0 {
+		t.Fatalf("structural defensive fixture did not populate every required Task-1 family: %+v", mutated)
+	}
+	requireMutateStringPath(t, &mutated, "identity", "Identity", "BoardSlug")
+	requireMutateStringPath(t, &mutated, "node", "Nodes", 1, "NodeID")
+	requireMutateStringPath(t, &mutated, "node attempt ref", "Nodes", 1, "Attempts", 0, "NodeID")
+	requireMutateStringPath(t, &mutated, "attempt", "Attempts", 0, "NodeID")
+	requireMutateStringPath(t, &mutated, "attempt input ref", "Attempts", 0, "InputRefs", 0, "FromNodeID")
+	requireMutateStringPath(t, &mutated, "attempt output ref", "Attempts", 0, "Outputs", 0, "PortID")
+	requireMutateStringPath(t, &mutated, "gate", "Gates", 0, "Reason")
+	requireMutateStringPath(t, &mutated, "output ref", "Outputs", 0, "PortID")
+	requireMutateFamily(t, &mutated, "payload projection", "Outputs", 0, "PayloadProjection")
+	requireMutateStringPath(t, &mutated, "block open dispatch", "Blocks", 0, "OpenDispatches", 0, "DispatchID")
+	requireMutateStringPath(t, &mutated, "escalation", "Escalations", 0, "Reason")
+	if got := mustMarshalJSON(t, ProjectRunView(structuralProjection)); !bytes.Equal(got, wantStructuralView) {
+		t.Fatalf("explicit structural-family mutation leaked into RunView\nwant: %s\ngot:  %s", wantStructuralView, got)
+	}
+
+	wantPage := mustMarshalJSON(t, mustProjectEventPage(t, structuralProjection, 0, RunPageMaximumLimit))
+	mutatedPage := mustProjectEventPage(t, structuralProjection, 0, RunPageMaximumLimit)
+	if len(mutatedPage.Events) != 7 {
+		t.Fatalf("event defensive fixture events = %d, want 7", len(mutatedPage.Events))
+	}
+	requireMutateStringPath(t, &mutatedPage, "event envelope", "Events", 1, "Actor")
+	requireMutateFamily(t, &mutatedPage, "event nested data", "Events", 1, "Data")
+	if got := mustMarshalJSON(t, mustProjectEventPage(t, structuralProjection, 0, RunPageMaximumLimit)); !bytes.Equal(got, wantPage) {
+		t.Fatalf("explicit event-family mutation leaked into RunEventPage\nwant: %s\ngot:  %s", wantPage, got)
+	}
+
+	artifact := map[string]any{
+		"artifactId": "art_01KXNP6VY3227H78329V52CKF8", "availability": "available", "name": "report",
+		"artifact": map[string]any{
+			"artifactId": "art_01KXNP6VY3227H78329V52CKF8", "rootId": "root_workspace", "ref": "artifacts/report.json",
+			"mediaType": "application/json", "sizeBytes": 2, "sha256": projectionSHA256([]byte("{}")),
+		},
+	}
+	artifactProjection := mustProjectCanonicalFixture(t, schema2ProjectionInput(t, true,
+		schema2Event(projectionTestRunID, 3, "artifact_attached", map[string]any{
+			"artifactProjection": artifact, "source": map[string]any{"kind": "system", "sourceId": "copy-test"},
+		}),
+	))
+	wantArtifactView := mustMarshalJSON(t, ProjectRunView(artifactProjection))
+	artifactView := ProjectRunView(artifactProjection)
+	if len(artifactView.Artifacts) != 1 {
+		t.Fatalf("artifact defensive fixture did not populate artifacts: %+v", artifactView)
+	}
+	requireMutateStringPath(t, &artifactView, "artifact metadata", "Artifacts", 0, "Name")
+	requireMutateStringPath(t, &artifactView, "artifact safe ref", "Artifacts", 0, "Artifact", "Ref")
+	if got := mustMarshalJSON(t, ProjectRunView(artifactProjection)); !bytes.Equal(got, wantArtifactView) {
+		t.Fatalf("explicit artifact mutation leaked into RunView\nwant: %s\ngot:  %s", wantArtifactView, got)
+	}
+
+	sessionInput, _ := schema2OpenDispatchLifecycleInput(t, false)
+	sessionProjection := mustProjectCanonicalFixture(t, sessionInput)
+	wantSessionView := mustMarshalJSON(t, ProjectRunView(sessionProjection))
+	sessionView := ProjectRunView(sessionProjection)
+	if len(sessionView.Sessions) != 1 || len(sessionView.Blocks) != 1 || len(sessionView.Blocks[0].OpenDispatches) != 1 {
+		t.Fatalf("session/open-dispatch defensive fixture incomplete: %+v", sessionView)
+	}
+	requireMutateStringPath(t, &sessionView, "session target", "Sessions", 0, "SessionTargetID")
+	requireMutateStringPath(t, &sessionView, "session baseline", "Sessions", 0, "Baseline", "SHA256")
+	requireMutateStringPath(t, &sessionView, "session capability", "Sessions", 0, "PeekCapability", "Generation")
+	requireMutateStringPath(t, &sessionView, "node session ref", "Nodes", 0, "Sessions", 0, "BindingID")
+	requireMutateStringPath(t, &sessionView, "attempt slot ref", "Attempts", 0, "Slots", 0, "BindingID")
+	requireMutateStringPath(t, &sessionView, "schema-2 open dispatch", "Blocks", 0, "OpenDispatches", 0, "TargetLeaseID")
+	if got := mustMarshalJSON(t, ProjectRunView(sessionProjection)); !bytes.Equal(got, wantSessionView) {
+		t.Fatalf("explicit session/open-dispatch mutation leaked into RunView\nwant: %s\ngot:  %s", wantSessionView, got)
 	}
 }
 
@@ -998,6 +1317,122 @@ func TestProjectCommandReceiptRejectsPendingMismatchAndSubstitution(t *testing.T
 	}
 }
 
+func TestProjectCommandReceiptRejectsClosedRecordMatrixForEveryKindAndState(t *testing.T) {
+	commonRequired := []string{
+		"commandSchema", "recordRev", "priorGeneration", "commandEncoding", "commandId", "commandKind",
+		"commandPayload", "commandPayloadSha256", "admittedWriterFence", "stateWriterFence", "state",
+		"outcomeWriterFence", "decisionAdmissionPolicyRef",
+	}
+	for _, kind := range []string{"start", "resume", "cancel", "verdict"} {
+		for _, state := range []string{"applied", "rejected"} {
+			t.Run(kind+"/"+state, func(t *testing.T) {
+				valid := canonicalCommandInput(t, projectionTestCommandID, kind, state)
+				for _, member := range commonRequired {
+					t.Run("missing "+member, func(t *testing.T) {
+						input := cloneCanonicalCommandInput(valid)
+						input.Record = mutateCommandRecord(t, input.Record, func(record map[string]any) { delete(record, member) })
+						requireCommandReceiptMatrixError(t, input)
+					})
+				}
+
+				for _, test := range []struct {
+					name   string
+					mutate func(map[string]any)
+				}{
+					{name: "unknown top-level member", mutate: func(record map[string]any) { record["projectionUnknown"] = true }},
+					{name: "outcome fence exceeds publishing fence", mutate: func(record map[string]any) { record["outcomeWriterFence"] = 10 }},
+					{name: "state fence precedes admission", mutate: func(record map[string]any) { record["stateWriterFence"] = 0 }},
+					{name: "embedded payload substitution", mutate: func(record map[string]any) { record["commandPayload"].(map[string]any)["actor"] = "human:other" }},
+					{name: "record payload hash substitution", mutate: func(record map[string]any) { record["commandPayloadSha256"] = strings.Repeat("e", 64) }},
+				} {
+					t.Run(test.name, func(t *testing.T) {
+						input := cloneCanonicalCommandInput(valid)
+						input.Record = mutateCommandRecord(t, input.Record, test.mutate)
+						requireCommandReceiptMatrixError(t, input)
+					})
+				}
+
+				t.Run("duplicate member", func(t *testing.T) {
+					input := cloneCanonicalCommandInput(valid)
+					needle := []byte(`"commandId":"` + projectionTestCommandID + `"`)
+					input.Record = bytes.Replace(input.Record, needle, append(append([]byte{}, needle...), append([]byte(","), needle...)...), 1)
+					requireCommandReceiptMatrixError(t, input)
+				})
+
+				if state == "applied" {
+					for _, member := range []string{"runId", "effectSeq"} {
+						t.Run("applied missing "+member, func(t *testing.T) {
+							input := cloneCanonicalCommandInput(valid)
+							input.Record = mutateCommandRecord(t, input.Record, func(record map[string]any) { delete(record, member) })
+							requireCommandReceiptMatrixError(t, input)
+						})
+					}
+					t.Run("applied forbids rejectionCode", func(t *testing.T) {
+						input := cloneCanonicalCommandInput(valid)
+						input.Record = mutateCommandRecord(t, input.Record, func(record map[string]any) { record["rejectionCode"] = "forbidden" })
+						requireCommandReceiptMatrixError(t, input)
+					})
+				} else {
+					t.Run("rejected missing rejectionCode", func(t *testing.T) {
+						input := cloneCanonicalCommandInput(valid)
+						input.Record = mutateCommandRecord(t, input.Record, func(record map[string]any) { delete(record, "rejectionCode") })
+						requireCommandReceiptMatrixError(t, input)
+					})
+					for _, member := range []string{"runId", "effectSeq"} {
+						t.Run("rejected forbids "+member, func(t *testing.T) {
+							input := cloneCanonicalCommandInput(valid)
+							input.Record = mutateCommandRecord(t, input.Record, func(record map[string]any) {
+								if member == "runId" {
+									record[member] = projectionTestRunID
+								} else {
+									record[member] = 7
+								}
+							})
+							requireCommandReceiptMatrixError(t, input)
+						})
+					}
+				}
+
+				if kind == "start" {
+					for _, test := range []struct {
+						name   string
+						mutate func(map[string]any)
+					}{
+						{name: "null", mutate: func(record map[string]any) { record["decisionAdmissionPolicyRef"] = nil }},
+						{name: "missing revision", mutate: func(record map[string]any) {
+							delete(record["decisionAdmissionPolicyRef"].(map[string]any), "policyRev")
+						}},
+						{name: "missing hash", mutate: func(record map[string]any) {
+							delete(record["decisionAdmissionPolicyRef"].(map[string]any), "policySha256")
+						}},
+						{name: "zero revision", mutate: func(record map[string]any) { record["decisionAdmissionPolicyRef"].(map[string]any)["policyRev"] = 0 }},
+						{name: "invalid hash", mutate: func(record map[string]any) {
+							record["decisionAdmissionPolicyRef"].(map[string]any)["policySha256"] = "not-a-hash"
+						}},
+						{name: "unknown nested member", mutate: func(record map[string]any) {
+							record["decisionAdmissionPolicyRef"].(map[string]any)["projectionUnknown"] = true
+						}},
+					} {
+						t.Run("start policy "+test.name, func(t *testing.T) {
+							input := cloneCanonicalCommandInput(valid)
+							input.Record = mutateCommandRecord(t, input.Record, test.mutate)
+							requireCommandReceiptMatrixError(t, input)
+						})
+					}
+				} else {
+					t.Run("non-start policy must be null", func(t *testing.T) {
+						input := cloneCanonicalCommandInput(valid)
+						input.Record = mutateCommandRecord(t, input.Record, func(record map[string]any) {
+							record["decisionAdmissionPolicyRef"] = map[string]any{"policyRev": 1, "policySha256": strings.Repeat("a", 64)}
+						})
+						requireCommandReceiptMatrixError(t, input)
+					})
+				}
+			})
+		}
+	}
+}
+
 func TestCanonicalRunSourceSelectionIsClosedAndNonAuthorizing(t *testing.T) {
 	schema1 := mustProjectCanonicalFixture(t, schema1ProjectionInput(t, schema1StartedEvent(projectionTestRunID)))
 	schema1View := ProjectRunView(schema1)
@@ -1305,6 +1740,127 @@ func TestProjectCanonicalRunSchema1OpenDispatchParity(t *testing.T) {
 }
 
 func TestProjectCanonicalRunSchema2OpenDispatchIsSourceSelected(t *testing.T) {
+	for _, test := range []struct {
+		name              string
+		revokedCapability bool
+		blockSeq          uint64
+		capabilityState   string
+		revokedSeq        string
+	}{
+		{name: "none capability", blockSeq: 6, capabilityState: "none"},
+		{name: "revoked capability", revokedCapability: true, blockSeq: 7, capabilityState: "revoked", revokedSeq: "6"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			validInput, wantDispatches := schema2OpenDispatchLifecycleInput(t, test.revokedCapability)
+			projection := mustProjectCanonicalFixture(t, validInput)
+			view := ProjectRunView(projection)
+			if view.Status != "running" || view.Identity.Epoch != 1 || len(view.Blocks) != 1 {
+				t.Fatalf("reattach lifecycle status/epoch/blocks = %q/%d/%d, want running/1/1", view.Status, view.Identity.Epoch, len(view.Blocks))
+			}
+			assertExactJSONValue(t, "schema-2 reattach block", view.Blocks[0], map[string]any{
+				"seq": test.blockSeq, "epoch": 0, "scope": "node", "nodeId": projectionTestFormationID, "reason": "reattach required",
+				"resumeAllowed": true, "resumePolicy": "reattach_only", "nextEpoch": 1, "openDispatches": wantDispatches,
+			})
+			page := mustProjectEventPage(t, projection, test.blockSeq-1, 2)
+			if len(page.Events) != 2 {
+				t.Fatalf("schema-2 block/resume page events = %d, want 2", len(page.Events))
+			}
+			blockedDispatches := eventDataMember(t, page.Events[0], "openDispatches")
+			resumedDispatches := eventDataMember(t, page.Events[1], "openDispatches")
+			wantDispatchBytes := mustMarshalJSON(t, wantDispatches)
+			if !jsonBytesEqual(blockedDispatches, wantDispatchBytes) || !bytes.Equal(blockedDispatches, resumedDispatches) {
+				t.Fatalf("schema-2 blocked/resumed dispatches changed\nwant:    %s\nblocked: %s\nresumed: %s", wantDispatchBytes, blockedDispatches, resumedDispatches)
+			}
+			var gotDispatches []map[string]json.RawMessage
+			if err := json.Unmarshal(blockedDispatches, &gotDispatches); err != nil {
+				t.Fatal(err)
+			}
+			if len(gotDispatches) != 1 {
+				t.Fatalf("schema-2 dispatches = %d, want one source-ordered item", len(gotDispatches))
+			}
+			gotRevokedSeq, hasRevokedSeq := gotDispatches[0]["peekCapabilityRevokedSeq"]
+			if test.revokedCapability {
+				if !hasRevokedSeq || string(gotRevokedSeq) != test.revokedSeq {
+					t.Fatalf("revoked dispatch lost exact revocation sequence %s: %s", test.revokedSeq, blockedDispatches)
+				}
+			} else if hasRevokedSeq {
+				t.Fatalf("none-state dispatch invented optional revocation sequence: %s", blockedDispatches)
+			}
+			if string(gotDispatches[0]["latestCapabilityGeneration"]) != `"0"` || string(gotDispatches[0]["latestCapabilityIssuedSeq"]) != `0` ||
+				string(gotDispatches[0]["latestSteeringGeneration"]) != `"0"` {
+				t.Fatalf("dispatch lost required zero-valued lifecycle members: %s", blockedDispatches)
+			}
+			assertSchema2SessionProjection(t, view, test.capabilityState)
+		})
+	}
+
+	validInput, _ := schema2OpenDispatchLifecycleInput(t, false)
+
+	for _, test := range []struct {
+		name   string
+		mutate func(blocked, resumed []any)
+	}{
+		{name: "none state nonzero generation", mutate: func(blocked, resumed []any) {
+			blocked[0].(map[string]any)["latestCapabilityGeneration"] = "1"
+			resumed[0].(map[string]any)["latestCapabilityGeneration"] = "1"
+		}},
+		{name: "none state nonzero issued sequence", mutate: func(blocked, resumed []any) {
+			blocked[0].(map[string]any)["latestCapabilityIssuedSeq"] = 4
+			resumed[0].(map[string]any)["latestCapabilityIssuedSeq"] = 4
+		}},
+		{name: "none state carries revocation sequence", mutate: func(blocked, resumed []any) {
+			blocked[0].(map[string]any)["peekCapabilityRevokedSeq"] = 5
+			resumed[0].(map[string]any)["peekCapabilityRevokedSeq"] = 5
+		}},
+		{name: "interrupt none carries request", mutate: func(blocked, resumed []any) {
+			blocked[0].(map[string]any)["interruptRequestedSeq"] = 5
+			resumed[0].(map[string]any)["interruptRequestedSeq"] = 5
+		}},
+		{name: "unknown nested member", mutate: func(blocked, resumed []any) {
+			blocked[0].(map[string]any)["targetKey"] = "private"
+			resumed[0].(map[string]any)["targetKey"] = "private"
+		}},
+		{name: "resume carry differs from block", mutate: func(_ []any, resumed []any) {
+			resumed[0].(map[string]any)["latestSteeringGeneration"] = "1"
+		}},
+	} {
+		t.Run("rejects "+test.name, func(t *testing.T) {
+			input := cloneCanonicalInput(validInput)
+			events := canonicalLedgerEvents(t, input)
+			blocked := events[5]["data"].(map[string]any)["openDispatches"].([]any)
+			resumed := events[6]["data"].(map[string]any)["openDispatches"].([]any)
+			test.mutate(blocked, resumed)
+			input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2Ledger, marshalProjectionLedger(t, events...))
+			_, err := ProjectCanonicalRun(input)
+			requireProjectionError(t, err, ErrRunProjectionInvalid)
+		})
+	}
+
+	for _, test := range []struct {
+		name   string
+		mutate func(blocked, resumed []any)
+	}{
+		{name: "revoked state missing revocation sequence", mutate: func(blocked, resumed []any) {
+			delete(blocked[0].(map[string]any), "peekCapabilityRevokedSeq")
+			delete(resumed[0].(map[string]any), "peekCapabilityRevokedSeq")
+		}},
+		{name: "revocation sequence does not name lifecycle event", mutate: func(blocked, resumed []any) {
+			blocked[0].(map[string]any)["peekCapabilityRevokedSeq"] = 5
+			resumed[0].(map[string]any)["peekCapabilityRevokedSeq"] = 5
+		}},
+	} {
+		t.Run("rejects "+test.name, func(t *testing.T) {
+			input, _ := schema2OpenDispatchLifecycleInput(t, true)
+			events := canonicalLedgerEvents(t, input)
+			blocked := events[6]["data"].(map[string]any)["openDispatches"].([]any)
+			resumed := events[7]["data"].(map[string]any)["openDispatches"].([]any)
+			test.mutate(blocked, resumed)
+			input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2Ledger, marshalProjectionLedger(t, events...))
+			_, err := ProjectCanonicalRun(input)
+			requireProjectionError(t, err, ErrRunProjectionInvalid)
+		})
+	}
+
 	schema1 := SafeSchema1OpenDispatch{
 		DispatchID: "dispatch-a", NodeID: projectionTestFormationID, SlotID: "slot_worker",
 	}
@@ -1707,7 +2263,7 @@ boardRev = 7
 		"maxActiveRuns": 1, "maxQueuedRuns": 1,
 	})
 	policyHash := projectionSHA256(policy)
-	commandRecord := schema2AdmissionCommandRecord(t, projectionTestCommandID, policyHash)
+	commandRecord := schema2AdmissionCommandRecord(t, projectionTestCommandID, 1, policyHash)
 	var command map[string]any
 	if err := json.Unmarshal(commandRecord, &command); err != nil {
 		t.Fatal(err)
@@ -1788,6 +2344,218 @@ boardRev = 7
 	}
 }
 
+func schema2OpenDispatchLifecycleInput(t *testing.T, revokedCapability bool) (CanonicalRunReadInput, []any) {
+	t.Helper()
+	input := schema2ProjectionInput(t, true)
+	rootText := `{"goal":"Project the run"}`
+	rootHash := projectionSHA256([]byte(rootText))
+	graph := []byte(`schema = 2
+id = "` + projectionTestBoardID + `"
+slug = "` + projectionTestBoardSlug + `"
+title = "Projection fixture"
+rev = 7
+
+[[formation]]
+id = "` + projectionTestFormationID + `"
+type = "solo"
+title = "Work"
+
+[[formation.input]]
+id = "port_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_out"
+label = "Output"
+
+[[formation.slot]]
+id = "slot_worker"
+label = "Worker"
+agentId = "worker"
+harness = "codex"
+controller = true
+
+[[authoredConfigManifest]]
+classification = "authored_config"
+sourceKind = "formation_brief"
+nodeId = "` + projectionTestFormationID + `"
+encoding = "formation-brief-jcs-v1"
+mediaType = "application/json"
+sha256 = "` + rootHash + `"
+`)
+	bindings := []byte(`schema = 2
+runId = "` + projectionTestRunID + `"
+boardId = "` + projectionTestBoardID + `"
+boardRev = 7
+
+[[binding]]
+bindingId = "binding_worker"
+nodeId = "` + projectionTestFormationID + `"
+slotId = "slot_worker"
+agentId = "worker"
+harness = "codex"
+sessionTargetId = "target_worker"
+targetFingerprint = "` + strings.Repeat("a", 64) + `"
+sessionLineageSha256 = "` + strings.Repeat("c", 64) + `"
+`)
+	graphHash := projectionSHA256(graph)
+	bindingsHash := projectionSHA256(bindings)
+
+	var bootstrap map[string]any
+	if err := json.Unmarshal(canonicalDocumentByRole(t, input, CanonicalInputRoleSchema2RunBootstrap).Bytes, &bootstrap); err != nil {
+		t.Fatal(err)
+	}
+	bootstrap["graphSnapshotSha256"] = graphHash
+	bootstrap["privateBindingsSha256"] = bindingsHash
+	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2RunBootstrap, canonicalJSON(t, bootstrap))
+	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2GraphSnapshot, graph)
+	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2PrivateBindings, bindings)
+
+	events := canonicalLedgerEvents(t, input)
+	started := events[0]
+	delete(started, "missionId")
+	delete(started, "beadId")
+	startedData := started["data"].(map[string]any)
+	startedData["graphSnapshotSha256"] = graphHash
+	startedData["privateBindingsSha256"] = bindingsHash
+	startedData["bindingProjectionSha256"] = projectionSHA256(canonicalJSON(t, []any{
+		map[string]any{"bindingId": "binding_worker", "nodeId": projectionTestFormationID, "slotId": "slot_worker", "sessionTargetId": "target_worker"},
+	}))
+	startedData["runRoot"] = map[string]any{"kind": "formation", "nodeId": projectionTestFormationID}
+	startedData["rootInputProjection"] = map[string]any{
+		"classification": "authored_config", "sourceKind": "formation_brief", "encoding": "formation-brief-jcs-v1",
+		"mediaType": "application/json", "sha256": rootHash, "text": rootText,
+	}
+	delete(events[1], "missionId")
+	delete(events[1], "beadId")
+
+	rootPayload := map[string]any{
+		"availability": "available", "exact": true, "classification": "authored_config", "sourceKind": "formation_brief",
+		"encoding": "formation-brief-jcs-v1", "mediaType": "application/json", "sha256": rootHash,
+		"payload": map[string]any{"kind": "work", "mediaType": "application/json", "text": rootText},
+	}
+	nodeStarted := schema2FormationEvent(projectionTestRunID, 3, "node_started", map[string]any{
+		"nodeId": projectionTestFormationID, "nodeKind": "formation", "attempt": 1, "reason": "initial",
+		"inputRefs": []any{map[string]any{
+			"inputId": "input_run_seed", "sourceKind": "run_seed", "runId": projectionTestRunID, "seedId": "seed_root",
+			"seedEncoding": "formation-brief-jcs-v1", "seedMediaType": "application/json", "seedSha256": rootHash,
+			"toNodeId": projectionTestFormationID, "toPortId": "port_in", "payloadProjection": rootPayload,
+		}},
+	})
+	bindingWorker := schema2FormationEvent(projectionTestRunID, 4, "slot_binding_observed", map[string]any{
+		"bindingId": "binding_worker", "slotId": "slot_worker", "sessionTargetId": "target_worker", "health": "runnable",
+		"reason": "resolved", "observedAt": "2026-07-20T10:00:03Z", "relatedSeq": 3,
+	})
+	bindingWorker["nodeId"] = projectionTestFormationID
+	bindingWorker["slotId"] = "slot_worker"
+	dispatchWorker := schema2SlotDispatchEvent(t, 5, "dsp_01KXNP6VY3227H78329V52CKF8", "lease_01KXNP6VY3227H78329V52CKF8", "slot_worker", "worker", "binding_worker", "target_worker", strings.Repeat("a", 64))
+
+	openDispatches := []any{
+		map[string]any{
+			"dispatchId": "dsp_01KXNP6VY3227H78329V52CKF8", "targetLeaseId": "lease_01KXNP6VY3227H78329V52CKF8",
+			"nodeId": projectionTestFormationID, "attempt": 1, "slotId": "slot_worker", "agentId": "worker", "bindingId": "binding_worker",
+			"sessionTargetId": "target_worker", "targetFingerprint": strings.Repeat("a", 64), "dispatchSeq": 5,
+			"peekCapabilityState": "none", "latestCapabilityGeneration": "0", "latestCapabilityIssuedSeq": 0,
+			"latestSteeringGeneration": "0", "interruptState": "none",
+		},
+	}
+	nextSeq := uint64(6)
+	if revokedCapability {
+		revoked := schema2FormationEvent(projectionTestRunID, nextSeq, "slot_peek_capability_revoked", map[string]any{
+			"dispatchId": "dsp_01KXNP6VY3227H78329V52CKF8", "targetLeaseId": "lease_01KXNP6VY3227H78329V52CKF8",
+			"bindingId": "binding_worker", "sessionTargetId": "target_worker", "targetFingerprint": strings.Repeat("a", 64),
+			"capabilityGeneration": "0", "capabilityIssuedSeq": 0, "steeringGeneration": "0", "reason": "recovered_fence",
+			"revokedAt": "2026-07-20T10:00:05Z", "inputClosed": true,
+		})
+		revoked["nodeId"] = projectionTestFormationID
+		revoked["slotId"] = "slot_worker"
+		events = append(events, nodeStarted, bindingWorker, dispatchWorker, revoked)
+		item := openDispatches[0].(map[string]any)
+		item["peekCapabilityState"] = "revoked"
+		item["peekCapabilityRevokedSeq"] = nextSeq
+		nextSeq++
+	} else {
+		events = append(events, nodeStarted, bindingWorker, dispatchWorker)
+	}
+	blockedSeq := nextSeq
+	blocked := schema2FormationEvent(projectionTestRunID, blockedSeq, "run_blocked", map[string]any{
+		"reason": "reattach required", "blockScope": "node", "blockedNodeId": projectionTestFormationID,
+		"resumeAllowed": true, "resumePolicy": "reattach_only", "openDispatches": cloneAny(openDispatches),
+		"retryTargets": []any{}, "nextEpoch": 1,
+	})
+	blocked["nodeId"] = projectionTestFormationID
+	resumePayload := canonicalCommandPayload("resume", projectionTestRunID)
+	resumePayload["blockedSeq"] = blockedSeq
+	resumePayloadRaw := canonicalJSON(t, resumePayload)
+	resumePayloadHash := projectionSHA256(resumePayloadRaw)
+	resumeSeq := blockedSeq + 1
+	resumed := schema2FormationEvent(projectionTestRunID, resumeSeq, "run_resumed", map[string]any{
+		"commandId": projectionTestOtherCmdID, "commandPayloadSha256": resumePayloadHash, "resumedFromSeq": blockedSeq,
+		"resumedBy": "human:test", "resumeMode": "reattach", "reason": "continue", "openDispatches": cloneAny(openDispatches), "retryTargets": []any{},
+	})
+	resumed["actor"] = "human:test"
+	resumed["epoch"] = uint64(1)
+	events = append(events, blocked, resumed)
+
+	var admissionRecord map[string]any
+	if err := json.Unmarshal(canonicalDocumentByRole(t, input, CanonicalInputRoleSchema2CommandRecord).Bytes, &admissionRecord); err != nil {
+		t.Fatal(err)
+	}
+	admissionPayload := admissionRecord["commandPayload"].(map[string]any)
+	admissionPayload["runRoot"] = map[string]any{"kind": "formation", "nodeId": projectionTestFormationID}
+	admissionRecord["commandPayloadSha256"] = projectionSHA256(canonicalJSON(t, admissionPayload))
+	startedData["commandPayloadSha256"] = admissionRecord["commandPayloadSha256"]
+	resumeRecord := map[string]any{
+		"commandSchema": 1, "recordRev": 1, "priorGeneration": nil, "commandEncoding": "run-command-jcs-v1",
+		"commandId": projectionTestOtherCmdID, "commandKind": "resume", "commandPayload": resumePayload, "commandPayloadSha256": resumePayloadHash,
+		"admittedWriterFence": 1, "stateWriterFence": 1, "state": "applied", "runId": projectionTestRunID,
+		"effectSeq": resumeSeq, "outcomeWriterFence": 1, "decisionAdmissionPolicyRef": nil,
+	}
+	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2CommandRecord, canonicalJSON(t, admissionRecord))
+	input.Documents = append(input.Documents, canonicalInputDocument(CanonicalInputRoleSchema2CommandRecord, canonicalJSON(t, resumeRecord)))
+	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2Ledger, marshalProjectionLedger(t, events...))
+	return input, openDispatches
+}
+
+func schema2FormationEvent(runID string, sequence uint64, eventType string, data map[string]any) map[string]any {
+	event := schema2Event(runID, sequence, eventType, data)
+	delete(event, "missionId")
+	delete(event, "beadId")
+	return event
+}
+
+func schema2SlotDispatchEvent(t *testing.T, sequence uint64, dispatchID, leaseID, slotID, agentID, bindingID, targetID, fingerprint string) map[string]any {
+	t.Helper()
+	promptHash := strings.Repeat("e", 64)
+	fingerprintHash := projectionSHA256([]byte(fingerprint))
+	barrier := map[string]any{
+		"dispatchId": dispatchID, "targetLeaseId": leaseID, "targetFingerprintSha256": fingerprintHash,
+		"attachmentAuditRegistrationSha256": strings.Repeat("1", 64), "promptSha256": promptHash, "monitorEvidenceSha256": strings.Repeat("2", 64),
+	}
+	ready := map[string]any{
+		"targetFingerprintSha256": fingerprintHash, "acquisitionChallengeSha256": strings.Repeat("3", 64),
+		"dispatchInputBarrierSha256": projectionSHA256(canonicalJSON(t, barrier)), "harnessReadyEvidenceSha256": strings.Repeat("4", 64),
+	}
+	baseline := map[string]any{
+		"targetFingerprintSha256": fingerprintHash, "historyEpoch": "AQIDBAUGBwgJCgsMDQ4PEA", "offset": "0", "cols": 120, "rows": 40,
+	}
+	event := schema2FormationEvent(projectionTestRunID, sequence, "slot_dispatch", map[string]any{
+		"dispatchId": dispatchID, "targetLeaseId": leaseID, "turnKey": "turn_" + slotID, "turnPhase": "solo",
+		"turnInputs": map[string]any{"nodeStartedSeq": 3, "priorTurnResults": []any{}},
+		"nodeId":     projectionTestFormationID, "attempt": 1, "slotId": slotID, "agentId": agentID, "harness": "codex",
+		"bindingId": bindingID, "sessionTargetId": targetID, "targetFingerprint": fingerprint,
+		"dispatchInputBarrierEncoding": "target-dispatch-input-barrier-v1", "dispatchInputBarrier": barrier,
+		"dispatchInputBarrierSha256": projectionSHA256(canonicalJSON(t, barrier)),
+		"targetReadyProofEncoding":   "target-ready-proof-v1", "targetReadyProof": ready, "targetReadyProofSha256": projectionSHA256(canonicalJSON(t, ready)),
+		"paneHistoryBaselineEncoding": "tmux-pane-history-baseline-v1", "paneHistoryBaseline": baseline,
+		"paneHistoryBaselineSha256": projectionSHA256(canonicalJSON(t, baseline)), "steeringGeneration": "0",
+		"promptSha256": promptHash, "nativeAck": false, "recordedBeforeSend": true,
+	})
+	event["nodeId"] = projectionTestFormationID
+	event["slotId"] = slotID
+	return event
+}
+
 type schema2IdentityChange struct {
 	runAuthorityID string
 	commandID      string
@@ -1822,8 +2590,37 @@ func schema2InputWithTwoPolicies(t *testing.T) CanonicalRunReadInput {
 		}
 	}
 	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2Ledger, marshalProjectionLedger(t, events...))
-	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2CommandRecord, schema2AdmissionCommandRecord(t, projectionTestCommandID, policy2.SHA256))
+	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2CommandRecord, schema2AdmissionCommandRecord(t, projectionTestCommandID, 2, policy2.SHA256))
 	return input
+}
+
+func assertSchema2SelectedPolicyLinkage(t *testing.T, input CanonicalRunReadInput, wantRev uint64) {
+	t.Helper()
+	var authority, command map[string]any
+	if err := json.Unmarshal(canonicalDocumentByRole(t, input, CanonicalInputRoleSchema2WorkspaceAuthority).Bytes, &authority); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(canonicalDocumentByRole(t, input, CanonicalInputRoleSchema2CommandRecord).Bytes, &command); err != nil {
+		t.Fatal(err)
+	}
+	want := authority["admissionPolicyRef"]
+	if !jsonBytesEqual(mustMarshalJSON(t, command["decisionAdmissionPolicyRef"]), mustMarshalJSON(t, want)) {
+		t.Fatalf("command decision policy ref = %s, want exact authority selection %s", mustMarshalJSON(t, command["decisionAdmissionPolicyRef"]), mustMarshalJSON(t, want))
+	}
+	wantMap := want.(map[string]any)
+	if wantMap["policyRev"] != float64(wantRev) {
+		t.Fatalf("selected policy revision = %#v, want %d", wantMap["policyRev"], wantRev)
+	}
+	for _, event := range canonicalLedgerEvents(t, input) {
+		if event["type"] != "run_started" && event["type"] != "run_activated" {
+			continue
+		}
+		data := event["data"].(map[string]any)
+		got := map[string]any{"policyRev": data["admissionPolicyRev"], "policySha256": data["admissionPolicySha256"]}
+		if !jsonBytesEqual(mustMarshalJSON(t, got), mustMarshalJSON(t, want)) {
+			t.Fatalf("%s policy ref = %s, want exact authority/command selection %s", event["type"], mustMarshalJSON(t, got), mustMarshalJSON(t, want))
+		}
+	}
 }
 
 func schema2InputWithIdentityChange(t *testing.T, base CanonicalRunReadInput, change schema2IdentityChange) CanonicalRunReadInput {
@@ -1859,13 +2656,13 @@ func schema2InputWithIdentityChange(t *testing.T, base CanonicalRunReadInput, ch
 	if change.commandID != "" {
 		started["admissionCommandId"] = change.commandID
 		policyHash := canonicalDocumentByRole(t, input, CanonicalInputRoleSchema2AdmissionPolicy).SHA256
-		input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2CommandRecord, schema2AdmissionCommandRecord(t, change.commandID, policyHash))
+		input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2CommandRecord, schema2AdmissionCommandRecord(t, change.commandID, 1, policyHash))
 	}
 	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2RunBootstrap, canonicalJSON(t, bootstrap))
 	return replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2Ledger, marshalProjectionLedger(t, events...))
 }
 
-func schema2AdmissionCommandRecord(t *testing.T, commandID, policyHash string) []byte {
+func schema2AdmissionCommandRecord(t *testing.T, commandID string, policyRev uint64, policyHash string) []byte {
 	t.Helper()
 	payload := canonicalCommandPayload("start", projectionTestRunID)
 	return canonicalJSON(t, map[string]any{
@@ -1875,7 +2672,7 @@ func schema2AdmissionCommandRecord(t *testing.T, commandID, policyHash string) [
 		"commandPayloadSha256": projectionSHA256(canonicalJSON(t, payload)),
 		"admittedWriterFence":  1, "stateWriterFence": 1, "state": "applied",
 		"runId": projectionTestRunID, "effectSeq": 1, "outcomeWriterFence": 1,
-		"decisionAdmissionPolicyRef": map[string]any{"policyRev": 1, "policySha256": policyHash},
+		"decisionAdmissionPolicyRef": map[string]any{"policyRev": policyRev, "policySha256": policyHash},
 	})
 }
 
@@ -2325,6 +3122,233 @@ func findProjectedGate(t *testing.T, view RunView, gateID string) RunGateView {
 	}
 	t.Fatalf("gate %q absent from projection: %+v", gateID, view.Gates)
 	return RunGateView{}
+}
+
+func findProjectedAttempt(t *testing.T, view RunView, nodeID string, attemptNumber uint64) RunAttemptView {
+	t.Helper()
+	for _, attempt := range view.Attempts {
+		if attempt.NodeID == nodeID && attempt.Attempt == attemptNumber {
+			return attempt
+		}
+	}
+	t.Fatalf("attempt %s/%d absent from projection: %+v", nodeID, attemptNumber, view.Attempts)
+	return RunAttemptView{}
+}
+
+func findProjectedOutput(t *testing.T, view RunView, nodeID string, attemptNumber uint64, portID string) RunOutputView {
+	t.Helper()
+	for _, output := range view.Outputs {
+		if output.NodeID == nodeID && output.Attempt == attemptNumber && output.PortID == portID {
+			return output
+		}
+	}
+	t.Fatalf("output %s/%d/%s absent from projection: %+v", nodeID, attemptNumber, portID, view.Outputs)
+	return RunOutputView{}
+}
+
+func assertExactJSONValue(t *testing.T, label string, got, want any) {
+	t.Helper()
+	gotRaw := mustMarshalJSON(t, got)
+	wantRaw := mustMarshalJSON(t, want)
+	if !jsonBytesEqual(gotRaw, wantRaw) {
+		t.Fatalf("%s = %s, want exact %s", label, gotRaw, wantRaw)
+	}
+}
+
+func projectedNodeIDs(view RunView) []string {
+	ids := make([]string, len(view.Nodes))
+	for index, node := range view.Nodes {
+		ids[index] = node.NodeID
+	}
+	return ids
+}
+
+func projectedArtifactIDs(view RunView) []string {
+	ids := make([]string, len(view.Artifacts))
+	for index, artifact := range view.Artifacts {
+		var identity struct {
+			ArtifactID string `json:"artifactId"`
+		}
+		_ = json.Unmarshal(mustMarshalJSONNoTest(artifact), &identity)
+		ids[index] = identity.ArtifactID
+	}
+	return ids
+}
+
+func mustMarshalJSONNoTest(value any) []byte {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return raw
+}
+
+func blockSequences(view RunView) []uint64 {
+	sequences := make([]uint64, len(view.Blocks))
+	for index, block := range view.Blocks {
+		sequences[index] = block.Seq
+	}
+	return sequences
+}
+
+func escalationSequences(view RunView) []uint64 {
+	sequences := make([]uint64, len(view.Escalations))
+	for index, escalation := range view.Escalations {
+		sequences[index] = escalation.Seq
+	}
+	return sequences
+}
+
+func assertStringOrder(t *testing.T, label string, got, want []string) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("%s = %v, want %v", label, got, want)
+	}
+}
+
+func assertUint64Order(t *testing.T, label string, got, want []uint64) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("%s = %v, want %v", label, got, want)
+	}
+}
+
+func assertAttemptOrder(t *testing.T, view RunView, want []string) {
+	t.Helper()
+	got := make([]string, len(view.Attempts))
+	for index, attempt := range view.Attempts {
+		got[index] = fmt.Sprintf("%s/%d", attempt.NodeID, attempt.Attempt)
+	}
+	assertStringOrder(t, "attempt order", got, want)
+}
+
+func assertGateOrder(t *testing.T, view RunView, want []string) {
+	t.Helper()
+	got := make([]string, len(view.Gates))
+	for index, gate := range view.Gates {
+		got[index] = fmt.Sprintf("%s/%d", gate.GateID, gate.Attempt)
+	}
+	assertStringOrder(t, "gate order", got, want)
+}
+
+func assertOutputOrder(t *testing.T, view RunView, want []string) {
+	t.Helper()
+	got := make([]string, len(view.Outputs))
+	for index, output := range view.Outputs {
+		got[index] = fmt.Sprintf("%s/%d/%s", output.NodeID, output.Attempt, output.PortID)
+	}
+	assertStringOrder(t, "output order", got, want)
+}
+
+func assertSchema2SessionProjection(t *testing.T, view RunView, capabilityState string) {
+	t.Helper()
+	if len(view.Sessions) != 1 {
+		t.Fatalf("schema-2 sessions = %d, want one projected slot session", len(view.Sessions))
+	}
+	fingerprint := strings.Repeat("a", 64)
+	baseline := map[string]any{
+		"targetFingerprintSha256": projectionSHA256([]byte(fingerprint)), "historyEpoch": "AQIDBAUGBwgJCgsMDQ4PEA", "offset": "0", "cols": 120, "rows": 40,
+	}
+	assertExactJSONValue(t, "session[0]", view.Sessions[0], map[string]any{
+		"bindingId": "binding_worker", "nodeId": projectionTestFormationID, "attempt": 1, "slotId": "slot_worker",
+		"dispatchId": "dsp_01KXNP6VY3227H78329V52CKF8", "targetLeaseId": "lease_01KXNP6VY3227H78329V52CKF8", "sessionTargetId": "target_worker",
+		"bindingHealth": "runnable", "sessionLineageSha256": strings.Repeat("c", 64),
+		"targetFingerprintSha256": projectionSHA256([]byte(fingerprint)),
+		"baseline":                map[string]any{"encoding": "tmux-pane-history-baseline-v1", "sha256": projectionSHA256(canonicalJSON(t, baseline)), "state": "valid"},
+		"attachment":              map[string]any{"state": "accounted"}, "occupancy": map[string]any{"state": "active"},
+		"peekCapability": map[string]any{"state": capabilityState, "issuedSeq": 0, "generation": "0"},
+		"steering":       map[string]any{"state": "closed", "generation": "0"}, "operatorInfluenced": false,
+	})
+	refs := []any{
+		map[string]any{"bindingId": "binding_worker", "nodeId": projectionTestFormationID, "attempt": 1, "slotId": "slot_worker"},
+	}
+	node := findProjectedNode(t, view, projectionTestFormationID)
+	attempt := findProjectedAttempt(t, view, projectionTestFormationID, 1)
+	assertExactJSONValue(t, "node session refs", node.Sessions, refs)
+	assertExactJSONValue(t, "attempt slot refs", attempt.Slots, refs)
+}
+
+func requireCommandReceiptMatrixError(t *testing.T, input CanonicalCommandReadInput) {
+	t.Helper()
+	if receipt, err := ProjectCommandReceipt(input); err == nil {
+		t.Fatalf("invalid command record returned receipt: %#v", receipt)
+	} else {
+		requireProjectionError(t, err, ErrRunCommandNotTerminal)
+	}
+}
+
+func requireMutateStringPath(t *testing.T, root any, label string, path ...any) {
+	t.Helper()
+	value, commit, ok := mutableValueAtPath(reflect.ValueOf(root), path)
+	if !ok || value.Kind() != reflect.String || !value.CanSet() {
+		t.Fatalf("%s mutation path %v did not resolve to a settable string", label, path)
+	}
+	value.SetString("projection-test-mutated-" + label)
+	commit()
+}
+
+func requireMutateFamily(t *testing.T, root any, label string, path ...any) {
+	t.Helper()
+	value, commit, ok := mutableValueAtPath(reflect.ValueOf(root), path)
+	if !ok {
+		t.Fatalf("%s mutation path %v did not resolve", label, path)
+	}
+	if mutations := poisonEveryMutableLeaf(value); mutations == 0 {
+		t.Fatalf("%s mutation path %v contained no mutable leaf", label, path)
+	}
+	commit()
+}
+
+func mutableValueAtPath(root reflect.Value, path []any) (reflect.Value, func(), bool) {
+	commits := make([]func(), 0)
+	current := root
+	unwrap := func() bool {
+		for current.IsValid() && (current.Kind() == reflect.Pointer || current.Kind() == reflect.Interface) {
+			if current.IsNil() {
+				return false
+			}
+			if current.Kind() == reflect.Pointer {
+				current = current.Elem()
+				continue
+			}
+			container := current
+			copyValue := reflect.New(container.Elem().Type()).Elem()
+			copyValue.Set(container.Elem())
+			current = copyValue
+			commits = append(commits, func() { container.Set(copyValue) })
+		}
+		return current.IsValid()
+	}
+	if !unwrap() {
+		return reflect.Value{}, func() {}, false
+	}
+	for _, component := range path {
+		if !unwrap() {
+			return reflect.Value{}, func() {}, false
+		}
+		switch component := component.(type) {
+		case string:
+			if current.Kind() != reflect.Struct {
+				return reflect.Value{}, func() {}, false
+			}
+			current = current.FieldByName(component)
+		case int:
+			if current.Kind() != reflect.Slice || component < 0 || component >= current.Len() {
+				return reflect.Value{}, func() {}, false
+			}
+			current = current.Index(component)
+		default:
+			return reflect.Value{}, func() {}, false
+		}
+	}
+	if !unwrap() {
+		return reflect.Value{}, func() {}, false
+	}
+	return current, func() {
+		for index := len(commits) - 1; index >= 0; index-- {
+			commits[index]()
+		}
+	}, true
 }
 
 func requireProjectionError(t *testing.T, err, target error) {
