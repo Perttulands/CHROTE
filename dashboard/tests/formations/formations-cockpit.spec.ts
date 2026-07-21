@@ -650,6 +650,13 @@ test.describe('Formations cockpit — responsive safety', () => {
       await page.setViewportSize({ width: viewport.width, height: viewport.height })
       await mockApiRoutes(page)
       await mockFormationsApiRoutes(page)
+      const layoutWrites: Record<string, unknown>[] = []
+      await page.route('**/api/formations/**', async route => {
+        if (route.request().method() === 'PATCH') {
+          layoutWrites.push(route.request().postDataJSON() as Record<string, unknown>)
+        }
+        await route.fallback()
+      })
       await page.goto('/')
       if (viewport.width <= 768) {
         await page.locator('.hamburger-btn').click()
@@ -666,6 +673,7 @@ test.describe('Formations cockpit — responsive safety', () => {
       const gateTokenBox = await requiredBox(page.getByTestId('gate-token'), `${viewport.label} gate token`)
       const newFormationBox = await requiredBox(page.getByTestId('new-formation'), `${viewport.label} new formation`)
       const boardPickerBox = await requiredBox(page.getByTestId('board-picker'), `${viewport.label} board picker`)
+      const mission = page.getByTestId(`mission-node-${mockFormationsBoard.missions[0].id}`)
       const nodes = await page.locator('.fmx .world .formation,.fmx .world .gatecard,.fmx .world .missioncard').evaluateAll(elements => elements.map(element => {
         const rect = element.getBoundingClientRect()
         return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }
@@ -696,6 +704,72 @@ test.describe('Formations cockpit — responsive safety', () => {
 
       const visibleNodes = nodes.filter(box => boxesOverlap(box, viewportRect))
       expect(visibleNodes.length, `${viewport.label} should show at least one card on the canvas`).toBeGreaterThan(0)
+
+      if (viewport.label === 'mobile') {
+        // Supported narrow model: full-width horizontal agent rail above a
+        // full-size pannable canvas. Controls stay at readable/actionable size;
+        // the board is traversed by pan/zoom rather than whole-board shrinking.
+        const rosterBox = await requiredBox(page.getByTestId('agent-roster'), 'mobile agent rail')
+        expect(viewportBox.width).toBeGreaterThanOrEqual(360)
+        expect(rosterBox.width).toBeGreaterThanOrEqual(360)
+        expect(rosterBox.height).toBeGreaterThanOrEqual(72)
+        expect(rosterBox.height).toBeLessThanOrEqual(110)
+
+        await expect(page.locator('.fmx .zoomlevel')).toHaveText('100%')
+        const missionBox = await requiredBox(mission, 'mobile mission card')
+        const missionRunBox = await requiredBox(page.getByTestId(`run-mission-${mockFormationsBoard.missions[0].id}`), 'mobile mission action')
+        expect(missionBox.width).toBeGreaterThanOrEqual(230)
+        expect(missionRunBox.width).toBeGreaterThanOrEqual(34)
+        expect(missionRunBox.height).toBeGreaterThanOrEqual(34)
+        expect(boardPickerBox.width).toBeGreaterThanOrEqual(150)
+        expect(boardPickerBox.height).toBeGreaterThanOrEqual(34)
+        expect(newFormationBox.width).toBeGreaterThanOrEqual(110)
+        expect(gateTokenBox.width).toBeGreaterThanOrEqual(60)
+        await expect(page.getByTestId('new-formation')).toHaveCSS('font-size', '11px')
+        await expect(page.getByTestId('gate-token')).toHaveCSS('font-size', '10px')
+
+        const savedPositions = await page.locator('.fmx [data-node]').evaluateAll(elements => elements.map(element => ({
+          id: (element as HTMLElement).dataset.node,
+          left: (element as HTMLElement).style.left,
+          top: (element as HTMLElement).style.top,
+        })))
+        expect(savedPositions).toEqual(expect.arrayContaining(mockFormationsLayout.nodes.map(node => ({
+          id: node.id,
+          left: `${node.x}px`,
+          top: `${node.y}px`,
+        }))))
+
+        await page.getByTestId(`run-mission-${mockFormationsBoard.missions[0].id}`).click()
+        await expect(page.getByTestId('run-banner').locator('.badge')).toHaveText('blocked')
+        const runBannerBox = await requiredBox(page.getByTestId('run-banner'), 'mobile run banner')
+        const runBadgeBox = await requiredBox(page.getByTestId('run-banner').locator('.badge'), 'mobile run badge')
+        expect(runBannerBox.x).toBeGreaterThanOrEqual(viewportRect.left + 8)
+        expect(runBannerBox.right).toBeLessThanOrEqual(viewportRect.right - 8)
+        expect(runBadgeBox.x).toBeGreaterThanOrEqual(runBannerBox.x + 8)
+        await page.getByTitle('Zoom in').click()
+        await expect(page.locator('.fmx .zoomlevel')).toHaveText('120%')
+        await page.getByRole('button', { name: 'FIT' }).click()
+        await expect(page.locator('.fmx .zoomlevel')).toHaveText('100%')
+
+        await page.mouse.move(viewportBox.centerX, viewportBox.bottom - 24)
+        await page.mouse.down()
+        await page.mouse.move(viewportBox.x + 40, viewportBox.bottom - 24, { steps: 8 })
+        await page.mouse.up()
+        const formation = page.getByTestId(`formation-node-${mockFormationsBoard.formations[0].id}`)
+        const formationBox = await requiredBox(formation, 'mobile panned formation')
+        expect(boxesOverlap({ left: formationBox.x, right: formationBox.right, top: formationBox.y, bottom: formationBox.bottom }, viewportRect)).toBe(true)
+        await formation.getByTestId(`verify-band-${mockFormationsBoard.formations[0].id}`).click()
+        await expect(page.getByRole('dialog', { name: `Legacy verification · ${mockFormationsBoard.formations[0].title}` })).toBeVisible()
+        await page.getByRole('button', { name: 'Close legacy verification' }).click()
+        const runBannerOverflow = await page.getByTestId('run-banner').evaluate(element => ({
+          clientWidth: element.clientWidth,
+          scrollLeft: element.scrollLeft,
+          scrollWidth: element.scrollWidth,
+        }))
+        expect(runBannerOverflow.scrollLeft).toBe(0)
+        expect(runBannerOverflow.scrollWidth).toBeLessThanOrEqual(runBannerOverflow.clientWidth)
+        expect(layoutWrites).toEqual([])
+      }
 
       await page.screenshot({ path: viewport.artifact })
     })
@@ -1032,6 +1106,54 @@ test.describe('Formations cockpit — direct manipulation gestures', () => {
     const gatePatch = layoutNodePatch('gate-review')
     expect(gatePatch?.x).toBeLessThan(gateStart.x)
     expect(gatePatch?.y).toBeGreaterThan(gateStart.y)
+  })
+
+  test('releases keyboard shortcuts while the keep-alive cockpit is hidden and restores them on return', async ({ page }) => {
+    const mission = page.getByTestId('mission-node-mission-smoke')
+    const missionHandle = mission.locator('.mtitle')
+    const missionBox = await requiredBox(missionHandle, 'mission drag handle')
+    await pointerDragFromPoint(page, missionBox.centerX, missionBox.centerY, missionBox.centerX + 84, missionBox.centerY + 36)
+    await expect.poll(() => layoutPatches.length).toBe(1)
+
+    const viewport = page.locator('.fmx .viewport')
+    const viewportBox = await requiredBox(viewport, 'formations viewport')
+    await viewport.evaluate((element, point) => {
+      element.dispatchEvent(new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        button: 2,
+        clientX: point.clientX,
+        clientY: point.clientY,
+      }))
+    }, {
+      clientX: viewportBox.x + viewportBox.width * 0.7,
+      clientY: viewportBox.y + viewportBox.height * 0.7,
+    })
+    await page.getByRole('menuitem', { name: 'Mission' }).click()
+    await expect(page.getByRole('dialog', { name: 'Create mission' })).toBeVisible()
+
+    await page.getByRole('button', { name: 'Settings' }).click()
+    await expect(page.getByTestId('formations-host')).toBeHidden()
+
+    const hiddenShortcutOwnership = await page.evaluate(() => {
+      const undo = new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true })
+      window.dispatchEvent(undo)
+      const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      window.dispatchEvent(escape)
+      return { undoPrevented: undo.defaultPrevented, escapePrevented: escape.defaultPrevented }
+    })
+    expect(hiddenShortcutOwnership).toEqual({ undoPrevented: false, escapePrevented: false })
+
+    await page.getByRole('button', { name: 'Formations' }).click()
+    await expect(page.getByTestId('formations-view')).toBeVisible()
+    expect(layoutPatches).toHaveLength(1)
+    await expect(page.getByRole('dialog', { name: 'Create mission' })).toBeVisible()
+
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('dialog', { name: 'Create mission' })).toHaveCount(0)
+
+    await page.keyboard.press('Control+z')
+    await expect.poll(() => layoutPatches.length).toBe(2)
   })
 
   test('pointercancel clears every gesture projection without committing a drop', async ({ page }) => {

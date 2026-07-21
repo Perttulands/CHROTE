@@ -581,6 +581,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   }, [patchBoard, patchLayoutEdge, persistPosition, persistPositions])
 
   useEffect(() => {
+    if (!active) return
     const onKeyDown = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey) || event.shiftKey || event.key.toLowerCase() !== 'z') return
       if (isTextEditingTarget(event.target)) return
@@ -589,7 +590,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [performUndo])
+  }, [active, performUndo])
 
   // Context menus dismiss on outside click, Escape, or scroll (reference behavior).
   useEffect(() => {
@@ -599,7 +600,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       if (!target?.closest?.('.ctxmenu')) setMenu(null)
     }
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setMenu(null)
+      if (active && event.key === 'Escape') setMenu(null)
     }
     window.addEventListener('pointerdown', onPointerDown, true)
     window.addEventListener('wheel', onPointerDown, { capture: true, passive: true })
@@ -609,7 +610,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       window.removeEventListener('wheel', onPointerDown, true)
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [menu])
+  }, [active, menu])
 
   const wire = useCallback((from: string, to: string) => {
     if (!from || !to || from.split(':')[0] === to.split(':')[0]) return
@@ -706,7 +707,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   }, [missionEditor, missionEditorSaving, patchBoard, placementForNewNode])
 
   useEffect(() => {
-    if (!missionEditor || missionEditorSaving) return
+    if (!active || !missionEditor || missionEditorSaving) return
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
       event.preventDefault()
@@ -714,7 +715,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [closeMissionEditor, missionEditor, missionEditorSaving])
+  }, [active, closeMissionEditor, missionEditor, missionEditorSaving])
 
   const deleteFormationOp = useCallback((formation: FormationNode) => {
     void patchBoard({ deleteFormation: { id: formation.id } })
@@ -996,8 +997,12 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       minX = Math.min(minX, x); minY = Math.min(minY, y)
       maxX = Math.max(maxX, x + r.width / scale); maxY = Math.max(maxY, y + r.height / scale)
     })
-    const pad = 64
-    const next = clampScale(Math.min(rect.width / (maxX - minX + pad * 2), rect.height / (maxY - minY + pad * 2)), 1)
+    const narrow = window.innerWidth <= 768
+    const pad = narrow ? 24 : 64
+    const fittedScale = clampScale(Math.min(rect.width / (maxX - minX + pad * 2), rect.height / (maxY - minY + pad * 2)), 1)
+    // Narrow screens are a readable pan/zoom surface, not a miniature overview.
+    // Keep cards at authored size and focus the leading edge of the saved board.
+    const next = narrow ? 1 : fittedScale
     // The FIT button glides via the .world.smooth transition (reference feel);
     // the initial auto-fit on board load snaps so geometry is stable immediately.
     if (options?.smooth) {
@@ -1006,8 +1011,8 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     }
     setView({
       scale: next,
-      x: (rect.width - (maxX - minX) * next) / 2 - minX * next,
-      y: (rect.height - (maxY - minY) * next) / 2 - minY * next,
+      x: narrow ? pad - minX * next : (rect.width - (maxX - minX) * next) / 2 - minX * next,
+      y: narrow ? pad - minY * next : (rect.height - (maxY - minY) * next) / 2 - minY * next,
     })
   }, [])
 
