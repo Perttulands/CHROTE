@@ -18,10 +18,20 @@ type schema2SecondRepairCase struct {
 
 func TestProjectCanonicalRunSchema2PublicDataRequiredness(t *testing.T) {
 	cases := schema2SecondRepairRequirednessCases(t)
+	allowlist := schema2SecondRepairPublicAllowedKeys()
 	seen := map[string]bool{}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			seen[test.eventType] = true
+			allowed, ok := allowlist[test.eventType]
+			if !ok {
+				t.Fatalf("schema-2 public allowlist missing %s", test.eventType)
+			}
+			for key := range test.data {
+				if !schema2SecondRepairContainsString(allowed, key) {
+					t.Fatalf("valid %s fixture contains non-allowlisted key %s", test.name, key)
+				}
+			}
 			if _, err := schema2SecondRepairSanitize(test.eventType, test.data); err != nil {
 				t.Fatalf("valid %s fixture rejected before requiredness checks: %v", test.name, err)
 			}
@@ -51,10 +61,37 @@ func TestProjectCanonicalRunSchema2PublicDataRequiredness(t *testing.T) {
 	if len(want) != 37 {
 		t.Fatalf("frozen schema-2 requiredness table has %d rows, want 37", len(want))
 	}
+	if len(allowlist) != 37 {
+		t.Fatalf("frozen schema-2 public allowlist has %d rows, want 37", len(allowlist))
+	}
 	for eventType := range want {
 		if !seen[eventType] {
 			t.Errorf("schema-2 requiredness fixture missing %s", eventType)
 		}
+	}
+}
+
+func TestProjectCanonicalRunSchema2OptionalPublicDataMayBeAbsent(t *testing.T) {
+	for _, test := range []struct {
+		eventType string
+		key       string
+	}{
+		{eventType: "formation_result", key: "reportArtifactId"},
+		{eventType: "tool_result", key: "displayEvidence"},
+		{eventType: "node_output", key: "reportArtifactId"},
+		{eventType: "gate_evaluating", key: "revisionCycleId"},
+		{eventType: "gate_evaluating", key: "triggerFeedbackId"},
+		{eventType: "gate_evaluating", key: "priorGateSeq"},
+		{eventType: "run_succeeded", key: "summaryArtifactId"},
+	} {
+		t.Run(test.eventType+"/absent_"+test.key, func(t *testing.T) {
+			data := schema2SecondRepairFixture(t, test.eventType)
+			delete(data, test.key)
+			_, err := schema2SecondRepairSanitize(test.eventType, data)
+			if err != nil {
+				t.Fatalf("optional %s.%s omission rejected: %v", test.eventType, test.key, err)
+			}
+		})
 	}
 }
 
@@ -331,9 +368,7 @@ func schema2SecondRepairFixture(t *testing.T, eventType string) map[string]any {
 	case "judge_result":
 		return schema2RepairJudgeResultData()
 	case "judge_attempt_failed":
-		data := schema2RepairJudgeAttemptFailedData()
-		data["code"] = "invalid_judge_result"
-		return data
+		return schema2RepairJudgeAttemptFailedData()
 	case "gate_verdict":
 		return schema2RepairGateVerdictData()
 	case "artifact_attached":
@@ -367,7 +402,7 @@ func schema2SecondRepairFixture(t *testing.T, eventType string) map[string]any {
 	}
 }
 
-func schema2SecondRepairPublicRequiredKeys() map[string][]string {
+func schema2SecondRepairPublicAllowedKeys() map[string][]string {
 	return map[string][]string{
 		"run_started":                           {"workspaceAuthorityId", "workspaceAdmissionSeq", "admissionPolicyRev", "admissionPolicySha256", "admissionCommandId", "commandPayloadSha256", "boardSlug", "sourceBoardSchema", "snapshotSchema", "runAuthorityId", "graphSnapshotSha256", "privateBindingsSha256", "bindingProjectionSha256", "runRoot", "rootInputProjection", "limits"},
 		"run_activated":                         {"workspaceAdmissionSeq", "admissionPolicyRev", "admissionPolicySha256", "reason"},
@@ -407,6 +442,26 @@ func schema2SecondRepairPublicRequiredKeys() map[string][]string {
 		"run_failed":                            {"failureReconciliationSeq", "code", "reason", "unrecoverable", "relatedSeq", "failureCause", "nodeAttemptDispositions", "slotDispatchDispositions", "toolLeaseDispositions", "final"},
 		"run_succeeded":                         {"summaryArtifactId", "outputArtifactIds", "final"},
 	}
+}
+
+func schema2SecondRepairPublicRequiredKeys() map[string][]string {
+	result := make(map[string][]string, 37)
+	for eventType, allowed := range schema2SecondRepairPublicAllowedKeys() {
+		result[eventType] = append([]string(nil), allowed...)
+	}
+	for eventType, optional := range map[string][]string{
+		"node_started":     {"triggerFeedbackId", "priorGateSeq"},
+		"formation_result": {"reportArtifactId"},
+		"tool_result":      {"displayEvidence"},
+		"node_output":      {"reportArtifactId"},
+		"gate_evaluating":  {"revisionCycleId", "triggerFeedbackId", "priorGateSeq"},
+		"run_succeeded":    {"summaryArtifactId"},
+	} {
+		for _, key := range optional {
+			result[eventType] = withoutSecondRepairStrings(result[eventType], key)
+		}
+	}
+	return result
 }
 
 func schema2SecondRepairSemanticNegatives(t *testing.T) []schema2SecondRepairSemanticMutation {
@@ -592,6 +647,15 @@ func withoutSecondRepairStrings(input []string, excluded string) []string {
 		}
 	}
 	return result
+}
+
+func schema2SecondRepairContainsString(input []string, target string) bool {
+	for _, value := range input {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func schema2SecondRepairForbiddenValue(key string) any {

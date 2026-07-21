@@ -136,14 +136,14 @@ func TestProjectCanonicalRunSchema2StructuralArmsAreNeverAuditOnly(t *testing.T)
 			name: "node input ignored is deliberately non-structural typed history", prepare: startSchema2RepairAttempt(projectionTestFormationID, "formation"),
 			eventType: "node_input_ignored", data: map[string]any{
 				"nodeId": projectionTestFormationID, "toPortId": "port_in", "inputRef": schema2RepairInputRef(),
-				"reason": "closed_turn", "relatedAttempt": 1,
+				"reason": "late_optional", "relatedAttempt": 1,
 			},
 			historyOnly: true,
 		},
 		{
 			name: "scoped error changes the affected attempt", prepare: startSchema2RepairAttempt(projectionTestFormationID, "formation"),
 			eventType: "error", data: map[string]any{
-				"code": "dispatch_failed", "message": "dispatch failed", "boundary": "dispatcher", "errorScope": "node",
+				"code": "dispatch_failed", "message": "dispatch failed", "boundary": "engine", "errorScope": "node",
 				"nodeId": projectionTestFormationID, "recoverable": true, "relatedSeq": 2,
 			},
 			want: func(state *projectionState) {
@@ -405,7 +405,7 @@ func TestProjectCanonicalRunSchema2SessionAuthorityArmsAreNeverAuditOnly(t *test
 			session.Steering = RunSessionSteering{State: "open", Generation: "1", StartedSeq: &started}
 		}, data: map[string]any{
 			"startedSeq": 18, "dispatchId": dispatchID, "targetLeaseId": leaseID, "targetFingerprint": fingerprint,
-			"steeringGeneration": "1", "reason": "complete", "endedAt": "2026-07-20T10:00:19Z",
+			"steeringGeneration": "1", "reason": "released", "endedAt": "2026-07-20T10:00:19Z",
 		}, want: func(session *RunSessionView) {
 			session.PeekCapability.State = "issued"
 			session.Steering = RunSessionSteering{State: "closed", Generation: "1"}
@@ -413,7 +413,7 @@ func TestProjectCanonicalRunSchema2SessionAuthorityArmsAreNeverAuditOnly(t *test
 		{name: "reconciliation interrupt updates session occupancy", eventType: "slot_reconciliation_interrupt", data: map[string]any{
 			"dispatchId": dispatchID, "targetLeaseId": leaseID, "bindingId": "binding_worker", "sessionTargetId": "target_worker",
 			"targetFingerprint": fingerprint, "authorityKind": "failure", "authoritySeq": 18,
-			"interruptEncoding": "slot-reconciliation-interrupt-v1", "interruptSha256": strings.Repeat("b", 64), "recordedBeforeSend": true,
+			"interruptEncoding": "terminal-etx-v1", "interruptSha256": strings.Repeat("b", 64), "recordedBeforeSend": true,
 		}, want: func(session *RunSessionView) { session.Occupancy.State = "held" }},
 		{name: "reconciliation outcome updates session occupancy", eventType: "slot_reconciliation_interrupt_outcome", prepare: func(session *RunSessionView) {
 			session.Occupancy.State = "held"
@@ -1720,7 +1720,7 @@ func schema2RepairGateKindResultVerdictData(verdict string) map[string]any {
 	return map[string]any{
 		"gateId": projectionTestGateID, "gateAttempt": 1, "kind": "code", "verdict": verdict, "reason": "lint passed",
 		"evidence": evidence, "evaluatedInputRef": schema2RepairInputRef(),
-		"resultEncoding": "gate-kind-result-jcs-v1", "resultSha256": projectionSHA256(mustMarshalJSONNoTest(result)), "relatedSeqs": []any{},
+		"resultEncoding": "decision-result-jcs-v1", "resultSha256": projectionSHA256(mustMarshalJSONNoTest(result)), "relatedSeqs": []any{},
 		"gateBindingId": "gatebinding_lint", "inputSha256": strings.Repeat("b", 64), "profileSha256": strings.Repeat("c", 64),
 		"evaluatorBundleSha256": strings.Repeat("d", 64), "parametersSha256": strings.Repeat("e", 64),
 		"policySha256": strings.Repeat("f", 64), "determinismPolicySha256": strings.Repeat("1", 64),
@@ -1795,7 +1795,7 @@ func schema2RepairJudgeResultVerdictData(verdict string) map[string]any {
 	return map[string]any{
 		"gateId": projectionTestGateID, "gateAttempt": 1, "judgeNodeId": projectionTestFormationID, "judgeAttempt": 1,
 		"chainIndex": 0, "contextEncoding": "judge-context-jcs-v1", "contextSha256": strings.Repeat("a", 64),
-		"priorResultSeqs": []any{}, "result": result, "resultEncoding": "judge-result-jcs-v1", "resultSha256": projectionSHA256(mustMarshalJSONNoTest(result)),
+		"priorResultSeqs": []any{}, "result": result, "resultEncoding": "decision-result-jcs-v1", "resultSha256": projectionSHA256(mustMarshalJSONNoTest(result)),
 	}
 }
 
@@ -1803,7 +1803,7 @@ func schema2RepairJudgeAttemptFailedData() map[string]any {
 	return map[string]any{
 		"gateId": projectionTestGateID, "gateAttempt": 1, "judgeNodeId": projectionTestFormationID, "judgeAttempt": 1,
 		"chainIndex": 0, "contextSha256": strings.Repeat("a", 64), "priorResultSeqs": []any{},
-		"code": "judge_failed", "reason": "invalid result", "relatedSeq": 19,
+		"code": "invalid_judge_result", "reason": "invalid result", "relatedSeq": 19,
 	}
 }
 
