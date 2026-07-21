@@ -376,6 +376,106 @@ updatedAt = "2026-07-21T12:00:00Z"
 	}
 }
 
+func TestTOMLPairedWritesRejectInvalidLayoutBeforeBoardMutation(t *testing.T) {
+	operations := []struct {
+		name string
+		run  func(*Store, WriteOptions) error
+	}{
+		{
+			name: "create Formation",
+			run: func(store *Store, opts WriteOptions) error {
+				_, err := store.CreateFormation("invalid-pair", FormationCreateRequest{Type: FormationTypeSolo, Title: "Must not persist"}, opts)
+				return err
+			},
+		},
+		{
+			name: "delete Formation",
+			run: func(store *Store, opts WriteOptions) error {
+				_, err := store.DeleteFormation("invalid-pair", FormationDeleteRequest{ID: "fmn_existing"}, opts)
+				return err
+			},
+		},
+		{
+			name: "create Gate",
+			run: func(store *Store, opts WriteOptions) error {
+				_, err := store.CreateGate("invalid-pair", GateCreateRequest{Title: "Must not persist", Kinds: []string{"human"}}, opts)
+				return err
+			},
+		},
+		{
+			name: "delete Gate",
+			run: func(store *Store, opts WriteOptions) error {
+				_, err := store.DeleteGate("invalid-pair", GateDeleteRequest{ID: "gate_existing"}, opts)
+				return err
+			},
+		},
+		{
+			name: "create Mission",
+			run: func(store *Store, opts WriteOptions) error {
+				_, err := store.CreateMission("invalid-pair", MissionCreateRequest{Title: "Must not persist", BeadID: "ctx-ug7.31"}, opts)
+				return err
+			},
+		},
+		{
+			name: "delete Mission",
+			run: func(store *Store, opts WriteOptions) error {
+				_, err := store.DeleteMission("invalid-pair", MissionDeleteRequest{ID: "mis_existing"}, opts)
+				return err
+			},
+		},
+	}
+
+	for _, operation := range operations {
+		t.Run(operation.name, func(t *testing.T) {
+			store := NewStore(t.TempDir())
+			store.Now = fixedClock()
+			boardRaw := `schema = 1
+id = "brd_invalid_pair"
+slug = "invalid-pair"
+title = "Invalid pair"
+rev = 7
+updatedAt = "2026-07-21T12:00:00Z"
+
+[[mission]]
+id = "mis_existing"
+title = "Existing Mission"
+goal = "Stay"
+beadId = "ctx-ug7.31"
+
+[[formation]]
+id = "fmn_existing"
+type = "solo"
+title = "Existing Formation"
+
+[[gate]]
+id = "gate_existing"
+title = "Existing Gate"
+kinds = ["human"]
+criterion = "Stay"
+`
+			layoutRaw := `schema = 1
+boardId = "brd_invalid_pair"
+"board\u0049d" = 'brd_duplicate'
+boardRev = 7
+updatedAt = "2026-07-21T12:00:00Z"
+`
+			writeFixture(t, store.BoardPath("invalid-pair"), boardRaw)
+			writeFixture(t, store.LayoutPath("invalid-pair"), layoutRaw)
+
+			err := operation.run(store, WriteOptions{ExpectedETag: etag([]byte(boardRaw)), ExpectedRev: 7})
+			if err == nil || !strings.HasPrefix(err.Error(), "invalid_definition_source:") {
+				t.Fatalf("paired write error = %v, want stable invalid_definition_source", err)
+			}
+			if got := readFile(t, store.BoardPath("invalid-pair")); got != boardRaw {
+				t.Fatalf("rejected paired write changed board:\n got %q\nwant %q", got, boardRaw)
+			}
+			if got := readFile(t, store.LayoutPath("invalid-pair")); got != layoutRaw {
+				t.Fatalf("rejected paired write changed layout:\n got %q\nwant %q", got, layoutRaw)
+			}
+		})
+	}
+}
+
 func equalStrings(got, want []string) bool {
 	if len(got) != len(want) {
 		return false

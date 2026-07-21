@@ -1088,6 +1088,51 @@ criterion = 42
 	}
 }
 
+func TestArchonMapsInvalidLayoutSourceBeforePairedMutation(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	boardRaw := `schema = 1
+id = "brd_invalid_pair"
+slug = "invalid-pair"
+title = "Invalid pair"
+rev = 7
+updatedAt = "2026-07-21T12:00:00Z"
+`
+	layoutRaw := `schema = 1
+boardId = "brd_invalid_pair"
+"board\u0049d" = 'brd_duplicate'
+boardRev = 7
+updatedAt = "2026-07-21T12:00:00Z"
+`
+	writeArchonFile(t, store.BoardPath("invalid-pair"), boardRaw)
+	writeArchonFile(t, store.LayoutPath("invalid-pair"), layoutRaw)
+
+	_, stderr, code := runArchon(
+		t,
+		&fakeTmux{live: map[string]bool{}},
+		"--workspace", workspace,
+		"formation", "create", "invalid-pair", "solo",
+		"--title", "must not persist",
+		"--json",
+	)
+	if code == 0 {
+		t.Fatalf("invalid layout source unexpectedly accepted: %s", stderr)
+	}
+	var response archonErrorResponse
+	if err := json.Unmarshal([]byte(stderr), &response); err != nil {
+		t.Fatalf("decode invalid layout error: %v\nstderr=%s", err, stderr)
+	}
+	if response.Code != "invalid_definition_source" || response.Boundary != "board" || response.Selector != "invalid-pair" {
+		t.Fatalf("structured error = %+v, want stable invalid_definition_source board envelope", response)
+	}
+	if got := readArchonFile(t, store.BoardPath("invalid-pair")); got != boardRaw {
+		t.Fatalf("rejected Archon paired write changed board bytes:\n got %q\nwant %q", got, boardRaw)
+	}
+	if got := readArchonFile(t, store.LayoutPath("invalid-pair")); got != layoutRaw {
+		t.Fatalf("rejected Archon paired write changed layout bytes:\n got %q\nwant %q", got, layoutRaw)
+	}
+}
+
 func TestArchonMissionListAndInspectExposeReachableChain(t *testing.T) {
 	workspace := t.TempDir()
 	store := formations.NewStore(workspace)
