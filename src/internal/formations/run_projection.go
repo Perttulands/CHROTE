@@ -9,10 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"reflect"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 type CanonicalRunProjection struct {
@@ -37,6 +39,172 @@ type rawProjectionEvent struct {
 	data        map[string]json.RawMessage
 	rawData     json.RawMessage
 	writerFence uint64
+}
+
+const schema1ProjectionLedgerReadMaximumBytes = int64(64 << 20)
+
+type schema1CanonicalRunReader struct {
+	store *Store
+}
+
+func (reader *schema1CanonicalRunReader) ReadRun(runID string) (CanonicalRunReadInput, error) {
+	if reader == nil || reader.store == nil || !validRunID(runID) {
+		return CanonicalRunReadInput{}, ErrInvalidSlug
+	}
+	ledger, err := reader.store.openRunLedger(runID, false)
+	if err != nil {
+		return CanonicalRunReadInput{}, err
+	}
+	defer ledger.close()
+	ledgerBytes, err := readSchema1ProjectionLedger(ledger.file)
+	if err != nil {
+		return CanonicalRunReadInput{}, err
+	}
+	class, classifyErr := classifyRuntimeAuthorityLedger(bytes.NewReader(ledgerBytes), runtimeAuthoritySchema, runID)
+	if classifyErr != nil {
+		if runtimeAuthorityClassifierRequiresAuthority(classifyErr) {
+			return CanonicalRunReadInput{}, fmt.Errorf("%w: %w: classify canonical run", ErrRunLedgerInvalid, ErrRuntimeAuthorityNonAuthorizing)
+		}
+		return CanonicalRunReadInput{}, fmt.Errorf("%w: classify canonical run: %v", ErrRunLedgerInvalid, classifyErr)
+	}
+	if class != RuntimeAuthoritySchema1Inspection {
+		return CanonicalRunReadInput{}, fmt.Errorf("%w: %w: schema-2 canonical reader unavailable", ErrRunLedgerInvalid, ErrRuntimeAuthorityNonAuthorizing)
+	}
+	snapshot, err := readRunArtifactAt(ledger.directory, runID+".snapshot.toml", runtimeAuthorityMaxRecordBytes)
+	if err != nil {
+		return CanonicalRunReadInput{}, fmt.Errorf("%w: read graph snapshot: %v", ErrRunLedgerInvalid, err)
+	}
+	bindings, err := readRunArtifactAt(ledger.directory, runID+".bindings.toml", runtimeAuthorityMaxRecordBytes)
+	if err != nil {
+		return CanonicalRunReadInput{}, fmt.Errorf("%w: read bindings snapshot: %v", ErrRunLedgerInvalid, err)
+	}
+	return CanonicalRunReadInput{
+		RunID: runID, Source: CanonicalRunSourceSchema1,
+		Documents: []CanonicalInputDocument{
+			projectionDocument(CanonicalInputRoleSchema1Ledger, ledgerBytes),
+			projectionDocument(CanonicalInputRoleSchema1GraphSnapshot, snapshot),
+			projectionDocument(CanonicalInputRoleSchema1BindingsSnapshot, bindings),
+		},
+	}, nil
+}
+
+func projectionDocument(role CanonicalInputRole, raw []byte) CanonicalInputDocument {
+	owned := append([]byte(nil), raw...)
+	return CanonicalInputDocument{Role: role, Bytes: owned, SHA256: projectionSHA(owned)}
+}
+
+func readSchema1ProjectionLedger(file *os.File) ([]byte, error) {
+	if file == nil {
+		return nil, ErrRunLedgerInvalid
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if info.Size() < 0 || info.Size() > schema1ProjectionLedgerReadMaximumBytes {
+		return nil, projectionError(ErrRunProjectionResourceLimit, "run ledger exceeds read limit")
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, schema1ProjectionLedgerReadMaximumBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) > schema1ProjectionLedgerReadMaximumBytes {
+		return nil, projectionError(ErrRunProjectionResourceLimit, "run ledger exceeds read limit")
+	}
+	return raw, nil
+}
+
+func (reader *schema1CanonicalRunReader) ListRunIdentities(request RunIdentityPageRequest) (RunIdentityPage, error) {
+	if reader == nil || reader.store == nil || request.Limit < 1 || request.Limit > RunListPageLimit || (request.After != "" && !validRunID(request.After)) {
+		return RunIdentityPage{}, projectionError(ErrRunProjectionInvalid, "invalid identity page selector")
+	}
+	runs, _, err := reader.store.openRunsDirectory(false)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, ErrNotFound) {
+			return RunIdentityPage{RunIDs: []string{}, Cursor: request.After}, nil
+		}
+		return RunIdentityPage{}, err
+	}
+	defer runs.Close()
+	candidates := make([]string, 0, request.Limit+1)
+	seen := map[string]bool{}
+	insert := func(runID string) {
+		if seen[runID] || (request.After != "" && runID <= request.After) {
+			return
+		}
+		seen[runID] = true
+		position := sort.SearchStrings(candidates, runID)
+		candidates = append(candidates, "")
+		copy(candidates[position+1:], candidates[position:])
+		candidates[position] = runID
+		if len(candidates) > request.Limit+1 {
+			delete(seen, candidates[len(candidates)-1])
+			candidates = candidates[:len(candidates)-1]
+		}
+	}
+	for {
+		slugs, done, readErr := readRuntimeAuthorityDirectoryNameBatch(runs, runtimeAuthorityDirectoryBatchSize)
+		if readErr != nil {
+			return RunIdentityPage{}, readErr
+		}
+		for _, slug := range slugs {
+			if validateSlug(slug) != nil {
+				continue
+			}
+			directory, openErr := openRuntimeAuthorityDirectoryAt(runs, slug)
+			if openErr != nil {
+				if errors.Is(openErr, syscall.ELOOP) || errors.Is(openErr, syscall.ENOTDIR) || errors.Is(openErr, os.ErrNotExist) {
+					continue
+				}
+				return RunIdentityPage{}, openErr
+			}
+			for {
+				names, namesDone, namesErr := readRuntimeAuthorityDirectoryNameBatch(directory, runtimeAuthorityDirectoryBatchSize)
+				if namesErr != nil {
+					_ = directory.Close()
+					return RunIdentityPage{}, namesErr
+				}
+				for _, name := range names {
+					if strings.HasSuffix(name, ".ndjson") {
+						runID := strings.TrimSuffix(name, ".ndjson")
+						if validRunID(runID) {
+							insert(runID)
+						}
+					}
+				}
+				if namesDone {
+					break
+				}
+			}
+			_ = directory.Close()
+		}
+		if done {
+			break
+		}
+	}
+	for _, runID := range candidates {
+		ledger, resolveErr := reader.store.openRunLedger(runID, false)
+		if resolveErr != nil {
+			return RunIdentityPage{}, resolveErr
+		}
+		ledger.close()
+	}
+	hasMore := len(candidates) > request.Limit
+	if hasMore {
+		candidates = candidates[:request.Limit]
+	}
+	cursor := request.After
+	if len(candidates) != 0 {
+		cursor = candidates[len(candidates)-1]
+	}
+	return RunIdentityPage{RunIDs: candidates, Cursor: cursor, HasMore: hasMore}, nil
+}
+
+func (*schema1CanonicalRunReader) ReadCommand(SubmittedCommandIdentity) (CanonicalCommandReadInput, error) {
+	return CanonicalCommandReadInput{}, projectionError(ErrRunCommandNotTerminal, "schema-1 has no command authority")
 }
 
 func projectionError(cause error, format string, args ...any) error {
@@ -1817,7 +1985,21 @@ func reduceSchema1Event(state *projectionState, raw rawProjectionEvent, safe Saf
 	case SafeSchema1GateVerdictEvent:
 		state.finishGate(raw.envelope.GateID, raw.envelope.Attempt, raw.envelope.Seq, event.Data.Verdict, event.Data.Reason)
 	case SafeSchema1HumanInputRequestedEvent:
-		gate := state.ensureGate(raw.envelope.GateID, raw.envelope.Attempt)
+		gateID := raw.envelope.GateID
+		if gateID == "" {
+			gateID = event.Data.GateID
+		}
+		attempt := raw.envelope.Attempt
+		if attempt == 0 {
+			attempt = 1
+			if node := state.node(gateID); node != nil && node.LatestAttempt != 0 {
+				attempt = node.LatestAttempt
+			}
+		}
+		gate := state.ensureGate(gateID, attempt)
+		if gate == nil {
+			return projectionError(ErrRunProjectionInvalid, "unknown human gate")
+		}
 		gate.Status = "waiting_human"
 		gate.RequestSeq = raw.envelope.Seq
 		state.view.Status = "waiting_human"
@@ -1966,9 +2148,16 @@ func (state *projectionState) completeSchema1Node(raw rawProjectionEvent, data S
 	if node == nil {
 		return projectionError(ErrRunProjectionInvalid, "unknown output node")
 	}
-	attempt := state.ensureAttempt(raw.envelope.NodeID, raw.envelope.Attempt)
+	attemptNumber := raw.envelope.Attempt
+	if attemptNumber == 0 {
+		attemptNumber = node.LatestAttempt
+		if attemptNumber == 0 {
+			attemptNumber = 1
+		}
+	}
+	attempt := state.ensureAttempt(raw.envelope.NodeID, attemptNumber)
 	if attempt == nil {
-		return projectionError(ErrRunProjectionInvalid, "unknown output attempt")
+		return projectionError(ErrRunProjectionInvalid, "unknown output attempt for node %q raw=%d latest=%d", raw.envelope.NodeID, raw.envelope.Attempt, node.LatestAttempt)
 	}
 	status := data.Status
 	if status == "" {
@@ -1984,7 +2173,7 @@ func (state *projectionState) completeSchema1Node(raw rawProjectionEvent, data S
 			continue
 		}
 		seen[portID] = true
-		state.appendOutput(raw.envelope.NodeID, raw.envelope.Attempt, portID, raw.envelope.Seq, value.Text)
+		state.appendOutput(raw.envelope.NodeID, attemptNumber, portID, raw.envelope.Seq, value.Text)
 	}
 	var extras []string
 	for portID := range data.Outputs {
@@ -1994,7 +2183,7 @@ func (state *projectionState) completeSchema1Node(raw rawProjectionEvent, data S
 	}
 	sort.Strings(extras)
 	for _, portID := range extras {
-		state.appendOutput(raw.envelope.NodeID, raw.envelope.Attempt, portID, raw.envelope.Seq, data.Outputs[portID].Text)
+		state.appendOutput(raw.envelope.NodeID, attemptNumber, portID, raw.envelope.Seq, data.Outputs[portID].Text)
 	}
 	return nil
 }
@@ -2573,6 +2762,15 @@ func finalizeProjectionState(state *projectionState) {
 		for index := range state.view.Attempts {
 			if state.view.Attempts[index].NodeID == session.NodeID && state.view.Attempts[index].Attempt == session.Attempt {
 				state.view.Attempts[index].Slots = append(state.view.Attempts[index].Slots, ref)
+			}
+		}
+	}
+	if state.view.Source.EventSchema == 1 && state.view.Status == RunStatusSucceeded {
+		for _, node := range state.view.Nodes {
+			if node.Status == "waiting" {
+				state.view.Status = RunStatusBlocked
+				state.view.Final = false
+				break
 			}
 		}
 	}

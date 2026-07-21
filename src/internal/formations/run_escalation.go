@@ -108,25 +108,22 @@ func (s *Store) RecordEscalationFromCapture(runID, nodeID, captured string) (boo
 }
 
 func (s *Store) ProjectOpenEscalations(runID string) ([]OpenEscalation, error) {
-	events, err := s.ReadRunEvents(runID)
+	view, err := s.ReadRunView(runID)
 	if err != nil {
 		return nil, err
 	}
-	open := make([]OpenEscalation, 0)
-	for _, event := range events {
-		if event.Type != RunEventEscalationRaised {
-			continue
-		}
+	open := make([]OpenEscalation, 0, len(view.Escalations))
+	for _, escalation := range view.Escalations {
 		open = append(open, OpenEscalation{
 			RunID:    runID,
-			Seq:      event.Seq,
-			NodeID:   event.NodeID,
-			GateID:   event.GateID,
-			Severity: stringFromEventData(event, "severity"),
-			Reason:   stringFromEventData(event, "reason"),
-			Source:   stringFromEventData(event, "source"),
-			Trigger:  stringFromEventData(event, "trigger"),
-			Blocks:   boolFromEventData(event, "blocks"),
+			Seq:      int(escalation.Seq),
+			NodeID:   escalation.NodeID,
+			GateID:   escalation.GateID,
+			Severity: escalation.Severity,
+			Reason:   escalation.Reason,
+			Source:   escalation.Source,
+			Trigger:  escalation.Trigger,
+			Blocks:   escalation.Blocks,
 		})
 	}
 	return open, nil

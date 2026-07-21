@@ -457,93 +457,22 @@ func (s *Store) readRunSnapshot(started RunEvent, expectedRunID string, ledger *
 }
 
 func (s *Store) ProjectRun(runID string) (*RunStatusProjection, error) {
-	ledger, err := s.openRunLedger(runID, false)
+	view, err := s.ReadRunView(runID)
 	if err != nil {
 		return nil, err
-	}
-	defer ledger.close()
-	events, err := classifyAndReadRunEvents(ledger.file, runID)
-	if err != nil {
-		return nil, err
-	}
-	if len(events) == 0 || events[0].Seq != 1 || events[0].Type != RunEventStarted {
-		return nil, ErrRunLedgerInvalid
 	}
 	status := &RunStatusProjection{
-		RunID:     runID,
-		Status:    RunStatusRunning,
-		BoardSlug: stringFromEventData(events[0], "boardSlug"),
-		BoardID:   events[0].BoardID,
-		BoardRev:  events[0].BoardRev,
-		MissionID: events[0].MissionID,
-		BeadID:    events[0].BeadID,
+		RunID: runID, Status: view.Status, Final: view.Final, BoardSlug: view.Identity.BoardSlug,
+		BoardID: view.Identity.BoardID, BoardRev: int(view.Identity.BoardRev), MissionID: view.Identity.MissionID,
+		BeadID: view.Identity.BeadID, Epoch: int(view.Identity.Epoch), EventCount: int(view.Audit.ConsumedEventCount),
 	}
-	for i, event := range events {
-		if event.Seq != i+1 {
-			return nil, ErrRunLedgerInvalid
-		}
-		status.EventCount++
-		status.Epoch = event.Epoch
-		switch event.Type {
-		case RunEventStarted, RunEventResumed:
-			status.Status = RunStatusRunning
-			status.Final = false
-			status.ResumeAllowed = false
-		case RunEventBlocked:
-			status.Status = RunStatusBlocked
-			status.Final = false
-			status.ResumeAllowed = boolFromEventData(event, "resumeAllowed")
-		case RunEventCanceled:
-			status.Status = RunStatusCanceled
-			status.Final = true
-			status.ResumeAllowed = false
-		case RunEventFailed:
-			status.Status = RunStatusFailed
-			status.Final = true
-			status.ResumeAllowed = false
-		case RunEventSucceeded:
-			status.Status = RunStatusSucceeded
-			status.Final = true
-			status.ResumeAllowed = false
-		}
+	if status.Status == "waiting_human" {
+		status.Status = RunStatusRunning
 	}
-	// Honesty safety net: a run can only project succeeded when every reachable
-	// required node reached a terminal state. If the ledger still shows a node
-	// whose last lifecycle event is node_waiting, the success is a lie (e.g. a
-	// stray/legacy run_succeeded over a starved join); project blocked instead so
-	// CLI, API, and UI never report finished work that never ran.
-	if status.Status == RunStatusSucceeded {
-		if waiting := unresolvedWaitingNodes(events); len(waiting) > 0 {
-			status.Status = RunStatusBlocked
-			status.Final = false
-			status.ResumeAllowed = false
-		}
+	if view.Status == RunStatusBlocked && len(view.Blocks) != 0 {
+		status.ResumeAllowed = view.Blocks[len(view.Blocks)-1].ResumeAllowed
 	}
 	return status, nil
-}
-
-// unresolvedWaitingNodes returns node IDs whose last lifecycle event in the
-// ledger is node_waiting — reached but never run to output. Order follows first
-// appearance for deterministic reporting.
-func unresolvedWaitingNodes(events []RunEvent) []string {
-	last := map[string]string{}
-	order := make([]string, 0)
-	for _, event := range events {
-		switch event.Type {
-		case RunEventNodeWaiting, RunEventNodeStarted, RunEventNodeOutput:
-			if _, seen := last[event.NodeID]; !seen {
-				order = append(order, event.NodeID)
-			}
-			last[event.NodeID] = event.Type
-		}
-	}
-	var waiting []string
-	for _, id := range order {
-		if last[id] == RunEventNodeWaiting {
-			waiting = append(waiting, id)
-		}
-	}
-	return waiting
 }
 
 func (s *Store) ReadRunEvents(runID string) ([]RunEvent, error) {
@@ -556,55 +485,54 @@ func (s *Store) ReadRunEvents(runID string) ([]RunEvent, error) {
 }
 
 func (s *Store) ListRuns(filter RunListFilter) ([]RunStatusProjection, error) {
-	runIDs, err := s.listRunIDs()
+	page, err := s.ListRunViews(filter, "", RunListPageLimit)
 	if err != nil {
 		return nil, err
 	}
-	runs := make([]RunStatusProjection, 0, len(runIDs))
-	for _, runID := range runIDs {
-		status, err := s.ProjectRun(runID)
-		if err != nil {
-			return nil, err
+	runs := make([]RunStatusProjection, 0, len(page.Runs))
+	for _, view := range page.Runs {
+		status := RunStatusProjection{
+			RunID: view.RunID, Status: view.Status, Final: view.Final, BoardSlug: view.Identity.BoardSlug,
+			BoardID: view.Identity.BoardID, BoardRev: int(view.Identity.BoardRev), MissionID: view.Identity.MissionID,
+			BeadID: view.Identity.BeadID, Epoch: int(view.Identity.Epoch), EventCount: int(view.Audit.ConsumedEventCount),
 		}
-		if filter.BoardSlug != "" && status.BoardSlug != filter.BoardSlug {
-			continue
+		if status.Status == "waiting_human" {
+			status.Status = RunStatusRunning
 		}
-		runs = append(runs, *status)
+		if view.Status == RunStatusBlocked && len(view.Blocks) != 0 {
+			status.ResumeAllowed = view.Blocks[len(view.Blocks)-1].ResumeAllowed
+		}
+		runs = append(runs, status)
 	}
 	return runs, nil
 }
 
 func (s *Store) ProjectRunNodeReport(runID, nodeID string) (*RunNodeReport, error) {
-	events, err := s.ReadRunEvents(runID)
+	view, err := s.ReadRunView(runID)
 	if err != nil {
 		return nil, err
 	}
-	report := &RunNodeReport{
-		RunID:  runID,
-		NodeID: nodeID,
-		Status: RunStatusRunning,
+	var node *RunNodeView
+	for index := range view.Nodes {
+		if view.Nodes[index].NodeID == nodeID {
+			node = &view.Nodes[index]
+			break
+		}
 	}
-	for _, event := range events {
-		if event.NodeID != nodeID {
+	if node == nil || (len(node.Attempts) == 0 && len(node.Outputs) == 0 && node.Status == "not_run") {
+		return nil, fmt.Errorf("%w: node %q", ErrNotFound, nodeID)
+	}
+	report := &RunNodeReport{RunID: runID, NodeID: nodeID, Status: node.Status, EventCount: len(node.Attempts) + len(node.Outputs)}
+	if len(node.Outputs) != 0 {
+		report.Outputs = make(map[string]FormationOutputPayload, len(node.Outputs))
+	}
+	for _, output := range view.Outputs {
+		if output.NodeID != nodeID {
 			continue
 		}
-		report.EventCount++
-		switch event.Type {
-		case RunEventNodeStarted:
-			report.Brief = formationBriefFromEventData(event.Data["brief"])
-		case RunEventNodeOutput:
-			report.OutputSeq = event.Seq
-			report.Status = stringFromEventData(event, "status")
-			report.ReportRef = stringFromEventData(event, "reportRef")
-			report.Text = stringFromEventData(event, "text")
-			report.Outputs = outputPayloadsFromAny(event.Data["outputs"])
-			if report.Status == "" {
-				report.Status = "done"
-			}
-		}
-	}
-	if report.EventCount == 0 {
-		return nil, fmt.Errorf("%w: node %q", ErrNotFound, nodeID)
+		report.OutputSeq = int(output.OutcomeSeq)
+		report.Text = output.PayloadProjection.Payload.Text
+		report.Outputs[output.PortID] = FormationOutputPayload{Text: output.PayloadProjection.Payload.Text}
 	}
 	return report, nil
 }

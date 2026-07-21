@@ -4,6 +4,7 @@ package formations
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -106,12 +107,14 @@ type WriteOptions struct {
 // NewStore constructs the schema-1 compatibility and offline-definition store.
 // Production runtime wiring must use NewRuntimeStore.
 func NewStore(workspace string) *Store {
-	return &Store{
+	store := &Store{
 		Workspace: workspace,
 		Now: func() time.Time {
 			return time.Now().UTC()
 		},
 	}
+	store.canonicalRunAuthorityReader = &schema1CanonicalRunReader{store: store}
+	return store
 }
 
 func (s *Store) workspaceRoot() string {
@@ -151,6 +154,43 @@ func (s *Store) ReadRunEventPage(runID string, since uint64, limit int) (RunEven
 		return RunEventPage{}, err
 	}
 	return ProjectRunEventPage(projection, since, limit)
+}
+
+func (s *Store) ListRunViews(filter RunListFilter, after string, limit int) (RunListPage, error) {
+	if s == nil || s.canonicalRunAuthorityReader == nil || limit < 1 || limit > RunListPageLimit || (after != "" && !validRunID(after)) {
+		return RunListPage{}, fmt.Errorf("%w: invalid run list selector", ErrRunProjectionInvalid)
+	}
+	identities, err := s.canonicalRunAuthorityReader.ListRunIdentities(RunIdentityPageRequest{After: after, Limit: limit})
+	if err != nil {
+		return RunListPage{}, err
+	}
+	page := RunListPage{Schema: RunListPageSchema, Runs: []RunView{}, Cursor: after, HasMore: identities.HasMore}
+	for index, runID := range identities.RunIDs {
+		projection, readErr := s.ReadCanonicalRun(runID)
+		if readErr != nil {
+			return RunListPage{}, readErr
+		}
+		view := ProjectRunView(projection)
+		candidate := page
+		candidate.Cursor = runID
+		candidate.HasMore = identities.HasMore || index+1 < len(identities.RunIDs)
+		if filter.BoardSlug == "" || view.Identity.BoardSlug == filter.BoardSlug {
+			candidate.Runs = append(append([]RunView(nil), page.Runs...), view)
+		}
+		encoded, encodeErr := json.Marshal(candidate)
+		if encodeErr != nil {
+			return RunListPage{}, fmt.Errorf("%w: encode run list", ErrRunProjectionInvalid)
+		}
+		if len(encoded) > RunListMaximumBytes {
+			if len(page.Runs) == 0 && len(candidate.Runs) != 0 {
+				return RunListPage{}, fmt.Errorf("%w: run list singleton exceeds byte limit", ErrRunProjectionResourceLimit)
+			}
+			page.HasMore = true
+			break
+		}
+		page = candidate
+	}
+	return page, nil
 }
 
 func (s *Store) BoardPath(slug string) string {
