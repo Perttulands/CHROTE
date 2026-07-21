@@ -375,6 +375,13 @@ func (s *Store) createNode(
 			built = cloneDefinitionPairState(next)
 			return next, nil
 		},
+		validate: func(_, candidate definitionPairState) error {
+			if _, err := parseBoardForWrite(candidate.board); err != nil {
+				return err
+			}
+			_, err := parseLayoutForWrite(candidate.layout.raw)
+			return err
+		},
 		cas: func(current definitionPairState) error {
 			board, err := parseBoardForWrite(current.board)
 			if err != nil {
