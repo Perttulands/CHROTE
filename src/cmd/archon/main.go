@@ -928,6 +928,9 @@ func runGateUpdate(store *formations.Store, args []string, stdout, stderr io.Wri
 		UpdatedBy:                  *updatedBy,
 	}, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
 	if err != nil {
+		if errors.Is(err, formations.ErrInvalidDefinitionSource) {
+			return failSelector(stderr, err, *jsonOut, "board", fs.Arg(0))
+		}
 		return fail(stderr, err)
 	}
 	result.TOML = ""
@@ -2179,6 +2182,8 @@ func archonErrorCode(err error) string {
 		return "definition_publication_uncertain"
 	case errors.Is(err, formations.ErrInvalidToolMutation):
 		return "invalid_tool_mutation"
+	case errors.Is(err, formations.ErrInvalidDefinitionSource):
+		return formations.InvalidDefinitionSourceCode
 	case errors.Is(err, formations.ErrToolExecutionUnavailable):
 		return formations.ToolExecutionUnavailableCode
 	case errors.Is(err, formations.ErrRuntimeAuthorityNonAuthorizing):

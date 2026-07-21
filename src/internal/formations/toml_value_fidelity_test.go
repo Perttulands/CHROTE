@@ -98,6 +98,61 @@ criterion = 'Coverage #1 passes'
 	}
 }
 
+func TestTOMLInspectionUsesDecodedValuesForSupportedLayoutFields(t *testing.T) {
+	store := NewStore(t.TempDir())
+	store.Now = fixedClock()
+	const unknownLayout = `futureLayout = '''
+layout # future
+stays byte exact
+'''
+`
+	raw := `schema = 1
+boardId = 'brd_layout_#1'
+boardRev = 7
+updatedAt = '2026-07-21T12:00:00Z#source'
+` + unknownLayout + `
+
+[["no\u0064e"]]
+id = 'node_#1'
+x = 10
+y = -20
+
+[[edge]]
+id = "edge_\u00231"
+lane = '''work # lane
+continued'''
+`
+	writeFixture(t, store.LayoutPath("value-layout"), raw)
+
+	layout, err := store.ReadLayout("value-layout")
+	if err != nil {
+		t.Fatalf("read value-faithful layout: %v", err)
+	}
+	if layout.BoardID != "brd_layout_#1" || layout.UpdatedAt != "2026-07-21T12:00:00Z#source" {
+		t.Fatalf("decoded layout metadata = boardId %q updatedAt %q", layout.BoardID, layout.UpdatedAt)
+	}
+	if len(layout.Nodes) != 1 || layout.Nodes[0] != (LayoutNode{ID: "node_#1", X: 10, Y: -20}) {
+		t.Fatalf("decoded layout nodes = %+v", layout.Nodes)
+	}
+	if len(layout.Edges) != 1 || layout.Edges[0] != (LayoutEdge{ID: "edge_#1", Lane: "work # lane\ncontinued"}) {
+		t.Fatalf("decoded layout edges = %+v", layout.Edges)
+	}
+	if layout.TOML != raw || layout.ETag != etag([]byte(raw)) {
+		t.Fatal("layout inspection changed raw TOML identity")
+	}
+
+	layout, err = store.UpdateLayoutMetadata("value-layout", LayoutMetadataPatch{}, WriteOptions{ExpectedETag: layout.ETag})
+	if err != nil {
+		t.Fatalf("update value-faithful layout metadata: %v", err)
+	}
+	if layout.UpdatedAt != fixedClock()().Format("2006-01-02T15:04:05Z07:00") || !strings.Contains(layout.TOML, unknownLayout) {
+		t.Fatalf("layout update changed decoded metadata or unknown multiline bytes:\n%s", layout.TOML)
+	}
+	if len(layout.Edges) != 1 || layout.Edges[0].Lane != "work # lane\ncontinued" {
+		t.Fatalf("layout update changed multiline edge lane = %+v", layout.Edges)
+	}
+}
+
 func TestTOMLWriterConsumesKnownMultilineRangesAndPreservesUnknownValues(t *testing.T) {
 	store := NewStore(t.TempDir())
 	store.Now = fixedClock()

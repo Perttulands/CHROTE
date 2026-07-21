@@ -349,7 +349,7 @@ func (s *Store) createNode(
 			layout: expectedLayout,
 		},
 		build: func(current definitionPairState) (definitionPairState, error) {
-			board, err := parseBoard(current.board)
+			board, err := parseBoardForWrite(current.board)
 			if err != nil {
 				return definitionPairState{}, err
 			}
@@ -376,7 +376,7 @@ func (s *Store) createNode(
 			return next, nil
 		},
 		cas: func(current definitionPairState) error {
-			board, err := parseBoard(current.board)
+			board, err := parseBoardForWrite(current.board)
 			if err != nil {
 				return err
 			}
@@ -390,11 +390,11 @@ func (s *Store) createNode(
 		return nil, nil, err
 	}
 
-	board, err := parseBoard(built.board)
+	board, err := parseBoardForWrite(built.board)
 	if err != nil {
 		return nil, nil, err
 	}
-	layout, err := parseLayout(built.layout.raw)
+	layout, err := parseLayoutForWrite(built.layout.raw)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -410,7 +410,7 @@ func buildCreateLayoutCandidate(current definitionPairContent, boardID string, b
 	if !current.present {
 		raw = []byte("schema = " + renderInt(CurrentLayoutSchema) + "\nboardId = " + renderString(boardID) + "\nboardRev = " + renderInt(boardRev) + "\nupdatedAt = " + renderString(updatedAt) + "\n")
 	}
-	layout, err := parseLayout(raw)
+	layout, err := parseLayoutForWrite(raw)
 	if err != nil {
 		return nil, err
 	}
@@ -472,7 +472,7 @@ func (s *Store) DeleteFormation(slug string, req FormationDeleteRequest, opts Wr
 		if err != nil {
 			return err
 		}
-		current, err := parseBoard(raw)
+		current, err := parseBoardForWrite(raw)
 		if err != nil {
 			return err
 		}
@@ -496,7 +496,7 @@ func (s *Store) DeleteFormation(slug string, req FormationDeleteRequest, opts Wr
 		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
-		board, err := parseBoard(nextRaw)
+		board, err := parseBoardForWrite(nextRaw)
 		if err != nil {
 			return err
 		}
@@ -534,7 +534,7 @@ func (s *Store) DeleteGate(slug string, req GateDeleteRequest, opts WriteOptions
 		if err != nil {
 			return err
 		}
-		current, err := parseBoard(raw)
+		current, err := parseBoardForWrite(raw)
 		if err != nil {
 			return err
 		}
@@ -558,7 +558,7 @@ func (s *Store) DeleteGate(slug string, req GateDeleteRequest, opts WriteOptions
 		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
-		board, err := parseBoard(nextRaw)
+		board, err := parseBoardForWrite(nextRaw)
 		if err != nil {
 			return err
 		}
@@ -596,7 +596,7 @@ func (s *Store) DeleteMission(slug string, req MissionDeleteRequest, opts WriteO
 		if err != nil {
 			return err
 		}
-		current, err := parseBoard(raw)
+		current, err := parseBoardForWrite(raw)
 		if err != nil {
 			return err
 		}
@@ -620,7 +620,7 @@ func (s *Store) DeleteMission(slug string, req MissionDeleteRequest, opts WriteO
 		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
-		board, err := parseBoard(nextRaw)
+		board, err := parseBoardForWrite(nextRaw)
 		if err != nil {
 			return err
 		}
@@ -829,7 +829,7 @@ func (s *Store) RemoveFormationVerification(slug string, req FormationVerificati
 			formationEnd -= end - i
 		}
 		nextRaw := renderTOMLLines(lines)
-		nextBoard, err := parseBoard(nextRaw)
+		nextBoard, err := parseBoardForWrite(nextRaw)
 		if err != nil {
 			return nil, err
 		}
@@ -1191,7 +1191,7 @@ func (s *Store) updateLayoutNodes(slug string, nodes []LayoutNode, board *BoardD
 		default:
 			return err
 		}
-		current, err := parseLayout(raw)
+		current, err := parseLayoutForWrite(raw)
 		if err != nil {
 			return err
 		}
@@ -1211,7 +1211,7 @@ func (s *Store) updateLayoutNodes(slug string, nodes []LayoutNode, board *BoardD
 		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
-		layout, err = parseLayout(nextRaw)
+		layout, err = parseLayoutForWrite(nextRaw)
 		return err
 	})
 	if err != nil {
@@ -1233,7 +1233,7 @@ func (s *Store) UpdateLayoutEdges(slug string, edges []LayoutEdge, opts WriteOpt
 		if err != nil {
 			return err
 		}
-		current, err := parseLayout(raw)
+		current, err := parseLayoutForWrite(raw)
 		if err != nil {
 			return err
 		}
@@ -1249,7 +1249,7 @@ func (s *Store) UpdateLayoutEdges(slug string, edges []LayoutEdge, opts WriteOpt
 		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
-		layout, err = parseLayout(nextRaw)
+		layout, err = parseLayoutForWrite(nextRaw)
 		return err
 	})
 	if err != nil {
@@ -1289,10 +1289,16 @@ func (s *Store) updateBoardDefinition(slug, updatedBy string, opts WriteOptions,
 		if err != nil {
 			return err
 		}
+		if _, err := parseBoardForWrite(raw); err != nil {
+			return err
+		}
+		if _, err := parseBoardForWrite(nextRaw); err != nil {
+			return err
+		}
 		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
-		next, err = parseBoard(nextRaw)
+		next, err = parseBoardForWrite(nextRaw)
 		return err
 	})
 	if err != nil {
@@ -1710,7 +1716,7 @@ func firstFormationPortEndpoint(raw []byte, formationID, direction string) (stri
 }
 
 func setGateFormationKind(lines []tomlLine, gateStart, gateEnd int, present bool) []tomlLine {
-	kinds := parseStringArray(scalarInBlock(lines, gateStart+1, gateEnd, "kinds"))
+	kinds, _ := decodedStringArrayInLineRange(lines, gateStart+1, gateEnd, "kinds")
 	hasFormation := false
 	filtered := make([]string, 0, len(kinds)+1)
 	for _, kind := range kinds {
@@ -1748,7 +1754,7 @@ func (s *Store) deleteLayoutNodes(slug, boardID string, boardRev int, nodeIDs ma
 		default:
 			return err
 		}
-		current, err := parseLayout(raw)
+		current, err := parseLayoutForWrite(raw)
 		if err != nil {
 			return err
 		}
@@ -1764,7 +1770,7 @@ func (s *Store) deleteLayoutNodes(slug, boardID string, boardRev int, nodeIDs ma
 		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
-		layout, err = parseLayout(nextRaw)
+		layout, err = parseLayoutForWrite(nextRaw)
 		return err
 	})
 	if err != nil {
@@ -1811,14 +1817,7 @@ func patchLayoutNodeBlocks(raw []byte, patches []LayoutNode) []byte {
 				break
 			}
 		}
-		nodeID := ""
-		for j := i + 1; j < end; j++ {
-			key, value, ok := tomlKeyValue(lines[j].body)
-			if ok && key == "id" {
-				nodeID = value
-				break
-			}
-		}
+		nodeID := scalarInBlock(lines, i+1, end, "id")
 		patch, ok := byID[nodeID]
 		if !ok {
 			continue
@@ -1915,14 +1914,8 @@ func tomlBlockEnd(lines []tomlLine, start int) int {
 }
 
 func scalarInBlock(lines []tomlLine, start, end int, key string) string {
-	for i := start; i < end && i < len(lines); i++ {
-		if _, ok := tomlLineSectionName(lines[i]); ok || isTOMLHeader(lines[i]) {
-			break
-		}
-		fieldKey, value, ok := tomlKeyValue(lines[i].body)
-		if ok && fieldKey == key {
-			return value
-		}
+	if value, ok := decodedStringInLineRange(lines, start, end, key); ok {
+		return value
 	}
 	return ""
 }
@@ -2224,16 +2217,7 @@ func findMissionBlockByID(lines []tomlLine, missionID string) (int, int, bool) {
 }
 
 func formationHeaderScalar(lines []tomlLine, start, end int, key string) string {
-	for i := start + 1; i < end && i < len(lines); i++ {
-		if _, ok := tomlLineSectionName(lines[i]); ok || isTOMLHeader(lines[i]) {
-			break
-		}
-		fieldKey, value, ok := tomlKeyValue(lines[i].body)
-		if ok && fieldKey == key {
-			return value
-		}
-	}
-	return ""
+	return scalarInBlock(lines, start+1, formationHeaderEnd(lines, start, end), key)
 }
 
 func formationHeaderEnd(lines []tomlLine, start, end int) int {
@@ -2365,17 +2349,22 @@ func renderBriefSection(req FormationBriefRequest) []tomlLine {
 }
 
 func setScalarInLineRange(lines []tomlLine, start, end int, key, renderedValue string) []tomlLine {
-	for i := start; i < end && i < len(lines); i++ {
-		fieldKey, _, ok := tomlKeyValue(lines[i].body)
-		if ok && fieldKey == key {
-			lines[i].body = replaceScalarValue(lines[i].body, renderedValue)
-			return lines
-		}
-	}
-	newLine := tomlLine{body: key + " = " + renderedValue, newline: "\n"}
 	if end > len(lines) {
 		end = len(lines)
 	}
+	for i := start; i < end; i++ {
+		if isTOMLHeader(lines[i]) {
+			end = i
+			break
+		}
+		fieldKey, _, ok := tomlKeyValue(lines[i].body)
+		if ok && fieldKey == key {
+			lines[i].body = replaceScalarValue(lines[i].body, renderedValue)
+			valueEnd := tomlValueLineEnd(lines, i, end)
+			return append(lines[:i+1], lines[valueEnd:]...)
+		}
+	}
+	newLine := tomlLine{body: key + " = " + renderedValue, newline: "\n"}
 	lines = append(lines, tomlLine{})
 	copy(lines[end+1:], lines[end:])
 	lines[end] = newLine
@@ -2384,9 +2373,13 @@ func setScalarInLineRange(lines []tomlLine, start, end int, key, renderedValue s
 
 func removeScalarInLineRange(lines []tomlLine, start, end int, key string) []tomlLine {
 	for i := start; i < end && i < len(lines); i++ {
+		if isTOMLHeader(lines[i]) {
+			break
+		}
 		fieldKey, _, ok := tomlKeyValue(lines[i].body)
 		if ok && fieldKey == key {
-			return append(lines[:i], lines[i+1:]...)
+			valueEnd := tomlValueLineEnd(lines, i, end)
+			return append(lines[:i], lines[valueEnd:]...)
 		}
 	}
 	return lines
