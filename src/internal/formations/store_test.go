@@ -2273,25 +2273,46 @@ func TestCreateGateHoldsBoardLockUntilCoherentLayoutResult(t *testing.T) {
 		createDone <- createOutcome{result: result, err: err}
 	}()
 
+	// The pair publisher stages the layout overlay before the board definition,
+	// both under the board lock. While the layout lock is held the create must
+	// block holding the board lock, and the authoritative board definition must
+	// not advance -- so a reader can never observe a board node before its
+	// layout placement is durable.
+	boardLock := mutexFor(store.BoardPath("session-search") + ".lock")
 	deadline := time.Now().Add(2 * time.Second)
+	boardLockHeld := false
 	for {
-		current, readErr := store.ReadBoard("session-search")
-		if readErr == nil && current.Rev == before.Rev+1 {
+		if !boardLock.TryLock() {
+			boardLockHeld = true
 			break
 		}
+		boardLock.Unlock()
 		if time.Now().After(deadline) {
-			close(releaseLayout)
-			outcome := <-createDone
-			t.Fatalf("gate board write did not reach blocked layout upsert: readErr=%v createErr=%v", readErr, outcome.err)
+			break
 		}
 		time.Sleep(time.Millisecond)
 	}
-
-	boardLock := mutexFor(store.BoardPath("session-search") + ".lock")
-	boardLockHeld := !boardLock.TryLock()
 	if !boardLockHeld {
-		boardLock.Unlock()
+		close(releaseLayout)
+		outcome := <-createDone
+		<-layoutLockDone
+		t.Fatalf("CreateGate never held the board lock while its layout write was blocked: createErr=%v", outcome.err)
 	}
+
+	blocked, readErr := store.ReadBoard("session-search")
+	if readErr != nil {
+		close(releaseLayout)
+		<-createDone
+		<-layoutLockDone
+		t.Fatalf("read board while create blocked: %v", readErr)
+	}
+	if blocked.Rev != before.Rev {
+		close(releaseLayout)
+		<-createDone
+		<-layoutLockDone
+		t.Fatalf("board advanced to rev %d while its layout write was blocked; the definition must not commit before the layout pair", blocked.Rev)
+	}
+
 	close(releaseLayout)
 	outcome := <-createDone
 	if err := <-layoutLockDone; err != nil {
@@ -2300,8 +2321,8 @@ func TestCreateGateHoldsBoardLockUntilCoherentLayoutResult(t *testing.T) {
 	if outcome.err != nil {
 		t.Fatalf("create gate: %v", outcome.err)
 	}
-	if !boardLockHeld {
-		t.Fatal("CreateGate released the board lock before its layout upsert completed")
+	if outcome.result.Board.Rev != before.Rev+1 {
+		t.Fatalf("committed board rev = %d, want %d", outcome.result.Board.Rev, before.Rev+1)
 	}
 	if outcome.result.Board.Rev != outcome.result.Layout.BoardRev {
 		t.Fatalf("returned board rev %d and layout boardRev %d are incoherent", outcome.result.Board.Rev, outcome.result.Layout.BoardRev)
