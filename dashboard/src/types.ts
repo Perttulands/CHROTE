@@ -331,6 +331,8 @@ export type SendToSessionPayload = {
   serverPid?: undefined
 })
 
+export type SendToSessionOutcome = 'sent' | 'failed' | 'unknown'
+
 export interface SendSessionPane {
   sessionId: string
   pane: string
@@ -495,7 +497,7 @@ export interface DashboardActions {
   openSendToSession: (sessionName: string, prefill?: string) => void
   closeSendToSession: () => void
   listSessionPanes: (sessionName: string, unixUser?: LaunchUser) => Promise<SendSessionPane[] | null>
-  sendToSession: (sessionName: string, payload: SendToSessionPayload, unixUser?: LaunchUser) => Promise<boolean>
+  sendToSession: (sessionName: string, payload: SendToSessionPayload, unixUser?: LaunchUser) => Promise<SendToSessionOutcome>
 
   // Session row clicks always preview; assignment navigation is an explicit secondary action.
   handleSessionClick: (sessionName: string) => void

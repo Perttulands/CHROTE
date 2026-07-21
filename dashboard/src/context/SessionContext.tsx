@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, ReactNode } from 'react'
-import type { DashboardContextType, TmuxSession, SessionBankEntry, ManagedRecoveryStatusEntry, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance, WorkspaceId, TerminalWorkspace, LayoutPreset, LaunchUser, CreateSessionOptions, PersistentAgentPayload, SendSessionPane, SendToSessionPayload, SendToSessionResult, WindowRevealRequest } from '../types'
+import type { DashboardContextType, TmuxSession, SessionBankEntry, ManagedRecoveryStatusEntry, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance, WorkspaceId, TerminalWorkspace, LayoutPreset, LaunchUser, CreateSessionOptions, PersistentAgentPayload, SendSessionPane, SendToSessionOutcome, SendToSessionPayload, SendToSessionResult, WindowRevealRequest } from '../types'
 import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE, MAX_PRESETS, TERMINAL_WORKSPACE_IDS, getSessionKey, getSessionNameFromKey, getSessionPrefixForUser, getSessionUserFromKey, normalizeTerminalUsers, resolveLaunchUser } from '../types'
 import { useToast } from './ToastContext'
 import { apiErrorMessage } from '../apiErrors'
@@ -1116,7 +1116,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, [addToast])
 
-  const sendToSession = useCallback(async (sessionName: string, payload: SendToSessionPayload, unixUser?: LaunchUser): Promise<boolean> => {
+  const sendToSession = useCallback(async (sessionName: string, payload: SendToSessionPayload, unixUser?: LaunchUser): Promise<SendToSessionOutcome> => {
     const expectedUnixUser = unixUser ?? ''
     try {
       const form = new FormData()
@@ -1141,10 +1141,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         console.error('Failed to send to session:', errorText)
         if (definitiveMessage) {
           addToast(definitiveMessage, 'error')
+          return 'failed'
         } else {
           addToast(`Delivery outcome is unknown for '${sessionName}'; inspect the exact pane before retrying`, 'error')
+          return 'unknown'
         }
-        return false
       }
       const result = await response.json().catch(() => null) as SendToSessionResult | null
       const commonResultValid = !!result &&
@@ -1173,23 +1174,23 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           result.targetVerified === false &&
           result.warning.trim() !== '') {
         addToast(`Delivery outcome is unknown for '${sessionName}' (${result.pane}); ${result.warning.trim()}`, 'error')
-        return false
+        return 'unknown'
       }
       if (!commonResultValid || !result || result.success !== true || result.transport !== 'pasted' ||
           result.submitted !== payload.submit || result.bufferCleaned !== true ||
           (result.targetVerified !== true && result.warning.trim() === '')) {
         addToast('Unexpected send response; inspect the target pane before retrying', 'error')
-        return false
+        return 'unknown'
       }
       const paneLabel = ` (${result.pane})`
       const submitLabel = result.submitted ? ' and submitted' : ''
       const warning = result.warning?.trim() ?? ''
       addToast(`Pasted to '${sessionName}'${paneLabel}${submitLabel}${warning ? `; ${warning}` : ''}`, warning ? 'info' : 'success')
-      return true
+      return 'sent'
     } catch (e) {
       console.error('Send-to-session delivery outcome is unknown:', e)
       addToast(`Delivery outcome is unknown for '${sessionName}'; inspect the exact pane before retrying`, 'error')
-      return false
+      return 'unknown'
     }
   }, [addToast])
 

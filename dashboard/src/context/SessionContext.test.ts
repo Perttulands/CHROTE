@@ -5,6 +5,7 @@ import { SessionProvider, useSession } from './SessionContext'
 import { ToastProvider, useToast } from './ToastContext'
 import { featureFlagKey } from '../featureFlags'
 import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE, resolveLaunchUser } from '../types'
+import type { SendToSessionOutcome } from '../types'
 
 function setViewportWidth(width: number) {
   Object.defineProperty(window, 'innerWidth', {
@@ -740,12 +741,12 @@ describe('sendToSession', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
     fetchMock.mockClear()
 
-    let delivered = true
+    let delivered: SendToSessionOutcome = 'sent'
     await act(async () => {
       delivered = await result.current.session.sendToSession('shell1', { text: 'wrong scope', files: [], submit: false })
     })
 
-    expect(delivered).toBe(false)
+    expect(delivered).toBe('unknown')
     await waitFor(() => expect(result.current.toast.toasts[0]?.message).toContain('Unexpected send response'))
   })
 
@@ -782,7 +783,7 @@ describe('sendToSession', () => {
     await waitFor(() => expect(result.current.terminalUsers).toEqual(['perttu']))
     fetchMock.mockClear()
 
-    let delivered = false
+    let delivered: SendToSessionOutcome = 'failed'
     await act(async () => {
       delivered = await result.current.sendToSession('shell1', {
         text: 'inspect this',
@@ -795,7 +796,7 @@ describe('sendToSession', () => {
       }, 'perttu')
     })
 
-    expect(delivered).toBe(true)
+    expect(delivered).toBe('sent')
     expect(fetchMock).toHaveBeenCalledOnce()
     const [url, init] = fetchMock.mock.calls[0]
     expect(String(url)).toBe('/api/tmux/sessions/shell1/send?unixUser=perttu')
@@ -843,7 +844,7 @@ describe('sendToSession', () => {
     await waitFor(() => expect(result.current.session.terminalUsers).toEqual(['perttu']))
     fetchMock.mockClear()
 
-    let delivered = true
+    let delivered: SendToSessionOutcome = 'sent'
     await act(async () => {
       delivered = await result.current.session.sendToSession('shell1', {
         text: 'do not duplicate',
@@ -856,7 +857,7 @@ describe('sendToSession', () => {
       }, 'perttu')
     })
 
-    expect(delivered).toBe(false)
+    expect(delivered).toBe('unknown')
     await waitFor(() => expect(result.current.toast.toasts[0]?.message).toContain('inspect the exact pane before retrying'))
   })
 
@@ -874,7 +875,7 @@ describe('sendToSession', () => {
     const { result } = renderSessionWithToast()
     await waitFor(() => expect(result.current.session.terminalUsers).toEqual(['perttu']))
 
-    let delivered = true
+    let delivered: SendToSessionOutcome = 'sent'
     await act(async () => {
       delivered = await result.current.session.sendToSession('shell1', {
         text: 'could already be pasted',
@@ -883,7 +884,7 @@ describe('sendToSession', () => {
       }, 'perttu')
     })
 
-    expect(delivered).toBe(false)
+    expect(delivered).toBe('unknown')
     await waitFor(() => expect(result.current.toast.toasts[0]?.message).toContain('inspect the exact pane before retrying'))
   })
 
@@ -928,7 +929,7 @@ describe('sendToSession', () => {
     const { result } = renderSessionWithToast()
     await waitFor(() => expect(result.current.session.terminalUsers).toEqual(['perttu']))
 
-    let delivered = true
+    let delivered: SendToSessionOutcome = 'sent'
     await act(async () => {
       delivered = await result.current.session.sendToSession('shell1', {
         text: 'classify this response',
@@ -937,7 +938,7 @@ describe('sendToSession', () => {
       }, 'perttu')
     })
 
-    expect(delivered).toBe(false)
+    expect(delivered).toBe(unknown ? 'unknown' : 'failed')
     await waitFor(() => expect(result.current.toast.toasts[0]?.message).toContain(expected))
     if (!unknown) {
       expect(result.current.toast.toasts[0]?.message).not.toContain('outcome is unknown')
@@ -963,7 +964,7 @@ describe('sendToSession', () => {
     await waitFor(() => expect(result.current.terminalUsers).toEqual(['perttu']))
     fetchMock.mockClear()
 
-    let delivered = true
+    let delivered: SendToSessionOutcome = 'sent'
     await act(async () => {
       delivered = await result.current.sendToSession('shell1', {
         text: 'do not overclaim',
@@ -976,7 +977,7 @@ describe('sendToSession', () => {
       }, 'perttu')
     })
 
-    expect(delivered).toBe(false)
+    expect(delivered).toBe('unknown')
   })
 })
 
