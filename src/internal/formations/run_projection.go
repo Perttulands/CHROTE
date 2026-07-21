@@ -3513,7 +3513,7 @@ func reduceSchema2Event(state *projectionState, raw rawProjectionEvent, safe Saf
 		if gate == nil {
 			return projectionError(ErrRunProjectionInvalid, "gate result without evaluation")
 		}
-		gate.Evidence = append(gate.Evidence, SafeGateEvidence{Kind: event.Data.Kind, Reason: event.Data.Reason})
+		gate.Evidence = append(gate.Evidence, append([]SafeGateEvidence(nil), event.Data.Evidence...)...)
 	case SafeSchema2JudgeResultEvent:
 		if err := state.completeSchema2Attempt(event.Data.JudgeNodeID, event.Data.JudgeAttempt, "done", raw.envelope.Seq, nil); err != nil {
 			return err
@@ -3522,7 +3522,7 @@ func reduceSchema2Event(state *projectionState, raw rawProjectionEvent, safe Saf
 		if gate == nil {
 			return projectionError(ErrRunProjectionInvalid, "judge result without gate")
 		}
-		gate.Evidence = append(gate.Evidence, SafeGateEvidence{Kind: "judge", Reason: event.Data.Result.Reason})
+		gate.Evidence = append(gate.Evidence, append([]SafeGateEvidence(nil), event.Data.Result.Evidence...)...)
 	case SafeSchema2JudgeAttemptFailedEvent:
 		if err := state.completeSchema2Attempt(event.Data.JudgeNodeID, event.Data.JudgeAttempt, "failed", raw.envelope.Seq, nil); err != nil {
 			return err
@@ -3698,8 +3698,12 @@ func (state *projectionState) completeSchema2Attempt(nodeID string, attempt uint
 	if node == nil || view == nil {
 		return projectionError(ErrRunProjectionInvalid, "result without selected attempt")
 	}
-	node.Status, node.FinalDisposition = status, status
-	view.Status, view.Disposition, view.CompletedSeq = status, status, sequence
+	disposition := ""
+	if status == "done" || status == "failed" {
+		disposition = status
+	}
+	node.Status, node.FinalDisposition = status, disposition
+	view.Status, view.Disposition, view.CompletedSeq = status, disposition, sequence
 	state.appendProjectedOutputs(nodeID, attempt, sequence, outputs)
 	return nil
 }
@@ -3898,16 +3902,18 @@ func (state *projectionState) finishGate(gateID string, attempt, sequence uint64
 		return
 	}
 	gate.VerdictSeq, gate.Verdict, gate.Reason = sequence, verdict, reason
+	nodeStatus := "failed"
 	if verdict == "pass" {
 		gate.Status = "passed"
+		nodeStatus = "done"
 	} else {
 		gate.Status = "failed"
 	}
 	if node := state.node(gateID); node != nil {
-		node.Status, node.FinalDisposition = gate.Status, gate.Status
+		node.Status, node.FinalDisposition = nodeStatus, nodeStatus
 	}
 	if attemptView := state.ensureAttempt(gateID, attempt); attemptView != nil {
-		attemptView.Status, attemptView.Disposition, attemptView.CompletedSeq = gate.Status, gate.Status, sequence
+		attemptView.Status, attemptView.Disposition, attemptView.CompletedSeq = nodeStatus, nodeStatus, sequence
 	}
 }
 
