@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 type CanonicalRunProjection struct {
@@ -969,6 +970,9 @@ func sanitizeSchema1Event(event rawProjectionEvent) (SafeRunEvent, error) {
 		}
 		return SafeSchema1SlotResultEvent{safeEventEnvelope: envelope, Type: event.typeName, Data: decoded}, nil
 	case RunEventNodeOutput:
+		if _, ok := data["reason"]; !ok {
+			return nil, projectionError(ErrRunEventUnknown, "incomplete node_output")
+		}
 		if raw, ok := data["outputs"]; ok {
 			clean, e := sanitizeSchema1Outputs(raw)
 			if e != nil {
@@ -1362,6 +1366,19 @@ func projectionSafeSequence(value uint64) bool {
 	return value > 0 && value <= MaxJSONSafeInteger
 }
 
+func projectionSafeSequenceOrZero(value uint64) bool {
+	return value <= MaxJSONSafeInteger
+}
+
+func projectionTimestamp(value string) bool {
+	_, err := time.Parse(time.RFC3339Nano, value)
+	return err == nil
+}
+
+func projectionBoundedText(value string, allowEmpty bool) bool {
+	return (allowEmpty || value != "") && len(value) <= 64<<10
+}
+
 func projectionAscendingUnique(values []uint64, allowEmpty bool) bool {
 	if !allowEmpty && len(values) == 0 {
 		return false
@@ -1634,7 +1651,7 @@ func decodeTurnInputs(raw json.RawMessage) (SafeTurnInputs, error) {
 func decodeEventTiming(raw json.RawMessage) (SafeEventTiming, error) {
 	allowed := stringSet("startedAt", "finishedAt", "durationMs")
 	result, err := decodeClosedProjection[SafeEventTiming](raw, allowed, allowed)
-	if err != nil || result.StartedAt == "" || result.FinishedAt == "" || result.DurationMS > MaxJSONSafeInteger {
+	if err != nil || !projectionTimestamp(result.StartedAt) || !projectionTimestamp(result.FinishedAt) || result.DurationMS > MaxJSONSafeInteger {
 		return SafeEventTiming{}, errors.New("invalid timing")
 	}
 	return result, nil
@@ -1902,25 +1919,74 @@ func selectedProjectionDataHash(data map[string]json.RawMessage, keys ...string)
 
 func validateAndNormalizeSchema2Data(eventType string, data map[string]json.RawMessage) error {
 	switch eventType {
+	case "run_activated":
+		decoded, err := decodeTypedData[SafeSchema2RunActivatedData](data)
+		if err != nil || !projectionSafeSequence(decoded.WorkspaceAdmissionSeq) || !projectionSafeSequence(decoded.AdmissionPolicyRev) || !lowercaseProjectionSHA(decoded.AdmissionPolicySHA256) || !projectionValueIn(decoded.Reason, "immediate", "dequeued") {
+			return errors.New("invalid run activation")
+		}
+	case "run_resumed":
+		decoded, err := decodeTypedData[SafeSchema2RunResumedData](data)
+		if err != nil || !safeProjectionIdentifier(decoded.CommandID) || !lowercaseProjectionSHA(decoded.CommandPayloadSHA256) || !projectionSafeSequence(decoded.ResumedFromSeq) || !projectionBoundedText(decoded.ResumedBy, false) || !projectionValueIn(decoded.ResumeMode, "reattach", "retry-failed-producer") || !projectionBoundedText(decoded.Reason, false) {
+			return errors.New("invalid run resume")
+		}
+		fallthrough
+	case "run_blocked":
+		retryTargets, err := decodeRetryTargets(data["retryTargets"])
+		if err != nil {
+			return err
+		}
+		if err := replaceProjectionData(data, "retryTargets", retryTargets); err != nil {
+			return err
+		}
+		if eventType == "run_blocked" {
+			decoded, err := decodeTypedData[SafeSchema2RunBlockedData](data)
+			if err != nil || !projectionBoundedText(decoded.Reason, false) || !projectionValueIn(decoded.BlockScope, "run", "node", "gate") || !projectionValueIn(decoded.ResumePolicy, "retry_failed_producer", "reattach_only", "new_run_required") {
+				return errors.New("invalid run block")
+			}
+			if decoded.BlockedNodeID != "" && !safeProjectionIdentifier(decoded.BlockedNodeID) || decoded.BlockedGateID != "" && !safeProjectionIdentifier(decoded.BlockedGateID) || decoded.NextEpoch > MaxJSONSafeInteger {
+				return errors.New("invalid run block identity")
+			}
+			if decoded.ResumePolicy == "retry_failed_producer" {
+				if !decoded.ResumeAllowed || decoded.BlockScope != "node" || !projectionSafeSequence(decoded.NextEpoch) || len(retryTargets) != 1 {
+					return errors.New("invalid retry block")
+				}
+			} else if decoded.ResumePolicy == "new_run_required" && decoded.ResumeAllowed || decoded.ResumePolicy == "reattach_only" && !decoded.ResumeAllowed {
+				return errors.New("invalid block resume policy")
+			}
+			if decoded.BlockScope == "node" && !projectionSafeSequence(decoded.NextEpoch) {
+				return errors.New("invalid block epoch")
+			}
+		}
 	case "node_waiting":
 		decoded, err := decodeTypedData[SafeSchema2NodeWaitingData](data)
-		if err != nil || !safeProjectionIdentifier(decoded.NodeID) {
+		if err != nil || !safeProjectionIdentifier(decoded.NodeID) || !projectionSafeSequenceOrZero(decoded.NeededInputs) || !projectionSafeSequenceOrZero(decoded.ReadyInputs) || !projectionSafeSequenceOrZero(decoded.TotalInputs) || decoded.NeededInputs+decoded.ReadyInputs != decoded.TotalInputs || decoded.NeededInputs != uint64(len(decoded.WaitingFor)) || !validateProjectionIdentifiers(decoded.WaitingFor) {
 			return errors.New("invalid waiting node identity")
+		}
+	case "node_input_ignored":
+		decoded, err := decodeTypedData[SafeSchema2NodeInputIgnoredData](data)
+		if err != nil || !safeProjectionIdentifier(decoded.NodeID) || !safeProjectionIdentifier(decoded.ToPortID) || !projectionValueIn(decoded.Reason, "late_optional", "duplicate_feedback", "stale_feedback", "mismatched_feedback") || !projectionSafeSequence(decoded.RelatedAttempt) {
+			return errors.New("invalid ignored input")
 		}
 	case "node_started":
 		decoded, err := decodeTypedData[SafeSchema2NodeStartedData](data)
-		if err != nil || (decoded.TriggerFeedbackID != "" && !safeProjectionIdentifier(decoded.TriggerFeedbackID)) {
+		if err != nil || !safeProjectionIdentifier(decoded.NodeID) || !projectionValueIn(decoded.NodeKind, "mission", "formation", "tool", "gate") || !projectionSafeSequence(decoded.Attempt) || !projectionValueIn(decoded.Reason, "initial", "resume", "pushback", "revision-cycle", "judge") || (decoded.TriggerFeedbackID != "" && !safeProjectionIdentifier(decoded.TriggerFeedbackID)) {
 			return errors.New("invalid node start option")
 		}
 		if _, present := data["priorGateSeq"]; present && !projectionSafeSequence(decoded.PriorGateSeq) {
 			return errors.New("invalid prior gate sequence")
 		}
-	case "run_resumed", "run_blocked":
-		retryTargets, err := decodeRetryTargets(data["retryTargets"])
-		if err != nil {
-			return err
+		if decoded.Reason == "judge" {
+			if decoded.ContextEncoding != "judge-context-jcs-v1" || !lowercaseProjectionSHA(decoded.JudgeContextSHA256) || !projectionAscendingUnique(decoded.PriorResultSeqs, true) {
+				return errors.New("invalid judge node start")
+			}
+		} else if decoded.InputRefs == nil {
+			return errors.New("missing ordinary node inputs")
 		}
-		return replaceProjectionData(data, "retryTargets", retryTargets)
+	case "slot_binding_observed":
+		decoded, err := decodeTypedData[SafeSchema2SlotBindingObservedData](data)
+		if err != nil || !safeProjectionIdentifier(decoded.BindingID) || !safeProjectionIdentifier(decoded.SlotID) || !safeProjectionIdentifier(decoded.SessionTargetID) || !projectionValueIn(decoded.Health, "runnable", "unavailable", "stale") || !projectionBoundedText(decoded.Reason, false) || !projectionTimestamp(decoded.ObservedAt) || !projectionSafeSequenceOrZero(decoded.RelatedSeq) {
+			return errors.New("invalid binding observation")
+		}
 	case "slot_dispatch":
 		turnInputs, err := decodeTurnInputs(data["turnInputs"])
 		if err != nil {
@@ -1930,8 +1996,44 @@ func validateAndNormalizeSchema2Data(eventType string, data map[string]json.RawM
 			return err
 		}
 		decoded, err := decodeTypedData[SafeSchema2SlotDispatchData](data)
-		if err != nil || !safeProjectionIdentifier(decoded.DispatchID) || !safeProjectionIdentifier(decoded.TargetLeaseID) || !safeProjectionIdentifier(decoded.NodeID) || !safeProjectionIdentifier(decoded.SlotID) || !safeProjectionIdentifier(decoded.AgentID) || !safeProjectionIdentifier(decoded.BindingID) || !safeProjectionIdentifier(decoded.SessionTargetID) || !projectionSafeSequence(decoded.Attempt) || !lowercaseProjectionSHA(decoded.TargetFingerprint) || !lowercaseProjectionSHA(decoded.DispatchInputBarrierSHA256) || !lowercaseProjectionSHA(decoded.TargetReadyProofSHA256) || !lowercaseProjectionSHA(decoded.PaneHistoryBaselineSHA256) || !lowercaseProjectionSHA(decoded.PromptSHA256) || !canonicalUnsignedDecimal(decoded.SteeringGeneration) || !decoded.RecordedBeforeSend {
+		if err != nil || !safeProjectionIdentifier(decoded.DispatchID) || !safeProjectionIdentifier(decoded.TargetLeaseID) || !safeProjectionIdentifier(decoded.TurnKey) || !projectionValueIn(decoded.TurnPhase, "solo", "flow-step", "peer-turn", "peer-facilitator", "leader-plan", "leader-worker", "leader-agentic", "judge") || !safeProjectionIdentifier(decoded.NodeID) || !safeProjectionIdentifier(decoded.SlotID) || !safeProjectionIdentifier(decoded.AgentID) || !safeProjectionIdentifier(decoded.Harness) || !safeProjectionIdentifier(decoded.BindingID) || !safeProjectionIdentifier(decoded.SessionTargetID) || !projectionSafeSequence(decoded.Attempt) || !lowercaseProjectionSHA(decoded.TargetFingerprint) || decoded.DispatchInputBarrierEncoding != "target-dispatch-input-barrier-v1" || !lowercaseProjectionSHA(decoded.DispatchInputBarrierSHA256) || decoded.TargetReadyProofEncoding != "target-ready-proof-v1" || !lowercaseProjectionSHA(decoded.TargetReadyProofSHA256) || decoded.PaneHistoryBaselineEncoding != "tmux-pane-history-baseline-v1" || !lowercaseProjectionSHA(decoded.PaneHistoryBaselineSHA256) || decoded.SteeringGeneration != "0" || !lowercaseProjectionSHA(decoded.PromptSHA256) || !decoded.RecordedBeforeSend {
 			return errors.New("invalid slot dispatch")
+		}
+	case "slot_peek_capability_issued":
+		decoded, err := decodeTypedData[SafeSchema2SlotPeekCapabilityIssuedData](data)
+		if err != nil || !safeProjectionIdentifier(decoded.DispatchID) || !safeProjectionIdentifier(decoded.TargetLeaseID) || !safeProjectionIdentifier(decoded.BindingID) || !safeProjectionIdentifier(decoded.SessionTargetID) || !lowercaseProjectionSHA(decoded.TargetFingerprint) || !canonicalUnsignedDecimal(decoded.CapabilityGeneration) || decoded.CapabilityGeneration == "0" || !projectionSafeSequenceOrZero(decoded.PriorIssuedSeq) || !projectionTimestamp(decoded.IssuedAt) {
+			return errors.New("invalid peek capability issuance")
+		}
+		if decoded.PriorIssuedSeq == 0 && decoded.CapabilityGeneration != "1" {
+			return errors.New("invalid first capability generation")
+		}
+	case "slot_steering_started":
+		decoded, err := decodeTypedData[SafeSchema2SlotSteeringStartedData](data)
+		if err != nil || !safeProjectionIdentifier(decoded.DispatchID) || !safeProjectionIdentifier(decoded.TargetLeaseID) || !safeProjectionIdentifier(decoded.BindingID) || !safeProjectionIdentifier(decoded.SessionTargetID) || !lowercaseProjectionSHA(decoded.TargetFingerprint) || !projectionSafeSequence(decoded.CapabilityIssuedSeq) || !canonicalUnsignedDecimal(decoded.CapabilityGeneration) || decoded.CapabilityGeneration == "0" || !canonicalUnsignedDecimal(decoded.SteeringGeneration) || decoded.SteeringGeneration == "0" || !projectionBoundedText(decoded.Actor, false) || !projectionTimestamp(decoded.StartedAt) || !decoded.RecordedBeforeInput {
+			return errors.New("invalid steering start")
+		}
+	case "slot_steering_ended":
+		decoded, err := decodeTypedData[SafeSchema2SlotSteeringEndedData](data)
+		if err != nil || !projectionSafeSequence(decoded.StartedSeq) || !safeProjectionIdentifier(decoded.DispatchID) || !safeProjectionIdentifier(decoded.TargetLeaseID) || !lowercaseProjectionSHA(decoded.TargetFingerprint) || !canonicalUnsignedDecimal(decoded.SteeringGeneration) || decoded.SteeringGeneration == "0" || !projectionValueIn(decoded.Reason, "released", "disconnect", "capability_revoked", "recovered_revoked") || !projectionTimestamp(decoded.EndedAt) {
+			return errors.New("invalid steering end")
+		}
+	case "slot_peek_capability_revoked":
+		decoded, err := decodeTypedData[SafeSchema2SlotPeekCapabilityRevokedData](data)
+		if err != nil || !safeProjectionIdentifier(decoded.DispatchID) || !safeProjectionIdentifier(decoded.TargetLeaseID) || !safeProjectionIdentifier(decoded.BindingID) || !safeProjectionIdentifier(decoded.SessionTargetID) || !lowercaseProjectionSHA(decoded.TargetFingerprint) || !canonicalUnsignedDecimal(decoded.CapabilityGeneration) || !projectionSafeSequenceOrZero(decoded.CapabilityIssuedSeq) || !canonicalUnsignedDecimal(decoded.SteeringGeneration) || !projectionValueIn(decoded.Reason, "result_closure", "cancel", "failure", "foreign_attachment", "foreign_input", "attachment_audit_lost", "recovered_fence") || !projectionTimestamp(decoded.RevokedAt) || !decoded.InputClosed {
+			return errors.New("invalid peek capability revocation")
+		}
+		if (decoded.CapabilityGeneration == "0") != (decoded.CapabilityIssuedSeq == 0) {
+			return errors.New("capability revocation generation mismatch")
+		}
+	case "slot_reconciliation_interrupt":
+		decoded, err := decodeTypedData[SafeSchema2SlotReconciliationInterruptData](data)
+		if err != nil || !safeProjectionIdentifier(decoded.DispatchID) || !safeProjectionIdentifier(decoded.TargetLeaseID) || !safeProjectionIdentifier(decoded.BindingID) || !safeProjectionIdentifier(decoded.SessionTargetID) || !lowercaseProjectionSHA(decoded.TargetFingerprint) || !projectionValueIn(decoded.AuthorityKind, "cancel", "failure") || !projectionSafeSequence(decoded.AuthoritySeq) || decoded.InterruptEncoding != "terminal-etx-v1" || !lowercaseProjectionSHA(decoded.InterruptSHA256) || !decoded.RecordedBeforeSend {
+			return errors.New("invalid reconciliation interrupt")
+		}
+	case "slot_reconciliation_interrupt_outcome":
+		decoded, err := decodeTypedData[SafeSchema2SlotReconciliationInterruptOutcomeData](data)
+		if err != nil || !projectionSafeSequence(decoded.RequestedSeq) || !safeProjectionIdentifier(decoded.DispatchID) || !safeProjectionIdentifier(decoded.TargetLeaseID) || !lowercaseProjectionSHA(decoded.TargetFingerprint) || !projectionValueIn(decoded.Outcome, "sent", "unavailable", "unsupported") || !projectionTimestamp(decoded.ObservedAt) {
+			return errors.New("invalid reconciliation interrupt outcome")
 		}
 	case "slot_result":
 		allowed := stringSet("turnKey", "phase", "status", "turnPayload", "outputs", "reportArtifactId", "artifactIds", "diffArtifactIds")
@@ -1969,8 +2071,11 @@ func validateAndNormalizeSchema2Data(eventType string, data map[string]json.RawM
 			return errors.New("invalid turn result artifacts")
 		}
 		outer, err := decodeTypedData[SafeSchema2SlotResultData](data)
-		if err != nil || outer.TurnKey != turnResult.TurnKey || outer.TurnPhase != turnResult.Phase || !projectionValueIn(outer.Status, "ok", "error", "timeout") {
+		if err != nil || !safeProjectionIdentifier(outer.DispatchID) || !safeProjectionIdentifier(outer.TargetLeaseID) || !safeProjectionIdentifier(outer.NodeID) || !projectionSafeSequence(outer.Attempt) || !safeProjectionIdentifier(outer.SlotID) || !safeProjectionIdentifier(outer.AgentID) || !safeProjectionIdentifier(outer.BindingID) || !safeProjectionIdentifier(outer.SessionTargetID) || !lowercaseProjectionSHA(outer.TargetFingerprint) || outer.PaneHistoryBaselineEncoding != "tmux-pane-history-baseline-v1" || !projectionSafeSequence(outer.PaneHistoryBaselineDispatchSeq) || !lowercaseProjectionSHA(outer.PaneHistoryBaselineSHA256) || !projectionSafeSequence(outer.PeekCapabilityRevokedSeq) || !canonicalUnsignedDecimal(outer.SteeringGeneration) || !lowercaseProjectionSHA(outer.ClientAttachmentAuditProofSHA256) || outer.TurnKey != turnResult.TurnKey || outer.TurnPhase != turnResult.Phase || !projectionValueIn(outer.Status, "ok", "error", "needs-review") {
 			return errors.New("turn result identity mismatch")
+		}
+		if outer.OperatorInfluenced != (outer.SteeringGeneration != "0") {
+			return errors.New("turn result steering influence mismatch")
 		}
 		turnPayload, err := decodePayloadProjection(turnResultObject["turnPayload"])
 		if err != nil {
@@ -2028,6 +2133,11 @@ func validateAndNormalizeSchema2Data(eventType string, data map[string]json.RawM
 			return err
 		}
 		return replaceProjectionData(data, "inputHashes", hashes)
+	case "tool_process_launch":
+		decoded, err := decodeTypedData[SafeSchema2ToolProcessLaunchData](data)
+		if err != nil || !safeProjectionIdentifier(decoded.ToolLeaseID) || !safeProjectionIdentifier(decoded.LaunchID) || !safeProjectionIdentifier(decoded.NodeID) || !projectionSafeSequence(decoded.Attempt) || !canonicalUnsignedDecimal(decoded.Generation) || decoded.Generation == "0" || !decoded.RecordedBeforeSpawn {
+			return errors.New("invalid tool process launch")
+		}
 	case "tool_result":
 		decoded, err := decodeTypedData[SafeSchema2ToolResultData](data)
 		if err != nil || !projectionValueIn(decoded.Status, "ok", "error", "timeout") || !safeProjectionIdentifier(decoded.ToolLeaseID) || !safeProjectionIdentifier(decoded.LaunchID) || !canonicalUnsignedDecimal(decoded.Generation) || !safeProjectionIdentifier(decoded.NodeID) || !projectionSafeSequence(decoded.Attempt) {
@@ -2079,7 +2189,7 @@ func validateAndNormalizeSchema2Data(eventType string, data map[string]json.RawM
 		}
 	case "node_output":
 		decoded, err := decodeTypedData[SafeSchema2NodeOutputData](data)
-		if err != nil || !safeProjectionIdentifier(decoded.NodeID) || !projectionValueIn(decoded.Status, "done", "needs-review", "blocked", "failed") || (decoded.ReportArtifactID != "" && !safeProjectionIdentifier(decoded.ReportArtifactID)) {
+		if err != nil || !safeProjectionIdentifier(decoded.NodeID) || !projectionValueIn(decoded.Status, "done", "needs-review", "blocked", "failed") || (decoded.ReportArtifactID != "" && !safeProjectionIdentifier(decoded.ReportArtifactID)) || !validateProjectionIdentifiers(decoded.ArtifactIDs) || !validateProjectionIdentifiers(decoded.DiffArtifactIDs) {
 			return errors.New("invalid node output")
 		}
 		outputs, err := decodePayloadProjections(data["outputs"])
@@ -2113,7 +2223,7 @@ func validateAndNormalizeSchema2Data(eventType string, data map[string]json.RawM
 		}
 	case "gate_evaluating":
 		decoded, err := decodeTypedData[SafeSchema2GateEvaluatingData](data)
-		if err != nil || (decoded.RevisionCycleID != "" && !safeProjectionIdentifier(decoded.RevisionCycleID)) || (decoded.TriggerFeedbackID != "" && !safeProjectionIdentifier(decoded.TriggerFeedbackID)) {
+		if err != nil || !safeProjectionIdentifier(decoded.GateID) || !projectionSafeSequence(decoded.GateAttempt) || !safeProjectionIdentifier(decoded.NodeID) || !validateProjectionIdentifiers(decoded.Kinds) || decoded.InputRef.InputID == "" || decoded.JudgeChain == nil || !validateProjectionIdentifiers(decoded.JudgeChain) || (decoded.RevisionCycleID != "" && !safeProjectionIdentifier(decoded.RevisionCycleID)) || (decoded.TriggerFeedbackID != "" && !safeProjectionIdentifier(decoded.TriggerFeedbackID)) {
 			return errors.New("invalid gate evaluation option")
 		}
 		if _, present := data["priorGateSeq"]; present && !projectionSafeSequence(decoded.PriorGateSeq) {
@@ -2127,7 +2237,7 @@ func validateAndNormalizeSchema2Data(eventType string, data map[string]json.RawM
 		return replaceProjectionData(data, "criterionProjection", criterion)
 	case "gate_kind_result":
 		decoded, err := decodeTypedData[SafeSchema2GateKindResultData](data)
-		if err != nil || !projectionValueIn(decoded.Kind, "code", "formation") || !projectionValueIn(decoded.Verdict, "pass", "fail") || decoded.ResultEncoding != "gate-kind-result-jcs-v1" {
+		if err != nil || !safeProjectionIdentifier(decoded.GateID) || !projectionSafeSequence(decoded.GateAttempt) || !projectionValueIn(decoded.Kind, "code", "formation") || !projectionValueIn(decoded.Verdict, "pass", "fail") || !projectionBoundedText(decoded.Reason, false) || decoded.EvaluatedInputRef.InputID == "" || decoded.ResultEncoding != "decision-result-jcs-v1" || !lowercaseProjectionSHA(decoded.ResultSHA256) {
 			return errors.New("invalid gate kind result")
 		}
 		if err := validateSafeGateEvidence(decoded.Evidence); err != nil {
@@ -2146,16 +2256,25 @@ func validateAndNormalizeSchema2Data(eventType string, data map[string]json.RawM
 		}
 	case "judge_result":
 		decoded, err := decodeTypedData[SafeSchema2JudgeResultData](data)
-		if err != nil || decoded.ResultEncoding != "judge-result-jcs-v1" || !projectionValueIn(decoded.Result.Verdict, "pass", "fail") || decoded.Result.Reason == "" || validateSafeGateEvidence(decoded.Result.Evidence) != nil {
+		resultAllowed := stringSet("verdict", "reason", "evidence")
+		result, resultErr := decodeClosedProjection[SafeJudgeResult](data["result"], resultAllowed, resultAllowed)
+		if err != nil || resultErr != nil || !safeProjectionIdentifier(decoded.GateID) || !projectionSafeSequence(decoded.GateAttempt) || !safeProjectionIdentifier(decoded.JudgeNodeID) || !projectionSafeSequence(decoded.JudgeAttempt) || decoded.ChainIndex > MaxJSONSafeInteger || decoded.ContextEncoding != "judge-context-jcs-v1" || !lowercaseProjectionSHA(decoded.ContextSHA256) || !projectionAscendingUnique(decoded.PriorResultSeqs, true) || decoded.ResultEncoding != "decision-result-jcs-v1" || !projectionValueIn(result.Verdict, "pass", "fail") || !projectionBoundedText(result.Reason, false) || validateSafeGateEvidence(result.Evidence) != nil {
 			return errors.New("invalid judge result")
 		}
+		decoded.Result = result
 		canonical, err := canonicalProjectionJSON(data["result"])
 		if err != nil || projectionSHA(canonical) != decoded.ResultSHA256 {
 			return errors.New("judge result hash mismatch")
 		}
+		return replaceProjectionData(data, "result", result)
+	case "judge_attempt_failed":
+		decoded, err := decodeTypedData[SafeSchema2JudgeAttemptFailedData](data)
+		if err != nil || !safeProjectionIdentifier(decoded.GateID) || !projectionSafeSequence(decoded.GateAttempt) || !safeProjectionIdentifier(decoded.JudgeNodeID) || !projectionSafeSequence(decoded.JudgeAttempt) || decoded.ChainIndex > MaxJSONSafeInteger || !lowercaseProjectionSHA(decoded.ContextSHA256) || !projectionAscendingUnique(decoded.PriorResultSeqs, true) || decoded.Code != "invalid_judge_result" || !projectionBoundedText(decoded.Reason, false) || !projectionSafeSequence(decoded.RelatedSeq) {
+			return errors.New("invalid failed judge attempt")
+		}
 	case "gate_verdict":
 		decoded, err := decodeTypedData[SafeSchema2GateVerdictData](data)
-		if err != nil || !projectionValueIn(decoded.Verdict, "pass", "fail") || len(decoded.PerKind) == 0 || len(decoded.PerKind) != len(decoded.KindResultSeqs) {
+		if err != nil || !safeProjectionIdentifier(decoded.GateID) || !projectionSafeSequence(decoded.GateAttempt) || !projectionValueIn(decoded.Verdict, "pass", "fail") || len(decoded.PerKind) == 0 || len(decoded.PerKind) != len(decoded.KindResultSeqs) || decoded.EvaluatedInputRef.InputID == "" || decoded.RoutePort != decoded.Verdict || !validateProjectionIdentifiers(decoded.RoutedEdges) || !projectionBoundedText(decoded.Reason, false) {
 			return errors.New("invalid gate verdict")
 		}
 		for kind, verdict := range decoded.PerKind {
@@ -2184,8 +2303,25 @@ func validateAndNormalizeSchema2Data(eventType string, data map[string]json.RawM
 		return replaceProjectionData(data, "feedbackPayload", feedback)
 	case "run_succeeded":
 		decoded, err := decodeTypedData[SafeSchema2RunSucceededData](data)
-		if err != nil || (decoded.SummaryArtifactID != "" && !safeProjectionIdentifier(decoded.SummaryArtifactID)) {
+		if err != nil || (decoded.SummaryArtifactID != "" && !safeProjectionIdentifier(decoded.SummaryArtifactID)) || !validateProjectionIdentifiers(decoded.OutputArtifactIDs) || !decoded.Final {
 			return errors.New("invalid run summary artifact")
+		}
+	case "artifact_observed":
+		decoded, err := decodeTypedData[SafeSchema2ArtifactObservedData](data)
+		if err != nil || !safeProjectionIdentifier(decoded.ArtifactID) || !projectionValueIn(decoded.Availability, "available", "unavailable", "redacted", "expired") || !projectionTimestamp(decoded.ObservedAt) || !projectionSafeSequenceOrZero(decoded.RelatedSeq) {
+			return errors.New("invalid artifact observation")
+		}
+		if decoded.Availability == "available" {
+			if decoded.Artifact == nil || decoded.Artifact.ArtifactID != decoded.ArtifactID {
+				return errors.New("invalid available artifact observation")
+			}
+		} else if !safeProjectionIdentifier(decoded.ErrorCode) {
+			return errors.New("invalid unavailable artifact observation")
+		}
+	case "escalation_raised":
+		decoded, err := decodeTypedData[SafeSchema2EscalationRaisedData](data)
+		if err != nil || !safeProjectionIdentifier(decoded.Trigger) || !projectionValueIn(decoded.Severity, "info", "needs-attention", "stop") || !projectionBoundedText(decoded.Reason, false) || !projectionValueIn(decoded.Source, "system", "agent", "human") || (decoded.NodeID != "" && !safeProjectionIdentifier(decoded.NodeID)) || (decoded.GateID != "" && !safeProjectionIdentifier(decoded.GateID)) {
+			return errors.New("invalid escalation")
 		}
 	case "human_input_requested":
 		promptAllowed := stringSet("classification", "sourceKind", "templateId")
@@ -2211,7 +2347,29 @@ func validateAndNormalizeSchema2Data(eventType string, data map[string]json.RawM
 				return err
 			}
 		}
+		decoded, err := decodeTypedData[SafeSchema2HumanInputRequestedData](data)
+		if err != nil || !safeProjectionIdentifier(decoded.GateID) || !projectionSafeSequence(decoded.GateAttempt) || !safeProjectionIdentifier(decoded.NodeID) || !projectionBoundedText(decoded.RequestedBy, false) || decoded.EvaluatedInputRef.InputID == "" {
+			return errors.New("invalid human input request")
+		}
+	case "human_verdict_recorded":
+		decoded, err := decodeTypedData[SafeSchema2HumanVerdictRecordedData](data)
+		if err != nil || !safeProjectionIdentifier(decoded.CommandID) || !lowercaseProjectionSHA(decoded.CommandPayloadSHA256) || !safeProjectionIdentifier(decoded.GateID) || !projectionSafeSequence(decoded.GateAttempt) || !safeProjectionIdentifier(decoded.NodeID) || !projectionValueIn(decoded.Verdict, "pass", "fail") || !projectionBoundedText(decoded.Reason, false) || !projectionSafeSequence(decoded.RequestedSeq) || !projectionBoundedText(decoded.DecidedBy, false) {
+			return errors.New("invalid human verdict")
+		}
+	case "error":
+		decoded, err := decodeTypedData[SafeSchema2ErrorData](data)
+		if err != nil || !safeProjectionIdentifier(decoded.Code) || !projectionBoundedText(decoded.Message, false) || !projectionValueIn(decoded.Boundary, "engine", "writer", "adapter", "tmux", "schema", "operator", "evaluator") || !projectionValueIn(decoded.ErrorScope, "run", "node", "gate", "slot", "tool") || !projectionSafeSequenceOrZero(decoded.RelatedSeq) {
+			return errors.New("invalid run error")
+		}
+		identity := map[string]string{"run": "run", "node": decoded.NodeID, "gate": decoded.GateID, "slot": decoded.SlotID, "tool": decoded.ToolLeaseID}[decoded.ErrorScope]
+		if decoded.ErrorScope != "run" && !safeProjectionIdentifier(identity) {
+			return errors.New("invalid scoped error identity")
+		}
 	case "run_cancel_requested":
+		decoded, err := decodeTypedData[SafeSchema2RunCancelRequestedData](data)
+		if err != nil || !safeProjectionIdentifier(decoded.CommandID) || !lowercaseProjectionSHA(decoded.CommandPayloadSHA256) || !projectionBoundedText(decoded.Reason, false) || !projectionBoundedText(decoded.RequestedBy, false) {
+			return errors.New("invalid cancellation request")
+		}
 		nodes, err := decodeNodeAttemptSnapshots(data["openNodeAttempts"])
 		if err != nil {
 			return err
@@ -2230,6 +2388,10 @@ func validateAndNormalizeSchema2Data(eventType string, data map[string]json.RawM
 			}
 		}
 	case "run_failure_reconciliation_started":
+		decoded, err := decodeTypedData[SafeSchema2RunFailureReconciliationStartedData](data)
+		if err != nil || !projectionSafeSequenceOrZero(decoded.OriginCancelRequestSeq) || !safeProjectionIdentifier(decoded.Code) || !projectionBoundedText(decoded.Reason, false) || !projectionSafeSequenceOrZero(decoded.RelatedSeq) || !decoded.RecordedBeforeReconciliation {
+			return errors.New("invalid failure reconciliation start")
+		}
 		cause, err := decodeFailureCause(data["failureCause"])
 		if err != nil {
 			return err
@@ -2246,18 +2408,14 @@ func validateAndNormalizeSchema2Data(eventType string, data map[string]json.RawM
 		if err != nil {
 			return err
 		}
-		var recorded bool
-		if json.Unmarshal(data["recordedBeforeReconciliation"], &recorded) != nil || !recorded {
-			return errors.New("failure reconciliation not recorded")
-		}
 		for key, value := range map[string]any{"failureCause": cause, "openNodeAttempts": nodes, "openSlotDispatches": slots, "openToolLeases": tools} {
 			if err := replaceProjectionData(data, key, value); err != nil {
 				return err
 			}
 		}
 	case "run_canceled":
-		var final bool
-		if json.Unmarshal(data["final"], &final) != nil || !final {
+		decoded, err := decodeTypedData[SafeSchema2RunCanceledData](data)
+		if err != nil || !projectionSafeSequence(decoded.CancelRequestSeq) || !projectionBoundedText(decoded.Reason, false) || !projectionBoundedText(decoded.RequestedBy, false) || !decoded.Final {
 			return errors.New("run canceled is not final")
 		}
 		nodes, err := decodeNodeAttemptDispositions(data["nodeAttemptDispositions"], "canceled_non_authorizing")
@@ -2283,8 +2441,8 @@ func validateAndNormalizeSchema2Data(eventType string, data map[string]json.RawM
 			}
 		}
 	case "run_failed":
-		var final bool
-		if json.Unmarshal(data["final"], &final) != nil || !final {
+		decoded, err := decodeTypedData[SafeSchema2RunFailedData](data)
+		if err != nil || !projectionSafeSequence(decoded.FailureReconciliationSeq) || !safeProjectionIdentifier(decoded.Code) || !projectionBoundedText(decoded.Reason, false) || !projectionSafeSequenceOrZero(decoded.RelatedSeq) || !decoded.Final {
 			return errors.New("run failed is not final")
 		}
 		cause, err := decodeFailureCause(data["failureCause"])
@@ -2320,6 +2478,14 @@ func sanitizeSchema2Event(event rawProjectionEvent) (SafeRunEvent, error) {
 	data, err := validateDataKeys(event.data, allowed, private)
 	if err != nil {
 		return nil, err
+	}
+	if (event.typeName == "run_blocked" || event.typeName == "run_resumed") && data["openDispatches"] != nil {
+		if _, err := decodeSchema2OpenDispatches(data["openDispatches"]); err != nil {
+			return nil, err
+		}
+	}
+	if err := validateSchema2DataPresence(event.typeName, data, allowed); err != nil {
+		return nil, projectionError(ErrRunEventUnknown, "invalid schema-2 data presence")
 	}
 	envelope := eventEnvelope(event)
 	if raw, ok := data["inputRef"]; ok {
@@ -2633,6 +2799,92 @@ func schema2DataContract(eventType string) (map[string]bool, map[string]bool) {
 		private = stringSet("capturedRange", "sentinel", "clientAttachmentAuditProof", "turnClosureProof")
 	}
 	return stringSet(keys...), private
+}
+
+func rawProjectionString(data map[string]json.RawMessage, key string) string {
+	var value string
+	_ = json.Unmarshal(data[key], &value)
+	return value
+}
+
+func validateSchema2DataPresence(eventType string, data map[string]json.RawMessage, allowed map[string]bool) error {
+	required := make(map[string]bool, len(allowed))
+	for key := range allowed {
+		required[key] = true
+	}
+	for _, key := range map[string][]string{
+		"node_started":     {"triggerFeedbackId", "priorGateSeq"},
+		"formation_result": {"reportArtifactId", "artifactIds", "diffArtifactIds", "contributingSlotResultSeqs"},
+		"tool_result":      {"displayEvidence"},
+		"node_output":      {"reportArtifactId"},
+		"gate_evaluating":  {"revisionCycleId", "triggerFeedbackId", "priorGateSeq"},
+		"run_succeeded":    {"summaryArtifactId"},
+	}[eventType] {
+		delete(required, key)
+	}
+	forbidden := map[string]bool{}
+
+	switch eventType {
+	case "node_started":
+		if rawProjectionString(data, "reason") == "judge" {
+			required = stringSet("nodeId", "nodeKind", "attempt", "reason", "contextEncoding", "judgeContextSha256", "priorResultSeqs")
+			forbidden = stringSet("inputRefs")
+		} else {
+			required = stringSet("nodeId", "nodeKind", "attempt", "reason", "inputRefs")
+			forbidden = stringSet("contextEncoding", "judgeContextSha256", "priorResultSeqs")
+		}
+	case "gate_kind_result":
+		if rawProjectionString(data, "kind") == "formation" {
+			required = stringSet("gateId", "gateAttempt", "kind", "verdict", "reason", "evidence", "evaluatedInputRef", "resultEncoding", "resultSha256", "relatedSeqs")
+			forbidden = stringSet("gateBindingId", "inputSha256", "profileSha256", "evaluatorBundleSha256", "parametersSha256", "policySha256", "determinismPolicySha256")
+		}
+	case "gate_verdict":
+		if rawProjectionString(data, "verdict") == "pass" {
+			delete(required, "feedbackPayload")
+			forbidden = stringSet("feedbackPayload")
+		}
+	case "artifact_observed":
+		if rawProjectionString(data, "availability") == "available" {
+			required = stringSet("artifactId", "availability", "artifact", "observedAt", "relatedSeq")
+			forbidden = stringSet("errorCode")
+		} else {
+			required = stringSet("artifactId", "availability", "errorCode", "observedAt", "relatedSeq")
+			forbidden = stringSet("artifact")
+		}
+	case "error":
+		required = stringSet("code", "message", "boundary", "errorScope", "recoverable", "relatedSeq")
+		forbidden = stringSet("nodeId", "gateId", "slotId", "toolLeaseId")
+		identityKey := map[string]string{"node": "nodeId", "gate": "gateId", "slot": "slotId", "tool": "toolLeaseId"}[rawProjectionString(data, "errorScope")]
+		if identityKey != "" {
+			required[identityKey] = true
+			delete(forbidden, identityKey)
+		}
+	case "run_blocked":
+		required = stringSet("reason", "blockScope", "resumeAllowed", "resumePolicy", "openDispatches", "retryTargets")
+		forbidden = stringSet("blockedNodeId", "blockedGateId", "nextEpoch")
+		switch rawProjectionString(data, "blockScope") {
+		case "node":
+			required["blockedNodeId"] = true
+			delete(forbidden, "blockedNodeId")
+			required["nextEpoch"] = true
+			delete(forbidden, "nextEpoch")
+		case "gate":
+			required["blockedGateId"] = true
+			delete(forbidden, "blockedGateId")
+		}
+	}
+
+	for key := range required {
+		if _, ok := data[key]; !ok {
+			return errors.New("missing required data member")
+		}
+	}
+	for key := range forbidden {
+		if _, ok := data[key]; ok {
+			return errors.New("forbidden data member")
+		}
+	}
+	return nil
 }
 
 func decodeSchema2OpenDispatches(raw json.RawMessage) ([]SafeSchema2OpenDispatch, error) {
@@ -3163,7 +3415,7 @@ func reduceSchema2Event(state *projectionState, raw rawProjectionEvent, safe Saf
 			return err
 		}
 	case SafeSchema2RunActivatedEvent:
-		if event.Data.AdmissionPolicyRev != state.view.Audit.AdmissionPolicyRev || event.Data.AdmissionPolicySHA256 != state.view.Audit.AdmissionPolicySHA256 {
+		if event.Data.WorkspaceAdmissionSeq != state.view.Audit.WorkspaceAdmissionSeq || event.Data.AdmissionPolicyRev != state.view.Audit.AdmissionPolicyRev || event.Data.AdmissionPolicySHA256 != state.view.Audit.AdmissionPolicySHA256 {
 			return projectionError(ErrRunProjectionInvalid, "activation policy mismatch")
 		}
 		state.view.Status = "running"
