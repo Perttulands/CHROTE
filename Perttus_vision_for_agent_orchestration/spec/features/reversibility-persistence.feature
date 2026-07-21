@@ -9,7 +9,7 @@ Feature: Reversibility and the file contract — safe, durable, and recoverable
 
   Background:
     Given definitions live in "<workspace>/.formations/" (sibling of ".beads/")
-    And canonical run authority lives under "<chrote-data>/formations/" outside generic Files roots
+    And canonical run authority lives under one "<formations-host-authority-root>/" outside generic Files roots
     And persona cards live centrally in "~/agents/"
     And the shared formations package is the only serializer of definition files
     And the current fenced CHROTE server coordinator is the sole semantic writer of schema-2 runtime authority
@@ -33,18 +33,18 @@ Feature: Reversibility and the file contract — safe, durable, and recoverable
   @cli
   Scenario: A certified guarded rollback version does not delete durable evidence
     Given Formations has produced evidence under ".formations/"
-    And Formations has produced canonical run authority under "<chrote-data>/formations/"
-    And the rollback binary reports the non-authorizing registry/bootstrap/workspace-authority guard capability
+    And Formations has produced canonical run authority under "<formations-host-authority-root>/"
+    And the rollback binary reports the non-authorizing "formations.runtime-authority-read-guard.v1" capability
     When the operator deploys that certified prior CHROTE code version
     Then existing ".formations/" data is preserved byte-for-byte
-    And existing "<chrote-data>/formations/" data is preserved byte-for-byte
+    And existing "<formations-host-authority-root>/" data is preserved byte-for-byte
     And tmux sessions and Beads are untouched
 
   @file
   Scenario: Rollback never treats canonical data as disposable cache
     When a code rollback is requested
     Then no workflow deletes or rewrites "<workspace>/.formations/"
-    And no workflow deletes or rewrites "<chrote-data>/formations/"
+    And no workflow deletes or rewrites "<formations-host-authority-root>/"
     And explicit evidence retention or migration remains a separate operator decision
 
   @file @security
@@ -75,7 +75,9 @@ Feature: Reversibility and the file contract — safe, durable, and recoverable
     Given the supported current owner holds the governing registry or workspace authority lock
     When it updates the registry, workspace counters/current policy ref, owner lease, or one command record and its terminal receipt fields
     Then each closed record increments its revision and writes a same-directory generation-checked temp, fsyncs it, atomically renames it, and fsyncs the parent
-    And registry generations use only the parent registry lock while workspace-local generations use only the owner lock
+    And registry generations use only the shared host registry lock while workspace-local generations use only the owner lock
+    And each mutable record exact-binds its expected previous revision and same-encoding SHA-256 through required "priorGeneration"
+    And a permissively decoded legacy record missing that binding is non-authorizing and never auto-upgraded
     And every revision, fence, and admission sequence stays within the JSON-safe positive-integer range or fails before mutation
     And immutable authority is fully written and fsynced in same-directory staging before atomic no-replace canonical install and parent fsync
     And an exact canonical immutable file makes retry idempotent while conflicting bytes are never replaced
@@ -128,14 +130,22 @@ Feature: Reversibility and the file contract — safe, durable, and recoverable
     Then the change is detected (mtime/fsnotify) and surfaced as a reload signal
 
   @file
-  Scenario Outline: Schema is versioned — refuse newer, up-migrate older
-    Given a file with schema version "<v>"
+  Scenario Outline: Definition schema reads are versioned and non-mutating
+    Given a board or layout file with schema version "<v>"
     Then the package "<behavior>"
     Examples:
-      | v       | behavior                                            |
-      | current | reads normally                                      |
-      | older   | up-migrates on read, preserving content             |
-      | newer   | refuses to load and fails loud (never silent guess) |
+      | v       | behavior                                                                  |
+      | current | reads normally without rewriting canonical bytes                         |
+      | older   | normalizes only in memory for inspection; canonical bytes remain unchanged |
+      | newer   | refuses to load and fails loud (never silent guess)                       |
+
+  @file
+  Scenario: Only first Tool creation persists a board-schema migration
+    Given a schema-1 board that is safely normalizable and a schema-1 layout
+    When either definition is read or inspected
+    Then both canonical files remain byte-for-byte unchanged
+    When the first Tool is created successfully
+    Then the board is written once as board schema 2 and the layout remains schema 1
 
   # ── Separation of concerns ──────────────────────────────────────────────────
 
@@ -143,7 +153,7 @@ Feature: Reversibility and the file contract — safe, durable, and recoverable
   Scenario: Definition, layout, and run state are separate
     Then structure lives in the board definition
     And node x/y and wire lanes live in the layout sidecar
-    And canonical run events live in the writer-only per-run NDJSON ledger under the CHROTE data root outside generic Files roots
+    And canonical run events live in the writer-only per-run NDJSON ledger under "<formations-host-authority-root>/" outside generic Files roots
     And only the current workspace lease/fence holder may append or perform a runtime side effect
     And the workspace exposes only definitions, layout, and authorized sanitized artifacts
     And a run finishing or a node being dragged never dirties the board definition

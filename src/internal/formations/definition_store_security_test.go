@@ -99,10 +99,19 @@ func TestDefinitionReadsRejectExternalLinksWithoutMigration(t *testing.T) {
 				default:
 					t.Fatalf("unknown attack %q", attack)
 				}
+				formationsDirectory := filepath.Dir(definitionDirectory)
+				formationsModeBefore := definitionPathModeForTest(t, formationsDirectory)
+				definitionDirectoryModeBefore := definitionPathModeForTest(t, definitionDirectory)
 
 				exposed, err := definition.read(NewStore(workspace))
 				if err == nil {
 					t.Errorf("read followed %s and exposed %q", attack, exposed)
+				}
+				if got := definitionPathModeForTest(t, formationsDirectory); got != formationsModeBefore {
+					t.Errorf("rejected %s read changed .formations mode from %v to %v", attack, formationsModeBefore, got)
+				}
+				if got := definitionPathModeForTest(t, definitionDirectory); got != definitionDirectoryModeBefore {
+					t.Errorf("rejected %s read changed definition directory mode from %v to %v", attack, definitionDirectoryModeBefore, got)
 				}
 				victimAfter, readErr := os.ReadFile(victimPath)
 				if readErr != nil {
@@ -290,22 +299,136 @@ func TestDefinitionWriterRepairsValidatedSingleLinkLockMode(t *testing.T) {
 }
 
 func TestLegacyMigrationRepairsValidatedDefinitionDirectoryMode(t *testing.T) {
-	store := NewStore(t.TempDir())
-	writeFixture(t, store.BoardPath("legacy"), "id = \"brd_legacy\"\nslug = \"legacy\"\ntitle = \"Legacy\"\nrev = 1\n")
-	directory := filepath.Dir(store.BoardPath("legacy"))
-	if err := os.Chmod(directory, 0o755); err != nil {
-		t.Fatalf("set legacy directory mode: %v", err)
+	definitions := []struct {
+		name string
+		path func(*Store) string
+		raw  string
+		read func(*Store) error
+	}{
+		{
+			name: "board",
+			path: func(store *Store) string { return store.BoardPath("legacy") },
+			raw:  minimalBoard("legacy", 1),
+			read: func(store *Store) error {
+				_, err := store.ReadBoard("legacy")
+				return err
+			},
+		},
+		{
+			name: "layout",
+			path: func(store *Store) string { return store.LayoutPath("legacy") },
+			raw: "schema = 1\n" +
+				"boardId = \"brd_legacy\"\n" +
+				"boardRev = 1\n" +
+				"updatedAt = \"2026-07-18T12:00:00Z\"\n",
+			read: func(store *Store) error {
+				_, err := store.ReadLayout("legacy")
+				return err
+			},
+		},
 	}
 
-	if _, err := store.ReadBoard("legacy"); err != nil {
-		t.Fatalf("migrate legacy board: %v", err)
+	for _, definition := range definitions {
+		definition := definition
+		t.Run(definition.name, func(t *testing.T) {
+			store := NewStore(t.TempDir())
+			definitionPath := definition.path(store)
+			writeFixture(t, definitionPath, definition.raw)
+			definitionDirectory := filepath.Dir(definitionPath)
+			formationsDirectory := filepath.Dir(definitionDirectory)
+			for _, directory := range []string{formationsDirectory, definitionDirectory} {
+				if err := os.Chmod(directory, 0o755); err != nil {
+					t.Fatalf("set legacy directory mode for %s: %v", directory, err)
+				}
+			}
+
+			formationsModeBefore := definitionPathModeForTest(t, formationsDirectory)
+			formationsIdentityBefore := operativeFileIdentityForTest(t, formationsDirectory)
+			definitionBefore := readFile(t, definitionPath)
+			definitionModeBefore := definitionPathModeForTest(t, definitionPath)
+			definitionIdentityBefore := operativeFileIdentityForTest(t, definitionPath)
+
+			// Public definition readers deliberately open the existing hierarchy with
+			// create=false. A successful validated file read may repair only the leaf.
+			if err := definition.read(store); err != nil {
+				t.Fatalf("read legacy %s: %v", definition.name, err)
+			}
+			if got := definitionPathModeForTest(t, formationsDirectory); got != formationsModeBefore {
+				t.Errorf("legacy %s read changed .formations mode from %v to %v", definition.name, formationsModeBefore, got)
+			}
+			if got := operativeFileIdentityForTest(t, formationsDirectory); got != formationsIdentityBefore {
+				t.Errorf("legacy %s read replaced .formations identity = %v, want %v", definition.name, got, formationsIdentityBefore)
+			}
+			if got := readFile(t, definitionPath); got != definitionBefore {
+				t.Errorf("legacy %s read rewrote definition bytes:\n got %q\nwant %q", definition.name, got, definitionBefore)
+			}
+			if got := definitionPathModeForTest(t, definitionPath); got != definitionModeBefore {
+				t.Errorf("legacy %s read changed definition mode from %v to %v", definition.name, definitionModeBefore, got)
+			}
+			if got := operativeFileIdentityForTest(t, definitionPath); got != definitionIdentityBefore {
+				t.Errorf("legacy %s read replaced definition identity = %v, want %v", definition.name, got, definitionIdentityBefore)
+			}
+			if _, err := os.Lstat(definitionPath + ".lock"); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("legacy %s read created a definition lock: %v", definition.name, err)
+			}
+			if got := definitionPathModeForTest(t, definitionDirectory); !hasSharedDirMode(got) {
+				t.Fatalf("migrated %s definition directory mode = %v, want shared setgid 0770", definition.name, got)
+			}
+		})
 	}
-	info, err := os.Stat(directory)
-	if err != nil {
-		t.Fatalf("stat migrated definition directory: %v", err)
+}
+
+func TestMissingDefinitionReadsDoNotRepairDirectoryMode(t *testing.T) {
+	definitions := []struct {
+		name      string
+		directory string
+		read      func(*Store) error
+	}{
+		{
+			name:      "board",
+			directory: boardDefinitionKind.directory,
+			read: func(store *Store) error {
+				_, err := store.ReadBoard("missing")
+				return err
+			},
+		},
+		{
+			name:      "layout",
+			directory: layoutDefinitionKind.directory,
+			read: func(store *Store) error {
+				_, err := store.ReadLayout("missing")
+				return err
+			},
+		},
 	}
-	if !hasSharedDirMode(info.Mode()) {
-		t.Fatalf("migrated definition directory mode = %v, want shared setgid 0770", info.Mode())
+
+	for _, definition := range definitions {
+		definition := definition
+		t.Run(definition.name, func(t *testing.T) {
+			store := NewStore(t.TempDir())
+			formationsDirectory := filepath.Join(store.workspaceRoot(), ".formations")
+			definitionDirectory := filepath.Join(formationsDirectory, definition.directory)
+			if err := os.MkdirAll(definitionDirectory, 0o755); err != nil {
+				t.Fatalf("create legacy definition directory: %v", err)
+			}
+			for _, directory := range []string{formationsDirectory, definitionDirectory} {
+				if err := os.Chmod(directory, 0o755); err != nil {
+					t.Fatalf("set legacy directory mode for %s: %v", directory, err)
+				}
+			}
+			formationsModeBefore := definitionPathModeForTest(t, formationsDirectory)
+			definitionDirectoryModeBefore := definitionPathModeForTest(t, definitionDirectory)
+
+			if err := definition.read(store); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("missing %s read error = %v, want ErrNotFound", definition.name, err)
+			}
+			if got := definitionPathModeForTest(t, formationsDirectory); got != formationsModeBefore {
+				t.Errorf("missing %s read changed .formations mode from %v to %v", definition.name, formationsModeBefore, got)
+			}
+			if got := definitionPathModeForTest(t, definitionDirectory); got != definitionDirectoryModeBefore {
+				t.Errorf("missing %s read changed definition directory mode from %v to %v", definition.name, definitionDirectoryModeBefore, got)
+			}
+		})
 	}
 }
 
@@ -333,10 +456,29 @@ func TestListBoardsRejectsDefinitionShapedDirectory(t *testing.T) {
 	if err := os.MkdirAll(store.BoardPath("directory"), 0o755); err != nil {
 		t.Fatalf("create definition-shaped directory: %v", err)
 	}
+	definitionDirectory := filepath.Dir(store.BoardPath("directory"))
+	formationsDirectory := filepath.Dir(definitionDirectory)
+	formationsModeBefore := definitionPathModeForTest(t, formationsDirectory)
+	definitionDirectoryModeBefore := definitionPathModeForTest(t, definitionDirectory)
 
 	if _, err := store.ListBoards(); err == nil {
 		t.Fatal("list boards silently ignored definition-shaped directory")
 	}
+	if got := definitionPathModeForTest(t, formationsDirectory); got != formationsModeBefore {
+		t.Errorf("wrong-type definition read changed .formations mode from %v to %v", formationsModeBefore, got)
+	}
+	if got := definitionPathModeForTest(t, definitionDirectory); got != definitionDirectoryModeBefore {
+		t.Errorf("wrong-type definition read changed definition directory mode from %v to %v", definitionDirectoryModeBefore, got)
+	}
+}
+
+func definitionPathModeForTest(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	return info.Mode()
 }
 
 func TestConfiguredWorkspaceSymlinkStillSupportsDefinitionPersistence(t *testing.T) {

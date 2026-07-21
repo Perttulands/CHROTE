@@ -162,6 +162,42 @@
 .fmx .verify-band.legacy .vico{border-color:var(--gold);color:var(--gold);}
 .fmx .verify-band.legacy .vlabel{color:var(--gold);}
 
+/* Tool card: definition projection only; runtime execution is deliberately unavailable. */
+.fmx .toolcard{position:absolute;width:300px;background:var(--card);border:1px solid var(--steel);border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.35);z-index:1;cursor:grab;transition:left .18s cubic-bezier(.2,.7,.3,1),top .18s cubic-bezier(.2,.7,.3,1);}
+.fmx .toolcard:active{cursor:grabbing;}
+.fmx .tool-head{display:flex;align-items:flex-start;gap:12px;padding:12px 14px 7px;border-bottom:1px solid var(--line2);}
+.fmx .tool-heading{display:flex;min-width:0;flex:1;flex-direction:column;gap:3px;}
+.fmx .tool-kind{font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--steel);}
+.fmx .tool-title{font-size:14px;font-weight:700;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.fmx .tool-inspect{border:1px solid var(--line);border-radius:4px;background:var(--paper2);color:var(--ink2);padding:4px 7px;font:inherit;font-size:9px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;}
+.fmx .tool-inspect:hover{border-color:var(--steel);color:var(--steel);}
+.fmx .tool-profile{padding:8px 14px 2px;color:var(--ink2);font-size:10.5px;font-family:var(--font-mono,monospace);overflow-wrap:anywhere;}
+.fmx .tool-state{padding:2px 14px 9px;color:var(--gold);font-size:9px;letter-spacing:.1em;text-transform:uppercase;}
+.fmx .tool-ports{border-top:1px solid var(--line2);}
+.fmx .tool-port-row{position:relative;display:flex;align-items:center;gap:8px;min-height:34px;padding:7px 14px;}
+.fmx .tool-port-row + .tool-port-row{border-top:1px solid var(--line2);}
+.fmx .tool-port-direction{flex-shrink:0;color:var(--dimmer);font-size:8.5px;letter-spacing:.13em;text-transform:uppercase;}
+.fmx .tool-port-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink2);font-size:11px;}
+.fmx .tool-port-row.output{justify-content:flex-end;text-align:right;}
+.fmx .tool-port-row.input .port.pin{left:-9px;top:50%;margin-top:-8px;}
+.fmx .tool-port-row.output .port.pout{right:-9px;top:50%;margin-top:-8px;}
+
+.fmx .tool-inspector{width:430px;left:calc(50% - 215px);}
+.fmx .tool-detail-state{margin-bottom:12px;border-left:3px solid var(--gold);background:color-mix(in srgb,var(--gold) 8%,transparent);padding:8px 10px;color:var(--gold);font-size:10px;letter-spacing:.1em;text-transform:uppercase;}
+.fmx .tool-detail-identity{display:grid;gap:7px;margin:0;}
+.fmx .tool-detail-identity>div{display:grid;grid-template-columns:72px minmax(0,1fr);gap:10px;}
+.fmx .tool-detail-identity dt{color:var(--dim);font-size:9px;letter-spacing:.1em;text-transform:uppercase;}
+.fmx .tool-detail-identity dd{min-width:0;margin:0;color:var(--ink2);font-family:var(--font-mono,monospace);font-size:11px;overflow-wrap:anywhere;}
+.fmx .tool-detail-section{margin-top:15px;}
+.fmx .tool-detail-section h3{margin:0 0 6px;color:var(--dim);font-size:9px;letter-spacing:.12em;text-transform:uppercase;}
+.fmx .tool-detail-list{display:grid;gap:5px;}
+.fmx .tool-detail-row,.fmx .tool-detail-port{border:1px solid var(--line);border-radius:4px;background:var(--paper2);padding:8px 10px;color:var(--ink2);font-size:11px;}
+.fmx .tool-detail-row{display:flex;justify-content:space-between;gap:12px;}
+.fmx .tool-detail-row strong,.fmx .tool-detail-port strong,.fmx .tool-detail-port code{color:var(--ink);font-family:var(--font-mono,monospace);}
+.fmx .tool-detail-port{display:flex;flex-wrap:wrap;gap:4px 9px;align-items:baseline;}
+.fmx .tool-detail-port code{width:100%;font-size:9.5px;overflow-wrap:anywhere;}
+.fmx .tool-detail-port span{color:var(--dim);}
+
 /* wires */
 .fmx .wires{position:absolute;top:0;left:0;width:3400px;height:2300px;z-index:0;pointer-events:auto;overflow:visible;}
 .fmx .wires path.wirehit{fill:none;stroke:transparent;stroke-width:18;pointer-events:stroke;cursor:grab;}
@@ -193,7 +229,7 @@
 /* gate card */
 .fmx .gatecard{position:absolute;display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:4px;padding:11px 62px 11px 11px;box-shadow:0 2px 8px rgba(0,0,0,.35);min-width:150px;max-width:300px;min-height:76px;z-index:1;cursor:grab;transition:box-shadow .16s,left .18s cubic-bezier(.2,.7,.3,1),top .18s cubic-bezier(.2,.7,.3,1);}
 /* While a card is being hand-dragged, position must track the pointer 1:1. */
-.fmx .world.nodedrag .formation,.fmx .world.nodedrag .missioncard,.fmx .world.nodedrag .gatecard{transition:none;}
+.fmx .world.nodedrag .formation,.fmx .world.nodedrag .missioncard,.fmx .world.nodedrag .gatecard,.fmx .world.nodedrag .toolcard{transition:none;}
 .fmx .gatecard:hover{box-shadow:0 2px 8px rgba(0,0,0,.35),0 0 0 1px var(--terra);}
 .fmx .gico{width:46px;height:46px;border-radius:50%;background:var(--paper2);border:2px solid var(--dim);display:flex;align-items:center;justify-content:center;color:var(--ink2);position:relative;flex-shrink:0;transition:transform .16s,border-color .16s,background .16s,color .16s;}
 .fmx .gico svg{width:23px;height:23px;}
@@ -288,6 +324,10 @@
 .fmx[data-textsize="large"] .gmeta .gt{font-size:11px;}
 .fmx[data-textsize="large"] .gmeta .gs{font-size:11.5px;}
 .fmx[data-textsize="large"] .vkinds{font-size:12px;}
+.fmx[data-textsize="large"] .tool-title{font-size:16px;}
+.fmx[data-textsize="large"] .tool-profile,.fmx[data-textsize="large"] .tool-port-label{font-size:12.5px;}
+.fmx[data-textsize="large"] .tool-state,.fmx[data-textsize="large"] .tool-detail-state{font-size:10.5px;}
+.fmx[data-textsize="large"] .tool-detail-row,.fmx[data-textsize="large"] .tool-detail-port,.fmx[data-textsize="large"] .tool-detail-identity dd{font-size:12px;}
 .fmx[data-textsize="xlarge"] .ragent .ri .n{font-size:14px;}
 .fmx[data-textsize="xlarge"] .ragent .ri .r{font-size:11px;}
 .fmx[data-textsize="xlarge"] .fhead .ft .tt{font-size:18px;}
@@ -300,6 +340,10 @@
 .fmx[data-textsize="xlarge"] .gmeta .gt{font-size:12px;}
 .fmx[data-textsize="xlarge"] .gmeta .gs{font-size:12.5px;}
 .fmx[data-textsize="xlarge"] .vkinds{font-size:13px;}
+.fmx[data-textsize="xlarge"] .tool-title{font-size:18px;}
+.fmx[data-textsize="xlarge"] .tool-profile,.fmx[data-textsize="xlarge"] .tool-port-label{font-size:13.5px;}
+.fmx[data-textsize="xlarge"] .tool-state,.fmx[data-textsize="xlarge"] .tool-detail-state{font-size:11.5px;}
+.fmx[data-textsize="xlarge"] .tool-detail-row,.fmx[data-textsize="xlarge"] .tool-detail-port,.fmx[data-textsize="xlarge"] .tool-detail-identity dd{font-size:13px;}
 
 @media (max-width: 768px) {
   .fmx .topbar{gap:8px;padding:6px 8px;overflow-x:auto;}

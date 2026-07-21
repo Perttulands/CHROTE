@@ -46,49 +46,83 @@ type formationsHumanGateVerdictRequest struct {
 }
 
 type formationsBoardPatchRequest struct {
-	Title                         *string                              `json:"title"`
-	CreateFormation               *formationsCreateFormationRequest    `json:"createFormation"`
-	DeleteFormation               *formationsDeleteFormationRequest    `json:"deleteFormation"`
-	DeleteGate                    *formationsDeleteGateRequest         `json:"deleteGate"`
-	DeleteMission                 *formationsDeleteMissionRequest      `json:"deleteMission"`
-	AssignSlot                    *formationsAssignSlotRequest         `json:"assignSlot"`
-	MakeController                *formationsMakeControllerRequest     `json:"makeController"`
-	SetBrief                      *formationsSetBriefRequest           `json:"setBrief"`
-	ClearBrief                    *formationsClearBriefRequest         `json:"clearBrief"`
-	SetVerification               *formationsSetVerificationRequest    `json:"setVerification"`
-	RemoveVerification            *formationsRemoveVerificationRequest `json:"removeVerification"`
-	AddPort                       *formationsAddPortRequest            `json:"addPort"`
-	RemovePort                    *formationsRemovePortRequest         `json:"removePort"`
-	WireConnection                *formationsWireConnectionRequest     `json:"wireConnection"`
-	UnwireConnection              *formationsWireConnectionRequest     `json:"unwireConnection"`
-	RewireConnection              *formationsRewireConnectionRequest   `json:"rewireConnection"`
-	CreateGate                    *formationsCreateGateRequest         `json:"createGate"`
-	SetGateJudge                  *formationsSetGateJudgeRequest       `json:"setGateJudge"`
-	DetachGateJudge               *formationsDetachGateJudgeRequest    `json:"detachGateJudge"`
-	CreateMission                 *formationsCreateMissionRequest      `json:"createMission"`
-	LegacyCommandFieldsPresent    bool                                 `json:"-"`
-	SetVerificationOccurrences    int                                  `json:"-"`
-	RemoveVerificationOccurrences int                                  `json:"-"`
-	MutationOccurrences           int                                  `json:"-"`
-	ExpectedRev                   int                                  `json:"expectedRev"`
-	UpdatedBy                     string                               `json:"updatedBy"`
+	Title                         *string                                 `json:"title"`
+	CreateTool                    *formationsToolCreateRequest            `json:"createTool"`
+	UpdateTool                    *formationsToolUpdateRequest            `json:"updateTool"`
+	DeleteTool                    *formationsToolDeleteRequest            `json:"deleteTool"`
+	CreateFormation               *formationsCreateFormationRequest       `json:"createFormation"`
+	DeleteFormation               *formationsDeleteFormationRequest       `json:"deleteFormation"`
+	DeleteGate                    *formationsDeleteGateRequest            `json:"deleteGate"`
+	DeleteMission                 *formationsDeleteMissionRequest         `json:"deleteMission"`
+	AssignSlot                    *formationsAssignSlotRequest            `json:"assignSlot"`
+	MakeController                *formationsMakeControllerRequest        `json:"makeController"`
+	SetBrief                      *formationsSetBriefRequest              `json:"setBrief"`
+	ClearBrief                    *formationsClearBriefRequest            `json:"clearBrief"`
+	SetVerification               *formationsSetVerificationRequest       `json:"setVerification"`
+	RemoveVerification            *formationsRemoveVerificationRequest    `json:"removeVerification"`
+	AddPort                       *formationsAddPortRequest               `json:"addPort"`
+	RemovePort                    *formationsRemovePortRequest            `json:"removePort"`
+	WireConnection                *formationsWireConnectionRequest        `json:"wireConnection"`
+	UnwireConnection              *formationsWireConnectionRequest        `json:"unwireConnection"`
+	RewireConnection              *formationsRewireConnectionRequest      `json:"rewireConnection"`
+	CreateGate                    *formationsCreateGateRequest            `json:"createGate"`
+	SetGateJudge                  *formationsSetGateJudgeRequest          `json:"setGateJudge"`
+	DetachGateJudge               *formationsDetachGateJudgeRequest       `json:"detachGateJudge"`
+	CreateMission                 *formationsCreateMissionRequest         `json:"createMission"`
+	LegacyCommandFieldsPresent    bool                                    `json:"-"`
+	SetVerificationOccurrences    int                                     `json:"-"`
+	RemoveVerificationOccurrences int                                     `json:"-"`
+	MutationOccurrences           int                                     `json:"-"`
+	ExpectedRev                   int                                     `json:"expectedRev"`
+	LayoutExpectation             *formationsToolLayoutExpectationRequest `json:"layoutExpectation"`
+	UpdatedBy                     string                                  `json:"updatedBy"`
+	ToolOperationOccurrences      int                                     `json:"-"`
+	ToolFrameInvalid              bool                                    `json:"-"`
+	ExpectedRevOccurrences        int                                     `json:"-"`
+	LayoutExpectationOccurrences  int                                     `json:"-"`
+	UpdatedByOccurrences          int                                     `json:"-"`
+	UpdatedByNull                 bool                                    `json:"-"`
 }
 
 func (request *formationsBoardPatchRequest) UnmarshalJSON(raw []byte) error {
-	type requestFields formationsBoardPatchRequest
-	var decoded requestFields
-	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return err
-	}
 	presence, err := inspectBoardPatchPresence(raw)
 	if err != nil {
 		return err
+	}
+	invalidToolSurrogate := false
+	if presence.ToolOperationOccurrences > 0 {
+		invalidToolSurrogate, err = inspectToolFrameUnicode(raw)
+		if err != nil {
+			return err
+		}
+	}
+
+	type requestFields formationsBoardPatchRequest
+	var decoded requestFields
+	if presence.ToolOperationOccurrences == 0 {
+		legacy := struct {
+			*requestFields
+			LayoutExpectation json.RawMessage `json:"layoutExpectation"`
+		}{requestFields: &decoded}
+		if err := json.Unmarshal(raw, &legacy); err != nil {
+			return err
+		}
+	} else {
+		if err := json.Unmarshal(raw, &decoded); err != nil {
+			return err
+		}
 	}
 	*request = formationsBoardPatchRequest(decoded)
 	request.LegacyCommandFieldsPresent = presence.LegacyCommandFieldsPresent
 	request.SetVerificationOccurrences = presence.SetVerificationOccurrences
 	request.RemoveVerificationOccurrences = presence.RemoveVerificationOccurrences
 	request.MutationOccurrences = presence.MutationOccurrences
+	request.ToolOperationOccurrences = presence.ToolOperationOccurrences
+	request.ToolFrameInvalid = presence.ToolFrameInvalid || invalidToolSurrogate
+	request.ExpectedRevOccurrences = presence.ExpectedRevOccurrences
+	request.LayoutExpectationOccurrences = presence.LayoutExpectationOccurrences
+	request.UpdatedByOccurrences = presence.UpdatedByOccurrences
+	request.UpdatedByNull = presence.UpdatedByNull
 	return nil
 }
 
@@ -208,10 +242,19 @@ type boardPatchPresence struct {
 	SetVerificationOccurrences    int
 	RemoveVerificationOccurrences int
 	MutationOccurrences           int
+	ToolOperationOccurrences      int
+	ToolFrameInvalid              bool
+	ExpectedRevOccurrences        int
+	LayoutExpectationOccurrences  int
+	UpdatedByOccurrences          int
+	UpdatedByNull                 bool
 }
 
 var boardPatchMutationKeys = []string{
 	"title",
+	"createTool",
+	"updateTool",
+	"deleteTool",
 	"createFormation",
 	"deleteFormation",
 	"deleteGate",
@@ -258,6 +301,12 @@ func inspectBoardPatchPresence(raw []byte) (boardPatchPresence, error) {
 				break
 			}
 		}
+		if isToolOperationKey(key) {
+			presence.ToolOperationOccurrences++
+		}
+		if !isExactToolFrameKey(key) {
+			presence.ToolFrameInvalid = true
+		}
 		if strings.EqualFold(key, "createGate") {
 			legacyFieldsPresent, err := scanLegacyGateCommandFields(decoder)
 			if err != nil {
@@ -272,8 +321,18 @@ func inspectBoardPatchPresence(raw []byte) (boardPatchPresence, error) {
 		if strings.EqualFold(key, "removeVerification") {
 			presence.RemoveVerificationOccurrences++
 		}
-		if err := skipJSONValue(decoder); err != nil {
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
 			return boardPatchPresence{}, err
+		}
+		switch key {
+		case "expectedRev":
+			presence.ExpectedRevOccurrences++
+		case "layoutExpectation":
+			presence.LayoutExpectationOccurrences++
+		case "updatedBy":
+			presence.UpdatedByOccurrences++
+			presence.UpdatedByNull = presence.UpdatedByNull || bytes.Equal(bytes.TrimSpace(value), []byte("null"))
 		}
 	}
 	closing, err := decoder.Token()
@@ -450,10 +509,6 @@ func (h *FormationsHandler) StartRun(w http.ResponseWriter, r *http.Request) {
 	}
 	if (request.MissionID == "") == (request.FormationID == "") {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "exactly one of missionId or formationId is required")
-		return
-	}
-	if err := h.store.RequireRuntimeAuthority(); err != nil {
-		writeFormationsError(w, err)
 		return
 	}
 	slug, err := h.store.ResolveBoardSelector(request.Board)
@@ -685,6 +740,9 @@ func (h *FormationsHandler) GetBoardChanges(w http.ResponseWriter, r *http.Reque
 func (h *FormationsHandler) PatchBoard(w http.ResponseWriter, r *http.Request) {
 	var request formationsBoardPatchRequest
 	if !decodeJSONBody(w, r, &request) {
+		return
+	}
+	if h.patchToolBoard(w, r, &request) {
 		return
 	}
 	if request.SetVerificationOccurrences > 0 {
@@ -1196,6 +1254,12 @@ func patchUpdatedBy(parent, child string) string {
 
 func writeFormationsError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, formations.ErrDefinitionPublicationUncertain):
+		core.WriteError(w, http.StatusServiceUnavailable, "DEFINITION_PUBLICATION_UNCERTAIN", "Reload both board and layout before any explicit retry")
+	case errors.Is(err, formations.ErrInvalidToolMutation):
+		core.WriteError(w, http.StatusUnprocessableEntity, "INVALID_TOOL_MUTATION", "Tool mutation is invalid")
+	case errors.Is(err, formations.ErrToolExecutionUnavailable):
+		core.WriteError(w, http.StatusUnprocessableEntity, formations.ToolExecutionUnavailableCode, "Tool execution is unavailable")
 	case errors.Is(err, formations.ErrRuntimeAuthorityNonAuthorizing):
 		core.WriteError(w, http.StatusServiceUnavailable, "RUNTIME_AUTHORITY_NON_AUTHORIZING", "Formations runtime authority is unavailable")
 	case errors.Is(err, formations.ErrConflict):

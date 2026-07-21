@@ -327,9 +327,6 @@ func (s *Store) CreateFormation(slug string, req FormationCreateRequest, opts Wr
 		}
 
 		doc := parseTOMLDocument(raw)
-		if current.Schema < CurrentSchema {
-			doc.setScalar("schema", renderInt(CurrentSchema))
-		}
 		if req.UpdatedBy != "" {
 			doc.setScalar("updatedBy", renderString(req.UpdatedBy))
 		}
@@ -388,9 +385,6 @@ func (s *Store) DeleteFormation(slug string, req FormationDeleteRequest, opts Wr
 		}
 
 		doc := parseTOMLDocument(raw)
-		if current.Schema < CurrentSchema {
-			doc.setScalar("schema", renderInt(CurrentSchema))
-		}
 		if req.UpdatedBy != "" {
 			doc.setScalar("updatedBy", renderString(req.UpdatedBy))
 		}
@@ -453,9 +447,6 @@ func (s *Store) DeleteGate(slug string, req GateDeleteRequest, opts WriteOptions
 		}
 
 		doc := parseTOMLDocument(raw)
-		if current.Schema < CurrentSchema {
-			doc.setScalar("schema", renderInt(CurrentSchema))
-		}
 		if req.UpdatedBy != "" {
 			doc.setScalar("updatedBy", renderString(req.UpdatedBy))
 		}
@@ -518,9 +509,6 @@ func (s *Store) DeleteMission(slug string, req MissionDeleteRequest, opts WriteO
 		}
 
 		doc := parseTOMLDocument(raw)
-		if current.Schema < CurrentSchema {
-			doc.setScalar("schema", renderInt(CurrentSchema))
-		}
 		if req.UpdatedBy != "" {
 			doc.setScalar("updatedBy", renderString(req.UpdatedBy))
 		}
@@ -814,9 +802,6 @@ func (s *Store) CreateGate(slug string, req GateCreateRequest, opts WriteOptions
 		}
 
 		doc := parseTOMLDocument(raw)
-		if current.Schema < CurrentSchema {
-			doc.setScalar("schema", renderInt(CurrentSchema))
-		}
 		if req.UpdatedBy != "" {
 			doc.setScalar("updatedBy", renderString(req.UpdatedBy))
 		}
@@ -950,9 +935,6 @@ func (s *Store) CreateMission(slug string, req MissionCreateRequest, opts WriteO
 		}
 
 		doc := parseTOMLDocument(raw)
-		if current.Schema < CurrentSchema {
-			doc.setScalar("schema", renderInt(CurrentSchema))
-		}
 		if req.UpdatedBy != "" {
 			doc.setScalar("updatedBy", renderString(req.UpdatedBy))
 		}
@@ -1063,11 +1045,15 @@ func (s *Store) WireFormationPorts(slug string, req FormationWireRequest, opts W
 				return nil, ErrConflict
 			}
 		}
-		return appendConnectionBlock(raw, BoardConnection{
-			ID:   newPrefixedID("edge"),
+		candidate := BoardConnection{
 			From: req.From,
 			To:   req.To,
-		}), nil
+		}
+		if _, incompatible := toolConnectionCompatibilityFinding(current, candidate); incompatible {
+			return nil, ErrConflict
+		}
+		candidate.ID = newPrefixedID("edge")
+		return appendConnectionBlock(raw, candidate), nil
 	})
 }
 
@@ -1116,15 +1102,19 @@ func (s *Store) RewireFormationTarget(slug string, req FormationRewireRequest, o
 		if !hasOriginal {
 			return nil, ErrNotFound
 		}
+		candidate := BoardConnection{
+			From: req.From,
+			To:   req.To,
+		}
+		if _, incompatible := toolConnectionCompatibilityFinding(current, candidate); incompatible {
+			return nil, ErrConflict
+		}
 		nextRaw, deleted := deleteConnectionByEndpoints(raw, req.From, req.PreviousTo)
 		if !deleted {
 			return nil, ErrNotFound
 		}
-		return appendConnectionBlock(nextRaw, BoardConnection{
-			ID:   newPrefixedID("edge"),
-			From: req.From,
-			To:   req.To,
-		}), nil
+		candidate.ID = newPrefixedID("edge")
+		return appendConnectionBlock(nextRaw, candidate), nil
 	})
 }
 
@@ -1152,7 +1142,7 @@ func (s *Store) updateLayoutNodes(slug string, nodes []LayoutNode, board *BoardD
 					return err
 				}
 			}
-			raw = []byte("schema = 1\nboardId = " + renderString(board.ID) + "\nboardRev = " + renderInt(board.Rev) + "\nupdatedAt = " + renderString(s.now().Format(time.RFC3339)) + "\n")
+			raw = []byte("schema = " + renderInt(CurrentLayoutSchema) + "\nboardId = " + renderString(board.ID) + "\nboardRev = " + renderInt(board.Rev) + "\nupdatedAt = " + renderString(s.now().Format(time.RFC3339)) + "\n")
 			recreatingMissing = true
 		case errors.Is(err, ErrNotFound):
 			return ErrNotFound
@@ -1167,8 +1157,8 @@ func (s *Store) updateLayoutNodes(slug string, nodes []LayoutNode, board *BoardD
 			return ErrConflict
 		}
 		doc := parseTOMLDocument(raw)
-		if current.Schema < CurrentSchema {
-			doc.setScalar("schema", renderInt(CurrentSchema))
+		if current.Schema < CurrentLayoutSchema {
+			doc.setScalar("schema", renderInt(CurrentLayoutSchema))
 		}
 		if board != nil {
 			doc.setScalar("boardId", renderString(board.ID))
@@ -1209,8 +1199,8 @@ func (s *Store) UpdateLayoutEdges(slug string, edges []LayoutEdge, opts WriteOpt
 			return ErrConflict
 		}
 		doc := parseTOMLDocument(raw)
-		if current.Schema < CurrentSchema {
-			doc.setScalar("schema", renderInt(CurrentSchema))
+		if current.Schema < CurrentLayoutSchema {
+			doc.setScalar("schema", renderInt(CurrentLayoutSchema))
 		}
 		doc.setScalar("updatedAt", renderString(s.now().Format(time.RFC3339)))
 		nextRaw := patchLayoutEdgeBlocks(doc.bytes(), edges)
@@ -1248,9 +1238,6 @@ func (s *Store) updateBoardDefinition(slug, updatedBy string, opts WriteOptions,
 		}
 
 		doc := parseTOMLDocument(raw)
-		if current.Schema < CurrentSchema {
-			doc.setScalar("schema", renderInt(CurrentSchema))
-		}
 		if updatedBy != "" {
 			doc.setScalar("updatedBy", renderString(updatedBy))
 		}
@@ -1709,7 +1696,7 @@ func (s *Store) upsertLayoutNode(slug, boardID string, boardRev int, node Layout
 		switch {
 		case err == nil:
 		case errors.Is(err, ErrNotFound):
-			raw = []byte("schema = 1\nboardId = " + renderString(boardID) + "\nboardRev = " + renderInt(boardRev) + "\nupdatedAt = " + renderString(s.now().Format(time.RFC3339)) + "\n")
+			raw = []byte("schema = " + renderInt(CurrentLayoutSchema) + "\nboardId = " + renderString(boardID) + "\nboardRev = " + renderInt(boardRev) + "\nupdatedAt = " + renderString(s.now().Format(time.RFC3339)) + "\n")
 		default:
 			return err
 		}
@@ -1718,8 +1705,8 @@ func (s *Store) upsertLayoutNode(slug, boardID string, boardRev int, node Layout
 			return err
 		}
 		doc := parseTOMLDocument(raw)
-		if current.Schema < CurrentSchema {
-			doc.setScalar("schema", renderInt(CurrentSchema))
+		if current.Schema < CurrentLayoutSchema {
+			doc.setScalar("schema", renderInt(CurrentLayoutSchema))
 		}
 		doc.setScalar("boardId", renderString(boardID))
 		doc.setScalar("boardRev", renderInt(boardRev))
@@ -1746,7 +1733,7 @@ func (s *Store) deleteLayoutNodes(slug, boardID string, boardRev int, nodeIDs ma
 		case err == nil:
 		case errors.Is(err, ErrNotFound):
 			layout = &LayoutDocument{
-				Schema:   CurrentSchema,
+				Schema:   CurrentLayoutSchema,
 				BoardID:  boardID,
 				BoardRev: boardRev,
 				Nodes:    []LayoutNode{},
@@ -1760,8 +1747,8 @@ func (s *Store) deleteLayoutNodes(slug, boardID string, boardRev int, nodeIDs ma
 			return err
 		}
 		doc := parseTOMLDocument(raw)
-		if current.Schema < CurrentSchema {
-			doc.setScalar("schema", renderInt(CurrentSchema))
+		if current.Schema < CurrentLayoutSchema {
+			doc.setScalar("schema", renderInt(CurrentLayoutSchema))
 		}
 		doc.setScalar("boardId", renderString(boardID))
 		doc.setScalar("boardRev", renderInt(boardRev))
@@ -1983,6 +1970,62 @@ func tomlHeaderEnd(line string, openWidth, closeWidth int) int {
 	return -1
 }
 
+func parseTOMLBasicString(literal string) (string, bool) {
+	if len(literal) < 2 || literal[0] != '"' || literal[len(literal)-1] != '"' {
+		return "", false
+	}
+	body := literal[1 : len(literal)-1]
+	if containsTOMLForbiddenRawControl(body) {
+		return "", false
+	}
+	for i := 0; i < len(body); i++ {
+		if body[i] != '\\' {
+			continue
+		}
+		i++
+		if i >= len(body) {
+			return "", false
+		}
+		switch body[i] {
+		case 'b', 't', 'n', 'f', 'r', '"', '\\':
+		case 'u':
+			if i+4 >= len(body) || !isTOMLHex(body[i+1:i+5]) {
+				return "", false
+			}
+			i += 4
+		case 'U':
+			if i+8 >= len(body) || !isTOMLHex(body[i+1:i+9]) {
+				return "", false
+			}
+			i += 8
+		default:
+			return "", false
+		}
+	}
+	value, err := strconv.Unquote(literal)
+	return value, err == nil
+}
+
+func containsTOMLForbiddenRawControl(value string) bool {
+	for i := 0; i < len(value); i++ {
+		if value[i] <= 0x08 || value[i] >= 0x0b && value[i] <= 0x1f || value[i] == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+func isTOMLHex(value string) bool {
+	for i := 0; i < len(value); i++ {
+		if !((value[i] >= '0' && value[i] <= '9') ||
+			(value[i] >= 'a' && value[i] <= 'f') ||
+			(value[i] >= 'A' && value[i] <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
 func parseTOMLKeyPath(raw string) ([]string, bool) {
 	var path []string
 	for i := 0; ; {
@@ -2018,8 +2061,8 @@ func parseTOMLKeyPath(raw string) ([]string, bool) {
 			if !closed {
 				return nil, false
 			}
-			unquoted, err := strconv.Unquote(raw[start:i])
-			if err != nil {
+			unquoted, ok := parseTOMLBasicString(raw[start:i])
+			if !ok {
 				return nil, false
 			}
 			segment = unquoted
@@ -2279,6 +2322,9 @@ func endpointAllowsDirection(raw []byte, endpoint, direction string) (string, bo
 	if _, _, ok := findMissionBlockByID(lines, nodeID); ok {
 		return nodeID, portID == "out" && direction == FormationPortOutput
 	}
+	if toolEndpointAllowsDirection(raw, nodeID, portID, direction) {
+		return nodeID, true
+	}
 	return "", false
 }
 
@@ -2524,17 +2570,24 @@ func parseBoardConnections(raw []byte) []BoardConnection {
 		if !active || current == nil {
 			continue
 		}
-		key, value, ok := tomlKeyValue(line.body)
-		if !ok {
+		key, literal, present, err := parseToolAssignment(line.body)
+		if err != nil || !present {
 			continue
 		}
 		switch key {
-		case "id":
-			current.ID = value
-		case "from":
-			current.From = value
-		case "to":
-			current.To = value
+		case "id", "from", "to":
+			value, err := parseToolString(literal)
+			if err != nil {
+				continue
+			}
+			switch key {
+			case "id":
+				current.ID = value
+			case "from":
+				current.From = value
+			case "to":
+				current.To = value
+			}
 		}
 	}
 	return connections
@@ -2666,14 +2719,29 @@ func parseLayoutNodes(raw []byte) []LayoutNode {
 		}
 		switch key {
 		case "id":
-			current.ID = value
+			if identity, ok := parseLayoutStringField(line.body); ok {
+				current.ID = identity
+			}
 		case "x":
-			current.X, _ = strconv.Atoi(value)
+			if coordinate, ok := parseLayoutCoordinate(value); ok {
+				current.X = coordinate
+			}
 		case "y":
-			current.Y, _ = strconv.Atoi(value)
+			if coordinate, ok := parseLayoutCoordinate(value); ok {
+				current.Y = coordinate
+			}
 		}
 	}
 	return nodes
+}
+
+func parseLayoutCoordinate(value string) (int, bool) {
+	coordinate, err := parseTOMLInteger(value)
+	if err != nil {
+		return 0, false
+	}
+	projected := int(coordinate)
+	return projected, int64(projected) == coordinate
 }
 
 func parseLayoutEdges(raw []byte) []LayoutEdge {
@@ -2700,18 +2768,31 @@ func parseLayoutEdges(raw []byte) []LayoutEdge {
 		if !active || current == nil {
 			continue
 		}
-		key, value, ok := tomlKeyValue(line.body)
+		key, _, ok := tomlKeyValue(line.body)
 		if !ok {
 			continue
 		}
 		switch key {
 		case "id":
-			current.ID = value
+			if identity, ok := parseLayoutStringField(line.body); ok {
+				current.ID = identity
+			}
 		case "lane":
-			current.Lane = value
+			if lane, ok := parseLayoutStringField(line.body); ok {
+				current.Lane = lane
+			}
 		}
 	}
 	return edges
+}
+
+func parseLayoutStringField(line string) (string, bool) {
+	_, literal, present, err := parseToolAssignment(line)
+	if err != nil || !present {
+		return "", false
+	}
+	value, err := parseToolString(literal)
+	return value, err == nil
 }
 
 func tomlKeyValue(line string) (string, string, bool) {

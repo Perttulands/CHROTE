@@ -76,6 +76,14 @@ func (s *Store) openDefinition(kind definitionKind, slug string, createDirectory
 }
 
 func (s *Store) openDefinitionDirectory(kind definitionKind, create bool) (*os.File, error) {
+	return s.openDefinitionDirectoryWithLeafParentSync(kind, create, nil)
+}
+
+func (s *Store) openDefinitionDirectoryWithLeafParentSync(
+	kind definitionKind,
+	create bool,
+	beforeParentSync func() error,
+) (*os.File, error) {
 	workspace, err := filepath.Abs(s.workspaceRoot())
 	if err != nil {
 		return nil, err
@@ -91,10 +99,20 @@ func (s *Store) openDefinitionDirectory(kind definitionKind, create bool) (*os.F
 		_ = syscall.Close(fd)
 		return nil, errors.New("could not open formations workspace")
 	}
-	for _, component := range []string{".formations", kind.directory} {
+	components := []string{".formations", kind.directory}
+	for index, component := range components {
 		next, openErr := openDefinitionDirectoryAt(current, component, create)
+		if openErr == nil && index == len(components)-1 && beforeParentSync != nil {
+			openErr = beforeParentSync()
+			if openErr == nil {
+				openErr = current.Sync()
+			}
+		}
 		_ = current.Close()
 		if openErr != nil {
+			if next != nil {
+				_ = next.Close()
+			}
 			return nil, openErr
 		}
 		current = next
@@ -168,6 +186,9 @@ func (f *definitionFile) read() ([]byte, os.FileInfo, error) {
 		return nil, nil, definitionPathError(err)
 	}
 	defer file.Close()
+	if err := ensureDefinitionDirectoryMode(f.directory, filepath.Dir(f.path)); err != nil {
+		return nil, nil, definitionPathError(err)
+	}
 	info, err := file.Stat()
 	if err != nil {
 		return nil, nil, definitionPathError(err)

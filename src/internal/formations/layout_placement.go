@@ -39,7 +39,7 @@ func (s *Store) FindFreeLayoutPosition(slug string, desiredX, desiredY int) (Lay
 		return LayoutNode{}, err
 	}
 
-	occupied := make([]LayoutNode, 0, len(board.Missions)+len(board.Formations)+len(board.Gates))
+	occupied := make([]LayoutNode, 0, len(board.Missions)+len(board.Formations)+len(board.Gates)+len(board.Tools))
 	index := 0
 	appendPosition := func(id string) {
 		position, ok := persisted[id]
@@ -57,6 +57,9 @@ func (s *Store) FindFreeLayoutPosition(slug string, desiredX, desiredY int) (Lay
 	}
 	for _, gate := range board.Gates {
 		appendPosition(gate.ID)
+	}
+	for _, tool := range board.Tools {
+		appendPosition(tool.ID)
 	}
 
 	x := maxInt(layoutPlacementMin, snapLayoutPosition(desiredX))

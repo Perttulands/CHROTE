@@ -56,6 +56,7 @@ archon board      new | list | inspect | validate | arrange
 archon formation  create | list | inspect | assign | unassign | set-brief | remove-verification | add-input | add-output | wire | unwire | run
 archon gate       create | update | judge | approve | reject
 archon mission    create | list | inspect | wire | run
+archon tool       create | update | delete | inspect
 archon run        list | status | logs | follow | resume | abort | ask
 ```
 
@@ -69,16 +70,23 @@ authoring, validation, inspection, save, runtime, replay, or reconnect command
 may rearrange existing coordinates. When neither coordinate is supplied,
 current Formation, Gate, and Mission create verbs use one shared, bounded
 free-space grid heuristic to place only the new node; explicit `--x` or `--y`
-keeps the supplied coordinates exact. Connection-aware neighbor placement
-remains target behavior and is not yet implemented.
+keeps the supplied coordinates exact. Tool create accepts either an exact
+`--x`/`--y` pair or exact predecessor/successor node-id hints for
+connection-aware free-space placement. That heuristic writes only the new Tool;
+it never moves or reflows an existing node.
 
-Current Archon keeps schema-1 definition authoring and inspection, plus local
-schema-1 `run list`, `status`, `logs`, `follow`, and `ask` inspection. Runtime
-mutation verbs (`mission run`, `formation run`, `gate approve`, `gate reject`,
-`run resume`, and `run abort`) are deliberately non-authorizing: they fail at
-the runtime-authority boundary before board or run reads, artifact writes,
-dispatch, or tmux effects. They do not fall back to the local engine or private
-schema-2 ledgers.
+Current Archon keeps schema-1 definition authoring and inspection for Tool-free
+boards. The first Tool create is the only schema-1-to-2 definition-authoring
+migration; Tool update/delete require and preserve schema 2. Local schema-1
+`run list`, `status`, `logs`, `follow`, and `ask` remain inspection-only.
+Runtime mutation verbs (`mission run`, `formation run`, `gate approve`,
+`gate reject`, `run resume`, and `run abort`) remain deliberately
+non-authorizing. Mission/Formation start first reads the selected definition and
+applies root, migration, and Tool fences; authoritative Mission start also
+evaluates CAS before Tool semantics. A surviving start then fails at the
+runtime-authority boundary. Verdict, resume, abort, and surviving start fail
+before run-private reads, artifact writes, dispatch, or tmux effects. None
+falls back to the local engine or private schema-2 ledgers.
 
 Schema-1 inline Formation verification is retired by ADR-0008. Archon inspection
 keeps legacy blocks legible, but authoring, run start, resume, and verdict entry
@@ -121,11 +129,37 @@ target flags and transport wiring land with `ctx-ug7.6`; this current-command
 inventory remains unchanged until then.
 
 ADR-0006 accepts agent-first authoring for a mixed Mission → Formation → Tool →
-Gate workflow. There is no `archon tool` group today. Non-executing Tool
-definition, descriptor, board-authoring, and validation foundations belong to
-`ctx-ug7.8.1`; certified host-private implementation packaging and execution
-belong to `ctx-ug7.8`; agent authoring UX and exact command spelling belong to
-`ctx-ug7.11` and `ctx-ug7.13`. This spec must not imply they already ship.
+Gate workflow. Current Archon provides the narrow non-executing definition
+surface:
+
+```text
+archon tool create <board> --profile-id <id> --profile-version <version> --title <title> --params-json '<object>' [--x n --y n | [--predecessor-node-id <id>] [--successor-node-id <id>]] [--updated-by <actor>] [--json]
+archon tool update <board> <tool> [--title <title>] [--params-json '<complete object>'] [--updated-by <actor>] [--json]
+archon tool delete <board> <tool> [--updated-by <actor>] [--json]
+archon tool inspect <board> <tool> [--json]
+```
+
+Board selectors accept a stable id or slug. Tool selectors accept a stable id or
+an unambiguous exact/slugged title. Tool graph validation, wiring, unwiring, and
+whole-board layout continue through the existing `board validate`,
+`formation wire`, `formation unwire`, and `board arrange` verbs; there is no
+separate `tool wire`, `tool arrange`, or `tool run`. Archon reads the current
+board/layout identity immediately before a Tool mutation and supplies the
+shared revision/ETag CAS internally; it exposes no public CAS-bypass flag. The
+closed initial profile catalog contains only `json.normalize@1`, and
+`--params-json` accepts one duplicate-free object whose values are strings,
+booleans, or signed 64-bit integers.
+
+Starting a Mission whose selected graph reaches a valid Tool fails with
+`tool_execution_unavailable` before snapshot, binding, ledger, dispatch,
+process, tmux, or artifact mutation. There is no isolated Tool-run endpoint;
+isolated Formation runs remain singleton roots and do not traverse downstream
+Tools. The authoritative Mission Store evaluates revision/ETag CAS first, so a
+stale caller still receives the existing conflict rather than the Tool
+sentinel. Certified host-private implementation packaging and execution remain
+owned by `ctx-ug7.8`; `ctx-ug7.11` and `ctx-ug7.13` own the broader
+agent-authoring UX. This command group grants no Tool execution authority.
+
 Legacy `command`, `commandArgv`, `commandShell`, and `commandCwd` Gate fields are
 schema-1 inspection and migration-plan inputs only, including authored empty
 values. Gate-owned process execution is retired. Board validation reports
@@ -134,14 +168,14 @@ resume reports the same error before any run mutation when its executable root
 contains such a Gate. Unreachable Gates and Gates outside an isolated Formation
 root remain board-validation errors but do not block that selected run.
 
-Before Tool profiles land, the migration projection is deliberately
-non-authorizing: `ready=false`, `applySupported=false`, and no raw command value,
-resolved executable/cwd, generated Tool id, or inferred profile appears in it.
-`ctx-ug7.8.1` owns non-executing Tool definitions, registry descriptors, and
-board authoring. `ctx-ug7.8` owns certified host-private implementations and
-runtime execution. `ctx-ug7.30` owns pure code-Gate profiles and the later
-explicit Tool-plus-pure-Gate apply path; this spec does not claim any of those
-command surfaces ship.
+The legacy Script-Gate migration projection remains deliberately
+non-authorizing after the first Tool descriptor lands: `ready=false`,
+`applySupported=false`, and no raw command value, resolved executable/cwd,
+generated Tool id, or inferred profile appears in it. The current Tool command
+group only authors definitions. `ctx-ug7.8` owns certified host-private
+implementations and runtime execution. `ctx-ug7.30` owns pure code-Gate profiles
+and the later explicit Tool-plus-pure-Gate apply path; no migration-apply or
+Tool-runtime command surface ships here.
 
 ## Output modes
 

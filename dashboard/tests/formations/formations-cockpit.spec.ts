@@ -357,6 +357,256 @@ test.describe('Formations cockpit — D7 reference parity', () => {
   })
 })
 
+test.describe('Formations cockpit — Tool projection', () => {
+  test('keeps non-executing Tools legible through inspection, routing, FIT, drag, and text sizing', async ({ page }) => {
+    const sourceTool = {
+      id: 'tool_source',
+      title: 'Source JSON',
+      profileId: 'json.normalize',
+      profileVersion: '1',
+      params: { mode: 'strict' },
+      inputs: [{
+        id: 'in',
+        name: 'input',
+        label: 'Source input',
+        direction: 'input' as const,
+        kind: 'work' as const,
+        acceptedMediaTypes: ['application/json'],
+        required: true,
+        role: 'data' as const,
+      }],
+      outputs: [{
+        id: 'out',
+        name: 'output',
+        label: 'Source output',
+        direction: 'output' as const,
+        kind: 'work' as const,
+        acceptedMediaTypes: ['application/json'],
+      }],
+    }
+    const normalizeTool = {
+      ...sourceTool,
+      id: 'tool_normalize',
+      title: 'Normalize report',
+      inputs: sourceTool.inputs.map(port => ({ ...port, label: 'Report' })),
+      outputs: sourceTool.outputs.map(port => ({ ...port, label: 'Normalized report' })),
+    }
+    const board = {
+      ...mockFormationsBoard,
+      schema: 2,
+      tools: [sourceTool, normalizeTool],
+      connections: [
+        ...mockFormationsBoard.connections.filter(connection => connection.id !== 'conn-review-gate'),
+        { id: 'edge_tool_gate', from: 'tool_normalize:out', to: 'gate-review:in' },
+      ],
+    }
+    let currentBoard = board
+    let currentLayout = {
+      ...mockFormationsLayout,
+      nodes: [
+        ...mockFormationsLayout.nodes,
+        { id: 'tool_source', x: 1200, y: 90 },
+        { id: 'tool_normalize', x: 1600, y: 150 },
+      ],
+    }
+    const mutations: Array<{ method: string; path: string; body: Record<string, unknown> }> = []
+
+    const fontPx = (locator: Locator) => locator.evaluate(element => Number.parseFloat(getComputedStyle(element).fontSize))
+    const wireScreenEndpoints = (locator: Locator) => locator.evaluate((node: SVGPathElement) => {
+      const length = node.getTotalLength()
+      const matrix = node.getScreenCTM()
+      if (!matrix) throw new Error('Tool wire has no screen transform')
+      const start = node.getPointAtLength(0).matrixTransform(matrix)
+      const end = node.getPointAtLength(length).matrixTransform(matrix)
+      return { length, start: { x: start.x, y: start.y }, end: { x: end.x, y: end.y } }
+    })
+    const assertWire = async (wire: Locator, output: Locator, input: Locator) => {
+      const endpoints = await wireScreenEndpoints(wire)
+      const outputBox = await requiredBox(output, 'Tool output port')
+      const inputBox = await requiredBox(input, 'Tool input port')
+      expect(endpoints.length).toBeGreaterThan(20)
+      expect(Math.abs(endpoints.start.x - outputBox.centerX)).toBeLessThanOrEqual(4)
+      expect(Math.abs(endpoints.start.y - outputBox.centerY)).toBeLessThanOrEqual(4)
+      expect(Math.abs(endpoints.end.x - inputBox.centerX)).toBeLessThanOrEqual(4)
+      expect(Math.abs(endpoints.end.y - inputBox.centerY)).toBeLessThanOrEqual(4)
+    }
+    const openInspector = async () => {
+      const dialog = page.getByRole('dialog', { name: 'Tool details: Normalize report' })
+      if (!await dialog.isVisible()) {
+        await page.getByRole('button', { name: 'Inspect Tool Normalize report' }).click()
+      }
+      await expect(dialog).toBeVisible()
+      return dialog
+    }
+
+    await mockApiRoutes(page)
+    await mockFormationsApiRoutes(page, { board, layout: currentLayout })
+    await page.route('**/api/formations/**', async route => {
+      const request = route.request()
+      if (request.method() === 'GET') {
+        await route.fallback()
+        return
+      }
+      const path = new URL(request.url()).pathname
+      const body = (request.postDataJSON() || {}) as Record<string, unknown>
+      mutations.push({ method: request.method(), path, body })
+      if (request.method() === 'PATCH' && path === `/api/formations/boards/${board.slug}`) {
+        const connection = body.wireConnection as { from?: string; to?: string } | undefined
+        if (connection?.from === 'tool_source:out' && connection.to === 'tool_normalize:in') {
+          currentBoard = {
+            ...currentBoard,
+            rev: currentBoard.rev + 1,
+            etag: '"board-tool-wire"',
+            connections: [
+              ...currentBoard.connections,
+              { id: 'edge_tool_chain', from: connection.from, to: connection.to },
+            ],
+          }
+          await fulfillApi(route, { board: currentBoard, layout: null }, { ETag: currentBoard.etag })
+          return
+        }
+      }
+      if (request.method() === 'PATCH' && path === `/api/formations/boards/${board.slug}/layout`) {
+        const requestedNodes = Array.isArray(body.nodes) ? body.nodes as Array<{ id: string; x: number; y: number }> : []
+        currentLayout = {
+          ...currentLayout,
+          etag: '"layout-tool-drag"',
+          nodes: currentLayout.nodes.map(node => requestedNodes.find(requested => requested.id === node.id) || node),
+        }
+        await fulfillApi(route, { layout: currentLayout }, { ETag: currentLayout.etag })
+        return
+      }
+      await route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: false, error: { code: 'UNEXPECTED_MUTATION', message: `${request.method()} ${path}` } }),
+      })
+    })
+
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Formations' }).click()
+    await expect(page.getByTestId('formations-view')).toBeVisible()
+
+    const sourceCard = page.getByTestId('tool-node-tool_source')
+    const normalizeCard = page.getByTestId('tool-node-tool_normalize')
+    await expect(sourceCard).toBeVisible()
+    await expect(normalizeCard).toBeVisible()
+    await expect(normalizeCard).toContainText('json.normalize@1')
+    await expect(normalizeCard).toContainText('execution unavailable')
+    const inspector = await openInspector()
+    await expect(inspector).toContainText('tool_normalize')
+    await expect(inspector).toContainText('mode')
+    await expect(inspector).toContainText('strict')
+    await expect(inspector).toContainText('Report')
+    await expect(inspector).toContainText('Normalized report')
+
+    const defaultFonts = {
+      title: await fontPx(normalizeCard.locator('.tool-title')),
+      profile: await fontPx(normalizeCard.locator('.tool-profile')),
+      port: await fontPx(normalizeCard.locator('.tool-port-label').first()),
+      detail: await fontPx(inspector.locator('.tool-detail-port').first()),
+    }
+    await inspector.getByRole('button', { name: 'Close Tool details' }).click()
+
+    const world = page.getByTestId('formations-world')
+    await page.getByRole('button', { name: 'FIT' }).click()
+    await expect(world).toHaveClass(/smooth/)
+    await expect(world).not.toHaveClass(/smooth/, { timeout: 1_000 })
+    const viewportBox = await requiredBox(page.getByTestId('formations-canvas'), 'Formations viewport')
+    for (const [label, card] of [['source Tool', sourceCard], ['normalize Tool', normalizeCard]] as const) {
+      const cardBox = await requiredBox(card, label)
+      expect(cardBox.x).toBeGreaterThanOrEqual(viewportBox.x)
+      expect(cardBox.right).toBeLessThanOrEqual(viewportBox.right)
+      expect(cardBox.y).toBeGreaterThanOrEqual(viewportBox.y)
+      expect(cardBox.bottom).toBeLessThanOrEqual(viewportBox.bottom)
+    }
+
+    const normalizeCardBox = await requiredBox(normalizeCard.locator('.tool-title'), 'Tool judge-drop target')
+    const judgeSocketBox = await requiredBox(page.getByTestId('gate-judge-socket-gate-review'), 'Gate judge socket')
+    await page.mouse.move(judgeSocketBox.centerX, judgeSocketBox.centerY)
+    await page.mouse.down()
+    await page.mouse.move(judgeSocketBox.centerX + 6, judgeSocketBox.centerY + 6)
+    await page.mouse.move(normalizeCardBox.centerX, normalizeCardBox.centerY, { steps: 10 })
+    await page.mouse.up()
+    expect(mutations).toHaveLength(0)
+
+    const sourceOutput = page.locator('[data-port-out="tool_source:out"]')
+    const normalizeInput = page.locator('[data-port-in="tool_normalize:in"]')
+    const sourceOutputBox = await requiredBox(sourceOutput, 'Source Tool output')
+    const normalizeInputBox = await requiredBox(normalizeInput, 'Normalize Tool input')
+    await page.mouse.move(sourceOutputBox.centerX, sourceOutputBox.centerY)
+    await page.mouse.down()
+    await page.mouse.move(sourceOutputBox.centerX + 6, sourceOutputBox.centerY + 6)
+    await page.mouse.move(normalizeInputBox.centerX, normalizeInputBox.centerY, { steps: 10 })
+    await page.mouse.up()
+    await expect.poll(() => mutations.length).toBe(1)
+    expect(mutations[0]).toMatchObject({
+      method: 'PATCH',
+      path: `/api/formations/boards/${board.slug}`,
+      body: { wireConnection: { from: 'tool_source:out', to: 'tool_normalize:in' } },
+    })
+    await expect(page.getByTestId('formation-wire-edge_tool_chain')).toBeAttached()
+    await assertWire(page.getByTestId('formation-wire-edge_tool_chain'), sourceOutput, normalizeInput)
+    await assertWire(
+      page.getByTestId('formation-wire-edge_tool_gate'),
+      page.locator('[data-port-out="tool_normalize:out"]'),
+      page.locator('[data-port-in="gate-review:in"]'),
+    )
+
+    const worldTransform = await world.evaluate(element => (element as HTMLElement).style.transform)
+    const dragHandle = await requiredBox(normalizeCard.locator('.tool-title'), 'Tool drag handle')
+    await page.mouse.move(dragHandle.centerX, dragHandle.centerY)
+    await page.mouse.down()
+    await page.mouse.move(dragHandle.centerX + 6, dragHandle.centerY + 6)
+    await page.mouse.move(dragHandle.centerX + 74, dragHandle.centerY + 38, { steps: 10 })
+    await expect(world).toHaveClass(/nodedrag/)
+    await expect(page.getByTestId('formations-canvas')).not.toHaveClass(/panning/)
+    await page.mouse.up()
+    await expect.poll(() => mutations.length).toBe(2)
+    expect(mutations[1]).toMatchObject({
+      method: 'PATCH',
+      path: `/api/formations/boards/${board.slug}/layout`,
+      body: { nodes: [{ id: 'tool_normalize', x: expect.any(Number), y: expect.any(Number) }] },
+    })
+    expect(await world.evaluate(element => (element as HTMLElement).style.transform)).toBe(worldTransform)
+
+    await normalizeCard.click({ button: 'right' })
+    await expect(page.locator('.fmx .ctxmenu')).toHaveCount(0)
+    expect(mutations).toHaveLength(2)
+
+    await page.getByRole('button', { name: 'Settings' }).click()
+    await page.getByTestId('formations-textsize-large').click()
+    await page.getByRole('button', { name: 'Formations' }).click()
+    await expect(page.getByTestId('formations-view')).toHaveAttribute('data-textsize', 'large')
+    const largeInspector = await openInspector()
+    const largeFonts = {
+      title: await fontPx(normalizeCard.locator('.tool-title')),
+      profile: await fontPx(normalizeCard.locator('.tool-profile')),
+      port: await fontPx(normalizeCard.locator('.tool-port-label').first()),
+      detail: await fontPx(largeInspector.locator('.tool-detail-port').first()),
+    }
+    for (const key of Object.keys(defaultFonts) as Array<keyof typeof defaultFonts>) {
+      expect(largeFonts[key], `large ${key} text`).toBeGreaterThan(defaultFonts[key])
+    }
+
+    await page.getByRole('button', { name: 'Settings' }).click()
+    await page.getByTestId('formations-textsize-xlarge').click()
+    await page.getByRole('button', { name: 'Formations' }).click()
+    await expect(page.getByTestId('formations-view')).toHaveAttribute('data-textsize', 'xlarge')
+    const xlargeInspector = await openInspector()
+    const xlargeFonts = {
+      title: await fontPx(normalizeCard.locator('.tool-title')),
+      profile: await fontPx(normalizeCard.locator('.tool-profile')),
+      port: await fontPx(normalizeCard.locator('.tool-port-label').first()),
+      detail: await fontPx(xlargeInspector.locator('.tool-detail-port').first()),
+    }
+    for (const key of Object.keys(largeFonts) as Array<keyof typeof largeFonts>) {
+      expect(xlargeFonts[key], `xlarge ${key} text`).toBeGreaterThan(largeFonts[key])
+    }
+    expect(mutations).toHaveLength(2)
+  })
+})
+
 test.describe('Formations cockpit — layout safety', () => {
   test('preserves overlapping saved coordinates while keeping the mission start control reachable', async ({ page }) => {
     await mockApiRoutes(page)

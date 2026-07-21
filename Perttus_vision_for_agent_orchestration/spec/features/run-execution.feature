@@ -175,7 +175,7 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
     When a run is durably admitted
     Then its opaque workspace authority exact-matches "workspace-root-identity-v1" for the configured/opened root
     And a path alias, changed symlink target, or same-named workspace cannot select or replace that authority
-    And its canonical ledger, graph snapshot, private bindings, and private refs live under the CHROTE data root outside every Files root
+    And its canonical ledger, run bootstrap, graph snapshot, private bindings, and private refs live under "<formations-host-authority-root>/" outside every Files root
     And the graph snapshot embeds a stable "authoredConfigManifest" covered by "graphSnapshotSha256"
     And each manifest entry classifies and hashes exactly one Mission objective, whole Formation brief, or Gate criterion by source kind and node id
     And the generic Files API cannot list, read, write, rename, or delete any canonical authority path
@@ -189,7 +189,7 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
   Scenario: Concurrent workspace registration cannot split authority
     Given no workspace authority is registered for one opened directory
     When two coordinators concurrently register different configured aliases for that directory
-    Then the stable parent registry lock serializes the race before either authority-id lock is selected
+    Then the stable shared host registry lock serializes the race before either authority-id lock is selected
     And the private registry enforces uniqueness for cleaned configured spelling and opened device/inode identity
     And exactly one fsynced authority mapping may exist
     And the alias/conflict requires explicit migration and cannot execute under a second owner lock
@@ -214,8 +214,8 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
     When it acquires or takes over ownership
     Then it advances and fsyncs nextWriterFence before publishing owner.private.json
     And a crash may leave a gap but restart never reuses that fence
-    And mutable registry generations publish under the parent registry lock
-    And mutable workspace, owner, and command records have increasing record revisions and publish under the owner lock by generation-checked temp fsync, atomic rename, and parent fsync
+    And mutable registry generations publish under the shared host registry lock
+    And mutable workspace, owner, and command records have increasing record revisions, exact-bind the prior generation in the same named encoding, and publish under the owner lock by generation-checked temp fsync, atomic rename, and parent fsync
     And immutable authority publishes only by same-directory staging fsync plus atomic no-replace install and parent fsync, never by writing its canonical path in place
     And every revision, fence, and admission sequence is in "1..9007199254740991" and exhaustion fails before mutation
     And a torn or conflicting published generation authorizes no projection or runtime effect
@@ -797,9 +797,9 @@ Feature: Run a mission — cascade work along the wires with gates, joins, and j
 
   @file
   Scenario: A pure Tool run freezes its executable profile contract
-    Given a Tool references a host-owned profile id, version constraint, and non-secret parameters
+    Given a Tool references one exact authored "(profileId, profileVersion)" tuple and non-secret parameters
     When the run starts
-    Then it freezes the exact profile version/content hash, parameters, effective policy, determinism policy, and execution-bundle hash
+    Then it freezes that exact authored tuple, its matching profile content hash, parameters, effective policy, determinism policy, and execution-bundle hash
     And the bundle covers executable, toolchain/script, argv, cwd, normalized non-secret environment values, supervisor/fence policy, and limits
     And the host-private binding authority stores them as one "RunToolBinding"
     And preflight rejects before "run_started" if the frozen supervisor/fence policy is unavailable

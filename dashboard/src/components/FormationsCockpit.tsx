@@ -143,6 +143,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const [missionEditorSaving, setMissionEditorSaving] = useState(false)
   const [briefEditor, setBriefEditor] = useState<BriefEditorState | null>(null)
   const [legacyVerification, setLegacyVerification] = useState<LegacyVerificationState | null>(null)
+  const [inspectedToolId, setInspectedToolId] = useState<string | null>(null)
   const [hiddenWireId, setHiddenWireId] = useState<string | null>(null)
   const [judgeHover, setJudgeHover] = useState<string | null>(null)
   const [laneDraft, setLaneDraft] = useState<{ connectionId: string; y: number } | null>(null)
@@ -165,7 +166,10 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   useEffect(() => { layoutRef.current = layout }, [layout])
   useEffect(() => { judgeHoverRef.current = judgeHover }, [judgeHover])
 
-  useEffect(() => { setLegacyVerification(null) }, [selectedSlug])
+  useEffect(() => {
+    setLegacyVerification(null)
+    setInspectedToolId(null)
+  }, [selectedSlug])
 
   // ----- data loading -----
   useEffect(() => {
@@ -314,6 +318,13 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   ), [displayLayoutByNode])
 
   const nodeStates = useMemo(() => projectNodeStates(runEvents, activeRun), [runEvents, activeRun])
+  const inspectedTool = useMemo(
+    () => (board?.tools || []).find(tool => tool.id === inspectedToolId) || null,
+    [board?.tools, inspectedToolId],
+  )
+  useEffect(() => {
+    if (inspectedToolId && !inspectedTool) setInspectedToolId(null)
+  }, [inspectedTool, inspectedToolId])
 
   // ----- wire geometry: measure rendered port centers in world coords -----
   // Reads board/layout/view STATE directly (not refs) so the measurement runs in the
@@ -933,7 +944,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const onViewportPointerDown = useCallback((event: ReactPointerEvent) => {
     if (event.button !== 0) return
     const target = event.target as HTMLElement
-    if (target.closest('.formation,.gatecard,.missioncard,.zoomctl,.run-banner')) return
+    if (target.closest('.formation,.gatecard,.missioncard,.toolcard,.zoomctl,.run-banner')) return
     const pan = { startX: event.clientX, startY: event.clientY, originX: viewRef.current.x, originY: viewRef.current.y }
     interactionOwner.begin({
       kind: 'pan',
@@ -973,7 +984,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     const rect = viewportRef.current?.getBoundingClientRect()
     const world = worldRef.current
     if (!currentBoard || !rect || !world) return
-    const cards = Array.from(world.querySelectorAll<HTMLElement>('.formation,.gatecard,.missioncard'))
+    const cards = Array.from(world.querySelectorAll<HTMLElement>('.formation,.gatecard,.missioncard,.toolcard'))
     if (!cards.length) { setView({ x: 40, y: 40, scale: 1 }); return }
     const worldRect = world.getBoundingClientRect()
     const scale = viewRef.current.scale || 1
@@ -1176,7 +1187,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
           } else {
             // Dropped on empty canvas inside the viewport → spawn a judge there (reference just-works).
             const rect = viewportRef.current?.getBoundingClientRect()
-            const overCard = (pointer.target as HTMLElement | null)?.closest?.('.formation,.gatecard,.missioncard,.ctxmenu,.pop')
+            const overCard = (pointer.target as HTMLElement | null)?.closest?.('.formation,.gatecard,.missioncard,.toolcard,.ctxmenu,.pop')
             const inView = rect && pointer.clientX > rect.left && pointer.clientX < rect.right && pointer.clientY > rect.top && pointer.clientY < rect.bottom
             if (!overCard && inView) {
               const w = screenToWorld(pointer.clientX, pointer.clientY)
@@ -1434,7 +1445,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
 
   const canvasMenu = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement
-    if (target.closest('.formation,.gatecard,.missioncard,.ctxmenu,.pop,.run-banner,.zoomctl')) return
+    if (target.closest('.formation,.gatecard,.missioncard,.toolcard,.ctxmenu,.pop,.run-banner,.zoomctl')) return
     if ((target as Element).closest?.('path')) return
     event.preventDefault()
     event.stopPropagation()
@@ -1764,6 +1775,84 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
                 </div>
               )
             })}
+
+            {(board?.tools || []).map((tool, index) => {
+              const nodeIndex = index
+                + (board?.missions?.length || 0)
+                + (board?.formations?.length || 0)
+                + (board?.gates?.length || 0)
+              const pos = positionOf(tool.id, nodeIndex)
+              return (
+                <div
+                  key={tool.id}
+                  className="toolcard"
+                  data-kind="tool"
+                  data-node={tool.id}
+                  data-execution-state="unavailable"
+                  data-testid={`tool-node-${tool.id}`}
+                  style={{ left: pos.x, top: pos.y }}
+                  onPointerDown={event => beginNodeDrag(event, tool.id, nodeIndex)}
+                >
+                  <div className="tool-head">
+                    <div className="tool-heading">
+                      <span className="tool-kind">Tool</span>
+                      <span className="tool-title">{tool.title}</span>
+                    </div>
+                    <button
+                      type="button"
+                      className="tool-inspect"
+                      aria-label={`Inspect Tool ${tool.title}`}
+                      onPointerDown={event => event.stopPropagation()}
+                      onClick={event => {
+                        event.stopPropagation()
+                        setInspectedToolId(tool.id)
+                      }}
+                    >
+                      details
+                    </button>
+                  </div>
+                  <div className="tool-profile">{tool.profileId}@{tool.profileVersion}</div>
+                  <div className="tool-state">execution unavailable</div>
+                  <div className="tool-ports inputs">
+                    {(tool.inputs || []).map(port => {
+                      const endpoint = `${tool.id}:${port.id}`
+                      const incoming = (board?.connections || []).find(connection => connection.to === endpoint)
+                      return (
+                        <div className="tool-port-row input" key={port.id}>
+                          <span
+                            className={`port pin${hoverPort === endpoint ? ' snaptarget' : ''}${incoming ? ' has' : ''}`}
+                            data-port-in={endpoint}
+                            data-reconnect-id={incoming?.id}
+                            data-reconnect-from={incoming?.from}
+                            onPointerDown={incoming ? event => beginReconnect(event, incoming) : undefined}
+                            onMouseDown={incoming ? event => beginReconnect(event, incoming) : undefined}
+                          />
+                          <span className="tool-port-direction">in</span>
+                          <span className="tool-port-label">{port.label}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                  <div className="tool-ports outputs">
+                    {(tool.outputs || []).map(port => {
+                      const endpoint = `${tool.id}:${port.id}`
+                      return (
+                        <div className="tool-port-row output" key={port.id}>
+                          <span className="tool-port-direction">out</span>
+                          <span className="tool-port-label">{port.label}</span>
+                          <span
+                            className={`port pout ready${hoverPort === endpoint ? ' snaptarget' : ''}`}
+                            data-port-out={endpoint}
+                            title="Drag to a downstream input"
+                            onPointerDown={event => beginWire(event, endpoint, 'wire')}
+                          />
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })}
           </div>
 
           {activeRun ? (
@@ -1791,6 +1880,91 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
           {error ? <div className="errbar" data-testid="formations-error">{error}</div> : null}
         </div>
       </div>
+
+      {inspectedTool ? (
+        <div
+          className="pop tool-inspector"
+          role="dialog"
+          aria-label={`Tool details: ${inspectedTool.title}`}
+          onPointerDown={event => event.stopPropagation()}
+        >
+          <div className="pop-head">
+            <span className="pt">{inspectedTool.title}</span>
+            <button
+              className="x"
+              type="button"
+              aria-label="Close Tool details"
+              onClick={() => setInspectedToolId(null)}
+            >
+              x
+            </button>
+          </div>
+          <div className="pop-body tool-details">
+            <div className="tool-detail-state">execution unavailable</div>
+            <dl className="tool-detail-identity">
+              <div><dt>Node</dt><dd>{inspectedTool.id}</dd></div>
+              <div><dt>Profile</dt><dd>{inspectedTool.profileId}@{inspectedTool.profileVersion}</dd></div>
+            </dl>
+
+            <section className="tool-detail-section">
+              <h3>Parameters</h3>
+              <div className="tool-detail-list">
+                {Object.entries(inspectedTool.params || {})
+                  .sort(([left], [right]) => left.localeCompare(right))
+                  .map(([name, value]) => (
+                    <div className="tool-detail-row" data-testid={`tool-parameter-${name}`} key={name}>
+                      <span>{name}</span>
+                      <span>{typeof value === 'number' ? 'integer' : typeof value}</span>
+                      <strong>{String(value)}</strong>
+                    </div>
+                  ))}
+              </div>
+            </section>
+
+            <section className="tool-detail-section">
+              <h3>Inputs</h3>
+              <div className="tool-detail-list">
+                {(inspectedTool.inputs || []).map(port => (
+                  <div
+                    className="tool-detail-port"
+                    data-direction="input"
+                    data-testid={`tool-port-${port.id}`}
+                    key={port.id}
+                  >
+                    <code>{port.id}</code>
+                    <strong>{port.name}</strong>
+                    <span>{port.label}</span>
+                    <span>{port.kind}</span>
+                    <span>{(port.acceptedMediaTypes || []).length ? port.acceptedMediaTypes.join(' · ') : 'media not declared'}</span>
+                    <span>required={port.required === undefined ? 'unset' : String(port.required)}</span>
+                    <span>role={port.role ?? 'unset'}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="tool-detail-section">
+              <h3>Outputs</h3>
+              <div className="tool-detail-list">
+                {(inspectedTool.outputs || []).map(port => (
+                  <div
+                    className="tool-detail-port"
+                    data-direction="output"
+                    data-testid={`tool-port-${port.id}`}
+                    key={port.id}
+                  >
+                    <code>{port.id}</code>
+                    <strong>{port.name}</strong>
+                    <span>{port.label}</span>
+                    <span>{port.kind}</span>
+                    <span>{(port.acceptedMediaTypes || []).length ? port.acceptedMediaTypes.join(' · ') : 'media not declared'}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          </div>
+        </div>
+      ) : null}
 
       {missionEditor ? (
         <div

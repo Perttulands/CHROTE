@@ -1,6 +1,34 @@
 import { describe, expect, it } from 'vitest'
-import type { BoardDocument, LayoutNode } from './formationsTypes'
+import type { BoardDocument, LayoutNode, ToolNode } from './formationsTypes'
 import { GRID, clampScale, defaultPosition, displayLayoutFor, endpointNodeId, freeGridPosition, screenPointToWorld, snapToGrid, visibleWirePath, zoomTransform } from './formationsCanvas'
+
+function canvasTool(id: string): ToolNode {
+  return {
+    id,
+    title: 'Normalize report',
+    profileId: 'json.normalize',
+    profileVersion: '1',
+    params: { mode: 'strict' },
+    inputs: [{
+      id: `${id}_in`,
+      name: 'input',
+      label: 'Report',
+      direction: 'input',
+      kind: 'work',
+      acceptedMediaTypes: ['application/json'],
+      required: true,
+      role: 'data',
+    }],
+    outputs: [{
+      id: `${id}_out`,
+      name: 'output',
+      label: 'Normalized report',
+      direction: 'output',
+      kind: 'work',
+      acceptedMediaTypes: ['application/json'],
+    }],
+  }
+}
 
 describe('formations canvas helpers', () => {
   it('computes stable grid-aligned default positions for starter nodes', () => {
@@ -60,6 +88,35 @@ describe('formations canvas helpers', () => {
       { id: 'fmn_a', x: 220, y: 160 },
       { id: 'fmn_b', x: 220, y: 160 },
     ])
+  })
+
+  it('appends Tools after legacy fallback nodes and ignores layout-only authority', () => {
+    const board: BoardDocument = {
+      id: 'brd_tool_layout',
+      slug: 'tool-layout',
+      title: 'Tool layout',
+      rev: 2,
+      etag: 'board-etag',
+      missions: [{ id: 'mis_a', title: 'Mission', goal: '', beadId: '' }],
+      formations: [{ id: 'fmn_a', type: 'solo', title: 'Formation', inputs: [], outputs: [], slots: [] }],
+      gates: [{ id: 'gate_a', title: 'Gate', kinds: ['human'], criterion: '' }],
+      tools: [canvasTool('tool_persisted'), canvasTool('tool_fallback')],
+      connections: [],
+    }
+    const layoutByNode = new Map<string, LayoutNode>([
+      ['tool_persisted', { id: 'tool_persisted', x: 980, y: 420 }],
+      ['layout_only', { id: 'layout_only', x: 40, y: 40 }],
+    ])
+
+    const resolved = displayLayoutFor(board, layoutByNode)
+
+    expect([...resolved.keys()]).toEqual(['mis_a', 'fmn_a', 'gate_a', 'tool_persisted', 'tool_fallback'])
+    expect(resolved.get('mis_a')).toEqual({ id: 'mis_a', x: 140, y: 168 })
+    expect(resolved.get('fmn_a')).toEqual({ id: 'fmn_a', x: 448, y: 364 })
+    expect(resolved.get('gate_a')).toEqual({ id: 'gate_a', x: 756, y: 168 })
+    expect(resolved.get('tool_persisted')).toEqual({ id: 'tool_persisted', x: 980, y: 420 })
+    expect(resolved.get('tool_fallback')).toEqual({ id: 'tool_fallback', x: 1372, y: 168 })
+    expect(resolved.has('layout_only')).toBe(false)
   })
 
   it('places only a newly created node onto nearby free grid space', () => {

@@ -48,6 +48,90 @@ y = 112
 	}
 }
 
+func TestFindFreeLayoutPositionTreatsPersistedToolAsOccupiedButIgnoresLayoutOnlyNodes(t *testing.T) {
+	store := NewStore(t.TempDir())
+	boardRaw := `schema = 2
+id = "brd_tool_placement"
+slug = "tool-placement"
+title = "Tool placement"
+rev = 1
+
+` + toolStructuralJSONNormalizeToolBlock("tool_normalize", "Normalize report", "port_tool_in", "port_tool_out")
+	layoutRaw := `schema = 1
+boardId = "brd_tool_placement"
+boardRev = 1
+
+[[node]]
+id = "tool_normalize"
+x = 112
+y = 112
+
+[[node]]
+id = "layout_only"
+x = 448
+y = 112
+`
+	writeFixture(t, store.BoardPath("tool-placement"), boardRaw)
+	writeFixture(t, store.LayoutPath("tool-placement"), layoutRaw)
+
+	position, err := store.FindFreeLayoutPosition("tool-placement", 112, 112)
+	if err != nil {
+		t.Fatalf("find free position beside persisted Tool: %v", err)
+	}
+	if position.X != 448 || position.Y != 112 {
+		t.Fatalf("position = %+v, want Tool collision skipped and layout-only node ignored at 448,112", position)
+	}
+	if got := readFile(t, store.BoardPath("tool-placement")); got != boardRaw {
+		t.Fatalf("placement inspection changed board bytes:\n%s", got)
+	}
+	if got := readFile(t, store.LayoutPath("tool-placement")); got != layoutRaw {
+		t.Fatalf("placement inspection changed layout bytes:\n%s", got)
+	}
+}
+
+func TestFindFreeLayoutPositionAppendsToolToLegacyFallbackInventory(t *testing.T) {
+	store := NewStore(t.TempDir())
+	boardRaw := toolStructuralIsolatedNodesFixture()
+	layoutRaw := `schema = 1
+boardId = "brd_tool_structural"
+boardRev = 4
+
+[[node]]
+id = "mis_main"
+x = 112
+y = 1008
+
+[[node]]
+id = "fmn_worker"
+x = 448
+y = 1008
+
+[[node]]
+id = "gate_review"
+x = 784
+y = 1008
+`
+	writeFixture(t, store.BoardPath("tool-structural"), boardRaw)
+	writeFixture(t, store.LayoutPath("tool-structural"), layoutRaw)
+
+	// Persisting every legacy node away from the fallback row leaves only the
+	// appended Tool at index 3, whose fallback is 1064,364. Inserting the Tool
+	// earlier would leave that position unoccupied and shift a legacy fallback.
+	position, err := store.FindFreeLayoutPosition("tool-structural", 1064, 364)
+	if err != nil {
+		t.Fatalf("find free position beside fallback Tool: %v", err)
+	}
+	if position.X != 1400 || position.Y != 364 {
+		t.Fatalf("position = %+v, want fallback Tool collision skipped at 1400,364", position)
+	}
+	if got := readFile(t, store.BoardPath("tool-structural")); got != boardRaw {
+		t.Fatalf("fallback placement inspection changed board bytes:\n%s", got)
+	}
+	if got := readFile(t, store.LayoutPath("tool-structural")); got != layoutRaw {
+		t.Fatalf("fallback placement inspection changed layout bytes:\n%s", got)
+	}
+}
+
 func TestFindFreeLayoutPositionRejectsLayoutForAnotherBoard(t *testing.T) {
 	store := NewStore(t.TempDir())
 	writeFixture(t, store.BoardPath("placement"), minimalBoard("placement", 3))

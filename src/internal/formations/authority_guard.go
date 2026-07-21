@@ -20,6 +20,8 @@ import (
 	"syscall"
 	"time"
 	"unicode/utf8"
+
+	"github.com/chrote/server/internal/jsonstrict"
 )
 
 const RuntimeAuthorityGuardCapabilityV1 = "formations.runtime-authority-read-guard.v1"
@@ -1067,7 +1069,7 @@ func decodeRuntimeAuthorityJSON(raw []byte, destination any) error {
 }
 
 func validateRuntimeAuthorityJSONShape(raw []byte, destination any) error {
-	if err := rejectRuntimeInvalidJSONSurrogates(raw); err != nil {
+	if err := jsonstrict.ValidateUnicode(raw); err != nil {
 		return runtimeDecodeError{code: RuntimeAuthorityGuardMalformed, err: err}
 	}
 	expectedType := reflect.TypeOf(destination)
@@ -1190,53 +1192,6 @@ func runtimeJSONStructFieldTypes(value reflect.Type) (map[string]reflect.Type, b
 		}
 	}
 	return fields, true
-}
-
-func rejectRuntimeInvalidJSONSurrogates(raw []byte) error {
-	for index := 0; index < len(raw); index++ {
-		if raw[index] != '"' {
-			continue
-		}
-		for index++; index < len(raw); index++ {
-			switch raw[index] {
-			case '"':
-				goto nextString
-			case '\\':
-				index++
-				if index >= len(raw) || raw[index] != 'u' {
-					continue
-				}
-				first, ok := runtimeJSONHexCodeUnit(raw, index+1)
-				if !ok {
-					continue
-				}
-				index += 4
-				switch {
-				case first >= 0xd800 && first <= 0xdbff:
-					if index+6 >= len(raw) || raw[index+1] != '\\' || raw[index+2] != 'u' {
-						return errors.New("JSON contains an unpaired high surrogate")
-					}
-					second, ok := runtimeJSONHexCodeUnit(raw, index+3)
-					if !ok || second < 0xdc00 || second > 0xdfff {
-						return errors.New("JSON contains an unpaired high surrogate")
-					}
-					index += 6
-				case first >= 0xdc00 && first <= 0xdfff:
-					return errors.New("JSON contains an unpaired low surrogate")
-				}
-			}
-		}
-	nextString:
-	}
-	return nil
-}
-
-func runtimeJSONHexCodeUnit(raw []byte, start int) (uint16, bool) {
-	if start+4 > len(raw) {
-		return 0, false
-	}
-	value, err := strconv.ParseUint(string(raw[start:start+4]), 16, 16)
-	return uint16(value), err == nil
 }
 
 func ensureRuntimeJSONEOF(decoder *json.Decoder) error {

@@ -138,21 +138,15 @@ func (e *RunEngine) RunMission(slug string, req RunStartRequest) (*RunStatusProj
 	if e == nil || e.store == nil {
 		return nil, fmt.Errorf("%w: run engine store required", ErrNotFound)
 	}
-	if err := e.store.RequireRuntimeAuthority(); err != nil {
-		return nil, err
-	}
 	board, err := e.store.ReadBoard(slug)
 	if err != nil {
-		return nil, err
-	}
-	if err := rejectLegacyInlineVerification(board); err != nil {
 		return nil, err
 	}
 	mission, ok := findMission(board, req.MissionID)
 	if !ok {
 		return nil, fmt.Errorf("%w: mission %q", ErrNotFound, req.MissionID)
 	}
-	if err := rejectLegacyScriptGateForMission(board, mission.ID); err != nil {
+	if err := preflightMissionMigrations(board, mission.ID, reachableNodeIDs(board, mission.ID)); err != nil {
 		return nil, err
 	}
 	if len(outgoingConnections(board.Connections, mission.ID)) == 0 {
@@ -183,19 +177,16 @@ func (e *RunEngine) RunFormation(slug, formationID string, req FormationRunReque
 	if e == nil || e.store == nil {
 		return nil, fmt.Errorf("%w: run engine store required", ErrNotFound)
 	}
-	if err := e.store.RequireRuntimeAuthority(); err != nil {
-		return nil, err
-	}
 	board, err := e.store.ReadBoard(slug)
 	if err != nil {
-		return nil, err
-	}
-	if err := rejectLegacyInlineVerification(board); err != nil {
 		return nil, err
 	}
 	formation, ok := findFormation(board.Formations, formationID)
 	if !ok {
 		return nil, fmt.Errorf("%w: formation %q", ErrNotFound, formationID)
+	}
+	if err := preflightIsolatedFormationDefinition(board, formation.ID); err != nil {
+		return nil, err
 	}
 	personas := req.Personas
 	if personas == nil {

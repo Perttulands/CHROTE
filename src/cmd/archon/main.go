@@ -130,7 +130,7 @@ func runWithRuntimeStoreFactory(args []string, stdout, stderr io.Writer, runner 
 		return 2
 	}
 	if len(args) < 2 {
-		fmt.Fprintln(stderr, "usage: archon <agent|board|formation|gate|mission|run> <command>")
+		fmt.Fprintln(stderr, "usage: archon <agent|board|formation|gate|mission|tool|run> <command>")
 		return 2
 	}
 	switch args[0] {
@@ -235,6 +235,21 @@ func runWithRuntimeStoreFactory(args []string, stdout, stderr io.Writer, runner 
 			return runMissionRun(runtimeStore(config.Workspace), args[2:], stdout, stderr)
 		default:
 			fmt.Fprintf(stderr, "unknown mission command %q\n", args[1])
+			return 2
+		}
+	case "tool":
+		store := formations.NewStore(config.Workspace)
+		switch args[1] {
+		case "create":
+			return runToolCreate(store, args[2:], stdout, stderr)
+		case "update":
+			return runToolUpdate(store, args[2:], stdout, stderr)
+		case "delete":
+			return runToolDelete(store, args[2:], stdout, stderr)
+		case "inspect":
+			return runToolInspect(store, args[2:], stdout, stderr)
+		default:
+			fmt.Fprintf(stderr, "unknown tool command %q\n", args[1])
 			return 2
 		}
 	case "run":
@@ -1200,9 +1215,6 @@ func runMissionRun(store *formations.Store, args []string, stdout, stderr io.Wri
 		fmt.Fprintln(stderr, "usage: archon mission run <board> [--mission <mission>] [--json]")
 		return 2
 	}
-	if err := store.RequireRuntimeAuthority(); err != nil {
-		return failJSON(stderr, err, *jsonOut, "run", fs.Arg(0))
-	}
 	slug, err := store.ResolveBoardSelector(fs.Arg(0))
 	if err != nil {
 		return failSelector(stderr, err, *jsonOut, "board", fs.Arg(0))
@@ -1260,9 +1272,6 @@ func runFormationRun(store *formations.Store, args []string, stdout, stderr io.W
 	if fs.NArg() != 2 {
 		fmt.Fprintln(stderr, "usage: archon formation run <board> <formation> [--json]")
 		return 2
-	}
-	if err := store.RequireRuntimeAuthority(); err != nil {
-		return failJSON(stderr, err, *jsonOut, "run", fs.Arg(1))
 	}
 	slug, _, formationID, err := resolveFormationCommandTarget(store, fs.Arg(0), fs.Arg(1))
 	if err != nil {
@@ -2124,7 +2133,7 @@ func writeNDJSON(w io.Writer, value interface{}) error {
 }
 
 func fail(stderr io.Writer, err error) int {
-	fmt.Fprintln(stderr, err)
+	fmt.Fprintln(stderr, archonErrorMessage(err))
 	return 1
 }
 
@@ -2151,14 +2160,27 @@ func failRunStreamError(stdout, stderr io.Writer, err error, jsonOut bool, bound
 func archonErrorFromError(err error, boundary, selector string) archonErrorResponse {
 	return archonErrorResponse{
 		Code:     archonErrorCode(err),
-		Message:  err.Error(),
+		Message:  archonErrorMessage(err),
 		Boundary: boundary,
 		Selector: selector,
 	}
 }
 
+func archonErrorMessage(err error) string {
+	if errors.Is(err, formations.ErrDefinitionPublicationUncertain) {
+		return "Reload both board and layout before any explicit retry"
+	}
+	return err.Error()
+}
+
 func archonErrorCode(err error) string {
 	switch {
+	case errors.Is(err, formations.ErrDefinitionPublicationUncertain):
+		return "definition_publication_uncertain"
+	case errors.Is(err, formations.ErrInvalidToolMutation):
+		return "invalid_tool_mutation"
+	case errors.Is(err, formations.ErrToolExecutionUnavailable):
+		return formations.ToolExecutionUnavailableCode
 	case errors.Is(err, formations.ErrRuntimeAuthorityNonAuthorizing):
 		return "runtime_authority_non_authorizing"
 	case errors.Is(err, formations.ErrAmbiguousSelector):
@@ -2453,6 +2475,16 @@ func chainNodeByID(board *formations.BoardDocument, nodeID string, depth int) (a
 				ID:    mission.ID,
 				Kind:  "mission",
 				Title: mission.Title,
+				Depth: depth,
+			}, true
+		}
+	}
+	for _, tool := range board.Tools {
+		if tool.ID == nodeID {
+			return archonMissionChainNode{
+				ID:    tool.ID,
+				Kind:  "tool",
+				Title: tool.Title,
 				Depth: depth,
 			}, true
 		}

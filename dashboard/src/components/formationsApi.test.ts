@@ -9,7 +9,7 @@ import {
   patchBoardDocument,
   startRun,
 } from './formationsApi'
-import type { BoardDocument, LayoutDocument } from './formationsTypes'
+import type { BoardDocument, LayoutDocument, ToolNode } from './formationsTypes'
 
 function jsonResponse(body: unknown, options: { ok?: boolean; status?: number; etag?: string } = {}): Response {
   return {
@@ -87,6 +87,7 @@ describe('formations API helpers', () => {
       etag: 'response-etag',
       missions: [],
       gates: [],
+      tools: [],
       formations: [],
       connections: [],
     })
@@ -95,6 +96,46 @@ describe('formations API helpers', () => {
       nodes: [],
       edges: [],
     })
+  })
+
+  it('preserves the exact Tool projection at the API boundary', () => {
+    const tool: ToolNode = {
+      id: 'tool_normalize',
+      title: 'Normalize report',
+      profileId: 'json.normalize',
+      profileVersion: '1',
+      params: { mode: 'strict' },
+      inputs: [{
+        id: 'port_tool_in',
+        name: 'input',
+        label: 'Report',
+        direction: 'input',
+        kind: 'work',
+        acceptedMediaTypes: ['application/json'],
+        required: true,
+        role: 'data',
+      }],
+      outputs: [{
+        id: 'port_tool_out',
+        name: 'output',
+        label: 'Normalized report',
+        direction: 'output',
+        kind: 'work',
+        acceptedMediaTypes: ['application/json'],
+      }],
+    }
+    const board = normalizeBoard({
+      id: 'brd_tool',
+      slug: 'tool-board',
+      title: 'Tool board',
+      rev: 2,
+      etag: 'tool-etag',
+      formations: [],
+      connections: [],
+      tools: [tool],
+    })
+
+    expect(board.tools).toEqual([tool])
   })
 
   it('fetches and normalizes a board document', async () => {
@@ -120,6 +161,7 @@ describe('formations API helpers', () => {
       etag: 'response-etag',
       missions: [],
       gates: [],
+      tools: [],
       formations: [],
       connections: [],
     })

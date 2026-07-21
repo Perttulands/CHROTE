@@ -21,27 +21,28 @@ canned terminals are not persistence or run contracts.
 <workspace>/.formations/boards/<slug>.formation.toml
 <workspace>/.formations/layout/<slug>.layout.toml
 <workspace>/.formations/artifacts/<run-id>/...  # registered sanitized files only
-<chrote-data>/formations/workspaces/registry.lock
-<chrote-data>/formations/workspaces/registry.private.json
-<chrote-data>/formations/workspaces/<workspace-authority-id>/workspace.bootstrap.json
-<chrote-data>/formations/workspaces/<workspace-authority-id>/workspace.private.json
-<chrote-data>/formations/workspaces/<workspace-authority-id>/owner.lock
-<chrote-data>/formations/workspaces/<workspace-authority-id>/owner.private.json
-<chrote-data>/formations/workspaces/<workspace-authority-id>/admission-policies/<policy-rev>.json
-<chrote-data>/formations/workspaces/<workspace-authority-id>/commands/
-<chrote-data>/formations/workspaces/<workspace-authority-id>/runs/<run-id>/events.ndjson
-<chrote-data>/formations/workspaces/<workspace-authority-id>/runs/<run-id>/graph.snapshot.toml
-<chrote-data>/formations/workspaces/<workspace-authority-id>/runs/<run-id>/bindings.private.toml
-<chrote-data>/formations/workspaces/<workspace-authority-id>/runs/<run-id>/refs/
-<chrote-data>/formations/workspaces/<workspace-authority-id>/quarantine/
+<formations-host-authority-root>/workspaces/registry.lock
+<formations-host-authority-root>/workspaces/registry.private.json
+<formations-host-authority-root>/workspaces/<workspace-authority-id>/workspace.bootstrap.json
+<formations-host-authority-root>/workspaces/<workspace-authority-id>/workspace.private.json
+<formations-host-authority-root>/workspaces/<workspace-authority-id>/owner.lock
+<formations-host-authority-root>/workspaces/<workspace-authority-id>/owner.private.json
+<formations-host-authority-root>/workspaces/<workspace-authority-id>/admission-policies/<policy-rev>.json
+<formations-host-authority-root>/workspaces/<workspace-authority-id>/commands/
+<formations-host-authority-root>/workspaces/<workspace-authority-id>/runs/<run-id>/run.bootstrap.json
+<formations-host-authority-root>/workspaces/<workspace-authority-id>/runs/<run-id>/events.ndjson
+<formations-host-authority-root>/workspaces/<workspace-authority-id>/runs/<run-id>/graph.snapshot.toml
+<formations-host-authority-root>/workspaces/<workspace-authority-id>/runs/<run-id>/bindings.private.toml
+<formations-host-authority-root>/workspaces/<workspace-authority-id>/runs/<run-id>/refs/
+<formations-host-authority-root>/workspaces/<workspace-authority-id>/quarantine/
 ```
 
 The shared formations package is the only serializer for persona cards, board,
 and layout files. The UI, `archon`, and agents all call that serializer. The
-fenced CHROTE server coordinator is the sole semantic writer for schema-2
+fenced CHROTE server coordinator is the sole semantic writer for `authoritySchema=2`
 runtime authority; shared file locks protect bytes but grant no execution
-lease. Canonical run
-authority lives under the configured CHROTE data root outside every configured
+lease. Canonical run authority lives under the configured Formations
+host-authority root outside every configured
 Files read/write root: append-only ledger, immutable graph snapshot, private
 binding authority, sealed Tool inputs, and pending raw-redaction roots. The
 generic Files API cannot list, read, write, rename, or delete this tree. Run APIs
@@ -251,9 +252,12 @@ Formation input normalizes in memory to `direction=input`, `kind=work`,
 `role=data`; an output normalizes to `direction=output`, `kind=work` with the
   same media set. Fixed Mission `out` accepts only `text/markdown` in this phase;
   Gate `in`/`pass` work ports use the full set;
-Gate `fail` is `gate_feedback` and has no media set. Read/inspect does not rewrite. The
-first schema-2 structural mutation performs one atomic content-preserving
-migration and writes these defaults explicitly.
+Gate `fail` is `gate_feedback` and has no media set. Read/inspect does not rewrite.
+`CurrentBoardSchema=2`, `CurrentLayoutSchema=1`, and `NewBoardSchema=1`; the
+first successful Tool creation is the only authoring mutation that migrates a
+schema-1 board and writes these defaults explicitly. Ordinary non-Tool mutations
+preserve the existing board schema. Board schema 2 is monotonic: deleting the
+last Tool never downgrades it, and Tool updates and deletes remain schema 2.
 
 A schema-1 Gate fail edge into a work input loads in degraded inspection state
 with `legacy_fail_route_requires_migration`. Structural read succeeds, but board
@@ -389,6 +393,7 @@ mode = "strict"
 
 [[tool.input]]
 id       = "port_01J9_normalize_in"
+name     = "input"
 label    = "Report"
 direction = "input"
 kind     = "work"
@@ -398,16 +403,198 @@ role     = "data"
 
 [[tool.output]]
 id    = "port_01J9_normalize_out"
+name  = "output"
 label = "Normalized report"
 direction = "output"
 kind  = "work"
 acceptedMediaTypes = ["application/json"]
 ```
 
-Tool definitions store only profile identity/version constraint plus modeled
-non-secret parameters. Run start freezes the resolved profile version/content
-hash, parameters, effective policy hash, and content-addressed execution-bundle
-hash. The bundle covers executable/script/toolchain identity, argv template, cwd
+### Non-executing Tool descriptor and authoring freeze
+
+Until `ctx-ug7.8` supplies the certified runtime, `tool_execution_unavailable`
+is the sole non-executing Tool runtime code. The API maps it to HTTP 422 and
+Archon JSON returns the same lowercase code. There is no isolated Tool-run
+endpoint. Definition-side selected-root validation parses the board, resolves
+the requested Mission or isolated Formation root, and applies existing
+structural and legacy-migration validation first. It then scans the selected
+root's complete possible graph. A
+Mission scan includes both Gate branches and reachable judge chains; an isolated
+Formation scan does not traverse unrelated downstream board nodes. A selected
+root containing a Tool returns `tool_execution_unavailable` before command
+submission or coordinator authority resolution. This error precedes only a
+global coordinator/runtime-authority-unavailable error; malformed-definition
+and legacy-migration validation retain their earlier precedence. Rejection
+occurs before snapshot, binding, ledger, artifact, evaluator, executor, or
+process mutation.
+
+Tool identity is exact and immutable. `profileId` is case-sensitive ASCII, at
+most 128 bytes, and matches
+`^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+$`. `profileVersion` is an opaque,
+case-sensitive ASCII token matching
+`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`. Registry lookup is exact tuple equality on
+`(profileId, profileVersion)` with no ranges, aliases, defaults, fallback, or
+latest selection. Port and parameter machine names match
+`^[a-z][a-z0-9_]{0,63}$`.
+
+The registry is private, compiled, immutable, and data-only. It exposes only
+deterministic lookup/list copies and has no runtime registration API. Its exact
+closed shapes are:
+
+```text
+ToolProfileDescriptor {
+  profileId: string
+  profileVersion: string
+  displayName: string
+  ports: ToolPortDescriptor[]       // ordered
+  parameters: ToolParameterSpec[]   // ordered
+}
+
+ToolPortDescriptor {
+  name: string
+  label: string
+  direction: "input" | "output"
+  kind: "work"
+  acceptedMediaTypes: string[]
+  required?: boolean   // present only for input
+  role?: "data"        // present only for input
+}
+
+ToolParameterSpec {
+  name: string
+  label: string
+  type: "string" | "boolean" | "integer"
+  required: boolean
+  enum?: string[]
+  minBytes?: integer
+  maxBytes?: integer
+  minimum?: integer
+  maximum?: integer
+}
+```
+
+String specs alone may use `enum` and `minBytes`/`maxBytes`; integer specs alone
+require `minimum`/`maximum`; boolean specs carry none of those constraint fields.
+Unknown or irrelevant fields reject. A descriptor cannot represent callbacks or
+interfaces; executable, argv, shell, cwd, environment, path, bundle, or limits;
+secrets; network or effects; runtime capability; defaults; or unmodeled
+metadata. Board-authored data therefore never selects process authority.
+
+A board-generated port `id` is instance identity, descriptor `name` is stable
+semantic binding identity, and `label` is display-only. Tool board ports
+reproduce descriptor order and exact name, direction, kind, ordered duplicate-
+free `acceptedMediaTypes`, plus exact presence and value of input
+`required`/`role`. Clients never author Tool ports independently; Tool creation
+derives them from the descriptor. This slice's update surface changes only title
+and the complete parameter map. The profile tuple and ports are immutable;
+replacement is deferred.
+
+A Tool has at most 16 parameters. RFC 8785 canonical JSON for the complete
+parameter object is at most 4096 bytes. Values are only valid UTF-8 NUL-free
+strings, booleans, or JSON-safe integers in
+`[-9007199254740991,9007199254740991]`; TOML floats, datetimes, arrays, tables,
+and nested values reject. Every key must be descriptor-declared and satisfy its
+enum, byte-length, or range constraint. Registry compilation rejects any
+lowercase machine name containing `secret`, `credential`, `token`, `password`,
+or `passwd`, and rejects these exact reserved authority names: `api_key`,
+`apikey`, `private_key`, `access_key`, `executable`, `exec`, `command`, `cmd`,
+`argv`, `shell`, `cwd`, `env`, `environment`, `path`, `bundle`, `limits`,
+`network`, and `effects`.
+
+Descriptor binding compares ordered media arrays exactly. Shared routing treats
+media arrays as sets and requires the producer's complete possible media set to
+be a subset of the consumer set; nonempty intersection is insufficient. Work-
+port arrays are nonempty, duplicate-free, and contain only `text/plain`,
+`text/markdown`, or `application/json`.
+
+Schema ownership is split exactly as `CurrentBoardSchema=2`,
+`CurrentLayoutSchema=1`, and `NewBoardSchema=1`. Pure board and layout reads
+never write. Empty and Tool-free new boards remain schema 1, and ordinary
+non-Tool mutations preserve the board's existing schema. Board schema 2 is
+monotonic: deleting the last Tool never downgrades it, and Tool updates and
+deletes remain schema 2. Under board/layout locks and revision/ETag CAS, the
+first successful Tool creation on a schema-1 board first rejects ambiguous
+legacy fail or judge routes, inline verification, and every legacy script-Gate
+shape before staging. It then publishes one content-preserving board-file
+replacement that writes typed Formation defaults, explicit safe
+`workflow`/`judge` channels, `schema=2`, and the Tool with one revision
+increment. Layout remains schema 1; only the new Tool receives heuristic
+connection-aware, bounded free-space, grid-snap placement, and existing
+coordinates never move. Tool update changes only title and the complete
+parameter map. Tool delete removes the Tool, every incident board connection,
+its layout node, and every incident layout routing entry.
+
+Create and delete hold the board lock and then the layout lock through
+publication. Before publication, the writer computes and
+validates the exact old/old and new/new board/layout identities and stages and
+fsyncs every present old and new representation. Each identity member is either
+the explicit absent state or SHA-256 over the exact bytes; a missing original
+layout is not treated as an empty file. Restoring that predecessor means
+unlinking any canonical layout, confirming the no-file state, and fsyncing the
+layout parent directory. Validation, legacy, revision/ETag CAS,
+serialization, staging, or fsync failure before the first canonical rename
+leaves both canonical files byte-identical. Publication then follows one durable
+order: rename/install the staged layout (or establish its canonical no-file
+state), fsync the present canonical layout file or confirm absence and fsync the
+layout parent, only then rename/install the staged board, and finally fsync the
+canonical board file and board parent. Layout-only entries are ignored and grant
+no graph or Tool authority, while the board remains graph authority.
+
+After the first rename, an I/O error triggers synchronous reconciliation under
+both locks using those exact staged and canonical identities. Exact hashes alone
+never close reconciliation. Old/old returns the ordinary failure only after
+every present canonical file and both parent directories fsync; restored layout
+absence uses the unlink/no-file plus layout-parent-fsync rule above. New/new
+reports success only after the layout state and parent are durable before the
+board file and parent. If reconciliation rolls back after board publication, it
+restores and fsyncs the old board before restoring the old layout, preserving the
+same durable-state order in reverse. A mixed pair or any failed file/directory
+sync never returns an ordinary failure or success. If reconciliation cannot
+complete either exact outcome, it returns stable
+`definition_publication_uncertain`.
+
+Without a journal, uncertainty is not a durable mutation block. It forbids an
+automatic retry. The next explicit Tool mutation holds both locks, reopens and
+validates the current canonical board/layout pair, fsyncs every present member
+and both parent directories, and only then evaluates revision/ETag CAS. The UI
+and graph projection join positions and lanes only for node and connection ids
+present in the current board; the next successful Tool mutation filters inert
+layout extras. A possible layout-new/board-old crash state therefore projects
+the old board, with missing entries receiving only the normal non-authorizing
+placement heuristic. During reconciliation against that operation's staged
+identities, the durable crash states are exactly old/old,
+layout-new/board-old, or new/new; board-new/layout-old cannot arise from the
+publication protocol or reverse-order rollback. This does not reclassify
+ordinary stale layout as graph state. Layout raw entries grant no node or Tool
+authority. This protocol does not claim cross-file crash or power-loss atomicity
+without a future journal. A schema-1 reader rejects board schema 2.
+
+The initial and only catalog entry is exactly:
+
+```text
+profileId      = "json.normalize"
+profileVersion = "1"
+displayName    = "Normalize JSON"
+
+input port:  name="input", label="Report", direction="input", kind="work",
+             acceptedMediaTypes=["application/json"], required=true, role="data"
+output port: name="output", label="Normalized report", direction="output", kind="work",
+             acceptedMediaTypes=["application/json"]
+parameter:   name="mode", label="Mode", type="string", required=true,
+             enum=["strict"], minBytes=6, maxBytes=6
+```
+
+`json.normalize@1` freezes authoring and validation shape only; it claims no
+algorithm, runner, or output. The linter identifier, ports, parameters, media,
+sealed source/result contract, and descriptor are absent and reserved for a
+future owner product-direction decision. No placeholder is inferred here.
+
+Tool definitions store one exact immutable `(profileId, profileVersion)` tuple
+plus modeled non-secret parameters. There are no ranges, aliases, defaults,
+fallbacks, or latest selection. Run start later freezes that exact tuple and the
+matching profile content hash, parameters, effective policy hash, and
+content-addressed execution-bundle hash. The bundle covers
+executable/script/toolchain identity, argv template, cwd
 contract, normalized non-secret allowlisted environment values,
 supervisor/fence policy, and limits. The first profile class is certified pure
 and deterministic: network, secrets, undeclared environment/filesystem reads,
@@ -748,12 +935,18 @@ moving, focusing, or tiling Peek never creates, kills, or rebinds tmux state.
 
 Current main still constructs separate synchronous run engines in the API and
 Archon and writes run files below the workspace. The following ADR-0007 shapes
-are accepted schema-2 target state, not current-binary claims.
+are accepted `authoritySchema=2` target state, not current-binary claims.
 
 ```ts
+AuthorityGenerationRef {
+  recordRev: uint64
+  sha256: string
+}
+
 WorkspaceRegistry {
   registrySchema: 1
   recordRev: uint64
+  priorGeneration: AuthorityGenerationRef | null
   entries: WorkspaceRegistryEntry[]
 }
 
@@ -774,6 +967,7 @@ WorkspaceBootstrap {
 
 WorkspaceAuthority {
   recordRev: uint64
+  priorGeneration: AuthorityGenerationRef | null
   authoritySchema: uint64 // 2 for this target; monotonic high-water
   workspaceAuthorityId: string
   rootIdentityEncoding: "workspace-root-identity-v1"
@@ -797,6 +991,7 @@ WorkspaceAdmissionPolicy =
 WorkspaceOwnerLease {
   leaseSchema: 1
   recordRev: uint64
+  priorGeneration: AuthorityGenerationRef | null
   workspaceAuthorityId: string
   ownerInstanceId: string
   writerFence: uint64
@@ -808,6 +1003,7 @@ WorkspaceOwnerLease {
 RunCommandRecordBase {
   commandSchema: 1
   recordRev: uint64
+  priorGeneration: AuthorityGenerationRef | null
   commandEncoding: "run-command-jcs-v1"
   commandId: string
   commandKind: "start" | "resume" | "cancel" | "verdict"
@@ -836,22 +1032,117 @@ RunCommandReceipt =
       commandKind: "start" | "resume" | "cancel" | "verdict",
       outcomeWriterFence: uint64, state: "rejected", rejectionCode: string,
       decisionAdmissionPolicyRef: WorkspaceAdmissionPolicyRef | null }
+
+RunBootstrap {
+  runBootstrapSchema: 1
+  workspaceAuthorityId: string
+  runId: string
+  runAuthorityId: string
+  graphSnapshotEncoding: "run-graph-snapshot-toml-v1"
+  graphSnapshotSha256: string
+  privateBindingsEncoding: "run-private-bindings-toml-v1"
+  privateBindingsSha256: string
+}
 ```
+
+For `WorkspaceAuthority.authoritySchema=2`, the existing explicit
+`CHROTE_FORMATIONS_DATA_ROOT` server
+configuration seam supplies `<formations-host-authority-root>`. It is one stable
+absolute root, opened once and shared by every CHROTE lane capable of that authority schema on
+the host. It is never derived from a lane's service data directory, workspace,
+Files roots, caller input, or ambient working directory, and there is no per-lane
+fallback. Independent injected private roots are tests only: lanes using
+different roots are non-production and cannot claim host-wide authority. The
+server configuration/provisioning layer supplies the root; `ctx-ug7.15` owns
+publication and active/retained inventory. This contract authorizes no live path,
+service, deployment, configuration, or UID migration.
+
+The immutable code-owned `authoritySchema=2` Phase-B capability registry is never persisted
+as workspace truth or selected by a board. Its complete required set is the
+bytewise-ordered pair `formations.runtime-authority-read-guard.v1`, then
+`formations.workspace-authority.v1`. Both ids validate before owner-lock
+selection or fence allocation. The first remains non-authorizing. The second
+authorizes only workspace registration, private publication, owner lease and
+fence, and command-journal foundation work; semantic projection, run
+reconciliation, cleanup, quarantine, and execution remain false and unavailable.
+A missing, duplicate, unknown, or unsupported required capability rejects before
+owner or fence mutation.
+
+Writer trust is the dedicated CHROTE service UID. Production provisioning names
+that account in the tracked `services/chrote-srv.service` unit as `User=chrote`;
+the service manager and kernel resolve the account and launch the coordinator
+with its effective UID. Server construction passes that kernel effective UID as
+the numeric writer identity to the authority library, which checks the live
+effective UID and `st_uid` of the opened host root, private directories, files,
+and locks. No board, authority file, caller value, environment variable, or
+separately configurable numeric UID may self-assert writer trust. Required modes
+are exact directory mode `0700`, exact regular-file mode `0600`, no special bits,
+and file link count one. Same-UID agent processes are outside the supported
+topology because modes cannot isolate peers sharing a UID; agents must not run as
+the service UID. Tests may inject an expected UID and disposable root, but
+production uses only the provisioned account plus kernel credential. The UID is
+not persisted in authority JSON, and this contract authorizes no UID or service-
+configuration migration.
 
 `registry.private.json` is a closed schema-1 object. Its entries have exactly the
 fields above and sort by decoded unsigned numeric `device`, decoded unsigned
 numeric `inode`, then valid UTF-8 `configuredPath` bytewise. They use the same
 canonical path/device/inode rules as `workspace-root-identity-v1`. It is strict-validated
-under `registry.lock` before authority-id selection/creation; unknown schema/key,
+under the shared host `registry.lock` before authority-id selection/creation;
+unknown schema/key,
 duplicate configured/opened identity, or conflicting mapping authorizes no
 mutation. Registry generations use the atomic mutable-file rule below.
+
+Every overwrite-style mutable JSON record (`WorkspaceRegistry`,
+`WorkspaceAuthority`, `WorkspaceOwnerLease`, and `RunCommandRecord`) includes the
+closed `priorGeneration` field, exactly `null` or `{recordRev,sha256}`. Revision 1
+requires `null`; revision N greater than 1 requires `recordRev=N-1`. Their sole
+accepted target encodings are respectively `workspace-registry-jcs-v1`,
+`workspace-authority-jcs-v1`, `workspace-owner-lease-jcs-v1`, and
+`run-command-record-jcs-v1`. Each encoding is the complete closed corresponding
+JSON record (one exact state variant for a command record), serialized as RFC
+8785 canonical UTF-8 with no BOM, insignificant JSON whitespace, or trailing
+newline. The closed path-to-encoding map is
+`registry.private.json=workspace-registry-jcs-v1`,
+`workspace.private.json=workspace-authority-jcs-v1`,
+`owner.private.json=workspace-owner-lease-jcs-v1`, and
+`commands/<commandId>.json=run-command-record-jcs-v1`.
+No persisted encoding discriminator is added. `priorGeneration.sha256` is the
+64-lowercase-hex SHA-256 of the exact complete previous-generation bytes in that
+same named encoding.
+
+`RunCommandRecord.commandPayload` remains the closed `run-command-jcs-v1` JSON
+object. Its payload hash is computed from those canonical payload bytes; the
+object is then embedded as JSON and the complete containing command record is
+re-encoded as `run-command-record-jcs-v1`, never stored as an opaque string or
+pre-encoded byte field. Immutable admission-policy generations keep their
+existing `priorPolicySha256` chain and do not duplicate this field. A caller's
+expected predecessor must exact-match the next closed record's
+`priorGeneration`; only that authenticated binding permits exact-next retry
+after canonical replacement. Desired-state idempotency with a false or stale
+predecessor remains rejected. Without record-specific proof, the format-neutral
+generic publisher rejects a consumed predecessor and recovery rereads
+authoritative current state.
+
+These four encodings are the only accepted target encodings for their mutable
+record families. Where a record carries `registrySchema`, `leaseSchema`, or
+`commandSchema`, that value is exactly `1`; `WorkspaceAuthority.authoritySchema`
+is exactly `2` for this target. Pre-freeze or experimental records that reuse
+those schemas or the target workspace-authority shape but omit required
+`priorGeneration` are malformed, non-authorizing, and never auto-upgraded. This
+contract authorizes no migration of shipped or live records and no deployment.
+Before `formations.workspace-authority.v1` may authorize foundation work, the
+guard must make every permissively decoded or non-canonical legacy form
+non-authorizing, including bytes that do not exact-match the named encoding and
+records missing required `priorGeneration`; compatibility parsing may expose
+inspection evidence only.
 
 `workspace-bootstrap-jcs-v1` is RFC 8785 canonical UTF-8 JSON over exactly
 `{bootstrapSchema,workspaceAuthorityId,rootIdentityEncoding,
 workspaceRootIdentitySha256}` with no unknown keys or trailing newline. The
 published bootstrap is immutable. The separate mutable workspace authority
 record carries the current authority-schema high-water mark.
-The schema-2 target requires that value to be exactly `2`; a future supported
+The `authoritySchema=2` target requires that value to be exactly `2`; a future supported
 authority schema changes the supported value without rewriting the immutable
 bootstrap, while an older reader rejects that higher value before mutation.
 
@@ -880,10 +1171,12 @@ Device and inode are JSON strings matching `0|[1-9][0-9]*` and decode as
 The opaque `workspaceAuthorityId` binds one exact configured/opened root
 identity and matches canonical uppercase ULID grammar
 `^wsa_[0-7][0-9A-HJKMNP-TV-Z]{25}$`, validated before directory construction. First registration holds a
-coordinator-local mutex plus the process-shared parent `registry.lock`
-before selecting an authority-id directory. The private registry enforces one
-mapping for both cleaned configured spelling and opened `(device,inode)`; aliases,
-changed targets, or conflicts require explicit migration. The new
+coordinator-local mutex plus the process-shared host `registry.lock` at
+`<formations-host-authority-root>/workspaces/` before selecting an authority-id
+directory. The private registry enforces one mapping for both cleaned configured
+spelling and the once-opened `(device,inode)` identity; that shared mapping
+selects one `workspaceAuthorityId` and its corresponding `owner.lock`. Aliases,
+changed targets, second mappings, or conflicts require explicit migration. The new
 bootstrap/private directory is fsynced before its mapping and parent. Recovery
 may complete one unique exact creation, but never chooses between conflicts.
 
@@ -894,17 +1187,25 @@ generation and complete contiguous prior-hash chain to revision 1 before
 mutation. Missing generations, discontinuities, or cycles are invalid.
 Unsupported, missing, or conflicting bootstrap,
 workspace authority, or policy schema is strictly read-only: no fence, cleanup,
-quarantine, valid-run projection, or tmux action. Matching schema numbers alone do not enable schema-2;
+quarantine, valid-run projection, or tmux action. Matching schema numbers alone do not enable `authoritySchema=2`;
 admission waits for the complete registered safe projector/coordinator and a
 certified guarded rollback set.
 
 A supported coordinator reserves the next `writerFence`, fsyncs the advanced
 counter, then publishes its renewable lease. Counter gaps are allowed and reuse
-is forbidden; elapsed lease time cannot bypass a still-held kernel lock. The
-same lock stays held from current lease/fence validation
+is forbidden. `owner.lock` stays held continuously for the owner epoch and is
+the exclusion truth; `owner.private.json` is evidence and fencing, not an
+availability veto once the kernel lock is released. `acquiredAt`, `renewedAt`,
+and `leaseUntil` are canonical UTC `time.RFC3339Nano` strings using `Z`; parsing
+then UTC-formatting must reproduce the exact bytes, and
+`acquiredAt <= renewedAt < leaseUntil`. A process still holding the lock at
+`leaseUntil` publishes a valid renewal before authority work. Once the lock is
+released, including by crash, a successor may allocate and publish a strictly
+higher fence regardless of the predecessor's unexpired wall-clock lease. A
+still-held kernel lock is never bypassed by time. The same lock stays held from current lease/fence validation
 through every authority write+fsync and bounded non-idempotent send, Tool spawn,
 interrupt, cleanup, or quarantine call; takeover cannot race between check and
-effect. Lock order is parent registry (registration only), workspace authority,
+effect. Lock order is host registry (registration only), workspace owner,
 then host target arbiter; reverse acquisition is invalid. ADR-0006's per-target
 lease remains separately required.
 
@@ -927,13 +1228,14 @@ under `owner.lock`. Immutable admission-policy generations publish under
 `owner.lock` before the current workspace ref changes. Each mutable record's
 `recordRev` starts at 1; every successful replacement is
 exactly the last published revision plus one and rejects a stale, skipped, or
-regressed predecessor. Each uses a
+regressed predecessor, with the exact `priorGeneration` authentication above.
+Each uses a
 generation-checked same-directory temp, file fsync, atomic rename, and parent
 fsync. Migration holds both locks in parent-registry then workspace order.
 Torn/stale/conflicting published records authorize nothing, and a canonical
 immutable path is never a partial-file recovery surface.
 
-Every schema-2 JSON record/policy revision, writer-fence field, allocated
+Every JSON record/policy revision governed by `authoritySchema=2`, writer-fence field, allocated
 event/effect sequence, workspace-admission identity, and next counter is an integer in
 `1..9007199254740991`. Allocation past that bound fails closed before mutation;
 rounding, wrap, and reuse are invalid.
@@ -1021,7 +1323,7 @@ execution is asynchronous from that response.
 `maxActiveRuns` is a JSON integer in `1..2147483647`; `maxQueuedRuns` is a JSON
 integer in `0..2147483647`. In one admission critical section, the writer
 strict-validates the immutable generation named by
-`WorkspaceAuthority.admissionPolicyRef`. There is no implicit default: schema-2
+`WorkspaceAuthority.admissionPolicyRef`. There is no implicit default: `authoritySchema=2`
 starts with closed `state=disabled` revision 1. Disabled rejects new starts as
 `admission_disabled` and pauses queued activation without canceling active or
 queued work; queue wall clocks continue. Only a configured generation admits or
@@ -1055,7 +1357,7 @@ limit and never blocks dequeue. Counter gaps are allowed and reuse is forbidden.
 `run_started` alone projects queued; unique `run_activated` projects running and
 is required before every graph/dispatch event. Restart recomputes exact counts/
 FIFO for current state from run ledgers and strict-validates every retained
-policy ref. Schema 2 has no workspace-global admission-decision sequence: refs
+policy ref. `authoritySchema=2` has no workspace-global admission-decision sequence: refs
 attribute exact policy bytes but do not independently prove historical cross-run
 capacity interleaving. Concurrent starts still serialize under the authority
 critical section and are certified by contention/crash tests. Queue time
@@ -1066,6 +1368,25 @@ Every activated non-final ledger counts against `maxActiveRuns`, including while
 blocked, `waiting_human`, canceling, or failing, and releases that slot only at an
 execution-final event. This conservative first policy is reconstructible from
 the ledger without an unmodeled requeue transition.
+
+Each private run directory contains one immutable
+`runs/<run-id>/run.bootstrap.json`, encoded as RFC 8785 canonical UTF-8
+`run-bootstrap-jcs-v1` with no unknown keys or trailing newline. Its exact fields
+are `{runBootstrapSchema,workspaceAuthorityId,runId,runAuthorityId,
+graphSnapshotEncoding,graphSnapshotSha256,privateBindingsEncoding,
+privateBindingsSha256}`. `runBootstrapSchema=1`,
+`graphSnapshotEncoding="run-graph-snapshot-toml-v1"`, and
+`privateBindingsEncoding="run-private-bindings-toml-v1"`. Both hashes are
+exactly 64 lowercase hexadecimal characters without a prefix.
+`workspaceAuthorityId`, `runId`, and `runAuthorityId` use the existing
+uppercase-Crockford prefixed-id grammar: respectively `wsa_`, `run_`, and
+`auth_`, followed by 26 characters whose first character is in `0..7`.
+
+The exact graph and private-binding files publish immutably before the bootstrap.
+Only that bootstrap selects the authoritative pair, so stray complete files
+authorize nothing. `ctx-ug7.6.2` later exact-binds the bootstrap identity and
+hashes into `run_started`; this contract does not claim the current binary has
+implemented that step.
 
 Archon may author, validate, and inspect workflow definitions offline. All run
 commands and run list/status/log/follow require the coordinator's sanitized
@@ -1098,22 +1419,22 @@ envelope:
     "admissionPolicyRev": 3,
     "admissionPolicySha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     "admissionCommandId": "cmd_01J9...",
-    "commandPayloadSha256": "sha256:...",
+    "commandPayloadSha256": "1111111111111111111111111111111111111111111111111111111111111111",
     "boardSlug": "session-search",
     "boardPath": ".formations/boards/session-search.formation.toml",
     "sourceBoardSchema": 2,
     "snapshotSchema": 2,
     "runAuthorityId": "auth_01J9...",
-    "graphSnapshotSha256": "sha256:...",
-    "privateBindingsSha256": "sha256:...",
-    "bindingProjectionSha256": "sha256:...",
+    "graphSnapshotSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "privateBindingsSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "bindingProjectionSha256": "4444444444444444444444444444444444444444444444444444444444444444",
     "runRoot": {"kind": "mission", "nodeId": "mis_01J9_improve"},
     "rootInputProjection": {
       "classification": "authored_config",
       "sourceKind": "mission_objective",
       "encoding": "mission-objective-utf8-v1",
       "mediaType": "text/markdown",
-      "sha256": "sha256:...",
+      "sha256": "5555555555555555555555555555555555555555555555555555555555555555",
       "text": "Make session search fuzzy and keyboard-first"
     },
     "limits": {"maxDispatch": 20, "maxAttempts": 3, "wallClockSeconds": 1800, "redact": false}
@@ -1237,9 +1558,10 @@ not seeded, downstream edges are not traversed, and every other required-input
 shape rejects before `run_started`. Preflight resolves every declared slot, Tool
 profile, and schema-2 code-Gate evaluator profile in that executable subgraph.
 Before appending `run_started`, the current fenced coordinator creates and fsyncs one
-writer-only authority directory with write-once snapshots under the host-private CHROTE data root. It
-contains the canonical ledger, normalized graph snapshot, private bindings, and
-run-private refs; none is beneath a configured Files root. It computes SHA-256
+writer-only authority directory with write-once snapshots under the Formations
+host-authority root. It contains the canonical ledger, normalized graph snapshot,
+private bindings, immutable run bootstrap, and run-private refs; none is beneath
+a configured Files root. It computes SHA-256
 over the graph snapshot, private binding authority, and safe binding projection.
 Every dispatch/recovery read exact-verifies those hashes. Before admission,
 missing/altered authority rejects with `run_authority_integrity_failed` and no
@@ -1344,9 +1666,10 @@ determinism-policy SHA-256 values, and immutable execution-bundle SHA-256. The c
 script/toolchain identity, argv template, cwd contract, normalized non-secret
 allowlisted environment values, supervisor/fence policy, and limits; a mutable
 host path is not execution identity.
-The board snapshot keeps the authored constraint; the resolved binding is
-execution authority. Preflight rejects a reachable Tool before `run_started` if
-the frozen supervisor/fence policy is unavailable.
+The board snapshot keeps the authored exact `(profileId, profileVersion)` tuple;
+the later frozen binding adds the matching profile content hash and is execution
+authority. Preflight rejects a reachable Tool before `run_started` if the frozen
+supervisor/fence policy is unavailable.
 
 The private authority also stores one `RunGateBinding` per reachable schema-2
 code Gate: `gateBindingId`, Gate/profile ids, exact profile version/content
@@ -2073,8 +2396,8 @@ Structured payload fields use these shapes:
 - `retryTargets`: stable node-order array of `{nodeId, attempt, outputPortIds,
   outcomeSeqs, deliveredEdges=[]}`. Each entry names one whole failed producer
   attempt and lists all of that attempt's unsuccessful declared outputs in
-  stable port order; selective port replay is not implied. Schema 2 permits exactly one
-  entry. It is the first unresolved retry failure under the deterministic
+  stable port order; selective port replay is not implied. Ledger event schema 2
+  permits exactly one entry. It is the first unresolved retry failure under the deterministic
   selection rule below, not an arbitrary choice by a coordinator.
 
 Artifact projection remains replay-deterministic. It uses the latest
@@ -2424,7 +2747,7 @@ terminal non-rerun event is fsynced; only then is it deleted and its parent
 directory fsynced. Thus a crash on either side of the decision always leaves an
 authoritative scope for the latest recorded launch. Any mismatch or discarded
 redacted input appends the corresponding terminal error before private records
-are retired. Recovery never re-resolves the board's version constraint or
+are retired. Recovery never re-resolves the board's exact version token or
 substitutes a newer profile.
 
 Canonical cancel starts with an appended and fsynced
@@ -2997,8 +3320,9 @@ a narrower target.
 7. Use optimistic revision/ETag conflict handling; never clobber silently.
    Persona-card edits must detect stale reads or concurrent file changes and
    fail loud rather than overwriting.
-8. Refuse newer schema versions; up-migrate older versions only with content
-   preservation tests.
+8. Refuse newer schema versions. Migrate older versions only where the current
+   schema contract explicitly authorizes it and content-preservation tests pass;
+   board schema 1 to 2 migrates only on the first successful Tool creation.
 9. Runs never write persona cards, board definitions, or layout definitions.
 
 ## Deferred From S0

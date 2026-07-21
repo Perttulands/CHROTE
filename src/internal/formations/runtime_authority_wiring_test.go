@@ -59,15 +59,25 @@ func TestRuntimeStoreAuthorityBoundaryRemainsNonAuthorizingAfterExactMatch(t *te
 func TestMatchingRuntimeAuthorityRejectsBeforeEngineEffects(t *testing.T) {
 	fixture := newRuntimeAuthorityFixture(t)
 	bindRuntimeAuthorityFixtureToOpenedWorkspace(t, &fixture, fixture.workspace)
+	boardPath := filepath.Join(fixture.workspace, ".formations", "boards", "session-search.formation.toml")
+	writeFixture(t, boardPath, s4RunBoardFixture())
+	if err := os.Chmod(filepath.Dir(boardPath), os.FileMode(0o770)|os.ModeSetgid); err != nil {
+		t.Fatalf("set definition fixture mode: %v", err)
+	}
 	before := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace)
 	store := NewRuntimeStore(fixture.workspace, filepath.Dir(fixture.root))
 	executor := &countingFormationExecutor{}
 	engine := NewRunEngine(store, nil, executor)
 
-	_, err := engine.RunMission("missing", RunStartRequest{})
+	_, err := engine.RunMission("session-search", RunStartRequest{MissionID: "mis_showcase"})
 	var authorityErr *RuntimeAuthorityNonAuthorizingError
 	if !errors.As(err, &authorityErr) || authorityErr.Reason != RuntimeAuthorityCapabilityDisabled {
 		t.Fatalf("matching authority run error = %#v, want disabled non-authorizing capability", err)
+	}
+	_, err = store.StartRun("session-search", RunStartRequest{MissionID: "mis_showcase"})
+	authorityErr = nil
+	if !errors.As(err, &authorityErr) || authorityErr.Reason != RuntimeAuthorityCapabilityDisabled {
+		t.Fatalf("matching authority store start error = %#v, want disabled non-authorizing capability", err)
 	}
 	if executor.calls != 0 {
 		t.Fatalf("matching authority executor calls = %d, want zero", executor.calls)
@@ -75,6 +85,194 @@ func TestMatchingRuntimeAuthorityRejectsBeforeEngineEffects(t *testing.T) {
 	if got := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace); !reflect.DeepEqual(got, before) {
 		t.Fatalf("matching authority engine rejection changed state\nbefore: %#v\nafter:  %#v", before, got)
 	}
+}
+
+func TestRuntimeStartsRejectSelectedDefinitionBeforeUnavailableAuthority(t *testing.T) {
+	tests := []struct {
+		name      string
+		slug      string
+		board     string
+		malformed bool
+		wantErr   error
+		start     func(*Store, *RunEngine) error
+	}{
+		{
+			name:    "store missing definition",
+			slug:    "missing",
+			wantErr: ErrNotFound,
+			start: func(store *Store, _ *RunEngine) error {
+				_, err := store.StartRun("missing", RunStartRequest{MissionID: "mis_showcase"})
+				return err
+			},
+		},
+		{
+			name:      "store malformed definition",
+			slug:      "malformed",
+			board:     malformedRuntimeStartBoardFixture(),
+			malformed: true,
+			start: func(store *Store, _ *RunEngine) error {
+				_, err := store.StartRun("malformed", RunStartRequest{MissionID: "mis_showcase"})
+				return err
+			},
+		},
+		{
+			name:    "store missing mission",
+			slug:    "session-search",
+			board:   s4RunBoardFixture(),
+			wantErr: ErrNotFound,
+			start: func(store *Store, _ *RunEngine) error {
+				_, err := store.StartRun("session-search", RunStartRequest{MissionID: "mis_missing"})
+				return err
+			},
+		},
+		{
+			name:    "store legacy inline verification",
+			slug:    "session-search",
+			board:   s4VerificationBoardFixture("block"),
+			wantErr: ErrLegacyInlineVerificationRequiresMigration,
+			start: func(store *Store, _ *RunEngine) error {
+				_, err := store.StartRun("session-search", RunStartRequest{MissionID: "mis_showcase"})
+				return err
+			},
+		},
+		{
+			name:    "store reachable legacy script Gate",
+			slug:    "session-search",
+			board:   legacyScriptGateBoardFixture(`commandArgv = ["npm", "run", "lint"]`),
+			wantErr: ErrLegacyScriptGateRequiresFencedMigration,
+			start: func(store *Store, _ *RunEngine) error {
+				_, err := store.StartRun("session-search", RunStartRequest{MissionID: "mis_showcase"})
+				return err
+			},
+		},
+		{
+			name:    "engine mission missing definition",
+			slug:    "missing",
+			wantErr: ErrNotFound,
+			start: func(_ *Store, engine *RunEngine) error {
+				_, err := engine.RunMission("missing", RunStartRequest{MissionID: "mis_showcase"})
+				return err
+			},
+		},
+		{
+			name:      "engine mission malformed definition",
+			slug:      "malformed",
+			board:     malformedRuntimeStartBoardFixture(),
+			malformed: true,
+			start: func(_ *Store, engine *RunEngine) error {
+				_, err := engine.RunMission("malformed", RunStartRequest{MissionID: "mis_showcase"})
+				return err
+			},
+		},
+		{
+			name:    "engine mission missing root",
+			slug:    "session-search",
+			board:   s4RunBoardFixture(),
+			wantErr: ErrNotFound,
+			start: func(_ *Store, engine *RunEngine) error {
+				_, err := engine.RunMission("session-search", RunStartRequest{MissionID: "mis_missing"})
+				return err
+			},
+		},
+		{
+			name:    "engine mission legacy inline verification",
+			slug:    "session-search",
+			board:   s4VerificationBoardFixture("block"),
+			wantErr: ErrLegacyInlineVerificationRequiresMigration,
+			start: func(_ *Store, engine *RunEngine) error {
+				_, err := engine.RunMission("session-search", RunStartRequest{MissionID: "mis_showcase"})
+				return err
+			},
+		},
+		{
+			name:    "engine mission reachable legacy script Gate",
+			slug:    "session-search",
+			board:   legacyScriptGateBoardFixture(`commandArgv = ["npm", "run", "lint"]`),
+			wantErr: ErrLegacyScriptGateRequiresFencedMigration,
+			start: func(_ *Store, engine *RunEngine) error {
+				_, err := engine.RunMission("session-search", RunStartRequest{MissionID: "mis_showcase"})
+				return err
+			},
+		},
+		{
+			name:      "engine formation malformed definition",
+			slug:      "malformed",
+			board:     malformedRuntimeStartBoardFixture(),
+			malformed: true,
+			start: func(_ *Store, engine *RunEngine) error {
+				_, err := engine.RunFormation("malformed", "fmn_work", FormationRunRequest{})
+				return err
+			},
+		},
+		{
+			name:    "engine formation missing root",
+			slug:    "session-search",
+			board:   s4RunBoardFixture(),
+			wantErr: ErrNotFound,
+			start: func(_ *Store, engine *RunEngine) error {
+				_, err := engine.RunFormation("session-search", "fmn_missing", FormationRunRequest{})
+				return err
+			},
+		},
+		{
+			name:    "engine formation legacy inline verification",
+			slug:    "session-search",
+			board:   s4VerificationBoardFixture("block"),
+			wantErr: ErrLegacyInlineVerificationRequiresMigration,
+			start: func(_ *Store, engine *RunEngine) error {
+				_, err := engine.RunFormation("session-search", "fmn_work", FormationRunRequest{})
+				return err
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			store := NewRuntimeStore(workspace, filepath.Join(t.TempDir(), "missing-formations-data"))
+			if test.board != "" {
+				writeFixture(t, store.BoardPath(test.slug), test.board)
+			}
+			if test.malformed {
+				if _, err := store.ReadBoard(test.slug); err == nil || errors.Is(err, ErrRuntimeAuthorityNonAuthorizing) {
+					t.Fatalf("malformed fixture read error = %v, want definition parse rejection", err)
+				}
+			}
+			executor := &countingFormationExecutor{}
+			evaluator := &countingGateEvaluator{}
+			engine := NewRunEngine(store, nil, executor)
+			engine.SetGateEvaluator(evaluator)
+
+			err := test.start(store, engine)
+			if err == nil {
+				t.Fatal("start passed unavailable authority and invalid selected definition")
+			}
+			if errors.Is(err, ErrRuntimeAuthorityNonAuthorizing) {
+				t.Fatalf("start error = %v, want selected-definition rejection before runtime authority", err)
+			}
+			if test.wantErr != nil && !errors.Is(err, test.wantErr) {
+				t.Fatalf("start error = %v, want %v", err, test.wantErr)
+			}
+			if executor.calls != 0 || evaluator.calls != 0 {
+				t.Fatalf("start effects = executor:%d evaluator:%d, want zero", executor.calls, evaluator.calls)
+			}
+			if matches := mustGlob(t, filepath.Join(workspace, ".formations", "runs", "*")); len(matches) != 0 {
+				t.Fatalf("rejected start created run artifacts: %v", matches)
+			}
+		})
+	}
+}
+
+func malformedRuntimeStartBoardFixture() string {
+	return `schema = 2
+id = "brd_malformed"
+slug = "malformed"
+title = "Malformed Tool definition"
+rev = 1
+
+[tool]
+id = "tool_malformed"
+`
 }
 
 func TestRuntimeStoreUsesImmutableWorkspaceAfterAuthorityBinding(t *testing.T) {
@@ -111,7 +309,7 @@ func TestRuntimeStoreUsesImmutableWorkspaceAfterAuthorityBinding(t *testing.T) {
 	}
 }
 
-func TestRuntimeAuthorityRejectionPrecedesEngineDispatchAndTmuxSideEffects(t *testing.T) {
+func TestRuntimeAuthorityRejectionPrecedesRuntimeEffectsAfterStartPreflight(t *testing.T) {
 	workspace := t.TempDir()
 	store := NewRuntimeStore(workspace, filepath.Join(t.TempDir(), "missing-formations-data"))
 	executor := &countingFormationExecutor{}
@@ -124,16 +322,6 @@ func TestRuntimeAuthorityRejectionPrecedesEngineDispatchAndTmuxSideEffects(t *te
 		if !errors.Is(err, ErrRuntimeAuthorityNonAuthorizing) {
 			t.Fatalf("%s error = %v, want runtime-authority rejection", name, err)
 		}
-	}
-	if _, err := engine.RunMission("missing", RunStartRequest{}); err != nil {
-		assertNonAuthorizing("mission run", err)
-	} else {
-		t.Fatal("mission run passed unavailable authority")
-	}
-	if _, err := engine.RunFormation("missing", "formation_missing", FormationRunRequest{}); err != nil {
-		assertNonAuthorizing("formation run", err)
-	} else {
-		t.Fatal("formation run passed unavailable authority")
 	}
 	if _, err := engine.ResumeRun("run_missing", RunResumeRequest{}); err != nil {
 		assertNonAuthorizing("resume", err)
@@ -196,11 +384,6 @@ func TestRuntimeAuthorityRejectionPrecedesEngineDispatchAndTmuxSideEffects(t *te
 		t.Fatalf("tmux calls = list:%d describe:%d send:%d capture:%d, want zero", tmuxClient.listCalls, tmuxClient.describeCalls, tmuxClient.sendCalls, tmuxClient.captureCalls)
 	}
 
-	if _, err := store.StartRun("missing", RunStartRequest{}); err != nil {
-		assertNonAuthorizing("store start", err)
-	} else {
-		t.Fatal("store start passed unavailable authority")
-	}
 	if err := store.AppendRunEvent("run_missing", RunEvent{Type: RunEventCanceled}); err != nil {
 		assertNonAuthorizing("store append", err)
 	} else {

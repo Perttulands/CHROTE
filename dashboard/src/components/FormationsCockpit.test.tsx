@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import FormationsCockpit from './FormationsCockpit'
 
@@ -31,6 +31,38 @@ const formation = {
 
 const gate = { id: 'gate_review', title: 'Review', kinds: ['code'], criterion: 'Review the frame' }
 const mission = { id: 'mis_showcase', title: 'Showcase', goal: 'Build the page', beadId: 'home-7kc4.5' }
+const tool = {
+  id: 'tool_normalize',
+  title: 'Normalize report',
+  profileId: 'json.normalize',
+  profileVersion: '1',
+  params: { mode: 'strict' },
+  inputs: [{
+    id: 'port_tool_input',
+    name: 'input',
+    label: 'Report',
+    direction: 'input' as const,
+    kind: 'work' as const,
+    acceptedMediaTypes: ['application/json'],
+    required: true,
+    role: 'data' as const,
+  }],
+  outputs: [{
+    id: 'port_tool_output',
+    name: 'output',
+    label: 'Normalized report',
+    direction: 'output' as const,
+    kind: 'work' as const,
+    acceptedMediaTypes: ['application/json'],
+  }],
+}
+const upstreamTool = {
+  ...tool,
+  id: 'tool_source',
+  title: 'Source JSON',
+  inputs: tool.inputs.map(port => ({ ...port, id: 'port_source_input' })),
+  outputs: tool.outputs.map(port => ({ ...port, id: 'port_source_output' })),
+}
 
 function makeBoard() {
   return {
@@ -43,11 +75,26 @@ function makeBoard() {
     missions: [mission],
     formations: [formation, judgeFormation],
     gates: [gate],
+    tools: [] as typeof tool[],
     connections: [
       { id: 'edge_mission_frame', from: 'mis_showcase:out', to: 'fmn_frame:port_frame_in' },
       { id: 'edge_frame_gate', from: 'fmn_frame:port_frame_out', to: 'gate_review:in' },
       { id: 'edge_judge_send', from: 'gate_review:judge', to: 'fmn_judge:port_judge_in' },
       { id: 'edge_judge_return', from: 'fmn_judge:port_judge_out', to: 'gate_review:judge' },
+    ],
+  }
+}
+
+function makeToolBoard() {
+  const base = makeBoard()
+  return {
+    ...base,
+    schema: 2,
+    tools: [upstreamTool, tool],
+    connections: [
+      ...base.connections.filter(connection => connection.id !== 'edge_frame_gate'),
+      { id: 'edge_tool_chain', from: 'tool_source:port_source_output', to: 'tool_normalize:port_tool_input' },
+      { id: 'edge_tool_gate', from: 'tool_normalize:port_tool_output', to: 'gate_review:in' },
     ],
   }
 }
@@ -73,8 +120,10 @@ const agents = [
 ]
 
 type RecordedPatch = { url: string; body: Record<string, unknown> }
+type RecordedMutation = { method: string; url: string }
 type TestBoard = ReturnType<typeof makeBoard>
 type TestRunEvent = { runId: string; seq: number; type: string; nodeId?: string; data?: Record<string, unknown> }
+let recordedMutations: RecordedMutation[] = []
 
 function installFetchMock(options: {
   emptyBoards?: boolean
@@ -82,14 +131,18 @@ function installFetchMock(options: {
   missionCreateFailure?: boolean
   removalFailure?: boolean
   boards?: TestBoard[]
+  sameBoardRefreshes?: TestBoard[]
   runEvents?: TestRunEvent[]
 } = {}) {
   const patches: RecordedPatch[] = []
+  recordedMutations = []
   const availableBoards = options.boards?.length ? options.boards : [makeBoard()]
   let board = availableBoards[0]
   let currentLayout = layout
   ;(globalThis as Record<string, unknown>).fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
+    const method = (init?.method || 'GET').toUpperCase()
+    if (method !== 'GET') recordedMutations.push({ method, url })
     const respond = (data: unknown, etag = '') => Promise.resolve({
       ok: true,
       headers: { get: (name: string) => (name.toLowerCase() === 'etag' ? etag || null : null) },
@@ -148,10 +201,25 @@ function installFetchMock(options: {
       return respond({ status: { runId: 'run_legacy', status: 'succeeded', final: true, boardSlug: board.slug, missionId: mission.id, eventCount: options.runEvents?.length || 0 } })
     }
     if (url === '/api/formations/boards') return respond({ boards: options.emptyBoards ? [] : availableBoards.map(item => ({ slug: item.slug, title: item.title })) })
-    if (url.includes('/changes')) return respond({ signal: { changed: false } })
+    if (url.includes('/changes')) {
+      const refreshedBoard = options.sameBoardRefreshes?.shift()
+      if (!refreshedBoard) return respond({ signal: { changed: false } })
+      board = refreshedBoard
+      currentLayout = { ...currentLayout, boardRev: refreshedBoard.rev }
+      return respond({
+        signal: {
+          board: refreshedBoard.slug,
+          changed: true,
+          rev: refreshedBoard.rev,
+          etag: refreshedBoard.etag,
+        },
+      })
+    }
     if (url.endsWith('/layout')) return respond({ layout: currentLayout }, 'layout-etag')
     if (url.includes('/api/formations/boards/')) {
-      const requested = availableBoards.find(item => url.includes(`/boards/${item.slug}`)) || board
+      const requested = url.includes(`/boards/${board.slug}`)
+        ? board
+        : availableBoards.find(item => url.includes(`/boards/${item.slug}`)) || board
       return respond({ board: requested }, requested.etag)
     }
     if (url === '/api/agents') return respond({ agents })
@@ -211,6 +279,233 @@ describe('FormationsCockpit reference parity', () => {
     })
     expect(container.querySelector('[data-gate-judge-socket="gate_review"]')).toBeTruthy()
     expect(screen.getByTestId('gate-node-gate_review').className).toContain('hasjudge')
+  })
+
+  it('renders a non-executing Tool with its frozen identity, parameters, and declared work ports', async () => {
+    patches = installFetchMock({ boards: [makeToolBoard()] })
+
+    const { container } = await renderCockpit()
+    const card = await screen.findByTestId('tool-node-tool_normalize')
+
+    expect(card).toHaveClass('toolcard')
+    expect(card).not.toHaveClass('formation')
+    expect(card).not.toHaveClass('missioncard')
+    expect(card).not.toHaveClass('gatecard')
+    expect(card).toHaveAttribute('data-kind', 'tool')
+    expect(card).toHaveAttribute('data-node', 'tool_normalize')
+    expect(card).toHaveAttribute('data-execution-state', 'unavailable')
+    expect(screen.getByTestId('formations-world')).toContainElement(card)
+    expect(card).toHaveStyle({ left: '1680px', top: '364px' })
+    expect(card).toHaveTextContent('Normalize report')
+    expect(card).toHaveTextContent('json.normalize@1')
+    expect(card).toHaveTextContent('execution unavailable')
+    expect(card).toHaveTextContent('Report')
+    expect(card).toHaveTextContent('Normalized report')
+    expect(container.querySelector('[data-port-in="tool_normalize:port_tool_input"]')).toBeTruthy()
+    expect(container.querySelector('[data-port-out="tool_normalize:port_tool_output"]')).toBeTruthy()
+    await waitFor(() => expect(screen.getByTestId('formation-wire-edge_tool_chain')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByTestId('formation-wire-edge_tool_gate')).toBeInTheDocument())
+    expect(within(card).getAllByRole('button').map(button => button.getAttribute('aria-label'))).toEqual([
+      'Inspect Tool Normalize report',
+    ])
+    fireEvent.contextMenu(card)
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(patches).toEqual([])
+    expect(recordedMutations).toEqual([])
+  })
+
+  it('opens a read-only Tool inspector with the complete frozen projection', async () => {
+    patches = installFetchMock({ boards: [makeToolBoard()] })
+    await renderCockpit()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Inspect Tool Normalize report' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Tool details: Normalize report' })
+
+    expect(dialog).toHaveTextContent('tool_normalize')
+    expect(dialog).toHaveTextContent('json.normalize@1')
+    expect(dialog).toHaveTextContent('execution unavailable')
+
+    const parameter = within(dialog).getByTestId('tool-parameter-mode')
+    expect(parameter).toHaveTextContent('mode')
+    expect(parameter).toHaveTextContent('string')
+    expect(parameter).toHaveTextContent('strict')
+
+    const input = within(dialog).getByTestId('tool-port-port_tool_input')
+    expect(input).toHaveAttribute('data-direction', 'input')
+    expect(input).toHaveTextContent('port_tool_input')
+    expect(input).toHaveTextContent('input')
+    expect(input).toHaveTextContent('Report')
+    expect(input).toHaveTextContent('work')
+    expect(input).toHaveTextContent('application/json')
+    expect(input).toHaveTextContent('required=true')
+    expect(input).toHaveTextContent('role=data')
+
+    const output = within(dialog).getByTestId('tool-port-port_tool_output')
+    expect(output).toHaveAttribute('data-direction', 'output')
+    expect(output).toHaveTextContent('port_tool_output')
+    expect(output).toHaveTextContent('output')
+    expect(output).toHaveTextContent('Normalized report')
+    expect(output).toHaveTextContent('work')
+    expect(output).toHaveTextContent('application/json')
+    expect(output).not.toHaveTextContent('required')
+    expect(output).not.toHaveTextContent('data')
+    expect(within(dialog).getAllByRole('button').map(button => button.getAttribute('aria-label'))).toEqual([
+      'Close Tool details',
+    ])
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close Tool details' }))
+    expect(dialog).not.toBeInTheDocument()
+    expect(patches).toEqual([])
+    expect(recordedMutations).toEqual([])
+  })
+
+  it('keeps an inspection-readable invalid Tool visible when optional arrays decode as null', async () => {
+    const base = makeBoard()
+    const degradedTool = {
+      ...tool,
+      params: null,
+      inputs: [{ ...tool.inputs[0], acceptedMediaTypes: null }],
+      outputs: null,
+    } as unknown as typeof tool
+    patches = installFetchMock({ boards: [{ ...base, schema: 2, tools: [degradedTool] }] })
+
+    await renderCockpit()
+    const card = await screen.findByTestId('tool-node-tool_normalize')
+    expect(card).toHaveTextContent('Normalize report')
+    expect(card).toHaveTextContent('json.normalize@1')
+    expect(card).toHaveTextContent('execution unavailable')
+    expect(card).toHaveTextContent('Report')
+
+    fireEvent.click(within(card).getByRole('button', { name: 'Inspect Tool Normalize report' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Tool details: Normalize report' })
+    expect(dialog).toHaveTextContent('tool_normalize')
+    expect(within(dialog).getByTestId('tool-port-port_tool_input')).toHaveTextContent('media not declared')
+    expect(within(dialog).queryByTestId('tool-parameter-mode')).toBeNull()
+    expect(recordedMutations).toEqual([])
+  })
+
+  it('preserves readable Tool projection order and distinguishes false from unset input metadata', async () => {
+    const base = makeBoard()
+    const inspectionTool = {
+      ...tool,
+      params: { zeta: true, alpha: 7 },
+      inputs: [
+        {
+          ...tool.inputs[0],
+          id: 'port_false_input',
+          name: 'false_input',
+          label: 'False input',
+          acceptedMediaTypes: ['application/json', 'text/plain'],
+          required: false,
+          role: undefined,
+        },
+        {
+          ...tool.inputs[0],
+          id: 'port_unset_input',
+          name: 'unset_input',
+          label: 'Unset input',
+          acceptedMediaTypes: ['text/markdown', 'application/json'],
+          required: undefined,
+          role: undefined,
+        },
+      ],
+      outputs: [
+        { ...tool.outputs[0], id: 'port_first_output', name: 'first_output', label: 'First output' },
+        { ...tool.outputs[0], id: 'port_second_output', name: 'second_output', label: 'Second output' },
+      ],
+    } as unknown as typeof tool
+    patches = installFetchMock({ boards: [{ ...base, schema: 2, tools: [inspectionTool] }] })
+
+    await renderCockpit()
+    const card = await screen.findByTestId('tool-node-tool_normalize')
+    expect(Array.from(card.querySelectorAll('.tool-ports.inputs .tool-port-label'), node => node.textContent)).toEqual([
+      'False input',
+      'Unset input',
+    ])
+    expect(Array.from(card.querySelectorAll('.tool-ports.outputs .tool-port-label'), node => node.textContent)).toEqual([
+      'First output',
+      'Second output',
+    ])
+
+    fireEvent.click(within(card).getByRole('button', { name: 'Inspect Tool Normalize report' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Tool details: Normalize report' })
+    expect(within(dialog).getAllByTestId(/^tool-parameter-/).map(row => row.getAttribute('data-testid'))).toEqual([
+      'tool-parameter-alpha',
+      'tool-parameter-zeta',
+    ])
+    const alphaParameter = within(dialog).getByTestId('tool-parameter-alpha')
+    expect(within(alphaParameter).getByText('alpha')).toBeInTheDocument()
+    expect(within(alphaParameter).getByText('integer')).toBeInTheDocument()
+    expect(within(alphaParameter).getByText('7')).toBeInTheDocument()
+    const zetaParameter = within(dialog).getByTestId('tool-parameter-zeta')
+    expect(within(zetaParameter).getByText('zeta')).toBeInTheDocument()
+    expect(within(zetaParameter).getByText('boolean')).toBeInTheDocument()
+    expect(within(zetaParameter).getByText('true')).toBeInTheDocument()
+
+    const projectedPorts = within(dialog).getAllByTestId(/^tool-port-/)
+    expect(projectedPorts.map(port => port.getAttribute('data-testid'))).toEqual([
+      'tool-port-port_false_input',
+      'tool-port-port_unset_input',
+      'tool-port-port_first_output',
+      'tool-port-port_second_output',
+    ])
+    expect(projectedPorts[0]).toHaveTextContent('application/json · text/plain')
+    expect(projectedPorts[0]).toHaveTextContent('required=false')
+    expect(projectedPorts[0]).toHaveTextContent('role=unset')
+    expect(projectedPorts[1]).toHaveTextContent('text/markdown · application/json')
+    expect(projectedPorts[1]).toHaveTextContent('required=unset')
+    expect(projectedPorts[1]).toHaveTextContent('role=unset')
+    expect(patches).toEqual([])
+    expect(recordedMutations).toEqual([])
+  })
+
+  it('does not reopen a Tool inspector when the same board removes and later restores that node ID', async () => {
+    const initialBoard = makeToolBoard()
+    const refreshes: TestBoard[] = []
+    const changePolls: Array<() => void> = []
+    let timerId = 0
+    vi.spyOn(window, 'setInterval').mockImplementation((handler, timeout) => {
+      timerId += 1
+      if (timeout === 600) changePolls.push(() => handler())
+      return timerId as unknown as ReturnType<typeof setInterval>
+    })
+    const withoutTool = {
+      ...initialBoard,
+      rev: initialBoard.rev + 1,
+      etag: 'board-without-tool-etag',
+      tools: [upstreamTool],
+      connections: initialBoard.connections.filter(connection => (
+        !connection.from.startsWith('tool_normalize:') && !connection.to.startsWith('tool_normalize:')
+      )),
+    }
+    const restoredTool = {
+      ...initialBoard,
+      rev: initialBoard.rev + 2,
+      etag: 'board-restored-tool-etag',
+      tools: [upstreamTool, { ...tool, title: 'Restored normalize report' }],
+    }
+    patches = installFetchMock({ boards: [initialBoard], sameBoardRefreshes: refreshes })
+    await renderCockpit()
+    await waitFor(() => expect(changePolls).toHaveLength(1))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Inspect Tool Normalize report' }))
+    await screen.findByRole('dialog', { name: 'Tool details: Normalize report' })
+
+    refreshes.push(withoutTool)
+    await act(async () => { changePolls[0]() })
+    await waitFor(() => {
+      expect(screen.queryByTestId('tool-node-tool_normalize')).toBeNull()
+      expect(screen.queryByRole('dialog', { name: 'Tool details: Normalize report' })).toBeNull()
+    })
+    await waitFor(() => expect(changePolls.length).toBeGreaterThan(1))
+
+    refreshes.push(restoredTool)
+    await act(async () => { changePolls[changePolls.length - 1]() })
+    const restoredCard = await screen.findByTestId('tool-node-tool_normalize')
+    expect(restoredCard).toHaveTextContent('Restored normalize report')
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(patches).toEqual([])
+    expect(recordedMutations).toEqual([])
   })
 
   it('collects Mission fields and creates only after a safe Bead ID', async () => {
