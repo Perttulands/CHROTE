@@ -21,20 +21,17 @@ func TestProjectCanonicalRunSchema2PublicDataRequiredness(t *testing.T) {
 	allowlist := schema2SecondRepairPublicAllowedKeys()
 	seen := map[string]bool{}
 	for _, test := range cases {
+		seen[test.eventType] = true
 		t.Run(test.name, func(t *testing.T) {
-			seen[test.eventType] = true
 			allowed, ok := allowlist[test.eventType]
 			if !ok {
 				t.Fatalf("schema-2 public allowlist missing %s", test.eventType)
 			}
-			for key := range test.data {
-				if !schema2SecondRepairContainsString(allowed, key) {
-					t.Fatalf("valid %s fixture contains non-allowlisted key %s", test.name, key)
-				}
-			}
-			if _, err := schema2SecondRepairSanitize(test.eventType, test.data); err != nil {
+			safe, err := schema2SecondRepairSanitize(test.eventType, test.data)
+			if err != nil {
 				t.Fatalf("valid %s fixture rejected before requiredness checks: %v", test.name, err)
 			}
+			schema2SecondRepairRequireAllowlistedPublicData(t, test.eventType, test.data, safe, allowed)
 			for _, key := range test.required {
 				t.Run("missing_"+key, func(t *testing.T) {
 					mutated := cloneAny(test.data).(map[string]any)
@@ -68,6 +65,31 @@ func TestProjectCanonicalRunSchema2PublicDataRequiredness(t *testing.T) {
 		if !seen[eventType] {
 			t.Errorf("schema-2 requiredness fixture missing %s", eventType)
 		}
+	}
+}
+
+func schema2SecondRepairRequireAllowlistedPublicData(t *testing.T, eventType string, rawData map[string]any, safe SafeRunEvent, allowed []string) {
+	t.Helper()
+	var encoded struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(mustMarshalJSON(t, safe), &encoded); err != nil {
+		t.Fatalf("encode sanitized %s event: %v", eventType, err)
+	}
+	for key := range encoded.Data {
+		if !schema2SecondRepairContainsString(allowed, key) {
+			t.Fatalf("sanitized %s exposed non-allowlisted data key %s", eventType, key)
+		}
+	}
+	privateInputKeys := make([]string, 0)
+	for key := range rawData {
+		if !schema2SecondRepairContainsString(allowed, key) {
+			privateInputKeys = append(privateInputKeys, key)
+		}
+	}
+	if len(privateInputKeys) != 0 {
+		sort.Strings(privateInputKeys)
+		t.Logf("sanitized %s omitted private canonical input keys: %s", eventType, strings.Join(privateInputKeys, ","))
 	}
 }
 
