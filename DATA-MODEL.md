@@ -497,13 +497,16 @@ Stable unavailable reasons are `session_target_leased`,
 readiness, while `session_target_attachment_audit_unavailable` means complete
 client/input monitoring cannot be armed. A process-local CHROTE mutex is not
 complete monitoring: stock tmux on an owner-accessible raw socket admits
-independent attach, select, resize, control, paste, and `send-keys` routes. Until
-`ctx-ug7.21` selects, `ctx-ug7.22` implements, and `ctx-ug7.23` certifies an
-enforceable same-pool input boundary, that adapter returns
+independent attach, select, resize, control, paste, and `send-keys` routes.
+[ADR-0009](docs/adr/0009-same-pool-tmux-input-fence.md) records that complete
+mediation is infeasible under the accepted stock topology because pre-opened
+slave-PTY references can survive a userspace drain. The adapter returns
 `session_target_attachment_audit_unavailable` and sends nothing; this does not
-authorize a separate Formations production pool. Unknown fails unavailable
-without a binding. Connected hidden
-CHROTE Terminal iframes count as attached; binding never detaches them.
+authorize a separate Formations production pool. Implementation and
+certification remain blocked on the operation-time kernel-boundary decision
+`ctx-ug7.37` and its required superseding decision. Unknown fails unavailable
+without a binding.
+Connected hidden CHROTE Terminal iframes count as attached; binding never detaches them.
 The user may explicitly disconnect a CHROTE-owned presentation client and retry,
 but cannot reclaim an external client or another run's lease. Formation
 attachment ownership begins only when the exact target-registry occupancy is

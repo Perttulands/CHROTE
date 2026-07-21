@@ -977,10 +977,12 @@ client or another run's lease. Formation attachment ownership begins only after
 the exact target-registry occupancy is fsynced; the final atomic acquisition
 repeats the check and never steals, creates, or selects an alternate target.
 Stock tmux on an owner-accessible raw socket is not certified merely by a
-CHROTE mutex; `ctx-ug7.21` must select, `ctx-ug7.22` must implement, and
-`ctx-ug7.23` must certify a same-pool enforcement primitive before that adapter
-can dispatch. After exact acquisition, the certified boundary
-drains its durable interaction journal and installs the one-send
+CHROTE mutex. [ADR-0009](docs/adr/0009-same-pool-tmux-input-fence.md) records
+`ctx-ug7.21` as infeasible under the accepted stock topology because pre-opened
+slave-PTY references can survive a userspace drain. The adapter cannot dispatch;
+`.22`/`.23` stay blocked on the separately proven operation-time kernel-boundary
+decision `ctx-ug7.37` and its required superseding decision. For any future certified boundary, after
+exact acquisition it drains its durable interaction journal and installs the one-send
 `target-dispatch-input-barrier-v1`. The coordinator records a fresh
 `target-ready-proof-v1` bound to it, then the closed
 `tmux-pane-history-baseline-v1` token and SHA-256 in writer-private
@@ -1178,11 +1180,13 @@ step up is an explicit configuration decision, never a silent fallback.
    configured cockpit target therefore fails before any tmux client call with
    `session_target_attachment_audit_unavailable`; it cannot list, capture, send,
    detach, create, or kill through the Formations executor. No legacy
-   `PROD_SMOKE` or `DEDICATED` value authorizes this path. `ctx-ug7.21` selects,
-   `ctx-ug7.22` implements, and `ctx-ug7.23` certifies the missing same-pool
-   input fence. Only that certified implementation may replace the unavailable
-   result; it must not reintroduce a Formations-only production socket. The
-   disposable adapter records its initial socket identity and revalidates it
+   `PROD_SMOKE` or `DEDICATED` value authorizes this path.
+   [ADR-0009](docs/adr/0009-same-pool-tmux-input-fence.md) records
+   `ctx-ug7.21` as infeasible under the accepted stock topology; `ctx-ug7.22`
+   and `ctx-ug7.23` are blocked on the separately proven operation-time
+   kernel-boundary decision `ctx-ug7.37`. Only a superseding decision plus certified implementation
+   may replace the unavailable result; it must not reintroduce a Formations-only
+   production socket. The disposable adapter records its initial socket identity and revalidates it
    before every adapter operation, so an observed between-call path retarget
    blocks the next list, describe, capture, reattach, or send. This is
    defense-in-depth for trusted dogfood, not a same-UID stock-tmux fence: racing
