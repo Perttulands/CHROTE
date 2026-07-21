@@ -264,6 +264,80 @@ func TestSchema2TerminalLifecycleRequiresExactPredecessor(t *testing.T) {
 			}
 		})
 	})
+
+	t.Run("queued_requires_cancel_or_failure_predecessor", func(t *testing.T) {
+		for _, test := range terminalCases {
+			t.Run("rejects_direct_"+test.name, func(t *testing.T) {
+				state := schema2TerminalQueuedState()
+				err := schema2EpochReduce(t, &state, 20, 0, test.eventType, test.data())
+				if err == nil {
+					t.Fatalf("queued run admitted direct %s", test.eventType)
+				}
+				requireProjectionError(t, err, ErrRunProjectionInvalid)
+			})
+		}
+
+		t.Run("cancel_request_then_matching_canceled", func(t *testing.T) {
+			state := schema2TerminalQueuedState()
+			if err := schema2EpochReduce(t, &state, 20, 0, "run_cancel_requested", schema2TerminalCancelRequestedData()); err != nil {
+				t.Fatalf("queued cancel request rejected: %v", err)
+			}
+			if state.view.Status != "canceling" || state.view.Identity.Epoch != 0 {
+				t.Fatalf("queued cancel request = status %q epoch %d", state.view.Status, state.view.Identity.Epoch)
+			}
+			if err := schema2EpochReduce(t, &state, 21, 0, "run_canceled", schema2TerminalCanceledData(20)); err != nil {
+				t.Fatalf("matching queued-origin cancellation rejected: %v", err)
+			}
+			if state.view.Status != "canceled" || !state.view.Final || state.view.Identity.Epoch != 0 {
+				t.Fatalf("queued-origin cancellation = status %q final %t epoch %d", state.view.Status, state.view.Final, state.view.Identity.Epoch)
+			}
+		})
+
+		t.Run("failure_start_then_matching_failed", func(t *testing.T) {
+			state := schema2TerminalQueuedState()
+			if err := schema2EpochReduce(t, &state, 20, 0, "run_failure_reconciliation_started", schema2TerminalFailureStartedData(0)); err != nil {
+				t.Fatalf("queued failure reconciliation rejected: %v", err)
+			}
+			if state.view.Status != "failing" || state.view.Identity.Epoch != 0 {
+				t.Fatalf("queued failure start = status %q epoch %d", state.view.Status, state.view.Identity.Epoch)
+			}
+			if err := schema2EpochReduce(t, &state, 21, 0, "run_failed", schema2TerminalFailedData(20)); err != nil {
+				t.Fatalf("matching queued-origin failure rejected: %v", err)
+			}
+			if state.view.Status != "failed" || !state.view.Final || state.view.Identity.Epoch != 0 {
+				t.Fatalf("queued-origin failure = status %q final %t epoch %d", state.view.Status, state.view.Final, state.view.Identity.Epoch)
+			}
+		})
+	})
+
+	t.Run("waiting_human_requires_decision_or_cancel", func(t *testing.T) {
+		for _, test := range terminalCases {
+			t.Run("rejects_direct_"+test.name, func(t *testing.T) {
+				state := schema2TerminalWaitingState(t)
+				err := schema2EpochReduce(t, &state, 22, 0, test.eventType, test.data())
+				if err == nil {
+					t.Fatalf("waiting_human run admitted direct %s", test.eventType)
+				}
+				requireProjectionError(t, err, ErrRunProjectionInvalid)
+			})
+		}
+
+		t.Run("cancel_request_then_matching_canceled", func(t *testing.T) {
+			state := schema2TerminalWaitingState(t)
+			if err := schema2EpochReduce(t, &state, 22, 0, "run_cancel_requested", schema2TerminalCancelRequestedData()); err != nil {
+				t.Fatalf("waiting_human cancel request rejected: %v", err)
+			}
+			if state.view.Status != "canceling" || state.view.Identity.Epoch != 0 {
+				t.Fatalf("waiting cancel request = status %q epoch %d", state.view.Status, state.view.Identity.Epoch)
+			}
+			if err := schema2EpochReduce(t, &state, 23, 0, "run_canceled", schema2TerminalCanceledData(22)); err != nil {
+				t.Fatalf("matching waiting-origin cancellation rejected: %v", err)
+			}
+			if state.view.Status != "canceled" || !state.view.Final || state.view.Identity.Epoch != 0 {
+				t.Fatalf("waiting-origin cancellation = status %q final %t epoch %d", state.view.Status, state.view.Final, state.view.Identity.Epoch)
+			}
+		})
+	})
 }
 
 func TestProjectCanonicalRunRejectsSuccessAfterUnresolvedBlock(t *testing.T) {
@@ -280,6 +354,27 @@ func schema2TerminalBlockedState(t *testing.T) projectionState {
 	t.Helper()
 	state := schema2EpochTestState()
 	schema2EpochReduceValidBlock(t, &state)
+	return state
+}
+
+func schema2TerminalQueuedState() projectionState {
+	state := schema2EpochTestState()
+	state.view.Status = "queued"
+	return state
+}
+
+func schema2TerminalWaitingState(t *testing.T) projectionState {
+	t.Helper()
+	state := schema2EpochTestState()
+	if err := schema2EpochReduce(t, &state, 20, 0, "gate_evaluating", schema2SecondRepairFixture(t, "gate_evaluating")); err != nil {
+		t.Fatalf("reduce valid gate evaluation: %v", err)
+	}
+	if err := schema2EpochReduce(t, &state, 21, 0, "human_input_requested", schema2SecondRepairFixture(t, "human_input_requested")); err != nil {
+		t.Fatalf("reduce valid human request: %v", err)
+	}
+	if state.view.Status != "waiting_human" {
+		t.Fatalf("prepared human request = status %q", state.view.Status)
+	}
 	return state
 }
 
