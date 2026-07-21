@@ -35,10 +35,12 @@ func TestS5ResumeAppendsRunResumedInNextEpoch(t *testing.T) {
 		Actor:  "agent:test",
 		NodeID: "fmn_research",
 		Data: map[string]any{
-			"reason":         "awaiting operator resume",
-			"resumeAllowed":  true,
-			"resumePolicy":   "explicit",
-			"openDispatches": []string{"dispatch_01"},
+			"reason": "awaiting operator resume", "code": "operator_resume", "boundary": "engine",
+			"blockedNodeId": "fmn_research", "blockedGateId": "", "waitingNodes": []string{}, "recoverable": true,
+			"resumeAllowed": true, "resumePolicy": "explicit", "nextEpoch": 1,
+			"openDispatches": []any{map[string]any{
+				"dispatchId": "dispatch_01", "nodeId": "fmn_research", "slotId": "slot_research", "dispatchSeq": 0,
+			}},
 		},
 	}); err != nil {
 		t.Fatalf("append blocked: %v", err)
@@ -76,7 +78,7 @@ func TestS5ResumeAppendsRunResumedInNextEpoch(t *testing.T) {
 		t.Fatalf("resume event data = %#v, want resume contract payload", resume.Data)
 	}
 	openDispatches, ok := resume.Data["openDispatches"].([]any)
-	if !ok || len(openDispatches) != 1 || openDispatches[0] != "dispatch_01" {
+	if !ok || len(openDispatches) != 1 || openDispatches[0].(map[string]any)["dispatchId"] != "dispatch_01" {
 		t.Fatalf("resume openDispatches = %#v, want blocked-run open dispatches carried forward", resume.Data["openDispatches"])
 	}
 }
@@ -165,7 +167,11 @@ func TestS5BlockedEpochRejectsContinuationUntilResume(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start run: %v", err)
 	}
-	if err := store.AppendRunEvent(started.RunID, RunEvent{Type: RunEventBlocked, Data: map[string]any{"resumeAllowed": true, "resumePolicy": "explicit"}}); err != nil {
+	if err := store.AppendRunEvent(started.RunID, RunEvent{Type: RunEventBlocked, Data: map[string]any{
+		"reason": "operator resume", "code": "operator_resume", "boundary": "engine", "blockedNodeId": "", "blockedGateId": "",
+		"waitingNodes": []string{}, "recoverable": true, "resumeAllowed": true, "resumePolicy": "explicit",
+		"openDispatches": []any{}, "nextEpoch": 1,
+	}}); err != nil {
 		t.Fatalf("append block: %v", err)
 	}
 
@@ -302,6 +308,7 @@ func TestS5EngineResumeOpenDispatchRecordsReattachErrorWithoutResend(t *testing.
 	if err := dispatcher.CompleteFromCapture(started.RunID, lease.DispatchID, "<<<CHROTE-DONE run-id=wrong status=ok artifact=fake>>>"); !errors.Is(err, ErrDispatchTimeout) {
 		t.Fatalf("complete with mismatched sentinel error = %v, want ErrDispatchTimeout", err)
 	}
+	assertSchema1DispatchFailureRows(t, readRunEvents(t, findOnlyRunLedger(t, store, "session-search")), lease.DispatchID, lease.NodeID, lease.SlotID, true)
 	if len(adapter.sent) != 1 {
 		t.Fatalf("initial adapter sends = %d, want one original send", len(adapter.sent))
 	}
@@ -347,6 +354,7 @@ func TestS5EngineResumeOpenDispatchReattachesCompletedCapture(t *testing.T) {
 	if err := dispatcher.CompleteFromCapture(started.RunID, lease.DispatchID, "still working"); !errors.Is(err, ErrDispatchTimeout) {
 		t.Fatalf("complete without sentinel error = %v, want ErrDispatchTimeout", err)
 	}
+	assertSchema1DispatchFailureRows(t, readRunEvents(t, findOnlyRunLedger(t, store, "session-search")), lease.DispatchID, lease.NodeID, lease.SlotID, true)
 
 	executor := &fakeReattachExecutor{result: FormationExecutionResult{
 		Status:    "done",
@@ -417,6 +425,7 @@ func TestS5EngineResumeOpenDispatchRoutesReattachedOutputThroughGate(t *testing.
 	if err := dispatcher.CompleteFromCapture(started.RunID, lease.DispatchID, "still working"); !errors.Is(err, ErrDispatchTimeout) {
 		t.Fatalf("complete without sentinel error = %v, want ErrDispatchTimeout", err)
 	}
+	assertSchema1DispatchFailureRows(t, readRunEvents(t, findOnlyRunLedger(t, store, "session-search")), lease.DispatchID, lease.NodeID, lease.SlotID, true)
 	executor := &fakeReattachExecutor{
 		result: FormationExecutionResult{
 			Status: "done",
@@ -478,13 +487,13 @@ func TestS5EngineResumeReplaysNewerGateInputOnSameEdge(t *testing.T) {
 	}
 	firstInput := RunInputRef{EdgeID: "edge_work_gate", FromNodeID: "fmn_work", FromPortID: "port_work_out", ToPortID: "in", Ref: "ledger://work/1", Text: "old output"}
 	for _, event := range []RunEvent{
-		{Type: RunEventNodeStarted, NodeID: "fmn_work", Attempt: 1, Data: map[string]any{"nodeKind": "formation"}},
-		{Type: RunEventNodeOutput, NodeID: "fmn_work", Data: formationOutputEventData(FormationExecutionResult{Status: "done", Text: "old output", Outputs: map[string]FormationOutputPayload{"port_work_out": {Ref: "ledger://work/1", Text: "old output"}}})},
-		{Type: RunEventGateEvaluating, GateID: "gate_review", NodeID: "gate_review", Data: map[string]any{"gateId": "gate_review", "inputRef": firstInput}},
+		{Type: RunEventNodeStarted, NodeID: "fmn_work", Attempt: 1, Data: schema1ResumeNodeStartedData("formation", "initial")},
+		{Type: RunEventNodeOutput, NodeID: "fmn_work", Attempt: 1, Data: formationOutputEventData(FormationExecutionResult{Status: "done", Text: "old output", Outputs: map[string]FormationOutputPayload{"port_work_out": {Ref: "ledger://work/1", Text: "old output"}}})},
+		{Type: RunEventGateEvaluating, GateID: "gate_review", NodeID: "gate_review", Attempt: 1, Data: schema1ResumeGateEvaluatingData(firstInput, []string{"code"}, nil)},
 		{Type: RunEventGateVerdict, GateID: "gate_review", NodeID: "gate_review", Data: map[string]any{"verdict": "fail", "perKind": map[string]string{"code": "fail"}, "routePort": "fail", "routedEdges": []string{"edge_gate_fail_work"}, "reason": "push back", "inputRef": firstInput}},
-		{Type: RunEventNodeStarted, NodeID: "fmn_work", Attempt: 2, Data: map[string]any{"nodeKind": "formation", "reason": "pushback"}},
-		{Type: RunEventNodeOutput, NodeID: "fmn_work", Data: formationOutputEventData(FormationExecutionResult{Status: "done", Text: "revised output", Outputs: map[string]FormationOutputPayload{"port_work_out": {Ref: "ledger://work/2", Text: "revised output"}}})},
-		{Type: RunEventBlocked, NodeID: "fmn_work", Data: map[string]any{"reason": "crashed before revised gate evaluation", "resumeAllowed": true, "resumePolicy": "explicit"}},
+		{Type: RunEventNodeStarted, NodeID: "fmn_work", Attempt: 2, Data: schema1ResumeNodeStartedData("formation", "pushback")},
+		{Type: RunEventNodeOutput, NodeID: "fmn_work", Attempt: 2, Data: formationOutputEventData(FormationExecutionResult{Status: "done", Text: "revised output", Outputs: map[string]FormationOutputPayload{"port_work_out": {Ref: "ledger://work/2", Text: "revised output"}}})},
+		{Type: RunEventBlocked, NodeID: "fmn_work", Data: schema1ResumeBlockedData("fmn_work", "", "crashed before revised gate evaluation")},
 	} {
 		if err := store.AppendRunEvent(started.RunID, event); err != nil {
 			t.Fatalf("append %s/%s: %v", event.Type, event.NodeID, err)
@@ -533,17 +542,17 @@ func TestS5EngineResumeTerminalJudgeGatePassDoesNotReplayJudge(t *testing.T) {
 	}
 	workInput := RunInputRef{EdgeID: "edge_work_gate", FromNodeID: "fmn_work", FromPortID: "port_work_out", ToPortID: "in", Ref: "ledger://work", Text: "work output"}
 	for _, event := range []RunEvent{
-		{Type: RunEventNodeStarted, NodeID: "mis_showcase", MissionID: "mis_showcase", Data: map[string]any{"nodeKind": "mission"}},
-		{Type: RunEventNodeOutput, NodeID: "mis_showcase", MissionID: "mis_showcase", Data: formationOutputEventData(FormationExecutionResult{Status: "done", Text: "mission objective", Outputs: map[string]FormationOutputPayload{"out": {Text: "mission objective"}}})},
-		{Type: RunEventNodeStarted, NodeID: "fmn_work", Attempt: 1, Data: map[string]any{"nodeKind": "formation"}},
-		{Type: RunEventNodeOutput, NodeID: "fmn_work", Data: formationOutputEventData(FormationExecutionResult{Status: "done", Text: "work output", Outputs: map[string]FormationOutputPayload{"port_work_out": {Text: "work output"}}})},
-		{Type: RunEventGateEvaluating, GateID: "gate_review", NodeID: "gate_review", Data: map[string]any{"gateId": "gate_review", "inputRef": workInput}},
-		{Type: RunEventNodeStarted, NodeID: "fmn_j1", Attempt: 1, Data: map[string]any{"nodeKind": "formation", "reason": "judge"}},
-		{Type: RunEventNodeOutput, NodeID: "fmn_j1", Data: judgeOutputData("review notes", "port_j1_out")},
-		{Type: RunEventNodeStarted, NodeID: "fmn_j2", Attempt: 1, Data: map[string]any{"nodeKind": "formation", "reason": "judge"}},
-		{Type: RunEventNodeOutput, NodeID: "fmn_j2", Data: judgeOutputData("pass", "port_j2_out")},
+		{Type: RunEventNodeStarted, NodeID: "mis_showcase", MissionID: "mis_showcase", Attempt: 1, Data: schema1ResumeNodeStartedData("mission", "initial")},
+		{Type: RunEventNodeOutput, NodeID: "mis_showcase", MissionID: "mis_showcase", Attempt: 1, Data: formationOutputEventData(FormationExecutionResult{Status: "done", Text: "mission objective", Outputs: map[string]FormationOutputPayload{"out": {Text: "mission objective"}}})},
+		{Type: RunEventNodeStarted, NodeID: "fmn_work", Attempt: 1, Data: schema1ResumeNodeStartedData("formation", "initial")},
+		{Type: RunEventNodeOutput, NodeID: "fmn_work", Attempt: 1, Data: formationOutputEventData(FormationExecutionResult{Status: "done", Text: "work output", Outputs: map[string]FormationOutputPayload{"port_work_out": {Text: "work output"}}})},
+		{Type: RunEventGateEvaluating, GateID: "gate_review", NodeID: "gate_review", Attempt: 1, Data: schema1ResumeGateEvaluatingData(workInput, []string{"formation"}, []string{"fmn_j1", "fmn_j2"})},
+		{Type: RunEventNodeStarted, NodeID: "fmn_j1", Attempt: 1, Data: schema1ResumeNodeStartedData("formation", "judge")},
+		{Type: RunEventNodeOutput, NodeID: "fmn_j1", Attempt: 1, Data: judgeOutputData("review notes", "port_j1_out")},
+		{Type: RunEventNodeStarted, NodeID: "fmn_j2", Attempt: 1, Data: schema1ResumeNodeStartedData("formation", "judge")},
+		{Type: RunEventNodeOutput, NodeID: "fmn_j2", Attempt: 1, Data: judgeOutputData("pass", "port_j2_out")},
 		{Type: RunEventGateVerdict, GateID: "gate_review", NodeID: "gate_review", Data: map[string]any{"verdict": "pass", "perKind": map[string]string{"formation": "pass"}, "routePort": "pass", "routedEdges": []string{}, "reason": "judge chain", "inputRef": workInput}},
-		{Type: RunEventBlocked, NodeID: "gate_review", Data: map[string]any{"reason": "crashed before terminal success", "resumeAllowed": true, "resumePolicy": "explicit"}},
+		{Type: RunEventBlocked, NodeID: "gate_review", GateID: "gate_review", Data: schema1ResumeBlockedData("", "gate_review", "crashed before terminal success")},
 	} {
 		if err := store.AppendRunEvent(started.RunID, event); err != nil {
 			t.Fatalf("append %s/%s: %v", event.Type, event.NodeID, err)
@@ -606,11 +615,11 @@ func TestS5EngineResumeTerminalFailDoesNotBecomeGraphCompleteSuccess(t *testing.
 	}
 	workInput := RunInputRef{EdgeID: "edge_work_gate", FromNodeID: "fmn_work", FromPortID: "port_work_out", ToPortID: "in", Ref: "ledger://work", Text: "work output"}
 	for _, event := range []RunEvent{
-		{Type: RunEventNodeStarted, NodeID: "fmn_work", Attempt: 1, Data: map[string]any{"nodeKind": "formation"}},
-		{Type: RunEventNodeOutput, NodeID: "fmn_work", Data: formationOutputEventData(FormationExecutionResult{Status: "done", Text: "work output", Outputs: map[string]FormationOutputPayload{"port_work_out": {Text: "work output"}}})},
-		{Type: RunEventGateEvaluating, GateID: "gate_review", NodeID: "gate_review", Data: map[string]any{"gateId": "gate_review", "inputRef": workInput}},
-		{Type: RunEventGateVerdict, GateID: "gate_review", NodeID: "gate_review", Data: map[string]any{"verdict": "fail", "perKind": map[string]string{"code": "fail"}, "routePort": "none", "routedEdges": []string{}, "reason": "unwired fail", "inputRef": workInput}},
-		{Type: RunEventBlocked, NodeID: "gate_review", Data: map[string]any{"reason": "gate fail is unwired", "resumeAllowed": true, "resumePolicy": "explicit"}},
+		{Type: RunEventNodeStarted, NodeID: "fmn_work", Attempt: 1, Data: schema1ResumeNodeStartedData("formation", "initial")},
+		{Type: RunEventNodeOutput, NodeID: "fmn_work", Attempt: 1, Data: formationOutputEventData(FormationExecutionResult{Status: "done", Text: "work output", Outputs: map[string]FormationOutputPayload{"port_work_out": {Text: "work output"}}})},
+		{Type: RunEventGateEvaluating, GateID: "gate_review", NodeID: "gate_review", Attempt: 1, Data: schema1ResumeGateEvaluatingData(workInput, []string{"code"}, nil)},
+		{Type: RunEventGateVerdict, GateID: "gate_review", NodeID: "gate_review", Data: map[string]any{"verdict": "fail", "perKind": map[string]string{"code": "fail"}, "routePort": "fail", "routedEdges": []string{}, "reason": "unwired fail", "inputRef": workInput}},
+		{Type: RunEventBlocked, NodeID: "gate_review", GateID: "gate_review", Data: schema1ResumeBlockedData("", "gate_review", "gate fail is unwired")},
 	} {
 		if err := store.AppendRunEvent(started.RunID, event); err != nil {
 			t.Fatalf("append %s/%s: %v", event.Type, event.NodeID, err)
@@ -652,16 +661,16 @@ func TestS5EngineResumeHonorsMaxAttemptsFromOriginalRun(t *testing.T) {
 		t.Fatalf("start run: %v", err)
 	}
 	for _, event := range []RunEvent{
-		{Type: RunEventNodeStarted, NodeID: "fmn_frame", Attempt: 1},
-		{Type: RunEventNodeOutput, NodeID: "fmn_frame", Data: formationOutputEventData(FormationExecutionResult{
+		{Type: RunEventNodeStarted, NodeID: "fmn_frame", Attempt: 1, Data: schema1ResumeNodeStartedData("formation", "initial")},
+		{Type: RunEventNodeOutput, NodeID: "fmn_frame", Attempt: 1, Data: formationOutputEventData(FormationExecutionResult{
 			Status: "done",
 			Text:   "frame output",
 			Outputs: map[string]FormationOutputPayload{
 				"port_frame_out": {Text: "frame output"},
 			},
 		})},
-		{Type: RunEventNodeStarted, NodeID: "fmn_research", Attempt: 1},
-		{Type: RunEventBlocked, NodeID: "fmn_research", Data: map[string]any{"resumeAllowed": true, "resumePolicy": "explicit", "reason": "resume limit check"}},
+		{Type: RunEventNodeStarted, NodeID: "fmn_research", Attempt: 1, Data: schema1ResumeNodeStartedData("formation", "initial")},
+		{Type: RunEventBlocked, NodeID: "fmn_research", Data: schema1ResumeBlockedData("fmn_research", "", "resume limit check")},
 	} {
 		if err := store.AppendRunEvent(started.RunID, event); err != nil {
 			t.Fatalf("append %s: %v", event.Type, err)
@@ -715,6 +724,42 @@ func judgeOutputData(text, outputPort string) map[string]any {
 	})
 	data["reason"] = "judge"
 	return data
+}
+
+func schema1ResumeNodeStartedData(kind, reason string) map[string]any {
+	return map[string]any{
+		"nodeKind":  kind,
+		"inputRefs": []any{},
+		"reason":    reason,
+	}
+}
+
+func schema1ResumeGateEvaluatingData(input RunInputRef, kinds, judgeChain []string) map[string]any {
+	if judgeChain == nil {
+		judgeChain = []string{}
+	}
+	return map[string]any{
+		"kinds":      kinds,
+		"criterion":  "Resume fixture criterion",
+		"inputRef":   input,
+		"judgeChain": judgeChain,
+	}
+}
+
+func schema1ResumeBlockedData(nodeID, gateID, reason string) map[string]any {
+	return map[string]any{
+		"reason":         reason,
+		"code":           "resume_fixture",
+		"boundary":       "engine",
+		"blockedNodeId":  nodeID,
+		"blockedGateId":  gateID,
+		"waitingNodes":   []string{},
+		"recoverable":    true,
+		"resumeAllowed":  true,
+		"resumePolicy":   "explicit",
+		"openDispatches": []any{},
+		"nextEpoch":      1,
+	}
 }
 
 func countEventsForNode(events []RunEvent, eventType, nodeID string) int {

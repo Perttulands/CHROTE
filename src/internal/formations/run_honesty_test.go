@@ -32,6 +32,8 @@ func TestS4ReachableJoinWithUnavailableInputDoesNotFalselySucceed(t *testing.T) 
 		ExpectedBoardRev:  board.Rev,
 		Limits:            RunLimits{MaxDispatch: 10, WallClockSeconds: 60},
 	})
+	events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
+	assertSchema1WaitingNodeIDs(t, lastEventOfType(t, events, RunEventBlocked), "fmn_join")
 	if err != nil {
 		t.Fatalf("run mission: %v", err)
 	}
@@ -46,8 +48,6 @@ func TestS4ReachableJoinWithUnavailableInputDoesNotFalselySucceed(t *testing.T) 
 	if status.Final {
 		t.Fatalf("status.Final = true, want non-final blocked run that surfaces unfinished work")
 	}
-
-	events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
 
 	// The join must be on record as waiting, and that wait must be unresolved.
 	waitingAt := indexEvent(events, RunEventNodeWaiting, "fmn_join")
@@ -69,6 +69,25 @@ func TestS4ReachableJoinWithUnavailableInputDoesNotFalselySucceed(t *testing.T) 
 	// Only the reachable, fully-fed formation ran.
 	if got, want := executor.nodeIDs(), []string{"fmn_a"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("executor nodes = %v, want only fmn_a (join never runnable)", got)
+	}
+}
+
+func assertSchema1WaitingNodeIDs(t *testing.T, event RunEvent, want ...string) {
+	t.Helper()
+	raw, ok := event.Data["waitingNodes"].([]any)
+	if !ok {
+		t.Fatalf("waitingNodes = %#v, want array of node-id strings", event.Data["waitingNodes"])
+	}
+	got := make([]string, len(raw))
+	for index, value := range raw {
+		text, ok := value.(string)
+		if !ok || text == "" {
+			t.Fatalf("waitingNodes[%d] = %#v, want nonempty node-id string", index, value)
+		}
+		got[index] = text
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("waitingNodes = %v, want %v", got, want)
 	}
 }
 

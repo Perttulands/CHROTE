@@ -728,6 +728,7 @@ func TestTmuxExecutorReattachesCompletedDispatchFromPaneCapture(t *testing.T) {
 	if err := dispatcher.CompleteFromCapture(started.RunID, lease.DispatchID, "still working"); !errors.Is(err, ErrDispatchTimeout) {
 		t.Fatalf("complete without sentinel error = %v, want ErrDispatchTimeout", err)
 	}
+	assertSchema1DispatchFailureRows(t, readRunEvents(t, findOnlyRunLedger(t, store, "session-search")), lease.DispatchID, lease.NodeID, lease.SlotID, true)
 	if _, err := store.ResumeRun(started.RunID, RunResumeRequest{Actor: "agent:test", Mode: "reattach", Reason: "recover completed pane"}); err != nil {
 		t.Fatalf("record resume: %v", err)
 	}

@@ -110,8 +110,8 @@ func TestCareerWebAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("project frontend report: %v", err)
 	}
-	if report.ReportRef != "index.html" || report.Text == "" {
-		t.Fatalf("frontend report = %+v, want ledger-derived index.html report", report)
+	if report.ReportRef != "" || report.Text == "" || report.Outputs["port_frontend_out"].Text == "" {
+		t.Fatalf("frontend report = %+v, want public text/output with private reportRef omitted", report)
 	}
 
 	events := readRunEvents(t, filepath.Join(store.Workspace, statusLedgerPath(t, store, status.RunID)))

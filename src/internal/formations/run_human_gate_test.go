@@ -154,13 +154,14 @@ func TestS5HumanGatePassToUnderfedJoinBlocksWithoutFinalSuccess(t *testing.T) {
 		Mode:   "reattach",
 		Reason: "human gate approved",
 	})
+	events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
+	assertSchema1WaitingNodeIDs(t, lastEventOfType(t, events, RunEventBlocked), "fmn_join")
 	if err != nil {
 		t.Fatalf("resume after human verdict: %v", err)
 	}
 	if status.Status != RunStatusBlocked || status.Final {
 		t.Fatalf("status = %+v, want blocked non-final for underfed join", status)
 	}
-	events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
 	if events[len(events)-1].Type != RunEventBlocked {
 		t.Fatalf("last event = %s, want run_blocked instead of final success over underfed join", events[len(events)-1].Type)
 	}

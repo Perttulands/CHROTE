@@ -116,8 +116,8 @@ func TestS4RunNodeReportProjectionFromLedgerOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("project node report: %v", err)
 	}
-	if report.Text != "Report body from ledger" || report.ReportRef != "reports/fmn_research.md" || report.Status != "done" {
-		t.Fatalf("node report = %+v, want ledger output fields", report)
+	if report.Text != "Report body from ledger" || report.ReportRef != "" || report.Status != "done" || report.Outputs["port_research_out"].Text != "Report body from ledger" {
+		t.Fatalf("node report = %+v, want public ledger output fields with private reportRef omitted", report)
 	}
 }
 

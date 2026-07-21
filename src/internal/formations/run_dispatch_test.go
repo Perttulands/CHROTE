@@ -129,6 +129,7 @@ func TestS4DeadPaneAndIdleTimeoutRecordLoudError(t *testing.T) {
 		if !errors.Is(err, ErrDispatchTimeout) {
 			t.Fatalf("complete from mismatched capture error = %v, want ErrDispatchTimeout", err)
 		}
+		assertSchema1DispatchFailureRows(t, readRunEvents(t, findOnlyRunLedger(t, store, "session-search")), lease.DispatchID, lease.NodeID, lease.SlotID, true)
 		status, err := store.ProjectRun(started.RunID)
 		if err != nil {
 			t.Fatalf("project run: %v", err)
@@ -151,6 +152,7 @@ func TestS4CompletionForUnknownDispatchFailsLoud(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "unknown dispatch") {
 		t.Fatalf("complete unknown dispatch error = %v, want unknown dispatch failure", err)
 	}
+	assertSchema1DispatchFailureRows(t, readRunEvents(t, findOnlyRunLedger(t, store, "session-search")), "dsp_unknown", "", "", false)
 	status, err := store.ProjectRun(started.RunID)
 	if err != nil {
 		t.Fatalf("project run: %v", err)
@@ -165,6 +167,46 @@ func TestS4CompletionForUnknownDispatchFailsLoud(t *testing.T) {
 	errEvent := eventOfType(t, events, RunEventError)
 	if errEvent.Data["code"] != "unknown_dispatch" {
 		t.Fatalf("error data = %#v, want unknown_dispatch", errEvent.Data)
+	}
+}
+
+func assertSchema1DispatchFailureRows(t *testing.T, events []RunEvent, dispatchID, nodeID, slotID string, knownDispatch bool) {
+	t.Helper()
+	errEvent := lastEventOfType(t, events, RunEventError)
+	blockEvent := lastEventOfType(t, events, RunEventBlocked)
+	if errEvent.Data["dispatchId"] != dispatchID {
+		t.Fatalf("dispatch error id = %#v, want %q", errEvent.Data["dispatchId"], dispatchID)
+	}
+	if errEvent.NodeID != nodeID || errEvent.SlotID != slotID || errEvent.Data["nodeId"] != nodeID || errEvent.Data["slotId"] != slotID {
+		t.Fatalf("dispatch error identity = %+v data=%#v, want node=%q slot=%q", errEvent, errEvent.Data, nodeID, slotID)
+	}
+	if errEvent.Data["boundary"] == "" || errEvent.Data["recoverable"] != true {
+		t.Fatalf("dispatch error contract = %#v, want boundary and recoverable=true", errEvent.Data)
+	}
+	if blockEvent.NodeID != nodeID || blockEvent.SlotID != slotID || blockEvent.Data["blockedNodeId"] != nodeID {
+		t.Fatalf("dispatch block identity = %+v data=%#v, want node=%q slot=%q", blockEvent, blockEvent.Data, nodeID, slotID)
+	}
+	for _, key := range []string{"reason", "code", "boundary", "blockedGateId", "waitingNodes", "recoverable", "resumeAllowed", "resumePolicy", "openDispatches", "nextEpoch"} {
+		if _, ok := blockEvent.Data[key]; !ok {
+			t.Fatalf("dispatch block missing schema-1 field %q: %#v", key, blockEvent.Data)
+		}
+	}
+	openDispatches, ok := blockEvent.Data["openDispatches"].([]any)
+	if !ok {
+		t.Fatalf("openDispatches = %#v, want array", blockEvent.Data["openDispatches"])
+	}
+	if !knownDispatch {
+		if len(openDispatches) != 0 {
+			t.Fatalf("unknown dispatch open set = %#v, want empty rather than manufactured node/slot identity", openDispatches)
+		}
+		return
+	}
+	if len(openDispatches) != 1 {
+		t.Fatalf("known dispatch open set = %#v, want one lease", openDispatches)
+	}
+	open, ok := openDispatches[0].(map[string]any)
+	if !ok || open["dispatchId"] != dispatchID || open["nodeId"] != nodeID || open["slotId"] != slotID {
+		t.Fatalf("known dispatch open lease = %#v, want dispatch=%q node=%q slot=%q", openDispatches[0], dispatchID, nodeID, slotID)
 	}
 }
 

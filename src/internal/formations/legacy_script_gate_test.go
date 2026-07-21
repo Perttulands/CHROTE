@@ -581,7 +581,11 @@ func legacyScriptGateHistoricalBlockedRun(t *testing.T) (*Store, string, string)
 	if err != nil {
 		t.Fatalf("start historical run: %v", err)
 	}
-	if err := store.AppendRunEvent(started.RunID, RunEvent{Type: RunEventBlocked, Data: map[string]any{"resumeAllowed": true}}); err != nil {
+	if err := store.AppendRunEvent(started.RunID, RunEvent{Type: RunEventBlocked, Data: map[string]any{
+		"reason": "legacy script gate requires migration", "code": "legacy_script_gate_requires_migration", "boundary": "engine",
+		"blockedNodeId": "", "blockedGateId": "gate_review", "waitingNodes": []string{}, "recoverable": true,
+		"resumeAllowed": true, "resumePolicy": "explicit", "openDispatches": []any{}, "nextEpoch": 1,
+	}}); err != nil {
 		t.Fatalf("block historical run: %v", err)
 	}
 	writeFixture(t, filepath.Join(store.Workspace, started.SnapshotPath), legacyScriptGateBoardFixture(`commandArgv = ["npm", "run", "lint"]`))

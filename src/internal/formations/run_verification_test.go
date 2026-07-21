@@ -414,19 +414,22 @@ func TestLegacyInlineVerificationRawResumeAppendIsRejectedButCancelClosesRun(t *
 	snapshot := runArtifactPath("session-search", runID, ".snapshot.toml")
 	ledger := filepath.Join(store.Workspace, runArtifactPath("session-search", runID, ".ndjson"))
 	writeFixture(t, filepath.Join(store.Workspace, snapshot), raw)
-	if err := writeInitialRunEvent(ledger, RunEvent{
-		Timestamp: legacyRunEventTimestamp, RunID: runID, Seq: 1, Type: RunEventStarted, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
-		MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{
-			"boardSlug": "session-search", "snapshot": snapshot,
-			"bindingsSnapshot": runArtifactPath("session-search", runID, ".bindings.toml"),
-		},
-	}); err != nil {
+	writeFixture(t, filepath.Join(store.Workspace, runArtifactPath("session-search", runID, ".bindings.toml")), `schema = 1
+runId = "`+runID+`"
+boardId = "brd_01J9_sesssearch"
+boardSlug = "session-search"
+boardRev = 7
+missionId = "mis_showcase"
+`)
+	if err := writeInitialRunEvent(ledger, testRunStartedEvent(runID, "session-search")); err != nil {
 		t.Fatalf("write legacy run start: %v", err)
 	}
 	if err := appendRunEventLine(ledger, RunEvent{
 		Timestamp: legacyRunEventTimestamp, RunID: runID, Seq: 2, Type: RunEventBlocked, BoardID: "brd_01J9_sesssearch", BoardRev: 7,
 		MissionID: "mis_showcase", Actor: "agent:test", Data: map[string]any{
-			"reason": "legacy interruption", "resumeAllowed": true, "resumePolicy": "explicit",
+			"reason": "legacy interruption", "code": "legacy_interruption", "boundary": "engine",
+			"blockedNodeId": "", "blockedGateId": "", "waitingNodes": []string{}, "recoverable": true,
+			"resumeAllowed": true, "resumePolicy": "explicit", "openDispatches": []any{}, "nextEpoch": 1,
 		},
 	}); err != nil {
 		t.Fatalf("write legacy blocked event: %v", err)
@@ -460,15 +463,14 @@ func TestLegacyInlineVerificationRawResumeAppendIsRejectedButCancelClosesRun(t *
 	}
 }
 
-func TestLegacyInlineVerificationTerminalContainmentIgnoresUnavailableSnapshot(t *testing.T) {
+func TestLegacyInlineVerificationTerminalContainmentFailsClosedOnUnavailableSnapshot(t *testing.T) {
 	tests := []struct {
-		name       string
-		eventType  string
-		wantStatus string
-		corrupt    bool
+		name      string
+		eventType string
+		corrupt   bool
 	}{
-		{name: "cancel with missing snapshot", eventType: RunEventCanceled, wantStatus: RunStatusCanceled},
-		{name: "fail with unreadable snapshot", eventType: RunEventFailed, wantStatus: RunStatusFailed, corrupt: true},
+		{name: "cancel with missing snapshot", eventType: RunEventCanceled},
+		{name: "fail with unreadable snapshot", eventType: RunEventFailed, corrupt: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -504,12 +506,8 @@ func TestLegacyInlineVerificationTerminalContainmentIgnoresUnavailableSnapshot(t
 			}); err != nil {
 				t.Fatalf("append terminal containment event: %v", err)
 			}
-			status, err := store.ProjectRun(runID)
-			if err != nil {
-				t.Fatalf("project contained legacy run: %v", err)
-			}
-			if status.Status != test.wantStatus || !status.Final {
-				t.Fatalf("contained legacy status = %+v, want final %s", status, test.wantStatus)
+			if _, err := store.ProjectRun(runID); !errors.Is(err, ErrRunLedgerInvalid) {
+				t.Fatalf("project contained legacy run error = %v, want ErrRunLedgerInvalid for unavailable authority snapshot", err)
 			}
 		})
 	}
@@ -685,7 +683,7 @@ func runStartedFixture(runID, boardSlug, snapshot string) RunEvent {
 	}
 }
 
-func TestNewLegacyVerificationVerdictAppendIsRejectedButHistoricalEvidenceProjects(t *testing.T) {
+func TestNewLegacyVerificationVerdictAppendIsRejectedAndIncompleteHistoricalEvidenceFailsClosed(t *testing.T) {
 	store, _ := s4RunFixture(t)
 	store.Now = fixedClock()
 	raw := s4MissionOnlyBoardFixture()
@@ -742,12 +740,8 @@ func TestNewLegacyVerificationVerdictAppendIsRejectedButHistoricalEvidenceProjec
 	if len(events) != 3 || events[1].Type != RunEventVerificationVerdict {
 		t.Fatalf("historical events = %+v, want retained verification evidence", events)
 	}
-	projection, err := store.ProjectRun(historicalRunID)
-	if err != nil {
-		t.Fatalf("project historical ledger: %v", err)
-	}
-	if projection.Status != RunStatusSucceeded || !projection.Final {
-		t.Fatalf("historical projection = %+v, want final status determined by run_succeeded", projection)
+	if _, err := store.ProjectRun(historicalRunID); !errors.Is(err, ErrRunLedgerInvalid) {
+		t.Fatalf("project incomplete historical ledger error = %v, want ErrRunLedgerInvalid without immutable graph/bindings authority", err)
 	}
 }
 

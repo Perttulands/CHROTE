@@ -63,6 +63,14 @@ func TestConfiguredWorkspaceSymlinkStillSupportsRunInspection(t *testing.T) {
 	events := testLegacyRunEvents(runID, "session-search")
 	ledgerPath := filepath.Join(workspace, runArtifactPath("session-search", runID, ".ndjson"))
 	writeFixture(t, ledgerPath, string(testRunLedgerBytes(t, events...)))
+	writeFixture(t, filepath.Join(workspace, runArtifactPath("session-search", runID, ".snapshot.toml")), s4RunBoardFixture())
+	writeFixture(t, filepath.Join(workspace, runArtifactPath("session-search", runID, ".bindings.toml")), `schema = 1
+runId = "`+runID+`"
+boardId = "brd_01J9_sesssearch"
+boardSlug = "session-search"
+boardRev = 7
+missionId = "mis_showcase"
+`)
 	if err := os.Symlink(workspace, workspaceAlias); err != nil {
 		t.Fatalf("symlink configured workspace: %v", err)
 	}
@@ -507,7 +515,11 @@ func testLegacyRunEvents(runID, boardSlug string) []RunEvent {
 		BoardID:   "brd_01J9_sesssearch",
 		BoardRev:  7,
 		MissionID: "mis_showcase",
-		Data:      map[string]any{"reason": "interrupted", "resumeAllowed": true},
+		Data: map[string]any{
+			"reason": "interrupted", "code": "interrupted", "boundary": "engine", "blockedNodeId": "", "blockedGateId": "",
+			"waitingNodes": []string{}, "recoverable": true, "resumeAllowed": true, "resumePolicy": "explicit",
+			"openDispatches": []any{}, "nextEpoch": 1,
+		},
 	}
 	return []RunEvent{started, blocked}
 }
@@ -524,6 +536,10 @@ func testRunStartedEvent(runID, boardSlug string) RunEvent {
 		MissionID: "mis_showcase",
 		Data: map[string]any{
 			"boardSlug":        boardSlug,
+			"boardRev":         7,
+			"missionId":        "mis_showcase",
+			"beadId":           "ctx-test",
+			"limits":           map[string]any{"maxDispatch": 20, "maxAttempts": 3, "wallClockSeconds": 1800, "redact": false},
 			"snapshot":         runArtifactPath(boardSlug, runID, ".snapshot.toml"),
 			"bindingsSnapshot": runArtifactPath(boardSlug, runID, ".bindings.toml"),
 		},
