@@ -824,14 +824,15 @@ type SafeGateFeedbackInput struct {
 }
 
 type SafeGateFeedbackPayload struct {
-	FeedbackID     string                `json:"feedbackId"`
-	GateID         string                `json:"gateId"`
-	Verdict        string                `json:"verdict"`
-	EvaluatedInput SafeGateFeedbackInput `json:"evaluatedInput"`
-	Reason         string                `json:"reason"`
-	Evidence       []SafeGateEvidence    `json:"evidence"`
-	GateSeq        uint64                `json:"gateSeq"`
-	GateAttempt    uint64                `json:"gateAttempt"`
+	FeedbackID      string                `json:"feedbackId"`
+	GateID          string                `json:"gateId"`
+	Verdict         string                `json:"verdict"`
+	EvaluatedInput  SafeGateFeedbackInput `json:"evaluatedInput"`
+	Reason          string                `json:"reason"`
+	Evidence        []SafeGateEvidence    `json:"evidence"`
+	GateSeq         uint64                `json:"gateSeq"`
+	GateAttempt     uint64                `json:"gateAttempt"`
+	RevisionCycleID string                `json:"revisionCycleId,omitempty"`
 }
 
 type SafeArtifactSource struct {
@@ -960,6 +961,7 @@ type SafeSchema2RunResumedData struct {
 	RetryTargets         []SafeRetryTarget         `json:"retryTargets"`
 }
 type SafeSchema2NodeWaitingData struct {
+	NodeID       string   `json:"nodeId"`
 	NeededInputs uint64   `json:"neededInputs"`
 	ReadyInputs  uint64   `json:"readyInputs"`
 	TotalInputs  uint64   `json:"totalInputs"`
@@ -1154,14 +1156,14 @@ type SafeSchema2ToolResultData struct {
 	OutputHashes          SafeProjectionHashes   `json:"outputHashes"`
 	ArtifactRegistrations []ArtifactProjection   `json:"artifactRegistrations"`
 	Artifacts             []ArtifactProjection   `json:"artifacts"`
-	DisplayEvidence       []SafeDisplayEvidence  `json:"displayEvidence"`
+	DisplayEvidence       *[]SafeDisplayEvidence `json:"displayEvidence,omitempty"`
 	Timing                SafeEventTiming        `json:"timing"`
 }
 type SafeSchema2NodeOutputData struct {
 	NodeID           string                 `json:"nodeId"`
 	Status           string                 `json:"status"`
 	Outputs          SafePayloadProjections `json:"outputs"`
-	ReportArtifactID string                 `json:"reportArtifactId"`
+	ReportArtifactID string                 `json:"reportArtifactId,omitempty"`
 	ArtifactIDs      []string               `json:"artifactIds"`
 	DiffArtifactIDs  []string               `json:"diffArtifactIds"`
 	ProducedBy       SafeProducedBy         `json:"producedBy"`
@@ -1176,9 +1178,9 @@ type SafeSchema2GateEvaluatingData struct {
 	CriterionProjection SafeCriterionProjection `json:"criterionProjection"`
 	InputRef            SafeInputIdentity       `json:"inputRef"`
 	JudgeChain          []string                `json:"judgeChain"`
-	RevisionCycleID     string                  `json:"revisionCycleId"`
-	TriggerFeedbackID   string                  `json:"triggerFeedbackId"`
-	PriorGateSeq        uint64                  `json:"priorGateSeq"`
+	RevisionCycleID     string                  `json:"revisionCycleId,omitempty"`
+	TriggerFeedbackID   string                  `json:"triggerFeedbackId,omitempty"`
+	PriorGateSeq        uint64                  `json:"priorGateSeq,omitempty"`
 }
 type SafeSchema2GateKindResultData struct {
 	GateID                  string             `json:"gateId"`
@@ -1225,16 +1227,16 @@ type SafeSchema2JudgeAttemptFailedData struct {
 	RelatedSeq      uint64   `json:"relatedSeq"`
 }
 type SafeSchema2GateVerdictData struct {
-	GateID            string                  `json:"gateId"`
-	GateAttempt       uint64                  `json:"gateAttempt"`
-	Verdict           string                  `json:"verdict"`
-	PerKind           SafeGateKindVerdicts    `json:"perKind"`
-	KindResultSeqs    SafeGateKindResultSeqs  `json:"kindResultSeqs"`
-	EvaluatedInputRef SafeInputIdentity       `json:"evaluatedInputRef"`
-	RoutePort         string                  `json:"routePort"`
-	RoutedEdges       []string                `json:"routedEdges"`
-	Reason            string                  `json:"reason"`
-	FeedbackPayload   SafeGateFeedbackPayload `json:"feedbackPayload"`
+	GateID            string                   `json:"gateId"`
+	GateAttempt       uint64                   `json:"gateAttempt"`
+	Verdict           string                   `json:"verdict"`
+	PerKind           SafeGateKindVerdicts     `json:"perKind"`
+	KindResultSeqs    SafeGateKindResultSeqs   `json:"kindResultSeqs"`
+	EvaluatedInputRef SafeInputIdentity        `json:"evaluatedInputRef"`
+	RoutePort         string                   `json:"routePort"`
+	RoutedEdges       []string                 `json:"routedEdges"`
+	Reason            string                   `json:"reason"`
+	FeedbackPayload   *SafeGateFeedbackPayload `json:"feedbackPayload,omitempty"`
 }
 type SafeSchema2ArtifactAttachedData struct {
 	ArtifactProjection ArtifactProjection `json:"artifactProjection"`
@@ -1344,7 +1346,7 @@ type SafeSchema2RunFailedData struct {
 	Final                    bool                          `json:"final"`
 }
 type SafeSchema2RunSucceededData struct {
-	SummaryArtifactID string   `json:"summaryArtifactId"`
+	SummaryArtifactID string   `json:"summaryArtifactId,omitempty"`
 	OutputArtifactIDs []string `json:"outputArtifactIds"`
 	Final             bool     `json:"final"`
 }

@@ -1302,7 +1302,7 @@ func cloneRawMap(input map[string]json.RawMessage) map[string]json.RawMessage {
 }
 
 func safeProjectionIdentifier(value string) bool {
-	return value != "" && runtimeAuthorityPathComponent(value) && !strings.Contains(value, "..")
+	return validToolDefinitionID(value) && runtimeAuthorityPathComponent(value) && !strings.Contains(value, "..")
 }
 
 func decodeClosedProjection[T any](raw json.RawMessage, allowed, required map[string]bool) (T, error) {
@@ -1376,11 +1376,38 @@ func projectionAscendingUnique(values []uint64, allowEmpty bool) bool {
 	return true
 }
 
+func setProjectionDefault(object map[string]json.RawMessage, key string, value any) error {
+	if _, ok := object[key]; ok {
+		return nil
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	object[key] = raw
+	return nil
+}
+
+func validateProjectionIdentifiers(values []string) bool {
+	seen := make(map[string]bool, len(values))
+	for _, value := range values {
+		if !safeProjectionIdentifier(value) || seen[value] {
+			return false
+		}
+		seen[value] = true
+	}
+	return true
+}
+
 func decodeSafeGateFeedback(raw json.RawMessage) (SafeGateFeedbackPayload, error) {
-	allowed := stringSet("feedbackId", "gateId", "verdict", "evaluatedInput", "reason", "evidence", "gateSeq", "gateAttempt")
-	result, err := decodeClosedProjection[SafeGateFeedbackPayload](raw, allowed, allowed)
+	allowed := stringSet("feedbackId", "gateId", "verdict", "evaluatedInput", "reason", "evidence", "gateSeq", "gateAttempt", "revisionCycleId")
+	required := stringSet("feedbackId", "gateId", "verdict", "evaluatedInput", "reason", "evidence", "gateSeq", "gateAttempt")
+	result, err := decodeClosedProjection[SafeGateFeedbackPayload](raw, allowed, required)
 	if err != nil || !safeProjectionIdentifier(result.FeedbackID) || !safeProjectionIdentifier(result.GateID) || result.Verdict != "fail" || !safeProjectionIdentifier(result.EvaluatedInput.InputID) || !projectionSafeSequence(result.EvaluatedInput.GateInputSeq) || !projectionSafeSequence(result.GateSeq) || !projectionSafeSequence(result.GateAttempt) || len(result.Reason) > 64<<10 {
 		return SafeGateFeedbackPayload{}, errors.New("invalid gate feedback")
+	}
+	if result.RevisionCycleID != "" && !safeProjectionIdentifier(result.RevisionCycleID) {
+		return SafeGateFeedbackPayload{}, errors.New("invalid gate feedback revision cycle")
 	}
 	if err := validateSafeGateEvidence(result.Evidence); err != nil {
 		return SafeGateFeedbackPayload{}, err
@@ -1875,6 +1902,19 @@ func selectedProjectionDataHash(data map[string]json.RawMessage, keys ...string)
 
 func validateAndNormalizeSchema2Data(eventType string, data map[string]json.RawMessage) error {
 	switch eventType {
+	case "node_waiting":
+		decoded, err := decodeTypedData[SafeSchema2NodeWaitingData](data)
+		if err != nil || !safeProjectionIdentifier(decoded.NodeID) {
+			return errors.New("invalid waiting node identity")
+		}
+	case "node_started":
+		decoded, err := decodeTypedData[SafeSchema2NodeStartedData](data)
+		if err != nil || (decoded.TriggerFeedbackID != "" && !safeProjectionIdentifier(decoded.TriggerFeedbackID)) {
+			return errors.New("invalid node start option")
+		}
+		if _, present := data["priorGateSeq"]; present && !projectionSafeSequence(decoded.PriorGateSeq) {
+			return errors.New("invalid prior gate sequence")
+		}
 	case "run_resumed", "run_blocked":
 		retryTargets, err := decodeRetryTargets(data["retryTargets"])
 		if err != nil {
@@ -1895,33 +1935,72 @@ func validateAndNormalizeSchema2Data(eventType string, data map[string]json.RawM
 		}
 	case "slot_result":
 		allowed := stringSet("turnKey", "phase", "status", "turnPayload", "outputs", "reportArtifactId", "artifactIds", "diffArtifactIds")
-		turnResult, err := decodeClosedProjection[SafeTurnResult](data["turnResult"], allowed, allowed)
+		required := stringSet("turnKey", "phase", "status", "turnPayload")
+		turnResultObject, err := decodeUniqueJSONObject(data["turnResult"])
+		if err != nil {
+			return errors.New("invalid turn result")
+		}
+		for key := range turnResultObject {
+			if !allowed[key] {
+				return errors.New("invalid turn result")
+			}
+		}
+		for key := range required {
+			if _, ok := turnResultObject[key]; !ok {
+				return errors.New("invalid turn result")
+			}
+		}
+		for key, value := range map[string]any{
+			"outputs": map[string]any{}, "reportArtifactId": "", "artifactIds": []string{}, "diffArtifactIds": []string{},
+		} {
+			if err := setProjectionDefault(turnResultObject, key, value); err != nil {
+				return err
+			}
+		}
+		normalizedTurnResult, err := json.Marshal(turnResultObject)
+		if err != nil {
+			return err
+		}
+		turnResult, err := decodeClosedProjection[SafeTurnResult](normalizedTurnResult, allowed, allowed)
 		if err != nil || !projectionValueIn(turnResult.Status, "done", "needs-review", "failed") {
 			return errors.New("invalid turn result")
+		}
+		if (turnResult.ReportArtifactID != "" && !safeProjectionIdentifier(turnResult.ReportArtifactID)) || !validateProjectionIdentifiers(turnResult.ArtifactIDs) || !validateProjectionIdentifiers(turnResult.DiffArtifactIDs) {
+			return errors.New("invalid turn result artifacts")
 		}
 		outer, err := decodeTypedData[SafeSchema2SlotResultData](data)
 		if err != nil || outer.TurnKey != turnResult.TurnKey || outer.TurnPhase != turnResult.Phase || !projectionValueIn(outer.Status, "ok", "error", "timeout") {
 			return errors.New("turn result identity mismatch")
 		}
-		turnPayload, err := decodePayloadProjection(rawObjectMember(data["turnResult"], "turnPayload"))
+		turnPayload, err := decodePayloadProjection(turnResultObject["turnPayload"])
 		if err != nil {
 			return err
 		}
-		outputs, err := decodePayloadProjections(rawObjectMember(data["turnResult"], "outputs"))
+		outputs, err := decodePayloadProjections(turnResultObject["outputs"])
 		if err != nil {
 			return err
 		}
 		turnResult.TurnPayload = turnPayload
 		turnResult.Outputs = outputs
-		canonical, err := canonicalProjectionJSON(data["turnResult"])
+		canonical, err := canonicalProjectionJSON(normalizedTurnResult)
 		if err != nil || projectionSHA(canonical) != outer.TurnResultSHA256 || outer.TurnResultEncoding != "slot-turn-result-jcs-v1" {
 			return errors.New("turn result hash mismatch")
 		}
 		return replaceProjectionData(data, "turnResult", turnResult)
 	case "formation_result":
+		for key, value := range map[string]any{
+			"reportArtifactId": "", "artifactIds": []string{}, "diffArtifactIds": []string{}, "contributingSlotResultSeqs": []uint64{},
+		} {
+			if err := setProjectionDefault(data, key, value); err != nil {
+				return err
+			}
+		}
 		decoded, err := decodeTypedData[SafeSchema2FormationResultData](data)
-		if err != nil || !projectionValueIn(decoded.Status, "done", "needs-review", "failed") || !safeProjectionIdentifier(decoded.NodeID) || !projectionSafeSequence(decoded.Attempt) || decoded.ResultEncoding != "formation-result-jcs-v1" || !projectionAscendingUnique(decoded.ContributingSlotResultSeqs, false) {
+		if err != nil || !projectionValueIn(decoded.Status, "done", "needs-review", "failed") || !safeProjectionIdentifier(decoded.NodeID) || !projectionSafeSequence(decoded.Attempt) || decoded.ResultEncoding != "formation-result-jcs-v1" || !projectionAscendingUnique(decoded.ContributingSlotResultSeqs, true) {
 			return errors.New("invalid formation result")
+		}
+		if (decoded.ReportArtifactID != "" && !safeProjectionIdentifier(decoded.ReportArtifactID)) || !validateProjectionIdentifiers(decoded.ArtifactIDs) || !validateProjectionIdentifiers(decoded.DiffArtifactIDs) {
+			return errors.New("invalid formation result artifacts")
 		}
 		outputs, err := decodePayloadProjections(data["outputs"])
 		if err != nil {
@@ -1978,22 +2057,29 @@ func validateAndNormalizeSchema2Data(eventType string, data map[string]json.RawM
 		if err != nil {
 			return err
 		}
-		display, err := decodeDisplayEvidence(data["displayEvidence"])
-		if err != nil {
-			return err
+		var display []SafeDisplayEvidence
+		if raw, present := data["displayEvidence"]; present {
+			display, err = decodeDisplayEvidence(raw)
+			if err != nil {
+				return err
+			}
 		}
 		timing, err := decodeEventTiming(data["timing"])
 		if err != nil {
 			return err
 		}
-		for key, value := range map[string]any{"outputs": outputs, "outputHashes": hashes, "artifactRegistrations": registrations, "artifacts": artifacts, "displayEvidence": display, "timing": timing} {
+		values := map[string]any{"outputs": outputs, "outputHashes": hashes, "artifactRegistrations": registrations, "artifacts": artifacts, "timing": timing}
+		if _, present := data["displayEvidence"]; present {
+			values["displayEvidence"] = display
+		}
+		for key, value := range values {
 			if err := replaceProjectionData(data, key, value); err != nil {
 				return err
 			}
 		}
 	case "node_output":
 		decoded, err := decodeTypedData[SafeSchema2NodeOutputData](data)
-		if err != nil || !safeProjectionIdentifier(decoded.NodeID) || !projectionValueIn(decoded.Status, "done", "needs-review", "blocked", "failed") {
+		if err != nil || !safeProjectionIdentifier(decoded.NodeID) || !projectionValueIn(decoded.Status, "done", "needs-review", "blocked", "failed") || (decoded.ReportArtifactID != "" && !safeProjectionIdentifier(decoded.ReportArtifactID)) {
 			return errors.New("invalid node output")
 		}
 		outputs, err := decodePayloadProjections(data["outputs"])
@@ -2026,6 +2112,13 @@ func validateAndNormalizeSchema2Data(eventType string, data map[string]json.RawM
 			}
 		}
 	case "gate_evaluating":
+		decoded, err := decodeTypedData[SafeSchema2GateEvaluatingData](data)
+		if err != nil || (decoded.RevisionCycleID != "" && !safeProjectionIdentifier(decoded.RevisionCycleID)) || (decoded.TriggerFeedbackID != "" && !safeProjectionIdentifier(decoded.TriggerFeedbackID)) {
+			return errors.New("invalid gate evaluation option")
+		}
+		if _, present := data["priorGateSeq"]; present && !projectionSafeSequence(decoded.PriorGateSeq) {
+			return errors.New("invalid prior gate sequence")
+		}
 		allowed := stringSet("classification", "sourceKind", "encoding", "mediaType", "sha256", "text")
 		criterion, err := decodeClosedProjection[SafeCriterionProjection](data["criterionProjection"], allowed, allowed)
 		if err != nil || criterion.Classification != "authored_config" || criterion.SourceKind != "gate_criterion" || criterion.Encoding != "gate-criterion-utf8-v1" || criterion.MediaType != "text/plain" || criterion.Text == "" || len(criterion.Text) > 64<<10 || criterion.SHA256 != projectionSHA([]byte(criterion.Text)) {
@@ -2074,11 +2167,26 @@ func validateAndNormalizeSchema2Data(eventType string, data map[string]json.RawM
 				return errors.New("invalid gate result sequence")
 			}
 		}
-		feedback, err := decodeSafeGateFeedback(data["feedbackPayload"])
+		feedbackRaw, hasFeedback := data["feedbackPayload"]
+		if decoded.Verdict == "pass" {
+			if hasFeedback {
+				return errors.New("pass gate verdict carries feedback")
+			}
+			return nil
+		}
+		if !hasFeedback {
+			return errors.New("fail gate verdict missing feedback")
+		}
+		feedback, err := decodeSafeGateFeedback(feedbackRaw)
 		if err != nil {
 			return err
 		}
 		return replaceProjectionData(data, "feedbackPayload", feedback)
+	case "run_succeeded":
+		decoded, err := decodeTypedData[SafeSchema2RunSucceededData](data)
+		if err != nil || (decoded.SummaryArtifactID != "" && !safeProjectionIdentifier(decoded.SummaryArtifactID)) {
+			return errors.New("invalid run summary artifact")
+		}
 	case "human_input_requested":
 		promptAllowed := stringSet("classification", "sourceKind", "templateId")
 		prompt, err := decodeClosedProjection[SafeFixedSystemProjection](data["promptProjection"], promptAllowed, promptAllowed)
@@ -2476,7 +2584,7 @@ func schema2DataContract(eventType string) (map[string]bool, map[string]bool) {
 		"run_started":                           {"workspaceAuthorityId", "workspaceAdmissionSeq", "admissionPolicyRev", "admissionPolicySha256", "admissionCommandId", "commandPayloadSha256", "boardSlug", "sourceBoardSchema", "snapshotSchema", "runAuthorityId", "graphSnapshotSha256", "privateBindingsSha256", "bindingProjectionSha256", "runRoot", "rootInputProjection", "limits"},
 		"run_activated":                         {"workspaceAdmissionSeq", "admissionPolicyRev", "admissionPolicySha256", "reason"},
 		"run_resumed":                           {"commandId", "commandPayloadSha256", "resumedFromSeq", "resumedBy", "resumeMode", "reason", "openDispatches", "retryTargets"},
-		"node_waiting":                          {"neededInputs", "readyInputs", "totalInputs", "waitingFor"},
+		"node_waiting":                          {"nodeId", "neededInputs", "readyInputs", "totalInputs", "waitingFor"},
 		"node_input_ignored":                    {"nodeId", "toPortId", "inputRef", "reason", "relatedAttempt"},
 		"node_started":                          {"nodeId", "nodeKind", "attempt", "reason", "inputRefs", "contextEncoding", "judgeContextSha256", "priorResultSeqs", "triggerFeedbackId", "priorGateSeq"},
 		"slot_binding_observed":                 {"bindingId", "slotId", "sessionTargetId", "health", "reason", "observedAt", "relatedSeq"},
