@@ -486,9 +486,9 @@ func ProjectCommandReceipt(input CanonicalCommandReadInput) (RunCommandReceipt, 
 	commandKind, kindErr := requiredJSONString(object, "commandKind")
 	payloadSHA, payloadHashErr := requiredJSONString(object, "commandPayloadSha256")
 	commandEncoding, encodingErr := requiredJSONString(object, "commandEncoding")
-	admittedFence, admittedErr := requiredJSONSafeUint(object, "admittedWriterFence")
-	stateFence, stateFenceErr := requiredJSONSafeUint(object, "stateWriterFence")
-	outcomeFence, outcomeFenceErr := requiredJSONSafeUint(object, "outcomeWriterFence")
+	admittedFenceText, admittedFence, admittedErr := requiredCanonicalPositiveUint64String(object, "admittedWriterFence")
+	_, stateFence, stateFenceErr := requiredCanonicalPositiveUint64String(object, "stateWriterFence")
+	outcomeFenceText, outcomeFence, outcomeFenceErr := requiredCanonicalPositiveUint64String(object, "outcomeWriterFence")
 	if schemaErr != nil || revisionErr != nil || idErr != nil || kindErr != nil || payloadHashErr != nil || encodingErr != nil || admittedErr != nil || stateFenceErr != nil || outcomeFenceErr != nil ||
 		commandSchema != 1 || recordRev != 2 || commandEncoding != "run-command-jcs-v1" || !validProjectionCommandKind(commandKind) ||
 		commandID != input.Submitted.CommandID || commandKind != input.Submitted.CommandKind || payloadSHA != input.Submitted.CommandPayloadSHA256 ||
@@ -520,7 +520,7 @@ func ProjectCommandReceipt(input CanonicalCommandReadInput) (RunCommandReceipt, 
 		"commandSchema": uint64(1), "recordRev": uint64(1), "priorGeneration": nil,
 		"commandEncoding": commandEncoding, "commandId": commandID, "commandKind": commandKind,
 		"commandPayload": json.RawMessage(append([]byte(nil), payloadRaw...)), "commandPayloadSha256": payloadSHA,
-		"admittedWriterFence": admittedFence, "stateWriterFence": admittedFence, "state": "pending",
+		"admittedWriterFence": admittedFenceText, "stateWriterFence": admittedFenceText, "state": "pending",
 	}
 	pendingRaw, marshalErr := json.Marshal(pending)
 	if marshalErr != nil || projectionSHA(pendingRaw) != priorSHA {
@@ -538,7 +538,7 @@ func ProjectCommandReceipt(input CanonicalCommandReadInput) (RunCommandReceipt, 
 		}
 		return RunCommandAppliedReceipt{
 			CommandID: commandID, CommandPayloadSHA256: payloadSHA, CommandKind: commandKind,
-			OutcomeWriterFence: strconv.FormatUint(outcomeFence, 10), State: state, RunID: runID,
+			OutcomeWriterFence: outcomeFenceText, State: state, RunID: runID,
 			EffectSeq: effectSeq, DecisionAdmissionPolicyRef: policy,
 		}, nil
 	}
@@ -548,7 +548,7 @@ func ProjectCommandReceipt(input CanonicalCommandReadInput) (RunCommandReceipt, 
 	}
 	return RunCommandRejectedReceipt{
 		CommandID: commandID, CommandPayloadSHA256: payloadSHA, CommandKind: commandKind,
-		OutcomeWriterFence: strconv.FormatUint(outcomeFence, 10), State: state,
+		OutcomeWriterFence: outcomeFenceText, State: state,
 		RejectionCode: rejectionCode, DecisionAdmissionPolicyRef: policy,
 	}, nil
 }
@@ -797,6 +797,23 @@ func requiredJSONSafeUint(object map[string]json.RawMessage, key string) (uint64
 		return 0, errors.New("not JSON-safe")
 	}
 	return value, nil
+}
+
+func requiredCanonicalPositiveUint64String(object map[string]json.RawMessage, key string) (string, uint64, error) {
+	value, err := requiredJSONString(object, key)
+	if err != nil || len(value) == 0 || value[0] == '0' {
+		return "", 0, errors.New("not canonical positive integer string")
+	}
+	for _, digit := range value {
+		if digit < '0' || digit > '9' {
+			return "", 0, errors.New("not canonical positive integer string")
+		}
+	}
+	parsed, err := strconv.ParseUint(value, 10, 64)
+	if err != nil || parsed == 0 || strconv.FormatUint(parsed, 10) != value {
+		return "", 0, errors.New("not canonical positive integer string")
+	}
+	return value, parsed, nil
 }
 
 func validateDataKeys(data map[string]json.RawMessage, allowed, private map[string]bool) (map[string]json.RawMessage, error) {
