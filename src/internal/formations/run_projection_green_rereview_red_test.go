@@ -47,10 +47,14 @@ func TestSchema2GateEvidenceIsTheExactFrozenUnionInEveryConsumer(t *testing.T) {
 				schema2SecondRepairRequirePublicRejection(t, eventType, data)
 			})
 
-			t.Run("rejects_declared_non_contract_reason", func(t *testing.T) {
-				eventType, data := consumer.data(map[string]any{"kind": "text", "text": "clean", "reason": "must not become public"})
-				schema2SecondRepairRequirePublicRejection(t, eventType, data)
-			})
+			for _, arm := range validArms {
+				t.Run("rejects_declared_non_contract_reason_on_"+arm.name, func(t *testing.T) {
+					evidence := cloneAny(arm.evidence).(map[string]any)
+					evidence["reason"] = "must not become public"
+					eventType, data := consumer.data(evidence)
+					schema2SecondRepairRequirePublicRejection(t, eventType, data)
+				})
+			}
 		})
 	}
 }
@@ -89,9 +93,11 @@ func TestSchema2NodeWaitingRequiresOneExactSelectedNodeIdentity(t *testing.T) {
 		event := schema2Event(projectionTestRunID, 3, "node_waiting", cloneAny(data).(map[string]any))
 		event["nodeId"] = projectionTestFormationID
 		raw, safe := schema2RepairDecodeSafeEvent(t, event)
-		if err := reduceSchema2Event(&state, raw, safe, nil); err == nil {
+		err := reduceSchema2Event(&state, raw, safe, nil)
+		if err == nil {
 			t.Fatal("node_waiting published one selected node identity while mutating another")
 		}
+		requireProjectionError(t, err, ErrRunProjectionInvalid)
 		after := schema2RepairStructuralFingerprint(t, state.view)
 		if !bytes.Equal(after, before) {
 			t.Fatalf("rejected node_waiting changed structural state\nbefore: %s\nafter:  %s", before, after)
@@ -142,6 +148,11 @@ func TestSchema2RunBlockedUsesTheFrozenScopeAndPolicyUnion(t *testing.T) {
 		{name: "node_scope_forbids_gate", data: schema2GreenRereviewBlock("node", "new_run_required", nil, false), mutate: func(data map[string]any) { data["blockedGateId"] = projectionTestGateID }},
 		{name: "gate_scope_requires_gate", data: schema2GreenRereviewBlock("gate", "new_run_required", nil, false), mutate: func(data map[string]any) { delete(data, "blockedGateId") }},
 		{name: "retry_is_node_only", data: schema2GreenRereviewBlock("node", "retry_failed_producer", nil, false), mutate: func(data map[string]any) { data["blockScope"] = "run"; delete(data, "blockedNodeId") }},
+		{name: "retry_rejects_gate_scope", data: schema2GreenRereviewBlock("node", "retry_failed_producer", nil, false), mutate: func(data map[string]any) {
+			data["blockScope"] = "gate"
+			delete(data, "blockedNodeId")
+			data["blockedGateId"] = projectionTestGateID
+		}},
 		{name: "retry_requires_resume_allowed", data: schema2GreenRereviewBlock("node", "retry_failed_producer", nil, false), mutate: func(data map[string]any) { data["resumeAllowed"] = false }},
 		{name: "retry_requires_empty_dispatches", data: schema2GreenRereviewBlock("node", "retry_failed_producer", nil, false), mutate: func(data map[string]any) { data["openDispatches"] = cloneAny(open) }},
 		{name: "retry_requires_one_target", data: schema2GreenRereviewBlock("node", "retry_failed_producer", nil, false), mutate: func(data map[string]any) { data["retryTargets"] = []any{} }},
@@ -214,9 +225,11 @@ func TestSchema2RunResumeMustMatchTheExactPriorBlock(t *testing.T) {
 		resumed := events[len(events)-1]["data"].(map[string]any)
 		resumed["resumedFromSeq"] = uint64(1)
 		input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2Ledger, marshalProjectionLedger(t, events...))
-		if projection, err := ProjectCanonicalRun(input); err == nil {
+		projection, err := ProjectCanonicalRun(input)
+		if err == nil {
 			t.Fatalf("run resumed from a non-block sequence: %#v", ProjectRunView(projection))
 		}
+		requireProjectionError(t, err, ErrRunProjectionInvalid)
 	})
 
 	t.Run("valid_retry_pair", func(t *testing.T) {
@@ -230,17 +243,21 @@ func TestSchema2RunResumeMustMatchTheExactPriorBlock(t *testing.T) {
 	t.Run("retry_targets_are_exact_carry", func(t *testing.T) {
 		block := schema2GreenRereviewBlock("node", "retry_failed_producer", nil, false)
 		resume := schema2GreenRereviewResume("retry-failed-producer", nil, []any{schema2GreenRereviewOtherRetryTarget()})
-		if err := schema2GreenRereviewReducePair(t, block, resume); err == nil {
+		err := schema2GreenRereviewReducePair(t, block, resume)
+		if err == nil {
 			t.Fatal("run resumed with a different retry target than the frozen block")
 		}
+		requireProjectionError(t, err, ErrRunProjectionInvalid)
 	})
 
 	t.Run("new_run_required_cannot_resume", func(t *testing.T) {
 		block := schema2GreenRereviewBlock("run", "new_run_required", nil, false)
 		resume := schema2GreenRereviewResume("retry-failed-producer", nil, []any{schema2RepairRetryTarget()})
-		if err := schema2GreenRereviewReducePair(t, block, resume); err == nil {
+		err := schema2GreenRereviewReducePair(t, block, resume)
+		if err == nil {
 			t.Fatal("new_run_required block reopened through run_resumed")
 		}
+		requireProjectionError(t, err, ErrRunProjectionInvalid)
 	})
 }
 
