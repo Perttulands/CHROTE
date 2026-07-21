@@ -30,6 +30,24 @@ func TestSchema2TerminalLifecycleRequiresExactPredecessor(t *testing.T) {
 	})
 
 	t.Run("canceling_accepts_only_its_terminal_or_exact_failure_escalation", func(t *testing.T) {
+		t.Run("rejects_structural_execution", func(t *testing.T) {
+			state := schema2TerminalCancelingState(t)
+			err := schema2EpochReduce(t, &state, 22, 0, "node_waiting", schema2SecondRepairFixture(t, "node_waiting"))
+			if err == nil {
+				t.Fatal("canceling run admitted structural execution")
+			}
+			requireProjectionError(t, err, ErrRunProjectionInvalid)
+		})
+
+		t.Run("rejects_repeated_cancel_request", func(t *testing.T) {
+			state := schema2TerminalCancelingState(t)
+			err := schema2EpochReduce(t, &state, 22, 0, "run_cancel_requested", schema2TerminalCancelRequestedData())
+			if err == nil {
+				t.Fatal("canceling run admitted a second cancel request")
+			}
+			requireProjectionError(t, err, ErrRunProjectionInvalid)
+		})
+
 		t.Run("rejects_succeeded", func(t *testing.T) {
 			state := schema2TerminalCancelingState(t)
 			err := schema2EpochReduce(t, &state, 22, 0, "run_succeeded", schema2TerminalSucceededData())
@@ -91,6 +109,33 @@ func TestSchema2TerminalLifecycleRequiresExactPredecessor(t *testing.T) {
 	})
 
 	t.Run("failing_accepts_only_failed_for_exact_reconciliation", func(t *testing.T) {
+		t.Run("rejects_structural_execution", func(t *testing.T) {
+			state := schema2TerminalFailingState(t)
+			err := schema2EpochReduce(t, &state, 22, 0, "node_waiting", schema2SecondRepairFixture(t, "node_waiting"))
+			if err == nil {
+				t.Fatal("failing run admitted structural execution")
+			}
+			requireProjectionError(t, err, ErrRunProjectionInvalid)
+		})
+
+		t.Run("rejects_cancel_request", func(t *testing.T) {
+			state := schema2TerminalFailingState(t)
+			err := schema2EpochReduce(t, &state, 22, 0, "run_cancel_requested", schema2TerminalCancelRequestedData())
+			if err == nil {
+				t.Fatal("failing run returned to canceling")
+			}
+			requireProjectionError(t, err, ErrRunProjectionInvalid)
+		})
+
+		t.Run("rejects_repeated_failure_start", func(t *testing.T) {
+			state := schema2TerminalFailingState(t)
+			err := schema2EpochReduce(t, &state, 22, 0, "run_failure_reconciliation_started", schema2TerminalFailureStartedData(0))
+			if err == nil {
+				t.Fatal("failing run admitted a second failure reconciliation start")
+			}
+			requireProjectionError(t, err, ErrRunProjectionInvalid)
+		})
+
 		t.Run("blocked_failure_start_requires_no_cancel_request", func(t *testing.T) {
 			state := schema2TerminalBlockedState(t)
 			err := schema2EpochReduce(t, &state, 21, 0, "run_failure_reconciliation_started", schema2TerminalFailureStartedData(20))
@@ -167,6 +212,40 @@ func TestSchema2TerminalLifecycleRequiresExactPredecessor(t *testing.T) {
 			}
 		})
 	})
+
+	t.Run("running_can_enter_exact_cancel_and_failure_paths", func(t *testing.T) {
+		t.Run("cancel_request_then_matching_canceled", func(t *testing.T) {
+			state := schema2EpochTestState()
+			if err := schema2EpochReduce(t, &state, 20, 0, "run_cancel_requested", schema2TerminalCancelRequestedData()); err != nil {
+				t.Fatalf("running cancel request rejected: %v", err)
+			}
+			if state.view.Status != "canceling" || state.view.Identity.Epoch != 0 {
+				t.Fatalf("cancel request = status %q epoch %d", state.view.Status, state.view.Identity.Epoch)
+			}
+			if err := schema2EpochReduce(t, &state, 21, 0, "run_canceled", schema2TerminalCanceledData(20)); err != nil {
+				t.Fatalf("matching running-origin cancellation rejected: %v", err)
+			}
+			if state.view.Status != "canceled" || !state.view.Final || state.view.Identity.Epoch != 0 {
+				t.Fatalf("running-origin cancellation = status %q final %t epoch %d", state.view.Status, state.view.Final, state.view.Identity.Epoch)
+			}
+		})
+
+		t.Run("failure_start_then_matching_failed", func(t *testing.T) {
+			state := schema2EpochTestState()
+			if err := schema2EpochReduce(t, &state, 20, 0, "run_failure_reconciliation_started", schema2TerminalFailureStartedData(0)); err != nil {
+				t.Fatalf("running failure reconciliation rejected: %v", err)
+			}
+			if state.view.Status != "failing" || state.view.Identity.Epoch != 0 {
+				t.Fatalf("failure start = status %q epoch %d", state.view.Status, state.view.Identity.Epoch)
+			}
+			if err := schema2EpochReduce(t, &state, 21, 0, "run_failed", schema2TerminalFailedData(20)); err != nil {
+				t.Fatalf("matching running-origin failure rejected: %v", err)
+			}
+			if state.view.Status != "failed" || !state.view.Final || state.view.Identity.Epoch != 0 {
+				t.Fatalf("running-origin failure = status %q final %t epoch %d", state.view.Status, state.view.Final, state.view.Identity.Epoch)
+			}
+		})
+	})
 }
 
 func TestProjectCanonicalRunRejectsSuccessAfterUnresolvedBlock(t *testing.T) {
@@ -189,12 +268,7 @@ func schema2TerminalBlockedState(t *testing.T) projectionState {
 func schema2TerminalCancelingState(t *testing.T) projectionState {
 	t.Helper()
 	state := schema2TerminalBlockedState(t)
-	cancel := map[string]any{
-		"commandId": projectionTestOtherCmdID, "commandPayloadSha256": strings.Repeat("a", 64),
-		"reason": "stop", "requestedBy": "human:test", "openNodeAttempts": []any{},
-		"openSlotDispatches": []any{}, "openToolLeases": []any{},
-	}
-	if err := schema2EpochReduce(t, &state, 21, 0, "run_cancel_requested", cancel); err != nil {
+	if err := schema2EpochReduce(t, &state, 21, 0, "run_cancel_requested", schema2TerminalCancelRequestedData()); err != nil {
 		t.Fatalf("reduce valid cancel request: %v", err)
 	}
 	return state
@@ -211,6 +285,14 @@ func schema2TerminalFailingState(t *testing.T) projectionState {
 
 func schema2TerminalSucceededData() map[string]any {
 	return map[string]any{"outputArtifactIds": []any{}, "final": true}
+}
+
+func schema2TerminalCancelRequestedData() map[string]any {
+	return map[string]any{
+		"commandId": projectionTestOtherCmdID, "commandPayloadSha256": strings.Repeat("a", 64),
+		"reason": "stop", "requestedBy": "human:test", "openNodeAttempts": []any{},
+		"openSlotDispatches": []any{}, "openToolLeases": []any{},
+	}
 }
 
 func schema2TerminalCanceledData(cancelRequestSeq uint64) map[string]any {
