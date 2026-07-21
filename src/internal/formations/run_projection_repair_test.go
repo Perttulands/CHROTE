@@ -75,7 +75,7 @@ func TestProjectCanonicalRunSchema2StructuralArmsAreNeverAuditOnly(t *testing.T)
 			name: "gate kind result retains typed evidence", prepare: prepareSchema2RepairGate,
 			eventType: "gate_kind_result", data: schema2RepairGateKindResultData(),
 			want: func(state *projectionState) {
-				state.ensureGate(projectionTestGateID, 1).Evidence = append(state.ensureGate(projectionTestGateID, 1).Evidence, SafeGateEvidence{Kind: "code", Reason: "lint passed"})
+				state.ensureGate(projectionTestGateID, 1).Evidence = append(state.ensureGate(projectionTestGateID, 1).Evidence, SafeGateEvidence{Kind: "text", Text: "clean"})
 			},
 		},
 		{
@@ -83,7 +83,7 @@ func TestProjectCanonicalRunSchema2StructuralArmsAreNeverAuditOnly(t *testing.T)
 			eventType: "judge_result", data: schema2RepairJudgeResultData(),
 			want: func(state *projectionState) {
 				schema2RepairCompleteAttempt(state, projectionTestFormationID, 1, "done", 20)
-				state.ensureGate(projectionTestGateID, 1).Evidence = append(state.ensureGate(projectionTestGateID, 1).Evidence, SafeGateEvidence{Kind: "judge", Reason: "approved"})
+				state.ensureGate(projectionTestGateID, 1).Evidence = append(state.ensureGate(projectionTestGateID, 1).Evidence, SafeGateEvidence{Kind: "ledger", Seq: 18})
 			},
 		},
 		{
@@ -188,6 +188,97 @@ func TestProjectCanonicalRunSchema2StructuralArmsAreNeverAuditOnly(t *testing.T)
 			wantFingerprint := schema2RepairStructuralFingerprint(t, want.view)
 			if !bytes.Equal(gotFingerprint, wantFingerprint) {
 				t.Fatalf("%s structural postcondition mismatch\ngot:  %s\nwant: %s", test.eventType, gotFingerprint, wantFingerprint)
+			}
+		})
+	}
+}
+
+func TestProjectCanonicalRunSchema2CompletionStatusAndDispositionMatrix(t *testing.T) {
+	board := &BoardDocument{
+		Missions:   []MissionNode{{ID: projectionTestMissionID}},
+		Formations: []FormationNode{{ID: projectionTestFormationID}},
+		Gates:      []GateNode{{ID: projectionTestGateID}},
+	}
+
+	for _, eventType := range []string{"formation_result", "node_output"} {
+		for _, test := range []struct {
+			status          string
+			wantStatus      string
+			wantDisposition string
+		}{
+			{status: "done", wantStatus: "done", wantDisposition: "done"},
+			{status: "failed", wantStatus: "failed", wantDisposition: "failed"},
+			{status: "needs-review", wantStatus: "needs-review", wantDisposition: ""},
+			{status: "blocked", wantStatus: "blocked", wantDisposition: ""},
+		} {
+			if eventType == "formation_result" && test.status == "blocked" {
+				continue
+			}
+			t.Run(eventType+"/"+test.status, func(t *testing.T) {
+				state := newProjectionState(projectionTestRunID, CanonicalRunSourceSchema2, board)
+				state.view.Status = "running"
+				schema2RepairStartAttempt(&state, projectionTestFormationID, "formation", 1, 2)
+				raw := rawProjectionEvent{envelope: safeEventEnvelope{RunID: projectionTestRunID, Seq: 20}}
+				var safe SafeRunEvent
+				switch eventType {
+				case "formation_result":
+					safe = SafeSchema2FormationResultEvent{Type: eventType, Data: SafeSchema2FormationResultData{
+						NodeID: projectionTestFormationID, Attempt: 1, Status: test.status, Outputs: SafePayloadProjections{},
+					}}
+				case "node_output":
+					safe = SafeSchema2NodeOutputEvent{Type: eventType, Data: SafeSchema2NodeOutputData{
+						NodeID: projectionTestFormationID, Status: test.status, Outputs: SafePayloadProjections{},
+					}}
+				}
+				if err := reduceSchema2Event(&state, raw, safe, nil); err != nil {
+					t.Fatalf("reduce admitted %s(%s): %v", eventType, test.status, err)
+				}
+				node := state.node(projectionTestFormationID)
+				attempt := state.existingAttempt(projectionTestFormationID, 1)
+				if node == nil || attempt == nil {
+					t.Fatalf("completion lost node/attempt: node=%#v attempt=%#v", node, attempt)
+				}
+				if node.Status != test.wantStatus || attempt.Status != test.wantStatus {
+					t.Fatalf("statuses = node:%q attempt:%q, want %q", node.Status, attempt.Status, test.wantStatus)
+				}
+				if node.FinalDisposition != test.wantDisposition || attempt.Disposition != test.wantDisposition {
+					t.Fatalf("dispositions = node:%q attempt:%q, want %q", node.FinalDisposition, attempt.Disposition, test.wantDisposition)
+				}
+			})
+		}
+	}
+
+	for _, test := range []struct {
+		verdict         string
+		wantGateStatus  string
+		wantNodeStatus  string
+		wantDisposition string
+	}{
+		{verdict: "pass", wantGateStatus: "passed", wantNodeStatus: "done", wantDisposition: "done"},
+		{verdict: "fail", wantGateStatus: "failed", wantNodeStatus: "failed", wantDisposition: "failed"},
+	} {
+		t.Run("gate_verdict/"+test.verdict, func(t *testing.T) {
+			state := newProjectionState(projectionTestRunID, CanonicalRunSourceSchema2, board)
+			state.view.Status = "running"
+			prepareSchema2RepairGate(&state)
+			raw := rawProjectionEvent{envelope: safeEventEnvelope{RunID: projectionTestRunID, Seq: 20}}
+			safe := SafeSchema2GateVerdictEvent{Type: "gate_verdict", Data: SafeSchema2GateVerdictData{
+				GateID: projectionTestGateID, GateAttempt: 1, Verdict: test.verdict, Reason: "decision",
+			}}
+			if err := reduceSchema2Event(&state, raw, safe, nil); err != nil {
+				t.Fatalf("reduce admitted gate verdict %s: %v", test.verdict, err)
+			}
+			gate := state.existingGate(projectionTestGateID, 1)
+			node := state.node(projectionTestGateID)
+			attempt := state.existingAttempt(projectionTestGateID, 1)
+			if gate == nil || node == nil || attempt == nil {
+				t.Fatalf("verdict lost gate/node/attempt: gate=%#v node=%#v attempt=%#v", gate, node, attempt)
+			}
+			if gate.Status != test.wantGateStatus || node.Status != test.wantNodeStatus || attempt.Status != test.wantNodeStatus {
+				t.Fatalf("statuses = gate:%q node:%q attempt:%q, want %q/%q/%q", gate.Status, node.Status, attempt.Status, test.wantGateStatus, test.wantNodeStatus, test.wantNodeStatus)
+			}
+			if node.FinalDisposition != test.wantDisposition || attempt.Disposition != test.wantDisposition {
+				t.Fatalf("dispositions = node:%q attempt:%q, want %q", node.FinalDisposition, attempt.Disposition, test.wantDisposition)
 			}
 		})
 	}
@@ -1670,7 +1761,7 @@ func schema2RepairJudgeResultData() map[string]any {
 }
 
 func schema2RepairJudgeResultVerdictData(verdict string) map[string]any {
-	result := map[string]any{"verdict": verdict, "reason": "approved", "evidence": []any{}}
+	result := map[string]any{"verdict": verdict, "reason": "approved", "evidence": []any{map[string]any{"kind": "ledger", "seq": 18}}}
 	return map[string]any{
 		"gateId": projectionTestGateID, "gateAttempt": 1, "judgeNodeId": projectionTestFormationID, "judgeAttempt": 1,
 		"chainIndex": 0, "contextEncoding": "judge-context-jcs-v1", "contextSha256": strings.Repeat("a", 64),
