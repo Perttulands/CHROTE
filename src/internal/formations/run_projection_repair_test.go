@@ -610,12 +610,37 @@ func TestProjectCanonicalRunValidatesEverySchema2AuthorityDocument(t *testing.T)
 		{name: "registry duplicate workspace entry", role: CanonicalInputRoleSchema2WorkspaceRegistry, mutate: func(value map[string]any) {
 			value["entries"] = append(value["entries"].([]any), cloneAny(value["entries"].([]any)[0]))
 		}},
+		{name: "registry schema is exact", role: CanonicalInputRoleSchema2WorkspaceRegistry, mutate: func(value map[string]any) { value["registrySchema"] = 2 }},
+		{name: "registry record revision is positive", role: CanonicalInputRoleSchema2WorkspaceRegistry, mutate: func(value map[string]any) { value["recordRev"] = 0 }},
+		{name: "registry prior generation is closed", role: CanonicalInputRoleSchema2WorkspaceRegistry, mutate: func(value map[string]any) {
+			value["priorGeneration"] = map[string]any{"recordRev": 1, "sha256": strings.Repeat("a", 64), "path": "/private"}
+		}},
+		{name: "registry device decimal is canonical", role: CanonicalInputRoleSchema2WorkspaceRegistry, mutate: func(value map[string]any) {
+			value["entries"].([]any)[0].(map[string]any)["device"] = "01"
+		}},
+		{name: "registry root hash has exact grammar", role: CanonicalInputRoleSchema2WorkspaceRegistry, mutate: func(value map[string]any) {
+			value["entries"].([]any)[0].(map[string]any)["workspaceRootIdentitySha256"] = "not-a-hash"
+		}},
 		{name: "bootstrap authority mismatch", role: CanonicalInputRoleSchema2WorkspaceBootstrap, mutate: func(value map[string]any) { value["workspaceAuthorityId"] = "wsa_other" }},
 		{name: "bootstrap root hash mismatch", role: CanonicalInputRoleSchema2WorkspaceBootstrap, mutate: func(value map[string]any) { value["workspaceRootIdentitySha256"] = strings.Repeat("f", 64) }},
+		{name: "bootstrap schema is exact", role: CanonicalInputRoleSchema2WorkspaceBootstrap, mutate: func(value map[string]any) { value["bootstrapSchema"] = 2 }},
+		{name: "bootstrap root encoding is exact", role: CanonicalInputRoleSchema2WorkspaceBootstrap, mutate: func(value map[string]any) { value["rootIdentityEncoding"] = "workspace-root-identity-v2" }},
 		{name: "current authority unknown member", role: CanonicalInputRoleSchema2WorkspaceAuthority, mutate: func(value map[string]any) { value["projectionUnknown"] = true }},
 		{name: "current authority id mismatch", role: CanonicalInputRoleSchema2WorkspaceAuthority, mutate: func(value map[string]any) { value["workspaceAuthorityId"] = "wsa_other" }},
+		{name: "current authority schema is exact", role: CanonicalInputRoleSchema2WorkspaceAuthority, mutate: func(value map[string]any) { value["authoritySchema"] = 3 }},
+		{name: "current authority revision is positive", role: CanonicalInputRoleSchema2WorkspaceAuthority, mutate: func(value map[string]any) { value["recordRev"] = 0 }},
+		{name: "current authority predecessor hash has exact grammar", role: CanonicalInputRoleSchema2WorkspaceAuthority, mutate: func(value map[string]any) {
+			value["priorGeneration"].(map[string]any)["sha256"] = "not-a-hash"
+		}},
+		{name: "current authority writer fence is positive", role: CanonicalInputRoleSchema2WorkspaceAuthority, mutate: func(value map[string]any) { value["nextWriterFence"] = 0 }},
+		{name: "current authority policy ref is closed", role: CanonicalInputRoleSchema2WorkspaceAuthority, mutate: func(value map[string]any) {
+			value["admissionPolicyRef"].(map[string]any)["configuredPath"] = "/private"
+		}},
 		{name: "run bootstrap unknown member", role: CanonicalInputRoleSchema2RunBootstrap, mutate: func(value map[string]any) { value["projectionUnknown"] = true }},
 		{name: "run bootstrap run mismatch", role: CanonicalInputRoleSchema2RunBootstrap, mutate: func(value map[string]any) { value["runId"] = projectionTestOtherRunID }},
+		{name: "run bootstrap schema is exact", role: CanonicalInputRoleSchema2RunBootstrap, mutate: func(value map[string]any) { value["runBootstrapSchema"] = 2 }},
+		{name: "run bootstrap graph encoding is exact", role: CanonicalInputRoleSchema2RunBootstrap, mutate: func(value map[string]any) { value["graphSnapshotEncoding"] = "json" }},
+		{name: "run bootstrap bindings hash has exact grammar", role: CanonicalInputRoleSchema2RunBootstrap, mutate: func(value map[string]any) { value["privateBindingsSha256"] = "not-a-hash" }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -630,6 +655,77 @@ func TestProjectCanonicalRunValidatesEverySchema2AuthorityDocument(t *testing.T)
 			}
 		})
 	}
+}
+
+func TestProjectCanonicalRunRejectsDuplicateAuthorityJSONMembers(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		role CanonicalInputRole
+		key  string
+	}{
+		{name: "registry", role: CanonicalInputRoleSchema2WorkspaceRegistry, key: "registrySchema"},
+		{name: "bootstrap", role: CanonicalInputRoleSchema2WorkspaceBootstrap, key: "bootstrapSchema"},
+		{name: "authority", role: CanonicalInputRoleSchema2WorkspaceAuthority, key: "authoritySchema"},
+		{name: "run bootstrap", role: CanonicalInputRoleSchema2RunBootstrap, key: "runBootstrapSchema"},
+		{name: "command", role: CanonicalInputRoleSchema2CommandRecord, key: "commandSchema"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := schema2ProjectionInput(t, true)
+			document := canonicalDocumentByRole(t, input, test.role).Bytes
+			needle := []byte(`"` + test.key + `":`)
+			index := bytes.Index(document, needle)
+			if index < 0 {
+				t.Fatalf("fixture lacks duplicate target %q: %s", test.key, document)
+			}
+			valueStart := index + len(needle)
+			valueEnd := bytes.IndexByte(document[valueStart:], ',')
+			if valueEnd < 0 {
+				t.Fatalf("fixture key %q has no following comma: %s", test.key, document)
+			}
+			value := document[valueStart : valueStart+valueEnd]
+			duplicate := append([]byte(nil), document[:valueStart+valueEnd+1]...)
+			duplicate = append(duplicate, []byte(`"`+test.key+`":`)...)
+			duplicate = append(duplicate, value...)
+			duplicate = append(duplicate, ',')
+			duplicate = append(duplicate, document[valueStart+valueEnd+1:]...)
+			input = replaceCanonicalDocument(t, input, test.role, duplicate)
+			schema2RepairRequireProjectionInvalid(t, input, "duplicate "+test.name+" JSON member")
+		})
+	}
+}
+
+func TestProjectCanonicalRunValidatesAdmissionPolicyClosedSemantics(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "unknown member", mutate: func(policy map[string]any) { policy["projectionUnknown"] = true }},
+		{name: "schema is exact", mutate: func(policy map[string]any) { policy["policySchema"] = 2 }},
+		{name: "revision is positive", mutate: func(policy map[string]any) { policy["policyRev"] = 0 }},
+		{name: "state is closed", mutate: func(policy map[string]any) { policy["state"] = "permissive" }},
+		{name: "configured requires active limit", mutate: func(policy map[string]any) { delete(policy, "maxActiveRuns") }},
+		{name: "configured requires positive active limit", mutate: func(policy map[string]any) { policy["maxActiveRuns"] = 0 }},
+		{name: "configured requires queued limit", mutate: func(policy map[string]any) { delete(policy, "maxQueuedRuns") }},
+		{name: "prior policy hash has exact grammar", mutate: func(policy map[string]any) { policy["priorPolicySha256"] = "not-a-hash" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			input := schema2ProjectionInput(t, true)
+			policy := schema2RepairConfiguredPolicy(t, input)
+			test.mutate(policy)
+			input = schema2RepairReplaceConfiguredPolicyAndReferences(t, input, canonicalJSON(t, policy))
+			schema2RepairRequireProjectionInvalid(t, input, "invalid configured admission policy")
+		})
+	}
+
+	t.Run("disabled policy forbids configured limits", func(t *testing.T) {
+		input := schema2ProjectionInput(t, true)
+		index := schema2RepairRoleDocumentIndex(input, CanonicalInputRoleSchema2AdmissionPolicy, 0)
+		policy := decodeCanonicalObject(t, input.Documents[index].Bytes)
+		policy["maxActiveRuns"], policy["maxQueuedRuns"] = 1, 1
+		input.Documents[index] = canonicalInputDocument(CanonicalInputRoleSchema2AdmissionPolicy, canonicalJSON(t, policy))
+		schema2RepairRequireProjectionInvalid(t, input, "disabled policy with configured limits")
+	})
 }
 
 func TestProjectCanonicalRunValidatesGraphBindingsAndCommandLinkage(t *testing.T) {
@@ -686,6 +782,137 @@ func TestProjectCanonicalRunValidatesGraphBindingsAndCommandLinkage(t *testing.T
 			if projection, err := ProjectCanonicalRun(input); err == nil {
 				t.Fatalf("%s command with wrong effectSeq projected: %#v", kind, ProjectRunView(projection))
 			}
+		})
+	}
+}
+
+func TestProjectCanonicalRunRejectsIncompleteGraphAndBindingsSemantics(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func([]byte) []byte
+	}{
+		{name: "graph slug differs from run start", mutate: func(graph []byte) []byte {
+			return bytes.Replace(graph, []byte(`slug = "`+projectionTestBoardSlug+`"`), []byte(`slug = "other"`), 1)
+		}},
+		{name: "graph revision differs from run start", mutate: func(graph []byte) []byte {
+			return bytes.Replace(graph, []byte("rev = 7"), []byte("rev = 8"), 1)
+		}},
+		{name: "selected root is absent", mutate: func(graph []byte) []byte {
+			return bytes.Replace(graph, []byte(`id = "`+projectionTestMissionID+`"`), []byte(`id = "mis_other"`), 1)
+		}},
+		{name: "manifest hash differs from authored bytes", mutate: func(graph []byte) []byte {
+			return bytes.Replace(graph, []byte(`sha256 = "`+projectionSHA256([]byte("Project the run"))+`"`), []byte(`sha256 = "`+strings.Repeat("a", 64)+`"`), 1)
+		}},
+		{name: "unknown graph key", mutate: func(graph []byte) []byte {
+			return append(graph, []byte("\nprojectionUnknown = true\n")...)
+		}},
+		{name: "duplicate graph scalar", mutate: func(graph []byte) []byte {
+			return bytes.Replace(graph, []byte("schema = 2\n"), []byte("schema = 2\nschema = 2\n"), 1)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := schema2ProjectionInput(t, true)
+			graph := append([]byte(nil), canonicalDocumentByRole(t, input, CanonicalInputRoleSchema2GraphSnapshot).Bytes...)
+			input = schema2RepairReplaceGraphAndHashes(t, input, test.mutate(graph))
+			schema2RepairRequireProjectionInvalid(t, input, "invalid graph snapshot")
+		})
+	}
+
+	for _, test := range []struct {
+		name   string
+		mutate func([]byte) []byte
+	}{
+		{name: "unknown top-level bindings key", mutate: func(bindings []byte) []byte {
+			return bytes.Replace(bindings, []byte("boardRev = 7\n"), []byte("boardRev = 7\nprojectionUnknown = true\n"), 1)
+		}},
+		{name: "unknown bindings section", mutate: func(bindings []byte) []byte {
+			return append(bindings, []byte("\n[[privateRoute]]\ntargetKey = \"private\"\n")...)
+		}},
+		{name: "unrelated malformed bindings line", mutate: func(bindings []byte) []byte {
+			return append(bindings, []byte("\nthis is not toml\n")...)
+		}},
+		{name: "duplicate binding member", mutate: func(bindings []byte) []byte {
+			return bytes.Replace(bindings, []byte(`bindingId = "binding_worker"`), []byte("bindingId = \"binding_worker\"\nbindingId = \"binding_worker\""), 1)
+		}},
+		{name: "duplicate binding identity", mutate: func(bindings []byte) []byte {
+			return bytes.Replace(bindings, []byte(`bindingId = "binding_reviewer"`), []byte(`bindingId = "binding_worker"`), 1)
+		}},
+		{name: "binding node is absent from graph", mutate: func(bindings []byte) []byte {
+			return bytes.Replace(bindings, []byte(`nodeId = "`+projectionTestFormationID+`"`), []byte(`nodeId = "fmn_missing"`), 1)
+		}},
+		{name: "binding slot is absent from node", mutate: func(bindings []byte) []byte {
+			return bytes.Replace(bindings, []byte(`slotId = "slot_worker"`), []byte(`slotId = "slot_missing"`), 1)
+		}},
+		{name: "binding fingerprint has invalid grammar", mutate: func(bindings []byte) []byte {
+			return bytes.Replace(bindings, []byte(`targetFingerprint = "`+strings.Repeat("a", 64)+`"`), []byte(`targetFingerprint = "not-a-hash"`), 1)
+		}},
+		{name: "binding run identity differs", mutate: func(bindings []byte) []byte {
+			return bytes.Replace(bindings, []byte(`runId = "`+projectionTestRunID+`"`), []byte(`runId = "`+projectionTestOtherRunID+`"`), 1)
+		}},
+		{name: "binding board revision differs", mutate: func(bindings []byte) []byte {
+			return bytes.Replace(bindings, []byte("boardRev = 7"), []byte("boardRev = 8"), 1)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input, _ := schema2OpenDispatchLifecycleInput(t, false)
+			bindings := append([]byte(nil), canonicalDocumentByRole(t, input, CanonicalInputRoleSchema2PrivateBindings).Bytes...)
+			input = schema2RepairReplaceBindingsAndHashes(t, input, test.mutate(bindings))
+			schema2RepairRequireProjectionInvalid(t, input, "invalid private bindings")
+		})
+	}
+}
+
+func TestProjectCanonicalRunRejectsLedgerAndCommandAuthorityDivergence(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func([]map[string]any)
+	}{
+		{name: "ledger event schema differs", mutate: func(events []map[string]any) { events[0]["schema"] = 1 }},
+		{name: "ledger authority schema differs", mutate: func(events []map[string]any) { events[0]["authoritySchema"] = 3 }},
+		{name: "ledger run identity differs", mutate: func(events []map[string]any) { events[0]["runId"] = projectionTestOtherRunID }},
+		{name: "ledger writer fence is zero", mutate: func(events []map[string]any) { events[0]["writerFence"] = 0 }},
+		{name: "ledger sequence has a gap", mutate: func(events []map[string]any) { events[len(events)-1]["seq"] = 20 }},
+		{name: "ledger start graph hash differs", mutate: func(events []map[string]any) {
+			events[0]["data"].(map[string]any)["graphSnapshotSha256"] = strings.Repeat("a", 64)
+		}},
+		{name: "ledger start bindings hash differs", mutate: func(events []map[string]any) {
+			events[0]["data"].(map[string]any)["privateBindingsSha256"] = strings.Repeat("a", 64)
+		}},
+		{name: "ledger start command identity differs", mutate: func(events []map[string]any) {
+			events[0]["data"].(map[string]any)["admissionCommandId"] = projectionTestOtherCmdID
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := schema2ProjectionInput(t, true)
+			events := canonicalLedgerEvents(t, input)
+			test.mutate(events)
+			input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2Ledger, marshalProjectionLedger(t, events...))
+			schema2RepairRequireProjectionInvalid(t, input, "divergent schema-2 ledger")
+		})
+	}
+
+	for _, test := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "command unknown member", mutate: func(record map[string]any) { record["targetKey"] = "private" }},
+		{name: "command encoding differs", mutate: func(record map[string]any) { record["commandEncoding"] = "run-command-json-v1" }},
+		{name: "command id differs", mutate: func(record map[string]any) { record["commandId"] = projectionTestOtherCmdID }},
+		{name: "command payload hash differs", mutate: func(record map[string]any) { record["commandPayloadSha256"] = strings.Repeat("a", 64) }},
+		{name: "command predecessor hash differs", mutate: func(record map[string]any) {
+			record["priorGeneration"].(map[string]any)["sha256"] = strings.Repeat("a", 64)
+		}},
+		{name: "command applied run differs", mutate: func(record map[string]any) { record["runId"] = projectionTestOtherRunID }},
+		{name: "command decision policy differs", mutate: func(record map[string]any) {
+			record["decisionAdmissionPolicyRef"].(map[string]any)["policySha256"] = strings.Repeat("a", 64)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := schema2ProjectionInput(t, true)
+			record := decodeCanonicalObject(t, canonicalDocumentByRole(t, input, CanonicalInputRoleSchema2CommandRecord).Bytes)
+			test.mutate(record)
+			input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2CommandRecord, canonicalJSON(t, record))
+			schema2RepairRequireProjectionInvalid(t, input, "divergent schema-2 command")
 		})
 	}
 }
@@ -1246,6 +1473,69 @@ func schema2RepairReplaceBindingsAndHashes(t *testing.T, input CanonicalRunReadI
 	events := canonicalLedgerEvents(t, input)
 	events[0]["data"].(map[string]any)["privateBindingsSha256"] = hash
 	return replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2Ledger, marshalProjectionLedger(t, events...))
+}
+
+func schema2RepairRoleDocumentIndex(input CanonicalRunReadInput, role CanonicalInputRole, occurrence int) int {
+	seen := 0
+	for index, document := range input.Documents {
+		if document.Role != role {
+			continue
+		}
+		if seen == occurrence {
+			return index
+		}
+		seen++
+	}
+	return -1
+}
+
+func schema2RepairConfiguredPolicy(t *testing.T, input CanonicalRunReadInput) map[string]any {
+	t.Helper()
+	index := schema2RepairRoleDocumentIndex(input, CanonicalInputRoleSchema2AdmissionPolicy, 1)
+	if index < 0 {
+		t.Fatal("configured admission policy fixture missing")
+	}
+	return decodeCanonicalObject(t, input.Documents[index].Bytes)
+}
+
+func schema2RepairReplaceConfiguredPolicyAndReferences(t *testing.T, input CanonicalRunReadInput, raw []byte) CanonicalRunReadInput {
+	t.Helper()
+	index := schema2RepairRoleDocumentIndex(input, CanonicalInputRoleSchema2AdmissionPolicy, 1)
+	if index < 0 {
+		t.Fatal("configured admission policy fixture missing")
+	}
+	input.Documents[index] = canonicalInputDocument(CanonicalInputRoleSchema2AdmissionPolicy, raw)
+	policy := decodeCanonicalObject(t, raw)
+	policyRev := uint64(2)
+	if value, ok := policy["policyRev"].(float64); ok && value >= 0 {
+		policyRev = uint64(value)
+	}
+	policyHash := projectionSHA256(raw)
+
+	authority := decodeCanonicalObject(t, canonicalDocumentByRole(t, input, CanonicalInputRoleSchema2WorkspaceAuthority).Bytes)
+	authority["admissionPolicyRef"] = map[string]any{"policyRev": policyRev, "policySha256": policyHash}
+	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2WorkspaceAuthority, canonicalJSON(t, authority))
+
+	events := canonicalLedgerEvents(t, input)
+	for _, event := range events {
+		data := event["data"].(map[string]any)
+		switch event["type"] {
+		case "run_started", "run_activated":
+			data["admissionPolicyRev"], data["admissionPolicySha256"] = policyRev, policyHash
+		}
+	}
+	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2Ledger, marshalProjectionLedger(t, events...))
+	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2CommandRecord, schema2AdmissionCommandRecord(t, projectionTestCommandID, policyRev, policyHash))
+	return input
+}
+
+func schema2RepairRequireProjectionInvalid(t *testing.T, input CanonicalRunReadInput, context string) {
+	t.Helper()
+	if projection, err := ProjectCanonicalRun(input); err == nil {
+		t.Fatalf("%s projected: %#v", context, ProjectRunView(projection))
+	} else {
+		requireProjectionError(t, err, ErrRunProjectionInvalid)
+	}
 }
 
 func schema2RepairWideFenceCommandInput(t *testing.T, state string, fence uint64, payload map[string]any) CanonicalCommandReadInput {
