@@ -39,6 +39,15 @@ func TestSchema2TerminalLifecycleRequiresExactPredecessor(t *testing.T) {
 			requireProjectionError(t, err, ErrRunProjectionInvalid)
 		})
 
+		t.Run("rejects_run_blocked", func(t *testing.T) {
+			state := schema2TerminalCancelingState(t)
+			err := schema2EpochReduce(t, &state, 22, 0, "run_blocked", schema2GreenRereviewBlock("run", "new_run_required", nil, false))
+			if err == nil {
+				t.Fatal("canceling run returned to blocked")
+			}
+			requireProjectionError(t, err, ErrRunProjectionInvalid)
+		})
+
 		t.Run("rejects_repeated_cancel_request", func(t *testing.T) {
 			state := schema2TerminalCancelingState(t)
 			err := schema2EpochReduce(t, &state, 22, 0, "run_cancel_requested", schema2TerminalCancelRequestedData())
@@ -114,6 +123,15 @@ func TestSchema2TerminalLifecycleRequiresExactPredecessor(t *testing.T) {
 			err := schema2EpochReduce(t, &state, 22, 0, "node_waiting", schema2SecondRepairFixture(t, "node_waiting"))
 			if err == nil {
 				t.Fatal("failing run admitted structural execution")
+			}
+			requireProjectionError(t, err, ErrRunProjectionInvalid)
+		})
+
+		t.Run("rejects_run_blocked", func(t *testing.T) {
+			state := schema2TerminalFailingState(t)
+			err := schema2EpochReduce(t, &state, 22, 0, "run_blocked", schema2GreenRereviewBlock("run", "new_run_required", nil, false))
+			if err == nil {
+				t.Fatal("failing run returned to blocked")
 			}
 			requireProjectionError(t, err, ErrRunProjectionInvalid)
 		})
