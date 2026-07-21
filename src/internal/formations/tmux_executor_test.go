@@ -354,8 +354,8 @@ func TestRedactPromptAndSecretTokensFromDispatchAdapterFailureLedger(t *testing.
 	dispatcher := NewSlotDispatcher(store, promptEchoDispatchAdapter{})
 
 	_, err := dispatcher.DispatchSlot(started.RunID, SlotDispatchRequest{
-		NodeID:      "fmn_work",
-		SlotID:      "slot_work",
+		NodeID:      "fmn_research",
+		SlotID:      "slot_research",
 		AgentID:     "scout",
 		Harness:     "openai-codex",
 		SessionStem: "scout",

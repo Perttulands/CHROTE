@@ -58,6 +58,9 @@ func TestS4MissionRunCascadesReachableChain(t *testing.T) {
 	if got, want := startedNodes, []string{"mis_showcase", "fmn_frame", "fmn_research", "fmn_ship"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("node_started order = %v, want %v", got, want)
 	}
+	if got, want := nodeStartedAttempts(events, "mis_showcase"), []int{1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("mission node_started attempts = %v, want exact positive attempt %v", got, want)
+	}
 	if events[len(events)-1].Type != RunEventSucceeded {
 		t.Fatalf("last event = %s, want run_succeeded", events[len(events)-1].Type)
 	}

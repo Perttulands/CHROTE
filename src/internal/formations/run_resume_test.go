@@ -293,8 +293,8 @@ func TestS5EngineResumeOpenDispatchRecordsReattachErrorWithoutResend(t *testing.
 	adapter := &fakeDispatchAdapter{}
 	dispatcher := NewSlotDispatcher(store, adapter)
 	lease, err := dispatcher.DispatchSlot(started.RunID, SlotDispatchRequest{
-		NodeID:      "fmn_work",
-		SlotID:      "slot_work",
+		NodeID:      "fmn_research",
+		SlotID:      "slot_research",
 		AgentID:     "scout",
 		Harness:     "openai-codex",
 		SessionStem: "scout",

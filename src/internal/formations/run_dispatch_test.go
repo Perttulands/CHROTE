@@ -26,8 +26,8 @@ func TestS4SlotDispatchLeaseRecordedBeforeSend(t *testing.T) {
 	dispatcher := NewSlotDispatcher(store, adapter)
 
 	lease, err := dispatcher.DispatchSlot(started.RunID, SlotDispatchRequest{
-		NodeID:      "fmn_work",
-		SlotID:      "slot_work",
+		NodeID:      "fmn_research",
+		SlotID:      "slot_research",
 		AgentID:     "scout",
 		Harness:     "openai-codex",
 		SessionStem: "scout",
@@ -81,8 +81,8 @@ func TestS4DeadPaneAndIdleTimeoutRecordLoudError(t *testing.T) {
 		dispatcher := NewSlotDispatcher(store, &fakeDispatchAdapter{err: ErrDispatchDeadPane})
 
 		lease, err := dispatcher.DispatchSlot(started.RunID, SlotDispatchRequest{
-			NodeID:      "fmn_work",
-			SlotID:      "slot_work",
+			NodeID:      "fmn_research",
+			SlotID:      "slot_research",
 			AgentID:     "scout",
 			Harness:     "openai-codex",
 			SessionStem: "scout",
@@ -113,8 +113,8 @@ func TestS4DeadPaneAndIdleTimeoutRecordLoudError(t *testing.T) {
 		store, started := startS4DispatchRun(t)
 		dispatcher := NewSlotDispatcher(store, &fakeDispatchAdapter{})
 		lease, err := dispatcher.DispatchSlot(started.RunID, SlotDispatchRequest{
-			NodeID:      "fmn_work",
-			SlotID:      "slot_work",
+			NodeID:      "fmn_research",
+			SlotID:      "slot_research",
 			AgentID:     "scout",
 			Harness:     "openai-codex",
 			SessionStem: "scout",
