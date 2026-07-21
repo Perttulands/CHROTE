@@ -78,6 +78,18 @@ The reader owns physical and integrity checks only:
   byte integrity;
 - strict source classification and the rule that one run has exactly one source.
 
+The total raw ledger document is bounded for both sources before an immutable
+`CanonicalRunReadInput` can contain it and before `CanonicalRunProjection` can
+materialize the sanitized stream. The code-owned implementation ceiling is
+`RunLedgerReadMaximumBytes = 64 << 20` (64 MiB). It is not a public transfer
+contract. For a descriptor/no-follow ledger read, a known stat size above the
+ceiling returns `ErrRunProjectionResourceLimit` before allocation. The reader
+then streams at most `RunLedgerReadMaximumBytes + 1` bytes from that same opened
+handle so an unknown size or post-stat growth is also detected. Observing the
+extra byte discards the complete candidate document and returns the same error;
+no partial input, projection, view, or page is available. The separate complete
+`RunEventPage` transfer ceiling remains 1 MiB.
+
 The reader does not reduce run status, interpret node or Gate behavior, sanitize
 events, derive actions, hydrate artifacts, or decide recovery state. Those are
 projector responsibilities.
@@ -207,6 +219,14 @@ without consuming that identity, and `hasMore` remains true. A single
 projection resource-limit error. No adapter silently truncates or rebuilds all
 pages in memory.
 
+Candidate projection is fail-loud before filtering or page publication. If any
+selected candidate has a guarded schema-2 claim but the post-writer,
+pre-activation capability is non-authorizing, the whole `RunListPage` fails
+with HTTP 503 and public code `RUNTIME_AUTHORITY_NON_AUTHORIZING`. The adapter
+never skips or filters that candidate, falls back to schema 1, or returns a
+partial page containing candidates projected before the failure. This
+deliberately exposes authority misconfiguration during a mixed-window read.
+
 The collection item fields are also versioned contract, not adapter-specific
 bags:
 
@@ -292,7 +312,8 @@ workspace admission sequence, admission and activation policy revision/hash,
 latest consumed writer fence, graph snapshot hash, and safe binding-projection
 hash where the selected schema provides them. Schema-1 cannot fabricate them.
 
-`RunCommandReceipt` preserves exactly the frozen safe receipt union:
+`RunCommandReceipt` preserves exactly the frozen safe receipt union under the
+literal upstream heading `Workspace Runtime Authority And Commands`:
 
 ```ts
 RunCommandReceipt =
@@ -340,6 +361,12 @@ projection's top-level `artifactId`. The unavailable, redacted, and expired
 variants contain exactly `{artifactId, availability, name, errorCode}` and no
 readable ref. State derives only from the latest durable registration or
 observation.
+
+`SafeArtifactRef.ref` is the contract-sanctioned root-relative path. It is
+resolved only beneath its named `rootId` through the descriptor-relative
+no-follow boundary. It is not a generic public member named `path`, and it is
+the sole path-bearing exception needed for authorized artifact reads; it does
+not weaken the global prohibition on a public JSON member named `path`.
 
 `RunBlockView` and `RunEscalationView` retain their source sequence, safe graph
 identity, closed code/severity/source/trigger fields, bounded safe reason, and
@@ -452,16 +479,29 @@ redacted, or expired.
 
 Every backend and frontend consumes the exact `recoveryState` field and values:
 
-1. `pending-redaction` iff the canonical private input contains any unresolved
-   run-owned redaction obligation. It wins over every other state.
-2. Otherwise `interrupted-finalization` iff replay shows at least one frozen
-   incomplete deterministic transition:
+1. Schema 1 always projects `recoveryState="live"` and
+   `reconcileCondition=null`. Its frozen 21-row vocabulary has no
+   `formation_result`, schema-2 private redaction obligation, or schema-2
+   deterministic reconciliation authority, so absence of those records is
+   never a recovery gap.
+2. Schema 2 alone evaluates recovery predicates. It projects
+   `pending-redaction` iff the canonical private input contains any unresolved
+   run-owned redaction obligation. That state wins over every other state.
+3. Otherwise schema 2 projects `interrupted-finalization` iff replay shows at
+   least one frozen incomplete deterministic transition:
    - a deciding `slot_result` without `formation_result`;
    - `formation_result` or `tool_result` without matching `node_output`;
    - `node_output` with incomplete declared delivery, routing, or finality;
    - `run_cancel_requested` without matching terminal cancellation/failure; or
    - `run_failure_reconciliation_started` without matching `run_failed`.
-3. Otherwise `live`.
+4. Otherwise schema 2 projects `live`.
+
+For the first schema-2 predicate, a deciding `slot_result` is exactly the first
+result in the frozen current Formation schedule whose status is non-`ok`, or the
+`ok` result that completes that schedule. After either case,
+`formation_result` is deterministically required. An intermediate `ok` result
+with a later scheduled turn is not deciding and its absence of
+`formation_result` does not create a recovery condition.
 
 `live` means only that replay evidences no recovery-only gap. It is not an alias
 for run status `running`. Status and recovery state remain independent fields.
@@ -510,9 +550,9 @@ mutates projection truth.
 
 This appendix closes the local projection contract that was intentionally only
 sketched above. Implementers do not infer fields from fixtures. The stable
-upstream anchors are the sections `RunCommandRecord`/`RunCommandReceipt`, `Run
-Ledger Envelope`, `Structured payload fields`, `Deterministic projection`, and
-`API Surface` in
+upstream anchors are the literal headings `Workspace Runtime Authority And
+Commands`, `Run Ledger Envelope`, `Event Payload Schemas`, `Projection Mapping`,
+and `API Surface` in
 `Perttus_vision_for_agent_orchestration/spec/contracts.md`; `FORMATIONS.md` and
 `DATA-MODEL.md` supply the existing identifier grammars and graph ordering.
 Those heading anchors, not mutable line numbers, define every referenced frozen
@@ -547,7 +587,7 @@ contract, not license for a generic data map.
 | `RunNodeView` | `NodeID:nodeId`; `Kind:kind:"mission"\|"formation"\|"tool"\|"gate"`; `Status:status:"not_run"\|"waiting"\|"running"\|"waiting_human"\|"done"\|"needs-review"\|"blocked"\|"failed"\|"canceled"\|"abandoned"`; `FinalDisposition:finalDisposition?:"done"\|"failed"\|"canceled"\|"abandoned"\|"not_run"`; `LatestAttempt:latestAttempt?:uint64/jsi`; `Readiness:readiness:RunReadiness`; `Attempts:attempts:RunAttemptRef[]`; `Outputs:outputs:RunOutputRef[]`; `Gates:gates:RunGateRef[]`; `Sessions:sessions:RunSessionRef[]` |
 | `RunAttemptView` | `NodeID:nodeId`; `Attempt:attempt:uint64/jsi`; `Status:status:"waiting"\|"running"\|"waiting_human"\|"done"\|"needs-review"\|"blocked"\|"failed"\|"canceled"\|"abandoned"`; optional `StartedSeq:startedSeq`, `CompletedSeq:completedSeq`; `InputRefs:inputRefs:SafeInputIdentity[]`; `Slots:slots:RunSessionRef[]`; `Outputs:outputs:RunOutputRef[]`; `Gate:gate?:RunGateRef`; `Disposition:disposition?:"done"\|"failed"\|"canceled"\|"abandoned"` |
 | `RunGateView` | `GateID:gateId`; `Attempt:attempt:uint64/jsi`; `Status:status:"idle"\|"evaluating"\|"waiting_human"\|"passed"\|"failed"\|"blocked"\|"abandoned"`; optional `EvaluatingSeq:evaluatingSeq`, `RequestSeq:requestSeq`, `VerdictSeq:verdictSeq`; `Verdict:verdict?:"pass"\|"fail"`; `Reason:reason?:string`; `Evidence:evidence:SafeGateEvidence[]` |
-| `RunOutputView` | `NodeID:nodeId`; `Attempt:attempt:uint64/jsi`; `PortID:portId`; `OutcomeSeq:outcomeSeq:uint64/jsi`; `PayloadProjection:payloadProjection:PayloadProjection` exactly as anchored in `Structured payload fields` |
+| `RunOutputView` | `NodeID:nodeId`; `Attempt:attempt:uint64/jsi`; `PortID:portId`; `OutcomeSeq:outcomeSeq:uint64/jsi`; `PayloadProjection:payloadProjection:PayloadProjection` exactly as anchored under `Event Payload Schemas` |
 | `RunBlockView` | `Seq:seq:uint64/jsi`; `Epoch:epoch:uint64/jsi`; `Scope:scope:"run"\|"node"\|"gate"`; optional `NodeID:nodeId`, `GateID:gateId`, `Code:code`; `Reason:reason`; `ResumeAllowed:resumeAllowed`; `ResumePolicy:resumePolicy:"retry_failed_producer"\|"reattach_only"\|"new_run_required"\|"explicit"\|"authoring"`; optional `NextEpoch:nextEpoch`; `OpenDispatches:openDispatches:SafeOpenDispatch[]` |
 | `RunEscalationView` | `Seq:seq:uint64/jsi`; optional `NodeID:nodeId`, `GateID:gateId`; `Severity:severity:"info"\|"needs-attention"\|"stop"`; `Reason:reason`; `Source:source:"system"\|"agent"\|"human"`; `Trigger:trigger:string`; `Blocks:blocks:boolean` |
 | `RunSessionView` | `BindingID:bindingId`; `NodeID:nodeId`; `Attempt:attempt:uint64/jsi`; `SlotID:slotId`; optional `DispatchID:dispatchId`, `TargetLeaseID:targetLeaseId`; `SessionTargetID:sessionTargetId`; `BindingHealth:bindingHealth:"runnable"\|"unavailable"\|"stale"`; optional `AvailabilityReason:availabilityReason`; `SessionLineageSHA256:sessionLineageSha256`; `TargetFingerprintSHA256:targetFingerprintSha256`; `Baseline:baseline:{encoding:string,sha256:string,state:"valid"\|"unavailable"\|"stale"}`; `Attachment:attachment:{state:"accounted"\|"foreign"\|"audit_lost"}`; `Occupancy:occupancy:{state:"active"\|"released"\|"held"\|"quarantined"}`; `PeekCapability:peekCapability:{state:"none"\|"issued"\|"input_open"\|"revoked",issuedSeq:uint64/jsi,generation:uint64/decimal}`; `Steering:steering:{state:"closed"\|"open",generation:uint64/decimal,startedSeq?:uint64/jsi}`; `OperatorInfluenced:operatorInfluenced:boolean` |
@@ -556,7 +596,7 @@ contract, not license for a generic data map.
 | `RunView` | exactly the members in the `formations.run-view.v1` block above, with `Generation:generation:string` and `ReconcileCondition:reconcileCondition:CoordinatorReconcileCondition|null`; no `events` member |
 | `RunListPage` | `Schema:schema:"formations.run-list.v1"`; `Runs:runs:RunView[]`; `Cursor:cursor:string`; `HasMore:hasMore:boolean` |
 | `RunEventPage` | `Schema:schema:"formations.run-events.v1"`; `RunID:runId`; `Generation:generation:string`; `Source:source:CanonicalRunSourceProjection`; `Cursor:cursor:uint64/jsi`; `HasMore:hasMore:boolean`; `Events:events:SafeRunEvent[]` |
-| `RunCommandReceipt` | exact two-arm union anchored at `RunCommandReceipt`; schema-2 fences remain `uint64/decimal` when the frozen authority record declares uint64 beyond JSON-safe range; event sequences remain `uint64/jsi` |
+| `RunCommandReceipt` | exact two-arm union anchored under `Workspace Runtime Authority And Commands`; schema-2 fences remain `uint64/decimal` when the frozen authority record declares uint64 beyond JSON-safe range; event sequences remain `uint64/jsi` |
 
 `RunAttemptRef` is exactly `{nodeId,attempt}`, `RunOutputRef` is exactly
 `{nodeId,attempt,portId}`, `RunGateRef` is exactly `{gateId,attempt}`, and
@@ -683,6 +723,10 @@ names them; every other unexpected envelope or data key rejects the complete
 projection. This preserves historical compatibility without upgrading it to
 schema-2 authority.
 
+Schema-1 scope in this slice is the minimum exact frozen 21 rows below. Do not
+add another compatibility event, infer newer authority, or perform unrelated
+legacy hardening. `ctx-4dr9` owns later deletion of this compatibility surface.
+
 Schema-1 `run_started` has an exact conditional data union. Both arms contain
 the existing common members `{boardSlug,boardRev,missionId,beadId,limits}`:
 
@@ -807,8 +851,10 @@ cannot contaminate schema-1 assertions:
    Comms, and embedded-asset behavior. After that process exits, a second
    isolated normal-server invocation uses the already-probed tree containing
    the same `run_01KXNP6VY3227H78329V52CKF8` as both a valid schema-1 fallback
-   and a valid guarded schema-2 claim. Detail must return HTTP 503
-   `RUNTIME_AUTHORITY_NON_AUTHORIZING`, never the fallback view, while
+   and a valid guarded schema-2 claim. Both detail and a run-list window that
+   selects this candidate must return HTTP 503
+   `RUNTIME_AUTHORITY_NON_AUTHORIZING`; list returns no partial page and never
+   skips or filters the candidate. Neither route returns the fallback view while
    `RuntimeAuthorityCapability.SemanticProjection` remains false. The two
    normal-server logs are separate. Neither invocation claims artifact-success
    coverage for schema 1.
@@ -867,6 +913,11 @@ filtered subset as a canonical page. After any mid-stream failure, Archon writes
 only a safe error to stderr, exits nonzero, and emits no error-shaped stdout
 line. This is the deliberate replacement for the old array/raw-event JSON
 formats.
+
+Creating a new ADR for this deliberate Archon page-NDJSON break is explicitly
+declined. The owner ruling, this approved design, the implementation plan, and
+their contract tests are the record and enforcement; no compatibility wrapper
+or legacy hardening is added.
 
 Comms keeps a 200-scanned-slot run-room preview and exposes its incompleteness:
 `RoomProjection` adds required-for-run `messagesCursor` and `messagesHasMore`,
@@ -934,7 +985,10 @@ runs; multiple attempts; failed Gates; exact/redacted outputs; artifact
 revocation; session/baseline/Peek states; omitted extension tails and empty event
 pages; scan-limit and encoded-byte event-page bounds; an individually oversized
 sanitized event; JSON-safe maximum identities; all recovery predicates and
-precedence; and whole-view rejection for every integrity class.
+precedence, including schema-1 finality staying `live` with no reconcile
+condition and every schema-2 deciding-`slot_result` case; aggregate ledger bytes
+at exactly 64 MiB and one byte over; and whole-view rejection for every integrity
+class.
 
 ### UX-OWNER: Perttu
 

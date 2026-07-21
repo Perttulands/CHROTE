@@ -18,17 +18,21 @@
 - `ProjectCanonicalRun(CanonicalRunReadInput) (CanonicalRunProjection, error)` is the only semantic reducer. Selectors cannot re-read files, reinterpret event meaning, or rebuild state.
 - `RunView` has no event-history member. Event history is available only through bounded `RunEventPage` values.
 - Run listing is one `formations.run-list.v1` page: ascending canonical run ID, exclusive last-scanned `after`, exactly 50 default/maximum scanned candidates, and a complete encoded-page cap of 4 MiB. Filtering consumes selected slots and advances the cursor. No layer collects every run identity or immutable run input.
+- A selected list candidate with a guarded schema-2 claim and non-authorizing post-writer/pre-activation capability fails the whole page as HTTP 503 `RUNTIME_AUTHORITY_NON_AUTHORIZING`. Never skip/filter/fallback or return candidates projected before that failure.
 - `since` is the last-consumed cursor and therefore an exclusive lower bound: eligible events satisfy `seq > since`. Accept `0..9007199254740991`. API requests without `limit` use `200`; explicit limits outside `1..200` fail. The limit counts canonical slots scanned, including omitted projection-only slots. The complete encoded `RunEventPage`, including mandatory run-incarnation generation and source, is at most 1 MiB.
+- Before either source returns a ledger document, enforce the code-owned `RunLedgerReadMaximumBytes = 64 << 20` aggregate raw-ledger ceiling through its descriptor/no-follow reader. This 64 MiB implementation limit is separate from the 1 MiB public event-page transfer cap; an over-limit read yields no partial input or projection.
 - Sanitization is projection-time allowlisting. Unknown or unsafe event types and fields fail closed unless the design explicitly marks them projection-only. Never recursively copy raw maps.
 - Every page/view source equality guard compares event schema, compatibility, and optional authority-schema presence/value. It never relies on Go pointer identity or JSON member order. Page generation compares the exact lowercase 64-hex value.
 - The design appendix's public HTTP/code matrix is closed. `writeFormationsError`, run-room parsing, artifact paths, and pre-header SSE failures must use those exact statuses/codes and fixed safe messages; no adapter invents another mapping.
 - Schema 2 remains non-authorizing, and this branch must leave `RuntimeAuthorityCapability.SemanticProjection` false. A later integration may enable it only after the complete guarded `ctx-ug7.6.1` provider binds this exact projector and all other required authority checks pass. Never use schema 1 as a fallback after a schema-2 claim.
+- Recovery is source-scoped: schema 1 always projects `recoveryState:"live"` with `reconcileCondition:null`; only schema 2 evaluates pending-redaction and interrupted-finalization. A deciding schema-2 `slot_result` is the first non-`ok` result or the `ok` result that completes the frozen current Formation schedule.
+- Schema-1 compatibility is the minimum exact frozen 21-row registry. Add no compatibility event or unrelated legacy hardening; `ctx-4dr9` owns its later deletion.
 - A `RunCommandReceipt` comes only from a terminal command receipt provider. Schema-1 mutations return an explicitly labeled compatibility result and must never manufacture or imply a receipt.
 - Receipt projection exact-binds the durable record to private `SubmittedCommandIdentity{commandId, normalized commandKind, canonical commandPayloadSha256}` constructed at the normalized submission boundary. Wrong id, kind, or hash is never a receipt.
-- Artifact serving is by stable `(runId, artifactId)` identity through the canonical verified-artifact seam. Never expose stored paths and never reopen a pathname after validation.
+- Artifact serving is by stable `(runId, artifactId)` identity through the canonical verified-artifact seam. `SafeArtifactRef.ref` is the sole contract-sanctioned root-relative path, resolved only beneath `rootId` with no-follow; it is not a generic JSON member named `path`. Never expose any other stored path and never reopen a pathname after validation.
 - The compiled artifact fixture's only shutdown surface is exact nonce-protected `POST /api/__formations_contract/shutdown`. Both normal production-binary invocations must return the existing API-fallback 404 for that exact method/path; no production route is added.
 - The no-fallback transport proof requires both observations over one unchanged generated tree: the tagged read-only test probe must directly accept it with nil guard error, ledger counts `0/1`, and every capability false including `SemanticProjection:false`; then the separate normal binary must return same-run 503 with no schema-1 compatibility data. The production API does not expose the internal guard reason.
-- Do not add visual redesign, new orchestration behavior, migrations, feature flags, speculative abstractions, or an ADR. The approved design records no new architectural decision.
+- Do not add visual redesign, new orchestration behavior, migrations, feature flags, speculative abstractions, or an ADR. A new ADR for the deliberate Archon page-NDJSON break is explicitly declined; the approved design, plan, owner ruling, and tests are its record and enforcement.
 - The work is complete only when all seven children are independently reviewed and closed with evidence, the umbrella is closed after them, every repository gate passes, and no legacy run-ledger consumer remains outside the canonical implementation and its tests.
 
 ## Intended file structure
@@ -85,8 +89,8 @@ The final whole-branch review occurs only after M1–M4 have exited. Do not call
 | Sole reducer and structural `RunView` | `ctx-7i1.1` | reducer/selector tests and duplicate-reducer scan |
 | Bounded `RunEventPage` | `ctx-7i1.1` | generation/source identity, cursor, scan, limit, 1 MiB tests |
 | Closed 41-type event union and schema-1 parity | `ctx-7i1.1`, `ctx-7i1.2` | 21 schema-1 and 37 schema-2 exact fixtures, including conditional start roots and source-selected open dispatches |
-| Authority, privacy, sessions, recovery, artifacts | `ctx-7i1.2` | adversarial security tests |
-| Bounded run list/detail/status/receipts/escalations API | `ctx-7i1.3` | identity-page, 4 MiB, provenance, tagged guard acceptance plus same-run schema-2 no-fallback, and HTTP contract tests |
+| Authority, privacy, sessions, source-scoped recovery, ledger bytes, artifacts | `ctx-7i1.2` | adversarial security, 64 MiB reader-boundary, and recovery tests |
+| Bounded run list/detail/status/receipts/escalations API | `ctx-7i1.3` | identity-page, 4 MiB, whole-page non-authorizing 503, provenance, tagged guard acceptance plus same-run schema-2 no-fallback, and HTTP contract tests |
 | Events, SSE, artifact-open API | `ctx-7i1.4` | HTTP/SSE/descriptor plus TestMain-contained compiled-server tests |
 | Archon canonical consumer | `ctx-7i1.5` | CLI contract and no-raw-read tests |
 | Comms canonical consumer | `ctx-7i1.6` | room/message projection tests |
@@ -278,7 +282,10 @@ or return any ledger/document bytes. `ListRunViews` reads and projects selected
 IDs one at a time, applies `RunListFilter` after selection, counts filtered IDs
 as scanned, and encodes each complete candidate `RunListPage` before accepting
 it. An overflow candidate is not consumed; an oversized singleton returns the
-typed resource-limit error.
+typed resource-limit error. Projection precedes filtering: a selected
+non-authorizing schema-2 claim aborts the complete page with the fixed authority
+error, even if the filter would exclude it, and no earlier candidate is
+published.
 
 The input role/cardinality validator is part of `ProjectCanonicalRun` and runs before any semantic decoder:
 
@@ -428,7 +435,10 @@ rg -n 'ReadRunEvents|ProjectRun\(|ProjectOpenEscalations|case "(run_|node_|gate_
 **Interfaces fixed by this task:**
 
 ```go
-const RunArtifactOpenMaximumBytes = uint64(64 << 20)
+const (
+	RunLedgerReadMaximumBytes   = uint64(64 << 20)
+	RunArtifactOpenMaximumBytes = uint64(64 << 20)
+)
 
 type VerifiedRunArtifact struct {
 	RunID       string
@@ -443,6 +453,11 @@ type VerifiedRunArtifact struct {
 func (s *Store) OpenVerifiedRunArtifact(runID, artifactID string) (VerifiedRunArtifact, error)
 ```
 
+`RunLedgerReadMaximumBytes` is an aggregate raw-ledger implementation ceiling
+shared by the schema-1 and schema-2 readers. It is enforced before the ledger
+document enters `CanonicalRunReadInput`; it is not a public transfer contract or
+an event-page bound.
+
 `VerifiedRunArtifact` is safe response material, not a path container. It must not expose `rootId`, `ref`, a file descriptor, socket data, or a private authority locator.
 
 ### Step 2.1: Write adversarial authority and privacy tests
@@ -450,12 +465,15 @@ func (s *Store) OpenVerifiedRunArtifact(runID, artifactID string) (VerifiedRunAr
 - [ ] Construct schema-2 authority fixtures for every required private input role. Prove projector-readiness checks can pass while the public capability and runtime store remain non-authorizing with `SemanticProjection:false`.
 - [ ] Prove a schema-2 claim with a missing, duplicate, mislinked, stale-fence, oversized, invalid-JSON, or wrong-run input returns the exact typed guard/projection error and never falls back to schema 1.
 - [ ] Prove schema-1 is selected only when no canonical schema-2 claim exists, or when the test explicitly constructs the offline compatibility store.
+- [ ] Add `TestRunLedgerReadMaximumBytesAtLimit` and `TestRunLedgerReadMaximumBytesOverLimit` as table-driven schema-1/schema-2 reader-boundary tests. A known stat size of exactly `RunLedgerReadMaximumBytes` reaches the bounded reader; `+1` returns `ErrRunProjectionResourceLimit` before allocation or a read. For an unknown size or a file that grows after stat, stream at most `RunLedgerReadMaximumBytes+1`, detect the extra byte, discard the candidate document, and return the same typed error. Use a deterministic chunk-generating reader/temporary descriptor rather than a checked-in 64 MiB fixture or `bytes.Repeat`: this performs one bounded at-limit allocation while isolating the physical byte guard from semantic replay. Separate small valid-ledger fixtures prove both source adapters route through the helper. On every over-limit path assert no `CanonicalInputDocument.Bytes`, no partial `CanonicalRunReadInput`, and a zero/unavailable `CanonicalRunProjection`.
 - [ ] For each schema-2 public event decoder, add one accepted exact payload, one unexpected top-level field, one unexpected `data` field, one invalid enum/id/hash, and one over-bound string. Unexpected authority-bearing material must reject the whole projection.
 - [ ] Add registered projection-only fixtures and prove they affect only scan count/cursor, never structural fields, actions, artifacts, bindings, or event output.
 - [ ] Assert `RunSessionView` JSON omits socket/server routes, `targetKey`, paths, raw session lookup identity, prompt/capture/pane/input bytes, exact history/baseline tokens, and capabilities. Also assert the required hashes, closed states, and opaque `sessionTargetId` remain.
 - [ ] Assert actions arise only from their ledgered preconditions. A status label, recovery state, local value, persona, or observed tmux session must not create cancel/resume/verdict/peek.
-- [ ] Add all five interrupted-finalization fixtures and an unresolved-redaction fixture. Assert precedence is `pending-redaction`, then `interrupted-finalization`, then `live`; only non-live states get `coordinator-reconcile`; neither state creates an action.
+- [ ] Add a complete final schema-1 `run_succeeded` fixture containing its ordinary legacy `slot_result` but no schema-2-only `formation_result`. Assert exactly `recoveryState:"live"` and `reconcileCondition:null`; schema 1 never evaluates a pending-redaction or interrupted-finalization predicate.
+- [ ] Add exact schema-2 deciding-result fixtures: the first non-`ok` `slot_result` without `formation_result` is interrupted; the `ok` result that completes the frozen current Formation schedule without `formation_result` is interrupted; an intermediate `ok` result with later scheduled turns is not deciding and remains live when no other gap exists; and either deciding case with its matching `formation_result` no longer has that gap. Add the other four interrupted-finalization predicates plus an unresolved-redaction fixture. Assert precedence is schema-2 `pending-redaction`, then schema-2 `interrupted-finalization`, then `live`; only non-live schema-2 states get `coordinator-reconcile`; neither state creates an action.
 - [ ] Register an artifact as available, cite it from an early event, later revoke/redact/expire it, then assert both structural and historical event occurrences expose only the latest unavailable projection.
+- [ ] Assert an available artifact exposes the exact `SafeArtifactRef.ref` member as a validated root-relative value bound to `rootId`, never a generic `path` member. Reject absolute, escaping, symlink-following, or wrong-root refs without weakening the global forbidden-member scan.
 - [ ] In the artifact-open fixture, replace/revoke the descriptor after the first projection and after the one allowed open. Assert the second projection rejects and the code never reopens the path. Also cover symlink, non-regular file, media mismatch, size mismatch, hash mismatch, and over-bound bytes.
 - [ ] Treat the accepted 64 MiB buffered-open ceiling as an implementation resource bound for this verified-buffer algorithm, not as a frozen artifact contract or existing Files-read policy. Test exact-size success at the ceiling and typed resource-limit rejection above it before allocation/response. A later same-handle streaming design requires design/plan review because it changes the optimistic linearization algorithm.
 
@@ -493,10 +511,14 @@ Run RED:
 
 ```bash
 cd /srv/chrote-worktrees/formations-run-view/src
-go test ./internal/formations -run 'TestRunProjectionAuthority|TestRunProjectionSanitization|TestRunProjectionSession|TestRunProjectionAction|TestRecoveryState|TestArtifactHydration|TestOpenVerifiedRunArtifact' -count=1
+go test ./internal/formations -run 'TestRunProjectionAuthority|TestRunLedgerReadMaximumBytes|TestRunProjectionSanitization|TestRunProjectionSession|TestRunProjectionAction|TestRecoveryState|TestArtifactHydration|TestOpenVerifiedRunArtifact' -count=1
 ```
 
-Expected RED: the projector currently accepts unsafe/private fixtures or lacks the verified-open surface. Commit tests only, then obtain `APPROVED_RED`:
+Expected RED: the reader lacks the aggregate ledger bound, source-scoped
+recovery assertions fail or the projector accepts unsafe/private fixtures, and
+the verified-open surface is absent. The generated at-limit stream is test
+construction, not a checked-in binary fixture. Commit tests only, then obtain
+`APPROVED_RED`:
 
 ```bash
 git add src/internal/formations/run_projection_security_test.go src/internal/formations/authority_guard_test.go src/internal/formations/run_artifact_security_test.go
@@ -506,23 +528,24 @@ git commit -m "test(formations): specify run projection security"
 ### Step 2.2: Bind authority and implement fail-closed sanitization
 
 - [ ] Complete the schema-1 production reader and the injectable schema-2 fixture reader against the closed role/cardinality table. Preserve descriptor-relative/no-follow reads, per-record/per-event 1 MiB guards, and the JSON-safe maximum. The production runtime boundary may inspect/guard a schema-2 claim but must return typed non-authorizing/unavailable instead of constructing a complete schema-2 projection input until `ctx-ug7.6.1` binds the missing provider.
+- [ ] Route both ledger roles through one bounded physical reader before constructing `CanonicalInputDocument`. After descriptor-relative no-follow open, reject a known stat size above `RunLedgerReadMaximumBytes` before allocation, then stream no more than `RunLedgerReadMaximumBytes+1` bytes from that same handle to catch unknown size or post-stat growth. On an extra byte, discard the buffer and return `ErrRunProjectionResourceLimit`; never return a partially populated document/input/projection. Keep this aggregate 64 MiB ceiling independent of the existing per-record checks and the public 1 MiB page encoder.
 - [ ] Keep `RuntimeAuthorityCapability.SemanticProjection` false in this branch under every fixture, including complete projector fixtures. Expose an internal fixture-testable projector-readiness result, but do not wire it into capability derivation. Only the later integration of the complete `ctx-ug7.6.1` guarded provider plus this exact projector may enable the existing capability.
 - [ ] Keep `RequireRuntimeAuthority` typed and non-authorizing. A schema-2 claim failure must surface its exact safe code; it must not call the schema-1 reader.
 - [ ] Decode schema-2 event envelopes directly from the reader's immutable `CanonicalInputDocument.Bytes`, with payload retained as `json.RawMessage`. Apply `json.Decoder.DisallowUnknownFields` at both envelope and event-specific payload decode. Never decode schema 2 through legacy `RunEvent.Data map[string]any`, because unknown keys would already be lost or weakly typed.
 - [ ] Register projection-only types in a separate table that records their redaction class and permits no semantic reducer callback.
 - [ ] Apply field-specific length, enum, identifier, hash, and fixed-template validation before values enter the private projection. Replace raw adapter errors with registered safe codes.
 - [ ] Derive sessions and actions from verified canonical binding/occupancy/capability state. Live tmux is not an input to this task.
-- [ ] Implement recovery predicates from replay state in the sole reducer. Evaluate pending redaction last in code but apply it as the final highest-precedence override so the precedence is unambiguous and tested.
+- [ ] Branch recovery derivation on the selected source. Schema 1 unconditionally sets `RecoveryState=RecoveryLive` and `ReconcileCondition=nil`. Schema 2 alone evaluates incomplete transitions. For a Formation, mark `slot_result` deciding exactly when it is the first non-`ok` result or the `ok` result that completes the frozen current schedule; only then is missing `formation_result` a gap. Evaluate pending redaction last in code but apply it as the final highest-precedence schema-2 override so the precedence is unambiguous and tested.
 - [ ] Hydrate every artifact occurrence after reduction from a map keyed by stable `artifactId`; never retain an earlier readable descriptor in an event.
 
-- [ ] Represent schema-2 public sanitizers, schema-1 compatibility sanitizers, and projection-only classifications as three explicit closed registries. The schema-2 registry contains exactly the 37 frozen types and exact per-type public key tables in the design appendix. The schema-1 registry contains all 21 current constants with the appendix's exact allowlist/recognized-private omission set. Their public union has 41 discriminants because `orchestration_team`, `peer_plane`, `adapter_send`, and `verification_verdict` are compatibility-only. `verification_verdict` is display evidence only and cannot update Gate/status/action/routing/recovery/receipt state.
+- [ ] Represent schema-2 public sanitizers, schema-1 compatibility sanitizers, and projection-only classifications as three explicit closed registries. The schema-2 registry contains exactly the 37 frozen types and exact per-type public key tables in the design appendix. The schema-1 registry contains the minimum exact 21 current constants with the appendix's exact allowlist/recognized-private omission set; add no compatibility event or unrelated legacy hardening because `ctx-4dr9` owns later deletion. Their public union has 41 discriminants because `orchestration_team`, `peer_plane`, `adapter_send`, and `verification_verdict` are compatibility-only. `verification_verdict` is display evidence only and cannot update Gate/status/action/routing/recovery/receipt state.
 - [ ] Projection-only types are accepted only through a closed code-owned registry selected by a supported authority schema; event bytes cannot self-register. Production has no extension entry in this branch. Tests inject the exact test-only entry `test_projection_only_redacted` with omit-all redaction classification from `_test.go`, and production code rejects the reserved `test_` prefix. There is no default sanitizer or name-only exemption. The reducer checks the selected projection-only registry first, the exact public registry second, and otherwise returns the typed unknown-authority-event error.
 - [ ] For all sanitizers, use exact typed envelope/data decoders. A recognized-private schema-1 key may be omitted only where the appendix names it. Any other unknown key or type rejects the complete projection. Add 21 schema-1 parity fixtures and 37 schema-2 exact fixtures; no recursive copy, `map[string]any`, or name-only compatibility exemption survives.
 
 ### Step 2.3: Implement optimistic artifact opening
 
 - [ ] Project C1 and select the exact available `ArtifactProjection` by `artifactId`; require equal top-level and nested IDs.
-- [ ] Open its descriptor exactly once using the existing root-relative no-follow primitives. Reject `sizeBytes > RunArtifactOpenMaximumBytes`; validate regular identity, media type, and exact stat size; read at most `sizeBytes+1` bytes from that same handle; require exactly `sizeBytes`; and validate SHA-256 over those bytes.
+- [ ] Treat `SafeArtifactRef.ref` as the one contract-sanctioned root-relative path: resolve it only beneath its `rootId` through the existing descriptor-relative no-follow primitives. It is not a generic public member named `path`. Open its descriptor exactly once. Reject `sizeBytes > RunArtifactOpenMaximumBytes`; validate regular identity, media type, and exact stat size; read at most `sizeBytes+1` bytes from that same handle; require exactly `sizeBytes`; and validate SHA-256 over those bytes.
 - [ ] Project C2 from current authority. Require P2 to be field-for-field equal to P1, including the entire `SafeArtifactRef`.
 - [ ] Return only the already verified bytes and safe metadata after C2 succeeds. On any error or mismatch, discard the buffer. Never reopen the descriptor and never append an observation from the read path.
 
@@ -531,11 +554,13 @@ Run GREEN:
 ```bash
 cd /srv/chrote-worktrees/formations-run-view/src
 gofmt -w internal/formations/run_projection.go internal/formations/run_projection_events.go internal/formations/run_projection_artifacts.go internal/formations/run_projection_security_test.go internal/formations/run_artifacts.go internal/formations/runtime_authority.go internal/formations/authority_guard.go internal/formations/authority_guard_test.go internal/formations/run_artifact_security_test.go
-go test ./internal/formations -run 'TestRunProjectionAuthority|TestRunProjectionSanitization|TestRunProjectionSession|TestRunProjectionAction|TestRecoveryState|TestArtifactHydration|TestOpenVerifiedRunArtifact|TestGuardRuntimeAuthority' -count=1
-go test -race ./internal/formations -run 'TestRunProjection|TestRecoveryState|TestOpenVerifiedRunArtifact|TestGuardRuntimeAuthority' -count=1
+go test ./internal/formations -run 'TestRunProjectionAuthority|TestRunLedgerReadMaximumBytes|TestRunProjectionSanitization|TestRunProjectionSession|TestRunProjectionAction|TestRecoveryState|TestArtifactHydration|TestOpenVerifiedRunArtifact|TestGuardRuntimeAuthority' -count=1
+go test -race ./internal/formations -run 'TestRunProjection|TestRunLedgerReadMaximumBytes|TestRecoveryState|TestOpenVerifiedRunArtifact|TestGuardRuntimeAuthority' -count=1
 ```
 
-Expected GREEN: all authority, privacy, and race tests pass; no schema-2 fixture reaches schema 1. Commit production separately:
+Expected GREEN: all authority, ledger-bound, source-scoped recovery, privacy,
+and race tests pass; no over-limit reader returns partial bytes/view and no
+schema-2 fixture reaches schema 1. Commit production separately:
 
 ```bash
 git add src/internal/formations/run_projection.go src/internal/formations/run_projection_events.go src/internal/formations/run_projection_artifacts.go src/internal/formations/run_projection_security_test.go src/internal/formations/run_artifacts.go src/internal/formations/runtime_authority.go src/internal/formations/authority_guard.go src/internal/formations/authority_guard_test.go src/internal/formations/run_artifact_security_test.go
@@ -728,13 +753,19 @@ production API.
 After that affirmative read-only probe succeeds, the second process uses its
 own random port and the same temporary workspace/runtime roots, with
 `CHROTE_FORMATIONS_DATA_ROOT` set to the no-fallback `formations-data`
-directory. Its exact assertion is
-`GET /api/formations/runs/run_01KXNP6VY3227H78329V52CKF8` -> HTTP 503 with
-public code `RUNTIME_AUTHORITY_NON_AUTHORIZING`, no `data.status`, no
-`source.compatibility:true`, and no schema-1 fixture member. This is the
-executable claimed-run no-fallback proof; neither the guard probe nor a
-capability endpoint substitutes for the separate normal-binary assertion. The
-first and second normal-process logs are respectively `normal-schema1.log` and
+directory. Its exact assertions are:
+
+- `GET /api/formations/runs/run_01KXNP6VY3227H78329V52CKF8` -> HTTP 503 with
+  public code `RUNTIME_AUTHORITY_NON_AUTHORIZING`, no `data.status`, no
+  `source.compatibility:true`, and no schema-1 fixture member; and
+- `GET /api/formations/runs?limit=50` -> the same HTTP 503/code, with no
+  `data`, `runs`, cursor, or candidate projected before the claimed run. It
+  never returns an empty/filtered compatibility page.
+
+These are the executable claimed-run no-fallback and mixed-window whole-page
+fail-loud proofs; neither the guard probe nor a capability endpoint substitutes
+for the separate normal-binary assertions. The first and second normal-process
+logs are respectively `normal-schema1.log` and
 `normal-schema2-no-fallback.log`; the probe evidence is
 `authority-guard-probe.log`, all under `$artifact_root`.
 
@@ -753,6 +784,7 @@ server invocations plus the non-server guard probe.
 ### Step 3.1: Write HTTP and terminal-receipt adapter tests
 
 - [ ] Assert `GET /api/formations/runs` returns the existing success envelope with `data` as one `formations.run-list.v1` page, ascending canonical run-id order, no raw statuses, and no event history. Cover absent/explicit `after`, absent/explicit `limit`, duplicate/empty/unknown query keys, filtering after selection, and cursor advancement across filtered candidates.
+- [ ] Build one selected list window with a valid schema-1 candidate followed by a guarded schema-2 claim whose post-writer/pre-activation capability is non-authorizing. Assert the complete request fails HTTP 503 `RUNTIME_AUTHORITY_NON_AUTHORIZING` with no `data`/`runs`/cursor, even when the public filter would exclude the claimed candidate. Prove it is never skipped, filtered, downgraded to its schema-1 fallback, or returned as a partial page after the earlier valid candidate.
 - [ ] Seed more than 50 identities and prove the reader retains only the next 51 IDs, reads/projects no more than 50 selected candidates one at a time, and returns `hasMore`. Build exact complete-page encodings one byte below/at/above 4 MiB; an overflow candidate is not consumed and an oversized singleton returns the typed 413 resource-limit error.
 - [ ] Assert `GET /api/formations/runs/{runId}` preserves the existing success envelope and `data.status` key, with one canonical `RunView` as that value.
 - [ ] Assert `GET /api/formations/runs/{runId}/escalations` returns `data.escalations` copied from that same view, with no independent ledger scan.
@@ -762,8 +794,9 @@ server invocations plus the non-server guard probe.
 - [ ] Run each schema-1 mutation and assert the response preserves the current `runId`/`status` keys, replaces the old status value with `RunView`, and has `status.source.compatibility === true`. Assert no `receipt` key is present.
 - [ ] Assert a schema-1 error never becomes a rejected receipt. Assert a schema-2 rejected-start receipt has no `runId` or `effectSeq`.
 - [ ] Assert unsafe projection errors use `writeFormationsError`, return no partial `RunView`, and preserve the registered HTTP status/code without raw paths or adapter errors.
+- [ ] Inject `ErrRunProjectionResourceLimit` from the aggregate ledger reader into list and detail. Assert fixed HTTP 413 `FORMATIONS_RUN_RESOURCE_LIMIT`, no partial list/view, and no raw byte count or path in the error body.
 - [ ] Add a spy canonical store to prove list/detail/escalations call `ListRunViews` or `ReadRunView`, never `ProjectRun`, `ReadRunEvents`, or `ProjectOpenEscalations`.
-- [ ] In the built-server contract, generate the complete no-fallback tree first, compile `src/internal/formations/authority_guard_contract_test.go` with `-tags formations_guard_contract`, and run only `TestFormationsRunNoFallbackAuthorityGuardContract` under the exact two-variable `env -i` contract above. Require nonempty `authority-guard-probe.log`, its fixed acceptance marker, nil guard error, ledger counts `0/1`, the complete all-false capability including `SemanticProjection:false`, and identical before/after snapshots. After that preflight, prove the ordinary schema-1 list/detail assertions and stop the first normal process. Only then start the second normal process. Assert the same run ID exists in both schema-1 and guarded schema-2 locations yet detail returns only 503 `RUNTIME_AUTHORITY_NON_AUTHORIZING`, with no compatibility fallback. The private guard reason remains absent from the HTTP response.
+- [ ] In the built-server contract, generate the complete no-fallback tree first, compile `src/internal/formations/authority_guard_contract_test.go` with `-tags formations_guard_contract`, and run only `TestFormationsRunNoFallbackAuthorityGuardContract` under the exact two-variable `env -i` contract above. Require nonempty `authority-guard-probe.log`, its fixed acceptance marker, nil guard error, ledger counts `0/1`, the complete all-false capability including `SemanticProjection:false`, and identical before/after snapshots. After that preflight, prove the ordinary schema-1 list/detail assertions and stop the first normal process. Only then start the second normal process. Assert the same run ID exists in both schema-1 and guarded schema-2 locations; both detail and a list window selecting it return only 503 `RUNTIME_AUTHORITY_NON_AUTHORIZING`, with no compatibility fallback, skipped candidate, empty 200 page, or partial page. The private guard reason remains absent from both HTTP responses.
 
 Representative assertions:
 
@@ -812,8 +845,8 @@ git commit -m "test(api): specify canonical run responses"
 - [ ] Replace the existing all-ID map/sort path in `run_artifacts.go` with the bounded next-51 selector. Retain only safe IDs greater than `after`, preserve duplicate detection for any selected ID through `openRunLedger`, and read/project at most one selected run at a time. Add a probe proving retained identity count never exceeds 51 when the directory contains more than 50 candidates.
 - [ ] Change detail to `ReadRunView`. Change escalations to select `view.Escalations`. Remove handler-level event reduction.
 - [ ] Preserve the repository's `core.WriteSuccess` envelope rather than adding a second response envelope. List uses the `RunListPage` directly as `data`; detail preserves `map[string]any{"status": view}`; escalations preserve `map[string]any{"escalations": view.Escalations}`.
-- [ ] Map projection guard, invalid-input, not-found, resource-limit, and authority errors through `writeFormationsError`. Do not return a partial list if any claimed run fails projection.
-- [ ] Build the exact valid no-fallback authority files above and run the tagged read-only guard probe to its fixed acceptance marker as the contract preflight. Then extend the disposable built-server fixture and Playwright contract to cover schema-1 bounded list/detail plus `source.compatibility:true` and exact cursor/order in the first normal process, followed by the second normal process proving that the same-run schema-2 claim returns 503 rather than the co-located schema-1 fallback. Both normal invocations return 404 for exact `POST /api/__formations_contract/shutdown` through the existing API fallback and the supplied binary omits the artifact fixture marker. Schema 1 cannot prove artifact success, and neither production-wiring invocation may synthesize artifact identity. The test uses temporary roots and no live provider/service/tmux.
+- [ ] Map projection guard, invalid-input, not-found, resource-limit, and authority errors through `writeFormationsError`. `ErrRunProjectionResourceLimit` maps to fixed 413 `FORMATIONS_RUN_RESOURCE_LIMIT`. A non-authorizing selected list candidate aborts the whole page as fixed 503 `RUNTIME_AUTHORITY_NON_AUTHORIZING` before success-envelope publication, regardless of filtering; do not return a partial list if any claimed run fails projection.
+- [ ] Build the exact valid no-fallback authority files above and run the tagged read-only guard probe to its fixed acceptance marker as the contract preflight. Then extend the disposable built-server fixture and Playwright contract to cover schema-1 bounded list/detail plus `source.compatibility:true` and exact cursor/order in the first normal process, followed by the second normal process proving that both detail and the list window selecting the same-run schema-2 claim return 503 rather than the co-located schema-1 fallback or an empty/partial page. Both normal invocations return 404 for exact `POST /api/__formations_contract/shutdown` through the existing API fallback and the supplied binary omits the artifact fixture marker. Schema 1 cannot prove artifact success, and neither production-wiring invocation may synthesize artifact identity. The test uses temporary roots and no live provider/service/tmux.
 
 ### Step 3.3: Bind terminal receipt input without fabricating it
 
@@ -836,7 +869,16 @@ CHROTE_SERVER_BINARY="$task3_contract_dir/server" CHROTE_CONTRACT_ARTIFACT_DIR="
 sed -n '1,240p' "$task3_contract_dir/contract.log"
 ```
 
-Expected GREEN: all canonical endpoint and compatibility-shape tests pass; the separately compiled read-only guard probe accepts the exact no-fallback fixture with counts `0/1`, the complete disabled capability, unchanged snapshots, and its fixed marker; the second normal-server invocation then proves that same valid schema-2 claim returns 503 without schema-1 fallback; schema-2 adapter fixtures pass; and live schema-2 receipt serving remains disabled without the independent provider. The guard probe source remains in the tests-only RED commit; no production guard code is added for this proof. Re-run the unchanged probe through `scripts/test-built-server-contract.sh` at GREEN. Commit production separately:
+Expected GREEN: all canonical endpoint and compatibility-shape tests pass; the
+separately compiled read-only guard probe accepts the exact no-fallback fixture
+with counts `0/1`, the complete disabled capability, unchanged snapshots, and
+its fixed marker; the second normal-server invocation then proves that both
+detail and list fail 503 for the same valid schema-2 claim without schema-1
+fallback, skip, filter, or partial page; schema-2 adapter fixtures pass; and live
+schema-2 receipt serving remains disabled without the independent provider. The
+guard probe source remains in the tests-only RED commit; no production guard
+code is added for this proof. Re-run the unchanged probe through
+`scripts/test-built-server-contract.sh` at GREEN. Commit production separately:
 
 ```bash
 git add src/internal/api/formations.go src/internal/api/formations_run_projection_test.go src/internal/api/formations_test.go src/internal/api/formations_acceptance_test.go src/internal/api/formations_runtime_authority_test.go src/internal/formations/run_projection.go src/internal/formations/run_projection_test.go src/internal/formations/run_artifacts.go src/internal/formations/store.go dashboard/tests/contract/built-server.spec.ts scripts/test-built-server-contract.sh dashboard/tests/contract/fixtures/run-view-schema1.ndjson dashboard/tests/contract/fixtures/run-view-schema1.snapshot.toml dashboard/tests/contract/fixtures/run-view-schema1.bindings.toml dashboard/tests/contract/fixtures/run-view-schema2-claim-schema1-fallback.ndjson dashboard/tests/contract/fixtures/run-view-schema2-claim-schema1-fallback.snapshot.toml dashboard/tests/contract/fixtures/run-view-schema2-claim-schema1-fallback.bindings.toml
@@ -1121,6 +1163,11 @@ The allowed result is no raw event read, no SSE polling timer, no repeated canon
 - Modify: `src/cmd/archon/runtime_authority_test.go`
 
 **Accepted engineering decision:** today `run logs --json` writes one JSON array of raw events, while `run follow --json` writes one raw event per NDJSON line. This plan deliberately changes both to one complete versioned `RunEventPage` per NDJSON line so each transferred unit is bounded and carries generation/source/cursor/`hasMore` semantics. That is a breaking public agent/CLI wire change, not an internal refactor or visual UX change. The Task 5 RED review must verify the sealed page-NDJSON, JSON+node usage-error, and stderr-only stream-failure semantics; it does not choose a compatibility wrapper.
+
+A new ADR for this break is explicitly `DECLINED`. Do not create one or add a
+compatibility/legacy-hardening side path; the owner ruling, approved design,
+this plan, and the RED/GREEN contract tests are the durable decision record and
+enforcement.
 
 **Command contract:**
 
@@ -1770,8 +1817,10 @@ non-server direct-guard probe:
 3. It then invokes the same normal binary again with
    those separate workspace/runtime roots. Detail for
    `run_01KXNP6VY3227H78329V52CKF8` must return 503
-   `RUNTIME_AUTHORITY_NON_AUTHORIZING` without schema-1 data. Both normal
-   processes return 404 for exact
+   `RUNTIME_AUTHORITY_NON_AUTHORIZING` without schema-1 data. A list window that
+   selects that candidate must fail the whole page with the same 503/code and no
+   `data`, skipped/filtered candidate, empty success page, or partial runs.
+   Both normal processes return 404 for exact
    `POST /api/__formations_contract/shutdown` through the existing API fallback;
    the production binary omits the test marker and never claims schema-1
    artifact success. The response does not expose the internal guard reason.
@@ -1810,22 +1859,35 @@ rg -n 't\.Skip\(|describe\.skip|it\.skip|test\.skip' src/internal/formations src
 
 - [ ] The first two scans must have no production consumer hit. Compatibility definitions/tests may remain only when their adapter is derived from `RunView` and the review package explains the hit.
 - [ ] The private-field scan must have no public projection JSON tag. Safe hashes/encodings are allowed only under their exact approved names.
+- [ ] Confirm both ledger roles pass through the one
+  `RunLedgerReadMaximumBytes` guard before `CanonicalInputDocument` creation,
+  with stat-over-limit rejection before allocation and a same-handle
+  limit-plus-one growth check. The focused at-limit/plus-one tests must prove no
+  partial input/view and `ErrRunProjectionResourceLimit`/fixed 413 mapping.
+- [ ] Confirm schema-1 recovery is unconditionally `live`/nil and that only
+  schema 2 tests the exact deciding-`slot_result` and other interrupted
+  predicates. Confirm a selected non-authorizing schema-2 list candidate aborts
+  the whole page with fixed 503 before filtering or success-envelope output.
+- [ ] `SafeArtifactRef.ref` is the sole allowed root-relative path-bearing
+  value and remains resolved under `rootId` with no-follow. It does not permit a
+  JSON member named `path`; every hit from the private-field scan still blocks.
 - [ ] For the skip scan, compare against certified base `884deeec2c4d4ec2e220b7450dccdd6a10238ef5`. A new skip in relevant coverage blocks completion; pre-existing unrelated skips must be listed, not silently called passing.
 - [ ] Search the branch diff for event reducers. The only semantic event-type switch is inside `ProjectCanonicalRun`; sanitizer variant dispatch and presentation-only safe-event formatting are not reducers and must not mutate status/actions/artifacts.
 - [ ] Confirm `RuntimeAuthorityCapability.SemanticProjection` is still false and schema-2 receipt serving is unbound. Confirm schema-1 response keys remain preserved and compatibility is conveyed only by `RunView.source.compatibility`.
-- [ ] Confirm no new ADR exists and the approved design still states that no new architectural decision is recorded.
+- [ ] Confirm no new ADR exists and the approved design/Task 5 still record the
+  explicit `DECLINED` ruling for an Archon page-NDJSON ADR.
 
 ### Step F.5: Obtain independent whole-branch review
 
 - [ ] Generate the final whole-slice package with `/home/perttu/skills/subagent-driven-development/scripts/review-package 884deeec2c4d4ec2e220b7450dccdd6a10238ef5 HEAD`. Optionally generate a second package from the recorded pre-implementation plan HEAD, but never use it instead of the certified-base package.
 - [ ] Dispatch the most capable available independent reviewer using `requesting-code-review`. Give it the approved design, this plan, `.superpowers/sdd/progress.md`, the printed package, child review/evidence paths, and exact gate outputs.
-- [ ] Require review of: sole-reducer architecture; source precedence/no fallback; `SemanticProjection:false`; the complete 41-type public union and 21/37 parity including the conditional Mission/isolated-Formation start and schema-1 sentinel artifact omission; source-selected schema-1/schema-2 open-dispatch shapes, order, duplicates, and resumed carry; bounded 50-candidate/4 MiB run listing and exact order; submitted receipt id/kind/hash binding; event-page generation/source identity; SSE one-snapshot closure; raw-message sanitization; session/action/recovery privacy; optimistic artifact-open linearization plus `no-store`/`nosniff`; Archon page-NDJSON filter/error semantics; honest pointer-backed Comms completeness and strict run parser; the built contract's separate schema-1 and same-run no-fallback normal invocations, exact authority hashes/paths, the tagged same-root direct-guard acceptance probe with nil/`0/1`/all-false/unchanged assertions, TestMain-safe `env -i`, exact test-only `POST /api/__formations_contract/shutdown` with normal-server API-fallback 404, test-only artifact fixture exclusion, and graceful shutdown; controller one-page/three-view/400-event atomic refresh; no raw consumer scans; and scope/no-UX drift.
+- [ ] Require review of: sole-reducer architecture; source precedence/no fallback; `SemanticProjection:false`; aggregate 64 MiB schema-1/schema-2 ledger reads with stat-before-allocation plus limit-plus-one growth detection and no partial input/view; the complete 41-type public union and minimum exact 21/37 parity including the conditional Mission/isolated-Formation start and schema-1 sentinel artifact omission; schema-1 recovery always `live`/nil and exact schema-2 deciding-result/interrupted/redaction predicates; source-selected schema-1/schema-2 open-dispatch shapes, order, duplicates, and resumed carry; bounded 50-candidate/4 MiB run listing, exact order, and whole-page 503 on a selected non-authorizing claim; submitted receipt id/kind/hash binding; event-page generation/source identity; SSE one-snapshot closure; raw-message sanitization; session/action privacy; `SafeArtifactRef.ref` as the sole root-relative path-bearing exception under `rootId`/no-follow; optimistic artifact-open linearization plus `no-store`/`nosniff`; Archon page-NDJSON filter/error semantics and explicit no-ADR ruling; honest pointer-backed Comms completeness and strict run parser; the built contract's separate schema-1 and same-run no-fallback normal invocations including detail/list 503, exact authority hashes/paths, the tagged same-root direct-guard acceptance probe with nil/`0/1`/all-false/unchanged assertions, TestMain-safe `env -i`, exact test-only `POST /api/__formations_contract/shutdown` with normal-server API-fallback 404, test-only artifact fixture exclusion, and graceful shutdown; controller one-page/three-view/400-event atomic refresh; no raw consumer scans; and scope/no-UX drift.
 - [ ] If findings exist, dispatch one fresh fixer with the complete Critical/Important list, named covering tests, and one appended report. Re-run covering gates and send the updated package to an independent re-review. Do not split findings across agents or dismiss a plan conflict without user resolution.
 - [ ] Record every resolved finding and final approval in `.superpowers/sdd/progress.md`. All Minor findings must be explicitly fixed or accepted with rationale before closure.
 
 ### Step F.6: Attach final evidence and close only the umbrella
 
-- [ ] Write `$ctx_7i1_evidence_dir/ctx-7i1-final-evidence.md` with the recorded evidence-directory path, child IDs/commits/reviews, exact gate commands and outputs, all three server invocation results/logs, `authority-guard-probe.log` and its exact nil/`0/1`/all-false/unchanged proof, same-run no-fallback authority-path/hash proof, exact shutdown method/path plus both normal-server API-fallback 404s, compiled-test-only/TestMain containment and production-binary exclusion proof, graceful shutdown proof, final review disposition, changed-file inventory, `SemanticProjection:false` proof, receipt-provider-unbound proof, and any accepted Minor item.
+- [ ] Write `$ctx_7i1_evidence_dir/ctx-7i1-final-evidence.md` with the recorded evidence-directory path, child IDs/commits/reviews, exact gate commands and outputs, aggregate-ledger exact-limit/plus-one/no-partial evidence, schema-scoped recovery fixtures, whole-list-page 503 evidence, all three server invocation results/logs, `authority-guard-probe.log` and its exact nil/`0/1`/all-false/unchanged proof, same-run no-fallback authority-path/hash proof, exact shutdown method/path plus both normal-server API-fallback 404s, compiled-test-only/TestMain containment and production-binary exclusion proof, graceful shutdown proof, final review disposition, changed-file inventory, `SemanticProjection:false` proof, receipt-provider-unbound proof, explicit Archon no-ADR proof, and any accepted Minor item.
 - [ ] Attach it with `bd comments add ctx-7i1 -f "$ctx_7i1_evidence_dir/ctx-7i1-final-evidence.md"`.
 - [ ] Close the umbrella only now:
 
