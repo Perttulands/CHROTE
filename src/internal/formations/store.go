@@ -34,8 +34,9 @@ type Store struct {
 	Workspace string
 	Now       func() time.Time
 
-	runtimeAuthority    *runtimeAuthorityBoundary
-	newToolDefinitionID func(string) string
+	runtimeAuthority            *runtimeAuthorityBoundary
+	canonicalRunAuthorityReader CanonicalRunAuthorityReader
+	newToolDefinitionID         func(string) string
 }
 
 type BoardDocument struct {
@@ -121,6 +122,35 @@ func (s *Store) workspaceRoot() string {
 		return s.runtimeAuthority.configuredWorkspace
 	}
 	return s.Workspace
+}
+
+// ReadCanonicalRun performs exactly one authority-reader invocation and then
+// hands the resulting immutable document set to the sole semantic projector.
+func (s *Store) ReadCanonicalRun(runID string) (CanonicalRunProjection, error) {
+	if s == nil || s.canonicalRunAuthorityReader == nil {
+		return CanonicalRunProjection{}, fmt.Errorf("%w: canonical run authority reader unavailable", ErrRunProjectionInvalid)
+	}
+	input, err := s.canonicalRunAuthorityReader.ReadRun(runID)
+	if err != nil {
+		return CanonicalRunProjection{}, err
+	}
+	return ProjectCanonicalRun(input)
+}
+
+func (s *Store) ReadRunView(runID string) (RunView, error) {
+	projection, err := s.ReadCanonicalRun(runID)
+	if err != nil {
+		return RunView{}, err
+	}
+	return ProjectRunView(projection), nil
+}
+
+func (s *Store) ReadRunEventPage(runID string, since uint64, limit int) (RunEventPage, error) {
+	projection, err := s.ReadCanonicalRun(runID)
+	if err != nil {
+		return RunEventPage{}, err
+	}
+	return ProjectRunEventPage(projection, since, limit)
 }
 
 func (s *Store) BoardPath(slug string) string {
