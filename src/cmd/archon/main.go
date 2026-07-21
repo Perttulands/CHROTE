@@ -553,7 +553,7 @@ func runFormationCreate(store *formations.Store, args []string, stdout, stderr i
 	}
 	createX, createY, err := resolveCreateCoordinates(store, slug, fs, *x, *y)
 	if err != nil {
-		return fail(stderr, err)
+		return failDefinitionWrite(stderr, err, *jsonOut, "board", fs.Arg(0))
 	}
 	result, err := store.CreateFormation(slug, formations.FormationCreateRequest{
 		Type:      fs.Arg(1),
@@ -563,7 +563,7 @@ func runFormationCreate(store *formations.Store, args []string, stdout, stderr i
 		UpdatedBy: *updatedBy,
 	}, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
 	if err != nil {
-		return fail(stderr, err)
+		return failDefinitionWrite(stderr, err, *jsonOut, "board", fs.Arg(0))
 	}
 	result.Board.TOML = ""
 	result.Layout.TOML = ""
@@ -618,7 +618,7 @@ func runFormationAssign(store *formations.Store, args []string, stdout, stderr i
 		UpdatedBy:   *updatedBy,
 	}, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
 	if err != nil {
-		return fail(stderr, err)
+		return failDefinitionWrite(stderr, err, *jsonOut, "formation", fs.Arg(1))
 	}
 	result.TOML = ""
 	if *jsonOut {
@@ -651,7 +651,7 @@ func runFormationUnassign(store *formations.Store, args []string, stdout, stderr
 		UpdatedBy:   *updatedBy,
 	}, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
 	if err != nil {
-		return fail(stderr, err)
+		return failDefinitionWrite(stderr, err, *jsonOut, "formation", fs.Arg(1))
 	}
 	result.TOML = ""
 	if *jsonOut {
@@ -692,7 +692,7 @@ func runFormationSetBrief(store *formations.Store, args []string, stdout, stderr
 		UpdatedBy:   *updatedBy,
 	}, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
 	if err != nil {
-		return fail(stderr, err)
+		return failDefinitionWrite(stderr, err, *jsonOut, "formation", fs.Arg(1))
 	}
 	result.TOML = ""
 	if *jsonOut {
@@ -763,7 +763,7 @@ func runFormationAddPort(store *formations.Store, args []string, stdout, stderr 
 		UpdatedBy:   *updatedBy,
 	}, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
 	if err != nil {
-		return fail(stderr, err)
+		return failDefinitionWrite(stderr, err, *jsonOut, "formation", fs.Arg(1))
 	}
 	result.TOML = ""
 	if *jsonOut {
@@ -795,7 +795,7 @@ func runFormationWire(store *formations.Store, args []string, stdout, stderr io.
 	}
 	board, err := store.ReadBoard(slug)
 	if err != nil {
-		return fail(stderr, err)
+		return failDefinitionWrite(stderr, err, *jsonOut, "board", fs.Arg(0))
 	}
 	request := formations.FormationWireRequest{
 		From:      fs.Arg(1),
@@ -809,7 +809,7 @@ func runFormationWire(store *formations.Store, args []string, stdout, stderr io.
 		result, err = store.WireFormationPorts(slug, request, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
 	}
 	if err != nil {
-		return fail(stderr, err)
+		return failDefinitionWrite(stderr, err, *jsonOut, "board", fs.Arg(0))
 	}
 	result.TOML = ""
 	if *jsonOut {
@@ -854,7 +854,7 @@ func runGateCreate(store *formations.Store, args []string, stdout, stderr io.Wri
 	}
 	createX, createY, err := resolveCreateCoordinates(store, slug, fs, *x, *y)
 	if err != nil {
-		return fail(stderr, err)
+		return failDefinitionWrite(stderr, err, *jsonOut, "board", fs.Arg(0))
 	}
 	result, err := store.CreateGate(slug, formations.GateCreateRequest{
 		Title:                      *title,
@@ -870,7 +870,7 @@ func runGateCreate(store *formations.Store, args []string, stdout, stderr io.Wri
 		UpdatedBy:                  *updatedBy,
 	}, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
 	if err != nil {
-		return fail(stderr, err)
+		return failDefinitionWrite(stderr, err, *jsonOut, "board", fs.Arg(0))
 	}
 	result.Board.TOML = ""
 	if *jsonOut {
@@ -928,7 +928,7 @@ func runGateUpdate(store *formations.Store, args []string, stdout, stderr io.Wri
 		UpdatedBy:                  *updatedBy,
 	}, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
 	if err != nil {
-		return fail(stderr, err)
+		return failDefinitionWrite(stderr, err, *jsonOut, "board", fs.Arg(0))
 	}
 	result.TOML = ""
 	if *jsonOut {
@@ -969,7 +969,7 @@ func runGateJudge(store *formations.Store, args []string, stdout, stderr io.Writ
 	}
 	board, err := store.ReadBoard(slug)
 	if err != nil {
-		return fail(stderr, err)
+		return failDefinitionWrite(stderr, err, *jsonOut, "board", fs.Arg(0))
 	}
 	gateID, err := resolveGateSelector(board, fs.Arg(1))
 	if err != nil {
@@ -987,7 +987,7 @@ func runGateJudge(store *formations.Store, args []string, stdout, stderr io.Writ
 		result, err = store.SetGateJudgeChain(slug, request, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
 	}
 	if err != nil {
-		return fail(stderr, err)
+		return failDefinitionWrite(stderr, err, *jsonOut, "board", fs.Arg(0))
 	}
 	result.TOML = ""
 	if *jsonOut {
@@ -1062,7 +1062,7 @@ func runMissionCreate(store *formations.Store, args []string, stdout, stderr io.
 	}
 	createX, createY, err := resolveCreateCoordinates(store, slug, fs, *x, *y)
 	if err != nil {
-		return fail(stderr, err)
+		return failDefinitionWrite(stderr, err, *jsonOut, "board", fs.Arg(0))
 	}
 	result, err := store.CreateMission(slug, formations.MissionCreateRequest{
 		Title:     *title,
@@ -1073,7 +1073,7 @@ func runMissionCreate(store *formations.Store, args []string, stdout, stderr io.
 		UpdatedBy: *updatedBy,
 	}, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
 	if err != nil {
-		return fail(stderr, err)
+		return failDefinitionWrite(stderr, err, *jsonOut, "board", fs.Arg(0))
 	}
 	result.Board.TOML = ""
 	if *jsonOut {
@@ -1189,7 +1189,7 @@ func runMissionWire(store *formations.Store, args []string, stdout, stderr io.Wr
 		UpdatedBy: *updatedBy,
 	}, formations.WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
 	if err != nil {
-		return fail(stderr, err)
+		return failDefinitionWrite(stderr, err, *jsonOut, "board", fs.Arg(0))
 	}
 	result.TOML = ""
 	if *jsonOut {
@@ -1922,7 +1922,7 @@ func runBoardArrange(store *formations.Store, args []string, stdout, stderr io.W
 	}
 	layout, err := store.ArrangeLayout(slug, formations.WriteOptions{ExpectedETag: expectedETag})
 	if err != nil {
-		return fail(stderr, err)
+		return failDefinitionWrite(stderr, err, *jsonOut, "board", fs.Arg(0))
 	}
 	layout.TOML = ""
 	if *jsonOut {
@@ -2147,6 +2147,13 @@ func failJSON(stderr io.Writer, err error, jsonOut bool, boundary, selector stri
 	return 1
 }
 
+func failDefinitionWrite(stderr io.Writer, err error, jsonOut bool, boundary, selector string) int {
+	if errors.Is(err, formations.ErrInvalidDefinitionSource) {
+		return failJSON(stderr, err, jsonOut, boundary, selector)
+	}
+	return fail(stderr, err)
+}
+
 func failRunStreamError(stdout, stderr io.Writer, err error, jsonOut bool, boundary, selector string) int {
 	if !jsonOut {
 		return fail(stderr, err)
@@ -2179,6 +2186,8 @@ func archonErrorCode(err error) string {
 		return "definition_publication_uncertain"
 	case errors.Is(err, formations.ErrInvalidToolMutation):
 		return "invalid_tool_mutation"
+	case errors.Is(err, formations.ErrInvalidDefinitionSource):
+		return formations.InvalidDefinitionSourceCode
 	case errors.Is(err, formations.ErrToolExecutionUnavailable):
 		return formations.ToolExecutionUnavailableCode
 	case errors.Is(err, formations.ErrRuntimeAuthorityNonAuthorizing):

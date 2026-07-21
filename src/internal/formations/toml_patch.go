@@ -8,8 +8,13 @@ import (
 
 type tomlDocument struct {
 	lines        []tomlLine
-	fields       map[string]int
+	fields       map[string]tomlField
 	firstSection int
+}
+
+type tomlField struct {
+	start int
+	end   int
 }
 
 type tomlLine struct {
@@ -21,23 +26,31 @@ type tomlLine struct {
 func parseTOMLDocument(raw []byte) *tomlDocument {
 	lines := splitLines(raw)
 	doc := &tomlDocument{
-		lines:        lines,
-		fields:       make(map[string]int),
-		firstSection: len(lines),
+		lines: lines,
 	}
-	for i, line := range lines {
+	doc.reindex()
+	return doc
+}
+
+func (d *tomlDocument) reindex() {
+	for i := range d.lines {
+		d.lines[i].valueContinuation = false
+	}
+	markTOMLValueContinuations(d.lines)
+	d.fields = make(map[string]tomlField)
+	d.firstSection = len(d.lines)
+	for i, line := range d.lines {
 		trimmed := strings.TrimSpace(line.body)
 		if !line.valueContinuation && strings.HasPrefix(trimmed, "[") {
-			doc.firstSection = i
+			d.firstSection = i
 			break
 		}
 		if !line.valueContinuation {
 			if key, ok := topLevelKey(line.body); ok {
-				doc.fields[key] = i
+				d.fields[key] = tomlField{start: i, end: tomlValueLineEnd(d.lines, i, len(d.lines))}
 			}
 		}
 	}
-	return doc
 }
 
 func splitLines(raw []byte) []tomlLine {
@@ -176,11 +189,11 @@ func (d *tomlDocument) bytes() []byte {
 }
 
 func (d *tomlDocument) stringValue(key string) string {
-	lineIndex, ok := d.fields[key]
+	field, ok := d.fields[key]
 	if !ok {
 		return ""
 	}
-	value := strings.TrimSpace(valuePart(d.lines[lineIndex].body))
+	value := strings.TrimSpace(valuePart(d.lines[field.start].body))
 	unquoted, err := strconv.Unquote(value)
 	if err != nil {
 		return value
@@ -189,11 +202,11 @@ func (d *tomlDocument) stringValue(key string) string {
 }
 
 func (d *tomlDocument) intValue(key string) int {
-	lineIndex, ok := d.fields[key]
+	field, ok := d.fields[key]
 	if !ok {
 		return 0
 	}
-	value := strings.TrimSpace(valuePart(d.lines[lineIndex].body))
+	value := strings.TrimSpace(valuePart(d.lines[field.start].body))
 	n, err := strconv.Atoi(value)
 	if err != nil {
 		return 0
@@ -202,8 +215,10 @@ func (d *tomlDocument) intValue(key string) int {
 }
 
 func (d *tomlDocument) setScalar(key, renderedValue string) {
-	if lineIndex, ok := d.fields[key]; ok {
-		d.lines[lineIndex].body = replaceScalarValue(d.lines[lineIndex].body, renderedValue)
+	if field, ok := d.fields[key]; ok {
+		d.lines[field.start].body = replaceScalarValue(d.lines[field.start].body, renderedValue)
+		d.lines = append(d.lines[:field.start+1], d.lines[field.end:]...)
+		d.reindex()
 		return
 	}
 	insertAt := d.firstSection
@@ -211,19 +226,18 @@ func (d *tomlDocument) setScalar(key, renderedValue string) {
 	d.lines = append(d.lines, tomlLine{})
 	copy(d.lines[insertAt+1:], d.lines[insertAt:])
 	d.lines[insertAt] = newLine
-	d.fields = make(map[string]int)
-	d.firstSection = len(d.lines)
-	for i, line := range d.lines {
-		trimmed := strings.TrimSpace(line.body)
-		if !line.valueContinuation && strings.HasPrefix(trimmed, "[") && d.firstSection == len(d.lines) {
-			d.firstSection = i
-		}
-		if i < d.firstSection && !line.valueContinuation {
-			if fieldKey, ok := topLevelKey(line.body); ok {
-				d.fields[fieldKey] = i
-			}
-		}
+	d.reindex()
+}
+
+func tomlValueLineEnd(lines []tomlLine, start, limit int) int {
+	if limit > len(lines) {
+		limit = len(lines)
 	}
+	end := start + 1
+	for end < limit && lines[end].valueContinuation {
+		end++
+	}
+	return end
 }
 
 func topLevelKey(line string) (string, bool) {
@@ -278,17 +292,20 @@ func replaceScalarValue(line, renderedValue string) string {
 }
 
 func commentIndex(line string) int {
-	inString := false
+	inBasicString := false
+	inLiteralString := false
 	escaped := false
 	for i, r := range line {
 		switch {
 		case escaped:
 			escaped = false
-		case r == '\\' && inString:
+		case r == '\\' && inBasicString:
 			escaped = true
-		case r == '"':
-			inString = !inString
-		case r == '#' && !inString:
+		case r == '"' && !inLiteralString:
+			inBasicString = !inBasicString
+		case r == '\'' && !inBasicString:
+			inLiteralString = !inLiteralString
+		case r == '#' && !inBasicString && !inLiteralString:
 			return i
 		}
 	}

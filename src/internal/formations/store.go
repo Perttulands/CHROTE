@@ -14,20 +14,22 @@ import (
 )
 
 const (
-	CurrentBoardSchema   = 2
-	CurrentLayoutSchema  = 1
-	NewBoardSchema       = 1
-	CurrentPersonaSchema = 1
+	CurrentBoardSchema          = 2
+	CurrentLayoutSchema         = 1
+	NewBoardSchema              = 1
+	CurrentPersonaSchema        = 1
+	InvalidDefinitionSourceCode = "invalid_definition_source"
 )
 
 var (
-	ErrConflict             = errors.New("formations conflict")
-	ErrAmbiguousSelector    = errors.New("ambiguous formations selector")
-	ErrInvalidSlug          = errors.New("invalid formations slug")
-	ErrNotFound             = errors.New("formations file not found")
-	ErrPreconditionRequired = errors.New("formations write precondition required")
-	ErrUnsupportedSchema    = errors.New("unsupported formations schema")
-	ErrInvalidToolMutation  = errors.New("invalid_tool_mutation")
+	ErrConflict                = errors.New("formations conflict")
+	ErrAmbiguousSelector       = errors.New("ambiguous formations selector")
+	ErrInvalidSlug             = errors.New("invalid formations slug")
+	ErrNotFound                = errors.New("formations file not found")
+	ErrPreconditionRequired    = errors.New("formations write precondition required")
+	ErrUnsupportedSchema       = errors.New("unsupported formations schema")
+	ErrInvalidToolMutation     = errors.New("invalid_tool_mutation")
+	ErrInvalidDefinitionSource = errors.New(InvalidDefinitionSourceCode)
 )
 
 type Store struct {
@@ -243,7 +245,7 @@ func (s *Store) UpdateBoardMetadata(slug string, patch BoardMetadataPatch, opts 
 		if err != nil {
 			return err
 		}
-		current, err := parseBoard(raw)
+		current, err := parseBoardForWrite(raw)
 		if err != nil {
 			return err
 		}
@@ -268,7 +270,7 @@ func (s *Store) UpdateBoardMetadata(slug string, patch BoardMetadataPatch, opts 
 		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
-		next, err = parseBoard(nextRaw)
+		next, err = parseBoardForWrite(nextRaw)
 		return err
 	})
 	if err != nil {
@@ -297,7 +299,7 @@ func (s *Store) UpdateLayoutMetadata(slug string, patch LayoutMetadataPatch, opt
 		if err != nil {
 			return err
 		}
-		current, err := parseLayout(raw)
+		current, err := parseLayoutForWrite(raw)
 		if err != nil {
 			return err
 		}
@@ -319,7 +321,7 @@ func (s *Store) UpdateLayoutMetadata(slug string, patch LayoutMetadataPatch, opt
 		if err := definition.writeAtomic(nextRaw); err != nil {
 			return err
 		}
-		next, err = parseLayout(nextRaw)
+		next, err = parseLayoutForWrite(nextRaw)
 		return err
 	})
 	if err != nil {
@@ -348,6 +350,19 @@ func (s *Store) readBoardDefinition(slug string) (*BoardDocument, error) {
 	return parseBoard(raw)
 }
 
+func (s *Store) readBoardDefinitionForWrite(slug string) (*BoardDocument, error) {
+	definition, err := s.openBoardDefinition(slug, false)
+	if err != nil {
+		return nil, err
+	}
+	defer definition.close()
+	raw, err := definition.readBytes()
+	if err != nil {
+		return nil, err
+	}
+	return parseBoardForWrite(raw)
+}
+
 func (s *Store) readLayoutDefinition(slug string) (*LayoutDocument, error) {
 	definition, err := s.openLayoutDefinition(slug, false)
 	if err != nil {
@@ -361,7 +376,64 @@ func (s *Store) readLayoutDefinition(slug string) (*LayoutDocument, error) {
 	return parseLayout(raw)
 }
 
+func (s *Store) readLayoutDefinitionForWrite(slug string) (*LayoutDocument, error) {
+	definition, err := s.openLayoutDefinition(slug, false)
+	if err != nil {
+		return nil, err
+	}
+	defer definition.close()
+	raw, err := definition.readBytes()
+	if err != nil {
+		return nil, err
+	}
+	return parseLayoutForWrite(raw)
+}
+
 func parseBoard(raw []byte) (*BoardDocument, error) {
+	source, err := decodeBoardTOML(raw)
+	if err != nil {
+		return parseBoardCompatibility(raw)
+	}
+	return boardFromTOMLSource(raw, source)
+}
+
+func parseBoardForWrite(raw []byte) (*BoardDocument, error) {
+	source, err := decodeBoardTOML(raw)
+	if err != nil {
+		return nil, err
+	}
+	return boardFromTOMLSource(raw, source)
+}
+
+func boardFromTOMLSource(raw []byte, source boardTOMLSource) (*BoardDocument, error) {
+	if source.Schema > CurrentBoardSchema {
+		return nil, fmt.Errorf("%w: schema %d", ErrUnsupportedSchema, source.Schema)
+	}
+	tools, err := parseToolNodes(raw)
+	if err != nil {
+		return nil, invalidDefinitionSource(err)
+	}
+	board := &BoardDocument{
+		Schema:      source.Schema,
+		ID:          source.ID,
+		Slug:        source.Slug,
+		Title:       source.Title,
+		Rev:         source.Rev,
+		UpdatedBy:   source.UpdatedBy,
+		UpdatedAt:   source.UpdatedAt,
+		Missions:    source.Missions,
+		Formations:  source.Formations,
+		Gates:       source.Gates,
+		Tools:       tools,
+		Connections: source.Connections,
+		ETag:        etag(raw),
+		TOML:        string(raw),
+	}
+	populateLegacyScriptGateMigrationInspections(board)
+	return board, nil
+}
+
+func parseBoardCompatibility(raw []byte) (*BoardDocument, error) {
 	doc := parseTOMLDocument(raw)
 	schema := doc.intValue("schema")
 	if schema > CurrentBoardSchema {
@@ -392,6 +464,38 @@ func parseBoard(raw []byte) (*BoardDocument, error) {
 }
 
 func parseLayout(raw []byte) (*LayoutDocument, error) {
+	source, err := decodeLayoutTOML(raw)
+	if err != nil {
+		return parseLayoutCompatibility(raw)
+	}
+	return layoutFromTOMLSource(raw, source)
+}
+
+func parseLayoutForWrite(raw []byte) (*LayoutDocument, error) {
+	source, err := decodeLayoutTOML(raw)
+	if err != nil {
+		return nil, err
+	}
+	return layoutFromTOMLSource(raw, source)
+}
+
+func layoutFromTOMLSource(raw []byte, source layoutTOMLSource) (*LayoutDocument, error) {
+	if source.Schema > CurrentLayoutSchema {
+		return nil, fmt.Errorf("%w: schema %d", ErrUnsupportedSchema, source.Schema)
+	}
+	return &LayoutDocument{
+		Schema:    source.Schema,
+		BoardID:   source.BoardID,
+		BoardRev:  source.BoardRev,
+		UpdatedAt: source.UpdatedAt,
+		Nodes:     source.Nodes,
+		Edges:     source.Edges,
+		ETag:      etag(raw),
+		TOML:      string(raw),
+	}, nil
+}
+
+func parseLayoutCompatibility(raw []byte) (*LayoutDocument, error) {
 	doc := parseTOMLDocument(raw)
 	schema := doc.intValue("schema")
 	if schema > CurrentLayoutSchema {
