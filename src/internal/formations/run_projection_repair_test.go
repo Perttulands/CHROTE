@@ -1207,17 +1207,18 @@ func TestProjectCommandReceiptRejectsWriterFenceTypeAndOrderingViolations(t *tes
 		})
 	}
 
-	t.Run("numeric JSON fence is not a decimal string", func(t *testing.T) {
-		input := schema2RepairFenceTextCommandInput(t, "applied", "1", "1", "1", canonicalCommandPayload("cancel", projectionTestRunID))
-		record := decodeCanonicalObject(t, input.Record)
-		record["outcomeWriterFence"] = 1
-		input.Record = canonicalJSON(t, record)
-		if receipt, err := ProjectCommandReceipt(input); err == nil {
-			t.Fatalf("numeric writer fence projected: %#v", receipt)
-		} else {
-			requireProjectionError(t, err, ErrRunCommandNotTerminal)
-		}
-	})
+	for _, field := range []string{"admittedWriterFence", "stateWriterFence", "outcomeWriterFence"} {
+		t.Run("numeric JSON "+field+" is not a decimal string", func(t *testing.T) {
+			values := map[string]any{"admittedWriterFence": "1", "stateWriterFence": "1", "outcomeWriterFence": "1"}
+			values[field] = 1
+			input := schema2RepairFenceCommandInput(t, "applied", values["admittedWriterFence"], values["stateWriterFence"], values["outcomeWriterFence"], canonicalCommandPayload("cancel", projectionTestRunID))
+			if receipt, err := ProjectCommandReceipt(input); err == nil {
+				t.Fatalf("numeric %s projected: %#v", field, receipt)
+			} else {
+				requireProjectionError(t, err, ErrRunCommandNotTerminal)
+			}
+		})
+	}
 }
 
 func startSchema2RepairAttempt(nodeID, kind string) func(*projectionState) {
@@ -1898,6 +1899,11 @@ func schema2RepairWideFenceCommandInput(t *testing.T, state string, fence uint64
 }
 
 func schema2RepairFenceTextCommandInput(t *testing.T, state, admittedFence, stateFence, outcomeFence string, payload map[string]any) CanonicalCommandReadInput {
+	t.Helper()
+	return schema2RepairFenceCommandInput(t, state, admittedFence, stateFence, outcomeFence, payload)
+}
+
+func schema2RepairFenceCommandInput(t *testing.T, state string, admittedFence, stateFence, outcomeFence any, payload map[string]any) CanonicalCommandReadInput {
 	t.Helper()
 	payloadHash := projectionSHA256(canonicalJSON(t, payload))
 	pending := canonicalJSON(t, map[string]any{
