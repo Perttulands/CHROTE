@@ -1223,6 +1223,7 @@ func formationOutputEventData(result FormationExecutionResult) map[string]any {
 	}
 	return map[string]any{
 		"status":    result.Status,
+		"reason":    "completed",
 		"reportRef": result.ReportRef,
 		"text":      result.Text,
 		"outputs":   outputs,
