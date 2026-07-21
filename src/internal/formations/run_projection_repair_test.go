@@ -339,13 +339,12 @@ func TestProjectCanonicalRunSchema2SessionAuthorityArmsAreNeverAuditOnly(t *test
 	}
 }
 
-func TestSafeRunEventPublicTypesContainNoRawJSON(t *testing.T) {
-	rawMessageType := reflect.TypeOf(json.RawMessage{})
+func TestSafeRunEventPublicTypesContainOnlyClosedNamedProjections(t *testing.T) {
 	for _, event := range append(schema2SafeEventTypes(), schema1SafeEventTypes()...) {
 		t.Run(strconv.Itoa(event.source)+"/"+event.literal, func(t *testing.T) {
-			paths := schema2RepairTypePaths(event.typeOf, rawMessageType, nil, map[reflect.Type]bool{})
+			paths := schema2RepairUnsafePublicTypePaths(event.typeOf, nil, map[reflect.Type]bool{})
 			if len(paths) != 0 {
-				t.Fatalf("public SafeRunEvent contains json.RawMessage at %s; use closed named projections", strings.Join(paths, ", "))
+				t.Fatalf("public SafeRunEvent contains permissive or anonymous nested types at %s; use closed named projections", strings.Join(paths, ", "))
 			}
 		})
 	}
@@ -370,8 +369,39 @@ func TestSchema2NestedPublicProjectionFamiliesAreClosed(t *testing.T) {
 		{name: "turn inputs reject invalid result hash", eventType: "slot_dispatch", valid: schema2RepairSlotDispatchData(t), mutate: func(data map[string]any) {
 			data["turnInputs"].(map[string]any)["priorTurnResults"] = []any{map[string]any{"slotResultSeq": 1, "turnResultSha256": "not-a-hash"}}
 		}},
+		{name: "turn inputs require prior results", eventType: "slot_dispatch", valid: schema2RepairSlotDispatchData(t), mutate: func(data map[string]any) {
+			delete(data["turnInputs"].(map[string]any), "priorTurnResults")
+		}},
+		{name: "turn inputs reject duplicate result sequence", eventType: "slot_dispatch", valid: schema2RepairSlotDispatchData(t), mutate: func(data map[string]any) {
+			item := map[string]any{"slotResultSeq": 1, "turnResultSha256": strings.Repeat("a", 64)}
+			data["turnInputs"].(map[string]any)["priorTurnResults"] = []any{item, cloneAny(item)}
+		}},
+		{name: "turn inputs reject reordered result sequence", eventType: "slot_dispatch", valid: schema2RepairSlotDispatchData(t), mutate: func(data map[string]any) {
+			data["turnInputs"].(map[string]any)["priorTurnResults"] = []any{
+				map[string]any{"slotResultSeq": 9, "turnResultSha256": strings.Repeat("a", 64)},
+				map[string]any{"slotResultSeq": 8, "turnResultSha256": strings.Repeat("b", 64)},
+			}
+		}},
+		{name: "turn result identity rejects unknown member", eventType: "slot_dispatch", valid: schema2RepairSlotDispatchData(t), mutate: func(data map[string]any) {
+			data["turnInputs"].(map[string]any)["priorTurnResults"] = []any{map[string]any{"slotResultSeq": 1, "turnResultSha256": strings.Repeat("a", 64), "result": "forbidden"}}
+		}},
+		{name: "tool inputs require manifest hash", eventType: "tool_dispatch", valid: schema2RepairToolDispatchData(), mutate: func(data map[string]any) {
+			delete(data, "inputManifestSha256")
+		}},
 		{name: "tool input hashes reject invalid hash grammar", eventType: "tool_dispatch", valid: schema2RepairToolDispatchData(), mutate: func(data map[string]any) {
 			data["inputHashes"].(map[string]any)["port_tool_in"] = "not-a-hash"
+		}},
+		{name: "tool input hash keys require identifier grammar", eventType: "tool_dispatch", valid: schema2RepairToolDispatchData(), mutate: func(data map[string]any) {
+			data["inputHashes"] = map[string]any{"../private": strings.Repeat("a", 64)}
+		}},
+		{name: "tool inputs reject unknown member", eventType: "tool_dispatch", valid: schema2RepairToolDispatchData(), mutate: func(data map[string]any) {
+			data["executable"] = "/private/tool"
+		}},
+		{name: "tool dispatch must be recorded before execution", eventType: "tool_dispatch", valid: schema2RepairToolDispatchData(), mutate: func(data map[string]any) {
+			data["recordedBeforeExecute"] = false
+		}},
+		{name: "tool result requires timing", eventType: "tool_result", valid: schema2RepairToolResultData(), mutate: func(data map[string]any) {
+			delete(data, "timing")
 		}},
 		{name: "tool result outputs reject unknown payload member", eventType: "tool_result", valid: schema2RepairToolResultData(), mutate: func(data map[string]any) {
 			data["outputs"].(map[string]any)["port_tool_out"].(map[string]any)["path"] = "/private"
@@ -379,10 +409,29 @@ func TestSchema2NestedPublicProjectionFamiliesAreClosed(t *testing.T) {
 		{name: "tool result output hashes must match output keys", eventType: "tool_result", valid: schema2RepairToolResultData(), mutate: func(data map[string]any) {
 			data["outputHashes"] = map[string]any{"other": strings.Repeat("a", 64)}
 		}},
+		{name: "tool result output hash must cover canonical projection", eventType: "tool_result", valid: schema2RepairToolResultData(), mutate: func(data map[string]any) {
+			data["outputHashes"].(map[string]any)["port_tool_out"] = strings.Repeat("a", 64)
+		}},
 		{name: "tool result artifact registration ids must agree", eventType: "tool_result", valid: schema2RepairToolResultData(), mutate: func(data map[string]any) {
 			registration := schema2RepairAvailableArtifactProjection()
 			registration["artifact"].(map[string]any)["artifactId"] = "artifact_other"
 			data["artifactRegistrations"] = []any{registration}
+		}},
+		{name: "tool result rejects duplicate artifact registrations", eventType: "tool_result", valid: schema2RepairToolResultData(), mutate: func(data map[string]any) {
+			registration := schema2RepairAvailableArtifactProjection()
+			data["artifactRegistrations"] = []any{registration, cloneAny(registration)}
+		}},
+		{name: "tool result display evidence rejects unknown member", eventType: "tool_result", valid: schema2RepairToolResultData(), mutate: func(data map[string]any) {
+			data["displayEvidence"] = []any{map[string]any{"kind": "text", "text": "ok", "ref": "forbidden"}}
+		}},
+		{name: "tool result timing rejects negative duration", eventType: "tool_result", valid: schema2RepairToolResultData(), mutate: func(data map[string]any) {
+			data["timing"].(map[string]any)["durationMs"] = -1
+		}},
+		{name: "tool result timing rejects unknown member", eventType: "tool_result", valid: schema2RepairToolResultData(), mutate: func(data map[string]any) {
+			data["timing"].(map[string]any)["deadline"] = "private"
+		}},
+		{name: "node outputs require status", eventType: "node_output", valid: schema2RepairNodeOutputData(projectionTestMissionID), mutate: func(data map[string]any) {
+			delete(data, "status")
 		}},
 		{name: "node outputs reject invalid status", eventType: "node_output", valid: schema2RepairNodeOutputData(projectionTestMissionID), mutate: func(data map[string]any) {
 			data["status"] = "maybe"
@@ -390,29 +439,94 @@ func TestSchema2NestedPublicProjectionFamiliesAreClosed(t *testing.T) {
 		{name: "node outputs reject unclosed payload", eventType: "node_output", valid: schema2RepairNodeOutputData(projectionTestMissionID), mutate: func(data map[string]any) {
 			data["outputs"].(map[string]any)["out"].(map[string]any)["token"] = "forbidden"
 		}},
+		{name: "node outputs reject unknown producer kind", eventType: "node_output", valid: schema2RepairNodeOutputData(projectionTestMissionID), mutate: func(data map[string]any) {
+			data["producedBy"].(map[string]any)["kind"] = "socket"
+		}},
+		{name: "node outputs require producer outcome sequence", eventType: "node_output", valid: schema2RepairNodeOutputData(projectionTestMissionID), mutate: func(data map[string]any) {
+			delete(data["producedBy"].(map[string]any), "outcomeSeq")
+		}},
+		{name: "node outputs reject malformed delivered edge identity", eventType: "node_output", valid: schema2RepairNodeOutputData(projectionTestMissionID), mutate: func(data map[string]any) {
+			data["deliveredEdges"] = []any{map[string]any{
+				"originEdgeId": "../private", "deliveryEdgeId": "edge_root_work", "toNodeId": projectionTestFormationID, "toPortId": "port_in",
+				"sourceNodeId": projectionTestMissionID, "sourcePortId": "out", "sourceOutputSeq": 1, "sourceAttempt": 1,
+			}}
+		}},
+		{name: "gate criterion requires text", eventType: "gate_evaluating", valid: schema2RepairGateEvaluatingData(), mutate: func(data map[string]any) {
+			delete(data["criterionProjection"].(map[string]any), "text")
+		}},
 		{name: "gate criterion requires authored config classification", eventType: "gate_evaluating", valid: schema2RepairGateEvaluatingData(), mutate: func(data map[string]any) {
 			data["criterionProjection"].(map[string]any)["classification"] = "runtime"
 		}},
 		{name: "gate criterion rejects unknown member", eventType: "gate_evaluating", valid: schema2RepairGateEvaluatingData(), mutate: func(data map[string]any) {
 			data["criterionProjection"].(map[string]any)["prompt"] = "forbidden"
 		}},
+		{name: "gate criterion hash must match text", eventType: "gate_evaluating", valid: schema2RepairGateEvaluatingData(), mutate: func(data map[string]any) {
+			data["criterionProjection"].(map[string]any)["sha256"] = strings.Repeat("a", 64)
+		}},
+		{name: "gate criterion encoding is fixed", eventType: "gate_evaluating", valid: schema2RepairGateEvaluatingData(), mutate: func(data map[string]any) {
+			data["criterionProjection"].(map[string]any)["encoding"] = "utf8"
+		}},
+		{name: "gate criterion text is bounded", eventType: "gate_evaluating", valid: schema2RepairGateEvaluatingData(), mutate: func(data map[string]any) {
+			text := strings.Repeat("x", 1<<20)
+			criterion := data["criterionProjection"].(map[string]any)
+			criterion["text"], criterion["sha256"] = text, projectionSHA256([]byte(text))
+		}},
 		{name: "gate result rejects unknown evidence kind", eventType: "gate_kind_result", valid: schema2RepairGateKindResultData(), mutate: func(data map[string]any) {
 			data["evidence"] = []any{map[string]any{"kind": "socket", "text": "forbidden"}}
+		}},
+		{name: "gate result evidence requires kind payload", eventType: "gate_kind_result", valid: schema2RepairGateKindResultData(), mutate: func(data map[string]any) {
+			data["evidence"] = []any{map[string]any{"kind": "artifact"}}
+		}},
+		{name: "gate result hash must match exact result", eventType: "gate_kind_result", valid: schema2RepairGateKindResultData(), mutate: func(data map[string]any) {
+			data["reason"] = "changed after hash"
+		}},
+		{name: "code gate result requires every binding hash", eventType: "gate_kind_result", valid: schema2RepairGateKindResultData(), mutate: func(data map[string]any) {
+			delete(data, "policySha256")
+		}},
+		{name: "formation gate result forbids code binding hashes", eventType: "gate_kind_result", valid: schema2RepairFormationGateKindResultData(), mutate: func(data map[string]any) {
+			data["gateBindingId"] = "gatebinding_forbidden"
 		}},
 		{name: "judge result rejects invalid verdict", eventType: "judge_result", valid: schema2RepairJudgeResultData(), mutate: func(data map[string]any) {
 			data["result"].(map[string]any)["verdict"] = "unknown"
 		}},
+		{name: "judge result requires reason", eventType: "judge_result", valid: schema2RepairJudgeResultData(), mutate: func(data map[string]any) {
+			delete(data["result"].(map[string]any), "reason")
+		}},
+		{name: "judge result hash must match closed result", eventType: "judge_result", valid: schema2RepairJudgeResultData(), mutate: func(data map[string]any) {
+			data["result"].(map[string]any)["reason"] = "changed after hash"
+		}},
 		{name: "gate feedback evaluated input is identity only", eventType: "gate_verdict", valid: schema2RepairGateVerdictData(), mutate: func(data map[string]any) {
 			data["feedbackPayload"].(map[string]any)["evaluatedInput"].(map[string]any)["payloadProjection"] = schema2RepairWorkProjection("forbidden")
+		}},
+		{name: "gate feedback verdict is fail", eventType: "gate_verdict", valid: schema2RepairGateVerdictData(), mutate: func(data map[string]any) {
+			data["feedbackPayload"].(map[string]any)["verdict"] = "pass"
+		}},
+		{name: "gate feedback requires input sequence", eventType: "gate_verdict", valid: schema2RepairGateVerdictData(), mutate: func(data map[string]any) {
+			delete(data["feedbackPayload"].(map[string]any)["evaluatedInput"].(map[string]any), "gateInputSeq")
+		}},
+		{name: "gate feedback reason is bounded", eventType: "gate_verdict", valid: schema2RepairGateVerdictData(), mutate: func(data map[string]any) {
+			data["feedbackPayload"].(map[string]any)["reason"] = strings.Repeat("x", 1<<20)
 		}},
 		{name: "artifact source rejects unknown kind", eventType: "artifact_attached", valid: schema2RepairArtifactAttachedData(), mutate: func(data map[string]any) {
 			data["source"].(map[string]any)["kind"] = "path"
 		}},
+		{name: "artifact source requires gate identity", eventType: "artifact_attached", valid: schema2RepairArtifactAttachedData(), mutate: func(data map[string]any) {
+			delete(data["source"].(map[string]any), "gateId")
+		}},
+		{name: "artifact attached forbids tool source", eventType: "artifact_attached", valid: schema2RepairArtifactAttachedData(), mutate: func(data map[string]any) {
+			data["source"] = map[string]any{"kind": "tool", "toolLeaseId": "toollease_01KXNP6VY3227H78329V52CKF8", "nodeId": "tool_normalize"}
+		}},
 		{name: "fixed system prompt rejects wrong template", eventType: "human_input_requested", valid: schema2RepairHumanRequestData(), mutate: func(data map[string]any) {
 			data["promptProjection"].(map[string]any)["templateId"] = "gate-human-verdict-v2"
 		}},
+		{name: "fixed system prompt rejects authored classification", eventType: "human_input_requested", valid: schema2RepairHumanRequestData(), mutate: func(data map[string]any) {
+			data["promptProjection"].(map[string]any)["classification"] = "authored_config"
+		}},
 		{name: "choice projections require exact pass and fail", eventType: "human_input_requested", valid: schema2RepairHumanRequestData(), mutate: func(data map[string]any) {
 			delete(data["choiceProjections"].(map[string]any), "fail")
+		}},
+		{name: "choice label binds exact template", eventType: "human_input_requested", valid: schema2RepairHumanRequestData(), mutate: func(data map[string]any) {
+			data["choiceProjections"].(map[string]any)["pass"].(map[string]any)["templateId"] = "gate-human-fail-v1"
 		}},
 		{name: "choice projections reject unknown choice", eventType: "human_input_requested", valid: schema2RepairHumanRequestData(), mutate: func(data map[string]any) {
 			data["choiceProjections"].(map[string]any)["later"] = map[string]any{"classification": "fixed_system", "sourceKind": "human_choice", "templateId": "gate-human-later-v1"}
@@ -431,6 +545,55 @@ func TestSchema2NestedPublicProjectionFamiliesAreClosed(t *testing.T) {
 			}
 			if safe, err := sanitizeSchema2Event(raw); err == nil {
 				t.Fatalf("invalid nested %s projection was exposed: %#v", test.eventType, safe)
+			}
+		})
+	}
+}
+
+func TestSchema2NestedProjectionClosedEnumsAcceptEveryFrozenLiteral(t *testing.T) {
+	tests := []struct {
+		name      string
+		eventType string
+		variants  []map[string]any
+	}{
+		{name: "tool result status", eventType: "tool_result", variants: schema2RepairVariants(schema2RepairToolResultData(), "status", "ok", "error", "timeout")},
+		{name: "node output status", eventType: "node_output", variants: schema2RepairVariants(schema2RepairNodeOutputData(projectionTestMissionID), "status", "done", "needs-review", "blocked", "failed")},
+		{name: "code gate verdict", eventType: "gate_kind_result", variants: []map[string]any{schema2RepairGateKindResultVerdictData("pass"), schema2RepairGateKindResultVerdictData("fail")}},
+		{name: "judge verdict", eventType: "judge_result", variants: []map[string]any{schema2RepairJudgeResultVerdictData("pass"), schema2RepairJudgeResultVerdictData("fail")}},
+		{name: "gate evidence kind", eventType: "gate_kind_result", variants: []map[string]any{
+			schema2RepairWithEvidence(schema2RepairGateKindResultData(), map[string]any{"kind": "artifact", "artifactId": "artifact_report"}),
+			schema2RepairWithEvidence(schema2RepairGateKindResultData(), map[string]any{"kind": "ledger", "seq": 1}),
+			schema2RepairWithEvidence(schema2RepairGateKindResultData(), map[string]any{"kind": "text", "text": "clean"}),
+		}},
+		{name: "non-tool artifact source kind", eventType: "artifact_attached", variants: []map[string]any{
+			schema2RepairWithArtifactSource(map[string]any{"kind": "slot", "dispatchId": "dsp_01KXNP6VY3227H78329V52CKF8", "nodeId": projectionTestFormationID, "slotId": "slot_worker"}),
+			schema2RepairWithArtifactSource(map[string]any{"kind": "gate", "gateId": projectionTestGateID, "gateAttempt": 1}),
+			schema2RepairWithArtifactSource(map[string]any{"kind": "system", "sourceId": "system_report"}),
+		}},
+		{name: "artifact availability", eventType: "artifact_attached", variants: []map[string]any{
+			schema2RepairArtifactAttachedData(),
+			schema2RepairWithArtifactProjection(schema2RepairUnavailableArtifactProjection("unavailable")),
+			schema2RepairWithArtifactProjection(schema2RepairUnavailableArtifactProjection("redacted")),
+			schema2RepairWithArtifactProjection(schema2RepairUnavailableArtifactProjection("expired")),
+		}},
+		{name: "payload kind", eventType: "node_output", variants: []map[string]any{
+			schema2RepairNodeOutputData(projectionTestMissionID),
+			schema2RepairNodeOutputWithPayload(map[string]any{"kind": "unavailable", "code": "formation_needs_review", "message": "Formation requires review", "retryable": true}),
+			schema2RepairNodeOutputWithPayload(map[string]any{"kind": "error", "code": "invalid_formation_outputs", "message": "Formation outputs do not match the declared ports", "retryable": true}),
+			schema2RepairNodeOutputWithPayload(map[string]any{"kind": "gate_feedback", "feedback": cloneAny(schema2RepairGateVerdictData()["feedbackPayload"])}),
+		}},
+		{name: "gate result kind", eventType: "gate_kind_result", variants: []map[string]any{schema2RepairGateKindResultData(), schema2RepairFormationGateKindResultData()}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			for index, data := range test.variants {
+				t.Run(strconv.Itoa(index), func(t *testing.T) {
+					event := schema2Event(projectionTestRunID, 20, test.eventType, cloneAny(data).(map[string]any))
+					if _, safe := schema2RepairDecodeSafeEvent(t, event); safe == nil {
+						t.Fatalf("accepted %s enum variant produced nil event", test.eventType)
+					}
+				})
 			}
 		})
 	}
@@ -762,17 +925,39 @@ func schema2RepairDecodeSafeEvent(t *testing.T, event map[string]any) (rawProjec
 	return raw, safe
 }
 
-func schema2RepairTypePaths(current, target reflect.Type, prefix []string, seen map[reflect.Type]bool) []string {
-	if current == target {
-		return []string{strings.Join(prefix, ".")}
+func schema2RepairUnsafePublicTypePaths(current reflect.Type, prefix []string, seen map[reflect.Type]bool) []string {
+	path := strings.Join(prefix, ".")
+	if path == "" {
+		path = current.String()
 	}
-	for current.Kind() == reflect.Pointer || current.Kind() == reflect.Slice || current.Kind() == reflect.Array {
-		current = current.Elem()
-		if current == target {
-			return []string{strings.Join(prefix, ".")}
+	if current == reflect.TypeOf((*ArtifactProjection)(nil)).Elem() || current == reflect.TypeOf((*SafeOpenDispatch)(nil)).Elem() {
+		return nil
+	}
+	if current.Kind() == reflect.Interface {
+		return []string{path + " (interface/any)"}
+	}
+	if current.Kind() == reflect.Pointer {
+		return schema2RepairUnsafePublicTypePaths(current.Elem(), prefix, seen)
+	}
+	if current.Kind() == reflect.Slice || current.Kind() == reflect.Array {
+		if current.Elem().Kind() == reflect.Uint8 {
+			return []string{path + " (raw bytes)"}
 		}
+		return schema2RepairUnsafePublicTypePaths(current.Elem(), append(prefix, "[]"), seen)
 	}
-	if current.Kind() != reflect.Struct || seen[current] {
+	if current.Kind() == reflect.Map {
+		if current.Key().Kind() != reflect.String {
+			return []string{path + " (non-string map key)"}
+		}
+		return schema2RepairUnsafePublicTypePaths(current.Elem(), append(prefix, "{}"), seen)
+	}
+	if current.Kind() != reflect.Struct {
+		return nil
+	}
+	if len(prefix) != 0 && current.Name() == "" {
+		return []string{path + " (anonymous struct)"}
+	}
+	if seen[current] {
 		return nil
 	}
 	seen[current] = true
@@ -780,7 +965,7 @@ func schema2RepairTypePaths(current, target reflect.Type, prefix []string, seen 
 	var paths []string
 	for index := 0; index < current.NumField(); index++ {
 		field := current.Field(index)
-		paths = append(paths, schema2RepairTypePaths(field.Type, target, append(prefix, field.Name), seen)...)
+		paths = append(paths, schema2RepairUnsafePublicTypePaths(field.Type, append(prefix, field.Name), seen)...)
 	}
 	return paths
 }
@@ -893,18 +1078,87 @@ func schema2RepairGateEvaluatingData() map[string]any {
 }
 
 func schema2RepairGateKindResultData() map[string]any {
+	return schema2RepairGateKindResultVerdictData("pass")
+}
+
+func schema2RepairGateKindResultVerdictData(verdict string) map[string]any {
+	evidence := []any{map[string]any{"kind": "text", "text": "clean"}}
+	result := map[string]any{"verdict": verdict, "reason": "lint passed", "evidence": evidence}
 	return map[string]any{
-		"gateId": projectionTestGateID, "gateAttempt": 1, "kind": "code", "verdict": "pass", "reason": "lint passed",
-		"evidence": []any{map[string]any{"kind": "text", "text": "clean"}}, "evaluatedInputRef": schema2RepairInputRef(),
-		"resultEncoding": "gate-kind-result-jcs-v1", "resultSha256": strings.Repeat("a", 64), "relatedSeqs": []any{},
+		"gateId": projectionTestGateID, "gateAttempt": 1, "kind": "code", "verdict": verdict, "reason": "lint passed",
+		"evidence": evidence, "evaluatedInputRef": schema2RepairInputRef(),
+		"resultEncoding": "gate-kind-result-jcs-v1", "resultSha256": projectionSHA256(mustMarshalJSONNoTest(result)), "relatedSeqs": []any{},
 		"gateBindingId": "gatebinding_lint", "inputSha256": strings.Repeat("b", 64), "profileSha256": strings.Repeat("c", 64),
 		"evaluatorBundleSha256": strings.Repeat("d", 64), "parametersSha256": strings.Repeat("e", 64),
 		"policySha256": strings.Repeat("f", 64), "determinismPolicySha256": strings.Repeat("1", 64),
 	}
 }
 
+func schema2RepairFormationGateKindResultData() map[string]any {
+	data := schema2RepairGateKindResultData()
+	data["kind"] = "formation"
+	data["relatedSeqs"] = []any{18}
+	for _, key := range []string{"gateBindingId", "inputSha256", "profileSha256", "evaluatorBundleSha256", "parametersSha256", "policySha256", "determinismPolicySha256"} {
+		delete(data, key)
+	}
+	return data
+}
+
+func schema2RepairVariants(base map[string]any, key string, values ...string) []map[string]any {
+	result := make([]map[string]any, 0, len(values))
+	for _, value := range values {
+		variant := cloneAny(base).(map[string]any)
+		variant[key] = value
+		result = append(result, variant)
+	}
+	return result
+}
+
+func schema2RepairNestedVariants(base map[string]any, objectKey, key string, values ...string) []map[string]any {
+	result := make([]map[string]any, 0, len(values))
+	for _, value := range values {
+		variant := cloneAny(base).(map[string]any)
+		variant[objectKey].(map[string]any)[key] = value
+		result = append(result, variant)
+	}
+	return result
+}
+
+func schema2RepairWithEvidence(base map[string]any, evidence map[string]any) map[string]any {
+	result := cloneAny(base).(map[string]any)
+	result["evidence"] = []any{evidence}
+	result["resultSha256"] = projectionSHA256(mustMarshalJSONNoTest(map[string]any{"verdict": result["verdict"], "reason": result["reason"], "evidence": result["evidence"]}))
+	return result
+}
+
+func schema2RepairWithArtifactSource(source map[string]any) map[string]any {
+	result := schema2RepairArtifactAttachedData()
+	result["source"] = source
+	return result
+}
+
+func schema2RepairUnavailableArtifactProjection(availability string) map[string]any {
+	return map[string]any{"artifactId": "artifact_report", "availability": availability, "name": "report.md", "errorCode": availability + "_artifact"}
+}
+
+func schema2RepairWithArtifactProjection(projection map[string]any) map[string]any {
+	result := schema2RepairArtifactAttachedData()
+	result["artifactProjection"] = projection
+	return result
+}
+
+func schema2RepairNodeOutputWithPayload(payload map[string]any) map[string]any {
+	result := schema2RepairNodeOutputData(projectionTestMissionID)
+	result["outputs"].(map[string]any)["out"] = map[string]any{"availability": "available", "exact": true, "payload": payload}
+	return result
+}
+
 func schema2RepairJudgeResultData() map[string]any {
-	result := map[string]any{"verdict": "pass", "reason": "approved", "evidence": []any{}}
+	return schema2RepairJudgeResultVerdictData("pass")
+}
+
+func schema2RepairJudgeResultVerdictData(verdict string) map[string]any {
+	result := map[string]any{"verdict": verdict, "reason": "approved", "evidence": []any{}}
 	return map[string]any{
 		"gateId": projectionTestGateID, "gateAttempt": 1, "judgeNodeId": projectionTestFormationID, "judgeAttempt": 1,
 		"chainIndex": 0, "contextEncoding": "judge-context-jcs-v1", "contextSha256": strings.Repeat("a", 64),
