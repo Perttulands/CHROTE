@@ -3054,23 +3054,24 @@ func decodeArtifactProjection(raw json.RawMessage) (ArtifactProjection, error) {
 }
 
 type projectionState struct {
-	view            RunView
-	board           *BoardDocument
-	nodeIndex       map[string]int
-	attemptIndex    map[string]int
-	gateIndex       map[string]int
-	artifactIndex   map[string]int
-	dispatches      map[string]SafeSchema2SlotDispatchData
-	dispatchSeq     map[string]uint64
-	matchedDispatch map[string]bool
-	revokedDispatch map[string]uint64
-	bindings        map[string]schema2Binding
-	health          map[string]SafeSchema2SlotBindingObservedData
-	lastBlockJSON   []byte
-	lastBlockRetry  []byte
-	lastBlockSeq    uint64
-	lastBlockPolicy string
-	terminal        bool
+	view               RunView
+	board              *BoardDocument
+	nodeIndex          map[string]int
+	attemptIndex       map[string]int
+	gateIndex          map[string]int
+	artifactIndex      map[string]int
+	dispatches         map[string]SafeSchema2SlotDispatchData
+	dispatchSeq        map[string]uint64
+	matchedDispatch    map[string]bool
+	revokedDispatch    map[string]uint64
+	bindings           map[string]schema2Binding
+	health             map[string]SafeSchema2SlotBindingObservedData
+	lastBlockJSON      []byte
+	lastBlockRetry     []byte
+	lastBlockSeq       uint64
+	lastBlockPolicy    string
+	lastBlockNextEpoch uint64
+	terminal           bool
 }
 
 type schema2Binding struct {
@@ -3428,10 +3429,29 @@ func reduceSchema1Event(state *projectionState, raw rawProjectionEvent, safe Saf
 }
 
 func reduceSchema2Event(state *projectionState, raw rawProjectionEvent, safe SafeRunEvent, commands map[string]RunCommandReceipt) error {
+	if _, started := safe.(SafeSchema2RunStartedEvent); started && raw.envelope.Epoch != 0 {
+		return projectionError(ErrRunProjectionInvalid, "schema-2 run_started must use epoch zero")
+	}
+	if _, resumed := safe.(SafeSchema2RunResumedEvent); !resumed && raw.envelope.Epoch != state.view.Identity.Epoch {
+		return projectionError(ErrRunProjectionInvalid, "event epoch differs from current epoch")
+	}
+	if state.view.Status == "blocked" {
+		switch safe.(type) {
+		case SafeSchema2RunResumedEvent,
+			SafeSchema2SlotBindingObservedEvent,
+			SafeSchema2ArtifactObservedEvent,
+			SafeSchema2RunCancelRequestedEvent,
+			SafeSchema2RunFailureReconciliationStartedEvent,
+			SafeSchema2RunCanceledEvent,
+			SafeSchema2RunFailedEvent,
+			SafeSchema2RunSucceededEvent:
+		default:
+			return projectionError(ErrRunProjectionInvalid, "structural event while run is blocked")
+		}
+	}
 	state.view.Cursor = raw.envelope.Seq
 	state.view.Audit.ConsumedEventCount++
 	state.view.Audit.LatestWriterFence = raw.writerFence
-	state.view.Identity.Epoch = raw.envelope.Epoch
 	switch event := safe.(type) {
 	case SafeSchema2RunStartedEvent:
 		if err := verifyEventCommand(event.Data.AdmissionCommandID, event.Data.CommandPayloadSHA256, raw.envelope.Seq, commands); err != nil {
@@ -3573,6 +3593,9 @@ func reduceSchema2Event(state *projectionState, raw rawProjectionEvent, safe Saf
 		if !state.selectedStructuralScope(event.Data.BlockedNodeID, event.Data.BlockedGateID) {
 			return projectionError(ErrRunProjectionInvalid, "block outside selected graph")
 		}
+		if event.Data.ResumeAllowed && (state.view.Identity.Epoch >= MaxJSONSafeInteger || event.Data.NextEpoch != state.view.Identity.Epoch+1) {
+			return projectionError(ErrRunProjectionInvalid, "block next epoch differs from current epoch")
+		}
 		if err := state.validateSchema2OpenDispatches(event.Data.OpenDispatches); err != nil {
 			return err
 		}
@@ -3582,7 +3605,7 @@ func reduceSchema2Event(state *projectionState, raw rawProjectionEvent, safe Saf
 		if err := verifyEventCommand(event.Data.CommandID, event.Data.CommandPayloadSHA256, raw.envelope.Seq, commands); err != nil {
 			return err
 		}
-		if state.view.Status != "blocked" || event.Data.ResumedFromSeq != state.lastBlockSeq {
+		if state.view.Status != "blocked" || event.Data.ResumedFromSeq != state.lastBlockSeq || state.lastBlockNextEpoch == 0 || raw.envelope.Epoch != state.lastBlockNextEpoch {
 			return projectionError(ErrRunProjectionInvalid, "resume does not name current block")
 		}
 		expectedMode := map[string]string{
@@ -3600,6 +3623,7 @@ func reduceSchema2Event(state *projectionState, raw rawProjectionEvent, safe Saf
 		if !bytes.Equal(retry, state.lastBlockRetry) {
 			return projectionError(ErrRunProjectionInvalid, "resume retry targets differ from block")
 		}
+		state.view.Identity.Epoch = raw.envelope.Epoch
 		state.view.Status = "running"
 	case SafeSchema2HumanVerdictRecordedEvent:
 		if len(commands) != 0 {
@@ -4656,6 +4680,7 @@ func (state *projectionState) appendSchema2Block(raw rawProjectionEvent, data Sa
 	state.lastBlockRetry, _ = json.Marshal(data.RetryTargets)
 	state.lastBlockSeq = raw.envelope.Seq
 	state.lastBlockPolicy = data.ResumePolicy
+	state.lastBlockNextEpoch = data.NextEpoch
 }
 
 func artifactProjectionID(artifact ArtifactProjection) string {
