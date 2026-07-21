@@ -1002,6 +1002,7 @@ func (e *RunEngine) executeSnapshot(runID string, board *BoardDocument, mission 
 		Type:      RunEventNodeStarted,
 		NodeID:    mission.ID,
 		MissionID: mission.ID,
+		Attempt:   1,
 		Data: map[string]any{
 			"nodeKind":  "mission",
 			"inputRefs": []RunInputRef{},
