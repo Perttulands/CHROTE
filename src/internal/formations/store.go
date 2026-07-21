@@ -133,9 +133,15 @@ func (s *Store) ReadCanonicalRun(runID string) (CanonicalRunProjection, error) {
 	if s == nil || s.canonicalRunAuthorityReader == nil {
 		return CanonicalRunProjection{}, fmt.Errorf("%w: canonical run authority reader unavailable", ErrRunProjectionInvalid)
 	}
+	if err := s.requireRuntimeAuthorityRead(); err != nil {
+		return CanonicalRunProjection{}, err
+	}
 	input, err := s.canonicalRunAuthorityReader.ReadRun(runID)
 	if err != nil {
 		return CanonicalRunProjection{}, err
+	}
+	if input.RunID != runID {
+		return CanonicalRunProjection{}, fmt.Errorf("%w: canonical authority reader substituted run identity", ErrRunProjectionInvalid)
 	}
 	return ProjectCanonicalRun(input)
 }

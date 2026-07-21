@@ -80,3 +80,35 @@ func (s *Store) RequireRuntimeAuthority() error {
 		Capability: result.Capability,
 	}
 }
+
+// requireRuntimeAuthorityRead prevents a guarded schema-2 authority claim from
+// falling through to the schema-1 inspection reader. Schema-1-only workspaces
+// remain readable while the schema-2 semantic reader is not yet available.
+func (s *Store) requireRuntimeAuthorityRead() error {
+	if s == nil || s.runtimeAuthority == nil {
+		return nil
+	}
+	boundary := s.runtimeAuthority
+	if boundary.formationsDataRoot == "" {
+		return &RuntimeAuthorityNonAuthorizingError{
+			Reason:     RuntimeAuthorityConfigurationMissing,
+			Stage:      RuntimeAuthorityGuardStageRoot,
+			Code:       RuntimeAuthorityGuardMissing,
+			Capability: disabledRuntimeAuthorityCapability(),
+		}
+	}
+	result, err := GuardRuntimeWorkspaceAuthorityV1(boundary.formationsDataRoot, boundary.configuredWorkspace)
+	if err != nil {
+		rejection := &RuntimeAuthorityNonAuthorizingError{Reason: RuntimeAuthorityGuardRejected, Capability: result.Capability}
+		var guardErr *RuntimeAuthorityGuardError
+		if errors.As(err, &guardErr) {
+			rejection.Stage = guardErr.Stage
+			rejection.Code = guardErr.Code
+		}
+		return rejection
+	}
+	if result.Ledgers.Schema2Guarded > 0 {
+		return &RuntimeAuthorityNonAuthorizingError{Reason: RuntimeAuthorityCapabilityDisabled, Capability: result.Capability}
+	}
+	return nil
+}

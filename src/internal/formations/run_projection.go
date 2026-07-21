@@ -2678,9 +2678,25 @@ type schema2Binding struct {
 	NodeID               string
 	SlotID               string
 	AgentID              string
+	Harness              string
 	SessionTargetID      string
 	TargetFingerprint    string
 	SessionLineageSHA256 string
+}
+
+type schema2BindingsSnapshot struct {
+	Schema   uint64
+	RunID    string
+	BoardID  string
+	BoardRev uint64
+	Bindings map[string]schema2Binding
+}
+
+type schema2AuthorityProjection struct {
+	WorkspaceAuthorityID        string
+	WorkspaceRootIdentitySHA256 string
+	NextAdmissionSeq            uint64
+	AdmissionPolicyRef          AdmissionPolicyRef
 }
 
 func projectSchema1Run(runID string, documents canonicalDocuments) (CanonicalRunProjection, error) {
@@ -2765,20 +2781,6 @@ func projectSchema2Run(runID string, documents canonicalDocuments) (CanonicalRun
 	if events[0].typeName != "run_started" {
 		return CanonicalRunProjection{}, projectionError(ErrRunProjectionInvalid, "schema-2 ledger does not start with run_started")
 	}
-	board, err := parseBoard(oneDocument(documents, CanonicalInputRoleSchema2GraphSnapshot).Bytes)
-	if err != nil {
-		return CanonicalRunProjection{}, projectionError(ErrRunProjectionInvalid, "invalid graph snapshot")
-	}
-	bindings, err := parseSchema2Bindings(oneDocument(documents, CanonicalInputRoleSchema2PrivateBindings).Bytes)
-	if err != nil {
-		return CanonicalRunProjection{}, err
-	}
-	policy, commands, err := validateSchema2Documents(runID, documents, events)
-	if err != nil {
-		return CanonicalRunProjection{}, err
-	}
-	state := newProjectionState(runID, CanonicalRunSourceSchema2, board)
-	state.bindings = bindings
 	startSafe, err := sanitizeSchema2Event(events[0])
 	if err != nil {
 		return CanonicalRunProjection{}, err
@@ -2787,6 +2789,28 @@ func projectSchema2Run(runID string, documents canonicalDocuments) (CanonicalRun
 	if !ok {
 		return CanonicalRunProjection{}, projectionError(ErrRunProjectionInvalid, "invalid schema-2 start arm")
 	}
+	graphDocument := oneDocument(documents, CanonicalInputRoleSchema2GraphSnapshot)
+	board, err := parseBoard(graphDocument.Bytes)
+	if err != nil {
+		return CanonicalRunProjection{}, projectionError(ErrRunProjectionInvalid, "invalid graph snapshot")
+	}
+	if err := validateSchema2GraphSnapshot(graphDocument.Bytes, board, started); err != nil {
+		return CanonicalRunProjection{}, err
+	}
+	bindingsDocument := oneDocument(documents, CanonicalInputRoleSchema2PrivateBindings)
+	bindings, err := parseSchema2Bindings(bindingsDocument.Bytes)
+	if err != nil {
+		return CanonicalRunProjection{}, err
+	}
+	if err := validateSchema2BindingsSnapshot(bindings, runID, board, started); err != nil {
+		return CanonicalRunProjection{}, err
+	}
+	authority, commands, err := validateSchema2Documents(runID, documents, events, started)
+	if err != nil {
+		return CanonicalRunProjection{}, err
+	}
+	state := newProjectionState(runID, CanonicalRunSourceSchema2, board)
+	state.bindings = bindings.Bindings
 	bootstrap, err := decodeUniqueJSONObject(oneDocument(documents, CanonicalInputRoleSchema2RunBootstrap).Bytes)
 	if err != nil {
 		return CanonicalRunProjection{}, projectionError(ErrRunProjectionInvalid, "invalid run bootstrap")
@@ -2795,17 +2819,17 @@ func projectSchema2Run(runID string, documents canonicalDocuments) (CanonicalRun
 	authorityID, _ := requiredJSONString(bootstrap, "runAuthorityId")
 	graphHash, _ := requiredJSONString(bootstrap, "graphSnapshotSha256")
 	bindingsHash, _ := requiredJSONString(bootstrap, "privateBindingsSha256")
-	if bootstrapRunID != runID || authorityID != started.Data.RunAuthorityID || graphHash != oneDocument(documents, CanonicalInputRoleSchema2GraphSnapshot).SHA256 || bindingsHash != oneDocument(documents, CanonicalInputRoleSchema2PrivateBindings).SHA256 || started.Data.GraphSnapshotSHA256 != graphHash || started.Data.PrivateBindingsSHA256 != bindingsHash {
+	if bootstrapRunID != runID || authorityID != started.Data.RunAuthorityID || graphHash != graphDocument.SHA256 || bindingsHash != bindingsDocument.SHA256 || started.Data.GraphSnapshotSHA256 != graphHash || started.Data.PrivateBindingsSHA256 != bindingsHash {
 		return CanonicalRunProjection{}, projectionError(ErrRunProjectionInvalid, "schema-2 immutable identity mismatch")
 	}
-	if started.Data.AdmissionPolicyRev != policy.PolicyRev || started.Data.AdmissionPolicySHA256 != policy.PolicySHA256 {
+	if started.Data.WorkspaceAuthorityID != authority.WorkspaceAuthorityID || started.Data.AdmissionPolicyRev != authority.AdmissionPolicyRef.PolicyRev || started.Data.AdmissionPolicySHA256 != authority.AdmissionPolicyRef.PolicySHA256 {
 		return CanonicalRunProjection{}, projectionError(ErrRunProjectionInvalid, "schema-2 policy mismatch")
 	}
 	state.view.Generation = projectionGeneration(runID, authorityID, graphHash, bindingsHash, started.Data.AdmissionCommandID)
 	state.view.Status = "queued"
 	state.view.Identity = RunIdentity{BoardID: started.BoardID, BoardSlug: started.Data.BoardSlug, BoardRev: started.BoardRev, RunRoot: started.Data.RunRoot, MissionID: started.MissionID, BeadID: started.BeadID, Epoch: started.Epoch, Redact: started.Data.Limits.Redact}
 	authoritySchema := uint64(2)
-	state.view.Audit = RunAudit{EventSchema: 2, AuthoritySchema: &authoritySchema, StartSeq: 1, AdmissionCommandID: started.Data.AdmissionCommandID, CommandPayloadSHA256: started.Data.CommandPayloadSHA256, WorkspaceAdmissionSeq: started.Data.WorkspaceAdmissionSeq, AdmissionPolicyRev: policy.PolicyRev, AdmissionPolicySHA256: policy.PolicySHA256, GraphSnapshotSHA256: graphHash, BindingProjectionSHA256: started.Data.BindingProjectionSHA256}
+	state.view.Audit = RunAudit{EventSchema: 2, AuthoritySchema: &authoritySchema, StartSeq: 1, AdmissionCommandID: started.Data.AdmissionCommandID, CommandPayloadSHA256: started.Data.CommandPayloadSHA256, WorkspaceAdmissionSeq: started.Data.WorkspaceAdmissionSeq, AdmissionPolicyRev: authority.AdmissionPolicyRef.PolicyRev, AdmissionPolicySHA256: authority.AdmissionPolicyRef.PolicySHA256, GraphSnapshotSHA256: graphHash, BindingProjectionSHA256: started.Data.BindingProjectionSHA256}
 	projected := make([]projectedEvent, 0, len(events))
 	for _, event := range events {
 		if state.terminal {
@@ -3001,7 +3025,14 @@ func reduceSchema2Event(state *projectionState, raw rawProjectionEvent, safe Saf
 			return projectionError(ErrRunProjectionInvalid, "resume carry differs from block")
 		}
 		state.view.Status = "running"
+	case SafeSchema2HumanVerdictRecordedEvent:
+		if err := verifyEventCommand(event.Data.CommandID, event.Data.CommandPayloadSHA256, raw.envelope.Seq, commands); err != nil {
+			return err
+		}
 	case SafeSchema2RunCancelRequestedEvent:
+		if err := verifyEventCommand(event.Data.CommandID, event.Data.CommandPayloadSHA256, raw.envelope.Seq, commands); err != nil {
+			return err
+		}
 		state.view.Status = "canceling"
 	case SafeSchema2RunFailureReconciliationStartedEvent:
 		state.view.Status = "failing"
@@ -3203,6 +3234,332 @@ func (state *projectionState) appendSchema1Block(raw rawProjectionEvent, data Sa
 	state.lastBlockJSON, _ = json.Marshal(data.OpenDispatches)
 }
 
+type schema2AuthoredConfigManifest struct {
+	Classification string
+	SourceKind     string
+	NodeID         string
+	Encoding       string
+	MediaType      string
+	SHA256         string
+}
+
+func validateSchema2GraphSnapshot(raw []byte, board *BoardDocument, started SafeSchema2RunStartedEvent) error {
+	if board == nil || board.Schema != 2 || board.ID != started.BoardID || board.Slug != started.Data.BoardSlug || uint64(board.Rev) != started.BoardRev {
+		return projectionError(ErrRunProjectionInvalid, "graph snapshot identity mismatch")
+	}
+	topLevelKeys := stringSet("schema", "id", "slug", "title", "rev", "updatedBy", "updatedAt")
+	sectionKeys := map[string]map[string]bool{
+		"mission":                stringSet("id", "title", "goal", "beadId"),
+		"authoredConfigManifest": stringSet("classification", "sourceKind", "nodeId", "encoding", "mediaType", "sha256"),
+		"formation":              stringSet("id", "type", "title", "verification", "verification.id", "verification.kinds", "verification.criterion", "verification.onFail"),
+		"formation.input":        stringSet("id", "label"),
+		"formation.output":       stringSet("id", "label"),
+		"formation.slot":         stringSet("id", "label", "agentId", "harness", "controller"),
+		"formation.brief":        stringSet("goal", "beadId", "files", "links"),
+		"formation.verification": stringSet("id", "kinds", "criterion", "onFail"),
+		"gate":                   stringSet("id", "title", "kinds", "criterion", "command", "commandArgv", "commandCwd", "commandShell", "judgeChain"),
+		"connection":             stringSet("id", "from", "to"),
+		"tool":                   stringSet("id", "title", "profileId", "profileVersion"),
+		"tool.input":             stringSet("id", "name", "label", "direction", "kind", "acceptedMediaTypes", "required", "role"),
+		"tool.output":            stringSet("id", "name", "label", "direction", "kind", "acceptedMediaTypes", "required", "role"),
+		"tool.params":            nil,
+	}
+	arraySections := stringSet("mission", "authoredConfigManifest", "formation", "formation.input", "formation.output", "formation.slot", "gate", "connection", "tool", "tool.input", "tool.output")
+	seenTop := map[string]bool{}
+	seenSection := map[string]bool{}
+	section := ""
+	var manifests []schema2AuthoredConfigManifest
+	var manifest *schema2AuthoredConfigManifest
+	for _, line := range splitLines(raw) {
+		trimmed := strings.TrimSpace(line.body)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || line.valueContinuation {
+			continue
+		}
+		name, isSection := tomlLineSectionName(line)
+		if isSection {
+			allowed, exists := sectionKeys[name]
+			_ = allowed
+			isArray := strings.HasPrefix(trimmed, "[[")
+			if !exists || isArray != arraySections[name] {
+				return projectionError(ErrRunProjectionInvalid, "unknown graph snapshot section")
+			}
+			section = name
+			seenSection = map[string]bool{}
+			manifest = nil
+			if name == "authoredConfigManifest" {
+				manifests = append(manifests, schema2AuthoredConfigManifest{})
+				manifest = &manifests[len(manifests)-1]
+			}
+			continue
+		}
+		if isTOMLHeader(line) {
+			return projectionError(ErrRunProjectionInvalid, "invalid graph snapshot section")
+		}
+		key, value, ok := tomlKeyValue(line.body)
+		if !ok {
+			return projectionError(ErrRunProjectionInvalid, "malformed graph snapshot line")
+		}
+		if section == "" {
+			if !topLevelKeys[key] || seenTop[key] {
+				return projectionError(ErrRunProjectionInvalid, "invalid graph snapshot top-level member")
+			}
+			seenTop[key] = true
+			continue
+		}
+		allowed := sectionKeys[section]
+		if (allowed != nil && !allowed[key]) || seenSection[key] {
+			return projectionError(ErrRunProjectionInvalid, "invalid graph snapshot member")
+		}
+		seenSection[key] = true
+		if manifest != nil {
+			switch key {
+			case "classification":
+				manifest.Classification = parseString(value)
+			case "sourceKind":
+				manifest.SourceKind = parseString(value)
+			case "nodeId":
+				manifest.NodeID = parseString(value)
+			case "encoding":
+				manifest.Encoding = parseString(value)
+			case "mediaType":
+				manifest.MediaType = parseString(value)
+			case "sha256":
+				manifest.SHA256 = parseString(value)
+			}
+		}
+	}
+	if len(seenTop) < 5 || !graphContainsRunRoot(board, started.Data.RunRoot) {
+		return projectionError(ErrRunProjectionInvalid, "graph snapshot root mismatch")
+	}
+	root := started.Data.RootInputProjection
+	if root.Classification != "authored_config" || !lowercaseProjectionSHA(root.SHA256) || projectionSHA([]byte(root.Text)) != root.SHA256 {
+		return projectionError(ErrRunProjectionInvalid, "invalid root input projection")
+	}
+	for _, candidate := range manifests {
+		if candidate.NodeID == started.Data.RunRoot.NodeID && candidate.Classification == root.Classification && candidate.SourceKind == root.SourceKind && candidate.Encoding == root.Encoding && candidate.MediaType == root.MediaType && candidate.SHA256 == root.SHA256 {
+			return nil
+		}
+	}
+	return projectionError(ErrRunProjectionInvalid, "authored config manifest mismatch")
+}
+
+func graphContainsRunRoot(board *BoardDocument, root RunRoot) bool {
+	switch root.Kind {
+	case "mission":
+		for _, node := range board.Missions {
+			if node.ID == root.NodeID {
+				return true
+			}
+		}
+	case "formation":
+		for _, node := range board.Formations {
+			if node.ID == root.NodeID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func validateSchema2BindingsSnapshot(snapshot schema2BindingsSnapshot, runID string, board *BoardDocument, started SafeSchema2RunStartedEvent) error {
+	if snapshot.Schema != 2 || snapshot.RunID != runID || snapshot.BoardID != started.BoardID || snapshot.BoardID != board.ID || snapshot.BoardRev != started.BoardRev || snapshot.BoardRev != uint64(board.Rev) {
+		return projectionError(ErrRunProjectionInvalid, "schema-2 bindings identity mismatch")
+	}
+	seenTargets := map[string]bool{}
+	for _, binding := range snapshot.Bindings {
+		var slot *FormationSlot
+		for formationIndex := range board.Formations {
+			formation := &board.Formations[formationIndex]
+			if formation.ID != binding.NodeID {
+				continue
+			}
+			for slotIndex := range formation.Slots {
+				if formation.Slots[slotIndex].ID == binding.SlotID {
+					slot = &formation.Slots[slotIndex]
+					break
+				}
+			}
+		}
+		if slot == nil || slot.AgentID != binding.AgentID || slot.Harness != binding.Harness || seenTargets[binding.SessionTargetID] {
+			return projectionError(ErrRunProjectionInvalid, "schema-2 binding graph mismatch")
+		}
+		seenTargets[binding.SessionTargetID] = true
+	}
+	return nil
+}
+
+type projectionWorkspaceBootstrap struct {
+	WorkspaceAuthorityID        string
+	WorkspaceRootIdentitySHA256 string
+}
+
+type projectionRunBootstrap struct {
+	WorkspaceAuthorityID string
+	RunID                string
+}
+
+func closedProjectionJSONObject(raw []byte, required []string, optional ...string) (map[string]json.RawMessage, error) {
+	object, err := decodeUniqueJSONObject(raw)
+	if err != nil {
+		return nil, err
+	}
+	allowed := stringSet(append(append([]string(nil), required...), optional...)...)
+	for key := range object {
+		if !allowed[key] {
+			return nil, errors.New("unknown JSON member")
+		}
+	}
+	for _, key := range required {
+		if _, ok := object[key]; !ok {
+			return nil, errors.New("missing JSON member")
+		}
+	}
+	return object, nil
+}
+
+func validateProjectionPriorGeneration(raw json.RawMessage, recordRev uint64) error {
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		if recordRev != 1 {
+			return errors.New("missing predecessor")
+		}
+		return nil
+	}
+	object, err := closedProjectionJSONObject(raw, []string{"recordRev", "sha256"})
+	if err != nil {
+		return err
+	}
+	priorRev, revErr := requiredJSONSafeUint(object, "recordRev")
+	priorSHA, shaErr := requiredJSONString(object, "sha256")
+	if revErr != nil || shaErr != nil || priorRev == 0 || priorRev+1 != recordRev || !lowercaseProjectionSHA(priorSHA) {
+		return errors.New("invalid predecessor")
+	}
+	return nil
+}
+
+func validateProjectionWorkspaceRegistry(raw []byte) (map[string]string, error) {
+	object, err := closedProjectionJSONObject(raw, []string{"registrySchema", "recordRev", "priorGeneration", "entries"})
+	if err != nil {
+		return nil, projectionError(ErrRunProjectionInvalid, "invalid workspace registry")
+	}
+	schema, schemaErr := requiredJSONSafeUint(object, "registrySchema")
+	recordRev, revErr := requiredJSONSafeUint(object, "recordRev")
+	if schemaErr != nil || revErr != nil || schema != 1 || recordRev == 0 || validateProjectionPriorGeneration(object["priorGeneration"], recordRev) != nil {
+		return nil, projectionError(ErrRunProjectionInvalid, "invalid workspace registry")
+	}
+	var entries []json.RawMessage
+	if err := json.Unmarshal(object["entries"], &entries); err != nil || len(entries) == 0 {
+		return nil, projectionError(ErrRunProjectionInvalid, "invalid workspace registry entries")
+	}
+	result := make(map[string]string, len(entries))
+	seenPaths, seenOpened, seenRoots := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	for _, rawEntry := range entries {
+		entry, entryErr := closedProjectionJSONObject(rawEntry, []string{"workspaceAuthorityId", "configuredPath", "device", "inode", "workspaceRootIdentitySha256"})
+		if entryErr != nil {
+			return nil, projectionError(ErrRunProjectionInvalid, "invalid workspace registry entry")
+		}
+		authorityID, idErr := requiredJSONString(entry, "workspaceAuthorityId")
+		configuredPath, pathErr := requiredJSONString(entry, "configuredPath")
+		device, deviceErr := requiredJSONString(entry, "device")
+		inode, inodeErr := requiredJSONString(entry, "inode")
+		rootHash, rootErr := requiredJSONString(entry, "workspaceRootIdentitySha256")
+		_, canonicalDeviceErr := runtimeCanonicalUint64String(device)
+		_, canonicalInodeErr := runtimeCanonicalUint64String(inode)
+		opened := device + ":" + inode
+		if idErr != nil || pathErr != nil || deviceErr != nil || inodeErr != nil || rootErr != nil || !safeProjectionIdentifier(authorityID) || validateRuntimeConfiguredPath(configuredPath) != nil || canonicalDeviceErr != nil || canonicalInodeErr != nil || !lowercaseProjectionSHA(rootHash) || seenPaths[configuredPath] || seenOpened[opened] || seenRoots[rootHash] || result[authorityID] != "" {
+			return nil, projectionError(ErrRunProjectionInvalid, "invalid workspace registry entry")
+		}
+		seenPaths[configuredPath], seenOpened[opened], seenRoots[rootHash] = true, true, true
+		result[authorityID] = rootHash
+	}
+	return result, nil
+}
+
+func validateProjectionWorkspaceBootstrap(raw []byte) (projectionWorkspaceBootstrap, error) {
+	object, err := closedProjectionJSONObject(raw, []string{"bootstrapSchema", "workspaceAuthorityId", "rootIdentityEncoding", "workspaceRootIdentitySha256"})
+	if err != nil {
+		return projectionWorkspaceBootstrap{}, projectionError(ErrRunProjectionInvalid, "invalid workspace bootstrap")
+	}
+	schema, schemaErr := requiredJSONSafeUint(object, "bootstrapSchema")
+	authorityID, idErr := requiredJSONString(object, "workspaceAuthorityId")
+	encoding, encodingErr := requiredJSONString(object, "rootIdentityEncoding")
+	rootHash, rootErr := requiredJSONString(object, "workspaceRootIdentitySha256")
+	if schemaErr != nil || idErr != nil || encodingErr != nil || rootErr != nil || schema != 1 || !safeProjectionIdentifier(authorityID) || encoding != "workspace-root-identity-v1" || !lowercaseProjectionSHA(rootHash) {
+		return projectionWorkspaceBootstrap{}, projectionError(ErrRunProjectionInvalid, "invalid workspace bootstrap")
+	}
+	return projectionWorkspaceBootstrap{WorkspaceAuthorityID: authorityID, WorkspaceRootIdentitySHA256: rootHash}, nil
+}
+
+func validateProjectionWorkspaceAuthority(raw []byte) (schema2AuthorityProjection, error) {
+	object, err := closedProjectionJSONObject(raw, []string{"recordRev", "priorGeneration", "authoritySchema", "workspaceAuthorityId", "rootIdentityEncoding", "workspaceRootIdentitySha256", "nextWriterFence", "nextAdmissionSeq", "admissionPolicyRef"})
+	if err != nil {
+		return schema2AuthorityProjection{}, projectionError(ErrRunProjectionInvalid, "invalid workspace authority")
+	}
+	recordRev, revErr := requiredJSONSafeUint(object, "recordRev")
+	schema, schemaErr := requiredJSONSafeUint(object, "authoritySchema")
+	authorityID, idErr := requiredJSONString(object, "workspaceAuthorityId")
+	encoding, encodingErr := requiredJSONString(object, "rootIdentityEncoding")
+	rootHash, rootErr := requiredJSONString(object, "workspaceRootIdentitySha256")
+	nextWriterFence, fenceErr := requiredJSONSafeUint(object, "nextWriterFence")
+	nextAdmissionSeq, admissionErr := requiredJSONSafeUint(object, "nextAdmissionSeq")
+	policyObject, policyErr := closedProjectionJSONObject(object["admissionPolicyRef"], []string{"policyRev", "policySha256"})
+	policyRev, policyRevErr := requiredJSONSafeUint(policyObject, "policyRev")
+	policySHA, policySHAErr := requiredJSONString(policyObject, "policySha256")
+	if revErr != nil || schemaErr != nil || idErr != nil || encodingErr != nil || rootErr != nil || fenceErr != nil || admissionErr != nil || policyErr != nil || policyRevErr != nil || policySHAErr != nil || recordRev == 0 || schema != 2 || !safeProjectionIdentifier(authorityID) || encoding != "workspace-root-identity-v1" || !lowercaseProjectionSHA(rootHash) || nextWriterFence == 0 || nextAdmissionSeq == 0 || policyRev == 0 || !lowercaseProjectionSHA(policySHA) || validateProjectionPriorGeneration(object["priorGeneration"], recordRev) != nil {
+		return schema2AuthorityProjection{}, projectionError(ErrRunProjectionInvalid, "invalid workspace authority")
+	}
+	return schema2AuthorityProjection{WorkspaceAuthorityID: authorityID, WorkspaceRootIdentitySHA256: rootHash, NextAdmissionSeq: nextAdmissionSeq, AdmissionPolicyRef: AdmissionPolicyRef{PolicyRev: policyRev, PolicySHA256: policySHA}}, nil
+}
+
+func validateProjectionRunBootstrap(raw []byte) (projectionRunBootstrap, error) {
+	object, err := closedProjectionJSONObject(raw, []string{"runBootstrapSchema", "workspaceAuthorityId", "runId", "runAuthorityId", "graphSnapshotEncoding", "graphSnapshotSha256", "privateBindingsEncoding", "privateBindingsSha256"})
+	if err != nil {
+		return projectionRunBootstrap{}, err
+	}
+	schema, schemaErr := requiredJSONSafeUint(object, "runBootstrapSchema")
+	workspaceID, workspaceErr := requiredJSONString(object, "workspaceAuthorityId")
+	runID, runErr := requiredJSONString(object, "runId")
+	authorityID, authorityErr := requiredJSONString(object, "runAuthorityId")
+	graphEncoding, graphEncodingErr := requiredJSONString(object, "graphSnapshotEncoding")
+	graphHash, graphHashErr := requiredJSONString(object, "graphSnapshotSha256")
+	bindingsEncoding, bindingsEncodingErr := requiredJSONString(object, "privateBindingsEncoding")
+	bindingsHash, bindingsHashErr := requiredJSONString(object, "privateBindingsSha256")
+	if schemaErr != nil || workspaceErr != nil || runErr != nil || authorityErr != nil || graphEncodingErr != nil || graphHashErr != nil || bindingsEncodingErr != nil || bindingsHashErr != nil || schema != 1 || !safeProjectionIdentifier(workspaceID) || !validRunID(runID) || !safeProjectionIdentifier(authorityID) || graphEncoding != "run-graph-snapshot-toml-v1" || bindingsEncoding != "run-private-bindings-toml-v1" || !lowercaseProjectionSHA(graphHash) || !lowercaseProjectionSHA(bindingsHash) {
+		return projectionRunBootstrap{}, errors.New("invalid run bootstrap")
+	}
+	return projectionRunBootstrap{WorkspaceAuthorityID: workspaceID, RunID: runID}, nil
+}
+
+func validateProjectionAdmissionPolicy(raw []byte) (uint64, string, error) {
+	object, err := closedProjectionJSONObject(raw, []string{"policySchema", "policyRev", "priorPolicySha256", "state"}, "maxActiveRuns", "maxQueuedRuns")
+	if err != nil {
+		return 0, "", err
+	}
+	schema, schemaErr := requiredJSONSafeUint(object, "policySchema")
+	revision, revisionErr := requiredJSONSafeUint(object, "policyRev")
+	prior, priorErr := requiredJSONString(object, "priorPolicySha256")
+	state, stateErr := requiredJSONString(object, "state")
+	if schemaErr != nil || revisionErr != nil || priorErr != nil || stateErr != nil || schema != 1 || revision == 0 || (revision == 1 && prior != "") || (revision > 1 && !lowercaseProjectionSHA(prior)) {
+		return 0, "", errors.New("invalid admission policy")
+	}
+	_, hasActive := object["maxActiveRuns"]
+	_, hasQueued := object["maxQueuedRuns"]
+	switch state {
+	case "disabled":
+		if hasActive || hasQueued {
+			return 0, "", errors.New("disabled policy has limits")
+		}
+	case "configured":
+		active, activeErr := requiredJSONSafeUint(object, "maxActiveRuns")
+		queued, queuedErr := requiredJSONSafeUint(object, "maxQueuedRuns")
+		if activeErr != nil || queuedErr != nil || active == 0 || queued == 0 || active > runtimeAuthorityMaxRunLimit || queued > runtimeAuthorityMaxRunLimit {
+			return 0, "", errors.New("invalid configured policy limits")
+		}
+	default:
+		return 0, "", errors.New("unknown admission policy state")
+	}
+	return revision, prior, nil
+}
+
 func (state *projectionState) finishRun(status, disposition string, sequence uint64) {
 	state.view.Status, state.view.Final, state.terminal = status, true, true
 	for index := range state.view.Attempts {
@@ -3217,44 +3574,73 @@ func (state *projectionState) finishRun(status, disposition string, sequence uin
 	}
 }
 
-func parseSchema2Bindings(raw []byte) (map[string]schema2Binding, error) {
-	result := map[string]schema2Binding{}
+func parseSchema2Bindings(raw []byte) (schema2BindingsSnapshot, error) {
+	result := schema2BindingsSnapshot{Bindings: map[string]schema2Binding{}}
 	var current *schema2Binding
+	currentKeys := map[string]bool{}
+	topKeys := map[string]bool{}
 	flush := func() error {
 		if current == nil {
 			return nil
 		}
 		if !safeProjectionIdentifier(current.BindingID) || !safeProjectionIdentifier(current.NodeID) ||
 			!safeProjectionIdentifier(current.SlotID) || !safeProjectionIdentifier(current.AgentID) ||
-			!safeProjectionIdentifier(current.SessionTargetID) || current.TargetFingerprint == "" ||
-			current.SessionLineageSHA256 == "" {
+			!safeProjectionIdentifier(current.Harness) || !safeProjectionIdentifier(current.SessionTargetID) ||
+			!lowercaseProjectionSHA(current.TargetFingerprint) || !lowercaseProjectionSHA(current.SessionLineageSHA256) || len(currentKeys) != 8 {
 			return projectionError(ErrRunProjectionInvalid, "invalid schema-2 binding")
 		}
-		if _, exists := result[current.BindingID]; exists {
+		if _, exists := result.Bindings[current.BindingID]; exists {
 			return projectionError(ErrRunProjectionInvalid, "duplicate schema-2 binding")
 		}
-		result[current.BindingID] = *current
+		result.Bindings[current.BindingID] = *current
 		return nil
 	}
 	for _, line := range splitLines(raw) {
+		trimmed := strings.TrimSpace(line.body)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || line.valueContinuation {
+			continue
+		}
 		section, isSection := tomlLineSectionName(line)
 		if isSection {
 			if err := flush(); err != nil {
-				return nil, err
+				return schema2BindingsSnapshot{}, err
 			}
 			current = nil
-			if section == "binding" && strings.HasPrefix(strings.TrimSpace(line.body), "[[") {
-				current = &schema2Binding{}
+			if section != "binding" || !strings.HasPrefix(trimmed, "[[") {
+				return schema2BindingsSnapshot{}, projectionError(ErrRunProjectionInvalid, "unknown schema-2 bindings section")
 			}
+			current = &schema2Binding{}
+			currentKeys = map[string]bool{}
 			continue
 		}
-		if current == nil || line.valueContinuation {
-			continue
+		if isTOMLHeader(line) {
+			return schema2BindingsSnapshot{}, projectionError(ErrRunProjectionInvalid, "invalid schema-2 bindings section")
 		}
 		key, value, ok := tomlKeyValue(line.body)
 		if !ok {
+			return schema2BindingsSnapshot{}, projectionError(ErrRunProjectionInvalid, "malformed schema-2 bindings line")
+		}
+		if current == nil {
+			if topKeys[key] || !stringSet("schema", "runId", "boardId", "boardRev")[key] {
+				return schema2BindingsSnapshot{}, projectionError(ErrRunProjectionInvalid, "invalid schema-2 bindings metadata")
+			}
+			topKeys[key] = true
+			switch key {
+			case "schema":
+				result.Schema, _ = strconv.ParseUint(value, 10, 64)
+			case "runId":
+				result.RunID = parseString(value)
+			case "boardId":
+				result.BoardID = parseString(value)
+			case "boardRev":
+				result.BoardRev, _ = strconv.ParseUint(value, 10, 64)
+			}
 			continue
 		}
+		if currentKeys[key] || !stringSet("bindingId", "nodeId", "slotId", "agentId", "harness", "sessionTargetId", "targetFingerprint", "sessionLineageSha256")[key] {
+			return schema2BindingsSnapshot{}, projectionError(ErrRunProjectionInvalid, "invalid schema-2 binding member")
+		}
+		currentKeys[key] = true
 		switch key {
 		case "bindingId":
 			current.BindingID = parseString(value)
@@ -3264,6 +3650,8 @@ func parseSchema2Bindings(raw []byte) (map[string]schema2Binding, error) {
 			current.SlotID = parseString(value)
 		case "agentId":
 			current.AgentID = parseString(value)
+		case "harness":
+			current.Harness = parseString(value)
 		case "sessionTargetId":
 			current.SessionTargetID = parseString(value)
 		case "targetFingerprint":
@@ -3273,49 +3661,60 @@ func parseSchema2Bindings(raw []byte) (map[string]schema2Binding, error) {
 		}
 	}
 	if err := flush(); err != nil {
-		return nil, err
+		return schema2BindingsSnapshot{}, err
+	}
+	if len(topKeys) != 4 || result.Schema != 2 || !validRunID(result.RunID) || !safeProjectionIdentifier(result.BoardID) || result.BoardRev == 0 || result.BoardRev > MaxJSONSafeInteger {
+		return schema2BindingsSnapshot{}, projectionError(ErrRunProjectionInvalid, "invalid schema-2 bindings metadata")
 	}
 	return result, nil
 }
 
-func validateSchema2Documents(runID string, documents canonicalDocuments, events []rawProjectionEvent) (AdmissionPolicyRef, map[string]RunCommandReceipt, error) {
-	var authority struct {
-		AuthoritySchema    uint64             `json:"authoritySchema"`
-		AdmissionPolicyRef AdmissionPolicyRef `json:"admissionPolicyRef"`
+func validateSchema2Documents(runID string, documents canonicalDocuments, events []rawProjectionEvent, started SafeSchema2RunStartedEvent) (schema2AuthorityProjection, map[string]RunCommandReceipt, error) {
+	registry, err := validateProjectionWorkspaceRegistry(oneDocument(documents, CanonicalInputRoleSchema2WorkspaceRegistry).Bytes)
+	if err != nil {
+		return schema2AuthorityProjection{}, nil, err
 	}
-	if err := json.Unmarshal(oneDocument(documents, CanonicalInputRoleSchema2WorkspaceAuthority).Bytes, &authority); err != nil ||
-		authority.AuthoritySchema != 2 || authority.AdmissionPolicyRef.PolicyRev == 0 || !lowercaseProjectionSHA(authority.AdmissionPolicyRef.PolicySHA256) {
-		return AdmissionPolicyRef{}, nil, projectionError(ErrRunProjectionInvalid, "invalid workspace authority")
+	bootstrap, err := validateProjectionWorkspaceBootstrap(oneDocument(documents, CanonicalInputRoleSchema2WorkspaceBootstrap).Bytes)
+	if err != nil {
+		return schema2AuthorityProjection{}, nil, err
 	}
+	authority, err := validateProjectionWorkspaceAuthority(oneDocument(documents, CanonicalInputRoleSchema2WorkspaceAuthority).Bytes)
+	if err != nil {
+		return schema2AuthorityProjection{}, nil, err
+	}
+	entry, ok := registry[authority.WorkspaceAuthorityID]
+	if !ok || bootstrap.WorkspaceAuthorityID != authority.WorkspaceAuthorityID || bootstrap.WorkspaceRootIdentitySHA256 != authority.WorkspaceRootIdentitySHA256 || entry != authority.WorkspaceRootIdentitySHA256 || started.Data.WorkspaceAuthorityID != authority.WorkspaceAuthorityID || started.Data.WorkspaceAdmissionSeq == 0 || started.Data.WorkspaceAdmissionSeq >= authority.NextAdmissionSeq {
+		return schema2AuthorityProjection{}, nil, projectionError(ErrRunProjectionInvalid, "workspace authority identity mismatch")
+	}
+	runBootstrap, err := validateProjectionRunBootstrap(oneDocument(documents, CanonicalInputRoleSchema2RunBootstrap).Bytes)
+	if err != nil || runBootstrap.WorkspaceAuthorityID != authority.WorkspaceAuthorityID || runBootstrap.RunID != runID {
+		return schema2AuthorityProjection{}, nil, projectionError(ErrRunProjectionInvalid, "invalid run bootstrap")
+	}
+
 	type policyRecord struct {
-		PolicySchema      uint64 `json:"policySchema"`
-		PolicyRev         uint64 `json:"policyRev"`
-		PriorPolicySHA256 string `json:"priorPolicySha256"`
+		Document CanonicalInputDocument
+		Prior    string
 	}
-	policies := make(map[uint64]CanonicalInputDocument)
+	policies := make(map[uint64]policyRecord)
 	for _, document := range documents.byRole[CanonicalInputRoleSchema2AdmissionPolicy] {
-		var policy policyRecord
-		if err := json.Unmarshal(document.Bytes, &policy); err != nil || policy.PolicySchema != 1 || policy.PolicyRev == 0 || policy.PolicyRev > authority.AdmissionPolicyRef.PolicyRev {
-			return AdmissionPolicyRef{}, nil, projectionError(ErrRunProjectionInvalid, "invalid admission policy")
+		policyRev, prior, policyErr := validateProjectionAdmissionPolicy(document.Bytes)
+		if policyErr != nil || policyRev > authority.AdmissionPolicyRef.PolicyRev {
+			return schema2AuthorityProjection{}, nil, projectionError(ErrRunProjectionInvalid, "invalid admission policy")
 		}
-		if _, exists := policies[policy.PolicyRev]; exists {
-			return AdmissionPolicyRef{}, nil, projectionError(ErrRunProjectionInvalid, "duplicate admission policy")
+		if _, exists := policies[policyRev]; exists {
+			return schema2AuthorityProjection{}, nil, projectionError(ErrRunProjectionInvalid, "duplicate admission policy")
 		}
-		policies[policy.PolicyRev] = document
-		if policy.PolicyRev == 1 {
-			if policy.PriorPolicySHA256 != "" {
-				return AdmissionPolicyRef{}, nil, projectionError(ErrRunProjectionInvalid, "invalid initial admission policy")
-			}
-		} else {
-			prior, ok := policies[policy.PolicyRev-1]
-			if !ok || policy.PriorPolicySHA256 != prior.SHA256 {
-				return AdmissionPolicyRef{}, nil, projectionError(ErrRunProjectionInvalid, "broken admission policy chain")
-			}
+		policies[policyRev] = policyRecord{Document: document, Prior: prior}
+	}
+	for revision := uint64(1); revision <= authority.AdmissionPolicyRef.PolicyRev; revision++ {
+		policy, present := policies[revision]
+		if !present || (revision == 1 && policy.Prior != "") || (revision > 1 && policy.Prior != policies[revision-1].Document.SHA256) {
+			return schema2AuthorityProjection{}, nil, projectionError(ErrRunProjectionInvalid, "broken admission policy chain")
 		}
 	}
 	selected, ok := policies[authority.AdmissionPolicyRef.PolicyRev]
-	if !ok || len(policies) != int(authority.AdmissionPolicyRef.PolicyRev) || selected.SHA256 != authority.AdmissionPolicyRef.PolicySHA256 {
-		return AdmissionPolicyRef{}, nil, projectionError(ErrRunProjectionInvalid, "incomplete admission policy chain")
+	if !ok || len(policies) != int(authority.AdmissionPolicyRef.PolicyRev) || selected.Document.SHA256 != authority.AdmissionPolicyRef.PolicySHA256 {
+		return schema2AuthorityProjection{}, nil, projectionError(ErrRunProjectionInvalid, "incomplete admission policy chain")
 	}
 
 	referenced := map[string]struct {
@@ -3334,7 +3733,7 @@ func validateSchema2Documents(runID string, documents canonicalDocuments, events
 		}
 		if commandID != "" {
 			if previous, exists := referenced[commandID]; exists && (previous.payload != payload || previous.seq != event.envelope.Seq) {
-				return AdmissionPolicyRef{}, nil, projectionError(ErrRunProjectionInvalid, "command referenced inconsistently")
+				return schema2AuthorityProjection{}, nil, projectionError(ErrRunProjectionInvalid, "command referenced inconsistently")
 			}
 			referenced[commandID] = struct {
 				payload string
@@ -3346,16 +3745,16 @@ func validateSchema2Documents(runID string, documents canonicalDocuments, events
 	for _, document := range documents.byRole[CanonicalInputRoleSchema2CommandRecord] {
 		object, err := decodeUniqueJSONObject(document.Bytes)
 		if err != nil {
-			return AdmissionPolicyRef{}, nil, projectionError(ErrRunProjectionInvalid, "invalid command record")
+			return schema2AuthorityProjection{}, nil, projectionError(ErrRunProjectionInvalid, "invalid command record")
 		}
 		commandID, _ := requiredJSONString(object, "commandId")
 		commandKind, _ := requiredJSONString(object, "commandKind")
 		payload, _ := requiredJSONString(object, "commandPayloadSha256")
 		if _, exists := commands[commandID]; exists {
-			return AdmissionPolicyRef{}, nil, projectionError(ErrRunProjectionInvalid, "duplicate command record")
+			return schema2AuthorityProjection{}, nil, projectionError(ErrRunProjectionInvalid, "duplicate command record")
 		}
 		if _, exists := referenced[commandID]; !exists {
-			return AdmissionPolicyRef{}, nil, projectionError(ErrRunProjectionInvalid, "unreferenced command record")
+			return schema2AuthorityProjection{}, nil, projectionError(ErrRunProjectionInvalid, "unreferenced command record")
 		}
 		receipt, receiptErr := ProjectCommandReceipt(CanonicalCommandReadInput{
 			Source:    CanonicalRunSourceSchema2,
@@ -3363,17 +3762,17 @@ func validateSchema2Documents(runID string, documents canonicalDocuments, events
 			Record:    document.Bytes,
 		})
 		if receiptErr != nil {
-			return AdmissionPolicyRef{}, nil, projectionError(ErrRunProjectionInvalid, "invalid command receipt")
+			return schema2AuthorityProjection{}, nil, projectionError(ErrRunProjectionInvalid, "invalid command receipt")
 		}
 		commands[commandID] = receipt
 	}
 	if len(commands) != len(referenced) {
-		return AdmissionPolicyRef{}, nil, projectionError(ErrRunProjectionInvalid, "incomplete command set")
+		return schema2AuthorityProjection{}, nil, projectionError(ErrRunProjectionInvalid, "incomplete command set")
 	}
-	if started, ok := commands[events[0].dataString("admissionCommandId")].(RunCommandAppliedReceipt); !ok || started.RunID != runID || started.DecisionAdmissionPolicyRef == nil || *started.DecisionAdmissionPolicyRef != authority.AdmissionPolicyRef {
-		return AdmissionPolicyRef{}, nil, projectionError(ErrRunProjectionInvalid, "admission command mismatch")
+	if receipt, ok := commands[events[0].dataString("admissionCommandId")].(RunCommandAppliedReceipt); !ok || receipt.RunID != runID || receipt.DecisionAdmissionPolicyRef == nil || *receipt.DecisionAdmissionPolicyRef != authority.AdmissionPolicyRef {
+		return schema2AuthorityProjection{}, nil, projectionError(ErrRunProjectionInvalid, "admission command mismatch")
 	}
-	return authority.AdmissionPolicyRef, commands, nil
+	return authority, commands, nil
 }
 
 func (event rawProjectionEvent) dataString(key string) string {
@@ -3404,7 +3803,7 @@ func verifyEventCommand(commandID, payloadSHA string, sequence uint64, commands 
 func (state *projectionState) addSchema2Dispatch(raw rawProjectionEvent, dispatch SafeSchema2SlotDispatchData) error {
 	binding, ok := state.bindings[dispatch.BindingID]
 	if !ok || binding.NodeID != dispatch.NodeID || binding.SlotID != dispatch.SlotID || binding.AgentID != dispatch.AgentID ||
-		binding.SessionTargetID != dispatch.SessionTargetID || binding.TargetFingerprint != dispatch.TargetFingerprint || !dispatch.RecordedBeforeSend {
+		binding.Harness != dispatch.Harness || binding.SessionTargetID != dispatch.SessionTargetID || binding.TargetFingerprint != dispatch.TargetFingerprint || !dispatch.RecordedBeforeSend {
 		return projectionError(ErrRunProjectionInvalid, "dispatch binding mismatch")
 	}
 	if _, exists := state.dispatches[dispatch.DispatchID]; exists {
