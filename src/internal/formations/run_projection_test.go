@@ -456,6 +456,57 @@ func TestProjectCanonicalRunValidatesInputRolesAndOwnsBytes(t *testing.T) {
 	})
 }
 
+func TestProjectCanonicalRunRequiresCompleteAdmissionPolicyChain(t *testing.T) {
+	valid := schema2InputWithTwoPolicies(t)
+	mustProjectCanonicalFixture(t, valid)
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*CanonicalRunReadInput)
+	}{
+		{name: "missing prior revision", mutate: func(input *CanonicalRunReadInput) {
+			for index, document := range input.Documents {
+				if document.Role == CanonicalInputRoleSchema2AdmissionPolicy {
+					input.Documents = append(input.Documents[:index], input.Documents[index+1:]...)
+					return
+				}
+			}
+		}},
+		{name: "duplicate selected revision", mutate: func(input *CanonicalRunReadInput) {
+			policies := canonicalDocumentsByRole(*input, CanonicalInputRoleSchema2AdmissionPolicy)
+			input.Documents = append(input.Documents, policies[len(policies)-1])
+		}},
+		{name: "unreferenced extra revision", mutate: func(input *CanonicalRunReadInput) {
+			prior := canonicalDocumentsByRole(*input, CanonicalInputRoleSchema2AdmissionPolicy)[1]
+			extra := canonicalJSON(t, map[string]any{
+				"policySchema": 1, "policyRev": 3, "priorPolicySha256": prior.SHA256, "state": "disabled",
+				"maxActiveRuns": 0, "maxQueuedRuns": 0,
+			})
+			input.Documents = append(input.Documents, canonicalInputDocument(CanonicalInputRoleSchema2AdmissionPolicy, extra))
+		}},
+		{name: "broken prior hash", mutate: func(input *CanonicalRunReadInput) {
+			for index := range input.Documents {
+				if input.Documents[index].Role != CanonicalInputRoleSchema2AdmissionPolicy {
+					continue
+				}
+				var policy map[string]any
+				if json.Unmarshal(input.Documents[index].Bytes, &policy) == nil && policy["policyRev"] == float64(2) {
+					policy["priorPolicySha256"] = strings.Repeat("f", 64)
+					input.Documents[index] = canonicalInputDocument(CanonicalInputRoleSchema2AdmissionPolicy, canonicalJSON(t, policy))
+					return
+				}
+			}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := cloneCanonicalInput(valid)
+			test.mutate(&input)
+			_, err := ProjectCanonicalRun(input)
+			requireProjectionError(t, err, ErrRunProjectionInvalid)
+		})
+	}
+}
+
 func TestProjectRunViewIsDeterministicDefensiveAndHistoryFree(t *testing.T) {
 	projection := mustProjectCanonicalFixture(t, schema1ProjectionInput(t,
 		schema1StartedEvent(projectionTestRunID),
@@ -487,6 +538,41 @@ func TestProjectRunViewIsDeterministicDefensiveAndHistoryFree(t *testing.T) {
 	thirdRaw := mustMarshalJSON(t, third)
 	if !bytes.Equal(thirdRaw, secondRaw) {
 		t.Fatalf("ProjectRunView returned aliased state\nbefore mutation: %s\nafter mutation:  %s", secondRaw, thirdRaw)
+	}
+}
+
+func TestProjectRunViewAndEventPageDefensivelyCopyEveryPopulatedFamily(t *testing.T) {
+	events := []map[string]any{
+		schema1StartedEvent(projectionTestRunID),
+		schema1NodeStartedEvent(projectionTestRunID, 2),
+		schema1NodeOutputEvent(projectionTestRunID, 3, "done"),
+		schema1GateEvaluatingEvent(projectionTestRunID, 4),
+		schema1Event(projectionTestRunID, 5, RunEventHumanInputRequested, map[string]any{
+			"gateId": projectionTestGateID, "nodeId": projectionTestFormationID, "choices": []string{"pass", "fail"}, "requestedBy": "agent:test",
+			"inputRef":    map[string]any{"edgeId": "edge_work_gate", "fromNodeId": projectionTestFormationID, "fromPortId": "port_out", "toPortId": "in", "outputSeq": 3},
+			"codeVerdict": "pass", "codeReason": "checks pass", "codePerKind": map[string]any{"code": "pass"}, "timeoutSeconds": 300,
+		}),
+		schema1EscalationEvent(projectionTestRunID, 6, true),
+		schema1BlockedEvent(projectionTestRunID, 7, true, []any{}),
+	}
+	projection := mustProjectCanonicalFixture(t, schema1ProjectionInput(t, events...))
+
+	wantView := mustMarshalJSON(t, ProjectRunView(projection))
+	mutatedView := ProjectRunView(projection)
+	if mutations := poisonEveryMutableLeaf(reflect.ValueOf(&mutatedView).Elem()); mutations < 12 {
+		t.Fatalf("rich RunView fixture exposed only %d mutable leaves; expected nested identity, readiness, attempts, outputs, gates, blocks, escalations, and actions", mutations)
+	}
+	if got := mustMarshalJSON(t, ProjectRunView(projection)); !bytes.Equal(got, wantView) {
+		t.Fatalf("RunView mutation leaked into projection\nwant: %s\ngot:  %s", wantView, got)
+	}
+
+	wantPage := mustMarshalJSON(t, mustProjectEventPage(t, projection, 0, RunPageMaximumLimit))
+	mutatedPage := mustProjectEventPage(t, projection, 0, RunPageMaximumLimit)
+	if mutations := poisonEveryMutableLeaf(reflect.ValueOf(&mutatedPage).Elem()); mutations < 12 {
+		t.Fatalf("rich RunEventPage fixture exposed only %d mutable leaves", mutations)
+	}
+	if got := mustMarshalJSON(t, mustProjectEventPage(t, projection, 0, RunPageMaximumLimit)); !bytes.Equal(got, wantPage) {
+		t.Fatalf("RunEventPage mutation leaked into projection\nwant: %s\ngot:  %s", wantPage, got)
 	}
 }
 
@@ -536,39 +622,32 @@ func TestProjectRunViewGenerationTracksImmutableIncarnation(t *testing.T) {
 	if !lowercaseSHA256Pattern.MatchString(schema2Generation) {
 		t.Fatalf("schema-2 generation = %q, want lowercase SHA-256", schema2Generation)
 	}
-	for _, role := range []CanonicalInputRole{
-		CanonicalInputRoleSchema2RunBootstrap,
-		CanonicalInputRoleSchema2GraphSnapshot,
-		CanonicalInputRoleSchema2PrivateBindings,
-		CanonicalInputRoleSchema2Ledger,
+	for _, test := range []struct {
+		name   string
+		change schema2IdentityChange
+	}{
+		{name: "run authority", change: schema2IdentityChange{runAuthorityID: "auth_01KXNP6VY3227H78329V52CKF9"}},
+		{name: "graph snapshot", change: schema2IdentityChange{changeGraph: true}},
+		{name: "private bindings", change: schema2IdentityChange{changeBindings: true}},
+		{name: "admission command", change: schema2IdentityChange{commandID: projectionTestOtherCmdID}},
 	} {
-		t.Run("schema 2 tuple changes with "+string(role), func(t *testing.T) {
-			input := cloneCanonicalInput(schema2Base)
-			document := canonicalDocumentByRole(t, input, role)
-			switch role {
-			case CanonicalInputRoleSchema2RunBootstrap:
-				document.Bytes = bytes.Replace(document.Bytes, []byte(projectionTestAuthorityID), []byte("auth_01KXNP6VY3227H78329V52CKF9"), 1)
-			case CanonicalInputRoleSchema2GraphSnapshot:
-				document.Bytes = append(document.Bytes, '\n')
-			case CanonicalInputRoleSchema2PrivateBindings:
-				document.Bytes = append(document.Bytes, '\n')
-			case CanonicalInputRoleSchema2Ledger:
-				// The immutable tuple includes the admission command id from the first event,
-				// but excludes an ordinary advancing tail.
-				document.Bytes = bytes.Replace(document.Bytes, []byte(projectionTestCommandID), []byte(projectionTestOtherCmdID), 1)
-			}
-			document.SHA256 = projectionSHA256(document.Bytes)
-			input = replaceCanonicalDocumentObject(input, role, document)
-			projection, err := ProjectCanonicalRun(input)
-			if err != nil {
-				// Cross-document parity may reject a one-document substitution. That is
-				// still the required fail-closed result, never reuse of the old generation.
-				return
-			}
-			if got := ProjectRunView(projection).Generation; got == schema2Generation {
-				t.Fatalf("schema-2 generation did not change after immutable tuple substitution in %s", role)
+		t.Run("schema 2 tuple changes with "+test.name, func(t *testing.T) {
+			projection := mustProjectCanonicalFixture(t, schema2InputWithIdentityChange(t, schema2Base, test.change))
+			if got := ProjectRunView(projection).Generation; got == schema2Generation || !lowercaseSHA256Pattern.MatchString(got) {
+				t.Fatalf("schema-2 generation after coherent %s change = %q, base %q", test.name, got, schema2Generation)
 			}
 		})
+	}
+
+	tail := cloneCanonicalInput(schema2Base)
+	events := canonicalLedgerEvents(t, tail)
+	events = append(events, schema2Event(projectionTestRunID, uint64(len(events)+1), "error", map[string]any{
+		"code": "display_only", "message": "tail", "boundary": "schema", "errorScope": "run",
+		"recoverable": true, "relatedSeq": 1,
+	}))
+	tail = replaceCanonicalDocument(t, tail, CanonicalInputRoleSchema2Ledger, marshalProjectionLedger(t, events...))
+	if got := ProjectRunView(mustProjectCanonicalFixture(t, tail)).Generation; got != schema2Generation {
+		t.Fatalf("schema-2 generation changed across a coherent ordinary ledger tail: got %q want %q", got, schema2Generation)
 	}
 }
 
@@ -774,45 +853,26 @@ func TestProjectCommandReceiptPreservesTerminalUnion(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				var got map[string]any
+				var got, record map[string]any
 				if err := json.Unmarshal(mustMarshalJSON(t, receipt), &got); err != nil {
 					t.Fatal(err)
 				}
-				for _, key := range []string{"commandId", "commandPayloadSha256", "commandKind", "outcomeWriterFence", "state", "decisionAdmissionPolicyRef"} {
-					if _, ok := got[key]; !ok {
-						t.Fatalf("receipt missing %q: %#v", key, got)
-					}
+				if err := json.Unmarshal(input.Record, &record); err != nil {
+					t.Fatal(err)
 				}
-				if got["commandId"] != projectionTestCommandID || got["commandKind"] != commandKind || got["state"] != state {
-					t.Fatalf("receipt identity/state = %#v", got)
-				}
-				if got["outcomeWriterFence"] != "9" {
-					t.Fatalf("outcomeWriterFence = %#v, want canonical unsigned decimal string", got["outcomeWriterFence"])
+				want := map[string]any{
+					"commandId": record["commandId"], "commandPayloadSha256": record["commandPayloadSha256"],
+					"commandKind": record["commandKind"], "outcomeWriterFence": "9", "state": state,
+					"decisionAdmissionPolicyRef": record["decisionAdmissionPolicyRef"],
 				}
 				if state == "applied" {
-					if got["runId"] != projectionTestRunID || got["effectSeq"] != float64(7) {
-						t.Fatalf("applied arm = %#v", got)
-					}
-					if _, exists := got["rejectionCode"]; exists {
-						t.Fatalf("applied arm exposed rejectionCode: %#v", got)
-					}
+					want["runId"] = projectionTestRunID
+					want["effectSeq"] = float64(7)
 				} else {
-					if got["rejectionCode"] != "fixture_rejected" {
-						t.Fatalf("rejected arm = %#v", got)
-					}
-					if _, exists := got["runId"]; exists {
-						t.Fatalf("rejected arm acquired runId: %#v", got)
-					}
-					if _, exists := got["effectSeq"]; exists {
-						t.Fatalf("rejected arm acquired effectSeq: %#v", got)
-					}
+					want["rejectionCode"] = "fixture_rejected"
 				}
-				if commandKind == "start" {
-					if got["decisionAdmissionPolicyRef"] == nil {
-						t.Fatalf("start receipt lost decision policy ref: %#v", got)
-					}
-				} else if got["decisionAdmissionPolicyRef"] != nil {
-					t.Fatalf("non-start receipt invented decision policy ref: %#v", got)
+				if !reflect.DeepEqual(got, want) {
+					t.Fatalf("receipt = %#v, want exact closed %s arm %#v", got, state, want)
 				}
 			})
 		}
@@ -846,6 +906,18 @@ func TestProjectCommandReceiptRejectsPendingMismatchAndSubstitution(t *testing.T
 		{name: "substituted embedded payload", mutate: func(input *CanonicalCommandReadInput) {
 			input.Record = mutateCommandRecord(t, input.Record, func(record map[string]any) { record["commandPayload"] = map[string]any{"kind": "start"} })
 		}},
+		{name: "substituted record kind", mutate: func(input *CanonicalCommandReadInput) {
+			input.Record = mutateCommandRecord(t, input.Record, func(record map[string]any) { record["commandKind"] = "resume" })
+		}},
+		{name: "substituted record payload hash", mutate: func(input *CanonicalCommandReadInput) {
+			input.Record = mutateCommandRecord(t, input.Record, func(record map[string]any) { record["commandPayloadSha256"] = strings.Repeat("e", 64) })
+		}},
+		{name: "terminal missing outcome fence", mutate: func(input *CanonicalCommandReadInput) {
+			input.Record = mutateCommandRecord(t, input.Record, func(record map[string]any) { delete(record, "outcomeWriterFence") })
+		}},
+		{name: "unknown record member", mutate: func(input *CanonicalCommandReadInput) {
+			input.Record = mutateCommandRecord(t, input.Record, func(record map[string]any) { record["projectionUnknown"] = true })
+		}},
 		{name: "applied missing run id", mutate: func(input *CanonicalCommandReadInput) {
 			input.Record = mutateCommandRecord(t, input.Record, func(record map[string]any) { delete(record, "runId") })
 		}},
@@ -855,10 +927,45 @@ func TestProjectCommandReceiptRejectsPendingMismatchAndSubstitution(t *testing.T
 		{name: "applied contains rejection field", mutate: func(input *CanonicalCommandReadInput) {
 			input.Record = mutateCommandRecord(t, input.Record, func(record map[string]any) { record["rejectionCode"] = "forbidden" })
 		}},
-		{name: "start missing decision policy", mutate: func(input *CanonicalCommandReadInput) {
+		{name: "start nil decision policy", mutate: func(input *CanonicalCommandReadInput) {
 			input.Record = mutateCommandRecord(t, input.Record, func(record map[string]any) { record["decisionAdmissionPolicyRef"] = nil })
 		}},
+		{name: "start missing decision policy member", mutate: func(input *CanonicalCommandReadInput) {
+			input.Record = mutateCommandRecord(t, input.Record, func(record map[string]any) { delete(record, "decisionAdmissionPolicyRef") })
+		}},
 	}
+
+	t.Run("duplicate JSON member", func(t *testing.T) {
+		input := cloneCanonicalCommandInput(valid)
+		input.Record = bytes.Replace(input.Record, []byte(`"commandId":"`+projectionTestCommandID+`"`), []byte(`"commandId":"`+projectionTestCommandID+`","commandId":"`+projectionTestCommandID+`"`), 1)
+		if receipt, err := ProjectCommandReceipt(input); err == nil {
+			t.Fatalf("duplicate member returned receipt: %#v", receipt)
+		} else {
+			requireProjectionError(t, err, ErrRunCommandNotTerminal)
+		}
+	})
+
+	t.Run("pending carrying terminal members", func(t *testing.T) {
+		input := cloneCanonicalCommandInput(valid)
+		input.Record = mutateCommandRecord(t, input.Record, func(record map[string]any) { record["state"] = "pending" })
+		if receipt, err := ProjectCommandReceipt(input); err == nil {
+			t.Fatalf("pending record carrying terminal members returned receipt: %#v", receipt)
+		} else {
+			requireProjectionError(t, err, ErrRunCommandNotTerminal)
+		}
+	})
+
+	t.Run("non-start decision policy must be null", func(t *testing.T) {
+		input := canonicalCommandInput(t, projectionTestCommandID, "resume", "applied")
+		input.Record = mutateCommandRecord(t, input.Record, func(record map[string]any) {
+			record["decisionAdmissionPolicyRef"] = map[string]any{"policyRev": 1, "policySha256": strings.Repeat("a", 64)}
+		})
+		if receipt, err := ProjectCommandReceipt(input); err == nil {
+			t.Fatalf("non-start policy ref returned receipt: %#v", receipt)
+		} else {
+			requireProjectionError(t, err, ErrRunCommandNotTerminal)
+		}
+	})
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			input := cloneCanonicalCommandInput(valid)
@@ -933,9 +1040,43 @@ func TestCanonicalRunSourceSelectionIsClosedAndNonAuthorizing(t *testing.T) {
 	}
 }
 
+func TestProjectCanonicalRunRejectsUnknownEventTypeAndCompatibilityArmsDoNotAuthorize(t *testing.T) {
+	unknown := schema1Event(projectionTestRunID, 2, "projection_unknown", map[string]any{})
+	_, err := ProjectCanonicalRun(schema1ProjectionInput(t, schema1StartedEvent(projectionTestRunID), unknown))
+	requireProjectionError(t, err, ErrRunEventUnknown)
+
+	for _, eventType := range []string{RunEventOrchestrationTeam, RunEventPeerPlane, RunEventAdapterSend, RunEventVerificationVerdict} {
+		t.Run(eventType, func(t *testing.T) {
+			var selected schema1SafeRegistryCase
+			for _, candidate := range schema1SafeRegistryCases() {
+				if candidate.eventType == eventType {
+					selected = candidate
+					break
+				}
+			}
+			input, targetSeq := schema1RegistryFixture(t, selected)
+			events := canonicalLedgerEvents(t, input)
+			baselineInput := replaceCanonicalDocument(t, cloneCanonicalInput(input), CanonicalInputRoleSchema1Ledger, marshalProjectionLedger(t, events[:len(events)-1]...))
+			baseline := ProjectRunView(mustProjectCanonicalFixture(t, baselineInput))
+			projection := mustProjectCanonicalFixture(t, input)
+			got := ProjectRunView(projection)
+			got.Cursor = baseline.Cursor
+			got.Audit.ConsumedEventCount = baseline.Audit.ConsumedEventCount
+			if !bytes.Equal(mustMarshalJSON(t, got), mustMarshalJSON(t, baseline)) {
+				t.Fatalf("compatibility-only %s changed structural or authorizing state\nbefore: %s\nafter:  %s", eventType, mustMarshalJSON(t, baseline), mustMarshalJSON(t, got))
+			}
+			page := mustProjectEventPage(t, projection, targetSeq-1, 1)
+			if len(page.Events) != 1 || !bytes.Contains(mustMarshalJSON(t, page.Events[0]), []byte(`"type":"`+eventType+`"`)) {
+				t.Fatalf("compatibility-only %s was not retained as readable audit evidence: %s", eventType, mustMarshalJSON(t, page))
+			}
+		})
+	}
+}
+
 type schema1SafeRegistryCase struct {
 	eventType   string
-	safeData    map[string]any
+	rawData     map[string]any
+	publicData  map[string]any
 	privateKeys []string
 }
 
@@ -976,8 +1117,10 @@ func TestProjectCanonicalRunSchema1SafeEventRegistry(t *testing.T) {
 			if event.Type != test.eventType {
 				t.Fatalf("event type = %q, want %q", event.Type, test.eventType)
 			}
-			if got, want := sortedRawKeys(event.Data), sortedAnyKeys(test.safeData); !reflect.DeepEqual(got, want) {
-				t.Fatalf("safe data keys = %v, want exact allowlist %v; event=%s", got, want, mustMarshalJSON(t, page.Events[0]))
+			gotData := mustMarshalJSON(t, event.Data)
+			wantData := mustMarshalJSON(t, test.publicData)
+			if !jsonBytesEqual(gotData, wantData) {
+				t.Fatalf("safe data = %s, want complete nested projection %s; event=%s", gotData, wantData, mustMarshalJSON(t, page.Events[0]))
 			}
 			allKeys := recursiveJSONKeys(t, mustMarshalJSON(t, page.Events[0]))
 			for _, key := range test.privateKeys {
@@ -1006,12 +1149,10 @@ func TestProjectCanonicalRunSchema1SafeEventRegistry(t *testing.T) {
 					name: "wrong safe key type",
 					mutate: func(events []map[string]any) {
 						data := events[len(events)-1]["data"].(map[string]any)
-						keys := sortedAnyKeys(data)
+						keys := sortedAnyKeys(test.publicData)
 						for _, key := range keys {
-							if !containsString(test.privateKeys, key) {
-								data[key] = map[string]any{"wrong": true}
-								return
-							}
+							data[key] = map[string]any{"wrong": true}
+							return
 						}
 					},
 				},
@@ -1143,7 +1284,9 @@ func TestProjectCanonicalRunSchema1OpenDispatchParity(t *testing.T) {
 		{name: "missing dispatch id", dispatches: []any{map[string]any{"nodeId": projectionTestFormationID, "slotId": "slot_worker"}}},
 		{name: "missing node id", dispatches: []any{map[string]any{"dispatchId": "dispatch-a", "slotId": "slot_worker"}}},
 		{name: "missing slot id", dispatches: []any{map[string]any{"dispatchId": "dispatch-a", "nodeId": projectionTestFormationID}}},
-		{name: "invalid id grammar", dispatches: []any{map[string]any{"dispatchId": "../dispatch", "nodeId": projectionTestFormationID, "slotId": "slot_worker"}}},
+		{name: "invalid dispatch id grammar", dispatches: []any{map[string]any{"dispatchId": "../dispatch", "nodeId": projectionTestFormationID, "slotId": "slot_worker"}}},
+		{name: "invalid node id grammar", dispatches: []any{map[string]any{"dispatchId": "dispatch-a", "nodeId": "../node", "slotId": "slot_worker"}}},
+		{name: "invalid slot id grammar", dispatches: []any{map[string]any{"dispatchId": "dispatch-a", "nodeId": projectionTestFormationID, "slotId": "../slot"}}},
 		{name: "unsafe dispatch sequence", dispatches: []any{map[string]any{"dispatchId": "dispatch-a", "nodeId": projectionTestFormationID, "slotId": "slot_worker", "dispatchSeq": MaxJSONSafeInteger + 1}}},
 		{name: "unknown nested key", dispatches: []any{map[string]any{"dispatchId": "dispatch-a", "nodeId": projectionTestFormationID, "slotId": "slot_worker", "targetLeaseId": "lease-private"}}},
 		{name: "duplicate dispatch id", dispatches: []any{
@@ -1240,6 +1383,23 @@ func TestProjectCanonicalRunSafeRunEventHasExactDiscriminants(t *testing.T) {
 	}
 	for _, test := range tests {
 		byLiteral[test.literal] = append(byLiteral[test.literal], test.source)
+		dataField, ok := test.typeOf.FieldByName("Data")
+		if !ok {
+			t.Fatalf("%s has no exported Data field", test.typeOf)
+		}
+		wantDataName := strings.TrimSuffix(test.typeOf.Name(), "Event") + "Data"
+		if test.source == 1 && test.literal == RunEventStarted {
+			if dataField.Type.Kind() != reflect.Interface || dataField.Type.NumMethod() == 0 {
+				t.Fatalf("%s.Data = %v, want a closed conditional-union interface", test.typeOf, dataField.Type)
+			}
+			mission := reflect.TypeOf(SafeSchema1RunStartedMissionData{})
+			formation := reflect.TypeOf(SafeSchema1RunStartedFormationData{})
+			if !mission.Implements(dataField.Type) || !formation.Implements(dataField.Type) || reflect.TypeOf(map[string]any{}).Implements(dataField.Type) {
+				t.Fatalf("%s.Data union does not admit exactly the two named closed start data structs", test.typeOf)
+			}
+		} else if dataField.Type.Kind() != reflect.Struct || dataField.Type.Name() != wantDataName {
+			t.Fatalf("%s.Data = %v, want exact named struct %s", test.typeOf, dataField.Type, wantDataName)
+		}
 		value := reflect.New(test.typeOf)
 		field := value.Elem().FieldByName("Type")
 		if !field.IsValid() || !field.CanSet() || field.Kind() != reflect.String {
@@ -1547,7 +1707,7 @@ boardRev = 7
 		"maxActiveRuns": 1, "maxQueuedRuns": 1,
 	})
 	policyHash := projectionSHA256(policy)
-	commandRecord := schema2CommandRecord(t, projectionTestCommandID, "start", "applied", projectionTestRunID)
+	commandRecord := schema2AdmissionCommandRecord(t, projectionTestCommandID, policyHash)
 	var command map[string]any
 	if err := json.Unmarshal(commandRecord, &command); err != nil {
 		t.Fatal(err)
@@ -1587,6 +1747,7 @@ boardRev = 7
 		},
 		"limits": map[string]any{"maxDispatch": 20, "maxAttempts": 3, "wallClockSeconds": 1800, "redact": false},
 	})
+	started["actor"] = "human:test"
 	events := []map[string]any{started}
 	if activated {
 		events = append(events, schema2Event(projectionTestRunID, 2, "run_activated", map[string]any{
@@ -1625,6 +1786,97 @@ boardRev = 7
 			canonicalInputDocument(CanonicalInputRoleSchema2CommandRecord, commandRecord),
 		},
 	}
+}
+
+type schema2IdentityChange struct {
+	runAuthorityID string
+	commandID      string
+	changeGraph    bool
+	changeBindings bool
+}
+
+func schema2InputWithTwoPolicies(t *testing.T) CanonicalRunReadInput {
+	t.Helper()
+	input := schema2ProjectionInput(t, true)
+	policy1 := canonicalDocumentByRole(t, input, CanonicalInputRoleSchema2AdmissionPolicy)
+	policy2Bytes := canonicalJSON(t, map[string]any{
+		"policySchema": 1, "policyRev": 2, "priorPolicySha256": policy1.SHA256, "state": "configured",
+		"maxActiveRuns": 2, "maxQueuedRuns": 2,
+	})
+	policy2 := canonicalInputDocument(CanonicalInputRoleSchema2AdmissionPolicy, policy2Bytes)
+	input.Documents = append(input.Documents, policy2)
+
+	var authority map[string]any
+	if err := json.Unmarshal(canonicalDocumentByRole(t, input, CanonicalInputRoleSchema2WorkspaceAuthority).Bytes, &authority); err != nil {
+		t.Fatal(err)
+	}
+	authority["admissionPolicyRef"] = map[string]any{"policyRev": 2, "policySha256": policy2.SHA256}
+	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2WorkspaceAuthority, canonicalJSON(t, authority))
+
+	events := canonicalLedgerEvents(t, input)
+	for _, event := range events {
+		data := event["data"].(map[string]any)
+		if event["type"] == "run_started" || event["type"] == "run_activated" {
+			data["admissionPolicyRev"] = 2
+			data["admissionPolicySha256"] = policy2.SHA256
+		}
+	}
+	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2Ledger, marshalProjectionLedger(t, events...))
+	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2CommandRecord, schema2AdmissionCommandRecord(t, projectionTestCommandID, policy2.SHA256))
+	return input
+}
+
+func schema2InputWithIdentityChange(t *testing.T, base CanonicalRunReadInput, change schema2IdentityChange) CanonicalRunReadInput {
+	t.Helper()
+	input := cloneCanonicalInput(base)
+	var bootstrap map[string]any
+	if err := json.Unmarshal(canonicalDocumentByRole(t, input, CanonicalInputRoleSchema2RunBootstrap).Bytes, &bootstrap); err != nil {
+		t.Fatal(err)
+	}
+	events := canonicalLedgerEvents(t, input)
+	started := events[0]["data"].(map[string]any)
+
+	if change.runAuthorityID != "" {
+		bootstrap["runAuthorityId"] = change.runAuthorityID
+		started["runAuthorityId"] = change.runAuthorityID
+	}
+	if change.changeGraph {
+		graph := append([]byte(nil), canonicalDocumentByRole(t, input, CanonicalInputRoleSchema2GraphSnapshot).Bytes...)
+		graph = append(graph, []byte("\n# coherent generation fixture\n")...)
+		graphHash := projectionSHA256(graph)
+		input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2GraphSnapshot, graph)
+		bootstrap["graphSnapshotSha256"] = graphHash
+		started["graphSnapshotSha256"] = graphHash
+	}
+	if change.changeBindings {
+		bindings := append([]byte(nil), canonicalDocumentByRole(t, input, CanonicalInputRoleSchema2PrivateBindings).Bytes...)
+		bindings = append(bindings, []byte("\n# coherent generation fixture\n")...)
+		bindingsHash := projectionSHA256(bindings)
+		input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2PrivateBindings, bindings)
+		bootstrap["privateBindingsSha256"] = bindingsHash
+		started["privateBindingsSha256"] = bindingsHash
+	}
+	if change.commandID != "" {
+		started["admissionCommandId"] = change.commandID
+		policyHash := canonicalDocumentByRole(t, input, CanonicalInputRoleSchema2AdmissionPolicy).SHA256
+		input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2CommandRecord, schema2AdmissionCommandRecord(t, change.commandID, policyHash))
+	}
+	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2RunBootstrap, canonicalJSON(t, bootstrap))
+	return replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2Ledger, marshalProjectionLedger(t, events...))
+}
+
+func schema2AdmissionCommandRecord(t *testing.T, commandID, policyHash string) []byte {
+	t.Helper()
+	payload := canonicalCommandPayload("start", projectionTestRunID)
+	return canonicalJSON(t, map[string]any{
+		"commandSchema": 1, "recordRev": 1, "priorGeneration": nil,
+		"commandEncoding": "run-command-jcs-v1", "commandId": commandID,
+		"commandKind": "start", "commandPayload": payload,
+		"commandPayloadSha256": projectionSHA256(canonicalJSON(t, payload)),
+		"admittedWriterFence":  1, "stateWriterFence": 1, "state": "applied",
+		"runId": projectionTestRunID, "effectSeq": 1, "outcomeWriterFence": 1,
+		"decisionAdmissionPolicyRef": map[string]any{"policyRev": 1, "policySha256": policyHash},
+	})
 }
 
 func schema2CommandRecord(t *testing.T, commandID, kind, state, runID string) []byte {
@@ -1718,10 +1970,10 @@ func schema1SafeRegistryCases() []schema1SafeRegistryCase {
 		"toPortId": "port_in", "outputSeq": 1,
 		"ref": "/private/input", "text": "private input", "reportRef": "/private/report", "artifactRef": "/private/artifact",
 	}
-	return []schema1SafeRegistryCase{
+	tests := []schema1SafeRegistryCase{
 		{
 			eventType: RunEventStarted,
-			safeData: map[string]any{
+			rawData: map[string]any{
 				"boardSlug": projectionTestBoardSlug, "boardRev": 7, "missionId": projectionTestMissionID,
 				"beadId": "ctx-7i1.1", "limits": map[string]any{"maxDispatch": 20, "maxAttempts": 3, "wallClockSeconds": 1800, "redact": false},
 			},
@@ -1729,19 +1981,19 @@ func schema1SafeRegistryCases() []schema1SafeRegistryCase {
 		},
 		{
 			eventType: RunEventResumed,
-			safeData: map[string]any{
+			rawData: map[string]any{
 				"resumedFromSeq": 2, "resumedBy": "human:test", "resumeMode": "reattach", "reason": "continue", "openDispatches": []any{},
 			},
 		},
-		{eventType: RunEventNodeWaiting, safeData: map[string]any{"neededInputs": 1, "readyInputs": 0, "totalInputs": 1, "waitingFor": []string{"edge_root_work"}}},
+		{eventType: RunEventNodeWaiting, rawData: map[string]any{"neededInputs": 1, "readyInputs": 0, "totalInputs": 1, "waitingFor": []string{"edge_root_work"}}},
 		{
 			eventType:   RunEventNodeStarted,
-			safeData:    map[string]any{"nodeKind": "formation", "inputRefs": []any{inputRef}, "reason": "initial", "brief": map[string]any{"goal": "private"}},
+			rawData:     map[string]any{"nodeKind": "formation", "inputRefs": []any{inputRef}, "reason": "initial", "brief": map[string]any{"goal": "private"}},
 			privateKeys: []string{"brief", "ref", "text", "reportRef", "artifactRef"},
 		},
 		{
 			eventType: RunEventOrchestrationTeam,
-			safeData: map[string]any{
+			rawData: map[string]any{
 				"mode": "orchestrated", "controllerSlot": "slot_worker",
 				"controller": map[string]any{"slotId": "slot_worker", "label": "Worker", "agentId": "worker", "harness": "codex", "sessionStem": "private", "sessionRef": "private"},
 				"workers":    []any{map[string]any{"slotId": "slot_reviewer", "label": "Reviewer", "agentId": "reviewer", "harness": "codex", "sessionStem": "private", "sessionRef": "private"}},
@@ -1751,7 +2003,7 @@ func schema1SafeRegistryCases() []schema1SafeRegistryCase {
 		},
 		{
 			eventType: RunEventPeerPlane,
-			safeData: map[string]any{
+			rawData: map[string]any{
 				"mode": "peer", "peers": []any{map[string]any{"slotId": "slot_worker", "label": "Worker", "agentId": "worker", "harness": "codex", "sessionStem": "private", "sessionRef": "private"}},
 				"path": "/private", "socket": "/private/socket", "cwd": "/private/cwd",
 			},
@@ -1759,7 +2011,7 @@ func schema1SafeRegistryCases() []schema1SafeRegistryCase {
 		},
 		{
 			eventType: RunEventSlotDispatch,
-			safeData: map[string]any{
+			rawData: map[string]any{
 				"dispatchId": "dispatch-a", "nodeId": projectionTestFormationID, "slotId": "slot_worker", "agentId": "worker", "harness": "codex",
 				"phase": "solo", "promptSha256": strings.Repeat("a", 64), "nativeAck": true, "recordedBeforeSend": true,
 				"sessionStem": "private", "sessionRef": "private", "promptRef": "private",
@@ -1768,7 +2020,7 @@ func schema1SafeRegistryCases() []schema1SafeRegistryCase {
 		},
 		{
 			eventType: RunEventAdapterSend,
-			safeData: map[string]any{
+			rawData: map[string]any{
 				"adapter": "tmux", "dispatchId": "dispatch-a", "nodeId": projectionTestFormationID, "slotId": "slot_worker", "phase": "solo",
 				"socketSha256": strings.Repeat("b", 64), "promptSha256": strings.Repeat("a", 64), "sent": true, "sessionRef": "private",
 			},
@@ -1776,7 +2028,7 @@ func schema1SafeRegistryCases() []schema1SafeRegistryCase {
 		},
 		{
 			eventType: RunEventSlotResult,
-			safeData: map[string]any{
+			rawData: map[string]any{
 				"dispatchId": "dispatch-a", "nodeId": projectionTestFormationID, "slotId": "slot_worker", "status": "ok",
 				"sentinel": map[string]any{"runId": projectionTestRunID, "status": "done", "artifact": "/private/artifact"},
 			},
@@ -1784,7 +2036,7 @@ func schema1SafeRegistryCases() []schema1SafeRegistryCase {
 		},
 		{
 			eventType: RunEventNodeOutput,
-			safeData: map[string]any{
+			rawData: map[string]any{
 				"status": "done", "text": "done", "reason": "completed", "reportRef": "/private/report",
 				"outputs": map[string]any{"port_out": map[string]any{"text": "done", "ref": "/private", "reportRef": "/private/report", "artifactRef": "/private/artifact"}},
 			},
@@ -1792,32 +2044,93 @@ func schema1SafeRegistryCases() []schema1SafeRegistryCase {
 		},
 		{
 			eventType:   RunEventGateEvaluating,
-			safeData:    map[string]any{"kinds": []string{"human"}, "criterion": "Approve", "inputRef": inputRef, "judgeChain": []string{}},
+			rawData:     map[string]any{"kinds": []string{"human"}, "criterion": "Approve", "inputRef": inputRef, "judgeChain": []string{}},
 			privateKeys: []string{"ref", "text", "reportRef", "artifactRef"},
 		},
 		{
 			eventType: RunEventGateVerdict,
-			safeData: map[string]any{
+			rawData: map[string]any{
 				"verdict": "pass", "perKind": map[string]any{"human": "pass"}, "routePort": "pass", "routedEdges": []string{}, "reason": "approved", "inputRef": inputRef,
 			},
 			privateKeys: []string{"ref", "text", "reportRef", "artifactRef"},
 		},
-		{eventType: RunEventVerificationVerdict, safeData: map[string]any{"verificationId": "verification-1", "verdict": "pass"}},
-		{eventType: RunEventEscalationRaised, safeData: map[string]any{"trigger": "sentinel", "severity": "needs-attention", "reason": "review", "source": "agent", "nodeId": projectionTestFormationID, "gateId": "", "blocks": false}},
+		{eventType: RunEventVerificationVerdict, rawData: map[string]any{"verificationId": "verification-1", "verdict": "pass"}},
+		{eventType: RunEventEscalationRaised, rawData: map[string]any{"trigger": "sentinel", "severity": "needs-attention", "reason": "review", "source": "agent", "nodeId": projectionTestFormationID, "gateId": "", "blocks": false}},
 		{
 			eventType: RunEventHumanInputRequested,
-			safeData: map[string]any{
+			rawData: map[string]any{
 				"gateId": projectionTestGateID, "nodeId": projectionTestFormationID, "choices": []string{"pass", "fail"}, "requestedBy": "agent:test", "inputRef": inputRef,
 				"codeVerdict": "pass", "codeReason": "checks pass", "codePerKind": map[string]any{"code": "pass"}, "timeoutSeconds": 300, "prompt": "private prompt",
 			},
 			privateKeys: []string{"prompt", "ref", "text", "reportRef", "artifactRef"},
 		},
-		{eventType: RunEventHumanVerdictRecorded, safeData: map[string]any{"gateId": projectionTestGateID, "nodeId": projectionTestFormationID, "verdict": "pass", "reason": "approved", "requestedSeq": 2, "decidedBy": "human:test"}},
-		{eventType: RunEventError, safeData: map[string]any{"code": "fixture", "message": "safe message", "reason": "safe reason", "boundary": "schema", "nodeId": projectionTestFormationID, "gateId": "", "slotId": "", "dispatchId": "", "recoverable": true, "relatedSeq": 1}},
-		{eventType: RunEventBlocked, safeData: map[string]any{"reason": "blocked", "code": "fixture", "boundary": "engine", "blockedNodeId": projectionTestFormationID, "blockedGateId": "", "waitingNodes": []string{}, "recoverable": true, "resumeAllowed": true, "resumePolicy": "explicit", "openDispatches": []any{}, "nextEpoch": 1}},
-		{eventType: RunEventCanceled, safeData: map[string]any{"reason": "stop", "requestedBy": "human:test", "softInterruptedSlots": []string{}, "final": true}},
-		{eventType: RunEventFailed, safeData: map[string]any{"code": "fixture", "reason": "failed", "boundary": "engine", "recoverable": false, "relatedSeq": 1, "final": true}},
-		{eventType: RunEventSucceeded, safeData: map[string]any{"final": true, "mode": "mission", "formationId": "", "missionId": projectionTestMissionID, "reason": "done", "summaryRef": "/private/summary", "outputRefs": []string{"/private/output"}, "artifactRefs": []string{"/private/artifact"}}, privateKeys: []string{"summaryRef", "outputRefs", "artifactRefs"}},
+		{eventType: RunEventHumanVerdictRecorded, rawData: map[string]any{"gateId": projectionTestGateID, "nodeId": projectionTestFormationID, "verdict": "pass", "reason": "approved", "requestedSeq": 2, "decidedBy": "human:test"}},
+		{eventType: RunEventError, rawData: map[string]any{"code": "fixture", "message": "safe message", "reason": "safe reason", "boundary": "schema", "nodeId": projectionTestFormationID, "gateId": "", "slotId": "", "dispatchId": "", "recoverable": true, "relatedSeq": 1}},
+		{eventType: RunEventBlocked, rawData: map[string]any{"reason": "blocked", "code": "fixture", "boundary": "engine", "blockedNodeId": projectionTestFormationID, "blockedGateId": "", "waitingNodes": []string{}, "recoverable": true, "resumeAllowed": true, "resumePolicy": "explicit", "openDispatches": []any{}, "nextEpoch": 1}},
+		{eventType: RunEventCanceled, rawData: map[string]any{"reason": "stop", "requestedBy": "human:test", "softInterruptedSlots": []string{}, "final": true}},
+		{eventType: RunEventFailed, rawData: map[string]any{"code": "fixture", "reason": "failed", "boundary": "engine", "recoverable": false, "relatedSeq": 1, "final": true}},
+		{eventType: RunEventSucceeded, rawData: map[string]any{"final": true, "mode": "mission", "formationId": "", "missionId": projectionTestMissionID, "reason": "done", "summaryRef": "/private/summary", "outputRefs": []string{"/private/output"}, "artifactRefs": []string{"/private/artifact"}}, privateKeys: []string{"summaryRef", "outputRefs", "artifactRefs"}},
+	}
+	for i := range tests {
+		tests[i].publicData = schema1ExpectedPublicData(tests[i])
+	}
+	return tests
+}
+
+func schema1ExpectedPublicData(test schema1SafeRegistryCase) map[string]any {
+	inputRef := map[string]any{
+		"edgeId": "edge_root_work", "fromNodeId": projectionTestMissionID, "fromPortId": "out",
+		"toPortId": "port_in", "outputSeq": 1,
+	}
+	switch test.eventType {
+	case RunEventStarted:
+		return map[string]any{
+			"boardSlug": projectionTestBoardSlug, "boardRev": 7, "missionId": projectionTestMissionID,
+			"beadId": "ctx-7i1.1", "limits": map[string]any{"maxDispatch": 20, "maxAttempts": 3, "wallClockSeconds": 1800, "redact": false},
+		}
+	case RunEventNodeStarted:
+		return map[string]any{"nodeKind": "formation", "inputRefs": []any{inputRef}, "reason": "initial"}
+	case RunEventOrchestrationTeam:
+		return map[string]any{
+			"mode": "orchestrated", "controllerSlot": "slot_worker",
+			"controller": map[string]any{"slotId": "slot_worker", "label": "Worker", "agentId": "worker", "harness": "codex"},
+			"workers":    []any{map[string]any{"slotId": "slot_reviewer", "label": "Reviewer", "agentId": "reviewer", "harness": "codex"}},
+		}
+	case RunEventPeerPlane:
+		return map[string]any{"mode": "peer", "peers": []any{map[string]any{"slotId": "slot_worker", "label": "Worker", "agentId": "worker", "harness": "codex"}}}
+	case RunEventSlotDispatch:
+		return map[string]any{
+			"dispatchId": "dispatch-a", "nodeId": projectionTestFormationID, "slotId": "slot_worker", "agentId": "worker", "harness": "codex",
+			"phase": "solo", "promptSha256": strings.Repeat("a", 64), "nativeAck": true, "recordedBeforeSend": true,
+		}
+	case RunEventAdapterSend:
+		return map[string]any{
+			"adapter": "tmux", "dispatchId": "dispatch-a", "nodeId": projectionTestFormationID, "slotId": "slot_worker", "phase": "solo",
+			"socketSha256": strings.Repeat("b", 64), "promptSha256": strings.Repeat("a", 64), "sent": true,
+		}
+	case RunEventSlotResult:
+		return map[string]any{
+			"dispatchId": "dispatch-a", "nodeId": projectionTestFormationID, "slotId": "slot_worker", "status": "ok",
+			"sentinel": map[string]any{"runId": projectionTestRunID, "status": "done"},
+		}
+	case RunEventNodeOutput:
+		return map[string]any{
+			"status": "done", "text": "done", "reason": "completed",
+			"outputs": map[string]any{"port_out": map[string]any{"text": "done"}},
+		}
+	case RunEventGateEvaluating:
+		return map[string]any{"kinds": []string{"human"}, "criterion": "Approve", "inputRef": inputRef, "judgeChain": []string{}}
+	case RunEventGateVerdict:
+		return map[string]any{"verdict": "pass", "perKind": map[string]any{"human": "pass"}, "routePort": "pass", "routedEdges": []string{}, "reason": "approved", "inputRef": inputRef}
+	case RunEventHumanInputRequested:
+		return map[string]any{
+			"gateId": projectionTestGateID, "nodeId": projectionTestFormationID, "choices": []string{"pass", "fail"}, "requestedBy": "agent:test", "inputRef": inputRef,
+			"codeVerdict": "pass", "codeReason": "checks pass", "codePerKind": map[string]any{"code": "pass"}, "timeoutSeconds": 300,
+		}
+	case RunEventSucceeded:
+		return map[string]any{"final": true, "mode": "mission", "formationId": "", "missionId": projectionTestMissionID, "reason": "done"}
+	default:
+		return cloneAny(test.rawData).(map[string]any)
 	}
 }
 
@@ -1826,7 +2139,7 @@ func schema1RegistryFixture(t *testing.T, test schema1SafeRegistryCase) (Canonic
 	if test.eventType == RunEventStarted {
 		started := schema1StartedEvent(projectionTestRunID)
 		data := started["data"].(map[string]any)
-		for key, value := range test.safeData {
+		for key, value := range test.rawData {
 			data[key] = cloneAny(value)
 		}
 		return schema1ProjectionInput(t, started), 1
@@ -1867,7 +2180,7 @@ func schema1RegistryFixture(t *testing.T, test schema1SafeRegistryCase) (Canonic
 			"codeVerdict": "pass", "codeReason": "checks pass", "codePerKind": map[string]any{"code": "pass"}, "timeoutSeconds": 300,
 		}))
 	}
-	target := schema1Event(projectionTestRunID, uint64(len(events)+1), test.eventType, test.safeData)
+	target := schema1Event(projectionTestRunID, uint64(len(events)+1), test.eventType, test.rawData)
 	appendEvent(target)
 	return schema1ProjectionInput(t, events...), uint64(len(events))
 }
@@ -2091,6 +2404,16 @@ func canonicalDocumentByRole(t *testing.T, input CanonicalRunReadInput, role Can
 	return CanonicalInputDocument{}
 }
 
+func canonicalDocumentsByRole(input CanonicalRunReadInput, role CanonicalInputRole) []CanonicalInputDocument {
+	documents := make([]CanonicalInputDocument, 0)
+	for _, document := range input.Documents {
+		if document.Role == role {
+			documents = append(documents, document)
+		}
+	}
+	return documents
+}
+
 func removeCanonicalRole(documents []CanonicalInputDocument, role CanonicalInputRole) []CanonicalInputDocument {
 	filtered := make([]CanonicalInputDocument, 0, len(documents))
 	for _, document := range documents {
@@ -2182,6 +2505,111 @@ func cloneAny(value any) any {
 	default:
 		return value
 	}
+}
+
+func removeKeysRecursively(value any, keys []string) {
+	private := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		private[key] = struct{}{}
+	}
+	var walk func(any)
+	walk = func(current any) {
+		switch current := current.(type) {
+		case map[string]any:
+			for key, nested := range current {
+				if _, omit := private[key]; omit {
+					delete(current, key)
+					continue
+				}
+				walk(nested)
+			}
+		case []any:
+			for _, nested := range current {
+				walk(nested)
+			}
+		}
+	}
+	walk(value)
+}
+
+func jsonBytesEqual(left, right []byte) bool {
+	var leftValue, rightValue any
+	if json.Unmarshal(left, &leftValue) != nil || json.Unmarshal(right, &rightValue) != nil {
+		return false
+	}
+	return reflect.DeepEqual(leftValue, rightValue)
+}
+
+func poisonEveryMutableLeaf(value reflect.Value) int {
+	if !value.IsValid() {
+		return 0
+	}
+	if value.Kind() == reflect.Interface {
+		if value.IsNil() {
+			return 0
+		}
+		copyValue := reflect.New(value.Elem().Type()).Elem()
+		copyValue.Set(value.Elem())
+		mutations := poisonEveryMutableLeaf(copyValue)
+		if mutations > 0 && value.CanSet() {
+			value.Set(copyValue)
+		}
+		return mutations
+	}
+	if value.Kind() == reflect.Pointer {
+		if value.IsNil() {
+			return 0
+		}
+		return poisonEveryMutableLeaf(value.Elem())
+	}
+	switch value.Kind() {
+	case reflect.Struct:
+		mutations := 0
+		for index := 0; index < value.NumField(); index++ {
+			if value.Field(index).CanSet() {
+				mutations += poisonEveryMutableLeaf(value.Field(index))
+			}
+		}
+		return mutations
+	case reflect.Slice:
+		mutations := 0
+		for index := 0; index < value.Len(); index++ {
+			mutations += poisonEveryMutableLeaf(value.Index(index))
+		}
+		if value.CanSet() && value.Len() > 0 {
+			value.Set(reflect.Append(value, reflect.Zero(value.Type().Elem())))
+			mutations++
+		}
+		return mutations
+	case reflect.Map:
+		if value.IsNil() || value.Len() == 0 {
+			return 0
+		}
+		keys := value.MapKeys()
+		value.SetMapIndex(keys[0], reflect.Value{})
+		return 1
+	case reflect.String:
+		if value.CanSet() {
+			value.SetString("projection-test-mutated")
+			return 1
+		}
+	case reflect.Bool:
+		if value.CanSet() {
+			value.SetBool(!value.Bool())
+			return 1
+		}
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		if value.CanSet() {
+			value.SetUint(value.Uint() + 1)
+			return 1
+		}
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		if value.CanSet() {
+			value.SetInt(value.Int() + 1)
+			return 1
+		}
+	}
+	return 0
 }
 
 func mutateCommandRecord(t *testing.T, raw []byte, mutate func(map[string]any)) []byte {
