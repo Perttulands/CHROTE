@@ -57,7 +57,7 @@ chown -R chrote:chrote /home/chrote/.local
 log "Phase 4: Installing dependencies..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq curl git tmux python3 python3-pip locales build-essential jq wget unzip rsync >/dev/null
+apt-get install -y -qq curl git tmux acl python3 python3-pip locales build-essential jq wget unzip rsync >/dev/null
 locale-gen en_US.UTF-8 >/dev/null
 
 # Install Go 1.23 (required by go.mod)

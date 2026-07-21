@@ -14,6 +14,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -36,17 +37,18 @@ const (
 
 // Config holds server configuration
 type Config struct {
-	Host               string
-	Port               int
-	TtydPort           int
-	CORSOrigins        []string
-	StartTtyd          bool
-	FormationsDataRoot string
+	Host                    string
+	Port                    int
+	TtydPort                int
+	CORSOrigins             []string
+	StartTtyd               bool
+	FormationsDataRoot      string
+	StartSessionDropJanitor bool
 }
 
 func main() {
 	// Parse flags
-	config := Config{}
+	config := Config{StartSessionDropJanitor: true}
 	flag.StringVar(&config.Host, "host", defaultBindHost, "Bind address")
 	flag.IntVar(&config.Port, "port", defaultServerPort, "Server port")
 	flag.IntVar(&config.TtydPort, "ttyd-port", defaultTtydPort, "ttyd port")
@@ -76,7 +78,7 @@ func main() {
 	mux := http.NewServeMux()
 	runtimeCtx, stopRuntime := context.WithCancel(context.Background())
 
-	terminalProxy, scheduledTasks, stopSystemHistory := registerRuntimeRoutes(mux, config, runtimeCtx)
+	terminalProxy, scheduledTasks, stopRuntimeMaintenance := registerRuntimeRoutes(mux, config, runtimeCtx)
 	registerAPIFallback(mux)
 
 	// Serve embedded dashboard at root
@@ -130,7 +132,7 @@ func main() {
 
 	// Stop subsystems
 	stopRuntime()
-	stopSystemHistory()
+	stopRuntimeMaintenance()
 	scheduledTasks.StopScheduler()
 	if config.StartTtyd {
 		terminalProxy.Stop()
@@ -149,6 +151,18 @@ func main() {
 
 func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Context) (*proxy.TerminalProxy, *api.ScheduledHandler, context.CancelFunc) {
 	tmuxHandler := api.NewTmuxHandler()
+	closedJanitorDone := make(chan struct{})
+	close(closedJanitorDone)
+	var janitorDone <-chan struct{} = closedJanitorDone
+	if config.StartSessionDropJanitor {
+		var err error
+		janitorDone, err = tmuxHandler.StartSessionDropJanitor(ctx, func(err error) {
+			log.Printf("Warning: session drop maintenance failed: %v", err)
+		})
+		if err != nil {
+			log.Printf("Warning: initial session drop maintenance failed: %v", err)
+		}
+	}
 	tmuxHandler.RegisterRoutes(mux)
 	tmuxHandler.StartPersistentAgentSupervisor(ctx)
 
@@ -188,7 +202,21 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Contex
 	// Create terminal proxy
 	terminalProxy := proxy.NewTerminalProxy(config.TtydPort)
 	terminalProxy.RegisterRoutes(mux)
-	return terminalProxy, scheduledHandler, stopSystemHistory
+	var stopOnce sync.Once
+	stopRuntimeMaintenance := func() {
+		stopOnce.Do(func() {
+			stopSystemHistory()
+			if !config.StartSessionDropJanitor {
+				return
+			}
+			select {
+			case <-janitorDone:
+			case <-time.After(10 * time.Second):
+				log.Printf("Warning: session drop janitor did not stop before shutdown deadline")
+			}
+		})
+	}
+	return terminalProxy, scheduledHandler, stopRuntimeMaintenance
 }
 
 func warnRemovedAccessTokenSetting() {

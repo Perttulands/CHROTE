@@ -149,9 +149,34 @@
 }
 
 .send-session-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+.send-session-pane-status {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.send-session-pane-error {
+  color: var(--danger, #ff5c5c);
+}
+
+.send-session-pane-select {
+  width: 100%;
+  border: 1px solid var(--divider);
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+  padding: 9px 10px;
+  font: inherit;
+  text-transform: none;
+  letter-spacing: normal;
+  outline: none;
 }
 
 .send-session-textarea {
@@ -169,6 +194,7 @@
 }
 
 .send-session-textarea:focus,
+.send-session-pane-select:focus,
 .send-session-dropzone:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.35);

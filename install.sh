@@ -52,6 +52,16 @@ check_prereqs() {
         fi
     fi
 
+    # Send to Session uses POSIX ACLs so only the target Unix user can read drops.
+    if ! command -v setfacl &>/dev/null; then
+        warn "setfacl not found. Installing ACL tools..."
+        if command -v apt-get &>/dev/null; then
+            sudo apt-get update && sudo apt-get install -y acl
+        else
+            error "setfacl is required. Install your platform's POSIX ACL tools and retry."
+        fi
+    fi
+
     success "Prerequisites OK"
 }
 

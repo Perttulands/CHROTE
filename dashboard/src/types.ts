@@ -315,10 +315,64 @@ export interface ManagedRecoveryStatusEntry {
   sourceKind: string
 }
 
-export interface SendToSessionPayload {
+export type SendToSessionPayload = {
   text: string
   files: File[]
   submit: boolean
+} & ({
+  pane: string
+  sessionId: string
+  panePid: string
+  serverPid: string
+} | {
+  pane?: undefined
+  sessionId?: undefined
+  panePid?: undefined
+  serverPid?: undefined
+})
+
+export interface SendSessionPane {
+  sessionId: string
+  pane: string
+  panePid: string
+  serverPid: string
+  windowId?: string
+  windowName?: string
+  currentPath?: string
+  currentCommand?: string
+  active: boolean
+}
+
+export type SendToSessionResult = {
+  success: true
+  transport: 'pasted'
+  session: string
+  sessionId: string
+  pane: string
+  panePid: string
+  serverPid: string
+  unixUser: string
+  submissionRequested: boolean
+  submitted: boolean
+  bufferCleaned: boolean
+  targetVerified: boolean
+  warning: string
+} | {
+  success: false
+  transport: 'unknown'
+  retryable: false
+  deliveryConfirmed: false
+  session: string
+  sessionId: string
+  pane: string
+  panePid: string
+  serverPid: string
+  unixUser: string
+  submissionRequested: boolean
+  submitted: false
+  bufferCleaned: boolean
+  targetVerified: false
+  warning: string
 }
 
 export interface SessionBankEntry extends TmuxSession {
@@ -440,6 +494,7 @@ export interface DashboardActions {
   closeFloatingModal: () => void
   openSendToSession: (sessionName: string, prefill?: string) => void
   closeSendToSession: () => void
+  listSessionPanes: (sessionName: string, unixUser?: LaunchUser) => Promise<SendSessionPane[] | null>
   sendToSession: (sessionName: string, payload: SendToSessionPayload, unixUser?: LaunchUser) => Promise<boolean>
 
   // Session row clicks always preview; assignment navigation is an explicit secondary action.

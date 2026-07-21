@@ -2155,13 +2155,9 @@ esac
 }
 
 func TestTmuxHandler_SendToSessionStoresDropAndPastesViaBuffer(t *testing.T) {
-	tmpDir := t.TempDir()
-	dropsDir := filepath.Join(tmpDir, "drops")
-	argsPath := installArgvRecordingTmux(t)
-	t.Setenv("CHROTE_SESSION_DROPS_DIR", dropsDir)
-	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
-	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
+	h := newSendHarness(t, "$7\talice-shell\t%42\t111\t9001\n")
+	dropsDir := h.dropsDir
+	argsPath := h.tmuxLog
 
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -2200,7 +2196,7 @@ func TestTmuxHandler_SendToSessionStoresDropAndPastesViaBuffer(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if response["success"] != true || response["session"] != "alice-shell" || response["unixUser"] != "alice" {
+	if response["success"] != true || response["session"] != "alice-shell" || response["unixUser"] != "alice" || response["pane"] != "%42" || response["submitted"] != true {
 		t.Fatalf("send response = %#v", response)
 	}
 	dropPath, _ := response["dropPath"].(string)
@@ -2228,8 +2224,8 @@ func TestTmuxHandler_SendToSessionStoresDropAndPastesViaBuffer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat stored file: %v", err)
 	}
-	if info.Mode().Perm() != 0o644 {
-		t.Fatalf("stored file mode = %o, want 644", info.Mode().Perm())
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("stored file owner-only base mode = %o, want 600 with fake ACL", info.Mode().Perm())
 	}
 
 	calls := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath))
@@ -2239,8 +2235,10 @@ func TestTmuxHandler_SendToSessionStoresDropAndPastesViaBuffer(t *testing.T) {
 	}
 	wantSnippets := []string{
 		strings.Join([]string{"-S", "/tmp/tmux-a", "load-buffer"}, "\x00"),
-		strings.Join([]string{"-S", "/tmp/tmux-a", "paste-buffer", "-d"}, "\x00"),
-		strings.Join([]string{"-S", "/tmp/tmux-a", "send-keys", "-t", "alice-shell", "Enter"}, "\x00"),
+		strings.Join([]string{"-S", "/tmp/tmux-a", "if-shell", "-F", "-t", "%42"}, "\x00"),
+		"paste-buffer -d -b chrote-send-",
+		"send-keys -t %42 Enter",
+		atomicSendSubmittedMarker,
 	}
 	for _, snippet := range wantSnippets {
 		found := false

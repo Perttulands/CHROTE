@@ -18,7 +18,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o chrote-server ./cmd/server
 FROM alpine:latest
 
 # Install runtime dependencies
-RUN apk add --no-cache tmux ttyd bash curl
+RUN apk add --no-cache tmux ttyd bash curl acl
 
 # Create working directories
 RUN mkdir -p /code /workspace
