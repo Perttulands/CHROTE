@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/chrote/server/internal/core"
@@ -37,7 +38,8 @@ type TmuxHandler struct {
 	managed    *managedRecoveryStatusStore
 	// recoveryMu serializes recovery-owner checks with the store or tmux
 	// mutation that makes the winning claim observable.
-	recoveryMu sync.Mutex
+	recoveryMu     sync.Mutex
+	sessionDropSem chan struct{}
 }
 
 type recoveryOwnershipConflict struct {
@@ -146,6 +148,12 @@ type AppearanceRequest struct {
 	ModeStyleFg        string `json:"modeStyleFg"`
 }
 
+func newSessionDropSemaphore() chan struct{} {
+	sem := make(chan struct{}, 1)
+	sem <- struct{}{}
+	return sem
+}
+
 // NewTmuxHandler creates the default tmux handler. By default it uses
 // TMUX_TMPDIR; CHROTE_DEFAULT_TMUX_SOCKET pins the same /api/tmux route to an
 // explicit socket without changing the dashboard UI.
@@ -154,12 +162,13 @@ func NewTmuxHandler() *TmuxHandler {
 		cache: &sessionsCache{
 			ttl: time.Second,
 		},
-		colorRegex: regexp.MustCompile(`^#[0-9A-Fa-f]{3,6}$|^[a-zA-Z]+$|^default$`),
-		socket:     strings.TrimSpace(os.Getenv("CHROTE_DEFAULT_TMUX_SOCKET")),
-		workDir:    strings.TrimSpace(os.Getenv("CHROTE_DEFAULT_TMUX_WORKDIR")),
-		bank:       newSessionBankStore(defaultSessionBankPath()),
-		persistent: newPersistentAgentStore(defaultPersistentAgentsPath()),
-		managed:    newManagedRecoveryStatusStore(defaultManagedRecoveryStatusPath()),
+		colorRegex:     regexp.MustCompile(`^#[0-9A-Fa-f]{3,6}$|^[a-zA-Z]+$|^default$`),
+		socket:         strings.TrimSpace(os.Getenv("CHROTE_DEFAULT_TMUX_SOCKET")),
+		workDir:        strings.TrimSpace(os.Getenv("CHROTE_DEFAULT_TMUX_WORKDIR")),
+		bank:           newSessionBankStore(defaultSessionBankPath()),
+		persistent:     newPersistentAgentStore(defaultPersistentAgentsPath()),
+		managed:        newManagedRecoveryStatusStore(defaultManagedRecoveryStatusPath()),
+		sessionDropSem: newSessionDropSemaphore(),
 	}
 }
 
@@ -231,6 +240,7 @@ func (h *TmuxHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/tmux/sessions", h.CreateSession)
 	mux.HandleFunc("POST /api/tmux/sessions/{name}/persistence", h.EnablePersistentAgent)
 	mux.HandleFunc("DELETE /api/tmux/sessions/{name}/persistence", h.DisablePersistentAgent)
+	mux.HandleFunc("GET /api/tmux/sessions/{name}/panes", h.ListSessionPanes)
 	mux.HandleFunc("POST /api/tmux/sessions/{name}/send", h.SendToSession)
 	mux.HandleFunc("POST /api/tmux/session-bank/{name}/recovery", h.UpdateBankedRecovery)
 	mux.HandleFunc("POST /api/tmux/session-bank/{name}/recover", h.RecoverBankedSession)
@@ -381,9 +391,50 @@ func targetFromRequest(h *TmuxHandler, r *http.Request, bodyUnixUser string) (tm
 	return h.targetForUnixUser(unixUser)
 }
 
+func sendTargetFromRequest(h *TmuxHandler, r *http.Request, bodyUnixUser string) (tmuxTarget, error) {
+	bodyUnixUser = strings.TrimSpace(bodyUnixUser)
+	queryUnixUser := ""
+	if r != nil {
+		queryUnixUser = strings.TrimSpace(r.URL.Query().Get("unixUser"))
+	}
+	if bodyUnixUser != "" && queryUnixUser != "" && bodyUnixUser != queryUnixUser {
+		return tmuxTarget{}, fmt.Errorf("conflicting Unix users in query %q and request body %q", queryUnixUser, bodyUnixUser)
+	}
+	unixUser := bodyUnixUser
+	if unixUser == "" {
+		unixUser = queryUnixUser
+	}
+	if unixUser == "" {
+		configured := configuredTerminalUsers()
+		switch len(configured) {
+		case 0:
+			return h.targetForUnixUser("")
+		case 1:
+			unixUser = configured[0]
+		default:
+			return tmuxTarget{}, fmt.Errorf("Unix user is required when multiple terminal users are configured")
+		}
+	}
+	return h.targetForUnixUser(unixUser)
+}
+
 const defaultSessionBankFile = "/srv/data/chrote/session-bank/sessions.json"
 const defaultSessionDropsDir = "/srv/data/chrote/session-drops"
+const defaultSessionDropRetention = 7 * 24 * time.Hour
+const defaultSessionDropMaintenanceInterval = time.Hour
 const reservedInternalSessionPrefix = "chrote-probe-"
+
+var sessionDropIDPattern = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{24}$`)
+var sessionDropUnixUserPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_-]*[$]?$`)
+var errEmptySessionDrop = errors.New("send text or at least one file")
+
+func validSessionDropID(name string) bool {
+	if !sessionDropIDPattern.MatchString(name) {
+		return false
+	}
+	_, err := time.Parse("20060102T150405Z", strings.SplitN(name, "-", 2)[0])
+	return err == nil
+}
 
 func isReservedInternalSessionName(name string) bool {
 	return strings.HasPrefix(strings.TrimSpace(name), reservedInternalSessionPrefix)
@@ -415,6 +466,9 @@ type sessionDropManifest struct {
 	ID        string            `json:"id"`
 	Session   string            `json:"session"`
 	UnixUser  string            `json:"unixUser,omitempty"`
+	PaneID    string            `json:"paneId"`
+	PanePID   string            `json:"panePid"`
+	ServerPID string            `json:"serverPid"`
 	CreatedAt string            `json:"createdAt"`
 	TextPath  string            `json:"textPath,omitempty"`
 	Payload   string            `json:"payload"`
@@ -1559,6 +1613,7 @@ var (
 	tmuxSessionIDPattern     = regexp.MustCompile(`^\$[0-9]+$`)
 	tmuxWindowIDPattern      = regexp.MustCompile(`^@[0-9]+$`)
 	tmuxPaneIDPattern        = regexp.MustCompile(`^%[0-9]+$`)
+	tmuxPIDPattern           = regexp.MustCompile(`^[1-9][0-9]*$`)
 	tmuxCreationTokenPattern = regexp.MustCompile(`^[0-9a-f]{24}$`)
 )
 
@@ -2162,18 +2217,500 @@ func parseSessionDropForm(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-func writeSessionDrop(r *http.Request, sessionName string, target tmuxTarget) (sessionDropManifest, error) {
+type sendPaneTarget struct {
+	SessionID      string `json:"sessionId"`
+	Session        string `json:"session"`
+	PaneID         string `json:"pane"`
+	PanePID        string `json:"panePid"`
+	ServerPID      string `json:"serverPid"`
+	WindowID       string `json:"windowId,omitempty"`
+	WindowName     string `json:"windowName,omitempty"`
+	CurrentPath    string `json:"currentPath,omitempty"`
+	CurrentCommand string `json:"currentCommand,omitempty"`
+	Active         bool   `json:"active"`
+}
+
+type sendTargetError struct {
+	Status  int
+	Code    string
+	Message string
+}
+
+func (e *sendTargetError) Error() string { return e.Message }
+
+func parseSendPaneTargets(output string) []sendPaneTarget {
+	targets := []sendPaneTarget{}
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		parts := strings.Split(line, "	")
+		if len(parts) < 5 {
+			continue
+		}
+		target := sendPaneTarget{
+			SessionID: strings.TrimSpace(parts[0]),
+			Session:   strings.TrimSpace(parts[1]),
+			PaneID:    strings.TrimSpace(parts[2]),
+			PanePID:   strings.TrimSpace(parts[3]),
+			ServerPID: strings.TrimSpace(parts[4]),
+		}
+		if len(parts) >= 10 {
+			target.WindowID = strings.TrimSpace(parts[5])
+			target.WindowName = strings.TrimSpace(parts[6])
+			target.CurrentPath = strings.TrimSpace(parts[7])
+			target.CurrentCommand = strings.TrimSpace(parts[8])
+			target.Active = strings.TrimSpace(parts[9]) == "1"
+		}
+		if !tmuxSessionIDPattern.MatchString(target.SessionID) ||
+			!tmuxPaneIDPattern.MatchString(target.PaneID) ||
+			!tmuxPIDPattern.MatchString(target.PanePID) ||
+			!tmuxPIDPattern.MatchString(target.ServerPID) {
+			continue
+		}
+		targets = append(targets, target)
+	}
+	return targets
+}
+
+func (h *TmuxHandler) listSendPanes(ctx context.Context, target tmuxTarget, sessionName string) ([]sendPaneTarget, error) {
+	output, err := h.runTmuxOnSocketContext(ctx, target.socket, "list-panes", "-a", "-F", "#{session_id}	#{session_name}	#{pane_id}	#{pane_pid}	#{pid}	#{window_id}	#{window_name}	#{pane_current_path}	#{pane_current_command}	#{pane_active}")
+	if err != nil {
+		return nil, err
+	}
+	panes := []sendPaneTarget{}
+	for _, pane := range parseSendPaneTargets(output) {
+		if pane.Session == sessionName {
+			panes = append(panes, pane)
+		}
+	}
+	if len(panes) == 0 {
+		return nil, &sendTargetError{Status: http.StatusNotFound, Code: "SESSION_NOT_FOUND", Message: fmt.Sprintf("tmux session %q was not found exactly", sessionName)}
+	}
+	return panes, nil
+}
+
+func (h *TmuxHandler) resolveSendPane(ctx context.Context, target tmuxTarget, sessionName, requestedPane string) (sendPaneTarget, error) {
+	panes, err := h.listSendPanes(ctx, target, sessionName)
+	if err != nil {
+		return sendPaneTarget{}, err
+	}
+	requestedPane = strings.TrimSpace(requestedPane)
+	if requestedPane == "" {
+		if len(panes) != 1 {
+			return sendPaneTarget{}, &sendTargetError{Status: http.StatusConflict, Code: "PANE_REQUIRED", Message: fmt.Sprintf("tmux session %q has %d panes; select an exact %%pane", sessionName, len(panes))}
+		}
+		return panes[0], nil
+	}
+	if !tmuxPaneIDPattern.MatchString(requestedPane) {
+		return sendPaneTarget{}, &sendTargetError{Status: http.StatusBadRequest, Code: "BAD_REQUEST", Message: "pane must be an immutable tmux pane ID such as %7"}
+	}
+	for _, pane := range panes {
+		if pane.PaneID == requestedPane {
+			return pane, nil
+		}
+	}
+	return sendPaneTarget{}, &sendTargetError{Status: http.StatusConflict, Code: "PANE_NOT_IN_SESSION", Message: fmt.Sprintf("pane %q does not belong to tmux session %q", requestedPane, sessionName)}
+}
+
+func sameSendPaneGeneration(expected, actual sendPaneTarget) bool {
+	return expected.SessionID == actual.SessionID &&
+		expected.Session == actual.Session &&
+		expected.PaneID == actual.PaneID &&
+		expected.PanePID == actual.PanePID &&
+		expected.ServerPID == actual.ServerPID
+}
+
+const (
+	atomicSendPastedMarker      = "CHROTE_SEND_PASTED"
+	atomicSendSubmittedMarker   = "CHROTE_SEND_SUBMITTED"
+	atomicSendTargetChangedMark = "CHROTE_SEND_TARGET_CHANGED"
+)
+
+func atomicSendCondition(pane sendPaneTarget) string {
+	return fmt.Sprintf(
+		"#{&&:#{==:#{session_id},%s},#{&&:#{==:#{pane_id},%s},#{&&:#{==:#{pane_pid},%s},#{==:#{pid},%s}}}}",
+		pane.SessionID,
+		pane.PaneID,
+		pane.PanePID,
+		pane.ServerPID,
+	)
+}
+
+func atomicSendCommand(bufferName string, pane sendPaneTarget, submit bool) (string, string) {
+	command := fmt.Sprintf("paste-buffer -d -b %s -t %s", bufferName, pane.PaneID)
+	marker := atomicSendPastedMarker
+	if submit {
+		command += fmt.Sprintf(" ; send-keys -t %s Enter", pane.PaneID)
+		marker = atomicSendSubmittedMarker
+	}
+	command += " ; display-message -p " + marker
+	return command, marker
+}
+
+func sessionDropRetention() (time.Duration, error) {
+	raw := strings.TrimSpace(os.Getenv("CHROTE_SESSION_DROPS_RETENTION"))
+	if raw == "" {
+		return defaultSessionDropRetention, nil
+	}
+	retention, err := time.ParseDuration(raw)
+	if err != nil || retention < 0 {
+		return 0, fmt.Errorf("invalid CHROTE_SESSION_DROPS_RETENTION %q", raw)
+	}
+	return retention, nil
+}
+
+func sessionDropMaintenanceInterval() (time.Duration, error) {
+	raw := strings.TrimSpace(os.Getenv("CHROTE_SESSION_DROPS_MAINTENANCE_INTERVAL"))
+	if raw == "" {
+		return defaultSessionDropMaintenanceInterval, nil
+	}
+	interval, err := time.ParseDuration(raw)
+	if err != nil || interval <= 0 {
+		return 0, fmt.Errorf("invalid CHROTE_SESSION_DROPS_MAINTENANCE_INTERVAL %q", raw)
+	}
+	return interval, nil
+}
+
+func (h *TmuxHandler) lockSessionDrops(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-h.sessionDropSem:
+		return nil
+	}
+}
+
+func (h *TmuxHandler) unlockSessionDrops() {
+	h.sessionDropSem <- struct{}{}
+}
+
+func (h *TmuxHandler) maintainSessionDrops(ctx context.Context, now time.Time) error {
+	if err := h.lockSessionDrops(ctx); err != nil {
+		return err
+	}
+	defer h.unlockSessionDrops()
+	return maintainSessionDropsContext(ctx, defaultSessionDropsPath(), now)
+}
+
+// StartSessionDropJanitor hardens legacy drops synchronously before serving and
+// removes expired drops periodically until ctx is cancelled. The returned
+// channel closes after all janitor work has stopped.
+func (h *TmuxHandler) StartSessionDropJanitor(ctx context.Context, report func(error)) (<-chan struct{}, error) {
+	interval, err := sessionDropMaintenanceInterval()
+	if err != nil {
+		if report != nil {
+			report(fmt.Errorf("invalid session drop maintenance interval; using %s: %w", defaultSessionDropMaintenanceInterval, err))
+		}
+		interval = defaultSessionDropMaintenanceInterval
+	}
+	done := make(chan struct{})
+	initialErr := h.maintainSessionDrops(ctx, time.Now())
+	if ctx.Err() != nil {
+		close(done)
+		return done, errors.Join(initialErr, ctx.Err())
+	}
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-ticker.C:
+				if err := h.maintainSessionDrops(ctx, now); err != nil && report != nil && !errors.Is(err, context.Canceled) {
+					report(err)
+				}
+			}
+		}
+	}()
+	return done, initialErr
+}
+
+func setSessionDropACLContext(parent context.Context, path, unixUser, permissions string, reset bool) error {
+	unixUser = strings.TrimSpace(unixUser)
+	if unixUser != "" && !sessionDropUnixUserPattern.MatchString(unixUser) {
+		return fmt.Errorf("invalid session drop Unix user %q", unixUser)
+	}
+	args := []string{"-k"}
+	if reset {
+		args = []string{"-b", "-k"}
+	}
+	args = append(args, "-m", "g::---", "-m", "o::---")
+	if unixUser != "" {
+		args = append(args, "-m", "u:"+unixUser+":"+permissions)
+	}
+	args = append(args, "--", path)
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, "setfacl", args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("set session drop ACL: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func rebuildSessionDropRootACLContext(parent context.Context, path string, unixUsers []string) error {
+	if err := parent.Err(); err != nil {
+		return err
+	}
+	args := []string{"-b", "-k", "-m", "g::---", "-m", "o::---"}
+	for _, unixUser := range unixUsers {
+		if !sessionDropUnixUserPattern.MatchString(unixUser) {
+			return fmt.Errorf("invalid session drop Unix user %q", unixUser)
+		}
+		args = append(args, "-m", "u:"+unixUser+":--x")
+	}
+	args = append(args, "--", path)
+	// setfacl computes the full access ACL before applying it, so cancellation
+	// leaves either the prior ACL or this complete retained-user set.
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, "setfacl", args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("rebuild session drop root ACL: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func ensureSessionDropRoot(dropRoot string) error {
+	if strings.TrimSpace(dropRoot) == "" {
+		return fmt.Errorf("session drops path is empty")
+	}
+	info, err := os.Lstat(dropRoot)
+	if os.IsNotExist(err) {
+		if err := os.MkdirAll(dropRoot, 0o700); err != nil {
+			return fmt.Errorf("create session drop root: %w", err)
+		}
+		info, err = os.Lstat(dropRoot)
+	}
+	if err != nil {
+		return fmt.Errorf("inspect session drop root: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("session drop root must be a real directory")
+	}
+	if err := os.Chmod(dropRoot, 0o700); err != nil {
+		return fmt.Errorf("secure session drop root: %w", err)
+	}
+	return nil
+}
+
+func secureSessionDropTree(dropRoot, dropPath, unixUser string) error {
+	return secureSessionDropTreeContext(context.Background(), dropRoot, dropPath, unixUser)
+}
+
+func secureSessionDropTreeContext(ctx context.Context, dropRoot, dropPath, unixUser string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := ensureSessionDropRoot(dropRoot); err != nil {
+		return err
+	}
+	if err := setSessionDropACLContext(ctx, dropRoot, unixUser, "--x", false); err != nil {
+		return err
+	}
+	return secureSessionDropPathContext(ctx, dropPath, unixUser)
+}
+
+func secureSessionDropPathContext(ctx context.Context, dropPath, unixUser string) error {
+	return filepath.Walk(dropPath, func(path string, info os.FileInfo, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if walkErr != nil {
+			return walkErr
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("session drop contains symbolic link %q", path)
+		}
+		if !info.IsDir() && !info.Mode().IsRegular() {
+			return fmt.Errorf("session drop contains non-regular file %q", path)
+		}
+		mode := os.FileMode(0o600)
+		permissions := "r--"
+		if info.IsDir() {
+			mode = 0o700
+			permissions = "r-x"
+		}
+		// Close the owning-group mask before rebuilding the ACL from a known base.
+		if err := os.Chmod(path, mode); err != nil {
+			return err
+		}
+		return setSessionDropACLContext(ctx, path, unixUser, permissions, true)
+	})
+}
+
+func readSessionDropManifest(path string) (sessionDropManifest, error) {
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if os.IsNotExist(err) {
+		return sessionDropManifest{}, nil
+	}
+	if err != nil {
+		return sessionDropManifest{}, fmt.Errorf("open manifest without following links: %w", err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return sessionDropManifest{}, fmt.Errorf("inspect manifest: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return sessionDropManifest{}, fmt.Errorf("manifest must be a regular file")
+	}
+	manifest := sessionDropManifest{}
+	if err := json.NewDecoder(io.LimitReader(file, 1<<20)).Decode(&manifest); err != nil {
+		return sessionDropManifest{}, fmt.Errorf("decode manifest: %w", err)
+	}
+	return manifest, nil
+}
+
+type sessionDropMaintenanceEntry struct {
+	name     string
+	path     string
+	unixUser string
+	expired  bool
+	process  bool
+}
+
+func removeSessionDropTreeContext(ctx context.Context, root string) error {
+	paths := []string{}
+	if err := filepath.Walk(root, func(path string, _ os.FileInfo, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if walkErr != nil {
+			return walkErr
+		}
+		paths = append(paths, path)
+		return nil
+	}); err != nil {
+		return err
+	}
+	for index := len(paths) - 1; index >= 0; index-- {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := os.Remove(paths[index]); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func maintainSessionDrops(dropRoot string, now time.Time) error {
+	return maintainSessionDropsContext(context.Background(), dropRoot, now)
+}
+
+func maintainSessionDropsContext(ctx context.Context, dropRoot string, now time.Time) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := ensureSessionDropRoot(dropRoot); err != nil {
+		return err
+	}
+	retention, retentionConfigErr := sessionDropRetention()
+	if retentionConfigErr != nil {
+		retention = defaultSessionDropRetention
+	}
+	maintenanceErrors := []error{}
+	if retentionConfigErr != nil {
+		maintenanceErrors = append(maintenanceErrors, retentionConfigErr)
+	}
+	entries, err := os.ReadDir(dropRoot)
+	if err != nil {
+		return fmt.Errorf("read session drops: %w", err)
+	}
+
+	inventory := make([]sessionDropMaintenanceEntry, 0, len(entries))
+	retainedUsers := map[string]struct{}{}
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(append(maintenanceErrors, err)...)
+		}
+		record := sessionDropMaintenanceEntry{name: entry.Name(), path: filepath.Join(dropRoot, entry.Name())}
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			maintenanceErrors = append(maintenanceErrors, fmt.Errorf("inspect session drop %q: %w", entry.Name(), infoErr))
+			inventory = append(inventory, record)
+			continue
+		}
+		if info.Mode()&os.ModeSymlink != 0 || (!info.IsDir() && !info.Mode().IsRegular()) {
+			maintenanceErrors = append(maintenanceErrors, fmt.Errorf("unsupported entry in session drop root %q", entry.Name()))
+			inventory = append(inventory, record)
+			continue
+		}
+		record.process = true
+		record.expired = info.IsDir() && validSessionDropID(entry.Name()) && retention > 0 && now.Sub(info.ModTime()) > retention
+		if info.IsDir() && !record.expired {
+			manifest, manifestErr := readSessionDropManifest(filepath.Join(record.path, "manifest.json"))
+			if manifestErr != nil {
+				maintenanceErrors = append(maintenanceErrors, fmt.Errorf("read existing session drop %q manifest: %w", entry.Name(), manifestErr))
+			} else if manifest.UnixUser != "" && !sessionDropUnixUserPattern.MatchString(manifest.UnixUser) {
+				maintenanceErrors = append(maintenanceErrors, fmt.Errorf("invalid session drop Unix user %q in %q", manifest.UnixUser, entry.Name()))
+			} else if manifest.UnixUser != "" {
+				account, lookupErr := tmuxLookupUser(manifest.UnixUser)
+				if lookupErr != nil || account == nil || strings.TrimSpace(account.Uid) == "" {
+					if lookupErr == nil {
+						lookupErr = fmt.Errorf("account has no numeric UID")
+					}
+					maintenanceErrors = append(maintenanceErrors, fmt.Errorf("resolve session drop Unix user %q in %q: %w", manifest.UnixUser, entry.Name(), lookupErr))
+				} else {
+					record.unixUser = manifest.UnixUser
+					retainedUsers[record.unixUser] = struct{}{}
+				}
+			}
+		}
+		inventory = append(inventory, record)
+	}
+
+	users := make([]string, 0, len(retainedUsers))
+	for unixUser := range retainedUsers {
+		users = append(users, unixUser)
+	}
+	sort.Strings(users)
+	if err := rebuildSessionDropRootACLContext(ctx, dropRoot, users); err != nil {
+		return errors.Join(append(maintenanceErrors, err)...)
+	}
+	if err := ctx.Err(); err != nil {
+		return errors.Join(append(maintenanceErrors, err)...)
+	}
+
+	for _, record := range inventory {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(append(maintenanceErrors, err)...)
+		}
+		if !record.process {
+			continue
+		}
+		if record.expired {
+			if err := removeSessionDropTreeContext(ctx, record.path); err != nil {
+				if ctx.Err() != nil {
+					return errors.Join(append(maintenanceErrors, ctx.Err())...)
+				}
+				maintenanceErrors = append(maintenanceErrors, fmt.Errorf("remove expired session drop %q: %w", record.name, err))
+			}
+			continue
+		}
+		if err := secureSessionDropPathContext(ctx, record.path, record.unixUser); err != nil {
+			if ctx.Err() != nil {
+				return errors.Join(append(maintenanceErrors, ctx.Err())...)
+			}
+			maintenanceErrors = append(maintenanceErrors, fmt.Errorf("secure existing session drop %q: %w", record.name, err))
+		}
+	}
+	return errors.Join(maintenanceErrors...)
+}
+
+func writeSessionDrop(r *http.Request, sessionName string, target tmuxTarget, pane sendPaneTarget) (manifest sessionDropManifest, err error) {
 	if r == nil {
 		return sessionDropManifest{}, fmt.Errorf("request is missing")
 	}
-	text := strings.TrimRight(strings.ReplaceAll(r.FormValue("text"), "\r\n", "\n"), "\x00")
+	text := strings.TrimRight(strings.ReplaceAll(sessionDropFormValue(r, "text"), "\r\n", "\n"), "\x00")
 	fileHeaders := []*multipart.FileHeader{}
 	if r.MultipartForm != nil && r.MultipartForm.File != nil {
 		fileHeaders = append(fileHeaders, r.MultipartForm.File["files"]...)
 		fileHeaders = append(fileHeaders, r.MultipartForm.File["file"]...)
 	}
 	if strings.TrimSpace(text) == "" && len(fileHeaders) == 0 {
-		return sessionDropManifest{}, fmt.Errorf("send text or at least one file")
+		return sessionDropManifest{}, errEmptySessionDrop
 	}
 
 	dropID, err := newSessionDropID()
@@ -2181,32 +2718,37 @@ func writeSessionDrop(r *http.Request, sessionName string, target tmuxTarget) (s
 		return sessionDropManifest{}, fmt.Errorf("create drop id: %w", err)
 	}
 	dropRoot := defaultSessionDropsPath()
-	if strings.TrimSpace(dropRoot) == "" {
-		return sessionDropManifest{}, fmt.Errorf("session drops path is empty")
+	if err := ensureSessionDropRoot(dropRoot); err != nil {
+		return sessionDropManifest{}, err
 	}
 	dropPath := filepath.Join(dropRoot, dropID)
 	filesDir := filepath.Join(dropPath, "files")
-	if err := os.MkdirAll(filesDir, 0o755); err != nil {
+	if err := os.MkdirAll(filesDir, 0o700); err != nil {
 		return sessionDropManifest{}, fmt.Errorf("create drop directory: %w", err)
 	}
-	_ = os.Chmod(dropRoot, 0o755)
-	_ = os.Chmod(dropPath, 0o755)
-	_ = os.Chmod(filesDir, 0o755)
+	complete := false
+	defer func() {
+		if !complete {
+			_ = os.RemoveAll(dropPath)
+		}
+	}()
 
-	manifest := sessionDropManifest{
+	manifest = sessionDropManifest{
 		ID:        dropID,
 		Session:   sessionName,
 		UnixUser:  target.unixUser,
+		PaneID:    pane.PaneID,
+		PanePID:   pane.PanePID,
+		ServerPID: pane.ServerPID,
 		CreatedAt: time.Now().UTC().Format(time.RFC3339),
 		Payload:   filepath.Join(dropPath, "payload.txt"),
 		Files:     []sessionDropFile{},
 	}
 	if text != "" {
 		manifest.TextPath = filepath.Join(dropPath, "text.txt")
-		if err := os.WriteFile(manifest.TextPath, []byte(text), 0o644); err != nil {
+		if err := os.WriteFile(manifest.TextPath, []byte(text), 0o600); err != nil {
 			return sessionDropManifest{}, fmt.Errorf("write drop text: %w", err)
 		}
-		_ = os.Chmod(manifest.TextPath, 0o644)
 	}
 
 	usedNames := map[string]int{}
@@ -2221,7 +2763,7 @@ func writeSessionDrop(r *http.Request, sessionName string, target tmuxTarget) (s
 		if err != nil {
 			return sessionDropManifest{}, fmt.Errorf("open uploaded file %q: %w", header.Filename, err)
 		}
-		dest, err := os.OpenFile(destPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		dest, err := os.OpenFile(destPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err != nil {
 			_ = src.Close()
 			return sessionDropManifest{}, fmt.Errorf("create uploaded file %q: %w", cleanName, err)
@@ -2238,7 +2780,6 @@ func writeSessionDrop(r *http.Request, sessionName string, target tmuxTarget) (s
 		if closeSrcErr != nil {
 			return sessionDropManifest{}, fmt.Errorf("close uploaded source %q: %w", header.Filename, closeSrcErr)
 		}
-		_ = os.Chmod(destPath, 0o644)
 		manifest.Files = append(manifest.Files, sessionDropFile{
 			Name:        cleanName,
 			Original:    filepath.Base(strings.ReplaceAll(header.Filename, "\\", "/")),
@@ -2261,10 +2802,9 @@ func writeSessionDrop(r *http.Request, sessionName string, target tmuxTarget) (s
 		sections = append(sections, strings.TrimRight(fileSection, "\n"))
 	}
 	payload := strings.Join(sections, "\n\n")
-	if err := os.WriteFile(manifest.Payload, []byte(payload), 0o644); err != nil {
+	if err := os.WriteFile(manifest.Payload, []byte(payload), 0o600); err != nil {
 		return sessionDropManifest{}, fmt.Errorf("write drop payload: %w", err)
 	}
-	_ = os.Chmod(manifest.Payload, 0o644)
 
 	manifestPath := filepath.Join(dropPath, "manifest.json")
 	raw, err := json.MarshalIndent(manifest, "", "  ")
@@ -2272,22 +2812,66 @@ func writeSessionDrop(r *http.Request, sessionName string, target tmuxTarget) (s
 		return sessionDropManifest{}, fmt.Errorf("marshal drop manifest: %w", err)
 	}
 	raw = append(raw, '\n')
-	if err := os.WriteFile(manifestPath, raw, 0o644); err != nil {
+	if err := os.WriteFile(manifestPath, raw, 0o600); err != nil {
 		return sessionDropManifest{}, fmt.Errorf("write drop manifest: %w", err)
 	}
-	_ = os.Chmod(manifestPath, 0o644)
+	if err := secureSessionDropTree(dropRoot, dropPath, target.unixUser); err != nil {
+		return sessionDropManifest{}, err
+	}
+	complete = true
 	return manifest, nil
+}
+
+func sessionDropFormValue(r *http.Request, key string) string {
+	if r == nil || r.MultipartForm == nil {
+		return ""
+	}
+	values := r.MultipartForm.Value[key]
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
 }
 
 func submitFormValue(raw string) bool {
 	raw = strings.TrimSpace(strings.ToLower(raw))
-	return raw == "" || raw == "1" || raw == "true" || raw == "yes" || raw == "on"
+	return raw == "1" || raw == "true" || raw == "yes" || raw == "on"
 }
 
-// SendToSession handles POST /api/tmux/sessions/{name}/send.
-// It stores sent text/files durably on disk, then pastes a composed payload into
-// the target tmux session via tmux buffers so multiline content never rides in
-// command argv.
+// ListSessionPanes handles GET /api/tmux/sessions/{name}/panes and exposes
+// immutable pane IDs plus human-readable labels for an explicit safe choice.
+func (h *TmuxHandler) ListSessionPanes(w http.ResponseWriter, r *http.Request) {
+	sessionName := strings.TrimSpace(r.PathValue("name"))
+	valid, errMsg := core.ValidateSessionName(sessionName, "session name")
+	if !valid {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", errMsg)
+		return
+	}
+	target, err := sendTargetFromRequest(h, r, "")
+	if err != nil {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+		return
+	}
+	panes, err := h.listSendPanes(r.Context(), target, sessionName)
+	if err != nil {
+		var targetErr *sendTargetError
+		if errors.As(err, &targetErr) {
+			core.WriteError(w, targetErr.Status, targetErr.Code, targetErr.Message)
+			return
+		}
+		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
+		return
+	}
+	core.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":  true,
+		"session":  sessionName,
+		"unixUser": target.unixUser,
+		"panes":    panes,
+	})
+}
+
+// SendToSession handles POST /api/tmux/sessions/{name}/send. It pins exact
+// immutable pane identity and pastes through an atomic guarded tmux queue.
 func (h *TmuxHandler) SendToSession(w http.ResponseWriter, r *http.Request) {
 	sessionName := strings.TrimSpace(r.PathValue("name"))
 	valid, errMsg := core.ValidateSessionName(sessionName, "session name")
@@ -2302,41 +2886,180 @@ func (h *TmuxHandler) SendToSession(w http.ResponseWriter, r *http.Request) {
 	if r.MultipartForm != nil {
 		defer r.MultipartForm.RemoveAll()
 	}
-	target, targetErr := targetFromRequest(h, r, r.FormValue("unixUser"))
+	target, targetErr := sendTargetFromRequest(h, r, sessionDropFormValue(r, "unixUser"))
 	if targetErr != nil {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", targetErr.Error())
 		return
 	}
 
-	manifest, err := writeSessionDrop(r, sessionName, target)
+	pane, err := h.resolveSendPane(r.Context(), target, sessionName, sessionDropFormValue(r, "pane"))
 	if err != nil {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
-		return
-	}
-	bufferName := "chrote-send-" + manifest.ID
-	if _, err := h.runTmuxOnSocket(target.socket, "load-buffer", "-b", bufferName, manifest.Payload); err != nil {
-		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
-		return
-	}
-	if _, err := h.runTmuxOnSocket(target.socket, "paste-buffer", "-d", "-b", bufferName, "-t", sessionName); err != nil {
-		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
-		return
-	}
-	if submitFormValue(r.FormValue("submit")) {
-		if _, err := h.runTmuxOnSocket(target.socket, "send-keys", "-t", sessionName, "Enter"); err != nil {
+		var targetFailure *sendTargetError
+		if errors.As(err, &targetFailure) {
+			core.WriteError(w, targetFailure.Status, targetFailure.Code, targetFailure.Message)
+		} else {
 			core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
+		}
+		return
+	}
+	requestedPane := strings.TrimSpace(sessionDropFormValue(r, "pane"))
+	if requestedPane != "" {
+		expected := sendPaneTarget{
+			SessionID: strings.TrimSpace(sessionDropFormValue(r, "sessionId")),
+			Session:   sessionName,
+			PaneID:    requestedPane,
+			PanePID:   strings.TrimSpace(sessionDropFormValue(r, "panePid")),
+			ServerPID: strings.TrimSpace(sessionDropFormValue(r, "serverPid")),
+		}
+		if !tmuxSessionIDPattern.MatchString(expected.SessionID) ||
+			!tmuxPIDPattern.MatchString(expected.PanePID) ||
+			!tmuxPIDPattern.MatchString(expected.ServerPID) {
+			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "an explicit pane requires its sessionId, panePid, and serverPid generation tuple")
 			return
 		}
+		if !sameSendPaneGeneration(expected, pane) {
+			core.WriteError(w, http.StatusConflict, "TARGET_CHANGED", "the selected tmux pane generation changed; refresh the chooser before retrying")
+			return
+		}
+	} else if strings.TrimSpace(sessionDropFormValue(r, "sessionId")) != "" || strings.TrimSpace(sessionDropFormValue(r, "panePid")) != "" || strings.TrimSpace(sessionDropFormValue(r, "serverPid")) != "" {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "pane generation fields require an explicit pane")
+		return
+	}
+
+	if err := h.lockSessionDrops(r.Context()); err != nil {
+		core.WriteError(w, http.StatusRequestTimeout, "REQUEST_CANCELLED", "send request was cancelled before persistence")
+		return
+	}
+	defer h.unlockSessionDrops()
+	manifest, err := writeSessionDrop(r, sessionName, target, pane)
+	if err != nil {
+		if errors.Is(err, errEmptySessionDrop) {
+			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+			return
+		}
+		core.WriteError(w, http.StatusInternalServerError, "SESSION_DROP_ERROR", err.Error())
+		return
+	}
+	dropPath := filepath.Dir(manifest.Payload)
+	retainDrop := false
+	defer func() {
+		if !retainDrop {
+			_ = os.RemoveAll(dropPath)
+		}
+	}()
+
+	bufferName := "chrote-send-" + manifest.ID
+	bufferDeleted := false
+	deleteBuffer := func() error {
+		if bufferDeleted {
+			return nil
+		}
+		_, deleteErr := h.runTmuxOnSocketContext(context.Background(), target.socket, "delete-buffer", "-b", bufferName)
+		if deleteErr == nil {
+			bufferDeleted = true
+		}
+		return deleteErr
+	}
+	defer func() { _ = deleteBuffer() }()
+
+	if _, err := h.runTmuxOnSocketContext(r.Context(), target.socket, "load-buffer", "-b", bufferName, manifest.Payload); err != nil {
+		cleanupErr := deleteBuffer()
+		if cleanupErr != nil {
+			err = fmt.Errorf("%w; buffer cleanup failed: %v", err, cleanupErr)
+		}
+		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
+		return
+	}
+
+	submissionRequested := submitFormValue(sessionDropFormValue(r, "submit"))
+	writeUnknownOutcome := func(detail string) {
+		retainDrop = true
+		cleanupErr := deleteBuffer()
+		bufferCleaned := cleanupErr == nil
+		warning := "tmux did not confirm whether delivery occurred; inspect the exact pane before retrying"
+		if strings.TrimSpace(detail) != "" {
+			warning += ": " + strings.TrimSpace(detail)
+		}
+		if cleanupErr != nil {
+			warning += fmt.Sprintf("; buffer cleanup could not be confirmed: %v", cleanupErr)
+		}
+		core.WriteJSON(w, http.StatusAccepted, map[string]interface{}{
+			"success":             false,
+			"transport":           "unknown",
+			"retryable":           false,
+			"deliveryConfirmed":   false,
+			"submissionRequested": submissionRequested,
+			"submitted":           false,
+			"bufferCleaned":       bufferCleaned,
+			"targetVerified":      false,
+			"warning":             warning,
+			"session":             sessionName,
+			"sessionId":           pane.SessionID,
+			"pane":                pane.PaneID,
+			"panePid":             pane.PanePID,
+			"serverPid":           pane.ServerPID,
+			"unixUser":            target.unixUser,
+			"dropId":              manifest.ID,
+			"dropPath":            dropPath,
+			"payload":             manifest.Payload,
+			"files":               manifest.Files,
+			"timestamp":           time.Now().UTC().Format(time.RFC3339),
+		})
+	}
+	guardedCommand, successMarker := atomicSendCommand(bufferName, pane, submissionRequested)
+	output, err := h.runTmuxOnSocketContext(
+		context.Background(),
+		target.socket,
+		"if-shell", "-F", "-t", pane.PaneID,
+		atomicSendCondition(pane),
+		guardedCommand,
+		"display-message -p "+atomicSendTargetChangedMark,
+	)
+	if err != nil {
+		writeUnknownOutcome(err.Error())
+		return
+	}
+	marker := strings.TrimSpace(output)
+	if marker == atomicSendTargetChangedMark {
+		if cleanupErr := deleteBuffer(); cleanupErr != nil {
+			core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", fmt.Sprintf("target changed and buffer cleanup failed: %v", cleanupErr))
+			return
+		}
+		core.WriteError(w, http.StatusConflict, "TARGET_CHANGED", "tmux session or pane changed while preparing the send; inspect and retry")
+		return
+	}
+	if marker != successMarker {
+		writeUnknownOutcome(fmt.Sprintf("unexpected atomic send result %q", marker))
+		return
+	}
+	bufferDeleted = true
+	retainDrop = true
+	warnings := []string{}
+	submitted := submissionRequested
+	verifiedPane, verifyErr := h.resolveSendPane(r.Context(), target, sessionName, pane.PaneID)
+	targetVerified := verifyErr == nil && sameSendPaneGeneration(pane, verifiedPane)
+	if !targetVerified {
+		warnings = append(warnings, "target changed before post-send verification")
 	}
 	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"success":   true,
-		"session":   sessionName,
-		"unixUser":  target.unixUser,
-		"dropId":    manifest.ID,
-		"dropPath":  filepath.Dir(manifest.Payload),
-		"payload":   manifest.Payload,
-		"files":     manifest.Files,
-		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"success":             true,
+		"transport":           "pasted",
+		"submissionRequested": submissionRequested,
+		"submitted":           submitted,
+		"bufferCleaned":       true,
+		"targetVerified":      targetVerified,
+		"warning":             strings.Join(warnings, "; "),
+		"session":             sessionName,
+		"sessionId":           pane.SessionID,
+		"pane":                pane.PaneID,
+		"panePid":             pane.PanePID,
+		"serverPid":           pane.ServerPID,
+		"unixUser":            target.unixUser,
+		"dropId":              manifest.ID,
+		"dropPath":            dropPath,
+		"payload":             manifest.Payload,
+		"files":               manifest.Files,
+		"timestamp":           time.Now().UTC().Format(time.RFC3339),
 	})
 }
 
