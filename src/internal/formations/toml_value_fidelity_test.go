@@ -476,6 +476,80 @@ updatedAt = "2026-07-21T12:00:00Z"
 	}
 }
 
+func TestTOMLPairedCreatesValidateGeneratedCandidatesBeforePublication(t *testing.T) {
+	tests := []struct {
+		name       string
+		boardTail  string
+		layoutTail string
+		create     func(*Store, WriteOptions) error
+	}{
+		{
+			name:      "Formation table-array collision",
+			boardTail: "formation = []\n",
+			create: func(store *Store, opts WriteOptions) error {
+				_, err := store.CreateFormation("candidate-validation", FormationCreateRequest{Type: FormationTypeSolo, Title: "Must not persist"}, opts)
+				return err
+			},
+		},
+		{
+			name:      "Gate table-array collision",
+			boardTail: "gate = []\n",
+			create: func(store *Store, opts WriteOptions) error {
+				_, err := store.CreateGate("candidate-validation", GateCreateRequest{Title: "Must not persist", Kinds: []string{"human"}}, opts)
+				return err
+			},
+		},
+		{
+			name:      "Mission table-array collision",
+			boardTail: "mission = []\n",
+			create: func(store *Store, opts WriteOptions) error {
+				_, err := store.CreateMission("candidate-validation", MissionCreateRequest{Title: "Must not persist", BeadID: "ctx-ug7.31"}, opts)
+				return err
+			},
+		},
+		{
+			name:       "layout node table-array collision",
+			layoutTail: "node = []\n",
+			create: func(store *Store, opts WriteOptions) error {
+				_, err := store.CreateFormation("candidate-validation", FormationCreateRequest{Type: FormationTypeSolo, Title: "Must not persist"}, opts)
+				return err
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := NewStore(t.TempDir())
+			store.Now = fixedClock()
+			boardRaw := `schema = 1
+id = "brd_candidate_validation"
+slug = "candidate-validation"
+title = "Candidate validation"
+rev = 7
+updatedAt = "2026-07-21T12:00:00Z"
+` + test.boardTail
+			layoutRaw := `schema = 1
+boardId = "brd_candidate_validation"
+boardRev = 7
+updatedAt = "2026-07-21T12:00:00Z"
+` + test.layoutTail
+			writeFixture(t, store.BoardPath("candidate-validation"), boardRaw)
+			writeFixture(t, store.LayoutPath("candidate-validation"), layoutRaw)
+
+			err := test.create(store, WriteOptions{ExpectedETag: etag([]byte(boardRaw)), ExpectedRev: 7})
+			if err == nil || !strings.HasPrefix(err.Error(), "invalid_definition_source:") {
+				t.Fatalf("candidate validation error = %v, want stable invalid_definition_source", err)
+			}
+			if got := readFile(t, store.BoardPath("candidate-validation")); got != boardRaw {
+				t.Fatalf("rejected create changed board:\n got %q\nwant %q", got, boardRaw)
+			}
+			if got := readFile(t, store.LayoutPath("candidate-validation")); got != layoutRaw {
+				t.Fatalf("rejected create changed layout:\n got %q\nwant %q", got, layoutRaw)
+			}
+		})
+	}
+}
+
 func equalStrings(got, want []string) bool {
 	if len(got) != len(want) {
 		return false
