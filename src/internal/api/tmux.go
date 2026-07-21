@@ -29,13 +29,13 @@ import (
 
 // TmuxHandler handles tmux-related API endpoints
 type TmuxHandler struct {
-	cache          *sessionsCache
-	colorRegex     *regexp.Regexp
-	socket         string
-	workDir        string
-	bank           *sessionBankStore
-	persistent     *persistentAgentStore
-	managed        *managedRecoveryStatusStore
+	cache      *sessionsCache
+	colorRegex *regexp.Regexp
+	socket     string
+	workDir    string
+	bank       *sessionBankStore
+	persistent *persistentAgentStore
+	managed    *managedRecoveryStatusStore
 	// recoveryMu serializes recovery-owner checks with the store or tmux
 	// mutation that makes the winning claim observable.
 	recoveryMu     sync.Mutex
