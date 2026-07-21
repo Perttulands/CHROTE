@@ -2,6 +2,7 @@ package formations
 
 import (
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -25,6 +26,17 @@ func TestSchema2EpochLifecycleIsExactAcrossBlockAndResume(t *testing.T) {
 		err := schema2EpochReduce(t, &state, 20, 0, "run_blocked", block)
 		if err == nil {
 			t.Fatal("epoch-0 block admitted nextEpoch=2")
+		}
+		requireProjectionError(t, err, ErrRunProjectionInvalid)
+	})
+
+	t.Run("future_envelope_block_cannot_locally_name_its_next_epoch", func(t *testing.T) {
+		state := schema2EpochTestState()
+		block := schema2GreenRereviewBlock("node", "retry_failed_producer", nil, false)
+		block["nextEpoch"] = uint64(2)
+		err := schema2EpochReduce(t, &state, 20, 1, "run_blocked", block)
+		if err == nil {
+			t.Fatal("epoch-0 run admitted a locally consistent epoch-1 block with nextEpoch=2")
 		}
 		requireProjectionError(t, err, ErrRunProjectionInvalid)
 	})
@@ -74,6 +86,16 @@ func TestSchema2EpochLifecycleIsExactAcrossBlockAndResume(t *testing.T) {
 		}
 	})
 
+	t.Run("blocked_epoch_rejects_future_non_authorizing_observation", func(t *testing.T) {
+		state := schema2EpochTestState()
+		schema2EpochReduceValidBlock(t, &state)
+		err := schema2EpochReduce(t, &state, 21, 1, "slot_binding_observed", schema2SecondRepairFixture(t, "slot_binding_observed"))
+		if err == nil {
+			t.Fatal("epoch-0 block admitted a non-authorizing observation from unopened epoch 1")
+		}
+		requireProjectionError(t, err, ErrRunProjectionInvalid)
+	})
+
 	t.Run("post_resume_event_cannot_regress_epoch", func(t *testing.T) {
 		state := schema2EpochTestState()
 		schema2EpochReduceValidBlock(t, &state)
@@ -96,6 +118,60 @@ func TestSchema2EpochLifecycleIsExactAcrossBlockAndResume(t *testing.T) {
 			t.Fatalf("current epoch = %d, want 1", state.view.Identity.Epoch)
 		}
 	})
+
+	t.Run("second_block_resume_cycle_uses_relative_next_epoch", func(t *testing.T) {
+		state := schema2EpochTestState()
+		schema2EpochReduceValidBlock(t, &state)
+		schema2EpochReduceValidResume(t, &state, 21)
+		schema2EpochReduceValidBlockAt(t, &state, 22, 1, 2)
+		schema2EpochReduceValidResumeAt(t, &state, 23, 2)
+		if err := schema2EpochReduce(t, &state, 24, 2, "node_waiting", schema2SecondRepairFixture(t, "node_waiting")); err != nil {
+			t.Fatalf("current epoch-2 structural event rejected after second resume: %v", err)
+		}
+		if state.view.Status != "running" || state.view.Identity.Epoch != 2 {
+			t.Fatalf("second cycle lifecycle = status %q epoch %d, want running/2", state.view.Status, state.view.Identity.Epoch)
+		}
+	})
+
+	t.Run("second_block_resume_cycle_rejects_prior_epoch", func(t *testing.T) {
+		state := schema2EpochTestState()
+		schema2EpochReduceValidBlock(t, &state)
+		schema2EpochReduceValidResume(t, &state, 21)
+		schema2EpochReduceValidBlockAt(t, &state, 22, 1, 2)
+		schema2EpochReduceValidResumeAt(t, &state, 23, 2)
+		err := schema2EpochReduce(t, &state, 24, 1, "node_waiting", schema2SecondRepairFixture(t, "node_waiting"))
+		if err == nil {
+			t.Fatal("second resume admitted a structural event from prior epoch 1")
+		}
+		requireProjectionError(t, err, ErrRunProjectionInvalid)
+	})
+
+	t.Run("blocked_run_can_cancel_and_finalize_in_current_epoch", func(t *testing.T) {
+		state := schema2EpochTestState()
+		schema2EpochReduceValidBlock(t, &state)
+		cancel := map[string]any{
+			"commandId": projectionTestOtherCmdID, "commandPayloadSha256": strings.Repeat("a", 64),
+			"reason": "stop", "requestedBy": "human:test", "openNodeAttempts": []any{},
+			"openSlotDispatches": []any{}, "openToolLeases": []any{},
+		}
+		if err := schema2EpochReduce(t, &state, 21, 0, "run_cancel_requested", cancel); err != nil {
+			t.Fatalf("cancel request rejected from blocked run: %v", err)
+		}
+		if state.view.Status != "canceling" || state.view.Identity.Epoch != 0 {
+			t.Fatalf("cancel request lifecycle = status %q epoch %d, want canceling/0", state.view.Status, state.view.Identity.Epoch)
+		}
+		canceled := map[string]any{
+			"cancelRequestSeq": uint64(21), "reason": "stop", "requestedBy": "human:test",
+			"nodeAttemptDispositions": []any{}, "slotDispatchDispositions": []any{},
+			"reconciledToolLeases": []any{}, "final": true,
+		}
+		if err := schema2EpochReduce(t, &state, 22, 0, "run_canceled", canceled); err != nil {
+			t.Fatalf("run_canceled rejected after blocked cancel request: %v", err)
+		}
+		if state.view.Status != "canceled" || !state.view.Final || state.view.Identity.Epoch != 0 {
+			t.Fatalf("canceled lifecycle = status %q final %t epoch %d, want canceled/true/0", state.view.Status, state.view.Final, state.view.Identity.Epoch)
+		}
+	})
 }
 
 func schema2EpochTestState() projectionState {
@@ -112,17 +188,29 @@ func schema2EpochTestState() projectionState {
 
 func schema2EpochReduceValidBlock(t *testing.T, state *projectionState) {
 	t.Helper()
+	schema2EpochReduceValidBlockAt(t, state, 20, 0, 1)
+}
+
+func schema2EpochReduceValidBlockAt(t *testing.T, state *projectionState, sequence, epoch, nextEpoch uint64) {
+	t.Helper()
 	block := schema2GreenRereviewBlock("node", "retry_failed_producer", nil, false)
-	if err := schema2EpochReduce(t, state, 20, 0, "run_blocked", block); err != nil {
-		t.Fatalf("reduce valid epoch-0 block: %v", err)
+	block["nextEpoch"] = nextEpoch
+	if err := schema2EpochReduce(t, state, sequence, epoch, "run_blocked", block); err != nil {
+		t.Fatalf("reduce valid epoch-%d block: %v", epoch, err)
 	}
 }
 
 func schema2EpochReduceValidResume(t *testing.T, state *projectionState, sequence uint64) {
 	t.Helper()
+	schema2EpochReduceValidResumeAt(t, state, sequence, 1)
+}
+
+func schema2EpochReduceValidResumeAt(t *testing.T, state *projectionState, sequence, epoch uint64) {
+	t.Helper()
 	resume := schema2GreenRereviewResume("retry-failed-producer", nil, []any{schema2RepairRetryTarget()})
-	if err := schema2EpochReduce(t, state, sequence, 1, "run_resumed", resume); err != nil {
-		t.Fatalf("reduce valid epoch-1 resume: %v", err)
+	resume["resumedFromSeq"] = state.lastBlockSeq
+	if err := schema2EpochReduce(t, state, sequence, epoch, "run_resumed", resume); err != nil {
+		t.Fatalf("reduce valid epoch-%d resume: %v", epoch, err)
 	}
 }
 
@@ -142,12 +230,16 @@ func schema2EpochReduce(t *testing.T, state *projectionState, sequence, epoch ui
 		return err
 	}
 	var commands map[string]RunCommandReceipt
-	if eventType == "run_resumed" {
+	if eventType == "run_resumed" || eventType == "run_cancel_requested" {
 		commandID := data["commandId"].(string)
 		payloadHash := data["commandPayloadSha256"].(string)
+		commandKind := "resume"
+		if eventType == "run_cancel_requested" {
+			commandKind = "cancel"
+		}
 		commands = map[string]RunCommandReceipt{
 			commandID: RunCommandAppliedReceipt{
-				CommandID: commandID, CommandPayloadSHA256: payloadHash, CommandKind: "resume",
+				CommandID: commandID, CommandPayloadSHA256: payloadHash, CommandKind: commandKind,
 				State: "applied", RunID: projectionTestRunID, EffectSeq: sequence,
 			},
 		}
