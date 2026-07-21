@@ -130,6 +130,7 @@ function installFetchMock(options: {
   freshCreateLayout?: boolean
   missionCreateFailure?: boolean
   removalFailure?: boolean
+  removalGate?: Promise<void>
   boards?: TestBoard[]
   sameBoardRefreshes?: TestBoard[]
   runEvents?: TestRunEvent[]
@@ -179,6 +180,12 @@ function installFetchMock(options: {
       }
       if (!url.endsWith('/layout') && body.removeVerification && options.removalFailure) {
         return reject('Legacy verification migration failed')
+      }
+      if (!url.endsWith('/layout') && body.removeVerification && options.removalGate) {
+        return options.removalGate.then(() => {
+          board = { ...board, rev: board.rev + 1 }
+          return respond({ board }, 'board-etag-2')
+        })
       }
       if (options.freshCreateLayout && !url.endsWith('/layout') && body.createGate) {
         const requested = body.createGate as { title: string; kinds: string[]; criterion: string }
@@ -641,8 +648,12 @@ describe('FormationsCockpit reference parity', () => {
     await renderCockpit()
     const band = screen.getByRole('button', { name: 'Inspect legacy verification for Frame' })
     expect(band).toBe(screen.getByTestId('verify-band-fmn_frame'))
+    band.focus()
     fireEvent.click(band)
     const dialog = await screen.findByRole('dialog', { name: 'Legacy verification · Frame' })
+		expect(dialog).toHaveAttribute('aria-modal', 'true')
+		expect(dialog).toHaveAccessibleDescription(/Inline verification is retired/)
+		expect(screen.getByRole('button', { name: 'Close legacy verification' })).toHaveFocus()
 		expect(dialog).toHaveTextContent('Tests pass')
 		expect(dialog).toHaveTextContent('Create and wire an explicit Gate')
 		expect(screen.queryByRole('button', { name: 'Save verification' })).toBeNull()
@@ -655,7 +666,27 @@ describe('FormationsCockpit reference parity', () => {
       expect(removal).toEqual({ formationId: 'fmn_frame', replacementGateId: 'gate_review' })
     })
     expect(patches.some(patch => patch.body.setVerification)).toBe(false)
-    expect(dialog).not.toBeInTheDocument()
+    await waitFor(() => expect(dialog).not.toBeInTheDocument())
+    expect(band).toHaveFocus()
+  })
+
+  it('restores the migration trigger after button and Escape dismissal', async () => {
+    await renderCockpit()
+    const band = screen.getByRole('button', { name: 'Inspect legacy verification for Frame' })
+
+    band.focus()
+    fireEvent.click(band)
+    const close = await screen.findByRole('button', { name: 'Close legacy verification' })
+    close.focus()
+    fireEvent.click(close)
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Legacy verification · Frame' })).toBeNull())
+    expect(band).toHaveFocus()
+
+    fireEvent.click(band)
+    await screen.findByRole('dialog', { name: 'Legacy verification · Frame' })
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Legacy verification · Frame' })).toBeNull())
+    expect(band).toHaveFocus()
   })
 
   it('does not offer new inline verification authoring', async () => {
@@ -676,7 +707,35 @@ describe('FormationsCockpit reference parity', () => {
 		fireEvent.change(screen.getByLabelText('Replacement Gate'), { target: { value: 'gate_review' } })
 		fireEvent.click(screen.getByRole('button', { name: 'Remove legacy verification' }))
     expect(await screen.findByTestId('formations-error')).toHaveTextContent('Legacy verification migration failed')
+    const localError = await within(dialog).findByRole('alert')
+    expect(localError).toHaveTextContent('Could not remove legacy verification')
+    expect(localError).not.toHaveTextContent('Legacy verification migration failed')
     expect(dialog).toBeInTheDocument()
+  })
+
+  it('locks Gate selection and duplicate removal while migration is pending', async () => {
+    let releaseRemoval: (() => void) | undefined
+    const removalGate = new Promise<void>(resolve => { releaseRemoval = resolve })
+    patches = installFetchMock({ removalGate })
+    await renderCockpit()
+    const band = screen.getByRole('button', { name: 'Inspect legacy verification for Frame' })
+    band.focus()
+    fireEvent.click(band)
+    const dialog = await screen.findByRole('dialog', { name: 'Legacy verification · Frame' })
+    const replacement = within(dialog).getByLabelText('Replacement Gate')
+    const remove = within(dialog).getByRole('button', { name: 'Remove legacy verification' })
+    fireEvent.change(replacement, { target: { value: 'gate_review' } })
+    fireEvent.click(remove)
+
+    expect(await within(dialog).findByRole('status')).toHaveTextContent('Removing legacy verification')
+    expect(replacement).toBeDisabled()
+    expect(remove).toBeDisabled()
+    fireEvent.click(remove)
+    expect(patches.filter(patch => patch.body.removeVerification)).toHaveLength(1)
+
+    await act(async () => releaseRemoval?.())
+    await waitFor(() => expect(dialog).not.toBeInTheDocument())
+    expect(band).toHaveFocus()
   })
 
   it('renders partial legacy verification without inventing missing evidence', async () => {
@@ -737,10 +796,14 @@ describe('FormationsCockpit reference parity', () => {
     const secondBoard = { ...makeBoard(), id: 'brd_second', slug: 'second-board', title: 'Second board', etag: 'second-etag' }
     patches = installFetchMock({ boards: [makeBoard(), secondBoard] })
     await renderCockpit()
-    fireEvent.click(screen.getByTestId('verify-band-fmn_frame'))
-    await screen.findByRole('dialog', { name: 'Legacy verification · Frame' })
+    const band = screen.getByTestId('verify-band-fmn_frame')
+    band.focus()
+    fireEvent.click(band)
+    const dialog = await screen.findByRole('dialog', { name: 'Legacy verification · Frame' })
+    within(dialog).getByLabelText('Replacement Gate').focus()
     fireEvent.change(screen.getByTestId('board-picker'), { target: { value: 'second-board' } })
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Legacy verification · Frame' })).toBeNull())
+    expect(screen.getByTestId('verify-band-fmn_frame')).toHaveFocus()
     expect(patches.filter(patch => patch.body.removeVerification)).toEqual([])
   })
 

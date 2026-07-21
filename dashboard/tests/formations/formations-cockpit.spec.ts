@@ -1,4 +1,4 @@
-import { test, expect } from '../fixtures'
+import { allowBrowserConsoleMessage, test, expect } from '../fixtures'
 import { mockApiRoutes, mockFormationsApiRoutes, mockFormationsBoard, mockFormationsLayout, mockFormationsAgents, mockFormationsRunEvents } from '../mock-api'
 import type { Locator, Page, Route } from '@playwright/test'
 import { activeRunStorageKey } from '../../src/components/formationsRunState'
@@ -294,6 +294,9 @@ test.describe('Formations cockpit — D7 reference parity', () => {
     await band.click()
 
     const dialog = page.getByRole('dialog', { name: `Legacy verification · ${formation.title}` })
+    await expect(dialog).toHaveAttribute('aria-modal', 'true')
+    await expect(dialog).toHaveAccessibleDescription(/Inline verification is retired/)
+    await expect(dialog.getByRole('button', { name: 'Close legacy verification' })).toBeFocused()
     await expect(dialog).toContainText(formation.verification.criterion)
     await expect(dialog).toContainText('Create and wire an explicit Gate')
     await expect(dialog.getByRole('button', { name: 'Save verification' })).toHaveCount(0)
@@ -301,6 +304,121 @@ test.describe('Formations cockpit — D7 reference parity', () => {
     await expect(dialog.getByRole('button', { name: 'Remove legacy verification' })).toBeDisabled()
     await dialog.getByLabel('Replacement Gate').selectOption(mockFormationsBoard.gates[0].id)
     await expect(dialog.getByRole('button', { name: 'Remove legacy verification' })).toBeEnabled()
+    await page.keyboard.press('Escape')
+    await expect(dialog).toBeHidden()
+    await expect(band).toBeFocused()
+  })
+
+  test('announces a redaction-safe dialog-local removal failure', async ({ page }) => {
+    allowBrowserConsoleMessage('Failed to load resource: the server responded with a status of 409')
+    await page.route('**/api/formations/**', async route => {
+      const request = route.request()
+      const body = request.method() === 'PATCH' ? request.postDataJSON() as Record<string, unknown> : null
+      if (body?.removeVerification) {
+        await route.fulfill({
+          status: 409,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: false, error: { code: 'WRITE_REJECTED', message: 'sensitive backend migration detail' } }),
+        })
+        return
+      }
+      await route.fallback()
+    })
+
+    const formation = mockFormationsBoard.formations[0]
+    await page.getByTestId(`verify-band-${formation.id}`).click()
+    const dialog = page.getByRole('dialog', { name: `Legacy verification · ${formation.title}` })
+    await dialog.getByLabel('Replacement Gate').selectOption(mockFormationsBoard.gates[0].id)
+    await dialog.getByRole('button', { name: 'Remove legacy verification' }).click()
+
+    const localError = dialog.getByRole('alert')
+    await expect(localError).toContainText('Could not remove legacy verification')
+    await expect(localError).not.toContainText('sensitive backend migration detail')
+    await expect(dialog).toBeVisible()
+  })
+
+  test('locks duplicate submission until successful removal restores trigger focus', async ({ page }) => {
+    let releaseRemoval: (() => void) | undefined
+    const removalGate = new Promise<void>(resolve => { releaseRemoval = resolve })
+    let removalRequests = 0
+    await page.route('**/api/formations/**', async route => {
+      const request = route.request()
+      const body = request.method() === 'PATCH' ? request.postDataJSON() as Record<string, unknown> : null
+      if (body?.removeVerification) {
+        removalRequests += 1
+        await removalGate
+        const board = { ...mockFormationsBoard, rev: mockFormationsBoard.rev + 1, etag: 'migration-success-etag' }
+        await fulfillApi(route, { board, layout: null }, { ETag: board.etag })
+        return
+      }
+      await route.fallback()
+    })
+
+    const formation = mockFormationsBoard.formations[0]
+    const band = page.getByTestId(`verify-band-${formation.id}`)
+    await band.click()
+    const dialog = page.getByRole('dialog', { name: `Legacy verification · ${formation.title}` })
+    const replacement = dialog.getByLabel('Replacement Gate')
+    const remove = dialog.getByRole('button', { name: 'Remove legacy verification' })
+    await replacement.selectOption(mockFormationsBoard.gates[0].id)
+    await remove.click()
+
+    await expect(dialog.getByRole('status')).toContainText('Removing legacy verification')
+    await expect(replacement).toBeDisabled()
+    await expect(remove).toBeDisabled()
+    expect(removalRequests).toBe(1)
+
+    releaseRemoval?.()
+    await expect(dialog).toBeHidden()
+    await expect(band).toBeFocused()
+    expect(removalRequests).toBe(1)
+  })
+
+  test('closes on board change and restores focus when the migration trigger remains', async ({ page }) => {
+    const secondBoard = {
+      ...mockFormationsBoard,
+      id: 'board-second',
+      slug: 'second-board',
+      title: 'Second board',
+      rev: mockFormationsBoard.rev + 1,
+      etag: 'second-board-etag',
+    }
+    const secondLayout = { ...mockFormationsLayout, board: secondBoard.slug, boardRev: secondBoard.rev, etag: 'second-layout-etag' }
+    await page.route('**/api/formations/**', async route => {
+      const request = route.request()
+      const path = new URL(request.url()).pathname
+      if (request.method() === 'GET' && path === '/api/formations/boards') {
+        await fulfillApi(route, { boards: [
+          { id: mockFormationsBoard.id, slug: mockFormationsBoard.slug, title: mockFormationsBoard.title, rev: mockFormationsBoard.rev, etag: mockFormationsBoard.etag },
+          { id: secondBoard.id, slug: secondBoard.slug, title: secondBoard.title, rev: secondBoard.rev, etag: secondBoard.etag },
+        ] })
+        return
+      }
+      if (request.method() === 'GET' && path === `/api/formations/boards/${secondBoard.slug}`) {
+        await fulfillApi(route, { board: secondBoard }, { ETag: secondBoard.etag })
+        return
+      }
+      if (request.method() === 'GET' && path === `/api/formations/boards/${secondBoard.slug}/layout`) {
+        await fulfillApi(route, { layout: secondLayout }, { ETag: secondLayout.etag })
+        return
+      }
+      if (request.method() === 'GET' && path === `/api/formations/boards/${secondBoard.slug}/changes`) {
+        await fulfillApi(route, { signal: { board: secondBoard.slug, changed: false, rev: secondBoard.rev, etag: secondBoard.etag } })
+        return
+      }
+      await route.fallback()
+    })
+
+    await page.reload()
+    await page.getByRole('button', { name: 'Formations' }).click()
+    const band = page.getByTestId(`verify-band-${mockFormationsBoard.formations[0].id}`)
+    await band.click()
+    const dialog = page.getByRole('dialog', { name: `Legacy verification · ${mockFormationsBoard.formations[0].title}` })
+    await dialog.getByLabel('Replacement Gate').focus()
+    await page.getByTestId('board-picker').selectOption(secondBoard.slug)
+
+    await expect(dialog).toBeHidden()
+    await expect(page.getByTestId(`verify-band-${mockFormationsBoard.formations[0].id}`)).toBeFocused()
   })
 
   test('matches the 03-formations.html first-viewport cockpit geometry', async ({ page }) => {
