@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1079,9 +1080,10 @@ func TestRuntimeStoreSchema2ClaimNeverFallsBackToExistingSchema1Run(t *testing.T
 }
 
 func TestProjectCanonicalRunSelectsOnlyRootReachableGraph(t *testing.T) {
-	input := schema1ProjectionInput(t, schema1StartedEvent(projectionTestRunID))
-	snapshot := canonicalDocumentByRole(t, input, CanonicalInputRoleSchema1GraphSnapshot).Bytes
-	snapshot = append(snapshot, []byte(`
+	t.Run("schema 1", func(t *testing.T) {
+		input := schema1ProjectionInput(t, schema1StartedEvent(projectionTestRunID))
+		snapshot := canonicalDocumentByRole(t, input, CanonicalInputRoleSchema1GraphSnapshot).Bytes
+		snapshot = append(snapshot, []byte(`
 
 [[formation]]
 id = "fmn_disconnected"
@@ -1106,22 +1108,47 @@ title = "Disconnected gate"
 kinds = ["human"]
 criterion = "Never reached"
 `)...)
-	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema1GraphSnapshot, snapshot)
-	view := ProjectRunView(mustProjectCanonicalFixture(t, input))
-	for _, forbidden := range []string{"fmn_disconnected", "gate_disconnected"} {
-		if raw := mustMarshalJSON(t, view); bytes.Contains(raw, []byte(forbidden)) {
-			t.Fatalf("disconnected board element %q leaked into a structural collection: %s", forbidden, raw)
-		}
-	}
-	if len(view.Nodes) != 3 || len(view.Attempts) != 0 || len(view.Gates) != 0 || len(view.Outputs) != 0 || len(view.Sessions) != 0 {
-		t.Fatalf("selected-root structural cardinality inflated: nodes=%d attempts=%d gates=%d outputs=%d sessions=%d", len(view.Nodes), len(view.Attempts), len(view.Gates), len(view.Outputs), len(view.Sessions))
-	}
+		input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema1GraphSnapshot, snapshot)
+		schema2RepairAssertSelectedRootProjection(t, ProjectRunView(mustProjectCanonicalFixture(t, input)), 3, "fmn_disconnected", "gate_disconnected")
+	})
+
+	t.Run("schema 2", func(t *testing.T) {
+		input := schema2ProjectionInput(t, true)
+		graph := append([]byte(nil), canonicalDocumentByRole(t, input, CanonicalInputRoleSchema2GraphSnapshot).Bytes...)
+		graph = append(graph, []byte(`
+
+[[formation]]
+id = "fmn_disconnected"
+type = "solo"
+title = "Disconnected"
+[[formation.input]]
+id = "in"
+label = "Input"
+[[formation.output]]
+id = "out"
+label = "Output"
+[[formation.slot]]
+id = "slot_disconnected"
+label = "Disconnected"
+agentId = "disconnected"
+harness = "codex"
+controller = true
+
+[[gate]]
+id = "gate_disconnected"
+title = "Disconnected gate"
+kinds = ["human"]
+criterion = ""
+`)...)
+		input = schema2RepairReplaceGraphAndHashes(t, input, graph)
+		schema2RepairAssertSelectedRootProjection(t, ProjectRunView(mustProjectCanonicalFixture(t, input)), 1, "fmn_disconnected", "gate_disconnected")
+	})
 }
 
 func TestProjectCommandReceiptPreservesFullUint64WriterFences(t *testing.T) {
 	for _, state := range []string{"applied", "rejected"} {
 		t.Run(state, func(t *testing.T) {
-			fence := uint64(MaxJSONSafeInteger + 17)
+			fence := uint64(math.MaxUint64)
 			payload := canonicalCommandPayload("cancel", projectionTestRunID)
 			input := schema2RepairWideFenceCommandInput(t, state, fence, payload)
 			receipt, err := ProjectCommandReceipt(input)
@@ -1137,6 +1164,60 @@ func TestProjectCommandReceiptPreservesFullUint64WriterFences(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestProjectCommandReceiptRejectsNoncanonicalUint64WriterFences(t *testing.T) {
+	badValues := []string{"", "0", "+1", "01", " 1", "1 ", "1.0", "-1", "18446744073709551616"}
+	for _, state := range []string{"applied", "rejected"} {
+		for _, field := range []string{"admittedWriterFence", "stateWriterFence", "outcomeWriterFence"} {
+			for _, bad := range badValues {
+				name := state + "/" + field + "/" + strconv.Quote(bad)
+				t.Run(name, func(t *testing.T) {
+					values := map[string]string{"admittedWriterFence": "1", "stateWriterFence": "1", "outcomeWriterFence": "1"}
+					values[field] = bad
+					input := schema2RepairFenceTextCommandInput(t, state, values["admittedWriterFence"], values["stateWriterFence"], values["outcomeWriterFence"], canonicalCommandPayload("cancel", projectionTestRunID))
+					if receipt, err := ProjectCommandReceipt(input); err == nil {
+						t.Fatalf("noncanonical %s=%q projected: %#v", field, bad, receipt)
+					} else {
+						requireProjectionError(t, err, ErrRunCommandNotTerminal)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestProjectCommandReceiptRejectsWriterFenceTypeAndOrderingViolations(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		admitted string
+		state    string
+		outcome  string
+	}{
+		{name: "state fence precedes admission", admitted: "2", state: "1", outcome: "1"},
+		{name: "outcome fence follows state", admitted: "1", state: "1", outcome: "2"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := schema2RepairFenceTextCommandInput(t, "applied", test.admitted, test.state, test.outcome, canonicalCommandPayload("cancel", projectionTestRunID))
+			if receipt, err := ProjectCommandReceipt(input); err == nil {
+				t.Fatalf("unordered writer fences projected: %#v", receipt)
+			} else {
+				requireProjectionError(t, err, ErrRunCommandNotTerminal)
+			}
+		})
+	}
+
+	t.Run("numeric JSON fence is not a decimal string", func(t *testing.T) {
+		input := schema2RepairFenceTextCommandInput(t, "applied", "1", "1", "1", canonicalCommandPayload("cancel", projectionTestRunID))
+		record := decodeCanonicalObject(t, input.Record)
+		record["outcomeWriterFence"] = 1
+		input.Record = canonicalJSON(t, record)
+		if receipt, err := ProjectCommandReceipt(input); err == nil {
+			t.Fatalf("numeric writer fence projected: %#v", receipt)
+		} else {
+			requireProjectionError(t, err, ErrRunCommandNotTerminal)
+		}
+	})
 }
 
 func startSchema2RepairAttempt(nodeID, kind string) func(*projectionState) {
@@ -1168,6 +1249,19 @@ func schema2RepairStructuralFingerprint(t *testing.T, view RunView) []byte {
 	view.Audit = RunAudit{}
 	view.Identity.Epoch = 0
 	return mustMarshalJSON(t, view)
+}
+
+func schema2RepairAssertSelectedRootProjection(t *testing.T, view RunView, wantNodes int, forbidden ...string) {
+	t.Helper()
+	raw := mustMarshalJSON(t, view)
+	for _, identity := range forbidden {
+		if bytes.Contains(raw, []byte(identity)) {
+			t.Fatalf("disconnected board element %q leaked into a structural collection: %s", identity, raw)
+		}
+	}
+	if len(view.Nodes) != wantNodes || len(view.Attempts) != 0 || len(view.Gates) != 0 || len(view.Outputs) != 0 || len(view.Artifacts) != 0 || len(view.Blocks) != 0 || len(view.Escalations) != 0 || len(view.Sessions) != 0 {
+		t.Fatalf("selected-root structural cardinality inflated: nodes=%d attempts=%d gates=%d outputs=%d artifacts=%d blocks=%d escalations=%d sessions=%d", len(view.Nodes), len(view.Attempts), len(view.Gates), len(view.Outputs), len(view.Artifacts), len(view.Blocks), len(view.Escalations), len(view.Sessions))
+	}
 }
 
 func schema2RepairCloneView(t *testing.T, view RunView) RunView {
@@ -1800,17 +1894,22 @@ func schema2RepairRequireProjectionInvalid(t *testing.T, input CanonicalRunReadI
 func schema2RepairWideFenceCommandInput(t *testing.T, state string, fence uint64, payload map[string]any) CanonicalCommandReadInput {
 	t.Helper()
 	fenceString := strconv.FormatUint(fence, 10)
+	return schema2RepairFenceTextCommandInput(t, state, fenceString, fenceString, fenceString, payload)
+}
+
+func schema2RepairFenceTextCommandInput(t *testing.T, state, admittedFence, stateFence, outcomeFence string, payload map[string]any) CanonicalCommandReadInput {
+	t.Helper()
 	payloadHash := projectionSHA256(canonicalJSON(t, payload))
 	pending := canonicalJSON(t, map[string]any{
 		"commandSchema": 1, "recordRev": 1, "priorGeneration": nil, "commandEncoding": "run-command-jcs-v1",
 		"commandId": projectionTestCommandID, "commandKind": "cancel", "commandPayload": payload, "commandPayloadSha256": payloadHash,
-		"admittedWriterFence": fenceString, "stateWriterFence": fenceString, "state": "pending",
+		"admittedWriterFence": admittedFence, "stateWriterFence": admittedFence, "state": "pending",
 	})
 	terminal := map[string]any{
 		"commandSchema": 1, "recordRev": 2, "priorGeneration": map[string]any{"recordRev": 1, "sha256": projectionSHA256(pending)},
 		"commandEncoding": "run-command-jcs-v1", "commandId": projectionTestCommandID, "commandKind": "cancel",
-		"commandPayload": payload, "commandPayloadSha256": payloadHash, "admittedWriterFence": fenceString,
-		"stateWriterFence": fenceString, "state": state, "outcomeWriterFence": fenceString, "decisionAdmissionPolicyRef": nil,
+		"commandPayload": payload, "commandPayloadSha256": payloadHash, "admittedWriterFence": admittedFence,
+		"stateWriterFence": stateFence, "state": state, "outcomeWriterFence": outcomeFence, "decisionAdmissionPolicyRef": nil,
 	}
 	if state == "applied" {
 		terminal["runId"] = projectionTestRunID
