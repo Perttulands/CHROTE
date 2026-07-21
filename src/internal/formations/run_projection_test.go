@@ -221,12 +221,12 @@ func TestProjectCanonicalRunStructuralTransitionSubstructuresAndOrdering(t *test
 			want := map[string]any{
 				"eventSchema": 2, "authoritySchema": 2, "startSeq": 1, "consumedEventCount": len(events),
 				"admissionCommandId": started["admissionCommandId"], "commandPayloadSha256": started["commandPayloadSha256"],
-				"workspaceAdmissionSeq": 1, "admissionPolicyRev": 1, "admissionPolicySha256": started["admissionPolicySha256"],
+				"workspaceAdmissionSeq": 1, "admissionPolicyRev": 2, "admissionPolicySha256": started["admissionPolicySha256"],
 				"latestWriterFence": 1, "graphSnapshotSha256": started["graphSnapshotSha256"],
 				"bindingProjectionSha256": started["bindingProjectionSha256"],
 			}
 			if activated {
-				want["activationPolicyRev"] = 1
+				want["activationPolicyRev"] = 2
 				want["activationPolicySha256"] = started["admissionPolicySha256"]
 			}
 			assertExactJSONValue(t, fmt.Sprintf("schema 2 activated=%v audit", activated), view.Audit, want)
@@ -410,6 +410,45 @@ func TestProjectCanonicalRunStructuralTransitionSubstructuresAndOrdering(t *test
 		}
 		assertExactJSONValue(t, "success audit", view.Audit, map[string]any{"eventSchema": 1, "startSeq": 1, "consumedEventCount": 4})
 	})
+}
+
+func TestProjectCanonicalRunUsesFrozenGraphOrderForAllStructuralReferences(t *testing.T) {
+	input := schema1OrderingProjectionInput(t)
+	view := ProjectRunView(mustProjectCanonicalFixture(t, input))
+
+	assertStringOrder(t, "order-distinguishing node order", projectedNodeIDs(view), []string{
+		projectionTestMissionID, "fmn_alpha", "fmn_beta", "gate_alpha", "gate_beta",
+	})
+	assertAttemptOrder(t, view, []string{"fmn_alpha/1", "fmn_beta/1", "gate_alpha/1", "gate_beta/1"})
+	assertGateOrder(t, view, []string{"gate_alpha/1", "gate_beta/1"})
+	assertOutputOrder(t, view, []string{"fmn_alpha/1/port_z", "fmn_alpha/1/port_a", "fmn_beta/1/port_b"})
+
+	alphaOutputs := []any{
+		map[string]any{"nodeId": "fmn_alpha", "attempt": 1, "portId": "port_z"},
+		map[string]any{"nodeId": "fmn_alpha", "attempt": 1, "portId": "port_a"},
+	}
+	betaOutputs := []any{map[string]any{"nodeId": "fmn_beta", "attempt": 1, "portId": "port_b"}}
+	assertExactJSONValue(t, "alpha node attempts", findProjectedNode(t, view, "fmn_alpha").Attempts, []any{map[string]any{"nodeId": "fmn_alpha", "attempt": 1}})
+	assertExactJSONValue(t, "alpha node outputs", findProjectedNode(t, view, "fmn_alpha").Outputs, alphaOutputs)
+	assertExactJSONValue(t, "alpha attempt outputs", findProjectedAttempt(t, view, "fmn_alpha", 1).Outputs, alphaOutputs)
+	assertExactJSONValue(t, "beta node attempts", findProjectedNode(t, view, "fmn_beta").Attempts, []any{map[string]any{"nodeId": "fmn_beta", "attempt": 1}})
+	assertExactJSONValue(t, "beta node outputs", findProjectedNode(t, view, "fmn_beta").Outputs, betaOutputs)
+	assertExactJSONValue(t, "beta attempt outputs", findProjectedAttempt(t, view, "fmn_beta", 1).Outputs, betaOutputs)
+
+	for _, gateID := range []string{"gate_alpha", "gate_beta"} {
+		gateRef := map[string]any{"gateId": gateID, "attempt": 1}
+		node := findProjectedNode(t, view, gateID)
+		attempt := findProjectedAttempt(t, view, gateID, 1)
+		assertExactJSONValue(t, gateID+" node attempts", node.Attempts, []any{map[string]any{"nodeId": gateID, "attempt": 1}})
+		assertExactJSONValue(t, gateID+" node gate refs", node.Gates, []any{gateRef})
+		assertExactJSONValue(t, gateID+" owning attempt gate ref", attempt.Gate, gateRef)
+		assertExactJSONValue(t, gateID+" owning attempt outputs", attempt.Outputs, []any{})
+		assertExactJSONValue(t, gateID+" owning attempt sessions", attempt.Slots, []any{})
+	}
+
+	sessionInput, _ := schema2OpenDispatchLifecycleInput(t, false)
+	sessionView := ProjectRunView(mustProjectCanonicalFixture(t, sessionInput))
+	assertSchema2SessionProjection(t, sessionView, "none")
 }
 
 func TestProjectCanonicalRunSchema2ActivateAndArtifactTransitions(t *testing.T) {
@@ -691,7 +730,8 @@ func TestProjectCanonicalRunRequiresCompleteAdmissionPolicyChain(t *testing.T) {
 	valid := schema2InputWithTwoPolicies(t)
 	mustProjectCanonicalFixture(t, valid)
 	assertSchema2SelectedPolicyLinkage(t, valid, 2)
-	assertSchema2SelectedPolicyLinkage(t, schema2ProjectionInput(t, true), 1)
+	assertSchema2SelectedPolicyLinkage(t, schema2ProjectionInput(t, true), 2)
+	assertSchema2AuthorityHistory(t, valid)
 
 	for _, test := range []struct {
 		name   string
@@ -881,7 +921,7 @@ func TestProjectRunViewAndEventPageDefensiveCopiesAreFamilyComplete(t *testing.T
 	sessionProjection := mustProjectCanonicalFixture(t, sessionInput)
 	wantSessionView := mustMarshalJSON(t, ProjectRunView(sessionProjection))
 	sessionView := ProjectRunView(sessionProjection)
-	if len(sessionView.Sessions) != 1 || len(sessionView.Blocks) != 1 || len(sessionView.Blocks[0].OpenDispatches) != 1 {
+	if len(sessionView.Sessions) != 2 || len(sessionView.Blocks) != 1 || len(sessionView.Blocks[0].OpenDispatches) != 2 {
 		t.Fatalf("session/open-dispatch defensive fixture incomplete: %+v", sessionView)
 	}
 	requireMutateStringPath(t, &sessionView, "session target", "Sessions", 0, "SessionTargetID")
@@ -1167,7 +1207,12 @@ func TestProjectCommandReceiptPreservesTerminalUnion(t *testing.T) {
 	for _, commandKind := range []string{"start", "resume", "cancel", "verdict"} {
 		for _, state := range []string{"applied", "rejected"} {
 			t.Run(commandKind+"/"+state, func(t *testing.T) {
+				history := canonicalCommandHistory(t, projectionTestCommandID, commandKind, state, projectionTestRunID)
 				input := canonicalCommandInput(t, projectionTestCommandID, commandKind, state)
+				if !bytes.Equal(input.Record, history.terminal) {
+					t.Fatalf("canonical command input did not select exact terminal generation\nwant: %s\ngot:  %s", history.terminal, input.Record)
+				}
+				assertAuthenticatedCommandHistory(t, history)
 				receipt, err := ProjectCommandReceipt(input)
 				if err != nil {
 					t.Fatal(err)
@@ -1196,6 +1241,32 @@ func TestProjectCommandReceiptPreservesTerminalUnion(t *testing.T) {
 			})
 		}
 	}
+
+	t.Run("recovery repair preserves origin fence", func(t *testing.T) {
+		history := schema2CommandHistoryForPayload(t, projectionTestCommandID, "cancel", "applied", canonicalCommandPayload("cancel", projectionTestRunID), schema2CommandOutcome{
+			runID: projectionTestRunID, effectSeq: 7, admittedWriterFence: 1, stateWriterFence: 2, outcomeWriterFence: 1,
+		})
+		assertAuthenticatedCommandHistory(t, history)
+		var terminal map[string]any
+		if err := json.Unmarshal(history.terminal, &terminal); err != nil {
+			t.Fatal(err)
+		}
+		input := CanonicalCommandReadInput{
+			Source: CanonicalRunSourceSchema2,
+			Submitted: SubmittedCommandIdentity{
+				CommandID: projectionTestCommandID, CommandKind: "cancel", CommandPayloadSHA256: terminal["commandPayloadSha256"].(string),
+			},
+			Record: history.terminal,
+		}
+		receipt, err := ProjectCommandReceipt(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertExactJSONValue(t, "recovery-repaired receipt", receipt, map[string]any{
+			"commandId": projectionTestCommandID, "commandPayloadSha256": terminal["commandPayloadSha256"], "commandKind": "cancel",
+			"state": "applied", "runId": projectionTestRunID, "effectSeq": 7, "outcomeWriterFence": "1", "decisionAdmissionPolicyRef": nil,
+		})
+	})
 }
 
 func TestProjectCommandReceiptRejectsPendingMismatchAndSubstitution(t *testing.T) {
@@ -1342,6 +1413,13 @@ func TestProjectCommandReceiptRejectsClosedRecordMatrixForEveryKindAndState(t *t
 					{name: "unknown top-level member", mutate: func(record map[string]any) { record["projectionUnknown"] = true }},
 					{name: "outcome fence exceeds publishing fence", mutate: func(record map[string]any) { record["outcomeWriterFence"] = 10 }},
 					{name: "state fence precedes admission", mutate: func(record map[string]any) { record["stateWriterFence"] = 0 }},
+					{name: "terminal has no pending predecessor", mutate: func(record map[string]any) {
+						record["recordRev"] = 1
+						record["priorGeneration"] = nil
+					}},
+					{name: "pending predecessor hash substitution", mutate: func(record map[string]any) {
+						record["priorGeneration"].(map[string]any)["sha256"] = strings.Repeat("f", 64)
+					}},
 					{name: "embedded payload substitution", mutate: func(record map[string]any) { record["commandPayload"].(map[string]any)["actor"] = "human:other" }},
 					{name: "record payload hash substitution", mutate: func(record map[string]any) { record["commandPayloadSha256"] = strings.Repeat("e", 64) }},
 				} {
@@ -1747,11 +1825,12 @@ func TestProjectCanonicalRunSchema2OpenDispatchIsSourceSelected(t *testing.T) {
 		capabilityState   string
 		revokedSeq        string
 	}{
-		{name: "none capability", blockSeq: 6, capabilityState: "none"},
-		{name: "revoked capability", revokedCapability: true, blockSeq: 7, capabilityState: "revoked", revokedSeq: "6"},
+		{name: "none capability", blockSeq: 8, capabilityState: "none"},
+		{name: "revoked capability", revokedCapability: true, blockSeq: 9, capabilityState: "revoked", revokedSeq: "8"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			validInput, wantDispatches := schema2OpenDispatchLifecycleInput(t, test.revokedCapability)
+			assertSchema2OpenDispatchOrderingPrecondition(t, validInput, wantDispatches)
 			projection := mustProjectCanonicalFixture(t, validInput)
 			view := ProjectRunView(projection)
 			if view.Status != "running" || view.Identity.Epoch != 1 || len(view.Blocks) != 1 {
@@ -1775,10 +1854,14 @@ func TestProjectCanonicalRunSchema2OpenDispatchIsSourceSelected(t *testing.T) {
 			if err := json.Unmarshal(blockedDispatches, &gotDispatches); err != nil {
 				t.Fatal(err)
 			}
-			if len(gotDispatches) != 1 {
-				t.Fatalf("schema-2 dispatches = %d, want one source-ordered item", len(gotDispatches))
+			if len(gotDispatches) != 2 {
+				t.Fatalf("schema-2 dispatches = %d, want the complete two-item unmatched set", len(gotDispatches))
 			}
-			gotRevokedSeq, hasRevokedSeq := gotDispatches[0]["peekCapabilityRevokedSeq"]
+			if string(gotDispatches[0]["dispatchId"]) != `"dsp_01KXNP6VY3227H78329V52CKF9"` || string(gotDispatches[0]["dispatchSeq"]) != `6` ||
+				string(gotDispatches[1]["dispatchId"]) != `"dsp_01KXNP6VY3227H78329V52CKF8"` || string(gotDispatches[1]["dispatchSeq"]) != `7` {
+				t.Fatalf("schema-2 unmatched set lost stable dispatchSeq order: %s", blockedDispatches)
+			}
+			gotRevokedSeq, hasRevokedSeq := gotDispatches[1]["peekCapabilityRevokedSeq"]
 			if test.revokedCapability {
 				if !hasRevokedSeq || string(gotRevokedSeq) != test.revokedSeq {
 					t.Fatalf("revoked dispatch lost exact revocation sequence %s: %s", test.revokedSeq, blockedDispatches)
@@ -1786,9 +1869,14 @@ func TestProjectCanonicalRunSchema2OpenDispatchIsSourceSelected(t *testing.T) {
 			} else if hasRevokedSeq {
 				t.Fatalf("none-state dispatch invented optional revocation sequence: %s", blockedDispatches)
 			}
-			if string(gotDispatches[0]["latestCapabilityGeneration"]) != `"0"` || string(gotDispatches[0]["latestCapabilityIssuedSeq"]) != `0` ||
-				string(gotDispatches[0]["latestSteeringGeneration"]) != `"0"` {
-				t.Fatalf("dispatch lost required zero-valued lifecycle members: %s", blockedDispatches)
+			if _, reviewerRevoked := gotDispatches[0]["peekCapabilityRevokedSeq"]; reviewerRevoked {
+				t.Fatalf("unchanged reviewer dispatch invented revocation state: %s", blockedDispatches)
+			}
+			for index, dispatch := range gotDispatches {
+				if string(dispatch["latestCapabilityGeneration"]) != `"0"` || string(dispatch["latestCapabilityIssuedSeq"]) != `0` ||
+					string(dispatch["latestSteeringGeneration"]) != `"0"` {
+					t.Fatalf("dispatch %d lost required zero-valued lifecycle members: %s", index, blockedDispatches)
+				}
 			}
 			assertSchema2SessionProjection(t, view, test.capabilityState)
 		})
@@ -1827,8 +1915,7 @@ func TestProjectCanonicalRunSchema2OpenDispatchIsSourceSelected(t *testing.T) {
 		t.Run("rejects "+test.name, func(t *testing.T) {
 			input := cloneCanonicalInput(validInput)
 			events := canonicalLedgerEvents(t, input)
-			blocked := events[5]["data"].(map[string]any)["openDispatches"].([]any)
-			resumed := events[6]["data"].(map[string]any)["openDispatches"].([]any)
+			blocked, resumed := schema2OpenDispatchCarries(t, events)
 			test.mutate(blocked, resumed)
 			input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2Ledger, marshalProjectionLedger(t, events...))
 			_, err := ProjectCanonicalRun(input)
@@ -1841,25 +1928,66 @@ func TestProjectCanonicalRunSchema2OpenDispatchIsSourceSelected(t *testing.T) {
 		mutate func(blocked, resumed []any)
 	}{
 		{name: "revoked state missing revocation sequence", mutate: func(blocked, resumed []any) {
-			delete(blocked[0].(map[string]any), "peekCapabilityRevokedSeq")
-			delete(resumed[0].(map[string]any), "peekCapabilityRevokedSeq")
+			delete(blocked[1].(map[string]any), "peekCapabilityRevokedSeq")
+			delete(resumed[1].(map[string]any), "peekCapabilityRevokedSeq")
 		}},
 		{name: "revocation sequence does not name lifecycle event", mutate: func(blocked, resumed []any) {
-			blocked[0].(map[string]any)["peekCapabilityRevokedSeq"] = 5
-			resumed[0].(map[string]any)["peekCapabilityRevokedSeq"] = 5
+			blocked[1].(map[string]any)["peekCapabilityRevokedSeq"] = 7
+			resumed[1].(map[string]any)["peekCapabilityRevokedSeq"] = 7
 		}},
 	} {
 		t.Run("rejects "+test.name, func(t *testing.T) {
 			input, _ := schema2OpenDispatchLifecycleInput(t, true)
 			events := canonicalLedgerEvents(t, input)
-			blocked := events[6]["data"].(map[string]any)["openDispatches"].([]any)
-			resumed := events[7]["data"].(map[string]any)["openDispatches"].([]any)
+			blocked, resumed := schema2OpenDispatchCarries(t, events)
 			test.mutate(blocked, resumed)
 			input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2Ledger, marshalProjectionLedger(t, events...))
 			_, err := ProjectCanonicalRun(input)
 			requireProjectionError(t, err, ErrRunProjectionInvalid)
 		})
 	}
+
+	for _, target := range []string{"block", "resume"} {
+		for _, test := range []struct {
+			name   string
+			mutate func([]any) []any
+		}{
+			{name: "missing dispatch", mutate: func(carry []any) []any { return carry[:1] }},
+			{name: "extra dispatch", mutate: func(carry []any) []any {
+				extra := cloneStringAnyMap(carry[1].(map[string]any))
+				extra["dispatchId"] = "dsp_01KXNP6VY3227H78329V52CKFA"
+				extra["targetLeaseId"] = "lease_01KXNP6VY3227H78329V52CKFA"
+				extra["dispatchSeq"] = 5
+				return append([]any{extra}, carry...)
+			}},
+			{name: "duplicate dispatch", mutate: func(carry []any) []any { return append(carry, cloneAny(carry[1])) }},
+			{name: "reordered dispatches", mutate: func(carry []any) []any { return []any{carry[1], carry[0]} }},
+			{name: "mismatched dispatch", mutate: func(carry []any) []any {
+				carry[1].(map[string]any)["targetLeaseId"] = "lease_01KXNP6VY3227H78329V52CKFA"
+				return carry
+			}},
+		} {
+			t.Run("rejects "+target+" "+test.name, func(t *testing.T) {
+				input := cloneCanonicalInput(validInput)
+				events := canonicalLedgerEvents(t, input)
+				blocked, resumed := schema2OpenDispatchCarries(t, events)
+				if target == "block" {
+					schema2SetOpenDispatchCarry(t, events, "run_blocked", test.mutate(blocked))
+				} else {
+					schema2SetOpenDispatchCarry(t, events, "run_resumed", test.mutate(resumed))
+				}
+				input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2Ledger, marshalProjectionLedger(t, events...))
+				_, err := ProjectCanonicalRun(input)
+				requireProjectionError(t, err, ErrRunProjectionInvalid)
+			})
+		}
+	}
+
+	t.Run("rejects already-matched dispatch in block and resume carry", func(t *testing.T) {
+		input := schema2AlreadyMatchedDispatchCarryInput(t)
+		_, err := ProjectCanonicalRun(input)
+		requireProjectionError(t, err, ErrRunProjectionInvalid)
+	})
 
 	schema1 := SafeSchema1OpenDispatch{
 		DispatchID: "dispatch-a", NodeID: projectionTestFormationID, SlotID: "slot_worker",
@@ -2216,6 +2344,171 @@ cardPath = "/private/reviewer.toml"
 cardSha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 `
 
+const schema1OrderingSnapshot = `schema = 1
+id = "brd_projection"
+slug = "projection"
+title = "Projection ordering fixture"
+rev = 7
+
+[[mission]]
+id = "mis_root"
+title = "Root"
+goal = "Project the run"
+beadId = "ctx-7i1.1"
+
+[[formation]]
+id = "fmn_alpha"
+type = "solo"
+title = "Alpha"
+[[formation.input]]
+id = "port_in"
+label = "Input"
+[[formation.output]]
+id = "port_z"
+label = "First declared output"
+[[formation.output]]
+id = "port_a"
+label = "Second declared output"
+[[formation.slot]]
+id = "slot_alpha"
+label = "Alpha"
+agentId = "alpha"
+harness = "codex"
+controller = true
+
+[[formation]]
+id = "fmn_beta"
+type = "solo"
+title = "Beta"
+[[formation.input]]
+id = "port_in"
+label = "Input"
+[[formation.output]]
+id = "port_b"
+label = "Output"
+[[formation.slot]]
+id = "slot_beta"
+label = "Beta"
+agentId = "beta"
+harness = "codex"
+controller = true
+
+[[gate]]
+id = "gate_alpha"
+title = "Alpha review"
+kinds = ["human"]
+criterion = "Approve alpha"
+
+[[gate]]
+id = "gate_beta"
+title = "Beta review"
+kinds = ["human"]
+criterion = "Approve beta"
+
+[[connection]]
+id = "edge_root_alpha"
+from = "mis_root:out"
+to = "fmn_alpha:port_in"
+[[connection]]
+id = "edge_root_beta"
+from = "mis_root:out"
+to = "fmn_beta:port_in"
+[[connection]]
+id = "edge_alpha_gate"
+from = "fmn_alpha:port_z"
+to = "gate_alpha:in"
+[[connection]]
+id = "edge_beta_gate"
+from = "fmn_beta:port_b"
+to = "gate_beta:in"
+`
+
+const schema1OrderingBindings = `schema = 1
+runId = "run_01KXNP6VY3227H78329V52CKF8"
+boardId = "brd_projection"
+boardSlug = "projection"
+boardRev = 7
+missionId = "mis_root"
+
+[[binding]]
+nodeId = "fmn_beta"
+slotId = "slot_beta"
+agentId = "beta"
+harness = "codex"
+sessionStem = "beta"
+cardPath = "/private/beta.toml"
+cardSha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+[[binding]]
+nodeId = "fmn_alpha"
+slotId = "slot_alpha"
+agentId = "alpha"
+harness = "codex"
+sessionStem = "alpha"
+cardPath = "/private/alpha.toml"
+cardSha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+`
+
+func schema1OrderingProjectionInput(t *testing.T) CanonicalRunReadInput {
+	t.Helper()
+	inputRef := func(edgeID, nodeID, portID string, outputSeq uint64) map[string]any {
+		return map[string]any{
+			"edgeId": edgeID, "fromNodeId": nodeID, "fromPortId": portID, "toPortId": "in", "outputSeq": outputSeq,
+		}
+	}
+	nodeStarted := func(sequence uint64, nodeID, edgeID string) map[string]any {
+		event := schema1Event(projectionTestRunID, sequence, RunEventNodeStarted, map[string]any{
+			"nodeKind": "formation", "reason": "initial",
+			"inputRefs": []any{map[string]any{
+				"edgeId": edgeID, "fromNodeId": projectionTestMissionID, "fromPortId": "out", "toPortId": "port_in", "outputSeq": 1,
+			}},
+		})
+		event["nodeId"] = nodeID
+		return event
+	}
+	nodeOutput := func(sequence uint64, nodeID string, outputs map[string]any) map[string]any {
+		event := schema1Event(projectionTestRunID, sequence, RunEventNodeOutput, map[string]any{
+			"status": "done", "text": nodeID + " done", "outputs": outputs, "reason": "completed",
+		})
+		event["nodeId"] = nodeID
+		return event
+	}
+	gateEvaluating := func(sequence uint64, gateID string, input map[string]any) map[string]any {
+		event := schema1Event(projectionTestRunID, sequence, RunEventGateEvaluating, map[string]any{
+			"kinds": []string{"human"}, "criterion": "Approve " + gateID, "inputRef": input, "judgeChain": []string{},
+		})
+		event["nodeId"] = gateID
+		event["gateId"] = gateID
+		return event
+	}
+	gateVerdict := func(sequence uint64, gateID string, input map[string]any) map[string]any {
+		event := schema1Event(projectionTestRunID, sequence, RunEventGateVerdict, map[string]any{
+			"verdict": "pass", "perKind": map[string]any{"human": "pass"}, "routePort": "pass", "routedEdges": []string{},
+			"reason": "reviewed", "inputRef": input,
+		})
+		event["nodeId"] = gateID
+		event["gateId"] = gateID
+		return event
+	}
+	betaInput := inputRef("edge_beta_gate", "fmn_beta", "port_b", 3)
+	alphaInput := inputRef("edge_alpha_gate", "fmn_alpha", "port_z", 7)
+	input := schema1ProjectionInput(t,
+		schema1StartedEvent(projectionTestRunID),
+		nodeStarted(2, "fmn_beta", "edge_root_beta"),
+		nodeOutput(3, "fmn_beta", map[string]any{"port_b": map[string]any{"text": "beta"}}),
+		gateEvaluating(4, "gate_beta", betaInput),
+		gateVerdict(5, "gate_beta", betaInput),
+		nodeStarted(6, "fmn_alpha", "edge_root_alpha"),
+		nodeOutput(7, "fmn_alpha", map[string]any{
+			"port_a": map[string]any{"text": "alpha second"}, "port_z": map[string]any{"text": "alpha first"},
+		}),
+		gateEvaluating(8, "gate_alpha", alphaInput),
+		gateVerdict(9, "gate_alpha", alphaInput),
+	)
+	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema1GraphSnapshot, []byte(schema1OrderingSnapshot))
+	return replaceCanonicalDocument(t, input, CanonicalInputRoleSchema1BindingsSnapshot, []byte(schema1OrderingBindings))
+}
+
 func schema1ProjectionInput(t *testing.T, events ...map[string]any) CanonicalRunReadInput {
 	t.Helper()
 	return CanonicalRunReadInput{
@@ -2227,6 +2520,59 @@ func schema1ProjectionInput(t *testing.T, events ...map[string]any) CanonicalRun
 			canonicalInputDocument(CanonicalInputRoleSchema1BindingsSnapshot, []byte(schema1ProjectionBindings)),
 		},
 	}
+}
+
+type schema2AuthorityFixture struct {
+	policies             []CanonicalInputDocument
+	authorityGenerations [][]byte
+	selectedPolicyRev    uint64
+	selectedPolicySHA256 string
+}
+
+func schema2AuthorityHistory(t *testing.T, rootHash string) schema2AuthorityFixture {
+	t.Helper()
+	disabledPolicy := canonicalInputDocument(CanonicalInputRoleSchema2AdmissionPolicy, canonicalJSON(t, map[string]any{
+		"policySchema": 1, "policyRev": 1, "priorPolicySha256": "", "state": "disabled",
+	}))
+	initialAuthority := canonicalJSON(t, map[string]any{
+		"recordRev": 1, "priorGeneration": nil, "authoritySchema": 2,
+		"workspaceAuthorityId": projectionTestWorkspaceID,
+		"rootIdentityEncoding": "workspace-root-identity-v1", "workspaceRootIdentitySha256": rootHash,
+		"nextWriterFence": 1, "nextAdmissionSeq": 1,
+		"admissionPolicyRef": map[string]any{"policyRev": 1, "policySha256": disabledPolicy.SHA256},
+	})
+	writerAllocated := nextMutableRecordGeneration(t, initialAuthority, func(record map[string]any) {
+		record["nextWriterFence"] = 2
+	})
+	configuredPolicy := canonicalInputDocument(CanonicalInputRoleSchema2AdmissionPolicy, canonicalJSON(t, map[string]any{
+		"policySchema": 1, "policyRev": 2, "priorPolicySha256": disabledPolicy.SHA256, "state": "configured",
+		"maxActiveRuns": 1, "maxQueuedRuns": 1,
+	}))
+	policyConfigured := nextMutableRecordGeneration(t, writerAllocated, func(record map[string]any) {
+		record["admissionPolicyRef"] = map[string]any{"policyRev": 2, "policySha256": configuredPolicy.SHA256}
+	})
+	admissionAllocated := nextMutableRecordGeneration(t, policyConfigured, func(record map[string]any) {
+		record["nextAdmissionSeq"] = 2
+	})
+	return schema2AuthorityFixture{
+		policies:             []CanonicalInputDocument{disabledPolicy, configuredPolicy},
+		authorityGenerations: [][]byte{initialAuthority, writerAllocated, policyConfigured, admissionAllocated},
+		selectedPolicyRev:    2,
+		selectedPolicySHA256: configuredPolicy.SHA256,
+	}
+}
+
+func nextMutableRecordGeneration(t *testing.T, previous []byte, mutate func(map[string]any)) []byte {
+	t.Helper()
+	var record map[string]any
+	if err := json.Unmarshal(previous, &record); err != nil {
+		t.Fatal(err)
+	}
+	previousRev := uint64(record["recordRev"].(float64))
+	record["recordRev"] = previousRev + 1
+	record["priorGeneration"] = map[string]any{"recordRev": previousRev, "sha256": projectionSHA256(previous)}
+	mutate(record)
+	return canonicalJSON(t, record)
 }
 
 func schema2ProjectionInput(t *testing.T, activated bool, extra ...map[string]any) CanonicalRunReadInput {
@@ -2258,18 +2604,14 @@ boardRev = 7
 `)
 	graphHash := projectionSHA256(graph)
 	bindingsHash := projectionSHA256(bindings)
-	policy := canonicalJSON(t, map[string]any{
-		"policySchema": 1, "policyRev": 1, "priorPolicySha256": "", "state": "configured",
-		"maxActiveRuns": 1, "maxQueuedRuns": 1,
-	})
-	policyHash := projectionSHA256(policy)
-	commandRecord := schema2AdmissionCommandRecord(t, projectionTestCommandID, 1, policyHash)
+	rootHash := strings.Repeat("1", 64)
+	authority := schema2AuthorityHistory(t, rootHash)
+	commandRecord := schema2AdmissionCommandRecord(t, projectionTestCommandID, authority.selectedPolicyRev, authority.selectedPolicySHA256)
 	var command map[string]any
 	if err := json.Unmarshal(commandRecord, &command); err != nil {
 		t.Fatal(err)
 	}
 	commandPayloadHash := command["commandPayloadSha256"].(string)
-	rootHash := strings.Repeat("1", 64)
 	runBootstrap := canonicalJSON(t, map[string]any{
 		"runBootstrapSchema":      1,
 		"workspaceAuthorityId":    projectionTestWorkspaceID,
@@ -2283,8 +2625,8 @@ boardRev = 7
 	started := schema2Event(projectionTestRunID, 1, "run_started", map[string]any{
 		"workspaceAuthorityId":    projectionTestWorkspaceID,
 		"workspaceAdmissionSeq":   1,
-		"admissionPolicyRev":      1,
-		"admissionPolicySha256":   policyHash,
+		"admissionPolicyRev":      authority.selectedPolicyRev,
+		"admissionPolicySha256":   authority.selectedPolicySHA256,
 		"admissionCommandId":      projectionTestCommandID,
 		"commandPayloadSha256":    commandPayloadHash,
 		"boardSlug":               projectionTestBoardSlug,
@@ -2307,40 +2649,37 @@ boardRev = 7
 	events := []map[string]any{started}
 	if activated {
 		events = append(events, schema2Event(projectionTestRunID, 2, "run_activated", map[string]any{
-			"workspaceAdmissionSeq": 1, "admissionPolicyRev": 1,
-			"admissionPolicySha256": policyHash, "reason": "immediate",
+			"workspaceAdmissionSeq": 1, "admissionPolicyRev": authority.selectedPolicyRev,
+			"admissionPolicySha256": authority.selectedPolicySHA256, "reason": "immediate",
 		}))
 	}
 	events = append(events, extra...)
+	documents := []CanonicalInputDocument{
+		canonicalInputDocument(CanonicalInputRoleSchema2WorkspaceRegistry, canonicalJSON(t, map[string]any{
+			"registrySchema": 1, "recordRev": 1, "priorGeneration": nil,
+			"entries": []any{map[string]any{
+				"workspaceAuthorityId": projectionTestWorkspaceID, "configuredPath": "/workspace",
+				"device": "1", "inode": "2", "workspaceRootIdentitySha256": rootHash,
+			}},
+		})),
+		canonicalInputDocument(CanonicalInputRoleSchema2WorkspaceBootstrap, canonicalJSON(t, map[string]any{
+			"bootstrapSchema": 1, "workspaceAuthorityId": projectionTestWorkspaceID,
+			"rootIdentityEncoding": "workspace-root-identity-v1", "workspaceRootIdentitySha256": rootHash,
+		})),
+		canonicalInputDocument(CanonicalInputRoleSchema2WorkspaceAuthority, authority.authorityGenerations[len(authority.authorityGenerations)-1]),
+	}
+	documents = append(documents, authority.policies...)
+	documents = append(documents,
+		canonicalInputDocument(CanonicalInputRoleSchema2RunBootstrap, runBootstrap),
+		canonicalInputDocument(CanonicalInputRoleSchema2GraphSnapshot, graph),
+		canonicalInputDocument(CanonicalInputRoleSchema2PrivateBindings, bindings),
+		canonicalInputDocument(CanonicalInputRoleSchema2Ledger, marshalProjectionLedger(t, events...)),
+		canonicalInputDocument(CanonicalInputRoleSchema2CommandRecord, commandRecord),
+	)
 	return CanonicalRunReadInput{
-		RunID:  projectionTestRunID,
-		Source: CanonicalRunSourceSchema2,
-		Documents: []CanonicalInputDocument{
-			canonicalInputDocument(CanonicalInputRoleSchema2WorkspaceRegistry, canonicalJSON(t, map[string]any{
-				"registrySchema": 1, "recordRev": 1, "priorGeneration": nil,
-				"entries": []any{map[string]any{
-					"workspaceAuthorityId": projectionTestWorkspaceID, "configuredPath": "/workspace",
-					"device": "1", "inode": "2", "workspaceRootIdentitySha256": rootHash,
-				}},
-			})),
-			canonicalInputDocument(CanonicalInputRoleSchema2WorkspaceBootstrap, canonicalJSON(t, map[string]any{
-				"bootstrapSchema": 1, "workspaceAuthorityId": projectionTestWorkspaceID,
-				"rootIdentityEncoding": "workspace-root-identity-v1", "workspaceRootIdentitySha256": rootHash,
-			})),
-			canonicalInputDocument(CanonicalInputRoleSchema2WorkspaceAuthority, canonicalJSON(t, map[string]any{
-				"recordRev": 1, "priorGeneration": nil, "authoritySchema": 2,
-				"workspaceAuthorityId": projectionTestWorkspaceID,
-				"rootIdentityEncoding": "workspace-root-identity-v1", "workspaceRootIdentitySha256": rootHash,
-				"nextWriterFence": 2, "nextAdmissionSeq": 2,
-				"admissionPolicyRef": map[string]any{"policyRev": 1, "policySha256": policyHash},
-			})),
-			canonicalInputDocument(CanonicalInputRoleSchema2AdmissionPolicy, policy),
-			canonicalInputDocument(CanonicalInputRoleSchema2RunBootstrap, runBootstrap),
-			canonicalInputDocument(CanonicalInputRoleSchema2GraphSnapshot, graph),
-			canonicalInputDocument(CanonicalInputRoleSchema2PrivateBindings, bindings),
-			canonicalInputDocument(CanonicalInputRoleSchema2Ledger, marshalProjectionLedger(t, events...)),
-			canonicalInputDocument(CanonicalInputRoleSchema2CommandRecord, commandRecord),
-		},
+		RunID:     projectionTestRunID,
+		Source:    CanonicalRunSourceSchema2,
+		Documents: documents,
 	}
 }
 
@@ -2357,7 +2696,7 @@ rev = 7
 
 [[formation]]
 id = "` + projectionTestFormationID + `"
-type = "solo"
+type = "peer"
 title = "Work"
 
 [[formation.input]]
@@ -2369,11 +2708,18 @@ id = "port_out"
 label = "Output"
 
 [[formation.slot]]
+id = "slot_reviewer"
+label = "Reviewer"
+agentId = "reviewer"
+harness = "codex"
+controller = true
+
+[[formation.slot]]
 id = "slot_worker"
 label = "Worker"
 agentId = "worker"
 harness = "codex"
-controller = true
+controller = false
 
 [[authoredConfigManifest]]
 classification = "authored_config"
@@ -2397,6 +2743,16 @@ harness = "codex"
 sessionTargetId = "target_worker"
 targetFingerprint = "` + strings.Repeat("a", 64) + `"
 sessionLineageSha256 = "` + strings.Repeat("c", 64) + `"
+
+[[binding]]
+bindingId = "binding_reviewer"
+nodeId = "` + projectionTestFormationID + `"
+slotId = "slot_reviewer"
+agentId = "reviewer"
+harness = "codex"
+sessionTargetId = "target_reviewer"
+targetFingerprint = "` + strings.Repeat("b", 64) + `"
+sessionLineageSha256 = "` + strings.Repeat("d", 64) + `"
 `)
 	graphHash := projectionSHA256(graph)
 	bindingsHash := projectionSHA256(bindings)
@@ -2419,6 +2775,7 @@ sessionLineageSha256 = "` + strings.Repeat("c", 64) + `"
 	startedData["graphSnapshotSha256"] = graphHash
 	startedData["privateBindingsSha256"] = bindingsHash
 	startedData["bindingProjectionSha256"] = projectionSHA256(canonicalJSON(t, []any{
+		map[string]any{"bindingId": "binding_reviewer", "nodeId": projectionTestFormationID, "slotId": "slot_reviewer", "sessionTargetId": "target_reviewer"},
 		map[string]any{"bindingId": "binding_worker", "nodeId": projectionTestFormationID, "slotId": "slot_worker", "sessionTargetId": "target_worker"},
 	}))
 	startedData["runRoot"] = map[string]any{"kind": "formation", "nodeId": projectionTestFormationID}
@@ -2448,18 +2805,32 @@ sessionLineageSha256 = "` + strings.Repeat("c", 64) + `"
 	})
 	bindingWorker["nodeId"] = projectionTestFormationID
 	bindingWorker["slotId"] = "slot_worker"
-	dispatchWorker := schema2SlotDispatchEvent(t, 5, "dsp_01KXNP6VY3227H78329V52CKF8", "lease_01KXNP6VY3227H78329V52CKF8", "slot_worker", "worker", "binding_worker", "target_worker", strings.Repeat("a", 64))
+	bindingReviewer := schema2FormationEvent(projectionTestRunID, 5, "slot_binding_observed", map[string]any{
+		"bindingId": "binding_reviewer", "slotId": "slot_reviewer", "sessionTargetId": "target_reviewer", "health": "runnable",
+		"reason": "resolved", "observedAt": "2026-07-20T10:00:04Z", "relatedSeq": 3,
+	})
+	bindingReviewer["nodeId"] = projectionTestFormationID
+	bindingReviewer["slotId"] = "slot_reviewer"
+	dispatchReviewer := schema2SlotDispatchEvent(t, 6, "dsp_01KXNP6VY3227H78329V52CKF9", "lease_01KXNP6VY3227H78329V52CKF9", "slot_reviewer", "reviewer", "binding_reviewer", "target_reviewer", strings.Repeat("b", 64), "peer-turn")
+	dispatchWorker := schema2SlotDispatchEvent(t, 7, "dsp_01KXNP6VY3227H78329V52CKF8", "lease_01KXNP6VY3227H78329V52CKF8", "slot_worker", "worker", "binding_worker", "target_worker", strings.Repeat("a", 64), "peer-turn")
 
 	openDispatches := []any{
 		map[string]any{
+			"dispatchId": "dsp_01KXNP6VY3227H78329V52CKF9", "targetLeaseId": "lease_01KXNP6VY3227H78329V52CKF9",
+			"nodeId": projectionTestFormationID, "attempt": 1, "slotId": "slot_reviewer", "agentId": "reviewer", "bindingId": "binding_reviewer",
+			"sessionTargetId": "target_reviewer", "targetFingerprint": strings.Repeat("b", 64), "dispatchSeq": 6,
+			"peekCapabilityState": "none", "latestCapabilityGeneration": "0", "latestCapabilityIssuedSeq": 0,
+			"latestSteeringGeneration": "0", "interruptState": "none",
+		},
+		map[string]any{
 			"dispatchId": "dsp_01KXNP6VY3227H78329V52CKF8", "targetLeaseId": "lease_01KXNP6VY3227H78329V52CKF8",
 			"nodeId": projectionTestFormationID, "attempt": 1, "slotId": "slot_worker", "agentId": "worker", "bindingId": "binding_worker",
-			"sessionTargetId": "target_worker", "targetFingerprint": strings.Repeat("a", 64), "dispatchSeq": 5,
+			"sessionTargetId": "target_worker", "targetFingerprint": strings.Repeat("a", 64), "dispatchSeq": 7,
 			"peekCapabilityState": "none", "latestCapabilityGeneration": "0", "latestCapabilityIssuedSeq": 0,
 			"latestSteeringGeneration": "0", "interruptState": "none",
 		},
 	}
-	nextSeq := uint64(6)
+	nextSeq := uint64(8)
 	if revokedCapability {
 		revoked := schema2FormationEvent(projectionTestRunID, nextSeq, "slot_peek_capability_revoked", map[string]any{
 			"dispatchId": "dsp_01KXNP6VY3227H78329V52CKF8", "targetLeaseId": "lease_01KXNP6VY3227H78329V52CKF8",
@@ -2469,13 +2840,13 @@ sessionLineageSha256 = "` + strings.Repeat("c", 64) + `"
 		})
 		revoked["nodeId"] = projectionTestFormationID
 		revoked["slotId"] = "slot_worker"
-		events = append(events, nodeStarted, bindingWorker, dispatchWorker, revoked)
-		item := openDispatches[0].(map[string]any)
+		events = append(events, nodeStarted, bindingWorker, bindingReviewer, dispatchReviewer, dispatchWorker, revoked)
+		item := openDispatches[1].(map[string]any)
 		item["peekCapabilityState"] = "revoked"
 		item["peekCapabilityRevokedSeq"] = nextSeq
 		nextSeq++
 	} else {
-		events = append(events, nodeStarted, bindingWorker, dispatchWorker)
+		events = append(events, nodeStarted, bindingWorker, bindingReviewer, dispatchReviewer, dispatchWorker)
 	}
 	blockedSeq := nextSeq
 	blocked := schema2FormationEvent(projectionTestRunID, blockedSeq, "run_blocked", map[string]any{
@@ -2497,24 +2868,124 @@ sessionLineageSha256 = "` + strings.Repeat("c", 64) + `"
 	resumed["epoch"] = uint64(1)
 	events = append(events, blocked, resumed)
 
+	admissionPayload := canonicalCommandPayload("start", projectionTestRunID)
+	admissionPayload["runRoot"] = map[string]any{"kind": "formation", "nodeId": projectionTestFormationID}
+	policyRev, policyHash := selectedAdmissionPolicy(t, input)
+	admissionHistory := schema2CommandHistoryForPayload(t, projectionTestCommandID, "start", "applied", admissionPayload, schema2CommandOutcome{
+		runID: projectionTestRunID, effectSeq: 1, admittedWriterFence: 1, stateWriterFence: 1, outcomeWriterFence: 1,
+		decisionPolicyRef: map[string]any{"policyRev": policyRev, "policySha256": policyHash},
+	})
 	var admissionRecord map[string]any
-	if err := json.Unmarshal(canonicalDocumentByRole(t, input, CanonicalInputRoleSchema2CommandRecord).Bytes, &admissionRecord); err != nil {
+	if err := json.Unmarshal(admissionHistory.terminal, &admissionRecord); err != nil {
 		t.Fatal(err)
 	}
-	admissionPayload := admissionRecord["commandPayload"].(map[string]any)
-	admissionPayload["runRoot"] = map[string]any{"kind": "formation", "nodeId": projectionTestFormationID}
-	admissionRecord["commandPayloadSha256"] = projectionSHA256(canonicalJSON(t, admissionPayload))
 	startedData["commandPayloadSha256"] = admissionRecord["commandPayloadSha256"]
-	resumeRecord := map[string]any{
-		"commandSchema": 1, "recordRev": 1, "priorGeneration": nil, "commandEncoding": "run-command-jcs-v1",
-		"commandId": projectionTestOtherCmdID, "commandKind": "resume", "commandPayload": resumePayload, "commandPayloadSha256": resumePayloadHash,
-		"admittedWriterFence": 1, "stateWriterFence": 1, "state": "applied", "runId": projectionTestRunID,
-		"effectSeq": resumeSeq, "outcomeWriterFence": 1, "decisionAdmissionPolicyRef": nil,
-	}
-	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2CommandRecord, canonicalJSON(t, admissionRecord))
-	input.Documents = append(input.Documents, canonicalInputDocument(CanonicalInputRoleSchema2CommandRecord, canonicalJSON(t, resumeRecord)))
+	resumeHistory := schema2CommandHistoryForPayload(t, projectionTestOtherCmdID, "resume", "applied", resumePayload, schema2CommandOutcome{
+		runID: projectionTestRunID, effectSeq: resumeSeq, admittedWriterFence: 1, stateWriterFence: 1, outcomeWriterFence: 1,
+	})
+	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2CommandRecord, admissionHistory.terminal)
+	input.Documents = append(input.Documents, canonicalInputDocument(CanonicalInputRoleSchema2CommandRecord, resumeHistory.terminal))
 	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2Ledger, marshalProjectionLedger(t, events...))
 	return input, openDispatches
+}
+
+func schema2AlreadyMatchedDispatchCarryInput(t *testing.T) CanonicalRunReadInput {
+	t.Helper()
+	input, _ := schema2OpenDispatchLifecycleInput(t, false)
+	events := canonicalLedgerEvents(t, input)
+	blocked := cloneStringAnyMap(events[len(events)-2])
+	resumed := cloneStringAnyMap(events[len(events)-1])
+	blocked["seq"] = uint64(10)
+	blocked["ts"] = "2026-07-20T10:00:09Z"
+	resumed["seq"] = uint64(11)
+	resumed["ts"] = "2026-07-20T10:00:10Z"
+	resumedData := resumed["data"].(map[string]any)
+	resumedData["resumedFromSeq"] = uint64(10)
+	resumePayload := canonicalCommandPayload("resume", projectionTestRunID)
+	resumePayload["blockedSeq"] = uint64(10)
+	resumePayloadHash := projectionSHA256(canonicalJSON(t, resumePayload))
+	resumedData["commandPayloadSha256"] = resumePayloadHash
+	resumeHistory := schema2CommandHistoryForPayload(t, projectionTestOtherCmdID, "resume", "applied", resumePayload, schema2CommandOutcome{
+		runID: projectionTestRunID, effectSeq: 11, admittedWriterFence: 1, stateWriterFence: 1, outcomeWriterFence: 1,
+	})
+
+	events = append(events[:len(events)-2], schema2MatchedReviewerEvents(t)...)
+	events = append(events, blocked, resumed)
+	input = replaceCanonicalCommandRecord(t, input, projectionTestOtherCmdID, resumeHistory.terminal)
+	return replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2Ledger, marshalProjectionLedger(t, events...))
+}
+
+func schema2MatchedReviewerEvents(t *testing.T) []map[string]any {
+	t.Helper()
+	dispatchID := "dsp_01KXNP6VY3227H78329V52CKF9"
+	leaseID := "lease_01KXNP6VY3227H78329V52CKF9"
+	fingerprint := strings.Repeat("b", 64)
+	revoked := schema2FormationEvent(projectionTestRunID, 8, "slot_peek_capability_revoked", map[string]any{
+		"dispatchId": dispatchID, "targetLeaseId": leaseID, "bindingId": "binding_reviewer", "sessionTargetId": "target_reviewer",
+		"targetFingerprint": fingerprint, "capabilityGeneration": "0", "capabilityIssuedSeq": 0, "steeringGeneration": "0",
+		"reason": "result_closure", "revokedAt": "2026-07-20T10:00:07Z", "inputClosed": true,
+	})
+	revoked["nodeId"] = projectionTestFormationID
+	revoked["slotId"] = "slot_reviewer"
+
+	startCursor := map[string]any{"historyEpoch": "AQIDBAUGBwgJCgsMDQ4PEA", "offset": "0"}
+	endCursor := map[string]any{"historyEpoch": "AQIDBAUGBwgJCgsMDQ4PEA", "offset": "24"}
+	fingerprintHash := projectionSHA256([]byte(fingerprint))
+	closureBarrier := map[string]any{
+		"dispatchId": dispatchID, "targetLeaseId": leaseID, "targetFingerprintSha256": fingerprintHash,
+		"monitorEvidenceSha256": strings.Repeat("2", 64), "terminalCaptureEnd": endCursor,
+	}
+	auditProof := map[string]any{
+		"proofKind": "tmux_clients_accounted", "dispatchId": dispatchID, "targetLeaseId": leaseID, "targetFingerprint": fingerprint,
+		"attachmentAuditRegistrationSha256": strings.Repeat("1", 64), "closureBarrierSha256": projectionSHA256(canonicalJSON(t, closureBarrier)),
+		"terminalCaptureEnd": endCursor, "monitorEvidenceSha256": strings.Repeat("2", 64),
+	}
+	auditHash := projectionSHA256(canonicalJSON(t, auditProof))
+	sentinel := "<<<CHROTE-DONE run-id=" + projectionTestRunID + " status=ok artifact=report.md>>>"
+	baseline := map[string]any{
+		"targetFingerprintSha256": fingerprintHash, "historyEpoch": "AQIDBAUGBwgJCgsMDQ4PEA", "offset": "0", "cols": 120, "rows": 40,
+	}
+	baselineHash := projectionSHA256(canonicalJSON(t, baseline))
+	turnResult := map[string]any{
+		"turnKey": "turn_slot_reviewer", "phase": "peer-turn", "status": "done",
+		"turnPayload": map[string]any{"availability": "available", "exact": true, "payload": map[string]any{"kind": "work", "mediaType": "text/plain", "text": "review complete"}},
+		"outputs":     map[string]any{}, "reportArtifactId": "", "artifactIds": []any{}, "diffArtifactIds": []any{},
+	}
+	turnClosureProof := map[string]any{
+		"proofKind": "harness_turn_closed", "dispatchId": dispatchID, "targetLeaseId": leaseID, "targetFingerprint": fingerprint,
+		"paneHistoryBaselineSha256": baselineHash, "peekCapabilityRevokedSeq": 8, "steeringGeneration": "0",
+		"sentinelSha256": projectionSHA256([]byte(sentinel)), "terminalCaptureEnd": endCursor,
+		"harnessReadyEvidenceSha256": strings.Repeat("4", 64), "clientAttachmentAuditProofSha256": auditHash,
+	}
+	result := schema2FormationEvent(projectionTestRunID, 9, "slot_result", map[string]any{
+		"dispatchId": dispatchID, "targetLeaseId": leaseID, "turnKey": "turn_slot_reviewer", "turnPhase": "peer-turn",
+		"nodeId": projectionTestFormationID, "attempt": 1, "slotId": "slot_reviewer", "agentId": "reviewer", "bindingId": "binding_reviewer",
+		"sessionTargetId": "target_reviewer", "targetFingerprint": fingerprint,
+		"paneHistoryBaselineEncoding": "tmux-pane-history-baseline-v1", "paneHistoryBaselineDispatchSeq": 6, "paneHistoryBaselineSha256": baselineHash,
+		"peekCapabilityRevokedSeq": 8, "steeringGeneration": "0", "operatorInfluenced": false, "status": "ok",
+		"capturedRange": map[string]any{"sessionTargetId": "target_reviewer", "start": startCursor, "end": endCursor, "startedAt": "2026-07-20T10:00:06Z", "endedAt": "2026-07-20T10:00:08Z"},
+		"sentinel":      sentinel, "clientAttachmentAuditProof": auditProof, "clientAttachmentAuditProofSha256": auditHash,
+		"turnClosureProof": turnClosureProof, "turnResult": turnResult, "turnResultEncoding": "slot-turn-result-jcs-v1", "turnResultSha256": projectionSHA256(canonicalJSON(t, turnResult)),
+	})
+	result["nodeId"] = projectionTestFormationID
+	result["slotId"] = "slot_reviewer"
+	return []map[string]any{revoked, result}
+}
+
+func replaceCanonicalCommandRecord(t *testing.T, input CanonicalRunReadInput, commandID string, raw []byte) CanonicalRunReadInput {
+	t.Helper()
+	for index, document := range input.Documents {
+		if document.Role != CanonicalInputRoleSchema2CommandRecord {
+			continue
+		}
+		var record map[string]any
+		if err := json.Unmarshal(document.Bytes, &record); err == nil && record["commandId"] == commandID {
+			input.Documents[index] = canonicalInputDocument(CanonicalInputRoleSchema2CommandRecord, raw)
+			return input
+		}
+	}
+	t.Fatalf("canonical input has no command record %s", commandID)
+	return input
 }
 
 func schema2FormationEvent(runID string, sequence uint64, eventType string, data map[string]any) map[string]any {
@@ -2524,7 +2995,50 @@ func schema2FormationEvent(runID string, sequence uint64, eventType string, data
 	return event
 }
 
-func schema2SlotDispatchEvent(t *testing.T, sequence uint64, dispatchID, leaseID, slotID, agentID, bindingID, targetID, fingerprint string) map[string]any {
+func schema2OpenDispatchCarries(t *testing.T, events []map[string]any) ([]any, []any) {
+	t.Helper()
+	var blocked, resumed []any
+	for _, event := range events {
+		switch event["type"] {
+		case "run_blocked":
+			blocked = event["data"].(map[string]any)["openDispatches"].([]any)
+		case "run_resumed":
+			resumed = event["data"].(map[string]any)["openDispatches"].([]any)
+		}
+	}
+	if blocked == nil || resumed == nil {
+		t.Fatalf("schema-2 lifecycle missing block/resume carries")
+	}
+	return blocked, resumed
+}
+
+func assertSchema2OpenDispatchOrderingPrecondition(t *testing.T, input CanonicalRunReadInput, dispatches []any) {
+	t.Helper()
+	graph := canonicalDocumentByRole(t, input, CanonicalInputRoleSchema2GraphSnapshot).Bytes
+	bindings := canonicalDocumentByRole(t, input, CanonicalInputRoleSchema2PrivateBindings).Bytes
+	if bytes.Index(graph, []byte(`id = "slot_reviewer"`)) >= bytes.Index(graph, []byte(`id = "slot_worker"`)) {
+		t.Fatalf("graph slot declaration order no longer distinguishes reviewer before worker")
+	}
+	if bytes.Index(bindings, []byte(`bindingId = "binding_worker"`)) >= bytes.Index(bindings, []byte(`bindingId = "binding_reviewer"`)) {
+		t.Fatalf("binding inventory order no longer distinguishes worker before reviewer")
+	}
+	if len(dispatches) != 2 || dispatches[0].(map[string]any)["bindingId"] != "binding_reviewer" || dispatches[1].(map[string]any)["bindingId"] != "binding_worker" {
+		t.Fatalf("dispatchSeq order no longer differs from binding inventory: %+v", dispatches)
+	}
+}
+
+func schema2SetOpenDispatchCarry(t *testing.T, events []map[string]any, eventType string, carry []any) {
+	t.Helper()
+	for _, event := range events {
+		if event["type"] == eventType {
+			event["data"].(map[string]any)["openDispatches"] = carry
+			return
+		}
+	}
+	t.Fatalf("schema-2 lifecycle missing %s", eventType)
+}
+
+func schema2SlotDispatchEvent(t *testing.T, sequence uint64, dispatchID, leaseID, slotID, agentID, bindingID, targetID, fingerprint, turnPhase string) map[string]any {
 	t.Helper()
 	promptHash := strings.Repeat("e", 64)
 	fingerprintHash := projectionSHA256([]byte(fingerprint))
@@ -2540,7 +3054,7 @@ func schema2SlotDispatchEvent(t *testing.T, sequence uint64, dispatchID, leaseID
 		"targetFingerprintSha256": fingerprintHash, "historyEpoch": "AQIDBAUGBwgJCgsMDQ4PEA", "offset": "0", "cols": 120, "rows": 40,
 	}
 	event := schema2FormationEvent(projectionTestRunID, sequence, "slot_dispatch", map[string]any{
-		"dispatchId": dispatchID, "targetLeaseId": leaseID, "turnKey": "turn_" + slotID, "turnPhase": "solo",
+		"dispatchId": dispatchID, "targetLeaseId": leaseID, "turnKey": "turn_" + slotID, "turnPhase": turnPhase,
 		"turnInputs": map[string]any{"nodeStartedSeq": 3, "priorTurnResults": []any{}},
 		"nodeId":     projectionTestFormationID, "attempt": 1, "slotId": slotID, "agentId": agentID, "harness": "codex",
 		"bindingId": bindingID, "sessionTargetId": targetID, "targetFingerprint": fingerprint,
@@ -2565,33 +3079,7 @@ type schema2IdentityChange struct {
 
 func schema2InputWithTwoPolicies(t *testing.T) CanonicalRunReadInput {
 	t.Helper()
-	input := schema2ProjectionInput(t, true)
-	policy1 := canonicalDocumentByRole(t, input, CanonicalInputRoleSchema2AdmissionPolicy)
-	policy2Bytes := canonicalJSON(t, map[string]any{
-		"policySchema": 1, "policyRev": 2, "priorPolicySha256": policy1.SHA256, "state": "configured",
-		"maxActiveRuns": 2, "maxQueuedRuns": 2,
-	})
-	policy2 := canonicalInputDocument(CanonicalInputRoleSchema2AdmissionPolicy, policy2Bytes)
-	input.Documents = append(input.Documents, policy2)
-
-	var authority map[string]any
-	if err := json.Unmarshal(canonicalDocumentByRole(t, input, CanonicalInputRoleSchema2WorkspaceAuthority).Bytes, &authority); err != nil {
-		t.Fatal(err)
-	}
-	authority["admissionPolicyRef"] = map[string]any{"policyRev": 2, "policySha256": policy2.SHA256}
-	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2WorkspaceAuthority, canonicalJSON(t, authority))
-
-	events := canonicalLedgerEvents(t, input)
-	for _, event := range events {
-		data := event["data"].(map[string]any)
-		if event["type"] == "run_started" || event["type"] == "run_activated" {
-			data["admissionPolicyRev"] = 2
-			data["admissionPolicySha256"] = policy2.SHA256
-		}
-	}
-	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2Ledger, marshalProjectionLedger(t, events...))
-	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2CommandRecord, schema2AdmissionCommandRecord(t, projectionTestCommandID, 2, policy2.SHA256))
-	return input
+	return schema2ProjectionInput(t, true)
 }
 
 func assertSchema2SelectedPolicyLinkage(t *testing.T, input CanonicalRunReadInput, wantRev uint64) {
@@ -2620,6 +3108,59 @@ func assertSchema2SelectedPolicyLinkage(t *testing.T, input CanonicalRunReadInpu
 		if !jsonBytesEqual(mustMarshalJSON(t, got), mustMarshalJSON(t, want)) {
 			t.Fatalf("%s policy ref = %s, want exact authority/command selection %s", event["type"], mustMarshalJSON(t, got), mustMarshalJSON(t, want))
 		}
+	}
+}
+
+func assertSchema2AuthorityHistory(t *testing.T, input CanonicalRunReadInput) {
+	t.Helper()
+	history := schema2AuthorityHistory(t, strings.Repeat("1", 64))
+	current := canonicalDocumentByRole(t, input, CanonicalInputRoleSchema2WorkspaceAuthority)
+	wantCurrent := history.authorityGenerations[len(history.authorityGenerations)-1]
+	if !bytes.Equal(current.Bytes, wantCurrent) {
+		t.Fatalf("selected workspace authority is not the exact authenticated admission-allocation generation\nwant: %s\ngot:  %s", wantCurrent, current.Bytes)
+	}
+	policies := canonicalDocumentsByRole(input, CanonicalInputRoleSchema2AdmissionPolicy)
+	if len(policies) != len(history.policies) {
+		t.Fatalf("admission policy generations = %d, want %d", len(policies), len(history.policies))
+	}
+	for index := range history.policies {
+		if !bytes.Equal(policies[index].Bytes, history.policies[index].Bytes) {
+			t.Fatalf("admission policy generation %d changed\nwant: %s\ngot:  %s", index+1, history.policies[index].Bytes, policies[index].Bytes)
+		}
+	}
+	for index, raw := range history.authorityGenerations {
+		var generation map[string]any
+		if err := json.Unmarshal(raw, &generation); err != nil {
+			t.Fatal(err)
+		}
+		wantRev := uint64(index + 1)
+		if generation["recordRev"] != float64(wantRev) {
+			t.Fatalf("authority generation %d recordRev = %#v", wantRev, generation["recordRev"])
+		}
+		if index == 0 {
+			if generation["priorGeneration"] != nil {
+				t.Fatalf("initial authority priorGeneration = %#v, want null", generation["priorGeneration"])
+			}
+			continue
+		}
+		assertExactJSONValue(t, fmt.Sprintf("authority generation %d predecessor", wantRev), generation["priorGeneration"], map[string]any{
+			"recordRev": wantRev - 1, "sha256": projectionSHA256(history.authorityGenerations[index-1]),
+		})
+	}
+	assertExactJSONValue(t, "initial disabled authority state", decodeCanonicalObject(t, history.authorityGenerations[0]), map[string]any{
+		"recordRev": 1, "priorGeneration": nil, "authoritySchema": 2,
+		"workspaceAuthorityId": projectionTestWorkspaceID,
+		"rootIdentityEncoding": "workspace-root-identity-v1", "workspaceRootIdentitySha256": strings.Repeat("1", 64),
+		"nextWriterFence": 1, "nextAdmissionSeq": 1,
+		"admissionPolicyRef": map[string]any{"policyRev": 1, "policySha256": history.policies[0].SHA256},
+	})
+	configured := decodeCanonicalObject(t, history.authorityGenerations[2])
+	assertExactJSONValue(t, "configured authority policy ref", configured["admissionPolicyRef"], map[string]any{
+		"policyRev": 2, "policySha256": history.policies[1].SHA256,
+	})
+	allocated := decodeCanonicalObject(t, history.authorityGenerations[3])
+	if allocated["nextWriterFence"] != float64(2) || allocated["nextAdmissionSeq"] != float64(2) {
+		t.Fatalf("allocated authority counters = writer %#v admission %#v, want 2/2", allocated["nextWriterFence"], allocated["nextAdmissionSeq"])
 	}
 }
 
@@ -2655,8 +3196,8 @@ func schema2InputWithIdentityChange(t *testing.T, base CanonicalRunReadInput, ch
 	}
 	if change.commandID != "" {
 		started["admissionCommandId"] = change.commandID
-		policyHash := canonicalDocumentByRole(t, input, CanonicalInputRoleSchema2AdmissionPolicy).SHA256
-		input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2CommandRecord, schema2AdmissionCommandRecord(t, change.commandID, 1, policyHash))
+		policyRev, policyHash := selectedAdmissionPolicy(t, input)
+		input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2CommandRecord, schema2AdmissionCommandRecord(t, change.commandID, policyRev, policyHash))
 	}
 	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2RunBootstrap, canonicalJSON(t, bootstrap))
 	return replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2Ledger, marshalProjectionLedger(t, events...))
@@ -2664,55 +3205,114 @@ func schema2InputWithIdentityChange(t *testing.T, base CanonicalRunReadInput, ch
 
 func schema2AdmissionCommandRecord(t *testing.T, commandID string, policyRev uint64, policyHash string) []byte {
 	t.Helper()
-	payload := canonicalCommandPayload("start", projectionTestRunID)
-	return canonicalJSON(t, map[string]any{
-		"commandSchema": 1, "recordRev": 1, "priorGeneration": nil,
-		"commandEncoding": "run-command-jcs-v1", "commandId": commandID,
-		"commandKind": "start", "commandPayload": payload,
-		"commandPayloadSha256": projectionSHA256(canonicalJSON(t, payload)),
-		"admittedWriterFence":  1, "stateWriterFence": 1, "state": "applied",
-		"runId": projectionTestRunID, "effectSeq": 1, "outcomeWriterFence": 1,
-		"decisionAdmissionPolicyRef": map[string]any{"policyRev": policyRev, "policySha256": policyHash},
+	history := schema2CommandHistoryForPayload(t, commandID, "start", "applied", canonicalCommandPayload("start", projectionTestRunID), schema2CommandOutcome{
+		runID: projectionTestRunID, effectSeq: 1, admittedWriterFence: 1, stateWriterFence: 1, outcomeWriterFence: 1,
+		decisionPolicyRef: map[string]any{"policyRev": policyRev, "policySha256": policyHash},
 	})
+	return history.terminal
 }
 
 func schema2CommandRecord(t *testing.T, commandID, kind, state, runID string) []byte {
 	t.Helper()
-	payload := canonicalCommandPayload(kind, runID)
-	payloadRaw := canonicalJSON(t, payload)
-	record := map[string]any{
-		"commandSchema":        1,
-		"recordRev":            1,
-		"priorGeneration":      nil,
-		"commandEncoding":      "run-command-jcs-v1",
-		"commandId":            commandID,
-		"commandKind":          kind,
-		"commandPayload":       payload,
-		"commandPayloadSha256": projectionSHA256(payloadRaw),
-		"admittedWriterFence":  1,
-		"stateWriterFence":     9,
-		"state":                state,
+	return canonicalCommandHistory(t, commandID, kind, state, runID).terminal
+}
+
+type schema2CommandHistory struct {
+	pending  []byte
+	terminal []byte
+}
+
+type schema2CommandOutcome struct {
+	runID               string
+	effectSeq           uint64
+	rejectionCode       string
+	admittedWriterFence uint64
+	stateWriterFence    uint64
+	outcomeWriterFence  uint64
+	decisionPolicyRef   any
+}
+
+func canonicalCommandHistory(t *testing.T, commandID, kind, state, runID string) schema2CommandHistory {
+	t.Helper()
+	decisionPolicyRef := any(nil)
+	if kind == "start" {
+		decisionPolicyRef = map[string]any{"policyRev": 2, "policySha256": strings.Repeat("a", 64)}
 	}
-	switch state {
-	case "applied":
-		record["runId"] = runID
-		record["effectSeq"] = 7
-		record["outcomeWriterFence"] = 9
-		if kind == "start" {
-			record["decisionAdmissionPolicyRef"] = map[string]any{"policyRev": 1, "policySha256": strings.Repeat("a", 64)}
-		} else {
-			record["decisionAdmissionPolicyRef"] = nil
-		}
-	case "rejected":
-		record["rejectionCode"] = "fixture_rejected"
-		record["outcomeWriterFence"] = 9
-		if kind == "start" {
-			record["decisionAdmissionPolicyRef"] = map[string]any{"policyRev": 1, "policySha256": strings.Repeat("a", 64)}
-		} else {
-			record["decisionAdmissionPolicyRef"] = nil
+	return schema2CommandHistoryForPayload(t, commandID, kind, state, canonicalCommandPayload(kind, runID), schema2CommandOutcome{
+		runID: runID, effectSeq: 7, rejectionCode: "fixture_rejected",
+		admittedWriterFence: 9, stateWriterFence: 9, outcomeWriterFence: 9,
+		decisionPolicyRef: decisionPolicyRef,
+	})
+}
+
+func schema2CommandHistoryForPayload(t *testing.T, commandID, kind, state string, payload map[string]any, outcome schema2CommandOutcome) schema2CommandHistory {
+	t.Helper()
+	payloadHash := projectionSHA256(canonicalJSON(t, payload))
+	pending := canonicalJSON(t, map[string]any{
+		"commandSchema": 1, "recordRev": 1, "priorGeneration": nil,
+		"commandEncoding": "run-command-jcs-v1", "commandId": commandID, "commandKind": kind,
+		"commandPayload": payload, "commandPayloadSha256": payloadHash,
+		"admittedWriterFence": outcome.admittedWriterFence, "stateWriterFence": outcome.admittedWriterFence, "state": "pending",
+	})
+	terminal := map[string]any{
+		"commandSchema": 1, "recordRev": 2,
+		"priorGeneration": map[string]any{"recordRev": 1, "sha256": projectionSHA256(pending)},
+		"commandEncoding": "run-command-jcs-v1", "commandId": commandID, "commandKind": kind,
+		"commandPayload": payload, "commandPayloadSha256": payloadHash,
+		"admittedWriterFence": outcome.admittedWriterFence, "stateWriterFence": outcome.stateWriterFence, "state": state,
+		"outcomeWriterFence": outcome.outcomeWriterFence, "decisionAdmissionPolicyRef": outcome.decisionPolicyRef,
+	}
+	if state == "applied" {
+		terminal["runId"] = outcome.runID
+		terminal["effectSeq"] = outcome.effectSeq
+	} else {
+		terminal["rejectionCode"] = outcome.rejectionCode
+	}
+	return schema2CommandHistory{pending: pending, terminal: canonicalJSON(t, terminal)}
+}
+
+func assertAuthenticatedCommandHistory(t *testing.T, history schema2CommandHistory) {
+	t.Helper()
+	pending := decodeCanonicalObject(t, history.pending)
+	terminal := decodeCanonicalObject(t, history.terminal)
+	assertExactJSONValue(t, "pending command generation identity", map[string]any{
+		"recordRev": pending["recordRev"], "priorGeneration": pending["priorGeneration"], "state": pending["state"],
+	}, map[string]any{"recordRev": 1, "priorGeneration": nil, "state": "pending"})
+	for _, forbidden := range []string{"runId", "effectSeq", "rejectionCode", "outcomeWriterFence", "decisionAdmissionPolicyRef"} {
+		if _, exists := pending[forbidden]; exists {
+			t.Fatalf("pending command generation contains terminal member %q: %s", forbidden, history.pending)
 		}
 	}
-	return canonicalJSON(t, record)
+	assertExactJSONValue(t, "terminal command predecessor", terminal["priorGeneration"], map[string]any{
+		"recordRev": 1, "sha256": projectionSHA256(history.pending),
+	})
+	if terminal["recordRev"] != float64(2) || terminal["state"] == "pending" {
+		t.Fatalf("terminal command generation identity/state = %#v/%#v, want rev2 terminal", terminal["recordRev"], terminal["state"])
+	}
+	for _, member := range []string{"commandEncoding", "commandId", "commandKind", "commandPayload", "commandPayloadSha256", "admittedWriterFence"} {
+		if !jsonBytesEqual(mustMarshalJSON(t, terminal[member]), mustMarshalJSON(t, pending[member])) {
+			t.Fatalf("terminal command changed immutable member %q\npending:  %s\nterminal: %s", member, history.pending, history.terminal)
+		}
+	}
+}
+
+func decodeCanonicalObject(t *testing.T, raw []byte) map[string]any {
+	t.Helper()
+	var object map[string]any
+	if err := json.Unmarshal(raw, &object); err != nil {
+		t.Fatal(err)
+	}
+	return object
+}
+
+func selectedAdmissionPolicy(t *testing.T, input CanonicalRunReadInput) (uint64, string) {
+	t.Helper()
+	var authority map[string]any
+	if err := json.Unmarshal(canonicalDocumentByRole(t, input, CanonicalInputRoleSchema2WorkspaceAuthority).Bytes, &authority); err != nil {
+		t.Fatal(err)
+	}
+	ref := authority["admissionPolicyRef"].(map[string]any)
+	return uint64(ref["policyRev"].(float64)), ref["policySha256"].(string)
 }
 
 func canonicalCommandPayload(kind, runID string) map[string]any {
@@ -3242,24 +3842,32 @@ func assertOutputOrder(t *testing.T, view RunView, want []string) {
 
 func assertSchema2SessionProjection(t *testing.T, view RunView, capabilityState string) {
 	t.Helper()
-	if len(view.Sessions) != 1 {
-		t.Fatalf("schema-2 sessions = %d, want one projected slot session", len(view.Sessions))
+	if len(view.Sessions) != 2 {
+		t.Fatalf("schema-2 sessions = %d, want the complete two-slot session set", len(view.Sessions))
 	}
-	fingerprint := strings.Repeat("a", 64)
-	baseline := map[string]any{
-		"targetFingerprintSha256": projectionSHA256([]byte(fingerprint)), "historyEpoch": "AQIDBAUGBwgJCgsMDQ4PEA", "offset": "0", "cols": 120, "rows": 40,
+	expected := []struct {
+		bindingID, slotID, dispatchID, leaseID, targetID, fingerprint, lineage, capabilityState string
+	}{
+		{"binding_reviewer", "slot_reviewer", "dsp_01KXNP6VY3227H78329V52CKF9", "lease_01KXNP6VY3227H78329V52CKF9", "target_reviewer", strings.Repeat("b", 64), strings.Repeat("d", 64), "none"},
+		{"binding_worker", "slot_worker", "dsp_01KXNP6VY3227H78329V52CKF8", "lease_01KXNP6VY3227H78329V52CKF8", "target_worker", strings.Repeat("a", 64), strings.Repeat("c", 64), capabilityState},
 	}
-	assertExactJSONValue(t, "session[0]", view.Sessions[0], map[string]any{
-		"bindingId": "binding_worker", "nodeId": projectionTestFormationID, "attempt": 1, "slotId": "slot_worker",
-		"dispatchId": "dsp_01KXNP6VY3227H78329V52CKF8", "targetLeaseId": "lease_01KXNP6VY3227H78329V52CKF8", "sessionTargetId": "target_worker",
-		"bindingHealth": "runnable", "sessionLineageSha256": strings.Repeat("c", 64),
-		"targetFingerprintSha256": projectionSHA256([]byte(fingerprint)),
-		"baseline":                map[string]any{"encoding": "tmux-pane-history-baseline-v1", "sha256": projectionSHA256(canonicalJSON(t, baseline)), "state": "valid"},
-		"attachment":              map[string]any{"state": "accounted"}, "occupancy": map[string]any{"state": "active"},
-		"peekCapability": map[string]any{"state": capabilityState, "issuedSeq": 0, "generation": "0"},
-		"steering":       map[string]any{"state": "closed", "generation": "0"}, "operatorInfluenced": false,
-	})
+	for index, want := range expected {
+		baseline := map[string]any{
+			"targetFingerprintSha256": projectionSHA256([]byte(want.fingerprint)), "historyEpoch": "AQIDBAUGBwgJCgsMDQ4PEA", "offset": "0", "cols": 120, "rows": 40,
+		}
+		assertExactJSONValue(t, fmt.Sprintf("session[%d]", index), view.Sessions[index], map[string]any{
+			"bindingId": want.bindingID, "nodeId": projectionTestFormationID, "attempt": 1, "slotId": want.slotID,
+			"dispatchId": want.dispatchID, "targetLeaseId": want.leaseID, "sessionTargetId": want.targetID,
+			"bindingHealth": "runnable", "sessionLineageSha256": want.lineage,
+			"targetFingerprintSha256": projectionSHA256([]byte(want.fingerprint)),
+			"baseline":                map[string]any{"encoding": "tmux-pane-history-baseline-v1", "sha256": projectionSHA256(canonicalJSON(t, baseline)), "state": "valid"},
+			"attachment":              map[string]any{"state": "accounted"}, "occupancy": map[string]any{"state": "active"},
+			"peekCapability": map[string]any{"state": want.capabilityState, "issuedSeq": 0, "generation": "0"},
+			"steering":       map[string]any{"state": "closed", "generation": "0"}, "operatorInfluenced": false,
+		})
+	}
 	refs := []any{
+		map[string]any{"bindingId": "binding_reviewer", "nodeId": projectionTestFormationID, "attempt": 1, "slotId": "slot_reviewer"},
 		map[string]any{"bindingId": "binding_worker", "nodeId": projectionTestFormationID, "attempt": 1, "slotId": "slot_worker"},
 	}
 	node := findProjectedNode(t, view, projectionTestFormationID)
