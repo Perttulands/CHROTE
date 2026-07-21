@@ -284,6 +284,36 @@ func TestProjectCanonicalRunSchema2CompletionStatusAndDispositionMatrix(t *testi
 	}
 }
 
+func TestProjectCanonicalRunSchema2PreservesEveryAdmittedGateEvidenceKind(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		evidence map[string]any
+		want     SafeGateEvidence
+	}{
+		{name: "artifact", evidence: map[string]any{"kind": "artifact", "artifactId": "artifact_report"}, want: SafeGateEvidence{Kind: "artifact", ArtifactID: "artifact_report"}},
+		{name: "ledger", evidence: map[string]any{"kind": "ledger", "seq": 18}, want: SafeGateEvidence{Kind: "ledger", Seq: 18}},
+		{name: "text", evidence: map[string]any{"kind": "text", "text": "clean"}, want: SafeGateEvidence{Kind: "text", Text: "clean"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			state := newProjectionState(projectionTestRunID, CanonicalRunSourceSchema2, &BoardDocument{Gates: []GateNode{{ID: projectionTestGateID}}})
+			state.view.Status = "running"
+			prepareSchema2RepairGate(&state)
+			data := schema2RepairWithEvidence(schema2RepairGateKindResultData(), test.evidence)
+			event := schema2Event(projectionTestRunID, 20, "gate_kind_result", data)
+			delete(event, "missionId")
+			delete(event, "beadId")
+			raw, safe := schema2RepairDecodeSafeEvent(t, event)
+			if err := reduceSchema2Event(&state, raw, safe, nil); err != nil {
+				t.Fatalf("reduce admitted %s evidence: %v", test.name, err)
+			}
+			gate := state.existingGate(projectionTestGateID, 1)
+			if gate == nil || len(gate.Evidence) != 1 || gate.Evidence[0] != test.want {
+				t.Fatalf("preserved %s evidence = %#v, want %#v", test.name, gate, test.want)
+			}
+		})
+	}
+}
+
 func TestProjectCanonicalRunRejectsInvalidSchema2StartAttempt(t *testing.T) {
 	for _, test := range []struct {
 		name    string
