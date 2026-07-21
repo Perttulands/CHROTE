@@ -1708,13 +1708,9 @@ func starvedFormations(formationByID map[string]FormationNode, ready map[string]
 // missing producer, so the run is blocked non-resumably with recovery guidance:
 // wire a producer to the starved ports and start a new run.
 func (e *RunEngine) appendStarvedBlock(runID string, starved []starvedFormation) error {
-	waitingNodes := make([]map[string]any, 0, len(starved))
+	waitingNodes := make([]string, 0, len(starved))
 	for _, s := range starved {
-		waitingNodes = append(waitingNodes, map[string]any{
-			"nodeId":        s.ID,
-			"title":         s.Title,
-			"missingInputs": s.Missing,
-		})
+		waitingNodes = append(waitingNodes, s.ID)
 	}
 	primary := starved[0]
 	reason := fmt.Sprintf("formation %q is waiting on inputs %v that no upstream node produces; wire a producer to those ports and start a new run", primary.ID, primary.Missing)
