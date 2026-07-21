@@ -161,9 +161,13 @@ type RunSessionRef struct {
 }
 
 type PayloadValue struct {
-	Kind      string `json:"kind"`
-	MediaType string `json:"mediaType"`
-	Text      string `json:"text"`
+	Kind      string                   `json:"kind"`
+	MediaType string                   `json:"mediaType,omitempty"`
+	Text      string                   `json:"text,omitempty"`
+	Code      string                   `json:"code,omitempty"`
+	Message   string                   `json:"message,omitempty"`
+	Retryable *bool                    `json:"retryable,omitempty"`
+	Feedback  *SafeGateFeedbackPayload `json:"feedback,omitempty"`
 }
 
 type PayloadProjection struct {
@@ -188,8 +192,14 @@ type RootInputProjection struct {
 
 type SafeInputIdentity struct {
 	EdgeID            string             `json:"edgeId,omitempty"`
+	OriginEdgeID      string             `json:"originEdgeId,omitempty"`
+	DeliveryEdgeID    string             `json:"deliveryEdgeId,omitempty"`
 	FromNodeID        string             `json:"fromNodeId,omitempty"`
 	FromPortID        string             `json:"fromPortId,omitempty"`
+	SourceNodeID      string             `json:"sourceNodeId,omitempty"`
+	SourcePortID      string             `json:"sourcePortId,omitempty"`
+	SourceOutputSeq   uint64             `json:"sourceOutputSeq,omitempty"`
+	SourceAttempt     uint64             `json:"sourceAttempt,omitempty"`
 	ToPortID          string             `json:"toPortId,omitempty"`
 	OutputSeq         uint64             `json:"outputSeq,omitempty"`
 	InputID           string             `json:"inputId,omitempty"`
@@ -200,6 +210,7 @@ type SafeInputIdentity struct {
 	SeedMediaType     string             `json:"seedMediaType,omitempty"`
 	SeedSHA256        string             `json:"seedSha256,omitempty"`
 	ToNodeID          string             `json:"toNodeId,omitempty"`
+	GateInputSeq      uint64             `json:"gateInputSeq,omitempty"`
 	PayloadProjection *PayloadProjection `json:"payloadProjection,omitempty"`
 }
 
@@ -230,8 +241,11 @@ type RunAttemptView struct {
 }
 
 type SafeGateEvidence struct {
-	Kind   string `json:"kind"`
-	Reason string `json:"reason,omitempty"`
+	Kind       string `json:"kind"`
+	Reason     string `json:"reason,omitempty"`
+	ArtifactID string `json:"artifactId,omitempty"`
+	Seq        uint64 `json:"seq,omitempty"`
+	Text       string `json:"text,omitempty"`
 }
 
 type RunGateView struct {
@@ -637,11 +651,15 @@ type SafeSchema1SlotResultData struct {
 type SafeSchema1OutputValue struct {
 	Text string `json:"text,omitempty"`
 }
+
+type SafeSchema1Outputs map[string]SafeSchema1OutputValue
+type SafeSchema1Verdicts map[string]string
+
 type SafeSchema1NodeOutputData struct {
-	Status  string                            `json:"status"`
-	Text    string                            `json:"text"`
-	Outputs map[string]SafeSchema1OutputValue `json:"outputs"`
-	Reason  string                            `json:"reason"`
+	Status  string             `json:"status"`
+	Text    string             `json:"text"`
+	Outputs SafeSchema1Outputs `json:"outputs"`
+	Reason  string             `json:"reason"`
 }
 type SafeSchema1GateEvaluatingData struct {
 	Kinds      []string          `json:"kinds"`
@@ -650,12 +668,12 @@ type SafeSchema1GateEvaluatingData struct {
 	JudgeChain []string          `json:"judgeChain"`
 }
 type SafeSchema1GateVerdictData struct {
-	Verdict     string            `json:"verdict"`
-	PerKind     map[string]string `json:"perKind"`
-	RoutePort   string            `json:"routePort"`
-	RoutedEdges []string          `json:"routedEdges"`
-	Reason      string            `json:"reason"`
-	InputRef    SafeInputIdentity `json:"inputRef"`
+	Verdict     string              `json:"verdict"`
+	PerKind     SafeSchema1Verdicts `json:"perKind"`
+	RoutePort   string              `json:"routePort"`
+	RoutedEdges []string            `json:"routedEdges"`
+	Reason      string              `json:"reason"`
+	InputRef    SafeInputIdentity   `json:"inputRef"`
 }
 type SafeSchema1VerificationVerdictData struct {
 	VerificationID string `json:"verificationId"`
@@ -671,15 +689,15 @@ type SafeSchema1EscalationRaisedData struct {
 	Blocks   bool   `json:"blocks"`
 }
 type SafeSchema1HumanInputRequestedData struct {
-	GateID         string            `json:"gateId"`
-	NodeID         string            `json:"nodeId"`
-	Choices        []string          `json:"choices"`
-	RequestedBy    string            `json:"requestedBy"`
-	InputRef       SafeInputIdentity `json:"inputRef"`
-	CodeVerdict    string            `json:"codeVerdict"`
-	CodeReason     string            `json:"codeReason"`
-	CodePerKind    map[string]string `json:"codePerKind"`
-	TimeoutSeconds uint64            `json:"timeoutSeconds"`
+	GateID         string              `json:"gateId"`
+	NodeID         string              `json:"nodeId"`
+	Choices        []string            `json:"choices"`
+	RequestedBy    string              `json:"requestedBy"`
+	InputRef       SafeInputIdentity   `json:"inputRef"`
+	CodeVerdict    string              `json:"codeVerdict"`
+	CodeReason     string              `json:"codeReason"`
+	CodePerKind    SafeSchema1Verdicts `json:"codePerKind"`
+	TimeoutSeconds uint64              `json:"timeoutSeconds"`
 }
 type SafeSchema1HumanVerdictRecordedData struct {
 	GateID       string `json:"gateId"`
@@ -736,6 +754,177 @@ type SafeSchema1RunSucceededData struct {
 	Reason      string `json:"reason"`
 }
 
+type SafePriorTurnResult struct {
+	SlotResultSeq    uint64 `json:"slotResultSeq"`
+	TurnResultSHA256 string `json:"turnResultSha256"`
+}
+
+type SafeTurnInputs struct {
+	NodeStartedSeq   uint64                `json:"nodeStartedSeq"`
+	PriorTurnResults []SafePriorTurnResult `json:"priorTurnResults"`
+}
+
+type SafePayloadProjections map[string]PayloadProjection
+type SafeProjectionHashes map[string]string
+type SafeGateKindVerdicts map[string]string
+type SafeGateKindResultSeqs map[string]*uint64
+type SafeCompletedKindResultSeqs map[string]uint64
+
+type SafeTurnResult struct {
+	TurnKey          string                 `json:"turnKey"`
+	Phase            string                 `json:"phase"`
+	Status           string                 `json:"status"`
+	TurnPayload      PayloadProjection      `json:"turnPayload"`
+	Outputs          SafePayloadProjections `json:"outputs"`
+	ReportArtifactID string                 `json:"reportArtifactId"`
+	ArtifactIDs      []string               `json:"artifactIds"`
+	DiffArtifactIDs  []string               `json:"diffArtifactIds"`
+}
+
+type SafeProducedBy struct {
+	Kind       string `json:"kind"`
+	OutcomeSeq uint64 `json:"outcomeSeq"`
+}
+
+type SafeEventTiming struct {
+	StartedAt  string `json:"startedAt"`
+	FinishedAt string `json:"finishedAt"`
+	DurationMS uint64 `json:"durationMs"`
+}
+
+type SafeDeliveredEdge struct {
+	OriginEdgeID    string `json:"originEdgeId"`
+	DeliveryEdgeID  string `json:"deliveryEdgeId"`
+	ToNodeID        string `json:"toNodeId"`
+	ToPortID        string `json:"toPortId"`
+	SourceNodeID    string `json:"sourceNodeId"`
+	SourcePortID    string `json:"sourcePortId"`
+	SourceOutputSeq uint64 `json:"sourceOutputSeq"`
+	SourceAttempt   uint64 `json:"sourceAttempt"`
+}
+
+type SafeCriterionProjection struct {
+	Classification string `json:"classification"`
+	SourceKind     string `json:"sourceKind"`
+	Encoding       string `json:"encoding"`
+	MediaType      string `json:"mediaType"`
+	SHA256         string `json:"sha256"`
+	Text           string `json:"text"`
+}
+
+type SafeJudgeResult struct {
+	Verdict  string             `json:"verdict"`
+	Reason   string             `json:"reason"`
+	Evidence []SafeGateEvidence `json:"evidence"`
+}
+
+type SafeGateFeedbackInput struct {
+	InputID      string `json:"inputId"`
+	GateInputSeq uint64 `json:"gateInputSeq"`
+}
+
+type SafeGateFeedbackPayload struct {
+	FeedbackID     string                `json:"feedbackId"`
+	GateID         string                `json:"gateId"`
+	Verdict        string                `json:"verdict"`
+	EvaluatedInput SafeGateFeedbackInput `json:"evaluatedInput"`
+	Reason         string                `json:"reason"`
+	Evidence       []SafeGateEvidence    `json:"evidence"`
+	GateSeq        uint64                `json:"gateSeq"`
+	GateAttempt    uint64                `json:"gateAttempt"`
+}
+
+type SafeArtifactSource struct {
+	Kind        string `json:"kind"`
+	DispatchID  string `json:"dispatchId,omitempty"`
+	NodeID      string `json:"nodeId,omitempty"`
+	SlotID      string `json:"slotId,omitempty"`
+	GateID      string `json:"gateId,omitempty"`
+	GateAttempt uint64 `json:"gateAttempt,omitempty"`
+	SourceID    string `json:"sourceId,omitempty"`
+}
+
+type SafeFixedSystemProjection struct {
+	Classification string `json:"classification"`
+	SourceKind     string `json:"sourceKind"`
+	TemplateID     string `json:"templateId"`
+}
+
+type SafeHumanChoiceProjections struct {
+	Pass SafeFixedSystemProjection `json:"pass"`
+	Fail SafeFixedSystemProjection `json:"fail"`
+}
+
+type SafeRetryTarget struct {
+	NodeID         string   `json:"nodeId"`
+	Attempt        uint64   `json:"attempt"`
+	OutputPortIDs  []string `json:"outputPortIds"`
+	OutcomeSeqs    []uint64 `json:"outcomeSeqs"`
+	DeliveredEdges []string `json:"deliveredEdges"`
+}
+
+type SafeNodeAttemptSnapshot struct {
+	NodeID   string `json:"nodeId"`
+	NodeKind string `json:"nodeKind"`
+	Attempt  uint64 `json:"attempt"`
+	StartSeq uint64 `json:"startSeq"`
+	Phase    string `json:"phase"`
+	PhaseSeq uint64 `json:"phaseSeq"`
+}
+
+type SafeToolLaunchSnapshot struct {
+	LaunchID            string `json:"launchId"`
+	Generation          string `json:"generation"`
+	ProcessScopeID      string `json:"processScopeId"`
+	DeadlineAuthorityID string `json:"deadlineAuthorityId"`
+	LaunchSeq           uint64 `json:"launchSeq"`
+}
+
+type SafeToolLeaseSnapshot struct {
+	ToolLeaseID  string                  `json:"toolLeaseId"`
+	NodeID       string                  `json:"nodeId"`
+	Attempt      uint64                  `json:"attempt"`
+	DispatchSeq  uint64                  `json:"dispatchSeq"`
+	LatestLaunch *SafeToolLaunchSnapshot `json:"latestLaunch,omitempty"`
+}
+
+type SafeFailureCause struct {
+	Kind        string `json:"kind"`
+	DispatchID  string `json:"dispatchId,omitempty"`
+	ToolLeaseID string `json:"toolLeaseId,omitempty"`
+	ErrorSeq    uint64 `json:"errorSeq,omitempty"`
+}
+
+type SafeNodeAttemptDisposition struct {
+	SafeNodeAttemptSnapshot
+	Disposition string `json:"disposition"`
+}
+
+type SafeSlotDispatchDisposition struct {
+	SafeSchema2OpenDispatch
+	Disposition                   string `json:"disposition"`
+	SoftInterrupt                 string `json:"softInterrupt"`
+	SoftInterruptRequestedSeq     uint64 `json:"softInterruptRequestedSeq"`
+	SoftInterruptOutcomeSeq       uint64 `json:"softInterruptOutcomeSeq,omitempty"`
+	TargetLeaseState              string `json:"targetLeaseState"`
+	FinalPeekCapabilityState      string `json:"finalPeekCapabilityState"`
+	FinalCapabilityGeneration     string `json:"finalCapabilityGeneration"`
+	FinalCapabilityIssuedSeq      uint64 `json:"finalCapabilityIssuedSeq"`
+	FinalSteeringGeneration       string `json:"finalSteeringGeneration"`
+	FinalPeekCapabilityRevokedSeq uint64 `json:"finalPeekCapabilityRevokedSeq"`
+}
+
+type SafeToolLeaseDisposition struct {
+	SafeToolLeaseSnapshot
+	Disposition string `json:"disposition"`
+}
+
+type SafeDisplayEvidence struct {
+	Kind               string             `json:"kind"`
+	Text               string             `json:"text,omitempty"`
+	ArtifactProjection ArtifactProjection `json:"artifactProjection,omitempty"`
+}
+
 type SafeSchema2RunStartedData struct {
 	WorkspaceAuthorityID    string              `json:"workspaceAuthorityId"`
 	WorkspaceAdmissionSeq   uint64              `json:"workspaceAdmissionSeq"`
@@ -768,7 +957,7 @@ type SafeSchema2RunResumedData struct {
 	ResumeMode           string                    `json:"resumeMode"`
 	Reason               string                    `json:"reason"`
 	OpenDispatches       []SafeSchema2OpenDispatch `json:"openDispatches"`
-	RetryTargets         []json.RawMessage         `json:"retryTargets"`
+	RetryTargets         []SafeRetryTarget         `json:"retryTargets"`
 }
 type SafeSchema2NodeWaitingData struct {
 	NeededInputs uint64   `json:"neededInputs"`
@@ -805,29 +994,29 @@ type SafeSchema2SlotBindingObservedData struct {
 	RelatedSeq      uint64 `json:"relatedSeq"`
 }
 type SafeSchema2SlotDispatchData struct {
-	DispatchID                   string          `json:"dispatchId"`
-	TargetLeaseID                string          `json:"targetLeaseId"`
-	TurnKey                      string          `json:"turnKey"`
-	TurnPhase                    string          `json:"turnPhase"`
-	TurnInputs                   json.RawMessage `json:"turnInputs"`
-	NodeID                       string          `json:"nodeId"`
-	Attempt                      uint64          `json:"attempt"`
-	SlotID                       string          `json:"slotId"`
-	AgentID                      string          `json:"agentId"`
-	Harness                      string          `json:"harness"`
-	BindingID                    string          `json:"bindingId"`
-	SessionTargetID              string          `json:"sessionTargetId"`
-	TargetFingerprint            string          `json:"targetFingerprint"`
-	DispatchInputBarrierEncoding string          `json:"dispatchInputBarrierEncoding"`
-	DispatchInputBarrierSHA256   string          `json:"dispatchInputBarrierSha256"`
-	TargetReadyProofEncoding     string          `json:"targetReadyProofEncoding"`
-	TargetReadyProofSHA256       string          `json:"targetReadyProofSha256"`
-	PaneHistoryBaselineEncoding  string          `json:"paneHistoryBaselineEncoding"`
-	PaneHistoryBaselineSHA256    string          `json:"paneHistoryBaselineSha256"`
-	SteeringGeneration           string          `json:"steeringGeneration"`
-	PromptSHA256                 string          `json:"promptSha256"`
-	NativeAck                    bool            `json:"nativeAck"`
-	RecordedBeforeSend           bool            `json:"recordedBeforeSend"`
+	DispatchID                   string         `json:"dispatchId"`
+	TargetLeaseID                string         `json:"targetLeaseId"`
+	TurnKey                      string         `json:"turnKey"`
+	TurnPhase                    string         `json:"turnPhase"`
+	TurnInputs                   SafeTurnInputs `json:"turnInputs"`
+	NodeID                       string         `json:"nodeId"`
+	Attempt                      uint64         `json:"attempt"`
+	SlotID                       string         `json:"slotId"`
+	AgentID                      string         `json:"agentId"`
+	Harness                      string         `json:"harness"`
+	BindingID                    string         `json:"bindingId"`
+	SessionTargetID              string         `json:"sessionTargetId"`
+	TargetFingerprint            string         `json:"targetFingerprint"`
+	DispatchInputBarrierEncoding string         `json:"dispatchInputBarrierEncoding"`
+	DispatchInputBarrierSHA256   string         `json:"dispatchInputBarrierSha256"`
+	TargetReadyProofEncoding     string         `json:"targetReadyProofEncoding"`
+	TargetReadyProofSHA256       string         `json:"targetReadyProofSha256"`
+	PaneHistoryBaselineEncoding  string         `json:"paneHistoryBaselineEncoding"`
+	PaneHistoryBaselineSHA256    string         `json:"paneHistoryBaselineSha256"`
+	SteeringGeneration           string         `json:"steeringGeneration"`
+	PromptSHA256                 string         `json:"promptSha256"`
+	NativeAck                    bool           `json:"nativeAck"`
+	RecordedBeforeSend           bool           `json:"recordedBeforeSend"`
 }
 type SafeSchema2SlotPeekCapabilityIssuedData struct {
 	DispatchID           string `json:"dispatchId"`
@@ -895,59 +1084,56 @@ type SafeSchema2SlotReconciliationInterruptOutcomeData struct {
 	ObservedAt        string `json:"observedAt"`
 }
 type SafeSchema2SlotResultData struct {
-	DispatchID                       string          `json:"dispatchId"`
-	TargetLeaseID                    string          `json:"targetLeaseId"`
-	TurnKey                          string          `json:"turnKey"`
-	TurnPhase                        string          `json:"turnPhase"`
-	NodeID                           string          `json:"nodeId"`
-	Attempt                          uint64          `json:"attempt"`
-	SlotID                           string          `json:"slotId"`
-	AgentID                          string          `json:"agentId"`
-	BindingID                        string          `json:"bindingId"`
-	SessionTargetID                  string          `json:"sessionTargetId"`
-	TargetFingerprint                string          `json:"targetFingerprint"`
-	PaneHistoryBaselineEncoding      string          `json:"paneHistoryBaselineEncoding"`
-	PaneHistoryBaselineDispatchSeq   uint64          `json:"paneHistoryBaselineDispatchSeq"`
-	PaneHistoryBaselineSHA256        string          `json:"paneHistoryBaselineSha256"`
-	PeekCapabilityRevokedSeq         uint64          `json:"peekCapabilityRevokedSeq"`
-	SteeringGeneration               string          `json:"steeringGeneration"`
-	OperatorInfluenced               bool            `json:"operatorInfluenced"`
-	Status                           string          `json:"status"`
-	TurnResult                       json.RawMessage `json:"turnResult"`
-	TurnResultEncoding               string          `json:"turnResultEncoding"`
-	TurnResultSHA256                 string          `json:"turnResultSha256"`
-	ClientAttachmentAuditProofSHA256 string          `json:"clientAttachmentAuditProofSha256"`
+	DispatchID                       string         `json:"dispatchId"`
+	TargetLeaseID                    string         `json:"targetLeaseId"`
+	TurnKey                          string         `json:"turnKey"`
+	TurnPhase                        string         `json:"turnPhase"`
+	NodeID                           string         `json:"nodeId"`
+	Attempt                          uint64         `json:"attempt"`
+	SlotID                           string         `json:"slotId"`
+	AgentID                          string         `json:"agentId"`
+	BindingID                        string         `json:"bindingId"`
+	SessionTargetID                  string         `json:"sessionTargetId"`
+	TargetFingerprint                string         `json:"targetFingerprint"`
+	PaneHistoryBaselineEncoding      string         `json:"paneHistoryBaselineEncoding"`
+	PaneHistoryBaselineDispatchSeq   uint64         `json:"paneHistoryBaselineDispatchSeq"`
+	PaneHistoryBaselineSHA256        string         `json:"paneHistoryBaselineSha256"`
+	PeekCapabilityRevokedSeq         uint64         `json:"peekCapabilityRevokedSeq"`
+	SteeringGeneration               string         `json:"steeringGeneration"`
+	OperatorInfluenced               bool           `json:"operatorInfluenced"`
+	Status                           string         `json:"status"`
+	TurnResult                       SafeTurnResult `json:"turnResult"`
+	TurnResultEncoding               string         `json:"turnResultEncoding"`
+	TurnResultSHA256                 string         `json:"turnResultSha256"`
+	ClientAttachmentAuditProofSHA256 string         `json:"clientAttachmentAuditProofSha256"`
 }
 type SafeSchema2FormationResultData struct {
-	NodeID                     string          `json:"nodeId"`
-	Attempt                    uint64          `json:"attempt"`
-	Status                     string          `json:"status"`
-	Outputs                    json.RawMessage `json:"outputs"`
-	OutputHashes               json.RawMessage `json:"outputHashes"`
-	ReportArtifactID           string          `json:"reportArtifactId"`
-	ArtifactIDs                []string        `json:"artifactIds"`
-	DiffArtifactIDs            []string        `json:"diffArtifactIds"`
-	ContributingSlotResultSeqs []uint64        `json:"contributingSlotResultSeqs"`
-	ResultEncoding             string          `json:"resultEncoding"`
-	ResultSHA256               string          `json:"resultSha256"`
+	NodeID                     string                 `json:"nodeId"`
+	Attempt                    uint64                 `json:"attempt"`
+	Status                     string                 `json:"status"`
+	Outputs                    SafePayloadProjections `json:"outputs"`
+	OutputHashes               SafeProjectionHashes   `json:"outputHashes"`
+	ReportArtifactID           string                 `json:"reportArtifactId"`
+	ArtifactIDs                []string               `json:"artifactIds"`
+	DiffArtifactIDs            []string               `json:"diffArtifactIds"`
+	ContributingSlotResultSeqs []uint64               `json:"contributingSlotResultSeqs"`
+	ResultEncoding             string                 `json:"resultEncoding"`
+	ResultSHA256               string                 `json:"resultSha256"`
 }
 
-// The remaining schema-2 arms are closed by named structs. Their nested values
-// remain encoded projections because Task 1 neither interprets nor authorizes
-// those upstream payloads; the per-type allowlist is enforced before decode.
 type SafeSchema2ToolDispatchData struct {
-	ToolLeaseID             string          `json:"toolLeaseId"`
-	NodeID                  string          `json:"nodeId"`
-	Attempt                 uint64          `json:"attempt"`
-	ToolBindingID           string          `json:"toolBindingId"`
-	InputManifestSHA256     string          `json:"inputManifestSha256"`
-	InputHashes             json.RawMessage `json:"inputHashes"`
-	ProfileSHA256           string          `json:"profileSha256"`
-	ParametersSHA256        string          `json:"parametersSha256"`
-	PolicySHA256            string          `json:"policySha256"`
-	DeterminismPolicySHA256 string          `json:"determinismPolicySha256"`
-	ExecutionBundleSHA256   string          `json:"executionBundleSha256"`
-	RecordedBeforeExecute   bool            `json:"recordedBeforeExecute"`
+	ToolLeaseID             string               `json:"toolLeaseId"`
+	NodeID                  string               `json:"nodeId"`
+	Attempt                 uint64               `json:"attempt"`
+	ToolBindingID           string               `json:"toolBindingId"`
+	InputManifestSHA256     string               `json:"inputManifestSha256"`
+	InputHashes             SafeProjectionHashes `json:"inputHashes"`
+	ProfileSHA256           string               `json:"profileSha256"`
+	ParametersSHA256        string               `json:"parametersSha256"`
+	PolicySHA256            string               `json:"policySha256"`
+	DeterminismPolicySHA256 string               `json:"determinismPolicySha256"`
+	ExecutionBundleSHA256   string               `json:"executionBundleSha256"`
+	RecordedBeforeExecute   bool                 `json:"recordedBeforeExecute"`
 }
 type SafeSchema2ToolProcessLaunchData struct {
 	ToolLeaseID         string `json:"toolLeaseId"`
@@ -958,60 +1144,60 @@ type SafeSchema2ToolProcessLaunchData struct {
 	RecordedBeforeSpawn bool   `json:"recordedBeforeSpawn"`
 }
 type SafeSchema2ToolResultData struct {
-	ToolLeaseID           string          `json:"toolLeaseId"`
-	LaunchID              string          `json:"launchId"`
-	Generation            string          `json:"generation"`
-	NodeID                string          `json:"nodeId"`
-	Attempt               uint64          `json:"attempt"`
-	Status                string          `json:"status"`
-	Outputs               json.RawMessage `json:"outputs"`
-	OutputHashes          json.RawMessage `json:"outputHashes"`
-	ArtifactRegistrations json.RawMessage `json:"artifactRegistrations"`
-	Artifacts             json.RawMessage `json:"artifacts"`
-	DisplayEvidence       json.RawMessage `json:"displayEvidence"`
-	Timing                json.RawMessage `json:"timing"`
+	ToolLeaseID           string                 `json:"toolLeaseId"`
+	LaunchID              string                 `json:"launchId"`
+	Generation            string                 `json:"generation"`
+	NodeID                string                 `json:"nodeId"`
+	Attempt               uint64                 `json:"attempt"`
+	Status                string                 `json:"status"`
+	Outputs               SafePayloadProjections `json:"outputs"`
+	OutputHashes          SafeProjectionHashes   `json:"outputHashes"`
+	ArtifactRegistrations []ArtifactProjection   `json:"artifactRegistrations"`
+	Artifacts             []ArtifactProjection   `json:"artifacts"`
+	DisplayEvidence       []SafeDisplayEvidence  `json:"displayEvidence"`
+	Timing                SafeEventTiming        `json:"timing"`
 }
 type SafeSchema2NodeOutputData struct {
-	NodeID           string          `json:"nodeId"`
-	Status           string          `json:"status"`
-	Outputs          json.RawMessage `json:"outputs"`
-	ReportArtifactID string          `json:"reportArtifactId"`
-	ArtifactIDs      []string        `json:"artifactIds"`
-	DiffArtifactIDs  []string        `json:"diffArtifactIds"`
-	ProducedBy       json.RawMessage `json:"producedBy"`
-	Timing           json.RawMessage `json:"timing"`
-	DeliveredEdges   json.RawMessage `json:"deliveredEdges"`
+	NodeID           string                 `json:"nodeId"`
+	Status           string                 `json:"status"`
+	Outputs          SafePayloadProjections `json:"outputs"`
+	ReportArtifactID string                 `json:"reportArtifactId"`
+	ArtifactIDs      []string               `json:"artifactIds"`
+	DiffArtifactIDs  []string               `json:"diffArtifactIds"`
+	ProducedBy       SafeProducedBy         `json:"producedBy"`
+	Timing           SafeEventTiming        `json:"timing"`
+	DeliveredEdges   []SafeDeliveredEdge    `json:"deliveredEdges"`
 }
 type SafeSchema2GateEvaluatingData struct {
-	GateID              string            `json:"gateId"`
-	GateAttempt         uint64            `json:"gateAttempt"`
-	NodeID              string            `json:"nodeId"`
-	Kinds               []string          `json:"kinds"`
-	CriterionProjection json.RawMessage   `json:"criterionProjection"`
-	InputRef            SafeInputIdentity `json:"inputRef"`
-	JudgeChain          []string          `json:"judgeChain"`
-	RevisionCycleID     string            `json:"revisionCycleId"`
-	TriggerFeedbackID   string            `json:"triggerFeedbackId"`
-	PriorGateSeq        uint64            `json:"priorGateSeq"`
+	GateID              string                  `json:"gateId"`
+	GateAttempt         uint64                  `json:"gateAttempt"`
+	NodeID              string                  `json:"nodeId"`
+	Kinds               []string                `json:"kinds"`
+	CriterionProjection SafeCriterionProjection `json:"criterionProjection"`
+	InputRef            SafeInputIdentity       `json:"inputRef"`
+	JudgeChain          []string                `json:"judgeChain"`
+	RevisionCycleID     string                  `json:"revisionCycleId"`
+	TriggerFeedbackID   string                  `json:"triggerFeedbackId"`
+	PriorGateSeq        uint64                  `json:"priorGateSeq"`
 }
 type SafeSchema2GateKindResultData struct {
-	GateID                  string            `json:"gateId"`
-	GateAttempt             uint64            `json:"gateAttempt"`
-	Kind                    string            `json:"kind"`
-	Verdict                 string            `json:"verdict"`
-	Reason                  string            `json:"reason"`
-	Evidence                json.RawMessage   `json:"evidence"`
-	EvaluatedInputRef       SafeInputIdentity `json:"evaluatedInputRef"`
-	ResultEncoding          string            `json:"resultEncoding"`
-	ResultSHA256            string            `json:"resultSha256"`
-	RelatedSeqs             []uint64          `json:"relatedSeqs"`
-	GateBindingID           string            `json:"gateBindingId,omitempty"`
-	InputSHA256             string            `json:"inputSha256,omitempty"`
-	ProfileSHA256           string            `json:"profileSha256,omitempty"`
-	EvaluatorBundleSHA256   string            `json:"evaluatorBundleSha256,omitempty"`
-	ParametersSHA256        string            `json:"parametersSha256,omitempty"`
-	PolicySHA256            string            `json:"policySha256,omitempty"`
-	DeterminismPolicySHA256 string            `json:"determinismPolicySha256,omitempty"`
+	GateID                  string             `json:"gateId"`
+	GateAttempt             uint64             `json:"gateAttempt"`
+	Kind                    string             `json:"kind"`
+	Verdict                 string             `json:"verdict"`
+	Reason                  string             `json:"reason"`
+	Evidence                []SafeGateEvidence `json:"evidence"`
+	EvaluatedInputRef       SafeInputIdentity  `json:"evaluatedInputRef"`
+	ResultEncoding          string             `json:"resultEncoding"`
+	ResultSHA256            string             `json:"resultSha256"`
+	RelatedSeqs             []uint64           `json:"relatedSeqs"`
+	GateBindingID           string             `json:"gateBindingId,omitempty"`
+	InputSHA256             string             `json:"inputSha256,omitempty"`
+	ProfileSHA256           string             `json:"profileSha256,omitempty"`
+	EvaluatorBundleSHA256   string             `json:"evaluatorBundleSha256,omitempty"`
+	ParametersSHA256        string             `json:"parametersSha256,omitempty"`
+	PolicySHA256            string             `json:"policySha256,omitempty"`
+	DeterminismPolicySHA256 string             `json:"determinismPolicySha256,omitempty"`
 }
 type SafeSchema2JudgeResultData struct {
 	GateID          string          `json:"gateId"`
@@ -1022,7 +1208,7 @@ type SafeSchema2JudgeResultData struct {
 	ContextEncoding string          `json:"contextEncoding"`
 	ContextSHA256   string          `json:"contextSha256"`
 	PriorResultSeqs []uint64        `json:"priorResultSeqs"`
-	Result          json.RawMessage `json:"result"`
+	Result          SafeJudgeResult `json:"result"`
 	ResultEncoding  string          `json:"resultEncoding"`
 	ResultSHA256    string          `json:"resultSha256"`
 }
@@ -1039,20 +1225,20 @@ type SafeSchema2JudgeAttemptFailedData struct {
 	RelatedSeq      uint64   `json:"relatedSeq"`
 }
 type SafeSchema2GateVerdictData struct {
-	GateID            string            `json:"gateId"`
-	GateAttempt       uint64            `json:"gateAttempt"`
-	Verdict           string            `json:"verdict"`
-	PerKind           json.RawMessage   `json:"perKind"`
-	KindResultSeqs    []uint64          `json:"kindResultSeqs"`
-	EvaluatedInputRef SafeInputIdentity `json:"evaluatedInputRef"`
-	RoutePort         string            `json:"routePort"`
-	RoutedEdges       []string          `json:"routedEdges"`
-	Reason            string            `json:"reason"`
-	FeedbackPayload   json.RawMessage   `json:"feedbackPayload"`
+	GateID            string                  `json:"gateId"`
+	GateAttempt       uint64                  `json:"gateAttempt"`
+	Verdict           string                  `json:"verdict"`
+	PerKind           SafeGateKindVerdicts    `json:"perKind"`
+	KindResultSeqs    SafeGateKindResultSeqs  `json:"kindResultSeqs"`
+	EvaluatedInputRef SafeInputIdentity       `json:"evaluatedInputRef"`
+	RoutePort         string                  `json:"routePort"`
+	RoutedEdges       []string                `json:"routedEdges"`
+	Reason            string                  `json:"reason"`
+	FeedbackPayload   SafeGateFeedbackPayload `json:"feedbackPayload"`
 }
 type SafeSchema2ArtifactAttachedData struct {
 	ArtifactProjection ArtifactProjection `json:"artifactProjection"`
-	Source             json.RawMessage    `json:"source"`
+	Source             SafeArtifactSource `json:"source"`
 }
 type SafeSchema2ArtifactObservedData struct {
 	ArtifactID   string           `json:"artifactId"`
@@ -1072,14 +1258,14 @@ type SafeSchema2EscalationRaisedData struct {
 	Blocks   bool   `json:"blocks"`
 }
 type SafeSchema2HumanInputRequestedData struct {
-	GateID                  string            `json:"gateId"`
-	GateAttempt             uint64            `json:"gateAttempt"`
-	NodeID                  string            `json:"nodeId"`
-	PromptProjection        json.RawMessage   `json:"promptProjection"`
-	ChoiceProjections       json.RawMessage   `json:"choiceProjections"`
-	RequestedBy             string            `json:"requestedBy"`
-	EvaluatedInputRef       SafeInputIdentity `json:"evaluatedInputRef"`
-	CompletedKindResultSeqs []uint64          `json:"completedKindResultSeqs"`
+	GateID                  string                      `json:"gateId"`
+	GateAttempt             uint64                      `json:"gateAttempt"`
+	NodeID                  string                      `json:"nodeId"`
+	PromptProjection        SafeFixedSystemProjection   `json:"promptProjection"`
+	ChoiceProjections       SafeHumanChoiceProjections  `json:"choiceProjections"`
+	RequestedBy             string                      `json:"requestedBy"`
+	EvaluatedInputRef       SafeInputIdentity           `json:"evaluatedInputRef"`
+	CompletedKindResultSeqs SafeCompletedKindResultSeqs `json:"completedKindResultSeqs"`
 }
 type SafeSchema2HumanVerdictRecordedData struct {
 	CommandID            string `json:"commandId"`
@@ -1112,50 +1298,50 @@ type SafeSchema2RunBlockedData struct {
 	ResumeAllowed  bool                      `json:"resumeAllowed"`
 	ResumePolicy   string                    `json:"resumePolicy"`
 	OpenDispatches []SafeSchema2OpenDispatch `json:"openDispatches"`
-	RetryTargets   []json.RawMessage         `json:"retryTargets"`
+	RetryTargets   []SafeRetryTarget         `json:"retryTargets"`
 	NextEpoch      uint64                    `json:"nextEpoch"`
 }
 type SafeSchema2RunCancelRequestedData struct {
-	CommandID            string          `json:"commandId"`
-	CommandPayloadSHA256 string          `json:"commandPayloadSha256"`
-	Reason               string          `json:"reason"`
-	RequestedBy          string          `json:"requestedBy"`
-	OpenNodeAttempts     json.RawMessage `json:"openNodeAttempts"`
-	OpenSlotDispatches   json.RawMessage `json:"openSlotDispatches"`
-	OpenToolLeases       json.RawMessage `json:"openToolLeases"`
+	CommandID            string                    `json:"commandId"`
+	CommandPayloadSHA256 string                    `json:"commandPayloadSha256"`
+	Reason               string                    `json:"reason"`
+	RequestedBy          string                    `json:"requestedBy"`
+	OpenNodeAttempts     []SafeNodeAttemptSnapshot `json:"openNodeAttempts"`
+	OpenSlotDispatches   []SafeSchema2OpenDispatch `json:"openSlotDispatches"`
+	OpenToolLeases       []SafeToolLeaseSnapshot   `json:"openToolLeases"`
 }
 type SafeSchema2RunCanceledData struct {
-	CancelRequestSeq         uint64          `json:"cancelRequestSeq"`
-	Reason                   string          `json:"reason"`
-	RequestedBy              string          `json:"requestedBy"`
-	NodeAttemptDispositions  json.RawMessage `json:"nodeAttemptDispositions"`
-	SlotDispatchDispositions json.RawMessage `json:"slotDispatchDispositions"`
-	ReconciledToolLeases     json.RawMessage `json:"reconciledToolLeases"`
-	Final                    bool            `json:"final"`
+	CancelRequestSeq         uint64                        `json:"cancelRequestSeq"`
+	Reason                   string                        `json:"reason"`
+	RequestedBy              string                        `json:"requestedBy"`
+	NodeAttemptDispositions  []SafeNodeAttemptDisposition  `json:"nodeAttemptDispositions"`
+	SlotDispatchDispositions []SafeSlotDispatchDisposition `json:"slotDispatchDispositions"`
+	ReconciledToolLeases     []SafeToolLeaseDisposition    `json:"reconciledToolLeases"`
+	Final                    bool                          `json:"final"`
 }
 type SafeSchema2RunFailureReconciliationStartedData struct {
-	OriginCancelRequestSeq       uint64          `json:"originCancelRequestSeq"`
-	Code                         string          `json:"code"`
-	Reason                       string          `json:"reason"`
-	Unrecoverable                bool            `json:"unrecoverable"`
-	RelatedSeq                   uint64          `json:"relatedSeq"`
-	FailureCause                 json.RawMessage `json:"failureCause"`
-	OpenNodeAttempts             json.RawMessage `json:"openNodeAttempts"`
-	OpenSlotDispatches           json.RawMessage `json:"openSlotDispatches"`
-	OpenToolLeases               json.RawMessage `json:"openToolLeases"`
-	RecordedBeforeReconciliation bool            `json:"recordedBeforeReconciliation"`
+	OriginCancelRequestSeq       uint64                    `json:"originCancelRequestSeq"`
+	Code                         string                    `json:"code"`
+	Reason                       string                    `json:"reason"`
+	Unrecoverable                bool                      `json:"unrecoverable"`
+	RelatedSeq                   uint64                    `json:"relatedSeq"`
+	FailureCause                 SafeFailureCause          `json:"failureCause"`
+	OpenNodeAttempts             []SafeNodeAttemptSnapshot `json:"openNodeAttempts"`
+	OpenSlotDispatches           []SafeSchema2OpenDispatch `json:"openSlotDispatches"`
+	OpenToolLeases               []SafeToolLeaseSnapshot   `json:"openToolLeases"`
+	RecordedBeforeReconciliation bool                      `json:"recordedBeforeReconciliation"`
 }
 type SafeSchema2RunFailedData struct {
-	FailureReconciliationSeq uint64          `json:"failureReconciliationSeq"`
-	Code                     string          `json:"code"`
-	Reason                   string          `json:"reason"`
-	Unrecoverable            bool            `json:"unrecoverable"`
-	RelatedSeq               uint64          `json:"relatedSeq"`
-	FailureCause             json.RawMessage `json:"failureCause"`
-	NodeAttemptDispositions  json.RawMessage `json:"nodeAttemptDispositions"`
-	SlotDispatchDispositions json.RawMessage `json:"slotDispatchDispositions"`
-	ToolLeaseDispositions    json.RawMessage `json:"toolLeaseDispositions"`
-	Final                    bool            `json:"final"`
+	FailureReconciliationSeq uint64                        `json:"failureReconciliationSeq"`
+	Code                     string                        `json:"code"`
+	Reason                   string                        `json:"reason"`
+	Unrecoverable            bool                          `json:"unrecoverable"`
+	RelatedSeq               uint64                        `json:"relatedSeq"`
+	FailureCause             SafeFailureCause              `json:"failureCause"`
+	NodeAttemptDispositions  []SafeNodeAttemptDisposition  `json:"nodeAttemptDispositions"`
+	SlotDispatchDispositions []SafeSlotDispatchDisposition `json:"slotDispatchDispositions"`
+	ToolLeaseDispositions    []SafeToolLeaseDisposition    `json:"toolLeaseDispositions"`
+	Final                    bool                          `json:"final"`
 }
 type SafeSchema2RunSucceededData struct {
 	SummaryArtifactID string   `json:"summaryArtifactId"`
