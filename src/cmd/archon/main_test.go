@@ -778,7 +778,9 @@ to = "gate_migrated:in"
 		t.Fatalf("start historical compatibility run: %v", err)
 	}
 	if err := store.AppendRunEvent(started.RunID, formations.RunEvent{Type: formations.RunEventBlocked, Data: map[string]any{
-		"reason": "legacy interruption", "resumeAllowed": true, "resumePolicy": "explicit",
+		"reason": "legacy interruption", "code": "legacy_interruption", "boundary": "engine",
+		"blockedNodeId": "", "blockedGateId": "", "waitingNodes": []string{}, "recoverable": true,
+		"resumeAllowed": true, "resumePolicy": "explicit", "openDispatches": []any{}, "nextEpoch": 1,
 	}}); err != nil {
 		t.Fatalf("block historical compatibility run: %v", err)
 	}
@@ -2608,15 +2610,12 @@ func TestArchonRunListJSONListsDurableRunsAndFiltersBoard(t *testing.T) {
 	store := formations.NewStore(workspace)
 	alphaRun := startArchonLedgerRun(t, store, "alpha", "brd_alpha", "mis_alpha")
 	betaRun := startArchonLedgerRun(t, store, "beta", "brd_beta", "mis_beta")
-	if err := store.AppendRunEvent(alphaRun.RunID, formations.RunEvent{Type: formations.RunEventSucceeded}); err != nil {
+	if err := store.AppendRunEvent(alphaRun.RunID, formations.RunEvent{Type: formations.RunEventSucceeded, Data: archonRunSucceededData("mis_alpha")}); err != nil {
 		t.Fatalf("finish alpha run: %v", err)
 	}
 	if err := store.AppendRunEvent(betaRun.RunID, formations.RunEvent{
 		Type: formations.RunEventBlocked,
-		Data: map[string]any{
-			"reason":        "beta needs operator",
-			"resumeAllowed": true,
-		},
+		Data: archonRunBlockedData("beta needs operator", "operator_required", "", ""),
 	}); err != nil {
 		t.Fatalf("block beta run: %v", err)
 	}
@@ -2654,7 +2653,10 @@ func TestArchonRunFollowJSONEmitsNDJSONUntilFinal(t *testing.T) {
 	workspace := t.TempDir()
 	store := formations.NewStore(workspace)
 	started := startArchonLedgerRun(t, store, "alpha", "brd_alpha", "mis_alpha")
-	if err := store.AppendRunEvent(started.RunID, formations.RunEvent{Type: formations.RunEventNodeStarted, NodeID: "fmn_work"}); err != nil {
+	if err := store.AppendRunEvent(started.RunID, formations.RunEvent{
+		Type: formations.RunEventNodeStarted, NodeID: "fmn_work", Attempt: 1,
+		Data: archonNodeStartedData(),
+	}); err != nil {
 		t.Fatalf("append node_started: %v", err)
 	}
 
@@ -2669,7 +2671,7 @@ func TestArchonRunFollowJSONEmitsNDJSONUntilFinal(t *testing.T) {
 		done <- runResult{stdout: stdout, stderr: stderr, code: code}
 	}()
 	time.Sleep(20 * time.Millisecond)
-	if err := store.AppendRunEvent(started.RunID, formations.RunEvent{Type: formations.RunEventSucceeded}); err != nil {
+	if err := store.AppendRunEvent(started.RunID, formations.RunEvent{Type: formations.RunEventSucceeded, Data: archonRunSucceededData("mis_alpha")}); err != nil {
 		t.Fatalf("append final event: %v", err)
 	}
 
@@ -2699,16 +2701,24 @@ func TestArchonRunAskJSONIncludesDurableLedgerEvidence(t *testing.T) {
 	workspace := t.TempDir()
 	store := formations.NewStore(workspace)
 	started := startArchonLedgerRun(t, store, "session-search", "brd_session_search", "mis_showcase")
-	if err := store.AppendRunEvent(started.RunID, formations.RunEvent{Type: formations.RunEventNodeStarted, NodeID: "fmn_work"}); err != nil {
+	if err := store.AppendRunEvent(started.RunID, formations.RunEvent{
+		Type: formations.RunEventNodeStarted, NodeID: "fmn_work", Attempt: 1,
+		Data: archonNodeStartedData(),
+	}); err != nil {
 		t.Fatalf("append node_started: %v", err)
 	}
 	if err := store.AppendRunEvent(started.RunID, formations.RunEvent{
-		Type:   formations.RunEventNodeOutput,
-		NodeID: "fmn_work",
+		Type:    formations.RunEventNodeOutput,
+		NodeID:  "fmn_work",
+		Attempt: 1,
 		Data: map[string]any{
 			"status":    "done",
 			"reportRef": "reports/fmn_work.md",
 			"text":      "durable output from fmn_work",
+			"outputs": map[string]any{
+				"port_work_out": map[string]any{"text": "durable output from fmn_work"},
+			},
+			"reason": "fixture",
 		},
 	}); err != nil {
 		t.Fatalf("append node_output: %v", err)
@@ -2717,12 +2727,20 @@ func TestArchonRunAskJSONIncludesDurableLedgerEvidence(t *testing.T) {
 		t.Fatalf("record escalation recorded=%v err=%v", recorded, err)
 	}
 	if err := store.AppendRunEvent(started.RunID, formations.RunEvent{
-		Type:   formations.RunEventHumanInputRequested,
-		NodeID: "gate_review",
-		GateID: "gate_review",
+		Type:    formations.RunEventHumanInputRequested,
+		NodeID:  "gate_review",
+		GateID:  "gate_review",
+		Attempt: 1,
 		Data: map[string]any{
-			"prompt":  "Approve durable output?",
-			"choices": []string{"pass", "fail"},
+			"gateId":      "gate_review",
+			"nodeId":      "gate_review",
+			"prompt":      "Approve durable output?",
+			"choices":     []string{"pass", "fail"},
+			"requestedBy": "gate_review",
+			"inputRef": map[string]any{
+				"edgeId": "edge_work_review", "fromNodeId": "fmn_work", "fromPortId": "port_work_out", "toPortId": "in", "outputSeq": 3,
+			},
+			"codeVerdict": "", "codeReason": "", "codePerKind": map[string]string{}, "timeoutSeconds": 0,
 		},
 	}); err != nil {
 		t.Fatalf("append human input request: %v", err)
@@ -2730,12 +2748,7 @@ func TestArchonRunAskJSONIncludesDurableLedgerEvidence(t *testing.T) {
 	if err := store.AppendRunEvent(started.RunID, formations.RunEvent{
 		Type:   formations.RunEventBlocked,
 		NodeID: "fmn_work",
-		Data: map[string]any{
-			"reason":        "waiting for operator",
-			"code":          "operator_required",
-			"blockedNodeId": "fmn_work",
-			"resumeAllowed": true,
-		},
+		Data:   archonRunBlockedData("waiting for operator", "operator_required", "fmn_work", ""),
 	}); err != nil {
 		t.Fatalf("append blocked event: %v", err)
 	}
@@ -2835,6 +2848,28 @@ func startArchonLedgerRun(t *testing.T, store *formations.Store, slug, boardID, 
 		t.Fatalf("start run for board %s: %v", slug, err)
 	}
 	return started
+}
+
+func archonNodeStartedData() map[string]any {
+	return map[string]any{
+		"nodeKind":  "formation",
+		"inputRefs": []any{},
+		"reason":    "fixture",
+	}
+}
+
+func archonRunBlockedData(reason, code, nodeID, gateID string) map[string]any {
+	return map[string]any{
+		"reason": reason, "code": code, "boundary": "engine",
+		"blockedNodeId": nodeID, "blockedGateId": gateID, "waitingNodes": []string{}, "recoverable": true,
+		"resumeAllowed": true, "resumePolicy": "explicit", "openDispatches": []any{}, "nextEpoch": 1,
+	}
+}
+
+func archonRunSucceededData(missionID string) map[string]any {
+	return map[string]any{
+		"final": true, "mode": "mission", "formationId": "", "missionId": missionID, "reason": "fixture complete",
+	}
 }
 
 func intSliceContains(values []int, target int) bool {
@@ -3144,6 +3179,35 @@ id = "` + missionID + `"
 title = "Mission"
 goal = "Exercise durable run ledger"
 beadId = "home-test.1"
+
+[[formation]]
+id = "fmn_work"
+type = "solo"
+title = "Work"
+
+[[formation.input]]
+id = "port_work_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_work_out"
+label = "Output"
+
+[[gate]]
+id = "gate_review"
+title = "Review"
+kinds = ["human"]
+criterion = "Approve durable output"
+
+[[connection]]
+id = "edge_mission_work"
+from = "` + missionID + `:out"
+to = "fmn_work:port_work_in"
+
+[[connection]]
+id = "edge_work_review"
+from = "fmn_work:port_work_out"
+to = "gate_review:in"
 `
 }
 

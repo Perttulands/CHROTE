@@ -1004,7 +1004,9 @@ onFail = "block"
 		t.Fatalf("start historical compatibility run: %v", err)
 	}
 	if err := store.AppendRunEvent(started.RunID, formations.RunEvent{Type: formations.RunEventBlocked, Data: map[string]any{
-		"reason": "legacy interruption", "resumeAllowed": true, "resumePolicy": "explicit",
+		"reason": "legacy interruption", "code": "legacy_interruption", "boundary": "engine",
+		"blockedNodeId": "", "blockedGateId": "", "waitingNodes": []string{}, "recoverable": true,
+		"resumeAllowed": true, "resumePolicy": "explicit", "openDispatches": []any{}, "nextEpoch": 1,
 	}}); err != nil {
 		t.Fatalf("block historical compatibility run: %v", err)
 	}

@@ -86,28 +86,24 @@ func TestProjectRoomPrivateInboxRequiresExplicitActor(t *testing.T) {
 
 func TestProjectRunRoomProjectsFinalFormationsLedgerAsReadOnlySource(t *testing.T) {
 	workspace := t.TempDir()
-	writeRunLedgerFixture(t, workspace, "demo", "run_abc123", []map[string]any{
-		{"seq": 1, "type": "run_started", "actor": "Perttu", "ts": "2026-07-04T01:00:01Z", "runId": "run_abc123", "boardId": "brd_demo", "boardRev": 3, "missionId": "mission_ui", "beadId": "ctx-q8x.2", "data": map[string]any{"boardSlug": "demo", "objective": "Render projection"}},
-		{"seq": 2, "type": "node_output", "actor": "CodexA", "ts": "2026-07-04T01:00:02Z", "runId": "run_abc123", "nodeId": "fmn_ui", "data": map[string]any{"text": "projection rendered", "outputPort": "done"}},
-		{"seq": 3, "type": "run_succeeded", "actor": "room-system", "ts": "2026-07-04T01:00:03Z", "runId": "run_abc123", "data": map[string]any{"summary": "green"}},
-	})
+	runID := startRunRoomFixture(t, workspace)
 
-	projection, err := NewStore(workspace).ProjectRoom("run:run_abc123", ProjectionOptions{})
+	projection, err := NewStore(workspace).ProjectRoom("run:"+runID, ProjectionOptions{})
 	if err != nil {
 		t.Fatalf("ProjectRoom run: %v", err)
 	}
 
-	if projection.RoomRef != "run:run_abc123" || projection.RoomKind != "run" || projection.RoomID != "run_abc123" {
+	if projection.RoomRef != "run:"+runID || projection.RoomKind != "run" || projection.RoomID != runID {
 		t.Fatalf("run room identity = %+v", projection)
 	}
 	if projection.Source.Kind != "formations-run-ledger" || !projection.Source.ReadOnly || !projection.Source.RunFinal || projection.Source.RunStatus != "succeeded" {
 		t.Fatalf("run room source = %+v", projection.Source)
 	}
-	if projection.Summary.EventCount != 3 {
-		t.Fatalf("event count = %d, want 3", projection.Summary.EventCount)
+	if projection.Summary.EventCount != 4 {
+		t.Fatalf("event count = %d, want 4", projection.Summary.EventCount)
 	}
-	if projection.Messages[1].Type != "node_output" || projection.Messages[1].Metadata["nodeId"] != "fmn_ui" {
-		t.Fatalf("node output message = %+v", projection.Messages[1])
+	if projection.Messages[2].Type != "node_output" || projection.Messages[2].Metadata["nodeId"] != "fmn_ui" {
+		t.Fatalf("node output message = %+v", projection.Messages[2])
 	}
 }
 
@@ -115,19 +111,16 @@ func TestProjectRunRoomAllowsConfiguredWorkspaceRootSymlink(t *testing.T) {
 	root := t.TempDir()
 	workspace := filepath.Join(root, "workspace")
 	workspaceAlias := filepath.Join(root, "workspace-alias")
-	writeRunLedgerFixture(t, workspace, "demo", "run_abc123", []map[string]any{
-		{"seq": 1, "type": "run_started", "actor": "Perttu", "ts": "2026-07-04T01:00:01Z", "runId": "run_abc123", "boardId": "brd_demo", "boardRev": 3, "missionId": "mission_ui", "data": map[string]any{"boardSlug": "demo"}},
-		{"seq": 2, "type": "run_succeeded", "actor": "room-system", "ts": "2026-07-04T01:00:02Z", "runId": "run_abc123", "data": map[string]any{"summary": "green"}},
-	})
+	runID := startRunRoomFixture(t, workspace)
 	if err := os.Symlink(workspace, workspaceAlias); err != nil {
 		t.Fatalf("symlink configured workspace: %v", err)
 	}
 
-	projection, err := NewStore(workspaceAlias).ProjectRoom("run:run_abc123", ProjectionOptions{})
+	projection, err := NewStore(workspaceAlias).ProjectRoom("run:"+runID, ProjectionOptions{})
 	if err != nil {
 		t.Fatalf("ProjectRoom through configured workspace symlink: %v", err)
 	}
-	if projection.RoomID != "run_abc123" || projection.Source.RunStatus != "succeeded" || !projection.Source.RunFinal {
+	if projection.RoomID != runID || projection.Source.RunStatus != "succeeded" || !projection.Source.RunFinal {
 		t.Fatalf("run projection through configured workspace symlink = %+v", projection)
 	}
 }
@@ -241,6 +234,85 @@ func writeRunLedgerFixture(t *testing.T, workspace, boardSlug, runID string, eve
 	t.Helper()
 	path := filepath.Join(workspace, ".formations", "runs", boardSlug, runID+".ndjson")
 	writeLedgerFixture(t, path, events)
+}
+
+func startRunRoomFixture(t *testing.T, workspace string) string {
+	t.Helper()
+	store := formations.NewStore(workspace)
+	boardPath := store.BoardPath("demo")
+	if err := os.MkdirAll(filepath.Dir(boardPath), 0o755); err != nil {
+		t.Fatalf("mkdir run-room board directory: %v", err)
+	}
+	if err := os.WriteFile(boardPath, []byte(`schema = 1
+id = "brd_demo"
+slug = "demo"
+title = "Demo"
+rev = 3
+
+[[mission]]
+id = "mission_ui"
+title = "Render projection"
+goal = "Render projection"
+beadId = "ctx-q8x.2"
+
+[[formation]]
+id = "fmn_ui"
+type = "solo"
+title = "UI"
+
+[[formation.input]]
+id = "port_ui_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_ui_out"
+label = "Output"
+
+[[connection]]
+id = "edge_mission_ui"
+from = "mission_ui:out"
+to = "fmn_ui:port_ui_in"
+`), 0o644); err != nil {
+		t.Fatalf("write run-room board: %v", err)
+	}
+	board, err := store.ReadBoard("demo")
+	if err != nil {
+		t.Fatalf("read run-room board: %v", err)
+	}
+	started, err := store.StartRun("demo", formations.RunStartRequest{
+		MissionID: "mission_ui", Actor: "Perttu", ExpectedBoardETag: board.ETag, ExpectedBoardRev: board.Rev,
+	})
+	if err != nil {
+		t.Fatalf("start run-room fixture: %v", err)
+	}
+	for _, artifact := range []string{started.SnapshotPath, started.BindingsSnapshotPath} {
+		info, statErr := os.Stat(filepath.Join(workspace, artifact))
+		if statErr != nil || !info.Mode().IsRegular() {
+			t.Fatalf("immutable run-room artifact %q info=%+v err=%v, want regular file", artifact, info, statErr)
+		}
+	}
+	if err := store.AppendRunEvent(started.RunID, formations.RunEvent{
+		Type: formations.RunEventNodeStarted, Actor: "CodexA", NodeID: "fmn_ui", Attempt: 1,
+		Data: map[string]any{"nodeKind": "formation", "inputRefs": []any{}, "reason": "fixture"},
+	}); err != nil {
+		t.Fatalf("append run-room node start: %v", err)
+	}
+	if err := store.AppendRunEvent(started.RunID, formations.RunEvent{
+		Type: formations.RunEventNodeOutput, Actor: "CodexA", NodeID: "fmn_ui", Attempt: 1,
+		Data: map[string]any{
+			"status": "done", "text": "projection rendered", "reason": "fixture",
+			"outputs": map[string]any{"port_ui_out": map[string]any{"text": "projection rendered"}},
+		},
+	}); err != nil {
+		t.Fatalf("append run-room node output: %v", err)
+	}
+	if err := store.AppendRunEvent(started.RunID, formations.RunEvent{
+		Type: formations.RunEventSucceeded, Actor: "room-system",
+		Data: map[string]any{"final": true, "mode": "mission", "formationId": "", "missionId": "mission_ui", "reason": "fixture complete"},
+	}); err != nil {
+		t.Fatalf("append run-room success: %v", err)
+	}
+	return started.RunID
 }
 
 func writeLedgerFixture(t *testing.T, path string, events []map[string]any) {
