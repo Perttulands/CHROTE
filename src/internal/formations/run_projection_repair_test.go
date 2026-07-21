@@ -331,7 +331,24 @@ func TestProjectCanonicalRunRejectsInvalidSchema2StartAttempt(t *testing.T) {
 			event := schema2Event(projectionTestRunID, 2, "node_started", data)
 			delete(event, "missionId")
 			delete(event, "beadId")
-			raw, safe := schema2RepairDecodeSafeEvent(t, event)
+			var raw rawProjectionEvent
+			var safe SafeRunEvent
+			if test.attempt == 0 {
+				var err error
+				raw, err = decodeProjectionEvent(canonicalJSON(t, event), CanonicalRunSourceSchema2, projectionTestRunID)
+				if err != nil {
+					t.Fatalf("decode zero-attempt reducer fixture: %v", err)
+				}
+				safe = SafeSchema2NodeStartedEvent{
+					safeEventEnvelope: eventEnvelope(raw),
+					Type:              raw.typeName,
+					Data: SafeSchema2NodeStartedData{
+						NodeID: test.nodeID, NodeKind: "formation", Attempt: test.attempt, Reason: "initial", InputRefs: []SafeInputIdentity{},
+					},
+				}
+			} else {
+				raw, safe = schema2RepairDecodeSafeEvent(t, event)
+			}
 			if err := reduceSchema2Event(&state, raw, safe, nil); err == nil {
 				t.Fatalf("invalid startAttempt node=%q attempt=%d was silently consumed", test.nodeID, test.attempt)
 			} else {
