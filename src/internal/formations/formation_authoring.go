@@ -479,6 +479,9 @@ func (s *Store) DeleteFormation(slug string, req FormationDeleteRequest, opts Wr
 		if opts.ExpectedETag != current.ETag || opts.ExpectedRev != current.Rev {
 			return ErrConflict
 		}
+		if err := s.validateExistingLayoutSourceForWrite(slug); err != nil {
+			return err
+		}
 
 		doc := parseTOMLDocument(raw)
 		if req.UpdatedBy != "" {
@@ -541,6 +544,9 @@ func (s *Store) DeleteGate(slug string, req GateDeleteRequest, opts WriteOptions
 		if opts.ExpectedETag != current.ETag || opts.ExpectedRev != current.Rev {
 			return ErrConflict
 		}
+		if err := s.validateExistingLayoutSourceForWrite(slug); err != nil {
+			return err
+		}
 
 		doc := parseTOMLDocument(raw)
 		if req.UpdatedBy != "" {
@@ -602,6 +608,9 @@ func (s *Store) DeleteMission(slug string, req MissionDeleteRequest, opts WriteO
 		}
 		if opts.ExpectedETag != current.ETag || opts.ExpectedRev != current.Rev {
 			return ErrConflict
+		}
+		if err := s.validateExistingLayoutSourceForWrite(slug); err != nil {
+			return err
 		}
 
 		doc := parseTOMLDocument(raw)
@@ -1162,6 +1171,14 @@ func (s *Store) RewireFormationTarget(slug string, req FormationRewireRequest, o
 
 func (s *Store) UpdateLayoutNodes(slug string, nodes []LayoutNode, opts WriteOptions) (*LayoutDocument, error) {
 	return s.updateLayoutNodes(slug, nodes, nil, opts)
+}
+
+func (s *Store) validateExistingLayoutSourceForWrite(slug string) error {
+	_, err := s.readLayoutDefinitionForWrite(slug)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	return err
 }
 
 func (s *Store) updateLayoutNodes(slug string, nodes []LayoutNode, board *BoardDocument, opts WriteOptions) (*LayoutDocument, error) {

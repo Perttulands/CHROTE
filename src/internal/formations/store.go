@@ -350,6 +350,19 @@ func (s *Store) readBoardDefinition(slug string) (*BoardDocument, error) {
 	return parseBoard(raw)
 }
 
+func (s *Store) readBoardDefinitionForWrite(slug string) (*BoardDocument, error) {
+	definition, err := s.openBoardDefinition(slug, false)
+	if err != nil {
+		return nil, err
+	}
+	defer definition.close()
+	raw, err := definition.readBytes()
+	if err != nil {
+		return nil, err
+	}
+	return parseBoardForWrite(raw)
+}
+
 func (s *Store) readLayoutDefinition(slug string) (*LayoutDocument, error) {
 	definition, err := s.openLayoutDefinition(slug, false)
 	if err != nil {
@@ -361,6 +374,19 @@ func (s *Store) readLayoutDefinition(slug string) (*LayoutDocument, error) {
 		return nil, err
 	}
 	return parseLayout(raw)
+}
+
+func (s *Store) readLayoutDefinitionForWrite(slug string) (*LayoutDocument, error) {
+	definition, err := s.openLayoutDefinition(slug, false)
+	if err != nil {
+		return nil, err
+	}
+	defer definition.close()
+	raw, err := definition.readBytes()
+	if err != nil {
+		return nil, err
+	}
+	return parseLayoutForWrite(raw)
 }
 
 func parseBoard(raw []byte) (*BoardDocument, error) {

@@ -19,13 +19,13 @@ const (
 // changing authored layout. Board nodes missing from the layout still occupy
 // their display fallback so an agent-created node does not cover them.
 func (s *Store) FindFreeLayoutPosition(slug string, desiredX, desiredY int) (LayoutNode, error) {
-	board, err := s.ReadBoard(slug)
+	board, err := s.readBoardDefinitionForWrite(slug)
 	if err != nil {
 		return LayoutNode{}, err
 	}
 
 	persisted := map[string]LayoutNode{}
-	layout, err := s.ReadLayout(slug)
+	layout, err := s.readLayoutDefinitionForWrite(slug)
 	switch {
 	case err == nil:
 		if layout.BoardID != board.ID {
