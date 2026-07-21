@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -1288,7 +1289,7 @@ func TestProjectCommandReceiptRejectsPendingMismatchAndSubstitution(t *testing.T
 			})
 		}},
 		{name: "stale writer state", mutate: func(input *CanonicalCommandReadInput) {
-			input.Record = mutateCommandRecord(t, input.Record, func(record map[string]any) { record["stateWriterFence"] = 1; record["admittedWriterFence"] = 2 })
+			input.Record = mutateCommandRecord(t, input.Record, func(record map[string]any) { record["stateWriterFence"] = "1"; record["admittedWriterFence"] = "2" })
 		}},
 		{name: "substituted record id", mutate: func(input *CanonicalCommandReadInput) {
 			input.Record = mutateCommandRecord(t, input.Record, func(record map[string]any) { record["commandId"] = projectionTestOtherCmdID })
@@ -1411,8 +1412,8 @@ func TestProjectCommandReceiptRejectsClosedRecordMatrixForEveryKindAndState(t *t
 					mutate func(map[string]any)
 				}{
 					{name: "unknown top-level member", mutate: func(record map[string]any) { record["projectionUnknown"] = true }},
-					{name: "outcome fence exceeds publishing fence", mutate: func(record map[string]any) { record["outcomeWriterFence"] = 10 }},
-					{name: "state fence precedes admission", mutate: func(record map[string]any) { record["stateWriterFence"] = 0 }},
+					{name: "outcome fence exceeds publishing fence", mutate: func(record map[string]any) { record["outcomeWriterFence"] = "10" }},
+					{name: "state fence precedes admission", mutate: func(record map[string]any) { record["stateWriterFence"] = "0" }},
 					{name: "terminal has no pending predecessor", mutate: func(record map[string]any) {
 						record["recordRev"] = 1
 						record["priorGeneration"] = nil
@@ -3248,19 +3249,22 @@ func canonicalCommandHistory(t *testing.T, commandID, kind, state, runID string)
 func schema2CommandHistoryForPayload(t *testing.T, commandID, kind, state string, payload map[string]any, outcome schema2CommandOutcome) schema2CommandHistory {
 	t.Helper()
 	payloadHash := projectionSHA256(canonicalJSON(t, payload))
+	admittedWriterFence := strconv.FormatUint(outcome.admittedWriterFence, 10)
+	stateWriterFence := strconv.FormatUint(outcome.stateWriterFence, 10)
+	outcomeWriterFence := strconv.FormatUint(outcome.outcomeWriterFence, 10)
 	pending := canonicalJSON(t, map[string]any{
 		"commandSchema": 1, "recordRev": 1, "priorGeneration": nil,
 		"commandEncoding": "run-command-jcs-v1", "commandId": commandID, "commandKind": kind,
 		"commandPayload": payload, "commandPayloadSha256": payloadHash,
-		"admittedWriterFence": outcome.admittedWriterFence, "stateWriterFence": outcome.admittedWriterFence, "state": "pending",
+		"admittedWriterFence": admittedWriterFence, "stateWriterFence": admittedWriterFence, "state": "pending",
 	})
 	terminal := map[string]any{
 		"commandSchema": 1, "recordRev": 2,
 		"priorGeneration": map[string]any{"recordRev": 1, "sha256": projectionSHA256(pending)},
 		"commandEncoding": "run-command-jcs-v1", "commandId": commandID, "commandKind": kind,
 		"commandPayload": payload, "commandPayloadSha256": payloadHash,
-		"admittedWriterFence": outcome.admittedWriterFence, "stateWriterFence": outcome.stateWriterFence, "state": state,
-		"outcomeWriterFence": outcome.outcomeWriterFence, "decisionAdmissionPolicyRef": outcome.decisionPolicyRef,
+		"admittedWriterFence": admittedWriterFence, "stateWriterFence": stateWriterFence, "state": state,
+		"outcomeWriterFence": outcomeWriterFence, "decisionAdmissionPolicyRef": outcome.decisionPolicyRef,
 	}
 	if state == "applied" {
 		terminal["runId"] = outcome.runID

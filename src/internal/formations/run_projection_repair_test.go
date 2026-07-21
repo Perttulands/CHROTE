@@ -1513,10 +1513,8 @@ func schema2RepairReducerData(eventType string, data map[string]any) map[string]
 		data["evaluatedInputRef"] = reducerRef
 	case "gate_verdict":
 		data["evaluatedInputRef"] = reducerRef
-		data["kindResultSeqs"] = []any{18, 19}
 	case "human_input_requested":
 		data["evaluatedInputRef"] = reducerRef
-		data["completedKindResultSeqs"] = []any{18}
 	case "node_input_ignored":
 		data["inputRef"] = reducerRef
 	}
