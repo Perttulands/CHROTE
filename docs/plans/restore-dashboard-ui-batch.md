@@ -60,13 +60,13 @@ behavior behind its restored feature flag.
 
 ## Execution runbook
 
-> All commands assume `cd /home/perttu/chrote` unless noted. Source ref for every restored file is
+> All commands run from the repository root unless noted. Source ref for every restored file is
 > `cc8cb6b`. Checkpoint after each phase before proceeding.
 
 ### Phase 0 — Pre‑flight & bead
 
 ```bash
-cd /home/perttu/chrote
+cd /path/to/chrote
 git status --short                       # clean / only known drift; do NOT sweep unrelated changes
 git rev-parse --abbrev-ref HEAD
 sed -n '1,80p' AGENTS.md
@@ -327,7 +327,7 @@ Work is isolated on `feat/restore-dashboard-ui-batch`; nothing on `main` is forc
 - **`uiV2` default off** → restoring V2 sidebar code does not change the visible sidebar until flipped.
 - **`go test ./...`** now includes `system_test.go`/`beads_test.go`; environment‑tied failures are real
   signals — fix/narrow, don't skip silently.
-- **Git hygiene:** commit only task files; do not sweep parent `/home/perttu` repo or CHROTE drift.
+- **Git hygiene:** commit only task files; do not sweep parent workspaces or unrelated CHROTE drift.
 - **`system.go`** shells out for process/disk info; review for input validation before deploy
   (ships unchanged from `cc8cb6b`).
 

@@ -15,7 +15,7 @@ type HealthHandler struct {
 
 // NewHealthHandler creates a new HealthHandler
 func NewHealthHandler() *HealthHandler {
-	return &HealthHandler{version: "0.2.0"}
+	return &HealthHandler{version: "2.0.0-alpha.2-dev"}
 }
 
 // NewHealthHandlerWithVersion creates a new HealthHandler with a custom version

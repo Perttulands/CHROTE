@@ -969,7 +969,7 @@ func TestTmuxHandler_CreateSessionUsesSelectedUnixUserTarget(t *testing.T) {
 	_, argsPath := installFakeTmux(t)
 	t.Setenv("CHROTE_TERMINAL_USERS", "perttu,tavern")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "perttu=/run/user/1000/chrote-tmux/tmux-1000/default,tavern=/tmp/tmux-1001/default")
-	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "perttu=/home/perttu,tavern=/home/tavern")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "perttu=/home/operator,tavern=/home/secondary")
 
 	handler := NewTmuxHandler()
 	bodyBytes := []byte(`{"name":"tavern-shell","unixUser":"tavern","mouseScroll":false}`)
@@ -984,7 +984,7 @@ func TestTmuxHandler_CreateSessionUsesSelectedUnixUserTarget(t *testing.T) {
 	}
 	got := normalizeFakeTmuxCreationTokens(readFakeCommandCalls(t, argsPath))
 	want := []string{
-		"-S /tmp/tmux-1001/default new-session -d -P -F #{session_id} -e CHROTE_CREATION_TOKEN=<token> -s tavern-shell -c /home/tavern",
+		"-S /tmp/tmux-1001/default new-session -d -P -F #{session_id} -e CHROTE_CREATION_TOKEN=<token> -s tavern-shell -c /home/secondary",
 		"-S /tmp/tmux-1001/default set-option -g mouse off",
 		"-S /tmp/tmux-1001/default unbind-key -q -n MouseDown3Pane",
 		"-S /tmp/tmux-1001/default unbind-key -q -n MouseDown3Status",
@@ -1014,7 +1014,7 @@ esac
 	t.Setenv("PATH", tmpDir)
 	t.Setenv("CHROTE_TERMINAL_USERS", "perttu,tavern")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "perttu=/tmp/tmux-p,tavern=/tmp/tmux-t")
-	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "perttu=/home/perttu,tavern=/home/tavern")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "perttu=/home/operator,tavern=/home/secondary")
 
 	handler := NewTmuxHandler()
 	req := httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil)
@@ -1123,7 +1123,7 @@ func TestTmuxHandler_ApplyAppearanceTargetsConfiguredTerminalUsers(t *testing.T)
 	t.Setenv("PATH", tmpDir)
 	t.Setenv("CHROTE_TERMINAL_USERS", "perttu,tavern")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "perttu=/tmp/tmux-p,tavern=/tmp/tmux-t")
-	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "perttu=/home/perttu,tavern=/home/tavern")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "perttu=/home/operator,tavern=/home/secondary")
 
 	handler := NewTmuxHandler()
 	bodyBytes := []byte(`{"statusBg":"default","statusFg":"#ffffff","paneBorderActive":"#ff00ff"}`)
@@ -1163,7 +1163,7 @@ func TestTmuxHandler_SetMouseModeTargetsConfiguredTerminalUsers(t *testing.T) {
 	t.Setenv("PATH", tmpDir)
 	t.Setenv("CHROTE_TERMINAL_USERS", "perttu,tavern")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "perttu=/tmp/tmux-p,tavern=/tmp/tmux-t")
-	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "perttu=/home/perttu,tavern=/home/tavern")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "perttu=/home/operator,tavern=/home/secondary")
 
 	handler := NewTmuxHandler()
 	bodyBytes := []byte(`{"enabled":false}`)

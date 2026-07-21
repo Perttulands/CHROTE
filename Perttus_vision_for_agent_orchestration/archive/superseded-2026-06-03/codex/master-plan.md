@@ -319,7 +319,7 @@ chrotectl agents list --json
 chrotectl agents inspect archon --json
 
 chrotectl mission init "Improve session search" \
-  --workspace /home/perttu/chrote \
+  --workspace /workspace/chrote \
   --bead home-abc.1 \
   --json
 
@@ -545,14 +545,14 @@ curl -sS http://127.0.0.1:8094/api/beads/health
 Build/test:
 
 ```bash
-cd /home/perttu/chrote/src && go test ./...
-cd /home/perttu/chrote/dashboard && npm run test:unit && npm run build
+cd /workspace/chrote/src && go test ./...
+cd /workspace/chrote/dashboard && npm run test:unit && npm run build
 ```
 
 If frontend is embedded:
 
 ```bash
-cd /home/perttu/chrote
+cd /workspace/chrote
 find src/internal/dashboard/dist -mindepth 1 -delete
 cp -a dashboard/dist/. src/internal/dashboard/dist/
 find src/internal/dashboard/dist -type d -empty -delete

@@ -1,98 +1,118 @@
-# CHROTE Source-Truth Index
+# CHROTE Documentation Source of Truth
 
-Status: **Active supporting index**.
+When CHROTE documents disagree, this file says which one wins.
 
-This file answers one question: when CHROTE docs disagree, which one wins?
+It is a routing table, not another product spec. `scripts/doc-lint.py` enforces
+the stable parts of the map.
 
-It is not a replacement for the specs below. It is the routing table for them, and `scripts/doc-lint.py` enforces the minimum hygiene that keeps this table honest.
+## Public reader path
+
+A first-time reader should not need architecture archaeology or private operator
+notes.
+
+| Need | Start here |
+| --- | --- |
+| What CHROTE is and whether to use it | [`README.md`](../README.md) |
+| Current shipped product and roadmap boundary | [`PRD.md`](../PRD.md) |
+| Install or upgrade | [`docs/installation.md`](installation.md) |
+| Diagnose a supported install | [`docs/troubleshooting.md`](troubleshooting.md) |
+| Security and trust boundary | [`SECURITY.md`](../SECURITY.md) |
+| Contribute and reproduce CI | [`CONTRIBUTING.md`](../CONTRIBUTING.md) |
+| Release history | [`CHANGELOG.md`](../CHANGELOG.md) |
+
+The README is the landing page, not the authority for deep runtime contracts.
+When it conflicts with the PRD or an active source-truth spec, fix the README.
 
 ## Active source-truth specs
 
-These files define current CHROTE behavior plus explicitly labeled accepted
-targets. They should not contradict each other within the same status.
-
-| File | Authority |
+| Spec | Owns |
 | --- | --- |
-| [`PRD.md`](../PRD.md) | Product scope, roadmap posture, and current surface framing |
-| [`FORMATIONS.md`](../FORMATIONS.md) | Formations product/model/runtime invariants |
-| [`ARCHON.md`](../ARCHON.md) | Archon CLI purpose and command-surface direction |
-| [`DATA-MODEL.md`](../DATA-MODEL.md) | Durable state ownership, files, ledgers, API/persistence model |
-| [`DESIGN-SYSTEM.md`](../DESIGN-SYSTEM.md) | Dashboard visual/interaction principles and theme ids |
+| [`PRD.md`](../PRD.md) | Current product, shipped views, operator outcomes, non-goals, and roadmap boundary |
+| [`FORMATIONS.md`](../FORMATIONS.md) | Unreleased experimental Formation and mission model, ports, gates, runs, and execution environments |
+| [`ARCHON.md`](../ARCHON.md) | Unreleased experimental Archon CLI and shared-storage contract |
+| [`DATA-MODEL.md`](../DATA-MODEL.md) | Durable data, ids, revisions, ledgers, and browser-state boundary |
+| [`DESIGN-SYSTEM.md`](../DESIGN-SYSTEM.md) | Dashboard visual and interaction principles and theme ids |
+| [`SECURITY.md`](../SECURITY.md) | Public network, identity, filesystem, terminal, and secret-handling boundary |
 
-The four machine-linted specs are `FORMATIONS.md`, `ARCHON.md`, `DATA-MODEL.md`, and `DESIGN-SYSTEM.md`. They carry YAML frontmatter with `authority: source-of-truth` and `enforced_by: scripts/doc-lint.py`.
+The four machine-frontmattered specs are `FORMATIONS.md`, `ARCHON.md`,
+`DATA-MODEL.md`, and `DESIGN-SYSTEM.md`. They carry
+`authority: source-of-truth` and `enforced_by: scripts/doc-lint.py`.
 
-`PRD.md` is intentionally product-level, not machine-linted frontmatter yet. If it starts carrying executable invariants, add frontmatter and extend the lint deliberately.
+`PRD.md` is product-level authority and is linted for its stable shipped-view
+inventory. If it starts carrying more executable invariants, extend the lint
+deliberately rather than relying on prose discipline.
 
-These documents distinguish **current implementation** from **accepted target**.
-An accepted ADR can constrain the next implementation without claiming the
-current binary already has that behavior. When status differs, the explicit
-current/target label in the root specs wins over an older scenario packet.
+## Supporting active docs
 
-## Active supporting docs
-
-These docs are useful and current enough to consult, but they do not override the active source-truth specs.
-
-| File | Role |
+| Document | Role |
 | --- | --- |
-| [`README.md`](../README.md) | Operator-facing overview and discoverability |
-| [`COMPONENTS.md`](../COMPONENTS.md) | Implementation/component map |
-| [`SECURITY.md`](../SECURITY.md) | Security posture and deployment cautions |
-| [`CHANGELOG.md`](../CHANGELOG.md) | Release notes |
-| [`AGENTS.md`](../AGENTS.md) | Agent/project work rules |
-| [`CLAUDE.md`](../CLAUDE.md) | Claude/agent-specific work rules |
-| [`docs/TEST_STRATEGY.md`](TEST_STRATEGY.md) | Test command reference |
-| [`docs/installation.md`](installation.md) | Install/rebuild notes |
-| [`docs/troubleshooting.md`](troubleshooting.md) | Known operator fixes |
-| [`docs/adr/`](adr/) | Accepted architectural decisions; narrower than the active specs |
-| [`docs/adr/0001-formations-run-recovery-contract.md`](adr/0001-formations-run-recovery-contract.md) | Accepted epoch/recovery base; amended by ADR-0006 for node/resource recovery and ADR-0007 for coordinator ownership |
-| [`docs/adr/0005-formations-redacted-run-replay.md`](adr/0005-formations-redacted-run-replay.md) | Accepted redacted-run evidence and replay boundary |
-| [`docs/adr/0006-formations-workflow-node-contract.md`](adr/0006-formations-workflow-node-contract.md) | Accepted mixed-workflow node, port, gate, artifact, and run-bound session target, including retired Gate-owned process execution and non-mutating legacy migration inspection; explicitly not fully implemented |
-| [`docs/adr/0007-formations-execution-authority.md`](adr/0007-formations-execution-authority.md) | Accepted sole-coordinator, shared-cockpit session-pool/full-Peek, explicit-arrange, command receipt, writer-fence, admission, failure-reconciliation, result-release, and guarded authority-schema target; explicitly not fully implemented and fail-closed on stock tmux pending `ctx-ug7.21` through `ctx-ug7.23` |
-| [`docs/adr/0008-retire-inline-formation-verification.md`](adr/0008-retire-inline-formation-verification.md) | Accepted retirement of replay-ambiguous inline Formation verification in favor of explicit Gates; compatibility inspection and removal bound to an existing wired replacement Gate only |
+| [`COMPONENTS.md`](../COMPONENTS.md) | Public component and optional-integration map |
+| [`docs/CHROTE_VISION.md`](CHROTE_VISION.md) | Short product thesis |
+| [`docs/TEST_STRATEGY.md`](TEST_STRATEGY.md) | Test layers, commands, and CI policy |
+| [`docs/PRD-terminal-lifecycle.md`](PRD-terminal-lifecycle.md) | Terminal iframe and tmux lifecycle constraints |
+| [`docs/adr/`](adr/) | Accepted architectural decisions |
+| [`dashboard/README.md`](../dashboard/README.md) | Dashboard contributor map and local commands |
 
-## Formations historical/reference packet
+Supporting docs explain or operationalize the source-truth specs. They do not
+silently override them.
 
-The `Perttus_vision_for_agent_orchestration/` tree is valuable, but it is not a single current source of truth.
+## Host-local operations are not public product truth
 
-| Path | Status |
-| --- | --- |
-| [`Perttus_vision_for_agent_orchestration/DECISIONS-LOCKED.md`](../Perttus_vision_for_agent_orchestration/DECISIONS-LOCKED.md) | Historical decision packet. Consult for why earlier pivots happened; current root specs win when behavior changed. |
-| [`Perttus_vision_for_agent_orchestration/spec/`](../Perttus_vision_for_agent_orchestration/spec/) | Supporting S0/BDD packet. Use as baseline acceptance/reference material, not as a replacement for current root specs or later accepted ADR-0005/0006/0007/0008 semantics. |
-| [`Perttus_vision_for_agent_orchestration/03-formations.html`](../Perttus_vision_for_agent_orchestration/03-formations.html) and [`03-formations.js`](../Perttus_vision_for_agent_orchestration/03-formations.js) | Visual/interaction reference for the cockpit feel. Root specs and current code decide current feature availability/runtime semantics. |
-| [`Perttus_vision_for_agent_orchestration/archive/`](../Perttus_vision_for_agent_orchestration/archive/) | Archive/superseded design material. Background only. |
+Machine-specific paths, service identities, socket ACLs, ports, restart helpers,
+rollback binaries, and migration lanes belong in private operator configuration
+or the owning infrastructure repository.
 
-## Archive-only docs
+Public docs may document generic environment variables, user services, and
+security requirements. They must not require another user to reconstruct one
+operator's host layout.
 
-These are not operational instructions unless a current active spec or Bead explicitly revives a slice.
+`AGENTS.md` and `CLAUDE.md` are contributor/agent instructions for this checkout,
+not end-user installation guides. If they contain local execution context, it
+must not be copied into public onboarding prose.
 
-| Path | Status |
-| --- | --- |
-| [`docs/archive/`](archive/) | Archive-only. May contain stale ports, commands, service names, and dangerous cleanup advice. |
-| [`docs/plans/`](plans/) | Planning artifacts. Useful context, not standing instructions. |
-| [`docs/legacy-ideas.md`](legacy-ideas.md) | Demoted idea capture. |
+## Plans, explorations, and historical material
 
-## Intentionally absent docs
+The following are useful context but are not current product authority:
 
-Do not create stub docs just to satisfy old references.
+- [`docs/plans/`](plans/) — implementation plans;
+- [`docs/archive/`](archive/) — retired or historical material;
+- [`Perttus_vision_for_agent_orchestration/spec/`](../Perttus_vision_for_agent_orchestration/spec/) — active design reference packet where still cited by Formations specs;
+- `Perttus_vision_for_agent_orchestration/archive/` — superseded exploration;
+- `docs/gascity-*` — evaluation material, not a hidden runtime dependency.
 
-| Missing path | Current replacement |
-| --- | --- |
-| `CHROTE.md` | Use [`README.md`](../README.md) for overview and this index for source-truth routing. |
-| `SPEC-CHANGELOG.md` | Use [`CHANGELOG.md`](../CHANGELOG.md) for release notes and Beads/ADRs for spec decisions. |
-| `ARCHON_BDD.md` / `FORMATIONS_BDD.md` | Use the current root specs plus the supporting S0 packet under [`Perttus_vision_for_agent_orchestration/spec/`](../Perttus_vision_for_agent_orchestration/spec/). |
-| `scripts/dead-link-check.py` / `scripts/agent-check` | Not current repo gates. Add them only with passing implementations and Bead ownership. |
+If historical text conflicts with an active source-truth spec, the active spec
+wins. Do not repair history into looking current; label or archive it.
+
+## Intentionally absent documents and tools
+
+These names have appeared in older plans but are not current authority:
+
+- `CHROTE.md`
+- `SPEC-CHANGELOG.md`
+- `ARCHON_BDD.md`
+- `FORMATIONS_BDD.md`
+- `scripts/dead-link-check.py`
+- `scripts/agent-check`
+
+Do not invent them to satisfy stale prose. Add a new canonical document or tool
+only when it has a clear owner and enforcement role.
 
 ## Current enforcement boundary
 
-`scripts/doc-lint.py` deliberately checks only what is stable enough to enforce today:
+`scripts/doc-lint.py` checks:
 
-1. active source-truth frontmatter exists on the four machine-linted specs;
-2. every `enforced_by:` path in tracked Markdown points to an existing file;
-3. this index references real files or intentionally absent docs;
-4. dashboard theme ids in docs match the TypeScript settings type;
-5. `SECURITY.md` names the current bind/port/auth environment variables.
+1. required source-truth frontmatter;
+2. valid `enforced_by` paths;
+3. required index entries and local links;
+4. theme-id parity between code and specs;
+5. stable security/runtime facts;
+6. absence of host-local operator lanes from public product docs;
+7. the shipped PRD view inventory;
+8. placeholder repository links.
 
-It deliberately does **not** yet enforce full `ARCHON.md` versus
-`src/cmd/archon/main.go` parity or the ADR-0006/ADR-0007/ADR-0008 models. Those belong to explicit
-CLI/API/model/projection fixtures and exact-candidate Beads, not a prose-only
-lint. Until those gates close, target sections must remain labeled honestly.
+It intentionally does not decide whether every roadmap paragraph is wise or
+every archived note is still interesting. Those are review problems, not regex
+problems.
+
+When stable drift recurs, extend the lint. When a check would merely encode a
+transient implementation detail, leave it to tests and review.

@@ -64,7 +64,7 @@ ledger_key   = "susie"          # filter interactions.jsonl by this; default = i
 
 **The Archon** (`~/agents/archon.toml`): `kind=hermes`, `profile=archon` (the existing one — do not
 duplicate its SOUL), `oversees=["*"]` by convention (the one persona that enumerates/assembles the
-whole org). **Senior architect** (e.g. `atlas`): `kind=claude-code`, `agent_md=/home/perttu/chrote/CLAUDE.md`,
+whole org). **Senior architect** (e.g. `atlas`): `kind=claude-code`, `agent_md=/workspace/chrote/CLAUDE.md`,
 `[standards].holds="chrote-architecture"` — proves the schema is harness-agnostic. **A disposable
 helper has no card at all** — it's just a `claude-pico`/`codex-1` tmux session Oracle reports.
 
@@ -154,7 +154,7 @@ name    = "Design Team"
 leader  = "susie"                 # the single touchpoint (vision §3/§7)
 members = ["pixel","atlas"]       # persona ids; same persona may sit in many teams
 charter = "Produce 2-3 directions before converging. Escalate on scope > 1 week or brand conflict."
-beads_workspace = "/home/perttu/chrote"   # where this team tracks work
+beads_workspace = "/workspace/chrote"   # where this team tracks work
 ```
 
 - **Preconfigured team** = such a file (durable, reusable — "talk to a leader who already has a group").

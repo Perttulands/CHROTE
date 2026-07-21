@@ -1,67 +1,123 @@
 # Security Policy
 
-## Supported Versions
+## Supported versions
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 0.x.x   | :white_check_mark: |
+CHROTE v2 is alpha. Security fixes target `main` and the newest v2 alpha release.
+The v1 line and older snapshots are preserved for history but are not supported.
 
-## Reporting a Vulnerability
+| Version | Supported |
+| --- | --- |
+| `main` | Yes |
+| newest `2.0.0-alpha.*` | Yes, until superseded |
+| `1.x` and older | No |
 
-If you discover a security vulnerability, please report it privately:
+Before the next tagged alpha, release artifacts must be rebuilt with the patched
+Go baseline declared by `src/go.mod` and pass both source and binary
+`govulncheck` gates. Do not treat an older downloadable binary as equivalent to
+current `main`.
 
-1. **Do NOT** create a public GitHub issue
-2. Email the maintainer or use GitHub's private vulnerability reporting feature
-3. Include:
-   - Description of the vulnerability
-   - Steps to reproduce
-   - Potential impact
-   - Suggested fix (if any)
+## Trust model
 
-We will respond within 48 hours and work with you to understand and address the issue.
+CHROTE is private single-operator infrastructure. CHROTE has no built-in application login.
 
-## Security Considerations
+Anyone who can reach the dashboard is inside the trusted operator boundary and
+may reach terminal-grade capabilities, configured files, Beads data, local
+services, schedules, recovery actions, and any experimental Formations surface
+included in that build.
 
-### Network Exposure
+Default runtime values are loopback-only:
 
-CHROTE is designed for **local or explicitly trusted network use only**. By default:
+- `HOST=127.0.0.1`
+- `PORT=8094`
+- `TTYD_PORT=7683`
 
-- The server binds to `127.0.0.1`.
-- The `/srv` proving lane runs from `/srv/chrote` with data under `/srv/data/chrote`, system unit `chrote-srv.service`, server port `8095`, and terminal proxy port `7686`.
-- The legacy rollback lane runs from `/home/perttu/chrote`, user unit `chrote.service`, server port `8094`, and terminal proxy port `7683`.
-- CHROTE has no built-in application login or access token. Host and tailnet access controls are the trust boundary.
-- CORS controls browser response sharing; it is not authentication or a complete CSRF defense. Treat every browser origin and client with network reachability as trusted.
-- Use a reverse proxy, Tailscale, or equivalent network controls before binding beyond localhost.
+Use a private access layer such as Tailscale for remote access. Do not bind
+CHROTE directly to an untrusted LAN or the public internet.
 
-### Recommended Security Practices
+## CORS is not authentication
 
-1. **Keep localhost as the default** - Leave `HOST=127.0.0.1` unless the host network is explicitly trusted.
-2. **Keep remote access private** - Use Tailscale ACLs or equivalent trusted-network controls. Never expose CHROTE through Funnel or the public internet.
-3. **Separate read and mutation roots** - `CHROTE_ROOTS=/` can provide broad browsing, while `CHROTE_WRITE_ROOTS` limits create, overwrite, rename, and delete.
-4. **Run as a non-root user** - The systemd service should run as the owning Unix user, not root.
-5. **Treat terminal access as host access** - tmux sessions are not a sandbox.
+`CORS_ORIGINS` controls which browser origins receive cross-origin API headers.
+If unset, CHROTE emits no CORS headers.
 
-### Environment Variables
+That protects browser API use across origins. It does not identify a user, stop
+direct network clients, or replace the private-network trust boundary.
 
-Sensitive configuration should use host-owned environment files or service environment, not browser state:
+## Terminal boundary
 
-- `HOST` - Server bind address (default: `127.0.0.1`).
-- `PORT` - Server port. The `/srv` proving lane sets `8095`; the legacy rollback lane uses `8094`.
-- `TTYD_PORT` - Terminal proxy port. The `/srv` proving lane sets `7686`; the legacy rollback lane uses `7683`.
-- `CORS_ORIGINS` - Optional comma-separated browser origins for cross-origin API access.
-- `API_AUTH_TOKEN` - Removed and ignored. A stale non-empty value emits a startup warning but never gates requests.
-- `CHROTE_ROOTS` - Comma-separated list of allowed filesystem roots.
-- `CHROTE_WRITE_ROOTS` - Comma-separated roots where file mutations are allowed. Defaults to `CHROTE_ROOTS` for backward compatibility.
-- `CHROTE_FILE_DENY_PATHS` - Additional sensitive roots blocked from browsing and mutation. Built-in credential and pseudo-filesystem exclusions always apply.
-- `CHROTE_MAX_UPLOAD_BYTES` - Maximum file upload/write request size; defaults to 64 MiB.
-- `CHROTE_WORKDIR` - Default working directory for launched sessions.
+CHROTE and ttyd can attach to tmux sessions available to their Unix identity and
+to any explicitly configured socket mapping.
 
-### Path Traversal Protection
+- A terminal is arbitrary command execution as that Unix user.
+- Cross-user socket access requires deliberate filesystem and tmux ACL setup.
+- CHROTE must not guess socket ownership or silently widen access.
+- Experimental Formations executor access does not permit creating or killing unrelated tmux
+  sessions.
+- Browser/device disconnects must not kill durable tmux work.
 
-The server resolves symlinks before revalidating paths, blocks sensitive credential and pseudo-filesystem locations, separates read roots from write roots, and bounds uploads. Attempts to access paths outside policy are rejected.
+Treat exposing CHROTE as exposing a shell.
 
-## Known Limitations
+## Filesystem boundary
 
-- No built-in application authentication; deploy only on localhost or an explicitly trusted private network
-- No built-in HTTPS termination (use tailnet-only Tailscale Serve or another trusted reverse proxy)
-- Terminal sessions are not isolated (tmux shared sessions)
+`CHROTE_ROOTS` constrains CHROTE's file APIs. `CHROTE_WORKDIR` controls the
+default working directory for new sessions.
+
+- Keep configured roots as narrow as practical.
+- Symlinks are resolved before access and mutation authorization.
+- A broad root permits every operation the CHROTE API exposes within the Unix
+  permissions of the service identity.
+- File roots do **not** sandbox tmux agents; those processes retain their Unix
+  user's filesystem permissions.
+- Experimental Formations artifact hydration and script-gate working directories have their
+  own documented root checks.
+
+## Services, schedules, and executors
+
+Optional service URLs and tokens are server-side runtime configuration. Browser
+clients call CHROTE-owned proxy routes and must never receive service bearer
+tokens.
+
+Scheduled tasks, persistent-agent supervisors, recovery actions, and
+experimental Formations executors cross from observation into host mutation.
+Their contracts must:
+
+- require explicit configuration and operator intent;
+- use argument vectors instead of implicit shell parsing where possible;
+- constrain working directories and executable boundaries;
+- cap and redact recorded output;
+- fail loud in durable history or ledgers;
+- refuse unsafe promotion from lab/isolated environments to live host state.
+
+## Secrets
+
+Never commit:
+
+- bearer tokens or API keys;
+- private service environment files;
+- tmux socket grants or sudoers fragments for a specific host;
+- recovery manifests containing private command lines or paths;
+- terminal transcripts;
+- private screenshot content.
+
+Use owner-controlled runtime environment files with restrictive permissions.
+`.env.example` documents variable names only.
+
+## Dependencies and releases
+
+A release is not complete merely because a binary exists.
+
+- CI must use the Go version declared by `src/go.mod`.
+- `govulncheck ./...` must report no reachable source vulnerabilities.
+- the exact release binary must pass `govulncheck -mode=binary`;
+- build provenance must identify the intended clean commit and patched Go
+  version;
+- dashboard dependency audit, tests, and embedded-asset parity must pass.
+
+## Reporting a vulnerability
+
+Use GitHub's private security-advisory flow for the repository when available.
+If private reporting is unavailable, contact the maintainer directly rather than
+publishing exploit details in a public issue.
+
+Include the affected commit/version, deployment boundary, reproduction steps,
+impact, and any evidence that avoids exposing real credentials, terminal
+contents, or private paths.

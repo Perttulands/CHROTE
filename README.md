@@ -4,583 +4,256 @@
 
 **C**ontrol **H**ub for **R**emote **O**perations & **T**mux **E**xecution
 
----
-
 > **WARNING:** CHROTE is for people who looked at one AI coding agent, thought
 > "good start," opened five more terminals, lost track of which one was doing
 > what, and decided the correct answer was obviously a browser cockpit.
-
+>
 > **CAUTION:** This is private infrastructure for a machine you own. It assumes
-> you are comfortable with tmux, local services, broken builds, weird agent
-> output, and the occasional need to kill everything and start over.
+> you are comfortable with tmux, local services, weird agent output, and the
+> occasional need to kill everything and start over.
 
----
+CHROTE is a browser cockpit for durable, host-owned AI development work: the
+place where one person runs a workforce of agents and trusts what they see.
+Your terminal sessions, files, Beads, agents, workflows, and recovery state
+live on the host. The browser is just glass.
 
-## What Is This?
+Close the laptop. Change devices. Reconnect later. The work should still be
+there, because a browser tab was never qualified to own it.
 
-CHROTE is a web cockpit for running a durable AI development workspace on your
-own host.
+[![CHROTE terminal workspace with Codex and Claude Code attached](docs/assets/readme/terminal-agents.png)](docs/assets/readme/attach-hermes-workflow.mp4)
 
-The work lives on the host: tmux sessions, agent CLIs, source files, Beads,
-local services, logs, builds, tests, and all the strange state that normally
-dies when you close the wrong terminal tab.
+<p align="center"><strong><a href="docs/assets/readme/attach-hermes-workflow.mp4">Watch the 18-second workflow</a></strong>: two attached agents, add a third window, attach Hermes.</p>
 
-CHROTE gives you a browser surface over that mess.
-
-Open it from your laptop. Open it from your tablet. Open it from your phone
-while pretending you are not checking whether an agent just rewrote the same
-file three different ways.
-
-The host keeps running. The sessions stay alive. The browser is just glass.
-
-Client devices are disposable viewports.
-
-![Dashboard Screenshot](screenshot%201.png)
-
----
-
-## The Pitch
-
-Terminal-first AI work is powerful. It also gets stupid fast.
+## Why this exists
 
 One agent in one terminal is a workflow.
 
-Five agents across tmux panes, a Beads backlog, a local context service, a TTS
-queue, a file tree, and three half-finished builds is no longer a workflow. It
-is a control-room problem.
+Five agents across tmux sessions, a Beads backlog, a file tree, recovery state,
+and three half-finished builds is a control-room problem.
 
-CHROTE is the control room.
+CHROTE is the control room. It does not replace the terminal, move durable state
+into the browser, or pretend agent work is calm and linear. It gives the mess
+handles — and then it goes further: it turns "one person plus N agents" from a
+babysitting job into a supervised production line, where your attention is spent
+only at decision points and quality gates.
 
-It does not replace the terminal. It stops the terminal from being trapped on
-one screen, one laptop, one fragile browser tab, or one half-remembered tmux
-command.
+This is not an *autonomous* software factory. It is a *supervised* one. The
+difference is the whole product.
 
-It gives you handles:
+## Running work through Formations
 
-- the terminal that kept running
-- the agent session you need to inspect
-- the Bead that says what the work actually is
-- the file tree where the state lives
-- the local service that should stay local
-- the big red button for when the session pile has become performance art
+Formations is how delegated work actually gets done here. In business terms:
 
-This is not magic. It is not an autonomous software factory. It is not a chat
-app wearing a trench coat.
+1. **Delegate by describing.** You tell an agent the outcome you want; it
+   authors the workflow — plan, execute, check, deliver — onto a spatial board
+   through the Archon CLI. You read and adjust; you never assemble pipelines by
+   hand.
+2. **Quality is built into delivery.** Every workflow runs through gates:
+   machine checks (lint, tests) and judgment checks (agent review, your
+   verdict). Work loops until it passes. Nothing reaches you as "done" that did
+   not earn it.
+3. **One glance tells you the truth.** The board shows what every agent is
+   doing now, what finished, what is stuck — and it is honest: everything shown
+   is backed by durable run evidence, never by optimism. If the system does not
+   know, it says so, plainly, instead of guessing.
+4. **Your attention is spent deliberately.** Runs go unattended until a
+   genuinely human decision appears — approve this default, judge these
+   candidates, answer this question. Then one clear ask surfaces with the
+   answer controls on it, and it reaches you even when you are not watching the
+   board.
+5. **Every claim is inspectable.** Open any step: what was attempted, what came
+   out, why the gate passed or failed, the actual deliverable readable inline.
+   Trust comes from being able to look, not from being told.
+6. **You can always grab the wheel.** Any live agent session can be jumped
+   into — take the keyboard, steer, hand back. Supervision is interactive, not
+   a spectator view.
+7. **It survives reality.** Crashes, restarts, disconnects — runs recover, and
+   state says exactly what happened. That is what makes multi-day unattended
+   operation safe rather than reckless.
+8. **Output is a real deliverable.** A run ends in something you ship — a
+   merged change, a post, a document — with provenance: which run produced it
+   and which gates it passed. Actually shipping it stays your call.
 
-It is a cockpit for the host where the work actually lives.
+The specs behind this live in [FORMATIONS.md](FORMATIONS.md) (the run model),
+[ARCHON.md](ARCHON.md) (the CLI agents author with), and
+[DATA-MODEL.md](DATA-MODEL.md) (persistence and event formats).
 
----
+## What is on `main`
 
-## Who Is This For?
+| Surface | Operator job |
+| --- | --- |
+| **Formations** | Author, run, and supervise gated agent workflows on a spatial board with honest run state |
+| **Terminal 1-3** | Three independent workspaces, each with one to four windows attached to real tmux sessions |
+| **Sessions / Files sidecar** | Find, Peek, attach, navigate, and inspect files without leaving the active terminal workspace |
+| **Files** | Browse, inspect, edit, compare, and send configured workspace files to a session |
+| **Beads** | Inspect configured `bd` workspaces, issues, ready work, triage, and health |
+| **Agents** | Observe agent-like tmux sessions without requiring one blessed harness |
+| **Recovery** | Distinguish live, offline, recoverable, and unmanaged work through Session Bank and typed recovery plans |
+| **Scheduled / Server** | Inspect scheduled tasks, health, resources, runtime events, and bounded history |
+| **Services** | Host optional server-side adapters without putting private tokens in the browser |
+
+The terminal remains the heart of the thing. tmux owns process durability;
+CHROTE owns the browser view and explicit operator actions. Formations borrows
+the same session pool the terminals use — a judge with prior context is a
+feature, and a busy session says so loudly instead of being silently stolen.
+
+A few interaction rules are deliberate:
+
+- Session-row clicks mean **Peek**. They do not silently reassign a window.
+- The location chip navigates to an already attached session.
+- The Sessions/Files sidecar is closed by default and takes zero width while
+  closed. Pinning and width persist per terminal workspace.
+- At `768px` and below, the sidecar overlays the terminals instead of crushing
+  them.
+- Browser disconnects must not kill tmux work.
+
+Empty terminal windows have guardians. They do not execute code or solve race
+conditions. They sit there judging the empty pane until you attach something.
+Some things are load-bearing.
+
+## Beads without leaving the cockpit
+
+Agents can ramble. Beads are supposed to say what the work actually is.
+
+CHROTE reads configured `bd` workspaces and surfaces issue state, ready work,
+triage, dependencies, and project health. `bd` remains the source of truth;
+CHROTE does not invent a second issue database.
+
+![CHROTE Beads Kanban with synthetic public demo issues](docs/assets/readme/beads-kanban.png)
+
+## Who this is for
+
+**This is probably for you if:**
+
+- you already run agent CLIs in tmux;
+- closing a laptop should not kill the work;
+- you want terminals, files, Beads, workflows, recovery, and local services in
+  one private browser surface;
+- you think agents need supervision, not mythology;
+- you want your own cockpit, not somebody else's control plane.
 
 **This is not for you if:**
 
-- you have never used tmux and do not want to learn
-- you expect a polished SaaS product with account recovery emails
-- you want AI coding to feel calm, linear, and supervised by adults
-- you need the browser to own the work
-- you think "works on my machine" is a warning instead of a lifestyle
+- you want a hosted multi-tenant SaaS product;
+- you expect built-in accounts, password resets, and public-internet hardening;
+- you want the browser to become the workspace source of truth;
+- you need an OS sandbox around terminal agents;
+- you have never used tmux and have no interest in starting.
 
-**This is for you if:**
+## Quick start
 
-- you already run agent CLIs in terminal sessions
-- you close laptops but do not want the work to die
-- you want one browser view over terminals, files, Beads, and local services
-- you accept that agents need supervision, not mythology
-- you want your own cockpit, not someone else's control plane
+The supported public path is a same-user Linux or WSL user service built from an
+inspectable checkout.
 
----
-
-## Dashboard Views
-
-| View | What It Does |
-| --- | --- |
-| **Terminal** | Browser panes attached to durable tmux sessions |
-| **Terminal 2** | A second independent terminal workspace |
-| **Files** | File browsing for configured workspace roots |
-| **Beads** | Modern `bd` issues, ready work, triage, and project state |
-| **Agents** | Visibility into persona cards and agent-like tmux sessions |
-| **Formations** | Spatial mission/formation/gate cockpit backed by Archon/Formations files |
-| **Services** | Operator panels for selected local services |
-| **Settings** | Theme, font, terminal, and session behavior |
-| **Help** | Dashboard usage notes |
-
-### Terminal View
-
-The terminal is still the heart of the thing.
-
-CHROTE does not try to hide tmux behind a toy abstraction. It gives you browser
-panes that attach to real sessions. If a browser disconnects, the session keeps
-running. If your laptop sleeps, the host does not care. If an agent is still
-typing when you reconnect, you can watch the smoke in real time.
-
-You can run one pane when you are focused, four panes when you are supervising,
-and a second terminal workspace when the first one has become a crime scene.
-
-Empty terminal windows show guardians. They do not execute code. They do not
-solve race conditions. They just sit there, judging the empty pane until you
-drop a session onto it.
-
-### Files
-
-CHROTE can browse the workspace roots you explicitly allow.
-
-It is not trying to become an IDE. It is trying to answer the practical question
-you hit constantly while supervising agents: "What file did they just touch, and
-how bad is it?"
-
-![File Browser](file%20system.png)
-
-### Beads
-
-Modern `bd` is the source of truth for work.
-
-CHROTE surfaces Beads so the cockpit can show more than terminal noise. Agents
-can ramble. Beads are supposed to say what the work actually is.
-
-![Beads Kanban](kanban.png)
-
-`beads_viewer` (`bv`) is optional, but useful. CHROTE can run it as a tmux
-sidecar when you want the graph-aware view without leaving the cockpit.
-
-![Beads Viewer In-Session](BV_insession.png)
-
-### Themes
-
-The dashboard still has a little theater in it.
-
-Matrix, Dark, and Gastown themes change the room without changing the job. The
-terminal remains the terminal. The cockpit just gets to have an opinion.
-
-![Themes](Themes.png)
-
-### Nuke All
-
-Sometimes the correct session management strategy is mercy.
-
-CHROTE still has a Nuke All flow. It is deliberately hard to trigger: the
-dashboard opens a confirmation modal, requires the word `NUKE`, and sends a
-dashboard-only confirmation header to the server.
-
-Use it when the session pile has gone sideways. Do not use it as a substitute
-for thinking.
-
----
-
-## The Crew
-
-Every empty terminal window in CHROTE has a guardian.
-
-They are not a feature checklist item. They are a warning label with a face:
-this is a terminal cockpit, not a glass office suite. The guardians are there
-for the three seconds before you bury them under tmux. They are the dashboard's
-way of saying: yes, this is serious work; no, we are not going to pretend it is
-sterile.
-
-### Terminal 1 - The Veterans
-
-<table>
-<tr>
-<td width="25%" align="center">
-<img src="dashboard/public/bg-polecat.png" width="150"><br>
-<b>POLECAT</b><br>
-<i>The Mechanic</i><br>
-V8 engine heart. Keeps the rigs running when everything is on fire.
-</td>
-<td width="25%" align="center">
-<img src="dashboard/public/bg_fox.png" width="150"><br>
-<b>FOX</b><br>
-<i>The Strategist</i><br>
-Monocle and military precision. Plans the operations others execute.
-</td>
-<td width="25%" align="center">
-<img src="dashboard/public/bg-badger.png" width="150"><br>
-<b>BADGER</b><br>
-<i>The Engineer</i><br>
-Welding goggles and steady hands. Builds what Fox designs.
-</td>
-<td width="25%" align="center">
-<img src="dashboard/public/bg_wolf.png" width="150"><br>
-<b>WOLF</b><br>
-<i>The Enforcer</i><br>
-Hooded and chained. When sessions need ending, Wolf answers.
-</td>
-</tr>
-</table>
-
-### Terminal 2 - The Operations
-
-<table>
-<tr>
-<td width="25%" align="center">
-<img src="dashboard/public/bg_crew.png" width="150"><br>
-<b>CREW</b><br>
-<i>The Technician</i><br>
-Wrench in hand, plasma flowing. Keeps the terminals alive.
-</td>
-<td width="25%" align="center">
-<img src="dashboard/public/bg_convoy.png" width="150"><br>
-<b>CONVOY</b><br>
-<i>The Transport</i><br>
-The rig itself. Carries your workloads across the wasteland.
-</td>
-<td width="25%" align="center">
-<img src="dashboard/public/bg_hawk.png" width="150"><br>
-<b>HAWK</b><br>
-<i>The Architect</i><br>
-Cloaked scholar. Reads the ancient docs. Guides the workers.
-</td>
-<td width="25%" align="center">
-<img src="dashboard/public/bg_town.png" width="150"><br>
-<b>TOWN</b><br>
-<i>The Settlement</i><br>
-CHROTE itself. The glowing hub where all roads lead.
-</td>
-</tr>
-</table>
-
----
-
-## Agents
-
-The Agents view is deliberately boring in the best way: it watches tmux sessions
-whose names look like agent sessions.
-
-By default, that means prefixes like:
-
-```text
-agent-*
-claude-*
-codex*
-gemini-*
-hermes-*
-opencode*
-```
-
-Override the prefixes when your workspace uses different names:
+Requirements: Linux or WSL with user systemd, Go 1.23+, Node.js 20.19+ or 22.12+,
+npm, tmux, curl, and Git.
 
 ```bash
-CHROTE_AGENT_PREFIXES=claude-,codex,opencode,agent-
+git clone https://github.com/Perttulands/CHROTE.git
+cd CHROTE
+./install.sh --workspace "$HOME/work"
 ```
 
-The view infers simple state from recent terminal output, shows context
-percentage when visible in scrollback, and extracts Beads IDs such as
-`home-fv6.9`.
+Open <http://127.0.0.1:8094>.
 
-It does not currently run an agent society. It does not own agent-to-agent IPC.
-It does not pretend terminal scrollback is a perfect audit log.
+The installer builds the dashboard and embedded Go binary from the checkout,
+installs a user service, starts it, and checks `/api/health`. It does not require
+`sudo`. Giving CHROTE all of `$HOME` is possible, but a narrower workspace is the
+better default.
 
-It gives the operator a map.
+Read [the installation guide](docs/installation.md) before changing ports,
+prefixes, service configuration, or remote access. Use
+[troubleshooting](docs/troubleshooting.md) when a supported install is not
+healthy.
 
----
+## Trust boundary
 
-## Services
+CHROTE has **no built-in application login**. Anyone who can reach it is inside
+the trusted operator boundary and can reach terminal-grade capabilities.
 
-The Services view is where CHROTE starts to become more than terminals.
-
-Some host-owned capabilities should stay local: text-to-speech queues, context
-stores, model tools, browser automation, maybe later an orchestration sidecar
-that has earned its place. CHROTE can expose selected controls for those
-services without making the browser talk to raw private ports or hold private
-tokens.
-
-Current service adapters:
-
-| Service | Default URL | CHROTE Role |
-| --- | --- | --- |
-| TTS Gateway | `http://127.0.0.1:3100` | Inspect health, queue, voices, playback, and enqueue spoken responses |
-| Context Citadel | `http://127.0.0.1:3200` | Read, edit, save, inspect history, and ask grounded questions over context docs |
-
-Browser clients call CHROTE routes under `/api/services/...`. CHROTE talks to
-the upstream services server-side and injects credentials where needed.
-
-Tokens stay on the host. The browser does not get them.
-
----
-
-## Version Line
-
-CHROTE v2 is the current line.
-
-It continues the original CHROTE project, but it is not a compatibility patch to
-v1. The shape changed. The job changed. The README gets to be honest about that.
-
-Current release status: v2 is alpha. The cockpit is usable, but the API, install
-surface, and service panels are still moving.
-
-The original code line is preserved for archaeology:
-
-- branch: `legacy/v1`
-- release: `v1.0.0`
-
-v2 is the line on `main`.
-
-### What Changed In v2?
-
-The old CHROTE was built around a very specific era: Gastown, ChroteChat,
-agent swarms, terminal chaos, mobile command center energy, and a heroic amount
-of duct tape.
-
-That era taught us useful things.
-
-It also left dents.
-
-v2 keeps the parts that earned their keep:
-
-- durable tmux sessions
-- browser terminal panes
-- workspace file browsing
-- Beads-backed work state
-- agent session visibility
-- local services behind server-side adapters
-- secrets that stay on the host, where they belong
-- the guardians, because some things are load-bearing
-
-v2 drops the parts that became dead weight.
-
-ChroteChat is gone. The cockpit is not chat.
-
-Gastown is no longer the center of the universe. Gastown, Gas City, Codex,
-Claude Code, OpenCode, Gemini, Hermes, Beads, `bv`, and plain old tmux can all
-matter. None of them gets to own CHROTE.
-
-CHROTE belongs to the workspace.
-
----
-
-## Architecture
-
-The short version:
+The sane deployment shape is:
 
 ```text
 browser
   |
-  v
-CHROTE server
+private network / HTTPS
   |
-  +-- tmux socket + ttyd terminal bridge
-  +-- configured filesystem roots
-  +-- bd / beads workspaces
-  +-- optional bv tmux sidecar
-  +-- selected localhost service adapters
+loopback CHROTE server
+  |
+  +-- tmux + ttyd
+  +-- configured file roots
+  +-- configured Beads workspaces
+  +-- optional local adapters
 ```
 
-The longer version: CHROTE is a Go server with an embedded React dashboard. The
-dashboard is built first, copied into the Go tree, and baked into the server
-binary with `go:embed`.
+Keep CHROTE bound to loopback. Put remote access behind an
+operator-controlled private network such as Tailscale. Do not expose it directly
+to the public internet. CORS is not authentication, and configured file roots do
+not sandbox commands running in tmux.
 
-One process serves the dashboard and the API.
+Read [SECURITY.md](SECURITY.md) before treating this as anything less powerful
+than remote shell access.
 
-The host owns the hard state. CHROTE is the cockpit.
+## Release status
 
----
+CHROTE v2 is alpha.
 
-## Access
+- Latest tagged alpha: `v2.0.0-alpha.1`
+- Current `main` development version: `2.0.0-alpha.2-dev`
+- Legacy v1: preserved for archaeology, not supported
 
-Current local `/srv` proving service:
+This README describes current `main`. A development version is not a published
+release, and an older downloadable binary is not equivalent to current source.
 
-```text
-http://127.0.0.1:8095/
-```
+## Architecture
 
-Legacy rollback user service:
+CHROTE is a Go server with an embedded React dashboard. The dashboard is built,
+copied into the Go tree, and baked into the server binary with `go:embed`. One
+process serves the UI, API, recovery state, workflow runs, and loopback terminal
+proxy.
 
-```text
-http://127.0.0.1:8094/
-```
+The hard state stays boring and inspectable:
 
-Tailnet URL format:
+- tmux sessions for durable terminal work;
+- files under configured roots;
+- `bd` workspaces for issue state;
+- append-only run ledgers for workflow evidence;
+- host-owned configuration and recovery records;
+- Git for source and history.
 
-```text
-http[s]://<tailnet-host>:<tailnet-port>/
-```
+The browser is disposable. The work is not.
 
-The expected deployment is private: localhost and a private access layer such as
-Tailscale. CHROTE has no built-in application login or access token: host and
-tailnet access controls are the trust boundary. Do not expose CHROTE directly to
-the public internet. CORS is not an authorization or CSRF boundary; treat every
-browser origin and client with network reachability as trusted.
+## Documentation
 
-Older deployments may still define `API_AUTH_TOKEN`. CHROTE ignores that removed
-setting and logs a startup warning without printing its value.
-
-Common service commands:
-
-```bash
-# /srv proving lane
-systemctl status chrote-srv.service --no-pager
-journalctl -u chrote-srv.service -f
-
-# legacy rollback lane
-systemctl --user status chrote.service
-systemctl --user restart chrote.service
-journalctl --user -u chrote.service -f
-```
-
----
-
-## Runtime
-
-CHROTE currently runs side-by-side in two service lanes during the `/srv`
-migration.
-
-```text
-/srv proving lane:
-  source: /srv/chrote
-  data: /srv/data/chrote
-  unit: chrote-srv.service
-  CHROTE HTTP: 127.0.0.1:8095
-  terminal ttyd: 127.0.0.1:7686
-
-legacy rollback lane:
-  source: /home/perttu/chrote
-  unit: chrote.service
-  CHROTE HTTP: 127.0.0.1:8094
-  terminal ttyd: 127.0.0.1:7683
-```
-
-The terminal proxy is loopback-only. A private access layer should expose only
-the CHROTE HTTP server.
-
-The `/srv` proving lane reads tmux socket mappings from its private runtime
-environment. The Perttu legacy rollback lane uses this interactive tmux socket:
-
-```bash
-TMUX_TMPDIR=/run/user/1000/chrote-tmux tmux ls
-```
-
-Baseline session:
-
-```bash
-TMUX_TMPDIR=/run/user/1000/chrote-tmux tmux new-session -A -s main -c "$HOME"
-```
-
----
-
-## Configuration
-
-Important runtime variables:
-
-```bash
-CHROTE_WORKDIR=<workspace-root>
-CHROTE_ROOTS=<workspace-root>
-CHROTE_WRITE_ROOTS=<comma-separated mutation roots>
-CHROTE_FILE_DENY_PATHS=<extra comma-separated sensitive roots>
-CHROTE_MAX_UPLOAD_BYTES=67108864
-CHROTE_FORMATIONS_DATA_ROOT=<host-private-formations-root>
-CHROTE_BEADS_WORKSPACES=<workspace-root>
-CHROTE_BD_COMMAND=bd
-CHROTE_AGENT_PREFIXES=claude-,codex,opencode,agent-
-CHROTE_TTS_URL=http://127.0.0.1:3100
-CHROTE_CONTEXT_API_URL=http://127.0.0.1:3200
-CHROTE_MANAGED_RECOVERY_STATUS_PATH=/srv/data/chrote/tmux-recovery/managed-status.json
-```
-
-`CHROTE_FORMATIONS_DATA_ROOT` is an explicit host-private authority root. It is
-not derived from `CHROTE_WORKDIR` or `CHROTE_ROOTS`, and CHROTE excludes both
-its configured path and canonical aliases from the generic Files API.
-
-Private service adapter values live outside the repo:
-
-```text
-/srv/chrote/config/chrote.env
-/etc/chrote/chrote-srv.env
-~/.config/chrote/services.env   # legacy rollback lane
-```
-
-That is where private service-adapter credentials belong. Do not commit them or
-paste them into issues. Do not teach the browser your secrets.
-
-Externally managed recovery status is a separate read-only registry, not
-Session Bank or Persistent desired state. Owner-side restore can atomically
-publish it with `scripts/tmux-recovery/restore.py --managed-status-output ...`;
-the file is mode `0600` and must not contain descriptors, argv, env, tokens, or
-restart instructions. CHROTE reads it only as a regular, non-symlink,
-owner-only file; it does not require the writer UID to match the service UID, so
-the configured file path and parent directory permissions are the trust boundary.
-
----
-
-## Build
-
-```bash
-cd /path/to/chrote/dashboard
-npm run build
-
-cd /path/to/chrote
-rm -rf src/internal/dashboard/dist
-cp -r dashboard/dist src/internal/dashboard/dist
-
-cd /path/to/chrote/src
-go test ./...
-go build -o ../chrote-server ./cmd/server
-
-# Restart only the intended lane.
-systemctl restart chrote-srv.service        # /srv proving lane
-systemctl --user restart chrote.service     # legacy rollback lane
-```
-
-For more installation detail, see [docs/installation.md](docs/installation.md).
-
----
-
-## Security Model
-
-CHROTE is private infrastructure.
-
-The sane shape is:
-
-- bind CHROTE and upstream services to localhost
-- expose only CHROTE through a private tailnet/network layer
-- treat host and tailnet access controls as the trust boundary; CHROTE has no application login
-- keep broad read access separate from narrower file mutation roots
-- keep service credentials server-side
-- treat browser clients as viewports, not secret owners
-
-CHROTE is reckless enough to be useful. It should not be reckless with your
-tokens.
-
-See [SECURITY.md](SECURITY.md) for the security model.
-
----
-
-## Roadmap
-
-The current line is the durable cockpit:
-
-- terminals
-- files
-- Beads
-- agent session visibility
-- selected local services
-
-The next serious direction is a meta-harness: explicit adapters, run ledgers,
-recipes, teams, transcripts, and human approval boundaries across multiple
-agent products and local tools.
-
-Gas City may become a sidecar. Gastown ideas may come back as adapters. Other
-harnesses may earn first-class treatment.
-
-Nothing gets to own the center for free.
-
-The center is the workspace.
-
----
-
-## See Also
-
-| Document | What It Is |
+| Need | Start here |
 | --- | --- |
-| [docs/source-truth-index.md](docs/source-truth-index.md) | Active/supporting/archive doc hierarchy and enforcement boundary |
-| [PRD.md](PRD.md) | Current product requirements and staged roadmap |
-| [docs/installation.md](docs/installation.md) | Generic install and rebuild notes |
-| [docs/legacy-ideas.md](docs/legacy-ideas.md) | Useful ideas from the old line, demoted on purpose |
-| [SECURITY.md](SECURITY.md) | Security model |
-| [CHANGELOG.md](CHANGELOG.md) | Release notes |
+| Current product and roadmap boundary | [PRD.md](PRD.md) |
+| Install or upgrade | [docs/installation.md](docs/installation.md) |
+| Troubleshoot | [docs/troubleshooting.md](docs/troubleshooting.md) |
+| Security model | [SECURITY.md](SECURITY.md) |
+| Contribute and reproduce CI | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| Component map | [COMPONENTS.md](COMPONENTS.md) |
+| Release history | [CHANGELOG.md](CHANGELOG.md) |
+| Documentation authority | [docs/source-truth-index.md](docs/source-truth-index.md) |
 
----
+Plans and archives are context, not product authority. When docs disagree, the
+[source-truth index](docs/source-truth-index.md) says which one wins.
+
+## Development
+
+```bash
+npm ci --prefix dashboard
+./scripts/build-embedded-dashboard.sh
+
+cd src
+go test ./...
+go build ./cmd/server
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full local and CI verification
+contract. Do not build a release from stale embedded dashboard assets.
 
 ## License
 
-MIT. Open source for people who want their own cockpit, not someone else's
+MIT. Open source for people who want their own cockpit, not somebody else's
 control plane.

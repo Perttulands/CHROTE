@@ -116,8 +116,8 @@ stores, creates a unique tmux socket plus fake owner home, runs real
 snapshot/restore/verify CLI calls, and prints a concise JSON result. It may add a
 unique current-user transient `systemd-run --user` sleep unit when user systemd
 is available; otherwise the managed-owner leg is reported as an explicit skip.
-It does not use live `8095`, `/srv/data/chrote`, existing tmux sockets, sudo, or
-existing systemd units.
+It does not use configured live service ports, production data roots, existing
+tmux sockets, sudo, or existing systemd units.
 
 Install into an explicit prefix:
 
