@@ -232,12 +232,7 @@ func TestTmuxHandler_RenameSessionRejectsSessionBankOwnedSourceBeforeTmux(t *tes
 	recorder := httptest.NewRecorder()
 
 	handler.RenameSession(recorder, req)
-	if recorder.Code != http.StatusConflict {
-		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusConflict, recorder.Body.String())
-	}
-	if !strings.Contains(strings.ToLower(recorder.Body.String()), "session bank") {
-		t.Fatalf("error body = %s, want Session Bank ownership conflict", recorder.Body.String())
-	}
+	assertRecoveryOwnershipError(t, recorder, http.StatusConflict, "PERSISTENT_AGENT_OWNERSHIP_CONFLICT", RecoveryOwnerSessionBank, sessionBankOwnerRef("alice", "codex-alpha"))
 	if got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)); len(got) != 0 {
 		t.Fatalf("tmux calls = %#v, want no tmux side effects before source ownership conflict", got)
 	}
@@ -290,12 +285,7 @@ func TestTmuxHandler_RenameSessionRejectsSessionBankOwnedTargetBeforeTmux(t *tes
 	recorder := httptest.NewRecorder()
 
 	handler.RenameSession(recorder, req)
-	if recorder.Code != http.StatusConflict {
-		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusConflict, recorder.Body.String())
-	}
-	if !strings.Contains(strings.ToLower(recorder.Body.String()), "session bank") {
-		t.Fatalf("error body = %s, want Session Bank ownership conflict", recorder.Body.String())
-	}
+	assertRecoveryOwnershipError(t, recorder, http.StatusConflict, "PERSISTENT_AGENT_OWNERSHIP_CONFLICT", RecoveryOwnerSessionBank, sessionBankOwnerRef("alice", "codex-renamed"))
 	if got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)); len(got) != 0 {
 		t.Fatalf("tmux calls = %#v, want no tmux side effects before target ownership conflict", got)
 	}
@@ -718,9 +708,7 @@ func TestTmuxHandler_RenameSessionRejectsManagedSourceOrDestinationBeforeTmux(t 
 			recorder := httptest.NewRecorder()
 
 			handler.RenameSession(recorder, req)
-			if recorder.Code != http.StatusConflict {
-				t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusConflict, recorder.Body.String())
-			}
+			assertRecoveryOwnershipError(t, recorder, http.StatusConflict, "SESSION_OWNERSHIP_CONFLICT", RecoveryOwnerExternalManager, "systemd:user/"+tt.managerRef)
 			if got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)); len(got) != 0 {
 				t.Fatalf("tmux calls = %#v, want none before managed rename conflict", got)
 			}
