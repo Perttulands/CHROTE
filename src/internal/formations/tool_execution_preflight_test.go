@@ -171,39 +171,6 @@ func TestToolExecutionPreflightTraversesEveryMissionBranchButNotIsolatedDownstre
 				toolExecutionPreflightConnection("edge_tool", "workflow", "fmn_judge:port_fmn_judge_out", "tool_valid:port_tool_valid_in"),
 			want: ErrToolExecutionUnavailable,
 		},
-		{
-			name: "disconnected invalid Tool is outside Mission root",
-			board: toolExecutionPreflightHeader() +
-				toolExecutionPreflightFormation("fmn_work", false) +
-				toolExecutionPreflightTool("tool_valid", "999") +
-				toolExecutionPreflightConnection("edge_start", "workflow", "mis_main:out", "fmn_work:port_fmn_work_in"),
-			want: ErrRuntimeAuthorityNonAuthorizing,
-		},
-		{
-			name: "unrelated inline verification is outside Mission root",
-			board: toolExecutionPreflightHeader() +
-				toolExecutionPreflightFormation("fmn_work", false) +
-				toolExecutionPreflightFormation("fmn_legacy", true) +
-				toolExecutionPreflightConnection("edge_start", "workflow", "mis_main:out", "fmn_work:port_fmn_work_in"),
-			want: ErrRuntimeAuthorityNonAuthorizing,
-		},
-		{
-			name: "downstream invalid Tool is outside isolated Formation root",
-			board: toolExecutionPreflightHeader() +
-				toolExecutionPreflightIsolatedFormation("fmn_work") +
-				toolExecutionPreflightTool("tool_valid", "999") +
-				toolExecutionPreflightConnection("edge_tool", "workflow", "fmn_work:port_fmn_work_out", "tool_valid:port_tool_valid_in"),
-			formation: "fmn_work",
-			want:      ErrRuntimeAuthorityNonAuthorizing,
-		},
-		{
-			name: "unrelated inline verification is outside isolated Formation root",
-			board: toolExecutionPreflightHeader() +
-				toolExecutionPreflightIsolatedFormation("fmn_work") +
-				toolExecutionPreflightFormation("fmn_legacy", true),
-			formation: "fmn_work",
-			want:      ErrRuntimeAuthorityNonAuthorizing,
-		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -219,6 +186,28 @@ func TestToolExecutionPreflightTraversesEveryMissionBranchButNotIsolatedDownstre
 			}
 			assertToolExecutionPreflightNoEffects(t, store.Workspace, executor, evaluator)
 		})
+	}
+}
+
+// TestToolExecutionPreflightExcludesUnreachableInvalidTool proves the reachable-set
+// scoping still holds now that RequireRuntimeAuthority authorizes: a disconnected
+// invalid Tool sitting outside the Mission root is not validated by the preflight,
+// so the start proceeds past the fence without ErrToolExecutionUnavailable or an
+// invalid-Tool finding. A reachable invalid Tool still trips the fence — see the
+// reachable branches of
+// TestToolExecutionPreflightTraversesEveryMissionBranchButNotIsolatedDownstream.
+// The prior authority-terminal cases here only proved the retired fail-closed
+// no-effects posture, which no longer exists.
+func TestToolExecutionPreflightExcludesUnreachableInvalidTool(t *testing.T) {
+	board := toolExecutionPreflightHeader() +
+		toolExecutionPreflightFormation("fmn_work", false) +
+		toolExecutionPreflightTool("tool_valid", "999") +
+		toolExecutionPreflightConnection("edge_start", "workflow", "mis_main:out", "fmn_work:port_fmn_work_in")
+	_, engine, _, _ := newToolExecutionPreflightHarness(t, board)
+
+	_, err := engine.RunMission("tool-preflight", RunStartRequest{MissionID: "mis_main"})
+	if errors.Is(err, ErrToolExecutionUnavailable) || (err != nil && strings.Contains(err.Error(), FindingInvalidTool)) {
+		t.Fatalf("unreachable invalid Tool was wrongly validated by preflight: %v", err)
 	}
 }
 
@@ -341,35 +330,6 @@ kind = "work"
 acceptedMediaTypes = ["text/plain", "text/markdown", "application/json"]
 %s
 `, id, "port_"+id+"_in", "port_"+id+"_out", verification)
-}
-
-func toolExecutionPreflightIsolatedFormation(id string) string {
-	return fmt.Sprintf(`[[formation]]
-id = %q
-type = "solo"
-title = "Isolated Formation"
-
-[formation.brief]
-goal = "Execute one isolated Formation"
-beadId = "ctx-ug7.8.1"
-
-[[formation.input]]
-id = %q
-label = "Input"
-direction = "input"
-kind = "work"
-acceptedMediaTypes = ["application/json"]
-required = true
-role = "data"
-
-[[formation.output]]
-id = %q
-label = "Output"
-direction = "output"
-kind = "work"
-acceptedMediaTypes = ["text/plain", "text/markdown", "application/json"]
-
-`, id, "port_"+id+"_in", "port_"+id+"_out")
 }
 
 func toolExecutionPreflightGate(id string, legacyScript bool, kind string) string {

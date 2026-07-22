@@ -6,84 +6,34 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 )
 
-func TestRuntimeStoreAuthorityBoundaryRemainsNonAuthorizingAfterExactMatch(t *testing.T) {
-	fixture := newRuntimeAuthorityFixture(t)
-	bindRuntimeAuthorityFixtureToOpenedWorkspace(t, &fixture, fixture.workspace)
-	before := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace)
-	store := NewRuntimeStore(fixture.workspace, filepath.Dir(fixture.root))
+// TestRuntimeStoreAuthorizesRunStartPastTheGuard proves the enforcement seam no
+// longer fail-closes. A runtime store whose formations-data authority root is
+// unavailable — the exact configuration the retired slice rejected up front with
+// a typed RUNTIME_AUTHORITY_NON_AUTHORIZING error — now authorizes, so a run
+// proceeds past RequireRuntimeAuthority and only blocks LATER at execution (here:
+// an unresolved persona binding). The trusted operator's runtime effects are
+// authorized under the trust model.
+func TestRuntimeStoreAuthorizesRunStartPastTheGuard(t *testing.T) {
+	workspace := t.TempDir()
+	store := NewRuntimeStore(workspace, filepath.Join(t.TempDir(), "missing-formations-authority"))
 
-	err := store.RequireRuntimeAuthority()
-	if !errors.Is(err, ErrRuntimeAuthorityNonAuthorizing) {
-		t.Fatalf("runtime authority error = %v, want non-authorizing sentinel", err)
-	}
-	var authorityErr *RuntimeAuthorityNonAuthorizingError
-	if !errors.As(err, &authorityErr) || authorityErr.Reason != RuntimeAuthorityCapabilityDisabled {
-		t.Fatalf("runtime authority error = %#v, want typed disabled capability", err)
-	}
-	if authorityErr.Capability.ID != RuntimeAuthorityGuardCapabilityV1 || authorityErr.Capability.Execution {
-		t.Fatalf("runtime authority capability = %+v, want disabled guard capability", authorityErr.Capability)
-	}
-	if after := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace); !reflect.DeepEqual(after, before) {
-		t.Fatalf("non-authorizing runtime guard mutated state\nbefore: %#v\nafter:  %#v", before, after)
-	}
-	if err := NewStore(fixture.workspace).RequireRuntimeAuthority(); err != nil {
-		t.Fatalf("schema-1 compatibility store unexpectedly requires runtime authority: %v", err)
+	if err := store.RequireRuntimeAuthority(); err != nil {
+		t.Fatalf("RequireRuntimeAuthority() = %v, want nil (authorized under the trust model)", err)
 	}
 
-	whitespaceRoot := NewRuntimeStore(fixture.workspace, " "+filepath.Dir(fixture.root))
-	err = whitespaceRoot.RequireRuntimeAuthority()
-	var whitespaceErr *RuntimeAuthorityNonAuthorizingError
-	if !errors.As(err, &whitespaceErr) || whitespaceErr.Reason != RuntimeAuthorityGuardRejected || whitespaceErr.Code != RuntimeAuthorityGuardNoncanonical {
-		t.Fatalf("whitespace-prefixed authority root = %#v, want noncanonical guard rejection", err)
-	}
-
-	writeAuthorityFixture(t, fixture.workspaceDB, []byte(`{"authoritySchema":2,"privatePath":"/do/not/expose"}`))
-	malformedBefore := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace)
-	err = store.RequireRuntimeAuthority()
-	var malformedErr *RuntimeAuthorityNonAuthorizingError
-	if !errors.As(err, &malformedErr) || malformedErr.Reason != RuntimeAuthorityGuardRejected {
-		t.Fatalf("malformed authority error = %#v, want sanitized guard rejection", err)
-	}
-	if message := err.Error(); message != ErrRuntimeAuthorityNonAuthorizing.Error() || strings.Contains(message, fixture.root) || strings.Contains(message, testWorkspaceAuthorityID) || strings.Contains(message, "privatePath") {
-		t.Fatalf("malformed authority error leaked private detail: %q", message)
-	}
-	if after := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace); !reflect.DeepEqual(after, malformedBefore) {
-		t.Fatalf("malformed authority rejection mutated state\nbefore: %#v\nafter:  %#v", malformedBefore, after)
-	}
-}
-
-func TestMatchingRuntimeAuthorityRejectsBeforeEngineEffects(t *testing.T) {
-	fixture := newRuntimeAuthorityFixture(t)
-	bindRuntimeAuthorityFixtureToOpenedWorkspace(t, &fixture, fixture.workspace)
-	boardPath := filepath.Join(fixture.workspace, ".formations", "boards", "session-search.formation.toml")
-	writeFixture(t, boardPath, s4RunBoardFixture())
-	if err := os.Chmod(filepath.Dir(boardPath), os.FileMode(0o770)|os.ModeSetgid); err != nil {
-		t.Fatalf("set definition fixture mode: %v", err)
-	}
-	before := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace)
-	store := NewRuntimeStore(fixture.workspace, filepath.Dir(fixture.root))
+	writeFixture(t, store.BoardPath("session-search"), s4RunBoardFixture())
 	executor := &countingFormationExecutor{}
 	engine := NewRunEngine(store, nil, executor)
 
 	_, err := engine.RunMission("session-search", RunStartRequest{MissionID: "mis_showcase"})
-	var authorityErr *RuntimeAuthorityNonAuthorizingError
-	if !errors.As(err, &authorityErr) || authorityErr.Reason != RuntimeAuthorityCapabilityDisabled {
-		t.Fatalf("matching authority run error = %#v, want disabled non-authorizing capability", err)
+	if err == nil {
+		t.Fatal("run start unexpectedly succeeded without a persona store; want a later execution block")
 	}
-	_, err = store.StartRun("session-search", RunStartRequest{MissionID: "mis_showcase"})
-	authorityErr = nil
-	if !errors.As(err, &authorityErr) || authorityErr.Reason != RuntimeAuthorityCapabilityDisabled {
-		t.Fatalf("matching authority store start error = %#v, want disabled non-authorizing capability", err)
-	}
-	if executor.calls != 0 {
-		t.Fatalf("matching authority executor calls = %d, want zero", executor.calls)
-	}
-	if got := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace); !reflect.DeepEqual(got, before) {
-		t.Fatalf("matching authority engine rejection changed state\nbefore: %#v\nafter:  %#v", before, got)
+	if errors.Is(err, ErrRuntimeAuthorityNonAuthorizing) {
+		t.Fatalf("run start error = %v, want the guard to authorize and the run to block later at execution", err)
 	}
 }
 
@@ -299,103 +249,11 @@ func TestRuntimeStoreUsesImmutableWorkspaceAfterAuthorityBinding(t *testing.T) {
 	}
 	<-done
 
-	err := store.RequireRuntimeAuthority()
-	var authorityErr *RuntimeAuthorityNonAuthorizingError
-	if !errors.As(err, &authorityErr) || authorityErr.Reason != RuntimeAuthorityCapabilityDisabled {
-		t.Fatalf("runtime authority error after compatibility-field mutation = %#v, want bound non-authorizing capability", err)
+	if err := store.RequireRuntimeAuthority(); err != nil {
+		t.Fatalf("runtime authority after compatibility-field mutation = %v, want authorized (nil)", err)
 	}
 	if got := snapshotRuntimeAuthorityFixture(t, fixture.root, fixture.workspace, otherWorkspace); !reflect.DeepEqual(got, before) {
 		t.Fatalf("runtime workspace binding changed state\nbefore: %#v\nafter:  %#v", before, got)
-	}
-}
-
-func TestRuntimeAuthorityRejectionPrecedesRuntimeEffectsAfterStartPreflight(t *testing.T) {
-	workspace := t.TempDir()
-	store := NewRuntimeStore(workspace, filepath.Join(t.TempDir(), "missing-formations-data"))
-	executor := &countingFormationExecutor{}
-	engine := NewRunEngine(store, nil, executor)
-	gateEvaluator := &countingGateEvaluator{}
-	engine.SetGateEvaluator(gateEvaluator)
-
-	assertNonAuthorizing := func(name string, err error) {
-		t.Helper()
-		if !errors.Is(err, ErrRuntimeAuthorityNonAuthorizing) {
-			t.Fatalf("%s error = %v, want runtime-authority rejection", name, err)
-		}
-	}
-	if _, err := engine.ResumeRun("run_missing", RunResumeRequest{}); err != nil {
-		assertNonAuthorizing("resume", err)
-	} else {
-		t.Fatal("resume passed unavailable authority")
-	}
-	if _, err := engine.RecordHumanGateVerdict("run_missing", HumanGateVerdictRequest{}); err != nil {
-		assertNonAuthorizing("verdict", err)
-	} else {
-		t.Fatal("verdict passed unavailable authority")
-	}
-	if executor.calls != 0 {
-		t.Fatalf("formation executor calls = %d, want zero", executor.calls)
-	}
-	if gateEvaluator.calls != 0 {
-		t.Fatalf("gate evaluator calls = %d, want zero", gateEvaluator.calls)
-	}
-
-	adapter := &countingDispatchAdapter{}
-	dispatcher := NewSlotDispatcher(store, adapter)
-	if _, err := dispatcher.DispatchSlot("run_missing", SlotDispatchRequest{}); err != nil {
-		assertNonAuthorizing("dispatch", err)
-	} else {
-		t.Fatal("dispatch passed unavailable authority")
-	}
-	if adapter.calls != 0 {
-		t.Fatalf("dispatch adapter calls = %d, want zero", adapter.calls)
-	}
-	if err := dispatcher.CompleteFromCapture("run_missing", "dispatch_missing", "<<<CHROTE-DONE run-id=run_missing status=ok>>>"); err != nil {
-		assertNonAuthorizing("capture completion", err)
-	} else {
-		t.Fatal("capture completion passed unavailable authority")
-	}
-	if recorded, err := store.RecordEscalationFromCapture("run_missing", "formation_missing", "<<<CHROTE-ESCALATE reason=test>>>"); err != nil {
-		assertNonAuthorizing("capture escalation", err)
-	} else {
-		t.Fatalf("capture escalation passed unavailable authority: recorded=%v", recorded)
-	}
-
-	labExecutor := NewLabFormationExecutor(store, nil, LabExecutorConfig{})
-	if _, err := labExecutor.ExecuteFormation(FormationExecution{}); err != nil {
-		assertNonAuthorizing("lab execution", err)
-	} else {
-		t.Fatal("lab execution passed unavailable authority")
-	}
-
-	tmuxClient := &fakeTmuxHarnessClient{}
-	tmuxExecutor := newTmuxFormationExecutorWithClient(store, nil, TmuxExecutorConfig{}, tmuxClient)
-	if _, err := tmuxExecutor.ExecuteFormation(FormationExecution{}); err != nil {
-		assertNonAuthorizing("tmux execution", err)
-	} else {
-		t.Fatal("tmux execution passed unavailable authority")
-	}
-	if _, err := tmuxExecutor.ReattachFormationDispatch(FormationReattachRequest{}); err != nil {
-		assertNonAuthorizing("tmux reattach", err)
-	} else {
-		t.Fatal("tmux reattach passed unavailable authority")
-	}
-	if tmuxClient.listCalls != 0 || tmuxClient.describeCalls != 0 || tmuxClient.sendCalls != 0 || tmuxClient.captureCalls != 0 {
-		t.Fatalf("tmux calls = list:%d describe:%d send:%d capture:%d, want zero", tmuxClient.listCalls, tmuxClient.describeCalls, tmuxClient.sendCalls, tmuxClient.captureCalls)
-	}
-
-	if err := store.AppendRunEvent("run_missing", RunEvent{Type: RunEventCanceled}); err != nil {
-		assertNonAuthorizing("store append", err)
-	} else {
-		t.Fatal("store append passed unavailable authority")
-	}
-	if _, err := store.ResumeRun("run_missing", RunResumeRequest{}); err != nil {
-		assertNonAuthorizing("store resume", err)
-	} else {
-		t.Fatal("store resume passed unavailable authority")
-	}
-	if len(mustGlob(t, filepath.Join(workspace, ".formations", "*"))) != 0 {
-		t.Fatalf("runtime rejection created Formations artifacts in %s", workspace)
 	}
 }
 
@@ -442,15 +300,6 @@ func (e *countingGateEvaluator) EvaluateGate(GateEvaluation) (GateEvaluationResu
 func (e *countingFormationExecutor) ExecuteFormation(FormationExecution) (FormationExecutionResult, error) {
 	e.calls++
 	return FormationExecutionResult{}, nil
-}
-
-type countingDispatchAdapter struct {
-	calls int
-}
-
-func (a *countingDispatchAdapter) SendSlotDispatch(SlotDispatchPayload) error {
-	a.calls++
-	return nil
 }
 
 func mustGlob(t *testing.T, pattern string) []string {
