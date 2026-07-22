@@ -78,12 +78,14 @@ type FormationOutputPayload struct {
 }
 
 type GateEvaluation struct {
-	RunID     string
-	GateID    string
-	Title     string
-	Kinds     []string
-	Criterion string
-	Input     RunInputRef
+	RunID      string
+	GateID     string
+	Title      string
+	Kinds      []string
+	Criterion  string
+	Check      string
+	CheckValue string
+	Input      RunInputRef
 }
 
 type GateEvaluationResult struct {
@@ -1337,12 +1339,14 @@ func (e *RunEngine) evaluateGate(runID string, board *BoardDocument, gates map[s
 		return errRunStopped
 	}
 	result, err := e.evaluateGateResult(board, evaluationGate, GateEvaluation{
-		RunID:     runID,
-		GateID:    gate.ID,
-		Title:     gate.Title,
-		Kinds:     evaluationGate.Kinds,
-		Criterion: gate.Criterion,
-		Input:     input,
+		RunID:      runID,
+		GateID:     gate.ID,
+		Title:      gate.Title,
+		Kinds:      evaluationGate.Kinds,
+		Criterion:  gate.Criterion,
+		Check:      gate.Check,
+		CheckValue: gate.CheckValue,
+		Input:      input,
 	}, limits)
 	if err != nil {
 		return err
@@ -1465,7 +1469,14 @@ func (e *RunEngine) evaluateGateResult(board *BoardDocument, gate GateNode, req 
 		}
 		return GateEvaluationResult{}, errRunStopped
 	}
-	return e.gateEvaluator.EvaluateGate(req)
+	result, err := e.gateEvaluator.EvaluateGate(req)
+	if err != nil {
+		if blockErr := e.appendGateErrorAndBlock(req.RunID, gate.ID, "gate_evaluator_error", err.Error(), "gate", "gate evaluator error"); blockErr != nil {
+			return GateEvaluationResult{}, blockErr
+		}
+		return GateEvaluationResult{}, errRunStopped
+	}
+	return result, nil
 }
 
 func (e *RunEngine) runJudgeChain(board *BoardDocument, req GateEvaluation, chain []FormationNode, limits RunLimits) (string, error) {
