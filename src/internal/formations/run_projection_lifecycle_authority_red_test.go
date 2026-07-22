@@ -3,11 +3,14 @@ package formations
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
 // These tests remain inside Task 1's public ledger vocabulary. In particular,
 // they do not define or consume a nonempty schema-2 run-private-state record.
+// They cover structural lifecycle exactness only; recovery predicates, action
+// derivation, and reconcile conditions remain Task 2.
 func TestSchema2LifecycleGraphIsClosedAcrossQueuedWaitingAndFinal(t *testing.T) {
 	t.Run("queued_rejects_graph_work_before_activation", func(t *testing.T) {
 		state := schema2TerminalQueuedState()
@@ -157,24 +160,62 @@ func TestSchema2TerminalAuthoritySnapshotsHeadersAndMutationAreExact(t *testing.
 		})
 
 		for _, resource := range []string{"node", "dispatch", "tool"} {
-			t.Run(lifecycle+"_start_rejects_invented_"+resource+"_snapshot", func(t *testing.T) {
-				state := schema2EpochTestState()
-				data := schema2LifecycleStartData(lifecycle)
-				field, member := schema2InventedOpenSnapshot(t, lifecycle, resource)
-				data[field] = []any{member}
-				schema2RequireReducerErrorWithoutMutation(t, &state, 20, schema2LifecycleStartType(lifecycle), data)
+			t.Run(lifecycle+"_exact_nonempty_"+resource+"_snapshot_and_disposition_are_valid", func(t *testing.T) {
+				state, open := schema2LifecyclePublicState(t, resource)
+				if err := schema2EpochReduce(t, &state, 20, 0, schema2LifecycleStartType(lifecycle), schema2LifecycleStartWithOpen(lifecycle, open)); err != nil {
+					t.Fatalf("exact nonempty %s %s start rejected: %v", lifecycle, resource, err)
+				}
+				if len(open["openSlotDispatches"]) != 0 {
+					schema2LifecycleApplyExactCleanup(t, &state, lifecycle)
+					session := state.sessionByDispatch("dsp_01KXNP6VY3227H78329V52CKF8")
+					if session == nil || session.Occupancy.State != "held" {
+						t.Fatalf("exact %s cleanup outcome = %#v", lifecycle, session)
+					}
+				}
+				finalSeq := uint64(21)
+				if len(open["openSlotDispatches"]) != 0 {
+					finalSeq = 24
+				}
+				final := schema2LifecycleFinalWithDispositions(t, lifecycle, 20, open)
+				if err := schema2EpochReduce(t, &state, finalSeq, 0, schema2LifecycleFinalType(lifecycle), final); err != nil {
+					t.Fatalf("exact nonempty %s %s final rejected: %v", lifecycle, resource, err)
+				}
+				if !state.view.Final || state.view.Status != map[string]string{"cancel": "canceled", "failure": "failed"}[lifecycle] {
+					t.Fatalf("exact nonempty %s %s final = %q/%t", lifecycle, resource, state.view.Status, state.view.Final)
+				}
 			})
 
-			t.Run(lifecycle+"_final_rejects_extra_"+resource+"_disposition", func(t *testing.T) {
-				state := schema2EpochTestState()
-				if err := schema2EpochReduce(t, &state, 20, 0, schema2LifecycleStartType(lifecycle), schema2LifecycleStartData(lifecycle)); err != nil {
-					t.Fatalf("valid zero-cardinality %s start rejected: %v", lifecycle, err)
-				}
-				data := schema2LifecycleFinalData(lifecycle, 20)
-				field, member := schema2InventedDisposition(t, lifecycle, resource)
-				data[field] = []any{member}
-				schema2RequireReducerErrorWithoutMutation(t, &state, 21, schema2LifecycleFinalType(lifecycle), data)
-			})
+			for _, mutation := range []string{"missing", "duplicate", "extra", "identity_changed"} {
+				t.Run(lifecycle+"_start_rejects_"+mutation+"_"+resource+"_snapshot_without_mutation", func(t *testing.T) {
+					state, open := schema2LifecyclePublicState(t, resource)
+					field := schema2LifecycleOpenField(resource)
+					open[field] = schema2LifecycleMutatedMembers(t, resource, open[field], mutation)
+					data := schema2LifecycleStartWithOpen(lifecycle, open)
+					if resource == "dispatch" && mutation == "duplicate" {
+						schema2RequireAnyReducerErrorWithoutMutation(t, &state, 20, schema2LifecycleStartType(lifecycle), data)
+						return
+					}
+					schema2RequireReducerErrorWithoutMutation(t, &state, 20, schema2LifecycleStartType(lifecycle), data)
+				})
+
+				t.Run(lifecycle+"_final_rejects_"+mutation+"_"+resource+"_disposition_without_mutation", func(t *testing.T) {
+					state, open := schema2LifecyclePublicState(t, resource)
+					if err := schema2EpochReduce(t, &state, 20, 0, schema2LifecycleStartType(lifecycle), schema2LifecycleStartWithOpen(lifecycle, open)); err != nil {
+						t.Fatalf("prepare exact nonempty %s %s start: %v", lifecycle, resource, err)
+					}
+					if len(open["openSlotDispatches"]) != 0 {
+						schema2LifecycleApplyExactCleanup(t, &state, lifecycle)
+					}
+					final := schema2LifecycleFinalWithDispositions(t, lifecycle, 20, open)
+					field := schema2LifecycleDispositionField(resource, lifecycle)
+					final[field] = schema2LifecycleMutatedMembers(t, resource, final[field].([]any), mutation)
+					finalSeq := uint64(21)
+					if len(open["openSlotDispatches"]) != 0 {
+						finalSeq = 24
+					}
+					schema2RequireReducerErrorWithoutMutation(t, &state, finalSeq, schema2LifecycleFinalType(lifecycle), final)
+				})
+			}
 		}
 	}
 
@@ -198,22 +239,42 @@ func TestSchema2TerminalAuthoritySnapshotsHeadersAndMutationAreExact(t *testing.
 
 	for _, lifecycle := range []string{"cancel", "failure"} {
 		for _, authority := range []struct {
-			name string
-			kind string
-			seq  uint64
+			name   string
+			mutate func(map[string]any)
 		}{
-			{name: "exact_authority_but_dispatch_not_snapshotted", kind: lifecycle, seq: 21},
-			{name: "wrong_authority_sequence", kind: lifecycle, seq: 999},
-			{name: "wrong_authority_kind", kind: map[string]string{"cancel": "failure", "failure": "cancel"}[lifecycle], seq: 21},
+			{name: "wrong_authority_sequence", mutate: func(data map[string]any) { data["authoritySeq"] = uint64(19) }},
+			{name: "wrong_authority_kind", mutate: func(data map[string]any) {
+				data["authorityKind"] = map[string]string{"cancel": "failure", "failure": "cancel"}[lifecycle]
+			}},
+			{name: "wrong_target_lease", mutate: func(data map[string]any) { data["targetLeaseId"] = "lease_01KXNP6VY3227H78329V52CKF7" }},
+			{name: "wrong_binding", mutate: func(data map[string]any) { data["bindingId"] = "binding_other" }},
+			{name: "wrong_session_target", mutate: func(data map[string]any) { data["sessionTargetId"] = "target_other" }},
+			{name: "wrong_target_fingerprint", mutate: func(data map[string]any) {
+				data["targetFingerprint"] = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+			}},
 		} {
-			t.Run(lifecycle+"_cleanup_rejects_"+authority.name, func(t *testing.T) {
-				state := schema2LifecycleReconciliationState(t, lifecycle)
-				data := schema2SecondRepairFixture(t, "slot_reconciliation_interrupt")
-				data["authorityKind"] = authority.kind
-				data["authoritySeq"] = authority.seq
-				schema2RequireReducerErrorWithoutMutation(t, &state, 22, "slot_reconciliation_interrupt", data)
+			t.Run(lifecycle+"_cleanup_rejects_"+authority.name+"_without_mutation", func(t *testing.T) {
+				state, interrupt := schema2LifecycleCleanupState(t, lifecycle)
+				authority.mutate(interrupt)
+				schema2RequireLifecycleReducerErrorWithoutMutation(t, &state, 22, "slot_reconciliation_interrupt", interrupt)
 			})
 		}
+
+		t.Run(lifecycle+"_cleanup_rejects_dispatch_outside_frozen_membership_without_mutation", func(t *testing.T) {
+			state, _ := schema2LifecycleCleanupState(t, lifecycle)
+			interrupt := schema2LifecycleInjectUnsnapshottedDispatch(t, &state, lifecycle)
+			schema2RequireLifecycleReducerErrorWithoutMutation(t, &state, 22, "slot_reconciliation_interrupt", interrupt)
+		})
+
+		t.Run(lifecycle+"_cleanup_outcome_rejects_wrong_requested_sequence_without_mutation", func(t *testing.T) {
+			state, interrupt := schema2LifecycleCleanupState(t, lifecycle)
+			if err := schema2LifecycleReduce(t, &state, 22, "slot_reconciliation_interrupt", interrupt); err != nil {
+				t.Fatalf("prepare exact %s cleanup request: %v", lifecycle, err)
+			}
+			outcome := schema2LifecycleInterruptOutcomeData()
+			outcome["requestedSeq"] = uint64(21)
+			schema2RequireLifecycleReducerErrorWithoutMutation(t, &state, 23, "slot_reconciliation_interrupt_outcome", outcome)
+		})
 	}
 
 	t.Run("wrong_terminal_predecessor_does_not_mutate_state", func(t *testing.T) {
@@ -352,50 +413,304 @@ func schema2LifecycleFinalData(lifecycle string, predecessor uint64) map[string]
 	return schema2TerminalFailedData(predecessor)
 }
 
-func schema2InventedOpenSnapshot(t *testing.T, lifecycle, resource string) (string, any) {
+func schema2LifecyclePublicState(t *testing.T, resource string) (projectionState, map[string][]any) {
 	t.Helper()
+	open := map[string][]any{
+		"openNodeAttempts":   {},
+		"openSlotDispatches": {},
+		"openToolLeases":     {},
+	}
+	state := schema2EpochTestState()
+	prepareNode := func(nodeID, nodeKind string) map[string]any {
+		data := map[string]any{
+			"nodeId": nodeID, "nodeKind": nodeKind, "attempt": uint64(1),
+			"reason": "initial", "inputRefs": []any{},
+		}
+		if err := schema2LifecycleReduce(t, &state, 3, "node_started", data); err != nil {
+			t.Fatalf("prepare open %s attempt: %v", nodeKind, err)
+		}
+		return map[string]any{
+			"nodeId": nodeID, "nodeKind": nodeKind, "attempt": uint64(1),
+			"startSeq": uint64(3), "phase": "started", "phaseSeq": uint64(3),
+		}
+	}
+
 	switch resource {
 	case "node":
-		return "openNodeAttempts", schema2RepairNodeAttemptSnapshot()
+		open["openNodeAttempts"] = []any{prepareNode(projectionTestMissionID, "mission")}
 	case "dispatch":
-		return "openSlotDispatches", schema2RepairOpenDispatchSnapshot(t)
+		open["openNodeAttempts"] = []any{prepareNode(projectionTestFormationID, "formation")}
+		state.bindings["binding_worker"] = schema2Binding{
+			BindingID: "binding_worker", NodeID: projectionTestFormationID, SlotID: "slot_worker",
+			AgentID: "worker", Harness: "codex", SessionTargetID: "target_worker",
+			TargetFingerprint: strings.Repeat("a", 64), SessionLineageSHA256: strings.Repeat("c", 64),
+		}
+		observed := schema2SecondRepairFixture(t, "slot_binding_observed")
+		observed["relatedSeq"] = uint64(3)
+		if err := schema2LifecycleReduce(t, &state, 4, "slot_binding_observed", observed); err != nil {
+			t.Fatalf("prepare exact binding observation: %v", err)
+		}
+		dispatch := schema2RepairSlotDispatchData(t)
+		if err := schema2LifecycleReduce(t, &state, 5, "slot_dispatch", dispatch); err != nil {
+			t.Fatalf("prepare unmatched dispatch: %v", err)
+		}
+		current := state.currentSchema2OpenDispatches()
+		if len(current) != 1 {
+			t.Fatalf("prepared open dispatches = %#v", current)
+		}
+		open["openSlotDispatches"] = []any{schema2LifecycleMap(t, current[0])}
 	case "tool":
-		return "openToolLeases", schema2RepairToolLeaseSnapshot(lifecycle == "failure")
+		// I5 holds the launched-Tool/private-cleanup shape for ctx-ug7.6.1.
+		// This public control is deliberately the already-frozen unlaunched lease.
+		board := &BoardDocument{
+			Missions: []MissionNode{{ID: projectionTestMissionID}}, Formations: []FormationNode{{ID: projectionTestFormationID}},
+			Gates: []GateNode{{ID: projectionTestGateID}}, Tools: []ToolNode{{ID: "tool_normalize"}},
+		}
+		state = newProjectionState(projectionTestRunID, CanonicalRunSourceSchema2, board)
+		state.view.Status = "running"
+		state.view.Identity.Epoch = 0
+		open["openNodeAttempts"] = []any{prepareNode("tool_normalize", "tool")}
+		if err := schema2LifecycleReduce(t, &state, 4, "tool_dispatch", schema2RepairToolDispatchData()); err != nil {
+			t.Fatalf("prepare unlaunched Tool lease: %v", err)
+		}
+		open["openToolLeases"] = []any{map[string]any{
+			"toolLeaseId": "toollease_01KXNP6VY3227H78329V52CKF8", "nodeId": "tool_normalize",
+			"attempt": uint64(1), "dispatchSeq": uint64(4),
+		}}
 	default:
-		t.Fatalf("unknown snapshot resource %q", resource)
-		return "", nil
+		t.Fatalf("unknown public lifecycle resource %q", resource)
+	}
+	return state, open
+}
+
+func schema2LifecycleStartWithOpen(lifecycle string, open map[string][]any) map[string]any {
+	data := schema2LifecycleStartData(lifecycle)
+	for _, field := range []string{"openNodeAttempts", "openSlotDispatches", "openToolLeases"} {
+		data[field] = cloneAny(open[field])
+	}
+	return data
+}
+
+func schema2LifecycleFinalWithDispositions(t *testing.T, lifecycle string, predecessor uint64, open map[string][]any) map[string]any {
+	t.Helper()
+	data := schema2LifecycleFinalData(lifecycle, predecessor)
+	nodes := make([]any, 0, len(open["openNodeAttempts"]))
+	for _, member := range open["openNodeAttempts"] {
+		node := cloneAny(member).(map[string]any)
+		node["disposition"] = map[string]string{"cancel": "canceled_non_authorizing", "failure": "abandoned_non_authorizing"}[lifecycle]
+		nodes = append(nodes, node)
+	}
+	dispatches := make([]any, 0, len(open["openSlotDispatches"]))
+	for _, member := range open["openSlotDispatches"] {
+		disposition := cloneAny(member).(map[string]any)
+		disposition["disposition"] = map[string]string{"cancel": "canceled_non_authorizing", "failure": "abandoned_non_authorizing"}[lifecycle]
+		disposition["softInterrupt"] = "sent"
+		disposition["softInterruptRequestedSeq"] = uint64(22)
+		disposition["softInterruptOutcomeSeq"] = uint64(23)
+		disposition["targetLeaseState"] = "quarantined"
+		disposition["finalPeekCapabilityState"] = "revoked"
+		disposition["finalCapabilityGeneration"] = "0"
+		disposition["finalCapabilityIssuedSeq"] = uint64(0)
+		disposition["finalSteeringGeneration"] = "0"
+		disposition["finalPeekCapabilityRevokedSeq"] = uint64(21)
+		dispatches = append(dispatches, disposition)
+	}
+	tools := make([]any, 0, len(open["openToolLeases"]))
+	for _, member := range open["openToolLeases"] {
+		tool := cloneAny(member).(map[string]any)
+		tool["disposition"] = map[string]string{"cancel": "never_launched_cleaned", "failure": "abandoned_private_cleanup_owned"}[lifecycle]
+		tools = append(tools, tool)
+	}
+	data["nodeAttemptDispositions"] = nodes
+	data["slotDispatchDispositions"] = dispatches
+	if lifecycle == "cancel" {
+		data["reconciledToolLeases"] = tools
+	} else {
+		data["toolLeaseDispositions"] = tools
+	}
+	return data
+}
+
+func schema2LifecycleOpenField(resource string) string {
+	return map[string]string{"node": "openNodeAttempts", "dispatch": "openSlotDispatches", "tool": "openToolLeases"}[resource]
+}
+
+func schema2LifecycleDispositionField(resource, lifecycle string) string {
+	if resource == "node" {
+		return "nodeAttemptDispositions"
+	}
+	if resource == "dispatch" {
+		return "slotDispatchDispositions"
+	}
+	if lifecycle == "cancel" {
+		return "reconciledToolLeases"
+	}
+	return "toolLeaseDispositions"
+}
+
+func schema2LifecycleMutatedMembers(t *testing.T, resource string, exact []any, mutation string) []any {
+	t.Helper()
+	if len(exact) != 1 {
+		t.Fatalf("%s exact-set fixture cardinality = %d, want 1", resource, len(exact))
+	}
+	member := cloneAny(exact[0]).(map[string]any)
+	changed := cloneAny(member).(map[string]any)
+	switch resource {
+	case "node":
+		changed["attempt"] = uint64(2)
+	case "dispatch":
+		changed["dispatchId"] = "dsp_01KXNP6VY3227H78329V52CKF7"
+	case "tool":
+		changed["toolLeaseId"] = "toollease_01KXNP6VY3227H78329V52CKF7"
+	default:
+		t.Fatalf("unknown lifecycle mutation resource %q", resource)
+	}
+	switch mutation {
+	case "missing":
+		return []any{}
+	case "duplicate":
+		return []any{member, cloneAny(member)}
+	case "extra":
+		return []any{member, changed}
+	case "identity_changed":
+		return []any{changed}
+	default:
+		t.Fatalf("unknown lifecycle set mutation %q", mutation)
+		return nil
 	}
 }
 
-func schema2InventedDisposition(t *testing.T, lifecycle, resource string) (string, any) {
+func schema2LifecycleCleanupState(t *testing.T, lifecycle string) (projectionState, map[string]any) {
 	t.Helper()
-	switch resource {
-	case "node":
-		node := schema2RepairNodeAttemptSnapshot()
-		if lifecycle == "cancel" {
-			node["disposition"] = "canceled_non_authorizing"
-		} else {
-			node["disposition"] = "abandoned_non_authorizing"
-		}
-		return "nodeAttemptDispositions", node
-	case "dispatch":
-		disposition := "canceled_non_authorizing"
-		if lifecycle == "failure" {
-			disposition = "abandoned_non_authorizing"
-		}
-		return "slotDispatchDispositions", schema2RepairSlotDisposition(t, disposition)
-	case "tool":
-		tool := schema2RepairToolLeaseSnapshot(lifecycle == "failure")
-		if lifecycle == "cancel" {
-			tool["disposition"] = "never_launched_cleaned"
-			return "reconciledToolLeases", tool
-		}
-		tool["disposition"] = "abandoned_private_cleanup_owned"
-		return "toolLeaseDispositions", tool
-	default:
-		t.Fatalf("unknown disposition resource %q", resource)
-		return "", nil
+	state, open := schema2LifecyclePublicState(t, "dispatch")
+	if err := schema2EpochReduce(t, &state, 20, 0, schema2LifecycleStartType(lifecycle), schema2LifecycleStartWithOpen(lifecycle, open)); err != nil {
+		t.Fatalf("prepare exact %s cleanup snapshot: %v", lifecycle, err)
 	}
+	revoked := schema2LifecycleRevocationData(lifecycle)
+	if err := schema2LifecycleReduce(t, &state, 21, "slot_peek_capability_revoked", revoked); err != nil {
+		t.Fatalf("prepare exact %s capability revocation: %v", lifecycle, err)
+	}
+	return state, schema2LifecycleInterruptData(lifecycle)
+}
+
+func schema2LifecycleApplyExactCleanup(t *testing.T, state *projectionState, lifecycle string) {
+	t.Helper()
+	revoked := schema2LifecycleRevocationData(lifecycle)
+	if err := schema2LifecycleReduce(t, state, 21, "slot_peek_capability_revoked", revoked); err != nil {
+		t.Fatalf("exact %s capability revocation rejected: %v", lifecycle, err)
+	}
+	if err := schema2LifecycleReduce(t, state, 22, "slot_reconciliation_interrupt", schema2LifecycleInterruptData(lifecycle)); err != nil {
+		t.Fatalf("exact %s reconciliation interrupt rejected: %v", lifecycle, err)
+	}
+	if err := schema2LifecycleReduce(t, state, 23, "slot_reconciliation_interrupt_outcome", schema2LifecycleInterruptOutcomeData()); err != nil {
+		t.Fatalf("exact %s reconciliation outcome rejected: %v", lifecycle, err)
+	}
+}
+
+func schema2LifecycleRevocationData(lifecycle string) map[string]any {
+	return map[string]any{
+		"dispatchId": "dsp_01KXNP6VY3227H78329V52CKF8", "targetLeaseId": "lease_01KXNP6VY3227H78329V52CKF8",
+		"bindingId": "binding_worker", "sessionTargetId": "target_worker", "targetFingerprint": strings.Repeat("a", 64),
+		"capabilityGeneration": "0", "capabilityIssuedSeq": uint64(0), "steeringGeneration": "0",
+		"reason":    map[string]string{"cancel": "cancel", "failure": "failure"}[lifecycle],
+		"revokedAt": "2026-07-20T10:00:19Z", "inputClosed": true,
+	}
+}
+
+func schema2LifecycleInterruptData(lifecycle string) map[string]any {
+	return map[string]any{
+		"dispatchId": "dsp_01KXNP6VY3227H78329V52CKF8", "targetLeaseId": "lease_01KXNP6VY3227H78329V52CKF8",
+		"bindingId": "binding_worker", "sessionTargetId": "target_worker", "targetFingerprint": strings.Repeat("a", 64),
+		"authorityKind": lifecycle, "authoritySeq": uint64(20), "interruptEncoding": "terminal-etx-v1",
+		"interruptSha256": strings.Repeat("b", 64), "recordedBeforeSend": true,
+	}
+}
+
+func schema2LifecycleInterruptOutcomeData() map[string]any {
+	return map[string]any{
+		"requestedSeq": uint64(22), "dispatchId": "dsp_01KXNP6VY3227H78329V52CKF8",
+		"targetLeaseId": "lease_01KXNP6VY3227H78329V52CKF8", "targetFingerprint": strings.Repeat("a", 64),
+		"outcome": "sent", "observedAt": "2026-07-20T10:00:20Z",
+	}
+}
+
+func schema2LifecycleInjectUnsnapshottedDispatch(t *testing.T, state *projectionState, lifecycle string) map[string]any {
+	t.Helper()
+	// The reducer state is deliberately reconstructed after the valid snapshot:
+	// every target identity is exact, leaving frozen-snapshot membership as the
+	// only invalid relation under test.
+	const oldDispatchID = "dsp_01KXNP6VY3227H78329V52CKF8"
+	const dispatchID = "dsp_01KXNP6VY3227H78329V52CKF7"
+	const leaseID = "lease_01KXNP6VY3227H78329V52CKF7"
+	dispatch := state.dispatches[oldDispatchID]
+	dispatch.DispatchID = dispatchID
+	dispatch.TargetLeaseID = leaseID
+	dispatch.BindingID = "binding_intruder"
+	dispatch.SessionTargetID = "target_intruder"
+	dispatch.TargetFingerprint = strings.Repeat("f", 64)
+	state.dispatches[dispatchID] = dispatch
+	state.dispatchSeq[dispatchID] = 19
+	session := *state.sessionByDispatch(oldDispatchID)
+	session.DispatchID = dispatchID
+	session.TargetLeaseID = leaseID
+	session.BindingID = "binding_intruder"
+	session.SessionTargetID = "target_intruder"
+	session.TargetFingerprintSHA256 = projectionSHA([]byte(dispatch.TargetFingerprint))
+	state.view.Sessions = append(state.view.Sessions, session)
+	return map[string]any{
+		"dispatchId": dispatchID, "targetLeaseId": leaseID, "bindingId": "binding_intruder",
+		"sessionTargetId": "target_intruder", "targetFingerprint": dispatch.TargetFingerprint,
+		"authorityKind": lifecycle, "authoritySeq": uint64(20), "interruptEncoding": "terminal-etx-v1",
+		"interruptSha256": strings.Repeat("b", 64), "recordedBeforeSend": true,
+	}
+}
+
+func schema2LifecycleReduce(t *testing.T, state *projectionState, sequence uint64, eventType string, data map[string]any) error {
+	t.Helper()
+	event := schema2Event(projectionTestRunID, sequence, eventType, cloneAny(data).(map[string]any))
+	event["epoch"] = state.view.Identity.Epoch
+	if nodeID, ok := data["nodeId"].(string); ok && nodeID != "" {
+		event["nodeId"] = nodeID
+	}
+	if slotID, ok := data["slotId"].(string); ok && slotID != "" {
+		event["slotId"] = slotID
+	}
+	if eventType == "slot_binding_observed" || eventType == "slot_reconciliation_interrupt" || eventType == "slot_reconciliation_interrupt_outcome" || eventType == "slot_peek_capability_revoked" {
+		event["nodeId"] = projectionTestFormationID
+		event["slotId"] = "slot_worker"
+	}
+	raw, err := decodeProjectionEvent(canonicalJSON(t, event), CanonicalRunSourceSchema2, projectionTestRunID)
+	if err != nil {
+		return err
+	}
+	safe, err := sanitizeSchema2Event(raw)
+	if err != nil {
+		return err
+	}
+	return reduceSchema2Event(state, raw, safe, nil)
+}
+
+func schema2RequireLifecycleReducerErrorWithoutMutation(t *testing.T, state *projectionState, sequence uint64, eventType string, data map[string]any) {
+	t.Helper()
+	before := schema2ReducerStateFingerprint(t, state)
+	err := schema2LifecycleReduce(t, state, sequence, eventType, data)
+	if err == nil {
+		t.Fatalf("%s admitted invalid lifecycle evidence", eventType)
+	}
+	requireProjectionError(t, err, ErrRunProjectionInvalid)
+	after := schema2ReducerStateFingerprint(t, state)
+	if !bytes.Equal(after, before) {
+		t.Fatalf("rejected %s mutated reducer state\nbefore: %s\nafter:  %s", eventType, before, after)
+	}
+}
+
+func schema2LifecycleMap(t *testing.T, value any) map[string]any {
+	t.Helper()
+	var result map[string]any
+	if err := json.Unmarshal(mustMarshalJSON(t, value), &result); err != nil {
+		t.Fatalf("decode lifecycle fixture: %v", err)
+	}
+	return result
 }
 
 func schema2FailureHeaderState(t *testing.T, errorCause bool) (projectionState, map[string]any) {
@@ -423,23 +738,6 @@ func schema2FailureFinalFromStart(start map[string]any, sequence uint64) map[str
 	return failed
 }
 
-func schema2LifecycleReconciliationState(t *testing.T, lifecycle string) projectionState {
-	t.Helper()
-	var state projectionState
-	if lifecycle == "cancel" {
-		state = schema2TerminalCancelingState(t)
-	} else {
-		state = schema2TerminalFailingState(t)
-	}
-	data := schema2SecondRepairFixture(t, "slot_reconciliation_interrupt")
-	dispatchID := data["dispatchId"].(string)
-	state.view.Sessions = []RunSessionView{{
-		DispatchID: dispatchID,
-		Occupancy:  RunSessionOccupancy{State: "active"},
-	}}
-	return state
-}
-
 func schema2RequireReducerErrorWithoutMutation(t *testing.T, state *projectionState, sequence uint64, eventType string, data map[string]any) {
 	t.Helper()
 	before := schema2ReducerStateFingerprint(t, state)
@@ -448,6 +746,19 @@ func schema2RequireReducerErrorWithoutMutation(t *testing.T, state *projectionSt
 		t.Fatalf("%s admitted invalid lifecycle evidence", eventType)
 	}
 	requireProjectionError(t, err, ErrRunProjectionInvalid)
+	after := schema2ReducerStateFingerprint(t, state)
+	if !bytes.Equal(after, before) {
+		t.Fatalf("rejected %s mutated reducer state\nbefore: %s\nafter:  %s", eventType, before, after)
+	}
+}
+
+func schema2RequireAnyReducerErrorWithoutMutation(t *testing.T, state *projectionState, sequence uint64, eventType string, data map[string]any) {
+	t.Helper()
+	before := schema2ReducerStateFingerprint(t, state)
+	err := schema2EpochReduce(t, state, sequence, state.view.Identity.Epoch, eventType, data)
+	if err == nil {
+		t.Fatalf("%s admitted invalid lifecycle evidence", eventType)
+	}
 	after := schema2ReducerStateFingerprint(t, state)
 	if !bytes.Equal(after, before) {
 		t.Fatalf("rejected %s mutated reducer state\nbefore: %s\nafter:  %s", eventType, before, after)
