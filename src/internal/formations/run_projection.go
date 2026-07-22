@@ -3215,6 +3215,7 @@ type schema2BindingsSnapshot struct {
 type schema2AuthorityProjection struct {
 	WorkspaceAuthorityID        string
 	WorkspaceRootIdentitySHA256 string
+	NextWriterFence             uint64
 	NextAdmissionSeq            uint64
 	AdmissionPolicyRef          AdmissionPolicyRef
 }
@@ -3330,6 +3331,9 @@ func projectSchema2Run(runID string, documents canonicalDocuments) (CanonicalRun
 	}
 	authority, commands, err := validateSchema2Documents(runID, documents, events, started)
 	if err != nil {
+		return CanonicalRunProjection{}, err
+	}
+	if err := validateSchema2WriterFences(events, authority.NextWriterFence); err != nil {
 		return CanonicalRunProjection{}, err
 	}
 	state := newProjectionState(runID, CanonicalRunSourceSchema2, board)
@@ -5113,7 +5117,18 @@ func validateProjectionWorkspaceAuthority(raw []byte) (schema2AuthorityProjectio
 	if revErr != nil || schemaErr != nil || idErr != nil || encodingErr != nil || rootErr != nil || fenceErr != nil || admissionErr != nil || policyErr != nil || policyRevErr != nil || policySHAErr != nil || recordRev == 0 || schema != 2 || !safeProjectionIdentifier(authorityID) || encoding != "workspace-root-identity-v1" || !lowercaseProjectionSHA(rootHash) || nextWriterFence == 0 || nextAdmissionSeq == 0 || policyRev == 0 || !lowercaseProjectionSHA(policySHA) || validateProjectionPriorGeneration(object["priorGeneration"], recordRev) != nil {
 		return schema2AuthorityProjection{}, projectionError(ErrRunProjectionInvalid, "invalid workspace authority")
 	}
-	return schema2AuthorityProjection{WorkspaceAuthorityID: authorityID, WorkspaceRootIdentitySHA256: rootHash, NextAdmissionSeq: nextAdmissionSeq, AdmissionPolicyRef: AdmissionPolicyRef{PolicyRev: policyRev, PolicySHA256: policySHA}}, nil
+	return schema2AuthorityProjection{WorkspaceAuthorityID: authorityID, WorkspaceRootIdentitySHA256: rootHash, NextWriterFence: nextWriterFence, NextAdmissionSeq: nextAdmissionSeq, AdmissionPolicyRef: AdmissionPolicyRef{PolicyRev: policyRev, PolicySHA256: policySHA}}, nil
+}
+
+func validateSchema2WriterFences(events []rawProjectionEvent, nextWriterFence uint64) error {
+	var highWater uint64
+	for _, event := range events {
+		if event.writerFence == 0 || event.writerFence < highWater || event.writerFence >= nextWriterFence {
+			return projectionError(ErrRunProjectionInvalid, "ledger writer fence differs from immutable workspace authority")
+		}
+		highWater = event.writerFence
+	}
+	return nil
 }
 
 func validateProjectionRunBootstrap(raw []byte) (projectionRunBootstrap, error) {
