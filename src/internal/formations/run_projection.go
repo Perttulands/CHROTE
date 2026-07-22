@@ -43,6 +43,7 @@ type rawProjectionEvent struct {
 }
 
 const schema1ProjectionLedgerReadMaximumBytes = int64(64 << 20)
+const schema2TerminalETXSHA256 = "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5"
 
 type schema1CanonicalRunReader struct {
 	store *Store
@@ -2942,23 +2943,43 @@ func decodeSchema2OpenDispatches(raw json.RawMessage) ([]SafeSchema2OpenDispatch
 		if !canonicalUnsignedDecimal(itemValue.LatestCapabilityGeneration) || !canonicalUnsignedDecimal(itemValue.LatestSteeringGeneration) {
 			return nil, projectionError(ErrRunProjectionInvalid, "invalid dispatch generation")
 		}
-		if itemValue.PeekCapabilityState == "none" {
+		switch itemValue.PeekCapabilityState {
+		case "none":
 			if itemValue.LatestCapabilityGeneration != "0" || itemValue.LatestCapabilityIssuedSeq != 0 || itemValue.PeekCapabilityRevokedSeq != nil {
 				return nil, projectionError(ErrRunProjectionInvalid, "invalid none capability state")
 			}
-		} else if itemValue.PeekCapabilityState == "revoked" {
+		case "issued", "input_open":
+			if itemValue.LatestCapabilityGeneration == "0" || !projectionSafeSequence(itemValue.LatestCapabilityIssuedSeq) || itemValue.PeekCapabilityRevokedSeq != nil {
+				return nil, projectionError(ErrRunProjectionInvalid, "invalid issued capability state")
+			}
+		case "revoked":
 			if itemValue.PeekCapabilityRevokedSeq == nil {
 				return nil, projectionError(ErrRunProjectionInvalid, "missing revocation sequence")
 			}
-		} else {
+		default:
 			return nil, projectionError(ErrRunProjectionInvalid, "invalid capability state")
+		}
+		if itemValue.PeekCapabilityState == "input_open" {
+			if itemValue.OpenSteeringStartedSeq == nil || !projectionSafeSequence(*itemValue.OpenSteeringStartedSeq) {
+				return nil, projectionError(ErrRunProjectionInvalid, "missing open steering sequence")
+			}
+		} else if itemValue.OpenSteeringStartedSeq != nil {
+			return nil, projectionError(ErrRunProjectionInvalid, "unexpected open steering sequence")
 		}
 		if itemValue.InterruptState == "none" {
 			if itemValue.InterruptRequestedSeq != nil || itemValue.InterruptOutcomeSeq != nil {
 				return nil, projectionError(ErrRunProjectionInvalid, "invalid interrupt state")
 			}
-		} else if itemValue.InterruptState == "" {
-			return nil, projectionError(ErrRunProjectionInvalid, "missing interrupt state")
+		} else if itemValue.InterruptState == "requested" {
+			if itemValue.InterruptRequestedSeq == nil || !projectionSafeSequence(*itemValue.InterruptRequestedSeq) || itemValue.InterruptOutcomeSeq != nil {
+				return nil, projectionError(ErrRunProjectionInvalid, "invalid requested interrupt state")
+			}
+		} else if projectionValueIn(itemValue.InterruptState, "sent", "unavailable", "unsupported") {
+			if itemValue.InterruptRequestedSeq == nil || itemValue.InterruptOutcomeSeq == nil || !projectionSafeSequence(*itemValue.InterruptRequestedSeq) || !projectionSafeSequence(*itemValue.InterruptOutcomeSeq) {
+				return nil, projectionError(ErrRunProjectionInvalid, "invalid completed interrupt state")
+			}
+		} else {
+			return nil, projectionError(ErrRunProjectionInvalid, "invalid interrupt state")
 		}
 	}
 	return result, nil
@@ -3054,26 +3075,35 @@ func decodeArtifactProjection(raw json.RawMessage) (ArtifactProjection, error) {
 }
 
 type projectionState struct {
-	view               RunView
-	board              *BoardDocument
-	nodeIndex          map[string]int
-	attemptIndex       map[string]int
-	gateIndex          map[string]int
-	artifactIndex      map[string]int
-	dispatches         map[string]SafeSchema2SlotDispatchData
-	dispatchSeq        map[string]uint64
-	matchedDispatch    map[string]bool
-	revokedDispatch    map[string]uint64
-	bindings           map[string]schema2Binding
-	health             map[string]SafeSchema2SlotBindingObservedData
-	lastBlockJSON      []byte
-	lastBlockRetry     []byte
-	lastBlockSeq       uint64
-	lastBlockPolicy    string
-	lastBlockNextEpoch uint64
-	cancelRequestSeq   uint64
-	failureStartSeq    uint64
-	terminal           bool
+	view                RunView
+	board               *BoardDocument
+	nodeIndex           map[string]int
+	attemptIndex        map[string]int
+	gateIndex           map[string]int
+	artifactIndex       map[string]int
+	dispatches          map[string]SafeSchema2SlotDispatchData
+	dispatchSeq         map[string]uint64
+	matchedDispatch     map[string]bool
+	revokedDispatch     map[string]uint64
+	bindings            map[string]schema2Binding
+	health              map[string]SafeSchema2SlotBindingObservedData
+	lastBlockJSON       []byte
+	lastBlockRetry      []byte
+	lastBlockSeq        uint64
+	lastBlockPolicy     string
+	lastBlockNextEpoch  uint64
+	cancelRequestSeq    uint64
+	failureStartSeq     uint64
+	cancelRequest       *SafeSchema2RunCancelRequestedData
+	failureStart        *SafeSchema2RunFailureReconciliationStartedData
+	toolLeases          map[string]SafeToolLeaseSnapshot
+	errorNodes          map[uint64]string
+	revocations         map[string]SafeSchema2SlotPeekCapabilityRevokedData
+	interrupts          map[string]SafeSchema2SlotReconciliationInterruptData
+	interruptSeq        map[string]uint64
+	interruptOutcomes   map[string]SafeSchema2SlotReconciliationInterruptOutcomeData
+	interruptOutcomeSeq map[string]uint64
+	terminal            bool
 }
 
 type schema2Binding struct {
@@ -3277,7 +3307,7 @@ func newProjectionState(runID string, source CanonicalRunSource, board *BoardDoc
 	}
 	state := projectionState{
 		view:  RunView{Schema: RunViewSchema, RunID: runID, Source: sourceProjection, RecoveryState: "live", Nodes: []RunNodeView{}, Attempts: []RunAttemptView{}, Gates: []RunGateView{}, Outputs: []RunOutputView{}, Artifacts: []ArtifactProjection{}, Blocks: []RunBlockView{}, Escalations: []RunEscalationView{}, Sessions: []RunSessionView{}, Actions: []RunAction{}},
-		board: board, nodeIndex: map[string]int{}, attemptIndex: map[string]int{}, gateIndex: map[string]int{}, artifactIndex: map[string]int{}, dispatches: map[string]SafeSchema2SlotDispatchData{}, dispatchSeq: map[string]uint64{}, matchedDispatch: map[string]bool{}, revokedDispatch: map[string]uint64{}, bindings: map[string]schema2Binding{}, health: map[string]SafeSchema2SlotBindingObservedData{},
+		board: board, nodeIndex: map[string]int{}, attemptIndex: map[string]int{}, gateIndex: map[string]int{}, artifactIndex: map[string]int{}, dispatches: map[string]SafeSchema2SlotDispatchData{}, dispatchSeq: map[string]uint64{}, matchedDispatch: map[string]bool{}, revokedDispatch: map[string]uint64{}, bindings: map[string]schema2Binding{}, health: map[string]SafeSchema2SlotBindingObservedData{}, toolLeases: map[string]SafeToolLeaseSnapshot{}, errorNodes: map[uint64]string{}, revocations: map[string]SafeSchema2SlotPeekCapabilityRevokedData{}, interrupts: map[string]SafeSchema2SlotReconciliationInterruptData{}, interruptSeq: map[string]uint64{}, interruptOutcomes: map[string]SafeSchema2SlotReconciliationInterruptOutcomeData{}, interruptOutcomeSeq: map[string]uint64{},
 	}
 	appendNode := func(id, kind string) {
 		if id == "" {
@@ -3500,19 +3530,33 @@ func reduceSchema2EventInPlace(state *projectionState, raw rawProjectionEvent, s
 		session.PeekCapability.State = "issued"
 		session.Steering = RunSessionSteering{State: "closed", Generation: event.Data.SteeringGeneration}
 	case SafeSchema2SlotPeekCapabilityRevokedEvent:
+		if err := state.validateLifecycleRevocation(event.Data); err != nil {
+			return err
+		}
+		state.revocations[event.Data.DispatchID] = event.Data
 		state.revokedDispatch[event.Data.DispatchID] = raw.envelope.Seq
 		state.setSessionCapability(event.Data.DispatchID, "revoked", event.Data.CapabilityIssuedSeq, event.Data.CapabilityGeneration)
 	case SafeSchema2SlotReconciliationInterruptEvent:
+		if err := state.validateLifecycleInterrupt(event.Data); err != nil {
+			return err
+		}
 		session := state.sessionByDispatch(event.Data.DispatchID)
 		if session == nil {
 			return projectionError(ErrRunProjectionInvalid, "reconciliation interrupt without session")
 		}
+		state.interrupts[event.Data.DispatchID] = event.Data
+		state.interruptSeq[event.Data.DispatchID] = raw.envelope.Seq
 		session.Occupancy.State = "held"
 	case SafeSchema2SlotReconciliationInterruptOutcomeEvent:
+		if err := state.validateLifecycleInterruptOutcome(event.Data); err != nil {
+			return err
+		}
 		session := state.sessionByDispatch(event.Data.DispatchID)
 		if session == nil {
 			return projectionError(ErrRunProjectionInvalid, "reconciliation outcome without session")
 		}
+		state.interruptOutcomes[event.Data.DispatchID] = event.Data
+		state.interruptOutcomeSeq[event.Data.DispatchID] = raw.envelope.Seq
 		session.Occupancy.State = "held"
 		if event.Data.Outcome != "sent" {
 			session.Occupancy.State = "quarantined"
@@ -3525,10 +3569,18 @@ func reduceSchema2EventInPlace(state *projectionState, raw rawProjectionEvent, s
 			return err
 		}
 	case SafeSchema2ToolDispatchEvent:
+		if _, exists := state.toolLeases[event.Data.ToolLeaseID]; exists {
+			return projectionError(ErrRunProjectionInvalid, "duplicate tool lease")
+		}
 		if state.startAttempt(event.Data.NodeID, event.Data.Attempt, raw.envelope.Seq, nil) == nil {
 			return projectionError(ErrRunProjectionInvalid, "invalid tool dispatch attempt")
 		}
+		state.toolLeases[event.Data.ToolLeaseID] = SafeToolLeaseSnapshot{ToolLeaseID: event.Data.ToolLeaseID, NodeID: event.Data.NodeID, Attempt: event.Data.Attempt, DispatchSeq: raw.envelope.Seq}
 	case SafeSchema2ToolResultEvent:
+		lease, exists := state.toolLeases[event.Data.ToolLeaseID]
+		if !exists || lease.NodeID != event.Data.NodeID || lease.Attempt != event.Data.Attempt {
+			return projectionError(ErrRunProjectionInvalid, "tool result without open lease")
+		}
 		status := "failed"
 		if event.Data.Status == "ok" {
 			status = "done"
@@ -3536,6 +3588,7 @@ func reduceSchema2EventInPlace(state *projectionState, raw rawProjectionEvent, s
 		if err := state.completeSchema2Attempt(event.Data.NodeID, event.Data.Attempt, status, raw.envelope.Seq, event.Data.Outputs); err != nil {
 			return err
 		}
+		delete(state.toolLeases, event.Data.ToolLeaseID)
 	case SafeSchema2NodeOutputEvent:
 		node := state.node(event.Data.NodeID)
 		if node == nil || node.LatestAttempt == 0 {
@@ -3652,6 +3705,12 @@ func reduceSchema2EventInPlace(state *projectionState, raw rawProjectionEvent, s
 		}
 		state.view.Escalations = append(state.view.Escalations, RunEscalationView{Seq: raw.envelope.Seq, NodeID: event.Data.NodeID, GateID: event.Data.GateID, Severity: event.Data.Severity, Reason: event.Data.Reason, Source: event.Data.Source, Trigger: event.Data.Trigger, Blocks: event.Data.Blocks})
 	case SafeSchema2ErrorEvent:
+		if projectionValueIn(event.Data.ErrorScope, "run", "node", "gate") {
+			state.errorNodes[raw.envelope.Seq] = event.Data.NodeID
+			if event.Data.ErrorScope == "gate" {
+				state.errorNodes[raw.envelope.Seq] = event.Data.GateID
+			}
+		}
 		if event.Data.ErrorScope != "node" {
 			break
 		}
@@ -3669,6 +3728,11 @@ func reduceSchema2EventInPlace(state *projectionState, raw rawProjectionEvent, s
 		if err := verifyEventCommand(event.Data.CommandID, event.Data.CommandPayloadSHA256, raw.envelope.Seq, commands); err != nil {
 			return err
 		}
+		if err := state.validateLifecycleStart(event.Data.OpenNodeAttempts, event.Data.OpenSlotDispatches, event.Data.OpenToolLeases); err != nil {
+			return err
+		}
+		value := event.Data
+		state.cancelRequest = &value
 		state.cancelRequestSeq = raw.envelope.Seq
 		state.view.Status = "canceling"
 	case SafeSchema2RunFailureReconciliationStartedEvent:
@@ -3679,19 +3743,30 @@ func reduceSchema2EventInPlace(state *projectionState, raw rawProjectionEvent, s
 		} else if event.Data.OriginCancelRequestSeq != 0 {
 			return projectionError(ErrRunProjectionInvalid, "failure reconciliation invents cancellation origin")
 		}
+		if err := state.validateLifecycleStart(event.Data.OpenNodeAttempts, event.Data.OpenSlotDispatches, event.Data.OpenToolLeases); err != nil {
+			return err
+		}
+		if err := state.validateFailureCause(event.Data.FailureCause, event.Data.OpenNodeAttempts, event.Data.OpenSlotDispatches, event.Data.OpenToolLeases); err != nil {
+			return err
+		}
+		value := event.Data
+		state.failureStart = &value
 		state.failureStartSeq = raw.envelope.Seq
 		state.view.Status = "failing"
 	case SafeSchema2RunCanceledEvent:
-		if event.Data.CancelRequestSeq != state.cancelRequestSeq {
-			return projectionError(ErrRunProjectionInvalid, "run cancellation does not name current request")
+		if err := state.validateCancellationFinal(event.Data); err != nil {
+			return err
 		}
-		state.finishRun("canceled", "canceled", raw.envelope.Seq)
+		state.applyLifecycleFinal("canceled", raw.envelope.Seq, event.Data.NodeAttemptDispositions, event.Data.SlotDispatchDispositions)
 	case SafeSchema2RunFailedEvent:
-		if event.Data.FailureReconciliationSeq != state.failureStartSeq {
-			return projectionError(ErrRunProjectionInvalid, "run failure does not name current reconciliation")
+		if err := state.validateFailureFinal(event.Data); err != nil {
+			return err
 		}
-		state.finishRun("failed", "failed", raw.envelope.Seq)
+		state.applyLifecycleFinal("failed", raw.envelope.Seq, event.Data.NodeAttemptDispositions, event.Data.SlotDispatchDispositions)
 	case SafeSchema2RunSucceededEvent:
+		if err := state.validateSuccessFinal(); err != nil {
+			return err
+		}
 		state.view.Status = "succeeded"
 		state.view.Final = true
 		state.terminal = true
@@ -3807,9 +3882,330 @@ func cloneSchema2ProjectionState(state projectionState) projectionState {
 	clone.revokedDispatch = cloneProjectionValue(reflect.ValueOf(state.revokedDispatch)).Interface().(map[string]uint64)
 	clone.bindings = cloneProjectionValue(reflect.ValueOf(state.bindings)).Interface().(map[string]schema2Binding)
 	clone.health = cloneProjectionValue(reflect.ValueOf(state.health)).Interface().(map[string]SafeSchema2SlotBindingObservedData)
+	clone.toolLeases = cloneProjectionValue(reflect.ValueOf(state.toolLeases)).Interface().(map[string]SafeToolLeaseSnapshot)
+	clone.errorNodes = cloneProjectionValue(reflect.ValueOf(state.errorNodes)).Interface().(map[uint64]string)
+	clone.revocations = cloneProjectionValue(reflect.ValueOf(state.revocations)).Interface().(map[string]SafeSchema2SlotPeekCapabilityRevokedData)
+	clone.interrupts = cloneProjectionValue(reflect.ValueOf(state.interrupts)).Interface().(map[string]SafeSchema2SlotReconciliationInterruptData)
+	clone.interruptSeq = cloneProjectionValue(reflect.ValueOf(state.interruptSeq)).Interface().(map[string]uint64)
+	clone.interruptOutcomes = cloneProjectionValue(reflect.ValueOf(state.interruptOutcomes)).Interface().(map[string]SafeSchema2SlotReconciliationInterruptOutcomeData)
+	clone.interruptOutcomeSeq = cloneProjectionValue(reflect.ValueOf(state.interruptOutcomeSeq)).Interface().(map[string]uint64)
+	if state.cancelRequest != nil {
+		value := cloneProjectionValue(reflect.ValueOf(*state.cancelRequest)).Interface().(SafeSchema2RunCancelRequestedData)
+		clone.cancelRequest = &value
+	}
+	if state.failureStart != nil {
+		value := cloneProjectionValue(reflect.ValueOf(*state.failureStart)).Interface().(SafeSchema2RunFailureReconciliationStartedData)
+		clone.failureStart = &value
+	}
 	clone.lastBlockJSON = append([]byte(nil), state.lastBlockJSON...)
 	clone.lastBlockRetry = append([]byte(nil), state.lastBlockRetry...)
 	return clone
+}
+
+func (state *projectionState) currentOpenNodeAttempts() []SafeNodeAttemptSnapshot {
+	result := make([]SafeNodeAttemptSnapshot, 0, len(state.view.Attempts))
+	for _, attempt := range state.view.Attempts {
+		if attempt.CompletedSeq != 0 {
+			continue
+		}
+		node := state.node(attempt.NodeID)
+		if node == nil {
+			continue
+		}
+		snapshot := SafeNodeAttemptSnapshot{NodeID: attempt.NodeID, NodeKind: node.Kind, Attempt: attempt.Attempt, StartSeq: attempt.StartedSeq, Phase: "started", PhaseSeq: attempt.StartedSeq}
+		if gate := state.existingGate(attempt.NodeID, attempt.Attempt); gate != nil {
+			if gate.Status == "waiting_human" {
+				snapshot.Phase, snapshot.PhaseSeq = "waiting_human", gate.RequestSeq
+			} else if gate.EvaluatingSeq != 0 {
+				snapshot.Phase, snapshot.PhaseSeq = "gate_evaluating", gate.EvaluatingSeq
+			}
+		}
+		result = append(result, snapshot)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].StartSeq != result[j].StartSeq {
+			return result[i].StartSeq < result[j].StartSeq
+		}
+		if result[i].NodeID != result[j].NodeID {
+			return result[i].NodeID < result[j].NodeID
+		}
+		return result[i].Attempt < result[j].Attempt
+	})
+	return result
+}
+
+func (state *projectionState) currentOpenToolLeases() []SafeToolLeaseSnapshot {
+	result := make([]SafeToolLeaseSnapshot, 0, len(state.toolLeases))
+	for _, lease := range state.toolLeases {
+		result = append(result, lease)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].DispatchSeq < result[j].DispatchSeq })
+	return result
+}
+
+func (state *projectionState) validateLifecycleStart(nodes []SafeNodeAttemptSnapshot, slots []SafeSchema2OpenDispatch, tools []SafeToolLeaseSnapshot) error {
+	if !reflect.DeepEqual(nodes, state.currentOpenNodeAttempts()) || !reflect.DeepEqual(slots, state.currentSchema2OpenDispatches()) || !reflect.DeepEqual(tools, state.currentOpenToolLeases()) {
+		return projectionError(ErrRunProjectionInvalid, "lifecycle snapshot differs from open public authority")
+	}
+	return nil
+}
+
+func (state *projectionState) validateFailureCause(cause SafeFailureCause, nodes []SafeNodeAttemptSnapshot, slots []SafeSchema2OpenDispatch, tools []SafeToolLeaseSnapshot) error {
+	switch cause.Kind {
+	case "none":
+		return nil
+	case "slot":
+		for _, slot := range slots {
+			if slot.DispatchID == cause.DispatchID {
+				return nil
+			}
+		}
+	case "tool":
+		for _, tool := range tools {
+			if tool.ToolLeaseID == cause.ToolLeaseID {
+				return nil
+			}
+		}
+	case "error":
+		if _, exists := state.errorNodes[cause.ErrorSeq]; exists {
+			return nil
+		}
+	}
+	return projectionError(ErrRunProjectionInvalid, "failure cause does not name retained public authority")
+}
+
+func (state *projectionState) activeLifecycleAuthority() (string, uint64, []SafeSchema2OpenDispatch, bool) {
+	switch state.view.Status {
+	case "canceling":
+		if state.cancelRequest != nil {
+			return "cancel", state.cancelRequestSeq, state.cancelRequest.OpenSlotDispatches, true
+		}
+	case "failing":
+		if state.failureStart != nil {
+			return "failure", state.failureStartSeq, state.failureStart.OpenSlotDispatches, true
+		}
+	}
+	return "", 0, nil, false
+}
+
+func findLifecycleDispatch(dispatches []SafeSchema2OpenDispatch, dispatchID string) (SafeSchema2OpenDispatch, bool) {
+	for _, dispatch := range dispatches {
+		if dispatch.DispatchID == dispatchID {
+			return dispatch, true
+		}
+	}
+	return SafeSchema2OpenDispatch{}, false
+}
+
+func (state *projectionState) validateLifecycleRevocation(data SafeSchema2SlotPeekCapabilityRevokedData) error {
+	kind, _, dispatches, ok := state.activeLifecycleAuthority()
+	if !ok {
+		dispatches = state.currentSchema2OpenDispatches()
+	}
+	dispatch, member := findLifecycleDispatch(dispatches, data.DispatchID)
+	session := state.sessionByDispatch(data.DispatchID)
+	if !member || session == nil || state.revokedDispatch[data.DispatchID] != 0 ||
+		data.TargetLeaseID != dispatch.TargetLeaseID || data.BindingID != dispatch.BindingID || data.SessionTargetID != dispatch.SessionTargetID || data.TargetFingerprint != dispatch.TargetFingerprint ||
+		data.CapabilityGeneration != dispatch.LatestCapabilityGeneration || data.CapabilityIssuedSeq != dispatch.LatestCapabilityIssuedSeq || data.SteeringGeneration != dispatch.LatestSteeringGeneration ||
+		!data.InputClosed {
+		return projectionError(ErrRunProjectionInvalid, "capability revocation differs from frozen lifecycle authority")
+	}
+	if ok && data.Reason != kind {
+		return projectionError(ErrRunProjectionInvalid, "capability revocation differs from frozen lifecycle authority")
+	}
+	return nil
+}
+
+func (state *projectionState) validateLifecycleInterrupt(data SafeSchema2SlotReconciliationInterruptData) error {
+	kind, authoritySeq, dispatches, ok := state.activeLifecycleAuthority()
+	dispatch, member := findLifecycleDispatch(dispatches, data.DispatchID)
+	revocation, revoked := state.revocations[data.DispatchID]
+	if !ok || !member || !revoked || state.interruptSeq[data.DispatchID] != 0 ||
+		data.TargetLeaseID != dispatch.TargetLeaseID || data.BindingID != dispatch.BindingID || data.SessionTargetID != dispatch.SessionTargetID || data.TargetFingerprint != dispatch.TargetFingerprint ||
+		data.AuthorityKind != kind || data.AuthoritySeq != authoritySeq || data.InterruptEncoding != "terminal-etx-v1" || data.InterruptSHA256 != schema2TerminalETXSHA256 || !data.RecordedBeforeSend ||
+		revocation.TargetLeaseID != data.TargetLeaseID || revocation.TargetFingerprint != data.TargetFingerprint {
+		return projectionError(ErrRunProjectionInvalid, "reconciliation interrupt differs from frozen lifecycle authority")
+	}
+	return nil
+}
+
+func (state *projectionState) validateLifecycleInterruptOutcome(data SafeSchema2SlotReconciliationInterruptOutcomeData) error {
+	request, requested := state.interrupts[data.DispatchID]
+	if !requested || state.interruptOutcomeSeq[data.DispatchID] != 0 || data.RequestedSeq != state.interruptSeq[data.DispatchID] || data.TargetLeaseID != request.TargetLeaseID || data.TargetFingerprint != request.TargetFingerprint {
+		return projectionError(ErrRunProjectionInvalid, "reconciliation outcome differs from interrupt request")
+	}
+	return nil
+}
+
+func lifecycleNodeDispositionBase(values []SafeNodeAttemptDisposition) []SafeNodeAttemptSnapshot {
+	result := make([]SafeNodeAttemptSnapshot, len(values))
+	for index := range values {
+		result[index] = values[index].SafeNodeAttemptSnapshot
+	}
+	return result
+}
+
+func lifecycleSlotDispositionBase(values []SafeSlotDispatchDisposition) []SafeSchema2OpenDispatch {
+	result := make([]SafeSchema2OpenDispatch, len(values))
+	for index := range values {
+		result[index] = values[index].SafeSchema2OpenDispatch
+	}
+	return result
+}
+
+func lifecycleToolDispositionBase(values []SafeToolLeaseDisposition) []SafeToolLeaseSnapshot {
+	result := make([]SafeToolLeaseSnapshot, len(values))
+	for index := range values {
+		result[index] = values[index].SafeToolLeaseSnapshot
+	}
+	return result
+}
+
+func (state *projectionState) failureSelectedNode(cause SafeFailureCause, slots []SafeSchema2OpenDispatch, tools []SafeToolLeaseSnapshot) string {
+	switch cause.Kind {
+	case "slot":
+		if slot, ok := findLifecycleDispatch(slots, cause.DispatchID); ok {
+			return slot.NodeID
+		}
+	case "tool":
+		for _, tool := range tools {
+			if tool.ToolLeaseID == cause.ToolLeaseID {
+				return tool.NodeID
+			}
+		}
+	case "error":
+		return state.errorNodes[cause.ErrorSeq]
+	}
+	return ""
+}
+
+func (state *projectionState) validateNodeDispositions(snapshots []SafeNodeAttemptSnapshot, dispositions []SafeNodeAttemptDisposition, status string, cause SafeFailureCause, slots []SafeSchema2OpenDispatch, tools []SafeToolLeaseSnapshot) error {
+	if !reflect.DeepEqual(lifecycleNodeDispositionBase(dispositions), snapshots) {
+		return projectionError(ErrRunProjectionInvalid, "node dispositions differ from lifecycle snapshot")
+	}
+	selected := state.failureSelectedNode(cause, slots, tools)
+	for _, disposition := range dispositions {
+		want := "canceled_non_authorizing"
+		if status == "failed" {
+			want = "abandoned_non_authorizing"
+			if disposition.NodeID == selected && selected != "" {
+				want = "failed_non_authorizing"
+			}
+		}
+		if disposition.Disposition != want {
+			return projectionError(ErrRunProjectionInvalid, "node disposition differs from failure cause")
+		}
+	}
+	return nil
+}
+
+func (state *projectionState) validateSlotDispositions(snapshots []SafeSchema2OpenDispatch, dispositions []SafeSlotDispatchDisposition, status string, cause SafeFailureCause) error {
+	if !reflect.DeepEqual(lifecycleSlotDispositionBase(dispositions), snapshots) {
+		return projectionError(ErrRunProjectionInvalid, "slot dispositions differ from lifecycle snapshot")
+	}
+	for _, disposition := range dispositions {
+		want := "canceled_non_authorizing"
+		if status == "failed" {
+			want = "abandoned_non_authorizing"
+			if cause.Kind == "slot" && cause.DispatchID == disposition.DispatchID {
+				want = "failed_non_authorizing"
+			}
+		}
+		request, requested := state.interrupts[disposition.DispatchID]
+		outcome, completed := state.interruptOutcomes[disposition.DispatchID]
+		revocation, revoked := state.revocations[disposition.DispatchID]
+		if disposition.Disposition != want || !requested || !completed || !revoked ||
+			disposition.SoftInterrupt != outcome.Outcome || disposition.SoftInterruptRequestedSeq != state.interruptSeq[disposition.DispatchID] || disposition.SoftInterruptOutcomeSeq != state.interruptOutcomeSeq[disposition.DispatchID] ||
+			disposition.FinalPeekCapabilityState != "revoked" || disposition.FinalCapabilityGeneration != revocation.CapabilityGeneration || disposition.FinalCapabilityIssuedSeq != revocation.CapabilityIssuedSeq || disposition.FinalSteeringGeneration != revocation.SteeringGeneration || disposition.FinalPeekCapabilityRevokedSeq != state.revokedDispatch[disposition.DispatchID] ||
+			request.TargetLeaseID != disposition.TargetLeaseID || request.TargetFingerprint != disposition.TargetFingerprint {
+			return projectionError(ErrRunProjectionInvalid, "slot disposition differs from retained cleanup lineage")
+		}
+	}
+	return nil
+}
+
+func validateToolDispositions(snapshots []SafeToolLeaseSnapshot, dispositions []SafeToolLeaseDisposition, status string, cause SafeFailureCause) error {
+	if !reflect.DeepEqual(lifecycleToolDispositionBase(dispositions), snapshots) {
+		return projectionError(ErrRunProjectionInvalid, "tool dispositions differ from lifecycle snapshot")
+	}
+	for _, disposition := range dispositions {
+		want := "never_launched_cleaned"
+		if status == "failed" {
+			want = "abandoned_private_cleanup_owned"
+			if cause.Kind == "tool" && cause.ToolLeaseID == disposition.ToolLeaseID {
+				want = "failed_private_cleanup_owned"
+			}
+		}
+		if disposition.Disposition != want {
+			return projectionError(ErrRunProjectionInvalid, "tool disposition differs from failure cause")
+		}
+	}
+	return nil
+}
+
+func (state *projectionState) validateCancellationFinal(data SafeSchema2RunCanceledData) error {
+	start := state.cancelRequest
+	if start == nil || data.CancelRequestSeq != state.cancelRequestSeq || data.Reason != start.Reason || data.RequestedBy != start.RequestedBy ||
+		state.validateNodeDispositions(start.OpenNodeAttempts, data.NodeAttemptDispositions, "canceled", SafeFailureCause{Kind: "none"}, start.OpenSlotDispatches, start.OpenToolLeases) != nil ||
+		state.validateSlotDispositions(start.OpenSlotDispatches, data.SlotDispatchDispositions, "canceled", SafeFailureCause{Kind: "none"}) != nil ||
+		validateToolDispositions(start.OpenToolLeases, data.ReconciledToolLeases, "canceled", SafeFailureCause{Kind: "none"}) != nil {
+		return projectionError(ErrRunProjectionInvalid, "run cancellation differs from retained request")
+	}
+	return nil
+}
+
+func (state *projectionState) validateFailureFinal(data SafeSchema2RunFailedData) error {
+	start := state.failureStart
+	if start == nil || data.FailureReconciliationSeq != state.failureStartSeq || data.Code != start.Code || data.Reason != start.Reason || data.Unrecoverable != start.Unrecoverable || data.RelatedSeq != start.RelatedSeq || !reflect.DeepEqual(data.FailureCause, start.FailureCause) ||
+		state.validateNodeDispositions(start.OpenNodeAttempts, data.NodeAttemptDispositions, "failed", start.FailureCause, start.OpenSlotDispatches, start.OpenToolLeases) != nil ||
+		state.validateSlotDispositions(start.OpenSlotDispatches, data.SlotDispatchDispositions, "failed", start.FailureCause) != nil ||
+		validateToolDispositions(start.OpenToolLeases, data.ToolLeaseDispositions, "failed", start.FailureCause) != nil {
+		return projectionError(ErrRunProjectionInvalid, "run failure differs from retained reconciliation")
+	}
+	return nil
+}
+
+func (state *projectionState) validateSuccessFinal() error {
+	if len(state.currentOpenNodeAttempts()) != 0 || len(state.currentSchema2OpenDispatches()) != 0 || len(state.currentOpenToolLeases()) != 0 || state.cancelRequest != nil || state.failureStart != nil {
+		return projectionError(ErrRunProjectionInvalid, "run success retains open execution authority")
+	}
+	return nil
+}
+
+func (state *projectionState) applyLifecycleFinal(status string, sequence uint64, nodes []SafeNodeAttemptDisposition, slots []SafeSlotDispatchDisposition) {
+	state.view.Status, state.view.Final, state.terminal = status, true, true
+	for _, disposition := range nodes {
+		projected := "canceled"
+		if disposition.Disposition == "failed_non_authorizing" {
+			projected = "failed"
+		} else if disposition.Disposition == "abandoned_non_authorizing" {
+			projected = "abandoned"
+		}
+		if attempt := state.existingAttempt(disposition.NodeID, disposition.Attempt); attempt != nil {
+			attempt.Status, attempt.Disposition, attempt.CompletedSeq = projected, projected, sequence
+		}
+		if node := state.node(disposition.NodeID); node != nil {
+			node.Status, node.FinalDisposition = projected, projected
+		}
+	}
+	for _, disposition := range slots {
+		if session := state.sessionByDispatch(disposition.DispatchID); session != nil {
+			session.Occupancy.State = disposition.TargetLeaseState
+			session.PeekCapability = RunSessionPeekCapability{State: disposition.FinalPeekCapabilityState, Generation: disposition.FinalCapabilityGeneration, IssuedSeq: disposition.FinalCapabilityIssuedSeq}
+			session.Steering = RunSessionSteering{State: "closed", Generation: disposition.FinalSteeringGeneration}
+		}
+	}
+	for index := range state.view.Nodes {
+		node := &state.view.Nodes[index]
+		if node.LatestAttempt != 0 {
+			continue
+		}
+		projected := "canceled"
+		if status == "failed" {
+			projected = "abandoned"
+		}
+		node.Status, node.FinalDisposition = projected, projected
+	}
 }
 
 func (state *projectionState) node(nodeID string) *RunNodeView {
