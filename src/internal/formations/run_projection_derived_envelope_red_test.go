@@ -6,6 +6,171 @@ import (
 	"testing"
 )
 
+func TestTask1RunStartedRequiresRootConditionalEnvelopeIdentity(t *testing.T) {
+	t.Run("Mission root exact envelope projects", func(t *testing.T) {
+		if _, err := ProjectCanonicalRun(schema2ProjectionInput(t, true)); err != nil {
+			t.Fatalf("project exact Mission root: %v", err)
+		}
+	})
+
+	for _, mutation := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "Mission root missing missionId", mutate: func(started map[string]any) { delete(started, "missionId") }},
+		{name: "Mission root mismatched missionId", mutate: func(started map[string]any) { started["missionId"] = projectionTestFormationID }},
+		{name: "Mission root mismatched beadId", mutate: func(started map[string]any) { started["beadId"] = "ctx-other" }},
+	} {
+		t.Run(mutation.name, func(t *testing.T) {
+			input := schema2ProjectionInput(t, true)
+			schema2RequireRunStartedEnvelopeRejection(t, input, mutation.mutate)
+		})
+	}
+
+	t.Run("isolated Formation exact envelope projects", func(t *testing.T) {
+		input, _ := schema2OpenDispatchLifecycleInput(t, false)
+		if _, err := ProjectCanonicalRun(input); err != nil {
+			t.Fatalf("project exact isolated Formation root: %v", err)
+		}
+	})
+
+	for _, mutation := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "isolated Formation forbids missionId", mutate: func(started map[string]any) { started["missionId"] = projectionTestMissionID }},
+		{name: "isolated Formation forbids beadId", mutate: func(started map[string]any) { started["beadId"] = "ctx-7i1.1" }},
+	} {
+		t.Run(mutation.name, func(t *testing.T) {
+			input, _ := schema2OpenDispatchLifecycleInput(t, false)
+			schema2RequireRunStartedEnvelopeRejection(t, input, mutation.mutate)
+		})
+	}
+}
+
+func schema2RequireRunStartedEnvelopeRejection(t *testing.T, input CanonicalRunReadInput, mutate func(map[string]any)) {
+	t.Helper()
+	events := canonicalLedgerEvents(t, input)
+	mutate(events[0])
+	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2Ledger, marshalProjectionLedger(t, events...))
+	if projection, err := ProjectCanonicalRun(input); err == nil {
+		t.Fatalf("contradictory run_started envelope projected: %#v", projection)
+	} else {
+		requireProjectionError(t, err, ErrRunProjectionInvalid)
+	}
+}
+
+func TestTask1DirectNodeAuthorityRequiresExactEnvelopeIdentity(t *testing.T) {
+	tests := []struct {
+		name      string
+		eventType string
+		sequence  uint64
+		prepare   func(*testing.T) (projectionState, map[string]any)
+		required  []string
+	}{
+		{
+			name: "node input ignored", eventType: "node_input_ignored", sequence: 5,
+			prepare: func(t *testing.T) (projectionState, map[string]any) {
+				return schema2DerivedEnvelopeAttemptState(t, projectionTestFormationID, "formation"), schema2SecondRepairFixture(t, "node_input_ignored")
+			},
+			required: []string{"nodeId", "attempt"},
+		},
+		{
+			name: "Formation result", eventType: "formation_result", sequence: 20,
+			prepare:  schema2DerivedFormationResultInput,
+			required: []string{"nodeId", "attempt"},
+		},
+		{
+			name: "Tool process launch", eventType: "tool_process_launch", sequence: 5,
+			prepare: func(t *testing.T) (projectionState, map[string]any) {
+				state, _ := schema2LifecyclePublicState(t, "tool")
+				return state, schema2RepairToolProcessLaunchData()
+			},
+			required: []string{"nodeId", "attempt"},
+		},
+		{
+			name: "Tool result", eventType: "tool_result", sequence: 6,
+			prepare: func(t *testing.T) (projectionState, map[string]any) {
+				state, _ := schema2LifecyclePublicState(t, "tool")
+				return state, schema2RepairToolResultData()
+			},
+			required: []string{"nodeId", "attempt"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name+" conformant envelope is accepted", func(t *testing.T) {
+			state, data := test.prepare(t)
+			if err := schema2DerivedEnvelopeReduce(t, &state, test.sequence, test.eventType, data, nil); err != nil {
+				t.Fatalf("reduce conformant %s: %v", test.eventType, err)
+			}
+		})
+		for _, member := range test.required {
+			member := member
+			for _, mutation := range []struct {
+				name   string
+				mutate func(map[string]any)
+			}{
+				{name: "omitted", mutate: func(event map[string]any) { delete(event, member) }},
+				{name: "mismatched", mutate: func(event map[string]any) { schema2SetMismatchedEnvelopeIdentity(event, member) }},
+			} {
+				mutation := mutation
+				t.Run(test.name+" rejects "+mutation.name+" "+member+" without mutation", func(t *testing.T) {
+					state, data := test.prepare(t)
+					schema2DerivedEnvelopeRequireRejection(t, &state, test.sequence, test.eventType, data, mutation.mutate)
+				})
+			}
+		}
+	}
+
+	t.Run("node output conformant envelope closes only its selected attempt", func(t *testing.T) {
+		state, result := schema2FinalGreenFormationResultState(t)
+		data := schema2FinalGreenNodeOutputFromResult("formation", 20, result)
+		if err := schema2DerivedEnvelopeReduce(t, &state, 21, "node_output", data, nil); err != nil {
+			t.Fatalf("reduce conformant node_output: %v", err)
+		}
+		schema2FinalGreenRequireClosedAttemptAt(t, &state, projectionTestFormationID, 1, 21, "port_out")
+	})
+
+	for _, mutation := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "omitted nodeId", mutate: func(event map[string]any) { delete(event, "nodeId") }},
+		{name: "mismatched nodeId", mutate: func(event map[string]any) { event["nodeId"] = projectionTestMissionID }},
+	} {
+		t.Run("node output rejects "+mutation.name+" without mutation", func(t *testing.T) {
+			state, result := schema2FinalGreenFormationResultState(t)
+			data := schema2FinalGreenNodeOutputFromResult("formation", 20, result)
+			schema2DerivedEnvelopeRequireRejection(t, &state, 21, "node_output", data, mutation.mutate)
+		})
+	}
+}
+
+func schema2DerivedFormationResultInput(t *testing.T) (projectionState, map[string]any) {
+	t.Helper()
+	state := schema2EpochTestState()
+	if err := schema2LifecycleReduce(t, &state, 3, "node_started", schema2FinalGreenNodeStartedData(projectionTestFormationID, "formation")); err != nil {
+		t.Fatalf("prepare Formation attempt: %v", err)
+	}
+	return state, schema2RepairFormationResultData()
+}
+
+func schema2SetMismatchedEnvelopeIdentity(event map[string]any, member string) {
+	switch member {
+	case "attempt":
+		event[member] = uint64(2)
+	case "nodeId":
+		event[member] = projectionTestMissionID
+	case "slotId":
+		event[member] = "slot_other"
+	case "gateId":
+		event[member] = "gate_other"
+	default:
+		panic("unsupported envelope identity member: " + member)
+	}
+}
+
 func TestTask1DerivedGraphAuthorityRequiresExactEnvelopeIdentity(t *testing.T) {
 	t.Run("slot_dispatch_conformant_envelope_adds_only_exact_dispatch_and_session_authority", func(t *testing.T) {
 		state := schema2DerivedEnvelopeSlotState(t)
@@ -151,21 +316,6 @@ func schema2DerivedEnvelopeReduce(t *testing.T, state *projectionState, sequence
 	t.Helper()
 	event := schema2Event(projectionTestRunID, sequence, eventType, cloneAny(data).(map[string]any))
 	event["epoch"] = state.view.Identity.Epoch
-	switch eventType {
-	case "slot_dispatch":
-		event["nodeId"] = data["nodeId"]
-		event["slotId"] = data["slotId"]
-		event["attempt"] = data["attempt"]
-	case "tool_dispatch":
-		event["nodeId"] = data["nodeId"]
-		event["attempt"] = data["attempt"]
-	case "gate_evaluating":
-		event["nodeId"] = data["nodeId"]
-		event["gateId"] = data["gateId"]
-		event["attempt"] = data["gateAttempt"]
-	default:
-		t.Fatalf("unsupported derived envelope event %q", eventType)
-	}
 	if mutate != nil {
 		mutate(event)
 	}
