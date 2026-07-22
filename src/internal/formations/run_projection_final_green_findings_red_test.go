@@ -233,6 +233,84 @@ func TestTask1FinalGreenFindingsFailureCauseErrorSelectsOnlyExactOpenedAttempt(t
 	}
 }
 
+func TestTask1FinalGreenFindingsNodeStartedOwnsUniqueGraphAttemptIdentity(t *testing.T) {
+	for _, valid := range []struct {
+		name     string
+		nodeID   string
+		nodeKind string
+	}{
+		{name: "mission", nodeID: projectionTestMissionID, nodeKind: "mission"},
+		{name: "formation", nodeID: projectionTestFormationID, nodeKind: "formation"},
+		{name: "gate", nodeID: projectionTestGateID, nodeKind: "gate"},
+	} {
+		t.Run(valid.name+"_graph_kind_and_envelope_identity_are_valid", func(t *testing.T) {
+			state := schema2EpochTestState()
+			data := schema2FinalGreenNodeStartedData(valid.nodeID, valid.nodeKind)
+			if err := schema2FinalGreenReduceNodeStarted(t, &state, 3, data, nil); err != nil {
+				t.Fatalf("valid %s node_started rejected: %v", valid.name, err)
+			}
+			attempt := state.existingAttempt(valid.nodeID, 1)
+			if attempt == nil || attempt.StartedSeq != 3 || attempt.Status != "running" {
+				t.Fatalf("valid %s attempt projection = %#v", valid.name, attempt)
+			}
+		})
+	}
+
+	t.Run("duplicate_same_attempt_is_rejected_without_mutation", func(t *testing.T) {
+		state := schema2EpochTestState()
+		data := schema2FinalGreenNodeStartedData(projectionTestFormationID, "formation")
+		if err := schema2FinalGreenReduceNodeStarted(t, &state, 3, data, nil); err != nil {
+			t.Fatalf("prepare unique attempt: %v", err)
+		}
+		schema2FinalGreenRequireNodeStartedRejectionWithoutMutation(t, &state, 4, data, nil)
+	})
+
+	t.Run("second_attempt_while_prior_attempt_is_open_is_rejected_without_mutation", func(t *testing.T) {
+		state := schema2EpochTestState()
+		first := schema2FinalGreenNodeStartedData(projectionTestFormationID, "formation")
+		if err := schema2FinalGreenReduceNodeStarted(t, &state, 3, first, nil); err != nil {
+			t.Fatalf("prepare first open attempt: %v", err)
+		}
+		second := schema2FinalGreenNodeStartedData(projectionTestFormationID, "formation")
+		second["attempt"] = uint64(2)
+		schema2FinalGreenRequireNodeStartedRejectionWithoutMutation(t, &state, 4, second, nil)
+	})
+
+	for _, contradiction := range []struct {
+		name     string
+		nodeID   string
+		nodeKind string
+	}{
+		{name: "mission_as_formation", nodeID: projectionTestMissionID, nodeKind: "formation"},
+		{name: "formation_as_mission", nodeID: projectionTestFormationID, nodeKind: "mission"},
+		{name: "gate_as_formation", nodeID: projectionTestGateID, nodeKind: "formation"},
+	} {
+		t.Run(contradiction.name+"_is_rejected_without_mutation", func(t *testing.T) {
+			state := schema2EpochTestState()
+			data := schema2FinalGreenNodeStartedData(contradiction.nodeID, contradiction.nodeKind)
+			schema2FinalGreenRequireNodeStartedRejectionWithoutMutation(t, &state, 3, data, nil)
+		})
+	}
+
+	for _, mismatch := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "node_id", mutate: func(event map[string]any) {
+			event["nodeId"] = projectionTestMissionID
+		}},
+		{name: "attempt", mutate: func(event map[string]any) {
+			event["attempt"] = uint64(2)
+		}},
+	} {
+		t.Run("envelope_data_"+mismatch.name+"_mismatch_is_rejected_without_mutation", func(t *testing.T) {
+			state := schema2EpochTestState()
+			data := schema2FinalGreenNodeStartedData(projectionTestFormationID, "formation")
+			schema2FinalGreenRequireNodeStartedRejectionWithoutMutation(t, &state, 3, data, mismatch.mutate)
+		})
+	}
+}
+
 func schema2FinalGreenErrorArm(t *testing.T, arm string) (projectionState, uint64, map[string]any) {
 	t.Helper()
 	data := schema2FinalGreenErrorData("run")
@@ -321,6 +399,42 @@ func schema2FinalGreenErrorArm(t *testing.T, arm string) (projectionState, uint6
 	default:
 		t.Fatalf("unknown error arm %q", arm)
 		return projectionState{}, 0, nil
+	}
+}
+
+func schema2FinalGreenReduceNodeStarted(t *testing.T, state *projectionState, sequence uint64, data map[string]any, mutateEvent func(map[string]any)) error {
+	t.Helper()
+	event := schema2Event(projectionTestRunID, sequence, "node_started", cloneAny(data).(map[string]any))
+	event["epoch"] = state.view.Identity.Epoch
+	event["nodeId"] = data["nodeId"]
+	event["attempt"] = data["attempt"]
+	if mutateEvent != nil {
+		mutateEvent(event)
+	}
+	raw, err := decodeProjectionEvent(canonicalJSON(t, event), CanonicalRunSourceSchema2, projectionTestRunID)
+	if err != nil {
+		return err
+	}
+	safe, err := sanitizeSchema2Event(raw)
+	if err != nil {
+		return err
+	}
+	return reduceSchema2Event(state, raw, safe, nil)
+}
+
+func schema2FinalGreenRequireNodeStartedRejectionWithoutMutation(t *testing.T, state *projectionState, sequence uint64, data map[string]any, mutateEvent func(map[string]any)) {
+	t.Helper()
+	before := schema2ReducerStateFingerprint(t, state)
+	err := schema2FinalGreenReduceNodeStarted(t, state, sequence, data, mutateEvent)
+	if err == nil {
+		t.Fatal("contradictory node_started identity was admitted")
+	}
+	if !errors.Is(err, ErrRunEventUnknown) && !errors.Is(err, ErrRunProjectionInvalid) {
+		t.Fatalf("node_started rejection = %T %v, want typed event or projection rejection", err, err)
+	}
+	after := schema2ReducerStateFingerprint(t, state)
+	if !bytes.Equal(after, before) {
+		t.Fatalf("rejected node_started mutated reducer state\nbefore: %s\nafter:  %s", before, after)
 	}
 }
 
