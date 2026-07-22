@@ -121,6 +121,164 @@ export function projectNodeStates(events: RunEvent[], activeRun: RunStatusProjec
   return map
 }
 
+function evidenceString(data: Record<string, unknown> | undefined, key: string): string {
+  const value = data?.[key]
+  return typeof value === 'string' ? value : ''
+}
+
+export interface NodeEvidenceDispatch {
+  seq: number
+  slotId: string
+  agentId: string
+  harness: string
+  phase: string
+  promptSha256: string
+  sessionRef: string
+}
+
+export interface NodeEvidenceAttempt {
+  attempt: number
+  startedSeq: number | null
+  reason: string
+  dispatches: NodeEvidenceDispatch[]
+}
+
+export interface NodeEvidenceOutputPort {
+  port: string
+  value: string
+  reportRef: string
+  ref: string
+  artifactRef: string
+}
+
+export interface NodeEvidenceOutput {
+  seq: number
+  status: string
+  text: string
+  reportRef: string
+  ports: NodeEvidenceOutputPort[]
+}
+
+export interface NodeEvidenceGateVerdict {
+  seq: number
+  verdict: string
+  reason: string
+  routePort: string
+  perKind: [string, string][]
+}
+
+export interface NodeEvidence {
+  nodeId: string
+  state: NodeRunState
+  attempts: NodeEvidenceAttempt[]
+  output: NodeEvidenceOutput | null
+  gateVerdict: NodeEvidenceGateVerdict | null
+  eventCount: number
+}
+
+/**
+ * Project a single node's inspectable evidence straight from the run ledger the
+ * API already returns: dispatch attempts (node_started + slot_dispatch, grouped
+ * by attempt), its latest output (inline value + reportRef + per-port payloads),
+ * and any gate verdict with its per-kind evidence. Reads only what the backend
+ * emits — no new endpoint, no new projection.
+ */
+export function projectNodeEvidence(events: RunEvent[], nodeId: string): NodeEvidence {
+  const sorted = [...events].sort((a, b) => a.seq - b.seq)
+  const attempts = new Map<number, NodeEvidenceAttempt>()
+  const order: number[] = []
+  const ensureAttempt = (attempt: number): NodeEvidenceAttempt => {
+    const key = attempt || 1
+    let entry = attempts.get(key)
+    if (!entry) {
+      entry = { attempt: key, startedSeq: null, reason: '', dispatches: [] }
+      attempts.set(key, entry)
+      order.push(key)
+    }
+    return entry
+  }
+  let output: NodeEvidenceOutput | null = null
+  let gateVerdict: NodeEvidenceGateVerdict | null = null
+  let eventCount = 0
+  for (const event of sorted) {
+    if ((event.nodeId || event.gateId) !== nodeId) continue
+    eventCount++
+    switch (event.type) {
+      case 'node_started': {
+        const entry = ensureAttempt(event.attempt || 1)
+        entry.startedSeq = event.seq
+        entry.reason = evidenceString(event.data, 'reason')
+        break
+      }
+      case 'slot_dispatch': {
+        const entry = ensureAttempt(event.attempt || 1)
+        entry.dispatches.push({
+          seq: event.seq,
+          slotId: evidenceString(event.data, 'slotId'),
+          agentId: evidenceString(event.data, 'agentId'),
+          harness: evidenceString(event.data, 'harness'),
+          phase: evidenceString(event.data, 'phase'),
+          promptSha256: evidenceString(event.data, 'promptSha256'),
+          sessionRef: evidenceString(event.data, 'sessionRef'),
+        })
+        break
+      }
+      case 'node_output': {
+        const rawOutputs = event.data?.outputs
+        const ports: NodeEvidenceOutputPort[] = []
+        if (rawOutputs && typeof rawOutputs === 'object') {
+          for (const [port, payload] of Object.entries(rawOutputs as Record<string, unknown>)) {
+            const fields = (payload && typeof payload === 'object' ? payload : {}) as Record<string, unknown>
+            ports.push({
+              port,
+              value: typeof fields.text === 'string' ? fields.text : '',
+              reportRef: typeof fields.reportRef === 'string' ? fields.reportRef : '',
+              ref: typeof fields.ref === 'string' ? fields.ref : '',
+              artifactRef: typeof fields.artifactRef === 'string' ? fields.artifactRef : '',
+            })
+          }
+        }
+        ports.sort((a, b) => a.port.localeCompare(b.port))
+        output = {
+          seq: event.seq,
+          status: evidenceString(event.data, 'status') || 'done',
+          text: evidenceString(event.data, 'text'),
+          reportRef: runEventReportRef(event),
+          ports,
+        }
+        break
+      }
+      case 'gate_verdict': {
+        const rawPerKind = event.data?.perKind
+        const perKind: [string, string][] = rawPerKind && typeof rawPerKind === 'object'
+          ? Object.entries(rawPerKind as Record<string, unknown>).map(([kind, result]) => [
+              kind,
+              typeof result === 'string' ? result : String(result),
+            ])
+          : []
+        gateVerdict = {
+          seq: event.seq,
+          verdict: evidenceString(event.data, 'verdict'),
+          reason: evidenceString(event.data, 'reason'),
+          routePort: evidenceString(event.data, 'routePort'),
+          perKind,
+        }
+        break
+      }
+      default:
+        break
+    }
+  }
+  return {
+    nodeId,
+    state: projectNodeStates(sorted, null).get(nodeId) || '',
+    attempts: order.map(key => attempts.get(key) as NodeEvidenceAttempt),
+    output,
+    gateVerdict,
+    eventCount,
+  }
+}
+
 export function openHumanGateId(events: RunEvent[]): string {
   let openGateId = ''
   for (const event of [...events].sort((a, b) => a.seq - b.seq)) {

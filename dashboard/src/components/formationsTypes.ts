@@ -118,7 +118,20 @@ export interface RunEvent {
   runId: string
   nodeId?: string
   gateId?: string
+  attempt?: number
   data?: Record<string, unknown>
+}
+
+export interface OpenEscalation {
+  runId: string
+  seq: number
+  nodeId?: string
+  gateId?: string
+  severity: string
+  reason: string
+  source: string
+  trigger: string
+  blocks: boolean
 }
 
 export interface RunStartResult {

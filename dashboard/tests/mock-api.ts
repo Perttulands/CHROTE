@@ -315,11 +315,23 @@ export async function mockFormationsApiRoutes(page: Page, options?: {
     resumeAllowed: boolean
     [key: string]: unknown
   }
+  escalations?: Array<{
+    runId: string
+    seq: number
+    nodeId?: string
+    gateId?: string
+    severity: string
+    reason: string
+    source: string
+    trigger: string
+    blocks: boolean
+  }>
 }) {
   const board = options?.board ?? mockFormationsBoard
   const layout = options?.layout ?? mockFormationsLayout
   const agents = options?.agents ?? mockFormationsAgents
   const runEvents = options?.runEvents ?? mockFormationsRunEvents
+  const escalations = options?.escalations ?? []
   const runStatus = options?.runStatus ?? {
     runId: 'run-playwright-smoke',
     status: 'blocked',
@@ -413,7 +425,7 @@ export async function mockFormationsApiRoutes(page: Page, options?: {
     }
 
     if (request.method() === 'GET' && path === `/api/formations/runs/${runStatus.runId}/escalations`) {
-      await fulfillJson(route, { escalations: [] })
+      await fulfillJson(route, { escalations })
       return
     }
 

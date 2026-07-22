@@ -122,7 +122,9 @@ const agents = [
 type RecordedPatch = { url: string; body: Record<string, unknown> }
 type RecordedMutation = { method: string; url: string }
 type TestBoard = ReturnType<typeof makeBoard>
-type TestRunEvent = { runId: string; seq: number; type: string; nodeId?: string; data?: Record<string, unknown> }
+type TestRunEvent = { runId: string; seq: number; type: string; nodeId?: string; gateId?: string; attempt?: number; data?: Record<string, unknown> }
+type TestEscalation = { runId: string; seq: number; nodeId?: string; gateId?: string; severity: string; reason: string; source: string; trigger: string; blocks: boolean }
+type TestRunStatus = { status?: string; final?: boolean; resumeAllowed?: boolean }
 let recordedMutations: RecordedMutation[] = []
 
 function installFetchMock(options: {
@@ -134,6 +136,8 @@ function installFetchMock(options: {
   boards?: TestBoard[]
   sameBoardRefreshes?: TestBoard[]
   runEvents?: TestRunEvent[]
+  escalations?: TestEscalation[]
+  runStatus?: TestRunStatus
 } = {}) {
   const patches: RecordedPatch[] = []
   recordedMutations = []
@@ -203,9 +207,18 @@ function installFetchMock(options: {
       if (url.endsWith('/layout')) return respond({ layout: currentLayout }, 'layout-etag-2')
       return respond({ board }, 'board-etag-2')
     }
+    if (/\/api\/formations\/runs\/[^/]+\/escalations$/.test(url)) return respond({ escalations: options.escalations || [] })
     if (/\/api\/formations\/runs\/[^/]+\/events$/.test(url)) return respond({ events: options.runEvents || [] })
     if (/\/api\/formations\/runs\/[^/]+$/.test(url)) {
-      return respond({ status: { runId: 'run_legacy', status: 'succeeded', final: true, boardSlug: board.slug, missionId: mission.id, eventCount: options.runEvents?.length || 0 } })
+      return respond({ status: {
+        runId: 'run_legacy',
+        status: options.runStatus?.status ?? 'succeeded',
+        final: options.runStatus?.final ?? true,
+        resumeAllowed: options.runStatus?.resumeAllowed ?? false,
+        boardSlug: board.slug,
+        missionId: mission.id,
+        eventCount: options.runEvents?.length || 0,
+      } })
     }
     if (url === '/api/formations/boards') return respond({ boards: options.emptyBoards ? [] : availableBoards.map(item => ({ slug: item.slug, title: item.title })) })
     if (url.includes('/changes')) {
@@ -822,6 +835,58 @@ describe('FormationsCockpit reference parity', () => {
     expect(dialog).toHaveTextContent('Legacy verification evidence · non-authorizing')
     expect(dialog).toHaveTextContent('seq 2 · fail')
     expect(dialog).not.toHaveTextContent('do not render raw feedback')
+  })
+
+  it('opens a node evidence inspector with attempts, inline output, and reportRef', async () => {
+    localStorage.setItem('chrote-formations-active-run-test-board', 'run_legacy')
+    patches = installFetchMock({
+      runEvents: [
+        { runId: 'run_legacy', seq: 1, type: 'node_started', nodeId: 'fmn_frame', attempt: 1, data: { reason: 'single-formation' } },
+        { runId: 'run_legacy', seq: 2, type: 'slot_dispatch', nodeId: 'fmn_frame', attempt: 1, data: { slotId: 'slot_lead', agentId: 'mason', harness: 'codex', promptSha256: 'deadbeefcafebabe0011' } },
+        { runId: 'run_legacy', seq: 3, type: 'node_output', nodeId: 'fmn_frame', data: { status: 'done', text: 'the framed output', reportRef: 'reports/fmn_frame.md', outputs: { port_frame_out: { text: 'the framed output', reportRef: 'reports/fmn_frame.md' } } } },
+      ],
+    })
+    await renderCockpit()
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/formations/runs/run_legacy/events', expect.anything()))
+
+    fireEvent.click(await screen.findByTestId('inspect-node-fmn_frame'))
+    const dialog = await screen.findByTestId('node-inspector')
+    expect(within(dialog).getByTestId('node-evidence-state')).toHaveTextContent('done')
+    expect(within(dialog).getByTestId('node-attempt-1')).toHaveTextContent('single-formation')
+    expect(dialog).toHaveTextContent('mason')
+    expect(dialog).toHaveTextContent('codex')
+    expect(within(dialog).getByTestId('node-output-value')).toHaveTextContent('the framed output')
+    expect(within(dialog).getByTestId('node-output-reportref')).toHaveTextContent('reports/fmn_frame.md')
+    expect(within(dialog).getByTestId('node-output-port-port_frame_out')).toBeInTheDocument()
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close run evidence' }))
+    await waitFor(() => expect(screen.queryByTestId('node-inspector')).toBeNull())
+  })
+
+  it('surfaces open escalations as a needs-you banner and marks the escalated node', async () => {
+    localStorage.setItem('chrote-formations-active-run-test-board', 'run_legacy')
+    patches = installFetchMock({
+      runStatus: { status: 'blocked', final: false, resumeAllowed: true },
+      runEvents: [
+        { runId: 'run_legacy', seq: 1, type: 'gate_evaluating', nodeId: 'gate_review', gateId: 'gate_review' },
+      ],
+      escalations: [
+        { runId: 'run_legacy', seq: 5, gateId: 'gate_review', nodeId: 'gate_review', severity: 'stop', reason: 'operator taste needed', source: 'agent', trigger: 'sentinel', blocks: true },
+      ],
+    })
+    await renderCockpit()
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/formations/runs/run_legacy/escalations', expect.anything()))
+
+    const banner = await screen.findByTestId('escalations-banner')
+    expect(banner).toHaveTextContent('Needs you')
+    const item = within(banner).getByTestId('escalation-5')
+    expect(item).toHaveTextContent('operator taste needed')
+    expect(item).toHaveTextContent('gate_review')
+    expect(item).toHaveTextContent('stop')
+    await waitFor(() => expect(screen.getByTestId('gate-node-gate_review')).toHaveClass('needs-you'))
+
+    fireEvent.click(item)
+    expect(await screen.findByTestId('node-inspector')).toHaveTextContent('Run evidence · Review')
   })
 
   it('detaches the judge from the gate context menu', async () => {
