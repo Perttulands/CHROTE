@@ -370,6 +370,100 @@ func TestTmuxExecutorOnlyCreatesAndKillsOwnedSessionsOnSharedSocket(t *testing.T
 	}
 }
 
+func TestTmuxExecutorLazyStartsServerOnEmptySocket(t *testing.T) {
+	// Owner ruling: Formations supports ANY configured tmux socket, including one
+	// with no pre-existing server. Model that by removing the socket fixture and
+	// reporting no live server: the executor must lazy-start a keeper (which, like
+	// tmux, materializes the socket), then create/own/tear-down its run session
+	// exactly as on an existing server — never kill-server, never tearing down the
+	// keeper.
+	cfg := tmuxTestConfig(t)
+	if err := os.Remove(cfg.Socket); err != nil {
+		t.Fatalf("remove socket fixture to model empty socket: %v", err)
+	}
+	client := &fakeTmuxHarnessClient{noServer: true, artifact: "reports/tmux-lazy.md"}
+	status, _ := runTmuxFormationForTestWithConfig(t, client, "", cfg)
+	if status.Status != RunStatusSucceeded || !status.Final {
+		t.Fatalf("status = %+v, want succeeded final", status)
+	}
+
+	keeper := cfg.SessionPrefix + "keeper"
+	if got, want := client.keepersStarted, []string{keeper}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("keepers started = %v, want exactly one lazy-start keeper %v", got, want)
+	}
+	if !safeTmuxSessionName(keeper) {
+		t.Fatalf("keeper name %q is not a safe tmux target", keeper)
+	}
+	if len(client.created) != 1 {
+		t.Fatalf("created sessions = %v, want exactly one owned run session", client.created)
+	}
+	run := client.created[0]
+	if run == keeper {
+		t.Fatalf("owned run session %q must be distinct from the keeper", run)
+	}
+
+	for _, op := range client.ops {
+		if op.op == "kill-server" {
+			t.Fatalf("executor issued kill-server on the lazy-started socket")
+		}
+	}
+	// Only the owned run session is torn down; the keeper is infrastructure and is
+	// never reclaimed by teardown.
+	if got, want := client.killed, []string{run}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("killed sessions = %v, want only the owned run session %v (keeper must never be torn down)", got, want)
+	}
+	live := map[string]bool{}
+	for _, name := range client.liveSessions() {
+		live[name] = true
+	}
+	if !live[keeper] {
+		t.Fatalf("keeper %q must remain live after the run; it is left running by design", keeper)
+	}
+}
+
+func TestTmuxExecutorReusesExistingServer(t *testing.T) {
+	// When a server is already running on the configured socket, the executor must
+	// use it as-is: no second keeper is lazy-started and the existing server is
+	// left untouched. Seed foreign sessions to model a live shared server.
+	foreign := []string{"sol", "terminal-1"}
+	client := &fakeTmuxHarnessClient{
+		sessions: append([]string(nil), foreign...),
+		artifact: "reports/tmux-existing.md",
+	}
+	status, _ := runTmuxFormationForTest(t, client, "")
+	if status.Status != RunStatusSucceeded || !status.Final {
+		t.Fatalf("status = %+v, want succeeded final", status)
+	}
+
+	if len(client.keepersStarted) != 0 {
+		t.Fatalf("keepers started = %v, want none when a server already exists", client.keepersStarted)
+	}
+	for _, op := range client.ops {
+		if op.op == "start-keeper" {
+			t.Fatalf("executor lazy-started a keeper despite an existing server")
+		}
+		if op.op == "kill-server" {
+			t.Fatalf("executor issued kill-server on the existing server")
+		}
+	}
+	if len(client.created) != 1 {
+		t.Fatalf("created sessions = %v, want exactly one owned run session", client.created)
+	}
+	if got, want := client.killed, []string{client.created[0]}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("killed sessions = %v, want only the owned run session %v", got, want)
+	}
+	// Foreign sessions on the existing server remain live and untouched.
+	live := map[string]bool{}
+	for _, name := range client.liveSessions() {
+		live[name] = true
+	}
+	for _, name := range foreign {
+		if !live[name] {
+			t.Fatalf("foreign session %q was disrupted; the existing server must be left untouched", name)
+		}
+	}
+}
+
 func TestPickOwnedSessionNameFailsClosedOnForeignCollision(t *testing.T) {
 	// A name collision with a pre-existing (possibly foreign) session must never
 	// reuse or touch it: the executor regenerates a fresh unique name instead.
@@ -1638,6 +1732,10 @@ type fakeTmuxOp struct {
 type fakeTmuxHarnessClient struct {
 	sessions             []string
 	pane                 tmuxPaneState
+	noServer             bool
+	hasServerErr         error
+	startKeeperErr       error
+	keepersStarted       []string
 	listErr              error
 	describeErr          error
 	sendErr              error
@@ -1681,6 +1779,32 @@ func (f *fakeTmuxHarnessClient) liveSessions() []string {
 		live = append(live, name)
 	}
 	return live
+}
+
+func (f *fakeTmuxHarnessClient) HasServer(_ context.Context, _ string) (bool, error) {
+	// Probe op carries no session target so safety assertions that scan ops for
+	// foreign-target touches skip it.
+	f.ops = append(f.ops, fakeTmuxOp{op: "has-server"})
+	if f.hasServerErr != nil {
+		return false, f.hasServerErr
+	}
+	return !f.noServer, nil
+}
+
+func (f *fakeTmuxHarnessClient) StartKeeper(_ context.Context, socket, keeper string) error {
+	f.ops = append(f.ops, fakeTmuxOp{op: "start-keeper", target: keeper})
+	if f.startKeeperErr != nil {
+		return f.startKeeperErr
+	}
+	// Model tmux materializing the socket file when it starts the server, so the
+	// executor's subsequent pinTmuxSocketIdentity (a real os.Lstat) succeeds.
+	if strings.TrimSpace(socket) != "" {
+		_ = os.WriteFile(socket, []byte("lazy-started tmux socket identity fixture"), 0o600)
+	}
+	f.keepersStarted = append(f.keepersStarted, keeper)
+	f.sessions = append(f.sessions, keeper)
+	f.noServer = false
+	return nil
 }
 
 func (f *fakeTmuxHarnessClient) ListSessions(context.Context, string) ([]string, error) {

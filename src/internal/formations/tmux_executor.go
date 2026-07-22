@@ -28,6 +28,17 @@ const (
 	// Collision is astronomically unlikely with a random nonce, so a small bound
 	// is plenty; exhausting it fails closed rather than reusing a foreign name.
 	ownedSessionNameAttempts = 8
+	// tmuxKeeperSuffix names the executor's own lazy-start "keeper" session,
+	// appended to the configured SessionPrefix. The keeper's only job is to hold
+	// a freshly lazy-started tmux server alive; it is infrastructure, never an
+	// owned run session, so teardown must never reclaim it.
+	tmuxKeeperSuffix = "keeper"
+	// tmuxKeeperHoldCommand is the long-lived pane command for the keeper. It is
+	// run through a real shell (see StartKeeper's SHELL=/bin/bash) so the keeper
+	// pane survives even when the invoking service user's login shell is
+	// /usr/sbin/nologin; without an explicit long-lived command the pane would
+	// exit immediately and take the just-started server down with it.
+	tmuxKeeperHoldCommand = "exec sleep 2147483647"
 )
 
 var (
@@ -64,12 +75,17 @@ type TmuxFormationExecutor struct {
 }
 
 // tmuxHarnessClient is the executor's entire surface onto tmux. It is
-// deliberately narrow: it can enumerate sessions (read-only), CREATE a session,
-// KILL a named session, describe/capture a pane (read-only) and send a prompt.
-// There is intentionally NO kill-server, rename, resize, respawn, or attach
-// operation, so the shared-socket safety invariant — never disrupt a session
-// the executor did not itself create — cannot be violated by construction.
+// deliberately narrow: it can probe whether a server is running (read-only),
+// lazy-START a server via a keeper session, enumerate sessions (read-only),
+// CREATE a session, KILL a named session, describe/capture a pane (read-only)
+// and send a prompt. There is intentionally NO kill-server, rename, resize,
+// respawn, or attach operation, so the shared-socket safety invariant — never
+// disrupt a session the executor did not itself create — cannot be violated by
+// construction. HasServer/StartKeeper only ever ADD infrastructure (a server and
+// its keeper); they never touch or tear down anything, owned or foreign.
 type tmuxHarnessClient interface {
+	HasServer(ctx context.Context, socket string) (bool, error)
+	StartKeeper(ctx context.Context, socket, keeper string) error
 	ListSessions(ctx context.Context, socket string) ([]string, error)
 	CreateSession(ctx context.Context, socket, name, cwd, launch string) error
 	KillSession(ctx context.Context, socket, name string) error
@@ -1274,19 +1290,30 @@ func (e *TmuxFormationExecutor) validateConfiguredBoundary() error {
 		return runExecutionError("invalid_socket", "tmux executor socket is invalid", "executor", err)
 	}
 	e.config.Socket = socket
-	// The executor now shares the cockpit tmux socket by owner ruling. The old
-	// blanket refusal of the default/cockpit socket is gone; safety lives in
-	// session-scoping (create + tear down only uniquely-named owned sessions,
-	// never touch a foreign session). The socket must still be a real, stable,
-	// non-symlink path, which pinTmuxSocketIdentity enforces below.
-	if err := e.pinTmuxSocketIdentity(); err != nil {
-		return err
-	}
+	// The session prefix is validated here, before pinning, because a lazy-start
+	// keeper's name is derived from it (SessionPrefix + keeper) and ensureServer
+	// runs next.
 	if strings.TrimSpace(e.config.SessionPrefix) == "" {
 		return runExecutionError("missing_session_prefix", "tmux executor session prefix is not configured", "executor", nil)
 	}
 	if !safeTmuxSessionName(e.config.SessionPrefix + "probe") {
 		return runExecutionError("invalid_session_prefix", "tmux executor session prefix is not a safe tmux target prefix", "executor", nil)
+	}
+	// The executor shares the cockpit tmux socket by owner ruling, and by owner
+	// ruling also supports ANY configured socket — including one with no
+	// pre-existing server. ensureServer lazy-starts a server (a keeper session)
+	// when none is running so the socket can be pinned and used; an existing
+	// server (foreign or ours) is left completely untouched. The old blanket
+	// refusal of the default/cockpit socket is gone; safety lives in
+	// session-scoping (create + tear down only uniquely-named owned sessions,
+	// never touch a foreign session). The socket must still be a real, stable,
+	// non-symlink path, which pinTmuxSocketIdentity enforces below once a server
+	// (and thus the socket file) exists.
+	if err := e.ensureServer(); err != nil {
+		return err
+	}
+	if err := e.pinTmuxSocketIdentity(); err != nil {
+		return err
 	}
 	if strings.TrimSpace(e.config.Cwd) == "" {
 		return runExecutionError("missing_cwd", "tmux executor cwd is not configured", "executor", nil)
@@ -1321,6 +1348,38 @@ func (e *TmuxFormationExecutor) validateConfiguredBoundary() error {
 		return runExecutionError("cwd_outside_root", "tmux executor cwd is outside configured roots", "executor", nil)
 	}
 	e.config.Roots = roots
+	return nil
+}
+
+// ensureServer guarantees a live tmux server on the configured socket before the
+// executor pins its identity, so any configured socket — including one with no
+// pre-existing server — can be used. It probes for a server (read-only); if one
+// is already running (foreign or ours) it returns immediately and touches
+// nothing. Only when no server is running does it lazy-start one, and it does so
+// with the least possible footprint: a single detached "keeper" session whose
+// sole purpose is to hold the new server alive. The keeper carries a distinct
+// reserved name (SessionPrefix + keeper) and is NEVER recorded as an owned run
+// session, so teardownOwnedSessions never reclaims it; it is fine to leave
+// running. ensureServer only ever ADDS a server + keeper — it never issues
+// kill-server, kill-session, attach, rename, or resize — so the only-own-sessions
+// safety invariant holds by construction.
+func (e *TmuxFormationExecutor) ensureServer() error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(e.config.TimeoutSeconds)*time.Second)
+	defer cancel()
+	running, err := e.client.HasServer(ctx, e.config.Socket)
+	if err != nil {
+		return runExecutionError("tmux_server_probe_failed", redactLedgerText(err.Error()), "adapter", err)
+	}
+	if running {
+		return nil
+	}
+	keeper := e.config.SessionPrefix + tmuxKeeperSuffix
+	if !safeTmuxSessionName(keeper) {
+		return runExecutionError("invalid_session_prefix", "tmux executor session prefix cannot form a safe keeper session name", "executor", nil)
+	}
+	if err := e.client.StartKeeper(ctx, e.config.Socket, keeper); err != nil {
+		return runExecutionError("tmux_server_start_failed", redactLedgerText(err.Error()), "adapter", err)
+	}
 	return nil
 }
 
@@ -1542,6 +1601,42 @@ func safeTmuxSessionName(name string) bool {
 }
 
 type realTmuxHarnessClient struct{}
+
+// HasServer reports whether a tmux server is live on the socket. It is a
+// read-only probe: it lists sessions and treats any connection failure (no
+// server running, absent or stale socket file) as "no server". It never starts,
+// attaches to, or mutates anything.
+func (realTmuxHarnessClient) HasServer(ctx context.Context, socket string) (bool, error) {
+	if _, err := runTmuxCommand(ctx, socket, nil, "list-sessions", "-F", "#{session_name}"); err != nil {
+		return false, nil
+	}
+	return true, nil
+}
+
+// StartKeeper lazy-starts a tmux server on the socket by creating a single
+// detached keeper session that holds the server alive. Its pane runs an explicit
+// long-lived command (tmuxKeeperHoldCommand) through a real shell — the process
+// env forces SHELL=/bin/bash so tmux's default-shell is a real interactive shell
+// rather than the service user's /usr/sbin/nologin, which would otherwise make
+// the keeper pane exit immediately and take the just-started server with it.
+// It uses new-session -d WITHOUT -A, so a name collision fails closed instead of
+// attaching to or reusing a pre-existing session; the executor only ever passes
+// its own reserved keeper name here. This is the only server-starting operation;
+// it never issues kill-server, kill-session, attach, rename, or resize.
+func (realTmuxHarnessClient) StartKeeper(ctx context.Context, socket, keeper string) error {
+	cmd := exec.CommandContext(ctx, "tmux", "-S", socket, "new-session", "-d", "-s", keeper, tmuxKeeperHoldCommand)
+	cmd.Env = append(os.Environ(), "SHELL=/bin/bash")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		message := strings.TrimSpace(stderr.String())
+		if message == "" {
+			message = err.Error()
+		}
+		return errors.New(redactLedgerText(message))
+	}
+	return nil
+}
 
 func (realTmuxHarnessClient) ListSessions(ctx context.Context, socket string) ([]string, error) {
 	output, err := runTmuxCommand(ctx, socket, nil, "list-sessions", "-F", "#{session_name}")
