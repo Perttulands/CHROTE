@@ -1,6 +1,10 @@
 package formations
 
-import "testing"
+import (
+	"bytes"
+	"encoding/json"
+	"testing"
+)
 
 // schema2EnvelopeFixtureRule is the tests-only oracle for the frozen schema-2
 // public-envelope contract. It is deliberately closed: adding a safe schema-2
@@ -85,6 +89,97 @@ func TestSchema2EnvelopeFixtureRegistryIsClosed(t *testing.T) {
 	}
 	if counts["A"] != 3 || counts["B"] != 8 || counts["C"] != 25 || counts["D"] != 1 || len(counts) != 4 {
 		t.Fatalf("envelope audit class counts = %#v; want A=3 B=8 C=25 D=1", counts)
+	}
+}
+
+func TestSchema2EnvelopeFixtureRegistryProjectsAuditedPublicSpine(t *testing.T) {
+	rules := make(map[string]schema2EnvelopeFixtureRule, 37)
+	for _, rule := range schema2EnvelopeFixtureRules() {
+		rules[rule.EventType] = rule
+	}
+
+	for _, registered := range schema2SafeEventTypes() {
+		t.Run(registered.literal, func(t *testing.T) {
+			data := schema2SecondRepairFixture(t, registered.literal)
+			event := schema2Event(projectionTestRunID, 20, registered.literal, data)
+			raw, err := decodeProjectionEvent(canonicalJSON(t, event), CanonicalRunSourceSchema2, projectionTestRunID)
+			if err != nil {
+				t.Fatalf("decode exact %s fixture: %v", registered.literal, err)
+			}
+			safe, err := sanitizeSchema2Event(raw)
+			if err != nil {
+				t.Fatalf("sanitize exact %s fixture: %v", registered.literal, err)
+			}
+
+			var public map[string]json.RawMessage
+			if err := json.Unmarshal(mustMarshalJSON(t, safe), &public); err != nil {
+				t.Fatalf("decode public %s fixture: %v", registered.literal, err)
+			}
+			if got := rawProjectionString(public, "type"); got != registered.literal {
+				t.Fatalf("public event type = %q, want %q", got, registered.literal)
+			}
+			for _, member := range []string{"runId", "boardId", "boardRev", "missionId", "beadId", "nodeId", "slotId", "gateId", "epoch", "attempt"} {
+				schema2RequirePublicFixtureMember(t, registered.literal, public, event, member)
+			}
+
+			rule, ok := rules[registered.literal]
+			if !ok {
+				t.Fatalf("schema-2 event %q has no audited envelope rule", registered.literal)
+			}
+			if rule.Class == "B" || rule.Class == "D" {
+				for _, member := range []string{"nodeId", "slotId", "gateId", "attempt"} {
+					if _, present := public[member]; present {
+						t.Fatalf("class %s event %s fabricated public %s", rule.Class, registered.literal, member)
+					}
+				}
+			}
+			for _, member := range schema2RequiredFixtureEnvelopeMembers(rule.Rule) {
+				if _, present := public[member]; !present {
+					t.Fatalf("event %s rule %s omitted required public %s", registered.literal, rule.Rule, member)
+				}
+			}
+		})
+	}
+}
+
+func schema2RequirePublicFixtureMember(t *testing.T, eventType string, public map[string]json.RawMessage, event map[string]any, member string) {
+	t.Helper()
+	want, expected := event[member]
+	if value, ok := want.(uint64); ok && value == 0 && (member == "epoch" || member == "attempt") {
+		expected = false
+	}
+	got, projected := public[member]
+	if expected != projected {
+		t.Fatalf("public %s %s presence = %t, want %t", eventType, member, projected, expected)
+	}
+	if !expected {
+		return
+	}
+	wantJSON := canonicalJSON(t, want)
+	if !bytes.Equal(got, wantJSON) {
+		t.Fatalf("public %s %s = %s, want %s", eventType, member, got, wantJSON)
+	}
+}
+
+func schema2RequiredFixtureEnvelopeMembers(rule string) []string {
+	switch rule {
+	case "root_conditional":
+		return []string{"missionId"}
+	case "node_without_attempt":
+		return []string{"nodeId"}
+	case "direct_node_related_attempt", "direct_node_attempt", "direct_node_open_attempt":
+		return []string{"nodeId", "attempt"}
+	case "binding_node_slot_without_attempt":
+		return []string{"nodeId", "slotId"}
+	case "direct_node_slot_attempt", "retained_dispatch_node_slot_attempt":
+		return []string{"nodeId", "slotId", "attempt"}
+	case "gate_node_gate_attempt", "judge_node_attempt_parent_gate":
+		return []string{"nodeId", "gateId", "attempt"}
+	case "run_scoped", "multi_resource", "artifact_resource", "task2_source_authority",
+		"optional_node_and_gate_without_attempt", "scope_conditioned", "scope_conditioned_without_attempt":
+		return nil
+	default:
+		panic("unclassified fixture envelope rule: " + rule)
 	}
 }
 
