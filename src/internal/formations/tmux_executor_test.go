@@ -37,18 +37,16 @@ func TestConfiguredFormationExecutorFromEnvSelectsTmuxOnlyWhenHarnessesSet(t *te
 	}
 }
 
-func TestTmuxExecutorRefusesConfiguredCockpitSocketEvenWithLegacyOptIns(t *testing.T) {
+func TestTmuxExecutorAcceptsConfiguredCockpitSocket(t *testing.T) {
+	// Owner ruling: Formations shares the cockpit socket. A real, stable,
+	// non-symlink socket that is ALSO the configured cockpit socket must now
+	// validate cleanly; safety moved from socket-refusal to session-scoping.
 	cfg := tmuxTestConfig(t)
-	cfg.Socket = "/run/user/1000/chrote-tmux/tmux-1000/default"
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "perttu=/run/user/1000/chrote-tmux/tmux-1000/default")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "perttu="+cfg.Socket)
+	t.Setenv("CHROTE_DEFAULT_TMUX_SOCKET", cfg.Socket)
 
-	err := newTmuxFormationExecutorWithClient(nil, nil, cfg, &fakeTmuxHarnessClient{}).validateConfiguredBoundary()
-	var executionErr *RunExecutionError
-	if !errors.As(err, &executionErr) {
-		t.Fatalf("cockpit socket error = %v, want RunExecutionError", err)
-	}
-	if executionErr.Code != "session_target_attachment_audit_unavailable" || executionErr.Boundary != "executor" {
-		t.Fatalf("cockpit socket error = %+v, want session_target_attachment_audit_unavailable/executor", executionErr)
+	if err := newTmuxFormationExecutorWithClient(nil, nil, cfg, &fakeTmuxHarnessClient{}).validateConfiguredBoundary(); err != nil {
+		t.Fatalf("configured cockpit socket validate error = %v, want accepted", err)
 	}
 }
 
@@ -71,53 +69,6 @@ func TestTmuxExecutorAcceptsProductionDedicatedSocketOutsideTemp(t *testing.T) {
 	cfg := nonTempWorkspace(t)
 	if err := newTmuxFormationExecutorWithClient(nil, nil, cfg, &fakeTmuxHarnessClient{}).validateConfiguredBoundary(); err != nil {
 		t.Fatalf("production dedicated socket + workspace outside /tmp validate error = %v, want accepted", err)
-	}
-}
-
-func TestTmuxExecutorRefusesCockpitAndDefaultSocketWithProductionWorkspace(t *testing.T) {
-	// Cockpit isolation must survive independently of the workspace boundary: even
-	// with a valid production workspace outside /tmp, the default tmux socket and a
-	// configured cockpit socket are still refused.
-	t.Run("configured cockpit socket", func(t *testing.T) {
-		cfg := nonTempWorkspace(t)
-		cockpitSocket := filepath.Join(t.TempDir(), "chrote-tmux", fmt.Sprintf("tmux-%d", os.Getuid()), "default")
-		cfg.Socket = cockpitSocket
-		t.Setenv("CHROTE_DEFAULT_TMUX_SOCKET", cockpitSocket)
-		assertBoundaryCode(t, cfg, "session_target_attachment_audit_unavailable")
-	})
-
-	t.Run("default tmux socket", func(t *testing.T) {
-		cfg := nonTempWorkspace(t)
-		tmuxTmpRoot := t.TempDir()
-		cfg.Socket = filepath.Join(tmuxTmpRoot, fmt.Sprintf("tmux-%d", os.Getuid()), "default")
-		t.Setenv("TMUX_TMPDIR", tmuxTmpRoot)
-		t.Setenv("CHROTE_DEFAULT_TMUX_SOCKET", "")
-		assertBoundaryCode(t, cfg, "session_target_attachment_audit_unavailable")
-	})
-}
-
-func TestTmuxExecutorRefusesCockpitSocketAlias(t *testing.T) {
-	root := t.TempDir()
-	cockpitSocket := filepath.Join(root, "cockpit.sock")
-	if err := os.WriteFile(cockpitSocket, []byte("socket identity fixture"), 0o600); err != nil {
-		t.Fatalf("write cockpit socket fixture: %v", err)
-	}
-	aliasSocket := filepath.Join(root, "alias.sock")
-	if err := os.Symlink(cockpitSocket, aliasSocket); err != nil {
-		t.Fatalf("symlink cockpit socket fixture: %v", err)
-	}
-
-	cfg := tmuxTestConfig(t)
-	cfg.Socket = aliasSocket
-	t.Setenv("CHROTE_DEFAULT_TMUX_SOCKET", cockpitSocket)
-
-	err := newTmuxFormationExecutorWithClient(nil, nil, cfg, &fakeTmuxHarnessClient{}).validateConfiguredBoundary()
-	var executionErr *RunExecutionError
-	if !errors.As(err, &executionErr) {
-		t.Fatalf("cockpit socket alias error = %v, want RunExecutionError", err)
-	}
-	if executionErr.Code != "session_target_attachment_audit_unavailable" {
-		t.Fatalf("cockpit socket alias code = %q, want session_target_attachment_audit_unavailable", executionErr.Code)
 	}
 }
 
@@ -148,69 +99,6 @@ func TestTmuxExecutorNonTempWorkspaceUsesOrdinaryValidationCodes(t *testing.T) {
 		cfg.Roots = []string{cfg.Cwd, "/srv/path-that-does-not-exist"}
 		assertBoundaryCode(t, cfg, "unavailable_root")
 	})
-}
-
-func TestTmuxExecutorRefusesImplicitTerminalUserDefaultSocketBeforeTmux(t *testing.T) {
-	socketRoot, err := os.MkdirTemp("/tmp", "tmux-")
-	if err != nil {
-		t.Fatalf("create implicit terminal socket root: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := os.RemoveAll(socketRoot); err != nil {
-			t.Errorf("remove implicit terminal socket root: %v", err)
-		}
-	})
-
-	cfg := tmuxTestConfig(t)
-	cfg.Socket = filepath.Join(socketRoot, "default")
-	if err := os.WriteFile(cfg.Socket, []byte("implicit terminal socket fixture"), 0o600); err != nil {
-		t.Fatalf("write implicit terminal socket fixture: %v", err)
-	}
-	t.Setenv("CHROTE_TERMINAL_USERS", "configured-user-with-implicit-socket")
-	assertRunAttachmentAuditUnavailableBeforeTmux(t, cfg)
-}
-
-func TestTmuxExecutorRefusesTmuxTmpDirDefaultSocketBeforeTmux(t *testing.T) {
-	tmuxTmpRoot := t.TempDir()
-	socketRoot := filepath.Join(tmuxTmpRoot, fmt.Sprintf("tmux-%d", os.Getuid()))
-	if err := os.MkdirAll(socketRoot, 0o700); err != nil {
-		t.Fatalf("create TMUX_TMPDIR socket root: %v", err)
-	}
-
-	cfg := tmuxTestConfig(t)
-	cfg.Socket = filepath.Join(socketRoot, "default")
-	if err := os.WriteFile(cfg.Socket, []byte("TMUX_TMPDIR socket fixture"), 0o600); err != nil {
-		t.Fatalf("write TMUX_TMPDIR socket fixture: %v", err)
-	}
-	t.Setenv("TMUX_TMPDIR", tmuxTmpRoot)
-	assertRunAttachmentAuditUnavailableBeforeTmux(t, cfg)
-}
-
-func TestTmuxExecutorRefusesXDGDerivedDefaultSocketBeforeTmux(t *testing.T) {
-	xdgRoot := t.TempDir()
-	socketRoot := filepath.Join(xdgRoot, "tmux", fmt.Sprintf("tmux-%d", os.Getuid()))
-	if err := os.MkdirAll(socketRoot, 0o700); err != nil {
-		t.Fatalf("create XDG-derived socket root: %v", err)
-	}
-
-	cfg := tmuxTestConfig(t)
-	cfg.Socket = filepath.Join(socketRoot, "default")
-	if err := os.WriteFile(cfg.Socket, []byte("XDG-derived socket fixture"), 0o600); err != nil {
-		t.Fatalf("write XDG-derived socket fixture: %v", err)
-	}
-	t.Setenv("TMUX_TMPDIR", "")
-	t.Setenv("XDG_RUNTIME_DIR", xdgRoot)
-	assertRunAttachmentAuditUnavailableBeforeTmux(t, cfg)
-}
-
-func TestIsDefaultTmuxSocketIncludesCoreFallbackLayout(t *testing.T) {
-	t.Setenv("TMUX", "")
-	t.Setenv("TMUX_TMPDIR", "")
-	t.Setenv("XDG_RUNTIME_DIR", "")
-	socket := filepath.Join("/tmp", fmt.Sprintf("tmux-%d", os.Getuid()), fmt.Sprintf("tmux-%d", os.Getuid()), "default")
-	if !isDefaultTmuxSocket(socket) {
-		t.Fatalf("core fallback socket %q was not recognized as a default tmux socket", socket)
-	}
 }
 
 func TestTmuxExecutorRefusesSocketRetargetBeforeSend(t *testing.T) {
@@ -271,22 +159,6 @@ func assertBoundaryCode(t *testing.T, cfg TmuxExecutorConfig, wantCode string) {
 	}
 }
 
-func assertRunAttachmentAuditUnavailableBeforeTmux(t *testing.T, cfg TmuxExecutorConfig) {
-	t.Helper()
-	client := &fakeTmuxHarnessClient{}
-	status, events := runTmuxFormationForTestWithConfig(t, client, "", cfg)
-	if status.Status != RunStatusBlocked {
-		t.Fatalf("run status = %+v, want blocked", status)
-	}
-	errorEvent := eventOfType(t, events, RunEventError)
-	if errorEvent.Data["code"] != "session_target_attachment_audit_unavailable" {
-		t.Fatalf("run error code = %#v, want session_target_attachment_audit_unavailable", errorEvent.Data["code"])
-	}
-	if client.listCalls != 0 || client.describeCalls != 0 || client.sendCalls != 0 || client.captureCalls != 0 {
-		t.Fatalf("tmux client calls = list:%d describe:%d send:%d capture:%d, want all zero", client.listCalls, client.describeCalls, client.sendCalls, client.captureCalls)
-	}
-}
-
 func TestTmuxExecutorSessionFailuresRecordDurableBoundaryAndProvenance(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -294,18 +166,13 @@ func TestTmuxExecutorSessionFailuresRecordDurableBoundaryAndProvenance(t *testin
 		wantCode string
 	}{
 		{
-			name:     "missing session",
-			client:   &fakeTmuxHarnessClient{sessions: nil},
-			wantCode: "missing_session",
-		},
-		{
-			name:     "ambiguous session",
-			client:   &fakeTmuxHarnessClient{sessions: []string{"tmux-scout", "tmux-scout"}},
-			wantCode: "ambiguous_session",
+			name:     "spawn failure",
+			client:   &fakeTmuxHarnessClient{createErr: errors.New("tmux new-session refused")},
+			wantCode: "session_spawn_failed",
 		},
 		{
 			name:     "dead pane",
-			client:   &fakeTmuxHarnessClient{sessions: []string{"tmux-scout"}, pane: tmuxPaneState{Dead: true}},
+			client:   &fakeTmuxHarnessClient{pane: tmuxPaneState{Dead: true}},
 			wantCode: "dead_pane",
 		},
 	} {
@@ -414,9 +281,19 @@ func TestTmuxAdapterHappyPathRecordsSendCompletionAndOutput(t *testing.T) {
 	if client.sendCalls != 1 || client.captureCalls != 2 {
 		t.Fatalf("fake client calls send=%d capture=%d, want one send and two captures (preflight + completion)", client.sendCalls, client.captureCalls)
 	}
+	if len(client.created) != 1 {
+		t.Fatalf("created sessions = %v, want exactly one on-demand owned session", client.created)
+	}
+	ownedSession := client.created[0]
 	adapterSend := eventOfType(t, events, RunEventAdapterSend)
-	if adapterSend.Data["adapter"] != "tmux" || adapterSend.Data["sessionRef"] != "tmux:tmux-scout" || adapterSend.Data["promptSha256"] == "" {
-		t.Fatalf("adapter_send data = %#v, want tmux session and prompt hash", adapterSend.Data)
+	if adapterSend.Data["adapter"] != "tmux" || adapterSend.Data["sessionRef"] != "tmux:"+ownedSession || adapterSend.Data["promptSha256"] == "" {
+		t.Fatalf("adapter_send data = %#v, want owned tmux session %q and prompt hash", adapterSend.Data, ownedSession)
+	}
+	if client.sendTargets[0] != ownedSession {
+		t.Fatalf("send target = %q, want the owned session %q, never the foreign fixture", client.sendTargets[0], ownedSession)
+	}
+	if got, want := client.killed, []string{ownedSession}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("killed sessions = %v, want the one owned session torn down %v", got, want)
 	}
 	slotResult := eventOfType(t, events, RunEventSlotResult)
 	sentinel, ok := slotResult.Data["sentinel"].(map[string]any)
@@ -429,6 +306,106 @@ func TestTmuxAdapterHappyPathRecordsSendCompletionAndOutput(t *testing.T) {
 	output := eventOfType(t, events, RunEventNodeOutput)
 	if !strings.Contains(fmt.Sprint(output.Data["text"]), "agent output") {
 		t.Fatalf("node_output = %#v, want captured agent output text", output.Data)
+	}
+}
+
+func TestTmuxExecutorOnlyCreatesAndKillsOwnedSessionsOnSharedSocket(t *testing.T) {
+	// The shared cockpit socket also hosts the operator's interactive terminals
+	// and other live agent sessions. Seed those as foreign fixtures and prove the
+	// executor spawns exactly one uniquely-named session, only ever operates on
+	// that session, tears down only that session, never issues kill-server, and
+	// never disrupts a foreign session.
+	foreign := []string{"sol", "terminal-1", "terminal-2", "mission-real-agent-smoke-0644", "0"}
+	client := &fakeTmuxHarnessClient{
+		sessions: append([]string(nil), foreign...),
+		artifact: "reports/tmux-shared.md",
+	}
+	status, _ := runTmuxFormationForTest(t, client, "")
+	if status.Status != RunStatusSucceeded || !status.Final {
+		t.Fatalf("status = %+v, want succeeded final", status)
+	}
+
+	if len(client.created) != 1 {
+		t.Fatalf("created sessions = %v, want exactly one owned on-demand session", client.created)
+	}
+	owned := client.created[0]
+	if !safeTmuxSessionName(owned) {
+		t.Fatalf("owned session name %q is not a safe tmux target", owned)
+	}
+	foreignSet := map[string]bool{}
+	for _, name := range foreign {
+		foreignSet[name] = true
+	}
+	if foreignSet[owned] {
+		t.Fatalf("owned session name %q collides with a foreign session", owned)
+	}
+
+	// Every recorded tmux op either enumerates sessions (no target) or targets the
+	// one owned session. There is structurally no kill-server, and no op may ever
+	// name a foreign session.
+	for _, op := range client.ops {
+		if op.op == "kill-server" {
+			t.Fatalf("executor issued kill-server on the shared socket")
+		}
+		if op.target == "" {
+			continue
+		}
+		if op.target != owned {
+			t.Fatalf("tmux op %q targeted %q; the executor must only ever touch the session it created (%q)", op.op, op.target, owned)
+		}
+	}
+	if got, want := client.killed, []string{owned}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("killed sessions = %v, want only the owned session torn down %v", got, want)
+	}
+
+	// Every foreign session is still present and untouched after the run.
+	live := map[string]bool{}
+	for _, name := range client.liveSessions() {
+		live[name] = true
+	}
+	for _, name := range foreign {
+		if !live[name] {
+			t.Fatalf("foreign session %q was disrupted; it must remain live and untouched", name)
+		}
+	}
+}
+
+func TestPickOwnedSessionNameFailsClosedOnForeignCollision(t *testing.T) {
+	// A name collision with a pre-existing (possibly foreign) session must never
+	// reuse or touch it: the executor regenerates a fresh unique name instead.
+	cfg := tmuxTestConfig(t)
+	origNonce := newSessionNonce
+	t.Cleanup(func() { newSessionNonce = origNonce })
+	var calls int
+	newSessionNonce = func() string {
+		calls++
+		if calls == 1 {
+			return "dup" // first candidate deliberately collides
+		}
+		return "unique"
+	}
+	runID, slotID := "run_x", "slot_y"
+	collidingForeign := cfg.SessionPrefix + runID + "-" + slotID + "-dup"
+	client := &fakeTmuxHarnessClient{sessions: []string{collidingForeign, "sol", "terminal-1"}}
+	executor := newTmuxFormationExecutorWithClient(nil, nil, cfg, client)
+	if err := executor.validateConfiguredBoundary(); err != nil {
+		t.Fatalf("validate boundary: %v", err)
+	}
+
+	name, err := executor.pickOwnedSessionName(context.Background(), runID, slotID)
+	if err != nil {
+		t.Fatalf("pick owned session name: %v", err)
+	}
+	if name == collidingForeign {
+		t.Fatalf("owned name = %q, must never reuse the colliding foreign session", name)
+	}
+	if want := cfg.SessionPrefix + runID + "-" + slotID + "-unique"; name != want {
+		t.Fatalf("owned name = %q, want regenerated unique name %q", name, want)
+	}
+	// Name selection is read-only: it enumerates sessions but never creates,
+	// kills, or dispatches to anything.
+	if len(client.created) != 0 || len(client.killed) != 0 || client.sendCalls != 0 {
+		t.Fatalf("pick mutated tmux: created=%v killed=%v sends=%d", client.created, client.killed, client.sendCalls)
 	}
 }
 
@@ -824,8 +801,19 @@ func TestTmuxPeerFormationUsesSharedPlaneAndFacilitatorSynthesis(t *testing.T) {
 	if status.Status != RunStatusSucceeded || !status.Final {
 		t.Fatalf("status = %+v, want succeeded final", status)
 	}
-	if got, want := client.sendTargets, []string{"tmux-peer-a", "tmux-peer-b", "tmux-peer-a"}; fmt.Sprint(got) != fmt.Sprint(want) {
-		t.Fatalf("send targets = %v, want peer turn/turn/facilitator %v", got, want)
+	if len(client.created) != 2 {
+		t.Fatalf("created sessions = %v, want one owned session per peer", client.created)
+	}
+	ownedA, ownedB := client.created[0], client.created[1]
+	if got, want := client.sendTargets, []string{ownedA, ownedB, ownedA}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("send targets = %v, want peer-turn/turn/facilitator on owned sessions %v (facilitator reuses peer A)", got, want)
+	}
+	for _, foreign := range []string{"tmux-peer-a", "tmux-peer-b"} {
+		for _, target := range client.sendTargets {
+			if target == foreign {
+				t.Fatalf("send targeted foreign session %q; executor must only dispatch to sessions it created", foreign)
+			}
+		}
 	}
 	if len(client.sentPrompts) != 3 {
 		t.Fatalf("sent prompts = %d, want 3 peer prompts", len(client.sentPrompts))
@@ -1027,8 +1015,18 @@ func TestTmuxOrchestratedFormationGivesLeaderToolPacketWithoutPreDispatchingWork
 	if status.Status != RunStatusSucceeded || !status.Final {
 		t.Fatalf("status = %+v, want succeeded final", status)
 	}
-	if got, want := client.sendTargets, []string{"tmux-lead"}; fmt.Sprint(got) != fmt.Sprint(want) {
-		t.Fatalf("send targets = %v, want only leader dispatch %v", got, want)
+	// created order follows binding resolution: controller, worker A, worker B.
+	if len(client.created) != 3 {
+		t.Fatalf("created sessions = %v, want one owned session for the leader and each worker", client.created)
+	}
+	ownedLead, ownedWorkerA := client.created[0], client.created[1]
+	if got, want := client.sendTargets, []string{ownedLead}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("send targets = %v, want only the leader's owned session %v", got, want)
+	}
+	for _, foreign := range []string{"tmux-lead", "tmux-worker-a", "tmux-worker-b"} {
+		if client.sendTargets[0] == foreign {
+			t.Fatalf("leader dispatch targeted foreign session %q; executor must only dispatch to sessions it created", foreign)
+		}
 	}
 	if len(client.sentPrompts) != 1 {
 		t.Fatalf("sent prompts = %d, want 1 leader prompt", len(client.sentPrompts))
@@ -1038,9 +1036,9 @@ func TestTmuxOrchestratedFormationGivesLeaderToolPacketWithoutPreDispatchingWork
 		"orchestration phase: leader-agentic",
 		"formation team packet:",
 		"tmux socket: " + cfg.Socket,
-		"- slot slot_worker_a label=\"Worker A\" agent=\"worker-a\" harness=\"openai-codex\" session=\"tmux-worker-a\"",
-		"tmux -S " + cfg.Socket + " capture-pane -t tmux-worker-a -p -S -120",
-		"tmux -S " + cfg.Socket + " send-keys -t tmux-worker-a C-u",
+		"- slot slot_worker_a label=\"Worker A\" agent=\"worker-a\" harness=\"openai-codex\" session=\"" + ownedWorkerA + "\"",
+		"tmux -S " + cfg.Socket + " capture-pane -t " + ownedWorkerA + " -p -S -120",
+		"tmux -S " + cfg.Socket + " send-keys -t " + ownedWorkerA + " C-u",
 		"Use native tmux/shell tools to steer the worker sessions yourself",
 	} {
 		if !strings.Contains(leaderPrompt, want) {
@@ -1632,6 +1630,11 @@ harness = "openai-codex"
 `
 }
 
+type fakeTmuxOp struct {
+	op     string
+	target string
+}
+
 type fakeTmuxHarnessClient struct {
 	sessions             []string
 	pane                 tmuxPaneState
@@ -1639,6 +1642,7 @@ type fakeTmuxHarnessClient struct {
 	describeErr          error
 	sendErr              error
 	captureErr           error
+	createErr            error
 	sendErrEchoPrompt    bool
 	captureErrEchoPrompt bool
 	captures             []string
@@ -1654,19 +1658,58 @@ type fakeTmuxHarnessClient struct {
 	captureCalls         int
 	listCalls            int
 	describeCalls        int
+	created              []string
+	killed               []string
+	ops                  []fakeTmuxOp
 	afterCapture         func(call int)
+}
+
+// liveSessions models the sessions currently visible on the socket: the
+// pre-existing (foreign) fixtures plus every session the executor created and
+// has not yet torn down.
+func (f *fakeTmuxHarnessClient) liveSessions() []string {
+	killed := make(map[string]int, len(f.killed))
+	for _, name := range f.killed {
+		killed[name]++
+	}
+	live := append([]string(nil), f.sessions...)
+	for _, name := range f.created {
+		if killed[name] > 0 {
+			killed[name]--
+			continue
+		}
+		live = append(live, name)
+	}
+	return live
 }
 
 func (f *fakeTmuxHarnessClient) ListSessions(context.Context, string) ([]string, error) {
 	f.listCalls++
+	f.ops = append(f.ops, fakeTmuxOp{op: "list-sessions"})
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
-	return append([]string(nil), f.sessions...), nil
+	return f.liveSessions(), nil
 }
 
-func (f *fakeTmuxHarnessClient) DescribeActivePane(context.Context, string, string) (tmuxPaneState, error) {
+func (f *fakeTmuxHarnessClient) CreateSession(_ context.Context, _, name, _, _ string) error {
+	f.ops = append(f.ops, fakeTmuxOp{op: "new-session", target: name})
+	if f.createErr != nil {
+		return f.createErr
+	}
+	f.created = append(f.created, name)
+	return nil
+}
+
+func (f *fakeTmuxHarnessClient) KillSession(_ context.Context, _, name string) error {
+	f.ops = append(f.ops, fakeTmuxOp{op: "kill-session", target: name})
+	f.killed = append(f.killed, name)
+	return nil
+}
+
+func (f *fakeTmuxHarnessClient) DescribeActivePane(_ context.Context, _, target string) (tmuxPaneState, error) {
 	f.describeCalls++
+	f.ops = append(f.ops, fakeTmuxOp{op: "describe", target: target})
 	if f.describeErr != nil {
 		return tmuxPaneState{}, f.describeErr
 	}
@@ -1675,6 +1718,7 @@ func (f *fakeTmuxHarnessClient) DescribeActivePane(context.Context, string, stri
 
 func (f *fakeTmuxHarnessClient) SendPrompt(_ context.Context, _, target, dispatchID, prompt string) error {
 	f.sendCalls++
+	f.ops = append(f.ops, fakeTmuxOp{op: "send", target: target})
 	f.lastDispatchID = dispatchID
 	f.lastPrompt = prompt
 	f.lastTarget = target
@@ -1687,8 +1731,9 @@ func (f *fakeTmuxHarnessClient) SendPrompt(_ context.Context, _, target, dispatc
 	return f.sendErr
 }
 
-func (f *fakeTmuxHarnessClient) CapturePane(context.Context, string, string, int) (string, error) {
+func (f *fakeTmuxHarnessClient) CapturePane(_ context.Context, _, target string, _ int) (string, error) {
 	f.captureCalls++
+	f.ops = append(f.ops, fakeTmuxOp{op: "capture", target: target})
 	if f.afterCapture != nil {
 		f.afterCapture(f.captureCalls)
 	}
