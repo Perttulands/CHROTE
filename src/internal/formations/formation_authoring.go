@@ -232,10 +232,18 @@ type BoardConnection struct {
 }
 
 type GateNode struct {
-	ID                    string                               `json:"id"`
-	Title                 string                               `json:"title"`
-	Kinds                 []string                             `json:"kinds"`
-	Criterion             string                               `json:"criterion"`
+	ID    string   `json:"id"`
+	Title string   `json:"title"`
+	Kinds []string `json:"kinds"`
+	// Criterion is free-text human intent. It is NEVER interpreted as an
+	// executable step (FORMATIONS.md rule 9); machine gates use Check below.
+	Criterion string `json:"criterion"`
+	// Check names an explicit, operator-declared pure code-Gate evaluator profile
+	// (see code_gate.go) and CheckValue is its validated non-secret parameter.
+	// When set, a machine gate mechanically evaluates the routed output against
+	// this declared check rather than blocking on missing_gate_evaluator.
+	Check                 string                               `json:"check,omitempty"`
+	CheckValue            string                               `json:"checkValue,omitempty"`
 	Command               string                               `json:"command,omitempty"` // legacy inspection-only metadata
 	CommandArgv           []string                             `json:"commandArgv,omitempty"`
 	CommandCWD            string                               `json:"commandCwd,omitempty"`
@@ -1601,6 +1609,10 @@ func appendGateBlock(raw []byte, gate GateNode) []byte {
 	b.WriteString("title = " + renderString(gate.Title) + "\n")
 	b.WriteString("kinds = " + renderStringArray(gate.Kinds) + "\n")
 	b.WriteString("criterion = " + renderString(gate.Criterion) + "\n")
+	if strings.TrimSpace(gate.Check) != "" {
+		b.WriteString("check = " + renderString(gate.Check) + "\n")
+		b.WriteString("checkValue = " + renderString(gate.CheckValue) + "\n")
+	}
 	return []byte(b.String())
 }
 
@@ -2653,6 +2665,10 @@ func parseGateNodes(raw []byte) []GateNode {
 			current.Kinds = parseStringArray(value)
 		case "criterion":
 			current.Criterion = value
+		case "check":
+			current.Check = value
+		case "checkValue":
+			current.CheckValue = value
 		case "command":
 			current.legacyCommandFields[key]++
 			current.Command = value

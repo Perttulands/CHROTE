@@ -478,7 +478,11 @@ func NewFormationsHandlerWithStores(store *formations.Store, personas *formation
 }
 
 func (h *FormationsHandler) newRunEngine(boundary string) *formations.RunEngine {
-	return formations.NewRunEngine(h.store, h.personas, formations.NewConfiguredFormationExecutorFromEnv(h.store, h.personas, boundary))
+	engine := formations.NewRunEngine(h.store, h.personas, formations.NewConfiguredFormationExecutorFromEnv(h.store, h.personas, boundary))
+	// Wire the deterministic pure code-Gate evaluator so defined machine gates
+	// return a real pass/fail verdict instead of blocking on missing_gate_evaluator.
+	engine.SetGateEvaluator(formations.NewCodeGateEvaluator())
+	return engine
 }
 
 func (h *FormationsHandler) RegisterRoutes(mux *http.ServeMux) {
