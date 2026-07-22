@@ -3,6 +3,7 @@ package formations
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -192,7 +193,11 @@ func TestSchema2TerminalAuthoritySnapshotsHeadersAndMutationAreExact(t *testing.
 					open[field] = schema2LifecycleMutatedMembers(t, resource, open[field], mutation)
 					data := schema2LifecycleStartWithOpen(lifecycle, open)
 					if resource == "dispatch" && mutation == "duplicate" {
-						schema2RequireAnyReducerErrorWithoutMutation(t, &state, 20, schema2LifecycleStartType(lifecycle), data)
+						// Duplicate object identities are rejected by the current
+						// sanitizer before the reducer can classify the exact-set
+						// mismatch. Either public typed rejection is contract-valid;
+						// an untyped error or state mutation is not.
+						schema2RequireTypedReducerErrorWithoutMutation(t, &state, 20, schema2LifecycleStartType(lifecycle), data)
 						return
 					}
 					schema2RequireReducerErrorWithoutMutation(t, &state, 20, schema2LifecycleStartType(lifecycle), data)
@@ -643,11 +648,23 @@ func schema2LifecycleInjectUnsnapshottedDispatch(t *testing.T, state *projection
 	const dispatchID = "dsp_01KXNP6VY3227H78329V52CKF7"
 	const leaseID = "lease_01KXNP6VY3227H78329V52CKF7"
 	dispatch := state.dispatches[oldDispatchID]
+	binding := state.bindings[dispatch.BindingID]
+	health := state.health[dispatch.BindingID]
+	if binding.BindingID == "" || health.BindingID == "" {
+		t.Fatalf("prepared dispatch lacks binding authority: binding=%#v health=%#v", binding, health)
+	}
 	dispatch.DispatchID = dispatchID
 	dispatch.TargetLeaseID = leaseID
 	dispatch.BindingID = "binding_intruder"
 	dispatch.SessionTargetID = "target_intruder"
 	dispatch.TargetFingerprint = strings.Repeat("f", 64)
+	binding.BindingID = dispatch.BindingID
+	binding.SessionTargetID = dispatch.SessionTargetID
+	binding.TargetFingerprint = dispatch.TargetFingerprint
+	health.BindingID = dispatch.BindingID
+	health.SessionTargetID = dispatch.SessionTargetID
+	state.bindings[dispatch.BindingID] = binding
+	state.health[dispatch.BindingID] = health
 	state.dispatches[dispatchID] = dispatch
 	state.dispatchSeq[dispatchID] = 19
 	session := *state.sessionByDispatch(oldDispatchID)
@@ -752,12 +769,15 @@ func schema2RequireReducerErrorWithoutMutation(t *testing.T, state *projectionSt
 	}
 }
 
-func schema2RequireAnyReducerErrorWithoutMutation(t *testing.T, state *projectionState, sequence uint64, eventType string, data map[string]any) {
+func schema2RequireTypedReducerErrorWithoutMutation(t *testing.T, state *projectionState, sequence uint64, eventType string, data map[string]any) {
 	t.Helper()
 	before := schema2ReducerStateFingerprint(t, state)
 	err := schema2EpochReduce(t, state, sequence, state.view.Identity.Epoch, eventType, data)
 	if err == nil {
 		t.Fatalf("%s admitted invalid lifecycle evidence", eventType)
+	}
+	if !errors.Is(err, ErrRunEventUnknown) && !errors.Is(err, ErrRunProjectionInvalid) {
+		t.Fatalf("%s error = %T %v, want typed event or projection rejection", eventType, err, err)
 	}
 	after := schema2ReducerStateFingerprint(t, state)
 	if !bytes.Equal(after, before) {
