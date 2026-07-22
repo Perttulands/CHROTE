@@ -173,6 +173,35 @@ func TestTask1FinalGreenFindingsFailureCauseErrorSelectsOnlyExactOpenedAttempt(t
 		schema2RequireNodeAttemptDisposition(t, &state, projectionTestMissionID, "abandoned", 21)
 	})
 
+	t.Run("attempt_bearing_gate_error_selects_only_exact_gate_attempt", func(t *testing.T) {
+		state, final := schema2FinalGreenGateFailureFinal(t)
+		if err := schema2LifecycleReduce(t, &state, 21, "run_failed", final); err != nil {
+			t.Fatalf("exact Gate-selected failure final rejected: %v", err)
+		}
+		schema2RequireNodeAttemptDisposition(t, &state, projectionTestGateID, "failed", 21)
+		schema2RequireNodeAttemptDisposition(t, &state, projectionTestMissionID, "abandoned", 21)
+	})
+
+	for _, mutation := range []struct {
+		name   string
+		nodeID string
+		value  string
+	}{
+		{name: "selected_gate_is_abandoned", nodeID: projectionTestGateID, value: "abandoned_non_authorizing"},
+		{name: "collateral_mission_is_selected", nodeID: projectionTestMissionID, value: "failed_non_authorizing"},
+	} {
+		t.Run("attempt_bearing_gate_error_rejects_"+mutation.name+"_without_mutation", func(t *testing.T) {
+			state, final := schema2FinalGreenGateFailureFinal(t)
+			for _, member := range final["nodeAttemptDispositions"].([]any) {
+				disposition := member.(map[string]any)
+				if disposition["nodeId"] == mutation.nodeID {
+					disposition["disposition"] = mutation.value
+				}
+			}
+			schema2RequireLifecycleReducerErrorWithoutMutation(t, &state, 21, "run_failed", final)
+		})
+	}
+
 	for _, scope := range []string{"run", "pre_attempt_node"} {
 		t.Run(scope+"_error_selects_no_open_attempt", func(t *testing.T) {
 			state := schema2EpochTestState()
@@ -612,6 +641,64 @@ func TestTask1FinalGreenFindingsWriterFencesStayWithinImmutableAuthority(t *test
 			schema2FinalGreenRequireWholeProjectionInvalid(t, input)
 		})
 	}
+}
+
+func schema2FinalGreenGateFailureFinal(t *testing.T) (projectionState, map[string]any) {
+	t.Helper()
+	state := schema2EpochTestState()
+	if err := schema2FinalGreenReduceNodeStarted(t, &state, 3, schema2FinalGreenNodeStartedData(projectionTestGateID, "gate"), nil); err != nil {
+		t.Fatalf("prepare exact opened Gate attempt: %v", err)
+	}
+	if err := schema2LifecycleReduce(t, &state, 4, "gate_evaluating", schema2FinalGreenGateEvaluatingData()); err != nil {
+		t.Fatalf("prepare exact Gate evaluation: %v", err)
+	}
+	if err := schema2FinalGreenReduceNodeStarted(t, &state, 5, schema2FinalGreenNodeStartedData(projectionTestMissionID, "mission"), nil); err != nil {
+		t.Fatalf("prepare collateral Mission attempt: %v", err)
+	}
+
+	errorData := schema2FinalGreenErrorData("gate")
+	errorData["nodeId"] = projectionTestGateID
+	errorData["attempt"] = uint64(1)
+	errorData["gateId"] = projectionTestGateID
+	errorData["gateAttempt"] = uint64(1)
+	errorData["relatedSeq"] = uint64(4)
+	raw, safe, err := schema2FinalGreenReduceError(t, &state, 6, errorData, nil)
+	if err != nil {
+		t.Fatalf("prepare exact attempt-bearing Gate error: %v", err)
+	}
+	if raw.envelope.NodeID != projectionTestGateID || raw.envelope.GateID != projectionTestGateID || raw.envelope.Attempt != 1 {
+		t.Fatalf("Gate error envelope identity = node:%q gate:%q attempt:%d", raw.envelope.NodeID, raw.envelope.GateID, raw.envelope.Attempt)
+	}
+	schema2FinalGreenRequirePublicErrorShape(t, raw, safe)
+
+	open := schema2FinalGreenOpenAuthority(t, &state)
+	assertExactJSONValue(t, "Gate error open-attempt authority", open["openNodeAttempts"], []any{
+		map[string]any{
+			"nodeId": projectionTestGateID, "nodeKind": "gate", "attempt": uint64(1),
+			"startSeq": uint64(3), "phase": "gate_evaluating", "phaseSeq": uint64(4),
+		},
+		map[string]any{
+			"nodeId": projectionTestMissionID, "nodeKind": "mission", "attempt": uint64(1),
+			"startSeq": uint64(5), "phase": "started", "phaseSeq": uint64(5),
+		},
+	})
+	start := schema2LifecycleStartWithOpen("failure", open)
+	start["relatedSeq"] = uint64(6)
+	start["failureCause"] = map[string]any{"kind": "error", "errorSeq": uint64(6)}
+	if err := schema2LifecycleReduce(t, &state, 20, "run_failure_reconciliation_started", start); err != nil {
+		t.Fatalf("prepare Gate-selected failure authority: %v", err)
+	}
+	final := schema2LifecycleFinalWithDispositions(t, "failure", 20, open)
+	for _, field := range []string{"code", "reason", "unrecoverable", "relatedSeq", "failureCause"} {
+		final[field] = cloneAny(start[field])
+	}
+	for _, member := range final["nodeAttemptDispositions"].([]any) {
+		disposition := member.(map[string]any)
+		if disposition["nodeId"] == projectionTestGateID {
+			disposition["disposition"] = "failed_non_authorizing"
+		}
+	}
+	return state, final
 }
 
 func schema2FinalGreenErrorArm(t *testing.T, arm string) (projectionState, uint64, map[string]any) {
