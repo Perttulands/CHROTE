@@ -3,6 +3,8 @@ package formations
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,17 +21,28 @@ import (
 const (
 	defaultTmuxOutputCapBytes = 8192
 	defaultTmuxTimeoutSeconds = 30
-	// defaultTmuxTmpdirRoot is the stock tmux default socket tmpdir. It is used
-	// only to recognize (and refuse) the default tmux socket layout so Formations
-	// never dispatches onto it; it is no longer a workspace/cwd boundary.
-	defaultTmuxTmpdirRoot = "/tmp"
-	peerPlaneMaxBytes     = 1 << 20
+	peerPlaneMaxBytes         = 1 << 20
+	// ownedSessionNameAttempts bounds how many times the executor regenerates a
+	// unique owned session name when the candidate collides with a session
+	// already present on the shared socket (a pre-existing / foreign session).
+	// Collision is astronomically unlikely with a random nonce, so a small bound
+	// is plenty; exhausting it fails closed rather than reusing a foreign name.
+	ownedSessionNameAttempts = 8
 )
 
 var (
 	errTmuxTargetMissing = errors.New("tmux target missing")
 	tmuxSubmitDelay      = 500 * time.Millisecond
 	tmuxSleep            = time.Sleep
+	// newSessionNonce returns a collision-proof suffix for an owned session name.
+	// It is a package var so tests can make owned names deterministic.
+	newSessionNonce = func() string {
+		var buf [6]byte
+		if _, err := rand.Read(buf[:]); err != nil {
+			return strconv.FormatInt(time.Now().UnixNano(), 36)
+		}
+		return hex.EncodeToString(buf[:])
+	}
 )
 
 type TmuxExecutorConfig struct {
@@ -50,11 +63,65 @@ type TmuxFormationExecutor struct {
 	socketIdentity os.FileInfo
 }
 
+// tmuxHarnessClient is the executor's entire surface onto tmux. It is
+// deliberately narrow: it can enumerate sessions (read-only), CREATE a session,
+// KILL a named session, describe/capture a pane (read-only) and send a prompt.
+// There is intentionally NO kill-server, rename, resize, respawn, or attach
+// operation, so the shared-socket safety invariant — never disrupt a session
+// the executor did not itself create — cannot be violated by construction.
 type tmuxHarnessClient interface {
 	ListSessions(ctx context.Context, socket string) ([]string, error)
+	CreateSession(ctx context.Context, socket, name, cwd, launch string) error
+	KillSession(ctx context.Context, socket, name string) error
 	DescribeActivePane(ctx context.Context, socket, target string) (tmuxPaneState, error)
 	SendPrompt(ctx context.Context, socket, target, dispatchID, prompt string) error
 	CapturePane(ctx context.Context, socket, target string, maxBytes int) (string, error)
+}
+
+// ownedSessions tracks the non-persistent tmux sessions a single formation
+// execution created on the (shared) socket. Only names recorded here may ever be
+// torn down, guaranteeing teardown never touches a foreign session. It is keyed
+// by slot so a slot dispatched more than once in one execution (e.g. a peer that
+// also takes the facilitator turn) reuses its own session instead of spawning a
+// second one.
+type ownedSessions struct {
+	bySlot map[string]string
+	order  []string
+}
+
+func newOwnedSessions() *ownedSessions {
+	return &ownedSessions{bySlot: map[string]string{}}
+}
+
+func (o *ownedSessions) name(slotID string) (string, bool) {
+	if o == nil {
+		return "", false
+	}
+	name, ok := o.bySlot[slotID]
+	return name, ok
+}
+
+func (o *ownedSessions) record(slotID, name string) {
+	if o == nil {
+		return
+	}
+	if _, ok := o.bySlot[slotID]; ok {
+		return
+	}
+	o.bySlot[slotID] = name
+	o.order = append(o.order, name)
+}
+
+func (o *ownedSessions) owns(name string) bool {
+	if o == nil {
+		return false
+	}
+	for _, owned := range o.order {
+		if owned == name {
+			return true
+		}
+	}
+	return false
 }
 
 type tmuxPaneState struct {
@@ -158,9 +225,11 @@ func (e *TmuxFormationExecutor) ExecuteFormation(req FormationExecution) (Format
 
 	allowed := e.allowedHarnesses()
 	dispatcher := NewSlotDispatcher(e.store, nil)
+	owned := newOwnedSessions()
+	defer e.teardownOwnedSessions(owned)
 	outputs := make([]string, 0, len(req.Formation.Slots))
 	for _, slot := range req.Formation.Slots {
-		output, err := e.executeSlot(req, slot, allowed, dispatcher, "", outputContractExtraLines(req.Formation))
+		output, err := e.executeSlot(req, slot, allowed, dispatcher, "", outputContractExtraLines(req.Formation), owned)
 		if err != nil {
 			return FormationExecutionResult{}, err
 		}
@@ -243,16 +312,18 @@ func (e *TmuxFormationExecutor) executeOrchestratedFormation(req FormationExecut
 	}
 	allowed := e.allowedHarnesses()
 	dispatcher := NewSlotDispatcher(e.store, nil)
+	owned := newOwnedSessions()
+	defer e.teardownOwnedSessions(owned)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(e.config.TimeoutSeconds)*time.Second)
 	defer cancel()
 
-	controllerBinding, err := e.resolveSlotBinding(ctx, req, controller, allowed)
+	controllerBinding, err := e.resolveSlotBinding(ctx, req, controller, allowed, owned)
 	if err != nil {
 		return FormationExecutionResult{}, withSlot(err, req.NodeID, controller.ID, "")
 	}
 	workerBindings := make([]tmuxSlotBinding, 0, len(workers))
 	for _, worker := range workers {
-		binding, err := e.resolveSlotBinding(ctx, req, worker, allowed)
+		binding, err := e.resolveSlotBinding(ctx, req, worker, allowed, owned)
 		if err != nil {
 			return FormationExecutionResult{}, withSlot(err, req.NodeID, worker.ID, "")
 		}
@@ -263,7 +334,7 @@ func (e *TmuxFormationExecutor) executeOrchestratedFormation(req FormationExecut
 	}
 
 	leaderExtra := append(e.leaderAgenticExtraLines(controllerBinding, workerBindings), outputContractExtraLines(req.Formation)...)
-	leader, err := e.executeSlot(req, controller, allowed, dispatcher, "leader-agentic", leaderExtra)
+	leader, err := e.executeSlot(req, controller, allowed, dispatcher, "leader-agentic", leaderExtra, owned)
 	if err != nil {
 		return FormationExecutionResult{}, err
 	}
@@ -281,12 +352,14 @@ func (e *TmuxFormationExecutor) executePeerFormation(req FormationExecution) (Fo
 	}
 	allowed := e.allowedHarnesses()
 	dispatcher := NewSlotDispatcher(e.store, nil)
+	owned := newOwnedSessions()
+	defer e.teardownOwnedSessions(owned)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(e.config.TimeoutSeconds)*time.Second)
 	defer cancel()
 
 	bindings := make([]tmuxSlotBinding, 0, len(peers))
 	for _, peer := range peers {
-		binding, err := e.resolveSlotBinding(ctx, req, peer, allowed)
+		binding, err := e.resolveSlotBinding(ctx, req, peer, allowed, owned)
 		if err != nil {
 			return FormationExecutionResult{}, withSlot(err, req.NodeID, peer.ID, "")
 		}
@@ -302,7 +375,7 @@ func (e *TmuxFormationExecutor) executePeerFormation(req FormationExecution) (Fo
 	}
 
 	for i, peer := range peers {
-		output, err := e.executeSlot(req, peer, allowed, dispatcher, "peer-turn", e.peerTurnExtraLines(plane.relativePath, bindings, bindings[i], false))
+		output, err := e.executeSlot(req, peer, allowed, dispatcher, "peer-turn", e.peerTurnExtraLines(plane.relativePath, bindings, bindings[i], false), owned)
 		if err != nil {
 			return FormationExecutionResult{}, err
 		}
@@ -314,7 +387,7 @@ func (e *TmuxFormationExecutor) executePeerFormation(req FormationExecution) (Fo
 	facilitator := peers[0]
 	facilitatorBinding := bindings[0]
 	facilitatorExtra := append(e.peerTurnExtraLines(plane.relativePath, bindings, facilitatorBinding, true), outputContractExtraLines(req.Formation)...)
-	final, err := e.executeSlot(req, facilitator, allowed, dispatcher, "peer-facilitator", facilitatorExtra)
+	final, err := e.executeSlot(req, facilitator, allowed, dispatcher, "peer-facilitator", facilitatorExtra, owned)
 	if err != nil {
 		return FormationExecutionResult{}, err
 	}
@@ -624,10 +697,10 @@ func hasOutputPortKey(raw map[string]any) bool {
 	return false
 }
 
-func (e *TmuxFormationExecutor) executeSlot(req FormationExecution, slot FormationSlot, allowed map[string]bool, dispatcher *SlotDispatcher, phase string, extraLines []string) (tmuxSlotOutput, error) {
+func (e *TmuxFormationExecutor) executeSlot(req FormationExecution, slot FormationSlot, allowed map[string]bool, dispatcher *SlotDispatcher, phase string, extraLines []string, owned *ownedSessions) (tmuxSlotOutput, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(e.config.TimeoutSeconds)*time.Second)
 	defer cancel()
-	binding, err := e.resolveSlotBinding(ctx, req, slot, allowed)
+	binding, err := e.resolveSlotBinding(ctx, req, slot, allowed, owned)
 	if err != nil {
 		return tmuxSlotOutput{}, withSlot(err, req.NodeID, slot.ID, "")
 	}
@@ -689,7 +762,7 @@ func (e *TmuxFormationExecutor) executeSlot(req FormationExecution, slot Formati
 	}, nil
 }
 
-func (e *TmuxFormationExecutor) resolveSlotBinding(ctx context.Context, req FormationExecution, slot FormationSlot, allowed map[string]bool) (tmuxSlotBinding, error) {
+func (e *TmuxFormationExecutor) resolveSlotBinding(ctx context.Context, req FormationExecution, slot FormationSlot, allowed map[string]bool, owned *ownedSessions) (tmuxSlotBinding, error) {
 	if slot.AgentID == "" {
 		return tmuxSlotBinding{}, runExecutionError("missing_agent", fmt.Sprintf("slot %q is not staffed", slot.ID), "executor", nil)
 	}
@@ -714,11 +787,8 @@ func (e *TmuxFormationExecutor) resolveSlotBinding(ctx context.Context, req Form
 	if variant.SessionStem == "" {
 		return tmuxSlotBinding{}, runExecutionError("missing_session", fmt.Sprintf("agent %q harness %q has no session stem", card.ID, variant.ID), "executor", nil)
 	}
-	sessionName := e.config.SessionPrefix + variant.SessionStem
-	if !safeTmuxSessionName(sessionName) {
-		return tmuxSlotBinding{}, runExecutionError("invalid_session", fmt.Sprintf("resolved tmux session %q is not a safe isolated target", sessionName), "executor", nil)
-	}
-	if err := e.ensureSessionReady(ctx, sessionName); err != nil {
+	sessionName, err := e.provisionOwnedSession(ctx, owned, req.RunID, slot, variant)
+	if err != nil {
 		return tmuxSlotBinding{}, err
 	}
 	return tmuxSlotBinding{
@@ -727,6 +797,137 @@ func (e *TmuxFormationExecutor) resolveSlotBinding(ctx context.Context, req Form
 		Variant:     variant,
 		SessionName: sessionName,
 	}, nil
+}
+
+// provisionOwnedSession returns a tmux session this execution owns for the slot,
+// spawning a fresh non-persistent one on demand when none exists yet. The
+// spawned session runs the harness launch command in the configured cwd; the
+// executor owns its whole lifecycle and tears it down at the end of the run.
+// A slot already provisioned in this execution reuses its own session.
+func (e *TmuxFormationExecutor) provisionOwnedSession(ctx context.Context, owned *ownedSessions, runID string, slot FormationSlot, variant HarnessVariant) (string, error) {
+	if name, ok := owned.name(slot.ID); ok {
+		if err := e.ensureOwnedSessionReady(ctx, name); err != nil {
+			return "", err
+		}
+		return name, nil
+	}
+	launch := strings.TrimSpace(variant.Launch)
+	if launch == "" {
+		return "", runExecutionError("missing_launch", fmt.Sprintf("agent %q harness %q has no launch command to spawn an on-demand session", slot.AgentID, variant.ID), "executor", nil)
+	}
+	name, err := e.pickOwnedSessionName(ctx, runID, slot.ID)
+	if err != nil {
+		return "", err
+	}
+	if err := e.validatePinnedTmuxSocket(); err != nil {
+		return "", err
+	}
+	if err := e.client.CreateSession(ctx, e.config.Socket, name, e.config.Cwd, launch); err != nil {
+		return "", runExecutionError("session_spawn_failed", redactLedgerText(err.Error()), "adapter", err)
+	}
+	// Record ownership immediately after a successful create so teardown reclaims
+	// the session even if the readiness check below fails.
+	owned.record(slot.ID, name)
+	if err := e.ensureOwnedSessionReady(ctx, name); err != nil {
+		return "", err
+	}
+	return name, nil
+}
+
+// pickOwnedSessionName derives a collision-proof, executor-owned tmux session
+// name (run + slot scoped, random-nonce suffixed). It refuses any candidate that
+// already exists on the socket, so it can never reuse or alias a pre-existing /
+// foreign session; if it cannot find a free name it fails closed.
+func (e *TmuxFormationExecutor) pickOwnedSessionName(ctx context.Context, runID, slotID string) (string, error) {
+	if err := e.validatePinnedTmuxSocket(); err != nil {
+		return "", err
+	}
+	existing, err := e.client.ListSessions(ctx, e.config.Socket)
+	if err != nil {
+		return "", runExecutionError("tmux_unavailable", redactLedgerText(err.Error()), "adapter", err)
+	}
+	taken := make(map[string]bool, len(existing))
+	for _, name := range existing {
+		taken[name] = true
+	}
+	for attempt := 0; attempt < ownedSessionNameAttempts; attempt++ {
+		candidate := e.config.SessionPrefix + sanitizeSessionComponent(runID) + "-" + sanitizeSessionComponent(slotID) + "-" + newSessionNonce()
+		if !safeTmuxSessionName(candidate) {
+			continue
+		}
+		if taken[candidate] {
+			// Fail-closed on collision: never reuse or touch a session we did
+			// not create; regenerate with fresh entropy instead.
+			continue
+		}
+		return candidate, nil
+	}
+	return "", runExecutionError("session_name_collision", "could not derive a collision-free owned tmux session name", "executor", nil)
+}
+
+// ensureOwnedSessionReady confirms an owned session is live and rooted in the
+// workspace before dispatch. It targets only the exact owned name, so it never
+// enumerates or inspects foreign sessions.
+func (e *TmuxFormationExecutor) ensureOwnedSessionReady(ctx context.Context, sessionName string) error {
+	if err := e.validatePinnedTmuxSocket(); err != nil {
+		return err
+	}
+	pane, err := e.client.DescribeActivePane(ctx, e.config.Socket, sessionName)
+	if err != nil {
+		code := "pane_unavailable"
+		if errors.Is(err, errTmuxTargetMissing) {
+			code = "missing_session"
+		}
+		return runExecutionError(code, redactLedgerText(err.Error()), "adapter", err)
+	}
+	if pane.Dead {
+		return runExecutionError("dead_pane", fmt.Sprintf("tmux session %q active pane is dead", sessionName), "adapter", ErrDispatchDeadPane)
+	}
+	if pane.CurrentPath != "" {
+		paneCwd, err := filepath.Abs(pane.CurrentPath)
+		if err != nil {
+			return runExecutionError("invalid_cwd", "tmux pane cwd is invalid", "adapter", err)
+		}
+		if !e.pathWithinRoots(paneCwd) {
+			return runExecutionError("cwd_outside_root", "tmux pane cwd is outside configured roots", "adapter", nil)
+		}
+	}
+	return nil
+}
+
+// teardownOwnedSessions kills every session this execution created, and nothing
+// else. It only proceeds while the pinned socket identity is intact, so a socket
+// that was swapped mid-run cannot cause a kill on a different tmux server; it
+// never issues kill-server and never targets a name it did not create.
+func (e *TmuxFormationExecutor) teardownOwnedSessions(owned *ownedSessions) {
+	if owned == nil || len(owned.order) == 0 {
+		return
+	}
+	if err := e.validatePinnedTmuxSocket(); err != nil {
+		return
+	}
+	for _, name := range owned.order {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(e.config.TimeoutSeconds)*time.Second)
+		_ = e.client.KillSession(ctx, e.config.Socket, name)
+		cancel()
+	}
+}
+
+// sanitizeSessionComponent maps an identifier into the tmux-safe alphabet so a
+// derived owned session name always passes safeTmuxSessionName.
+func sanitizeSessionComponent(value string) string {
+	var b strings.Builder
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			b.WriteRune(r)
+			continue
+		}
+		b.WriteRune('-')
+	}
+	if b.Len() == 0 {
+		return "x"
+	}
+	return b.String()
 }
 
 func splitOrchestratedSlots(formation FormationNode) (FormationSlot, []FormationSlot, error) {
@@ -1073,9 +1274,11 @@ func (e *TmuxFormationExecutor) validateConfiguredBoundary() error {
 		return runExecutionError("invalid_socket", "tmux executor socket is invalid", "executor", err)
 	}
 	e.config.Socket = socket
-	if err := e.validateTmuxSocketPathBoundary(); err != nil {
-		return err
-	}
+	// The executor now shares the cockpit tmux socket by owner ruling. The old
+	// blanket refusal of the default/cockpit socket is gone; safety lives in
+	// session-scoping (create + tear down only uniquely-named owned sessions,
+	// never touch a foreign session). The socket must still be a real, stable,
+	// non-symlink path, which pinTmuxSocketIdentity enforces below.
 	if err := e.pinTmuxSocketIdentity(); err != nil {
 		return err
 	}
@@ -1121,18 +1324,6 @@ func (e *TmuxFormationExecutor) validateConfiguredBoundary() error {
 	return nil
 }
 
-func (e *TmuxFormationExecutor) validateTmuxSocketPathBoundary() error {
-	socket := e.config.Socket
-	// Cockpit isolation (absolute): the executor must never dispatch onto the
-	// default tmux socket or a configured cockpit socket, where interactive
-	// terminals and other live agent sessions run. The dedicated production
-	// Formations socket is neither, so it is accepted.
-	if isDefaultTmuxSocket(socket) || isConfiguredCockpitTmuxSocket(socket) {
-		return runExecutionError("session_target_attachment_audit_unavailable", "stock tmux cannot certify attachment and input continuity for a cockpit session target", "executor", nil)
-	}
-	return nil
-}
-
 func (e *TmuxFormationExecutor) pinTmuxSocketIdentity() error {
 	info, err := os.Lstat(e.config.Socket)
 	if err != nil || info.Mode()&os.ModeSymlink != 0 {
@@ -1150,9 +1341,6 @@ func (e *TmuxFormationExecutor) validatePinnedTmuxSocket() error {
 	if e.socketIdentity == nil {
 		return runExecutionError("session_target_attachment_audit_unavailable", "disposable tmux socket identity is not pinned", "executor", nil)
 	}
-	if err := e.validateTmuxSocketPathBoundary(); err != nil {
-		return err
-	}
 	info, err := os.Lstat(e.config.Socket)
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !os.SameFile(e.socketIdentity, info) {
 		return runExecutionError("session_target_attachment_audit_unavailable", "disposable tmux socket identity changed", "executor", err)
@@ -1160,53 +1348,6 @@ func (e *TmuxFormationExecutor) validatePinnedTmuxSocket() error {
 	resolved, err := filepath.EvalSymlinks(e.config.Socket)
 	if err != nil || filepath.Clean(resolved) != filepath.Clean(e.config.Socket) {
 		return runExecutionError("session_target_attachment_audit_unavailable", "disposable tmux socket path changed", "executor", err)
-	}
-	return nil
-}
-
-func (e *TmuxFormationExecutor) ensureSessionReady(ctx context.Context, sessionName string) error {
-	if err := e.validatePinnedTmuxSocket(); err != nil {
-		return err
-	}
-	sessions, err := e.client.ListSessions(ctx, e.config.Socket)
-	if err != nil {
-		return runExecutionError("tmux_unavailable", redactLedgerText(err.Error()), "adapter", err)
-	}
-	matches := 0
-	for _, name := range sessions {
-		if name == sessionName {
-			matches++
-		}
-	}
-	switch matches {
-	case 0:
-		return runExecutionError("missing_session", fmt.Sprintf("tmux session %q was not found on isolated socket", sessionName), "adapter", nil)
-	case 1:
-	default:
-		return runExecutionError("ambiguous_session", fmt.Sprintf("tmux session %q matched %d sessions on isolated socket", sessionName, matches), "adapter", nil)
-	}
-	if err := e.validatePinnedTmuxSocket(); err != nil {
-		return err
-	}
-	pane, err := e.client.DescribeActivePane(ctx, e.config.Socket, sessionName)
-	if err != nil {
-		code := "pane_unavailable"
-		if errors.Is(err, errTmuxTargetMissing) {
-			code = "missing_session"
-		}
-		return runExecutionError(code, redactLedgerText(err.Error()), "adapter", err)
-	}
-	if pane.Dead {
-		return runExecutionError("dead_pane", fmt.Sprintf("tmux session %q active pane is dead", sessionName), "adapter", ErrDispatchDeadPane)
-	}
-	if pane.CurrentPath != "" {
-		paneCwd, err := filepath.Abs(pane.CurrentPath)
-		if err != nil {
-			return runExecutionError("invalid_cwd", "tmux pane cwd is invalid", "adapter", err)
-		}
-		if !e.pathWithinRoots(paneCwd) {
-			return runExecutionError("cwd_outside_root", "tmux pane cwd is outside configured roots", "adapter", nil)
-		}
 	}
 	return nil
 }
@@ -1400,126 +1541,6 @@ func safeTmuxSessionName(name string) bool {
 	return true
 }
 
-func isDefaultTmuxSocket(socket string) bool {
-	candidates := []string{}
-	if tmuxEnv := strings.TrimSpace(os.Getenv("TMUX")); tmuxEnv != "" {
-		if configured, _, ok := strings.Cut(tmuxEnv, ","); ok {
-			candidates = append(candidates, strings.TrimSpace(configured))
-		}
-	}
-	tmuxRoots := []string{defaultTmuxTmpdirRoot}
-	tmpdir := strings.TrimSpace(os.Getenv("TMUX_TMPDIR"))
-	xdg := strings.TrimSpace(os.Getenv("XDG_RUNTIME_DIR"))
-	if tmpdir != "" {
-		tmuxRoots = append(tmuxRoots, tmpdir)
-		candidates = append(candidates, filepath.Join(tmpdir, "default"))
-	} else if xdg != "" {
-		tmuxRoots = append(tmuxRoots, filepath.Join(xdg, "tmux"))
-	} else {
-		tmuxRoots = append(tmuxRoots, filepath.Join(defaultTmuxTmpdirRoot, fmt.Sprintf("tmux-%d", os.Getuid())))
-	}
-	if xdg != "" {
-		candidates = append(candidates, filepath.Join(xdg, "tmux", "default"))
-	}
-	for _, root := range tmuxRoots {
-		candidates = append(candidates, filepath.Join(root, fmt.Sprintf("tmux-%d", os.Getuid()), "default"))
-	}
-	for _, candidate := range candidates {
-		if sameTmuxSocket(socket, candidate) {
-			return true
-		}
-	}
-	paths := []string{socket}
-	if resolved, err := filepath.EvalSymlinks(socket); err == nil {
-		paths = append(paths, resolved)
-	}
-	for _, root := range tmuxRoots {
-		for _, path := range paths {
-			if isCanonicalTmuxDefaultSocketPath(path, root) {
-				return true
-			}
-		}
-		entries, err := os.ReadDir(root)
-		if err != nil {
-			continue
-		}
-		for _, entry := range entries {
-			if !isNumericTmuxSocketDir(entry.Name()) {
-				continue
-			}
-			if sameTmuxSocket(socket, filepath.Join(root, entry.Name(), "default")) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func isCanonicalTmuxDefaultSocketPath(path, root string) bool {
-	absPath, pathErr := filepath.Abs(path)
-	absRoot, rootErr := filepath.Abs(root)
-	if pathErr != nil || rootErr != nil {
-		return false
-	}
-	rel, err := filepath.Rel(absRoot, absPath)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return false
-	}
-	parts := strings.Split(filepath.ToSlash(rel), "/")
-	return len(parts) == 2 && isNumericTmuxSocketDir(parts[0]) && parts[1] == "default"
-}
-
-func isNumericTmuxSocketDir(name string) bool {
-	uid := strings.TrimPrefix(name, "tmux-")
-	if uid == "" || uid == name {
-		return false
-	}
-	for _, ch := range uid {
-		if ch < '0' || ch > '9' {
-			return false
-		}
-	}
-	return true
-}
-
-func isConfiguredCockpitTmuxSocket(socket string) bool {
-	candidates := []string{strings.TrimSpace(os.Getenv("CHROTE_DEFAULT_TMUX_SOCKET"))}
-	for _, item := range strings.Split(os.Getenv("CHROTE_TERMINAL_USER_SOCKETS"), ",") {
-		parts := strings.SplitN(item, "=", 2)
-		if len(parts) == 2 {
-			candidates = append(candidates, strings.TrimSpace(parts[1]))
-		}
-	}
-	for _, candidate := range candidates {
-		if candidate == "" {
-			continue
-		}
-		if sameTmuxSocket(socket, candidate) {
-			return true
-		}
-	}
-	return false
-}
-
-func sameTmuxSocket(left, right string) bool {
-	leftAbs, leftErr := filepath.Abs(left)
-	rightAbs, rightErr := filepath.Abs(right)
-	if leftErr != nil || rightErr != nil {
-		return false
-	}
-	if leftAbs == rightAbs {
-		return true
-	}
-	leftResolved, leftResolveErr := filepath.EvalSymlinks(leftAbs)
-	rightResolved, rightResolveErr := filepath.EvalSymlinks(rightAbs)
-	if leftResolveErr == nil && rightResolveErr == nil && leftResolved == rightResolved {
-		return true
-	}
-	leftInfo, leftStatErr := os.Stat(leftAbs)
-	rightInfo, rightStatErr := os.Stat(rightAbs)
-	return leftStatErr == nil && rightStatErr == nil && os.SameFile(leftInfo, rightInfo)
-}
-
 type realTmuxHarnessClient struct{}
 
 func (realTmuxHarnessClient) ListSessions(ctx context.Context, socket string) ([]string, error) {
@@ -1535,6 +1556,29 @@ func (realTmuxHarnessClient) ListSessions(ctx context.Context, socket string) ([
 		}
 	}
 	return sessions, nil
+}
+
+// CreateSession spawns a detached, non-persistent session running launch in cwd.
+// It uses new-session -d WITHOUT -A, so tmux fails closed on a name collision
+// (it never attaches to or reuses a pre-existing session); the executor only
+// ever passes a collision-checked, uniquely-owned name here.
+func (realTmuxHarnessClient) CreateSession(ctx context.Context, socket, name, cwd, launch string) error {
+	args := []string{"new-session", "-d", "-s", name}
+	if strings.TrimSpace(cwd) != "" {
+		args = append(args, "-c", cwd)
+	}
+	if strings.TrimSpace(launch) != "" {
+		args = append(args, launch)
+	}
+	_, err := runTmuxCommand(ctx, socket, nil, args...)
+	return err
+}
+
+// KillSession kills exactly one named session. It is only ever called by the
+// executor with a name it created; it never runs kill-server.
+func (realTmuxHarnessClient) KillSession(ctx context.Context, socket, name string) error {
+	_, err := runTmuxCommand(ctx, socket, nil, "kill-session", "-t", name)
+	return err
 }
 
 func (realTmuxHarnessClient) DescribeActivePane(ctx context.Context, socket, target string) (tmuxPaneState, error) {
