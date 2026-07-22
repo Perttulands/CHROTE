@@ -2191,6 +2191,7 @@ func schema1Event(runID string, sequence uint64, eventType string, data map[stri
 
 func schema2Event(runID string, sequence uint64, eventType string, data map[string]any) map[string]any {
 	event := schema1Event(runID, sequence, eventType, data)
+	schema2ApplyFixtureEnvelope(event, eventType, data)
 	event["schema"] = uint64(2)
 	event["authoritySchema"] = uint64(2)
 	event["writerFence"] = uint64(1)

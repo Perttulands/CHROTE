@@ -181,6 +181,7 @@ func TestProjectCanonicalRunSchema2StructuralArmsAreNeverAuditOnly(t *testing.T)
 				rawData["attempt"] = uint64(1)
 				event["data"] = rawData
 				event["nodeId"] = projectionTestFormationID
+				event["attempt"] = uint64(1)
 			},
 			want: func(state *projectionState) {
 				state.node(projectionTestFormationID).Status = "blocked"
