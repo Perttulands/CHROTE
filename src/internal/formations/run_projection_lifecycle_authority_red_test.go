@@ -2,6 +2,7 @@ package formations
 
 import (
 	"bytes"
+	"encoding/json"
 	"testing"
 )
 
@@ -55,6 +56,13 @@ func TestSchema2LifecycleGraphIsClosedAcrossQueuedWaitingAndFinal(t *testing.T) 
 		}
 	})
 
+	t.Run("wrong_waiting_verdict_request_sequence_is_rejected_without_mutation", func(t *testing.T) {
+		state := schema2TerminalWaitingState(t)
+		data := schema2RepairHumanVerdictData()
+		data["requestedSeq"] = uint64(20)
+		schema2RequireReducerErrorWithoutMutation(t, &state, 22, "human_verdict_recorded", data)
+	})
+
 	t.Run("canonical_activation_from_queued_still_passes", func(t *testing.T) {
 		projection, err := ProjectCanonicalRun(schema2ProjectionInput(t, true))
 		if err != nil {
@@ -67,15 +75,23 @@ func TestSchema2LifecycleGraphIsClosedAcrossQueuedWaitingAndFinal(t *testing.T) 
 	})
 
 	t.Run("final_binding_observation_is_current_epoch_and_non_authorizing", func(t *testing.T) {
-		observed := schema2Event(projectionTestRunID, 4, "slot_binding_observed", schema2SecondRepairFixture(t, "slot_binding_observed"))
-		projection, err := ProjectCanonicalRun(schema2ProjectionInput(t, true,
-			schema2Event(projectionTestRunID, 3, "run_succeeded", schema2TerminalSucceededData()),
-			observed,
-		))
+		projection, err := ProjectCanonicalRun(schema2FinalBindingObservationInput(t))
 		if err != nil {
 			t.Fatalf("current-epoch final binding observation rejected: %v", err)
 		}
-		schema2RequireSuccessfulFinalOutcome(t, ProjectRunView(projection))
+		view := ProjectRunView(projection)
+		schema2RequireSuccessfulFinalOutcome(t, view)
+		page, err := ProjectRunEventPage(projection, 3, 1)
+		if err != nil {
+			t.Fatalf("page final binding observation: %v", err)
+		}
+		if len(page.Events) != 1 {
+			t.Fatalf("final binding observation page = %#v", page.Events)
+		}
+		observed, ok := page.Events[0].(SafeSchema2SlotBindingObservedEvent)
+		if !ok || observed.Data.BindingID != "binding_worker" || observed.Data.SlotID != "slot_worker" || observed.Data.SessionTargetID != "target_worker" {
+			t.Fatalf("final binding observation = %#v", page.Events[0])
+		}
 	})
 
 	t.Run("final_artifact_observation_preserves_outcome", func(t *testing.T) {
@@ -275,6 +291,37 @@ func schema2FinalArtifactObservationInput(t *testing.T, epoch uint64) CanonicalR
 		schema2Event(projectionTestRunID, 4, "run_succeeded", schema2TerminalSucceededData()),
 		observed,
 	)
+}
+
+func schema2FinalBindingObservationInput(t *testing.T) CanonicalRunReadInput {
+	t.Helper()
+	input, _ := schema2OpenDispatchLifecycleInput(t, false)
+	events := canonicalLedgerEvents(t, input)
+	observed := schema2FormationEvent(projectionTestRunID, 4, "slot_binding_observed", schema2SecondRepairFixture(t, "slot_binding_observed"))
+	observed["nodeId"] = projectionTestFormationID
+	observed["slotId"] = "slot_worker"
+	input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2Ledger, marshalProjectionLedger(t,
+		events[0],
+		events[1],
+		schema2FormationEvent(projectionTestRunID, 3, "run_succeeded", schema2TerminalSucceededData()),
+		observed,
+	))
+	documents := input.Documents[:0]
+	for _, document := range input.Documents {
+		if document.Role != CanonicalInputRoleSchema2CommandRecord {
+			documents = append(documents, document)
+			continue
+		}
+		var record map[string]any
+		if err := json.Unmarshal(document.Bytes, &record); err != nil {
+			t.Fatalf("decode command record: %v", err)
+		}
+		if record["commandId"] == projectionTestCommandID {
+			documents = append(documents, document)
+		}
+	}
+	input.Documents = documents
+	return input
 }
 
 func schema2LifecycleStartType(lifecycle string) string {
