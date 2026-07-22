@@ -3241,9 +3241,6 @@ func projectSchema2Run(runID string, documents canonicalDocuments) (CanonicalRun
 	state.view.Audit = RunAudit{EventSchema: 2, AuthoritySchema: &authoritySchema, StartSeq: 1, AdmissionCommandID: started.Data.AdmissionCommandID, CommandPayloadSHA256: started.Data.CommandPayloadSHA256, WorkspaceAdmissionSeq: started.Data.WorkspaceAdmissionSeq, AdmissionPolicyRev: authority.AdmissionPolicyRef.PolicyRev, AdmissionPolicySHA256: authority.AdmissionPolicyRef.PolicySHA256, GraphSnapshotSHA256: graphHash, BindingProjectionSHA256: started.Data.BindingProjectionSHA256}
 	projected := make([]projectedEvent, 0, len(events))
 	for _, event := range events {
-		if state.terminal {
-			return CanonicalRunProjection{}, projectionError(ErrRunProjectionInvalid, "event follows terminal event")
-		}
 		safe, sanitizeErr := sanitizeSchema2Event(event)
 		if sanitizeErr != nil {
 			return CanonicalRunProjection{}, sanitizeErr
@@ -3431,18 +3428,24 @@ func reduceSchema1Event(state *projectionState, raw rawProjectionEvent, safe Saf
 }
 
 func reduceSchema2Event(state *projectionState, raw rawProjectionEvent, safe SafeRunEvent, commands map[string]RunCommandReceipt) error {
+	working := cloneSchema2ProjectionState(*state)
+	if err := reduceSchema2EventInPlace(&working, raw, safe, commands); err != nil {
+		return err
+	}
+	*state = working
+	return nil
+}
+
+func reduceSchema2EventInPlace(state *projectionState, raw rawProjectionEvent, safe SafeRunEvent, commands map[string]RunCommandReceipt) error {
 	if _, started := safe.(SafeSchema2RunStartedEvent); started && raw.envelope.Epoch != 0 {
 		return projectionError(ErrRunProjectionInvalid, "schema-2 run_started must use epoch zero")
 	}
 	if _, resumed := safe.(SafeSchema2RunResumedEvent); !resumed && raw.envelope.Epoch != state.view.Identity.Epoch {
 		return projectionError(ErrRunProjectionInvalid, "event epoch differs from current epoch")
 	}
-	if err := validateSchema2LifecycleStatus(state.view.Status, safe); err != nil {
+	if err := validateSchema2LifecycleStatus(state, safe); err != nil {
 		return err
 	}
-	state.view.Cursor = raw.envelope.Seq
-	state.view.Audit.ConsumedEventCount++
-	state.view.Audit.LatestWriterFence = raw.writerFence
 	switch event := safe.(type) {
 	case SafeSchema2RunStartedEvent:
 		if err := verifyEventCommand(event.Data.AdmissionCommandID, event.Data.CommandPayloadSHA256, raw.envelope.Seq, commands); err != nil {
@@ -3625,7 +3628,7 @@ func reduceSchema2Event(state *projectionState, raw rawProjectionEvent, safe Saf
 		gate := state.existingGate(event.Data.GateID, event.Data.GateAttempt)
 		node := state.node(event.Data.GateID)
 		attempt := state.existingAttempt(event.Data.GateID, event.Data.GateAttempt)
-		if gate == nil || node == nil || attempt == nil {
+		if gate == nil || node == nil || attempt == nil || gate.Status != "waiting_human" || gate.RequestSeq != event.Data.RequestedSeq {
 			return projectionError(ErrRunProjectionInvalid, "human verdict without request")
 		}
 		state.view.Status = "running"
@@ -3693,11 +3696,47 @@ func reduceSchema2Event(state *projectionState, raw rawProjectionEvent, safe Saf
 		state.view.Final = true
 		state.terminal = true
 	}
+	state.view.Cursor = raw.envelope.Seq
+	state.view.Audit.ConsumedEventCount++
+	state.view.Audit.LatestWriterFence = raw.writerFence
 	return nil
 }
 
-func validateSchema2LifecycleStatus(status string, safe SafeRunEvent) error {
+func validateSchema2LifecycleStatus(state *projectionState, safe SafeRunEvent) error {
+	status := state.view.Status
 	switch status {
+	case "queued":
+		allowed := false
+		switch safe.(type) {
+		case SafeSchema2RunStartedEvent:
+			allowed = state.view.Audit.ConsumedEventCount == 0
+		case SafeSchema2RunActivatedEvent,
+			SafeSchema2RunCancelRequestedEvent,
+			SafeSchema2RunFailureReconciliationStartedEvent:
+			allowed = true
+		}
+		if !allowed {
+			return projectionError(ErrRunProjectionInvalid, "schema-2 event is invalid while run status is %q", status)
+		}
+	case "running":
+		switch safe.(type) {
+		case SafeSchema2RunStartedEvent,
+			SafeSchema2RunActivatedEvent,
+			SafeSchema2RunResumedEvent,
+			SafeSchema2RunCanceledEvent,
+			SafeSchema2RunFailedEvent:
+			return projectionError(ErrRunProjectionInvalid, "schema-2 event is invalid while run status is %q", status)
+		}
+	case "waiting_human":
+		switch safe.(type) {
+		case SafeSchema2HumanVerdictRecordedEvent,
+			SafeSchema2SlotBindingObservedEvent,
+			SafeSchema2ArtifactObservedEvent,
+			SafeSchema2RunCancelRequestedEvent,
+			SafeSchema2RunFailureReconciliationStartedEvent:
+			return nil
+		}
+		return projectionError(ErrRunProjectionInvalid, "schema-2 event is invalid while run status is %q", status)
 	case "blocked":
 		switch safe.(type) {
 		case SafeSchema2RunResumedEvent,
@@ -3726,6 +3765,14 @@ func validateSchema2LifecycleStatus(status string, safe SafeRunEvent) error {
 		if !allowed {
 			return projectionError(ErrRunProjectionInvalid, "schema-2 event is invalid while run status is %q", status)
 		}
+	case "succeeded", "failed", "canceled":
+		switch safe.(type) {
+		case SafeSchema2SlotBindingObservedEvent, SafeSchema2ArtifactObservedEvent:
+			return nil
+		}
+		return projectionError(ErrRunProjectionInvalid, "schema-2 event is invalid while run status is %q", status)
+	default:
+		return projectionError(ErrRunProjectionInvalid, "unknown schema-2 run status %q", status)
 	}
 
 	allowed := true
@@ -3745,6 +3792,24 @@ func validateSchema2LifecycleStatus(status string, safe SafeRunEvent) error {
 		return projectionError(ErrRunProjectionInvalid, "schema-2 event is invalid while run status is %q", status)
 	}
 	return nil
+}
+
+func cloneSchema2ProjectionState(state projectionState) projectionState {
+	clone := state
+	clone.view = cloneProjectionValue(reflect.ValueOf(state.view)).Interface().(RunView)
+	clone.nodeIndex = cloneProjectionValue(reflect.ValueOf(state.nodeIndex)).Interface().(map[string]int)
+	clone.attemptIndex = cloneProjectionValue(reflect.ValueOf(state.attemptIndex)).Interface().(map[string]int)
+	clone.gateIndex = cloneProjectionValue(reflect.ValueOf(state.gateIndex)).Interface().(map[string]int)
+	clone.artifactIndex = cloneProjectionValue(reflect.ValueOf(state.artifactIndex)).Interface().(map[string]int)
+	clone.dispatches = cloneProjectionValue(reflect.ValueOf(state.dispatches)).Interface().(map[string]SafeSchema2SlotDispatchData)
+	clone.dispatchSeq = cloneProjectionValue(reflect.ValueOf(state.dispatchSeq)).Interface().(map[string]uint64)
+	clone.matchedDispatch = cloneProjectionValue(reflect.ValueOf(state.matchedDispatch)).Interface().(map[string]bool)
+	clone.revokedDispatch = cloneProjectionValue(reflect.ValueOf(state.revokedDispatch)).Interface().(map[string]uint64)
+	clone.bindings = cloneProjectionValue(reflect.ValueOf(state.bindings)).Interface().(map[string]schema2Binding)
+	clone.health = cloneProjectionValue(reflect.ValueOf(state.health)).Interface().(map[string]SafeSchema2SlotBindingObservedData)
+	clone.lastBlockJSON = append([]byte(nil), state.lastBlockJSON...)
+	clone.lastBlockRetry = append([]byte(nil), state.lastBlockRetry...)
+	return clone
 }
 
 func (state *projectionState) node(nodeID string) *RunNodeView {
