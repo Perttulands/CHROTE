@@ -33,12 +33,9 @@ func TestProjectCanonicalRunSchema2StructuralArmsAreNeverAuditOnly(t *testing.T)
 		historyOnly bool
 	}{
 		{
-			name: "formation result closes its attempt and materializes outputs", prepare: startSchema2RepairAttempt(projectionTestFormationID, "formation"),
+			name: "formation result retains materialization authority without closing its attempt", prepare: startSchema2RepairAttempt(projectionTestFormationID, "formation"),
 			eventType: "formation_result", data: schema2RepairFormationResultData(),
-			want: func(state *projectionState) {
-				schema2RepairCompleteAttempt(state, projectionTestFormationID, 1, "done", 20)
-				schema2RepairAppendOutput(state, projectionTestFormationID, 1, "port_out", 20, schema2RepairPayload("formation output"))
-			},
+			historyOnly: true,
 		},
 		{
 			name:      "tool dispatch opens tool attempt state",
@@ -51,17 +48,14 @@ func TestProjectCanonicalRunSchema2StructuralArmsAreNeverAuditOnly(t *testing.T)
 			historyOnly: true,
 		},
 		{
-			name: "tool result closes tool attempt and materializes outputs", prepare: func(state *projectionState) {
+			name: "tool result closes its lease without closing the tool attempt", prepare: func(state *projectionState) {
 				schema2RepairStartAttempt(state, "tool_normalize", "tool", 1, 2)
 				state.toolLeases["toollease_01KXNP6VY3227H78329V52CKF8"] = SafeToolLeaseSnapshot{
 					ToolLeaseID: "toollease_01KXNP6VY3227H78329V52CKF8", NodeID: "tool_normalize", Attempt: 1, DispatchSeq: 2,
 				}
 			},
 			eventType: "tool_result", data: schema2RepairToolResultData(),
-			want: func(state *projectionState) {
-				schema2RepairCompleteAttempt(state, "tool_normalize", 1, "done", 20)
-				schema2RepairAppendOutput(state, "tool_normalize", 1, "port_tool_out", 20, schema2RepairPayload(`{"normalized":true}`))
-			},
+			historyOnly: true,
 		},
 		{
 			name: "node output closes the named attempt and materializes outputs", prepare: startSchema2RepairAttempt(projectionTestMissionID, "mission"),
@@ -205,7 +199,7 @@ func TestProjectCanonicalRunSchema2CompletionStatusAndDispositionMatrix(t *testi
 		Gates:      []GateNode{{ID: projectionTestGateID}},
 	}
 
-	for _, eventType := range []string{"formation_result", "node_output"} {
+	for _, eventType := range []string{"node_output"} {
 		for _, test := range []struct {
 			status          string
 			wantStatus      string
@@ -216,30 +210,23 @@ func TestProjectCanonicalRunSchema2CompletionStatusAndDispositionMatrix(t *testi
 			{status: "needs-review", wantStatus: "needs-review", wantDisposition: ""},
 			{status: "blocked", wantStatus: "blocked", wantDisposition: ""},
 		} {
-			if eventType == "formation_result" && test.status == "blocked" {
-				continue
-			}
 			t.Run(eventType+"/"+test.status, func(t *testing.T) {
 				state := newProjectionState(projectionTestRunID, CanonicalRunSourceSchema2, board)
 				state.view.Status = "running"
-				schema2RepairStartAttempt(&state, projectionTestFormationID, "formation", 1, 2)
+				schema2RepairStartAttempt(&state, projectionTestMissionID, "mission", 1, 2)
 				raw := rawProjectionEvent{envelope: safeEventEnvelope{RunID: projectionTestRunID, Seq: 20}}
 				var safe SafeRunEvent
 				switch eventType {
-				case "formation_result":
-					safe = SafeSchema2FormationResultEvent{Type: eventType, Data: SafeSchema2FormationResultData{
-						NodeID: projectionTestFormationID, Attempt: 1, Status: test.status, Outputs: SafePayloadProjections{},
-					}}
 				case "node_output":
 					safe = SafeSchema2NodeOutputEvent{Type: eventType, Data: SafeSchema2NodeOutputData{
-						NodeID: projectionTestFormationID, Status: test.status, Outputs: SafePayloadProjections{},
+						NodeID: projectionTestMissionID, Status: test.status, Outputs: SafePayloadProjections{},
 					}}
 				}
 				if err := reduceSchema2Event(&state, raw, safe, nil); err != nil {
 					t.Fatalf("reduce admitted %s(%s): %v", eventType, test.status, err)
 				}
-				node := state.node(projectionTestFormationID)
-				attempt := state.existingAttempt(projectionTestFormationID, 1)
+				node := state.node(projectionTestMissionID)
+				attempt := state.existingAttempt(projectionTestMissionID, 1)
 				if node == nil || attempt == nil {
 					t.Fatalf("completion lost node/attempt: node=%#v attempt=%#v", node, attempt)
 				}
@@ -251,6 +238,26 @@ func TestProjectCanonicalRunSchema2CompletionStatusAndDispositionMatrix(t *testi
 				}
 			})
 		}
+	}
+
+	for _, status := range []string{"done", "needs-review", "failed"} {
+		t.Run("formation_result/"+status+"_keeps_ordinary_attempt_open", func(t *testing.T) {
+			state := newProjectionState(projectionTestRunID, CanonicalRunSourceSchema2, board)
+			state.view.Status = "running"
+			schema2RepairStartAttempt(&state, projectionTestFormationID, "formation", 1, 2)
+			raw := rawProjectionEvent{envelope: safeEventEnvelope{RunID: projectionTestRunID, Seq: 20}}
+			safe := SafeSchema2FormationResultEvent{Type: "formation_result", Data: SafeSchema2FormationResultData{
+				NodeID: projectionTestFormationID, Attempt: 1, Status: status, Outputs: SafePayloadProjections{},
+			}}
+			if err := reduceSchema2Event(&state, raw, safe, nil); err != nil {
+				t.Fatalf("reduce admitted formation_result(%s): %v", status, err)
+			}
+			node := state.node(projectionTestFormationID)
+			attempt := state.existingAttempt(projectionTestFormationID, 1)
+			if node == nil || attempt == nil || node.Status != "running" || attempt.Status != "running" || node.FinalDisposition != "" || attempt.Disposition != "" || attempt.CompletedSeq != 0 || len(state.view.Outputs) != 0 {
+				t.Fatalf("formation_result(%s) closed/materialized ordinary attempt: node=%#v attempt=%#v outputs=%#v", status, node, attempt, state.view.Outputs)
+			}
+		})
 	}
 
 	for _, test := range []struct {
