@@ -3071,6 +3071,8 @@ type projectionState struct {
 	lastBlockSeq       uint64
 	lastBlockPolicy    string
 	lastBlockNextEpoch uint64
+	cancelRequestSeq   uint64
+	failureStartSeq    uint64
 	terminal           bool
 }
 
@@ -3435,19 +3437,8 @@ func reduceSchema2Event(state *projectionState, raw rawProjectionEvent, safe Saf
 	if _, resumed := safe.(SafeSchema2RunResumedEvent); !resumed && raw.envelope.Epoch != state.view.Identity.Epoch {
 		return projectionError(ErrRunProjectionInvalid, "event epoch differs from current epoch")
 	}
-	if state.view.Status == "blocked" {
-		switch safe.(type) {
-		case SafeSchema2RunResumedEvent,
-			SafeSchema2SlotBindingObservedEvent,
-			SafeSchema2ArtifactObservedEvent,
-			SafeSchema2RunCancelRequestedEvent,
-			SafeSchema2RunFailureReconciliationStartedEvent,
-			SafeSchema2RunCanceledEvent,
-			SafeSchema2RunFailedEvent,
-			SafeSchema2RunSucceededEvent:
-		default:
-			return projectionError(ErrRunProjectionInvalid, "structural event while run is blocked")
-		}
+	if err := validateSchema2LifecycleStatus(state.view.Status, safe); err != nil {
+		return err
 	}
 	state.view.Cursor = raw.envelope.Seq
 	state.view.Audit.ConsumedEventCount++
@@ -3675,17 +3666,83 @@ func reduceSchema2Event(state *projectionState, raw rawProjectionEvent, safe Saf
 		if err := verifyEventCommand(event.Data.CommandID, event.Data.CommandPayloadSHA256, raw.envelope.Seq, commands); err != nil {
 			return err
 		}
+		state.cancelRequestSeq = raw.envelope.Seq
 		state.view.Status = "canceling"
 	case SafeSchema2RunFailureReconciliationStartedEvent:
+		if state.view.Status == "canceling" {
+			if event.Data.OriginCancelRequestSeq != state.cancelRequestSeq {
+				return projectionError(ErrRunProjectionInvalid, "failure reconciliation does not name current cancellation")
+			}
+		} else if event.Data.OriginCancelRequestSeq != 0 {
+			return projectionError(ErrRunProjectionInvalid, "failure reconciliation invents cancellation origin")
+		}
+		state.failureStartSeq = raw.envelope.Seq
 		state.view.Status = "failing"
 	case SafeSchema2RunCanceledEvent:
+		if event.Data.CancelRequestSeq != state.cancelRequestSeq {
+			return projectionError(ErrRunProjectionInvalid, "run cancellation does not name current request")
+		}
 		state.finishRun("canceled", "canceled", raw.envelope.Seq)
 	case SafeSchema2RunFailedEvent:
+		if event.Data.FailureReconciliationSeq != state.failureStartSeq {
+			return projectionError(ErrRunProjectionInvalid, "run failure does not name current reconciliation")
+		}
 		state.finishRun("failed", "failed", raw.envelope.Seq)
 	case SafeSchema2RunSucceededEvent:
 		state.view.Status = "succeeded"
 		state.view.Final = true
 		state.terminal = true
+	}
+	return nil
+}
+
+func validateSchema2LifecycleStatus(status string, safe SafeRunEvent) error {
+	switch status {
+	case "blocked":
+		switch safe.(type) {
+		case SafeSchema2RunResumedEvent,
+			SafeSchema2SlotBindingObservedEvent,
+			SafeSchema2ArtifactObservedEvent,
+			SafeSchema2RunCancelRequestedEvent,
+			SafeSchema2RunFailureReconciliationStartedEvent:
+			return nil
+		}
+		return projectionError(ErrRunProjectionInvalid, "schema-2 event is invalid while run status is %q", status)
+	case "canceling", "failing":
+		allowed := false
+		switch safe.(type) {
+		case SafeSchema2SlotBindingObservedEvent,
+			SafeSchema2ArtifactObservedEvent,
+			SafeSchema2SlotSteeringEndedEvent,
+			SafeSchema2SlotPeekCapabilityRevokedEvent,
+			SafeSchema2SlotReconciliationInterruptEvent,
+			SafeSchema2SlotReconciliationInterruptOutcomeEvent:
+			allowed = true
+		case SafeSchema2RunFailureReconciliationStartedEvent, SafeSchema2RunCanceledEvent:
+			allowed = status == "canceling"
+		case SafeSchema2RunFailedEvent:
+			allowed = status == "failing"
+		}
+		if !allowed {
+			return projectionError(ErrRunProjectionInvalid, "schema-2 event is invalid while run status is %q", status)
+		}
+	}
+
+	allowed := true
+	switch safe.(type) {
+	case SafeSchema2RunCancelRequestedEvent:
+		allowed = projectionValueIn(status, "queued", "running", "blocked", "waiting_human")
+	case SafeSchema2RunFailureReconciliationStartedEvent:
+		allowed = projectionValueIn(status, "queued", "running", "blocked", "canceling")
+	case SafeSchema2RunCanceledEvent:
+		allowed = status == "canceling"
+	case SafeSchema2RunFailedEvent:
+		allowed = status == "failing"
+	case SafeSchema2RunSucceededEvent:
+		allowed = status == "running"
+	}
+	if !allowed {
+		return projectionError(ErrRunProjectionInvalid, "schema-2 event is invalid while run status is %q", status)
 	}
 	return nil
 }
