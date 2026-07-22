@@ -537,6 +537,71 @@ func TestTask1FinalGreenFindingsRunSuccessRequiresExactRegisteredArtifacts(t *te
 	}
 }
 
+func TestTask1FinalGreenFindingsWriterFencesStayWithinImmutableAuthority(t *testing.T) {
+	t.Run("equal_allocated_historical_fences_are_valid", func(t *testing.T) {
+		input := schema2ProjectionInput(t, true)
+		projection, err := ProjectCanonicalRun(input)
+		if err != nil {
+			t.Fatalf("equal allocated writer fences rejected: %v", err)
+		}
+		if projection.view.Audit.LatestWriterFence != 1 {
+			t.Fatalf("latest writer fence = %d, want 1", projection.view.Audit.LatestWriterFence)
+		}
+	})
+
+	t.Run("higher_allocated_epoch_preserves_exact_authority_generation_chain", func(t *testing.T) {
+		input := schema2ProjectionInput(t, true)
+		previous, current := schema2FinalGreenAllocateNextWriterFence(t, &input, 3)
+		events := canonicalLedgerEvents(t, input)
+		events[0]["writerFence"] = uint64(1)
+		for _, event := range events[1:] {
+			event["writerFence"] = uint64(2)
+		}
+		input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2Ledger, marshalProjectionLedger(t, events...))
+
+		projection, err := ProjectCanonicalRun(input)
+		if err != nil {
+			t.Fatalf("allocated higher historical writer fence rejected: %v", err)
+		}
+		if projection.view.Audit.LatestWriterFence != 2 {
+			t.Fatalf("latest writer fence = %d, want 2", projection.view.Audit.LatestWriterFence)
+		}
+		schema2FinalGreenRequireExactAuthoritySuccessor(t, previous, current, 3)
+	})
+
+	for _, test := range []struct {
+		name    string
+		prepare func(*CanonicalRunReadInput)
+		fences  []uint64
+	}{
+		{
+			name: "regression_rejects_the_whole_projection",
+			prepare: func(input *CanonicalRunReadInput) {
+				schema2FinalGreenAllocateNextWriterFence(t, input, 3)
+			},
+			fences: []uint64{2, 1},
+		},
+		{name: "fence_equal_to_next_writer_fence_is_unallocated", fences: []uint64{2, 2}},
+		{name: "fence_above_next_writer_fence_is_unallocated", fences: []uint64{3, 3}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := schema2ProjectionInput(t, true)
+			if test.prepare != nil {
+				test.prepare(&input)
+			}
+			events := canonicalLedgerEvents(t, input)
+			if len(events) != len(test.fences) {
+				t.Fatalf("fixture event count = %d, want %d fences", len(events), len(test.fences))
+			}
+			for index := range events {
+				events[index]["writerFence"] = test.fences[index]
+			}
+			input = replaceCanonicalDocument(t, input, CanonicalInputRoleSchema2Ledger, marshalProjectionLedger(t, events...))
+			schema2FinalGreenRequireWholeProjectionInvalid(t, input)
+		})
+	}
+}
+
 func schema2FinalGreenErrorArm(t *testing.T, arm string) (projectionState, uint64, map[string]any) {
 	t.Helper()
 	data := schema2FinalGreenErrorData("run")
@@ -784,6 +849,41 @@ func schema2FinalGreenRequireLifecycleRejectionWithoutMutation(t *testing.T, sta
 	after := schema2ReducerStateFingerprint(t, state)
 	if !bytes.Equal(after, before) {
 		t.Fatalf("rejected %s mutated reducer state\nbefore: %s\nafter:  %s", eventType, before, after)
+	}
+}
+
+func schema2FinalGreenAllocateNextWriterFence(t *testing.T, input *CanonicalRunReadInput, next uint64) ([]byte, []byte) {
+	t.Helper()
+	previous := canonicalDocumentByRole(t, *input, CanonicalInputRoleSchema2WorkspaceAuthority).Bytes
+	current := nextMutableRecordGeneration(t, previous, func(record map[string]any) {
+		record["nextWriterFence"] = next
+	})
+	*input = replaceCanonicalDocument(t, *input, CanonicalInputRoleSchema2WorkspaceAuthority, current)
+	return previous, current
+}
+
+func schema2FinalGreenRequireExactAuthoritySuccessor(t *testing.T, previous, current []byte, next uint64) {
+	t.Helper()
+	prior := decodeCanonicalObject(t, previous)
+	successor := decodeCanonicalObject(t, current)
+	priorRevision := uint64(prior["recordRev"].(float64))
+	if successor["recordRev"] != float64(priorRevision+1) || successor["nextWriterFence"] != float64(next) {
+		t.Fatalf("authority successor revision/fence = %#v/%#v, want %d/%d", successor["recordRev"], successor["nextWriterFence"], priorRevision+1, next)
+	}
+	assertExactJSONValue(t, "authority successor predecessor", successor["priorGeneration"], map[string]any{
+		"recordRev": priorRevision, "sha256": projectionSHA256(previous),
+	})
+}
+
+func schema2FinalGreenRequireWholeProjectionInvalid(t *testing.T, input CanonicalRunReadInput) {
+	t.Helper()
+	projection, err := ProjectCanonicalRun(input)
+	if err == nil {
+		t.Fatalf("non-authoritative writer-fence history projected: %#v", ProjectRunView(projection))
+	}
+	requireProjectionError(t, err, ErrRunProjectionInvalid)
+	if projection.latestSeq != 0 || len(projection.events) != 0 || projection.view.Schema != "" {
+		t.Fatalf("rejected writer-fence history returned a partial projection: %#v", projection)
 	}
 }
 
