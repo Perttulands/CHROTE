@@ -258,6 +258,7 @@ func TestSchema2TerminalAuthoritySnapshotsHeadersAndMutationAreExact(t *testing.
 		failure := schema2SecondRepairFixture(t, "error")
 		failure["errorScope"] = "node"
 		failure["nodeId"] = projectionTestFormationID
+		failure["attempt"] = uint64(1)
 		failure["relatedSeq"] = uint64(4)
 		if err := schema2LifecycleReduce(t, &state, 5, "error", failure); err != nil {
 			t.Fatalf("prepare exact selected attempt error: %v", err)
@@ -1170,7 +1171,9 @@ func schema2LifecycleMap(t *testing.T, value any) map[string]any {
 func schema2FailureHeaderState(t *testing.T, errorCause bool) (projectionState, map[string]any) {
 	t.Helper()
 	state := schema2EpochTestState()
-	if err := schema2EpochReduce(t, &state, 19, 0, "error", schema2SecondRepairFixture(t, "error")); err != nil {
+	if _, _, err := schema2FinalGreenReduceError(
+		t, &state, 19, schema2SecondRepairFixture(t, "error"), nil,
+	); err != nil {
 		t.Fatalf("prepare failure provenance: %v", err)
 	}
 	start := schema2TerminalFailureStartedData(0)

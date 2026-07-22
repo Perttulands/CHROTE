@@ -1001,10 +1001,12 @@ func TestProjectRunViewGenerationTracksImmutableIncarnation(t *testing.T) {
 
 	tail := cloneCanonicalInput(schema2Base)
 	events := canonicalLedgerEvents(t, tail)
-	events = append(events, schema2Event(projectionTestRunID, uint64(len(events)+1), "error", map[string]any{
+	tailError := schema2Event(projectionTestRunID, uint64(len(events)+1), "error", map[string]any{
 		"code": "display_only", "message": "tail", "boundary": "schema", "errorScope": "run",
 		"recoverable": true, "relatedSeq": 1,
-	}))
+	})
+	delete(tailError, "attempt")
+	events = append(events, tailError)
 	tail = replaceCanonicalDocument(t, tail, CanonicalInputRoleSchema2Ledger, marshalProjectionLedger(t, events...))
 	if got := ProjectRunView(mustProjectCanonicalFixture(t, tail)).Generation; got != schema2Generation {
 		t.Fatalf("schema-2 generation changed across a coherent ordinary ledger tail: got %q want %q", got, schema2Generation)
