@@ -20,6 +20,7 @@ import {
   fetchBoardDocument,
   fetchBoardLayout,
   fetchBoardSummaries,
+  fetchRunEscalations,
   fetchRunEvents,
   fetchRunStatus,
   patchBoardDocument,
@@ -31,6 +32,7 @@ import {
 import {
   activeRunStorageKey,
   openHumanGateId,
+  projectNodeEvidence,
   projectNodeStates,
   runStatusFromResponse,
   upsertRunEvent,
@@ -58,6 +60,7 @@ import type {
   LayoutDocument,
   LayoutNode,
   MissionNode,
+  OpenEscalation,
   RunEvent,
   RunStatusProjection,
   ViewTransform,
@@ -131,6 +134,8 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const [error, setError] = useState('')
   const [activeRun, setActiveRun] = useState<RunStatusProjection | null>(null)
   const [runEvents, setRunEvents] = useState<RunEvent[]>([])
+  const [escalations, setEscalations] = useState<OpenEscalation[]>([])
+  const [inspectedNodeId, setInspectedNodeId] = useState<string | null>(null)
   const [ghost, setGhost] = useState<{ x: number; y: number; agentId: string; harness?: string } | null>(null)
   const [hoverSlot, setHoverSlot] = useState<string | null>(null)
   const [dragPos, setDragPos] = useState<{ id: string; x: number; y: number } | null>(null)
@@ -179,6 +184,8 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     legacyVerificationPendingRef.current = false
     setLegacyVerification(null)
     setInspectedToolId(null)
+    setInspectedNodeId(null)
+    setEscalations([])
   }, [selectedSlug])
 
   useLayoutEffect(() => {
@@ -213,6 +220,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
         setLayout(null)
         setActiveRun(null)
         setRunEvents([])
+        setEscalations([])
       })
       .catch(err => !cancelled && setError(err instanceof Error ? err.message : 'Failed to load boards'))
     return () => { cancelled = true }
@@ -286,6 +294,12 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
             setError(err instanceof Error ? err.message : 'Failed to restore run events')
           }
         }
+        try {
+          const open = await fetchRunEscalations(runId)
+          if (!cancelled) setEscalations(open)
+        } catch {
+          /* escalations are best-effort; never block run restore */
+        }
         if (status.final) window.localStorage.removeItem(activeRunStorageKey(selectedSlug))
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to restore active run')
@@ -307,6 +321,12 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
         const events = await fetchRunEvents(activeRun.runId)
         if (cancelled) return
         setRunEvents(prev => events.reduce((acc, event) => upsertRunEvent(acc, event), prev))
+        try {
+          const open = await fetchRunEscalations(activeRun.runId)
+          if (!cancelled) setEscalations(open)
+        } catch {
+          /* escalations are best-effort; a transient failure must not drop the run poll */
+        }
         if (status.final && selectedSlug) window.localStorage.removeItem(activeRunStorageKey(selectedSlug))
       } catch {
         /* transient */
@@ -902,6 +922,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       const status = { ...result.status, runId: result.status.runId || result.runId }
       setActiveRun(status)
       setRunEvents([])
+      setEscalations([])
       window.localStorage.setItem(activeRunStorageKey(current.slug), status.runId)
       setError('')
     } catch (err) {
@@ -917,6 +938,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       const status = { ...result.status, runId: result.status.runId || result.runId }
       setActiveRun(status)
       setRunEvents([])
+      setEscalations([])
       window.localStorage.setItem(activeRunStorageKey(current.slug), status.runId)
       setError('')
     } catch (err) {
@@ -1601,6 +1623,40 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   )
   const runBadgeClass = activeRun ? activeRun.status : ''
   const pendingHumanGateId = useMemo(() => openHumanGateId(runEvents), [runEvents])
+  const openEscalations = useMemo(
+    () => (activeRun && !activeRun.final ? escalations : []),
+    [activeRun, escalations],
+  )
+  const needsYouNodeIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const escalation of openEscalations) {
+      if (escalation.gateId) ids.add(escalation.gateId)
+      if (escalation.nodeId) ids.add(escalation.nodeId)
+    }
+    return ids
+  }, [openEscalations])
+  const inspectedNode = useMemo(() => {
+    if (!inspectedNodeId || !board) return null
+    const formation = board.formations?.find(node => node.id === inspectedNodeId)
+    if (formation) return { kind: 'formation' as const, id: formation.id, title: formation.title }
+    const gate = board.gates?.find(node => node.id === inspectedNodeId)
+    if (gate) return { kind: 'gate' as const, id: gate.id, title: gate.title || gate.kinds.join(' · ') || 'Gate' }
+    const mission = board.missions?.find(node => node.id === inspectedNodeId)
+    if (mission) return { kind: 'mission' as const, id: mission.id, title: mission.title }
+    return null
+  }, [inspectedNodeId, board])
+  const inspectedEvidence = useMemo(
+    () => (inspectedNodeId ? projectNodeEvidence(runEvents, inspectedNodeId) : null),
+    [inspectedNodeId, runEvents],
+  )
+  const inspectableNodeId = useCallback((escalation: OpenEscalation): string => {
+    const candidate = escalation.gateId || escalation.nodeId || ''
+    if (!candidate || !board) return ''
+    const known = board.formations?.some(node => node.id === candidate)
+      || board.gates?.some(node => node.id === candidate)
+      || board.missions?.some(node => node.id === candidate)
+    return known ? candidate : ''
+  }, [board])
 
   return (
     <div className="fmx" data-testid="formations-view" data-cockpit="d7" data-textsize={textSize}>
@@ -1727,7 +1783,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
               return (
                 <div
                   key={formation.id}
-                  className={`formation type-${formation.type}${state === 'running' ? ' running' : ''}${judgeHover === formation.id ? ' judgehover' : ''}`}
+                  className={`formation type-${formation.type}${state === 'running' ? ' running' : ''}${judgeHover === formation.id ? ' judgehover' : ''}${needsYouNodeIds.has(formation.id) ? ' needs-you' : ''}`}
                   data-node={formation.id}
                   data-testid={`formation-node-${formation.id}`}
                   style={{ left: pos.x, top: pos.y }}
@@ -1758,6 +1814,17 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
                   })}
                   <div className="fhead" onPointerDown={event => beginNodeDrag(event, formation.id, index)}>
                     <div className="ft"><div className="tt">{formation.title}</div><div className="tg">{TYPE_TAG[formation.type]}</div></div>
+                    {nodeStates.has(formation.id) ? (
+                      <button
+                        type="button"
+                        className="finspect"
+                        title="Inspect run evidence"
+                        aria-label={`Inspect run evidence for ${formation.title}`}
+                        data-testid={`inspect-node-${formation.id}`}
+                        onPointerDown={event => event.stopPropagation()}
+                        onClick={event => { event.stopPropagation(); setInspectedNodeId(formation.id) }}
+                      >evidence</button>
+                    ) : null}
                     <button className="frun" title="Run formation" onClick={() => void runFormation(formation)} data-testid={`run-formation-${formation.id}`}>{PLAY_SVG}</button>
                   </div>
                   <div className="fstatus">{state && state !== 'done' ? state : ''}</div>
@@ -1809,7 +1876,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
               return (
                 <div
                   key={gate.id}
-                  className={`gatecard${state ? ` ${state}` : ''}${gateHasJudge(gate.id) ? ' hasjudge' : ''}`}
+                  className={`gatecard${state ? ` ${state}` : ''}${gateHasJudge(gate.id) ? ' hasjudge' : ''}${needsYouNodeIds.has(gate.id) ? ' needs-you' : ''}`}
                   data-node={gate.id}
                   data-gate={gate.id}
                   data-testid={`gate-node-${gate.id}`}
@@ -1836,6 +1903,17 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
                   />
                   <span className="gico" onPointerDown={event => beginNodeDrag(event, gate.id, nodeIndex)}>{GATE_SVG}</span>
                   <span className="gmeta" onPointerDown={event => beginNodeDrag(event, gate.id, nodeIndex)}><span className="gt">{gate.title || gate.kinds.join(' · ') || 'Gate'}</span><span className="gs">{[gate.kinds.join(' · '), gate.criterion || 'work is accepted before it proceeds'].filter(Boolean).join(' · ')}</span></span>
+                  {nodeStates.has(gate.id) ? (
+                    <button
+                      type="button"
+                      className="ginspect"
+                      title="Inspect gate evidence"
+                      aria-label={`Inspect gate evidence for ${gate.title || 'gate'}`}
+                      data-testid={`inspect-node-${gate.id}`}
+                      onPointerDown={event => event.stopPropagation()}
+                      onClick={event => { event.stopPropagation(); setInspectedNodeId(gate.id) }}
+                    >evidence</button>
+                  ) : null}
                   <span className="glabel pass"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M4 12l5 5L20 6" /></svg>pass</span>
                   <span className="glabel fail"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M6 6l12 12M18 6L6 18" /></svg>fail</span>
                   <span className={`port pass${hoverPort === `${gate.id}:pass` ? ' snaptarget' : ''}`} data-port-out={`${gate.id}:pass`} title="On PASS → drag to the next step" onPointerDown={event => beginWire(event, `${gate.id}:pass`, 'pass')} />
@@ -1938,6 +2016,29 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
             </div>
           ) : null}
 
+          {openEscalations.length ? (
+            <div className="needs-you" data-testid="escalations-banner" role="alert">
+              <div className="needs-you-hd">Needs you</div>
+              <div className="needs-you-list">
+                {openEscalations.map(escalation => (
+                  <button
+                    type="button"
+                    className={`needs-you-item${escalation.blocks ? ' stop' : ''}`}
+                    data-testid={`escalation-${escalation.seq}`}
+                    key={escalation.seq}
+                    title={inspectableNodeId(escalation) ? 'Open the escalated node evidence' : undefined}
+                    disabled={!inspectableNodeId(escalation)}
+                    onClick={() => { const id = inspectableNodeId(escalation); if (id) setInspectedNodeId(id) }}
+                  >
+                    <span className="needs-you-sev">{escalation.blocks ? 'stop' : (escalation.severity || 'needs-attention')}</span>
+                    <span className="needs-you-ask">{escalation.reason || 'The run is asking for you.'}</span>
+                    <span className="needs-you-where">{escalation.gateId || escalation.nodeId || 'run'}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
           <div className="zoomlevel">{Math.round(view.scale * 100)}%</div>
           <div className="zoomctl">
             <button onClick={() => zoomBy(1.2)} title="Zoom in">+</button>
@@ -2030,6 +2131,95 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
                 ))}
               </div>
             </section>
+          </div>
+        </div>
+      ) : null}
+
+      {inspectedNode && inspectedEvidence ? (
+        <div
+          className="pop node-inspector"
+          role="dialog"
+          aria-label={`Run evidence · ${inspectedNode.title}`}
+          data-testid="node-inspector"
+          onPointerDown={event => event.stopPropagation()}
+        >
+          <div className="pop-head">
+            <span className="pt">Run evidence · {inspectedNode.title}</span>
+            <button className="x" type="button" aria-label="Close run evidence" onClick={() => setInspectedNodeId(null)}>x</button>
+          </div>
+          <div className="pop-body node-evidence">
+            <dl className="node-evidence-identity">
+              <div><dt>Node</dt><dd>{inspectedNode.id}</dd></div>
+              <div><dt>State</dt><dd data-testid="node-evidence-state">{inspectedEvidence.state || 'not started'}</dd></div>
+            </dl>
+
+            <section className="node-evidence-section">
+              <h3>Attempts</h3>
+              {inspectedEvidence.attempts.length === 0 ? (
+                <div className="node-evidence-empty">No dispatch attempts recorded yet.</div>
+              ) : inspectedEvidence.attempts.map(attempt => (
+                <div className="node-evidence-attempt" data-testid={`node-attempt-${attempt.attempt}`} key={attempt.attempt}>
+                  <div className="node-attempt-head">Attempt {attempt.attempt}{attempt.reason ? ` · ${attempt.reason}` : ''}</div>
+                  {attempt.dispatches.length === 0 ? (
+                    <div className="node-evidence-empty">Started — no slot dispatch recorded.</div>
+                  ) : attempt.dispatches.map(dispatch => (
+                    <div className="node-dispatch" key={dispatch.seq}>
+                      <span className="node-dispatch-slot">{dispatch.slotId || 'slot'}</span>
+                      <span className="node-dispatch-agent">{[dispatch.agentId, dispatch.harness].filter(Boolean).join(' · ') || 'agent not recorded'}</span>
+                      {dispatch.phase ? <span className="node-dispatch-phase">{dispatch.phase}</span> : null}
+                      {dispatch.promptSha256 ? <span className="node-dispatch-hash" title={`prompt sha256 ${dispatch.promptSha256}`}>prompt {dispatch.promptSha256.slice(0, 12)}</span> : null}
+                      {dispatch.sessionRef ? <span className="node-dispatch-session">{dispatch.sessionRef}</span> : null}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </section>
+
+            <section className="node-evidence-section">
+              <h3>Output</h3>
+              {inspectedEvidence.output ? (
+                <div className="node-evidence-output" data-testid="node-output">
+                  <div className="node-output-status">status · {inspectedEvidence.output.status}</div>
+                  {inspectedEvidence.output.text ? (
+                    <pre className="node-output-value" data-testid="node-output-value">{inspectedEvidence.output.text}</pre>
+                  ) : <div className="node-evidence-empty">No inline output value.</div>}
+                  {inspectedEvidence.output.reportRef ? (
+                    <div className="node-output-ref" data-testid="node-output-reportref">report · {inspectedEvidence.output.reportRef}</div>
+                  ) : null}
+                  {inspectedEvidence.output.ports.length ? (
+                    <div className="node-output-ports">
+                      {inspectedEvidence.output.ports.map(port => (
+                        <div className="node-output-port" data-testid={`node-output-port-${port.port}`} key={port.port}>
+                          <span className="node-output-port-id">{port.port}</span>
+                          {port.value ? <span className="node-output-port-value">{port.value}</span> : null}
+                          {port.reportRef ? <span className="node-output-port-ref">report {port.reportRef}</span> : null}
+                          {port.ref ? <span className="node-output-port-ref">ref {port.ref}</span> : null}
+                          {port.artifactRef ? <span className="node-output-port-ref">artifact {port.artifactRef}</span> : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : <div className="node-evidence-empty">No output recorded yet.</div>}
+            </section>
+
+            {inspectedEvidence.gateVerdict ? (
+              <section className="node-evidence-section">
+                <h3>Gate verdict</h3>
+                <div className={`node-evidence-verdict ${inspectedEvidence.gateVerdict.verdict === 'fail' ? 'fail' : 'pass'}`} data-testid="node-gate-verdict">
+                  <div className="node-verdict-line">verdict · {inspectedEvidence.gateVerdict.verdict || 'not recorded'}</div>
+                  {inspectedEvidence.gateVerdict.routePort ? <div className="node-verdict-line">route · {inspectedEvidence.gateVerdict.routePort}</div> : null}
+                  {inspectedEvidence.gateVerdict.reason ? <div className="node-verdict-line">reason · {inspectedEvidence.gateVerdict.reason}</div> : null}
+                  {inspectedEvidence.gateVerdict.perKind.length ? (
+                    <div className="node-verdict-evidence">
+                      {inspectedEvidence.gateVerdict.perKind.map(([kind, result]) => (
+                        <div className="node-verdict-kind" key={kind}><span>{kind}</span><strong>{result}</strong></div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </section>
+            ) : null}
           </div>
         </div>
       ) : null}

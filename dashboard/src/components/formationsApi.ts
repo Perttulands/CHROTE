@@ -6,6 +6,7 @@ import type {
   LayoutDocument,
   LayoutEdge,
   LayoutNode,
+  OpenEscalation,
   RunEvent,
   RunStartResult,
   RunStatusProjection,
@@ -170,6 +171,11 @@ export async function fetchRunStatus(runId: string): Promise<RunStatusProjection
 export async function fetchRunEvents(runId: string): Promise<RunEvent[]> {
   const result = await fetchApi<{ events: RunEvent[] }>(`/api/formations/runs/${encodeURIComponent(runId)}/events`)
   return (result.data.events || []).sort((a, b) => a.seq - b.seq)
+}
+
+export async function fetchRunEscalations(runId: string): Promise<OpenEscalation[]> {
+  const result = await fetchApi<{ escalations: OpenEscalation[] }>(`/api/formations/runs/${encodeURIComponent(runId)}/escalations`)
+  return (result.data.escalations || []).sort((a, b) => a.seq - b.seq)
 }
 
 export async function abortRunRequest(runId: string, body: { reason: string; requestedBy: string }): Promise<RunStatusProjection | RunStatusResult> {

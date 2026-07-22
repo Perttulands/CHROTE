@@ -129,6 +129,10 @@ async function installArchonRunLifecycleHarness(page: Page, fixture: ReturnType<
       await fulfillApi(route, { status })
       return
     }
+    if (request.method() === 'GET' && path === `/api/formations/runs/${status.runId}/escalations`) {
+      await fulfillApi(route, { escalations: [] })
+      return
+    }
 
     await route.fulfill({
       status: 404,
@@ -228,6 +232,10 @@ async function installReloadRecoveryHarness(page: Page) {
     }
     if (request.method() === 'GET' && path === `/api/formations/runs/${runId}/events`) {
       await fulfillApi(route, { events: runEvents })
+      return
+    }
+    if (request.method() === 'GET' && path === `/api/formations/runs/${runId}/escalations`) {
+      await fulfillApi(route, { escalations: [] })
       return
     }
 
@@ -1469,5 +1477,70 @@ test.describe('Formations cockpit — direct manipulation gestures', () => {
       gateId: 'gate-review',
       chain: ['formation-review'],
     })
+  })
+})
+
+test.describe('Formations cockpit — evidence inspector + needs-you escalations', () => {
+  test('inspects a node’s ledger evidence and renders an open escalation on the board', async ({ page }) => {
+    const runId = 'run-playwright-smoke'
+    const boardSlug = mockFormationsBoard.slug
+    const formationId = mockFormationsBoard.formations[0].id
+    const gateId = mockFormationsBoard.gates[0].id
+
+    await mockApiRoutes(page)
+    await mockFormationsApiRoutes(page, {
+      runStatus: {
+        runId,
+        status: 'blocked',
+        final: false,
+        boardSlug,
+        missionId: mockFormationsBoard.missions[0].id,
+        eventCount: 5,
+        resumeAllowed: true,
+      },
+      runEvents: [
+        { seq: 1, type: 'run_started', runId, data: { actor: 'playwright' } },
+        { seq: 2, type: 'node_started', runId, nodeId: formationId, attempt: 1, data: { reason: 'single-formation' } },
+        { seq: 3, type: 'slot_dispatch', runId, nodeId: formationId, attempt: 1, data: { slotId: 'slot-controller', agentId: 'claude', harness: 'claude-code', promptSha256: '0011223344556677' } },
+        { seq: 4, type: 'node_output', runId, nodeId: formationId, data: { status: 'done', text: 'A reviewed poem', reportRef: 'reports/review.md', outputs: { out: { text: 'A reviewed poem', reportRef: 'reports/review.md' } } } },
+        { seq: 5, type: 'run_blocked', runId, gateId, data: { reason: 'human gate', resumeAllowed: true } },
+      ] as unknown as typeof mockFormationsRunEvents,
+      escalations: [
+        { runId, seq: 6, gateId, nodeId: gateId, severity: 'stop', reason: 'operator taste needed on the poem', source: 'agent', trigger: 'sentinel', blocks: true },
+      ],
+    })
+
+    await page.addInitScript(({ key, value }) => {
+      window.localStorage.setItem(key, value)
+    }, { key: activeRunStorageKey(boardSlug), value: runId })
+
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Formations' }).click()
+    await expect(page.getByTestId('formations-view')).toBeVisible()
+    await expect(page.getByTestId('run-banner').locator('.badge')).toHaveText('blocked')
+
+    // Evidence inspector: inline output value + reportRef, straight from the ledger.
+    await page.getByTestId(`inspect-node-${formationId}`).click()
+    const inspector = page.getByTestId('node-inspector')
+    await expect(inspector).toBeVisible()
+    await expect(inspector.getByTestId('node-evidence-state')).toHaveText('done')
+    await expect(inspector.getByTestId('node-attempt-1')).toContainText('single-formation')
+    await expect(inspector).toContainText('claude')
+    await expect(inspector.getByTestId('node-output-value')).toHaveText('A reviewed poem')
+    await expect(inspector.getByTestId('node-output-reportref')).toContainText('reports/review.md')
+    await inspector.getByRole('button', { name: 'Close run evidence' }).click()
+    await expect(page.getByTestId('node-inspector')).toHaveCount(0)
+
+    // Needs-you: the open escalation is unmissable, names the ask + node, and marks the card.
+    const banner = page.getByTestId('escalations-banner')
+    await expect(banner).toBeVisible()
+    await expect(banner).toContainText('Needs you')
+    await expect(banner.getByTestId('escalation-6')).toContainText('operator taste needed on the poem')
+    await expect(banner.getByTestId('escalation-6')).toContainText(gateId)
+    await expect(page.getByTestId(`gate-node-${gateId}`)).toHaveClass(/needs-you/)
+
+    // The escalation entry deep-links into the escalated node's evidence.
+    await banner.getByTestId('escalation-6').click()
+    await expect(page.getByTestId('node-inspector')).toContainText('Run evidence')
   })
 })

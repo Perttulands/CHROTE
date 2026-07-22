@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   activeRunStorageKey,
+  projectNodeEvidence,
   runEventReportRef,
   runEventResumeAllowed,
   runEventText,
@@ -48,6 +49,51 @@ describe('formations run-state helpers', () => {
     expect(runEventReportRef({ runId: 'run_1', seq: 2, type: 'node_output', data: { reportRef: 'reports/fmn_work.md' } })).toBe('reports/fmn_work.md')
     expect(runEventResumeAllowed({ runId: 'run_1', seq: 3, type: 'run_blocked', data: { resumeAllowed: true } }, false)).toBe(true)
     expect(runEventResumeAllowed({ runId: 'run_1', seq: 4, type: 'run_failed' }, true)).toBe(false)
+  })
+
+  it('projects a formation node dispatch attempts, inline output, and reportRef from the ledger', () => {
+    const evidence = projectNodeEvidence([
+      { runId: 'run_1', seq: 1, type: 'run_started' },
+      { runId: 'run_1', seq: 2, type: 'node_started', nodeId: 'fmn_work', attempt: 1, data: { reason: 'single-formation' } },
+      { runId: 'run_1', seq: 3, type: 'slot_dispatch', nodeId: 'fmn_work', attempt: 1, data: { slotId: 'slot_lead', agentId: 'mason', harness: 'codex', phase: 'work', promptSha256: 'abcdef0123456789' } },
+      { runId: 'run_1', seq: 4, type: 'node_output', nodeId: 'fmn_work', data: { status: 'done', text: 'the work output', reportRef: 'reports/fmn_work.md', outputs: { port_work_out: { text: 'the work output', reportRef: 'reports/fmn_work.md', ref: 'ledger://run_1/edge' } } } },
+    ], 'fmn_work')
+
+    expect(evidence.state).toBe('done')
+    expect(evidence.attempts).toHaveLength(1)
+    expect(evidence.attempts[0]).toMatchObject({ attempt: 1, startedSeq: 2, reason: 'single-formation' })
+    expect(evidence.attempts[0].dispatches).toEqual([
+      { seq: 3, slotId: 'slot_lead', agentId: 'mason', harness: 'codex', phase: 'work', promptSha256: 'abcdef0123456789', sessionRef: '' },
+    ])
+    expect(evidence.output).toMatchObject({ status: 'done', text: 'the work output', reportRef: 'reports/fmn_work.md' })
+    expect(evidence.output?.ports).toEqual([
+      { port: 'port_work_out', value: 'the work output', reportRef: 'reports/fmn_work.md', ref: 'ledger://run_1/edge', artifactRef: '' },
+    ])
+    expect(evidence.gateVerdict).toBeNull()
+  })
+
+  it('groups repeated dispatch attempts and captures the gate verdict evidence for a gate node', () => {
+    const evidence = projectNodeEvidence([
+      { runId: 'run_1', seq: 1, type: 'node_started', nodeId: 'fmn_work', attempt: 1 },
+      { runId: 'run_1', seq: 2, type: 'slot_dispatch', nodeId: 'fmn_work', attempt: 1, data: { slotId: 'slot_lead', agentId: 'mason' } },
+      { runId: 'run_1', seq: 3, type: 'node_started', nodeId: 'fmn_work', attempt: 2 },
+      { runId: 'run_1', seq: 4, type: 'slot_dispatch', nodeId: 'fmn_work', attempt: 2, data: { slotId: 'slot_lead', agentId: 'mason' } },
+      { runId: 'run_1', seq: 5, type: 'gate_verdict', nodeId: 'gate_review', gateId: 'gate_review', data: { verdict: 'fail', reason: 'needs another pass', routePort: 'fail', perKind: { code: 'fail', human: 'pass' } } },
+    ], 'gate_review')
+
+    expect(evidence.attempts).toHaveLength(0)
+    expect(evidence.gateVerdict).toMatchObject({ verdict: 'fail', reason: 'needs another pass', routePort: 'fail' })
+    expect(evidence.gateVerdict?.perKind).toEqual([['code', 'fail'], ['human', 'pass']])
+    expect(evidence.state).toBe('failed')
+
+    const workEvidence = projectNodeEvidence([
+      { runId: 'run_1', seq: 1, type: 'node_started', nodeId: 'fmn_work', attempt: 1 },
+      { runId: 'run_1', seq: 2, type: 'slot_dispatch', nodeId: 'fmn_work', attempt: 1, data: { slotId: 'slot_lead' } },
+      { runId: 'run_1', seq: 3, type: 'node_started', nodeId: 'fmn_work', attempt: 2 },
+      { runId: 'run_1', seq: 4, type: 'slot_dispatch', nodeId: 'fmn_work', attempt: 2, data: { slotId: 'slot_lead' } },
+    ], 'fmn_work')
+    expect(workEvidence.attempts.map(attempt => attempt.attempt)).toEqual([1, 2])
+    expect(workEvidence.output).toBeNull()
   })
 
   it('normalizes run status envelopes and active run storage keys', () => {
