@@ -147,6 +147,186 @@ func TestTask1DirectNodeAuthorityRequiresExactEnvelopeIdentity(t *testing.T) {
 	}
 }
 
+func TestTask1SlotBindingAuthorityRequiresExactEnvelopeIdentity(t *testing.T) {
+	t.Run("conformant binding observation records only exact binding health", func(t *testing.T) {
+		state, data := schema2DerivedBindingObservationInput(t)
+		if err := schema2DerivedEnvelopeReduce(t, &state, 5, "slot_binding_observed", data, nil); err != nil {
+			t.Fatalf("reduce conformant slot_binding_observed: %v", err)
+		}
+		if len(state.health) != 1 || state.health["binding_worker"].Health != "runnable" {
+			t.Fatalf("binding health authority = %#v", state.health)
+		}
+	})
+
+	for _, mutation := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "omitted nodeId", mutate: func(event map[string]any) { delete(event, "nodeId") }},
+		{name: "mismatched nodeId", mutate: func(event map[string]any) { event["nodeId"] = projectionTestMissionID }},
+		{name: "omitted slotId", mutate: func(event map[string]any) { delete(event, "slotId") }},
+		{name: "mismatched slotId", mutate: func(event map[string]any) { event["slotId"] = "slot_other" }},
+		{name: "fabricated attempt", mutate: func(event map[string]any) { event["attempt"] = uint64(1) }},
+	} {
+		t.Run("rejects "+mutation.name+" without mutation", func(t *testing.T) {
+			state, data := schema2DerivedBindingObservationInput(t)
+			schema2DerivedEnvelopeRequireRejection(t, &state, 5, "slot_binding_observed", data, mutation.mutate)
+		})
+	}
+
+	for _, mutation := range []struct {
+		name   string
+		mutate func(map[string]any)
+	}{
+		{name: "unknown binding", mutate: func(data map[string]any) { data["bindingId"] = "binding_other" }},
+		{name: "contradictory slot", mutate: func(data map[string]any) { data["slotId"] = "slot_other" }},
+		{name: "contradictory target", mutate: func(data map[string]any) { data["sessionTargetId"] = "target_other" }},
+	} {
+		t.Run("rejects "+mutation.name+" without mutation", func(t *testing.T) {
+			state, data := schema2DerivedBindingObservationInput(t)
+			mutation.mutate(data)
+			schema2DerivedRequireDataRejection(t, &state, 5, "slot_binding_observed", data, nil)
+		})
+	}
+}
+
+func schema2DerivedBindingObservationInput(t *testing.T) (projectionState, map[string]any) {
+	t.Helper()
+	state := schema2DerivedEnvelopeAttemptState(t, projectionTestFormationID, "formation")
+	state.bindings["binding_worker"] = schema2Binding{
+		BindingID: "binding_worker", NodeID: projectionTestFormationID, SlotID: "slot_worker",
+		AgentID: "worker", Harness: "codex", SessionTargetID: "target_worker",
+		TargetFingerprint: strings.Repeat("a", 64), SessionLineageSHA256: strings.Repeat("c", 64),
+	}
+	data := schema2SecondRepairFixture(t, "slot_binding_observed")
+	data["relatedSeq"] = uint64(3)
+	return state, data
+}
+
+func TestTask1RetainedSlotAuthorityRequiresExactEnvelopeIdentity(t *testing.T) {
+	tests := []struct {
+		name      string
+		eventType string
+		sequence  uint64
+		prepare   func(*testing.T) (projectionState, map[string]any)
+	}{
+		{name: "capability issue", eventType: "slot_peek_capability_issued", sequence: 6, prepare: schema2DerivedCapabilityIssueInput},
+		{name: "steering start", eventType: "slot_steering_started", sequence: 7, prepare: schema2DerivedSteeringStartInput},
+		{name: "steering end", eventType: "slot_steering_ended", sequence: 8, prepare: schema2DerivedSteeringEndInput},
+		{name: "capability revoke", eventType: "slot_peek_capability_revoked", sequence: 21, prepare: schema2DerivedCapabilityRevokeInput},
+		{name: "reconciliation interrupt", eventType: "slot_reconciliation_interrupt", sequence: 22, prepare: schema2DerivedReconciliationInput},
+		{name: "reconciliation outcome", eventType: "slot_reconciliation_interrupt_outcome", sequence: 23, prepare: schema2DerivedReconciliationOutcomeInput},
+		{name: "slot result", eventType: "slot_result", sequence: 9, prepare: schema2DerivedSlotResultInput},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name+" conformant envelope is accepted", func(t *testing.T) {
+			state, data := test.prepare(t)
+			if err := schema2DerivedEnvelopeReduce(t, &state, test.sequence, test.eventType, data, nil); err != nil {
+				t.Fatalf("reduce conformant %s: %v", test.eventType, err)
+			}
+		})
+		for _, member := range []string{"nodeId", "slotId", "attempt"} {
+			member := member
+			for _, mutation := range []struct {
+				name   string
+				mutate func(map[string]any)
+			}{
+				{name: "omitted", mutate: func(event map[string]any) { delete(event, member) }},
+				{name: "mismatched", mutate: func(event map[string]any) { schema2SetMismatchedEnvelopeIdentity(event, member) }},
+			} {
+				mutation := mutation
+				t.Run(test.name+" rejects "+mutation.name+" "+member+" without mutation", func(t *testing.T) {
+					state, data := test.prepare(t)
+					schema2DerivedEnvelopeRequireRejection(t, &state, test.sequence, test.eventType, data, mutation.mutate)
+				})
+			}
+		}
+	}
+
+	t.Run("slot result rejects payload retained-dispatch disagreement", func(t *testing.T) {
+		state, data := schema2DerivedSlotResultInput(t)
+		data["slotId"] = "slot_other"
+		schema2DerivedRequireDataRejection(t, &state, 9, "slot_result", data, nil)
+	})
+}
+
+func schema2DerivedCapabilityIssueInput(t *testing.T) (projectionState, map[string]any) {
+	t.Helper()
+	state, _ := schema2LifecyclePublicState(t, "dispatch")
+	return state, schema2SecondRepairFixture(t, "slot_peek_capability_issued")
+}
+
+func schema2DerivedSteeringStartInput(t *testing.T) (projectionState, map[string]any) {
+	t.Helper()
+	state, issued := schema2DerivedCapabilityIssueInput(t)
+	if err := schema2DerivedEnvelopeReduce(t, &state, 6, "slot_peek_capability_issued", issued, nil); err != nil {
+		t.Fatalf("prepare issued capability: %v", err)
+	}
+	started := schema2SecondRepairFixture(t, "slot_steering_started")
+	started["capabilityIssuedSeq"] = uint64(6)
+	return state, started
+}
+
+func schema2DerivedSteeringEndInput(t *testing.T) (projectionState, map[string]any) {
+	t.Helper()
+	state, started := schema2DerivedSteeringStartInput(t)
+	if err := schema2DerivedEnvelopeReduce(t, &state, 7, "slot_steering_started", started, nil); err != nil {
+		t.Fatalf("prepare open steering: %v", err)
+	}
+	ended := schema2SecondRepairFixture(t, "slot_steering_ended")
+	ended["startedSeq"] = uint64(7)
+	return state, ended
+}
+
+func schema2DerivedCapabilityRevokeInput(t *testing.T) (projectionState, map[string]any) {
+	t.Helper()
+	return schema2LifecyclePreRevocationState(t, "cancel")
+}
+
+func schema2DerivedReconciliationInput(t *testing.T) (projectionState, map[string]any) {
+	t.Helper()
+	return schema2LifecycleCleanupState(t, "cancel")
+}
+
+func schema2DerivedReconciliationOutcomeInput(t *testing.T) (projectionState, map[string]any) {
+	t.Helper()
+	state, interrupt := schema2DerivedReconciliationInput(t)
+	if err := schema2DerivedEnvelopeReduce(t, &state, 22, "slot_reconciliation_interrupt", interrupt, nil); err != nil {
+		t.Fatalf("prepare reconciliation interrupt: %v", err)
+	}
+	return state, schema2LifecycleInterruptOutcomeData()
+}
+
+func schema2DerivedSlotResultInput(t *testing.T) (projectionState, map[string]any) {
+	t.Helper()
+	state := schema2EpochTestState()
+	if err := schema2LifecycleReduce(t, &state, 3, "node_started", schema2FinalGreenNodeStartedData(projectionTestFormationID, "formation")); err != nil {
+		t.Fatalf("prepare Formation attempt: %v", err)
+	}
+	state.bindings["binding_reviewer"] = schema2Binding{
+		BindingID: "binding_reviewer", NodeID: projectionTestFormationID, SlotID: "slot_reviewer",
+		AgentID: "reviewer", Harness: "codex", SessionTargetID: "target_reviewer",
+		TargetFingerprint: strings.Repeat("b", 64), SessionLineageSHA256: strings.Repeat("d", 64),
+	}
+	observed := map[string]any{
+		"bindingId": "binding_reviewer", "slotId": "slot_reviewer", "sessionTargetId": "target_reviewer",
+		"health": "runnable", "reason": "resolved", "observedAt": "2026-07-20T10:00:03Z", "relatedSeq": uint64(3),
+	}
+	if err := schema2DerivedEnvelopeReduce(t, &state, 4, "slot_binding_observed", observed, nil); err != nil {
+		t.Fatalf("prepare reviewer binding observation: %v", err)
+	}
+	dispatchEvent := schema2SlotDispatchEvent(t, 6, "dsp_01KXNP6VY3227H78329V52CKF9", "lease_01KXNP6VY3227H78329V52CKF9", "slot_reviewer", "reviewer", "binding_reviewer", "target_reviewer", strings.Repeat("b", 64), "peer-turn")
+	if err := schema2DerivedEnvelopeReduce(t, &state, 6, "slot_dispatch", cloneAny(dispatchEvent["data"]).(map[string]any), nil); err != nil {
+		t.Fatalf("prepare reviewer dispatch: %v", err)
+	}
+	matched := schema2MatchedReviewerEvents(t)
+	if err := schema2DerivedEnvelopeReduce(t, &state, 8, "slot_peek_capability_revoked", cloneAny(matched[0]["data"]).(map[string]any), nil); err != nil {
+		t.Fatalf("prepare reviewer capability revocation: %v", err)
+	}
+	return state, cloneAny(matched[1]["data"]).(map[string]any)
+}
+
 func schema2DerivedFormationResultInput(t *testing.T) (projectionState, map[string]any) {
 	t.Helper()
 	state := schema2EpochTestState()
@@ -212,6 +392,13 @@ func TestTask1DerivedGraphAuthorityRequiresExactEnvelopeIdentity(t *testing.T) {
 			schema2DerivedEnvelopeRequireRejection(t, &state, 6, "slot_dispatch", schema2RepairSlotDispatchData(t), identity.mutate)
 		})
 	}
+
+	t.Run("slot_dispatch_rejects_payload_binding_disagreement_without_mutation", func(t *testing.T) {
+		state := schema2DerivedEnvelopeSlotState(t)
+		data := schema2RepairSlotDispatchData(t)
+		data["bindingId"] = "binding_reviewer"
+		schema2DerivedRequireDataRejection(t, &state, 6, "slot_dispatch", data, nil)
+	})
 
 	t.Run("tool_dispatch_conformant_envelope_adds_only_exact_lease_authority", func(t *testing.T) {
 		state := schema2DerivedEnvelopeAttemptState(t, "tool_normalize", "tool")
@@ -336,6 +523,20 @@ func schema2DerivedEnvelopeRequireRejection(t *testing.T, state *projectionState
 	err := schema2DerivedEnvelopeReduce(t, state, sequence, eventType, data, mutate)
 	if err == nil {
 		t.Fatalf("%s admitted omitted or mismatched graph envelope identity", eventType)
+	}
+	requireProjectionError(t, err, ErrRunProjectionInvalid)
+	after := schema2ReducerStateFingerprint(t, state)
+	if !bytes.Equal(after, before) {
+		t.Fatalf("rejected %s mutated complete reducer state\nbefore: %s\nafter:  %s", eventType, before, after)
+	}
+}
+
+func schema2DerivedRequireDataRejection(t *testing.T, state *projectionState, sequence uint64, eventType string, data map[string]any, mutate func(map[string]any)) {
+	t.Helper()
+	before := schema2ReducerStateFingerprint(t, state)
+	err := schema2DerivedEnvelopeReduce(t, state, sequence, eventType, data, mutate)
+	if err == nil {
+		t.Fatalf("%s admitted data that contradicts retained authority", eventType)
 	}
 	requireProjectionError(t, err, ErrRunProjectionInvalid)
 	after := schema2ReducerStateFingerprint(t, state)

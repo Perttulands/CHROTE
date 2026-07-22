@@ -125,10 +125,12 @@ func schema2ApplyFixtureEnvelope(event map[string]any, eventType string, data ma
 	case "slot_peek_capability_issued", "slot_steering_started", "slot_steering_ended",
 		"slot_peek_capability_revoked", "slot_reconciliation_interrupt",
 		"slot_reconciliation_interrupt_outcome":
-		// The complete fixture family has one retained worker dispatch. Tests for
-		// alternate dispatches overwrite this exact spine from their own prefix.
+		slotID := "slot_worker"
+		if data["bindingId"] == "binding_reviewer" || data["dispatchId"] == "dsp_01KXNP6VY3227H78329V52CKF9" {
+			slotID = "slot_reviewer"
+		}
 		schema2SetFixtureIdentity(event, "nodeId", projectionTestFormationID)
-		schema2SetFixtureIdentity(event, "slotId", "slot_worker")
+		schema2SetFixtureIdentity(event, "slotId", slotID)
 		schema2SetFixtureIdentity(event, "attempt", uint64(1))
 	case "formation_result", "tool_dispatch", "tool_process_launch", "tool_result":
 		schema2SetFixtureIdentity(event, "nodeId", data["nodeId"])
