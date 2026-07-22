@@ -375,6 +375,33 @@ func TestSchema2TerminalAuthoritySnapshotsHeadersAndMutationAreExact(t *testing.
 			}
 		})
 
+		for _, finalMutation := range []struct {
+			name   string
+			mutate func(map[string]any)
+		}{
+			{name: "wrong_nonzero_preserved_peek_capability_state", mutate: func(data map[string]any) { data["peekCapabilityState"] = "revoked" }},
+			{name: "wrong_nonzero_preserved_capability_generation", mutate: func(data map[string]any) { data["latestCapabilityGeneration"] = "2" }},
+			{name: "wrong_nonzero_preserved_capability_issued_sequence", mutate: func(data map[string]any) { data["latestCapabilityIssuedSeq"] = uint64(5) }},
+			{name: "wrong_nonzero_preserved_steering_generation", mutate: func(data map[string]any) { data["latestSteeringGeneration"] = "2" }},
+			{name: "wrong_nonzero_final_capability_generation", mutate: func(data map[string]any) { data["finalCapabilityGeneration"] = "2" }},
+			{name: "wrong_nonzero_final_capability_issued_sequence", mutate: func(data map[string]any) { data["finalCapabilityIssuedSeq"] = uint64(5) }},
+			{name: "wrong_nonzero_final_steering_generation", mutate: func(data map[string]any) { data["finalSteeringGeneration"] = "2" }},
+			{name: "wrong_nonzero_final_revocation_sequence", mutate: func(data map[string]any) { data["finalPeekCapabilityRevokedSeq"] = uint64(20) }},
+		} {
+			t.Run(lifecycle+"_typed_final_rejects_"+finalMutation.name+"_without_mutation", func(t *testing.T) {
+				state, final := schema2LifecycleIssuedFinalState(t, lifecycle)
+				dispositions := final["slotDispatchDispositions"].([]any)
+				if len(dispositions) != 1 {
+					t.Fatalf("exact nonzero %s final slot cardinality = %d", lifecycle, len(dispositions))
+				}
+				finalMutation.mutate(dispositions[0].(map[string]any))
+				// The typed final path isolates reducer exactness from the known
+				// public issued-arm decoder defect. The public exact positive above
+				// retains end-to-end decoder coverage.
+				schema2RequireTypedLifecycleFinalErrorWithoutMutation(t, &state, 24, lifecycle, final)
+			})
+		}
+
 		for _, authority := range []struct {
 			name   string
 			mutate func(map[string]any)
@@ -948,6 +975,47 @@ func schema2LifecycleReduceTypedStart(t *testing.T, state *projectionState, sequ
 		safe = SafeSchema2RunFailureReconciliationStartedEvent{safeEventEnvelope: eventEnvelope(raw), Type: eventType, Data: typed}
 	}
 	return reduceSchema2Event(state, raw, safe, commands)
+}
+
+func schema2LifecycleReduceTypedFinal(t *testing.T, state *projectionState, sequence uint64, lifecycle string, data map[string]any) error {
+	t.Helper()
+	eventType := schema2LifecycleFinalType(lifecycle)
+	event := schema2Event(projectionTestRunID, sequence, eventType, cloneAny(data).(map[string]any))
+	event["epoch"] = state.view.Identity.Epoch
+	raw, err := decodeProjectionEvent(canonicalJSON(t, event), CanonicalRunSourceSchema2, projectionTestRunID)
+	if err != nil {
+		return err
+	}
+	encoded := mustMarshalJSON(t, data)
+	var safe SafeRunEvent
+	if lifecycle == "cancel" {
+		var typed SafeSchema2RunCanceledData
+		if err := json.Unmarshal(encoded, &typed); err != nil {
+			t.Fatalf("decode typed cancellation final: %v", err)
+		}
+		safe = SafeSchema2RunCanceledEvent{safeEventEnvelope: eventEnvelope(raw), Type: eventType, Data: typed}
+	} else {
+		var typed SafeSchema2RunFailedData
+		if err := json.Unmarshal(encoded, &typed); err != nil {
+			t.Fatalf("decode typed failure final: %v", err)
+		}
+		safe = SafeSchema2RunFailedEvent{safeEventEnvelope: eventEnvelope(raw), Type: eventType, Data: typed}
+	}
+	return reduceSchema2Event(state, raw, safe, nil)
+}
+
+func schema2RequireTypedLifecycleFinalErrorWithoutMutation(t *testing.T, state *projectionState, sequence uint64, lifecycle string, data map[string]any) {
+	t.Helper()
+	before := schema2ReducerStateFingerprint(t, state)
+	err := schema2LifecycleReduceTypedFinal(t, state, sequence, lifecycle, data)
+	if err == nil {
+		t.Fatalf("typed %s final admitted invalid nonzero lineage", lifecycle)
+	}
+	requireProjectionError(t, err, ErrRunProjectionInvalid)
+	after := schema2ReducerStateFingerprint(t, state)
+	if !bytes.Equal(after, before) {
+		t.Fatalf("rejected typed %s final mutated reducer state\nbefore: %s\nafter:  %s", lifecycle, before, after)
+	}
 }
 
 func schema2LifecycleApplyExactCleanup(t *testing.T, state *projectionState, lifecycle string) {
