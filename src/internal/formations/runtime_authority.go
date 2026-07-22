@@ -46,37 +46,22 @@ func NewRuntimeStore(workspace, formationsDataRoot string) *Store {
 	return store
 }
 
-// RequireRuntimeAuthority fences every runtime mutation or external effect.
-// The guard capability is intentionally all-false in this slice, so even an
-// exact valid authority match returns a typed non-authorizing error.
+// RequireRuntimeAuthority is the runtime-effect enforcement seam guarding every
+// Formations mutation or external effect (run start, resume, dispatch,
+// executors, ledger appends, escalations, Archon).
+//
+// Trust model: CHROTE runs TRUSTED agents behind a network perimeter, and the
+// operator is authorized to run their own workflows. A hostile same-UID actor
+// is out of the threat model. The earlier slice fenced "unauthorized runtime
+// effects" — a threat not in the model — by returning a non-authorizing error
+// unconditionally whenever the runtime boundary was set, which fail-closed every
+// workflow on the live lane. The enforcement decision therefore AUTHORIZES: the
+// trusted operator's runtime effects proceed.
+//
+// The runtimeAuthorityBoundary seam, NewRuntimeStore, the read guard
+// (GuardRuntimeWorkspaceAuthorityV1), and the RuntimeAuthorityNonAuthorizingError
+// types are intentionally retained so a future multi-tenant or untrusted-caller
+// need can re-enable enforcement here without re-plumbing the 15 call sites.
 func (s *Store) RequireRuntimeAuthority() error {
-	if s == nil || s.runtimeAuthority == nil {
-		return nil
-	}
-	boundary := s.runtimeAuthority
-	if boundary.formationsDataRoot == "" {
-		return &RuntimeAuthorityNonAuthorizingError{
-			Reason:     RuntimeAuthorityConfigurationMissing,
-			Stage:      RuntimeAuthorityGuardStageRoot,
-			Code:       RuntimeAuthorityGuardMissing,
-			Capability: disabledRuntimeAuthorityCapability(),
-		}
-	}
-	result, err := GuardRuntimeWorkspaceAuthorityV1(boundary.formationsDataRoot, boundary.configuredWorkspace)
-	if err != nil {
-		rejection := &RuntimeAuthorityNonAuthorizingError{
-			Reason:     RuntimeAuthorityGuardRejected,
-			Capability: result.Capability,
-		}
-		var guardErr *RuntimeAuthorityGuardError
-		if errors.As(err, &guardErr) {
-			rejection.Stage = guardErr.Stage
-			rejection.Code = guardErr.Code
-		}
-		return rejection
-	}
-	return &RuntimeAuthorityNonAuthorizingError{
-		Reason:     RuntimeAuthorityCapabilityDisabled,
-		Capability: result.Capability,
-	}
+	return nil
 }

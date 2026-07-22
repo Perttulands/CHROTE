@@ -13,7 +13,7 @@ import (
 	"github.com/chrote/server/internal/core"
 )
 
-func TestRuntimeRoutesInstallDefinitionPreflightAndNonAuthorizingStore(t *testing.T) {
+func TestRuntimeRoutesInstallDefinitionPreflightAndAuthorizedStore(t *testing.T) {
 	core.ResetConfigForTesting()
 	t.Cleanup(core.ResetConfigForTesting)
 	workspace := t.TempDir()
@@ -36,10 +36,12 @@ func TestRuntimeRoutesInstallDefinitionPreflightAndNonAuthorizingStore(t *testin
 		t.Fatalf("runtime start status/body = %d %s, want definition-first 404", recorder.Code, recorder.Body.String())
 	}
 
+	// The runtime authority guard now authorizes (trust model): resuming a missing
+	// run is no longer fenced up front with a 503, it proceeds to a not-found 404.
 	resume := httptest.NewRecorder()
 	mux.ServeHTTP(resume, httptest.NewRequest(http.MethodPost, "/api/formations/runs/run_missing/resume", bytes.NewBufferString(`{}`)))
-	if resume.Code != http.StatusServiceUnavailable || !strings.Contains(resume.Body.String(), `"code":"RUNTIME_AUTHORITY_NON_AUTHORIZING"`) {
-		t.Fatalf("runtime resume status/body = %d %s, want safe non-authorizing 503", resume.Code, resume.Body.String())
+	if resume.Code != http.StatusNotFound || !strings.Contains(resume.Body.String(), `"code":"NOT_FOUND"`) {
+		t.Fatalf("runtime resume status/body = %d %s, want authorized-path 404", resume.Code, resume.Body.String())
 	}
 
 	definitions := httptest.NewRecorder()

@@ -182,7 +182,11 @@ func TestFormationsRuntimeAPIMissionCASPrecedesToolPreflight(t *testing.T) {
 	}
 }
 
-func TestFormationsRuntimeAPIResumeAbortAndVerdictRemainAuthorityFirst(t *testing.T) {
+// The runtime authority guard now authorizes (trust model), so resume/abort/verdict
+// against a missing run are no longer fenced up front — they proceed past the guard
+// and report the run as not found. The response must still stay private and cause
+// no runtime effects.
+func TestFormationsRuntimeAPIResumeAbortAndVerdictReportMissingRun(t *testing.T) {
 	workspace := t.TempDir()
 	privateRoot := filepath.Join(t.TempDir(), "wsa_private_authority")
 	tmuxCapture := installRuntimeAuthorityAPITmuxTripwire(t, workspace)
@@ -203,12 +207,12 @@ func TestFormationsRuntimeAPIResumeAbortAndVerdictRemainAuthorityFirst(t *testin
 		t.Run(request.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, request.path, strings.NewReader(request.body)))
-			if recorder.Code != http.StatusServiceUnavailable {
-				t.Fatalf("status = %d, want 503: %s", recorder.Code, recorder.Body.String())
+			if recorder.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404: %s", recorder.Code, recorder.Body.String())
 			}
 			body := recorder.Body.String()
-			if !strings.Contains(body, `"code":"RUNTIME_AUTHORITY_NON_AUTHORIZING"`) {
-				t.Fatalf("response lacks stable authority code: %s", body)
+			if !strings.Contains(body, `"code":"NOT_FOUND"`) {
+				t.Fatalf("response lacks not-found code: %s", body)
 			}
 			assertRuntimeAuthorityAPIResponseIsPrivate(t, body, workspace, privateRoot)
 			assertNoRuntimeAuthorityAPIEffects(t, workspace, tmuxCapture)

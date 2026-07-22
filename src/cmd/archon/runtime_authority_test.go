@@ -113,7 +113,11 @@ to = "tool_normalize:port_tool_in"
 `
 }
 
-func TestArchonResumeAbortAndVerdictRemainAuthorityFirst(t *testing.T) {
+// The runtime authority guard now authorizes (trust model), so resume/abort/verdict
+// against a missing run are no longer fenced up front — they proceed past the guard
+// and report the run as not found. The structured error must stay private (no host
+// paths or authority IDs) and cause no runtime effects.
+func TestArchonResumeAbortAndVerdictReportMissingRun(t *testing.T) {
 	workspace := t.TempDir()
 	privateRoot := filepath.Join(t.TempDir(), "wsa_private_authority")
 	t.Setenv("CHROTE_FORMATIONS_DATA_ROOT", privateRoot)
@@ -138,8 +142,8 @@ func TestArchonResumeAbortAndVerdictRemainAuthorityFirst(t *testing.T) {
 				t.Fatalf("stdout = %q, want structured error on stderr only", stdout.String())
 			}
 			body := stderr.String()
-			if !strings.Contains(body, `"code": "runtime_authority_non_authorizing"`) {
-				t.Fatalf("stderr lacks typed runtime authority error: %s", body)
+			if !strings.Contains(body, `"code": "not_found"`) {
+				t.Fatalf("stderr lacks not-found code: %s", body)
 			}
 			assertArchonRuntimeAuthorityResponseIsPrivate(t, body, workspace, privateRoot)
 			assertNoArchonRuntimeAuthorityEffects(t, workspace, tmuxCapture, runner)

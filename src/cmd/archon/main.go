@@ -1026,7 +1026,7 @@ func runGateVerdict(store *formations.Store, args []string, stdout, stderr io.Wr
 		Actor:   *actor,
 	})
 	if err != nil {
-		return fail(stderr, err)
+		return failJSON(stderr, err, *jsonOut, "run", fs.Arg(0))
 	}
 	if *jsonOut {
 		return writeJSON(stdout, status)
