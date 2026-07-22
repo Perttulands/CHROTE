@@ -498,6 +498,11 @@ func TestTask1FinalGreenFindingsDuplicateMissingOrStaleMaterializationCannotClos
 		schema2FinalGreenRequireLifecycleRejectionWithoutMutation(t, &state, 21, "formation_result", result)
 	})
 
+	t.Run("duplicate_tool_result_is_rejected_without_mutation", func(t *testing.T) {
+		state, result := schema2FinalGreenToolResultState(t)
+		schema2FinalGreenRequireLifecycleRejectionWithoutMutation(t, &state, 7, "tool_result", result)
+	})
+
 	t.Run("formation_node_output_without_result_is_rejected_without_mutation", func(t *testing.T) {
 		state := schema2EpochTestState()
 		if err := schema2LifecycleReduce(t, &state, 3, "node_started", schema2FinalGreenNodeStartedData(projectionTestFormationID, "formation")); err != nil {
@@ -522,7 +527,7 @@ func TestTask1FinalGreenFindingsDuplicateMissingOrStaleMaterializationCannotClos
 		schema2FinalGreenRequireLifecycleRejectionWithoutMutation(t, &state, 22, "node_output", output)
 	})
 
-	t.Run("stale_result_cannot_close_new_latest_attempt", func(t *testing.T) {
+	t.Run("stale_node_output_cannot_close_new_latest_attempt", func(t *testing.T) {
 		state, result := schema2FinalGreenFormationResultState(t)
 		output := schema2FinalGreenNodeOutputFromResult("formation", 20, result)
 		if err := schema2LifecycleReduce(t, &state, 21, "node_output", output); err != nil {
@@ -535,6 +540,36 @@ func TestTask1FinalGreenFindingsDuplicateMissingOrStaleMaterializationCannotClos
 			t.Fatalf("prepare second Formation attempt: %v", err)
 		}
 		schema2FinalGreenRequireLifecycleRejectionWithoutMutation(t, &state, 23, "node_output", output)
+	})
+
+	t.Run("stale_formation_result_cannot_replace_prior_materialization_after_new_attempt", func(t *testing.T) {
+		state, result := schema2FinalGreenFormationResultState(t)
+		output := schema2FinalGreenNodeOutputFromResult("formation", 20, result)
+		if err := schema2LifecycleReduce(t, &state, 21, "node_output", output); err != nil {
+			t.Fatalf("prepare first completed Formation attempt: %v", err)
+		}
+		second := schema2FinalGreenNodeStartedData(projectionTestFormationID, "formation")
+		second["attempt"] = uint64(2)
+		second["reason"] = "resume"
+		if err := schema2FinalGreenReduceNodeStarted(t, &state, 22, second, nil); err != nil {
+			t.Fatalf("prepare second Formation attempt: %v", err)
+		}
+		schema2FinalGreenRequireLifecycleRejectionWithoutMutation(t, &state, 23, "formation_result", result)
+	})
+
+	t.Run("stale_tool_result_cannot_replace_prior_materialization_after_new_attempt", func(t *testing.T) {
+		state, result := schema2FinalGreenToolResultState(t)
+		output := schema2FinalGreenNodeOutputFromResult("tool", 6, result)
+		if err := schema2LifecycleReduce(t, &state, 7, "node_output", output); err != nil {
+			t.Fatalf("prepare first completed Tool attempt: %v", err)
+		}
+		second := schema2FinalGreenNodeStartedData("tool_normalize", "tool")
+		second["attempt"] = uint64(2)
+		second["reason"] = "resume"
+		if err := schema2FinalGreenReduceNodeStarted(t, &state, 8, second, nil); err != nil {
+			t.Fatalf("prepare second Tool attempt: %v", err)
+		}
+		schema2FinalGreenRequireLifecycleRejectionWithoutMutation(t, &state, 9, "tool_result", result)
 	})
 }
 
