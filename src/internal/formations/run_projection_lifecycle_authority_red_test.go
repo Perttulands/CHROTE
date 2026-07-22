@@ -184,6 +184,7 @@ func TestSchema2TerminalAuthoritySnapshotsHeadersAndMutationAreExact(t *testing.
 				if !state.view.Final || state.view.Status != map[string]string{"cancel": "canceled", "failure": "failed"}[lifecycle] {
 					t.Fatalf("exact nonempty %s %s final = %q/%t", lifecycle, resource, state.view.Status, state.view.Final)
 				}
+				schema2RequireLifecycleProjectedResource(t, &state, lifecycle, resource, finalSeq)
 			})
 
 			for _, mutation := range []string{"missing", "duplicate", "extra", "identity_changed"} {
@@ -223,6 +224,62 @@ func TestSchema2TerminalAuthoritySnapshotsHeadersAndMutationAreExact(t *testing.
 			}
 		}
 	}
+
+	t.Run("failure_cause_selects_one_open_attempt_and_abandons_collateral", func(t *testing.T) {
+		state := schema2EpochTestState()
+		open := map[string][]any{"openNodeAttempts": {}, "openSlotDispatches": {}, "openToolLeases": {}}
+		for _, node := range []struct {
+			sequence uint64
+			nodeID   string
+			kind     string
+		}{
+			{sequence: 3, nodeID: projectionTestMissionID, kind: "mission"},
+			{sequence: 4, nodeID: projectionTestFormationID, kind: "formation"},
+		} {
+			started := map[string]any{
+				"nodeId": node.nodeID, "nodeKind": node.kind, "attempt": uint64(1),
+				"reason": "initial", "inputRefs": []any{},
+			}
+			if err := schema2LifecycleReduce(t, &state, node.sequence, "node_started", started); err != nil {
+				t.Fatalf("prepare %s selected/collateral attempt: %v", node.kind, err)
+			}
+			open["openNodeAttempts"] = append(open["openNodeAttempts"], map[string]any{
+				"nodeId": node.nodeID, "nodeKind": node.kind, "attempt": uint64(1),
+				"startSeq": node.sequence, "phase": "started", "phaseSeq": node.sequence,
+			})
+		}
+		failure := schema2SecondRepairFixture(t, "error")
+		failure["errorScope"] = "node"
+		failure["nodeId"] = projectionTestFormationID
+		failure["relatedSeq"] = uint64(4)
+		if err := schema2LifecycleReduce(t, &state, 5, "error", failure); err != nil {
+			t.Fatalf("prepare exact selected attempt error: %v", err)
+		}
+		start := schema2LifecycleStartWithOpen("failure", open)
+		start["relatedSeq"] = uint64(5)
+		start["failureCause"] = map[string]any{"kind": "error", "errorSeq": uint64(5)}
+		if err := schema2LifecycleReduce(t, &state, 20, "run_failure_reconciliation_started", start); err != nil {
+			t.Fatalf("prepare selected/collateral failure snapshot: %v", err)
+		}
+		final := schema2LifecycleFinalWithDispositions(t, "failure", 20, open)
+		for _, field := range []string{"code", "reason", "unrecoverable", "relatedSeq", "failureCause"} {
+			final[field] = cloneAny(start[field])
+		}
+		for _, member := range final["nodeAttemptDispositions"].([]any) {
+			disposition := member.(map[string]any)
+			if disposition["nodeId"] == projectionTestFormationID {
+				disposition["disposition"] = "failed_non_authorizing"
+			}
+		}
+		if err := schema2LifecycleReduce(t, &state, 21, "run_failed", final); err != nil {
+			t.Fatalf("exact selected/collateral failure final rejected: %v", err)
+		}
+		if !state.view.Final || state.view.Status != "failed" {
+			t.Fatalf("selected/collateral run final = %q/%t", state.view.Status, state.view.Final)
+		}
+		schema2RequireNodeAttemptDisposition(t, &state, projectionTestFormationID, "failed", 21)
+		schema2RequireNodeAttemptDisposition(t, &state, projectionTestMissionID, "abandoned", 21)
+	})
 
 	for _, header := range []struct {
 		name   string
@@ -339,6 +396,30 @@ func TestSchema2TerminalAuthoritySnapshotsHeadersAndMutationAreExact(t *testing.
 				outcome := schema2LifecycleInterruptOutcomeData()
 				outcomeMutation.mutate(outcome)
 				schema2RequireLifecycleReducerErrorWithoutMutation(t, &state, 23, "slot_reconciliation_interrupt_outcome", outcome)
+			})
+		}
+
+		for _, finalMutation := range []struct {
+			name   string
+			mutate func(map[string]any)
+		}{
+			{name: "wrong_soft_interrupt_outcome", mutate: func(data map[string]any) { data["softInterrupt"] = "unavailable" }},
+			{name: "wrong_soft_interrupt_requested_sequence", mutate: func(data map[string]any) { data["softInterruptRequestedSeq"] = uint64(21) }},
+			{name: "wrong_soft_interrupt_outcome_sequence", mutate: func(data map[string]any) { data["softInterruptOutcomeSeq"] = uint64(22) }},
+			{name: "wrong_final_capability_generation", mutate: func(data map[string]any) { data["finalCapabilityGeneration"] = "1" }},
+			{name: "wrong_final_capability_issued_sequence", mutate: func(data map[string]any) { data["finalCapabilityIssuedSeq"] = uint64(1) }},
+			{name: "wrong_final_steering_generation", mutate: func(data map[string]any) { data["finalSteeringGeneration"] = "1" }},
+			{name: "wrong_final_revocation_sequence", mutate: func(data map[string]any) { data["finalPeekCapabilityRevokedSeq"] = uint64(20) }},
+			{name: "wrong_preserved_request_steering_generation", mutate: func(data map[string]any) { data["latestSteeringGeneration"] = "1" }},
+		} {
+			t.Run(lifecycle+"_final_slot_disposition_rejects_"+finalMutation.name+"_without_mutation", func(t *testing.T) {
+				state, final := schema2LifecycleFinalSlotState(t, lifecycle)
+				dispositions := final["slotDispatchDispositions"].([]any)
+				if len(dispositions) != 1 {
+					t.Fatalf("exact %s final slot disposition cardinality = %d", lifecycle, len(dispositions))
+				}
+				finalMutation.mutate(dispositions[0].(map[string]any))
+				schema2RequireReducerErrorWithoutMutation(t, &state, 24, schema2LifecycleFinalType(lifecycle), final)
 			})
 		}
 	}
@@ -597,6 +678,37 @@ func schema2LifecycleFinalWithDispositions(t *testing.T, lifecycle string, prede
 	return data
 }
 
+func schema2RequireLifecycleProjectedResource(t *testing.T, state *projectionState, lifecycle, resource string, completedSeq uint64) {
+	t.Helper()
+	nodeID := map[string]string{
+		"node": projectionTestMissionID, "dispatch": projectionTestFormationID, "tool": "tool_normalize",
+	}[resource]
+	want := map[string]string{"cancel": "canceled", "failure": "abandoned"}[lifecycle]
+	schema2RequireNodeAttemptDisposition(t, state, nodeID, want, completedSeq)
+	if resource != "dispatch" {
+		return
+	}
+	session := state.sessionByDispatch("dsp_01KXNP6VY3227H78329V52CKF8")
+	if session == nil {
+		t.Fatal("final dispatch session is absent")
+	}
+	if session.Occupancy.State != "quarantined" || session.PeekCapability.State != "revoked" || session.PeekCapability.Generation != "0" || session.PeekCapability.IssuedSeq != 0 || session.Steering.State != "closed" || session.Steering.Generation != "0" || session.Steering.StartedSeq != nil {
+		t.Fatalf("final %s dispatch session does not reflect its exact disposition: %#v", lifecycle, session)
+	}
+}
+
+func schema2RequireNodeAttemptDisposition(t *testing.T, state *projectionState, nodeID, want string, completedSeq uint64) {
+	t.Helper()
+	node := state.node(nodeID)
+	attempt := state.existingAttempt(nodeID, 1)
+	if node == nil || attempt == nil {
+		t.Fatalf("final resource %q absent: node=%#v attempt=%#v", nodeID, node, attempt)
+	}
+	if node.Status != want || node.FinalDisposition != want || attempt.Status != want || attempt.Disposition != want || attempt.CompletedSeq != completedSeq {
+		t.Fatalf("final resource %q = node{%q,%q} attempt{%q,%q,completed=%d}, want %q at %d", nodeID, node.Status, node.FinalDisposition, attempt.Status, attempt.Disposition, attempt.CompletedSeq, want, completedSeq)
+	}
+}
+
 func schema2LifecycleOpenField(resource string) string {
 	return map[string]string{"node": "openNodeAttempts", "dispatch": "openSlotDispatches", "tool": "openToolLeases"}[resource]
 }
@@ -757,6 +869,16 @@ func schema2LifecycleApplyExactCleanup(t *testing.T, state *projectionState, lif
 	if err := schema2LifecycleReduce(t, state, 23, "slot_reconciliation_interrupt_outcome", schema2LifecycleInterruptOutcomeData()); err != nil {
 		t.Fatalf("exact %s reconciliation outcome rejected: %v", lifecycle, err)
 	}
+}
+
+func schema2LifecycleFinalSlotState(t *testing.T, lifecycle string) (projectionState, map[string]any) {
+	t.Helper()
+	state, open := schema2LifecyclePublicState(t, "dispatch")
+	if err := schema2EpochReduce(t, &state, 20, 0, schema2LifecycleStartType(lifecycle), schema2LifecycleStartWithOpen(lifecycle, open)); err != nil {
+		t.Fatalf("prepare exact %s final-slot snapshot: %v", lifecycle, err)
+	}
+	schema2LifecycleApplyExactCleanup(t, &state, lifecycle)
+	return state, schema2LifecycleFinalWithDispositions(t, lifecycle, 20, open)
 }
 
 func schema2LifecycleRevocationData(lifecycle string) map[string]any {
