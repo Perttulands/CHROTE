@@ -167,6 +167,12 @@ func TestProjectCanonicalRunSchema2StructuralArmsAreNeverAuditOnly(t *testing.T)
 				"code": "dispatch_failed", "message": "dispatch failed", "boundary": "engine", "errorScope": "node",
 				"nodeId": projectionTestFormationID, "recoverable": true, "relatedSeq": 2,
 			},
+			envelope: func(event map[string]any) {
+				rawData := cloneAny(event["data"]).(map[string]any)
+				rawData["attempt"] = uint64(1)
+				event["data"] = rawData
+				event["nodeId"] = projectionTestFormationID
+			},
 			want: func(state *projectionState) {
 				state.node(projectionTestFormationID).Status = "blocked"
 				schema2RepairAttempt(state, projectionTestFormationID, 1).Status = "blocked"
