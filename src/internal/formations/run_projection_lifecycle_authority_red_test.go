@@ -379,7 +379,10 @@ func TestSchema2TerminalAuthoritySnapshotsHeadersAndMutationAreExact(t *testing.
 			name   string
 			mutate func(map[string]any)
 		}{
-			{name: "wrong_nonzero_preserved_peek_capability_state", mutate: func(data map[string]any) { data["peekCapabilityState"] = "revoked" }},
+			{name: "wrong_nonzero_preserved_peek_capability_state", mutate: func(data map[string]any) {
+				data["peekCapabilityState"] = "revoked"
+				data["peekCapabilityRevokedSeq"] = uint64(21)
+			}},
 			{name: "wrong_nonzero_preserved_capability_generation", mutate: func(data map[string]any) { data["latestCapabilityGeneration"] = "2" }},
 			{name: "wrong_nonzero_preserved_capability_issued_sequence", mutate: func(data map[string]any) { data["latestCapabilityIssuedSeq"] = uint64(5) }},
 			{name: "wrong_nonzero_preserved_steering_generation", mutate: func(data map[string]any) { data["latestSteeringGeneration"] = "2" }},
