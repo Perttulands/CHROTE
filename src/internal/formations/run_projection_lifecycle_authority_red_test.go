@@ -1272,6 +1272,14 @@ func TestSchema2ReducerStateFingerprintIsDeterministicAndComplete(t *testing.T) 
 			t.Fatalf("map mutation did not change reducer fingerprint: %s", after)
 		}
 	})
+
+	t.Run("unsupported_state_kind_fails_loud", func(t *testing.T) {
+		var output bytes.Buffer
+		err := schema2WriteCanonicalReducerValue(&output, reflect.ValueOf(make(chan struct{})), map[schema2CanonicalVisit]bool{})
+		if err == nil || !strings.Contains(err.Error(), "unsupported reducer state kind chan") {
+			t.Fatalf("unsupported reducer state kind error = %v", err)
+		}
+	})
 }
 
 func schema2ReducerStateFingerprint(t *testing.T, state *projectionState) []byte {
