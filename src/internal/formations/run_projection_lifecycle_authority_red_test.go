@@ -4,6 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
+	"reflect"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -1160,10 +1165,52 @@ func schema2RequireRawReducerErrorWithoutMutation(t *testing.T, state *projectio
 	}
 }
 
+func TestSchema2ReducerStateFingerprintIsDeterministicAndComplete(t *testing.T) {
+	t.Run("repeated_fingerprints_are_byte_identical", func(t *testing.T) {
+		state := schema2EpochTestState()
+		first := schema2ReducerStateFingerprint(t, &state)
+		second := schema2ReducerStateFingerprint(t, &state)
+		if !bytes.Equal(first, second) {
+			t.Fatalf("repeated reducer fingerprints differ\nfirst:  %s\nsecond: %s", first, second)
+		}
+	})
+
+	t.Run("board_mutation_changes_fingerprint", func(t *testing.T) {
+		state := schema2EpochTestState()
+		before := schema2ReducerStateFingerprint(t, &state)
+		state.board.Title = "mutated board"
+		after := schema2ReducerStateFingerprint(t, &state)
+		if bytes.Equal(before, after) {
+			t.Fatalf("board mutation did not change reducer fingerprint: %s", after)
+		}
+	})
+
+	t.Run("nested_view_mutation_changes_fingerprint", func(t *testing.T) {
+		state := schema2EpochTestState()
+		before := schema2ReducerStateFingerprint(t, &state)
+		state.view.Nodes[0].Status = "waiting"
+		after := schema2ReducerStateFingerprint(t, &state)
+		if bytes.Equal(before, after) {
+			t.Fatalf("nested view mutation did not change reducer fingerprint: %s", after)
+		}
+	})
+
+	t.Run("map_mutation_changes_fingerprint", func(t *testing.T) {
+		state := schema2EpochTestState()
+		before := schema2ReducerStateFingerprint(t, &state)
+		state.dispatchSeq["dsp_01KXNP6VY3227H78329V52CKF8"] = 9
+		after := schema2ReducerStateFingerprint(t, &state)
+		if bytes.Equal(before, after) {
+			t.Fatalf("map mutation did not change reducer fingerprint: %s", after)
+		}
+	})
+}
+
 func schema2ReducerStateFingerprint(t *testing.T, state *projectionState) []byte {
 	t.Helper()
-	return mustMarshalJSON(t, struct {
+	diagnostic := mustMarshalJSON(t, struct {
 		View               RunView
+		Board              *BoardDocument
 		NodeIndex          map[string]int
 		AttemptIndex       map[string]int
 		GateIndex          map[string]int
@@ -1183,7 +1230,8 @@ func schema2ReducerStateFingerprint(t *testing.T, state *projectionState) []byte
 		FailureStartSeq    uint64
 		Terminal           bool
 	}{
-		View: state.view, NodeIndex: state.nodeIndex, AttemptIndex: state.attemptIndex,
+		View: state.view, Board: state.board,
+		NodeIndex: state.nodeIndex, AttemptIndex: state.attemptIndex,
 		GateIndex: state.gateIndex, ArtifactIndex: state.artifactIndex,
 		Dispatches: state.dispatches, DispatchSeq: state.dispatchSeq,
 		MatchedDispatch: state.matchedDispatch, RevokedDispatch: state.revokedDispatch,
@@ -1194,4 +1242,146 @@ func schema2ReducerStateFingerprint(t *testing.T, state *projectionState) []byte
 		CancelRequestSeq:   state.cancelRequestSeq, FailureStartSeq: state.failureStartSeq,
 		Terminal: state.terminal,
 	})
+	var structural bytes.Buffer
+	if err := schema2WriteCanonicalReducerValue(&structural, reflect.ValueOf(state), map[schema2CanonicalVisit]bool{}); err != nil {
+		t.Fatalf("fingerprint reducer state: %v", err)
+	}
+	result := make([]byte, 0, len(diagnostic)+structural.Len()+32)
+	result = append(result, "diagnostic="...)
+	result = append(result, diagnostic...)
+	result = append(result, '\n')
+	result = append(result, "structural="...)
+	result = append(result, structural.Bytes()...)
+	return result
+}
+
+type schema2CanonicalVisit struct {
+	typ     reflect.Type
+	pointer uintptr
+}
+
+func schema2WriteCanonicalReducerValue(output *bytes.Buffer, value reflect.Value, active map[schema2CanonicalVisit]bool) error {
+	if !value.IsValid() {
+		output.WriteString("invalid;")
+		return nil
+	}
+	typ := value.Type()
+	output.WriteString(typ.PkgPath())
+	output.WriteByte('/')
+	output.WriteString(typ.String())
+	output.WriteByte(':')
+
+	switch value.Kind() {
+	case reflect.Bool:
+		output.WriteString(strconv.FormatBool(value.Bool()))
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		output.WriteString(strconv.FormatInt(value.Int(), 10))
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		output.WriteString(strconv.FormatUint(value.Uint(), 10))
+	case reflect.Float32, reflect.Float64:
+		float := value.Float()
+		if math.IsNaN(float) || math.IsInf(float, 0) {
+			return fmt.Errorf("unsupported non-finite reducer float %s", typ)
+		}
+		output.WriteString(strconv.FormatFloat(float, 'x', -1, typ.Bits()))
+	case reflect.String:
+		encoded, _ := json.Marshal(value.String())
+		output.Write(encoded)
+	case reflect.Pointer, reflect.Interface:
+		if value.IsNil() {
+			output.WriteString("nil")
+			break
+		}
+		if value.Kind() == reflect.Pointer {
+			visit := schema2CanonicalVisit{typ: typ, pointer: value.Pointer()}
+			if active[visit] {
+				return fmt.Errorf("cyclic reducer pointer %s", typ)
+			}
+			active[visit] = true
+			defer delete(active, visit)
+		}
+		output.WriteByte('(')
+		if err := schema2WriteCanonicalReducerValue(output, value.Elem(), active); err != nil {
+			return err
+		}
+		output.WriteByte(')')
+	case reflect.Array:
+		output.WriteByte('[')
+		for index := 0; index < value.Len(); index++ {
+			if err := schema2WriteCanonicalReducerValue(output, value.Index(index), active); err != nil {
+				return err
+			}
+			output.WriteByte(';')
+		}
+		output.WriteByte(']')
+	case reflect.Slice:
+		if value.IsNil() {
+			output.WriteString("nil")
+			break
+		}
+		visit := schema2CanonicalVisit{typ: typ, pointer: value.Pointer()}
+		if active[visit] {
+			return fmt.Errorf("cyclic reducer slice %s", typ)
+		}
+		active[visit] = true
+		defer delete(active, visit)
+		output.WriteByte('[')
+		for index := 0; index < value.Len(); index++ {
+			if err := schema2WriteCanonicalReducerValue(output, value.Index(index), active); err != nil {
+				return err
+			}
+			output.WriteByte(';')
+		}
+		output.WriteByte(']')
+	case reflect.Map:
+		if value.IsNil() {
+			output.WriteString("nil")
+			break
+		}
+		visit := schema2CanonicalVisit{typ: typ, pointer: value.Pointer()}
+		if active[visit] {
+			return fmt.Errorf("cyclic reducer map %s", typ)
+		}
+		active[visit] = true
+		defer delete(active, visit)
+		type canonicalMapEntry struct {
+			key   []byte
+			value reflect.Value
+		}
+		entries := make([]canonicalMapEntry, 0, value.Len())
+		iterator := value.MapRange()
+		for iterator.Next() {
+			var key bytes.Buffer
+			if err := schema2WriteCanonicalReducerValue(&key, iterator.Key(), active); err != nil {
+				return err
+			}
+			entries = append(entries, canonicalMapEntry{key: key.Bytes(), value: iterator.Value()})
+		}
+		sort.Slice(entries, func(left, right int) bool { return bytes.Compare(entries[left].key, entries[right].key) < 0 })
+		output.WriteByte('{')
+		for _, entry := range entries {
+			output.Write(entry.key)
+			output.WriteByte('=')
+			if err := schema2WriteCanonicalReducerValue(output, entry.value, active); err != nil {
+				return err
+			}
+			output.WriteByte(';')
+		}
+		output.WriteByte('}')
+	case reflect.Struct:
+		output.WriteByte('{')
+		for index := 0; index < value.NumField(); index++ {
+			output.WriteString(typ.Field(index).Name)
+			output.WriteByte('=')
+			if err := schema2WriteCanonicalReducerValue(output, value.Field(index), active); err != nil {
+				return err
+			}
+			output.WriteByte(';')
+		}
+		output.WriteByte('}')
+	default:
+		return fmt.Errorf("unsupported reducer state kind %s at %s", value.Kind(), typ)
+	}
+	output.WriteByte(';')
+	return nil
 }

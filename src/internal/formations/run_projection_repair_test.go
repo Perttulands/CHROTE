@@ -427,17 +427,11 @@ func TestProjectCanonicalRunSchema2SessionAuthorityArmsAreNeverAuditOnly(t *test
 			session.PeekCapability.State = "issued"
 			session.Steering = RunSessionSteering{State: "closed", Generation: "1"}
 		}},
-		{name: "reconciliation interrupt updates session occupancy", eventType: "slot_reconciliation_interrupt", data: map[string]any{
-			"dispatchId": dispatchID, "targetLeaseId": leaseID, "bindingId": "binding_worker", "sessionTargetId": "target_worker",
-			"targetFingerprint": fingerprint, "authorityKind": "failure", "authoritySeq": 18,
-			"interruptEncoding": "terminal-etx-v1", "interruptSha256": strings.Repeat("b", 64), "recordedBeforeSend": true,
-		}, want: func(session *RunSessionView) { session.Occupancy.State = "held" }},
-		{name: "reconciliation outcome updates session occupancy", eventType: "slot_reconciliation_interrupt_outcome", prepare: func(session *RunSessionView) {
-			session.Occupancy.State = "held"
-		}, data: map[string]any{
-			"requestedSeq": 18, "dispatchId": dispatchID, "targetLeaseId": leaseID, "targetFingerprint": fingerprint,
-			"outcome": "unavailable", "observedAt": "2026-07-20T10:00:19Z",
-		}, want: func(session *RunSessionView) { session.Occupancy.State = "quarantined" }},
+		// Reconciliation interrupt and outcome positives are deliberately not
+		// shallow session-arm cases: each requires the exact lifecycle snapshot,
+		// revocation, frozen membership, and request prefix. The exact public and
+		// typed controls live in
+		// TestSchema2TerminalAuthoritySnapshotsHeadersAndMutationAreExact.
 	}
 
 	for _, test := range tests {

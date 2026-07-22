@@ -611,7 +611,7 @@ func schema2SecondRepairFixture(t *testing.T, eventType string) map[string]any {
 	case "slot_peek_capability_revoked":
 		return map[string]any{"dispatchId": dispatchID, "targetLeaseId": leaseID, "bindingId": bindingID, "sessionTargetId": targetID, "targetFingerprint": fingerprint, "capabilityGeneration": "1", "capabilityIssuedSeq": 18, "steeringGeneration": "1", "reason": "result_closure", "revokedAt": timestamp, "inputClosed": true}
 	case "slot_reconciliation_interrupt":
-		return map[string]any{"dispatchId": dispatchID, "targetLeaseId": leaseID, "bindingId": bindingID, "sessionTargetId": targetID, "targetFingerprint": fingerprint, "authorityKind": "cancel", "authoritySeq": 18, "interruptEncoding": "terminal-etx-v1", "interruptSha256": strings.Repeat("b", 64), "recordedBeforeSend": true}
+		return map[string]any{"dispatchId": dispatchID, "targetLeaseId": leaseID, "bindingId": bindingID, "sessionTargetId": targetID, "targetFingerprint": fingerprint, "authorityKind": "cancel", "authoritySeq": 18, "interruptEncoding": "terminal-etx-v1", "interruptSha256": schema2TerminalETXInterruptSHA256, "recordedBeforeSend": true}
 	case "slot_reconciliation_interrupt_outcome":
 		return map[string]any{"requestedSeq": 18, "dispatchId": dispatchID, "targetLeaseId": leaseID, "targetFingerprint": fingerprint, "outcome": "sent", "observedAt": timestamp}
 	case "slot_result":
