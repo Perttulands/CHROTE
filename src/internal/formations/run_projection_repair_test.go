@@ -44,6 +44,10 @@ func TestProjectCanonicalRunSchema2StructuralArmsAreNeverAuditOnly(t *testing.T)
 			name:       "tool dispatch binds a lease to the exact node_started Tool attempt",
 			openNodeID: "tool_normalize", openNodeKind: "tool",
 			eventType: "tool_dispatch", data: schema2RepairToolDispatchData(),
+			envelope: func(event map[string]any) {
+				event["nodeId"] = "tool_normalize"
+				event["attempt"] = uint64(1)
+			},
 			historyOnly: true,
 			assertAuthority: func(t *testing.T, state *projectionState) {
 				attempt := state.existingAttempt("tool_normalize", 1)
@@ -83,6 +87,11 @@ func TestProjectCanonicalRunSchema2StructuralArmsAreNeverAuditOnly(t *testing.T)
 			name:       "gate evaluating binds Gate state to the exact node_started attempt",
 			openNodeID: projectionTestGateID, openNodeKind: "gate",
 			eventType: "gate_evaluating", data: schema2RepairGateEvaluatingData(),
+			envelope: func(event map[string]any) {
+				event["nodeId"] = projectionTestGateID
+				event["gateId"] = projectionTestGateID
+				event["attempt"] = uint64(1)
+			},
 			want: func(state *projectionState) { schema2RepairBindGate(state, projectionTestGateID, 1, 20) },
 			assertAuthority: func(t *testing.T, state *projectionState) {
 				attempt := state.existingAttempt(projectionTestGateID, 1)
