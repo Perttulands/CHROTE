@@ -324,13 +324,23 @@ func TestSchema2TerminalLifecycleRequiresExactPredecessor(t *testing.T) {
 
 		t.Run("cancel_request_then_matching_canceled", func(t *testing.T) {
 			state := schema2TerminalWaitingState(t)
-			if err := schema2EpochReduce(t, &state, 22, 0, "run_cancel_requested", schema2TerminalCancelRequestedData()); err != nil {
+			openGate := map[string]any{
+				"nodeId": projectionTestGateID, "nodeKind": "gate", "attempt": uint64(1),
+				"startSeq": uint64(20), "phase": "waiting_human", "phaseSeq": uint64(21),
+			}
+			cancelRequested := schema2TerminalCancelRequestedData()
+			cancelRequested["openNodeAttempts"] = []any{openGate}
+			if err := schema2EpochReduce(t, &state, 22, 0, "run_cancel_requested", cancelRequested); err != nil {
 				t.Fatalf("waiting_human cancel request rejected: %v", err)
 			}
 			if state.view.Status != "canceling" || state.view.Identity.Epoch != 0 {
 				t.Fatalf("waiting cancel request = status %q epoch %d", state.view.Status, state.view.Identity.Epoch)
 			}
-			if err := schema2EpochReduce(t, &state, 23, 0, "run_canceled", schema2TerminalCanceledData(22)); err != nil {
+			canceled := schema2TerminalCanceledData(22)
+			gateDisposition := cloneAny(openGate).(map[string]any)
+			gateDisposition["disposition"] = "canceled_non_authorizing"
+			canceled["nodeAttemptDispositions"] = []any{gateDisposition}
+			if err := schema2EpochReduce(t, &state, 23, 0, "run_canceled", canceled); err != nil {
 				t.Fatalf("matching waiting-origin cancellation rejected: %v", err)
 			}
 			if state.view.Status != "canceled" || !state.view.Final || state.view.Identity.Epoch != 0 {

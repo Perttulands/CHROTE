@@ -51,7 +51,12 @@ func TestProjectCanonicalRunSchema2StructuralArmsAreNeverAuditOnly(t *testing.T)
 			historyOnly: true,
 		},
 		{
-			name: "tool result closes tool attempt and materializes outputs", prepare: startSchema2RepairAttempt("tool_normalize", "tool"),
+			name: "tool result closes tool attempt and materializes outputs", prepare: func(state *projectionState) {
+				schema2RepairStartAttempt(state, "tool_normalize", "tool", 1, 2)
+				state.toolLeases["toollease_01KXNP6VY3227H78329V52CKF8"] = SafeToolLeaseSnapshot{
+					ToolLeaseID: "toollease_01KXNP6VY3227H78329V52CKF8", NodeID: "tool_normalize", Attempt: 1, DispatchSeq: 2,
+				}
+			},
 			eventType: "tool_result", data: schema2RepairToolResultData(),
 			want: func(state *projectionState) {
 				schema2RepairCompleteAttempt(state, "tool_normalize", 1, "done", 20)
@@ -437,6 +442,7 @@ func TestProjectCanonicalRunSchema2SessionAuthorityArmsAreNeverAuditOnly(t *test
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			state := newProjectionState(projectionTestRunID, CanonicalRunSourceSchema2, &BoardDocument{Formations: []FormationNode{{ID: projectionTestFormationID}}})
+			state.view.Status = "running"
 			state.dispatches[dispatchID] = SafeSchema2SlotDispatchData{
 				DispatchID: dispatchID, TargetLeaseID: leaseID, NodeID: projectionTestFormationID, Attempt: 1,
 				SlotID: "slot_worker", AgentID: "worker", BindingID: "binding_worker", SessionTargetID: "target_worker",
