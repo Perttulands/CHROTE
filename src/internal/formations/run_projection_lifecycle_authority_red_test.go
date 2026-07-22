@@ -810,8 +810,8 @@ func schema2LifecycleIssuedPreRevocationState(t *testing.T, lifecycle string) (p
 	state, open := schema2LifecycleIssuedSteeringState(t)
 	start := schema2LifecycleStartWithOpen(lifecycle, open)
 	// The current public open-dispatch decoder still rejects the frozen
-	// `issued` snapshot arm. Drive the already-sanitized typed reducer here so
-	// each lineage negative starts after an exact accepted authority event; the
+	// `issued` snapshot arm. Drive a closed typed reducer fixture here so each
+	// lineage negative starts after an exact accepted authority event; the
 	// public positive above separately keeps that decoder defect RED.
 	if err := schema2LifecycleReduceTypedStart(t, &state, 20, lifecycle, start); err != nil {
 		t.Fatalf("prepare typed exact %s issued snapshot: %v", lifecycle, err)
