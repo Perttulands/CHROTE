@@ -2501,7 +2501,7 @@ func sanitizeSchema2Event(event rawProjectionEvent) (SafeRunEvent, error) {
 			return nil, err
 		}
 	}
-	if err := validateSchema2DataPresence(event.typeName, data, allowed); err != nil {
+	if err := validateSchema2DataPresence(event.typeName, data, event.data, allowed); err != nil {
 		return nil, projectionError(ErrRunEventUnknown, "invalid schema-2 data presence")
 	}
 	envelope := eventEnvelope(event)
@@ -2814,6 +2814,8 @@ func schema2DataContract(eventType string) (map[string]bool, map[string]bool) {
 		private = stringSet("dispatchInputBarrier", "targetReadyProof", "paneHistoryBaseline")
 	case "slot_result":
 		private = stringSet("capturedRange", "sentinel", "clientAttachmentAuditProof", "turnClosureProof")
+	case "error":
+		private = stringSet("attempt", "waitingSeq", "gateAttempt", "bindingId", "sessionTargetId", "dispatchId")
 	}
 	return stringSet(keys...), private
 }
@@ -2824,7 +2826,12 @@ func rawProjectionString(data map[string]json.RawMessage, key string) string {
 	return value
 }
 
-func validateSchema2DataPresence(eventType string, data map[string]json.RawMessage, allowed map[string]bool) error {
+func rawProjectionUint(data map[string]json.RawMessage, key string) uint64 {
+	value, _ := requiredJSONSafeUint(data, key)
+	return value
+}
+
+func validateSchema2DataPresence(eventType string, data, rawData map[string]json.RawMessage, allowed map[string]bool) error {
 	required := make(map[string]bool, len(allowed))
 	for key := range allowed {
 		required[key] = true
@@ -2871,10 +2878,26 @@ func validateSchema2DataPresence(eventType string, data map[string]json.RawMessa
 	case "error":
 		required = stringSet("code", "message", "boundary", "errorScope", "recoverable", "relatedSeq")
 		forbidden = stringSet("nodeId", "gateId", "slotId", "toolLeaseId")
-		identityKey := map[string]string{"node": "nodeId", "gate": "gateId", "slot": "slotId", "tool": "toolLeaseId"}[rawProjectionString(data, "errorScope")]
-		if identityKey != "" {
+		scope := rawProjectionString(data, "errorScope")
+		for _, identityKey := range []string{map[string]string{"node": "nodeId", "gate": "gateId", "slot": "slotId", "tool": "toolLeaseId"}[scope]} {
+			if identityKey == "" {
+				continue
+			}
 			required[identityKey] = true
 			delete(forbidden, identityKey)
+		}
+		privateIdentityComplete := func(keys ...string) bool {
+			for _, key := range keys {
+				if _, present := rawData[key]; !present {
+					return false
+				}
+			}
+			return true
+		}
+		if (scope == "gate" && privateIdentityComplete("attempt", "gateAttempt")) ||
+			(scope == "slot" && privateIdentityComplete("attempt", "bindingId", "sessionTargetId")) ||
+			(scope == "tool" && privateIdentityComplete("attempt")) {
+			delete(forbidden, "nodeId")
 		}
 	case "run_blocked":
 		required = stringSet("reason", "blockScope", "resumeAllowed", "resumePolicy", "openDispatches", "retryTargets")
@@ -3097,13 +3120,20 @@ type projectionState struct {
 	cancelRequest       *SafeSchema2RunCancelRequestedData
 	failureStart        *SafeSchema2RunFailureReconciliationStartedData
 	toolLeases          map[string]SafeToolLeaseSnapshot
-	errorNodes          map[uint64]string
+	waitingSeq          map[string]uint64
+	errorAuthority      map[uint64]schema2ErrorAuthority
 	revocations         map[string]SafeSchema2SlotPeekCapabilityRevokedData
 	interrupts          map[string]SafeSchema2SlotReconciliationInterruptData
 	interruptSeq        map[string]uint64
 	interruptOutcomes   map[string]SafeSchema2SlotReconciliationInterruptOutcomeData
 	interruptOutcomeSeq map[string]uint64
 	terminal            bool
+}
+
+type schema2ErrorAuthority struct {
+	SelectedAttemptKey string
+	SelectedAttempt    uint64
+	CanBackFailure     bool
 }
 
 type schema2Binding struct {
@@ -3307,7 +3337,7 @@ func newProjectionState(runID string, source CanonicalRunSource, board *BoardDoc
 	}
 	state := projectionState{
 		view:  RunView{Schema: RunViewSchema, RunID: runID, Source: sourceProjection, RecoveryState: "live", Nodes: []RunNodeView{}, Attempts: []RunAttemptView{}, Gates: []RunGateView{}, Outputs: []RunOutputView{}, Artifacts: []ArtifactProjection{}, Blocks: []RunBlockView{}, Escalations: []RunEscalationView{}, Sessions: []RunSessionView{}, Actions: []RunAction{}},
-		board: board, nodeIndex: map[string]int{}, attemptIndex: map[string]int{}, gateIndex: map[string]int{}, artifactIndex: map[string]int{}, dispatches: map[string]SafeSchema2SlotDispatchData{}, dispatchSeq: map[string]uint64{}, matchedDispatch: map[string]bool{}, revokedDispatch: map[string]uint64{}, bindings: map[string]schema2Binding{}, health: map[string]SafeSchema2SlotBindingObservedData{}, toolLeases: map[string]SafeToolLeaseSnapshot{}, errorNodes: map[uint64]string{}, revocations: map[string]SafeSchema2SlotPeekCapabilityRevokedData{}, interrupts: map[string]SafeSchema2SlotReconciliationInterruptData{}, interruptSeq: map[string]uint64{}, interruptOutcomes: map[string]SafeSchema2SlotReconciliationInterruptOutcomeData{}, interruptOutcomeSeq: map[string]uint64{},
+		board: board, nodeIndex: map[string]int{}, attemptIndex: map[string]int{}, gateIndex: map[string]int{}, artifactIndex: map[string]int{}, dispatches: map[string]SafeSchema2SlotDispatchData{}, dispatchSeq: map[string]uint64{}, matchedDispatch: map[string]bool{}, revokedDispatch: map[string]uint64{}, bindings: map[string]schema2Binding{}, health: map[string]SafeSchema2SlotBindingObservedData{}, toolLeases: map[string]SafeToolLeaseSnapshot{}, waitingSeq: map[string]uint64{}, errorAuthority: map[uint64]schema2ErrorAuthority{}, revocations: map[string]SafeSchema2SlotPeekCapabilityRevokedData{}, interrupts: map[string]SafeSchema2SlotReconciliationInterruptData{}, interruptSeq: map[string]uint64{}, interruptOutcomes: map[string]SafeSchema2SlotReconciliationInterruptOutcomeData{}, interruptOutcomeSeq: map[string]uint64{},
 	}
 	appendNode := func(id, kind string) {
 		if id == "" {
@@ -3498,10 +3528,13 @@ func reduceSchema2EventInPlace(state *projectionState, raw rawProjectionEvent, s
 		}
 		node.Status = "waiting"
 		node.Readiness = RunReadiness{NeededInputs: event.Data.NeededInputs, ReadyInputs: event.Data.ReadyInputs, TotalInputs: event.Data.TotalInputs, WaitingFor: append([]string(nil), event.Data.WaitingFor...)}
+		state.waitingSeq[event.Data.NodeID] = raw.envelope.Seq
 	case SafeSchema2NodeStartedEvent:
-		if state.startAttempt(event.Data.NodeID, event.Data.Attempt, raw.envelope.Seq, event.Data.InputRefs) == nil {
+		node := state.node(event.Data.NodeID)
+		if raw.envelope.NodeID != event.Data.NodeID || raw.envelope.Attempt != event.Data.Attempt || node == nil || node.Kind != event.Data.NodeKind || state.openSchema2Attempt(event.Data.NodeID, event.Data.Attempt, raw.envelope.Seq, event.Data.InputRefs) == nil {
 			return projectionError(ErrRunProjectionInvalid, "invalid node start")
 		}
+		delete(state.waitingSeq, event.Data.NodeID)
 	case SafeSchema2SlotBindingObservedEvent:
 		state.health[event.Data.BindingID] = event.Data
 	case SafeSchema2SlotDispatchEvent:
@@ -3572,7 +3605,8 @@ func reduceSchema2EventInPlace(state *projectionState, raw rawProjectionEvent, s
 		if _, exists := state.toolLeases[event.Data.ToolLeaseID]; exists {
 			return projectionError(ErrRunProjectionInvalid, "duplicate tool lease")
 		}
-		if state.startAttempt(event.Data.NodeID, event.Data.Attempt, raw.envelope.Seq, nil) == nil {
+		attempt := state.existingAttempt(event.Data.NodeID, event.Data.Attempt)
+		if attempt == nil || attempt.CompletedSeq != 0 {
 			return projectionError(ErrRunProjectionInvalid, "invalid tool dispatch attempt")
 		}
 		state.toolLeases[event.Data.ToolLeaseID] = SafeToolLeaseSnapshot{ToolLeaseID: event.Data.ToolLeaseID, NodeID: event.Data.NodeID, Attempt: event.Data.Attempt, DispatchSeq: raw.envelope.Seq}
@@ -3705,25 +3739,17 @@ func reduceSchema2EventInPlace(state *projectionState, raw rawProjectionEvent, s
 		}
 		state.view.Escalations = append(state.view.Escalations, RunEscalationView{Seq: raw.envelope.Seq, NodeID: event.Data.NodeID, GateID: event.Data.GateID, Severity: event.Data.Severity, Reason: event.Data.Reason, Source: event.Data.Source, Trigger: event.Data.Trigger, Blocks: event.Data.Blocks})
 	case SafeSchema2ErrorEvent:
-		if projectionValueIn(event.Data.ErrorScope, "run", "node", "gate") {
-			state.errorNodes[raw.envelope.Seq] = event.Data.NodeID
-			if event.Data.ErrorScope == "gate" {
-				state.errorNodes[raw.envelope.Seq] = event.Data.GateID
-			}
+		authority, err := state.validateSchema2ErrorIdentity(raw, event.Data)
+		if err != nil {
+			return err
 		}
-		if event.Data.ErrorScope != "node" {
-			break
+		state.errorAuthority[raw.envelope.Seq] = authority
+		if event.Data.ErrorScope == "node" && authority.SelectedAttemptKey != "" {
+			attempt := state.existingAttempt(event.Data.NodeID, authority.SelectedAttempt)
+			node := state.node(event.Data.NodeID)
+			node.Status = "blocked"
+			attempt.Status = "blocked"
 		}
-		node := state.node(event.Data.NodeID)
-		if node == nil || node.LatestAttempt == 0 {
-			return projectionError(ErrRunProjectionInvalid, "scoped error outside selected attempt")
-		}
-		attempt := state.existingAttempt(event.Data.NodeID, node.LatestAttempt)
-		if attempt == nil {
-			return projectionError(ErrRunProjectionInvalid, "scoped error without attempt")
-		}
-		node.Status = "blocked"
-		attempt.Status = "blocked"
 	case SafeSchema2RunCancelRequestedEvent:
 		if err := verifyEventCommand(event.Data.CommandID, event.Data.CommandPayloadSHA256, raw.envelope.Seq, commands); err != nil {
 			return err
@@ -3883,7 +3909,8 @@ func cloneSchema2ProjectionState(state projectionState) projectionState {
 	clone.bindings = cloneProjectionValue(reflect.ValueOf(state.bindings)).Interface().(map[string]schema2Binding)
 	clone.health = cloneProjectionValue(reflect.ValueOf(state.health)).Interface().(map[string]SafeSchema2SlotBindingObservedData)
 	clone.toolLeases = cloneProjectionValue(reflect.ValueOf(state.toolLeases)).Interface().(map[string]SafeToolLeaseSnapshot)
-	clone.errorNodes = cloneProjectionValue(reflect.ValueOf(state.errorNodes)).Interface().(map[uint64]string)
+	clone.waitingSeq = cloneProjectionValue(reflect.ValueOf(state.waitingSeq)).Interface().(map[string]uint64)
+	clone.errorAuthority = cloneProjectionValue(reflect.ValueOf(state.errorAuthority)).Interface().(map[uint64]schema2ErrorAuthority)
 	clone.revocations = cloneProjectionValue(reflect.ValueOf(state.revocations)).Interface().(map[string]SafeSchema2SlotPeekCapabilityRevokedData)
 	clone.interrupts = cloneProjectionValue(reflect.ValueOf(state.interrupts)).Interface().(map[string]SafeSchema2SlotReconciliationInterruptData)
 	clone.interruptSeq = cloneProjectionValue(reflect.ValueOf(state.interruptSeq)).Interface().(map[string]uint64)
@@ -3900,6 +3927,117 @@ func cloneSchema2ProjectionState(state projectionState) projectionState {
 	clone.lastBlockJSON = append([]byte(nil), state.lastBlockJSON...)
 	clone.lastBlockRetry = append([]byte(nil), state.lastBlockRetry...)
 	return clone
+}
+
+func (state *projectionState) validateSchema2ErrorIdentity(raw rawProjectionEvent, data SafeSchema2ErrorData) (schema2ErrorAuthority, error) {
+	invalid := func() (schema2ErrorAuthority, error) {
+		return schema2ErrorAuthority{}, projectionError(ErrRunProjectionInvalid, "error identity differs from retained authority")
+	}
+	privateKeys := stringSet("attempt", "waitingSeq", "gateAttempt", "bindingId", "sessionTargetId", "dispatchId")
+	allowedPrivate := map[string]bool{}
+	requirePrivate := func(key string) (json.RawMessage, bool) {
+		value, ok := raw.data[key]
+		return value, ok
+	}
+	requireUint := func(key string) (uint64, bool) {
+		value, err := requiredJSONSafeUint(raw.data, key)
+		return value, err == nil && projectionSafeSequence(value)
+	}
+	requireID := func(key string) (string, bool) {
+		value, err := requiredJSONString(raw.data, key)
+		return value, err == nil && safeProjectionIdentifier(value)
+	}
+	finish := func(authority schema2ErrorAuthority) (schema2ErrorAuthority, error) {
+		for key := range privateKeys {
+			if _, present := raw.data[key]; present && !allowedPrivate[key] {
+				return invalid()
+			}
+		}
+		return authority, nil
+	}
+
+	switch data.ErrorScope {
+	case "run":
+		if raw.envelope.NodeID != "" || raw.envelope.GateID != "" || raw.envelope.SlotID != "" || raw.envelope.Attempt != 0 {
+			return invalid()
+		}
+		return finish(schema2ErrorAuthority{CanBackFailure: true})
+	case "node":
+		if raw.envelope.NodeID != data.NodeID || raw.envelope.GateID != "" || raw.envelope.SlotID != "" || state.node(data.NodeID) == nil {
+			return invalid()
+		}
+		_, hasAttempt := requirePrivate("attempt")
+		_, hasWaiting := requirePrivate("waitingSeq")
+		if hasAttempt == hasWaiting {
+			return invalid()
+		}
+		if hasAttempt {
+			allowedPrivate["attempt"] = true
+			attemptNumber, ok := requireUint("attempt")
+			attempt := state.existingAttempt(data.NodeID, attemptNumber)
+			if !ok || raw.envelope.Attempt != attemptNumber || attempt == nil || attempt.CompletedSeq != 0 {
+				return invalid()
+			}
+			return finish(schema2ErrorAuthority{SelectedAttemptKey: projectionAttemptKey(data.NodeID, attemptNumber), SelectedAttempt: attemptNumber, CanBackFailure: true})
+		}
+		allowedPrivate["waitingSeq"] = true
+		waitingSequence, ok := requireUint("waitingSeq")
+		if !ok || raw.envelope.Attempt != 0 || state.waitingSeq[data.NodeID] != waitingSequence {
+			return invalid()
+		}
+		return finish(schema2ErrorAuthority{CanBackFailure: true})
+	case "gate":
+		allowedPrivate = stringSet("attempt", "gateAttempt")
+		attemptNumber, attemptOK := requireUint("attempt")
+		gateAttempt, gateOK := requireUint("gateAttempt")
+		attempt := state.existingAttempt(data.NodeID, attemptNumber)
+		gate := state.existingGate(data.GateID, gateAttempt)
+		if !attemptOK || !gateOK || data.NodeID != data.GateID || raw.envelope.NodeID != data.NodeID || raw.envelope.GateID != data.GateID || raw.envelope.SlotID != "" || raw.envelope.Attempt != attemptNumber || attemptNumber != gateAttempt || attempt == nil || attempt.CompletedSeq != 0 || gate == nil {
+			return invalid()
+		}
+		return finish(schema2ErrorAuthority{SelectedAttemptKey: projectionAttemptKey(data.NodeID, attemptNumber), SelectedAttempt: attemptNumber, CanBackFailure: true})
+	case "slot":
+		allowedPrivate = stringSet("attempt", "bindingId", "sessionTargetId", "dispatchId")
+		attemptNumber, attemptOK := requireUint("attempt")
+		bindingID, bindingOK := requireID("bindingId")
+		sessionTargetID, targetOK := requireID("sessionTargetId")
+		attempt := state.existingAttempt(data.NodeID, attemptNumber)
+		binding, bound := state.bindings[bindingID]
+		health, observed := state.health[bindingID]
+		if !attemptOK || !bindingOK || !targetOK || raw.envelope.NodeID != data.NodeID || raw.envelope.SlotID != data.SlotID || raw.envelope.GateID != "" || raw.envelope.Attempt != attemptNumber || attempt == nil || attempt.CompletedSeq != 0 || !bound || binding.NodeID != data.NodeID || binding.SlotID != data.SlotID || binding.SessionTargetID != sessionTargetID || !observed || health.SlotID != data.SlotID || health.SessionTargetID != sessionTargetID {
+			return invalid()
+		}
+		matchingDispatchID := ""
+		for dispatchID, dispatch := range state.dispatches {
+			if !state.matchedDispatch[dispatchID] && dispatch.NodeID == data.NodeID && dispatch.Attempt == attemptNumber && dispatch.SlotID == data.SlotID && dispatch.BindingID == bindingID && dispatch.SessionTargetID == sessionTargetID {
+				if matchingDispatchID != "" {
+					return invalid()
+				}
+				matchingDispatchID = dispatchID
+			}
+		}
+		if _, present := requirePrivate("dispatchId"); present {
+			dispatchID, ok := requireID("dispatchId")
+			dispatch, exists := state.dispatches[dispatchID]
+			if !ok || !exists || matchingDispatchID != dispatchID || dispatch.NodeID != data.NodeID || dispatch.Attempt != attemptNumber || dispatch.SlotID != data.SlotID || dispatch.BindingID != bindingID || dispatch.SessionTargetID != sessionTargetID {
+				return invalid()
+			}
+		} else if matchingDispatchID != "" {
+			return invalid()
+		}
+		return finish(schema2ErrorAuthority{})
+	case "tool":
+		allowedPrivate = stringSet("attempt")
+		attemptNumber, attemptOK := requireUint("attempt")
+		attempt := state.existingAttempt(data.NodeID, attemptNumber)
+		lease, exists := state.toolLeases[data.ToolLeaseID]
+		if !attemptOK || raw.envelope.NodeID != data.NodeID || raw.envelope.GateID != "" || raw.envelope.SlotID != "" || raw.envelope.Attempt != attemptNumber || attempt == nil || attempt.CompletedSeq != 0 || !exists || lease.NodeID != data.NodeID || lease.Attempt != attemptNumber {
+			return invalid()
+		}
+		return finish(schema2ErrorAuthority{})
+	default:
+		return invalid()
+	}
 }
 
 func (state *projectionState) currentOpenNodeAttempts() []SafeNodeAttemptSnapshot {
@@ -3967,7 +4105,7 @@ func (state *projectionState) validateFailureCause(cause SafeFailureCause, nodes
 			}
 		}
 	case "error":
-		if _, exists := state.errorNodes[cause.ErrorSeq]; exists {
+		if authority, exists := state.errorAuthority[cause.ErrorSeq]; exists && authority.CanBackFailure {
 			return nil
 		}
 	}
@@ -4061,20 +4199,20 @@ func lifecycleToolDispositionBase(values []SafeToolLeaseDisposition) []SafeToolL
 	return result
 }
 
-func (state *projectionState) failureSelectedNode(cause SafeFailureCause, slots []SafeSchema2OpenDispatch, tools []SafeToolLeaseSnapshot) string {
+func (state *projectionState) failureSelectedAttempt(cause SafeFailureCause, slots []SafeSchema2OpenDispatch, tools []SafeToolLeaseSnapshot) string {
 	switch cause.Kind {
 	case "slot":
 		if slot, ok := findLifecycleDispatch(slots, cause.DispatchID); ok {
-			return slot.NodeID
+			return projectionAttemptKey(slot.NodeID, slot.Attempt)
 		}
 	case "tool":
 		for _, tool := range tools {
 			if tool.ToolLeaseID == cause.ToolLeaseID {
-				return tool.NodeID
+				return projectionAttemptKey(tool.NodeID, tool.Attempt)
 			}
 		}
 	case "error":
-		return state.errorNodes[cause.ErrorSeq]
+		return state.errorAuthority[cause.ErrorSeq].SelectedAttemptKey
 	}
 	return ""
 }
@@ -4083,12 +4221,12 @@ func (state *projectionState) validateNodeDispositions(snapshots []SafeNodeAttem
 	if !reflect.DeepEqual(lifecycleNodeDispositionBase(dispositions), snapshots) {
 		return projectionError(ErrRunProjectionInvalid, "node dispositions differ from lifecycle snapshot")
 	}
-	selected := state.failureSelectedNode(cause, slots, tools)
+	selected := state.failureSelectedAttempt(cause, slots, tools)
 	for _, disposition := range dispositions {
 		want := "canceled_non_authorizing"
 		if status == "failed" {
 			want = "abandoned_non_authorizing"
-			if disposition.NodeID == selected && selected != "" {
+			if projectionAttemptKey(disposition.NodeID, disposition.Attempt) == selected && selected != "" {
 				want = "failed_non_authorizing"
 			}
 		}
@@ -4247,6 +4385,19 @@ func (state *projectionState) startAttempt(nodeID string, attempt, sequence uint
 	view := &state.view.Attempts[len(state.view.Attempts)-1]
 	state.addAttemptRef(node, view)
 	return view
+}
+
+func (state *projectionState) openSchema2Attempt(nodeID string, attempt, sequence uint64, inputs []SafeInputIdentity) *RunAttemptView {
+	if state.existingAttempt(nodeID, attempt) != nil {
+		return nil
+	}
+	for index := range state.view.Attempts {
+		existing := &state.view.Attempts[index]
+		if existing.NodeID == nodeID && existing.CompletedSeq == 0 {
+			return nil
+		}
+	}
+	return state.startAttempt(nodeID, attempt, sequence, inputs)
 }
 
 func (state *projectionState) addAttemptRef(node *RunNodeView, attempt *RunAttemptView) {
@@ -4468,7 +4619,8 @@ func (state *projectionState) startSchema2Gate(gateID string, attempt, sequence 
 	if state.node(gateID) == nil || attempt == 0 || attempt > MaxJSONSafeInteger {
 		return projectionError(ErrRunProjectionInvalid, "invalid gate evaluation")
 	}
-	if state.startAttempt(gateID, attempt, sequence, nil) == nil {
+	owner := state.existingAttempt(gateID, attempt)
+	if owner == nil || owner.CompletedSeq != 0 {
 		return projectionError(ErrRunProjectionInvalid, "invalid gate evaluation")
 	}
 	state.startGate(gateID, attempt, sequence, SafeInputIdentity{})
@@ -5099,7 +5251,8 @@ func (state *projectionState) addSchema2Dispatch(raw rawProjectionEvent, dispatc
 	if !ok || health.SessionTargetID != dispatch.SessionTargetID || health.SlotID != dispatch.SlotID {
 		return projectionError(ErrRunProjectionInvalid, "dispatch without runnable binding observation")
 	}
-	if state.ensureAttempt(dispatch.NodeID, dispatch.Attempt) == nil {
+	attempt := state.existingAttempt(dispatch.NodeID, dispatch.Attempt)
+	if attempt == nil || attempt.CompletedSeq != 0 {
 		return projectionError(ErrRunProjectionInvalid, "dispatch outside selected graph")
 	}
 	state.view.Sessions = append(state.view.Sessions, RunSessionView{
