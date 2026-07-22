@@ -1687,6 +1687,50 @@ func decodeArtifactProjectionArray(raw json.RawMessage) ([]ArtifactProjection, e
 	return closedProjectionArray(raw, decodeArtifactProjection)
 }
 
+func decodeSchema2ToolResultData(data map[string]json.RawMessage) (SafeSchema2ToolResultData, error) {
+	type toolResultHeader struct {
+		ToolLeaseID  string                 `json:"toolLeaseId"`
+		LaunchID     string                 `json:"launchId"`
+		Generation   string                 `json:"generation"`
+		NodeID       string                 `json:"nodeId"`
+		Attempt      uint64                 `json:"attempt"`
+		Status       string                 `json:"status"`
+		Outputs      SafePayloadProjections `json:"outputs"`
+		OutputHashes SafeProjectionHashes   `json:"outputHashes"`
+		Timing       SafeEventTiming        `json:"timing"`
+	}
+	headerData := cloneRawMap(data)
+	delete(headerData, "artifactRegistrations")
+	delete(headerData, "artifacts")
+	delete(headerData, "displayEvidence")
+	header, err := decodeTypedData[toolResultHeader](headerData)
+	if err != nil {
+		return SafeSchema2ToolResultData{}, err
+	}
+	registrations, err := decodeArtifactProjectionArray(data["artifactRegistrations"])
+	if err != nil {
+		return SafeSchema2ToolResultData{}, err
+	}
+	artifacts, err := decodeArtifactProjectionArray(data["artifacts"])
+	if err != nil {
+		return SafeSchema2ToolResultData{}, err
+	}
+	result := SafeSchema2ToolResultData{
+		ToolLeaseID: header.ToolLeaseID, LaunchID: header.LaunchID, Generation: header.Generation,
+		NodeID: header.NodeID, Attempt: header.Attempt, Status: header.Status,
+		Outputs: header.Outputs, OutputHashes: header.OutputHashes,
+		ArtifactRegistrations: registrations, Artifacts: artifacts, Timing: header.Timing,
+	}
+	if raw, present := data["displayEvidence"]; present {
+		display, decodeErr := decodeDisplayEvidence(raw)
+		if decodeErr != nil {
+			return SafeSchema2ToolResultData{}, decodeErr
+		}
+		result.DisplayEvidence = &display
+	}
+	return result, nil
+}
+
 func decodeDisplayEvidence(raw json.RawMessage) ([]SafeDisplayEvidence, error) {
 	return closedProjectionArray(raw, func(item json.RawMessage) (SafeDisplayEvidence, error) {
 		object, err := decodeUniqueJSONObject(item)
@@ -2156,10 +2200,6 @@ func validateAndNormalizeSchema2Data(eventType string, data map[string]json.RawM
 			return errors.New("invalid tool process launch")
 		}
 	case "tool_result":
-		decoded, err := decodeTypedData[SafeSchema2ToolResultData](data)
-		if err != nil || !projectionValueIn(decoded.Status, "ok", "error", "timeout") || !safeProjectionIdentifier(decoded.ToolLeaseID) || !safeProjectionIdentifier(decoded.LaunchID) || !canonicalUnsignedDecimal(decoded.Generation) || !safeProjectionIdentifier(decoded.NodeID) || !projectionSafeSequence(decoded.Attempt) {
-			return errors.New("invalid tool result")
-		}
 		outputs, err := decodePayloadProjections(data["outputs"])
 		if err != nil {
 			return err
@@ -2203,6 +2243,10 @@ func validateAndNormalizeSchema2Data(eventType string, data map[string]json.RawM
 			if err := replaceProjectionData(data, key, value); err != nil {
 				return err
 			}
+		}
+		decoded, err := decodeSchema2ToolResultData(data)
+		if err != nil || !projectionValueIn(decoded.Status, "ok", "error", "timeout") || !safeProjectionIdentifier(decoded.ToolLeaseID) || !safeProjectionIdentifier(decoded.LaunchID) || !canonicalUnsignedDecimal(decoded.Generation) || !safeProjectionIdentifier(decoded.NodeID) || !projectionSafeSequence(decoded.Attempt) {
+			return errors.New("invalid tool result")
 		}
 	case "node_output":
 		decoded, err := decodeTypedData[SafeSchema2NodeOutputData](data)
@@ -2640,7 +2684,7 @@ func sanitizeSchema2Event(event rawProjectionEvent) (SafeRunEvent, error) {
 		}
 		return SafeSchema2ToolProcessLaunchEvent{safeEventEnvelope: envelope, Type: event.typeName, Data: decoded}, nil
 	case "tool_result":
-		decoded, e := decodeTypedData[SafeSchema2ToolResultData](data)
+		decoded, e := decodeSchema2ToolResultData(data)
 		if e != nil {
 			return nil, makeError()
 		}
@@ -3120,6 +3164,7 @@ type projectionState struct {
 	cancelRequest       *SafeSchema2RunCancelRequestedData
 	failureStart        *SafeSchema2RunFailureReconciliationStartedData
 	toolLeases          map[string]SafeToolLeaseSnapshot
+	materializations    map[string]schema2NodeMaterialization
 	waitingSeq          map[string]uint64
 	errorAuthority      map[uint64]schema2ErrorAuthority
 	revocations         map[string]SafeSchema2SlotPeekCapabilityRevokedData
@@ -3134,6 +3179,18 @@ type schema2ErrorAuthority struct {
 	SelectedAttemptKey string
 	SelectedAttempt    uint64
 	CanBackFailure     bool
+}
+
+type schema2NodeMaterialization struct {
+	Kind             string
+	Sequence         uint64
+	Status           string
+	Outputs          SafePayloadProjections
+	OutputHashes     SafeProjectionHashes
+	ReportArtifactID string
+	ArtifactIDs      []string
+	DiffArtifactIDs  []string
+	Timing           SafeEventTiming
 }
 
 type schema2Binding struct {
@@ -3337,7 +3394,7 @@ func newProjectionState(runID string, source CanonicalRunSource, board *BoardDoc
 	}
 	state := projectionState{
 		view:  RunView{Schema: RunViewSchema, RunID: runID, Source: sourceProjection, RecoveryState: "live", Nodes: []RunNodeView{}, Attempts: []RunAttemptView{}, Gates: []RunGateView{}, Outputs: []RunOutputView{}, Artifacts: []ArtifactProjection{}, Blocks: []RunBlockView{}, Escalations: []RunEscalationView{}, Sessions: []RunSessionView{}, Actions: []RunAction{}},
-		board: board, nodeIndex: map[string]int{}, attemptIndex: map[string]int{}, gateIndex: map[string]int{}, artifactIndex: map[string]int{}, dispatches: map[string]SafeSchema2SlotDispatchData{}, dispatchSeq: map[string]uint64{}, matchedDispatch: map[string]bool{}, revokedDispatch: map[string]uint64{}, bindings: map[string]schema2Binding{}, health: map[string]SafeSchema2SlotBindingObservedData{}, toolLeases: map[string]SafeToolLeaseSnapshot{}, waitingSeq: map[string]uint64{}, errorAuthority: map[uint64]schema2ErrorAuthority{}, revocations: map[string]SafeSchema2SlotPeekCapabilityRevokedData{}, interrupts: map[string]SafeSchema2SlotReconciliationInterruptData{}, interruptSeq: map[string]uint64{}, interruptOutcomes: map[string]SafeSchema2SlotReconciliationInterruptOutcomeData{}, interruptOutcomeSeq: map[string]uint64{},
+		board: board, nodeIndex: map[string]int{}, attemptIndex: map[string]int{}, gateIndex: map[string]int{}, artifactIndex: map[string]int{}, dispatches: map[string]SafeSchema2SlotDispatchData{}, dispatchSeq: map[string]uint64{}, matchedDispatch: map[string]bool{}, revokedDispatch: map[string]uint64{}, bindings: map[string]schema2Binding{}, health: map[string]SafeSchema2SlotBindingObservedData{}, toolLeases: map[string]SafeToolLeaseSnapshot{}, materializations: map[string]schema2NodeMaterialization{}, waitingSeq: map[string]uint64{}, errorAuthority: map[uint64]schema2ErrorAuthority{}, revocations: map[string]SafeSchema2SlotPeekCapabilityRevokedData{}, interrupts: map[string]SafeSchema2SlotReconciliationInterruptData{}, interruptSeq: map[string]uint64{}, interruptOutcomes: map[string]SafeSchema2SlotReconciliationInterruptOutcomeData{}, interruptOutcomeSeq: map[string]uint64{},
 	}
 	appendNode := func(id, kind string) {
 		if id == "" {
@@ -3598,7 +3655,7 @@ func reduceSchema2EventInPlace(state *projectionState, raw rawProjectionEvent, s
 		state.matchedDispatch[event.Data.DispatchID] = true
 		state.setSessionOperatorInfluenced(event.Data.DispatchID, event.Data.OperatorInfluenced)
 	case SafeSchema2FormationResultEvent:
-		if err := state.completeSchema2Attempt(event.Data.NodeID, event.Data.Attempt, event.Data.Status, raw.envelope.Seq, event.Data.Outputs); err != nil {
+		if err := state.retainSchema2FormationResult(raw, event.Data); err != nil {
 			return err
 		}
 	case SafeSchema2ToolDispatchEvent:
@@ -3611,24 +3668,11 @@ func reduceSchema2EventInPlace(state *projectionState, raw rawProjectionEvent, s
 		}
 		state.toolLeases[event.Data.ToolLeaseID] = SafeToolLeaseSnapshot{ToolLeaseID: event.Data.ToolLeaseID, NodeID: event.Data.NodeID, Attempt: event.Data.Attempt, DispatchSeq: raw.envelope.Seq}
 	case SafeSchema2ToolResultEvent:
-		lease, exists := state.toolLeases[event.Data.ToolLeaseID]
-		if !exists || lease.NodeID != event.Data.NodeID || lease.Attempt != event.Data.Attempt {
-			return projectionError(ErrRunProjectionInvalid, "tool result without open lease")
-		}
-		status := "failed"
-		if event.Data.Status == "ok" {
-			status = "done"
-		}
-		if err := state.completeSchema2Attempt(event.Data.NodeID, event.Data.Attempt, status, raw.envelope.Seq, event.Data.Outputs); err != nil {
+		if err := state.retainSchema2ToolResult(raw, event.Data); err != nil {
 			return err
 		}
-		delete(state.toolLeases, event.Data.ToolLeaseID)
 	case SafeSchema2NodeOutputEvent:
-		node := state.node(event.Data.NodeID)
-		if node == nil || node.LatestAttempt == 0 {
-			return projectionError(ErrRunProjectionInvalid, "output without node attempt")
-		}
-		if err := state.completeSchema2Attempt(event.Data.NodeID, node.LatestAttempt, event.Data.Status, raw.envelope.Seq, event.Data.Outputs); err != nil {
+		if err := state.applySchema2NodeOutput(raw, event.Data); err != nil {
 			return err
 		}
 	case SafeSchema2GateEvaluatingEvent:
@@ -3790,7 +3834,7 @@ func reduceSchema2EventInPlace(state *projectionState, raw rawProjectionEvent, s
 		}
 		state.applyLifecycleFinal("failed", raw.envelope.Seq, event.Data.NodeAttemptDispositions, event.Data.SlotDispatchDispositions)
 	case SafeSchema2RunSucceededEvent:
-		if err := state.validateSuccessFinal(); err != nil {
+		if err := state.validateSuccessFinal(event.Data); err != nil {
 			return err
 		}
 		state.view.Status = "succeeded"
@@ -3909,6 +3953,7 @@ func cloneSchema2ProjectionState(state projectionState) projectionState {
 	clone.bindings = cloneProjectionValue(reflect.ValueOf(state.bindings)).Interface().(map[string]schema2Binding)
 	clone.health = cloneProjectionValue(reflect.ValueOf(state.health)).Interface().(map[string]SafeSchema2SlotBindingObservedData)
 	clone.toolLeases = cloneProjectionValue(reflect.ValueOf(state.toolLeases)).Interface().(map[string]SafeToolLeaseSnapshot)
+	clone.materializations = cloneProjectionValue(reflect.ValueOf(state.materializations)).Interface().(map[string]schema2NodeMaterialization)
 	clone.waitingSeq = cloneProjectionValue(reflect.ValueOf(state.waitingSeq)).Interface().(map[string]uint64)
 	clone.errorAuthority = cloneProjectionValue(reflect.ValueOf(state.errorAuthority)).Interface().(map[uint64]schema2ErrorAuthority)
 	clone.revocations = cloneProjectionValue(reflect.ValueOf(state.revocations)).Interface().(map[string]SafeSchema2SlotPeekCapabilityRevokedData)
@@ -4303,9 +4348,12 @@ func (state *projectionState) validateFailureFinal(data SafeSchema2RunFailedData
 	return nil
 }
 
-func (state *projectionState) validateSuccessFinal() error {
+func (state *projectionState) validateSuccessFinal(data SafeSchema2RunSucceededData) error {
 	if len(state.currentOpenNodeAttempts()) != 0 || len(state.currentSchema2OpenDispatches()) != 0 || len(state.currentOpenToolLeases()) != 0 || state.cancelRequest != nil || state.failureStart != nil {
 		return projectionError(ErrRunProjectionInvalid, "run success retains open execution authority")
+	}
+	if !state.artifactIDsRegistered(data.SummaryArtifactID, data.OutputArtifactIDs) {
+		return projectionError(ErrRunProjectionInvalid, "run success references unregistered artifact")
 	}
 	return nil
 }
@@ -4428,7 +4476,7 @@ func (state *projectionState) existingAttempt(nodeID string, attempt uint64) *Ru
 func (state *projectionState) completeSchema2Attempt(nodeID string, attempt uint64, status string, sequence uint64, outputs SafePayloadProjections) error {
 	node := state.node(nodeID)
 	view := state.existingAttempt(nodeID, attempt)
-	if node == nil || view == nil {
+	if node == nil || view == nil || view.CompletedSeq != 0 || node.LatestAttempt != attempt {
 		return projectionError(ErrRunProjectionInvalid, "result without selected attempt")
 	}
 	disposition := ""
@@ -4439,6 +4487,128 @@ func (state *projectionState) completeSchema2Attempt(nodeID string, attempt uint
 	view.Status, view.Disposition, view.CompletedSeq = status, disposition, sequence
 	state.appendProjectedOutputs(nodeID, attempt, sequence, outputs)
 	return nil
+}
+
+func (state *projectionState) retainSchema2FormationResult(raw rawProjectionEvent, data SafeSchema2FormationResultData) error {
+	key := projectionAttemptKey(data.NodeID, data.Attempt)
+	node := state.node(data.NodeID)
+	attempt := state.existingAttempt(data.NodeID, data.Attempt)
+	if (raw.envelope.NodeID != "" && raw.envelope.NodeID != data.NodeID) || (raw.envelope.Attempt != 0 && raw.envelope.Attempt != data.Attempt) || node == nil || node.Kind != "formation" || node.LatestAttempt != data.Attempt || attempt == nil || attempt.CompletedSeq != 0 {
+		return projectionError(ErrRunProjectionInvalid, "formation result without open exact attempt")
+	}
+	if _, exists := state.materializations[key]; exists {
+		return projectionError(ErrRunProjectionInvalid, "duplicate formation result")
+	}
+	if !state.artifactIDsRegistered(data.ReportArtifactID, data.ArtifactIDs, data.DiffArtifactIDs) {
+		return projectionError(ErrRunProjectionInvalid, "formation result references unregistered artifact")
+	}
+	state.materializations[key] = schema2NodeMaterialization{
+		Kind: "formation", Sequence: raw.envelope.Seq, Status: data.Status,
+		Outputs: data.Outputs, OutputHashes: data.OutputHashes,
+		ReportArtifactID: data.ReportArtifactID,
+		ArtifactIDs:      append([]string(nil), data.ArtifactIDs...), DiffArtifactIDs: append([]string(nil), data.DiffArtifactIDs...),
+	}
+	return nil
+}
+
+func (state *projectionState) retainSchema2ToolResult(raw rawProjectionEvent, data SafeSchema2ToolResultData) error {
+	key := projectionAttemptKey(data.NodeID, data.Attempt)
+	node := state.node(data.NodeID)
+	attempt := state.existingAttempt(data.NodeID, data.Attempt)
+	lease, exists := state.toolLeases[data.ToolLeaseID]
+	if (raw.envelope.NodeID != "" && raw.envelope.NodeID != data.NodeID) || (raw.envelope.Attempt != 0 && raw.envelope.Attempt != data.Attempt) || node == nil || node.Kind != "tool" || node.LatestAttempt != data.Attempt || attempt == nil || attempt.CompletedSeq != 0 || !exists || lease.NodeID != data.NodeID || lease.Attempt != data.Attempt {
+		return projectionError(ErrRunProjectionInvalid, "tool result without open exact lease")
+	}
+	if _, exists := state.materializations[key]; exists {
+		return projectionError(ErrRunProjectionInvalid, "duplicate tool result")
+	}
+	for _, registration := range data.ArtifactRegistrations {
+		artifactID := artifactProjectionID(registration)
+		if artifactID == "" {
+			return projectionError(ErrRunProjectionInvalid, "invalid tool artifact registration")
+		}
+		if _, registered := state.artifactIndex[artifactID]; registered {
+			return projectionError(ErrRunProjectionInvalid, "duplicate tool artifact registration")
+		}
+		state.upsertArtifact(registration)
+	}
+	artifactIDs := make([]string, 0, len(data.Artifacts))
+	for _, artifact := range data.Artifacts {
+		artifactID := artifactProjectionID(artifact)
+		registered, ok := artifactByID(state.view.Artifacts, artifactID)
+		if artifactID == "" || !ok || !reflect.DeepEqual(registered, artifact) {
+			return projectionError(ErrRunProjectionInvalid, "tool result artifact differs from registration")
+		}
+		artifactIDs = append(artifactIDs, artifactID)
+	}
+	status := "failed"
+	if data.Status == "ok" {
+		status = "done"
+	}
+	state.materializations[key] = schema2NodeMaterialization{
+		Kind: "tool", Sequence: raw.envelope.Seq, Status: status,
+		Outputs: data.Outputs, OutputHashes: data.OutputHashes,
+		ArtifactIDs: artifactIDs, DiffArtifactIDs: []string{}, Timing: data.Timing,
+	}
+	delete(state.toolLeases, data.ToolLeaseID)
+	return nil
+}
+
+func (state *projectionState) applySchema2NodeOutput(raw rawProjectionEvent, data SafeSchema2NodeOutputData) error {
+	node := state.node(data.NodeID)
+	attemptNumber := raw.envelope.Attempt
+	if attemptNumber == 0 && len(raw.rawData) == 0 && node != nil {
+		attemptNumber = node.LatestAttempt
+	}
+	if node == nil || attemptNumber == 0 || node.LatestAttempt != attemptNumber {
+		return projectionError(ErrRunProjectionInvalid, "output without exact node attempt")
+	}
+	attempt := state.existingAttempt(data.NodeID, attemptNumber)
+	if attempt == nil || attempt.CompletedSeq != 0 {
+		return projectionError(ErrRunProjectionInvalid, "output without open node attempt")
+	}
+	if node.Kind == "formation" || node.Kind == "tool" {
+		materialization, exists := state.materializations[projectionAttemptKey(data.NodeID, attemptNumber)]
+		if !exists || materialization.Kind != node.Kind || data.ProducedBy.Kind != materialization.Kind || data.ProducedBy.OutcomeSeq != materialization.Sequence || data.Status != materialization.Status || !reflect.DeepEqual(data.Outputs, materialization.Outputs) || !schema2PayloadHashesMatch(data.Outputs, materialization.OutputHashes) || data.ReportArtifactID != materialization.ReportArtifactID || !reflect.DeepEqual(data.ArtifactIDs, materialization.ArtifactIDs) || !reflect.DeepEqual(data.DiffArtifactIDs, materialization.DiffArtifactIDs) {
+			return projectionError(ErrRunProjectionInvalid, "node output differs from immutable result")
+		}
+		if node.Kind == "tool" && !reflect.DeepEqual(data.Timing, materialization.Timing) {
+			return projectionError(ErrRunProjectionInvalid, "tool output timing differs from immutable result")
+		}
+		if !state.artifactIDsRegistered(data.ReportArtifactID, data.ArtifactIDs, data.DiffArtifactIDs) {
+			return projectionError(ErrRunProjectionInvalid, "node output references unregistered artifact")
+		}
+	}
+	return state.completeSchema2Attempt(data.NodeID, attemptNumber, data.Status, raw.envelope.Seq, data.Outputs)
+}
+
+func schema2PayloadHashesMatch(outputs SafePayloadProjections, hashes SafeProjectionHashes) bool {
+	if len(outputs) != len(hashes) {
+		return false
+	}
+	for portID, output := range outputs {
+		raw, err := json.Marshal(output)
+		if err != nil || hashes[portID] != projectionSHA(raw) {
+			return false
+		}
+	}
+	return true
+}
+
+func (state *projectionState) artifactIDsRegistered(reportArtifactID string, artifactIDs ...[]string) bool {
+	if reportArtifactID != "" {
+		if _, registered := state.artifactIndex[reportArtifactID]; !registered {
+			return false
+		}
+	}
+	for _, ids := range artifactIDs {
+		for _, artifactID := range ids {
+			if _, registered := state.artifactIndex[artifactID]; !registered {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (state *projectionState) appendProjectedOutputs(nodeID string, attempt, sequence uint64, outputs SafePayloadProjections) {
