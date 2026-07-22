@@ -19,8 +19,11 @@ import (
 const (
 	defaultTmuxOutputCapBytes = 8192
 	defaultTmuxTimeoutSeconds = 30
-	formationsDogfoodRoot     = "/tmp"
-	peerPlaneMaxBytes         = 1 << 20
+	// defaultTmuxTmpdirRoot is the stock tmux default socket tmpdir. It is used
+	// only to recognize (and refuse) the default tmux socket layout so Formations
+	// never dispatches onto it; it is no longer a workspace/cwd boundary.
+	defaultTmuxTmpdirRoot = "/tmp"
+	peerPlaneMaxBytes     = 1 << 20
 )
 
 var (
@@ -1092,9 +1095,6 @@ func (e *TmuxFormationExecutor) validateConfiguredBoundary() error {
 	if err != nil {
 		return runExecutionError("invalid_cwd", "tmux executor cwd is invalid", "executor", err)
 	}
-	if !pathResolvedWithinRoot(cwd, formationsDogfoodRoot) {
-		return runExecutionError("session_target_attachment_audit_unavailable", "stock tmux dogfood requires disposable socket and workspace roots", "executor", nil)
-	}
 	if info, err := os.Stat(cwd); err != nil || !info.IsDir() {
 		return runExecutionError("unavailable_cwd", "tmux executor cwd is unavailable", "executor", err)
 	}
@@ -1105,9 +1105,6 @@ func (e *TmuxFormationExecutor) validateConfiguredBoundary() error {
 		absRoot, err := filepath.Abs(root)
 		if err != nil {
 			return runExecutionError("invalid_root", "tmux executor root is invalid", "executor", err)
-		}
-		if !pathResolvedWithinRoot(absRoot, formationsDogfoodRoot) {
-			return runExecutionError("session_target_attachment_audit_unavailable", "stock tmux dogfood requires disposable socket and workspace roots", "executor", nil)
 		}
 		if info, err := os.Stat(absRoot); err != nil || !info.IsDir() {
 			return runExecutionError("unavailable_root", "tmux executor root is unavailable", "executor", err)
@@ -1126,7 +1123,11 @@ func (e *TmuxFormationExecutor) validateConfiguredBoundary() error {
 
 func (e *TmuxFormationExecutor) validateTmuxSocketPathBoundary() error {
 	socket := e.config.Socket
-	if isDefaultTmuxSocket(socket) || isConfiguredCockpitTmuxSocket(socket) || !pathResolvedWithinRoot(socket, formationsDogfoodRoot) {
+	// Cockpit isolation (absolute): the executor must never dispatch onto the
+	// default tmux socket or a configured cockpit socket, where interactive
+	// terminals and other live agent sessions run. The dedicated production
+	// Formations socket is neither, so it is accepted.
+	if isDefaultTmuxSocket(socket) || isConfiguredCockpitTmuxSocket(socket) {
 		return runExecutionError("session_target_attachment_audit_unavailable", "stock tmux cannot certify attachment and input continuity for a cockpit session target", "executor", nil)
 	}
 	return nil
@@ -1406,7 +1407,7 @@ func isDefaultTmuxSocket(socket string) bool {
 			candidates = append(candidates, strings.TrimSpace(configured))
 		}
 	}
-	tmuxRoots := []string{formationsDogfoodRoot}
+	tmuxRoots := []string{defaultTmuxTmpdirRoot}
 	tmpdir := strings.TrimSpace(os.Getenv("TMUX_TMPDIR"))
 	xdg := strings.TrimSpace(os.Getenv("XDG_RUNTIME_DIR"))
 	if tmpdir != "" {
@@ -1415,7 +1416,7 @@ func isDefaultTmuxSocket(socket string) bool {
 	} else if xdg != "" {
 		tmuxRoots = append(tmuxRoots, filepath.Join(xdg, "tmux"))
 	} else {
-		tmuxRoots = append(tmuxRoots, filepath.Join(formationsDogfoodRoot, fmt.Sprintf("tmux-%d", os.Getuid())))
+		tmuxRoots = append(tmuxRoots, filepath.Join(defaultTmuxTmpdirRoot, fmt.Sprintf("tmux-%d", os.Getuid())))
 	}
 	if xdg != "" {
 		candidates = append(candidates, filepath.Join(xdg, "tmux", "default"))
@@ -1517,35 +1518,6 @@ func sameTmuxSocket(left, right string) bool {
 	leftInfo, leftStatErr := os.Stat(leftAbs)
 	rightInfo, rightStatErr := os.Stat(rightAbs)
 	return leftStatErr == nil && rightStatErr == nil && os.SameFile(leftInfo, rightInfo)
-}
-
-func pathResolvedWithinRoot(path, root string) bool {
-	absPath, pathErr := filepath.Abs(path)
-	absRoot, rootErr := filepath.Abs(root)
-	if pathErr != nil || rootErr != nil {
-		return false
-	}
-	resolvedRoot, err := filepath.EvalSymlinks(absRoot)
-	if err != nil {
-		return false
-	}
-
-	var resolvedPath string
-	if _, err := os.Lstat(absPath); err == nil {
-		resolvedPath, err = filepath.EvalSymlinks(absPath)
-		if err != nil {
-			return false
-		}
-	} else if os.IsNotExist(err) {
-		resolvedParent, resolveErr := filepath.EvalSymlinks(filepath.Dir(absPath))
-		if resolveErr != nil {
-			return false
-		}
-		resolvedPath = filepath.Join(resolvedParent, filepath.Base(absPath))
-	} else {
-		return false
-	}
-	return pathWithinRoot(resolvedPath, resolvedRoot)
 }
 
 type realTmuxHarnessClient struct{}

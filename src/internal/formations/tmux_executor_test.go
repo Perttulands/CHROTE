@@ -52,43 +52,48 @@ func TestTmuxExecutorRefusesConfiguredCockpitSocketEvenWithLegacyOptIns(t *testi
 	}
 }
 
-func TestTmuxExecutorLegacyOptInsCannotAuthorizeNonTempSocket(t *testing.T) {
-	for _, envName := range []string{
-		"CHROTE_FORMATIONS_TMUX_PROD_SMOKE",
-		"CHROTE_FORMATIONS_TMUX_DEDICATED",
-	} {
-		t.Run(envName, func(t *testing.T) {
-			clearExecutorEnv(t)
-			root := t.TempDir()
-			t.Setenv("CHROTE_FORMATIONS_TMUX_HARNESSES", "openai-codex")
-			t.Setenv("CHROTE_FORMATIONS_TMUX_SOCKET", "/run/chrote/formations-tmux/default")
-			t.Setenv("CHROTE_FORMATIONS_TMUX_CWD", root)
-			t.Setenv("CHROTE_FORMATIONS_TMUX_ROOTS", root)
-			t.Setenv("CHROTE_FORMATIONS_TMUX_SESSION_PREFIX", "tmux-")
-			t.Setenv(envName, "1")
-
-			store, personas := s4RunFixture(t)
-			client := &fakeTmuxHarnessClient{}
-			executor := newTmuxFormationExecutorWithClient(store, personas, TmuxExecutorConfigFromEnv(), client)
-			_, err := executor.ExecuteFormation(FormationExecution{})
-			var executionErr *RunExecutionError
-			if !errors.As(err, &executionErr) {
-				t.Fatalf("legacy opt-in error = %v, want RunExecutionError", err)
-			}
-			if executionErr.Code != "session_target_attachment_audit_unavailable" {
-				t.Fatalf("legacy opt-in code = %q, want session_target_attachment_audit_unavailable", executionErr.Code)
-			}
-			if client.listCalls != 0 || client.describeCalls != 0 || client.sendCalls != 0 || client.captureCalls != 0 {
-				t.Fatalf("tmux client calls = list:%d describe:%d send:%d capture:%d, want all zero", client.listCalls, client.describeCalls, client.sendCalls, client.captureCalls)
-			}
-		})
-	}
-}
-
 func TestTmuxExecutorAllowsDisposableTempDogfood(t *testing.T) {
 	if err := newTmuxFormationExecutorWithClient(nil, nil, tmuxTestConfig(t), &fakeTmuxHarnessClient{}).validateConfiguredBoundary(); err != nil {
 		t.Fatalf("disposable temp dogfood validate error = %v, want allowed", err)
 	}
+}
+
+func TestTmuxExecutorAcceptsProductionDedicatedSocketOutsideTemp(t *testing.T) {
+	// Production-style config: a dedicated tmux socket and workspace cwd/roots
+	// that live OUTSIDE /tmp. The executor must accept it now that the disposable
+	// /tmp dogfood requirement is removed.
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_TMPDIR", "")
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	t.Setenv("CHROTE_DEFAULT_TMUX_SOCKET", "")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "")
+
+	cfg := nonTempWorkspace(t)
+	if err := newTmuxFormationExecutorWithClient(nil, nil, cfg, &fakeTmuxHarnessClient{}).validateConfiguredBoundary(); err != nil {
+		t.Fatalf("production dedicated socket + workspace outside /tmp validate error = %v, want accepted", err)
+	}
+}
+
+func TestTmuxExecutorRefusesCockpitAndDefaultSocketWithProductionWorkspace(t *testing.T) {
+	// Cockpit isolation must survive independently of the workspace boundary: even
+	// with a valid production workspace outside /tmp, the default tmux socket and a
+	// configured cockpit socket are still refused.
+	t.Run("configured cockpit socket", func(t *testing.T) {
+		cfg := nonTempWorkspace(t)
+		cockpitSocket := filepath.Join(t.TempDir(), "chrote-tmux", fmt.Sprintf("tmux-%d", os.Getuid()), "default")
+		cfg.Socket = cockpitSocket
+		t.Setenv("CHROTE_DEFAULT_TMUX_SOCKET", cockpitSocket)
+		assertBoundaryCode(t, cfg, "session_target_attachment_audit_unavailable")
+	})
+
+	t.Run("default tmux socket", func(t *testing.T) {
+		cfg := nonTempWorkspace(t)
+		tmuxTmpRoot := t.TempDir()
+		cfg.Socket = filepath.Join(tmuxTmpRoot, fmt.Sprintf("tmux-%d", os.Getuid()), "default")
+		t.Setenv("TMUX_TMPDIR", tmuxTmpRoot)
+		t.Setenv("CHROTE_DEFAULT_TMUX_SOCKET", "")
+		assertBoundaryCode(t, cfg, "session_target_attachment_audit_unavailable")
+	})
 }
 
 func TestTmuxExecutorRefusesCockpitSocketAlias(t *testing.T) {
@@ -116,48 +121,32 @@ func TestTmuxExecutorRefusesCockpitSocketAlias(t *testing.T) {
 	}
 }
 
-func TestTmuxExecutorDisposableBoundaryRejectsSymlinkEscapes(t *testing.T) {
-	t.Run("socket", func(t *testing.T) {
-		cfg := tmuxTestConfig(t)
-		aliasSocket := filepath.Join(filepath.Dir(cfg.Socket), "outside.sock")
-		if err := os.Symlink("/dev/null", aliasSocket); err != nil {
-			t.Fatalf("symlink outside socket fixture: %v", err)
-		}
-		cfg.Socket = aliasSocket
-		assertAttachmentAuditUnavailable(t, cfg)
-	})
-
-	t.Run("workspace root", func(t *testing.T) {
-		cfg := tmuxTestConfig(t)
-		aliasRoot := filepath.Join(t.TempDir(), "outside-root")
-		if err := os.Symlink("/srv", aliasRoot); err != nil {
-			t.Fatalf("symlink outside root fixture: %v", err)
-		}
-		cfg.Cwd = aliasRoot
-		cfg.Roots = []string{aliasRoot}
-		assertAttachmentAuditUnavailable(t, cfg)
-	})
+func TestTmuxExecutorRejectsSocketSymlink(t *testing.T) {
+	// The socket-identity/stability check is retained: a socket that is a
+	// symlink is refused so the executor cannot be pointed at a moving target.
+	cfg := tmuxTestConfig(t)
+	aliasSocket := filepath.Join(filepath.Dir(cfg.Socket), "outside.sock")
+	if err := os.Symlink("/dev/null", aliasSocket); err != nil {
+		t.Fatalf("symlink outside socket fixture: %v", err)
+	}
+	cfg.Socket = aliasSocket
+	assertAttachmentAuditUnavailable(t, cfg)
 }
 
-func TestTmuxExecutorNonTempBoundaryWinsOverInvalidConfiguration(t *testing.T) {
-	t.Run("socket before missing cwd", func(t *testing.T) {
-		cfg := tmuxTestConfig(t)
-		cfg.Socket = "/run/chrote/formations-tmux/default"
-		cfg.Cwd = "/path-that-does-not-exist"
-		assertAttachmentAuditUnavailable(t, cfg)
-	})
-
-	t.Run("cwd before stat", func(t *testing.T) {
+func TestTmuxExecutorNonTempWorkspaceUsesOrdinaryValidationCodes(t *testing.T) {
+	// The /tmp workspace boundary is removed: a missing non-/tmp cwd or root is
+	// now an ordinary configuration error, not session_target_attachment_audit_unavailable.
+	t.Run("missing cwd", func(t *testing.T) {
 		cfg := tmuxTestConfig(t)
 		cfg.Cwd = "/srv/path-that-does-not-exist"
 		cfg.Roots = []string{cfg.Cwd}
-		assertAttachmentAuditUnavailable(t, cfg)
+		assertBoundaryCode(t, cfg, "unavailable_cwd")
 	})
 
-	t.Run("root before stat", func(t *testing.T) {
+	t.Run("missing root", func(t *testing.T) {
 		cfg := tmuxTestConfig(t)
 		cfg.Roots = []string{cfg.Cwd, "/srv/path-that-does-not-exist"}
-		assertAttachmentAuditUnavailable(t, cfg)
+		assertBoundaryCode(t, cfg, "unavailable_root")
 	})
 }
 
@@ -224,20 +213,6 @@ func TestIsDefaultTmuxSocketIncludesCoreFallbackLayout(t *testing.T) {
 	}
 }
 
-func TestTmuxExecutorDogfoodBoundaryIgnoresTMPDIR(t *testing.T) {
-	packageRoot, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get package root: %v", err)
-	}
-
-	cfg := tmuxTestConfig(t)
-	cfg.Socket = filepath.Join(packageRoot, "tmux_executor_test.go")
-	cfg.Cwd = packageRoot
-	cfg.Roots = []string{packageRoot}
-	t.Setenv("TMPDIR", packageRoot)
-	assertRunAttachmentAuditUnavailableBeforeTmux(t, cfg)
-}
-
 func TestTmuxExecutorRefusesSocketRetargetBeforeSend(t *testing.T) {
 	cfg := tmuxTestConfig(t)
 	client := &fakeTmuxHarnessClient{
@@ -281,6 +256,18 @@ func assertAttachmentAuditUnavailable(t *testing.T, cfg TmuxExecutorConfig) {
 	}
 	if executionErr.Code != "session_target_attachment_audit_unavailable" {
 		t.Fatalf("disposable boundary code = %q, want session_target_attachment_audit_unavailable", executionErr.Code)
+	}
+}
+
+func assertBoundaryCode(t *testing.T, cfg TmuxExecutorConfig, wantCode string) {
+	t.Helper()
+	err := newTmuxFormationExecutorWithClient(nil, nil, cfg, &fakeTmuxHarnessClient{}).validateConfiguredBoundary()
+	var executionErr *RunExecutionError
+	if !errors.As(err, &executionErr) {
+		t.Fatalf("boundary error = %v, want RunExecutionError with code %q", err, wantCode)
+	}
+	if executionErr.Code != wantCode {
+		t.Fatalf("boundary code = %q, want %q", executionErr.Code, wantCode)
 	}
 }
 
@@ -1484,6 +1471,48 @@ func tmuxTestConfig(t *testing.T) TmuxExecutorConfig {
 		Socket:         socket,
 		Cwd:            root,
 		Roots:          []string{root},
+		SessionPrefix:  "tmux-",
+		OutputCapBytes: defaultTmuxOutputCapBytes,
+		TimeoutSeconds: 1,
+	}
+}
+
+// nonTempWorkspace builds a production-style config whose dedicated socket and
+// workspace cwd/roots live OUTSIDE /tmp, mirroring the /srv + /run production
+// layout. The base directory is created under the package directory (which is
+// never /tmp) and removed on cleanup.
+func nonTempWorkspace(t *testing.T) TmuxExecutorConfig {
+	t.Helper()
+	packageRoot, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get package root: %v", err)
+	}
+	base, err := os.MkdirTemp(packageRoot, "chrote-prod-")
+	if err != nil {
+		t.Fatalf("create non-temp workspace base: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(base); err != nil {
+			t.Errorf("remove non-temp workspace base: %v", err)
+		}
+	})
+	workspace := filepath.Join(base, "workspace")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatalf("create non-temp workspace: %v", err)
+	}
+	socketDir := filepath.Join(base, "formations-tmux")
+	if err := os.MkdirAll(socketDir, 0o700); err != nil {
+		t.Fatalf("create non-temp socket dir: %v", err)
+	}
+	socket := filepath.Join(socketDir, "default")
+	if err := os.WriteFile(socket, []byte("dedicated formations tmux socket fixture"), 0o600); err != nil {
+		t.Fatalf("write non-temp socket fixture: %v", err)
+	}
+	return TmuxExecutorConfig{
+		Harnesses:      []string{"openai-codex"},
+		Socket:         socket,
+		Cwd:            workspace,
+		Roots:          []string{workspace},
 		SessionPrefix:  "tmux-",
 		OutputCapBytes: defaultTmuxOutputCapBytes,
 		TimeoutSeconds: 1,
