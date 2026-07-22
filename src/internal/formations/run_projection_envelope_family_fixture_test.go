@@ -138,8 +138,12 @@ func schema2ApplyFixtureEnvelope(event map[string]any, eventType string, data ma
 	case "node_output":
 		schema2SetFixtureIdentity(event, "nodeId", data["nodeId"])
 		schema2SetFixtureIdentity(event, "attempt", uint64(1))
-	case "gate_evaluating", "gate_kind_result", "gate_verdict", "human_input_requested", "human_verdict_recorded":
+	case "gate_evaluating", "human_input_requested", "human_verdict_recorded":
 		schema2SetFixtureIdentity(event, "nodeId", data["nodeId"])
+		schema2SetFixtureIdentity(event, "gateId", data["gateId"])
+		schema2SetFixtureIdentity(event, "attempt", data["gateAttempt"])
+	case "gate_kind_result", "gate_verdict":
+		schema2SetFixtureIdentity(event, "nodeId", data["gateId"])
 		schema2SetFixtureIdentity(event, "gateId", data["gateId"])
 		schema2SetFixtureIdentity(event, "attempt", data["gateAttempt"])
 	case "judge_result", "judge_attempt_failed":

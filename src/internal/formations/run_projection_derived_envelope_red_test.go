@@ -327,6 +327,253 @@ func schema2DerivedSlotResultInput(t *testing.T) (projectionState, map[string]an
 	return state, cloneAny(matched[1]["data"]).(map[string]any)
 }
 
+func TestTask1GateAuthorityRequiresExactEnvelopeIdentity(t *testing.T) {
+	tests := []struct {
+		name      string
+		eventType string
+		prepare   func(*testing.T) (projectionState, map[string]any)
+	}{
+		{name: "Gate kind result", eventType: "gate_kind_result", prepare: func(t *testing.T) (projectionState, map[string]any) {
+			state := schema2EpochTestState()
+			prepareSchema2RepairGate(&state)
+			return state, schema2RepairGateKindResultData()
+		}},
+		{name: "Gate verdict", eventType: "gate_verdict", prepare: func(t *testing.T) (projectionState, map[string]any) {
+			state := schema2EpochTestState()
+			prepareSchema2RepairGate(&state)
+			return state, schema2RepairGateVerdictData()
+		}},
+		{name: "human input request", eventType: "human_input_requested", prepare: func(t *testing.T) (projectionState, map[string]any) {
+			state := schema2EpochTestState()
+			prepareSchema2RepairGate(&state)
+			return state, schema2RepairHumanRequestData()
+		}},
+		{name: "human verdict", eventType: "human_verdict_recorded", prepare: func(t *testing.T) (projectionState, map[string]any) {
+			state := schema2EpochTestState()
+			prepareSchema2RepairHumanGate(&state)
+			return state, schema2RepairHumanVerdictData()
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name+" conformant envelope is accepted", func(t *testing.T) {
+			state, data := test.prepare(t)
+			if err := schema2DerivedEnvelopeReduce(t, &state, 20, test.eventType, data, nil); err != nil {
+				t.Fatalf("reduce conformant %s: %v", test.eventType, err)
+			}
+		})
+		for _, member := range []string{"nodeId", "gateId", "attempt"} {
+			member := member
+			for _, mutation := range []struct {
+				name   string
+				mutate func(map[string]any)
+			}{
+				{name: "omitted", mutate: func(event map[string]any) { delete(event, member) }},
+				{name: "mismatched", mutate: func(event map[string]any) { schema2SetMismatchedEnvelopeIdentity(event, member) }},
+			} {
+				mutation := mutation
+				t.Run(test.name+" rejects "+mutation.name+" "+member+" without mutation", func(t *testing.T) {
+					state, data := test.prepare(t)
+					schema2DerivedEnvelopeRequireRejection(t, &state, 20, test.eventType, data, mutation.mutate)
+				})
+			}
+		}
+		// Payloads that carry nodeId must bind it to the Gate as well as to
+		// the common envelope. Gate-kind/verdict payloads select the Gate
+		// directly and intentionally omit this duplicate.
+		_, data := test.prepare(t)
+		if _, ok := data["nodeId"]; ok {
+			t.Run(test.name+" rejects payload nodeId that differs from gateId", func(t *testing.T) {
+				state, data := test.prepare(t)
+				data["nodeId"] = projectionTestFormationID
+				schema2DerivedRequireDataRejection(t, &state, 20, test.eventType, data, nil)
+			})
+		}
+	}
+}
+
+func TestTask1JudgeAuthorityUsesJudgeAttemptInEnvelope(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		eventType string
+		data      func() map[string]any
+	}{
+		{name: "judge result", eventType: "judge_result", data: schema2RepairJudgeResultData},
+		{name: "judge failure", eventType: "judge_attempt_failed", data: schema2RepairJudgeAttemptFailedData},
+	} {
+		t.Run(test.name+" conformant judge envelope is accepted", func(t *testing.T) {
+			state, data := schema2DerivedJudgeInput(t, test.data())
+			if err := schema2DerivedEnvelopeReduce(t, &state, 20, test.eventType, data, nil); err != nil {
+				t.Fatalf("reduce conformant %s: %v", test.eventType, err)
+			}
+		})
+
+		for _, mutation := range []struct {
+			name   string
+			mutate func(map[string]any)
+		}{
+			{name: "omitted judge node", mutate: func(event map[string]any) { delete(event, "nodeId") }},
+			{name: "mismatched judge node", mutate: func(event map[string]any) { event["nodeId"] = projectionTestGateID }},
+			{name: "omitted judge attempt", mutate: func(event map[string]any) { delete(event, "attempt") }},
+			{name: "Gate attempt used as common attempt", mutate: func(event map[string]any) { event["attempt"] = uint64(1) }},
+			{name: "mismatched judge attempt", mutate: func(event map[string]any) { event["attempt"] = uint64(3) }},
+			{name: "omitted parent Gate", mutate: func(event map[string]any) { delete(event, "gateId") }},
+			{name: "mismatched parent Gate", mutate: func(event map[string]any) { event["gateId"] = "gate_other" }},
+		} {
+			t.Run(test.name+" rejects "+mutation.name+" without mutation", func(t *testing.T) {
+				state, data := schema2DerivedJudgeInput(t, test.data())
+				schema2DerivedEnvelopeRequireRejection(t, &state, 20, test.eventType, data, mutation.mutate)
+			})
+		}
+	}
+}
+
+func schema2DerivedJudgeInput(t *testing.T, data map[string]any) (projectionState, map[string]any) {
+	t.Helper()
+	state := schema2EpochTestState()
+	prepareSchema2RepairGate(&state)
+	schema2RepairStartAttempt(&state, projectionTestFormationID, "formation", 2, 4)
+	data["judgeAttempt"] = uint64(2)
+	return state, data
+}
+
+func TestTask1EscalationAuthorityRequiresExactOptionalEnvelopeIdentity(t *testing.T) {
+	tests := []struct {
+		name   string
+		nodeID string
+		gateID string
+	}{
+		{name: "run only"},
+		{name: "node only", nodeID: projectionTestFormationID},
+		{name: "Gate only", gateID: projectionTestGateID},
+		{name: "distinct node and Gate", nodeID: projectionTestFormationID, gateID: projectionTestGateID},
+	}
+
+	for _, test := range tests {
+		data := schema2SecondRepairFixture(t, "escalation_raised")
+		data["nodeId"], data["gateId"] = test.nodeID, test.gateID
+		t.Run(test.name+" exact envelope is accepted without attempt", func(t *testing.T) {
+			state := schema2FinalGreenAllNodeState()
+			if err := schema2DerivedEnvelopeReduce(t, &state, 20, "escalation_raised", data, nil); err != nil {
+				t.Fatalf("reduce conformant escalation: %v", err)
+			}
+		})
+
+		mutations := []struct {
+			name   string
+			mutate func(map[string]any)
+		}{{name: "fabricated attempt", mutate: func(event map[string]any) { event["attempt"] = uint64(1) }}}
+		if test.nodeID == "" {
+			mutations = append(mutations, struct {
+				name   string
+				mutate func(map[string]any)
+			}{name: "fabricated node", mutate: func(event map[string]any) { event["nodeId"] = projectionTestFormationID }})
+		} else {
+			mutations = append(mutations, struct {
+				name   string
+				mutate func(map[string]any)
+			}{name: "mismatched node", mutate: func(event map[string]any) { event["nodeId"] = projectionTestMissionID }})
+		}
+		if test.gateID == "" {
+			mutations = append(mutations, struct {
+				name   string
+				mutate func(map[string]any)
+			}{name: "fabricated Gate", mutate: func(event map[string]any) { event["gateId"] = projectionTestGateID }})
+		} else {
+			mutations = append(mutations, struct {
+				name   string
+				mutate func(map[string]any)
+			}{name: "mismatched Gate", mutate: func(event map[string]any) { event["gateId"] = "gate_other" }})
+		}
+		for _, mutation := range mutations {
+			mutation := mutation
+			t.Run(test.name+" rejects "+mutation.name+" without mutation", func(t *testing.T) {
+				state := schema2FinalGreenAllNodeState()
+				schema2DerivedEnvelopeRequireRejection(t, &state, 20, "escalation_raised", data, mutation.mutate)
+			})
+		}
+	}
+}
+
+func TestTask1RunBlockedAuthorityRequiresScopeConditionedEnvelopeIdentity(t *testing.T) {
+	tests := []struct {
+		name      string
+		data      map[string]any
+		mutations []struct {
+			name   string
+			mutate func(map[string]any)
+		}
+	}{
+		{
+			name: "run scope", data: schema2GreenRereviewBlock("run", "new_run_required", nil, false),
+			mutations: []struct {
+				name   string
+				mutate func(map[string]any)
+			}{
+				{name: "forbidden node", mutate: func(event map[string]any) { event["nodeId"] = projectionTestFormationID }},
+				{name: "forbidden Gate", mutate: func(event map[string]any) { event["gateId"] = projectionTestGateID }},
+				{name: "forbidden attempt", mutate: func(event map[string]any) { event["attempt"] = uint64(1) }},
+			},
+		},
+		{
+			name: "node scope", data: schema2GreenRereviewBlock("node", "new_run_required", nil, false),
+			mutations: []struct {
+				name   string
+				mutate func(map[string]any)
+			}{
+				{name: "missing node", mutate: func(event map[string]any) { delete(event, "nodeId") }},
+				{name: "mismatched node", mutate: func(event map[string]any) { event["nodeId"] = projectionTestMissionID }},
+				{name: "forbidden Gate", mutate: func(event map[string]any) { event["gateId"] = projectionTestGateID }},
+				{name: "forbidden attempt", mutate: func(event map[string]any) { event["attempt"] = uint64(1) }},
+			},
+		},
+		{
+			name: "Gate scope without causal node", data: schema2GreenRereviewBlock("gate", "new_run_required", nil, false),
+			mutations: []struct {
+				name   string
+				mutate func(map[string]any)
+			}{
+				{name: "missing Gate", mutate: func(event map[string]any) { delete(event, "gateId") }},
+				{name: "mismatched Gate", mutate: func(event map[string]any) { event["gateId"] = "gate_other" }},
+				{name: "forbidden node", mutate: func(event map[string]any) { event["nodeId"] = projectionTestFormationID }},
+				{name: "forbidden attempt", mutate: func(event map[string]any) { event["attempt"] = uint64(1) }},
+			},
+		},
+		{
+			name: "Gate scope with distinct causal node", data: schema2GreenRereviewBlock("gate", "new_run_required", nil, true),
+			mutations: []struct {
+				name   string
+				mutate func(map[string]any)
+			}{
+				{name: "missing Gate", mutate: func(event map[string]any) { delete(event, "gateId") }},
+				{name: "mismatched Gate", mutate: func(event map[string]any) { event["gateId"] = "gate_other" }},
+				{name: "missing causal node", mutate: func(event map[string]any) { delete(event, "nodeId") }},
+				{name: "mismatched causal node", mutate: func(event map[string]any) { event["nodeId"] = projectionTestMissionID }},
+				{name: "forbidden attempt", mutate: func(event map[string]any) { event["attempt"] = uint64(1) }},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name+" exact envelope is accepted without attempt", func(t *testing.T) {
+			state := schema2FinalGreenAllNodeState()
+			if err := schema2DerivedEnvelopeReduce(t, &state, 20, "run_blocked", test.data, nil); err != nil {
+				t.Fatalf("reduce conformant run_blocked: %v", err)
+			}
+			if state.view.Status != "blocked" {
+				t.Fatalf("run_blocked status = %q", state.view.Status)
+			}
+		})
+		for _, mutation := range test.mutations {
+			mutation := mutation
+			t.Run(test.name+" rejects "+mutation.name+" without mutation", func(t *testing.T) {
+				state := schema2FinalGreenAllNodeState()
+				schema2DerivedEnvelopeRequireRejection(t, &state, 20, "run_blocked", test.data, mutation.mutate)
+			})
+		}
+	}
+}
+
 func schema2DerivedFormationResultInput(t *testing.T) (projectionState, map[string]any) {
 	t.Helper()
 	state := schema2EpochTestState()
@@ -469,6 +716,13 @@ func TestTask1DerivedGraphAuthorityRequiresExactEnvelopeIdentity(t *testing.T) {
 			schema2DerivedEnvelopeRequireRejection(t, &state, 5, "gate_evaluating", schema2FinalGreenGateEvaluatingData(), identity.mutate)
 		})
 	}
+
+	t.Run("gate_evaluating_rejects_payload_node_that_differs_from_gate_without_mutation", func(t *testing.T) {
+		state := schema2DerivedEnvelopeAttemptState(t, projectionTestGateID, "gate")
+		data := schema2FinalGreenGateEvaluatingData()
+		data["nodeId"] = projectionTestFormationID
+		schema2DerivedRequireDataRejection(t, &state, 5, "gate_evaluating", data, nil)
+	})
 }
 
 func schema2DerivedEnvelopeSlotState(t *testing.T) projectionState {
