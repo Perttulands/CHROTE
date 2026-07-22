@@ -24,13 +24,16 @@ func TestProjectCanonicalRunSchema2StructuralArmsAreNeverAuditOnly(t *testing.T)
 	}
 
 	tests := []struct {
-		name        string
-		prepare     func(*projectionState)
-		eventType   string
-		data        map[string]any
-		envelope    func(map[string]any)
-		want        func(*projectionState)
-		historyOnly bool
+		name            string
+		prepare         func(*projectionState)
+		openNodeID      string
+		openNodeKind    string
+		eventType       string
+		data            map[string]any
+		envelope        func(map[string]any)
+		want            func(*projectionState)
+		assertAuthority func(*testing.T, *projectionState)
+		historyOnly     bool
 	}{
 		{
 			name: "formation result retains materialization authority without closing its attempt", prepare: startSchema2RepairAttempt(projectionTestFormationID, "formation"),
@@ -38,9 +41,20 @@ func TestProjectCanonicalRunSchema2StructuralArmsAreNeverAuditOnly(t *testing.T)
 			historyOnly: true,
 		},
 		{
-			name:      "tool dispatch opens tool attempt state",
+			name:       "tool dispatch binds a lease to the exact node_started Tool attempt",
+			openNodeID: "tool_normalize", openNodeKind: "tool",
 			eventType: "tool_dispatch", data: schema2RepairToolDispatchData(),
-			want: func(state *projectionState) { schema2RepairStartAttempt(state, "tool_normalize", "tool", 1, 20) },
+			historyOnly: true,
+			assertAuthority: func(t *testing.T, state *projectionState) {
+				attempt := state.existingAttempt("tool_normalize", 1)
+				lease, ok := state.toolLeases["toollease_01KXNP6VY3227H78329V52CKF8"]
+				if !ok || lease.NodeID != "tool_normalize" || lease.Attempt != 1 || lease.DispatchSeq != 20 {
+					t.Fatalf("tool_dispatch lease = %#v, want exact node_started attempt binding", lease)
+				}
+				if attempt == nil || attempt.StartedSeq != 2 || len(state.view.Attempts) != 1 {
+					t.Fatalf("tool_dispatch changed ordinary attempt authority: attempt=%#v all=%#v", attempt, state.view.Attempts)
+				}
+			},
 		},
 		{
 			name: "tool process launch is deliberately non-structural typed history", prepare: startSchema2RepairAttempt("tool_normalize", "tool"),
@@ -66,9 +80,17 @@ func TestProjectCanonicalRunSchema2StructuralArmsAreNeverAuditOnly(t *testing.T)
 			},
 		},
 		{
-			name:      "gate evaluating opens gate state",
+			name:       "gate evaluating binds Gate state to the exact node_started attempt",
+			openNodeID: projectionTestGateID, openNodeKind: "gate",
 			eventType: "gate_evaluating", data: schema2RepairGateEvaluatingData(),
-			want: func(state *projectionState) { schema2RepairStartGate(state, projectionTestGateID, 1, 20) },
+			want: func(state *projectionState) { schema2RepairBindGate(state, projectionTestGateID, 1, 20) },
+			assertAuthority: func(t *testing.T, state *projectionState) {
+				attempt := state.existingAttempt(projectionTestGateID, 1)
+				gate := state.existingGate(projectionTestGateID, 1)
+				if attempt == nil || attempt.StartedSeq != 2 || len(state.view.Attempts) != 1 || gate == nil || gate.EvaluatingSeq != 20 {
+					t.Fatalf("gate_evaluating changed ordinary attempt authority: attempt=%#v gate=%#v all=%#v", attempt, gate, state.view.Attempts)
+				}
+			},
 		},
 		{
 			name: "gate kind result retains typed evidence", prepare: prepareSchema2RepairGate,
@@ -157,6 +179,12 @@ func TestProjectCanonicalRunSchema2StructuralArmsAreNeverAuditOnly(t *testing.T)
 			state := newProjectionState(projectionTestRunID, CanonicalRunSourceSchema2, board)
 			state.view.Status = "running"
 			state.view.Identity.RunRoot = RunRoot{Kind: "mission", NodeID: projectionTestMissionID}
+			if test.openNodeID != "" {
+				started := schema2FinalGreenNodeStartedData(test.openNodeID, test.openNodeKind)
+				if err := schema2FinalGreenReduceNodeStarted(t, &state, 2, started, nil); err != nil {
+					t.Fatalf("prepare exact %s node_started attempt: %v", test.openNodeKind, err)
+				}
+			}
 			if test.prepare != nil {
 				test.prepare(&state)
 			}
@@ -177,6 +205,9 @@ func TestProjectCanonicalRunSchema2StructuralArmsAreNeverAuditOnly(t *testing.T)
 				t.Fatalf("reduce admitted %s: %v", test.eventType, err)
 			}
 			schema2RepairAssertTypedHistory(t, safe, test.eventType, data)
+			if test.assertAuthority != nil {
+				test.assertAuthority(t, &state)
+			}
 			gotFingerprint := schema2RepairStructuralFingerprint(t, state.view)
 			if test.historyOnly {
 				if wantFingerprint := schema2RepairStructuralFingerprint(t, before); !bytes.Equal(gotFingerprint, wantFingerprint) {
@@ -1506,6 +1537,10 @@ func schema2RepairStartAttempt(state *projectionState, nodeID, kind string, atte
 
 func schema2RepairStartGate(state *projectionState, gateID string, attempt, sequence uint64) {
 	schema2RepairStartAttempt(state, gateID, "gate", attempt, sequence)
+	schema2RepairBindGate(state, gateID, attempt, sequence)
+}
+
+func schema2RepairBindGate(state *projectionState, gateID string, attempt, sequence uint64) {
 	state.startGate(gateID, attempt, sequence, SafeInputIdentity{})
 	ref := RunGateRef{GateID: gateID, Attempt: attempt}
 	node := state.node(gateID)

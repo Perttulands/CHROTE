@@ -326,7 +326,7 @@ func TestSchema2TerminalLifecycleRequiresExactPredecessor(t *testing.T) {
 			state := schema2TerminalWaitingState(t)
 			openGate := map[string]any{
 				"nodeId": projectionTestGateID, "nodeKind": "gate", "attempt": uint64(1),
-				"startSeq": uint64(20), "phase": "waiting_human", "phaseSeq": uint64(21),
+				"startSeq": uint64(19), "phase": "waiting_human", "phaseSeq": uint64(21),
 			}
 			cancelRequested := schema2TerminalCancelRequestedData()
 			cancelRequested["openNodeAttempts"] = []any{openGate}
@@ -376,10 +376,13 @@ func schema2TerminalQueuedState() projectionState {
 func schema2TerminalWaitingState(t *testing.T) projectionState {
 	t.Helper()
 	state := schema2EpochTestState()
-	if err := schema2EpochReduce(t, &state, 20, 0, "gate_evaluating", schema2SecondRepairFixture(t, "gate_evaluating")); err != nil {
+	if err := schema2FinalGreenReduceNodeStarted(t, &state, 19, schema2FinalGreenNodeStartedData(projectionTestGateID, "gate"), nil); err != nil {
+		t.Fatalf("reduce valid Gate node_started: %v", err)
+	}
+	if err := schema2LifecycleReduce(t, &state, 20, "gate_evaluating", schema2SecondRepairFixture(t, "gate_evaluating")); err != nil {
 		t.Fatalf("reduce valid gate evaluation: %v", err)
 	}
-	if err := schema2EpochReduce(t, &state, 21, 0, "human_input_requested", schema2SecondRepairFixture(t, "human_input_requested")); err != nil {
+	if err := schema2LifecycleReduce(t, &state, 21, "human_input_requested", schema2SecondRepairFixture(t, "human_input_requested")); err != nil {
 		t.Fatalf("reduce valid human request: %v", err)
 	}
 	if state.view.Status != "waiting_human" {

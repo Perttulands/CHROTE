@@ -311,6 +311,18 @@ func TestTask1FinalGreenFindingsNodeStartedOwnsUniqueGraphAttemptIdentity(t *tes
 	}
 }
 
+func TestTask1FinalGreenFindingsDerivedToolAndGateAuthorityRequireNodeStarted(t *testing.T) {
+	t.Run("tool_dispatch_cannot_open_an_ordinary_attempt", func(t *testing.T) {
+		state := schema2FinalGreenAllNodeState()
+		schema2RequireLifecycleReducerErrorWithoutMutation(t, &state, 3, "tool_dispatch", schema2RepairToolDispatchData())
+	})
+
+	t.Run("gate_evaluating_cannot_open_an_ordinary_attempt", func(t *testing.T) {
+		state := schema2FinalGreenAllNodeState()
+		schema2RequireLifecycleReducerErrorWithoutMutation(t, &state, 3, "gate_evaluating", schema2FinalGreenGateEvaluatingData())
+	})
+}
+
 func TestTask1FinalGreenFindingsMaterializationResultsRemainOpenUntilNodeOutput(t *testing.T) {
 	t.Run("formation_result_retains_materialization_but_does_not_close_or_publish_outputs", func(t *testing.T) {
 		state, result := schema2FinalGreenFormationResultState(t)
@@ -632,11 +644,10 @@ func schema2FinalGreenErrorArm(t *testing.T, arm string) (projectionState, uint6
 		return state, 4, data
 	case "gate":
 		state := schema2EpochTestState()
-		gate := schema2RepairGateEvaluatingData()
-		delete(gate, "revisionCycleId")
-		delete(gate, "triggerFeedbackId")
-		delete(gate, "priorGateSeq")
-		if err := schema2LifecycleReduce(t, &state, 3, "gate_evaluating", gate); err != nil {
+		if err := schema2FinalGreenReduceNodeStarted(t, &state, 3, schema2FinalGreenNodeStartedData(projectionTestGateID, "gate"), nil); err != nil {
+			t.Fatalf("prepare opened Gate attempt: %v", err)
+		}
+		if err := schema2LifecycleReduce(t, &state, 4, "gate_evaluating", schema2FinalGreenGateEvaluatingData()); err != nil {
 			t.Fatalf("prepare gate attempt: %v", err)
 		}
 		data["errorScope"] = "gate"
@@ -644,8 +655,8 @@ func schema2FinalGreenErrorArm(t *testing.T, arm string) (projectionState, uint6
 		data["attempt"] = uint64(1)
 		data["gateId"] = projectionTestGateID
 		data["gateAttempt"] = uint64(1)
-		data["relatedSeq"] = uint64(3)
-		return state, 4, data
+		data["relatedSeq"] = uint64(4)
+		return state, 5, data
 	case "slot", "slot_without_dispatch":
 		state := schema2EpochTestState()
 		if arm == "slot" {
@@ -885,6 +896,27 @@ func schema2FinalGreenRequireWholeProjectionInvalid(t *testing.T, input Canonica
 	if projection.latestSeq != 0 || len(projection.events) != 0 || projection.view.Schema != "" {
 		t.Fatalf("rejected writer-fence history returned a partial projection: %#v", projection)
 	}
+}
+
+func schema2FinalGreenAllNodeState() projectionState {
+	board := &BoardDocument{
+		Missions:   []MissionNode{{ID: projectionTestMissionID}},
+		Formations: []FormationNode{{ID: projectionTestFormationID}},
+		Gates:      []GateNode{{ID: projectionTestGateID}},
+		Tools:      []ToolNode{{ID: "tool_normalize"}},
+	}
+	state := newProjectionState(projectionTestRunID, CanonicalRunSourceSchema2, board)
+	state.view.Status = "running"
+	state.view.Identity.Epoch = 0
+	return state
+}
+
+func schema2FinalGreenGateEvaluatingData() map[string]any {
+	data := schema2RepairGateEvaluatingData()
+	delete(data, "revisionCycleId")
+	delete(data, "triggerFeedbackId")
+	delete(data, "priorGateSeq")
+	return data
 }
 
 func schema2FinalGreenErrorData(scope string) map[string]any {
