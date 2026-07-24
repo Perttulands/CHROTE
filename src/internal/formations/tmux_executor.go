@@ -45,7 +45,14 @@ const (
 var (
 	errTmuxTargetMissing = errors.New("tmux target missing")
 	tmuxSubmitDelay      = 500 * time.Millisecond
-	tmuxSleep            = time.Sleep
+	// tmuxPasteSettleDelay lets a large bracketed paste finish rendering in the
+	// agent TUI before the first Enter. A single Enter sent too soon is absorbed
+	// into the still-settling input instead of submitting the turn.
+	tmuxPasteSettleDelay = 1200 * time.Millisecond
+	// tmuxSubmitMaxEnters bounds the "send a few more Enters" submit: keep pressing
+	// Enter until the pane shows the agent actually working, up to this many tries.
+	tmuxSubmitMaxEnters = 8
+	tmuxSleep           = time.Sleep
 	// newSessionNonce returns a collision-proof suffix for an owned session name.
 	// It is a package var so tests can make owned names deterministic.
 	newSessionNonce = func() string {
@@ -1850,44 +1857,36 @@ func (realTmuxHarnessClient) SendPrompt(ctx context.Context, socket, target, dis
 	if _, err := runTmuxCommand(ctx, socket, nil, "paste-buffer", "-t", target, "-b", bufferName); err != nil {
 		return err
 	}
-	tmuxSleep(tmuxSubmitDelay)
-	for attempt := 0; attempt < 3; attempt++ {
-		if _, err := runTmuxCommand(ctx, socket, nil, "send-keys", "-t", target, "ENTER"); err != nil {
+	// Let the (possibly large, multi-line) bracketed paste finish rendering before
+	// the first Enter — a too-early Enter is swallowed by the settling input.
+	tmuxSleep(tmuxPasteSettleDelay)
+	// Submit with the interactive "send to session" pattern: press Enter, then keep
+	// pressing a few more, until the pane shows the agent is actually working. A
+	// single Enter after a paste is unreliable; extra Enters on an already-working
+	// (or empty) input are harmless no-ops in the agent TUI.
+	for attempt := 0; attempt < tmuxSubmitMaxEnters; attempt++ {
+		if _, err := runTmuxCommand(ctx, socket, nil, "send-keys", "-t", target, "Enter"); err != nil {
 			return err
 		}
 		tmuxSleep(tmuxSubmitDelay)
-		if _, err := runTmuxCommand(ctx, socket, nil, "send-keys", "-t", target, "C-m"); err != nil {
-			return err
-		}
-		tmuxSleep(tmuxSubmitDelay)
-		captured, err := runTmuxCommand(ctx, socket, nil, "capture-pane", "-p", "-J", "-t", target, "-S", "-40")
+		captured, err := runTmuxCommand(ctx, socket, nil, "capture-pane", "-p", "-J", "-t", target, "-S", "-6")
 		if err != nil {
 			return err
 		}
-		if !tmuxPaneLooksLikePendingPastedInput(captured) {
+		if tmuxPaneShowsAgentWorking(captured) {
 			return nil
 		}
 	}
 	return nil
 }
 
-func tmuxPaneLooksLikePendingPastedInput(captured string) bool {
-	lines := strings.Split(captured, "\n")
-	lastPasted := -1
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "› [Pasted Content") || strings.HasPrefix(trimmed, "> [Pasted Content") {
-			lastPasted = i
-		}
-	}
-	if lastPasted == -1 {
-		return false
-	}
-	tail := strings.Join(lines[lastPasted:], "\n")
-	if strings.Contains(tail, "Working (") || strings.Contains(tail, "─ Worked") || strings.Contains(tail, "<<<CHROTE-DONE run-id=run_") {
-		return false
-	}
-	return true
+// tmuxPaneShowsAgentWorking reports whether the captured pane shows the agent
+// actively processing a turn. The coding-agent TUIs surface an "esc to interrupt"
+// affordance on their status line only while a turn is in flight, which is a
+// reliable positive signal that the pasted prompt was submitted (as opposed to
+// still sitting unsent in the input box).
+func tmuxPaneShowsAgentWorking(captured string) bool {
+	return strings.Contains(captured, "esc to interrupt")
 }
 
 func (realTmuxHarnessClient) CapturePane(ctx context.Context, socket, target string, _ int) (string, error) {
