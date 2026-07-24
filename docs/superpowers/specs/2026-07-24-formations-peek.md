@@ -2,7 +2,7 @@
 
 - Bead: chrote-a7k (parent epic chrote-z0q)
 - Date: 2026-07-24
-- Branch/worktree: feat/formations-peek @ /srv/chrote-worktrees/peek
+- Branch/worktree: feat/formations-peek @ -worktrees/peek
 - Status: design → RED → GREEN (SDD)
 
 ## 1. Feature
