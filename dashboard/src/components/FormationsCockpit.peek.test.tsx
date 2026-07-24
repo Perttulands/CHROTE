@@ -118,6 +118,14 @@ describe('FormationsCockpit peek / grab the wheel', () => {
     expect((mocks.session as ReturnType<typeof stubSession>).openFloatingModal).toHaveBeenCalledWith(MISSION_SESSION)
   })
 
+  it('does not offer peek before a running node has dispatched a session', async () => {
+    mocks.session = stubSession([MISSION_SESSION])
+    installFetchMock([{ runId: 'run1', seq: 1, type: 'node_started', nodeId: 'fmn_work', attempt: 1 }], { status: 'running', final: false })
+    const dialog = await openInspector()
+    expect(within(dialog).getByTestId('node-evidence-state')).toHaveTextContent('running')
+    expect(within(dialog).queryByTestId('peek-node-fmn_work')).toBeNull()
+  })
+
   it('does not offer peek for a finished node', async () => {
     mocks.session = stubSession([MISSION_SESSION])
     installFetchMock([...runningEvents, { runId: 'run1', seq: 3, type: 'node_output', nodeId: 'fmn_work', data: { status: 'done', text: 'done' } }], { status: 'succeeded', final: true })

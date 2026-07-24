@@ -2162,7 +2162,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
               <div><dt>State</dt><dd data-testid="node-evidence-state">{inspectedEvidence.state || 'not started'}</dd></div>
             </dl>
 
-            {inspectedEvidence.state === 'running' ? (
+            {inspectedEvidence.state === 'running' && inspectedEvidence.attempts.some(attempt => attempt.dispatches.some(dispatch => dispatch.sessionRef.startsWith('tmux:'))) ? (
               <section className="node-evidence-section node-peek">
                 <h3>Live session</h3>
                 <button
