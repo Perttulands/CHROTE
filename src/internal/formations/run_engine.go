@@ -1,6 +1,7 @@
 package formations
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -41,10 +42,12 @@ type GateEvaluator interface {
 }
 
 type RunEngine struct {
-	store         *Store
-	personas      *PersonaStore
-	executor      FormationExecutor
-	gateEvaluator GateEvaluator
+	store            *Store
+	personas         *PersonaStore
+	executor         FormationExecutor
+	gateEvaluator    GateEvaluator
+	needsYouNotifier NeedsYouNotifier
+	needsYouBoardURL string
 }
 
 type FormationRunRequest struct {
@@ -136,6 +139,54 @@ func (e *RunEngine) SetGateEvaluator(evaluator GateEvaluator) {
 	e.gateEvaluator = evaluator
 }
 
+// SetNeedsYouNotifier wires the outbound needs-you channel. A nil notifier
+// leaves the feature off (reconcileNeedsYou becomes a no-op). boardBaseURL is an
+// optional origin used to build a pointer back to the board.
+func (e *RunEngine) SetNeedsYouNotifier(notifier NeedsYouNotifier, boardBaseURL string) {
+	e.needsYouNotifier = notifier
+	e.needsYouBoardURL = strings.TrimSpace(boardBaseURL)
+}
+
+// projectAndNotify pushes any newly-opened needs-you asks and then returns the
+// run projection. Notification is best-effort and never affects the run result.
+func (e *RunEngine) projectAndNotify(runID string) (*RunStatusProjection, error) {
+	e.reconcileNeedsYou(runID)
+	return e.store.ProjectRun(runID)
+}
+
+// reconcileNeedsYou delivers one notification per open ask that has not been
+// delivered yet, sourced from the durable run ledger. It is idempotent: dedup is
+// persisted, resolved asks are never projected as open, and send failures leave
+// the ask undelivered so the next genuine state transition retries it.
+func (e *RunEngine) reconcileNeedsYou(runID string) {
+	if e == nil || e.needsYouNotifier == nil || e.store == nil {
+		return
+	}
+	events, err := e.store.ReadRunEvents(runID)
+	if err != nil || len(events) == 0 {
+		return
+	}
+	asks := projectOpenNeedsYouAsks(events)
+	if len(asks) == 0 {
+		return
+	}
+	notified, err := e.store.NeedsYouNotifiedSeqs(runID)
+	if err != nil {
+		return
+	}
+	boardSlug := stringFromEventData(events[0], "boardSlug")
+	for _, ask := range asks {
+		if notified[ask.Seq] {
+			continue
+		}
+		notification := buildNeedsYouNotification(ask, boardSlug, e.needsYouBoardURL)
+		if err := e.needsYouNotifier.NotifyNeedsYou(context.Background(), notification); err != nil {
+			continue // best-effort; retry on the next state transition
+		}
+		_ = e.store.MarkNeedsYouNotified(runID, ask.Seq)
+	}
+}
+
 func (e *RunEngine) RunMission(slug string, req RunStartRequest) (*RunStatusProjection, error) {
 	if e == nil || e.store == nil {
 		return nil, fmt.Errorf("%w: run engine store required", ErrNotFound)
@@ -172,7 +223,7 @@ func (e *RunEngine) RunMission(slug string, req RunStartRequest) (*RunStatusProj
 	if err := e.executeSnapshot(started.RunID, runBoard, mission, req.Limits); err != nil {
 		return nil, err
 	}
-	return e.store.ProjectRun(started.RunID)
+	return e.projectAndNotify(started.RunID)
 }
 
 func (e *RunEngine) RunFormation(slug, formationID string, req FormationRunRequest) (*RunStatusProjection, error) {
@@ -224,14 +275,14 @@ func (e *RunEngine) RunFormation(slug, formationID string, req FormationRunReque
 		if blockErr := e.appendExecutionFailureAndBlock(started.RunID, formation.ID, err); blockErr != nil {
 			return nil, blockErr
 		}
-		return e.store.ProjectRun(started.RunID)
+		return e.projectAndNotify(started.RunID)
 	}
 	if result.Status == "" {
 		result.Status = "done"
 	}
 	if err := e.ensureFormationOutputPayloads(started.RunID, formation, result); err != nil {
 		if errors.Is(err, errRunStopped) {
-			return e.store.ProjectRun(started.RunID)
+			return e.projectAndNotify(started.RunID)
 		}
 		return nil, err
 	}
@@ -256,7 +307,7 @@ func (e *RunEngine) RunFormation(slug, formationID string, req FormationRunReque
 	}); err != nil {
 		return nil, err
 	}
-	return e.store.ProjectRun(started.RunID)
+	return e.projectAndNotify(started.RunID)
 }
 
 func (e *RunEngine) ResumeRun(runID string, req RunResumeRequest) (*RunStatusProjection, error) {
@@ -288,7 +339,7 @@ func (e *RunEngine) ResumeRun(runID string, req RunResumeRequest) (*RunStatusPro
 			if err := e.appendOpenDispatchReattachFailure(runID, openDispatches); err != nil {
 				return nil, err
 			}
-			return e.store.ProjectRun(runID)
+			return e.projectAndNotify(runID)
 		}
 		events, err = e.store.ReadRunEvents(runID)
 		if err != nil {
@@ -303,7 +354,7 @@ func (e *RunEngine) ResumeRun(runID string, req RunResumeRequest) (*RunStatusPro
 	if err := e.resumeSnapshot(runID, board, mission, runLimitsFromEvent(started), events); err != nil {
 		return nil, err
 	}
-	return e.store.ProjectRun(runID)
+	return e.projectAndNotify(runID)
 }
 
 func (e *RunEngine) RecordHumanGateVerdict(runID string, req HumanGateVerdictRequest) (*RunStatusProjection, error) {
@@ -351,7 +402,12 @@ func (e *RunEngine) RecordHumanGateVerdict(runID string, req HumanGateVerdictReq
 		return nil, fmt.Errorf("%w: gate %q", ErrNotFound, req.GateID)
 	}
 	input := runInputRefFromAny(requestEvent.Data["inputRef"])
-	return e.routeGateVerdict(runID, board, gate, input, verdict, "human verdict", runLimitsFromEvent(events[0]))
+	status, err := e.routeGateVerdict(runID, board, gate, input, verdict, "human verdict", runLimitsFromEvent(events[0]))
+	if err != nil {
+		return nil, err
+	}
+	e.reconcileNeedsYou(runID)
+	return status, nil
 }
 
 type openDispatchRef struct {

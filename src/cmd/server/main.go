@@ -194,6 +194,14 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Contex
 	workspace := core.GetWorkDir()
 	formationsStore := formations.NewRuntimeStore(workspace, config.FormationsDataRoot)
 	formationsHandler := api.NewFormationsHandlerWithStore(formationsStore)
+	// Outbound "needs-you" channel: off by default. When the owner configures a
+	// webhook URL, a run that needs a human decision pushes one notification to it.
+	if webhookURL := strings.TrimSpace(os.Getenv("CHROTE_NEEDS_YOU_WEBHOOK_URL")); webhookURL != "" {
+		formationsHandler.SetNeedsYouNotifier(
+			formations.NewWebhookNeedsYouNotifier(webhookURL),
+			strings.TrimSpace(os.Getenv("CHROTE_NEEDS_YOU_BOARD_URL")),
+		)
+	}
 	formationsHandler.RegisterRoutes(mux)
 
 	commsHandler := api.NewCommsHandlerWithStore(comms.NewStoreWithFormations(workspace, formationsStore))
