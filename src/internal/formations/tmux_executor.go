@@ -45,7 +45,14 @@ const (
 var (
 	errTmuxTargetMissing = errors.New("tmux target missing")
 	tmuxSubmitDelay      = 500 * time.Millisecond
-	tmuxSleep            = time.Sleep
+	// tmuxPasteSettleDelay lets a large bracketed paste finish rendering in the
+	// agent TUI before the first Enter. A single Enter sent too soon is absorbed
+	// into the still-settling input instead of submitting the turn.
+	tmuxPasteSettleDelay = 1200 * time.Millisecond
+	// tmuxSubmitMaxEnters bounds the "send a few more Enters" submit: keep pressing
+	// Enter until the pane shows the agent actually working, up to this many tries.
+	tmuxSubmitMaxEnters = 8
+	tmuxSleep           = time.Sleep
 	// newSessionNonce returns a collision-proof suffix for an owned session name.
 	// It is a package var so tests can make owned names deterministic.
 	newSessionNonce = func() string {
@@ -188,12 +195,13 @@ type tmuxHarnessClient interface {
 // also takes the facilitator turn) reuses its own session instead of spawning a
 // second one.
 type ownedSessions struct {
-	bySlot map[string]string
-	order  []string
+	bySlot  map[string]string
+	startAt map[string]time.Time
+	order   []string
 }
 
 func newOwnedSessions() *ownedSessions {
-	return &ownedSessions{bySlot: map[string]string{}}
+	return &ownedSessions{bySlot: map[string]string{}, startAt: map[string]time.Time{}}
 }
 
 func (o *ownedSessions) name(slotID string) (string, bool) {
@@ -213,6 +221,26 @@ func (o *ownedSessions) record(slotID, name string) {
 	}
 	o.bySlot[slotID] = name
 	o.order = append(o.order, name)
+	// Record the session's dispatch-start once, when it is first created. Reused
+	// dispatches on the same session (e.g. a peer that also takes the facilitator
+	// turn) keep this earliest start so the transcript-capture mtime guard still
+	// includes the same, growing transcript file and previousSentinels can tell a
+	// prior turn's sentinel from this turn's.
+	if o.startAt != nil {
+		if _, ok := o.startAt[slotID]; !ok {
+			o.startAt[slotID] = time.Now()
+		}
+	}
+}
+
+// startedAt reports when the slot's owned session was first created. The zero
+// value / false is returned for an unknown slot; callers fall back to now.
+func (o *ownedSessions) startedAt(slotID string) (time.Time, bool) {
+	if o == nil || o.startAt == nil {
+		return time.Time{}, false
+	}
+	at, ok := o.startAt[slotID]
+	return at, ok
 }
 
 func (o *ownedSessions) owns(name string) bool {
@@ -812,10 +840,18 @@ func (e *TmuxFormationExecutor) executeSlot(req FormationExecution, slot Formati
 	variant := binding.Variant
 	sessionName := binding.SessionName
 
+	// dispatchStart bounds the transcript-capture mtime guard (claude-code). It is
+	// the session's creation time so a reused session (facilitator turn) keeps its
+	// growing transcript in scope; it falls back to now for a session not tracked
+	// as owned. Non-transcript harnesses ignore it.
+	dispatchStart, ok := owned.startedAt(slot.ID)
+	if !ok {
+		dispatchStart = time.Now()
+	}
 	turnMarker := "turn marker: " + newPrefixedID("turn")
 	promptExtra := append(append([]string{}, extraLines...), turnMarker)
 	prompt := e.renderPromptWithContext(req, slot, *card, variant, phase, promptExtra)
-	existingSentinels, err := e.countExistingCompletionSentinels(ctx, sessionName, req.RunID)
+	existingSentinels, err := e.countExistingCompletionSentinels(ctx, sessionName, req.RunID, variant.ID, dispatchStart)
 	if err != nil {
 		return tmuxSlotOutput{}, withSlot(err, req.NodeID, slot.ID, "")
 	}
@@ -843,7 +879,7 @@ func (e *TmuxFormationExecutor) executeSlot(req FormationExecution, slot Formati
 		return tmuxSlotOutput{}, err
 	}
 
-	captured, err := e.waitForCompletion(ctx, sessionName, req.RunID, prompt, existingSentinels)
+	captured, err := e.waitForCompletion(ctx, sessionName, req.RunID, prompt, existingSentinels, variant.ID, dispatchStart)
 	if err != nil {
 		return tmuxSlotOutput{}, withSlot(err, req.NodeID, slot.ID, lease.DispatchID)
 	}
@@ -1521,11 +1557,11 @@ func (e *TmuxFormationExecutor) validatePinnedTmuxSocket() error {
 	return nil
 }
 
-func (e *TmuxFormationExecutor) countExistingCompletionSentinels(ctx context.Context, sessionName, runID string) (int, error) {
+func (e *TmuxFormationExecutor) countExistingCompletionSentinels(ctx context.Context, sessionName, runID, harnessID string, dispatchStart time.Time) (int, error) {
 	if err := e.validatePinnedTmuxSocket(); err != nil {
 		return 0, err
 	}
-	captured, err := e.client.CapturePane(ctx, e.config.Socket, sessionName, e.config.OutputCapBytes+1)
+	captured, err := e.captureCompletionText(ctx, harnessID, sessionName, runID, dispatchStart)
 	if err != nil {
 		code := "capture_failed"
 		if errors.Is(err, errTmuxTargetMissing) {
@@ -1539,13 +1575,13 @@ func (e *TmuxFormationExecutor) countExistingCompletionSentinels(ctx context.Con
 	return countCompletionSentinels(captured, runID), nil
 }
 
-func (e *TmuxFormationExecutor) waitForCompletion(ctx context.Context, sessionName, runID, prompt string, previousSentinels int) (string, error) {
+func (e *TmuxFormationExecutor) waitForCompletion(ctx context.Context, sessionName, runID, prompt string, previousSentinels int, harnessID string, dispatchStart time.Time) (string, error) {
 	deadline := time.Now().Add(time.Duration(e.config.TimeoutSeconds) * time.Second)
 	for {
 		if err := e.validatePinnedTmuxSocket(); err != nil {
 			return "", err
 		}
-		captured, err := e.client.CapturePane(ctx, e.config.Socket, sessionName, e.config.OutputCapBytes+1)
+		captured, err := e.captureCompletionText(ctx, harnessID, sessionName, runID, dispatchStart)
 		if err != nil {
 			code := "capture_failed"
 			if errors.Is(err, errTmuxTargetMissing) {
@@ -1821,44 +1857,36 @@ func (realTmuxHarnessClient) SendPrompt(ctx context.Context, socket, target, dis
 	if _, err := runTmuxCommand(ctx, socket, nil, "paste-buffer", "-t", target, "-b", bufferName); err != nil {
 		return err
 	}
-	tmuxSleep(tmuxSubmitDelay)
-	for attempt := 0; attempt < 3; attempt++ {
-		if _, err := runTmuxCommand(ctx, socket, nil, "send-keys", "-t", target, "ENTER"); err != nil {
+	// Let the (possibly large, multi-line) bracketed paste finish rendering before
+	// the first Enter — a too-early Enter is swallowed by the settling input.
+	tmuxSleep(tmuxPasteSettleDelay)
+	// Submit with the interactive "send to session" pattern: press Enter, then keep
+	// pressing a few more, until the pane shows the agent is actually working. A
+	// single Enter after a paste is unreliable; extra Enters on an already-working
+	// (or empty) input are harmless no-ops in the agent TUI.
+	for attempt := 0; attempt < tmuxSubmitMaxEnters; attempt++ {
+		if _, err := runTmuxCommand(ctx, socket, nil, "send-keys", "-t", target, "Enter"); err != nil {
 			return err
 		}
 		tmuxSleep(tmuxSubmitDelay)
-		if _, err := runTmuxCommand(ctx, socket, nil, "send-keys", "-t", target, "C-m"); err != nil {
-			return err
-		}
-		tmuxSleep(tmuxSubmitDelay)
-		captured, err := runTmuxCommand(ctx, socket, nil, "capture-pane", "-p", "-J", "-t", target, "-S", "-40")
+		captured, err := runTmuxCommand(ctx, socket, nil, "capture-pane", "-p", "-J", "-t", target, "-S", "-6")
 		if err != nil {
 			return err
 		}
-		if !tmuxPaneLooksLikePendingPastedInput(captured) {
+		if tmuxPaneShowsAgentWorking(captured) {
 			return nil
 		}
 	}
 	return nil
 }
 
-func tmuxPaneLooksLikePendingPastedInput(captured string) bool {
-	lines := strings.Split(captured, "\n")
-	lastPasted := -1
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "› [Pasted Content") || strings.HasPrefix(trimmed, "> [Pasted Content") {
-			lastPasted = i
-		}
-	}
-	if lastPasted == -1 {
-		return false
-	}
-	tail := strings.Join(lines[lastPasted:], "\n")
-	if strings.Contains(tail, "Working (") || strings.Contains(tail, "─ Worked") || strings.Contains(tail, "<<<CHROTE-DONE run-id=run_") {
-		return false
-	}
-	return true
+// tmuxPaneShowsAgentWorking reports whether the captured pane shows the agent
+// actively processing a turn. The coding-agent TUIs surface an "esc to interrupt"
+// affordance on their status line only while a turn is in flight, which is a
+// reliable positive signal that the pasted prompt was submitted (as opposed to
+// still sitting unsent in the input box).
+func tmuxPaneShowsAgentWorking(captured string) bool {
+	return strings.Contains(captured, "esc to interrupt")
 }
 
 func (realTmuxHarnessClient) CapturePane(ctx context.Context, socket, target string, _ int) (string, error) {

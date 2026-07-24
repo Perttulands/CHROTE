@@ -1254,10 +1254,12 @@ func TestTmuxRenderedPromptDoesNotContainParseableActualRunSentinel(t *testing.T
 	}
 }
 
-func TestRealTmuxHarnessClientSendPromptClearsPaneAndPacesUppercaseEnterAndControlM(t *testing.T) {
+func TestRealTmuxHarnessClientSendPromptPastesThenEntersUntilWorking(t *testing.T) {
 	fakeDir := t.TempDir()
 	logPath := filepath.Join(fakeDir, "tmux.log")
 	fakeTmuxPath := filepath.Join(fakeDir, "tmux")
+	// The fake reports the agent as working ("esc to interrupt") on the first
+	// capture-pane, so the submit loop stops after a single Enter.
 	fakeTmux := `#!/usr/bin/env bash
 set -euo pipefail
 stdin="$(cat)"
@@ -1271,6 +1273,9 @@ stdin="$(cat)"
     printf 'STDIN_BEGIN\n%s\nSTDIN_END\n' "$stdin"
   fi
 } >> "${TMUX_FAKE_LOG:?}"
+if [[ " $* " == *" capture-pane "* ]]; then
+  printf '  ⏵⏵ bypass permissions on · esc to interrupt\n'
+fi
 `
 	if err := os.WriteFile(fakeTmuxPath, []byte(fakeTmux), 0o755); err != nil {
 		t.Fatalf("write fake tmux: %v", err)
@@ -1279,12 +1284,15 @@ stdin="$(cat)"
 	t.Setenv("PATH", fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	oldDelay := tmuxSubmitDelay
+	oldSettle := tmuxPasteSettleDelay
 	oldSleep := tmuxSleep
 	t.Cleanup(func() {
 		tmuxSubmitDelay = oldDelay
+		tmuxPasteSettleDelay = oldSettle
 		tmuxSleep = oldSleep
 	})
 	tmuxSubmitDelay = 37 * time.Millisecond
+	tmuxPasteSettleDelay = 71 * time.Millisecond
 	type sleepSnapshot struct {
 		Delay        time.Duration
 		CommandCount int
@@ -1316,25 +1324,25 @@ stdin="$(cat)"
 		{"-S", socket, "load-buffer", "-b", "chrote-dispatch-123", "-"},
 		{"-S", socket, "send-keys", "-t", target, "C-u"},
 		{"-S", socket, "paste-buffer", "-t", target, "-b", "chrote-dispatch-123"},
-		{"-S", socket, "send-keys", "-t", target, "ENTER"},
-		{"-S", socket, "send-keys", "-t", target, "C-m"},
-		{"-S", socket, "capture-pane", "-p", "-J", "-t", target, "-S", "-40"},
+		{"-S", socket, "send-keys", "-t", target, "Enter"},
+		{"-S", socket, "capture-pane", "-p", "-J", "-t", target, "-S", "-6"},
 		{"-S", socket, "delete-buffer", "-b", "chrote-dispatch-123"},
 	}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("tmux command sequence = %#v, want %#v", got, want)
 	}
+	// One settle sleep after the paste (before any Enter), then one submit sleep
+	// after the single Enter (before the capture confirms working).
 	wantSleeps := []sleepSnapshot{
-		{Delay: tmuxSubmitDelay, CommandCount: 3},
+		{Delay: tmuxPasteSettleDelay, CommandCount: 3},
 		{Delay: tmuxSubmitDelay, CommandCount: 4},
-		{Delay: tmuxSubmitDelay, CommandCount: 5},
 	}
 	if fmt.Sprint(sleeps) != fmt.Sprint(wantSleeps) {
 		t.Fatalf("tmux submit pacing = %#v, want %#v", sleeps, wantSleeps)
 	}
 }
 
-func TestRealTmuxHarnessClientRetriesWhenPastedPromptStillPending(t *testing.T) {
+func TestRealTmuxHarnessClientSubmitsPromptWithRepeatedEnter(t *testing.T) {
 	fakeDir := t.TempDir()
 	logPath := filepath.Join(fakeDir, "tmux.log")
 	statePath := filepath.Join(fakeDir, "capture-count")
@@ -1360,9 +1368,9 @@ if [[ " $* " == *" capture-pane "* ]]; then
   count=$((count + 1))
   printf '%s' "$count" > "${TMUX_FAKE_STATE:?}"
   if [ "$count" -eq 1 ]; then
-    printf '› [Pasted Content 1900 chars]\n'
+    printf '❯ worker prompt still sitting unsent in the input box\n'
   else
-    printf 'submitted\n'
+    printf '  ⏵⏵ bypass permissions on · esc to interrupt · ← for history\n'
   fi
 fi
 `
@@ -1393,39 +1401,34 @@ fi
 	if err != nil {
 		t.Fatalf("read fake tmux log: %v", err)
 	}
-	enterCount := strings.Count(string(raw), "send-keys\t-t\t"+target+"\tENTER")
-	controlMCount := strings.Count(string(raw), "send-keys\t-t\t"+target+"\tC-m")
+	// The prompt is submitted by pressing Enter until the pane shows the agent
+	// working ("esc to interrupt"): one Enter while it still sits unsent, a second
+	// once working is detected, then the loop stops. The old ENTER/C-m keys are
+	// gone — a single "Enter" key per attempt.
+	enterCount := strings.Count(string(raw), "send-keys\t-t\t"+target+"\tEnter")
+	legacyKeys := strings.Count(string(raw), "\tENTER") + strings.Count(string(raw), "\tC-m")
 	captureCount := strings.Count(string(raw), "capture-pane	-p	-J	-t	"+target)
-	if enterCount != 2 || controlMCount != 2 || captureCount != 2 {
-		t.Fatalf("retry counts enter=%d c-m=%d capture=%d, want 2/2/2\nlog:\n%s", enterCount, controlMCount, captureCount, raw)
+	if enterCount != 2 || captureCount != 2 || legacyKeys != 0 {
+		t.Fatalf("submit counts enter=%d capture=%d legacy=%d, want enter=2 capture=2 legacy=0\nlog:\n%s", enterCount, captureCount, legacyKeys, raw)
 	}
 }
 
-func TestTmuxPaneLooksLikePendingPastedInputHandlesBulletsInsidePrompt(t *testing.T) {
-	pending := strings.Join([]string{
-		"› [Pasted Content 8664 chars]────────",
-		"",
-		"  • Worker A: identify the API/runtime boundary.",
-		"  • Worker B: identify the verification evidence.",
-		"  gpt-5.5 xhigh · /tmp/workspace",
+func TestTmuxPaneShowsAgentWorking(t *testing.T) {
+	idle := strings.Join([]string{
+		"❯ prompt still sitting unsent in the input box",
+		"────────────────────────────────",
+		"  ⏵⏵ bypass permissions on (shift+tab to cycle)",
 	}, "\n")
-	if !tmuxPaneLooksLikePendingPastedInput(pending) {
-		t.Fatalf("pending pasted prompt with bullet lines was not detected")
+	if tmuxPaneShowsAgentWorking(idle) {
+		t.Fatalf("idle input box was misread as an actively working turn")
 	}
 
-	placeholder := pending + "\nWhen complete, emit exactly one sentinel line using the run value above: <<<CHROTE-DONE run-id=<the-run-value-above> status=ok artifact=<path-or-ref>>>"
-	if !tmuxPaneLooksLikePendingPastedInput(placeholder) {
-		t.Fatalf("placeholder sentinel inside pasted prompt was misclassified as completion")
-	}
-
-	working := pending + "\n\n• Working (1s • esc to interrupt)"
-	if tmuxPaneLooksLikePendingPastedInput(working) {
-		t.Fatalf("active Codex turn was misclassified as pending pasted input")
-	}
-
-	done := pending + "\n\n• Done\n<<<CHROTE-DONE run-id=run_x status=ok artifact=inline>>>"
-	if tmuxPaneLooksLikePendingPastedInput(done) {
-		t.Fatalf("completed Codex turn was misclassified as pending pasted input")
+	working := strings.Join([]string{
+		"  Working through the brief…",
+		"  ⏵⏵ bypass permissions on · esc to interrupt · ← for history",
+	}, "\n")
+	if !tmuxPaneShowsAgentWorking(working) {
+		t.Fatalf("active turn (esc to interrupt) was not detected as working")
 	}
 }
 
