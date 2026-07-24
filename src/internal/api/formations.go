@@ -15,8 +15,17 @@ import (
 )
 
 type FormationsHandler struct {
-	store    *formations.Store
-	personas *formations.PersonaStore
+	store            *formations.Store
+	personas         *formations.PersonaStore
+	needsYouNotifier formations.NeedsYouNotifier
+	needsYouBoardURL string
+}
+
+// SetNeedsYouNotifier wires the outbound needs-you channel onto every run engine
+// this handler constructs. A nil notifier leaves the push feature off.
+func (h *FormationsHandler) SetNeedsYouNotifier(notifier formations.NeedsYouNotifier, boardBaseURL string) {
+	h.needsYouNotifier = notifier
+	h.needsYouBoardURL = boardBaseURL
 }
 
 type formationsRunStartRequest struct {
@@ -482,6 +491,9 @@ func (h *FormationsHandler) newRunEngine(boundary string) *formations.RunEngine 
 	// Wire the deterministic pure code-Gate evaluator so defined machine gates
 	// return a real pass/fail verdict instead of blocking on missing_gate_evaluator.
 	engine.SetGateEvaluator(formations.NewCodeGateEvaluator())
+	if h.needsYouNotifier != nil {
+		engine.SetNeedsYouNotifier(h.needsYouNotifier, h.needsYouBoardURL)
+	}
 	return engine
 }
 
