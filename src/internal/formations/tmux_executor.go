@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	osuser "os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -54,13 +55,99 @@ var (
 		}
 		return hex.EncodeToString(buf[:])
 	}
+	// formationServiceUID returns the numeric uid the CHROTE service process runs
+	// as. This is the default expected agent-user, so single-user installs work
+	// with zero configuration. Package var for test injection; never hardcoded.
+	formationServiceUID = func() (int, error) {
+		current, err := osuser.Current()
+		if err != nil {
+			return 0, err
+		}
+		return strconv.Atoi(current.Uid)
+	}
+	// formationLookupUID maps a configured agent-user name to its numeric uid.
+	// Package var for test injection; never hardcoded to a specific user.
+	formationLookupUID = func(name string) (int, error) {
+		account, err := osuser.Lookup(name)
+		if err != nil {
+			return 0, err
+		}
+		return strconv.Atoi(account.Uid)
+	}
+	// formationSocketOwnerUID returns the uid that owns the tmux socket file, i.e.
+	// the user the backing tmux server runs as (the pane's Unix identity). It
+	// stats the socket; tests inject a fake to avoid a real tmux server / uid.
+	formationSocketOwnerUID = func(socket string) (int, error) {
+		info, err := os.Stat(socket)
+		if err != nil {
+			return 0, err
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok {
+			return 0, fmt.Errorf("tmux socket %s owner is not stat-able", socket)
+		}
+		return int(stat.Uid), nil
+	}
 )
 
+// expectedAgentUser is the resolved identity the executor requires the tmux
+// server to run as. self is true when that identity is the service user itself,
+// which is the only case where lazy-starting a server (as the service user) is
+// safe.
+type expectedAgentUser struct {
+	uid  int
+	self bool
+	name string
+}
+
+// resolveExpectedAgentUser resolves the configured agent-user to a uid and
+// decides whether it is the service user (self). An empty AgentUser defaults to
+// the service user, so single-user installs need no configuration and always run
+// self. The self/other decision is purely uid-based, so an explicitly configured
+// name that resolves to the service uid behaves exactly like the default.
+func (e *TmuxFormationExecutor) resolveExpectedAgentUser() (expectedAgentUser, error) {
+	serviceUID, err := formationServiceUID()
+	if err != nil {
+		return expectedAgentUser{}, runExecutionError("agent_user_unresolved", "formations executor could not resolve the service user", "executor", err)
+	}
+	name := strings.TrimSpace(e.config.AgentUser)
+	if name == "" {
+		return expectedAgentUser{uid: serviceUID, self: true}, nil
+	}
+	agentUID, err := formationLookupUID(name)
+	if err != nil {
+		return expectedAgentUser{}, runExecutionError("agent_user_unresolved", fmt.Sprintf("configured formations agent-user %q could not be resolved", name), "executor", err)
+	}
+	return expectedAgentUser{uid: agentUID, self: agentUID == serviceUID, name: name}, nil
+}
+
+// verifyServerOwner fails loud unless the tmux socket's backing server is owned by
+// the expected agent-user uid. This subsumes chrote-fjy: a server owned by anyone
+// other than the configured agent-user is refused rather than silently running
+// agents under the wrong identity — including a self-mode socket that already
+// hosts a foreign server.
+func (e *TmuxFormationExecutor) verifyServerOwner(expected expectedAgentUser) error {
+	ownerUID, err := formationSocketOwnerUID(e.config.Socket)
+	if err != nil {
+		return runExecutionError("agent_user_owner_unverified", fmt.Sprintf("could not determine the owner of tmux socket %s", e.config.Socket), "executor", err)
+	}
+	if ownerUID != expected.uid {
+		return runExecutionError("agent_user_owner_mismatch", fmt.Sprintf("tmux socket %s is owned by uid %d but formations agents must run as uid %d (configured agent-user)", e.config.Socket, ownerUID, expected.uid), "executor", nil)
+	}
+	return nil
+}
+
 type TmuxExecutorConfig struct {
-	Harnesses      []string
-	Socket         string
-	Cwd            string
-	Roots          []string
+	Harnesses []string
+	Socket    string
+	Cwd       string
+	Roots     []string
+	// AgentUser is the Unix user the executor expects to own the tmux server it
+	// drives (and therefore the user agents run as). Empty defaults to the service
+	// user the CHROTE process runs as, so single-user installs need zero config.
+	// Nothing is hardcoded to a specific username; a split install sets this to
+	// the operator/agent-user and provisions a correctly-owned server out of band.
+	AgentUser      string
 	SessionPrefix  string
 	OutputCapBytes int
 	TimeoutSeconds int
@@ -163,6 +250,7 @@ func TmuxExecutorConfigFromEnv() TmuxExecutorConfig {
 		Socket:         strings.TrimSpace(os.Getenv("CHROTE_FORMATIONS_TMUX_SOCKET")),
 		Cwd:            strings.TrimSpace(os.Getenv("CHROTE_FORMATIONS_TMUX_CWD")),
 		Roots:          splitLabCSV(os.Getenv("CHROTE_FORMATIONS_TMUX_ROOTS")),
+		AgentUser:      strings.TrimSpace(os.Getenv("CHROTE_FORMATIONS_AGENT_USER")),
 		SessionPrefix:  strings.TrimSpace(os.Getenv("CHROTE_FORMATIONS_TMUX_SESSION_PREFIX")),
 		OutputCapBytes: capBytes,
 		TimeoutSeconds: timeoutSeconds,
@@ -1300,19 +1388,32 @@ func (e *TmuxFormationExecutor) validateConfiguredBoundary() error {
 		return runExecutionError("invalid_session_prefix", "tmux executor session prefix is not a safe tmux target prefix", "executor", nil)
 	}
 	// The executor shares the cockpit tmux socket by owner ruling, and by owner
-	// ruling also supports ANY configured socket — including one with no
-	// pre-existing server. ensureServer lazy-starts a server (a keeper session)
-	// when none is running so the socket can be pinned and used; an existing
-	// server (foreign or ours) is left completely untouched. The old blanket
-	// refusal of the default/cockpit socket is gone; safety lives in
+	// ruling also supports ANY configured socket. ensureServer resolves the
+	// configured agent-user (default: the service user), verifies the socket's
+	// backing server is owned by that user, and — only in the self case — lazy
+	// -starts a server (a keeper session) when none is running so the socket can
+	// be pinned and used. An existing server is left completely untouched; a
+	// wrong-owner or absent other-user server fails loud rather than silently
+	// running agents under the wrong identity. Safety otherwise lives in
 	// session-scoping (create + tear down only uniquely-named owned sessions,
 	// never touch a foreign session). The socket must still be a real, stable,
 	// non-symlink path, which pinTmuxSocketIdentity enforces below once a server
 	// (and thus the socket file) exists.
-	if err := e.ensureServer(); err != nil {
+	expected, err := e.resolveExpectedAgentUser()
+	if err != nil {
+		return err
+	}
+	if err := e.ensureServer(expected); err != nil {
 		return err
 	}
 	if err := e.pinTmuxSocketIdentity(); err != nil {
+		return err
+	}
+	// Ownership is verified only after the socket identity is pinned, so the stat
+	// reads the confirmed real, non-symlink, stable socket path rather than a
+	// symlink target. A server owned by anyone other than the configured
+	// agent-user is refused loud here (subsumes chrote-fjy).
+	if err := e.verifyServerOwner(expected); err != nil {
 		return err
 	}
 	if strings.TrimSpace(e.config.Cwd) == "" {
@@ -1351,19 +1452,25 @@ func (e *TmuxFormationExecutor) validateConfiguredBoundary() error {
 	return nil
 }
 
-// ensureServer guarantees a live tmux server on the configured socket before the
-// executor pins its identity, so any configured socket — including one with no
-// pre-existing server — can be used. It probes for a server (read-only); if one
-// is already running (foreign or ours) it returns immediately and touches
-// nothing. Only when no server is running does it lazy-start one, and it does so
-// with the least possible footprint: a single detached "keeper" session whose
-// sole purpose is to hold the new server alive. The keeper carries a distinct
-// reserved name (SessionPrefix + keeper) and is NEVER recorded as an owned run
-// session, so teardownOwnedSessions never reclaims it; it is fine to leave
-// running. ensureServer only ever ADDS a server + keeper — it never issues
-// kill-server, kill-session, attach, rename, or resize — so the only-own-sessions
-// safety invariant holds by construction.
-func (e *TmuxFormationExecutor) ensureServer() error {
+// ensureServer guarantees a live tmux server on the socket before the executor
+// pins its identity and dispatches. It probes for a server (read-only); if one is
+// already running it leaves it untouched.
+//
+// Lazy-start is gated on identity: it fires ONLY in the self case, where the
+// server the executor would start (as the service user) is owned by exactly the
+// expected agent-user. When the configured agent-user is NOT the service user,
+// ensureServer refuses to lazy-start — doing so would create a wrong-owner server
+// and silently run agents under the service user's identity — and instead fails
+// loud, requiring a correctly-owned server to have been provisioned out of band.
+//
+// Ownership of the resulting server is verified separately (verifyServerOwner)
+// after the socket identity is pinned. Lazy-start uses the least possible
+// footprint: a single detached "keeper" session (SessionPrefix + keeper) that
+// only holds the new server alive; it is NEVER recorded as an owned run session,
+// so teardownOwnedSessions never reclaims it. ensureServer only ever ADDS a
+// server + keeper — it never issues kill-server, kill-session, attach, rename, or
+// resize — so the only-own-sessions safety invariant holds by construction.
+func (e *TmuxFormationExecutor) ensureServer(expected expectedAgentUser) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(e.config.TimeoutSeconds)*time.Second)
 	defer cancel()
 	running, err := e.client.HasServer(ctx, e.config.Socket)
@@ -1372,6 +1479,9 @@ func (e *TmuxFormationExecutor) ensureServer() error {
 	}
 	if running {
 		return nil
+	}
+	if !expected.self {
+		return runExecutionError("agent_user_server_absent", fmt.Sprintf("formations tmux server is not running on %s; a server owned by the configured agent-user %q must be provisioned before dispatch (refusing to lazy-start a wrong-owner server)", e.config.Socket, expected.name), "executor", nil)
 	}
 	keeper := e.config.SessionPrefix + tmuxKeeperSuffix
 	if !safeTmuxSessionName(keeper) {
