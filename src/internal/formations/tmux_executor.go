@@ -188,12 +188,13 @@ type tmuxHarnessClient interface {
 // also takes the facilitator turn) reuses its own session instead of spawning a
 // second one.
 type ownedSessions struct {
-	bySlot map[string]string
-	order  []string
+	bySlot  map[string]string
+	startAt map[string]time.Time
+	order   []string
 }
 
 func newOwnedSessions() *ownedSessions {
-	return &ownedSessions{bySlot: map[string]string{}}
+	return &ownedSessions{bySlot: map[string]string{}, startAt: map[string]time.Time{}}
 }
 
 func (o *ownedSessions) name(slotID string) (string, bool) {
@@ -213,6 +214,26 @@ func (o *ownedSessions) record(slotID, name string) {
 	}
 	o.bySlot[slotID] = name
 	o.order = append(o.order, name)
+	// Record the session's dispatch-start once, when it is first created. Reused
+	// dispatches on the same session (e.g. a peer that also takes the facilitator
+	// turn) keep this earliest start so the transcript-capture mtime guard still
+	// includes the same, growing transcript file and previousSentinels can tell a
+	// prior turn's sentinel from this turn's.
+	if o.startAt != nil {
+		if _, ok := o.startAt[slotID]; !ok {
+			o.startAt[slotID] = time.Now()
+		}
+	}
+}
+
+// startedAt reports when the slot's owned session was first created. The zero
+// value / false is returned for an unknown slot; callers fall back to now.
+func (o *ownedSessions) startedAt(slotID string) (time.Time, bool) {
+	if o == nil || o.startAt == nil {
+		return time.Time{}, false
+	}
+	at, ok := o.startAt[slotID]
+	return at, ok
 }
 
 func (o *ownedSessions) owns(name string) bool {
@@ -812,10 +833,18 @@ func (e *TmuxFormationExecutor) executeSlot(req FormationExecution, slot Formati
 	variant := binding.Variant
 	sessionName := binding.SessionName
 
+	// dispatchStart bounds the transcript-capture mtime guard (claude-code). It is
+	// the session's creation time so a reused session (facilitator turn) keeps its
+	// growing transcript in scope; it falls back to now for a session not tracked
+	// as owned. Non-transcript harnesses ignore it.
+	dispatchStart, ok := owned.startedAt(slot.ID)
+	if !ok {
+		dispatchStart = time.Now()
+	}
 	turnMarker := "turn marker: " + newPrefixedID("turn")
 	promptExtra := append(append([]string{}, extraLines...), turnMarker)
 	prompt := e.renderPromptWithContext(req, slot, *card, variant, phase, promptExtra)
-	existingSentinels, err := e.countExistingCompletionSentinels(ctx, sessionName, req.RunID)
+	existingSentinels, err := e.countExistingCompletionSentinels(ctx, sessionName, req.RunID, variant.ID, dispatchStart)
 	if err != nil {
 		return tmuxSlotOutput{}, withSlot(err, req.NodeID, slot.ID, "")
 	}
@@ -843,7 +872,7 @@ func (e *TmuxFormationExecutor) executeSlot(req FormationExecution, slot Formati
 		return tmuxSlotOutput{}, err
 	}
 
-	captured, err := e.waitForCompletion(ctx, sessionName, req.RunID, prompt, existingSentinels)
+	captured, err := e.waitForCompletion(ctx, sessionName, req.RunID, prompt, existingSentinels, variant.ID, dispatchStart)
 	if err != nil {
 		return tmuxSlotOutput{}, withSlot(err, req.NodeID, slot.ID, lease.DispatchID)
 	}
@@ -1521,11 +1550,11 @@ func (e *TmuxFormationExecutor) validatePinnedTmuxSocket() error {
 	return nil
 }
 
-func (e *TmuxFormationExecutor) countExistingCompletionSentinels(ctx context.Context, sessionName, runID string) (int, error) {
+func (e *TmuxFormationExecutor) countExistingCompletionSentinels(ctx context.Context, sessionName, runID, harnessID string, dispatchStart time.Time) (int, error) {
 	if err := e.validatePinnedTmuxSocket(); err != nil {
 		return 0, err
 	}
-	captured, err := e.client.CapturePane(ctx, e.config.Socket, sessionName, e.config.OutputCapBytes+1)
+	captured, err := e.captureCompletionText(ctx, harnessID, sessionName, runID, dispatchStart)
 	if err != nil {
 		code := "capture_failed"
 		if errors.Is(err, errTmuxTargetMissing) {
@@ -1539,13 +1568,13 @@ func (e *TmuxFormationExecutor) countExistingCompletionSentinels(ctx context.Con
 	return countCompletionSentinels(captured, runID), nil
 }
 
-func (e *TmuxFormationExecutor) waitForCompletion(ctx context.Context, sessionName, runID, prompt string, previousSentinels int) (string, error) {
+func (e *TmuxFormationExecutor) waitForCompletion(ctx context.Context, sessionName, runID, prompt string, previousSentinels int, harnessID string, dispatchStart time.Time) (string, error) {
 	deadline := time.Now().Add(time.Duration(e.config.TimeoutSeconds) * time.Second)
 	for {
 		if err := e.validatePinnedTmuxSocket(); err != nil {
 			return "", err
 		}
-		captured, err := e.client.CapturePane(ctx, e.config.Socket, sessionName, e.config.OutputCapBytes+1)
+		captured, err := e.captureCompletionText(ctx, harnessID, sessionName, runID, dispatchStart)
 		if err != nil {
 			code := "capture_failed"
 			if errors.Is(err, errTmuxTargetMissing) {
