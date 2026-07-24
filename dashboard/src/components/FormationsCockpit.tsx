@@ -32,6 +32,7 @@ import {
 import {
   activeRunStorageKey,
   openHumanGateId,
+  peekTargetForEvidence,
   projectNodeEvidence,
   projectNodeStates,
   runStatusFromResponse,
@@ -1649,6 +1650,14 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     () => (inspectedNodeId ? projectNodeEvidence(runEvents, inspectedNodeId) : null),
     [inspectedNodeId, runEvents],
   )
+  const liveSessionNames = useMemo(
+    () => new Set((session?.sessions ?? []).map(item => item.name)),
+    [session?.sessions],
+  )
+  const peekTarget = useMemo(
+    () => peekTargetForEvidence(inspectedEvidence, liveSessionNames),
+    [inspectedEvidence, liveSessionNames],
+  )
   const inspectableNodeId = useCallback((escalation: OpenEscalation): string => {
     const candidate = escalation.gateId || escalation.nodeId || ''
     if (!candidate || !board) return ''
@@ -2152,6 +2161,24 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
               <div><dt>Node</dt><dd>{inspectedNode.id}</dd></div>
               <div><dt>State</dt><dd data-testid="node-evidence-state">{inspectedEvidence.state || 'not started'}</dd></div>
             </dl>
+
+            {inspectedEvidence.state === 'running' && inspectedEvidence.attempts.some(attempt => attempt.dispatches.some(dispatch => dispatch.sessionRef.startsWith('tmux:'))) ? (
+              <section className="node-evidence-section node-peek">
+                <h3>Live session</h3>
+                <button
+                  type="button"
+                  className="node-peek-btn"
+                  data-testid={`peek-node-${inspectedNode.id}`}
+                  disabled={!peekTarget || !session}
+                  onClick={() => { if (peekTarget && session) session.openFloatingModal(peekTarget.sessionName) }}
+                >Peek · grab the wheel</button>
+                <p className="node-peek-note">
+                  {peekTarget
+                    ? 'Attaches to the live agent session. Type to steer; close the window to hand back. It ends when the step finishes.'
+                    : 'No live agent session to attach to right now. Peek is only available while the step is running.'}
+                </p>
+              </section>
+            ) : null}
 
             <section className="node-evidence-section">
               <h3>Attempts</h3>

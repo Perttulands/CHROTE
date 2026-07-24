@@ -1544,3 +1544,59 @@ test.describe('Formations cockpit — evidence inspector + needs-you escalations
     await expect(page.getByTestId('node-inspector')).toContainText('Run evidence')
   })
 })
+
+test.describe('Formations cockpit — peek / grab the wheel', () => {
+  test('attaches to a running node’s live agent session from the inspector', async ({ page }) => {
+    const runId = 'run-peek-smoke'
+    const boardSlug = mockFormationsBoard.slug
+    const formationId = mockFormationsBoard.formations[0].id
+    const missionSession = 'mission-run-peek-slot-ab12'
+
+    // The ephemeral agent session is live in the terminal registry while the
+    // step runs, so peek has a real session to attach to.
+    await mockApiRoutes(page, {
+      sessionsResponse: {
+        sessions: [{ name: missionSession, windows: 1, attached: false, group: 'mission' }],
+        grouped: { mission: [{ name: missionSession, windows: 1, attached: false, group: 'mission' }] },
+        timestamp: new Date().toISOString(),
+      },
+    })
+    await mockFormationsApiRoutes(page, {
+      runStatus: {
+        runId,
+        status: 'running',
+        final: false,
+        boardSlug,
+        missionId: mockFormationsBoard.missions[0].id,
+        eventCount: 3,
+      },
+      runEvents: [
+        { seq: 1, type: 'run_started', runId, data: { actor: 'playwright' } },
+        { seq: 2, type: 'node_started', runId, nodeId: formationId, attempt: 1, data: { reason: 'single-formation' } },
+        { seq: 3, type: 'slot_dispatch', runId, nodeId: formationId, attempt: 1, data: { slotId: 'slot-controller', agentId: 'claude', harness: 'claude-code', sessionRef: `tmux:${missionSession}` } },
+      ] as unknown as typeof mockFormationsRunEvents,
+    })
+
+    await page.addInitScript(({ key, value }) => {
+      window.localStorage.setItem(key, value)
+    }, { key: activeRunStorageKey(boardSlug), value: runId })
+
+    await page.goto('/')
+    await page.getByRole('button', { name: 'Formations' }).click()
+    await expect(page.getByTestId('formations-view')).toBeVisible()
+
+    await page.getByTestId(`inspect-node-${formationId}`).click()
+    const inspector = page.getByTestId('node-inspector')
+    await expect(inspector).toBeVisible()
+    await expect(inspector.getByTestId('node-evidence-state')).toHaveText('running')
+
+    const peek = inspector.getByTestId(`peek-node-${formationId}`)
+    await expect(peek).toBeEnabled()
+    await expect(peek).toContainText('grab the wheel')
+    await peek.click()
+
+    // Reuses the existing floating terminal, attached to that exact session.
+    await expect(page.locator('.floating-modal')).toBeVisible()
+    await expect(page.locator('.floating-modal-body iframe')).toHaveAttribute('src', new RegExp(`arg=${missionSession}`))
+  })
+})
