@@ -279,6 +279,42 @@ export function projectNodeEvidence(events: RunEvent[], nodeId: string): NodeEvi
   }
 }
 
+export interface PeekTarget {
+  sessionName: string
+  sessionRef: string
+}
+
+/**
+ * Decide whether a node's live agent tmux session is attachable right now.
+ * Peek is honest: the node must be running AND its latest dispatch must name a
+ * tmux session that is still present in the live terminal registry. Formations
+ * sessions are ephemeral — spawned per step and torn down after — so "ran once"
+ * is never enough; the session name has to still be live to attach. Non-tmux
+ * refs (e.g. lab runs, "lab:...") have no attachable tmux session and are
+ * refused. Returns the session to attach, or null when peek is not available.
+ */
+export function peekTargetForEvidence(
+  evidence: NodeEvidence | null,
+  liveSessionNames: ReadonlySet<string>,
+): PeekTarget | null {
+  if (!evidence || evidence.state !== 'running') return null
+  const tmuxPrefix = 'tmux:'
+  for (let a = evidence.attempts.length - 1; a >= 0; a--) {
+    const dispatches = evidence.attempts[a].dispatches
+    for (let d = dispatches.length - 1; d >= 0; d--) {
+      const sessionRef = dispatches[d].sessionRef
+      if (!sessionRef.startsWith(tmuxPrefix)) continue
+      const sessionName = sessionRef.slice(tmuxPrefix.length)
+      if (!sessionName) continue
+      // The latest dispatched session is the only one that can still be live;
+      // if it is gone from the registry, the step has been torn down — do not
+      // fall back to an older attempt's (already dead) session.
+      return liveSessionNames.has(sessionName) ? { sessionName, sessionRef } : null
+    }
+  }
+  return null
+}
+
 export function openHumanGateId(events: RunEvent[]): string {
   let openGateId = ''
   for (const event of [...events].sort((a, b) => a.seq - b.seq)) {

@@ -74,6 +74,6 @@ describe('peekTargetForEvidence', () => {
       { runId: 'run_1', seq: 1, type: 'node_started', nodeId: NODE, attempt: 1 },
       { runId: 'run_1', seq: 2, type: 'slot_dispatch', nodeId: NODE, attempt: 1, data: { sessionRef: '' } },
     ])
-    expect(peekTargetForEvidence(ev, new Set([''])).valueOf()).toBeNull()
+    expect(peekTargetForEvidence(ev, new Set(['']))).toBeNull()
   })
 })
