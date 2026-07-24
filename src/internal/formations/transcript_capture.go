@@ -68,7 +68,7 @@ func (e *TmuxFormationExecutor) captureFromTranscript(runID string, dispatchStar
 	if err != nil {
 		return "", err
 	}
-	candidates, err := listTranscriptCandidates(root)
+	candidates, err := listTranscriptCandidates(root, dispatchStart)
 	if err != nil {
 		return "", err
 	}
@@ -123,7 +123,13 @@ func (e *TmuxFormationExecutor) agentHomeDir() (string, error) {
 // subdirectories of root, tagging each with its reported cwd and mtime. A missing
 // root (the agent has not written any transcript yet) is not an error — it yields
 // no candidates so the caller keeps polling.
-func listTranscriptCandidates(root string) ([]transcriptCandidate, error) {
+//
+// Files whose mtime predates `since` (minus the skew tolerance) are skipped by a
+// cheap stat BEFORE their contents are read: a transcript last written before
+// this dispatch cannot hold its completion, so there is no reason to read a
+// possibly multi-megabyte file on every 100ms poll. In practice only this run's
+// own, actively-growing transcript survives the gate and gets read.
+func listTranscriptCandidates(root string, since time.Time) ([]transcriptCandidate, error) {
 	projects, err := os.ReadDir(root)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -131,6 +137,7 @@ func listTranscriptCandidates(root string) ([]transcriptCandidate, error) {
 		}
 		return nil, err
 	}
+	threshold := since.Add(-transcriptMtimeSkew)
 	var candidates []transcriptCandidate
 	for _, project := range projects {
 		if !project.IsDir() {
@@ -145,11 +152,14 @@ func listTranscriptCandidates(root string) ([]transcriptCandidate, error) {
 			if file.IsDir() || !strings.HasSuffix(file.Name(), ".jsonl") {
 				continue
 			}
-			path := filepath.Join(projectDir, file.Name())
 			info, err := file.Info()
 			if err != nil {
 				continue
 			}
+			if info.ModTime().Before(threshold) {
+				continue
+			}
+			path := filepath.Join(projectDir, file.Name())
 			data, err := os.ReadFile(path)
 			if err != nil {
 				continue

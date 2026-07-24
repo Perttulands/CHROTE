@@ -168,6 +168,43 @@ func TestAssistantTextFromTranscriptSkipsMalformedLines(t *testing.T) {
 	}
 }
 
+// Review-fix test: listTranscriptCandidates must gate out transcripts modified
+// before the dispatch by a cheap stat, WITHOUT reading their (possibly multi-MB)
+// contents — otherwise a busy ~/.claude/projects is re-read in full on every
+// 100ms poll for the whole run.
+func TestListTranscriptCandidatesSkipsStaleByMtime(t *testing.T) {
+	root := t.TempDir()
+	projectDir := filepath.Join(root, "-workspace-demo")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("mkdir project dir: %v", err)
+	}
+	body := []byte(`{"type":"attachment","cwd":"` + fixtureCwd + `"}` + "\n")
+	stale := filepath.Join(projectDir, "stale.jsonl")
+	if err := os.WriteFile(stale, body, 0o644); err != nil {
+		t.Fatalf("write stale: %v", err)
+	}
+	fresh := filepath.Join(projectDir, "fresh.jsonl")
+	if err := os.WriteFile(fresh, body, 0o644); err != nil {
+		t.Fatalf("write fresh: %v", err)
+	}
+	dispatchStart := time.Now()
+	old := dispatchStart.Add(-time.Hour)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatalf("chtimes stale: %v", err)
+	}
+
+	candidates, err := listTranscriptCandidates(root, dispatchStart)
+	if err != nil {
+		t.Fatalf("listTranscriptCandidates error = %v", err)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("candidates = %d, want 1 (stale must be gated out before read)", len(candidates))
+	}
+	if filepath.Base(candidates[0].path) != "fresh.jsonl" {
+		t.Fatalf("candidate = %q, want fresh.jsonl", candidates[0].path)
+	}
+}
+
 // writeRoutingTranscript materializes one qualifying claude-code transcript under
 // root/<project>/<uuid>.jsonl whose first cwd-bearing record reports wantCwd.
 func writeRoutingTranscript(t *testing.T, root, wantCwd string) {
