@@ -32,6 +32,7 @@ src/arena-server
 src/server
 chrote-server
 chrote-server-integ
+chrote-server.*
 *.exe
 
 # Vite cache
