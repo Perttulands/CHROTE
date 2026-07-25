@@ -44,6 +44,21 @@ test('Formations CI records a JSON report and rejects an empty execution', () =>
   assert.match(workflow, /\$\{\{ runner\.temp \}\}\/formations-playwright\.json/)
 })
 
+test('active environment template cannot advertise retired Gate process controls', () => {
+  const envExample = fs.readFileSync(`${repoRoot}/.env.example`, 'utf8')
+  const retiredControls = [
+    'CHROTE_FORMATIONS_SCRIPT_GATES',
+    'CHROTE_FORMATIONS_GATE_TIMEOUT_SECONDS',
+    'CHROTE_FORMATIONS_GATE_OUTPUT_CAP_BYTES',
+    'CHROTE_FORMATIONS_GATE_ENV_ALLOWLIST',
+  ]
+
+  for (const control of retiredControls) {
+    assert.doesNotMatch(envExample, new RegExp(`^${control}=`, 'm'))
+  }
+  assert.doesNotMatch(envExample, /Formations script gates|Gate TOML should use commandArgv|commandShell is the explicit shell escape hatch|Gate commands receive a sanitized env/)
+})
+
 test('built-server wrapper owns its environment, roots, socket, and port', () => {
   const wrapper = fs.readFileSync(`${repoRoot}/scripts/test-built-server-contract.sh`, 'utf8')
 
