@@ -1005,7 +1005,7 @@ func runGateVerdict(store *formations.Store, args []string, stdout, stderr io.Wr
 	fs := flag.NewFlagSet("gate verdict", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	reason := fs.String("reason", "", "verdict reason")
-	actor := fs.String("actor", "human:perttu", "deciding actor")
+	actor := fs.String("actor", "human:operator", "deciding actor")
 	jsonOut := fs.Bool("json", false, "write JSON")
 	if err := fs.Parse(reorderFlags(args, map[string]bool{"json": true})); err != nil {
 		return 2

@@ -17,7 +17,7 @@ import (
 func TestScheduledTasksAPIEnvelopeAndLifecycle(t *testing.T) {
 	fixedNow := time.Date(2026, 6, 27, 14, 0, 0, 0, time.UTC)
 	runner := newFakeScheduledRunner()
-	runner.allow(scheduled.Target{SessionName: "ops", UnixUser: "perttu"})
+	runner.allow(scheduled.Target{SessionName: "ops", UnixUser: "alice"})
 	handler := newScheduledTestHandler(t, runner, fixedNow, true)
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -25,7 +25,7 @@ func TestScheduledTasksAPIEnvelopeAndLifecycle(t *testing.T) {
 	created := scheduledAPIPost(t, mux, "/api/scheduled-tasks", `{
 		"name":"Standup nudge",
 		"prompt":"hello; rm -rf / $(whoami)",
-		"target":{"sessionName":"ops","unixUser":"perttu"},
+		"target":{"sessionName":"ops","unixUser":"alice"},
 		"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"},
 		"createdBy":"agent:test"
 	}`)
@@ -106,12 +106,12 @@ func TestScheduledTasksAPIEnvelopeAndLifecycle(t *testing.T) {
 
 func TestScheduledTasksAPIRequiresMutationIntentAndJSON(t *testing.T) {
 	runner := newFakeScheduledRunner()
-	runner.allow(scheduled.Target{SessionName: "ops", UnixUser: "perttu"})
+	runner.allow(scheduled.Target{SessionName: "ops", UnixUser: "alice"})
 	handler := newScheduledTestHandler(t, runner, time.Date(2026, 6, 27, 14, 0, 0, 0, time.UTC), true)
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
-	body := `{"name":"csrf","prompt":"hello","target":{"sessionName":"ops","unixUser":"perttu"},"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"}}`
+	body := `{"name":"csrf","prompt":"hello","target":{"sessionName":"ops","unixUser":"alice"},"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/scheduled-tasks", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -146,24 +146,24 @@ func TestScheduledTasksAPIValidationRejectsUnsafeOrInvalidRequests(t *testing.T)
 	}{
 		{
 			name: "empty prompt",
-			body: `{"name":"bad","prompt":"   ","target":{"sessionName":"ops","unixUser":"perttu"},"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"}}`,
+			body: `{"name":"bad","prompt":"   ","target":{"sessionName":"ops","unixUser":"alice"},"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"}}`,
 		},
 		{
 			name: "invalid interval",
-			body: `{"name":"bad","prompt":"hello","target":{"sessionName":"ops","unixUser":"perttu"},"schedule":{"type":"interval","everyMinutes":0,"timezone":"UTC"}}`,
+			body: `{"name":"bad","prompt":"hello","target":{"sessionName":"ops","unixUser":"alice"},"schedule":{"type":"interval","everyMinutes":0,"timezone":"UTC"}}`,
 		},
 		{
 			name: "invalid cron",
-			body: `{"name":"bad","prompt":"hello","target":{"sessionName":"ops","unixUser":"perttu"},"schedule":{"type":"cron","expression":"61 * * * *","timezone":"UTC"}}`,
+			body: `{"name":"bad","prompt":"hello","target":{"sessionName":"ops","unixUser":"alice"},"schedule":{"type":"cron","expression":"61 * * * *","timezone":"UTC"}}`,
 		},
 		{
 			name:     "socket field is forbidden",
-			body:     `{"name":"bad","prompt":"hello","target":{"sessionName":"ops","unixUser":"perttu","socket":"/tmp/evil.sock"},"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"}}`,
+			body:     `{"name":"bad","prompt":"hello","target":{"sessionName":"ops","unixUser":"alice","socket":"/tmp/evil.sock"},"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"}}`,
 			wantBody: "socket",
 		},
 		{
 			name:     "unknown target rejected when validation enabled",
-			body:     `{"name":"bad","prompt":"hello","target":{"sessionName":"missing","unixUser":"perttu"},"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"}}`,
+			body:     `{"name":"bad","prompt":"hello","target":{"sessionName":"missing","unixUser":"alice"},"schedule":{"type":"interval","everyMinutes":15,"timezone":"UTC"}}`,
 			wantBody: "target",
 		},
 		{
@@ -225,13 +225,13 @@ func TestScheduledTmuxRunnerSendsPromptWithLiteralSendKeysArgv(t *testing.T) {
 	}
 	t.Setenv("TMUX_ARGS_FILE", argsPath)
 	t.Setenv("PATH", tmpDir)
-	t.Setenv("CHROTE_TERMINAL_USERS", "perttu")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "perttu=/tmp/chrote-fake-tmux.sock")
-	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "perttu=/tmp/chrote-fake-home")
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/chrote-fake-tmux.sock")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/tmp/chrote-fake-home")
 
 	runner := NewScheduledTmuxRunner(NewTmuxHandler())
 	prompt := "-X; rm -rf / $(whoami)"
-	if err := runner.SendPrompt(context.Background(), scheduled.Target{SessionName: "ops", UnixUser: "perttu"}, prompt); err != nil {
+	if err := runner.SendPrompt(context.Background(), scheduled.Target{SessionName: "ops", UnixUser: "alice"}, prompt); err != nil {
 		t.Fatalf("SendPrompt returned error: %v", err)
 	}
 
@@ -259,14 +259,14 @@ printf 'tmux started\n' >> "$TMUX_ARGS_FILE"
 	}
 	t.Setenv("TMUX_ARGS_FILE", argsPath)
 	t.Setenv("PATH", tmpDir)
-	t.Setenv("CHROTE_TERMINAL_USERS", "perttu")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "perttu=/tmp/chrote-fake-tmux.sock")
-	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "perttu=/tmp/chrote-fake-home")
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/chrote-fake-tmux.sock")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/tmp/chrote-fake-home")
 
 	runner := NewScheduledTmuxRunner(NewTmuxHandler())
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := runner.SendPrompt(ctx, scheduled.Target{SessionName: "ops", UnixUser: "perttu"}, "do not send"); err == nil {
+	if err := runner.SendPrompt(ctx, scheduled.Target{SessionName: "ops", UnixUser: "alice"}, "do not send"); err == nil {
 		t.Fatal("SendPrompt returned nil for a canceled context")
 	}
 	if raw, err := os.ReadFile(argsPath); err == nil {

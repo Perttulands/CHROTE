@@ -42,7 +42,7 @@ func TestTmuxExecutorAcceptsConfiguredCockpitSocket(t *testing.T) {
 	// non-symlink socket that is ALSO the configured cockpit socket must now
 	// validate cleanly; safety moved from socket-refusal to session-scoping.
 	cfg := tmuxTestConfig(t)
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "perttu="+cfg.Socket)
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice="+cfg.Socket)
 	t.Setenv("CHROTE_DEFAULT_TMUX_SOCKET", cfg.Socket)
 
 	if err := newTmuxFormationExecutorWithClient(nil, nil, cfg, &fakeTmuxHarnessClient{}).validateConfiguredBoundary(); err != nil {

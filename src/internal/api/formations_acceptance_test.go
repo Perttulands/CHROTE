@@ -48,7 +48,7 @@ func TestFormationsRunProjectionParity(t *testing.T) {
 	}
 
 	verdictRec := httptest.NewRecorder()
-	mux.ServeHTTP(verdictRec, httptest.NewRequest(http.MethodPost, "/api/formations/runs/"+started.RunID+"/gates/gate_review/verdict", bytes.NewBufferString(`{"verdict":"pass","reason":"ship it","actor":"human:perttu"}`)))
+	mux.ServeHTTP(verdictRec, httptest.NewRequest(http.MethodPost, "/api/formations/runs/"+started.RunID+"/gates/gate_review/verdict", bytes.NewBufferString(`{"verdict":"pass","reason":"ship it","actor":"human:operator"}`)))
 	if verdictRec.Code != http.StatusOK {
 		t.Fatalf("verdict status = %d, want %d: %s", verdictRec.Code, http.StatusOK, verdictRec.Body.String())
 	}

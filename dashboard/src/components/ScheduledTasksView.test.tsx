@@ -6,7 +6,7 @@ const task = {
   id: 'tsk_existing',
   name: 'Morning prompt',
   prompt: 'status please',
-  target: { sessionName: 'ops', unixUser: 'perttu' },
+  target: { sessionName: 'ops', unixUser: 'alice' },
   schedule: { type: 'interval', everyMinutes: 15, timezone: 'UTC' },
   enabled: true,
   paused: false,
@@ -22,11 +22,11 @@ const sessionsEnvelope = {
   success: true,
   data: {
     sessions: [
-      { name: 'ops', unixUser: 'perttu', windows: 1, attached: false, group: 'ops' },
+      { name: 'ops', unixUser: 'alice', windows: 1, attached: false, group: 'ops' },
       { name: 'codex', unixUser: 'chrote', windows: 1, attached: false, group: 'codex' },
     ],
     grouped: {},
-    terminalUsers: ['perttu', 'chrote'],
+    terminalUsers: ['alice', 'chrote'],
   },
   timestamp: '2026-06-27T14:00:00Z',
 }
@@ -77,7 +77,7 @@ describe('ScheduledTasksView', () => {
 
     expect(await screen.findByRole('heading', { name: 'Scheduled Tasks' })).toBeInTheDocument()
     expect(await screen.findByRole('button', { name: /Morning prompt/ })).toBeInTheDocument()
-    expect(screen.getAllByText('perttu / ops').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('alice / ops').length).toBeGreaterThan(0)
     expect(screen.getAllByText(/agent:test/).length).toBeGreaterThan(0)
     expect(screen.getAllByText(/Every 15 minutes/).length).toBeGreaterThan(0)
   })

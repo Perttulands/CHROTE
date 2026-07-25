@@ -41,17 +41,17 @@ vi.mock('../context/SessionContext', () => ({
       ...DEFAULT_SETTINGS,
       terminalLaunchUsers: {
         ...DEFAULT_SETTINGS.terminalLaunchUsers,
-        terminal3: 'tavern',
+        terminal3: 'build',
       },
       terminalSessionPrefixes: {
         ...DEFAULT_SETTINGS.terminalSessionPrefixes,
-        tavern: 'forge',
+        build: 'forge',
       },
     },
-    terminalUsers: ['perttu', 'tavern'],
+    terminalUsers: ['alice', 'build'],
     sessions: [
-      { name: 'forge-existing', windows: 1, attached: false, group: 'forge', unixUser: 'tavern' },
-      { name: 'shell-existing', windows: 1, attached: false, group: 'shell', unixUser: 'perttu' },
+      { name: 'forge-existing', windows: 1, attached: false, group: 'forge', unixUser: 'build' },
+      { name: 'shell-existing', windows: 1, attached: false, group: 'shell', unixUser: 'alice' },
     ],
     layoutPresets: [{ id: 'preset-1', name: 'Focus Layout', createdAt: 1, workspaces: {} }],
     refreshSessions,
@@ -167,14 +167,14 @@ describe('TerminalWindow launch user', () => {
     render(
       <TerminalWindow
         workspaceId="terminal3"
-        window={{ id: 'terminal3-window-0', boundSessions: ['tavern:forge-existing'], activeSession: 'tavern:forge-existing', colorIndex: 0 }}
+        window={{ id: 'terminal3-window-0', boundSessions: ['build:forge-existing'], activeSession: 'build:forge-existing', colorIndex: 0 }}
       />
     )
 
     fireEvent.click(screen.getByText('forge-existing'), { ctrlKey: true })
 
     expect(openSendToSession).not.toHaveBeenCalled()
-    expect(setActiveSession).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'tavern:forge-existing')
+    expect(setActiveSession).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'build:forge-existing')
   })
 
   it('does not intercept right-click on terminal window chrome', () => {
@@ -203,7 +203,7 @@ describe('TerminalWindow launch user', () => {
     )
 
     const tag = container.querySelector('.session-tag') as HTMLElement
-    expect(tag).toHaveAttribute('title', 'Drag forge-existing (Unix user tavern)')
+    expect(tag).toHaveAttribute('title', 'Drag forge-existing (Unix user build)')
     expect(container.querySelector('.session-tag-drag-handle')).toBeNull()
     expect(tag.style.transform).toBe('')
     expect(tag.style.transition).toBe('none')
@@ -234,7 +234,7 @@ describe('TerminalWindow launch user', () => {
     render(
       <TerminalWindow
         workspaceId="terminal3"
-        window={{ id: 'terminal3-window-0', boundSessions: ['tavern:forge-existing'], activeSession: 'tavern:forge-existing', colorIndex: 0 }}
+        window={{ id: 'terminal3-window-0', boundSessions: ['build:forge-existing'], activeSession: 'build:forge-existing', colorIndex: 0 }}
       />
     )
 
@@ -243,7 +243,7 @@ describe('TerminalWindow launch user', () => {
     expect(removeSessionFromWindow).toHaveBeenCalledWith(
       'terminal3',
       'terminal3-window-0',
-      'tavern:forge-existing',
+      'build:forge-existing',
     )
   })
 

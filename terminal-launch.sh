@@ -83,7 +83,8 @@ attach_explicit_socket() {
   fi
 
   # REASON: explicit-socket terminals must fail loud instead of falling back to
-  # the ambient perttu tmux server when the configured session is unavailable.
+  # the invoking user's ambient tmux server when the configured session is
+  # unavailable — a silent fallback would attach the operator to the wrong pool.
   if "$TMUX_BIN" -S "$socket" has-session -t "$session" 2>/dev/null; then
     exec "$TMUX_BIN" -S "$socket" attach-session -t "$session"
   fi

@@ -25,9 +25,9 @@ func installFailingTmux(t *testing.T, stderr string) {
 
 func TestTmuxHandler_ListSessionsTreatsKnownNoServerErrorsAsEmptyList(t *testing.T) {
 	tests := []string{
-		"no server running on /tmp/tmux-1000/default",
+		"no server running on /tmp/tmux-2001/default",
 		"No such file or directory",
-		"error connecting to /run/user/1000/tmux/default (No such file or directory)",
+		"error connecting to /run/user/2001/tmux/default (No such file or directory)",
 	}
 
 	for _, stderr := range tests {
@@ -57,7 +57,7 @@ func TestTmuxHandler_ListSessionsTreatsKnownNoServerErrorsAsEmptyList(t *testing
 }
 
 func TestTmuxHandler_ListSessionsReportsPermissionDeniedConnectionErrors(t *testing.T) {
-	installFailingTmux(t, "error connecting to /run/user/1000/chrote-tmux/default (Permission denied)")
+	installFailingTmux(t, "error connecting to /run/user/2001/chrote-tmux/default (Permission denied)")
 	handler := NewTmuxHandler()
 	req := httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil)
 	rec := httptest.NewRecorder()
@@ -77,7 +77,7 @@ func TestTmuxHandler_ListSessionsReportsPermissionDeniedConnectionErrors(t *test
 }
 
 func TestTmuxHandler_ListSessionsReportsUnknownConnectionErrors(t *testing.T) {
-	installFailingTmux(t, "error connecting to /run/user/1000/chrote-tmux/default")
+	installFailingTmux(t, "error connecting to /run/user/2001/chrote-tmux/default")
 	handler := NewTmuxHandler()
 	req := httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil)
 	rec := httptest.NewRecorder()

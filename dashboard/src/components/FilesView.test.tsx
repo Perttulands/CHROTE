@@ -338,7 +338,7 @@ describe('FilesView saved path groups', () => {
     fireEvent.click(pinnedToggle)
 
     expect(screen.getByRole('button', { name: /Pinned.*2/ })).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.queryByRole('button', { name: /perttu/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /alice/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /srv/ })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /hosts/ })).toBeInTheDocument()
     expect(JSON.parse(window.localStorage.getItem('chrote.files.savedGroupsCollapsed') || '{}')).toEqual({

@@ -58,7 +58,7 @@ gc session list
 gc session peek plan-demo
 gc session nudge plan-demo "Plan the next CHROTE meta-harness slice and list acceptance criteria."
 gc session submit planner "Submit-path validation for CHROTE meta-harness spike." --intent follow_up
-tmux -S /run/user/1000/chrote-tmux/tmux-1000/gascity list-sessions
+tmux -S /run/user/2001/chrote-tmux/tmux-1000/gascity list-sessions
 ```
 
 Result:
@@ -175,7 +175,7 @@ be treated as an adapter concern before using Gas City as the only transcript
 source for CHROTE.
 
 Real AI harnesses are not yet safe to attach. The mock agents run as the normal
-`perttu` user, and Gas City settings include dangerous-mode prompt skipping for
+`alice` user, and Gas City settings include dangerous-mode prompt skipping for
 managed sessions. Before connecting Codex, Claude Code, OpenCode, Pi, or Gemini,
 CHROTE needs explicit adapter boundaries, environment scrubbing, transcript
 policy, and approval rules.

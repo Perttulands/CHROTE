@@ -14,7 +14,7 @@ func TestStoreWritesPrivateGroupSharedModes(t *testing.T) {
 		ID:        "tsk_modes",
 		Name:      "sensitive prompt",
 		Prompt:    "do not leak this operator instruction",
-		Target:    Target{SessionName: "ops", UnixUser: "perttu"},
+		Target:    Target{SessionName: "ops", UnixUser: "alice"},
 		Schedule:  Schedule{Type: "interval", EveryMinutes: 15, Timezone: "UTC"},
 		Enabled:   true,
 		CreatedAt: time.Date(2026, 6, 27, 14, 0, 0, 0, time.UTC),

@@ -5,8 +5,8 @@ configuration knob. No live infrastructure change is authorized here: provisioni
 the correctly-owned tmux server for a split install and the `/srv` cutover are
 executed separately by the orchestrator with explicit owner sign-off.
 Date: 2026-07-24. Beads: chrote-ejp (implements), chrote-jkk (parent), chrote-fjy
-(subsumed). Design reference: `design/executor-as-perttu` branch,
-`docs/superpowers/specs/2026-07-24-executor-as-perttu-design.md`.
+(subsumed). Design reference: `design/executor-as-alice` branch,
+`docs/superpowers/specs/2026-07-24-executor-as-alice-design.md`.
 
 Golden rule that still binds: **do not disrupt running shells or tmux sessions.**
 The executor only ever creates and tears down its own uniquely-named sessions and
@@ -31,7 +31,7 @@ OPERATOR user (whoever owns the agent credentials in their home).
   reverting agents to the wrong identity (chrote-fjy).
 
 Owner hard constraint (msg 239): CHROTE supports ANY user; Formations must too.
-NOTHING may hardcode `perttu` or any specific user. The agent-user is
+NOTHING may hardcode `alice` or any specific user. The agent-user is
 CONFIGURATION.
 
 ## 2. Design
@@ -47,7 +47,7 @@ expects to own the tmux server it drives (and therefore the user agents run as).
 - **Empty / unset ⇒ default to the service user** (the user the CHROTE process
   runs as, resolved via `os/user.Current()`). Single-user installs need no config.
 - Set to a username ⇒ that user is the expected agent-user (split install).
-- Nothing is hardcoded to a specific username; `perttu` never appears in code.
+- Nothing is hardcoded to a specific username; `alice` never appears in code.
 
 Stored as `TmuxExecutorConfig.AgentUser`; read in `TmuxExecutorConfigFromEnv`.
 

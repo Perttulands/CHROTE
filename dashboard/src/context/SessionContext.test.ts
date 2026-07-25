@@ -509,7 +509,7 @@ describe('resolveLaunchUser', () => {
       ...DEFAULT_SETTINGS,
       terminalLaunchUsers: {
         ...DEFAULT_SETTINGS.terminalLaunchUsers,
-        terminal1: 'perttu',
+        terminal1: 'alice',
       },
     }
 
@@ -521,11 +521,11 @@ describe('resolveLaunchUser', () => {
       ...DEFAULT_SETTINGS,
       terminalLaunchUsers: {
         ...DEFAULT_SETTINGS.terminalLaunchUsers,
-        terminal3: 'tavern',
+        terminal3: 'build',
       },
     }
 
-    expect(resolveLaunchUser(settings, 'terminal3', ['perttu', 'tavern'])).toBe('tavern')
+    expect(resolveLaunchUser(settings, 'terminal3', ['alice', 'build'])).toBe('build')
   })
 })
 
@@ -538,7 +538,7 @@ describe('createSession', () => {
   })
 
   function stubSessionFetch(existingSessions = [
-    { name: 'shell1', windows: 1, attached: false, group: 'shell', unixUser: 'perttu' },
+    { name: 'shell1', windows: 1, attached: false, group: 'shell', unixUser: 'alice' },
   ]) {
     const fetchMock = vi.fn((_: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === 'POST') {
@@ -554,7 +554,7 @@ describe('createSession', () => {
         json: () => Promise.resolve({
           sessions: existingSessions,
           grouped: {},
-          terminalUsers: ['perttu', 'tavern'],
+          terminalUsers: ['alice', 'build'],
           timestamp: new Date().toISOString(),
         }),
         text: () => Promise.resolve(''),
@@ -568,18 +568,18 @@ describe('createSession', () => {
     const fetchMock = stubSessionFetch()
     const { result } = renderSession()
 
-    await waitFor(() => expect(result.current.terminalUsers).toEqual(['perttu', 'tavern']))
+    await waitFor(() => expect(result.current.terminalUsers).toEqual(['alice', 'build']))
     fetchMock.mockClear()
 
     let created: string | null = null
     await act(async () => {
-      created = await result.current.createSession({ workspaceId: 'terminal1', unixUser: 'perttu' })
+      created = await result.current.createSession({ workspaceId: 'terminal1', unixUser: 'alice' })
     })
 
     expect(created).toBe('shell2')
     expect(fetchMock).toHaveBeenCalled()
     const [, init] = fetchMock.mock.calls[0]
-    expect(JSON.parse(String(init?.body))).toEqual({ name: 'shell2', unixUser: 'perttu', mouseScroll: true })
+    expect(JSON.parse(String(init?.body))).toEqual({ name: 'shell2', unixUser: 'alice', mouseScroll: true })
     expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual([])
   })
 
@@ -587,24 +587,24 @@ describe('createSession', () => {
     const fetchMock = stubSessionFetch()
     const { result } = renderSession()
 
-    await waitFor(() => expect(result.current.terminalUsers).toEqual(['perttu', 'tavern']))
+    await waitFor(() => expect(result.current.terminalUsers).toEqual(['alice', 'build']))
     fetchMock.mockClear()
 
     let created: string | null = null
     await act(async () => {
       created = await result.current.createSession({
         workspaceId: 'terminal3',
-        unixUser: 'tavern',
+        unixUser: 'build',
         attachTo: { workspaceId: 'terminal3', windowId: 'terminal3-window-0' },
       })
     })
 
-    expect(created).toBe('tavern1')
+    expect(created).toBe('build1')
     const [, init] = fetchMock.mock.calls[0]
-    expect(JSON.parse(String(init?.body))).toEqual({ name: 'tavern1', unixUser: 'tavern', mouseScroll: true })
+    expect(JSON.parse(String(init?.body))).toEqual({ name: 'build1', unixUser: 'build', mouseScroll: true })
     const win = result.current.workspaces.terminal3.windows[0]
-    expect(win.boundSessions).toEqual(['tavern:tavern1'])
-    expect(win.activeSession).toBe('tavern:tavern1')
+    expect(win.boundSessions).toEqual(['build:build1'])
+    expect(win.activeSession).toBe('build:build1')
   })
 
   it('passes saved disabled mouse-scroll preference when creating sessions', async () => {
@@ -617,15 +617,15 @@ describe('createSession', () => {
     const fetchMock = stubSessionFetch()
     const { result } = renderSession()
 
-    await waitFor(() => expect(result.current.terminalUsers).toEqual(['perttu', 'tavern']))
+    await waitFor(() => expect(result.current.terminalUsers).toEqual(['alice', 'build']))
     fetchMock.mockClear()
 
     await act(async () => {
-      await result.current.createSession({ workspaceId: 'terminal1', unixUser: 'perttu' })
+      await result.current.createSession({ workspaceId: 'terminal1', unixUser: 'alice' })
     })
 
     const [, init] = fetchMock.mock.calls[0]
-    expect(JSON.parse(String(init?.body))).toEqual({ name: 'shell2', unixUser: 'perttu', mouseScroll: false })
+    expect(JSON.parse(String(init?.body))).toEqual({ name: 'shell2', unixUser: 'alice', mouseScroll: false })
   })
 
   it('handles expected create-session API failures with a toast and no console error', async () => {
@@ -633,7 +633,7 @@ describe('createSession', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     const { result } = renderSession()
 
-    await waitFor(() => expect(result.current.terminalUsers).toEqual(['perttu', 'tavern']))
+    await waitFor(() => expect(result.current.terminalUsers).toEqual(['alice', 'build']))
     fetchMock.mockClear()
     fetchMock.mockImplementationOnce(() => Promise.resolve({
       ok: false,
@@ -643,7 +643,7 @@ describe('createSession', () => {
 
     let created: string | null = 'not-null'
     await act(async () => {
-      created = await result.current.createSession({ workspaceId: 'terminal1', unixUser: 'perttu' })
+      created = await result.current.createSession({ workspaceId: 'terminal1', unixUser: 'alice' })
     })
 
     expect(created).toBeNull()
@@ -663,27 +663,27 @@ describe('sendToSession', () => {
       if (String(input).includes('/api/tmux/sessions/shell1/panes')) {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ success: true, session: 'shell1', unixUser: 'perttu', panes: [pane] }),
+          json: () => Promise.resolve({ success: true, session: 'shell1', unixUser: 'alice', panes: [pane] }),
           text: () => Promise.resolve(''),
         })
       }
       return Promise.resolve(sessionResponse({
-        sessions: [{ name: 'shell1', windows: 1, attached: false, group: 'shell', unixUser: 'perttu' }],
-        terminalUsers: ['perttu'],
+        sessions: [{ name: 'shell1', windows: 1, attached: false, group: 'shell', unixUser: 'alice' }],
+        terminalUsers: ['alice'],
       }))
     })
     vi.stubGlobal('fetch', fetchMock)
     const { result } = renderSession()
-    await waitFor(() => expect(result.current.terminalUsers).toEqual(['perttu']))
+    await waitFor(() => expect(result.current.terminalUsers).toEqual(['alice']))
     fetchMock.mockClear()
 
     let panes = null
     await act(async () => {
-      panes = await result.current.listSessionPanes('shell1', 'perttu')
+      panes = await result.current.listSessionPanes('shell1', 'alice')
     })
 
     expect(panes).toEqual([pane])
-    expect(fetchMock).toHaveBeenCalledWith('/api/tmux/sessions/shell1/panes?unixUser=perttu', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(fetchMock).toHaveBeenCalledWith('/api/tmux/sessions/shell1/panes?unixUser=alice', expect.objectContaining({ signal: expect.any(AbortSignal) }))
   })
 
   it('rejects pane discovery from a non-empty Unix user when default scope was requested', async () => {
@@ -692,7 +692,7 @@ describe('sendToSession', () => {
       if (String(input).includes('/api/tmux/sessions/shell1/panes')) {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ success: true, session: 'shell1', unixUser: 'perttu', panes: [pane] }),
+          json: () => Promise.resolve({ success: true, session: 'shell1', unixUser: 'alice', panes: [pane] }),
           text: () => Promise.resolve(''),
         })
       }
@@ -724,7 +724,7 @@ describe('sendToSession', () => {
             pane: '%42',
             panePid: '222',
             serverPid: '9001',
-            unixUser: 'perttu',
+            unixUser: 'alice',
             submissionRequested: false,
             submitted: false,
             bufferCleaned: true,
@@ -763,7 +763,7 @@ describe('sendToSession', () => {
             pane: '%42',
             panePid: '222',
             serverPid: '9001',
-            unixUser: 'perttu',
+            unixUser: 'alice',
             submissionRequested: true,
             submitted: true,
             bufferCleaned: true,
@@ -774,13 +774,13 @@ describe('sendToSession', () => {
         })
       }
       return Promise.resolve(sessionResponse({
-        sessions: [{ name: 'shell1', windows: 1, attached: false, group: 'shell', unixUser: 'perttu' }],
-        terminalUsers: ['perttu'],
+        sessions: [{ name: 'shell1', windows: 1, attached: false, group: 'shell', unixUser: 'alice' }],
+        terminalUsers: ['alice'],
       }))
     })
     vi.stubGlobal('fetch', fetchMock)
     const { result } = renderSession()
-    await waitFor(() => expect(result.current.terminalUsers).toEqual(['perttu']))
+    await waitFor(() => expect(result.current.terminalUsers).toEqual(['alice']))
     fetchMock.mockClear()
 
     let delivered: SendToSessionOutcome = 'failed'
@@ -793,13 +793,13 @@ describe('sendToSession', () => {
         sessionId: '$7',
         panePid: '222',
         serverPid: '9001',
-      }, 'perttu')
+      }, 'alice')
     })
 
     expect(delivered).toBe('sent')
     expect(fetchMock).toHaveBeenCalledOnce()
     const [url, init] = fetchMock.mock.calls[0]
-    expect(String(url)).toBe('/api/tmux/sessions/shell1/send?unixUser=perttu')
+    expect(String(url)).toBe('/api/tmux/sessions/shell1/send?unixUser=alice')
     const form = init?.body as FormData
     expect(form.get('text')).toBe('inspect this')
     expect(form.get('submit')).toBe('true')
@@ -824,7 +824,7 @@ describe('sendToSession', () => {
             pane: '%42',
             panePid: '222',
             serverPid: '9001',
-            unixUser: 'perttu',
+            unixUser: 'alice',
             submissionRequested: true,
             submitted: false,
             bufferCleaned: true,
@@ -835,13 +835,13 @@ describe('sendToSession', () => {
         })
       }
       return Promise.resolve(sessionResponse({
-        sessions: [{ name: 'shell1', windows: 1, attached: false, group: 'shell', unixUser: 'perttu' }],
-        terminalUsers: ['perttu'],
+        sessions: [{ name: 'shell1', windows: 1, attached: false, group: 'shell', unixUser: 'alice' }],
+        terminalUsers: ['alice'],
       }))
     })
     vi.stubGlobal('fetch', fetchMock)
     const { result } = renderSessionWithToast()
-    await waitFor(() => expect(result.current.session.terminalUsers).toEqual(['perttu']))
+    await waitFor(() => expect(result.current.session.terminalUsers).toEqual(['alice']))
     fetchMock.mockClear()
 
     let delivered: SendToSessionOutcome = 'sent'
@@ -854,7 +854,7 @@ describe('sendToSession', () => {
         sessionId: '$7',
         panePid: '222',
         serverPid: '9001',
-      }, 'perttu')
+      }, 'alice')
     })
 
     expect(delivered).toBe('unknown')
@@ -867,13 +867,13 @@ describe('sendToSession', () => {
         return Promise.reject(new Error('connection reset after request write'))
       }
       return Promise.resolve(sessionResponse({
-        sessions: [{ name: 'shell1', windows: 1, attached: false, group: 'shell', unixUser: 'perttu' }],
-        terminalUsers: ['perttu'],
+        sessions: [{ name: 'shell1', windows: 1, attached: false, group: 'shell', unixUser: 'alice' }],
+        terminalUsers: ['alice'],
       }))
     })
     vi.stubGlobal('fetch', fetchMock)
     const { result } = renderSessionWithToast()
-    await waitFor(() => expect(result.current.session.terminalUsers).toEqual(['perttu']))
+    await waitFor(() => expect(result.current.session.terminalUsers).toEqual(['alice']))
 
     let delivered: SendToSessionOutcome = 'sent'
     await act(async () => {
@@ -881,7 +881,7 @@ describe('sendToSession', () => {
         text: 'could already be pasted',
         files: [],
         submit: false,
-      }, 'perttu')
+      }, 'alice')
     })
 
     expect(delivered).toBe('unknown')
@@ -921,13 +921,13 @@ describe('sendToSession', () => {
         })
       }
       return Promise.resolve(sessionResponse({
-        sessions: [{ name: 'shell1', windows: 1, attached: false, group: 'shell', unixUser: 'perttu' }],
-        terminalUsers: ['perttu'],
+        sessions: [{ name: 'shell1', windows: 1, attached: false, group: 'shell', unixUser: 'alice' }],
+        terminalUsers: ['alice'],
       }))
     })
     vi.stubGlobal('fetch', fetchMock)
     const { result } = renderSessionWithToast()
-    await waitFor(() => expect(result.current.session.terminalUsers).toEqual(['perttu']))
+    await waitFor(() => expect(result.current.session.terminalUsers).toEqual(['alice']))
 
     let delivered: SendToSessionOutcome = 'sent'
     await act(async () => {
@@ -935,7 +935,7 @@ describe('sendToSession', () => {
         text: 'classify this response',
         files: [],
         submit: false,
-      }, 'perttu')
+      }, 'alice')
     })
 
     expect(delivered).toBe(unknown ? 'unknown' : 'failed')
@@ -955,13 +955,13 @@ describe('sendToSession', () => {
         })
       }
       return Promise.resolve(sessionResponse({
-        sessions: [{ name: 'shell1', windows: 1, attached: false, group: 'shell', unixUser: 'perttu' }],
-        terminalUsers: ['perttu'],
+        sessions: [{ name: 'shell1', windows: 1, attached: false, group: 'shell', unixUser: 'alice' }],
+        terminalUsers: ['alice'],
       }))
     })
     vi.stubGlobal('fetch', fetchMock)
     const { result } = renderSession()
-    await waitFor(() => expect(result.current.terminalUsers).toEqual(['perttu']))
+    await waitFor(() => expect(result.current.terminalUsers).toEqual(['alice']))
     fetchMock.mockClear()
 
     let delivered: SendToSessionOutcome = 'sent'
@@ -974,7 +974,7 @@ describe('sendToSession', () => {
         sessionId: '$7',
         panePid: '222',
         serverPid: '9001',
-      }, 'perttu')
+      }, 'alice')
     })
 
     expect(delivered).toBe('unknown')
@@ -1015,7 +1015,7 @@ describe('refreshSessions', () => {
     expect(requests).toHaveLength(1)
 
     await act(async () => {
-      requests[0].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: ['perttu'] }))
+      requests[0].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: ['alice'] }))
       await Promise.resolve()
     })
     expect(requests).toHaveLength(2)
@@ -1029,14 +1029,14 @@ describe('refreshSessions', () => {
     expect(requests).toHaveLength(2)
 
     await act(async () => {
-      requests[1].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: ['perttu'] }))
+      requests[1].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: ['alice'] }))
       await Promise.resolve()
     })
     expect(requests).toHaveLength(3)
     expect(coalescedSettled).toBe(true)
 
     await act(async () => {
-      requests[2].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: ['perttu'] }))
+      requests[2].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: ['alice'] }))
       await Promise.resolve()
     })
     expect(requests).toHaveLength(3)
@@ -1342,8 +1342,8 @@ describe('refreshSessions', () => {
             terminal1: {
               windows: [{
                 id: 'terminal1-window-0',
-                boundSessions: ['perttu:known'],
-                activeSession: 'perttu:known',
+                boundSessions: ['alice:known'],
+                activeSession: 'alice:known',
                 colorIndex: 0,
               }],
               windowCount: 1,
@@ -1356,23 +1356,23 @@ describe('refreshSessions', () => {
     }))
     const { requests } = stubDeferredSessionFetch()
     const { result, unmount } = renderSession()
-    const knownSession = { name: 'known', windows: 1, attached: false, group: 'shell', unixUser: 'perttu' }
+    const knownSession = { name: 'known', windows: 1, attached: false, group: 'shell', unixUser: 'alice' }
     const knownGrouped = { shell: [knownSession] }
-    const knownBank = [{ name: 'banked', unixUser: 'perttu', live: false }]
+    const knownBank = [{ name: 'banked', unixUser: 'alice', live: false }]
 
     await act(async () => {
       requests[0].response.resolve(sessionResponse({
         sessions: [knownSession],
         grouped: knownGrouped,
         banked: knownBank,
-        terminalUsers: ['perttu'],
+        terminalUsers: ['alice'],
       }))
       await flushPromises()
     })
     expect(result.current.sessions).toEqual([knownSession])
     act(() => {
-      result.current.openFloatingModal('perttu:known')
-      result.current.openSendToSession('perttu:known')
+      result.current.openFloatingModal('alice:known')
+      result.current.openSendToSession('alice:known')
     })
 
     let timeoutSettled = false
@@ -1397,15 +1397,15 @@ describe('refreshSessions', () => {
       sessions: [knownSession],
       groupedSessions: knownGrouped,
       sessionBank: knownBank,
-      terminalUsers: ['perttu'],
-      floatingSession: 'perttu:known',
-      sendToSessionTarget: 'perttu:known',
+      terminalUsers: ['alice'],
+      floatingSession: 'alice:known',
+      sendToSessionTarget: 'alice:known',
       loading: false,
       error: 'Failed to fetch sessions (request timed out)',
     })
     expect(result.current.workspaces.terminal1.windows[0]).toMatchObject({
-      boundSessions: ['perttu:known'],
-      activeSession: 'perttu:known',
+      boundSessions: ['alice:known'],
+      activeSession: 'alice:known',
     })
     expect(vi.getTimerCount()).toBe(1)
 
@@ -1415,9 +1415,9 @@ describe('refreshSessions', () => {
       requests[2].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: [] }))
       await firstAuthoritativeMissing
     })
-    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['perttu:known'])
-    expect(result.current.floatingSession).toBe('perttu:known')
-    expect(result.current.sendToSessionTarget).toBe('perttu:known')
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:known'])
+    expect(result.current.floatingSession).toBe('alice:known')
+    expect(result.current.sendToSessionTarget).toBe('alice:known')
 
     const secondAuthoritativeMissing = result.current.refreshSessions()
     await act(async () => {
@@ -1444,8 +1444,8 @@ describe('refreshSessions', () => {
             terminal1: {
               windows: [{
                 id: 'terminal1-window-0',
-                boundSessions: ['perttu:stale'],
-                activeSession: 'perttu:stale',
+                boundSessions: ['alice:stale'],
+                activeSession: 'alice:stale',
                 colorIndex: 0,
               }],
               windowCount: 1,
@@ -1459,22 +1459,22 @@ describe('refreshSessions', () => {
     const { requests } = stubDeferredSessionFetch()
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     const { result } = renderSession()
-    const staleSession = { name: 'stale', windows: 1, attached: false, group: 'shell', unixUser: 'perttu' }
-    const knownBank = [{ name: 'banked', unixUser: 'perttu', live: false }]
+    const staleSession = { name: 'stale', windows: 1, attached: false, group: 'shell', unixUser: 'alice' }
+    const knownBank = [{ name: 'banked', unixUser: 'alice', live: false }]
 
     await act(async () => {
       requests[0].response.resolve(sessionResponse({
         sessions: [staleSession],
         grouped: { shell: [staleSession] },
         banked: knownBank,
-        terminalUsers: ['perttu'],
+        terminalUsers: ['alice'],
       }))
       await Promise.resolve()
     })
     act(() => {
-      result.current.openFloatingModal('perttu:stale')
-      result.current.openSendToSession('perttu:stale')
-      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'protected', 'perttu')
+      result.current.openFloatingModal('alice:stale')
+      result.current.openSendToSession('alice:stale')
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'protected', 'alice')
     })
 
     const knownState = {
@@ -1516,30 +1516,30 @@ describe('refreshSessions', () => {
       await aborted
     })
     expect(result.current).toMatchObject(knownState)
-    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['perttu:stale', 'perttu:protected'])
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:stale', 'alice:protected'])
 
     const firstMissing = result.current.refreshSessions()
     await act(async () => {
-      requests[4].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: ['perttu'] }))
+      requests[4].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: ['alice'] }))
       await firstMissing
     })
-    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['perttu:stale', 'perttu:protected'])
-    expect(result.current.floatingSession).toBe('perttu:stale')
-    expect(result.current.sendToSessionTarget).toBe('perttu:stale')
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:stale', 'alice:protected'])
+    expect(result.current.floatingSession).toBe('alice:stale')
+    expect(result.current.sendToSessionTarget).toBe('alice:stale')
 
     const secondMissing = result.current.refreshSessions()
     await act(async () => {
-      requests[5].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: ['perttu'] }))
+      requests[5].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: ['alice'] }))
       await secondMissing
     })
-    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['perttu:protected'])
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:protected'])
     expect(result.current.floatingSession).toBeNull()
     expect(result.current.sendToSessionTarget).toBeNull()
 
     for (const requestIndex of [6, 7]) {
       const refresh = result.current.refreshSessions()
       await act(async () => {
-        requests[requestIndex].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: ['perttu'] }))
+        requests[requestIndex].response.resolve(sessionResponse({ sessions: [], grouped: {}, banked: [], terminalUsers: ['alice'] }))
         await refresh
       })
     }
@@ -1562,8 +1562,8 @@ describe('refreshSessions', () => {
               terminal1: {
                 windows: [{
                   id: 'terminal1-window-0',
-                  boundSessions: ['perttu:known'],
-                  activeSession: 'perttu:known',
+                  boundSessions: ['alice:known'],
+                  activeSession: 'alice:known',
                   colorIndex: 0,
                 }],
                 windowCount: 1,
@@ -1577,22 +1577,22 @@ describe('refreshSessions', () => {
       const { requests } = stubDeferredSessionFetch()
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
       const { result, unmount } = renderSession()
-      const knownSession = { name: 'known', windows: 1, attached: false, group: 'shell', unixUser: 'perttu' }
+      const knownSession = { name: 'known', windows: 1, attached: false, group: 'shell', unixUser: 'alice' }
       const knownGrouped = { shell: [knownSession] }
-      const knownBank = [{ name: 'banked', unixUser: 'perttu', live: false }]
+      const knownBank = [{ name: 'banked', unixUser: 'alice', live: false }]
 
       await act(async () => {
         requests[0].response.resolve(sessionResponse({
           sessions: [knownSession],
           grouped: knownGrouped,
           banked: knownBank,
-          terminalUsers: ['perttu'],
+          terminalUsers: ['alice'],
         }))
         await Promise.resolve()
       })
       act(() => {
-        result.current.openFloatingModal('perttu:known')
-        result.current.openSendToSession('perttu:known')
+        result.current.openFloatingModal('alice:known')
+        result.current.openSendToSession('alice:known')
       })
 
       const failedRefresh = result.current.refreshSessions()
@@ -1615,13 +1615,13 @@ describe('refreshSessions', () => {
         sessions: [knownSession],
         groupedSessions: knownGrouped,
         sessionBank: knownBank,
-        terminalUsers: ['perttu'],
-        floatingSession: 'perttu:known',
-        sendToSessionTarget: 'perttu:known',
+        terminalUsers: ['alice'],
+        floatingSession: 'alice:known',
+        sendToSessionTarget: 'alice:known',
       })
       expect(result.current.workspaces.terminal1.windows[0]).toMatchObject({
-        boundSessions: ['perttu:known'],
-        activeSession: 'perttu:known',
+        boundSessions: ['alice:known'],
+        activeSession: 'alice:known',
       })
 
       const firstMissing = result.current.refreshSessions()
@@ -1630,11 +1630,11 @@ describe('refreshSessions', () => {
         await firstMissing
       })
       expect(result.current.workspaces.terminal1.windows[0]).toMatchObject({
-        boundSessions: ['perttu:known'],
-        activeSession: 'perttu:known',
+        boundSessions: ['alice:known'],
+        activeSession: 'alice:known',
       })
-      expect(result.current.floatingSession).toBe('perttu:known')
-      expect(result.current.sendToSessionTarget).toBe('perttu:known')
+      expect(result.current.floatingSession).toBe('alice:known')
+      expect(result.current.sendToSessionTarget).toBe('alice:known')
 
       const secondMissing = result.current.refreshSessions()
       await act(async () => {
@@ -1657,13 +1657,13 @@ describe('refreshSessions', () => {
 
   it('auto-removes stale terminal bindings after repeated successful session refreshes', async () => {
     const liveSessions = [
-      { name: 'alive', windows: 1, attached: false, group: 'shell', unixUser: 'perttu' },
+      { name: 'alive', windows: 1, attached: false, group: 'shell', unixUser: 'alice' },
       { name: 'legacy-live', windows: 1, attached: false, group: 'shell' },
-      { name: 'agent-live', windows: 1, attached: false, group: 'agents', unixUser: 'tavern', persistent: true },
+      { name: 'agent-live', windows: 1, attached: false, group: 'agents', unixUser: 'build', persistent: true },
     ]
     const banked = [
       {
-        name: 'gone', windows: 1, attached: false, group: 'shell', unixUser: 'perttu', live: false,
+        name: 'gone', windows: 1, attached: false, group: 'shell', unixUser: 'alice', live: false,
         firstSeen: '2026-07-10T10:00:00Z', lastSeen: '2026-07-10T10:05:00Z', recoveryKind: 'shell',
       },
     ]
@@ -1677,8 +1677,8 @@ describe('refreshSessions', () => {
               windows: [
                 {
                   id: 'terminal1-window-0',
-                  boundSessions: ['perttu:alive', 'perttu:gone', 'legacy-live', 'legacy-gone'],
-                  activeSession: 'perttu:gone',
+                  boundSessions: ['alice:alive', 'alice:gone', 'legacy-live', 'legacy-gone'],
+                  activeSession: 'alice:gone',
                   colorIndex: 0,
                 },
               ],
@@ -1688,8 +1688,8 @@ describe('refreshSessions', () => {
               windows: [
                 {
                   id: 'terminal2-window-0',
-                  boundSessions: ['tavern:agent-live', 'tavern:agent-dead'],
-                  activeSession: 'tavern:agent-dead',
+                  boundSessions: ['build:agent-live', 'build:agent-dead'],
+                  activeSession: 'build:agent-dead',
                   colorIndex: 0,
                 },
               ],
@@ -1716,27 +1716,27 @@ describe('refreshSessions', () => {
     const { result } = renderSession()
 
     await waitFor(() => expect(result.current.sessions).toEqual(liveSessions))
-    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toContain('perttu:gone')
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toContain('alice:gone')
 
     await act(async () => {
       await result.current.refreshSessions()
     })
 
     await waitFor(() => {
-      expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['perttu:alive', 'legacy-live'])
-      expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('perttu:alive')
-      expect(result.current.workspaces.terminal2.windows[0].boundSessions).toEqual(['tavern:agent-live'])
-      expect(result.current.workspaces.terminal2.windows[0].activeSession).toBe('tavern:agent-live')
+      expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:alive', 'legacy-live'])
+      expect(result.current.workspaces.terminal1.windows[0].activeSession).toBe('alice:alive')
+      expect(result.current.workspaces.terminal2.windows[0].boundSessions).toEqual(['build:agent-live'])
+      expect(result.current.workspaces.terminal2.windows[0].activeSession).toBe('build:agent-live')
     })
     expect(result.current.sessionBank).toEqual(banked)
   })
 
   it('stores managed status registry entries separately from banked sessions', async () => {
-    const banked = [{ name: 'banked-agent', unixUser: 'perttu', live: false }]
+    const banked = [{ name: 'banked-agent', unixUser: 'alice', live: false }]
     const managed = [{
       name: 'systemd-worker',
       sessionName: 'systemd-worker',
-      unixUser: 'perttu',
+      unixUser: 'alice',
       owner: { kind: 'external_manager', ref: 'systemd:user/worker.service', mayRestart: false },
       managerKind: 'systemd-user',
       managerRef: 'worker.service',
@@ -1751,7 +1751,7 @@ describe('refreshSessions', () => {
         grouped: {},
         banked,
         managed,
-        terminalUsers: ['perttu'],
+        terminalUsers: ['alice'],
         timestamp: new Date().toISOString(),
       }),
       text: () => Promise.resolve(''),
@@ -1799,7 +1799,7 @@ describe('refreshSessions', () => {
 
   it('preserves existing sessions and groups when a poll returns a non-ok response', async () => {
     const existingSessions = [
-      { name: 'shell1', windows: 1, attached: false, group: 'shell', unixUser: 'perttu' },
+      { name: 'shell1', windows: 1, attached: false, group: 'shell', unixUser: 'alice' },
     ]
     const existingGrouped = { shell: existingSessions }
     const fetchMock = vi.fn((): Promise<any> => Promise.resolve({
@@ -1807,7 +1807,7 @@ describe('refreshSessions', () => {
       json: () => Promise.resolve({
         sessions: existingSessions,
         grouped: existingGrouped,
-        terminalUsers: ['perttu'],
+        terminalUsers: ['alice'],
         timestamp: new Date().toISOString(),
       }),
       text: () => Promise.resolve(''),
@@ -1874,16 +1874,16 @@ describe('addSessionToWindow', () => {
     const { result } = renderSession()
 
     act(() => {
-      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'shell', 'perttu')
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'shell', 'alice')
     })
     act(() => {
-      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'shell', 'tavern')
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'shell', 'build')
     })
 
     const win = result.current.workspaces.terminal1.windows[0]
-    expect(win.boundSessions).toEqual(['perttu:shell', 'tavern:shell'])
-    expect(result.current.assignedSessions.get('perttu:shell')).toMatchObject({ workspaceId: 'terminal1', windowId: 'terminal1-window-0' })
-    expect(result.current.assignedSessions.get('tavern:shell')).toMatchObject({ workspaceId: 'terminal1', windowId: 'terminal1-window-0' })
+    expect(win.boundSessions).toEqual(['alice:shell', 'build:shell'])
+    expect(result.current.assignedSessions.get('alice:shell')).toMatchObject({ workspaceId: 'terminal1', windowId: 'terminal1-window-0' })
+    expect(result.current.assignedSessions.get('build:shell')).toMatchObject({ workspaceId: 'terminal1', windowId: 'terminal1-window-0' })
   })
 
   it('replaces a legacy bare binding with the user-qualified binding instead of duplicating it', () => {
@@ -1893,12 +1893,12 @@ describe('addSessionToWindow', () => {
       result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'shell')
     })
     act(() => {
-      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'shell', 'perttu')
+      result.current.addSessionToWindow('terminal1', 'terminal1-window-0', 'shell', 'alice')
     })
 
     const win = result.current.workspaces.terminal1.windows[0]
-    expect(win.boundSessions).toEqual(['perttu:shell'])
-    expect(win.activeSession).toBe('perttu:shell')
+    expect(win.boundSessions).toEqual(['alice:shell'])
+    expect(win.activeSession).toBe('alice:shell')
   })
 
   it('moves the single safe bare-qualified identity into a non-empty target and activates it', () => {

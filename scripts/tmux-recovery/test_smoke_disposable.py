@@ -34,7 +34,7 @@ class DisposableSmokeHelpersTest(unittest.TestCase):
         with self.assertRaisesRegex(smoke_disposable.SmokeFailure, "live data"):
             smoke_disposable.assert_no_forbidden_references(["/srv/data/chrote/session-bank/sessions.json"])
         with self.assertRaisesRegex(smoke_disposable.SmokeFailure, "Tavern"):
-            smoke_disposable.assert_no_forbidden_references(["/tmp/tavern.sock"])
+            smoke_disposable.assert_no_forbidden_references(["/tmp/build.sock"])
 
     def test_loopback_port_allocation_reports_environment_blocker(self) -> None:
         def denied_socket(*_args, **_kwargs):

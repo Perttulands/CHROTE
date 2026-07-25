@@ -16,7 +16,7 @@ http://127.0.0.1:8095
   "name": "Daily standup nudge",
   "prompt": "Write the standup summary now.",
   "target": {
-    "unixUser": "perttu",
+    "unixUser": "alice",
     "sessionName": "planner"
   },
   "schedule": {
@@ -51,7 +51,7 @@ curl -fsS -X POST http://127.0.0.1:8095/api/scheduled-tasks \
   -d '{
     "name": "Hourly planner nudge",
     "prompt": "Review current plan and post blockers.",
-    "target": {"unixUser": "perttu", "sessionName": "planner"},
+    "target": {"unixUser": "alice", "sessionName": "planner"},
     "schedule": {"type": "interval", "everyMinutes": 60, "timezone": "UTC"},
     "enabled": true,
     "paused": false,
@@ -73,7 +73,7 @@ curl -fsS -X POST http://127.0.0.1:8095/api/scheduled-tasks \
   -d '{
     "name": "Weekday morning review",
     "prompt": "Check overnight CHROTE runs and summarize anything stuck.",
-    "target": {"unixUser": "perttu", "sessionName": "planner"},
+    "target": {"unixUser": "alice", "sessionName": "planner"},
     "schedule": {"type": "cron", "expression": "0 9 * * 1-5", "timezone": "Europe/Helsinki"},
     "enabled": true,
     "paused": false,

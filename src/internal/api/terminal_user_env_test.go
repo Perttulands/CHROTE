@@ -10,20 +10,20 @@ import (
 // first-wins, so listing and attaching resolved different tmux servers. The
 // server must refuse to start instead of silently picking one.
 func TestValidateTerminalUserEnv_RejectsDuplicateUserSocketKey(t *testing.T) {
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "perttu=/run/user/1000/chrote-tmux/tmux-1000/default,tavern=/tmp/tmux-1001/default,perttu=/run/user/1000/chrote-formations-tmux/default")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/run/user/2001/chrote-tmux/tmux-1000/default,build=/tmp/tmux-2002/default,alice=/run/user/2001/chrote-formations-tmux/default")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "")
 	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "")
 
 	err := ValidateTerminalUserEnv()
 	if err == nil {
-		t.Fatal("duplicate perttu entry in CHROTE_TERMINAL_USER_SOCKETS was accepted; the server would start with listing and attach resolving different sockets")
+		t.Fatal("duplicate alice entry in CHROTE_TERMINAL_USER_SOCKETS was accepted; the server would start with listing and attach resolving different sockets")
 	}
 	message := err.Error()
 	for _, want := range []string{
 		"CHROTE_TERMINAL_USER_SOCKETS",
-		"perttu",
-		"/run/user/1000/chrote-tmux/tmux-1000/default",
-		"/run/user/1000/chrote-formations-tmux/default",
+		"alice",
+		"/run/user/2001/chrote-tmux/tmux-1000/default",
+		"/run/user/2001/chrote-formations-tmux/default",
 	} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("error %q does not name %q, so an operator cannot tell which entry to remove", message, want)
@@ -33,17 +33,17 @@ func TestValidateTerminalUserEnv_RejectsDuplicateUserSocketKey(t *testing.T) {
 
 func TestValidateTerminalUserEnv_RejectsDuplicateWorkdirKey(t *testing.T) {
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "")
-	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "perttu=/home/perttu,perttu=/srv")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice,alice=/srv")
 	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "")
 
 	if err := ValidateTerminalUserEnv(); err == nil {
-		t.Fatal("duplicate perttu entry in CHROTE_TERMINAL_USER_WORKDIRS was accepted")
+		t.Fatal("duplicate alice entry in CHROTE_TERMINAL_USER_WORKDIRS was accepted")
 	}
 }
 
 func TestValidateTerminalUserEnv_AcceptsOneEntryPerUser(t *testing.T) {
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", " perttu=/run/user/1000/chrote-tmux/tmux-1000/default, tavern = /tmp/tmux-1001/default ,")
-	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "perttu=/home/perttu,tavern=/home/tavern")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", " alice=/run/user/2001/chrote-tmux/tmux-1000/default, build = /tmp/tmux-2002/default ,")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice,build=/home/build")
 	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "")
 
 	if err := ValidateTerminalUserEnv(); err != nil {
@@ -55,10 +55,10 @@ func TestValidateTerminalUserEnv_AcceptsOneEntryPerUser(t *testing.T) {
 // configured user. With duplicates rejected at startup, agreement holds because
 // exactly one entry can match.
 func TestParseUserValueMap_ResolvesTheSingleEntryPerUser(t *testing.T) {
-	sockets := parseUserValueMap(" perttu=/run/user/1000/chrote-tmux/tmux-1000/default, tavern = /tmp/tmux-1001/default ")
+	sockets := parseUserValueMap(" alice=/run/user/2001/chrote-tmux/tmux-1000/default, build = /tmp/tmux-2002/default ")
 	want := map[string]string{
-		"perttu": "/run/user/1000/chrote-tmux/tmux-1000/default",
-		"tavern": "/tmp/tmux-1001/default",
+		"alice": "/run/user/2001/chrote-tmux/tmux-1000/default",
+		"build": "/tmp/tmux-2002/default",
 	}
 	for user, socket := range want {
 		if sockets[user] != socket {

@@ -79,7 +79,7 @@ func TestS5HumanGateVerdictRequiresResumeToDispatchPassWire(t *testing.T) {
 		GateID:  "gate_review",
 		Verdict: "pass",
 		Reason:  "direction is right",
-		Actor:   "human:perttu",
+		Actor:   "human:operator",
 	})
 	if err != nil {
 		t.Fatalf("record human verdict: %v", err)
@@ -106,7 +106,7 @@ func TestS5HumanGateVerdictRequiresResumeToDispatchPassWire(t *testing.T) {
 	}
 	events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
 	verdict := eventOfType(t, events, RunEventHumanVerdictRecorded)
-	if verdict.GateID != "gate_review" || verdict.Data["verdict"] != "pass" || verdict.Data["reason"] != "direction is right" || verdict.Data["decidedBy"] != "human:perttu" {
+	if verdict.GateID != "gate_review" || verdict.Data["verdict"] != "pass" || verdict.Data["reason"] != "direction is right" || verdict.Data["decidedBy"] != "human:operator" {
 		t.Fatalf("human verdict event = %+v, want pass reason/actor", verdict)
 	}
 	gateVerdict := eventOfType(t, events, RunEventGateVerdict)
@@ -144,7 +144,7 @@ func TestS5HumanGatePassToUnderfedJoinBlocksWithoutFinalSuccess(t *testing.T) {
 		GateID:  "gate_review",
 		Verdict: "pass",
 		Reason:  "draft is usable",
-		Actor:   "human:perttu",
+		Actor:   "human:operator",
 	})
 	if err != nil {
 		t.Fatalf("record human verdict: %v", err)
@@ -407,7 +407,7 @@ func TestS5HumanGateFailPushbackResumeReDispatchesWork(t *testing.T) {
 		GateID:  "gate_review",
 		Verdict: "fail",
 		Reason:  "revise the draft",
-		Actor:   "human:perttu",
+		Actor:   "human:operator",
 	})
 	if err != nil {
 		t.Fatalf("record fail verdict: %v", err)
@@ -435,7 +435,7 @@ func TestS5HumanGateFailPushbackResumeReDispatchesWork(t *testing.T) {
 		GateID:  "gate_review",
 		Verdict: "pass",
 		Reason:  "looks good now",
-		Actor:   "human:perttu",
+		Actor:   "human:operator",
 	})
 	if err != nil {
 		t.Fatalf("record pass verdict: %v", err)

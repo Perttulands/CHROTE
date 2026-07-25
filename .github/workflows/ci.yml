@@ -28,6 +28,9 @@ jobs:
       - name: Documentation contract
         run: python3 scripts/doc-lint.py
 
+      - name: Host neutrality
+        run: python3 scripts/host-neutrality.py
+
       - name: Dashboard install dependencies
         run: |
           cd dashboard

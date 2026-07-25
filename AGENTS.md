@@ -46,6 +46,9 @@ Create discovered work as linked Beads rather than burying it in prose or unrela
 - Do not kill, rename, or restart tmux sessions unless the task explicitly requires it.
 - Do not assume a service name, port, socket, or deployment lane from tracked files. Discover the approved target from local operator configuration before runtime actions.
 - Never commit private topology, credentials, terminal transcripts, or operator-specific recovery procedures.
+  `python3 scripts/host-neutrality.py` enforces this over every tracked file and runs in CI. It fails on real
+  usernames, home directories, uid-scoped socket paths, tailnet or host names, and host-only unit names.
+  Use neutral fixtures instead: `alice`/`build`, `/run/user/<uid>/...`, `/tmp/tmux-<uid>/...`.
 
 ## Build and verify
 

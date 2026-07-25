@@ -9,12 +9,12 @@ import (
 )
 
 func TestNewTerminalProxy_DefaultProfileUsesConfiguredSocket(t *testing.T) {
-	t.Setenv("CHROTE_DEFAULT_TMUX_SOCKET", "/tmp/tmux-1001/default")
+	t.Setenv("CHROTE_DEFAULT_TMUX_SOCKET", "/tmp/tmux-2002/default")
 
 	proxy := NewTerminalProxy(7683)
 	env := proxy.launchEnv()
 
-	want := "CHROTE_TMUX_SOCKET=/tmp/tmux-1001/default"
+	want := "CHROTE_TMUX_SOCKET=/tmp/tmux-2002/default"
 	for _, entry := range env {
 		if entry == want {
 			return
