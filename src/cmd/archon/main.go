@@ -2050,7 +2050,7 @@ func archonExposeTmuxTargetSessions(roster *formations.AgentRoster) {
 }
 
 func (realTmuxRunner) LiveSessions() ([]formations.LiveAgentSession, error) {
-	cmd := exec.Command("tmux", archonTmuxArgs("list-sessions", "-F", "#{session_name}:#{session_attached}")...)
+	cmd := exec.Command(core.TmuxBin(), archonTmuxArgs("list-sessions", "-F", "#{session_name}:#{session_attached}")...)
 	cmd.Env = archonTmuxEnv()
 	output, err := cmd.Output()
 	if err != nil {
@@ -2083,13 +2083,13 @@ func (realTmuxRunner) Spawn(name, command string) error {
 	if command != "" {
 		args = append(args, command)
 	}
-	cmd := exec.Command("tmux", archonTmuxArgs(args...)...)
+	cmd := exec.Command(core.TmuxBin(), archonTmuxArgs(args...)...)
 	cmd.Env = archonTmuxEnv()
 	return cmd.Run()
 }
 
 func (realTmuxRunner) Attach(name string) error {
-	cmd := exec.Command("tmux", archonTmuxArgs("attach-session", "-t", name)...)
+	cmd := exec.Command(core.TmuxBin(), archonTmuxArgs("attach-session", "-t", name)...)
 	cmd.Env = archonTmuxEnv()
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout

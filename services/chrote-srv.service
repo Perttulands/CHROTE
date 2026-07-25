@@ -13,6 +13,12 @@ UMask=0002
 ExecStartPre=+/bin/sh -lc 'install -d -o "${CHROTE_SERVICE_USER:-chrote}" -g "${CHROTE_SERVICE_GROUP:-chrote}" -m "${CHROTE_RUNTIME_MODE:-0750}" "${CHROTE_RUNTIME_ROOT:-/run/chrote}/tmux" "${CHROTE_RUNTIME_ROOT:-/run/chrote}/formations-tmux"'
 ExecStartPre=+/bin/sh -lc 'exec "$CHROTE_SERVICE_ROOT/scripts/chrote-tmux-grants.sh"'
 ExecStart=/bin/sh -lc 'cd "$CHROTE_SERVICE_ROOT" && exec "$CHROTE_SERVICE_ROOT/chrote-server" --host "${HOST:-127.0.0.1}" --port "${PORT:-8095}" --ttyd-port "${TTYD_PORT:-7686}"'
+# KillMode=process because this cgroup holds long-lived children that must
+# outlive a restart: ttyd terminal sessions and any Formations tmux server. The
+# default control-group SIGTERMs all of them. Keep it in the tracked unit so
+# reinstalling from the repo cannot silently revert it, the way the legacy lane's
+# drop-in-only setting could.
+KillMode=process
 Restart=on-failure
 RestartSec=5
 

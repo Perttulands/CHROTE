@@ -17,6 +17,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/chrote/server/internal/core"
 )
 
 const (
@@ -1770,7 +1772,7 @@ func (realTmuxHarnessClient) HasServer(ctx context.Context, socket string) (bool
 // its own reserved keeper name here. This is the only server-starting operation;
 // it never issues kill-server, kill-session, attach, rename, or resize.
 func (realTmuxHarnessClient) StartKeeper(ctx context.Context, socket, keeper string) error {
-	cmd := exec.CommandContext(ctx, "tmux", "-S", socket, "new-session", "-d", "-s", keeper, tmuxKeeperHoldCommand)
+	cmd := exec.CommandContext(ctx, core.TmuxBin(), "-S", socket, "new-session", "-d", "-s", keeper, tmuxKeeperHoldCommand)
 	cmd.Env = append(os.Environ(), "SHELL=/bin/bash")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -1904,7 +1906,7 @@ func (realTmuxHarnessClient) CapturePane(ctx context.Context, socket, target str
 
 func runTmuxCommand(ctx context.Context, socket string, stdin *strings.Reader, args ...string) (string, error) {
 	allArgs := append([]string{"-S", socket}, args...)
-	cmd := exec.CommandContext(ctx, "tmux", allArgs...)
+	cmd := exec.CommandContext(ctx, core.TmuxBin(), allArgs...)
 	if stdin != nil {
 		cmd.Stdin = stdin
 	}

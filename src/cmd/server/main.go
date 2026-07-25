@@ -67,6 +67,9 @@ func main() {
 	}
 	config.FormationsDataRoot = os.Getenv("CHROTE_FORMATIONS_DATA_ROOT")
 	warnRemovedAccessTokenSetting()
+	if err := api.ValidateTerminalUserEnv(); err != nil {
+		log.Fatalf("invalid terminal user configuration: %v", err)
+	}
 	if origins := os.Getenv("CORS_ORIGINS"); origins != "" {
 		config.CORSOrigins = strings.Split(origins, ",")
 		for i := range config.CORSOrigins {

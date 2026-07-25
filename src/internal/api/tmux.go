@@ -291,6 +291,52 @@ func parseUserValueMap(raw string) map[string]string {
 	return result
 }
 
+// terminalUserMapEnvVars are the CHROTE_TERMINAL_USER_* CSV maps parsed by
+// parseUserValueMap.
+var terminalUserMapEnvVars = []string{
+	"CHROTE_TERMINAL_USER_SOCKETS",
+	"CHROTE_TERMINAL_USER_WORKDIRS",
+	"CHROTE_TERMINAL_USER_HOMES",
+}
+
+// ValidateTerminalUserEnv rejects a Unix user appearing twice in any
+// CHROTE_TERMINAL_USER_* map. parseUserValueMap is last-wins while
+// terminal-launch.sh is first-wins, so a duplicate makes session listing and
+// terminal attach resolve different tmux servers. Refusing to start is the only
+// way both parsers stay in agreement.
+func ValidateTerminalUserEnv() error {
+	for _, name := range terminalUserMapEnvVars {
+		if err := validateNoDuplicateUserKeys(name, os.Getenv(name)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateNoDuplicateUserKeys(envName, raw string) error {
+	seen := map[string]string{}
+	for _, item := range strings.Split(raw, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		parts := strings.SplitN(item, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		user := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+		if user == "" || value == "" {
+			continue
+		}
+		if previous, duplicate := seen[user]; duplicate {
+			return fmt.Errorf("%s has duplicate entries for Unix user %q (%q and %q); keep exactly one entry per user so terminal listing and terminal attach resolve the same socket", envName, user, previous, value)
+		}
+		seen[user] = value
+	}
+	return nil
+}
+
 func configuredTerminalUsers() []string {
 	raw := strings.TrimSpace(os.Getenv("CHROTE_TERMINAL_USERS"))
 	if raw == "" {
@@ -1284,7 +1330,7 @@ func (h *TmuxHandler) runTmuxOnSocketContext(parent context.Context, socket stri
 		args = append([]string{"-S", socket}, args...)
 	}
 
-	cmd := exec.CommandContext(ctx, "tmux", args...)
+	cmd := exec.CommandContext(ctx, core.TmuxBin(), args...)
 	cmd.Env = core.GetTmuxEnv()
 
 	output, err := cmd.Output()
