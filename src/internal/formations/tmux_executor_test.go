@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestConfiguredFormationExecutorFromEnvSelectsTmuxOnlyWhenHarnessesSet(t *testing.T) {
@@ -1235,6 +1236,339 @@ func TestTmuxOrchestratedFormationRejectsInvalidSlotShapeBeforeDispatch(t *testi
 	}
 }
 
+// TestTmuxOrchestratedFormationRecordsPerWorkerCaptureEvidence pins the
+// observability half of ADR-0011: every bound worker gets an outcome event
+// derived from Archon's OWN pane observation — a bind-time baseline capture
+// diffed against a completion capture — never from the leader's self-report and
+// never by Archon prompting the worker. Worker A is touched by the leader and
+// its produced text must be inspectable in the ledger; worker B is left
+// untouched and must surface as a distinct anomaly rather than as silence.
+func TestTmuxOrchestratedFormationRecordsPerWorkerCaptureEvidence(t *testing.T) {
+	store, personas := s4RunFixture(t)
+	store.Now = fixedClock()
+	personas.Now = fixedClock()
+	for _, id := range []string{"lead", "worker-a", "worker-b"} {
+		createS4Persona(t, personas, id)
+	}
+	writeFixture(t, store.BoardPath("session-search"), tmuxOrchestratedBoardFixture())
+	cfg := tmuxTestConfig(t)
+	client := &fakeTmuxHarnessClient{
+		pane: tmuxPaneState{CurrentPath: cfg.Cwd},
+		captures: []string{
+			"FINAL-SYNTHESIS: leader delegated the boundary map to worker A\n<<<CHROTE-DONE run-id=run_missing status=ok artifact=final.md>>>",
+		},
+		workerPanes: map[string]*fakeWorkerPane{
+			"slot_worker_a": {captures: []string{
+				"worker A idle",
+				"worker A idle\nWORKER-A-RESULT: boundary mapped in api/router.go",
+			}},
+			"slot_worker_b": {captures: []string{"worker B idle"}},
+		},
+	}
+	executor := newTmuxFormationExecutorWithClient(store, personas, cfg, client)
+	engine := NewRunEngine(store, personas, executor)
+	status, err := engine.RunFormation("session-search", "fmn_orch", FormationRunRequest{
+		Actor:  "agent:test",
+		Limits: RunLimits{MaxDispatch: 6, MaxAttempts: 1},
+	})
+	if err != nil {
+		t.Fatalf("run orchestrated formation: %v", err)
+	}
+	if status.Status != RunStatusSucceeded || !status.Final {
+		t.Fatalf("status = %+v, want succeeded final", status)
+	}
+	if len(client.created) != 3 {
+		t.Fatalf("created sessions = %v, want one owned session for the leader and each worker", client.created)
+	}
+	ownedLead, ownedWorkerA, ownedWorkerB := client.created[0], client.created[1], client.created[2]
+	if got, want := client.sendTargets, []string{ownedLead}; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("send targets = %v, want only the leader's owned session %v", got, want)
+	}
+
+	events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
+	observations := workerObservationsBySlot(t, events)
+	if len(observations) != 2 {
+		t.Fatalf("worker observations = %v, want one per bound worker", eventTypes(events))
+	}
+
+	touched := observations["slot_worker_a"]
+	if got := fmt.Sprint(touched.Data["outcome"]); got != "output_captured" {
+		t.Fatalf("worker A outcome = %q, want output_captured", got)
+	}
+	if touched.Data["anomaly"] != false {
+		t.Fatalf("worker A anomaly = %#v, want false", touched.Data["anomaly"])
+	}
+	if touched.Data["changed"] != true {
+		t.Fatalf("worker A changed = %#v, want true", touched.Data["changed"])
+	}
+	if got := fmt.Sprint(touched.Data["sessionRef"]); got != "tmux:"+ownedWorkerA {
+		t.Fatalf("worker A sessionRef = %q, want tmux:%s", got, ownedWorkerA)
+	}
+	if got := fmt.Sprint(touched.Data["text"]); !strings.Contains(got, "WORKER-A-RESULT: boundary mapped in api/router.go") {
+		t.Fatalf("worker A observation text = %q, want the worker's captured output", got)
+	}
+	if strings.Contains(fmt.Sprint(touched.Data["text"]), "worker A idle") {
+		t.Fatalf("worker A observation text = %q, want only what appeared after the bind-time baseline", touched.Data["text"])
+	}
+	if touched.Data["baselineSha256"] == touched.Data["captureSha256"] {
+		t.Fatalf("worker A baseline/capture digests both %v, want a recorded change", touched.Data["captureSha256"])
+	}
+	if got := fmt.Sprint(touched.Data["observer"]); got != "archon-capture" {
+		t.Fatalf("worker A observer = %q, want archon-capture provenance", got)
+	}
+	if got := fmt.Sprint(touched.Data["agentId"]); got != "worker-a" {
+		t.Fatalf("worker A agentId = %q, want worker-a", got)
+	}
+
+	untouched := observations["slot_worker_b"]
+	if got := fmt.Sprint(untouched.Data["outcome"]); got != "never_touched" {
+		t.Fatalf("worker B outcome = %q, want never_touched", got)
+	}
+	if untouched.Data["anomaly"] != true {
+		t.Fatalf("worker B anomaly = %#v, want true", untouched.Data["anomaly"])
+	}
+	if untouched.Data["changed"] != false {
+		t.Fatalf("worker B changed = %#v, want false", untouched.Data["changed"])
+	}
+	if untouched.Data["baselineSha256"] != untouched.Data["captureSha256"] {
+		t.Fatalf("worker B digests baseline=%v capture=%v, want an unchanged pane", untouched.Data["baselineSha256"], untouched.Data["captureSha256"])
+	}
+	if got := fmt.Sprint(untouched.Data["sessionRef"]); got != "tmux:"+ownedWorkerB {
+		t.Fatalf("worker B sessionRef = %q, want tmux:%s", got, ownedWorkerB)
+	}
+	for _, target := range client.sendTargets {
+		if target == ownedWorkerA || target == ownedWorkerB {
+			t.Fatalf("Archon prompted worker session %q; observation must stay read-only", target)
+		}
+	}
+	if !eventsContainType(events, RunEventOrchestrationTeam) {
+		t.Fatalf("events = %v, want the shipped binding evidence preserved", eventTypes(events))
+	}
+}
+
+// TestTmuxOrchestratedFormationRecordsWorkerHangEvidence covers the
+// hang/timeout mode and its discriminator: a worker pane that changed but still
+// shows the harness mid-turn when the run completes is recorded as a distinct
+// anomaly, while a worker that changed and settled in the same run is recorded
+// as ordinary captured output.
+func TestTmuxOrchestratedFormationRecordsWorkerHangEvidence(t *testing.T) {
+	store, personas := s4RunFixture(t)
+	store.Now = fixedClock()
+	personas.Now = fixedClock()
+	for _, id := range []string{"lead", "worker-a", "worker-b"} {
+		createS4Persona(t, personas, id)
+	}
+	writeFixture(t, store.BoardPath("session-search"), tmuxOrchestratedBoardFixture())
+	cfg := tmuxTestConfig(t)
+	client := &fakeTmuxHarnessClient{
+		pane: tmuxPaneState{CurrentPath: cfg.Cwd},
+		captures: []string{
+			"FINAL-SYNTHESIS: leader finished while worker A was still running\n<<<CHROTE-DONE run-id=run_missing status=ok artifact=final.md>>>",
+		},
+		workerPanes: map[string]*fakeWorkerPane{
+			"slot_worker_a": {captures: []string{
+				"worker A idle",
+				"worker A idle\nrunning the boundary sweep\n  esc to interrupt",
+			}},
+			"slot_worker_b": {captures: []string{
+				"worker B idle",
+				"worker B idle\nWORKER-B-RESULT: tests green",
+			}},
+		},
+	}
+	executor := newTmuxFormationExecutorWithClient(store, personas, cfg, client)
+	engine := NewRunEngine(store, personas, executor)
+	status, err := engine.RunFormation("session-search", "fmn_orch", FormationRunRequest{
+		Actor:  "agent:test",
+		Limits: RunLimits{MaxDispatch: 6, MaxAttempts: 1},
+	})
+	if err != nil {
+		t.Fatalf("run orchestrated formation: %v", err)
+	}
+	if status.Status != RunStatusSucceeded {
+		t.Fatalf("status = %+v, want succeeded", status)
+	}
+	events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
+	observations := workerObservationsBySlot(t, events)
+
+	hung := observations["slot_worker_a"]
+	if got := fmt.Sprint(hung.Data["outcome"]); got != "hang_timeout" {
+		t.Fatalf("worker A outcome = %q, want hang_timeout for a pane still mid-turn at run completion", got)
+	}
+	if hung.Data["anomaly"] != true {
+		t.Fatalf("worker A anomaly = %#v, want true", hung.Data["anomaly"])
+	}
+	if hung.Data["agentWorking"] != true {
+		t.Fatalf("worker A agentWorking = %#v, want true", hung.Data["agentWorking"])
+	}
+	if got := fmt.Sprint(hung.Data["text"]); !strings.Contains(got, "running the boundary sweep") {
+		t.Fatalf("worker A observation text = %q, want the unfinished worker output", got)
+	}
+
+	settled := observations["slot_worker_b"]
+	if got := fmt.Sprint(settled.Data["outcome"]); got != "output_captured" {
+		t.Fatalf("worker B outcome = %q, want output_captured", got)
+	}
+	if settled.Data["agentWorking"] != false {
+		t.Fatalf("worker B agentWorking = %#v, want false", settled.Data["agentWorking"])
+	}
+}
+
+// TestTmuxOrchestratedFormationRecordsMissingWorkerSessionEvidence covers the
+// missing-session mode at both observation points. A worker Archon cannot see
+// at bind time fails the run loudly with per-worker evidence and without ever
+// dispatching the leader; a worker session that disappears after the leader
+// finished is recorded as an anomaly on an otherwise complete run.
+func TestTmuxOrchestratedFormationRecordsMissingWorkerSessionEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		workerPanes map[string]*fakeWorkerPane
+		wantStatus  string
+		wantPhase   string
+		wantSends   int
+	}{
+		{
+			name: "worker session absent at bind time",
+			workerPanes: map[string]*fakeWorkerPane{
+				"slot_worker_b": {missing: true},
+			},
+			wantStatus: RunStatusBlocked,
+			wantPhase:  "bind",
+			wantSends:  0,
+		},
+		{
+			name: "worker session gone at baseline capture",
+			workerPanes: map[string]*fakeWorkerPane{
+				"slot_worker_b": {captures: []string{fakeWorkerPaneGone}},
+			},
+			wantStatus: RunStatusBlocked,
+			wantPhase:  "bind",
+			wantSends:  0,
+		},
+		{
+			name: "worker session gone at completion",
+			workerPanes: map[string]*fakeWorkerPane{
+				"slot_worker_a": {captures: []string{"worker A idle"}},
+				"slot_worker_b": {captures: []string{"worker B idle", fakeWorkerPaneGone}},
+			},
+			wantStatus: RunStatusSucceeded,
+			wantPhase:  "completion",
+			wantSends:  1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, personas := s4RunFixture(t)
+			store.Now = fixedClock()
+			personas.Now = fixedClock()
+			for _, id := range []string{"lead", "worker-a", "worker-b"} {
+				createS4Persona(t, personas, id)
+			}
+			writeFixture(t, store.BoardPath("session-search"), tmuxOrchestratedBoardFixture())
+			cfg := tmuxTestConfig(t)
+			client := &fakeTmuxHarnessClient{
+				pane: tmuxPaneState{CurrentPath: cfg.Cwd},
+				captures: []string{
+					"FINAL-SYNTHESIS: leader finished\n<<<CHROTE-DONE run-id=run_missing status=ok artifact=final.md>>>",
+				},
+				workerPanes: tc.workerPanes,
+			}
+			executor := newTmuxFormationExecutorWithClient(store, personas, cfg, client)
+			engine := NewRunEngine(store, personas, executor)
+			status, err := engine.RunFormation("session-search", "fmn_orch", FormationRunRequest{
+				Actor:  "agent:test",
+				Limits: RunLimits{MaxDispatch: 6, MaxAttempts: 1},
+			})
+			if err != nil {
+				t.Fatalf("run orchestrated formation: %v", err)
+			}
+			if status.Status != tc.wantStatus {
+				t.Fatalf("status = %+v, want %s", status, tc.wantStatus)
+			}
+			if client.sendCalls != tc.wantSends {
+				t.Fatalf("send calls = %d, want %d", client.sendCalls, tc.wantSends)
+			}
+			events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
+			observations := workerObservationsBySlot(t, events)
+			missing, ok := observations["slot_worker_b"]
+			if !ok {
+				t.Fatalf("events = %v, want a worker_observation for the missing worker session", eventTypes(events))
+			}
+			if got := fmt.Sprint(missing.Data["outcome"]); got != "missing_session" {
+				t.Fatalf("worker B outcome = %q, want missing_session", got)
+			}
+			if missing.Data["anomaly"] != true {
+				t.Fatalf("worker B anomaly = %#v, want true", missing.Data["anomaly"])
+			}
+			if got := fmt.Sprint(missing.Data["phase"]); got != tc.wantPhase {
+				t.Fatalf("worker B observation phase = %q, want %s", got, tc.wantPhase)
+			}
+			if missing.SlotID != "slot_worker_b" {
+				t.Fatalf("worker B observation slotId = %q, want slot_worker_b", missing.SlotID)
+			}
+			if got := fmt.Sprint(missing.Data["sessionRef"]); !strings.HasPrefix(got, "tmux:") {
+				t.Fatalf("worker B observation sessionRef = %q, want the tmux session Archon could not observe", got)
+			}
+			if tc.wantStatus == RunStatusBlocked {
+				errEvent := eventOfType(t, events, RunEventError)
+				if errEvent.Data["code"] != "missing_session" {
+					t.Fatalf("run error code = %#v, want missing_session", errEvent.Data["code"])
+				}
+			}
+		})
+	}
+}
+
+func TestWorkerObservationExcerptKeepsNewPaneTextWithinCap(t *testing.T) {
+	grew, truncated := workerObservationExcerpt("worker idle", "worker idle\nWORKER-RESULT: done", 4096)
+	if grew != "WORKER-RESULT: done" || truncated {
+		t.Fatalf("grown pane excerpt = %q truncated=%v, want only the text after the baseline", grew, truncated)
+	}
+
+	scrolled, truncated := workerObservationExcerpt("worker idle", "later output only", 4096)
+	if scrolled != "later output only" || truncated {
+		t.Fatalf("scrolled pane excerpt = %q truncated=%v, want the whole capture", scrolled, truncated)
+	}
+
+	long := strings.Repeat("ä", 200)
+	capped, truncated := workerObservationExcerpt("", long, 64)
+	if !truncated {
+		t.Fatalf("oversized pane excerpt truncated=%v, want true", truncated)
+	}
+	if len(capped) > 64 {
+		t.Fatalf("oversized pane excerpt = %d bytes, want at most the 64 byte cap", len(capped))
+	}
+	if !utf8.ValidString(capped) {
+		t.Fatalf("oversized pane excerpt %q is not valid UTF-8", capped)
+	}
+	if !strings.HasSuffix(long, capped) {
+		t.Fatalf("oversized pane excerpt = %q, want the tail of the capture", capped)
+	}
+
+	secret, _ := workerObservationExcerpt("", "worker ran with token=sk-abcdefgh12345678", 4096)
+	if strings.Contains(secret, "sk-abcdefgh12345678") {
+		t.Fatalf("pane excerpt %q leaked a secret-shaped token past ledger redaction", secret)
+	}
+}
+
+// workerObservationsBySlot indexes the per-worker observation events by slot and
+// fails on a duplicate, since each bound worker must produce exactly one outcome
+// event per run.
+func workerObservationsBySlot(t *testing.T, events []RunEvent) map[string]RunEvent {
+	t.Helper()
+	observations := map[string]RunEvent{}
+	for _, event := range events {
+		if event.Type != RunEventWorkerObservation {
+			continue
+		}
+		slotID := fmt.Sprint(event.Data["slotId"])
+		if _, ok := observations[slotID]; ok {
+			t.Fatalf("duplicate worker_observation for slot %s", slotID)
+		}
+		observations[slotID] = event
+	}
+	return observations
+}
+
 func TestWaitForCompletionAcceptsSentinelAfterTurnMarkerWhenPriorSentinelScrolledOut(t *testing.T) {
 	prompt := strings.Join([]string{
 		"run: run_marker",
@@ -1889,6 +2223,30 @@ type fakeTmuxOp struct {
 	target string
 }
 
+// fakeWorkerPaneGone stands in a capture script for an observation that finds
+// the session gone, so a test can make a worker session disappear part way
+// through a run.
+const fakeWorkerPaneGone = "\x00gone"
+
+// fakeWorkerPane scripts what Archon's read-only observation sees on one worker
+// session: successive CapturePane results (the last one repeats) and, with
+// missing set, a session that is absent from the first look onward.
+type fakeWorkerPane struct {
+	captures []string
+	missing  bool
+}
+
+func (p *fakeWorkerPane) next() string {
+	if len(p.captures) == 0 {
+		return ""
+	}
+	text := p.captures[0]
+	if len(p.captures) > 1 {
+		p.captures = p.captures[1:]
+	}
+	return text
+}
+
 type fakeTmuxHarnessClient struct {
 	sessions             []string
 	pane                 tmuxPaneState
@@ -1920,6 +2278,23 @@ type fakeTmuxHarnessClient struct {
 	killed               []string
 	ops                  []fakeTmuxOp
 	afterCapture         func(call int)
+	// workerPanes is keyed by a fragment of the tmux target name. Owned session
+	// names embed the slot id, so a test scripts a worker's pane by slot without
+	// knowing the session nonce the executor generates.
+	workerPanes map[string]*fakeWorkerPane
+}
+
+func (f *fakeTmuxHarnessClient) workerPane(target string) *fakeWorkerPane {
+	for key, pane := range f.workerPanes {
+		if strings.Contains(target, key) {
+			return pane
+		}
+	}
+	return nil
+}
+
+func fakeTmuxMissingTarget(target string) error {
+	return fmt.Errorf("%w: can't find session: %s", errTmuxTargetMissing, target)
 }
 
 // liveSessions models the sessions currently visible on the socket: the
@@ -1997,6 +2372,9 @@ func (f *fakeTmuxHarnessClient) DescribeActivePane(_ context.Context, _, target 
 	if f.describeErr != nil {
 		return tmuxPaneState{}, f.describeErr
 	}
+	if pane := f.workerPane(target); pane != nil && pane.missing {
+		return tmuxPaneState{}, fakeTmuxMissingTarget(target)
+	}
 	return f.pane, nil
 }
 
@@ -2020,6 +2398,16 @@ func (f *fakeTmuxHarnessClient) CapturePane(_ context.Context, _, target string,
 	f.ops = append(f.ops, fakeTmuxOp{op: "capture", target: target})
 	if f.afterCapture != nil {
 		f.afterCapture(f.captureCalls)
+	}
+	if pane := f.workerPane(target); pane != nil {
+		if pane.missing {
+			return "", fakeTmuxMissingTarget(target)
+		}
+		text := pane.next()
+		if text == fakeWorkerPaneGone {
+			return "", fakeTmuxMissingTarget(target)
+		}
+		return text, nil
 	}
 	if !f.awaitingCapture {
 		return f.paneText, nil

@@ -459,18 +459,29 @@ func (e *TmuxFormationExecutor) executeOrchestratedFormation(req FormationExecut
 	for _, worker := range workers {
 		binding, err := e.resolveSlotBinding(ctx, req, worker, allowed, owned)
 		if err != nil {
-			return FormationExecutionResult{}, withSlot(err, req.NodeID, worker.ID, "")
+			return FormationExecutionResult{}, e.failWorkerBind(req, controllerBinding, worker, owned, err)
 		}
 		workerBindings = append(workerBindings, binding)
 	}
 	if err := e.appendOrchestrationTeamEvent(req, controllerBinding, workerBindings); err != nil {
 		return FormationExecutionResult{}, err
 	}
-
-	leaderExtra := append(e.leaderAgenticExtraLines(controllerBinding, workerBindings), outputContractExtraLines(req.Formation)...)
-	leader, err := e.executeSlot(req, controller, allowed, dispatcher, "leader-agentic", leaderExtra, owned)
+	baselines, err := e.captureWorkerBaselines(req, controllerBinding, workerBindings)
 	if err != nil {
 		return FormationExecutionResult{}, err
+	}
+
+	leaderExtra := append(e.leaderAgenticExtraLines(controllerBinding, workerBindings), outputContractExtraLines(req.Formation)...)
+	leader, leaderErr := e.executeSlot(req, controller, allowed, dispatcher, "leader-agentic", leaderExtra, owned)
+	// Observe the workers whether or not the leader finished: a leader that timed
+	// out is exactly when a hung or never-touched worker most needs evidence. The
+	// leader's own failure still wins as the returned error.
+	observeErr := e.observeWorkerOutcomes(req, controllerBinding, baselines)
+	if leaderErr != nil {
+		return FormationExecutionResult{}, leaderErr
+	}
+	if observeErr != nil {
+		return FormationExecutionResult{}, observeErr
 	}
 	text := leader.Text
 	if strings.TrimSpace(text) == "" {
@@ -1267,6 +1278,261 @@ func (e *TmuxFormationExecutor) appendOrchestrationTeamEvent(req FormationExecut
 			"workers": workerData,
 		},
 	})
+}
+
+// Worker observation outcomes. ADR-0011 makes the leader agentic — Archon never
+// mediates its commands — so the ledger's only independent account of what each
+// worker did is Archon's own pane observation. These are the outcomes that
+// account can reach; every one but workerOutcomeOutputCaptured is an anomaly a
+// reviewer should see without reading the leader's self-report.
+const (
+	// workerOutcomeMissingSession: the worker's tmux session was not there when
+	// Archon looked (at bind time, or gone again by completion).
+	workerOutcomeMissingSession = "missing_session"
+	// workerOutcomeBindFailed: the worker slot never bound for some other reason
+	// (unstaffed, unknown persona, unconfigured harness, dead pane).
+	workerOutcomeBindFailed = "bind_failed"
+	// workerOutcomeCaptureFailed: the session exists but Archon could not read it.
+	workerOutcomeCaptureFailed = "capture_failed"
+	// workerOutcomeNeverTouched: the pane was byte-identical to its bind-time
+	// baseline at completion, so the leader never used this worker.
+	workerOutcomeNeverTouched = "never_touched"
+	// workerOutcomeHangTimeout: the pane changed but the harness was still
+	// mid-turn when the run finished — the worker hung or ran past the deadline.
+	workerOutcomeHangTimeout = "hang_timeout"
+	// workerOutcomeOutputCaptured: the pane changed and settled; the recorded
+	// excerpt is what the worker produced.
+	workerOutcomeOutputCaptured = "output_captured"
+)
+
+const (
+	workerObservationPhaseBind       = "bind"
+	workerObservationPhaseCompletion = "completion"
+	// workerObservationExcerptBytes caps the pane excerpt carried by one
+	// observation event. Observation is evidence, not formation output, so an
+	// oversized worker pane is truncated (and marked) rather than failing the run
+	// the way an oversized dispatch capture does.
+	workerObservationExcerptBytes = 4096
+)
+
+// workerBaseline is Archon's bind-time observation of one bound worker session:
+// the pane as it stood before the leader could touch it. Diffing the completion
+// capture against it is what separates a worker the leader never used from one
+// that actually did work.
+type workerBaseline struct {
+	binding tmuxSlotBinding
+	capture string
+}
+
+// captureWorkerBaselines records the pre-leader pane of every bound worker. It
+// fails closed: a worker Archon cannot observe now can never be covered by the
+// per-worker evidence contract, so the run stops loudly here instead of
+// dispatching a leader whose worker would be invisible.
+func (e *TmuxFormationExecutor) captureWorkerBaselines(req FormationExecution, controller tmuxSlotBinding, workers []tmuxSlotBinding) ([]workerBaseline, error) {
+	baselines := make([]workerBaseline, 0, len(workers))
+	for _, worker := range workers {
+		captured, err := e.captureWorkerPane(worker.SessionName)
+		if err != nil {
+			data := e.workerObservationIdentity(worker.Slot, &worker, controller, worker.SessionName)
+			data["phase"] = workerObservationPhaseBind
+			data["outcome"] = workerCaptureOutcome(err)
+			data["anomaly"] = true
+			data["code"] = executionFailureEvent(err).Code
+			data["message"] = redactLedgerText(err.Error())
+			if appendErr := e.appendWorkerObservation(req, worker.Slot.ID, data); appendErr != nil {
+				return nil, appendErr
+			}
+			return nil, withSlot(err, req.NodeID, worker.Slot.ID, "")
+		}
+		baselines = append(baselines, workerBaseline{binding: worker, capture: captured})
+	}
+	return baselines, nil
+}
+
+// observeWorkerOutcomes appends one capture-derived outcome event per bound
+// worker after the leader's turn. It never prompts a worker and never trusts the
+// leader's account: the outcome comes from comparing Archon's own completion
+// capture with the bind-time baseline. An anomaly is recorded, not raised — the
+// leader owns delegation strategy under ADR-0011, so an unused or still-running
+// worker is evidence for the reviewer rather than a run failure. Only a ledger
+// append failure is returned.
+func (e *TmuxFormationExecutor) observeWorkerOutcomes(req FormationExecution, controller tmuxSlotBinding, baselines []workerBaseline) error {
+	for _, baseline := range baselines {
+		worker := baseline.binding
+		data := e.workerObservationIdentity(worker.Slot, &worker, controller, worker.SessionName)
+		data["phase"] = workerObservationPhaseCompletion
+		data["baselineSha256"] = etag([]byte(baseline.capture))
+		data["baselineBytes"] = len(baseline.capture)
+		captured, err := e.captureWorkerPane(worker.SessionName)
+		if err != nil {
+			data["outcome"] = workerCaptureOutcome(err)
+			data["anomaly"] = true
+			data["code"] = executionFailureEvent(err).Code
+			data["message"] = redactLedgerText(err.Error())
+			if appendErr := e.appendWorkerObservation(req, worker.Slot.ID, data); appendErr != nil {
+				return appendErr
+			}
+			continue
+		}
+		changed := captured != baseline.capture
+		working := tmuxPaneShowsAgentWorking(captured)
+		outcome := workerOutcomeOutputCaptured
+		message := ""
+		switch {
+		case !changed:
+			outcome = workerOutcomeNeverTouched
+			message = "worker pane is unchanged from its bind-time baseline; the leader never touched this worker"
+		case working:
+			outcome = workerOutcomeHangTimeout
+			message = "worker harness was still processing a turn when the run completed"
+		}
+		excerpt, truncated := workerObservationExcerpt(baseline.capture, captured, e.workerExcerptCap())
+		data["captureSha256"] = etag([]byte(captured))
+		data["captureBytes"] = len(captured)
+		data["changed"] = changed
+		data["agentWorking"] = working
+		data["outcome"] = outcome
+		data["anomaly"] = outcome != workerOutcomeOutputCaptured
+		if message != "" {
+			data["message"] = message
+		}
+		if excerpt != "" {
+			data["text"] = excerpt
+		}
+		if truncated {
+			data["truncated"] = true
+		}
+		if err := e.appendWorkerObservation(req, worker.Slot.ID, data); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// failWorkerBind records per-worker evidence for a bind-time failure before the
+// error propagates, so a worker whose session is missing is a named ledger event
+// instead of an unattributed run error. It returns the original (slot-annotated)
+// error unless recording the evidence itself failed, which is the worse silence.
+func (e *TmuxFormationExecutor) failWorkerBind(req FormationExecution, controller tmuxSlotBinding, worker FormationSlot, owned *ownedSessions, cause error) error {
+	sessionName, _ := owned.name(worker.ID)
+	data := e.workerObservationIdentity(worker, nil, controller, sessionName)
+	data["phase"] = workerObservationPhaseBind
+	data["outcome"] = workerBindOutcome(cause)
+	data["anomaly"] = true
+	data["code"] = executionFailureEvent(cause).Code
+	data["message"] = redactLedgerText(cause.Error())
+	if err := e.appendWorkerObservation(req, worker.ID, data); err != nil {
+		return err
+	}
+	return withSlot(cause, req.NodeID, worker.ID, "")
+}
+
+// workerObservationIdentity builds the identity half of a worker_observation
+// event. binding is nil when the worker never bound, so the identity falls back
+// to the slot's authored agent/harness and to the owned session name if one was
+// created before the failure.
+func (e *TmuxFormationExecutor) workerObservationIdentity(slot FormationSlot, binding *tmuxSlotBinding, controller tmuxSlotBinding, sessionName string) map[string]any {
+	agentID := slot.AgentID
+	harness := slot.Harness
+	sessionStem := ""
+	if binding != nil {
+		if binding.Card != nil {
+			agentID = binding.Card.ID
+		}
+		harness = binding.Variant.ID
+		sessionStem = binding.Variant.SessionStem
+		if binding.SessionName != "" {
+			sessionName = binding.SessionName
+		}
+	}
+	data := map[string]any{
+		"mode": "agentic-leader",
+		// observer names the provenance this whole event exists for: Archon's own
+		// read-only capture, never the leader's self-report.
+		"observer":       "archon-capture",
+		"slotId":         slot.ID,
+		"label":          slot.Label,
+		"agentId":        agentID,
+		"harness":        harness,
+		"controllerSlot": controller.Slot.ID,
+	}
+	if sessionStem != "" {
+		data["sessionStem"] = sessionStem
+	}
+	if sessionName != "" {
+		data["sessionRef"] = "tmux:" + sessionName
+	}
+	return data
+}
+
+func (e *TmuxFormationExecutor) appendWorkerObservation(req FormationExecution, slotID string, data map[string]any) error {
+	return e.store.AppendRunEvent(req.RunID, RunEvent{
+		Type:    RunEventWorkerObservation,
+		NodeID:  req.NodeID,
+		SlotID:  slotID,
+		Attempt: req.Attempt,
+		Data:    data,
+	})
+}
+
+// captureWorkerPane is Archon's read-only look at a worker session. It runs on
+// its own deadline because completion-time observation happens after the
+// leader's dispatch has already consumed the execution context.
+func (e *TmuxFormationExecutor) captureWorkerPane(sessionName string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(e.config.TimeoutSeconds)*time.Second)
+	defer cancel()
+	if err := e.validatePinnedTmuxSocket(); err != nil {
+		return "", err
+	}
+	captured, err := e.client.CapturePane(ctx, e.config.Socket, sessionName, e.config.OutputCapBytes+1)
+	if err != nil {
+		code := "capture_failed"
+		if errors.Is(err, errTmuxTargetMissing) {
+			code = "missing_session"
+		}
+		return "", runExecutionError(code, redactLedgerText(err.Error()), "adapter", err)
+	}
+	return captured, nil
+}
+
+func workerCaptureOutcome(err error) string {
+	if errors.Is(err, errTmuxTargetMissing) {
+		return workerOutcomeMissingSession
+	}
+	return workerOutcomeCaptureFailed
+}
+
+func workerBindOutcome(err error) string {
+	if errors.Is(err, errTmuxTargetMissing) {
+		return workerOutcomeMissingSession
+	}
+	return workerOutcomeBindFailed
+}
+
+func (e *TmuxFormationExecutor) workerExcerptCap() int {
+	capBytes := e.config.OutputCapBytes
+	if capBytes <= 0 {
+		capBytes = defaultTmuxOutputCapBytes
+	}
+	return min(capBytes, workerObservationExcerptBytes)
+}
+
+// workerObservationExcerpt returns the redacted, capped pane text a reviewer
+// needs to see what a worker produced: the content that appeared after the
+// bind-time baseline when the pane only grew, otherwise the tail of the whole
+// capture, since a pane that scrolled no longer contains its baseline. Captured
+// worker text goes through the same ledger redaction as every other capture.
+func workerObservationExcerpt(baseline, captured string, capBytes int) (string, bool) {
+	delta := captured
+	if baseline != "" && strings.HasPrefix(captured, baseline) {
+		delta = captured[len(baseline):]
+	}
+	truncated := false
+	if capBytes > 0 && len(delta) > capBytes {
+		delta = strings.ToValidUTF8(delta[len(delta)-capBytes:], "")
+		truncated = true
+	}
+	return redactLedgerText(delta), truncated
 }
 
 func (e *TmuxFormationExecutor) leaderAgenticExtraLines(controller tmuxSlotBinding, workers []tmuxSlotBinding) []string {

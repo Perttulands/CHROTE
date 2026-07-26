@@ -23,6 +23,7 @@ const (
 	RunEventNodeWaiting          = "node_waiting"
 	RunEventNodeStarted          = "node_started"
 	RunEventOrchestrationTeam    = "orchestration_team"
+	RunEventWorkerObservation    = "worker_observation"
 	RunEventPeerPlane            = "peer_plane"
 	RunEventSlotDispatch         = "slot_dispatch"
 	RunEventAdapterSend          = "adapter_send"
