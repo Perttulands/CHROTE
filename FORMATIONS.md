@@ -333,6 +333,13 @@ ledgers.
     and never carries downstream work. Gate `in` accepts work, `pass` preserves
     it, and `fail` carries feedback.
 
+    Naming note: this Gate-attached judge channel is unrelated to a Formation
+    that merely plays a judging *role* in a pipeline (for example a "judge"
+    Formation that compares candidate drafts before a human Gate). Such a
+    Formation is an ordinary workflow node with `data` ports and no Gate
+    attachment; only a Formation wired to a Gate's reserved `judge` socket
+    participates in verdicts.
+
 ## Port payload contract
 
 Connections are not just visual arrows. A wire from `source:summary` to
