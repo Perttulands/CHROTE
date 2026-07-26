@@ -1157,14 +1157,15 @@ step up is an explicit configuration decision, never a silent fallback.
    ledger, gate, and recovery behavior is exercisable here. When lab harnesses
    are configured, lab takes precedence over the tmux executor.
 2. **Isolated tmux dogfood.** `CHROTE_FORMATIONS_TMUX_*` dispatches to real agent
-   sessions, but the executor refuses to run unless the socket, cwd, and all
-   roots live under fixed `/tmp` and the socket is not the
-   default-resolved or configured Terminal socket. No legacy environment flag
-   lifts this restriction. Dogfooding happens on a throwaway socket and
-   temporary workspace with its own sessions. Known live socket identities and
-   observed between-call retargets fail closed, but same-UID dogfood remains a
-   trusted test boundary rather than construction-level isolation. It must not
-   be treated as the production session-pool design or certification.
+   sessions on a throwaway socket and temporary workspace with its own
+   sessions, through the same agent-user-verified executor path as production
+   ([ADR-0010](docs/adr/0010-formations-agent-user-socket-ownership.md); the
+   earlier fixed-`/tmp` socket/cwd/roots restriction is superseded). Socket
+   identity is pinned and revalidated per operation, so known live socket
+   identities and observed between-call retargets fail closed — but same-UID
+   dogfood remains a trusted test boundary rather than construction-level
+   isolation. It must not be treated as the production session-pool design or
+   certification.
 3. **Retired Script-gate process path.** No environment flag enables Gate-owned
    argv/shell execution. Legacy Gate command fields are inspectable only and
    produce the stable migration error at validation, selected-root preflight,
@@ -1172,26 +1173,35 @@ step up is an explicit configuration decision, never a silent fallback.
    future execution implementation under `ctx-ug7.8`; current host-profile Tool
    definitions are non-executing, and code Gates remain certified pure
    in-process evaluators.
-4. **Shared cockpit execution (accepted contract, currently unavailable).**
-   Production Formations must consume the same Terminal inventory resolver and
-   session pool as Terminal tabs. The stock tmux adapter cannot yet arbitrate
-   connected/busy clients or prove the complete attachment, mutation, input,
-   pane-history, and closure journal required by ADR-0007. A non-temporary or
-   configured cockpit target therefore fails before any tmux client call with
-   `session_target_attachment_audit_unavailable`; it cannot list, capture, send,
-   detach, create, or kill through the Formations executor. No legacy
-   `PROD_SMOKE` or `DEDICATED` value authorizes this path.
+4. **Production execution on an agent-user-owned socket (accepted contract,
+   deployed).** The executor runs on any configured socket whose backing tmux
+   server is owned by the configured agent-user
+   ([ADR-0010](docs/adr/0010-formations-agent-user-socket-ownership.md)).
+   `CHROTE_FORMATIONS_AGENT_USER` names that user; empty defaults to the
+   service user, so a single-user install needs zero configuration and a split
+   install points at the operator who owns agent credentials. Ownership is
+   verified against the pinned socket identity before execution; a wrong-owner
+   server fails loud with `agent_user_owner_mismatch`, and only a self-mode
+   executor may lazy-start a server. By owner ruling this covers both the
+   shared cockpit socket and a dedicated Formations socket — ADR-0009's
+   rejection of a Formations-only production socket is superseded on that
+   point by ADR-0010. The executor still only creates and tears down its own
+   uniquely-named sessions. Attachment of Formations slots to *existing*
+   cockpit Terminal sessions remains unavailable: the stock tmux adapter
+   cannot arbitrate connected/busy clients or prove the attachment, mutation,
+   input, pane-history, and closure journal required by ADR-0007, so a
+   session-target acquisition fails with
+   `session_target_attachment_audit_unavailable`.
    [ADR-0009](docs/adr/0009-same-pool-tmux-input-fence.md) records
    `ctx-ug7.21` as infeasible under the accepted stock topology; `ctx-ug7.22`
-   and `ctx-ug7.23` are blocked on the separately proven operation-time
-   kernel-boundary decision `ctx-ug7.37`. Only a superseding decision plus certified implementation
-   may replace the unavailable result; it must not reintroduce a Formations-only
-   production socket. The disposable adapter records its initial socket identity and revalidates it
-   before every adapter operation, so an observed between-call path retarget
-   blocks the next list, describe, capture, reattach, or send. This is
-   defense-in-depth for trusted dogfood, not a same-UID stock-tmux fence: racing
-   within a command or independently using an owner-accessible raw socket
-   remains possible and cannot be cited as production certification.
+   and `ctx-ug7.23` stay blocked on the separately proven operation-time
+   kernel-boundary decision `ctx-ug7.37`. Socket identity is recorded and
+   revalidated before every adapter operation, so an observed between-call
+   path retarget blocks the next list, describe, capture, reattach, or send.
+   This is defense-in-depth for trusted execution, not a same-UID stock-tmux
+   fence: racing within a command or independently using an owner-accessible
+   raw socket remains possible and cannot be cited as production
+   certification.
 
 ## Build sequence
 
