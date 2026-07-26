@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import FilesView from './FilesView'
-import { fetchDirectory, readTextFile, writeTextFile } from './FilesView/fileService'
+import { deleteItem, fetchDirectory, readTextFile, renameItem, writeTextFile } from './FilesView/fileService'
 
 vi.mock('./FilesView/fileService', async () => {
   const actual = await vi.importActual<typeof import('./FilesView/fileService')>('./FilesView/fileService')
@@ -195,6 +195,100 @@ describe('FilesView editor tab bulk close', () => {
       expect(within(editorTabs()).getByRole('button', { name: /one\.txt/ })).toBeInTheDocument()
       expect(within(editorTabs()).queryByRole('button', { name: /two\.txt/ })).not.toBeInTheDocument()
     })
+  })
+})
+
+describe('FilesView dirty buffer safety', () => {
+  it('keeps unsaved edits when the same file is reopened from the tree', async () => {
+    mockRootFiles({ 'notes.txt': 'from disk' })
+    render(<FilesView />)
+
+    await openRootFile('notes.txt')
+    fireEvent.change(await screen.findByDisplayValue('from disk'), { target: { value: 'unsaved work' } })
+    mockReadTextFile.mockClear()
+
+    await openRootFile('notes.txt')
+
+    expect(await screen.findByDisplayValue('unsaved work')).toBeInTheDocument()
+    expect(mockReadTextFile).not.toHaveBeenCalled()
+    expect(within(editorTabs()).getAllByRole('button', { name: /notes\.txt/ })).toHaveLength(1)
+  })
+
+  it('asks before closing one dirty tab and keeps the buffer when cancelled', async () => {
+    mockRootFiles({ 'notes.txt': 'from disk' })
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    render(<FilesView />)
+
+    await openRootFile('notes.txt')
+    fireEvent.change(await screen.findByDisplayValue('from disk'), { target: { value: 'unsaved work' } })
+
+    const closeControl = () => within(within(editorTabs()).getByRole('button', { name: /notes\.txt/ }))
+      .getByRole('button', { name: 'x' })
+    fireEvent.click(closeControl())
+
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/unsaved changes/i))
+    expect(within(editorTabs()).getByRole('button', { name: /notes\.txt/ })).toBeInTheDocument()
+    expect(screen.getByDisplayValue('unsaved work')).toBeInTheDocument()
+
+    // Confirming discards the buffer; the last tab closing drops back to Folder mode.
+    confirmSpy.mockReturnValue(true)
+    fireEvent.click(closeControl())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Folder' })).toHaveAttribute('aria-pressed', 'true'))
+    expect(screen.queryByDisplayValue('unsaved work')).not.toBeInTheDocument()
+    confirmSpy.mockRestore()
+  })
+
+  it('refuses to delete a file whose open buffer has unsaved edits', async () => {
+    mockRootFiles({ 'notes.txt': 'from disk' })
+    render(<FilesView />)
+
+    await openRootFile('notes.txt')
+    fireEvent.change(await screen.findByDisplayValue('from disk'), { target: { value: 'unsaved work' } })
+
+    // The file listing only renders in Folder mode.
+    fireEvent.click(screen.getByRole('button', { name: 'Folder' }))
+    fireEvent.contextMenu(await screen.findByRole('row', { name: /notes\.txt/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /^delete$/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /^delete$/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/save or close unsaved files before deleting/i)
+    expect(deleteItem).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'File' }))
+    expect(await screen.findByDisplayValue('unsaved work')).toBeInTheDocument()
+  })
+
+  it('follows a renamed file so the unsaved buffer saves to its new path', async () => {
+    mockRootFiles({ 'notes.txt': 'from disk' })
+    render(<FilesView />)
+
+    await openRootFile('notes.txt')
+    fireEvent.change(await screen.findByDisplayValue('from disk'), { target: { value: 'unsaved work' } })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Folder' }))
+    fireEvent.contextMenu(await screen.findByRole('row', { name: /notes\.txt/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /^rename$/i }))
+    const renameInput = await screen.findByDisplayValue('notes.txt')
+    fireEvent.change(renameInput, { target: { value: 'renamed.txt' } })
+    fireEvent.keyDown(renameInput, { key: 'Enter' })
+
+    await waitFor(() => expect(renameItem).toHaveBeenCalledWith('/notes.txt', '/renamed.txt'))
+    fireEvent.click(screen.getByRole('button', { name: 'File' }))
+    await within(editorTabs()).findByRole('button', { name: /renamed\.txt/ })
+    expect(await screen.findByDisplayValue('unsaved work')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(mockWriteTextFile).toHaveBeenCalledWith('/renamed.txt', 'unsaved work'))
+  })
+
+  it('surfaces a read failure without leaving the tab stuck loading', async () => {
+    mockRootFiles({ 'broken.txt': 'x' })
+    mockReadTextFile.mockRejectedValue(new Error('boom'))
+    render(<FilesView />)
+
+    await openRootFile('broken.txt')
+
+    expect(await screen.findByText(/boom|failed to read/i)).toBeInTheDocument()
   })
 })
 
