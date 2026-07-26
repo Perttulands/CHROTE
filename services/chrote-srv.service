@@ -18,11 +18,20 @@ ExecStartPre=+/bin/sh -lc 'install -d -o "${CHROTE_SERVICE_USER:-chrote}" -g "${
 ExecStartPre=+/bin/sh -lc 'install -D -o root -g root -m 0755 "$CHROTE_SERVICE_ROOT/scripts/chrote-tmux-grants.sh" "${CHROTE_TMUX_GRANT_HELPER:-/usr/local/libexec/chrote/chrote-tmux-grants.sh}"'
 ExecStartPre=+/bin/sh -lc 'exec "${CHROTE_TMUX_GRANT_HELPER:-/usr/local/libexec/chrote/chrote-tmux-grants.sh}"'
 ExecStart=/bin/sh -lc 'cd "$CHROTE_SERVICE_ROOT" && exec "$CHROTE_SERVICE_ROOT/chrote-server" --host "${HOST:-127.0.0.1}" --port "${PORT:-8095}" --ttyd-port "${TTYD_PORT:-7686}"'
-# KillMode=process because this cgroup holds long-lived children that must
-# outlive a restart: ttyd terminal sessions and any Formations tmux server. The
-# default control-group SIGTERMs all of them. Keep it in the tracked unit so
-# reinstalling from the repo cannot silently revert it, the way the legacy lane's
-# drop-in-only setting could.
+# KillMode=process protects exactly one thing: a Formations tmux server started
+# lazily by the executor inside this unit, which holds running agents. The default
+# control-group would SIGTERM it on every restart.
+#
+# It protects nothing else, despite appearances. ttyd does not need to survive —
+# the next start reclaims its port with `fuser -k` (src/internal/proxy/terminal.go)
+# — and tmux servers owned by other users are outside this cgroup entirely, so
+# their sessions survive either setting. Sessions preserved across a restart are
+# therefore NOT evidence that this setting works; only an in-cgroup tmux server is.
+# While the executor drives an out-of-unit socket, this setting is inert.
+#
+# The cost is orphans: `systemctl stop` leaves any in-cgroup child running. Keep it
+# in the tracked unit so reinstalling from the repo cannot silently revert it, the
+# way the legacy lane's drop-in-only setting could.
 KillMode=process
 Restart=on-failure
 RestartSec=5
