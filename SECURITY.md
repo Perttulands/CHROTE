@@ -18,21 +18,33 @@ current `main`.
 
 ## Trust model
 
-CHROTE is private single-operator infrastructure. CHROTE has no built-in application login.
+CHROTE is private infrastructure for a single human operator, and that operator
+boundary can span several Unix identities at once. CHROTE has
+no built-in application login, and nothing in the application authenticates a
+request.
+Retired settings such as `API_AUTH_TOKEN` are ignored: the server logs a startup
+warning if one is still set, and a value in an environment file provides no
+protection.
 
-Anyone who can reach the dashboard is inside the trusted operator boundary and
-may reach terminal-grade capabilities, configured files, Beads data, local
-services, schedules, recovery actions, and any experimental Formations surface
-included in that build.
+Anyone who can reach the dashboard holds, at once:
 
-Default runtime values are loopback-only:
+- a terminal for **every** Unix user listed in `CHROTE_TERMINAL_USERS` — that is
+  arbitrary command execution as each of those users, not just one;
+- the file APIs across everything under `CHROTE_ROOTS` with the service
+  identity's Unix permissions — deployments may configure broad roots, up to `/`;
+- Beads data, local service proxies, schedules, recovery actions, and any
+  experimental Formations surface included in that build.
+
+The control is the network perimeter, not application authentication and not
+same-user isolation. Default runtime values are loopback-only:
 
 - `HOST=127.0.0.1`
 - `PORT=8094`
 - `TTYD_PORT=7683`
 
 Use a private access layer such as Tailscale for remote access. Do not bind
-CHROTE directly to an untrusted LAN or the public internet.
+CHROTE directly to an untrusted LAN or the public internet. Treat exposing the
+dashboard as exposing the shells of every configured terminal user.
 
 ## CORS is not authentication
 
@@ -45,7 +57,10 @@ direct network clients, or replace the private-network trust boundary.
 ## Terminal boundary
 
 CHROTE and ttyd can attach to tmux sessions available to their Unix identity and
-to any explicitly configured socket mapping.
+to any explicitly configured socket mapping. A deployment commonly runs the
+server as a dedicated service account while fronting other Unix users' sessions
+through deliberate socket grants, so the reachable surface is the union of every
+configured user's sessions, not the service account's alone.
 
 - A terminal is arbitrary command execution as that Unix user.
 - Cross-user socket access requires deliberate filesystem and tmux ACL setup.
@@ -61,7 +76,9 @@ Treat exposing CHROTE as exposing a shell.
 `CHROTE_ROOTS` constrains CHROTE's file APIs. `CHROTE_WORKDIR` controls the
 default working directory for new sessions.
 
-- Keep configured roots as narrow as practical.
+- Keep configured roots as narrow as practical. Narrow roots are advice, not a
+  guarantee: a deployment that sets `CHROTE_ROOTS=/` grants the file APIs
+  everything the service identity can read or write.
 - Symlinks are resolved before access and mutation authorization.
 - A broad root permits every operation the CHROTE API exposes within the Unix
   permissions of the service identity.
