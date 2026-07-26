@@ -1,53 +1,93 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { DndContext } from '@dnd-kit/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ScheduledTasksView from './ScheduledTasksView'
+import { DEFAULT_SETTINGS } from '../types'
+
+// The view listens to the ancestor DndContext through useDndMonitor. Capture the
+// listener so a drop can be replayed exactly as DndContext would dispatch it.
+const dndMonitor = vi.hoisted(() => ({ listener: null as null | { onDragEnd?: (event: unknown) => void } }))
+
+vi.mock('@dnd-kit/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@dnd-kit/core')>()
+  return {
+    ...actual,
+    useDndMonitor: (listener: { onDragEnd?: (event: unknown) => void }) => {
+      dndMonitor.listener = listener
+    },
+  }
+})
+
+function dropSession(target: { sessionName: string; unixUser?: string }, overId = 'scheduled-task-targets') {
+  act(() => {
+    dndMonitor.listener?.onDragEnd?.({
+      active: { id: `${target.unixUser || ''}:${target.sessionName}`, data: { current: { type: 'session', ...target } } },
+      over: { id: overId },
+    })
+  })
+}
+
+const sessions = [
+  { name: 'claude-chrote-worker', unixUser: 'build', windows: 1, attached: true, group: 'claude' },
+  { name: 'claude-chrote-worker-2', unixUser: 'build', windows: 1, attached: true, group: 'claude' },
+  { name: 'ops', unixUser: 'alice', windows: 1, attached: false, group: 'ops' },
+]
+
+vi.mock('../context/SessionContext', () => ({
+  useSession: () => ({
+    sessions,
+    groupedSessions: {},
+    loading: false,
+    error: null,
+    sidebarCollapsed: false,
+    refreshSessions: vi.fn(),
+    createSession: vi.fn(),
+    sessionBank: [],
+    settings: DEFAULT_SETTINGS,
+    terminalUsers: ['build', 'alice'],
+  }),
+}))
 
 const task = {
   id: 'tsk_existing',
-  name: 'Morning prompt',
-  prompt: 'status please',
-  target: { sessionName: 'ops', unixUser: 'alice' },
-  schedule: { type: 'interval', everyMinutes: 15, timezone: 'UTC' },
+  name: 'Continue work',
+  prompt: 'Continue if work is clear',
+  targets: [
+    { sessionName: 'claude-chrote-worker', unixUser: 'build' },
+    { sessionName: 'claude-chrote-worker-2', unixUser: 'build' },
+  ],
+  schedule: { type: 'cron', expression: '0 16 * * *', timezone: 'Europe/Helsinki' },
   enabled: true,
   paused: false,
   nextRun: '2026-06-27T15:00:00Z',
   lastStatus: 'success',
-  createdBy: 'agent:test',
-  updatedBy: 'agent:test',
-  createdAt: '2026-06-27T14:00:00Z',
-  updatedAt: '2026-06-27T14:00:00Z',
-}
-
-const sessionsEnvelope = {
-  success: true,
-  data: {
-    sessions: [
-      { name: 'ops', unixUser: 'alice', windows: 1, attached: false, group: 'ops' },
-      { name: 'codex', unixUser: 'chrote', windows: 1, attached: false, group: 'codex' },
-    ],
-    grouped: {},
-    terminalUsers: ['alice', 'chrote'],
-  },
-  timestamp: '2026-06-27T14:00:00Z',
+  createdBy: 'user:dashboard',
+  updatedBy: 'user:dashboard',
+  recentRuns: [
+    {
+      id: 'run_1',
+      trigger: 'scheduled',
+      startedAt: '2026-06-26T13:00:00Z',
+      status: 'partial',
+      message: 'claude-chrote-worker-2: session is gone',
+      targets: [
+        { sessionName: 'claude-chrote-worker', status: 'success', pane: '%1' },
+        { sessionName: 'claude-chrote-worker-2', status: 'error', message: 'session is gone' },
+      ],
+    },
+  ],
 }
 
 function ok(data: unknown) {
   return Promise.resolve(new Response(JSON.stringify({ success: true, data, timestamp: '2026-06-27T14:00:00Z' }), { status: 200 }))
 }
 
-function setViewportForTest(width: number, height: number) {
-  const originalWidth = window.innerWidth
-  const originalHeight = window.innerHeight
-  Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: width })
-  Object.defineProperty(window, 'innerHeight', { configurable: true, writable: true, value: height })
-  return () => {
-    Object.defineProperty(window, 'innerWidth', { configurable: true, writable: true, value: originalWidth })
-    Object.defineProperty(window, 'innerHeight', { configurable: true, writable: true, value: originalHeight })
-  }
-}
-
-function menuRect(width: number, height: number): DOMRect {
-  return { x: 0, y: 0, width, height, top: 0, left: 0, right: width, bottom: height, toJSON: () => ({}) } as DOMRect
+function renderView() {
+  return render(
+    <DndContext>
+      <ScheduledTasksView />
+    </DndContext>,
+  )
 }
 
 describe('ScheduledTasksView', () => {
@@ -58,74 +98,108 @@ describe('ScheduledTasksView', () => {
       const url = String(input)
       const method = init?.method || 'GET'
       if (url === '/api/scheduled-tasks' && method === 'GET') return ok({ tasks: [task] })
-      if (url === '/api/tmux/sessions' && method === 'GET') return Promise.resolve(new Response(JSON.stringify(sessionsEnvelope), { status: 200 }))
       if (url === '/api/scheduled-tasks' && method === 'POST') {
-        const body = JSON.parse(String(init?.body))
-        return ok({ task: { ...task, ...body, id: 'tsk_created', createdAt: task.createdAt, updatedAt: task.updatedAt } })
+        return ok({ task: { ...task, ...JSON.parse(String(init?.body)), id: 'tsk_created' } })
       }
-      if (url === '/api/scheduled-tasks/tsk_existing/run-now' && method === 'POST') return ok({ task, run: { id: 'run_1', status: 'success' } })
-      if (url === '/api/scheduled-tasks/tsk_existing/pause' && method === 'POST') return ok({ task: { ...task, paused: true } })
-      if (url === '/api/scheduled-tasks/tsk_existing/resume' && method === 'POST') return ok({ task })
-      if (url === '/api/scheduled-tasks/tsk_existing' && method === 'DELETE') return ok({ deleted: 'tsk_existing' })
       if (url === '/api/scheduled-tasks/tsk_existing' && method === 'PATCH') return ok({ task })
-      return Promise.resolve(new Response(JSON.stringify({ success: false, error: { message: `unexpected ${method} ${url}` }, timestamp: 'now' }), { status: 500 }))
+      if (url === '/api/scheduled-tasks/tsk_existing' && method === 'DELETE') return ok({ deleted: 'tsk_existing' })
+      if (url.startsWith('/api/scheduled-tasks/tsk_existing/') && method === 'POST') {
+        return ok({ task, run: { id: 'run_2', status: 'success', targets: task.targets.map(t => ({ ...t, status: 'success' })) } })
+      }
+      return Promise.resolve(new Response(JSON.stringify({ success: false, error: { message: `unexpected ${method} ${url}` } }), { status: 500 }))
     }))
   })
 
-  it('loads tasks and exposes agent metadata/target readback', async () => {
-    render(<ScheduledTasksView />)
+  it('lists tasks with plain-language schedules and every target session', async () => {
+    renderView()
 
     expect(await screen.findByRole('heading', { name: 'Scheduled Tasks' })).toBeInTheDocument()
-    expect(await screen.findByRole('button', { name: /Morning prompt/ })).toBeInTheDocument()
-    expect(screen.getAllByText('alice / ops').length).toBeGreaterThan(0)
-    expect(screen.getAllByText(/agent:test/).length).toBeGreaterThan(0)
-    expect(screen.getAllByText(/Every 15 minutes/).length).toBeGreaterThan(0)
+    const card = await screen.findByRole('button', { name: /Continue work/ })
+    expect(within(card).getByText(/Daily at 16:00/)).toBeInTheDocument()
+    expect(within(card).getByText('Europe/Helsinki', { exact: false })).toBeInTheDocument()
+    expect(within(card).getByText('claude-chrote-worker')).toBeInTheDocument()
+    expect(within(card).getByText('claude-chrote-worker-2')).toBeInTheDocument()
   })
 
-  it('creates an interval scheduled task through the API form', async () => {
-    render(<ScheduledTasksView />)
+  it('shows per-target run history so a partial delivery is visible', async () => {
+    renderView()
+
+    fireEvent.click(await screen.findByRole('button', { name: /Continue work/ }))
+    expect(await screen.findByText(/claude-chrote-worker: success, claude-chrote-worker-2: error/)).toBeInTheDocument()
+    expect(screen.getByText(/session is gone/)).toBeInTheDocument()
+  })
+
+  it('creates a daily multi-session task without asking for a unix user or cron string', async () => {
+    renderView()
 
     fireEvent.click(await screen.findByRole('button', { name: /New Task/i }))
-    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Nightly nudge' } })
-    fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: 'hello; literal $(whoami)' } })
-    fireEvent.change(screen.getByLabelText('Unix user'), { target: { value: 'chrote' } })
-    fireEvent.change(screen.getByLabelText('Session'), { target: { value: 'codex' } })
-    fireEvent.change(screen.getByLabelText('Every minutes'), { target: { value: '30' } })
-    fireEvent.change(screen.getByLabelText('Created by'), { target: { value: 'agent:ui-test' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Create Task' }))
+    fireEvent.change(screen.getByLabelText('Prompt'), {
+      target: { value: 'Continue if work is clear, keep things moving' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /claude-chrote-worker$/ }))
+    fireEvent.click(screen.getByRole('button', { name: /claude-chrote-worker-2$/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Daily' }))
+    fireEvent.change(screen.getByLabelText('Time of day'), { target: { value: '16:00' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }))
 
     await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/scheduled-tasks', expect.objectContaining({ method: 'POST' })))
     const post = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url) === '/api/scheduled-tasks' && init?.method === 'POST')
     expect(post?.[1]?.headers).toMatchObject({ 'X-Chrote-Intent': 'scheduled-task' })
-    expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({
-      name: 'Nightly nudge',
-      prompt: 'hello; literal $(whoami)',
-      target: { unixUser: 'chrote', sessionName: 'codex' },
-      schedule: { type: 'interval', everyMinutes: 30, timezone: 'UTC' },
-      createdBy: 'agent:ui-test',
-      updatedBy: 'agent:ui-test',
+    const body = JSON.parse(String(post?.[1]?.body))
+    expect(body).toMatchObject({
+      prompt: 'Continue if work is clear, keep things moving',
+      targets: [
+        { sessionName: 'claude-chrote-worker', unixUser: 'build' },
+        { sessionName: 'claude-chrote-worker-2', unixUser: 'build' },
+      ],
+      schedule: { type: 'cron', expression: '0 16 * * *' },
     })
+    // The name is derived from the prompt when the operator leaves it blank.
+    expect(body.name).toBe('Continue if work is clear, keep things moving')
+    expect(screen.queryByLabelText(/unix user/i)).not.toBeInTheDocument()
   })
 
-  it('protects unsaved form edits before closing the task form', async () => {
-    vi.mocked(window.confirm).mockReturnValue(false)
-    render(<ScheduledTasksView />)
+  it('adds a target when a session is dropped on the editor target zone', async () => {
+    renderView()
 
     fireEvent.click(await screen.findByRole('button', { name: /New Task/i }))
-    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Unsaved draft' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    const dropzone = screen.getByTestId('scheduled-target-dropzone')
+    expect(within(dropzone).getByText('No sessions selected')).toBeInTheDocument()
 
-    expect(window.confirm).toHaveBeenCalledWith(expect.stringMatching(/discard unsaved/i))
-    expect(screen.getByLabelText('Name')).toHaveValue('Unsaved draft')
+    // jsdom cannot perform a real pointer drag; drive the registered dnd-kit
+    // monitor listener with the event DndContext would dispatch.
+    dropSession({ sessionName: 'ops', unixUser: 'alice' })
+
+    await waitFor(() => expect(within(dropzone).getByLabelText('Remove ops')).toBeInTheDocument())
   })
 
-  it('runs, pauses, resumes, and deletes through task actions', async () => {
-    render(<ScheduledTasksView />)
-    const row = await screen.findByRole('button', { name: /Morning prompt/ })
-    fireEvent.click(row)
+  it('ignores drops that land outside the target zone', async () => {
+    renderView()
+    fireEvent.click(await screen.findByRole('button', { name: /New Task/i }))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Run Now' }))
+    dropSession({ sessionName: 'ops', unixUser: 'alice' }, 'some-terminal-window')
+
+    expect(within(screen.getByTestId('scheduled-target-dropzone')).getByText('No sessions selected')).toBeInTheDocument()
+  })
+
+  it('refuses to save a task with no target session', async () => {
+    renderView()
+
+    fireEvent.click(await screen.findByRole('button', { name: /New Task/i }))
+    fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: 'no targets yet' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/at least one target session/i)
+    expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0)
+  })
+
+  it('runs, pauses, and deletes the selected task', async () => {
+    renderView()
+    fireEvent.click(await screen.findByRole('button', { name: /Continue work/ }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Run now' }))
     await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/scheduled-tasks/tsk_existing/run-now', expect.objectContaining({ method: 'POST' })))
+    expect(await screen.findByText(/Sent to 2 sessions/)).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Pause' }))
     await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/scheduled-tasks/tsk_existing/pause', expect.objectContaining({ method: 'POST' })))
@@ -134,30 +208,26 @@ describe('ScheduledTasksView', () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/scheduled-tasks/tsk_existing', expect.objectContaining({ method: 'DELETE' })))
   })
 
-  it('uses a viewport-safe right-click task menu', async () => {
-    const restoreViewport = setViewportForTest(360, 240)
-    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect
-    const rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-      if (this.classList.contains('scheduled-task-menu')) return menuRect(180, 160)
-      return originalGetBoundingClientRect.call(this)
-    })
+  it('loads an existing task back into the simple editor', async () => {
+    renderView()
+    fireEvent.click(await screen.findByRole('button', { name: /Continue work/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
 
-    try {
-      render(<ScheduledTasksView />)
-      const taskButton = await screen.findByRole('button', { name: /Morning prompt/ })
-      fireEvent.contextMenu(taskButton, { clientX: 350, clientY: 230 })
-      const menu = document.querySelector('.scheduled-task-menu') as HTMLElement
+    expect(screen.getByLabelText('Prompt')).toHaveValue('Continue if work is clear')
+    expect(screen.getByRole('button', { name: 'Daily' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByLabelText('Time of day')).toHaveValue('16:00')
+    expect(screen.getByLabelText('Timezone')).toHaveValue('Europe/Helsinki')
+  })
 
-      await waitFor(() => {
-        const left = Number.parseFloat(menu.style.left)
-        const top = Number.parseFloat(menu.style.top)
-        expect(left + 180).toBeLessThanOrEqual(window.innerWidth)
-        expect(top + 160).toBeLessThanOrEqual(window.innerHeight)
-      })
-      expect(within(menu).getByRole('button', { name: 'Copy ID' })).toBeInTheDocument()
-    } finally {
-      rectSpy.mockRestore()
-      restoreViewport()
-    }
+  it('protects unsaved edits before discarding the form', async () => {
+    vi.mocked(window.confirm).mockReturnValue(false)
+    renderView()
+
+    fireEvent.click(await screen.findByRole('button', { name: /New Task/i }))
+    fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: 'unsaved draft' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringMatching(/discard unsaved/i))
+    expect(screen.getByLabelText('Prompt')).toHaveValue('unsaved draft')
   })
 })

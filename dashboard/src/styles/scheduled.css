@@ -1,0 +1,548 @@
+/* CHROTE Scheduled Tasks cockpit */
+
+.scheduled-dock {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  position: relative;
+  overflow: hidden;
+  background: var(--background);
+  color: var(--text-primary);
+}
+
+.scheduled-dock .session-panel {
+  flex: 0 0 var(--scheduled-sidecar-width, 260px);
+}
+
+.scheduled-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.scheduled-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 45px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--divider);
+  background: var(--surface-primary);
+  flex-shrink: 0;
+}
+
+.scheduled-toolbar h2 {
+  margin: 0;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-primary);
+}
+
+.scheduled-toolbar-hint {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheduled-alert,
+.scheduled-notice {
+  margin: 8px 12px 0;
+  padding: 6px 10px;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  font-size: 12px;
+  background: var(--surface-secondary);
+  color: var(--text-secondary);
+}
+
+.scheduled-alert {
+  border-color: var(--color-error);
+  color: var(--color-error);
+  background: var(--color-error-light);
+}
+
+.scheduled-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px;
+  overflow: hidden;
+}
+
+.scheduled-list,
+.scheduled-detail {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  background: var(--surface-primary);
+  padding: 8px;
+  overflow: auto;
+}
+
+/* Task cards: dense, monochrome, status carried as text. */
+.scheduled-task-card {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+  border: 1px solid var(--divider);
+  border-left: 3px solid transparent;
+  border-radius: 4px;
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.scheduled-task-card:hover {
+  border-color: var(--accent);
+}
+
+.scheduled-task-card.active {
+  border-left-color: var(--accent);
+  background: var(--accent-light);
+}
+
+.scheduled-task-card.muted .scheduled-task-name {
+  color: var(--text-secondary);
+}
+
+.scheduled-task-name {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheduled-task-when {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.scheduled-task-zone,
+.scheduled-task-status,
+.scheduled-muted {
+  color: var(--text-dim);
+}
+
+.scheduled-task-status {
+  font-size: 11px;
+}
+
+.scheduled-bad {
+  color: var(--color-error);
+}
+
+.scheduled-task-targets,
+.scheduled-target-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.scheduled-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border: 1px solid var(--divider);
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--surface-primary);
+}
+
+.scheduled-chip-user {
+  font-size: 9px;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.scheduled-chip-removable button {
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font: inherit;
+  line-height: 1;
+  padding: 0 0 0 2px;
+}
+
+.scheduled-chip-removable button:hover {
+  color: var(--color-error);
+}
+
+/* Detail + form */
+.scheduled-card,
+.scheduled-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.scheduled-card-header,
+.scheduled-form-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.scheduled-card-header h3,
+.scheduled-form-header h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.scheduled-card-header p {
+  margin: 2px 0 0;
+  font-size: 12px;
+}
+
+.scheduled-actions,
+.scheduled-form-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.scheduled-actions button,
+.scheduled-secondary {
+  padding: 4px 10px;
+  border: 1px solid var(--divider);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.scheduled-actions button:hover:not(:disabled),
+.scheduled-secondary:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.scheduled-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.scheduled-actions button.danger:hover {
+  border-color: var(--color-error);
+  color: var(--color-error);
+}
+
+.scheduled-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--accent-light);
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.scheduled-primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.scheduled-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  min-width: 0;
+}
+
+.scheduled-field.compact {
+  flex: 0 0 auto;
+  max-width: 190px;
+}
+
+.scheduled-field input,
+.scheduled-field select,
+.scheduled-field textarea {
+  padding: 5px 8px;
+  border: 1px solid var(--divider);
+  border-radius: 3px;
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.scheduled-field input:focus,
+.scheduled-field select:focus,
+.scheduled-field textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.scheduled-prompt-input {
+  resize: vertical;
+  min-height: 76px;
+  font-family: inherit;
+}
+
+.scheduled-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+}
+
+/* Target picker */
+.scheduled-targets,
+.scheduled-when {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  background: var(--surface-secondary);
+}
+
+.scheduled-targets.drop-active {
+  border-color: var(--accent);
+  background: var(--accent-light);
+}
+
+.scheduled-targets-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.scheduled-session-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 120px;
+  overflow: auto;
+  padding-top: 6px;
+  border-top: 1px dashed var(--divider);
+}
+
+.scheduled-session-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--divider);
+  border-radius: 3px;
+  background: var(--surface-primary);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.scheduled-session-option:hover {
+  border-color: var(--accent);
+}
+
+.scheduled-session-option.selected {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-light);
+}
+
+/* Schedule builder */
+.scheduled-mode-switch {
+  display: inline-flex;
+  border: 1px solid var(--divider);
+  border-radius: 3px;
+  overflow: hidden;
+  width: max-content;
+}
+
+.scheduled-mode {
+  padding: 4px 12px;
+  border: 0;
+  border-right: 1px solid var(--divider);
+  background: var(--surface-primary);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.scheduled-mode:last-child {
+  border-right: 0;
+}
+
+.scheduled-mode.active {
+  background: var(--accent-light);
+  color: var(--accent);
+}
+
+.scheduled-when-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.scheduled-when-row .scheduled-field:not(.compact) {
+  flex: 1 1 220px;
+}
+
+.scheduled-weekdays {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.scheduled-weekday {
+  min-width: 42px;
+  padding: 4px 6px;
+  border: 1px solid var(--divider);
+  border-radius: 3px;
+  background: var(--surface-primary);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.scheduled-weekday.active {
+  border-color: var(--accent);
+  background: var(--accent-light);
+  color: var(--accent);
+}
+
+/* Readbacks */
+.scheduled-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.scheduled-meta dt {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.scheduled-meta dd {
+  margin: 3px 0 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.scheduled-prompt-readback {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-height: 0;
+}
+
+.scheduled-prompt-readback pre {
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 180px;
+  overflow: auto;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  background: var(--surface-secondary);
+  color: var(--text-primary);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Run history claims the leftover height: it is the part of the card that keeps
+   growing, so the pane fills with real information instead of padding. */
+.scheduled-runs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-height: 0;
+}
+
+.scheduled-runs ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--divider);
+  border-radius: 4px;
+  background: var(--surface-secondary);
+  padding: 6px 8px;
+}
+
+.scheduled-runs li {
+  font-size: 11px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--divider);
+  padding-bottom: 3px;
+}
+
+.scheduled-empty {
+  margin: 0;
+  padding: 16px;
+  font-size: 12px;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.scheduled-detail-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin: auto;
+}
+
+@media (max-width: 900px) {
+  .scheduled-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(120px, 34%) minmax(0, 1fr);
+  }
+
+  .scheduled-toolbar-hint {
+    display: none;
+  }
+}
