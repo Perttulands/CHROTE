@@ -170,14 +170,19 @@ jobs:
 
       - name: Build dashboard and embedded Go server
         run: |
-          cd dashboard
-          npm run build
-          cd ..
-          mkdir -p src/internal/dashboard/dist
-          find src/internal/dashboard/dist -mindepth 1 -delete
-          cp -a dashboard/dist/. src/internal/dashboard/dist/
+          # Use the shipped script rather than repeating its steps here. This job
+          # previously inlined its own copy of the embed logic, so the two could
+          # drift and only one of them wrote the provenance stamp.
+          scripts/build-embedded-dashboard.sh
           cd src
           go build -o ../chrote-server-ci ./cmd/server
+
+      - name: Embedded dashboard is not stale
+        # go:embed fails loudly on a MISSING bundle but silently accepts a STALE one,
+        # and both dist directories are gitignored so git cannot notice. That is how an
+        # 8-day-old UI built from an abandoned branch shipped unnoticed on 2026-07-24
+        # and a committed change looked lost.
+        run: python3 scripts/check-embedded-dashboard.py
 
       - name: Install Playwright browser
         run: |

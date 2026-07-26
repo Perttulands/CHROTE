@@ -84,3 +84,6 @@ dashboard/playwright-report/data/
 # Python bytecode
 __pycache__/
 *.pyc
+
+# provenance stamp for the embedded dashboard bundle (build artifact)
+src/internal/dashboard/dist.stamp

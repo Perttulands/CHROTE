@@ -16,4 +16,21 @@ mkdir -p "$(dirname "$embed_dir")"
 cp -R "$dashboard_dir/dist" "$embed_dir"
 find "$embed_dir" -type d -empty -delete
 
+# Record WHICH dashboard source this bundle came from. go:embed fails loudly on a
+# missing bundle but silently accepts a stale one, and both dist directories are
+# gitignored, so nothing else can tell. Without this stamp an 8-day-old UI built
+# from an abandoned branch shipped unnoticed on 2026-07-24 and a committed change
+# looked lost. scripts/check-embedded-dashboard.py verifies it.
+#
+# Kept beside dist/, not inside it: anything inside is embedded and served.
+stamp="$repo_root/src/internal/dashboard/dist.stamp"
+{
+  printf '# written by scripts/build-embedded-dashboard.sh -- do not edit or commit\n'
+  printf 'source_sha256=%s\n' \
+    "$(cd "$repo_root" && python3 scripts/check-embedded-dashboard.py --print-fingerprint)"
+  printf 'commit=%s\n' "$(cd "$repo_root" && git rev-parse HEAD 2>/dev/null || printf unknown)"
+  printf 'built_at=%s\n' "$(date --iso-8601=seconds)"
+} >"$stamp"
+
 echo "Embedded dashboard written to $embed_dir"
+echo "Build stamp written to $stamp"
