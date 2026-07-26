@@ -96,9 +96,11 @@ test.describe('terminal drag lifecycle', () => {
     await page.waitForSelector('.session-panel .session-item')
   })
 
-  test('only the overlay moves mid-drag and drop feedback has an opaque base', async ({ page }) => {
+  test('only the overlay moves mid-drag and only the hovered window shows drop feedback', async ({ page }) => {
     const row = page.locator('.session-panel .session-item:has-text("gt-gastown-jack")')
-    const target = page.locator('.terminal-window:visible').first().locator('.terminal-window-body')
+    const targetWindow = page.locator('.terminal-window:visible').first()
+    const otherWindow = page.locator('.terminal-window:visible').nth(1)
+    const target = targetWindow.locator('.terminal-window-body')
     const initialBox = await row.boundingBox()
 
     await expect(row).toHaveCSS('touch-action', 'pan-y')
@@ -120,27 +122,26 @@ test.describe('terminal drag lifecycle', () => {
     await expect(overlayWrapper).toHaveCSS('pointer-events', 'none')
     await expect(page.locator('.dragging-overlay')).toHaveCount(1)
 
-    await expect(page.locator('.terminal-grid[data-workspace="terminal1"] .terminal-drop-overlay')).toHaveCount(2)
+    await expect(page.locator('.terminal-grid[data-workspace="terminal1"] .terminal-drop-overlay')).toHaveCount(1)
     await expect(page.locator('.terminal-grid[data-workspace="terminal2"] .terminal-drop-overlay')).toHaveCount(0)
     await expect(page.locator('.terminal-grid[data-workspace="terminal3"] .terminal-drop-overlay')).toHaveCount(0)
+    await expect(targetWindow).toHaveClass(/drop-target/)
+    await expect(otherWindow).not.toHaveClass(/drop-target/)
+    await expect(otherWindow.locator('.terminal-drop-overlay')).toHaveCount(0)
 
     const targetOverlay = target.locator('.terminal-drop-overlay')
+    await expect(targetOverlay.locator('.drop-hint')).toHaveText('Release to add')
     const bodyBox = await target.boundingBox()
     const dropBox = await targetOverlay.boundingBox()
     expect(dropBox).toEqual(bodyBox)
-    const computedColors = await targetOverlay.evaluate((element) => {
-      const probe = document.createElement('div')
-      probe.style.backgroundColor = 'var(--surface-primary)'
-      element.appendChild(probe)
-      const semanticSurface = getComputedStyle(probe).backgroundColor
-      probe.remove()
-      return {
-        overlay: getComputedStyle(element).backgroundColor,
-        semanticSurface,
-      }
+    // The overlay is a translucent tint: the terminal content stays readable
+    // underneath while the hint chip carries the affordance.
+    const overlayAlpha = await targetOverlay.evaluate((element) => {
+      const match = getComputedStyle(element).backgroundColor.match(/rgba?\(([^)]+)\)/)
+      const parts = match ? match[1].split(',').map(part => Number(part.trim())) : []
+      return parts.length === 4 ? parts[3] : 1
     })
-    expect(computedColors.overlay).toBe(computedColors.semanticSurface)
-    expect(await targetOverlay.evaluate(element => getComputedStyle(element).backgroundImage)).toContain('linear-gradient')
+    expect(overlayAlpha).toBeLessThan(0.5)
 
     await page.keyboard.press('Escape')
     await page.mouse.up()
@@ -246,6 +247,7 @@ test.describe('terminal drag lifecycle', () => {
     await page.mouse.move(to.x, to.y, { steps: 10 })
     await page.mouse.up()
     await expectTagAssignment(firstWindow, secondWindow, 1, 0)
+    await expect(firstWindow.getByRole('button', { name: 'Send to session gt-gastown-jack' })).toBeVisible()
 
     const tag = firstWindow.locator('.session-tag:has-text("gt-gastown-jack")')
     const tagDragSurface = tag
@@ -259,6 +261,8 @@ test.describe('terminal drag lifecycle', () => {
     await expectTagAssignment(firstWindow, secondWindow, 1, 0)
 
     await startMouseDrag(page, tagDragSurface, firstWindow.locator('.terminal-window-body'))
+    // Hovering the tag's own source window is a no-op, so it shows no drop feedback.
+    await expect(page.locator('.terminal-drop-overlay')).toHaveCount(0)
     await finishMouseDrag(page)
     await expectTagAssignment(firstWindow, secondWindow, 1, 0)
 

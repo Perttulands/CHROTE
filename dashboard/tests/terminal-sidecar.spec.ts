@@ -78,6 +78,14 @@ test.describe('terminal workspace sidecar', () => {
     const restored = await box(terminal)
     expect(Math.abs(restored.x - initial.x)).toBeLessThanOrEqual(1)
     expect(Math.abs(restored.width - initial.width)).toBeLessThanOrEqual(1)
+
+    // The pin preference survives close: reopening pins the panel beside the
+    // terminal again instead of overlaying it.
+    await page.getByRole('button', { name: 'Files sidecar' }).click()
+    await expect(dock.locator('.terminal-files-panel.sidecar-pinned')).toBeVisible()
+    await expect(dock.locator('.terminal-sidecar-dismiss')).toHaveCount(0)
+    const reopened = await box(terminal)
+    expect(reopened.width).toBeLessThan(initial.width - 200)
   })
 
   test('uses icon-only hit-testable launchers and one overlay drawer on narrow screens', async ({ page }) => {

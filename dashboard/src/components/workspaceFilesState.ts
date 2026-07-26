@@ -150,7 +150,9 @@ export function readWorkspaceDockState(workspaceId: WorkspaceId): WorkspaceDockS
       : null
     return {
       activeSidecar,
-      sidecarPinned: activeSidecar !== null && raw.sidecarPinned === true,
+      // The pin preference survives a closed sidecar so reopening restores
+      // the same presentation (pinned beside vs overlay above the terminal).
+      sidecarPinned: raw.sidecarPinned === true,
       sessionsWidth: finiteNumber(raw.sessionsWidth, DEFAULT_WORKSPACE_DOCK_STATE.sessionsWidth, 220, 480),
       filesWidth: finiteNumber(raw.filesWidth, DEFAULT_WORKSPACE_DOCK_STATE.filesWidth, 240, 560),
     }
@@ -189,7 +191,7 @@ export function writeWorkspaceDockState(workspaceId: WorkspaceId, state: Workspa
     : null
   writeStorageMap(DOCK_STORAGE_KEY, workspaceId, {
     activeSidecar,
-    sidecarPinned: activeSidecar !== null && state.sidecarPinned,
+    sidecarPinned: state.sidecarPinned === true,
     sessionsWidth: finiteNumber(state.sessionsWidth, DEFAULT_WORKSPACE_DOCK_STATE.sessionsWidth, 220, 480),
     filesWidth: finiteNumber(state.filesWidth, DEFAULT_WORKSPACE_DOCK_STATE.filesWidth, 240, 560),
   }, 2)

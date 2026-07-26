@@ -459,7 +459,6 @@ export interface DashboardState {
   sendToSessionTarget: string | null // Session targeted by the Send to Session modal
   sendToSessionPrefill: string // Optional caller-provided draft for the current Send modal opening
   sendToSessionRequestId: number // Distinguishes deliberate reopenings of the same target
-  isDragging: boolean // True when a session is being dragged
 
   // Computed: which sessions are assigned to any window
   assignedSessions: Map<string, { workspaceId: WorkspaceId; windowId: string; colorIndex: number; windowIndex: number }>
@@ -518,9 +517,6 @@ export interface DashboardActions {
   // Mark a live Codex/Claude session as persistent desired state, or make it mortal again
   makeSessionPersistent: (sessionName: string, payload: PersistentAgentPayload, unixUser?: LaunchUser) => Promise<boolean>
   makeSessionMortal: (sessionName: string, unixUser?: LaunchUser) => Promise<boolean>
-
-  // Drag state
-  setIsDragging: (dragging: boolean) => void
 
   // Settings
   updateSettings: (settings: Partial<UserSettings>) => void

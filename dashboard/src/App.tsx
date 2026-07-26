@@ -143,8 +143,6 @@ function DashboardContent() {
   const [formationsVisited, setFormationsVisited] = useState(false)
   const {
     addSessionToWindow,
-    setIsDragging,
-    isDragging,
     settings,
     windowRevealRequest,
     workspaces,
@@ -213,8 +211,7 @@ function DashboardContent() {
 
   const resetDrag = useCallback(() => {
     setActiveDrag(null)
-    setIsDragging(false)
-  }, [setIsDragging])
+  }, [])
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -232,7 +229,6 @@ function DashboardContent() {
     }
 
     setActiveDrag({ name: data.sessionKey, type: data.type, unixUser: data.unixUser })
-    setIsDragging(true)
   }
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -261,7 +257,7 @@ function DashboardContent() {
 
   return (
     <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragCancel={resetDrag}>
-      <div className={`dashboard ${isDragging ? 'is-dragging' : ''}`}>
+      <div className={`dashboard ${activeDrag ? 'is-dragging' : ''}`}>
         <TabBar
           activeTab={activeTab}
           onTabChange={handleTabChange}

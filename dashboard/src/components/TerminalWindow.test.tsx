@@ -22,6 +22,10 @@ const draggableState = vi.hoisted(() => ({
   isDragging: false,
   listeners: { onPointerDown: vi.fn() },
 }))
+const droppableState = vi.hoisted(() => ({
+  isOver: false,
+  active: null as { data: { current: Record<string, unknown> } } | null,
+}))
 const poolState = vi.hoisted(() => ({ loadedSessions: new Set<string>() }))
 
 vi.mock('@dnd-kit/core', () => ({
@@ -32,7 +36,7 @@ vi.mock('@dnd-kit/core', () => ({
     transform: draggableState.transform,
     isDragging: draggableState.isDragging,
   }),
-  useDroppable: () => ({ setNodeRef: vi.fn(), isOver: false }),
+  useDroppable: () => ({ setNodeRef: vi.fn(), isOver: droppableState.isOver, active: droppableState.active }),
 }))
 
 vi.mock('../context/SessionContext', () => ({
@@ -106,6 +110,8 @@ describe('TerminalWindow launch user', () => {
     draggableState.transform = null
     draggableState.isDragging = false
     draggableState.listeners.onPointerDown.mockClear()
+    droppableState.isOver = false
+    droppableState.active = null
     poolState.loadedSessions = new Set()
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true })) as any)
     vi.stubGlobal('ResizeObserver', class {
@@ -247,12 +253,29 @@ describe('TerminalWindow launch user', () => {
     )
   })
 
-  it('renders full-body visual drop feedback without making the overlay the hit target', () => {
+  it('stays calm during a drag until this window is actually hovered', () => {
+    droppableState.active = { data: { current: { type: 'session', sessionName: 'alpha', sessionKey: 'alice:alpha' } } }
+
     const { container } = render(
       <TerminalWindow
         workspaceId="terminal3"
         window={{ id: 'terminal3-window-0', boundSessions: [], activeSession: null, colorIndex: 0 }}
-        isDragging
+      />
+    )
+
+    expect(container.querySelector('.terminal-drop-overlay')).toBeNull()
+    expect(container.querySelector('.terminal-window')).not.toHaveClass('drop-target')
+    expect(screen.queryByText('Release to add')).not.toBeInTheDocument()
+  })
+
+  it('renders hovered-target drop feedback without making the overlay the hit target', () => {
+    droppableState.active = { data: { current: { type: 'session', sessionName: 'alpha', sessionKey: 'alice:alpha' } } }
+    droppableState.isOver = true
+
+    const { container } = render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: [], activeSession: null, colorIndex: 0 }}
       />
     )
 
@@ -260,6 +283,64 @@ describe('TerminalWindow launch user', () => {
     const overlay = container.querySelector('.terminal-drop-overlay') as HTMLElement
     expect(body).toContainElement(overlay)
     expect(overlay).toHaveStyle({ inset: '0', pointerEvents: 'none' })
+    expect(overlay).toHaveTextContent('Release to add')
+    expect(container.querySelector('.terminal-window')).toHaveClass('drop-target')
+  })
+
+  it('shows no drop feedback when hovering a tag over its own source window', () => {
+    droppableState.active = {
+      data: {
+        current: {
+          type: 'tag',
+          sessionName: 'forge-existing',
+          sessionKey: 'build:forge-existing',
+          sourceWorkspaceId: 'terminal3',
+          sourceWindowId: 'terminal3-window-0',
+        },
+      },
+    }
+    droppableState.isOver = true
+
+    const { container } = render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['build:forge-existing'], activeSession: 'build:forge-existing', colorIndex: 0 }}
+      />
+    )
+
+    expect(container.querySelector('.terminal-drop-overlay')).toBeNull()
+    expect(container.querySelector('.terminal-window')).not.toHaveClass('drop-target')
+  })
+
+  it('exposes a one-click Send action in the header for the mounted active session', () => {
+    render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['build:forge-existing'], activeSession: 'build:forge-existing', colorIndex: 0 }}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send to session forge-existing' }))
+
+    expect(openSendToSession).toHaveBeenCalledWith('build:forge-existing')
+  })
+
+  it('offers no Send action for empty or still-initializing windows', () => {
+    const { rerender } = render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: [], activeSession: null, colorIndex: 0 }}
+      />
+    )
+    expect(screen.queryByRole('button', { name: /Send to session/i })).not.toBeInTheDocument()
+
+    rerender(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['INIT-PENDING'], activeSession: 'INIT-PENDING', colorIndex: 0 }}
+      />
+    )
+    expect(screen.queryByRole('button', { name: /Send to session/i })).not.toBeInTheDocument()
   })
 
   it('keeps terminal panes on the per-window opaque background palette', () => {

@@ -77,7 +77,7 @@ test.describe('Arena Dashboard', () => {
       await expect(page.locator('.window-location-chip')).toHaveCount(0)
     })
 
-    test('closes the active sidecar from its stable trigger and reopens it as an overlay', async ({ page }) => {
+    test('closes the active sidecar from its stable trigger and reopens it still pinned', async ({ page }) => {
       const panel = page.locator('.session-panel')
       await expect(panel).toHaveClass(/sidecar-pinned/)
 
@@ -85,7 +85,7 @@ test.describe('Arena Dashboard', () => {
       await expect(panel).toHaveCount(0)
 
       await page.getByRole('button', { name: 'Sessions sidecar', exact: true }).click()
-      await expect(page.locator('.session-panel')).toHaveClass(/sidecar-overlay/)
+      await expect(page.locator('.session-panel')).toHaveClass(/sidecar-pinned/)
     })
 
     test('switches one pinned sidecar between Sessions and Files and opens one non-modal file Peek', async ({ page }) => {
