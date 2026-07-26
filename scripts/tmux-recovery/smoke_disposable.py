@@ -17,6 +17,7 @@ import json
 import os
 from pathlib import Path
 import pwd
+import re
 import shutil
 import shlex
 import signal
@@ -132,20 +133,47 @@ def managed_systemd_record(*, session_name: str, unix_user: str, unit: str, owne
     }
 
 
-def assert_no_forbidden_references(values: list[Any]) -> None:
+# Live tmux sockets are matched by SHAPE, not by this host's names. The previous version listed
+# one operator's username and uid literally, which failed twice over: a repo-wide neutrality sweep
+# rewrote those literals to the neutral fixture values `build` and uid 2001, so the guard stopped
+# catching any live socket AND started tripping on the smoke's own `go build` argv in command_log.
+# A shape rule cannot be broken that way, and it catches every uid rather than one.
+LIVE_TMUX_SOCKET_PATTERNS = (
+    r"/run/user/\d+/[\w.-]*tmux[\w.-]*(?:/[\w.-]+)*",
+    r"/tmp/tmux-\d+(?:/[\w.-]+)*",
+    r"/run/chrote/[\w.-]*tmux[\w.-]*(?:/[\w.-]+)*",
+)
+# The product's compiled defaults plus this deployment's overrides. The smoke allocates its own
+# ports and choose_loopback_port() refuses to hand back any of these.
+LIVE_PORTS = (8094, 8095, 7683, 7686)
+LIVE_DATA_PATHS = ("/srv/data/chrote",)
+
+
+def assert_no_forbidden_references(values: list[Any], *, temp_root: str | Path | None = None) -> None:
+    """Fail if the smoke's own record mentions a resource it must never have touched.
+
+    Everything the smoke legitimately owns lives under `temp_root`, so a uid-scoped tmux socket
+    path outside that root means the disposable run reached into live infrastructure.
+    """
     text = "\n".join(_stringify(value) for value in values)
     lower = text.lower()
-    forbidden = [
-        ("live 8095", ["127.0.0.1:8095", "localhost:8095", ":8095"]),
-        ("live data", ["/srv/data/chrote"]),
-        ("Tavern", ["build"]),
-        ("live tmux socket", ["/run/user/2001/chrote-tmux", "/tmp/tmux-2001/default"]),
-        ("Claude", ["claude"]),
-    ]
-    for label, needles in forbidden:
-        for needle in needles:
-            if needle.lower() in lower:
-                raise SmokeFailure(f"forbidden {label} reference detected: {needle}")
+    root = str(Path(temp_root)) if temp_root is not None else None
+
+    for port in LIVE_PORTS:
+        for needle in (f"127.0.0.1:{port}", f"localhost:{port}", f":{port}"):
+            if needle in lower:
+                raise SmokeFailure(f"forbidden live {port} reference detected: {needle}")
+    for needle in LIVE_DATA_PATHS:
+        if needle in lower:
+            raise SmokeFailure(f"forbidden live data reference detected: {needle}")
+    for pattern in LIVE_TMUX_SOCKET_PATTERNS:
+        for match in re.finditer(pattern, text):
+            found = match.group(0)
+            if root is not None and found.startswith(root):
+                continue  # the smoke's own disposable socket, not a live one
+            raise SmokeFailure(f"forbidden live tmux socket reference detected: {found}")
+    if "claude" in lower:
+        raise SmokeFailure("forbidden live agent session reference detected: claude")
 
 
 def _stringify(value: Any) -> str:
@@ -855,7 +883,8 @@ def run_smoke(args: argparse.Namespace) -> SmokeState:
                     "persistentAgents": server_env["CHROTE_PERSISTENT_AGENTS_PATH"],
                     "sessionDrops": server_env["CHROTE_SESSION_DROPS_DIR"],
                 },
-            ]
+            ],
+            temp_root=temp_root,
         )
         state.checks["forbidden_live_references"] = {"status": "pass"}
         return state
