@@ -1162,6 +1162,79 @@ func TestTmuxOrchestratedFormationGivesLeaderToolPacketWithoutPreDispatchingWork
 	}
 }
 
+// TestTmuxOrchestratedFormationRejectsInvalidSlotShapeBeforeDispatch covers the
+// slot-shape errors splitOrchestratedSlots raises before the executor resolves
+// any slot binding or touches tmux: no controller slot, a controller with no
+// worker slots, and (optionally) more than one controller slot. Each case must
+// fail fast with the matching runExecutionError code, visible in the run
+// ledger, and without a single tmux call.
+func TestTmuxOrchestratedFormationRejectsInvalidSlotShapeBeforeDispatch(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		board    string
+		agentIDs []string
+		wantCode string
+	}{
+		{
+			name:     "no controller slot",
+			board:    tmuxOrchestratedBoardFixtureNoController(),
+			agentIDs: []string{"worker-a", "worker-b"},
+			wantCode: "missing_controller",
+		},
+		{
+			name:     "controller with no worker slots",
+			board:    tmuxOrchestratedBoardFixtureNoWorkers(),
+			agentIDs: []string{"lead"},
+			wantCode: "missing_worker",
+		},
+		{
+			name:     "two controller slots",
+			board:    tmuxOrchestratedBoardFixtureTwoControllers(),
+			agentIDs: []string{"lead", "co-lead", "worker-a"},
+			wantCode: "ambiguous_controller",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, personas := s4RunFixture(t)
+			store.Now = fixedClock()
+			personas.Now = fixedClock()
+			for _, id := range tc.agentIDs {
+				createS4Persona(t, personas, id)
+			}
+			writeFixture(t, store.BoardPath("session-search"), tc.board)
+			cfg := tmuxTestConfig(t)
+			client := &fakeTmuxHarnessClient{}
+			executor := newTmuxFormationExecutorWithClient(store, personas, cfg, client)
+			engine := NewRunEngine(store, personas, executor)
+			status, err := engine.RunFormation("session-search", "fmn_orch", FormationRunRequest{
+				Actor:  "agent:test",
+				Limits: RunLimits{MaxDispatch: 6, MaxAttempts: 1},
+			})
+			if err != nil {
+				t.Fatalf("run orchestrated formation: %v", err)
+			}
+			if status.Status != RunStatusBlocked {
+				t.Fatalf("status = %+v, want blocked", status)
+			}
+			events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
+			errEvent := eventOfType(t, events, RunEventError)
+			if errEvent.Data["code"] != tc.wantCode {
+				t.Fatalf("run error code = %#v, want %s", errEvent.Data["code"], tc.wantCode)
+			}
+			if errEvent.NodeID != "fmn_orch" {
+				t.Fatalf("error nodeId = %q, want fmn_orch", errEvent.NodeID)
+			}
+			if eventsContainType(events, RunEventOrchestrationTeam) || eventsContainType(events, RunEventSlotDispatch) {
+				t.Fatalf("events after slot-shape rejection = %v, want no orchestration_team/slot_dispatch", eventTypes(events))
+			}
+			if len(client.created) != 0 || client.listCalls != 0 || client.describeCalls != 0 || client.captureCalls != 0 || client.sendCalls != 0 {
+				t.Fatalf("tmux client calls after slot-shape rejection: created=%v list=%d describe=%d capture=%d send=%d, want none",
+					client.created, client.listCalls, client.describeCalls, client.captureCalls, client.sendCalls)
+			}
+		})
+	}
+}
+
 func TestWaitForCompletionAcceptsSentinelAfterTurnMarkerWhenPriorSentinelScrolledOut(t *testing.T) {
 	prompt := strings.Join([]string{
 		"run: run_marker",
@@ -1683,6 +1756,90 @@ controller = false
 agentId = "worker-b"
 harness = "openai-codex"
 `
+}
+
+// tmuxOrchestratedBoardFixtureWithSlots renders the same brd_orch/fmn_orch
+// header as tmuxOrchestratedBoardFixture with a caller-supplied slot table, so
+// tests can exercise splitOrchestratedSlots's rejection paths (no controller,
+// no workers, more than one controller) without duplicating the preamble.
+func tmuxOrchestratedBoardFixtureWithSlots(slots string) string {
+	return `schema = 1
+id = "brd_orch"
+slug = "session-search"
+title = "Orchestrated Smoke"
+rev = 1
+updatedBy = "agent:test"
+updatedAt = "2026-06-03T16:00:00Z"
+
+[[formation]]
+id = "fmn_orch"
+type = "orchestrated"
+title = "Proposal crew"
+
+[formation.brief]
+goal = "Produce a tiny implementation proposal with API and test sections"
+beadId = "home-9hjn"
+
+[[formation.input]]
+id = "port_orch_in"
+label = "Input"
+
+[[formation.output]]
+id = "port_orch_out"
+label = "Output"
+
+` + slots
+}
+
+func tmuxOrchestratedBoardFixtureNoController() string {
+	return tmuxOrchestratedBoardFixtureWithSlots(`[[formation.slot]]
+id = "slot_worker_a"
+label = "Worker A"
+controller = false
+agentId = "worker-a"
+harness = "openai-codex"
+
+[[formation.slot]]
+id = "slot_worker_b"
+label = "Worker B"
+controller = false
+agentId = "worker-b"
+harness = "openai-codex"
+`)
+}
+
+func tmuxOrchestratedBoardFixtureNoWorkers() string {
+	return tmuxOrchestratedBoardFixtureWithSlots(`[[formation.slot]]
+id = "slot_lead"
+label = "Lead"
+controller = true
+agentId = "lead"
+harness = "openai-codex"
+`)
+}
+
+func tmuxOrchestratedBoardFixtureTwoControllers() string {
+	return tmuxOrchestratedBoardFixtureWithSlots(`[[formation.slot]]
+id = "slot_lead"
+label = "Lead"
+controller = true
+agentId = "lead"
+harness = "openai-codex"
+
+[[formation.slot]]
+id = "slot_co_lead"
+label = "Co-Lead"
+controller = true
+agentId = "co-lead"
+harness = "openai-codex"
+
+[[formation.slot]]
+id = "slot_worker_a"
+label = "Worker A"
+controller = false
+agentId = "worker-a"
+harness = "openai-codex"
+`)
 }
 
 func tmuxPeerBoardFixture() string {
