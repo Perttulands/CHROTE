@@ -1196,9 +1196,9 @@ step up is an explicit configuration decision, never a silent fallback.
    uniquely-named sessions. Attachment of Formations slots to *existing*
    cockpit Terminal sessions remains unavailable: the stock tmux adapter
    cannot arbitrate connected/busy clients or prove the attachment, mutation,
-   input, pane-history, and closure journal required by ADR-0007, so a
-   session-target acquisition fails with
-   `session_target_attachment_audit_unavailable`.
+   input, pane-history, and closure journal required by ADR-0007, and no
+   executor path exists that can attach a slot to a pre-existing session —
+   the executor only creates and tears down its own uniquely-named sessions.
    [ADR-0009](docs/adr/0009-same-pool-tmux-input-fence.md) records
    `ctx-ug7.21` as infeasible under the accepted stock topology; `ctx-ug7.22`
    and `ctx-ug7.23` stay blocked on the separately proven operation-time
