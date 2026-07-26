@@ -5,10 +5,13 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -69,22 +72,45 @@ func (h *BeadsHandler) checkBdInstalled() bool {
 	return err == nil
 }
 
-// checkBeadsDirectory verifies .beads directory exists
+// checkBeadsDirectory verifies the project carries a readable modern bd workspace
 func (h *BeadsHandler) checkBeadsDirectory(projectPath string) (string, error) {
 	beadsPath := filepath.Join(projectPath, ".beads")
 	info, err := os.Stat(beadsPath)
-	if err != nil || !info.IsDir() {
+	if err != nil {
+		if errors.Is(err, fs.ErrPermission) {
+			return "", beadsPermissionError(beadsPath, err)
+		}
 		return "", fmt.Errorf("no .beads directory found in %s. Run 'bd init' to create one", projectPath)
 	}
-	if !isRegularFile(filepath.Join(beadsPath, "metadata.json")) || !isDirectory(filepath.Join(beadsPath, "embeddeddolt")) {
+	if !info.IsDir() {
+		return "", fmt.Errorf("no .beads directory found in %s. Run 'bd init' to create one", projectPath)
+	}
+	metaInfo, metaErr := os.Stat(filepath.Join(beadsPath, "metadata.json"))
+	doltInfo, doltErr := os.Stat(filepath.Join(beadsPath, "embeddeddolt"))
+	// An unreadable workspace must never be reported as a missing one: the data
+	// may be intact, and the 'bd init' suggestion below invites a destructive
+	// re-init (bd init --force discards the workspace).
+	if errors.Is(metaErr, fs.ErrPermission) {
+		return "", beadsPermissionError(beadsPath, metaErr)
+	}
+	if errors.Is(doltErr, fs.ErrPermission) {
+		return "", beadsPermissionError(beadsPath, doltErr)
+	}
+	if metaErr != nil || !metaInfo.Mode().IsRegular() || doltErr != nil || !doltInfo.IsDir() {
 		return "", fmt.Errorf("%s exists but is not a modern bd workspace. Run 'bd init' in %s", beadsPath, projectPath)
 	}
 	return beadsPath, nil
 }
 
-func isRegularFile(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.Mode().IsRegular()
+func beadsPermissionError(beadsPath string, cause error) error {
+	return fmt.Errorf("cannot access %s as user %s: %w. The workspace may be intact — fix the directory permissions or ACLs instead of re-initializing", beadsPath, effectiveUsername(), cause)
+}
+
+func effectiveUsername() string {
+	if current, err := user.Current(); err == nil && current.Username != "" {
+		return current.Username
+	}
+	return fmt.Sprintf("uid %d", os.Geteuid())
 }
 
 func isDirectory(path string) bool {
@@ -477,7 +503,7 @@ func (h *BeadsHandler) ListProjects(w http.ResponseWriter, r *http.Request) {
 					projectPath := filepath.Join(root, entry.Name())
 					if err := h.appendProject(&projects, seen, projectPath, "auto"); err != nil {
 						beadsPath := filepath.Join(projectPath, ".beads")
-						if isDirectory(beadsPath) {
+						if isDirectory(beadsPath) || errors.Is(err, fs.ErrPermission) {
 							warnings = append(warnings, "Ignoring invalid Beads workspace: "+projectPath+": "+err.Error())
 						}
 					}
@@ -487,7 +513,7 @@ func (h *BeadsHandler) ListProjects(w http.ResponseWriter, r *http.Request) {
 			// Check root itself
 			if err := h.appendProject(&projects, seen, root, "auto-root"); err != nil {
 				beadsPath := filepath.Join(root, ".beads")
-				if isDirectory(beadsPath) {
+				if isDirectory(beadsPath) || errors.Is(err, fs.ErrPermission) {
 					warnings = append(warnings, "Ignoring invalid Beads workspace: "+root+": "+err.Error())
 				}
 			}

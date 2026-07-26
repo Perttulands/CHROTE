@@ -447,3 +447,118 @@ func TestBeadsHandler_AddCommentPassesTextAsSingleArgument(t *testing.T) {
 		t.Fatalf("bd args = %#v, want %#v", gotArgs, wantArgs)
 	}
 }
+
+func TestBeadsHandler_CheckBeadsDirectoryUnreadableReportsPermissionError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits do not restrict root")
+	}
+	resetBeadsTestEnv(t)
+	handler := NewBeadsHandler()
+
+	project := t.TempDir()
+	makeValidBeadsWorkspace(t, project)
+	beadsPath := filepath.Join(project, ".beads")
+	if err := os.Chmod(beadsPath, 0); err != nil {
+		t.Fatalf("chmod .beads: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(beadsPath, 0o700) })
+
+	_, err := handler.checkBeadsDirectory(project)
+	if err == nil {
+		t.Fatal("unreadable .beads was accepted as a workspace")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, beadsPath) {
+		t.Errorf("error does not name the workspace path %q: %q", beadsPath, msg)
+	}
+	if !strings.Contains(msg, effectiveUsername()) {
+		t.Errorf("error does not name the effective user %q: %q", effectiveUsername(), msg)
+	}
+	if !strings.Contains(msg, "permission denied") {
+		t.Errorf("error does not state the permission cause: %q", msg)
+	}
+	if strings.Contains(msg, "bd init") {
+		t.Errorf("error suggests destructive re-init for possibly intact data: %q", msg)
+	}
+}
+
+func TestBeadsHandler_CheckBeadsDirectoryUnsearchableParentReportsPermissionError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits do not restrict root")
+	}
+	resetBeadsTestEnv(t)
+	handler := NewBeadsHandler()
+
+	project := filepath.Join(t.TempDir(), "project")
+	makeValidBeadsWorkspace(t, project)
+	if err := os.Chmod(project, 0); err != nil {
+		t.Fatalf("chmod project: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(project, 0o700) })
+
+	_, err := handler.checkBeadsDirectory(project)
+	if err == nil {
+		t.Fatal("unsearchable project directory was accepted as a workspace")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, filepath.Join(project, ".beads")) {
+		t.Errorf("error does not name the workspace path: %q", msg)
+	}
+	if !strings.Contains(msg, effectiveUsername()) {
+		t.Errorf("error does not name the effective user %q: %q", effectiveUsername(), msg)
+	}
+	if strings.Contains(msg, "bd init") {
+		t.Errorf("error suggests destructive re-init for possibly intact data: %q", msg)
+	}
+}
+
+func TestBeadsHandler_CheckBeadsDirectoryAbsentStillSuggestsBdInit(t *testing.T) {
+	resetBeadsTestEnv(t)
+	handler := NewBeadsHandler()
+
+	_, err := handler.checkBeadsDirectory(t.TempDir())
+	if err == nil {
+		t.Fatal("missing .beads was accepted as a workspace")
+	}
+	if !strings.Contains(err.Error(), "bd init") {
+		t.Errorf("missing workspace should still suggest 'bd init': %q", err.Error())
+	}
+}
+
+func TestBeadsHandler_ListProjectsReportsPermissionErrorForUnreadableWorkspace(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission bits do not restrict root")
+	}
+	resetBeadsTestEnv(t)
+
+	rootDir := t.TempDir()
+	project := filepath.Join(rootDir, "project")
+	makeValidBeadsWorkspace(t, project)
+	beadsPath := filepath.Join(project, ".beads")
+	if err := os.Chmod(beadsPath, 0); err != nil {
+		t.Fatalf("chmod .beads: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(beadsPath, 0o700) })
+
+	t.Setenv("CHROTE_ROOTS", rootDir)
+	core.ResetConfigForTesting()
+
+	handler := NewBeadsHandler()
+	req := httptest.NewRequest(http.MethodGet, "/api/beads/projects?path="+project, nil)
+	rec := httptest.NewRecorder()
+	handler.ListProjects(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("ListProjects status = %d, want %d: %s", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "permission denied") {
+		t.Errorf("response does not state the permission cause: %s", body)
+	}
+	if !strings.Contains(body, effectiveUsername()) {
+		t.Errorf("response does not name the effective user %q: %s", effectiveUsername(), body)
+	}
+	if strings.Contains(body, "bd init") {
+		t.Errorf("response suggests destructive re-init for possibly intact data: %s", body)
+	}
+}
