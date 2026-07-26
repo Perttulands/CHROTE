@@ -90,7 +90,8 @@ operator-controlled instance.
 - Archive material is context, not authority.
 - README prose should sound like CHROTE, not generated launch copy.
 - Public screenshots must contain no terminal transcripts, credentials, private
-  paths, personal usernames, Tavern content, or sensitive issue/session names.
+  paths, personal usernames, content belonging to a second local account, or
+  sensitive issue/session names.
 
 ## Pull requests
 
