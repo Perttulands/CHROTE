@@ -32,6 +32,11 @@ jobs:
       - name: Host neutrality
         run: python3 scripts/host-neutrality.py
 
+      - name: Python checks
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_*.py'
+          python3 -m unittest discover -s scripts/tmux-recovery -p 'test_*.py'
+
       - name: Verify tag matches VERSION
         run: |
           release_version="${GITHUB_REF_NAME#v}"
