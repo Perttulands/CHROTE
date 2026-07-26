@@ -286,6 +286,57 @@ def check_theme_docs(errors: list[str]) -> None:
         fail(errors, f"DESIGN-SYSTEM.md: theme table mismatch; missing={missing}, extra={extra}")
 
 
+def compiled_default_ports() -> dict[str, int]:
+    """Read the server's compiled default ports out of the code.
+
+    These are the product's defaults, and the only port values docs may present as
+    such. Three port stories exist in this repo and get confused for one another:
+    the compiled defaults here, the container's explicit 8080/7681 in src/Dockerfile
+    and src/deploy.sh, and whatever an operator passes with --port. A deployment's
+    port must never be documented as the product's, and vice versa — that inversion
+    has already sent work at correcting accurate documentation.
+    """
+    text = (ROOT / "src/cmd/server/main.go").read_text(encoding="utf-8")
+    ports: dict[str, int] = {}
+    for name in ("defaultServerPort", "defaultTtydPort"):
+        match = re.search(rf"^\s*{name}\s*=\s*(\d+)\s*$", text, re.MULTILINE)
+        if not match:
+            raise SystemExit(f"doc-lint: cannot read {name} from src/cmd/server/main.go")
+        ports[name] = int(match.group(1))
+    return ports
+
+
+def check_documented_ports_match_code(errors: list[str]) -> None:
+    """Fail when a doc's stated default port disagrees with the compiled one.
+
+    Derived from the code rather than duplicated, so changing main.go without
+    updating the docs fails here instead of drifting silently.
+    """
+    ports = compiled_default_ports()
+    server = str(ports["defaultServerPort"])
+    ttyd = str(ports["defaultTtydPort"])
+
+    for rel_path in ["README.md", "SECURITY.md", "docs/installation.md", "docs/troubleshooting.md"]:
+        path = ROOT / rel_path
+        if not path.exists():
+            fail(errors, f"missing public product doc: {rel_path}")
+            continue
+        if server not in path.read_text(encoding="utf-8"):
+            fail(
+                errors,
+                f"{rel_path}: does not name the compiled default server port {server} "
+                f"(src/cmd/server/main.go defaultServerPort)",
+            )
+
+    installation = (ROOT / "docs/installation.md").read_text(encoding="utf-8")
+    if ttyd not in installation:
+        fail(
+            errors,
+            f"docs/installation.md: does not name the compiled default ttyd port {ttyd} "
+            f"(src/cmd/server/main.go defaultTtydPort)",
+        )
+
+
 def check_security_runtime_facts(errors: list[str]) -> None:
     path = ROOT / "SECURITY.md"
     if not path.exists():
@@ -294,7 +345,7 @@ def check_security_runtime_facts(errors: list[str]) -> None:
     text = path.read_text(encoding="utf-8")
     required = [
         "127.0.0.1",
-        "8094",
+        str(compiled_default_ports()["defaultServerPort"]),
         "HOST",
         "PORT",
         "TTYD_PORT",
@@ -456,6 +507,7 @@ def main() -> int:
     check_source_truth_index(errors)
     check_active_local_links(errors)
     check_theme_docs(errors)
+    check_documented_ports_match_code(errors)
     check_security_runtime_facts(errors)
     check_public_docs_are_host_neutral(errors)
     check_current_product_views(errors)
