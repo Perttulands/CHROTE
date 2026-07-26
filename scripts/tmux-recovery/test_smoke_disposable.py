@@ -80,6 +80,68 @@ class DisposableSmokeHelpersTest(unittest.TestCase):
         self.assertNotRegex(guard, r"/run/user/\d")
         self.assertNotRegex(guard, r"/tmp/tmux-\d")
 
+    def test_live_pane_pids_reads_pids_from_tmux_for_one_session(self) -> None:
+        seen: list[list[str]] = []
+
+        def fake_run_command(argv, **kwargs):
+            seen.append(argv)
+            return smoke_disposable.CommandResult(argv=argv, returncode=0, stdout="4242\n4243\n\n", stderr="")
+
+        original = smoke_disposable.run_command
+        smoke_disposable.run_command = fake_run_command
+        try:
+            pids = smoke_disposable.live_pane_pids(Path("/tmp/x/t.sock"), "ctxsh75_abc", "/usr/bin/tmux")
+        finally:
+            smoke_disposable.run_command = original
+
+        self.assertEqual(pids, {"4242", "4243"})  # blank line dropped
+        self.assertEqual(
+            seen[0],
+            ["/usr/bin/tmux", "-S", "/tmp/x/t.sock", "list-panes", "-t", "ctxsh75_abc", "-F", "#{pane_pid}"],
+        )
+
+    def test_restored_panes_are_judged_by_pid_not_by_pane_id(self) -> None:
+        # tmux allocates pane ids monotonically PER SERVER and restore rebuilds on a fresh server,
+        # so a snapshotted session holding the first panes gets the same ids back and an
+        # id-inequality check fires on a correct restore. Pids do not depend on creation order.
+        same_ids_new_processes = {"9001", "9002"} & {"9101", "9102"}
+        self.assertEqual(same_ids_new_processes, set(), "disjoint pids mean the panes were recreated")
+        genuine_survivor = {"9001", "9002"} & {"9002", "9103"}
+        self.assertEqual(genuine_survivor, {"9002"}, "an overlapping pid is a real survivor and must fail")
+
+    def test_kill_tmux_server_fails_loud_when_the_server_survives(self) -> None:
+        # A guarded tmux wrapper refuses kill-server with a non-zero exit. check=False swallowed
+        # that, so the smoke restored a server it never killed and passed vacuously.
+        def fake_run_command(argv, **kwargs):
+            if "kill-server" in argv:
+                return smoke_disposable.CommandResult(
+                    argv=argv, returncode=126, stdout="", stderr="BLOCKED by CHROTE tmux guard: kill-server"
+                )
+            return smoke_disposable.CommandResult(argv=argv, returncode=0, stdout="ctxsh75_abc: 1 windows\n", stderr="")
+
+        original = smoke_disposable.run_command
+        smoke_disposable.run_command = fake_run_command
+        try:
+            with self.assertRaisesRegex(smoke_disposable.SmokeFailure, "survived kill-server"):
+                smoke_disposable.kill_tmux_server(Path("/tmp/x/t.sock"), "/usr/bin/tmux")
+        finally:
+            smoke_disposable.run_command = original
+
+    def test_kill_tmux_server_accepts_a_server_that_is_really_gone(self) -> None:
+        def fake_run_command(argv, **kwargs):
+            if "kill-server" in argv:
+                return smoke_disposable.CommandResult(argv=argv, returncode=0, stdout="", stderr="")
+            return smoke_disposable.CommandResult(
+                argv=argv, returncode=1, stdout="", stderr="no server running on /tmp/x/t.sock"
+            )
+
+        original = smoke_disposable.run_command
+        smoke_disposable.run_command = fake_run_command
+        try:
+            smoke_disposable.kill_tmux_server(Path("/tmp/x/t.sock"), "/usr/bin/tmux")
+        finally:
+            smoke_disposable.run_command = original
+
     def test_loopback_port_allocation_reports_environment_blocker(self) -> None:
         def denied_socket(*_args, **_kwargs):
             raise PermissionError(1, "Operation not permitted")

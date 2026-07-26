@@ -381,7 +381,22 @@ def tmux(*args: str, socket_path: Path, tmux_bin: str = "tmux", state: SmokeStat
 
 
 def kill_tmux_server(socket_path: Path, tmux_bin: str, state: SmokeState | None = None) -> None:
-    tmux("kill-server", socket_path=socket_path, tmux_bin=tmux_bin, state=state, check=False)
+    """Kill the smoke's own disposable server, and PROVE it died.
+
+    check=False alone made this a silent no-op wherever tmux is a guarded wrapper that refuses
+    kill-server: the smoke went on to "restore" a server it had never killed, re-observed the
+    original panes, and passed every downstream check vacuously. The kill is the one step the
+    whole recovery smoke rests on, so it fails loud instead.
+    """
+    killed = tmux("kill-server", socket_path=socket_path, tmux_bin=tmux_bin, state=state, check=False)
+    probe = tmux("list-sessions", socket_path=socket_path, tmux_bin=tmux_bin, state=state, check=False)
+    if probe.returncode == 0:
+        detail = (killed.stderr or killed.stdout or "").strip()[:400]
+        raise SmokeFailure(
+            f"disposable tmux server at {socket_path} survived kill-server "
+            f"(kill exit {killed.returncode}); the smoke would otherwise verify a recovery that "
+            f"never happened. tmux said: {detail!r}"
+        )
 
 
 def start_initial_tmux_topology(
@@ -471,6 +486,27 @@ def pane_ids(session: dict[str, Any]) -> list[str]:
         topology = desc.get("topology") if isinstance(desc.get("topology"), dict) else {}
         ids.append(str(topology.get("paneId", "")))
     return ids
+
+
+def live_pane_pids(socket_path: Path, session_name: str, tmux_bin: str, state: SmokeState | None = None) -> set[str]:
+    """OS pids backing a session's panes, straight from tmux.
+
+    Pane *ids* cannot answer "are these new processes?". tmux allocates them monotonically per
+    server and restore rebuilds on a fresh server, so the counter restarts at 0 and old and new
+    ids collide whenever the snapshotted session happened to hold the first panes. Pids are the
+    thing the check actually means, and they do not depend on creation order.
+    """
+    result = tmux(
+        "list-panes",
+        "-t",
+        session_name,
+        "-F",
+        "#{pane_pid}",
+        socket_path=socket_path,
+        tmux_bin=tmux_bin,
+        state=state,
+    )
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
 
 
 def find_manifest_path(snapshot_result: dict[str, Any]) -> Path:
@@ -751,6 +787,10 @@ def run_smoke(args: argparse.Namespace) -> SmokeState:
             "verification": verification_summary,
         }
 
+        pane_pids_before = live_pane_pids(tmux_socket, session_name, tmux_bin, state)
+        if not pane_pids_before:
+            raise SmokeFailure(f"no pane pids observed for {session_name!r} before the kill")
+
         kill_tmux_server(tmux_socket, tmux_bin, state)
         start_extra_tmux_session(tmux_bin=tmux_bin, socket_path=tmux_socket, session_name=extra_session, cwd=work_dir, state=state)
         state.checks["post_snapshot_extra_session"] = {"status": "pass", "sessionName": extra_session}
@@ -820,12 +860,15 @@ def run_smoke(args: argparse.Namespace) -> SmokeState:
             }
         old_panes = pane_ids(expected_session)
         new_panes = pane_ids(observed_session)
-        if old_panes == new_panes:
-            raise SmokeFailure(f"pane ids were not reallocated: {old_panes}")
+        pane_pids_after = live_pane_pids(tmux_socket, session_name, tmux_bin, state)
+        survivors = pane_pids_before & pane_pids_after
+        if survivors:
+            raise SmokeFailure(f"restored panes reuse pre-kill processes: {sorted(survivors)}")
         state.checks["restored_topology_workloads"] = {
             "status": "pass",
             "oldPaneIds": old_panes,
             "newPaneIds": new_panes,
+            "panePidsReplaced": len(pane_pids_before | pane_pids_after),
             "hermesProfile": agent.get("hermesProfile"),
             "helperHTTP": 200,
             "extraSessionPreserved": True,
