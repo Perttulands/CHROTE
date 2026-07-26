@@ -2044,32 +2044,7 @@ func tmuxRunBoardWithBrief(goal string) string {
 }
 
 func tmuxOrchestratedBoardFixture() string {
-	return `schema = 1
-id = "brd_orch"
-slug = "session-search"
-title = "Orchestrated Smoke"
-rev = 1
-updatedBy = "agent:test"
-updatedAt = "2026-06-03T16:00:00Z"
-
-[[formation]]
-id = "fmn_orch"
-type = "orchestrated"
-title = "Proposal crew"
-
-[formation.brief]
-goal = "Produce a tiny implementation proposal with API and test sections"
-beadId = "home-9hjn"
-
-[[formation.input]]
-id = "port_orch_in"
-label = "Input"
-
-[[formation.output]]
-id = "port_orch_out"
-label = "Output"
-
-[[formation.slot]]
+	return tmuxOrchestratedBoardFixtureWithSlots(`[[formation.slot]]
 id = "slot_lead"
 label = "Lead"
 controller = true
@@ -2089,13 +2064,13 @@ label = "Worker B"
 controller = false
 agentId = "worker-b"
 harness = "openai-codex"
-`
+`)
 }
 
-// tmuxOrchestratedBoardFixtureWithSlots renders the same brd_orch/fmn_orch
-// header as tmuxOrchestratedBoardFixture with a caller-supplied slot table, so
-// tests can exercise splitOrchestratedSlots's rejection paths (no controller,
-// no workers, more than one controller) without duplicating the preamble.
+// tmuxOrchestratedBoardFixtureWithSlots renders the brd_orch/fmn_orch header
+// with a caller-supplied slot table; every orchestrated-board fixture,
+// including the canonical tmuxOrchestratedBoardFixture, goes through it so a
+// header change cannot silently fork the board shape between tests.
 func tmuxOrchestratedBoardFixtureWithSlots(slots string) string {
 	return `schema = 1
 id = "brd_orch"
