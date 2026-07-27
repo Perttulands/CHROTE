@@ -119,6 +119,12 @@
   border-bottom: 1px solid var(--divider);
 }
 
+/* Brief placeholder while a lazy view chunk loads on first visit */
+.view-chunk-loading {
+  flex: 1;
+  padding: 24px;
+}
+
 /* Drag overlay */
 .dashboard.is-dragging iframe {
   pointer-events: none;

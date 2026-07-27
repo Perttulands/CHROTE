@@ -1,20 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react'
 import { DndContext, DragEndEvent, DragStartEvent, DragOverlay, useSensor, useSensors, PointerSensor } from '@dnd-kit/core'
 import { SessionProvider, useSession } from './context/SessionContext'
 import TabBar, { Tab } from './components/TabBar'
 import TerminalWorkspaceDock from './components/TerminalWorkspaceDock'
-import FilesView from './components/FilesView'
-import SettingsView from './components/SettingsView'
 import FloatingModal from './components/FloatingModal'
 import SendToSessionModal from './components/SendToSessionModal'
-import HelpView from './components/HelpView'
-import BeadsView from './components/BeadsView'
-import FormationsCockpit from './components/FormationsCockpit'
-import AgentsView from './components/AgentsView'
-import ServicesView from './components/ServicesView'
-import SystemStatusView from './components/SystemStatusView'
-import ScheduledTasksView from './components/ScheduledTasksView'
 import ErrorBoundary from './components/ErrorBoundary'
+import Skeleton from './components/LoadingSkeleton'
 import { ToastContainer } from './components/ToastNotification'
 import KeyboardShortcutsOverlay from './components/KeyboardShortcutsOverlay'
 import LayoutPresetsPanel from './components/LayoutPresetsPanel'
@@ -23,6 +15,26 @@ import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { installFeatureFlagHelpers, isFeatureEnabled } from './featureFlags'
 import { TERMINAL_WORKSPACE_IDS, getSessionNameFromKey, getTerminalUserColor, getTerminalUserInitial } from './types'
 import type { UserSettings, WorkspaceId } from './types'
+
+// Non-terminal views load as route-level chunks on first visit. The terminal
+// docks and everything they depend on stay eager: they are the startup surface
+// and their iframe pool must never be interrupted by a chunk load. Each lazy
+// view gets its OWN Suspense boundary inside its mount branch — one shared
+// boundary around .dashboard-content would swap the whole tree (terminal docks
+// included) for a fallback while a chunk loads, killing live terminals.
+const FilesView = lazy(() => import('./components/FilesView'))
+const SettingsView = lazy(() => import('./components/SettingsView'))
+const HelpView = lazy(() => import('./components/HelpView'))
+const BeadsView = lazy(() => import('./components/BeadsView'))
+const FormationsCockpit = lazy(() => import('./components/FormationsCockpit'))
+const AgentsView = lazy(() => import('./components/AgentsView'))
+const ServicesView = lazy(() => import('./components/ServicesView'))
+const SystemStatusView = lazy(() => import('./components/SystemStatusView'))
+const ScheduledTasksView = lazy(() => import('./components/ScheduledTasksView'))
+
+function ViewFallback() {
+  return <div className="view-chunk-loading"><Skeleton height="14px" width="180px" /></div>
+}
 
 interface ActiveDrag {
   name: string
@@ -278,22 +290,30 @@ function DashboardContent() {
           ))}
           {persistFilesTabState ? (
             <div style={{ display: activeTab === 'files' ? 'contents' : 'none' }}>
-              <FilesView
-                navigateRequest={filesNavigateRequest}
-                onSendPath={filesSendTarget ? handleSendFilePath : undefined}
-                sendTargetLabel={filesSendTarget ? getSessionNameFromKey(filesSendTarget) : null}
-              />
+              <Suspense fallback={<ViewFallback />}>
+                <FilesView
+                  navigateRequest={filesNavigateRequest}
+                  onSendPath={filesSendTarget ? handleSendFilePath : undefined}
+                  sendTargetLabel={filesSendTarget ? getSessionNameFromKey(filesSendTarget) : null}
+                />
+              </Suspense>
             </div>
           ) : (
-            activeTab === 'files' && <FilesView
-                navigateRequest={filesNavigateRequest}
-                onSendPath={filesSendTarget ? handleSendFilePath : undefined}
-                sendTargetLabel={filesSendTarget ? getSessionNameFromKey(filesSendTarget) : null}
-              />
+            activeTab === 'files' && (
+              <Suspense fallback={<ViewFallback />}>
+                <FilesView
+                  navigateRequest={filesNavigateRequest}
+                  onSendPath={filesSendTarget ? handleSendFilePath : undefined}
+                  sendTargetLabel={filesSendTarget ? getSessionNameFromKey(filesSendTarget) : null}
+                />
+              </Suspense>
+            )
           )}
           {activeTab === 'beads' && (
             <ErrorBoundary>
-              <BeadsView onOpenProjectInFiles={handleOpenProjectInFiles} />
+              <Suspense fallback={<ViewFallback />}>
+                <BeadsView onOpenProjectInFiles={handleOpenProjectInFiles} />
+              </Suspense>
             </ErrorBoundary>
           )}
           {(formationsVisited || activeTab === 'formations') && (
@@ -308,34 +328,52 @@ function DashboardContent() {
               }}
             >
               <ErrorBoundary>
-                <FormationsCockpit active={activeTab === 'formations'} />
+                <Suspense fallback={<ViewFallback />}>
+                  <FormationsCockpit active={activeTab === 'formations'} />
+                </Suspense>
               </ErrorBoundary>
             </div>
           )}
           {activeTab === 'agents' && (
             <ErrorBoundary>
-              <AgentsView />
+              <Suspense fallback={<ViewFallback />}>
+                <AgentsView />
+              </Suspense>
             </ErrorBoundary>
           )}
           {activeTab === 'services' && (
             <ErrorBoundary>
-              <ServicesView />
+              <Suspense fallback={<ViewFallback />}>
+                <ServicesView />
+              </Suspense>
             </ErrorBoundary>
           )}
           {activeTab === 'scheduled' && (
             <ErrorBoundary>
-              <ScheduledTasksView />
+              <Suspense fallback={<ViewFallback />}>
+                <ScheduledTasksView />
+              </Suspense>
             </ErrorBoundary>
           )}
           {serverStatusTab && (
             <div style={{ display: activeTab === 'server' ? 'contents' : 'none' }}>
               <ErrorBoundary>
-                <SystemStatusView active={activeTab === 'server'} />
+                <Suspense fallback={<ViewFallback />}>
+                  <SystemStatusView active={activeTab === 'server'} />
+                </Suspense>
               </ErrorBoundary>
             </div>
           )}
-          {activeTab === 'settings' && <SettingsView sessionBankFocusNonce={settingsSessionBankFocusNonce} />}
-          {activeTab === 'help' && <HelpView />}
+          {activeTab === 'settings' && (
+            <Suspense fallback={<ViewFallback />}>
+              <SettingsView sessionBankFocusNonce={settingsSessionBankFocusNonce} />
+            </Suspense>
+          )}
+          {activeTab === 'help' && (
+            <Suspense fallback={<ViewFallback />}>
+              <HelpView />
+            </Suspense>
+          )}
         </div>
 
         <FloatingModal />
