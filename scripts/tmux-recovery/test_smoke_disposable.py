@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -104,43 +106,185 @@ class DisposableSmokeHelpersTest(unittest.TestCase):
         # tmux allocates pane ids monotonically PER SERVER and restore rebuilds on a fresh server,
         # so a snapshotted session holding the first panes gets the same ids back and an
         # id-inequality check fires on a correct restore. Pids do not depend on creation order.
-        same_ids_new_processes = {"9001", "9002"} & {"9101", "9102"}
-        self.assertEqual(same_ids_new_processes, set(), "disjoint pids mean the panes were recreated")
-        genuine_survivor = {"9001", "9002"} & {"9002", "9103"}
-        self.assertEqual(genuine_survivor, {"9002"}, "an overlapping pid is a real survivor and must fail")
-
-    def test_kill_tmux_server_fails_loud_when_the_server_survives(self) -> None:
-        # A guarded tmux wrapper refuses kill-server with a non-zero exit. check=False swallowed
-        # that, so the smoke restored a server it never killed and passed vacuously.
-        def fake_run_command(argv, **kwargs):
-            if "kill-server" in argv:
-                return smoke_disposable.CommandResult(
-                    argv=argv, returncode=126, stdout="", stderr="BLOCKED by CHROTE tmux guard: kill-server"
-                )
-            return smoke_disposable.CommandResult(argv=argv, returncode=0, stdout="ctxsh75_abc: 1 windows\n", stderr="")
-
-        original = smoke_disposable.run_command
-        smoke_disposable.run_command = fake_run_command
-        try:
-            with self.assertRaisesRegex(smoke_disposable.SmokeFailure, "survived kill-server"):
-                smoke_disposable.kill_tmux_server(Path("/tmp/x/t.sock"), "/usr/bin/tmux")
-        finally:
-            smoke_disposable.run_command = original
-
-    def test_kill_tmux_server_accepts_a_server_that_is_really_gone(self) -> None:
-        def fake_run_command(argv, **kwargs):
-            if "kill-server" in argv:
-                return smoke_disposable.CommandResult(argv=argv, returncode=0, stdout="", stderr="")
-            return smoke_disposable.CommandResult(
-                argv=argv, returncode=1, stdout="", stderr="no server running on /tmp/x/t.sock"
+        replaced = smoke_disposable.assert_pane_processes_recreated(
+            {"9001", "9002"},
+            {"9101", "9102"},
+        )
+        self.assertEqual(replaced, 4)
+        with self.assertRaisesRegex(smoke_disposable.SmokeFailure, "pre-kill processes.*9002"):
+            smoke_disposable.assert_pane_processes_recreated(
+                {"9001", "9002"},
+                {"9002", "9103"},
             )
 
-        original = smoke_disposable.run_command
-        smoke_disposable.run_command = fake_run_command
-        try:
-            smoke_disposable.kill_tmux_server(Path("/tmp/x/t.sock"), "/usr/bin/tmux")
-        finally:
-            smoke_disposable.run_command = original
+    def test_tmux_server_pid_is_read_from_the_exact_disposable_socket(self) -> None:
+        seen: list[list[str]] = []
+
+        def fake_run_command(argv, **kwargs):
+            seen.append(argv)
+            return smoke_disposable.CommandResult(argv=argv, returncode=0, stdout="4242\n", stderr="")
+
+        with mock.patch.object(smoke_disposable, "run_command", side_effect=fake_run_command):
+            pid = smoke_disposable.tmux_server_pid(Path("/tmp/x/t.sock"), "/usr/bin/tmux")
+
+        self.assertEqual(pid, 4242)
+        self.assertEqual(
+            seen,
+            [["/usr/bin/tmux", "-S", "/tmp/x/t.sock", "display-message", "-p", "#{pid}"]],
+        )
+
+    def test_smoke_never_invokes_tmux_kill_server(self) -> None:
+        source = Path(smoke_disposable.__file__).read_text(encoding="utf-8")
+        self.assertNotRegex(source, r'tmux\(\s*"kill-server"')
+
+    def test_stop_tmux_server_refuses_a_pid_not_owned_by_the_disposable_socket(self) -> None:
+        with (
+            mock.patch.object(smoke_disposable, "tmux_server_pid", return_value=5000) as read_pid,
+            mock.patch.object(smoke_disposable.os, "kill") as send_signal,
+        ):
+            with self.assertRaisesRegex(
+                smoke_disposable.SmokeFailure,
+                "disposable socket reports pid 5000, not recorded pid 4242",
+            ):
+                smoke_disposable.stop_tmux_server(Path("/tmp/x/t.sock"), 4242, "/usr/bin/tmux")
+
+        read_pid.assert_called_once_with(Path("/tmp/x/t.sock"), "/usr/bin/tmux", None)
+        send_signal.assert_not_called()
+
+    def test_stop_tmux_server_signals_only_the_recorded_pid(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            socket_path = Path(raw_dir) / "tmux.sock"
+            socket_path.touch()
+            signal_calls: list[tuple[int, int]] = []
+            alive = {4242}
+
+            def fake_kill(pid: int, sig: int) -> None:
+                signal_calls.append((pid, sig))
+                if sig == smoke_disposable.signal.SIGTERM:
+                    alive.discard(pid)
+                    socket_path.unlink()
+                elif pid not in alive:
+                    raise ProcessLookupError
+
+            with (
+                mock.patch.object(smoke_disposable, "tmux_server_pid", return_value=4242),
+                mock.patch.object(smoke_disposable.os, "kill", side_effect=fake_kill),
+            ):
+                smoke_disposable.stop_tmux_server(socket_path, 4242, "/usr/bin/tmux")
+
+        self.assertEqual({pid for pid, _sig in signal_calls}, {4242})
+        self.assertEqual(signal_calls.count((4242, smoke_disposable.signal.SIGTERM)), 1)
+
+    def test_stop_tmux_server_removes_its_stale_socket_only_after_the_pid_dies(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            socket_path = Path(raw_dir) / "tmux.sock"
+            socket_path.touch()
+            alive = {4242}
+
+            def fake_kill(pid: int, sig: int) -> None:
+                if sig == smoke_disposable.signal.SIGTERM:
+                    alive.discard(pid)
+                elif pid not in alive:
+                    raise ProcessLookupError
+
+            with (
+                mock.patch.object(smoke_disposable, "tmux_server_pid", return_value=4242),
+                mock.patch.object(smoke_disposable.os, "kill", side_effect=fake_kill),
+                mock.patch.object(smoke_disposable.time, "monotonic", side_effect=[10.0, 10.0, 10.25]),
+                mock.patch.object(smoke_disposable.time, "sleep"),
+            ):
+                smoke_disposable.stop_tmux_server(
+                    socket_path,
+                    4242,
+                    "/usr/bin/tmux",
+                    timeout=0.2,
+                    poll_interval=0.05,
+                )
+
+            self.assertFalse(socket_path.exists())
+
+    def test_stop_tmux_server_uses_a_bounded_timeout_and_fails_if_the_pid_survives(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            socket_path = Path(raw_dir) / "tmux.sock"
+            socket_path.touch()
+            signal_calls: list[tuple[int, int]] = []
+
+            def fake_kill(pid: int, sig: int) -> None:
+                signal_calls.append((pid, sig))
+
+            with (
+                mock.patch.object(smoke_disposable, "tmux_server_pid", return_value=4242),
+                mock.patch.object(smoke_disposable.os, "kill", side_effect=fake_kill),
+                mock.patch.object(smoke_disposable.time, "monotonic", side_effect=[10.0, 10.0, 10.25]) as clock,
+                mock.patch.object(smoke_disposable.time, "sleep") as sleep,
+            ):
+                with self.assertRaisesRegex(
+                    smoke_disposable.SmokeFailure,
+                    "pid 4242 survived SIGTERM after 0.200s",
+                ):
+                    smoke_disposable.stop_tmux_server(
+                        socket_path,
+                        4242,
+                        "/usr/bin/tmux",
+                        timeout=0.2,
+                        poll_interval=0.05,
+                    )
+
+        self.assertEqual({pid for pid, _sig in signal_calls}, {4242})
+        self.assertEqual(signal_calls.count((4242, smoke_disposable.signal.SIGTERM)), 1)
+        self.assertEqual(clock.call_count, 3)
+        sleep.assert_called_once_with(0.05)
+
+    def test_cleanup_preserves_the_socket_root_if_the_recorded_pid_survives(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            temp_root = Path(raw_dir) / "smoke"
+            socket_path = temp_root / "tmux" / "tmux.sock"
+            socket_path.parent.mkdir(parents=True)
+            socket_path.touch()
+            server = smoke_disposable.DisposableTmuxServer(
+                socket_path=socket_path,
+                tmux_bin="/usr/bin/tmux",
+            )
+            server.pid = 4242
+            cleanup = smoke_disposable.CleanupStack()
+            cleanup.add(lambda: server.remove_temp_root(temp_root))
+            cleanup.add(server.stop)
+
+            with mock.patch.object(
+                smoke_disposable,
+                "stop_tmux_server",
+                side_effect=smoke_disposable.SmokeFailure("pid 4242 survived SIGTERM"),
+            ):
+                with self.assertRaisesRegex(smoke_disposable.SmokeFailure, "survived SIGTERM"):
+                    cleanup.close()
+
+            self.assertTrue(socket_path.exists(), "a live server must keep its socket reachable")
+
+    def test_cleanup_preserves_the_socket_root_if_started_server_pid_capture_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            temp_root = Path(raw_dir) / "smoke"
+            socket_path = temp_root / "tmux" / "tmux.sock"
+            socket_path.parent.mkdir(parents=True)
+            socket_path.touch()
+            server = smoke_disposable.DisposableTmuxServer(
+                socket_path=socket_path,
+                tmux_bin="/usr/bin/tmux",
+            )
+            cleanup = smoke_disposable.CleanupStack()
+            cleanup.add(lambda: server.remove_temp_root(temp_root))
+            cleanup.add(server.stop)
+
+            with mock.patch.object(
+                smoke_disposable,
+                "tmux_server_pid",
+                side_effect=smoke_disposable.SmokeFailure("pid query failed"),
+            ):
+                with self.assertRaisesRegex(smoke_disposable.SmokeFailure, "pid query failed"):
+                    server.capture()
+            with self.assertRaisesRegex(smoke_disposable.SmokeFailure, "pid was not recorded"):
+                cleanup.close()
+
+            self.assertTrue(socket_path.exists(), "an untracked started server must keep its socket reachable")
 
     def test_loopback_port_allocation_reports_environment_blocker(self) -> None:
         def denied_socket(*_args, **_kwargs):
