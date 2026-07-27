@@ -535,9 +535,13 @@ function migrateStoredState(raw: unknown, viewportBucket: ViewportBucket): Loade
 const SessionContext = createContext<DashboardContextType | null>(null)
 
 export function SessionProvider({ children }: { children: ReactNode }) {
-  const viewportBucket = useMemo(() => getCurrentViewportBucket(), [])
-  // Load initial state from localStorage or use defaults
-  const stored = useMemo(() => loadStoredState(viewportBucket), [viewportBucket])
+  // Live-switch policy (ctx-00t): the bucket follows the viewport across
+  // breakpoint crossings and rotations instead of freezing at mount, so
+  // edits are never persisted under a stale viewport key.
+  const [viewportBucket, setViewportBucket] = useState<ViewportBucket>(() => getCurrentViewportBucket())
+  // Load initial state from localStorage or use defaults. Mount-time only:
+  // later bucket switches load their layout in the viewport-change handler.
+  const stored = useMemo(() => loadStoredState(viewportBucket), [])
 
   // Toast notifications
   const { addToast } = useToast()
@@ -556,6 +560,31 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return acc
     }, {} as Record<WorkspaceId, TerminalWorkspace>)
   )
+  const viewportBucketRef = useRef(viewportBucket)
+  viewportBucketRef.current = viewportBucket
+
+  // Follow live breakpoint crossings and rotations. Entering a bucket with a
+  // stored layout loads it; a bucket never used before carries the current
+  // layout over (and the save effect then persists it there). Both setters
+  // batch, so the persistence effect observes only the consistent new
+  // (workspaces, bucket) pair — nothing is ever written under a stale key.
+  useEffect(() => {
+    const handleViewportChange = () => {
+      const next = getCurrentViewportBucket()
+      if (next === viewportBucketRef.current) return
+      const storedNext = loadStoredState(next)
+      const nextLayout = storedNext?.layoutsByViewport[next]
+      setViewportBucket(next)
+      if (nextLayout) setWorkspaces(nextLayout.workspaces)
+    }
+    window.addEventListener('resize', handleViewportChange)
+    window.addEventListener('orientationchange', handleViewportChange)
+    return () => {
+      window.removeEventListener('resize', handleViewportChange)
+      window.removeEventListener('orientationchange', handleViewportChange)
+    }
+  }, [])
+
   const [sidebarCollapsed, setSidebarCollapsed] = useState(stored?.sidebarCollapsed ?? false)
   const [floatingSession, setFloatingSession] = useState<string | null>(null)
   const [sendToSessionTarget, setSendToSessionTarget] = useState<string | null>(null)

@@ -11,13 +11,31 @@ RuntimeDirectory=chrote
 RuntimeDirectoryMode=0750
 UMask=0002
 ExecStartPre=+/bin/sh -lc 'install -d -o "${CHROTE_SERVICE_USER:-chrote}" -g "${CHROTE_SERVICE_GROUP:-chrote}" -m "${CHROTE_RUNTIME_MODE:-0750}" "${CHROTE_RUNTIME_ROOT:-/run/chrote}/tmux" "${CHROTE_RUNTIME_ROOT:-/run/chrote}/formations-tmux"'
-ExecStartPre=+/bin/sh -lc 'exec "$CHROTE_SERVICE_ROOT/scripts/chrote-tmux-grants.sh"'
+# Install the tracked grant helper before running it, so the copy that executes
+# is always the copy that review, tests and doc-lint inspect. A host drop-in that
+# re-points ExecStartPre at a hand-maintained libexec copy is how the installed
+# helper forked from the repo and kept a validation bypass nobody could see.
+ExecStartPre=+/bin/sh -lc 'install -D -o root -g root -m 0755 "$CHROTE_SERVICE_ROOT/scripts/chrote-tmux-grants.sh" "${CHROTE_TMUX_GRANT_HELPER:-/usr/local/libexec/chrote/chrote-tmux-grants.sh}"'
+ExecStartPre=+/bin/sh -lc 'exec "${CHROTE_TMUX_GRANT_HELPER:-/usr/local/libexec/chrote/chrote-tmux-grants.sh}"'
 ExecStart=/bin/sh -lc 'cd "$CHROTE_SERVICE_ROOT" && exec "$CHROTE_SERVICE_ROOT/chrote-server" --host "${HOST:-127.0.0.1}" --port "${PORT:-8095}" --ttyd-port "${TTYD_PORT:-7686}"'
-# KillMode=process because this cgroup holds long-lived children that must
-# outlive a restart: ttyd terminal sessions and any Formations tmux server. The
-# default control-group SIGTERMs all of them. Keep it in the tracked unit so
-# reinstalling from the repo cannot silently revert it, the way the legacy lane's
-# drop-in-only setting could.
+# KillMode=process is ruled on by docs/adr/0013-ttyd-restart-lifecycle-and-orphan-reaping.md,
+# which owns the lifecycle and reaping story. Read that before changing this line.
+#
+# Two measurements worth keeping next to the setting, because both invite wrong
+# conclusions from `systemctl status` alone:
+#
+#   ttyd is not what this protects. The next start reclaims its port with
+#   `fuser -k` (src/internal/proxy/terminal.go), so a preserved ttyd is killed
+#   moments later anyway.
+#
+#   Sessions surviving a restart are NOT evidence that this setting works. The
+#   tmux servers holding them are owned by other users and sit outside this
+#   cgroup, so they survive either setting. Only an in-cgroup tmux server would
+#   demonstrate anything, and per ADR-0013 that case is still open.
+#
+# The cost is orphans: `systemctl stop` leaves any in-cgroup child running. Keep it
+# in the tracked unit so reinstalling from the repo cannot silently revert it, the
+# way the legacy lane's drop-in-only setting could.
 KillMode=process
 Restart=on-failure
 RestartSec=5

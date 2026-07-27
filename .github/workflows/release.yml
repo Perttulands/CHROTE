@@ -19,7 +19,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.26.5'
           cache-dependency-path: src/go.sum
 
       - uses: actions/setup-node@v4
@@ -31,6 +31,11 @@ jobs:
 
       - name: Host neutrality
         run: python3 scripts/host-neutrality.py
+
+      - name: Python checks
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_*.py'
+          python3 -m unittest discover -s scripts/tmux-recovery -p 'test_*.py'
 
       - name: Verify tag matches VERSION
         run: |

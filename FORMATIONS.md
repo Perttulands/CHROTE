@@ -244,9 +244,10 @@ migration. Board schema 2 is monotonic: deleting the final Tool never downgrades
 it, and Tool update/delete remain board schema 2. Fixed Mission `out` accepts only
 `text/markdown`;
 Gate `in`/`pass` work ports use the full set. Gate `fail` is `gate_feedback` and has no media set. A
-legacy fail edge into a work
-input loads as degraded for inspection but cannot validate or run until rewired;
-annotated-work pushback is never inferred. Old ledgers project with their
+Gate fail edge into a work input is the typed pushback route
+([ADR-0012](docs/adr/0012-gate-fail-pushback-edge.md)); it always delivers the
+typed `gate_feedback` object — annotated-work pushback is never inferred and a
+feedback payload never masquerades as work. Old ledgers project with their
 recorded schema-1 semantics and are never reinterpreted as typed feedback. A
 safely normalizable schema-1 board may start from an immutable normalized
 board-schema-2 run snapshot without rewriting the canonical board; source/snapshot
@@ -315,13 +316,18 @@ ledgers.
     unknown, or incompatible output ids block loudly instead of broadcasting a
     blob. Gates use the separate verdict/routing contract below.
 11. **One input, one producer.** Every input port accepts at most one incoming
-    edge. Joins declare multiple distinct required ports and start only when all
-    are satisfied.
+    non-pushback edge. Joins declare multiple distinct required ports and start
+    only when all are satisfied. The one sanctioned exception
+    ([ADR-0012](docs/adr/0012-gate-fail-pushback-edge.md)): a Gate `fail` edge
+    may additionally target an already-produced work input as the typed
+    pushback route; it delivers `gate_feedback` that triggers a bounded next
+    attempt, never a second concurrent work producer.
 12. **Attempts bind immutable inputs.** A completed attempt is never mutated by
     later deliveries. Inputs freeze at `node_started`; late optional data is
-    recorded and ignored. Only matching feedback on a persisted `retry_control`
-    role creates an in-graph bounded next attempt from the exact evaluated source
-    attempt. Explicit operator resume is a separate bounded trigger for a
+    recorded and ignored. Only matching `gate_feedback` delivered over a typed
+    gate-fail pushback edge — a Gate `fail` connection wired back into the
+    evaluated producer's work input — creates an in-graph bounded next attempt
+    from the exact evaluated source attempt. Explicit operator resume is a separate bounded trigger for a
     retryable blocked producer whose attempt delivered no edges.
 13. **Gates evaluate; they do not transform.** Pass preserves the evaluated
     work and its provenance. Fail creates one stable typed feedback object;
@@ -373,7 +379,8 @@ safe ref size/hash metadata, and typed unavailable/error fields without creating
 another routing path.
 
 Payload kinds are `work`, `gate_feedback`, `unavailable`, and `error`. Tool inputs
-use `data`; `retry_control` is allowed only on an optional Formation input. The
+use `data`; there is no `retry_control` port role — pushback rides the Gate
+fail edge into an ordinary work input (ADR-0012). The
 Mission, Formation, and Tool outputs produce only `work`; Tool inputs accept
 only `work`. Formation inputs may declare `work` or `gate_feedback`, but only the
 fixed Gate `fail` port produces `gate_feedback`. Shared readers, writers,
@@ -438,12 +445,13 @@ At `node_started`, every required execution ref and any optional execution ref
 already present freeze as the attempt input set; the ledger stores only their
 durable projections. A later optional `data` delivery records
 `node_input_ignored`; a late required delivery fails loud. A
-`gate_feedback` value can trigger another attempt only through a persisted
-optional `retry_control` input and only when the traversal names one exact
-evaluated source attempt whose node matches the receiver. It is the only
-in-graph retry trigger; operator resume is the separate blocked-run trigger.
-After validated `retry_control` edges are removed, the workflow-channel graph
-must be acyclic. Read, mutation, validation, and preflight reject every other
+`gate_feedback` value can trigger another attempt only through a typed
+gate-fail pushback edge into the evaluated producer's work input, and only when
+the traversal names one exact evaluated source attempt whose node matches the
+receiver. It is the only in-graph retry trigger; operator resume is the
+separate blocked-run trigger.
+After validated gate-fail pushback edges are removed, the workflow-channel
+graph must be acyclic. Read, mutation, validation, and preflight reject every other
 cycle rather than allowing a required-input deadlock.
 If an acyclic graph nevertheless quiesces with a never-started JOIN holding only
 some required inputs, the engine records node-scoped
@@ -825,11 +833,13 @@ Gate-input sequence, and carries feedback/Gate ids, failed verdict, bounded type
 safe evidence, gate sequence, and Gate attempt. It embeds no work ref, payload
 projection, payload, or artifact, so it cannot replace or silently copy work.
 
-A separate correction node declares distinct required work and feedback `data`
-ports. `pushback` is a deliberately narrow fail-route action. The evaluated
-input must come directly from the receiving Formation; that Formation's entire
-connected workflow-output frontier must be the single edge into the Gate, and
-the Gate fail frontier must be the single edge back to its `retry_control`.
+`pushback` is a deliberately narrow fail-route action
+([ADR-0012](docs/adr/0012-gate-fail-pushback-edge.md)): the Gate's fail edge
+returns its typed feedback to the work input of the Formation whose output the
+Gate evaluated, creating the bounded next attempt under invariant 12. The
+evaluated input must come directly from the receiving Formation. The earlier
+separate-correction-node model with `retry_control` ports was never
+implemented and is rejected by ADR-0012.
 The first Gate evaluation allocates a stable run-local revision-cycle id.
 Matching feedback starts source attempt N+1 only while the frozen authoritative
 inputs remain live or durably exact; otherwise ADR-0005 fails terminally. The
@@ -1132,7 +1142,8 @@ A correct run model:
    `""`/`[]`, preserves array order, adds no trailing newline, and freezes those
    bytes as the `application/json` synthetic `run_seed` input and `seedSha256`.
    Incoming board edges, optional inputs,
-   `retry_control`, and downstream edges remain outside the isolated root. Any
+   gate-fail pushback edges, and downstream edges remain outside the isolated
+   root. Any
    other required-input shape fails before `run_started`.
    For either root, `run_started.rootInputProjection` uses the exact closed shape
    in `spec/contracts.md`; its `sha256` hashes the canonical Mission objective or

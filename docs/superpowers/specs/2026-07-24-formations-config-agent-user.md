@@ -5,8 +5,12 @@ configuration knob. No live infrastructure change is authorized here: provisioni
 the correctly-owned tmux server for a split install and the `/srv` cutover are
 executed separately by the orchestrator with explicit owner sign-off.
 Date: 2026-07-24. Beads: chrote-ejp (implements), chrote-jkk (parent), chrote-fjy
-(subsumed). Design reference: `design/executor-as-alice` branch,
-`docs/superpowers/specs/2026-07-24-executor-as-alice-design.md`.
+(subsumed). Design reference: the executor-ownership design, recorded on an
+unmerged design branch and therefore not resolvable from `main`. It weighed three
+options — run the whole service as the agent user; give the agent user a narrow,
+dedicated Formations tmux server that the service drives over a socket grant; or
+add an agent-side RPC helper the service calls — and recommended the narrow split,
+which is what the knob in this spec configures.
 
 Golden rule that still binds: **do not disrupt running shells or tmux sessions.**
 The executor only ever creates and tears down its own uniquely-named sessions and

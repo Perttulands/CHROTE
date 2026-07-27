@@ -91,7 +91,7 @@ STALE_ROOT_MEDIA = [
     "Themes.png",
     "chat_new.png",
 ]
-GO_BASELINE = "1.23"
+GO_BASELINE = "1.26.5"
 NODE_BASELINE_DOC = "Node.js 20.19+ or 22.12+"
 NODE_ENGINE_RANGE = "^20.19.0 || >=22.12.0"
 GOVULNCHECK_VERSION = "v1.6.0"
@@ -438,6 +438,11 @@ def check_toolchain_contract(errors: list[str]) -> None:
         ".github/workflows/release.yml": f"go-version: '{GO_BASELINE}'",
         "CONTRIBUTING.md": f"Go {GO_BASELINE}+",
         "docs/TEST_STRATEGY.md": f"Go {GO_BASELINE}",
+        # README and installation.md state the Go requirement to readers but were not enforced,
+        # so they kept saying 1.23 through the 1.26.5 bump while this gate reported PASS. The
+        # Node baseline below already covers them; the Go baseline now does too.
+        "README.md": f"Go {GO_BASELINE}+",
+        "docs/installation.md": f"Go {GO_BASELINE}+",
     }
     for rel_path, token in required_tokens.items():
         path = ROOT / rel_path
@@ -453,12 +458,16 @@ def check_toolchain_contract(errors: list[str]) -> None:
             fail(errors, f"{rel_path}: missing Node baseline token {NODE_BASELINE_DOC!r}")
 
     scanner = f"golang.org/x/vuln/cmd/govulncheck@{GOVULNCHECK_VERSION}"
-    for rel_path in [".github/workflows/release.yml"]:
+    # ci.yml included: scanning only at release meant a vulnerable toolchain could sit on main
+    # indefinitely and surface as a release-day failure.
+    for rel_path in [".github/workflows/release.yml", ".github/workflows/ci.yml"]:
         text = (ROOT / rel_path).read_text(encoding="utf-8")
         if scanner not in text:
             fail(errors, f"{rel_path}: missing pinned vulnerability scanner {scanner}")
-        if "-mode=binary" not in text:
-            fail(errors, f"{rel_path}: missing release-binary vulnerability scan")
+    # Binary-mode scanning is release-only: CI has no release artifact to scan.
+    release_text = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    if "-mode=binary" not in release_text:
+        fail(errors, ".github/workflows/release.yml: missing release-binary vulnerability scan")
 
 
 def check_version_contract(errors: list[str]) -> None:

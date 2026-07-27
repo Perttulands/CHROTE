@@ -2,6 +2,12 @@
 
 Use these rules for work in the CHROTE repository. Keep public instructions host-neutral; deployment-specific paths, ports, sockets, service identities, and credentials belong in untracked operator configuration.
 
+## Operating contract
+
+This repository sits inside a host workspace whose root instruction files (`CLAUDE.md` and `AGENTS.md` one directory up) name the operator's canonical operating contract. Read it before non-trivial work; it is the authority these repository rules sit under, not a duplicate of them. In short: define done before changing things, read before writing, keep changes small, tests must prove intent, verify before claiming done, fail loud.
+
+The contract's own location is deployment-specific, so it is deliberately not spelled out here — naming it would put an operator path in a public file, which the host-neutrality rule above and `scripts/host-neutrality.py` both forbid. Follow the pointer up rather than copying the rules down: restating them here is how two contracts drift apart.
+
 ## Product boundary
 
 CHROTE is a private browser cockpit for host-owned work:

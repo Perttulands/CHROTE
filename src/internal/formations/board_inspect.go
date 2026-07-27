@@ -69,6 +69,12 @@ func ValidateBoard(board *BoardDocument) BoardValidationReport {
 	}
 	inputProducers := make(map[string]string, len(board.Connections))
 	for _, connection := range board.Connections {
+		// A gate-fail edge into an occupied input is the sanctioned typed
+		// pushback route (ADR-0012); only non-pushback producers count toward
+		// the one-producer rule.
+		if isGateFailPushbackEndpoint(board.Gates, connection.From) {
+			continue
+		}
 		if first, exists := inputProducers[connection.To]; exists {
 			report.Errors = append(report.Errors, BoardFinding{
 				Code:    FindingDuplicateInputProducer,

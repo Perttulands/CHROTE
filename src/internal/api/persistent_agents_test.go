@@ -1611,3 +1611,150 @@ func forcePersistentFailureRetry(t *testing.T, path string, consecutiveFailures 
 		t.Fatalf("write forced persistent failure retry: %v", err)
 	}
 }
+
+func TestTmuxHandler_EnablePersistentAgentRenameFailureRollsBackCleanly(t *testing.T) {
+	tmpDir := t.TempDir()
+	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")
+	installPersistentAgentScriptedTmux(t, `
+case "$*" in
+  *display-message*) printf '42:node:/home/alice/project\n' ;;
+  *rename-session*) echo 'rename exploded' >&2; exit 1 ;;
+esac
+`)
+	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+	installProcessTable(t, []processInfo{{pid: "42", ppid: "1", comm: "node", args: "node /usr/bin/codex resume --no-alt-screen " + persistentTestCodexID}})
+
+	handler := NewTmuxHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	body := persistentAgentRequestJSON(t, map[string]any{
+		"identity":           "Maintains exact identity.",
+		"newName":            "codex-beta",
+		"recoveryDescriptor": persistentAgentTestDescriptor("codex-beta", "alice", RecoveryAgentCodex, persistentTestCodexID, ""),
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions/codex-alpha/persistence?unixUser=alice", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	mux.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status code = %d, expected 500; body=%s", recorder.Code, recorder.Body.String())
+	}
+	responseBody := recorder.Body.String()
+	if !strings.Contains(responseBody, "rename exploded") {
+		t.Fatalf("response should carry the tmux error: %s", responseBody)
+	}
+	if strings.Contains(responseBody, "stale persistent entry") {
+		t.Fatalf("successful rollback must not report a stale entry: %s", responseBody)
+	}
+	raw, err := os.ReadFile(persistentPath)
+	if err != nil {
+		t.Fatalf("read persistent store: %v", err)
+	}
+	var entries []map[string]any
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		t.Fatalf("decode persistent store: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("rollback should leave no entries, got %#v", entries)
+	}
+}
+
+func TestTmuxHandler_EnablePersistentAgentSurfacesFailedRollback(t *testing.T) {
+	tmpDir := t.TempDir()
+	storeDir := filepath.Join(tmpDir, "persistent-agents")
+	persistentPath := filepath.Join(storeDir, "agents.json")
+	t.Cleanup(func() { _ = os.Chmod(storeDir, 0o770) })
+	// The fake rename makes the store directory read-only before failing, so
+	// Upsert succeeds but the rollback Forget cannot write the store.
+	installPersistentAgentScriptedTmux(t, `
+case "$*" in
+  *display-message*) printf '42:node:/home/alice/project\n' ;;
+  *rename-session*) chmod 0500 '`+storeDir+`'; echo 'rename exploded' >&2; exit 1 ;;
+esac
+`)
+	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+	installProcessTable(t, []processInfo{{pid: "42", ppid: "1", comm: "node", args: "node /usr/bin/codex resume --no-alt-screen " + persistentTestCodexID}})
+
+	handler := NewTmuxHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	body := persistentAgentRequestJSON(t, map[string]any{
+		"identity":           "Maintains exact identity.",
+		"newName":            "codex-beta",
+		"recoveryDescriptor": persistentAgentTestDescriptor("codex-beta", "alice", RecoveryAgentCodex, persistentTestCodexID, ""),
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions/codex-alpha/persistence?unixUser=alice", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	mux.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status code = %d, expected 500; body=%s", recorder.Code, recorder.Body.String())
+	}
+	responseBody := recorder.Body.String()
+	if !strings.Contains(responseBody, "rename exploded") ||
+		!strings.Contains(responseBody, "stale persistent entry remains") ||
+		!strings.Contains(responseBody, "codex-beta") {
+		t.Fatalf("failed rollback must surface both errors and the stale name: %s", responseBody)
+	}
+	_ = os.Chmod(storeDir, 0o770)
+	entries := readPersistentAgentRawEntries(t, persistentPath)
+	if len(entries) != 1 || entries[0]["name"] != "codex-beta" {
+		t.Fatalf("the stale entry the response warned about should exist: %#v", entries)
+	}
+}
+
+func TestTmuxHandler_ReconcileSurfacesUnpersistedRetryBookkeeping(t *testing.T) {
+	tmpDir := t.TempDir()
+	storeDir := filepath.Join(tmpDir, "persistent-agents")
+	persistentPath := filepath.Join(storeDir, "agents.json")
+	t.Cleanup(func() { _ = os.Chmod(storeDir, 0o770) })
+	// The fake new-session makes the store directory read-only before failing,
+	// so the revive fails AND RecordLaunchFailure cannot persist retry state.
+	installPersistentAgentScriptedTmux(t, `
+case "$*" in
+  *has-session*) echo "can't find session: codex-alpha" >&2; exit 1 ;;
+  *new-session*) chmod 0500 '`+storeDir+`'; echo 'boom launch' >&2; exit 1 ;;
+esac
+`)
+	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+	writePersistentAgentRawSeed(t, persistentPath, []map[string]any{
+		persistentAgentRawEntry("codex-alpha", "alice", RecoveryAgentCodex, persistentTestCodexID, ""),
+	})
+
+	handler := NewTmuxHandler()
+	results, err := handler.ReconcilePersistentAgents(context.Background())
+	if err != nil {
+		t.Fatalf("reconcile persistent agents: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %+v, want one", results)
+	}
+	if results[0].Action != "error" {
+		t.Fatalf("action = %q, want error when retry bookkeeping is not durable; result=%+v", results[0].Action, results[0])
+	}
+	if !strings.Contains(results[0].Error, "boom launch") ||
+		!strings.Contains(results[0].Error, "retry bookkeeping not persisted") {
+		t.Fatalf("error should join the revive failure and the bookkeeping failure: %q", results[0].Error)
+	}
+	_ = os.Chmod(storeDir, 0o770)
+	rawEntries := readPersistentAgentRawEntries(t, persistentPath)
+	if rawEntries[0]["consecutiveLaunchFailures"] != nil || rawEntries[0]["nextRetryAt"] != nil {
+		t.Fatalf("unpersisted bookkeeping must not appear in the store: %#v", rawEntries[0])
+	}
+}

@@ -1280,6 +1280,10 @@ func (s *sessionBankStore) saveLocked(entries []SessionBankEntry) error {
 		_ = tmp.Close()
 		return err
 	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
 	if err := tmp.Chmod(0o660); err != nil {
 		_ = tmp.Close()
 		return err
@@ -1291,7 +1295,7 @@ func (s *sessionBankStore) saveLocked(entries []SessionBankEntry) error {
 		return err
 	}
 	_ = os.Chmod(s.path, 0o660)
-	return nil
+	return core.FsyncDir(dir)
 }
 
 func isTmuxNoServerError(errStr string) bool {

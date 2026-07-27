@@ -1107,7 +1107,9 @@ func (s *Store) WireFormationPorts(slug string, req FormationWireRequest, opts W
 			if connection.From == req.From && connection.To == req.To {
 				return nil, ErrConflict
 			}
-			if connection.To == req.To {
+			if connection.To == req.To &&
+				!isGateFailPushbackEndpoint(current.Gates, req.From) &&
+				!isGateFailPushbackEndpoint(current.Gates, connection.From) {
 				return nil, ErrConflict
 			}
 		}
@@ -1667,7 +1669,7 @@ func judgeChainConnections(raw []byte, req GateJudgeRequest) ([]BoardConnection,
 	}
 	connections := []BoardConnection{}
 	addConnection := func(connection BoardConnection) error {
-		exists, err := validateConnectionCandidate(existing, connection)
+		exists, err := validateConnectionCandidate(existing, board.Gates, connection)
 		if err != nil {
 			return err
 		}
@@ -1712,7 +1714,7 @@ func judgeChainConnections(raw []byte, req GateJudgeRequest) ([]BoardConnection,
 	return connections, nil
 }
 
-func validateConnectionCandidate(existing []BoardConnection, candidate BoardConnection) (bool, error) {
+func validateConnectionCandidate(existing []BoardConnection, gates []GateNode, candidate BoardConnection) (bool, error) {
 	if endpointNodeID(candidate.From) == endpointNodeID(candidate.To) {
 		return false, ErrConflict
 	}
@@ -1720,7 +1722,9 @@ func validateConnectionCandidate(existing []BoardConnection, candidate BoardConn
 		if connection.From == candidate.From && connection.To == candidate.To {
 			return true, nil
 		}
-		if connection.To == candidate.To {
+		if connection.To == candidate.To &&
+			!isGateFailPushbackEndpoint(gates, candidate.From) &&
+			!isGateFailPushbackEndpoint(gates, connection.From) {
 			return false, ErrConflict
 		}
 	}
@@ -2208,6 +2212,23 @@ func isTOMLHeader(line tomlLine) bool {
 
 func endpointNodeID(endpoint string) string {
 	return strings.SplitN(endpoint, ":", 2)[0]
+}
+
+// isGateFailPushbackEndpoint reports whether the endpoint is a Gate's fail
+// port. Under ADR-0012 a gate-fail edge into an already-produced work input is
+// the sanctioned typed pushback route, exempt from the one-producer conflict
+// at every enforcement site; a second non-pushback producer stays a conflict.
+func isGateFailPushbackEndpoint(gates []GateNode, endpoint string) bool {
+	nodeID, port, ok := strings.Cut(endpoint, ":")
+	if !ok || port != "fail" {
+		return false
+	}
+	for _, gate := range gates {
+		if gate.ID == nodeID {
+			return true
+		}
+	}
+	return false
 }
 
 func findFormationBlockByID(lines []tomlLine, formationID string) (int, int, bool) {

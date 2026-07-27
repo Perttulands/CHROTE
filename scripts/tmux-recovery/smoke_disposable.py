@@ -17,6 +17,7 @@ import json
 import os
 from pathlib import Path
 import pwd
+import re
 import shutil
 import shlex
 import signal
@@ -132,20 +133,47 @@ def managed_systemd_record(*, session_name: str, unix_user: str, unit: str, owne
     }
 
 
-def assert_no_forbidden_references(values: list[Any]) -> None:
+# Live tmux sockets are matched by SHAPE, not by this host's names. The previous version listed
+# one operator's username and uid literally, which failed twice over: a repo-wide neutrality sweep
+# rewrote those literals to the neutral fixture values `build` and uid 2001, so the guard stopped
+# catching any live socket AND started tripping on the smoke's own `go build` argv in command_log.
+# A shape rule cannot be broken that way, and it catches every uid rather than one.
+LIVE_TMUX_SOCKET_PATTERNS = (
+    r"/run/user/\d+/[\w.-]*tmux[\w.-]*(?:/[\w.-]+)*",
+    r"/tmp/tmux-\d+(?:/[\w.-]+)*",
+    r"/run/chrote/[\w.-]*tmux[\w.-]*(?:/[\w.-]+)*",
+)
+# The product's compiled defaults plus this deployment's overrides. The smoke allocates its own
+# ports and choose_loopback_port() refuses to hand back any of these.
+LIVE_PORTS = (8094, 8095, 7683, 7686)
+LIVE_DATA_PATHS = ("/srv/data/chrote",)
+
+
+def assert_no_forbidden_references(values: list[Any], *, temp_root: str | Path | None = None) -> None:
+    """Fail if the smoke's own record mentions a resource it must never have touched.
+
+    Everything the smoke legitimately owns lives under `temp_root`, so a uid-scoped tmux socket
+    path outside that root means the disposable run reached into live infrastructure.
+    """
     text = "\n".join(_stringify(value) for value in values)
     lower = text.lower()
-    forbidden = [
-        ("live 8095", ["127.0.0.1:8095", "localhost:8095", ":8095"]),
-        ("live data", ["/srv/data/chrote"]),
-        ("Tavern", ["build"]),
-        ("live tmux socket", ["/run/user/2001/chrote-tmux", "/tmp/tmux-2001/default"]),
-        ("Claude", ["claude"]),
-    ]
-    for label, needles in forbidden:
-        for needle in needles:
-            if needle.lower() in lower:
-                raise SmokeFailure(f"forbidden {label} reference detected: {needle}")
+    root = str(Path(temp_root)) if temp_root is not None else None
+
+    for port in LIVE_PORTS:
+        for needle in (f"127.0.0.1:{port}", f"localhost:{port}", f":{port}"):
+            if needle in lower:
+                raise SmokeFailure(f"forbidden live {port} reference detected: {needle}")
+    for needle in LIVE_DATA_PATHS:
+        if needle in lower:
+            raise SmokeFailure(f"forbidden live data reference detected: {needle}")
+    for pattern in LIVE_TMUX_SOCKET_PATTERNS:
+        for match in re.finditer(pattern, text):
+            found = match.group(0)
+            if root is not None and found.startswith(root):
+                continue  # the smoke's own disposable socket, not a live one
+            raise SmokeFailure(f"forbidden live tmux socket reference detected: {found}")
+    if "claude" in lower:
+        raise SmokeFailure("forbidden live agent session reference detected: claude")
 
 
 def _stringify(value: Any) -> str:
@@ -353,7 +381,22 @@ def tmux(*args: str, socket_path: Path, tmux_bin: str = "tmux", state: SmokeStat
 
 
 def kill_tmux_server(socket_path: Path, tmux_bin: str, state: SmokeState | None = None) -> None:
-    tmux("kill-server", socket_path=socket_path, tmux_bin=tmux_bin, state=state, check=False)
+    """Kill the smoke's own disposable server, and PROVE it died.
+
+    check=False alone made this a silent no-op wherever tmux is a guarded wrapper that refuses
+    kill-server: the smoke went on to "restore" a server it had never killed, re-observed the
+    original panes, and passed every downstream check vacuously. The kill is the one step the
+    whole recovery smoke rests on, so it fails loud instead.
+    """
+    killed = tmux("kill-server", socket_path=socket_path, tmux_bin=tmux_bin, state=state, check=False)
+    probe = tmux("list-sessions", socket_path=socket_path, tmux_bin=tmux_bin, state=state, check=False)
+    if probe.returncode == 0:
+        detail = (killed.stderr or killed.stdout or "").strip()[:400]
+        raise SmokeFailure(
+            f"disposable tmux server at {socket_path} survived kill-server "
+            f"(kill exit {killed.returncode}); the smoke would otherwise verify a recovery that "
+            f"never happened. tmux said: {detail!r}"
+        )
 
 
 def start_initial_tmux_topology(
@@ -443,6 +486,27 @@ def pane_ids(session: dict[str, Any]) -> list[str]:
         topology = desc.get("topology") if isinstance(desc.get("topology"), dict) else {}
         ids.append(str(topology.get("paneId", "")))
     return ids
+
+
+def live_pane_pids(socket_path: Path, session_name: str, tmux_bin: str, state: SmokeState | None = None) -> set[str]:
+    """OS pids backing a session's panes, straight from tmux.
+
+    Pane *ids* cannot answer "are these new processes?". tmux allocates them monotonically per
+    server and restore rebuilds on a fresh server, so the counter restarts at 0 and old and new
+    ids collide whenever the snapshotted session happened to hold the first panes. Pids are the
+    thing the check actually means, and they do not depend on creation order.
+    """
+    result = tmux(
+        "list-panes",
+        "-t",
+        session_name,
+        "-F",
+        "#{pane_pid}",
+        socket_path=socket_path,
+        tmux_bin=tmux_bin,
+        state=state,
+    )
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
 
 
 def find_manifest_path(snapshot_result: dict[str, Any]) -> Path:
@@ -723,6 +787,10 @@ def run_smoke(args: argparse.Namespace) -> SmokeState:
             "verification": verification_summary,
         }
 
+        pane_pids_before = live_pane_pids(tmux_socket, session_name, tmux_bin, state)
+        if not pane_pids_before:
+            raise SmokeFailure(f"no pane pids observed for {session_name!r} before the kill")
+
         kill_tmux_server(tmux_socket, tmux_bin, state)
         start_extra_tmux_session(tmux_bin=tmux_bin, socket_path=tmux_socket, session_name=extra_session, cwd=work_dir, state=state)
         state.checks["post_snapshot_extra_session"] = {"status": "pass", "sessionName": extra_session}
@@ -792,12 +860,15 @@ def run_smoke(args: argparse.Namespace) -> SmokeState:
             }
         old_panes = pane_ids(expected_session)
         new_panes = pane_ids(observed_session)
-        if old_panes == new_panes:
-            raise SmokeFailure(f"pane ids were not reallocated: {old_panes}")
+        pane_pids_after = live_pane_pids(tmux_socket, session_name, tmux_bin, state)
+        survivors = pane_pids_before & pane_pids_after
+        if survivors:
+            raise SmokeFailure(f"restored panes reuse pre-kill processes: {sorted(survivors)}")
         state.checks["restored_topology_workloads"] = {
             "status": "pass",
             "oldPaneIds": old_panes,
             "newPaneIds": new_panes,
+            "panePidsReplaced": len(pane_pids_before | pane_pids_after),
             "hermesProfile": agent.get("hermesProfile"),
             "helperHTTP": 200,
             "extraSessionPreserved": True,
@@ -855,7 +926,8 @@ def run_smoke(args: argparse.Namespace) -> SmokeState:
                     "persistentAgents": server_env["CHROTE_PERSISTENT_AGENTS_PATH"],
                     "sessionDrops": server_env["CHROTE_SESSION_DROPS_DIR"],
                 },
-            ]
+            ],
+            temp_root=temp_root,
         )
         state.checks["forbidden_live_references"] = {"status": "pass"}
         return state

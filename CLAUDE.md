@@ -2,6 +2,8 @@
 
 Follow [`AGENTS.md`](AGENTS.md). It contains the repository-wide product boundary, source-truth map, Beads workflow, verification commands, privacy rules, and runtime-action gate.
 
+Start with its **Operating contract** section: the host workspace one directory up names the operator's canonical operating contract, and that contract governs this repository's rules. Read it before non-trivial work.
+
 ## Project map
 
 ```text
