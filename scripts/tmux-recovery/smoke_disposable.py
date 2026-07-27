@@ -380,29 +380,115 @@ def tmux(*args: str, socket_path: Path, tmux_bin: str = "tmux", state: SmokeStat
     return run_command([tmux_bin, "-S", str(socket_path), *args], timeout=30, check=check, state=state)
 
 
-def kill_tmux_server(socket_path: Path, tmux_bin: str, state: SmokeState | None = None) -> None:
-    """Kill the smoke's own disposable server, and PROVE it died.
+def tmux_server_pid(socket_path: Path, tmux_bin: str, state: SmokeState | None = None) -> int:
+    """Read the server pid through the exact disposable socket."""
+    result = tmux(
+        "display-message",
+        "-p",
+        "#{pid}",
+        socket_path=socket_path,
+        tmux_bin=tmux_bin,
+        state=state,
+    )
+    raw = result.stdout.strip()
+    if not re.fullmatch(r"[1-9]\d*", raw):
+        raise SmokeFailure(f"disposable tmux socket {socket_path} returned invalid server pid: {raw!r}")
+    return int(raw)
 
-    check=False alone made this a silent no-op wherever tmux is a guarded wrapper that refuses
-    kill-server: the smoke went on to "restore" a server it had never killed, re-observed the
-    original panes, and passed every downstream check vacuously. The kill is the one step the
-    whole recovery smoke rests on, so it fails loud instead.
-    """
-    killed = tmux("kill-server", socket_path=socket_path, tmux_bin=tmux_bin, state=state, check=False)
-    probe = tmux("list-sessions", socket_path=socket_path, tmux_bin=tmux_bin, state=state, check=False)
-    if probe.returncode == 0:
-        detail = (killed.stderr or killed.stdout or "").strip()[:400]
+
+def _pid_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def stop_tmux_server(
+    socket_path: Path,
+    recorded_pid: int,
+    tmux_bin: str,
+    state: SmokeState | None = None,
+    *,
+    timeout: float = 2.0,
+    poll_interval: float = 0.05,
+) -> None:
+    """Stop only the recorded disposable server pid and prove it and its socket disappeared."""
+    current_pid = tmux_server_pid(socket_path, tmux_bin, state)
+    if current_pid != recorded_pid:
         raise SmokeFailure(
-            f"disposable tmux server at {socket_path} survived kill-server "
-            f"(kill exit {killed.returncode}); the smoke would otherwise verify a recovery that "
-            f"never happened. tmux said: {detail!r}"
+            f"disposable socket reports pid {current_pid}, not recorded pid {recorded_pid}; "
+            "refusing to signal an unproved process"
         )
+
+    os.kill(recorded_pid, signal.SIGTERM)
+    deadline = time.monotonic() + timeout
+    while True:
+        alive = _pid_is_alive(recorded_pid)
+        socket_exists = socket_path.exists()
+        if not alive:
+            if socket_exists:
+                try:
+                    socket_path.unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError as exc:
+                    raise SmokeFailure(
+                        f"disposable tmux server pid {recorded_pid} exited but its stale "
+                        f"socket {socket_path} could not be removed: {exc}"
+                    ) from exc
+            if not socket_path.exists():
+                return
+            raise SmokeFailure(
+                f"disposable tmux server pid {recorded_pid} exited but socket {socket_path} remained"
+            )
+        now = time.monotonic()
+        if now >= deadline:
+            break
+        time.sleep(min(poll_interval, deadline - now))
+
+    if alive:
+        raise SmokeFailure(
+            f"disposable tmux server pid {recorded_pid} survived SIGTERM after {timeout:.3f}s; "
+            "the smoke would otherwise verify a recovery that never happened"
+        )
+
+
+@dataclass
+class DisposableTmuxServer:
+    socket_path: Path
+    tmux_bin: str
+    state: SmokeState | None = None
+    pid: int | None = None
+    _may_be_running: bool = False
+
+    def capture(self) -> int:
+        self._may_be_running = True
+        self.pid = tmux_server_pid(self.socket_path, self.tmux_bin, self.state)
+        return self.pid
+
+    def stop(self) -> None:
+        if self.pid is None:
+            if self._may_be_running:
+                raise SmokeFailure(
+                    f"disposable tmux server started at {self.socket_path}, but its pid was not recorded; "
+                    "preserving the socket root for fail-loud recovery"
+                )
+            return
+        stop_tmux_server(self.socket_path, self.pid, self.tmux_bin, self.state)
+        self.pid = None
+        self._may_be_running = False
+
+    def remove_temp_root(self, temp_root: Path) -> None:
+        if self.pid is None and not self._may_be_running:
+            shutil.rmtree(temp_root, ignore_errors=True)
 
 
 def start_initial_tmux_topology(
     *,
-    tmux_bin: str,
-    socket_path: Path,
+    server: DisposableTmuxServer,
     session_name: str,
     hermes_argv: list[str],
     hermes_cwd: Path,
@@ -411,7 +497,7 @@ def start_initial_tmux_topology(
     helper_port: int,
     state: SmokeState,
 ) -> None:
-    socket_path.parent.mkdir(parents=True, exist_ok=True)
+    server.socket_path.parent.mkdir(parents=True, exist_ok=True)
     tmux(
         "new-session",
         "-d",
@@ -422,10 +508,11 @@ def start_initial_tmux_topology(
         "-c",
         str(hermes_cwd),
         shlex.join(hermes_argv),
-        socket_path=socket_path,
-        tmux_bin=tmux_bin,
+        socket_path=server.socket_path,
+        tmux_bin=server.tmux_bin,
         state=state,
     )
+    server.capture()
     tmux(
         "new-window",
         "-d",
@@ -436,13 +523,13 @@ def start_initial_tmux_topology(
         "-c",
         str(http_cwd),
         shlex.join(["python3", "-m", "http.server", str(helper_port), "--bind", "127.0.0.1", "--directory", str(site_dir)]),
-        socket_path=socket_path,
-        tmux_bin=tmux_bin,
+        socket_path=server.socket_path,
+        tmux_bin=server.tmux_bin,
         state=state,
     )
 
 
-def start_extra_tmux_session(*, tmux_bin: str, socket_path: Path, session_name: str, cwd: Path, state: SmokeState) -> None:
+def start_extra_tmux_session(*, server: DisposableTmuxServer, session_name: str, cwd: Path, state: SmokeState) -> None:
     tmux(
         "new-session",
         "-d",
@@ -453,10 +540,11 @@ def start_extra_tmux_session(*, tmux_bin: str, socket_path: Path, session_name: 
         "-c",
         str(cwd),
         "sleep 300",
-        socket_path=socket_path,
-        tmux_bin=tmux_bin,
+        socket_path=server.socket_path,
+        tmux_bin=server.tmux_bin,
         state=state,
     )
+    server.capture()
 
 
 def parse_cli_json(result: CommandResult) -> dict[str, Any]:
@@ -507,6 +595,13 @@ def live_pane_pids(socket_path: Path, session_name: str, tmux_bin: str, state: S
         state=state,
     )
     return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
+def assert_pane_processes_recreated(before: set[str], after: set[str]) -> int:
+    survivors = before & after
+    if survivors:
+        raise SmokeFailure(f"restored panes reuse pre-kill processes: {sorted(survivors)}")
+    return len(before | after)
 
 
 def find_manifest_path(snapshot_result: dict[str, Any]) -> Path:
@@ -649,7 +744,15 @@ def run_smoke(args: argparse.Namespace) -> SmokeState:
     if temp_root.exists():
         raise SmokeFailure(f"temp root already exists: {temp_root}")
     temp_root.mkdir(parents=True, mode=0o700)
-    cleanup.add(lambda: shutil.rmtree(temp_root, ignore_errors=True))
+    disposable_tmux_server: DisposableTmuxServer | None = None
+
+    def remove_temp_root() -> None:
+        if disposable_tmux_server is None:
+            shutil.rmtree(temp_root, ignore_errors=True)
+            return
+        disposable_tmux_server.remove_temp_root(temp_root)
+
+    cleanup.add(remove_temp_root)
     try:
         unix_user = pwd.getpwuid(os.geteuid()).pw_name
         tmux_bin = find_required_tool("tmux")
@@ -666,6 +769,7 @@ def run_smoke(args: argparse.Namespace) -> SmokeState:
         http_cwd = work_dir / "web"
         site_dir = fake_home / "site"
         tmux_socket = temp_root / "tmux" / "ctx-sh7-5.sock"
+        disposable_tmux_server = DisposableTmuxServer(tmux_socket, tmux_bin, state)
         manifest_dir = temp_root / "manifests"
         managed_records_path = temp_root / "managed-records.json"
         managed_status_path = temp_root / "data" / "tmux-recovery" / "managed-status.json"
@@ -726,10 +830,9 @@ def run_smoke(args: argparse.Namespace) -> SmokeState:
         wait_health(api_url, proc)
         state.checks["feature_server_health"] = {"status": "pass", "url": api_url + "/api/health"}
 
-        cleanup.add(lambda: kill_tmux_server(tmux_socket, tmux_bin, state))
+        cleanup.add(disposable_tmux_server.stop)
         start_initial_tmux_topology(
-            tmux_bin=tmux_bin,
-            socket_path=tmux_socket,
+            server=disposable_tmux_server,
             session_name=session_name,
             hermes_argv=hermes_argv,
             hermes_cwd=hermes_cwd,
@@ -738,6 +841,7 @@ def run_smoke(args: argparse.Namespace) -> SmokeState:
             helper_port=helper_port,
             state=state,
         )
+        state.resources["initialTmuxServerPid"] = disposable_tmux_server.pid
         wait_exact_hermes_argv(tmux_socket, fake_home, hermes_argv)
         wait_http_ok(f"http://127.0.0.1:{helper_port}/")
         state.checks["initial_tmux_workloads"] = {"status": "pass", "hermesArgv": hermes_argv, "helperHTTP": 200}
@@ -791,8 +895,21 @@ def run_smoke(args: argparse.Namespace) -> SmokeState:
         if not pane_pids_before:
             raise SmokeFailure(f"no pane pids observed for {session_name!r} before the kill")
 
-        kill_tmux_server(tmux_socket, tmux_bin, state)
-        start_extra_tmux_session(tmux_bin=tmux_bin, socket_path=tmux_socket, session_name=extra_session, cwd=work_dir, state=state)
+        stopped_pid = disposable_tmux_server.pid
+        disposable_tmux_server.stop()
+        state.checks["disposable_tmux_server_stopped"] = {
+            "status": "pass",
+            "pid": stopped_pid,
+            "signal": "SIGTERM",
+            "timeoutSeconds": 2,
+        }
+        start_extra_tmux_session(
+            server=disposable_tmux_server,
+            session_name=extra_session,
+            cwd=work_dir,
+            state=state,
+        )
+        state.resources["recoveryTmuxServerPid"] = disposable_tmux_server.pid
         state.checks["post_snapshot_extra_session"] = {"status": "pass", "sessionName": extra_session}
 
         restore_result = run_command(
@@ -861,14 +978,12 @@ def run_smoke(args: argparse.Namespace) -> SmokeState:
         old_panes = pane_ids(expected_session)
         new_panes = pane_ids(observed_session)
         pane_pids_after = live_pane_pids(tmux_socket, session_name, tmux_bin, state)
-        survivors = pane_pids_before & pane_pids_after
-        if survivors:
-            raise SmokeFailure(f"restored panes reuse pre-kill processes: {sorted(survivors)}")
+        pane_pids_replaced = assert_pane_processes_recreated(pane_pids_before, pane_pids_after)
         state.checks["restored_topology_workloads"] = {
             "status": "pass",
             "oldPaneIds": old_panes,
             "newPaneIds": new_panes,
-            "panePidsReplaced": len(pane_pids_before | pane_pids_after),
+            "panePidsReplaced": pane_pids_replaced,
             "hermesProfile": agent.get("hermesProfile"),
             "helperHTTP": 200,
             "extraSessionPreserved": True,
