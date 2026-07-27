@@ -79,6 +79,7 @@ type SessionsResponse struct {
 	TerminalUsers []string                     `json:"terminalUsers"`
 	Timestamp     string                       `json:"timestamp"`
 	Error         string                       `json:"error,omitempty"`
+	Partial       bool                         `json:"partial,omitempty"`
 }
 
 // SessionBankEntry is a durable reminder of a terminal session that CHROTE has
@@ -1439,6 +1440,7 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 
 	if useConfiguredUsers {
 		var errors []string
+		successfulUsers := 0
 		for _, unixUser := range configuredTerminalUsers() {
 			target, targetErr := h.targetForUnixUser(unixUser)
 			if targetErr != nil {
@@ -1450,10 +1452,12 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 				errors = append(errors, fmt.Sprintf("%s: %s", unixUser, errStr))
 				continue
 			}
+			successfulUsers++
 			response.Sessions = append(response.Sessions, sessions...)
 		}
 		if len(errors) > 0 {
 			response.Error = strings.Join(errors, "; ")
+			response.Partial = successfulUsers > 0
 		}
 	} else {
 		target, targetErr := targetFromRequest(h, r, "")

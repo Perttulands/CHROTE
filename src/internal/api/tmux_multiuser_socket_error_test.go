@@ -48,9 +48,10 @@ func installSelectiveTmux(t *testing.T, failFor string, stderr string) {
 // pre-existing test exercised, so the branch that actually runs in production had
 // no coverage and "the error names the effective user" was unproven.
 func TestTmuxHandler_ListSessionsNamesTheUnixUserWhoseSocketFailed(t *testing.T) {
-	installSelectiveTmux(t, "denied", "error connecting to /run/user/2002/chrote-tmux/default (Permission denied)")
-	t.Setenv("CHROTE_TERMINAL_USERS", "daemon,nobody")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "daemon=/tmp/fixture-daemon/ok.sock,nobody=/tmp/fixture-nobody/denied.sock")
+	installSelectiveTmux(t, "denied", "error connecting to /tmp/chrote-tmux-test/build.sock (Permission denied)")
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice,build")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/fixture-alice/ok.sock,build=/tmp/fixture-build/denied.sock")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/workspaces/alice,build=/workspaces/build")
 
 	handler := NewTmuxHandler()
 	req := httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil)
@@ -72,14 +73,12 @@ func TestTmuxHandler_ListSessionsNamesTheUnixUserWhoseSocketFailed(t *testing.T)
 	// The whole point: which user is broken must be identifiable. An unattributed
 	// permission error on a host with several users is not actionable.
 	//
-	// `daemon` and `nobody` stand in for the two real operators. They are used because
-	// targetForUnixUser does a real user.Lookup, so invented names fail before the code
-	// under test runs -- and the real usernames must never appear in a tracked file
-	// (scripts/host-neutrality.py). Both accounts exist on any Linux host, CI included.
-	if !strings.Contains(response.Error, "nobody") {
+	// Fake users are paired with fake workdirs so targetForUnixUser can exercise the
+	// configured multi-user branch without relying on host accounts.
+	if !strings.Contains(response.Error, "build") {
 		t.Fatalf("error = %q, want it to name the unix user whose socket failed", response.Error)
 	}
-	if strings.Contains(response.Error, "daemon") {
+	if strings.Contains(response.Error, "alice") {
 		t.Fatalf("error = %q, want the healthy user not to be blamed", response.Error)
 	}
 }
@@ -89,9 +88,10 @@ func TestTmuxHandler_ListSessionsNamesTheUnixUserWhoseSocketFailed(t *testing.T)
 // failures -- because cross-user ACL breakage is the headline failure mode here, and
 // an empty list is indistinguishable from "no sessions".
 func TestTmuxHandler_ListSessionsStillReturnsHealthyUsersSessionsWhenOneSocketFails(t *testing.T) {
-	installSelectiveTmux(t, "denied", "error connecting to /run/user/2002/chrote-tmux/default (Permission denied)")
-	t.Setenv("CHROTE_TERMINAL_USERS", "daemon,nobody")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "daemon=/tmp/fixture-daemon/ok.sock,nobody=/tmp/fixture-nobody/denied.sock")
+	installSelectiveTmux(t, "denied", "error connecting to /tmp/chrote-tmux-test/build.sock (Permission denied)")
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice,build")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/fixture-alice/ok.sock,build=/tmp/fixture-build/denied.sock")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/workspaces/alice,build=/workspaces/build")
 
 	handler := NewTmuxHandler()
 	req := httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil)
@@ -107,9 +107,41 @@ func TestTmuxHandler_ListSessionsStillReturnsHealthyUsersSessionsWhenOneSocketFa
 		t.Fatalf("sessions = empty, want the healthy user's sessions preserved alongside the error %q", response.Error)
 	}
 	for _, session := range response.Sessions {
-		if session.UnixUser == "nobody" {
+		if session.UnixUser == "build" {
 			t.Fatalf("sessions contain the failed user %q: %+v", session.UnixUser, session)
 		}
+	}
+	payload := decodeJSONMap(t, rec)
+	if partial, ok := payload["partial"].(bool); !ok || !partial {
+		t.Fatalf("partial = %#v, want true for healthy sessions plus a per-user error", payload["partial"])
+	}
+}
+
+// When every configured user's socket fails, none of the returned session data
+// is authoritative. The partial marker must stay absent so dashboard clients
+// preserve their last-known-good state.
+func TestTmuxHandler_ListSessionsDoesNotMarkTotalMultiUserFailurePartial(t *testing.T) {
+	installSelectiveTmux(t, "fixture-", "error connecting to /tmp/chrote-tmux-test/socket (Permission denied)")
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice,build")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/fixture-alice/denied.sock,build=/tmp/fixture-build/denied.sock")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/workspaces/alice,build=/workspaces/build")
+
+	handler := NewTmuxHandler()
+	req := httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ListSessions(rec, req)
+
+	payload := decodeJSONMap(t, rec)
+	if _, ok := payload["partial"]; ok {
+		t.Fatalf("partial = %#v, want the marker omitted when every configured user failed", payload["partial"])
+	}
+	if sessions, ok := payload["sessions"].([]interface{}); !ok || len(sessions) != 0 {
+		t.Fatalf("sessions = %#v, want none when every configured user failed", payload["sessions"])
+	}
+	errorText, _ := payload["error"].(string)
+	if !strings.Contains(errorText, "alice:") || !strings.Contains(errorText, "build:") {
+		t.Fatalf("error = %q, want both failed fake users named", errorText)
 	}
 }
 
@@ -117,9 +149,10 @@ func TestTmuxHandler_ListSessionsStillReturnsHealthyUsersSessionsWhenOneSocketFa
 // no-server path stays quiet in the multi-user branch too -- otherwise a user who
 // simply has no tmux running would raise a permanent cockpit error.
 func TestTmuxHandler_ListSessionsMultiUserNoServerIsNotAnError(t *testing.T) {
-	installSelectiveTmux(t, "empty", "no server running on /tmp/tmux-2002/default")
-	t.Setenv("CHROTE_TERMINAL_USERS", "daemon,nobody")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "daemon=/tmp/fixture-daemon/ok.sock,nobody=/tmp/fixture-nobody/empty.sock")
+	installSelectiveTmux(t, "empty", "no server running on /tmp/chrote-tmux-test/empty.sock")
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice,build")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/fixture-alice/ok.sock,build=/tmp/fixture-build/empty.sock")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/workspaces/alice,build=/workspaces/build")
 
 	handler := NewTmuxHandler()
 	req := httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil)
