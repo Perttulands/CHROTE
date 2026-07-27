@@ -740,7 +740,7 @@ func TestToolStructuralValidateBoardChecksEveryToolDefinition(t *testing.T) {
 func TestToolStructuralSecondProducerToToolInputRejectsCandidateAndWholeBoard(t *testing.T) {
 	existing := []BoardConnection{{ID: "edge_first", From: "tool_source_a:port_source_a_out", To: "tool_target:port_target_in"}}
 	candidate := BoardConnection{ID: "edge_second", From: "tool_source_b:port_source_b_out", To: "tool_target:port_target_in"}
-	if exists, err := validateConnectionCandidate(existing, candidate); err == nil || exists {
+	if exists, err := validateConnectionCandidate(existing, nil, candidate); err == nil || exists {
 		t.Fatalf("second producer candidate = exists %v, err %v; want structural conflict", exists, err)
 	}
 
