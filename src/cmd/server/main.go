@@ -168,6 +168,11 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Contex
 	}
 	tmuxHandler.RegisterRoutes(mux)
 	tmuxHandler.StartPersistentAgentSupervisor(ctx)
+	// Keeps an abandoned or still-hidden browser terminal from clamping a live
+	// agent's window to the ttyd default of 80 columns.
+	tmuxHandler.StartTerminalSizeGuard(ctx, func(err error) {
+		log.Printf("Warning: terminal size guard: %v", err)
+	})
 
 	scheduledHandler := api.NewScheduledHandler(tmuxHandler)
 	scheduledHandler.RegisterRoutes(mux)
