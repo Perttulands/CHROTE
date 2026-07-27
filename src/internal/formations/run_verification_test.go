@@ -348,7 +348,7 @@ func TestLegacyInlineVerificationHumanVerdictRejectsBeforeLedgerMutation(t *test
 	}
 	engine := NewRunEngine(store, personas, &fakeRunExecutor{})
 	_, err = engine.RecordHumanGateVerdict(runID, HumanGateVerdictRequest{
-		GateID: "gate_review", Verdict: "pass", Actor: "human:perttu",
+		GateID: "gate_review", Verdict: "pass", Actor: "human:operator",
 	})
 	if err == nil || !strings.Contains(err.Error(), "legacy_inline_verification_requires_migration") {
 		t.Fatalf("human verdict error = %v, want stable legacy inline verification migration code", err)
@@ -447,7 +447,7 @@ func TestLegacyInlineVerificationRawResumeAppendIsRejectedButCancelClosesRun(t *
 		t.Fatalf("rejected raw resume mutated ledger\nbefore=%+v\nafter=%+v", before, after)
 	}
 	if err := store.AppendRunEvent(runID, RunEvent{
-		Type: RunEventCanceled, Actor: "human:perttu", Data: map[string]any{"reason": "retire legacy run", "final": true},
+		Type: RunEventCanceled, Actor: "human:operator", Data: map[string]any{"reason": "retire legacy run", "final": true},
 	}); err != nil {
 		t.Fatalf("cancel legacy blocked run: %v", err)
 	}
@@ -500,7 +500,7 @@ func TestLegacyInlineVerificationTerminalContainmentIgnoresUnavailableSnapshot(t
 				t.Fatalf("write legacy blocked event: %v", err)
 			}
 			if err := store.AppendRunEvent(runID, RunEvent{
-				Type: test.eventType, Actor: "human:perttu", Data: map[string]any{"reason": "contain legacy run", "final": true},
+				Type: test.eventType, Actor: "human:operator", Data: map[string]any{"reason": "contain legacy run", "final": true},
 			}); err != nil {
 				t.Fatalf("append terminal containment event: %v", err)
 			}

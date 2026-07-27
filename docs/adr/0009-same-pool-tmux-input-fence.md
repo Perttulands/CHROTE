@@ -2,7 +2,11 @@
 
 ## Status
 
-Accepted 2026-07-21 — infeasible under the accepted topology; descendants blocked
+Accepted 2026-07-21 — infeasible under the accepted topology; descendants blocked.
+Partially superseded 2026-07-26 by
+[ADR-0010](0010-formations-agent-user-socket-ownership.md): the blanket
+configured-socket refusal and the prohibition on a Formations-only socket no
+longer hold; the same-UID input-fence infeasibility analysis stands.
 
 ## Context
 
@@ -25,6 +29,8 @@ Formations. There are three current paths:
 3. `TmuxFormationExecutor` uses its separate `config.Socket` directly. Its
    production guard deliberately rejects configured cockpit sockets with
    `session_target_attachment_audit_unavailable` before a tmux client call.
+   (Superseded: since ADR-0010 the executor accepts any configured socket
+   whose backing server the configured agent-user owns.)
 
 Resolver convergence remains mandatory for any future candidate. It is not
 implemented today, and the infeasible result below blocks `ctx-ug7.22` on the
@@ -147,7 +153,7 @@ the narrower input-plane contract either.
 
 ## Disposable evidence
 
-No prototype used `/run/user/1000/chrote-tmux` or a live session. Each tmux
+No prototype used `/run/user/2001/chrote-tmux` or a live session. Each tmux
 server used a fresh `/tmp/chrote-tmux.*` `TMUX_TMPDIR` or a fresh equivalent
 inside a disposable container, explicit sockets, and exact-session cleanup. No
 prototype used `kill-server`.
@@ -265,6 +271,9 @@ topology**. No socket, userspace broker, pathname ownership transition, tmux
 hook, wrapper or in-process lock is selected for production. Production
 Formations remains fail-closed with
 `session_target_attachment_audit_unavailable` before every tmux client call.
+(Superseded by ADR-0010: production Formations now runs on any agent-user-owned
+configured socket; that refusal survives only for socket-identity pinning
+failures, and slot attachment to pre-existing sessions remains unimplemented.)
 
 An operation-time kernel reference monitor might form a future primitive because
 it could decide every slave write/ioctl by trusted pane lineage even when the
@@ -402,7 +411,11 @@ reachable during partial rollback. An identity change cannot resume a run.
 ## Exact handoff for `ctx-ug7.22`
 
 `.22` has a durable Beads dependency on `ctx-ug7.37` and must not implement the
-rejected root-sealed broker from earlier notes. Its exact contract is:
+rejected root-sealed broker from earlier notes. **ADR-0010 (2026-07-26)
+supersedes parts of this handoff: item 1's blanket refusal and item 2's
+"Formations-only pool" prohibition no longer bind — read ADR-0010 first. The
+kernel-mechanism requirement and everything else stand.** Its exact contract
+is:
 
 1. Keep every non-temporary or configured cockpit target returning
    `session_target_attachment_audit_unavailable` through the Formations executor

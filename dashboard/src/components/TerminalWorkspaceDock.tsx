@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { memo, useCallback, useEffect, useState } from 'react'
 import { FolderTree, SquareTerminal } from 'lucide-react'
 import type { WorkspaceId } from '../types'
 import { useSession } from '../context/SessionContext'
@@ -66,14 +66,16 @@ function TerminalWorkspaceDock({
     writeWorkspaceDockState(workspaceId, dockState)
   }, [dockState, workspaceId])
 
+  // Closing keeps sidecarPinned so a pinned panel reopens pinned beside the
+  // terminal instead of overlaying it.
   const toggleSidecar = useCallback((sidecar: Exclude<WorkspaceSidecar, null>) => {
     updateDockState(previous => previous.activeSidecar === sidecar
-      ? { ...previous, activeSidecar: null, sidecarPinned: false }
+      ? { ...previous, activeSidecar: null }
       : { ...previous, activeSidecar: sidecar })
   }, [updateDockState])
 
   const closeSidecar = useCallback(() => {
-    updateDockState(previous => ({ ...previous, activeSidecar: null, sidecarPinned: false }))
+    updateDockState(previous => ({ ...previous, activeSidecar: null }))
   }, [updateDockState])
 
   const togglePin = useCallback(() => {
@@ -172,9 +174,11 @@ function TerminalWorkspaceDock({
           onOpenInFiles={onOpenInFiles}
         />
       )}
-      <TerminalArea workspaceId={workspaceId} active={active} sidecarControls={sidecarControls} />
+      <TerminalArea workspaceId={workspaceId} sidecarControls={sidecarControls} />
     </div>
   )
 }
 
-export default TerminalWorkspaceDock
+// Memoized so App-level drag state changes don't reconcile the whole terminal
+// subtree; all props are primitives or stable useCallback references.
+export default memo(TerminalWorkspaceDock)

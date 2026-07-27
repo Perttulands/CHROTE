@@ -69,7 +69,10 @@ installed.
 Generic cockpit sessions remain name/user projections. Formations execution
 needs a stricter server-owned binding over the same Terminal-session resolver
 and configured inventory. That inventory is the union of explicitly configured
-user/socket sources. There is no second production Formations source or pool.
+user/socket sources, which since
+[ADR-0010](docs/adr/0010-formations-agent-user-socket-ownership.md) may include
+a dedicated Formations socket whose backing server the configured agent-user
+owns; every source is still explicit configuration, never an ambient default.
 Disposable inventories are test, certification, and dogfood fixtures only; a
 topology test registers one through the shared Terminal resolver rather than a
 Formations-only path.

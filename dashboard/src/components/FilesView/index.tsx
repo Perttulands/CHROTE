@@ -32,8 +32,25 @@ import {
   readFilesWorkbenchState,
   writeFilesWorkbenchState,
   type FilesContentMode,
-  type StoredOpenFile,
 } from './filesWorkbenchState'
+import {
+  applyRead,
+  closeAllBuffers,
+  closeBuffer,
+  closeOtherBuffers,
+  describeBuffers,
+  dirtyBuffersUnder,
+  findBuffer,
+  openBuffer,
+  patchBuffer,
+  pruneViewStates,
+  remapBuffers,
+  remapConflicts,
+  remapViewStates,
+  removeBuffersUnder,
+  type OpenFile,
+  type OpenFilesState,
+} from './openFilesModel'
 
 type SortKey = 'name' | 'size' | 'modified'
 type SortDir = 'asc' | 'desc'
@@ -55,13 +72,6 @@ interface FilesViewProps {
   } | null
   onSendPath?: (path: string) => void
   sendTargetLabel?: string | null
-}
-
-interface OpenFile extends StoredOpenFile {
-  content: string
-  dirty: boolean
-  loading: boolean
-  error: string | null
 }
 
 interface ContextMenuState {
@@ -196,14 +206,33 @@ function FilesView({ navigateRequest = null, onSendPath, sendTargetLabel = null 
   const [createIntent, setCreateIntent] = useState<CreateIntent | null>(null)
   const [deleteTargets, setDeleteTargets] = useState<FileItem[] | null>(null)
   const [toast, setToast] = useState<string | null>(null)
-  const [openFiles, setOpenFiles] = useState<OpenFile[]>(() => initialWorkbench.openFiles.map(file => ({
-    ...file,
-    content: '',
-    dirty: false,
-    loading: file.kind === 'text',
-    error: null,
-  })))
-  const [activeFilePath, setActiveFilePath] = useState<string | null>(initialWorkbench.activeFilePath)
+  // openFilesModel owns every buffer transition; the view holds the state but
+  // never rewrites the buffer set inline.
+  const [openFilesState, setOpenFilesState] = useState<OpenFilesState>(() => ({
+    files: initialWorkbench.openFiles.map((file, index) => ({
+      ...file,
+      content: '',
+      dirty: false,
+      loading: file.kind === 'text',
+      error: null,
+      readToken: index + 1,
+    })),
+    activePath: initialWorkbench.activeFilePath,
+  }))
+  const openFiles = openFilesState.files
+  const activeFilePath = openFilesState.activePath
+  const openFilesStateRef = useRef(openFilesState)
+  openFilesStateRef.current = openFilesState
+  // Monotonic for the life of the workbench, so a token is never reused by a
+  // reopened tab while an older read for the same path is still in flight.
+  const readTokenRef = useRef(initialWorkbench.openFiles.length)
+  const nextReadToken = useCallback(() => {
+    readTokenRef.current += 1
+    return readTokenRef.current
+  }, [])
+  const setActiveFilePath = useCallback((path: string | null) => {
+    setOpenFilesState(previous => ({ ...previous, activePath: path }))
+  }, [])
   const [fileViewStates, setFileViewStates] = useState<Record<string, FileViewState>>(initialWorkbench.fileViewStates)
   const [pinnedPaths, setPinnedPaths] = useState<SavedPath[]>(() => readSavedPaths(PINNED_STORAGE_KEY))
   const [recentPaths, setRecentPaths] = useState<SavedPath[]>(() => readSavedPaths(RECENT_STORAGE_KEY))
@@ -325,7 +354,19 @@ function FilesView({ navigateRequest = null, onSendPath, sendTargetLabel = null 
 
 
   const updateOpenFile = useCallback((path: string, patch: Partial<OpenFile>) => {
-    setOpenFiles(prev => prev.map(file => (file.path === path ? { ...file, ...patch } : file)))
+    setOpenFilesState(previous => patchBuffer(previous, path, patch))
+  }, [])
+
+  // Read results are applied through the model, which drops them unless the
+  // buffer still holds the token the read was issued under. That is what makes
+  // out-of-order, superseded, and post-move reads harmless.
+  const readIntoBuffer = useCallback(async (path: string, readToken: number) => {
+    try {
+      const content = await readTextFile(path)
+      setOpenFilesState(previous => applyRead(previous, path, readToken, { content }))
+    } catch (readError) {
+      setOpenFilesState(previous => applyRead(previous, path, readToken, { error: getErrorMessage(readError, 'read') }))
+    }
   }, [])
 
   const rememberRecent = useCallback((path: string) => {
@@ -343,53 +384,41 @@ function FilesView({ navigateRequest = null, onSendPath, sendTargetLabel = null 
     }
 
     const kind = getPreviewKind(item)
-    setActiveFilePath(item.path)
     setContentMode('file')
     rememberRecent(item.path)
 
-    setOpenFiles(prev => {
-      if (prev.some(file => file.path === item.path)) return prev
-      return [
-        ...prev,
-        {
-          path: item.path,
-          name: item.name,
-          size: item.size,
-          type: item.type,
-          kind,
-          content: '',
-          dirty: false,
-          loading: kind === 'text' && item.size <= MAX_TEXT_PREVIEW_BYTES,
-          error: kind === 'text' && item.size > MAX_TEXT_PREVIEW_BYTES ? 'File is too large for inline editing' : null,
-        },
-      ]
-    })
+    // Reopening an already-open file focuses its tab. It is deliberately not
+    // re-read: that is what used to overwrite unsaved edits with disk content.
+    const result = openBuffer(openFilesStateRef.current, {
+      path: item.path,
+      name: item.name,
+      size: item.size,
+      type: item.type,
+      kind,
+      loading: kind === 'text' && item.size <= MAX_TEXT_PREVIEW_BYTES,
+      error: kind === 'text' && item.size > MAX_TEXT_PREVIEW_BYTES ? 'File is too large for inline editing' : null,
+    }, nextReadToken())
+    openFilesStateRef.current = result.state
+    setOpenFilesState(result.state)
 
-    if (kind === 'text' && item.size <= MAX_TEXT_PREVIEW_BYTES) {
-      try {
-        const content = await readTextFile(item.path)
-        updateOpenFile(item.path, { content, loading: false, error: null })
-      } catch (readError) {
-        updateOpenFile(item.path, {
-          loading: false,
-          error: getErrorMessage(readError, 'read'),
-        })
-      }
+    if (result.readToken !== null) {
+      await readIntoBuffer(item.path, result.readToken)
     }
-  }, [navigateTo, rememberRecent, updateOpenFile])
+  }, [navigateTo, nextReadToken, readIntoBuffer, rememberRecent])
 
   useEffect(() => {
-    initialWorkbench.openFiles.forEach(file => {
-      if (file.kind !== 'text') return
+    // Restored tabs read once, under the token they were restored with.
+    openFilesStateRef.current.files.forEach(file => {
+      if (file.kind !== 'text' || !file.loading) return
       if (file.size > MAX_TEXT_PREVIEW_BYTES) {
         updateOpenFile(file.path, { loading: false, error: 'File is too large for inline editing' })
         return
       }
-      void readTextFile(file.path)
-        .then(content => updateOpenFile(file.path, { content, loading: false, error: null }))
-        .catch(readError => updateOpenFile(file.path, { loading: false, error: getErrorMessage(readError, 'read') }))
+      void readIntoBuffer(file.path, file.readToken)
     })
-  }, [initialWorkbench.openFiles, updateOpenFile])
+    // Restore runs once for the state the workbench mounted with.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     if (!navigateRequest) return
@@ -422,18 +451,19 @@ function FilesView({ navigateRequest = null, onSendPath, sendTargetLabel = null 
     void openFile(makeFileItemFromPath(saved.path))
   }, [navigateTo, openFile])
 
+  // Closing one tab has an unambiguous target, so a dirty buffer asks for an
+  // explicit discard. Bulk closes cover many buffers at once and keep blocking
+  // instead, so the operator resolves them one by one.
   const closeOpenFile = useCallback((path: string) => {
-    setOpenFiles(prev => {
-      const index = prev.findIndex(file => file.path === path)
-      const next = prev.filter(file => file.path !== path)
-      if (activeFilePath === path) {
-        const fallback = next[index] || next[index - 1] || next[0] || null
-        setActiveFilePath(fallback?.path || null)
-      }
-      if (next.length === 0) setContentMode('folder')
+    const target = findBuffer(openFilesStateRef.current, path)
+    if (target?.dirty && !window.confirm(`${target.name} has unsaved changes. Discard them?`)) return
+
+    setOpenFilesState(previous => {
+      const next = closeBuffer(previous, path)
+      if (next.files.length === 0) setContentMode('folder')
       return next
     })
-  }, [activeFilePath])
+  }, [])
 
   const closeAllOpenFiles = useCallback(() => {
     setTabContextMenu(null)
@@ -442,8 +472,7 @@ function FilesView({ navigateRequest = null, onSendPath, sendTargetLabel = null 
       return
     }
 
-    setOpenFiles([])
-    setActiveFilePath(null)
+    setOpenFilesState(closeAllBuffers())
     setContentMode('folder')
   }, [openFiles, showError])
 
@@ -458,8 +487,7 @@ function FilesView({ navigateRequest = null, onSendPath, sendTargetLabel = null 
       return
     }
 
-    setOpenFiles([fileToKeep])
-    setActiveFilePath(fileToKeep.path)
+    setOpenFilesState(previous => closeOtherBuffers(previous, path))
   }, [openFiles, showError])
 
   const activeFile = useMemo(
@@ -579,16 +607,22 @@ function FilesView({ navigateRequest = null, onSendPath, sendTargetLabel = null 
       return
     }
 
+    const safeName = sanitizeFilename(renameValue)
+    const destination = joinPath(getParentPath(item.path), safeName)
+    const conflicts = remapConflicts(openFilesStateRef.current, item.path, destination)
+    if (conflicts.length > 0) {
+      showError(`Close the open tab at ${conflicts[0]} before renaming onto it.`)
+      cancelRename()
+      return
+    }
+
     setOperationLabel('Renaming')
     try {
-      const safeName = sanitizeFilename(renameValue)
-      const destination = joinPath(getParentPath(item.path), safeName)
       await renameItem(item.path, destination)
-      setOpenFiles(prev => prev.map(file => {
-        if (file.path !== item.path) return file
-        return { ...file, path: destination, name: safeName }
-      }))
-      if (activeFilePath === item.path) setActiveFilePath(destination)
+      // Remap buffers and view state together so open tabs — including
+      // descendants of a renamed folder — follow the file to its new path.
+      setOpenFilesState(previous => remapBuffers(previous, item.path, destination))
+      setFileViewStates(previous => remapViewStates(previous, item.path, destination))
       await loadDirectory(currentPath)
       setTreeRefreshToken(previous => previous + 1)
     } catch (renameError) {
@@ -640,16 +674,24 @@ function FilesView({ navigateRequest = null, onSendPath, sendTargetLabel = null 
 
   const confirmDelete = async () => {
     if (!deleteTargets) return
+    const deletedPaths = deleteTargets.map(item => item.path)
+
+    // Deleting the file under an unsaved buffer destroys the edit and the disk
+    // copy at once, so it blocks the same way a bulk close does.
+    const dirty = dirtyBuffersUnder(openFilesStateRef.current, deletedPaths)
+    if (dirty.length > 0) {
+      showError(`Save or close unsaved files before deleting: ${describeBuffers(dirty)}.`)
+      setDeleteTargets(null)
+      return
+    }
+
     setOperationLabel('Deleting')
     try {
       for (const target of deleteTargets) {
         await deleteItem(target.path)
       }
-      const deletedPaths = new Set(deleteTargets.map(item => item.path))
-      setOpenFiles(prev => prev.filter(file => !Array.from(deletedPaths).some(path => file.path === path || file.path.startsWith(`${path}/`))))
-      if (activeFilePath && Array.from(deletedPaths).some(path => activeFilePath === path || activeFilePath.startsWith(`${path}/`))) {
-        setActiveFilePath(null)
-      }
+      setOpenFilesState(previous => removeBuffersUnder(previous, deletedPaths))
+      setFileViewStates(previous => pruneViewStates(previous, deletedPaths))
       await loadDirectory(currentPath)
       setTreeRefreshToken(previous => previous + 1)
       setDeleteTargets(null)
@@ -782,11 +824,27 @@ function FilesView({ navigateRequest = null, onSendPath, sendTargetLabel = null 
     setDropTargetPath(null)
     if (!target.isDir || draggingPaths.length === 0) return
 
+    const moves = draggingPaths.map(sourcePath => ({
+      sourcePath,
+      destination: joinPath(target.path, getBaseName(sourcePath)),
+    }))
+    const conflict = moves
+      .flatMap(move => remapConflicts(openFilesStateRef.current, move.sourcePath, move.destination))
+      .find(Boolean)
+    if (conflict) {
+      showError(`Close the open tab at ${conflict} before moving onto it.`)
+      setDraggingPaths([])
+      return
+    }
+
     setOperationLabel('Moving')
     try {
-      for (const sourcePath of draggingPaths) {
-        const destination = joinPath(target.path, getBaseName(sourcePath))
+      for (const { sourcePath, destination } of moves) {
         await renameItem(sourcePath, destination)
+        // Remap after each successful move so a mid-batch failure still leaves
+        // the moved buffers pointing at their real paths.
+        setOpenFilesState(previous => remapBuffers(previous, sourcePath, destination))
+        setFileViewStates(previous => remapViewStates(previous, sourcePath, destination))
       }
       await loadDirectory(currentPath)
       setTreeRefreshToken(previous => previous + 1)

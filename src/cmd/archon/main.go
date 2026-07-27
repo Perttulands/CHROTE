@@ -1005,7 +1005,7 @@ func runGateVerdict(store *formations.Store, args []string, stdout, stderr io.Wr
 	fs := flag.NewFlagSet("gate verdict", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	reason := fs.String("reason", "", "verdict reason")
-	actor := fs.String("actor", "human:perttu", "deciding actor")
+	actor := fs.String("actor", "human:operator", "deciding actor")
 	jsonOut := fs.Bool("json", false, "write JSON")
 	if err := fs.Parse(reorderFlags(args, map[string]bool{"json": true})); err != nil {
 		return 2
@@ -2050,7 +2050,7 @@ func archonExposeTmuxTargetSessions(roster *formations.AgentRoster) {
 }
 
 func (realTmuxRunner) LiveSessions() ([]formations.LiveAgentSession, error) {
-	cmd := exec.Command("tmux", archonTmuxArgs("list-sessions", "-F", "#{session_name}:#{session_attached}")...)
+	cmd := exec.Command(core.TmuxBin(), archonTmuxArgs("list-sessions", "-F", "#{session_name}:#{session_attached}")...)
 	cmd.Env = archonTmuxEnv()
 	output, err := cmd.Output()
 	if err != nil {
@@ -2083,13 +2083,13 @@ func (realTmuxRunner) Spawn(name, command string) error {
 	if command != "" {
 		args = append(args, command)
 	}
-	cmd := exec.Command("tmux", archonTmuxArgs(args...)...)
+	cmd := exec.Command(core.TmuxBin(), archonTmuxArgs(args...)...)
 	cmd.Env = archonTmuxEnv()
 	return cmd.Run()
 }
 
 func (realTmuxRunner) Attach(name string) error {
-	cmd := exec.Command("tmux", archonTmuxArgs("attach-session", "-t", name)...)
+	cmd := exec.Command(core.TmuxBin(), archonTmuxArgs("attach-session", "-t", name)...)
 	cmd.Env = archonTmuxEnv()
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout

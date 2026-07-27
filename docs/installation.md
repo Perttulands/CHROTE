@@ -1,5 +1,14 @@
 # Installing CHROTE
 
+> **Scope: a fresh, from-scratch install.** Everything below — the
+> `chrote.service` user unit, port `8094`, ttyd port `7683` — describes what
+> `install.sh` creates on a machine that has never run CHROTE, using the
+> compiled defaults. It is **not** a description of any already-operated
+> deployment: an existing host may run a different unit, port, and socket,
+> recorded only in local operator configuration. Diagnosing or restarting an
+> operated deployment from this page targets the wrong process — resolve the
+> real target from local operator context first, and ask instead of guessing.
+
 CHROTE v2 is alpha. The canonical public installation is a **same-user Linux or
 WSL user service built from the checked-out source**. This keeps the installed
 binary tied to an inspectable commit instead of silently selecting an older

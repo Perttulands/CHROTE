@@ -335,7 +335,7 @@ func TestFormationsHandlerS5ResumeVerdictAndEscalations(t *testing.T) {
 	if _, err := store.RecordEscalationFromCapture(humanStarted.RunID, "fmn_work", "<<<CHROTE-ESCALATE run-id="+humanStarted.RunID+" severity=needs-attention reason='found a better direction'>>>"); err != nil {
 		t.Fatalf("record escalation: %v", err)
 	}
-	verdictReq := httptest.NewRequest(http.MethodPost, "/api/formations/runs/"+humanStarted.RunID+"/gates/gate_review/verdict", bytes.NewBufferString(`{"verdict":"pass","reason":"direction is right","actor":"human:perttu"}`))
+	verdictReq := httptest.NewRequest(http.MethodPost, "/api/formations/runs/"+humanStarted.RunID+"/gates/gate_review/verdict", bytes.NewBufferString(`{"verdict":"pass","reason":"direction is right","actor":"human:operator"}`))
 	verdictRec := httptest.NewRecorder()
 	mux.ServeHTTP(verdictRec, verdictReq)
 	if verdictRec.Code != http.StatusOK {
@@ -1057,7 +1057,7 @@ onFail = "block"
 	if afterResume := readFormationsAPIFile(t, ledgerPath); afterResume != beforeResume {
 		t.Fatalf("rejected API resume changed ledger\nbefore:\n%s\nafter:\n%s", beforeResume, afterResume)
 	}
-	abortReq := httptest.NewRequest(http.MethodPost, "/api/formations/runs/"+started.RunID+"/abort", bytes.NewBufferString(`{"reason":"retire legacy run","requestedBy":"human:perttu"}`))
+	abortReq := httptest.NewRequest(http.MethodPost, "/api/formations/runs/"+started.RunID+"/abort", bytes.NewBufferString(`{"reason":"retire legacy run","requestedBy":"human:operator"}`))
 	abortRec := httptest.NewRecorder()
 	mux.ServeHTTP(abortRec, abortReq)
 	if abortRec.Code != http.StatusOK || !bytes.Contains(abortRec.Body.Bytes(), []byte(`"status":"canceled"`)) || !bytes.Contains(abortRec.Body.Bytes(), []byte(`"final":true`)) {

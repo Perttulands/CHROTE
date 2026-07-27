@@ -2,7 +2,7 @@ import { test, expect, Page } from './fixtures'
 import { mockApiRoutes, mockSessions } from './mock-api'
 import { openSessionsSidecar } from './helpers'
 
-const terminalRoutePattern = /.*\/terminal\/?.*/
+const terminalRoutePattern = /\/terminal(\/|\?|$)/
 
 // Helper: drag-and-drop for dnd-kit (same as dashboard.spec.ts)
 async function dragAndDrop(page: Page, sourceSelector: string, targetSelector: string) {

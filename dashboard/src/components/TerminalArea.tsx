@@ -11,12 +11,11 @@ import { useIframePool } from './IframePool'
 
 interface TerminalAreaProps {
   workspaceId: WorkspaceId
-  active?: boolean
   sidecarControls?: ReactNode
 }
 
-function TerminalArea({ workspaceId, active = true, sidecarControls }: TerminalAreaProps) {
-  const { workspaces, setWindowCount, clearStaleSessionsFromWindow, isDragging, sessions, windowRevealRequest } = useSession()
+function TerminalArea({ workspaceId, sidecarControls }: TerminalAreaProps) {
+  const { workspaces, setWindowCount, clearStaleSessionsFromWindow, sessions, windowRevealRequest } = useSession()
   const pool = useIframePool()
   const workspace = workspaces[workspaceId]
   const windows = workspace.windows
@@ -203,7 +202,6 @@ function TerminalArea({ workspaceId, active = true, sidecarControls }: TerminalA
               key={window.id}
               workspaceId={workspaceId}
               window={window}
-              isDragging={active && isVisible && isDragging}
               refitNonce={refitNonce}
               style={{ display: isVisible ? 'flex' : 'none' }}
             />

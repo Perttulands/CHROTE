@@ -24,35 +24,22 @@ vi.mock('@dnd-kit/core', () => ({
   useSensors: (...args: unknown[]) => args,
 }))
 
-vi.mock('./context/SessionContext', async () => {
-  const React = await import('react')
-  const DragContext = React.createContext<any>(null)
-  return {
-    SessionProvider: ({ children }: { children: React.ReactNode }) => {
-      const [isDragging, setIsDragging] = React.useState(false)
-      return (
-        <DragContext.Provider value={{
-          addSessionToWindow: mocks.addSessionToWindow,
-          removeSessionFromWindow: mocks.removeSessionFromWindow,
-          isDragging,
-          setIsDragging,
-          settings: DEFAULT_SETTINGS,
-          windowRevealRequest: mocks.windowRevealRequest,
-          workspaces: {
-            terminal1: { windows: [] },
-            terminal2: { windows: [] },
-            terminal3: { windows: [] },
-          },
-          focusedWindowKey: null,
-          openSendToSession: mocks.openSendToSession,
-        }}>
-          {children}
-        </DragContext.Provider>
-      )
+vi.mock('./context/SessionContext', () => ({
+  SessionProvider: ({ children }: { children: React.ReactNode }) => children,
+  useSession: () => ({
+    addSessionToWindow: mocks.addSessionToWindow,
+    removeSessionFromWindow: mocks.removeSessionFromWindow,
+    settings: DEFAULT_SETTINGS,
+    windowRevealRequest: mocks.windowRevealRequest,
+    workspaces: {
+      terminal1: { windows: [] },
+      terminal2: { windows: [] },
+      terminal3: { windows: [] },
     },
-    useSession: () => React.useContext(DragContext),
-  }
-})
+    focusedWindowKey: null,
+    openSendToSession: mocks.openSendToSession,
+  }),
+}))
 
 vi.mock('./components/TabBar', () => ({ default: () => <div data-testid="tab-bar" /> }))
 vi.mock('./components/TerminalWorkspaceDock', () => ({

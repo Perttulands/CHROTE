@@ -86,7 +86,7 @@ func TestCareerWebAcceptance(t *testing.T) {
 		GateID:  "gate_taste",
 		Verdict: "pass",
 		Reason:  "artifact fits the job-search story",
-		Actor:   "human:perttu",
+		Actor:   "human:operator",
 	})
 	if err != nil {
 		t.Fatalf("record human verdict: %v", err)

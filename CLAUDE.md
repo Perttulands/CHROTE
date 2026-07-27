@@ -17,7 +17,7 @@ The `/api/oracle/*` route names are compatibility names. Product UI calls this s
 
 ## Working rules
 
-- Use modern `bd` in the owning workspace for durable work state.
+- Use modern `bd` in this repository's own `.beads/` workspace for durable work state (`chrote-` prefix; `chrt-`/`ctx-` ids are imported history — `.beads/WORKSPACE.md` owns the scope and import story).
 - Use `bv` only as an optional graph-aware Beads viewer, never as the issue source of truth.
 - Preserve running shells, tmux sessions, and unrelated dirty work.
 - Keep listeners loopback-only unless the user explicitly approves a broader binding.
@@ -43,9 +43,9 @@ bd close <id>         # Complete work
 
 - Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
 - Run `bd prime` for detailed command reference and session close protocol
-- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
+- Use `bd remember` for shared persistent knowledge. Harness-private memory files may exist, but anything another agent needs must land in `bd remember` or a bead — never only in a tool-private file
 
-**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
+**Architecture in one line:** issues live in this workspace's local embedded Dolt DB under `.beads/`; no git-remote Dolt sync is configured for this repository and there is no `.beads/issues.jsonl` export — the local database is the only copy, so treat it as primary data, not derived state.
 
 ## Agent Context Profiles
 

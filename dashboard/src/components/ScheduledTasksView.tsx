@@ -1,19 +1,35 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { FormEvent, MouseEvent as ReactMouseEvent } from 'react'
-import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
-import { copyTextToClipboard } from '../utils/clipboard'
-import DismissiblePanel from './DismissiblePanel'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties, FormEvent } from 'react'
+import { useDndMonitor, useDroppable } from '@dnd-kit/core'
+import { CalendarClock, Plus, SquareTerminal } from 'lucide-react'
+import { useSession } from '../context/SessionContext'
+import { getSessionKey, getTerminalUserInitial } from '../types'
+import type { WorkspaceId } from '../types'
+import SessionPanel from './SessionPanel'
+import {
+  WEEKDAYS,
+  browserTimezone,
+  describeSchedule,
+  emptyScheduleForm,
+  scheduleFormError,
+  scheduleFromForm,
+  scheduleToForm,
+  type ScheduleForm,
+  type ScheduleMode,
+  type ScheduledSchedule,
+} from './scheduledSchedule'
 
 interface ScheduledTarget {
   sessionName: string
   unixUser?: string
 }
 
-interface ScheduledSchedule {
-  type: 'interval' | 'cron'
-  expression?: string
-  timezone: string
-  everyMinutes?: number
+interface ScheduledTargetRun {
+  sessionName: string
+  unixUser?: string
+  status: string
+  pane?: string
+  message?: string
 }
 
 interface ScheduledRun {
@@ -23,13 +39,15 @@ interface ScheduledRun {
   finishedAt?: string
   status: string
   message?: string
+  targets?: ScheduledTargetRun[]
 }
 
 interface ScheduledTask {
   id: string
   name: string
   prompt: string
-  target: ScheduledTarget
+  targets?: ScheduledTarget[]
+  target?: ScheduledTarget
   schedule: ScheduledSchedule
   enabled: boolean
   paused: boolean
@@ -43,47 +61,37 @@ interface ScheduledTask {
   recentRuns?: ScheduledRun[]
 }
 
-interface TmuxSessionOption {
-  name: string
-  unixUser?: string
-  windows?: number
-  attached?: boolean
-  group?: string
-}
-
-interface TaskFormState {
+interface TaskForm {
   id?: string
   name: string
   prompt: string
-  unixUser: string
-  sessionName: string
-  scheduleType: 'interval' | 'cron'
-  everyMinutes: string
-  cronExpression: string
-  timezone: string
-  createdBy: string
-  enabled: boolean
+  targets: ScheduledTarget[]
+  schedule: ScheduleForm
   paused: boolean
 }
 
-interface MenuState {
-  x: number
-  y: number
-  taskId: string
+const DROPZONE_ID = 'scheduled-task-targets'
+const SIDECAR_STORAGE_KEY = 'chrote.scheduled.sidecar'
+const ACTOR = 'user:dashboard'
+// Session creation from the sidecar needs a workspace to attach to; the
+// Scheduled tab borrows the first terminal workspace like every other consumer.
+const SIDECAR_WORKSPACE: WorkspaceId = 'terminal1'
+
+function newTaskForm(targets: ScheduledTarget[] = []): TaskForm {
+  return { name: '', prompt: '', targets, schedule: emptyScheduleForm(), paused: false }
 }
 
-const emptyForm: TaskFormState = {
-  name: '',
-  prompt: '',
-  unixUser: '',
-  sessionName: '',
-  scheduleType: 'interval',
-  everyMinutes: '15',
-  cronExpression: '0 9 * * *',
-  timezone: 'UTC',
-  createdBy: 'agent:dashboard',
-  enabled: true,
-  paused: false,
+export function taskTargets(task: ScheduledTask): ScheduledTarget[] {
+  if (task.targets && task.targets.length > 0) return task.targets
+  return task.target ? [task.target] : []
+}
+
+function targetKey(target: ScheduledTarget): string {
+  return `${target.unixUser || ''}:${target.sessionName}`
+}
+
+function targetLabel(target: ScheduledTarget): string {
+  return target.sessionName
 }
 
 function apiErrorMessage(response: unknown, fallback: string): string {
@@ -110,122 +118,83 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   return (payload?.data ?? payload) as T
 }
 
-function formatSchedule(schedule: ScheduledSchedule): string {
-  if (schedule.type === 'interval') return `Every ${schedule.everyMinutes ?? '?'} minutes`
-  return `Cron ${schedule.expression || '?'}`
-}
-
 function formatDateTime(value?: string): string {
-  if (!value) return 'Not scheduled'
+  if (!value) return '—'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleString()
+  return date.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
-function taskToForm(task: ScheduledTask): TaskFormState {
-  return {
-    id: task.id,
-    name: task.name,
-    prompt: task.prompt,
-    unixUser: task.target.unixUser || '',
-    sessionName: task.target.sessionName,
-    scheduleType: task.schedule.type,
-    everyMinutes: String(task.schedule.everyMinutes || 15),
-    cronExpression: task.schedule.expression || '0 9 * * *',
-    timezone: task.schedule.timezone || 'UTC',
-    createdBy: task.updatedBy || task.createdBy || 'agent:dashboard',
-    enabled: task.enabled,
-    paused: task.paused,
-  }
+// formatCountdown keeps liveness as text rather than a blinking indicator.
+export function formatCountdown(value: string | undefined, now: number): string {
+  if (!value) return ''
+  const target = new Date(value).getTime()
+  if (Number.isNaN(target)) return ''
+  const seconds = Math.round((target - now) / 1000)
+  if (seconds <= 0) return 'due now'
+  const days = Math.floor(seconds / 86400)
+  const hours = Math.floor((seconds % 86400) / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  if (days > 0) return `in ${days}d ${hours}h`
+  if (hours > 0) return `in ${hours}h ${minutes}m`
+  if (minutes > 0) return `in ${minutes}m`
+  return 'in <1m'
 }
 
-function duplicateTaskForm(task: ScheduledTask): TaskFormState {
-  return {
-    ...taskToForm(task),
-    id: undefined,
-    name: `${task.name} copy`,
-    createdBy: 'agent:dashboard',
-  }
+function statusLabel(task: ScheduledTask): string {
+  if (task.paused) return 'Paused'
+  if (!task.enabled) return 'Disabled'
+  return 'Active'
 }
 
-function buildRequest(form: TaskFormState) {
-  const actor = form.createdBy.trim() || 'agent:dashboard'
-  return {
-    name: form.name.trim(),
-    prompt: form.prompt,
-    target: {
-      unixUser: form.unixUser.trim(),
-      sessionName: form.sessionName.trim(),
-    },
-    schedule: form.scheduleType === 'interval'
-      ? { type: 'interval', everyMinutes: Number(form.everyMinutes), timezone: form.timezone.trim() || 'UTC' }
-      : { type: 'cron', expression: form.cronExpression.trim(), timezone: form.timezone.trim() || 'UTC' },
-    enabled: form.enabled,
-    paused: form.paused,
-    createdBy: actor,
-    updatedBy: actor,
+function readSidecarOpen(): boolean {
+  try {
+    return window.localStorage.getItem(SIDECAR_STORAGE_KEY) !== 'closed'
+  } catch {
+    return true
   }
 }
 
-function validateForm(form: TaskFormState): string | null {
-  if (!form.name.trim()) return 'Name is required.'
-  if (!form.prompt.trim()) return 'Prompt is required.'
-  if (!form.sessionName.trim()) return 'Session is required.'
-  if (form.scheduleType === 'interval') {
-    const minutes = Number(form.everyMinutes)
-    if (!Number.isFinite(minutes) || minutes <= 0) return 'Every minutes must be a positive number.'
+function writeSidecarOpen(open: boolean) {
+  try {
+    window.localStorage.setItem(SIDECAR_STORAGE_KEY, open ? 'open' : 'closed')
+  } catch {
+    // Private-mode storage failures must not break scheduling.
   }
-  if (form.scheduleType === 'cron' && form.cronExpression.trim().split(/\s+/).length !== 5) {
-    return 'Cron expression must have five fields.'
-  }
-  return null
-}
-
-function unwrapSessions(data: unknown): TmuxSessionOption[] {
-  if (data && typeof data === 'object') {
-    const maybe = data as { sessions?: TmuxSessionOption[]; data?: { sessions?: TmuxSessionOption[] } }
-    return maybe.sessions || maybe.data?.sessions || []
-  }
-  return []
 }
 
 function ScheduledTasksView() {
+  const { sessions } = useSession()
   const [tasks, setTasks] = useState<ScheduledTask[]>([])
-  const [sessions, setSessions] = useState<TmuxSessionOption[]>([])
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
-  const [form, setForm] = useState<TaskFormState>(emptyForm)
+  const [form, setForm] = useState<TaskForm | null>(null)
   const [formDirty, setFormDirty] = useState(false)
-  const [showForm, setShowForm] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [menu, setMenu] = useState<MenuState | null>(null)
-  const menuPosition = useViewportMenuPosition<HTMLDivElement>(menu ? { x: menu.x, y: menu.y } : null, {
-    estimatedSize: { width: 180, height: 180 },
-  })
+  const [busy, setBusy] = useState(false)
+  const [sidecarOpen, setSidecarOpen] = useState(readSidecarOpen)
+  const [sidecarWidth, setSidecarWidth] = useState(260)
+  const [now, setNow] = useState(() => Date.now())
+  const formRef = useRef<TaskForm | null>(null)
+  formRef.current = form
 
   const selectedTask = useMemo(
-    () => tasks.find(task => task.id === selectedTaskId) || tasks[0] || null,
+    () => tasks.find(task => task.id === selectedTaskId) || null,
     [selectedTaskId, tasks],
   )
-  const menuTask = useMemo(
-    () => tasks.find(task => task.id === menu?.taskId) || null,
-    [menu?.taskId, tasks],
-  )
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const load = useCallback(async (): Promise<ScheduledTask[]> => {
     setError(null)
     try {
-      const [tasksData, sessionsData] = await Promise.all([
-        fetchJSON<{ tasks: ScheduledTask[] }>('/api/scheduled-tasks'),
-        fetchJSON<unknown>('/api/tmux/sessions'),
-      ])
-      setTasks(tasksData.tasks || [])
-      setSessions(unwrapSessions(sessionsData))
-      setSelectedTaskId(previous => previous && tasksData.tasks?.some(task => task.id === previous) ? previous : tasksData.tasks?.[0]?.id || null)
+      const data = await fetchJSON<{ tasks: ScheduledTask[] }>('/api/scheduled-tasks')
+      const loaded = data.tasks || []
+      setTasks(loaded)
+      setSelectedTaskId(previous => (previous && loaded.some(task => task.id === previous) ? previous : loaded[0]?.id || null))
+      return loaded
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Failed to load scheduled tasks.')
+      return []
     } finally {
       setLoading(false)
     }
@@ -235,260 +204,617 @@ function ScheduledTasksView() {
     void load()
   }, [load])
 
+  // Countdowns tick once a minute; the list itself only reloads after actions.
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000)
+    return () => window.clearInterval(timer)
+  }, [])
 
-  const updateForm = <K extends keyof TaskFormState>(key: K, value: TaskFormState[K]) => {
+  useEffect(() => {
+    writeSidecarOpen(sidecarOpen)
+  }, [sidecarOpen])
+
+  const updateForm = useCallback((update: (previous: TaskForm) => TaskForm) => {
     setFormDirty(true)
-    setForm(previous => ({ ...previous, [key]: value }))
-  }
+    setForm(previous => (previous ? update(previous) : previous))
+  }, [])
 
-  const canDiscardForm = () => !showForm || !formDirty || window.confirm('Discard unsaved scheduled task changes?')
-
-  const closeForm = () => {
-    if (!canDiscardForm()) return
-    setShowForm(false)
-    setFormDirty(false)
-  }
-
-  const startCreate = () => {
-    if (!canDiscardForm()) return
-    setForm(emptyForm)
-    setFormDirty(false)
-    setShowForm(true)
+  const addTarget = useCallback((target: ScheduledTarget) => {
     setNotice(null)
-  }
+    setFormDirty(true)
+    setForm(previous => {
+      const base = previous ?? newTaskForm()
+      if (base.targets.some(existing => targetKey(existing) === targetKey(target))) return base
+      return { ...base, targets: [...base.targets, target] }
+    })
+  }, [])
 
-  const startEdit = (task: ScheduledTask) => {
+  // Sessions dragged out of the sidecar land on the editor's target zone. The
+  // ancestor DndContext lives in App, so this view only listens.
+  useDndMonitor({
+    onDragEnd(event) {
+      if (event.over?.id !== DROPZONE_ID) return
+      const data = event.active.data.current as { sessionName?: string; unixUser?: string } | undefined
+      if (!data?.sessionName) return
+      addTarget({ sessionName: data.sessionName, ...(data.unixUser ? { unixUser: data.unixUser } : {}) })
+    },
+  })
+
+  const { isOver, setNodeRef: setDropRef } = useDroppable({ id: DROPZONE_ID })
+
+  const canDiscardForm = useCallback(
+    () => !formRef.current || !formDirty || window.confirm('Discard unsaved scheduled task changes?'),
+    [formDirty],
+  )
+
+  const startCreate = useCallback((targets: ScheduledTarget[] = []) => {
     if (!canDiscardForm()) return
-    setForm(taskToForm(task))
+    setForm(newTaskForm(targets))
     setFormDirty(false)
+    setNotice(null)
+  }, [canDiscardForm])
+
+  const startEdit = useCallback((task: ScheduledTask) => {
+    if (!canDiscardForm()) return
     setSelectedTaskId(task.id)
-    setShowForm(true)
-    setMenu(null)
-    setNotice(null)
-  }
-
-  const startDuplicate = (task: ScheduledTask) => {
-    if (!canDiscardForm()) return
-    setForm(duplicateTaskForm(task))
+    setForm({
+      id: task.id,
+      name: task.name,
+      prompt: task.prompt,
+      targets: taskTargets(task),
+      schedule: scheduleToForm(task.schedule),
+      paused: task.paused,
+    })
     setFormDirty(false)
-    setShowForm(true)
-    setMenu(null)
     setNotice(null)
-  }
+  }, [canDiscardForm])
 
-  const saveForm = async (event: FormEvent) => {
+  const startDuplicate = useCallback((task: ScheduledTask) => {
+    if (!canDiscardForm()) return
+    setForm({
+      name: `${task.name} copy`,
+      prompt: task.prompt,
+      targets: taskTargets(task),
+      schedule: scheduleToForm(task.schedule),
+      paused: task.paused,
+    })
+    setFormDirty(false)
+    setNotice(null)
+  }, [canDiscardForm])
+
+  const closeForm = useCallback(() => {
+    if (!canDiscardForm()) return
+    setForm(null)
+    setFormDirty(false)
+  }, [canDiscardForm])
+
+  const saveForm = useCallback(async (event: FormEvent) => {
     event.preventDefault()
-    const validationError = validateForm(form)
-    if (validationError) {
-      setError(validationError)
+    if (!form) return
+    if (!form.prompt.trim()) {
+      setError('Prompt is required.')
       return
     }
+    if (form.targets.length === 0) {
+      setError('Add at least one target session.')
+      return
+    }
+    const scheduleError = scheduleFormError(form.schedule)
+    if (scheduleError) {
+      setError(scheduleError)
+      return
+    }
+
+    const name = form.name.trim() || form.prompt.trim().split('\n')[0].slice(0, 60)
+    const request = {
+      name,
+      prompt: form.prompt,
+      targets: form.targets,
+      schedule: scheduleFromForm(form.schedule),
+      enabled: true,
+      paused: form.paused,
+      createdBy: ACTOR,
+      updatedBy: ACTOR,
+    }
+
     setError(null)
+    setBusy(true)
     try {
-      const request = buildRequest(form)
       const data = form.id
-        ? await fetchJSON<{ task: ScheduledTask }>(`/api/scheduled-tasks/${encodeURIComponent(form.id)}`, { method: 'PATCH', body: JSON.stringify(request) })
+        ? await fetchJSON<{ task: ScheduledTask }>(`/api/scheduled-tasks/${encodeURIComponent(form.id)}`, {
+            method: 'PATCH',
+            body: JSON.stringify(request),
+          })
         : await fetchJSON<{ task: ScheduledTask }>('/api/scheduled-tasks', { method: 'POST', body: JSON.stringify(request) })
-      setNotice(form.id ? 'Task updated.' : 'Task created.')
-      setShowForm(false)
+      setForm(null)
       setFormDirty(false)
+      setNotice(form.id ? 'Task updated.' : 'Task created.')
       await load()
       setSelectedTaskId(data.task.id)
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Failed to save scheduled task.')
+    } finally {
+      setBusy(false)
     }
-  }
+  }, [form, load])
 
-  const actionTask = async (task: ScheduledTask, action: 'run-now' | 'pause' | 'resume') => {
-    setMenu(null)
+  const actionTask = useCallback(async (task: ScheduledTask, action: 'run-now' | 'pause' | 'resume') => {
+    setError(null)
+    setBusy(true)
     try {
-      await fetchJSON(`/api/scheduled-tasks/${encodeURIComponent(task.id)}/${action}`, { method: 'POST', body: '{}' })
-      setNotice(action === 'run-now' ? 'Task sent to tmux.' : action === 'pause' ? 'Task paused.' : 'Task resumed.')
+      const data = await fetchJSON<{ task: ScheduledTask; run?: ScheduledRun }>(
+        `/api/scheduled-tasks/${encodeURIComponent(task.id)}/${action}`,
+        { method: 'POST', body: JSON.stringify({ updatedBy: ACTOR }) },
+      )
+      if (action === 'run-now') {
+        const run = data.run
+        const delivered = run?.targets?.filter(result => result.status === 'success').length ?? 0
+        const total = run?.targets?.length ?? taskTargets(task).length
+        setNotice(run?.status === 'success'
+          ? `Sent to ${total} ${total === 1 ? 'session' : 'sessions'}.`
+          : `Sent to ${delivered} of ${total}: ${run?.message || 'delivery failed'}`)
+      } else {
+        setNotice(action === 'pause' ? 'Task paused.' : 'Task resumed.')
+      }
       await load()
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : `Failed to ${action} task.`)
+    } finally {
+      setBusy(false)
     }
-  }
+  }, [load])
 
-  const deleteTask = async (task: ScheduledTask) => {
-    setMenu(null)
+  const deleteTask = useCallback(async (task: ScheduledTask) => {
     if (!window.confirm(`Delete scheduled task "${task.name}"?`)) return
+    setBusy(true)
     try {
       await fetchJSON(`/api/scheduled-tasks/${encodeURIComponent(task.id)}`, { method: 'DELETE' })
       setNotice('Task deleted.')
+      if (formRef.current?.id === task.id) {
+        setForm(null)
+        setFormDirty(false)
+      }
       await load()
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : 'Failed to delete task.')
+    } finally {
+      setBusy(false)
     }
-  }
+  }, [load])
 
-  const copyTaskID = async (task: ScheduledTask) => {
-    setMenu(null)
-    const copied = await copyTextToClipboard(task.id)
-    setNotice(copied ? 'Task ID copied.' : task.id)
-  }
+  const sessionOptions = useMemo(
+    () => [...sessions].sort((a, b) => a.name.localeCompare(b.name)),
+    [sessions],
+  )
 
-  const openContextMenu = (event: ReactMouseEvent, task: ScheduledTask) => {
-    event.preventDefault()
-    setSelectedTaskId(task.id)
-    setMenu({ x: event.clientX, y: event.clientY, taskId: task.id })
-  }
+  const dockStyle = { '--scheduled-sidecar-width': `${sidecarWidth}px` } as CSSProperties
 
   return (
-    <div className="scheduled-view">
-      <header className="scheduled-header">
-        <div>
+    <div className="scheduled-dock" data-sidecar={sidecarOpen ? 'sessions' : 'closed'} style={dockStyle}>
+      {sidecarOpen && (
+        <SessionPanel
+          activeWorkspaceId={SIDECAR_WORKSPACE}
+          collapsed={false}
+          width={sidecarWidth}
+          pinned
+          canPin={false}
+          panelId="scheduled-sessions-sidecar"
+          onClose={() => setSidecarOpen(false)}
+          onWidthChange={setSidecarWidth}
+        />
+      )}
+
+      <div className="scheduled-main">
+        <header className="scheduled-toolbar">
+          <button
+            type="button"
+            className={`terminal-sidecar-button ${sidecarOpen ? 'active' : ''}`}
+            aria-label="Sessions sidecar"
+            aria-controls="scheduled-sessions-sidecar"
+            aria-expanded={sidecarOpen}
+            aria-pressed={sidecarOpen}
+            title="Sessions"
+            onClick={() => setSidecarOpen(open => !open)}
+          >
+            <SquareTerminal size={16} aria-hidden="true" />
+            <span className="terminal-sidecar-label">Sessions</span>
+            <span className="terminal-sidecar-count">{sessions.length}</span>
+          </button>
           <h2>Scheduled Tasks</h2>
-          <p>Persisted CHROTE jobs that send explicit prompts into tmux sessions.</p>
+          <span className="scheduled-toolbar-hint">Prompts CHROTE sends into your sessions on a timer</span>
+          <button type="button" className="scheduled-primary" onClick={() => startCreate()}>
+            <Plus size={14} aria-hidden="true" /> New Task
+          </button>
+        </header>
+
+        {error && <div className="scheduled-alert" role="alert">{error}</div>}
+        {notice && <div className="scheduled-notice" role="status">{notice}</div>}
+
+        <div className="scheduled-body">
+          <section className="scheduled-list" aria-label="Scheduled task list">
+            {loading ? (
+              <p className="scheduled-empty">Loading scheduled tasks…</p>
+            ) : tasks.length === 0 ? (
+              <p className="scheduled-empty">No scheduled tasks yet. Create one to keep sessions moving while you are away.</p>
+            ) : (
+              tasks.map(task => {
+                const targets = taskTargets(task)
+                return (
+                  <button
+                    key={task.id}
+                    type="button"
+                    className={`scheduled-task-card ${task.id === selectedTaskId ? 'active' : ''} ${task.paused || !task.enabled ? 'muted' : ''}`}
+                    onClick={() => setSelectedTaskId(task.id)}
+                    onDoubleClick={() => startEdit(task)}
+                  >
+                    <span className="scheduled-task-name">{task.name}</span>
+                    <span className="scheduled-task-when">
+                      {describeSchedule(task.schedule)}
+                      <span className="scheduled-task-zone"> · {task.schedule?.timezone || 'Local'}</span>
+                    </span>
+                    <span className="scheduled-task-targets">
+                      {targets.map(target => (
+                        <span key={targetKey(target)} className="scheduled-chip">{targetLabel(target)}</span>
+                      ))}
+                    </span>
+                    <span className="scheduled-task-status">
+                      <span className={task.paused || !task.enabled ? 'scheduled-muted' : ''}>{statusLabel(task)}</span>
+                      {!task.paused && task.enabled && task.nextRun && (
+                        <span className="scheduled-muted"> · next {formatCountdown(task.nextRun, now)}</span>
+                      )}
+                      {task.lastStatus && (
+                        <span className={task.lastStatus === 'success' ? 'scheduled-muted' : 'scheduled-bad'}> · last {task.lastStatus}</span>
+                      )}
+                    </span>
+                  </button>
+                )
+              })
+            )}
+          </section>
+
+          <section className="scheduled-detail" aria-label="Scheduled task detail">
+            {form ? (
+              <form className="scheduled-form" onSubmit={saveForm}>
+                <div className="scheduled-form-header">
+                  <h3>{form.id ? 'Edit task' : 'New task'}</h3>
+                  <div className="scheduled-form-header-actions">
+                    <button type="button" className="scheduled-secondary" onClick={closeForm}>Cancel</button>
+                    <button type="submit" className="scheduled-primary" disabled={busy}>
+                      {form.id ? 'Save task' : 'Create task'}
+                    </button>
+                  </div>
+                </div>
+
+                <label className="scheduled-field">
+                  <span>Prompt</span>
+                  <textarea
+                    className="scheduled-prompt-input"
+                    value={form.prompt}
+                    rows={4}
+                    placeholder="Continue if work is clear…"
+                    onChange={event => updateForm(previous => ({ ...previous, prompt: event.target.value }))}
+                  />
+                </label>
+
+                <div
+                  ref={setDropRef}
+                  className={`scheduled-targets ${isOver ? 'drop-active' : ''}`}
+                  data-testid="scheduled-target-dropzone"
+                >
+                  <div className="scheduled-targets-head">
+                    <span className="scheduled-label">Send to</span>
+                    <span className="scheduled-muted">Drag sessions here, or pick them below</span>
+                  </div>
+                  <div className="scheduled-target-chips">
+                    {form.targets.length === 0 ? (
+                      <span className="scheduled-muted">No sessions selected</span>
+                    ) : (
+                      form.targets.map(target => (
+                        <span key={targetKey(target)} className="scheduled-chip scheduled-chip-removable">
+                          {target.unixUser && (
+                            <span className="scheduled-chip-user" title={`Unix user: ${target.unixUser}`}>
+                              {getTerminalUserInitial(target.unixUser)}
+                            </span>
+                          )}
+                          {targetLabel(target)}
+                          <button
+                            type="button"
+                            aria-label={`Remove ${target.sessionName}`}
+                            onClick={() => updateForm(previous => ({
+                              ...previous,
+                              targets: previous.targets.filter(existing => targetKey(existing) !== targetKey(target)),
+                            }))}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))
+                    )}
+                  </div>
+                  <div className="scheduled-session-picker" role="group" aria-label="Available sessions">
+                    {sessionOptions.map(session => {
+                      const target: ScheduledTarget = {
+                        sessionName: session.name,
+                        ...(session.unixUser ? { unixUser: session.unixUser } : {}),
+                      }
+                      const selected = form.targets.some(existing => targetKey(existing) === targetKey(target))
+                      return (
+                        <button
+                          key={getSessionKey(session.name, session.unixUser)}
+                          type="button"
+                          className={`scheduled-session-option ${selected ? 'selected' : ''}`}
+                          aria-pressed={selected}
+                          onClick={() => (selected
+                            ? updateForm(previous => ({
+                                ...previous,
+                                targets: previous.targets.filter(existing => targetKey(existing) !== targetKey(target)),
+                              }))
+                            : addTarget(target))}
+                        >
+                          {session.unixUser && (
+                            <span className="scheduled-chip-user">{getTerminalUserInitial(session.unixUser)}</span>
+                          )}
+                          {session.name}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <ScheduleEditor
+                  schedule={form.schedule}
+                  onChange={schedule => updateForm(previous => ({ ...previous, schedule }))}
+                />
+
+                <label className="scheduled-field">
+                  <span>Name <span className="scheduled-muted">(optional)</span></span>
+                  <input
+                    value={form.name}
+                    placeholder="Defaults to the first line of the prompt"
+                    onChange={event => updateForm(previous => ({ ...previous, name: event.target.value }))}
+                  />
+                </label>
+              </form>
+            ) : selectedTask ? (
+              <TaskDetail
+                task={selectedTask}
+                now={now}
+                busy={busy}
+                onEdit={() => startEdit(selectedTask)}
+                onDuplicate={() => startDuplicate(selectedTask)}
+                onDelete={() => void deleteTask(selectedTask)}
+                onRunNow={() => void actionTask(selectedTask, 'run-now')}
+                onTogglePause={() => void actionTask(selectedTask, selectedTask.paused ? 'resume' : 'pause')}
+              />
+            ) : (
+              <div className="scheduled-empty scheduled-detail-empty">
+                <CalendarClock size={20} aria-hidden="true" />
+                <p>Select a task, or create one to send a prompt into your sessions on a schedule.</p>
+              </div>
+            )}
+          </section>
         </div>
-        <button className="scheduled-primary" type="button" onClick={startCreate}>New Task</button>
-      </header>
+      </div>
+    </div>
+  )
+}
 
-      {error && <div className="scheduled-alert" role="alert">{error}</div>}
-      {notice && <div className="scheduled-notice" role="status">{notice}</div>}
+function ScheduleEditor({ schedule, onChange }: { schedule: ScheduleForm; onChange: (schedule: ScheduleForm) => void }) {
+  const modes: { mode: ScheduleMode; label: string }[] = [
+    { mode: 'every', label: 'Every' },
+    { mode: 'daily', label: 'Daily' },
+    { mode: 'weekly', label: 'Weekly' },
+    { mode: 'cron', label: 'Cron' },
+  ]
+  const localZone = browserTimezone()
 
-      <div className="scheduled-grid">
-        <section className="scheduled-list" aria-label="Scheduled task list">
-          {loading ? (
-            <div className="scheduled-empty">Loading scheduled tasks...</div>
-          ) : tasks.length === 0 ? (
-            <div className="scheduled-empty">No scheduled tasks yet. Create one to send prompts into tmux later.</div>
-          ) : (
-            tasks.map(task => (
-              <button
-                key={task.id}
-                className={`scheduled-task-row ${task.id === selectedTask?.id ? 'active' : ''}`}
-                type="button"
-                onClick={() => setSelectedTaskId(task.id)}
-                onContextMenu={(event) => openContextMenu(event, task)}
-              >
-                <span className="scheduled-task-title">{task.name}</span>
-                <span>{task.target.unixUser || 'default'} / {task.target.sessionName}</span>
-                <span>{formatSchedule(task.schedule)}</span>
-                <span className={task.paused || !task.enabled ? 'scheduled-muted' : 'scheduled-good'}>
-                  {task.paused ? 'Paused' : task.enabled ? 'Enabled' : 'Disabled'}
-                </span>
-              </button>
-            ))
-          )}
-        </section>
-
-        <section className="scheduled-detail" aria-label="Scheduled task details">
-          {showForm ? (
-            <form className="scheduled-form" onSubmit={saveForm}>
-              <div className="scheduled-form-header">
-                <h3>{form.id ? 'Edit scheduled task' : 'Create scheduled task'}</h3>
-                <button type="button" className="scheduled-secondary" onClick={closeForm}>Cancel</button>
-              </div>
-              <label>
-                <span>Name</span>
-                <input value={form.name} onChange={(event) => updateForm('name', event.target.value)} />
-              </label>
-              <label>
-                <span>Prompt</span>
-                <textarea value={form.prompt} onChange={(event) => updateForm('prompt', event.target.value)} />
-              </label>
-              <div className="scheduled-form-row">
-                <label>
-                  <span>Unix user</span>
-                  <input list="scheduled-users" value={form.unixUser} onChange={(event) => updateForm('unixUser', event.target.value)} />
-                </label>
-                <label>
-                  <span>Session</span>
-                  <input list="scheduled-sessions" value={form.sessionName} onChange={(event) => updateForm('sessionName', event.target.value)} />
-                </label>
-              </div>
-              <datalist id="scheduled-users">
-                {Array.from(new Set(sessions.map(session => session.unixUser).filter(Boolean))).map(user => <option key={user} value={user} />)}
-              </datalist>
-              <datalist id="scheduled-sessions">
-                {sessions.map(session => <option key={`${session.unixUser || ''}:${session.name}`} value={session.name}>{session.unixUser || 'default'}</option>)}
-              </datalist>
-              <div className="scheduled-form-row">
-                <label>
-                  <span>Schedule type</span>
-                  <select value={form.scheduleType} onChange={(event) => updateForm('scheduleType', event.target.value as 'interval' | 'cron')}>
-                    <option value="interval">Interval</option>
-                    <option value="cron">Cron</option>
-                  </select>
-                </label>
-                {form.scheduleType === 'interval' ? (
-                  <label>
-                    <span>Every minutes</span>
-                    <input type="number" min="1" value={form.everyMinutes} onChange={(event) => updateForm('everyMinutes', event.target.value)} />
-                  </label>
-                ) : (
-                  <label>
-                    <span>Cron expression</span>
-                    <input value={form.cronExpression} onChange={(event) => updateForm('cronExpression', event.target.value)} />
-                  </label>
-                )}
-                <label>
-                  <span>Timezone</span>
-                  <input value={form.timezone} onChange={(event) => updateForm('timezone', event.target.value)} />
-                </label>
-              </div>
-              <div className="scheduled-form-row compact">
-                <label>
-                  <span>Created by</span>
-                  <input value={form.createdBy} onChange={(event) => updateForm('createdBy', event.target.value)} />
-                </label>
-                <label className="scheduled-checkbox">
-                  <input type="checkbox" checked={form.enabled} onChange={(event) => updateForm('enabled', event.target.checked)} />
-                  <span>Enabled</span>
-                </label>
-                <label className="scheduled-checkbox">
-                  <input type="checkbox" checked={form.paused} onChange={(event) => updateForm('paused', event.target.checked)} />
-                  <span>Paused</span>
-                </label>
-              </div>
-              <button className="scheduled-primary" type="submit">{form.id ? 'Save Task' : 'Create Task'}</button>
-            </form>
-          ) : selectedTask ? (
-            <div className="scheduled-card">
-              <div className="scheduled-card-header">
-                <div>
-                  <h3>{selectedTask.name}</h3>
-                  <p>{selectedTask.id}</p>
-                </div>
-                <div className="scheduled-actions">
-                  <button type="button" onClick={() => startEdit(selectedTask)}>Edit</button>
-                  <button type="button" onClick={() => void actionTask(selectedTask, 'run-now')}>Run Now</button>
-                  <button type="button" onClick={() => void actionTask(selectedTask, selectedTask.paused ? 'resume' : 'pause')}>{selectedTask.paused ? 'Resume' : 'Pause'}</button>
-                  <button type="button" onClick={() => startDuplicate(selectedTask)}>Duplicate</button>
-                  <button type="button" className="danger" onClick={() => void deleteTask(selectedTask)}>Delete</button>
-                </div>
-              </div>
-              <dl className="scheduled-meta">
-                <div><dt>Target</dt><dd>{selectedTask.target.unixUser || 'default'} / {selectedTask.target.sessionName}</dd></div>
-                <div><dt>Schedule</dt><dd>{formatSchedule(selectedTask.schedule)} ({selectedTask.schedule.timezone || 'Local'})</dd></div>
-                <div><dt>Next run</dt><dd>{formatDateTime(selectedTask.nextRun)}</dd></div>
-                <div><dt>Last status</dt><dd>{selectedTask.lastStatus || 'Never run'}</dd></div>
-                <div><dt>Agent metadata</dt><dd>createdBy {selectedTask.createdBy || 'unknown'} · updatedBy {selectedTask.updatedBy || 'unknown'}</dd></div>
-              </dl>
-              <label className="scheduled-prompt-readback">
-                <span>Prompt</span>
-                <textarea readOnly value={selectedTask.prompt} />
-              </label>
-            </div>
-          ) : (
-            <div className="scheduled-empty">Select or create a scheduled task.</div>
-          )}
-        </section>
+  return (
+    <div className="scheduled-when">
+      <div className="scheduled-targets-head">
+        <span className="scheduled-label">When</span>
+        <span className="scheduled-muted">{describeSchedule(scheduleFromForm(schedule))} · {schedule.timezone}</span>
       </div>
 
-      {menu && menuTask && (
-        <DismissiblePanel onDismiss={() => setMenu(null)} panelPosition="fixed">
-          <div ref={menuPosition.ref} className="session-context-menu scheduled-task-menu" style={menuPosition.style}>
-            <button className="session-context-item" type="button" onClick={() => startEdit(menuTask)}>Edit</button>
-            <button className="session-context-item" type="button" onClick={() => void actionTask(menuTask, 'run-now')}>Run Now</button>
-            <button className="session-context-item" type="button" onClick={() => void actionTask(menuTask, menuTask.paused ? 'resume' : 'pause')}>{menuTask.paused ? 'Resume' : 'Pause'}</button>
-            <button className="session-context-item" type="button" onClick={() => startDuplicate(menuTask)}>Duplicate</button>
-            <button className="session-context-item" type="button" onClick={() => void copyTaskID(menuTask)}>Copy ID</button>
-            <button className="session-context-item session-context-danger" type="button" onClick={() => void deleteTask(menuTask)}>Delete</button>
-          </div>
-        </DismissiblePanel>
+      <div className="scheduled-mode-switch" role="group" aria-label="Schedule type">
+        {modes.map(({ mode, label }) => (
+          <button
+            key={mode}
+            type="button"
+            className={`scheduled-mode ${schedule.mode === mode ? 'active' : ''}`}
+            aria-pressed={schedule.mode === mode}
+            onClick={() => onChange({ ...schedule, mode })}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div className="scheduled-when-row">
+        {schedule.mode === 'every' && (
+          <>
+            <label className="scheduled-field compact">
+              <span>Run every</span>
+              <input
+                type="number"
+                min="1"
+                aria-label="Interval"
+                value={schedule.everyValue}
+                onChange={event => onChange({ ...schedule, everyValue: event.target.value })}
+              />
+            </label>
+            <label className="scheduled-field compact">
+              <span>Unit</span>
+              <select
+                aria-label="Interval unit"
+                value={schedule.everyUnit}
+                onChange={event => onChange({ ...schedule, everyUnit: event.target.value as 'minutes' | 'hours' })}
+              >
+                <option value="minutes">minutes</option>
+                <option value="hours">hours</option>
+              </select>
+            </label>
+          </>
+        )}
+
+        {(schedule.mode === 'daily' || schedule.mode === 'weekly') && (
+          <label className="scheduled-field compact">
+            <span>At</span>
+            <input
+              type="time"
+              aria-label="Time of day"
+              value={schedule.time}
+              onChange={event => onChange({ ...schedule, time: event.target.value })}
+            />
+          </label>
+        )}
+
+        {schedule.mode === 'cron' && (
+          <label className="scheduled-field">
+            <span>Cron expression</span>
+            <input
+              aria-label="Cron expression"
+              value={schedule.cron}
+              placeholder="minute hour day month weekday"
+              onChange={event => onChange({ ...schedule, cron: event.target.value })}
+            />
+          </label>
+        )}
+
+        <label className="scheduled-field compact">
+          <span>Timezone</span>
+          <select
+            aria-label="Timezone"
+            value={schedule.timezone}
+            onChange={event => onChange({ ...schedule, timezone: event.target.value })}
+          >
+            {[...new Set([localZone, schedule.timezone, 'UTC'])].map(zone => (
+              <option key={zone} value={zone}>{zone === localZone ? `${zone} (yours)` : zone}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {schedule.mode === 'weekly' && (
+        <div className="scheduled-weekdays" role="group" aria-label="Days of week">
+          {WEEKDAYS.map(day => {
+            const selected = schedule.weekdays.includes(day.value)
+            return (
+              <button
+                key={day.value}
+                type="button"
+                className={`scheduled-weekday ${selected ? 'active' : ''}`}
+                aria-pressed={selected}
+                aria-label={day.long}
+                onClick={() => onChange({
+                  ...schedule,
+                  weekdays: selected
+                    ? schedule.weekdays.filter(value => value !== day.value)
+                    : [...schedule.weekdays, day.value],
+                })}
+              >
+                {day.short}
+              </button>
+            )
+          })}
+        </div>
       )}
+    </div>
+  )
+}
+
+function TaskDetail({
+  task,
+  now,
+  busy,
+  onEdit,
+  onDuplicate,
+  onDelete,
+  onRunNow,
+  onTogglePause,
+}: {
+  task: ScheduledTask
+  now: number
+  busy: boolean
+  onEdit: () => void
+  onDuplicate: () => void
+  onDelete: () => void
+  onRunNow: () => void
+  onTogglePause: () => void
+}) {
+  const targets = taskTargets(task)
+  const runs = task.recentRuns || []
+
+  return (
+    <div className="scheduled-card">
+      <div className="scheduled-card-header">
+        <div>
+          <h3>{task.name}</h3>
+          <p className="scheduled-muted">
+            {describeSchedule(task.schedule)} · {task.schedule?.timezone || 'Local'} · {statusLabel(task)}
+          </p>
+        </div>
+        <div className="scheduled-actions">
+          <button type="button" onClick={onEdit}>Edit</button>
+          <button type="button" onClick={onRunNow} disabled={busy}>Run now</button>
+          <button type="button" onClick={onTogglePause} disabled={busy}>{task.paused ? 'Resume' : 'Pause'}</button>
+          <button type="button" onClick={onDuplicate}>Duplicate</button>
+          <button type="button" className="danger" onClick={onDelete}>Delete</button>
+        </div>
+      </div>
+
+      <dl className="scheduled-meta">
+        <div>
+          <dt>Next run</dt>
+          <dd>{task.paused || !task.enabled ? 'Paused' : `${formatDateTime(task.nextRun)} (${formatCountdown(task.nextRun, now)})`}</dd>
+        </div>
+        <div>
+          <dt>Last run</dt>
+          <dd>{task.lastRun ? `${formatDateTime(task.lastRun)} · ${task.lastStatus || 'unknown'}` : 'Never run'}</dd>
+        </div>
+        <div>
+          <dt>Sends to</dt>
+          <dd className="scheduled-target-chips">
+            {targets.map(target => (
+              <span key={targetKey(target)} className="scheduled-chip">
+                {target.unixUser && <span className="scheduled-chip-user">{getTerminalUserInitial(target.unixUser)}</span>}
+                {targetLabel(target)}
+              </span>
+            ))}
+          </dd>
+        </div>
+        <div>
+          <dt>Task ID</dt>
+          <dd className="scheduled-muted">{task.id}</dd>
+        </div>
+      </dl>
+
+      <div className="scheduled-prompt-readback">
+        <span className="scheduled-label">Prompt</span>
+        <pre>{task.prompt}</pre>
+      </div>
+
+      <div className="scheduled-runs">
+        <span className="scheduled-label">Recent runs</span>
+        {runs.length === 0 ? (
+          <ul><li className="scheduled-muted">No runs recorded yet.</li></ul>
+        ) : (
+          <ul>
+            {runs.map(run => (
+              <li key={run.id}>
+                <span className={run.status === 'success' ? '' : 'scheduled-bad'}>{run.status}</span>
+                <span className="scheduled-muted"> · {formatDateTime(run.startedAt)} · {run.trigger || 'scheduled'}</span>
+                {run.targets && run.targets.length > 0 && (
+                  <span className="scheduled-muted">
+                    {' · '}
+                    {run.targets.map(result => `${result.sessionName}: ${result.status}`).join(', ')}
+                  </span>
+                )}
+                {run.message && <span className="scheduled-bad"> · {run.message}</span>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   )
 }

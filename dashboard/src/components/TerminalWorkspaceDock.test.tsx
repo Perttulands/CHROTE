@@ -164,6 +164,27 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
     }
   })
 
+  it('reopens a closed pinned sidecar in the pinned presentation instead of overlaying the terminal', () => {
+    renderDock()
+    const sessions = screen.getByRole('button', { name: /Sessions sidecar/i })
+    fireEvent.click(sessions)
+    fireEvent.click(screen.getByRole('button', { name: 'Pin sessions' }))
+    expect(screen.getByTestId('sessions-panel')).toHaveAttribute('data-pinned', 'true')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close sessions' }))
+    expect(screen.queryByTestId('sessions-panel')).not.toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem('chrote.workspaceDock.v2') || '{}')).toMatchObject({
+      workspaces: { terminal1: { activeSidecar: null, sidecarPinned: true } },
+    })
+
+    fireEvent.click(sessions)
+    expect(screen.getByTestId('sessions-panel')).toHaveAttribute('data-pinned', 'true')
+
+    fireEvent.click(sessions)
+    fireEvent.click(screen.getByRole('button', { name: /Files sidecar/i }))
+    expect(screen.getByTestId('files-panel')).toHaveAttribute('data-pinned', 'true')
+  })
+
   it('forces a stored desktop pin into overlay presentation on narrow viewports without losing the stored preference', () => {
     writeWorkspaceDockState('terminal1', {
       activeSidecar: 'sessions',

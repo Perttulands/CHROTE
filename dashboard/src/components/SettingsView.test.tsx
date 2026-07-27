@@ -202,6 +202,24 @@ describe('SettingsView terminal launch users', () => {
     expect(updateSettings).toHaveBeenCalledWith({ mouseScroll: false })
   })
 
+  it('toggles the terminal scrollbar visibility setting', () => {
+    const updateSettings = vi.fn()
+    mockUseSession.mockReturnValue(sessionReturn(updateSettings, {
+      settings: {
+        ...settings,
+        hideScrollbar: true,
+      },
+    }))
+
+    render(<SettingsView />)
+
+    const checkbox = screen.getByLabelText('Hide terminal scrollbar')
+    expect(checkbox).toBeChecked()
+    fireEvent.click(checkbox)
+
+    expect(updateSettings).toHaveBeenCalledWith({ hideScrollbar: false })
+  })
+
   it('persists the Formations text size preset from Appearance settings', () => {
     const updateSettings = vi.fn()
     mockUseSession.mockReturnValue(sessionReturn(updateSettings))

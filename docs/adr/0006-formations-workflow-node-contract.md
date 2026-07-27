@@ -998,8 +998,9 @@ mean runnable.
 In production, Formations calls the same configured Terminal-session resolver
 and inventory shown by cockpit Terminal tabs. That inventory is the union of
 the explicitly configured user/socket sources; it may contain one or several
-tmux servers, but there is no separate Formations-only production source or
-pool. Reusing accumulated session context is intentional; the evidence contract
+tmux servers, and since
+[ADR-0010](0010-formations-agent-user-socket-ownership.md) a dedicated
+Formations socket owned by the configured agent-user is a permitted source. Reusing accumulated session context is intentional; the evidence contract
 is same-session-lineage, not a clean-room agent. A persona `session_stem` that
 matches targets in more than one inventory source is ambiguous and fails loud;
 the board never chooses a raw socket path. A disposable source may replace the

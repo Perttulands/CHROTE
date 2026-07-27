@@ -291,6 +291,52 @@ func parseUserValueMap(raw string) map[string]string {
 	return result
 }
 
+// terminalUserMapEnvVars are the CHROTE_TERMINAL_USER_* CSV maps parsed by
+// parseUserValueMap.
+var terminalUserMapEnvVars = []string{
+	"CHROTE_TERMINAL_USER_SOCKETS",
+	"CHROTE_TERMINAL_USER_WORKDIRS",
+	"CHROTE_TERMINAL_USER_HOMES",
+}
+
+// ValidateTerminalUserEnv rejects a Unix user appearing twice in any
+// CHROTE_TERMINAL_USER_* map. parseUserValueMap is last-wins while
+// terminal-launch.sh is first-wins, so a duplicate makes session listing and
+// terminal attach resolve different tmux servers. Refusing to start is the only
+// way both parsers stay in agreement.
+func ValidateTerminalUserEnv() error {
+	for _, name := range terminalUserMapEnvVars {
+		if err := validateNoDuplicateUserKeys(name, os.Getenv(name)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateNoDuplicateUserKeys(envName, raw string) error {
+	seen := map[string]string{}
+	for _, item := range strings.Split(raw, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		parts := strings.SplitN(item, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		user := strings.TrimSpace(parts[0])
+		value := strings.TrimSpace(parts[1])
+		if user == "" || value == "" {
+			continue
+		}
+		if previous, duplicate := seen[user]; duplicate {
+			return fmt.Errorf("%s has duplicate entries for Unix user %q (%q and %q); keep exactly one entry per user so terminal listing and terminal attach resolve the same socket", envName, user, previous, value)
+		}
+		seen[user] = value
+	}
+	return nil
+}
+
 func configuredTerminalUsers() []string {
 	raw := strings.TrimSpace(os.Getenv("CHROTE_TERMINAL_USERS"))
 	if raw == "" {
@@ -1284,7 +1330,7 @@ func (h *TmuxHandler) runTmuxOnSocketContext(parent context.Context, socket stri
 		args = append([]string{"-S", socket}, args...)
 	}
 
-	cmd := exec.CommandContext(ctx, "tmux", args...)
+	cmd := exec.CommandContext(ctx, core.TmuxBin(), args...)
 	cmd.Env = core.GetTmuxEnv()
 
 	output, err := cmd.Output()
@@ -2345,6 +2391,111 @@ func atomicSendCommand(bufferName string, pane sendPaneTarget, submit bool) (str
 	return command, marker
 }
 
+type paneSendKind int
+
+const (
+	// paneSendDelivered means tmux confirmed the paste (and Enter, when asked for)
+	// against the pinned pane generation.
+	paneSendDelivered paneSendKind = iota
+	// paneSendTargetChanged means the pane generation moved before the paste ran,
+	// so nothing was delivered.
+	paneSendTargetChanged
+	// paneSendUnknown means tmux never confirmed the outcome; the payload may or
+	// may not have landed and must not be retried blindly.
+	paneSendUnknown
+)
+
+// paneSendResult reports what the guarded tmux paste did. Kind covers everything
+// after the buffer is loaded; a load failure is returned as an error instead
+// because nothing can have been delivered yet.
+type paneSendResult struct {
+	Kind          paneSendKind
+	Submitted     bool
+	BufferCleaned bool
+	Detail        string
+	CleanupErr    error
+}
+
+// sendBufferToPane is the single delivery path shared by Send to Session and
+// scheduled tasks: load the payload into a private buffer, paste it only while
+// the pinned pane generation still matches, optionally press Enter, and leave no
+// buffer behind. The guarded paste deliberately runs on a background context so
+// a cancelled caller cannot tear down a half-applied send.
+func (h *TmuxHandler) sendBufferToPane(loadCtx context.Context, target tmuxTarget, pane sendPaneTarget, bufferName, payloadPath string, submit bool) (paneSendResult, error) {
+	bufferDeleted := false
+	deleteBuffer := func() error {
+		if bufferDeleted {
+			return nil
+		}
+		_, err := h.runTmuxOnSocketContext(context.Background(), target.socket, "delete-buffer", "-b", bufferName)
+		if err == nil {
+			bufferDeleted = true
+		}
+		return err
+	}
+
+	if _, err := h.runTmuxOnSocketContext(loadCtx, target.socket, "load-buffer", "-b", bufferName, payloadPath); err != nil {
+		if cleanupErr := deleteBuffer(); cleanupErr != nil {
+			err = fmt.Errorf("%w; buffer cleanup failed: %v", err, cleanupErr)
+		}
+		return paneSendResult{Kind: paneSendUnknown, BufferCleaned: bufferDeleted}, err
+	}
+
+	guardedCommand, successMarker := atomicSendCommand(bufferName, pane, submit)
+	output, err := h.runTmuxOnSocketContext(
+		context.Background(),
+		target.socket,
+		"if-shell", "-F", "-t", pane.PaneID,
+		atomicSendCondition(pane),
+		guardedCommand,
+		"display-message -p "+atomicSendTargetChangedMark,
+	)
+	if err != nil {
+		cleanupErr := deleteBuffer()
+		return paneSendResult{Kind: paneSendUnknown, BufferCleaned: cleanupErr == nil, Detail: err.Error(), CleanupErr: cleanupErr}, nil
+	}
+
+	switch marker := strings.TrimSpace(output); marker {
+	case atomicSendTargetChangedMark:
+		cleanupErr := deleteBuffer()
+		return paneSendResult{Kind: paneSendTargetChanged, BufferCleaned: cleanupErr == nil, CleanupErr: cleanupErr}, nil
+	case successMarker:
+		// paste-buffer -d consumed the buffer on success.
+		return paneSendResult{Kind: paneSendDelivered, Submitted: submit, BufferCleaned: true}, nil
+	default:
+		cleanupErr := deleteBuffer()
+		return paneSendResult{
+			Kind:          paneSendUnknown,
+			BufferCleaned: cleanupErr == nil,
+			Detail:        fmt.Sprintf("unexpected atomic send result %q", marker),
+			CleanupErr:    cleanupErr,
+		}, nil
+	}
+}
+
+// resolveActiveSendPane picks the pane an unattended sender should use: the
+// session's only pane, or its active pane. Interactive sends pin an exact pane
+// instead; a scheduled task has no operator to disambiguate at fire time.
+func (h *TmuxHandler) resolveActiveSendPane(ctx context.Context, target tmuxTarget, sessionName string) (sendPaneTarget, error) {
+	panes, err := h.listSendPanes(ctx, target, sessionName)
+	if err != nil {
+		return sendPaneTarget{}, err
+	}
+	if len(panes) == 1 {
+		return panes[0], nil
+	}
+	for _, pane := range panes {
+		if pane.Active {
+			return pane, nil
+		}
+	}
+	return sendPaneTarget{}, &sendTargetError{
+		Status:  http.StatusConflict,
+		Code:    "PANE_REQUIRED",
+		Message: fmt.Sprintf("tmux session %q has %d panes and no active pane", sessionName, len(panes)),
+	}
+}
+
 func sessionDropRetention() (time.Duration, error) {
 	raw := strings.TrimSpace(os.Getenv("CHROTE_SESSION_DROPS_RETENTION"))
 	if raw == "" {
@@ -2949,33 +3100,9 @@ func (h *TmuxHandler) SendToSession(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	bufferName := "chrote-send-" + manifest.ID
-	bufferDeleted := false
-	deleteBuffer := func() error {
-		if bufferDeleted {
-			return nil
-		}
-		_, deleteErr := h.runTmuxOnSocketContext(context.Background(), target.socket, "delete-buffer", "-b", bufferName)
-		if deleteErr == nil {
-			bufferDeleted = true
-		}
-		return deleteErr
-	}
-	defer func() { _ = deleteBuffer() }()
-
-	if _, err := h.runTmuxOnSocketContext(r.Context(), target.socket, "load-buffer", "-b", bufferName, manifest.Payload); err != nil {
-		cleanupErr := deleteBuffer()
-		if cleanupErr != nil {
-			err = fmt.Errorf("%w; buffer cleanup failed: %v", err, cleanupErr)
-		}
-		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
-		return
-	}
-
 	submissionRequested := submitFormValue(sessionDropFormValue(r, "submit"))
-	writeUnknownOutcome := func(detail string) {
+	writeUnknownOutcome := func(detail string, bufferCleaned bool, cleanupErr error) {
 		retainDrop = true
-		cleanupErr := deleteBuffer()
-		bufferCleaned := cleanupErr == nil
 		warning := "tmux did not confirm whether delivery occurred; inspect the exact pane before retrying"
 		if strings.TrimSpace(detail) != "" {
 			warning += ": " + strings.TrimSpace(detail)
@@ -3006,33 +3133,23 @@ func (h *TmuxHandler) SendToSession(w http.ResponseWriter, r *http.Request) {
 			"timestamp":           time.Now().UTC().Format(time.RFC3339),
 		})
 	}
-	guardedCommand, successMarker := atomicSendCommand(bufferName, pane, submissionRequested)
-	output, err := h.runTmuxOnSocketContext(
-		context.Background(),
-		target.socket,
-		"if-shell", "-F", "-t", pane.PaneID,
-		atomicSendCondition(pane),
-		guardedCommand,
-		"display-message -p "+atomicSendTargetChangedMark,
-	)
+	result, err := h.sendBufferToPane(r.Context(), target, pane, bufferName, manifest.Payload, submissionRequested)
 	if err != nil {
-		writeUnknownOutcome(err.Error())
+		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
 		return
 	}
-	marker := strings.TrimSpace(output)
-	if marker == atomicSendTargetChangedMark {
-		if cleanupErr := deleteBuffer(); cleanupErr != nil {
-			core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", fmt.Sprintf("target changed and buffer cleanup failed: %v", cleanupErr))
+	switch result.Kind {
+	case paneSendUnknown:
+		writeUnknownOutcome(result.Detail, result.BufferCleaned, result.CleanupErr)
+		return
+	case paneSendTargetChanged:
+		if result.CleanupErr != nil {
+			core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", fmt.Sprintf("target changed and buffer cleanup failed: %v", result.CleanupErr))
 			return
 		}
 		core.WriteError(w, http.StatusConflict, "TARGET_CHANGED", "tmux session or pane changed while preparing the send; inspect and retry")
 		return
 	}
-	if marker != successMarker {
-		writeUnknownOutcome(fmt.Sprintf("unexpected atomic send result %q", marker))
-		return
-	}
-	bufferDeleted = true
 	retainDrop = true
 	warnings := []string{}
 	submitted := submissionRequested

@@ -459,7 +459,9 @@ export async function mockFileApiRoutes(page: Page) {
 }
 
 export async function mockApiRoutes(page: Page, options?: { sessionsResponse?: SessionsResponse }) {
-  await page.route(/.*\/terminal\/?.*/, async route => {
+  // Terminal proxy path only — must not swallow module URLs such as
+  // /src/utils/terminalIframe.ts (see the matching route in fixtures.ts).
+  await page.route(/\/terminal(\/|\?|$)/, async route => {
     await route.fulfill({
       status: 200,
       contentType: 'text/html',

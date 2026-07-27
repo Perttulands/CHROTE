@@ -94,10 +94,13 @@ not authorize a Formations-only production socket or pool: Terminal tabs and
 Formations must still resolve the same target and lineage through the shared
 inventory.
 
-The legacy disposable adapter is trusted dogfood only. It rejects configured,
-default, non-`/tmp`, and symlink-escaped sockets, records the initial socket
-identity, and revalidates that identity before each adapter call so an observed
-between-call retarget fails before the next list, describe, capture, or send.
+The legacy disposable adapter is trusted dogfood only. It rejected configured,
+default, and non-`/tmp` sockets until
+[ADR-0010](0010-formations-agent-user-socket-ownership.md) removed that
+restriction (2026-07-26); it still rejects symlink-escaped sockets, records the
+initial socket identity, and revalidates that identity before each adapter call
+so an observed between-call retarget fails before the next list, describe,
+capture, or send.
 That check is not a same-UID enforcement primitive: a dogfood process can still
 race inside a stock tmux command or use an owner-accessible raw socket directly.
 Consequently this adapter and its path checks cannot certify production access;

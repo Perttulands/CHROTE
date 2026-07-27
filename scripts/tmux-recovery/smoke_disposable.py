@@ -138,8 +138,8 @@ def assert_no_forbidden_references(values: list[Any]) -> None:
     forbidden = [
         ("live 8095", ["127.0.0.1:8095", "localhost:8095", ":8095"]),
         ("live data", ["/srv/data/chrote"]),
-        ("Tavern", ["tavern"]),
-        ("live tmux socket", ["/run/user/1000/chrote-tmux", "/tmp/tmux-1000/default"]),
+        ("Tavern", ["build"]),
+        ("live tmux socket", ["/run/user/2001/chrote-tmux", "/tmp/tmux-2001/default"]),
         ("Claude", ["claude"]),
     ]
     for label, needles in forbidden:

@@ -43,7 +43,7 @@ func TestCategorizeSession(t *testing.T) {
 		{"gastown worker", "gt-gastown-jack", "gt-gastown"},
 		{"gastown simple", "gt-gastown", "gt-gastown"},
 		{"gt-only", "gt-", "gt-"},
-		{"dynamic dashed prefix", "perttu-shell", "perttu"},
+		{"dynamic dashed prefix", "alice-shell", "alice"},
 		{"dynamic multi dash prefix", "worker-agent-1", "worker"},
 		{"dynamic numeric suffix prefix", "forge1", "forge"},
 		{"random session", "random", "other"},
@@ -142,9 +142,9 @@ func TestGetTmuxTmpdir(t *testing.T) {
 
 	// Test XDG_RUNTIME_DIR fallback
 	os.Unsetenv("TMUX_TMPDIR")
-	os.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
-	if result := GetTmuxTmpdir(); result != "/run/user/1000/tmux" {
-		t.Errorf("GetTmuxTmpdir() with XDG_RUNTIME_DIR = %q, expected /run/user/1000/tmux", result)
+	os.Setenv("XDG_RUNTIME_DIR", "/run/user/2001")
+	if result := GetTmuxTmpdir(); result != "/run/user/2001/tmux" {
+		t.Errorf("GetTmuxTmpdir() with XDG_RUNTIME_DIR = %q, expected /run/user/2001/tmux", result)
 	}
 
 	// Test uid fallback when no XDG_RUNTIME_DIR

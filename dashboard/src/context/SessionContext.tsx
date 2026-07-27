@@ -561,7 +561,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [sendToSessionTarget, setSendToSessionTarget] = useState<string | null>(null)
   const [sendToSessionPrefill, setSendToSessionPrefill] = useState('')
   const [sendToSessionRequestId, setSendToSessionRequestId] = useState(0)
-  const [isDragging, setIsDragging] = useState(false)
   const [settings, setSettings] = useState<UserSettings>(stored?.settings ?? DEFAULT_SETTINGS)
   // Track which window has focus for keyboard navigation (workspaceId-windowId)
   const [focusedWindowKey, setFocusedWindowKey] = useState<string | null>(null)
@@ -744,6 +743,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         if (!isAuthoritative()) return
 
         const data = dataOutcome.value
+        // An error-bearing payload is NOT authoritative, on a 200 as much as on a
+        // non-ok, so the last known good state is kept rather than overwritten. This
+        // is deliberate and tested ("preserves authoritative state ... across failed,
+        // non-ok, and aborted refreshes" feeds a payload literally named
+        // `not-authoritative` and asserts it is ignored).
+        //
+        // Known limitation, tracked as chrote-5mj.3.3: /api/tmux/sessions collapses
+        // two different conditions into this one string -- "tmux is unavailable, trust
+        // nothing" and "user X's socket is unreadable, the other users' sessions are
+        // fine". For the second, the healthy users' sessions ARE authoritative and
+        // ignoring them means a first load with one broken ACL shows an error and an
+        // empty list. Fixing that needs the API to distinguish partial from total
+        // failure; it is not a change that can be made safely here alone, because
+        // trusting an error-bearing payload is exactly what the test above forbids.
         if (!response.ok || data.error) {
           setError(typeof data.error === 'string' ? data.error : 'Failed to fetch sessions')
           return
@@ -1441,7 +1454,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     sendToSessionPrefill,
     sendToSessionRequestId,
     assignedSessions,
-    isDragging,
     settings,
     focusedWindowKey,
     windowRevealRequest,
@@ -1470,7 +1482,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     renameSession,
     makeSessionPersistent,
     makeSessionMortal,
-    setIsDragging,
     updateSettings,
     setFocusedWindowKey,
     revealWindow,
@@ -1493,7 +1504,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     sendToSessionPrefill,
     sendToSessionRequestId,
     assignedSessions,
-    isDragging,
     settings,
     focusedWindowKey,
     windowRevealRequest,
@@ -1520,7 +1530,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     renameSession,
     makeSessionPersistent,
     makeSessionMortal,
-    setIsDragging,
     updateSettings,
     setFocusedWindowKey,
     revealWindow,

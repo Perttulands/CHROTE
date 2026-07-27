@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useDroppable, useDraggable } from '@dnd-kit/core'
+import { Send } from 'lucide-react'
 import { useSession } from '../context/SessionContext'
 import { useIframePool } from './IframePool'
 import { WINDOW_COLORS, getSessionKey, getSessionNameFromKey, getSessionUserFromKey, getTerminalUserColor, getTerminalUserInitial } from '../types'
@@ -38,25 +39,6 @@ function CreateSessionButton({ workspaceId, windowId, accentColor }: CreateSessi
       <span className="create-session-icon">{creating ? '...' : '+'}</span>
       <span className="create-session-label">New Session</span>
     </button>
-  )
-}
-
-interface DropOverlayProps {
-  isVisible: boolean
-  isOver: boolean
-}
-
-// Full-window drop overlay that appears during drag
-function DropOverlay({ isVisible, isOver }: DropOverlayProps) {
-  if (!isVisible) return null
-
-  return (
-    <div
-      className={`terminal-drop-overlay ${isOver ? 'is-over' : ''}`}
-      style={{ inset: 0, pointerEvents: 'none' }}
-    >
-      <span className="drop-hint">{isOver ? 'Release to add' : 'Drop here'}</span>
-    </div>
   )
 }
 
@@ -134,18 +116,25 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
 interface TerminalWindowProps {
   workspaceId: WorkspaceId
   window: TerminalWindowType
-  isDragging?: boolean
   refitNonce?: number
   style?: React.CSSProperties
 }
 
-function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false, refitNonce = 0, style }: TerminalWindowProps) {
+function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, style }: TerminalWindowProps) {
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const windowRef = useRef<HTMLDivElement>(null)
-  const { setNodeRef: setDropNodeRef, isOver } = useDroppable({
+  const { setNodeRef: setDropNodeRef, isOver, active } = useDroppable({
     id: `drop-${workspaceId}-${windowConfig.id}`,
     data: { type: 'window', workspaceId, windowId: windowConfig.id },
   })
+  // Drop feedback is fully local: only the hovered window reacts, and the
+  // window a tag is dragged from stays calm because dropping there is a no-op.
+  const activeDragData = active?.data.current as { type?: string; sourceWorkspaceId?: string; sourceWindowId?: string } | undefined
+  const isSessionDrag = activeDragData?.type === 'session' || activeDragData?.type === 'tag'
+  const isDragSourceWindow = activeDragData?.type === 'tag'
+    && activeDragData.sourceWorkspaceId === workspaceId
+    && activeDragData.sourceWindowId === windowConfig.id
+  const isDropTarget = isOver && isSessionDrag && !isDragSourceWindow
   const setBodyRef = useCallback((node: HTMLDivElement | null) => {
     bodyRef.current = node
     setDropNodeRef(node)
@@ -159,6 +148,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
     cycleSession,
     focusedWindowKey,
     setFocusedWindowKey,
+    openSendToSession,
   } = useSession()
 
   // Generate a unique key for this window
@@ -261,11 +251,12 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
 
 
   const hasSessions = windowConfig.boundSessions.length > 0
+  const sendableSession = activeSession && activeSession !== 'INIT-PENDING' ? activeSession : null
 
   return (
     <div
       ref={windowRef}
-      className={`terminal-window ${isFocused ? 'focused' : ''}`}
+      className={`terminal-window ${isFocused ? 'focused' : ''} ${isDropTarget ? 'drop-target' : ''}`}
       tabIndex={-1}
       style={{
         '--window-accent': colorTheme.accent,
@@ -309,6 +300,16 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
               </button>
             </>
           )}
+          {sendableSession && (
+            <button
+              className="window-send-btn"
+              onClick={() => openSendToSession(sendableSession)}
+              title={`Send to ${getSessionNameFromKey(sendableSession)}`}
+              aria-label={`Send to session ${getSessionNameFromKey(sendableSession)}`}
+            >
+              <Send size={12} aria-hidden="true" />
+            </button>
+          )}
           {activeSession && !activeSessionLoaded && (
             <span className="terminal-loading-state">Loading terminal…</span>
           )}
@@ -333,7 +334,11 @@ function TerminalWindow({ workspaceId, window: windowConfig, isDragging = false,
           </div>
         ) : null}
         {/* Iframes are injected here by the IframePool via DOM manipulation */}
-        <DropOverlay isVisible={isDragging} isOver={isOver} />
+        {isDropTarget && (
+          <div className="terminal-drop-overlay" style={{ inset: 0, pointerEvents: 'none' }}>
+            <span className="drop-hint">Release to add</span>
+          </div>
+        )}
       </div>
     </div>
   )

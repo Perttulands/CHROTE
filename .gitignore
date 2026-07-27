@@ -32,6 +32,7 @@ src/arena-server
 src/server
 chrote-server
 chrote-server-integ
+chrote-server.*
 *.exe
 
 # Vite cache
@@ -79,3 +80,17 @@ dashboard/playwright-report/data/
 
 # Beads / Dolt files (added by bd init)
 .beads/proxieddb/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# provenance stamp for the embedded dashboard bundle (build artifact)
+src/internal/dashboard/dist.stamp
+
+# Archon CLI binaries (build with: cd src && go build -o ../archon ./cmd/archon)
+/archon
+/src/archon
+
+# root-level tool droppings (a vite cache appeared here 2026-07-26)
+/node_modules/

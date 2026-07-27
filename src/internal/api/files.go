@@ -86,6 +86,7 @@ type confinedParent struct {
 }
 
 var errFilesPathChanged = errors.New("files path changed during validation")
+var errFilesDestinationExists = errors.New("files destination already exists")
 
 // Linux openat/unlinkat flags used by CHROTE's Linux service lane.
 const fileAtRemoveDirectory = 0x200
@@ -755,6 +756,41 @@ func (h *FilesHandler) removeConfinedAt(parent *os.File, name, logicalPath strin
 	return unlinkDirectoryAt(parent, name)
 }
 
+// renameFileAtNoReplace moves oldName under oldParent to newName under
+// newParent and refuses to replace whatever is already sitting at the
+// destination. A plain renameat silently overwrites the destination, which
+// destroys a file the caller never named.
+//
+// The occupancy check is descriptor-relative and does not follow symlinks, so a
+// symlink at the destination counts as occupied and is left alone.
+//
+// Known limitation: the check and the rename are two syscalls, so a destination
+// created in between is still overwritten. Closing that window needs
+// RENAME_NOREPLACE via renameat2, which Go's frozen syscall package does not
+// expose on this platform — it needs golang.org/x/sys or per-architecture
+// syscall numbers, a dependency call for the repo owner rather than a drive-by
+// here. Tracked separately; the racing writer must already be a local process
+// under the service account.
+func renameFileAtNoReplace(oldParent *os.File, oldName string, newParent *os.File, newName string) error {
+	if oldParent == nil || newParent == nil || !validFilePathComponent(oldName) || !validFilePathComponent(newName) {
+		return errFilesPathChanged
+	}
+	fd, err := syscall.Openat(
+		int(newParent.Fd()),
+		newName,
+		fileOpenPath|syscall.O_CLOEXEC|syscall.O_NOFOLLOW,
+		0,
+	)
+	if err == nil {
+		_ = syscall.Close(fd)
+		return errFilesDestinationExists
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return syscall.Renameat(int(oldParent.Fd()), oldName, int(newParent.Fd()), newName)
+}
+
 func unlinkDirectoryAt(parent *os.File, name string) error {
 	if parent == nil || !validFilePathComponent(name) {
 		return errFilesPathChanged
@@ -1116,7 +1152,11 @@ func (h *FilesHandler) RenameResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := syscall.Renameat(int(sourceParent.directory.Fd()), sourceParent.name, int(destinationParent.directory.Fd()), destinationParent.name); err != nil {
+	if err := renameFileAtNoReplace(sourceParent.directory, sourceParent.name, destinationParent.directory, destinationParent.name); err != nil {
+		if errors.Is(err, errFilesDestinationExists) {
+			core.WriteError(w, http.StatusConflict, "DESTINATION_EXISTS", "A file or folder already exists at the destination")
+			return
+		}
 		writeFilesUseError(w, err, false)
 		return
 	}

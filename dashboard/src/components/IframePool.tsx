@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useRef, useCallback, us
 import { useSession } from '../context/SessionContext'
 import { TERMINAL_WORKSPACE_IDS, getSessionKey, getSessionNameFromKey, getSessionUserFromKey } from '../types'
 import type { LaunchUser } from '../types'
+import { applyScrollbarVisibility, attachPasteBridge } from '../utils/terminalIframe'
 
 interface IframePoolContextType {
   /** Claim an iframe into a container element. Returns cleanup function. */
@@ -81,6 +82,10 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
   }, [workspaces, sessions])
   const sessionUsersRef = useRef(sessionUsers)
   sessionUsersRef.current = sessionUsers
+  // Load listeners are attached once per iframe element but fire on every
+  // navigation; read settings through a ref so they never act on stale values.
+  const settingsRef = useRef(settings)
+  settingsRef.current = settings
 
   // Compute all unique session names that need iframes
   const allSessions = useMemo(() => new Set(sessionUsers.keys()), [sessionUsers])
@@ -142,6 +147,13 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
       iframe.addEventListener('load', () => {
         setLoadedSessions(prev => new Set(prev).add(sessionName))
         applyFontSizeToIframe(iframe, settings.fontSize)
+        try {
+          const iframeWindow = iframe.contentWindow
+          if (iframeWindow) {
+            attachPasteBridge(iframeWindow)
+            applyScrollbarVisibility(iframeWindow.document, settingsRef.current.hideScrollbar)
+          }
+        } catch { /* cross-origin or not ready */ }
       })
 
       iframeRefs.current.set(sessionName, iframe)
@@ -169,6 +181,16 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
       if (iframe) applyFontSizeToIframe(iframe, settings.fontSize)
     })
   }, [settings.fontSize, loadedSessions])
+
+  // Flip scrollbar visibility live in every loaded iframe, no reconnect.
+  useEffect(() => {
+    loadedSessions.forEach(sessionName => {
+      try {
+        const doc = iframeRefs.current.get(sessionName)?.contentWindow?.document
+        if (doc) applyScrollbarVisibility(doc, settings.hideScrollbar)
+      } catch { /* cross-origin or not ready */ }
+    })
+  }, [settings.hideScrollbar, loadedSessions])
 
   const applyFontSizeToIframe = useCallback((iframe: HTMLIFrameElement, fontSize: number) => {
     if (!iframe?.contentWindow) return

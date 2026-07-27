@@ -39,6 +39,22 @@ describe('workspace Files persistence', () => {
     })
   })
 
+  it('keeps the pin preference while the sidecar is closed', () => {
+    writeWorkspaceDockState('terminal1', {
+      activeSidecar: null,
+      sidecarPinned: true,
+      sessionsWidth: 260,
+      filesWidth: 320,
+    })
+
+    expect(readWorkspaceDockState('terminal1')).toEqual({
+      activeSidecar: null,
+      sidecarPinned: true,
+      sessionsWidth: 260,
+      filesWidth: 320,
+    })
+  })
+
   it('migrates the old independent rails into one deterministic pinned sidecar', () => {
     window.localStorage.setItem('chrote.workspaceDock.v1', JSON.stringify({
       version: 1,

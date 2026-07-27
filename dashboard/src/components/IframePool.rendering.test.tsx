@@ -7,13 +7,13 @@ vi.mock('../context/SessionContext', () => ({
   useSession: () => ({
     settings: { fontSize: 14 },
     sessions: [
-      { name: 'smooth-scroll', windows: 1, attached: false, group: 'shell', unixUser: 'perttu' },
+      { name: 'smooth-scroll', windows: 1, attached: false, group: 'shell', unixUser: 'alice' },
     ],
     workspaces: {
       terminal1: {
         windowCount: 1,
         windows: [
-          { id: 'terminal1-window-0', boundSessions: ['perttu:smooth-scroll'], activeSession: 'perttu:smooth-scroll', colorIndex: 0 },
+          { id: 'terminal1-window-0', boundSessions: ['alice:smooth-scroll'], activeSession: 'alice:smooth-scroll', colorIndex: 0 },
         ],
       },
       terminal2: { windowCount: 1, windows: [] },
@@ -28,7 +28,7 @@ function ClaimedIframe() {
 
   useEffect(() => {
     if (!targetRef.current) return
-    return pool.claimIframe('perttu:smooth-scroll', targetRef.current)
+    return pool.claimIframe('alice:smooth-scroll', targetRef.current)
   }, [pool])
 
   return <div data-testid="iframe-target" ref={targetRef} />
@@ -50,7 +50,7 @@ describe('IframePool attached terminal rendering', () => {
       const target = document.querySelector('[data-testid="iframe-target"]')
       const node = target?.querySelector('iframe') as HTMLIFrameElement | null
       expect(node).not.toBeNull()
-      expect(node?.getAttribute('src')).toBe('/terminal/?arg=smooth-scroll&arg=perttu')
+      expect(node?.getAttribute('src')).toBe('/terminal/?arg=smooth-scroll&arg=alice')
       return node!
     })
 

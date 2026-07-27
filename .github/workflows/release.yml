@@ -29,6 +29,9 @@ jobs:
       - name: Documentation contract
         run: python3 scripts/doc-lint.py
 
+      - name: Host neutrality
+        run: python3 scripts/host-neutrality.py
+
       - name: Verify tag matches VERSION
         run: |
           release_version="${GITHUB_REF_NAME#v}"

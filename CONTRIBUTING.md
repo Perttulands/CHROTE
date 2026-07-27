@@ -43,6 +43,9 @@ Before opening a pull request, reproduce the repository contract:
 # Documentation and source-truth contract
 python3 scripts/doc-lint.py
 
+# Host neutrality: no deployment specifics in tracked files (all file types, not just Markdown)
+python3 scripts/host-neutrality.py
+
 # Dashboard
 cd dashboard
 npm run lint

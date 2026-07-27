@@ -334,6 +334,101 @@ func TestFilesHandler_RenameResource_NotAllowedPath(t *testing.T) {
 	}
 }
 
+func TestFilesHandlerRenameRefusesToClobberExistingDestination(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source.txt")
+	destination := filepath.Join(root, "occupied.txt")
+	writeFileFixture(t, source, "source content")
+	writeFileFixture(t, destination, "destination content")
+	handler := &FilesHandler{
+		allowedRoots:   []string{root},
+		writeRoots:     []string{root},
+		maxUploadBytes: defaultMaxUploadBytes,
+	}
+	body, err := json.Marshal(RenameRequest{Action: "rename", Destination: destination})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPatch, "/api/files/resources/ignored", bytes.NewReader(body))
+	req.SetPathValue("path", source)
+	rec := httptest.NewRecorder()
+
+	handler.RenameResource(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 for an occupied destination: %s", rec.Code, rec.Body.String())
+	}
+	if got, err := os.ReadFile(destination); err != nil || string(got) != "destination content" {
+		t.Fatalf("destination was clobbered: content=%q err=%v", got, err)
+	}
+	if got, err := os.ReadFile(source); err != nil || string(got) != "source content" {
+		t.Fatalf("source was consumed by a refused rename: content=%q err=%v", got, err)
+	}
+}
+
+func TestFilesHandlerRenameRefusesToClobberExistingDirectoryDestination(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source-dir")
+	destination := filepath.Join(root, "occupied-dir")
+	writeFileFixture(t, filepath.Join(source, "child.txt"), "source child")
+	writeFileFixture(t, filepath.Join(destination, "keep.txt"), "destination child")
+	handler := &FilesHandler{
+		allowedRoots:   []string{root},
+		writeRoots:     []string{root},
+		maxUploadBytes: defaultMaxUploadBytes,
+	}
+	body, err := json.Marshal(RenameRequest{Action: "rename", Destination: destination})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPatch, "/api/files/resources/ignored", bytes.NewReader(body))
+	req.SetPathValue("path", source)
+	rec := httptest.NewRecorder()
+
+	handler.RenameResource(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 for an occupied directory destination: %s", rec.Code, rec.Body.String())
+	}
+	if got, err := os.ReadFile(filepath.Join(destination, "keep.txt")); err != nil || string(got) != "destination child" {
+		t.Fatalf("destination directory was replaced: content=%q err=%v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(source, "child.txt")); err != nil {
+		t.Fatalf("source directory was consumed by a refused rename: %v", err)
+	}
+}
+
+func TestFilesHandlerRenameStillMovesToFreeDestination(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source.txt")
+	destination := filepath.Join(root, "moved.txt")
+	writeFileFixture(t, source, "source content")
+	handler := &FilesHandler{
+		allowedRoots:   []string{root},
+		writeRoots:     []string{root},
+		maxUploadBytes: defaultMaxUploadBytes,
+	}
+	body, err := json.Marshal(RenameRequest{Action: "rename", Destination: destination})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPatch, "/api/files/resources/ignored", bytes.NewReader(body))
+	req.SetPathValue("path", source)
+	rec := httptest.NewRecorder()
+
+	handler.RenameResource(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for a free destination: %s", rec.Code, rec.Body.String())
+	}
+	if got, err := os.ReadFile(destination); err != nil || string(got) != "source content" {
+		t.Fatalf("destination content = %q err=%v, want the moved source", got, err)
+	}
+	if _, err := os.Stat(source); !os.IsNotExist(err) {
+		t.Fatalf("source still exists after a successful rename: %v", err)
+	}
+}
+
 func TestFilesHandler_DeleteResource_AtRoot(t *testing.T) {
 	handler := NewFilesHandler()
 

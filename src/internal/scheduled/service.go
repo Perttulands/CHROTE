@@ -14,6 +14,7 @@ const (
 	defaultMaxAuditEntries = 50
 	defaultRunTimeout      = 5 * time.Second
 	defaultValidateTimeout = 5 * time.Second
+	maxTargetsPerTask      = 32
 )
 
 var (
@@ -35,7 +36,7 @@ type ServiceOptions struct {
 type CreateTaskRequest struct {
 	Name      string
 	Prompt    string
-	Target    Target
+	Targets   []Target
 	Schedule  Schedule
 	Enabled   *bool
 	Paused    bool
@@ -47,7 +48,7 @@ type CreateTaskRequest struct {
 type PatchTaskRequest struct {
 	Name      *string
 	Prompt    *string
-	Target    *Target
+	Targets   *[]Target
 	Schedule  *Schedule
 	Enabled   *bool
 	Paused    *bool
@@ -134,7 +135,7 @@ func (s *Service) Create(ctx context.Context, request CreateTaskRequest) (*Task,
 		ID:         newTaskID(now),
 		Name:       strings.TrimSpace(request.Name),
 		Prompt:     request.Prompt,
-		Target:     normalizeTarget(request.Target),
+		Targets:    normalizeTargets(request.Targets, nil),
 		Schedule:   request.Schedule,
 		Enabled:    enabled,
 		Paused:     request.Paused,
@@ -169,9 +170,8 @@ func (s *Service) Patch(ctx context.Context, id string, request PatchTaskRequest
 	if request.Prompt != nil {
 		task.Prompt = *request.Prompt
 	}
-	if request.Target != nil {
-		target := normalizeTarget(*request.Target)
-		task.Target = target
+	if request.Targets != nil {
+		task.Targets = normalizeTargets(*request.Targets, nil)
 		reschedule = true
 	}
 	if request.Schedule != nil {
@@ -190,7 +190,7 @@ func (s *Service) Patch(ctx context.Context, id string, request PatchTaskRequest
 		task.UpdatedBy = strings.TrimSpace(request.UpdatedBy)
 	}
 	task.UpdatedAt = now
-	if err := s.validateAndPrepare(ctx, task, request.Target != nil, now); err != nil {
+	if err := s.validateAndPrepare(ctx, task, request.Targets != nil, now); err != nil {
 		return nil, err
 	}
 	if reschedule || (task.Enabled && !task.Paused && task.NextRun == nil) {
@@ -376,11 +376,20 @@ func (s *Service) validateAndPrepare(ctx context.Context, task *Task, validateTa
 	if len(task.Prompt) > 64*1024 {
 		return fmt.Errorf("%w: prompt is too large", ErrInvalid)
 	}
-	if !safeSessionName.MatchString(task.Target.SessionName) {
-		return fmt.Errorf("%w: target sessionName is required and must contain only letters, numbers, dashes, and underscores", ErrInvalid)
+	task.Targets = normalizeTargets(task.Targets, nil)
+	if len(task.Targets) == 0 {
+		return fmt.Errorf("%w: at least one target session is required", ErrInvalid)
 	}
-	if task.Target.UnixUser != "" && !safeUnixUser.MatchString(task.Target.UnixUser) {
-		return fmt.Errorf("%w: target unixUser contains invalid characters", ErrInvalid)
+	if len(task.Targets) > maxTargetsPerTask {
+		return fmt.Errorf("%w: a task may target at most %d sessions", ErrInvalid, maxTargetsPerTask)
+	}
+	for _, target := range task.Targets {
+		if !safeSessionName.MatchString(target.SessionName) {
+			return fmt.Errorf("%w: target sessionName is required and must contain only letters, numbers, dashes, and underscores", ErrInvalid)
+		}
+		if target.UnixUser != "" && !safeUnixUser.MatchString(target.UnixUser) {
+			return fmt.Errorf("%w: target unixUser contains invalid characters", ErrInvalid)
+		}
 	}
 	schedule, err := NormalizeSchedule(task.Schedule)
 	if err != nil {
@@ -391,7 +400,11 @@ func (s *Service) validateAndPrepare(ctx context.Context, task *Task, validateTa
 		return err
 	}
 	if validateTarget && s.validateTargets {
-		return s.validateTarget(ctx, task.Target)
+		for _, target := range task.Targets {
+			if err := s.validateTarget(ctx, target); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -409,35 +422,77 @@ func (s *Service) recomputeNextRun(task *Task, now time.Time) error {
 	return nil
 }
 
+// fireTask delivers the prompt to every target. Targets are independent: one
+// missing session is recorded against that target only and never cancels
+// delivery to the healthy ones.
 func (s *Service) fireTask(ctx context.Context, task *Task, trigger string) RunEntry {
 	started := s.now().UTC()
 	run := RunEntry{ID: newRunID(started), Trigger: trigger, StartedAt: started}
-	status := RunStatusSuccess
-	message := ""
-	if s.validateTargets {
-		if err := s.validateTarget(ctx, task.Target); err != nil {
-			status = RunStatusError
-			message = err.Error()
+
+	targets := normalizeTargets(task.Targets, nil)
+	if len(targets) == 0 {
+		run.Status = RunStatusError
+		run.Message = "task has no targets"
+	} else {
+		failures := []string{}
+		succeeded := 0
+		for _, target := range targets {
+			result := s.deliverToTarget(ctx, target, task.Prompt)
+			run.Targets = append(run.Targets, result)
+			if result.Status == RunStatusSuccess {
+				succeeded++
+				continue
+			}
+			failures = append(failures, fmt.Sprintf("%s: %s", targetLabel(target), result.Message))
 		}
-	}
-	if status == RunStatusSuccess {
-		sendCtx, cancel := context.WithTimeout(ctx, s.runTimeout)
-		err := s.runner.SendPrompt(sendCtx, task.Target, task.Prompt)
-		cancel()
-		if err != nil {
-			status = RunStatusError
-			message = err.Error()
+		switch {
+		case succeeded == len(targets):
+			run.Status = RunStatusSuccess
+		case succeeded == 0:
+			run.Status = RunStatusError
+		default:
+			run.Status = RunStatusPartial
 		}
+		run.Message = strings.Join(failures, "; ")
 	}
+
 	finished := s.now().UTC()
 	run.FinishedAt = finished
-	run.Status = status
-	run.Message = message
 	task.LastRun = &finished
-	task.LastStatus = status
+	task.LastStatus = run.Status
 	task.RecentRuns = boundedRuns(append([]RunEntry{run}, task.RecentRuns...), s.maxRecentRuns)
 	_ = s.recomputeNextRun(task, finished)
 	return run
+}
+
+func (s *Service) deliverToTarget(ctx context.Context, target Target, prompt string) TargetRun {
+	result := TargetRun{SessionName: target.SessionName, UnixUser: target.UnixUser, Status: RunStatusSuccess}
+	if s.validateTargets {
+		if err := s.validateTarget(ctx, target); err != nil {
+			result.Status = RunStatusError
+			result.Message = err.Error()
+			return result
+		}
+	}
+	sendCtx, cancel := context.WithTimeout(ctx, s.runTimeout)
+	delivery, err := s.runner.SendPrompt(sendCtx, target, prompt)
+	cancel()
+	if err != nil {
+		result.Status = RunStatusError
+		result.Message = err.Error()
+		return result
+	}
+	result.Pane = delivery.Pane
+	result.Submitted = delivery.Submitted
+	result.Message = delivery.Detail
+	return result
+}
+
+func targetLabel(target Target) string {
+	if target.UnixUser == "" {
+		return target.SessionName
+	}
+	return target.UnixUser + "/" + target.SessionName
 }
 
 func (s *Service) validateTarget(ctx context.Context, target Target) error {

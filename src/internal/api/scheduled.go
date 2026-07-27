@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"mime"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -54,19 +55,77 @@ func (r *ScheduledTmuxRunner) ValidateTarget(ctx context.Context, target schedul
 	return nil
 }
 
-// SendPrompt sends prompt literally and then presses Enter. Prompt text is never shell-interpolated.
-func (r *ScheduledTmuxRunner) SendPrompt(ctx context.Context, target scheduled.Target, prompt string) error {
+// SendPrompt delivers the prompt through the same guarded paste path as Send to
+// Session: the prompt is loaded into a private tmux buffer and pasted only while
+// the resolved pane generation still matches, then Enter is pressed so an agent
+// TUI actually submits it. Prompt text is never shell-interpolated.
+func (r *ScheduledTmuxRunner) SendPrompt(ctx context.Context, target scheduled.Target, prompt string) (scheduled.Delivery, error) {
 	resolved, err := r.tmux.targetForUnixUser(target.UnixUser)
 	if err != nil {
-		return err
+		return scheduled.Delivery{}, err
 	}
-	if _, err := r.runTmux(ctx, resolved.socket, "send-keys", "-t", target.SessionName, "-l", "--", prompt); err != nil {
-		return err
+	if strings.TrimSpace(target.SessionName) == "" {
+		return scheduled.Delivery{}, fmt.Errorf("%w: target sessionName is required", scheduled.ErrTargetNotFound)
 	}
-	if _, err := r.runTmux(ctx, resolved.socket, "send-keys", "-t", target.SessionName, "Enter"); err != nil {
-		return err
+	pane, err := r.tmux.resolveActiveSendPane(ctx, resolved, target.SessionName)
+	if err != nil {
+		return scheduled.Delivery{}, fmt.Errorf("%w: %s", scheduled.ErrTargetNotFound, err.Error())
 	}
-	return nil
+
+	payloadPath, cleanup, err := writeScheduledPromptPayload(prompt)
+	if err != nil {
+		return scheduled.Delivery{}, err
+	}
+	defer cleanup()
+
+	bufferName := "chrote-scheduled-" + strings.TrimPrefix(pane.PaneID, "%")
+	result, err := r.tmux.sendBufferToPane(ctx, resolved, pane, bufferName, payloadPath, true)
+	if err != nil {
+		return scheduled.Delivery{}, err
+	}
+	switch result.Kind {
+	case paneSendTargetChanged:
+		return scheduled.Delivery{}, fmt.Errorf("%w: pane %s changed before the prompt was pasted", scheduled.ErrTargetNotFound, pane.PaneID)
+	case paneSendUnknown:
+		detail := strings.TrimSpace(result.Detail)
+		if detail == "" {
+			detail = "tmux did not confirm delivery"
+		}
+		return scheduled.Delivery{}, fmt.Errorf("delivery to pane %s is unconfirmed: %s", pane.PaneID, detail)
+	}
+	return scheduled.Delivery{
+		Pane:      pane.PaneID,
+		Submitted: result.Submitted,
+		Detail:    "pasted and submitted",
+	}, nil
+}
+
+// writeScheduledPromptPayload stages the prompt for tmux load-buffer. The file is
+// private to the CHROTE service and removed after the paste; unlike Send to
+// Session there are no attachments to retain, so the prompt reaches the pane
+// with nothing appended to it.
+func writeScheduledPromptPayload(prompt string) (string, func(), error) {
+	file, err := os.CreateTemp("", "chrote-scheduled-prompt-*.txt")
+	if err != nil {
+		return "", func() {}, fmt.Errorf("stage scheduled prompt: %w", err)
+	}
+	path := file.Name()
+	cleanup := func() { _ = os.Remove(path) }
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		cleanup()
+		return "", func() {}, fmt.Errorf("stage scheduled prompt: %w", err)
+	}
+	if _, err := file.WriteString(prompt); err != nil {
+		_ = file.Close()
+		cleanup()
+		return "", func() {}, fmt.Errorf("stage scheduled prompt: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("stage scheduled prompt: %w", err)
+	}
+	return path, cleanup, nil
 }
 
 func (r *ScheduledTmuxRunner) runTmux(ctx context.Context, socket string, args ...string) (string, error) {
@@ -140,14 +199,13 @@ func (h *ScheduledHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid scheduled task JSON: "+err.Error())
 		return
 	}
-	if request.Target.Socket != "" {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "target socket is not accepted; CHROTE resolves sockets server-side")
+	if !rejectScheduledSockets(w, request.Target, request.Targets) {
 		return
 	}
 	task, err := h.service.Create(r.Context(), scheduled.CreateTaskRequest{
 		Name:      request.Name,
 		Prompt:    request.Prompt,
-		Target:    request.Target.toScheduled(),
+		Targets:   scheduledTargetList(request.Target, request.Targets),
 		Schedule:  request.Schedule,
 		Enabled:   request.Enabled,
 		Paused:    request.Paused,
@@ -179,8 +237,11 @@ func (h *ScheduledHandler) PatchTask(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid scheduled task JSON: "+err.Error())
 		return
 	}
-	if request.Target != nil && request.Target.Socket != "" {
-		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "target socket is not accepted; CHROTE resolves sockets server-side")
+	requestedTargets := []scheduledAPITarget{}
+	if request.Targets != nil {
+		requestedTargets = *request.Targets
+	}
+	if !rejectScheduledSockets(w, request.Target, requestedTargets) {
 		return
 	}
 	patch := scheduled.PatchTaskRequest{
@@ -191,9 +252,9 @@ func (h *ScheduledHandler) PatchTask(w http.ResponseWriter, r *http.Request) {
 		Paused:    request.Paused,
 		UpdatedBy: request.UpdatedBy,
 	}
-	if request.Target != nil {
-		target := request.Target.toScheduled()
-		patch.Target = &target
+	if request.Target != nil || request.Targets != nil {
+		targets := scheduledTargetList(request.Target, requestedTargets)
+		patch.Targets = &targets
 	}
 	task, err := h.service.Patch(r.Context(), r.PathValue("id"), patch)
 	if err != nil {
@@ -271,24 +332,26 @@ func requireScheduledMutation(w http.ResponseWriter, r *http.Request, requireJSO
 }
 
 type scheduledTaskRequest struct {
-	Name      string             `json:"name"`
-	Prompt    string             `json:"prompt"`
-	Target    scheduledAPITarget `json:"target"`
-	Schedule  scheduled.Schedule `json:"schedule"`
-	Enabled   *bool              `json:"enabled,omitempty"`
-	Paused    bool               `json:"paused,omitempty"`
-	CreatedBy string             `json:"createdBy,omitempty"`
-	UpdatedBy string             `json:"updatedBy,omitempty"`
+	Name      string               `json:"name"`
+	Prompt    string               `json:"prompt"`
+	Target    *scheduledAPITarget  `json:"target,omitempty"`
+	Targets   []scheduledAPITarget `json:"targets,omitempty"`
+	Schedule  scheduled.Schedule   `json:"schedule"`
+	Enabled   *bool                `json:"enabled,omitempty"`
+	Paused    bool                 `json:"paused,omitempty"`
+	CreatedBy string               `json:"createdBy,omitempty"`
+	UpdatedBy string               `json:"updatedBy,omitempty"`
 }
 
 type scheduledTaskPatchRequest struct {
-	Name      *string             `json:"name,omitempty"`
-	Prompt    *string             `json:"prompt,omitempty"`
-	Target    *scheduledAPITarget `json:"target,omitempty"`
-	Schedule  *scheduled.Schedule `json:"schedule,omitempty"`
-	Enabled   *bool               `json:"enabled,omitempty"`
-	Paused    *bool               `json:"paused,omitempty"`
-	UpdatedBy string              `json:"updatedBy,omitempty"`
+	Name      *string               `json:"name,omitempty"`
+	Prompt    *string               `json:"prompt,omitempty"`
+	Target    *scheduledAPITarget   `json:"target,omitempty"`
+	Targets   *[]scheduledAPITarget `json:"targets,omitempty"`
+	Schedule  *scheduled.Schedule   `json:"schedule,omitempty"`
+	Enabled   *bool                 `json:"enabled,omitempty"`
+	Paused    *bool                 `json:"paused,omitempty"`
+	UpdatedBy string                `json:"updatedBy,omitempty"`
 }
 
 type scheduledAPITarget struct {
@@ -299,6 +362,35 @@ type scheduledAPITarget struct {
 
 func (t scheduledAPITarget) toScheduled() scheduled.Target {
 	return scheduled.Target{SessionName: t.SessionName, UnixUser: t.UnixUser}
+}
+
+// scheduledTargetList folds the documented single `target` object and the
+// multi-target `targets` array into one ordered list. Callers may send either.
+func scheduledTargetList(single *scheduledAPITarget, many []scheduledAPITarget) []scheduled.Target {
+	targets := make([]scheduled.Target, 0, len(many)+1)
+	for _, target := range many {
+		targets = append(targets, target.toScheduled())
+	}
+	if single != nil {
+		targets = append(targets, single.toScheduled())
+	}
+	return targets
+}
+
+// rejectScheduledSockets fails closed on client-supplied socket paths; CHROTE
+// resolves tmux sockets server-side from its terminal configuration.
+func rejectScheduledSockets(w http.ResponseWriter, single *scheduledAPITarget, many []scheduledAPITarget) bool {
+	if single != nil && single.Socket != "" {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "target socket is not accepted; CHROTE resolves sockets server-side")
+		return false
+	}
+	for _, target := range many {
+		if target.Socket != "" {
+			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "target socket is not accepted; CHROTE resolves sockets server-side")
+			return false
+		}
+	}
+	return true
 }
 
 func actorFromRequest(r *http.Request) string {

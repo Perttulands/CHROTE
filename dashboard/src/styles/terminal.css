@@ -192,6 +192,11 @@
   box-shadow: 0 0 15px color-mix(in srgb, var(--window-accent, var(--accent)) 40%, transparent);
 }
 
+.terminal-window.drop-target {
+  border-color: var(--accent);
+  box-shadow: 0 0 15px rgba(var(--accent-rgb), 0.25);
+}
+
 .terminal-window-header {
   display: flex;
   justify-content: space-between;
@@ -289,7 +294,8 @@
   gap: 4px;
 }
 
-.cycle-btn {
+.cycle-btn,
+.window-send-btn {
   background: transparent;
   border: 1px solid var(--divider);
   color: var(--text-dim);
@@ -299,9 +305,16 @@
   transition: all 0.15s ease;
 }
 
-.cycle-btn:hover {
+.cycle-btn:hover,
+.window-send-btn:hover {
   color: var(--text-primary);
   border-color: var(--window-accent, var(--accent));
+}
+
+.window-send-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 6px;
 }
 
 .terminal-loading-state {

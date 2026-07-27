@@ -47,7 +47,7 @@ Snapshot normal path:
 ```bash
 chrote-tmux-recovery-snapshot \
   --api-url http://127.0.0.1:8095 \
-  --socket /run/user/1000/tmux/chrote \
+  --socket /run/user/2001/tmux/chrote \
   --unix-user alice \
   --owner-home /home/alice \
   --owner-kind session_bank \
@@ -73,7 +73,7 @@ Restore normal path:
 chrote-tmux-recovery-restore \
   --api-url http://127.0.0.1:8095 \
   --manifest /path/to/accepted-manifest.json \
-  --socket /run/user/1000/tmux/chrote \
+  --socket /run/user/2001/tmux/chrote \
   --unix-user alice \
   --owner-home /home/alice \
   --owner-kind session_bank \

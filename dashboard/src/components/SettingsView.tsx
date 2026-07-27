@@ -124,6 +124,10 @@ function SettingsView({ sessionBankFocusNonce = 0 }: SettingsViewProps = {}) {
     updateSettings({ mouseScroll: e.target.checked })
   }
 
+  const handleHideScrollbarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    updateSettings({ hideScrollbar: e.target.checked })
+  }
+
   const handleRefreshIntervalChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     updateSettings({ autoRefreshInterval: parseInt(e.target.value, 10) })
   }
@@ -266,6 +270,25 @@ function SettingsView({ sessionBankFocusNonce = 0 }: SettingsViewProps = {}) {
             Enables tmux mouse mode so the scroll wheel scrolls history. Applies instantly to
             configured CHROTE terminal sockets. This is global per tmux server and makes
             click-drag select inside tmux; hold Shift for browser text selection.
+          </p>
+        </div>
+
+        <div className="settings-field">
+          <label
+            className="settings-label"
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
+          >
+            <input
+              type="checkbox"
+              checked={settings.hideScrollbar}
+              onChange={handleHideScrollbarChange}
+            />
+            Hide terminal scrollbar
+          </label>
+          <p className="settings-hint">
+            Hides the xterm scrollbar gutter in terminal windows. Under tmux that scrollback is
+            empty, so the bar is dead UI; scrolling stays on the mouse wheel via tmux history.
+            Applies instantly to all open terminals.
           </p>
         </div>
       </section>
