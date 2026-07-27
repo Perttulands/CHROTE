@@ -8,6 +8,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 var (
@@ -30,6 +32,7 @@ const (
 	RunEventSlotResult           = "slot_result"
 	RunEventNodeOutput           = "node_output"
 	RunEventGateEvaluating       = "gate_evaluating"
+	RunEventGateKindResult       = "gate_kind_result"
 	RunEventGateVerdict          = "gate_verdict"
 	RunEventVerificationVerdict  = "verification_verdict"
 	RunEventEscalationRaised     = "escalation_raised"
@@ -139,6 +142,23 @@ type runBinding struct {
 	Source      string
 }
 
+type RunGateBinding struct {
+	GateBindingID           string            `toml:"gateBindingId"`
+	GateID                  string            `toml:"gateId"`
+	ProfileID               string            `toml:"profileId"`
+	ProfileVersion          string            `toml:"profileVersion"`
+	ProfileSHA256           string            `toml:"profileSha256"`
+	EvaluatorBundleSHA256   string            `toml:"evaluatorBundleSha256"`
+	Parameters              map[string]string `toml:"parameters"`
+	ParametersSHA256        string            `toml:"parametersSha256"`
+	PolicySHA256            string            `toml:"policySha256"`
+	DeterminismPolicySHA256 string            `toml:"determinismPolicySha256"`
+	MaxInputBytes           int               `toml:"maxInputBytes"`
+	MaxResultBytes          int               `toml:"maxResultBytes"`
+	MaxOperations           int               `toml:"maxOperations"`
+	ResultEncoding          string            `toml:"resultEncoding"`
+}
+
 func (s *Store) StartRun(slug string, req RunStartRequest) (*RunStartResult, error) {
 	if err := validateSlug(slug); err != nil {
 		return nil, err
@@ -179,6 +199,10 @@ func (s *Store) StartRun(slug string, req RunStartRequest) (*RunStartResult, err
 	}
 
 	runID := newPrefixedID("run")
+	gateBindings, err := resolveRunGateBindings(board, mission.ID, runID)
+	if err != nil {
+		return nil, err
+	}
 	ledgerPath := runArtifactPath(slug, runID, ".ndjson")
 	snapshotPath := runArtifactPath(slug, runID, ".snapshot.toml")
 	bindingsPath := runArtifactPath(slug, runID, ".bindings.toml")
@@ -194,7 +218,7 @@ func (s *Store) StartRun(slug string, req RunStartRequest) (*RunStartResult, err
 	if err := writeRunArtifactExclusiveAt(runDirectory, runID+".snapshot.toml", boardRaw); err != nil {
 		return nil, err
 	}
-	if err := writeRunArtifactExclusiveAt(runDirectory, runID+".bindings.toml", []byte(renderRunBindings(runID, board, mission, bindings))); err != nil {
+	if err := writeRunArtifactExclusiveAt(runDirectory, runID+".bindings.toml", []byte(renderRunBindings(runID, board, mission, bindings, gateBindings))); err != nil {
 		return nil, err
 	}
 
@@ -704,7 +728,7 @@ func resolveRunBindings(board *BoardDocument, personas *PersonaStore) ([]runBind
 	return bindings, nil
 }
 
-func renderRunBindings(runID string, board *BoardDocument, mission MissionNode, bindings []runBinding) string {
+func renderRunBindings(runID string, board *BoardDocument, mission MissionNode, bindings []runBinding, gateBindings []RunGateBinding) string {
 	var b strings.Builder
 	b.WriteString("schema = 1\n")
 	b.WriteString("runId = " + renderString(runID) + "\n")
@@ -730,7 +754,108 @@ func renderRunBindings(runID string, board *BoardDocument, mission MissionNode, 
 		}
 		b.WriteString("\n")
 	}
+	for _, binding := range gateBindings {
+		b.WriteString("[[gateBinding]]\n")
+		b.WriteString("gateBindingId = " + renderString(binding.GateBindingID) + "\n")
+		b.WriteString("gateId = " + renderString(binding.GateID) + "\n")
+		b.WriteString("profileId = " + renderString(binding.ProfileID) + "\n")
+		b.WriteString("profileVersion = " + renderString(binding.ProfileVersion) + "\n")
+		b.WriteString("profileSha256 = " + renderString(binding.ProfileSHA256) + "\n")
+		b.WriteString("evaluatorBundleSha256 = " + renderString(binding.EvaluatorBundleSHA256) + "\n")
+		b.WriteString("parameters = { value = " + renderString(binding.Parameters["value"]) + " }\n")
+		b.WriteString("parametersSha256 = " + renderString(binding.ParametersSHA256) + "\n")
+		b.WriteString("policySha256 = " + renderString(binding.PolicySHA256) + "\n")
+		b.WriteString("determinismPolicySha256 = " + renderString(binding.DeterminismPolicySHA256) + "\n")
+		b.WriteString("maxInputBytes = " + renderInt(binding.MaxInputBytes) + "\n")
+		b.WriteString("maxResultBytes = " + renderInt(binding.MaxResultBytes) + "\n")
+		b.WriteString("maxOperations = " + renderInt(binding.MaxOperations) + "\n")
+		b.WriteString("resultEncoding = " + renderString(binding.ResultEncoding) + "\n")
+		b.WriteString("\n")
+	}
 	return b.String()
+}
+
+func resolveRunGateBindings(board *BoardDocument, missionID, runID string) ([]RunGateBinding, error) {
+	selected := reachableNodeIDs(board, missionID)
+	bindings := make([]RunGateBinding, 0)
+	for _, gate := range board.Gates {
+		if !selected[gate.ID] || !hasGateKind(gate.Kinds, "code") {
+			continue
+		}
+		descriptor, ok := LookupCodeGateProfileDescriptor(gate.Check, gate.CheckVersion)
+		if !ok {
+			return nil, fmt.Errorf(
+				"%w: Gate %q uses unknown profile tuple %q@%q",
+				ErrInvalidCodeGateProfile, gate.ID, gate.Check, gate.CheckVersion,
+			)
+		}
+		bindings = append(bindings, newRunGateBinding(runID, gate, descriptor))
+	}
+	return bindings, nil
+}
+
+func newRunGateBinding(runID string, gate GateNode, descriptor CodeGateProfileDescriptor) RunGateBinding {
+	parametersCanonical := codeGateParametersCanonical(gate.CheckValue)
+	return RunGateBinding{
+		GateBindingID:           "gbd_" + codeGateSHA256(runID + "\x00" + gate.ID)[:24],
+		GateID:                  gate.ID,
+		ProfileID:               descriptor.ProfileID,
+		ProfileVersion:          descriptor.ProfileVersion,
+		ProfileSHA256:           descriptor.ProfileSHA256,
+		EvaluatorBundleSHA256:   descriptor.EvaluatorBundleSHA256,
+		Parameters:              map[string]string{"value": gate.CheckValue},
+		ParametersSHA256:        codeGateSHA256(parametersCanonical),
+		PolicySHA256:            descriptor.PolicySHA256,
+		DeterminismPolicySHA256: descriptor.DeterminismPolicySHA256,
+		MaxInputBytes:           descriptor.MaxInputBytes,
+		MaxResultBytes:          descriptor.MaxResultBytes,
+		MaxOperations:           descriptor.MaxOperations,
+		ResultEncoding:          descriptor.ResultEncoding,
+	}
+}
+
+func (s *Store) readRunGateBinding(runID, gateID string) (*RunGateBinding, error) {
+	ledger, err := s.openRunLedger(runID, false)
+	if err != nil {
+		return nil, fmt.Errorf("%w: open run ledger: %v", ErrRunLedgerInvalid, err)
+	}
+	defer ledger.close()
+	events, err := classifyAndReadRunEvents(ledger.file, runID)
+	if err != nil {
+		return nil, err
+	}
+	if len(events) == 0 {
+		return nil, ErrRunLedgerInvalid
+	}
+	if err := s.validateRunSnapshotIdentity(events[0], runID, ledger); err != nil {
+		return nil, err
+	}
+	raw, err := readRunArtifactAt(ledger.directory, runID+".bindings.toml", runtimeAuthorityMaxRecordBytes)
+	if err != nil {
+		return nil, fmt.Errorf("%w: bindings read failed: %v", ErrRunLedgerInvalid, err)
+	}
+	var document struct {
+		RunID        string           `toml:"runId"`
+		GateBindings []RunGateBinding `toml:"gateBinding"`
+	}
+	if err := toml.Unmarshal(raw, &document); err != nil || document.RunID != runID {
+		return nil, ErrRunLedgerInvalid
+	}
+	var found *RunGateBinding
+	for i := range document.GateBindings {
+		if document.GateBindings[i].GateID != gateID {
+			continue
+		}
+		if found != nil {
+			return nil, ErrRunLedgerInvalid
+		}
+		binding := document.GateBindings[i]
+		found = &binding
+	}
+	if found == nil {
+		return nil, fmt.Errorf("%w: missing code Gate binding for %q", ErrRunLedgerInvalid, gateID)
+	}
+	return found, nil
 }
 
 func findMission(board *BoardDocument, missionID string) (MissionNode, bool) {

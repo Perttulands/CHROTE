@@ -280,7 +280,9 @@ func runWithRuntimeStoreFactory(args []string, stdout, stderr io.Writer, runner 
 }
 
 func newArchonRunEngine(store *formations.Store, personas *formations.PersonaStore, boundary string) *formations.RunEngine {
-	return formations.NewRunEngine(store, personas, formations.NewConfiguredFormationExecutorFromEnv(store, personas, boundary))
+	engine := formations.NewRunEngine(store, personas, formations.NewConfiguredFormationExecutorFromEnv(store, personas, boundary))
+	engine.SetGateEvaluator(formations.NewCodeGateEvaluator())
+	return engine
 }
 
 func parseGlobalArgs(args []string, stderr io.Writer) (archonConfig, []string, bool) {
@@ -829,6 +831,9 @@ func runGateCreate(store *formations.Store, args []string, stdout, stderr io.Wri
 	title := fs.String("title", "Review gate", "gate title")
 	kinds := fs.String("kinds", "code", "comma-separated gate kinds")
 	criterion := fs.String("criterion", "", "gate criterion")
+	check := fs.String("check", "", "registered code Gate profile id")
+	checkVersion := fs.String("check-version", "", "exact code Gate profile version")
+	checkValue := fs.String("check-value", "", "code Gate profile value parameter")
 	command := fs.String("command", "", "retired legacy Gate field; new writes fail with a migration error")
 	commandArgv := fs.String("command-argv", "", "retired legacy Gate argv; new writes fail with a migration error")
 	commandCWD := fs.String("command-cwd", "", "retired legacy Gate cwd; new writes fail with a migration error")
@@ -841,7 +846,7 @@ func runGateCreate(store *formations.Store, args []string, stdout, stderr io.Wri
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: archon gate create <board> [--kinds code,human] [--criterion text] [--command-argv npm,run,lint] [--command-cwd dir] [--command-shell cmd] [--x n] [--y n] [--json]")
+		fmt.Fprintln(stderr, "usage: archon gate create <board> [--kinds code,human] [--criterion text] [--check id --check-version version --check-value value] [--x n] [--y n] [--json]")
 		return 2
 	}
 	slug, err := store.ResolveBoardSelector(fs.Arg(0))
@@ -860,6 +865,9 @@ func runGateCreate(store *formations.Store, args []string, stdout, stderr io.Wri
 		Title:                      *title,
 		Kinds:                      splitCSV(*kinds),
 		Criterion:                  *criterion,
+		Check:                      *check,
+		CheckVersion:               *checkVersion,
+		CheckValue:                 *checkValue,
 		Command:                    *command,
 		CommandArgv:                splitCSV(*commandArgv),
 		CommandCWD:                 *commandCWD,
@@ -886,6 +894,9 @@ func runGateUpdate(store *formations.Store, args []string, stdout, stderr io.Wri
 	title := fs.String("title", "", "gate title")
 	kinds := fs.String("kinds", "", "comma-separated gate kinds")
 	criterion := fs.String("criterion", "", "gate criterion")
+	check := fs.String("check", "", "registered code Gate profile id")
+	checkVersion := fs.String("check-version", "", "exact code Gate profile version")
+	checkValue := fs.String("check-value", "", "code Gate profile value parameter")
 	command := fs.String("command", "", "retired legacy Gate field; new writes fail with a migration error")
 	commandArgv := fs.String("command-argv", "", "retired legacy Gate argv; new writes fail with a migration error")
 	commandCWD := fs.String("command-cwd", "", "retired legacy Gate cwd; new writes fail with a migration error")
@@ -896,7 +907,7 @@ func runGateUpdate(store *formations.Store, args []string, stdout, stderr io.Wri
 		return 2
 	}
 	if fs.NArg() != 2 {
-		fmt.Fprintln(stderr, "usage: archon gate update <board> <gate> [--title text] [--kinds code,llm] [--criterion text] [--command-argv npm,run,lint] [--command-cwd dir] [--command-shell cmd] [--json]")
+		fmt.Fprintln(stderr, "usage: archon gate update <board> <gate> [--title text] [--kinds code,human] [--criterion text] [--check id --check-version version --check-value value] [--json]")
 		return 2
 	}
 	slug, err := store.ResolveBoardSelector(fs.Arg(0))
@@ -920,6 +931,9 @@ func runGateUpdate(store *formations.Store, args []string, stdout, stderr io.Wri
 		Title:                      *title,
 		Kinds:                      updateKinds,
 		Criterion:                  *criterion,
+		Check:                      *check,
+		CheckVersion:               *checkVersion,
+		CheckValue:                 *checkValue,
 		Command:                    *command,
 		CommandArgv:                splitCSV(*commandArgv),
 		CommandCWD:                 *commandCWD,

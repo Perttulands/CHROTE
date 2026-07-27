@@ -714,6 +714,9 @@ id = "gate_migrated"
 title = "Migrated check"
 kinds = ["code"]
 criterion = "Tests pass"
+check = "output_contains"
+checkVersion = "1"
+checkValue = "output from"
 
 [[connection]]
 id = "edge_main_work"
@@ -1785,6 +1788,44 @@ updatedAt = "2026-06-03T16:00:00Z"
 	}
 }
 
+func TestArchonCodeGateCreatePersistsExactProfileTuple(t *testing.T) {
+	workspace := t.TempDir()
+	store := formations.NewStore(workspace)
+	writeArchonFile(t, store.BoardPath("session-search"), `schema = 1
+id = "brd_01J9_sesssearch"
+slug = "session-search"
+title = "Improve session search"
+rev = 7
+`)
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(
+		t,
+		runner,
+		"--workspace", workspace,
+		"gate", "create", "session-search",
+		"--kinds", "code",
+		"--criterion", "Lint passes",
+		"--check", "output_contains",
+		"--check-version", "1",
+		"--check-value", "LINT OK",
+		"--json",
+	)
+	if code != 0 {
+		t.Fatalf("gate create code=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	var board formations.BoardDocument
+	if err := json.Unmarshal([]byte(stdout), &board); err != nil {
+		t.Fatalf("decode gate create: %v\n%s", err, stdout)
+	}
+	if len(board.Gates) != 1 ||
+		board.Gates[0].Check != "output_contains" ||
+		board.Gates[0].CheckVersion != "1" ||
+		board.Gates[0].CheckValue != "LINT OK" {
+		t.Fatalf("created Gates = %+v, want exact output_contains@1 parameter", board.Gates)
+	}
+}
+
 func TestArchonS3GateJudgeChainAndDetach(t *testing.T) {
 	workspace := t.TempDir()
 	store := formations.NewStore(workspace)
@@ -2252,6 +2293,9 @@ func TestArchonS4ConfiguredLabPoemMissionReachesGateAndPolishesAfterApproval(t *
 	}
 	if eventsContainErrorCode(events, "missing_executor") || eventsContainReason(events, "formation executor unavailable") {
 		t.Fatalf("configured lab poem run still blocked as missing executor: %+v", events)
+	}
+	if eventsContainErrorCode(events, "missing_gate_evaluator") || !eventsContain(events, formations.RunEventGateKindResult, "gate_review") {
+		t.Fatalf("configured Archon run did not execute the registered code Gate profile: %+v", events)
 	}
 	for _, want := range []struct {
 		eventType string
@@ -3289,6 +3333,9 @@ id = "gate_lint"
 title = "Legacy lint"
 kinds = ["code"]
 criterion = "Lint passes"
+check = "output_contains"
+checkVersion = "1"
+checkValue = "output from"
 commandArgv = ["npm", "run", "lint"]
 commandCwd = "dashboard"
 
@@ -3418,8 +3465,11 @@ func archonS4PoemBoardFixture() string {
 [[gate]]
 id = "gate_review"
 title = "Human review"
-kinds = ["human"]
+kinds = ["code", "human"]
 criterion = "Draft is ready to polish"
+check = "output_contains"
+checkVersion = "1"
+checkValue = "lab-fake output"
 
 [[formation]]
 id = "fmn_polish"
@@ -3489,7 +3539,7 @@ controller = true
 [[gate]]
 id = "gate_review"
 title = "Review"
-kinds = ["code", "human"]
+kinds = ["human"]
 criterion = "Good enough to ship"
 
 [[formation]]

@@ -3,6 +3,7 @@ package formations
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 const ToolExecutionUnavailableCode = "tool_execution_unavailable"
@@ -12,6 +13,9 @@ var ErrToolExecutionUnavailable = errors.New(ToolExecutionUnavailableCode)
 func preflightMissionDefinition(board *BoardDocument, missionID string) error {
 	selected := reachableNodeIDs(board, missionID)
 	if err := preflightMissionMigrations(board, missionID, selected); err != nil {
+		return err
+	}
+	if err := preflightSelectedCodeGates(board, selected); err != nil {
 		return err
 	}
 	return preflightSelectedTools(board, selected)
@@ -32,7 +36,45 @@ func preflightIsolatedFormationDefinition(board *BoardDocument, formationID stri
 	if err := rejectLegacyInlineVerificationForNodes(board, selected); err != nil {
 		return err
 	}
+	if err := preflightSelectedCodeGates(board, selected); err != nil {
+		return err
+	}
 	return preflightSelectedTools(board, selected)
+}
+
+func preflightSelectedCodeGates(board *BoardDocument, selected map[string]bool) error {
+	if board == nil {
+		return nil
+	}
+	for _, gate := range board.Gates {
+		if !selected[gate.ID] || !hasGateKind(gate.Kinds, "code") {
+			continue
+		}
+		descriptor, ok := LookupCodeGateProfileDescriptor(gate.Check, gate.CheckVersion)
+		if !ok {
+			return fmt.Errorf(
+				"%w: Gate %q uses unknown profile tuple %q@%q",
+				ErrInvalidCodeGateProfile,
+				gate.ID,
+				strings.TrimSpace(gate.Check),
+				strings.TrimSpace(gate.CheckVersion),
+			)
+		}
+		if err := validateCodeGateProfileDescriptor(descriptor); err != nil {
+			return fmt.Errorf("%w: Gate %q: %v", ErrInvalidCodeGateProfile, gate.ID, err)
+		}
+		if strings.TrimSpace(gate.CheckValue) == "" {
+			return fmt.Errorf(
+				"%w: Gate %q profile %q@%q requires non-empty parameter %q",
+				ErrInvalidCodeGateProfile,
+				gate.ID,
+				descriptor.ProfileID,
+				descriptor.ProfileVersion,
+				descriptor.ParameterName,
+			)
+		}
+	}
+	return nil
 }
 
 func preflightSelectedTools(board *BoardDocument, selected map[string]bool) error {

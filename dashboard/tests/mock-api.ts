@@ -226,6 +226,23 @@ export const mockFormationsBoard = {
   ],
 }
 
+export const mockCodeGateProfiles = [
+  {
+    profileId: 'output_absent',
+    profileVersion: '1',
+    displayName: 'Output excludes value',
+    parameterName: 'value',
+    parameterLabel: 'Forbidden text',
+  },
+  {
+    profileId: 'output_contains',
+    profileVersion: '1',
+    displayName: 'Output contains value',
+    parameterName: 'value',
+    parameterLabel: 'Required text',
+  },
+]
+
 export const mockFormationsLayout = {
   boardId: mockFormationsBoard.id,
   boardRev: mockFormationsBoard.rev,
@@ -350,6 +367,11 @@ export async function mockFormationsApiRoutes(page: Page, options?: {
     const request = route.request()
     const url = new URL(request.url())
     const path = url.pathname
+
+    if (request.method() === 'GET' && path === '/api/formations/gate-profiles') {
+      await fulfillJson(route, { profiles: mockCodeGateProfiles })
+      return
+    }
 
     if (request.method() === 'GET' && path === '/api/formations/boards') {
       await fulfillJson(route, {

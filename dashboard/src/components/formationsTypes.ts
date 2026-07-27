@@ -100,6 +100,17 @@ export interface GateNode {
   title: string
   kinds: string[]
   criterion: string
+  check?: string
+  checkVersion?: string
+  checkValue?: string
+}
+
+export interface CodeGateProfileDescriptor {
+  profileId: string
+  profileVersion: string
+  displayName: string
+  parameterName: string
+  parameterLabel: string
 }
 
 export interface RunStatusProjection {

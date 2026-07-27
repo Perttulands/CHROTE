@@ -26,6 +26,7 @@ func TestS4JudgeChainVerdictRoutesGate(t *testing.T) {
 		"fmn_j2": "pass",
 	}}
 	engine := NewRunEngine(store, personas, executor)
+	engine.SetGateEvaluator(NewCodeGateEvaluator())
 
 	status, err := engine.RunMission("session-search", RunStartRequest{
 		MissionID:         "mis_showcase",
@@ -778,6 +779,9 @@ id = "gate_review"
 title = "Review"
 kinds = ["code", "formation"]
 criterion = "Judge the work"
+check = "output_contains"
+checkVersion = "1"
+checkValue = "output from"
 
 [[formation]]
 id = "fmn_j1"

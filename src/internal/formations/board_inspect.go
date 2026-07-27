@@ -10,6 +10,7 @@ import (
 const (
 	FindingDanglingConnection                        = "dangling_connection"
 	FindingGateNotRoutable                           = "gate_not_routable"
+	FindingInvalidCodeGateProfile                    = "invalid_code_gate_profile"
 	FindingInvalidFormationType                      = "invalid_formation_type"
 	FindingLegacyScriptGate                          = LegacyScriptGateMigrationCode
 	FindingLegacyInlineVerificationRequiresMigration = LegacyInlineVerificationMigrationCode
@@ -89,8 +90,18 @@ func ValidateBoard(board *BoardDocument) BoardValidationReport {
 	for _, gate := range board.Gates {
 		hasJudgeChain := len(judgeChainForGate(board, gate.ID)) > 0
 		hasScriptCommand := gateHasLegacyScriptCommand(gate)
-		nonHumanKinds := withoutGateKind(gate.Kinds, "human")
-		isHumanOnlyGate := len(nonHumanKinds) == 0 && hasGateKind(gate.Kinds, "human")
+		hasFormationKind := hasGateKind(gate.Kinds, "formation")
+		hasOnlySupportedKinds := len(gate.Kinds) > 0
+		for _, kind := range gate.Kinds {
+			if kind != "code" && kind != "formation" && kind != "human" {
+				hasOnlySupportedKinds = false
+			}
+		}
+		codeRouteIsExecutable := !hasGateKind(gate.Kinds, "code") ||
+			codeGateDefinitionIsRoutable(gate)
+		isRoutable := hasOnlySupportedKinds &&
+			(!hasFormationKind || hasJudgeChain) &&
+			codeRouteIsExecutable
 		if hasScriptCommand {
 			report.Errors = append(report.Errors, BoardFinding{
 				Code:    FindingLegacyScriptGate,
@@ -99,11 +110,11 @@ func ValidateBoard(board *BoardDocument) BoardValidationReport {
 				Details: gate.LegacyScriptMigration,
 			})
 		}
-		if !hasJudgeChain && !isHumanOnlyGate {
+		if !isRoutable {
 			report.Errors = append(report.Errors, BoardFinding{
 				Code:    FindingGateNotRoutable,
 				NodeID:  gate.ID,
-				Message: fmt.Sprintf("gate %q has no judge chain or human-only kind, so the current board cannot route it; attach a judge chain or make it a human-only gate", gate.ID),
+				Message: fmt.Sprintf("gate %q has no complete executable route; configure a registered code check, attach the declared formation judge chain, or use a human-only gate", gate.ID),
 			})
 		}
 	}

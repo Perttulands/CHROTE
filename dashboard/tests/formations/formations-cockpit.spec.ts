@@ -1,5 +1,5 @@
 import { allowBrowserConsoleMessage, test, expect } from '../fixtures'
-import { mockApiRoutes, mockFormationsApiRoutes, mockFormationsBoard, mockFormationsLayout, mockFormationsAgents, mockFormationsRunEvents } from '../mock-api'
+import { mockApiRoutes, mockCodeGateProfiles, mockFormationsApiRoutes, mockFormationsBoard, mockFormationsLayout, mockFormationsAgents, mockFormationsRunEvents } from '../mock-api'
 import type { Locator, Page, Route } from '@playwright/test'
 import { activeRunStorageKey } from '../../src/components/formationsRunState'
 import { createArchonPoemRoundTripFixture } from './archon-poem-fixture'
@@ -85,6 +85,10 @@ async function installArchonRunLifecycleHarness(page: Page, fixture: ReturnType<
     const request = route.request()
     const path = new URL(request.url()).pathname
 
+    if (request.method() === 'GET' && path === '/api/formations/gate-profiles') {
+      await fulfillApi(route, { profiles: mockCodeGateProfiles })
+      return
+    }
     if (request.method() === 'GET' && path === '/api/formations/boards') {
       await fulfillApi(route, {
         boards: [{ id: board.id, slug: board.slug, title: board.title, rev: board.rev, etag: board.etag }],
@@ -201,6 +205,10 @@ async function installReloadRecoveryHarness(page: Page) {
   await page.route('**/api/formations/**', async route => {
     const request = route.request()
     const path = new URL(request.url()).pathname
+    if (request.method() === 'GET' && path === '/api/formations/gate-profiles') {
+      await fulfillApi(route, { profiles: mockCodeGateProfiles })
+      return
+    }
     if (request.method() === 'GET' && path === '/api/formations/boards') {
       await fulfillApi(route, {
         boards: [{ id: board.id, slug: board.slug, title: board.title, rev: board.rev, etag: board.etag }],
@@ -392,10 +400,14 @@ test.describe('Formations cockpit — D7 reference parity', () => {
       etag: 'second-board-etag',
     }
     const secondLayout = { ...mockFormationsLayout, board: secondBoard.slug, boardRev: secondBoard.rev, etag: 'second-layout-etag' }
-    await page.route('**/api/formations/**', async route => {
-      const request = route.request()
-      const path = new URL(request.url()).pathname
-      if (request.method() === 'GET' && path === '/api/formations/boards') {
+  await page.route('**/api/formations/**', async route => {
+    const request = route.request()
+    const path = new URL(request.url()).pathname
+    if (request.method() === 'GET' && path === '/api/formations/gate-profiles') {
+      await fulfillApi(route, { profiles: mockCodeGateProfiles })
+      return
+    }
+    if (request.method() === 'GET' && path === '/api/formations/boards') {
         await fulfillApi(route, { boards: [
           { id: mockFormationsBoard.id, slug: mockFormationsBoard.slug, title: mockFormationsBoard.title, rev: mockFormationsBoard.rev, etag: mockFormationsBoard.etag },
           { id: secondBoard.id, slug: secondBoard.slug, title: secondBoard.title, rev: secondBoard.rev, etag: secondBoard.etag },
@@ -1163,7 +1175,16 @@ test.describe('Formations cockpit — direct manipulation gestures', () => {
     const vbox = await viewport.boundingBox()
     if (!vbox) throw new Error('no viewport box')
     await pointerDrag(page, page.getByTestId('gate-token'), vbox.x + vbox.width * 0.5, vbox.y + vbox.height * 0.6)
+    const dialog = page.getByRole('dialog', { name: 'Create code Gate' })
+    await expect(dialog).toBeVisible()
+    await dialog.getByLabel('Forbidden text').fill('error')
+    await dialog.getByRole('button', { name: 'Create Gate' }).click()
     await expect.poll(() => patches.find(p => 'createGate' in p)).toBeTruthy()
+    expect(patches.find(p => 'createGate' in p)?.createGate).toMatchObject({
+      check: 'output_absent',
+      checkVersion: '1',
+      checkValue: 'error',
+    })
   })
 
   test('canvas Mission form submits the authored fields and a required Bead ID', async ({ page }) => {

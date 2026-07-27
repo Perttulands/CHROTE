@@ -255,6 +255,77 @@ func TestToolExecutionPreflightPreservesMissionCASPrecedence(t *testing.T) {
 	}
 }
 
+func TestCodeGatePreflightRejectsInvalidSelectedProfileBeforeRunMutation(t *testing.T) {
+	tests := []struct {
+		name         string
+		check        string
+		checkVersion string
+		checkValue   string
+	}{
+		{name: "unknown profile", check: "no_such_profile", checkVersion: "1", checkValue: "LINT OK"},
+		{name: "mismatched version", check: "output_contains", checkVersion: "999", checkValue: "LINT OK"},
+		{name: "missing parameter", check: "output_contains", checkVersion: "1"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			board := toolExecutionPreflightHeader() +
+				toolExecutionPreflightCodeGate("gate_lint", test.check, test.checkVersion, test.checkValue) +
+				toolExecutionPreflightConnection("edge_gate", "workflow", "mis_main:out", "gate_lint:in")
+			store, _, executor, evaluator := newToolExecutionPreflightHarness(t, board)
+
+			_, err := store.StartRun("tool-preflight", RunStartRequest{MissionID: "mis_main"})
+			if err == nil || !strings.Contains(err.Error(), FindingInvalidCodeGateProfile) {
+				t.Fatalf("start error = %v, want %s admission failure", err, FindingInvalidCodeGateProfile)
+			}
+			assertToolExecutionPreflightNoEffects(t, store.Workspace, executor, evaluator)
+		})
+	}
+}
+
+func TestCodeGatePreflightIgnoresInvalidProfileOutsideSelectedRoot(t *testing.T) {
+	board := toolExecutionPreflightHeader() +
+		toolExecutionPreflightFormation("fmn_work", false) +
+		toolExecutionPreflightCodeGate("gate_unrelated", "output_contains", "999", "LINT OK") +
+		toolExecutionPreflightConnection("edge_work", "workflow", "mis_main:out", "fmn_work:port_fmn_work_in")
+	_, engine, _, _ := newToolExecutionPreflightHarness(t, board)
+
+	if _, err := engine.RunMission("tool-preflight", RunStartRequest{MissionID: "mis_main"}); err != nil {
+		t.Fatalf("unreachable invalid code Gate blocked selected root: %v", err)
+	}
+}
+
+func TestCodeGatePreflightRejectsRegisteredProcessAndEffectfulProfilesBeforeRunMutation(t *testing.T) {
+	base := outputContainsCodeGateProfile
+	tests := []struct {
+		name   string
+		mutate func(*CodeGateProfileDescriptor)
+	}{
+		{name: "process", mutate: func(d *CodeGateProfileDescriptor) { d.ExecutionClass = "process" }},
+		{name: "effectful", mutate: func(d *CodeGateProfileDescriptor) { d.EffectPolicy = "network" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			profileID := "test_" + test.name
+			key := codeGateProfileKey{id: profileID, version: "1"}
+			registered := base
+			registered.descriptor.ProfileID = profileID
+			test.mutate(&registered.descriptor)
+			codeGateProfiles[key] = registered
+			defer delete(codeGateProfiles, key)
+
+			board := toolExecutionPreflightHeader() +
+				toolExecutionPreflightCodeGate("gate_lint", profileID, "1", "LINT OK") +
+				toolExecutionPreflightConnection("edge_gate", "workflow", "mis_main:out", "gate_lint:in")
+			store, _, executor, evaluator := newToolExecutionPreflightHarness(t, board)
+			_, err := store.StartRun("tool-preflight", RunStartRequest{MissionID: "mis_main"})
+			if !errors.Is(err, ErrInvalidCodeGateProfile) {
+				t.Fatalf("start error = %v, want invalid profile admission", err)
+			}
+			assertToolExecutionPreflightNoEffects(t, store.Workspace, executor, evaluator)
+		})
+	}
+}
+
 func newToolExecutionPreflightHarness(t *testing.T, board string) (*Store, *RunEngine, *countingFormationExecutor, *countingGateEvaluator) {
 	t.Helper()
 	workspace := t.TempDir()
@@ -344,6 +415,19 @@ kinds = [%q]
 criterion = "Review the work"
 %s
 `, id, kind, command)
+}
+
+func toolExecutionPreflightCodeGate(id, check, checkVersion, checkValue string) string {
+	return fmt.Sprintf(`[[gate]]
+id = %q
+title = "Lint"
+kinds = ["code"]
+criterion = "Lint passes"
+check = %q
+checkVersion = %q
+checkValue = %q
+
+`, id, check, checkVersion, checkValue)
 }
 
 func toolExecutionPreflightTool(id, profileVersion string) string {

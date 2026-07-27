@@ -349,6 +349,9 @@ id = "gate_taste"
 title = "Taste review"
 kinds = ["code", "human"]
 criterion = "Good enough to ship for an AI-company job search"
+check = "output_contains"
+checkVersion = "1"
+checkValue = "Built index.html"
 
 [[formation]]
 id = "fmn_publish"

@@ -149,6 +149,9 @@ type GateCreateRequest struct {
 	Title                      string
 	Kinds                      []string
 	Criterion                  string
+	Check                      string
+	CheckVersion               string
+	CheckValue                 string
 	Command                    string // legacy inspection-only compatibility input
 	CommandArgv                []string
 	CommandCWD                 string
@@ -164,6 +167,9 @@ type GateUpdateRequest struct {
 	Title                      string
 	Kinds                      []string
 	Criterion                  string
+	Check                      string
+	CheckVersion               string
+	CheckValue                 string
 	Command                    string // legacy inspection-only compatibility input
 	CommandArgv                []string
 	CommandCWD                 string
@@ -239,10 +245,12 @@ type GateNode struct {
 	// executable step (FORMATIONS.md rule 9); machine gates use Check below.
 	Criterion string `json:"criterion"`
 	// Check names an explicit, operator-declared pure code-Gate evaluator profile
-	// (see code_gate.go) and CheckValue is its validated non-secret parameter.
+	// (see code_gate.go), CheckVersion pins its exact registry version, and
+	// CheckValue is its validated non-secret parameter.
 	// When set, a machine gate mechanically evaluates the routed output against
 	// this declared check rather than blocking on missing_gate_evaluator.
 	Check                 string                               `json:"check,omitempty"`
+	CheckVersion          string                               `json:"checkVersion,omitempty"`
 	CheckValue            string                               `json:"checkValue,omitempty"`
 	Command               string                               `json:"command,omitempty"` // legacy inspection-only metadata
 	CommandArgv           []string                             `json:"commandArgv,omitempty"`
@@ -893,6 +901,9 @@ func (s *Store) createGate(slug string, req GateCreateRequest, opts WriteOptions
 	if err := validateSlug(slug); err != nil {
 		return nil, err
 	}
+	if err := validateCodeGateAuthoring(req.Check, req.CheckVersion, req.CheckValue); err != nil {
+		return nil, err
+	}
 	if opts.ExpectedETag == "" || opts.ExpectedRev == 0 {
 		return nil, ErrPreconditionRequired
 	}
@@ -905,10 +916,13 @@ func (s *Store) createGate(slug string, req GateCreateRequest, opts WriteOptions
 		title = "Review gate"
 	}
 	gate := GateNode{
-		ID:        newPrefixedID("gate"),
-		Title:     title,
-		Kinds:     kinds,
-		Criterion: req.Criterion,
+		ID:           newPrefixedID("gate"),
+		Title:        title,
+		Kinds:        kinds,
+		Criterion:    req.Criterion,
+		Check:        req.Check,
+		CheckVersion: req.CheckVersion,
+		CheckValue:   req.CheckValue,
 	}
 
 	board, layout, err := s.createNode(slug, opts, nodeCreateCandidate{
@@ -933,6 +947,9 @@ func (s *Store) UpdateGate(slug string, req GateUpdateRequest, opts WriteOptions
 	if err := rejectLegacyScriptGateWrite(req.LegacyCommandFieldsPresent, req.Command, req.CommandArgv, req.CommandCWD, req.CommandShell); err != nil {
 		return nil, err
 	}
+	if err := validateCodeGateAuthoring(req.Check, req.CheckVersion, req.CheckValue); err != nil {
+		return nil, err
+	}
 	return s.updateBoardDefinition(slug, req.UpdatedBy, opts, func(raw []byte, _ *BoardDocument) ([]byte, error) {
 		lines := splitLines(raw)
 		gateStart, gateEnd, ok := findGateBlockByID(lines, req.GateID)
@@ -948,8 +965,41 @@ func (s *Store) UpdateGate(slug string, req GateUpdateRequest, opts WriteOptions
 		if req.Criterion != "" {
 			lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "criterion", renderString(req.Criterion))
 		}
+		if req.Check != "" {
+			lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "check", renderString(req.Check))
+			lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "checkVersion", renderString(req.CheckVersion))
+			lines = setScalarInLineRange(lines, gateStart+1, gateEnd, "checkValue", renderString(req.CheckValue))
+		}
 		return renderTOMLLines(lines), nil
 	})
+}
+
+func validateCodeGateAuthoring(check, checkVersion, checkValue string) error {
+	if strings.TrimSpace(check) == "" && strings.TrimSpace(checkVersion) == "" && strings.TrimSpace(checkValue) == "" {
+		return nil
+	}
+	descriptor, ok := LookupCodeGateProfileDescriptor(check, checkVersion)
+	if !ok {
+		return fmt.Errorf(
+			"%w: unknown profile tuple %q@%q",
+			ErrInvalidCodeGateProfile,
+			strings.TrimSpace(check),
+			strings.TrimSpace(checkVersion),
+		)
+	}
+	if err := validateCodeGateProfileDescriptor(descriptor); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidCodeGateProfile, err)
+	}
+	if strings.TrimSpace(checkValue) == "" {
+		return fmt.Errorf(
+			"%w: profile %q@%q requires non-empty parameter %q",
+			ErrInvalidCodeGateProfile,
+			descriptor.ProfileID,
+			descriptor.ProfileVersion,
+			descriptor.ParameterName,
+		)
+	}
+	return nil
 }
 
 func (s *Store) SetGateJudgeChain(slug string, req GateJudgeRequest, opts WriteOptions) (*BoardDocument, error) {
@@ -1613,6 +1663,7 @@ func appendGateBlock(raw []byte, gate GateNode) []byte {
 	b.WriteString("criterion = " + renderString(gate.Criterion) + "\n")
 	if strings.TrimSpace(gate.Check) != "" {
 		b.WriteString("check = " + renderString(gate.Check) + "\n")
+		b.WriteString("checkVersion = " + renderString(gate.CheckVersion) + "\n")
 		b.WriteString("checkValue = " + renderString(gate.CheckValue) + "\n")
 	}
 	return []byte(b.String())
@@ -2688,6 +2739,8 @@ func parseGateNodes(raw []byte) []GateNode {
 			current.Criterion = value
 		case "check":
 			current.Check = value
+		case "checkVersion":
+			current.CheckVersion = value
 		case "checkValue":
 			current.CheckValue = value
 		case "command":

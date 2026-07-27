@@ -92,6 +92,53 @@ func TestS4RunStartAppendsSeq1AndSnapshots(t *testing.T) {
 	}
 }
 
+func TestRunStartFreezesSelectedCodeGateProfileBinding(t *testing.T) {
+	store, personas := s4RunFixture(t)
+	store.Now = fixedClock()
+	personas.Now = fixedClock()
+	createS4Persona(t, personas, "scout")
+	writeFixture(t, store.BoardPath("session-search"), codeGateLintBoardFixture("output_contains", "LINT OK"))
+	board, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+
+	started, err := store.StartRun("session-search", RunStartRequest{
+		MissionID:         "mis_showcase",
+		ExpectedBoardETag: board.ETag,
+		ExpectedBoardRev:  board.Rev,
+		Personas:          personas,
+	})
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	descriptor, ok := LookupCodeGateProfileDescriptor("output_contains", "1")
+	if !ok {
+		t.Fatal("missing test profile descriptor")
+	}
+	bindings := readFile(t, filepath.Join(store.Workspace, started.BindingsSnapshotPath))
+	for _, want := range []string{
+		"[[gateBinding]]",
+		`gateId = "gate_lint"`,
+		`profileId = "output_contains"`,
+		`profileVersion = "1"`,
+		`profileSha256 = "` + descriptor.ProfileSHA256 + `"`,
+		`evaluatorBundleSha256 = "` + descriptor.EvaluatorBundleSHA256 + `"`,
+		`parameters = { value = "LINT OK" }`,
+		`parametersSha256 = "` + codeGateSHA256(`{"value":"LINT OK"}`) + `"`,
+		`policySha256 = "` + descriptor.PolicySHA256 + `"`,
+		`determinismPolicySha256 = "` + descriptor.DeterminismPolicySHA256 + `"`,
+		fmt.Sprintf("maxInputBytes = %d", descriptor.MaxInputBytes),
+		fmt.Sprintf("maxResultBytes = %d", descriptor.MaxResultBytes),
+		fmt.Sprintf("maxOperations = %d", descriptor.MaxOperations),
+		`resultEncoding = "decision-result-jcs-v1"`,
+	} {
+		if !strings.Contains(bindings, want) {
+			t.Fatalf("code Gate binding snapshot missing %q:\n%s", want, bindings)
+		}
+	}
+}
+
 func TestS4ProjectRunStatusFromLedgerOnly(t *testing.T) {
 	store, personas := s4RunFixture(t)
 	store.Now = fixedClock()
