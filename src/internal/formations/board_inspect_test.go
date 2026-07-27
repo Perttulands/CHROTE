@@ -166,6 +166,41 @@ criterion = "An operator confirms the result is real"
 	}
 }
 
+func TestValidateBoardAcceptsRegisteredCodeGateWithoutJudgeOrHuman(t *testing.T) {
+	raw := cleanValidateBoardFixture() + `
+[[gate]]
+id = "gate_lint"
+title = "Lint"
+kinds = ["code"]
+criterion = "Lint passes clean"
+check = "output_contains"
+checkVersion = "1"
+checkValue = "LINT OK"
+`
+	report := ValidateBoard(mustParseValidateBoardFixture(t, raw))
+	if got := findBoardFindings(report.Errors, FindingGateNotRoutable); len(got) != 0 {
+		t.Fatalf("registered code Gate was reported unroutable: %+v", got)
+	}
+}
+
+func TestValidateBoardRequiresExactCodeGateProfileVersion(t *testing.T) {
+	raw := cleanValidateBoardFixture() + `
+[[gate]]
+id = "gate_lint"
+title = "Lint"
+kinds = ["code"]
+criterion = "Lint passes clean"
+check = "output_contains"
+checkVersion = "999"
+checkValue = "LINT OK"
+`
+	report := ValidateBoard(mustParseValidateBoardFixture(t, raw))
+	unroutable := findBoardFindings(report.Errors, FindingGateNotRoutable)
+	if len(unroutable) != 1 || unroutable[0].NodeID != "gate_lint" {
+		t.Fatalf("unroutable findings = %+v, want exact-version gate_lint finding", unroutable)
+	}
+}
+
 func TestValidateBoardRequiresExecutableRouteForMixedHumanCodeGate(t *testing.T) {
 	raw := cleanValidateBoardFixture() + `
 [[gate]]
@@ -178,6 +213,27 @@ criterion = "Automated checks pass and a human confirms"
 	unroutable := findBoardFindings(report.Errors, FindingGateNotRoutable)
 	if len(unroutable) != 1 || unroutable[0].NodeID != "gate_mixed" {
 		t.Fatalf("mixed human/code gate findings = %+v, want gate_mixed unroutable", unroutable)
+	}
+}
+
+func TestValidateBoardRequiresExactProfileForMixedCodeFormationGate(t *testing.T) {
+	tests := []struct {
+		name        string
+		declaration string
+	}{
+		{name: "missing", declaration: ""},
+		{name: "unknown", declaration: "\ncheck = \"no_such_profile\"\ncheckVersion = \"1\"\ncheckValue = \"value\""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw := s4JudgeChainRunBoardFixture()
+			raw = strings.Replace(raw, "\ncheck = \"output_contains\"\ncheckVersion = \"1\"\ncheckValue = \"output from\"", test.declaration, 1)
+			report := ValidateBoard(mustParseValidateBoardFixture(t, raw))
+			unroutable := findBoardFindings(report.Errors, FindingGateNotRoutable)
+			if len(unroutable) != 1 || unroutable[0].NodeID != "gate_review" {
+				t.Fatalf("mixed code/formation findings = %+v, want gate_review unroutable", unroutable)
+			}
+		})
 	}
 }
 

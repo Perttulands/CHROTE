@@ -194,7 +194,7 @@ controller = true
 [[gate]]
 id = "gate_review"
 title = "Review"
-kinds = ["code", "human"]
+kinds = ["human"]
 criterion = "Good enough to ship"
 
 [[formation]]

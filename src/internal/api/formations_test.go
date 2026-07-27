@@ -61,6 +61,39 @@ updatedAt = "2026-06-03T16:00:00Z"
 	}
 }
 
+func TestFormationsHandlerListsRegisteredCodeGateProfiles(t *testing.T) {
+	handler := NewFormationsHandlerWithStore(formations.NewStore(t.TempDir()))
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/formations/gate-profiles", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Profiles []formations.CodeGateProfileDescriptor `json:"profiles"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v\n%s", err, rec.Body.String())
+	}
+	if !response.Success || len(response.Data.Profiles) != 2 {
+		t.Fatalf("profile response = %+v, want two registered profiles", response)
+	}
+	profile := response.Data.Profiles[0]
+	if profile.ProfileID != "output_absent" ||
+		profile.ProfileVersion != "1" ||
+		profile.ExecutionClass != formations.CodeGateExecutionClassInProcess ||
+		profile.EffectPolicy != formations.CodeGateEffectPolicyNone ||
+		profile.ResultEncoding != formations.CodeGateResultEncoding {
+		t.Fatalf("first profile = %+v, want exact safe output_absent@1 descriptor", profile)
+	}
+}
+
 func TestFormationsHandlerBoardPatchReturnsConflictForStaleETag(t *testing.T) {
 	store := formations.NewStore(t.TempDir())
 	store.Now = fixedFormationsAPIClock()
@@ -1232,6 +1265,9 @@ id = "gate_migrated"
 title = "Migrated check"
 kinds = ["code"]
 criterion = "Tests pass"
+check = "output_contains"
+checkVersion = "1"
+checkValue = "output from"
 
 [[connection]]
 id = "edge_main_work"
@@ -1415,6 +1451,85 @@ updatedAt = "2026-06-03T16:00:00Z"
 	placed := response.Data.Layout.Nodes[0]
 	if placed.ID != created.ID || placed.X != 420 || placed.Y != 280 || response.Data.Layout.ETag == "" {
 		t.Fatalf("gate layout = %+v, want fresh created-node position and ETag", response.Data.Layout)
+	}
+}
+
+func TestCodeGateAuthoringPersistsExactSelectedProfileTuple(t *testing.T) {
+	store := formations.NewStore(t.TempDir())
+	store.Now = fixedFormationsAPIClock()
+	writeFormationsAPIFixture(t, store.BoardPath("session-search"), `schema = 1
+id = "brd_01J9_sesssearch"
+slug = "session-search"
+title = "Improve session search"
+rev = 7
+`)
+	board, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	handler := NewFormationsHandlerWithStore(store)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/session-search", bytes.NewBufferString(`{"createGate":{"title":"Lint","kinds":["code"],"criterion":"Lint passes","check":"output_contains","checkVersion":"1","checkValue":"LINT OK","x":420,"y":280},"expectedRev":7,"updatedBy":"agent:test"}`))
+	req.Header.Set("If-Match", board.ETag)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("gate create status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var response struct {
+		Data struct {
+			Gate formations.GateNode `json:"gate"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v\n%s", err, rec.Body.String())
+	}
+	if response.Data.Gate.Check != "output_contains" ||
+		response.Data.Gate.CheckVersion != "1" ||
+		response.Data.Gate.CheckValue != "LINT OK" {
+		t.Fatalf("created Gate = %+v, want exact selected profile tuple and parameter", response.Data.Gate)
+	}
+	raw := readFormationsAPIFile(t, store.BoardPath("session-search"))
+	for _, want := range []string{
+		`check = "output_contains"`,
+		`checkVersion = "1"`,
+		`checkValue = "LINT OK"`,
+	} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("board missing %q:\n%s", want, raw)
+		}
+	}
+}
+
+func TestCodeGateAuthoringRejectsUnknownProfileWithStableErrorBeforeMutation(t *testing.T) {
+	store := formations.NewStore(t.TempDir())
+	writeFormationsAPIFixture(t, store.BoardPath("session-search"), `schema = 1
+id = "brd_01J9_sesssearch"
+slug = "session-search"
+title = "Improve session search"
+rev = 7
+`)
+	board, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	before := readFormationsAPIFile(t, store.BoardPath("session-search"))
+	handler := NewFormationsHandlerWithStore(store)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/session-search", bytes.NewBufferString(`{"createGate":{"title":"Lint","kinds":["code"],"check":"unknown","checkVersion":"1","checkValue":"LINT OK"},"expectedRev":7}`))
+	req.Header.Set("If-Match", board.ETag)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity ||
+		!bytes.Contains(rec.Body.Bytes(), []byte(`"code":"invalid_code_gate_profile"`)) {
+		t.Fatalf("unknown profile response = %d %s, want stable 422", rec.Code, rec.Body.String())
+	}
+	if after := readFormationsAPIFile(t, store.BoardPath("session-search")); after != before {
+		t.Fatalf("unknown profile changed board bytes\n--- before ---\n%s\n--- after ---\n%s", before, after)
 	}
 }
 
@@ -2018,6 +2133,9 @@ id = "gate_lint"
 title = "Legacy lint"
 kinds = ["code"]
 criterion = "Lint passes"
+check = "output_contains"
+checkVersion = "1"
+checkValue = "output from"
 commandArgv = ["npm", "run", "lint"]
 commandCwd = "dashboard"
 
@@ -2069,7 +2187,7 @@ controller = true
 [[gate]]
 id = "gate_review"
 title = "Review"
-kinds = ["code", "human"]
+kinds = ["human"]
 criterion = "Good enough to ship"
 
 [[formation]]

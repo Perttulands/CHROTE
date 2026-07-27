@@ -208,7 +208,23 @@ func (f *fakeGateEvaluator) EvaluateGate(req GateEvaluation) (GateEvaluationResu
 		verdict = f.verdicts[0]
 		f.verdicts = f.verdicts[1:]
 	}
-	return GateEvaluationResult{Verdict: verdict, Reason: "fake " + verdict}, nil
+	reason := "fake " + verdict
+	canonical, err := canonicalCodeGateResult(verdict, reason, nil)
+	if err != nil {
+		return GateEvaluationResult{}, err
+	}
+	bindingID := ""
+	if req.Binding != nil {
+		bindingID = req.Binding.GateBindingID
+	}
+	return GateEvaluationResult{
+		Verdict:         verdict,
+		Reason:          reason,
+		ResultEncoding:  CodeGateResultEncoding,
+		ResultSHA256:    codeGateSHA256(canonical),
+		CanonicalResult: canonical,
+		GateBindingID:   bindingID,
+	}, nil
 }
 
 func eventOfType(t *testing.T, events []RunEvent, eventType string) RunEvent {
@@ -268,6 +284,9 @@ id = "gate_review"
 title = "Review"
 kinds = ["code"]
 criterion = "Good enough to ship"
+check = "output_contains"
+checkVersion = "1"
+checkValue = "output from"
 
 [[formation]]
 id = "fmn_ship"

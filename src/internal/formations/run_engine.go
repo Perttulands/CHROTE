@@ -81,20 +81,35 @@ type FormationOutputPayload struct {
 }
 
 type GateEvaluation struct {
-	RunID      string
-	GateID     string
-	Title      string
-	Kinds      []string
-	Criterion  string
-	Check      string
-	CheckValue string
-	Input      RunInputRef
+	RunID        string
+	GateID       string
+	Title        string
+	Kinds        []string
+	Criterion    string
+	Check        string
+	CheckVersion string
+	CheckValue   string
+	Input        RunInputRef
+	Binding      *RunGateBinding
 }
 
 type GateEvaluationResult struct {
-	Verdict string
-	Reason  string
-	PerKind map[string]string
+	Verdict         string
+	Reason          string
+	Evidence        []GateEvidenceRef
+	PerKind         map[string]string
+	KindResultSeqs  map[string]int
+	CodeVerdict     string
+	CodeReason      string
+	ResultEncoding  string
+	ResultSHA256    string
+	CanonicalResult string
+	GateBindingID   string
+}
+
+type GateEvidenceRef struct {
+	Kind string `json:"kind"`
+	Text string `json:"text,omitempty"`
 }
 
 type HumanGateVerdictRequest struct {
@@ -317,6 +332,17 @@ func (e *RunEngine) ResumeRun(runID string, req RunResumeRequest) (*RunStatusPro
 	if err := e.store.RequireRuntimeAuthority(); err != nil {
 		return nil, err
 	}
+	beforeEvents, err := e.store.ReadRunEvents(runID)
+	if err != nil {
+		return nil, err
+	}
+	beforeBoard, err := e.readRunBoard(runID)
+	if err != nil {
+		return nil, err
+	}
+	if err := e.validateDurableCodeGateState(runID, beforeBoard, beforeEvents); err != nil {
+		return nil, err
+	}
 	_, board, err := e.store.resumeRunWithSnapshot(runID, req)
 	if err != nil {
 		return nil, err
@@ -357,6 +383,95 @@ func (e *RunEngine) ResumeRun(runID string, req RunResumeRequest) (*RunStatusPro
 	return e.projectAndNotify(runID)
 }
 
+func (e *RunEngine) validateDurableCodeGateState(runID string, board *BoardDocument, events []RunEvent) error {
+	gates := map[string]GateNode{}
+	for _, gate := range board.Gates {
+		gates[gate.ID] = gate
+	}
+	for _, event := range events {
+		gateID := event.GateID
+		if gateID == "" {
+			gateID = event.NodeID
+		}
+		gate, ok := gates[gateID]
+		if !ok {
+			continue
+		}
+		switch event.Type {
+		case RunEventGateKindResult:
+			if stringFromAny(event.Data["kind"]) != "code" {
+				continue
+			}
+			input := runInputRefFromAny(event.Data["inputRef"])
+			if _, err := e.gateKindResultFromEvent(runID, gate, input, event); err != nil {
+				return err
+			}
+		case RunEventHumanInputRequested:
+			if err := e.validateHumanRequestKindResults(runID, gate, event, events); err != nil {
+				return err
+			}
+		case RunEventGateVerdict:
+			if err := e.validateGateVerdictKindResults(runID, gate, event, events); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (e *RunEngine) validateGateVerdictKindResults(runID string, gate GateNode, verdictEvent RunEvent, events []RunEvent) error {
+	rawSeqs, present := verdictEvent.Data["kindResultSeqs"]
+	if !present {
+		return nil
+	}
+	seqs := intMapFromRunEventData(rawSeqs)
+	perKind := stringMapFromRunEventData(verdictEvent.Data["perKind"])
+	input := runInputRefFromAny(verdictEvent.Data["inputRef"])
+	for kind, seq := range seqs {
+		if kind != "code" && kind != "formation" {
+			return fmt.Errorf("%w: Gate %q aggregate result names unknown kind %q", ErrRunLedgerInvalid, gate.ID, kind)
+		}
+		if seq <= 0 || seq >= verdictEvent.Seq || seq > len(events) {
+			return fmt.Errorf("%w: Gate %q aggregate %s result sequence is invalid", ErrRunLedgerInvalid, gate.ID, kind)
+		}
+		event := events[seq-1]
+		eventGateID := event.GateID
+		if eventGateID == "" {
+			eventGateID = event.NodeID
+		}
+		if event.Seq != seq ||
+			event.Type != RunEventGateKindResult ||
+			eventGateID != gate.ID ||
+			stringFromAny(event.Data["kind"]) != kind ||
+			runInputRefFromAny(event.Data["inputRef"]) != input {
+			return fmt.Errorf("%w: Gate %q aggregate %s result identity mismatch", ErrRunLedgerInvalid, gate.ID, kind)
+		}
+		result, err := e.gateKindResultFromEvent(runID, gate, input, event)
+		if err != nil {
+			return err
+		}
+		if perKind[kind] != result.Verdict {
+			return fmt.Errorf("%w: Gate %q aggregate %s verdict mismatch", ErrRunLedgerInvalid, gate.ID, kind)
+		}
+		if kind == "code" &&
+			(stringFromAny(verdictEvent.Data["codeVerdict"]) != result.Verdict ||
+				stringFromAny(verdictEvent.Data["codeReason"]) != result.Reason ||
+				stringFromAny(verdictEvent.Data["resultEncoding"]) != result.ResultEncoding ||
+				stringFromAny(verdictEvent.Data["resultSha256"]) != result.ResultSHA256 ||
+				stringFromAny(verdictEvent.Data["gateBindingId"]) != result.GateBindingID ||
+				!gateEvidenceRefsEqual(gateEvidenceRefsFromRunEventData(verdictEvent.Data["evidence"]), result.Evidence)) {
+			return fmt.Errorf("%w: Gate %q aggregate code result mismatch", ErrRunLedgerInvalid, gate.ID)
+		}
+	}
+	for _, kind := range []string{"code", "formation"} {
+		state := perKind[kind]
+		if hasGateKind(gate.Kinds, kind) && state != "" && state != "not_run" && seqs[kind] == 0 {
+			return fmt.Errorf("%w: Gate %q aggregate %s result sequence is missing", ErrRunLedgerInvalid, gate.ID, kind)
+		}
+	}
+	return nil
+}
+
 func (e *RunEngine) RecordHumanGateVerdict(runID string, req HumanGateVerdictRequest) (*RunStatusProjection, error) {
 	if e == nil || e.store == nil {
 		return nil, fmt.Errorf("%w: run engine store required", ErrNotFound)
@@ -375,9 +490,26 @@ func (e *RunEngine) RecordHumanGateVerdict(runID string, req HumanGateVerdictReq
 	if !ok {
 		return nil, fmt.Errorf("%w: human gate request %q", ErrNotFound, req.GateID)
 	}
+	board, err := e.readRunBoard(runID)
+	if err != nil {
+		return nil, err
+	}
+	gate, ok := findGate(board.Gates, req.GateID)
+	if !ok {
+		return nil, fmt.Errorf("%w: gate %q", ErrNotFound, req.GateID)
+	}
+	if err := rejectLegacyScriptGateForRun(board, events[0], nil); err != nil {
+		return nil, err
+	}
+	if err := rejectLegacyInlineVerification(board); err != nil {
+		return nil, err
+	}
+	if err := e.validateHumanRequestKindResults(runID, gate, requestEvent, events); err != nil {
+		return nil, err
+	}
 	verdict := normalizeGateVerdict(req.Verdict)
 	actor := defaultRunActor(req.Actor)
-	board, err := e.store.appendRunEventWithSnapshot(runID, RunEvent{
+	validatedBoard, err := e.store.appendRunEventWithSnapshot(runID, RunEvent{
 		Type:   RunEventHumanVerdictRecorded,
 		Actor:  actor,
 		GateID: req.GateID,
@@ -394,20 +526,78 @@ func (e *RunEngine) RecordHumanGateVerdict(runID string, req HumanGateVerdictReq
 	if err != nil {
 		return nil, err
 	}
-	if board == nil {
+	if validatedBoard == nil {
 		return nil, ErrRunLedgerInvalid
 	}
-	gate, ok := findGate(board.Gates, req.GateID)
-	if !ok {
-		return nil, fmt.Errorf("%w: gate %q", ErrNotFound, req.GateID)
-	}
 	input := runInputRefFromAny(requestEvent.Data["inputRef"])
-	status, err := e.routeGateVerdict(runID, board, gate, input, verdict, "human verdict", runLimitsFromEvent(events[0]))
+	status, err := e.routeGateVerdict(runID, validatedBoard, gate, input, verdict, "human verdict", runLimitsFromEvent(events[0]), requestEvent)
 	if err != nil {
 		return nil, err
 	}
 	e.reconcileNeedsYou(runID)
 	return status, nil
+}
+
+func (e *RunEngine) validateHumanRequestKindResults(runID string, gate GateNode, request RunEvent, events []RunEvent) error {
+	seqs := intMapFromRunEventData(request.Data["kindResultSeqs"])
+	perKind := stringMapFromRunEventData(request.Data["codePerKind"])
+	input := runInputRefFromAny(request.Data["inputRef"])
+	requiredKinds := make([]string, 0, 2)
+	for _, kind := range []string{"code", "formation"} {
+		if hasGateKind(gate.Kinds, kind) {
+			requiredKinds = append(requiredKinds, kind)
+		}
+	}
+	if len(seqs) != len(requiredKinds) {
+		return fmt.Errorf("%w: Gate %q human request kind result set mismatch", ErrRunLedgerInvalid, gate.ID)
+	}
+	for _, kind := range requiredKinds {
+		seq := seqs[kind]
+		if seq <= 0 || seq >= request.Seq || seq > len(events) {
+			return fmt.Errorf("%w: Gate %q human request %s result sequence is invalid", ErrRunLedgerInvalid, gate.ID, kind)
+		}
+		event := events[seq-1]
+		eventGateID := event.GateID
+		if eventGateID == "" {
+			eventGateID = event.NodeID
+		}
+		if event.Seq != seq ||
+			event.Type != RunEventGateKindResult ||
+			eventGateID != gate.ID ||
+			stringFromAny(event.Data["kind"]) != kind ||
+			runInputRefFromAny(event.Data["inputRef"]) != input {
+			return fmt.Errorf("%w: Gate %q human request %s result identity mismatch", ErrRunLedgerInvalid, gate.ID, kind)
+		}
+		result, err := e.gateKindResultFromEvent(runID, gate, input, event)
+		if err != nil {
+			return err
+		}
+		if perKind[kind] != result.Verdict {
+			return fmt.Errorf("%w: Gate %q human request %s verdict mismatch", ErrRunLedgerInvalid, gate.ID, kind)
+		}
+		if kind == "code" &&
+			(stringFromAny(request.Data["codeVerdict"]) != result.Verdict ||
+				stringFromAny(request.Data["codeReason"]) != result.Reason ||
+				stringFromAny(request.Data["resultEncoding"]) != result.ResultEncoding ||
+				stringFromAny(request.Data["resultSha256"]) != result.ResultSHA256 ||
+				stringFromAny(request.Data["gateBindingId"]) != result.GateBindingID ||
+				!gateEvidenceRefsEqual(gateEvidenceRefsFromRunEventData(request.Data["evidence"]), result.Evidence)) {
+			return fmt.Errorf("%w: Gate %q human request code result mismatch", ErrRunLedgerInvalid, gate.ID)
+		}
+	}
+	return nil
+}
+
+func gateEvidenceRefsEqual(left, right []GateEvidenceRef) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 type openDispatchRef struct {
@@ -597,7 +787,7 @@ func (e *RunEngine) startFormationRun(slug string, board *BoardDocument, formati
 	if err := writeRunArtifactExclusiveAt(runDirectory, runID+".snapshot.toml", boardRaw); err != nil {
 		return nil, MissionNode{}, RunInputRef{}, err
 	}
-	if err := writeRunArtifactExclusiveAt(runDirectory, runID+".bindings.toml", []byte(renderRunBindings(runID, board, mission, bindings))); err != nil {
+	if err := writeRunArtifactExclusiveAt(runDirectory, runID+".bindings.toml", []byte(renderRunBindings(runID, board, mission, bindings, nil))); err != nil {
 		return nil, MissionNode{}, RunInputRef{}, err
 	}
 	started := &RunStartResult{
@@ -680,6 +870,12 @@ func (e *RunEngine) resumeSnapshot(runID string, board *BoardDocument, mission M
 			}
 			return err
 		}
+	}
+	if err := e.resumeIncompleteGateEvaluations(runID, board, gateByID, events, limits, ready, queued, &queue); err != nil {
+		if errors.Is(err, errRunStopped) {
+			return nil
+		}
+		return err
 	}
 	if err := e.replayGateVerdictsToReady(runID, board, gateByID, events, limits, ready, queued, &queue, completed, lastOutputIdx); err != nil {
 		if errors.Is(err, errRunStopped) {
@@ -783,6 +979,145 @@ func (e *RunEngine) resumeSnapshot(runID string, board *BoardDocument, mission M
 		return e.appendErrorAndBlock(runID, "resume_no_work", "no resumable work found", "engine", "", "no resumable work found")
 	}
 	return e.appendResumeSucceeded(runID)
+}
+
+func (e *RunEngine) resumeIncompleteGateEvaluations(runID string, board *BoardDocument, gates map[string]GateNode, events []RunEvent, limits RunLimits, ready map[string]map[string]RunInputRef, queued map[string]bool, queue *[]string) error {
+	pending := map[string]RunEvent{}
+	for _, event := range events {
+		gateID := event.GateID
+		if gateID == "" {
+			gateID = event.NodeID
+		}
+		if gateID == "" {
+			continue
+		}
+		switch event.Type {
+		case RunEventGateEvaluating:
+			pending[gateID] = event
+		case RunEventGateVerdict, RunEventHumanInputRequested, RunEventError:
+			delete(pending, gateID)
+		}
+	}
+	evaluations := make([]RunEvent, 0, len(pending))
+	for _, event := range pending {
+		evaluations = append(evaluations, event)
+	}
+	sort.Slice(evaluations, func(i, j int) bool { return evaluations[i].Seq < evaluations[j].Seq })
+	for _, evaluation := range evaluations {
+		gateID := evaluation.GateID
+		if gateID == "" {
+			gateID = evaluation.NodeID
+		}
+		gate, ok := gates[gateID]
+		if !ok {
+			return fmt.Errorf("%w: gate %q", ErrNotFound, gateID)
+		}
+		input := runInputRefFromAny(evaluation.Data["inputRef"])
+		prior, err := e.durableGateKindResultsForEvaluation(runID, gate, input, events, evaluation.Seq)
+		if err != nil {
+			return err
+		}
+		if err := e.evaluateGateKinds(runID, board, gates, gate, input, limits, ready, queued, queue, prior); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *RunEngine) durableGateKindResultsForEvaluation(runID string, gate GateNode, input RunInputRef, events []RunEvent, evaluatingSeq int) (map[string]durableGateKindResult, error) {
+	results := map[string]durableGateKindResult{}
+	lastKindIndex := -1
+	canonicalOrder := map[string]int{"code": 0, "formation": 1}
+	for _, event := range events {
+		if event.Seq <= evaluatingSeq {
+			continue
+		}
+		gateID := event.GateID
+		if gateID == "" {
+			gateID = event.NodeID
+		}
+		if gateID != gate.ID {
+			continue
+		}
+		if event.Type == RunEventGateEvaluating || event.Type == RunEventGateVerdict || event.Type == RunEventHumanInputRequested {
+			break
+		}
+		if event.Type != RunEventGateKindResult {
+			continue
+		}
+		kind := stringFromAny(event.Data["kind"])
+		kindIndex, ok := canonicalOrder[kind]
+		if !ok || kindIndex <= lastKindIndex {
+			return nil, fmt.Errorf("%w: Gate %q has duplicate or out-of-order kind result %q", ErrRunLedgerInvalid, gate.ID, kind)
+		}
+		if runInputRefFromAny(event.Data["inputRef"]) != input {
+			return nil, fmt.Errorf("%w: Gate %q kind result input mismatch", ErrRunLedgerInvalid, gate.ID)
+		}
+		result, err := e.gateKindResultFromEvent(runID, gate, input, event)
+		if err != nil {
+			return nil, err
+		}
+		results[kind] = durableGateKindResult{Seq: event.Seq, Result: result}
+		lastKindIndex = kindIndex
+	}
+	return results, nil
+}
+
+func (e *RunEngine) gateKindResultFromEvent(runID string, gate GateNode, input RunInputRef, event RunEvent) (GateEvaluationResult, error) {
+	kind := stringFromAny(event.Data["kind"])
+	verdict := stringFromAny(event.Data["verdict"])
+	if verdict != "pass" && verdict != "fail" {
+		return GateEvaluationResult{}, fmt.Errorf("%w: Gate %q kind %q has invalid verdict", ErrRunLedgerInvalid, gate.ID, kind)
+	}
+	result := GateEvaluationResult{
+		Verdict:        verdict,
+		Reason:         stringFromAny(event.Data["reason"]),
+		Evidence:       gateEvidenceRefsFromRunEventData(event.Data["evidence"]),
+		PerKind:        map[string]string{kind: verdict},
+		KindResultSeqs: map[string]int{kind: event.Seq},
+		ResultEncoding: stringFromAny(event.Data["resultEncoding"]),
+		ResultSHA256:   stringFromAny(event.Data["resultSha256"]),
+		GateBindingID:  stringFromAny(event.Data["gateBindingId"]),
+	}
+	if kind != "code" {
+		return result, nil
+	}
+	binding, err := e.store.readRunGateBinding(runID, gate.ID)
+	if err != nil {
+		return GateEvaluationResult{}, err
+	}
+	if stringFromAny(event.Data["inputSha256"]) != codeGateSHA256(input.Text) ||
+		stringFromAny(event.Data["profileId"]) != binding.ProfileID ||
+		stringFromAny(event.Data["profileVersion"]) != binding.ProfileVersion ||
+		stringFromAny(event.Data["profileSha256"]) != binding.ProfileSHA256 ||
+		stringFromAny(event.Data["evaluatorBundleSha256"]) != binding.EvaluatorBundleSHA256 ||
+		stringFromAny(event.Data["parametersSha256"]) != binding.ParametersSHA256 ||
+		stringFromAny(event.Data["policySha256"]) != binding.PolicySHA256 ||
+		stringFromAny(event.Data["determinismPolicySha256"]) != binding.DeterminismPolicySHA256 ||
+		intFromRunEventData(event.Data["maxInputBytes"]) != binding.MaxInputBytes ||
+		intFromRunEventData(event.Data["maxResultBytes"]) != binding.MaxResultBytes ||
+		intFromRunEventData(event.Data["maxOperations"]) != binding.MaxOperations {
+		return GateEvaluationResult{}, fmt.Errorf("%w: Gate %q code result frozen binding mismatch", ErrRunLedgerInvalid, gate.ID)
+	}
+	canonical, err := canonicalCodeGateResult(result.Verdict, result.Reason, result.Evidence)
+	if err != nil {
+		return GateEvaluationResult{}, fmt.Errorf("%w: Gate %q canonical code result: %v", ErrRunLedgerInvalid, gate.ID, err)
+	}
+	result.CanonicalResult = canonical
+	result.CodeVerdict = result.Verdict
+	result.CodeReason = result.Reason
+	if err := validateCodeGateEvaluationResult(GateEvaluation{
+		RunID:        runID,
+		GateID:       gate.ID,
+		Check:        gate.Check,
+		CheckVersion: gate.CheckVersion,
+		CheckValue:   gate.CheckValue,
+		Input:        input,
+		Binding:      binding,
+	}, result); err != nil {
+		return GateEvaluationResult{}, fmt.Errorf("%w: %v", ErrRunLedgerInvalid, err)
+	}
+	return result, nil
 }
 
 func (e *RunEngine) appendResumeSucceeded(runID string) error {
@@ -997,10 +1332,12 @@ func (e *RunEngine) replayGateVerdictsToReady(runID string, board *BoardDocument
 				}
 			}
 			nextInput := input
-			nextInput.EdgeID = route.ID
-			nextInput.FromNodeID = gateID
-			nextInput.FromPortID = routePort
-			nextInput.Ref = fmt.Sprintf("ledger://%s/%s", runID, route.ID)
+			if routePort == "fail" {
+				nextInput.EdgeID = route.ID
+				nextInput.FromNodeID = gateID
+				nextInput.FromPortID = routePort
+				nextInput.Ref = fmt.Sprintf("ledger://%s/%s", runID, route.ID)
+			}
 			if err := e.deliverConnection(runID, board, gates, route, nextInput, limits, ready, queued, queue); err != nil {
 				return err
 			}
@@ -1369,46 +1706,102 @@ func (e *RunEngine) evaluateGate(runID string, board *BoardDocument, gates map[s
 	}); err != nil {
 		return err
 	}
-	humanGate := hasGateKind(gate.Kinds, "human")
-	evaluationGate := gate
-	evaluationGate.Kinds = withoutGateKind(gate.Kinds, "human")
-	if len(evaluationGate.Kinds) == 0 && humanGate {
-		if err := e.store.AppendRunEvent(runID, RunEvent{
-			Type:   RunEventHumanInputRequested,
-			GateID: gate.ID,
-			NodeID: gate.ID,
-			Data: map[string]any{
-				"gateId":         gate.ID,
-				"nodeId":         gate.ID,
-				"prompt":         gate.Criterion,
-				"choices":        []string{"pass", "fail"},
-				"requestedBy":    gate.ID,
-				"inputRef":       input,
-				"codeVerdict":    "",
-				"codeReason":     "",
-				"codePerKind":    map[string]string{},
-				"timeoutSeconds": 0,
-			},
-		}); err != nil {
-			return err
+	return e.evaluateGateKinds(runID, board, gates, gate, input, limits, ready, queued, queue, nil)
+}
+
+type durableGateKindResult struct {
+	Seq    int
+	Result GateEvaluationResult
+}
+
+func (e *RunEngine) evaluateGateKinds(runID string, board *BoardDocument, gates map[string]GateNode, gate GateNode, input RunInputRef, limits RunLimits, ready map[string]map[string]RunInputRef, queued map[string]bool, queue *[]string, prior map[string]durableGateKindResult) error {
+	result := GateEvaluationResult{
+		Verdict:        "pass",
+		PerKind:        map[string]string{},
+		KindResultSeqs: map[string]int{},
+	}
+	if hasGateKind(gate.Kinds, "code") {
+		codeResult := GateEvaluationResult{}
+		codeResultSeq := 0
+		if durable, ok := prior["code"]; ok {
+			codeResult = durable.Result
+			codeResultSeq = durable.Seq
+		} else {
+			var err error
+			codeResult, err = e.evaluateCodeGateResult(GateEvaluation{
+				RunID:        runID,
+				GateID:       gate.ID,
+				Title:        gate.Title,
+				Kinds:        []string{"code"},
+				Criterion:    gate.Criterion,
+				Check:        gate.Check,
+				CheckVersion: gate.CheckVersion,
+				CheckValue:   gate.CheckValue,
+				Input:        input,
+			})
+			if err != nil {
+				return err
+			}
+			codeResult.Verdict = normalizeGateVerdict(codeResult.Verdict)
+			codeResult.PerKind = map[string]string{"code": codeResult.Verdict}
+			codeResultSeq, err = e.appendGateKindResult(runID, gate, "code", input, codeResult)
+			if err != nil {
+				return err
+			}
 		}
-		return errRunStopped
+		codeVerdict := normalizeGateVerdict(codeResult.Verdict)
+		codeResult.Verdict = codeVerdict
+		codeResult.PerKind = map[string]string{"code": codeVerdict}
+		codeResult.KindResultSeqs = map[string]int{"code": codeResultSeq}
+		codeResult.CodeVerdict = codeVerdict
+		codeResult.CodeReason = codeResult.Reason
+		result = codeResult
+		result.PerKind = map[string]string{"code": codeVerdict}
+		result.KindResultSeqs = map[string]int{"code": codeResultSeq}
+		if codeVerdict == "fail" {
+			markLaterGateKindsNotRun(gate.Kinds, result.PerKind, "code")
+			return e.routeGateEvaluation(runID, board, gates, gate, input, "fail", result, limits, ready, queued, queue)
+		}
 	}
-	result, err := e.evaluateGateResult(board, evaluationGate, GateEvaluation{
-		RunID:      runID,
-		GateID:     gate.ID,
-		Title:      gate.Title,
-		Kinds:      evaluationGate.Kinds,
-		Criterion:  gate.Criterion,
-		Check:      gate.Check,
-		CheckValue: gate.CheckValue,
-		Input:      input,
-	}, limits)
-	if err != nil {
-		return err
+	if hasGateKind(gate.Kinds, "formation") {
+		formationResult := GateEvaluationResult{}
+		formationResultSeq := 0
+		if durable, ok := prior["formation"]; ok {
+			formationResult = durable.Result
+			formationResultSeq = durable.Seq
+		} else {
+			text, err := e.runJudgeChain(board, GateEvaluation{
+				RunID:     runID,
+				GateID:    gate.ID,
+				Title:     gate.Title,
+				Kinds:     []string{"formation"},
+				Criterion: gate.Criterion,
+				Input:     input,
+			}, judgeChainForGate(board, gate.ID), limits)
+			if err != nil {
+				return err
+			}
+			formationResult = GateEvaluationResult{
+				Verdict: normalizeGateVerdict(strings.TrimSpace(text)),
+				Reason:  "judge chain",
+				PerKind: map[string]string{},
+			}
+			formationResultSeq, err = e.appendGateKindResult(runID, gate, "formation", input, formationResult)
+			if err != nil {
+				return err
+			}
+		}
+		formationResult.PerKind["formation"] = formationResult.Verdict
+		result.Verdict = formationResult.Verdict
+		result.Reason = formationResult.Reason
+		result.PerKind["formation"] = formationResult.Verdict
+		result.KindResultSeqs["formation"] = formationResultSeq
+		if formationResult.Verdict == "fail" {
+			markLaterGateKindsNotRun(gate.Kinds, result.PerKind, "formation")
+			return e.routeGateEvaluation(runID, board, gates, gate, input, "fail", result, limits, ready, queued, queue)
+		}
 	}
-	verdict := normalizeGateVerdict(result.Verdict)
-	if humanGate && verdict == "pass" {
+	if hasGateKind(gate.Kinds, "human") {
 		if err := e.store.AppendRunEvent(runID, RunEvent{
 			Type:   RunEventHumanInputRequested,
 			GateID: gate.ID,
@@ -1420,9 +1813,15 @@ func (e *RunEngine) evaluateGate(runID string, board *BoardDocument, gates map[s
 				"choices":        []string{"pass", "fail"},
 				"requestedBy":    gate.ID,
 				"inputRef":       input,
-				"codeVerdict":    verdict,
-				"codeReason":     result.Reason,
+				"codeVerdict":    result.CodeVerdict,
+				"codeReason":     result.CodeReason,
 				"codePerKind":    result.PerKind,
+				"codeResultSeq":  result.KindResultSeqs["code"],
+				"kindResultSeqs": result.KindResultSeqs,
+				"evidence":       result.Evidence,
+				"resultEncoding": result.ResultEncoding,
+				"resultSha256":   result.ResultSHA256,
+				"gateBindingId":  result.GateBindingID,
 				"timeoutSeconds": 0,
 			},
 		}); err != nil {
@@ -1430,7 +1829,66 @@ func (e *RunEngine) evaluateGate(runID string, board *BoardDocument, gates map[s
 		}
 		return errRunStopped
 	}
-	return e.routeGateEvaluation(runID, board, gates, gate, input, verdict, result, limits, ready, queued, queue)
+	return e.routeGateEvaluation(runID, board, gates, gate, input, "pass", result, limits, ready, queued, queue)
+}
+
+func (e *RunEngine) appendGateKindResult(runID string, gate GateNode, kind string, input RunInputRef, result GateEvaluationResult) (int, error) {
+	data := map[string]any{
+		"kind":           kind,
+		"verdict":        normalizeGateVerdict(result.Verdict),
+		"reason":         result.Reason,
+		"evidence":       result.Evidence,
+		"resultEncoding": result.ResultEncoding,
+		"resultSha256":   result.ResultSHA256,
+		"gateBindingId":  result.GateBindingID,
+		"inputRef":       input,
+	}
+	if kind == "code" {
+		binding, err := e.store.readRunGateBinding(runID, gate.ID)
+		if err != nil {
+			return 0, err
+		}
+		data["inputSha256"] = codeGateSHA256(input.Text)
+		data["profileId"] = binding.ProfileID
+		data["profileVersion"] = binding.ProfileVersion
+		data["profileSha256"] = binding.ProfileSHA256
+		data["evaluatorBundleSha256"] = binding.EvaluatorBundleSHA256
+		data["parametersSha256"] = binding.ParametersSHA256
+		data["policySha256"] = binding.PolicySHA256
+		data["determinismPolicySha256"] = binding.DeterminismPolicySHA256
+		data["maxInputBytes"] = binding.MaxInputBytes
+		data["maxResultBytes"] = binding.MaxResultBytes
+		data["maxOperations"] = binding.MaxOperations
+	}
+	if err := e.store.AppendRunEvent(runID, RunEvent{
+		Type:   RunEventGateKindResult,
+		GateID: gate.ID,
+		NodeID: gate.ID,
+		Data:   data,
+	}); err != nil {
+		return 0, err
+	}
+	events, err := e.store.ReadRunEvents(runID)
+	if err != nil {
+		return 0, err
+	}
+	if len(events) == 0 || events[len(events)-1].Type != RunEventGateKindResult {
+		return 0, ErrRunLedgerInvalid
+	}
+	return events[len(events)-1].Seq, nil
+}
+
+func markLaterGateKindsNotRun(kinds []string, perKind map[string]string, failedKind string) {
+	afterFailure := false
+	for _, kind := range []string{"code", "formation", "human"} {
+		if kind == failedKind {
+			afterFailure = true
+			continue
+		}
+		if afterFailure && hasGateKind(kinds, kind) {
+			perKind[kind] = "not_run"
+		}
+	}
 }
 
 func (e *RunEngine) routeGateEvaluation(runID string, board *BoardDocument, gates map[string]GateNode, gate GateNode, input RunInputRef, verdict string, result GateEvaluationResult, limits RunLimits, ready map[string]map[string]RunInputRef, queued map[string]bool, queue *[]string) error {
@@ -1444,12 +1902,20 @@ func (e *RunEngine) routeGateEvaluation(runID string, board *BoardDocument, gate
 		GateID: gate.ID,
 		NodeID: gate.ID,
 		Data: map[string]any{
-			"verdict":     verdict,
-			"perKind":     result.PerKind,
-			"routePort":   routePort,
-			"routedEdges": connectionIDs(routes),
-			"reason":      result.Reason,
-			"inputRef":    input,
+			"verdict":        verdict,
+			"perKind":        result.PerKind,
+			"kindResultSeqs": result.KindResultSeqs,
+			"codeResultSeq":  result.KindResultSeqs["code"],
+			"codeVerdict":    result.CodeVerdict,
+			"codeReason":     result.CodeReason,
+			"routePort":      routePort,
+			"routedEdges":    connectionIDs(routes),
+			"reason":         result.Reason,
+			"evidence":       result.Evidence,
+			"resultEncoding": result.ResultEncoding,
+			"resultSha256":   result.ResultSHA256,
+			"gateBindingId":  result.GateBindingID,
+			"inputRef":       input,
 		},
 	}); err != nil {
 		return err
@@ -1462,10 +1928,12 @@ func (e *RunEngine) routeGateEvaluation(runID string, board *BoardDocument, gate
 	}
 	for _, route := range routes {
 		nextInput := input
-		nextInput.EdgeID = route.ID
-		nextInput.FromNodeID = gate.ID
-		nextInput.FromPortID = routePort
-		nextInput.Ref = fmt.Sprintf("ledger://%s/%s", runID, route.ID)
+		if verdict == "fail" {
+			nextInput.EdgeID = route.ID
+			nextInput.FromNodeID = gate.ID
+			nextInput.FromPortID = routePort
+			nextInput.Ref = fmt.Sprintf("ledger://%s/%s", runID, route.ID)
+		}
 		if err := e.deliverConnection(runID, board, gates, route, nextInput, limits, ready, queued, queue); err != nil {
 			return err
 		}
@@ -1473,23 +1941,32 @@ func (e *RunEngine) routeGateEvaluation(runID string, board *BoardDocument, gate
 	return nil
 }
 
-func (e *RunEngine) routeGateVerdict(runID string, board *BoardDocument, gate GateNode, input RunInputRef, verdict, reason string, limits RunLimits) (*RunStatusProjection, error) {
+func (e *RunEngine) routeGateVerdict(runID string, board *BoardDocument, gate GateNode, input RunInputRef, verdict, reason string, limits RunLimits, requestEvent RunEvent) (*RunStatusProjection, error) {
 	routes := outgoingConnectionsFromPort(board.Connections, gate.ID, verdict)
 	routePort := verdict
 	if verdict == "fail" && len(routes) == 0 {
 		routePort = "none"
 	}
+	result := gateResultFromHumanRequest(requestEvent, verdict, reason)
 	if err := e.store.AppendRunEvent(runID, RunEvent{
 		Type:   RunEventGateVerdict,
 		GateID: gate.ID,
 		NodeID: gate.ID,
 		Data: map[string]any{
-			"verdict":     verdict,
-			"perKind":     map[string]string{"human": verdict},
-			"routePort":   routePort,
-			"routedEdges": connectionIDs(routes),
-			"reason":      reason,
-			"inputRef":    input,
+			"verdict":        verdict,
+			"perKind":        result.PerKind,
+			"kindResultSeqs": result.KindResultSeqs,
+			"codeResultSeq":  result.KindResultSeqs["code"],
+			"codeVerdict":    result.CodeVerdict,
+			"codeReason":     result.CodeReason,
+			"routePort":      routePort,
+			"routedEdges":    connectionIDs(routes),
+			"reason":         reason,
+			"evidence":       result.Evidence,
+			"resultEncoding": result.ResultEncoding,
+			"resultSha256":   result.ResultSHA256,
+			"gateBindingId":  result.GateBindingID,
+			"inputRef":       input,
 		},
 	}); err != nil {
 		return nil, err
@@ -1507,32 +1984,141 @@ func (e *RunEngine) routeGateVerdict(runID string, board *BoardDocument, gate Ga
 	return e.store.ProjectRun(runID)
 }
 
-func (e *RunEngine) evaluateGateResult(board *BoardDocument, gate GateNode, req GateEvaluation, limits RunLimits) (GateEvaluationResult, error) {
-	judgeChain := judgeChainForGate(board, gate.ID)
-	if len(judgeChain) > 0 {
-		text, err := e.runJudgeChain(board, req, judgeChain, limits)
-		if err != nil {
-			return GateEvaluationResult{}, err
-		}
-		return GateEvaluationResult{
-			Verdict: normalizeGateVerdict(strings.TrimSpace(text)),
-			Reason:  "judge chain",
-		}, nil
-	}
+func (e *RunEngine) evaluateCodeGateResult(req GateEvaluation) (GateEvaluationResult, error) {
 	if e.gateEvaluator == nil {
-		if err := e.appendGateErrorAndBlock(req.RunID, gate.ID, "missing_gate_evaluator", "gate evaluator unavailable", "gate", "gate evaluator unavailable"); err != nil {
+		if err := e.appendGateErrorAndBlock(req.RunID, req.GateID, "missing_gate_evaluator", "gate evaluator unavailable", "gate", "gate evaluator unavailable"); err != nil {
 			return GateEvaluationResult{}, err
 		}
 		return GateEvaluationResult{}, errRunStopped
 	}
-	result, err := e.gateEvaluator.EvaluateGate(req)
+	if strings.TrimSpace(req.Check) != "" || strings.TrimSpace(req.CheckVersion) != "" {
+		binding, err := e.store.readRunGateBinding(req.RunID, req.GateID)
+		if err != nil {
+			if blockErr := e.appendGateErrorAndBlock(req.RunID, req.GateID, "gate_evaluator_error", err.Error(), "gate", "gate evaluator error"); blockErr != nil {
+				return GateEvaluationResult{}, blockErr
+			}
+			return GateEvaluationResult{}, errRunStopped
+		}
+		req.Binding = binding
+	}
+	result, err := callGateEvaluator(e.gateEvaluator, req)
 	if err != nil {
-		if blockErr := e.appendGateErrorAndBlock(req.RunID, gate.ID, "gate_evaluator_error", err.Error(), "gate", "gate evaluator error"); blockErr != nil {
+		if blockErr := e.appendGateErrorAndBlock(req.RunID, req.GateID, "gate_evaluator_error", err.Error(), "gate", "gate evaluator error"); blockErr != nil {
+			return GateEvaluationResult{}, blockErr
+		}
+		return GateEvaluationResult{}, errRunStopped
+	}
+	if err := validateCodeGateEvaluationResult(req, result); err != nil {
+		if blockErr := e.appendGateErrorAndBlock(req.RunID, req.GateID, "gate_evaluator_error", err.Error(), "gate", "gate evaluator error"); blockErr != nil {
 			return GateEvaluationResult{}, blockErr
 		}
 		return GateEvaluationResult{}, errRunStopped
 	}
 	return result, nil
+}
+
+func validateCodeGateEvaluationResult(req GateEvaluation, result GateEvaluationResult) error {
+	if result.Verdict != "pass" && result.Verdict != "fail" {
+		return fmt.Errorf("gate %q evaluator returned invalid verdict %q", req.GateID, result.Verdict)
+	}
+	if req.Binding == nil || result.GateBindingID != req.Binding.GateBindingID {
+		return fmt.Errorf("gate %q evaluator result binding mismatch", req.GateID)
+	}
+	if result.ResultEncoding != CodeGateResultEncoding {
+		return fmt.Errorf("gate %q evaluator result encoding mismatch", req.GateID)
+	}
+	canonical, err := canonicalCodeGateResult(result.Verdict, result.Reason, result.Evidence)
+	if err != nil {
+		return fmt.Errorf("gate %q canonical result: %w", req.GateID, err)
+	}
+	if result.CanonicalResult != canonical {
+		return fmt.Errorf("gate %q evaluator canonical result mismatch", req.GateID)
+	}
+	if result.ResultSHA256 != codeGateSHA256(canonical) {
+		return fmt.Errorf("gate %q evaluator result hash mismatch", req.GateID)
+	}
+	return nil
+}
+
+func gateResultFromHumanRequest(request RunEvent, verdict, reason string) GateEvaluationResult {
+	perKind := stringMapFromRunEventData(request.Data["codePerKind"])
+	perKind["human"] = verdict
+	return GateEvaluationResult{
+		Verdict:        verdict,
+		Reason:         reason,
+		Evidence:       gateEvidenceRefsFromRunEventData(request.Data["evidence"]),
+		PerKind:        perKind,
+		KindResultSeqs: intMapFromRunEventData(request.Data["kindResultSeqs"]),
+		CodeVerdict:    stringFromAny(request.Data["codeVerdict"]),
+		CodeReason:     stringFromAny(request.Data["codeReason"]),
+		ResultEncoding: stringFromAny(request.Data["resultEncoding"]),
+		ResultSHA256:   stringFromAny(request.Data["resultSha256"]),
+		GateBindingID:  stringFromAny(request.Data["gateBindingId"]),
+	}
+}
+
+func intMapFromRunEventData(value any) map[string]int {
+	result := map[string]int{}
+	switch raw := value.(type) {
+	case map[string]int:
+		for key, item := range raw {
+			result[key] = item
+		}
+	case map[string]any:
+		for key, item := range raw {
+			result[key] = intFromRunEventData(item)
+		}
+	}
+	return result
+}
+
+func stringMapFromRunEventData(value any) map[string]string {
+	result := map[string]string{}
+	switch raw := value.(type) {
+	case map[string]string:
+		for key, item := range raw {
+			result[key] = item
+		}
+	case map[string]any:
+		for key, item := range raw {
+			if text, ok := item.(string); ok {
+				result[key] = text
+			}
+		}
+	}
+	return result
+}
+
+func gateEvidenceRefsFromRunEventData(value any) []GateEvidenceRef {
+	switch raw := value.(type) {
+	case []GateEvidenceRef:
+		return append([]GateEvidenceRef(nil), raw...)
+	case []any:
+		result := make([]GateEvidenceRef, 0, len(raw))
+		for _, item := range raw {
+			fields, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			result = append(result, GateEvidenceRef{
+				Kind: stringFromAny(fields["kind"]),
+				Text: stringFromAny(fields["text"]),
+			})
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
+func callGateEvaluator(evaluator GateEvaluator, req GateEvaluation) (result GateEvaluationResult, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			result = GateEvaluationResult{}
+			err = fmt.Errorf("gate evaluator panic: %v", recovered)
+		}
+	}()
+	return evaluator.EvaluateGate(req)
 }
 
 func (e *RunEngine) runJudgeChain(board *BoardDocument, req GateEvaluation, chain []FormationNode, limits RunLimits) (string, error) {

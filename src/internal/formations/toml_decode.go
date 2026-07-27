@@ -414,6 +414,9 @@ func decodeGateNodes(document map[string]any) ([]GateNode, error) {
 		if node.Check, err = tomlString(table, "check"); err != nil {
 			return nil, err
 		}
+		if node.CheckVersion, err = tomlString(table, "checkVersion"); err != nil {
+			return nil, err
+		}
 		if node.CheckValue, err = tomlString(table, "checkValue"); err != nil {
 			return nil, err
 		}

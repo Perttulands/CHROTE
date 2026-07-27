@@ -236,6 +236,9 @@ type formationsCreateGateRequest struct {
 	Title        string   `json:"title"`
 	Kinds        []string `json:"kinds"`
 	Criterion    string   `json:"criterion"`
+	Check        string   `json:"check"`
+	CheckVersion string   `json:"checkVersion"`
+	CheckValue   string   `json:"checkValue"`
 	Command      string   `json:"command"`
 	CommandArgv  []string `json:"commandArgv"`
 	CommandCWD   string   `json:"commandCwd"`
@@ -499,6 +502,7 @@ func (h *FormationsHandler) newRunEngine(boundary string) *formations.RunEngine 
 
 func (h *FormationsHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/formations/boards", h.ListBoards)
+	mux.HandleFunc("GET /api/formations/gate-profiles", h.ListGateProfiles)
 	mux.HandleFunc("POST /api/formations/runs", h.StartRun)
 	mux.HandleFunc("GET /api/formations/runs/{runId}", h.GetRun)
 	mux.HandleFunc("GET /api/formations/runs/{runId}/events", h.GetRunEvents)
@@ -512,6 +516,10 @@ func (h *FormationsHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/formations/boards/{board}", h.PatchBoard)
 	mux.HandleFunc("GET /api/formations/boards/{board}/layout", h.GetLayout)
 	mux.HandleFunc("PATCH /api/formations/boards/{board}/layout", h.PatchLayout)
+}
+
+func (h *FormationsHandler) ListGateProfiles(w http.ResponseWriter, _ *http.Request) {
+	core.WriteSuccess(w, map[string]interface{}{"profiles": formations.ListCodeGateProfileDescriptors()})
 }
 
 func (h *FormationsHandler) StartRun(w http.ResponseWriter, r *http.Request) {
@@ -1077,6 +1085,9 @@ func (h *FormationsHandler) PatchBoard(w http.ResponseWriter, r *http.Request) {
 			Title:                      gate.Title,
 			Kinds:                      gate.Kinds,
 			Criterion:                  gate.Criterion,
+			Check:                      gate.Check,
+			CheckVersion:               gate.CheckVersion,
+			CheckValue:                 gate.CheckValue,
 			Command:                    gate.Command,
 			CommandArgv:                gate.CommandArgv,
 			CommandCWD:                 gate.CommandCWD,
@@ -1274,6 +1285,8 @@ func writeFormationsError(w http.ResponseWriter, err error) {
 		core.WriteError(w, http.StatusServiceUnavailable, "DEFINITION_PUBLICATION_UNCERTAIN", "Reload both board and layout before any explicit retry")
 	case errors.Is(err, formations.ErrInvalidToolMutation):
 		core.WriteError(w, http.StatusUnprocessableEntity, "INVALID_TOOL_MUTATION", "Tool mutation is invalid")
+	case errors.Is(err, formations.ErrInvalidCodeGateProfile):
+		core.WriteError(w, http.StatusUnprocessableEntity, formations.FindingInvalidCodeGateProfile, err.Error())
 	case errors.Is(err, formations.ErrInvalidDefinitionSource):
 		core.WriteError(w, http.StatusUnprocessableEntity, "INVALID_DEFINITION_SOURCE", err.Error())
 	case errors.Is(err, formations.ErrToolExecutionUnavailable):

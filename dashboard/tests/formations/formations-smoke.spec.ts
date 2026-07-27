@@ -1,5 +1,5 @@
 import { test, expect } from '../fixtures'
-import { mockApiRoutes, mockFormationsApiRoutes, mockFormationsBoard } from '../mock-api'
+import { mockApiRoutes, mockCodeGateProfiles, mockFormationsApiRoutes, mockFormationsBoard } from '../mock-api'
 
 test.describe('Formations Playwright stack smoke', () => {
   test.beforeEach(async ({ page }) => {
@@ -44,6 +44,18 @@ test.describe('Formations Playwright stack smoke', () => {
     await page.route('**/api/formations/**', async route => {
       const request = route.request()
       const path = new URL(request.url()).pathname
+      if (request.method() === 'GET' && path === '/api/formations/gate-profiles') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            success: true,
+            timestamp: new Date().toISOString(),
+            data: { profiles: mockCodeGateProfiles },
+          }),
+        })
+        return
+      }
       if (request.method() === 'GET' && path === '/api/formations/boards') {
         await route.fulfill({
           status: 200,

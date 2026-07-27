@@ -2,6 +2,7 @@ import type {
   AgentProjection,
   BoardDocument,
   BoardSummary,
+  CodeGateProfileDescriptor,
   FormationNode,
   LayoutDocument,
   LayoutEdge,
@@ -80,6 +81,11 @@ export function missingLayoutForBoard(board: BoardDocument): LayoutDocument {
 export async function fetchBoardSummaries(): Promise<BoardSummary[]> {
   const result = await fetchApi<{ boards: BoardSummary[] }>('/api/formations/boards')
   return result.data.boards || []
+}
+
+export async function fetchCodeGateProfiles(): Promise<CodeGateProfileDescriptor[]> {
+  const result = await fetchApi<{ profiles: CodeGateProfileDescriptor[] }>('/api/formations/gate-profiles')
+  return result.data.profiles || []
 }
 
 export async function fetchBoardDocument(slug: string): Promise<BoardDocument> {

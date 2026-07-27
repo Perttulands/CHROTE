@@ -220,6 +220,24 @@ function installFetchMock(options: {
         eventCount: options.runEvents?.length || 0,
       } })
     }
+    if (url === '/api/formations/gate-profiles') {
+      return respond({ profiles: [
+        {
+          profileId: 'output_absent',
+          profileVersion: '1',
+          displayName: 'Output excludes value',
+          parameterName: 'value',
+          parameterLabel: 'Forbidden text',
+        },
+        {
+          profileId: 'output_contains',
+          profileVersion: '1',
+          displayName: 'Output contains value',
+          parameterName: 'value',
+          parameterLabel: 'Required text',
+        },
+      ] })
+    }
     if (url === '/api/formations/boards') return respond({ boards: options.emptyBoards ? [] : availableBoards.map(item => ({ slug: item.slug, title: item.title })) })
     if (url.includes('/changes')) {
       const refreshedBoard = options.sameBoardRefreshes?.shift()
@@ -615,12 +633,40 @@ describe('FormationsCockpit reference parity', () => {
     const viewport = container.querySelector('.viewport') as HTMLElement
     fireEvent.contextMenu(viewport, { clientX: 300, clientY: 300 })
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Gate' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Create code Gate' })
+    fireEvent.change(within(dialog).getByLabelText('Forbidden text'), { target: { value: 'error' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create Gate' }))
 
     const created = await screen.findByTestId('gate-node-gate_created')
     await waitFor(() => {
       expect(created).toHaveStyle({ left: '1344px', top: '784px' })
     })
     expect(patches.filter(patch => patch.url.endsWith('/layout'))).toEqual([])
+  })
+
+  it('creates a code Gate from a backend-registered exact profile tuple', async () => {
+    patches = installFetchMock({ freshCreateLayout: true })
+    const { container } = await renderCockpit()
+    const viewport = container.querySelector('.viewport') as HTMLElement
+    fireEvent.contextMenu(viewport, { clientX: 300, clientY: 300 })
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Gate' }))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Create code Gate' })
+    fireEvent.change(within(dialog).getByLabelText('Evaluator profile'), { target: { value: 'output_contains@1' } })
+    fireEvent.change(within(dialog).getByLabelText('Required text'), { target: { value: 'LINT OK' } })
+    fireEvent.change(within(dialog).getByLabelText('Gate criterion'), { target: { value: 'Lint passes clean' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create Gate' }))
+
+    await waitFor(() => {
+      const create = patches.find(patch => patch.body.createGate)?.body.createGate
+      expect(create).toMatchObject({
+        kinds: ['code'],
+        criterion: 'Lint passes clean',
+        check: 'output_contains',
+        checkVersion: '1',
+        checkValue: 'LINT OK',
+      })
+    })
   })
 
   it('dismisses context menus on Escape and outside pointerdown', async () => {

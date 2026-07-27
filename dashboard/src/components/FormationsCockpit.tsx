@@ -20,6 +20,7 @@ import {
   fetchBoardDocument,
   fetchBoardLayout,
   fetchBoardSummaries,
+  fetchCodeGateProfiles,
   fetchRunEscalations,
   fetchRunEvents,
   fetchRunStatus,
@@ -54,6 +55,7 @@ import type {
   BoardConnection,
   BoardDocument,
   BoardSummary,
+  CodeGateProfileDescriptor,
   FormationBrief,
   FormationNode,
   FormationSlot,
@@ -96,6 +98,16 @@ type LegacyVerificationState = {
   error: string
 }
 type MissionEditorState = { title: string; goal: string; beadId: string; x: number; y: number }
+type GateEditorState = {
+  title: string
+  criterion: string
+  profileKey: string
+  checkValue: string
+  x: number
+  y: number
+  saving: boolean
+  error: string
+}
 type BriefEditorState = {
   formationId: string
   title: string
@@ -149,6 +161,8 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const [missionEditor, setMissionEditor] = useState<MissionEditorState | null>(null)
   const [missionEditorError, setMissionEditorError] = useState('')
   const [missionEditorSaving, setMissionEditorSaving] = useState(false)
+  const [gateProfiles, setGateProfiles] = useState<CodeGateProfileDescriptor[]>([])
+  const [gateEditor, setGateEditor] = useState<GateEditorState | null>(null)
   const [briefEditor, setBriefEditor] = useState<BriefEditorState | null>(null)
   const [legacyVerification, setLegacyVerification] = useState<LegacyVerificationState | null>(null)
   const legacyVerificationOpen = legacyVerification !== null
@@ -224,6 +238,16 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
         setEscalations([])
       })
       .catch(err => !cancelled && setError(err instanceof Error ? err.message : 'Failed to load boards'))
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    fetchCodeGateProfiles()
+      .then(profiles => {
+        if (!cancelled) setGateProfiles(profiles)
+      })
+      .catch(err => !cancelled && setError(err instanceof Error ? err.message : 'Failed to load code Gate profiles'))
     return () => { cancelled = true }
   }, [])
 
@@ -365,6 +389,10 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const inspectedTool = useMemo(
     () => (board?.tools || []).find(tool => tool.id === inspectedToolId) || null,
     [board?.tools, inspectedToolId],
+  )
+  const selectedGateProfile = useMemo(
+    () => gateProfiles.find(profile => `${profile.profileId}@${profile.profileVersion}` === gateEditor?.profileKey) || null,
+    [gateEditor?.profileKey, gateProfiles],
   )
   useEffect(() => {
     if (inspectedToolId && !inspectedTool) setInspectedToolId(null)
@@ -673,14 +701,70 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     void patchBoard({ unwireConnection: { from: connection.from, to: connection.to } })
   }, [patchBoard])
 
-  const createGateAt = useCallback(async (worldX: number, worldY: number) => {
-    const placement = placementForNewNode(worldX, worldY)
+  const createGateAt = useCallback((worldX: number, worldY: number) => {
+    const profile = gateProfiles[0]
+    if (!profile) {
+      setError('No registered code Gate profiles are available')
+      return
+    }
+    setGateEditor({
+      title: 'Review gate',
+      criterion: '',
+      profileKey: `${profile.profileId}@${profile.profileVersion}`,
+      checkValue: '',
+      x: worldX,
+      y: worldY,
+      saving: false,
+      error: '',
+    })
+  }, [gateProfiles])
+
+  const closeGateEditor = useCallback(() => {
+    if (gateEditor?.saving) return
+    setGateEditor(null)
+  }, [gateEditor?.saving])
+
+  const saveGateEditor = useCallback(async () => {
+    if (!gateEditor || gateEditor.saving) return
+    const profile = gateProfiles.find(candidate => `${candidate.profileId}@${candidate.profileVersion}` === gateEditor.profileKey)
+    const checkValue = gateEditor.checkValue.trim()
+    if (!profile || !checkValue) {
+      setGateEditor(current => current ? { ...current, error: profile ? `${profile.parameterLabel} is required.` : 'Choose a registered evaluator profile.' } : null)
+      return
+    }
+    const placement = placementForNewNode(gateEditor.x, gateEditor.y)
     const before = boardRef.current
-    const result = await patchBoard({ createGate: { title: 'Review gate', kinds: ['code'], criterion: '', x: placement.x, y: placement.y } })
+    if (!before) return
+    setGateEditor(current => current ? { ...current, saving: true, error: '' } : null)
+    const result = await patchBoard({
+      createGate: {
+        title: gateEditor.title.trim() || 'Review gate',
+        kinds: ['code'],
+        criterion: gateEditor.criterion.trim(),
+        check: profile.profileId,
+        checkVersion: profile.profileVersion,
+        checkValue,
+        x: placement.x,
+        y: placement.y,
+      },
+    })
+    setGateEditor(current => current ? { ...current, saving: false } : null)
     if (!before || !result) return
     const gate = findAddedByID(before.gates || [], result.board.gates || [])
     if (gate) undoStack.current.push({ kind: 'deleteGate', id: gate.id })
-  }, [patchBoard, placementForNewNode])
+    setGateEditor(null)
+  }, [gateEditor, gateProfiles, patchBoard, placementForNewNode])
+
+  useEffect(() => {
+    if (!active || !gateEditor || gateEditor.saving) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      closeGateEditor()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [active, closeGateEditor, gateEditor])
 
   const assignSlot = useCallback((formation: FormationNode, slot: FormationSlot, agentId: string, harness: string) => {
     undoStack.current.push({ kind: 'assignSlot', formationId: formation.id, slotId: slot.id, agentId: slot.agentId || '', harness: slot.harness || '' })
@@ -2248,6 +2332,75 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
               </section>
             ) : null}
           </div>
+        </div>
+      ) : null}
+
+      {gateEditor ? (
+        <div
+          className="pop"
+          role="dialog"
+          aria-label="Create code Gate"
+          onPointerDown={event => event.stopPropagation()}
+        >
+          <div className="pop-head">
+            <span className="pt">Create code Gate</span>
+            <button className="x" type="button" aria-label="Close code Gate creator" disabled={gateEditor.saving} onClick={closeGateEditor}>x</button>
+          </div>
+          <form
+            className="pop-body"
+            onSubmit={event => {
+              event.preventDefault()
+              void saveGateEditor()
+            }}
+          >
+            <label htmlFor="cockpit-gate-title">Title</label>
+            <input
+              id="cockpit-gate-title"
+              className="f"
+              aria-label="Gate title"
+              value={gateEditor.title}
+              disabled={gateEditor.saving}
+              onChange={event => setGateEditor(current => current ? { ...current, title: event.target.value } : current)}
+            />
+            <label htmlFor="cockpit-gate-profile">Evaluator profile</label>
+            <select
+              id="cockpit-gate-profile"
+              className="legacy-select"
+              aria-label="Evaluator profile"
+              value={gateEditor.profileKey}
+              disabled={gateEditor.saving}
+              onChange={event => setGateEditor(current => current ? { ...current, profileKey: event.target.value, error: '' } : current)}
+            >
+              {gateProfiles.map(profile => (
+                <option key={`${profile.profileId}@${profile.profileVersion}`} value={`${profile.profileId}@${profile.profileVersion}`}>
+                  {profile.displayName} · {profile.profileId}@{profile.profileVersion}
+                </option>
+              ))}
+            </select>
+            <label htmlFor="cockpit-gate-value">{selectedGateProfile?.parameterLabel || 'Value'}</label>
+            <input
+              id="cockpit-gate-value"
+              className="f"
+              aria-label={selectedGateProfile?.parameterLabel || 'Value'}
+              aria-invalid={gateEditor.error ? true : undefined}
+              value={gateEditor.checkValue}
+              disabled={gateEditor.saving}
+              onChange={event => setGateEditor(current => current ? { ...current, checkValue: event.target.value, error: '' } : current)}
+            />
+            <label htmlFor="cockpit-gate-criterion">Criterion</label>
+            <textarea
+              id="cockpit-gate-criterion"
+              aria-label="Gate criterion"
+              value={gateEditor.criterion}
+              disabled={gateEditor.saving}
+              onChange={event => setGateEditor(current => current ? { ...current, criterion: event.target.value } : current)}
+            />
+            {gateEditor.error ? <p className="field-note error" role="alert">{gateEditor.error}</p> : null}
+            <div className="pop-actions">
+              <button className="cancel" type="button" aria-label="Cancel code Gate creation" disabled={gateEditor.saving} onClick={closeGateEditor}>Cancel</button>
+              <button className="save" type="submit" disabled={gateEditor.saving}>{gateEditor.saving ? 'Creating…' : 'Create Gate'}</button>
+            </div>
+          </form>
         </div>
       ) : null}
 
