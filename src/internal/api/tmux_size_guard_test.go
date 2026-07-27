@@ -215,6 +215,61 @@ exit 0
 	}
 }
 
+func TestApplySizeGuardReturnsAReinstatedSessionToAutomaticSizing(t *testing.T) {
+	tmpDir := t.TempDir()
+	argsPath := tmpDir + "/tmux-argv.txt"
+	fakeTmux := tmpDir + "/tmux"
+	// The client was flagged while hidden and has now reported a real viewport.
+	script := `#!/bin/sh
+{
+  printf 'CALL\n'
+  for arg in "$@"; do
+    printf '%s\n' "$arg"
+  done
+} >> "$TMUX_ARGS_FILE"
+for arg in "$@"; do
+  case "$arg" in
+    list-clients)
+      printf '/dev/pts/14\tagent-watched\t152\t68\t1\tattached,focused,ignore-size,UTF-8\n'
+      exit 0
+      ;;
+  esac
+done
+exit 0
+`
+	if err := osWriteFileExecutable(fakeTmux, script); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+	t.Setenv("TMUX_ARGS_FILE", argsPath)
+	t.Setenv("PATH", tmpDir+":/usr/bin:/bin")
+
+	handler := NewTmuxHandler()
+	applied, err := handler.applySizeGuard(context.Background(), "/tmp/guard-test.sock", time.Unix(1785200000, 0), 5*time.Minute)
+	if err != nil {
+		t.Fatalf("applySizeGuard returned error: %v", err)
+	}
+	if len(applied) != 1 || applied[0].IgnoreSize {
+		t.Fatalf("applied = %+v, want the flag cleared", applied)
+	}
+
+	raw, err := osReadFileString(argsPath)
+	if err != nil {
+		t.Fatalf("read fake tmux args: %v", err)
+	}
+	calls := splitScheduledTmuxCalls(raw)
+	if len(calls) != 3 {
+		t.Fatalf("tmux calls = %#v, want list-clients, refresh-client, resize-window -A", calls)
+	}
+	want := []string{"-S", "/tmp/guard-test.sock", "refresh-client", "-f", "!ignore-size", "-t", "/dev/pts/14"}
+	if strings.Join(calls[1], "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("second call = %#v, want %#v", calls[1], want)
+	}
+	wantAuto := []string{"-S", "/tmp/guard-test.sock", "resize-window", "-A", "-t", "agent-watched"}
+	if strings.Join(calls[2], "\x00") != strings.Join(wantAuto, "\x00") {
+		t.Fatalf("third call = %#v, want %#v so the window follows the viewport again", calls[2], wantAuto)
+	}
+}
+
 func TestSizeGuardCanBeDisabledAndTuned(t *testing.T) {
 	t.Setenv("CHROTE_TERMINAL_SIZE_GUARD", "off")
 	if sizeGuardEnabled() {

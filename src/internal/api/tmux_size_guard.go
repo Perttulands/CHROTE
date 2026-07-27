@@ -46,6 +46,7 @@ type tmuxClient struct {
 // sizeGuardDecision is what the sweep wants to change about one client.
 type sizeGuardDecision struct {
 	TTY        string
+	Session    string
 	IgnoreSize bool
 }
 
@@ -94,7 +95,7 @@ func planSizeGuard(clients []tmuxClient, now time.Time, idleAfter time.Duration)
 		if shouldIgnore == client.IgnoreSize {
 			continue
 		}
-		decisions = append(decisions, sizeGuardDecision{TTY: client.TTY, IgnoreSize: shouldIgnore})
+		decisions = append(decisions, sizeGuardDecision{TTY: client.TTY, Session: client.Session, IgnoreSize: shouldIgnore})
 	}
 	return decisions
 }
@@ -225,13 +226,27 @@ func (h *TmuxHandler) applySizeGuard(ctx context.Context, socket string, now tim
 		applied = append(applied, decision)
 	}
 
-	if len(applied) > 0 {
-		width, height := unobservedWindowSize()
-		for _, session := range sessionsNeedingResize(clients, applied) {
-			if _, err := h.runTmuxOnSocketContext(ctx, socket,
-				"resize-window", "-t", session, "-x", strconv.Itoa(width), "-y", strconv.Itoa(height)); err != nil {
-				continue
-			}
+	if len(applied) == 0 {
+		return applied, nil
+	}
+
+	// An explicit resize-window pins the window to manual sizing, so a session
+	// whose client just got its say back has to be handed to automatic sizing
+	// again or it would ignore the viewport the client reports.
+	for _, decision := range applied {
+		if decision.IgnoreSize || decision.Session == "" {
+			continue
+		}
+		if _, err := h.runTmuxOnSocketContext(ctx, socket, "resize-window", "-A", "-t", decision.Session); err != nil {
+			continue
+		}
+	}
+
+	width, height := unobservedWindowSize()
+	for _, session := range sessionsNeedingResize(clients, applied) {
+		if _, err := h.runTmuxOnSocketContext(ctx, socket,
+			"resize-window", "-t", session, "-x", strconv.Itoa(width), "-y", strconv.Itoa(height)); err != nil {
+			continue
 		}
 	}
 	return applied, nil
