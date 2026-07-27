@@ -1523,14 +1523,27 @@ describe('refreshSessions', () => {
     vi.useRealTimers()
   })
 
-  it('accepts healthy sessions from an authoritative partial refresh and keeps the per-user error visible', async () => {
+  it('replaces last-known-good state with healthy sessions from an authoritative partial refresh and keeps the per-user error visible', async () => {
     vi.useFakeTimers()
     const { requests } = stubDeferredSessionFetch()
     const { result, unmount } = renderSession()
+    const knownSession = { name: 'known', windows: 1, attached: false, group: 'shell', unixUser: 'alice' }
     const healthySession = { name: 'healthy', windows: 1, attached: false, group: 'shell', unixUser: 'alice' }
 
     await act(async () => {
       requests[0].response.resolve(sessionResponse({
+        sessions: [knownSession],
+        grouped: { shell: [knownSession] },
+        banked: [{ name: 'known-banked', unixUser: 'alice', live: false }],
+        terminalUsers: ['alice'],
+      }))
+      await flushPromises()
+    })
+    expect(result.current.sessions).toEqual([knownSession])
+
+    const partialRefresh = result.current.refreshSessions()
+    await act(async () => {
+      requests[1].response.resolve(sessionResponse({
         partial: true,
         error: 'build: error connecting to /tmp/chrote-tmux-test/build.sock (Permission denied)',
         sessions: [healthySession],
@@ -1538,7 +1551,7 @@ describe('refreshSessions', () => {
         banked: [],
         terminalUsers: ['alice', 'build'],
       }))
-      await flushPromises()
+      await partialRefresh
     })
 
     expect(result.current.sessions).toEqual([healthySession])

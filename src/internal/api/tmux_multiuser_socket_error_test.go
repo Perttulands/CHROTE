@@ -39,6 +39,9 @@ func installSelectiveTmux(t *testing.T, failFor string, stderr string) {
 	}
 	t.Setenv("TMUX_STDERR", stderr)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CHROTE_SESSION_BANK_PATH", filepath.Join(dir, "session-bank.json"))
+	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", filepath.Join(dir, "persistent-agents.json"))
+	t.Setenv("CHROTE_MANAGED_RECOVERY_STATUS_PATH", filepath.Join(dir, "managed-status.json"))
 }
 
 // The production path on a multi-user host is the CHROTE_TERMINAL_USERS loop, and
@@ -142,6 +145,45 @@ func TestTmuxHandler_ListSessionsDoesNotMarkTotalMultiUserFailurePartial(t *test
 	errorText, _ := payload["error"].(string)
 	if !strings.Contains(errorText, "alice:") || !strings.Contains(errorText, "build:") {
 		t.Fatalf("error = %q, want both failed fake users named", errorText)
+	}
+}
+
+// A per-user partial marker covers only tmux socket failures. If another
+// sessions-response subsystem also fails, the combined payload is not
+// authoritative and must retain total-failure semantics.
+func TestTmuxHandler_ListSessionsDoesNotMarkGlobalFailurePartial(t *testing.T) {
+	tests := []struct {
+		name          string
+		pathEnv       string
+		errorFragment string
+	}{
+		{name: "managed status", pathEnv: "CHROTE_MANAGED_RECOVERY_STATUS_PATH", errorFragment: "managed status:"},
+		{name: "persistent agents", pathEnv: "CHROTE_PERSISTENT_AGENTS_PATH", errorFragment: "persistent agents:"},
+		{name: "session bank", pathEnv: "CHROTE_SESSION_BANK_PATH", errorFragment: "session bank:"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			installSelectiveTmux(t, "denied", "error connecting to /tmp/chrote-tmux-test/build.sock (Permission denied)")
+			t.Setenv("CHROTE_TERMINAL_USERS", "alice,build")
+			t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/fixture-alice/ok.sock,build=/tmp/fixture-build/denied.sock")
+			t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/workspaces/alice,build=/workspaces/build")
+			t.Setenv(test.pathEnv, t.TempDir())
+
+			handler := NewTmuxHandler()
+			req := httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil)
+			rec := httptest.NewRecorder()
+
+			handler.ListSessions(rec, req)
+
+			payload := decodeJSONMap(t, rec)
+			if _, ok := payload["partial"]; ok {
+				t.Fatalf("partial = %#v, want the marker omitted when a global subsystem also failed", payload["partial"])
+			}
+			errorText, _ := payload["error"].(string)
+			if !strings.Contains(errorText, test.errorFragment) || !strings.Contains(errorText, "build:") {
+				t.Fatalf("error = %q, want both the global and per-user failures preserved", errorText)
+			}
+		})
 	}
 }
 
