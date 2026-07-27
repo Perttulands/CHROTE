@@ -2652,3 +2652,111 @@ func TestTmuxOrchestratedFormationRecordsCaptureFailureEvidence(t *testing.T) {
 		t.Fatalf("worker A outcome = %q, want output_captured", got)
 	}
 }
+
+// A resumed orchestrated leader dispatch cannot carry capture-derived worker
+// outcomes (bind-time baselines die with the process), so the reattach path
+// must record one explicit evidence-gap observation per bound worker — the
+// chrote-1mi contract: silent absence of worker evidence after resume is no
+// longer possible.
+func TestTmuxExecutorReattachRecordsWorkerEvidenceGaps(t *testing.T) {
+	store, personas := s4RunFixture(t)
+	store.Now = fixedClock()
+	personas.Now = fixedClock()
+	createS4Persona(t, personas, "scout")
+	writeFixture(t, store.BoardPath("session-search"), s4RunBoardFixture())
+	board, err := store.ReadBoard("session-search")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	started, err := store.StartRun("session-search", RunStartRequest{
+		MissionID:         "mis_showcase",
+		Actor:             "agent:test",
+		ExpectedBoardETag: board.ETag,
+		ExpectedBoardRev:  board.Rev,
+		Personas:          personas,
+	})
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	dispatcher := NewSlotDispatcher(store, &fakeDispatchAdapter{})
+	lease, err := dispatcher.DispatchSlot(started.RunID, SlotDispatchRequest{
+		NodeID:      "fmn_research",
+		SlotID:      "slot_research",
+		AgentID:     "scout",
+		Harness:     "openai-codex",
+		SessionStem: "scout",
+		SessionRef:  "tmux:tmux-scout",
+		Prompt:      "Lead the team",
+		Attempt:     1,
+	})
+	if err != nil {
+		t.Fatalf("dispatch slot: %v", err)
+	}
+	if err := store.AppendRunEvent(started.RunID, RunEvent{
+		Type:   RunEventOrchestrationTeam,
+		NodeID: "fmn_research",
+		Data: map[string]any{
+			"mode": "agentic-leader",
+			"controller": map[string]any{
+				"slotId":     "slot_research",
+				"sessionRef": "tmux:tmux-scout",
+			},
+			"workers": []map[string]any{
+				{"slotId": "slot_worker_a", "label": "Worker A", "agentId": "worker-a", "harness": "openai-codex", "sessionStem": "wa", "sessionRef": "tmux:worker-a-sess"},
+				{"slotId": "slot_worker_b", "label": "Worker B", "agentId": "worker-b", "harness": "openai-codex", "sessionRef": "tmux:worker-b-sess"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("append team event: %v", err)
+	}
+	if err := dispatcher.CompleteFromCapture(started.RunID, lease.DispatchID, "still working"); !errors.Is(err, ErrDispatchTimeout) {
+		t.Fatalf("complete without sentinel error = %v, want ErrDispatchTimeout", err)
+	}
+	if _, err := store.ResumeRun(started.RunID, RunResumeRequest{Actor: "agent:test", Mode: "reattach", Reason: "recover orchestrated leader"}); err != nil {
+		t.Fatalf("record resume: %v", err)
+	}
+	cfg := tmuxTestConfig(t)
+	client := &fakeTmuxHarnessClient{paneText: fmt.Sprintf("leader wrapped up\n```chrote-outputs\n{\"port_research_out\":{\"text\":\"resumed synthesis\"}}\n```\n<<<CHROTE-DONE run-id=%s status=ok artifact=done.md>>>", started.RunID)}
+	executor := newTmuxFormationExecutorWithClient(store, personas, cfg, client)
+	orchestrated := board.Formations[0]
+	orchestrated.Type = FormationTypeOrchestrated
+	if _, err := executor.ReattachFormationDispatch(FormationReattachRequest{
+		RunID:      started.RunID,
+		DispatchID: lease.DispatchID,
+		NodeID:     "fmn_research",
+		SlotID:     "slot_research",
+		Formation:  orchestrated,
+	}); err != nil {
+		t.Fatalf("reattach dispatch: %v", err)
+	}
+
+	events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
+	if eventOfType(t, events, RunEventSlotResult).Data["dispatchId"] != lease.DispatchID {
+		t.Fatalf("events = %v, want slot_result for the resumed dispatch", eventTypes(events))
+	}
+	observations := workerObservationsBySlot(t, events)
+	if len(observations) != 2 {
+		t.Fatalf("worker observations = %v, want one evidence gap per bound worker", eventTypes(events))
+	}
+	for slotID, ref := range map[string]string{
+		"slot_worker_a": "tmux:worker-a-sess",
+		"slot_worker_b": "tmux:worker-b-sess",
+	} {
+		gap := observations[slotID]
+		if got := fmt.Sprint(gap.Data["outcome"]); got != "evidence_gap" {
+			t.Fatalf("%s outcome = %q, want evidence_gap", slotID, got)
+		}
+		if got := fmt.Sprint(gap.Data["phase"]); got != "reattach" {
+			t.Fatalf("%s phase = %q, want reattach", slotID, got)
+		}
+		if gap.Data["anomaly"] != true {
+			t.Fatalf("%s anomaly = %#v, want true", slotID, gap.Data["anomaly"])
+		}
+		if got := fmt.Sprint(gap.Data["sessionRef"]); got != ref {
+			t.Fatalf("%s sessionRef = %q, want %q", slotID, got, ref)
+		}
+		if got := fmt.Sprint(gap.Data["controllerSlot"]); got != "slot_research" {
+			t.Fatalf("%s controllerSlot = %q, want slot_research", slotID, got)
+		}
+	}
+}

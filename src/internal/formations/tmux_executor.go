@@ -436,7 +436,94 @@ func (e *TmuxFormationExecutor) ReattachFormationDispatch(req FormationReattachR
 	if err := dispatcher.CompleteFromCapture(req.RunID, req.DispatchID, captured); err != nil {
 		return FormationExecutionResult{}, err
 	}
+	if err := e.appendReattachEvidenceGaps(req, dispatch.Attempt); err != nil {
+		return FormationExecutionResult{}, err
+	}
 	return result, nil
+}
+
+// appendReattachEvidenceGaps records one explicit evidence-gap observation per
+// bound worker when a resumed orchestrated leader dispatch completes. Bind-time
+// pane baselines do not survive a process restart, so a resumed run can never
+// carry capture-derived worker outcomes; ADR-0011 defines fail-loud as distinct
+// visible events, so the gap is recorded rather than silent. Worker identity
+// comes from the run's orchestration_team event — the only durable record of
+// which sessions were bound. Emission happens only after the leader completion
+// succeeded, which CompleteFromCapture allows once, so the gaps cannot
+// duplicate across retries.
+func (e *TmuxFormationExecutor) appendReattachEvidenceGaps(req FormationReattachRequest, attempt int) error {
+	if req.Formation.Type != FormationTypeOrchestrated {
+		return nil
+	}
+	events, err := e.store.ReadRunEvents(req.RunID)
+	if err != nil {
+		return err
+	}
+	var team RunEvent
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Type == RunEventOrchestrationTeam {
+			team = events[i]
+			break
+		}
+	}
+	if team.Data == nil {
+		return nil
+	}
+	controllerSlot := ""
+	if controller, ok := team.Data["controller"].(map[string]any); ok {
+		controllerSlot = stringFromAny(controller["slotId"])
+	}
+	for _, worker := range teamWorkerMaps(team.Data) {
+		slotID := stringFromAny(worker["slotId"])
+		data := map[string]any{
+			"mode":           "agentic-leader",
+			"observer":       "archon-capture",
+			"slotId":         slotID,
+			"label":          stringFromAny(worker["label"]),
+			"agentId":        stringFromAny(worker["agentId"]),
+			"harness":        stringFromAny(worker["harness"]),
+			"controllerSlot": controllerSlot,
+			"phase":          workerObservationPhaseReattach,
+			"outcome":        workerOutcomeEvidenceGap,
+			"anomaly":        true,
+			"message":        "leader dispatch was resumed after a restart; the bind-time baseline did not survive, so no capture-derived outcome exists for this worker",
+		}
+		if stem := stringFromAny(worker["sessionStem"]); stem != "" {
+			data["sessionStem"] = stem
+		}
+		if ref := stringFromAny(worker["sessionRef"]); ref != "" {
+			data["sessionRef"] = ref
+		}
+		if err := e.store.AppendRunEvent(req.RunID, RunEvent{
+			Type:    RunEventWorkerObservation,
+			NodeID:  req.NodeID,
+			SlotID:  slotID,
+			Attempt: attempt,
+			Data:    data,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// teamWorkerMaps decodes the workers list of an orchestration_team event,
+// which is []map[string]any when appended in-process and []any of maps after a
+// ledger round-trip.
+func teamWorkerMaps(data map[string]any) []map[string]any {
+	switch workers := data["workers"].(type) {
+	case []map[string]any:
+		return workers
+	case []any:
+		out := make([]map[string]any, 0, len(workers))
+		for _, raw := range workers {
+			if m, ok := raw.(map[string]any); ok {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 func (e *TmuxFormationExecutor) executeOrchestratedFormation(req FormationExecution) (FormationExecutionResult, error) {
@@ -1303,11 +1390,17 @@ const (
 	// workerOutcomeOutputCaptured: the pane changed and settled; the recorded
 	// excerpt is what the worker produced.
 	workerOutcomeOutputCaptured = "output_captured"
+	// workerOutcomeEvidenceGap: the leader dispatch was resumed after a process
+	// restart. Bind-time baselines do not survive a restart, so no
+	// capture-derived outcome can exist for this worker; the gap is recorded as
+	// a distinct visible event instead of silence.
+	workerOutcomeEvidenceGap = "evidence_gap"
 )
 
 const (
 	workerObservationPhaseBind       = "bind"
 	workerObservationPhaseCompletion = "completion"
+	workerObservationPhaseReattach   = "reattach"
 	// workerObservationExcerptBytes caps the pane excerpt carried by one
 	// observation event. Observation is evidence, not formation output, so an
 	// oversized worker pane is truncated (and marked) rather than failing the run
@@ -1327,13 +1420,11 @@ type workerBaseline struct {
 // captureWorkerBaselines records the pre-leader pane of every bound worker. It
 // fails closed: a worker Archon cannot observe now can never be covered by the
 // per-worker evidence contract, so the run stops loudly here instead of
-// dispatching a leader whose worker would be invisible.
-// captureWorkerBaselines records one bind-time pane baseline per worker,
-// failing the run loud on the first worker it cannot observe. Deliberate
-// semantics: a mid-loop failure discards the earlier workers' baselines and
-// they get no observation event — the run never reaches the leader, so there
-// is nothing those workers produced to evidence. One event per bound worker is
-// only guaranteed for runs that reach the completion observation.
+// dispatching a leader whose worker would be invisible. Deliberate semantics:
+// a mid-loop failure discards the earlier workers' baselines and they get no
+// observation event — the run never reaches the leader, so there is nothing
+// those workers produced to evidence. One event per bound worker is only
+// guaranteed for runs that reach the completion observation.
 func (e *TmuxFormationExecutor) captureWorkerBaselines(req FormationExecution, controller tmuxSlotBinding, workers []tmuxSlotBinding) ([]workerBaseline, error) {
 	baselines := make([]workerBaseline, 0, len(workers))
 	for _, worker := range workers {
