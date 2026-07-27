@@ -18,16 +18,20 @@ ExecStartPre=+/bin/sh -lc 'install -d -o "${CHROTE_SERVICE_USER:-chrote}" -g "${
 ExecStartPre=+/bin/sh -lc 'install -D -o root -g root -m 0755 "$CHROTE_SERVICE_ROOT/scripts/chrote-tmux-grants.sh" "${CHROTE_TMUX_GRANT_HELPER:-/usr/local/libexec/chrote/chrote-tmux-grants.sh}"'
 ExecStartPre=+/bin/sh -lc 'exec "${CHROTE_TMUX_GRANT_HELPER:-/usr/local/libexec/chrote/chrote-tmux-grants.sh}"'
 ExecStart=/bin/sh -lc 'cd "$CHROTE_SERVICE_ROOT" && exec "$CHROTE_SERVICE_ROOT/chrote-server" --host "${HOST:-127.0.0.1}" --port "${PORT:-8095}" --ttyd-port "${TTYD_PORT:-7686}"'
-# KillMode=process protects exactly one thing: a Formations tmux server started
-# lazily by the executor inside this unit, which holds running agents. The default
-# control-group would SIGTERM it on every restart.
+# KillMode=process is ruled on by docs/adr/0013-ttyd-restart-lifecycle-and-orphan-reaping.md,
+# which owns the lifecycle and reaping story. Read that before changing this line.
 #
-# It protects nothing else, despite appearances. ttyd does not need to survive —
-# the next start reclaims its port with `fuser -k` (src/internal/proxy/terminal.go)
-# — and tmux servers owned by other users are outside this cgroup entirely, so
-# their sessions survive either setting. Sessions preserved across a restart are
-# therefore NOT evidence that this setting works; only an in-cgroup tmux server is.
-# While the executor drives an out-of-unit socket, this setting is inert.
+# Two measurements worth keeping next to the setting, because both invite wrong
+# conclusions from `systemctl status` alone:
+#
+#   ttyd is not what this protects. The next start reclaims its port with
+#   `fuser -k` (src/internal/proxy/terminal.go), so a preserved ttyd is killed
+#   moments later anyway.
+#
+#   Sessions surviving a restart are NOT evidence that this setting works. The
+#   tmux servers holding them are owned by other users and sit outside this
+#   cgroup, so they survive either setting. Only an in-cgroup tmux server would
+#   demonstrate anything, and per ADR-0013 that case is still open.
 #
 # The cost is orphans: `systemctl stop` leaves any in-cgroup child running. Keep it
 # in the tracked unit so reinstalling from the repo cannot silently revert it, the
