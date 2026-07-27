@@ -19,6 +19,23 @@ import (
 	"time"
 )
 
+// prototypeFixturePaneLifetimeSeconds bounds how long a fixture pane can live.
+//
+// cleanup() kills these sessions and works correctly when it runs. The problem is that it does
+// not always run: t.Cleanup never executes if the test binary is interrupted or killed. When that
+// happens the panes survive, and `cat >> "$1"` never sees EOF, so they survive FOREVER. Six such
+// servers accumulated on this host from an interrupted run and were still resident five days
+// later; a later /tmp sweep removed their socket directories, leaving them unreachable by any
+// tooling that resolves sockets by path, so only a pid could retire them.
+//
+// No cleanup logic can cover that case, because the process running it is gone. A pane that
+// bounds its own lifetime can.
+//
+// MUST be non-zero. `timeout 0` means "no timeout" and produces exactly the immortal process
+// this backstop exists to prevent; that footgun is what created the longest-lived orphan here.
+// prototypeFixturePaneLifetimeIsBounded guards the value.
+const prototypeFixturePaneLifetimeSeconds = 300
+
 type prototypeConsumer string
 
 const (
@@ -229,6 +246,7 @@ func newSamePoolInputFenceFixture(t *testing.T, inventory map[string][]string) *
 			fixture.inputPaths[prototypeInputKey(unixUser, sessionName)] = inputPath
 			output, startErr := fixture.handler.runTmuxOnSocketContext(context.Background(), target.socket,
 				"new-session", "-d", "-s", sessionName, "-x", "80", "-y", "24",
+				"timeout", fmt.Sprintf("%ds", prototypeFixturePaneLifetimeSeconds),
 				"sh", "-c", `cat >> "$1"`, "sh", inputPath,
 			)
 			if startErr != nil {
@@ -237,6 +255,15 @@ func newSamePoolInputFenceFixture(t *testing.T, inventory map[string][]string) *
 		}
 	}
 	return fixture
+}
+
+func sortedFixtureUsers(targets map[string]tmuxTarget) []string {
+	users := make([]string, 0, len(targets))
+	for unixUser := range targets {
+		users = append(users, unixUser)
+	}
+	sort.Strings(users)
+	return users
 }
 
 func prototypeInputKey(unixUser, sessionName string) string {
@@ -354,6 +381,30 @@ func (f *samePoolInputFenceFixture) cleanup(t *testing.T) {
 			}
 		}
 	}
+	// Prove the servers are gone BEFORE deleting the directory that holds their sockets.
+	// Deleting a live server's socket is what makes it unreachable: the process keeps running,
+	// but nothing that resolves by path can ever address it again — which is the state the six
+	// orphans on this host ended up in. The kills above normally succeed, so this is a
+	// belt-and-braces check for whatever makes them fail; when it trips, say which sockets and
+	// leave the directory in place so they stay addressable.
+	survivors := make([]string, 0, len(f.targets))
+	if f.handler != nil {
+		for _, unixUser := range sortedFixtureUsers(f.targets) {
+			target := f.targets[unixUser]
+			if _, err := f.handler.runTmuxOnSocketContext(context.Background(), target.socket, "list-sessions"); err == nil {
+				survivors = append(survivors, fmt.Sprintf("%s=%s", unixUser, target.socket))
+			}
+		}
+	}
+	if len(survivors) > 0 {
+		t.Errorf(
+			"disposable tmux server(s) survived cleanup, so the socket directory is being left in place to keep them addressable: %s. "+
+				"each pane self-terminates within %ds",
+			strings.Join(survivors, ", "), prototypeFixturePaneLifetimeSeconds,
+		)
+		return
+	}
+
 	base := filepath.Base(f.root)
 	info, err := os.Lstat(f.root)
 	if err != nil && !os.IsNotExist(err) {
