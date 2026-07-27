@@ -163,6 +163,7 @@ export interface UserSettings {
   musicEnabled: boolean              // Whether music is playing
   tmuxAppearance: TmuxAppearance     // tmux color customization
   mouseScroll: boolean               // tmux mouse mode: scroll wheel scrolls history
+  hideScrollbar: boolean             // Hide the dead xterm scrollbar gutter in terminal iframes
   beadsProjectPaths?: string[]       // Manually added beads project paths
   formationsTextSize?: FormationsTextSize // Formations cockpit text scale
 }
@@ -187,6 +188,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   musicEnabled: false,
   tmuxAppearance: DEFAULT_TMUX_APPEARANCE,
   mouseScroll: true,
+  hideScrollbar: true,
   formationsTextSize: 'default',
 }
 
