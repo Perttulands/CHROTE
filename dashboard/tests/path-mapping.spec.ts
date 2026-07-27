@@ -30,7 +30,7 @@ async function setupPathTest(page: Page) {
   // Track API calls to verify correct paths
   const apiCalls: string[] = []
 
-  await page.route(/.*\/terminal\/?.*/, async route => {
+  await page.route(/\/terminal(\/|\?|$)/, async route => {
     await route.fulfill({
       status: 200,
       contentType: 'text/html',

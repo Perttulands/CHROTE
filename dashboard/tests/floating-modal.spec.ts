@@ -2,7 +2,7 @@ import { test, expect } from './fixtures'
 import { mockApiRoutes } from './mock-api'
 import { openSessionsSidecar } from './helpers'
 
-const terminalRoutePattern = /.*\/terminal\/?.*/
+const terminalRoutePattern = /\/terminal(\/|\?|$)/
 
 test.describe('Floating Modal (pol-9a4a)', () => {
   test('drag modal header to reposition', async ({ page }) => {

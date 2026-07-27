@@ -124,7 +124,10 @@ export const test = base.extend<{ allowedConsoleMessages: ConsoleMatcher[] }>({
       })
     })
 
-    await page.route(/.*\/terminal\/?.*/, async (route) => {
+    // Match only the terminal proxy path (/terminal, /terminal/, /terminal?arg=…),
+    // never source modules like /src/utils/terminalIframe.ts — serving HTML for a
+    // module URL breaks the whole app with a MIME error.
+    await page.route(/\/terminal(\/|\?|$)/, async (route) => {
       const request = route.request()
       unexpectedBackendRequests.push(`${request.method()} ${request.url()}`)
       await route.fulfill({

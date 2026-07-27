@@ -8,7 +8,7 @@ import { openSessionsSidecar } from './helpers'
  * After a rename, the old name is replaced in subsequent GET responses.
  */
 async function mockApiRoutesWithMutations(page: Page) {
-  await page.route(/.*\/terminal\/?.*/, async route => {
+  await page.route(/\/terminal(\/|\?|$)/, async route => {
     await route.fulfill({
       status: 200,
       contentType: 'text/html',
