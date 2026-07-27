@@ -4,4 +4,7 @@ Description=Refresh CHROTE tmux socket ACL and server-access grants
 [Service]
 Type=oneshot
 EnvironmentFile=/etc/chrote/chrote-srv.env
-ExecStart=/bin/sh -lc 'exec "$CHROTE_SERVICE_ROOT/scripts/chrote-tmux-grants.sh"'
+# Same install-then-run order as chrote-srv.service, so the timer cannot drift
+# onto a stale copy of the helper.
+ExecStartPre=/bin/sh -lc 'install -D -o root -g root -m 0755 "$CHROTE_SERVICE_ROOT/scripts/chrote-tmux-grants.sh" "${CHROTE_TMUX_GRANT_HELPER:-/usr/local/libexec/chrote/chrote-tmux-grants.sh}"'
+ExecStart=/bin/sh -lc 'exec "${CHROTE_TMUX_GRANT_HELPER:-/usr/local/libexec/chrote/chrote-tmux-grants.sh}"'

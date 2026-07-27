@@ -31,6 +31,9 @@ jobs:
       - name: Host neutrality
         run: python3 scripts/host-neutrality.py
 
+      - name: Cross-user tmux grant helper
+        run: bash scripts/test-tmux-grants.sh
+
       - name: Dashboard install dependencies
         run: |
           cd dashboard
