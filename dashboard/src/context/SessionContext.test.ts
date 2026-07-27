@@ -501,6 +501,96 @@ describe('migrateStoredState (via loadStoredState)', () => {
 })
 
 // ──────────────────────────────────────────────
+// 3b. live viewport bucket switching (ctx-00t)
+// ──────────────────────────────────────────────
+describe('live viewport bucket switching', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    setViewportWidth(1280)
+  })
+
+  function crossTo(width: number) {
+    act(() => {
+      setViewportWidth(width)
+      window.dispatchEvent(new Event('resize'))
+    })
+  }
+
+  function persisted() {
+    return JSON.parse(localStorage.getItem('chrote-dashboard-state') ?? '{}')
+  }
+
+  it('carries the current layout into a never-used bucket and persists later edits under the new key only', () => {
+    const hook = renderSession()
+    act(() => { hook.result.current.setWindowCount('terminal1', 4) })
+
+    crossTo(390)
+
+    expect(hook.result.current.workspaces.terminal1.windowCount).toBe(4)
+
+    act(() => { hook.result.current.setWindowCount('terminal1', 1) })
+
+    expect(persisted().layoutsByViewport.mobile.workspaces.terminal1.windowCount).toBe(1)
+    expect(persisted().layoutsByViewport.desktop.workspaces.terminal1.windowCount).toBe(4)
+    hook.unmount()
+  })
+
+  it('loads the stored layout live when crossing into a bucket that already has one', () => {
+    const hook = renderSession()
+    act(() => { hook.result.current.setWindowCount('terminal1', 4) })
+
+    crossTo(390)
+    act(() => { hook.result.current.setWindowCount('terminal1', 1) })
+
+    crossTo(1280)
+
+    expect(hook.result.current.workspaces.terminal1.windowCount).toBe(4)
+    expect(persisted().layoutsByViewport.mobile.workspaces.terminal1.windowCount).toBe(1)
+    expect(persisted().layoutsByViewport.desktop.workspaces.terminal1.windowCount).toBe(4)
+    hook.unmount()
+  })
+
+  it('survives rapid breakpoint flapping with a consistent final bucket and no cross-key leakage', () => {
+    const hook = renderSession()
+    act(() => { hook.result.current.setWindowCount('terminal1', 3) })
+
+    crossTo(390)
+    crossTo(1000)
+    crossTo(1280)
+    crossTo(390)
+
+    act(() => { hook.result.current.setWindowCount('terminal1', 1) })
+
+    expect(persisted().layoutsByViewport.mobile.workspaces.terminal1.windowCount).toBe(1)
+    expect(persisted().layoutsByViewport.desktop.workspaces.terminal1.windowCount).toBe(3)
+    expect(persisted().layoutsByViewport.tablet.workspaces.terminal1.windowCount).toBe(3)
+    hook.unmount()
+  })
+
+  it('ignores resizes that stay inside the same bucket', () => {
+    const hook = renderSession()
+    act(() => { hook.result.current.setWindowCount('terminal1', 4) })
+    const before = hook.result.current.workspaces
+
+    crossTo(1400)
+
+    expect(hook.result.current.workspaces).toBe(before)
+    expect(persisted().layoutsByViewport.mobile).toBeUndefined()
+    hook.unmount()
+  })
+
+  it('removes the viewport listener on unmount', () => {
+    const hook = renderSession()
+    hook.unmount()
+
+    expect(() => {
+      setViewportWidth(390)
+      window.dispatchEvent(new Event('resize'))
+    }).not.toThrow()
+  })
+})
+
+// ──────────────────────────────────────────────
 // 4. launch-user resolution
 // ──────────────────────────────────────────────
 describe('resolveLaunchUser', () => {
