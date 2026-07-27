@@ -2203,6 +2203,11 @@ type fakeTmuxOp struct {
 // through a run.
 const fakeWorkerPaneGone = "\x00gone"
 
+// fakeWorkerPaneReadError stands in a capture script for an observation that
+// fails for a reason other than a missing target (a generic tmux read error),
+// so a test can exercise the capture_failed defensive outcome.
+const fakeWorkerPaneReadError = "\x00readerr"
+
 // fakeWorkerPane scripts what Archon's read-only observation sees on one worker
 // session: successive CapturePane results (the last one repeats) and, with
 // missing set, a session that is absent from the first look onward.
@@ -2382,6 +2387,9 @@ func (f *fakeTmuxHarnessClient) CapturePane(_ context.Context, _, target string,
 		if text == fakeWorkerPaneGone {
 			return "", fakeTmuxMissingTarget(target)
 		}
+		if text == fakeWorkerPaneReadError {
+			return "", fmt.Errorf("tmux read failed for %s: input/output error", target)
+		}
 		return text, nil
 	}
 	if !f.awaitingCapture {
@@ -2554,4 +2562,93 @@ func eventTypesOf(events []RunEvent) []string {
 		values = append(values, event.Type)
 	}
 	return values
+}
+
+// The excerpt must redact before truncating: cutting raw text first can split
+// a secret-shaped token at the cap boundary, leaving a fragment the redaction
+// patterns no longer match.
+func TestWorkerObservationExcerptRedactsTokenStraddlingTheCapBoundary(t *testing.T) {
+	raw := strings.Repeat("a", 40) + " sk-abcdefgh12345678"
+	got, truncated := workerObservationExcerpt("", raw, 16)
+	if !truncated {
+		t.Fatalf("truncated = false, want true for a %d-byte delta with cap 16", len(raw))
+	}
+	if strings.Contains(got, "12345678") || strings.Contains(got, "abcdefgh") {
+		t.Fatalf("excerpt = %q, contains fragments of the secret token", got)
+	}
+}
+
+func TestWorkerOutcomeMappersDistinguishMissingSession(t *testing.T) {
+	generic := fmt.Errorf("tmux read failed: input/output error")
+	missing := fakeTmuxMissingTarget("owned-session")
+	if got := workerBindOutcome(generic); got != workerOutcomeBindFailed {
+		t.Fatalf("workerBindOutcome(generic) = %q, want %q", got, workerOutcomeBindFailed)
+	}
+	if got := workerBindOutcome(missing); got != workerOutcomeMissingSession {
+		t.Fatalf("workerBindOutcome(missing) = %q, want %q", got, workerOutcomeMissingSession)
+	}
+	if got := workerCaptureOutcome(generic); got != workerOutcomeCaptureFailed {
+		t.Fatalf("workerCaptureOutcome(generic) = %q, want %q", got, workerOutcomeCaptureFailed)
+	}
+	if got := workerCaptureOutcome(missing); got != workerOutcomeMissingSession {
+		t.Fatalf("workerCaptureOutcome(missing) = %q, want %q", got, workerOutcomeMissingSession)
+	}
+}
+
+// A completion capture that fails for a reason other than a missing target is
+// the capture_failed defensive outcome: recorded as an anomaly on an otherwise
+// successful run, never silence and never a run failure.
+func TestTmuxOrchestratedFormationRecordsCaptureFailureEvidence(t *testing.T) {
+	store, personas := s4RunFixture(t)
+	store.Now = fixedClock()
+	personas.Now = fixedClock()
+	for _, id := range []string{"lead", "worker-a", "worker-b"} {
+		createS4Persona(t, personas, id)
+	}
+	writeFixture(t, store.BoardPath("session-search"), tmuxOrchestratedBoardFixture())
+	cfg := tmuxTestConfig(t)
+	client := &fakeTmuxHarnessClient{
+		pane: tmuxPaneState{CurrentPath: cfg.Cwd},
+		captures: []string{
+			"FINAL-SYNTHESIS: leader worked around the unreadable pane\n<<<CHROTE-DONE run-id=run_missing status=ok artifact=final.md>>>",
+		},
+		workerPanes: map[string]*fakeWorkerPane{
+			"slot_worker_a": {captures: []string{
+				"worker A idle",
+				"worker A idle\nWORKER-A-RESULT: done",
+			}},
+			"slot_worker_b": {captures: []string{"worker B idle", fakeWorkerPaneReadError}},
+		},
+	}
+	executor := newTmuxFormationExecutorWithClient(store, personas, cfg, client)
+	engine := NewRunEngine(store, personas, executor)
+	status, err := engine.RunFormation("session-search", "fmn_orch", FormationRunRequest{
+		Actor:  "agent:test",
+		Limits: RunLimits{MaxDispatch: 6, MaxAttempts: 1},
+	})
+	if err != nil {
+		t.Fatalf("run orchestrated formation: %v", err)
+	}
+	if status.Status != RunStatusSucceeded || !status.Final {
+		t.Fatalf("status = %+v, want succeeded final despite the unreadable worker pane", status)
+	}
+
+	events := readRunEvents(t, findOnlyRunLedger(t, store, "session-search"))
+	observations := workerObservationsBySlot(t, events)
+	if len(observations) != 2 {
+		t.Fatalf("worker observations = %v, want one per bound worker", eventTypes(events))
+	}
+	unreadable := observations["slot_worker_b"]
+	if got := fmt.Sprint(unreadable.Data["outcome"]); got != "capture_failed" {
+		t.Fatalf("worker B outcome = %q, want capture_failed", got)
+	}
+	if unreadable.Data["anomaly"] != true {
+		t.Fatalf("worker B anomaly = %#v, want true", unreadable.Data["anomaly"])
+	}
+	if got := fmt.Sprint(unreadable.Data["message"]); !strings.Contains(got, "input/output error") {
+		t.Fatalf("worker B message = %q, want the underlying read error", got)
+	}
+	if got := fmt.Sprint(observations["slot_worker_a"].Data["outcome"]); got != "output_captured" {
+		t.Fatalf("worker A outcome = %q, want output_captured", got)
+	}
 }

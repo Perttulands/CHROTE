@@ -1328,6 +1328,12 @@ type workerBaseline struct {
 // fails closed: a worker Archon cannot observe now can never be covered by the
 // per-worker evidence contract, so the run stops loudly here instead of
 // dispatching a leader whose worker would be invisible.
+// captureWorkerBaselines records one bind-time pane baseline per worker,
+// failing the run loud on the first worker it cannot observe. Deliberate
+// semantics: a mid-loop failure discards the earlier workers' baselines and
+// they get no observation event — the run never reaches the leader, so there
+// is nothing those workers produced to evidence. One event per bound worker is
+// only guaranteed for runs that reach the completion observation.
 func (e *TmuxFormationExecutor) captureWorkerBaselines(req FormationExecution, controller tmuxSlotBinding, workers []tmuxSlotBinding) ([]workerBaseline, error) {
 	baselines := make([]workerBaseline, 0, len(workers))
 	for _, worker := range workers {
@@ -1522,17 +1528,22 @@ func (e *TmuxFormationExecutor) workerExcerptCap() int {
 // bind-time baseline when the pane only grew, otherwise the tail of the whole
 // capture, since a pane that scrolled no longer contains its baseline. Captured
 // worker text goes through the same ledger redaction as every other capture.
+// Redaction runs before the cap: cutting raw text first can split a
+// secret-shaped token at the boundary, and the surviving half no longer
+// matches the redaction patterns; cutting redacted text at worst splits a
+// placeholder.
 func workerObservationExcerpt(baseline, captured string, capBytes int) (string, bool) {
 	delta := captured
 	if baseline != "" && strings.HasPrefix(captured, baseline) {
 		delta = captured[len(baseline):]
 	}
+	redacted := redactLedgerText(delta)
 	truncated := false
-	if capBytes > 0 && len(delta) > capBytes {
-		delta = strings.ToValidUTF8(delta[len(delta)-capBytes:], "")
+	if capBytes > 0 && len(redacted) > capBytes {
+		redacted = strings.ToValidUTF8(redacted[len(redacted)-capBytes:], "")
 		truncated = true
 	}
-	return redactLedgerText(delta), truncated
+	return redacted, truncated
 }
 
 func (e *TmuxFormationExecutor) leaderAgenticExtraLines(controller tmuxSlotBinding, workers []tmuxSlotBinding) []string {
