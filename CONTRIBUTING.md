@@ -16,7 +16,7 @@ operator data into a product change.
 
 ## Development prerequisites
 
-- Go 1.23+
+- Go 1.26.5+
 - Node.js 20.19+ or 22.12+
 - npm
 - Python 3 for documentation and recovery-tool checks

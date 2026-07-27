@@ -4,7 +4,7 @@ CHROTE combines a Go server, an embedded React dashboard, tmux/ttyd integration,
 
 ## Supported toolchain
 
-- Go 1.23
+- Go 1.26.5
 - Node.js 20.19+ or 22.12+
 - npm
 - Chromium through Playwright

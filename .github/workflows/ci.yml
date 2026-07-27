@@ -18,7 +18,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.26.5'
           cache-dependency-path: src/go.sum
 
       - uses: actions/setup-node@v4
@@ -60,6 +60,14 @@ jobs:
         run: |
           cd src
           go vet ./...
+
+      # release.yml has scanned source and both release binaries since it was written, but CI
+      # scanned nothing, so a toolchain drifting into known-vulnerable territory only surfaced at
+      # release time. Under the old 1.23 pin this step reports 23 reachable stdlib advisories.
+      - name: Go vulnerability scan
+        run: |
+          cd src
+          go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 
       - name: Go tests
         run: |
@@ -159,7 +167,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.26.5'
           cache-dependency-path: src/go.sum
 
       - uses: actions/setup-node@v4

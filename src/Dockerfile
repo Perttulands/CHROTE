@@ -1,6 +1,6 @@
 # CHROTE - Multi-stage Dockerfile
 # Stage 1: Build the Go binary
-FROM golang:1.23-alpine AS builder
+FROM golang:1.26.5-alpine AS builder
 
 WORKDIR /app
 
