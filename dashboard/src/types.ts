@@ -400,6 +400,7 @@ export interface SessionsResponse {
   terminalUsers?: LaunchUser[]
   timestamp: string
   error?: string
+  partial?: boolean
 }
 
 export interface TerminalWindow {

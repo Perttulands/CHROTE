@@ -772,27 +772,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         if (!isAuthoritative()) return
 
         const data = dataOutcome.value
-        // An error-bearing payload is NOT authoritative, on a 200 as much as on a
-        // non-ok, so the last known good state is kept rather than overwritten. This
-        // is deliberate and tested ("preserves authoritative state ... across failed,
-        // non-ok, and aborted refreshes" feeds a payload literally named
-        // `not-authoritative` and asserts it is ignored).
-        //
-        // Known limitation, tracked as chrote-5mj.3.3: /api/tmux/sessions collapses
-        // two different conditions into this one string -- "tmux is unavailable, trust
-        // nothing" and "user X's socket is unreadable, the other users' sessions are
-        // fine". For the second, the healthy users' sessions ARE authoritative and
-        // ignoring them means a first load with one broken ACL shows an error and an
-        // empty list. Fixing that needs the API to distinguish partial from total
-        // failure; it is not a change that can be made safely here alone, because
-        // trusting an error-bearing payload is exactly what the test above forbids.
-        if (!response.ok || data.error) {
+        // Total failures are not authoritative, on a 200 as much as on a non-ok,
+        // so they preserve the last known good state. A configured multi-user
+        // response can explicitly mark healthy users' results as authoritative
+        // partial data while retaining its user-prefixed error.
+        const isPartial = response.ok && data.partial === true
+        if (!response.ok || (data.error && !isPartial)) {
           setError(typeof data.error === 'string' ? data.error : 'Failed to fetch sessions')
           return
         }
 
         const nextSessions = Array.isArray(data.sessions) ? data.sessions : []
-        setError(null)
+        setError(typeof data.error === 'string' ? data.error : null)
         setSessions(nextSessions)
         setGroupedSessions(isRecord(data.grouped) ? data.grouped as Record<string, TmuxSession[]> : {})
         setSessionBank(Array.isArray(data.banked) ? data.banked : [])

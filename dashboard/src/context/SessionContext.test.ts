@@ -1523,6 +1523,47 @@ describe('refreshSessions', () => {
     vi.useRealTimers()
   })
 
+  it('replaces last-known-good state with healthy sessions from an authoritative partial refresh and keeps the per-user error visible', async () => {
+    vi.useFakeTimers()
+    const { requests } = stubDeferredSessionFetch()
+    const { result, unmount } = renderSession()
+    const knownSession = { name: 'known', windows: 1, attached: false, group: 'shell', unixUser: 'alice' }
+    const healthySession = { name: 'healthy', windows: 1, attached: false, group: 'shell', unixUser: 'alice' }
+
+    await act(async () => {
+      requests[0].response.resolve(sessionResponse({
+        sessions: [knownSession],
+        grouped: { shell: [knownSession] },
+        banked: [{ name: 'known-banked', unixUser: 'alice', live: false }],
+        terminalUsers: ['alice'],
+      }))
+      await flushPromises()
+    })
+    expect(result.current.sessions).toEqual([knownSession])
+
+    const partialRefresh = result.current.refreshSessions()
+    await act(async () => {
+      requests[1].response.resolve(sessionResponse({
+        partial: true,
+        error: 'build: error connecting to /tmp/chrote-tmux-test/build.sock (Permission denied)',
+        sessions: [healthySession],
+        grouped: { shell: [healthySession] },
+        banked: [],
+        terminalUsers: ['alice', 'build'],
+      }))
+      await partialRefresh
+    })
+
+    expect(result.current.sessions).toEqual([healthySession])
+    expect(result.current.groupedSessions).toEqual({ shell: [healthySession] })
+    expect(result.current.terminalUsers).toEqual(['alice', 'build'])
+    expect(result.current.error).toBe('build: error connecting to /tmp/chrote-tmux-test/build.sock (Permission denied)')
+
+    unmount()
+    expect(vi.getTimerCount()).toBe(0)
+    vi.useRealTimers()
+  })
+
   it('preserves authoritative state and stale confirmation across failed, non-ok, and aborted refreshes', async () => {
     vi.useFakeTimers()
     localStorage.setItem('chrote-dashboard-state', JSON.stringify({
