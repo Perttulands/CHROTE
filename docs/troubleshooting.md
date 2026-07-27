@@ -1,5 +1,13 @@
 # Troubleshooting CHROTE
 
+> **Scope: the from-scratch install this repo's `install.sh` creates** — the
+> `chrote.service` user unit with the compiled default ports `8094` (dashboard)
+> and `7683` (ttyd). An already-operated deployment may run under a different
+> unit and port known only to local operator configuration; health-checking or
+> restarting the defaults on such a host inspects the wrong process and can
+> touch a retired service. Resolve the real unit and port from local operator
+> context before running anything below, and ask instead of guessing.
+
 Start at the boundary that is actually failing. Do not reboot WSL, kill tmux, or
 wipe browser state as a first move.
 
