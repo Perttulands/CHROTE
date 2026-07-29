@@ -120,6 +120,69 @@ else
   fail "a failing run exits non-zero (got $status)"
 fi
 
+# A configured socket that exists must fail loud when tmux is unavailable or
+# server-access fails. Missing sockets may remain a non-failure because an owner
+# may simply not be logged in yet.
+fixture_root="$(mktemp -d "/tmp/tmux-$MY_UID/chrote-grants-test.XXXXXX")"
+socket_fixture="$fixture_root/socket"
+fake_tmux="$fixture_root/fake-tmux"
+socket_pid=""
+cleanup_fixture() {
+  if [ -n "$socket_pid" ] && kill -0 "$socket_pid" 2>/dev/null; then
+    kill "$socket_pid" 2>/dev/null || true
+    wait "$socket_pid" 2>/dev/null || true
+  fi
+  rm -rf "$fixture_root"
+}
+trap cleanup_fixture EXIT
+
+python3 - "$socket_fixture" <<'PY' &
+import signal
+import socket
+import sys
+
+server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+server.bind(sys.argv[1])
+signal.pause()
+PY
+socket_pid=$!
+for _ in $(seq 1 50); do
+  [ -S "$socket_fixture" ] && break
+  sleep 0.02
+done
+if [ ! -S "$socket_fixture" ]; then
+  printf 'FAIL could not create Unix-socket fixture\n' >&2
+  cleanup_fixture
+  exit 1
+fi
+
+CHROTE_TMUX_BIN="$fixture_root/no-such-tmux"
+if grant_server_access "$ME" "$socket_fixture" >/dev/null 2>&1; then
+  fail "an existing socket fails when the configured tmux binary is unavailable"
+else
+  ok "an existing socket fails when the configured tmux binary is unavailable"
+fi
+
+printf '#!/usr/bin/env bash\nexit 23\n' > "$fake_tmux"
+chmod +x "$fake_tmux"
+CHROTE_TMUX_BIN="$fake_tmux"
+run_as_owner() {
+  shift
+  "$@"
+}
+if grant_server_access "$ME" "$socket_fixture" >/dev/null 2>&1; then
+  fail "an existing socket fails when tmux server-access fails"
+else
+  ok "an existing socket fails when tmux server-access fails"
+fi
+
+CHROTE_TMUX_BIN="$fixture_root/no-such-tmux"
+if grant_server_access "$ME" "$fixture_root/missing-socket" >/dev/null 2>&1; then
+  ok "a missing socket remains a non-failure"
+else
+  fail "a missing socket remains a non-failure"
+fi
+
 # An empty mapping list is not a failure: nothing was asked for.
 if [ "$MY_UID" -ne 0 ]; then
   ok "skipped empty-mapping exit check (needs root)"
@@ -132,6 +195,9 @@ else
     fail "an empty mapping list succeeds (got $status)"
   fi
 fi
+
+cleanup_fixture
+trap - EXIT
 
 printf '\n%d checks, %d failures\n' "$checks" "$failures"
 [ "$failures" -eq 0 ]
