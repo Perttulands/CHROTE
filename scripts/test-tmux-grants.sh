@@ -123,7 +123,7 @@ fi
 # A configured socket that exists must fail loud when tmux is unavailable or
 # server-access fails. Missing sockets may remain a non-failure because an owner
 # may simply not be logged in yet.
-fixture_root="$(mktemp -d "/tmp/tmux-$MY_UID/chrote-grants-test.XXXXXX")"
+fixture_root="$(mktemp -d "/tmp/chrote-grants-test.XXXXXX")"
 socket_fixture="$fixture_root/socket"
 fake_tmux="$fixture_root/fake-tmux"
 socket_pid=""
