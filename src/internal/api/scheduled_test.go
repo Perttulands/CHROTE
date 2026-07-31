@@ -314,7 +314,10 @@ for arg in "$@"; do
       exit 0
       ;;
     if-shell)
-      printf 'CHROTE_SEND_SUBMITTED\n'
+      case " $* " in
+        *" send-keys "*) printf 'CHROTE_SEND_SUBMIT_KEY_DISPATCHED\n' ;;
+        *) printf 'CHROTE_SEND_PASTED\n' ;;
+      esac
       exit 0
       ;;
   esac
@@ -348,8 +351,8 @@ exit 0
 		t.Fatalf("read fake tmux args: %v", err)
 	}
 	calls := splitScheduledTmuxCalls(raw)
-	if len(calls) != 3 {
-		t.Fatalf("tmux calls = %#v, want list-panes, load-buffer, then the guarded paste", calls)
+	if len(calls) != 4 {
+		t.Fatalf("tmux calls = %#v, want list-panes, load-buffer, guarded paste, then guarded submit key", calls)
 	}
 	if calls[0][2] != "list-panes" {
 		t.Fatalf("first call = %#v, want pane resolution before any side effect", calls[0])
@@ -357,13 +360,19 @@ exit 0
 	if calls[1][2] != "load-buffer" || calls[1][3] != "-b" || !strings.HasPrefix(calls[1][4], "chrote-scheduled-") {
 		t.Fatalf("second call = %#v, want the prompt staged in a private buffer", calls[1])
 	}
-	guarded := strings.Join(calls[2], "\x00")
+	guardedPaste := strings.Join(calls[2], "\x00")
 	for _, want := range []string{
 		"if-shell", "#{==:#{pane_id},%1}",
-		"paste-buffer -d -b " + calls[1][4] + " -t %1 ; send-keys -t %1 Enter ; display-message -p CHROTE_SEND_SUBMITTED",
+		"paste-buffer -d -b " + calls[1][4] + " -t %1 ; display-message -p CHROTE_SEND_PASTED",
 	} {
-		if !strings.Contains(guarded, want) {
+		if !strings.Contains(guardedPaste, want) {
 			t.Fatalf("guarded paste call = %#v, want it to contain %q", calls[2], want)
+		}
+	}
+	guardedSubmit := strings.Join(calls[3], "\x00")
+	for _, want := range []string{"if-shell", "#{==:#{pane_id},%1}", "send-keys -t %1 C-m", "CHROTE_SEND_SUBMIT_KEY_DISPATCHED"} {
+		if !strings.Contains(guardedSubmit, want) {
+			t.Fatalf("guarded submit call = %#v, want it to contain %q", calls[3], want)
 		}
 	}
 	for _, call := range calls {

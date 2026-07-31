@@ -816,7 +816,7 @@ describe('sendToSession', () => {
             serverPid: '9001',
             unixUser: 'alice',
             submissionRequested: false,
-            submitted: false,
+            submitKeyDispatched: false,
             bufferCleaned: true,
             targetVerified: true,
             warning: '',
@@ -855,7 +855,7 @@ describe('sendToSession', () => {
             serverPid: '9001',
             unixUser: 'alice',
             submissionRequested: true,
-            submitted: true,
+            submitKeyDispatched: true,
             bufferCleaned: true,
             targetVerified: false,
             warning: 'target changed before post-send verification',
@@ -899,6 +899,56 @@ describe('sendToSession', () => {
     expect(form.get('serverPid')).toBe('9001')
   })
 
+  it('reports a confirmed paste without a submit-key receipt as unknown and non-retryable', async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      if (String(input).includes('/api/tmux/sessions/shell1/send')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            success: true,
+            transport: 'pasted',
+            session: 'shell1',
+            sessionId: '$7',
+            pane: '%42',
+            panePid: '222',
+            serverPid: '9001',
+            unixUser: 'alice',
+            submissionRequested: true,
+            submitKeyDispatched: false,
+            bufferCleaned: true,
+            targetVerified: false,
+            warning: 'target changed after paste; submit key was not dispatched',
+          }),
+          text: () => Promise.resolve(''),
+        })
+      }
+      return Promise.resolve(sessionResponse({
+        sessions: [{ name: 'shell1', windows: 1, attached: false, group: 'shell', unixUser: 'alice' }],
+        terminalUsers: ['alice'],
+      }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const { result } = renderSessionWithToast()
+    await waitFor(() => expect(result.current.session.terminalUsers).toEqual(['alice']))
+    fetchMock.mockClear()
+
+    let delivered: SendToSessionOutcome = 'sent'
+    await act(async () => {
+      delivered = await result.current.session.sendToSession('shell1', {
+        text: 'pasted but not submitted',
+        files: [],
+        submit: true,
+        pane: '%42',
+        sessionId: '$7',
+        panePid: '222',
+        serverPid: '9001',
+      }, 'alice')
+    })
+
+    expect(delivered).toBe('unknown')
+    await waitFor(() => expect(result.current.toast.toasts[0]?.message).toContain('submit key was not dispatched'))
+  })
+
   it('treats an explicit unknown delivery outcome as non-retryable and tells the user to inspect', async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
       if (String(input).includes('/api/tmux/sessions/shell1/send')) {
@@ -916,7 +966,7 @@ describe('sendToSession', () => {
             serverPid: '9001',
             unixUser: 'alice',
             submissionRequested: true,
-            submitted: false,
+            submitKeyDispatched: false,
             bufferCleaned: true,
             targetVerified: false,
             warning: 'tmux did not confirm whether delivery occurred; inspect the exact pane before retrying',

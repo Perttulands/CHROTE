@@ -357,7 +357,7 @@ export type SendToSessionResult = {
   serverPid: string
   unixUser: string
   submissionRequested: boolean
-  submitted: boolean
+  submitKeyDispatched: boolean
   bufferCleaned: boolean
   targetVerified: boolean
   warning: string
@@ -373,7 +373,7 @@ export type SendToSessionResult = {
   serverPid: string
   unixUser: string
   submissionRequested: boolean
-  submitted: false
+  submitKeyDispatched: false
   bufferCleaned: boolean
   targetVerified: false
   warning: string

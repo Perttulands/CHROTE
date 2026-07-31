@@ -29,6 +29,8 @@ type sendHarness struct {
 func newSendHarness(t *testing.T, panes string) sendHarness {
 	t.Helper()
 	originalLookupUser := tmuxLookupUser
+	originalSendSleep := tmuxSendSleep
+	tmuxSendSleep = func(time.Duration) {}
 	tmuxLookupUser = func(username string) (*osuser.User, error) {
 		switch username {
 		case "alice":
@@ -39,7 +41,10 @@ func newSendHarness(t *testing.T, panes string) sendHarness {
 			return originalLookupUser(username)
 		}
 	}
-	t.Cleanup(func() { tmuxLookupUser = originalLookupUser })
+	t.Cleanup(func() {
+		tmuxLookupUser = originalLookupUser
+		tmuxSendSleep = originalSendSleep
+	})
 	dir := t.TempDir()
 	tmuxLog := filepath.Join(dir, "tmux.log")
 	aclLog := filepath.Join(dir, "setfacl.log")
@@ -70,13 +75,17 @@ case "${1:-}" in
   if-shell)
     if [ "${TMUX_SEND_ATOMIC_CHANGED:-}" = 1 ]; then
       printf '%s\n' CHROTE_SEND_TARGET_CHANGED
+    elif [ "${TMUX_SEND_SUBMIT_TARGET_CHANGED:-}" = 1 ] && echo " $* " | grep -q " send-keys "; then
+      printf '%s\n' CHROTE_SEND_SUBMIT_TARGET_CHANGED
     elif [ "${TMUX_SEND_FAIL_PASTE:-}" = 1 ]; then
       exit 8
-    elif [ "${TMUX_SEND_FAIL_SUBMIT:-}" = 1 ]; then
+    elif [ "${TMUX_SEND_FAIL_SUBMIT:-}" = 1 ] && echo " $* " | grep -q " send-keys "; then
       exit 10
+    elif [ -n "${TMUX_SEND_REQUIRE_SETTLE:-}" ] && echo " $* " | grep -q " send-keys " && [ ! -f "$TMUX_SEND_REQUIRE_SETTLE" ]; then
+      printf '%s\n' CHROTE_SEND_SUBMIT_NOT_SETTLED
     else
       case " $* " in
-        *" send-keys "*) printf '%s\n' CHROTE_SEND_SUBMITTED ;;
+        *" send-keys "*) printf '%s\n' CHROTE_SEND_SUBMIT_KEY_DISPATCHED ;;
         *) printf '%s\n' CHROTE_SEND_PASTED ;;
       esac
     fi
@@ -341,8 +350,8 @@ func TestSendToSessionPinsExactPaneAndDefaultsToNoSubmit(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if response["pane"] != "%42" || response["submitted"] != false || response["transport"] != "pasted" {
-		t.Fatalf("response = %#v, want pane %%42, submitted false, transport pasted", response)
+	if response["pane"] != "%42" || response["submitKeyDispatched"] != false || response["transport"] != "pasted" {
+		t.Fatalf("response = %#v, want pane %%42, no submit key, transport pasted", response)
 	}
 	log := readOptionalFile(t, h.tmuxLog)
 	if !strings.Contains(log, "if-shell\n-F\n-t\n%42\n") ||
@@ -420,9 +429,18 @@ func TestSendToSessionAtomicClientFailureRetainsDropAsNonRetryableUnknown(t *tes
 	}
 }
 
-func TestSendToSessionQueuesSubmitInsideAtomicGuard(t *testing.T) {
+func TestSendToSessionSettlesThenDispatchesOneGuardedSubmitKey(t *testing.T) {
 	h := newSendHarness(t, "$7	one	%41	111	9001\n")
-	recorder := h.send(t, "one", map[string]string{"text": "submit atomically", "submit": "true"})
+	var settleDelay time.Duration
+	settled := filepath.Join(t.TempDir(), "paste-settled")
+	t.Setenv("TMUX_SEND_REQUIRE_SETTLE", settled)
+	tmuxSendSleep = func(delay time.Duration) {
+		settleDelay = delay
+		if err := os.WriteFile(settled, nil, 0o600); err != nil {
+			t.Fatalf("record paste settle: %v", err)
+		}
+	}
+	recorder := h.send(t, "one", map[string]string{"text": "submit after settling", "submit": "true"})
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
 	}
@@ -430,12 +448,44 @@ func TestSendToSessionQueuesSubmitInsideAtomicGuard(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if response["transport"] != "pasted" || response["submissionRequested"] != true || response["submitted"] != true || response["bufferCleaned"] != true {
-		t.Fatalf("atomic submit response = %#v", response)
+	if response["transport"] != "pasted" || response["submissionRequested"] != true || response["submitKeyDispatched"] != true || response["bufferCleaned"] != true {
+		t.Fatalf("guarded submit response = %#v", response)
+	}
+	if _, legacy := response["submitted"]; legacy {
+		t.Fatalf("response still claims application submission: %#v", response)
+	}
+	if settleDelay != tmuxSendSubmitSettleDelay {
+		t.Fatalf("settle delay = %s, want %s", settleDelay, tmuxSendSubmitSettleDelay)
 	}
 	log := readOptionalFile(t, h.tmuxLog)
-	if !strings.Contains(log, "paste-buffer -d") || !strings.Contains(log, "send-keys -t %41 Enter") || !strings.Contains(log, "CHROTE_SEND_SUBMITTED") {
-		t.Fatalf("submit was not queued inside the atomic guarded command: %s", log)
+	if strings.Count(log, "if-shell\n-F\n-t\n%41\n") != 2 ||
+		!strings.Contains(log, "paste-buffer -d") ||
+		strings.Count(log, "send-keys -t %41 C-m") != 1 ||
+		!strings.Contains(log, "CHROTE_SEND_SUBMIT_KEY_DISPATCHED") {
+		t.Fatalf("paste and submit key were not separately generation-guarded: %s", log)
+	}
+	if strings.Contains(log, "send-keys -t %41 Enter") {
+		t.Fatalf("legacy immediate Enter remained in submit path: %s", log)
+	}
+}
+
+func TestSendToSessionDoesNotDispatchSubmitKeyAfterGenerationChanges(t *testing.T) {
+	h := newSendHarness(t, "$7	one	%41	111	9001\n")
+	t.Setenv("TMUX_SEND_SUBMIT_TARGET_CHANGED", "1")
+	recorder := h.send(t, "one", map[string]string{"text": "paste only after race", "submit": "true"})
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var response map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	warning, _ := response["warning"].(string)
+	if response["transport"] != "pasted" || response["submitKeyDispatched"] != false || !strings.Contains(warning, "submit key was not dispatched") {
+		t.Fatalf("generation-race response = %#v", response)
+	}
+	if strings.Count(readOptionalFile(t, h.tmuxLog), "send-keys -t %41 C-m") != 1 {
+		t.Fatalf("guarded submit command was retried: %s", readOptionalFile(t, h.tmuxLog))
 	}
 }
 

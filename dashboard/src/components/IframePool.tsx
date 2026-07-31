@@ -97,6 +97,8 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
 
   // Track which sessions are claimed and where
   const claimsRef = useRef<Map<string, HTMLElement>>(new Map())
+  const fitTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>[]>>(new Map())
+  const triggerFitRef = useRef<(sessionName: string) => void>(() => {})
 
   // Track which sessions have had their src set (deferred connection)
   const connectedRef = useRef<Set<string>>(new Set())
@@ -154,6 +156,7 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
             applyScrollbarVisibility(iframeWindow.document, settingsRef.current.hideScrollbar)
           }
         } catch { /* cross-origin or not ready */ }
+        triggerFitRef.current(sessionName)
       })
 
       iframeRefs.current.set(sessionName, iframe)
@@ -255,16 +258,48 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
   }, [applyFontSizeToIframe])
 
   const triggerFit = useCallback((sessionName: string) => {
-    try {
-      const iframe = iframeRefs.current.get(sessionName)
-      if (!iframe?.contentWindow) return
-      // Only fit iframes that are claimed into a visible container, not parked in pool
-      if (!claimsRef.current.has(sessionName)) return
-      // Don't trigger fit if iframe has no meaningful dimensions
-      if (iframe.offsetWidth < 10 || iframe.offsetHeight < 10) return
-      iframe.contentWindow.dispatchEvent(new Event('resize'))
-    } catch { /* cross-origin */ }
+    const iframe = iframeRefs.current.get(sessionName)
+    if (!iframe?.contentWindow) return
+
+    fitTimeoutsRef.current.get(sessionName)?.forEach(clearTimeout)
+
+    const fitVisibleIframe = () => {
+      try {
+        // Only fit iframes claimed into a visible container, not parked in the pool.
+        if (!claimsRef.current.has(sessionName)) return
+        if (iframe.offsetWidth < 10 || iframe.offsetHeight < 10) return
+        iframe.contentWindow?.dispatchEvent(new Event('resize'))
+      } catch { /* cross-origin */ }
+    }
+
+    fitVisibleIframe()
+    const timeouts = [200, 500].map(delay => setTimeout(() => {
+      fitVisibleIframe()
+      if (delay === 500) fitTimeoutsRef.current.delete(sessionName)
+    }, delay))
+    fitTimeoutsRef.current.set(sessionName, timeouts)
   }, [])
+  triggerFitRef.current = triggerFit
+
+  useEffect(() => () => {
+    fitTimeoutsRef.current.forEach(timeouts => timeouts.forEach(clearTimeout))
+    fitTimeoutsRef.current.clear()
+  }, [])
+
+  useEffect(() => {
+    claimsRef.current.forEach((_container, sessionName) => triggerFit(sessionName))
+  }, [settings.fontSize, triggerFit])
+
+  useEffect(() => {
+    const refitClaimed = () => {
+      if (document.visibilityState === 'hidden') return
+      claimsRef.current.forEach((_container, sessionName) => triggerFit(sessionName))
+    }
+    document.addEventListener('visibilitychange', refitClaimed)
+    return () => {
+      document.removeEventListener('visibilitychange', refitClaimed)
+    }
+  }, [triggerFit])
 
   const focusIframe = useCallback((sessionName: string) => {
     try {

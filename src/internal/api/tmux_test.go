@@ -2184,7 +2184,7 @@ func TestTmuxHandler_SendToSessionStoresDropAndPastesViaBuffer(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if response["success"] != true || response["session"] != "alice-shell" || response["unixUser"] != "alice" || response["pane"] != "%42" || response["submitted"] != true {
+	if response["success"] != true || response["session"] != "alice-shell" || response["unixUser"] != "alice" || response["pane"] != "%42" || response["submitKeyDispatched"] != true {
 		t.Fatalf("send response = %#v", response)
 	}
 	dropPath, _ := response["dropPath"].(string)
@@ -2225,8 +2225,8 @@ func TestTmuxHandler_SendToSessionStoresDropAndPastesViaBuffer(t *testing.T) {
 		strings.Join([]string{"-S", "/tmp/tmux-a", "load-buffer"}, "\x00"),
 		strings.Join([]string{"-S", "/tmp/tmux-a", "if-shell", "-F", "-t", "%42"}, "\x00"),
 		"paste-buffer -d -b chrote-send-",
-		"send-keys -t %42 Enter",
-		atomicSendSubmittedMarker,
+		"send-keys -t %42 C-m",
+		atomicSendSubmitKeyMarker,
 	}
 	for _, snippet := range wantSnippets {
 		found := false

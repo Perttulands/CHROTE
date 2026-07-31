@@ -107,7 +107,7 @@ func TestSendToSessionRealTmuxPinsExactPane(t *testing.T) {
 		t.Fatalf("ambiguous status = %d, want %d; body=%s", ambiguous.Code, http.StatusConflict, ambiguous.Body.String())
 	}
 
-	marker := "CHROTE_REAL_SEND_EXACT_PANE"
+	marker := ": # CHROTE_REAL_SEND_EXACT_PANE"
 	selected := paneTargets[0]
 	exact := send("multi", map[string]string{
 		"text":      marker,
@@ -115,7 +115,7 @@ func TestSendToSessionRealTmuxPinsExactPane(t *testing.T) {
 		"sessionId": selected.SessionID,
 		"panePid":   selected.PanePID,
 		"serverPid": selected.ServerPID,
-		"submit":    "false",
+		"submit":    "true",
 	})
 	if exact.Code != http.StatusOK {
 		t.Fatalf("exact status = %d, want %d; body=%s", exact.Code, http.StatusOK, exact.Body.String())
@@ -124,7 +124,7 @@ func TestSendToSessionRealTmuxPinsExactPane(t *testing.T) {
 	if err := json.Unmarshal(exact.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if response["pane"] != selected.PaneID || response["submitted"] != false || response["targetVerified"] != true {
+	if response["pane"] != selected.PaneID || response["submitKeyDispatched"] != true || response["targetVerified"] != true {
 		t.Fatalf("exact response = %#v", response)
 	}
 
