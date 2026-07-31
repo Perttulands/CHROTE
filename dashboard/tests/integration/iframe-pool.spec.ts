@@ -1,25 +1,55 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, APIRequestContext, Locator, Page } from '@playwright/test';
+import {
+  cleanupTrackedSessions as reconcileTrackedSessions,
+  LiveSessionIdentity,
+} from '../helpers/liveSessionCleanup';
 
 /**
  * Integration tests for IframePool terminal rendering.
- * Tests against the real running CHROTE backend at port 8090.
+ * Tests against the real running CHROTE backend.
  *
  * Verifies that terminal iframes render visibly when sessions are bound to windows,
- * across multiple flows: new session button, drag-and-drop, page reload persistence,
- * and preset switching.
+ * across multiple flows: new session button, tab switching, and page reload persistence.
  */
 test.describe.serial('IframePool: session iframe renders in window', () => {
-  const createdSessions: string[] = [];
+  test.describe.configure({ retries: 0 });
+  const createdSessions: LiveSessionIdentity[] = [];
+
+  async function createTrackedSession(page: Page, terminalWindow: Locator): Promise<string> {
+    const responsePromise = page.waitForResponse(response =>
+      response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/tmux/sessions'
+    );
+    await terminalWindow.locator('.create-session-btn').click();
+    const response = await responsePromise;
+    expect(response.ok(), await response.text()).toBe(true);
+    const payload = await response.json() as { session?: string };
+    const requestPayload = response.request().postDataJSON() as { unixUser?: string } | null;
+    expect(payload.session).toBeTruthy();
+    createdSessions.push({ name: payload.session!, unixUser: requestPayload?.unixUser });
+    await expect(terminalWindow.locator('.session-tag')).toHaveCount(1, { timeout: 10000 });
+    return payload.session!;
+  }
+
+  async function cleanupTrackedSessions(request: APIRequestContext, attempts: number): Promise<string[]> {
+    return reconcileTrackedSessions(createdSessions, async session => {
+      const query = session.unixUser ? `?unixUser=${encodeURIComponent(session.unixUser)}` : '';
+      const response = await request.delete(`/api/tmux/sessions/${encodeURIComponent(session.name)}${query}`);
+      return {
+        ok: response.ok(),
+        status: response.status(),
+        body: response.ok() ? '' : await response.text(),
+      };
+    }, attempts);
+  }
 
   test.afterEach(async ({ request }) => {
-    // Clean up sessions we created
-    for (const name of createdSessions) {
-      try {
-        // truthsayer:ignore sql-injection -- test-controlled variable, not user input
-        await request.delete(`/api/tmux/sessions/${name}`);
-      } catch { /* ignore */ }
-    }
-    createdSessions.length = 0;
+    const failures = await cleanupTrackedSessions(request, 2);
+    expect(failures, 'every iframe-pool smoke session must be deleted; unresolved unixUser/session tuples remain tracked').toEqual([]);
+  });
+
+  test.afterAll(async ({ request }) => {
+    const failures = await cleanupTrackedSessions(request, 3);
+    expect(failures, 'final iframe-pool reconciliation left unresolved unixUser/session tuples').toEqual([]);
   });
 
   test('new session button creates a visible iframe in window body', async ({ page }) => {
@@ -34,19 +64,7 @@ test.describe.serial('IframePool: session iframe renders in window', () => {
     const createBtn = firstWindow.locator('.create-session-btn');
     await expect(createBtn).toBeVisible({ timeout: 5000 });
 
-    // Capture the session name from the POST request
-    let sessionName = '';
-    page.on('request', req => {
-      if (req.method() === 'POST' && req.url().includes('/api/tmux/sessions')) {
-        try { sessionName = JSON.parse(req.postData() || '{}').name || ''; } catch {}
-      }
-    });
-
-    await createBtn.click();
-
-    // Wait for session tag to appear
-    await expect(firstWindow.locator('.session-tag')).toHaveCount(1, { timeout: 10000 });
-    if (sessionName) createdSessions.push(sessionName);
+    await createTrackedSession(page, firstWindow);
 
     // KEY: iframe must exist in window body and be visible
     const body = firstWindow.locator('.terminal-window-body');
@@ -95,17 +113,7 @@ test.describe.serial('IframePool: session iframe renders in window', () => {
     const createBtn = firstWindow.locator('.create-session-btn');
     await expect(createBtn).toBeVisible({ timeout: 5000 });
 
-    let sessionName = '';
-    page.on('request', req => {
-      if (req.method() === 'POST' && req.url().includes('/api/tmux/sessions')) {
-        try { sessionName = JSON.parse(req.postData() || '{}').name || ''; } catch {}
-      }
-    });
-
-    // Create a session
-    await createBtn.click();
-    await expect(firstWindow.locator('.session-tag')).toHaveCount(1, { timeout: 10000 });
-    if (sessionName) createdSessions.push(sessionName);
+    await createTrackedSession(page, firstWindow);
 
     // Verify iframe is there
     const body = firstWindow.locator('.terminal-window-body');
@@ -144,17 +152,7 @@ test.describe.serial('IframePool: session iframe renders in window', () => {
 
     const firstWindow = page.locator('.terminal-window').first();
 
-    let sessionName = '';
-    page.on('request', req => {
-      if (req.method() === 'POST' && req.url().includes('/api/tmux/sessions')) {
-        try { sessionName = JSON.parse(req.postData() || '{}').name || ''; } catch {}
-      }
-    });
-
-    // Create session
-    await firstWindow.locator('.create-session-btn').click();
-    await expect(firstWindow.locator('.session-tag')).toHaveCount(1, { timeout: 10000 });
-    if (sessionName) createdSessions.push(sessionName);
+    await createTrackedSession(page, firstWindow);
 
     // Verify iframe
     await expect(firstWindow.locator('.terminal-window-body iframe')).toHaveCount(1, { timeout: 5000 });
