@@ -56,6 +56,10 @@ describe('live terminal session cleanup ledger', () => {
     expect(spec).toContain('test.describe.configure({ retries: 0 });');
     expect(spec).toContain("response.request().postDataJSON()");
     expect(spec).toContain("createdSessions.push({ name: payload.session!, unixUser: requestPayload?.unixUser });");
+    expect(spec).toContain("const query = session.unixUser ? `?unixUser=${encodeURIComponent(session.unixUser)}` : '';");
+    expect(spec).toContain("request.delete(`/api/tmux/sessions/${encodeURIComponent(session.name)}${query}`)");
+    expect(spec).toContain('ok: response.ok()');
+    expect(spec).toContain('status: response.status()');
     expect(spec).not.toContain("page.on('request'");
 
     const afterEach = spec.match(/test\.afterEach\([\s\S]*?\n {2}\}\);/)?.[0];
