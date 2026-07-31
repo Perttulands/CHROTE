@@ -50,6 +50,7 @@ README.md.backup
 
 # Instance-specific state (Polis or any deployment)
 # Systemd units live outside the repo (~/.config/systemd/user/)
+# Beads state is private and must use an operator-configured sidecar, never this public origin.
 # The following are created at runtime, not tracked:
 *.sqlite
 *.db
