@@ -21,12 +21,18 @@ test.describe('live terminal interactions', () => {
     await expect(terminalOneTab).toHaveClass(/active/)
     await expect(terminalOneTab).not.toBeFocused()
 
-    const sessionRow = page.locator('.session-item').first()
+    const workspace = page.locator('.terminal-workspace-dock[data-active="true"]')
+    const sessionsSidecar = workspace.getByRole('button', { name: 'Sessions sidecar', exact: true })
+    await expect(sessionsSidecar).toHaveAttribute('aria-expanded', 'false')
+    await sessionsSidecar.click()
+    await expect(sessionsSidecar).toHaveAttribute('aria-expanded', 'true')
+
+    const sessionRow = workspace.locator('.session-item').first()
     await expect(sessionRow).toBeVisible()
     const sessionName = (await sessionRow.locator('.session-name').textContent())?.trim()
     expect(sessionName).toBeTruthy()
 
-    const firstWindow = page.locator('.terminal-window:visible').first()
+    const firstWindow = workspace.locator('.terminal-window:visible').first()
     await expect(sessionRow.getByRole('button', { name: `Session actions for ${sessionName}` })).toBeVisible()
     const rowBox = await sessionRow.boundingBox()
     const windowBox = await firstWindow.boundingBox()
@@ -39,6 +45,8 @@ test.describe('live terminal interactions', () => {
     await page.mouse.up()
 
     await expect(firstWindow.locator('.tag-name')).toHaveText(sessionName!)
+    await sessionsSidecar.click()
+    await expect(sessionsSidecar).toHaveAttribute('aria-expanded', 'false')
     const terminalFrame = firstWindow.locator(`iframe[title="Terminal - ${sessionName}"]`)
     await expect(terminalFrame).toBeVisible({ timeout: 15000 })
 
@@ -61,9 +69,10 @@ test.describe('live terminal interactions', () => {
     await page.setViewportSize({ width: 390, height: 844 })
     await openLiveDashboard(page)
 
-    const panel = page.locator('.session-panel')
-    await expect(panel).toHaveClass(/collapsed/)
-    await expect(page.locator('.terminal-window:visible')).toHaveCount(1)
+    const workspace = page.locator('.terminal-workspace-dock[data-active="true"]')
+    const sessionsSidecar = workspace.getByRole('button', { name: 'Sessions sidecar', exact: true })
+    await expect(sessionsSidecar).toHaveAttribute('aria-expanded', 'false')
+    await expect(workspace.locator('.terminal-window:visible')).toHaveCount(1)
 
     const layoutFour = page.getByRole('button', { name: '4', exact: true }).last()
     await expect(layoutFour).toBeVisible()
@@ -76,7 +85,10 @@ test.describe('live terminal interactions', () => {
     await layoutFour.click()
     await expect(page.getByRole('group', { name: 'Window view controls' }).getByRole('button')).toHaveCount(4)
 
-    await panel.getByTitle('Expand').click()
+    await sessionsSidecar.click()
+    await expect(sessionsSidecar).toHaveAttribute('aria-expanded', 'true')
+    const panel = workspace.locator('.session-panel')
+    await expect(panel).toBeVisible()
     const sessionRow = panel.locator('.session-item').first()
     await expect(sessionRow).toBeVisible()
     const actions = sessionRow.getByRole('button', { name: /Session actions for/ })
