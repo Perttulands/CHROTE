@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -397,6 +398,21 @@ exit 0
 	if _, err := os.Stat(strings.TrimSpace(stagedPath)); !os.IsNotExist(err) {
 		t.Fatalf("staged prompt file still exists after delivery (stat err = %v)", err)
 	}
+
+	if _, err := runner.SendPrompt(context.Background(), scheduled.Target{SessionName: "ops", UnixUser: "alice"}, "second delivery"); err != nil {
+		t.Fatalf("second SendPrompt returned error: %v", err)
+	}
+	raw, err = osReadFileString(argsPath)
+	if err != nil {
+		t.Fatalf("read fake tmux args after second delivery: %v", err)
+	}
+	calls = splitScheduledTmuxCalls(raw)
+	if len(calls) != 8 {
+		t.Fatalf("tmux calls after two sends = %#v, want four calls per delivery", calls)
+	}
+	if calls[1][4] == calls[5][4] {
+		t.Fatalf("scheduled deliveries reused buffer %q; timeout cleanup could delete a later run", calls[1][4])
+	}
 }
 
 func TestScheduledTmuxRunnerReportsUnconfirmedDeliveryWithoutClaimingSuccess(t *testing.T) {
@@ -520,6 +536,54 @@ exit 0
 	}
 }
 
+func TestScheduledTmuxRunnerReportsCleanupFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	fakeTmux := tmpDir + "/tmux"
+	script := `#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in
+    list-panes)
+      printf '$1\tops\t%%1\t1234\t5678\t@1\tmain\t/tmp\tclaude\t1\n'
+      exit 0
+      ;;
+    load-buffer)
+      exit 0
+      ;;
+    delete-buffer)
+      printf 'delete denied\n' >&2
+      exit 42
+      ;;
+    if-shell)
+      exec sleep 2
+      ;;
+  esac
+done
+exit 0
+`
+	if err := osWriteFileExecutable(fakeTmux, script); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+	t.Setenv("PATH", tmpDir+":/usr/bin:/bin")
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/chrote-fake-tmux.sock")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/tmp/chrote-fake-home")
+
+	runner := NewScheduledTmuxRunner(NewTmuxHandler())
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err := runner.SendPrompt(ctx, scheduled.Target{SessionName: "ops", UnixUser: "alice"}, "cleanup must be observable")
+	if err == nil {
+		t.Fatal("SendPrompt returned nil after guarded paste timeout and cleanup failure")
+	}
+	if !strings.Contains(err.Error(), "buffer cleanup failed") || !strings.Contains(err.Error(), "delete denied") {
+		t.Fatalf("error = %v, want fail-loud delete-buffer failure", err)
+	}
+	if elapsed := time.Since(started); elapsed > 600*time.Millisecond {
+		t.Fatalf("cleanup failure escaped the caller deadline: elapsed %s", elapsed)
+	}
+}
+
 func TestScheduledTmuxRunnerCancelsSettleBeforeSubmitKey(t *testing.T) {
 	tmpDir := t.TempDir()
 	argsPath := tmpDir + "/tmux-argv.txt"
@@ -576,6 +640,71 @@ exit 0
 	}
 	if strings.Contains(string(raw), "send-keys") {
 		t.Fatalf("submit key was dispatched after caller deadline:\n%s", raw)
+	}
+}
+
+func TestProductionScheduledServiceUsesEightConcurrentWorkers(t *testing.T) {
+	runner := &productionValidationRunner{
+		entered: make(chan scheduled.Target, 16),
+		release: make(chan struct{}),
+	}
+	service := newProductionScheduledService(scheduled.NewStore(t.TempDir()), runner)
+	targets := make([]scheduled.Target, 16)
+	for index := range targets {
+		targets[index] = scheduled.Target{SessionName: fmt.Sprintf("worker-%02d", index)}
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.Create(context.Background(), scheduled.CreateTaskRequest{
+			Name:     "production concurrency",
+			Prompt:   "validate",
+			Targets:  targets,
+			Schedule: scheduled.Schedule{Type: "interval", EveryMinutes: 60, Timezone: "UTC"},
+		})
+		done <- err
+	}()
+	for range 8 {
+		select {
+		case <-runner.entered:
+		case <-time.After(time.Second):
+			close(runner.release)
+			<-done
+			t.Fatal("production validation did not start eight workers")
+		}
+	}
+	select {
+	case target := <-runner.entered:
+		close(runner.release)
+		<-done
+		t.Fatalf("production validation exceeded eight workers with %+v", target)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(runner.release)
+	if err := <-done; err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+}
+
+type productionValidationRunner struct {
+	entered chan scheduled.Target
+	release chan struct{}
+}
+
+func (r *productionValidationRunner) ValidateTarget(_ context.Context, target scheduled.Target) error {
+	r.entered <- target
+	<-r.release
+	return nil
+}
+
+func (r *productionValidationRunner) SendPrompt(context.Context, scheduled.Target, string) (scheduled.Delivery, error) {
+	return scheduled.Delivery{}, errors.New("SendPrompt should not run during production validation test")
+}
+
+func TestWriteScheduledErrorReportsTaskMutationConflict(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	writeScheduledError(recorder, fmt.Errorf("%w: tsk_busy", scheduled.ErrConflict))
+	if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), `"code":"CONFLICT"`) {
+		t.Fatalf("status/body = %d/%s, want public 409 CONFLICT", recorder.Code, recorder.Body.String())
 	}
 }
 

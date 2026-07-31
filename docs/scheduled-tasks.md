@@ -199,17 +199,22 @@ The API fails closed for:
 - an empty target list, or more than 32 targets;
 - invalid or unknown targets when target validation is enabled;
 - user-supplied `socket` fields;
-- session/user names outside CHROTE's safe target grammar.
+- session/user names outside CHROTE's safe target grammar; and
+- a concurrent mutation of the same task. One task mutation owns the complete
+  read/send/save operation; overlapping patch, pause/resume, delete, run-now, or
+  scheduler work receives `409 CONFLICT` instead of dispatching twice or overwriting state.
 
 Prompts are delivered through the same guarded path as **Send to Session**: the prompt is
 staged in a private file, loaded into a private tmux buffer, and pasted only while the
 resolved pane's `session_id`/`pane_id`/`pane_pid`/`server pid` generation still matches,
 followed by an `Enter` key dispatch. That dispatch is a tmux transport receipt only; it does
-not prove that the terminal application accepted or began processing the prompt. The buffer
-is deleted afterwards and the staged file is removed. Prompt text never reaches a shell or a
-tmux argv, and nothing is appended to it. If the pane generation changed, or tmux does not
-confirm the paste, the run is recorded as failed for that target instead of being retried
-blindly.
+not prove that the terminal application accepted or began processing the prompt. A successful
+paste consumes its run-unique tmux buffer. Failure paths reserve part of the same delivery
+deadline for synchronous buffer deletion; if tmux cannot confirm that cleanup, the persisted
+run reports the cleanup failure. The staged file is always removed. Prompt text never reaches
+a shell or a tmux argv, and nothing is appended to it. If the pane generation changed, or tmux
+does not confirm the paste, the run is recorded as failed for that target instead of being
+retried blindly.
 
 For an unattended send CHROTE resolves the target session's active pane (a session with a
 single pane resolves to that pane). Interactive sends still pin an exact pane, because a

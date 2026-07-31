@@ -28,8 +28,10 @@ type ScheduledTmuxRunner struct {
 }
 
 const (
-	scheduledMutationIntentHeader = "X-Chrote-Intent"
-	scheduledMutationIntentValue  = "scheduled-task"
+	scheduledMutationIntentHeader    = "X-Chrote-Intent"
+	scheduledMutationIntentValue     = "scheduled-task"
+	scheduledTmuxCleanupReserve      = 250 * time.Millisecond
+	scheduledMaxConcurrentDeliveries = 8
 )
 
 // NewScheduledTmuxRunner creates a safe argv-only tmux prompt runner.
@@ -81,21 +83,34 @@ func (r *ScheduledTmuxRunner) SendPrompt(ctx context.Context, target scheduled.T
 
 	bufferSuffix := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(payloadPath), "chrote-scheduled-prompt-"), ".txt")
 	bufferName := "chrote-scheduled-" + strings.TrimPrefix(pane.PaneID, "%") + "-" + bufferSuffix
-	result, err := r.tmux.sendBufferToPane(ctx, ctx, resolved, pane, bufferName, payloadPath, true)
+	result, err := r.tmux.sendBufferToPane(ctx, ctx, scheduledTmuxCleanupReserve, resolved, pane, bufferName, payloadPath, true)
 	if err != nil {
 		return scheduled.Delivery{}, err
 	}
 	switch result.Kind {
 	case paneSendTargetChanged:
-		return scheduled.Delivery{}, fmt.Errorf("%w: pane %s changed before the prompt was pasted", scheduled.ErrTargetNotFound, pane.PaneID)
+		detail := fmt.Sprintf("pane %s changed before the prompt was pasted", pane.PaneID)
+		if result.CleanupErr != nil {
+			detail += "; buffer cleanup failed: " + result.CleanupErr.Error()
+		}
+		return scheduled.Delivery{}, fmt.Errorf("%w: %s", scheduled.ErrTargetNotFound, detail)
 	case paneSendUnknown:
 		detail := strings.TrimSpace(result.Detail)
 		if detail == "" {
 			detail = "tmux did not confirm delivery"
 		}
+		if result.CleanupErr != nil {
+			detail += "; buffer cleanup failed: " + result.CleanupErr.Error()
+		}
+		if result.OperationErr != nil {
+			return scheduled.Delivery{}, fmt.Errorf("delivery to pane %s is unconfirmed: %s: %w", pane.PaneID, detail, result.OperationErr)
+		}
 		return scheduled.Delivery{}, fmt.Errorf("delivery to pane %s is unconfirmed: %s", pane.PaneID, detail)
 	}
 	if !result.SubmitKeyDispatched {
+		if result.OperationErr != nil {
+			return scheduled.Delivery{}, fmt.Errorf("prompt was pasted but the submit key was not dispatched: %w", result.OperationErr)
+		}
 		if err := ctx.Err(); err != nil {
 			return scheduled.Delivery{}, fmt.Errorf("prompt was pasted but the submit key was not dispatched: %w", err)
 		}
@@ -148,12 +163,15 @@ func (r *ScheduledTmuxRunner) runTmux(ctx context.Context, socket string, args .
 
 // NewScheduledHandler creates the production scheduled-task handler.
 func NewScheduledHandler(tmux *TmuxHandler) *ScheduledHandler {
-	store := scheduled.NewStore("")
-	service := scheduled.NewService(store, NewScheduledTmuxRunner(tmux), scheduled.ServiceOptions{
-		ValidateTargets:         true,
-		MaxConcurrentDeliveries: 8,
-	})
+	service := newProductionScheduledService(scheduled.NewStore(""), NewScheduledTmuxRunner(tmux))
 	return NewScheduledHandlerWithService(service)
+}
+
+func newProductionScheduledService(store *scheduled.Store, runner scheduled.Runner) *scheduled.Service {
+	return scheduled.NewService(store, runner, scheduled.ServiceOptions{
+		ValidateTargets:         true,
+		MaxConcurrentDeliveries: scheduledMaxConcurrentDeliveries,
+	})
 }
 
 // NewScheduledHandlerWithService creates a handler around an explicit service for tests.
@@ -422,6 +440,8 @@ func writeScheduledError(w http.ResponseWriter, err error) {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 	case errors.Is(err, scheduled.ErrTargetNotFound):
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+	case errors.Is(err, scheduled.ErrConflict):
+		core.WriteError(w, http.StatusConflict, "CONFLICT", err.Error())
 	default:
 		core.WriteError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
 	}

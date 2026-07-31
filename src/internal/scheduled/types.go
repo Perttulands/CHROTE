@@ -29,6 +29,8 @@ var (
 	ErrInvalid = errors.New("invalid scheduled task")
 	// ErrTargetNotFound indicates that the selected tmux target is unavailable.
 	ErrTargetNotFound = errors.New("scheduled task target not found")
+	// ErrConflict indicates that another mutation currently owns the task.
+	ErrConflict = errors.New("scheduled task is already being modified")
 )
 
 // Runner validates scheduled task targets and sends prompts to them.

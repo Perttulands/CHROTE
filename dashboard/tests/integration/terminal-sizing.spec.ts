@@ -1,4 +1,8 @@
-import { test, expect, Page, Frame, Locator } from '@playwright/test';
+import { test, expect, Page, Frame, Locator, APIRequestContext } from '@playwright/test';
+import {
+  cleanupTrackedSessions as reconcileTrackedSessions,
+  LiveSessionIdentity,
+} from '../helpers/liveSessionCleanup';
 
 type RefitProbeWindow = typeof window & {
   __chroteRefitProbe?: {
@@ -19,7 +23,8 @@ type RefitProbeWindow = typeof window & {
  * Beads: pol-8dca, pol-3798, pol-1c0b
  */
 test.describe.serial('Terminal Sizing: iframe fills container and xterm fits', () => {
-  const createdSessions: Array<{ name: string; unixUser?: string }> = [];
+  test.describe.configure({ retries: 0 });
+  const createdSessions: LiveSessionIdentity[] = [];
 
   // Helper: get the visible terminal grid (scoped to active workspace)
   function visibleArea(page: Page) {
@@ -81,19 +86,26 @@ test.describe.serial('Terminal Sizing: iframe fills container and xterm fits', (
     return payload.session!;
   }
 
+  async function cleanupTrackedSessions(request: APIRequestContext, attempts: number): Promise<string[]> {
+    return reconcileTrackedSessions(createdSessions, async session => {
+      const query = session.unixUser ? `?unixUser=${encodeURIComponent(session.unixUser)}` : '';
+      const response = await request.delete(`/api/tmux/sessions/${encodeURIComponent(session.name)}${query}`);
+      return {
+        ok: response.ok(),
+        status: response.status(),
+        body: response.ok() ? '' : await response.text(),
+      };
+    }, attempts);
+  }
+
   test.afterEach(async ({ request }) => {
-    const cleanupFailures: string[] = [];
-    for (const session of createdSessions) {
-      try {
-        const query = session.unixUser ? `?unixUser=${encodeURIComponent(session.unixUser)}` : '';
-        const response = await request.delete(`/api/tmux/sessions/${encodeURIComponent(session.name)}${query}`);
-        if (!response.ok()) cleanupFailures.push(`${session.name}: HTTP ${response.status()} ${await response.text()}`);
-      } catch (error) {
-        cleanupFailures.push(`${session.name}: ${String(error)}`);
-      }
-    }
-    createdSessions.length = 0;
-    expect(cleanupFailures, 'every live sizing smoke session must be deleted').toEqual([]);
+    const failures = await cleanupTrackedSessions(request, 2);
+    expect(failures, 'every live sizing smoke session must be deleted; unresolved unixUser/session tuples remain tracked').toEqual([]);
+  });
+
+  test.afterAll(async ({ request }) => {
+    const failures = await cleanupTrackedSessions(request, 3);
+    expect(failures, 'final live sizing reconciliation left unresolved unixUser/session tuples').toEqual([]);
   });
 
   test('iframe dimensions match container after session load', async ({ page }) => {

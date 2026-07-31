@@ -2435,13 +2435,41 @@ type paneSendResult struct {
 	SubmitKeyDispatched bool
 	BufferCleaned       bool
 	Detail              string
+	OperationErr        error
 	CleanupErr          error
 }
 
-func (h *TmuxHandler) retryDeleteBuffer(socket, bufferName string) {
-	go func() {
-		_, _ = h.runTmuxOnSocketContext(context.Background(), socket, "delete-buffer", "-b", bufferName)
-	}()
+func reservePaneSendCleanup(ctx context.Context, reserve time.Duration) (context.Context, time.Duration, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	deadline, bounded := ctx.Deadline()
+	if reserve <= 0 || !bounded {
+		return ctx, 0, func() {}
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return ctx, 0, func() {}
+	}
+	if maximumReserve := remaining / 4; reserve > maximumReserve {
+		reserve = maximumReserve
+	}
+	if reserve <= 0 {
+		return ctx, 0, func() {}
+	}
+	sendCtx, cancel := context.WithDeadline(ctx, deadline.Add(-reserve))
+	return sendCtx, reserve, cancel
+}
+
+func paneSendCleanupContext(operationCtx context.Context, budget time.Duration) (context.Context, context.CancelFunc) {
+	if budget <= 0 {
+		return operationCtx, func() {}
+	}
+	deadline := time.Now().Add(budget)
+	if operationDeadline, bounded := operationCtx.Deadline(); bounded && operationDeadline.Before(deadline) {
+		deadline = operationDeadline
+	}
+	return context.WithDeadline(context.WithoutCancel(operationCtx), deadline)
 }
 
 // sendBufferToPane is the single delivery path shared by Send to Session and
@@ -2450,20 +2478,25 @@ func (h *TmuxHandler) retryDeleteBuffer(socket, bufferName string) {
 // and leave no buffer behind. Interactive sends pass a background operation
 // context so request cancellation cannot tear down a half-applied operator action;
 // scheduled sends pass their bounded delivery context end to end.
-func (h *TmuxHandler) sendBufferToPane(loadCtx, operationCtx context.Context, target tmuxTarget, pane sendPaneTarget, bufferName, payloadPath string, submit bool) (paneSendResult, error) {
+func (h *TmuxHandler) sendBufferToPane(loadCtx, operationCtx context.Context, cleanupReserve time.Duration, target tmuxTarget, pane sendPaneTarget, bufferName, payloadPath string, submit bool) (paneSendResult, error) {
 	if operationCtx == nil {
 		operationCtx = context.Background()
+	}
+	sendCtx, cleanupBudget, cancelSend := reservePaneSendCleanup(operationCtx, cleanupReserve)
+	defer cancelSend()
+	if cleanupBudget > 0 {
+		loadCtx = sendCtx
 	}
 	bufferDeleted := false
 	deleteBuffer := func() error {
 		if bufferDeleted {
 			return nil
 		}
-		_, err := h.runTmuxOnSocketContext(operationCtx, target.socket, "delete-buffer", "-b", bufferName)
+		cleanupCtx, cancelCleanup := paneSendCleanupContext(operationCtx, cleanupBudget)
+		defer cancelCleanup()
+		_, err := h.runTmuxOnSocketContext(cleanupCtx, target.socket, "delete-buffer", "-b", bufferName)
 		if err == nil {
 			bufferDeleted = true
-		} else {
-			h.retryDeleteBuffer(target.socket, bufferName)
 		}
 		return err
 	}
@@ -2476,7 +2509,7 @@ func (h *TmuxHandler) sendBufferToPane(loadCtx, operationCtx context.Context, ta
 	}
 
 	output, err := h.runTmuxOnSocketContext(
-		operationCtx,
+		sendCtx,
 		target.socket,
 		"if-shell", "-F", "-t", pane.PaneID,
 		atomicSendCondition(pane),
@@ -2485,7 +2518,7 @@ func (h *TmuxHandler) sendBufferToPane(loadCtx, operationCtx context.Context, ta
 	)
 	if err != nil {
 		cleanupErr := deleteBuffer()
-		return paneSendResult{Kind: paneSendUnknown, BufferCleaned: cleanupErr == nil, Detail: err.Error(), CleanupErr: cleanupErr}, nil
+		return paneSendResult{Kind: paneSendUnknown, BufferCleaned: cleanupErr == nil, Detail: err.Error(), OperationErr: err, CleanupErr: cleanupErr}, nil
 	}
 
 	switch marker := strings.TrimSpace(output); marker {
@@ -2512,15 +2545,16 @@ func (h *TmuxHandler) sendBufferToPane(loadCtx, operationCtx context.Context, ta
 	// Agent TUIs can swallow a submit key delivered in the same burst as a large
 	// bracketed paste. Let the paste settle, then guard the single C-m against the
 	// exact pane generation again before dispatching it.
-	if err := tmuxSendSleep(operationCtx, tmuxSendSubmitSettleDelay); err != nil {
+	if err := tmuxSendSleep(sendCtx, tmuxSendSubmitSettleDelay); err != nil {
 		return paneSendResult{
 			Kind:          paneSendDelivered,
 			BufferCleaned: true,
 			Detail:        "submit key was not dispatched: " + err.Error(),
+			OperationErr:  err,
 		}, nil
 	}
 	output, err = h.runTmuxOnSocketContext(
-		operationCtx,
+		sendCtx,
 		target.socket,
 		"if-shell", "-F", "-t", pane.PaneID,
 		atomicSendCondition(pane),
@@ -2528,7 +2562,7 @@ func (h *TmuxHandler) sendBufferToPane(loadCtx, operationCtx context.Context, ta
 		"display-message -p "+atomicSendSubmitTargetChangedMarker,
 	)
 	if err != nil {
-		return paneSendResult{Kind: paneSendUnknown, BufferCleaned: true, Detail: err.Error()}, nil
+		return paneSendResult{Kind: paneSendUnknown, BufferCleaned: true, Detail: err.Error(), OperationErr: err}, nil
 	}
 	switch marker := strings.TrimSpace(output); marker {
 	case atomicSendSubmitKeyMarker:
@@ -3208,7 +3242,7 @@ func (h *TmuxHandler) SendToSession(w http.ResponseWriter, r *http.Request) {
 			"timestamp":           time.Now().UTC().Format(time.RFC3339),
 		})
 	}
-	result, err := h.sendBufferToPane(r.Context(), context.Background(), target, pane, bufferName, manifest.Payload, submissionRequested)
+	result, err := h.sendBufferToPane(r.Context(), context.Background(), 0, target, pane, bufferName, manifest.Payload, submissionRequested)
 	if err != nil {
 		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
 		return

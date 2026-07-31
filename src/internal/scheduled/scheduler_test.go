@@ -319,6 +319,173 @@ func TestCreateBoundsConcurrentTargetValidation(t *testing.T) {
 	}
 }
 
+func TestConcurrentRunNowCannotDispatchTwiceOrLoseReceipt(t *testing.T) {
+	service, runner, taskID := newBlockedMutationService(t)
+	releaseOnce := sync.Once{}
+	release := func() { releaseOnce.Do(func() { close(runner.release) }) }
+	defer release()
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, _, err := service.RunNow(context.Background(), taskID, "first")
+		firstDone <- err
+	}()
+	select {
+	case <-runner.entered:
+	case <-time.After(time.Second):
+		t.Fatal("first RunNow did not enter delivery")
+	}
+
+	secondDone := make(chan error, 1)
+	go func() {
+		_, _, err := service.RunNow(context.Background(), taskID, "second")
+		secondDone <- err
+	}()
+	var secondErr error
+	duplicateSend := false
+	select {
+	case secondErr = <-secondDone:
+	case <-runner.entered:
+		duplicateSend = true
+	case <-time.After(time.Second):
+		t.Fatal("second RunNow neither failed with a conflict nor entered delivery")
+	}
+	release()
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first RunNow returned error: %v", err)
+	}
+	if duplicateSend {
+		if err := <-secondDone; err != nil {
+			t.Logf("duplicate RunNow later returned %v", err)
+		}
+		t.Fatal("two concurrent RunNow calls both dispatched the prompt")
+	}
+	if secondErr == nil || !strings.Contains(secondErr.Error(), "already being modified") {
+		t.Fatalf("second RunNow error = %v, want a fail-loud task mutation conflict", secondErr)
+	}
+	loaded, err := service.Get(taskID)
+	if err != nil {
+		t.Fatalf("Get after RunNow: %v", err)
+	}
+	if len(loaded.RecentRuns) != 1 || runner.sendCount() != 1 {
+		t.Fatalf("persisted runs/sends = %d/%d, want exactly one of each", len(loaded.RecentRuns), runner.sendCount())
+	}
+}
+
+func TestRunNowBlocksConcurrentTaskMutation(t *testing.T) {
+	mutations := []struct {
+		name string
+		run  func(*Service, string) error
+	}{
+		{name: "patch", run: func(service *Service, id string) error {
+			name := "stale patch"
+			_, err := service.Patch(context.Background(), id, PatchTaskRequest{Name: &name})
+			return err
+		}},
+		{name: "pause", run: func(service *Service, id string) error {
+			_, err := service.Pause(id, "pauser")
+			return err
+		}},
+		{name: "resume", run: func(service *Service, id string) error {
+			_, err := service.Resume(id, "resumer")
+			return err
+		}},
+		{name: "delete", run: func(service *Service, id string) error { return service.Delete(id) }},
+	}
+	for _, mutation := range mutations {
+		t.Run(mutation.name, func(t *testing.T) {
+			service, runner, taskID := newBlockedMutationService(t)
+			releaseOnce := sync.Once{}
+			release := func() { releaseOnce.Do(func() { close(runner.release) }) }
+			defer release()
+			runDone := make(chan error, 1)
+			go func() {
+				_, _, err := service.RunNow(context.Background(), taskID, "runner")
+				runDone <- err
+			}()
+			select {
+			case <-runner.entered:
+			case <-time.After(time.Second):
+				t.Fatal("RunNow did not enter delivery")
+			}
+			mutationErr := mutation.run(service, taskID)
+			release()
+			if err := <-runDone; err != nil {
+				t.Fatalf("RunNow returned error: %v", err)
+			}
+			if mutationErr == nil || !strings.Contains(mutationErr.Error(), "already being modified") {
+				t.Fatalf("concurrent %s error = %v, want a fail-loud task mutation conflict", mutation.name, mutationErr)
+			}
+			loaded, err := service.Get(taskID)
+			if err != nil {
+				t.Fatalf("task was lost after rejected %s: %v", mutation.name, err)
+			}
+			if len(loaded.RecentRuns) != 1 || runner.sendCount() != 1 {
+				t.Fatalf("after %s, persisted runs/sends = %d/%d, want one", mutation.name, len(loaded.RecentRuns), runner.sendCount())
+			}
+		})
+	}
+}
+
+func TestManualRunClaimPreventsConcurrentScheduledDispatch(t *testing.T) {
+	service, runner, taskID := newBlockedMutationService(t)
+	releaseOnce := sync.Once{}
+	release := func() { releaseOnce.Do(func() { close(runner.release) }) }
+	defer release()
+	manualDone := make(chan error, 1)
+	go func() {
+		_, _, err := service.RunNow(context.Background(), taskID, "manual")
+		manualDone <- err
+	}()
+	select {
+	case <-runner.entered:
+	case <-time.After(time.Second):
+		t.Fatal("manual run did not enter delivery")
+	}
+
+	tickDone := make(chan struct {
+		runs []RunEntry
+		err  error
+	}, 1)
+	go func() {
+		runs, err := service.RunDue(context.Background())
+		tickDone <- struct {
+			runs []RunEntry
+			err  error
+		}{runs: runs, err: err}
+	}()
+	var tickResult struct {
+		runs []RunEntry
+		err  error
+	}
+	duplicateSend := false
+	select {
+	case tickResult = <-tickDone:
+	case <-runner.entered:
+		duplicateSend = true
+	case <-time.After(time.Second):
+		t.Fatal("scheduler neither skipped claimed task nor entered duplicate delivery")
+	}
+	release()
+	if err := <-manualDone; err != nil {
+		t.Fatalf("manual RunNow returned error: %v", err)
+	}
+	if duplicateSend {
+		tickResult = <-tickDone
+		t.Fatal("scheduled and manual runs dispatched the same task concurrently")
+	}
+	if tickResult.err != nil || len(tickResult.runs) != 0 {
+		t.Fatalf("RunDue result = %+v/%v, want claimed task skipped", tickResult.runs, tickResult.err)
+	}
+	loaded, err := service.Get(taskID)
+	if err != nil {
+		t.Fatalf("Get after manual/scheduled arbitration: %v", err)
+	}
+	if len(loaded.RecentRuns) != 1 || runner.sendCount() != 1 {
+		t.Fatalf("persisted runs/sends = %d/%d, want one manual run", len(loaded.RecentRuns), runner.sendCount())
+	}
+}
+
 func TestDeliveryRunTimeoutIncludesValidation(t *testing.T) {
 	runner := &slowValidationRunner{validationDelay: 30 * time.Millisecond}
 	service := NewService(NewStore(t.TempDir()), runner, ServiceOptions{
@@ -434,6 +601,55 @@ func TestTaskJSONMirrorsFirstTargetForOlderReaders(t *testing.T) {
 	if len(document.Targets) != 2 {
 		t.Fatalf("targets = %+v, want both persisted", document.Targets)
 	}
+}
+
+type blockingTaskMutationRunner struct {
+	entered chan Target
+	release chan struct{}
+	mu      sync.Mutex
+	sends   int
+}
+
+func (r *blockingTaskMutationRunner) ValidateTarget(context.Context, Target) error { return nil }
+
+func (r *blockingTaskMutationRunner) SendPrompt(_ context.Context, target Target, _ string) (Delivery, error) {
+	r.mu.Lock()
+	r.sends++
+	r.mu.Unlock()
+	r.entered <- target
+	<-r.release
+	return Delivery{Pane: "%1", SubmitKeyDispatched: true}, nil
+}
+
+func (r *blockingTaskMutationRunner) sendCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.sends
+}
+
+func newBlockedMutationService(t *testing.T) (*Service, *blockingTaskMutationRunner, string) {
+	t.Helper()
+	now := time.Date(2026, 7, 31, 20, 0, 0, 0, time.UTC)
+	store := NewStore(t.TempDir())
+	runner := &blockingTaskMutationRunner{entered: make(chan Target, 4), release: make(chan struct{})}
+	task := &Task{
+		ID:         "tsk_mutation",
+		Name:       "serialized task",
+		Prompt:     "run once",
+		Targets:    []Target{{SessionName: "ops", UnixUser: "alice"}},
+		Schedule:   Schedule{Type: "interval", EveryMinutes: 15, Timezone: "UTC"},
+		Enabled:    true,
+		NextRun:    timePtr(now.Add(-time.Minute)),
+		CreatedAt:  now.Add(-time.Hour),
+		UpdatedAt:  now.Add(-time.Hour),
+		RecentRuns: []RunEntry{},
+		Audit:      []AuditEntry{},
+	}
+	if err := store.Save(task); err != nil {
+		t.Fatalf("save mutation test task: %v", err)
+	}
+	service := NewService(store, runner, ServiceOptions{Now: func() time.Time { return now }})
+	return service, runner, task.ID
 }
 
 type blockingValidationRunner struct {

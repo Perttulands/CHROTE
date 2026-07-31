@@ -130,6 +130,17 @@ func (s *Service) Get(id string) (*Task, error) {
 	return s.store.Get(id)
 }
 
+func (s *Service) claimTaskMutation(id string) (func(), error) {
+	release, claimed, err := s.store.TryLock(id)
+	if err != nil {
+		return nil, err
+	}
+	if !claimed {
+		return nil, fmt.Errorf("%w: %s", ErrConflict, id)
+	}
+	return release, nil
+}
+
 // Create validates, computes nextRun, and persists a new task.
 func (s *Service) Create(ctx context.Context, request CreateTaskRequest) (*Task, error) {
 	now := s.now().UTC()
@@ -169,6 +180,12 @@ func (s *Service) Create(ctx context.Context, request CreateTaskRequest) (*Task,
 
 // Patch applies partial changes to an existing task.
 func (s *Service) Patch(ctx context.Context, id string, request PatchTaskRequest) (*Task, error) {
+	release, err := s.claimTaskMutation(id)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	task, err := s.store.Get(id)
 	if err != nil {
 		return nil, err
@@ -218,11 +235,22 @@ func (s *Service) Patch(ctx context.Context, id string, request PatchTaskRequest
 
 // Delete removes an existing task.
 func (s *Service) Delete(id string) error {
+	release, err := s.claimTaskMutation(id)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return s.store.Delete(id)
 }
 
 // Pause marks a task paused and clears nextRun without disabling it.
 func (s *Service) Pause(id, actor string) (*Task, error) {
+	release, err := s.claimTaskMutation(id)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	task, err := s.store.Get(id)
 	if err != nil {
 		return nil, err
@@ -243,6 +271,12 @@ func (s *Service) Pause(id, actor string) (*Task, error) {
 
 // Resume unpauses a task and recomputes its nextRun if it is enabled.
 func (s *Service) Resume(id, actor string) (*Task, error) {
+	release, err := s.claimTaskMutation(id)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	task, err := s.store.Get(id)
 	if err != nil {
 		return nil, err
@@ -265,6 +299,12 @@ func (s *Service) Resume(id, actor string) (*Task, error) {
 
 // RunNow sends the task prompt immediately and persists the run result.
 func (s *Service) RunNow(ctx context.Context, id, actor string) (*Task, RunEntry, error) {
+	release, err := s.claimTaskMutation(id)
+	if err != nil {
+		return nil, RunEntry{}, err
+	}
+	defer release()
+
 	task, err := s.store.Get(id)
 	if err != nil {
 		return nil, RunEntry{}, err
@@ -282,7 +322,8 @@ func (s *Service) RunNow(ctx context.Context, id, actor string) (*Task, RunEntry
 	return cloneTask(task), run, nil
 }
 
-// RunDue reloads persisted tasks, computes missing nextRun values, and fires due tasks once.
+// RunDue reloads persisted tasks, claims each task before inspecting or changing
+// it, computes missing nextRun values, and fires due tasks once.
 func (s *Service) RunDue(ctx context.Context) ([]RunEntry, error) {
 	tasks, err := s.store.List()
 	if err != nil {
@@ -291,87 +332,82 @@ func (s *Service) RunDue(ctx context.Context) ([]RunEntry, error) {
 	now := s.now().UTC()
 	runs := []RunEntry{}
 	for i := range tasks {
-		task := tasks[i]
-		originalUpdatedAt := task.UpdatedAt
-		changed := false
-		if task.Enabled && !task.Paused && task.NextRun != nil && !task.NextRun.After(now) {
-			release, claimed, err := s.store.TryLock(task.ID)
-			if err != nil {
-				return runs, err
-			}
-			if !claimed {
-				continue
-			}
-
-			latest, err := s.store.Get(task.ID)
-			if errors.Is(err, ErrNotFound) {
-				release()
-				continue
-			}
-			if err != nil {
-				release()
-				return runs, err
-			}
-			if !latest.UpdatedAt.Equal(originalUpdatedAt) || !latest.Enabled || latest.Paused || latest.NextRun == nil || latest.NextRun.After(now) {
-				release()
-				continue
-			}
-			task = *latest
-
-			if err := s.validateAndPrepare(ctx, &task, false, now); err != nil {
-				task.LastStatus = RunStatusError
-				task.UpdatedAt = now
-				task.Audit = boundedAudit(append(task.Audit, AuditEntry{At: now, Action: "scheduler-error", Message: err.Error()}), s.maxAuditEntries)
-			} else {
-				run := s.fireTask(ctx, &task, "scheduled")
-				task.UpdatedAt = now
-				task.Audit = boundedAudit(append(task.Audit, AuditEntry{At: now, Action: "scheduled-run", Message: run.Status}), s.maxAuditEntries)
-				runs = append(runs, run)
-			}
-			if err := s.saveSchedulerChange(&task, originalUpdatedAt); err != nil {
-				release()
-				return runs, err
-			}
-			release()
-			continue
-		} else if task.Enabled && !task.Paused && task.NextRun == nil {
-			if err := s.validateAndPrepare(ctx, &task, false, now); err != nil {
-				task.LastStatus = RunStatusError
-				task.UpdatedAt = now
-				task.Audit = boundedAudit(append(task.Audit, AuditEntry{At: now, Action: "scheduler-error", Message: err.Error()}), s.maxAuditEntries)
-			} else if task.NextRun == nil {
-				if err := s.recomputeNextRun(&task, now); err != nil {
-					return runs, err
-				}
-			}
-			changed = true
-		} else if err := s.validateAndPrepare(ctx, &task, false, now); err != nil {
-			task.LastStatus = RunStatusError
-			task.UpdatedAt = now
-			task.Audit = boundedAudit(append(task.Audit, AuditEntry{At: now, Action: "scheduler-error", Message: err.Error()}), s.maxAuditEntries)
-			changed = true
+		release, claimed, err := s.store.TryLock(tasks[i].ID)
+		if err != nil {
+			return runs, err
 		}
-		if changed {
-			if err := s.saveSchedulerChange(&task, originalUpdatedAt); err != nil {
-				return runs, err
-			}
+		if !claimed {
+			continue
+		}
+		run, err := s.runDueTask(ctx, tasks[i].ID, now)
+		release()
+		if run != nil {
+			runs = append(runs, *run)
+		}
+		if err != nil {
+			return runs, err
 		}
 	}
 	return runs, nil
 }
 
-func (s *Service) saveSchedulerChange(task *Task, originalUpdatedAt time.Time) error {
-	latest, err := s.store.Get(task.ID)
+func (s *Service) runDueTask(ctx context.Context, id string, now time.Time) (*RunEntry, error) {
+	task, err := s.store.Get(id)
 	if errors.Is(err, ErrNotFound) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if !latest.UpdatedAt.Equal(originalUpdatedAt) {
-		return nil
+
+	changed := false
+	originalUpdatedAt := task.UpdatedAt
+	var run *RunEntry
+	if task.Enabled && !task.Paused && task.NextRun != nil && !task.NextRun.After(now) {
+		if err := s.validateAndPrepare(ctx, task, false, now); err != nil {
+			task.LastStatus = RunStatusError
+			task.UpdatedAt = now
+			task.Audit = boundedAudit(append(task.Audit, AuditEntry{At: now, Action: "scheduler-error", Message: err.Error()}), s.maxAuditEntries)
+		} else {
+			fired := s.fireTask(ctx, task, "scheduled")
+			task.UpdatedAt = now
+			task.Audit = boundedAudit(append(task.Audit, AuditEntry{At: now, Action: "scheduled-run", Message: fired.Status}), s.maxAuditEntries)
+			run = &fired
+		}
+		changed = true
+	} else if task.Enabled && !task.Paused && task.NextRun == nil {
+		if err := s.validateAndPrepare(ctx, task, false, now); err != nil {
+			task.LastStatus = RunStatusError
+			task.UpdatedAt = now
+			task.Audit = boundedAudit(append(task.Audit, AuditEntry{At: now, Action: "scheduler-error", Message: err.Error()}), s.maxAuditEntries)
+		} else if task.NextRun == nil {
+			if err := s.recomputeNextRun(task, now); err != nil {
+				return nil, err
+			}
+		}
+		changed = true
+	} else if err := s.validateAndPrepare(ctx, task, false, now); err != nil {
+		task.LastStatus = RunStatusError
+		task.UpdatedAt = now
+		task.Audit = boundedAudit(append(task.Audit, AuditEntry{At: now, Action: "scheduler-error", Message: err.Error()}), s.maxAuditEntries)
+		changed = true
 	}
-	return s.store.Save(task)
+	if changed {
+		latest, err := s.store.Get(task.ID)
+		if errors.Is(err, ErrNotFound) {
+			return run, nil
+		}
+		if err != nil {
+			return run, err
+		}
+		if !latest.UpdatedAt.Equal(originalUpdatedAt) {
+			return run, fmt.Errorf("%w: %s changed outside its task claim", ErrConflict, task.ID)
+		}
+		if err := s.store.Save(task); err != nil {
+			return run, err
+		}
+	}
+	return run, nil
 }
 
 func (s *Service) validateAndPrepare(ctx context.Context, task *Task, validateTarget bool, now time.Time) error {
