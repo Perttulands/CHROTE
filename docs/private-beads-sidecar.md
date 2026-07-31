@@ -17,8 +17,11 @@ A compliant sidecar must:
    tracked-worktree state, Dolt commit, checksum, and record counts;
 5. synchronize periodically so tracker-only changes leave the machine;
 6. synchronize successfully before a CHROTE source push proceeds;
-7. fail non-zero on export, native push, Git push, or verification errors; and
-8. prove restore in a disposable workspace without overwriting an existing
+7. fail non-zero on export, native push, Git push, or verification errors;
+8. keep the pushed Git worktree distinct from the explicitly configured canonical
+   Beads directory, so worktree pushes pair the correct source tip without tracker
+   auto-discovery; and
+9. prove restore in a disposable workspace without overwriting an existing
    `.beads/` database.
 
 The portable JSONL export is not a substitute for native Dolt replication.
