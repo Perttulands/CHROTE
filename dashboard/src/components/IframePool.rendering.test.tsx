@@ -95,4 +95,48 @@ describe('IframePool attached terminal rendering', () => {
     vi.advanceTimersByTime(300)
     expect(dispatch).toHaveBeenCalledTimes(3)
   })
+
+  it('cancels pending fits when the document becomes hidden', async () => {
+    const originalVisibility = Object.getOwnPropertyDescriptor(document, 'visibilityState')
+    try {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+      render(
+        <IframePoolProvider>
+          <ClaimedIframe />
+        </IframePoolProvider>
+      )
+
+      const iframe = await waitFor(() => {
+        const node = document.querySelector('[data-testid="iframe-target"] iframe') as HTMLIFrameElement | null
+        expect(node).not.toBeNull()
+        return node!
+      })
+      Object.defineProperty(iframe, 'offsetWidth', { configurable: true, value: 800 })
+      Object.defineProperty(iframe, 'offsetHeight', { configurable: true, value: 600 })
+      const dispatch = vi.spyOn(iframe.contentWindow!, 'dispatchEvent')
+      vi.useFakeTimers()
+
+      fireEvent.click(screen.getByRole('button', { name: 'Fit terminal' }))
+      expect(dispatch).toHaveBeenCalledTimes(1)
+      expect(vi.getTimerCount()).toBe(2)
+
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+      fireEvent(document, new Event('visibilitychange'))
+      expect(vi.getTimerCount()).toBe(0)
+      vi.advanceTimersByTime(500)
+      expect(dispatch).toHaveBeenCalledTimes(1)
+
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+      fireEvent(document, new Event('visibilitychange'))
+      expect(dispatch).toHaveBeenCalledTimes(2)
+      expect(vi.getTimerCount()).toBe(2)
+      vi.advanceTimersByTime(500)
+      expect(dispatch).toHaveBeenCalledTimes(4)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      if (originalVisibility) {
+        Object.defineProperty(document, 'visibilityState', originalVisibility)
+      }
+    }
+  })
 })

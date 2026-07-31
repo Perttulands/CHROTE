@@ -30,7 +30,7 @@ func newSendHarness(t *testing.T, panes string) sendHarness {
 	t.Helper()
 	originalLookupUser := tmuxLookupUser
 	originalSendSleep := tmuxSendSleep
-	tmuxSendSleep = func(time.Duration) {}
+	tmuxSendSleep = func(context.Context, time.Duration) error { return nil }
 	tmuxLookupUser = func(username string) (*osuser.User, error) {
 		switch username {
 		case "alice":
@@ -434,11 +434,12 @@ func TestSendToSessionSettlesThenDispatchesOneGuardedSubmitKey(t *testing.T) {
 	var settleDelay time.Duration
 	settled := filepath.Join(t.TempDir(), "paste-settled")
 	t.Setenv("TMUX_SEND_REQUIRE_SETTLE", settled)
-	tmuxSendSleep = func(delay time.Duration) {
+	tmuxSendSleep = func(_ context.Context, delay time.Duration) error {
 		settleDelay = delay
 		if err := os.WriteFile(settled, nil, 0o600); err != nil {
 			t.Fatalf("record paste settle: %v", err)
 		}
+		return nil
 	}
 	recorder := h.send(t, "one", map[string]string{"text": "submit after settling", "submit": "true"})
 	if recorder.Code != http.StatusOK {

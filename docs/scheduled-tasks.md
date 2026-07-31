@@ -57,11 +57,15 @@ results:
   "status": "partial",
   "message": "alice/planner-2: scheduled task target not found",
   "targets": [
-    {"sessionName": "planner", "unixUser": "alice", "status": "success", "pane": "%7", "submitted": true},
+    {"sessionName": "planner", "unixUser": "alice", "status": "success", "pane": "%7", "submitKeyDispatched": true},
     {"sessionName": "planner-2", "unixUser": "alice", "status": "error", "message": "scheduled task target not found"}
   ]
 }
 ```
+
+`submitKeyDispatched: true` is a tmux transport receipt only. It confirms that
+CHROTE dispatched the submit key to the verified pane; it does not claim that
+the terminal application accepted or began processing the prompt.
 
 ## List tasks
 
@@ -200,10 +204,12 @@ The API fails closed for:
 Prompts are delivered through the same guarded path as **Send to Session**: the prompt is
 staged in a private file, loaded into a private tmux buffer, and pasted only while the
 resolved pane's `session_id`/`pane_id`/`pane_pid`/`server pid` generation still matches,
-followed by `Enter` so an agent TUI actually submits it. The buffer is deleted afterwards
-and the staged file is removed. Prompt text never reaches a shell or a tmux argv, and
-nothing is appended to it. If the pane generation changed, or tmux does not confirm the
-paste, the run is recorded as failed for that target instead of being retried blindly.
+followed by an `Enter` key dispatch. That dispatch is a tmux transport receipt only; it does
+not prove that the terminal application accepted or began processing the prompt. The buffer
+is deleted afterwards and the staged file is removed. Prompt text never reaches a shell or a
+tmux argv, and nothing is appended to it. If the pane generation changed, or tmux does not
+confirm the paste, the run is recorded as failed for that target instead of being retried
+blindly.
 
 For an unattended send CHROTE resolves the target session's active pane (a session with a
 single pane resolves to that pane). Interactive sends still pin an exact pane, because a

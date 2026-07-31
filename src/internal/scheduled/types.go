@@ -16,6 +16,10 @@ const (
 	// RunStatusPartial records a fan-out where some targets took the prompt and
 	// others failed. A dead session must never block healthy ones.
 	RunStatusPartial = "partial"
+	// SubmitKeyDispatchedDetail is the truthful transport receipt stored for a
+	// guarded submit. It deliberately does not claim application acceptance.
+	SubmitKeyDispatchedDetail = "pasted; submit key dispatched (application acceptance unconfirmed)"
+	legacySubmittedDetail     = "pasted and submitted"
 )
 
 var (
@@ -33,12 +37,12 @@ type Runner interface {
 	SendPrompt(context.Context, Target, string) (Delivery, error)
 }
 
-// Delivery describes how one prompt reached one target. It is recorded for
-// audit so a run entry can prove which pane accepted the prompt.
+// Delivery describes the tmux transport receipt for one target. A dispatched
+// submit key does not prove that the application accepted the prompt.
 type Delivery struct {
-	Pane      string
-	Submitted bool
-	Detail    string
+	Pane                string
+	SubmitKeyDispatched bool
+	Detail              string
 }
 
 // Target identifies the selected tmux destination. Socket paths are deliberately
@@ -60,12 +64,34 @@ type Schedule struct {
 
 // TargetRun records the delivery outcome for a single target inside one run.
 type TargetRun struct {
-	SessionName string `json:"sessionName"`
-	UnixUser    string `json:"unixUser,omitempty"`
-	Status      string `json:"status"`
-	Pane        string `json:"pane,omitempty"`
-	Submitted   bool   `json:"submitted,omitempty"`
-	Message     string `json:"message,omitempty"`
+	SessionName         string `json:"sessionName"`
+	UnixUser            string `json:"unixUser,omitempty"`
+	Status              string `json:"status"`
+	Pane                string `json:"pane,omitempty"`
+	SubmitKeyDispatched bool   `json:"submitKeyDispatched,omitempty"`
+	Message             string `json:"message,omitempty"`
+}
+
+// UnmarshalJSON conservatively migrates the legacy submission claim emitted by
+// older CHROTE builds into a truthful tmux transport receipt. MarshalJSON then
+// emits only the current schema, so API reads cannot repeat the false ACK.
+func (t *TargetRun) UnmarshalJSON(raw []byte) error {
+	type targetRunAlias TargetRun
+	var document struct {
+		targetRunAlias
+		LegacySubmitted bool `json:"submitted"`
+	}
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return err
+	}
+	*t = TargetRun(document.targetRunAlias)
+	if document.LegacySubmitted {
+		t.SubmitKeyDispatched = true
+	}
+	if t.Message == legacySubmittedDetail {
+		t.Message = SubmitKeyDispatchedDetail
+	}
+	return nil
 }
 
 // RunEntry is a bounded audit record for recent task executions.

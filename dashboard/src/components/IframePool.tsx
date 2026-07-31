@@ -265,7 +265,8 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
 
     const fitVisibleIframe = () => {
       try {
-        // Only fit iframes claimed into a visible container, not parked in the pool.
+        // Only fit iframes claimed into a visible container in a visible document.
+        if (document.visibilityState === 'hidden') return
         if (!claimsRef.current.has(sessionName)) return
         if (iframe.offsetWidth < 10 || iframe.offsetHeight < 10) return
         iframe.contentWindow?.dispatchEvent(new Event('resize'))
@@ -292,7 +293,11 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const refitClaimed = () => {
-      if (document.visibilityState === 'hidden') return
+      if (document.visibilityState === 'hidden') {
+        fitTimeoutsRef.current.forEach(timeouts => timeouts.forEach(clearTimeout))
+        fitTimeoutsRef.current.clear()
+        return
+      }
       claimsRef.current.forEach((_container, sessionName) => triggerFit(sessionName))
     }
     document.addEventListener('visibilitychange', refitClaimed)

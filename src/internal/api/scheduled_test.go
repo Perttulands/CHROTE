@@ -342,8 +342,8 @@ exit 0
 	if err != nil {
 		t.Fatalf("SendPrompt returned error: %v", err)
 	}
-	if delivery.Pane != "%1" || !delivery.Submitted {
-		t.Fatalf("delivery = %+v, want the resolved pane recorded as submitted", delivery)
+	if delivery.Pane != "%1" || !delivery.SubmitKeyDispatched {
+		t.Fatalf("delivery = %+v, want the resolved pane recorded with a submit-key receipt", delivery)
 	}
 
 	raw, err := osReadFileString(argsPath)
@@ -464,6 +464,121 @@ printf 'tmux started\n' >> "$TMUX_ARGS_FILE"
 	}
 }
 
+func TestScheduledTmuxRunnerCancelsGuardedPasteWithCallerContext(t *testing.T) {
+	tmpDir := t.TempDir()
+	argsPath := tmpDir + "/tmux-argv.txt"
+	fakeTmux := tmpDir + "/tmux"
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_ARGS_FILE"
+for arg in "$@"; do
+  case "$arg" in
+    list-panes)
+      printf '$1\tops\t%%1\t1234\t5678\t@1\tmain\t/tmp\tclaude\t1\n'
+      exit 0
+      ;;
+    load-buffer)
+      exit 0
+      ;;
+    if-shell)
+      exec sleep 2
+      ;;
+  esac
+done
+exit 0
+`
+	if err := osWriteFileExecutable(fakeTmux, script); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+	t.Setenv("TMUX_ARGS_FILE", argsPath)
+	t.Setenv("PATH", tmpDir+":/usr/bin:/bin")
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/chrote-fake-tmux.sock")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/tmp/chrote-fake-home")
+
+	runner := NewScheduledTmuxRunner(NewTmuxHandler())
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err := runner.SendPrompt(ctx, scheduled.Target{SessionName: "ops", UnixUser: "alice"}, "cancel paste")
+	elapsed := time.Since(started)
+	if err == nil {
+		t.Fatal("SendPrompt returned nil after the caller deadline interrupted guarded paste")
+	}
+	if elapsed > 600*time.Millisecond {
+		t.Fatalf("guarded paste escaped caller deadline: elapsed %s", elapsed)
+	}
+	cleanupDeadline := time.Now().Add(time.Second)
+	for {
+		raw, readErr := os.ReadFile(argsPath)
+		if readErr == nil && strings.Contains(string(raw), "delete-buffer") {
+			break
+		}
+		if time.Now().After(cleanupDeadline) {
+			t.Fatalf("timed-out scheduled buffer did not start bounded background cleanup; log=%q err=%v", raw, readErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestScheduledTmuxRunnerCancelsSettleBeforeSubmitKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	argsPath := tmpDir + "/tmux-argv.txt"
+	fakeTmux := tmpDir + "/tmux"
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_ARGS_FILE"
+for arg in "$@"; do
+  case "$arg" in
+    list-panes)
+      printf '$1\tops\t%%1\t1234\t5678\t@1\tmain\t/tmp\tclaude\t1\n'
+      exit 0
+      ;;
+    load-buffer)
+      exit 0
+      ;;
+    if-shell)
+      case " $* " in
+        *" send-keys "*) printf 'CHROTE_SEND_SUBMIT_KEY_DISPATCHED\n' ;;
+        *) printf 'CHROTE_SEND_PASTED\n' ;;
+      esac
+      exit 0
+      ;;
+  esac
+done
+exit 0
+`
+	if err := osWriteFileExecutable(fakeTmux, script); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+	t.Setenv("TMUX_ARGS_FILE", argsPath)
+	t.Setenv("PATH", tmpDir+":/usr/bin:/bin")
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/chrote-fake-tmux.sock")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/tmp/chrote-fake-home")
+
+	runner := NewScheduledTmuxRunner(NewTmuxHandler())
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err := runner.SendPrompt(ctx, scheduled.Target{SessionName: "ops", UnixUser: "alice"}, "cancel submit")
+	elapsed := time.Since(started)
+	if err == nil {
+		t.Fatal("SendPrompt returned nil after the caller deadline expired during paste settle")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("settle cancellation error = %v, want context deadline exceeded", err)
+	}
+	if elapsed > 600*time.Millisecond {
+		t.Fatalf("paste settle escaped caller deadline: elapsed %s", elapsed)
+	}
+	raw, readErr := os.ReadFile(argsPath)
+	if readErr != nil {
+		t.Fatalf("read fake tmux args: %v", readErr)
+	}
+	if strings.Contains(string(raw), "send-keys") {
+		t.Fatalf("submit key was dispatched after caller deadline:\n%s", raw)
+	}
+}
+
 func newScheduledTestHandler(t *testing.T, runner scheduled.Runner, now time.Time, validateTargets bool) *ScheduledHandler {
 	t.Helper()
 	store := scheduled.NewStore(t.TempDir())
@@ -507,7 +622,7 @@ func (r *fakeScheduledRunner) SendPrompt(_ context.Context, target scheduled.Tar
 		return scheduled.Delivery{}, err
 	}
 	r.sent = append(r.sent, fakeScheduledSend{target: target, prompt: prompt})
-	return scheduled.Delivery{Pane: "%1", Submitted: true, Detail: "pasted and submitted"}, nil
+	return scheduled.Delivery{Pane: "%1", SubmitKeyDispatched: true, Detail: "submit key dispatched"}, nil
 }
 
 func scheduledAPIGet(t *testing.T, mux http.Handler, path string) map[string]any {

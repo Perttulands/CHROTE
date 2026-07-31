@@ -1,4 +1,11 @@
-import { test, expect, Page, Frame } from '@playwright/test';
+import { test, expect, Page, Frame, Locator } from '@playwright/test';
+
+type RefitProbeWindow = typeof window & {
+  __chroteRefitProbe?: {
+    events: Array<{ at: number; width: number; height: number }>;
+    installed: boolean;
+  };
+};
 
 /**
  * Integration tests for terminal iframe sizing and fit behavior.
@@ -12,7 +19,7 @@ import { test, expect, Page, Frame } from '@playwright/test';
  * Beads: pol-8dca, pol-3798, pol-1c0b
  */
 test.describe.serial('Terminal Sizing: iframe fills container and xterm fits', () => {
-  const createdSessions: string[] = [];
+  const createdSessions: Array<{ name: string; unixUser?: string }> = [];
 
   // Helper: get the visible terminal grid (scoped to active workspace)
   function visibleArea(page: Page) {
@@ -59,13 +66,34 @@ test.describe.serial('Terminal Sizing: iframe fills container and xterm fits', (
     }).toPass({ timeout });
   }
 
+  async function createTrackedSession(page: Page, terminalWindow: Locator): Promise<string> {
+    const responsePromise = page.waitForResponse(response =>
+      response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/tmux/sessions'
+    );
+    await terminalWindow.locator('.create-session-btn').click();
+    const response = await responsePromise;
+    expect(response.ok(), await response.text()).toBe(true);
+    const payload = await response.json() as { session?: string };
+    const requestPayload = response.request().postDataJSON() as { unixUser?: string } | null;
+    expect(payload.session).toBeTruthy();
+    createdSessions.push({ name: payload.session!, unixUser: requestPayload?.unixUser });
+    await expect(terminalWindow.locator('.session-tag')).toHaveCount(1, { timeout: 10000 });
+    return payload.session!;
+  }
+
   test.afterEach(async ({ request }) => {
-    for (const name of createdSessions) {
+    const cleanupFailures: string[] = [];
+    for (const session of createdSessions) {
       try {
-        await request.delete(`/api/tmux/sessions/${name}`);
-      } catch { /* ignore */ }
+        const query = session.unixUser ? `?unixUser=${encodeURIComponent(session.unixUser)}` : '';
+        const response = await request.delete(`/api/tmux/sessions/${encodeURIComponent(session.name)}${query}`);
+        if (!response.ok()) cleanupFailures.push(`${session.name}: HTTP ${response.status()} ${await response.text()}`);
+      } catch (error) {
+        cleanupFailures.push(`${session.name}: ${String(error)}`);
+      }
     }
     createdSessions.length = 0;
+    expect(cleanupFailures, 'every live sizing smoke session must be deleted').toEqual([]);
   });
 
   test('iframe dimensions match container after session load', async ({ page }) => {
@@ -83,17 +111,7 @@ test.describe.serial('Terminal Sizing: iframe fills container and xterm fits', (
     const createBtn = firstWindow.locator('.create-session-btn');
     await expect(createBtn).toBeVisible({ timeout: 5000 });
 
-    // Capture session name
-    let sessionName = '';
-    page.on('request', req => {
-      if (req.method() === 'POST' && req.url().includes('/api/tmux/sessions')) {
-        try { sessionName = JSON.parse(req.postData() || '{}').name || ''; } catch {}
-      }
-    });
-
-    await createBtn.click();
-    await expect(firstWindow.locator('.session-tag')).toHaveCount(1, { timeout: 10000 });
-    if (sessionName) createdSessions.push(sessionName);
+    await createTrackedSession(page, firstWindow);
 
     // Wait for iframe + xterm
     const body = firstWindow.locator('.terminal-window-body');
@@ -143,16 +161,7 @@ test.describe.serial('Terminal Sizing: iframe fills container and xterm fits', (
     const firstWindow = visibleArea(page).locator('.terminal-window').first();
     await expect(firstWindow.locator('.create-session-btn')).toBeVisible({ timeout: 5000 });
 
-    let sessionName = '';
-    page.on('request', req => {
-      if (req.method() === 'POST' && req.url().includes('/api/tmux/sessions')) {
-        try { sessionName = JSON.parse(req.postData() || '{}').name || ''; } catch {}
-      }
-    });
-
-    await firstWindow.locator('.create-session-btn').click();
-    await expect(firstWindow.locator('.session-tag')).toHaveCount(1, { timeout: 10000 });
-    if (sessionName) createdSessions.push(sessionName);
+    await createTrackedSession(page, firstWindow);
 
     // Wait for xterm to render and fit
     const termFrame = await waitForXterm(page);
@@ -196,16 +205,7 @@ test.describe.serial('Terminal Sizing: iframe fills container and xterm fits', (
 
     const firstWindow = visibleArea(page).locator('.terminal-window').first();
 
-    let sessionName = '';
-    page.on('request', req => {
-      if (req.method() === 'POST' && req.url().includes('/api/tmux/sessions')) {
-        try { sessionName = JSON.parse(req.postData() || '{}').name || ''; } catch {}
-      }
-    });
-
-    await firstWindow.locator('.create-session-btn').click();
-    await expect(firstWindow.locator('.session-tag')).toHaveCount(1, { timeout: 10000 });
-    if (sessionName) createdSessions.push(sessionName);
+    await createTrackedSession(page, firstWindow);
 
     const iframe = firstWindow.locator('.terminal-window-body iframe').first();
     const termFrame = await waitForXterm(page);
@@ -246,7 +246,7 @@ test.describe.serial('Terminal Sizing: iframe fills container and xterm fits', (
     expect(xtermSizing!.isClipped).toBe(false);
   });
 
-  test('terminal re-fits after tab switch round-trip', async ({ page }) => {
+  test('terminal re-fits after a hidden tab viewport change and renders the input marker visibly', async ({ page }) => {
     await page.goto('/');
     await page.evaluate(() => localStorage.clear());
     await page.reload();
@@ -256,16 +256,7 @@ test.describe.serial('Terminal Sizing: iframe fills container and xterm fits', (
     await controls.locator('.layout-btn').filter({ hasText: '1' }).click();
     const firstWindow = visibleArea(page).locator('.terminal-window').first();
 
-    let sessionName = '';
-    page.on('request', req => {
-      if (req.method() === 'POST' && req.url().includes('/api/tmux/sessions')) {
-        try { sessionName = JSON.parse(req.postData() || '{}').name || ''; } catch {}
-      }
-    });
-
-    await firstWindow.locator('.create-session-btn').click();
-    await expect(firstWindow.locator('.session-tag')).toHaveCount(1, { timeout: 10000 });
-    if (sessionName) createdSessions.push(sessionName);
+    await createTrackedSession(page, firstWindow);
 
     const termFrameBefore = await waitForXterm(page);
     const promptMarker = 'CHROTE_REFIT_INPUT_MARKER';
@@ -277,18 +268,83 @@ test.describe.serial('Terminal Sizing: iframe fills container and xterm fits', (
       });
       expect(line).toContain(promptMarker);
     }).toPass({ timeout: 5000 });
+    await termFrameBefore.evaluate(() => {
+      const probeWindow = window as RefitProbeWindow;
+      probeWindow.__chroteRefitProbe ??= { events: [], installed: false };
+      if (!probeWindow.__chroteRefitProbe.installed) {
+        window.addEventListener('resize', event => {
+          if (event.isTrusted) return;
+          probeWindow.__chroteRefitProbe?.events.push({
+            at: performance.now(),
+            width: window.innerWidth,
+            height: window.innerHeight,
+          });
+        });
+        probeWindow.__chroteRefitProbe.installed = true;
+      }
+    });
 
-    // Switch to Files tab
+    // Hide Terminal behind Files, then change viewport geometry while it is hidden.
     await page.click('.tab:has-text("Files")');
     await expect(page.getByRole('heading', { name: 'Files' })).toBeVisible({ timeout: 5000 });
+    const originalViewport = page.viewportSize();
+    if (originalViewport) {
+      await page.setViewportSize({
+        width: originalViewport.width > 1000 ? originalViewport.width - 180 : originalViewport.width + 180,
+        height: originalViewport.height > 640 ? originalViewport.height - 100 : originalViewport.height + 100,
+      });
+    }
 
     // Switch back to Terminal 1
     await page.click('.tab:has-text("Terminal")');
     await page.waitForSelector('.terminal-window', { timeout: 5000 });
     // Wait for xterm to re-fit after tab return
     const termFrameAfter = getTerminalFrame(page);
-    if (termFrameAfter) await waitForFit(termFrameAfter);
-    await page.waitForTimeout(550);
+    if (!termFrameAfter) throw new Error('Terminal iframe disappeared after tab return');
+    await waitForFit(termFrameAfter);
+
+    const geometryBeforeDelayedFit = await termFrameAfter.evaluate(() => ({
+      width: window.innerWidth,
+      height: window.innerHeight,
+    }));
+    const refitStartedAt = await termFrameAfter.evaluate(() => {
+      const probeWindow = window as RefitProbeWindow;
+      if (!probeWindow.__chroteRefitProbe) throw new Error('refit probe was not installed');
+      probeWindow.__chroteRefitProbe.events = [];
+      return performance.now();
+    });
+    await page.getByRole('button', { name: 'Refit terminal layout' }).click();
+    await expect.poll(async () => termFrameAfter.evaluate(() =>
+      (window as RefitProbeWindow).__chroteRefitProbe?.events.length ?? 0
+    )).toBeGreaterThan(0);
+
+    // Change geometry after the immediate refit but before the 200 ms recovery pass.
+    await page.waitForTimeout(80);
+    const revealedViewport = page.viewportSize();
+    if (!revealedViewport) throw new Error('Playwright viewport is unavailable');
+    await page.setViewportSize({
+      width: revealedViewport.width > 1000 ? revealedViewport.width - 120 : revealedViewport.width + 120,
+      height: revealedViewport.height > 640 ? revealedViewport.height - 60 : revealedViewport.height + 60,
+    });
+    await expect.poll(async () => termFrameAfter.evaluate(({ width, height }) =>
+      window.innerWidth !== width || window.innerHeight !== height,
+      geometryBeforeDelayedFit
+    )).toBe(true);
+    const finalGeometry = await termFrameAfter.evaluate(() => ({
+      width: window.innerWidth,
+      height: window.innerHeight,
+    }));
+    await expect.poll(async () => termFrameAfter.evaluate(({ startedAt, geometry }) => {
+      const events = (window as RefitProbeWindow).__chroteRefitProbe?.events ?? [];
+      return events.some(event =>
+        event.at - startedAt >= 180
+        && event.width === geometry.width
+        && event.height === geometry.height
+      );
+    }, { startedAt: refitStartedAt, geometry: finalGeometry }), {
+      message: 'a delayed refit must observe the final post-reveal geometry',
+      timeout: 1500,
+    }).toBe(true);
 
     // After returning, iframe should still fill container
     const sizing = await page.evaluate(() => {
@@ -312,28 +368,77 @@ test.describe.serial('Terminal Sizing: iframe fills container and xterm fits', (
     expect(sizing).not.toBeNull();
     expect(sizing!.fills).toBe(true);
 
-    // Check xterm is not clipped
-    const termFrame = getTerminalFrame(page);
-    if (termFrame) {
-      const xtermSizing = await termFrame.evaluate(() => {
+    // Check xterm is not clipped and the marker cells are actually painted.
+    const xtermSizing = await termFrameAfter.evaluate(marker => {
         const viewport = document.querySelector('.xterm-viewport') as HTMLElement;
         const screen = document.querySelector('.xterm-screen') as HTMLElement;
-        const term = (window as typeof window & { term?: { rows: number; buffer: { active: { cursorY: number; getLine: (row: number) => { translateToString: (trimRight?: boolean) => string } | undefined } } } }).term;
-        if (!viewport || !screen || !term) return null;
+        const term = (window as typeof window & { term?: { cols: number; rows: number; buffer: { active: { cursorY: number; getLine: (row: number) => { translateToString: (trimRight?: boolean) => string } | undefined } } } }).term;
+        const renderCanvas = Array.from(screen?.querySelectorAll('canvas') ?? [])
+          .find(canvas => !canvas.classList.contains('xterm-link-layer'));
+        if (!viewport || !screen || !term || !renderCanvas) return null;
+
+        const inputLine = term.buffer.active.getLine(term.buffer.active.cursorY)?.translateToString(true) ?? '';
+        const markerColumn = inputLine.indexOf(marker);
+        const viewportRect = viewport.getBoundingClientRect();
+        const canvasRect = renderCanvas.getBoundingClientRect();
+        const cellWidthCss = canvasRect.width / term.cols;
+        const cellHeightCss = canvasRect.height / term.rows;
+        const markerRect = {
+          left: canvasRect.left + markerColumn * cellWidthCss,
+          right: canvasRect.left + (markerColumn + marker.length) * cellWidthCss,
+          top: canvasRect.top + term.buffer.active.cursorY * cellHeightCss,
+          bottom: canvasRect.top + (term.buffer.active.cursorY + 1) * cellHeightCss,
+        };
+
+        screen.querySelectorAll('[data-chrote-visual-probe]').forEach(node => node.remove());
+        const blankColumn = markerColumn + marker.length + 4;
+        const visualProbeReady = markerColumn >= 0 && blankColumn + marker.length <= term.cols;
+        if (visualProbeReady) {
+          const addProbe = (kind: 'marker' | 'blank', column: number) => {
+            const probe = document.createElement('div');
+            probe.dataset.chroteVisualProbe = kind;
+            Object.assign(probe.style, {
+              position: 'absolute',
+              pointerEvents: 'none',
+              left: `${column * cellWidthCss}px`,
+              top: `${term.buffer.active.cursorY * cellHeightCss}px`,
+              width: `${marker.length * cellWidthCss}px`,
+              height: `${cellHeightCss}px`,
+              zIndex: '20',
+            });
+            screen.appendChild(probe);
+          };
+          addProbe('marker', markerColumn);
+          addProbe('blank', blankColumn);
+        }
+
         return {
           isClipped: screen.scrollHeight > viewport.clientHeight + 5,
           cursorY: term.buffer.active.cursorY,
           rows: term.rows,
-          inputLine: term.buffer.active.getLine(term.buffer.active.cursorY)?.translateToString(true) ?? '',
+          inputLine,
+          markerFullyVisible: markerColumn >= 0
+            && markerRect.left >= viewportRect.left
+            && markerRect.right <= viewportRect.right
+            && markerRect.top >= viewportRect.top
+            && markerRect.bottom <= viewportRect.bottom,
+          visualProbeReady,
         };
-      });
+    }, promptMarker);
 
-      console.log('xterm sizing after tab switch:', xtermSizing);
-      if (xtermSizing) {
-        expect(xtermSizing.isClipped).toBe(false);
-        expect(xtermSizing.cursorY).toBeLessThan(xtermSizing.rows);
-        expect(xtermSizing.inputLine).toContain(promptMarker);
-      }
-    }
+    console.log('xterm sizing after tab switch:', xtermSizing);
+    expect(xtermSizing).not.toBeNull();
+    expect(xtermSizing!.isClipped).toBe(false);
+    expect(xtermSizing!.cursorY).toBeLessThan(xtermSizing!.rows);
+    expect(xtermSizing!.inputLine).toContain(promptMarker);
+    expect(xtermSizing!.markerFullyVisible).toBe(true);
+    expect(xtermSizing!.visualProbeReady).toBe(true);
+
+    const markerPixels = await termFrameAfter.locator('[data-chrote-visual-probe="marker"]').screenshot();
+    const blankPixels = await termFrameAfter.locator('[data-chrote-visual-probe="blank"]').screenshot();
+    expect(markerPixels.equals(blankPixels), 'marker cells must contain painted glyphs unlike blank cells on the same row').toBe(false);
+    await termFrameAfter.evaluate(() => {
+      document.querySelectorAll('[data-chrote-visual-probe]').forEach(node => node.remove());
+    });
   });
 });

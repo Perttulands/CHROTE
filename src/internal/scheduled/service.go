@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -30,6 +31,7 @@ type ServiceOptions struct {
 	MaxAuditEntries         int
 	RunTimeout              time.Duration
 	TargetValidationTimeout time.Duration
+	MaxConcurrentDeliveries int
 }
 
 // CreateTaskRequest is the normalized API-independent create request.
@@ -65,6 +67,7 @@ type Service struct {
 	maxAuditEntries         int
 	runTimeout              time.Duration
 	targetValidationTimeout time.Duration
+	maxConcurrentDeliveries int
 }
 
 // NewService creates a task service around a Store and Runner.
@@ -92,6 +95,13 @@ func NewService(store *Store, runner Runner, options ServiceOptions) *Service {
 	if validationTimeout <= 0 {
 		validationTimeout = defaultValidateTimeout
 	}
+	maxConcurrentDeliveries := options.MaxConcurrentDeliveries
+	if maxConcurrentDeliveries <= 0 {
+		maxConcurrentDeliveries = 1
+	}
+	if maxConcurrentDeliveries > maxTargetsPerTask {
+		maxConcurrentDeliveries = maxTargetsPerTask
+	}
 	return &Service{
 		store:                   store,
 		runner:                  runner,
@@ -101,6 +111,7 @@ func NewService(store *Store, runner Runner, options ServiceOptions) *Service {
 		maxAuditEntries:         maxAuditEntries,
 		runTimeout:              runTimeout,
 		targetValidationTimeout: validationTimeout,
+		maxConcurrentDeliveries: maxConcurrentDeliveries,
 	}
 }
 
@@ -400,10 +411,8 @@ func (s *Service) validateAndPrepare(ctx context.Context, task *Task, validateTa
 		return err
 	}
 	if validateTarget && s.validateTargets {
-		for _, target := range task.Targets {
-			if err := s.validateTarget(ctx, target); err != nil {
-				return err
-			}
+		if err := s.validateTargetSet(ctx, task.Targets); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -436,14 +445,13 @@ func (s *Service) fireTask(ctx context.Context, task *Task, trigger string) RunE
 	} else {
 		failures := []string{}
 		succeeded := 0
-		for _, target := range targets {
-			result := s.deliverToTarget(ctx, target, task.Prompt)
-			run.Targets = append(run.Targets, result)
+		run.Targets = s.deliverToTargets(ctx, targets, task.Prompt)
+		for index, result := range run.Targets {
 			if result.Status == RunStatusSuccess {
 				succeeded++
 				continue
 			}
-			failures = append(failures, fmt.Sprintf("%s: %s", targetLabel(target), result.Message))
+			failures = append(failures, fmt.Sprintf("%s: %s", targetLabel(targets[index]), result.Message))
 		}
 		switch {
 		case succeeded == len(targets):
@@ -465,25 +473,59 @@ func (s *Service) fireTask(ctx context.Context, task *Task, trigger string) RunE
 	return run
 }
 
+func (s *Service) deliverToTargets(ctx context.Context, targets []Target, prompt string) []TargetRun {
+	results := make([]TargetRun, len(targets))
+	if s.maxConcurrentDeliveries == 1 || len(targets) == 1 {
+		for index, target := range targets {
+			results[index] = s.deliverToTarget(ctx, target, prompt)
+		}
+		return results
+	}
+
+	semaphore := make(chan struct{}, s.maxConcurrentDeliveries)
+	var wait sync.WaitGroup
+	for index, target := range targets {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			select {
+			case semaphore <- struct{}{}:
+				defer func() { <-semaphore }()
+			case <-ctx.Done():
+				results[index] = TargetRun{
+					SessionName: target.SessionName,
+					UnixUser:    target.UnixUser,
+					Status:      RunStatusError,
+					Message:     ctx.Err().Error(),
+				}
+				return
+			}
+			results[index] = s.deliverToTarget(ctx, target, prompt)
+		}()
+	}
+	wait.Wait()
+	return results
+}
+
 func (s *Service) deliverToTarget(ctx context.Context, target Target, prompt string) TargetRun {
 	result := TargetRun{SessionName: target.SessionName, UnixUser: target.UnixUser, Status: RunStatusSuccess}
+	deliveryCtx, cancel := context.WithTimeout(ctx, s.runTimeout)
+	defer cancel()
 	if s.validateTargets {
-		if err := s.validateTarget(ctx, target); err != nil {
+		if err := s.validateTarget(deliveryCtx, target); err != nil {
 			result.Status = RunStatusError
 			result.Message = err.Error()
 			return result
 		}
 	}
-	sendCtx, cancel := context.WithTimeout(ctx, s.runTimeout)
-	delivery, err := s.runner.SendPrompt(sendCtx, target, prompt)
-	cancel()
+	delivery, err := s.runner.SendPrompt(deliveryCtx, target, prompt)
 	if err != nil {
 		result.Status = RunStatusError
 		result.Message = err.Error()
 		return result
 	}
 	result.Pane = delivery.Pane
-	result.Submitted = delivery.Submitted
+	result.SubmitKeyDispatched = delivery.SubmitKeyDispatched
 	result.Message = delivery.Detail
 	return result
 }
@@ -495,6 +537,42 @@ func targetLabel(target Target) string {
 	return target.UnixUser + "/" + target.SessionName
 }
 
+func (s *Service) validateTargetSet(ctx context.Context, targets []Target) error {
+	if s.maxConcurrentDeliveries == 1 || len(targets) == 1 {
+		for _, target := range targets {
+			if err := s.validateTarget(ctx, target); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	errorsByTarget := make([]error, len(targets))
+	semaphore := make(chan struct{}, s.maxConcurrentDeliveries)
+	var wait sync.WaitGroup
+	for index, target := range targets {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			select {
+			case semaphore <- struct{}{}:
+				defer func() { <-semaphore }()
+			case <-ctx.Done():
+				errorsByTarget[index] = fmt.Errorf("%w: %v", ErrTargetNotFound, ctx.Err())
+				return
+			}
+			errorsByTarget[index] = s.validateTarget(ctx, target)
+		}()
+	}
+	wait.Wait()
+	for _, err := range errorsByTarget {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Service) validateTarget(ctx context.Context, target Target) error {
 	if s.runner == nil {
 		return fmt.Errorf("%w: runner is not configured", ErrTargetNotFound)
@@ -502,6 +580,9 @@ func (s *Service) validateTarget(ctx context.Context, target Target) error {
 	validateCtx, cancel := context.WithTimeout(ctx, s.targetValidationTimeout)
 	defer cancel()
 	if err := s.runner.ValidateTarget(validateCtx, target); err != nil {
+		return fmt.Errorf("%w: %v", ErrTargetNotFound, err)
+	}
+	if err := validateCtx.Err(); err != nil {
 		return fmt.Errorf("%w: %v", ErrTargetNotFound, err)
 	}
 	return nil

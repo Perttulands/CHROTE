@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -78,8 +79,9 @@ func (r *ScheduledTmuxRunner) SendPrompt(ctx context.Context, target scheduled.T
 	}
 	defer cleanup()
 
-	bufferName := "chrote-scheduled-" + strings.TrimPrefix(pane.PaneID, "%")
-	result, err := r.tmux.sendBufferToPane(ctx, resolved, pane, bufferName, payloadPath, true)
+	bufferSuffix := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(payloadPath), "chrote-scheduled-prompt-"), ".txt")
+	bufferName := "chrote-scheduled-" + strings.TrimPrefix(pane.PaneID, "%") + "-" + bufferSuffix
+	result, err := r.tmux.sendBufferToPane(ctx, ctx, resolved, pane, bufferName, payloadPath, true)
 	if err != nil {
 		return scheduled.Delivery{}, err
 	}
@@ -94,12 +96,15 @@ func (r *ScheduledTmuxRunner) SendPrompt(ctx context.Context, target scheduled.T
 		return scheduled.Delivery{}, fmt.Errorf("delivery to pane %s is unconfirmed: %s", pane.PaneID, detail)
 	}
 	if !result.SubmitKeyDispatched {
+		if err := ctx.Err(); err != nil {
+			return scheduled.Delivery{}, fmt.Errorf("prompt was pasted but the submit key was not dispatched: %w", err)
+		}
 		return scheduled.Delivery{}, fmt.Errorf("%w: prompt was pasted but the submit key was not dispatched", scheduled.ErrTargetNotFound)
 	}
 	return scheduled.Delivery{
-		Pane:      pane.PaneID,
-		Submitted: true,
-		Detail:    "pasted; submit key dispatched (application acceptance unconfirmed)",
+		Pane:                pane.PaneID,
+		SubmitKeyDispatched: true,
+		Detail:              scheduled.SubmitKeyDispatchedDetail,
 	}, nil
 }
 
@@ -144,7 +149,10 @@ func (r *ScheduledTmuxRunner) runTmux(ctx context.Context, socket string, args .
 // NewScheduledHandler creates the production scheduled-task handler.
 func NewScheduledHandler(tmux *TmuxHandler) *ScheduledHandler {
 	store := scheduled.NewStore("")
-	service := scheduled.NewService(store, NewScheduledTmuxRunner(tmux), scheduled.ServiceOptions{ValidateTargets: true})
+	service := scheduled.NewService(store, NewScheduledTmuxRunner(tmux), scheduled.ServiceOptions{
+		ValidateTargets:         true,
+		MaxConcurrentDeliveries: 8,
+	})
 	return NewScheduledHandlerWithService(service)
 }
 

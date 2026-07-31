@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -215,6 +217,177 @@ func TestFireTaskFansOutToEveryTargetAndSurvivesOneDeadSession(t *testing.T) {
 	}
 }
 
+func TestFireTaskBoundsConcurrentFanOutAndPreservesTargetOrder(t *testing.T) {
+	runner := &blockingScheduledRunner{
+		entered: make(chan Target, 3),
+		release: make(chan struct{}),
+	}
+	service := NewService(NewStore(t.TempDir()), runner, ServiceOptions{MaxConcurrentDeliveries: 2})
+	task := &Task{
+		Prompt: "continue",
+		Targets: []Target{
+			{SessionName: "worker-1"},
+			{SessionName: "worker-2"},
+			{SessionName: "worker-3"},
+		},
+	}
+	done := make(chan RunEntry, 1)
+	go func() { done <- service.fireTask(context.Background(), task, "manual") }()
+
+	for range 2 {
+		select {
+		case <-runner.entered:
+		case <-time.After(time.Second):
+			t.Fatal("fan-out did not start two deliveries concurrently")
+		}
+	}
+	select {
+	case target := <-runner.entered:
+		t.Fatalf("fan-out exceeded the configured concurrency before release: %+v", target)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(runner.release)
+
+	var run RunEntry
+	select {
+	case run = <-done:
+	case <-time.After(time.Second):
+		t.Fatal("fan-out did not finish after releasing deliveries")
+	}
+	if len(run.Targets) != 3 {
+		t.Fatalf("target results = %+v, want all three", run.Targets)
+	}
+	for index, want := range []string{"worker-1", "worker-2", "worker-3"} {
+		if run.Targets[index].SessionName != want {
+			t.Fatalf("target result order = %+v, want task order", run.Targets)
+		}
+	}
+}
+
+func TestCreateBoundsConcurrentTargetValidation(t *testing.T) {
+	runner := &blockingValidationRunner{
+		entered: make(chan Target, 16),
+		release: make(chan struct{}),
+	}
+	service := NewService(NewStore(t.TempDir()), runner, ServiceOptions{
+		ValidateTargets:         true,
+		TargetValidationTimeout: time.Second,
+		MaxConcurrentDeliveries: 4,
+	})
+	targets := make([]Target, 16)
+	for index := range targets {
+		targets[index] = Target{SessionName: fmt.Sprintf("worker-%02d", index)}
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := service.Create(context.Background(), CreateTaskRequest{
+			Name:     "bounded validation",
+			Prompt:   "inspect",
+			Targets:  targets,
+			Schedule: Schedule{Type: "interval", EveryMinutes: 60, Timezone: "UTC"},
+		})
+		done <- err
+	}()
+
+	observed := make([]Target, 0, 4)
+	timer := time.NewTimer(250 * time.Millisecond)
+	defer timer.Stop()
+	for len(observed) < 4 {
+		select {
+		case target := <-runner.entered:
+			observed = append(observed, target)
+		case <-timer.C:
+			close(runner.release)
+			<-done
+			t.Fatalf("validation started %d targets, want concurrency 4", len(observed))
+		}
+	}
+	select {
+	case target := <-runner.entered:
+		close(runner.release)
+		<-done
+		t.Fatalf("validation exceeded concurrency bound with fifth target %+v", target)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(runner.release)
+	if err := <-done; err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if runner.maxConcurrency() != 4 {
+		t.Fatalf("max validation concurrency = %d, want 4", runner.maxConcurrency())
+	}
+}
+
+func TestDeliveryRunTimeoutIncludesValidation(t *testing.T) {
+	runner := &slowValidationRunner{validationDelay: 30 * time.Millisecond}
+	service := NewService(NewStore(t.TempDir()), runner, ServiceOptions{
+		ValidateTargets:         true,
+		RunTimeout:              10 * time.Millisecond,
+		TargetValidationTimeout: time.Second,
+	})
+	task := &Task{
+		ID:      "tsk_delivery_budget",
+		Prompt:  "stay inside one delivery budget",
+		Targets: []Target{{SessionName: "worker-1"}},
+	}
+
+	run := service.fireTask(context.Background(), task, "manual")
+	if runner.sendCalled {
+		t.Fatal("SendPrompt received a fresh timeout after validation exhausted the delivery budget")
+	}
+	if run.Status != RunStatusError || len(run.Targets) != 1 || !strings.Contains(run.Targets[0].Message, context.DeadlineExceeded.Error()) {
+		t.Fatalf("run = %+v, want a deadline error without attempting send", run)
+	}
+}
+
+func TestTargetRunJSONReportsSubmitKeyDispatchWithoutSubmittedClaim(t *testing.T) {
+	raw, err := json.Marshal(TargetRun{
+		SessionName:         "worker-1",
+		Status:              RunStatusSuccess,
+		SubmitKeyDispatched: true,
+	})
+	if err != nil {
+		t.Fatalf("marshal target run: %v", err)
+	}
+	if !strings.Contains(string(raw), `"submitKeyDispatched":true`) {
+		t.Fatalf("target run JSON = %s, want submitKeyDispatched receipt", raw)
+	}
+	if strings.Contains(string(raw), `"submitted"`) {
+		t.Fatalf("target run JSON = %s, must not claim application submission", raw)
+	}
+}
+
+func TestTargetRunJSONMigratesLegacySubmissionClaim(t *testing.T) {
+	var target TargetRun
+	if err := json.Unmarshal([]byte(`{
+		"sessionName":"worker-1",
+		"status":"success",
+		"pane":"%1",
+		"submitted":true,
+		"message":"pasted and submitted"
+	}`), &target); err != nil {
+		t.Fatalf("unmarshal legacy target run: %v", err)
+	}
+	if !target.SubmitKeyDispatched {
+		t.Fatalf("legacy target run = %+v, want truthful submit-key receipt", target)
+	}
+	if target.Message != SubmitKeyDispatchedDetail {
+		t.Fatalf("legacy target message = %q, want %q", target.Message, SubmitKeyDispatchedDetail)
+	}
+
+	raw, err := json.Marshal(target)
+	if err != nil {
+		t.Fatalf("marshal migrated target run: %v", err)
+	}
+	if strings.Contains(string(raw), `"submitted"`) || strings.Contains(string(raw), `pasted and submitted`) {
+		t.Fatalf("migrated target run still exposes legacy false ACK: %s", raw)
+	}
+	if !strings.Contains(string(raw), `"submitKeyDispatched":true`) {
+		t.Fatalf("migrated target run JSON = %s, want submit-key receipt", raw)
+	}
+}
+
 func TestStoreReadsLegacySingleTargetDocument(t *testing.T) {
 	dir := t.TempDir()
 	legacy := `{
@@ -263,6 +436,75 @@ func TestTaskJSONMirrorsFirstTargetForOlderReaders(t *testing.T) {
 	}
 }
 
+type blockingValidationRunner struct {
+	entered chan Target
+	release chan struct{}
+	mu      sync.Mutex
+	active  int
+	max     int
+}
+
+func (r *blockingValidationRunner) ValidateTarget(_ context.Context, target Target) error {
+	r.mu.Lock()
+	r.active++
+	if r.active > r.max {
+		r.max = r.active
+	}
+	r.mu.Unlock()
+	r.entered <- target
+	<-r.release
+	r.mu.Lock()
+	r.active--
+	r.mu.Unlock()
+	return nil
+}
+
+func (r *blockingValidationRunner) SendPrompt(context.Context, Target, string) (Delivery, error) {
+	return Delivery{}, errors.New("SendPrompt should not run during task validation")
+}
+
+func (r *blockingValidationRunner) maxConcurrency() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.max
+}
+
+type slowValidationRunner struct {
+	validationDelay time.Duration
+	sendCalled      bool
+}
+
+func (r *slowValidationRunner) ValidateTarget(context.Context, Target) error {
+	time.Sleep(r.validationDelay)
+	return nil
+}
+
+func (r *slowValidationRunner) SendPrompt(context.Context, Target, string) (Delivery, error) {
+	r.sendCalled = true
+	return Delivery{}, errors.New("send should not receive a fresh timeout")
+}
+
+type blockingScheduledRunner struct {
+	entered chan Target
+	release chan struct{}
+}
+
+func (r *blockingScheduledRunner) ValidateTarget(context.Context, Target) error { return nil }
+
+func (r *blockingScheduledRunner) SendPrompt(ctx context.Context, target Target, _ string) (Delivery, error) {
+	select {
+	case r.entered <- target:
+	case <-ctx.Done():
+		return Delivery{}, ctx.Err()
+	}
+	select {
+	case <-r.release:
+		return Delivery{Pane: "%1", SubmitKeyDispatched: true, Detail: "submit key dispatched"}, nil
+	case <-ctx.Done():
+		return Delivery{}, ctx.Err()
+	}
+}
+
 type schedulerTestRunner struct {
 	sent    []schedulerTestSend
 	onSend  func()
@@ -288,7 +530,7 @@ func (r *schedulerTestRunner) SendPrompt(_ context.Context, target Target, promp
 			return Delivery{}, err
 		}
 	}
-	return Delivery{Pane: "%1", Submitted: true, Detail: "pasted and submitted"}, nil
+	return Delivery{Pane: "%1", SubmitKeyDispatched: true, Detail: "submit key dispatched"}, nil
 }
 
 func timePtr(t time.Time) *time.Time {
