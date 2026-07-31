@@ -49,6 +49,7 @@ deliberately rather than relying on prose discipline.
 | [`COMPONENTS.md`](../COMPONENTS.md) | Public component and optional-integration map |
 | [`docs/CHROTE_VISION.md`](CHROTE_VISION.md) | Short product thesis |
 | [`docs/TEST_STRATEGY.md`](TEST_STRATEGY.md) | Test layers, commands, and CI policy |
+| [`docs/private-beads-sidecar.md`](private-beads-sidecar.md) | Host-neutral contract for private Beads transport, revision pairing, and restore |
 | [`docs/PRD-terminal-lifecycle.md`](PRD-terminal-lifecycle.md) | Terminal iframe and tmux lifecycle constraints |
 | [`docs/adr/`](adr/) | Accepted architectural decisions |
 | [`dashboard/README.md`](../dashboard/README.md) | Dashboard contributor map and local commands |

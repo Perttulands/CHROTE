@@ -47,7 +47,7 @@ bd close <id>         # Complete work
 - Run `bd prime` for detailed command reference and session close protocol
 - Use `bd remember` for shared persistent knowledge. Harness-private memory files may exist, but anything another agent needs must land in `bd remember` or a bead — never only in a tool-private file
 
-**Architecture in one line:** issues live in this workspace's local embedded Dolt DB under `.beads/`; no git-remote Dolt sync is configured for this repository and there is no `.beads/issues.jsonl` export — the local database is the only copy, so treat it as primary data, not derived state.
+**Architecture in one line:** issues live in this workspace's local embedded Dolt DB under `.beads/`; the public source repository intentionally ignores that directory. Owner/maintainer checkouts replicate native Dolt history to a separately authorized private Git sidecar and pair portable exports with source revisions there. Never push tracker data or `refs/dolt/data` to the public source origin; verify the Beads remote before `bd dolt push`. See [`docs/private-beads-sidecar.md`](docs/private-beads-sidecar.md).
 
 ## Agent Context Profiles
 
