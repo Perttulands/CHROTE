@@ -1,6 +1,6 @@
-import { render, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useEffect, useRef } from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { IframePoolProvider, useIframePool } from './IframePool'
 
 vi.mock('../context/SessionContext', () => ({
@@ -31,12 +31,21 @@ function ClaimedIframe() {
     return pool.claimIframe('alice:smooth-scroll', targetRef.current)
   }, [pool])
 
-  return <div data-testid="iframe-target" ref={targetRef} />
+  return (
+    <>
+      <div data-testid="iframe-target" ref={targetRef} />
+      <button type="button" onClick={() => pool.triggerFit('alice:smooth-scroll')}>Fit terminal</button>
+    </>
+  )
 }
 
 describe('IframePool attached terminal rendering', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('uses an opaque non-scrolling ttyd iframe instead of the old transparent theme path', async () => {
@@ -58,5 +67,32 @@ describe('IframePool attached terminal rendering', () => {
     expect(iframe.getAttribute('scrolling')).toBe('no')
     expect(iframe.style.backgroundColor).toBe('rgb(10, 10, 10)')
     expect(iframe.style.overflow).toBe('hidden')
+  })
+
+  it('finishes a bounded three-pass fit after the visible iframe geometry settles', async () => {
+    render(
+      <IframePoolProvider>
+        <ClaimedIframe />
+      </IframePoolProvider>
+    )
+
+    const iframe = await waitFor(() => {
+      const node = document.querySelector('[data-testid="iframe-target"] iframe') as HTMLIFrameElement | null
+      expect(node).not.toBeNull()
+      return node!
+    })
+    Object.defineProperty(iframe, 'offsetWidth', { configurable: true, value: 800 })
+    Object.defineProperty(iframe, 'offsetHeight', { configurable: true, value: 600 })
+    const dispatch = vi.spyOn(iframe.contentWindow!, 'dispatchEvent')
+    vi.useFakeTimers()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Fit terminal' }))
+    expect(dispatch).toHaveBeenCalledTimes(1)
+
+    vi.advanceTimersByTime(200)
+    expect(dispatch).toHaveBeenCalledTimes(2)
+
+    vi.advanceTimersByTime(300)
+    expect(dispatch).toHaveBeenCalledTimes(3)
   })
 })

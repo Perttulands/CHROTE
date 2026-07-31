@@ -267,11 +267,20 @@ test.describe.serial('Terminal Sizing: iframe fills container and xterm fits', (
     await expect(firstWindow.locator('.session-tag')).toHaveCount(1, { timeout: 10000 });
     if (sessionName) createdSessions.push(sessionName);
 
-    await waitForXterm(page);
+    const termFrameBefore = await waitForXterm(page);
+    const promptMarker = 'CHROTE_REFIT_INPUT_MARKER';
+    await termFrameBefore.locator('.xterm-helper-textarea').pressSequentially(promptMarker);
+    await expect(async () => {
+      const line = await termFrameBefore.evaluate(() => {
+        const term = (window as typeof window & { term?: { buffer: { active: { cursorY: number; getLine: (row: number) => { translateToString: (trimRight?: boolean) => string } | undefined } } } }).term;
+        return term?.buffer.active.getLine(term.buffer.active.cursorY)?.translateToString(true) ?? '';
+      });
+      expect(line).toContain(promptMarker);
+    }).toPass({ timeout: 5000 });
 
     // Switch to Files tab
     await page.click('.tab:has-text("Files")');
-    await page.waitForSelector('.file-browser, .filebrowser', { timeout: 5000 });
+    await expect(page.getByRole('heading', { name: 'Files' })).toBeVisible({ timeout: 5000 });
 
     // Switch back to Terminal 1
     await page.click('.tab:has-text("Terminal")');
@@ -279,6 +288,7 @@ test.describe.serial('Terminal Sizing: iframe fills container and xterm fits', (
     // Wait for xterm to re-fit after tab return
     const termFrameAfter = getTerminalFrame(page);
     if (termFrameAfter) await waitForFit(termFrameAfter);
+    await page.waitForTimeout(550);
 
     // After returning, iframe should still fill container
     const sizing = await page.evaluate(() => {
@@ -308,15 +318,21 @@ test.describe.serial('Terminal Sizing: iframe fills container and xterm fits', (
       const xtermSizing = await termFrame.evaluate(() => {
         const viewport = document.querySelector('.xterm-viewport') as HTMLElement;
         const screen = document.querySelector('.xterm-screen') as HTMLElement;
-        if (!viewport || !screen) return null;
+        const term = (window as typeof window & { term?: { rows: number; buffer: { active: { cursorY: number; getLine: (row: number) => { translateToString: (trimRight?: boolean) => string } | undefined } } } }).term;
+        if (!viewport || !screen || !term) return null;
         return {
           isClipped: screen.scrollHeight > viewport.clientHeight + 5,
+          cursorY: term.buffer.active.cursorY,
+          rows: term.rows,
+          inputLine: term.buffer.active.getLine(term.buffer.active.cursorY)?.translateToString(true) ?? '',
         };
       });
 
       console.log('xterm sizing after tab switch:', xtermSizing);
       if (xtermSizing) {
         expect(xtermSizing.isClipped).toBe(false);
+        expect(xtermSizing.cursorY).toBeLessThan(xtermSizing.rows);
+        expect(xtermSizing.inputLine).toContain(promptMarker);
       }
     }
   });

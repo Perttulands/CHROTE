@@ -1194,7 +1194,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         (!payload.serverPid || result.serverPid === payload.serverPid) &&
         typeof result.submissionRequested === 'boolean' &&
         result.submissionRequested === payload.submit &&
-        typeof result.submitted === 'boolean' &&
+        typeof result.submitKeyDispatched === 'boolean' &&
         typeof result.bufferCleaned === 'boolean' &&
         typeof result.targetVerified === 'boolean' &&
         typeof result.warning === 'string'
@@ -1203,20 +1203,26 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           result.transport === 'unknown' &&
           result.retryable === false &&
           result.deliveryConfirmed === false &&
-          result.submitted === false &&
+          result.submitKeyDispatched === false &&
           result.targetVerified === false &&
           result.warning.trim() !== '') {
         addToast(`Delivery outcome is unknown for '${sessionName}' (${result.pane}); ${result.warning.trim()}`, 'error')
         return 'unknown'
       }
+      if (commonResultValid && result && result.success === true && result.transport === 'pasted' &&
+          payload.submit && result.submitKeyDispatched === false) {
+        const warning = result.warning.trim()
+        addToast(`Pasted to '${sessionName}' (${result.pane}), but the submit key was not dispatched${warning ? `; ${warning}` : ''}`, 'error')
+        return 'unknown'
+      }
       if (!commonResultValid || !result || result.success !== true || result.transport !== 'pasted' ||
-          result.submitted !== payload.submit || result.bufferCleaned !== true ||
+          result.submitKeyDispatched !== payload.submit || result.bufferCleaned !== true ||
           (result.targetVerified !== true && result.warning.trim() === '')) {
         addToast('Unexpected send response; inspect the target pane before retrying', 'error')
         return 'unknown'
       }
       const paneLabel = ` (${result.pane})`
-      const submitLabel = result.submitted ? ' and submitted' : ''
+      const submitLabel = result.submitKeyDispatched ? '; submit key dispatched (application acceptance unconfirmed)' : ''
       const warning = result.warning?.trim() ?? ''
       addToast(`Pasted to '${sessionName}'${paneLabel}${submitLabel}${warning ? `; ${warning}` : ''}`, warning ? 'info' : 'success')
       return 'sent'

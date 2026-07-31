@@ -2379,37 +2379,33 @@ func sameSendPaneGeneration(expected, actual sendPaneTarget) bool {
 }
 
 const (
-	atomicSendPastedMarker      = "CHROTE_SEND_PASTED"
-	atomicSendSubmittedMarker   = "CHROTE_SEND_SUBMITTED"
-	atomicSendTargetChangedMark = "CHROTE_SEND_TARGET_CHANGED"
+	atomicSendPastedMarker              = "CHROTE_SEND_PASTED"
+	atomicSendSubmitKeyMarker           = "CHROTE_SEND_SUBMIT_KEY_DISPATCHED"
+	atomicSendTargetChangedMark         = "CHROTE_SEND_TARGET_CHANGED"
+	atomicSendSubmitTargetChangedMarker = "CHROTE_SEND_SUBMIT_TARGET_CHANGED"
+	tmuxSendSubmitSettleDelay           = 1200 * time.Millisecond
 )
 
+var tmuxSendSleep = time.Sleep
+
 func atomicSendCondition(pane sendPaneTarget) string {
-	return fmt.Sprintf(
-		"#{&&:#{==:#{session_id},%s},#{&&:#{==:#{pane_id},%s},#{&&:#{==:#{pane_pid},%s},#{==:#{pid},%s}}}}",
-		pane.SessionID,
-		pane.PaneID,
-		pane.PanePID,
-		pane.ServerPID,
-	)
+	return fmt.Sprintf("#{&&:#{==:#{session_id},%s},#{&&:#{==:#{pane_id},%s},#{&&:#{==:#{pane_pid},%s},#{==:#{pid},%s}}}}", pane.SessionID, pane.PaneID, pane.PanePID, pane.ServerPID)
 }
 
-func atomicSendCommand(bufferName string, pane sendPaneTarget, submit bool) (string, string) {
+func atomicPasteCommand(bufferName string, pane sendPaneTarget) string {
 	command := fmt.Sprintf("paste-buffer -d -b %s -t %s", bufferName, pane.PaneID)
-	marker := atomicSendPastedMarker
-	if submit {
-		command += fmt.Sprintf(" ; send-keys -t %s Enter", pane.PaneID)
-		marker = atomicSendSubmittedMarker
-	}
-	command += " ; display-message -p " + marker
-	return command, marker
+	return command + " ; display-message -p " + atomicSendPastedMarker
+}
+
+func atomicSubmitCommand(pane sendPaneTarget) string {
+	return fmt.Sprintf("send-keys -t %s C-m ; display-message -p %s", pane.PaneID, atomicSendSubmitKeyMarker)
 }
 
 type paneSendKind int
 
 const (
-	// paneSendDelivered means tmux confirmed the paste (and Enter, when asked for)
-	// against the pinned pane generation.
+	// paneSendDelivered means tmux confirmed the paste against the pinned pane
+	// generation. SubmitKeyDispatched separately records the one guarded C-m.
 	paneSendDelivered paneSendKind = iota
 	// paneSendTargetChanged means the pane generation moved before the paste ran,
 	// so nothing was delivered.
@@ -2423,18 +2419,18 @@ const (
 // after the buffer is loaded; a load failure is returned as an error instead
 // because nothing can have been delivered yet.
 type paneSendResult struct {
-	Kind          paneSendKind
-	Submitted     bool
-	BufferCleaned bool
-	Detail        string
-	CleanupErr    error
+	Kind                paneSendKind
+	SubmitKeyDispatched bool
+	BufferCleaned       bool
+	Detail              string
+	CleanupErr          error
 }
 
 // sendBufferToPane is the single delivery path shared by Send to Session and
 // scheduled tasks: load the payload into a private buffer, paste it only while
-// the pinned pane generation still matches, optionally press Enter, and leave no
-// buffer behind. The guarded paste deliberately runs on a background context so
-// a cancelled caller cannot tear down a half-applied send.
+// the pinned pane generation still matches, optionally dispatch one guarded C-m,
+// and leave no buffer behind. Guarded commands deliberately run on a background
+// context so caller cancellation cannot tear down a half-applied send.
 func (h *TmuxHandler) sendBufferToPane(loadCtx context.Context, target tmuxTarget, pane sendPaneTarget, bufferName, payloadPath string, submit bool) (paneSendResult, error) {
 	bufferDeleted := false
 	deleteBuffer := func() error {
@@ -2455,13 +2451,12 @@ func (h *TmuxHandler) sendBufferToPane(loadCtx context.Context, target tmuxTarge
 		return paneSendResult{Kind: paneSendUnknown, BufferCleaned: bufferDeleted}, err
 	}
 
-	guardedCommand, successMarker := atomicSendCommand(bufferName, pane, submit)
 	output, err := h.runTmuxOnSocketContext(
 		context.Background(),
 		target.socket,
 		"if-shell", "-F", "-t", pane.PaneID,
 		atomicSendCondition(pane),
-		guardedCommand,
+		atomicPasteCommand(bufferName, pane),
 		"display-message -p "+atomicSendTargetChangedMark,
 	)
 	if err != nil {
@@ -2473,16 +2468,52 @@ func (h *TmuxHandler) sendBufferToPane(loadCtx context.Context, target tmuxTarge
 	case atomicSendTargetChangedMark:
 		cleanupErr := deleteBuffer()
 		return paneSendResult{Kind: paneSendTargetChanged, BufferCleaned: cleanupErr == nil, CleanupErr: cleanupErr}, nil
-	case successMarker:
+	case atomicSendPastedMarker:
 		// paste-buffer -d consumed the buffer on success.
-		return paneSendResult{Kind: paneSendDelivered, Submitted: submit, BufferCleaned: true}, nil
+		bufferDeleted = true
 	default:
 		cleanupErr := deleteBuffer()
 		return paneSendResult{
 			Kind:          paneSendUnknown,
 			BufferCleaned: cleanupErr == nil,
-			Detail:        fmt.Sprintf("unexpected atomic send result %q", marker),
+			Detail:        fmt.Sprintf("unexpected guarded paste result %q", marker),
 			CleanupErr:    cleanupErr,
+		}, nil
+	}
+
+	if !submit {
+		return paneSendResult{Kind: paneSendDelivered, BufferCleaned: true}, nil
+	}
+
+	// Agent TUIs can swallow a submit key delivered in the same burst as a large
+	// bracketed paste. Let the paste settle, then guard the single C-m against the
+	// exact pane generation again before dispatching it.
+	tmuxSendSleep(tmuxSendSubmitSettleDelay)
+	output, err = h.runTmuxOnSocketContext(
+		context.Background(),
+		target.socket,
+		"if-shell", "-F", "-t", pane.PaneID,
+		atomicSendCondition(pane),
+		atomicSubmitCommand(pane),
+		"display-message -p "+atomicSendSubmitTargetChangedMarker,
+	)
+	if err != nil {
+		return paneSendResult{Kind: paneSendUnknown, BufferCleaned: true, Detail: err.Error()}, nil
+	}
+	switch marker := strings.TrimSpace(output); marker {
+	case atomicSendSubmitKeyMarker:
+		return paneSendResult{Kind: paneSendDelivered, SubmitKeyDispatched: true, BufferCleaned: true}, nil
+	case atomicSendSubmitTargetChangedMarker:
+		return paneSendResult{
+			Kind:          paneSendDelivered,
+			BufferCleaned: true,
+			Detail:        "target changed after paste; submit key was not dispatched",
+		}, nil
+	default:
+		return paneSendResult{
+			Kind:          paneSendUnknown,
+			BufferCleaned: true,
+			Detail:        fmt.Sprintf("unexpected guarded submit result %q", marker),
 		}, nil
 	}
 }
@@ -3130,7 +3161,7 @@ func (h *TmuxHandler) SendToSession(w http.ResponseWriter, r *http.Request) {
 			"retryable":           false,
 			"deliveryConfirmed":   false,
 			"submissionRequested": submissionRequested,
-			"submitted":           false,
+			"submitKeyDispatched": false,
 			"bufferCleaned":       bufferCleaned,
 			"targetVerified":      false,
 			"warning":             warning,
@@ -3166,9 +3197,11 @@ func (h *TmuxHandler) SendToSession(w http.ResponseWriter, r *http.Request) {
 	}
 	retainDrop = true
 	warnings := []string{}
-	submitted := submissionRequested
 	verifiedPane, verifyErr := h.resolveSendPane(r.Context(), target, sessionName, pane.PaneID)
 	targetVerified := verifyErr == nil && sameSendPaneGeneration(pane, verifiedPane)
+	if strings.TrimSpace(result.Detail) != "" {
+		warnings = append(warnings, result.Detail)
+	}
 	if !targetVerified {
 		warnings = append(warnings, "target changed before post-send verification")
 	}
@@ -3176,7 +3209,7 @@ func (h *TmuxHandler) SendToSession(w http.ResponseWriter, r *http.Request) {
 		"success":             true,
 		"transport":           "pasted",
 		"submissionRequested": submissionRequested,
-		"submitted":           submitted,
+		"submitKeyDispatched": result.SubmitKeyDispatched,
 		"bufferCleaned":       true,
 		"targetVerified":      targetVerified,
 		"warning":             strings.Join(warnings, "; "),
