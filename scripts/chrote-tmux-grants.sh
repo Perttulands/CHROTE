@@ -182,24 +182,30 @@ grant_server_access() {
   local owner="$1"
   local socket="$2"
   local tmux
-  tmux="$(tmux_bin)" || {
-    log "warning: tmux binary not found; cannot refresh tmux server-access for $owner=$socket"
-    return 0
-  }
 
-  if [ ! -S "$socket" ]; then
+  # An owner may simply not be logged in yet, so an absent configured socket is
+  # not a service failure. Once the path exists, however, every part of the
+  # grant must work or the unit would report green while access is broken.
+  if [ ! -e "$socket" ]; then
     log "socket missing, skipping server-access: $owner=$socket"
     return 0
   fi
+  if [ ! -S "$socket" ]; then
+    log "configured socket path exists but is not a Unix socket: $owner=$socket"
+    return 1
+  fi
+
+  tmux="$(tmux_bin)" || {
+    log "tmux binary not found; cannot refresh tmux server-access for $owner=$socket"
+    return 1
+  }
 
   if run_as_owner "$owner" env TERM="$TERM_VALUE" "$tmux" -S "$socket" server-access -a "$SERVICE_USER" >/dev/null 2>&1; then
     return 0
   fi
 
-  # Older tmux or a dead socket should not block CHROTE startup; the API fails
-  # loud on its own if the socket is unusable.
-  log "warning: tmux server-access refresh failed for $owner=$socket"
-  return 0
+  log "tmux server-access refresh failed for $owner=$socket"
+  return 1
 }
 
 grant_socket() {
