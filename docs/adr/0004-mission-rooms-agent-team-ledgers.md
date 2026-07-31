@@ -66,10 +66,8 @@ Mission-room implementation must start with read-only projection, then writer co
 The model is more structured than chat and slightly heavier for agents, but it makes ownership, handoff, and recovery inspectable. It also leaves some future work explicit: UI affordances for broad reservation warnings, timeout/stale-worker policy, and CHROTE-facing browser dogfood before production integration.
 
 ## Enforcement
-- Prototype source: `/srv/prototypes/agent-team-rooms`.
-- SDD contract: `/srv/prototypes/agent-team-rooms/SPEC.md`.
-- Prototype verification command: `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v`.
-- Structured dogfood report: `/srv/prototypes/chrote-agent-team-structured-dogfood-20260704-010611/STRUCTURED_DOGFOOD_REPORT.md`.
+- The historical prototype, SDD contract, and two dogfood repositories are preserved as verified all-ref Git bundles in operator-owned backup storage. Production CHROTE does not load or depend on those trees.
+- The historical prototype verification command was `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v`; production behavior must be covered by tests in this repository.
 - Beads: `ctx-q8x.1`, `ctx-q8x.12`, `ctx-gio`, and later CHROTE-facing browser dogfood `ctx-q8x.13`.
 
 Any CHROTE production implementation must cite this ADR, preserve the backing-store routing above, and prove projection/writer behavior against the structured claim/reservation/salvage contract before adding live nudge delivery.
