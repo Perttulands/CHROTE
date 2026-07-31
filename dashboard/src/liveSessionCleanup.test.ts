@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { cleanupTrackedSessions, LiveSessionIdentity } from '../tests/helpers/liveSessionCleanup';
 
@@ -34,5 +36,18 @@ describe('live terminal session cleanup ledger', () => {
 
     expect(sessions).toEqual([{ name: 'still-live', unixUser: 'alice' }]);
     expect(failures).toEqual(['alice/still-live: attempt 1: HTTP 500 denied']);
+  });
+
+  it('pins retry masking off and final reconciliation on for the live smoke', () => {
+    const spec = readFileSync(resolve(process.cwd(), 'tests/integration/terminal-sizing.spec.ts'), 'utf8');
+    expect(spec).toContain('test.describe.configure({ retries: 0 });');
+
+    const afterEach = spec.match(/test\.afterEach\([\s\S]*?\n {2}\}\);/)?.[0];
+    expect(afterEach).toContain('cleanupTrackedSessions(request, 2)');
+    expect(afterEach).toContain("expect(failures, 'every live sizing smoke session must be deleted");
+
+    const afterAll = spec.match(/test\.afterAll\([\s\S]*?\n {2}\}\);/)?.[0];
+    expect(afterAll).toContain('cleanupTrackedSessions(request, 3)');
+    expect(afterAll).toContain("expect(failures, 'final live sizing reconciliation");
   });
 });
