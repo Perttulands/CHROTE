@@ -22,7 +22,7 @@ describe('live terminal session cleanup ledger', () => {
   it('removes only identities whose deletion was confirmed', async () => {
     const sessions: LiveSessionIdentity[] = [
       { name: 'deleted', unixUser: 'alice' },
-      { name: 'still-live', unixUser: 'tavern' },
+      { name: 'still-live', unixUser: 'alice' },
     ];
     const deleteSession = vi.fn(async (session: LiveSessionIdentity) => ({
       ok: session.name === 'deleted',
@@ -32,7 +32,7 @@ describe('live terminal session cleanup ledger', () => {
 
     const failures = await cleanupTrackedSessions(sessions, deleteSession, 1);
 
-    expect(sessions).toEqual([{ name: 'still-live', unixUser: 'tavern' }]);
-    expect(failures).toEqual(['tavern/still-live: attempt 1: HTTP 500 denied']);
+    expect(sessions).toEqual([{ name: 'still-live', unixUser: 'alice' }]);
+    expect(failures).toEqual(['alice/still-live: attempt 1: HTTP 500 denied']);
   });
 });
