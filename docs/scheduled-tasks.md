@@ -204,8 +204,10 @@ The API fails closed for:
   read/send/save operation; overlapping patch, pause/resume, delete, run-now, or
   scheduler work receives `409 CONFLICT` instead of dispatching twice or overwriting state.
 
-Prompts are delivered through the same guarded path as **Send to Session**: the prompt is
-staged in a private file, loaded into a private tmux buffer, and pasted only while the
+Prompts are delivered through the same guarded path as **Send to Session**. Each target has
+one delivery deadline covering Unix-account/socket resolution, validation, pane resolution,
+buffer loading, guarded paste, submit settling, guarded key dispatch, and failure cleanup. The
+prompt is staged in a private file, loaded into a private tmux buffer, and pasted only while the
 resolved pane's `session_id`/`pane_id`/`pane_pid`/`server pid` generation still matches,
 followed by an `Enter` key dispatch. That dispatch is a tmux transport receipt only; it does
 not prove that the terminal application accepted or began processing the prompt. A successful

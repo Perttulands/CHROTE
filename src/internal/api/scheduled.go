@@ -44,7 +44,7 @@ func NewScheduledTmuxRunner(tmux *TmuxHandler) *ScheduledTmuxRunner {
 
 // ValidateTarget verifies the configured tmux socket/user can see the target session.
 func (r *ScheduledTmuxRunner) ValidateTarget(ctx context.Context, target scheduled.Target) error {
-	resolved, err := r.tmux.targetForUnixUser(target.UnixUser)
+	resolved, err := r.tmux.targetForUnixUserContext(ctx, target.UnixUser)
 	if err != nil {
 		return err
 	}
@@ -63,7 +63,7 @@ func (r *ScheduledTmuxRunner) ValidateTarget(ctx context.Context, target schedul
 // the resolved pane generation still matches, then one guarded submit key is
 // dispatched after the paste settles. Prompt text is never shell-interpolated.
 func (r *ScheduledTmuxRunner) SendPrompt(ctx context.Context, target scheduled.Target, prompt string) (scheduled.Delivery, error) {
-	resolved, err := r.tmux.targetForUnixUser(target.UnixUser)
+	resolved, err := r.tmux.targetForUnixUserContext(ctx, target.UnixUser)
 	if err != nil {
 		return scheduled.Delivery{}, err
 	}

@@ -274,6 +274,66 @@ var (
 	tmuxLookupUser  = osuser.Lookup
 )
 
+type tmuxUserLookupResult struct {
+	account *osuser.User
+	err     error
+}
+
+type tmuxUserLookupCall struct {
+	done   chan struct{}
+	result tmuxUserLookupResult
+}
+
+var tmuxUserLookupFlights = struct {
+	sync.Mutex
+	calls map[string]*tmuxUserLookupCall
+}{calls: map[string]*tmuxUserLookupCall{}}
+
+func resolveTmuxUserContext(ctx context.Context, key string, lookup func() (*osuser.User, error)) (*osuser.User, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	tmuxUserLookupFlights.Lock()
+	call := tmuxUserLookupFlights.calls[key]
+	if call == nil {
+		call = &tmuxUserLookupCall{done: make(chan struct{})}
+		tmuxUserLookupFlights.calls[key] = call
+		go func() {
+			call.result.account, call.result.err = lookup()
+			tmuxUserLookupFlights.Lock()
+			delete(tmuxUserLookupFlights.calls, key)
+			close(call.done)
+			tmuxUserLookupFlights.Unlock()
+		}()
+	}
+	tmuxUserLookupFlights.Unlock()
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-call.done:
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return call.result.account, call.result.err
+	}
+}
+
+func currentTmuxUserContext(ctx context.Context) (*osuser.User, error) {
+	return resolveTmuxUserContext(ctx, "current", tmuxCurrentUser)
+}
+
+func lookupTmuxUserContext(ctx context.Context, username string) (*osuser.User, error) {
+	lookupUser := tmuxLookupUser
+	return resolveTmuxUserContext(ctx, "lookup:"+username, func() (*osuser.User, error) {
+		return lookupUser(username)
+	})
+}
+
 func parseUserValueMap(raw string) map[string]string {
 	result := map[string]string{}
 	for _, item := range strings.Split(raw, ",") {
@@ -362,31 +422,67 @@ func advertisedTerminalUsers() []string {
 }
 
 func allowedTerminalUsers() map[string]bool {
+	allowed, _ := allowedTerminalUsersContext(context.Background())
+	return allowed
+}
+
+func allowedTerminalUsersContext(ctx context.Context) (map[string]bool, error) {
 	allowed := map[string]bool{}
 	configured := configuredTerminalUsers()
 	if len(configured) > 0 {
 		for _, item := range configured {
 			allowed[item] = true
 		}
-		return allowed
+		return allowed, nil
 	}
-	if current, err := tmuxCurrentUser(); err == nil && current.Username != "" {
+	current, err := currentTmuxUserContext(ctx)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return allowed, nil
+	}
+	if current != nil && current.Username != "" {
 		allowed[current.Username] = true
 	}
-	return allowed
+	return allowed, nil
 }
 
 func (h *TmuxHandler) targetForUnixUser(unixUser string) (tmuxTarget, error) {
+	return h.resolveTargetForUnixUser(context.Background(), unixUser, false)
+}
+
+func (h *TmuxHandler) targetForUnixUserContext(ctx context.Context, unixUser string) (tmuxTarget, error) {
+	return h.resolveTargetForUnixUser(ctx, unixUser, true)
+}
+
+func (h *TmuxHandler) resolveTargetForUnixUser(ctx context.Context, unixUser string, configuredFastPath bool) (tmuxTarget, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return tmuxTarget{}, err
+	}
 	unixUser = strings.TrimSpace(unixUser)
 	if unixUser == "" {
 		target := tmuxTarget{socket: h.socket, workDir: h.workDir}
-		if current, err := tmuxCurrentUser(); err == nil && current != nil {
+		current, err := currentTmuxUserContext(ctx)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return tmuxTarget{}, ctxErr
+			}
+			return target, nil
+		}
+		if current != nil {
 			target.ownerHome = strings.TrimSpace(current.HomeDir)
 		}
 		return target, nil
 	}
 
-	allowed := allowedTerminalUsers()
+	allowed, err := allowedTerminalUsersContext(ctx)
+	if err != nil {
+		return tmuxTarget{}, err
+	}
 	if !allowed[unixUser] {
 		return tmuxTarget{}, fmt.Errorf("Unix user %q is not allowed for terminal launch", unixUser)
 	}
@@ -400,16 +496,24 @@ func (h *TmuxHandler) targetForUnixUser(unixUser string) (tmuxTarget, error) {
 		ownerHome: homeMap[unixUser],
 		unixUser:  unixUser,
 	}
+	if configuredFastPath && target.socket != "" && target.workDir != "" {
+		return target, nil
+	}
 
-	account, err := tmuxLookupUser(unixUser)
+	account, err := lookupTmuxUserContext(ctx, unixUser)
 	if err != nil {
-		if target.socket != "" && target.workDir != "" {
+		if target.socket != "" && target.workDir != "" && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			return target, nil
 		}
 		return tmuxTarget{}, fmt.Errorf("lookup Unix user %q: %w", unixUser, err)
 	}
 	currentUser := ""
-	if current, err := tmuxCurrentUser(); err == nil && current != nil {
+	current, currentErr := currentTmuxUserContext(ctx)
+	if currentErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return tmuxTarget{}, ctxErr
+		}
+	} else if current != nil {
 		currentUser = current.Username
 	}
 	if target.workDir == "" {
