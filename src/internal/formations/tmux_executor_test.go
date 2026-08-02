@@ -203,6 +203,175 @@ func TestTmuxExecutorSessionFailuresRecordDurableBoundaryAndProvenance(t *testin
 	}
 }
 
+func TestTmuxExecutorWaitsForCodexTUIReadinessBeforeDispatch(t *testing.T) {
+	client := &fakeTmuxHarnessClient{
+		startupCaptures: []string{
+			"OpenAI Codex\nstarting",
+			"OpenAI Codex\n› Explain this codebase",
+		},
+	}
+	status, _ := runTmuxFormationForTest(t, client, "")
+	if status.Status != RunStatusSucceeded || !status.Final {
+		t.Fatalf("status = %+v, want succeeded final", status)
+	}
+	if client.sendCalls != 1 {
+		t.Fatalf("send calls = %d, want one", client.sendCalls)
+	}
+	if client.preSendCaptureCalls < 2 {
+		t.Fatalf("pre-send captures = %d, want at least two so dispatch waits past startup", client.preSendCaptureCalls)
+	}
+	if !strings.Contains(client.lastPreSendCapture, "› Explain this codebase") {
+		t.Fatalf("last pre-send capture = %q, want initialized Codex input before dispatch", client.lastPreSendCapture)
+	}
+}
+
+func TestTmuxPaneShowsHarnessReadyIgnoresTrailingBlankRows(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		harnessID string
+		captured  string
+	}{
+		{
+			name:      "Codex",
+			harnessID: "openai-codex",
+			captured:  "OpenAI Codex\n› Implement {feature}\n\n  gpt-5.6-sol xhigh · ~" + strings.Repeat("\n", 10),
+		},
+		{
+			name:      "Claude",
+			harnessID: "claude-code",
+			captured:  "Claude Code\n❯" + strings.Repeat("\n", 10),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if !tmuxPaneShowsHarnessReady(tc.harnessID, tc.captured) {
+				t.Fatalf("matcher rejected initialized %s pane with trailing blank rows", tc.name)
+			}
+		})
+	}
+}
+
+func TestTmuxPaneShowsHarnessReadyRejectsClaudeTrustPrompt(t *testing.T) {
+	captured := strings.Join([]string{
+		"Quick safety check: Is this a project you created or one you trust?",
+		"Claude Code'll be able to read, edit, and execute files here.",
+		"❯ 1. Yes, I trust this folder",
+		"  2. No, exit",
+	}, "\n")
+	if tmuxPaneShowsHarnessReady("claude-code", captured) {
+		t.Fatal("Claude workspace trust prompt was misread as an idle agent input")
+	}
+}
+
+func TestTmuxExecutorWaitsForClaudeTUIReadinessBeforeDispatch(t *testing.T) {
+	cfg := tmuxTestConfig(t)
+	transcriptRoot := t.TempDir()
+	t.Setenv(transcriptRootEnv, transcriptRoot)
+	projectDir := filepath.Join(transcriptRoot, "-workspace-test")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatalf("create Claude transcript project: %v", err)
+	}
+	transcriptPath := filepath.Join(projectDir, "session.jsonl")
+	initial, err := json.Marshal(map[string]any{"type": "attachment", "cwd": cfg.Cwd, "sessionId": "session"})
+	if err != nil {
+		t.Fatalf("marshal initial Claude transcript record: %v", err)
+	}
+	if err := os.WriteFile(transcriptPath, append(initial, '\n'), 0o644); err != nil {
+		t.Fatalf("write initial Claude transcript: %v", err)
+	}
+
+	client := &fakeTmuxHarnessClient{
+		harness: "claude-code",
+		startupCaptures: []string{
+			"Claude Code\nstarting",
+			"Claude Code\n❯",
+		},
+	}
+	client.afterSend = func(prompt string) {
+		completion := withPromptOutputContract(
+			"agent output\n<<<CHROTE-DONE run-id="+runIDFromPrompt(prompt)+" status=ok artifact=reports/tmux.md>>>",
+			prompt,
+		)
+		record, marshalErr := json.Marshal(map[string]any{
+			"type":      "assistant",
+			"cwd":       cfg.Cwd,
+			"sessionId": "session",
+			"message":   map[string]any{"role": "assistant", "content": completion},
+		})
+		if marshalErr != nil {
+			t.Fatalf("marshal Claude completion record: %v", marshalErr)
+		}
+		file, openErr := os.OpenFile(transcriptPath, os.O_APPEND|os.O_WRONLY, 0o644)
+		if openErr != nil {
+			t.Fatalf("open Claude transcript: %v", openErr)
+		}
+		if _, writeErr := file.Write(append(record, '\n')); writeErr != nil {
+			_ = file.Close()
+			t.Fatalf("append Claude transcript: %v", writeErr)
+		}
+		if closeErr := file.Close(); closeErr != nil {
+			t.Fatalf("close Claude transcript: %v", closeErr)
+		}
+	}
+	status, _ := runTmuxFormationForTestWithConfig(t, client, "", cfg)
+	if status.Status != RunStatusSucceeded || !status.Final {
+		t.Fatalf("status = %+v, want succeeded final", status)
+	}
+	if client.sendCalls != 1 {
+		t.Fatalf("send calls = %d, want one", client.sendCalls)
+	}
+	if client.preSendCaptureCalls < 2 {
+		t.Fatalf("pre-send captures = %d, want at least two so dispatch waits past startup", client.preSendCaptureCalls)
+	}
+	if !strings.Contains(client.lastPreSendCapture, "❯") {
+		t.Fatalf("last pre-send capture = %q, want initialized Claude input before dispatch", client.lastPreSendCapture)
+	}
+}
+
+func TestTmuxExecutorNeverDispatchesWhenClaudeTUIReadinessUnknown(t *testing.T) {
+	client := &fakeTmuxHarnessClient{
+		harness:         "claude-code",
+		startupCaptures: []string{"Claude Code\nstarting"},
+	}
+	status, events := runTmuxFormationForTest(t, client, "")
+	if status.Status != RunStatusBlocked || !status.ResumeAllowed {
+		t.Fatalf("status = %+v, want resumable blocked run", status)
+	}
+	if client.sendCalls != 0 {
+		t.Fatalf("send calls = %d, want zero before readiness", client.sendCalls)
+	}
+	if eventsContainType(events, RunEventSlotDispatch) || eventsContainType(events, RunEventAdapterSend) {
+		t.Fatalf("events = %v, want no slot_dispatch or adapter_send before readiness", eventTypes(events))
+	}
+	errEvent := eventOfType(t, events, RunEventError)
+	if errEvent.Data["code"] != "session_startup_timeout" || errEvent.Data["boundary"] != "adapter" {
+		t.Fatalf("error data = %#v, want session_startup_timeout at adapter boundary", errEvent.Data)
+	}
+	if len(client.created) != 1 || fmt.Sprint(client.killed) != fmt.Sprint(client.created) {
+		t.Fatalf("created=%v killed=%v, want exact owned-session cleanup", client.created, client.killed)
+	}
+}
+
+func TestTmuxExecutorNeverDispatchesWhenCodexTUIReadinessUnknown(t *testing.T) {
+	client := &fakeTmuxHarnessClient{startupCaptures: []string{"OpenAI Codex\nstarting"}}
+	status, events := runTmuxFormationForTest(t, client, "")
+	if status.Status != RunStatusBlocked || !status.ResumeAllowed {
+		t.Fatalf("status = %+v, want resumable blocked run", status)
+	}
+	if client.sendCalls != 0 {
+		t.Fatalf("send calls = %d, want zero before readiness", client.sendCalls)
+	}
+	if eventsContainType(events, RunEventSlotDispatch) || eventsContainType(events, RunEventAdapterSend) {
+		t.Fatalf("events = %v, want no slot_dispatch or adapter_send before readiness", eventTypes(events))
+	}
+	errEvent := eventOfType(t, events, RunEventError)
+	if errEvent.Data["code"] != "session_startup_timeout" || errEvent.Data["boundary"] != "adapter" {
+		t.Fatalf("error data = %#v, want session_startup_timeout at adapter boundary", errEvent.Data)
+	}
+	if len(client.created) != 1 || fmt.Sprint(client.killed) != fmt.Sprint(client.created) {
+		t.Fatalf("created=%v killed=%v, want exact owned-session cleanup", client.created, client.killed)
+	}
+}
+
 func TestRedactPromptAndSecretTokensFromDispatchAdapterFailureLedger(t *testing.T) {
 	store, started := startS4DispatchRun(t)
 	prompt := "brief: RAW-PROMPT-DISPATCH-DO-NOT-LOG api_key=sk-dispatchsecret123\ninput: hidden dispatch payload"
@@ -279,8 +448,8 @@ func TestTmuxAdapterHappyPathRecordsSendCompletionAndOutput(t *testing.T) {
 			t.Fatalf("events = %v, want %s", eventTypes(events), eventType)
 		}
 	}
-	if client.sendCalls != 1 || client.captureCalls != 2 {
-		t.Fatalf("fake client calls send=%d capture=%d, want one send and two captures (preflight + completion)", client.sendCalls, client.captureCalls)
+	if client.sendCalls != 1 || client.captureCalls != 3 {
+		t.Fatalf("fake client calls send=%d capture=%d, want one send and three captures (readiness + preflight + completion)", client.sendCalls, client.captureCalls)
 	}
 	if len(client.created) != 1 {
 		t.Fatalf("created sessions = %v, want exactly one on-demand owned session", client.created)
@@ -1661,12 +1830,10 @@ func TestTmuxRenderedPromptDoesNotContainParseableActualRunSentinel(t *testing.T
 	}
 }
 
-func TestRealTmuxHarnessClientSendPromptPastesThenEntersUntilWorking(t *testing.T) {
+func TestRealTmuxHarnessClientPastesSettlesThenSubmitsExactlyOnce(t *testing.T) {
 	fakeDir := t.TempDir()
 	logPath := filepath.Join(fakeDir, "tmux.log")
 	fakeTmuxPath := filepath.Join(fakeDir, "tmux")
-	// The fake reports the agent as working ("esc to interrupt") on the first
-	// capture-pane, so the submit loop stops after a single Enter.
 	fakeTmux := `#!/usr/bin/env bash
 set -euo pipefail
 stdin="$(cat)"
@@ -1680,9 +1847,6 @@ stdin="$(cat)"
     printf 'STDIN_BEGIN\n%s\nSTDIN_END\n' "$stdin"
   fi
 } >> "${TMUX_FAKE_LOG:?}"
-if [[ " $* " == *" capture-pane "* ]]; then
-  printf '  ⏵⏵ bypass permissions on · esc to interrupt\n'
-fi
 `
 	if err := os.WriteFile(fakeTmuxPath, []byte(fakeTmux), 0o755); err != nil {
 		t.Fatalf("write fake tmux: %v", err)
@@ -1690,15 +1854,12 @@ fi
 	t.Setenv("TMUX_FAKE_LOG", logPath)
 	t.Setenv("PATH", fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	oldDelay := tmuxSubmitDelay
 	oldSettle := tmuxPasteSettleDelay
 	oldSleep := tmuxSleep
 	t.Cleanup(func() {
-		tmuxSubmitDelay = oldDelay
 		tmuxPasteSettleDelay = oldSettle
 		tmuxSleep = oldSleep
 	})
-	tmuxSubmitDelay = 37 * time.Millisecond
 	tmuxPasteSettleDelay = 71 * time.Millisecond
 	type sleepSnapshot struct {
 		Delay        time.Duration
@@ -1730,37 +1891,36 @@ fi
 	want := [][]string{
 		{"-S", socket, "load-buffer", "-b", "chrote-dispatch-123", "-"},
 		{"-S", socket, "send-keys", "-t", target, "C-u"},
-		{"-S", socket, "paste-buffer", "-t", target, "-b", "chrote-dispatch-123"},
+		{"-S", socket, "paste-buffer", "-p", "-t", target, "-b", "chrote-dispatch-123"},
 		{"-S", socket, "send-keys", "-t", target, "Enter"},
-		{"-S", socket, "capture-pane", "-p", "-J", "-t", target, "-S", "-6"},
 		{"-S", socket, "delete-buffer", "-b", "chrote-dispatch-123"},
 	}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("tmux command sequence = %#v, want %#v", got, want)
 	}
-	// One settle sleep after the paste (before any Enter), then one submit sleep
-	// after the single Enter (before the capture confirms working).
+	// The paste settles after load/clear/paste and before the single Enter.
 	wantSleeps := []sleepSnapshot{
 		{Delay: tmuxPasteSettleDelay, CommandCount: 3},
-		{Delay: tmuxSubmitDelay, CommandCount: 4},
 	}
 	if fmt.Sprint(sleeps) != fmt.Sprint(wantSleeps) {
 		t.Fatalf("tmux submit pacing = %#v, want %#v", sleeps, wantSleeps)
 	}
 }
 
-func TestRealTmuxHarnessClientSubmitsPromptWithRepeatedEnter(t *testing.T) {
-	fakeDir := t.TempDir()
-	logPath := filepath.Join(fakeDir, "tmux.log")
-	statePath := filepath.Join(fakeDir, "capture-count")
-	fakeTmuxPath := filepath.Join(fakeDir, "tmux")
-	fakeTmux := `#!/usr/bin/env bash
+func TestRealTmuxHarnessClientDoesNotResubmitWhenWorkingEvidenceIsDelayedOrAbsent(t *testing.T) {
+	for _, mode := range []string{"delayed", "absent"} {
+		t.Run(mode, func(t *testing.T) {
+			fakeDir := t.TempDir()
+			logPath := filepath.Join(fakeDir, "tmux.log")
+			statePath := filepath.Join(fakeDir, "capture-count")
+			fakeTmuxPath := filepath.Join(fakeDir, "tmux")
+			fakeTmux := `#!/usr/bin/env bash
 set -euo pipefail
 stdin="$(cat)"
 {
   printf 'ARGS'
   for arg in "$@"; do
-    printf '\t%s' "$arg"
+    printf '	%s' "$arg"
   done
   printf '\n'
   if [ -n "$stdin" ]; then
@@ -1774,68 +1934,54 @@ if [[ " $* " == *" capture-pane "* ]]; then
   fi
   count=$((count + 1))
   printf '%s' "$count" > "${TMUX_FAKE_STATE:?}"
-  if [ "$count" -eq 1 ]; then
-    printf '❯ worker prompt still sitting unsent in the input box\n'
-  else
+  if [ "${TMUX_FAKE_MODE:?}" = delayed ] && [ "$count" -gt 1 ]; then
     printf '  ⏵⏵ bypass permissions on · esc to interrupt · ← for history\n'
+  else
+    printf '❯ worker prompt still sitting unsent in the input box\n'
   fi
 fi
 `
-	if err := os.WriteFile(fakeTmuxPath, []byte(fakeTmux), 0o755); err != nil {
-		t.Fatalf("write fake tmux: %v", err)
-	}
-	t.Setenv("TMUX_FAKE_LOG", logPath)
-	t.Setenv("TMUX_FAKE_STATE", statePath)
-	t.Setenv("PATH", fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			if err := os.WriteFile(fakeTmuxPath, []byte(fakeTmux), 0o755); err != nil {
+				t.Fatalf("write fake tmux: %v", err)
+			}
+			t.Setenv("TMUX_FAKE_LOG", logPath)
+			t.Setenv("TMUX_FAKE_STATE", statePath)
+			t.Setenv("TMUX_FAKE_MODE", mode)
+			t.Setenv("PATH", fakeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	oldDelay := tmuxSubmitDelay
-	oldSleep := tmuxSleep
-	t.Cleanup(func() {
-		tmuxSubmitDelay = oldDelay
-		tmuxSleep = oldSleep
-	})
-	tmuxSubmitDelay = time.Millisecond
-	tmuxSleep = func(time.Duration) {}
+			oldSleep := tmuxSleep
+			t.Cleanup(func() { tmuxSleep = oldSleep })
+			tmuxSleep = func(time.Duration) {}
 
-	ctx := context.Background()
-	socket := "/tmp/chrote-test-tmux.sock"
-	target := "tmux-worker"
-	if err := (realTmuxHarnessClient{}).SendPrompt(ctx, socket, target, "dispatch-retry", strings.Repeat("worker prompt\n", 80)); err != nil {
-		t.Fatalf("send prompt with fake tmux: %v", err)
-	}
+			ctx := context.Background()
+			socket := "/tmp/chrote-test-tmux.sock"
+			target := "tmux-worker"
+			if err := (realTmuxHarnessClient{}).SendPrompt(ctx, socket, target, "dispatch-once", strings.Repeat("worker prompt\n", 80)); err != nil {
+				t.Fatalf("send prompt with fake tmux: %v", err)
+			}
 
-	raw, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("read fake tmux log: %v", err)
-	}
-	// The prompt is submitted by pressing Enter until the pane shows the agent
-	// working ("esc to interrupt"): one Enter while it still sits unsent, a second
-	// once working is detected, then the loop stops. The old ENTER/C-m keys are
-	// gone — a single "Enter" key per attempt.
-	enterCount := strings.Count(string(raw), "send-keys\t-t\t"+target+"\tEnter")
-	legacyKeys := strings.Count(string(raw), "\tENTER") + strings.Count(string(raw), "\tC-m")
-	captureCount := strings.Count(string(raw), "capture-pane	-p	-J	-t	"+target)
-	if enterCount != 2 || captureCount != 2 || legacyKeys != 0 {
-		t.Fatalf("submit counts enter=%d capture=%d legacy=%d, want enter=2 capture=2 legacy=0\nlog:\n%s", enterCount, captureCount, legacyKeys, raw)
+			raw, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatalf("read fake tmux log: %v", err)
+			}
+			// Busy evidence may appear late or never. SendPrompt must still submit at
+			// most once and must not use pane observation as permission to resend.
+			enterCount := strings.Count(string(raw), "send-keys	-t	"+target+"	Enter")
+			legacyKeys := strings.Count(string(raw), "	ENTER") + strings.Count(string(raw), "	C-m")
+			captureCount := strings.Count(string(raw), "capture-pane	-p	-J	-t	"+target)
+			if enterCount != 1 || captureCount != 0 || legacyKeys != 0 {
+				t.Fatalf("submit counts enter=%d capture=%d legacy=%d, want enter=1 capture=0 legacy=0\nlog:\n%s", enterCount, captureCount, legacyKeys, raw)
+			}
+		})
 	}
 }
 
 func TestTmuxPaneShowsAgentWorking(t *testing.T) {
-	idle := strings.Join([]string{
-		"❯ prompt still sitting unsent in the input box",
-		"────────────────────────────────",
-		"  ⏵⏵ bypass permissions on (shift+tab to cycle)",
-	}, "\n")
-	if tmuxPaneShowsAgentWorking(idle) {
-		t.Fatalf("idle input box was misread as an actively working turn")
+	if tmuxPaneShowsAgentWorking("❯ prompt still sitting unsent in the input box") {
+		t.Fatal("idle input box was misread as an actively working turn")
 	}
-
-	working := strings.Join([]string{
-		"  Working through the brief…",
-		"  ⏵⏵ bypass permissions on · esc to interrupt · ← for history",
-	}, "\n")
-	if !tmuxPaneShowsAgentWorking(working) {
-		t.Fatalf("active turn (esc to interrupt) was not detected as working")
+	if !tmuxPaneShowsAgentWorking("Working through the brief · esc to interrupt") {
+		t.Fatal("active turn was not detected as working")
 	}
 }
 
@@ -1941,9 +2087,24 @@ func runTmuxFormationForTestWithConfig(t *testing.T, client *fakeTmuxHarnessClie
 	store, personas := s4RunFixture(t)
 	store.Now = fixedClock()
 	personas.Now = fixedClock()
-	createS4Persona(t, personas, "scout")
+	harness := strings.TrimSpace(client.harness)
+	if harness == "" {
+		harness = "openai-codex"
+	}
+	if _, err := personas.CreatePersona(CreatePersonaRequest{
+		ID:           "scout",
+		Kind:         "specialist",
+		Capabilities: []string{"research"},
+		Harness:      harness,
+	}); err != nil {
+		t.Fatalf("create persona scout: %v", err)
+	}
 	if board == "" {
 		board = s4RunBoardFixture()
+	}
+	if harness != "openai-codex" {
+		board = strings.Replace(board, `harness = "openai-codex"`, `harness = "`+harness+`"`, 1)
+		cfg.Harnesses = []string{harness}
 	}
 	writeFixture(t, store.BoardPath("session-search"), board)
 	if client.pane.CurrentPath == "" && !client.pane.Dead {
@@ -2228,6 +2389,7 @@ func (p *fakeWorkerPane) next() string {
 }
 
 type fakeTmuxHarnessClient struct {
+	harness              string
 	sessions             []string
 	pane                 tmuxPaneState
 	noServer             bool
@@ -2250,6 +2412,10 @@ type fakeTmuxHarnessClient struct {
 	sendTargets          []string
 	paneText             string
 	awaitingCapture      bool
+	startupCaptures      []string
+	readinessPending     map[string]bool
+	preSendCaptureCalls  int
+	lastPreSendCapture   string
 	sendCalls            int
 	captureCalls         int
 	listCalls            int
@@ -2258,6 +2424,7 @@ type fakeTmuxHarnessClient struct {
 	killed               []string
 	ops                  []fakeTmuxOp
 	afterCapture         func(call int)
+	afterSend            func(prompt string)
 	// workerPanes is keyed by a fragment of the tmux target name. Owned session
 	// names embed the slot id, so a test scripts a worker's pane by slot without
 	// knowing the session nonce the executor generates.
@@ -2355,6 +2522,12 @@ func (f *fakeTmuxHarnessClient) DescribeActivePane(_ context.Context, _, target 
 	if pane := f.workerPane(target); pane != nil && pane.missing {
 		return tmuxPaneState{}, fakeTmuxMissingTarget(target)
 	}
+	if f.ownsTarget(target) {
+		if f.readinessPending == nil {
+			f.readinessPending = map[string]bool{}
+		}
+		f.readinessPending[target] = true
+	}
 	return f.pane, nil
 }
 
@@ -2367,10 +2540,22 @@ func (f *fakeTmuxHarnessClient) SendPrompt(_ context.Context, _, target, dispatc
 	f.sentPrompts = append(f.sentPrompts, prompt)
 	f.sendTargets = append(f.sendTargets, target)
 	f.awaitingCapture = true
+	if f.afterSend != nil {
+		f.afterSend(prompt)
+	}
 	if f.sendErrEchoPrompt {
 		return fmt.Errorf("tmux send failed with prompt %s token=sk-tmu...t123", prompt)
 	}
 	return f.sendErr
+}
+
+func (f *fakeTmuxHarnessClient) ownsTarget(target string) bool {
+	for _, created := range f.created {
+		if created == target {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *fakeTmuxHarnessClient) CapturePane(_ context.Context, _, target string, _ int) (string, error) {
@@ -2379,11 +2564,37 @@ func (f *fakeTmuxHarnessClient) CapturePane(_ context.Context, _, target string,
 	if f.afterCapture != nil {
 		f.afterCapture(f.captureCalls)
 	}
-	if pane := f.workerPane(target); pane != nil {
-		if pane.missing {
+	workerPane := f.workerPane(target)
+	if !f.awaitingCapture && f.readinessPending != nil && f.readinessPending[target] {
+		captured := f.paneText
+		if f.startupCaptures == nil {
+			if f.harness == "claude-code" {
+				captured = "Claude Code\n❯"
+			} else {
+				captured = "OpenAI Codex\n› Explain this codebase"
+			}
+		} else if len(f.startupCaptures) > 0 {
+			captured = f.startupCaptures[0]
+			if len(f.startupCaptures) > 1 {
+				f.startupCaptures = f.startupCaptures[1:]
+			}
+		}
+		f.preSendCaptureCalls++
+		f.lastPreSendCapture = captured
+		harness := f.harness
+		if harness == "" {
+			harness = "openai-codex"
+		}
+		if tmuxPaneShowsHarnessReady(harness, captured) {
+			f.readinessPending[target] = false
+		}
+		return captured, nil
+	}
+	if workerPane != nil {
+		if workerPane.missing {
 			return "", fakeTmuxMissingTarget(target)
 		}
-		text := pane.next()
+		text := workerPane.next()
 		if text == fakeWorkerPaneGone {
 			return "", fakeTmuxMissingTarget(target)
 		}
