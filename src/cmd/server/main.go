@@ -29,6 +29,10 @@ import (
 // Version is set at build time or defaults to dev
 var Version = "2.0.0-alpha.2-dev"
 
+// BuildCommit is stamped at build time via
+// -ldflags "-X main.BuildCommit=$(git rev-parse HEAD)"; empty when unstamped.
+var BuildCommit = ""
+
 const (
 	defaultBindHost   = "127.0.0.1"
 	defaultServerPort = 8094
@@ -183,7 +187,7 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Contex
 	filesHandler := api.NewFilesHandlerWithFormationsDataRoot(config.FormationsDataRoot)
 	filesHandler.RegisterRoutes(mux)
 
-	healthHandler := api.NewHealthHandlerWithVersion(Version)
+	healthHandler := api.NewHealthHandlerWithBuildInfo(Version, BuildCommit)
 	healthHandler.RegisterRoutes(mux)
 
 	servicesHandler := api.NewServicesHandler(api.LoadServiceConfigFromEnv())
