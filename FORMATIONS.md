@@ -1219,7 +1219,10 @@ step up is an explicit configuration decision, never a silent fallback.
    This is defense-in-depth for trusted execution, not a same-UID stock-tmux
    fence: racing within a command or independently using an owner-accessible
    raw socket remains possible and cannot be cited as production
-   certification.
+   certification. For executor-created sessions, dispatch waits until the
+   configured Codex or Claude harness exposes its idle input, records a loud
+   pre-send timeout when readiness remains unknown, and pastes and submits each
+   prompt exactly once. Post-submit observation never authorizes another submit.
 
 ## Build sequence
 

@@ -102,12 +102,32 @@ function mockHistoryFailure(status = statusResponse()) {
   })
 }
 
-function barXCoordinates(nodes: NodeListOf<SVGRectElement>) {
-  return Array.from(nodes, node => Number(node.getAttribute('x')))
+/** Pulls the x coordinates out of a trace path so geometry can be asserted without a layout engine. */
+function pathXCoordinates(container: HTMLElement, selector: string) {
+  const node = container.querySelector(selector)
+  const numbers = (node?.getAttribute('d') || '').match(/-?\d+(?:\.\d+)?/g) || []
+  return numbers.map(Number).filter((_value, index) => index % 2 === 0)
 }
 
-function barWidths(nodes: NodeListOf<SVGRectElement>) {
-  return Array.from(nodes, node => Number(node.getAttribute('width')))
+/** Pulls the y coordinates out of a trace path to assert how a series was scaled. */
+function pathYCoordinates(container: HTMLElement, selector: string) {
+  const node = container.querySelector(selector)
+  const numbers = (node?.getAttribute('d') || '').match(/-?\d+(?:\.\d+)?/g) || []
+  return numbers.map(Number).filter((_value, index) => index % 2 === 1)
+}
+
+function stretchTrace(strip: HTMLElement, width = 900) {
+  vi.spyOn(strip, 'getBoundingClientRect').mockReturnValue({
+    x: 0,
+    y: 0,
+    left: 0,
+    top: 0,
+    right: width,
+    bottom: 96,
+    width,
+    height: 96,
+    toJSON: () => ({}),
+  } as DOMRect)
 }
 
 describe('SystemStatusView', () => {
@@ -122,90 +142,126 @@ describe('SystemStatusView', () => {
     vi.unstubAllGlobals()
   })
 
-  it('renders backend-backed TUI telemetry strips with storage state', async () => {
+  it('renders one instrument row per metric with its reading, detail and window stats', async () => {
     const { container } = render(<SystemStatusView active />)
 
     expect(await screen.findByRole('heading', { name: 'Server cockpit' })).toBeInTheDocument()
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/system/status'))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/system/history'))
 
-    expect(await screen.findByRole('heading', { name: 'History' })).toBeInTheDocument()
-    expect(screen.getByText('3 samples')).toBeInTheDocument()
-    expect(screen.queryByRole('img', { name: 'Server telemetry timeline' })).not.toBeInTheDocument()
-    expect(screen.queryByText(/TUI-style separated graphs/)).not.toBeInTheDocument()
-    expect(screen.queryByText(/backend history/)).not.toBeInTheDocument()
-    expect(screen.queryByText(/scroll sideways/i)).not.toBeInTheDocument()
-    expect(screen.queryByRole('list', { name: 'Telemetry legend' })).not.toBeInTheDocument()
-    expect(screen.getByRole('img', { name: 'GPU history' })).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: 'VRAM history' })).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: 'RAM history' })).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: 'Swap history' })).toBeInTheDocument()
+    expect(await screen.findByText('3 samples')).toBeInTheDocument()
+    expect(container.querySelectorAll('.system-instrument')).toHaveLength(6)
+    expect(container.querySelectorAll('.system-trace')).toHaveLength(6)
+
     expect(screen.getByRole('img', { name: 'CPU history' })).toBeInTheDocument()
     expect(screen.getByRole('img', { name: 'Load history' })).toBeInTheDocument()
-    expect(container.querySelectorAll('.system-tui-row')).toHaveLength(6)
-    expect(container.querySelectorAll('.system-tui-strip')).toHaveLength(6)
-    expect(container.querySelectorAll('.system-timeline-meta')).toHaveLength(0)
-    expect(container.querySelectorAll('.system-timeline-hint')).toHaveLength(0)
-    expect(container.querySelectorAll('.system-tui-guide')).toHaveLength(0)
-    const timeLabels = container.querySelectorAll('.system-tui-time')
-    expect(timeLabels[0]).toHaveAttribute('text-anchor', 'start')
-    expect(timeLabels[timeLabels.length - 1]).toHaveAttribute('text-anchor', 'end')
-    const scroll = screen.getByLabelText(/scrollable server telemetry history/i)
-    expect(scroll).toHaveClass('system-timeline-scroll')
-    expect(container.querySelectorAll('.system-donut')).toHaveLength(6)
-    expect(container.querySelectorAll('.system-summary-label svg')).toHaveLength(0)
-    expect(container.querySelectorAll('.system-summary-card small')).toHaveLength(0)
-    expect(screen.getByRole('img', { name: /GPU 17%/i })).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: /VRAM 14%/i })).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: /RAM 25%/i })).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: /SWAP 13%/i })).toBeInTheDocument()
-    expect(screen.getByRole('img', { name: /Storage 28%/i })).toBeInTheDocument()
-    expect(container.querySelectorAll('.system-tui-bar-gpu').length).toBeGreaterThan(0)
-    expect(container.querySelectorAll('.system-tui-bar-vram').length).toBeGreaterThan(0)
-    expect(container.querySelectorAll('.system-tui-bar-memory').length).toBeGreaterThan(0)
-    expect(container.querySelectorAll('.system-tui-bar-swap').length).toBeGreaterThan(0)
-    expect(container.querySelectorAll('.system-tui-bar-cpu').length).toBeGreaterThan(0)
-    expect(container.querySelectorAll('.system-tui-bar-load').length).toBeGreaterThan(0)
+    expect(screen.getByRole('img', { name: 'RAM history' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Swap history' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'GPU history' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'VRAM history' })).toBeInTheDocument()
+
+    expect(screen.getByRole('region', { name: /^CPU 30%/ })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: /^Load 2\.6%/ })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: /^RAM 25%/ })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: /^Swap 13%/ })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: /^GPU 17%/ })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: /^VRAM 14%/ })).toBeInTheDocument()
 
     expect(screen.getByText('landmass')).toBeInTheDocument()
-    expect(screen.queryByText('nominal')).not.toBeInTheDocument()
-    expect(screen.getAllByText(/NVIDIA GeForce RTX 4070 Ti SUPER/).length).toBeGreaterThan(0)
-    expect(screen.getAllByText(/WSL nvidia-smi/).length).toBeGreaterThan(0)
+    expect(screen.getByText('up 12d 12h')).toBeInTheDocument()
     expect(screen.getByText('16 cores')).toBeInTheDocument()
     expect(screen.getByText('2.2 GB / 16 GB')).toBeInTheDocument()
     expect(screen.getByText('16 GB / 64 GB')).toBeInTheDocument()
     expect(screen.getByText('free 1.0 GB · available 48 GB')).toBeInTheDocument()
     expect(screen.getByText('1.0 GB / 8.0 GB')).toBeInTheDocument()
-    expect(screen.getByText('280 GB / 1000 GB')).toBeInTheDocument()
-    expect(screen.queryByText(/occupied/)).not.toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Storage' })).not.toBeInTheDocument()
-    expect(container.querySelectorAll('.system-storage-row')).toHaveLength(0)
-    expect(container.querySelectorAll('.system-tui-row-label strong')).toHaveLength(0)
-    expect(container.querySelectorAll('.system-tui-row-label small')).toHaveLength(0)
-    expect(screen.queryByText('0-100')).not.toBeInTheDocument()
+    expect(screen.getByText('0.42 / 0.73 / 0.62')).toBeInTheDocument()
 
-    expect(screen.queryByRole('img', { name: /CPU utilization trend/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('img', { name: /GPU utilization trend/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Signals' })).not.toBeInTheDocument()
-    expect(screen.queryByLabelText(/server signal history/i)).not.toBeInTheDocument()
-    expect(screen.queryByLabelText(/network detail/i)).not.toBeInTheDocument()
-    expect(container.querySelectorAll('.system-sparkline')).toHaveLength(0)
-    expect(container.querySelectorAll('.system-signal-row')).toHaveLength(0)
-    expect(container.querySelectorAll('.system-graph-panel')).toHaveLength(0)
-    expect(container.querySelectorAll('.system-graph-line-memory')).toHaveLength(0)
-    expect(container.querySelectorAll('.system-timeline-lane')).toHaveLength(0)
-    expect(container.querySelectorAll('.system-timeline-direct-label')).toHaveLength(0)
-    expect(container.querySelectorAll('.system-timeline-path-cpu-load')).toHaveLength(0)
-    expect(container.querySelectorAll('.system-timeline-path-gpu')).toHaveLength(0)
-    expect(container.querySelectorAll('.system-health')).toHaveLength(0)
-    expect(screen.queryByText(/attention/i)).not.toBeInTheDocument()
-    expect(container.querySelectorAll('.system-tui-path')).toHaveLength(0)
-    expect(container.querySelectorAll('.system-tui-dot')).toHaveLength(0)
+    // Peak and average over the sampled window, not just the live tip.
+    expect(screen.getByText('peak 17% · avg 12%')).toBeInTheDocument()
+
+    // The donut/summary duplication and the horizontal scroll strip are gone.
+    expect(container.querySelectorAll('.system-donut')).toHaveLength(0)
+    expect(container.querySelectorAll('.system-summary-card')).toHaveLength(0)
+    expect(container.querySelectorAll('.system-summary-grid')).toHaveLength(0)
+    expect(container.querySelectorAll('.system-tui-row')).toHaveLength(0)
+    expect(container.querySelectorAll('.system-tui-bar')).toHaveLength(0)
+    expect(container.querySelectorAll('.system-timeline-scroll')).toHaveLength(0)
+    expect(container.querySelectorAll('.system-storage-row')).toHaveLength(0)
+    expect(screen.queryByLabelText(/scrollable server telemetry history/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'History' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Storage' })).not.toBeInTheDocument()
   })
 
-  it('packs wide telemetry histories into tight fixed-width bars', async () => {
+  it('scales each row to its own peak so a quiet host is still readable', async () => {
+    const { container } = render(<SystemStatusView active />)
+
+    await screen.findByText('3 samples')
+
+    // GPU peaks at 17%, so the axis tops out at 25% rather than a flat 0-100 baseline.
+    const gpuScale = container.querySelector('.system-instrument-gpu .system-instrument-scale')
+    expect(gpuScale).toHaveTextContent('25%')
+    const gpuYs = pathYCoordinates(container, '.system-instrument-gpu .system-trace-line')
+    expect(gpuYs[gpuYs.length - 1]).toBeCloseTo(100 - 17 / 25 * 100, 1)
+
+    // A different peak gets a different ceiling, and the label always states it.
+    expect(container.querySelector('.system-instrument-cpu .system-instrument-scale')).toHaveTextContent('40%')
+    expect(container.querySelector('.system-instrument-swap .system-instrument-scale')).toHaveTextContent('20%')
+  })
+
+  it('floors the axis instead of magnifying an all-zero series', async () => {
+    const idle = (timestamp: string) => statusResponse({
+      timestamp,
+      gpus: [baseGPU({ utilizationPercent: 0 })],
+    })
+    mockSystemResponses(idle('2026-06-28T07:20:00Z'), historyResponse([
+      idle('2026-06-28T07:00:00Z'),
+      idle('2026-06-28T07:10:00Z'),
+    ]))
+
+    const { container } = render(<SystemStatusView active />)
+
+    await screen.findByText('3 samples')
+    expect(container.querySelector('.system-instrument-gpu .system-instrument-scale')).toHaveTextContent('5%')
+    const ys = pathYCoordinates(container, '.system-instrument-gpu .system-trace-line')
+    expect(ys.every(y => y === 100)).toBe(true)
+  })
+
+  it('caps the axis at 100% once a series actually saturates', async () => {
+    const busy = (timestamp: string, usedPercent: number) => statusResponse({
+      timestamp,
+      memory: baseMemory({ usedPercent }),
+    })
+    mockSystemResponses(busy('2026-06-28T07:20:00Z', 94), historyResponse([
+      busy('2026-06-28T07:00:00Z', 88),
+      busy('2026-06-28T07:10:00Z', 91),
+    ]))
+
+    const { container } = render(<SystemStatusView active />)
+
+    await screen.findByText('3 samples')
+    expect(container.querySelector('.system-instrument-memory .system-instrument-scale')).toHaveTextContent('100%')
+    expect(container.querySelectorAll('.system-instrument-memory.system-tone-warn')).toHaveLength(1)
+  })
+
+  it('shows GPU thermals and power draw from the payload instead of discarding them', async () => {
+    render(<SystemStatusView active />)
+
+    expect(await screen.findByText('39 °C · 58 W · WSL nvidia-smi')).toBeInTheDocument()
+    expect(screen.getByText('NVIDIA GeForce RTX 4070 Ti SUPER')).toBeInTheDocument()
+  })
+
+  it('keeps root storage as a header meter rather than a metric row', async () => {
+    render(<SystemStatusView active />)
+
+    const meter = await screen.findByRole('img', { name: 'Storage 28%' })
+    expect(meter).toHaveTextContent('280 GB / 1000 GB')
+    expect(meter).toHaveTextContent('Storage /')
+    expect(screen.queryByRole('img', { name: 'Storage history' })).not.toBeInTheDocument()
+  })
+
+  it('stretches every trace across the full chart width regardless of sample count', async () => {
     const start = Date.parse('2026-06-28T02:20:00Z')
-    const samples = Array.from({ length: 299 }, (_, index) => statusResponse({
+    const samples = Array.from({ length: 299 }, (_unused, index) => statusResponse({
       timestamp: new Date(start + index * 60_000).toISOString(),
       host: { hostname: 'landmass', uptimeSeconds: 1060000 + index * 60, load1: 0.25 + index / 1000, load5: 0.45, load15: 0.53 },
       cpu: { cores: 16, totalTicks: 1200 + index * 100, idleTicks: 960 + index * 60 },
@@ -221,19 +277,43 @@ describe('SystemStatusView', () => {
     const { container } = render(<SystemStatusView active />)
 
     await screen.findByText(/300 samples/)
-    const timeline = await screen.findByRole('img', { name: 'GPU history' })
-    const width = Number(timeline.getAttribute('width'))
-    expect(width).toBeGreaterThanOrEqual(1400)
-    expect(width).toBeLessThanOrEqual(1700)
+    const strip = await screen.findByRole('img', { name: 'GPU history' })
+    expect(strip).toHaveAttribute('preserveAspectRatio', 'none')
+    expect(strip).toHaveAttribute('viewBox', '0 0 1000 100')
+    expect(strip).not.toHaveAttribute('width')
 
-    const bars = container.querySelectorAll<SVGRectElement>('.system-tui-bar-gpu')
-    const [firstWidth] = barWidths(bars)
-    const xs = barXCoordinates(bars)
-    expect(firstWidth).toBeLessThanOrEqual(7.2)
-    expect(xs[2] - xs[1]).toBeLessThanOrEqual(firstWidth + 1)
+    const xs = pathXCoordinates(container, '.system-instrument-gpu .system-trace-line')
+    expect(xs).toHaveLength(300)
+    expect(xs[0]).toBe(0)
+    expect(xs[xs.length - 1]).toBe(1000)
   })
 
-  it('uses one synchronized crosshair readout instead of per-bar tooltip clutter', async () => {
+  it('renders a sparse history at the same full width as a dense one', async () => {
+    const { container } = render(<SystemStatusView active />)
+
+    await screen.findByText('3 samples')
+    const xs = pathXCoordinates(container, '.system-instrument-memory .system-trace-line')
+    expect(xs).toHaveLength(3)
+    expect(xs[0]).toBe(0)
+    expect(xs[xs.length - 1]).toBe(1000)
+  })
+
+  it('positions telemetry by timestamp gaps instead of sample index', async () => {
+    const current = statusResponse({ timestamp: '2026-06-28T07:20:00Z' })
+    mockSystemResponses(current, historyResponse([
+      statusResponse({ timestamp: '2026-06-28T07:00:00Z', gpus: [baseGPU({ utilizationPercent: 8 })] }),
+      statusResponse({ timestamp: '2026-06-28T07:19:00Z', gpus: [baseGPU({ utilizationPercent: 12 })] }),
+    ]))
+
+    const { container } = render(<SystemStatusView active />)
+
+    await screen.findByText(/3 samples/)
+    const xs = pathXCoordinates(container, '.system-instrument-gpu .system-trace-line')
+    expect(xs).toHaveLength(3)
+    expect(xs[1] - xs[0]).toBeGreaterThan((xs[2] - xs[1]) * 10)
+  })
+
+  it('scrubs every row to the hovered sample with one synchronized crosshair', async () => {
     mockSystemResponses(statusResponse({ timestamp: '2026-06-28T07:20:00Z' }), historyResponse([
       statusResponse({
         timestamp: '2026-06-28T07:00:00Z',
@@ -252,54 +332,26 @@ describe('SystemStatusView', () => {
     const { container } = render(<SystemStatusView active />)
 
     await screen.findByText(/3 samples/)
-    expect(container.querySelectorAll('.system-tui-bar-point title')).toHaveLength(0)
     expect(screen.queryByLabelText('History sample')).not.toBeInTheDocument()
 
     const strip = await screen.findByRole('img', { name: 'GPU history' })
-    vi.spyOn(strip, 'getBoundingClientRect').mockReturnValue({
-      x: 0,
-      y: 0,
-      left: 0,
-      top: 0,
-      right: 900,
-      bottom: 64,
-      width: 900,
-      height: 64,
-      toJSON: () => ({}),
-    } as DOMRect)
-
+    stretchTrace(strip)
     fireEvent.pointerMove(strip, { clientX: 451, clientY: 20 })
 
     const readout = await screen.findByLabelText('History sample')
     expect(readout).toHaveTextContent(new Date('2026-06-28T07:10:00Z').toLocaleTimeString())
-    expect(readout).toHaveTextContent('GPU 12%')
-    expect(readout).toHaveTextContent('VRAM 14%')
-    expect(readout).toHaveTextContent('RAM 25%')
-    expect(readout).toHaveTextContent('SWAP 13%')
-    expect(readout).toHaveTextContent('CPU 30%')
-    expect(readout).toHaveTextContent('LOAD 3.1%')
-    expect(container.querySelectorAll('.system-tui-crosshair')).toHaveLength(6)
-    expect(container.querySelectorAll('.system-tui-bar-hover')).toHaveLength(6)
+    expect(container.querySelectorAll('.system-trace-crosshair')).toHaveLength(6)
+    expect(container.querySelectorAll('.system-instrument-reading.is-scrubbed')).toHaveLength(6)
+
+    // Every row's number reports the hovered moment, not the live tip.
+    expect(screen.getByRole('region', { name: /^GPU 12%/ })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: /^CPU 30%/ })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: /^Load 3\.1%/ })).toBeInTheDocument()
 
     fireEvent.pointerLeave(strip)
     expect(screen.queryByLabelText('History sample')).not.toBeInTheDocument()
-    expect(container.querySelectorAll('.system-tui-crosshair')).toHaveLength(0)
-  })
-
-  it('positions telemetry by timestamp gaps instead of sample index', async () => {
-    const current = statusResponse({ timestamp: '2026-06-28T07:20:00Z' })
-    mockSystemResponses(current, historyResponse([
-      statusResponse({ timestamp: '2026-06-28T07:00:00Z', gpus: [baseGPU({ utilizationPercent: 8 })] }),
-      statusResponse({ timestamp: '2026-06-28T07:19:00Z', gpus: [baseGPU({ utilizationPercent: 12 })] }),
-    ]))
-
-    const { container } = render(<SystemStatusView active />)
-
-    await screen.findByText(/3 samples/)
-    await screen.findByRole('img', { name: 'GPU history' })
-    const xs = barXCoordinates(container.querySelectorAll('.system-tui-bar-gpu'))
-    expect(xs).toHaveLength(3)
-    expect(xs[1] - xs[0]).toBeGreaterThan((xs[2] - xs[1]) * 10)
+    expect(container.querySelectorAll('.system-trace-crosshair')).toHaveLength(0)
+    expect(container.querySelectorAll('.system-instrument-reading.is-scrubbed')).toHaveLength(0)
   })
 
   it('renders current status with a non-fatal history note when history fails', async () => {
@@ -312,8 +364,24 @@ describe('SystemStatusView', () => {
     expect(screen.getByText('1 sample · current status fallback')).toBeInTheDocument()
     expect(await screen.findByRole('status')).toHaveTextContent('History unavailable: HISTORY_DOWN: history unavailable')
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(screen.getByRole('img', { name: /Storage 28%/i })).toBeInTheDocument()
-    expect(container.querySelectorAll('.system-tui-bar-gpu')).toHaveLength(1)
+    expect(screen.getByRole('img', { name: 'Storage 28%' })).toBeInTheDocument()
+    // A lone reading still gets a visible stem rather than vanishing into a zero-length path.
+    expect(container.querySelectorAll('.system-instrument-gpu .system-trace-stem')).toHaveLength(1)
+    expect(container.querySelectorAll('.system-instrument-gpu .system-trace-line')).toHaveLength(0)
+  })
+
+  it('leaves gaps in a series instead of bridging missing readings', async () => {
+    mockSystemResponses(statusResponse({ timestamp: '2026-06-28T07:20:00Z' }), historyResponse([
+      statusResponse({ timestamp: '2026-06-28T07:00:00Z', gpus: [baseGPU({ utilizationPercent: 8 })] }),
+      statusResponse({ timestamp: '2026-06-28T07:05:00Z', gpus: [{ available: false, message: 'nvidia-smi busy' }] }),
+      statusResponse({ timestamp: '2026-06-28T07:10:00Z', gpus: [baseGPU({ utilizationPercent: 12 })] }),
+    ]))
+
+    const { container } = render(<SystemStatusView active />)
+
+    await screen.findByText(/4 samples/)
+    expect(container.querySelectorAll('.system-instrument-gpu .system-trace-stem')).toHaveLength(1)
+    expect(container.querySelectorAll('.system-instrument-gpu .system-trace-line')).toHaveLength(1)
   })
 
   it('keeps the Server tab alive when a status payload has no disks', async () => {
@@ -395,7 +463,7 @@ describe('SystemStatusView', () => {
 
     render(<SystemStatusView active />)
 
-    expect(await screen.findByRole('img', { name: /SWAP 99%/i })).toBeInTheDocument()
+    expect(await screen.findByRole('region', { name: /^Swap 99%/ })).toBeInTheDocument()
     expect(screen.getByText('7.9 GB / 8.0 GB')).toBeInTheDocument()
     expect(screen.getByText('0 B/s active swap I/O')).toBeInTheDocument()
     expect(screen.queryByText('SWAP_HIGH')).not.toBeInTheDocument()
@@ -413,9 +481,10 @@ describe('SystemStatusView', () => {
     })
     mockSystemResponses(current, historyResponse([previous, current]))
 
-    render(<SystemStatusView active />)
+    const { container } = render(<SystemStatusView active />)
 
     expect(await screen.findByText('SWAP_ACTIVE')).toBeInTheDocument()
     expect(screen.getAllByText(/active swap I\/O/).length).toBeGreaterThan(0)
+    expect(container.querySelectorAll('.system-tone-warn')).toHaveLength(1)
   })
 })

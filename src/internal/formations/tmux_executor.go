@@ -46,15 +46,12 @@ const (
 
 var (
 	errTmuxTargetMissing = errors.New("tmux target missing")
-	tmuxSubmitDelay      = 500 * time.Millisecond
 	// tmuxPasteSettleDelay lets a large bracketed paste finish rendering in the
-	// agent TUI before the first Enter. A single Enter sent too soon is absorbed
+	// agent TUI before the single submit key. An Enter sent too soon can be absorbed
 	// into the still-settling input instead of submitting the turn.
-	tmuxPasteSettleDelay = 1200 * time.Millisecond
-	// tmuxSubmitMaxEnters bounds the "send a few more Enters" submit: keep pressing
-	// Enter until the pane shows the agent actually working, up to this many tries.
-	tmuxSubmitMaxEnters = 8
-	tmuxSleep           = time.Sleep
+	tmuxPasteSettleDelay         = 1200 * time.Millisecond
+	tmuxSessionReadyPollInterval = 100 * time.Millisecond
+	tmuxSleep                    = time.Sleep
 	// newSessionNonce returns a collision-proof suffix for an owned session name.
 	// It is a package var so tests can make owned names deterministic.
 	newSessionNonce = func() string {
@@ -1046,7 +1043,7 @@ func (e *TmuxFormationExecutor) resolveSlotBinding(ctx context.Context, req Form
 // A slot already provisioned in this execution reuses its own session.
 func (e *TmuxFormationExecutor) provisionOwnedSession(ctx context.Context, owned *ownedSessions, runID string, slot FormationSlot, variant HarnessVariant) (string, error) {
 	if name, ok := owned.name(slot.ID); ok {
-		if err := e.ensureOwnedSessionReady(ctx, name); err != nil {
+		if err := e.ensureOwnedSessionReady(ctx, name, variant.ID); err != nil {
 			return "", err
 		}
 		return name, nil
@@ -1068,7 +1065,7 @@ func (e *TmuxFormationExecutor) provisionOwnedSession(ctx context.Context, owned
 	// Record ownership immediately after a successful create so teardown reclaims
 	// the session even if the readiness check below fails.
 	owned.record(slot.ID, name)
-	if err := e.ensureOwnedSessionReady(ctx, name); err != nil {
+	if err := e.ensureOwnedSessionReady(ctx, name, variant.ID); err != nil {
 		return "", err
 	}
 	return name, nil
@@ -1105,10 +1102,11 @@ func (e *TmuxFormationExecutor) pickOwnedSessionName(ctx context.Context, runID,
 	return "", runExecutionError("session_name_collision", "could not derive a collision-free owned tmux session name", "executor", nil)
 }
 
-// ensureOwnedSessionReady confirms an owned session is live and rooted in the
-// workspace before dispatch. It targets only the exact owned name, so it never
-// enumerates or inspects foreign sessions.
-func (e *TmuxFormationExecutor) ensureOwnedSessionReady(ctx context.Context, sessionName string) error {
+// ensureOwnedSessionReady confirms an owned session is live, rooted in the
+// workspace, and showing the selected harness's initialized input before
+// dispatch. It targets only the exact owned name, so it never enumerates or
+// inspects foreign sessions.
+func (e *TmuxFormationExecutor) ensureOwnedSessionReady(ctx context.Context, sessionName, harnessID string) error {
 	if err := e.validatePinnedTmuxSocket(); err != nil {
 		return err
 	}
@@ -1132,7 +1130,61 @@ func (e *TmuxFormationExecutor) ensureOwnedSessionReady(ctx context.Context, ses
 			return runExecutionError("cwd_outside_root", "tmux pane cwd is outside configured roots", "adapter", nil)
 		}
 	}
-	return nil
+
+	deadline := time.Now().Add(time.Duration(e.config.TimeoutSeconds) * time.Second)
+	for {
+		if err := e.validatePinnedTmuxSocket(); err != nil {
+			return err
+		}
+		captured, err := e.client.CapturePane(ctx, e.config.Socket, sessionName, e.config.OutputCapBytes)
+		if err != nil {
+			code := "session_startup_capture_failed"
+			if errors.Is(err, errTmuxTargetMissing) {
+				code = "missing_session"
+			}
+			return runExecutionError(code, redactLedgerText(err.Error()), "adapter", err)
+		}
+		if tmuxPaneShowsHarnessReady(harnessID, captured) {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return runExecutionError("session_startup_timeout", "agent TUI did not become ready before startup timeout", "adapter", ErrDispatchTimeout)
+		}
+		select {
+		case <-ctx.Done():
+			return runExecutionError("session_startup_timeout", "agent TUI did not become ready before startup timeout", "adapter", ctx.Err())
+		case <-time.After(tmuxSessionReadyPollInterval):
+		}
+	}
+}
+
+func tmuxPaneShowsHarnessReady(harnessID, captured string) bool {
+	captured = strings.TrimRight(captured, " 	\r\n")
+	lines := strings.Split(captured, "\n")
+	if len(lines) > 8 {
+		lines = lines[len(lines)-8:]
+	}
+	tail := strings.Join(lines, "\n")
+	if strings.Contains(tail, "esc to interrupt") {
+		return false
+	}
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		switch harnessID {
+		case "openai-codex":
+			if strings.Contains(captured, "OpenAI Codex") && strings.HasPrefix(line, "›") {
+				return true
+			}
+		case "claude-code":
+			if strings.Contains(captured, "Quick safety check") || strings.Contains(captured, "Yes, I trust this folder") {
+				return false
+			}
+			if strings.Contains(captured, "Claude Code") && strings.HasPrefix(line, "❯") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // teardownOwnedSessions kills every session this execution created, and nothing
@@ -2224,37 +2276,22 @@ func (realTmuxHarnessClient) SendPrompt(ctx context.Context, socket, target, dis
 	if _, err := runTmuxCommand(ctx, socket, nil, "send-keys", "-t", target, "C-u"); err != nil {
 		return err
 	}
-	if _, err := runTmuxCommand(ctx, socket, nil, "paste-buffer", "-t", target, "-b", bufferName); err != nil {
+	if _, err := runTmuxCommand(ctx, socket, nil, "paste-buffer", "-p", "-t", target, "-b", bufferName); err != nil {
 		return err
 	}
 	// Let the (possibly large, multi-line) bracketed paste finish rendering before
-	// the first Enter — a too-early Enter is swallowed by the settling input.
+	// the single Enter — a too-early Enter can be swallowed by the settling input.
 	tmuxSleep(tmuxPasteSettleDelay)
-	// Submit with the interactive "send to session" pattern: press Enter, then keep
-	// pressing a few more, until the pane shows the agent is actually working. A
-	// single Enter after a paste is unreliable; extra Enters on an already-working
-	// (or empty) input are harmless no-ops in the agent TUI.
-	for attempt := 0; attempt < tmuxSubmitMaxEnters; attempt++ {
-		if _, err := runTmuxCommand(ctx, socket, nil, "send-keys", "-t", target, "Enter"); err != nil {
-			return err
-		}
-		tmuxSleep(tmuxSubmitDelay)
-		captured, err := runTmuxCommand(ctx, socket, nil, "capture-pane", "-p", "-J", "-t", target, "-S", "-6")
-		if err != nil {
-			return err
-		}
-		if tmuxPaneShowsAgentWorking(captured) {
-			return nil
-		}
+	// Delivery is at-most-once: once the prompt has been pasted, submit exactly
+	// once. Pane state can lag behind the keypress, so using observation as
+	// permission to press Enter again can queue duplicate copies of the prompt.
+	// Completion monitoring owns the post-submit outcome.
+	if _, err := runTmuxCommand(ctx, socket, nil, "send-keys", "-t", target, "Enter"); err != nil {
+		return err
 	}
 	return nil
 }
 
-// tmuxPaneShowsAgentWorking reports whether the captured pane shows the agent
-// actively processing a turn. The coding-agent TUIs surface an "esc to interrupt"
-// affordance on their status line only while a turn is in flight, which is a
-// reliable positive signal that the pasted prompt was submitted (as opposed to
-// still sitting unsent in the input box).
 func tmuxPaneShowsAgentWorking(captured string) bool {
 	return strings.Contains(captured, "esc to interrupt")
 }
