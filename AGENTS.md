@@ -49,6 +49,24 @@ bd update <id> --claim --json
 
 Create discovered work as linked Beads rather than burying it in prose or unrelated changes.
 
+## Git checkpoints
+
+This project uses frequent local Git commits as part of normal Beads-backed
+work. This project-specific rule is more specific than the generated Beads
+profile's conservative Git fallback below; leave the generated block intact.
+
+- Create and claim the relevant Bead before substantive implementation, then
+  commit each coherent, verified increment before moving to an independent
+  concern.
+- Keep commits small and single-purpose. Stage only the files belonging to the
+  current Bead, and preserve unrelated dirty work.
+- Do not leave substantive completed work only in the working tree at handoff.
+  Report the commit hash, Bead id/status, and verification receipt together.
+- A local commit does not authorize a push, rebase, merge, or deployment. Those
+  remain separate actions requiring explicit authority.
+- If the user explicitly says not to commit yet, honor that exception and
+  report the exact uncommitted scope at handoff.
+
 ## Before editing
 
 - Read nearby code, callers, tests, and the active source-truth document.
