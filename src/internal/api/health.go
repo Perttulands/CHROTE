@@ -11,6 +11,7 @@ import (
 // HealthHandler handles health check endpoints
 type HealthHandler struct {
 	version string
+	commit  string
 }
 
 // NewHealthHandler creates a new HealthHandler
@@ -21,6 +22,12 @@ func NewHealthHandler() *HealthHandler {
 // NewHealthHandlerWithVersion creates a new HealthHandler with a custom version
 func NewHealthHandlerWithVersion(version string) *HealthHandler {
 	return &HealthHandler{version: version}
+}
+
+// NewHealthHandlerWithBuildInfo creates a HealthHandler carrying the git commit
+// the binary was built from. Commit is empty when the build did not stamp one.
+func NewHealthHandlerWithBuildInfo(version, commit string) *HealthHandler {
+	return &HealthHandler{version: version, commit: commit}
 }
 
 // RegisterRoutes registers the health routes on the given mux
@@ -34,6 +41,7 @@ func (h *HealthHandler) Health(w http.ResponseWriter, r *http.Request) {
 	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"status":    "ok",
 		"version":   h.version,
+		"commit":    h.commit,
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	})
 }

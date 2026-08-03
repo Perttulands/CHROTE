@@ -29,7 +29,7 @@ func TestResponseShapeBaseline_FlatHealthEndpointsDoNotUseDataEnvelope(t *testin
 			name:     "health",
 			path:     "/api/health",
 			call:     handler.Health,
-			wantKeys: []string{"status", "timestamp", "version"},
+			wantKeys: []string{"commit", "status", "timestamp", "version"},
 		},
 		{
 			name:     "version",

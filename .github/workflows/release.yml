@@ -91,7 +91,7 @@ jobs:
           cd src
           go test ./...
           release_version="${GITHUB_REF_NAME#v}"
-          go build -trimpath -ldflags "-X main.Version=$release_version" -o /tmp/chrote-server-release-smoke ./cmd/server
+          go build -trimpath -ldflags "-X main.Version=$release_version -X main.BuildCommit=$GITHUB_SHA" -o /tmp/chrote-server-release-smoke ./cmd/server
 
       # Build Go binaries for multiple architectures
       - name: Build Binaries
@@ -99,8 +99,8 @@ jobs:
           mkdir -p dist
           cd src
           release_version="${GITHUB_REF_NAME#v}"
-          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-X main.Version=$release_version" -o ../dist/chrote-server-linux-amd64 ./cmd/server
-          GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-X main.Version=$release_version" -o ../dist/chrote-server-linux-arm64 ./cmd/server
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-X main.Version=$release_version -X main.BuildCommit=$GITHUB_SHA" -o ../dist/chrote-server-linux-amd64 ./cmd/server
+          GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-X main.Version=$release_version -X main.BuildCommit=$GITHUB_SHA" -o ../dist/chrote-server-linux-arm64 ./cmd/server
 
       - name: Scan release binaries
         run: |
