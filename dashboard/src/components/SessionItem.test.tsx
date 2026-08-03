@@ -211,7 +211,7 @@ describe('SessionItem user badge and context actions', () => {
           group: 'codex',
           unixUser: 'alice',
           persistent: true,
-          persistentState: 'healthy',
+          persistentHealth: 'healthy',
           persistentIdentity: 'Maintains the VW Codex lane.',
           persistentAgentKind: 'codex',
         }}
@@ -220,36 +220,39 @@ describe('SessionItem user badge and context actions', () => {
 
     const lock = screen.getByLabelText('Persistent agent')
     expect(lock).toHaveTextContent('🔒')
-    expect(lock).toHaveAttribute('title', 'Persistent codex agent · healthy: Maintains the VW Codex lane.')
-    expect(screen.getByLabelText('Persistent state: healthy')).toHaveTextContent('healthy')
+    expect(lock).toHaveAttribute(
+      'title',
+      'Locked codex agent, supervised by systemd: Maintains the VW Codex lane.',
+    )
+    // A healthy lock shows the lock and nothing else: a badge that is always
+    // present carries no information.
+    expect(screen.queryByLabelText(/^Supervision:/)).toBeNull()
   })
 
   it.each([
-    ['starting', 'starting'],
-    ['healthy', 'healthy'],
-    ['needs_interaction', 'needs interaction'],
-    ['wrong_identity', 'wrong identity'],
+    ['degraded', 'unconfirmed'],
     ['failed', 'failed'],
-  ] as const)('renders persistent state %s exactly', (state, label) => {
+    ['inactive', 'stopped'],
+  ] as const)('renders unit health %s exactly', (health, label) => {
     render(
       <SessionItem
         session={{
-          name: `agent-${state}`,
+          name: `agent-${health}`,
           windows: 1,
           attached: false,
           group: 'codex',
           unixUser: 'alice',
           persistent: true,
-          persistentState: state,
+          persistentHealth: health,
           persistentAgentKind: 'codex',
         }}
       />
     )
 
-    expect(screen.getByLabelText(`Persistent state: ${label}`)).toHaveTextContent(label)
+    expect(screen.getByLabelText(`Supervision: ${label}`)).toHaveTextContent(label)
   })
 
-  it('renders backoff retry and Hermes profile metadata for persistent agents', () => {
+  it('names the unit and its trouble in the lock tooltip', () => {
     render(
       <SessionItem
         session={{
@@ -259,9 +262,10 @@ describe('SessionItem user badge and context actions', () => {
           group: 'hermes',
           unixUser: 'alice',
           persistent: true,
-          persistentState: 'backoff',
-          persistentNextRetryAt: '2026-07-15T10:05:00Z',
-          persistentLastError: 'launch failed',
+          persistentHealth: 'degraded',
+          persistentUnit: 'chrote-agent@hermes-scout.service',
+          persistentActiveState: 'active',
+          persistentDetail: 'unit is running a different transcript than the one this lock configured',
           persistentAgentKind: 'hermes',
           persistentAgentSessionId: 'hermes-session-20260715T100000Z',
           persistentHermesProfile: 'scout',
@@ -269,10 +273,10 @@ describe('SessionItem user badge and context actions', () => {
       />
     )
 
-    expect(screen.getByLabelText('Persistent state: backoff; retry at 2026-07-15T10:05:00Z')).toHaveTextContent('backoff')
+    expect(screen.getByLabelText('Supervision: unconfirmed')).toHaveTextContent('unconfirmed')
     expect(screen.getByLabelText('Persistent agent')).toHaveAttribute(
       'title',
-      'Persistent hermes agent · Hermes profile scout · backoff; retry at 2026-07-15T10:05:00Z · launch failed',
+      'Locked hermes agent, supervised by systemd · Hermes profile scout · chrote-agent@hermes-scout.service · unit active · unit is running a different transcript than the one this lock configured',
     )
   })
 
@@ -354,11 +358,15 @@ describe('SessionItem user badge and context actions', () => {
     )
 
     fireEvent.contextMenu(screen.getByText('codex-alpha'))
-    expect(screen.queryByRole('button', { name: /Kill Session/i })).not.toBeInTheDocument()
+    // Kill is no longer hidden for a locked session; it is offered as the honest
+    // two-step, because killing without unlocking would be undone by the unit.
+    expect(screen.getByRole('button', { name: /Stop supervision and kill/i })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /Make mortal \(metadata only\)/i }))
 
     expect(mockState.makeSessionMortal).toHaveBeenCalledWith('codex-alpha', 'alice')
-    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('only removes CHROTE persistence metadata'))
+    expect(window.confirm).toHaveBeenCalledWith(
+      expect.stringContaining('no longer be restarted after a crash or reboot'),
+    )
   })
 
   it('uses the whole session row as the drag surface without rendering a drag grip', () => {

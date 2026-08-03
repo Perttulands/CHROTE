@@ -221,11 +221,41 @@ func SelectWorkloadRecoveryDescriptor(candidates []WorkloadRecoveryDescriptor, o
 	return WorkloadRecoveryDescriptor{}, fmt.Errorf("ambiguous recovery candidates")
 }
 
+// isChroteInstalledAgentUnitRef reports whether an owner ref names a unit from
+// CHROTE's own template on a user manager. Deliberately exact rather than a
+// prefix match: "evil@chrote-agent@x.service" and a .timer of the same stem
+// must not pass, and neither may a system-manager unit.
+func isChroteInstalledAgentUnitRef(ref string) bool {
+	const prefix = "systemd:user/" + agentUnitTemplate
+	trimmed := strings.TrimSpace(ref)
+	if !strings.HasPrefix(trimmed, prefix) || !strings.HasSuffix(trimmed, agentUnitSuffix) {
+		return false
+	}
+	session := strings.TrimSuffix(strings.TrimPrefix(trimmed, prefix), agentUnitSuffix)
+	unit, err := agentUnitName(session)
+	if err != nil {
+		return false
+	}
+	return trimmed == "systemd:user/"+unit
+}
+
 func validateRecoveryModeOwner(mode string, owner WorkloadRecoveryOwner) error {
 	switch mode {
 	case RecoveryModeAgent:
-		if owner.Kind != RecoveryOwnerSessionBank && owner.Kind != RecoveryOwnerPersistentAgent {
-			return fmt.Errorf("agent descriptors require a session bank or persistent agent owner")
+		switch owner.Kind {
+		case RecoveryOwnerSessionBank, RecoveryOwnerPersistentAgent:
+		case RecoveryOwnerExternalManager:
+			// ADR-0014 decision 3. An external manager is normally passive, but a
+			// unit CHROTE itself installed is CHROTE exercising ownership through
+			// a supervisor rather than a second owner competing with one. This
+			// checks the half that is checkable on a descriptor -- the unit is
+			// ours by name; the other half, that our config backs it, is enforced
+			// by agentUnitController.OwnsUnit, which can see the filesystem.
+			if !isChroteInstalledAgentUnitRef(owner.Ref) {
+				return fmt.Errorf("agent descriptors require a session bank, persistent agent, or CHROTE-installed unit owner")
+			}
+		default:
+			return fmt.Errorf("agent descriptors require a session bank, persistent agent, or CHROTE-installed unit owner")
 		}
 		if !owner.MayRestart {
 			return fmt.Errorf("agent descriptors require restart permission")

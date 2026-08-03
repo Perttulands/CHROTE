@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# chrote-agentctl -- the one privileged step in locked-agent supervision.
+#
+# CHROTE runs as its own service account. Locking a session means enabling a
+# systemd USER unit belonging to the account that owns the agent, which is a
+# different account. This helper is that boundary, and it exists so the boundary
+# is one auditable file rather than a shell string built inside a web server.
+#
+# Invoked as:  chrote-agentctl <unix-user> --user <verb> <unit>
+#
+# The operator grants it via a scoped sudoers rule; ADR-0014 decision 4 records
+# that cross-user control is deliberate policy on this host. What is NOT
+# deliberate is authority leaking, so this script re-validates everything it was
+# handed and refuses anything outside the exact shape above. It is the last
+# place that can tell, and it does not trust its caller.
+set -uo pipefail
+
+fail() { printf 'chrote-agentctl: %s\n' "$*" >&2; exit 64; }
+
+# Only these verbs. `start`/`stop` are absent on purpose: lock and unlock are
+# enable --now / disable --now, and a verb that can start a unit without
+# enabling it would let a lock exist that does not survive reboot -- the exact
+# promise the lock is supposed to make.
+readonly ALLOWED_VERBS=" enable disable show is-active is-enabled "
+
+[[ $# -ge 3 ]] || fail "usage: chrote-agentctl <unix-user> --user <verb> [--now] [--property=...] <unit>"
+
+target_user=$1; shift
+[[ "$target_user" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || fail "invalid unix user"
+
+[[ "$1" == "--user" ]] || fail "only --user (per-account) managers are reachable through this helper"
+shift
+
+verb=$1; shift
+[[ "$ALLOWED_VERBS" == *" $verb "* ]] || fail "verb not permitted: $verb"
+
+# Everything between the verb and the unit must be an option this helper knows.
+# An unrecognised option could change what systemctl does to a unit we did not
+# vet, so the answer is refusal rather than pass-through.
+args=()
+unit=""
+for argument in "$@"; do
+  case "$argument" in
+    --now|--quiet)
+      args+=("$argument")
+      ;;
+    --property=*)
+      [[ "$argument" =~ ^--property=[A-Za-z]+$ ]] || fail "invalid --property"
+      args+=("$argument")
+      ;;
+    -*)
+      fail "option not permitted: $argument"
+      ;;
+    *)
+      [[ -z "$unit" ]] || fail "exactly one unit may be named"
+      unit=$argument
+      ;;
+  esac
+done
+
+[[ -n "$unit" ]] || fail "no unit named"
+# The whole grant, in one line: this helper can only ever touch units from
+# CHROTE's own template, for one session name at a time, in the user manager of
+# the account that owns them.
+[[ "$unit" =~ ^chrote-agent@[a-zA-Z0-9_-]{1,50}\.service$ ]] || fail "unit outside the chrote-agent@ template: $unit"
+[[ "$unit" != chrote-agent@-* ]] || fail "session names may not start with a dash"
+
+runtime_dir="/run/user/$(id -u "$target_user" 2>/dev/null || echo invalid)"
+[[ -d "$runtime_dir" ]] || fail "no user manager runtime directory for $target_user; is lingering enabled?"
+
+# `env -i`, never bare `env`: bare env ADDS to the caller's environment, and the
+# caller is the CHROTE web server, whose environment holds API_AUTH_TOKEN and
+# service credentials. Those would be inherited by a process running as the
+# supervised account, which can read its own /proc/<pid>/environ. -i replaces the
+# environment with exactly the three variables systemctl --user needs.
+exec setpriv --reuid "$target_user" --regid "$target_user" --init-groups --inh-caps=-all -- \
+  env -i "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+  "XDG_RUNTIME_DIR=$runtime_dir" "DBUS_SESSION_BUS_ADDRESS=unix:path=$runtime_dir/bus" \
+  systemctl --user "$verb" "${args[@]}" "$unit"

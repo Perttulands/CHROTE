@@ -7,13 +7,17 @@ ACLs, and rollback layouts belong in private operator configuration.
 
 | Component | Role | Required? |
 | --- | --- | --- |
-| Go server | HTTP API, embedded dashboard, terminal proxy, recovery, scheduling, and optional experimental runtimes | Yes |
+| Go server | HTTP API, embedded dashboard, terminal proxy, operator-triggered recovery, scheduling, and optional experimental runtimes | Yes |
 | React dashboard | Browser cockpit served from the Go binary | Yes |
 | tmux | Durable terminal and process substrate | Yes for terminal workspaces |
 | ttyd | Browser terminal transport behind CHROTE | Yes for interactive terminals |
-| Host filesystem | Files, schedules, recovery state, and experimental definitions when used | Yes |
+| Host filesystem | Files, schedules, recovery state, per-agent lock configuration and launcher receipts, and experimental definitions when used | Yes |
 
 The browser is a client of this runtime. It is not the durable source of truth.
+Neither is the server the owner of durable agent lifetime: locked sessions are
+supervised by systemd user units, so the server can restart without interrupting
+them. Recovery in the server is operator-triggered and one-shot; nothing in it
+loops to keep a workload alive.
 
 ## Built-in cockpit surfaces
 
@@ -38,7 +42,7 @@ The browser is a client of this runtime. It is not the durable source of truth.
 | TTS Gateway adapter | Optional Services console; no upstream or credentials are bundled |
 | Context Citadel adapter | Optional adapter code; no current authentication or upstream is bundled |
 | Tailscale or equivalent | Private HTTPS/network access outside localhost |
-| Persistent-agent supervisor | Explicit lifecycle control for configured long-running agents |
+| systemd user manager | Supervises locked sessions through a CHROTE-installed per-agent unit; required for the session lock, including a running user manager for the target account |
 
 Optional integrations must degrade clearly when unavailable. They must not make
 the core dashboard fail to load.

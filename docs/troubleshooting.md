@@ -150,7 +150,36 @@ entries.
 Use explicit Refit/reconnect actions before deleting stale sessions. Bulk
 session destruction is an advanced emergency action in Settings.
 
-## 9. Scheduled task is stuck
+## 9. A locked agent is failed, degraded, or not coming back
+
+A locked session is supervised by its own systemd user unit, not by CHROTE, so
+the unit's journal is the diagnostic record — not a status string in CHROTE.
+Read it as the account that owns the agent:
+
+```bash
+systemctl --user status chrote-agent@<session>.service
+journalctl --user -u chrote-agent@<session>.service -n 100
+```
+
+Read the reported state literally:
+
+- `failed` or `inactive` come straight from systemd; the journal holds the exit
+  status and the launcher's own refusal messages.
+- `degraded` means the unit is active but the launcher receipt does not match the
+  session CHROTE expected. The unit is running something; treat it as the wrong
+  something until the journal says otherwise.
+- A launcher that refuses at startup naming a tmux socket is working as
+  designed: it never creates a tmux server, so a dead socket is the keeper
+  unit's problem, not the agent's.
+
+Locking needs the owning account's systemd user manager to be running, which for
+a headless account means lingering. A lock that fails immediately with no unit
+in the journal usually means there was no user manager to accept it.
+
+Unlocking disables the unit and leaves the agent and its tmux session running.
+If work is still alive after an unlock, that is the contract, not a bug.
+
+## 10. Scheduled task is stuck
 
 Inspect the Scheduled view and service logs for lock age, last run, and failure
 history. CHROTE may reclaim a stale lock according to its scheduling contract;
@@ -159,7 +188,7 @@ it must not silently double-run a task with a fresh lock.
 Do not delete lock/state files until you understand whether another process is
 still running.
 
-## 10. Browser state looks stale
+## 11. Browser state looks stale
 
 First:
 
@@ -172,7 +201,7 @@ Only then consider clearing CHROTE local storage. Local storage owns presentatio
 preferences and workspace assignments; clearing it should not kill tmux sessions
 or delete host files, but it will reset layout state.
 
-## 11. Reinstall without losing work
+## 12. Reinstall without losing work
 
 ```bash
 cd CHROTE
@@ -187,4 +216,7 @@ Uninstall also preserves them by default:
 ```
 
 Never use `--purge-state` unless you deliberately want to remove Session Bank,
-schedules, persistent-agent definitions, and other CHROTE-owned state.
+schedules, per-agent lock configuration and launcher receipts, and other
+CHROTE-owned state. Purging the configuration of a locked agent does not by
+itself stop its systemd unit; disable the unit first if you want supervision to
+end, and expect the agent itself to keep running until you stop it.

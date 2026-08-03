@@ -232,13 +232,11 @@ export interface TmuxSession {
   persistentAgentKind?: 'codex' | 'claude' | string
   persistentAgentSessionId?: string
   persistentHermesProfile?: string
-  persistentResumeCommand?: string
-  persistentState?: PersistentAgentState
-  persistentConsecutiveLaunchFailures?: number
-  persistentNextRetryAt?: string
-  persistentLastCheckAt?: string
-  persistentLastRestartAt?: string
-  persistentLastError?: string
+  /** Health of the session's own systemd unit, read live by the server. */
+  persistentUnit?: string
+  persistentHealth?: PersistentAgentHealth
+  persistentActiveState?: string
+  persistentDetail?: string
 }
 
 export interface PersistentAgentPayload {
@@ -246,18 +244,20 @@ export interface PersistentAgentPayload {
   agentKind?: 'codex' | 'claude' | string
   agentSessionId?: string
   newName?: string
-  cwd?: string
-  transcriptPath?: string
   recoveryDescriptor?: WorkloadRecoveryDescriptor
 }
 
-export type PersistentAgentState =
-  | 'starting'
+/**
+ * What the lock badge shows. These are unit facts, not an in-server state
+ * machine: `degraded` means the unit runs but has not confirmed it resumed the
+ * configured transcript, or that no unit backs a stored lock at all.
+ */
+export type PersistentAgentHealth =
   | 'healthy'
-  | 'needs_interaction'
-  | 'wrong_identity'
-  | 'backoff'
+  | 'degraded'
   | 'failed'
+  | 'inactive'
+  | 'unlocked'
 
 export type WorkloadRecoveryMode =
   | 'topology'

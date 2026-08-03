@@ -823,7 +823,6 @@ def run_smoke(args: argparse.Namespace) -> SmokeState:
                 "CHROTE_MANAGED_RECOVERY_STATUS_PATH": str(managed_status_path),
                 "CHROTE_PERSISTENT_AGENTS_PATH": str(temp_root / "data" / "persistent-agents" / "agents.json"),
                 "CHROTE_SESSION_DROPS_DIR": str(temp_root / "data" / "session-drops"),
-                "CHROTE_PERSISTENT_AGENTS_DISABLE": "true",
             }
         )
         proc = start_server(binary, server_env, server_log, cleanup)

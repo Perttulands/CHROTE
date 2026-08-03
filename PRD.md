@@ -100,10 +100,21 @@ Sessions and Files are independent peer sidecars within each terminal workspace.
 
 ### Persistent agents
 
-- Configured persistent agents expose lifecycle state such as running, backoff,
-  stopped, and failed.
-- CHROTE may start, stop, or retry a persistent agent only through explicit API
-  operations and configured supervisor/runtime contracts.
+- Locking a session is the operator's promise that this agent should still be
+  running tomorrow. The lock is the cockpit affordance for that promise; it is
+  not itself the supervisor.
+- Supervision belongs to the host init system. CHROTE writes a per-agent
+  configuration and enables a systemd user unit for it. The server runs no
+  supervision loop, holds no retry state, and never recreates a session, so a
+  CHROTE restart, crash, or upgrade cannot interrupt a locked agent.
+- Lifecycle state is read from the unit rather than tracked by CHROTE. Reported
+  health combines the unit's active state with a launcher receipt showing that
+  the expected agent resumed the expected work; an active unit without a
+  matching receipt is reported as degraded rather than healthy.
+- Unlocking withdraws the promise, not the work. The tmux session and the
+  running agent are left alive, and the confirmation says so.
+- Sessions owned by units CHROTE did not install remain read-only and are never
+  restarted by CHROTE.
 - Persistent state does not imply autonomous authority to message, claim, or
   mutate unrelated work.
 

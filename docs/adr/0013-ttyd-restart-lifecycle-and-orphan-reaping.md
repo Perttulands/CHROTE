@@ -97,6 +97,12 @@ say what may outlive it and what cleans up:
   live child of this unit would be an orphan this unit cannot account for. It
   must be owned by its own unit before that path goes live, consistent with
   ADR-0010's agent-user socket ownership.
+- **Agent-revival tmux servers** — closed 2026-08-03 by
+  [ADR-0014](0014-persistent-agents-supervised-by-systemd.md). The persistent-agent
+  reconciler ran inside this unit and created tmux sessions directly, so a revive
+  against a dead socket would have forked a tmux *server* into this cgroup — an
+  orphan class this inventory did not list. Supervision now lives in
+  `chrote-agent@*.service`, whose launcher refuses to create a server at all.
 
 Known sharp edge, deliberately left as follow-up rather than changed in passing:
 `fuser -k <port>/tcp` kills whatever holds the port, not specifically our ttyd.

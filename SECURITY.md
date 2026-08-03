@@ -93,9 +93,8 @@ Optional service URLs and tokens are server-side runtime configuration. Browser
 clients call CHROTE-owned proxy routes and must never receive service bearer
 tokens.
 
-Scheduled tasks, persistent-agent supervisors, recovery actions, and
-experimental Formations executors cross from observation into host mutation.
-Their contracts must:
+Scheduled tasks, session locking, recovery actions, and experimental Formations
+executors cross from observation into host mutation. Their contracts must:
 
 - require explicit configuration and operator intent;
 - use argument vectors instead of implicit shell parsing where possible;
@@ -103,6 +102,17 @@ Their contracts must:
 - cap and redact recorded output;
 - fail loud in durable history or ledgers;
 - refuse unsafe promotion from lab/isolated environments to live host state.
+
+Resuming a locked agent is a case of the second rule rather than an exception to
+it. The agent is started from an argument vector in its own unit, not by typing
+a command into a live pane, so there is no shell to quote for and no pane
+contents to depend on. Around that: a session name is validated before it is
+used to build a unit name, so a name cannot introduce a second unit, a flag, or
+a metacharacter; any grant to control units is scoped to the verbs and the
+single unit-name pattern CHROTE owns, never to arbitrary unit names; and
+per-agent configuration is written mode 0600 into CHROTE's own state directory
+with paths canonicalized, so a symlinked or out-of-directory configuration is
+refused rather than read.
 
 ## Secrets
 

@@ -1411,10 +1411,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (identity) body.identity = identity
       const newName = payload.newName?.trim()
       if (newName) body.newName = newName
-      const cwd = payload.cwd?.trim()
-      if (cwd) body.cwd = cwd
-      const transcriptPath = payload.transcriptPath?.trim()
-      if (transcriptPath) body.transcriptPath = transcriptPath
       if (payload.recoveryDescriptor) body.recoveryDescriptor = payload.recoveryDescriptor
 
       const response = await fetch(`/api/tmux/sessions/${encodeURIComponent(sessionName)}/persistence${query}`, {

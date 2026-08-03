@@ -173,6 +173,8 @@ func TestTmuxHandler_RenameSessionRejectsPersistentTargetCollisionBeforeTmux(t *
 		persistentAgentRawEntry("codex-target", "alice", RecoveryAgentCodex, persistentTestCodexID, ""),
 	})
 	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	installFakeSystemctl(t)
+	t.Setenv("CHROTE_AGENT_UNITS_DIR", t.TempDir())
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
@@ -217,6 +219,8 @@ func TestTmuxHandler_RenameSessionRejectsSessionBankOwnedSourceBeforeTmux(t *tes
 		t.Fatalf("read persistent seed: %v", err)
 	}
 	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	installFakeSystemctl(t)
+	t.Setenv("CHROTE_AGENT_UNITS_DIR", t.TempDir())
 	t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
@@ -270,6 +274,8 @@ func TestTmuxHandler_RenameSessionRejectsSessionBankOwnedTargetBeforeTmux(t *tes
 		t.Fatalf("read persistent seed: %v", err)
 	}
 	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	installFakeSystemctl(t)
+	t.Setenv("CHROTE_AGENT_UNITS_DIR", t.TempDir())
 	t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
@@ -322,6 +328,8 @@ func TestTmuxHandler_RenamePersistentSessionStoreFailureDoesNotCallTmux(t *testi
 	}
 	t.Cleanup(func() { _ = os.Chmod(persistentDir, 0o700) })
 	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	installFakeSystemctl(t)
+	t.Setenv("CHROTE_AGENT_UNITS_DIR", t.TempDir())
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
@@ -369,6 +377,8 @@ esac
 	})
 	t.Setenv("PERSISTENT_DIR", persistentDir)
 	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	installFakeSystemctl(t)
+	t.Setenv("CHROTE_AGENT_UNITS_DIR", t.TempDir())
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
@@ -392,95 +402,6 @@ esac
 	}
 	if got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)); len(got) == 0 || !containsArg(got[0], "rename-session") {
 		t.Fatalf("tmux calls = %#v, want attempted rename-session", got)
-	}
-}
-
-func TestTmuxHandler_ReconcileWaitsForPersistentRenameTransaction(t *testing.T) {
-	tmpDir := t.TempDir()
-	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")
-	startedPath := filepath.Join(tmpDir, "rename-started")
-	releasePath := filepath.Join(tmpDir, "rename-release")
-	argsPath := installPersistentAgentScriptedTmux(t, `
-case "$*" in
-  *rename-session*)
-    : > "$RENAME_STARTED"
-    while [ ! -f "$RENAME_RELEASE" ]; do sleep 0.02; done
-    exit 0
-    ;;
-  *"has-session -t codex-alpha"*)
-    if [ -f "$RENAME_STARTED" ] && [ ! -f "$RENAME_RELEASE" ]; then
-      echo "can't find session: codex-alpha" >&2
-      exit 1
-    fi
-    exit 0
-    ;;
-  *"has-session -t codex-renamed"*)
-    if [ -f "$RENAME_RELEASE" ]; then exit 0; fi
-    echo "can't find session: codex-renamed" >&2
-    exit 1
-    ;;
-  *display-message*) printf '42:node:/home/alice/project\n' ;;
-  *capture-pane*) printf 'Codex ready\n' ;;
-  *new-session*) echo 'unexpected early recreate' >&2; exit 1 ;;
-esac
-`)
-	writePersistentAgentRawSeed(t, persistentPath, []map[string]any{
-		persistentAgentRawEntry("codex-alpha", "alice", RecoveryAgentCodex, persistentTestCodexID, ""),
-	})
-	t.Setenv("RENAME_STARTED", startedPath)
-	t.Setenv("RENAME_RELEASE", releasePath)
-	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
-	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
-	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
-	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
-	installProcessTable(t, []processInfo{{pid: "42", ppid: "1", comm: "node", args: "node /usr/bin/codex resume " + persistentTestCodexID}})
-
-	handler := NewTmuxHandler()
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-	body := RenameSessionRequest{NewName: "codex-renamed"}
-	bodyBytes, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPatch, "/api/tmux/sessions/codex-alpha?unixUser=alice", bytes.NewBuffer(bodyBytes))
-	req.Header.Set("Content-Type", "application/json")
-
-	renameDone := make(chan int, 1)
-	go func() {
-		recorder := httptest.NewRecorder()
-		mux.ServeHTTP(recorder, req)
-		renameDone <- recorder.Code
-	}()
-	waitForTestFile(t, startedPath)
-
-	reconcileDone := make(chan []PersistentAgentReconcileResult, 1)
-	go func() {
-		results, err := handler.ReconcilePersistentAgents(context.Background())
-		if err != nil {
-			t.Errorf("reconcile persistent agents: %v", err)
-		}
-		reconcileDone <- results
-	}()
-
-	select {
-	case results := <-reconcileDone:
-		t.Fatalf("reconcile completed before rename transaction released: %+v", results)
-	case <-time.After(100 * time.Millisecond):
-	}
-	calls := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath))
-	for _, call := range calls {
-		if containsArg(call, "new-session") {
-			t.Fatalf("reconcile recreated during blocked rename transaction: %#v", calls)
-		}
-	}
-	if err := os.WriteFile(releasePath, []byte("go"), 0o600); err != nil {
-		t.Fatalf("release rename: %v", err)
-	}
-	if code := <-renameDone; code != http.StatusOK {
-		t.Fatalf("rename status code = %d, expected %d", code, http.StatusOK)
-	}
-	results := <-reconcileDone
-	if len(results) != 1 || results[0].Action != "ok" {
-		t.Fatalf("reconcile results = %+v, want ok after rename release", results)
 	}
 }
 
@@ -766,6 +687,8 @@ func TestTmuxHandler_CreateAndRenameRejectReservedInternalSessionNames(t *testin
 	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")
 	argsPath := installPersistentAgentScriptedTmux(t, "")
 	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	installFakeSystemctl(t)
+	t.Setenv("CHROTE_AGENT_UNITS_DIR", t.TempDir())
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
@@ -1542,6 +1465,8 @@ case "$*" in
 esac
 `)
 	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	installFakeSystemctl(t)
+	t.Setenv("CHROTE_AGENT_UNITS_DIR", t.TempDir())
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
@@ -1595,8 +1520,14 @@ esac
 		t.Fatalf("sessions = %+v, want one", sessions.Sessions)
 	}
 	session := sessions.Sessions[0]
-	if !session.Persistent || session.PersistentIdentity != "Maintains the VW Codex lane." || session.PersistentAgentKind != "codex" || session.PersistentAgentSessionID != sessionID || session.PersistentResumeCommand != "codex resume "+sessionID {
+	if !session.Persistent || session.PersistentIdentity != "Maintains the VW Codex lane." || session.PersistentAgentKind != "codex" || session.PersistentAgentSessionID != sessionID {
 		t.Fatalf("persistent session metadata = %+v", session)
+	}
+	// The resume command is no longer projected to clients: the unit renders argv
+	// from the typed kind and native id, so shipping a rendered string would be a
+	// second source of truth for the same fact (ADR-0014).
+	if session.PersistentUnit != "chrote-agent@"+session.Name+".service" {
+		t.Fatalf("a locked session must name its unit, got %q", session.PersistentUnit)
 	}
 }
 
@@ -1609,6 +1540,8 @@ case "$*" in
 esac
 `)
 	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	installFakeSystemctl(t)
+	t.Setenv("CHROTE_AGENT_UNITS_DIR", t.TempDir())
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
@@ -1655,6 +1588,8 @@ case "$*" in
 esac
 `)
 	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	installFakeSystemctl(t)
+	t.Setenv("CHROTE_AGENT_UNITS_DIR", t.TempDir())
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
@@ -1704,6 +1639,8 @@ case "$*" in
 esac
 `)
 	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	installFakeSystemctl(t)
+	t.Setenv("CHROTE_AGENT_UNITS_DIR", t.TempDir())
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
@@ -1748,6 +1685,8 @@ case "$*" in
 esac
 `)
 	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	installFakeSystemctl(t)
+	t.Setenv("CHROTE_AGENT_UNITS_DIR", t.TempDir())
 	t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
@@ -1796,6 +1735,8 @@ case "$*" in
 esac
 `)
 	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	installFakeSystemctl(t)
+	t.Setenv("CHROTE_AGENT_UNITS_DIR", t.TempDir())
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
@@ -1849,102 +1790,13 @@ func TestPersistentAgentMetadataInferenceParsesClaudeResumeArgs(t *testing.T) {
 	}
 }
 
-func TestTmuxHandler_ReconcilePersistentAgentsRecreatesMissingCodexSession(t *testing.T) {
-	tmpDir := t.TempDir()
-	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")
-	argsPath := installPersistentAgentScriptedTmux(t, `
-case "$*" in
-  *has-session*) echo 'no server running on /tmp/tmux-a' >&2; exit 1 ;;
-esac
-`)
-	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
-	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
-	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
-	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
-	const sessionID = "019f45ec-f88b-7f70-88dc-b5b99a9e94c6"
-	writePersistentAgentSeed(t, persistentPath, []PersistentAgentEntry{{
-		Name:           "codex-alpha",
-		UnixUser:       "alice",
-		Identity:       "Maintains the repo.",
-		AgentKind:      "codex",
-		AgentSessionID: sessionID,
-		ResumeCommand:  "rm -rf /",
-		CWD:            "/home/alice/project",
-	}})
-
-	handler := NewTmuxHandler()
-	results, err := handler.ReconcilePersistentAgents(context.Background())
-	if err != nil {
-		t.Fatalf("reconcile persistent agents: %v", err)
-	}
-	if len(results) != 1 || results[0].Action != "recreated" || results[0].Error != "" {
-		t.Fatalf("reconcile results = %+v", results)
-	}
-	want := [][]string{
-		{"-S", "/tmp/tmux-a", "has-session", "-t", "codex-alpha"},
-		{"-S", "/tmp/tmux-a", "new-session", "-d", "-P", "-F", "#{session_id}", "-e", "CHROTE_CREATION_TOKEN=<token>", "-s", "codex-alpha", "-c", "/home/alice/project"},
-		{"-S", "/tmp/tmux-a", "unbind-key", "-q", "-n", "MouseDown3Pane"},
-		{"-S", "/tmp/tmux-a", "unbind-key", "-q", "-n", "MouseDown3Status"},
-		{"-S", "/tmp/tmux-a", "unbind-key", "-q", "-n", "MouseDown3StatusLeft"},
-		{"-S", "/tmp/tmux-a", "unbind-key", "-q", "-n", "M-MouseDown3Pane"},
-		{"-S", "/tmp/tmux-a", "unbind-key", "-q", "-n", "M-MouseDown3Status"},
-		{"-S", "/tmp/tmux-a", "unbind-key", "-q", "-n", "M-MouseDown3StatusLeft"},
-		{"-S", "/tmp/tmux-a", "send-keys", "-t", "$42", "-l", "--", "codex resume " + sessionID},
-		{"-S", "/tmp/tmux-a", "send-keys", "-t", "$42", "Enter"},
-	}
-	if got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)); !equalArgvCalls(got, want) {
-		t.Fatalf("tmux calls = %#v, want %#v", got, want)
-	}
-}
-
-func TestTmuxHandler_ReconcilePersistentAgentsFailsAndCleansUpWhenMenuRemovalFails(t *testing.T) {
-	tmpDir := t.TempDir()
-	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")
-	argsPath := installPersistentAgentScriptedTmux(t, `
-case "$*" in
-  *has-session*) echo 'no server running on /tmp/tmux-a' >&2; exit 1 ;;
-  *"unbind-key -q -n MouseDown3Pane"*) echo 'unbind failed' >&2; exit 1 ;;
-esac
-`)
-	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
-	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
-	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
-	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
-	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
-	const sessionID = "019f45ec-f88b-7f70-88dc-b5b99a9e94c6"
-	writePersistentAgentSeed(t, persistentPath, []PersistentAgentEntry{{
-		Name:           "codex-alpha",
-		UnixUser:       "alice",
-		AgentKind:      "codex",
-		AgentSessionID: sessionID,
-		CWD:            "/home/alice/project",
-	}})
-
-	handler := NewTmuxHandler()
-	results, err := handler.ReconcilePersistentAgents(context.Background())
-	if err != nil {
-		t.Fatalf("reconcile persistent agents: %v", err)
-	}
-	if len(results) != 1 || results[0].Action != "backoff" || !strings.Contains(results[0].Error, "MouseDown3Pane") {
-		t.Fatalf("reconcile results = %+v, want menu-removal backoff", results)
-	}
-	want := [][]string{
-		{"-S", "/tmp/tmux-a", "has-session", "-t", "codex-alpha"},
-		{"-S", "/tmp/tmux-a", "new-session", "-d", "-P", "-F", "#{session_id}", "-e", "CHROTE_CREATION_TOKEN=<token>", "-s", "codex-alpha", "-c", "/home/alice/project"},
-		{"-S", "/tmp/tmux-a", "unbind-key", "-q", "-n", "MouseDown3Pane"},
-		{"-S", "/tmp/tmux-a", "if-shell", "-F", "-t", "$42", "#{==:#{CHROTE_CREATION_TOKEN},<token>}", "kill-session -t $42", "display-message -p CHROTE_OWNERSHIP_MISMATCH"},
-	}
-	if got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)); !equalArgvCalls(got, want) {
-		t.Fatalf("tmux calls = %#v, want cleanup calls %#v", got, want)
-	}
-}
-
 func TestTmuxHandler_DisablePersistentAgentRemovesDesiredStateWithoutCallingTmux(t *testing.T) {
 	tmpDir := t.TempDir()
 	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")
 	argsPath := installArgvRecordingTmux(t)
 	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	installFakeSystemctl(t)
+	t.Setenv("CHROTE_AGENT_UNITS_DIR", t.TempDir())
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")

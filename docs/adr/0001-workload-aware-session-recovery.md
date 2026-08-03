@@ -1,7 +1,13 @@
 # ADR-0001: Workload-Aware Session Recovery Descriptors
 
 ## Status
-Accepted
+Accepted. Partially superseded 2026-08-03 by
+[ADR-0014](0014-persistent-agents-supervised-by-systemd.md): continuous
+supervision moved from an in-server Persistent Agents component to systemd user
+units, and the mode/owner matrix below gained one cell (agent-mode workloads
+owned by a CHROTE-installed `external_manager` unit may restart). The descriptor
+model, the exactly-one-owner rule, and the unresolved-rather-than-guessed
+discipline recorded here remain in force.
 
 ## Context
 CHROTE currently sees tmux sessions, windows, panes, process names, and recent
@@ -39,8 +45,14 @@ Every descriptor has exactly one recovery owner:
 
 - Session Bank owns one-shot recovery for banked sessions.
 - Persistent Agents own continuous supervision for persistent agent sessions.
+  (Superseded by ADR-0014: systemd user units own continuous supervision, and
+  the CHROTE server supervises nothing.)
 - External managers own their sessions; CHROTE may observe them but must not
-  reconstruct them as Session Bank or Persistent Agent work.
+  reconstruct them as Session Bank or Persistent Agent work. (ADR-0014 narrows
+  this: a unit CHROTE itself installed may restart its session, because CHROTE
+  owning the unit definition and systemd owning process lifetime is one owner
+  exercised through a supervisor, not two competing owners. Units CHROTE did not
+  install stay read-only exactly as written here.)
 
 The owner records kind, reference, and whether that owner is allowed to restart.
 Mode and owner combinations are strict: agent descriptors require a restarting
