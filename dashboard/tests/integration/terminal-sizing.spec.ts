@@ -281,17 +281,23 @@ test.describe.serial('Terminal Sizing: iframe fills container and xterm fits', (
       expect(line).toContain(promptMarker);
     }).toPass({ timeout: 5000 });
     await termFrameBefore.evaluate(() => {
+      // The dashboard fits by calling term.fit() directly (dispatched resize
+      // events raced the ttyd socket open and were dropped — chrote-qlx).
+      // Probe by wrapping term.fit so every dashboard-driven fit is recorded.
       const probeWindow = window as RefitProbeWindow;
       probeWindow.__chroteRefitProbe ??= { events: [], installed: false };
       if (!probeWindow.__chroteRefitProbe.installed) {
-        window.addEventListener('resize', event => {
-          if (event.isTrusted) return;
+        const termWindow = window as typeof window & { term?: { fit?: () => void } };
+        if (!termWindow.term?.fit) throw new Error('term.fit unavailable; cannot install refit probe');
+        const originalFit = termWindow.term.fit.bind(termWindow.term);
+        termWindow.term.fit = () => {
           probeWindow.__chroteRefitProbe?.events.push({
             at: performance.now(),
             width: window.innerWidth,
             height: window.innerHeight,
           });
-        });
+          return originalFit();
+        };
         probeWindow.__chroteRefitProbe.installed = true;
       }
     });
@@ -330,7 +336,8 @@ test.describe.serial('Terminal Sizing: iframe fills container and xterm fits', (
       (window as RefitProbeWindow).__chroteRefitProbe?.events.length ?? 0
     )).toBeGreaterThan(0);
 
-    // Change geometry after the immediate refit but before the 200 ms recovery pass.
+    // Change geometry right after the immediate refit; the body
+    // ResizeObserver's debounced pass must pick up the final geometry.
     await page.waitForTimeout(80);
     const revealedViewport = page.viewportSize();
     if (!revealedViewport) throw new Error('Playwright viewport is unavailable');
@@ -349,12 +356,12 @@ test.describe.serial('Terminal Sizing: iframe fills container and xterm fits', (
     await expect.poll(async () => termFrameAfter.evaluate(({ startedAt, geometry }) => {
       const events = (window as RefitProbeWindow).__chroteRefitProbe?.events ?? [];
       return events.some(event =>
-        event.at - startedAt >= 180
+        event.at > startedAt
         && event.width === geometry.width
         && event.height === geometry.height
       );
     }, { startedAt: refitStartedAt, geometry: finalGeometry }), {
-      message: 'a delayed refit must observe the final post-reveal geometry',
+      message: 'a follow-up fit must observe the final post-reveal geometry',
       timeout: 1500,
     }).toBe(true);
 
@@ -452,5 +459,88 @@ test.describe.serial('Terminal Sizing: iframe fills container and xterm fits', (
     await termFrameAfter.evaluate(() => {
       document.querySelectorAll('[data-chrote-visual-probe]').forEach(node => node.remove());
     });
+  });
+
+  test('input marker stays visible after a hidden-tab viewport change WITHOUT manual Refit', async ({ page }) => {
+    // No-Refit variant (chrote-qlx acceptance): the closed-loop fit path —
+    // font-then-fit on load plus ResizeObserver-driven term.fit() — must
+    // recover the final geometry on its own. The Refit button is never
+    // clicked anywhere in this test.
+    await page.goto('/');
+    await page.evaluate(() => localStorage.clear());
+    await page.reload();
+    await page.waitForSelector('.dashboard', { timeout: 10000 });
+
+    const controls = layoutControls(page);
+    await controls.locator('.layout-btn').filter({ hasText: '1' }).click();
+    const firstWindow = visibleArea(page).locator('.terminal-window').first();
+
+    await createTrackedSession(page, firstWindow);
+
+    const termFrameBefore = await waitForXterm(page);
+    const promptMarker = 'CHROTE_AUTOFIT_INPUT_MARKER';
+    await termFrameBefore.locator('.xterm-helper-textarea').pressSequentially(promptMarker);
+    await expect(async () => {
+      const line = await termFrameBefore.evaluate(() => {
+        const term = (window as typeof window & { term?: { buffer: { active: { cursorY: number; getLine: (row: number) => { translateToString: (trimRight?: boolean) => string } | undefined } } } }).term;
+        return term?.buffer.active.getLine(term.buffer.active.cursorY)?.translateToString(true) ?? '';
+      });
+      expect(line).toContain(promptMarker);
+    }).toPass({ timeout: 5000 });
+
+    // Hide Terminal behind Files, change viewport geometry while hidden.
+    await page.click('.tab:has-text("Files")');
+    await expect(page.getByRole('heading', { name: 'Files' })).toBeVisible({ timeout: 5000 });
+    const originalViewport = page.viewportSize();
+    if (originalViewport) {
+      await page.setViewportSize({
+        width: originalViewport.width > 1000 ? originalViewport.width - 180 : originalViewport.width + 180,
+        height: originalViewport.height > 640 ? originalViewport.height - 100 : originalViewport.height + 100,
+      });
+    }
+
+    // Return to Terminal 1 and let the automatic paths settle — no Refit.
+    await page.click('.tab:has-text("Terminal")');
+    await page.waitForSelector('.terminal-window', { timeout: 5000 });
+    const termFrameAfter = getTerminalFrame(page);
+    if (!termFrameAfter) throw new Error('Terminal iframe disappeared after tab return');
+    await waitForFit(termFrameAfter);
+
+    await expect(async () => {
+      const state = await termFrameAfter.evaluate(marker => {
+        const viewport = document.querySelector('.xterm-viewport') as HTMLElement;
+        const screen = document.querySelector('.xterm-screen') as HTMLElement;
+        const term = (window as typeof window & { term?: { cols: number; rows: number; buffer: { active: { cursorY: number; getLine: (row: number) => { translateToString: (trimRight?: boolean) => string } | undefined } } } }).term;
+        const renderCanvas = Array.from(screen?.querySelectorAll('canvas') ?? [])
+          .find(canvas => !canvas.classList.contains('xterm-link-layer'));
+        if (!viewport || !screen || !term || !renderCanvas) return null;
+
+        const inputLine = term.buffer.active.getLine(term.buffer.active.cursorY)?.translateToString(true) ?? '';
+        const markerColumn = inputLine.indexOf(marker);
+        const viewportRect = viewport.getBoundingClientRect();
+        const canvasRect = renderCanvas.getBoundingClientRect();
+        const cellWidthCss = canvasRect.width / term.cols;
+        const cellHeightCss = canvasRect.height / term.rows;
+        const markerBottom = canvasRect.top + (term.buffer.active.cursorY + 1) * cellHeightCss;
+        const markerTop = canvasRect.top + term.buffer.active.cursorY * cellHeightCss;
+        const markerLeft = canvasRect.left + markerColumn * cellWidthCss;
+        const markerRight = canvasRect.left + (markerColumn + marker.length) * cellWidthCss;
+
+        return {
+          isClipped: screen.scrollHeight > viewport.clientHeight + 5,
+          inputLine,
+          markerFullyVisible: markerColumn >= 0
+            && markerLeft >= viewportRect.left
+            && markerRight <= viewportRect.right
+            && markerTop >= viewportRect.top
+            && markerBottom <= viewportRect.bottom,
+        };
+      }, promptMarker);
+
+      expect(state).not.toBeNull();
+      expect(state!.isClipped).toBe(false);
+      expect(state!.inputLine).toContain(promptMarker);
+      expect(state!.markerFullyVisible).toBe(true);
+    }).toPass({ timeout: 5000 });
   });
 });

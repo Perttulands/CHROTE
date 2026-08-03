@@ -29,7 +29,10 @@ function FloatingModal() {
 
   const triggerFit = useCallback(() => {
     try {
-      iframeRef.current?.contentWindow?.dispatchEvent(new Event('resize'))
+      // Direct term.fit(): the ttyd client only hears dispatched resize
+      // events after its WebSocket opens; term.fit exists from open() onward.
+      const frameWindow = iframeRef.current?.contentWindow as (Window & { term?: { fit?: () => void } }) | null
+      frameWindow?.term?.fit?.()
     } catch {
       // Cross-origin or not ready.
     }
@@ -55,6 +58,9 @@ function FloatingModal() {
         const frameWindow = iframeRef.current?.contentWindow as (Window & { term?: { options: { fontSize: number } } }) | null
         if (frameWindow?.term) {
           frameWindow.term.options.fontSize = settings.fontSize
+          // Font-then-fit: size the grid with the final cell metrics. This
+          // also covers the initial fit — term.fit() works pre-socket.
+          triggerFit()
           return
         }
       } catch {
@@ -68,17 +74,7 @@ function FloatingModal() {
       cancelled = true
       if (timer) clearTimeout(timer)
     }
-  }, [floatingSession, loaded, settings.fontSize])
-
-  useEffect(() => {
-    if (!loaded) return
-    const raf = requestAnimationFrame(triggerFit)
-    const fallback = setTimeout(triggerFit, 120)
-    return () => {
-      cancelAnimationFrame(raf)
-      clearTimeout(fallback)
-    }
-  }, [floatingSession, loaded, triggerFit])
+  }, [floatingSession, loaded, settings.fontSize, triggerFit])
 
   useEffect(() => {
     const body = bodyRef.current
