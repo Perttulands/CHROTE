@@ -13,7 +13,7 @@ import LayoutPresetsPanel from './components/LayoutPresetsPanel'
 import { IframePoolProvider } from './components/IframePool'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { installFeatureFlagHelpers, isFeatureEnabled } from './featureFlags'
-import { TERMINAL_WORKSPACE_IDS, getSessionNameFromKey, getTerminalUserColor, getTerminalUserInitial } from './types'
+import { getSessionNameFromKey, getTerminalUserColor, getTerminalUserInitial, isTerminalWorkspaceId } from './types'
 import type { UserSettings, WorkspaceId } from './types'
 
 // Non-terminal views load as route-level chunks on first visit. The terminal
@@ -68,10 +68,6 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
 }
 
-function isWorkspaceId(value: unknown): value is WorkspaceId {
-  return typeof value === 'string' && TERMINAL_WORKSPACE_IDS.includes(value as WorkspaceId)
-}
-
 function isWindowIdForWorkspace(value: unknown, workspaceId: WorkspaceId): value is string {
   if (typeof value !== 'string') return false
   return /^[0-3]$/.test(value.slice(`${workspaceId}-window-`.length)) &&
@@ -95,7 +91,7 @@ function readDragData(value: unknown): SessionDragData | TagDragData | null {
 
   if (
     data.type === 'tag' &&
-    isWorkspaceId(data.sourceWorkspaceId) &&
+    isTerminalWorkspaceId(data.sourceWorkspaceId) &&
     isWindowIdForWorkspace(data.sourceWindowId, data.sourceWorkspaceId)
   ) {
     return {
@@ -116,7 +112,7 @@ function readWindowDropData(value: unknown): WindowDropData | null {
   const data = value as Record<string, unknown>
   if (
     data.type !== 'window' ||
-    !isWorkspaceId(data.workspaceId) ||
+    !isTerminalWorkspaceId(data.workspaceId) ||
     !isWindowIdForWorkspace(data.windowId, data.workspaceId)
   ) return null
 
@@ -158,6 +154,7 @@ function DashboardContent() {
     settings,
     windowRevealRequest,
     workspaces,
+    workspaceIds,
     focusedWindowKey,
     openSendToSession,
   } = useSession()
@@ -279,7 +276,7 @@ function DashboardContent() {
 
         <div className="dashboard-content">
           {/* Terminal workspaces stay mounted so panel state and pooled iframe connections survive tab switches. */}
-          {TERMINAL_WORKSPACE_IDS.map(workspaceId => (
+          {workspaceIds.map(workspaceId => (
             <TerminalWorkspaceDock
               key={workspaceId}
               workspaceId={workspaceId}

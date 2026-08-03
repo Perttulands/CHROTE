@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import SessionItem from './SessionItem'
-import { DEFAULT_SETTINGS } from '../types'
+import { DEFAULT_SETTINGS, TERMINAL_WORKSPACE_IDS } from '../types'
 
 const mockState = vi.hoisted(() => ({
   assignedSessions: new Map<string, { workspaceId: string; windowId: string; windowIndex: number; colorIndex: number }>(),
@@ -41,6 +41,7 @@ vi.mock('../context/SessionContext', () => ({
       terminal2: { windows: [], windowCount: 0 },
       terminal3: { windows: [], windowCount: 0 },
     },
+    workspaceIds: TERMINAL_WORKSPACE_IDS,
     addSessionToWindow: mockState.addSessionToWindow,
     removeSessionFromWindow: mockState.removeSessionFromWindow,
     openFloatingModal: mockState.openFloatingModal,

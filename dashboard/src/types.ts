@@ -42,15 +42,27 @@ export const TMUX_PRESETS: Record<string, TmuxAppearance> = {
   },
 }
 
-// Terminal workspaces and launch-user settings
-export type WorkspaceId = 'terminal1' | 'terminal2' | 'terminal3'
+// Terminal workspaces and launch-user settings.
+// Workspace ids are always terminal1..terminalN and terminalWorkspaceIds() is
+// the only derivation. Persisted layouts, dock state, and settings key off
+// these ids, so the scheme is load-bearing: existing localStorage must keep
+// resolving unchanged at the default count.
+export type WorkspaceId = `terminal${number}`
 
-export const TERMINAL_WORKSPACE_IDS = ['terminal1', 'terminal2', 'terminal3'] as const
+export const DEFAULT_TERMINAL_TAB_COUNT = 3
 
-export const TERMINAL_LABELS: Record<WorkspaceId, string> = {
-  terminal1: 'Terminal',
-  terminal2: 'Terminal 2',
-  terminal3: 'Terminal 3',
+export function terminalWorkspaceIds(count: number = DEFAULT_TERMINAL_TAB_COUNT): WorkspaceId[] {
+  return Array.from({ length: count }, (_, i) => `terminal${i + 1}` as WorkspaceId)
+}
+
+export const TERMINAL_WORKSPACE_IDS: readonly WorkspaceId[] = terminalWorkspaceIds()
+
+export function isTerminalWorkspaceId(value: unknown, ids: readonly WorkspaceId[] = TERMINAL_WORKSPACE_IDS): value is WorkspaceId {
+  return typeof value === 'string' && (ids as readonly string[]).includes(value)
+}
+
+export function getTerminalLabel(workspaceId: WorkspaceId): string {
+  return workspaceId === 'terminal1' ? 'Terminal' : `Terminal ${workspaceId.slice('terminal'.length)}`
 }
 
 export type LaunchUser = string
@@ -75,11 +87,7 @@ export function getSessionUserFromKey(sessionKey: string): LaunchUser {
 
 export const DEFAULT_TERMINAL_SESSION_PREFIXES: Record<LaunchUser, string> = {}
 
-export const DEFAULT_TERMINAL_LAUNCH_USERS: Record<WorkspaceId, LaunchUser> = {
-  terminal1: '',
-  terminal2: '',
-  terminal3: '',
-}
+export const DEFAULT_TERMINAL_LAUNCH_USERS: Record<WorkspaceId, LaunchUser> = {}
 
 export const TERMINAL_USER_COLOR_PALETTE = [
   '#4a9eff',
@@ -455,6 +463,10 @@ export interface DashboardState {
 
   // Window configuration
   workspaces: Record<WorkspaceId, TerminalWorkspace>
+
+  // Resolved terminal workspace id list (settings-derived; fixed at the
+  // default count until the tab-count setting lands)
+  workspaceIds: readonly WorkspaceId[]
 
   // UI state
   sidebarCollapsed: boolean

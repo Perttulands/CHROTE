@@ -3,11 +3,11 @@ import { useMediaQuery } from '../hooks/useMediaQuery'
 import { isFeatureEnabled } from '../featureFlags'
 import { useSession } from '../context/SessionContext'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
-import { TERMINAL_LABELS, TERMINAL_WORKSPACE_IDS } from '../types'
+import { getTerminalLabel, isTerminalWorkspaceId } from '../types'
 import type { WorkspaceId } from '../types'
 import DismissiblePanel from './DismissiblePanel'
 
-export type Tab = 'terminal1' | 'terminal2' | 'terminal3' | 'files' | 'agents' | 'beads' | 'formations' | 'services' | 'scheduled' | 'server' | 'settings' | 'help'
+export type Tab = WorkspaceId | 'files' | 'agents' | 'beads' | 'formations' | 'services' | 'scheduled' | 'server' | 'settings' | 'help'
 
 interface InternalTab {
   id: Tab
@@ -39,15 +39,13 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
     tabMenu.show ? { x: tabMenu.x, y: tabMenu.y } : null,
     { estimatedSize: { width: 230, height: 210 } },
   )
-  const { settings, updateSettings, saveCurrentLayout, loadPreset, layoutPresets, clearWorkspaceAssignments } = useSession()
+  const { settings, updateSettings, saveCurrentLayout, loadPreset, layoutPresets, clearWorkspaceAssignments, workspaceIds } = useSession()
 
   const isMobile = useMediaQuery('(max-width: 768px)')
 
 
   const tabs: TabConfig[] = [
-    { id: 'terminal1', label: settings.terminalLabels.terminal1?.trim() || TERMINAL_LABELS.terminal1 },
-    { id: 'terminal2', label: settings.terminalLabels.terminal2?.trim() || TERMINAL_LABELS.terminal2 },
-    { id: 'terminal3', label: settings.terminalLabels.terminal3?.trim() || TERMINAL_LABELS.terminal3 },
+    ...workspaceIds.map((id): InternalTab => ({ id, label: settings.terminalLabels[id]?.trim() || getTerminalLabel(id) })),
     { id: 'files', label: 'Files' },
     { id: 'agents', label: 'Agents' },
     { id: 'beads', label: 'Beads' },
@@ -83,7 +81,7 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
 
   const renameTab = () => {
     if (!tabMenu.workspaceId) return
-    const label = window.prompt('Terminal tab label', settings.terminalLabels[tabMenu.workspaceId] || TERMINAL_LABELS[tabMenu.workspaceId])?.trim() ?? ''
+    const label = window.prompt('Terminal tab label', settings.terminalLabels[tabMenu.workspaceId] || getTerminalLabel(tabMenu.workspaceId))?.trim() ?? ''
     updateSettings({
       terminalLabels: {
         ...settings.terminalLabels,
@@ -100,8 +98,8 @@ function TabBar({ activeTab, onTabChange, onShowHelp, onShowPresets }: TabBarPro
   }
 
   const terminalTabMenu = tabMenu.workspaceId
-  const activeTerminalWorkspace = TERMINAL_WORKSPACE_IDS.includes(activeTab as WorkspaceId)
-    ? activeTab as WorkspaceId
+  const activeTerminalWorkspace = isTerminalWorkspaceId(activeTab, workspaceIds)
+    ? activeTab
     : null
   const openActiveTabMenu = (button: HTMLButtonElement) => {
     if (!activeTerminalWorkspace) return

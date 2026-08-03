@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import SettingsView from './SettingsView'
-import { DEFAULT_SETTINGS } from '../types'
+import { DEFAULT_SETTINGS, TERMINAL_WORKSPACE_IDS } from '../types'
 
 const mockUseSession = vi.fn()
 const refreshSessions = vi.fn()
@@ -40,6 +40,7 @@ function sessionReturn(updateSettings: ReturnType<typeof vi.fn>, overrides: Reco
     sessions: [],
     refreshSessions,
     createSession,
+    workspaceIds: TERMINAL_WORKSPACE_IDS,
     ...overrides,
   }
 }

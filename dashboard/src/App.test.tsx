@@ -1,7 +1,7 @@
 import { act, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
-import { DEFAULT_SETTINGS } from './types'
+import { DEFAULT_SETTINGS, TERMINAL_WORKSPACE_IDS } from './types'
 
 const mocks = vi.hoisted(() => ({
   dndProps: null as Record<string, any> | null,
@@ -36,6 +36,7 @@ vi.mock('./context/SessionContext', () => ({
       terminal2: { windows: [] },
       terminal3: { windows: [] },
     },
+    workspaceIds: TERMINAL_WORKSPACE_IDS,
     focusedWindowKey: null,
     openSendToSession: mocks.openSendToSession,
   }),

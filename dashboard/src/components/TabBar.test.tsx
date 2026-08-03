@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import TabBar from './TabBar'
-import { DEFAULT_SETTINGS } from '../types'
+import { DEFAULT_SETTINGS, TERMINAL_WORKSPACE_IDS } from '../types'
 
 const mockState = vi.hoisted(() => ({
   updateSettings: vi.fn(),
@@ -18,6 +18,7 @@ vi.mock('../context/SessionContext', () => ({
     loadPreset: mockState.loadPreset,
     layoutPresets: [{ id: 'preset-1', name: 'Focus Layout' }],
     clearWorkspaceAssignments: mockState.clearWorkspaceAssignments,
+    workspaceIds: TERMINAL_WORKSPACE_IDS,
   }),
 }))
 
@@ -51,6 +52,16 @@ describe('TabBar Services navigation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Terminal 3' }))
 
     expect(onTabChange).toHaveBeenCalledWith('terminal3')
+  })
+
+  it('renders exactly the default terminal tabs, in order, with canonical labels', () => {
+    mockMatchMedia(false)
+
+    render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} />)
+
+    const labels = screen.getAllByRole('button').map(button => button.textContent)
+    const terminalLabels = labels.filter(label => label?.startsWith('Terminal'))
+    expect(terminalLabels).toEqual(['Terminal', 'Terminal 2', 'Terminal 3'])
   })
 
   it('shows Services in desktop navigation', () => {

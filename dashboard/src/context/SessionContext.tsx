@@ -118,9 +118,11 @@ function isViewportBucket(value: string): value is ViewportBucket {
 
 function mergeTerminalLaunchUsers(raw: unknown): Record<WorkspaceId, LaunchUser> {
   const rawUsers = isRecord(raw) ? raw : {}
+  // Sparse: an absent entry and '' mean the same thing to resolveLaunchUser,
+  // so only meaningful assignments are kept.
   return WORKSPACE_IDS.reduce((acc, workspaceId) => {
     const value = rawUsers[workspaceId]
-    acc[workspaceId] = typeof value === 'string' ? value : ''
+    if (typeof value === 'string' && value !== '') acc[workspaceId] = value
     return acc
   }, {} as Record<WorkspaceId, LaunchUser>)
 }
@@ -184,11 +186,10 @@ function migrateSettings(rawSettings: unknown, schemaVersion: unknown): UserSett
 
 function defaultStoredState(): LoadedStoredState {
   return {
-    workspaces: {
-      terminal1: createDefaultWorkspace('terminal1', 2),
-      terminal2: createDefaultWorkspace('terminal2', 2),
-      terminal3: createDefaultWorkspace('terminal3', 2),
-    },
+    workspaces: WORKSPACE_IDS.reduce((acc, workspaceId) => {
+      acc[workspaceId] = createDefaultWorkspace(workspaceId, 2)
+      return acc
+    }, {} as Record<WorkspaceId, TerminalWorkspace>),
     layoutsByViewport: {},
     sidebarCollapsed: false,
     settings: DEFAULT_SETTINGS,
@@ -1474,6 +1475,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     loading,
     error,
     workspaces,
+    workspaceIds: WORKSPACE_IDS,
     sidebarCollapsed,
     floatingSession,
     sendToSessionTarget,
