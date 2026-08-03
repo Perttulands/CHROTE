@@ -52,6 +52,10 @@ var agentUnixUserRegex = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
 // constrained separately.
 var agentNativeSessionIDRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
 
+// A hermes profile becomes an argv element after --profile, so it is held to the
+// same shape as every other value that reaches a command line.
+var agentHermesProfileRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`)
+
 // systemctlRunner runs one systemctl --user invocation against a target user's
 // manager. It is an injection point so tests never touch a real bus, and so the
 // privileged mechanism (how CHROTE reaches another user's manager) stays in one
@@ -75,11 +79,14 @@ type agentUnitConfig struct {
 	AgentKind      string
 	AgentSessionID string
 	AgentBin       string
-	TmuxBin        string
-	TmuxSocket     string
-	Workdir        string
-	KeeperUnit     string
-	WatchInterval  int
+	// HermesProfile is required for, and only for, hermes agents: their canonical
+	// argv is python -m hermes_cli.main --profile <profile> --resume <id>.
+	HermesProfile string
+	TmuxBin       string
+	TmuxSocket    string
+	Workdir       string
+	KeeperUnit    string
+	WatchInterval int
 }
 
 // AgentUnitStatus is what the sessions API projects onto a session and the
@@ -109,9 +116,25 @@ type agentUnitController struct {
 	mu        sync.Mutex
 }
 
+const defaultAgentUnitsDir = "/srv/data/chrote/agent-units"
+
+func defaultAgentUnitsPath() string {
+	if override := strings.TrimSpace(os.Getenv("CHROTE_AGENT_UNITS_DIR")); override != "" {
+		return override
+	}
+	return defaultAgentUnitsDir
+}
+
+// agentSystemctlRun is the seam every controller falls back to. It exists as a
+// package variable, matching tmuxCurrentUser above, so a test binary can never
+// reach a real user manager by forgetting to inject a fake.
+var agentSystemctlRun systemctlRunner = runSystemctlForUser
+
 func newAgentUnitController(root string, runner systemctlRunner) *agentUnitController {
 	if runner == nil {
-		runner = runSystemctlForUser
+		runner = func(ctx context.Context, unixUser string, args ...string) (string, error) {
+			return agentSystemctlRun(ctx, unixUser, args...)
+		}
 	}
 	return &agentUnitController{root: strings.TrimSpace(root), systemctl: runner}
 }
@@ -163,6 +186,10 @@ func (c *agentUnitConfig) validate() error {
 	}
 	switch strings.ToLower(strings.TrimSpace(c.AgentKind)) {
 	case "codex", "claude":
+	case "hermes":
+		if !agentHermesProfileRegex.MatchString(strings.TrimSpace(c.HermesProfile)) {
+			return fmt.Errorf("hermes agents require a profile name, got %q", c.HermesProfile)
+		}
 	default:
 		return fmt.Errorf("unsupported agent kind %q", c.AgentKind)
 	}
@@ -414,6 +441,9 @@ func writeAgentUnitConfigFile(path string, config agentUnitConfig, receiptPath s
 	fmt.Fprintf(&builder, "CHROTE_AGENT_WORKDIR=%s\n", config.Workdir)
 	fmt.Fprintf(&builder, "CHROTE_AGENT_RECEIPT_PATH=%s\n", receiptPath)
 	fmt.Fprintf(&builder, "CHROTE_AGENT_WATCH_INTERVAL=%d\n", watch)
+	if profile := strings.TrimSpace(config.HermesProfile); profile != "" {
+		fmt.Fprintf(&builder, "CHROTE_AGENT_HERMES_PROFILE=%s\n", profile)
+	}
 	if strings.TrimSpace(config.KeeperUnit) != "" {
 		fmt.Fprintf(&builder, "CHROTE_AGENT_TMUX_KEEPER_UNIT=%s\n", strings.TrimSpace(config.KeeperUnit))
 	}
@@ -469,6 +499,8 @@ func readAgentUnitConfigFile(path string) (agentUnitConfig, error) {
 			config.TmuxSocket = value
 		case "CHROTE_AGENT_WORKDIR":
 			config.Workdir = value
+		case "CHROTE_AGENT_HERMES_PROFILE":
+			config.HermesProfile = value
 		}
 	}
 	return config, nil
@@ -484,6 +516,42 @@ func readAgentUnitReceipt(path string) (agentUnitReceipt, error) {
 		return agentUnitReceipt{}, err
 	}
 	return receipt, nil
+}
+
+// agentBinaryForKind resolves the CLI a locked agent resumes with. The unit
+// needs an absolute path because it runs with the systemd user manager's PATH,
+// not a login shell's. An operator override wins; otherwise the owner's usual
+// per-user install location is used, and the launcher fails loud if it is wrong
+// rather than silently running some other binary of the same name.
+// absoluteToolPath resolves a possibly bare binary name against PATH. A unit
+// runs with the user manager's PATH, not a login shell's, so a bare name in the
+// config would resolve differently there -- or not at all.
+func absoluteToolPath(candidate string) string {
+	candidate = strings.TrimSpace(candidate)
+	if candidate == "" || filepath.IsAbs(candidate) {
+		return candidate
+	}
+	if resolved, err := exec.LookPath(candidate); err == nil {
+		return resolved
+	}
+	return candidate
+}
+
+func agentBinaryForKind(kind, ownerHome string) string {
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	envKey := "CHROTE_AGENT_BIN_" + strings.ToUpper(kind)
+	if override := strings.TrimSpace(os.Getenv(envKey)); override != "" {
+		return override
+	}
+	if strings.TrimSpace(ownerHome) == "" {
+		return ""
+	}
+	if kind == "hermes" {
+		// Hermes runs from its own venv interpreter, not a launcher shim. Same
+		// path canonicalRecoveryAgentArgv derives, kept in one shape.
+		return filepath.Join(ownerHome, ".hermes", "hermes-agent-current", "venv", "bin", "python")
+	}
+	return filepath.Join(ownerHome, ".local", "bin", kind)
 }
 
 // runSystemctlForUser is the production mechanism. Argv-array with a timeout,

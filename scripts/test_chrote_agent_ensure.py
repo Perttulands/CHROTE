@@ -225,6 +225,23 @@ class SessionLifecycleTests(unittest.TestCase):
         fixture.run("--once")
         self.assertIn(f"--resume {SESSION_ID}", "\n".join(fixture.calls()))
 
+    def test_hermes_kind_renders_module_profile_and_resume(self) -> None:
+        fixture = LauncherFixture(
+            CHROTE_AGENT_KIND="hermes", CHROTE_AGENT_HERMES_PROFILE="research"
+        )
+        result = fixture.run("--once")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            f"-m hermes_cli.main --profile research --resume {SESSION_ID}",
+            "\n".join(fixture.calls()),
+        )
+
+    def test_hermes_without_a_profile_fails_before_touching_tmux(self) -> None:
+        fixture = LauncherFixture(CHROTE_AGENT_KIND="hermes")
+        result = fixture.run("--once")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("new-session", "\n".join(fixture.calls()))
+
     def test_receipt_records_the_resumed_identity(self) -> None:
         fixture = LauncherFixture()
         result = fixture.run("--once")
@@ -312,7 +329,7 @@ class ConfigValidationTests(unittest.TestCase):
     def test_malformed_values_are_refused(self) -> None:
         cases = {
             "CHROTE_AGENT_SESSION": "bad name; rm -rf /",
-            "CHROTE_AGENT_KIND": "shell",
+            "CHROTE_AGENT_KIND": "bash",
             "CHROTE_AGENT_SESSION_ID": "--last",
             "CHROTE_AGENT_TMUX_SOCKET": "relative/path",
             "CHROTE_AGENT_WATCH_INTERVAL": "0",
@@ -324,7 +341,7 @@ class ConfigValidationTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, f"{key}={value!r} should be refused")
 
     def test_unsupported_agent_kind_never_reaches_tmux(self) -> None:
-        fixture = LauncherFixture(CHROTE_AGENT_KIND="hermes")
+        fixture = LauncherFixture(CHROTE_AGENT_KIND="shell")
         result = fixture.run("--once")
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("new-session", "\n".join(fixture.calls()))

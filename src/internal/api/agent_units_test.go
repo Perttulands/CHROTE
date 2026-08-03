@@ -431,3 +431,15 @@ func writeTestReceipt(t *testing.T, path, session, kind, sessionID string) {
 		t.Fatalf("write receipt: %v", err)
 	}
 }
+
+// installFakeSystemctl points the package-level seam at a recorder for the
+// duration of one test, so a handler built by the production constructor drives
+// a fake rather than a real user manager.
+func installFakeSystemctl(t *testing.T) *fakeSystemctl {
+	t.Helper()
+	fake := &fakeSystemctl{states: map[string]systemdUnitState{}}
+	previous := agentSystemctlRun
+	agentSystemctlRun = fake.run
+	t.Cleanup(func() { agentSystemctlRun = previous })
+	return fake
+}

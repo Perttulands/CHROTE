@@ -90,6 +90,12 @@ render_resume_argv() {
   case "$AGENT_KIND" in
     codex) printf '%s resume %s' "$AGENT_BIN" "$AGENT_SESSION_ID" ;;
     claude) printf '%s --resume %s' "$AGENT_BIN" "$AGENT_SESSION_ID" ;;
+    hermes)
+      # AGENT_BIN is hermes's own venv interpreter, so the module and profile are
+      # part of the canonical form rather than a wrapper script.
+      printf '%s -m hermes_cli.main --profile %s --resume %s' \
+        "$AGENT_BIN" "$HERMES_PROFILE" "$AGENT_SESSION_ID"
+      ;;
     *) fail "unsupported agent kind: $AGENT_KIND" ;;
   esac
 }
@@ -180,12 +186,19 @@ AGENT_KIND=$(require_value CHROTE_AGENT_KIND)
 AGENT_SESSION_ID=$(require_value CHROTE_AGENT_SESSION_ID)
 AGENT_BIN=$(require_value CHROTE_AGENT_BIN)
 KEEPER_UNIT=$(config_value CHROTE_AGENT_TMUX_KEEPER_UNIT || true)
+HERMES_PROFILE=$(config_value CHROTE_AGENT_HERMES_PROFILE || true)
 RECEIPT_PATH=$(config_value CHROTE_AGENT_RECEIPT_PATH || true)
 WATCH_INTERVAL=$(config_value CHROTE_AGENT_WATCH_INTERVAL || true)
 [[ -n "${WATCH_INTERVAL:-}" ]] || WATCH_INTERVAL=10
 
 validate_token "CHROTE_AGENT_SESSION" "$SESSION" '^[a-zA-Z0-9_-]{1,50}$'
-validate_token "CHROTE_AGENT_KIND" "$AGENT_KIND" '^(codex|claude)$'
+validate_token "CHROTE_AGENT_KIND" "$AGENT_KIND" '^(codex|claude|hermes)$'
+# A hermes profile becomes an argv element after --profile, so it is held to the
+# same shape as every other value that reaches a command line.
+if [[ "$AGENT_KIND" == hermes ]]; then
+  [[ -n "${HERMES_PROFILE:-}" ]] || fail "hermes agents require CHROTE_AGENT_HERMES_PROFILE: $CONFIG_FILE"
+  validate_token "CHROTE_AGENT_HERMES_PROFILE" "$HERMES_PROFILE" '^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$'
+fi
 validate_token "CHROTE_AGENT_SESSION_ID" "$AGENT_SESSION_ID" '^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$'
 validate_token "CHROTE_AGENT_WATCH_INTERVAL" "$WATCH_INTERVAL" '^[1-9][0-9]{0,3}$'
 for path_name in CHROTE_AGENT_TMUX_BIN:$TMUX_BIN CHROTE_AGENT_TMUX_SOCKET:$TMUX_SOCKET \

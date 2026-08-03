@@ -36,6 +36,9 @@ type TmuxHandler struct {
 	bank       *sessionBankStore
 	persistent *persistentAgentStore
 	managed    *managedRecoveryStatusStore
+	// agentUnits owns everything about a locked session's lifetime, which is to
+	// say it owns nothing: it writes config and asks systemd (ADR-0014).
+	agentUnits *agentUnitController
 	// recoveryMu serializes recovery-owner checks with the store or tmux
 	// mutation that makes the winning claim observable.
 	recoveryMu     sync.Mutex
@@ -171,6 +174,7 @@ func NewTmuxHandler() *TmuxHandler {
 		bank:           newSessionBankStore(defaultSessionBankPath()),
 		persistent:     newPersistentAgentStore(defaultPersistentAgentsPath()),
 		managed:        newManagedRecoveryStatusStore(defaultManagedRecoveryStatusPath()),
+		agentUnits:     newAgentUnitController(defaultAgentUnitsPath(), nil),
 		sessionDropSem: newSessionDropSemaphore(),
 	}
 }

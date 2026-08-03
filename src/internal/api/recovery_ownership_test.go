@@ -390,6 +390,7 @@ func configureRecoveryOwnershipTest(t *testing.T, bankPath, persistentPath, mana
 	t.Helper()
 	t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
 	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	installFakeSystemctl(t)
 	t.Setenv("CHROTE_MANAGED_RECOVERY_STATUS_PATH", managedPath)
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice,bob")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a,bob=/tmp/tmux-b")

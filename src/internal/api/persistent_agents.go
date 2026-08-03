@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1790,6 +1789,34 @@ func (h *TmuxHandler) EnablePersistentAgent(w http.ResponseWriter, r *http.Reque
 		core.WriteError(w, http.StatusBadRequest, "PERSISTENT_AGENT_ERROR", err.Error())
 		return
 	}
+	// Hand the promise to systemd. Identity was resolved once, above, because we
+	// are adopting a pane we did not create; from here nothing in this process
+	// watches it (ADR-0014).
+	if h.agentUnits != nil {
+		unitConfig := agentUnitConfig{
+			Session:        entry.Name,
+			UnixUser:       unixUser,
+			AgentKind:      entry.AgentKind,
+			AgentSessionID: entry.AgentSessionID,
+			AgentBin:       agentBinaryForKind(entry.AgentKind, ownerHome),
+			HermesProfile:  persistentAgentHermesProfile(entry),
+			TmuxBin:        absoluteToolPath(core.TmuxBin()),
+			TmuxSocket:     target.socket,
+			Workdir:        entry.CWD,
+			KeeperUnit:     strings.TrimSpace(os.Getenv("CHROTE_TMUX_KEEPER_UNIT")),
+		}
+		if err := h.agentUnits.Enable(r.Context(), unitConfig); err != nil {
+			// A registry entry without a running unit is a lock that does not
+			// lock. Roll it back rather than report a promise nothing keeps.
+			if _, forgetErr := h.persistent.Forget(entry.Name, unixUser); forgetErr != nil {
+				core.WriteError(w, http.StatusInternalServerError, "PERSISTENT_AGENT_ERROR",
+					fmt.Sprintf("%s; rollback also failed, a stale entry remains for %q: %s", err.Error(), entry.Name, forgetErr))
+				return
+			}
+			core.WriteError(w, http.StatusInternalServerError, "PERSISTENT_AGENT_UNIT_ERROR", err.Error())
+			return
+		}
+	}
 	if newName != sessionName {
 		if _, err := h.runTmuxOnSocket(target.socket, "rename-session", "-t", sessionName, newName); err != nil {
 			// The registry entry was written before the rename; a failed
@@ -1833,6 +1860,16 @@ func (h *TmuxHandler) DisablePersistentAgent(w http.ResponseWriter, r *http.Requ
 	}
 	h.recoveryMu.Lock()
 	defer h.recoveryMu.Unlock()
+	// Stop supervising first: if this fails, the session stays locked rather
+	// than becoming a unit CHROTE has forgotten but systemd still restarts.
+	// Unlocking withdraws the promise and deliberately leaves the agent running
+	// (ADR-0014 decision 8).
+	if h.agentUnits != nil {
+		if err := h.agentUnits.Disable(r.Context(), sessionName, unixUser); err != nil {
+			core.WriteError(w, http.StatusInternalServerError, "PERSISTENT_AGENT_UNIT_ERROR", err.Error())
+			return
+		}
+	}
 	removed, err := h.persistent.Forget(sessionName, unixUser)
 	if err != nil {
 		core.WriteError(w, http.StatusInternalServerError, "PERSISTENT_AGENT_ERROR", err.Error())
@@ -1847,220 +1884,4 @@ func (h *TmuxHandler) DisablePersistentAgent(w http.ResponseWriter, r *http.Requ
 		"removed":    removed,
 		"timestamp":  time.Now().UTC().Format(time.RFC3339),
 	})
-}
-
-func (h *TmuxHandler) revivePersistentAgent(ctx context.Context, entry PersistentAgentEntry, target tmuxTarget, desc WorkloadRecoveryDescriptor) error {
-	workDir := strings.TrimSpace(desc.Topology.PaneCurrentPath)
-	if workDir == "" {
-		return fmt.Errorf("no persistence working directory available")
-	}
-	resumeCommand, ok := persistentDescriptorCommand(desc, target.ownerHome)
-	if !ok {
-		return fmt.Errorf("unsafe or unsupported persistent agent metadata")
-	}
-	session, err := h.createOwnedTmuxSession(ctx, target.socket, entry.Name, workDir)
-	if err != nil {
-		return err
-	}
-	if err := h.removeTmuxRightClickMenus(ctx, target.socket); err != nil {
-		return h.cleanupOwnedTmuxSessionAfterError(target.socket, session, err)
-	}
-	if _, err := h.runTmuxOnSocketContext(ctx, target.socket, "send-keys", "-t", session.ID, "-l", "--", resumeCommand); err != nil {
-		return h.cleanupOwnedTmuxSessionAfterError(target.socket, session, err)
-	}
-	if _, err := h.runTmuxOnSocketContext(ctx, target.socket, "send-keys", "-t", session.ID, "Enter"); err != nil {
-		return h.cleanupOwnedTmuxSessionAfterError(target.socket, session, err)
-	}
-	return nil
-}
-
-func persistentAgentBackoffActive(entry PersistentAgentEntry) bool {
-	if entry.State != PersistentAgentStateBackoff || strings.TrimSpace(entry.NextRetryAt) == "" {
-		return false
-	}
-	nextRetry, err := time.Parse(time.RFC3339, entry.NextRetryAt)
-	if err != nil {
-		return false
-	}
-	return persistentAgentNow().Before(nextRetry)
-}
-
-// ReconcilePersistentAgents applies desired state once. Tests call this directly;
-// the server also runs it periodically in the background.
-func (h *TmuxHandler) ReconcilePersistentAgents(ctx context.Context) ([]PersistentAgentReconcileResult, error) {
-	if h == nil || h.persistent == nil {
-		return []PersistentAgentReconcileResult{}, nil
-	}
-	h.recoveryMu.Lock()
-	defer h.recoveryMu.Unlock()
-	entries, err := h.persistent.Read()
-	if err != nil {
-		return nil, err
-	}
-	results := make([]PersistentAgentReconcileResult, 0, len(entries))
-	for _, entry := range entries {
-		result := PersistentAgentReconcileResult{
-			Session:        entry.Name,
-			UnixUser:       entry.UnixUser,
-			AgentKind:      entry.AgentKind,
-			AgentSessionID: entry.AgentSessionID,
-			Action:         "ok",
-		}
-		if entry.State == PersistentAgentStateFailed {
-			result.Action = PersistentAgentStateFailed
-			result.Error = entry.LastError
-			results = append(results, result)
-			continue
-		}
-		if persistentAgentBackoffActive(entry) {
-			result.Action = PersistentAgentStateBackoff
-			result.Error = entry.LastError
-			results = append(results, result)
-			continue
-		}
-		target, targetErr := h.targetForUnixUser(entry.UnixUser)
-		if targetErr != nil {
-			result.Action = "error"
-			result.Error = targetErr.Error()
-			annotateStatusPersistError(&result, h.persistent.UpdateStatus(entry.Name, entry.UnixUser, result.Action, result.Error))
-			results = append(results, result)
-			continue
-		}
-		ownerHome, ownerHomeErr := trustedSessionBankOwnerHome(target)
-		if ownerHomeErr != nil {
-			result.Action = "error"
-			result.Error = ownerHomeErr.Error()
-			annotateStatusPersistError(&result, h.persistent.UpdateStatus(entry.Name, entry.UnixUser, result.Action, result.Error))
-			results = append(results, result)
-			continue
-		}
-		desc, descErr := persistentDescriptorForEntry(entry, ownerHome)
-		if descErr != nil {
-			result.Action = "error"
-			result.Error = "unsafe or unsupported persistent agent metadata: " + descErr.Error()
-			annotateStatusPersistError(&result, h.persistent.UpdateStatus(entry.Name, entry.UnixUser, result.Action, result.Error))
-			results = append(results, result)
-			continue
-		}
-		result.AgentKind = desc.Agent.Kind
-		result.AgentSessionID = desc.Agent.NativeSessionID
-		exists, existsErr := h.tmuxSessionExists(ctx, target.socket, entry.Name)
-		if existsErr != nil {
-			result.Action = "error"
-			result.Error = existsErr.Error()
-			annotateStatusPersistError(&result, h.persistent.UpdateStatus(entry.Name, entry.UnixUser, result.Action, result.Error))
-			results = append(results, result)
-			continue
-		}
-		if !exists {
-			if reviveErr := h.revivePersistentAgent(ctx, entry, target, desc); reviveErr != nil {
-				updated, recordErr := h.persistent.RecordLaunchFailure(entry.Name, entry.UnixUser, reviveErr.Error())
-				if recordErr != nil {
-					// Without durable retry state the backoff would be synthetic:
-					// the next reconcile forgets this failure ever happened.
-					result.Action = "error"
-					result.Error = reviveErr.Error() + "; retry bookkeeping not persisted: " + recordErr.Error()
-				} else if updated.State == PersistentAgentStateFailed {
-					result.Action = PersistentAgentStateFailed
-					result.Error = reviveErr.Error()
-				} else {
-					result.Action = PersistentAgentStateBackoff
-					result.Error = reviveErr.Error()
-				}
-			} else {
-				result.Action = "recreated"
-				annotateStatusPersistError(&result, h.persistent.UpdateStatus(entry.Name, entry.UnixUser, result.Action, ""))
-			}
-			results = append(results, result)
-			continue
-		}
-		pane, err := h.inspectSessionPane(ctx, target.socket, entry.Name)
-		if err != nil {
-			result.Action = "error"
-			result.Error = err.Error()
-			annotateStatusPersistError(&result, h.persistent.UpdateStatus(entry.Name, entry.UnixUser, result.Action, result.Error))
-			results = append(results, result)
-			continue
-		}
-		status := h.inspectPersistentLiveStatus(ctx, target, entry, desc, pane)
-		switch status.action {
-		case "ok":
-			result.Action = "ok"
-			annotateStatusPersistError(&result, h.persistent.UpdateStatus(entry.Name, entry.UnixUser, result.Action, ""))
-			results = append(results, result)
-			continue
-		case PersistentAgentStateNeedsInteraction, PersistentAgentStateWrongIdentity:
-			result.Action = status.action
-			result.Error = status.message
-			annotateStatusPersistError(&result, h.persistent.UpdateStatus(entry.Name, entry.UnixUser, result.Action, result.Error))
-			results = append(results, result)
-			continue
-		case "error":
-			result.Action = "error"
-			result.Error = status.message
-			annotateStatusPersistError(&result, h.persistent.UpdateStatus(entry.Name, entry.UnixUser, result.Action, result.Error))
-			results = append(results, result)
-			continue
-		}
-		if status.noAgent {
-			if _, killErr := h.runTmuxOnSocketContext(ctx, target.socket, "kill-session", "-t", entry.Name); killErr != nil && !isTmuxMissingTargetError(killErr) {
-				result.Action = "error"
-				result.Error = killErr.Error()
-				annotateStatusPersistError(&result, h.persistent.UpdateStatus(entry.Name, entry.UnixUser, result.Action, result.Error))
-				results = append(results, result)
-				continue
-			}
-			if reviveErr := h.revivePersistentAgent(ctx, entry, target, desc); reviveErr != nil {
-				updated, recordErr := h.persistent.RecordLaunchFailure(entry.Name, entry.UnixUser, reviveErr.Error())
-				if recordErr != nil {
-					// Without durable retry state the backoff would be synthetic:
-					// the next reconcile forgets this failure ever happened.
-					result.Action = "error"
-					result.Error = reviveErr.Error() + "; retry bookkeeping not persisted: " + recordErr.Error()
-				} else if updated.State == PersistentAgentStateFailed {
-					result.Action = PersistentAgentStateFailed
-					result.Error = reviveErr.Error()
-				} else {
-					result.Action = PersistentAgentStateBackoff
-					result.Error = reviveErr.Error()
-				}
-			} else {
-				result.Action = "restarted"
-				annotateStatusPersistError(&result, h.persistent.UpdateStatus(entry.Name, entry.UnixUser, result.Action, ""))
-			}
-			results = append(results, result)
-			continue
-		}
-		results = append(results, result)
-	}
-	return results, nil
-}
-
-// StartPersistentAgentSupervisor keeps persistent agents reconciled until ctx ends.
-func (h *TmuxHandler) StartPersistentAgentSupervisor(ctx context.Context) {
-	if h == nil || h.persistent == nil {
-		return
-	}
-	if disabled, _ := strconv.ParseBool(strings.TrimSpace(os.Getenv("CHROTE_PERSISTENT_AGENTS_DISABLE"))); disabled {
-		return
-	}
-	interval := 15 * time.Second
-	if raw := strings.TrimSpace(os.Getenv("CHROTE_PERSISTENT_AGENTS_INTERVAL")); raw != "" {
-		if parsed, err := time.ParseDuration(raw); err == nil && parsed > 0 {
-			interval = parsed
-		}
-	}
-	go func() {
-		_, _ = h.ReconcilePersistentAgents(ctx)
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				_, _ = h.ReconcilePersistentAgents(ctx)
-			}
-		}
-	}()
 }
