@@ -31,10 +31,13 @@ Warnings are evidence. Do not suppress React lifecycle warnings, Go diagnostics,
 
 ```bash
 python3 scripts/doc-lint.py
+python3 scripts/host-neutrality.py
 git diff --check
 ```
 
 `scripts/doc-lint.py` enforces stable public facts: source-truth frontmatter and routing, host-neutral product docs, shipped versus experimental view labels, version/toolchain parity, and required README media.
+
+`scripts/host-neutrality.py` is the wider net over the same contract: it checks every tracked file rather than only Markdown, because real account names and socket paths reached shipped scripts and Go tests while a Markdown-only lint reported PASS.
 
 Local links and images must resolve. Plans and archives are historical context and are not allowed to stand in for active product truth.
 
@@ -98,6 +101,8 @@ go tool cover -func=coverage.out
 
 Go unit and package tests own API contracts, path authorization, tmux command construction, terminal proxy lifecycle, recovery, schedules, persistence, and experimental orchestration internals.
 
+Because agent supervision is systemd's rather than the server's, the persistence tests are about what CHROTE hands to systemd and what it refuses to hand over: that the server starts no supervision goroutine, that a unit name built from a session name cannot be injected into, and that a unit CHROTE did not install cannot claim restart capability. The launcher's own refusal to create a tmux server is pinned separately. Cross-user and reboot behavior are proven once by an operator smoke, not by the disposable installer test below.
+
 ### Vulnerability and release-binary checks
 
 ```bash
@@ -116,6 +121,15 @@ go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 \
 
 Source scanning and binary scanning prove different things. Releases require both.
 
+### Operator tooling tests
+
+```bash
+python3 -m unittest discover -s scripts/tmux-recovery -p 'test_*.py'
+python3 scripts/test_chrote_agent_ensure.py
+```
+
+The first covers the operator-side recovery clients: manifest validation, owner rules, and the snapshot/restore/verify CLIs. The second covers the agent launcher that systemd runs for a locked session, including its refusal to create a tmux server, its refusal to source or follow a symlinked config, and its non-zero exit when the session or the agent process goes away.
+
 ### Disposable installer smoke
 
 ```bash
@@ -127,7 +141,7 @@ The first mode tests an exact prebuilt binary. The second builds from the checko
 
 The smoke proves:
 
-- managed files and the user unit are written under the selected prefix;
+- managed files and the server user unit are written under the selected prefix;
 - workspace paths with spaces and `%` survive environment and systemd quoting;
 - `/api/health` reports the expected version;
 - an isolated tmux session is discovered;
@@ -135,7 +149,7 @@ The smoke proves:
 - normal uninstall preserves workspace, state, and private overrides;
 - explicit purge removes state and private overrides without deleting the workspace.
 
-It validates the generated unit with `systemd-analyze`. It deliberately does not start or replace a real user service.
+It validates each generated unit with `systemd-analyze`. It deliberately does not start or replace a real user service, which is why unit files are checked statically here and locking is proven by an operator smoke instead.
 
 ## Live backend integration
 

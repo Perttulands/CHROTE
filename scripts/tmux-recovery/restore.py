@@ -250,7 +250,7 @@ def main(
     parser.add_argument("--socket", help="Owner tmux socket path for post-restore evidence collection")
     parser.add_argument("--unix-user", help="Unix owner whose tmux socket is being collected")
     parser.add_argument("--owner-home", help="Unix owner home directory")
-    parser.add_argument("--owner-kind", choices=["session_bank", "persistent_agent", "external_manager"])
+    parser.add_argument("--owner-kind", choices=["session_bank", "external_manager"])
     parser.add_argument("--owner-ref")
     parser.add_argument("--owner-may-restart", action="store_true")
     parser.add_argument("--session-name", help="Required filter for persistent/external owner collection")

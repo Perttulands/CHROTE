@@ -323,6 +323,9 @@ def _validate_descriptor(desc: Any, session_index: int, desc_index: int) -> None
     _validate_topology(desc.get("topology"), f"{path}.topology")
     if mode == "managed" and (owner.get("kind") != "external_manager" or owner.get("mayRestart") is not False):
         raise ManifestError(f"{path} managed owner must be non-restarting external_manager")
+    # persistent_agent is accepted but no longer producible: ADR-0014 moved agent supervision to
+    # systemd user units and dropped the kind from every CLI. Existing manifests are immutable and
+    # schemaVersion is an exact-match const, so narrowing this set would make them unloadable.
     if mode == "agent" and (owner.get("kind") not in {"session_bank", "persistent_agent"} or owner.get("mayRestart") is not True):
         raise ManifestError(f"{path} agent owner must be restartable")
     if mode in {"command", "topology"} and (owner.get("kind") != "session_bank" or owner.get("mayRestart") is not True):
@@ -418,6 +421,7 @@ def _validate_owner(owner: Any, path: str) -> None:
     if not isinstance(owner, dict):
         raise ManifestError(f"{path} is required")
     _reject_unknown_keys(owner, OWNER_KNOWN_KEYS, path)
+    # persistent_agent stays loadable for manifests written before ADR-0014; it is not producible.
     if owner.get("kind") not in {"session_bank", "persistent_agent", "external_manager"}:
         raise ManifestError(f"{path}.kind is invalid")
     if not isinstance(owner.get("ref"), str) or not OWNER_REF_RE.match(owner["ref"].strip()):

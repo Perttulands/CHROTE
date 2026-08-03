@@ -23,6 +23,14 @@ Managed records are read-only manifest entries. A managed record uses
 false`, and a typed `statusProbe`. Restore health-checks those records; it does
 not POST them to Session Bank and does not start or restart the unit.
 
+`restartAllowed: false` describes a unit owned by someone other than CHROTE.
+Under `docs/adr/0014-persistent-agents-supervised-by-systemd.md`, CHROTE
+installs `chrote-agent@<name>.service` units of its own, and systemd restarts
+those. They are the one restart-capable external manager, and they are read live
+from systemd rather than round-tripped through this manifest or through the
+managed status registry. Every managed record these tools write therefore still
+describes an externally owned, non-restarting, read-only unit.
+
 Manifest files use schema version `chrote.tmux-recovery.manifest.v1`; the JSON
 schema lives next to this README as `recovery-manifest.schema.json`.
 Descriptors contain only CHROTE/Go recovery fields. Operator-only pane status
@@ -38,9 +46,14 @@ escalation helpers.
 
 For Session Bank collection, owner refs are derived per pane as
 `<unixUser>/<sessionName>` from `tmux list-panes -a`; do not apply one owner ref
-across a multi-session socket. Persistent-agent and external-manager collection
-require an explicit `--session-name` filter plus `--owner-ref`, or a typed
-manifest-only managed record.
+across a multi-session socket. External-manager collection requires an explicit
+`--session-name` filter plus `--owner-ref`, or a typed manifest-only managed
+record.
+
+`--owner-kind` accepts `session_bank` and `external_manager`. ADR-0014 retired
+`persistent_agent`, so no tool here can produce it any more. Manifests written
+before that change still load: an accepted manifest is an immutable artifact
+pinned to an exact `schemaVersion`, so the value stays valid on read.
 
 Snapshot normal path:
 
@@ -83,10 +96,13 @@ chrote-tmux-recovery-restore \
 ```
 
 Restore delegates Session Bank owners to CHROTE recovery APIs and health-checks
-managed `systemd-user` owners. It never starts tmux, launches agents, starts or
-restarts units, or reads unit environments. `--topology-only` is explicit and
-reports limited topology/cwd/dead verification rather than workload identity
-success.
+managed `systemd-user` owners. `restore.py` itself never starts tmux, launches
+agents, starts or restarts units, or reads unit environments. That is a limit on
+this tool, not a description of the whole system: since ADR-0014, CHROTE starts
+and stops the `chrote-agent@<name>.service` units it installs when an operator
+locks or unlocks a session. Units that these tools see as managed records stay
+read-only here no matter who owns them. `--topology-only` is explicit and reports
+limited topology/cwd/dead verification rather than workload identity success.
 
 `restore` and `verify` first poll readiness for up to 30 seconds at a bounded
 0.5-second interval, requiring exact topology, workload identity, pane health,

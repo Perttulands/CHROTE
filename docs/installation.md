@@ -50,7 +50,7 @@ Defaults:
 | Managed config | `$XDG_CONFIG_HOME/chrote/chrote.env` or `$HOME/.config/chrote/chrote.env` |
 | Private overrides | `$XDG_CONFIG_HOME/chrote/secrets.env` |
 | Durable state | `$XDG_STATE_HOME/chrote` or `$HOME/.local/state/chrote` |
-| User unit | `$XDG_CONFIG_HOME/systemd/user/chrote.service` |
+| Server user unit | `$XDG_CONFIG_HOME/systemd/user/chrote.service` |
 
 The installer:
 
@@ -59,10 +59,16 @@ The installer:
 3. installs `chrote-server`, ttyd, and `terminal-launch.sh` under the user prefix;
 4. writes XDG-scoped state paths for Session Bank, persistent agents, schedules,
    recovery status, and agent cards;
-5. writes one `chrote.service` user unit;
+5. writes the `chrote.service` user unit that runs the cockpit itself;
 6. enables, starts, and health-checks the service.
 
 No workspace files are copied into CHROTE state.
+
+`chrote.service` is no longer the only unit in the design. Locking a session
+puts that agent under its own systemd user unit, instantiated from the
+`chrote-agent@.service` template, so a locked agent survives a restart of the
+cockpit. That template is a deliberate host capability rather than a default;
+see [Configure optional capabilities](#configure-optional-capabilities) below.
 
 ## Choose a narrower workspace
 
@@ -137,9 +143,17 @@ systemctl --user restart chrote.service
 ```
 
 Common advanced settings are documented in [`.env.example`](../.env.example).
-Cross-user terminal sockets, persistent-agent supervisors, Formations tmux
-execution, and script gates require deliberate host setup. They are not enabled
-by the generic installer.
+Cross-user terminal sockets, session locking, Formations tmux execution, and
+script gates require deliberate host setup. They are not enabled by the generic
+installer.
+
+Session locking additionally needs the `chrote-agent@.service` template
+installed for the account that will own the locked agent, and that account's
+systemd user manager running — which for a headless account means lingering is
+enabled. CHROTE fails loud and names the condition rather than accepting a lock
+it cannot supervise. The template's launcher attaches to an existing tmux
+server and refuses to create one, so the tmux server's lifetime stays with
+whichever unit owns that socket.
 
 ## Upgrade
 

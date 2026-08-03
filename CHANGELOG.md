@@ -14,7 +14,12 @@ release.
 - Unified default-closed Sessions/Files sidecars with Peek and explicit
   attached-window navigation.
 - Files workbench and terminal-companion file sidecar.
-- Persistent-agent discovery, supervision state, and explicit lifecycle actions.
+- Session locking that puts a durable agent under its own systemd user unit.
+  Supervision, restart, and boot recovery belong to systemd, so a locked agent is
+  unaffected by CHROTE restarting, crashing, or being upgraded. Reported health
+  is the unit's state plus a launcher receipt proving the expected agent resumed
+  the expected work. Unlocking stops the supervision and leaves the agent
+  running.
 - Session Bank with typed workload descriptors and workload-aware recovery.
 - Scheduled tasks and Server health/history cockpit views.
 - Documentation source-truth index and contract lint.

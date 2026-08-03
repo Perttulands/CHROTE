@@ -342,7 +342,7 @@ def main(
     parser.add_argument("--socket", required=True)
     parser.add_argument("--unix-user", required=True)
     parser.add_argument("--owner-home", required=True)
-    parser.add_argument("--owner-kind", required=True, choices=["session_bank", "persistent_agent", "external_manager"])
+    parser.add_argument("--owner-kind", required=True, choices=["session_bank", "external_manager"])
     parser.add_argument("--owner-ref")
     parser.add_argument("--owner-may-restart", action="store_true")
     parser.add_argument("--session-name")
