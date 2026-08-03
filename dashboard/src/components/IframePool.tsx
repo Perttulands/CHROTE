@@ -55,6 +55,20 @@ function applyParkedIframeStyle(iframe: HTMLIFrameElement) {
   iframe.style.visibility = 'hidden'
 }
 
+// Reparenting an iframe with appendChild reloads its document in current
+// Chrome — the ttyd WebSocket dies and the client restarts. moveBefore
+// (Chrome 133+) is a state-preserving move. appendChild remains for the
+// first insertion of a detached iframe and for engines without moveBefore.
+// Evidence: /srv/data/chrote/evidence/fit-probe-20260803/
+function placeIframe(container: HTMLElement, iframe: HTMLIFrameElement) {
+  const moveBefore = (container as HTMLElement & { moveBefore?: (node: Node, refChild: Node | null) => void }).moveBefore
+  if (iframe.isConnected && typeof moveBefore === 'function') {
+    moveBefore.call(container, iframe, null)
+  } else {
+    container.appendChild(iframe)
+  }
+}
+
 export function IframePoolProvider({ children }: { children: ReactNode }) {
   const { workspaces, settings, sessions } = useSession()
 
@@ -100,7 +114,6 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
 
   // Track which sessions are claimed and where
   const claimsRef = useRef<Map<string, HTMLElement>>(new Map())
-  const fitTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>[]>>(new Map())
   const triggerFitRef = useRef<(sessionName: string) => void>(() => {})
 
   // Track which sessions have had their src set (deferred connection)
@@ -151,7 +164,10 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
 
       iframe.addEventListener('load', () => {
         setLoadedSessions(prev => new Set(prev).add(sessionName))
-        applyFontSizeToIframe(iframe, settings.fontSize)
+        // Font-then-fit: the retry loop fits once the real font metrics are
+        // in place. Fitting in parallel with font application left the grid
+        // sized with stale cell metrics (the clipped-input-row bug).
+        applyFontSizeToIframe(sessionName, settingsRef.current.fontSize)
         try {
           const iframeWindow = iframe.contentWindow
           if (iframeWindow) {
@@ -159,7 +175,6 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
             applyScrollbarVisibility(iframeWindow.document, settingsRef.current.hideScrollbar)
           }
         } catch { /* cross-origin or not ready */ }
-        triggerFitRef.current(sessionName)
       })
 
       iframeRefs.current.set(sessionName, iframe)
@@ -167,24 +182,25 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
       // If already claimed, put it in the container with visible styles; otherwise hide in pool
       const claimContainer = claimsRef.current.get(sessionName)
       if (claimContainer) {
+        placeIframe(claimContainer, iframe)
         applyClaimedIframeStyle(iframe)
-        claimContainer.appendChild(iframe)
         // Set src since it's being claimed immediately
         if (!connectedRef.current.has(sessionName)) {
           connectedRef.current.add(sessionName)
           iframe.src = getTerminalUrl(getSessionNameFromKey(sessionName), sessionUsersRef.current.get(sessionName) ?? getSessionUserFromKey(sessionName))
         }
       } else {
-        pool.appendChild(iframe)
+        placeIframe(pool, iframe)
       }
     })
-  }, [allSessions, settings.fontSize])
+  }, [allSessions])
 
-  // Apply font size to all loaded iframes when setting changes
+  // Apply font size to all loaded iframes when setting changes. Claimed
+  // iframes refit via the font-then-fit path; parked iframes only get the
+  // font (the fit guard skips them).
   useEffect(() => {
     loadedSessions.forEach(sessionName => {
-      const iframe = iframeRefs.current.get(sessionName)
-      if (iframe) applyFontSizeToIframe(iframe, settings.fontSize)
+      applyFontSizeToIframe(sessionName, settings.fontSize)
     })
   }, [settings.fontSize, loadedSessions])
 
@@ -198,7 +214,8 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
     })
   }, [settings.hideScrollbar, loadedSessions])
 
-  const applyFontSizeToIframe = useCallback((iframe: HTMLIFrameElement, fontSize: number) => {
+  const applyFontSizeToIframe = useCallback((sessionName: string, fontSize: number) => {
+    const iframe = iframeRefs.current.get(sessionName)
     if (!iframe?.contentWindow) return
     let attempts = 0
     const tryApply = () => {
@@ -206,6 +223,9 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
         const iframeWindow = iframe.contentWindow as Window & { term?: { options: { fontSize: number } } }
         if (iframeWindow?.term) {
           iframeWindow.term.options.fontSize = fontSize
+          // Fit only after the real font metrics are in place (and only if
+          // claimed — the guard lives in triggerFit).
+          triggerFitRef.current(sessionName)
           return
         }
       } catch { /* cross-origin or not ready */ }
@@ -220,11 +240,12 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
 
     const iframe = iframeRefs.current.get(sessionName)
     if (iframe) {
-      // Move iframe from pool into the claiming container.
-      // Clear pool-specific inline styles; CSS (.terminal-window-body iframe)
-      // handles positioning via position:absolute + inset.
+      // Move first, then restyle: clearing park styles while the iframe
+      // still sits in the 400x300 pool would lay it out at pool size.
+      // CSS (.terminal-window-body iframe) handles positioning via
+      // position:absolute + inset once claimed.
+      placeIframe(container, iframe)
       applyClaimedIframeStyle(iframe)
-      container.appendChild(iframe)
 
       // Deferred connection: set src only on first claim into a visible container
       if (!connectedRef.current.has(sessionName)) {
@@ -239,9 +260,9 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
       const iframe = iframeRefs.current.get(sessionName)
       const pool = poolContainerRef.current
       if (iframe && pool) {
-        // Override CSS positioning: park in hidden pool with explicit inline styles
+        // Move first, then park with explicit inline styles (overrides CSS positioning)
+        placeIframe(pool, iframe)
         applyParkedIframeStyle(iframe)
-        pool.appendChild(iframe)
       }
     }
   }, [])
@@ -256,51 +277,32 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
   const getIframe = useCallback((sessionName: string) => iframeRefs.current.get(sessionName) ?? null, [])
 
   const applyFontSize = useCallback((sessionName: string, fontSize: number) => {
-    const iframe = iframeRefs.current.get(sessionName)
-    if (iframe) applyFontSizeToIframe(iframe, fontSize)
+    applyFontSizeToIframe(sessionName, fontSize)
   }, [applyFontSizeToIframe])
 
   const triggerFit = useCallback((sessionName: string) => {
     const iframe = iframeRefs.current.get(sessionName)
     if (!iframe?.contentWindow) return
-
-    fitTimeoutsRef.current.get(sessionName)?.forEach(clearTimeout)
-
-    const fitVisibleIframe = () => {
-      try {
-        // Only fit iframes claimed into a visible container in a visible document.
-        if (document.visibilityState === 'hidden') return
-        if (!claimsRef.current.has(sessionName)) return
-        if (iframe.offsetWidth < 10 || iframe.offsetHeight < 10) return
-        iframe.contentWindow?.dispatchEvent(new Event('resize'))
-      } catch { /* cross-origin */ }
-    }
-
-    fitVisibleIframe()
-    const timeouts = [200, 500].map(delay => setTimeout(() => {
-      fitVisibleIframe()
-      if (delay === 500) fitTimeoutsRef.current.delete(sessionName)
-    }, delay))
-    fitTimeoutsRef.current.set(sessionName, timeouts)
+    // Fit only iframes claimed into a live container at a real size: a
+    // parked fit would resize the shared tmux window for every other
+    // attached client (chrote-b5o).
+    if (!claimsRef.current.has(sessionName)) return
+    if (iframe.offsetWidth < 10 || iframe.offsetHeight < 10) return
+    try {
+      // Call the ttyd client's own fit hook directly. window.term.fit exists
+      // from xterm open() onward — BEFORE the WebSocket opens — whereas a
+      // dispatched resize event is heard only after onSocketOpen attaches
+      // the client's listener. Direct calls are race-free: fit early and
+      // onSocketOpen pushes the corrected grid; fit late and onResize sends it.
+      const iframeWindow = iframe.contentWindow as Window & { term?: { fit?: () => void } }
+      iframeWindow.term?.fit?.()
+    } catch { /* cross-origin or not ready */ }
   }, [])
   triggerFitRef.current = triggerFit
 
-  useEffect(() => () => {
-    fitTimeoutsRef.current.forEach(timeouts => timeouts.forEach(clearTimeout))
-    fitTimeoutsRef.current.clear()
-  }, [])
-
-  useEffect(() => {
-    claimsRef.current.forEach((_container, sessionName) => triggerFit(sessionName))
-  }, [settings.fontSize, triggerFit])
-
   useEffect(() => {
     const refitClaimed = () => {
-      if (document.visibilityState === 'hidden') {
-        fitTimeoutsRef.current.forEach(timeouts => timeouts.forEach(clearTimeout))
-        fitTimeoutsRef.current.clear()
-        return
-      }
+      if (document.visibilityState !== 'visible') return
       claimsRef.current.forEach((_container, sessionName) => triggerFit(sessionName))
     }
     document.addEventListener('visibilitychange', refitClaimed)
