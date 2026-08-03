@@ -290,23 +290,27 @@ function DashboardContent() {
           ))}
           {persistFilesTabState ? (
             <div style={{ display: activeTab === 'files' ? 'contents' : 'none' }}>
-              <Suspense fallback={<ViewFallback />}>
-                <FilesView
-                  navigateRequest={filesNavigateRequest}
-                  onSendPath={filesSendTarget ? handleSendFilePath : undefined}
-                  sendTargetLabel={filesSendTarget ? getSessionNameFromKey(filesSendTarget) : null}
-                />
-              </Suspense>
+              <ErrorBoundary>
+                <Suspense fallback={<ViewFallback />}>
+                  <FilesView
+                    navigateRequest={filesNavigateRequest}
+                    onSendPath={filesSendTarget ? handleSendFilePath : undefined}
+                    sendTargetLabel={filesSendTarget ? getSessionNameFromKey(filesSendTarget) : null}
+                  />
+                </Suspense>
+              </ErrorBoundary>
             </div>
           ) : (
             activeTab === 'files' && (
-              <Suspense fallback={<ViewFallback />}>
-                <FilesView
-                  navigateRequest={filesNavigateRequest}
-                  onSendPath={filesSendTarget ? handleSendFilePath : undefined}
-                  sendTargetLabel={filesSendTarget ? getSessionNameFromKey(filesSendTarget) : null}
-                />
-              </Suspense>
+              <ErrorBoundary>
+                <Suspense fallback={<ViewFallback />}>
+                  <FilesView
+                    navigateRequest={filesNavigateRequest}
+                    onSendPath={filesSendTarget ? handleSendFilePath : undefined}
+                    sendTargetLabel={filesSendTarget ? getSessionNameFromKey(filesSendTarget) : null}
+                  />
+                </Suspense>
+              </ErrorBoundary>
             )
           )}
           {activeTab === 'beads' && (
@@ -364,15 +368,22 @@ function DashboardContent() {
               </ErrorBoundary>
             </div>
           )}
+          {/* Even "static" views need a boundary: their lazy chunks can fail
+              after a deploy, and an uncaught throw here unmounts the whole
+              dashboard tree, terminal docks included. */}
           {activeTab === 'settings' && (
-            <Suspense fallback={<ViewFallback />}>
-              <SettingsView sessionBankFocusNonce={settingsSessionBankFocusNonce} />
-            </Suspense>
+            <ErrorBoundary>
+              <Suspense fallback={<ViewFallback />}>
+                <SettingsView sessionBankFocusNonce={settingsSessionBankFocusNonce} />
+              </Suspense>
+            </ErrorBoundary>
           )}
           {activeTab === 'help' && (
-            <Suspense fallback={<ViewFallback />}>
-              <HelpView />
-            </Suspense>
+            <ErrorBoundary>
+              <Suspense fallback={<ViewFallback />}>
+                <HelpView />
+              </Suspense>
+            </ErrorBoundary>
           )}
         </div>
 
