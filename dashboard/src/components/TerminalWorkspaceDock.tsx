@@ -54,7 +54,13 @@ function TerminalWorkspaceDock({
   const { sessions } = useSession()
   const isNarrow = useMediaQuery('(max-width: 768px)')
   const [dockState, setDockState] = useState<WorkspaceDockState>(() => readWorkspaceDockState(workspaceId))
-  const effectivePinned = dockState.sidecarPinned && !isNarrow
+  const sessionsOpen = dockState.openSidecars.includes('sessions')
+  const filesOpen = dockState.openSidecars.includes('files')
+  // Two panels need a rail so they remain usable instead of occupying the
+  // same overlay position. On narrow screens the existing overlay behavior is
+  // retained.
+  const forcedPinned = dockState.openSidecars.length > 1 && !isNarrow
+  const effectivePinned = (dockState.sidecarPinned || forcedPinned) && !isNarrow
   const sessionsPanelId = `${workspaceId}-sessions-sidecar`
   const filesPanelId = `${workspaceId}-files-sidecar`
 
@@ -68,43 +74,50 @@ function TerminalWorkspaceDock({
 
   // Closing keeps sidecarPinned so a pinned panel reopens pinned beside the
   // terminal instead of overlaying it.
-  const toggleSidecar = useCallback((sidecar: Exclude<WorkspaceSidecar, null>) => {
-    updateDockState(previous => previous.activeSidecar === sidecar
-      ? { ...previous, activeSidecar: null }
-      : { ...previous, activeSidecar: sidecar })
+  const toggleSidecar = useCallback((sidecar: WorkspaceSidecar) => {
+    updateDockState(previous => previous.openSidecars.includes(sidecar)
+      ? { ...previous, openSidecars: previous.openSidecars.filter(openSidecar => openSidecar !== sidecar) }
+      : { ...previous, openSidecars: [...previous.openSidecars, sidecar] })
   }, [updateDockState])
 
-  const closeSidecar = useCallback(() => {
-    updateDockState(previous => ({ ...previous, activeSidecar: null }))
+  const closeSidecar = useCallback((sidecar: WorkspaceSidecar) => {
+    updateDockState(previous => ({
+      ...previous,
+      openSidecars: previous.openSidecars.filter(openSidecar => openSidecar !== sidecar),
+    }))
+  }, [updateDockState])
+
+  const closeAllSidecars = useCallback(() => {
+    updateDockState(previous => ({ ...previous, openSidecars: [] }))
   }, [updateDockState])
 
   const togglePin = useCallback(() => {
     if (isNarrow) return
-    updateDockState(previous => previous.activeSidecar === null
+    updateDockState(previous => previous.openSidecars.length === 0 || previous.openSidecars.length > 1
       ? previous
       : { ...previous, sidecarPinned: !previous.sidecarPinned })
   }, [isNarrow, updateDockState])
 
   useEffect(() => {
-    if (!active || dockState.activeSidecar === null || effectivePinned) return
+    if (!active || dockState.openSidecars.length === 0 || effectivePinned) return
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return
       if (hasVisibleEscapeBlocker()) return
-      closeSidecar()
+      closeAllSidecars()
     }
     window.addEventListener('keydown', closeOnEscape)
     return () => window.removeEventListener('keydown', closeOnEscape)
-  }, [active, closeSidecar, dockState.activeSidecar, effectivePinned])
+  }, [active, closeAllSidecars, dockState.openSidecars.length, effectivePinned])
 
   const sidecarControls = (
     <div className="terminal-sidecar-switcher" role="group" aria-label="Workspace sidecar">
       <button
         type="button"
-        className={`terminal-sidecar-button ${dockState.activeSidecar === 'sessions' ? 'active' : ''}`}
+        className={`terminal-sidecar-button ${sessionsOpen ? 'active' : ''}`}
         aria-label="Sessions sidecar"
         aria-controls={sessionsPanelId}
-        aria-expanded={dockState.activeSidecar === 'sessions'}
-        aria-pressed={dockState.activeSidecar === 'sessions'}
+        aria-expanded={sessionsOpen}
+        aria-pressed={sessionsOpen}
         title="Sessions"
         onClick={() => toggleSidecar('sessions')}
       >
@@ -114,11 +127,11 @@ function TerminalWorkspaceDock({
       </button>
       <button
         type="button"
-        className={`terminal-sidecar-button ${dockState.activeSidecar === 'files' ? 'active' : ''}`}
+        className={`terminal-sidecar-button ${filesOpen ? 'active' : ''}`}
         aria-label="Files sidecar"
         aria-controls={filesPanelId}
-        aria-expanded={dockState.activeSidecar === 'files'}
-        aria-pressed={dockState.activeSidecar === 'files'}
+        aria-expanded={filesOpen}
+        aria-pressed={filesOpen}
         title="Files"
         onClick={() => toggleSidecar('files')}
       >
@@ -133,43 +146,44 @@ function TerminalWorkspaceDock({
       className="terminal-workspace-dock"
       data-workspace={workspaceId}
       data-active={active}
-      data-sidecar={dockState.activeSidecar ?? 'closed'}
+      data-sidecar={dockState.openSidecars.join(',') || 'closed'}
+      data-sidecar-count={dockState.openSidecars.length}
       data-sidecar-pinned={effectivePinned}
       style={{ display: active ? 'flex' : 'none' }}
     >
-      {active && dockState.activeSidecar !== null && !effectivePinned && (
+      {active && dockState.openSidecars.length > 0 && !effectivePinned && (
         <button
           type="button"
           className="terminal-sidecar-dismiss"
-          aria-label={`Close ${dockState.activeSidecar} sidecar`}
+          aria-label="Close open sidecars"
           tabIndex={-1}
-          onClick={closeSidecar}
+          onClick={closeAllSidecars}
         />
       )}
-      {active && dockState.activeSidecar === 'sessions' && (
+      {active && sessionsOpen && (
         <SessionPanel
           activeWorkspaceId={workspaceId}
           onOpenSessionBankSettings={onOpenSessionBankSettings}
           collapsed={false}
           width={dockState.sessionsWidth}
           pinned={effectivePinned}
-          canPin={!isNarrow}
+          canPin={!isNarrow && !forcedPinned}
           panelId={sessionsPanelId}
           onTogglePin={togglePin}
-          onClose={closeSidecar}
+          onClose={() => closeSidecar('sessions')}
           onWidthChange={sessionsWidth => updateDockState(previous => ({ ...previous, sessionsWidth }))}
         />
       )}
-      {active && dockState.activeSidecar === 'files' && (
+      {active && filesOpen && (
         <TerminalFilesPanel
           workspaceId={workspaceId}
           collapsed={false}
           width={dockState.filesWidth}
           pinned={effectivePinned}
-          canPin={!isNarrow}
+          canPin={!isNarrow && !forcedPinned}
           panelId={filesPanelId}
           onTogglePin={togglePin}
-          onClose={closeSidecar}
+          onClose={() => closeSidecar('files')}
           onWidthChange={filesWidth => updateDockState(previous => ({ ...previous, filesWidth }))}
           onOpenInFiles={onOpenInFiles}
         />

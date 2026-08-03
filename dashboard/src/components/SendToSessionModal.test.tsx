@@ -82,17 +82,24 @@ describe('SendToSessionModal', () => {
     await waitForResolvedPane()
 
     expect(screen.getByLabelText(/Message to send/i)).toHaveValue(mockState.sendToSessionPrefill)
-    expect(screen.getByRole('checkbox', { name: /Press Enter after sending/i })).not.toBeChecked()
+    expect(screen.getByRole('checkbox', { name: /Press Enter after sending/i })).toBeChecked()
     expect(mockState.sendToSession).not.toHaveBeenCalled()
   })
 
-  it('sends editable text and dropped files to the selected session', async () => {
+  it('checks Press Enter after sending for an ordinary session by default', async () => {
+    render(<SendToSessionModal />)
+    await waitForResolvedPane()
+
+    expect(screen.getByRole('checkbox', { name: /Press Enter after sending/i })).toBeChecked()
+  })
+
+  it('sends editable text and dropped files to the selected session and submits by default', async () => {
     const file = new File(['hello'], 'notes.txt', { type: 'text/plain' })
     render(<SendToSessionModal />)
 
     expect(screen.getByRole('heading', { name: /Send to Session: alice-shell/i })).toBeInTheDocument()
     expect(screen.getByText(/retained for seven days by default and cleaned automatically in the background/i)).toBeInTheDocument()
-    await waitFor(() => expect(screen.getByRole('checkbox', { name: /Press Enter after sending/i })).not.toBeChecked())
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: /Press Enter after sending/i })).toBeChecked())
 
     fireEvent.change(screen.getByLabelText(/Message to send/i), {
       target: { value: 'Please inspect this.' },
@@ -108,7 +115,7 @@ describe('SendToSessionModal', () => {
     expect(mockState.sendToSession).toHaveBeenCalledWith('alice-shell', {
       text: 'Please inspect this.',
       files: [file],
-      submit: false,
+      submit: true,
       pane: '%1',
       sessionId: '$1',
       panePid: '101',
@@ -129,7 +136,7 @@ describe('SendToSessionModal', () => {
     await waitFor(() => expect(mockState.sendToSession).toHaveBeenCalledWith('shared', {
       text: 'for bob only',
       files: [],
-      submit: false,
+      submit: true,
       pane: '%1',
       sessionId: '$1',
       panePid: '101',
@@ -165,7 +172,7 @@ describe('SendToSessionModal', () => {
     await waitFor(() => expect(mockState.sendToSession).toHaveBeenCalledWith('alice-shell', {
       text: 'inspect logs',
       files: [],
-      submit: false,
+      submit: true,
       pane: '%42',
       sessionId: '$7',
       panePid: '222',
@@ -218,7 +225,7 @@ describe('SendToSessionModal', () => {
     await waitFor(() => {
       expect(screen.getByLabelText(/Message to send/i)).toHaveValue('')
       expect(screen.queryByText('draft.txt')).not.toBeInTheDocument()
-      expect(screen.getByRole('checkbox', { name: /Press Enter after sending/i })).not.toBeChecked()
+      expect(screen.getByRole('checkbox', { name: /Press Enter after sending/i })).toBeChecked()
     })
   })
 
@@ -265,9 +272,18 @@ describe('SendToSessionModal', () => {
 
     await waitFor(() => expect(screen.getByRole('button', { name: /^Send$/i })).toBeEnabled())
     expect(mockState.closeSendToSession).not.toHaveBeenCalled()
+    expect(mockState.sendToSession).toHaveBeenCalledWith('alice-shell', {
+      text: 'retry this draft',
+      files: [file],
+      submit: false,
+      pane: '%1',
+      sessionId: '$1',
+      panePid: '101',
+      serverPid: '9001',
+    }, 'alice')
     expect(screen.getByLabelText(/Message to send/i)).toHaveValue('retry this draft')
     expect(screen.getByText('retry.txt')).toBeInTheDocument()
-    expect(screen.getByRole('checkbox', { name: /Press Enter after sending/i })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: /Press Enter after sending/i })).not.toBeChecked()
   })
 
   it('refreshes exact pane choices after a failed or stale send', async () => {
@@ -333,15 +349,15 @@ describe('SendToSessionModal', () => {
     await waitFor(() => {
       expect(screen.getByLabelText(/Message to send/i)).toHaveValue('')
       expect(screen.queryByText('sent.txt')).not.toBeInTheDocument()
-      expect(screen.getByRole('checkbox', { name: /Press Enter after sending/i })).not.toBeChecked()
+      expect(screen.getByRole('checkbox', { name: /Press Enter after sending/i })).toBeChecked()
     })
   })
 
-  it('defaults submit on only for resolved agent targets, never unknown or plain shells', async () => {
+  it('defaults submit on for every resolved session, but not unresolved targets', async () => {
     const { rerender } = render(<SendToSessionModal />)
     const submit = () => screen.getByRole('checkbox', { name: /Press Enter after sending/i })
 
-    await waitFor(() => expect(submit()).not.toBeChecked())
+    await waitFor(() => expect(submit()).toBeChecked())
 
     setTarget('alice:codex-agent', rerender)
     await waitFor(() => expect(submit()).toBeChecked())

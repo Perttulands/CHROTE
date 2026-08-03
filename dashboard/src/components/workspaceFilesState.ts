@@ -31,10 +31,10 @@ export interface WorkspaceFilesState {
   fileViewStates: Record<string, FileViewState>
 }
 
-export type WorkspaceSidecar = 'sessions' | 'files' | null
+export type WorkspaceSidecar = 'sessions' | 'files'
 
 export interface WorkspaceDockState {
-  activeSidecar: WorkspaceSidecar
+  openSidecars: WorkspaceSidecar[]
   sidecarPinned: boolean
   sessionsWidth: number
   filesWidth: number
@@ -54,7 +54,7 @@ export const DEFAULT_FILE_VIEW_STATE: FileViewState = {
 }
 
 export const DEFAULT_WORKSPACE_DOCK_STATE: WorkspaceDockState = {
-  activeSidecar: null,
+  openSidecars: [],
   sidecarPinned: false,
   sessionsWidth: 260,
   filesWidth: 320,
@@ -142,14 +142,19 @@ function readLegacySidebarCollapsed(workspaceId: WorkspaceId): boolean | null {
   }
 }
 
+function sanitizeOpenSidecars(value: unknown): WorkspaceSidecar[] {
+  if (!Array.isArray(value)) return []
+  return (['sessions', 'files'] as const).filter(sidecar => value.includes(sidecar))
+}
+
 export function readWorkspaceDockState(workspaceId: WorkspaceId): WorkspaceDockState {
   const raw = readStorageMap(DOCK_STORAGE_KEY, 2)[workspaceId]
   if (isRecord(raw)) {
-    const activeSidecar = raw.activeSidecar === 'sessions' || raw.activeSidecar === 'files'
-      ? raw.activeSidecar
-      : null
+    const openSidecars = Array.isArray(raw.openSidecars)
+      ? sanitizeOpenSidecars(raw.openSidecars)
+      : sanitizeOpenSidecars(raw.activeSidecar ? [raw.activeSidecar] : [])
     return {
-      activeSidecar,
+      openSidecars,
       // The pin preference survives a closed sidecar so reopening restores
       // the same presentation (pinned beside vs overlay above the terminal).
       sidecarPinned: raw.sidecarPinned === true,
@@ -160,14 +165,13 @@ export function readWorkspaceDockState(workspaceId: WorkspaceId): WorkspaceDockS
 
   const legacy = readStorageMap(LEGACY_DOCK_STORAGE_KEY)[workspaceId]
   if (isRecord(legacy)) {
-    const activeSidecar: WorkspaceSidecar = legacy.sessionsCollapsed !== true
-      ? 'sessions'
-      : legacy.filesCollapsed === false
-        ? 'files'
-        : null
+    const openSidecars = sanitizeOpenSidecars([
+      legacy.sessionsCollapsed !== true ? 'sessions' : null,
+      legacy.filesCollapsed === false ? 'files' : null,
+    ])
     return {
-      activeSidecar,
-      sidecarPinned: activeSidecar !== null,
+      openSidecars,
+      sidecarPinned: openSidecars.length > 0,
       sessionsWidth: finiteNumber(legacy.sessionsWidth, DEFAULT_WORKSPACE_DOCK_STATE.sessionsWidth, 220, 480),
       filesWidth: finiteNumber(legacy.filesWidth, DEFAULT_WORKSPACE_DOCK_STATE.filesWidth, 240, 560),
     }
@@ -177,7 +181,7 @@ export function readWorkspaceDockState(workspaceId: WorkspaceId): WorkspaceDockS
   if (legacySidebarCollapsed !== null) {
     return {
       ...DEFAULT_WORKSPACE_DOCK_STATE,
-      activeSidecar: legacySidebarCollapsed ? null : 'sessions',
+      openSidecars: legacySidebarCollapsed ? [] : ['sessions'],
       sidecarPinned: !legacySidebarCollapsed,
     }
   }
@@ -186,11 +190,9 @@ export function readWorkspaceDockState(workspaceId: WorkspaceId): WorkspaceDockS
 }
 
 export function writeWorkspaceDockState(workspaceId: WorkspaceId, state: WorkspaceDockState): void {
-  const activeSidecar = state.activeSidecar === 'sessions' || state.activeSidecar === 'files'
-    ? state.activeSidecar
-    : null
+  const openSidecars = sanitizeOpenSidecars(state.openSidecars)
   writeStorageMap(DOCK_STORAGE_KEY, workspaceId, {
-    activeSidecar,
+    openSidecars,
     sidecarPinned: state.sidecarPinned === true,
     sessionsWidth: finiteNumber(state.sessionsWidth, DEFAULT_WORKSPACE_DOCK_STATE.sessionsWidth, 220, 480),
     filesWidth: finiteNumber(state.filesWidth, DEFAULT_WORKSPACE_DOCK_STATE.filesWidth, 240, 560),

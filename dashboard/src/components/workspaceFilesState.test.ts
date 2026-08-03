@@ -11,16 +11,16 @@ import {
 describe('workspace Files persistence', () => {
   beforeEach(() => window.localStorage.clear())
 
-  it('keeps sidecar mode, pinning, and widths isolated per terminal workspace', () => {
+  it('keeps open sidecars, pinning, and widths isolated per terminal workspace', () => {
     writeWorkspaceDockState('terminal1', {
-      activeSidecar: 'files',
+      openSidecars: ['files'],
       sidecarPinned: true,
       sessionsWidth: 300,
       filesWidth: 360,
     })
 
     expect(readWorkspaceDockState('terminal1')).toEqual({
-      activeSidecar: 'files',
+      openSidecars: ['files'],
       sidecarPinned: true,
       sessionsWidth: 300,
       filesWidth: 360,
@@ -30,7 +30,7 @@ describe('workspace Files persistence', () => {
       version: 2,
       workspaces: {
         terminal1: {
-          activeSidecar: 'files',
+          openSidecars: ['files'],
           sidecarPinned: true,
           sessionsWidth: 300,
           filesWidth: 360,
@@ -41,21 +41,42 @@ describe('workspace Files persistence', () => {
 
   it('keeps the pin preference while the sidecar is closed', () => {
     writeWorkspaceDockState('terminal1', {
-      activeSidecar: null,
+      openSidecars: [],
       sidecarPinned: true,
       sessionsWidth: 260,
       filesWidth: 320,
     })
 
     expect(readWorkspaceDockState('terminal1')).toEqual({
-      activeSidecar: null,
+      openSidecars: [],
       sidecarPinned: true,
       sessionsWidth: 260,
       filesWidth: 320,
     })
   })
 
-  it('migrates the old independent rails into one deterministic pinned sidecar', () => {
+  it('reads the current single-sidecar format into independent open state', () => {
+    window.localStorage.setItem('chrote.workspaceDock.v2', JSON.stringify({
+      version: 2,
+      workspaces: {
+        terminal1: {
+          activeSidecar: 'files',
+          sidecarPinned: true,
+          sessionsWidth: 300,
+          filesWidth: 360,
+        },
+      },
+    }))
+
+    expect(readWorkspaceDockState('terminal1')).toEqual({
+      openSidecars: ['files'],
+      sidecarPinned: true,
+      sessionsWidth: 300,
+      filesWidth: 360,
+    })
+  })
+
+  it('migrates the old independent rails without closing either open sidecar', () => {
     window.localStorage.setItem('chrote.workspaceDock.v1', JSON.stringify({
       version: 1,
       workspaces: {
@@ -75,13 +96,13 @@ describe('workspace Files persistence', () => {
     }))
 
     expect(readWorkspaceDockState('terminal1')).toEqual({
-      activeSidecar: 'files',
+      openSidecars: ['files'],
       sidecarPinned: true,
       sessionsWidth: 300,
       filesWidth: 360,
     })
     expect(readWorkspaceDockState('terminal2')).toEqual({
-      activeSidecar: 'sessions',
+      openSidecars: ['sessions', 'files'],
       sidecarPinned: true,
       sessionsWidth: 280,
       filesWidth: 340,
@@ -91,7 +112,7 @@ describe('workspace Files persistence', () => {
   it('migrates the legacy global sidebar collapse only into Terminal 1', () => {
     window.localStorage.setItem('chrote-dashboard-state', JSON.stringify({ sidebarCollapsed: false }))
 
-    expect(readWorkspaceDockState('terminal1')).toMatchObject({ activeSidecar: 'sessions', sidecarPinned: true })
+    expect(readWorkspaceDockState('terminal1')).toMatchObject({ openSidecars: ['sessions'], sidecarPinned: true })
     expect(readWorkspaceDockState('terminal2')).toEqual(DEFAULT_WORKSPACE_DOCK_STATE)
   })
 
