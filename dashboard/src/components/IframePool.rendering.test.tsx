@@ -3,22 +3,29 @@ import { useEffect, useRef } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { IframePoolProvider, useIframePool } from './IframePool'
 
+const defaultMockSessions = [
+  { name: 'smooth-scroll', windows: 1, attached: false, group: 'shell', unixUser: 'alice' },
+]
+const defaultMockWorkspaces = {
+  terminal1: {
+    windowCount: 1,
+    windows: [
+      { id: 'terminal1-window-0', boundSessions: ['alice:smooth-scroll'], activeSession: 'alice:smooth-scroll', colorIndex: 0 },
+    ],
+  },
+  terminal2: { windowCount: 1, windows: [] },
+  terminal3: { windowCount: 1, windows: [] },
+}
+const mockSessionState = {
+  sessions: defaultMockSessions,
+  workspaces: defaultMockWorkspaces as Record<string, unknown>,
+}
+
 vi.mock('../context/SessionContext', () => ({
   useSession: () => ({
     settings: { fontSize: 14 },
-    sessions: [
-      { name: 'smooth-scroll', windows: 1, attached: false, group: 'shell', unixUser: 'alice' },
-    ],
-    workspaces: {
-      terminal1: {
-        windowCount: 1,
-        windows: [
-          { id: 'terminal1-window-0', boundSessions: ['alice:smooth-scroll'], activeSession: 'alice:smooth-scroll', colorIndex: 0 },
-        ],
-      },
-      terminal2: { windowCount: 1, windows: [] },
-      terminal3: { windowCount: 1, windows: [] },
-    },
+    sessions: mockSessionState.sessions,
+    workspaces: mockSessionState.workspaces,
   }),
 }))
 
@@ -42,10 +49,39 @@ function ClaimedIframe() {
 describe('IframePool attached terminal rendering', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
+    mockSessionState.sessions = defaultMockSessions
+    mockSessionState.workspaces = defaultMockWorkspaces
   })
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('pools iframes for sessions bound in any workspace present in state, not just the default tab set', async () => {
+    // A visibility-derived enumeration would miss this workspace id and the
+    // allSessions cleanup effect would then prune its live iframe.
+    mockSessionState.sessions = [
+      { name: 'hidden-session', windows: 1, attached: false, group: 'shell', unixUser: 'alice' },
+    ]
+    mockSessionState.workspaces = {
+      terminal1: { windowCount: 1, windows: [] },
+      terminal7: {
+        windowCount: 1,
+        windows: [
+          { id: 'terminal7-window-0', boundSessions: ['alice:hidden-session'], activeSession: 'alice:hidden-session', colorIndex: 0 },
+        ],
+      },
+    }
+
+    render(
+      <IframePoolProvider>
+        <div />
+      </IframePoolProvider>
+    )
+
+    await waitFor(() => {
+      expect(document.querySelectorAll('iframe')).toHaveLength(1)
+    })
   })
 
   it('uses an opaque non-scrolling ttyd iframe instead of the old transparent theme path', async () => {

@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo, ReactNode } from 'react'
 import { useSession } from '../context/SessionContext'
-import { TERMINAL_WORKSPACE_IDS, getSessionKey, getSessionNameFromKey, getSessionUserFromKey } from '../types'
+import { getSessionKey, getSessionNameFromKey, getSessionUserFromKey } from '../types'
 import type { LaunchUser } from '../types'
 import { applyScrollbarVisibility, attachPasteBridge } from '../utils/terminalIframe'
 
@@ -65,8 +65,11 @@ export function IframePoolProvider({ children }: { children: ReactNode }) {
     sessions.forEach(session => {
       sessionsByName.set(session.name, [...(sessionsByName.get(session.name) ?? []), session])
     })
-    TERMINAL_WORKSPACE_IDS.forEach(wsId => {
-      workspaces[wsId].windows.forEach(w => {
+    // Every workspace in state contributes bindings, whether or not its tab is
+    // currently reachable — a visibility-derived list here would turn the
+    // allSessions cleanup effect below into a prune of hidden workspaces.
+    Object.values(workspaces).forEach(workspace => {
+      workspace.windows.forEach(w => {
         w.boundSessions.forEach(sessionKey => {
           if (!sessionKey || sessionKey === 'INIT-PENDING' || users.has(sessionKey)) return
           const exactSession = sessionsByKey.get(sessionKey)

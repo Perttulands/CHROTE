@@ -1,7 +1,7 @@
 import { act, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
-import { DEFAULT_SETTINGS } from './types'
+import { DEFAULT_SETTINGS, TERMINAL_WORKSPACE_IDS } from './types'
 
 const mocks = vi.hoisted(() => ({
   dndProps: null as Record<string, any> | null,
@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   removeSessionFromWindow: vi.fn(),
   openSendToSession: vi.fn(),
   windowRevealRequest: null as { workspaceId: string; windowId: string; requestId: number } | null,
+  workspaceIds: null as readonly string[] | null,
 }))
 
 vi.mock('@dnd-kit/core', () => ({
@@ -36,6 +37,7 @@ vi.mock('./context/SessionContext', () => ({
       terminal2: { windows: [] },
       terminal3: { windows: [] },
     },
+    workspaceIds: mocks.workspaceIds ?? TERMINAL_WORKSPACE_IDS,
     focusedWindowKey: null,
     openSendToSession: mocks.openSendToSession,
   }),
@@ -105,6 +107,7 @@ describe('App drag lifecycle', () => {
     vi.clearAllMocks()
     mocks.dndProps = null
     mocks.windowRevealRequest = null
+    mocks.workspaceIds = null
   })
 
   it('uses one reset path for drag cancel and clears all active drag visuals', () => {
@@ -226,5 +229,23 @@ describe('App drag lifecycle', () => {
 
     expect(container.querySelector('[data-workspace="terminal3"]')).toHaveAttribute('data-active', 'true')
     expect(container.querySelector('.session-panel')).toHaveAttribute('data-active-workspace', 'terminal3')
+  })
+
+  it('keeps docks mounted for workspaces hidden by a shrunken tab count', () => {
+    mocks.workspaceIds = ['terminal1', 'terminal2']
+    const { container } = render(<App />)
+
+    const hiddenDock = container.querySelector('[data-workspace="terminal3"]')
+    expect(hiddenDock).not.toBeNull()
+    expect(hiddenDock).toHaveAttribute('data-active', 'false')
+  })
+
+  it('falls back to terminal1 when the active workspace tab becomes hidden', () => {
+    mocks.workspaceIds = ['terminal1', 'terminal2']
+    mocks.windowRevealRequest = { workspaceId: 'terminal3', windowId: 'terminal3-window-2', requestId: 1 }
+    const { container } = render(<App />)
+
+    expect(container.querySelector('[data-workspace="terminal3"]')).toHaveAttribute('data-active', 'false')
+    expect(container.querySelector('[data-workspace="terminal1"]')).toHaveAttribute('data-active', 'true')
   })
 })

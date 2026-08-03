@@ -42,15 +42,45 @@ export const TMUX_PRESETS: Record<string, TmuxAppearance> = {
   },
 }
 
-// Terminal workspaces and launch-user settings
-export type WorkspaceId = 'terminal1' | 'terminal2' | 'terminal3'
+// Terminal workspaces and launch-user settings.
+// Workspace ids are always terminal1..terminalN and terminalWorkspaceIds() is
+// the only derivation. Persisted layouts, dock state, and settings key off
+// these ids, so the scheme is load-bearing: existing localStorage must keep
+// resolving unchanged at the default count.
+export type WorkspaceId = `terminal${number}`
 
-export const TERMINAL_WORKSPACE_IDS = ['terminal1', 'terminal2', 'terminal3'] as const
+export const DEFAULT_TERMINAL_TAB_COUNT = 3
+export const MIN_TERMINAL_TAB_COUNT = 1
+export const MAX_TERMINAL_TAB_COUNT = 6
 
-export const TERMINAL_LABELS: Record<WorkspaceId, string> = {
-  terminal1: 'Terminal',
-  terminal2: 'Terminal 2',
-  terminal3: 'Terminal 3',
+// Single owner of terminalTabCount ingestion: settings merge spreads raw
+// stored values into a typed object, so every non-numeric, fractional, or
+// out-of-range shape must resolve here, not at the UI write site.
+export function normalizeTerminalTabCount(value: unknown): number {
+  if (typeof value !== 'number' || Number.isNaN(value)) return DEFAULT_TERMINAL_TAB_COUNT
+  return Math.max(MIN_TERMINAL_TAB_COUNT, Math.min(MAX_TERMINAL_TAB_COUNT, Math.floor(value)))
+}
+
+export function terminalWorkspaceIds(count: number = DEFAULT_TERMINAL_TAB_COUNT): WorkspaceId[] {
+  return Array.from({ length: normalizeTerminalTabCount(count) }, (_, i) => `terminal${i + 1}` as WorkspaceId)
+}
+
+export function terminalWorkspaceIndex(workspaceId: WorkspaceId): number {
+  return Number(workspaceId.slice('terminal'.length))
+}
+
+export function sortTerminalWorkspaceIds(ids: readonly WorkspaceId[]): WorkspaceId[] {
+  return [...ids].sort((a, b) => terminalWorkspaceIndex(a) - terminalWorkspaceIndex(b))
+}
+
+export const TERMINAL_WORKSPACE_IDS: readonly WorkspaceId[] = terminalWorkspaceIds()
+
+export function isTerminalWorkspaceId(value: unknown, ids: readonly WorkspaceId[] = TERMINAL_WORKSPACE_IDS): value is WorkspaceId {
+  return typeof value === 'string' && (ids as readonly string[]).includes(value)
+}
+
+export function getTerminalLabel(workspaceId: WorkspaceId): string {
+  return workspaceId === 'terminal1' ? 'Terminal' : `Terminal ${workspaceId.slice('terminal'.length)}`
 }
 
 export type LaunchUser = string
@@ -75,11 +105,7 @@ export function getSessionUserFromKey(sessionKey: string): LaunchUser {
 
 export const DEFAULT_TERMINAL_SESSION_PREFIXES: Record<LaunchUser, string> = {}
 
-export const DEFAULT_TERMINAL_LAUNCH_USERS: Record<WorkspaceId, LaunchUser> = {
-  terminal1: '',
-  terminal2: '',
-  terminal3: '',
-}
+export const DEFAULT_TERMINAL_LAUNCH_USERS: Record<WorkspaceId, LaunchUser> = {}
 
 export const TERMINAL_USER_COLOR_PALETTE = [
   '#4a9eff',
@@ -151,6 +177,7 @@ export function getTerminalUserColor(settings: UserSettings, user: LaunchUser): 
 // User settings for persistent configuration
 export interface UserSettings {
   terminalMode: 'tmux'              // Terminal mode (tmux only)
+  terminalTabCount: number           // Visible terminal tabs (1-6); shrinking hides, never deletes
   fontSize: number                   // Terminal font size (12-20)
   theme: 'matrix' | 'dark' | 'gastown' // Color theme
   autoRefreshInterval: number        // Session refresh interval in ms (1000-30000)
@@ -176,6 +203,7 @@ export function resolveFormationsTextSize(value: unknown): FormationsTextSize {
 
 export const DEFAULT_SETTINGS: UserSettings = {
   terminalMode: 'tmux',
+  terminalTabCount: DEFAULT_TERMINAL_TAB_COUNT,
   fontSize: 14,
   theme: 'dark',
   autoRefreshInterval: 5000,
@@ -455,6 +483,10 @@ export interface DashboardState {
 
   // Window configuration
   workspaces: Record<WorkspaceId, TerminalWorkspace>
+
+  // Resolved terminal workspace id list (settings-derived; fixed at the
+  // default count until the tab-count setting lands)
+  workspaceIds: readonly WorkspaceId[]
 
   // UI state
   sidebarCollapsed: boolean

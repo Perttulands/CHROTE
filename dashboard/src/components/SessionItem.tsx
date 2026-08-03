@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useDraggable } from '@dnd-kit/core'
-import type { PersistentAgentPayload, PersistentAgentState, TmuxSession, WorkspaceId } from '../types'
+import type { PersistentAgentPayload, PersistentAgentState, TmuxSession } from '../types'
 import { useSession } from '../context/SessionContext'
-import { TERMINAL_LABELS, TERMINAL_WORKSPACE_IDS, WINDOW_COLORS, getSessionKey, getTerminalUserColor, getTerminalUserInitial } from '../types'
+import { WINDOW_COLORS, getSessionKey, getTerminalLabel, getTerminalUserColor, getTerminalUserInitial } from '../types'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
 import DismissiblePanel from './DismissiblePanel'
 
@@ -75,7 +75,7 @@ function persistentPrompt(session: TmuxSession): string {
 }
 
 function SessionItem({ session }: SessionItemProps) {
-  const { assignedSessions, handleSessionClick, focusSessionAssignment, deleteSession, renameSession, makeSessionPersistent, makeSessionMortal, workspaces, addSessionToWindow, removeSessionFromWindow, openFloatingModal, openSendToSession, settings } = useSession()
+  const { assignedSessions, handleSessionClick, focusSessionAssignment, deleteSession, renameSession, makeSessionPersistent, makeSessionMortal, workspaces, workspaceIds, addSessionToWindow, removeSessionFromWindow, openFloatingModal, openSendToSession, settings } = useSession()
   const sessionKey = getSessionKey(session.name, session.unixUser)
   const assignmentKey = assignedSessions.has(sessionKey) ? sessionKey : session.name
   const assignment = assignedSessions.get(assignmentKey)
@@ -241,13 +241,13 @@ function SessionItem({ session }: SessionItemProps) {
   }, [handleRenameSubmit])
 
   const handleAssignToWindow = useCallback((windowId: string) => {
-    const workspaceId = TERMINAL_WORKSPACE_IDS.find(wsId =>
+    const workspaceId = workspaceIds.find(wsId =>
       workspaces[wsId]?.windows.some(w => w.id === windowId)
-    ) as WorkspaceId | undefined
+    )
     if (!workspaceId) return
     addSessionToWindow(workspaceId, windowId, session.name, session.unixUser)
     closeContextMenu()
-  }, [addSessionToWindow, workspaces, session.name, session.unixUser, closeContextMenu])
+  }, [addSessionToWindow, workspaces, workspaceIds, session.name, session.unixUser, closeContextMenu])
 
   const handleUnassign = useCallback(() => {
     if (assignment) {
@@ -419,12 +419,12 @@ function SessionItem({ session }: SessionItemProps) {
 
             {showAssignSubmenu && (
               <div className="session-context-submenu">
-                {TERMINAL_WORKSPACE_IDS.flatMap((wsId) => {
+                {workspaceIds.flatMap((wsId) => {
                   const ws = workspaces[wsId]
                   return ws.windows.slice(0, ws.windowCount).map((w, idx) => {
                     const color = WINDOW_COLORS[w.colorIndex % WINDOW_COLORS.length]
                     const isCurrentWindow = assignment?.windowId === w.id
-                    const labelPrefix = wsId === 'terminal1' ? '' : `${TERMINAL_LABELS[wsId]} - `
+                    const labelPrefix = wsId === 'terminal1' ? '' : `${getTerminalLabel(wsId)} - `
                     return (
                       <button
                         key={w.id}

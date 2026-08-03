@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import SettingsView from './SettingsView'
-import { DEFAULT_SETTINGS } from '../types'
+import { DEFAULT_SETTINGS, TERMINAL_WORKSPACE_IDS } from '../types'
 
 const mockUseSession = vi.fn()
 const refreshSessions = vi.fn()
@@ -40,6 +40,7 @@ function sessionReturn(updateSettings: ReturnType<typeof vi.fn>, overrides: Reco
     sessions: [],
     refreshSessions,
     createSession,
+    workspaceIds: TERMINAL_WORKSPACE_IDS,
     ...overrides,
   }
 }
@@ -121,6 +122,22 @@ describe('SettingsView terminal launch users', () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({ success: true, removed: true }) })
     vi.stubGlobal('fetch', fetchMock)
     Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } })
+  })
+
+  it('exposes the terminal tab count as a bounded select and routes it through updateSettings', () => {
+    const updateSettings = vi.fn()
+    mockUseSession.mockReturnValue(sessionReturn(updateSettings))
+
+    render(<SettingsView />)
+
+    const countSelect = screen.getByRole('combobox', { name: 'Terminal tabs' })
+    expect(countSelect).toHaveValue('3')
+    const options = within(countSelect).getAllByRole('option').map(option => option.getAttribute('value'))
+    expect(options).toEqual(['1', '2', '3', '4', '5', '6'])
+
+    fireEvent.change(countSelect, { target: { value: '5' } })
+
+    expect(updateSettings).toHaveBeenCalledWith({ terminalTabCount: 5 })
   })
 
   it('lets each terminal tab choose the Unix user used for new shells from configured users', () => {
