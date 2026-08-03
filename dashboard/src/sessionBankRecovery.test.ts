@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SessionBankEntry, WorkloadRecoveryDescriptor } from './types'
-import { getSessionBankRecoveryCapability, recoveryPlanDescriptors, summarizeSessionBankCapabilities } from './sessionBankRecovery'
+import { getSessionBankRecoveryCapability, summarizeSessionBankCapabilities } from './sessionBankRecovery'
 
 const owner = { kind: 'session_bank', ref: 'alice/velis', mayRestart: true } as const
 
@@ -187,11 +187,6 @@ describe('session bank recovery capability', () => {
     })
   })
 
-  it('reads backend recoveryPlan as an array', () => {
-    expect(recoveryPlanDescriptors(banked({
-      recoveryPlan: [descriptor()],
-    }))).toHaveLength(1)
-  })
 
   it.each([
     ['non-array object', { descriptors: [descriptor()] }, 'malformed_recovery_plan'],

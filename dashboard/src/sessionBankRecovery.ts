@@ -89,9 +89,6 @@ function isAbsoluteSafePath(value: unknown): boolean {
   return path.startsWith('/') && !/[\0\n\r#]/.test(path)
 }
 
-export function recoveryPlanDescriptors(entry: SessionBankEntry): WorkloadRecoveryDescriptor[] {
-  return readRecoveryPlan(entry).descriptors
-}
 
 function readRecoveryPlan(entry: SessionBankEntry): RecoveryPlanRead {
   const plan = (entry as { recoveryPlan?: unknown }).recoveryPlan

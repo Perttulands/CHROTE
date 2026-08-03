@@ -87,6 +87,10 @@ type EnablePersistentAgentRequest struct {
 // annotateStatusPersistError surfaces a failed reconcile bookkeeping write on
 // the result instead of letting the report claim durable state that was never
 // saved (ctx-6m5).
+// PersistentAgentReconcileResult describes one desired-state reconciliation decision.
+// annotateStatusPersistError surfaces a failed reconcile bookkeeping write on
+// the result instead of letting the report claim durable state that was never
+// saved (ctx-6m5).
 func annotateStatusPersistError(result *PersistentAgentReconcileResult, err error) {
 	if err == nil {
 		return
@@ -165,27 +169,6 @@ func sanitizePersistentRetryTimestamp(value string) string {
 		return ""
 	}
 	return value
-}
-
-func storedHermesResumeCommandLooksCanonical(command, profile, sessionID string) bool {
-	if strings.ContainsAny(command, "\x00\n\r") {
-		return false
-	}
-	tokens := strings.Fields(command)
-	if len(tokens) != 7 {
-		return false
-	}
-	executable := filepath.Clean(tokens[0])
-	if !filepath.IsAbs(executable) || !strings.HasSuffix(executable, persistentAgentHermesExecutableTail) {
-		return false
-	}
-	want := []string{"-m", persistentAgentHermesModule, "--profile", profile, "--resume", sessionID}
-	for i, token := range want {
-		if tokens[i+1] != token {
-			return false
-		}
-	}
-	return true
 }
 
 func canonicalPersistentAgentDescriptor(name, unixUser, ownerHome string, raw WorkloadRecoveryDescriptor) (WorkloadRecoveryDescriptor, error) {
@@ -304,18 +287,6 @@ func sanitizePersistentAgentEntry(entry PersistentAgentEntry) (PersistentAgentEn
 	entry.AgentSessionID = strings.TrimSpace(entry.AgentSessionID)
 	entry.ResumeCommand = command
 	return entry, true
-}
-
-func sanitizePersistentAgentEntries(entries []PersistentAgentEntry) []PersistentAgentEntry {
-	result := make([]PersistentAgentEntry, 0, len(entries))
-	for _, entry := range entries {
-		entry, ok := sanitizePersistentAgentEntry(entry)
-		if !ok {
-			continue
-		}
-		result = append(result, entry)
-	}
-	return result
 }
 
 func validatePersistentAgentEntries(entries []PersistentAgentEntry) ([]PersistentAgentEntry, error) {
@@ -1428,16 +1399,6 @@ func (h *TmuxHandler) inspectSessionPane(ctx context.Context, socket, sessionNam
 	return parsePaneInspection(output), nil
 }
 
-func persistenceWorkDir(entry PersistentAgentEntry, target tmuxTarget) string {
-	if entry.CWD != "" {
-		return entry.CWD
-	}
-	if target.workDir != "" {
-		return target.workDir
-	}
-	return core.GetWorkDir()
-}
-
 func persistentDescriptorFromMetadata(name, unixUser string, pane paneInspection, metadata inferredPersistentAgentMetadata) WorkloadRecoveryDescriptor {
 	desc := persistentDescriptorFromLegacyFields(name, unixUser, metadata.Kind, metadata.SessionID, pane.CWD)
 	desc.EvidenceSource = RecoveryEvidenceArgv
@@ -1534,19 +1495,6 @@ func persistentMetadataWrongIdentityMessage(metadata inferredPersistentAgentMeta
 		return fmt.Sprintf("wrong identity: hermes profile %q, want %q", metadata.HermesProfile, desc.Agent.HermesProfile)
 	}
 	return fmt.Sprintf("wrong identity: %s session %q, want %q", metadata.Kind, metadata.SessionID, desc.Agent.NativeSessionID)
-}
-
-func persistentProcessKindLive(ctx context.Context, pane paneInspection, desc WorkloadRecoveryDescriptor) (bool, error) {
-	if desc.Agent == nil {
-		return false, nil
-	}
-	if desc.Agent.Kind == RecoveryAgentHermes {
-		if strings.EqualFold(filepath.Base(pane.Command), "python") || strings.EqualFold(filepath.Base(pane.Command), "python3") {
-			return true, nil
-		}
-		return false, nil
-	}
-	return agentProcessLive(ctx, pane, desc.Agent.Kind)
 }
 
 func (h *TmuxHandler) verifyPersistentDescriptorForLivePane(ctx context.Context, target tmuxTarget, pane paneInspection, desc WorkloadRecoveryDescriptor, inferred bool) error {
@@ -1651,6 +1599,7 @@ func (h *TmuxHandler) inspectPersistentLiveStatus(ctx context.Context, target tm
 	return persistentLiveStatus{action: "missing", noAgent: true}
 }
 
+// EnablePersistentAgent handles POST /api/tmux/sessions/{name}/persistence.
 // EnablePersistentAgent handles POST /api/tmux/sessions/{name}/persistence.
 func (h *TmuxHandler) EnablePersistentAgent(w http.ResponseWriter, r *http.Request) {
 	sessionName := strings.TrimSpace(r.PathValue("name"))
@@ -1841,6 +1790,7 @@ func (h *TmuxHandler) EnablePersistentAgent(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// DisablePersistentAgent handles DELETE /api/tmux/sessions/{name}/persistence.
 // DisablePersistentAgent handles DELETE /api/tmux/sessions/{name}/persistence.
 func (h *TmuxHandler) DisablePersistentAgent(w http.ResponseWriter, r *http.Request) {
 	sessionName := strings.TrimSpace(r.PathValue("name"))
