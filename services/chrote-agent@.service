@@ -25,7 +25,14 @@ Type=simple
 # non-zero when the agent dies, which is what makes Restart= meaningful.
 # ExecStart is argv-only; %i is the agent name and reaches the launcher solely
 # as a path component of a config file CHROTE wrote.
-ExecStart=/usr/local/lib/chrote/chrote-agent-ensure.sh --config %h/.config/chrote/agents/%i.conf
+# The config path MUST equal what agentUnitController.configPath() writes:
+# <state dir>/<unix user>/<session>.conf. %u is the owning account, %i the
+# session. It is deliberately NOT under %h -- a config in the supervised
+# account's own home would be writable by the account being supervised, so what
+# runs and what CHROTE reports could diverge. Pinned by
+# TestAgentUnitFileConfigPathMatchesController; override the root with a drop-in
+# if the deployment moves it.
+ExecStart=/usr/local/lib/chrote/chrote-agent-ensure.sh --config /srv/data/chrote/agent-units/%u/%i.conf
 Restart=on-failure
 RestartSec=5
 

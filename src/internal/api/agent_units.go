@@ -169,19 +169,35 @@ func agentUnitName(session string) (string, error) {
 	return agentUnitTemplate + session + agentUnitSuffix, nil
 }
 
-func validateAgentUnixUser(unixUser string) error {
+// resolveAgentUnixUser returns the canonical account name to act on. An empty
+// value is not hostile, it is the common case: a session on CHROTE's own account
+// carries no unixUser at all, and treating that as invalid made such sessions
+// impossible to lock AND impossible to unlock -- the unlock handler returned
+// before reaching Forget, stranding the registry entry with no way to clear it.
+// Callers must use the returned value, never their own copy (see M6).
+func resolveAgentUnixUser(unixUser string) (string, error) {
 	unixUser = strings.TrimSpace(unixUser)
-	if !agentUnixUserRegex.MatchString(unixUser) {
-		return fmt.Errorf("unix user %q is not a valid account name", unixUser)
+	if unixUser == "" {
+		current, err := osuser.Current()
+		if err != nil {
+			return "", fmt.Errorf("cannot determine the account to supervise: %w", err)
+		}
+		unixUser = strings.TrimSpace(current.Username)
 	}
-	return nil
+	if !agentUnixUserRegex.MatchString(unixUser) {
+		return "", fmt.Errorf("unix user %q is not a valid account name", unixUser)
+	}
+	if strings.ContainsAny(unixUser, "\n\r\x00") {
+		return "", fmt.Errorf("unix user contains control characters")
+	}
+	return unixUser, nil
 }
 
 func (c *agentUnitConfig) validate() error {
 	if _, err := agentUnitName(c.Session); err != nil {
 		return err
 	}
-	if err := validateAgentUnixUser(c.UnixUser); err != nil {
+	if _, err := resolveAgentUnixUser(c.UnixUser); err != nil {
 		return err
 	}
 	switch strings.ToLower(strings.TrimSpace(c.AgentKind)) {
@@ -217,9 +233,15 @@ func (c *agentUnitConfig) validate() error {
 // stay inside the controller's own directory: a session name is not a path
 // component we are willing to trust twice.
 func (c *agentUnitController) configPath(session, unixUser string) (string, error) {
-	if err := validateAgentUnixUser(unixUser); err != nil {
+	// Canonical values only: validating a trimmed copy while joining the raw one
+	// let "alice " and "alice" produce the same unit name but different config
+	// paths, so a lock made with one spelling could not be unlocked with the
+	// other -- and the unit stayed enabled while the API reported it gone.
+	unixUser, err := resolveAgentUnixUser(unixUser)
+	if err != nil {
 		return "", err
 	}
+	session = strings.TrimSpace(session)
 	if _, err := agentUnitName(session); err != nil {
 		return "", err
 	}
@@ -249,6 +271,12 @@ func (c *agentUnitController) Enable(ctx context.Context, config agentUnitConfig
 	if err := config.validate(); err != nil {
 		return err
 	}
+	config.Session = strings.TrimSpace(config.Session)
+	resolvedUser, err := resolveAgentUnixUser(config.UnixUser)
+	if err != nil {
+		return err
+	}
+	config.UnixUser = resolvedUser
 	unit, err := agentUnitName(config.Session)
 	if err != nil {
 		return err
@@ -272,8 +300,17 @@ func (c *agentUnitController) Enable(ctx context.Context, config agentUnitConfig
 		return err
 	}
 	if _, err := c.systemctl(ctx, config.UnixUser, "enable", "--now", unit); err != nil {
-		// Leave no half-lock behind: a config with no unit would make an
-		// unlocked session look locked to OwnsUnit.
+		// `enable --now` is two operations. If the wants-symlink landed and only
+		// the start failed, removing our config here would make the unit
+		// unreachable: OwnsUnit needs the config, Disable stats it and returns a
+		// silent no-op, and AnnotateHealth never sees a session the handler
+		// already rolled back. That is an orphan that restarts on every login and
+		// that CHROTE can neither show nor stop. So undo the enable first, and if
+		// THAT fails, say so instead of dropping it.
+		if _, disableErr := c.systemctl(ctx, config.UnixUser, "disable", "--now", unit); disableErr != nil {
+			return fmt.Errorf("enable %s for %s: %w; and it could not be disabled again (%v) -- the unit may still be enabled",
+				unit, config.UnixUser, err, disableErr)
+		}
 		_ = os.Remove(configPath)
 		return fmt.Errorf("enable %s for %s: %w", unit, config.UnixUser, err)
 	}
@@ -459,10 +496,10 @@ func writeAgentUnitConfigFile(path string, config agentUnitConfig, receiptPath s
 		tmp.Close()
 		return fmt.Errorf("write agent config: %w", err)
 	}
-	if err := tmp.Chmod(agentUnitConfigMode); err != nil {
-		tmp.Close()
-		return fmt.Errorf("chmod agent config: %w", err)
-	}
+	// No Chmod here: os.CreateTemp already creates at 0600 and umask can only
+	// narrow that. Worse, chmod recomputes the POSIX ACL mask from the group
+	// bits, so chmod 0600 would void any user:<account>:r-- entry the deployment
+	// needs for the launcher -- running as another account -- to read this file.
 	if err := tmp.Sync(); err != nil {
 		tmp.Close()
 		return fmt.Errorf("sync agent config: %w", err)
@@ -559,9 +596,11 @@ func agentBinaryForKind(kind, ownerHome string) string {
 // operator grants narrowly (ADR-0014 decision 4); when the target is this
 // process's own account no elevation is used at all.
 func runSystemctlForUser(ctx context.Context, unixUser string, args ...string) (string, error) {
-	if err := validateAgentUnixUser(unixUser); err != nil {
+	resolved, err := resolveAgentUnixUser(unixUser)
+	if err != nil {
 		return "", err
 	}
+	unixUser = resolved
 	for _, arg := range args {
 		if strings.ContainsAny(arg, "\n\r\x00") {
 			return "", fmt.Errorf("refusing a systemctl argument containing control characters")

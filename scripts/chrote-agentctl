@@ -68,6 +68,12 @@ done
 runtime_dir="/run/user/$(id -u "$target_user" 2>/dev/null || echo invalid)"
 [[ -d "$runtime_dir" ]] || fail "no user manager runtime directory for $target_user; is lingering enabled?"
 
+# `env -i`, never bare `env`: bare env ADDS to the caller's environment, and the
+# caller is the CHROTE web server, whose environment holds API_AUTH_TOKEN and
+# service credentials. Those would be inherited by a process running as the
+# supervised account, which can read its own /proc/<pid>/environ. -i replaces the
+# environment with exactly the three variables systemctl --user needs.
 exec setpriv --reuid "$target_user" --regid "$target_user" --init-groups --inh-caps=-all -- \
-  env "XDG_RUNTIME_DIR=$runtime_dir" "DBUS_SESSION_BUS_ADDRESS=unix:path=$runtime_dir/bus" \
+  env -i "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+  "XDG_RUNTIME_DIR=$runtime_dir" "DBUS_SESSION_BUS_ADDRESS=unix:path=$runtime_dir/bus" \
   systemctl --user "$verb" "${args[@]}" "$unit"

@@ -1579,6 +1579,24 @@ func (h *TmuxHandler) EnablePersistentAgent(w http.ResponseWriter, r *http.Reque
 		core.WriteError(w, http.StatusBadRequest, "PERSISTENT_AGENT_ERROR", err.Error())
 		return
 	}
+	// Rename BEFORE handing the promise to systemd. The other order is a race:
+	// `enable --now` returns as soon as the launcher forks, the launcher looks
+	// for the NEW name, does not find it, and creates a second session resuming
+	// the same transcript while the original still sits under the old name.
+	if newName != sessionName {
+		if _, err := h.runTmuxOnSocket(target.socket, "rename-session", "-t", sessionName, newName); err != nil {
+			// The registry entry was written before the rename; a failed
+			// rollback must be reported, or a stale entry survives silently
+			// for a tmux name that was never committed.
+			if _, forgetErr := h.persistent.Forget(newName, unixUser); forgetErr != nil {
+				core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR",
+					fmt.Sprintf("%s; rollback also failed, a stale persistent entry remains for %q: %s", err.Error(), newName, forgetErr))
+				return
+			}
+			core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
+			return
+		}
+	}
 	// Hand the promise to systemd. Identity was resolved once, above, because we
 	// are adopting a pane we did not create; from here nothing in this process
 	// watches it (ADR-0014).
@@ -1598,26 +1616,15 @@ func (h *TmuxHandler) EnablePersistentAgent(w http.ResponseWriter, r *http.Reque
 		if err := h.agentUnits.Enable(r.Context(), unitConfig); err != nil {
 			// A registry entry without a running unit is a lock that does not
 			// lock. Roll it back rather than report a promise nothing keeps.
+			// The tmux rename above is deliberately NOT undone: the session now
+			// answers to the new name, and renaming it back would be a second
+			// mutation of a live session to tidy up a failed lock.
 			if _, forgetErr := h.persistent.Forget(entry.Name, unixUser); forgetErr != nil {
 				core.WriteError(w, http.StatusInternalServerError, "PERSISTENT_AGENT_ERROR",
 					fmt.Sprintf("%s; rollback also failed, a stale entry remains for %q: %s", err.Error(), entry.Name, forgetErr))
 				return
 			}
 			core.WriteError(w, http.StatusInternalServerError, "PERSISTENT_AGENT_UNIT_ERROR", err.Error())
-			return
-		}
-	}
-	if newName != sessionName {
-		if _, err := h.runTmuxOnSocket(target.socket, "rename-session", "-t", sessionName, newName); err != nil {
-			// The registry entry was written before the rename; a failed
-			// rollback must be reported, or a stale entry survives silently
-			// for a tmux name that was never committed.
-			if _, forgetErr := h.persistent.Forget(newName, unixUser); forgetErr != nil {
-				core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR",
-					fmt.Sprintf("%s; rollback also failed, a stale persistent entry remains for %q: %s", err.Error(), newName, forgetErr))
-				return
-			}
-			core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
 			return
 		}
 	}
@@ -1655,10 +1662,13 @@ func (h *TmuxHandler) DisablePersistentAgent(w http.ResponseWriter, r *http.Requ
 	// than becoming a unit CHROTE has forgotten but systemd still restarts.
 	// Unlocking withdraws the promise and deliberately leaves the agent running
 	// (ADR-0014 decision 8).
+	unitErr := ""
 	if h.agentUnits != nil {
 		if err := h.agentUnits.Disable(r.Context(), sessionName, unixUser); err != nil {
-			core.WriteError(w, http.StatusInternalServerError, "PERSISTENT_AGENT_UNIT_ERROR", err.Error())
-			return
+			// Report it, but do NOT return: an unlock that refuses to forget the
+			// registry entry leaves a session the operator can never clear from
+			// the UI. Forgetting is the part CHROTE owns and can always do.
+			unitErr = err.Error()
 		}
 	}
 	removed, err := h.persistent.Forget(sessionName, unixUser)
@@ -1667,12 +1677,18 @@ func (h *TmuxHandler) DisablePersistentAgent(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	h.invalidateCache()
-	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
+	body := map[string]interface{}{
 		"success":    true,
 		"session":    sessionName,
 		"unixUser":   unixUser,
 		"persistent": false,
 		"removed":    removed,
 		"timestamp":  time.Now().UTC().Format(time.RFC3339),
-	})
+	}
+	if unitErr != "" {
+		// The lock is gone from CHROTE's side either way; say plainly that the
+		// unit may still be running so the operator can finish the job by hand.
+		body["unitWarning"] = "the supervising unit could not be stopped; it may still be enabled"
+	}
+	core.WriteJSON(w, http.StatusOK, body)
 }

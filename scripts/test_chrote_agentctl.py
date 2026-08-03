@@ -132,3 +132,30 @@ class SourceContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EnvironmentIsolationTests(unittest.TestCase):
+    """The helper crosses an account boundary; the caller's environment must not.
+
+    The caller is the CHROTE web server, whose environment holds API_AUTH_TOKEN
+    and service credentials. Bare `env` ADDS to that environment rather than
+    replacing it, so the target account -- which can read its own
+    /proc/<pid>/environ -- would receive them on every invocation.
+    """
+
+    def setUp(self) -> None:
+        self.text = HELPER.read_text()
+
+    def test_environment_is_replaced_not_extended(self) -> None:
+        self.assertIn("env -i", self.text)
+
+    def test_no_bare_env_invocation_survives(self) -> None:
+        for line in self.text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            self.assertNotRegex(
+                stripped,
+                r"(^|\s)env\s+(?!-i)[A-Z]",
+                f"bare env forwards the caller's environment: {stripped!r}",
+            )

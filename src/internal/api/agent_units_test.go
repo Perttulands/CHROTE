@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	osuser "os/user"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -176,7 +177,7 @@ func TestAgentUnitController_EnableRefusesConfigPathEscape(t *testing.T) {
 
 func TestAgentUnitController_EnableRefusesHostileUnixUser(t *testing.T) {
 	controller, fake, _ := newTestAgentUnitController(t)
-	for _, user := range []string{"alice; rm -rf /", "--user", "", "a/b", strings.Repeat("u", 33)} {
+	for _, user := range []string{"alice; rm -rf /", "--user", "a/b", "Alice", strings.Repeat("u", 33)} {
 		config := agentUnitConfig{
 			Session:        "codex-alpha",
 			UnixUser:       user,
@@ -442,4 +443,102 @@ func installFakeSystemctl(t *testing.T) *fakeSystemctl {
 	agentSystemctlRun = fake.run
 	t.Cleanup(func() { agentSystemctlRun = previous })
 	return fake
+}
+
+// The unit file and this controller must agree on where a config lives. They are
+// two files that nothing forced into agreement, and when they disagreed the lock
+// reported success while supervising nothing: `enable --now` on a Type=simple
+// unit returns as soon as the launcher forks, so the launcher's "config file
+// does not exist" failure arrived seconds after a 200 response.
+func TestAgentUnitFileConfigPathMatchesController(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "services", "chrote-agent@.service"))
+	if err != nil {
+		t.Fatalf("read unit: %v", err)
+	}
+	var execStart string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.HasPrefix(line, "ExecStart=") {
+			execStart = strings.TrimPrefix(line, "ExecStart=")
+		}
+	}
+	if execStart == "" {
+		t.Fatal("unit has no ExecStart")
+	}
+	_, unitPath, found := strings.Cut(execStart, "--config ")
+	if !found {
+		t.Fatalf("ExecStart passes no --config: %q", execStart)
+	}
+	unitPath = strings.TrimSpace(unitPath)
+
+	// A config path under %h would be inside the SUPERVISED account's home,
+	// where the account being supervised could rewrite what its own unit obeys
+	// while CHROTE kept reading a different file.
+	if strings.Contains(unitPath, "%h") {
+		t.Fatalf("unit config path is inside the supervised account's home: %q", unitPath)
+	}
+
+	controller := newAgentUnitController(defaultAgentUnitsDir, func(context.Context, string, ...string) (string, error) {
+		return "", nil
+	})
+	want, err := controller.configPath("codex-alpha", "alice")
+	if err != nil {
+		t.Fatalf("configPath: %v", err)
+	}
+	// Resolve the unit's systemd specifiers the way systemd would for this pair.
+	got := strings.NewReplacer("%u", "alice", "%i", "codex-alpha").Replace(unitPath)
+	if got != want {
+		t.Fatalf("unit reads %q but the controller writes %q", got, want)
+	}
+}
+
+// An absent unixUser is the common case, not an attack: a session on CHROTE's
+// own account carries none. Treating it as invalid made those sessions
+// impossible to lock and, worse, impossible to UNLOCK -- the unlock handler
+// returned before reaching Forget, so the registry entry could never be cleared.
+func TestAgentUnitController_EmptyUnixUserResolvesToTheServersOwnAccount(t *testing.T) {
+	controller, fake, dir := newTestAgentUnitController(t)
+	current, err := osuser.Current()
+	if err != nil {
+		t.Skipf("cannot determine current user: %v", err)
+	}
+	config := agentUnitConfig{
+		Session: "codex-alpha", UnixUser: "", AgentKind: "codex",
+		AgentSessionID: "019f4baa-e368-7ea0-8912-fb2c6f99785c", AgentBin: "/opt/bin/codex",
+		TmuxBin: "/opt/bin/tmux", TmuxSocket: "/run/user/1234/pool/default", Workdir: "/opt/work",
+	}
+	if err := controller.Enable(context.Background(), config); err != nil {
+		t.Fatalf("a session with no unixUser must be lockable: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, current.Username, "codex-alpha.conf")); err != nil {
+		t.Fatalf("config must land under the resolved account: %v", err)
+	}
+	if got := fake.calls[len(fake.calls)-1].UnixUser; got != current.Username {
+		t.Fatalf("systemctl targeted %q, want the resolved account %q", got, current.Username)
+	}
+	// And it must be unlockable by the same absent-user request.
+	if err := controller.Disable(context.Background(), "codex-alpha", ""); err != nil {
+		t.Fatalf("a session locked without a unixUser must be unlockable the same way: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, current.Username, "codex-alpha.conf")); !os.IsNotExist(err) {
+		t.Fatalf("unlock must remove the config, stat err = %v", err)
+	}
+}
+
+// A failed `enable --now` may have already installed the wants-symlink. Undo it
+// before dropping our config, or the unit becomes an orphan CHROTE can never
+// see or stop: OwnsUnit needs the config, and Disable no-ops without it.
+func TestAgentUnitController_FailedEnableDisablesBeforeDroppingConfig(t *testing.T) {
+	controller, fake, _ := newTestAgentUnitController(t)
+	fake.err = errors.New("Job for chrote-agent@codex-alpha.service failed")
+	config := agentUnitConfig{
+		Session: "codex-alpha", UnixUser: "alice", AgentKind: "codex",
+		AgentSessionID: "019f4baa-e368-7ea0-8912-fb2c6f99785c", AgentBin: "/opt/bin/codex",
+		TmuxBin: "/opt/bin/tmux", TmuxSocket: "/run/user/1234/pool/default", Workdir: "/opt/work",
+	}
+	if err := controller.Enable(context.Background(), config); err == nil {
+		t.Fatal("a failing enable must fail the lock")
+	}
+	if fake.argvFor("disable") == nil {
+		t.Fatalf("a failed enable must attempt to undo itself; calls: %+v", fake.calls)
+	}
 }
