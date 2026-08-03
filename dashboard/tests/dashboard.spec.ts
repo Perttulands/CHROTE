@@ -88,7 +88,7 @@ test.describe('Arena Dashboard', () => {
       await expect(page.locator('.session-panel')).toHaveClass(/sidecar-pinned/)
     })
 
-    test('switches one pinned sidecar between Sessions and Files and opens one non-modal file Peek', async ({ page }) => {
+    test('keeps Sessions open while Files opens and shows one non-modal file Peek', async ({ page }) => {
       await page.route(/.*\/api\/files\/resources(?:\/.*)?$/, async route => {
         await route.fulfill({
           status: 200,
@@ -109,7 +109,7 @@ test.describe('Arena Dashboard', () => {
 
       await page.getByRole('button', { name: 'Files sidecar', exact: true }).click()
       const files = page.locator('.terminal-files-panel')
-      await expect(page.locator('.session-panel')).toHaveCount(0)
+      await expect(page.locator('.session-panel')).toHaveClass(/sidecar-pinned/)
       await expect(files).toHaveClass(/sidecar-pinned/)
 
       await page.getByRole('treeitem', { name: /File readme\.txt/ }).click()
@@ -121,6 +121,8 @@ test.describe('Arena Dashboard', () => {
 
       await page.getByRole('button', { name: 'Files sidecar', exact: true }).click()
       await expect(files).toHaveCount(0)
+      await expect(page.locator('.session-panel')).toHaveClass(/sidecar-pinned/)
+      await page.getByRole('button', { name: 'Sessions sidecar', exact: true }).click()
       await expect(page.locator('.session-panel')).toHaveCount(0)
       await expect(terminalFrame).toHaveAttribute('data-dock-identity', 'preserved')
     })

@@ -19,7 +19,7 @@ async function openFreshTerminal(page: Page, viewport?: { width: number; height:
   await expect(page.getByRole('button', { name: 'Sessions sidecar' })).toBeVisible()
 }
 
-test.describe('terminal workspace sidecar', () => {
+test.describe('terminal workspace sidecars', () => {
   test('keeps an untouched fresh sidecar closed across reload', async ({ page }) => {
     await openFreshTerminal(page, { width: 1280, height: 800 })
     const dock = page.locator('.terminal-workspace-dock[data-active="true"]')
@@ -33,7 +33,7 @@ test.describe('terminal workspace sidecar', () => {
     await expect(sessionsTrigger).toHaveAttribute('aria-pressed', 'false')
     await expect(dock.locator('.session-panel, .terminal-files-panel')).toHaveCount(0)
     await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('chrote.workspaceDock.v2') || '{}')
-      ?.workspaces?.terminal1?.activeSidecar)).toBe(null)
+      ?.workspaces?.terminal1?.openSidecars)).toEqual([])
   })
 
   test('opens Sessions and focuses its filter when slash is pressed while closed', async ({ page }) => {
@@ -64,6 +64,11 @@ test.describe('terminal workspace sidecar', () => {
     expect(Math.abs(overlaid.width - initial.width)).toBeLessThanOrEqual(1)
 
     await page.getByRole('button', { name: 'Files sidecar' }).click()
+    await expect(dock.locator('.session-panel.sidecar-pinned')).toBeVisible()
+    await expect(dock.locator('.terminal-files-panel.sidecar-pinned')).toBeVisible()
+    await expect(dock.locator('.terminal-sidecar-dismiss')).toHaveCount(0)
+
+    await page.getByRole('button', { name: 'Close Sessions sidecar' }).click()
     await expect(dock.locator('.session-panel')).toHaveCount(0)
     await expect(dock.locator('.terminal-files-panel.sidecar-overlay')).toBeVisible()
 
@@ -88,7 +93,7 @@ test.describe('terminal workspace sidecar', () => {
     expect(reopened.width).toBeLessThan(initial.width - 200)
   })
 
-  test('uses icon-only hit-testable launchers and one overlay drawer on narrow screens', async ({ page }) => {
+  test('uses icon-only hit-testable launchers and independent overlay drawers on narrow screens', async ({ page }) => {
     await openFreshTerminal(page, { width: 700, height: 800 })
 
     const dock = page.locator('.terminal-workspace-dock[data-active="true"]')
@@ -118,9 +123,10 @@ test.describe('terminal workspace sidecar', () => {
     expect(filesCenter).toBe('Files sidecar')
 
     await filesTrigger.click()
-    await expect(dock.locator('.session-panel')).toHaveCount(0)
+    await expect(dock.locator('.session-panel.sidecar-overlay')).toBeVisible()
     await expect(dock.locator('.terminal-files-panel.sidecar-overlay')).toBeVisible()
     await dock.locator('.terminal-sidecar-dismiss').click({ position: { x: 650, y: 300 } })
+    await expect(dock.locator('.session-panel')).toHaveCount(0)
     await expect(dock.locator('.terminal-files-panel')).toHaveCount(0)
   })
 

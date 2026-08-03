@@ -73,15 +73,17 @@ as a separate persistent workspace.
 
 ### Sessions and Files sidecar
 
-Sessions and Files are peer views of one terminal-workspace sidecar.
+Sessions and Files are independent peer sidecars within each terminal workspace.
 
-- The sidecar is closed by default and reserves no permanent terminal width.
-- Wide layouts may pin it; narrow layouts overlay it.
+- Both sidecars are closed by default and reserve no permanent terminal width.
+- Wide layouts may pin a sidecar; when both are open they occupy adjacent pinned
+  rails so neither obscures the other. Narrow layouts overlay the open sidecar
+  views.
 - Session row selection means **Peek**. It must not detach, reassign, or mutate
   terminal-window assignment metadata.
 - Navigating an attached session occurs through its explicit location chip.
-- The active sidecar view, pin preference, and separate Sessions/Files widths
-  persist per terminal workspace.
+- Each sidecar's open state, the pin preference, and separate Sessions/Files
+  widths persist per terminal workspace.
 - The `/` shortcut opens Sessions for the active terminal workspace and focuses
   its search when no visible dialog or menu owns the key.
 

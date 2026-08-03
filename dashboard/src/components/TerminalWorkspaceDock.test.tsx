@@ -81,11 +81,11 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
 
     expect(screen.queryByTestId('sessions-panel')).not.toBeInTheDocument()
     expect(JSON.parse(localStorage.getItem('chrote.workspaceDock.v2') || '{}')).toMatchObject({
-      workspaces: { terminal1: { activeSidecar: null, sidecarPinned: false } },
+      workspaces: { terminal1: { openSidecars: [], sidecarPinned: false } },
     })
   })
 
-  it('opens, switches, and closes exactly one sidecar from a stable switcher', () => {
+  it('opens and toggles each sidecar independently from a stable switcher', () => {
     const { container } = renderDock()
     const sessions = screen.getByRole('button', { name: /Sessions sidecar/i })
     const files = screen.getByRole('button', { name: /Files sidecar/i })
@@ -103,14 +103,41 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
 
     fireEvent.click(files)
     expect(files).toHaveAttribute('aria-pressed', 'true')
-    expect(sessions).toHaveAttribute('aria-pressed', 'false')
-    expect(screen.queryByTestId('sessions-panel')).not.toBeInTheDocument()
+    expect(sessions).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('sessions-panel')).toBeInTheDocument()
     expect(screen.getByTestId('files-panel')).toBeInTheDocument()
+    expect(container.querySelector('.terminal-sidecar-dismiss')).not.toBeInTheDocument()
 
     fireEvent.click(files)
     expect(files).toHaveAttribute('aria-pressed', 'false')
     expect(screen.queryByTestId('files-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('sessions-panel')).toBeInTheDocument()
+
+    fireEvent.click(sessions)
+    expect(sessions).toHaveAttribute('aria-pressed', 'false')
     expect(container.querySelector('.terminal-sidecar-dismiss')).not.toBeInTheDocument()
+  })
+
+  it('keeps Sessions and Files open together and closes them independently', () => {
+    renderDock()
+    const sessions = screen.getByRole('button', { name: /Sessions sidecar/i })
+    const files = screen.getByRole('button', { name: /Files sidecar/i })
+
+    fireEvent.click(sessions)
+    fireEvent.click(files)
+
+    expect(sessions).toHaveAttribute('aria-pressed', 'true')
+    expect(files).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('sessions-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('files-panel')).toBeInTheDocument()
+    expect(screen.getByTestId('sessions-panel')).toHaveAttribute('data-pinned', 'true')
+    expect(screen.getByTestId('files-panel')).toHaveAttribute('data-pinned', 'true')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close sessions' }))
+
+    expect(screen.queryByTestId('sessions-panel')).not.toBeInTheDocument()
+    expect(screen.getByTestId('files-panel')).toBeInTheDocument()
+    expect(files).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('pins only on desktop and closes an unpinned sidecar through Escape or the dismiss layer', () => {
@@ -174,7 +201,7 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close sessions' }))
     expect(screen.queryByTestId('sessions-panel')).not.toBeInTheDocument()
     expect(JSON.parse(localStorage.getItem('chrote.workspaceDock.v2') || '{}')).toMatchObject({
-      workspaces: { terminal1: { activeSidecar: null, sidecarPinned: true } },
+      workspaces: { terminal1: { openSidecars: [], sidecarPinned: true } },
     })
 
     fireEvent.click(sessions)
@@ -187,7 +214,7 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
 
   it('forces a stored desktop pin into overlay presentation on narrow viewports without losing the stored preference', () => {
     writeWorkspaceDockState('terminal1', {
-      activeSidecar: 'sessions',
+      openSidecars: ['sessions'],
       sidecarPinned: true,
       sessionsWidth: 300,
       filesWidth: 360,
@@ -201,7 +228,7 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
     expect(screen.getByRole('button', { name: 'Sessions sidecar' }).querySelector('.terminal-sidecar-label')).toBeInTheDocument()
 
     expect(JSON.parse(localStorage.getItem('chrote.workspaceDock.v2') || '{}')).toMatchObject({
-      workspaces: { terminal1: { activeSidecar: 'sessions', sidecarPinned: true } },
+      workspaces: { terminal1: { openSidecars: ['sessions'], sidecarPinned: true } },
     })
   })
 })
