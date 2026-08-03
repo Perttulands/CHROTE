@@ -187,7 +187,7 @@ trust boundary, and agents have broad host access by design. Deliberately grante
 authority is in scope; authority *leaking* through injection or traversal is not.
 
 Rejected alternative: **same-user-only v1.** It would dodge the grant entirely,
-but the host's real agents run as multiple users (`perttu`, `tavern`), so a
+but a cockpit host generally runs agents under more than one Unix account, so a
 same-user cockpit could not lock the sessions the feature exists for.
 
 ### Decision 5 — Health means the unit is active *and* the launcher confirmed identity
@@ -211,8 +211,8 @@ would show green.
 
 ### Decision 6 — The launcher never creates a tmux server
 
-The tmux server's lifetime belongs to its keeper unit
-(`chrote-cockpit-tmux.service` and siblings). `tmux new-session` against a dead
+The tmux server's lifetime belongs to its keeper unit -- a separate,
+operator-configured unit whose only job is owning that socket. `tmux new-session` against a dead
 socket forks a *server* into the caller's cgroup; if the caller is an agent unit,
 a later restart of that unit kills every session on that socket. The launcher
 therefore probes for a live server and fails loud, naming the keeper, rather than
