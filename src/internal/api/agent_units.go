@@ -597,3 +597,38 @@ func runSystemctlForUser(ctx context.Context, unixUser string, args ...string) (
 	}
 	return string(out), nil
 }
+
+// AnnotateHealth fills in each locked session's live unit health. It is separate
+// from the desired-state annotation on purpose: the store knows what was asked
+// for, systemd knows what is actually true, and conflating the two is how the
+// old supervisor reported healthy right through an outage.
+func (c *agentUnitController) AnnotateHealth(ctx context.Context, sessions []core.Session) []core.Session {
+	if c == nil {
+		return sessions
+	}
+	for i := range sessions {
+		if !sessions[i].Persistent {
+			continue
+		}
+		status, err := c.Status(ctx, sessions[i].Name, sessions[i].UnixUser)
+		if err != nil {
+			sessions[i].PersistentHealth = agentHealthDegraded
+			sessions[i].PersistentDetail = err.Error()
+			continue
+		}
+		if !status.Locked {
+			// The desired-state store says this session is locked but no unit
+			// config backs it: a failed enable, or a record left by the
+			// pre-ADR-0014 supervisor. Saying "unlocked" here would contradict
+			// the same payload's persistent:true, so say what is actually wrong.
+			sessions[i].PersistentHealth = agentHealthDegraded
+			sessions[i].PersistentDetail = "no supervising unit is installed for this session"
+			continue
+		}
+		sessions[i].PersistentUnit = status.Unit
+		sessions[i].PersistentHealth = status.Health
+		sessions[i].PersistentActiveState = status.ActiveState
+		sessions[i].PersistentDetail = status.Detail
+	}
+	return sessions
+}

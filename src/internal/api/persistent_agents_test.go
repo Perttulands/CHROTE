@@ -881,130 +881,71 @@ func TestPersistentAgentFilterBankedRemovesOnlyExactUserSession(t *testing.T) {
 	}
 }
 
-func TestTmuxHandler_ListSessionsProjectsPersistentSupervisorStateJSON(t *testing.T) {
+func TestTmuxHandler_ListSessionsReportsAStoreEntryWithNoUnitAsDegraded(t *testing.T) {
+	// The pre-ADR-0014 supervisor kept a six-state ladder in this store. Those
+	// states are gone -- health is the unit's -- but a record can still outlive
+	// its unit: a failed enable, or a row written by the old supervisor before
+	// the migration. Reporting "unlocked" for such a session would contradict the
+	// persistent:true in the same payload, so it must read as degraded and say
+	// why. This is also the projection an operator sees mid-migration.
 	tmpDir := t.TempDir()
 	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")
 	installPersistentAgentScriptedTmux(t, `
 case "$*" in
-  *list-sessions*) printf '$1:codex-healthy:1:0\n$2:claude-backoff:1:0\n$3:codex-needs:1:0\n$4:hermes-wrong:1:0\n$5:hermes-failed:1:0\n$6:mortal-shell:1:0\n' ;;
+  *list-sessions*) printf '$1:codex-orphaned:1:0\n' ;;
 esac
 `)
 	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	t.Setenv("CHROTE_AGENT_UNITS_DIR", filepath.Join(tmpDir, "agent-units"))
 	installFakeSystemctl(t)
-	t.Setenv("CHROTE_SESSION_BANK_PATH", filepath.Join(tmpDir, "session-bank", "sessions.json"))
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
 	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
 	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
 	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
 
-	healthy := persistentAgentRawEntry("codex-healthy", "alice", RecoveryAgentCodex, persistentTestCodexID, "")
-	healthy["state"] = PersistentAgentStateHealthy
-	healthy["lastCheckAt"] = "2026-07-15T10:00:00Z"
-	healthy["lastRestartAt"] = "2026-07-15T09:55:00Z"
-	backoff := persistentAgentRawEntry("claude-backoff", "alice", RecoveryAgentClaude, persistentTestClaudeID, "")
-	backoff["state"] = PersistentAgentStateBackoff
-	backoff["consecutiveLaunchFailures"] = 2
-	backoff["nextRetryAt"] = "2026-07-15T10:05:00Z"
-	backoff["lastCheckAt"] = "2026-07-15T10:01:00Z"
-	backoff["lastError"] = "launch failed: exit status 1"
-	needsInteraction := persistentAgentRawEntry("codex-needs", "alice", RecoveryAgentCodex, persistentTestCodexID, "")
-	needsInteraction["state"] = PersistentAgentStateNeedsInteraction
-	needsInteraction["lastCheckAt"] = "2026-07-15T10:02:00Z"
-	needsInteraction["lastError"] = "blocked-needs-interaction: migration"
-	wrongIdentity := persistentAgentRawEntry("hermes-wrong", "alice", RecoveryAgentHermes, persistentTestHermesID, "scout")
-	wrongIdentity["state"] = PersistentAgentStateWrongIdentity
-	wrongIdentity["lastCheckAt"] = "2026-07-15T10:03:00Z"
-	wrongIdentity["lastError"] = "wrong identity: expected hermes scout"
-	failed := persistentAgentRawEntry("hermes-failed", "alice", RecoveryAgentHermes, "hermes-session-20260715T110000Z", "operator")
-	failed["state"] = PersistentAgentStateFailed
-	failed["consecutiveLaunchFailures"] = 3
-	failed["lastCheckAt"] = "2026-07-15T10:04:00Z"
-	failed["lastError"] = "launch failed permanently"
-	writePersistentAgentRawSeed(t, persistentPath, []map[string]any{healthy, backoff, needsInteraction, wrongIdentity, failed})
+	{
+		entry := persistentAgentRawEntry("codex-orphaned", "alice", RecoveryAgentCodex, persistentTestCodexID, "")
+		writePersistentAgentRawSeed(t, persistentPath, []map[string]any{entry})
 
-	handler := NewTmuxHandler()
-	recorder := httptest.NewRecorder()
-	handler.ListSessions(recorder, httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil))
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
-	}
-	var response map[string]any
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	rawSessions, ok := response["sessions"].([]any)
-	if !ok {
-		t.Fatalf("sessions payload = %#v, want array", response["sessions"])
-	}
-	byName := map[string]map[string]any{}
-	for _, rawSession := range rawSessions {
-		session, ok := rawSession.(map[string]any)
-		if !ok {
-			t.Fatalf("session payload = %#v, want object", rawSession)
+		handler := NewTmuxHandler()
+		recorder := httptest.NewRecorder()
+		handler.ListSessions(recorder, httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
 		}
-		name, _ := session["name"].(string)
-		byName[name] = session
-	}
-
-	assertPersistent := func(name, state string) map[string]any {
-		t.Helper()
-		session, ok := byName[name]
-		if !ok {
-			t.Fatalf("missing session %q in %#v", name, byName)
+		var payload struct {
+			Sessions []map[string]any `json:"sessions"`
 		}
-		if session["persistent"] != true || session["persistentState"] != state {
-			t.Fatalf("%s persistent state payload = %#v", name, session)
+		if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("decode sessions: %v", err)
 		}
-		return session
-	}
-	healthySession := assertPersistent("codex-healthy", PersistentAgentStateHealthy)
-	if healthySession["persistentLastCheckAt"] != "2026-07-15T10:00:00Z" || healthySession["persistentLastRestartAt"] != "2026-07-15T09:55:00Z" {
-		t.Fatalf("healthy timestamps = %#v", healthySession)
-	}
-	if _, ok := healthySession["persistentHermesProfile"]; ok {
-		t.Fatalf("non-Hermes session exposed profile: %#v", healthySession)
-	}
-	backoffSession := assertPersistent("claude-backoff", PersistentAgentStateBackoff)
-	if backoffSession["persistentConsecutiveLaunchFailures"] != float64(2) || backoffSession["persistentNextRetryAt"] != "2026-07-15T10:05:00Z" || backoffSession["persistentLastError"] != "launch failed: exit status 1" {
-		t.Fatalf("backoff metadata = %#v", backoffSession)
-	}
-	assertPersistent("codex-needs", PersistentAgentStateNeedsInteraction)
-	needsSession := byName["codex-needs"]
-	if needsSession["persistentLastError"] != "blocked-needs-interaction: migration" {
-		t.Fatalf("needs-interaction error = %#v", needsSession)
-	}
-	wrongSession := assertPersistent("hermes-wrong", PersistentAgentStateWrongIdentity)
-	if wrongSession["persistentHermesProfile"] != "scout" || wrongSession["persistentLastError"] != "wrong identity: expected hermes scout" {
-		t.Fatalf("wrong-identity Hermes metadata = %#v", wrongSession)
-	}
-	if _, ok := wrongSession["persistentAgentProfile"]; ok {
-		t.Fatalf("wrong-identity Hermes session exposed generic profile: %#v", wrongSession)
-	}
-	failedSession := assertPersistent("hermes-failed", PersistentAgentStateFailed)
-	if failedSession["persistentHermesProfile"] != "operator" || failedSession["persistentConsecutiveLaunchFailures"] != float64(3) || failedSession["persistentLastError"] != "launch failed permanently" {
-		t.Fatalf("failed Hermes metadata = %#v", failedSession)
-	}
-	if _, ok := failedSession["persistentAgentProfile"]; ok {
-		t.Fatalf("failed Hermes session exposed generic profile: %#v", failedSession)
-	}
-
-	mortal, ok := byName["mortal-shell"]
-	if !ok {
-		t.Fatalf("missing mortal session in %#v", byName)
-	}
-	for _, field := range []string{
-		"persistent",
-		"persistentState",
-		"persistentConsecutiveLaunchFailures",
-		"persistentNextRetryAt",
-		"persistentLastCheckAt",
-		"persistentLastRestartAt",
-		"persistentLastError",
-		"persistentHermesProfile",
-		"persistentAgentProfile",
-	} {
-		if _, ok := mortal[field]; ok {
-			t.Fatalf("mortal session included %s: %#v", field, mortal)
+		var found map[string]any
+		for _, session := range payload.Sessions {
+			if session["name"] == "codex-orphaned" {
+				found = session
+			}
+		}
+		if found == nil {
+			t.Fatalf("session was not projected: %+v", payload.Sessions)
+		}
+		if found["persistent"] != true {
+			t.Fatalf("a stored entry must still project persistent:true, got %+v", found)
+		}
+		if found["persistentHealth"] != agentHealthDegraded {
+			t.Fatalf("persistentHealth = %v, want %q", found["persistentHealth"], agentHealthDegraded)
+		}
+		if detail, _ := found["persistentDetail"].(string); !strings.Contains(detail, "no supervising unit") {
+			t.Fatalf("degraded projection must say why, got %q", detail)
+		}
+		// The retired supervisor fields must not come back in the payload.
+		for _, gone := range []string{
+			"persistentState", "persistentResumeCommand", "persistentLastError",
+			"persistentNextRetryAt", "persistentConsecutiveLaunchFailures",
+			"persistentLastCheckAt", "persistentLastRestartAt",
+		} {
+			if _, present := found[gone]; present {
+				t.Fatalf("retired supervisor field %q is still projected: %+v", gone, found)
+			}
 		}
 	}
 }

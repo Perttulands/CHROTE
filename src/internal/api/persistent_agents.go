@@ -594,14 +594,9 @@ func (s *persistentAgentStore) AnnotateSessions(sessions []core.Session) ([]core
 		sessions[i].PersistentIdentity = entry.Identity
 		sessions[i].PersistentAgentKind = entry.AgentKind
 		sessions[i].PersistentAgentSessionID = entry.AgentSessionID
-		sessions[i].PersistentResumeCommand = entry.ResumeCommand
-		sessions[i].PersistentState = entry.State
-		sessions[i].PersistentConsecutiveLaunchFailures = entry.ConsecutiveLaunchFailures
-		sessions[i].PersistentNextRetryAt = entry.NextRetryAt
-		sessions[i].PersistentLastCheckAt = entry.LastCheckAt
-		sessions[i].PersistentLastRestartAt = entry.LastRestartAt
-		sessions[i].PersistentLastError = entry.LastError
 		sessions[i].PersistentHermesProfile = persistentAgentHermesProfile(entry)
+		// Health is deliberately NOT read here: this store knows what was asked
+		// for, not what systemd is doing about it. AnnotateHealth fills that in.
 	}
 	return sessions, nil
 }

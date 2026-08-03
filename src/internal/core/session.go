@@ -21,14 +21,16 @@ type Session struct {
 	PersistentIdentity                  string `json:"persistentIdentity,omitempty"`
 	PersistentAgentKind                 string `json:"persistentAgentKind,omitempty"`
 	PersistentAgentSessionID            string `json:"persistentAgentSessionId,omitempty"`
-	PersistentResumeCommand             string `json:"persistentResumeCommand,omitempty"`
-	PersistentState                     string `json:"persistentState,omitempty"`
-	PersistentConsecutiveLaunchFailures int    `json:"persistentConsecutiveLaunchFailures,omitempty"`
-	PersistentNextRetryAt               string `json:"persistentNextRetryAt,omitempty"`
-	PersistentLastCheckAt               string `json:"persistentLastCheckAt,omitempty"`
-	PersistentLastRestartAt             string `json:"persistentLastRestartAt,omitempty"`
-	PersistentLastError                 string `json:"persistentLastError,omitempty"`
 	PersistentHermesProfile             string `json:"persistentHermesProfile,omitempty"`
+	// Supervision health comes from the session's own systemd unit, read live
+	// (ADR-0014). The retired fields here -- resume command, a six-state ladder,
+	// launch-failure counters, retry and last-check timestamps -- described an
+	// in-server supervisor that no longer exists; four of them were never read by
+	// any client even while it did.
+	PersistentUnit        string `json:"persistentUnit,omitempty"`
+	PersistentHealth      string `json:"persistentHealth,omitempty"`
+	PersistentActiveState string `json:"persistentActiveState,omitempty"`
+	PersistentDetail      string `json:"persistentDetail,omitempty"`
 }
 
 // GroupPriority defines the sort order for session groups

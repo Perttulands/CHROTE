@@ -1588,6 +1588,7 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	if h.persistent != nil {
 		var persistentErr error
 		response.Sessions, persistentErr = h.persistent.AnnotateSessions(response.Sessions)
+		response.Sessions = h.agentUnits.AnnotateHealth(context.Background(), response.Sessions)
 		if persistentErr != nil {
 			response.Error = appendSessionResponseError(response.Error, "persistent agents: "+persistentErr.Error())
 		}

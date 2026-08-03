@@ -1513,8 +1513,14 @@ esac
 		t.Fatalf("sessions = %+v, want one", sessions.Sessions)
 	}
 	session := sessions.Sessions[0]
-	if !session.Persistent || session.PersistentIdentity != "Maintains the VW Codex lane." || session.PersistentAgentKind != "codex" || session.PersistentAgentSessionID != sessionID || session.PersistentResumeCommand != "codex resume "+sessionID {
+	if !session.Persistent || session.PersistentIdentity != "Maintains the VW Codex lane." || session.PersistentAgentKind != "codex" || session.PersistentAgentSessionID != sessionID {
 		t.Fatalf("persistent session metadata = %+v", session)
+	}
+	// The resume command is no longer projected to clients: the unit renders argv
+	// from the typed kind and native id, so shipping a rendered string would be a
+	// second source of truth for the same fact (ADR-0014).
+	if session.PersistentUnit != "chrote-agent@"+session.Name+".service" {
+		t.Fatalf("a locked session must name its unit, got %q", session.PersistentUnit)
 	}
 }
 
