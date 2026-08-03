@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, ReactNode } from 'react'
 import type { DashboardContextType, TmuxSession, SessionBankEntry, ManagedRecoveryStatusEntry, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance, WorkspaceId, TerminalWorkspace, LayoutPreset, LaunchUser, CreateSessionOptions, PersistentAgentPayload, SendSessionPane, SendToSessionOutcome, SendToSessionPayload, SendToSessionResult, WindowRevealRequest } from '../types'
-import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE, MAX_PRESETS, TERMINAL_WORKSPACE_IDS, getSessionKey, getSessionNameFromKey, getSessionPrefixForUser, getSessionUserFromKey, normalizeTerminalUsers, resolveLaunchUser } from '../types'
+import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE, MAX_PRESETS, getSessionKey, getSessionNameFromKey, getSessionPrefixForUser, getSessionUserFromKey, normalizeTerminalTabCount, normalizeTerminalUsers, resolveLaunchUser, sortTerminalWorkspaceIds, terminalWorkspaceIds } from '../types'
 import { useToast } from './ToastContext'
 import { apiErrorMessage } from '../apiErrors'
 
@@ -37,7 +37,23 @@ const STORAGE_KEY = 'chrote-dashboard-state'
 const PRESETS_STORAGE_KEY = 'chrote-dashboard-presets'
 const SETTINGS_SCHEMA_VERSION = 2
 
-const WORKSPACE_IDS: WorkspaceId[] = [...TERMINAL_WORKSPACE_IDS]
+// Shape check for workspace ids as they appear in persisted data. Broader than
+// the visible list on purpose: hidden workspaces (count shrunk) must keep
+// round-tripping through storage untouched.
+const STORED_WORKSPACE_ID_PATTERN = /^terminal[1-9]\d*$/
+
+function isStoredWorkspaceId(value: string): value is WorkspaceId {
+  return STORED_WORKSPACE_ID_PATTERN.test(value)
+}
+
+function visibleWorkspaceIds(settings: UserSettings): WorkspaceId[] {
+  return terminalWorkspaceIds(normalizeTerminalTabCount(settings.terminalTabCount))
+}
+
+function idsInWorkspaces(workspaces: Record<WorkspaceId, TerminalWorkspace>): WorkspaceId[] {
+  return sortTerminalWorkspaceIds(Object.keys(workspaces) as WorkspaceId[])
+}
+
 const CANONICAL_WINDOW_COUNT = 4
 const VIEWPORT_BUCKETS = ['mobile', 'tablet', 'desktop'] as const
 type ViewportBucket = typeof VIEWPORT_BUCKETS[number]
@@ -53,7 +69,7 @@ function loadStoredPresets(): LayoutPreset[] {
           id: typeof preset.id === 'string' ? preset.id : generatePresetId(),
           name: typeof preset.name === 'string' ? preset.name : 'Untitled',
           createdAt: typeof preset.createdAt === 'number' ? preset.createdAt : Date.now(),
-          workspaces: sanitizeWorkspaces(preset.workspaces),
+          workspaces: sanitizeWorkspaces(preset.workspaces, []),
         }))
       }
     }
@@ -119,10 +135,10 @@ function isViewportBucket(value: string): value is ViewportBucket {
 function mergeTerminalLaunchUsers(raw: unknown): Record<WorkspaceId, LaunchUser> {
   const rawUsers = isRecord(raw) ? raw : {}
   // Sparse: an absent entry and '' mean the same thing to resolveLaunchUser,
-  // so only meaningful assignments are kept.
-  return WORKSPACE_IDS.reduce((acc, workspaceId) => {
-    const value = rawUsers[workspaceId]
-    if (typeof value === 'string' && value !== '') acc[workspaceId] = value
+  // so only meaningful assignments are kept. Entries for hidden workspaces
+  // (beyond the current tab count) are retained, not filtered.
+  return Object.entries(rawUsers).reduce((acc, [key, value]) => {
+    if (isStoredWorkspaceId(key) && typeof value === 'string' && value !== '') acc[key] = value
     return acc
   }, {} as Record<WorkspaceId, LaunchUser>)
 }
@@ -164,6 +180,7 @@ function mergeSettings(rawSettings: unknown): UserSettings {
   return {
     ...DEFAULT_SETTINGS,
     ...rawSettings,
+    terminalTabCount: normalizeTerminalTabCount(rawSettings.terminalTabCount),
     terminalLaunchUsers,
     terminalSessionPrefixes,
     terminalLabels,
@@ -184,12 +201,16 @@ function migrateSettings(rawSettings: unknown, schemaVersion: unknown): UserSett
   return settings
 }
 
+function defaultWorkspacesFor(ids: readonly WorkspaceId[]): Record<WorkspaceId, TerminalWorkspace> {
+  return ids.reduce((acc, workspaceId) => {
+    acc[workspaceId] = createDefaultWorkspace(workspaceId, 2)
+    return acc
+  }, {} as Record<WorkspaceId, TerminalWorkspace>)
+}
+
 function defaultStoredState(): LoadedStoredState {
   return {
-    workspaces: WORKSPACE_IDS.reduce((acc, workspaceId) => {
-      acc[workspaceId] = createDefaultWorkspace(workspaceId, 2)
-      return acc
-    }, {} as Record<WorkspaceId, TerminalWorkspace>),
+    workspaces: defaultWorkspacesFor(visibleWorkspaceIds(DEFAULT_SETTINGS)),
     layoutsByViewport: {},
     sidebarCollapsed: false,
     settings: DEFAULT_SETTINGS,
@@ -217,7 +238,7 @@ function saveState(state: StoredStateV2, viewportBucket: ViewportBucket): void {
       settingsSchemaVersion: SETTINGS_SCHEMA_VERSION,
       layoutsByViewport: {
         ...existing.layoutsByViewport,
-        [viewportBucket]: { workspaces: sanitizeWorkspaces(state.workspaces) },
+        [viewportBucket]: { workspaces: sanitizeWorkspaces(state.workspaces, visibleWorkspaceIds(state.settings)) },
       },
       sidebarCollapsed: state.sidebarCollapsed,
       settings: state.settings,
@@ -329,7 +350,7 @@ function pruneWorkspacesToLiveSessions(
   let changed = false
   const next: Record<WorkspaceId, TerminalWorkspace> = { ...workspaces }
 
-  WORKSPACE_IDS.forEach(workspaceId => {
+  idsInWorkspaces(workspaces).forEach(workspaceId => {
     const ws = workspaces[workspaceId]
     if (!ws) return
     const windows = ws.windows.map(w => {
@@ -345,7 +366,7 @@ function pruneWorkspacesToLiveSessions(
 
 function staleSessionKeysInWorkspaces(workspaces: Record<WorkspaceId, TerminalWorkspace>, live: Set<string>): Set<string> {
   const stale = new Set<string>()
-  WORKSPACE_IDS.forEach(workspaceId => {
+  idsInWorkspaces(workspaces).forEach(workspaceId => {
     const ws = workspaces[workspaceId]
     if (!ws) return
     ws.windows.forEach(w => {
@@ -385,7 +406,7 @@ function sanitizeWorkspaceSlots(workspaceId: WorkspaceId, wsRaw: unknown): Termi
 
 function qualifiedUsersBySessionName(workspaces: Record<WorkspaceId, TerminalWorkspace>): Map<string, Set<LaunchUser>> {
   const qualifiedUsers = new Map<string, Set<LaunchUser>>()
-  WORKSPACE_IDS.forEach(workspaceId => {
+  idsInWorkspaces(workspaces).forEach(workspaceId => {
     workspaces[workspaceId].windows.forEach(window => {
       window.boundSessions.forEach(sessionKey => {
         const unixUser = getSessionUserFromKey(sessionKey)
@@ -435,7 +456,7 @@ function deduplicateWorkspaceBindings(
     : null
   const seen = new Set<string>()
 
-  return WORKSPACE_IDS.reduce((next, workspaceId) => {
+  return idsInWorkspaces(workspaces).reduce((next, workspaceId) => {
     const workspace = workspaces[workspaceId]
     next[workspaceId] = {
       ...workspace,
@@ -462,9 +483,15 @@ function deduplicateWorkspaceBindings(
   }, {} as Record<WorkspaceId, TerminalWorkspace>)
 }
 
-function sanitizeWorkspaces(rawWorkspaces: unknown): Record<WorkspaceId, TerminalWorkspace> {
+// Guarantees every id in `ids` exists (defaulting missing ones) and keeps any
+// extra stored terminal ids intact — hidden workspaces survive sanitization.
+function sanitizeWorkspaces(rawWorkspaces: unknown, ids: readonly WorkspaceId[]): Record<WorkspaceId, TerminalWorkspace> {
   const raw = isRecord(rawWorkspaces) ? rawWorkspaces : {}
-  const canonical = WORKSPACE_IDS.reduce((workspaces, workspaceId) => {
+  const canonicalIds = new Set<WorkspaceId>(ids)
+  Object.keys(raw).forEach(key => {
+    if (isStoredWorkspaceId(key)) canonicalIds.add(key)
+  })
+  const canonical = sortTerminalWorkspaceIds([...canonicalIds]).reduce((workspaces, workspaceId) => {
     workspaces[workspaceId] = sanitizeWorkspaceSlots(workspaceId, raw[workspaceId])
     return workspaces
   }, {} as Record<WorkspaceId, TerminalWorkspace>)
@@ -474,20 +501,22 @@ function sanitizeWorkspaces(rawWorkspaces: unknown): Record<WorkspaceId, Termina
 function migrateStoredState(raw: unknown, viewportBucket: ViewportBucket): LoadedStoredState {
   if (isRecord(raw)) {
     if (raw.version === 3 && isRecord(raw.layoutsByViewport)) {
+      const settings = migrateSettings(raw.settings, raw.settingsSchemaVersion)
+      const ids = visibleWorkspaceIds(settings)
       const layoutsByViewport: Partial<Record<ViewportBucket, StoredLayout>> = {}
 
       Object.entries(raw.layoutsByViewport).forEach(([key, value]) => {
         if (!isViewportBucket(key) || !isRecord(value)) return
         layoutsByViewport[key] = {
-          workspaces: sanitizeWorkspaces(value.workspaces),
+          workspaces: sanitizeWorkspaces(value.workspaces, ids),
         }
       })
 
       return {
-        workspaces: layoutsByViewport[viewportBucket]?.workspaces ?? defaultStoredState().workspaces,
+        workspaces: layoutsByViewport[viewportBucket]?.workspaces ?? defaultWorkspacesFor(ids),
         layoutsByViewport,
         sidebarCollapsed: typeof raw.sidebarCollapsed === 'boolean' ? raw.sidebarCollapsed : false,
-        settings: migrateSettings(raw.settings, raw.settingsSchemaVersion),
+        settings,
       }
     }
 
@@ -495,7 +524,7 @@ function migrateStoredState(raw: unknown, viewportBucket: ViewportBucket): Loade
     if (isRecord(raw.workspaces) && isRecord(raw.workspaces.terminal1) && isRecord(raw.workspaces.terminal2)) {
       const sidebarCollapsed = typeof raw.sidebarCollapsed === 'boolean' ? raw.sidebarCollapsed : false
       const settings = migrateSettings(raw.settings, raw.settingsSchemaVersion)
-      const workspaces = sanitizeWorkspaces(raw.workspaces)
+      const workspaces = sanitizeWorkspaces(raw.workspaces, visibleWorkspaceIds(settings))
 
       return {
         workspaces,
@@ -516,7 +545,7 @@ function migrateStoredState(raw: unknown, viewportBucket: ViewportBucket): Loade
           windows: raw.windows,
           windowCount: raw.windowCount,
         },
-      })
+      }, visibleWorkspaceIds(settings))
 
       return {
         workspaces,
@@ -556,13 +585,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null)
 
   const [workspaces, setWorkspaces] = useState<Record<WorkspaceId, TerminalWorkspace>>(
-    stored?.workspaces ?? WORKSPACE_IDS.reduce((acc, workspaceId) => {
-      acc[workspaceId] = createDefaultWorkspace(workspaceId, 2)
-      return acc
-    }, {} as Record<WorkspaceId, TerminalWorkspace>)
+    stored?.workspaces ?? defaultWorkspacesFor(visibleWorkspaceIds(stored?.settings ?? DEFAULT_SETTINGS))
   )
   const viewportBucketRef = useRef(viewportBucket)
   viewportBucketRef.current = viewportBucket
+  const workspacesRef = useRef(workspaces)
+  workspacesRef.current = workspaces
 
   // Follow live breakpoint crossings and rotations. Entering a bucket with a
   // stored layout loads it; a bucket never used before carries the current
@@ -614,10 +642,23 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
+  // Visible terminal tabs; hidden workspaces stay in the record untouched.
+  const workspaceIds = useMemo(() => visibleWorkspaceIds(settings), [settings])
+
+  // Growing the count reveals workspaces: any visible id missing from the
+  // record gets a default workspace. Shrinking removes nothing.
+  useEffect(() => {
+    setWorkspaces(prev => {
+      const missing = workspaceIds.filter(workspaceId => !prev[workspaceId])
+      if (missing.length === 0) return prev
+      return { ...prev, ...defaultWorkspacesFor(missing) }
+    })
+  }, [workspaceIds])
+
   // Computed: which sessions are assigned to any window
   const assignedSessions = useMemo(() => {
     const assigned = new Map<string, { workspaceId: WorkspaceId; windowId: string; colorIndex: number; windowIndex: number }>()
-    WORKSPACE_IDS.forEach(workspaceId => {
+    idsInWorkspaces(workspaces).forEach(workspaceId => {
       const ws = workspaces[workspaceId]
       ws.windows.forEach((w, idx) => {
         w.boundSessions.forEach(s => {
@@ -638,7 +679,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setWorkspaces(prev => {
       let changed = false
       const next: Record<WorkspaceId, TerminalWorkspace> = { ...prev }
-      WORKSPACE_IDS.forEach(workspaceId => {
+      idsInWorkspaces(prev).forEach(workspaceId => {
         const ws = prev[workspaceId]
         const hasStuck = ws.windows.some(w => w.activeSession === 'INIT-PENDING')
         if (!hasStuck) return
@@ -659,7 +700,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   // Persist state to localStorage (filter out INIT-PENDING to avoid stuck state)
   useEffect(() => {
     const cleanWorkspaces: Record<WorkspaceId, TerminalWorkspace> = { ...workspaces }
-    WORKSPACE_IDS.forEach(workspaceId => {
+    idsInWorkspaces(workspaces).forEach(workspaceId => {
       const ws = workspaces[workspaceId]
       cleanWorkspaces[workspaceId] = {
         ...ws,
@@ -882,7 +923,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const revealWindow = useCallback((workspaceId: WorkspaceId, windowId: string) => {
-    if (!WORKSPACE_IDS.includes(workspaceId)) return
+    if (!workspacesRef.current[workspaceId]) return
     const windowIndex = Array.from(
       { length: CANONICAL_WINDOW_COUNT },
       (_, index) => `${workspaceId}-window-${index}`,
@@ -953,7 +994,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
       const targetIdentity = sessionBindingIdentity(sessionKey, qualifiedUsers)
 
-      return WORKSPACE_IDS.reduce((next, wsId) => {
+      return idsInWorkspaces(prev).reduce((next, wsId) => {
         const workspace = prev[wsId]
         next[wsId] = {
           ...workspace,
@@ -1249,6 +1290,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const updateSettings = useCallback((newSettings: Partial<UserSettings>) => {
     setSettings(prev => {
       const updated = { ...prev, ...newSettings }
+      if (newSettings.terminalTabCount !== undefined) {
+        updated.terminalTabCount = normalizeTerminalTabCount(newSettings.terminalTabCount)
+      }
       // Hot-reload tmux appearance if it changed
       if (newSettings.tmuxAppearance) {
         applyTmuxAppearance(updated.tmuxAppearance)
@@ -1272,7 +1316,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         const deletedKey = getSessionKey(sessionName, unixUser)
         setWorkspaces(prev => {
           const next: Record<WorkspaceId, TerminalWorkspace> = { ...prev }
-          WORKSPACE_IDS.forEach(workspaceId => {
+          idsInWorkspaces(prev).forEach(workspaceId => {
             const ws = prev[workspaceId]
             next[workspaceId] = {
               ...ws,
@@ -1325,7 +1369,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         // Update window bindings to use the new name/key
         setWorkspaces(prev => {
           const next: Record<WorkspaceId, TerminalWorkspace> = { ...prev }
-          WORKSPACE_IDS.forEach(workspaceId => {
+          idsInWorkspaces(prev).forEach(workspaceId => {
             const ws = prev[workspaceId]
             next[workspaceId] = {
               ...ws,
@@ -1431,7 +1475,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       id: generatePresetId(),
       name,
       createdAt: Date.now(),
-      workspaces: sanitizeWorkspaces(workspaces),
+      workspaces: sanitizeWorkspaces(workspaces, []),
     }
 
     setLayoutPresets(prev => [...prev, newPreset])
@@ -1446,7 +1490,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return
     }
 
-    setWorkspaces(sanitizeWorkspaces(cloneWorkspaces(preset.workspaces)))
+    // Merge, not replace: preset ids apply, current ids absent from the preset
+    // are preserved, extra preset ids are stored for later growth. Loading a
+    // preset never changes the tab count.
+    setWorkspaces(prev => deduplicateWorkspaceBindings({
+      ...prev,
+      ...sanitizeWorkspaces(cloneWorkspaces(preset.workspaces), []),
+    }))
     addToast(`Layout '${preset.name}' loaded`, 'info')
   }, [layoutPresets, addToast])
 
@@ -1475,7 +1525,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     loading,
     error,
     workspaces,
-    workspaceIds: WORKSPACE_IDS,
+    workspaceIds,
     sidebarCollapsed,
     floatingSession,
     sendToSessionTarget,
@@ -1526,6 +1576,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     loading,
     error,
     workspaces,
+    workspaceIds,
     sidebarCollapsed,
     floatingSession,
     sendToSessionTarget,

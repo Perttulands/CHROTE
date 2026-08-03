@@ -3108,3 +3108,179 @@ describe('clampWindowCount (via setWindowCount)', () => {
     expect(result.current.workspaces.terminal1.windows[3].boundSessions).toEqual([])
   })
 })
+
+// ──────────────────────────────────────────────
+describe('terminal tab count', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    setViewportWidth(1280)
+  })
+
+  it('defaults to three visible workspaces', () => {
+    const { result } = renderSession()
+    expect(result.current.settings.terminalTabCount).toBe(3)
+    expect(result.current.workspaceIds).toEqual(['terminal1', 'terminal2', 'terminal3'])
+  })
+
+  it('normalizes malformed counts through updateSettings', () => {
+    const { result } = renderSession()
+
+    act(() => result.current.updateSettings({ terminalTabCount: 9 }))
+    expect(result.current.settings.terminalTabCount).toBe(6)
+
+    act(() => result.current.updateSettings({ terminalTabCount: 0 }))
+    expect(result.current.settings.terminalTabCount).toBe(1)
+
+    act(() => result.current.updateSettings({ terminalTabCount: 2.7 }))
+    expect(result.current.settings.terminalTabCount).toBe(2)
+
+    act(() => result.current.updateSettings({ terminalTabCount: Number.NaN }))
+    expect(result.current.settings.terminalTabCount).toBe(3)
+  })
+
+  it('normalizes malformed stored counts at load time', () => {
+    localStorage.setItem('chrote-dashboard-state', JSON.stringify({
+      version: 3,
+      settingsSchemaVersion: 2,
+      layoutsByViewport: {},
+      sidebarCollapsed: false,
+      settings: { ...DEFAULT_SETTINGS, terminalTabCount: '5' },
+    }))
+
+    const { result } = renderSession()
+    expect(result.current.settings.terminalTabCount).toBe(3)
+  })
+
+  it('grows by revealing default workspaces and keeps them across the visible list', () => {
+    const { result } = renderSession()
+
+    act(() => result.current.updateSettings({ terminalTabCount: 5 }))
+
+    expect(result.current.workspaceIds).toEqual(['terminal1', 'terminal2', 'terminal3', 'terminal4', 'terminal5'])
+    expect(result.current.workspaces.terminal4.windows).toHaveLength(4)
+    expect(result.current.workspaces.terminal5.windowCount).toBe(2)
+  })
+
+  it('shrink hides tabs but preserves the workspace record, then grow restores it exactly', () => {
+    const { result } = renderSession()
+
+    // Non-default terminal3 state: window count, binding, label, launch user.
+    act(() => result.current.setWindowCount('terminal3', 3))
+    act(() => result.current.addSessionToWindow('terminal3', 'terminal3-window-1', 'ops-shell', 'build'))
+    act(() => result.current.updateSettings({
+      terminalLabels: { terminal3: 'Ops' },
+      terminalLaunchUsers: { terminal3: 'build' },
+    }))
+
+    const before = JSON.parse(JSON.stringify(result.current.workspaces.terminal3))
+
+    act(() => result.current.updateSettings({ terminalTabCount: 2 }))
+    expect(result.current.workspaceIds).toEqual(['terminal1', 'terminal2'])
+    expect(result.current.workspaces.terminal3).toEqual(before)
+    expect(result.current.settings.terminalLabels.terminal3).toBe('Ops')
+    expect(result.current.settings.terminalLaunchUsers.terminal3).toBe('build')
+
+    act(() => result.current.updateSettings({ terminalTabCount: 3 }))
+    expect(result.current.workspaceIds).toEqual(['terminal1', 'terminal2', 'terminal3'])
+    expect(result.current.workspaces.terminal3).toEqual(before)
+  })
+
+  it('round-trips a hidden workspace through storage across a reload', () => {
+    const first = renderSession()
+
+    act(() => first.result.current.setWindowCount('terminal3', 3))
+    act(() => first.result.current.addSessionToWindow('terminal3', 'terminal3-window-1', 'ops-shell', 'build'))
+    act(() => first.result.current.updateSettings({ terminalTabCount: 2 }))
+    const before = JSON.parse(JSON.stringify(first.result.current.workspaces.terminal3))
+    first.unmount()
+
+    const second = renderSession()
+    expect(second.result.current.settings.terminalTabCount).toBe(2)
+    expect(second.result.current.workspaceIds).toEqual(['terminal1', 'terminal2'])
+    expect(second.result.current.workspaces.terminal3).toEqual(before)
+
+    act(() => second.result.current.updateSettings({ terminalTabCount: 3 }))
+    expect(second.result.current.workspaces.terminal3).toEqual(before)
+  })
+
+  it('keeps the version-sensitive theme reset for old stored settings and defaults their count', () => {
+    localStorage.setItem('chrote-dashboard-state', JSON.stringify({
+      version: 3,
+      settingsSchemaVersion: 1,
+      layoutsByViewport: {},
+      sidebarCollapsed: false,
+      settings: { ...DEFAULT_SETTINGS, theme: 'matrix', terminalTabCount: undefined },
+    }))
+
+    const { result } = renderSession()
+    expect(result.current.settings.theme).toBe('dark')
+    expect(result.current.settings.tmuxAppearance).toEqual(DEFAULT_TMUX_APPEARANCE)
+    expect(result.current.settings.terminalTabCount).toBe(3)
+  })
+
+  it('retains launch users stored for hidden workspace ids', () => {
+    localStorage.setItem('chrote-dashboard-state', JSON.stringify({
+      version: 3,
+      settingsSchemaVersion: 2,
+      layoutsByViewport: {},
+      sidebarCollapsed: false,
+      settings: { ...DEFAULT_SETTINGS, terminalTabCount: 2, terminalLaunchUsers: { terminal5: 'build' } },
+    }))
+
+    const { result } = renderSession()
+    expect(result.current.settings.terminalLaunchUsers.terminal5).toBe('build')
+  })
+
+  it('loading a smaller preset preserves current workspaces absent from it and never changes the count', () => {
+    localStorage.setItem('chrote-dashboard-presets', JSON.stringify([{
+      id: 'preset-small',
+      name: 'Solo',
+      createdAt: 1,
+      workspaces: {
+        terminal1: {
+          windowCount: 1,
+          windows: [{ id: 'terminal1-window-0', boundSessions: ['alice:solo'], activeSession: 'alice:solo', colorIndex: 0 }],
+        },
+      },
+    }]))
+
+    const { result } = renderSession()
+    act(() => result.current.setWindowCount('terminal3', 4))
+    const terminal3Before = JSON.parse(JSON.stringify(result.current.workspaces.terminal3))
+
+    act(() => result.current.loadPreset('preset-small'))
+
+    expect(result.current.settings.terminalTabCount).toBe(3)
+    expect(result.current.workspaceIds).toHaveLength(3)
+    expect(result.current.workspaces.terminal1.windows[0].boundSessions).toEqual(['alice:solo'])
+    expect(result.current.workspaces.terminal3).toEqual(terminal3Before)
+  })
+
+  it('loading a larger preset stores its extra workspaces hidden without changing the count', () => {
+    localStorage.setItem('chrote-dashboard-presets', JSON.stringify([{
+      id: 'preset-large',
+      name: 'Fleet',
+      createdAt: 1,
+      workspaces: {
+        terminal1: { windowCount: 1, windows: [] },
+        terminal2: { windowCount: 1, windows: [] },
+        terminal3: { windowCount: 1, windows: [] },
+        terminal4: {
+          windowCount: 1,
+          windows: [{ id: 'terminal4-window-0', boundSessions: ['alice:extra'], activeSession: 'alice:extra', colorIndex: 0 }],
+        },
+      },
+    }]))
+
+    const { result } = renderSession()
+    act(() => result.current.loadPreset('preset-large'))
+
+    expect(result.current.settings.terminalTabCount).toBe(3)
+    expect(result.current.workspaceIds).toEqual(['terminal1', 'terminal2', 'terminal3'])
+    expect(result.current.workspaces.terminal4.windows[0].boundSessions).toEqual(['alice:extra'])
+
+    act(() => result.current.updateSettings({ terminalTabCount: 4 }))
+    expect(result.current.workspaceIds).toContain('terminal4')
+    expect(result.current.workspaces.terminal4.windows[0].boundSessions).toEqual(['alice:extra'])
+  })
+})

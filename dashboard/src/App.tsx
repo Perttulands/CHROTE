@@ -13,7 +13,7 @@ import LayoutPresetsPanel from './components/LayoutPresetsPanel'
 import { IframePoolProvider } from './components/IframePool'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { installFeatureFlagHelpers, isFeatureEnabled } from './featureFlags'
-import { getSessionNameFromKey, getTerminalUserColor, getTerminalUserInitial, isTerminalWorkspaceId } from './types'
+import { getSessionNameFromKey, getTerminalUserColor, getTerminalUserInitial, isTerminalWorkspaceId, sortTerminalWorkspaceIds } from './types'
 import type { UserSettings, WorkspaceId } from './types'
 
 // Non-terminal views load as route-level chunks on first visit. The terminal
@@ -172,6 +172,20 @@ function DashboardContent() {
   const persistFilesTabState = isFeatureEnabled('filesPersistTabState')
   const serverStatusTab = isFeatureEnabled('serverStatusTab')
 
+  // Every workspace in state keeps its dock mounted — including ones hidden by
+  // a shrunken tab count — so panel state and pooled iframe claims survive.
+  const mountedWorkspaceIds = useMemo(
+    () => sortTerminalWorkspaceIds(Object.keys(workspaces) as WorkspaceId[]),
+    [workspaces],
+  )
+
+  // A tab-count shrink can hide the active workspace; fall back to terminal1.
+  useEffect(() => {
+    if (isTerminalWorkspaceId(activeTab, mountedWorkspaceIds) && !workspaceIds.includes(activeTab)) {
+      setActiveTab('terminal1')
+    }
+  }, [activeTab, workspaceIds, mountedWorkspaceIds])
+
   const handleShowHelp = useCallback(() => setShowHelp(true), [])
   const handleCloseHelp = useCallback(() => setShowHelp(false), [])
   const handleShowPresets = useCallback(() => setShowPresets(true), [])
@@ -276,7 +290,7 @@ function DashboardContent() {
 
         <div className="dashboard-content">
           {/* Terminal workspaces stay mounted so panel state and pooled iframe connections survive tab switches. */}
-          {workspaceIds.map(workspaceId => (
+          {mountedWorkspaceIds.map(workspaceId => (
             <TerminalWorkspaceDock
               key={workspaceId}
               workspaceId={workspaceId}

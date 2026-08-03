@@ -1,12 +1,43 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_TERMINAL_TAB_COUNT,
+  MAX_TERMINAL_TAB_COUNT,
+  MIN_TERMINAL_TAB_COUNT,
   TERMINAL_WORKSPACE_IDS,
   getDefaultLaunchUser,
   getTerminalLabel,
   isTerminalWorkspaceId,
+  normalizeTerminalTabCount,
   terminalWorkspaceIds,
 } from './types'
+
+describe('normalizeTerminalTabCount', () => {
+  it('passes through integers in range', () => {
+    expect(normalizeTerminalTabCount(1)).toBe(1)
+    expect(normalizeTerminalTabCount(3)).toBe(3)
+    expect(normalizeTerminalTabCount(6)).toBe(6)
+  })
+
+  it('clamps out-of-range numbers', () => {
+    expect(normalizeTerminalTabCount(0)).toBe(MIN_TERMINAL_TAB_COUNT)
+    expect(normalizeTerminalTabCount(-4)).toBe(MIN_TERMINAL_TAB_COUNT)
+    expect(normalizeTerminalTabCount(99)).toBe(MAX_TERMINAL_TAB_COUNT)
+    expect(normalizeTerminalTabCount(Number.POSITIVE_INFINITY)).toBe(MAX_TERMINAL_TAB_COUNT)
+    expect(normalizeTerminalTabCount(Number.NEGATIVE_INFINITY)).toBe(MIN_TERMINAL_TAB_COUNT)
+  })
+
+  it('floors fractional counts', () => {
+    expect(normalizeTerminalTabCount(2.9)).toBe(2)
+  })
+
+  it('defaults every non-numeric shape', () => {
+    expect(normalizeTerminalTabCount(undefined)).toBe(DEFAULT_TERMINAL_TAB_COUNT)
+    expect(normalizeTerminalTabCount(null)).toBe(DEFAULT_TERMINAL_TAB_COUNT)
+    expect(normalizeTerminalTabCount('5')).toBe(DEFAULT_TERMINAL_TAB_COUNT)
+    expect(normalizeTerminalTabCount(Number.NaN)).toBe(DEFAULT_TERMINAL_TAB_COUNT)
+    expect(normalizeTerminalTabCount({})).toBe(DEFAULT_TERMINAL_TAB_COUNT)
+  })
+})
 
 describe('terminalWorkspaceIds', () => {
   it('derives terminal1..terminalN for the requested count', () => {

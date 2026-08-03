@@ -124,6 +124,22 @@ describe('SettingsView terminal launch users', () => {
     Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } })
   })
 
+  it('exposes the terminal tab count as a bounded select and routes it through updateSettings', () => {
+    const updateSettings = vi.fn()
+    mockUseSession.mockReturnValue(sessionReturn(updateSettings))
+
+    render(<SettingsView />)
+
+    const countSelect = screen.getByRole('combobox', { name: 'Terminal tabs' })
+    expect(countSelect).toHaveValue('3')
+    const options = within(countSelect).getAllByRole('option').map(option => option.getAttribute('value'))
+    expect(options).toEqual(['1', '2', '3', '4', '5', '6'])
+
+    fireEvent.change(countSelect, { target: { value: '5' } })
+
+    expect(updateSettings).toHaveBeenCalledWith({ terminalTabCount: 5 })
+  })
+
   it('lets each terminal tab choose the Unix user used for new shells from configured users', () => {
     const updateSettings = vi.fn()
     mockUseSession.mockReturnValue(sessionReturn(updateSettings))

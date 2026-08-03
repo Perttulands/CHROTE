@@ -4,7 +4,7 @@ import { useSession } from '../context/SessionContext'
 import { useToast } from '../context/ToastContext'
 import type { UserSettings, TmuxAppearance, WorkspaceId, LaunchUser, FormationsTextSize } from '../types'
 import { resolveFormationsTextSize } from '../types'
-import { TMUX_PRESETS, defaultSessionPrefixForUser, defaultTerminalUserColor, getSessionPrefixForUser, getTerminalLabel, getTerminalUserColor, normalizeTerminalUsers, resolveLaunchUser } from '../types'
+import { MAX_TERMINAL_TAB_COUNT, MIN_TERMINAL_TAB_COUNT, TMUX_PRESETS, defaultSessionPrefixForUser, defaultTerminalUserColor, getSessionPrefixForUser, getTerminalLabel, getTerminalUserColor, normalizeTerminalUsers, resolveLaunchUser } from '../types'
 import FolderPickerModal from './FolderPickerModal'
 import SessionBankSection from './SessionBankSection'
 import NukeConfirmModal from './NukeConfirmModal'
@@ -439,6 +439,22 @@ function SettingsView({ sessionBankFocusNonce = 0 }: SettingsViewProps = {}) {
             </div>
           )}
           <p className="settings-hint">Small badges in the Sessions panel use the configured Unix username initial and color.</p>
+        </div>
+
+        <div className="settings-field">
+          <label className="settings-label" htmlFor="terminal-tab-count">Terminal tabs</label>
+          <select
+            id="terminal-tab-count"
+            aria-label="Terminal tabs"
+            className="settings-select"
+            value={settings.terminalTabCount}
+            onChange={(e) => updateSettings({ terminalTabCount: Number(e.target.value) })}
+          >
+            {Array.from({ length: MAX_TERMINAL_TAB_COUNT - MIN_TERMINAL_TAB_COUNT + 1 }, (_, i) => MIN_TERMINAL_TAB_COUNT + i).map(count => (
+              <option key={count} value={count}>{count}</option>
+            ))}
+          </select>
+          <p className="settings-hint">Hiding tabs never deletes their layouts or sessions; raise the count to bring them back.</p>
         </div>
 
         <div className="settings-field">

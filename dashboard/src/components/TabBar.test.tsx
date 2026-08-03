@@ -8,6 +8,7 @@ const mockState = vi.hoisted(() => ({
   saveCurrentLayout: vi.fn(),
   loadPreset: vi.fn(),
   clearWorkspaceAssignments: vi.fn(),
+  workspaceIds: null as readonly string[] | null,
 }))
 
 vi.mock('../context/SessionContext', () => ({
@@ -18,7 +19,7 @@ vi.mock('../context/SessionContext', () => ({
     loadPreset: mockState.loadPreset,
     layoutPresets: [{ id: 'preset-1', name: 'Focus Layout' }],
     clearWorkspaceAssignments: mockState.clearWorkspaceAssignments,
-    workspaceIds: TERMINAL_WORKSPACE_IDS,
+    workspaceIds: mockState.workspaceIds ?? TERMINAL_WORKSPACE_IDS,
   }),
 }))
 
@@ -62,6 +63,18 @@ describe('TabBar Services navigation', () => {
     const labels = screen.getAllByRole('button').map(button => button.textContent)
     const terminalLabels = labels.filter(label => label?.startsWith('Terminal'))
     expect(terminalLabels).toEqual(['Terminal', 'Terminal 2', 'Terminal 3'])
+  })
+
+  it('follows the resolved workspace id list instead of a fixed tab set', () => {
+    mockMatchMedia(false)
+    mockState.workspaceIds = ['terminal1', 'terminal2', 'terminal3', 'terminal4', 'terminal5']
+
+    render(<TabBar activeTab="terminal1" onTabChange={vi.fn()} />)
+
+    const labels = screen.getAllByRole('button').map(button => button.textContent)
+    const terminalLabels = labels.filter(label => label?.startsWith('Terminal'))
+    expect(terminalLabels).toEqual(['Terminal', 'Terminal 2', 'Terminal 3', 'Terminal 4', 'Terminal 5'])
+    mockState.workspaceIds = null
   })
 
   it('shows Services in desktop navigation', () => {
