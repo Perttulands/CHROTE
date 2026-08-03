@@ -83,26 +83,6 @@ type EnablePersistentAgentRequest struct {
 	RecoveryDescriptor *WorkloadRecoveryDescriptor `json:"recoveryDescriptor,omitempty"`
 }
 
-// PersistentAgentReconcileResult describes one desired-state reconciliation decision.
-// annotateStatusPersistError surfaces a failed reconcile bookkeeping write on
-// the result instead of letting the report claim durable state that was never
-// saved (ctx-6m5).
-// PersistentAgentReconcileResult describes one desired-state reconciliation decision.
-// annotateStatusPersistError surfaces a failed reconcile bookkeeping write on
-// the result instead of letting the report claim durable state that was never
-// saved (ctx-6m5).
-func annotateStatusPersistError(result *PersistentAgentReconcileResult, err error) {
-	if err == nil {
-		return
-	}
-	note := "status not persisted: " + err.Error()
-	if result.Error == "" {
-		result.Error = note
-		return
-	}
-	result.Error += "; " + note
-}
-
 type PersistentAgentReconcileResult struct {
 	Session        string `json:"session"`
 	UnixUser       string `json:"unixUser,omitempty"`
@@ -137,36 +117,6 @@ func sanitizePersistentIdentity(value string) string {
 	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
 	if len(value) > 240 {
 		value = value[:240]
-	}
-	return value
-}
-
-func sanitizePersistentAgentState(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case PersistentAgentStateStarting:
-		return PersistentAgentStateStarting
-	case PersistentAgentStateHealthy:
-		return PersistentAgentStateHealthy
-	case PersistentAgentStateNeedsInteraction:
-		return PersistentAgentStateNeedsInteraction
-	case PersistentAgentStateWrongIdentity:
-		return PersistentAgentStateWrongIdentity
-	case PersistentAgentStateBackoff:
-		return PersistentAgentStateBackoff
-	case PersistentAgentStateFailed:
-		return PersistentAgentStateFailed
-	default:
-		return ""
-	}
-}
-
-func sanitizePersistentRetryTimestamp(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	if _, err := time.Parse(time.RFC3339, value); err != nil {
-		return ""
 	}
 	return value
 }
@@ -250,17 +200,19 @@ func sanitizePersistentAgentEntry(entry PersistentAgentEntry) (PersistentAgentEn
 	entry.Identity = sanitizePersistentIdentity(entry.Identity)
 	entry.CWD = sanitizeRecoveryPath(entry.CWD, true)
 	entry.TranscriptPath = sanitizeRecoveryPath(entry.TranscriptPath, false)
-	entry.State = sanitizePersistentAgentState(entry.State)
-	if entry.ConsecutiveLaunchFailures < 0 {
-		entry.ConsecutiveLaunchFailures = 0
-	}
-	entry.NextRetryAt = sanitizePersistentRetryTimestamp(entry.NextRetryAt)
-	if entry.State != PersistentAgentStateBackoff {
-		entry.NextRetryAt = ""
-	}
-	if entry.State != PersistentAgentStateBackoff && entry.State != PersistentAgentStateFailed {
-		entry.ConsecutiveLaunchFailures = 0
-	}
+	// Supervision state is dropped on read rather than migrated. A record written
+	// by the pre-ADR-0014 supervisor carries a state ladder, a retry timestamp
+	// and a failure count that describe a supervisor that no longer runs; keeping
+	// them would mean shipping a health story nothing maintains. The entry's
+	// identity fields are what still matter, and a lock whose unit is missing is
+	// reported as degraded by AnnotateHealth, which is the honest reading and the
+	// operator's cue to re-lock.
+	entry.State = ""
+	entry.ConsecutiveLaunchFailures = 0
+	entry.NextRetryAt = ""
+	entry.LastCheckAt = ""
+	entry.LastRestartAt = ""
+	entry.LastError = ""
 	if entry.RecoveryDescriptor != nil {
 		desc, err := canonicalPersistentAgentDescriptor(entry.Name, entry.UnixUser, "/", *entry.RecoveryDescriptor)
 		if err != nil {
@@ -618,112 +570,6 @@ func (s *persistentAgentStore) FilterLiveSessionsForBank(sessions []core.Session
 		filtered = append(filtered, session)
 	}
 	return filtered, nil
-}
-
-func (s *persistentAgentStore) UpdateStatus(name, unixUser, action, errText string) error {
-	if s == nil {
-		return nil
-	}
-	now := persistentAgentNow().Format(time.RFC3339)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	entries, err := s.loadLocked()
-	if err != nil {
-		return err
-	}
-	entries, err = validatePersistentAgentEntries(entries)
-	if err != nil {
-		return err
-	}
-	key := persistentAgentKey(name, unixUser)
-	for i, entry := range entries {
-		if persistentAgentKey(entry.Name, entry.UnixUser) != key {
-			continue
-		}
-		entry.LastCheckAt = now
-		entry.UpdatedAt = now
-		entry.LastError = strings.TrimSpace(errText)
-		switch action {
-		case "ok", PersistentAgentStateHealthy:
-			entry.State = PersistentAgentStateHealthy
-			entry.ConsecutiveLaunchFailures = 0
-			entry.NextRetryAt = ""
-		case "recreated", "restarted", PersistentAgentStateStarting:
-			entry.State = PersistentAgentStateStarting
-			entry.ConsecutiveLaunchFailures = 0
-			entry.NextRetryAt = ""
-			entry.LastRestartAt = now
-		case PersistentAgentStateNeedsInteraction:
-			entry.State = PersistentAgentStateNeedsInteraction
-			entry.NextRetryAt = ""
-		case PersistentAgentStateWrongIdentity:
-			entry.State = PersistentAgentStateWrongIdentity
-			entry.NextRetryAt = ""
-		case PersistentAgentStateFailed:
-			entry.State = PersistentAgentStateFailed
-			entry.NextRetryAt = ""
-		}
-		entries[i] = entry
-		break
-	}
-	return s.saveLocked(entries)
-}
-
-func persistentAgentBackoffDelay(failures int) time.Duration {
-	if failures < 1 {
-		failures = 1
-	}
-	delay := persistentAgentInitialBackoff
-	for i := 1; i < failures; i++ {
-		delay *= 2
-		if delay >= persistentAgentMaxBackoff {
-			return persistentAgentMaxBackoff
-		}
-	}
-	return delay
-}
-
-func (s *persistentAgentStore) RecordLaunchFailure(name, unixUser, errText string) (PersistentAgentEntry, error) {
-	if s == nil {
-		return PersistentAgentEntry{}, nil
-	}
-	nowTime := persistentAgentNow()
-	now := nowTime.Format(time.RFC3339)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	entries, err := s.loadLocked()
-	if err != nil {
-		return PersistentAgentEntry{}, err
-	}
-	entries, err = validatePersistentAgentEntries(entries)
-	if err != nil {
-		return PersistentAgentEntry{}, err
-	}
-	key := persistentAgentKey(name, unixUser)
-	var updated PersistentAgentEntry
-	for i, entry := range entries {
-		if persistentAgentKey(entry.Name, entry.UnixUser) != key {
-			continue
-		}
-		entry.LastCheckAt = now
-		entry.UpdatedAt = now
-		entry.LastError = strings.TrimSpace(errText)
-		entry.ConsecutiveLaunchFailures++
-		if entry.ConsecutiveLaunchFailures >= persistentAgentMaxLaunchFailures {
-			entry.State = PersistentAgentStateFailed
-			entry.NextRetryAt = ""
-		} else {
-			entry.State = PersistentAgentStateBackoff
-			entry.NextRetryAt = nowTime.Add(persistentAgentBackoffDelay(entry.ConsecutiveLaunchFailures)).Format(time.RFC3339)
-		}
-		entries[i] = entry
-		updated = entry
-		break
-	}
-	if err := s.saveLocked(entries); err != nil {
-		return PersistentAgentEntry{}, err
-	}
-	return updated, nil
 }
 
 func (s *persistentAgentStore) loadLocked() ([]PersistentAgentEntry, error) {
