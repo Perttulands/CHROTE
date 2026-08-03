@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import { useDroppable, useDraggable } from '@dnd-kit/core'
 import { Send } from 'lucide-react'
 import { useSession } from '../context/SessionContext'
@@ -160,8 +160,14 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
   // Check if active session is loaded via pool
   const activeSessionLoaded = activeSession ? pool.loadedSessions.has(activeSession) : false
 
-  // Claim/release iframes from the pool as boundSessions change
-  useEffect(() => {
+  // Claim/release iframes from the pool as boundSessions change.
+  // Layout effect, not passive: on unmount (e.g. window-count shrink) a
+  // passive cleanup runs AFTER React removes this window's DOM subtree, so
+  // the iframe is already disconnected and can only be re-inserted into the
+  // pool — which reloads its document and kills the ttyd WebSocket. Layout
+  // cleanups run during the mutation phase, before detach, letting the pool
+  // move the still-connected iframe with state-preserving moveBefore.
+  useLayoutEffect(() => {
     const body = bodyRef.current
     if (!body) return
 
