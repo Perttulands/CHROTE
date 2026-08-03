@@ -63,6 +63,33 @@ test.describe.serial('Terminal Sizing: iframe fills container and xterm fits', (
     }).toPass({ timeout });
   }
 
+  // Helper: type a marker until the shell echoes it. A freshly created
+  // session can swallow keystrokes typed before its pty/shell is ready, so
+  // retype on a fresh line when nothing echoes. Each attempt gives the echo
+  // time to round-trip before reading — clearing and retyping inside a tight
+  // read loop would erase the echo and re-race it forever.
+  async function typeMarkerUntilEchoed(frame: Frame, marker: string, attempts = 5): Promise<void> {
+    const readCursorLine = () => frame.evaluate(() => {
+      const term = (window as typeof window & { term?: { buffer: { active: { baseY: number; cursorY: number; getLine: (row: number) => { translateToString: (trimRight?: boolean) => string } | undefined } } } }).term;
+      // Cursor line is baseY + cursorY: cursorY alone indexes scrollback
+      // whenever the buffer has scrolled or shrunk (baseY > 0).
+      return term?.buffer.active.getLine(term.buffer.active.baseY + term.buffer.active.cursorY)?.translateToString(true) ?? '';
+    });
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      await frame.locator('.xterm-helper-textarea').press('Control+u');
+      await frame.locator('.xterm-helper-textarea').pressSequentially(marker);
+      try {
+        await expect(async () => {
+          expect(await readCursorLine()).toContain(marker);
+        }).toPass({ timeout: 2000, intervals: [100, 250, 500] });
+        return;
+      } catch {
+        // Keystrokes swallowed (pty/shell not ready yet) — retype.
+      }
+    }
+    throw new Error(`marker never echoed after ${attempts} typing attempts`);
+  }
+
   // Helper: wait for iframe to reach stable dimensions after resize
   async function waitForIframeResize(iframe: ReturnType<typeof page.locator>, prevWidth: number, timeout = 5000): Promise<void> {
     await expect(async () => {
@@ -272,14 +299,7 @@ test.describe.serial('Terminal Sizing: iframe fills container and xterm fits', (
 
     const termFrameBefore = await waitForXterm(page);
     const promptMarker = 'CHROTE_REFIT_INPUT_MARKER';
-    await termFrameBefore.locator('.xterm-helper-textarea').pressSequentially(promptMarker);
-    await expect(async () => {
-      const line = await termFrameBefore.evaluate(() => {
-        const term = (window as typeof window & { term?: { buffer: { active: { cursorY: number; getLine: (row: number) => { translateToString: (trimRight?: boolean) => string } | undefined } } } }).term;
-        return term?.buffer.active.getLine(term.buffer.active.cursorY)?.translateToString(true) ?? '';
-      });
-      expect(line).toContain(promptMarker);
-    }).toPass({ timeout: 5000 });
+    await typeMarkerUntilEchoed(termFrameBefore, promptMarker);
     await termFrameBefore.evaluate(() => {
       // The dashboard fits by calling term.fit() directly (dispatched resize
       // events raced the ttyd socket open and were dropped — chrote-qlx).
@@ -391,12 +411,12 @@ test.describe.serial('Terminal Sizing: iframe fills container and xterm fits', (
     const xtermSizing = await termFrameAfter.evaluate(marker => {
         const viewport = document.querySelector('.xterm-viewport') as HTMLElement;
         const screen = document.querySelector('.xterm-screen') as HTMLElement;
-        const term = (window as typeof window & { term?: { cols: number; rows: number; buffer: { active: { cursorY: number; getLine: (row: number) => { translateToString: (trimRight?: boolean) => string } | undefined } } } }).term;
+        const term = (window as typeof window & { term?: { cols: number; rows: number; buffer: { active: { baseY: number; cursorY: number; getLine: (row: number) => { translateToString: (trimRight?: boolean) => string } | undefined } } } }).term;
         const renderCanvas = Array.from(screen?.querySelectorAll('canvas') ?? [])
           .find(canvas => !canvas.classList.contains('xterm-link-layer'));
         if (!viewport || !screen || !term || !renderCanvas) return null;
 
-        const inputLine = term.buffer.active.getLine(term.buffer.active.cursorY)?.translateToString(true) ?? '';
+        const inputLine = term.buffer.active.getLine(term.buffer.active.baseY + term.buffer.active.cursorY)?.translateToString(true) ?? '';
         const markerColumn = inputLine.indexOf(marker);
         const viewportRect = viewport.getBoundingClientRect();
         const canvasRect = renderCanvas.getBoundingClientRect();
@@ -479,14 +499,7 @@ test.describe.serial('Terminal Sizing: iframe fills container and xterm fits', (
 
     const termFrameBefore = await waitForXterm(page);
     const promptMarker = 'CHROTE_AUTOFIT_INPUT_MARKER';
-    await termFrameBefore.locator('.xterm-helper-textarea').pressSequentially(promptMarker);
-    await expect(async () => {
-      const line = await termFrameBefore.evaluate(() => {
-        const term = (window as typeof window & { term?: { buffer: { active: { cursorY: number; getLine: (row: number) => { translateToString: (trimRight?: boolean) => string } | undefined } } } }).term;
-        return term?.buffer.active.getLine(term.buffer.active.cursorY)?.translateToString(true) ?? '';
-      });
-      expect(line).toContain(promptMarker);
-    }).toPass({ timeout: 5000 });
+    await typeMarkerUntilEchoed(termFrameBefore, promptMarker);
 
     // Hide Terminal behind Files, change viewport geometry while hidden.
     await page.click('.tab:has-text("Files")');
@@ -510,12 +523,12 @@ test.describe.serial('Terminal Sizing: iframe fills container and xterm fits', (
       const state = await termFrameAfter.evaluate(marker => {
         const viewport = document.querySelector('.xterm-viewport') as HTMLElement;
         const screen = document.querySelector('.xterm-screen') as HTMLElement;
-        const term = (window as typeof window & { term?: { cols: number; rows: number; buffer: { active: { cursorY: number; getLine: (row: number) => { translateToString: (trimRight?: boolean) => string } | undefined } } } }).term;
+        const term = (window as typeof window & { term?: { cols: number; rows: number; buffer: { active: { baseY: number; cursorY: number; getLine: (row: number) => { translateToString: (trimRight?: boolean) => string } | undefined } } } }).term;
         const renderCanvas = Array.from(screen?.querySelectorAll('canvas') ?? [])
           .find(canvas => !canvas.classList.contains('xterm-link-layer'));
         if (!viewport || !screen || !term || !renderCanvas) return null;
 
-        const inputLine = term.buffer.active.getLine(term.buffer.active.cursorY)?.translateToString(true) ?? '';
+        const inputLine = term.buffer.active.getLine(term.buffer.active.baseY + term.buffer.active.cursorY)?.translateToString(true) ?? '';
         const markerColumn = inputLine.indexOf(marker);
         const viewportRect = viewport.getBoundingClientRect();
         const canvasRect = renderCanvas.getBoundingClientRect();
