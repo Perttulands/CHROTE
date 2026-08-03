@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useSession } from '../context/SessionContext'
 import { getSessionKey, getSessionNameFromKey, getSessionUserFromKey, type SendSessionPane, type TmuxSession } from '../types'
-import { detectAgentRole } from '../utils/roleDetection'
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -15,8 +14,7 @@ function filesFromList(list: FileList | File[] | null | undefined): File[] {
 }
 
 function defaultSubmitForSession(session: TmuxSession | undefined): boolean {
-  if (!session) return false
-  return Boolean(session.persistent || session.persistentAgentKind || detectAgentRole(session.name))
+  return Boolean(session)
 }
 
 function paneLabel(pane: SendSessionPane): string {
