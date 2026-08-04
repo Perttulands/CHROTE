@@ -60,6 +60,10 @@ profile's conservative Git fallback below; leave the generated block intact.
   concern.
 - Keep commits small and single-purpose. Stage only the files belonging to the
   current Bead, and preserve unrelated dirty work.
+- For generated, multiline, or Markdown commit messages, pass message bytes
+  with `git commit -F <file>` or `git commit -F - <<'EOF'`; never interpolate
+  message text into a double-quoted `-m` argument, where backticks and `$()`
+  execute in the shell.
 - Do not leave substantive completed work only in the working tree at handoff.
   Report the commit hash, Bead id/status, and verification receipt together.
 - A local commit does not authorize a push, rebase, merge, or deployment. Those
