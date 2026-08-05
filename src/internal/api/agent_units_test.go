@@ -7,8 +7,11 @@ import (
 	"os"
 	osuser "os/user"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/chrote/server/internal/core"
 )
 
 // The properties tested here are the ones a broken systemd control path would
@@ -31,17 +34,29 @@ type systemctlCall struct {
 }
 
 type fakeSystemctl struct {
-	calls  []systemctlCall
-	states map[string]systemdUnitState
-	err    error
+	calls        []systemctlCall
+	states       map[string]systemdUnitState
+	loadStates   map[string]string
+	errorsByUser map[string]error
+	err          error
 }
 
 func (f *fakeSystemctl) run(_ context.Context, unixUser string, args ...string) (string, error) {
 	f.calls = append(f.calls, systemctlCall{UnixUser: unixUser, Args: append([]string(nil), args...)})
+	if err := f.errorsByUser[unixUser]; err != nil {
+		return "", err
+	}
 	if f.err != nil {
 		return "", f.err
 	}
 	if len(args) > 0 && args[0] == "show" {
+		if slices.Contains(args, "--property=LoadState") {
+			state := f.loadStates[unixUser]
+			if state == "" {
+				state = "loaded"
+			}
+			return "LoadState=" + state + "\n", nil
+		}
 		unit := args[len(args)-1]
 		state, ok := f.states[unit]
 		if !ok {
@@ -53,6 +68,47 @@ func (f *fakeSystemctl) run(_ context.Context, unixUser string, args ...string) 
 			"\nExecMainStartTimestampMonotonic=1\nInvocationID=current-invocation\n", nil
 	}
 	return "", nil
+}
+
+func TestAgentUnitController_PreflightExercisesEachRealUserManagerAndFailsClosed(t *testing.T) {
+	controller, fake, _ := newTestAgentUnitController(t)
+	fake.loadStates = map[string]string{"alice": "loaded", "bob": "not-found"}
+
+	errs := controller.Preflight(context.Background(), []string{"alice", "bob"})
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "bob") {
+		t.Fatalf("preflight errors = %v, want one error naming bob", errs)
+	}
+	if err := controller.RequireCapability("alice"); err != nil {
+		t.Fatalf("loaded target-user template must be available: %v", err)
+	}
+	if err := controller.RequireCapability("bob"); err == nil || !strings.Contains(err.Error(), "not loaded") {
+		t.Fatalf("missing target-user template must be unavailable, got %v", err)
+	}
+	for _, user := range []string{"alice", "bob"} {
+		found := false
+		for _, call := range fake.calls {
+			if call.UnixUser == user && slices.Contains(call.Args, "--property=LoadState") {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("preflight never exercised %s's user manager: %+v", user, fake.calls)
+		}
+	}
+}
+
+func TestAgentUnitController_AnnotateCapabilityMakesUnavailableStateExplicit(t *testing.T) {
+	controller, fake, _ := newTestAgentUnitController(t)
+	fake.loadStates = map[string]string{"alice": "not-found"}
+	controller.Preflight(context.Background(), []string{"alice"})
+
+	sessions := controller.AnnotateCapability([]core.Session{{Name: "codex-alpha", UnixUser: "alice"}})
+	if sessions[0].PersistentAvailable == nil || *sessions[0].PersistentAvailable {
+		t.Fatalf("missing grant/template must project explicit unavailable state: %+v", sessions[0])
+	}
+	if !strings.Contains(sessions[0].PersistentCapabilityDetail, "not loaded") {
+		t.Fatalf("capability detail must explain the unavailable state: %+v", sessions[0])
+	}
 }
 
 func (f *fakeSystemctl) argvFor(verb string) []string {

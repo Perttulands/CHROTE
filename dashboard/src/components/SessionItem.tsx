@@ -403,6 +403,15 @@ function SessionItem({ session }: SessionItemProps) {
               <span className="session-context-icon">🔓</span>
               Make mortal (metadata only)
             </button>
+          ) : session.persistentAvailable === false ? (
+            <button
+              className="session-context-item"
+              disabled
+              title={session.persistentCapabilityDetail || 'Persistent-agent capability is unavailable'}
+            >
+              <span className="session-context-icon">🔒</span>
+              Persistence unavailable
+            </button>
           ) : (
             <button className="session-context-item" onClick={handleMakePersistent}>
               <span className="session-context-icon">🔒</span>

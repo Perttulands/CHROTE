@@ -10,6 +10,12 @@ EnvironmentFile=/etc/chrote/chrote-srv.env
 RuntimeDirectory=chrote
 RuntimeDirectoryMode=0750
 UMask=0002
+# Install the only cross-user control helper at the absolute path compiled into
+# the server, then validate and install the narrow sudo grant before CHROTE can
+# offer session locking. Both source files are tracked review artifacts.
+ExecStartPre=+/bin/sh -lc '/usr/bin/install -D -o root -g root -m 0755 "$CHROTE_SERVICE_ROOT/scripts/chrote-agentctl" /usr/local/libexec/chrote/chrote-agentctl'
+ExecStartPre=+/bin/sh -lc '/usr/sbin/visudo -cf "$CHROTE_SERVICE_ROOT/services/chrote-agentctl.sudoers"'
+ExecStartPre=+/bin/sh -lc '/usr/bin/install -D -o root -g root -m 0440 "$CHROTE_SERVICE_ROOT/services/chrote-agentctl.sudoers" /etc/sudoers.d/chrote-agentctl'
 ExecStartPre=+/bin/sh -lc 'install -d -o "${CHROTE_SERVICE_USER:-chrote}" -g "${CHROTE_SERVICE_GROUP:-chrote}" -m "${CHROTE_RUNTIME_MODE:-0750}" "${CHROTE_RUNTIME_ROOT:-/run/chrote}/tmux" "${CHROTE_RUNTIME_ROOT:-/run/chrote}/formations-tmux"'
 # Install the tracked grant helper before running it, so the copy that executes
 # is always the copy that review, tests and doc-lint inspect. A host drop-in that

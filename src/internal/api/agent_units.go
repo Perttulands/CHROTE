@@ -32,11 +32,13 @@ const (
 	agentUnitConfigMode  = 0o640
 	agentUnitDirMode     = 0o700
 	agentSystemctlBudget = 15 * time.Second
+	agentPreflightUnit   = "chrote-agent@chrote-preflight.service"
 
-	// The operator-installed setuid-free helper that reaches another account's
-	// user manager. Resolved from PATH so the deployment, not the binary,
-	// decides where it lives.
-	agentUnitHelperBinary = "chrote-agentctl"
+	// This is the entire privilege boundary. Both paths are root-owned deployment
+	// artifacts; PATH must never choose what runs after sudo crosses accounts.
+	agentUnitSudoBinary   = "/usr/bin/sudo"
+	agentUnitHelperBinary = "/usr/local/libexec/chrote/chrote-agentctl"
+	agentSystemctlBinary  = "/usr/bin/systemctl"
 
 	agentHealthHealthy  = "healthy"
 	agentHealthDegraded = "degraded"
@@ -122,10 +124,18 @@ type agentUnitReceipt struct {
 }
 
 type agentUnitController struct {
-	root        string
-	receiptRoot string
-	systemctl   systemctlRunner
-	mu          sync.Mutex
+	root              string
+	receiptRoot       string
+	systemctl         systemctlRunner
+	mu                sync.Mutex
+	capabilityMu      sync.RWMutex
+	capabilityChecked bool
+	capabilities      map[string]agentUnitCapability
+}
+
+type agentUnitCapability struct {
+	Available bool
+	Detail    string
 }
 
 const (
@@ -163,10 +173,125 @@ func newAgentUnitController(root string, runner systemctlRunner) *agentUnitContr
 	}
 	root = strings.TrimSpace(root)
 	return &agentUnitController{
-		root:        root,
-		receiptRoot: agentReceiptsPathForUnitsRoot(root),
-		systemctl:   runner,
+		root:         root,
+		receiptRoot:  agentReceiptsPathForUnitsRoot(root),
+		systemctl:    runner,
+		capabilities: make(map[string]agentUnitCapability),
 	}
+}
+
+// Preflight exercises the actual systemd user manager for every account the UI
+// may target. It is read-only: LoadState on a reserved, never-started instance
+// proves the bus, privilege crossing and installed template in one call.
+func (c *agentUnitController) Preflight(parent context.Context, unixUsers []string) []error {
+	if c == nil {
+		return []error{fmt.Errorf("persistent-agent controller is unavailable")}
+	}
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, agentSystemctlBudget)
+	defer cancel()
+	if len(unixUsers) == 0 {
+		unixUsers = []string{""}
+	}
+
+	capabilities := make(map[string]agentUnitCapability, len(unixUsers))
+	errs := []error{}
+	for _, requestedUser := range unixUsers {
+		unixUser, err := resolveAgentUnixUser(requestedUser)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if _, duplicate := capabilities[unixUser]; duplicate {
+			continue
+		}
+		out, runErr := c.systemctl(ctx, unixUser, "show", "--property=LoadState", agentPreflightUnit)
+		loadState := systemdProperty(out, "LoadState")
+		capability := agentUnitCapability{Available: runErr == nil && loadState == "loaded"}
+		switch {
+		case runErr != nil:
+			capability.Detail = fmt.Sprintf("persistent-agent control for %s failed preflight: %v", unixUser, runErr)
+		case loadState != "loaded":
+			capability.Detail = fmt.Sprintf("persistent-agent unit template is not loaded for %s", unixUser)
+		}
+		capabilities[unixUser] = capability
+		if !capability.Available {
+			errs = append(errs, errors.New(capability.Detail))
+		}
+	}
+
+	c.capabilityMu.Lock()
+	c.capabilities = capabilities
+	c.capabilityChecked = true
+	c.capabilityMu.Unlock()
+	return errs
+}
+
+func systemdProperty(output, name string) string {
+	for _, line := range strings.Split(output, "\n") {
+		key, value, found := strings.Cut(strings.TrimSpace(line), "=")
+		if found && key == name {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+// RequireCapability is a no-op only for explicitly constructed handlers whose
+// startup preflight has not run. Production main always preflights before it
+// listens and then fails this check closed for each unavailable account.
+func (c *agentUnitController) RequireCapability(unixUser string) error {
+	if c == nil {
+		return fmt.Errorf("persistent-agent capability is unavailable")
+	}
+	resolved, err := resolveAgentUnixUser(unixUser)
+	if err != nil {
+		return err
+	}
+	c.capabilityMu.RLock()
+	defer c.capabilityMu.RUnlock()
+	if !c.capabilityChecked {
+		return nil
+	}
+	capability, found := c.capabilities[resolved]
+	if !found {
+		return fmt.Errorf("persistent-agent control for %s was not preflighted", resolved)
+	}
+	if !capability.Available {
+		return errors.New(capability.Detail)
+	}
+	return nil
+}
+
+func (c *agentUnitController) AnnotateCapability(sessions []core.Session) []core.Session {
+	if c == nil {
+		return sessions
+	}
+	for i := range sessions {
+		resolved, err := resolveAgentUnixUser(sessions[i].UnixUser)
+		if err != nil {
+			continue
+		}
+		c.capabilityMu.RLock()
+		checked := c.capabilityChecked
+		capability, found := c.capabilities[resolved]
+		c.capabilityMu.RUnlock()
+		if !checked {
+			continue
+		}
+		available := found && capability.Available
+		sessions[i].PersistentAvailable = &available
+		if !available {
+			if found {
+				sessions[i].PersistentCapabilityDetail = capability.Detail
+			} else {
+				sessions[i].PersistentCapabilityDetail = fmt.Sprintf("persistent-agent control for %s was not preflighted", resolved)
+			}
+		}
+	}
+	return sessions
 }
 
 // agentUnitName converts a session name into the one unit name it is allowed to
@@ -759,13 +884,14 @@ func runSystemctlForUser(ctx context.Context, unixUser string, args ...string) (
 	argv := append([]string{"--user"}, args...)
 	var cmd *exec.Cmd
 	if current, err := osuser.Current(); err == nil && current.Username == unixUser {
-		cmd = exec.CommandContext(ctx, "systemctl", argv...)
+		cmd = exec.CommandContext(ctx, agentSystemctlBinary, argv...)
 	} else {
 		// Reaching another account's manager is the privileged step. It goes
 		// through a helper the operator installs and scopes to these verbs and
 		// to the chrote-agent@ template; this call site never constructs a unit
 		// name itself, it only forwards one that agentUnitName produced.
-		cmd = exec.CommandContext(ctx, agentUnitHelperBinary, append([]string{unixUser}, argv...)...)
+		helperArgv := append([]string{"-n", "--", agentUnitHelperBinary, unixUser}, argv...)
+		cmd = exec.CommandContext(ctx, agentUnitSudoBinary, helperArgv...)
 	}
 	out, err := cmd.Output()
 	if err != nil {

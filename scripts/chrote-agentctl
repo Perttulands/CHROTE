@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/bash
 # chrote-agentctl -- the one privileged step in locked-agent supervision.
 #
 # CHROTE runs as its own service account. Locking a session means enabling a
@@ -65,7 +65,7 @@ done
 [[ "$unit" =~ ^chrote-agent@[a-zA-Z0-9_-]{1,50}\.service$ ]] || fail "unit outside the chrote-agent@ template: $unit"
 [[ "$unit" != chrote-agent@-* ]] || fail "session names may not start with a dash"
 
-runtime_dir="/run/user/$(id -u "$target_user" 2>/dev/null || echo invalid)"
+runtime_dir="/run/user/$(/usr/bin/id -u "$target_user" 2>/dev/null || echo invalid)"
 [[ -d "$runtime_dir" ]] || fail "no user manager runtime directory for $target_user; is lingering enabled?"
 
 # `env -i`, never bare `env`: bare env ADDS to the caller's environment, and the
@@ -73,7 +73,7 @@ runtime_dir="/run/user/$(id -u "$target_user" 2>/dev/null || echo invalid)"
 # service credentials. Those would be inherited by a process running as the
 # supervised account, which can read its own /proc/<pid>/environ. -i replaces the
 # environment with exactly the three variables systemctl --user needs.
-exec setpriv --reuid "$target_user" --regid "$target_user" --init-groups --inh-caps=-all -- \
-  env -i "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+exec /usr/bin/setpriv --reuid "$target_user" --regid "$target_user" --init-groups --inh-caps=-all -- \
+  /usr/bin/env -i "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
   "XDG_RUNTIME_DIR=$runtime_dir" "DBUS_SESSION_BUS_ADDRESS=unix:path=$runtime_dir/bus" \
-  systemctl --user "$verb" "${args[@]}" "$unit"
+  /usr/bin/systemctl --user "$verb" "${args[@]}" "$unit"

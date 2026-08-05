@@ -121,6 +121,34 @@ esac
 	}
 }
 
+func TestTmuxHandler_EnablePersistentAgentRejectsUnavailableCapabilityBeforeSideEffects(t *testing.T) {
+	dir := t.TempDir()
+	fake := &fakeSystemctl{
+		states:     map[string]systemdUnitState{},
+		loadStates: map[string]string{"alice": "not-found"},
+	}
+	controller := newAgentUnitController(filepath.Join(dir, "units"), fake.run)
+	controller.Preflight(context.Background(), []string{"alice"})
+	handler := NewTmuxHandler()
+	handler.agentUnits = controller
+	handler.persistent = newPersistentAgentStore(filepath.Join(dir, "persistent.json"))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions/codex-alpha/persistence?unixUser=alice", strings.NewReader(`{}`))
+	req.SetPathValue("name", "codex-alpha")
+	recorder := httptest.NewRecorder()
+	handler.EnablePersistentAgent(recorder, req)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 before any lock side effect: %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "PERSISTENCE_UNAVAILABLE") {
+		t.Fatalf("response must name capability unavailability: %s", recorder.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "persistent.json")); !os.IsNotExist(err) {
+		t.Fatalf("unavailable capability must not write desired state, stat err = %v", err)
+	}
+}
+
 func TestTmuxHandler_EnablePersistentAgentInfersHermesDescriptorFromProductionArgv(t *testing.T) {
 	tmpDir := t.TempDir()
 	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")

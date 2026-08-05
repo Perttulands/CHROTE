@@ -232,6 +232,8 @@ export interface TmuxSession {
   persistentAgentKind?: 'codex' | 'claude' | string
   persistentAgentSessionId?: string
   persistentHermesProfile?: string
+  persistentAvailable?: boolean
+  persistentCapabilityDetail?: string
   /** Health of the session's own systemd unit, read live by the server. */
   persistentUnit?: string
   persistentHealth?: PersistentAgentHealth

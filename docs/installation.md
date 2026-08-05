@@ -155,6 +155,15 @@ it cannot supervise. The template's launcher attaches to an existing tmux
 server and refuses to create one, so the tmux server's lifetime stays with
 whichever unit owns that socket.
 
+For a dedicated host-service deployment, the tracked service artifact installs
+the reviewed helper at `/usr/local/libexec/chrote/chrote-agentctl`, validates and
+installs `services/chrote-agentctl.sudoers`, and then starts CHROTE. The server
+uses `/usr/bin/sudo -n --` with that absolute helper path for cross-user calls.
+At startup it queries `LoadState` through each configured account's real user
+manager. A missing grant, bus, lingering session, or template is logged and
+makes locking visibly unavailable for that account; terminal observation
+remains available.
+
 Install `services/chrote-agent-state.conf` through `systemd-tmpfiles`, then run
 `scripts/chrote-agent-state-init` once per target account. The latter creates a
 CHROTE-owned, target-readable config directory and a separate target-owned,

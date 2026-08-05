@@ -184,6 +184,12 @@ security work is therefore mechanism correctness, not authorization:
 
 - The grant is scoped to the verbs CHROTE needs and to the unit pattern
   `chrote-agent@*.service`. It never permits arbitrary unit names.
+- Cross-user calls use `/usr/bin/sudo -n --` and the single root-owned helper at
+  `/usr/local/libexec/chrote/chrote-agentctl`; neither executable is resolved
+  through the service `PATH`. The tracked `services/chrote-agentctl.sudoers`
+  grants the `chrote` service account only that helper, whose parser revalidates
+  the target account, user-manager scope, verb, options, and exact unit pattern.
+  The tracked host unit validates the grant with `visudo` before installing it.
 - Session names are validated by the existing `core.ValidateSessionName`
   (`^[a-zA-Z0-9_-]+$`, max 50) *before* they are used to build a unit name, so a
   name can never inject a second unit, a flag, or a shell metacharacter.
@@ -198,6 +204,11 @@ security work is therefore mechanism correctness, not authorization:
   discipline. tmux accepts one fixed pane command string, containing only the
   validated installed launcher path and a constant mode flag; no config value or
   rendered resume command crosses that shell-command boundary.
+- Before the HTTP server listens, a read-only `LoadState` query reaches every
+  configured account through the real control path. This simultaneously proves
+  the privilege grant, target user bus, and installed template. Failure is logged
+  and projected to that account's sessions; the UI shows locking as unavailable
+  and the mutation endpoint returns 503 before writing desired state.
 
 This is consistent with the recorded threat model: the network perimeter is the
 trust boundary, and agents have broad host access by design. Deliberately granted

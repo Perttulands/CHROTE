@@ -1469,6 +1469,12 @@ func (h *TmuxHandler) EnablePersistentAgent(w http.ResponseWriter, r *http.Reque
 			unixUser = queryUser
 		}
 	}
+	if h.agentUnits != nil {
+		if err := h.agentUnits.RequireCapability(unixUser); err != nil {
+			core.WriteError(w, http.StatusServiceUnavailable, "PERSISTENCE_UNAVAILABLE", err.Error())
+			return
+		}
+	}
 	newName := strings.TrimSpace(req.NewName)
 	if newName == "" {
 		newName = sessionName

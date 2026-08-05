@@ -22,6 +22,10 @@ type Session struct {
 	PersistentAgentKind      string `json:"persistentAgentKind,omitempty"`
 	PersistentAgentSessionID string `json:"persistentAgentSessionId,omitempty"`
 	PersistentHermesProfile  string `json:"persistentHermesProfile,omitempty"`
+	// PersistentAvailable is set only after startup preflight. A pointer keeps
+	// legacy/test handlers that did not preflight distinct from a proven false.
+	PersistentAvailable        *bool  `json:"persistentAvailable,omitempty"`
+	PersistentCapabilityDetail string `json:"persistentCapabilityDetail,omitempty"`
 	// Supervision health comes from the session's own systemd unit, read live
 	// (ADR-0014). The retired fields here -- resume command, a six-state ladder,
 	// launch-failure counters, retry and last-check timestamps -- described an

@@ -54,6 +54,9 @@ release.
 - Locked-agent health now requires a live observed agent process and a receipt
   bound to the current systemd invocation, pane, PID start identity, and unit
   start time; the unit does not report ready until that proof is published.
+- Cross-user locking now uses a shipped, validated sudoers grant and one absolute
+  root-owned helper. Startup probes each configured user's real manager and the
+  dashboard disables locking when that capability is unavailable.
 - Fresh terminal sidecars persist their default-closed state across reloads.
 - `/` opens Sessions for the active closed sidecar and focuses search.
 - Workload recovery records and restores supported agent, shell, and server

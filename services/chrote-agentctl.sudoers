@@ -1,0 +1,4 @@
+# CHROTE's only cross-user locked-agent authority. The root-owned helper rejects
+# every user, verb, option and unit outside ADR-0014's exact contract.
+Cmnd_Alias CHROTE_AGENT_CONTROL = /usr/local/libexec/chrote/chrote-agentctl *
+chrote ALL=(root) NOPASSWD: CHROTE_AGENT_CONTROL

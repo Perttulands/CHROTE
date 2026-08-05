@@ -48,11 +48,12 @@ type Config struct {
 	StartTtyd               bool
 	FormationsDataRoot      string
 	StartSessionDropJanitor bool
+	PreflightAgentUnits     bool
 }
 
 func main() {
 	// Parse flags
-	config := Config{StartSessionDropJanitor: true}
+	config := Config{StartSessionDropJanitor: true, PreflightAgentUnits: true}
 	flag.StringVar(&config.Host, "host", defaultBindHost, "Bind address")
 	flag.IntVar(&config.Port, "port", defaultServerPort, "Server port")
 	flag.IntVar(&config.TtydPort, "ttyd-port", defaultTtydPort, "ttyd port")
@@ -158,6 +159,11 @@ func main() {
 
 func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Context) (*proxy.TerminalProxy, *api.ScheduledHandler, context.CancelFunc) {
 	tmuxHandler := api.NewTmuxHandler()
+	if config.PreflightAgentUnits {
+		for _, err := range tmuxHandler.PreflightAgentUnits(ctx) {
+			log.Printf("Warning: persistent-agent capability unavailable: %v", err)
+		}
+	}
 	closedJanitorDone := make(chan struct{})
 	close(closedJanitorDone)
 	var janitorDone <-chan struct{} = closedJanitorDone

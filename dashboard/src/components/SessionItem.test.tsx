@@ -309,6 +309,28 @@ describe('SessionItem user badge and context actions', () => {
     expect(window.prompt).not.toHaveBeenCalledWith(expect.stringMatching(/session id/i), expect.anything())
   })
 
+  it('does not offer locking when startup preflight marked the capability unavailable', () => {
+    render(
+      <SessionItem
+        session={{
+          name: 'codex-unavailable',
+          windows: 1,
+          attached: false,
+          group: 'codex',
+          unixUser: 'alice',
+          persistentAvailable: false,
+          persistentCapabilityDetail: 'agent unit template is not loaded for alice',
+        }}
+      />
+    )
+
+    fireEvent.contextMenu(screen.getByText('codex-unavailable'))
+    expect(screen.queryByRole('button', { name: /^Make persistent$/i })).toBeNull()
+    const unavailable = screen.getByRole('button', { name: /Persistence unavailable/i })
+    expect(unavailable).toBeDisabled()
+    expect(unavailable).toHaveAttribute('title', 'agent unit template is not loaded for alice')
+  })
+
   it('surfaces available Hermes profile identity when making a session persistent', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     vi.spyOn(window, 'prompt')

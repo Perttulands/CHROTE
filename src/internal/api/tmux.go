@@ -179,6 +179,16 @@ func NewTmuxHandler() *TmuxHandler {
 	}
 }
 
+// PreflightAgentUnits must run before the production server starts listening.
+// A failed account remains visible for terminal use, but locking is explicitly
+// unavailable for it instead of failing after operator input.
+func (h *TmuxHandler) PreflightAgentUnits(ctx context.Context) []error {
+	if h == nil || h.agentUnits == nil {
+		return []error{fmt.Errorf("persistent-agent controller is unavailable")}
+	}
+	return h.agentUnits.Preflight(ctx, configuredTerminalUsers())
+}
+
 func (entry *SessionBankEntry) UnmarshalJSON(raw []byte) error {
 	type alias SessionBankEntry
 	var fields map[string]json.RawMessage
@@ -1588,11 +1598,12 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	if h.persistent != nil {
 		var persistentErr error
 		response.Sessions, persistentErr = h.persistent.AnnotateSessions(response.Sessions)
-		response.Sessions = h.agentUnits.AnnotateHealth(context.Background(), response.Sessions)
+		response.Sessions = h.agentUnits.AnnotateHealth(r.Context(), response.Sessions)
 		if persistentErr != nil {
 			response.Error = appendSessionResponseError(response.Error, "persistent agents: "+persistentErr.Error())
 		}
 	}
+	response.Sessions = h.agentUnits.AnnotateCapability(response.Sessions)
 	if managedErr == nil {
 		response.Sessions = filterLiveSessionsForManagedStatus(response.Sessions, managedEntries)
 	}

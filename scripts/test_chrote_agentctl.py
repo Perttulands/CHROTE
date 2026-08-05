@@ -15,6 +15,10 @@ import unittest
 from pathlib import Path
 
 HELPER = Path(__file__).resolve().parents[1] / "scripts" / "chrote-agentctl"
+REPO_ROOT = HELPER.parents[1]
+SUDOERS = REPO_ROOT / "services" / "chrote-agentctl.sudoers"
+SERVER_UNIT = REPO_ROOT / "services" / "chrote-srv.service"
+CONTROLLER = REPO_ROOT / "src" / "internal" / "api" / "agent_units.go"
 
 # Refusals exit 64 and never exec. A test that asserts "non-zero" would also pass
 # if the helper crashed after doing the dangerous thing, so the exact code
@@ -120,7 +124,7 @@ class SourceContractTests(unittest.TestCase):
             self.assertNotIn(pattern, self.text)
 
     def test_final_call_is_an_exec_with_an_argv(self) -> None:
-        self.assertIn("exec setpriv", self.text)
+        self.assertIn("exec /usr/bin/setpriv", self.text)
 
     def test_start_and_stop_are_not_grantable(self) -> None:
         # A verb that starts a unit without enabling it would create a lock that
@@ -128,6 +132,26 @@ class SourceContractTests(unittest.TestCase):
         allowed = next(line for line in self.text.splitlines() if "ALLOWED_VERBS=" in line)
         for verb in (" start ", " stop ", " restart "):
             self.assertNotIn(verb, allowed)
+
+    def test_privileged_executables_are_absolute(self) -> None:
+        self.assertTrue(self.text.startswith("#!/usr/bin/bash\n"))
+        for path in ("/usr/bin/id", "/usr/bin/setpriv", "/usr/bin/env", "/usr/bin/systemctl"):
+            self.assertIn(path, self.text)
+
+    def test_host_service_installs_the_reviewed_helper_and_grant(self) -> None:
+        sudoers = SUDOERS.read_text()
+        unit = SERVER_UNIT.read_text()
+        controller = CONTROLLER.read_text()
+        self.assertIn("/usr/local/libexec/chrote/chrote-agentctl", sudoers)
+        self.assertIn("chrote-agentctl *", sudoers)
+        self.assertIn('agentUnitSudoBinary   = "/usr/bin/sudo"', controller)
+        self.assertIn(
+            'agentUnitHelperBinary = "/usr/local/libexec/chrote/chrote-agentctl"',
+            controller,
+        )
+        self.assertIn("scripts/chrote-agentctl", unit)
+        self.assertIn("services/chrote-agentctl.sudoers", unit)
+        self.assertIn("/usr/sbin/visudo -cf", unit)
 
 
 if __name__ == "__main__":
