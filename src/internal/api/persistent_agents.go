@@ -548,31 +548,56 @@ func (s *persistentAgentStore) NamesForUser(unixUser string) (map[string]bool, e
 	return result, nil
 }
 
-func (s *persistentAgentStore) AnnotateSessions(sessions []core.Session) ([]core.Session, error) {
+func (s *persistentAgentStore) AnnotateSessions(sessions []core.Session, projectionUsers ...string) ([]core.Session, error) {
 	entries, err := s.Read()
 	if err != nil {
 		return sessions, err
+	}
+	allowedUsers := map[string]bool{}
+	for _, unixUser := range projectionUsers {
+		allowedUsers[strings.TrimSpace(unixUser)] = true
 	}
 	byKey := map[string]PersistentAgentEntry{}
 	for _, entry := range entries {
 		byKey[persistentAgentKey(entry.Name, entry.UnixUser)] = entry
 	}
+	seen := map[string]bool{}
 	for i := range sessions {
-		entry, ok := byKey[persistentAgentKey(sessions[i].Name, sessions[i].UnixUser)]
+		key := persistentAgentKey(sessions[i].Name, sessions[i].UnixUser)
+		entry, ok := byKey[key]
 		if !ok {
 			continue
 		}
-		sessions[i].Persistent = true
-		sessions[i].PersistentIdentity = entry.Identity
-		sessions[i].PersistentAgentKind = entry.AgentKind
-		sessions[i].PersistentAgentSessionID = entry.AgentSessionID
-		sessions[i].PersistentHermesProfile = persistentAgentHermesProfile(entry)
-		sessions[i].PersistentUnlockFailed = entry.UnlockFailed
-		sessions[i].PersistentUnlockError = entry.UnlockError
+		seen[key] = true
+		applyPersistentAgentEntry(&sessions[i], entry)
 		// Health is deliberately NOT read here: this store knows what was asked
 		// for, not what systemd is doing about it. AnnotateHealth fills that in.
 	}
+	for _, entry := range entries {
+		key := persistentAgentKey(entry.Name, entry.UnixUser)
+		if seen[key] || (len(projectionUsers) > 0 && !allowedUsers[strings.TrimSpace(entry.UnixUser)]) {
+			continue
+		}
+		projected := core.Session{
+			Name:                     entry.Name,
+			UnixUser:                 entry.UnixUser,
+			Group:                    core.CategorizeSession(entry.Name),
+			PersistentSessionMissing: true,
+		}
+		applyPersistentAgentEntry(&projected, entry)
+		sessions = append(sessions, projected)
+	}
 	return sessions, nil
+}
+
+func applyPersistentAgentEntry(session *core.Session, entry PersistentAgentEntry) {
+	session.Persistent = true
+	session.PersistentIdentity = entry.Identity
+	session.PersistentAgentKind = entry.AgentKind
+	session.PersistentAgentSessionID = entry.AgentSessionID
+	session.PersistentHermesProfile = persistentAgentHermesProfile(entry)
+	session.PersistentUnlockFailed = entry.UnlockFailed
+	session.PersistentUnlockError = entry.UnlockError
 }
 
 func persistentAgentHermesProfile(entry PersistentAgentEntry) string {

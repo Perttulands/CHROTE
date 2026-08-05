@@ -52,6 +52,7 @@ function persistentTitle(session: TmuxSession): string | undefined {
   if (hermesProfile) parts.push(`Hermes profile ${hermesProfile}`)
   if (session.persistentUnit) parts.push(session.persistentUnit)
   if (session.persistentActiveState) parts.push(`unit ${session.persistentActiveState}`)
+  if (session.persistentSessionMissing) parts.push('tmux session absent')
   if (session.persistentDetail) parts.push(session.persistentDetail)
   if (session.persistentUnlockError) parts.push(`unlock failed: ${session.persistentUnlockError}`)
   const title = parts.join(' · ')
@@ -73,6 +74,7 @@ function persistentPrompt(session: TmuxSession): string {
 function SessionItem({ session }: SessionItemProps) {
   const { assignedSessions, handleSessionClick, focusSessionAssignment, deleteSession, renameSession, makeSessionPersistent, makeSessionMortal, workspaces, workspaceIds, addSessionToWindow, removeSessionFromWindow, openFloatingModal, openSendToSession, settings } = useSession()
   const sessionKey = getSessionKey(session.name, session.unixUser)
+  const persistentSessionMissing = session.persistent === true && session.persistentSessionMissing === true
   const assignmentKey = assignedSessions.has(sessionKey) ? sessionKey : session.name
   const assignment = assignedSessions.get(assignmentKey)
   const isAssigned = !!assignment
@@ -101,6 +103,7 @@ function SessionItem({ session }: SessionItemProps) {
   const { listeners, setNodeRef, isDragging } = useDraggable({
     id: sessionKey,
     data: { type: 'session', session, sessionName: session.name, sessionKey, unixUser: session.unixUser },
+    disabled: persistentSessionMissing,
   })
 
   const style = isDragging
@@ -277,8 +280,9 @@ function SessionItem({ session }: SessionItemProps) {
   }, [openSendToSession, sessionKey, closeContextMenu])
 
   const handleClick = useCallback(() => {
+    if (persistentSessionMissing) return
     handleSessionClick(sessionKey)
-  }, [handleSessionClick, sessionKey])
+  }, [handleSessionClick, persistentSessionMissing, sessionKey])
 
   // Focus rename input when it appears
   useEffect(() => {
@@ -305,17 +309,19 @@ function SessionItem({ session }: SessionItemProps) {
     )
   }
 
-  const dragLabel = `Drag ${session.name}${session.unixUser ? ` (Unix user ${session.unixUser})` : ''}`
+  const dragLabel = persistentSessionMissing
+    ? `Locked agent ${session.name}: tmux session absent`
+    : `Drag ${session.name}${session.unixUser ? ` (Unix user ${session.unixUser})` : ''}`
 
   return (
     <>
       <div
         ref={setNodeRef}
-        className={`session-item ${isAssigned ? 'assigned' : ''} ${isDragging ? 'dragging' : ''}`}
+        className={`session-item ${isAssigned ? 'assigned' : ''} ${isDragging ? 'dragging' : ''} ${persistentSessionMissing ? 'persistent-session-missing' : ''}`}
         style={style}
         title={dragLabel}
-        {...listeners}
-        onPointerDown={handlePointerDown}
+        {...(persistentSessionMissing ? {} : listeners)}
+        onPointerDown={persistentSessionMissing ? undefined : handlePointerDown}
         onPointerUp={clearPendingTouchGesture}
         onPointerCancel={clearPendingTouchGesture}
         onClick={handleClick}
@@ -389,18 +395,22 @@ function SessionItem({ session }: SessionItemProps) {
           style={contextMenuPosition.style}
           onClick={e => e.stopPropagation()}
         >
-          <button className="session-context-item" onClick={handleStartRename}>
-            <span className="session-context-icon">✎</span>
-            Rename
-          </button>
-          <button className="session-context-item" onClick={handlePeek}>
-            <span className="session-context-icon">◉</span>
-            Peek
-          </button>
-          <button className="session-context-item" onClick={handleOpenSendToSession}>
-            <span className="session-context-icon">↗</span>
-            Send to Session
-          </button>
+          {!persistentSessionMissing && (
+            <>
+              <button className="session-context-item" onClick={handleStartRename}>
+                <span className="session-context-icon">✎</span>
+                Rename
+              </button>
+              <button className="session-context-item" onClick={handlePeek}>
+                <span className="session-context-icon">◉</span>
+                Peek
+              </button>
+              <button className="session-context-item" onClick={handleOpenSendToSession}>
+                <span className="session-context-icon">↗</span>
+                Send to Session
+              </button>
+            </>
+          )}
           {session.persistent ? (
             <button className="session-context-item" onClick={handleMakeMortal}>
               <span className="session-context-icon">🔓</span>
@@ -422,58 +432,63 @@ function SessionItem({ session }: SessionItemProps) {
             </button>
           )}
 
-          <div
-            className="session-context-submenu-trigger"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <button
-              className="session-context-item"
-              aria-expanded={showAssignSubmenu}
-              onClick={() => setShowAssignSubmenu(open => !open)}
+          {!persistentSessionMissing && (
+            <div
+              className="session-context-submenu-trigger"
+              onClick={(event) => event.stopPropagation()}
             >
-              <span className="session-context-icon">◫</span>
-              Attach to Window
-              <span className="session-context-arrow">▶</span>
-            </button>
+              <button
+                className="session-context-item"
+                aria-expanded={showAssignSubmenu}
+                onClick={() => setShowAssignSubmenu(open => !open)}
+              >
+                <span className="session-context-icon">◫</span>
+                Attach to Window
+                <span className="session-context-arrow">▶</span>
+              </button>
 
-            {showAssignSubmenu && (
-              <div className="session-context-submenu">
-                {workspaceIds.flatMap((wsId) => {
-                  const ws = workspaces[wsId]
-                  return ws.windows.slice(0, ws.windowCount).map((w, idx) => {
-                    const color = WINDOW_COLORS[w.colorIndex % WINDOW_COLORS.length]
-                    const isCurrentWindow = assignment?.windowId === w.id
-                    const labelPrefix = wsId === 'terminal1' ? '' : `${getTerminalLabel(wsId)} - `
-                    return (
-                      <button
-                        key={w.id}
-                        className={`session-context-item ${isCurrentWindow ? 'active' : ''}`}
-                        onClick={() => handleAssignToWindow(w.id)}
-                        style={{ borderLeft: `3px solid ${color.border}` }}
-                      >
-                        {labelPrefix}Window {idx + 1}
-                        {isCurrentWindow && <span className="session-context-check">✓</span>}
-                      </button>
-                    )
-                  })
-                })}
-              </div>
-            )}
-          </div>
+              {showAssignSubmenu && (
+                <div className="session-context-submenu">
+                  {workspaceIds.flatMap((wsId) => {
+                    const ws = workspaces[wsId]
+                    return ws.windows.slice(0, ws.windowCount).map((w, idx) => {
+                      const color = WINDOW_COLORS[w.colorIndex % WINDOW_COLORS.length]
+                      const isCurrentWindow = assignment?.windowId === w.id
+                      const labelPrefix = wsId === 'terminal1' ? '' : `${getTerminalLabel(wsId)} - `
+                      return (
+                        <button
+                          key={w.id}
+                          className={`session-context-item ${isCurrentWindow ? 'active' : ''}`}
+                          onClick={() => handleAssignToWindow(w.id)}
+                          style={{ borderLeft: `3px solid ${color.border}` }}
+                        >
+                          {labelPrefix}Window {idx + 1}
+                          {isCurrentWindow && <span className="session-context-check">✓</span>}
+                        </button>
+                      )
+                    })
+                  })}
+                </div>
+              )}
+            </div>
+          )}
 
-          {isAssigned && (
+          {isAssigned && !persistentSessionMissing && (
             <button className="session-context-item" onClick={handleUnassign}>
               <span className="session-context-icon">⊘</span>
               Unassign
             </button>
           )}
 
-          <div className="session-context-divider" />
-
-          <button className="session-context-item session-context-danger" onClick={handleDelete}>
-            <span className="session-context-icon">✕</span>
-            {session.persistent ? 'Stop supervision and kill' : 'Kill Session'}
-          </button>
+          {!persistentSessionMissing && (
+            <>
+              <div className="session-context-divider" />
+              <button className="session-context-item session-context-danger" onClick={handleDelete}>
+                <span className="session-context-icon">✕</span>
+                {session.persistent ? 'Stop supervision and kill' : 'Kill Session'}
+              </button>
+            </>
+          )}
           </div>
         </DismissiblePanel>
       )}

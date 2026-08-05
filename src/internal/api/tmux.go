@@ -1551,6 +1551,7 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	var managedErr error
 	var multiUserError string
 	multiUserPartialCandidate := false
+	persistentProjectionUsers := []string{}
 	if h.managed != nil {
 		managedEntries, managedErr = h.managed.Read()
 		if managedErr != nil {
@@ -1561,6 +1562,7 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if useConfiguredUsers {
+		persistentProjectionUsers = configuredTerminalUsers()
 		var errors []string
 		successfulUsers := 0
 		for _, unixUser := range configuredTerminalUsers() {
@@ -1588,6 +1590,7 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", targetErr.Error())
 			return
 		}
+		persistentProjectionUsers = []string{target.unixUser}
 		sessions, errStr := h.listSessionsForTarget(target)
 		response.Sessions = append(response.Sessions, sessions...)
 		if errStr != "" {
@@ -1597,7 +1600,7 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 
 	if h.persistent != nil {
 		var persistentErr error
-		response.Sessions, persistentErr = h.persistent.AnnotateSessions(response.Sessions)
+		response.Sessions, persistentErr = h.persistent.AnnotateSessions(response.Sessions, persistentProjectionUsers...)
 		response.Sessions = h.agentUnits.AnnotateHealth(r.Context(), response.Sessions)
 		if persistentErr != nil {
 			response.Error = appendSessionResponseError(response.Error, "persistent agents: "+persistentErr.Error())

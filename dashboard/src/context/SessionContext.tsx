@@ -318,6 +318,7 @@ function nextSessionNameForPrefix(sessions: TmuxSession[], prefix: string): stri
 function liveSessionKeys(sessions: TmuxSession[]): Set<string> {
   const live = new Set<string>()
   sessions.forEach(s => {
+    if (s.persistentSessionMissing) return
     live.add(getSessionKey(s.name, s.unixUser))
     live.add(s.name) // backward compatibility for layouts saved before user-qualified keys
   })

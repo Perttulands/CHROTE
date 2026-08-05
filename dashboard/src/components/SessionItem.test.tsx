@@ -461,6 +461,31 @@ describe('SessionItem user badge and context actions', () => {
     expect(screen.getByRole('button', { name: /Make mortal \(metadata only\)/i })).toBeInTheDocument()
   })
 
+  it('renders an absent locked session as status-only with an unlock action', () => {
+    render(
+      <SessionItem
+        session={{
+          name: 'codex-alpha', windows: 0, attached: false, group: 'codex',
+          unixUser: 'alice', persistent: true, persistentSessionMissing: true,
+          persistentHealth: 'failed', persistentUnit: 'chrote-agent@codex-alpha.service',
+          persistentDetail: 'unit failed; see the agent unit journal',
+        }}
+      />
+    )
+
+    fireEvent.click(screen.getByText('codex-alpha'))
+    expect(mockState.handleSessionClick).not.toHaveBeenCalled()
+
+    fireEvent.contextMenu(screen.getByText('codex-alpha'))
+    expect(screen.getByRole('button', { name: /Make mortal \(metadata only\)/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Peek' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Stop supervision and kill/i })).toBeNull()
+    expect(screen.getByLabelText('Persistent agent')).toHaveAttribute(
+      'title',
+      expect.stringContaining('tmux session absent'),
+    )
+  })
+
   it('uses the whole session row as the drag surface without rendering a drag grip', () => {
     const { container } = render(
       <SessionItem

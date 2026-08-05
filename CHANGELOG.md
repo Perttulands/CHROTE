@@ -59,6 +59,8 @@ release.
   dashboard disables locking when that capability is unavailable.
 - Failed unlocks now return an error and keep desired state visible and retryable;
   locked-session deletion stops unless supervision was definitively disabled.
+- Locked agents remain visible with unit health and an unlock action when their
+  tmux session or server is absent, instead of disappearing from every surface.
 - Fresh terminal sidecars persist their default-closed state across reloads.
 - `/` opens Sessions for the active closed sidecar and focuses search.
 - Workload recovery records and restores supported agent, shell, and server

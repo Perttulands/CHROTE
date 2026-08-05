@@ -1726,6 +1726,70 @@ esac
 	}
 }
 
+func TestTmuxHandler_ListSessionsProjectsFailedLockWhenTmuxSessionIsAbsent(t *testing.T) {
+	tmpDir := t.TempDir()
+	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")
+	installPersistentAgentScriptedTmux(t, `
+case "$*" in
+  *list-sessions*) echo 'no server running on /tmp/tmux-a' >&2; exit 1 ;;
+esac
+`)
+	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", persistentPath)
+	t.Setenv("CHROTE_SESSION_BANK_PATH", filepath.Join(tmpDir, "session-bank", "sessions.json"))
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+	writePersistentAgentSeed(t, persistentPath, []PersistentAgentEntry{{
+		Name: "codex-alpha", UnixUser: "alice", Identity: "Maintains the repo.",
+		AgentKind: "codex", AgentSessionID: persistentTestCodexID, CWD: "/home/alice/project",
+	}})
+
+	fake := &fakeSystemctl{states: map[string]systemdUnitState{}}
+	controller := newAgentUnitController(filepath.Join(tmpDir, "units"), fake.run)
+	if err := controller.Enable(context.Background(), agentUnitConfig{
+		Session: "codex-alpha", UnixUser: "alice", AgentKind: RecoveryAgentCodex,
+		AgentSessionID: persistentTestCodexID, AgentBin: "/opt/bin/codex",
+		TmuxBin: "/opt/bin/tmux", TmuxSocket: "/tmp/tmux-a", Workdir: "/home/alice/project",
+	}); err != nil {
+		t.Fatalf("seed unit config: %v", err)
+	}
+	unit, err := agentUnitName("codex-alpha")
+	if err != nil {
+		t.Fatalf("unit name: %v", err)
+	}
+	fake.states[unit] = systemdUnitState{ActiveState: "failed", SubState: "failed", UnitFileState: "enabled"}
+
+	handler := NewTmuxHandler()
+	handler.agentUnits = controller
+	recorder := httptest.NewRecorder()
+	handler.ListSessions(recorder, httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var response SessionsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode sessions: %v", err)
+	}
+	if response.Error != "" {
+		t.Fatalf("missing tmux server must not hide desired state behind an inventory error: %q", response.Error)
+	}
+	if len(response.Sessions) != 1 {
+		t.Fatalf("sessions = %+v, want one projected lock", response.Sessions)
+	}
+	projected := response.Sessions[0]
+	if !projected.Persistent || !projected.PersistentSessionMissing || projected.PersistentHealth != agentHealthFailed {
+		t.Fatalf("projected lock = %+v, want absent tmux session with failed unit", projected)
+	}
+	if projected.PersistentUnit != unit || projected.PersistentAgentSessionID != persistentTestCodexID {
+		t.Fatalf("projected lock identity = %+v", projected)
+	}
+	if len(response.Banked) != 0 {
+		t.Fatalf("projected persistent row must not be duplicated in Session Bank: %+v", response.Banked)
+	}
+}
+
 func TestTmuxHandler_EnablePersistentAgentRejectsNonAgentPaneWithoutPersisting(t *testing.T) {
 	tmpDir := t.TempDir()
 	persistentPath := filepath.Join(tmpDir, "persistent-agents", "agents.json")

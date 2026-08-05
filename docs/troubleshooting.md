@@ -171,6 +171,9 @@ Read the reported state literally:
 - A launcher that refuses at startup naming a tmux socket is working as
   designed: it never creates a tmux server, so a dead socket is the keeper
   unit's problem, not the agent's.
+- `tmux session absent` is a desired lock whose live session cannot currently be
+  found. It remains in Sessions so its unit status can be inspected and the lock
+  can be removed; terminal actions are unavailable until the session returns.
 
 Locking needs the owning account's systemd user manager to be running, which for
 a headless account means lingering. A lock that fails immediately with no unit

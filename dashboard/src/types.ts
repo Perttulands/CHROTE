@@ -236,6 +236,8 @@ export interface TmuxSession {
   persistentCapabilityDetail?: string
   persistentUnlockFailed?: boolean
   persistentUnlockError?: string
+  /** Desired lock exists but its tmux session is currently absent. */
+  persistentSessionMissing?: boolean
   /** Health of the session's own systemd unit, read live by the server. */
   persistentUnit?: string
   persistentHealth?: PersistentAgentHealth

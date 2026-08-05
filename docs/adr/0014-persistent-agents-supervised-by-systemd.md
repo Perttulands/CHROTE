@@ -289,8 +289,10 @@ read does not have, and needs a writer on a timer — a poller by another name.
   the current UI avoids by hiding the button. Hiding it is replaced by doing the
   right thing.
 - **Nuke All** continues to skip locked sessions.
-- Badge states: locked/healthy, locked/degraded, locked/failed, and managed
-  (read-only, external owner).
+- Badge states: locked/healthy, locked/degraded, locked/failed, locked with its
+  tmux session absent, and managed (read-only, external owner). Desired locks
+  are projected independently of live tmux inventory, so a failed unit remains
+  visible and unlockable even when there is no session row to annotate.
 
 ## Consequences
 
