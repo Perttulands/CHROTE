@@ -175,6 +175,11 @@ Read the reported state literally:
   found. It remains in Sessions so its unit status can be inspected and the lock
   can be removed; terminal actions are unavailable until the session returns.
 
+An unexpected degraded detail includes a `pa-...` reference instead of raw host
+paths. Search the CHROTE service journal for that exact reference to find the
+underlying config, receipt, D-Bus, or systemd error without exposing it to the
+browser.
+
 Locking needs the owning account's systemd user manager to be running, which for
 a headless account means lingering. A lock that fails immediately with no unit
 in the journal usually means there was no user manager to accept it.

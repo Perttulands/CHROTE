@@ -2,10 +2,13 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	osuser "os/user"
@@ -14,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -48,6 +52,18 @@ const (
 	agentHealthFailed   = "failed"
 	agentHealthInactive = "inactive"
 	agentHealthUnlocked = "unlocked"
+
+	agentDetailUnitUnreachable   = "unit-unreachable"
+	agentDetailConfigUnreadable  = "config-unreadable"
+	agentDetailConfigMissing     = "config-missing"
+	agentDetailReceiptMissing    = "receipt-missing"
+	agentDetailReceiptUnreadable = "receipt-unreadable"
+	agentDetailReceiptMismatch   = "receipt-mismatch"
+	agentDetailReceiptStale      = "receipt-stale"
+	agentDetailProcessMissing    = "process-missing"
+	agentDetailUnitFailed        = "unit-failed"
+	agentDetailUnitInactive      = "unit-inactive"
+	agentDetailLookupTimeout     = "lookup-timeout"
 )
 
 // A unix account name, deliberately stricter than POSIX allows: this value
@@ -105,14 +121,57 @@ type agentUnitConfig struct {
 // AgentUnitStatus is what the sessions API projects onto a session and the
 // dashboard renders as the lock badge.
 type AgentUnitStatus struct {
-	Session     string `json:"session"`
-	UnixUser    string `json:"unixUser,omitempty"`
-	Locked      bool   `json:"locked"`
-	Unit        string `json:"unit,omitempty"`
-	Health      string `json:"health"`
-	ActiveState string `json:"activeState,omitempty"`
-	SubState    string `json:"subState,omitempty"`
-	Detail      string `json:"detail,omitempty"`
+	Session       string `json:"session"`
+	UnixUser      string `json:"unixUser,omitempty"`
+	Locked        bool   `json:"locked"`
+	Unit          string `json:"unit,omitempty"`
+	Health        string `json:"health"`
+	ActiveState   string `json:"activeState,omitempty"`
+	SubState      string `json:"subState,omitempty"`
+	Detail        string `json:"detail,omitempty"`
+	DetailCode    string `json:"detailCode,omitempty"`
+	CorrelationID string `json:"correlationId,omitempty"`
+}
+
+type agentPublicError struct {
+	code          string
+	message       string
+	correlationID string
+	cause         error
+}
+
+func (e *agentPublicError) Error() string {
+	return fmt.Sprintf("%s (%s; reference %s)", e.message, e.code, e.correlationID)
+}
+
+func (e *agentPublicError) Unwrap() error { return e.cause }
+
+var agentStatusIncidentSequence atomic.Uint64
+
+func newAgentPublicError(code, message string, cause error) *agentPublicError {
+	var random [8]byte
+	correlationID := ""
+	if _, err := rand.Read(random[:]); err == nil {
+		correlationID = "pa-" + hex.EncodeToString(random[:])
+	} else {
+		correlationID = fmt.Sprintf("pa-%016x", agentStatusIncidentSequence.Add(1))
+	}
+	log.Printf("persistent-agent incident %s code=%s: %v", correlationID, code, cause)
+	return &agentPublicError{code: code, message: message, correlationID: correlationID, cause: cause}
+}
+
+func setAgentStatusIncident(status *AgentUnitStatus, code, message string, cause error) {
+	publicErr := newAgentPublicError(code, message, cause)
+	status.Health = agentHealthDegraded
+	status.Detail = message
+	status.DetailCode = code
+	status.CorrelationID = publicErr.correlationID
+}
+
+func setAgentStatusDetail(status *AgentUnitStatus, health, code, detail string) {
+	status.Health = health
+	status.Detail = detail
+	status.DetailCode = code
 }
 
 type agentUnitReceipt struct {
@@ -228,7 +287,7 @@ func (c *agentUnitController) Preflight(parent context.Context, unixUsers []stri
 		capability := agentUnitCapability{Available: runErr == nil && loadState == "loaded"}
 		switch {
 		case runErr != nil:
-			capability.Detail = fmt.Sprintf("persistent-agent control for %s failed preflight: %v", unixUser, runErr)
+			capability.Detail = newAgentPublicError(agentDetailUnitUnreachable, "persistent-agent control is unavailable", runErr).Error()
 		case loadState != "loaded":
 			capability.Detail = fmt.Sprintf("persistent-agent unit template is not loaded for %s", unixUser)
 		}
@@ -490,12 +549,13 @@ func (c *agentUnitController) Enable(ctx context.Context, config agentUnitConfig
 	defer c.invalidateHealth(config.Session, config.UnixUser)
 
 	if err := os.MkdirAll(filepath.Dir(configPath), agentUnitDirMode); err != nil {
-		return fmt.Errorf("agent config directory: %w", err)
+		return newAgentPublicError(agentDetailConfigUnreadable, "supervision config could not be written", err)
 	}
 	if err := writeAgentUnitConfigFile(configPath, config, receipt); err != nil {
-		return err
+		return newAgentPublicError(agentDetailConfigUnreadable, "supervision config could not be written", err)
 	}
 	if _, err := c.systemctl(ctx, config.UnixUser, "enable", "--now", unit); err != nil {
+		enableErr := newAgentPublicError(agentDetailUnitUnreachable, "the supervising unit could not be enabled", err)
 		// `enable --now` is two operations. If the wants-symlink landed and only
 		// the start failed, removing our config here would make the unit
 		// unreachable: OwnsUnit needs the config, Disable stats it and returns a
@@ -504,11 +564,11 @@ func (c *agentUnitController) Enable(ctx context.Context, config agentUnitConfig
 		// that CHROTE can neither show nor stop. So undo the enable first, and if
 		// THAT fails, say so instead of dropping it.
 		if _, disableErr := c.systemctl(ctx, config.UnixUser, "disable", "--now", unit); disableErr != nil {
-			return fmt.Errorf("enable %s for %s: %w; and it could not be disabled again (%v) -- the unit may still be enabled",
-				unit, config.UnixUser, err, disableErr)
+			rollbackErr := newAgentPublicError(agentDetailUnitUnreachable, "the partially enabled unit could not be disabled", disableErr)
+			return fmt.Errorf("%w; %v -- the unit may still be enabled", enableErr, rollbackErr)
 		}
 		_ = os.Remove(configPath)
-		return fmt.Errorf("enable %s for %s: %w", unit, config.UnixUser, err)
+		return enableErr
 	}
 	return nil
 }
@@ -534,10 +594,10 @@ func (c *agentUnitController) Disable(ctx context.Context, session, unixUser str
 		return nil
 	}
 	if _, err := c.systemctl(ctx, unixUser, "disable", "--now", unit); err != nil {
-		return fmt.Errorf("disable %s for %s: %w", unit, unixUser, err)
+		return newAgentPublicError(agentDetailUnitUnreachable, "the supervising unit could not be disabled", err)
 	}
 	if err := os.Remove(configPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove agent config: %w", err)
+		return newAgentPublicError(agentDetailConfigUnreadable, "supervision config could not be removed", err)
 	}
 	if receipt, err := c.receiptPath(session, unixUser); err == nil {
 		_ = os.Remove(receipt)
@@ -611,15 +671,21 @@ func (c *agentUnitController) Status(ctx context.Context, session, unixUser stri
 		if os.IsNotExist(err) {
 			return status, nil
 		}
-		return status, err
+		status.Locked = true
+		status.Unit = unit
+		setAgentStatusIncident(&status, agentDetailConfigUnreadable, "supervision config is unreadable", err)
+		return status, nil
 	}
 	status.Locked = true
 	status.Unit = unit
 
 	state, err := c.unitState(ctx, unixUser, unit)
 	if err != nil {
-		status.Health = agentHealthDegraded
-		status.Detail = "unit status unavailable: " + err.Error()
+		if ctx.Err() != nil {
+			setAgentStatusDetail(&status, agentHealthDegraded, agentDetailLookupTimeout, "unit status lookup timed out")
+		} else {
+			setAgentStatusIncident(&status, agentDetailUnitUnreachable, "unit status is unavailable", err)
+		}
 		return status, nil
 	}
 	status.ActiveState = state.ActiveState
@@ -629,42 +695,34 @@ func (c *agentUnitController) Status(ctx context.Context, session, unixUser stri
 	case "active", "activating", "reloading":
 		receiptPath, receiptErr := c.receiptPath(session, unixUser)
 		if receiptErr != nil {
-			status.Health = agentHealthDegraded
-			status.Detail = receiptErr.Error()
+			setAgentStatusIncident(&status, agentDetailReceiptUnreadable, "launcher receipt is unreadable", receiptErr)
 			return status, nil
 		}
 		receipt, receiptErr := readAgentUnitReceipt(receiptPath)
 		switch {
+		case os.IsNotExist(receiptErr):
+			setAgentStatusDetail(&status, agentHealthDegraded, agentDetailReceiptMissing, "unit is running but has not confirmed which transcript it resumed")
 		case receiptErr != nil:
-			status.Health = agentHealthDegraded
-			status.Detail = "unit is running but has not confirmed which transcript it resumed"
+			setAgentStatusIncident(&status, agentDetailReceiptUnreadable, "launcher receipt is unreadable", receiptErr)
 		case receipt.Session != config.Session || receipt.AgentKind != config.AgentKind:
-			status.Health = agentHealthDegraded
-			status.Detail = "unit receipt does not identify the configured agent"
+			setAgentStatusDetail(&status, agentHealthDegraded, agentDetailReceiptMismatch, "unit receipt does not identify the configured agent")
 		case receipt.AgentSessionID != config.AgentSessionID:
-			status.Health = agentHealthDegraded
-			status.Detail = "unit is running a different transcript than the one this lock configured"
+			setAgentStatusDetail(&status, agentHealthDegraded, agentDetailReceiptMismatch, "unit is running a different transcript than the one this lock configured")
 		case state.InvocationID == "" || receipt.InvocationID != state.InvocationID:
-			status.Health = agentHealthDegraded
-			status.Detail = "launcher receipt belongs to a previous unit invocation"
+			setAgentStatusDetail(&status, agentHealthDegraded, agentDetailReceiptStale, "launcher receipt belongs to a previous unit invocation")
 		case state.StartedMonotonic == 0 || receipt.AttestedAt < state.StartedMonotonic:
-			status.Health = agentHealthDegraded
-			status.Detail = "launcher receipt predates the current unit invocation"
+			setAgentStatusDetail(&status, agentHealthDegraded, agentDetailReceiptStale, "launcher receipt predates the current unit invocation")
 		case receipt.PanePID <= 0 || receipt.AgentPID != receipt.PanePID || !agentPaneIDRegex.MatchString(receipt.PaneID):
-			status.Health = agentHealthDegraded
-			status.Detail = "launcher receipt has invalid pane or process identity"
+			setAgentStatusDetail(&status, agentHealthDegraded, agentDetailReceiptMismatch, "launcher receipt has invalid pane or process identity")
 		case !agentReceiptProcessMatches(receipt):
-			status.Health = agentHealthDegraded
-			status.Detail = "the agent process confirmed by the launcher is no longer running"
+			setAgentStatusDetail(&status, agentHealthDegraded, agentDetailProcessMissing, "the agent process confirmed by the launcher is no longer running")
 		default:
 			status.Health = agentHealthHealthy
 		}
 	case "failed":
-		status.Health = agentHealthFailed
-		status.Detail = "unit failed; see the agent unit journal"
+		setAgentStatusDetail(&status, agentHealthFailed, agentDetailUnitFailed, "unit failed; see the agent unit journal")
 	default:
-		status.Health = agentHealthInactive
-		status.Detail = "unit is not running"
+		setAgentStatusDetail(&status, agentHealthInactive, agentDetailUnitInactive, "unit is not running")
 	}
 	return status, nil
 }
@@ -1004,13 +1062,17 @@ func (c *agentUnitController) AnnotateHealth(ctx context.Context, sessions []cor
 				defer func() { <-semaphore }()
 			case <-healthCtx.Done():
 				sessions[index].PersistentHealth = agentHealthDegraded
-				sessions[index].PersistentDetail = "unit status unavailable: " + healthCtx.Err().Error()
+				sessions[index].PersistentDetail = "unit status lookup timed out"
+				sessions[index].PersistentDetailCode = agentDetailLookupTimeout
 				return
 			}
 			status, err := c.cachedStatus(healthCtx, sessions[index].Name, sessions[index].UnixUser)
 			if err != nil {
+				publicErr := newAgentPublicError(agentDetailUnitUnreachable, "unit status is unavailable", err)
 				sessions[index].PersistentHealth = agentHealthDegraded
-				sessions[index].PersistentDetail = err.Error()
+				sessions[index].PersistentDetail = publicErr.message
+				sessions[index].PersistentDetailCode = publicErr.code
+				sessions[index].PersistentCorrelationID = publicErr.correlationID
 				return
 			}
 			if !status.Locked {
@@ -1020,12 +1082,15 @@ func (c *agentUnitController) AnnotateHealth(ctx context.Context, sessions []cor
 				// the same payload's persistent:true, so say what is actually wrong.
 				sessions[index].PersistentHealth = agentHealthDegraded
 				sessions[index].PersistentDetail = "no supervising unit is installed for this session"
+				sessions[index].PersistentDetailCode = agentDetailConfigMissing
 				return
 			}
 			sessions[index].PersistentUnit = status.Unit
 			sessions[index].PersistentHealth = status.Health
 			sessions[index].PersistentActiveState = status.ActiveState
 			sessions[index].PersistentDetail = status.Detail
+			sessions[index].PersistentDetailCode = status.DetailCode
+			sessions[index].PersistentCorrelationID = status.CorrelationID
 		}(i)
 	}
 	wait.Wait()

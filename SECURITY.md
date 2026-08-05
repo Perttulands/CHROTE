@@ -122,6 +122,10 @@ reject ownership, mode, regular-file, and symlink-boundary violations. Receipts
 are derived from the pane's observed process rather than desired config, bind to
 the current systemd invocation and monotonic start time, and identify the live
 PID by its process start ticks. Publication failure prevents unit readiness.
+Raw systemd, D-Bus, config-path, and receipt-read errors stay in the service
+journal. Browser payloads receive only a bounded failure code and message plus a
+random `pa-...` correlation reference, so diagnosis does not require exposing
+host layout or another account's runtime path.
 
 ## Secrets
 

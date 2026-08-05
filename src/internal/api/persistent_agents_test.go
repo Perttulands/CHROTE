@@ -185,7 +185,7 @@ func TestTmuxHandler_DisableFailureRetainsDesiredStateAndProjectsUnlockFailure(t
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("desired state must remain after failed disable: entries=%+v err=%v", entries, err)
 	}
-	if !entries[0].UnlockFailed || !strings.Contains(entries[0].UnlockError, "user bus") {
+	if !entries[0].UnlockFailed || !strings.Contains(entries[0].UnlockError, agentDetailUnitUnreachable) || strings.Contains(entries[0].UnlockError, "user bus") {
 		t.Fatalf("retained state must name the failed unlock: %+v", entries[0])
 	}
 	configPath, err := controller.configPath("codex-alpha", "alice")
@@ -200,7 +200,7 @@ func TestTmuxHandler_DisableFailureRetainsDesiredStateAndProjectsUnlockFailure(t
 	if err != nil {
 		t.Fatalf("annotate sessions: %v", err)
 	}
-	if !sessions[0].PersistentUnlockFailed || !strings.Contains(sessions[0].PersistentUnlockError, "user bus") {
+	if !sessions[0].PersistentUnlockFailed || !strings.Contains(sessions[0].PersistentUnlockError, "reference pa-") {
 		t.Fatalf("operator surface must retain the retryable unlock failure: %+v", sessions[0])
 	}
 }

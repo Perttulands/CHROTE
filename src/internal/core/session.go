@@ -37,10 +37,12 @@ type Session struct {
 	// launch-failure counters, retry and last-check timestamps -- described an
 	// in-server supervisor that no longer exists; four of them were never read by
 	// any client even while it did.
-	PersistentUnit        string `json:"persistentUnit,omitempty"`
-	PersistentHealth      string `json:"persistentHealth,omitempty"`
-	PersistentActiveState string `json:"persistentActiveState,omitempty"`
-	PersistentDetail      string `json:"persistentDetail,omitempty"`
+	PersistentUnit          string `json:"persistentUnit,omitempty"`
+	PersistentHealth        string `json:"persistentHealth,omitempty"`
+	PersistentActiveState   string `json:"persistentActiveState,omitempty"`
+	PersistentDetail        string `json:"persistentDetail,omitempty"`
+	PersistentDetailCode    string `json:"persistentDetailCode,omitempty"`
+	PersistentCorrelationID string `json:"persistentCorrelationId,omitempty"`
 }
 
 // GroupPriority defines the sort order for session groups

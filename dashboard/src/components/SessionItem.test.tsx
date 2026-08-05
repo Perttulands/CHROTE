@@ -282,6 +282,25 @@ describe('SessionItem user badge and context actions', () => {
     )
   })
 
+  it('shows a bounded supervision error with its support reference', () => {
+    render(
+      <SessionItem
+        session={{
+          name: 'codex-alpha', windows: 1, attached: false, group: 'codex',
+          unixUser: 'alice', persistent: true, persistentHealth: 'degraded',
+          persistentDetail: 'unit status is unavailable',
+          persistentDetailCode: 'unit-unreachable',
+          persistentCorrelationId: 'pa-0123456789abcdef',
+        }}
+      />
+    )
+
+    expect(screen.getByLabelText('Persistent agent')).toHaveAttribute(
+      'title',
+      expect.stringContaining('reference pa-0123456789abcdef'),
+    )
+  })
+
   it('offers make persistent for mortal sessions without asking for raw agent session id', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     vi.spyOn(window, 'prompt')

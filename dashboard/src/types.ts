@@ -243,6 +243,8 @@ export interface TmuxSession {
   persistentHealth?: PersistentAgentHealth
   persistentActiveState?: string
   persistentDetail?: string
+  persistentDetailCode?: string
+  persistentCorrelationId?: string
 }
 
 export interface PersistentAgentPayload {

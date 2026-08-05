@@ -65,6 +65,8 @@ release.
   bounded concurrency, cache briefly, and degrade per lock. The launcher rejects
   duplicate config keys and unsafe paths, and both unit types share one state-root
   configuration file.
+- Persistent-agent failures shown in the browser now use bounded codes and safe
+  messages with journal correlation references instead of raw host errors.
 - Fresh terminal sidecars persist their default-closed state across reloads.
 - `/` opens Sessions for the active closed sidecar and focuses search.
 - Workload recovery records and restores supported agent, shell, and server

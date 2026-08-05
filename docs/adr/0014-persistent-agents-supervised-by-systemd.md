@@ -243,6 +243,9 @@ starting and receipt publication failure prevents `READY=1`.
 Sessions listing gives all optional unit reads one two-second budget, runs at
 most four concurrently, and caches each result for two seconds. A canceled or
 timed-out lookup degrades only that lock; terminal inventory still returns.
+Unexpected config, receipt, D-Bus, and systemd failures are logged with a random
+correlation reference. The Sessions payload carries that reference plus a
+bounded code/message, never the raw error containing host paths or account data.
 
 Rejected alternative: **unit state alone.** Simpler, and wrong in the one case
 that matters — a unit that cheerfully restarts an agent into the wrong transcript

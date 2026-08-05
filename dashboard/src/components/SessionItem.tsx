@@ -54,6 +54,7 @@ function persistentTitle(session: TmuxSession): string | undefined {
   if (session.persistentActiveState) parts.push(`unit ${session.persistentActiveState}`)
   if (session.persistentSessionMissing) parts.push('tmux session absent')
   if (session.persistentDetail) parts.push(session.persistentDetail)
+  if (session.persistentCorrelationId) parts.push(`reference ${session.persistentCorrelationId}`)
   if (session.persistentUnlockError) parts.push(`unlock failed: ${session.persistentUnlockError}`)
   const title = parts.join(' · ')
   return session.persistentIdentity ? `${title}: ${session.persistentIdentity}` : title

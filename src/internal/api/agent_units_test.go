@@ -712,9 +712,130 @@ func TestAgentUnitController_SystemctlFailureSurfacesInsteadOfSilentlySucceeding
 	if err == nil {
 		t.Fatal("a systemctl failure must fail the lock, not report success")
 	}
-	if !strings.Contains(err.Error(), "user scope bus") {
-		t.Fatalf("the operator needs the real reason, got %v", err)
+	if strings.Contains(err.Error(), "user scope bus") || strings.Contains(err.Error(), "/run/user/") {
+		t.Fatalf("browser-facing control errors must not expose raw host details: %v", err)
 	}
+	if !strings.Contains(err.Error(), agentDetailUnitUnreachable) || !strings.Contains(err.Error(), "reference pa-") {
+		t.Fatalf("bounded error must carry a support reference, got %v", err)
+	}
+}
+
+func TestAgentUnitController_ConfigWriteFailureDoesNotExposeItsPath(t *testing.T) {
+	dir := t.TempDir()
+	blocked := filepath.Join(dir, "private-state")
+	if err := os.WriteFile(blocked, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("seed blocking file: %v", err)
+	}
+	controller := newAgentUnitController(filepath.Join(blocked, "units"), func(context.Context, string, ...string) (string, error) {
+		return "", nil
+	})
+	err := controller.Enable(context.Background(), agentUnitConfig{
+		Session: "codex-alpha", UnixUser: "alice", AgentKind: "codex",
+		AgentSessionID: "019f4baa-e368-7ea0-8912-fb2c6f99785c", AgentBin: "/opt/bin/codex",
+		TmuxBin: "/opt/bin/tmux", TmuxSocket: "/run/user/1234/pool/default", Workdir: "/opt/work",
+	})
+	if err == nil {
+		t.Fatal("blocked config root must fail")
+	}
+	if strings.Contains(err.Error(), blocked) || !strings.Contains(err.Error(), agentDetailConfigUnreadable) {
+		t.Fatalf("config write failure was not bounded: %v", err)
+	}
+}
+
+func TestAgentUnitController_StatusBoundsRawErrorsForBrowserProjection(t *testing.T) {
+	controller, fake, _ := newTestAgentUnitController(t)
+	config := agentUnitConfig{
+		Session: "codex-alpha", UnixUser: "alice", AgentKind: "codex",
+		AgentSessionID: "019f4baa-e368-7ea0-8912-fb2c6f99785c", AgentBin: "/opt/bin/codex",
+		TmuxBin: "/opt/bin/tmux", TmuxSocket: "/run/user/1234/pool/default", Workdir: "/opt/work",
+	}
+	if err := controller.Enable(context.Background(), config); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	fake.errorsByVerb = map[string]error{
+		"show": errors.New("connect /run/user/2001/bus for private-user: permission denied"),
+	}
+
+	status, err := controller.Status(context.Background(), "codex-alpha", "alice")
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if status.DetailCode != agentDetailUnitUnreachable || !strings.HasPrefix(status.CorrelationID, "pa-") {
+		t.Fatalf("bounded unit failure = %+v", status)
+	}
+	for _, leaked := range []string{"/run/user/", "private-user", "permission denied"} {
+		if strings.Contains(status.Detail, leaked) {
+			t.Fatalf("status detail leaked %q: %+v", leaked, status)
+		}
+	}
+
+	annotated := controller.AnnotateHealth(context.Background(), []core.Session{{
+		Name: "codex-alpha", UnixUser: "alice", Persistent: true,
+	}})
+	if annotated[0].PersistentDetailCode != agentDetailUnitUnreachable || !strings.HasPrefix(annotated[0].PersistentCorrelationID, "pa-") {
+		t.Fatalf("browser projection lost bounded failure metadata: %+v", annotated[0])
+	}
+}
+
+func TestAgentUnitController_StatusClassifiesUnreadableConfigAndReceipt(t *testing.T) {
+	newController := func(t *testing.T) (*agentUnitController, *fakeSystemctl, string) {
+		t.Helper()
+		controller, fake, _ := newTestAgentUnitController(t)
+		config := agentUnitConfig{
+			Session: "codex-alpha", UnixUser: "alice", AgentKind: "codex",
+			AgentSessionID: "019f4baa-e368-7ea0-8912-fb2c6f99785c", AgentBin: "/opt/bin/codex",
+			TmuxBin: "/opt/bin/tmux", TmuxSocket: "/run/user/1234/pool/default", Workdir: "/opt/work",
+		}
+		if err := controller.Enable(context.Background(), config); err != nil {
+			t.Fatalf("Enable: %v", err)
+		}
+		fake.states["chrote-agent@codex-alpha.service"] = systemdUnitState{
+			ActiveState: "active", SubState: "running", UnitFileState: "enabled",
+		}
+		configPath, err := controller.configPath("codex-alpha", "alice")
+		if err != nil {
+			t.Fatalf("config path: %v", err)
+		}
+		return controller, fake, configPath
+	}
+
+	t.Run("config", func(t *testing.T) {
+		controller, _, configPath := newController(t)
+		if err := os.Remove(configPath); err != nil {
+			t.Fatalf("remove config: %v", err)
+		}
+		if err := os.Mkdir(configPath, 0o700); err != nil {
+			t.Fatalf("replace config with directory: %v", err)
+		}
+		status, err := controller.Status(context.Background(), "codex-alpha", "alice")
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		if status.DetailCode != agentDetailConfigUnreadable || status.CorrelationID == "" || strings.Contains(status.Detail, configPath) {
+			t.Fatalf("config failure was not safely classified: %+v", status)
+		}
+	})
+
+	t.Run("receipt", func(t *testing.T) {
+		controller, _, _ := newController(t)
+		receiptPath, err := controller.receiptPath("codex-alpha", "alice")
+		if err != nil {
+			t.Fatalf("receipt path: %v", err)
+		}
+		if err := os.MkdirAll(filepath.Dir(receiptPath), 0o770); err != nil {
+			t.Fatalf("receipt directory: %v", err)
+		}
+		if err := os.WriteFile(receiptPath, []byte("not-json"), 0o640); err != nil {
+			t.Fatalf("write malformed receipt: %v", err)
+		}
+		status, err := controller.Status(context.Background(), "codex-alpha", "alice")
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		if status.DetailCode != agentDetailReceiptUnreadable || status.CorrelationID == "" || strings.Contains(status.Detail, receiptPath) {
+			t.Fatalf("receipt failure was not safely classified: %+v", status)
+		}
+	})
 }
 
 func writeTestReceipt(t *testing.T, path, session, kind, sessionID string) {
