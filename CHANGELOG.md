@@ -57,6 +57,8 @@ release.
 - Cross-user locking now uses a shipped, validated sudoers grant and one absolute
   root-owned helper. Startup probes each configured user's real manager and the
   dashboard disables locking when that capability is unavailable.
+- Failed unlocks now return an error and keep desired state visible and retryable;
+  locked-session deletion stops unless supervision was definitively disabled.
 - Fresh terminal sidecars persist their default-closed state across reloads.
 - `/` opens Sessions for the active closed sidecar and focuses search.
 - Workload recovery records and restores supported agent, shell, and server

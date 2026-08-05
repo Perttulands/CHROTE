@@ -234,6 +234,8 @@ export interface TmuxSession {
   persistentHermesProfile?: string
   persistentAvailable?: boolean
   persistentCapabilityDetail?: string
+  persistentUnlockFailed?: boolean
+  persistentUnlockError?: string
   /** Health of the session's own systemd unit, read live by the server. */
   persistentUnit?: string
   persistentHealth?: PersistentAgentHealth

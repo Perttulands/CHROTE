@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/chrote/server/internal/core"
 )
 
 const (
@@ -146,6 +149,59 @@ func TestTmuxHandler_EnablePersistentAgentRejectsUnavailableCapabilityBeforeSide
 	}
 	if _, err := os.Stat(filepath.Join(dir, "persistent.json")); !os.IsNotExist(err) {
 		t.Fatalf("unavailable capability must not write desired state, stat err = %v", err)
+	}
+}
+
+func TestTmuxHandler_DisableFailureRetainsDesiredStateAndProjectsUnlockFailure(t *testing.T) {
+	dir := t.TempDir()
+	storePath := filepath.Join(dir, "persistent.json")
+	writePersistentAgentRawSeed(t, storePath, []map[string]any{
+		persistentAgentRawEntry("codex-alpha", "alice", RecoveryAgentCodex, persistentTestCodexID, ""),
+	})
+	fake := &fakeSystemctl{states: map[string]systemdUnitState{}}
+	controller := newAgentUnitController(filepath.Join(dir, "units"), fake.run)
+	if err := controller.Enable(context.Background(), agentUnitConfig{
+		Session: "codex-alpha", UnixUser: "alice", AgentKind: RecoveryAgentCodex,
+		AgentSessionID: persistentTestCodexID, AgentBin: "/opt/bin/codex",
+		TmuxBin: "/opt/bin/tmux", TmuxSocket: "/run/user/1001/tmux/default",
+		Workdir: "/home/alice/project",
+	}); err != nil {
+		t.Fatalf("seed unit config: %v", err)
+	}
+	fake.errorsByVerb = map[string]error{"disable": errors.New("target user bus is unavailable")}
+
+	handler := NewTmuxHandler()
+	handler.persistent = newPersistentAgentStore(storePath)
+	handler.agentUnits = controller
+	req := httptest.NewRequest(http.MethodDelete, "/api/tmux/sessions/codex-alpha/persistence?unixUser=alice", nil)
+	req.SetPathValue("name", "codex-alpha")
+	recorder := httptest.NewRecorder()
+	handler.DisablePersistentAgent(recorder, req)
+
+	if recorder.Code < 400 {
+		t.Fatalf("failed disable must be non-2xx, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	entries, err := handler.persistent.Read()
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("desired state must remain after failed disable: entries=%+v err=%v", entries, err)
+	}
+	if !entries[0].UnlockFailed || !strings.Contains(entries[0].UnlockError, "user bus") {
+		t.Fatalf("retained state must name the failed unlock: %+v", entries[0])
+	}
+	configPath, err := controller.configPath("codex-alpha", "alice")
+	if err != nil {
+		t.Fatalf("config path: %v", err)
+	}
+	if _, err := os.Stat(configPath); err != nil {
+		t.Fatalf("unit config must remain retryable after failed disable: %v", err)
+	}
+
+	sessions, err := handler.persistent.AnnotateSessions([]core.Session{{Name: "codex-alpha", UnixUser: "alice"}})
+	if err != nil {
+		t.Fatalf("annotate sessions: %v", err)
+	}
+	if !sessions[0].PersistentUnlockFailed || !strings.Contains(sessions[0].PersistentUnlockError, "user bus") {
+		t.Fatalf("operator surface must retain the retryable unlock failure: %+v", sessions[0])
 	}
 }
 

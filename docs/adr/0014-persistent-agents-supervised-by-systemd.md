@@ -278,7 +278,10 @@ read does not have, and needs a writer on a timer — a poller by another name.
   may be interrupted. The badge appears when the unit is enabled.
 - **Unlock** = `disable --now` the unit and remove the config. The tmux session
   and the running agent are **left alive**; unlocking stops the promise, not the
-  work. The confirmation text says so.
+  work. The confirmation text says so. CHROTE removes desired state only after
+  `disable --now` succeeds. A failed disable returns an error, keeps the lock and
+  config registered, and projects an `unlock failed` state with the reason and
+  retry action; the UI must not continue from that failure into session deletion.
 - **Kill on a locked session** is no longer hidden. It is offered as "stop
   supervision and kill", which disables the unit first and then kills the
   session — the honest action. Killing a session while its unit is enabled would

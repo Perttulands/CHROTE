@@ -2675,7 +2675,7 @@ describe('persistent agent actions', () => {
     vi.mocked(fetch as any).mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ success: true }),
-      text: () => Promise.resolve(''),
+      text: () => Promise.resolve(JSON.stringify({ success: true })),
     })
 
     let success: boolean | undefined
@@ -2709,6 +2709,26 @@ describe('persistent agent actions', () => {
 
     expect(success).toBe(false)
     await waitFor(() => expect(result.current.toast.toasts[0]?.message).toBe('persistent agent metadata is locked by another owner'))
+  })
+
+  it('makeSessionMortal rejects a contradictory 2xx warning body', async () => {
+    const { result } = renderSessionWithToast()
+    vi.mocked(fetch as any).mockClear()
+    vi.mocked(fetch as any).mockResolvedValueOnce({
+      ok: true,
+      text: () => Promise.resolve(JSON.stringify({
+        success: true,
+        unitWarning: 'the supervising unit could not be stopped',
+      })),
+    })
+
+    let success: boolean | undefined
+    await act(async () => {
+      success = await result.current.session.makeSessionMortal('codex-alpha', 'alice')
+    })
+
+    expect(success).toBe(false)
+    await waitFor(() => expect(result.current.toast.toasts[0]?.message).toContain('could not be stopped'))
   })
 })
 

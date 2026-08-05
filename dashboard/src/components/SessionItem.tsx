@@ -40,6 +40,7 @@ function persistentHermesProfile(session: TmuxSession): string {
 }
 
 function persistentHealthLabel(session: TmuxSession): string {
+  if (session.persistentUnlockFailed) return 'unlock failed'
   const health = session.persistentHealth
   return health ? PERSISTENT_HEALTH_LABELS[health] ?? '' : ''
 }
@@ -52,6 +53,7 @@ function persistentTitle(session: TmuxSession): string | undefined {
   if (session.persistentUnit) parts.push(session.persistentUnit)
   if (session.persistentActiveState) parts.push(`unit ${session.persistentActiveState}`)
   if (session.persistentDetail) parts.push(session.persistentDetail)
+  if (session.persistentUnlockError) parts.push(`unlock failed: ${session.persistentUnlockError}`)
   const title = parts.join(' · ')
   return session.persistentIdentity ? `${title}: ${session.persistentIdentity}` : title
 }
@@ -191,7 +193,8 @@ function SessionItem({ session }: SessionItemProps) {
         `${session.name} is locked. Stop its supervising unit and kill the session? The agent will not come back.`
       )
       if (!confirmed) return
-      await makeSessionMortal(session.name, session.unixUser)
+      const unlocked = await makeSessionMortal(session.name, session.unixUser)
+      if (!unlocked) return
     }
     await deleteSession(session.name, session.unixUser)
   }, [deleteSession, makeSessionMortal, session.name, session.persistent, session.unixUser, closeContextMenu])
@@ -356,7 +359,7 @@ function SessionItem({ session }: SessionItemProps) {
           <span
             className={`persistent-agent-state persistent-agent-state-${session.persistentHealth}`}
             aria-label={`Supervision: ${persistentStatusLabel}`}
-            title={session.persistentDetail || persistentStatusLabel}
+            title={session.persistentUnlockError || session.persistentDetail || persistentStatusLabel}
           >
             {persistentStatusLabel}
           </span>

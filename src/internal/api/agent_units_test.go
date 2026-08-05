@@ -38,6 +38,7 @@ type fakeSystemctl struct {
 	states       map[string]systemdUnitState
 	loadStates   map[string]string
 	errorsByUser map[string]error
+	errorsByVerb map[string]error
 	err          error
 }
 
@@ -45,6 +46,11 @@ func (f *fakeSystemctl) run(_ context.Context, unixUser string, args ...string) 
 	f.calls = append(f.calls, systemctlCall{UnixUser: unixUser, Args: append([]string(nil), args...)})
 	if err := f.errorsByUser[unixUser]; err != nil {
 		return "", err
+	}
+	if len(args) > 0 {
+		if err := f.errorsByVerb[args[0]]; err != nil {
+			return "", err
+		}
 	}
 	if f.err != nil {
 		return "", f.err

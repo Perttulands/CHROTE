@@ -69,6 +69,8 @@ type PersistentAgentEntry struct {
 	LastCheckAt               string                      `json:"lastCheckAt,omitempty"`
 	LastRestartAt             string                      `json:"lastRestartAt,omitempty"`
 	LastError                 string                      `json:"lastError,omitempty"`
+	UnlockFailed              bool                        `json:"unlockFailed,omitempty"`
+	UnlockError               string                      `json:"unlockError,omitempty"`
 }
 
 // EnablePersistentAgentRequest is the request body for making a live session supervised.
@@ -213,6 +215,13 @@ func sanitizePersistentAgentEntry(entry PersistentAgentEntry) (PersistentAgentEn
 	entry.LastCheckAt = ""
 	entry.LastRestartAt = ""
 	entry.LastError = ""
+	entry.UnlockError = strings.Join(strings.Fields(strings.TrimSpace(entry.UnlockError)), " ")
+	if len(entry.UnlockError) > 500 {
+		entry.UnlockError = entry.UnlockError[:500]
+	}
+	if entry.UnlockError == "" {
+		entry.UnlockFailed = false
+	}
 	if entry.RecoveryDescriptor != nil {
 		desc, err := canonicalPersistentAgentDescriptor(entry.Name, entry.UnixUser, "/", *entry.RecoveryDescriptor)
 		if err != nil {
@@ -416,6 +425,46 @@ func (s *persistentAgentStore) Forget(name, unixUser string) (bool, error) {
 	return true, nil
 }
 
+func (s *persistentAgentStore) MarkUnlockFailed(name, unixUser, message string) error {
+	if s == nil {
+		return fmt.Errorf("persistent agent store is unavailable")
+	}
+	name = strings.TrimSpace(name)
+	unixUser = strings.TrimSpace(unixUser)
+	message = strings.Join(strings.Fields(strings.TrimSpace(message)), " ")
+	if len(message) > 500 {
+		message = message[:500]
+	}
+	if valid, errMsg := core.ValidateSessionName(name, "session name"); !valid {
+		return fmt.Errorf("%s", errMsg)
+	}
+	if message == "" {
+		return fmt.Errorf("unlock failure reason is required")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entries, err := s.loadLocked()
+	if err != nil {
+		return err
+	}
+	entries, err = validatePersistentAgentEntries(entries)
+	if err != nil {
+		return err
+	}
+	key := persistentAgentKey(name, unixUser)
+	for i := range entries {
+		if persistentAgentKey(entries[i].Name, entries[i].UnixUser) != key {
+			continue
+		}
+		entries[i].UnlockFailed = true
+		entries[i].UnlockError = message
+		entries[i].UpdatedAt = persistentAgentNow().Format(time.RFC3339)
+		return s.saveLocked(entries)
+	}
+	return fmt.Errorf("persistent agent %q for user %q is not registered", name, unixUser)
+}
+
 func (s *persistentAgentStore) Rename(oldName, newName, unixUser string) error {
 	if s == nil {
 		return nil
@@ -518,6 +567,8 @@ func (s *persistentAgentStore) AnnotateSessions(sessions []core.Session) ([]core
 		sessions[i].PersistentAgentKind = entry.AgentKind
 		sessions[i].PersistentAgentSessionID = entry.AgentSessionID
 		sessions[i].PersistentHermesProfile = persistentAgentHermesProfile(entry)
+		sessions[i].PersistentUnlockFailed = entry.UnlockFailed
+		sessions[i].PersistentUnlockError = entry.UnlockError
 		// Health is deliberately NOT read here: this store knows what was asked
 		// for, not what systemd is doing about it. AnnotateHealth fills that in.
 	}
@@ -1668,13 +1719,29 @@ func (h *TmuxHandler) DisablePersistentAgent(w http.ResponseWriter, r *http.Requ
 	// than becoming a unit CHROTE has forgotten but systemd still restarts.
 	// Unlocking withdraws the promise and deliberately leaves the agent running
 	// (ADR-0014 decision 8).
-	unitErr := ""
 	if h.agentUnits != nil {
+		unit, unitNameErr := agentUnitName(sessionName)
+		if unitNameErr != nil {
+			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", unitNameErr.Error())
+			return
+		}
+		if !h.agentUnits.OwnsUnit(unit, sessionName, unixUser) {
+			message := "the supervising unit cannot be proven disabled because its CHROTE config is missing"
+			if markErr := h.persistent.MarkUnlockFailed(sessionName, unixUser, message); markErr != nil {
+				message += "; recording the unlock failure also failed: " + markErr.Error()
+			}
+			h.invalidateCache()
+			core.WriteError(w, http.StatusBadGateway, "PERSISTENT_AGENT_UNLOCK_FAILED", message)
+			return
+		}
 		if err := h.agentUnits.Disable(r.Context(), sessionName, unixUser); err != nil {
-			// Report it, but do NOT return: an unlock that refuses to forget the
-			// registry entry leaves a session the operator can never clear from
-			// the UI. Forgetting is the part CHROTE owns and can always do.
-			unitErr = err.Error()
+			message := err.Error()
+			if markErr := h.persistent.MarkUnlockFailed(sessionName, unixUser, message); markErr != nil {
+				message += "; recording the unlock failure also failed: " + markErr.Error()
+			}
+			h.invalidateCache()
+			core.WriteError(w, http.StatusBadGateway, "PERSISTENT_AGENT_UNLOCK_FAILED", message)
+			return
 		}
 	}
 	removed, err := h.persistent.Forget(sessionName, unixUser)
@@ -1683,18 +1750,12 @@ func (h *TmuxHandler) DisablePersistentAgent(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	h.invalidateCache()
-	body := map[string]interface{}{
+	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"success":    true,
 		"session":    sessionName,
 		"unixUser":   unixUser,
 		"persistent": false,
 		"removed":    removed,
 		"timestamp":  time.Now().UTC().Format(time.RFC3339),
-	}
-	if unitErr != "" {
-		// The lock is gone from CHROTE's side either way; say plainly that the
-		// unit may still be running so the operator can finish the job by hand.
-		body["unitWarning"] = "the supervising unit could not be stopped; it may still be enabled"
-	}
-	core.WriteJSON(w, http.StatusOK, body)
+	})
 }

@@ -1809,6 +1809,20 @@ func TestTmuxHandler_DisablePersistentAgentRemovesDesiredStateWithoutCallingTmux
 	}})
 
 	handler := NewTmuxHandler()
+	unit, err := agentUnitName("codex-alpha")
+	if err != nil {
+		t.Fatalf("unit name: %v", err)
+	}
+	configPath, err := handler.agentUnits.configPath("codex-alpha", "alice")
+	if err != nil {
+		t.Fatalf("config path: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o750); err != nil {
+		t.Fatalf("create unit config directory: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte("SESSION=codex-alpha\nUNIT="+unit+"\n"), 0o640); err != nil {
+		t.Fatalf("seed unit config: %v", err)
+	}
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 	req := httptest.NewRequest(http.MethodDelete, "/api/tmux/sessions/codex-alpha/persistence?unixUser=alice", nil)

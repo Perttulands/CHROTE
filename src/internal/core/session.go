@@ -26,6 +26,8 @@ type Session struct {
 	// legacy/test handlers that did not preflight distinct from a proven false.
 	PersistentAvailable        *bool  `json:"persistentAvailable,omitempty"`
 	PersistentCapabilityDetail string `json:"persistentCapabilityDetail,omitempty"`
+	PersistentUnlockFailed      bool   `json:"persistentUnlockFailed,omitempty"`
+	PersistentUnlockError       string `json:"persistentUnlockError,omitempty"`
 	// Supervision health comes from the session's own systemd unit, read live
 	// (ADR-0014). The retired fields here -- resume command, a six-state ladder,
 	// launch-failure counters, retry and last-check timestamps -- described an

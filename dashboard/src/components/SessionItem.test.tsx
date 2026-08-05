@@ -13,6 +13,7 @@ const mockState = vi.hoisted(() => ({
   removeSessionFromWindow: vi.fn(),
   makeSessionPersistent: vi.fn(),
   makeSessionMortal: vi.fn(),
+  deleteSession: vi.fn(),
   dragListeners: { onPointerDown: vi.fn() },
   dragAttributes: { role: 'button', tabIndex: 0 },
   dragTransform: null as { x: number; y: number } | null,
@@ -34,7 +35,7 @@ vi.mock('../context/SessionContext', () => ({
     assignedSessions: mockState.assignedSessions,
     handleSessionClick: mockState.handleSessionClick,
     focusSessionAssignment: mockState.focusSessionAssignment,
-    deleteSession: vi.fn(),
+    deleteSession: mockState.deleteSession,
     renameSession: vi.fn(),
     workspaces: {
       terminal1: { windows: [{ id: 'terminal1-window-0', colorIndex: 0 }], windowCount: 1 },
@@ -68,6 +69,7 @@ describe('SessionItem user badge and context actions', () => {
     mockState.removeSessionFromWindow.mockClear()
     mockState.makeSessionPersistent.mockClear()
     mockState.makeSessionMortal.mockClear()
+    mockState.deleteSession.mockClear()
     mockState.dragListeners.onPointerDown.mockClear()
     mockState.dragTransform = null
     mockState.isDragging = false
@@ -415,6 +417,48 @@ describe('SessionItem user badge and context actions', () => {
     expect(window.confirm).toHaveBeenCalledWith(
       expect.stringContaining('no longer be restarted after a crash or reboot'),
     )
+  })
+
+  it('aborts locked-session deletion when stopping supervision fails', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    mockState.makeSessionMortal.mockResolvedValue(false)
+
+    render(
+      <SessionItem
+        session={{
+          name: 'codex-alpha', windows: 1, attached: false, group: 'codex',
+          unixUser: 'alice', persistent: true,
+        }}
+      />
+    )
+
+    fireEvent.contextMenu(screen.getByText('codex-alpha'))
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Stop supervision and kill/i }))
+    })
+
+    expect(mockState.makeSessionMortal).toHaveBeenCalledWith('codex-alpha', 'alice')
+    expect(mockState.deleteSession).not.toHaveBeenCalled()
+  })
+
+  it('keeps a failed unlock visible and retryable', () => {
+    render(
+      <SessionItem
+        session={{
+          name: 'codex-alpha', windows: 1, attached: false, group: 'codex',
+          unixUser: 'alice', persistent: true,
+          persistentUnlockFailed: true,
+          persistentUnlockError: 'target user bus is unavailable',
+        }}
+      />
+    )
+
+    expect(screen.getByLabelText('Supervision: unlock failed')).toHaveAttribute(
+      'title',
+      expect.stringContaining('target user bus is unavailable'),
+    )
+    fireEvent.contextMenu(screen.getByText('codex-alpha'))
+    expect(screen.getByRole('button', { name: /Make mortal \(metadata only\)/i })).toBeInTheDocument()
   })
 
   it('uses the whole session row as the drag surface without rendering a drag grip', () => {

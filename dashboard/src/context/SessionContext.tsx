@@ -1443,10 +1443,23 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         method: 'DELETE',
         signal: AbortSignal.timeout(10000),
       })
+      const responseText = await response.text()
       if (!response.ok) {
-        const errorText = await response.text()
-        console.error('Failed to make session mortal:', errorText)
-        addToast(apiErrorMessage(errorText, 'Failed to make session mortal'), 'error')
+        console.error('Failed to make session mortal:', responseText)
+        addToast(apiErrorMessage(responseText, 'Failed to make session mortal'), 'error')
+        return false
+      }
+      let body: { success?: boolean; unitWarning?: string } = {}
+      try {
+        body = JSON.parse(responseText) as typeof body
+      } catch {
+        // A successful unlock must be explicit; an empty or malformed 2xx body
+        // cannot prove that supervision stopped.
+      }
+      if (body.success !== true || body.unitWarning) {
+        const message = body.unitWarning || 'Server did not confirm that supervision stopped'
+        console.error('Failed to make session mortal:', responseText)
+        addToast(message, 'error')
         return false
       }
       addToast(`Session '${sessionName}' is mortal`, 'info')

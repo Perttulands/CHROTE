@@ -178,6 +178,9 @@ in the journal usually means there was no user manager to accept it.
 
 Unlocking disables the unit and leaves the agent and its tmux session running.
 If work is still alive after an unlock, that is the contract, not a bug.
+An `unlock failed` badge means CHROTE could not prove the unit was disabled. The
+lock remains desired and retryable; do not kill the tmux session until unlocking
+succeeds, because the still-enabled unit may recreate it.
 
 ## 10. Scheduled task is stuck
 
