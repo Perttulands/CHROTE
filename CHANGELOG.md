@@ -51,6 +51,9 @@ release.
 - Locked-agent config and receipt files now occupy separately provisioned
   ownership domains; receipt writes fail closed and reads validate mode, owner,
   regular-file type, and symlink boundaries.
+- Locked-agent health now requires a live observed agent process and a receipt
+  bound to the current systemd invocation, pane, PID start identity, and unit
+  start time; the unit does not report ready until that proof is published.
 - Fresh terminal sidecars persist their default-closed state across reloads.
 - `/` opens Sessions for the active closed sidecar and focuses search.
 - Workload recovery records and restores supported agent, shell, and server

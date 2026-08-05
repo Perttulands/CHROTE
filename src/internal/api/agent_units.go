@@ -11,6 +11,7 @@ import (
 	osuser "os/user"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -58,6 +59,8 @@ var agentNativeSessionIDRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0
 // same shape as every other value that reaches a command line.
 var agentHermesProfileRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`)
 
+var agentPaneIDRegex = regexp.MustCompile(`^%[0-9]+$`)
+
 // systemctlRunner runs one systemctl --user invocation against a target user's
 // manager. It is an injection point so tests never touch a real bus, and so the
 // privileged mechanism (how CHROTE reaches another user's manager) stays in one
@@ -65,10 +68,11 @@ var agentHermesProfileRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,6
 type systemctlRunner func(ctx context.Context, unixUser string, args ...string) (string, error)
 
 type systemdUnitState struct {
-	ActiveState   string
-	SubState      string
-	UnitFileState string
-	Started       bool
+	ActiveState      string
+	SubState         string
+	UnitFileState    string
+	StartedMonotonic uint64
+	InvocationID     string
 }
 
 // agentUnitConfig is CHROTE's desired state for one locked session. It carries
@@ -108,7 +112,12 @@ type agentUnitReceipt struct {
 	Session        string `json:"session"`
 	AgentKind      string `json:"agentKind"`
 	AgentSessionID string `json:"agentSessionId"`
+	PaneID         string `json:"paneId"`
 	PanePID        int    `json:"panePid"`
+	AgentPID       int    `json:"agentPid"`
+	ProcessStart   uint64 `json:"processStartTicks"`
+	InvocationID   string `json:"invocationId"`
+	AttestedAt     uint64 `json:"attestedAtMonotonic"`
 	StartedAt      string `json:"startedAt"`
 }
 
@@ -448,9 +457,24 @@ func (c *agentUnitController) Status(ctx context.Context, session, unixUser stri
 		case receiptErr != nil:
 			status.Health = agentHealthDegraded
 			status.Detail = "unit is running but has not confirmed which transcript it resumed"
+		case receipt.Session != config.Session || receipt.AgentKind != config.AgentKind:
+			status.Health = agentHealthDegraded
+			status.Detail = "unit receipt does not identify the configured agent"
 		case receipt.AgentSessionID != config.AgentSessionID:
 			status.Health = agentHealthDegraded
 			status.Detail = "unit is running a different transcript than the one this lock configured"
+		case state.InvocationID == "" || receipt.InvocationID != state.InvocationID:
+			status.Health = agentHealthDegraded
+			status.Detail = "launcher receipt belongs to a previous unit invocation"
+		case state.StartedMonotonic == 0 || receipt.AttestedAt < state.StartedMonotonic:
+			status.Health = agentHealthDegraded
+			status.Detail = "launcher receipt predates the current unit invocation"
+		case receipt.PanePID <= 0 || receipt.AgentPID != receipt.PanePID || !agentPaneIDRegex.MatchString(receipt.PaneID):
+			status.Health = agentHealthDegraded
+			status.Detail = "launcher receipt has invalid pane or process identity"
+		case !agentReceiptProcessMatches(receipt):
+			status.Health = agentHealthDegraded
+			status.Detail = "the agent process confirmed by the launcher is no longer running"
 		default:
 			status.Health = agentHealthHealthy
 		}
@@ -467,7 +491,8 @@ func (c *agentUnitController) Status(ctx context.Context, session, unixUser stri
 func (c *agentUnitController) unitState(ctx context.Context, unixUser, unit string) (systemdUnitState, error) {
 	out, err := c.systemctl(ctx, unixUser, "show",
 		"--property=ActiveState", "--property=SubState",
-		"--property=UnitFileState", "--property=ExecMainStartTimestampMonotonic", unit)
+		"--property=UnitFileState", "--property=ExecMainStartTimestampMonotonic",
+		"--property=InvocationID", unit)
 	if err != nil {
 		return systemdUnitState{}, err
 	}
@@ -485,10 +510,37 @@ func (c *agentUnitController) unitState(ctx context.Context, unixUser, unit stri
 		case "UnitFileState":
 			state.UnitFileState = value
 		case "ExecMainStartTimestampMonotonic":
-			state.Started = value != "" && value != "0"
+			state.StartedMonotonic, _ = strconv.ParseUint(value, 10, 64)
+		case "InvocationID":
+			state.InvocationID = value
 		}
 	}
 	return state, nil
+}
+
+func agentReceiptProcessMatches(receipt agentUnitReceipt) bool {
+	if receipt.AgentPID <= 0 || receipt.ProcessStart == 0 {
+		return false
+	}
+	start, err := processStartTicks(receipt.AgentPID)
+	return err == nil && start == receipt.ProcessStart
+}
+
+func processStartTicks(pid int) (uint64, error) {
+	raw, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return 0, err
+	}
+	line := string(raw)
+	end := strings.LastIndex(line, ") ")
+	if end < 0 {
+		return 0, fmt.Errorf("process stat has no command boundary")
+	}
+	fields := strings.Fields(line[end+2:])
+	if len(fields) <= 19 {
+		return 0, fmt.Errorf("process stat has %d fields after command", len(fields))
+	}
+	return strconv.ParseUint(fields[19], 10, 64)
 }
 
 // writeAgentUnitConfigFile writes the typed KEY=value file the launcher reads.

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	osuser "os/user"
 	"path/filepath"
@@ -44,12 +45,12 @@ func (f *fakeSystemctl) run(_ context.Context, unixUser string, args ...string) 
 		unit := args[len(args)-1]
 		state, ok := f.states[unit]
 		if !ok {
-			return "ActiveState=inactive\nSubState=dead\nUnitFileState=disabled\nExecMainStartTimestampMonotonic=0\n", nil
+			return "ActiveState=inactive\nSubState=dead\nUnitFileState=disabled\nExecMainStartTimestampMonotonic=0\nInvocationID=\n", nil
 		}
 		return "ActiveState=" + state.ActiveState +
 			"\nSubState=" + state.SubState +
 			"\nUnitFileState=" + state.UnitFileState +
-			"\nExecMainStartTimestampMonotonic=1\n", nil
+			"\nExecMainStartTimestampMonotonic=1\nInvocationID=current-invocation\n", nil
 	}
 	return "", nil
 }
@@ -342,6 +343,66 @@ func TestAgentUnitController_StatusRequiresBothUnitStateAndMatchingReceipt(t *te
 	}
 }
 
+func TestAgentUnitController_StatusRejectsPriorInvocationAndDeadProcessReceipts(t *testing.T) {
+	controller, fake, _ := newTestAgentUnitController(t)
+	sessionID := "019f4baa-e368-7ea0-8912-fb2c6f99785c"
+	config := agentUnitConfig{
+		Session: "codex-alpha", UnixUser: "alice", AgentKind: "codex",
+		AgentSessionID: sessionID, AgentBin: "/opt/bin/codex", TmuxBin: "/opt/bin/tmux",
+		TmuxSocket: "/run/user/1234/pool/default", Workdir: "/opt/work",
+	}
+	if err := controller.Enable(context.Background(), config); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	fake.states["chrote-agent@codex-alpha.service"] = systemdUnitState{
+		ActiveState: "active", SubState: "running", UnitFileState: "enabled",
+	}
+	receiptPath := filepath.Join(controller.receiptRoot, "alice", "codex-alpha.receipt.json")
+	if err := os.MkdirAll(filepath.Dir(receiptPath), 0o770); err != nil {
+		t.Fatalf("mkdir receipt dir: %v", err)
+	}
+
+	writeObservedReceipt := func(invocation string, pid int, processStart, attestedAt uint64) {
+		t.Helper()
+		body := fmt.Sprintf(`{"session":"codex-alpha","agentKind":"codex","agentSessionId":%q,"paneId":"%%7","panePid":%d,"agentPid":%d,"processStartTicks":%d,"invocationId":%q,"attestedAtMonotonic":%d,"startedAt":"2026-08-05T12:00:00Z"}`,
+			sessionID, pid, pid, processStart, invocation, attestedAt)
+		if err := os.WriteFile(receiptPath, []byte(body), 0o640); err != nil {
+			t.Fatalf("write receipt: %v", err)
+		}
+	}
+
+	writeObservedReceipt("prior-invocation", os.Getpid(), 1, 2)
+	status, err := controller.Status(context.Background(), "codex-alpha", "alice")
+	if err != nil {
+		t.Fatalf("Status prior invocation: %v", err)
+	}
+	if status.Health != agentHealthDegraded {
+		t.Fatalf("receipt from prior unit invocation must be degraded, got %q", status.Health)
+	}
+
+	currentStart, startErr := processStartTicks(os.Getpid())
+	if startErr != nil {
+		t.Fatalf("current process start: %v", startErr)
+	}
+	writeObservedReceipt("current-invocation", os.Getpid(), currentStart, 0)
+	status, err = controller.Status(context.Background(), "codex-alpha", "alice")
+	if err != nil {
+		t.Fatalf("Status stale monotonic receipt: %v", err)
+	}
+	if status.Health != agentHealthDegraded || !strings.Contains(status.Detail, "predates") {
+		t.Fatalf("receipt older than unit start must be degraded, got %#v", status)
+	}
+
+	writeObservedReceipt("current-invocation", 1<<22-1, 1, 2)
+	status, err = controller.Status(context.Background(), "codex-alpha", "alice")
+	if err != nil {
+		t.Fatalf("Status dead process: %v", err)
+	}
+	if status.Health != agentHealthDegraded {
+		t.Fatalf("receipt for a dead process must be degraded, got %q", status.Health)
+	}
+}
+
 func TestAgentUnitController_StatusReportsFailedAndInactiveVerbatim(t *testing.T) {
 	controller, fake, _ := newTestAgentUnitController(t)
 	sessionID := "019f4baa-e368-7ea0-8912-fb2c6f99785c"
@@ -446,7 +507,13 @@ func writeTestReceipt(t *testing.T, path, session, kind, sessionID string) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	body := `{"session":"` + session + `","agentKind":"` + kind + `","agentSessionId":"` + sessionID + `","panePid":4242,"startedAt":"2026-08-03T12:00:00Z"}`
+	pid := os.Getpid()
+	start, err := processStartTicks(pid)
+	if err != nil {
+		t.Fatalf("process start: %v", err)
+	}
+	body := fmt.Sprintf(`{"session":%q,"agentKind":%q,"agentSessionId":%q,"paneId":"%%7","panePid":%d,"agentPid":%d,"processStartTicks":%d,"invocationId":"current-invocation","attestedAtMonotonic":2,"startedAt":"2026-08-03T12:00:00Z"}`,
+		session, kind, sessionID, pid, pid, start)
 	if err := os.WriteFile(path, []byte(body), 0o640); err != nil {
 		t.Fatalf("write receipt: %v", err)
 	}

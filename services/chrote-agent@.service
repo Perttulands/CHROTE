@@ -20,7 +20,9 @@ StartLimitIntervalSec=120
 StartLimitBurst=5
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=all
+TimeoutStartSec=15
 # The launcher stays in the foreground for the life of the agent and exits
 # non-zero when the agent dies, which is what makes Restart= meaningful.
 # ExecStart is argv-only; %i is the agent name and reaches the launcher solely

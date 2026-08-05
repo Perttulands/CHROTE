@@ -114,7 +114,10 @@ the verbs and the single unit-name pattern CHROTE owns, never to arbitrary unit
 names. Per-agent configuration stays in a CHROTE-owned directory with a
 target-readable ACL, while launcher receipts stay in a separate target-owned
 directory readable by CHROTE's service group. Both are mode 0640; receipt reads
-reject ownership, mode, regular-file, and symlink-boundary violations.
+reject ownership, mode, regular-file, and symlink-boundary violations. Receipts
+are derived from the pane's observed process rather than desired config, bind to
+the current systemd invocation and monotonic start time, and identify the live
+PID by its process start ticks. Publication failure prevents unit readiness.
 
 ## Secrets
 

@@ -27,7 +27,7 @@ usage() {
   cat >&2 <<'USAGE'
 usage: chrote-agent-ensure.sh --config <file> [--once]
 
-  --config <file>  typed per-agent config written by CHROTE (mode 0600)
+  --config <file>  typed per-agent config written by CHROTE (mode 0640 ACL mask)
   --once           ensure the session exists, then exit 0 without watching.
                    For preflight only; the unit never passes it, because a
                    launcher that exits is a launcher systemd cannot supervise.
@@ -78,8 +78,15 @@ session_exists() { tmux_run has-session -t "=$SESSION" 2>/dev/null; }
 # actual agent rather than a generic shell that survives when the agent exits.
 pane_pid() {
   local value
-  value=$(tmux_run display-message -p -t "=$SESSION" '#{pane_pid}' 2>/dev/null) || return 1
+  value=$(tmux_run display-message -p -t "$PANE_TARGET" '#{pane_pid}' 2>/dev/null) || return 1
   [[ "$value" =~ ^[1-9][0-9]*$ ]] || return 1
+  printf '%s' "$value"
+}
+
+pane_id() {
+  local value
+  value=$(tmux_run display-message -p -t "$PANE_TARGET" '#{pane_id}' 2>/dev/null) || return 1
+  [[ "$value" =~ ^%[0-9]+$ ]] || return 1
   printf '%s' "$value"
 }
 
@@ -113,23 +120,114 @@ launch_agent() {
 
 # --- receipt -----------------------------------------------------------------
 
-# ADR-0014 decision 5: an active unit is not proof the RIGHT transcript resumed.
-# The receipt is what lets status distinguish healthy from degraded. Written
-# atomically so a reader never sees a half-file.
+# ADR-0014 decision 5: desired config is not proof of what exec actually ran.
+# The unit-facing process observes /proc for the pane PID, then records that
+# independent identity atomically. Pane mode never writes a receipt itself.
+monotonic_microseconds() {
+  local uptime whole fraction
+  read -r uptime _ </proc/uptime || return 1
+  whole=${uptime%%.*}
+  fraction=${uptime#*.}000000
+  fraction=${fraction:0:6}
+  [[ "$whole" =~ ^[0-9]+$ && "$fraction" =~ ^[0-9]{6}$ ]] || return 1
+  printf '%s' "$((10#$whole * 1000000 + 10#$fraction))"
+}
+
 write_receipt() {
-  local pane=$1 tmp
+  local pane_id_value=$1 pane_pid_value=$2 agent_pid_value=$3 process_start_ticks=$4 \
+    observed_kind=$5 observed_session_id=$6 attested_monotonic tmp
   [[ -n "$RECEIPT_PATH" ]] || fail "config has no receipt path: $CONFIG_FILE"
   [[ -d "$(dirname "$RECEIPT_PATH")" ]] \
     || fail "receipt runtime directory is not provisioned: $RECEIPT_PATH"
   tmp=$(mktemp "${RECEIPT_PATH}.XXXXXX") \
     || fail "cannot stage launcher receipt: $RECEIPT_PATH"
-  printf '{"session":"%s","agentKind":"%s","agentSessionId":"%s","panePid":%s,"startedAt":"%s"}\n' \
-    "$SESSION" "$AGENT_KIND" "$AGENT_SESSION_ID" "$pane" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$tmp" \
+  attested_monotonic=$(monotonic_microseconds) \
+    || { rm -f -- "$tmp"; fail "cannot read the monotonic clock for launcher receipt"; }
+  printf '{"session":"%s","agentKind":"%s","agentSessionId":"%s","paneId":"%s","panePid":%s,"agentPid":%s,"processStartTicks":%s,"invocationId":"%s","attestedAtMonotonic":%s,"startedAt":"%s"}\n' \
+    "$SESSION" "$observed_kind" "$observed_session_id" "$pane_id_value" \
+    "$pane_pid_value" "$agent_pid_value" "$process_start_ticks" "$UNIT_INVOCATION_ID" \
+    "$attested_monotonic" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$tmp" \
     || { rm -f -- "$tmp"; fail "cannot write launcher receipt: $RECEIPT_PATH"; }
   chmod 640 "$tmp" \
     || { rm -f -- "$tmp"; fail "cannot protect launcher receipt: $RECEIPT_PATH"; }
   mv -f "$tmp" "$RECEIPT_PATH" \
     || { rm -f -- "$tmp"; fail "cannot publish launcher receipt: $RECEIPT_PATH"; }
+}
+
+observe_agent_process() {
+  local pid=$1 start_index=-1 profile_index=-1 i stat_line
+  local -a observed=() stat_fields=()
+  kill -0 "$pid" 2>/dev/null || return 1
+  mapfile -d '' -t observed <"/proc/$pid/cmdline" 2>/dev/null || true
+  (( ${#observed[@]} > 0 )) || return 1
+
+  OBSERVED_AGENT_KIND=""
+  OBSERVED_AGENT_SESSION_ID=""
+  OBSERVED_HERMES_PROFILE=""
+  for ((i = 0; i < ${#observed[@]}; i++)); do
+    [[ "${observed[$i]}" == "hermes_cli.main" ]] && OBSERVED_AGENT_KIND=hermes
+    [[ "${observed[$i]}" == "--profile" ]] && profile_index=$i
+    [[ "${observed[$i]}" == "--resume" ]] && start_index=$i
+  done
+  if [[ "$OBSERVED_AGENT_KIND" == hermes ]]; then
+    (( profile_index >= 0 && profile_index + 1 < ${#observed[@]} )) || return 1
+    (( start_index >= 0 && start_index + 1 < ${#observed[@]} )) || return 1
+    OBSERVED_HERMES_PROFILE=${observed[$((profile_index + 1))]}
+    OBSERVED_AGENT_SESSION_ID=${observed[$((start_index + 1))]}
+  elif (( start_index >= 0 && start_index + 1 < ${#observed[@]} )); then
+    OBSERVED_AGENT_KIND=claude
+    OBSERVED_AGENT_SESSION_ID=${observed[$((start_index + 1))]}
+  else
+    for ((i = 0; i + 1 < ${#observed[@]}; i++)); do
+      if [[ "${observed[$i]}" == resume ]]; then
+        OBSERVED_AGENT_KIND=codex
+        OBSERVED_AGENT_SESSION_ID=${observed[$((i + 1))]}
+        break
+      fi
+    done
+  fi
+
+  [[ "$OBSERVED_AGENT_KIND" == "$AGENT_KIND" ]] || return 1
+  [[ "$OBSERVED_AGENT_SESSION_ID" == "$AGENT_SESSION_ID" ]] || return 1
+  if [[ "$AGENT_KIND" == hermes ]]; then
+    [[ "$OBSERVED_HERMES_PROFILE" == "$HERMES_PROFILE" ]] || return 1
+  fi
+
+  IFS= read -r stat_line <"/proc/$pid/stat" || return 1
+  stat_line=${stat_line##*) }
+  read -r -a stat_fields <<<"$stat_line"
+  (( ${#stat_fields[@]} > 19 )) || return 1
+  PROCESS_START_TICKS=${stat_fields[19]}
+  [[ "$PROCESS_START_TICKS" =~ ^[1-9][0-9]*$ ]] || return 1
+}
+
+attest_running_agent() {
+  local pane_pid_value pane_id_value attempts=0
+  [[ -n "$UNIT_INVOCATION_ID" ]] || {
+    log "no systemd INVOCATION_ID; running without a health receipt"
+    return 0
+  }
+  while (( attempts < 100 )); do
+    if pane_pid_value=$(pane_pid) && pane_id_value=$(pane_id) \
+      && observe_agent_process "$pane_pid_value"; then
+      break
+    fi
+    session_exists || fail "session $SESSION disappeared before identity confirmation"
+    sleep 0.05
+    attempts=$((attempts + 1))
+  done
+  (( attempts < 100 )) \
+    || fail "pane does not run the configured $AGENT_KIND session $AGENT_SESSION_ID"
+  write_receipt "$pane_id_value" "$pane_pid_value" "$pane_pid_value" \
+    "$PROCESS_START_TICKS" "$OBSERVED_AGENT_KIND" "$OBSERVED_AGENT_SESSION_ID"
+  ATTESTED_PANE_PID=$pane_pid_value
+
+  if [[ -n "${NOTIFY_SOCKET:-}" ]]; then
+    [[ -x /usr/bin/systemd-notify ]] || fail "systemd-notify is required for readiness"
+    /usr/bin/systemd-notify --pid="$$" --ready \
+      --status="observed $OBSERVED_AGENT_KIND session $OBSERVED_AGENT_SESSION_ID" \
+      || fail "could not notify systemd that identity was confirmed"
+  fi
 }
 
 # --- lifecycle ---------------------------------------------------------------
@@ -251,6 +349,7 @@ HERMES_PROFILE=$(config_value CHROTE_AGENT_HERMES_PROFILE || true)
 RECEIPT_PATH=$(config_value CHROTE_AGENT_RECEIPT_PATH || true)
 WATCH_INTERVAL=$(config_value CHROTE_AGENT_WATCH_INTERVAL || true)
 [[ -n "${WATCH_INTERVAL:-}" ]] || WATCH_INTERVAL=10
+UNIT_INVOCATION_ID=${INVOCATION_ID:-}
 
 validate_token "CHROTE_AGENT_SESSION" "$SESSION" '^[a-zA-Z0-9_-]{1,50}$'
 validate_token "CHROTE_AGENT_KIND" "$AGENT_KIND" '^(codex|claude|hermes)$'
@@ -262,6 +361,9 @@ if [[ "$AGENT_KIND" == hermes ]]; then
 fi
 validate_token "CHROTE_AGENT_SESSION_ID" "$AGENT_SESSION_ID" '^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$'
 validate_token "CHROTE_AGENT_WATCH_INTERVAL" "$WATCH_INTERVAL" '^[1-9][0-9]{0,3}$'
+if [[ -n "$UNIT_INVOCATION_ID" ]]; then
+  validate_token "INVOCATION_ID" "$UNIT_INVOCATION_ID" '^[a-fA-F0-9]{32}$'
+fi
 for path_name in CHROTE_AGENT_TMUX_BIN:$TMUX_BIN CHROTE_AGENT_TMUX_SOCKET:$TMUX_SOCKET \
                  CHROTE_AGENT_WORKDIR:$WORKDIR CHROTE_AGENT_BIN:$AGENT_BIN; do
   validate_token "${path_name%%:*}" "${path_name#*:}" '^/[^[:space:]]*$'
@@ -272,7 +374,6 @@ done
 [[ -d "$WORKDIR" ]] || fail "agent working directory does not exist: $WORKDIR"
 
 if (( PANE_MODE == 1 )); then
-  write_receipt "$$"
   launch_agent
 fi
 
@@ -291,9 +392,17 @@ if ! server_alive; then
   fail "no tmux server answers ${TMUX_SOCKET}; refusing to create one. Server lifetime belongs to ${keeper_description}; start it first."
 fi
 
+if [[ -n "$UNIT_INVOCATION_ID" && -n "$RECEIPT_PATH" ]]; then
+  rm -f -- "$RECEIPT_PATH" || fail "cannot remove the previous launcher receipt: $RECEIPT_PATH"
+fi
+
 ensure_session
 
-pane=$(wait_for_pane_pid) || fail "session $SESSION exists but has no readable pane process"
+attest_running_agent
+pane=${ATTESTED_PANE_PID:-}
+if [[ -z "$pane" ]]; then
+  pane=$(wait_for_pane_pid) || fail "session $SESSION exists but has no readable pane process"
+fi
 
 if (( WATCH == 0 )); then
   log "$PROGRAM_NAME --once: session $SESSION ready (pane $pane); not watching"

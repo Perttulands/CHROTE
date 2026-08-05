@@ -97,7 +97,8 @@ Rejected alternatives:
 ### Decision 2 — What systemd actually supervises: the launcher stays attached
 
 `ExecStart` runs the ensure-launcher in the foreground for the life of the agent.
-It is `Type=simple`; the unit is active exactly while the launcher runs.
+It is `Type=notify`; startup succeeds only after the launcher has independently
+confirmed the running pane process and sent `READY=1`.
 
 The launcher's lifecycle is:
 
@@ -112,10 +113,14 @@ The launcher's lifecycle is:
    Typed config reaches pane mode through tmux's environment, not command text;
    pane mode invokes the agent with its canonical argv and `exec`, without
    `send-keys` or a rendered resume command.
-3. Then **watch**: block until the session disappears or the agent process in it
+3. Observe the pane's actual `/proc` command line and process start ticks. Confirm
+   the configured agent kind, native session id, and Hermes profile where
+   applicable; publish an invocation-bound receipt; only then notify systemd that
+   startup is ready.
+4. Then **watch**: block until the session disappears or the agent process in it
    exits, and exit non-zero when it does.
 
-Step 3 is what makes `Restart=on-failure` meaningful. A launcher that created the
+Step 4 is what makes `Restart=on-failure` meaningful. A launcher that created the
 session and exited would leave systemd supervising a dead helper: the unit would
 report `inactive (dead)` seconds after a successful start, and nothing would
 notice the agent dying an hour later. This is precisely the shape of today's
@@ -209,13 +214,17 @@ transcript — it proves a process started. The status the UI renders is the
 conjunction of:
 
 - the unit's `ActiveState`/`SubState`, read live; and
-- a launcher receipt: on successful start the launcher records the native session
-  id it resumed and the pane it resumed into, in the per-agent state directory.
+- a launcher receipt derived from the actual pane process, not desired config. It
+  records the observed agent kind and native session id, pane id, PID plus process
+  start ticks, systemd invocation ID, and monotonic attestation time.
 
-`healthy` = unit active **and** receipt matches the configured native session id.
-Unit active with a mismatched or missing receipt is `degraded` and says so.
-`failed`/`inactive` are reported verbatim from systemd. A stale receipt (older
-than the unit's current start time) is treated as missing.
+`healthy` = unit active **and** the receipt matches the desired identity, current
+systemd invocation, current pane/process identity, and a live PID with the same
+process start ticks. The attestation's monotonic time must be at or after
+`ExecMainStartTimestampMonotonic`. Unit active with a stale, mismatched, missing,
+or dead-process receipt is `degraded` and says so. `failed`/`inactive` are
+reported verbatim from systemd. The launcher removes any prior receipt before
+starting and receipt publication failure prevents `READY=1`.
 
 Rejected alternative: **unit state alone.** Simpler, and wrong in the one case
 that matters — a unit that cheerfully restarts an agent into the wrong transcript

@@ -14,6 +14,7 @@ private real tmux socket because first-process semantics cannot be faked.
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import signal
@@ -307,25 +308,13 @@ class SessionLifecycleTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn("new-session", "\n".join(fixture.calls()))
 
-    def test_receipt_records_the_resumed_identity(self) -> None:
+    def test_pane_process_never_self_attests_from_desired_config(self) -> None:
         fixture = LauncherFixture()
         result = fixture.run_pane()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(fixture.receipt.exists(), "a receipt is what proves WHICH transcript resumed")
-        receipt = fixture.receipt.read_text()
-        self.assertIn(SESSION_ID, receipt)
-        self.assertIn("agent-under-test", receipt)
-        self.assertEqual(0o640, fixture.receipt.stat().st_mode & 0o777)
-
-    def test_receipt_write_failure_prevents_agent_start(self) -> None:
-        fixture = LauncherFixture(
-            CHROTE_AGENT_RECEIPT_PATH="/proc/chrote-agent-test/receipt.json"
-        )
-        result = fixture.run_pane()
-        self.assertNotEqual(result.returncode, 0, result.stderr)
         self.assertFalse(
-            fixture.agent_args.exists(),
-            "a launcher that cannot report identity must not start an unattested agent",
+            fixture.receipt.exists(),
+            "pane mode has only desired config; the unit-facing observer writes receipts",
         )
 
 
@@ -409,6 +398,9 @@ class RealTmuxProcessLifetimeTests(unittest.TestCase):
 
         workdir = root / "workspace"
         workdir.mkdir()
+        receipt_dir = root / "receipts"
+        receipt_dir.mkdir()
+        receipt_path = receipt_dir / "agent-under-test.json"
         config = root / "agent.conf"
         config.write_text(
             textwrap.dedent(
@@ -420,7 +412,7 @@ class RealTmuxProcessLifetimeTests(unittest.TestCase):
                 CHROTE_AGENT_KIND=codex
                 CHROTE_AGENT_SESSION_ID={SESSION_ID}
                 CHROTE_AGENT_BIN={agent}
-                CHROTE_AGENT_RECEIPT_PATH={root / 'receipt.json'}
+                CHROTE_AGENT_RECEIPT_PATH={receipt_path}
                 CHROTE_AGENT_WATCH_INTERVAL=1
                 CHROTE_AGENT_TMUX_KEEPER_UNIT=test-keeper.service
                 """
@@ -428,6 +420,9 @@ class RealTmuxProcessLifetimeTests(unittest.TestCase):
         )
         config.chmod(0o600)
 
+        first_invocation_id = "0123456789abcdef0123456789abcdef"
+        second_invocation_id = "1123456789abcdef0123456789abcdef"
+        third_invocation_id = "2123456789abcdef0123456789abcdef"
         tmux_env = {
             "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
             "HOME": str(root),
@@ -457,10 +452,12 @@ class RealTmuxProcessLifetimeTests(unittest.TestCase):
                 time.sleep(0.05)
             self.fail(f"timed out waiting for {count} lines in {path}")
 
-        def start_launcher() -> subprocess.Popen[str]:
+        def start_launcher(invocation_id: str) -> subprocess.Popen[str]:
+            launcher_env = dict(tmux_env)
+            launcher_env["INVOCATION_ID"] = invocation_id
             process = subprocess.Popen(
                 ["bash", str(LAUNCHER), "--config", str(config)],
-                env=tmux_env,
+                env=launcher_env,
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -478,10 +475,40 @@ class RealTmuxProcessLifetimeTests(unittest.TestCase):
             )
             wait_for_lines(agent_pids, 1)
 
-            first_launcher = start_launcher()
+            first_launcher = start_launcher(first_invocation_id)
             first_pid = int(wait_for_lines(agent_pids, 2)[1])
             first_argv = wait_for_lines(invocations, 2)[1]
             self.assertEqual(f"resume {SESSION_ID}", first_argv)
+
+            deadline = time.monotonic() + 7
+            while not receipt_path.exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            if not receipt_path.exists():
+                returncode = first_launcher.poll()
+                observed_pane_pid = tmux_run(
+                    "display-message", "-p", "-t", "=agent-under-test:0.0", "#{pane_pid}"
+                ).stdout.strip()
+                observed_cmdline = Path(f"/proc/{observed_pane_pid}/cmdline").read_bytes().replace(
+                    b"\0", b" "
+                )
+                stderr = (
+                    first_launcher.stderr.read()
+                    if returncode is not None and first_launcher.stderr
+                    else "launcher still running"
+                )
+                self.fail(
+                    "unit invocation must publish observed identity; "
+                    f"returncode={returncode}, pane_pid={observed_pane_pid}, "
+                    f"cmdline={observed_cmdline!r}, stderr={stderr}"
+                )
+            receipt = json.loads(receipt_path.read_text())
+            self.assertEqual(first_invocation_id, receipt.get("invocationId"))
+            self.assertEqual(first_pid, receipt.get("agentPid"))
+            self.assertEqual("codex", receipt.get("agentKind"))
+            self.assertEqual(SESSION_ID, receipt.get("agentSessionId"))
+            self.assertRegex(receipt.get("paneId", ""), r"^%[0-9]+$")
+            self.assertGreater(int(receipt.get("processStartTicks", 0)), 0)
+            self.assertGreater(int(receipt.get("attestedAtMonotonic", 0)), 0)
 
             pane_start = tmux_run(
                 "display-message", "-p", "-t", "=agent-under-test:0.0", "#{pane_start_command}"
@@ -510,7 +537,7 @@ class RealTmuxProcessLifetimeTests(unittest.TestCase):
             else:
                 self.fail("agent pane remained after its fixed initial process exited")
 
-            second_launcher = start_launcher()
+            second_launcher = start_launcher(second_invocation_id)
             second_pid = int(wait_for_lines(agent_pids, 3)[2])
             second_argv = wait_for_lines(invocations, 3)[2]
             self.assertNotEqual(first_pid, second_pid, "restart must launch a new agent process")
@@ -522,7 +549,48 @@ class RealTmuxProcessLifetimeTests(unittest.TestCase):
             if second_launcher.poll() is not None:
                 stderr = second_launcher.stderr.read() if second_launcher.stderr else ""
                 self.fail(f"replacement launcher must stay attached; stderr:\n{stderr}")
+
+            deadline = time.monotonic() + 5
+            second_receipt = {}
+            while time.monotonic() < deadline:
+                if receipt_path.exists():
+                    second_receipt = json.loads(receipt_path.read_text())
+                    if second_receipt.get("invocationId") == second_invocation_id:
+                        break
+                time.sleep(0.05)
+            self.assertEqual(
+                second_invocation_id,
+                second_receipt.get("invocationId"),
+                "restart must replace, not reuse, the prior invocation's receipt",
+            )
+
+            # Publishing observed identity is part of startup, not best effort.
+            # If the target-owned runtime directory becomes unwritable, the
+            # launcher must fail instead of notifying systemd that it is ready.
+            os.kill(second_pid, signal.SIGTERM)
+            self.assertNotEqual(second_launcher.wait(timeout=5), 0)
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                if tmux_run("has-session", "-t", "=agent-under-test", check=False).returncode != 0:
+                    break
+                time.sleep(0.05)
+            else:
+                self.fail("replacement agent pane remained after the agent exited")
+
+            receipt_path.unlink()
+            receipt_dir.chmod(0o500)
+            third_launcher = start_launcher(third_invocation_id)
+            wait_for_lines(agent_pids, 4)
+            self.assertNotEqual(third_launcher.wait(timeout=5), 0)
+            stderr = third_launcher.stderr.read() if third_launcher.stderr else ""
+            self.assertIn("cannot stage launcher receipt", stderr)
+            self.assertEqual(
+                0,
+                tmux_run("has-session", "-t", "=agent-under-test", check=False).returncode,
+                "receipt failure must not be disguised as successful readiness",
+            )
         finally:
+            receipt_dir.chmod(0o700)
             if agent_pids.exists():
                 for raw_pid in agent_pids.read_text().splitlines():
                     try:
@@ -625,12 +693,14 @@ class UnitFileTests(unittest.TestCase):
     def setUp(self) -> None:
         self.text = UNIT.read_text()
 
-    def test_type_is_simple_so_active_means_the_launcher_is_running(self) -> None:
-        self.assertIn("Type=simple", self.text)
+    def test_type_notify_waits_for_observed_identity_before_start_succeeds(self) -> None:
+        self.assertIn("Type=notify", self.text)
+        self.assertIn("NotifyAccess=all", self.text)
+        self.assertIn("TimeoutStartSec=15", self.text)
         self.assertNotIn(
             "RemainAfterExit",
             self.text,
-            "RemainAfterExit would make 'active' mean 'we once ran the launcher'",
+            "RemainAfterExit would make 'active' mean only that launch once ran",
         )
 
     def test_restart_policy_has_a_reachable_burst_window(self) -> None:

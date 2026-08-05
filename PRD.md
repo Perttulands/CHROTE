@@ -111,10 +111,11 @@ Sessions and Files are independent peer sidecars within each terminal workspace.
   resumes the same native agent session. The UI warns that current in-flight
   terminal input may be interrupted. The launcher invokes typed agent arguments
   directly; it never types a rendered command into a fresh shell.
-- Lifecycle state is read from the unit rather than tracked by CHROTE. Reported
-  health combines the unit's active state with a launcher receipt showing that
-  the expected agent resumed the expected work; an active unit without a
-  matching receipt is reported as degraded rather than healthy.
+- Lifecycle state is read from the unit rather than tracked by CHROTE. The unit
+  does not finish starting until its launcher observes the actual pane process
+  and publishes proof bound to that systemd invocation, pane, PID, process start,
+  and native transcript. Reported health revalidates that proof; an active unit
+  without current matching evidence is degraded rather than healthy.
 - Unlocking withdraws the promise, not the work. The tmux session and the
   running agent are left alive, and the confirmation says so.
 - Sessions owned by units CHROTE did not install remain read-only and are never
