@@ -315,7 +315,18 @@ class SessionLifecycleTests(unittest.TestCase):
         receipt = fixture.receipt.read_text()
         self.assertIn(SESSION_ID, receipt)
         self.assertIn("agent-under-test", receipt)
-        self.assertEqual(0o600, fixture.receipt.stat().st_mode & 0o777)
+        self.assertEqual(0o640, fixture.receipt.stat().st_mode & 0o777)
+
+    def test_receipt_write_failure_prevents_agent_start(self) -> None:
+        fixture = LauncherFixture(
+            CHROTE_AGENT_RECEIPT_PATH="/proc/chrote-agent-test/receipt.json"
+        )
+        result = fixture.run_pane()
+        self.assertNotEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(
+            fixture.agent_args.exists(),
+            "a launcher that cannot report identity must not start an unattested agent",
+        )
 
 
 class WatchContractTests(unittest.TestCase):

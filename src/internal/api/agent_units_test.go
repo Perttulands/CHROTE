@@ -123,6 +123,7 @@ func TestAgentUnitController_EnableWritesTypedConfigAndStartsTheUnit(t *testing.
 		"CHROTE_AGENT_SESSION_ID=019f4baa-e368-7ea0-8912-fb2c6f99785c",
 		"CHROTE_AGENT_BIN=/opt/bin/codex",
 		"CHROTE_AGENT_TMUX_SOCKET=/run/user/1234/pool/default",
+		"CHROTE_AGENT_RECEIPT_PATH=" + filepath.Join(controller.receiptRoot, "alice", "codex-alpha.receipt.json"),
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("config missing %q; got:\n%s", want, body)
@@ -138,8 +139,8 @@ func TestAgentUnitController_EnableWritesTypedConfigAndStartsTheUnit(t *testing.
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	if mode := info.Mode().Perm(); mode != 0o600 {
-		t.Fatalf("config mode = %o, want 600", mode)
+	if mode := info.Mode().Perm(); mode != 0o640 {
+		t.Fatalf("config mode = %o, want 640 ACL mask", mode)
 	}
 
 	argv := fake.argvFor("enable")
@@ -152,6 +153,24 @@ func TestAgentUnitController_EnableWritesTypedConfigAndStartsTheUnit(t *testing.
 	}
 	if fake.calls[len(fake.calls)-1].UnixUser != "alice" {
 		t.Fatalf("systemctl must target the session's own unix user")
+	}
+}
+
+func TestAgentUnitController_ConfigAndReceiptPathsUseSeparateOwnershipDomains(t *testing.T) {
+	controller, _, _ := newTestAgentUnitController(t)
+	configPath, err := controller.configPath("codex-alpha", "alice")
+	if err != nil {
+		t.Fatalf("configPath: %v", err)
+	}
+	receiptPath, err := controller.receiptPath("codex-alpha", "alice")
+	if err != nil {
+		t.Fatalf("receiptPath: %v", err)
+	}
+	if filepath.Dir(configPath) == filepath.Dir(receiptPath) {
+		t.Fatalf("target-writable receipt directory must not contain CHROTE-owned config: %q", configPath)
+	}
+	if strings.HasPrefix(filepath.Clean(receiptPath), filepath.Clean(controller.root)+string(os.PathSeparator)) {
+		t.Fatalf("receipt %q must be outside CHROTE's config ownership root %q", receiptPath, controller.root)
 	}
 }
 
@@ -270,7 +289,7 @@ func TestAgentUnitController_DisableIsIdempotent(t *testing.T) {
 }
 
 func TestAgentUnitController_StatusRequiresBothUnitStateAndMatchingReceipt(t *testing.T) {
-	controller, fake, dir := newTestAgentUnitController(t)
+	controller, fake, _ := newTestAgentUnitController(t)
 	sessionID := "019f4baa-e368-7ea0-8912-fb2c6f99785c"
 	config := agentUnitConfig{
 		Session:        "codex-alpha",
@@ -299,7 +318,7 @@ func TestAgentUnitController_StatusRequiresBothUnitStateAndMatchingReceipt(t *te
 
 	// Receipt for a DIFFERENT transcript: the failure this whole mechanism exists
 	// to catch -- a unit that cheerfully resumed the wrong session.
-	receiptPath := filepath.Join(dir, "alice", "codex-alpha.receipt.json")
+	receiptPath := filepath.Join(controller.receiptRoot, "alice", "codex-alpha.receipt.json")
 	writeTestReceipt(t, receiptPath, "codex-alpha", "codex", "019f0000-0000-7000-8000-000000000000")
 	status, err = controller.Status(context.Background(), "codex-alpha", "alice")
 	if err != nil {
@@ -324,7 +343,7 @@ func TestAgentUnitController_StatusRequiresBothUnitStateAndMatchingReceipt(t *te
 }
 
 func TestAgentUnitController_StatusReportsFailedAndInactiveVerbatim(t *testing.T) {
-	controller, fake, dir := newTestAgentUnitController(t)
+	controller, fake, _ := newTestAgentUnitController(t)
 	sessionID := "019f4baa-e368-7ea0-8912-fb2c6f99785c"
 	config := agentUnitConfig{
 		Session: "codex-alpha", UnixUser: "alice", AgentKind: "codex",
@@ -334,7 +353,7 @@ func TestAgentUnitController_StatusReportsFailedAndInactiveVerbatim(t *testing.T
 	if err := controller.Enable(context.Background(), config); err != nil {
 		t.Fatalf("Enable: %v", err)
 	}
-	writeTestReceipt(t, filepath.Join(dir, "alice", "codex-alpha.receipt.json"), "codex-alpha", "codex", sessionID)
+	writeTestReceipt(t, filepath.Join(controller.receiptRoot, "alice", "codex-alpha.receipt.json"), "codex-alpha", "codex", sessionID)
 	unit := "chrote-agent@codex-alpha.service"
 
 	fake.states[unit] = systemdUnitState{ActiveState: "failed", SubState: "failed", UnitFileState: "enabled"}
@@ -428,8 +447,29 @@ func writeTestReceipt(t *testing.T, path, session, kind, sessionID string) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	body := `{"session":"` + session + `","agentKind":"` + kind + `","agentSessionId":"` + sessionID + `","panePid":4242,"startedAt":"2026-08-03T12:00:00Z"}`
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(body), 0o640); err != nil {
 		t.Fatalf("write receipt: %v", err)
+	}
+}
+
+func TestReadAgentUnitReceiptRejectsSymlinksAndUnsafeMode(t *testing.T) {
+	dir := t.TempDir()
+	realPath := filepath.Join(dir, "real.json")
+	writeTestReceipt(t, realPath, "codex-alpha", "codex", "019f4baa-e368-7ea0-8912-fb2c6f99785c")
+
+	linkPath := filepath.Join(dir, "link.json")
+	if err := os.Symlink(realPath, linkPath); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if _, err := readAgentUnitReceipt(linkPath); err == nil {
+		t.Fatal("receipt reader must never follow a symlink")
+	}
+
+	if err := os.Chmod(realPath, 0o666); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	if _, err := readAgentUnitReceipt(realPath); err == nil {
+		t.Fatal("group-writable or world-readable receipt must be rejected")
 	}
 }
 

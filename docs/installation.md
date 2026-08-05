@@ -155,6 +155,13 @@ it cannot supervise. The template's launcher attaches to an existing tmux
 server and refuses to create one, so the tmux server's lifetime stays with
 whichever unit owns that socket.
 
+Install `services/chrote-agent-state.conf` through `systemd-tmpfiles`, then run
+`scripts/chrote-agent-state-init` once per target account. The latter creates a
+CHROTE-owned, target-readable config directory and a separate target-owned,
+CHROTE-readable receipt directory. Do not make the config directory writable by
+the target account; file mode alone cannot prevent unlink or replacement by a
+directory writer.
+
 ## Upgrade
 
 ```bash

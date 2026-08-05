@@ -118,13 +118,18 @@ launch_agent() {
 # atomically so a reader never sees a half-file.
 write_receipt() {
   local pane=$1 tmp
-  [[ -n "$RECEIPT_PATH" ]] || return 0
-  mkdir -p "$(dirname "$RECEIPT_PATH")" 2>/dev/null || true
-  tmp=$(mktemp "${RECEIPT_PATH}.XXXXXX") || return 0
+  [[ -n "$RECEIPT_PATH" ]] || fail "config has no receipt path: $CONFIG_FILE"
+  [[ -d "$(dirname "$RECEIPT_PATH")" ]] \
+    || fail "receipt runtime directory is not provisioned: $RECEIPT_PATH"
+  tmp=$(mktemp "${RECEIPT_PATH}.XXXXXX") \
+    || fail "cannot stage launcher receipt: $RECEIPT_PATH"
   printf '{"session":"%s","agentKind":"%s","agentSessionId":"%s","panePid":%s,"startedAt":"%s"}\n' \
-    "$SESSION" "$AGENT_KIND" "$AGENT_SESSION_ID" "$pane" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$tmp"
-  chmod 600 "$tmp" 2>/dev/null || true
-  mv -f "$tmp" "$RECEIPT_PATH"
+    "$SESSION" "$AGENT_KIND" "$AGENT_SESSION_ID" "$pane" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$tmp" \
+    || { rm -f -- "$tmp"; fail "cannot write launcher receipt: $RECEIPT_PATH"; }
+  chmod 640 "$tmp" \
+    || { rm -f -- "$tmp"; fail "cannot protect launcher receipt: $RECEIPT_PATH"; }
+  mv -f "$tmp" "$RECEIPT_PATH" \
+    || { rm -f -- "$tmp"; fail "cannot publish launcher receipt: $RECEIPT_PATH"; }
 }
 
 # --- lifecycle ---------------------------------------------------------------

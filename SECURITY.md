@@ -111,10 +111,10 @@ and startup does not depend on pane contents. Around that: a session name is
 validated before it is used to build a unit name, so a name cannot introduce a
 second unit, a flag, or a metacharacter; any grant to control units is scoped to
 the verbs and the single unit-name pattern CHROTE owns, never to arbitrary unit
-names; and
-per-agent configuration is written mode 0600 into CHROTE's own state directory
-with paths canonicalized, so a symlinked or out-of-directory configuration is
-refused rather than read.
+names. Per-agent configuration stays in a CHROTE-owned directory with a
+target-readable ACL, while launcher receipts stay in a separate target-owned
+directory readable by CHROTE's service group. Both are mode 0640; receipt reads
+reject ownership, mode, regular-file, and symlink-boundary violations.
 
 ## Secrets
 

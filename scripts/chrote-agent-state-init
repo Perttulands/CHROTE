@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# Provision one target account's locked-agent config and receipt ownership domains.
+set -euo pipefail
+
+readonly INSTALL_BIN=/usr/bin/install
+readonly SETFACL_BIN=/usr/bin/setfacl
+readonly ID_BIN=/usr/bin/id
+readonly GETENT_BIN=/usr/bin/getent
+readonly REALPATH_BIN=/usr/bin/realpath
+
+fail() { printf 'chrote-agent-state-init: %s\n' "$*" >&2; exit 1; }
+usage() {
+  cat >&2 <<'EOF'
+usage: chrote-agent-state-init --service-user USER --service-group GROUP \
+  --target-user USER --units-dir PATH --receipts-dir PATH
+EOF
+}
+
+SERVICE_USER=""
+SERVICE_GROUP=""
+TARGET_USER=""
+UNITS_DIR=""
+RECEIPTS_DIR=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --service-user) [[ $# -ge 2 ]] || fail "--service-user requires a value"; SERVICE_USER=$2; shift 2 ;;
+    --service-group) [[ $# -ge 2 ]] || fail "--service-group requires a value"; SERVICE_GROUP=$2; shift 2 ;;
+    --target-user) [[ $# -ge 2 ]] || fail "--target-user requires a value"; TARGET_USER=$2; shift 2 ;;
+    --units-dir) [[ $# -ge 2 ]] || fail "--units-dir requires a value"; UNITS_DIR=$2; shift 2 ;;
+    --receipts-dir) [[ $# -ge 2 ]] || fail "--receipts-dir requires a value"; RECEIPTS_DIR=$2; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) fail "unknown argument: $1" ;;
+  esac
+done
+
+for binary in "$INSTALL_BIN" "$SETFACL_BIN" "$ID_BIN" "$GETENT_BIN" "$REALPATH_BIN"; do
+  [[ -x "$binary" ]] || fail "required executable is missing: $binary"
+done
+for assignment in \
+  SERVICE_USER:"$SERVICE_USER" SERVICE_GROUP:"$SERVICE_GROUP" \
+  TARGET_USER:"$TARGET_USER" UNITS_DIR:"$UNITS_DIR" RECEIPTS_DIR:"$RECEIPTS_DIR"; do
+  [[ -n "${assignment#*:}" ]] || fail "${assignment%%:*} is required"
+done
+for account in "$SERVICE_USER" "$TARGET_USER"; do
+  [[ "$account" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || fail "invalid account: $account"
+  "$ID_BIN" -u "$account" >/dev/null 2>&1 || fail "account does not exist: $account"
+done
+[[ "$SERVICE_GROUP" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || fail "invalid group: $SERVICE_GROUP"
+"$GETENT_BIN" group "$SERVICE_GROUP" >/dev/null 2>&1 || fail "group does not exist: $SERVICE_GROUP"
+
+canonical_path() {
+  local value=$1 canonical
+  [[ "$value" == /* && "$value" != "/" ]] || fail "state path must be absolute and narrower than /: $value"
+  canonical=$("$REALPATH_BIN" -m -- "$value") || fail "cannot resolve state path: $value"
+  [[ "$canonical" == "$value" ]] || fail "state path is not canonical or crosses a symlink: $value"
+  printf '%s' "$canonical"
+}
+
+UNITS_DIR=$(canonical_path "$UNITS_DIR")
+RECEIPTS_DIR=$(canonical_path "$RECEIPTS_DIR")
+[[ "$UNITS_DIR" != "$RECEIPTS_DIR" ]] || fail "config and receipt roots must differ"
+case "$UNITS_DIR/" in "$RECEIPTS_DIR/"*) fail "config root may not be inside receipt root" ;; esac
+case "$RECEIPTS_DIR/" in "$UNITS_DIR/"*) fail "receipt root may not be inside config root" ;; esac
+
+service_uid=$("$ID_BIN" -u "$SERVICE_USER")
+target_uid=$("$ID_BIN" -u "$TARGET_USER")
+if (( EUID != 0 )) && { [[ "$EUID" != "$service_uid" ]] || [[ "$EUID" != "$target_uid" ]]; }; then
+  fail "root is required when service and target accounts differ"
+fi
+
+umask 027
+"$INSTALL_BIN" -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$UNITS_DIR" "$RECEIPTS_DIR"
+
+config_dir="$UNITS_DIR/$TARGET_USER"
+receipt_dir="$RECEIPTS_DIR/$TARGET_USER"
+"$INSTALL_BIN" -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$config_dir"
+"$SETFACL_BIN" -m "u:$TARGET_USER:--x" "$UNITS_DIR"
+"$SETFACL_BIN" -m "u:$TARGET_USER:r-x,m::r-x,d:u:$TARGET_USER:r--,d:m::r--" "$config_dir"
+
+"$SETFACL_BIN" -m "u:$TARGET_USER:--x" "$RECEIPTS_DIR"
+"$INSTALL_BIN" -d -o "$TARGET_USER" -g "$SERVICE_GROUP" -m 2770 "$receipt_dir"
+
+printf 'config_dir=%s receipt_dir=%s\n' "$config_dir" "$receipt_dir"

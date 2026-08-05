@@ -48,6 +48,9 @@ release.
 - Locked-agent units now track the agent's exact pane lifetime: the pane starts
   through a fixed launcher, typed config becomes an argv without `send-keys`,
   and agent exit makes the supervising unit restart the same native session.
+- Locked-agent config and receipt files now occupy separately provisioned
+  ownership domains; receipt writes fail closed and reads validate mode, owner,
+  regular-file type, and symlink boundaries.
 - Fresh terminal sidecars persist their default-closed state across reloads.
 - `/` opens Sessions for the active closed sidecar and focuses search.
 - Workload recovery records and restores supported agent, shell, and server

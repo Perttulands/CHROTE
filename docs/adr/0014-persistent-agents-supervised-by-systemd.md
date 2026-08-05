@@ -182,10 +182,13 @@ security work is therefore mechanism correctness, not authorization:
 - Session names are validated by the existing `core.ValidateSessionName`
   (`^[a-zA-Z0-9_-]+$`, max 50) *before* they are used to build a unit name, so a
   name can never inject a second unit, a flag, or a shell metacharacter.
-- Per-agent config files are written into CHROTE's own state directory with mode
-  0600, and paths are canonicalized; a symlinked or out-of-directory config is
-  refused, matching the discipline already in
-  `managed_recovery_status.go:86-94`.
+- Desired config and reported runtime state use separate ownership domains.
+  CHROTE owns each config directory; a named ACL grants the target account read
+  access only. The target account owns a separate setgid receipt directory whose
+  group is CHROTE's service group. Configs use mode 0640 as the ACL mask and
+  receipts use mode 0640; neither domain is writable by the other owner. Receipt
+  reads reject unsafe modes, ownership mismatches, non-regular files, and any
+  symlinked path component.
 - Config-derived invocation uses argv arrays with a timeout, per the repo's exec
   discipline. tmux accepts one fixed pane command string, containing only the
   validated installed launcher path and a constant mode flag; no config value or

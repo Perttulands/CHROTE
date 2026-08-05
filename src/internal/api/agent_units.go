@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	osuser "os/user"
@@ -12,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/chrote/server/internal/core"
@@ -26,7 +28,7 @@ import (
 const (
 	agentUnitTemplate    = "chrote-agent@"
 	agentUnitSuffix      = ".service"
-	agentUnitConfigMode  = 0o600
+	agentUnitConfigMode  = 0o640
 	agentUnitDirMode     = 0o700
 	agentSystemctlBudget = 15 * time.Second
 
@@ -70,9 +72,9 @@ type systemdUnitState struct {
 }
 
 // agentUnitConfig is CHROTE's desired state for one locked session. It carries
-// TYPED fields only: the launcher renders the resume argv from AgentKind plus
-// AgentSessionID, so no rendered command is ever persisted and a config file
-// cannot smuggle a command into a pane (ADR-0001, ADR-0014 decision 2).
+// TYPED fields only: the launcher constructs an argv from AgentKind plus
+// AgentSessionID, so no rendered command is persisted or parsed as shell text
+// (ADR-0001, ADR-0014 decision 2).
 type agentUnitConfig struct {
 	Session        string
 	UnixUser       string
@@ -111,18 +113,32 @@ type agentUnitReceipt struct {
 }
 
 type agentUnitController struct {
-	root      string
-	systemctl systemctlRunner
-	mu        sync.Mutex
+	root        string
+	receiptRoot string
+	systemctl   systemctlRunner
+	mu          sync.Mutex
 }
 
-const defaultAgentUnitsDir = "/srv/data/chrote/agent-units"
+const (
+	defaultAgentUnitsDir    = "/srv/data/chrote/agent-units"
+	defaultAgentReceiptsDir = "/srv/data/chrote/agent-receipts"
+)
 
 func defaultAgentUnitsPath() string {
 	if override := strings.TrimSpace(os.Getenv("CHROTE_AGENT_UNITS_DIR")); override != "" {
 		return override
 	}
 	return defaultAgentUnitsDir
+}
+
+func agentReceiptsPathForUnitsRoot(unitsRoot string) string {
+	if override := strings.TrimSpace(os.Getenv("CHROTE_AGENT_RECEIPTS_DIR")); override != "" {
+		return override
+	}
+	if filepath.Clean(unitsRoot) == filepath.Clean(defaultAgentUnitsDir) {
+		return defaultAgentReceiptsDir
+	}
+	return strings.TrimRight(unitsRoot, string(os.PathSeparator)) + "-receipts"
 }
 
 // agentSystemctlRun is the seam every controller falls back to. It exists as a
@@ -136,7 +152,12 @@ func newAgentUnitController(root string, runner systemctlRunner) *agentUnitContr
 			return agentSystemctlRun(ctx, unixUser, args...)
 		}
 	}
-	return &agentUnitController{root: strings.TrimSpace(root), systemctl: runner}
+	root = strings.TrimSpace(root)
+	return &agentUnitController{
+		root:        root,
+		receiptRoot: agentReceiptsPathForUnitsRoot(root),
+		systemctl:   runner,
+	}
 }
 
 // agentUnitName converts a session name into the one unit name it is allowed to
@@ -257,11 +278,23 @@ func (c *agentUnitController) configPath(session, unixUser string) (string, erro
 }
 
 func (c *agentUnitController) receiptPath(session, unixUser string) (string, error) {
-	configPath, err := c.configPath(session, unixUser)
+	unixUser, err := resolveAgentUnixUser(unixUser)
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSuffix(configPath, ".conf") + ".receipt.json", nil
+	session = strings.TrimSpace(session)
+	if _, err := agentUnitName(session); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(c.receiptRoot) == "" {
+		return "", fmt.Errorf("agent receipt state directory is not configured")
+	}
+	base := filepath.Join(c.receiptRoot, unixUser)
+	path := filepath.Join(base, session+".receipt.json")
+	if !strings.HasPrefix(filepath.Clean(path), filepath.Clean(base)+string(os.PathSeparator)) {
+		return "", fmt.Errorf("refusing a receipt path outside %s", base)
+	}
+	return path, nil
 }
 
 // Enable writes the typed config and hands supervision to systemd. The config is
@@ -459,16 +492,16 @@ func (c *agentUnitController) unitState(ctx context.Context, unixUser, unit stri
 }
 
 // writeAgentUnitConfigFile writes the typed KEY=value file the launcher reads.
-// Atomic rename so the launcher never reads a half-written config, and 0600
-// because it names a workspace and a transcript.
+// Atomic rename so the launcher never reads a half-written config. Mode 0640 is
+// an ACL mask: provisioning grants only the target account named read access.
 func writeAgentUnitConfigFile(path string, config agentUnitConfig, receiptPath string) error {
 	watch := config.WatchInterval
 	if watch <= 0 {
 		watch = 10
 	}
 	var builder strings.Builder
-	builder.WriteString("# Written by CHROTE. Typed fields only: the launcher renders the resume\n")
-	builder.WriteString("# argv from kind + native session id, so this file cannot carry a command.\n")
+	builder.WriteString("# Written by CHROTE. Typed fields only: the launcher constructs the resume\n")
+	builder.WriteString("# argv from kind + native session id; this file cannot carry a command.\n")
 	fmt.Fprintf(&builder, "CHROTE_AGENT_SESSION=%s\n", config.Session)
 	fmt.Fprintf(&builder, "CHROTE_AGENT_KIND=%s\n", strings.ToLower(strings.TrimSpace(config.AgentKind)))
 	fmt.Fprintf(&builder, "CHROTE_AGENT_SESSION_ID=%s\n", strings.TrimSpace(config.AgentSessionID))
@@ -496,10 +529,13 @@ func writeAgentUnitConfigFile(path string, config agentUnitConfig, receiptPath s
 		tmp.Close()
 		return fmt.Errorf("write agent config: %w", err)
 	}
-	// No Chmod here: os.CreateTemp already creates at 0600 and umask can only
-	// narrow that. Worse, chmod recomputes the POSIX ACL mask from the group
-	// bits, so chmod 0600 would void any user:<account>:r-- entry the deployment
-	// needs for the launcher -- running as another account -- to read this file.
+	// The group-read bit is the POSIX ACL mask. Provisioning gives only the target
+	// account a named read entry; 0640 makes that entry effective while keeping
+	// group::--- and other::--- in the ACL itself.
+	if err := tmp.Chmod(agentUnitConfigMode); err != nil {
+		tmp.Close()
+		return fmt.Errorf("set agent config mode: %w", err)
+	}
 	if err := tmp.Sync(); err != nil {
 		tmp.Close()
 		return fmt.Errorf("sync agent config: %w", err)
@@ -544,15 +580,74 @@ func readAgentUnitConfigFile(path string) (agentUnitConfig, error) {
 }
 
 func readAgentUnitReceipt(path string) (agentUnitReceipt, error) {
-	raw, err := os.ReadFile(path)
+	parent := filepath.Dir(path)
+	if err := rejectSymlinkPath(parent); err != nil {
+		return agentUnitReceipt{}, err
+	}
+	parentFD, err := syscall.Open(parent, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		return agentUnitReceipt{}, err
+	}
+	defer syscall.Close(parentFD)
+	var parentStat syscall.Stat_t
+	if err := syscall.Fstat(parentFD, &parentStat); err != nil {
+		return agentUnitReceipt{}, err
+	}
+	fileFD, err := syscall.Openat(parentFD, filepath.Base(path), syscall.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return agentUnitReceipt{}, err
+	}
+	file := os.NewFile(uintptr(fileFD), path)
+	if file == nil {
+		syscall.Close(fileFD)
+		return agentUnitReceipt{}, fmt.Errorf("open agent receipt")
+	}
+	defer file.Close()
+	var fileStat syscall.Stat_t
+	if err := syscall.Fstat(fileFD, &fileStat); err != nil {
+		return agentUnitReceipt{}, err
+	}
+	if fileStat.Mode&syscall.S_IFMT != syscall.S_IFREG {
+		return agentUnitReceipt{}, fmt.Errorf("agent receipt is not a regular file")
+	}
+	if mode := os.FileMode(fileStat.Mode).Perm(); mode != 0o640 {
+		return agentUnitReceipt{}, fmt.Errorf("agent receipt mode is %04o, want 0640", mode)
+	}
+	if fileStat.Uid != parentStat.Uid || fileStat.Gid != parentStat.Gid {
+		return agentUnitReceipt{}, fmt.Errorf("agent receipt owner does not match its runtime directory")
+	}
+	const maxReceiptBytes = 64 * 1024
+	raw, err := io.ReadAll(io.LimitReader(file, maxReceiptBytes+1))
+	if err != nil {
+		return agentUnitReceipt{}, err
+	}
+	if len(raw) > maxReceiptBytes {
+		return agentUnitReceipt{}, fmt.Errorf("agent receipt exceeds %d bytes", maxReceiptBytes)
 	}
 	receipt := agentUnitReceipt{}
 	if err := json.Unmarshal(raw, &receipt); err != nil {
 		return agentUnitReceipt{}, err
 	}
 	return receipt, nil
+}
+
+func rejectSymlinkPath(path string) error {
+	clean := filepath.Clean(path)
+	if !filepath.IsAbs(clean) {
+		return fmt.Errorf("agent receipt path is not absolute")
+	}
+	current := string(os.PathSeparator)
+	for _, component := range strings.Split(strings.TrimPrefix(clean, string(os.PathSeparator)), string(os.PathSeparator)) {
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("agent receipt path contains a symlink: %s", current)
+		}
+	}
+	return nil
 }
 
 // agentBinaryForKind resolves the CLI a locked agent resumes with. The unit
