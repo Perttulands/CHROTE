@@ -164,12 +164,17 @@ manager. A missing grant, bus, lingering session, or template is logged and
 makes locking visibly unavailable for that account; terminal observation
 remains available.
 
-Install `services/chrote-agent-state.conf` through `systemd-tmpfiles`, then run
-`scripts/chrote-agent-state-init` once per target account. The latter creates a
-CHROTE-owned, target-readable config directory and a separate target-owned,
-CHROTE-readable receipt directory. Do not make the config directory writable by
-the target account; file mode alone cannot prevent unlink or replacement by a
-directory writer.
+Install `services/chrote-agent-state.env` as
+`/etc/chrote/chrote-agent-state.env`, and install
+`services/chrote-agent-state.conf` through `systemd-tmpfiles`. The dedicated
+environment file is the single source for config and receipt roots used by both
+the server and every agent unit; put any `CHROTE_AGENT_UNITS_DIR` or
+`CHROTE_AGENT_RECEIPTS_DIR` override there, not in only one service. Then run
+`scripts/chrote-agent-state-init` once per target account with those same roots.
+It creates a CHROTE-owned, target-readable config directory and a separate
+target-owned, CHROTE-readable receipt directory. Do not make the config
+directory writable by the target account; file mode alone cannot prevent unlink
+or replacement by a directory writer.
 
 ## Upgrade
 

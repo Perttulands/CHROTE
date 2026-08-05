@@ -680,6 +680,29 @@ class ConfigValidationTests(unittest.TestCase):
                 result = fixture.run("--once")
                 self.assertNotEqual(result.returncode, 0, f"{key}={value!r} should be refused")
 
+    def test_duplicate_typed_key_is_refused(self) -> None:
+        fixture = LauncherFixture()
+        fixture.config.write_text(
+            fixture.config.read_text() + "\nCHROTE_AGENT_KIND=claude\n"
+        )
+        result = fixture.run("--once")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("duplicate CHROTE_AGENT_KIND", result.stderr)
+
+    def test_every_configured_path_rejects_shell_metacharacters(self) -> None:
+        for key in (
+            "CHROTE_AGENT_TMUX_BIN",
+            "CHROTE_AGENT_TMUX_SOCKET",
+            "CHROTE_AGENT_WORKDIR",
+            "CHROTE_AGENT_BIN",
+            "CHROTE_AGENT_RECEIPT_PATH",
+        ):
+            with self.subTest(key=key):
+                fixture = LauncherFixture(**{key: f"/tmp/{key};touch"})
+                result = fixture.run("--once")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f"{key} is not well formed", result.stderr)
+
     def test_unsupported_agent_kind_never_reaches_tmux(self) -> None:
         fixture = LauncherFixture(CHROTE_AGENT_KIND="shell")
         result = fixture.run("--once")

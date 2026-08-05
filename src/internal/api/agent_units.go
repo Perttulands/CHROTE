@@ -27,12 +27,15 @@ import (
 // those are `Restart=` and the journal.
 
 const (
-	agentUnitTemplate    = "chrote-agent@"
-	agentUnitSuffix      = ".service"
-	agentUnitConfigMode  = 0o640
-	agentUnitDirMode     = 0o700
-	agentSystemctlBudget = 15 * time.Second
-	agentPreflightUnit   = "chrote-agent@chrote-preflight.service"
+	agentUnitTemplate      = "chrote-agent@"
+	agentUnitSuffix        = ".service"
+	agentUnitConfigMode    = 0o640
+	agentUnitDirMode       = 0o700
+	agentSystemctlBudget   = 15 * time.Second
+	agentHealthBudget      = 2 * time.Second
+	agentHealthCacheTTL    = 2 * time.Second
+	agentHealthConcurrency = 4
+	agentPreflightUnit     = "chrote-agent@chrote-preflight.service"
 
 	// This is the entire privilege boundary. Both paths are root-owned deployment
 	// artifacts; PATH must never choose what runs after sudo crosses accounts.
@@ -60,6 +63,8 @@ var agentNativeSessionIDRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0
 // A hermes profile becomes an argv element after --profile, so it is held to the
 // same shape as every other value that reaches a command line.
 var agentHermesProfileRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`)
+
+var agentAbsolutePathRegex = regexp.MustCompile(`^/[a-zA-Z0-9._/-]+$`)
 
 var agentPaneIDRegex = regexp.MustCompile(`^%[0-9]+$`)
 
@@ -127,10 +132,19 @@ type agentUnitController struct {
 	root              string
 	receiptRoot       string
 	systemctl         systemctlRunner
-	mu                sync.Mutex
+	operationMu       sync.Mutex
+	operations        map[string]*sync.Mutex
+	healthMu          sync.Mutex
+	healthCache       map[string]cachedAgentUnitStatus
 	capabilityMu      sync.RWMutex
 	capabilityChecked bool
 	capabilities      map[string]agentUnitCapability
+}
+
+type cachedAgentUnitStatus struct {
+	status    AgentUnitStatus
+	err       error
+	expiresAt time.Time
 }
 
 type agentUnitCapability struct {
@@ -176,6 +190,8 @@ func newAgentUnitController(root string, runner systemctlRunner) *agentUnitContr
 		root:         root,
 		receiptRoot:  agentReceiptsPathForUnitsRoot(root),
 		systemctl:    runner,
+		operations:   make(map[string]*sync.Mutex),
+		healthCache:  make(map[string]cachedAgentUnitStatus),
 		capabilities: make(map[string]agentUnitCapability),
 	}
 }
@@ -373,15 +389,18 @@ func (c *agentUnitConfig) validate() error {
 		"tmux socket":  c.TmuxSocket,
 		"workdir":      c.Workdir,
 	} {
-		trimmed := strings.TrimSpace(value)
-		if trimmed == "" || !filepath.IsAbs(trimmed) || strings.ContainsAny(trimmed, "\n\r\x00") {
-			return fmt.Errorf("%s must be an absolute path without control characters", label)
+		if !validAgentAbsolutePath(value) {
+			return fmt.Errorf("%s must be a canonical absolute path containing only letters, digits, dot, underscore, slash, and dash", label)
 		}
 	}
 	if c.KeeperUnit != "" && strings.ContainsAny(c.KeeperUnit, "\n\r\x00") {
 		return fmt.Errorf("keeper unit name contains control characters")
 	}
 	return nil
+}
+
+func validAgentAbsolutePath(value string) bool {
+	return filepath.IsAbs(value) && filepath.Clean(value) == value && agentAbsolutePathRegex.MatchString(value)
 }
 
 // configPath is where this agent's typed config lives. The result is proven to
@@ -403,6 +422,9 @@ func (c *agentUnitController) configPath(session, unixUser string) (string, erro
 	if strings.TrimSpace(c.root) == "" {
 		return "", fmt.Errorf("agent unit state directory is not configured")
 	}
+	if !validAgentAbsolutePath(c.root) {
+		return "", fmt.Errorf("agent unit state directory must be a canonical safe absolute path")
+	}
 	base := filepath.Join(c.root, unixUser)
 	path := filepath.Join(base, session+".conf")
 	if !strings.HasPrefix(filepath.Clean(path), filepath.Clean(base)+string(os.PathSeparator)) {
@@ -422,6 +444,9 @@ func (c *agentUnitController) receiptPath(session, unixUser string) (string, err
 	}
 	if strings.TrimSpace(c.receiptRoot) == "" {
 		return "", fmt.Errorf("agent receipt state directory is not configured")
+	}
+	if !validAgentAbsolutePath(c.receiptRoot) {
+		return "", fmt.Errorf("agent receipt state directory must be a canonical safe absolute path")
 	}
 	base := filepath.Join(c.receiptRoot, unixUser)
 	path := filepath.Join(base, session+".receipt.json")
@@ -456,9 +481,13 @@ func (c *agentUnitController) Enable(ctx context.Context, config agentUnitConfig
 	if err != nil {
 		return err
 	}
+	if !validAgentAbsolutePath(receipt) {
+		return fmt.Errorf("agent receipt must be a canonical absolute path containing only letters, digits, dot, underscore, slash, and dash")
+	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	unlock := c.lockOperation(config.Session, config.UnixUser)
+	defer unlock()
+	defer c.invalidateHealth(config.Session, config.UnixUser)
 
 	if err := os.MkdirAll(filepath.Dir(configPath), agentUnitDirMode); err != nil {
 		return fmt.Errorf("agent config directory: %w", err)
@@ -496,8 +525,9 @@ func (c *agentUnitController) Disable(ctx context.Context, session, unixUser str
 		return err
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	unlock := c.lockOperation(session, unixUser)
+	defer unlock()
+	defer c.invalidateHealth(session, unixUser)
 
 	if _, statErr := os.Stat(configPath); os.IsNotExist(statErr) {
 		// Not locked by us. Disabling a unit we never installed is not our call.
@@ -513,6 +543,32 @@ func (c *agentUnitController) Disable(ctx context.Context, session, unixUser str
 		_ = os.Remove(receipt)
 	}
 	return nil
+}
+
+func agentUnitOperationKey(session, unixUser string) string {
+	if resolved, err := resolveAgentUnixUser(unixUser); err == nil {
+		unixUser = resolved
+	}
+	return strings.TrimSpace(unixUser) + "\x00" + strings.TrimSpace(session)
+}
+
+func (c *agentUnitController) lockOperation(session, unixUser string) func() {
+	key := agentUnitOperationKey(session, unixUser)
+	c.operationMu.Lock()
+	lock := c.operations[key]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		c.operations[key] = lock
+	}
+	c.operationMu.Unlock()
+	lock.Lock()
+	return lock.Unlock
+}
+
+func (c *agentUnitController) invalidateHealth(session, unixUser string) {
+	c.healthMu.Lock()
+	delete(c.healthCache, agentUnitOperationKey(session, unixUser))
+	c.healthMu.Unlock()
 }
 
 // OwnsUnit reports whether a unit is one CHROTE installed for this session --
@@ -729,11 +785,13 @@ func readAgentUnitConfigFile(path string) (agentUnitConfig, error) {
 		return agentUnitConfig{}, err
 	}
 	config := agentUnitConfig{}
+	seen := map[string]bool{}
 	for _, line := range strings.Split(string(raw), "\n") {
 		key, value, found := strings.Cut(strings.TrimSpace(line), "=")
 		if !found || strings.HasPrefix(key, "#") {
 			continue
 		}
+		known := true
 		switch key {
 		case "CHROTE_AGENT_SESSION":
 			config.Session = value
@@ -751,7 +809,16 @@ func readAgentUnitConfigFile(path string) (agentUnitConfig, error) {
 			config.Workdir = value
 		case "CHROTE_AGENT_HERMES_PROFILE":
 			config.HermesProfile = value
+		default:
+			known = false
 		}
+		if !known {
+			continue
+		}
+		if seen[key] {
+			return agentUnitConfig{}, fmt.Errorf("duplicate %s in agent config", key)
+		}
+		seen[key] = true
 	}
 	return config, nil
 }
@@ -918,29 +985,71 @@ func (c *agentUnitController) AnnotateHealth(ctx context.Context, sessions []cor
 	if c == nil {
 		return sessions
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	healthCtx, cancel := context.WithTimeout(ctx, agentHealthBudget)
+	defer cancel()
+	semaphore := make(chan struct{}, agentHealthConcurrency)
+	var wait sync.WaitGroup
 	for i := range sessions {
 		if !sessions[i].Persistent {
 			continue
 		}
-		status, err := c.Status(ctx, sessions[i].Name, sessions[i].UnixUser)
-		if err != nil {
-			sessions[i].PersistentHealth = agentHealthDegraded
-			sessions[i].PersistentDetail = err.Error()
-			continue
-		}
-		if !status.Locked {
-			// The desired-state store says this session is locked but no unit
-			// config backs it: a failed enable, or a record left by the
-			// pre-ADR-0014 supervisor. Saying "unlocked" here would contradict
-			// the same payload's persistent:true, so say what is actually wrong.
-			sessions[i].PersistentHealth = agentHealthDegraded
-			sessions[i].PersistentDetail = "no supervising unit is installed for this session"
-			continue
-		}
-		sessions[i].PersistentUnit = status.Unit
-		sessions[i].PersistentHealth = status.Health
-		sessions[i].PersistentActiveState = status.ActiveState
-		sessions[i].PersistentDetail = status.Detail
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			select {
+			case semaphore <- struct{}{}:
+				defer func() { <-semaphore }()
+			case <-healthCtx.Done():
+				sessions[index].PersistentHealth = agentHealthDegraded
+				sessions[index].PersistentDetail = "unit status unavailable: " + healthCtx.Err().Error()
+				return
+			}
+			status, err := c.cachedStatus(healthCtx, sessions[index].Name, sessions[index].UnixUser)
+			if err != nil {
+				sessions[index].PersistentHealth = agentHealthDegraded
+				sessions[index].PersistentDetail = err.Error()
+				return
+			}
+			if !status.Locked {
+				// The desired-state store says this session is locked but no unit
+				// config backs it: a failed enable, or a record left by the
+				// pre-ADR-0014 supervisor. Saying "unlocked" here would contradict
+				// the same payload's persistent:true, so say what is actually wrong.
+				sessions[index].PersistentHealth = agentHealthDegraded
+				sessions[index].PersistentDetail = "no supervising unit is installed for this session"
+				return
+			}
+			sessions[index].PersistentUnit = status.Unit
+			sessions[index].PersistentHealth = status.Health
+			sessions[index].PersistentActiveState = status.ActiveState
+			sessions[index].PersistentDetail = status.Detail
+		}(i)
 	}
+	wait.Wait()
 	return sessions
+}
+
+func (c *agentUnitController) cachedStatus(ctx context.Context, session, unixUser string) (AgentUnitStatus, error) {
+	unlock := c.lockOperation(session, unixUser)
+	defer unlock()
+	key := agentUnitOperationKey(session, unixUser)
+	now := time.Now()
+	c.healthMu.Lock()
+	cached, found := c.healthCache[key]
+	if found && now.Before(cached.expiresAt) {
+		c.healthMu.Unlock()
+		return cached.status, cached.err
+	}
+	c.healthMu.Unlock()
+
+	status, err := c.Status(ctx, session, unixUser)
+	if ctx.Err() == nil {
+		c.healthMu.Lock()
+		c.healthCache[key] = cachedAgentUnitStatus{status: status, err: err, expiresAt: now.Add(agentHealthCacheTTL)}
+		c.healthMu.Unlock()
+	}
+	return status, err
 }

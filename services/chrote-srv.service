@@ -7,6 +7,7 @@ Type=simple
 User=chrote
 Group=chrote
 EnvironmentFile=/etc/chrote/chrote-srv.env
+EnvironmentFile=-/etc/chrote/chrote-agent-state.env
 RuntimeDirectory=chrote
 RuntimeDirectoryMode=0750
 UMask=0002

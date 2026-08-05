@@ -16,7 +16,7 @@
 # Configuration is a typed file, never a command string. tmux starts this fixed
 # launcher as the pane command; pane mode then invokes the agent with a Bash argv
 # array. No config value is ever parsed by a shell as command text.
-set -uo pipefail
+set -euo pipefail
 
 readonly PROGRAM_NAME=${0##*/}
 
@@ -39,22 +39,23 @@ USAGE
 # Read one key from a strict KEY=value file. The file is never sourced: sourcing
 # would execute whatever a config-write bug put there, and this process is the
 # one thing standing between a config file and a shell.
-config_value() {
-  local key=$1 line value
+# Assign one typed config value without a command substitution. A failure inside
+# `$(...)` runs in a subshell; without this shape a caller can accidentally keep
+# going after fail() exits only that subshell.
+read_config_value() {
+  local key=$1 destination=$2 requirement=$3 line value="" found=0
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ "$line" == "$key="* ]] || continue
+    found=$((found + 1))
+    (( found == 1 )) || fail "config has duplicate $key: $CONFIG_FILE"
     value=${line#"$key="}
-    printf '%s' "$value"
-    return 0
   done <"$CONFIG_FILE"
-  return 1
-}
-
-require_value() {
-  local key=$1 value
-  value=$(config_value "$key") || fail "config is missing $key: $CONFIG_FILE"
-  [[ -n "$value" ]] || fail "config has an empty $key: $CONFIG_FILE"
-  printf '%s' "$value"
+  if (( found == 0 )); then
+    [[ "$requirement" == optional ]] || fail "config is missing $key: $CONFIG_FILE"
+  elif [[ "$requirement" == required && -z "$value" ]]; then
+    fail "config has an empty $key: $CONFIG_FILE"
+  fi
+  printf -v "$destination" '%s' "$value"
 }
 
 # Fail loud on anything that could become a second tmux argument, a flag, or a
@@ -64,6 +65,14 @@ require_value() {
 validate_token() {
   local name=$1 value=$2 pattern=$3
   [[ "$value" =~ $pattern ]] || fail "$name is not well formed: $CONFIG_FILE"
+}
+
+validate_path() {
+  local name=$1 value=$2 canonical
+  validate_token "$name" "$value" '^/[a-zA-Z0-9._/-]+$'
+  canonical=$(/usr/bin/realpath -m -s -- "$value") \
+    || fail "$name cannot be resolved: $CONFIG_FILE"
+  [[ "$canonical" == "$value" ]] || fail "$name is not canonical: $CONFIG_FILE"
 }
 
 # --- tmux --------------------------------------------------------------------
@@ -333,21 +342,22 @@ if (( PANE_MODE == 1 )); then
   CONFIG_FILE=${CHROTE_AGENT_CONFIG:-}
 fi
 [[ -n "$CONFIG_FILE" ]] || { usage; exit 2; }
+validate_path "config file" "$CONFIG_FILE"
 [[ -f "$CONFIG_FILE" ]] || fail "config file does not exist: $CONFIG_FILE"
 [[ ! -L "$CONFIG_FILE" ]] || fail "config file is a symlink, refusing to read it: $CONFIG_FILE"
 [[ -r "$CONFIG_FILE" ]] || fail "config file is not readable: $CONFIG_FILE"
 
-SESSION=$(require_value CHROTE_AGENT_SESSION)
-TMUX_BIN=$(require_value CHROTE_AGENT_TMUX_BIN)
-TMUX_SOCKET=$(require_value CHROTE_AGENT_TMUX_SOCKET)
-WORKDIR=$(require_value CHROTE_AGENT_WORKDIR)
-AGENT_KIND=$(require_value CHROTE_AGENT_KIND)
-AGENT_SESSION_ID=$(require_value CHROTE_AGENT_SESSION_ID)
-AGENT_BIN=$(require_value CHROTE_AGENT_BIN)
-KEEPER_UNIT=$(config_value CHROTE_AGENT_TMUX_KEEPER_UNIT || true)
-HERMES_PROFILE=$(config_value CHROTE_AGENT_HERMES_PROFILE || true)
-RECEIPT_PATH=$(config_value CHROTE_AGENT_RECEIPT_PATH || true)
-WATCH_INTERVAL=$(config_value CHROTE_AGENT_WATCH_INTERVAL || true)
+read_config_value CHROTE_AGENT_SESSION SESSION required
+read_config_value CHROTE_AGENT_TMUX_BIN TMUX_BIN required
+read_config_value CHROTE_AGENT_TMUX_SOCKET TMUX_SOCKET required
+read_config_value CHROTE_AGENT_WORKDIR WORKDIR required
+read_config_value CHROTE_AGENT_KIND AGENT_KIND required
+read_config_value CHROTE_AGENT_SESSION_ID AGENT_SESSION_ID required
+read_config_value CHROTE_AGENT_BIN AGENT_BIN required
+read_config_value CHROTE_AGENT_TMUX_KEEPER_UNIT KEEPER_UNIT optional
+read_config_value CHROTE_AGENT_HERMES_PROFILE HERMES_PROFILE optional
+read_config_value CHROTE_AGENT_RECEIPT_PATH RECEIPT_PATH optional
+read_config_value CHROTE_AGENT_WATCH_INTERVAL WATCH_INTERVAL optional
 [[ -n "${WATCH_INTERVAL:-}" ]] || WATCH_INTERVAL=10
 UNIT_INVOCATION_ID=${INVOCATION_ID:-}
 
@@ -366,8 +376,11 @@ if [[ -n "$UNIT_INVOCATION_ID" ]]; then
 fi
 for path_name in CHROTE_AGENT_TMUX_BIN:$TMUX_BIN CHROTE_AGENT_TMUX_SOCKET:$TMUX_SOCKET \
                  CHROTE_AGENT_WORKDIR:$WORKDIR CHROTE_AGENT_BIN:$AGENT_BIN; do
-  validate_token "${path_name%%:*}" "${path_name#*:}" '^/[^[:space:]]*$'
+  validate_path "${path_name%%:*}" "${path_name#*:}"
 done
+if [[ -n "$RECEIPT_PATH" ]]; then
+  validate_path "CHROTE_AGENT_RECEIPT_PATH" "$RECEIPT_PATH"
+fi
 
 [[ -x "$TMUX_BIN" ]] || fail "tmux binary is missing or not executable: $TMUX_BIN"
 [[ -x "$AGENT_BIN" ]] || fail "agent binary is missing or not executable: $AGENT_BIN"

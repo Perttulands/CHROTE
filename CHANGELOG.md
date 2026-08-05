@@ -61,6 +61,10 @@ release.
   locked-session deletion stops unless supervision was definitively disabled.
 - Locked agents remain visible with unit health and an unlock action when their
   tmux session or server is absent, instead of disappearing from every surface.
+- Locked-agent health reads now share a two-second request budget, run with
+  bounded concurrency, cache briefly, and degrade per lock. The launcher rejects
+  duplicate config keys and unsafe paths, and both unit types share one state-root
+  configuration file.
 - Fresh terminal sidecars persist their default-closed state across reloads.
 - `/` opens Sessions for the active closed sidecar and focuses search.
 - Workload recovery records and restores supported agent, shell, and server

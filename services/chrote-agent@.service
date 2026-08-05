@@ -23,6 +23,8 @@ StartLimitBurst=5
 Type=notify
 NotifyAccess=all
 TimeoutStartSec=15
+Environment=CHROTE_AGENT_UNITS_DIR=/srv/data/chrote/agent-units
+EnvironmentFile=-/etc/chrote/chrote-agent-state.env
 # The launcher stays in the foreground for the life of the agent and exits
 # non-zero when the agent dies, which is what makes Restart= meaningful.
 # ExecStart is argv-only; %i is the agent name and reaches the launcher solely
@@ -32,9 +34,9 @@ TimeoutStartSec=15
 # session. It is deliberately NOT under %h -- a config in the supervised
 # account's own home would be writable by the account being supervised, so what
 # runs and what CHROTE reports could diverge. Pinned by
-# TestAgentUnitFileConfigPathMatchesController; override the root with a drop-in
-# if the deployment moves it.
-ExecStart=/usr/local/lib/chrote/chrote-agent-ensure.sh --config /srv/data/chrote/agent-units/%u/%i.conf
+# TestAgentUnitFileConfigPathMatchesController; override the root only in the
+# shared /etc/chrote/chrote-agent-state.env read by this unit and the server.
+ExecStart=/usr/local/lib/chrote/chrote-agent-ensure.sh --config ${CHROTE_AGENT_UNITS_DIR}/%u/%i.conf
 Restart=on-failure
 RestartSec=5
 

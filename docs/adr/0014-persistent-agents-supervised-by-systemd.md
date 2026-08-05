@@ -203,7 +203,10 @@ security work is therefore mechanism correctness, not authorization:
 - Config-derived invocation uses argv arrays with a timeout, per the repo's exec
   discipline. tmux accepts one fixed pane command string, containing only the
   validated installed launcher path and a constant mode flag; no config value or
-  rendered resume command crosses that shell-command boundary.
+  rendered resume command crosses that shell-command boundary. Both readers
+  reject duplicate typed keys and accept only canonical absolute paths with a
+  deliberately narrow character set. The server and user-unit template read the
+  config and receipt roots from the same root-owned state environment file.
 - Before the HTTP server listens, a read-only `LoadState` query reaches every
   configured account through the real control path. This simultaneously proves
   the privilege grant, target user bus, and installed template. Failure is logged
@@ -236,6 +239,10 @@ process start ticks. The attestation's monotonic time must be at or after
 or dead-process receipt is `degraded` and says so. `failed`/`inactive` are
 reported verbatim from systemd. The launcher removes any prior receipt before
 starting and receipt publication failure prevents `READY=1`.
+
+Sessions listing gives all optional unit reads one two-second budget, runs at
+most four concurrently, and caches each result for two seconds. A canceled or
+timed-out lookup degrades only that lock; terminal inventory still returns.
 
 Rejected alternative: **unit state alone.** Simpler, and wrong in the one case
 that matters — a unit that cheerfully restarts an agent into the wrong transcript

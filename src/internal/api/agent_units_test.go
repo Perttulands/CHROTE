@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/chrote/server/internal/core"
 )
@@ -34,6 +36,7 @@ type systemctlCall struct {
 }
 
 type fakeSystemctl struct {
+	mu           sync.Mutex
 	calls        []systemctlCall
 	states       map[string]systemdUnitState
 	loadStates   map[string]string
@@ -43,6 +46,8 @@ type fakeSystemctl struct {
 }
 
 func (f *fakeSystemctl) run(_ context.Context, unixUser string, args ...string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls = append(f.calls, systemctlCall{UnixUser: unixUser, Args: append([]string(nil), args...)})
 	if err := f.errorsByUser[unixUser]; err != nil {
 		return "", err
@@ -257,6 +262,15 @@ func TestAgentUnitController_EnableRefusesConfigPathEscape(t *testing.T) {
 	}
 }
 
+func TestAgentUnitController_RejectsUnsafeConfiguredStateRoot(t *testing.T) {
+	controller := newAgentUnitController("/tmp/chrote-agent-units;touch", func(context.Context, string, ...string) (string, error) {
+		return "", nil
+	})
+	if _, err := controller.configPath("codex-alpha", "alice"); err == nil {
+		t.Fatal("unsafe configured state root must not produce a config path")
+	}
+}
+
 func TestAgentUnitController_EnableRefusesHostileUnixUser(t *testing.T) {
 	controller, fake, _ := newTestAgentUnitController(t)
 	for _, user := range []string{"alice; rm -rf /", "--user", "a/b", "Alice", strings.Repeat("u", 33)} {
@@ -308,6 +322,145 @@ func TestAgentUnitController_EnableRejectsUnsupportedKindAndSessionID(t *testing
 	if err := controller.Enable(context.Background(), bad); err == nil {
 		t.Fatal("a relative socket path must be refused")
 	}
+	bad = base
+	bad.AgentKind = "codex"
+	bad.AgentSessionID = "019f4baa-e368-7ea0-8912-fb2c6f99785c"
+	bad.AgentBin = "/opt/bin/codex;touch"
+	if err := controller.Enable(context.Background(), bad); err == nil {
+		t.Fatal("an executable path containing shell metacharacters must be refused")
+	}
+}
+
+func TestReadAgentUnitConfigRejectsDuplicateTypedKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.conf")
+	raw := strings.Join([]string{
+		"CHROTE_AGENT_SESSION=codex-alpha",
+		"CHROTE_AGENT_KIND=codex",
+		"CHROTE_AGENT_KIND=claude",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(raw), 0o640); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if _, err := readAgentUnitConfigFile(path); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("duplicate typed key must be rejected consistently with the launcher, got %v", err)
+	}
+}
+
+func TestAgentUnitController_AnnotateHealthUsesOneConcurrentRequestBudget(t *testing.T) {
+	var mu sync.Mutex
+	active := 0
+	maxActive := 0
+	blockShows := false
+	runner := func(ctx context.Context, _ string, args ...string) (string, error) {
+		if len(args) == 0 || args[0] != "show" || !blockShows {
+			return "", nil
+		}
+		mu.Lock()
+		active++
+		if active > maxActive {
+			maxActive = active
+		}
+		mu.Unlock()
+		<-ctx.Done()
+		mu.Lock()
+		active--
+		mu.Unlock()
+		return "", ctx.Err()
+	}
+	controller := newAgentUnitController(filepath.Join(t.TempDir(), "units"), runner)
+	sessions := make([]core.Session, 8)
+	for i := range sessions {
+		name := fmt.Sprintf("codex-%d", i)
+		if err := controller.Enable(context.Background(), agentUnitConfig{
+			Session: name, UnixUser: "alice", AgentKind: "codex",
+			AgentSessionID: fmt.Sprintf("session-%d", i), AgentBin: "/opt/bin/codex",
+			TmuxBin: "/opt/bin/tmux", TmuxSocket: "/run/user/1234/pool/default", Workdir: "/opt/work",
+		}); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+		sessions[i] = core.Session{Name: name, UnixUser: "alice", Persistent: true}
+	}
+	blockShows = true
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	annotated := controller.AnnotateHealth(ctx, sessions)
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("health annotation ignored the overall request deadline: %v", elapsed)
+	}
+	if maxActive < 2 || maxActive > agentHealthConcurrency {
+		t.Fatalf("health lookups max concurrency = %d, want 2..%d", maxActive, agentHealthConcurrency)
+	}
+	for _, session := range annotated {
+		if session.PersistentHealth != agentHealthDegraded {
+			t.Fatalf("timed-out lock must degrade independently: %+v", session)
+		}
+	}
+}
+
+func TestAgentUnitController_AnnotateHealthCachesBriefly(t *testing.T) {
+	controller, fake, _ := newTestAgentUnitController(t)
+	sessions := []core.Session{}
+	for _, name := range []string{"codex-alpha", "codex-beta"} {
+		if err := controller.Enable(context.Background(), agentUnitConfig{
+			Session: name, UnixUser: "alice", AgentKind: "codex",
+			AgentSessionID: "session-" + name, AgentBin: "/opt/bin/codex",
+			TmuxBin: "/opt/bin/tmux", TmuxSocket: "/run/user/1234/pool/default", Workdir: "/opt/work",
+		}); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+		unit, _ := agentUnitName(name)
+		fake.states[unit] = systemdUnitState{ActiveState: "failed", SubState: "failed", UnitFileState: "enabled"}
+		sessions = append(sessions, core.Session{Name: name, UnixUser: "alice", Persistent: true})
+	}
+	fake.calls = nil
+	controller.AnnotateHealth(context.Background(), sessions)
+	controller.AnnotateHealth(context.Background(), sessions)
+	shows := 0
+	for _, call := range fake.calls {
+		if len(call.Args) > 0 && call.Args[0] == "show" {
+			shows++
+		}
+	}
+	if shows != len(sessions) {
+		t.Fatalf("two immediate annotations made %d status reads, want one per lock", shows)
+	}
+}
+
+func TestAgentUnitController_DifferentUnitsDoNotSerializeControlCalls(t *testing.T) {
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	var wait sync.WaitGroup
+	runner := func(_ context.Context, _ string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "enable" {
+			started <- args[len(args)-1]
+			<-release
+		}
+		return "", nil
+	}
+	controller := newAgentUnitController(filepath.Join(t.TempDir(), "units"), runner)
+	enable := func(name string) {
+		defer wait.Done()
+		_ = controller.Enable(context.Background(), agentUnitConfig{
+			Session: name, UnixUser: "alice", AgentKind: "codex", AgentSessionID: "session-" + name,
+			AgentBin: "/opt/bin/codex", TmuxBin: "/opt/bin/tmux",
+			TmuxSocket: "/run/user/1234/pool/default", Workdir: "/opt/work",
+		})
+	}
+	wait.Add(2)
+	go enable("codex-alpha")
+	go enable("codex-beta")
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-time.After(500 * time.Millisecond):
+			close(release)
+			wait.Wait()
+			t.Fatal("control of one unit serialized an unrelated unit")
+		}
+	}
+	close(release)
+	wait.Wait()
 }
 
 func TestAgentUnitController_DisableStopsTheUnitAndRemovesConfigButNotTheSession(t *testing.T) {
@@ -646,7 +799,25 @@ func TestAgentUnitFileConfigPathMatchesController(t *testing.T) {
 		t.Fatalf("unit config path is inside the supervised account's home: %q", unitPath)
 	}
 
-	controller := newAgentUnitController(defaultAgentUnitsDir, func(context.Context, string, ...string) (string, error) {
+	stateRaw, err := os.ReadFile(filepath.Join("..", "..", "..", "services", "chrote-agent-state.env"))
+	if err != nil {
+		t.Fatalf("read shared agent state config: %v", err)
+	}
+	stateRoot := systemdProperty(string(stateRaw), "CHROTE_AGENT_UNITS_DIR")
+	if stateRoot != defaultAgentUnitsDir {
+		t.Fatalf("shared state config root = %q, want controller default %q", stateRoot, defaultAgentUnitsDir)
+	}
+	if !strings.Contains(string(raw), "EnvironmentFile=-/etc/chrote/chrote-agent-state.env") {
+		t.Fatal("agent unit does not read the shared state configuration")
+	}
+	serverRaw, err := os.ReadFile(filepath.Join("..", "..", "..", "services", "chrote-srv.service"))
+	if err != nil {
+		t.Fatalf("read server unit: %v", err)
+	}
+	if !strings.Contains(string(serverRaw), "EnvironmentFile=-/etc/chrote/chrote-agent-state.env") {
+		t.Fatal("server unit does not read the same state configuration as agent units")
+	}
+	controller := newAgentUnitController(stateRoot, func(context.Context, string, ...string) (string, error) {
 		return "", nil
 	})
 	want, err := controller.configPath("codex-alpha", "alice")
@@ -654,7 +825,7 @@ func TestAgentUnitFileConfigPathMatchesController(t *testing.T) {
 		t.Fatalf("configPath: %v", err)
 	}
 	// Resolve the unit's systemd specifiers the way systemd would for this pair.
-	got := strings.NewReplacer("%u", "alice", "%i", "codex-alpha").Replace(unitPath)
+	got := strings.NewReplacer("${CHROTE_AGENT_UNITS_DIR}", stateRoot, "%u", "alice", "%i", "codex-alpha").Replace(unitPath)
 	if got != want {
 		t.Fatalf("unit reads %q but the controller writes %q", got, want)
 	}
