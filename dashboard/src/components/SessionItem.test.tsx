@@ -281,6 +281,7 @@ describe('SessionItem user badge and context actions', () => {
   })
 
   it('offers make persistent for mortal sessions without asking for raw agent session id', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
     vi.spyOn(window, 'prompt')
       .mockReturnValueOnce('Maintains the VW Codex lane.')
     mockState.makeSessionPersistent.mockResolvedValue(true)
@@ -300,6 +301,7 @@ describe('SessionItem user badge and context actions', () => {
     fireEvent.contextMenu(screen.getByText('codex-alpha'))
     fireEvent.click(screen.getByRole('button', { name: /Make persistent/i }))
 
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringMatching(/restart this pane.*same native agent session/i))
     expect(mockState.makeSessionPersistent).toHaveBeenCalledWith('codex-alpha', {
       identity: 'Maintains the VW Codex lane.',
     }, 'alice')
@@ -308,6 +310,7 @@ describe('SessionItem user badge and context actions', () => {
   })
 
   it('surfaces available Hermes profile identity when making a session persistent', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
     vi.spyOn(window, 'prompt')
       .mockReturnValueOnce('Keeps Hermes scout alive.')
     mockState.makeSessionPersistent.mockResolvedValue(true)
@@ -336,6 +339,29 @@ describe('SessionItem user badge and context actions', () => {
       agentKind: 'hermes',
       agentSessionId: 'hermes-session-20260715T100000Z',
     }, 'alice')
+  })
+
+  it('does not lock when the operator declines the required pane restart', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false)
+    vi.spyOn(window, 'prompt')
+
+    render(
+      <SessionItem
+        session={{
+          name: 'codex-alpha',
+          windows: 1,
+          attached: false,
+          group: 'codex',
+          unixUser: 'alice',
+        }}
+      />
+    )
+
+    fireEvent.contextMenu(screen.getByText('codex-alpha'))
+    fireEvent.click(screen.getByRole('button', { name: /Make persistent/i }))
+
+    expect(window.prompt).not.toHaveBeenCalled()
+    expect(mockState.makeSessionPersistent).not.toHaveBeenCalled()
   })
 
   it('offers make mortal for persistent sessions and protects direct kill', async () => {

@@ -6,17 +6,21 @@ tested here are the ones a broken launcher would violate silently:
 
 * it never creates a tmux server (the fork-into-our-cgroup hazard),
 * it stays attached and exits non-zero when the agent dies (so Restart= fires),
-* it renders the resume argv from typed fields rather than trusting a string,
+* it invokes the resume argv from typed fields rather than trusting a string,
 * it refuses malformed config loudly instead of guessing.
 
-tmux is a fake binary that records its argv, so no test touches a real server.
+Most tests use a fake binary that records argv. One bounded regression uses a
+private real tmux socket because first-process semantics cannot be faked.
 """
 from __future__ import annotations
 
 import os
+import shutil
+import signal
 import subprocess
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 
@@ -61,15 +65,40 @@ case "$command" in
   new-session)
     [[ -f "$state/server_dead" ]] && exit 1
     touch "$state/session_exists"
+    printf '%s' "${args[-1]}" >"$state/pane_start_command"
+    for ((i = 1; i < ${#args[@]} - 1; i++)); do
+      if [[ "${args[$i]}" == "-e" && "${args[$((i + 1))]}" == CHROTE_AGENT_CONFIG=* ]]; then
+        printf '%s\n' "${args[$((i + 1))]}" >"$state/session_environment"
+      fi
+    done
+    exit 0
+    ;;
+  respawn-pane)
+    [[ -f "$state/session_exists" ]] || exit 1
+    printf '%s' "${args[-1]}" >"$state/pane_start_command"
+    exit 0
+    ;;
+  list-panes)
+    [[ -f "$state/session_exists" ]] || exit 1
+    printf '%%7\n'
     exit 0
     ;;
   display-message)
     [[ -f "$state/server_dead" ]] && exit 1
     [[ -f "$state/session_exists" ]] || exit 1
-    cat "$state/pane_pid"
+    if [[ "${args[-1]}" == '#{pane_start_command}' ]]; then
+      cat "$state/pane_start_command" 2>/dev/null
+    else
+      cat "$state/pane_pid"
+    fi
     exit 0
     ;;
-  send-keys)
+  set-environment)
+    printf '%s=%s\n' "${args[3]}" "${args[4]}" >"$state/session_environment"
+    exit 0
+    ;;
+  show-environment)
+    cat "$state/session_environment" 2>/dev/null
     exit 0
     ;;
   *)
@@ -94,7 +123,12 @@ class LauncherFixture:
         self.tmux.chmod(0o755)
 
         self.agent_bin = self.root / "agent-bin"
-        self.agent_bin.write_text("#!/usr/bin/env bash\nexit 0\n")
+        self.agent_args = self.root / "agent-args"
+        self.agent_bin.write_text(
+            "#!/usr/bin/env bash\n"
+            f"printf '%s\\n' \"$*\" >{self.agent_args}\n"
+            "exit 0\n"
+        )
         self.agent_bin.chmod(0o755)
 
         # A live process to stand in for the pane's own process. Its own PID is
@@ -152,6 +186,28 @@ class LauncherFixture:
             timeout=timeout,
         )
 
+    def run_pane(self, timeout: int = 30) -> subprocess.CompletedProcess:
+        env = {
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "HOME": str(self.root),
+            "FAKE_STATE": str(self.state),
+            "CHROTE_AGENT_CONFIG": str(self.config),
+        }
+        return subprocess.run(
+            ["bash", str(LAUNCHER), "--pane"],
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=timeout,
+        )
+
+    def mark_managed(self) -> None:
+        (self.state / "pane_start_command").write_text(f"{LAUNCHER.resolve()} --pane")
+        (self.state / "session_environment").write_text(
+            f"CHROTE_AGENT_CONFIG={self.config}\n"
+        )
+
     def calls(self) -> list[str]:
         log = self.state / "calls.log"
         return log.read_text().splitlines() if log.exists() else []
@@ -192,48 +248,57 @@ class SocketKeeperContractTests(unittest.TestCase):
 
 
 class SessionLifecycleTests(unittest.TestCase):
-    def test_missing_session_is_created_and_resumed_by_native_id(self) -> None:
+    def test_missing_session_is_created_with_the_fixed_pane_launcher(self) -> None:
         fixture = LauncherFixture()
         result = fixture.run("--once")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         calls = fixture.calls()
         joined = "\n".join(calls)
         self.assertIn("new-session -d -s agent-under-test", joined)
-        self.assertIn(f"send-keys -t =agent-under-test -l -- {fixture.agent_bin} resume {SESSION_ID}", joined)
-        self.assertIn("send-keys -t =agent-under-test Enter", joined)
+        self.assertIn(f"CHROTE_AGENT_CONFIG={fixture.config}", joined)
+        self.assertIn(f"{LAUNCHER.resolve()} --pane", joined)
+        self.assertNotIn("send-keys", joined, "startup must never type a rendered command")
         create_index = next(i for i, call in enumerate(calls) if call.startswith("-S") and "new-session" in call)
         liveness_index = next(i for i, call in enumerate(calls) if "list-sessions" in call)
         self.assertLess(
             liveness_index, create_index, "liveness must be proven before creating anything"
         )
 
-    def test_existing_session_is_adopted_without_sending_keys(self) -> None:
+    def test_existing_unmanaged_session_is_replaced_with_the_fixed_launcher(self) -> None:
         fixture = LauncherFixture()
         fixture.session_exists(True)
         result = fixture.run("--once")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         joined = "\n".join(fixture.calls())
         self.assertNotIn("new-session", joined)
-        self.assertNotIn(
-            "send-keys",
-            joined,
-            "adopting a live session must never type into someone's running agent",
-        )
+        self.assertIn("respawn-pane -k -t %7", joined)
+        self.assertNotIn("send-keys", joined)
+
+    def test_existing_trusted_pane_is_adopted_without_restarting_the_agent(self) -> None:
+        fixture = LauncherFixture()
+        fixture.session_exists(True)
+        fixture.mark_managed()
+        result = fixture.run("--once")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        joined = "\n".join(fixture.calls())
+        self.assertNotIn("respawn-pane", joined)
+        self.assertNotIn("new-session", joined)
 
     def test_claude_kind_renders_its_own_resume_flag(self) -> None:
         fixture = LauncherFixture(CHROTE_AGENT_KIND="claude")
-        fixture.run("--once")
-        self.assertIn(f"--resume {SESSION_ID}", "\n".join(fixture.calls()))
+        result = fixture.run_pane()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(f"--resume {SESSION_ID}", fixture.agent_args.read_text().strip())
 
     def test_hermes_kind_renders_module_profile_and_resume(self) -> None:
         fixture = LauncherFixture(
             CHROTE_AGENT_KIND="hermes", CHROTE_AGENT_HERMES_PROFILE="research"
         )
-        result = fixture.run("--once")
+        result = fixture.run_pane()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(
             f"-m hermes_cli.main --profile research --resume {SESSION_ID}",
-            "\n".join(fixture.calls()),
+            fixture.agent_args.read_text(),
         )
 
     def test_hermes_without_a_profile_fails_before_touching_tmux(self) -> None:
@@ -244,7 +309,7 @@ class SessionLifecycleTests(unittest.TestCase):
 
     def test_receipt_records_the_resumed_identity(self) -> None:
         fixture = LauncherFixture()
-        result = fixture.run("--once")
+        result = fixture.run_pane()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(fixture.receipt.exists(), "a receipt is what proves WHICH transcript resumed")
         receipt = fixture.receipt.read_text()
@@ -283,6 +348,202 @@ class WatchContractTests(unittest.TestCase):
         fixture.kill_server()
         result = fixture.run(timeout=30)
         self.assertNotEqual(result.returncode, 0)
+
+
+class RealTmuxProcessLifetimeTests(unittest.TestCase):
+    """The fake cannot model tmux's first-process semantics; this test must."""
+
+    def test_agent_exit_ends_the_launcher_and_restart_resumes_the_same_identity(self) -> None:
+        tmux = shutil.which("tmux")
+        if tmux is None:
+            self.skipTest("real tmux is required for the locked-agent lifetime contract")
+
+        # The local tmux safety wrapper recognizes this 0700 task-owned shape;
+        # it still routes every call to the explicit private socket below.
+        root = Path(tempfile.mkdtemp(prefix="chrote-tmux."))
+        socket = root / "tmux.sock"
+        keeper_stop = root / "keeper.stop"
+        keeper = root / "keeper"
+        keeper.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -u\n"
+            f"while [[ ! -e {keeper_stop} ]]; do sleep 0.1; done\n"
+        )
+        keeper.chmod(0o755)
+
+        invocations = root / "agent-invocations"
+        agent_pids = root / "agent-pids"
+        agent = root / "agent-bin"
+        agent.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -u\n"
+            f"printf '%s\\n' \"$*\" >>{invocations}\n"
+            f"printf '%s\\n' \"$$\" >>{agent_pids}\n"
+            "trap 'exit 0' TERM INT\n"
+            "while :; do sleep 0.1; done\n"
+        )
+        agent.chmod(0o755)
+
+        unmanaged = root / "unmanaged-pane"
+        unmanaged.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -u\n"
+            f"{agent} resume {SESSION_ID} &\n"
+            "child=$!\n"
+            "trap 'kill \"$child\" 2>/dev/null || true; wait \"$child\" 2>/dev/null || true; exit 0' TERM INT\n"
+            "wait \"$child\" || true\n"
+            "while :; do sleep 0.1; done\n"
+        )
+        unmanaged.chmod(0o755)
+
+        workdir = root / "workspace"
+        workdir.mkdir()
+        config = root / "agent.conf"
+        config.write_text(
+            textwrap.dedent(
+                f"""\
+                CHROTE_AGENT_SESSION=agent-under-test
+                CHROTE_AGENT_TMUX_BIN={tmux}
+                CHROTE_AGENT_TMUX_SOCKET={socket}
+                CHROTE_AGENT_WORKDIR={workdir}
+                CHROTE_AGENT_KIND=codex
+                CHROTE_AGENT_SESSION_ID={SESSION_ID}
+                CHROTE_AGENT_BIN={agent}
+                CHROTE_AGENT_RECEIPT_PATH={root / 'receipt.json'}
+                CHROTE_AGENT_WATCH_INTERVAL=1
+                CHROTE_AGENT_TMUX_KEEPER_UNIT=test-keeper.service
+                """
+            )
+        )
+        config.chmod(0o600)
+
+        tmux_env = {
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "HOME": str(root),
+            "USER": os.environ.get("USER", "chrote-test"),
+            "LOGNAME": os.environ.get("LOGNAME", "chrote-test"),
+            "SHELL": "/bin/bash",
+            "TERM": "xterm-256color",
+        }
+        launchers: list[subprocess.Popen[str]] = []
+
+        def tmux_run(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [tmux, "-S", str(socket), *args],
+                env=tmux_env,
+                text=True,
+                capture_output=True,
+                check=check,
+                timeout=10,
+            )
+
+        def wait_for_lines(path: Path, count: int, timeout: float = 8) -> list[str]:
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                lines = path.read_text().splitlines() if path.exists() else []
+                if len(lines) >= count:
+                    return lines
+                time.sleep(0.05)
+            self.fail(f"timed out waiting for {count} lines in {path}")
+
+        def start_launcher() -> subprocess.Popen[str]:
+            process = subprocess.Popen(
+                ["bash", str(LAUNCHER), "--config", str(config)],
+                env=tmux_env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            launchers.append(process)
+            return process
+
+        try:
+            # This session is the socket keeper. Its test-owned initial command
+            # exits on a file signal, so the private server can stop naturally;
+            # the test never calls kill-server.
+            tmux_run("new-session", "-d", "-s", "test-keeper", str(keeper))
+            tmux_run(
+                "new-session", "-d", "-s", "agent-under-test", "-c", str(workdir), str(unmanaged)
+            )
+            wait_for_lines(agent_pids, 1)
+
+            first_launcher = start_launcher()
+            first_pid = int(wait_for_lines(agent_pids, 2)[1])
+            first_argv = wait_for_lines(invocations, 2)[1]
+            self.assertEqual(f"resume {SESSION_ID}", first_argv)
+
+            pane_start = tmux_run(
+                "display-message", "-p", "-t", "=agent-under-test:0.0", "#{pane_start_command}"
+            ).stdout.strip()
+            self.assertIn(
+                "--pane",
+                pane_start,
+                "the pane must start through CHROTE's fixed launcher, not a generic shell",
+            )
+
+            # Kill only the agent. The keeper, tmux server, and outer launcher
+            # remain intact so the assertion distinguishes agent liveness from
+            # shell/pane liveness.
+            os.kill(first_pid, signal.SIGTERM)
+            try:
+                first_returncode = first_launcher.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.fail("launcher stayed healthy after only the agent process exited")
+            self.assertNotEqual(first_returncode, 0)
+
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                if tmux_run("has-session", "-t", "=agent-under-test", check=False).returncode != 0:
+                    break
+                time.sleep(0.05)
+            else:
+                self.fail("agent pane remained after its fixed initial process exited")
+
+            second_launcher = start_launcher()
+            second_pid = int(wait_for_lines(agent_pids, 3)[2])
+            second_argv = wait_for_lines(invocations, 3)[2]
+            self.assertNotEqual(first_pid, second_pid, "restart must launch a new agent process")
+            self.assertEqual(
+                first_argv,
+                second_argv,
+                "restart must resume the same native agent session identity",
+            )
+            if second_launcher.poll() is not None:
+                stderr = second_launcher.stderr.read() if second_launcher.stderr else ""
+                self.fail(f"replacement launcher must stay attached; stderr:\n{stderr}")
+        finally:
+            if agent_pids.exists():
+                for raw_pid in agent_pids.read_text().splitlines():
+                    try:
+                        os.kill(int(raw_pid), signal.SIGTERM)
+                    except (ProcessLookupError, ValueError):
+                        pass
+            for process in launchers:
+                if process.poll() is None:
+                    process.terminate()
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=3)
+                process.communicate(timeout=1)
+
+            # A pre-repair shell may remain after its child agent exits. Ask only
+            # this private, test-owned pane to exit; never address a live socket.
+            if socket.exists():
+                tmux_run("send-keys", "-t", "=agent-under-test:0.0", "C-c", check=False)
+                tmux_run("send-keys", "-t", "=agent-under-test:0.0", "exit", "Enter", check=False)
+            keeper_stop.touch()
+
+            deadline = time.monotonic() + 5
+            while socket.exists() and time.monotonic() < deadline:
+                probe = tmux_run("list-sessions", check=False)
+                if probe.returncode != 0:
+                    break
+                time.sleep(0.05)
+            if socket.exists() and tmux_run("list-sessions", check=False).returncode == 0:
+                self.fail(f"disposable tmux server survived cleanup at {socket}")
+            shutil.rmtree(root, ignore_errors=True)
 
 
 class ConfigValidationTests(unittest.TestCase):
@@ -407,6 +668,11 @@ class LauncherHygieneTests(unittest.TestCase):
                 text,
                 "the launcher must take every host-specific path from config",
             )
+
+    def test_launcher_never_types_a_rendered_resume_command(self) -> None:
+        text = LAUNCHER.read_text()
+        self.assertNotRegex(text, r"(?m)^\s*tmux_run\s+send-keys\b")
+        self.assertNotIn("render_resume_argv", text)
 
 
 if __name__ == "__main__":

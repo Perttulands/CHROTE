@@ -45,6 +45,9 @@ release.
 
 ### Fixed
 
+- Locked-agent units now track the agent's exact pane lifetime: the pane starts
+  through a fixed launcher, typed config becomes an argv without `send-keys`,
+  and agent exit makes the supervising unit restart the same native session.
 - Fresh terminal sidecars persist their default-closed state across reloads.
 - `/` opens Sessions for the active closed sidecar and focuses search.
 - Workload recovery records and restores supported agent, shell, and server

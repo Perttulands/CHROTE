@@ -103,8 +103,15 @@ The launcher's lifecycle is:
 
 1. Refuse to proceed if no tmux server answers the configured socket, naming the
    keeper unit. It never creates a tmux server. (See Decision 6.)
-2. If the configured session is absent, create it and start the agent with its
-   canonical argv.
+2. Start the pane through one fixed, trusted launcher. For a missing session,
+   create it with that launcher as its initial command. For an existing session,
+   adopt it only when the pane already has that exact start command and config;
+   otherwise replace its sole pane and resume the same native transcript. The
+   controlled replacement is necessary because a generic shell remains alive
+   after its child agent exits and therefore cannot be an exact liveness signal.
+   Typed config reaches pane mode through tmux's environment, not command text;
+   pane mode invokes the agent with its canonical argv and `exec`, without
+   `send-keys` or a rendered resume command.
 3. Then **watch**: block until the session disappears or the agent process in it
    exits, and exit non-zero when it does.
 
@@ -179,8 +186,10 @@ security work is therefore mechanism correctness, not authorization:
   0600, and paths are canonicalized; a symlinked or out-of-directory config is
   refused, matching the discipline already in
   `managed_recovery_status.go:86-94`.
-- All invocation is argv-array with a timeout, per the repo's exec discipline.
-  No shell.
+- Config-derived invocation uses argv arrays with a timeout, per the repo's exec
+  discipline. tmux accepts one fixed pane command string, containing only the
+  validated installed launcher path and a constant mode flag; no config value or
+  rendered resume command crosses that shell-command boundary.
 
 This is consistent with the recorded threat model: the network perimeter is the
 trust boundary, and agents have broad host access by design. Deliberately granted
@@ -240,8 +249,10 @@ read does not have, and needs a writer on a timer — a poller by another name.
 
 ### Decision 8 — UI semantics of the lock
 
-- **Lock** = write the per-agent config, then `enable --now` the unit. The badge
-  appears when the unit is enabled.
+- **Lock** = write the per-agent config, then `enable --now` the unit. A session
+  not already running through the trusted pane launcher is restarted once and
+  resumes the same native transcript; the UI warns that in-flight terminal input
+  may be interrupted. The badge appears when the unit is enabled.
 - **Unlock** = `disable --now` the unit and remove the config. The tmux session
   and the running agent are **left alive**; unlocking stops the promise, not the
   work. The confirmation text says so.

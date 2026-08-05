@@ -104,12 +104,14 @@ executors cross from observation into host mutation. Their contracts must:
 - refuse unsafe promotion from lab/isolated environments to live host state.
 
 Resuming a locked agent is a case of the second rule rather than an exception to
-it. The agent is started from an argument vector in its own unit, not by typing
-a command into a live pane, so there is no shell to quote for and no pane
-contents to depend on. Around that: a session name is validated before it is
-used to build a unit name, so a name cannot introduce a second unit, a flag, or
-a metacharacter; any grant to control units is scoped to the verbs and the
-single unit-name pattern CHROTE owns, never to arbitrary unit names; and
+it. tmux receives one fixed launcher command containing no config data. That
+launcher reads typed config separately and invokes the agent with an argument
+vector; no rendered resume command is typed into a pane or parsed as shell text,
+and startup does not depend on pane contents. Around that: a session name is
+validated before it is used to build a unit name, so a name cannot introduce a
+second unit, a flag, or a metacharacter; any grant to control units is scoped to
+the verbs and the single unit-name pattern CHROTE owns, never to arbitrary unit
+names; and
 per-agent configuration is written mode 0600 into CHROTE's own state directory
 with paths canonicalized, so a symlinked or out-of-directory configuration is
 refused rather than read.

@@ -107,6 +107,10 @@ Sessions and Files are independent peer sidecars within each terminal workspace.
   configuration and enables a systemd user unit for it. The server runs no
   supervision loop, holds no retry state, and never recreates a session, so a
   CHROTE restart, crash, or upgrade cannot interrupt a locked agent.
+- Locking replaces an unmanaged pane once with CHROTE's fixed pane launcher and
+  resumes the same native agent session. The UI warns that current in-flight
+  terminal input may be interrupted. The launcher invokes typed agent arguments
+  directly; it never types a rendered command into a fresh shell.
 - Lifecycle state is read from the unit rather than tracked by CHROTE. Reported
   health combines the unit's active state with a launcher receipt showing that
   the expected agent resumed the expected work; an active unit without a

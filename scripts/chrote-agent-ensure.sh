@@ -13,10 +13,9 @@
 # restart of this unit kills every session on the socket. Server lifetime belongs
 # to the socket's keeper unit, so a dead socket is a loud failure here.
 #
-# Configuration is a typed file, never a command string: the resume argv is
-# RENDERED from agent kind + native session id (ADR-0001 -- canonical argv from
-# typed fields, shell strings are a rendered view only). A config file therefore
-# cannot smuggle an arbitrary command into a pane.
+# Configuration is a typed file, never a command string. tmux starts this fixed
+# launcher as the pane command; pane mode then invokes the agent with a Bash argv
+# array. No config value is ever parsed by a shell as command text.
 set -uo pipefail
 
 readonly PROGRAM_NAME=${0##*/}
@@ -75,7 +74,8 @@ server_alive() { tmux_run list-sessions >/dev/null 2>&1; }
 
 session_exists() { tmux_run has-session -t "=$SESSION" 2>/dev/null; }
 
-# The pane's own pid, used as the liveness subject and recorded in the receipt.
+# The pane's first-process pid. Pane mode execs the agent, so this pid names the
+# actual agent rather than a generic shell that survives when the agent exits.
 pane_pid() {
   local value
   value=$(tmux_run display-message -p -t "=$SESSION" '#{pane_pid}' 2>/dev/null) || return 1
@@ -83,21 +83,32 @@ pane_pid() {
   printf '%s' "$value"
 }
 
-# --- resume argv -------------------------------------------------------------
+wait_for_pane_pid() {
+  local attempts=0 value
+  while (( attempts < 100 )); do
+    value=$(pane_pid) && { printf '%s' "$value"; return 0; }
+    session_exists || return 1
+    sleep 0.05
+    attempts=$((attempts + 1))
+  done
+  return 1
+}
 
-# Rendered here from typed fields, never read from config as a string.
-render_resume_argv() {
+# Start the agent from typed fields as an actual argv. This function runs only
+# as the fixed initial pane command; it never renders text for send-keys or sh -c.
+launch_agent() {
+  log "resuming $AGENT_KIND session $AGENT_SESSION_ID in $SESSION"
   case "$AGENT_KIND" in
-    codex) printf '%s resume %s' "$AGENT_BIN" "$AGENT_SESSION_ID" ;;
-    claude) printf '%s --resume %s' "$AGENT_BIN" "$AGENT_SESSION_ID" ;;
+    codex) exec "$AGENT_BIN" resume "$AGENT_SESSION_ID" ;;
+    claude) exec "$AGENT_BIN" --resume "$AGENT_SESSION_ID" ;;
     hermes)
       # AGENT_BIN is hermes's own venv interpreter, so the module and profile are
       # part of the canonical form rather than a wrapper script.
-      printf '%s -m hermes_cli.main --profile %s --resume %s' \
-        "$AGENT_BIN" "$HERMES_PROFILE" "$AGENT_SESSION_ID"
+      exec "$AGENT_BIN" -m hermes_cli.main --profile "$HERMES_PROFILE" --resume "$AGENT_SESSION_ID"
       ;;
     *) fail "unsupported agent kind: $AGENT_KIND" ;;
   esac
+  fail "could not execute $AGENT_KIND agent binary: $AGENT_BIN"
 }
 
 # --- receipt -----------------------------------------------------------------
@@ -120,28 +131,63 @@ write_receipt() {
 
 ensure_session() {
   if session_exists; then
-    log "session $SESSION already exists; adopting it without touching the pane"
+    PANE_TARGET=$(sole_pane) \
+      || fail "session $SESSION must contain exactly one pane before it can be locked"
+    if pane_is_managed "$PANE_TARGET"; then
+      log "session $SESSION already runs the trusted pane launcher; adopting it"
+      return 0
+    fi
+
+    # A shell cannot be made into an exact supervisor: its pane_pid stays alive
+    # after the child agent exits. Replace the one pane with the fixed launcher,
+    # which resumes the same native transcript and execs the agent directly.
+    log "replacing the unmanaged pane in $SESSION with the trusted pane launcher"
+    tmux_run set-environment -t "=$SESSION" CHROTE_AGENT_CONFIG "$CONFIG_FILE" \
+      || fail "could not bind typed config to $SESSION"
+    tmux_run respawn-pane -k -t "$PANE_TARGET" -c "$WORKDIR" "$PANE_COMMAND" \
+      || fail "could not replace the unmanaged pane in $SESSION"
     return 0
   fi
-  local argv
-  argv=$(render_resume_argv)
+
   log "creating session $SESSION in $WORKDIR"
   tmux_run new-session -d -s "$SESSION" -c "$WORKDIR" \
+    -e "CHROTE_AGENT_CONFIG=$CONFIG_FILE" "$PANE_COMMAND" \
     || fail "tmux refused to create session $SESSION"
-  # Two calls, never one: -l sends the text literally so nothing in it is
-  # interpreted as a key name, and Enter is a separate keystroke.
-  tmux_run send-keys -t "=$SESSION" -l -- "$argv" \
-    || fail "could not send the resume command to $SESSION"
-  tmux_run send-keys -t "=$SESSION" Enter \
-    || fail "could not submit the resume command in $SESSION"
-  log "resumed $AGENT_KIND session $AGENT_SESSION_ID in $SESSION"
+  PANE_TARGET=$(sole_pane) \
+    || fail "new session $SESSION did not expose exactly one pane"
+}
+
+sole_pane() {
+  local value
+  value=$(tmux_run list-panes -s -t "=$SESSION" -F '#{pane_id}' 2>/dev/null) || return 1
+  [[ "$value" =~ ^%[0-9]+$ ]] || return 1
+  printf '%s' "$value"
+}
+
+pane_start_command() {
+  tmux_run display-message -p -t "$1" '#{pane_start_command}' 2>/dev/null
+}
+
+session_config() {
+  local value
+  value=$(tmux_run show-environment -t "=$SESSION" CHROTE_AGENT_CONFIG 2>/dev/null) || return 1
+  [[ "$value" == CHROTE_AGENT_CONFIG=* ]] || return 1
+  printf '%s' "${value#CHROTE_AGENT_CONFIG=}"
+}
+
+pane_is_managed() {
+  local target=$1 start config
+  start=$(pane_start_command "$target") || return 1
+  config=$(session_config) || return 1
+  [[ "$config" == "$CONFIG_FILE" ]] || return 1
+  [[ "$start" == "$PANE_COMMAND" || "$start" == \"$PANE_COMMAND\" ]]
 }
 
 # Block until the session or its pane process goes away. Exiting non-zero is the
 # signal that makes Restart= fire; a clean operator `systemctl stop` never
 # reaches here because systemd signals the process first.
 watch_session() {
-  local pane
+  local expected_pane=$1 pane
   while :; do
     sleep "$WATCH_INTERVAL"
     if ! server_alive; then
@@ -153,6 +199,10 @@ watch_session() {
       return 1
     fi
     pane=$(pane_pid) || { log "session $SESSION has no readable pane process"; return 1; }
+    if [[ "$pane" != "$expected_pane" ]]; then
+      log "pane process in $SESSION changed from $expected_pane to $pane"
+      return 1
+    fi
     if ! kill -0 "$pane" 2>/dev/null; then
       log "pane process $pane in $SESSION exited"
       return 1
@@ -164,15 +214,21 @@ watch_session() {
 
 CONFIG_FILE=""
 WATCH=1
+PANE_MODE=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --config) [[ $# -ge 2 ]] || { usage; exit 2; }; CONFIG_FILE=$2; shift 2 ;;
     --once) WATCH=0; shift ;;
+    --pane) PANE_MODE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) log "unknown argument: $1"; usage; exit 2 ;;
   esac
 done
 
+if (( PANE_MODE == 1 )); then
+  [[ -z "$CONFIG_FILE" ]] || fail "pane mode accepts config only through CHROTE_AGENT_CONFIG"
+  CONFIG_FILE=${CHROTE_AGENT_CONFIG:-}
+fi
 [[ -n "$CONFIG_FILE" ]] || { usage; exit 2; }
 [[ -f "$CONFIG_FILE" ]] || fail "config file does not exist: $CONFIG_FILE"
 [[ ! -L "$CONFIG_FILE" ]] || fail "config file is a symlink, refusing to read it: $CONFIG_FILE"
@@ -207,7 +263,21 @@ for path_name in CHROTE_AGENT_TMUX_BIN:$TMUX_BIN CHROTE_AGENT_TMUX_SOCKET:$TMUX_
 done
 
 [[ -x "$TMUX_BIN" ]] || fail "tmux binary is missing or not executable: $TMUX_BIN"
+[[ -x "$AGENT_BIN" ]] || fail "agent binary is missing or not executable: $AGENT_BIN"
 [[ -d "$WORKDIR" ]] || fail "agent working directory does not exist: $WORKDIR"
+
+if (( PANE_MODE == 1 )); then
+  write_receipt "$$"
+  launch_agent
+fi
+
+LAUNCHER_BIN=$(readlink -f -- "$0") || fail "cannot resolve launcher path: $0"
+validate_token "launcher path" "$LAUNCHER_BIN" '^/[a-zA-Z0-9._/-]+$'
+[[ -x "$LAUNCHER_BIN" ]] || fail "launcher is missing or not executable: $LAUNCHER_BIN"
+# tmux accepts one shell-command field, not an argv vector. This string contains
+# only the fixed, validated launcher path and a constant mode flag; typed config
+# crosses separately in the tmux session environment and is never shell text.
+readonly PANE_COMMAND="$LAUNCHER_BIN --pane"
 
 # The socket-keeper contract. Refusing here is the whole point of this launcher:
 # reviving the server would put it in this unit's cgroup.
@@ -218,8 +288,7 @@ fi
 
 ensure_session
 
-pane=$(pane_pid) || fail "session $SESSION exists but has no readable pane process"
-write_receipt "$pane"
+pane=$(wait_for_pane_pid) || fail "session $SESSION exists but has no readable pane process"
 
 if (( WATCH == 0 )); then
   log "$PROGRAM_NAME --once: session $SESSION ready (pane $pane); not watching"
@@ -227,5 +296,5 @@ if (( WATCH == 0 )); then
 fi
 
 log "watching $SESSION (pane $pane) every ${WATCH_INTERVAL}s"
-watch_session
+watch_session "$pane"
 exit 1

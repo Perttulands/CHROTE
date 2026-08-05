@@ -202,6 +202,10 @@ function SessionItem({ session }: SessionItemProps) {
 
   const handleMakePersistent = useCallback(async () => {
     closeContextMenu()
+    const confirmed = window.confirm(
+      `Lock ${session.name}? CHROTE will restart this pane through its fixed launcher and resume the same native agent session. Current in-flight terminal input may be interrupted.`
+    )
+    if (!confirmed) return
     const identity = window.prompt(persistentPrompt(session), session.persistentIdentity || '')
     if (identity === null) return
     const payload: PersistentAgentPayload = {
