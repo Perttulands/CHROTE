@@ -33,7 +33,7 @@ test.describe('terminal workspace sidecars', () => {
     await expect(sessionsTrigger).toHaveAttribute('aria-pressed', 'false')
     await expect(dock.locator('.session-panel, .terminal-files-panel')).toHaveCount(0)
     await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('chrote.sessionsDock.v1') || '{}')
-      ?.state)).toEqual({ open: false, pinned: false, width: 260 })
+      ?.state)).toEqual({ open: false, pinned: false, width: 260, searchTerm: '', collapsedGroups: [] })
   })
 
   test('opens Sessions and focuses its filter when slash is pressed while closed', async ({ page }) => {

@@ -91,7 +91,7 @@ Sessions is one application-global sidecar. Files is a peer sidecar whose state 
 - Session row selection means **Peek**. It must not detach, reassign, or mutate
   terminal-window assignment metadata.
 - Navigating an attached session occurs through its explicit location chip.
-- Sessions open state, pin preference, and width are shared across terminal workspaces.
+- Sessions open state, pin preference, width, filter, and group collapse are shared across terminal workspaces.
 - Files open state, pin preference, width, path, selection, view, and panel state
   persist independently for each terminal workspace.
 - The `/` shortcut opens the global Sessions surface and focuses its search when

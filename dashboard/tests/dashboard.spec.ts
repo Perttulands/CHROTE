@@ -96,16 +96,27 @@ test.describe('Arena Dashboard', () => {
       await page.getByRole('button', { name: 'Files sidecar', exact: true }).click()
       await expect(files).toBeVisible()
 
+      const filter = page.getByPlaceholder('Filter sessions...')
+      await filter.fill('hq')
+      const groupHeader = page.locator('.session-group-header').first()
+      const groupName = await groupHeader.locator('.group-name').innerText()
+      await groupHeader.click()
+      await expect(groupHeader.locator('.expand-icon')).toHaveText('▶')
+
       await page.locator('.tab-bar-tabs .tab').filter({ hasText: /^Terminal 2$/ }).click()
 
       await expect(page.getByRole('button', { name: 'Sessions sidecar', exact: true })).toHaveAttribute('aria-pressed', 'true')
       await expect(sessions).toBeVisible()
+      await expect(filter).toHaveValue('hq')
+      await expect(page.locator('.session-group').filter({ hasText: groupName }).locator('.expand-icon')).toHaveText('▶')
       await expect(page.getByRole('button', { name: 'Files sidecar', exact: true })).toHaveAttribute('aria-pressed', 'false')
       await expect(files).toHaveCount(0)
 
       await page.locator('.tab-bar-tabs .tab').filter({ hasText: /^Terminal$/ }).click()
 
       await expect(sessions).toBeVisible()
+      await expect(filter).toHaveValue('hq')
+      await expect(page.locator('.session-group').filter({ hasText: groupName }).locator('.expand-icon')).toHaveText('▶')
       await expect(files).toBeVisible()
     })
 

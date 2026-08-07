@@ -99,7 +99,7 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
     expect(screen.queryByTestId('sessions-panel')).not.toBeInTheDocument()
     expect(JSON.parse(localStorage.getItem('chrote.sessionsDock.v1') || '{}')).toEqual({
       version: 1,
-      state: { open: false, pinned: false, width: 260 },
+      state: { open: false, pinned: false, width: 260, searchTerm: '', collapsedGroups: [] },
     })
   })
 
@@ -235,6 +235,8 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
       open: true,
       pinned: true,
       width: 300,
+      searchTerm: '',
+      collapsedGroups: [],
     })
     mocks.narrow = true
 

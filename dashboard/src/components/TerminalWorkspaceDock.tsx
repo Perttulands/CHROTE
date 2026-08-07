@@ -181,6 +181,13 @@ function TerminalWorkspaceDock({
           onTogglePin={toggleSessionsPin}
           onClose={closeSessions}
           onWidthChange={width => onSessionsDockStateChange(previous => ({ ...previous, width }))}
+          searchTerm={sessionsDockState.searchTerm}
+          collapsedGroups={sessionsDockState.collapsedGroups}
+          onSearchTermChange={searchTerm => onSessionsDockStateChange(previous => ({ ...previous, searchTerm }))}
+          onCollapsedGroupsChange={collapsedGroups => onSessionsDockStateChange(previous => ({
+            ...previous,
+            collapsedGroups,
+          }))}
         />
       )}
       {active && filesOpen && (

@@ -35,6 +35,8 @@ export interface SessionsDockState {
   open: boolean
   pinned: boolean
   width: number
+  searchTerm: string
+  collapsedGroups: string[]
 }
 
 export interface WorkspaceFilesDockState {
@@ -62,6 +64,8 @@ export const DEFAULT_SESSIONS_DOCK_STATE: SessionsDockState = {
   open: false,
   pinned: false,
   width: 260,
+  searchTerm: '',
+  collapsedGroups: [],
 }
 
 export const DEFAULT_WORKSPACE_FILES_DOCK_STATE: WorkspaceFilesDockState = {
@@ -179,6 +183,10 @@ export function readSessionsDockState(): SessionsDockState {
       open: raw.open === true,
       pinned: raw.pinned === true,
       width: finiteNumber(raw.width, DEFAULT_SESSIONS_DOCK_STATE.width, 220, 480),
+      searchTerm: typeof raw.searchTerm === 'string' ? raw.searchTerm : '',
+      collapsedGroups: Array.isArray(raw.collapsedGroups)
+        ? Array.from(new Set(raw.collapsedGroups.filter((group): group is string => typeof group === 'string')))
+        : [],
     }
   }
 
@@ -199,6 +207,8 @@ export function writeSessionsDockState(state: SessionsDockState): void {
     open: state.open === true,
     pinned: state.pinned === true,
     width: finiteNumber(state.width, DEFAULT_SESSIONS_DOCK_STATE.width, 220, 480),
+    searchTerm: typeof state.searchTerm === 'string' ? state.searchTerm : '',
+    collapsedGroups: Array.from(new Set(state.collapsedGroups.filter(group => typeof group === 'string'))),
   })
 }
 

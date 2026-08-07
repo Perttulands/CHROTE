@@ -15,12 +15,19 @@ describe('workspace Files persistence', () => {
   beforeEach(() => window.localStorage.clear())
 
   it('stores one Sessions presentation with no terminal workspace owner', () => {
-    writeSessionsDockState({ open: true, pinned: true, width: 300 })
+    const state = {
+      open: true,
+      pinned: true,
+      width: 300,
+      searchTerm: 'hq',
+      collapsedGroups: ['hq', 'codex'],
+    }
+    writeSessionsDockState(state)
 
-    expect(readSessionsDockState()).toEqual({ open: true, pinned: true, width: 300 })
+    expect(readSessionsDockState()).toEqual(state)
     expect(JSON.parse(localStorage.getItem('chrote.sessionsDock.v1') || '{}')).toEqual({
       version: 1,
-      state: { open: true, pinned: true, width: 300 },
+      state,
     })
   })
 
@@ -32,10 +39,10 @@ describe('workspace Files persistence', () => {
   })
 
   it('keeps independent Sessions and Files pin preferences while either panel is closed', () => {
-    writeSessionsDockState({ open: false, pinned: true, width: 280 })
+    writeSessionsDockState({ ...DEFAULT_SESSIONS_DOCK_STATE, open: false, pinned: true, width: 280 })
     writeWorkspaceFilesDockState('terminal1', { open: false, pinned: true, width: 340 })
 
-    expect(readSessionsDockState()).toEqual({ open: false, pinned: true, width: 280 })
+    expect(readSessionsDockState()).toEqual({ ...DEFAULT_SESSIONS_DOCK_STATE, open: false, pinned: true, width: 280 })
     expect(readWorkspaceFilesDockState('terminal1')).toEqual({ open: false, pinned: true, width: 340 })
   })
 
