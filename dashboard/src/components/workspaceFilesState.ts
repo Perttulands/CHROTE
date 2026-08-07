@@ -198,6 +198,9 @@ export function readSessionsDockState(): SessionsDockState {
         : [],
     }
   }
+  if (storageKeyExists(SESSIONS_DOCK_STORAGE_KEY)) {
+    return { ...DEFAULT_SESSIONS_DOCK_STATE }
+  }
 
   if (storageKeyExists(LEGACY_DOCK_V2_STORAGE_KEY) || storageKeyExists(LEGACY_DOCK_STORAGE_KEY)) {
     // The newer per-workspace generations had no unambiguous Sessions owner.
