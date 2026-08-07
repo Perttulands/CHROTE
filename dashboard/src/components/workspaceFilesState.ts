@@ -106,6 +106,15 @@ function readStorageMap(key: string, expectedVersion = 1): Record<string, unknow
   }
 }
 
+function storageKeyExists(key: string): boolean {
+  if (typeof window === 'undefined') return false
+  try {
+    return window.localStorage.getItem(key) !== null
+  } catch {
+    return false
+  }
+}
+
 function writeStorageMap(key: string, workspaceId: WorkspaceId, value: unknown, version = 1): void {
   if (typeof window === 'undefined') return
   try {
@@ -190,12 +199,11 @@ export function readSessionsDockState(): SessionsDockState {
     }
   }
 
-  const legacyWorkspaceDockState = readStorageMap(LEGACY_DOCK_V2_STORAGE_KEY, 2)
-  if (Object.keys(legacyWorkspaceDockState).length > 0) {
-    // The immediate predecessor had one Sessions preference per workspace, so
-    // it has no unambiguous global owner. Its presence still outranks the older
-    // global sidebar key: start from the global default and let App persist the
-    // new format rather than resurrecting stale presentation.
+  if (storageKeyExists(LEGACY_DOCK_V2_STORAGE_KEY) || storageKeyExists(LEGACY_DOCK_STORAGE_KEY)) {
+    // The newer per-workspace generations had no unambiguous Sessions owner.
+    // Their presence still supersedes the oldest global sidebar key: start from
+    // the global default and let App persist the new format rather than
+    // resurrecting stale presentation.
     return { ...DEFAULT_SESSIONS_DOCK_STATE }
   }
 
