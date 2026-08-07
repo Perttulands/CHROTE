@@ -198,6 +198,7 @@ function SessionPanel({
       className={`session-panel ${isCollapsed ? 'collapsed' : ''} ${pinned ? 'sidecar-pinned' : 'sidecar-overlay'}`}
       style={panelStyle}
       aria-label="Sessions sidecar"
+      data-active-workspace={activeWorkspaceId}
     >
       <div className="session-panel-header">
         <strong className="terminal-sidecar-title">Sessions</strong>

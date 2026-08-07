@@ -89,6 +89,11 @@ test.describe('Arena Dashboard', () => {
     })
 
     test('shares Sessions across terminal tabs while Files follows its terminal workspace', async ({ page }) => {
+      await page.route('**/api/scheduled-tasks', route => route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, data: { tasks: [] } }),
+      }))
       const sessions = page.locator('.session-panel')
       const files = page.locator('.terminal-files-panel')
 
@@ -118,12 +123,27 @@ test.describe('Arena Dashboard', () => {
       await expect(page.getByRole('button', { name: 'Files sidecar', exact: true })).toHaveAttribute('aria-pressed', 'false')
       await expect(files).toHaveCount(0)
 
+      await page.locator('.tab-bar-tabs .tab').filter({ hasText: /^Scheduled$/ }).click()
+
+      await expect(sessions).toBeVisible()
+      await expect(sessions).toHaveAttribute('data-active-workspace', 'terminal2')
+      await expect(sessions).toHaveClass(/sidecar-pinned/)
+      await expect.poll(() => sessions.evaluate(element => element.getBoundingClientRect().width)).toBe(sessionsWidth)
+      await expect(filter).toHaveValue('hq')
+      await expect(page.locator('.session-group').filter({ hasText: groupName }).locator('.expand-icon')).toHaveText('▶')
+      await page.getByRole('button', { name: 'Close Sessions sidecar' }).click()
+      await expect(sessions).toHaveCount(0)
+
+      await page.locator('.tab-bar-tabs .tab').filter({ hasText: /^Terminal 2$/ }).click()
+      await expect(page.getByRole('button', { name: 'Sessions sidecar', exact: true })).toHaveAttribute('aria-pressed', 'false')
+
       await page.locator('.tab-bar-tabs .tab').filter({ hasText: /^Terminal$/ }).click()
 
+      await expect(files).toBeVisible()
+      await page.getByRole('button', { name: 'Sessions sidecar', exact: true }).click()
       await expect(sessions).toBeVisible()
       await expect(filter).toHaveValue('hq')
       await expect(page.locator('.session-group').filter({ hasText: groupName }).locator('.expand-icon')).toHaveText('▶')
-      await expect(files).toBeVisible()
     })
 
     test('keeps Sessions open while Files opens and shows one non-modal file Peek', async ({ page }) => {

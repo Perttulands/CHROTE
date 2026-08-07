@@ -148,6 +148,7 @@ function DraggedSessionOverlay({ drag, settings }: { drag: ActiveDrag; settings:
 
 function DashboardContent() {
   const [activeTab, setActiveTab] = useState<Tab>('terminal1')
+  const [lastActiveWorkspaceId, setLastActiveWorkspaceId] = useState<WorkspaceId>('terminal1')
   const [sessionsDockState, setSessionsDockState] = useState<SessionsDockState>(readSessionsDockState)
   const [openFilesWorkspaceIds, setOpenFilesWorkspaceIds] = useState<Set<WorkspaceId>>(() => new Set())
   const [activeDrag, setActiveDrag] = useState<ActiveDrag | null>(null)
@@ -204,8 +205,13 @@ function DashboardContent() {
   useEffect(() => {
     if (isTerminalWorkspaceId(activeTab, mountedWorkspaceIds) && !workspaceIds.includes(activeTab)) {
       setActiveTab('terminal1')
+      setLastActiveWorkspaceId('terminal1')
     }
   }, [activeTab, workspaceIds, mountedWorkspaceIds])
+
+  useEffect(() => {
+    if (!workspaceIds.includes(lastActiveWorkspaceId)) setLastActiveWorkspaceId('terminal1')
+  }, [lastActiveWorkspaceId, workspaceIds])
 
   const handleShowHelp = useCallback(() => setShowHelp(true), [])
   const handleCloseHelp = useCallback(() => setShowHelp(false), [])
@@ -213,7 +219,8 @@ function DashboardContent() {
   const handleClosePresets = useCallback(() => setShowPresets(false), [])
   const handleTabChange = useCallback((tab: Tab) => {
     setActiveTab(tab)
-  }, [])
+    if (isTerminalWorkspaceId(tab, mountedWorkspaceIds)) setLastActiveWorkspaceId(tab)
+  }, [mountedWorkspaceIds])
   const handleOpenProjectInFiles = useCallback((path: string) => {
     setFilesNavigateRequest({ path, nonce: Date.now() })
     setActiveTab('files')
@@ -224,7 +231,10 @@ function DashboardContent() {
   }, [])
 
   useEffect(() => {
-    if (windowRevealRequest) setActiveTab(windowRevealRequest.workspaceId)
+    if (windowRevealRequest) {
+      setActiveTab(windowRevealRequest.workspaceId)
+      setLastActiveWorkspaceId(windowRevealRequest.workspaceId)
+    }
   }, [windowRevealRequest])
 
   // Global keyboard shortcuts
@@ -391,7 +401,12 @@ function DashboardContent() {
           {activeTab === 'scheduled' && (
             <ErrorBoundary>
               <Suspense fallback={<ViewFallback />}>
-                <ScheduledTasksView />
+                <ScheduledTasksView
+                  activeWorkspaceId={lastActiveWorkspaceId}
+                  sessionsDockState={sessionsDockState}
+                  onSessionsDockStateChange={setSessionsDockState}
+                  sessionsForcedPinned={sessionsForcedPinned}
+                />
               </Suspense>
             </ErrorBoundary>
           )}

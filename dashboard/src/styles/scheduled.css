@@ -12,7 +12,7 @@
 }
 
 .scheduled-dock .session-panel {
-  flex: 0 0 var(--scheduled-sidecar-width, 260px);
+  flex: 0 0 var(--session-panel-width, 260px);
 }
 
 .scheduled-main {
