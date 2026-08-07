@@ -70,7 +70,7 @@ as a separate persistent workspace.
 ### Terminal panes
 
 - Each terminal workspace owns its own layout, attached sessions, labels, and
-  sidecar state.
+  Files state. Sessions presentation and the Session Bank are application-global.
 - A workspace can show one to four terminal windows.
 - tmux, not CHROTE, owns process and session lifetime; CHROTE does not copy shell
   state into browser storage.
@@ -82,19 +82,20 @@ as a separate persistent workspace.
 
 ### Sessions and Files sidecar
 
-Sessions and Files are independent peer sidecars within each terminal workspace.
+Sessions is one application-global sidecar. Files is a peer sidecar whose state belongs to each terminal workspace.
 
-- Both sidecars are closed by default and reserve no permanent terminal width.
+- Sessions and each workspace's Files sidecar are closed by default and reserve no permanent terminal width.
 - Wide layouts may pin a sidecar; when both are open they occupy adjacent pinned
   rails so neither obscures the other. Narrow layouts overlay the open sidecar
   views.
 - Session row selection means **Peek**. It must not detach, reassign, or mutate
   terminal-window assignment metadata.
 - Navigating an attached session occurs through its explicit location chip.
-- Each sidecar's open state, the pin preference, and separate Sessions/Files
-  widths persist per terminal workspace.
-- The `/` shortcut opens Sessions for the active terminal workspace and focuses
-  its search when no visible dialog or menu owns the key.
+- Sessions open state, pin preference, and width are shared across terminal workspaces.
+- Files open state, pin preference, width, path, selection, view, and panel state
+  persist independently for each terminal workspace.
+- The `/` shortcut opens the global Sessions surface and focuses its search when
+  no visible dialog or menu owns the key.
 
 ### Session Bank and workload recovery
 

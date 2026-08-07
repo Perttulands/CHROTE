@@ -11,6 +11,11 @@ import { ToastContainer } from './components/ToastNotification'
 import KeyboardShortcutsOverlay from './components/KeyboardShortcutsOverlay'
 import LayoutPresetsPanel from './components/LayoutPresetsPanel'
 import { IframePoolProvider } from './components/IframePool'
+import {
+  readSessionsDockState,
+  writeSessionsDockState,
+  type SessionsDockState,
+} from './components/workspaceFilesState'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { installFeatureFlagHelpers, isFeatureEnabled } from './featureFlags'
 import { getSessionNameFromKey, getTerminalUserColor, getTerminalUserInitial, isTerminalWorkspaceId, sortTerminalWorkspaceIds } from './types'
@@ -143,6 +148,7 @@ function DraggedSessionOverlay({ drag, settings }: { drag: ActiveDrag; settings:
 
 function DashboardContent() {
   const [activeTab, setActiveTab] = useState<Tab>('terminal1')
+  const [sessionsDockState, setSessionsDockState] = useState<SessionsDockState>(readSessionsDockState)
   const [activeDrag, setActiveDrag] = useState<ActiveDrag | null>(null)
   const [showHelp, setShowHelp] = useState(false)
   const [showPresets, setShowPresets] = useState(false)
@@ -171,6 +177,10 @@ function DashboardContent() {
   }, [filesSendTarget, openSendToSession])
   const persistFilesTabState = isFeatureEnabled('filesPersistTabState')
   const serverStatusTab = isFeatureEnabled('serverStatusTab')
+
+  useEffect(() => {
+    writeSessionsDockState(sessionsDockState)
+  }, [sessionsDockState])
 
   // Every workspace in state keeps its dock mounted — including ones hidden by
   // a shrunken tab count — so panel state and pooled iframe claims survive.
@@ -295,6 +305,8 @@ function DashboardContent() {
               key={workspaceId}
               workspaceId={workspaceId}
               active={activeTab === workspaceId}
+              sessionsDockState={sessionsDockState}
+              onSessionsDockStateChange={setSessionsDockState}
               onOpenSessionBankSettings={handleOpenSessionBankSettings}
               onOpenInFiles={handleOpenProjectInFiles}
             />

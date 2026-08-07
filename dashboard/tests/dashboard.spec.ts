@@ -88,6 +88,27 @@ test.describe('Arena Dashboard', () => {
       await expect(page.locator('.session-panel')).toHaveClass(/sidecar-pinned/)
     })
 
+    test('shares Sessions across terminal tabs while Files follows its terminal workspace', async ({ page }) => {
+      const sessions = page.locator('.session-panel')
+      const files = page.locator('.terminal-files-panel')
+
+      await expect(sessions).toHaveClass(/sidecar-pinned/)
+      await page.getByRole('button', { name: 'Files sidecar', exact: true }).click()
+      await expect(files).toBeVisible()
+
+      await page.locator('.tab-bar-tabs .tab').filter({ hasText: /^Terminal 2$/ }).click()
+
+      await expect(page.getByRole('button', { name: 'Sessions sidecar', exact: true })).toHaveAttribute('aria-pressed', 'true')
+      await expect(sessions).toBeVisible()
+      await expect(page.getByRole('button', { name: 'Files sidecar', exact: true })).toHaveAttribute('aria-pressed', 'false')
+      await expect(files).toHaveCount(0)
+
+      await page.locator('.tab-bar-tabs .tab').filter({ hasText: /^Terminal$/ }).click()
+
+      await expect(sessions).toBeVisible()
+      await expect(files).toBeVisible()
+    })
+
     test('keeps Sessions open while Files opens and shows one non-modal file Peek', async ({ page }) => {
       await page.route(/.*\/api\/files\/resources(?:\/.*)?$/, async route => {
         await route.fulfill({

@@ -1,7 +1,12 @@
+import { useEffect, useState } from 'react'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import TerminalWorkspaceDock from './TerminalWorkspaceDock'
-import { writeWorkspaceDockState } from './workspaceFilesState'
+import {
+  readSessionsDockState,
+  writeSessionsDockState,
+  type SessionsDockState,
+} from './workspaceFilesState'
 
 const mocks = vi.hoisted(() => ({
   narrow: false,
@@ -54,15 +59,27 @@ vi.mock('./TerminalArea', () => ({
   ),
 }))
 
-function renderDock() {
-  return render(
+function DockHarness() {
+  const [sessionsDockState, setSessionsDockState] = useState<SessionsDockState>(readSessionsDockState)
+
+  useEffect(() => {
+    writeSessionsDockState(sessionsDockState)
+  }, [sessionsDockState])
+
+  return (
     <TerminalWorkspaceDock
       workspaceId="terminal1"
       active
+      sessionsDockState={sessionsDockState}
+      onSessionsDockStateChange={setSessionsDockState}
       onOpenSessionBankSettings={vi.fn()}
       onOpenInFiles={vi.fn()}
-    />,
+    />
   )
+}
+
+function renderDock() {
+  return render(<DockHarness />)
 }
 
 describe('TerminalWorkspaceDock sidecar state machine', () => {
@@ -80,8 +97,9 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
     renderDock()
 
     expect(screen.queryByTestId('sessions-panel')).not.toBeInTheDocument()
-    expect(JSON.parse(localStorage.getItem('chrote.workspaceDock.v2') || '{}')).toMatchObject({
-      workspaces: { terminal1: { openSidecars: [], sidecarPinned: false } },
+    expect(JSON.parse(localStorage.getItem('chrote.sessionsDock.v1') || '{}')).toEqual({
+      version: 1,
+      state: { open: false, pinned: false, width: 260 },
     })
   })
 
@@ -191,7 +209,7 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
     }
   })
 
-  it('reopens a closed pinned sidecar in the pinned presentation instead of overlaying the terminal', () => {
+  it('reopens a closed Sessions panel pinned without leaking that preference into Files', () => {
     renderDock()
     const sessions = screen.getByRole('button', { name: /Sessions sidecar/i })
     fireEvent.click(sessions)
@@ -200,8 +218,8 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Close sessions' }))
     expect(screen.queryByTestId('sessions-panel')).not.toBeInTheDocument()
-    expect(JSON.parse(localStorage.getItem('chrote.workspaceDock.v2') || '{}')).toMatchObject({
-      workspaces: { terminal1: { openSidecars: [], sidecarPinned: true } },
+    expect(JSON.parse(localStorage.getItem('chrote.sessionsDock.v1') || '{}')).toMatchObject({
+      state: { open: false, pinned: true },
     })
 
     fireEvent.click(sessions)
@@ -209,15 +227,14 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
 
     fireEvent.click(sessions)
     fireEvent.click(screen.getByRole('button', { name: /Files sidecar/i }))
-    expect(screen.getByTestId('files-panel')).toHaveAttribute('data-pinned', 'true')
+    expect(screen.getByTestId('files-panel')).toHaveAttribute('data-pinned', 'false')
   })
 
   it('forces a stored desktop pin into overlay presentation on narrow viewports without losing the stored preference', () => {
-    writeWorkspaceDockState('terminal1', {
-      openSidecars: ['sessions'],
-      sidecarPinned: true,
-      sessionsWidth: 300,
-      filesWidth: 360,
+    writeSessionsDockState({
+      open: true,
+      pinned: true,
+      width: 300,
     })
     mocks.narrow = true
 
@@ -227,8 +244,8 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
     expect(container.querySelector('.terminal-sidecar-dismiss')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Sessions sidecar' }).querySelector('.terminal-sidecar-label')).toBeInTheDocument()
 
-    expect(JSON.parse(localStorage.getItem('chrote.workspaceDock.v2') || '{}')).toMatchObject({
-      workspaces: { terminal1: { openSidecars: ['sessions'], sidecarPinned: true } },
+    expect(JSON.parse(localStorage.getItem('chrote.sessionsDock.v1') || '{}')).toMatchObject({
+      state: { open: true, pinned: true },
     })
   })
 })
