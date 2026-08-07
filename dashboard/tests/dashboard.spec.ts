@@ -93,8 +93,12 @@ test.describe('Arena Dashboard', () => {
       const files = page.locator('.terminal-files-panel')
 
       await expect(sessions).toHaveClass(/sidecar-pinned/)
+      await page.getByRole('button', { name: 'Unpin Sessions sidecar' }).click()
+      await expect(sessions).toHaveClass(/sidecar-overlay/)
       await page.getByRole('button', { name: 'Files sidecar', exact: true }).click()
       await expect(files).toBeVisible()
+      await expect(sessions).toHaveClass(/sidecar-pinned/)
+      const sessionsWidth = await sessions.evaluate(element => element.getBoundingClientRect().width)
 
       const filter = page.getByPlaceholder('Filter sessions...')
       await filter.fill('hq')
@@ -107,6 +111,8 @@ test.describe('Arena Dashboard', () => {
 
       await expect(page.getByRole('button', { name: 'Sessions sidecar', exact: true })).toHaveAttribute('aria-pressed', 'true')
       await expect(sessions).toBeVisible()
+      await expect(sessions).toHaveClass(/sidecar-pinned/)
+      await expect.poll(() => sessions.evaluate(element => element.getBoundingClientRect().width)).toBe(sessionsWidth)
       await expect(filter).toHaveValue('hq')
       await expect(page.locator('.session-group').filter({ hasText: groupName }).locator('.expand-icon')).toHaveText('▶')
       await expect(page.getByRole('button', { name: 'Files sidecar', exact: true })).toHaveAttribute('aria-pressed', 'false')

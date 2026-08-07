@@ -149,6 +149,7 @@ function DraggedSessionOverlay({ drag, settings }: { drag: ActiveDrag; settings:
 function DashboardContent() {
   const [activeTab, setActiveTab] = useState<Tab>('terminal1')
   const [sessionsDockState, setSessionsDockState] = useState<SessionsDockState>(readSessionsDockState)
+  const [openFilesWorkspaceIds, setOpenFilesWorkspaceIds] = useState<Set<WorkspaceId>>(() => new Set())
   const [activeDrag, setActiveDrag] = useState<ActiveDrag | null>(null)
   const [showHelp, setShowHelp] = useState(false)
   const [showPresets, setShowPresets] = useState(false)
@@ -177,6 +178,16 @@ function DashboardContent() {
   }, [filesSendTarget, openSendToSession])
   const persistFilesTabState = isFeatureEnabled('filesPersistTabState')
   const serverStatusTab = isFeatureEnabled('serverStatusTab')
+  const handleFilesOpenChange = useCallback((workspaceId: WorkspaceId, open: boolean) => {
+    setOpenFilesWorkspaceIds(previous => {
+      if (previous.has(workspaceId) === open) return previous
+      const next = new Set(previous)
+      if (open) next.add(workspaceId)
+      else next.delete(workspaceId)
+      return next
+    })
+  }, [])
+  const sessionsForcedPinned = openFilesWorkspaceIds.size > 0
 
   useEffect(() => {
     writeSessionsDockState(sessionsDockState)
@@ -307,6 +318,8 @@ function DashboardContent() {
               active={activeTab === workspaceId}
               sessionsDockState={sessionsDockState}
               onSessionsDockStateChange={setSessionsDockState}
+              sessionsForcedPinned={sessionsForcedPinned}
+              onFilesOpenChange={handleFilesOpenChange}
               onOpenSessionBankSettings={handleOpenSessionBankSettings}
               onOpenInFiles={handleOpenProjectInFiles}
             />

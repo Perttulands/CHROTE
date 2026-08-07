@@ -190,6 +190,15 @@ export function readSessionsDockState(): SessionsDockState {
     }
   }
 
+  const legacyWorkspaceDockState = readStorageMap(LEGACY_DOCK_V2_STORAGE_KEY, 2)
+  if (Object.keys(legacyWorkspaceDockState).length > 0) {
+    // The immediate predecessor had one Sessions preference per workspace, so
+    // it has no unambiguous global owner. Its presence still outranks the older
+    // global sidebar key: start from the global default and let App persist the
+    // new format rather than resurrecting stale presentation.
+    return { ...DEFAULT_SESSIONS_DOCK_STATE }
+  }
+
   const legacySidebarCollapsed = readLegacySidebarCollapsed()
   if (legacySidebarCollapsed !== null) {
     return {

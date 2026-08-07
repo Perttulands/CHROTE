@@ -177,7 +177,7 @@ A manual smoke should verify the user-visible contract rather than every control
 3. attach a test-owned tmux session and reconnect the browser;
 4. confirm Sessions-row **Peek** does not reassign it;
 5. confirm the location chip navigates to its attached window;
-6. confirm Sessions open/pin/width/filter/group-collapse remains global across terminal switches, Files state remains per workspace, and narrow layouts overlay at `768px` and below;
+6. confirm Sessions open/pin/width/filter/group-collapse remains global across terminal switches, including a consistent pinned rail and width on every tab while any workspace's Files panel is open; confirm Files state remains per workspace and narrow layouts overlay at `768px` and below;
 7. inspect one configured file root and one configured Beads workspace;
 8. verify optional integrations degrade clearly when unavailable;
 9. inspect Server and recovery status without triggering destructive actions.

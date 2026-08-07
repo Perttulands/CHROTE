@@ -85,9 +85,11 @@ as a separate persistent workspace.
 Sessions is one application-global sidecar. Files is a peer sidecar whose state belongs to each terminal workspace.
 
 - Sessions and each workspace's Files sidecar are closed by default and reserve no permanent terminal width.
-- Wide layouts may pin a sidecar; when both are open they occupy adjacent pinned
-  rails so neither obscures the other. Narrow layouts overlay the open sidecar
-  views.
+- Wide layouts may pin a sidecar. When Files is open in any workspace while
+  Sessions is open, every terminal tab presents Sessions as a pinned rail and
+  the active workspace's Files rail sits beside it; the stored global Sessions
+  pin preference resumes after all Files panels close. Narrow layouts overlay
+  the open sidecar views.
 - Session row selection means **Peek**. It must not detach, reassign, or mutate
   terminal-window assignment metadata.
 - Navigating an attached session occurs through its explicit location chip.

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import TerminalWorkspaceDock from './TerminalWorkspaceDock'
@@ -61,6 +61,10 @@ vi.mock('./TerminalArea', () => ({
 
 function DockHarness() {
   const [sessionsDockState, setSessionsDockState] = useState<SessionsDockState>(readSessionsDockState)
+  const [filesOpen, setFilesOpen] = useState(false)
+  const handleFilesOpenChange = useCallback((_workspaceId: string, open: boolean) => {
+    setFilesOpen(open)
+  }, [])
 
   useEffect(() => {
     writeSessionsDockState(sessionsDockState)
@@ -72,6 +76,8 @@ function DockHarness() {
       active
       sessionsDockState={sessionsDockState}
       onSessionsDockStateChange={setSessionsDockState}
+      sessionsForcedPinned={filesOpen}
+      onFilesOpenChange={handleFilesOpenChange}
       onOpenSessionBankSettings={vi.fn()}
       onOpenInFiles={vi.fn()}
     />

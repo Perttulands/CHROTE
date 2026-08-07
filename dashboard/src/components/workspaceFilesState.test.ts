@@ -70,6 +70,23 @@ describe('workspace Files persistence', () => {
     expect(readSessionsDockState()).toEqual(DEFAULT_SESSIONS_DOCK_STATE)
   })
 
+  it('does not let the oldest global sidebar state override the newer per-workspace generation', () => {
+    window.localStorage.setItem('chrote.workspaceDock.v2', JSON.stringify({
+      version: 2,
+      workspaces: {
+        terminal1: {
+          openSidecars: [],
+          sidecarPinned: false,
+          sessionsWidth: 410,
+          filesWidth: 360,
+        },
+      },
+    }))
+    window.localStorage.setItem('chrote-dashboard-state', JSON.stringify({ sidebarCollapsed: false }))
+
+    expect(readSessionsDockState()).toEqual(DEFAULT_SESSIONS_DOCK_STATE)
+  })
+
   it('migrates the legacy global sidebar collapse into the one Sessions presentation', () => {
     window.localStorage.setItem('chrote-dashboard-state', JSON.stringify({ sidebarCollapsed: false }))
 

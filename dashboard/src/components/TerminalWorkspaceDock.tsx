@@ -19,6 +19,8 @@ interface TerminalWorkspaceDockProps {
   active: boolean
   sessionsDockState: SessionsDockState
   onSessionsDockStateChange: Dispatch<SetStateAction<SessionsDockState>>
+  sessionsForcedPinned: boolean
+  onFilesOpenChange: (workspaceId: WorkspaceId, open: boolean) => void
   onOpenSessionBankSettings: () => void
   onOpenInFiles: (path: string) => void
 }
@@ -53,6 +55,8 @@ function TerminalWorkspaceDock({
   active,
   sessionsDockState,
   onSessionsDockStateChange,
+  sessionsForcedPinned,
+  onFilesOpenChange,
   onOpenSessionBankSettings,
   onOpenInFiles,
 }: TerminalWorkspaceDockProps) {
@@ -62,12 +66,11 @@ function TerminalWorkspaceDock({
   const sessionsOpen = sessionsDockState.open
   const filesOpen = filesDockState.open
   const openSidecarCount = Number(sessionsOpen) + Number(filesOpen)
-  // Two panels need a rail so they remain usable instead of occupying the
-  // same overlay position. On narrow screens the existing overlay behavior is
-  // retained.
-  const forcedPinned = openSidecarCount > 1 && !isNarrow
-  const sessionsPinned = sessionsOpen && (sessionsDockState.pinned || forcedPinned) && !isNarrow
-  const filesPinned = filesOpen && (filesDockState.pinned || forcedPinned) && !isNarrow
+  // Files remains workspace-local, but any open Files panel forces the one
+  // global Sessions surface into the same rail presentation on every tab.
+  const sessionsPinned = sessionsOpen && (sessionsDockState.pinned || sessionsForcedPinned) && !isNarrow
+  const filesForcedPinned = filesOpen && sessionsOpen && !isNarrow
+  const filesPinned = filesOpen && (filesDockState.pinned || filesForcedPinned) && !isNarrow
   const anyPinned = sessionsPinned || filesPinned
   const sessionsPanelId = `${workspaceId}-sessions-sidecar`
   const filesPanelId = `${workspaceId}-files-sidecar`
@@ -75,6 +78,14 @@ function TerminalWorkspaceDock({
   useEffect(() => {
     writeWorkspaceFilesDockState(workspaceId, filesDockState)
   }, [filesDockState, workspaceId])
+
+  useEffect(() => {
+    onFilesOpenChange(workspaceId, filesDockState.open)
+  }, [filesDockState.open, onFilesOpenChange, workspaceId])
+
+  useEffect(() => () => {
+    onFilesOpenChange(workspaceId, false)
+  }, [onFilesOpenChange, workspaceId])
 
   const toggleSessions = useCallback(() => {
     onSessionsDockStateChange(previous => ({ ...previous, open: !previous.open }))
@@ -176,7 +187,7 @@ function TerminalWorkspaceDock({
           collapsed={false}
           width={sessionsDockState.width}
           pinned={sessionsPinned}
-          canPin={!isNarrow && !forcedPinned}
+          canPin={!isNarrow && !sessionsForcedPinned}
           panelId={sessionsPanelId}
           onTogglePin={toggleSessionsPin}
           onClose={closeSessions}
@@ -196,7 +207,7 @@ function TerminalWorkspaceDock({
           collapsed={false}
           width={filesDockState.width}
           pinned={filesPinned}
-          canPin={!isNarrow && !forcedPinned}
+          canPin={!isNarrow && !filesForcedPinned}
           panelId={filesPanelId}
           onTogglePin={toggleFilesPin}
           onClose={closeFiles}
