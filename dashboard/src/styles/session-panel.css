@@ -313,51 +313,6 @@
   /* No longer greyed out - text is colored based on window assignment */
 }
 
-.persistent-agent-lock {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  font-size: 11px;
-  color: var(--accent);
-  flex-shrink: 0;
-}
-
-.persistent-agent-state {
-  flex: 0 1 auto;
-  max-width: 96px;
-  overflow: hidden;
-  border: 1px solid var(--divider);
-  border-radius: 999px;
-  padding: 1px 5px;
-  color: var(--text-dim);
-  font-size: 9px;
-  font-weight: 700;
-  line-height: 1.3;
-  text-overflow: ellipsis;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.persistent-agent-state-healthy {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.persistent-agent-state-needs_interaction,
-.persistent-agent-state-wrong_identity,
-.persistent-agent-state-backoff,
-.persistent-agent-state-failed {
-  border-color: var(--color-warning, #d6a23a);
-  color: var(--color-warning, #d6a23a);
-}
-
-.persistent-agent-state-failed {
-  border-color: var(--color-error);
-  color: var(--color-error);
-}
-
 /* Session Context Menu */
 .session-context-menu {
   position: fixed;

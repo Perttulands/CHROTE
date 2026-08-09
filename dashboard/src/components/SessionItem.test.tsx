@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import SessionItem from './SessionItem'
+import type { TmuxSession } from '../types'
 import { DEFAULT_SETTINGS, TERMINAL_WORKSPACE_IDS } from '../types'
 
 const mockState = vi.hoisted(() => ({
@@ -11,8 +12,6 @@ const mockState = vi.hoisted(() => ({
   focusSessionAssignment: vi.fn(),
   addSessionToWindow: vi.fn(),
   removeSessionFromWindow: vi.fn(),
-  makeSessionPersistent: vi.fn(),
-  makeSessionMortal: vi.fn(),
   dragListeners: { onPointerDown: vi.fn() },
   dragAttributes: { role: 'button', tabIndex: 0 },
   dragTransform: null as { x: number; y: number } | null,
@@ -46,8 +45,6 @@ vi.mock('../context/SessionContext', () => ({
     removeSessionFromWindow: mockState.removeSessionFromWindow,
     openFloatingModal: mockState.openFloatingModal,
     openSendToSession: mockState.openSendToSession,
-    makeSessionPersistent: mockState.makeSessionPersistent,
-    makeSessionMortal: mockState.makeSessionMortal,
     settings: {
       ...DEFAULT_SETTINGS,
       terminalUserColors: {
@@ -66,8 +63,6 @@ describe('SessionItem user badge and context actions', () => {
     mockState.focusSessionAssignment.mockClear()
     mockState.addSessionToWindow.mockClear()
     mockState.removeSessionFromWindow.mockClear()
-    mockState.makeSessionPersistent.mockClear()
-    mockState.makeSessionMortal.mockClear()
     mockState.dragListeners.onPointerDown.mockClear()
     mockState.dragTransform = null
     mockState.isDragging = false
@@ -201,7 +196,7 @@ describe('SessionItem user badge and context actions', () => {
     )
   })
 
-  it('renders a lock indicator with identity for persistent sessions', () => {
+  it('treats legacy persistence metadata as an ordinary session', () => {
     render(
       <SessionItem
         session={{
@@ -211,162 +206,21 @@ describe('SessionItem user badge and context actions', () => {
           group: 'codex',
           unixUser: 'alice',
           persistent: true,
-          persistentHealth: 'healthy',
-          persistentIdentity: 'Maintains the VW Codex lane.',
-          persistentAgentKind: 'codex',
-        }}
+          persistentHealth: 'failed',
+        } as TmuxSession & { persistent: boolean; persistentHealth: string }}
       />
     )
 
-    const lock = screen.getByLabelText('Persistent agent')
-    expect(lock).toHaveTextContent('🔒')
-    expect(lock).toHaveAttribute(
-      'title',
-      'Locked codex agent, supervised by systemd: Maintains the VW Codex lane.',
-    )
-    // A healthy lock shows the lock and nothing else: a badge that is always
-    // present carries no information.
+    expect(screen.queryByLabelText('Persistent agent')).toBeNull()
     expect(screen.queryByLabelText(/^Supervision:/)).toBeNull()
-  })
-
-  it.each([
-    ['degraded', 'unconfirmed'],
-    ['failed', 'failed'],
-    ['inactive', 'stopped'],
-  ] as const)('renders unit health %s exactly', (health, label) => {
-    render(
-      <SessionItem
-        session={{
-          name: `agent-${health}`,
-          windows: 1,
-          attached: false,
-          group: 'codex',
-          unixUser: 'alice',
-          persistent: true,
-          persistentHealth: health,
-          persistentAgentKind: 'codex',
-        }}
-      />
-    )
-
-    expect(screen.getByLabelText(`Supervision: ${label}`)).toHaveTextContent(label)
-  })
-
-  it('names the unit and its trouble in the lock tooltip', () => {
-    render(
-      <SessionItem
-        session={{
-          name: 'hermes-scout',
-          windows: 1,
-          attached: false,
-          group: 'hermes',
-          unixUser: 'alice',
-          persistent: true,
-          persistentHealth: 'degraded',
-          persistentUnit: 'chrote-agent@hermes-scout.service',
-          persistentActiveState: 'active',
-          persistentDetail: 'unit is running a different transcript than the one this lock configured',
-          persistentAgentKind: 'hermes',
-          persistentAgentSessionId: 'hermes-session-20260715T100000Z',
-          persistentHermesProfile: 'scout',
-        }}
-      />
-    )
-
-    expect(screen.getByLabelText('Supervision: unconfirmed')).toHaveTextContent('unconfirmed')
-    expect(screen.getByLabelText('Persistent agent')).toHaveAttribute(
-      'title',
-      'Locked hermes agent, supervised by systemd · Hermes profile scout · chrote-agent@hermes-scout.service · unit active · unit is running a different transcript than the one this lock configured',
-    )
-  })
-
-  it('offers make persistent for mortal sessions without asking for raw agent session id', async () => {
-    vi.spyOn(window, 'prompt')
-      .mockReturnValueOnce('Maintains the VW Codex lane.')
-    mockState.makeSessionPersistent.mockResolvedValue(true)
-
-    render(
-      <SessionItem
-        session={{
-          name: 'codex-alpha',
-          windows: 1,
-          attached: false,
-          group: 'codex',
-          unixUser: 'alice',
-        }}
-      />
-    )
 
     fireEvent.contextMenu(screen.getByText('codex-alpha'))
-    fireEvent.click(screen.getByRole('button', { name: /Make persistent/i }))
-
-    expect(mockState.makeSessionPersistent).toHaveBeenCalledWith('codex-alpha', {
-      identity: 'Maintains the VW Codex lane.',
-    }, 'alice')
-    expect(window.prompt).toHaveBeenCalledTimes(1)
-    expect(window.prompt).not.toHaveBeenCalledWith(expect.stringMatching(/session id/i), expect.anything())
-  })
-
-  it('surfaces available Hermes profile identity when making a session persistent', async () => {
-    vi.spyOn(window, 'prompt')
-      .mockReturnValueOnce('Keeps Hermes scout alive.')
-    mockState.makeSessionPersistent.mockResolvedValue(true)
-
-    render(
-      <SessionItem
-        session={{
-          name: 'hermes-scout',
-          windows: 1,
-          attached: false,
-          group: 'hermes',
-          unixUser: 'alice',
-          persistentAgentKind: 'hermes',
-          persistentAgentSessionId: 'hermes-session-20260715T100000Z',
-          persistentHermesProfile: 'scout',
-        }}
-      />
-    )
-
-    fireEvent.contextMenu(screen.getByText('hermes-scout'))
-    fireEvent.click(screen.getByRole('button', { name: /Make persistent/i }))
-
-    expect(window.prompt).toHaveBeenCalledWith(expect.stringContaining('Hermes profile scout'), '')
-    expect(mockState.makeSessionPersistent).toHaveBeenCalledWith('hermes-scout', {
-      identity: 'Keeps Hermes scout alive.',
-      agentKind: 'hermes',
-      agentSessionId: 'hermes-session-20260715T100000Z',
-    }, 'alice')
-  })
-
-  it('offers make mortal for persistent sessions and protects direct kill', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
-    mockState.makeSessionMortal.mockResolvedValue(true)
-
-    render(
-      <SessionItem
-        session={{
-          name: 'codex-alpha',
-          windows: 1,
-          attached: false,
-          group: 'codex',
-          unixUser: 'alice',
-          persistent: true,
-          persistentIdentity: 'Maintains the VW Codex lane.',
-          persistentAgentKind: 'codex',
-        }}
-      />
-    )
-
-    fireEvent.contextMenu(screen.getByText('codex-alpha'))
-    // Kill is no longer hidden for a locked session; it is offered as the honest
-    // two-step, because killing without unlocking would be undone by the unit.
-    expect(screen.getByRole('button', { name: /Stop supervision and kill/i })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /Make mortal \(metadata only\)/i }))
-
-    expect(mockState.makeSessionMortal).toHaveBeenCalledWith('codex-alpha', 'alice')
-    expect(window.confirm).toHaveBeenCalledWith(
-      expect.stringContaining('no longer be restarted after a crash or reboot'),
-    )
+    expect(screen.queryByRole('button', { name: /Make persistent|Make mortal|supervision/i })).toBeNull()
+    expect(screen.getByRole('button', { name: /Rename/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Peek/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Send to Session/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Attach to Window/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Kill Session/ })).toBeInTheDocument()
   })
 
   it('uses the whole session row as the drag surface without rendering a drag grip', () => {

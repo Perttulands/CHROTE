@@ -14,7 +14,6 @@ func TestRuntimeRoutesStartAndStopSessionDropJanitor(t *testing.T) {
 	t.Setenv("CHROTE_SESSION_DROPS_DIR", dropsDir)
 	t.Setenv("CHROTE_SESSION_DROPS_RETENTION", "1h")
 	t.Setenv("CHROTE_SESSION_DROPS_MAINTENANCE_INTERVAL", "10ms")
-	t.Setenv("CHROTE_PERSISTENT_AGENTS_DISABLE", "true")
 
 	createExpiredDrop := func(id string) string {
 		t.Helper()

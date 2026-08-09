@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useDraggable } from '@dnd-kit/core'
-import type { PersistentAgentHealth, PersistentAgentPayload, TmuxSession } from '../types'
+import type { TmuxSession } from '../types'
 import { useSession } from '../context/SessionContext'
 import { WINDOW_COLORS, getSessionKey, getTerminalLabel, getTerminalUserColor, getTerminalUserInitial } from '../types'
 import { useViewportMenuPosition } from '../hooks/useViewportMenuPosition'
@@ -16,60 +16,8 @@ interface ContextMenuState {
   y: number
 }
 
-// Unit facts, phrased for someone glancing at a session list. "degraded" is
-// deliberately not "unhealthy": the agent is very likely running, we just cannot
-// prove it is the transcript this lock was made for.
-const PERSISTENT_HEALTH_LABELS: Record<PersistentAgentHealth, string> = {
-  healthy: '',
-  degraded: 'unconfirmed',
-  failed: 'failed',
-  inactive: 'stopped',
-  unlocked: '',
-}
-
-function persistentAgentKind(session: TmuxSession): string {
-  return session.persistentAgentKind || 'agent'
-}
-
-function persistentAgentSessionId(session: TmuxSession): string {
-  return session.persistentAgentSessionId || ''
-}
-
-function persistentHermesProfile(session: TmuxSession): string {
-  return session.persistentHermesProfile || ''
-}
-
-function persistentHealthLabel(session: TmuxSession): string {
-  const health = session.persistentHealth
-  return health ? PERSISTENT_HEALTH_LABELS[health] ?? '' : ''
-}
-
-function persistentTitle(session: TmuxSession): string | undefined {
-  if (!session.persistent) return undefined
-  const parts = [`Locked ${persistentAgentKind(session)} agent, supervised by systemd`]
-  const hermesProfile = persistentHermesProfile(session)
-  if (hermesProfile) parts.push(`Hermes profile ${hermesProfile}`)
-  if (session.persistentUnit) parts.push(session.persistentUnit)
-  if (session.persistentActiveState) parts.push(`unit ${session.persistentActiveState}`)
-  if (session.persistentDetail) parts.push(session.persistentDetail)
-  const title = parts.join(' · ')
-  return session.persistentIdentity ? `${title}: ${session.persistentIdentity}` : title
-}
-
-function persistentPrompt(session: TmuxSession): string {
-  const parts = []
-  const kind = persistentAgentKind(session)
-  if (kind !== 'agent') parts.push(kind)
-  const hermesProfile = persistentHermesProfile(session)
-  if (hermesProfile) parts.push(`Hermes profile ${hermesProfile}`)
-  const sessionId = persistentAgentSessionId(session)
-  if (sessionId) parts.push(sessionId)
-  if (parts.length === 0) return 'One-sentence identity for this persistent agent:'
-  return `One-sentence identity for this persistent agent (${parts.join(' · ')}):`
-}
-
 function SessionItem({ session }: SessionItemProps) {
-  const { assignedSessions, handleSessionClick, focusSessionAssignment, deleteSession, renameSession, makeSessionPersistent, makeSessionMortal, workspaces, workspaceIds, addSessionToWindow, removeSessionFromWindow, openFloatingModal, openSendToSession, settings } = useSession()
+  const { assignedSessions, handleSessionClick, focusSessionAssignment, deleteSession, renameSession, workspaces, workspaceIds, addSessionToWindow, removeSessionFromWindow, openFloatingModal, openSendToSession, settings } = useSession()
   const sessionKey = getSessionKey(session.name, session.unixUser)
   const assignmentKey = assignedSessions.has(sessionKey) ? sessionKey : session.name
   const assignment = assignedSessions.get(assignmentKey)
@@ -183,43 +131,8 @@ function SessionItem({ session }: SessionItemProps) {
 
   const handleDelete = useCallback(async () => {
     closeContextMenu()
-    if (session.persistent) {
-      // Killing a locked session without unlocking it first would be undone by
-      // its unit within seconds. The old UI hid the button rather than explain
-      // that; do the two steps instead, in the order that actually works.
-      const confirmed = window.confirm(
-        `${session.name} is locked. Stop its supervising unit and kill the session? The agent will not come back.`
-      )
-      if (!confirmed) return
-      await makeSessionMortal(session.name, session.unixUser)
-    }
     await deleteSession(session.name, session.unixUser)
-  }, [deleteSession, makeSessionMortal, session.name, session.persistent, session.unixUser, closeContextMenu])
-
-
-  const persistentAgentTitle = persistentTitle(session)
-  const persistentStatusLabel = persistentHealthLabel(session)
-
-  const handleMakePersistent = useCallback(async () => {
-    closeContextMenu()
-    const identity = window.prompt(persistentPrompt(session), session.persistentIdentity || '')
-    if (identity === null) return
-    const payload: PersistentAgentPayload = {
-      identity: identity.trim(),
-    }
-    const agentKind = persistentAgentKind(session)
-    if (agentKind && agentKind !== 'agent') payload.agentKind = agentKind
-    const agentSessionId = persistentAgentSessionId(session)
-    if (agentSessionId) payload.agentSessionId = agentSessionId
-    await makeSessionPersistent(session.name, payload, session.unixUser)
-  }, [closeContextMenu, makeSessionPersistent, session])
-
-  const handleMakeMortal = useCallback(async () => {
-    closeContextMenu()
-    const confirmed = window.confirm(`Unlock ${session.name}? This stops its supervising unit, so the agent will no longer be restarted after a crash or reboot. The running session and its agent are left alone.`)
-    if (!confirmed) return
-    await makeSessionMortal(session.name, session.unixUser)
-  }, [closeContextMenu, makeSessionMortal, session.name, session.unixUser])
+  }, [deleteSession, session.name, session.unixUser, closeContextMenu])
 
 
   const handleStartRename = useCallback(() => {
@@ -343,20 +256,6 @@ function SessionItem({ session }: SessionItemProps) {
             {locationLabel}
           </button>
         )}
-        {session.persistent && (
-          <span className="persistent-agent-lock" aria-label="Persistent agent" title={persistentAgentTitle}>
-            🔒
-          </span>
-        )}
-        {session.persistent && persistentStatusLabel && (
-          <span
-            className={`persistent-agent-state persistent-agent-state-${session.persistentHealth}`}
-            aria-label={`Supervision: ${persistentStatusLabel}`}
-            title={session.persistentDetail || persistentStatusLabel}
-          >
-            {persistentStatusLabel}
-          </span>
-        )}
         <span className="session-name">{session.name}</span>
         <button
           type="button"
@@ -394,18 +293,6 @@ function SessionItem({ session }: SessionItemProps) {
             <span className="session-context-icon">↗</span>
             Send to Session
           </button>
-          {session.persistent ? (
-            <button className="session-context-item" onClick={handleMakeMortal}>
-              <span className="session-context-icon">🔓</span>
-              Make mortal (metadata only)
-            </button>
-          ) : (
-            <button className="session-context-item" onClick={handleMakePersistent}>
-              <span className="session-context-icon">🔒</span>
-              Make persistent
-            </button>
-          )}
-
           <div
             className="session-context-submenu-trigger"
             onClick={(event) => event.stopPropagation()}
@@ -456,7 +343,7 @@ function SessionItem({ session }: SessionItemProps) {
 
           <button className="session-context-item session-context-danger" onClick={handleDelete}>
             <span className="session-context-icon">✕</span>
-            {session.persistent ? 'Stop supervision and kill' : 'Kill Session'}
+            Kill Session
           </button>
           </div>
         </DismissiblePanel>

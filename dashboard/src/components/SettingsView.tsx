@@ -585,7 +585,6 @@ function SettingsView({ sessionBankFocusNonce = 0 }: SettingsViewProps = {}) {
         <NukeConfirmModal
           sessionCount={sessions.length}
           sessionNames={sessions.map(session => session.name)}
-          protectedSessionNames={sessions.filter(session => session.persistent).map(session => session.name)}
           onConfirm={nukeAllSessions}
           onCancel={() => setShowNukeModal(false)}
         />

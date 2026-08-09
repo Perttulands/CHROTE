@@ -217,7 +217,6 @@ CHROTE_BEADS_WORKSPACES=$(quote_env_value "$WORKSPACE")
 CHROTE_AGENTS_DIR=$(quote_env_value "$state_dir/agents")
 CHROTE_SESSION_BANK_PATH=$(quote_env_value "$state_dir/session-bank/sessions.json")
 CHROTE_SESSION_DROPS_DIR=$(quote_env_value "$state_dir/session-drops")
-CHROTE_PERSISTENT_AGENTS_PATH=$(quote_env_value "$state_dir/persistent-agents/agents.json")
 CHROTE_MANAGED_RECOVERY_STATUS_PATH=$(quote_env_value "$state_dir/tmux-recovery/managed-status.json")
 CHROTE_SCHEDULED_TASKS_DIR=$(quote_env_value "$state_dir/scheduled-tasks")
 PATH=$(quote_env_value "$service_path")
@@ -305,7 +304,6 @@ main() {
     "$state_dir/agents" \
     "$state_dir/session-bank" \
     "$state_dir/session-drops" \
-    "$state_dir/persistent-agents" \
     "$state_dir/tmux-recovery" \
     "$state_dir/scheduled-tasks"
 

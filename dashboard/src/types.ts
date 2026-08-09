@@ -227,37 +227,7 @@ export interface TmuxSession {
   attached: boolean
   group: string
   unixUser?: LaunchUser
-  persistent?: boolean
-  persistentIdentity?: string
-  persistentAgentKind?: 'codex' | 'claude' | string
-  persistentAgentSessionId?: string
-  persistentHermesProfile?: string
-  /** Health of the session's own systemd unit, read live by the server. */
-  persistentUnit?: string
-  persistentHealth?: PersistentAgentHealth
-  persistentActiveState?: string
-  persistentDetail?: string
 }
-
-export interface PersistentAgentPayload {
-  identity?: string
-  agentKind?: 'codex' | 'claude' | string
-  agentSessionId?: string
-  newName?: string
-  recoveryDescriptor?: WorkloadRecoveryDescriptor
-}
-
-/**
- * What the lock badge shows. These are unit facts, not an in-server state
- * machine: `degraded` means the unit runs but has not confirmed it resumed the
- * configured transcript, or that no unit backs a stored lock at all.
- */
-export type PersistentAgentHealth =
-  | 'healthy'
-  | 'degraded'
-  | 'failed'
-  | 'inactive'
-  | 'unlocked'
 
 export type WorkloadRecoveryMode =
   | 'topology'
@@ -268,6 +238,7 @@ export type WorkloadRecoveryMode =
 
 export type WorkloadRecoveryOwnerKind =
   | 'session_bank'
+  // Read compatibility for immutable artifacts created before ADR-0015.
   | 'persistent_agent'
   | 'external_manager'
 
@@ -548,10 +519,6 @@ export interface DashboardActions {
 
   // Rename a session
   renameSession: (oldName: string, newName: string, unixUser?: LaunchUser) => Promise<boolean>
-
-  // Mark a live Codex/Claude session as persistent desired state, or make it mortal again
-  makeSessionPersistent: (sessionName: string, payload: PersistentAgentPayload, unixUser?: LaunchUser) => Promise<boolean>
-  makeSessionMortal: (sessionName: string, unixUser?: LaunchUser) => Promise<boolean>
 
   // Settings
   updateSettings: (settings: Partial<UserSettings>) => void

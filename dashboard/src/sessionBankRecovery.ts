@@ -34,6 +34,8 @@ export interface SessionBankCapabilitySummary {
 }
 
 const RECOVERY_MODES = new Set(['topology', 'agent', 'command', 'managed', 'unresolved'])
+// `persistent_agent` is accepted only so immutable pre-retirement Session Bank
+// artifacts remain readable. No current UI or API path produces that owner.
 const OWNER_KINDS = new Set(['session_bank', 'persistent_agent', 'external_manager'])
 const EVIDENCE_SOURCES = new Set(['argv', 'transcript', 'state_db', 'topology', 'manager', 'process'])
 const CONFIDENCE_LEVELS = new Set(['high', 'medium', 'low'])

@@ -13,7 +13,7 @@ const mockState = vi.hoisted(() => ({
     { name: 'bob-shell', windows: 1, attached: true, group: 'main', unixUser: 'bob' },
     { name: 'shared', windows: 1, attached: true, group: 'main', unixUser: 'alice' },
     { name: 'shared', windows: 1, attached: true, group: 'main', unixUser: 'bob' },
-    { name: 'codex-agent', windows: 1, attached: true, group: 'codex', unixUser: 'alice', persistent: true, persistentAgentKind: 'codex' },
+    { name: 'codex-agent', windows: 1, attached: true, group: 'codex', unixUser: 'alice' },
     { name: 'hq-mayor', windows: 1, attached: true, group: 'hq', unixUser: 'alice' },
   ] as TmuxSession[],
   closeSendToSession: vi.fn(),
@@ -415,7 +415,7 @@ describe('SendToSessionModal', () => {
 
     mockState.sessions = [
       ...mockState.sessions,
-      { name: 'late-shell', windows: 1, attached: true, group: 'late', unixUser: 'alice', persistent: true },
+      { name: 'late-shell', windows: 1, attached: true, group: 'late', unixUser: 'alice' },
     ]
     rerender(<SendToSessionModal />)
 
@@ -428,7 +428,7 @@ describe('SendToSessionModal', () => {
     mockState.sendToSessionTarget = 'alice:refresh-shell'
     mockState.sessions = [
       ...mockState.sessions,
-      { name: 'refresh-shell', windows: 1, attached: true, group: 'refresh', unixUser: 'alice', persistent: true },
+      { name: 'refresh-shell', windows: 1, attached: true, group: 'refresh', unixUser: 'alice' },
     ]
     const { rerender } = render(<SendToSessionModal />)
     const submit = () => screen.getByRole('checkbox', { name: /Press Enter after sending/i })

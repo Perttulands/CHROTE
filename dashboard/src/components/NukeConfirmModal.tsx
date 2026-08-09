@@ -8,15 +8,14 @@ interface NukeConfirmModalProps {
   onCancel: () => void
   sessionCount: number
   sessionNames?: string[]
-  protectedSessionNames?: string[]
 }
 
-function NukeConfirmModal({ onConfirm, onCancel, sessionCount, sessionNames = [], protectedSessionNames = [] }: NukeConfirmModalProps) {
+function NukeConfirmModal({ onConfirm, onCancel, sessionCount, sessionNames = [] }: NukeConfirmModalProps) {
   const [inputValue, setInputValue] = useState('')
   const isValid = inputValue === 'NUKE'
 
   // Calculate how many sessions will actually be killed (excluding protected)
-  const protectedSet = new Set([...PROTECTED_SESSIONS, ...protectedSessionNames])
+  const protectedSet = new Set(PROTECTED_SESSIONS)
   const protectedNames = sessionNames.filter(name => protectedSet.has(name))
   const protectedCount = protectedNames.length
   const killableCount = sessionCount - protectedCount

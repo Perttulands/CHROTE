@@ -821,7 +821,6 @@ def run_smoke(args: argparse.Namespace) -> SmokeState:
                 "CHROTE_TERMINAL_USER_HOMES": f"{unix_user}={fake_home}",
                 "CHROTE_SESSION_BANK_PATH": str(temp_root / "data" / "session-bank" / "sessions.json"),
                 "CHROTE_MANAGED_RECOVERY_STATUS_PATH": str(managed_status_path),
-                "CHROTE_PERSISTENT_AGENTS_PATH": str(temp_root / "data" / "persistent-agents" / "agents.json"),
                 "CHROTE_SESSION_DROPS_DIR": str(temp_root / "data" / "session-drops"),
             }
         )
@@ -1037,7 +1036,6 @@ def run_smoke(args: argparse.Namespace) -> SmokeState:
                 {
                     "sessionBank": server_env["CHROTE_SESSION_BANK_PATH"],
                     "managedStatus": server_env["CHROTE_MANAGED_RECOVERY_STATUS_PATH"],
-                    "persistentAgents": server_env["CHROTE_PERSISTENT_AGENTS_PATH"],
                     "sessionDrops": server_env["CHROTE_SESSION_DROPS_DIR"],
                 },
             ],

@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, ReactNode } from 'react'
-import type { DashboardContextType, TmuxSession, SessionBankEntry, ManagedRecoveryStatusEntry, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance, WorkspaceId, TerminalWorkspace, LayoutPreset, LaunchUser, CreateSessionOptions, PersistentAgentPayload, SendSessionPane, SendToSessionOutcome, SendToSessionPayload, SendToSessionResult, WindowRevealRequest } from '../types'
+import type { DashboardContextType, TmuxSession, SessionBankEntry, ManagedRecoveryStatusEntry, TerminalWindow, SessionsResponse, UserSettings, TmuxAppearance, WorkspaceId, TerminalWorkspace, LayoutPreset, LaunchUser, CreateSessionOptions, SendSessionPane, SendToSessionOutcome, SendToSessionPayload, SendToSessionResult, WindowRevealRequest } from '../types'
 import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE, MAX_PRESETS, getSessionKey, getSessionNameFromKey, getSessionPrefixForUser, getSessionUserFromKey, normalizeTerminalTabCount, normalizeTerminalUsers, resolveLaunchUser, sortTerminalWorkspaceIds, terminalWorkspaceIds } from '../types'
 import { useToast } from './ToastContext'
 import { apiErrorMessage } from '../apiErrors'
@@ -1399,67 +1399,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [refreshSessions, addToast, protectStaleSessionAliases, workspaces])
 
 
-  const makeSessionPersistent = useCallback(async (sessionName: string, payload: PersistentAgentPayload, unixUser?: LaunchUser): Promise<boolean> => {
-    try {
-      const query = unixUser ? `?unixUser=${encodeURIComponent(unixUser)}` : ''
-      const body: Record<string, unknown> = {}
-      const agentKind = payload.agentKind?.trim()
-      if (agentKind) body.agentKind = agentKind
-      const agentSessionId = payload.agentSessionId?.trim()
-      if (agentSessionId) body.agentSessionId = agentSessionId
-      const identity = payload.identity?.trim()
-      if (identity) body.identity = identity
-      const newName = payload.newName?.trim()
-      if (newName) body.newName = newName
-      if (payload.recoveryDescriptor) body.recoveryDescriptor = payload.recoveryDescriptor
-
-      const response = await fetch(`/api/tmux/sessions/${encodeURIComponent(sessionName)}/persistence${query}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(10000),
-      })
-      if (!response.ok) {
-        const errorText = await response.text()
-        const message = apiErrorMessage(errorText, 'Failed to make session persistent')
-        console.error('Failed to make session persistent:', errorText)
-        addToast(message, 'error')
-        return false
-      }
-      addToast(`Session '${sessionName}' is persistent`, 'success')
-      refreshSessions()
-      return true
-    } catch (e) {
-      console.error('Failed to make session persistent:', e)
-      addToast('Failed to make session persistent', 'error')
-      return false
-    }
-  }, [addToast, refreshSessions])
-
-  const makeSessionMortal = useCallback(async (sessionName: string, unixUser?: LaunchUser): Promise<boolean> => {
-    try {
-      const query = unixUser ? `?unixUser=${encodeURIComponent(unixUser)}` : ''
-      const response = await fetch(`/api/tmux/sessions/${encodeURIComponent(sessionName)}/persistence${query}`, {
-        method: 'DELETE',
-        signal: AbortSignal.timeout(10000),
-      })
-      if (!response.ok) {
-        const errorText = await response.text()
-        console.error('Failed to make session mortal:', errorText)
-        addToast(apiErrorMessage(errorText, 'Failed to make session mortal'), 'error')
-        return false
-      }
-      addToast(`Session '${sessionName}' is mortal`, 'info')
-      refreshSessions()
-      return true
-    } catch (e) {
-      console.error('Failed to make session mortal:', e)
-      addToast('Failed to make session mortal', 'error')
-      return false
-    }
-  }, [addToast, refreshSessions])
-
-
   // Layout Preset Actions
   const saveCurrentLayout = useCallback((name: string): boolean => {
     if (layoutPresets.length >= MAX_PRESETS) {
@@ -1554,8 +1493,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     createSession,
     deleteSession,
     renameSession,
-    makeSessionPersistent,
-    makeSessionMortal,
     updateSettings,
     setFocusedWindowKey,
     revealWindow,
@@ -1603,8 +1540,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     createSession,
     deleteSession,
     renameSession,
-    makeSessionPersistent,
-    makeSessionMortal,
     updateSettings,
     setFocusedWindowKey,
     revealWindow,
