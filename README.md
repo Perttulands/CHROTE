@@ -92,8 +92,8 @@ The specs behind this live in [FORMATIONS.md](FORMATIONS.md) (the run model),
 | **Scheduled / Server** | Inspect scheduled tasks, health, resources, runtime events, and bounded history |
 | **Services** | Host optional server-side adapters without putting private tokens in the browser |
 
-The terminal remains the heart of the thing. tmux owns process durability;
-CHROTE owns the browser view and explicit operator actions. Formations borrows
+The terminal remains the heart of the thing. tmux owns process lifetime; CHROTE
+owns the browser view and explicit operator actions. Formations borrows
 the same session pool the terminals use — a judge with prior context is a
 feature, and a busy session says so loudly instead of being silently stolen.
 
@@ -214,14 +214,14 @@ proxy.
 
 The hard state stays boring and inspectable:
 
-- tmux sessions for durable terminal work;
+- tmux sessions for terminal work whose lifetime is independent of the browser;
 - files under configured roots;
 - `bd` workspaces for issue state;
 - append-only run ledgers for workflow evidence;
 - host-owned configuration and recovery records;
 - Git for source and history.
 
-The browser is disposable. The work is not.
+The browser is disposable. Host-owned state—not browser state—is authoritative.
 
 ## Documentation
 

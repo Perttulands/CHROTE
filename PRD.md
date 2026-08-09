@@ -8,19 +8,20 @@ The host owns the terminals, agents, files, dev servers, builds, tests, Beads,
 and recovery state. Browsers and client devices are replaceable windows onto
 that work.
 
-The browser is disposable. The work is not.
+The browser is disposable. Host-owned state—not browser state—is authoritative.
 
 ## Product contract
 
 CHROTE gives one trusted operator a coherent control surface over a configured
-Linux or WSL workspace. It keeps durable terminal work visible, makes local
+Linux or WSL workspace. It keeps existing tmux-backed work visible, makes local
 state inspectable, and adds explicit orchestration primitives without moving the
 source of truth into the browser.
 
 ### Current goals
 
-1. Make durable tmux sessions visible and controllable from a browser.
-2. Keep device disconnects and CHROTE restarts from silently killing important work.
+1. Make tmux sessions visible and controllable from a browser.
+2. Keep device disconnects and CHROTE restarts from deliberately terminating
+   externally owned tmux work.
 3. Put terminal sessions and relevant files beside each other without pretending
    to be an IDE.
 4. Surface agent sessions, Beads work, scheduled tasks, services, and server
@@ -38,13 +39,18 @@ source of truth into the browser.
 - CHROTE does not replace `tmux`, `bd`, Git, or the underlying AI harnesses.
 - CHROTE does not promise autonomous agent society, implicit agent-to-agent chat,
   or magic recovery of arbitrary shell state.
+- CHROTE does not promise that ordinary sessions or agent processes survive
+  process death or host reboot.
+- CHROTE does not install a universal workload supervisor. Rare workloads that
+  need reboot recovery use explicit operator-owned host configuration outside
+  CHROTE.
 - CHROTE does not require Gastown, Ralph, or a single preferred agent harness.
 
 ## Current views
 
 | View | Operator job |
 | --- | --- |
-| Terminal 1 | First independent terminal workspace with 1-4 durable tmux windows |
+| Terminal 1 | First independent terminal workspace with 1-4 tmux-backed windows |
 | Terminal 2 | Second independent terminal workspace |
 | Terminal 3 | Third independent terminal workspace |
 | Files | Browse, inspect, edit, compare, and send configured workspace files |
@@ -66,9 +72,12 @@ as a separate persistent workspace.
 - Each terminal workspace owns its own layout, attached sessions, labels, and
   sidecar state.
 - A workspace can show one to four terminal windows.
-- tmux remains the durable process/session substrate; CHROTE does not copy shell
+- tmux, not CHROTE, owns process and session lifetime; CHROTE does not copy shell
   state into browser storage.
-- Browser/device disconnects must not terminate tmux sessions.
+- Browser/device disconnects and CHROTE restarts must not cause CHROTE to
+  terminate tmux sessions.
+- A tmux session or workload may still exit naturally, be stopped externally,
+  or be lost with the host. CHROTE does not automatically recreate it.
 - Refit and recovery controls are explicit operator actions.
 
 ### Sessions and Files sidecar
@@ -96,27 +105,21 @@ Sessions and Files are independent peer sidecars within each terminal workspace.
 - Legacy or unsafe entries remain inspection-only or require explicit operator
   action; CHROTE must not fabricate arbitrary shell recovery.
 - Recovery plans are host-owned state, not browser-local state.
+- Recovery is an explicit operator action, not a universal process-lifetime or
+  host-reboot guarantee.
 - Bulk destruction remains an advanced emergency action.
 
-### Persistent agents
+### Session lifetime and optional host durability
 
-- Locking a session is the operator's promise that this agent should still be
-  running tomorrow. The lock is the cockpit affordance for that promise; it is
-  not itself the supervisor.
-- Supervision belongs to the host init system. CHROTE writes a per-agent
-  configuration and enables a systemd user unit for it. The server runs no
-  supervision loop, holds no retry state, and never recreates a session, so a
-  CHROTE restart, crash, or upgrade cannot interrupt a locked agent.
-- Lifecycle state is read from the unit rather than tracked by CHROTE. Reported
-  health combines the unit's active state with a launcher receipt showing that
-  the expected agent resumed the expected work; an active unit without a
-  matching receipt is reported as degraded rather than healthy.
-- Unlocking withdraws the promise, not the work. The tmux session and the
-  running agent are left alive, and the confirmation says so.
-- Sessions owned by units CHROTE did not install remain read-only and are never
-  restarted by CHROTE.
-- Persistent state does not imply autonomous authority to message, claim, or
-  mutate unrelated work.
+- Ordinary sessions and agents are transient, best-effort host work. Their
+  continued existence is not a CHROTE product promise.
+- CHROTE does not offer a "make permanent" or per-session supervision contract.
+  It does not install or control host units to restart ordinary agent sessions.
+- A rare workload that genuinely needs process-death or reboot recovery belongs
+  in explicit operator-owned host configuration. CHROTE may observe such a
+  workload, but it does not become its recovery owner.
+- This boundary does not permit CHROTE to kill external work during its own
+  restart. Non-interference is required; automatic reconstruction is not.
 
 ## Files
 
@@ -202,7 +205,7 @@ See `SECURITY.md` for the public security contract.
 
 ### Shipped foundation
 
-- Three durable terminal workspaces
+- Three tmux-backed terminal workspaces
 - Unified Sessions/Files sidecars
 - Files, Agents, Beads, Services, Scheduled, and Server views
 - Session Bank and typed workload recovery
@@ -224,7 +227,7 @@ Roadmap text is not permission to claim unshipped behavior in the README.
 - Go tests, race tests, vet, dashboard lint/unit/browser tests, dependency audits,
   and documentation checks pass in CI.
 - `/api/health` returns a healthy response on a supported installation.
-- Terminal sessions survive browser disconnects.
+- Browser disconnects do not cause CHROTE to terminate tmux sessions.
 - Unknown or unavailable optional integrations degrade clearly.
 - File access remains under configured roots.
 - Recovery, Formations execution, and destructive actions fail loud at their

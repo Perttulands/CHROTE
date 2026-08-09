@@ -9,21 +9,21 @@ ACLs, and rollback layouts belong in private operator configuration.
 | --- | --- | --- |
 | Go server | HTTP API, embedded dashboard, terminal proxy, operator-triggered recovery, scheduling, and optional experimental runtimes | Yes |
 | React dashboard | Browser cockpit served from the Go binary | Yes |
-| tmux | Durable terminal and process substrate | Yes for terminal workspaces |
+| tmux | Terminal and process substrate with a lifecycle independent of the browser | Yes for terminal workspaces |
 | ttyd | Browser terminal transport behind CHROTE | Yes for interactive terminals |
-| Host filesystem | Files, schedules, recovery state, per-agent lock configuration and launcher receipts, and experimental definitions when used | Yes |
+| Host filesystem | Files, schedules, recovery state, and experimental definitions when used | Yes |
 
-The browser is a client of this runtime. It is not the durable source of truth.
-Neither is the server the owner of durable agent lifetime: locked sessions are
-supervised by systemd user units, so the server can restart without interrupting
-them. Recovery in the server is operator-triggered and one-shot; nothing in it
-loops to keep a workload alive.
+The browser is a client of this runtime. It is not the source of truth. tmux
+sessions have a lifecycle independent of CHROTE, and a CHROTE restart must not
+deliberately terminate them. Recovery in the server is operator-triggered and
+one-shot; nothing in it loops to keep a workload alive or promises host-reboot
+recovery.
 
 ## Built-in cockpit surfaces
 
 | Surface | Backing capability |
 | --- | --- |
-| Terminal 1-3 | Independent layouts over durable tmux sessions |
+| Terminal 1-3 | Independent layouts over tmux sessions |
 | Sessions/Files sidecar | Session discovery, Peek, assignment navigation, and workspace-local files |
 | Files | Configured-root file operations and terminal handoff |
 | Agents | Agent/persona/session observability and mission context |
@@ -42,7 +42,6 @@ loops to keep a workload alive.
 | TTS Gateway adapter | Optional Services console; no upstream or credentials are bundled |
 | Context Citadel adapter | Optional adapter code; no current authentication or upstream is bundled |
 | Tailscale or equivalent | Private HTTPS/network access outside localhost |
-| systemd user manager | Supervises locked sessions through a CHROTE-installed per-agent unit; required for the session lock, including a running user manager for the target account |
 
 Optional integrations must degrade clearly when unavailable. They must not make
 the core dashboard fail to load.
