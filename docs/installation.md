@@ -157,6 +157,11 @@ The installer rebuilds from the checked-out commit, atomically replaces the
 managed binary, rewrites managed non-secret configuration, preserves
 `secrets.env` and durable state, then restarts and health-checks the user service.
 
+Previously installed `chrote-agent@*.service` units and their configuration are
+not automatically stopped or removed. If the unreleased capability was ever
+activated, inspect them explicitly through the host's service-management
+procedure.
+
 Review release notes and `git diff` before upgrading alpha builds.
 
 ## Uninstall

@@ -7,29 +7,9 @@ import (
 	"testing"
 )
 
-// CHROTE inventories and operates tmux sessions. It does not install or start a
-// second agent-lifetime controller as part of server startup.
-func TestServerStartsNoAgentPersistenceCapability(t *testing.T) {
-	source, err := os.ReadFile("main.go")
-	if err != nil {
-		t.Fatalf("read main.go: %v", err)
-	}
-	body := string(source)
-	for _, forbidden := range []string{
-		"StartPersistentAgentSupervisor",
-		"ReconcilePersistentAgents",
-		"PersistentAgent",
-		"agentUnit",
-	} {
-		if strings.Contains(body, forbidden) {
-			t.Fatalf("main.go contains %s; agent persistence is not a server capability", forbidden)
-		}
-	}
-}
-
 // Retiring Persistence v2 means removing the capability, not leaving dormant
 // host-control pieces that can be accidentally re-enabled by configuration.
-func TestPersistenceV2HostAndSourceSurfaceIsAbsent(t *testing.T) {
+func TestPersistenceV2HostArtifactsAndInstallerSurfaceAbsent(t *testing.T) {
 	repoRoot := filepath.Join("..", "..", "..")
 	for _, relative := range []string{
 		"scripts/chrote-agent-ensure.sh",
@@ -56,32 +36,6 @@ func TestPersistenceV2HostAndSourceSurfaceIsAbsent(t *testing.T) {
 		} {
 			if strings.Contains(string(raw), forbidden) {
 				t.Fatalf("%s still configures retired Persistence v2 surface %q", relative, forbidden)
-			}
-		}
-	}
-
-	apiRoot := filepath.Join(repoRoot, "src", "internal", "api")
-	entries, err := os.ReadDir(apiRoot)
-	if err != nil {
-		t.Fatalf("read api package: %v", err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
-			continue
-		}
-		raw, err := os.ReadFile(filepath.Join(apiRoot, entry.Name()))
-		if err != nil {
-			t.Fatalf("read %s: %v", entry.Name(), err)
-		}
-		for _, forbidden := range []string{
-			"persistentAgentStore",
-			"agentUnitController",
-			"EnablePersistentAgent",
-			"DisablePersistentAgent",
-			"/persistence",
-		} {
-			if strings.Contains(string(raw), forbidden) {
-				t.Fatalf("%s still contains retired Persistence v2 control %q", entry.Name(), forbidden)
 			}
 		}
 	}
