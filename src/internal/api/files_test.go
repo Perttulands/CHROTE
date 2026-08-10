@@ -507,6 +507,139 @@ func TestFilesHandlerReadAllKeepsOrdinaryFilesUseful(t *testing.T) {
 	}
 }
 
+func TestFilesHandlerSensitiveAllowPathsExposeOnlyConfiguredOwnerPrivateFiles(t *testing.T) {
+	root := t.TempDir()
+	ownerRoot := filepath.Join(root, "home", "operator")
+	outsidePrivate := filepath.Join(root, "outside", ".ssh")
+	for _, path := range []string{
+		filepath.Join(ownerRoot, ".hermes"),
+		filepath.Join(ownerRoot, ".ssh"),
+		outsidePrivate,
+	} {
+		if err := os.MkdirAll(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	outsideSecret := filepath.Join(outsidePrivate, "config")
+	if err := os.WriteFile(outsideSecret, []byte("not read"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(ownerRoot, ".ssh", "outside")
+	if err := os.Symlink(outsidePrivate, alias); err != nil {
+		t.Fatal(err)
+	}
+
+	core.ResetConfigForTesting()
+	t.Cleanup(core.ResetConfigForTesting)
+	t.Setenv("CHROTE_ROOTS", root)
+	t.Setenv("CHROTE_WRITE_ROOTS", root)
+	t.Setenv("CHROTE_FILE_ALLOW_SENSITIVE_PATHS", ownerRoot)
+	handler := NewFilesHandlerWithFormationsDataRoot("")
+
+	for _, path := range []string{
+		filepath.Join(ownerRoot, ".hermes"),
+		filepath.Join(ownerRoot, ".ssh", "new-key.pub"),
+	} {
+		if result := handler.resolveSafePath(path); result.Error != "" || !result.Writable {
+			t.Fatalf("resolveSafePath(%q) = %#v, want opted-in owner-private writable path", path, result)
+		}
+		if result := handler.resolveMutationPath(path); result.Error != "" || !result.Writable {
+			t.Fatalf("resolveMutationPath(%q) = %#v, want opted-in owner-private writable path", path, result)
+		}
+	}
+	if result := handler.resolveSafePath(outsideSecret); result.Error != "Sensitive path not available in CHROTE Files" {
+		t.Fatalf("outside owner-private path resolved as %#v, want sensitive-path rejection", result)
+	}
+	if result := handler.resolveSafePath(filepath.Join(alias, "config")); result.Error != "Sensitive path not available in CHROTE Files" {
+		t.Fatalf("canonical escape through opted-in root resolved as %#v, want sensitive-path rejection", result)
+	}
+}
+
+func TestFilesHandlerDenyAndFormationsRootsOverrideSensitiveAllowPaths(t *testing.T) {
+	root := t.TempDir()
+	ownerRoot := filepath.Join(root, "home", "operator")
+	deniedRoot := filepath.Join(ownerRoot, ".hermes", "deny-me")
+	formationsRoot := filepath.Join(ownerRoot, ".hermes", "formations-private")
+	for _, path := range []string{deniedRoot, formationsRoot} {
+		if err := os.MkdirAll(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	core.ResetConfigForTesting()
+	t.Cleanup(core.ResetConfigForTesting)
+	t.Setenv("CHROTE_ROOTS", root)
+	t.Setenv("CHROTE_WRITE_ROOTS", root)
+	t.Setenv("CHROTE_FILE_ALLOW_SENSITIVE_PATHS", ownerRoot)
+	t.Setenv("CHROTE_FILE_DENY_PATHS", deniedRoot)
+	handler := NewFilesHandlerWithFormationsDataRoot(formationsRoot)
+
+	for _, path := range []string{deniedRoot, formationsRoot} {
+		if result := handler.resolveSafePath(path); result.Error != "Sensitive path not available in CHROTE Files" {
+			t.Fatalf("resolveSafePath(%q) = %#v, want explicit private-root rejection", path, result)
+		}
+		if result := handler.resolveMutationPath(path); result.Error != "Sensitive path not available in CHROTE Files" {
+			t.Fatalf("resolveMutationPath(%q) = %#v, want explicit private-root rejection", path, result)
+		}
+	}
+}
+
+func TestFilesHandlerSensitiveAllowPathsSupportHTTPReadWriteRenameDelete(t *testing.T) {
+	root := t.TempDir()
+	ownerRoot := filepath.Join(root, "home", "operator")
+	privateRoot := filepath.Join(ownerRoot, ".hermes")
+	if err := os.MkdirAll(privateRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	core.ResetConfigForTesting()
+	t.Cleanup(core.ResetConfigForTesting)
+	t.Setenv("CHROTE_ROOTS", root)
+	t.Setenv("CHROTE_WRITE_ROOTS", root)
+	t.Setenv("CHROTE_FILE_ALLOW_SENSITIVE_PATHS", ownerRoot)
+	handler := NewFilesHandlerWithFormationsDataRoot("")
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	original := filepath.Join(privateRoot, "probe.txt")
+	renamed := filepath.Join(privateRoot, "renamed.txt")
+	request := func(method, path string, body []byte) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(method, "/api/files/resources"+filepath.ToSlash(path), bytes.NewReader(body))
+		if method == http.MethodPatch {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := request(http.MethodPost, original, []byte("owner-private")); rec.Code != http.StatusOK {
+		t.Fatalf("create status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if rec := request(http.MethodGet, privateRoot, nil); rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	rawReq := httptest.NewRequest(http.MethodGet, "/api/files/raw"+filepath.ToSlash(original), nil)
+	rawRec := httptest.NewRecorder()
+	mux.ServeHTTP(rawRec, rawReq)
+	if rawRec.Code != http.StatusOK || rawRec.Body.String() != "owner-private" {
+		t.Fatalf("raw read = %d %q, want 200 and task-owned bytes", rawRec.Code, rawRec.Body.String())
+	}
+	renameBody, err := json.Marshal(RenameRequest{Action: "rename", Destination: renamed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := request(http.MethodPatch, original, renameBody); rec.Code != http.StatusOK {
+		t.Fatalf("rename status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if rec := request(http.MethodDelete, renamed, nil); rec.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(renamed); !os.IsNotExist(err) {
+		t.Fatalf("renamed private fixture still exists: %v", err)
+	}
+}
+
 func TestFilesHandlerMutationRequiresConfiguredWriteRoot(t *testing.T) {
 	readRoot := t.TempDir()
 	writeRoot := t.TempDir()

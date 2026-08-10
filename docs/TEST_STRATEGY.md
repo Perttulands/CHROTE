@@ -79,6 +79,9 @@ CHROTE_PLAYWRIGHT_PORT=5279 npm test
 
 The default suite covers desktop and mobile layouts, terminal workspace persistence, Sessions/Files sidecars, Peek and location-chip behavior, drag/drop, Files, Beads, settings, destructive-action confirmation, and error states.
 
+The owner-access journey keeps the global Session Bank visible while navigating
+owner-private Files; backend tests prove deny/Formations/canonical precedence.
+
 Experimental Formations browser specs are separate:
 
 ```bash

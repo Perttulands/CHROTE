@@ -128,6 +128,8 @@ Sessions is one application-global sidecar, including when exposed from Schedule
 
 - File access is constrained to configured roots and the Unix permissions of the
   CHROTE process.
+- Owner-private paths stay hidden by default; explicit owner-root opt-in never overrides deny/Formations roots or canonical checks.
+- Cross-user roots additionally require effective service-identity list/read/write ACLs; permission failure is not an empty root.
 - The Files view is a terminal companion: browse, inspect, edit, compare, and
   send context to a session without becoming a general-purpose IDE.
 - Symlinks and mutations must remain within configured roots after resolution.
