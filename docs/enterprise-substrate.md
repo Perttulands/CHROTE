@@ -22,7 +22,7 @@ so the solo user never pays for them.
 Substantial run-data governance work toward that mode was built (by the `gpt-5.6-sol`
 lane) and is **parked, not lost**. This note is the map back to it.
 
-## Parked work (preserved on the remote + tagged)
+## Parked work (preserved by exact annotated tags)
 
 | Tag | Branch | What it is |
 | --- | --- | --- |
@@ -54,13 +54,15 @@ enterprise mode can be switched on later without re-plumbing:
 
 ## Reviving for enterprise mode
 
-1. Refresh the parked branches against current `main` first — they **drift** the
-   longer they sit (that is the cost of parking).
+1. Create revival branches from the parked tags and refresh them against current
+   `main` first — the code **drifts** the longer it sits (that is the cost of
+   parking).
 2. Introduce an explicit mode flag (env/config), **off by default**.
 3. Behind the flag: flip `RequireRuntimeAuthority` to enforce, wire the
    workspace-authority writer, select the sanitizing projection, add identity +
    tenant filtering + audit.
 4. Keep every enterprise path gated so the solo user experiences zero change.
 
-Do **not** delete the parked branches/tags — deleting them is the only way to
-lose this work.
+The exact annotated tags are the durable preservation refs. Before removing an
+old parked branch, verify that its tag peels to the recorded branch tip. The
+branch may then be removed; do **not** delete the tags.
