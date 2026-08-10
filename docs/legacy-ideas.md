@@ -22,6 +22,19 @@ This CHROTE install is not the old Gastown-oriented stack. The useful ideas from
 - Agent communication is owned by CHROTE.
 - Team launch/harness code is production-ready.
 
+## Historical Formations Experiments
+
+- The redaction/replay quarry explored preventing agent-controlled output and
+  completion references from persisting, then failing replay when authoritative
+  raw input was unavailable. The owner cut it: CHROTE is a solo,
+  trusted-operator system, its proving missions had no must-scrub-secrets
+  workflow, and the recovery/authority machinery added no current product value.
+  Reopen only for a concrete secret-bearing workflow.
+- `feat/formations-solid-ground` was an explicitly unreviewed WIP lane around
+  the same work. Its reusable CI assertion already landed on `main`; the
+  remaining redaction/replay material shares the cut above, so preserve the
+  decision here rather than the branch.
+
 ## Future Agent Monitor Direction
 
 The old Oracle concept should become a generic Agents view:
