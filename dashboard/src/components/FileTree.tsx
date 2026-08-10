@@ -105,16 +105,14 @@ function FileTree({
   }, [scrollTop])
 
   const updateExpanded = useCallback((path: string, expanded: boolean) => {
-    setLocalExpanded(prev => {
-      const next = new Set(prev)
-      if (expanded) next.add(path)
-      else next.delete(path)
-      next.add(rootPath)
-      onExpandedPathsChange(Array.from(next))
-      return next
-    })
+    const next = new Set(localExpanded)
+    if (expanded) next.add(path)
+    else next.delete(path)
+    next.add(rootPath)
+    setLocalExpanded(next)
+    onExpandedPathsChange(Array.from(next))
     if (expanded) void loadPath(path)
-  }, [loadPath, onExpandedPathsChange, rootPath])
+  }, [loadPath, localExpanded, onExpandedPathsChange, rootPath])
 
   const openItem = useCallback((item: FileItem) => {
     if (item.isDir) {

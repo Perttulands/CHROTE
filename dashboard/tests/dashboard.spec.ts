@@ -146,6 +146,50 @@ test.describe('Arena Dashboard', () => {
       await expect(page.locator('.session-group').filter({ hasText: groupName }).locator('.expand-icon')).toHaveText('▶')
     })
 
+    test('shows all configured owner Files beside the one global Session Bank', async ({ page }) => {
+      const ownerSessions = ['alice', 'build'].map(unixUser => ({ name: `${unixUser}-shell`, windows: 1, attached: false, group: 'owners', unixUser }))
+      await page.route('**/api/tmux/sessions', route => route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ sessions: ownerSessions, grouped: { owners: ownerSessions },
+          terminalUsers: ['alice', 'build'], timestamp: new Date().toISOString() }),
+      }))
+      await page.route(/.*\/api\/files\/resources(?:\/.*)?$/, async route => {
+        const path = decodeURIComponent(new URL(route.request().url()).pathname)
+        const directory = (names: string[]) => ({ isDir: true, items: names.map(name => ({
+          name, path: name, isDir: true, size: 0, modified: '2026-08-07T00:00:00Z', type: '',
+        })) })
+        let payload
+        if (path.endsWith('/api/files/resources') || path.endsWith('/api/files/resources/')) payload = directory(['home', 'srv'])
+        else if (path.endsWith('/api/files/resources/home')) payload = directory(['alice', 'build'])
+        else if (path.endsWith('/api/files/resources/home/alice')) payload = directory(['.hermes', '.ssh', 'projects'])
+        else if (path.endsWith('/api/files/resources/home/alice/.hermes')) payload = directory(['profiles'])
+        else payload = directory([])
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(payload) })
+      })
+
+      await page.reload()
+      await page.waitForSelector('.dashboard')
+      if (await page.locator('.session-panel').count() === 0) {
+        await openSessionsSidecar(page)
+      }
+      const sessions = page.locator('.session-panel')
+      await expect(sessions.getByText('alice-shell', { exact: true })).toBeVisible()
+      await expect(sessions.getByText('build-shell', { exact: true })).toBeVisible()
+
+      await page.getByRole('button', { name: 'Files sidecar', exact: true }).click()
+      const files = page.locator('.terminal-files-panel')
+      await expect(files).toBeVisible()
+      await expect(sessions).toBeVisible()
+      await files.getByRole('treeitem', { name: 'Folder home' }).click()
+      await files.getByRole('treeitem', { name: 'Folder alice' }).click()
+      await files.getByRole('treeitem', { name: 'Folder .hermes' }).click()
+      await expect(files.getByRole('textbox', { name: 'Files panel path' })).toHaveValue('/home/alice/.hermes')
+      await expect(files.getByRole('treeitem', { name: 'Folder profiles' })).toBeVisible()
+      await expect(sessions.getByText('alice-shell', { exact: true })).toBeVisible()
+      await expect(sessions.getByText('build-shell', { exact: true })).toBeVisible()
+    })
+
     test('keeps Sessions open while Files opens and shows one non-modal file Peek', async ({ page }) => {
       await page.route(/.*\/api\/files\/resources(?:\/.*)?$/, async route => {
         await route.fulfill({
