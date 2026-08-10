@@ -1,8 +1,8 @@
 # CHROTE Vision
 
-CHROTE is a private cockpit for durable host-owned work.
+CHROTE is a private cockpit for host-owned work.
 
-The browser is disposable. The work is not.
+The browser is disposable. Host-owned state—not browser state—is authoritative.
 
 ## Canonical source
 
@@ -30,7 +30,7 @@ browser is glass, not the vault.
 CHROTE grows only where it improves the operator's ability to understand,
 recover, and deliberately coordinate host-owned work:
 
-1. **Durable cockpit:** three terminal workspaces, unified Sessions/Files
+1. **Host-owned cockpit:** three terminal workspaces, unified Sessions/Files
    sidecars, Files, Beads, Agents, scheduling, server health, and recovery.
 2. **Local capability surface:** explicit adapters for services that earn a
    first-class operator workflow.
@@ -41,7 +41,7 @@ recover, and deliberately coordinate host-owned work:
    approval once those contracts are proven under real use.
 
 CHROTE should not become a pile of dashboards for things that are already better
-in a terminal. It should make durable work legible without stealing ownership
+in a terminal. It should make host-owned work legible without stealing ownership
 from the tools and files that created it.
 
 See [`meta-harness-desired-state.md`](meta-harness-desired-state.md) and

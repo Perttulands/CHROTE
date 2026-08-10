@@ -63,7 +63,6 @@ CHROTE_AGENTS_DIR="$artifact_root/agents" \
 CHROTE_BEADS_WORKSPACES="$workspace" \
 CHROTE_BEADS_AUTO_DISCOVER=false \
 CHROTE_SCHEDULED_TASKS_DIR="$artifact_root/scheduled-tasks" \
-CHROTE_PERSISTENT_AGENTS_PATH="$artifact_root/state/persistent-agents.json" \
 CHROTE_SESSION_BANK_PATH="$artifact_root/state/session-bank.json" \
 CHROTE_MANAGED_RECOVERY_STATUS_PATH="$artifact_root/state/managed-recovery.json" \
 CHROTE_FORMATIONS_DATA_ROOT="$artifact_root/formations-data" \

@@ -11,26 +11,12 @@ import (
 
 // Session represents a tmux session
 type Session struct {
-	ID                       string `json:"id,omitempty"`
-	Name                     string `json:"name"`
-	Windows                  int    `json:"windows"`
-	Attached                 bool   `json:"attached"`
-	Group                    string `json:"group"`
-	UnixUser                 string `json:"unixUser,omitempty"`
-	Persistent               bool   `json:"persistent,omitempty"`
-	PersistentIdentity       string `json:"persistentIdentity,omitempty"`
-	PersistentAgentKind      string `json:"persistentAgentKind,omitempty"`
-	PersistentAgentSessionID string `json:"persistentAgentSessionId,omitempty"`
-	PersistentHermesProfile  string `json:"persistentHermesProfile,omitempty"`
-	// Supervision health comes from the session's own systemd unit, read live
-	// (ADR-0014). The retired fields here -- resume command, a six-state ladder,
-	// launch-failure counters, retry and last-check timestamps -- described an
-	// in-server supervisor that no longer exists; four of them were never read by
-	// any client even while it did.
-	PersistentUnit        string `json:"persistentUnit,omitempty"`
-	PersistentHealth      string `json:"persistentHealth,omitempty"`
-	PersistentActiveState string `json:"persistentActiveState,omitempty"`
-	PersistentDetail      string `json:"persistentDetail,omitempty"`
+	ID       string `json:"id,omitempty"`
+	Name     string `json:"name"`
+	Windows  int    `json:"windows"`
+	Attached bool   `json:"attached"`
+	Group    string `json:"group"`
+	UnixUser string `json:"unixUser,omitempty"`
 }
 
 // GroupPriority defines the sort order for session groups

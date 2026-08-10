@@ -23,13 +23,9 @@ Managed records are read-only manifest entries. A managed record uses
 false`, and a typed `statusProbe`. Restore health-checks those records; it does
 not POST them to Session Bank and does not start or restart the unit.
 
-`restartAllowed: false` describes a unit owned by someone other than CHROTE.
-Under `docs/adr/0014-persistent-agents-supervised-by-systemd.md`, CHROTE
-installs `chrote-agent@<name>.service` units of its own, and systemd restarts
-those. They are the one restart-capable external manager, and they are read live
-from systemd rather than round-tripped through this manifest or through the
-managed status registry. Every managed record these tools write therefore still
-describes an externally owned, non-restarting, read-only unit.
+Every managed record these tools write describes an externally owned,
+non-restarting, read-only unit. ADR-0015 retires CHROTE's former per-session
+supervision path; these tools do not make an external manager CHROTE-owned.
 
 Manifest files use schema version `chrote.tmux-recovery.manifest.v1`; the JSON
 schema lives next to this README as `recovery-manifest.schema.json`.
@@ -50,10 +46,10 @@ across a multi-session socket. External-manager collection requires an explicit
 `--session-name` filter plus `--owner-ref`, or a typed manifest-only managed
 record.
 
-`--owner-kind` accepts `session_bank` and `external_manager`. ADR-0014 retired
-`persistent_agent`, so no tool here can produce it any more. Manifests written
-before that change still load: an accepted manifest is an immutable artifact
-pinned to an exact `schemaVersion`, so the value stays valid on read.
+`--owner-kind` accepts `session_bank` and `external_manager`. No tool here can
+produce the retired `persistent_agent` owner. Manifests written before that
+change still load: an accepted manifest is an immutable artifact pinned to an
+exact `schemaVersion`, so the value stays valid on read.
 
 Snapshot normal path:
 
@@ -97,12 +93,10 @@ chrote-tmux-recovery-restore \
 
 Restore delegates Session Bank owners to CHROTE recovery APIs and health-checks
 managed `systemd-user` owners. `restore.py` itself never starts tmux, launches
-agents, starts or restarts units, or reads unit environments. That is a limit on
-this tool, not a description of the whole system: since ADR-0014, CHROTE starts
-and stops the `chrote-agent@<name>.service` units it installs when an operator
-locks or unlocks a session. Units that these tools see as managed records stay
-read-only here no matter who owns them. `--topology-only` is explicit and reports
-limited topology/cwd/dead verification rather than workload identity success.
+agents, starts or restarts units, or reads unit environments. Units that these
+tools see as managed records stay read-only. `--topology-only` is explicit and
+reports limited topology/cwd/dead verification rather than workload identity
+success.
 
 `restore` and `verify` first poll readiness for up to 30 seconds at a bounded
 0.5-second interval, requiring exact topology, workload identity, pane health,
@@ -127,8 +121,8 @@ python3 scripts/tmux-recovery/smoke_disposable.py
 ```
 
 The smoke builds the current CHROTE server into a unique `/tmp` root, starts it
-on random loopback ports with temporary Session Bank and Persistent Agent
-stores, creates a unique tmux socket plus fake owner home, runs real
+on random loopback ports with temporary recovery state, creates a unique tmux
+socket plus fake owner home, runs real
 snapshot/restore/verify CLI calls, and prints a concise JSON result. It may add a
 unique current-user transient `systemd-run --user` sleep unit when user systemd
 is available; otherwise the managed-owner leg is reported as an explicit skip.

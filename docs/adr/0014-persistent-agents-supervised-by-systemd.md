@@ -2,6 +2,9 @@
 
 ## Status
 
+Superseded 2026-08-09 by
+[ADR-0015 (CHROTE preserves access but does not own workload durability)](0015-access-first-non-interference.md).
+
 Accepted 2026-08-03 — engineering decision, recorded for `chrote-gfu.2`.
 
 Supersedes the supervision-ownership half of

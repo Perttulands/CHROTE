@@ -376,10 +376,10 @@ func TestSelectWorkloadRecoveryDescriptorRejectsAmbiguousCandidates(t *testing.T
 }
 
 func TestWorkloadRecoveryDescriptorModeOwnerCombinations(t *testing.T) {
-	validPersistentAgent := recoveryTestAgentDescriptor(RecoveryAgentClaude, recoveryTestClaudeID)
-	validPersistentAgent.Owner = WorkloadRecoveryOwner{Kind: RecoveryOwnerPersistentAgent, Ref: "persistent:alice/claude-alpha", MayRestart: true}
-	if _, err := CanonicalizeWorkloadRecoveryDescriptor(validPersistentAgent, recoveryTestOwnerHome); err != nil {
-		t.Fatalf("persistent agent owner should be valid for agent mode: %v", err)
+	validLegacyPersistentAgent := recoveryTestAgentDescriptor(RecoveryAgentClaude, recoveryTestClaudeID)
+	validLegacyPersistentAgent.Owner = WorkloadRecoveryOwner{Kind: RecoveryOwnerPersistentAgent, Ref: "persistent:alice/claude-alpha", MayRestart: true}
+	if _, err := CanonicalizeWorkloadRecoveryDescriptor(validLegacyPersistentAgent, recoveryTestOwnerHome); err != nil {
+		t.Fatalf("legacy persistent agent owner should remain readable for agent mode: %v", err)
 	}
 
 	validUnresolved := recoveryTestUnresolvedDescriptor(RecoveryUnresolvedUnknownProcess)

@@ -51,7 +51,7 @@ deliberately rather than relying on prose discipline.
 | [`docs/TEST_STRATEGY.md`](TEST_STRATEGY.md) | Test layers, commands, and CI policy |
 | [`docs/private-beads-sidecar.md`](private-beads-sidecar.md) | Host-neutral contract for private Beads transport, revision pairing, and restore |
 | [`docs/PRD-terminal-lifecycle.md`](PRD-terminal-lifecycle.md) | Terminal iframe and tmux lifecycle constraints |
-| [`docs/adr/`](adr/) | Accepted architectural decisions |
+| [`docs/adr/`](adr/) | Accepted architectural decisions; [`ADR-0015`](adr/0015-access-first-non-interference.md) records the access-first and session-lifetime boundary |
 | [`dashboard/README.md`](../dashboard/README.md) | Dashboard contributor map and local commands |
 
 Supporting docs explain or operationalize the source-truth specs. They do not

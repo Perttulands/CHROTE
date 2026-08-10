@@ -13,7 +13,7 @@ grep -q -- '--binary)' "$installer"
 grep -q -- '--no-enable)' "$installer"
 grep -q -- '--no-start)' "$installer"
 grep -q 'CHROTE_SESSION_BANK_PATH' "$installer"
-grep -q 'CHROTE_PERSISTENT_AGENTS_PATH' "$installer"
+! grep -q 'CHROTE_PERSISTENT_AGENTS_PATH' "$installer"
 grep -q 'CHROTE_SCHEDULED_TASKS_DIR' "$installer"
 if grep -q 'chrote-ttyd.service' "$installer" "$uninstaller"; then
   echo "installer must use the Go server's managed ttyd, not a second service" >&2
@@ -97,7 +97,6 @@ done
 
 grep -F 'CHROTE_ROOTS=' "$env_file" | grep -Fq "$workspace"
 grep -F 'CHROTE_SESSION_BANK_PATH=' "$env_file" | grep -Fq "$state_home/chrote/session-bank/sessions.json"
-grep -F 'CHROTE_PERSISTENT_AGENTS_PATH=' "$env_file" | grep -Fq "$state_home/chrote/persistent-agents/agents.json"
 grep -F 'CHROTE_SCHEDULED_TASKS_DIR=' "$env_file" | grep -Fq "$state_home/chrote/scheduled-tasks"
 grep -Fq "ExecStart=$installed_binary" "$unit_file"
 ! grep -Fq 'Environment=TMUX_TMPDIR=' "$unit_file"

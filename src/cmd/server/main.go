@@ -171,10 +171,6 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Contex
 		}
 	}
 	tmuxHandler.RegisterRoutes(mux)
-	// No agent supervision goroutine starts here, deliberately: a locked agent's
-	// lifetime belongs to its own systemd unit, so this process can restart,
-	// crash, or be upgraded without interrupting one (ADR-0014). Pinned by
-	// TestServerStartsNoAgentSupervisionGoroutine.
 	// Keeps an abandoned or still-hidden browser terminal from clamping a live
 	// agent's window to the ttyd default of 80 columns.
 	tmuxHandler.StartTerminalSizeGuard(ctx, func(err error) {

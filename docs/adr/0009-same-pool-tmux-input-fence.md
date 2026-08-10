@@ -94,13 +94,16 @@ therefore receives no raw socket access, including read-only access.
 | Terminal launch | `src/internal/proxy/terminal.go` to root `terminal-launch.sh` | source/session selection, `has-session`, `attach-session`, attached key, paste, mouse, focus and client-size traffic |
 | Terminal API | `src/internal/api/tmux.go` | inventory and capture; create, split, layout, buffer/paste/send, kill, rename, key and option changes; recovery creation and resume |
 | Scheduled sends | `src/internal/api/scheduled.go` | `has-session`, literal `send-keys`, Enter |
-| Persistent agents | `src/internal/api/persistent_agents.go` | probe/create/capture/display, rename, resume input and kill |
 | Oracle | `src/internal/api/oracle.go` | list and capture through the ambient Terminal handler |
 | Formations adapter | `src/internal/formations/tmux_executor.go` | separate configured-socket list, describe, buffer, send and capture path; production currently rejects it before these calls |
 | Formations-generated agent routes | `peerTurnExtraLines`, `leaderAgenticExtraLines`, and `appendOrchestrationTeamEvent` in `src/internal/formations/tmux_executor.go` | puts the raw `config.Socket` plus native capture/send instructions into peer/leader prompts and run artifacts, making spawned agents direct protocol clients |
 | Archon dogfood | `src/cmd/archon/main.go` | list, create and attach on an explicitly disposable Formations socket |
 | Operator grant helper | `scripts/chrote-tmux-grants.sh` | filesystem ACLs and writable `server-access -a` grant |
 | Recovery tooling | `scripts/tmux-recovery/` and API restore handlers | disposable create/kill plus API-owned restore, topology and resume effects |
+
+The former Persistent Agents route was retired by
+[ADR-0015](0015-access-first-non-interference.md) and is not part of the current
+tmux command surface.
 
 The current raw Terminal attach and broad writable grant helper cannot be used
 by any future complete fence. Merely routing read-only collectors through a

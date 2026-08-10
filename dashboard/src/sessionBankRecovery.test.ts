@@ -137,6 +137,22 @@ describe('session bank recovery capability', () => {
         badgeLabel: 'Managed read-only',
       },
       {
+        name: 'legacy persistent owner remains readable',
+        entry: banked({
+          name: 'retired-lock',
+          recoveryPlan: [
+            descriptor({
+              owner: { kind: 'persistent_agent', ref: 'alice/retired-lock', mayRestart: true },
+              topology: { ...descriptor().topology, sessionName: 'retired-lock' },
+            }),
+          ],
+        }),
+        kind: 'externally-managed',
+        canRecoverWorkload: false,
+        canRestoreTopologyOnly: false,
+        badgeLabel: 'Managed read-only',
+      },
+      {
         name: 'mixed unresolved plan',
         entry: banked({
           name: 'mixed-agent',

@@ -46,6 +46,19 @@ Use a private access layer such as Tailscale for remote access. Do not bind
 CHROTE directly to an untrusted LAN or the public internet. Treat exposing the
 dashboard as exposing the shells of every configured terminal user.
 
+Configured Unix accounts are operational identities for process ownership,
+harness separation, and tmux routing. They are not mutually hostile tenants.
+Within that trusted-local boundary, preserving the owner's access to configured
+work takes priority over speculative isolation between those accounts.
+
+CHROTE therefore does not tighten or replace ownership, modes, or ACLs on
+workspaces, tmux sessions, or their sockets to manufacture an isolation or
+durability guarantee. It may apply or refresh explicitly operator-configured
+additive access grants, but those grants must never reduce the owner's access.
+Without such configuration, CHROTE reports missing access instead of reshaping
+the permission topology. Configured roots, path containment, and the Unix
+permissions the process already has remain enforced.
+
 ## CORS is not authentication
 
 `CORS_ORIGINS` controls which browser origins receive cross-origin API headers.
@@ -65,9 +78,13 @@ configured user's sessions, not the service account's alone.
 - A terminal is arbitrary command execution as that Unix user.
 - Cross-user socket access requires deliberate filesystem and tmux ACL setup.
 - CHROTE must not guess socket ownership or silently widen access.
+- CHROTE must not narrow owner access by dynamically changing workspace,
+  session, or socket permissions.
 - Experimental Formations executor access does not permit creating or killing unrelated tmux
   sessions.
-- Browser/device disconnects must not kill durable tmux work.
+- Browser/device disconnects and CHROTE restarts must not cause CHROTE to kill
+  external tmux work. CHROTE does not promise to recreate that work after it or
+  the host exits.
 
 Treat exposing CHROTE as exposing a shell.
 
@@ -93,8 +110,8 @@ Optional service URLs and tokens are server-side runtime configuration. Browser
 clients call CHROTE-owned proxy routes and must never receive service bearer
 tokens.
 
-Scheduled tasks, session locking, recovery actions, and experimental Formations
-executors cross from observation into host mutation. Their contracts must:
+Scheduled tasks, recovery actions, and experimental Formations executors cross
+from observation into host mutation. Their contracts must:
 
 - require explicit configuration and operator intent;
 - use argument vectors instead of implicit shell parsing where possible;
@@ -103,16 +120,9 @@ executors cross from observation into host mutation. Their contracts must:
 - fail loud in durable history or ledgers;
 - refuse unsafe promotion from lab/isolated environments to live host state.
 
-Resuming a locked agent is a case of the second rule rather than an exception to
-it. The agent is started from an argument vector in its own unit, not by typing
-a command into a live pane, so there is no shell to quote for and no pane
-contents to depend on. Around that: a session name is validated before it is
-used to build a unit name, so a name cannot introduce a second unit, a flag, or
-a metacharacter; any grant to control units is scoped to the verbs and the
-single unit-name pattern CHROTE owns, never to arbitrary unit names; and
-per-agent configuration is written mode 0600 into CHROTE's own state directory
-with paths canonicalized, so a symlinked or out-of-directory configuration is
-refused rather than read.
+CHROTE does not provide per-session agent supervision or a universal host-reboot
+recovery promise. Workloads that need that lifecycle use explicit,
+operator-owned host configuration outside CHROTE's request path.
 
 ## Secrets
 

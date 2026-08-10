@@ -10,16 +10,10 @@ release.
 
 ### Added
 
-- Three independent durable terminal workspaces.
+- Three independent tmux-backed terminal workspaces.
 - Unified default-closed Sessions/Files sidecars with Peek and explicit
   attached-window navigation.
 - Files workbench and terminal-companion file sidecar.
-- Session locking that puts a durable agent under its own systemd user unit.
-  Supervision, restart, and boot recovery belong to systemd, so a locked agent is
-  unaffected by CHROTE restarting, crashing, or being upgraded. Reported health
-  is the unit's state plus a launcher receipt proving the expected agent resumed
-  the expected work. Unlocking stops the supervision and leaves the agent
-  running.
 - Session Bank with typed workload descriptors and workload-aware recovery.
 - Scheduled tasks and Server health/history cockpit views.
 - Documentation source-truth index and contract lint.
@@ -42,6 +36,13 @@ release.
 - Bulk session destruction moved to advanced recovery settings.
 - Optional services and workspaces degrade explicitly instead of silently
   fabricating data.
+
+### Removed
+
+- Retired the unreleased session-locking and Persistent Agents capability,
+  including CHROTE-owned agent units and reboot-recovery claims. CHROTE preserves
+  external tmux work across its own lifecycle but does not supervise ordinary
+  sessions.
 
 ### Fixed
 

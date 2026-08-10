@@ -40,7 +40,6 @@ func installSelectiveTmux(t *testing.T, failFor string, stderr string) {
 	t.Setenv("TMUX_STDERR", stderr)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("CHROTE_SESSION_BANK_PATH", filepath.Join(dir, "session-bank.json"))
-	t.Setenv("CHROTE_PERSISTENT_AGENTS_PATH", filepath.Join(dir, "persistent-agents.json"))
 	t.Setenv("CHROTE_MANAGED_RECOVERY_STATUS_PATH", filepath.Join(dir, "managed-status.json"))
 }
 
@@ -158,7 +157,6 @@ func TestTmuxHandler_ListSessionsDoesNotMarkGlobalFailurePartial(t *testing.T) {
 		errorFragment string
 	}{
 		{name: "managed status", pathEnv: "CHROTE_MANAGED_RECOVERY_STATUS_PATH", errorFragment: "managed status:"},
-		{name: "persistent agents", pathEnv: "CHROTE_PERSISTENT_AGENTS_PATH", errorFragment: "persistent agents:"},
 		{name: "session bank", pathEnv: "CHROTE_SESSION_BANK_PATH", errorFragment: "session bank:"},
 	}
 	for _, test := range tests {

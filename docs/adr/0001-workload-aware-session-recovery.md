@@ -1,13 +1,14 @@
 # ADR-0001: Workload-Aware Session Recovery Descriptors
 
 ## Status
-Accepted. Partially superseded 2026-08-03 by
-[ADR-0014](0014-persistent-agents-supervised-by-systemd.md): continuous
-supervision moved from an in-server Persistent Agents component to systemd user
-units, and the mode/owner matrix below gained one cell (agent-mode workloads
-owned by a CHROTE-installed `external_manager` unit may restart). The descriptor
-model, the exactly-one-owner rule, and the unresolved-rather-than-guessed
-discipline recorded here remain in force.
+
+Accepted. Partially superseded 2026-08-09 by
+[ADR-0015](0015-access-first-non-interference.md): CHROTE no longer owns
+continuous supervision and the restart-capable CHROTE-installed external-manager
+cell is retired. The descriptor model, the exactly-one-owner rule, and the
+unresolved-rather-than-guessed discipline recorded here remain in force for
+operator-triggered recovery. ADR-0014 was the intermediate supervision decision
+and is now superseded in full.
 
 ## Context
 CHROTE currently sees tmux sessions, windows, panes, process names, and recent
@@ -16,10 +17,11 @@ identity. A pane named `codex-alpha` might contain a resumable Codex transcript,
 an intentional shell, a Python static server, a process supervised by another
 manager, or evidence too ambiguous to recover safely.
 
-Session Bank one-shot recovery and Persistent Agent continuous supervision need a
-shared vocabulary before either subsystem changes behavior. Without typed
-descriptors, recovery would either guess from names/transcripts or persist raw
-commands that can drift into unsafe restart behavior.
+Session Bank one-shot recovery and the now-retired Persistent Agent continuous
+supervision path needed a shared vocabulary before either subsystem changed
+behavior. Without typed descriptors, recovery would either guess from
+names/transcripts or persist raw commands that can drift into unsafe restart
+behavior.
 
 ## Decision
 Introduce workload recovery descriptors as the shared recovery model. A
@@ -44,23 +46,22 @@ Descriptor modes are:
 Every descriptor has exactly one recovery owner:
 
 - Session Bank owns one-shot recovery for banked sessions.
-- Persistent Agents own continuous supervision for persistent agent sessions.
-  (Superseded by ADR-0014: systemd user units own continuous supervision, and
-  the CHROTE server supervises nothing.)
+- CHROTE owns no continuous supervision path. (The former Persistent Agents and
+  CHROTE-installed systemd owner were retired by ADR-0015.)
 - External managers own their sessions; CHROTE may observe them but must not
-  reconstruct them as Session Bank or Persistent Agent work. (ADR-0014 narrows
-  this: a unit CHROTE itself installed may restart its session, because CHROTE
-  owning the unit definition and systemd owning process lifetime is one owner
-  exercised through a supervisor, not two competing owners. Units CHROTE did not
-  install stay read-only exactly as written here.)
+  reconstruct them as Session Bank work.
 
 The owner records kind, reference, and whether that owner is allowed to restart.
-Mode and owner combinations are strict: agent descriptors require a restarting
-Session Bank or Persistent Agent owner; command and topology descriptors require
-a restarting Session Bank owner; managed descriptors require a non-restarting
-external manager; unresolved descriptors cannot permit restart. Descriptors
-carry evidence source and confidence so later recovery code can fail loudly
-instead of turning weak evidence into a restart command.
+Mode and owner combinations are strict: agent, command, and topology descriptors
+require a restarting Session Bank owner; managed descriptors require a
+non-restarting external manager; unresolved descriptors cannot permit restart.
+Descriptors carry evidence source and confidence so later recovery code can
+fail loudly instead of turning weak evidence into a restart command.
+
+Accepted immutable manifests written by the retired implementation may still
+contain a `persistent_agent` owner and remain parseable for read compatibility.
+No current path produces that owner, and reading it does not reinstate a live
+continuous-supervision capability.
 
 Canonical argv is derived from typed fields only; shell command strings are only
 a rendered view of that argv and must quote unsafe tokens. Codex and Claude use
@@ -77,13 +78,12 @@ fields.
 - **Arbitrary command persistence:** rejected. Stored command strings cannot
   override canonical output. Commands must be typed and allowlisted.
 - **Duplicate recovery owners:** rejected. A session cannot be owned by both
-  Session Bank and Persistent Agents, or by CHROTE and an external manager.
+  Session Bank and an external manager.
 
 ## Consequences
-This creates a schema/probe foundation without changing Session Bank
-reconstruction, Persistent Agent reconciliation, systemd orchestration, or the
-dashboard. Current Session Bank JSON remains readable, and existing response
-fields stay intact.
+This creates a schema/probe foundation for operator-triggered Session Bank
+reconstruction and external-manager observation. Current Session Bank JSON
+remains readable, and existing response fields stay intact.
 
 Future recovery work must first derive or read a descriptor, validate exactly one
 owner, and then let only that owner perform its recovery action. If evidence is

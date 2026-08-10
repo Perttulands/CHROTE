@@ -12,13 +12,22 @@ The contract's own location is deployment-specific, so it is deliberately not sp
 
 CHROTE is a private browser cockpit for host-owned work:
 
-- durable tmux sessions and browser terminal windows;
+- tmux sessions and browser terminal windows;
 - files under configured roots;
 - Beads through modern `bd`;
 - harness-neutral agent observability;
 - recovery, scheduling, server status, and optional local adapters.
 
 CHROTE is not a hosted service, an IDE, or an OS sandbox. Do not assume Gastown, Ralph, or any single agent harness is installed.
+
+Preserve owner access and external work. Do not tighten or replace workspace,
+session, or socket ownership, modes, or ACLs to create speculative isolation or
+recovery guarantees. Explicit operator-configured additive grants may be
+applied or refreshed, but must never reduce owner access. A browser disconnect
+or CHROTE restart must not cause CHROTE to kill external tmux work, but ordinary
+sessions are best-effort and CHROTE does not recreate them after process death
+or host reboot. Rare durable workloads belong in explicit operator-owned host
+configuration.
 
 Formations and Archon are experimental and unreleased. Their active specs define development contracts, not a supported release promise.
 
