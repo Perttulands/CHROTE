@@ -799,6 +799,9 @@ func sessionBankRecoveryConflict(entry SessionBankEntry, ownerHome string) error
 		if desc.Owner.Kind == RecoveryOwnerSessionBank && desc.Owner.Ref == expectedOwnerRef {
 			return &recoveryOwnershipConflict{OwnerKind: desc.Owner.Kind, OwnerRef: desc.Owner.Ref}
 		}
+		if desc.Owner.Kind == RecoveryOwnerPersistentAgent {
+			return &recoveryOwnershipConflict{OwnerKind: desc.Owner.Kind, OwnerRef: desc.Owner.Ref}
+		}
 		if desc.Owner.Kind == RecoveryOwnerExternalManager || desc.Mode == RecoveryModeManaged {
 			return &recoveryOwnershipConflict{OwnerKind: desc.Owner.Kind, OwnerRef: desc.Owner.Ref}
 		}
@@ -806,12 +809,17 @@ func sessionBankRecoveryConflict(entry SessionBankEntry, ownerHome string) error
 	return nil
 }
 
-func (h *TmuxHandler) ensureTmuxRenameOwnershipAvailable(name, unixUser, ownerHome string) error {
+func (h *TmuxHandler) ensureTmuxNameOwnershipAvailable(name, unixUser, ownerHome string) error {
 	if h == nil {
 		return nil
 	}
 	if err := h.ensureExternalRecoveryOwnershipAvailable(name, unixUser); err != nil {
 		return err
+	}
+	// Legacy recovery descriptors need a trusted owner home to canonicalize.
+	// Keep ordinary creation compatible for targets where that home is unavailable.
+	if strings.TrimSpace(ownerHome) == "" {
+		return nil
 	}
 	if h.bank == nil {
 		return nil
@@ -1441,6 +1449,10 @@ func isTmuxNoServerError(errStr string) bool {
 	return strings.Contains(errStr, "no server running") ||
 		strings.Contains(errStr, "No such file or directory") ||
 		(strings.Contains(errStr, "error connecting to ") && strings.Contains(errStr, "(No such file or directory)"))
+}
+
+func isTmuxDuplicateSessionError(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "duplicate session")
 }
 
 func appendSessionResponseError(existing, next string) string {
@@ -3445,8 +3457,17 @@ func (h *TmuxHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", targetErr.Error())
 		return
 	}
-	if err := h.ensureManagedRecoveryOwnershipAvailable(name, target.unixUser); err != nil {
-		core.WriteError(w, http.StatusConflict, "SESSION_OWNERSHIP_CONFLICT", err.Error())
+	ownerHome := ""
+	if strings.TrimSpace(target.ownerHome) != "" {
+		var ownerHomeErr error
+		ownerHome, ownerHomeErr = trustedSessionBankOwnerHome(target)
+		if ownerHomeErr != nil {
+			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", ownerHomeErr.Error())
+			return
+		}
+	}
+	if err := h.ensureTmuxNameOwnershipAvailable(name, target.unixUser, ownerHome); err != nil {
+		writeRecoveryOwnershipError(w, "SESSION_OWNERSHIP_CONFLICT", "SESSION_BANK_ERROR", err)
 		return
 	}
 
@@ -3458,6 +3479,10 @@ func (h *TmuxHandler) CreateSession(w http.ResponseWriter, r *http.Request) {
 	// Create the session (detached) with an ownership marker and immutable ID.
 	session, err := h.createOwnedTmuxSession(r.Context(), target.socket, name, workDir)
 	if err != nil {
+		if isTmuxDuplicateSessionError(err) {
+			core.WriteError(w, http.StatusConflict, "SESSION_NAME_CONFLICT", fmt.Sprintf("tmux session name %q is already in use", name))
+			return
+		}
 		core.WriteError(w, http.StatusBadRequest, "TMUX_ERROR", err.Error())
 		return
 	}
@@ -3652,11 +3677,11 @@ func (h *TmuxHandler) RenameSession(w http.ResponseWriter, r *http.Request) {
 			core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", ownerHomeErr.Error())
 			return
 		}
-		if err := h.ensureTmuxRenameOwnershipAvailable(oldName, target.unixUser, ownerHome); err != nil {
+		if err := h.ensureTmuxNameOwnershipAvailable(oldName, target.unixUser, ownerHome); err != nil {
 			writeRecoveryOwnershipError(w, "SESSION_OWNERSHIP_CONFLICT", "SESSION_BANK_ERROR", err)
 			return
 		}
-		if err := h.ensureTmuxRenameOwnershipAvailable(req.NewName, target.unixUser, ownerHome); err != nil {
+		if err := h.ensureTmuxNameOwnershipAvailable(req.NewName, target.unixUser, ownerHome); err != nil {
 			writeRecoveryOwnershipError(w, "SESSION_OWNERSHIP_CONFLICT", "SESSION_BANK_ERROR", err)
 			return
 		}

@@ -565,6 +565,98 @@ func TestTmuxHandler_CreateAndRenameRejectReservedInternalSessionNames(t *testin
 	}
 }
 
+func TestTmuxHandler_CreateSessionReportsDuplicateNameClearly(t *testing.T) {
+	argsPath := installScriptedTmux(t, `
+case "$*" in
+  *new-session*) echo 'duplicate session: existing-smoke' >&2; exit 1 ;;
+esac
+`)
+	handler := NewTmuxHandler()
+	req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions", bytes.NewBufferString(`{"name":"existing-smoke"}`))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	handler.CreateSession(recorder, req)
+
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status code = %d, want %d; body=%s", recorder.Code, http.StatusConflict, recorder.Body.String())
+	}
+	var response core.APIResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode API response: %v", err)
+	}
+	if response.Error == nil || response.Error.Code != "SESSION_NAME_CONFLICT" {
+		t.Fatalf("error = %#v, want SESSION_NAME_CONFLICT", response.Error)
+	}
+	if !strings.Contains(response.Error.Message, "existing-smoke") || !strings.Contains(response.Error.Message, "already in use") {
+		t.Fatalf("error message = %q, want name and actionable duplicate message", response.Error.Message)
+	}
+	for _, call := range normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)) {
+		if containsArg(call, "kill-session") {
+			t.Fatalf("duplicate create attempted to kill an existing session: %#v", call)
+		}
+	}
+}
+
+func TestTmuxHandler_RejectsLegacyPersistentAgentNameOwnershipBeforeTmux(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(*TmuxHandler, *httptest.ResponseRecorder)
+	}{
+		{
+			name: "create",
+			call: func(handler *TmuxHandler, recorder *httptest.ResponseRecorder) {
+				req := httptest.NewRequest(http.MethodPost, "/api/tmux/sessions", bytes.NewBufferString(`{"name":"legacy-agent","unixUser":"alice"}`))
+				req.Header.Set("Content-Type", "application/json")
+				handler.CreateSession(recorder, req)
+			},
+		},
+		{
+			name: "rename",
+			call: func(handler *TmuxHandler, recorder *httptest.ResponseRecorder) {
+				req := httptest.NewRequest(http.MethodPatch, "/api/tmux/sessions/legacy-agent?unixUser=alice", bytes.NewBufferString(`{"newName":"renamed-agent"}`))
+				req.SetPathValue("name", "legacy-agent")
+				req.Header.Set("Content-Type", "application/json")
+				handler.RenameSession(recorder, req)
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
+			managedPath := filepath.Join(tmpDir, "managed-status.json")
+			argsPath := installScriptedTmux(t, "")
+			desc := sessionBankAgentDescriptor("legacy-agent", "alice", RecoveryAgentCodex, recoveryTestCodexID, "", 0, 0, "%1", "agents", "b25f,80x24,0,0", "/home/alice/project")
+			desc.Owner = WorkloadRecoveryOwner{Kind: RecoveryOwnerPersistentAgent, Ref: "persistent:alice/legacy-agent", MayRestart: true}
+			bankSeed := sessionBankEntryWithRecoveryPlanJSON(t, "legacy-agent", "alice", 1, []WorkloadRecoveryDescriptor{desc})
+			writeBankSeedRaw(t, bankPath, bankSeed)
+			t.Setenv("CHROTE_SESSION_BANK_PATH", bankPath)
+			t.Setenv("CHROTE_MANAGED_RECOVERY_STATUS_PATH", managedPath)
+			t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+			t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+			t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/home/alice/project")
+			t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+
+			handler := NewTmuxHandler()
+			recorder := httptest.NewRecorder()
+			tt.call(handler, recorder)
+
+			assertRecoveryOwnershipError(t, recorder, http.StatusConflict, "SESSION_OWNERSHIP_CONFLICT", RecoveryOwnerPersistentAgent, "persistent:alice/legacy-agent")
+			if got := normalizeArgvTmuxCreationTokens(readArgvRecordingTmuxCalls(t, argsPath)); len(got) != 0 {
+				t.Fatalf("tmux calls = %#v, want no calls before legacy ownership conflict", got)
+			}
+			bankAfter, err := os.ReadFile(bankPath)
+			if err != nil {
+				t.Fatalf("read bank after rejection: %v", err)
+			}
+			if !bytes.Equal(bankAfter, bankSeed) {
+				t.Fatalf("bank store mutated on rejected request:\nbefore=%s\nafter=%s", bankSeed, bankAfter)
+			}
+		})
+	}
+}
+
 func TestTmuxHandler_ApplyAppearance_InvalidColor(t *testing.T) {
 	handler := NewTmuxHandler()
 
