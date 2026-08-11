@@ -11,6 +11,11 @@ import { ToastContainer } from './components/ToastNotification'
 import KeyboardShortcutsOverlay from './components/KeyboardShortcutsOverlay'
 import LayoutPresetsPanel from './components/LayoutPresetsPanel'
 import { IframePoolProvider } from './components/IframePool'
+import {
+  readSessionsDockState,
+  writeSessionsDockState,
+  type SessionsDockState,
+} from './components/workspaceFilesState'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { installFeatureFlagHelpers, isFeatureEnabled } from './featureFlags'
 import { getSessionNameFromKey, getTerminalUserColor, getTerminalUserInitial, isTerminalWorkspaceId, sortTerminalWorkspaceIds } from './types'
@@ -143,6 +148,9 @@ function DraggedSessionOverlay({ drag, settings }: { drag: ActiveDrag; settings:
 
 function DashboardContent() {
   const [activeTab, setActiveTab] = useState<Tab>('terminal1')
+  const [lastActiveWorkspaceId, setLastActiveWorkspaceId] = useState<WorkspaceId>('terminal1')
+  const [sessionsDockState, setSessionsDockState] = useState<SessionsDockState>(readSessionsDockState)
+  const [openFilesWorkspaceIds, setOpenFilesWorkspaceIds] = useState<Set<WorkspaceId>>(() => new Set())
   const [activeDrag, setActiveDrag] = useState<ActiveDrag | null>(null)
   const [showHelp, setShowHelp] = useState(false)
   const [showPresets, setShowPresets] = useState(false)
@@ -171,6 +179,20 @@ function DashboardContent() {
   }, [filesSendTarget, openSendToSession])
   const persistFilesTabState = isFeatureEnabled('filesPersistTabState')
   const serverStatusTab = isFeatureEnabled('serverStatusTab')
+  const handleFilesOpenChange = useCallback((workspaceId: WorkspaceId, open: boolean) => {
+    setOpenFilesWorkspaceIds(previous => {
+      if (previous.has(workspaceId) === open) return previous
+      const next = new Set(previous)
+      if (open) next.add(workspaceId)
+      else next.delete(workspaceId)
+      return next
+    })
+  }, [])
+  const sessionsForcedPinned = openFilesWorkspaceIds.size > 0
+
+  useEffect(() => {
+    writeSessionsDockState(sessionsDockState)
+  }, [sessionsDockState])
 
   // Every workspace in state keeps its dock mounted — including ones hidden by
   // a shrunken tab count — so panel state and pooled iframe claims survive.
@@ -183,8 +205,13 @@ function DashboardContent() {
   useEffect(() => {
     if (isTerminalWorkspaceId(activeTab, mountedWorkspaceIds) && !workspaceIds.includes(activeTab)) {
       setActiveTab('terminal1')
+      setLastActiveWorkspaceId('terminal1')
     }
   }, [activeTab, workspaceIds, mountedWorkspaceIds])
+
+  useEffect(() => {
+    if (!workspaceIds.includes(lastActiveWorkspaceId)) setLastActiveWorkspaceId('terminal1')
+  }, [lastActiveWorkspaceId, workspaceIds])
 
   const handleShowHelp = useCallback(() => setShowHelp(true), [])
   const handleCloseHelp = useCallback(() => setShowHelp(false), [])
@@ -192,7 +219,8 @@ function DashboardContent() {
   const handleClosePresets = useCallback(() => setShowPresets(false), [])
   const handleTabChange = useCallback((tab: Tab) => {
     setActiveTab(tab)
-  }, [])
+    if (isTerminalWorkspaceId(tab, mountedWorkspaceIds)) setLastActiveWorkspaceId(tab)
+  }, [mountedWorkspaceIds])
   const handleOpenProjectInFiles = useCallback((path: string) => {
     setFilesNavigateRequest({ path, nonce: Date.now() })
     setActiveTab('files')
@@ -203,7 +231,10 @@ function DashboardContent() {
   }, [])
 
   useEffect(() => {
-    if (windowRevealRequest) setActiveTab(windowRevealRequest.workspaceId)
+    if (windowRevealRequest) {
+      setActiveTab(windowRevealRequest.workspaceId)
+      setLastActiveWorkspaceId(windowRevealRequest.workspaceId)
+    }
   }, [windowRevealRequest])
 
   // Global keyboard shortcuts
@@ -295,6 +326,10 @@ function DashboardContent() {
               key={workspaceId}
               workspaceId={workspaceId}
               active={activeTab === workspaceId}
+              sessionsDockState={sessionsDockState}
+              onSessionsDockStateChange={setSessionsDockState}
+              sessionsForcedPinned={sessionsForcedPinned}
+              onFilesOpenChange={handleFilesOpenChange}
               onOpenSessionBankSettings={handleOpenSessionBankSettings}
               onOpenInFiles={handleOpenProjectInFiles}
             />
@@ -366,7 +401,12 @@ function DashboardContent() {
           {activeTab === 'scheduled' && (
             <ErrorBoundary>
               <Suspense fallback={<ViewFallback />}>
-                <ScheduledTasksView />
+                <ScheduledTasksView
+                  activeWorkspaceId={lastActiveWorkspaceId}
+                  sessionsDockState={sessionsDockState}
+                  onSessionsDockStateChange={setSessionsDockState}
+                  sessionsForcedPinned={sessionsForcedPinned}
+                />
               </Suspense>
             </ErrorBoundary>
           )}

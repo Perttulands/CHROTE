@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useState } from 'react'
+import type { Dispatch, SetStateAction } from 'react'
 import { FolderTree, SquareTerminal } from 'lucide-react'
 import type { WorkspaceId } from '../types'
 import { useSession } from '../context/SessionContext'
@@ -7,15 +8,19 @@ import SessionPanel from './SessionPanel'
 import TerminalArea from './TerminalArea'
 import TerminalFilesPanel from './TerminalFilesPanel'
 import {
-  readWorkspaceDockState,
-  writeWorkspaceDockState,
-  type WorkspaceDockState,
-  type WorkspaceSidecar,
+  readWorkspaceFilesDockState,
+  writeWorkspaceFilesDockState,
+  type SessionsDockState,
+  type WorkspaceFilesDockState,
 } from './workspaceFilesState'
 
 interface TerminalWorkspaceDockProps {
   workspaceId: WorkspaceId
   active: boolean
+  sessionsDockState: SessionsDockState
+  onSessionsDockStateChange: Dispatch<SetStateAction<SessionsDockState>>
+  sessionsForcedPinned: boolean
+  onFilesOpenChange: (workspaceId: WorkspaceId, open: boolean) => void
   onOpenSessionBankSettings: () => void
   onOpenInFiles: (path: string) => void
 }
@@ -48,58 +53,73 @@ function hasVisibleEscapeBlocker(): boolean {
 function TerminalWorkspaceDock({
   workspaceId,
   active,
+  sessionsDockState,
+  onSessionsDockStateChange,
+  sessionsForcedPinned,
+  onFilesOpenChange,
   onOpenSessionBankSettings,
   onOpenInFiles,
 }: TerminalWorkspaceDockProps) {
   const { sessions } = useSession()
   const isNarrow = useMediaQuery('(max-width: 768px)')
-  const [dockState, setDockState] = useState<WorkspaceDockState>(() => readWorkspaceDockState(workspaceId))
-  const sessionsOpen = dockState.openSidecars.includes('sessions')
-  const filesOpen = dockState.openSidecars.includes('files')
-  // Two panels need a rail so they remain usable instead of occupying the
-  // same overlay position. On narrow screens the existing overlay behavior is
-  // retained.
-  const forcedPinned = dockState.openSidecars.length > 1 && !isNarrow
-  const effectivePinned = (dockState.sidecarPinned || forcedPinned) && !isNarrow
+  const [filesDockState, setFilesDockState] = useState<WorkspaceFilesDockState>(() => readWorkspaceFilesDockState(workspaceId))
+  const sessionsOpen = sessionsDockState.open
+  const filesOpen = filesDockState.open
+  const openSidecarCount = Number(sessionsOpen) + Number(filesOpen)
+  // Files remains workspace-local, but any open Files panel forces the one
+  // global Sessions surface into the same rail presentation on every tab.
+  const sessionsPinned = sessionsOpen && (sessionsDockState.pinned || sessionsForcedPinned) && !isNarrow
+  const filesForcedPinned = filesOpen && sessionsOpen && !isNarrow
+  const filesPinned = filesOpen && (filesDockState.pinned || filesForcedPinned) && !isNarrow
+  const anyPinned = sessionsPinned || filesPinned
   const sessionsPanelId = `${workspaceId}-sessions-sidecar`
   const filesPanelId = `${workspaceId}-files-sidecar`
 
-  const updateDockState = useCallback((update: (previous: WorkspaceDockState) => WorkspaceDockState) => {
-    setDockState(previous => update(previous))
+  useEffect(() => {
+    writeWorkspaceFilesDockState(workspaceId, filesDockState)
+  }, [filesDockState, workspaceId])
+
+  useEffect(() => {
+    onFilesOpenChange(workspaceId, filesDockState.open)
+  }, [filesDockState.open, onFilesOpenChange, workspaceId])
+
+  useEffect(() => () => {
+    onFilesOpenChange(workspaceId, false)
+  }, [onFilesOpenChange, workspaceId])
+
+  const toggleSessions = useCallback(() => {
+    onSessionsDockStateChange(previous => ({ ...previous, open: !previous.open }))
+  }, [onSessionsDockStateChange])
+
+  const toggleFiles = useCallback(() => {
+    setFilesDockState(previous => ({ ...previous, open: !previous.open }))
   }, [])
 
-  useEffect(() => {
-    writeWorkspaceDockState(workspaceId, dockState)
-  }, [dockState, workspaceId])
+  const closeSessions = useCallback(() => {
+    onSessionsDockStateChange(previous => ({ ...previous, open: false }))
+  }, [onSessionsDockStateChange])
 
-  // Closing keeps sidecarPinned so a pinned panel reopens pinned beside the
-  // terminal instead of overlaying it.
-  const toggleSidecar = useCallback((sidecar: WorkspaceSidecar) => {
-    updateDockState(previous => previous.openSidecars.includes(sidecar)
-      ? { ...previous, openSidecars: previous.openSidecars.filter(openSidecar => openSidecar !== sidecar) }
-      : { ...previous, openSidecars: [...previous.openSidecars, sidecar] })
-  }, [updateDockState])
-
-  const closeSidecar = useCallback((sidecar: WorkspaceSidecar) => {
-    updateDockState(previous => ({
-      ...previous,
-      openSidecars: previous.openSidecars.filter(openSidecar => openSidecar !== sidecar),
-    }))
-  }, [updateDockState])
+  const closeFiles = useCallback(() => {
+    setFilesDockState(previous => ({ ...previous, open: false }))
+  }, [])
 
   const closeAllSidecars = useCallback(() => {
-    updateDockState(previous => ({ ...previous, openSidecars: [] }))
-  }, [updateDockState])
+    closeSessions()
+    closeFiles()
+  }, [closeFiles, closeSessions])
 
-  const togglePin = useCallback(() => {
+  const toggleSessionsPin = useCallback(() => {
     if (isNarrow) return
-    updateDockState(previous => previous.openSidecars.length === 0 || previous.openSidecars.length > 1
-      ? previous
-      : { ...previous, sidecarPinned: !previous.sidecarPinned })
-  }, [isNarrow, updateDockState])
+    onSessionsDockStateChange(previous => ({ ...previous, pinned: !previous.pinned }))
+  }, [isNarrow, onSessionsDockStateChange])
+
+  const toggleFilesPin = useCallback(() => {
+    if (isNarrow) return
+    setFilesDockState(previous => ({ ...previous, pinned: !previous.pinned }))
+  }, [isNarrow])
 
   useEffect(() => {
-    if (!active || dockState.openSidecars.length === 0 || effectivePinned) return
+    if (!active || openSidecarCount === 0 || anyPinned) return
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented) return
       if (hasVisibleEscapeBlocker()) return
@@ -107,7 +127,7 @@ function TerminalWorkspaceDock({
     }
     window.addEventListener('keydown', closeOnEscape)
     return () => window.removeEventListener('keydown', closeOnEscape)
-  }, [active, closeAllSidecars, dockState.openSidecars.length, effectivePinned])
+  }, [active, anyPinned, closeAllSidecars, openSidecarCount])
 
   const sidecarControls = (
     <div className="terminal-sidecar-switcher" role="group" aria-label="Workspace sidecar">
@@ -119,7 +139,7 @@ function TerminalWorkspaceDock({
         aria-expanded={sessionsOpen}
         aria-pressed={sessionsOpen}
         title="Sessions"
-        onClick={() => toggleSidecar('sessions')}
+        onClick={toggleSessions}
       >
         <SquareTerminal size={16} aria-hidden="true" />
         <span className="terminal-sidecar-label">Sessions</span>
@@ -133,7 +153,7 @@ function TerminalWorkspaceDock({
         aria-expanded={filesOpen}
         aria-pressed={filesOpen}
         title="Files"
-        onClick={() => toggleSidecar('files')}
+        onClick={toggleFiles}
       >
         <FolderTree size={16} aria-hidden="true" />
         <span className="terminal-sidecar-label">Files</span>
@@ -146,12 +166,12 @@ function TerminalWorkspaceDock({
       className="terminal-workspace-dock"
       data-workspace={workspaceId}
       data-active={active}
-      data-sidecar={dockState.openSidecars.join(',') || 'closed'}
-      data-sidecar-count={dockState.openSidecars.length}
-      data-sidecar-pinned={effectivePinned}
+      data-sidecar={[sessionsOpen && 'sessions', filesOpen && 'files'].filter(Boolean).join(',') || 'closed'}
+      data-sidecar-count={openSidecarCount}
+      data-sidecar-pinned={anyPinned}
       style={{ display: active ? 'flex' : 'none' }}
     >
-      {active && dockState.openSidecars.length > 0 && !effectivePinned && (
+      {active && openSidecarCount > 0 && !anyPinned && (
         <button
           type="button"
           className="terminal-sidecar-dismiss"
@@ -165,26 +185,33 @@ function TerminalWorkspaceDock({
           activeWorkspaceId={workspaceId}
           onOpenSessionBankSettings={onOpenSessionBankSettings}
           collapsed={false}
-          width={dockState.sessionsWidth}
-          pinned={effectivePinned}
-          canPin={!isNarrow && !forcedPinned}
+          width={sessionsDockState.width}
+          pinned={sessionsPinned}
+          canPin={!isNarrow && !sessionsForcedPinned}
           panelId={sessionsPanelId}
-          onTogglePin={togglePin}
-          onClose={() => closeSidecar('sessions')}
-          onWidthChange={sessionsWidth => updateDockState(previous => ({ ...previous, sessionsWidth }))}
+          onTogglePin={toggleSessionsPin}
+          onClose={closeSessions}
+          onWidthChange={width => onSessionsDockStateChange(previous => ({ ...previous, width }))}
+          searchTerm={sessionsDockState.searchTerm}
+          collapsedGroups={sessionsDockState.collapsedGroups}
+          onSearchTermChange={searchTerm => onSessionsDockStateChange(previous => ({ ...previous, searchTerm }))}
+          onCollapsedGroupsChange={collapsedGroups => onSessionsDockStateChange(previous => ({
+            ...previous,
+            collapsedGroups,
+          }))}
         />
       )}
       {active && filesOpen && (
         <TerminalFilesPanel
           workspaceId={workspaceId}
           collapsed={false}
-          width={dockState.filesWidth}
-          pinned={effectivePinned}
-          canPin={!isNarrow && !forcedPinned}
+          width={filesDockState.width}
+          pinned={filesPinned}
+          canPin={!isNarrow && !filesForcedPinned}
           panelId={filesPanelId}
-          onTogglePin={togglePin}
-          onClose={() => closeSidecar('files')}
-          onWidthChange={filesWidth => updateDockState(previous => ({ ...previous, filesWidth }))}
+          onTogglePin={toggleFilesPin}
+          onClose={closeFiles}
+          onWidthChange={width => setFilesDockState(previous => ({ ...previous, width }))}
           onOpenInFiles={onOpenInFiles}
         />
       )}
@@ -193,6 +220,6 @@ function TerminalWorkspaceDock({
   )
 }
 
-// Memoized so App-level drag state changes don't reconcile the whole terminal
-// subtree; all props are primitives or stable useCallback references.
+// Memoized so unrelated App state changes do not reconcile the terminal subtree.
+// Shared Sessions presentation changes deliberately reach every mounted dock.
 export default memo(TerminalWorkspaceDock)

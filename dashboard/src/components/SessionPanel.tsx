@@ -20,6 +20,10 @@ type SessionPanelProps = {
   onTogglePin?: () => void
   onClose?: () => void
   onWidthChange?: (width: number) => void
+  searchTerm?: string
+  collapsedGroups?: string[]
+  onSearchTermChange?: (searchTerm: string) => void
+  onCollapsedGroupsChange?: (collapsedGroups: string[]) => void
 }
 
 function SessionPanel({
@@ -33,11 +37,29 @@ function SessionPanel({
   onTogglePin,
   onClose,
   onWidthChange,
+  searchTerm: controlledSearchTerm,
+  collapsedGroups: controlledCollapsedGroups,
+  onSearchTermChange,
+  onCollapsedGroupsChange,
 }: SessionPanelProps) {
   const { groupedSessions, loading, error, sidebarCollapsed, refreshSessions, createSession: createSessionAction, sessionBank, terminalUsers } = useSession()
   const isCollapsed = collapsed ?? sidebarCollapsed
   const [creating, setCreating] = useState(false)
-  const [searchTerm, setSearchTerm] = useState('')
+  const [localSearchTerm, setLocalSearchTerm] = useState('')
+  const [localCollapsedGroups, setLocalCollapsedGroups] = useState<string[]>([])
+  const searchTerm = controlledSearchTerm ?? localSearchTerm
+  const collapsedGroups = controlledCollapsedGroups ?? localCollapsedGroups
+  const updateSearchTerm = (nextSearchTerm: string) => {
+    if (controlledSearchTerm !== undefined) onSearchTermChange?.(nextSearchTerm)
+    else setLocalSearchTerm(nextSearchTerm)
+  }
+  const updateGroupExpanded = (groupKey: string, expanded: boolean) => {
+    const nextCollapsedGroups = expanded
+      ? collapsedGroups.filter(key => key !== groupKey)
+      : Array.from(new Set([...collapsedGroups, groupKey]))
+    if (controlledCollapsedGroups !== undefined) onCollapsedGroupsChange?.(nextCollapsedGroups)
+    else setLocalCollapsedGroups(nextCollapsedGroups)
+  }
   const [newSessionMenu, setNewSessionMenu] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 })
   const [namedSessionPopup, setNamedSessionPopup] = useState<{ show: boolean; x: number; y: number }>({ show: false, x: 0, y: 0 })
   const [namedSessionName, setNamedSessionName] = useState('')
@@ -176,6 +198,7 @@ function SessionPanel({
       className={`session-panel ${isCollapsed ? 'collapsed' : ''} ${pinned ? 'sidecar-pinned' : 'sidecar-overlay'}`}
       style={panelStyle}
       aria-label="Sessions sidecar"
+      data-active-workspace={activeWorkspaceId}
     >
       <div className="session-panel-header">
         <strong className="terminal-sidecar-title">Sessions</strong>
@@ -310,7 +333,7 @@ function SessionPanel({
             className="session-search-input"
             placeholder="Filter sessions..."
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            onChange={(e) => updateSearchTerm(e.target.value)}
           />
         </div>
       )}
@@ -339,7 +362,13 @@ function SessionPanel({
           )}
 
           {sortedGroups.map(([groupKey, groupSessions]) => (
-            <SessionGroup key={groupKey} groupKey={groupKey} sessions={groupSessions} />
+            <SessionGroup
+              key={groupKey}
+              groupKey={groupKey}
+              sessions={groupSessions}
+              expanded={!collapsedGroups.includes(groupKey)}
+              onExpandedChange={expanded => updateGroupExpanded(groupKey, expanded)}
+            />
           ))}
         </div>
       )}

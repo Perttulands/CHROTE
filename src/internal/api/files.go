@@ -20,12 +20,13 @@ import (
 
 // FilesHandler handles file browser API requests
 type FilesHandler struct {
-	allowedRoots   []string
-	writeRoots     []string
-	deniedRoots    []string
-	deniedRootIDs  map[fileIdentity]struct{}
-	maxUploadBytes int64
-	operationHook  func(string)
+	allowedRoots          []string
+	writeRoots            []string
+	sensitiveAllowedRoots []string
+	deniedRoots           []string
+	deniedRootIDs         map[fileIdentity]struct{}
+	maxUploadBytes        int64
+	operationHook         func(string)
 }
 
 const defaultMaxUploadBytes int64 = 64 << 20
@@ -104,11 +105,12 @@ func NewFilesHandlerWithFormationsDataRoot(formationsDataRoot string) *FilesHand
 	deniedRoots := append(defaultDeniedFileRoots(), configuredFileRoots("CHROTE_FILE_DENY_PATHS", nil)...)
 	deniedRoots = appendUniqueFileRoots(deniedRoots, canonicalFileRootAliases(formationsDataRoot)...)
 	return &FilesHandler{
-		allowedRoots:   allowedRoots,
-		writeRoots:     configuredFileRoots("CHROTE_WRITE_ROOTS", allowedRoots),
-		deniedRoots:    deniedRoots,
-		deniedRootIDs:  fileRootIdentities(deniedRoots),
-		maxUploadBytes: configuredMaxUploadBytes(),
+		allowedRoots:          allowedRoots,
+		writeRoots:            configuredFileRoots("CHROTE_WRITE_ROOTS", allowedRoots),
+		sensitiveAllowedRoots: configuredFileRootAliases("CHROTE_FILE_ALLOW_SENSITIVE_PATHS"),
+		deniedRoots:           deniedRoots,
+		deniedRootIDs:         fileRootIdentities(deniedRoots),
+		maxUploadBytes:        configuredMaxUploadBytes(),
 	}
 }
 
@@ -199,6 +201,14 @@ func configuredFileRoots(name string, fallback []string) []string {
 			seen[absolute] = true
 			roots = append(roots, absolute)
 		}
+	}
+	return roots
+}
+
+func configuredFileRootAliases(name string) []string {
+	roots := make([]string, 0)
+	for _, root := range configuredFileRoots(name, nil) {
+		roots = appendUniqueFileRoots(roots, canonicalFileRootAliases(root)...)
 	}
 	return roots
 }
@@ -295,7 +305,9 @@ func isPathUnderAnyRoot(path string, roots []string) (string, bool) {
 
 func (h *FilesHandler) isDeniedPath(path string) bool {
 	if isSensitiveCredentialPath(path) {
-		return true
+		if _, allowed := isPathUnderAnyRoot(path, h.sensitiveAllowedRoots); !allowed {
+			return true
+		}
 	}
 	_, denied := isPathUnderAnyRoot(path, h.deniedRoots)
 	return denied

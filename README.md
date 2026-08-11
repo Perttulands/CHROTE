@@ -102,7 +102,8 @@ A few interaction rules are deliberate:
 - Session-row clicks mean **Peek**. They do not silently reassign a window.
 - The location chip navigates to an already attached session.
 - The Sessions/Files sidecar is closed by default and takes zero width while
-  closed. Pinning and width persist per terminal workspace.
+  closed. Sessions pinning and width persist application-wide; Files pinning
+  and width persist per terminal workspace.
 - At `768px` and below, the sidecar overlays the terminals instead of crushing
   them.
 - Browser disconnects must not kill tmux work.

@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { CSSProperties, FormEvent } from 'react'
+import type { Dispatch, FormEvent, SetStateAction } from 'react'
 import { useDndMonitor, useDroppable } from '@dnd-kit/core'
 import { CalendarClock, Plus, SquareTerminal } from 'lucide-react'
 import { useSession } from '../context/SessionContext'
 import { getSessionKey, getTerminalUserInitial } from '../types'
 import type { WorkspaceId } from '../types'
 import SessionPanel from './SessionPanel'
+import type { SessionsDockState } from './workspaceFilesState'
 import {
   WEEKDAYS,
   browserTimezone,
@@ -71,11 +72,14 @@ interface TaskForm {
 }
 
 const DROPZONE_ID = 'scheduled-task-targets'
-const SIDECAR_STORAGE_KEY = 'chrote.scheduled.sidecar'
 const ACTOR = 'user:dashboard'
-// Session creation from the sidecar needs a workspace to attach to; the
-// Scheduled tab borrows the first terminal workspace like every other consumer.
-const SIDECAR_WORKSPACE: WorkspaceId = 'terminal1'
+
+interface ScheduledTasksViewProps {
+  activeWorkspaceId: WorkspaceId
+  sessionsDockState: SessionsDockState
+  onSessionsDockStateChange: Dispatch<SetStateAction<SessionsDockState>>
+  sessionsForcedPinned: boolean
+}
 
 function newTaskForm(targets: ScheduledTarget[] = []): TaskForm {
   return { name: '', prompt: '', targets, schedule: emptyScheduleForm(), paused: false }
@@ -147,23 +151,12 @@ function statusLabel(task: ScheduledTask): string {
   return 'Active'
 }
 
-function readSidecarOpen(): boolean {
-  try {
-    return window.localStorage.getItem(SIDECAR_STORAGE_KEY) !== 'closed'
-  } catch {
-    return true
-  }
-}
-
-function writeSidecarOpen(open: boolean) {
-  try {
-    window.localStorage.setItem(SIDECAR_STORAGE_KEY, open ? 'open' : 'closed')
-  } catch {
-    // Private-mode storage failures must not break scheduling.
-  }
-}
-
-function ScheduledTasksView() {
+function ScheduledTasksView({
+  activeWorkspaceId,
+  sessionsDockState,
+  onSessionsDockStateChange,
+  sessionsForcedPinned,
+}: ScheduledTasksViewProps) {
   const { sessions } = useSession()
   const [tasks, setTasks] = useState<ScheduledTask[]>([])
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
@@ -173,8 +166,6 @@ function ScheduledTasksView() {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [sidecarOpen, setSidecarOpen] = useState(readSidecarOpen)
-  const [sidecarWidth, setSidecarWidth] = useState(260)
   const [now, setNow] = useState(() => Date.now())
   const formRef = useRef<TaskForm | null>(null)
   formRef.current = form
@@ -209,10 +200,6 @@ function ScheduledTasksView() {
     const timer = window.setInterval(() => setNow(Date.now()), 30_000)
     return () => window.clearInterval(timer)
   }, [])
-
-  useEffect(() => {
-    writeSidecarOpen(sidecarOpen)
-  }, [sidecarOpen])
 
   const updateForm = useCallback((update: (previous: TaskForm) => TaskForm) => {
     setFormDirty(true)
@@ -387,20 +374,28 @@ function ScheduledTasksView() {
     [sessions],
   )
 
-  const dockStyle = { '--scheduled-sidecar-width': `${sidecarWidth}px` } as CSSProperties
+  const updateSessionsDockState = useCallback((patch: Partial<SessionsDockState>) => {
+    onSessionsDockStateChange(previous => ({ ...previous, ...patch }))
+  }, [onSessionsDockStateChange])
+  const sessionsPinned = sessionsDockState.pinned || sessionsForcedPinned
 
   return (
-    <div className="scheduled-dock" data-sidecar={sidecarOpen ? 'sessions' : 'closed'} style={dockStyle}>
-      {sidecarOpen && (
+    <div className="scheduled-dock" data-sidecar={sessionsDockState.open ? 'sessions' : 'closed'}>
+      {sessionsDockState.open && (
         <SessionPanel
-          activeWorkspaceId={SIDECAR_WORKSPACE}
+          activeWorkspaceId={activeWorkspaceId}
           collapsed={false}
-          width={sidecarWidth}
-          pinned
-          canPin={false}
+          width={sessionsDockState.width}
+          pinned={sessionsPinned}
+          canPin={!sessionsForcedPinned}
           panelId="scheduled-sessions-sidecar"
-          onClose={() => setSidecarOpen(false)}
-          onWidthChange={setSidecarWidth}
+          onTogglePin={() => updateSessionsDockState({ pinned: !sessionsDockState.pinned })}
+          onClose={() => updateSessionsDockState({ open: false })}
+          onWidthChange={width => updateSessionsDockState({ width })}
+          searchTerm={sessionsDockState.searchTerm}
+          collapsedGroups={sessionsDockState.collapsedGroups}
+          onSearchTermChange={searchTerm => updateSessionsDockState({ searchTerm })}
+          onCollapsedGroupsChange={collapsedGroups => updateSessionsDockState({ collapsedGroups })}
         />
       )}
 
@@ -408,13 +403,13 @@ function ScheduledTasksView() {
         <header className="scheduled-toolbar">
           <button
             type="button"
-            className={`terminal-sidecar-button ${sidecarOpen ? 'active' : ''}`}
+            className={`terminal-sidecar-button ${sessionsDockState.open ? 'active' : ''}`}
             aria-label="Sessions sidecar"
             aria-controls="scheduled-sessions-sidecar"
-            aria-expanded={sidecarOpen}
-            aria-pressed={sidecarOpen}
+            aria-expanded={sessionsDockState.open}
+            aria-pressed={sessionsDockState.open}
             title="Sessions"
-            onClick={() => setSidecarOpen(open => !open)}
+            onClick={() => updateSessionsDockState({ open: !sessionsDockState.open })}
           >
             <SquareTerminal size={16} aria-hidden="true" />
             <span className="terminal-sidecar-label">Sessions</span>

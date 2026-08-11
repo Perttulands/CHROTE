@@ -70,7 +70,7 @@ as a separate persistent workspace.
 ### Terminal panes
 
 - Each terminal workspace owns its own layout, attached sessions, labels, and
-  sidecar state.
+  Files state. Sessions presentation and the Session Bank are application-global.
 - A workspace can show one to four terminal windows.
 - tmux, not CHROTE, owns process and session lifetime; CHROTE does not copy shell
   state into browser storage.
@@ -82,19 +82,22 @@ as a separate persistent workspace.
 
 ### Sessions and Files sidecar
 
-Sessions and Files are independent peer sidecars within each terminal workspace.
+Sessions is one application-global sidecar, including when exposed from Scheduled for target selection. Files is a peer sidecar whose state belongs to each terminal workspace.
 
-- Both sidecars are closed by default and reserve no permanent terminal width.
-- Wide layouts may pin a sidecar; when both are open they occupy adjacent pinned
-  rails so neither obscures the other. Narrow layouts overlay the open sidecar
-  views.
+- Sessions and each workspace's Files sidecar are closed by default and reserve no permanent terminal width.
+- Wide layouts may pin a sidecar. When Files is open in any workspace while
+  Sessions is open, every terminal tab presents Sessions as a pinned rail and
+  the active workspace's Files rail sits beside it; the stored global Sessions
+  pin preference resumes after all Files panels close. Narrow layouts overlay
+  the open sidecar views.
 - Session row selection means **Peek**. It must not detach, reassign, or mutate
   terminal-window assignment metadata.
 - Navigating an attached session occurs through its explicit location chip.
-- Each sidecar's open state, the pin preference, and separate Sessions/Files
-  widths persist per terminal workspace.
-- The `/` shortcut opens Sessions for the active terminal workspace and focuses
-  its search when no visible dialog or menu owns the key.
+- Sessions open state, pin preference, width, filter, and group collapse are shared across terminal workspaces and Scheduled; session creation there routes through the last active terminal workspace.
+- Files open state, pin preference, width, path, selection, view, and panel state
+  persist independently for each terminal workspace.
+- The `/` shortcut opens the global Sessions surface and focuses its search when
+  no visible dialog or menu owns the key.
 
 ### Session Bank and workload recovery
 
@@ -125,6 +128,8 @@ Sessions and Files are independent peer sidecars within each terminal workspace.
 
 - File access is constrained to configured roots and the Unix permissions of the
   CHROTE process.
+- Owner-private paths stay hidden by default; explicit owner-root opt-in never overrides deny/Formations roots or canonical checks.
+- Cross-user roots additionally require effective service-identity list/read/write ACLs; permission failure is not an empty root.
 - The Files view is a terminal companion: browse, inspect, edit, compare, and
   send context to a session without becoming a general-purpose IDE.
 - Symlinks and mutations must remain within configured roots after resolution.

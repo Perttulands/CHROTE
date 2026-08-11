@@ -71,18 +71,20 @@ src/
 Each of the three terminal tabs owns an independent workspace with one to four
 terminal windows.
 
-Sessions and Files are peer views of a unified sidecar:
+Sessions and Files are peer views of one sidecar surface with different state
+ownership:
 
 - closed by default;
 - zero permanent width while closed;
 - pinnable on wide layouts;
 - overlayed at `768px` and below;
-- independently persisted Sessions/Files widths per workspace.
+- application-global Sessions presentation and width;
+- workspace-local Files presentation and width.
 
 A session-row click means **Peek**. It does not detach, reassign, or alter the
 window assignment. Attached-window navigation uses the explicit location chip.
-The `/` shortcut opens Sessions for the active terminal workspace and focuses
-its search when no visible dialog or menu owns the key.
+The `/` shortcut opens the global Sessions surface in the active terminal
+workspace and focuses its search when no visible dialog or menu owns the key.
 
 Do not duplicate dock ownership inside `TerminalWindow` or build a second Files
 sidebar. `TerminalWorkspaceDock` is the layout owner.

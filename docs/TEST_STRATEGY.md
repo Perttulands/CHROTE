@@ -79,6 +79,9 @@ CHROTE_PLAYWRIGHT_PORT=5279 npm test
 
 The default suite covers desktop and mobile layouts, terminal workspace persistence, Sessions/Files sidecars, Peek and location-chip behavior, drag/drop, Files, Beads, settings, destructive-action confirmation, and error states.
 
+The owner-access journey keeps the global Session Bank visible while navigating
+owner-private Files; backend tests prove deny/Formations/canonical precedence.
+
 Experimental Formations browser specs are separate:
 
 ```bash
@@ -177,7 +180,7 @@ A manual smoke should verify the user-visible contract rather than every control
 3. attach a test-owned tmux session and reconnect the browser;
 4. confirm Sessions-row **Peek** does not reassign it;
 5. confirm the location chip navigates to its attached window;
-6. confirm the Sessions/Files sidecar is default-closed, persists per workspace, and overlays at `768px` and below;
+6. confirm Sessions open/pin/width/filter/group-collapse remains global across terminal switches and Scheduled, including a consistent pinned rail and width while any workspace's Files panel is open; confirm session creation from Scheduled targets the last active terminal workspace, Files state remains per workspace, and narrow layouts overlay at `768px` and below;
 7. inspect one configured file root and one configured Beads workspace;
 8. verify optional integrations degrade clearly when unavailable;
 9. inspect Server and recovery status without triggering destructive actions.

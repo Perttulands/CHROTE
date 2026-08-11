@@ -99,6 +99,11 @@ default working directory for new sessions.
 - Symlinks are resolved before access and mutation authorization.
 - A broad root permits every operation the CHROTE API exposes within the Unix
   permissions of the service identity.
+- `.ssh`, `.gnupg`, `.hermes`, and peers are denied by default; explicit
+  `CHROTE_FILE_ALLOW_SENSITIVE_PATHS` roots grant direct browser CRUD.
+- Opt-in never overrides default/configured deny roots, private Formations
+  authority, or canonical/symlink checks.
+- Cross-user access also requires service-account traversal/read/write ACLs.
 - File roots do **not** sandbox tmux agents; those processes retain their Unix
   user's filesystem permissions.
 - Experimental Formations artifact hydration and script-gate working directories have their

@@ -204,7 +204,7 @@ export async function openSessionsSidecar(
   const panel = page.locator('.session-panel');
   await panel.waitFor({ state: 'visible' });
 
-  if (pin) {
+  if (pin && !await panel.evaluate(element => element.classList.contains('sidecar-pinned'))) {
     const pinButton = page.getByRole('button', { name: 'Pin Sessions sidecar' });
     if (await pinButton.count() > 0 && await pinButton.isVisible()) {
       await pinButton.click();

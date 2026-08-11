@@ -3,6 +3,7 @@ import { DndContext } from '@dnd-kit/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ScheduledTasksView from './ScheduledTasksView'
 import { DEFAULT_SETTINGS } from '../types'
+import { DEFAULT_SESSIONS_DOCK_STATE } from './workspaceFilesState'
 
 // The view listens to the ancestor DndContext through useDndMonitor. Capture the
 // listener so a drop can be replayed exactly as DndContext would dispatch it.
@@ -85,7 +86,12 @@ function ok(data: unknown) {
 function renderView() {
   return render(
     <DndContext>
-      <ScheduledTasksView />
+      <ScheduledTasksView
+        activeWorkspaceId="terminal2"
+        sessionsDockState={{ ...DEFAULT_SESSIONS_DOCK_STATE, open: true }}
+        onSessionsDockStateChange={vi.fn()}
+        sessionsForcedPinned={false}
+      />
     </DndContext>,
   )
 }

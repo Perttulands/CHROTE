@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import type { TmuxSession } from '../types'
 import { getGroupDisplayName, getSessionKey } from '../types'
 import SessionItem from './SessionItem'
@@ -6,17 +5,18 @@ import SessionItem from './SessionItem'
 interface SessionGroupProps {
   groupKey: string
   sessions: TmuxSession[]
+  expanded: boolean
+  onExpandedChange: (expanded: boolean) => void
 }
 
-function SessionGroup({ groupKey, sessions }: SessionGroupProps) {
-  const [expanded, setExpanded] = useState(true)
+function SessionGroup({ groupKey, sessions, expanded, onExpandedChange }: SessionGroupProps) {
   const displayName = getGroupDisplayName(groupKey)
 
   return (
     <div className="session-group">
       <div
         className="session-group-header"
-        onClick={() => setExpanded(!expanded)}
+        onClick={() => onExpandedChange(!expanded)}
       >
         <span className="expand-icon">{expanded ? '▼' : '▶'}</span>
         <span className="group-name">{displayName}</span>
