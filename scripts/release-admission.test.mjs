@@ -10,7 +10,7 @@ const script = fileURLToPath(new URL('./release-admission.sh', import.meta.url))
 const releaseCommit = '0123456789abcdef0123456789abcdef01234567'
 const mainCommit = 'fedcba9876543210fedcba9876543210fedcba98'
 
-async function runAdmission({ ancestor, checks }) {
+async function runAdmission({ ancestor, checks, main = mainCommit }) {
   const root = await mkdtemp(join(tmpdir(), 'chrote-release-admission-'))
   const bin = join(root, 'bin')
   await mkdir(bin)
@@ -23,7 +23,7 @@ async function runAdmission({ ancestor, checks }) {
   await writeFile(fakeGit, `#!/usr/bin/env bash
 case "$1:$2" in
   rev-parse:refs/tags/v2.0.0^{commit}) printf '%s\\n' '${releaseCommit}' ;;
-  rev-parse:refs/remotes/origin/main) printf '%s\\n' '${mainCommit}' ;;
+  rev-parse:refs/remotes/origin/main) printf '%s\\n' '${main}' ;;
   fetch:*) exit 0 ;;
   merge-base:*) exit ${ancestor ? 0 : 1} ;;
   *) exit 0 ;;
@@ -64,16 +64,24 @@ const successfulChecks = [
 ].map((name) => ({ name, head_sha: releaseCommit, conclusion: 'success' }))
 
 test('release admission rejects a tag outside origin/main', async () => {
-  const result = await runAdmission({ ancestor: false, checks: successfulChecks })
+  const result = await runAdmission({ ancestor: false, checks: successfulChecks, main: releaseCommit })
 
   assert.notEqual(result.status, 0)
   assert.match(result.stderr, /not an ancestor of origin\/main/)
+})
+
+test('release admission rejects an older ancestor tag even when every exact-SHA job succeeded', async () => {
+  const result = await runAdmission({ ancestor: true, checks: successfulChecks })
+
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /must equal origin\/main/)
 })
 
 test('release admission rejects an exact-main tag without every successful exact-SHA job', async () => {
   const result = await runAdmission({
     ancestor: true,
     checks: successfulChecks.filter(({ name }) => name !== 'formations-browser'),
+    main: releaseCommit,
   })
 
   assert.notEqual(result.status, 0)
@@ -81,7 +89,7 @@ test('release admission rejects an exact-main tag without every successful exact
 })
 
 test('release admission accepts an exact-main tag with all successful exact-SHA jobs', async () => {
-  const result = await runAdmission({ ancestor: true, checks: successfulChecks })
+  const result = await runAdmission({ ancestor: true, checks: successfulChecks, main: releaseCommit })
 
   assert.equal(result.status, 0, result.stderr)
   assert.match(result.stdout, /Release admission passed: tag=v2\.0\.0/)

@@ -45,34 +45,109 @@ tmp="$(mktemp -d)"
 server_pid=""
 runtime_dir="$(mktemp -d /tmp/chrote-tmux.XXXXXX)"
 tmux_socket="$runtime_dir/tmux-$(id -u)/default"
+tmux_timeout="${CHROTE_TEST_TMUX_TIMEOUT:-5s}"
+port_receipt="$tmp/ports"
 port_reserver_pid=""
-port_reserver_read_fd=""
-port_reserver_write_fd=""
+if ! timeout --version 2>&1 | grep -q 'GNU coreutils'; then
+  echo 'GNU timeout is required for bounded private tmux cleanup' >&2
+  exit 1
+fi
 tmux_cmd() {
-  TMUX_TMPDIR="$runtime_dir" "$tmux_bin" -S "$tmux_socket" "$@"
+  local tmux_capture status
+  tmux_capture="$(mktemp "$tmp/tmux-command.XXXXXX")"
+  if TMUX_TMPDIR="$runtime_dir" timeout --kill-after=1s "$tmux_timeout" \
+    "$tmux_bin" -S "$tmux_socket" "$@" >"$tmux_capture" 2>&1; then
+    status=0
+  else
+    status=$?
+  fi
+  cat "$tmux_capture"
+  rm -f "$tmux_capture"
+  return "$status"
 }
 release_port_reserver() {
-  local status=0
-  if [ -n "$port_reserver_pid" ]; then
-    if ! printf 'release\n' >&"$port_reserver_write_fd"; then
+  local status=0 pid="$port_reserver_pid" wait_status
+  if [ -n "$pid" ]; then
+    if ! kill -TERM "$pid" 2>/dev/null; then
+      printf 'port reserver PID %s exited before TERM release\n' "$pid" >&2
       status=1
     fi
-    if ! wait "$port_reserver_pid"; then
+    if wait "$pid"; then
+      if [ "$status" -ne 0 ]; then
+        printf 'port reserver PID %s did not accept TERM release\n' "$pid" >&2
+      fi
+    else
+      wait_status=$?
+      printf 'port reserver PID %s exited unexpectedly with status %s\n' "$pid" "$wait_status" >&2
       status=1
     fi
     port_reserver_pid=""
   fi
   return "$status"
 }
+tmux_no_server_output() {
+  case "$1" in
+    *'no server running'*|*'No such file or directory'*|*'server exited unexpectedly'*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+tmux_session_absent_output() {
+  case "$1" in
+    *"can't find session: public-smoke"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 cleanup_tmux() {
-  local sessions=""
-  if tmux_cmd has-session -t =public-smoke >/dev/null 2>&1; then
-    tmux_cmd kill-session -t =public-smoke >/dev/null 2>&1 || true
+  local probe_output="" probe_status=0 kill_output="" sessions="" list_status=0
+  if probe_output="$(tmux_cmd has-session -t =public-smoke 2>&1)"; then
+    if [ -n "$probe_output" ]; then
+      printf 'test tmux has-session returned unexpected output: %s\n' "$probe_output" >&2
+      return 1
+    fi
+    if ! kill_output="$(tmux_cmd kill-session -t =public-smoke 2>&1)"; then
+      printf 'test tmux failed to kill exact public-smoke session: %s\n' "$kill_output" >&2
+      return 1
+    fi
+    if [ -n "$kill_output" ]; then
+      printf 'test tmux kill-session returned unexpected output: %s\n' "$kill_output" >&2
+      return 1
+    fi
+    for _ in $(seq 1 50); do
+      if probe_output="$(tmux_cmd has-session -t =public-smoke 2>&1)"; then
+        printf 'test tmux exact public-smoke session survived cleanup: %s\n' "$probe_output" >&2
+        return 1
+      fi
+      probe_status=$?
+      if tmux_session_absent_output "$probe_output" || tmux_no_server_output "$probe_output"; then
+        break
+      fi
+      printf 'test tmux exact-session verification failed (status %s): %s\n' \
+        "$probe_status" "$probe_output" >&2
+      return 1
+    done
+  else
+    probe_status=$?
+    if tmux_session_absent_output "$probe_output" || tmux_no_server_output "$probe_output"; then
+      :
+    else
+      printf 'test tmux exact-session probe failed (status %s): %s\n' \
+        "$probe_status" "$probe_output" >&2
+      return 1
+    fi
   fi
   for _ in $(seq 1 50); do
-    sessions="$(tmux_cmd list-sessions -F '#{session_name}' 2>/dev/null || true)"
-    if [ -z "$sessions" ]; then
-      return 0
+    if sessions="$(tmux_cmd list-sessions -F '#{session_name}' 2>&1)"; then
+      if [ -z "$sessions" ]; then
+        return 0
+      fi
+    else
+      list_status=$?
+      if tmux_no_server_output "$sessions"; then
+        return 0
+      fi
+      printf 'test tmux session listing failed (status %s): %s\n' \
+        "$list_status" "$sessions" >&2
+      return 1
     fi
     sleep 0.1
   done
@@ -95,7 +170,8 @@ cleanup() {
     rm -rf "$runtime_dir"
   fi
   rm -rf "$tmp"
-  return "$status"
+  trap - EXIT
+  exit "$status"
 }
 trap cleanup EXIT
 
@@ -108,33 +184,70 @@ workspace="$tmp/workspace with spaces%25"
 mkdir -p "$home" "$workspace" "$runtime_dir"
 mkdir -p "$(dirname "$tmux_socket")"
 
-coproc port_reserver {
-python3 - <<'PY'
+python3 - "$port_receipt" <<'PY' &
+import os
+import signal
 import socket
 import sys
 
-sockets=[]
+sockets = []
+
+def close_sockets():
+    while sockets:
+        sockets.pop().close()
+
+def stop(_signum, _frame):
+    close_sockets()
+    raise SystemExit(0)
+
+signal.signal(signal.SIGTERM, stop)
 try:
     for _ in range(2):
-        sock=socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.bind(('127.0.0.1',0))
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(('127.0.0.1', 0))
         sock.listen(1)
         sockets.append(sock)
-    ports=[sock.getsockname()[1] for sock in sockets]
+    ports = [sock.getsockname()[1] for sock in sockets]
     if len(set(ports)) != 2:
         raise RuntimeError('dynamic port reservation returned duplicate ports')
-    print(*ports, flush=True)
-    sys.stdin.readline()
+    with open(sys.argv[1], 'x', encoding='ascii') as receipt:
+        receipt.write(f'{ports[0]} {ports[1]}\n')
+        receipt.flush()
+        os.fsync(receipt.fileno())
+    signal.pause()
+except SystemExit:
+    raise
+except Exception as exc:
+    print(f'failed to reserve distinct loopback ports: {exc}', file=sys.stderr)
+    raise SystemExit(1)
 finally:
-    for sock in sockets:
-        sock.close()
+    close_sockets()
 PY
-}
-port_reserver_pid="$port_reserver_PID"
-port_reserver_read_fd="${port_reserver[0]}"
-port_reserver_write_fd="${port_reserver[1]}"
-if ! read -r port ttyd_port <&"$port_reserver_read_fd"; then
-  echo 'failed to reserve distinct loopback ports' >&2
+port_reserver_pid=$!
+for _ in $(seq 1 50); do
+  if [ -s "$port_receipt" ]; then
+    break
+  fi
+  if ! kill -0 "$port_reserver_pid" 2>/dev/null; then
+    reserver_status=0
+    if wait "$port_reserver_pid"; then
+      reserver_status=0
+    else
+      reserver_status=$?
+    fi
+    printf 'port reserver PID %s exited before writing its receipt with status %s\n' \
+      "$port_reserver_pid" "$reserver_status" >&2
+    port_reserver_pid=""
+    exit 1
+  fi
+  sleep 0.1
+done
+if [ ! -s "$port_receipt" ]; then
+  echo 'port reserver did not write its receipt' >&2
+  exit 1
+fi
+if ! read -r port ttyd_port < "$port_receipt"; then
+  echo 'failed to read distinct loopback ports' >&2
   exit 1
 fi
 if [ "$port" = "$ttyd_port" ]; then

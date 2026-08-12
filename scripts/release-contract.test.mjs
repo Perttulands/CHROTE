@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
@@ -67,6 +70,13 @@ test('release checks and smokes the exact files it publishes', () => {
   assert.match(smoke, /export CHROTE_DEFAULT_TMUX_SOCKET="\$tmux_socket"/)
   assert.match(smoke, /tmux_cmd new-session/)
   assert.match(smoke, /kill-session -t =public-smoke/)
+  assert.match(smoke, /tmux_cmd has-session -t =public-smoke/)
+  assert.match(smoke, /tmux_cmd list-sessions -F '#\{session_name\}'/)
+  assert.match(smoke, /no server running|No such file or directory|server exited unexpectedly/)
+  assert.match(smoke, /can't find session: public-smoke/)
+  assert.doesNotMatch(smoke, /has-session[^\n]*\n\s+.*\|\| true/)
+  assert.doesNotMatch(smoke, /kill-session[^\n]*\|\| true/)
+  assert.doesNotMatch(smoke, /list-sessions[^\n]*\|\| true/)
   assert.doesNotMatch(smoke, /kill-server/)
   assert.match(workflow, /sha256sum chrote-server-linux-amd64 chrote-server-linux-arm64 > SHA256SUMS/)
   assert.match(workflow, /dist\/chrote-server-linux-amd64\n\s+dist\/chrote-server-linux-arm64\n\s+dist\/SHA256SUMS/)
@@ -74,16 +84,80 @@ test('release checks and smokes the exact files it publishes', () => {
 
 test('installer smoke reserves distinct ports until the server handoff', () => {
   const smoke = fs.readFileSync(`${repoRoot}/scripts/test-public-install.sh`, 'utf8')
-  const reserve = smoke.indexOf('coproc port_reserver')
+  const reserve = smoke.indexOf('python3 - "$port_receipt" <<\'PY\' &')
   const distinct = smoke.indexOf('len(set(ports)) != 2')
+  const receipt = smoke.indexOf('read -r port ttyd_port < "$port_receipt"')
+  const term = smoke.indexOf('kill -TERM "$pid"')
+  const wait = smoke.indexOf('wait "$pid"')
+  const clear = smoke.lastIndexOf('port_reserver_pid=""')
   const release = smoke.indexOf('\nrelease_port_reserver\n"$installed_binary" >')
   const serverStart = smoke.indexOf('"$installed_binary" >')
 
-  assert.ok(reserve >= 0, 'smoke must own the port reservation helper')
+  assert.ok(reserve >= 0, 'smoke must record the exact port reserver PID')
   assert.ok(distinct > reserve, 'smoke must reject equal reserved ports')
+  assert.ok(receipt > distinct, 'smoke must wait for the task-owned port receipt')
+  assert.ok(term >= 0, 'smoke must release only the exact port reserver PID')
+  assert.ok(wait > term, 'smoke must wait for the exact port reserver PID')
+  assert.ok(clear > wait, 'smoke must clear the exact port reserver PID after wait')
   assert.ok(release > distinct, 'smoke must release reservations explicitly')
   assert.ok(serverStart > release, 'smoke must release ports immediately before server start')
-  assert.doesNotMatch(smoke, /ports\.append\(sock\.getsockname\(\)\[1\]\)\s+sock\.close\(\)/)
+  assert.match(smoke, /signal\.signal\(signal\.SIGTERM, stop\)/)
+  assert.match(smoke, /raise SystemExit\(0\)/)
+  assert.doesNotMatch(smoke, /coproc\s+port_reserver/)
+  assert.doesNotMatch(smoke, /port_reserver_(?:read|write)_fd/)
+})
+
+test('installer smoke bounds private tmux cleanup and rejects timeout outcomes', () => {
+  const smoke = fs.readFileSync(`${repoRoot}/scripts/test-public-install.sh`, 'utf8')
+  const tmuxCommand = smoke.slice(smoke.indexOf('tmux_cmd()'), smoke.indexOf('release_port_reserver()'))
+  const timeoutConfig = smoke.slice(smoke.indexOf('tmux_timeout='), smoke.indexOf('tmux_cmd()'))
+  const noServer = smoke.slice(smoke.indexOf('tmux_no_server_output()'), smoke.indexOf('tmux_session_absent_output()'))
+  const cleanup = smoke.slice(smoke.indexOf('cleanup_tmux()'), smoke.indexOf('cleanup()'))
+
+  assert.match(tmuxCommand, /mktemp "\$tmp\/tmux-command\.XXXXXX"/)
+  assert.match(tmuxCommand, /timeout --kill-after=1s "\$tmux_timeout"/)
+  assert.match(tmuxCommand, />"\$tmux_capture" 2>&1/)
+  assert.match(tmuxCommand, /status=\$\?/)
+  assert.ok(tmuxCommand.indexOf('cat "$tmux_capture"') < tmuxCommand.indexOf('rm -f "$tmux_capture"'))
+  assert.ok(tmuxCommand.indexOf('rm -f "$tmux_capture"') < tmuxCommand.indexOf('return "$status"'))
+  assert.doesNotMatch(tmuxCommand, /--foreground/)
+  assert.match(timeoutConfig, /CHROTE_TEST_TMUX_TIMEOUT/)
+  assert.match(timeoutConfig, /timeout --version/)
+  assert.doesNotMatch(noServer, /timeout|124|137/i)
+  assert.match(cleanup, /exact-session probe failed \(status %s\)/)
+  assert.match(cleanup, /session listing failed \(status %s\)/)
+})
+
+test('installer smoke cleanup trap escalates cleanup failure and preserves body failure', () => {
+  const smoke = fs.readFileSync(`${repoRoot}/scripts/test-public-install.sh`, 'utf8')
+  const cleanupStart = smoke.indexOf('cleanup() {')
+  const trapStart = smoke.indexOf('trap cleanup EXIT', cleanupStart)
+  const cleanup = smoke.slice(cleanupStart, trapStart)
+  const shellQuote = (value) => `'${value.replaceAll("'", "'\\''")}'`
+  const runCleanup = ({ bodyStatus, releaseStatus, tmuxStatus }) => {
+    const root = fs.mkdtempSync(join(tmpdir(), 'chrote-cleanup-contract-'))
+    const harness = [
+      'set -u',
+      `tmp=${shellQuote(join(root, 'tmp'))}`,
+      `runtime_dir=${shellQuote(join(root, 'runtime'))}`,
+      'mkdir -p "$tmp" "$runtime_dir"',
+      'server_pid=""',
+      `release_port_reserver() { return ${releaseStatus}; }`,
+      `cleanup_tmux() { return ${tmuxStatus}; }`,
+      cleanup,
+      'trap cleanup EXIT',
+      `exit ${bodyStatus}`,
+    ].join('\n')
+    const result = spawnSync('bash', ['-c', harness], { encoding: 'utf8' })
+    fs.rmSync(root, { recursive: true, force: true })
+    return result
+  }
+
+  const cleanupFailure = runCleanup({ bodyStatus: 0, releaseStatus: 0, tmuxStatus: 1 })
+  assert.equal(cleanupFailure.status, 1, cleanupFailure.stderr)
+
+  const bodyFailure = runCleanup({ bodyStatus: 7, releaseStatus: 0, tmuxStatus: 0 })
+  assert.equal(bodyFailure.status, 7, bodyFailure.stderr)
 })
 
 test('candidate build sequence verifies both outside-checkout binaries before moving them', () => {

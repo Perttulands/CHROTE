@@ -28,6 +28,9 @@ fi
 git fetch --no-tags origin main:refs/remotes/origin/main
 main_commit="$(git rev-parse refs/remotes/origin/main)" \
   || die "origin/main does not resolve to a commit"
+if [ "$release_commit" != "$main_commit" ]; then
+  die "tag target $release_commit must equal origin/main $main_commit"
+fi
 if ! git merge-base --is-ancestor "$release_commit" "$main_commit"; then
   die "tag target $release_commit is not an ancestor of origin/main $main_commit"
 fi
