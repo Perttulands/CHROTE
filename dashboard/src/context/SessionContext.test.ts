@@ -15,12 +15,18 @@ function setViewportWidth(width: number) {
   })
 }
 
-// Mock fetch for SessionProvider (prevents real API calls)
-;(globalThis as Record<string, unknown>).fetch = vi.fn(() => Promise.resolve({
-  ok: true,
-  json: () => Promise.resolve({ sessions: [], grouped: {}, timestamp: new Date().toISOString() }),
-  text: () => Promise.resolve(''),
-})) as any
+// Keep the default refresh pending. Tests that exercise refreshSessions install
+// an explicit response, so unrelated tests do not receive an async provider
+// update after their assertions have completed.
+const defaultFetch = vi.fn((input: RequestInfo | URL) => {
+  if (String(input) === '/api/tmux/sessions') return new Promise<never>(() => {})
+  return Promise.resolve({
+    ok: true,
+    json: () => Promise.resolve({ sessions: [], grouped: {}, timestamp: new Date().toISOString() }),
+    text: () => Promise.resolve(''),
+  })
+})
+vi.stubGlobal('fetch', defaultFetch)
 
 // Mock localStorage
 const store: Record<string, string> = {}
@@ -31,6 +37,11 @@ vi.stubGlobal('localStorage', {
   clear: () => { Object.keys(store).forEach(k => delete store[k]) },
   length: 0,
   key: () => null,
+})
+
+beforeEach(() => {
+  vi.stubGlobal('fetch', defaultFetch)
+  defaultFetch.mockClear()
 })
 
 function Wrapper({ children }: { children: React.ReactNode }) {
@@ -2501,8 +2512,8 @@ describe('renameSession', () => {
   it('returns false when API call fails', async () => {
     const { result } = renderSession()
 
-    // After mount (which already consumed the default fetch for refreshSessions),
-    // queue a failing response for the next fetch call (the rename PATCH)
+    // Queue a failing response for the next fetch call (the rename PATCH); the
+    // default mount refresh remains pending in this fixture.
     vi.mocked(fetch as any).mockResolvedValueOnce({
       ok: false,
       text: () => Promise.resolve('Not Found'),
