@@ -72,6 +72,20 @@ test('release checks and smokes the exact files it publishes', () => {
   assert.match(workflow, /dist\/chrote-server-linux-amd64\n\s+dist\/chrote-server-linux-arm64\n\s+dist\/SHA256SUMS/)
 })
 
+test('installer smoke reserves distinct ports until the server handoff', () => {
+  const smoke = fs.readFileSync(`${repoRoot}/scripts/test-public-install.sh`, 'utf8')
+  const reserve = smoke.indexOf('coproc port_reserver')
+  const distinct = smoke.indexOf('len(set(ports)) != 2')
+  const release = smoke.indexOf('\nrelease_port_reserver\n"$installed_binary" >')
+  const serverStart = smoke.indexOf('"$installed_binary" >')
+
+  assert.ok(reserve >= 0, 'smoke must own the port reservation helper')
+  assert.ok(distinct > reserve, 'smoke must reject equal reserved ports')
+  assert.ok(release > distinct, 'smoke must release reservations explicitly')
+  assert.ok(serverStart > release, 'smoke must release ports immediately before server start')
+  assert.doesNotMatch(smoke, /ports\.append\(sock\.getsockname\(\)\[1\]\)\s+sock\.close\(\)/)
+})
+
 test('candidate build sequence verifies both outside-checkout binaries before moving them', () => {
   const candidates = fs.readFileSync(`${repoRoot}/scripts/build-release-candidates.sh`, 'utf8')
   const amd64 = candidates.indexOf('GOOS=linux GOARCH=amd64 go build')

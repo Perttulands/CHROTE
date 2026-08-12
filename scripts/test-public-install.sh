@@ -45,8 +45,24 @@ tmp="$(mktemp -d)"
 server_pid=""
 runtime_dir="$(mktemp -d /tmp/chrote-tmux.XXXXXX)"
 tmux_socket="$runtime_dir/tmux-$(id -u)/default"
+port_reserver_pid=""
+port_reserver_read_fd=""
+port_reserver_write_fd=""
 tmux_cmd() {
   TMUX_TMPDIR="$runtime_dir" "$tmux_bin" -S "$tmux_socket" "$@"
+}
+release_port_reserver() {
+  local status=0
+  if [ -n "$port_reserver_pid" ]; then
+    if ! printf 'release\n' >&"$port_reserver_write_fd"; then
+      status=1
+    fi
+    if ! wait "$port_reserver_pid"; then
+      status=1
+    fi
+    port_reserver_pid=""
+  fi
+  return "$status"
 }
 cleanup_tmux() {
   local sessions=""
@@ -65,6 +81,9 @@ cleanup_tmux() {
 }
 cleanup() {
   local status=$?
+  if ! release_port_reserver; then
+    status=1
+  fi
   if [ -n "$server_pid" ] && kill -0 "$server_pid" 2>/dev/null; then
     kill "$server_pid" 2>/dev/null || true
     wait "$server_pid" 2>/dev/null || true
@@ -89,17 +108,39 @@ workspace="$tmp/workspace with spaces%25"
 mkdir -p "$home" "$workspace" "$runtime_dir"
 mkdir -p "$(dirname "$tmux_socket")"
 
-read -r port ttyd_port < <(python3 - <<'PY'
+coproc port_reserver {
+python3 - <<'PY'
 import socket
-ports=[]
-for _ in range(2):
-    sock=socket.socket()
-    sock.bind(('127.0.0.1',0))
-    ports.append(sock.getsockname()[1])
-    sock.close()
-print(*ports)
+import sys
+
+sockets=[]
+try:
+    for _ in range(2):
+        sock=socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(('127.0.0.1',0))
+        sock.listen(1)
+        sockets.append(sock)
+    ports=[sock.getsockname()[1] for sock in sockets]
+    if len(set(ports)) != 2:
+        raise RuntimeError('dynamic port reservation returned duplicate ports')
+    print(*ports, flush=True)
+    sys.stdin.readline()
+finally:
+    for sock in sockets:
+        sock.close()
 PY
-)
+}
+port_reserver_pid="$port_reserver_PID"
+port_reserver_read_fd="${port_reserver[0]}"
+port_reserver_write_fd="${port_reserver[1]}"
+if ! read -r port ttyd_port <&"$port_reserver_read_fd"; then
+  echo 'failed to reserve distinct loopback ports' >&2
+  exit 1
+fi
+if [ "$port" = "$ttyd_port" ]; then
+  echo "dynamic port reservation returned duplicate ports: $port" >&2
+  exit 1
+fi
 
 install_args=(
   --workspace "$workspace"
@@ -154,6 +195,7 @@ export CHROTE_DEFAULT_TMUX_SOCKET="$tmux_socket"
 export PATH="$prefix/bin:$tmux_bin_dir:/usr/local/bin:/usr/bin:/bin"
 
 tmux_cmd new-session -d -s public-smoke -c "$workspace"
+release_port_reserver
 "$installed_binary" >"$tmp/server.log" 2>&1 &
 server_pid=$!
 
