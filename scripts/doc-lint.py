@@ -228,6 +228,12 @@ def check_source_truth_index(errors: list[str]) -> None:
             fail(errors, f"{INDEX_PATH.as_posix()}: broken local link: {match.group(1)}")
 
 
+def check_unsupported_delivery_path_absent(errors: list[str]) -> None:
+    path = ROOT / "src/Dockerfile"
+    if path.exists():
+        fail(errors, "unsupported delivery path must remain absent: src/Dockerfile")
+
+
 def check_active_local_links(errors: list[str]) -> None:
     link_pattern = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
     skipped_dirs = {"archive", "plans"}
@@ -291,10 +297,10 @@ def compiled_default_ports() -> dict[str, int]:
 
     These are the product's defaults, and the only port values docs may present as
     such. Three port stories exist in this repo and get confused for one another:
-    the compiled defaults here, the container's explicit 8080/7681 in src/Dockerfile
-    and src/deploy.sh, and whatever an operator passes with --port. A deployment's
-    port must never be documented as the product's, and vice versa — that inversion
-    has already sent work at correcting accurate documentation.
+    the compiled defaults here, the explicit 8080/7681 in src/deploy.sh, and
+    whatever an operator passes with --port. A deployment's port must never be
+    documented as the product's, and vice versa — that inversion has already sent
+    work at correcting accurate documentation.
     """
     text = (ROOT / "src/cmd/server/main.go").read_text(encoding="utf-8")
     ports: dict[str, int] = {}
@@ -514,6 +520,7 @@ def main() -> int:
     check_active_spec_frontmatter(errors)
     check_enforced_by_paths(errors)
     check_source_truth_index(errors)
+    check_unsupported_delivery_path_absent(errors)
     check_active_local_links(errors)
     check_theme_docs(errors)
     check_documented_ports_match_code(errors)
