@@ -46,17 +46,19 @@ type Config struct {
 	TtydPort                int
 	CORSOrigins             []string
 	StartTtyd               bool
+	StartSystemHistory      bool
 	FormationsDataRoot      string
 	StartSessionDropJanitor bool
 }
 
 func main() {
 	// Parse flags
-	config := Config{StartSessionDropJanitor: true}
+	config := Config{StartSessionDropJanitor: true, StartSystemHistory: true}
 	flag.StringVar(&config.Host, "host", defaultBindHost, "Bind address")
 	flag.IntVar(&config.Port, "port", defaultServerPort, "Server port")
 	flag.IntVar(&config.TtydPort, "ttyd-port", defaultTtydPort, "ttyd port")
 	flag.BoolVar(&config.StartTtyd, "start-ttyd", true, "Start ttyd child process")
+	flag.BoolVar(&config.StartSystemHistory, "start-system-history", true, "Start system history sampler")
 	flag.Parse()
 
 	// Environment overrides
@@ -193,7 +195,10 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Contex
 	servicesHandler.RegisterRoutes(mux)
 
 	systemHandler := api.NewSystemHandler()
-	stopSystemHistory := systemHandler.StartDefaultHistorySampler(ctx)
+	var stopSystemHistory context.CancelFunc = func() {}
+	if config.StartSystemHistory {
+		stopSystemHistory = startDefaultSystemHistorySampler(systemHandler, ctx)
+	}
 	systemHandler.RegisterRoutes(mux)
 
 	oracleHandler := api.NewOracleHandler(tmuxHandler, beadsHandler)
@@ -237,6 +242,8 @@ func registerRuntimeRoutes(mux *http.ServeMux, config Config, ctx context.Contex
 	}
 	return terminalProxy, scheduledHandler, stopRuntimeMaintenance
 }
+
+var startDefaultSystemHistorySampler = (*api.SystemHandler).StartDefaultHistorySampler
 
 func warnRemovedAccessTokenSetting() {
 	if strings.TrimSpace(os.Getenv("API_AUTH_TOKEN")) == "" {

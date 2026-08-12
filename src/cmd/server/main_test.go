@@ -1,11 +1,56 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/chrote/server/internal/api"
 )
+
+func TestRuntimeRoutesCanDisableSystemHistorySampler(t *testing.T) {
+	called := false
+	original := startDefaultSystemHistorySampler
+	startDefaultSystemHistorySampler = func(*api.SystemHandler, context.Context) context.CancelFunc {
+		called = true
+		return func() {}
+	}
+	t.Cleanup(func() { startDefaultSystemHistorySampler = original })
+	t.Setenv("CHROTE_TERMINAL_SIZE_GUARD", "off")
+	tmuxLog := filepath.Join(t.TempDir(), "tmux-calls.log")
+	fakeTmux := filepath.Join(t.TempDir(), "tmux")
+	if err := os.WriteFile(tmuxLog, nil, 0o600); err != nil {
+		t.Fatalf("create tmux call log: %v", err)
+	}
+	if err := os.WriteFile(fakeTmux, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$TMUX_CALL_LOG\"\n"), 0o700); err != nil {
+		t.Fatalf("create fake tmux: %v", err)
+	}
+	t.Setenv("CHROTE_TMUX_BIN", fakeTmux)
+	t.Setenv("TMUX_CALL_LOG", tmuxLog)
+
+	mux := http.NewServeMux()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, _, stopRuntimeMaintenance := registerRuntimeRoutes(mux, Config{
+		TtydPort:           1,
+		StartSystemHistory: false,
+	}, ctx)
+	<-ctx.Done()
+	stopRuntimeMaintenance()
+
+	if called {
+		t.Fatal("disabled system history started the host sampler")
+	}
+	if raw, err := os.ReadFile(tmuxLog); err != nil {
+		t.Fatalf("read tmux call log: %v", err)
+	} else if len(raw) != 0 {
+		t.Fatalf("system-history test dispatched tmux size-guard calls: %q", raw)
+	}
+}
 
 func TestCORSMiddlewareDefaultDoesNotSetAllowOrigin(t *testing.T) {
 	handler := corsMiddleware(nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
