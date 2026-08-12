@@ -4,6 +4,9 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 import { assertPlaywrightExecuted } from './assert-playwright-executed.mjs'
+import './release-admission.test.mjs'
+import './release-candidate-sequence.test.mjs'
+import './release-contract.test.mjs'
 
 const repoRoot = fileURLToPath(new URL('../', import.meta.url))
 

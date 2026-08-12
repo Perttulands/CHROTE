@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  checks: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
@@ -16,6 +17,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Release admission
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/release-admission.sh
 
       - uses: actions/setup-go@v5
         with:
@@ -42,7 +50,11 @@ jobs:
           release_version="${GITHUB_REF_NAME#v}"
           source_version="$(tr -d '\r\n' < VERSION)"
           if [ "$source_version" != "$release_version" ]; then
-            printf 'VERSION %s does not match tag %s\n' "$source_version" "$release_version"
+            printf 'VERSION %s does not match tag %s\n' "$source_version" "$GITHUB_REF_NAME"
+            exit 1
+          fi
+          if [ "$release_version" != "$RELEASE_VERSION" ]; then
+            printf 'admitted release version %s does not match tag %s\n' "$RELEASE_VERSION" "$release_version"
             exit 1
           fi
 
@@ -86,21 +98,18 @@ jobs:
           cd src
           go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 
-      - name: Embedded dashboard smoke
-        run: |
-          cd src
-          go test ./...
-          release_version="${GITHUB_REF_NAME#v}"
-          go build -trimpath -ldflags "-X main.Version=$release_version -X main.BuildCommit=$GITHUB_SHA" -o /tmp/chrote-server-release-smoke ./cmd/server
+      - name: Build publication candidates
+        # The script applies -X main.Version=$release_version and the admitted commit.
+        run: bash scripts/build-release-candidates.sh
 
-      # Build Go binaries for multiple architectures
-      - name: Build Binaries
+      - name: Verify publication provenance
         run: |
-          mkdir -p dist
-          cd src
-          release_version="${GITHUB_REF_NAME#v}"
-          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-X main.Version=$release_version -X main.BuildCommit=$GITHUB_SHA" -o ../dist/chrote-server-linux-amd64 ./cmd/server
-          GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-X main.Version=$release_version -X main.BuildCommit=$GITHUB_SHA" -o ../dist/chrote-server-linux-arm64 ./cmd/server
+          for binary in dist/chrote-server-linux-amd64 dist/chrote-server-linux-arm64; do
+            metadata="$(go version -m "$binary")"
+            printf '%s\n' "$metadata"
+            grep -Fq "vcs.revision=$RELEASE_COMMIT" <<<"$metadata"
+            grep -Fq 'vcs.modified=false' <<<"$metadata"
+          done
 
       - name: Scan release binaries
         run: |
@@ -109,12 +118,17 @@ jobs:
           go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 -mode=binary ../dist/chrote-server-linux-arm64
 
       - name: Smoke release installer contract
-        run: ./scripts/test-public-install.sh /tmp/chrote-server-release-smoke
+        run: CHROTE_EXPECTED_BUILD_COMMIT="$RELEASE_COMMIT" ./scripts/test-public-install.sh dist/chrote-server-linux-amd64
 
       - name: Generate checksums
         run: |
           cd dist
           sha256sum chrote-server-linux-amd64 chrote-server-linux-arm64 > SHA256SUMS
+
+      - name: Verify publication checksums
+        run: |
+          cd dist
+          sha256sum --check SHA256SUMS
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
