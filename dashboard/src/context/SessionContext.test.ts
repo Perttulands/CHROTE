@@ -18,14 +18,15 @@ function setViewportWidth(width: number) {
 // Keep the default refresh pending. Tests that exercise refreshSessions install
 // an explicit response, so unrelated tests do not receive an async provider
 // update after their assertions have completed.
-;(globalThis as Record<string, unknown>).fetch = vi.fn((input: RequestInfo | URL) => {
+const defaultFetch = vi.fn((input: RequestInfo | URL) => {
   if (String(input) === '/api/tmux/sessions') return new Promise<never>(() => {})
   return Promise.resolve({
     ok: true,
     json: () => Promise.resolve({ sessions: [], grouped: {}, timestamp: new Date().toISOString() }),
     text: () => Promise.resolve(''),
   })
-}) as any
+})
+vi.stubGlobal('fetch', defaultFetch)
 
 // Mock localStorage
 const store: Record<string, string> = {}
@@ -36,6 +37,11 @@ vi.stubGlobal('localStorage', {
   clear: () => { Object.keys(store).forEach(k => delete store[k]) },
   length: 0,
   key: () => null,
+})
+
+beforeEach(() => {
+  vi.stubGlobal('fetch', defaultFetch)
+  defaultFetch.mockClear()
 })
 
 function Wrapper({ children }: { children: React.ReactNode }) {
