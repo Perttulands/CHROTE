@@ -109,6 +109,16 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
     })
   })
 
+  it('keeps an open desktop sidecar in layout flow without an overlay toggle', () => {
+    const { container } = renderDock()
+
+    fireEvent.click(screen.getByRole('button', { name: /Sessions sidecar/i }))
+
+    expect(screen.getByTestId('sessions-panel')).toHaveAttribute('data-pinned', 'true')
+    expect(screen.queryByRole('button', { name: 'Pin sessions' })).not.toBeInTheDocument()
+    expect(container.querySelector('.terminal-sidecar-dismiss')).not.toBeInTheDocument()
+  })
+
   it('opens and toggles each sidecar independently from a stable switcher', () => {
     const { container } = renderDock()
     const sessions = screen.getByRole('button', { name: /Sessions sidecar/i })
@@ -121,9 +131,9 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
 
     fireEvent.click(sessions)
     expect(sessions).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByTestId('sessions-panel')).toHaveAttribute('data-pinned', 'false')
+    expect(screen.getByTestId('sessions-panel')).toHaveAttribute('data-pinned', 'true')
     expect(screen.queryByTestId('files-panel')).not.toBeInTheDocument()
-    expect(container.querySelector('.terminal-sidecar-dismiss')).toBeInTheDocument()
+    expect(container.querySelector('.terminal-sidecar-dismiss')).not.toBeInTheDocument()
 
     fireEvent.click(files)
     expect(files).toHaveAttribute('aria-pressed', 'true')
@@ -164,26 +174,32 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
     expect(files).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('pins only on desktop and closes an unpinned sidecar through Escape or the dismiss layer', () => {
-    const { container } = renderDock()
+  it('keeps desktop sidecars open through Escape and dismisses narrow overlays', () => {
+    const desktop = renderDock()
     fireEvent.click(screen.getByRole('button', { name: /Sessions sidecar/i }))
-    fireEvent.click(screen.getByRole('button', { name: 'Pin sessions' }))
 
     expect(screen.getByTestId('sessions-panel')).toHaveAttribute('data-pinned', 'true')
-    expect(container.querySelector('.terminal-sidecar-dismiss')).not.toBeInTheDocument()
+    expect(desktop.container.querySelector('.terminal-sidecar-dismiss')).not.toBeInTheDocument()
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(screen.getByTestId('sessions-panel')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Pin sessions' }))
+    desktop.unmount()
+    localStorage.clear()
+    mocks.narrow = true
+    const narrow = renderDock()
+
+    fireEvent.click(screen.getByRole('button', { name: /Sessions sidecar/i }))
+    expect(screen.getByTestId('sessions-panel')).toHaveAttribute('data-pinned', 'false')
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(screen.queryByTestId('sessions-panel')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /Files sidecar/i }))
-    fireEvent.click(container.querySelector('.terminal-sidecar-dismiss')!)
+    fireEvent.click(narrow.container.querySelector('.terminal-sidecar-dismiss')!)
     expect(screen.queryByTestId('files-panel')).not.toBeInTheDocument()
   })
 
   it('ignores hidden keep-alive dialogs for Escape while deferring to a visible dialog', () => {
+    mocks.narrow = true
     const { container } = renderDock()
     const hiddenHost = document.createElement('div')
     const dialog = document.createElement('section')
@@ -215,17 +231,16 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
     }
   })
 
-  it('reopens a closed Sessions panel pinned without leaking that preference into Files', () => {
+  it('reopens desktop sidecars in flow without rewriting stored pin preferences', () => {
     renderDock()
     const sessions = screen.getByRole('button', { name: /Sessions sidecar/i })
     fireEvent.click(sessions)
-    fireEvent.click(screen.getByRole('button', { name: 'Pin sessions' }))
     expect(screen.getByTestId('sessions-panel')).toHaveAttribute('data-pinned', 'true')
 
     fireEvent.click(screen.getByRole('button', { name: 'Close sessions' }))
     expect(screen.queryByTestId('sessions-panel')).not.toBeInTheDocument()
     expect(JSON.parse(localStorage.getItem('chrote.sessionsDock.v1') || '{}')).toMatchObject({
-      state: { open: false, pinned: true },
+      state: { open: false, pinned: false },
     })
 
     fireEvent.click(sessions)
@@ -233,7 +248,7 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
 
     fireEvent.click(sessions)
     fireEvent.click(screen.getByRole('button', { name: /Files sidecar/i }))
-    expect(screen.getByTestId('files-panel')).toHaveAttribute('data-pinned', 'false')
+    expect(screen.getByTestId('files-panel')).toHaveAttribute('data-pinned', 'true')
   })
 
   it('forces a stored desktop pin into overlay presentation on narrow viewports without losing the stored preference', () => {
