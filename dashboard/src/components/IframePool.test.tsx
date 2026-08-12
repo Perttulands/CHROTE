@@ -1,45 +1,27 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { renderHook } from '@testing-library/react'
-import { createElement } from 'react'
 import { IframePoolProvider, useIframePool } from './IframePool'
-import { SessionProvider } from '../context/SessionContext'
-import { ToastProvider } from '../context/ToastContext'
 
-// Mock fetch for SessionProvider
-;(globalThis as Record<string, unknown>).fetch = vi.fn(() => Promise.resolve({
-  ok: true,
-  json: () => Promise.resolve({ sessions: [], grouped: {}, timestamp: new Date().toISOString() }),
-})) as any
-
-// Mock localStorage
-const store: Record<string, string> = {}
-vi.stubGlobal('localStorage', {
-  getItem: (key: string) => store[key] ?? null,
-  setItem: (key: string, val: string) => { store[key] = val },
-  removeItem: (key: string) => { delete store[key] },
-  clear: () => { Object.keys(store).forEach(k => delete store[k]) },
-  length: 0,
-  key: () => null,
-})
-
-function Wrapper({ children }: { children: React.ReactNode }) {
-  return createElement(ToastProvider, null,
-    createElement(SessionProvider, null,
-      createElement(IframePoolProvider, null, children)))
-}
+// This suite proves IframePool's context identity. Keep the session boundary
+// synchronous so an unrelated SessionProvider refresh cannot update this test.
+vi.mock('../context/SessionContext', () => ({
+  useSession: () => ({
+    settings: { fontSize: 14, hideScrollbar: false },
+    workspaces: {},
+    sessions: [],
+  }),
+}))
 
 describe('IframePool context stability', () => {
-  beforeEach(() => {
-    localStorage.clear()
-  })
-
   it('pool operation functions have stable references across rerenders', () => {
     // The pool functions (claimIframe, getIframe, triggerFit, focusIframe)
     // must be stable refs (useCallback with [] deps).
     // If they aren't, then any effect depending on `pool` will re-run
     // every time the context changes — causing claim/release cycles.
 
-    const { result, rerender } = renderHook(() => useIframePool(), { wrapper: Wrapper })
+    const { result, rerender } = renderHook(() => useIframePool(), {
+      wrapper: ({ children }) => <IframePoolProvider>{children}</IframePoolProvider>,
+    })
 
     const first = {
       claim: result.current.claimIframe,
@@ -72,7 +54,9 @@ describe('IframePool context stability', () => {
     //
     // We test: the context value should be stable across isLoaded changes.
 
-    const { result, rerender } = renderHook(() => useIframePool(), { wrapper: Wrapper })
+    const { result, rerender } = renderHook(() => useIframePool(), {
+      wrapper: ({ children }) => <IframePoolProvider>{children}</IframePoolProvider>,
+    })
 
     const contextRef1 = result.current
 
