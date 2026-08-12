@@ -98,8 +98,7 @@ test.describe('Arena Dashboard', () => {
       const files = page.locator('.terminal-files-panel')
 
       await expect(sessions).toHaveClass(/sidecar-pinned/)
-      await page.getByRole('button', { name: 'Unpin Sessions sidecar' }).click()
-      await expect(sessions).toHaveClass(/sidecar-overlay/)
+      await expect(page.getByRole('button', { name: 'Unpin Sessions sidecar' })).toHaveCount(0)
       await page.getByRole('button', { name: 'Files sidecar', exact: true }).click()
       await expect(files).toBeVisible()
       await expect(sessions).toHaveClass(/sidecar-pinned/)

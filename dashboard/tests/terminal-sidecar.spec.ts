@@ -44,11 +44,11 @@ test.describe('terminal workspace sidecars', () => {
     await page.keyboard.press('/')
 
     await expect(sessionsTrigger).toHaveAttribute('aria-expanded', 'true')
-    await expect(page.locator('.session-panel.sidecar-overlay')).toBeVisible()
+    await expect(page.locator('.session-panel.sidecar-pinned')).toBeVisible()
     await expect(page.locator('.session-search-input')).toBeFocused()
   })
 
-  test('keeps closed and overlay sidecars out of terminal layout width, then pins explicitly', async ({ page }) => {
+  test('keeps open desktop sidecars beside terminal content', async ({ page }) => {
     await openFreshTerminal(page, { width: 1280, height: 800 })
 
     const dock = page.locator('.terminal-workspace-dock[data-active="true"]')
@@ -57,11 +57,14 @@ test.describe('terminal workspace sidecars', () => {
     await expect(dock.locator('.session-panel, .terminal-files-panel')).toHaveCount(0)
 
     await page.getByRole('button', { name: 'Sessions sidecar' }).click()
-    await expect(dock.locator('.session-panel.sidecar-overlay')).toBeVisible()
-    await expect(dock.locator('.terminal-sidecar-dismiss')).toBeVisible()
-    const overlaid = await box(terminal)
-    expect(Math.abs(overlaid.x - initial.x)).toBeLessThanOrEqual(1)
-    expect(Math.abs(overlaid.width - initial.width)).toBeLessThanOrEqual(1)
+    const sessionsPanel = dock.locator('.session-panel.sidecar-pinned')
+    await expect(sessionsPanel).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Pin Sessions sidecar' })).toHaveCount(0)
+    await expect(dock.locator('.terminal-sidecar-dismiss')).toHaveCount(0)
+    const sessionsBox = await box(sessionsPanel)
+    const besideSessions = await box(terminal)
+    expect(sessionsBox.x + sessionsBox.width).toBeLessThanOrEqual(besideSessions.x + 1)
+    expect(besideSessions.width).toBeLessThan(initial.width - 200)
 
     await page.getByRole('button', { name: 'Files sidecar' }).click()
     await expect(dock.locator('.session-panel.sidecar-pinned')).toBeVisible()
@@ -70,10 +73,8 @@ test.describe('terminal workspace sidecars', () => {
 
     await page.getByRole('button', { name: 'Close Sessions sidecar' }).click()
     await expect(dock.locator('.session-panel')).toHaveCount(0)
-    await expect(dock.locator('.terminal-files-panel.sidecar-overlay')).toBeVisible()
-
-    await page.getByRole('button', { name: 'Pin Files sidecar' }).click()
     await expect(dock.locator('.terminal-files-panel.sidecar-pinned')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Pin Files sidecar' })).toHaveCount(0)
     await expect(dock.locator('.terminal-sidecar-dismiss')).toHaveCount(0)
     const pinned = await box(terminal)
     expect(pinned.width).toBeLessThan(initial.width - 200)
@@ -84,8 +85,8 @@ test.describe('terminal workspace sidecars', () => {
     expect(Math.abs(restored.x - initial.x)).toBeLessThanOrEqual(1)
     expect(Math.abs(restored.width - initial.width)).toBeLessThanOrEqual(1)
 
-    // The pin preference survives close: reopening pins the panel beside the
-    // terminal again instead of overlaying it.
+    // Reopening keeps the desktop panel beside the terminal without changing
+    // the stored preference used by narrow viewports.
     await page.getByRole('button', { name: 'Files sidecar' }).click()
     await expect(dock.locator('.terminal-files-panel.sidecar-pinned')).toBeVisible()
     await expect(dock.locator('.terminal-sidecar-dismiss')).toHaveCount(0)
@@ -131,7 +132,7 @@ test.describe('terminal workspace sidecars', () => {
   })
 
   test('Escape ignores hidden keep-alive dialogs and defers to visible dialogs', async ({ page }) => {
-    await openFreshTerminal(page, { width: 1280, height: 800 })
+    await openFreshTerminal(page, { width: 700, height: 800 })
     await page.evaluate(() => {
       const host = document.createElement('div')
       host.id = 'escape-blocker-host'

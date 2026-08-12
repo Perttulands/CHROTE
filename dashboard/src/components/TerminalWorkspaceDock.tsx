@@ -55,7 +55,6 @@ function TerminalWorkspaceDock({
   active,
   sessionsDockState,
   onSessionsDockStateChange,
-  sessionsForcedPinned,
   onFilesOpenChange,
   onOpenSessionBankSettings,
   onOpenInFiles,
@@ -66,11 +65,10 @@ function TerminalWorkspaceDock({
   const sessionsOpen = sessionsDockState.open
   const filesOpen = filesDockState.open
   const openSidecarCount = Number(sessionsOpen) + Number(filesOpen)
-  // Files remains workspace-local, but any open Files panel forces the one
-  // global Sessions surface into the same rail presentation on every tab.
-  const sessionsPinned = sessionsOpen && (sessionsDockState.pinned || sessionsForcedPinned) && !isNarrow
-  const filesForcedPinned = filesOpen && sessionsOpen && !isNarrow
-  const filesPinned = filesOpen && (filesDockState.pinned || filesForcedPinned) && !isNarrow
+  // Desktop sidecars stay in the flex rail so they cannot cover terminals.
+  // Narrow viewports retain the dismissible overlay presentation.
+  const sessionsPinned = sessionsOpen && !isNarrow
+  const filesPinned = filesOpen && !isNarrow
   const anyPinned = sessionsPinned || filesPinned
   const sessionsPanelId = `${workspaceId}-sessions-sidecar`
   const filesPanelId = `${workspaceId}-files-sidecar`
@@ -187,7 +185,7 @@ function TerminalWorkspaceDock({
           collapsed={false}
           width={sessionsDockState.width}
           pinned={sessionsPinned}
-          canPin={!isNarrow && !sessionsForcedPinned}
+          canPin={false}
           panelId={sessionsPanelId}
           onTogglePin={toggleSessionsPin}
           onClose={closeSessions}
@@ -207,7 +205,7 @@ function TerminalWorkspaceDock({
           collapsed={false}
           width={filesDockState.width}
           pinned={filesPinned}
-          canPin={!isNarrow && !filesForcedPinned}
+          canPin={false}
           panelId={filesPanelId}
           onTogglePin={toggleFilesPin}
           onClose={closeFiles}
