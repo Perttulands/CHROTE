@@ -24,7 +24,12 @@ for binary in "$candidate_dir"/chrote-server-linux-*; do
   grep -Fq 'vcs.modified=false' <<<"$metadata"
 done
 
-if [ -n "$(git -C "$repo_root" status --porcelain)" ]; then
+worktree_status="$(git -C "$repo_root" status --porcelain)" || {
+  status=$?
+  printf 'Failed to inspect release worktree status (status %s)\n' "$status" >&2
+  exit "$status"
+}
+if [ -n "$worktree_status" ]; then
   git -C "$repo_root" status --short >&2
   exit 1
 fi
