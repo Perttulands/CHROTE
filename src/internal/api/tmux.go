@@ -1504,25 +1504,35 @@ func parseSessionsOutput(output string, unixUser string) []core.Session {
 	sessions := []core.Session{}
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		parts := strings.Split(line, ":")
-		if len(parts) < 3 {
+		line = strings.TrimSuffix(line, "\r")
+		if strings.TrimSpace(line) == "" {
 			continue
 		}
 		sessionID := ""
-		nameIndex := 0
-		if len(parts) >= 4 {
-			sessionID = parts[0]
-			nameIndex = 1
+		name := ""
+		windowsText := ""
+		attachedText := ""
+		cwd := ""
+		if parts := strings.SplitN(line, "	", 5); len(parts) == 5 {
+			sessionID, name, windowsText, attachedText, cwd = parts[0], parts[1], parts[2], parts[3], parts[4]
+		} else {
+			parts := strings.Split(line, ":")
+			if len(parts) < 3 {
+				continue
+			}
+			nameIndex := 0
+			if len(parts) >= 4 {
+				sessionID = parts[0]
+				nameIndex = 1
+			}
+			name = parts[nameIndex]
+			windowsText = parts[nameIndex+1]
+			attachedText = parts[nameIndex+2]
 		}
-		name := parts[nameIndex]
 		if isReservedInternalSessionName(name) {
 			continue
 		}
-		windows, _ := strconv.Atoi(parts[nameIndex+1]) //nolint:errcheck // defaults to 0 on parse failure, corrected to 1 below
+		windows, _ := strconv.Atoi(windowsText) //nolint:errcheck // defaults to 0 on parse failure, corrected to 1 below
 		if windows == 0 {
 			windows = 1
 		}
@@ -1530,16 +1540,17 @@ func parseSessionsOutput(output string, unixUser string) []core.Session {
 			ID:       sessionID,
 			Name:     name,
 			Windows:  windows,
-			Attached: parts[nameIndex+2] == "1",
+			Attached: attachedText == "1",
 			Group:    core.CategorizeSession(name),
 			UnixUser: unixUser,
+			CWD:      cwd,
 		})
 	}
 	return sessions
 }
 
 func (h *TmuxHandler) listSessionsForTarget(target tmuxTarget) ([]core.Session, string) {
-	output, err := h.runTmuxOnSocket(target.socket, "list-sessions", "-F", "#{session_id}:#{session_name}:#{session_windows}:#{session_attached}")
+	output, err := h.runTmuxOnSocket(target.socket, "list-sessions", "-F", "#{session_id}	#{session_name}	#{session_windows}	#{session_attached}	#{pane_current_path}")
 	if err != nil {
 		errStr := err.Error()
 		if isTmuxNoServerError(errStr) {

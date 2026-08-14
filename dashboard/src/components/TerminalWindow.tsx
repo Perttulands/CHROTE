@@ -76,7 +76,7 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
   const bankMatches = resolvedUser
     ? sessionBank.filter(entry => getSessionKey(entry.name, entry.unixUser) === sessionKey)
     : sessionBank.filter(entry => entry.name === actualName)
-  const workingDirectory = bankMatches.length === 1 ? bankMatches[0].cwd || null : null
+  const workingDirectory = session?.cwd || (bankMatches.length === 1 ? bankMatches[0].cwd || null : null)
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `tag-${workspaceId}-${windowId}-${sessionKey}`,
     data: { type: 'tag', sessionName: actualName, sessionKey, unixUser: resolvedUser, sourceWindowId: windowId, sourceWorkspaceId: workspaceId },

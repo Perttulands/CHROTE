@@ -56,7 +56,7 @@ vi.mock('../context/SessionContext', () => ({
     terminalUsers: ['alice', 'build'],
     sessions: [
       { name: 'forge-existing', windows: 1, attached: false, group: 'forge', unixUser: 'build' },
-      { name: 'shell-existing', windows: 1, attached: false, group: 'shell', unixUser: 'alice' },
+      { name: 'shell-existing', windows: 1, attached: false, group: 'shell', unixUser: 'alice', cwd: '/srv/live-shell' },
     ],
     sessionBank: [
       { name: 'forge-existing', unixUser: 'build', cwd: '/srv/forge' },
@@ -201,7 +201,7 @@ describe('TerminalWindow launch user', () => {
 
     openInactiveMenu()
     fireEvent.click(screen.getByRole('menuitem', { name: 'Open files in working directory' }))
-    expect(openFilesAtPath).toHaveBeenCalledWith('/srv/shell')
+    expect(openFilesAtPath).toHaveBeenCalledWith('/srv/live-shell')
 
     openInactiveMenu()
     fireEvent.click(screen.getByRole('menuitem', { name: 'Kill session' }))
@@ -300,6 +300,22 @@ describe('TerminalWindow launch user', () => {
 
     rerender(<TerminalWindow {...props} {...({ workspaceActive: false } as any)} />)
     expect(document.querySelector('.session-context-menu')).not.toBeInTheDocument()
+  })
+
+  it('falls back to a banked cwd when the live session has no reported cwd', () => {
+    const openFilesAtPath = vi.fn()
+    render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['build:forge-existing'], activeSession: 'build:forge-existing', colorIndex: 0 }}
+        onOpenFilesAtPath={openFilesAtPath}
+      />
+    )
+
+    dispatchContextMenu(screen.getByText('forge-existing'))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Open files in working directory' }))
+
+    expect(openFilesAtPath).toHaveBeenCalledWith('/srv/forge')
   })
 
   it('disables working-directory routing when the clicked session has no reported cwd', () => {
