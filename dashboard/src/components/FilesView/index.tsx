@@ -28,6 +28,9 @@ import FileViewer, {
   normalizeFilePath as normalizePath,
 } from '../FileViewer'
 import { DEFAULT_FILE_VIEW_STATE, type FileViewState } from '../workspaceFilesState'
+import { FileContextMenu } from '../FileContextMenu'
+import { getParentPath, joinFilePath, pathRelativeTo } from './pathActions'
+import { usePinnedPaths, type SavedKind, type SavedPath } from './pinnedPaths'
 import {
   readFilesWorkbenchState,
   writeFilesWorkbenchState,
@@ -55,15 +58,9 @@ import {
 type SortKey = 'name' | 'size' | 'modified'
 type SortDir = 'asc' | 'desc'
 type ViewMode = 'list' | 'grid'
-type SavedKind = 'file' | 'directory'
 type CreateKind = 'file' | 'folder'
 type SavedPathGroup = 'pinned' | 'recent'
 type SavedGroupsCollapsed = Record<SavedPathGroup, boolean>
-
-interface SavedPath {
-  path: string
-  kind: SavedKind
-}
 
 interface FilesViewProps {
   navigateRequest?: {
@@ -92,25 +89,11 @@ interface CreateIntent {
   name: string
 }
 
-const PINNED_STORAGE_KEY = 'chrote.files.pinnedPaths'
 const RECENT_STORAGE_KEY = 'chrote.files.recentPaths'
 const SAVED_GROUPS_COLLAPSED_STORAGE_KEY = 'chrote.files.savedGroupsCollapsed'
 const DEFAULT_SAVED_GROUPS_COLLAPSED: SavedGroupsCollapsed = {
   pinned: false,
   recent: false,
-}
-
-function joinPath(parent: string, name: string): string {
-  const cleanParent = normalizePath(parent)
-  return cleanParent === '/' ? `/${name}` : `${cleanParent}/${name}`
-}
-
-function getParentPath(path: string): string {
-  const normalized = normalizePath(path)
-  if (normalized === '/') return '/'
-  const parts = normalized.split('/').filter(Boolean)
-  parts.pop()
-  return parts.length === 0 ? '/' : `/${parts.join('/')}`
 }
 
 function savedPathLabel(path: string): string {
@@ -234,7 +217,7 @@ function FilesView({ navigateRequest = null, onSendPath, sendTargetLabel = null 
     setOpenFilesState(previous => ({ ...previous, activePath: path }))
   }, [])
   const [fileViewStates, setFileViewStates] = useState<Record<string, FileViewState>>(initialWorkbench.fileViewStates)
-  const [pinnedPaths, setPinnedPaths] = useState<SavedPath[]>(() => readSavedPaths(PINNED_STORAGE_KEY))
+  const [pinnedPaths, togglePinnedPath] = usePinnedPaths()
   const [recentPaths, setRecentPaths] = useState<SavedPath[]>(() => readSavedPaths(RECENT_STORAGE_KEY))
   const [savedGroupsCollapsed, setSavedGroupsCollapsed] = useState<SavedGroupsCollapsed>(() => readSavedGroupsCollapsed())
   const [editingPath, setEditingPath] = useState(false)
@@ -246,10 +229,6 @@ function FilesView({ navigateRequest = null, onSendPath, sendTargetLabel = null 
 
   const currentPathPinned = pinnedPaths.some(item => item.path === currentPath)
   const workbenchStyle = { '--fb-explorer-width': `${explorerWidth}px` } as CSSProperties
-  const contextMenuPosition = useViewportMenuPosition<HTMLDivElement>(
-    contextMenu ? { x: contextMenu.x, y: contextMenu.y } : null,
-    { estimatedSize: { width: 220, height: 320 } },
-  )
   const tabContextMenuPosition = useViewportMenuPosition<HTMLDivElement>(
     tabContextMenu ? { x: tabContextMenu.x, y: tabContextMenu.y } : null,
     { estimatedSize: { width: 180, height: 84 } },
@@ -608,7 +587,7 @@ function FilesView({ navigateRequest = null, onSendPath, sendTargetLabel = null 
     }
 
     const safeName = sanitizeFilename(renameValue)
-    const destination = joinPath(getParentPath(item.path), safeName)
+    const destination = joinFilePath(getParentPath(item.path), safeName)
     const conflicts = remapConflicts(openFilesStateRef.current, item.path, destination)
     if (conflicts.length > 0) {
       showError(`Close the open tab at ${conflicts[0]} before renaming onto it.`)
@@ -745,10 +724,7 @@ function FilesView({ navigateRequest = null, onSendPath, sendTargetLabel = null 
   }
 
   const pathRelativeToCurrent = (path: string) => {
-    if (currentPath === '/') return path.replace(/^\//, '') || '/'
-    if (path === currentPath) return getBaseName(path)
-    if (path.startsWith(`${currentPath}/`)) return path.slice(currentPath.length + 1)
-    return path
+    return pathRelativeTo(currentPath, path)
   }
 
   const copySelectedPaths = (targets: FileItem[]) => {
@@ -768,14 +744,7 @@ function FilesView({ navigateRequest = null, onSendPath, sendTargetLabel = null 
   }
 
   const togglePin = (path: string, kind: SavedKind) => {
-    setPinnedPaths(prev => {
-      const exists = prev.some(item => item.path === path)
-      const next = exists
-        ? prev.filter(item => item.path !== path)
-        : [{ path, kind }, ...prev].slice(0, 20)
-      writeSavedPaths(PINNED_STORAGE_KEY, next)
-      return next
-    })
+    togglePinnedPath(path, kind)
     setContextMenu(null)
   }
 
@@ -826,7 +795,7 @@ function FilesView({ navigateRequest = null, onSendPath, sendTargetLabel = null 
 
     const moves = draggingPaths.map(sourcePath => ({
       sourcePath,
-      destination: joinPath(target.path, getBaseName(sourcePath)),
+      destination: joinFilePath(target.path, getBaseName(sourcePath)),
     }))
     const conflict = moves
       .flatMap(move => remapConflicts(openFilesStateRef.current, move.sourcePath, move.destination))
@@ -1435,62 +1404,29 @@ function FilesView({ navigateRequest = null, onSendPath, sendTargetLabel = null 
       )}
 
       {contextMenu && (
-        <DismissiblePanel onDismiss={() => setContextMenu(null)} panelZIndex={2200} panelPosition="fixed">
-          <div
-            ref={contextMenuPosition.ref}
-            className="fb-context-menu"
-            style={contextMenuPosition.style}
-          >
-          {contextMenu.item?.isDir && (
-            <button className="fb-context-item" type="button" onClick={() => navigateTo(contextMenu.item!.path)}>Open Folder</button>
-          )}
-          {contextMenu.item && !contextMenu.item.isDir && (
-            <>
-              <button className="fb-context-item" type="button" onClick={() => void openFile(contextMenu.item!)}>Open</button>
-              <button className="fb-context-item" type="button" onClick={() => downloadItems([contextMenu.item!])}>Download</button>
-            </>
-          )}
-          {!contextMenu.item && (
-            <>
-              <button className="fb-context-item" type="button" onClick={() => startCreate('file')}>New File</button>
-              <button className="fb-context-item" type="button" onClick={() => startCreate('folder')}>New Folder</button>
-              <button className="fb-context-item" type="button" onClick={() => uploadInputRef.current?.click()}>Upload</button>
-              <button className="fb-context-item" type="button" onClick={refreshCurrentPath}>Refresh</button>
-              <div className="fb-context-divider" />
-              <button className="fb-context-item" type="button" onClick={() => copyPath(currentPath)}>Copy Current Folder Path</button>
-              {selectedItems.length > 0 && (
-                <button className="fb-context-item" type="button" onClick={() => copySelectedPaths(selectedItems)}>Copy Selected Path(s)</button>
-              )}
-              <button
-                className="fb-context-item"
-                type="button"
-                onClick={() => togglePin(currentPath, 'directory')}
-              >
-                {currentPathPinned ? 'Unpin Current Folder' : 'Pin Current Folder'}
-              </button>
-            </>
-          )}
-          {contextMenu.item && (
-            <>
-              <div className="fb-context-divider" />
-              <button className="fb-context-item" type="button" onClick={() => beginRename(contextMenu.item!)}>Rename</button>
-              <button
-                className="fb-context-item"
-                type="button"
-                onClick={() => togglePin(contextMenu.item!.path, contextMenu.item!.isDir ? 'directory' : 'file')}
-              >
-                {pinnedPaths.some(item => item.path === contextMenu.item!.path) ? 'Unpin' : 'Pin'}
-              </button>
-              <button className="fb-context-item" type="button" onClick={() => copyPath(contextMenu.item!.path)}>Copy Path</button>
-              <button className="fb-context-item" type="button" onClick={() => copySelectedPaths(contextTargets)}>Copy Selected Path(s)</button>
-              <button className="fb-context-item" type="button" onClick={() => copyRelativePath(contextMenu.item!.path)}>Copy Relative Path</button>
-              <button className="fb-context-item" type="button" onClick={() => openParentFolder(contextMenu.item!.path)}>Open Parent Folder</button>
-              <div className="fb-context-divider" />
-              <button className="fb-context-item fb-context-danger" type="button" onClick={() => requestDelete(contextTargets)}>Delete</button>
-            </>
-          )}
-          </div>
-        </DismissiblePanel>
+        <FileContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          item={contextMenu.item}
+          itemPinned={Boolean(contextMenu.item && pinnedPaths.some(item => item.path === contextMenu.item!.path))}
+          currentPathPinned={currentPathPinned}
+          onClose={() => setContextMenu(null)}
+          onOpen={item => item.isDir ? navigateTo(item.path) : void openFile(item)}
+          onDownload={item => downloadItems([item])}
+          onRename={beginRename}
+          onTogglePin={item => togglePin(item.path, item.isDir ? 'directory' : 'file')}
+          onCopyPath={copyPath}
+          onCopySelectedPaths={contextMenu.item || selectedItems.length > 0 ? () => copySelectedPaths(contextTargets) : undefined}
+          onCopyRelativePath={copyRelativePath}
+          onOpenParent={openParentFolder}
+          onDelete={() => requestDelete(contextTargets)}
+          onNewFile={() => startCreate('file')}
+          onNewFolder={() => startCreate('folder')}
+          onUpload={() => uploadInputRef.current?.click()}
+          onRefresh={refreshCurrentPath}
+          onCopyCurrentPath={() => copyPath(currentPath)}
+          onToggleCurrentPathPin={() => togglePin(currentPath, 'directory')}
+        />
       )}
 
       {deleteTargets && (

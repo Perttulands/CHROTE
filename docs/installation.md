@@ -21,7 +21,7 @@ the installing user's normal tmux server.
 ## Requirements
 
 - Linux or WSL with user systemd available
-- Go 1.26.5+
+- Go 1.26.6+
 - Node.js 20.19+ or 22.12+
 - npm
 - tmux

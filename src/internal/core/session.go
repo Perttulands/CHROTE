@@ -17,6 +17,7 @@ type Session struct {
 	Attached bool   `json:"attached"`
 	Group    string `json:"group"`
 	UnixUser string `json:"unixUser,omitempty"`
+	CWD      string `json:"cwd,omitempty"`
 }
 
 // GroupPriority defines the sort order for session groups

@@ -227,6 +227,7 @@ export interface TmuxSession {
   attached: boolean
   group: string
   unixUser?: LaunchUser
+  cwd?: string
 }
 
 export type WorkloadRecoveryMode =

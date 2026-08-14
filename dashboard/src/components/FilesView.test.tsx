@@ -411,6 +411,21 @@ describe('FilesView Markdown editor', () => {
 })
 
 describe('FilesView saved path groups', () => {
+  it('normalizes and deduplicates persisted pins before rendering them', async () => {
+    window.localStorage.setItem('chrote.files.pinnedPaths', JSON.stringify([
+      { path: '/srv/chrote', kind: 'directory' },
+      { path: '/srv//chrote/', kind: 'directory' },
+      { path: '/srv/chrote', kind: 'file' },
+    ]))
+
+    render(<FilesView />)
+
+    expect(await screen.findByRole('button', { name: /Pinned.*1/ })).toBeInTheDocument()
+    expect(JSON.parse(window.localStorage.getItem('chrote.files.pinnedPaths') || '[]')).toEqual([
+      { path: '/srv/chrote', kind: 'directory' },
+    ])
+  })
+
   it('renders multiple pinned paths and collapses the pinned group independently', async () => {
     window.localStorage.setItem('chrote.files.pinnedPaths', JSON.stringify([
       { path: '/home/operator', kind: 'directory' },

@@ -16,6 +16,7 @@ interface FileTreeProps {
   onExpandedPathsChange: (paths: string[]) => void
   onScrollTopChange: (scrollTop: number) => void
   onItemContextMenu?: (event: MouseEvent<HTMLElement>, item: FileItem) => void
+  onBackgroundContextMenu?: (event: MouseEvent<HTMLElement>) => void
 }
 
 function sortTreeItems(items: FileItem[]): FileItem[] {
@@ -53,6 +54,7 @@ function FileTree({
   onExpandedPathsChange,
   onScrollTopChange,
   onItemContextMenu,
+  onBackgroundContextMenu,
 }: FileTreeProps) {
   const treeRef = useRef<HTMLDivElement>(null)
   const loadingRef = useRef(new Set<string>())
@@ -192,6 +194,10 @@ function FileTree({
       role="tree"
       aria-label="File tree"
       onScroll={event => onScrollTopChange(event.currentTarget.scrollTop)}
+      onContextMenu={event => {
+        if ((event.target as HTMLElement).closest('.fb-tree-row')) return
+        onBackgroundContextMenu?.(event)
+      }}
     >
       {treeLoading.has(rootPath) && !treeItems[rootPath] ? (
         <div className="fb-tree-loading">Loading...</div>

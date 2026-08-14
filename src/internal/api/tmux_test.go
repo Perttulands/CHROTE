@@ -295,6 +295,44 @@ esac
 	}
 }
 
+func TestTmuxHandler_ListSessionsReportsLiveActivePaneCWD(t *testing.T) {
+	tmpDir := t.TempDir()
+	installScriptedTmux(t, `
+case "$*" in
+  *pane_current_path*) printf '$9\twork\t1\t0\t/workspaces/alice/live\n$10\tno-cwd\t1\t0\t\n' ;;
+esac
+`)
+	t.Setenv("CHROTE_SESSION_BANK_PATH", filepath.Join(tmpDir, "session-bank", "sessions.json"))
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/tmux-a")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/workspaces/alice")
+	t.Setenv("CHROTE_TERMINAL_USER_HOMES", "alice=/home/alice")
+
+	handler := NewTmuxHandler()
+	recorder := httptest.NewRecorder()
+	handler.ListSessions(recorder, httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d, expected %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	var response SessionsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(response.Sessions) != 2 {
+		t.Fatalf("sessions = %+v, want live sessions with and without cwd", response.Sessions)
+	}
+	byName := make(map[string]core.Session, len(response.Sessions))
+	for _, session := range response.Sessions {
+		byName[session.Name] = session
+	}
+	if got := byName["work"].CWD; got != "/workspaces/alice/live" {
+		t.Fatalf("live session cwd = %q, want active pane cwd", got)
+	}
+	if got := byName["no-cwd"].CWD; got != "" {
+		t.Fatalf("empty live session cwd = %q, want empty cwd without dropping session", got)
+	}
+}
+
 func TestTmuxHandler_ListSessionsProjectsManagedStatusSeparatelyAndSkipsBankOwnership(t *testing.T) {
 	tmpDir := t.TempDir()
 	bankPath := filepath.Join(tmpDir, "session-bank", "sessions.json")
@@ -1640,8 +1678,8 @@ func TestTmuxHandler_SendToSessionStoresDropAndPastesViaBuffer(t *testing.T) {
 	wantSnippets := []string{
 		strings.Join([]string{"-S", "/tmp/tmux-a", "load-buffer"}, "\x00"),
 		strings.Join([]string{"-S", "/tmp/tmux-a", "if-shell", "-F", "-t", "%42"}, "\x00"),
-		"paste-buffer -d -b chrote-send-",
-		"send-keys -t %42 C-m",
+		"paste-buffer -p -d -b chrote-send-",
+		"send-keys -t %42 Enter",
 		atomicSendSubmitKeyMarker,
 	}
 	for _, snippet := range wantSnippets {

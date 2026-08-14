@@ -45,17 +45,36 @@ vi.mock('./TerminalFilesPanel', () => ({
     panelId: string
     onTogglePin: () => void
     onClose: () => void
+    navigateRequest?: { path: string, requestId: number } | null
+    onNavigateRequestHandled?: (requestId: number) => void
   }) => props.collapsed ? null : (
-    <aside id={props.panelId} data-testid="files-panel" data-pinned={String(props.pinned)}>
+    <aside
+      id={props.panelId}
+      data-testid="files-panel"
+      data-pinned={String(props.pinned)}
+      data-navigate-path={props.navigateRequest?.path || ''}
+    >
       {props.canPin && <button onClick={props.onTogglePin}>Pin files</button>}
+      {props.navigateRequest && (
+        <button onClick={() => props.onNavigateRequestHandled?.(props.navigateRequest!.requestId)}>Acknowledge navigation</button>
+      )}
       <button onClick={props.onClose}>Close files</button>
     </aside>
   ),
 }))
 
 vi.mock('./TerminalArea', () => ({
-  default: ({ sidecarControls }: { sidecarControls?: React.ReactNode }) => (
-    <main data-testid="terminal-area">{sidecarControls}</main>
+  default: ({
+    sidecarControls,
+    onOpenFilesAtPath,
+  }: {
+    sidecarControls?: React.ReactNode
+    onOpenFilesAtPath?: (path: string) => void
+  }) => (
+    <main data-testid="terminal-area">
+      {sidecarControls}
+      <button type="button" onClick={() => onOpenFilesAtPath?.('/srv/chrote')}>Open files at session cwd</button>
+    </main>
   ),
 }))
 
@@ -150,6 +169,21 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
     fireEvent.click(sessions)
     expect(sessions).toHaveAttribute('aria-pressed', 'false')
     expect(container.querySelector('.terminal-sidecar-dismiss')).not.toBeInTheDocument()
+  })
+
+  it('opens the workspace Files sidecar at a path requested by a terminal session tag', () => {
+    renderDock()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open files at session cwd' }))
+
+    expect(screen.getByRole('button', { name: /Files sidecar/i })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('files-panel')).toHaveAttribute('data-navigate-path', '/srv/chrote')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Acknowledge navigation' }))
+    expect(screen.getByTestId('files-panel')).toHaveAttribute('data-navigate-path', '')
+    fireEvent.click(screen.getByRole('button', { name: 'Close files' }))
+    fireEvent.click(screen.getByRole('button', { name: /Files sidecar/i }))
+    expect(screen.getByTestId('files-panel')).toHaveAttribute('data-navigate-path', '')
   })
 
   it('keeps Sessions and Files open together and closes them independently', () => {
