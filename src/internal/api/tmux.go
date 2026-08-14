@@ -1502,7 +1502,7 @@ func (h *TmuxHandler) runTmuxOnSocketContext(parent context.Context, socket stri
 
 func parseSessionsOutput(output string, unixUser string) []core.Session {
 	sessions := []core.Session{}
-	lines := strings.Split(strings.TrimSpace(output), "\n")
+	lines := strings.Split(strings.TrimRight(output, "\r\n"), "\n")
 	for _, line := range lines {
 		line = strings.TrimSuffix(line, "\r")
 		if strings.TrimSpace(line) == "" {

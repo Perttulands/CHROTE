@@ -299,7 +299,7 @@ func TestTmuxHandler_ListSessionsReportsLiveActivePaneCWD(t *testing.T) {
 	tmpDir := t.TempDir()
 	installScriptedTmux(t, `
 case "$*" in
-  *pane_current_path*) printf '$9\twork\t1\t0\t/workspaces/alice/live\n' ;;
+  *pane_current_path*) printf '$9\twork\t1\t0\t/workspaces/alice/live\n$10\tno-cwd\t1\t0\t\n' ;;
 esac
 `)
 	t.Setenv("CHROTE_SESSION_BANK_PATH", filepath.Join(tmpDir, "session-bank", "sessions.json"))
@@ -318,11 +318,18 @@ esac
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if len(response.Sessions) != 1 {
-		t.Fatalf("sessions = %+v, want one live session", response.Sessions)
+	if len(response.Sessions) != 2 {
+		t.Fatalf("sessions = %+v, want live sessions with and without cwd", response.Sessions)
 	}
-	if got := response.Sessions[0].CWD; got != "/workspaces/alice/live" {
+	byName := make(map[string]core.Session, len(response.Sessions))
+	for _, session := range response.Sessions {
+		byName[session.Name] = session
+	}
+	if got := byName["work"].CWD; got != "/workspaces/alice/live" {
 		t.Fatalf("live session cwd = %q, want active pane cwd", got)
+	}
+	if got := byName["no-cwd"].CWD; got != "" {
+		t.Fatalf("empty live session cwd = %q, want empty cwd without dropping session", got)
 	}
 }
 
