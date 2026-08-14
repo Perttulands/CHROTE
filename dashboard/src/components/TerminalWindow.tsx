@@ -53,9 +53,10 @@ interface SessionTagProps {
   onClick: () => void
   onOpenFilesAtPath?: (path: string) => void
   workspaceActive: boolean
+  contextActionsEnabled: boolean
 }
 
-function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, onClick, onOpenFilesAtPath, workspaceActive }: SessionTagProps) {
+function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, onClick, onOpenFilesAtPath, workspaceActive, contextActionsEnabled }: SessionTagProps) {
   const { sessions, sessionBank, settings, deleteSession, openSendToSession } = useSession()
   const pool = useIframePool()
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
@@ -99,7 +100,8 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
   }
 
   const handleTagKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+    if ((event.target as HTMLElement).closest('.tag-remove')) return
+    if (contextActionsEnabled && (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) {
       event.preventDefault()
       event.stopPropagation()
       const rect = event.currentTarget.getBoundingClientRect()
@@ -126,8 +128,8 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
   }
 
   useEffect(() => {
-    if (!workspaceActive) closeContextMenu(false)
-  }, [closeContextMenu, workspaceActive])
+    if (!workspaceActive || !contextActionsEnabled) closeContextMenu(false)
+  }, [closeContextMenu, contextActionsEnabled, workspaceActive])
 
   useEffect(() => {
     if (contextMenu) firstActionRef.current?.focus()
@@ -146,7 +148,7 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
         onClick={handleClick}
         onKeyDown={handleTagKeyDown}
         onContextMenu={(event) => {
-          if ((event.target as HTMLElement).closest('.tag-remove')) return
+          if (!contextActionsEnabled || (event.target as HTMLElement).closest('.tag-remove')) return
           event.preventDefault()
           event.stopPropagation()
           openContextMenu(event.clientX, event.clientY)
@@ -409,6 +411,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
               onClick={() => handleTagClick(sessionName)}
               onOpenFilesAtPath={onOpenFilesAtPath}
               workspaceActive={workspaceActive}
+              contextActionsEnabled={sessionName !== 'INIT-PENDING'}
             />
           ))}
         </div>

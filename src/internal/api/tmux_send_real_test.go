@@ -90,6 +90,9 @@ func TestSendToSessionRealTmuxPinsExactPane(t *testing.T) {
 	if os.Getenv("CHROTE_REAL_TMUX_TEST") != "1" {
 		t.Skip("set CHROTE_REAL_TMUX_TEST=1 only with explicit approval to start and stop a disposable tmux server")
 	}
+	if os.Getenv("CHROTE_REAL_TMUX_OWNER_APPROVED") != "1" {
+		t.Skip("set CHROTE_REAL_TMUX_OWNER_APPROVED=1 only after configuring the effective tmux client's owner authorization for this disposable private root")
+	}
 	tmuxBin, err := exec.LookPath("tmux")
 	if err != nil {
 		t.Skip("tmux is not installed")
@@ -226,6 +229,9 @@ func TestSendToSessionRealTmuxPinsExactPane(t *testing.T) {
 func TestSendToSessionRealCodexLongPrompt(t *testing.T) {
 	if os.Getenv("CHROTE_REAL_CODEX_TEST") != "1" {
 		t.Skip("set CHROTE_REAL_CODEX_TEST=1 only for an approved private-socket Codex smoke")
+	}
+	if os.Getenv("CHROTE_REAL_TMUX_OWNER_APPROVED") != "1" {
+		t.Skip("set CHROTE_REAL_TMUX_OWNER_APPROVED=1 only after configuring the effective tmux client's owner authorization for this disposable private root")
 	}
 	tmuxBin, err := exec.LookPath("tmux")
 	if err != nil {

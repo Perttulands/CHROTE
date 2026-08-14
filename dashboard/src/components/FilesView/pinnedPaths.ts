@@ -13,6 +13,7 @@ const PINNED_PATHS_EVENT = 'chrote:pinned-paths-change'
 const MAX_PINNED_PATHS = 20
 
 let pinnedPathsSnapshot: SavedPath[] | null = null
+let pinnedPathsPersistenceDirty = false
 
 function normalizePinnedPaths(value: unknown): SavedPath[] {
   if (!Array.isArray(value)) return []
@@ -55,6 +56,7 @@ function adoptPinnedPaths(paths: SavedPath[]): SavedPath[] {
 
 export function readPinnedPaths(): SavedPath[] {
   if (typeof window === 'undefined') return pinnedPathsSnapshot ?? []
+  if (pinnedPathsPersistenceDirty && pinnedPathsSnapshot !== null) return pinnedPathsSnapshot
 
   let raw: string | null
   try {
@@ -80,8 +82,10 @@ function publishPinnedPaths(paths: SavedPath[]): SavedPath[] {
   if (typeof window !== 'undefined') {
     try {
       window.localStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify(normalized))
+      pinnedPathsPersistenceDirty = false
     } catch {
       // The mounted UI continues from the authoritative in-memory snapshot.
+      pinnedPathsPersistenceDirty = true
     }
     window.dispatchEvent(new CustomEvent<SavedPath[]>(PINNED_PATHS_EVENT, { detail: normalized }))
   }
@@ -108,6 +112,7 @@ export function usePinnedPaths(): [SavedPath[], (path: string, kind: SavedKind) 
     const handleStorage = (event: StorageEvent) => {
       if (event.key !== PINNED_STORAGE_KEY && event.key !== null) return
       const next = event.key === null ? [] : parsePinnedPaths(event.newValue)
+      pinnedPathsPersistenceDirty = false
       setPaths(adoptPinnedPaths(next))
     }
     window.addEventListener(PINNED_PATHS_EVENT, handlePinnedPaths)

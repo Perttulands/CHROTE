@@ -254,6 +254,41 @@ describe('TerminalWindow launch user', () => {
     expect(tag).toHaveFocus()
   })
 
+  it('does not expose session actions for the INIT-PENDING placeholder', () => {
+    const { container } = render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['INIT-PENDING'], activeSession: 'INIT-PENDING', colorIndex: 0 }}
+      />,
+    )
+
+    const event = dispatchContextMenu(screen.getByText('INIT-PENDING'))
+
+    expect(event.defaultPrevented).toBe(false)
+    expect(container.querySelector('.session-context-menu')).toBeNull()
+  })
+
+  it('does not open tag actions from Shift+F10 on the nested remove control', () => {
+    const { container } = render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['forge-existing'], activeSession: 'forge-existing', colorIndex: 0 }}
+      />,
+    )
+    const remove = container.querySelector('.tag-remove') as HTMLButtonElement
+    const event = new KeyboardEvent('keydown', {
+      key: 'F10',
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+
+    act(() => remove.dispatchEvent(event))
+
+    expect(event.defaultPrevented).toBe(false)
+    expect(container.querySelector('.session-context-menu')).toBeNull()
+  })
+
   it('clears an open tag menu when its keep-alive workspace becomes inactive', () => {
     const props = {
       workspaceId: 'terminal3' as const,
