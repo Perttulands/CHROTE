@@ -146,7 +146,7 @@ CHROTE does not invent a second issue database.
 The supported public path is a same-user Linux or WSL user service built from an
 inspectable checkout.
 
-Requirements: Linux or WSL with user systemd, Go 1.26.5+, Node.js 20.19+ or 22.12+,
+Requirements: Linux or WSL with user systemd, Go 1.26.6+, Node.js 20.19+ or 22.12+,
 npm, tmux, curl, and Git.
 
 ```bash

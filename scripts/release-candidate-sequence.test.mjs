@@ -16,7 +16,7 @@ test('candidate caller builds both files in a clean disposable checkout before m
   const runnerTemp = await mkdtemp(join(tmpdir(), 'chrote-release-candidates-runner-'))
   await mkdir(join(checkout, 'scripts'))
   await mkdir(join(checkout, 'src'))
-  await writeFile(join(checkout, 'src/go.mod'), 'module example.invalid/chrote\n\ngo 1.26.5\n')
+  await writeFile(join(checkout, 'src/go.mod'), 'module example.invalid/chrote\n\ngo 1.26.6\n')
   await writeFile(join(checkout, 'scripts/build-release-candidates.sh'), await readFile(scriptPath))
   await chmod(join(checkout, 'scripts/build-release-candidates.sh'), 0o755)
 
@@ -72,7 +72,7 @@ test('candidate caller fails closed when canonical worktree inspection fails', a
   const runnerTemp = await mkdtemp(join(tmpdir(), 'chrote-release-candidates-status-failure-runner-'))
   await mkdir(join(checkout, 'scripts'))
   await mkdir(join(checkout, 'src'))
-  await writeFile(join(checkout, 'src/go.mod'), 'module example.invalid/chrote\n\ngo 1.26.5\n')
+  await writeFile(join(checkout, 'src/go.mod'), 'module example.invalid/chrote\n\ngo 1.26.6\n')
   await writeFile(join(checkout, 'scripts/build-release-candidates.sh'), await readFile(scriptPath))
   await chmod(join(checkout, 'scripts/build-release-candidates.sh'), 0o755)
 

@@ -201,7 +201,7 @@ Run the test only under explicit disposable-server approval:
 
 ```bash
 cd src
-CHROTE_INPUT_FENCE_PROTOTYPE=1 GOTOOLCHAIN=go1.26.5 \
+CHROTE_INPUT_FENCE_PROTOTYPE=1 GOTOOLCHAIN=go1.26.6 \
   go test -race ./internal/api -run '^TestSamePoolInputFencePrototype' -count=1 -v
 ```
 

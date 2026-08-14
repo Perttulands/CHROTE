@@ -91,7 +91,7 @@ STALE_ROOT_MEDIA = [
     "Themes.png",
     "chat_new.png",
 ]
-GO_BASELINE = "1.26.5"
+GO_BASELINE = "1.26.6"
 NODE_BASELINE_DOC = "Node.js 20.19+ or 22.12+"
 NODE_ENGINE_RANGE = "^20.19.0 || >=22.12.0"
 GOVULNCHECK_VERSION = "v1.6.0"
@@ -445,7 +445,7 @@ def check_toolchain_contract(errors: list[str]) -> None:
         "CONTRIBUTING.md": f"Go {GO_BASELINE}+",
         "docs/TEST_STRATEGY.md": f"Go {GO_BASELINE}",
         # README and installation.md state the Go requirement to readers but were not enforced,
-        # so they kept saying 1.23 through the 1.26.5 bump while this gate reported PASS. The
+        # so they kept saying 1.23 through earlier baseline bumps while this gate reported PASS. The
         # Node baseline below already covers them; the Go baseline now does too.
         "README.md": f"Go {GO_BASELINE}+",
         "docs/installation.md": f"Go {GO_BASELINE}+",
