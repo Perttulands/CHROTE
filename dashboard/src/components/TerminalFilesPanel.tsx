@@ -1,11 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { CSSProperties, FormEvent, PointerEvent as ReactPointerEvent } from 'react'
-import { Pin, PinOff, X } from 'lucide-react'
+import type { ChangeEvent, CSSProperties, FormEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
+import { ArrowUp, Pin, PinOff, X } from 'lucide-react'
 import { useSession } from '../context/SessionContext'
 import { getSessionKey, getSessionNameFromKey, type WorkspaceId } from '../types'
 import { copyTextToClipboard } from '../utils/clipboard'
 import FileTree from './FileTree'
+import { FileContextMenu } from './FileContextMenu'
 import FileViewer, { normalizeFilePath } from './FileViewer'
+import {
+  createFile,
+  createFolder,
+  deleteItem,
+  getDownloadUrl,
+  getErrorMessage,
+  renameItem,
+  sanitizeFilename,
+  uploadFiles,
+} from './FilesView/fileService'
+import { getParentPath, joinFilePath, pathRelativeTo } from './FilesView/pathActions'
+import { usePinnedPaths } from './FilesView/pinnedPaths'
 import type { FileItem } from './FilesView/types'
 import {
   DEFAULT_FILE_VIEW_STATE,
@@ -39,6 +52,18 @@ interface FilePeekProps {
   onClose: () => void
   onOpenInFiles: (path: string) => void
   onSend: (path: string) => void
+}
+
+interface ContextMenuState {
+  x: number
+  y: number
+  item: FileItem | null
+}
+
+interface NameDialogState {
+  kind: 'file' | 'folder' | 'rename'
+  item: FileItem | null
+  value: string
 }
 
 function clampPeek(peek: WorkspaceFilePeekState): WorkspaceFilePeekState {
@@ -224,9 +249,16 @@ function TerminalFilesPanel({
   onOpenInFiles,
 }: TerminalFilesPanelProps) {
   const { workspaces, focusedWindowKey, sessionBank, openSendToSession } = useSession()
+  const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const [filesState, setFilesState] = useState<WorkspaceFilesState>(() => readWorkspaceFilesState(workspaceId))
   const [pathDraft, setPathDraft] = useState(filesState.currentPath)
   const [refreshToken, setRefreshToken] = useState(0)
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  const [nameDialog, setNameDialog] = useState<NameDialogState | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<FileItem | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+  const [operationLabel, setOperationLabel] = useState<string | null>(null)
+  const [pinnedPaths, togglePinnedPath] = usePinnedPaths()
   const workspace = workspaces[workspaceId]
 
   const updateFilesState = useCallback((update: (previous: WorkspaceFilesState) => WorkspaceFilesState) => {
@@ -310,6 +342,133 @@ function TerminalFilesPanel({
     navigateTo(pathDraft)
   }
 
+  const refreshFiles = useCallback(() => {
+    setRefreshToken(previous => previous + 1)
+  }, [])
+
+  const openContextMenu = (event: ReactMouseEvent<HTMLElement>, item: FileItem | null) => {
+    event.preventDefault()
+    if (item) {
+      updateFilesState(previous => ({ ...previous, selectedPath: item.path }))
+    }
+    setContextMenu({ x: event.clientX, y: event.clientY, item })
+  }
+
+  const startCreate = (kind: 'file' | 'folder') => {
+    setContextMenu(null)
+    setNameDialog({
+      kind,
+      item: null,
+      value: kind === 'folder' ? 'new-folder' : 'new-file.txt',
+    })
+  }
+
+  const startRename = (item: FileItem) => {
+    setContextMenu(null)
+    setNameDialog({ kind: 'rename', item, value: item.name })
+  }
+
+  const submitNameDialog = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!nameDialog) return
+
+    const operation = nameDialog.kind === 'rename'
+      ? 'Renaming'
+      : nameDialog.kind === 'folder' ? 'Creating folder' : 'Creating file'
+    setOperationLabel(operation)
+    try {
+      if (nameDialog.kind === 'file') {
+        await createFile(filesState.currentPath, nameDialog.value)
+      } else if (nameDialog.kind === 'folder') {
+        await createFolder(filesState.currentPath, nameDialog.value)
+      } else if (nameDialog.item) {
+        const sourcePath = nameDialog.item.path
+        const destination = joinFilePath(getParentPath(sourcePath), sanitizeFilename(nameDialog.value))
+        if (destination !== sourcePath) {
+          await renameItem(sourcePath, destination)
+          updateFilesState(previous => {
+            const remapPath = (path: string | null) => {
+              if (!path || (path !== sourcePath && !path.startsWith(`${sourcePath}/`))) return path
+              return `${destination}${path.slice(sourcePath.length)}`
+            }
+            const peekPath = previous.peek ? remapPath(previous.peek.path) : null
+            return {
+              ...previous,
+              selectedPath: remapPath(previous.selectedPath),
+              expandedPaths: previous.expandedPaths.map(path => remapPath(path) || path),
+              peek: previous.peek && peekPath ? {
+                ...previous.peek,
+                path: peekPath,
+                name: previous.peek.path === sourcePath ? sanitizeFilename(nameDialog.value) : previous.peek.name,
+              } : previous.peek,
+            }
+          })
+        }
+      }
+      setNameDialog(null)
+      refreshFiles()
+    } catch (error) {
+      setToast(getErrorMessage(error, nameDialog.kind === 'rename' ? 'rename' : 'create'))
+    } finally {
+      setOperationLabel(null)
+    }
+  }
+
+  const requestDelete = (item: FileItem) => {
+    setContextMenu(null)
+    setDeleteTarget(item)
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
+    setOperationLabel('Deleting')
+    try {
+      await deleteItem(deleteTarget.path)
+      const deletedPath = deleteTarget.path
+      updateFilesState(previous => ({
+        ...previous,
+        selectedPath: previous.selectedPath === deletedPath || previous.selectedPath?.startsWith(`${deletedPath}/`)
+          ? null
+          : previous.selectedPath,
+        expandedPaths: previous.expandedPaths.filter(path => path !== deletedPath && !path.startsWith(`${deletedPath}/`)),
+        peek: previous.peek && (previous.peek.path === deletedPath || previous.peek.path.startsWith(`${deletedPath}/`))
+          ? null
+          : previous.peek,
+      }))
+      setDeleteTarget(null)
+      refreshFiles()
+    } catch (error) {
+      setToast(getErrorMessage(error, 'delete'))
+    } finally {
+      setOperationLabel(null)
+    }
+  }
+
+  const handleUploadInput = async (event: ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files ? Array.from(event.target.files) : []
+    if (files.length === 0) return
+    setOperationLabel(`Uploading ${files.length} item${files.length === 1 ? '' : 's'}`)
+    try {
+      await uploadFiles(filesState.currentPath, files)
+      refreshFiles()
+    } catch (error) {
+      setToast(getErrorMessage(error, 'upload'))
+    } finally {
+      setOperationLabel(null)
+      if (uploadInputRef.current) uploadInputRef.current.value = ''
+    }
+  }
+
+  const copyPath = (path: string) => {
+    void copyTextToClipboard(normalizeFilePath(path))
+    setContextMenu(null)
+  }
+
+  const togglePin = (item: FileItem) => {
+    togglePinnedPath(item.path, item.isDir ? 'directory' : 'file')
+    setContextMenu(null)
+  }
+
   const startPanelResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.currentTarget.setPointerCapture(event.pointerId)
     const startX = event.clientX
@@ -347,13 +506,23 @@ function TerminalFilesPanel({
         <strong className="terminal-sidecar-title">Files</strong>
         {!collapsed && (
           <>
+            <button
+              type="button"
+              className="terminal-files-up"
+              aria-label="Go to parent folder"
+              title="Go to parent folder"
+              disabled={filesState.currentPath === '/'}
+              onClick={() => navigateTo(getParentPath(filesState.currentPath))}
+            >
+              <ArrowUp size={15} aria-hidden="true" />
+            </button>
             {sessionCwd && <button type="button" className="terminal-files-cwd" onClick={() => navigateTo(sessionCwd)}>CWD</button>}
             <button
               type="button"
               className="terminal-files-refresh"
               aria-label="Refresh Files"
               title="Refresh Files"
-              onClick={() => setRefreshToken(previous => previous + 1)}
+              onClick={refreshFiles}
             >
               ↻
             </button>
@@ -383,6 +552,13 @@ function TerminalFilesPanel({
       </header>
       {!collapsed && (
         <>
+          <input
+            ref={uploadInputRef}
+            className="fb-hidden-input terminal-files-upload"
+            type="file"
+            multiple
+            onChange={event => void handleUploadInput(event)}
+          />
           <form className="terminal-files-path" aria-label="Files panel path form" onSubmit={submitPath}>
             <input aria-label="Files panel path" value={pathDraft} onChange={event => setPathDraft(event.target.value)} />
           </form>
@@ -397,9 +573,11 @@ function TerminalFilesPanel({
             onOpenFile={openPeek}
             onExpandedPathsChange={expandedPaths => updateFilesState(previous => ({ ...previous, expandedPaths }))}
             onScrollTopChange={treeScrollTop => updateFilesState(previous => ({ ...previous, treeScrollTop }))}
+            onItemContextMenu={(event, item) => openContextMenu(event, item)}
+            onBackgroundContextMenu={event => openContextMenu(event, null)}
           />
           <footer className="terminal-files-footer" title={sendTarget || undefined}>
-            Target · {sendTargetLabel || 'focus a session'}
+            {operationLabel ? `${operationLabel}…` : `Target · ${sendTargetLabel || 'focus a session'}`}
           </footer>
           <div
             className="dock-resizer"
@@ -429,6 +607,111 @@ function TerminalFilesPanel({
             if (sendTarget) openSendToSession(sendTarget, `Please inspect:\n\n${path}\n\nNote: `)
           }}
         />
+      )}
+      {contextMenu && (
+        <FileContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          item={contextMenu.item}
+          itemPinned={Boolean(contextMenu.item && pinnedPaths.some(item => item.path === contextMenu.item!.path))}
+          currentPathPinned={pinnedPaths.some(item => item.path === filesState.currentPath)}
+          onClose={() => setContextMenu(null)}
+          onOpen={item => {
+            setContextMenu(null)
+            if (item.isDir) navigateTo(item.path)
+            else openPeek(item)
+          }}
+          onDownload={item => {
+            window.open(getDownloadUrl(item.path), '_blank')
+            setContextMenu(null)
+          }}
+          onRename={startRename}
+          onTogglePin={togglePin}
+          onCopyPath={copyPath}
+          onCopyRelativePath={path => {
+            void copyTextToClipboard(pathRelativeTo(filesState.currentPath, path))
+            setContextMenu(null)
+          }}
+          onOpenParent={path => {
+            setContextMenu(null)
+            onOpenInFiles(getParentPath(path))
+          }}
+          onDelete={requestDelete}
+          onNewFile={() => startCreate('file')}
+          onNewFolder={() => startCreate('folder')}
+          onUpload={() => {
+            setContextMenu(null)
+            uploadInputRef.current?.click()
+          }}
+          onRefresh={() => {
+            setContextMenu(null)
+            refreshFiles()
+          }}
+          onCopyCurrentPath={() => copyPath(filesState.currentPath)}
+          onToggleCurrentPathPin={() => {
+            togglePinnedPath(filesState.currentPath, 'directory')
+            setContextMenu(null)
+          }}
+        />
+      )}
+      {nameDialog && (
+        <div className="fb-dialog-overlay">
+          <div
+            className="fb-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={nameDialog.kind === 'rename' ? `Rename ${nameDialog.item?.name || 'item'}` : nameDialog.kind === 'folder' ? 'New Folder' : 'New File'}
+          >
+            <div className="fb-dialog-header">
+              <h3>{nameDialog.kind === 'rename' ? 'Rename' : nameDialog.kind === 'folder' ? 'New Folder' : 'New File'}</h3>
+              <button className="fb-dialog-close" type="button" onClick={() => setNameDialog(null)}>×</button>
+            </div>
+            <form onSubmit={event => void submitNameDialog(event)}>
+              <div className="fb-dialog-body">
+                <label className="fb-dialog-label">
+                  {nameDialog.kind === 'rename' ? 'New name' : nameDialog.kind === 'folder' ? 'Folder name' : 'File name'}
+                  <input
+                    className="fb-dialog-input"
+                    aria-label={nameDialog.kind === 'rename' ? 'New name' : nameDialog.kind === 'folder' ? 'Folder name' : 'File name'}
+                    value={nameDialog.value}
+                    onChange={event => setNameDialog(previous => previous ? { ...previous, value: event.target.value } : previous)}
+                    autoFocus
+                  />
+                </label>
+              </div>
+              <div className="fb-dialog-footer">
+                <button className="fb-dialog-btn fb-dialog-btn-cancel" type="button" onClick={() => setNameDialog(null)}>Cancel</button>
+                <button className="fb-dialog-btn fb-dialog-btn-primary" type="submit" disabled={!nameDialog.value.trim()}>
+                  {nameDialog.kind === 'rename' ? 'Rename' : 'Create'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {deleteTarget && (
+        <div className="fb-dialog-overlay">
+          <div className="fb-dialog fb-dialog-danger" role="dialog" aria-modal="true" aria-label={`Delete ${deleteTarget.name}`}>
+            <div className="fb-dialog-header">
+              <h3>Delete {deleteTarget.name}</h3>
+              <button className="fb-dialog-close" type="button" onClick={() => setDeleteTarget(null)}>×</button>
+            </div>
+            <div className="fb-dialog-body">
+              <p className="fb-dialog-message">This permanently removes the selected item from disk.</p>
+            </div>
+            <div className="fb-dialog-footer">
+              <button className="fb-dialog-btn fb-dialog-btn-cancel" type="button" onClick={() => setDeleteTarget(null)}>Cancel</button>
+              <button className="fb-dialog-btn fb-dialog-btn-danger" type="button" onClick={() => void confirmDelete()}>Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {toast && (
+        <div className="fb-error-toast" role="alert">
+          <span className="fb-error-toast-icon">!</span>
+          <span className="fb-error-toast-message">{toast}</span>
+          <button className="fb-error-toast-dismiss" type="button" onClick={() => setToast(null)}>x</button>
+        </div>
       )}
     </aside>
   )

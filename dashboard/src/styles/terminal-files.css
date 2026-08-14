@@ -83,6 +83,7 @@
   cursor: not-allowed;
 }
 
+.terminal-files-up,
 .terminal-files-cwd,
 .terminal-files-refresh {
   min-height: 28px;
