@@ -496,8 +496,8 @@ exit 0
 		t.Fatalf("read fake tmux args: %v", err)
 	}
 	calls := splitScheduledTmuxCalls(raw)
-	if len(calls) != 5 {
-		t.Fatalf("tmux calls = %#v, want list-panes, load-buffer, guarded paste, guarded submit key, then one fail-closed composer capture", calls)
+	if len(calls) != 4 {
+		t.Fatalf("tmux calls = %#v, want list-panes, load-buffer, guarded paste, then one guarded submit key; scheduled delivery must not inherit interactive composer retries", calls)
 	}
 	if calls[0][2] != "list-panes" {
 		t.Fatalf("first call = %#v, want pane resolution before any side effect", calls[0])
@@ -520,9 +520,7 @@ exit 0
 			t.Fatalf("guarded submit call = %#v, want it to contain %q", calls[3], want)
 		}
 	}
-	if got := strings.Join(calls[4], "\x00"); !strings.Contains(got, "capture-pane\x00-p\x00-J\x00-t\x00%1\x00-S\x00-200") {
-		t.Fatalf("post-submit observation call = %#v, want a bounded exact-pane capture", calls[4])
-	}
+
 	for _, call := range calls {
 		for _, arg := range call {
 			if strings.Contains(arg, "rm -rf") {
@@ -554,10 +552,10 @@ exit 0
 		t.Fatalf("read fake tmux args after second delivery: %v", err)
 	}
 	calls = splitScheduledTmuxCalls(raw)
-	if len(calls) != 10 {
-		t.Fatalf("tmux calls after two sends = %#v, want five calls per delivery", calls)
+	if len(calls) != 8 {
+		t.Fatalf("tmux calls after two sends = %#v, want four calls per scheduled delivery", calls)
 	}
-	if calls[1][4] == calls[6][4] {
+	if calls[1][4] == calls[5][4] {
 		t.Fatalf("scheduled deliveries reused buffer %q; timeout cleanup could delete a later run", calls[1][4])
 	}
 }

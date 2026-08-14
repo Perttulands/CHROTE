@@ -60,9 +60,9 @@ func (r *ScheduledTmuxRunner) ValidateTarget(ctx context.Context, target schedul
 
 // SendPrompt delivers the prompt through the same guarded paste path as Send to
 // Session: the prompt is loaded into a private tmux buffer and pasted only while
-// the resolved pane generation still matches, then one guarded submit key and at
-// most one evidence-gated retry are dispatched. Prompt text is never
-// shell-interpolated.
+// the resolved pane generation still matches, then one guarded submit key is
+// dispatched. Interactive composer retries belong only to Send to Session.
+// Prompt text is never shell-interpolated.
 func (r *ScheduledTmuxRunner) SendPrompt(ctx context.Context, target scheduled.Target, prompt string) (scheduled.Delivery, error) {
 	resolved, err := r.tmux.targetForUnixUserContext(ctx, target.UnixUser)
 	if err != nil {
@@ -84,7 +84,7 @@ func (r *ScheduledTmuxRunner) SendPrompt(ctx context.Context, target scheduled.T
 
 	bufferSuffix := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(payloadPath), "chrote-scheduled-prompt-"), ".txt")
 	bufferName := "chrote-scheduled-" + strings.TrimPrefix(pane.PaneID, "%") + "-" + bufferSuffix
-	result, err := r.tmux.sendBufferToPane(ctx, ctx, scheduledTmuxCleanupReserve, resolved, pane, bufferName, payloadPath, true)
+	result, err := r.tmux.sendBufferToPane(ctx, ctx, scheduledTmuxCleanupReserve, resolved, pane, bufferName, payloadPath, true, false)
 	if err != nil {
 		return scheduled.Delivery{}, err
 	}

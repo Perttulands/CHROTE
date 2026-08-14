@@ -53,6 +53,7 @@ func newSendHarness(t *testing.T, panes string) sendHarness {
 	paneCount := filepath.Join(dir, "pane-count")
 	captureCount := filepath.Join(dir, "capture-count")
 	submitCount := filepath.Join(dir, "submit-count")
+	payloadPath := filepath.Join(dir, "payload-path")
 	tmuxScript := `#!/bin/sh
 for arg in "$@"; do printf '%s\n' "$arg" >> "$TMUX_SEND_LOG"; done
 printf '%s\n' '---' >> "$TMUX_SEND_LOG"
@@ -75,13 +76,18 @@ case "${1:-}" in
     ;;
   load-buffer)
     [ "${TMUX_SEND_FAIL_LOAD:-}" = 1 ] && exit 7
+    for arg in "$@"; do payload_path="$arg"; done
+    printf '%s' "$payload_path" > "$TMUX_SEND_PAYLOAD_PATH"
     ;;
   capture-pane)
     count=0
     if [ -f "$TMUX_SEND_CAPTURE_COUNT" ]; then count=$(cat "$TMUX_SEND_CAPTURE_COUNT"); fi
     count=$((count + 1)); printf '%s' "$count" > "$TMUX_SEND_CAPTURE_COUNT"
     if [ "${TMUX_SEND_CAPTURE_FAIL_AT:-}" = "$count" ]; then exit 12; fi
-    if [ "$count" -eq 1 ]; then
+    if [ "${TMUX_SEND_CAPTURE_COLLAPSED_CODEX:-}" = 1 ]; then
+      size=$(wc -c < "$(cat "$TMUX_SEND_PAYLOAD_PATH")")
+      printf '╭ OpenAI Codex (v0.147.0)\n› [Pasted Content %s chars]\n  gpt-5.6-sol xhigh' "$size"
+    elif [ "$count" -eq 1 ]; then
       printf '%s' "${TMUX_SEND_CAPTURE_ONE:-}"
     else
       printf '%s' "${TMUX_SEND_CAPTURE_TWO:-${TMUX_SEND_CAPTURE_ONE:-}}"
@@ -153,6 +159,7 @@ exit 0
 	t.Setenv("TMUX_SEND_PANE_COUNT", paneCount)
 	t.Setenv("TMUX_SEND_CAPTURE_COUNT", captureCount)
 	t.Setenv("TMUX_SEND_SUBMIT_COUNT", submitCount)
+	t.Setenv("TMUX_SEND_PAYLOAD_PATH", payloadPath)
 	t.Setenv("TMUX_SEND_PANES", panes)
 	t.Setenv("CHROTE_SESSION_DROPS_DIR", filepath.Join(dir, "drops"))
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
@@ -535,6 +542,20 @@ func TestSendToSessionRetriesOnceForStableRecognizedPendingComposer(t *testing.T
 	}
 	if len(bounded) != 3 || bounded[0] || !bounded[1] || !bounded[2] {
 		t.Fatalf("sleep deadline states = %v, want only both observations bounded", bounded)
+	}
+}
+
+func TestSendToSessionRetriesOnceForStableCodexCollapsedPaste(t *testing.T) {
+	prompt := strings.Repeat("x", 9477)
+	h := newSendHarness(t, "$7	one	%41	111	9001	@3	work	/home/alice	codex	1\n")
+	t.Setenv("TMUX_SEND_CAPTURE_COLLAPSED_CODEX", "1")
+
+	recorder := h.send(t, "one", map[string]string{"text": prompt, "submit": "true"})
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if got := strings.Count(readOptionalFile(t, h.submitLog), "dispatched\n"); got != 2 {
+		t.Fatalf("submit keys dispatched = %d, want first Enter plus one retry for the observed Codex collapsed-paste composer\ntmux log:\n%s", got, readOptionalFile(t, h.tmuxLog))
 	}
 }
 

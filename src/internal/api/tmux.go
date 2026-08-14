@@ -23,6 +23,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/chrote/server/internal/core"
 )
@@ -2561,10 +2562,15 @@ func submitHarnessForPane(pane sendPaneTarget) tmuxSubmitHarness {
 	}
 }
 
-func submitPayloadWitness(payloadPath string) (string, bool) {
+type submitPayloadEvidence struct {
+	witness            string
+	codexCollapsedTags []string
+}
+
+func readSubmitPayloadEvidence(payloadPath string) (submitPayloadEvidence, bool) {
 	raw, err := os.ReadFile(payloadPath)
 	if err != nil {
-		return "", false
+		return submitPayloadEvidence{}, false
 	}
 	for _, line := range strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n") {
 		witness := strings.Join(strings.Fields(line), " ")
@@ -2575,12 +2581,19 @@ func submitPayloadWitness(payloadPath string) (string, bool) {
 		if len(runes) > 80 {
 			witness = string(runes[:80])
 		}
-		return witness, true
+		evidence := submitPayloadEvidence{witness: witness}
+		for _, size := range []int{len(raw), utf8.RuneCount(raw)} {
+			tag := fmt.Sprintf("[Pasted Content %d chars]", size)
+			if len(evidence.codexCollapsedTags) == 0 || evidence.codexCollapsedTags[len(evidence.codexCollapsedTags)-1] != tag {
+				evidence.codexCollapsedTags = append(evidence.codexCollapsedTags, tag)
+			}
+		}
+		return evidence, true
 	}
-	return "", false
+	return submitPayloadEvidence{}, false
 }
 
-func pendingSubmitComposer(harness tmuxSubmitHarness, capture, witness string) (string, bool) {
+func pendingSubmitComposer(harness tmuxSubmitHarness, capture string, evidence submitPayloadEvidence) (string, bool) {
 	capture = strings.ReplaceAll(capture, "\r", "")
 	lower := strings.ToLower(capture)
 	if strings.Contains(lower, "esc to interrupt") ||
@@ -2622,7 +2635,16 @@ func pendingSubmitComposer(harness tmuxSubmitHarness, capture, witness string) (
 		return "", false
 	}
 	composer := strings.Join(strings.Fields(strings.Join(lines[composerStart:], "\n")), " ")
-	if !strings.Contains(composer, witness) {
+	matchesPayload := strings.Contains(composer, evidence.witness)
+	if harness == tmuxSubmitHarnessCodex && !matchesPayload {
+		for _, tag := range evidence.codexCollapsedTags {
+			if strings.Contains(composer, tag) {
+				matchesPayload = true
+				break
+			}
+		}
+	}
+	if !matchesPayload {
 		return "", false
 	}
 	return composer, true
@@ -2633,7 +2655,7 @@ func (h *TmuxHandler) shouldRetrySubmit(ctx context.Context, target tmuxTarget, 
 	if harness == tmuxSubmitHarnessUnknown {
 		return false
 	}
-	witness, ok := submitPayloadWitness(payloadPath)
+	evidence, ok := readSubmitPayloadEvidence(payloadPath)
 	if !ok {
 		return false
 	}
@@ -2647,7 +2669,7 @@ func (h *TmuxHandler) shouldRetrySubmit(ctx context.Context, target tmuxTarget, 
 		if err != nil {
 			return "", false
 		}
-		return pendingSubmitComposer(harness, output, witness)
+		return pendingSubmitComposer(harness, output, evidence)
 	}
 	first, ok := capture()
 	if !ok {
@@ -2720,11 +2742,12 @@ func paneSendCleanupContext(operationCtx context.Context, budget time.Duration) 
 // sendBufferToPane is the single delivery path shared by Send to Session and
 // scheduled tasks: load the payload into a private buffer, paste it only while
 // the pinned pane generation still matches, optionally dispatch one guarded
-// Enter and at most one evidence-gated guarded retry, and leave no buffer behind.
+// Enter, and leave no buffer behind. Interactive sends may additionally allow
+// one evidence-gated guarded retry; unattended scheduled sends do not.
 // Interactive sends pass a background operation
 // context so request cancellation cannot tear down a half-applied operator action;
 // scheduled sends pass their bounded delivery context end to end.
-func (h *TmuxHandler) sendBufferToPane(loadCtx, operationCtx context.Context, cleanupReserve time.Duration, target tmuxTarget, pane sendPaneTarget, bufferName, payloadPath string, submit bool) (paneSendResult, error) {
+func (h *TmuxHandler) sendBufferToPane(loadCtx, operationCtx context.Context, cleanupReserve time.Duration, target tmuxTarget, pane sendPaneTarget, bufferName, payloadPath string, submit, retryPendingComposer bool) (paneSendResult, error) {
 	if operationCtx == nil {
 		operationCtx = context.Background()
 	}
@@ -2812,6 +2835,9 @@ func (h *TmuxHandler) sendBufferToPane(loadCtx, operationCtx context.Context, cl
 	}
 	switch marker := strings.TrimSpace(output); marker {
 	case atomicSendSubmitKeyMarker:
+		if !retryPendingComposer {
+			return paneSendResult{Kind: paneSendDelivered, SubmitKeyDispatched: true, BufferCleaned: true}, nil
+		}
 		// A second Enter is eligible only when two bounded captures positively
 		// identify the same non-empty pending prompt in a recognized idle composer.
 		// The retry itself uses the same immutable server-side generation guard.
@@ -3528,7 +3554,7 @@ func (h *TmuxHandler) SendToSession(w http.ResponseWriter, r *http.Request) {
 			"timestamp":           time.Now().UTC().Format(time.RFC3339),
 		})
 	}
-	result, err := h.sendBufferToPane(r.Context(), context.Background(), 0, target, pane, bufferName, manifest.Payload, submissionRequested)
+	result, err := h.sendBufferToPane(r.Context(), context.Background(), 0, target, pane, bufferName, manifest.Payload, submissionRequested, true)
 	if err != nil {
 		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
 		return
