@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
@@ -14,6 +14,7 @@ const removeSessionFromWindow = vi.fn()
 const renameSession = vi.fn()
 const deleteSession = vi.fn()
 const reconnectIframe = vi.fn()
+const triggerFit = vi.fn()
 const setFocusedWindowKey = vi.fn()
 const setActiveSession = vi.fn()
 const openSendToSession = vi.fn()
@@ -57,6 +58,10 @@ vi.mock('../context/SessionContext', () => ({
       { name: 'forge-existing', windows: 1, attached: false, group: 'forge', unixUser: 'build' },
       { name: 'shell-existing', windows: 1, attached: false, group: 'shell', unixUser: 'alice' },
     ],
+    sessionBank: [
+      { name: 'forge-existing', unixUser: 'build', cwd: '/srv/forge' },
+      { name: 'shell-existing', unixUser: 'alice', cwd: '/srv/shell' },
+    ],
     layoutPresets: [{ id: 'preset-1', name: 'Focus Layout', createdAt: 1, workspaces: {} }],
     refreshSessions,
     createSession,
@@ -86,7 +91,7 @@ vi.mock('./IframePool', () => ({
     isLoaded: vi.fn(() => false),
     loadedSessions: poolState.loadedSessions,
     getIframe: vi.fn(() => null),
-    triggerFit: vi.fn(),
+    triggerFit,
     focusIframe: vi.fn(),
     reconnectIframe,
   }),
@@ -97,7 +102,7 @@ const terminalCss = () => readFileSync(resolve(testDir, '../styles/terminal.css'
 
 function dispatchContextMenu(target: Element) {
   const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 350, clientY: 230 })
-  target.dispatchEvent(event)
+  act(() => target.dispatchEvent(event))
   return event
 }
 
@@ -153,20 +158,71 @@ describe('TerminalWindow launch user', () => {
     await waitFor(() => expect(createSession).toHaveBeenCalled())
   })
 
-  it('does not intercept right-click on session tags', () => {
-    const { container } = render(
+  it('opens only the requested actions for the clicked session tag', () => {
+    const openFilesAtPath = vi.fn()
+    render(
       <TerminalWindow
         workspaceId="terminal3"
-        window={{ id: 'terminal3-window-0', boundSessions: ['forge-existing'], activeSession: 'forge-existing', colorIndex: 0 }}
+        window={{
+          id: 'terminal3-window-0',
+          boundSessions: ['build:forge-existing', 'alice:shell-existing'],
+          activeSession: 'build:forge-existing',
+          colorIndex: 0,
+        }}
+        onOpenFilesAtPath={openFilesAtPath}
       />
     )
 
-    const event = dispatchContextMenu(screen.getByText('forge-existing'))
+    const openInactiveMenu = () => dispatchContextMenu(screen.getByText('shell-existing'))
 
-    expect(event.defaultPrevented).toBe(false)
-    expect(container.querySelector('.session-context-menu')).toBeNull()
+    const sendEvent = openInactiveMenu()
+    expect(sendEvent.defaultPrevented).toBe(true)
+    const menuButtons = screen.getAllByRole('button').filter(button => button.closest('.session-context-menu'))
+    expect(menuButtons).toHaveLength(5)
+    for (const label of [
+      'Send to session',
+      'Reconnect frame',
+      'Refit frame',
+      'Open files in working directory',
+      'Kill session',
+    ]) {
+      expect(screen.getByRole('button', { name: label })).toBeInTheDocument()
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Send to session' }))
+    expect(openSendToSession).toHaveBeenCalledWith('alice:shell-existing')
+
+    openInactiveMenu()
+    fireEvent.click(screen.getByRole('button', { name: 'Reconnect frame' }))
+    expect(reconnectIframe).toHaveBeenCalledWith('alice:shell-existing')
+
+    openInactiveMenu()
+    fireEvent.click(screen.getByRole('button', { name: 'Refit frame' }))
+    expect(triggerFit).toHaveBeenCalledWith('alice:shell-existing')
+
+    openInactiveMenu()
+    fireEvent.click(screen.getByRole('button', { name: 'Open files in working directory' }))
+    expect(openFilesAtPath).toHaveBeenCalledWith('/srv/shell')
+
+    openInactiveMenu()
+    fireEvent.click(screen.getByRole('button', { name: 'Kill session' }))
+    expect(deleteSession).toHaveBeenCalledWith('shell-existing', 'alice')
+
     expect(screen.queryByRole('button', { name: /Rename/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Kill/i })).not.toBeInTheDocument()
+    expect(setActiveSession).not.toHaveBeenCalled()
+  })
+
+  it('disables working-directory routing when the clicked session has no reported cwd', () => {
+    render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['missing-session'], activeSession: 'missing-session', colorIndex: 0 }}
+        onOpenFilesAtPath={vi.fn()}
+      />
+    )
+
+    dispatchContextMenu(screen.getByText('missing-session'))
+
+    expect(screen.getByRole('button', { name: 'Open files in working directory' })).toBeDisabled()
   })
 
   it('does not hide a Send action behind ctrl-click on an attached session tag', () => {

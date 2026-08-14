@@ -40,6 +40,7 @@ interface TerminalFilesPanelProps {
   onClose: () => void
   onWidthChange: (width: number) => void
   onOpenInFiles: (path: string) => void
+  navigateRequest?: { path: string; requestId: number } | null
 }
 
 interface FilePeekProps {
@@ -247,6 +248,7 @@ function TerminalFilesPanel({
   onClose,
   onWidthChange,
   onOpenInFiles,
+  navigateRequest,
 }: TerminalFilesPanelProps) {
   const { workspaces, focusedWindowKey, sessionBank, openSendToSession } = useSession()
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
@@ -304,6 +306,10 @@ function TerminalFilesPanel({
       treeScrollTop: 0,
     }))
   }, [updateFilesState])
+
+  useEffect(() => {
+    if (navigateRequest) navigateTo(navigateRequest.path)
+  }, [navigateRequest, navigateTo])
 
   const openPeek = useCallback((item: FileItem) => {
     const width = Math.min(760, Math.max(360, window.innerWidth - 96))

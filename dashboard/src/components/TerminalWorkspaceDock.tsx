@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import { FolderTree, SquareTerminal } from 'lucide-react'
 import type { WorkspaceId } from '../types'
@@ -62,6 +62,8 @@ function TerminalWorkspaceDock({
   const { sessions } = useSession()
   const isNarrow = useMediaQuery('(max-width: 768px)')
   const [filesDockState, setFilesDockState] = useState<WorkspaceFilesDockState>(() => readWorkspaceFilesDockState(workspaceId))
+  const [filesNavigateRequest, setFilesNavigateRequest] = useState<{ path: string; requestId: number } | null>(null)
+  const nextFilesNavigateRequestId = useRef(0)
   const sessionsOpen = sessionsDockState.open
   const filesOpen = filesDockState.open
   const openSidecarCount = Number(sessionsOpen) + Number(filesOpen)
@@ -99,6 +101,12 @@ function TerminalWorkspaceDock({
 
   const closeFiles = useCallback(() => {
     setFilesDockState(previous => ({ ...previous, open: false }))
+  }, [])
+
+  const openFilesAtPath = useCallback((path: string) => {
+    nextFilesNavigateRequestId.current += 1
+    setFilesNavigateRequest({ path, requestId: nextFilesNavigateRequestId.current })
+    setFilesDockState(previous => ({ ...previous, open: true }))
   }, [])
 
   const closeAllSidecars = useCallback(() => {
@@ -211,9 +219,14 @@ function TerminalWorkspaceDock({
           onClose={closeFiles}
           onWidthChange={width => setFilesDockState(previous => ({ ...previous, width }))}
           onOpenInFiles={onOpenInFiles}
+          navigateRequest={filesNavigateRequest}
         />
       )}
-      <TerminalArea workspaceId={workspaceId} sidecarControls={sidecarControls} />
+      <TerminalArea
+        workspaceId={workspaceId}
+        sidecarControls={sidecarControls}
+        onOpenFilesAtPath={openFilesAtPath}
+      />
     </div>
   )
 }

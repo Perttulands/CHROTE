@@ -198,6 +198,31 @@ describe('TerminalFilesPanel', () => {
     })
   })
 
+  it('navigates an already-mounted sidecar when a workspace request changes', async () => {
+    const props = {
+      workspaceId: 'terminal1' as const,
+      collapsed: false,
+      width: 320,
+      pinned: true,
+      canPin: true,
+      panelId: 'terminal1-files-sidecar',
+      onTogglePin: vi.fn(),
+      onClose: vi.fn(),
+      onWidthChange: vi.fn(),
+      onOpenInFiles: vi.fn(),
+    }
+    const { rerender } = render(<TerminalFilesPanel {...props} />)
+
+    rerender(
+      <TerminalFilesPanel
+        {...props}
+        navigateRequest={{ path: '/srv/chrote', requestId: 1 }}
+      />,
+    )
+
+    await waitFor(() => expect(screen.getByLabelText('Files panel path')).toHaveValue('/srv/chrote'))
+  })
+
   it('invalidates the FileTree cache when Refresh is clicked', async () => {
     render(
       <TerminalFilesPanel
