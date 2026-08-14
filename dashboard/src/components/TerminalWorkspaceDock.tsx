@@ -109,6 +109,10 @@ function TerminalWorkspaceDock({
     setFilesDockState(previous => ({ ...previous, open: true }))
   }, [])
 
+  const handleFilesNavigateRequest = useCallback((requestId: number) => {
+    setFilesNavigateRequest(previous => previous?.requestId === requestId ? null : previous)
+  }, [])
+
   const closeAllSidecars = useCallback(() => {
     closeSessions()
     closeFiles()
@@ -220,12 +224,14 @@ function TerminalWorkspaceDock({
           onWidthChange={width => setFilesDockState(previous => ({ ...previous, width }))}
           onOpenInFiles={onOpenInFiles}
           navigateRequest={filesNavigateRequest}
+          onNavigateRequestHandled={handleFilesNavigateRequest}
         />
       )}
       <TerminalArea
         workspaceId={workspaceId}
         sidecarControls={sidecarControls}
         onOpenFilesAtPath={openFilesAtPath}
+        workspaceActive={active}
       />
     </div>
   )

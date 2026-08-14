@@ -177,7 +177,7 @@ describe('TerminalWindow launch user', () => {
 
     const sendEvent = openInactiveMenu()
     expect(sendEvent.defaultPrevented).toBe(true)
-    const menuButtons = screen.getAllByRole('button').filter(button => button.closest('.session-context-menu'))
+    const menuButtons = screen.getAllByRole('menuitem')
     expect(menuButtons).toHaveLength(5)
     for (const label of [
       'Send to session',
@@ -186,29 +186,85 @@ describe('TerminalWindow launch user', () => {
       'Open files in working directory',
       'Kill session',
     ]) {
-      expect(screen.getByRole('button', { name: label })).toBeInTheDocument()
+      expect(screen.getByRole('menuitem', { name: label })).toBeInTheDocument()
     }
-    fireEvent.click(screen.getByRole('button', { name: 'Send to session' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Send to session' }))
     expect(openSendToSession).toHaveBeenCalledWith('alice:shell-existing')
 
     openInactiveMenu()
-    fireEvent.click(screen.getByRole('button', { name: 'Reconnect frame' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Reconnect frame' }))
     expect(reconnectIframe).toHaveBeenCalledWith('alice:shell-existing')
 
     openInactiveMenu()
-    fireEvent.click(screen.getByRole('button', { name: 'Refit frame' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Refit frame' }))
     expect(triggerFit).toHaveBeenCalledWith('alice:shell-existing')
 
     openInactiveMenu()
-    fireEvent.click(screen.getByRole('button', { name: 'Open files in working directory' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Open files in working directory' }))
     expect(openFilesAtPath).toHaveBeenCalledWith('/srv/shell')
 
     openInactiveMenu()
-    fireEvent.click(screen.getByRole('button', { name: 'Kill session' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Kill session' }))
     expect(deleteSession).toHaveBeenCalledWith('shell-existing', 'alice')
 
     expect(screen.queryByRole('button', { name: /Rename/i })).not.toBeInTheDocument()
     expect(setActiveSession).not.toHaveBeenCalled()
+  })
+
+  it('uses the original bound key for iframe actions on supported bare legacy tags', () => {
+    render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{
+          id: 'terminal3-window-0',
+          boundSessions: ['shell-existing'],
+          activeSession: 'shell-existing',
+          colorIndex: 0,
+        }}
+      />,
+    )
+
+    dispatchContextMenu(screen.getByText('shell-existing'))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Reconnect frame' }))
+    expect(reconnectIframe).toHaveBeenCalledWith('shell-existing')
+
+    dispatchContextMenu(screen.getByText('shell-existing'))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Refit frame' }))
+    expect(triggerFit).toHaveBeenCalledWith('shell-existing')
+  })
+
+  it('opens the tag menu from the keyboard and restores focus on Escape', () => {
+    const { container } = render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['build:forge-existing'], activeSession: 'build:forge-existing', colorIndex: 0 }}
+      />,
+    )
+    const tag = container.querySelector('.session-tag') as HTMLElement
+    tag.focus()
+    fireEvent.keyDown(tag, { key: 'ContextMenu' })
+
+    const menu = screen.getByRole('menu', { name: 'Session actions for forge-existing' })
+    expect(menu).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Send to session' })).toHaveFocus()
+    fireEvent.keyDown(menu, { key: 'ArrowDown' })
+    expect(screen.getByRole('menuitem', { name: 'Reconnect frame' })).toHaveFocus()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(tag).toHaveFocus()
+  })
+
+  it('clears an open tag menu when its keep-alive workspace becomes inactive', () => {
+    const props = {
+      workspaceId: 'terminal3' as const,
+      window: { id: 'terminal3-window-0', boundSessions: ['build:forge-existing'], activeSession: 'build:forge-existing', colorIndex: 0 },
+    }
+    const { rerender } = render(<TerminalWindow {...props} {...({ workspaceActive: true } as any)} />)
+    dispatchContextMenu(screen.getByText('forge-existing'))
+    expect(document.querySelector('.session-context-menu')).toBeInTheDocument()
+
+    rerender(<TerminalWindow {...props} {...({ workspaceActive: false } as any)} />)
+    expect(document.querySelector('.session-context-menu')).not.toBeInTheDocument()
   })
 
   it('disables working-directory routing when the clicked session has no reported cwd', () => {
@@ -222,7 +278,7 @@ describe('TerminalWindow launch user', () => {
 
     dispatchContextMenu(screen.getByText('missing-session'))
 
-    expect(screen.getByRole('button', { name: 'Open files in working directory' })).toBeDisabled()
+    expect(screen.getByRole('menuitem', { name: 'Open files in working directory' })).toBeDisabled()
   })
 
   it('does not hide a Send action behind ctrl-click on an attached session tag', () => {

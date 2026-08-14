@@ -18,6 +18,7 @@ import {
   uploadFiles,
 } from './FilesView/fileService'
 import { getParentPath, joinFilePath, pathRelativeTo } from './FilesView/pathActions'
+import { pruneViewStates, remapViewStates } from './FilesView/openFilesModel'
 import { usePinnedPaths } from './FilesView/pinnedPaths'
 import type { FileItem } from './FilesView/types'
 import {
@@ -41,6 +42,7 @@ interface TerminalFilesPanelProps {
   onWidthChange: (width: number) => void
   onOpenInFiles: (path: string) => void
   navigateRequest?: { path: string; requestId: number } | null
+  onNavigateRequestHandled?: (requestId: number) => void
 }
 
 interface FilePeekProps {
@@ -249,6 +251,7 @@ function TerminalFilesPanel({
   onWidthChange,
   onOpenInFiles,
   navigateRequest,
+  onNavigateRequestHandled,
 }: TerminalFilesPanelProps) {
   const { workspaces, focusedWindowKey, sessionBank, openSendToSession } = useSession()
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
@@ -308,8 +311,10 @@ function TerminalFilesPanel({
   }, [updateFilesState])
 
   useEffect(() => {
-    if (navigateRequest) navigateTo(navigateRequest.path)
-  }, [navigateRequest, navigateTo])
+    if (!navigateRequest) return
+    navigateTo(navigateRequest.path)
+    onNavigateRequestHandled?.(navigateRequest.requestId)
+  }, [navigateRequest, navigateTo, onNavigateRequestHandled])
 
   const openPeek = useCallback((item: FileItem) => {
     const width = Math.min(760, Math.max(360, window.innerWidth - 96))
@@ -402,6 +407,7 @@ function TerminalFilesPanel({
               ...previous,
               selectedPath: remapPath(previous.selectedPath),
               expandedPaths: previous.expandedPaths.map(path => remapPath(path) || path),
+              fileViewStates: remapViewStates(previous.fileViewStates, sourcePath, destination),
               peek: previous.peek && peekPath ? {
                 ...previous.peek,
                 path: peekPath,
@@ -437,6 +443,7 @@ function TerminalFilesPanel({
           ? null
           : previous.selectedPath,
         expandedPaths: previous.expandedPaths.filter(path => path !== deletedPath && !path.startsWith(`${deletedPath}/`)),
+        fileViewStates: pruneViewStates(previous.fileViewStates, [deletedPath]),
         peek: previous.peek && (previous.peek.path === deletedPath || previous.peek.path.startsWith(`${deletedPath}/`))
           ? null
           : previous.peek,

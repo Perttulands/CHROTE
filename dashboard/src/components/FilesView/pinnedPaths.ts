@@ -12,6 +12,8 @@ export const PINNED_STORAGE_KEY = 'chrote.files.pinnedPaths'
 const PINNED_PATHS_EVENT = 'chrote:pinned-paths-change'
 const MAX_PINNED_PATHS = 20
 
+let pinnedPathsSnapshot: SavedPath[] | null = null
+
 function normalizePinnedPaths(value: unknown): SavedPath[] {
   if (!Array.isArray(value)) return []
 
@@ -37,27 +39,49 @@ function normalizePinnedPaths(value: unknown): SavedPath[] {
   return normalized.slice(0, MAX_PINNED_PATHS)
 }
 
-export function readPinnedPaths(): SavedPath[] {
-  if (typeof window === 'undefined') return []
+function parsePinnedPaths(raw: string | null): SavedPath[] {
+  if (!raw) return []
   try {
-    const raw = window.localStorage.getItem(PINNED_STORAGE_KEY)
-    if (!raw) return []
-    const paths = normalizePinnedPaths(JSON.parse(raw) as unknown)
-    const serialized = JSON.stringify(paths)
-    if (serialized !== raw) window.localStorage.setItem(PINNED_STORAGE_KEY, serialized)
-    return paths
+    return normalizePinnedPaths(JSON.parse(raw) as unknown)
   } catch {
     return []
   }
 }
 
+function adoptPinnedPaths(paths: SavedPath[]): SavedPath[] {
+  pinnedPathsSnapshot = normalizePinnedPaths(paths)
+  return pinnedPathsSnapshot
+}
+
+export function readPinnedPaths(): SavedPath[] {
+  if (typeof window === 'undefined') return pinnedPathsSnapshot ?? []
+
+  let raw: string | null
+  try {
+    raw = window.localStorage.getItem(PINNED_STORAGE_KEY)
+  } catch {
+    return pinnedPathsSnapshot ?? []
+  }
+
+  const paths = adoptPinnedPaths(parsePinnedPaths(raw))
+  const serialized = JSON.stringify(paths)
+  if (raw && serialized !== raw) {
+    try {
+      window.localStorage.setItem(PINNED_STORAGE_KEY, serialized)
+    } catch {
+      // Canonical persistence is best-effort; the valid parsed snapshot remains authoritative.
+    }
+  }
+  return paths
+}
+
 function publishPinnedPaths(paths: SavedPath[]): SavedPath[] {
-  const normalized = normalizePinnedPaths(paths)
+  const normalized = adoptPinnedPaths(paths)
   if (typeof window !== 'undefined') {
     try {
       window.localStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify(normalized))
     } catch {
-      // localStorage quota/private mode failures should not break the file UI.
+      // The mounted UI continues from the authoritative in-memory snapshot.
     }
     window.dispatchEvent(new CustomEvent<SavedPath[]>(PINNED_PATHS_EVENT, { detail: normalized }))
   }
@@ -66,7 +90,7 @@ function publishPinnedPaths(paths: SavedPath[]): SavedPath[] {
 
 export function togglePinnedPath(path: string, kind: SavedKind): SavedPath[] {
   const cleanPath = normalizeFilePath(path)
-  const current = readPinnedPaths()
+  const current = pinnedPathsSnapshot ?? readPinnedPaths()
   const next = current.some(item => item.path === cleanPath)
     ? current.filter(item => item.path !== cleanPath)
     : [{ path: cleanPath, kind }, ...current]
@@ -79,10 +103,12 @@ export function usePinnedPaths(): [SavedPath[], (path: string, kind: SavedKind) 
   useEffect(() => {
     const handlePinnedPaths = (event: Event) => {
       const customEvent = event as CustomEvent<SavedPath[]>
-      setPaths(normalizePinnedPaths(customEvent.detail))
+      setPaths(adoptPinnedPaths(customEvent.detail))
     }
     const handleStorage = (event: StorageEvent) => {
-      if (event.key === PINNED_STORAGE_KEY) setPaths(readPinnedPaths())
+      if (event.key !== PINNED_STORAGE_KEY && event.key !== null) return
+      const next = event.key === null ? [] : parsePinnedPaths(event.newValue)
+      setPaths(adoptPinnedPaths(next))
     }
     window.addEventListener(PINNED_PATHS_EVENT, handlePinnedPaths)
     window.addEventListener('storage', handleStorage)

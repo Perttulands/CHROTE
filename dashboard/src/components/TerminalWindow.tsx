@@ -52,15 +52,18 @@ interface SessionTagProps {
   onRemove: () => void
   onClick: () => void
   onOpenFilesAtPath?: (path: string) => void
+  workspaceActive: boolean
 }
 
-function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, onClick, onOpenFilesAtPath }: SessionTagProps) {
+function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, onClick, onOpenFilesAtPath, workspaceActive }: SessionTagProps) {
   const { sessions, sessionBank, settings, deleteSession, openSendToSession } = useSession()
   const pool = useIframePool()
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const contextMenuPosition = useViewportMenuPosition<HTMLDivElement>(contextMenu, {
     estimatedSize: { width: 240, height: 230 },
   })
+  const tagRef = useRef<HTMLDivElement | null>(null)
+  const firstActionRef = useRef<HTMLButtonElement | null>(null)
   const actualName = getSessionNameFromKey(sessionName)
   const unixUser = getSessionUserFromKey(sessionName)
   const matchingSessions = unixUser
@@ -73,7 +76,7 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
     ? sessionBank.filter(entry => getSessionKey(entry.name, entry.unixUser) === sessionKey)
     : sessionBank.filter(entry => entry.name === actualName)
   const workingDirectory = bankMatches.length === 1 ? bankMatches[0].cwd || null : null
-  const { listeners, setNodeRef, isDragging } = useDraggable({
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `tag-${workspaceId}-${windowId}-${sessionKey}`,
     data: { type: 'tag', sessionName: actualName, sessionKey, unixUser: resolvedUser, sourceWindowId: windowId, sourceWorkspaceId: workspaceId },
   })
@@ -95,26 +98,58 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
     onClick()
   }
 
-  const closeContextMenu = () => setContextMenu(null)
+  const handleTagKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+      event.preventDefault()
+      event.stopPropagation()
+      const rect = event.currentTarget.getBoundingClientRect()
+      openContextMenu(rect.left, rect.bottom)
+      return
+    }
+    listeners?.onKeyDown?.(event)
+  }
+
+  const setTagNodeRef = useCallback((node: HTMLDivElement | null) => {
+    tagRef.current = node
+    setNodeRef(node)
+  }, [setNodeRef])
+  const closeContextMenu = useCallback((restoreFocus = true) => {
+    setContextMenu(null)
+    if (restoreFocus) tagRef.current?.focus()
+  }, [])
+  const openContextMenu = useCallback((x: number, y: number) => {
+    setContextMenu({ x, y })
+  }, [])
   const runContextAction = (action: () => void) => {
     closeContextMenu()
     action()
   }
 
+  useEffect(() => {
+    if (!workspaceActive) closeContextMenu(false)
+  }, [closeContextMenu, workspaceActive])
+
+  useEffect(() => {
+    if (contextMenu) firstActionRef.current?.focus()
+  }, [contextMenu])
+
   return (
     <>
       <div
-        ref={setNodeRef}
+        ref={setTagNodeRef}
         className={`session-tag ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''}`}
         style={style}
         title={dragLabel}
+        {...attributes}
         {...listeners}
+        aria-label={`Session ${displayName}`}
         onClick={handleClick}
+        onKeyDown={handleTagKeyDown}
         onContextMenu={(event) => {
           if ((event.target as HTMLElement).closest('.tag-remove')) return
           event.preventDefault()
           event.stopPropagation()
-          setContextMenu({ x: event.clientX, y: event.clientY })
+          openContextMenu(event.clientX, event.clientY)
         }}
       >
         {resolvedUser && (
@@ -138,27 +173,45 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
       </div>
 
       {contextMenu && (
-        <DismissiblePanel onDismiss={closeContextMenu} panelPosition="fixed">
+        <DismissiblePanel onDismiss={() => closeContextMenu()} panelPosition="fixed">
           <div
             ref={contextMenuPosition.ref}
             className="session-context-menu"
             style={contextMenuPosition.style}
+            role="menu"
+            aria-label={`Session actions for ${displayName}`}
             onClick={event => event.stopPropagation()}
+            onKeyDown={(event) => {
+              if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+              event.preventDefault()
+              const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'))
+              if (items.length === 0) return
+              const current = items.indexOf(document.activeElement as HTMLButtonElement)
+              const next = event.key === 'Home'
+                ? 0
+                : event.key === 'End'
+                  ? items.length - 1
+                  : event.key === 'ArrowDown'
+                    ? (current + 1) % items.length
+                    : (current - 1 + items.length) % items.length
+              items[next]?.focus()
+            }}
           >
-            <button className="session-context-item" onClick={() => runContextAction(() => openSendToSession(sessionKey))}>
+            <button ref={firstActionRef} role="menuitem" className="session-context-item" onClick={() => runContextAction(() => openSendToSession(sessionKey))}>
               <span className="session-context-icon" aria-hidden="true">↗</span>
               Send to session
             </button>
-            <button className="session-context-item" onClick={() => runContextAction(() => pool.reconnectIframe(sessionKey))}>
+            <button role="menuitem" className="session-context-item" onClick={() => runContextAction(() => pool.reconnectIframe(sessionName))}>
               <span className="session-context-icon" aria-hidden="true">↻</span>
               Reconnect frame
             </button>
-            <button className="session-context-item" onClick={() => runContextAction(() => pool.triggerFit(sessionKey))}>
+            <button role="menuitem" className="session-context-item" onClick={() => runContextAction(() => pool.triggerFit(sessionName))}>
               <span className="session-context-icon" aria-hidden="true">↔</span>
               Refit frame
             </button>
             <button
               className="session-context-item"
+              role="menuitem"
               disabled={!workingDirectory || !onOpenFilesAtPath}
               onClick={() => {
                 if (workingDirectory && onOpenFilesAtPath) runContextAction(() => onOpenFilesAtPath(workingDirectory))
@@ -170,6 +223,7 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
             <div className="session-context-divider" />
             <button
               className="session-context-item session-context-danger"
+              role="menuitem"
               onClick={() => runContextAction(() => { void deleteSession(actualName, resolvedUser) })}
             >
               <span className="session-context-icon" aria-hidden="true">✕</span>
@@ -188,9 +242,10 @@ interface TerminalWindowProps {
   refitNonce?: number
   style?: React.CSSProperties
   onOpenFilesAtPath?: (path: string) => void
+  workspaceActive?: boolean
 }
 
-function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, style, onOpenFilesAtPath }: TerminalWindowProps) {
+function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, style, onOpenFilesAtPath, workspaceActive = true }: TerminalWindowProps) {
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const windowRef = useRef<HTMLDivElement>(null)
   const { setNodeRef: setDropNodeRef, isOver, active } = useDroppable({
@@ -353,6 +408,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
               onRemove={() => handleRemoveSession(sessionName)}
               onClick={() => handleTagClick(sessionName)}
               onOpenFilesAtPath={onOpenFilesAtPath}
+              workspaceActive={workspaceActive}
             />
           ))}
         </div>

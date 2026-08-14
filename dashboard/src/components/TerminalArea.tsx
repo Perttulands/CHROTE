@@ -13,9 +13,10 @@ interface TerminalAreaProps {
   workspaceId: WorkspaceId
   sidecarControls?: ReactNode
   onOpenFilesAtPath?: (path: string) => void
+  workspaceActive?: boolean
 }
 
-function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath }: TerminalAreaProps) {
+function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspaceActive = true }: TerminalAreaProps) {
   const { workspaces, setWindowCount, clearStaleSessionsFromWindow, sessions, windowRevealRequest } = useSession()
   const pool = useIframePool()
   const workspace = workspaces[workspaceId]
@@ -206,6 +207,7 @@ function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath }: Termi
               refitNonce={refitNonce}
               style={{ display: isVisible ? 'flex' : 'none' }}
               onOpenFilesAtPath={onOpenFilesAtPath}
+              workspaceActive={workspaceActive}
             />
           )
         })}

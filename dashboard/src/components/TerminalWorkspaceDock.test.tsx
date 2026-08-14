@@ -46,6 +46,7 @@ vi.mock('./TerminalFilesPanel', () => ({
     onTogglePin: () => void
     onClose: () => void
     navigateRequest?: { path: string, requestId: number } | null
+    onNavigateRequestHandled?: (requestId: number) => void
   }) => props.collapsed ? null : (
     <aside
       id={props.panelId}
@@ -54,6 +55,9 @@ vi.mock('./TerminalFilesPanel', () => ({
       data-navigate-path={props.navigateRequest?.path || ''}
     >
       {props.canPin && <button onClick={props.onTogglePin}>Pin files</button>}
+      {props.navigateRequest && (
+        <button onClick={() => props.onNavigateRequestHandled?.(props.navigateRequest!.requestId)}>Acknowledge navigation</button>
+      )}
       <button onClick={props.onClose}>Close files</button>
     </aside>
   ),
@@ -174,6 +178,12 @@ describe('TerminalWorkspaceDock sidecar state machine', () => {
 
     expect(screen.getByRole('button', { name: /Files sidecar/i })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByTestId('files-panel')).toHaveAttribute('data-navigate-path', '/srv/chrote')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Acknowledge navigation' }))
+    expect(screen.getByTestId('files-panel')).toHaveAttribute('data-navigate-path', '')
+    fireEvent.click(screen.getByRole('button', { name: 'Close files' }))
+    fireEvent.click(screen.getByRole('button', { name: /Files sidecar/i }))
+    expect(screen.getByTestId('files-panel')).toHaveAttribute('data-navigate-path', '')
   })
 
   it('keeps Sessions and Files open together and closes them independently', () => {

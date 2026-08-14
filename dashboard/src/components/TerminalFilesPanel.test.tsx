@@ -11,6 +11,12 @@ import {
   uploadFiles,
 } from './FilesView/fileService'
 import TerminalFilesPanel from './TerminalFilesPanel'
+import {
+  DEFAULT_FILE_VIEW_STATE,
+  DEFAULT_WORKSPACE_FILES_STATE,
+  readWorkspaceFilesState,
+  writeWorkspaceFilesState,
+} from './workspaceFilesState'
 
 vi.mock('./FilesView/fileService', async () => {
   const actual = await vi.importActual<typeof import('./FilesView/fileService')>('./FilesView/fileService')
@@ -307,6 +313,57 @@ describe('TerminalFilesPanel', () => {
     fireEvent.click(within(menu).getByRole('button', { name: 'Open Folder' }))
     await waitFor(() => expect(screen.getByLabelText('Files panel path')).toHaveValue('/srv/chrote/docs'))
     expect(openInFiles).toHaveBeenCalledTimes(1)
+  })
+
+  it('remaps persisted Peek view state with a terminal-sidecar rename', async () => {
+    const viewState = { ...DEFAULT_FILE_VIEW_STATE, scrollTop: 144, fontSize: 18 }
+    writeWorkspaceFilesState('terminal1', {
+      ...DEFAULT_WORKSPACE_FILES_STATE,
+      currentPath: '/srv/chrote',
+      selectedPath: readme.path,
+      expandedPaths: ['/srv/chrote'],
+      peek: { path: readme.path, name: readme.name, size: readme.size, type: readme.type, x: 40, y: 40, width: 480, height: 360 },
+      fileViewStates: { [readme.path]: viewState },
+    })
+    renderPanel()
+
+    fireEvent.contextMenu(await screen.findByRole('treeitem', { name: /README\.md/ }))
+    const menu = document.querySelector('.fb-context-menu') as HTMLElement
+    fireEvent.click(within(menu).getByRole('button', { name: 'Rename' }))
+    fireEvent.change(screen.getByLabelText('New name'), { target: { value: 'GUIDE.md' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Rename' }))
+
+    await waitFor(() => {
+      const persisted = readWorkspaceFilesState('terminal1')
+      expect(persisted.peek?.path).toBe('/srv/chrote/GUIDE.md')
+      expect(persisted.fileViewStates['/srv/chrote/GUIDE.md']).toEqual(viewState)
+      expect(persisted.fileViewStates[readme.path]).toBeUndefined()
+    })
+  })
+
+  it('prunes persisted Peek view state with a terminal-sidecar delete', async () => {
+    const viewState = { ...DEFAULT_FILE_VIEW_STATE, scrollTop: 144, fontSize: 18 }
+    writeWorkspaceFilesState('terminal1', {
+      ...DEFAULT_WORKSPACE_FILES_STATE,
+      currentPath: '/srv/chrote',
+      selectedPath: readme.path,
+      expandedPaths: ['/srv/chrote'],
+      peek: { path: readme.path, name: readme.name, size: readme.size, type: readme.type, x: 40, y: 40, width: 480, height: 360 },
+      fileViewStates: { [readme.path]: viewState },
+    })
+    renderPanel()
+
+    fireEvent.contextMenu(await screen.findByRole('treeitem', { name: /README\.md/ }))
+    const menu = document.querySelector('.fb-context-menu') as HTMLElement
+    fireEvent.click(within(menu).getByRole('button', { name: 'Delete' }))
+    const dialog = screen.getByRole('dialog', { name: 'Delete README.md' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }))
+
+    await waitFor(() => {
+      const persisted = readWorkspaceFilesState('terminal1')
+      expect(persisted.peek).toBeNull()
+      expect(persisted.fileViewStates[readme.path]).toBeUndefined()
+    })
   })
 
   it('offers blank-tree actions and executes sidecar mutation primitives', async () => {
