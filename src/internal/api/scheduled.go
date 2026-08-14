@@ -60,8 +60,9 @@ func (r *ScheduledTmuxRunner) ValidateTarget(ctx context.Context, target schedul
 
 // SendPrompt delivers the prompt through the same guarded paste path as Send to
 // Session: the prompt is loaded into a private tmux buffer and pasted only while
-// the resolved pane generation still matches, then one guarded submit key is
-// dispatched after the paste settles. Prompt text is never shell-interpolated.
+// the resolved pane generation still matches, then one guarded submit key and at
+// most one evidence-gated retry are dispatched. Prompt text is never
+// shell-interpolated.
 func (r *ScheduledTmuxRunner) SendPrompt(ctx context.Context, target scheduled.Target, prompt string) (scheduled.Delivery, error) {
 	resolved, err := r.tmux.targetForUnixUserContext(ctx, target.UnixUser)
 	if err != nil {

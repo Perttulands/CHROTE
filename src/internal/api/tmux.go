@@ -2511,6 +2511,8 @@ const (
 	atomicSendTargetChangedMark         = "CHROTE_SEND_TARGET_CHANGED"
 	atomicSendSubmitTargetChangedMarker = "CHROTE_SEND_SUBMIT_TARGET_CHANGED"
 	tmuxSendSubmitSettleDelay           = 1200 * time.Millisecond
+	tmuxSendSubmitObservationDelay      = 400 * time.Millisecond
+	tmuxSendSubmitObservationTimeout    = 2 * time.Second
 )
 
 var tmuxSendSleep = func(ctx context.Context, delay time.Duration) error {
@@ -2532,19 +2534,135 @@ func atomicSendCondition(pane sendPaneTarget) string {
 }
 
 func atomicPasteCommand(bufferName string, pane sendPaneTarget) string {
-	command := fmt.Sprintf("paste-buffer -d -b %s -t %s", bufferName, pane.PaneID)
+	command := fmt.Sprintf("paste-buffer -p -d -b %s -t %s", bufferName, pane.PaneID)
 	return command + " ; display-message -p " + atomicSendPastedMarker
 }
 
 func atomicSubmitCommand(pane sendPaneTarget) string {
-	return fmt.Sprintf("send-keys -t %s C-m ; display-message -p %s", pane.PaneID, atomicSendSubmitKeyMarker)
+	return fmt.Sprintf("send-keys -t %s Enter ; display-message -p %s", pane.PaneID, atomicSendSubmitKeyMarker)
+}
+
+type tmuxSubmitHarness int
+
+const (
+	tmuxSubmitHarnessUnknown tmuxSubmitHarness = iota
+	tmuxSubmitHarnessCodex
+	tmuxSubmitHarnessClaude
+)
+
+func submitHarnessForPane(pane sendPaneTarget) tmuxSubmitHarness {
+	switch strings.ToLower(strings.TrimSpace(pane.CurrentCommand)) {
+	case "codex":
+		return tmuxSubmitHarnessCodex
+	case "claude":
+		return tmuxSubmitHarnessClaude
+	default:
+		return tmuxSubmitHarnessUnknown
+	}
+}
+
+func submitPayloadWitness(payloadPath string) (string, bool) {
+	raw, err := os.ReadFile(payloadPath)
+	if err != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n") {
+		witness := strings.Join(strings.Fields(line), " ")
+		if len([]rune(witness)) < 16 {
+			continue
+		}
+		runes := []rune(witness)
+		if len(runes) > 80 {
+			witness = string(runes[:80])
+		}
+		return witness, true
+	}
+	return "", false
+}
+
+func pendingSubmitComposer(harness tmuxSubmitHarness, capture, witness string) (string, bool) {
+	capture = strings.ReplaceAll(capture, "\r", "")
+	lower := strings.ToLower(capture)
+	if strings.Contains(lower, "esc to interrupt") ||
+		strings.Contains(lower, "ctrl+c to interrupt") ||
+		strings.Contains(lower, "quick safety check") ||
+		strings.Contains(lower, "yes, i trust this folder") {
+		return "", false
+	}
+	hasCodex := strings.Contains(capture, "OpenAI Codex")
+	hasClaude := strings.Contains(capture, "Claude Code")
+	if hasCodex == hasClaude {
+		return "", false
+	}
+	prefix := ""
+	switch harness {
+	case tmuxSubmitHarnessCodex:
+		if !hasCodex {
+			return "", false
+		}
+		prefix = "›"
+	case tmuxSubmitHarnessClaude:
+		if !hasClaude {
+			return "", false
+		}
+		prefix = "❯"
+	default:
+		return "", false
+	}
+
+	lines := strings.Split(capture, "\n")
+	composerStart := -1
+	for index := len(lines) - 1; index >= 0; index-- {
+		if strings.HasPrefix(strings.TrimSpace(lines[index]), prefix) {
+			composerStart = index
+			break
+		}
+	}
+	if composerStart < 0 {
+		return "", false
+	}
+	composer := strings.Join(strings.Fields(strings.Join(lines[composerStart:], "\n")), " ")
+	if !strings.Contains(composer, witness) {
+		return "", false
+	}
+	return composer, true
+}
+
+func (h *TmuxHandler) shouldRetrySubmit(ctx context.Context, target tmuxTarget, pane sendPaneTarget, payloadPath string) bool {
+	harness := submitHarnessForPane(pane)
+	if harness == tmuxSubmitHarnessUnknown {
+		return false
+	}
+	witness, ok := submitPayloadWitness(payloadPath)
+	if !ok {
+		return false
+	}
+	observationCtx, cancel := context.WithTimeout(ctx, tmuxSendSubmitObservationTimeout)
+	defer cancel()
+	capture := func() (string, bool) {
+		if err := tmuxSendSleep(observationCtx, tmuxSendSubmitObservationDelay); err != nil {
+			return "", false
+		}
+		output, err := h.runTmuxOnSocketContext(observationCtx, target.socket, "capture-pane", "-p", "-J", "-t", pane.PaneID, "-S", "-200")
+		if err != nil {
+			return "", false
+		}
+		return pendingSubmitComposer(harness, output, witness)
+	}
+	first, ok := capture()
+	if !ok {
+		return false
+	}
+	second, ok := capture()
+	return ok && first == second
 }
 
 type paneSendKind int
 
 const (
 	// paneSendDelivered means tmux confirmed the paste against the pinned pane
-	// generation. SubmitKeyDispatched separately records the one guarded C-m.
+	// generation. SubmitKeyDispatched separately records at least one guarded
+	// Enter transport receipt; it never claims application acceptance.
 	paneSendDelivered paneSendKind = iota
 	// paneSendTargetChanged means the pane generation moved before the paste ran,
 	// so nothing was delivered.
@@ -2601,8 +2719,9 @@ func paneSendCleanupContext(operationCtx context.Context, budget time.Duration) 
 
 // sendBufferToPane is the single delivery path shared by Send to Session and
 // scheduled tasks: load the payload into a private buffer, paste it only while
-// the pinned pane generation still matches, optionally dispatch one guarded C-m,
-// and leave no buffer behind. Interactive sends pass a background operation
+// the pinned pane generation still matches, optionally dispatch one guarded
+// Enter and at most one evidence-gated guarded retry, and leave no buffer behind.
+// Interactive sends pass a background operation
 // context so request cancellation cannot tear down a half-applied operator action;
 // scheduled sends pass their bounded delivery context end to end.
 func (h *TmuxHandler) sendBufferToPane(loadCtx, operationCtx context.Context, cleanupReserve time.Duration, target tmuxTarget, pane sendPaneTarget, bufferName, payloadPath string, submit bool) (paneSendResult, error) {
@@ -2670,7 +2789,7 @@ func (h *TmuxHandler) sendBufferToPane(loadCtx, operationCtx context.Context, cl
 	}
 
 	// Agent TUIs can swallow a submit key delivered in the same burst as a large
-	// bracketed paste. Let the paste settle, then guard the single C-m against the
+	// bracketed paste. Let the paste settle, then guard the first Enter against the
 	// exact pane generation again before dispatching it.
 	if err := tmuxSendSleep(sendCtx, tmuxSendSubmitSettleDelay); err != nil {
 		return paneSendResult{
@@ -2693,7 +2812,47 @@ func (h *TmuxHandler) sendBufferToPane(loadCtx, operationCtx context.Context, cl
 	}
 	switch marker := strings.TrimSpace(output); marker {
 	case atomicSendSubmitKeyMarker:
-		return paneSendResult{Kind: paneSendDelivered, SubmitKeyDispatched: true, BufferCleaned: true}, nil
+		// A second Enter is eligible only when two bounded captures positively
+		// identify the same non-empty pending prompt in a recognized idle composer.
+		// The retry itself uses the same immutable server-side generation guard.
+		if !h.shouldRetrySubmit(sendCtx, target, pane, payloadPath) {
+			return paneSendResult{Kind: paneSendDelivered, SubmitKeyDispatched: true, BufferCleaned: true}, nil
+		}
+		output, err = h.runTmuxOnSocketContext(
+			sendCtx,
+			target.socket,
+			"if-shell", "-F", "-t", pane.PaneID,
+			atomicSendCondition(pane),
+			atomicSubmitCommand(pane),
+			"display-message -p "+atomicSendSubmitTargetChangedMarker,
+		)
+		if err != nil {
+			return paneSendResult{
+				Kind:                paneSendDelivered,
+				SubmitKeyDispatched: true,
+				BufferCleaned:       true,
+				Detail:              "optional submit retry was not confirmed: " + err.Error(),
+				OperationErr:        err,
+			}, nil
+		}
+		switch retryMarker := strings.TrimSpace(output); retryMarker {
+		case atomicSendSubmitKeyMarker:
+			return paneSendResult{Kind: paneSendDelivered, SubmitKeyDispatched: true, BufferCleaned: true}, nil
+		case atomicSendSubmitTargetChangedMarker:
+			return paneSendResult{
+				Kind:                paneSendDelivered,
+				SubmitKeyDispatched: true,
+				BufferCleaned:       true,
+				Detail:              "target changed before optional submit retry; retry was suppressed",
+			}, nil
+		default:
+			return paneSendResult{
+				Kind:                paneSendDelivered,
+				SubmitKeyDispatched: true,
+				BufferCleaned:       true,
+				Detail:              fmt.Sprintf("unexpected optional submit retry result %q", retryMarker),
+			}, nil
+		}
 	case atomicSendSubmitTargetChangedMarker:
 		return paneSendResult{
 			Kind:          paneSendDelivered,

@@ -19,11 +19,12 @@ import (
 )
 
 type sendHarness struct {
-	dropsDir string
-	tmuxLog  string
-	aclLog   string
-	mux      *http.ServeMux
-	handler  *TmuxHandler
+	dropsDir  string
+	tmuxLog   string
+	submitLog string
+	aclLog    string
+	mux       *http.ServeMux
+	handler   *TmuxHandler
 }
 
 func newSendHarness(t *testing.T, panes string) sendHarness {
@@ -47,8 +48,11 @@ func newSendHarness(t *testing.T, panes string) sendHarness {
 	})
 	dir := t.TempDir()
 	tmuxLog := filepath.Join(dir, "tmux.log")
+	submitLog := filepath.Join(dir, "submit.log")
 	aclLog := filepath.Join(dir, "setfacl.log")
 	paneCount := filepath.Join(dir, "pane-count")
+	captureCount := filepath.Join(dir, "capture-count")
+	submitCount := filepath.Join(dir, "submit-count")
 	tmuxScript := `#!/bin/sh
 for arg in "$@"; do printf '%s\n' "$arg" >> "$TMUX_SEND_LOG"; done
 printf '%s\n' '---' >> "$TMUX_SEND_LOG"
@@ -72,6 +76,17 @@ case "${1:-}" in
   load-buffer)
     [ "${TMUX_SEND_FAIL_LOAD:-}" = 1 ] && exit 7
     ;;
+  capture-pane)
+    count=0
+    if [ -f "$TMUX_SEND_CAPTURE_COUNT" ]; then count=$(cat "$TMUX_SEND_CAPTURE_COUNT"); fi
+    count=$((count + 1)); printf '%s' "$count" > "$TMUX_SEND_CAPTURE_COUNT"
+    if [ "${TMUX_SEND_CAPTURE_FAIL_AT:-}" = "$count" ]; then exit 12; fi
+    if [ "$count" -eq 1 ]; then
+      printf '%s' "${TMUX_SEND_CAPTURE_ONE:-}"
+    else
+      printf '%s' "${TMUX_SEND_CAPTURE_TWO:-${TMUX_SEND_CAPTURE_ONE:-}}"
+    fi
+    ;;
   if-shell)
     if [ "${TMUX_SEND_ATOMIC_CHANGED:-}" = 1 ]; then
       printf '%s\n' CHROTE_SEND_TARGET_CHANGED
@@ -85,7 +100,17 @@ case "${1:-}" in
       printf '%s\n' CHROTE_SEND_SUBMIT_NOT_SETTLED
     else
       case " $* " in
-        *" send-keys "*) printf '%s\n' CHROTE_SEND_SUBMIT_KEY_DISPATCHED ;;
+        *" send-keys "*)
+          count=0
+          if [ -f "$TMUX_SEND_SUBMIT_COUNT" ]; then count=$(cat "$TMUX_SEND_SUBMIT_COUNT"); fi
+          count=$((count + 1)); printf '%s' "$count" > "$TMUX_SEND_SUBMIT_COUNT"
+          if [ "${TMUX_SEND_RETRY_TARGET_CHANGED:-}" = 1 ] && [ "$count" -gt 1 ]; then
+            printf '%s\n' CHROTE_SEND_SUBMIT_TARGET_CHANGED
+          else
+            printf '%s\n' dispatched >> "$TMUX_SEND_SUBMIT_LOG"
+            printf '%s\n' CHROTE_SEND_SUBMIT_KEY_DISPATCHED
+          fi
+          ;;
         *) printf '%s\n' CHROTE_SEND_PASTED ;;
       esac
     fi
@@ -123,8 +148,11 @@ exit 0
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("TMUX_SEND_LOG", tmuxLog)
+	t.Setenv("TMUX_SEND_SUBMIT_LOG", submitLog)
 	t.Setenv("TMUX_SEND_ACL_LOG", aclLog)
 	t.Setenv("TMUX_SEND_PANE_COUNT", paneCount)
+	t.Setenv("TMUX_SEND_CAPTURE_COUNT", captureCount)
+	t.Setenv("TMUX_SEND_SUBMIT_COUNT", submitCount)
 	t.Setenv("TMUX_SEND_PANES", panes)
 	t.Setenv("CHROTE_SESSION_DROPS_DIR", filepath.Join(dir, "drops"))
 	t.Setenv("CHROTE_TERMINAL_USERS", "alice")
@@ -134,7 +162,7 @@ exit 0
 	handler := NewTmuxHandler()
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
-	return sendHarness{dropsDir: filepath.Join(dir, "drops"), tmuxLog: tmuxLog, aclLog: aclLog, mux: mux, handler: handler}
+	return sendHarness{dropsDir: filepath.Join(dir, "drops"), tmuxLog: tmuxLog, submitLog: submitLog, aclLog: aclLog, mux: mux, handler: handler}
 }
 
 func (h sendHarness) send(t *testing.T, session string, fields map[string]string) *httptest.ResponseRecorder {
@@ -358,7 +386,7 @@ func TestSendToSessionPinsExactPaneAndDefaultsToNoSubmit(t *testing.T) {
 		!strings.Contains(log, "#{==:#{session_id},$7}") ||
 		!strings.Contains(log, "#{==:#{pane_pid},222}") ||
 		!strings.Contains(log, "#{==:#{pid},9001}") ||
-		!strings.Contains(log, "paste-buffer -d -b chrote-send-") ||
+		!strings.Contains(log, "paste-buffer -p -d -b chrote-send-") ||
 		!strings.Contains(log, "-t %42 ; display-message -p CHROTE_SEND_PASTED") {
 		t.Fatalf("tmux log does not atomically guard and paste to %%42: %s", log)
 	}
@@ -460,13 +488,120 @@ func TestSendToSessionSettlesThenDispatchesOneGuardedSubmitKey(t *testing.T) {
 	}
 	log := readOptionalFile(t, h.tmuxLog)
 	if strings.Count(log, "if-shell\n-F\n-t\n%41\n") != 2 ||
-		!strings.Contains(log, "paste-buffer -d") ||
-		strings.Count(log, "send-keys -t %41 C-m") != 1 ||
+		!strings.Contains(log, "paste-buffer -p -d") ||
+		strings.Count(log, "send-keys -t %41 Enter") != 1 ||
 		!strings.Contains(log, "CHROTE_SEND_SUBMIT_KEY_DISPATCHED") {
 		t.Fatalf("paste and submit key were not separately generation-guarded: %s", log)
 	}
-	if strings.Contains(log, "send-keys -t %41 Enter") {
-		t.Fatalf("legacy immediate Enter remained in submit path: %s", log)
+	if strings.Contains(log, "send-keys -t %41 C-m") {
+		t.Fatalf("legacy C-m remained in submit path: %s", log)
+	}
+}
+
+func TestSendToSessionRetriesOnceForStableRecognizedPendingComposer(t *testing.T) {
+	const prompt = "CHROTE_YLB_LONG_PENDING_PROMPT_7f9d"
+	h := newSendHarness(t, "$7	one	%41	111	9001	@3	work	/home/alice	codex	1\n")
+	pending := "╭ OpenAI Codex (v0.147.0)\n› " + prompt + "\n  gpt-5.6-sol xhigh"
+	t.Setenv("TMUX_SEND_CAPTURE_ONE", pending)
+	t.Setenv("TMUX_SEND_CAPTURE_TWO", pending)
+	delays := []time.Duration{}
+	bounded := []bool{}
+	tmuxSendSleep = func(ctx context.Context, delay time.Duration) error {
+		delays = append(delays, delay)
+		_, hasDeadline := ctx.Deadline()
+		bounded = append(bounded, hasDeadline)
+		return nil
+	}
+
+	recorder := h.send(t, "one", map[string]string{"text": prompt, "submit": "true"})
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if got := strings.Count(readOptionalFile(t, h.submitLog), "dispatched\n"); got != 2 {
+		t.Fatalf("submit keys dispatched = %d, want first Enter plus one retry\ntmux log:\n%s", got, readOptionalFile(t, h.tmuxLog))
+	}
+	log := readOptionalFile(t, h.tmuxLog)
+	if got := strings.Count(log, "capture-pane\n-p\n-J\n-t\n%41\n"); got != 2 {
+		t.Fatalf("post-submit captures = %d, want two bounded observations\n%s", got, log)
+	}
+	if got := strings.Count(log, "send-keys -t %41 Enter"); got != 2 {
+		t.Fatalf("guarded Enter attempts = %d, want exactly two\n%s", got, log)
+	}
+	if got := strings.Count(log, atomicSendCondition(sendPaneTarget{SessionID: "$7", PaneID: "%41", PanePID: "111", ServerPID: "9001"})); got != 3 {
+		t.Fatalf("generation guard occurrences = %d, want paste plus both Enter attempts\n%s", got, log)
+	}
+	if len(delays) != 3 || delays[0] != tmuxSendSubmitSettleDelay || delays[1] != tmuxSendSubmitObservationDelay || delays[2] != tmuxSendSubmitObservationDelay {
+		t.Fatalf("submit delays = %v, want settle then two observation delays", delays)
+	}
+	if len(bounded) != 3 || bounded[0] || !bounded[1] || !bounded[2] {
+		t.Fatalf("sleep deadline states = %v, want only both observations bounded", bounded)
+	}
+}
+
+func TestSendToSessionSuppressesSpeculativeSubmitRetry(t *testing.T) {
+	const prompt = "CHROTE_YLB_PENDING_PROMPT_20c4"
+	pending := "╭ OpenAI Codex (v0.147.0)\n› " + prompt + "\n  gpt-5.6-sol xhigh"
+	tests := []struct {
+		name          string
+		command       string
+		first         string
+		second        string
+		captureFailAt string
+	}{
+		{name: "working", command: "codex", first: pending + "\n• Working · esc to interrupt"},
+		{name: "working evidence delayed", command: "codex", first: pending, second: pending + "\n• Working · esc to interrupt"},
+		{name: "cleared", command: "codex", first: "╭ OpenAI Codex (v0.147.0)\n› Write tests for @filename\n  gpt-5.6-sol xhigh"},
+		{name: "completed", command: "codex", first: pending + "\n• Done\n› Write tests for @filename\n  gpt-5.6-sol xhigh"},
+		{name: "changed", command: "codex", first: pending, second: "╭ OpenAI Codex (v0.147.0)\n› DIFFERENT_PENDING_PROMPT\n  gpt-5.6-sol xhigh"},
+		{name: "unrecognized", command: "bash", first: "$ " + prompt},
+		{name: "ambiguous", command: "codex", first: "OpenAI Codex\nClaude Code\n› " + prompt + "\n❯ " + prompt},
+		{name: "capture failure", command: "codex", first: pending, captureFailAt: "2"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newSendHarness(t, "$7	one	%41	111	9001	@3	work	/home/alice	"+tc.command+"	1\n")
+			t.Setenv("TMUX_SEND_CAPTURE_ONE", tc.first)
+			t.Setenv("TMUX_SEND_CAPTURE_TWO", tc.second)
+			t.Setenv("TMUX_SEND_CAPTURE_FAIL_AT", tc.captureFailAt)
+
+			recorder := h.send(t, "one", map[string]string{"text": prompt, "submit": "true"})
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+			}
+			if got := strings.Count(readOptionalFile(t, h.submitLog), "dispatched\n"); got != 1 {
+				t.Fatalf("submit keys dispatched = %d, want only the first Enter\ntmux log:\n%s", got, readOptionalFile(t, h.tmuxLog))
+			}
+			if got := strings.Count(readOptionalFile(t, h.tmuxLog), "send-keys -t %41 Enter"); got != 1 {
+				t.Fatalf("guarded Enter attempts = %d, want one\n%s", got, readOptionalFile(t, h.tmuxLog))
+			}
+		})
+	}
+}
+
+func TestSendToSessionGenerationGuardSuppressesEligibleRetryAfterTargetDrift(t *testing.T) {
+	const prompt = "CHROTE_YLB_TARGET_DRIFT_PROMPT_431e"
+	h := newSendHarness(t, "$7	one	%41	111	9001	@3	work	/home/alice	claude	1\n")
+	pending := "Claude Code\n❯ " + prompt + "\n  ? for shortcuts"
+	t.Setenv("TMUX_SEND_CAPTURE_ONE", pending)
+	t.Setenv("TMUX_SEND_CAPTURE_TWO", pending)
+	t.Setenv("TMUX_SEND_RETRY_TARGET_CHANGED", "1")
+
+	recorder := h.send(t, "one", map[string]string{"text": prompt, "submit": "true"})
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if got := strings.Count(readOptionalFile(t, h.submitLog), "dispatched\n"); got != 1 {
+		t.Fatalf("actual submit keys dispatched = %d, want only the first Enter after target drift\n%s", got, readOptionalFile(t, h.tmuxLog))
+	}
+	if got := strings.Count(readOptionalFile(t, h.tmuxLog), "send-keys -t %41 Enter"); got != 2 {
+		t.Fatalf("guarded Enter attempts = %d, want the retry to reach the immutable server-side guard\n%s", got, readOptionalFile(t, h.tmuxLog))
+	}
+	var response map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response["submitKeyDispatched"] != true || response["transport"] != "pasted" {
+		t.Fatalf("first dispatch transport receipt was lost after suppressed retry: %#v", response)
 	}
 }
 
@@ -485,7 +620,7 @@ func TestSendToSessionDoesNotDispatchSubmitKeyAfterGenerationChanges(t *testing.
 	if response["transport"] != "pasted" || response["submitKeyDispatched"] != false || !strings.Contains(warning, "submit key was not dispatched") {
 		t.Fatalf("generation-race response = %#v", response)
 	}
-	if strings.Count(readOptionalFile(t, h.tmuxLog), "send-keys -t %41 C-m") != 1 {
+	if strings.Count(readOptionalFile(t, h.tmuxLog), "send-keys -t %41 Enter") != 1 {
 		t.Fatalf("guarded submit command was retried: %s", readOptionalFile(t, h.tmuxLog))
 	}
 }

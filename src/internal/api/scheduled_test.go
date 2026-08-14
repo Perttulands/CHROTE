@@ -496,8 +496,8 @@ exit 0
 		t.Fatalf("read fake tmux args: %v", err)
 	}
 	calls := splitScheduledTmuxCalls(raw)
-	if len(calls) != 4 {
-		t.Fatalf("tmux calls = %#v, want list-panes, load-buffer, guarded paste, then guarded submit key", calls)
+	if len(calls) != 5 {
+		t.Fatalf("tmux calls = %#v, want list-panes, load-buffer, guarded paste, guarded submit key, then one fail-closed composer capture", calls)
 	}
 	if calls[0][2] != "list-panes" {
 		t.Fatalf("first call = %#v, want pane resolution before any side effect", calls[0])
@@ -508,17 +508,20 @@ exit 0
 	guardedPaste := strings.Join(calls[2], "\x00")
 	for _, want := range []string{
 		"if-shell", "#{==:#{pane_id},%1}",
-		"paste-buffer -d -b " + calls[1][4] + " -t %1 ; display-message -p CHROTE_SEND_PASTED",
+		"paste-buffer -p -d -b " + calls[1][4] + " -t %1 ; display-message -p CHROTE_SEND_PASTED",
 	} {
 		if !strings.Contains(guardedPaste, want) {
 			t.Fatalf("guarded paste call = %#v, want it to contain %q", calls[2], want)
 		}
 	}
 	guardedSubmit := strings.Join(calls[3], "\x00")
-	for _, want := range []string{"if-shell", "#{==:#{pane_id},%1}", "send-keys -t %1 C-m", "CHROTE_SEND_SUBMIT_KEY_DISPATCHED"} {
+	for _, want := range []string{"if-shell", "#{==:#{pane_id},%1}", "send-keys -t %1 Enter", "CHROTE_SEND_SUBMIT_KEY_DISPATCHED"} {
 		if !strings.Contains(guardedSubmit, want) {
 			t.Fatalf("guarded submit call = %#v, want it to contain %q", calls[3], want)
 		}
+	}
+	if got := strings.Join(calls[4], "\x00"); !strings.Contains(got, "capture-pane\x00-p\x00-J\x00-t\x00%1\x00-S\x00-200") {
+		t.Fatalf("post-submit observation call = %#v, want a bounded exact-pane capture", calls[4])
 	}
 	for _, call := range calls {
 		for _, arg := range call {
@@ -543,7 +546,7 @@ exit 0
 		t.Fatalf("staged prompt file still exists after delivery (stat err = %v)", err)
 	}
 
-	if _, err := runner.SendPrompt(context.Background(), scheduled.Target{SessionName: "ops", UnixUser: "alice"}, "second delivery"); err != nil {
+	if _, err := runner.SendPrompt(context.Background(), scheduled.Target{SessionName: "ops", UnixUser: "alice"}, "second delivery with witness"); err != nil {
 		t.Fatalf("second SendPrompt returned error: %v", err)
 	}
 	raw, err = osReadFileString(argsPath)
@@ -551,10 +554,10 @@ exit 0
 		t.Fatalf("read fake tmux args after second delivery: %v", err)
 	}
 	calls = splitScheduledTmuxCalls(raw)
-	if len(calls) != 8 {
-		t.Fatalf("tmux calls after two sends = %#v, want four calls per delivery", calls)
+	if len(calls) != 10 {
+		t.Fatalf("tmux calls after two sends = %#v, want five calls per delivery", calls)
 	}
-	if calls[1][4] == calls[5][4] {
+	if calls[1][4] == calls[6][4] {
 		t.Fatalf("scheduled deliveries reused buffer %q; timeout cleanup could delete a later run", calls[1][4])
 	}
 }

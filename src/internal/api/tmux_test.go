@@ -1640,8 +1640,8 @@ func TestTmuxHandler_SendToSessionStoresDropAndPastesViaBuffer(t *testing.T) {
 	wantSnippets := []string{
 		strings.Join([]string{"-S", "/tmp/tmux-a", "load-buffer"}, "\x00"),
 		strings.Join([]string{"-S", "/tmp/tmux-a", "if-shell", "-F", "-t", "%42"}, "\x00"),
-		"paste-buffer -d -b chrote-send-",
-		"send-keys -t %42 C-m",
+		"paste-buffer -p -d -b chrote-send-",
+		"send-keys -t %42 Enter",
 		atomicSendSubmitKeyMarker,
 	}
 	for _, snippet := range wantSnippets {
