@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -11,62 +12,78 @@ import (
 	"os/exec"
 	osuser "os/user"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
 
-func cleanupPrivateTmuxPanes(t *testing.T, tmuxBin, socket, root string) {
-	t.Helper()
-	list := exec.Command(tmuxBin, "-S", socket, "list-panes", "-a", "-F", "#{pane_id}	#{pane_pid}	#{pane_current_command}")
-	output, err := list.CombinedOutput()
-	if err != nil {
-		_ = os.RemoveAll(root)
-		return
+func privateTmuxAuthoritativelyAbsent(output []byte, socket string) bool {
+	lower := strings.ToLower(string(output))
+	if strings.Contains(lower, "no server running") {
+		return true
 	}
-	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
-		fields := strings.Split(line, "	")
-		if len(fields) != 3 {
-			t.Errorf("cleanup private tmux pane identity %q", line)
-			continue
-		}
-		paneID, command := fields[0], strings.ToLower(fields[2])
-		pid, parseErr := strconv.Atoi(fields[1])
-		if parseErr != nil || pid <= 0 {
-			t.Errorf("cleanup private tmux pane PID %q: %v", fields[1], parseErr)
-			continue
-		}
-		if command == "bash" || command == "zsh" || command == "fish" || command == "sh" {
-			exitCommand := exec.Command(tmuxBin, "-S", socket, "send-keys", "-t", paneID, "exit", "Enter")
-			if exitOutput, exitErr := exitCommand.CombinedOutput(); exitErr == nil {
-				continue
-			} else {
-				t.Errorf("exit private shell pane %s: %v: %s", paneID, exitErr, exitOutput)
-			}
-		}
-		process, findErr := os.FindProcess(pid)
-		if findErr != nil {
-			t.Errorf("find private tmux pane process %d: %v", pid, findErr)
-			continue
-		}
-		if signalErr := process.Signal(syscall.SIGTERM); signalErr != nil && !errors.Is(signalErr, os.ErrProcessDone) {
-			t.Errorf("terminate private tmux pane process %d: %v", pid, signalErr)
-		}
+	if !strings.Contains(lower, "error connecting") || !strings.Contains(lower, "no such file or directory") {
+		return false
 	}
+	_, err := os.Lstat(socket)
+	return errors.Is(err, os.ErrNotExist)
+}
+
+func cleanupPrivateTmuxSessions(tmuxBin, socket, root string, sessions ...string) error {
+	for _, session := range sessions {
+		command := exec.Command(tmuxBin, "-S", socket, "kill-session", "-t", session)
+		output, err := command.CombinedOutput()
+		if err == nil {
+			continue
+		}
+		if privateTmuxAuthoritativelyAbsent(output, socket) {
+			break
+		}
+		return fmt.Errorf("kill exact private tmux session %q: %w: %s", session, err, strings.TrimSpace(string(output)))
+	}
+
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		probe := exec.Command(tmuxBin, "-S", socket, "list-sessions")
-		if probeErr := probe.Run(); probeErr != nil {
-			if removeErr := os.RemoveAll(root); removeErr != nil {
-				t.Errorf("remove private tmux root: %v", removeErr)
+		probe := exec.Command(tmuxBin, "-S", socket, "list-sessions", "-F", "#{session_name}")
+		output, err := probe.CombinedOutput()
+		if err != nil {
+			if !privateTmuxAuthoritativelyAbsent(output, socket) {
+				return fmt.Errorf("prove private tmux server exited: %w: %s", err, strings.TrimSpace(string(output)))
 			}
-			return
+			if removeErr := os.RemoveAll(root); removeErr != nil {
+				return fmt.Errorf("remove exited private tmux root: %w", removeErr)
+			}
+			return nil
+		}
+		if sessions := strings.TrimSpace(string(output)); sessions != "" {
+			return fmt.Errorf("private tmux server retained unexpected sessions %q; retained root %s", sessions, root)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Errorf("private tmux server remained after terminating its exact pane processes; retained root %s", root)
+	return fmt.Errorf("private tmux server remained reachable without sessions; retained root %s", root)
+}
+
+func TestCleanupPrivateTmuxSessionsRetainsRootOnAmbiguousClientFailure(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "TestCleanupPrivateTmuxSessions")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatalf("create private root: %v", err)
+	}
+	socket := filepath.Join(root, "tmux.sock")
+	if err := os.WriteFile(socket, []byte("fixture"), 0o600); err != nil {
+		t.Fatalf("create socket sentinel: %v", err)
+	}
+	tmuxBin := filepath.Join(parent, "tmux")
+	if err := os.WriteFile(tmuxBin, []byte("#!/bin/sh\nprintf 'tmux-guard: blocked owner-required-command\\n' >&2\nexit 73\n"), 0o700); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+
+	if err := cleanupPrivateTmuxSessions(tmuxBin, socket, root, "owned"); err == nil {
+		t.Fatal("cleanup succeeded after an ambiguous client failure")
+	}
+	if _, err := os.Stat(socket); err != nil {
+		t.Fatalf("ambiguous cleanup removed the private socket/root: %v", err)
+	}
 }
 
 func TestSendToSessionRealTmuxPinsExactPane(t *testing.T) {
@@ -85,7 +102,10 @@ func TestSendToSessionRealTmuxPinsExactPane(t *testing.T) {
 		t.Skip("current Unix user is unavailable")
 	}
 
-	root := t.TempDir()
+	root, err := os.MkdirTemp("", "TestSendToSessionRealTmuxPinsExactPane-*")
+	if err != nil {
+		t.Fatalf("create private tmux root: %v", err)
+	}
 	socket := filepath.Join(root, "tmux.sock")
 	drops := filepath.Join(root, "drops")
 	runTmux := func(args ...string) (string, error) {
@@ -93,7 +113,11 @@ func TestSendToSessionRealTmuxPinsExactPane(t *testing.T) {
 		output, commandErr := exec.Command(tmuxBin, cmdArgs...).CombinedOutput()
 		return string(output), commandErr
 	}
-	t.Cleanup(func() { cleanupPrivateTmuxPanes(t, tmuxBin, socket, root) })
+	t.Cleanup(func() {
+		if cleanupErr := cleanupPrivateTmuxSessions(tmuxBin, socket, root, "alpha-long", "multi"); cleanupErr != nil {
+			t.Errorf("cleanup private tmux fixture: %v", cleanupErr)
+		}
+	})
 	if output, err := runTmux("new-session", "-d", "-s", "alpha-long", "-x", "100", "-y", "20", "bash", "--noprofile", "--norc"); err != nil {
 		t.Fatalf("create prefix fixture: %v: %s", err, output)
 	}
@@ -219,7 +243,7 @@ func TestSendToSessionRealCodexLongPrompt(t *testing.T) {
 		t.Skip("current Unix user is unavailable")
 	}
 
-	root, err := os.MkdirTemp("", "chrote-ylb-codex-smoke-*")
+	root, err := os.MkdirTemp("", "TestSendToSessionRealCodexLongPrompt-*")
 	if err != nil {
 		t.Fatalf("create private smoke root: %v", err)
 	}
@@ -231,7 +255,11 @@ func TestSendToSessionRealCodexLongPrompt(t *testing.T) {
 		output, commandErr := exec.Command(tmuxBin, cmdArgs...).CombinedOutput()
 		return string(output), commandErr
 	}
-	t.Cleanup(func() { cleanupPrivateTmuxPanes(t, tmuxBin, socket, root) })
+	t.Cleanup(func() {
+		if cleanupErr := cleanupPrivateTmuxSessions(tmuxBin, socket, root, session); cleanupErr != nil {
+			t.Errorf("cleanup private Codex fixture: %v", cleanupErr)
+		}
+	})
 
 	repositoryRoot, err := os.Getwd()
 	if err != nil {

@@ -84,7 +84,7 @@ func (r *ScheduledTmuxRunner) SendPrompt(ctx context.Context, target scheduled.T
 
 	bufferSuffix := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(payloadPath), "chrote-scheduled-prompt-"), ".txt")
 	bufferName := "chrote-scheduled-" + strings.TrimPrefix(pane.PaneID, "%") + "-" + bufferSuffix
-	result, err := r.tmux.sendBufferToPane(ctx, ctx, scheduledTmuxCleanupReserve, resolved, pane, bufferName, payloadPath, true, false)
+	result, err := r.tmux.sendBufferToPane(ctx, ctx, scheduledTmuxCleanupReserve, resolved, pane, bufferName, payloadPath, true, false, submitPayloadEvidence{})
 	if err != nil {
 		return scheduled.Delivery{}, err
 	}

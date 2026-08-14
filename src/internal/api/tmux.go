@@ -613,16 +613,17 @@ type sessionDropFile struct {
 }
 
 type sessionDropManifest struct {
-	ID        string            `json:"id"`
-	Session   string            `json:"session"`
-	UnixUser  string            `json:"unixUser,omitempty"`
-	PaneID    string            `json:"paneId"`
-	PanePID   string            `json:"panePid"`
-	ServerPID string            `json:"serverPid"`
-	CreatedAt string            `json:"createdAt"`
-	TextPath  string            `json:"textPath,omitempty"`
-	Payload   string            `json:"payload"`
-	Files     []sessionDropFile `json:"files"`
+	ID             string                `json:"id"`
+	Session        string                `json:"session"`
+	UnixUser       string                `json:"unixUser,omitempty"`
+	PaneID         string                `json:"paneId"`
+	PanePID        string                `json:"panePid"`
+	ServerPID      string                `json:"serverPid"`
+	CreatedAt      string                `json:"createdAt"`
+	TextPath       string                `json:"textPath,omitempty"`
+	Payload        string                `json:"payload"`
+	Files          []sessionDropFile     `json:"files"`
+	submitEvidence submitPayloadEvidence `json:"-"`
 }
 
 func newSessionDropID() (string, error) {
@@ -2534,6 +2535,10 @@ func atomicSendCondition(pane sendPaneTarget) string {
 	return fmt.Sprintf("#{&&:#{==:#{session_id},%s},#{&&:#{==:#{pane_id},%s},#{&&:#{==:#{pane_pid},%s},#{==:#{pid},%s}}}}", pane.SessionID, pane.PaneID, pane.PanePID, pane.ServerPID)
 }
 
+func atomicRetrySendCondition(pane sendPaneTarget, harness tmuxSubmitHarness) string {
+	return fmt.Sprintf("#{&&:%s,#{==:#{pane_current_command},%s}}", atomicSendCondition(pane), harness.currentCommand())
+}
+
 func atomicPasteCommand(bufferName string, pane sendPaneTarget) string {
 	command := fmt.Sprintf("paste-buffer -p -d -b %s -t %s", bufferName, pane.PaneID)
 	return command + " ; display-message -p " + atomicSendPastedMarker
@@ -2551,6 +2556,17 @@ const (
 	tmuxSubmitHarnessClaude
 )
 
+func (harness tmuxSubmitHarness) currentCommand() string {
+	switch harness {
+	case tmuxSubmitHarnessCodex:
+		return "codex"
+	case tmuxSubmitHarnessClaude:
+		return "claude"
+	default:
+		return ""
+	}
+}
+
 func submitHarnessForPane(pane sendPaneTarget) tmuxSubmitHarness {
 	switch strings.ToLower(strings.TrimSpace(pane.CurrentCommand)) {
 	case "codex":
@@ -2567,12 +2583,8 @@ type submitPayloadEvidence struct {
 	codexCollapsedTags []string
 }
 
-func readSubmitPayloadEvidence(payloadPath string) (submitPayloadEvidence, bool) {
-	raw, err := os.ReadFile(payloadPath)
-	if err != nil {
-		return submitPayloadEvidence{}, false
-	}
-	for _, line := range strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n") {
+func buildSubmitPayloadEvidence(payload string) (submitPayloadEvidence, bool) {
+	for _, line := range strings.Split(strings.ReplaceAll(payload, "\r\n", "\n"), "\n") {
 		witness := strings.Join(strings.Fields(line), " ")
 		if len([]rune(witness)) < 16 {
 			continue
@@ -2582,7 +2594,7 @@ func readSubmitPayloadEvidence(payloadPath string) (submitPayloadEvidence, bool)
 			witness = string(runes[:80])
 		}
 		evidence := submitPayloadEvidence{witness: witness}
-		for _, size := range []int{len(raw), utf8.RuneCount(raw)} {
+		for _, size := range []int{len(payload), utf8.RuneCountInString(payload)} {
 			tag := fmt.Sprintf("[Pasted Content %d chars]", size)
 			if len(evidence.codexCollapsedTags) == 0 || evidence.codexCollapsedTags[len(evidence.codexCollapsedTags)-1] != tag {
 				evidence.codexCollapsedTags = append(evidence.codexCollapsedTags, tag)
@@ -2593,7 +2605,7 @@ func readSubmitPayloadEvidence(payloadPath string) (submitPayloadEvidence, bool)
 	return submitPayloadEvidence{}, false
 }
 
-func pendingSubmitComposer(harness tmuxSubmitHarness, capture string, evidence submitPayloadEvidence) (string, bool) {
+func activeSubmitComposer(harness tmuxSubmitHarness, capture string) (string, bool) {
 	capture = strings.ReplaceAll(capture, "\r", "")
 	lower := strings.ToLower(capture)
 	if strings.Contains(lower, "esc to interrupt") ||
@@ -2602,30 +2614,46 @@ func pendingSubmitComposer(harness tmuxSubmitHarness, capture string, evidence s
 		strings.Contains(lower, "yes, i trust this folder") {
 		return "", false
 	}
+
 	hasCodex := strings.Contains(capture, "OpenAI Codex")
 	hasClaude := strings.Contains(capture, "Claude Code")
 	if hasCodex == hasClaude {
 		return "", false
 	}
 	prefix := ""
+	footerMatches := func(string) bool { return false }
 	switch harness {
 	case tmuxSubmitHarnessCodex:
 		if !hasCodex {
 			return "", false
 		}
 		prefix = "›"
+		footerMatches = func(line string) bool {
+			line = strings.ToLower(strings.TrimSpace(line))
+			return strings.Contains(line, "gpt-") || strings.Contains(line, "% left")
+		}
 	case tmuxSubmitHarnessClaude:
 		if !hasClaude {
 			return "", false
 		}
 		prefix = "❯"
+		footerMatches = func(line string) bool {
+			return strings.Contains(strings.ToLower(line), "? for shortcuts")
+		}
 	default:
 		return "", false
 	}
 
 	lines := strings.Split(capture, "\n")
+	last := len(lines) - 1
+	for last >= 0 && strings.TrimSpace(lines[last]) == "" {
+		last--
+	}
+	if last < 1 || !footerMatches(lines[last]) {
+		return "", false
+	}
 	composerStart := -1
-	for index := len(lines) - 1; index >= 0; index-- {
+	for index := last - 1; index >= 0; index-- {
 		if strings.HasPrefix(strings.TrimSpace(lines[index]), prefix) {
 			composerStart = index
 			break
@@ -2634,29 +2662,74 @@ func pendingSubmitComposer(harness tmuxSubmitHarness, capture string, evidence s
 	if composerStart < 0 {
 		return "", false
 	}
-	composer := strings.Join(strings.Fields(strings.Join(lines[composerStart:], "\n")), " ")
-	matchesPayload := strings.Contains(composer, evidence.witness)
-	if harness == tmuxSubmitHarnessCodex && !matchesPayload {
-		for _, tag := range evidence.codexCollapsedTags {
-			if strings.Contains(composer, tag) {
-				matchesPayload = true
-				break
-			}
+	for _, line := range lines[composerStart+1 : last] {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "$ ") || strings.HasPrefix(trimmed, "# ") {
+			return "", false
 		}
 	}
-	if !matchesPayload {
+	return strings.Join(strings.Fields(strings.Join(lines[composerStart:last], "\n")), " "), true
+}
+
+func composerMatchesPayload(harness tmuxSubmitHarness, composer string, evidence submitPayloadEvidence) bool {
+	if evidence.witness != "" && strings.Contains(composer, evidence.witness) {
+		return true
+	}
+	if harness != tmuxSubmitHarnessCodex {
+		return false
+	}
+	for _, tag := range evidence.codexCollapsedTags {
+		if strings.Contains(composer, tag) {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *TmuxHandler) captureSubmitComposer(
+	ctx context.Context,
+	target tmuxTarget,
+	pane sendPaneTarget,
+	harness tmuxSubmitHarness,
+	evidence submitPayloadEvidence,
+	requirePayload bool,
+) (string, bool) {
+	panes, err := h.listSendPanes(ctx, target, pane.Session)
+	if err != nil {
+		return "", false
+	}
+	live := sendPaneTarget{}
+	found := false
+	for _, candidate := range panes {
+		if sameSendPaneGeneration(pane, candidate) {
+			live = candidate
+			found = true
+			break
+		}
+	}
+	if !found || submitHarnessForPane(live) != harness {
+		return "", false
+	}
+	output, err := h.runTmuxOnSocketContext(ctx, target.socket, "capture-pane", "-p", "-J", "-t", pane.PaneID, "-S", "-200")
+	if err != nil {
+		return "", false
+	}
+	composer, ok := activeSubmitComposer(harness, output)
+	if !ok || (requirePayload && !composerMatchesPayload(harness, composer, evidence)) {
 		return "", false
 	}
 	return composer, true
 }
 
-func (h *TmuxHandler) shouldRetrySubmit(ctx context.Context, target tmuxTarget, pane sendPaneTarget, payloadPath string) bool {
-	harness := submitHarnessForPane(pane)
-	if harness == tmuxSubmitHarnessUnknown {
-		return false
-	}
-	evidence, ok := readSubmitPayloadEvidence(payloadPath)
-	if !ok {
+func (h *TmuxHandler) shouldRetrySubmit(
+	ctx context.Context,
+	target tmuxTarget,
+	pane sendPaneTarget,
+	harness tmuxSubmitHarness,
+	evidence submitPayloadEvidence,
+	expectedComposer string,
+) bool {
+	if expectedComposer == "" {
 		return false
 	}
 	observationCtx, cancel := context.WithTimeout(ctx, tmuxSendSubmitObservationTimeout)
@@ -2665,18 +2738,14 @@ func (h *TmuxHandler) shouldRetrySubmit(ctx context.Context, target tmuxTarget, 
 		if err := tmuxSendSleep(observationCtx, tmuxSendSubmitObservationDelay); err != nil {
 			return "", false
 		}
-		output, err := h.runTmuxOnSocketContext(observationCtx, target.socket, "capture-pane", "-p", "-J", "-t", pane.PaneID, "-S", "-200")
-		if err != nil {
-			return "", false
-		}
-		return pendingSubmitComposer(harness, output, evidence)
+		return h.captureSubmitComposer(observationCtx, target, pane, harness, evidence, true)
 	}
 	first, ok := capture()
-	if !ok {
+	if !ok || first != expectedComposer {
 		return false
 	}
 	second, ok := capture()
-	return ok && first == second
+	return ok && second == expectedComposer
 }
 
 type paneSendKind int
@@ -2747,7 +2816,7 @@ func paneSendCleanupContext(operationCtx context.Context, budget time.Duration) 
 // Interactive sends pass a background operation
 // context so request cancellation cannot tear down a half-applied operator action;
 // scheduled sends pass their bounded delivery context end to end.
-func (h *TmuxHandler) sendBufferToPane(loadCtx, operationCtx context.Context, cleanupReserve time.Duration, target tmuxTarget, pane sendPaneTarget, bufferName, payloadPath string, submit, retryPendingComposer bool) (paneSendResult, error) {
+func (h *TmuxHandler) sendBufferToPane(loadCtx, operationCtx context.Context, cleanupReserve time.Duration, target tmuxTarget, pane sendPaneTarget, bufferName, payloadPath string, submit, retryPendingComposer bool, evidence submitPayloadEvidence) (paneSendResult, error) {
 	if operationCtx == nil {
 		operationCtx = context.Background()
 	}
@@ -2755,6 +2824,12 @@ func (h *TmuxHandler) sendBufferToPane(loadCtx, operationCtx context.Context, cl
 	defer cancelSend()
 	if cleanupBudget > 0 {
 		loadCtx = sendCtx
+	}
+	harness := submitHarnessForPane(pane)
+	beforePasteComposer := ""
+	beforePasteCaptured := false
+	if retryPendingComposer && harness != tmuxSubmitHarnessUnknown && evidence.witness != "" {
+		beforePasteComposer, beforePasteCaptured = h.captureSubmitComposer(sendCtx, target, pane, harness, evidence, false)
 	}
 	bufferDeleted := false
 	deleteBuffer := func() error {
@@ -2822,6 +2897,13 @@ func (h *TmuxHandler) sendBufferToPane(loadCtx, operationCtx context.Context, cl
 			OperationErr:  err,
 		}, nil
 	}
+	pastedComposer := ""
+	retryEligible := false
+	if beforePasteCaptured {
+		var pastedCaptured bool
+		pastedComposer, pastedCaptured = h.captureSubmitComposer(sendCtx, target, pane, harness, evidence, true)
+		retryEligible = pastedCaptured && pastedComposer != beforePasteComposer
+	}
 	output, err = h.runTmuxOnSocketContext(
 		sendCtx,
 		target.socket,
@@ -2835,20 +2917,20 @@ func (h *TmuxHandler) sendBufferToPane(loadCtx, operationCtx context.Context, cl
 	}
 	switch marker := strings.TrimSpace(output); marker {
 	case atomicSendSubmitKeyMarker:
-		if !retryPendingComposer {
+		if !retryEligible {
 			return paneSendResult{Kind: paneSendDelivered, SubmitKeyDispatched: true, BufferCleaned: true}, nil
 		}
 		// A second Enter is eligible only when two bounded captures positively
 		// identify the same non-empty pending prompt in a recognized idle composer.
 		// The retry itself uses the same immutable server-side generation guard.
-		if !h.shouldRetrySubmit(sendCtx, target, pane, payloadPath) {
+		if !h.shouldRetrySubmit(sendCtx, target, pane, harness, evidence, pastedComposer) {
 			return paneSendResult{Kind: paneSendDelivered, SubmitKeyDispatched: true, BufferCleaned: true}, nil
 		}
 		output, err = h.runTmuxOnSocketContext(
 			sendCtx,
 			target.socket,
 			"if-shell", "-F", "-t", pane.PaneID,
-			atomicSendCondition(pane),
+			atomicRetrySendCondition(pane, harness),
 			atomicSubmitCommand(pane),
 			"display-message -p "+atomicSendSubmitTargetChangedMarker,
 		)
@@ -3374,6 +3456,7 @@ func writeSessionDrop(r *http.Request, sessionName string, target tmuxTarget, pa
 		sections = append(sections, strings.TrimRight(fileSection, "\n"))
 	}
 	payload := strings.Join(sections, "\n\n")
+	manifest.submitEvidence, _ = buildSubmitPayloadEvidence(payload)
 	if err := os.WriteFile(manifest.Payload, []byte(payload), 0o600); err != nil {
 		return sessionDropManifest{}, fmt.Errorf("write drop payload: %w", err)
 	}
@@ -3554,7 +3637,7 @@ func (h *TmuxHandler) SendToSession(w http.ResponseWriter, r *http.Request) {
 			"timestamp":           time.Now().UTC().Format(time.RFC3339),
 		})
 	}
-	result, err := h.sendBufferToPane(r.Context(), context.Background(), 0, target, pane, bufferName, manifest.Payload, submissionRequested, true)
+	result, err := h.sendBufferToPane(r.Context(), context.Background(), 0, target, pane, bufferName, manifest.Payload, submissionRequested, true, manifest.submitEvidence)
 	if err != nil {
 		core.WriteError(w, http.StatusInternalServerError, "TMUX_ERROR", err.Error())
 		return

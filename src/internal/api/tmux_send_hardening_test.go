@@ -68,7 +68,8 @@ case "${1:-}" in
     count=0
     if [ -f "$TMUX_SEND_PANE_COUNT" ]; then count=$(cat "$TMUX_SEND_PANE_COUNT"); fi
     count=$((count + 1)); printf '%s' "$count" > "$TMUX_SEND_PANE_COUNT"
-    if [ "$count" -eq 1 ] || [ -z "${TMUX_SEND_PANES_NEXT:-}" ]; then
+    switch_after="${TMUX_SEND_PANES_SWITCH_AFTER:-1}"
+    if [ "$count" -le "$switch_after" ] || [ -z "${TMUX_SEND_PANES_NEXT:-}" ]; then
       printf '%s' "$TMUX_SEND_PANES"
     else
       printf '%s' "$TMUX_SEND_PANES_NEXT"
@@ -84,10 +85,26 @@ case "${1:-}" in
     if [ -f "$TMUX_SEND_CAPTURE_COUNT" ]; then count=$(cat "$TMUX_SEND_CAPTURE_COUNT"); fi
     count=$((count + 1)); printf '%s' "$count" > "$TMUX_SEND_CAPTURE_COUNT"
     if [ "${TMUX_SEND_CAPTURE_FAIL_AT:-}" = "$count" ]; then exit 12; fi
+    adjusted_count="$count"
+    submit_count=0
+    if [ -f "$TMUX_SEND_SUBMIT_COUNT" ]; then submit_count=$(cat "$TMUX_SEND_SUBMIT_COUNT"); fi
+    if { [ -n "${TMUX_SEND_CAPTURE_BEFORE:-}" ] || [ "${TMUX_SEND_CAPTURE_BEFORE_COLLAPSED_CODEX:-}" = 1 ]; } && [ "$submit_count" -eq 0 ]; then
+      if [ "$count" -eq 1 ]; then
+        if [ "${TMUX_SEND_CAPTURE_BEFORE_COLLAPSED_CODEX:-}" = 1 ]; then
+          for before_payload in "$CHROTE_SESSION_DROPS_DIR"/*/payload.txt; do [ -f "$before_payload" ] && break; done
+          before_size=$(wc -c < "$before_payload")
+          printf '╭ OpenAI Codex (v0.147.0)\n› [Pasted Content %s chars]\n  gpt-5.6-sol xhigh' "$before_size"
+        else
+          printf '%s' "$TMUX_SEND_CAPTURE_BEFORE"
+        fi
+        exit 0
+      fi
+      adjusted_count=$((count - 1))
+    fi
     if [ "${TMUX_SEND_CAPTURE_COLLAPSED_CODEX:-}" = 1 ]; then
       size=$(wc -c < "$(cat "$TMUX_SEND_PAYLOAD_PATH")")
       printf '╭ OpenAI Codex (v0.147.0)\n› [Pasted Content %s chars]\n  gpt-5.6-sol xhigh' "$size"
-    elif [ "$count" -eq 1 ]; then
+    elif [ "$adjusted_count" -eq 1 ]; then
       printf '%s' "${TMUX_SEND_CAPTURE_ONE:-}"
     else
       printf '%s' "${TMUX_SEND_CAPTURE_TWO:-${TMUX_SEND_CAPTURE_ONE:-}}"
@@ -509,6 +526,7 @@ func TestSendToSessionRetriesOnceForStableRecognizedPendingComposer(t *testing.T
 	const prompt = "CHROTE_YLB_LONG_PENDING_PROMPT_7f9d"
 	h := newSendHarness(t, "$7	one	%41	111	9001	@3	work	/home/alice	codex	1\n")
 	pending := "╭ OpenAI Codex (v0.147.0)\n› " + prompt + "\n  gpt-5.6-sol xhigh"
+	t.Setenv("TMUX_SEND_CAPTURE_BEFORE", "╭ OpenAI Codex (v0.147.0)\n› Write tests for @filename\n  gpt-5.6-sol xhigh")
 	t.Setenv("TMUX_SEND_CAPTURE_ONE", pending)
 	t.Setenv("TMUX_SEND_CAPTURE_TWO", pending)
 	delays := []time.Duration{}
@@ -528,8 +546,8 @@ func TestSendToSessionRetriesOnceForStableRecognizedPendingComposer(t *testing.T
 		t.Fatalf("submit keys dispatched = %d, want first Enter plus one retry\ntmux log:\n%s", got, readOptionalFile(t, h.tmuxLog))
 	}
 	log := readOptionalFile(t, h.tmuxLog)
-	if got := strings.Count(log, "capture-pane\n-p\n-J\n-t\n%41\n"); got != 2 {
-		t.Fatalf("post-submit captures = %d, want two bounded observations\n%s", got, log)
+	if got := strings.Count(log, "capture-pane\n-p\n-J\n-t\n%41\n"); got != 4 {
+		t.Fatalf("composer captures = %d, want before paste, after paste, and two bounded post-submit observations\n%s", got, log)
 	}
 	if got := strings.Count(log, "send-keys -t %41 Enter"); got != 2 {
 		t.Fatalf("guarded Enter attempts = %d, want exactly two\n%s", got, log)
@@ -548,6 +566,7 @@ func TestSendToSessionRetriesOnceForStableRecognizedPendingComposer(t *testing.T
 func TestSendToSessionRetriesOnceForStableCodexCollapsedPaste(t *testing.T) {
 	prompt := strings.Repeat("x", 9477)
 	h := newSendHarness(t, "$7	one	%41	111	9001	@3	work	/home/alice	codex	1\n")
+	t.Setenv("TMUX_SEND_CAPTURE_BEFORE", "╭ OpenAI Codex (v0.147.0)\n› Write tests for @filename\n  gpt-5.6-sol xhigh")
 	t.Setenv("TMUX_SEND_CAPTURE_COLLAPSED_CODEX", "1")
 
 	recorder := h.send(t, "one", map[string]string{"text": prompt, "submit": "true"})
@@ -577,10 +596,12 @@ func TestSendToSessionSuppressesSpeculativeSubmitRetry(t *testing.T) {
 		{name: "unrecognized", command: "bash", first: "$ " + prompt},
 		{name: "ambiguous", command: "codex", first: "OpenAI Codex\nClaude Code\n› " + prompt + "\n❯ " + prompt},
 		{name: "capture failure", command: "codex", first: pending, captureFailAt: "2"},
+		{name: "stale composer followed by shell", command: "codex", first: pending + "\n$ echo operator-input"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newSendHarness(t, "$7	one	%41	111	9001	@3	work	/home/alice	"+tc.command+"	1\n")
+			t.Setenv("TMUX_SEND_CAPTURE_BEFORE", "╭ OpenAI Codex (v0.147.0)\n› Write tests for @filename\n  gpt-5.6-sol xhigh")
 			t.Setenv("TMUX_SEND_CAPTURE_ONE", tc.first)
 			t.Setenv("TMUX_SEND_CAPTURE_TWO", tc.second)
 			t.Setenv("TMUX_SEND_CAPTURE_FAIL_AT", tc.captureFailAt)
@@ -603,6 +624,7 @@ func TestSendToSessionGenerationGuardSuppressesEligibleRetryAfterTargetDrift(t *
 	const prompt = "CHROTE_YLB_TARGET_DRIFT_PROMPT_431e"
 	h := newSendHarness(t, "$7	one	%41	111	9001	@3	work	/home/alice	claude	1\n")
 	pending := "Claude Code\n❯ " + prompt + "\n  ? for shortcuts"
+	t.Setenv("TMUX_SEND_CAPTURE_BEFORE", "Claude Code\n❯ Try \\\"fix a lint error\\\"\n  ? for shortcuts")
 	t.Setenv("TMUX_SEND_CAPTURE_ONE", pending)
 	t.Setenv("TMUX_SEND_CAPTURE_TWO", pending)
 	t.Setenv("TMUX_SEND_RETRY_TARGET_CHANGED", "1")
@@ -623,6 +645,41 @@ func TestSendToSessionGenerationGuardSuppressesEligibleRetryAfterTargetDrift(t *
 	}
 	if response["submitKeyDispatched"] != true || response["transport"] != "pasted" {
 		t.Fatalf("first dispatch transport receipt was lost after suppressed retry: %#v", response)
+	}
+}
+
+func TestSendToSessionSuppressesRetryWhenHarnessExitsAfterFirstSubmit(t *testing.T) {
+	const prompt = "CHROTE_YLB_EXITED_HARNESS_PROMPT_91ad"
+	initial := "$7\tone\t%41\t111\t9001\t@3\twork\t/home/alice\tcodex\t1\n"
+	h := newSendHarness(t, initial)
+	t.Setenv("TMUX_SEND_PANES_SWITCH_AFTER", "3")
+	t.Setenv("TMUX_SEND_PANES_NEXT", "$7\tone\t%41\t111\t9001\t@3\twork\t/home/alice\tbash\t1\n")
+	t.Setenv("TMUX_SEND_CAPTURE_BEFORE", "╭ OpenAI Codex (v0.147.0)\n› Write tests for @filename\n  gpt-5.6-sol xhigh")
+	pending := "╭ OpenAI Codex (v0.147.0)\n› " + prompt + "\n  gpt-5.6-sol xhigh"
+	t.Setenv("TMUX_SEND_CAPTURE_ONE", pending)
+	t.Setenv("TMUX_SEND_CAPTURE_TWO", pending)
+
+	recorder := h.send(t, "one", map[string]string{"text": prompt, "submit": "true"})
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if got := strings.Count(readOptionalFile(t, h.submitLog), "dispatched\n"); got != 1 {
+		t.Fatalf("submit dispatches = %d, want 1 after harness exit", got)
+	}
+}
+
+func TestSendToSessionSuppressesRetryForPreexistingEqualLengthCollapsedPaste(t *testing.T) {
+	prompt := strings.Repeat("x", 9477)
+	h := newSendHarness(t, "$7\tone\t%41\t111\t9001\t@3\twork\t/home/alice\tcodex\t1\n")
+	t.Setenv("TMUX_SEND_CAPTURE_BEFORE_COLLAPSED_CODEX", "1")
+	t.Setenv("TMUX_SEND_CAPTURE_COLLAPSED_CODEX", "1")
+
+	recorder := h.send(t, "one", map[string]string{"text": prompt, "submit": "true"})
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if got := strings.Count(readOptionalFile(t, h.submitLog), "dispatched\n"); got != 1 {
+		t.Fatalf("submit dispatches = %d, want 1 for a preexisting same-length chip", got)
 	}
 }
 
