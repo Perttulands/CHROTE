@@ -253,6 +253,32 @@ describe('TerminalWindow launch user', () => {
     )
   })
 
+  it('shares terminal header width equally between every tag without crowding controls', () => {
+    const css = terminalCss()
+    const rule = (selector: string) => {
+      const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const match = css.match(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`))
+      expect(match, `missing CSS rule ${selector}`).not.toBeNull()
+      return match![1]
+    }
+
+    expect(rule('.session-tags')).toMatch(/\bflex:\s*1;/)
+    expect(rule('.session-tags')).toMatch(/\bgap:\s*4px;/)
+
+    const tagRule = rule('.session-tag')
+    expect(tagRule).toMatch(/\bflex:\s*1 1 0;/)
+    expect(tagRule).toMatch(/\bmin-width:\s*0;/)
+    expect(tagRule).not.toMatch(/\bmax-width:/)
+    expect(rule('.session-tag.active')).not.toMatch(/\b(?:flex(?:-(?:basis|grow|shrink))?|min-width|max-width|width)\s*:/)
+
+    const tagNameRule = rule('.tag-name')
+    expect(tagNameRule).toMatch(/\boverflow:\s*hidden;/)
+    expect(tagNameRule).toMatch(/\btext-overflow:\s*ellipsis;/)
+    expect(tagNameRule).toMatch(/\bwhite-space:\s*nowrap;/)
+    expect(rule('.tag-remove')).toMatch(/\bflex-shrink:\s*0;/)
+    expect(rule('.window-controls')).toMatch(/\bflex:\s*0 0 auto;/)
+  })
+
   it('stays calm during a drag until this window is actually hovered', () => {
     droppableState.active = { data: { current: { type: 'session', sessionName: 'alpha', sessionKey: 'alice:alpha' } } }
 
