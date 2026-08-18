@@ -160,8 +160,8 @@ func (s *PersonaStore) ListPersonas() ([]PersonaCard, error) {
 	for _, card := range codexPresetPersonas() {
 		cardsByID[card.ID] = card
 	}
-	entries, err := os.ReadDir(s.AgentsDir)
-	if err != nil && !os.IsNotExist(err) {
+	entries, err := s.listPersonaEntries()
+	if err != nil {
 		return nil, err
 	}
 	for _, entry := range entries {
@@ -189,7 +189,7 @@ func (s *PersonaStore) ReadPersona(id string) (*PersonaCard, error) {
 	if err := validatePersonaID(id); err != nil {
 		return nil, err
 	}
-	raw, err := os.ReadFile(s.PersonaPath(id))
+	raw, err := s.readPersonaRaw(id)
 	if err != nil {
 		if os.IsNotExist(err) {
 			if preset, ok := codexPresetPersona(id); ok {
@@ -217,13 +217,14 @@ func (s *PersonaStore) CreatePersona(req CreatePersonaRequest) (*PersonaCard, er
 	if _, ok := codexPresetPersona(req.ID); ok {
 		return nil, ErrAlreadyExists
 	}
-	path := s.PersonaPath(req.ID)
 	var created *PersonaCard
-	err := withFileLock(path, func() error {
-		if _, err := os.Stat(path); err == nil {
-			return ErrAlreadyExists
-		} else if err != nil && !os.IsNotExist(err) {
+	err := s.withPersonaLock(req.ID, func() error {
+		exists, err := s.personaExists(req.ID)
+		if err != nil {
 			return err
+		}
+		if exists {
+			return ErrAlreadyExists
 		}
 		if req.Kind == "" {
 			return fmt.Errorf("%w: kind is required", ErrInvalidSlug)
@@ -249,7 +250,7 @@ func (s *PersonaStore) CreatePersona(req CreatePersonaRequest) (*PersonaCard, er
 		}
 		req.Launch = launch
 		raw := renderPersona(req, harness, sessionStem, tags)
-		if err := writeAtomic(path, []byte(raw)); err != nil {
+		if err := s.writePersonaAtomic(req.ID, []byte(raw)); err != nil {
 			return err
 		}
 		card, err := parsePersonaCard(req.ID, []byte(raw))
@@ -269,11 +270,10 @@ func (s *PersonaStore) EditPersona(id string, req EditPersonaRequest) (*PersonaC
 	if err := validatePersonaID(id); err != nil {
 		return nil, err
 	}
-	path := s.PersonaPath(id)
 	var updated *PersonaCard
-	err := withFileLock(path, func() error {
+	err := s.withPersonaLock(id, func() error {
 		preset := false
-		raw, err := os.ReadFile(path)
+		raw, err := s.readPersonaRaw(id)
 		if err != nil {
 			if os.IsNotExist(err) {
 				builtin, ok := codexPresetPersona(id)
@@ -372,7 +372,7 @@ func (s *PersonaStore) EditPersona(id string, req EditPersonaRequest) (*PersonaC
 				Text:      req.Note,
 			})
 		}
-		if err := writeAtomic(path, []byte(next)); err != nil {
+		if err := s.writePersonaAtomic(id, []byte(next)); err != nil {
 			return err
 		}
 		updated, err = parsePersonaCard(id, []byte(next))

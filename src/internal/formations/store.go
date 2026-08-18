@@ -36,8 +36,9 @@ type Store struct {
 	Workspace string
 	Now       func() time.Time
 
-	runtimeAuthority    *runtimeAuthorityBoundary
-	newToolDefinitionID func(string) string
+	runtimeAuthority                     *runtimeAuthorityBoundary
+	newToolDefinitionID                  func(string) string
+	deleteBoardAfterLayoutArchiveForTest func()
 }
 
 type BoardDocument struct {
@@ -231,31 +232,39 @@ func (s *Store) DeleteBoard(slug string, opts WriteOptions) (*BoardDeletion, err
 		}
 
 		archiveID := newPrefixedID("archive")
-		layoutArchive := ""
-		if err := s.withLayoutDefinitionLock(slug, func(layoutDefinition *definitionFile) error {
+		return s.withLayoutDefinitionLock(slug, func(layoutDefinition *definitionFile) error {
+			layoutArchive := ""
 			exists, err := layoutDefinition.exists()
-			if err != nil || !exists {
+			if err != nil {
 				return err
 			}
-			layoutArchive, err = layoutDefinition.archive(archiveID)
-			return err
-		}); err != nil {
-			return err
-		}
-
-		if _, err := boardDefinition.archive(archiveID); err != nil {
-			if layoutArchive != "" {
-				restoreErr := s.withLayoutDefinitionLock(slug, func(layoutDefinition *definitionFile) error {
-					return layoutDefinition.restoreArchived(layoutArchive)
-				})
-				if restoreErr != nil {
-					return fmt.Errorf("archive board: %v; restore layout: %w", err, restoreErr)
+			if exists {
+				layoutArchive, err = layoutDefinition.archive(archiveID)
+				if err != nil {
+					return err
 				}
 			}
-			return err
-		}
-		deleted = &BoardDeletion{ID: board.ID, Slug: board.Slug, Title: board.Title, ArchiveID: archiveID}
-		return nil
+			if s.deleteBoardAfterLayoutArchiveForTest != nil {
+				s.deleteBoardAfterLayoutArchiveForTest()
+			}
+
+			boardArchive, err := boardDefinition.archive(archiveID)
+			if err != nil {
+				// A non-empty archive name means rename committed but directory
+				// durability is uncertain. Do not invent a rollback outcome.
+				if boardArchive != "" {
+					return err
+				}
+				if layoutArchive != "" {
+					if restoreErr := layoutDefinition.restoreArchived(layoutArchive); restoreErr != nil {
+						return fmt.Errorf("archive board: %v; restore layout: %w", err, restoreErr)
+					}
+				}
+				return err
+			}
+			deleted = &BoardDeletion{ID: board.ID, Slug: board.Slug, Title: board.Title, ArchiveID: archiveID}
+			return nil
+		})
 	})
 	if err != nil {
 		return nil, err

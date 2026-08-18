@@ -378,7 +378,7 @@ func (f *definitionFile) archive(marker string) (string, error) {
 		return "", definitionPathError(&os.PathError{Op: "renameat", Path: f.name, Err: err})
 	}
 	if err := f.directory.Sync(); err != nil {
-		return "", definitionPathError(err)
+		return archiveName, fmt.Errorf("%w: archive %q directory sync failed: %v", ErrDefinitionPublicationUncertain, f.name, definitionPathError(err))
 	}
 	return archiveName, nil
 }

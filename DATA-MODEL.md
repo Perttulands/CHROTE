@@ -1192,6 +1192,14 @@ as orphaned sidecar data until an explicit note update removes it. A recreated
 board with the same slug receives an empty note view because the sidecar's
 stable board id no longer matches.
 
+Board titles are mutable; slugs and stable board ids are not. Board deletion is
+an ETag-and-revision-fenced removal from the live namespace. The writer archives
+the exact board and any layout definition under one deletion id instead of
+destroying their bytes. Run history and the board-id-bound notes sidecar remain
+available for explicit recovery/audit and are not treated as live board state.
+The writer holds the board/layout lock pair through the visible deletion commit;
+publication uncertainty fails loud and requires a reload before retry.
+
 All workflow payload ports are directional. A Gate's reserved `judge` socket is
 an evaluation-control relationship rather than a typed payload port; it permits
 one judge send and one return and never routes downstream work.

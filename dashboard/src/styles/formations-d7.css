@@ -72,6 +72,9 @@
 .fmx .formation:hover>.note-pin,.fmx .missioncard:hover>.note-pin,.fmx .gatecard:hover>.note-pin,.fmx .toolcard:hover>.note-pin,.fmx .note-pin:focus-visible,.fmx .note-pin.filled{opacity:1;}
 .fmx .note-pin:hover{transform:rotate(0deg) scale(1.08);}
 .fmx .note-pin.filled{background:#efcf62;}
+.fmx .note-preview{position:absolute;z-index:11;top:calc(100% + 5px);right:0;width:min(180px,90%);max-height:66px;overflow:hidden;padding:7px 9px;border:1px solid rgba(160,120,20,.42);background:#e9cc68;color:#4d3e16;box-shadow:2px 3px 7px rgba(0,0,0,.22);font:10px/1.4 'Courier Prime',monospace;white-space:pre-wrap;overflow-wrap:anywhere;transform:rotate(-.5deg);pointer-events:none;}
+.fmx .note-reload{width:100%;border:1px solid var(--gold);background:color-mix(in srgb,var(--bg2) 82%,var(--gold) 18%);color:var(--ink);padding:7px 9px;font:700 9px/1.35 'Courier Prime',monospace;text-transform:uppercase;cursor:pointer;}
+.fmx .note-reload:disabled{opacity:.45;cursor:not-allowed;}
 
 /* ===== ROSTER ===== */
 /* Leans on the Terminal tab's session panel: flat full-bleed rows, divider

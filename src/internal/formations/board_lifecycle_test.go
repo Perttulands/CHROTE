@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestDeleteBoardArchivesDefinitionAndLayoutWithPreconditions(t *testing.T) {
@@ -67,6 +68,56 @@ func TestDeleteBoardRequiresPreconditions(t *testing.T) {
 
 	if _, err := store.DeleteBoard("poems", WriteOptions{}); !errors.Is(err, ErrPreconditionRequired) {
 		t.Fatalf("delete error = %v, want ErrPreconditionRequired", err)
+	}
+}
+
+func TestDeleteBoardHoldsLayoutLockThroughBoardArchive(t *testing.T) {
+	store := NewStore(t.TempDir())
+	writeFixture(t, store.BoardPath("poems"), minimalBoard("poems", 7))
+	writeFixture(t, store.LayoutPath("poems"), `schema = 1
+boardId = "brd_01J9_sesssearch"
+boardRev = 7
+updatedAt = "2026-06-03T16:00:00Z"
+`)
+	board, err := store.ReadBoard("poems")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	archived := make(chan struct{})
+	release := make(chan struct{})
+	store.deleteBoardAfterLayoutArchiveForTest = func() {
+		close(archived)
+		<-release
+	}
+	deleteResult := make(chan error, 1)
+	go func() {
+		_, err := store.DeleteBoard("poems", WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev})
+		deleteResult <- err
+	}()
+	<-archived
+
+	updateResult := make(chan error, 1)
+	go func() {
+		_, err := store.UpdateLayoutNodes("poems", []LayoutNode{{ID: "fmn_frame", X: 10, Y: 20}}, WriteOptions{ExpectedETag: "*"})
+		updateResult <- err
+	}()
+	select {
+	case err := <-updateResult:
+		t.Fatalf("layout update escaped delete lock before board archive: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if err := <-deleteResult; err != nil {
+		t.Fatalf("delete board: %v", err)
+	}
+	if err := <-updateResult; !errors.Is(err, ErrNotFound) {
+		t.Fatalf("layout recreation error = %v, want ErrNotFound after board archive", err)
+	}
+	if _, err := store.ReadBoard("poems"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("read deleted board error = %v", err)
+	}
+	if _, err := store.ReadLayout("poems"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("read deleted layout error = %v", err)
 	}
 }
 

@@ -24,7 +24,7 @@ func TestBoardNotesRoundTripWithoutChangingExecutableBoard(t *testing.T) {
 	afterBoard, err := store.UpdateBoardNote("session-search", BoardNotePatch{
 		Target:    BoardNoteTarget,
 		Text:      boardText,
-		UpdatedBy: "human:perttu",
+		UpdatedBy: "human:operator",
 	}, NoteWriteOptions{ExpectedETag: empty.ETag})
 	if err != nil {
 		t.Fatalf("write board note: %v", err)

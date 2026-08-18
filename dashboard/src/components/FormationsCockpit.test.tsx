@@ -140,6 +140,7 @@ function installFetchMock(options: {
   escalations?: TestEscalation[]
   runStatus?: TestRunStatus
   boardNotes?: { board?: string; elements?: Array<{ nodeId: string; text: string }> }
+  notePatchConflict?: boolean
   agents?: typeof agents
 } = {}) {
   const patches: RecordedPatch[] = []
@@ -175,6 +176,13 @@ function installFetchMock(options: {
       json: () => Promise.resolve({ success: false, error: { code: 'BAD_REQUEST', message } }),
       text: () => Promise.resolve(message),
     })
+    const conflict = (message: string) => Promise.resolve({
+      ok: false,
+      status: 409,
+      headers: { get: () => null },
+      json: () => Promise.resolve({ success: false, error: { code: 'CONFLICT', message } }),
+      text: () => Promise.resolve(message),
+    })
     if (method === 'POST' && url === '/api/formations/boards') {
       const body = JSON.parse(String(init?.body)) as { title: string }
       const created = {
@@ -203,6 +211,7 @@ function installFetchMock(options: {
       return respond({ notes: boardNotes }, boardNotes.etag)
     }
     if (method === 'PATCH' && /^\/api\/formations\/boards\/[^/]+\/notes$/.test(url)) {
+      if (options.notePatchConflict) return conflict('Shared notes changed; reload and retry')
       const body = JSON.parse(String(init?.body)) as { target: string; text: string }
       boardNotes = {
         ...boardNotes,
@@ -426,6 +435,7 @@ describe('FormationsCockpit reference parity', () => {
     await renderCockpit()
     fireEvent.click(screen.getByRole('button', { name: 'Rename board' }))
     const dialog = await screen.findByRole('dialog', { name: 'Rename board' })
+    expect(screen.getByTestId('board-picker')).toBeDisabled()
     const input = within(dialog).getByLabelText('Board name')
     expect(input).toHaveValue('Test board')
     fireEvent.change(input, { target: { value: 'Delivery map' } })
@@ -460,6 +470,7 @@ describe('FormationsCockpit reference parity', () => {
     fireEvent.click(within(notepad).getByRole('button', { name: 'Expand shared notepad' }))
     expect(await within(notepad).findByLabelText('Board note')).toHaveValue('Preserve the API contract.')
     expect(screen.getByTestId('formation-node-fmn_frame')).toHaveClass('has-note')
+    expect(screen.getByRole('note', { name: 'Note for Frame' })).toHaveTextContent('Builder owns this element.')
 
     fireEvent.click(within(screen.getByTestId('formation-node-fmn_frame')).getByRole('button', { name: 'Edit note for Frame' }))
     expect(within(notepad).getByLabelText('Element')).toHaveValue('fmn_frame')
@@ -489,6 +500,19 @@ describe('FormationsCockpit reference parity', () => {
     fireEvent.click(saveElementNote)
 
     await waitFor(() => expect(judge).toHaveClass('has-note'))
+  })
+
+  it('preserves a stale local note draft and offers an explicit reload after conflict', async () => {
+    patches = installFetchMock({ boardNotes: { board: 'Server version' }, notePatchConflict: true })
+    await renderCockpit()
+    fireEvent.click(screen.getByRole('button', { name: 'Expand shared notepad' }))
+    const boardNote = await screen.findByRole('textbox', { name: 'Board note' })
+    fireEvent.change(boardNote, { target: { value: 'Local draft' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save board note' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Shared notes changed')
+    expect(boardNote).toHaveValue('Local draft')
+    expect(screen.getByRole('button', { name: 'Reload shared notes (discard local draft)' })).toBeEnabled()
   })
 
   it('protects unsaved notes from board switches, creation, and deletion', async () => {

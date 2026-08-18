@@ -3,7 +3,9 @@ package formations
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
+	"syscall"
 	"testing"
 )
 
@@ -84,6 +86,65 @@ func TestStaleCodexPresetEditDoesNotMaterializeOverride(t *testing.T) {
 	}
 	if _, err := os.Stat(store.PersonaPath("codex-scout")); !os.IsNotExist(err) {
 		t.Fatalf("stale edit created override: %v", err)
+	}
+}
+
+func TestPersonaStoreRejectsSymlinkAndFIFOCardSubstitution(t *testing.T) {
+	dir := t.TempDir()
+	external := filepath.Join(t.TempDir(), "external.toml")
+	if err := os.WriteFile(external, []byte("external secret"), 0o600); err != nil {
+		t.Fatalf("write external file: %v", err)
+	}
+	if err := os.Symlink(external, filepath.Join(dir, "codex-builder.toml")); err != nil {
+		t.Fatalf("symlink card: %v", err)
+	}
+	store := NewPersonaStore(dir)
+	if _, err := store.ReadPersona("codex-builder"); err == nil {
+		t.Fatal("ReadPersona followed substituted symlink")
+	}
+	if got, err := os.ReadFile(external); err != nil || string(got) != "external secret" {
+		t.Fatalf("external file changed: %q, err=%v", got, err)
+	}
+
+	if err := os.Remove(filepath.Join(dir, "codex-builder.toml")); err != nil {
+		t.Fatalf("remove card symlink: %v", err)
+	}
+	fifo := filepath.Join(dir, "codex-builder.toml")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatalf("mkfifo: %v", err)
+	}
+	if _, err := store.ReadPersona("codex-builder"); err == nil {
+		t.Fatal("ReadPersona accepted FIFO card")
+	}
+}
+
+func TestPersonaStoreRejectsSymlinkLockWithoutChangingExternalMode(t *testing.T) {
+	dir := t.TempDir()
+	external := filepath.Join(t.TempDir(), "external-lock")
+	if err := os.WriteFile(external, []byte("lock sentinel"), 0o600); err != nil {
+		t.Fatalf("write external lock: %v", err)
+	}
+	if err := os.Symlink(external, filepath.Join(dir, "codex-scout.toml.lock")); err != nil {
+		t.Fatalf("symlink lock: %v", err)
+	}
+	store := NewPersonaStore(dir)
+	builtin, err := store.ReadPersona("codex-scout")
+	if err != nil {
+		t.Fatalf("read builtin: %v", err)
+	}
+	name := "Unsafe override"
+	if _, err := store.EditPersona("codex-scout", EditPersonaRequest{SetDisplayName: &name, ExpectedETag: builtin.ETag}); err == nil {
+		t.Fatal("EditPersona followed substituted lock symlink")
+	}
+	info, err := os.Stat(external)
+	if err != nil {
+		t.Fatalf("stat external lock: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("external lock mode = %o, want 600", info.Mode().Perm())
+	}
+	if _, err := os.Stat(store.PersonaPath("codex-scout")); !os.IsNotExist(err) {
+		t.Fatalf("unsafe edit materialized card: %v", err)
 	}
 }
 

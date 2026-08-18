@@ -14,6 +14,7 @@
  */
 import { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
+  ApiRequestError,
   abortRunRequest,
   createBoard,
   deleteBoard,
@@ -127,6 +128,7 @@ type BriefEditorState = {
 type BoardDialogState = {
   mode: 'create' | 'rename' | 'delete'
   title: string
+  target?: Pick<BoardDocument, 'id' | 'slug' | 'etag' | 'rev'>
   saving: boolean
   error: string
 }
@@ -204,6 +206,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const [elementNoteDirty, setElementNoteDirty] = useState(false)
   const [noteSaving, setNoteSaving] = useState<'board' | 'element' | ''>('')
   const [noteError, setNoteError] = useState('')
+  const [notesConflict, setNotesConflict] = useState(false)
   const [legacyVerification, setLegacyVerification] = useState<LegacyVerificationState | null>(null)
   const legacyVerificationOpen = legacyVerification !== null
   const [inspectedToolId, setInspectedToolId] = useState<string | null>(null)
@@ -337,6 +340,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     setBoardNoteDirty(false)
     setElementNoteDirty(false)
     setNoteError('')
+    setNotesConflict(false)
   }, [selectedSlug])
 
   useEffect(() => {
@@ -346,6 +350,13 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       try {
         const next = await fetchBoardNotes(selectedSlug)
         if (cancelled) return
+        const current = notesRef.current
+        const dirty = boardNoteDirtyRef.current || elementNoteDirtyRef.current
+        if (dirty && current && current.etag !== next.etag) {
+          setNotesConflict(true)
+          setNoteError('Shared notes changed elsewhere. Your draft is preserved; reload notes or copy it before retrying.')
+          return
+        }
         notesRef.current = next
         setNotes(next)
         if (!boardNoteDirtyRef.current) setBoardNoteDraft(next.board)
@@ -612,9 +623,9 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   }, [])
 
   const selectBoard = useCallback((slug: string) => {
-    if (slug === boardRef.current?.slug || blockBoardExitForDirtyNotes()) return
+    if (boardDialog || slug === boardRef.current?.slug || blockBoardExitForDirtyNotes()) return
     setSelectedSlug(slug)
-  }, [blockBoardExitForDirtyNotes])
+  }, [blockBoardExitForDirtyNotes, boardDialog])
 
   const openCreateBoard = useCallback(() => {
     if (blockBoardExitForDirtyNotes()) return
@@ -624,14 +635,14 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const openRenameBoard = useCallback(() => {
     const current = boardRef.current
     if (!current) return
-    setBoardDialog({ mode: 'rename', title: current.title, saving: false, error: '' })
+    setBoardDialog({ mode: 'rename', title: current.title, target: { id: current.id, slug: current.slug, etag: current.etag, rev: current.rev }, saving: false, error: '' })
   }, [])
 
   const openDeleteBoard = useCallback(() => {
     if (blockBoardExitForDirtyNotes()) return
     const current = boardRef.current
     if (!current) return
-    setBoardDialog({ mode: 'delete', title: current.title, saving: false, error: '' })
+    setBoardDialog({ mode: 'delete', title: current.title, target: { id: current.id, slug: current.slug, etag: current.etag, rev: current.rev }, saving: false, error: '' })
   }, [blockBoardExitForDirtyNotes])
 
   const saveBoardName = useCallback(async () => {
@@ -659,11 +670,13 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
         }].sort((a, b) => a.slug.localeCompare(b.slug)))
         setSelectedSlug(created.slug)
       } else {
-        const current = boardRef.current
-        if (!current) throw new Error('No board is selected')
-        const result = await patchBoardDocument(current.slug, current.etag, current.rev, { title })
-        boardRef.current = result.board
-        setBoard(result.board)
+        const target = boardDialog.target
+        if (!target) throw new Error('Board target is missing; close and retry')
+        const result = await patchBoardDocument(target.slug, target.etag, target.rev, { title })
+        if (boardRef.current?.id === target.id) {
+          boardRef.current = result.board
+          setBoard(result.board)
+        }
         setBoards(items => items.map(item => item.slug === result.board.slug ? {
           ...item,
           title: result.board.title,
@@ -683,21 +696,23 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   }, [boardDialog])
 
   const archiveSelectedBoard = useCallback(async () => {
-    const current = boardRef.current
-    if (!current || boardDialog?.mode !== 'delete') return
+    const target = boardDialog?.target
+    if (!target || boardDialog?.mode !== 'delete') return
     setBoardDialog(dialog => dialog ? { ...dialog, saving: true, error: '' } : dialog)
     try {
-      await deleteBoard(current.slug, current.etag, current.rev)
+      await deleteBoard(target.slug, target.etag, target.rev)
       const remaining = await fetchBoardSummaries()
-      boardRef.current = null
-      layoutRef.current = null
-      setBoard(null)
-      setLayout(null)
       setBoards(remaining)
-      setSelectedSlug(remaining[0]?.slug || '')
-      setActiveRun(null)
-      setRunEvents([])
-      setEscalations([])
+      if (boardRef.current?.id === target.id) {
+        boardRef.current = null
+        layoutRef.current = null
+        setBoard(null)
+        setLayout(null)
+        setSelectedSlug(remaining[0]?.slug || '')
+        setActiveRun(null)
+        setRunEvents([])
+        setEscalations([])
+      }
       setBoardDialog(null)
       setError('')
     } catch (err) {
@@ -707,7 +722,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
         error: err instanceof Error ? err.message : 'Board deletion failed',
       } : dialog)
     }
-  }, [boardDialog?.mode])
+  }, [boardDialog])
 
   const patchLayoutEdge = useCallback(async (edgeId: string, lane: string) => {
     const currentBoard = boardRef.current
@@ -1947,10 +1962,12 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       setNotes(updated)
       setBoardNoteDraft(updated.board)
       setBoardNoteDirty(false)
+      setNotesConflict(false)
       if (!elementNoteDirtyRef.current && elementNoteTargetRef.current) {
         setElementNoteDraft(updated.elements.find(note => note.nodeId === elementNoteTargetRef.current)?.text || '')
       }
     } catch (err) {
+      if (err instanceof ApiRequestError && err.status === 409) setNotesConflict(true)
       setNoteError(err instanceof Error ? err.message : 'Failed to save board note')
     } finally {
       setNoteSaving('')
@@ -1971,27 +1988,56 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       setNotes(updated)
       setElementNoteDraft(updated.elements.find(note => note.nodeId === target)?.text || '')
       setElementNoteDirty(false)
+      setNotesConflict(false)
       if (!boardNoteDirtyRef.current) setBoardNoteDraft(updated.board)
     } catch (err) {
+      if (err instanceof ApiRequestError && err.status === 409) setNotesConflict(true)
       setNoteError(err instanceof Error ? err.message : 'Failed to save element note')
     } finally {
       setNoteSaving('')
     }
   }, [elementNoteDraft])
 
+  const reloadSharedNotes = useCallback(async () => {
+    const currentBoard = boardRef.current
+    if (!currentBoard) return
+    setNoteSaving('board')
+    try {
+      const fresh = await fetchBoardNotes(currentBoard.slug)
+      notesRef.current = fresh
+      boardNoteDirtyRef.current = false
+      elementNoteDirtyRef.current = false
+      setNotes(fresh)
+      setBoardNoteDraft(fresh.board)
+      setBoardNoteDirty(false)
+      setElementNoteDraft(fresh.elements.find(note => note.nodeId === elementNoteTargetRef.current)?.text || '')
+      setElementNoteDirty(false)
+      setNotesConflict(false)
+      setNoteError('')
+    } catch (err) {
+      setNoteError(err instanceof Error ? err.message : 'Failed to reload shared notes')
+    } finally {
+      setNoteSaving('')
+    }
+  }, [])
+
   const renderNotePin = (nodeID: string, title: string) => {
-    const hasNote = noteByNode.has(nodeID)
+    const noteText = noteByNode.get(nodeID) || ''
+    const hasNote = noteText !== ''
     return (
-      <button
-        type="button"
-        className={`note-pin${hasNote ? ' filled' : ''}`}
-        aria-label={`${hasNote ? 'Edit' : 'Add'} note for ${title}`}
-        title={`${hasNote ? 'Edit' : 'Add'} shared note`}
-        onPointerDown={event => event.stopPropagation()}
-        onClick={event => { event.stopPropagation(); selectElementNote(nodeID) }}
-      >
-        <span aria-hidden="true">{hasNote ? '▰' : '+'}</span>
-      </button>
+      <>
+        <button
+          type="button"
+          className={`note-pin${hasNote ? ' filled' : ''}`}
+          aria-label={`${hasNote ? 'Edit' : 'Add'} note for ${title}`}
+          title={`${hasNote ? 'Edit' : 'Add'} shared note`}
+          onPointerDown={event => event.stopPropagation()}
+          onClick={event => { event.stopPropagation(); selectElementNote(nodeID) }}
+        >
+          <span aria-hidden="true">{hasNote ? '▰' : '+'}</span>
+        </button>
+        {hasNote ? <div className="note-preview" role="note" aria-label={`Note for ${title}`}>{noteText}</div> : null}
+      </>
     )
   }
 
@@ -2128,18 +2174,18 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       <div className="topbar">
         <div className="boardpick">
           board
-          <select value={selectedSlug} onChange={event => selectBoard(event.target.value)} data-testid="board-picker" disabled={boards.length === 0}>
+          <select value={selectedSlug} onChange={event => selectBoard(event.target.value)} data-testid="board-picker" disabled={boards.length === 0 || Boolean(boardDialog)}>
             {boards.length === 0 ? <option value="">No boards</option> : null}
             {boards.map(summary => <option key={summary.slug} value={summary.slug}>{summary.title || summary.slug}</option>)}
           </select>
           {board ? <span className="rev">rev {board.rev}</span> : null}
         </div>
-        <button className="newbtn board-new" type="button" onClick={openCreateBoard} data-testid="new-board">
+        <button className="newbtn board-new" type="button" onClick={openCreateBoard} data-testid="new-board" disabled={Boolean(boardDialog)}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
           New board
         </button>
-        <button className="board-action" type="button" aria-label="Rename board" disabled={!board} onClick={openRenameBoard}>Rename</button>
-        <button className="board-action danger" type="button" aria-label="Delete board" disabled={!board} onClick={openDeleteBoard}>Delete</button>
+        <button className="board-action" type="button" aria-label="Rename board" disabled={!board || Boolean(boardDialog)} onClick={openRenameBoard}>Rename</button>
+        <button className="board-action danger" type="button" aria-label="Delete board" disabled={!board || Boolean(boardDialog)} onClick={openDeleteBoard}>Delete</button>
         <div className="sep" />
         <button className="newbtn" onClick={createSolo} data-testid="new-formation" disabled={!board}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
@@ -2621,6 +2667,11 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
                   ) : <div className="note-empty">Use a card's post-it button or choose an element.</div>}
                 </section>
                 {noteError ? <div className="note-error" role="alert">{noteError}</div> : null}
+                {notesConflict ? (
+                  <button type="button" className="note-reload" disabled={noteSaving !== ''} onClick={() => void reloadSharedNotes()}>
+                    Reload shared notes (discard local draft)
+                  </button>
+                ) : null}
               </div>
             ) : <div className="note-empty boardless">Create or select a board to use the shared notepad.</div>
           ) : null}

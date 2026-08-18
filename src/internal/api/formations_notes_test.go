@@ -43,7 +43,7 @@ func TestFormationsHandlerReadsAndWritesBoardNotesWithETagFences(t *testing.T) {
 		t.Fatalf("PATCH without If-Match status = %d, body=%s", missingFence.Code, missingFence.Body.String())
 	}
 
-	patch := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/session-search/notes", bytes.NewBufferString(`{"target":"board","text":"shared\nplan","updatedBy":"human:perttu"}`))
+	patch := httptest.NewRequest(http.MethodPatch, "/api/formations/boards/session-search/notes", bytes.NewBufferString(`{"target":"board","text":"shared\nplan","updatedBy":"human:operator"}`))
 	patch.Header.Set("If-Match", "*")
 	patched := httptest.NewRecorder()
 	mux.ServeHTTP(patched, patch)
@@ -58,7 +58,7 @@ func TestFormationsHandlerReadsAndWritesBoardNotesWithETagFences(t *testing.T) {
 	if err := json.Unmarshal(patched.Body.Bytes(), &current); err != nil {
 		t.Fatalf("decode patched notes: %v", err)
 	}
-	if current.Data.Notes.Board != "shared\nplan" || current.Data.Notes.ETag == "*" || current.Data.Notes.UpdatedBy != "human:perttu" {
+	if current.Data.Notes.Board != "shared\nplan" || current.Data.Notes.ETag == "*" || current.Data.Notes.UpdatedBy != "human:operator" {
 		t.Fatalf("patched notes = %+v", current.Data.Notes)
 	}
 
