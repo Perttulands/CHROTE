@@ -2,6 +2,7 @@ import type {
   AgentProjection,
   BoardDeletion,
   BoardDocument,
+  BoardNotesDocument,
   BoardSummary,
   CodeGateProfileDescriptor,
   FormationNode,
@@ -129,6 +130,30 @@ export async function deleteBoard(slug: string, etag: string, rev: number): Prom
     },
   )
   return result.data.deletion
+}
+
+export async function fetchBoardNotes(slug: string): Promise<BoardNotesDocument> {
+  const result = await fetchApi<{ notes: BoardNotesDocument }>(`/api/formations/boards/${encodeURIComponent(slug)}/notes`)
+  return {
+    ...result.data.notes,
+    board: result.data.notes.board || '',
+    elements: result.data.notes.elements || [],
+    etag: result.etag || result.data.notes.etag,
+  }
+}
+
+export async function patchBoardNote(slug: string, etag: string, target: string, text: string): Promise<BoardNotesDocument> {
+  const result = await fetchApi<{ notes: BoardNotesDocument }>(`/api/formations/boards/${encodeURIComponent(slug)}/notes`, {
+    method: 'PATCH',
+    headers: { 'If-Match': etag },
+    body: JSON.stringify({ target, text, updatedBy: 'human:ui' }),
+  })
+  return {
+    ...result.data.notes,
+    board: result.data.notes.board || '',
+    elements: result.data.notes.elements || [],
+    etag: result.etag || result.data.notes.etag,
+  }
 }
 
 export async function fetchAgents(): Promise<AgentProjection[]> {

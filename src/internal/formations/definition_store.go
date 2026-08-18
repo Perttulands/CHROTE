@@ -20,6 +20,7 @@ type definitionKind struct {
 var (
 	boardDefinitionKind  = definitionKind{directory: "boards", suffix: ".formation.toml"}
 	layoutDefinitionKind = definitionKind{directory: "layout", suffix: ".layout.toml"}
+	notesDefinitionKind  = definitionKind{directory: "notes", suffix: ".notes.toml"}
 )
 
 type definitionFile struct {
@@ -42,12 +43,20 @@ func (s *Store) openLayoutDefinition(slug string, createDirectory bool) (*defini
 	return s.openDefinition(layoutDefinitionKind, slug, createDirectory)
 }
 
+func (s *Store) openNotesDefinition(slug string, createDirectory bool) (*definitionFile, error) {
+	return s.openDefinition(notesDefinitionKind, slug, createDirectory)
+}
+
 func (s *Store) withBoardDefinitionLock(slug string, fn func(*definitionFile) error) error {
 	return s.withDefinitionLock(boardDefinitionKind, slug, fn)
 }
 
 func (s *Store) withLayoutDefinitionLock(slug string, fn func(*definitionFile) error) error {
 	return s.withDefinitionLock(layoutDefinitionKind, slug, fn)
+}
+
+func (s *Store) withNotesDefinitionLock(slug string, fn func(*definitionFile) error) error {
+	return s.withDefinitionLock(notesDefinitionKind, slug, fn)
 }
 
 func (s *Store) withDefinitionLock(kind definitionKind, slug string, fn func(*definitionFile) error) error {

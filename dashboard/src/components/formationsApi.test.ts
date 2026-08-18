@@ -6,10 +6,12 @@ import {
   fetchApi,
   fetchBoardChanged,
   fetchBoardDocument,
+  fetchBoardNotes,
   fetchBoardWithLayout,
   normalizeBoard,
   normalizeLayout,
   patchBoardDocument,
+  patchBoardNote,
   startRun,
 } from './formationsApi'
 import type { BoardDocument, LayoutDocument, ToolNode } from './formationsTypes'
@@ -223,6 +225,46 @@ describe('formations API helpers', () => {
     expect(calls[0].init?.method).toBe('DELETE')
     expect(calls[0].init?.headers).toMatchObject({ 'If-Match': 'board-etag' })
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({ expectedRev: 7 })
+  })
+
+  it('reads and updates board notes through the shared ETag-fenced sidecar', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      calls.push({ url, init })
+      const text = init?.method === 'PATCH' ? 'shared plan' : ''
+      return Promise.resolve(new Response(JSON.stringify({
+        success: true,
+        data: {
+          notes: {
+            schema: 1,
+            boardId: 'brd_1',
+            rev: text ? 1 : 0,
+            updatedAt: '2026-08-18T13:00:00Z',
+            board: text,
+            elements: null,
+            etag: text ? 'body-etag' : '*',
+          },
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json', ETag: text ? 'header-etag' : '*' },
+      }))
+    }))
+
+    const empty = await fetchBoardNotes('board one')
+    expect(empty.elements).toEqual([])
+    expect(empty.etag).toBe('*')
+
+    const updated = await patchBoardNote('board one', empty.etag, 'board', 'shared plan')
+    expect(updated.board).toBe('shared plan')
+    expect(updated.etag).toBe('header-etag')
+    expect(calls[1]).toMatchObject({ url: '/api/formations/boards/board%20one/notes' })
+    expect(calls[1].init).toMatchObject({
+      method: 'PATCH',
+      headers: { 'If-Match': '*' },
+      body: JSON.stringify({ target: 'board', text: 'shared plan', updatedBy: 'human:ui' }),
+    })
   })
 
   it('checks board changes against the current ETag', async () => {

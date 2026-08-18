@@ -13,6 +13,22 @@ export interface BoardDeletion {
   archiveId: string
 }
 
+export interface ElementNote {
+  nodeId: string
+  text: string
+}
+
+export interface BoardNotesDocument {
+  schema: number
+  boardId: string
+  rev: number
+  updatedAt: string
+  updatedBy?: string
+  board: string
+  elements: ElementNote[]
+  etag: string
+}
+
 export interface FormationPort {
   id: string
   label: string

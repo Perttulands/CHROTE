@@ -138,12 +138,23 @@ function installFetchMock(options: {
   runEvents?: TestRunEvent[]
   escalations?: TestEscalation[]
   runStatus?: TestRunStatus
+  boardNotes?: { board?: string; elements?: Array<{ nodeId: string; text: string }> }
 } = {}) {
   const patches: RecordedPatch[] = []
   recordedMutations = []
   let availableBoards = options.emptyBoards ? [] : (options.boards?.length ? options.boards : [makeBoard()])
   let board = availableBoards[0] || makeBoard()
   let currentLayout = layout
+  let boardNotes = {
+    schema: 1,
+    boardId: board.id,
+    rev: options.boardNotes ? 1 : 0,
+    updatedAt: '2026-08-18T13:00:00Z',
+    updatedBy: 'human:test',
+    board: options.boardNotes?.board || '',
+    elements: options.boardNotes?.elements || [],
+    etag: options.boardNotes ? 'notes-etag' : '*',
+  }
   ;(globalThis as Record<string, unknown>).fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     const method = (init?.method || 'GET').toUpperCase()
@@ -178,11 +189,31 @@ function installFetchMock(options: {
       availableBoards = [...availableBoards, created]
       board = created
       currentLayout = { schema: 1, boardId: created.id, boardRev: created.rev, etag: '*', nodes: [], edges: [] }
+      boardNotes = { ...boardNotes, boardId: created.id, rev: 0, board: '', elements: [], etag: '*' }
       return respond({ board: created }, created.etag)
     }
     if (method === 'DELETE' && url.includes('/api/formations/boards/')) {
       availableBoards = availableBoards.filter(item => item.slug !== board.slug)
       return respond({ deletion: { id: board.id, slug: board.slug, title: board.title, archiveId: 'archive_test' } })
+    }
+    if (method === 'GET' && /^\/api\/formations\/boards\/[^/]+\/notes$/.test(url)) {
+      return respond({ notes: boardNotes }, boardNotes.etag)
+    }
+    if (method === 'PATCH' && /^\/api\/formations\/boards\/[^/]+\/notes$/.test(url)) {
+      const body = JSON.parse(String(init?.body)) as { target: string; text: string }
+      boardNotes = {
+        ...boardNotes,
+        rev: boardNotes.rev + 1,
+        updatedBy: 'human:ui',
+        etag: `notes-etag-${boardNotes.rev + 1}`,
+        board: body.target === 'board' ? body.text : boardNotes.board,
+        elements: body.target === 'board'
+          ? boardNotes.elements
+          : body.text
+            ? [...boardNotes.elements.filter(note => note.nodeId !== body.target), { nodeId: body.target, text: body.text }]
+            : boardNotes.elements.filter(note => note.nodeId !== body.target),
+      }
+      return respond({ notes: boardNotes }, boardNotes.etag)
     }
     if (init?.method === 'PATCH') {
       const body = JSON.parse(String(init.body)) as Record<string, unknown>
@@ -370,6 +401,47 @@ describe('FormationsCockpit reference parity', () => {
     expect(recordedMutations).toContainEqual({ method: 'DELETE', url: '/api/formations/boards/test-board' })
   })
 
+  it('shares board and element notes through a collapsible right-side notepad', async () => {
+    patches = installFetchMock({
+      boardNotes: {
+        board: 'Preserve the API contract.',
+        elements: [{ nodeId: 'fmn_frame', text: 'Builder owns this element.' }],
+      },
+    })
+    await renderCockpit()
+
+    const notepad = await screen.findByRole('complementary', { name: 'Shared board notepad' })
+    expect(within(notepad).getByLabelText('Board note')).toHaveValue('Preserve the API contract.')
+    expect(screen.getByTestId('formation-node-fmn_frame')).toHaveClass('has-note')
+
+    fireEvent.click(within(screen.getByTestId('formation-node-fmn_frame')).getByRole('button', { name: 'Edit note for Frame' }))
+    expect(within(notepad).getByLabelText('Element')).toHaveValue('fmn_frame')
+    const elementNote = within(notepad).getByLabelText('Element note')
+    expect(elementNote).toHaveValue('Builder owns this element.')
+    fireEvent.change(elementNote, { target: { value: 'Builder and reviewer own this.' } })
+    fireEvent.click(within(notepad).getByRole('button', { name: 'Save element note' }))
+
+    await waitFor(() => expect(recordedMutations).toContainEqual({ method: 'PATCH', url: '/api/formations/boards/test-board/notes' }))
+    expect(screen.getByTestId('formation-node-fmn_frame')).toHaveClass('has-note')
+
+    fireEvent.click(within(notepad).getByRole('button', { name: 'Collapse shared notepad' }))
+    expect(screen.queryByLabelText('Board note')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Expand shared notepad' })).toBeInTheDocument()
+  })
+
+  it('adds a new element note from the sticky-note affordance', async () => {
+    await renderCockpit()
+    const judge = screen.getByTestId('formation-node-fmn_judge')
+    expect(judge).not.toHaveClass('has-note')
+
+    fireEvent.click(within(judge).getByRole('button', { name: 'Add note for Judge' }))
+    const elementNote = screen.getByLabelText('Element note')
+    fireEvent.change(elementNote, { target: { value: 'Use this as the release judge.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save element note' }))
+
+    await waitFor(() => expect(judge).toHaveClass('has-note'))
+  })
+
   it('shows only assignable persona cards in the formation staffing roster', async () => {
     await renderCockpit()
     const roster = screen.getByTestId('agent-roster')
@@ -414,6 +486,7 @@ describe('FormationsCockpit reference parity', () => {
     await waitFor(() => expect(screen.getByTestId('formation-wire-edge_tool_chain')).toBeInTheDocument())
     await waitFor(() => expect(screen.getByTestId('formation-wire-edge_tool_gate')).toBeInTheDocument())
     expect(within(card).getAllByRole('button').map(button => button.getAttribute('aria-label'))).toEqual([
+      'Add note for Normalize report',
       'Inspect Tool Normalize report',
     ])
     fireEvent.contextMenu(card)

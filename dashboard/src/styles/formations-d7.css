@@ -43,6 +43,36 @@
 
 .fmx .main{flex:1;display:flex;overflow:hidden;min-height:0;}
 
+.fmx .board-notes{width:300px;flex:0 0 auto;border-left:1px solid var(--line);background:color-mix(in srgb,var(--bg1) 94%,#d8ae43 6%);display:flex;flex-direction:column;min-height:0;transition:width .18s ease;}
+.fmx .board-notes.collapsed{width:38px;}
+.fmx .board-notes-head{min-height:48px;padding:9px 10px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);gap:8px;}
+.fmx .board-notes-title{font:700 11px/1.1 'Courier Prime',monospace;letter-spacing:.08em;text-transform:uppercase;color:var(--ink);}
+.fmx .board-notes-meta{margin-top:4px;font-size:9px;color:var(--dim);}
+.fmx .board-notes-toggle{border:1px solid var(--line);background:var(--bg2);color:var(--ink2);width:26px;height:26px;cursor:pointer;font-size:17px;line-height:1;}
+.fmx .board-notes-toggle:hover{border-color:var(--terra);color:var(--terra);}
+.fmx .board-notes-rail{writing-mode:vertical-rl;text-orientation:mixed;font:700 9px/1 'Courier Prime',monospace;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);}
+.fmx .board-notes.collapsed .board-notes-head{padding:8px 5px;flex-direction:column-reverse;justify-content:flex-end;}
+.fmx .board-notes-body{padding:12px;overflow:auto;display:flex;flex-direction:column;gap:14px;}
+.fmx .note-section{display:flex;flex-direction:column;gap:7px;}
+.fmx .note-section+.note-section{border-top:1px solid var(--line);padding-top:12px;}
+.fmx .note-section-head{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.fmx .note-section label{font:700 9px/1 'Courier Prime',monospace;letter-spacing:.1em;text-transform:uppercase;color:var(--ink2);}
+.fmx .note-section textarea{width:100%;min-height:136px;resize:vertical;border:1px solid color-mix(in srgb,var(--line) 75%,#d6af47 25%);background:color-mix(in srgb,var(--bg2) 88%,#f1cf70 12%);color:var(--ink);padding:10px;font:12px/1.5 'Courier Prime',monospace;outline:none;}
+.fmx .note-section textarea:focus{border-color:#d2a927;box-shadow:0 0 0 1px rgba(210,169,39,.18);}
+.fmx .note-section select{width:100%;border:1px solid var(--line);background:var(--bg2);color:var(--ink);padding:7px 8px;font:10px 'Courier Prime',monospace;}
+.fmx .note-section-head button{border:1px solid var(--line);background:var(--bg2);color:var(--terra);padding:4px 8px;font:700 9px 'Courier Prime',monospace;text-transform:uppercase;cursor:pointer;}
+.fmx .note-section-head button:disabled{opacity:.35;cursor:not-allowed;}
+.fmx .element-editor-head{margin-top:4px;}
+.fmx .note-empty,.fmx .note-dirty,.fmx .note-error{font:10px/1.45 'Courier Prime',monospace;color:var(--dim);}
+.fmx .note-empty.boardless{padding:16px;}
+.fmx .note-dirty{color:#b88618;}
+.fmx .note-error{color:var(--terra-d);border-left:2px solid var(--terra-d);padding-left:8px;}
+
+.fmx .note-pin{position:absolute;z-index:12;right:9px;top:-9px;width:22px;height:22px;border:1px solid rgba(160,120,20,.45);background:#e6c457;color:#5d4915;display:flex;align-items:center;justify-content:center;font:700 13px/1 'Courier Prime',monospace;cursor:pointer;box-shadow:1px 2px 4px rgba(0,0,0,.18);transform:rotate(1.5deg);opacity:.22;transition:opacity .12s ease,transform .12s ease;}
+.fmx .formation:hover>.note-pin,.fmx .missioncard:hover>.note-pin,.fmx .gatecard:hover>.note-pin,.fmx .toolcard:hover>.note-pin,.fmx .note-pin:focus-visible,.fmx .note-pin.filled{opacity:1;}
+.fmx .note-pin:hover{transform:rotate(0deg) scale(1.08);}
+.fmx .note-pin.filled{background:#efcf62;}
+
 /* ===== ROSTER ===== */
 /* Leans on the Terminal tab's session panel: flat full-bleed rows, divider
    header with a count pill, quiet monochrome identity tiles, liveness as text. */
@@ -365,6 +395,10 @@
   .fmx .newbtn svg{width:16px;height:16px;}
   .fmx .board-action{min-height:36px;padding:0 8px;}
   .fmx .main{flex-direction:column;}
+  .fmx .board-notes,.fmx .board-notes.open{width:100%;max-height:42%;border-left:0;border-top:1px solid var(--line);}
+  .fmx .board-notes.collapsed{width:100%;height:38px;min-height:38px;}
+  .fmx .board-notes.collapsed .board-notes-head{min-height:38px;padding:5px 9px;flex-direction:row;justify-content:space-between;border-bottom:0;}
+  .fmx .board-notes-rail{writing-mode:horizontal-tb;}
   .fmx .roster{width:100%;height:84px;flex-direction:row;border-right:0;border-bottom:1px solid var(--line);}
   .fmx .roster-hd{width:96px;min-height:0;padding:9px;flex-direction:column;align-items:flex-start;justify-content:center;border-bottom:0;border-right:1px solid var(--line);}
   .fmx .roster-hd .t{font-size:11px;}

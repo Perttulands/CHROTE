@@ -26,6 +26,7 @@ or narrower docs, but they should not contradict this file.
 | service data | upstream local services | CHROTE proxies and displays selected operations |
 | formation boards | `.formations/boards/` | TOML structural definitions |
 | formation layout | `.formations/layout/` | TOML sidecars for visual placement/routing |
+| formation notes | `.formations/notes/` | ETag-fenced TOML sidecars for shared board and element annotations; never execution input by implication |
 | agent personas | configured persona roots | TOML cards with stable ids and harness variants |
 | canonical run authority (accepted target) | fenced CHROTE coordinator under one configured lane-independent Formations host-authority root outside every Files root | Workspace command journal, writer-only ledger, immutable graph snapshot and run bootstrap, private binding/result authority, raw pending-redaction state, and run-private Tool materializations |
 | run inspection | canonical projection APIs plus authorized `.formations/artifacts/` files | Sanitized events, opaque binding projection, and registered safe artifacts; never replay authority |
@@ -1179,6 +1180,17 @@ A board definition contains structural state:
 - retired schema-1 inline verification/check specs, retained for inspection and
   replacement-Gate-bound removal but rejected from every new execution path by
   ADR-0008.
+
+Board notes are a separate revisioned sidecar keyed by board slug and bound to
+the board's stable id. One Markdown-capable board note and zero or more
+node-id-keyed element notes are visible and writable through both the dashboard
+and Archon. Notes do not change board or layout revisions, do not enter a run
+snapshot, and never authorize execution or agent handoff by their mere
+presence. Every update requires the current notes ETag; stale human/agent writes
+conflict rather than overwrite. Removing an element leaves its note preserved
+as orphaned sidecar data until an explicit note update removes it. A recreated
+board with the same slug receives an empty note view because the sidecar's
+stable board id no longer matches.
 
 All workflow payload ports are directional. A Gate's reserved `judge` socket is
 an evaluation-control relationship rather than a typed payload port; it permits

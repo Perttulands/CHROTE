@@ -517,6 +517,8 @@ func (h *FormationsHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/formations/boards/{board}", h.GetBoard)
 	mux.HandleFunc("PATCH /api/formations/boards/{board}", h.PatchBoard)
 	mux.HandleFunc("DELETE /api/formations/boards/{board}", h.DeleteBoard)
+	mux.HandleFunc("GET /api/formations/boards/{board}/notes", h.GetBoardNotes)
+	mux.HandleFunc("PATCH /api/formations/boards/{board}/notes", h.PatchBoardNotes)
 	mux.HandleFunc("GET /api/formations/boards/{board}/layout", h.GetLayout)
 	mux.HandleFunc("PATCH /api/formations/boards/{board}/layout", h.PatchLayout)
 }
@@ -791,6 +793,42 @@ func (h *FormationsHandler) DeleteBoard(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	core.WriteSuccess(w, map[string]interface{}{"deletion": deleted})
+}
+
+func (h *FormationsHandler) GetBoardNotes(w http.ResponseWriter, r *http.Request) {
+	slug, err := h.store.ResolveBoardSelector(r.PathValue("board"))
+	if err != nil {
+		writeFormationsError(w, err)
+		return
+	}
+	notes, err := h.store.ReadBoardNotes(slug)
+	if err != nil {
+		writeFormationsError(w, err)
+		return
+	}
+	w.Header().Set("ETag", notes.ETag)
+	core.WriteSuccess(w, map[string]interface{}{"notes": notes})
+}
+
+func (h *FormationsHandler) PatchBoardNotes(w http.ResponseWriter, r *http.Request) {
+	var request formations.BoardNotePatch
+	if !decodeJSONBody(w, r, &request) {
+		return
+	}
+	slug, err := h.store.ResolveBoardSelector(r.PathValue("board"))
+	if err != nil {
+		writeFormationsError(w, err)
+		return
+	}
+	notes, err := h.store.UpdateBoardNote(slug, request, formations.NoteWriteOptions{
+		ExpectedETag: r.Header.Get("If-Match"),
+	})
+	if err != nil {
+		writeFormationsError(w, err)
+		return
+	}
+	w.Header().Set("ETag", notes.ETag)
+	core.WriteSuccess(w, map[string]interface{}{"notes": notes})
 }
 
 func (h *FormationsHandler) GetBoard(w http.ResponseWriter, r *http.Request) {
@@ -1378,8 +1416,10 @@ func writeFormationsError(w http.ResponseWriter, err error) {
 		core.WriteError(w, http.StatusConflict, "BOARD_EXISTS", "A board with that name already exists")
 	case errors.Is(err, formations.ErrAmbiguousSelector):
 		core.WriteError(w, http.StatusBadRequest, "AMBIGUOUS_SELECTOR", err.Error())
-	case errors.Is(err, formations.ErrNotFound):
+	case errors.Is(err, formations.ErrNotFound), errors.Is(err, formations.ErrNoteTargetNotFound):
 		core.WriteError(w, http.StatusNotFound, "NOT_FOUND", "Formation resource not found")
+	case errors.Is(err, formations.ErrNoteTooLarge):
+		core.WriteError(w, http.StatusRequestEntityTooLarge, "NOTE_TOO_LARGE", "Formation note is too large")
 	case errors.Is(err, formations.ErrPreconditionRequired):
 		core.WriteError(w, http.StatusPreconditionRequired, "PRECONDITION_REQUIRED", "If-Match and revision preconditions are required")
 	case errors.Is(err, formations.ErrInvalidSlug):

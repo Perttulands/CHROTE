@@ -54,7 +54,7 @@ close.
 
 ```text
 archon agent      list | inspect | new | edit | spawn | attach | retire
-archon board      new | list | inspect | validate | arrange
+archon board      new | list | inspect | notes | note | validate | arrange
 archon formation  create | list | inspect | assign | unassign | set-brief | remove-verification | add-input | add-output | wire | unwire | run
 archon gate       create | update | judge | approve | reject
 archon mission    create | list | inspect | wire | run
@@ -178,6 +178,19 @@ group only authors definitions. `ctx-ug7.8` owns certified host-private
 implementations and runtime execution. `ctx-ug7.30` owns pure code-Gate profiles
 and the later explicit Tool-plus-pure-Gate apply path; no migration-apply or
 Tool-runtime command surface ships here.
+
+Shared board annotations use the same ETag-fenced notes sidecar as the cockpit:
+
+```text
+archon board notes <board> [--json]
+archon board note <board> [--node <node-id>] (--text <markdown> | --file <path> | --clear) [--updated-by <actor>] [--json]
+```
+
+Without `--node`, `board note` updates the board-level notepad. A node id targets
+the Mission, Formation, Gate, or Tool with that exact stable id. Archon reads the
+current notes revision and supplies its ETag before writing; a concurrent human
+or agent edit fails loud instead of being clobbered. Notes are authoring context,
+not execution authority and not an implicit agent handoff.
 
 ## Output modes
 
