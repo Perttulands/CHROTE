@@ -243,6 +243,18 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   useEffect(() => { judgeHoverRef.current = judgeHover }, [judgeHover])
 
   useEffect(() => {
+    if (!boardDialog && !agentEditor) return
+    const closeDialog = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || boardDialog?.saving || agentEditor?.saving) return
+      event.preventDefault()
+      setBoardDialog(null)
+      setAgentEditor(null)
+    }
+    window.addEventListener('keydown', closeDialog)
+    return () => window.removeEventListener('keydown', closeDialog)
+  }, [agentEditor, boardDialog])
+
+  useEffect(() => {
     legacyVerificationRequestRef.current = null
     legacyVerificationPendingRef.current = false
     setLegacyVerification(null)
@@ -592,9 +604,22 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     }
   }, [])
 
-  const openCreateBoard = useCallback(() => {
-    setBoardDialog({ mode: 'create', title: '', saving: false, error: '' })
+  const blockBoardExitForDirtyNotes = useCallback(() => {
+    if (!boardNoteDirtyRef.current && !elementNoteDirtyRef.current) return false
+    setNotesOpen(true)
+    setNoteError('Save the current notes before leaving this board.')
+    return true
   }, [])
+
+  const selectBoard = useCallback((slug: string) => {
+    if (slug === boardRef.current?.slug || blockBoardExitForDirtyNotes()) return
+    setSelectedSlug(slug)
+  }, [blockBoardExitForDirtyNotes])
+
+  const openCreateBoard = useCallback(() => {
+    if (blockBoardExitForDirtyNotes()) return
+    setBoardDialog({ mode: 'create', title: '', saving: false, error: '' })
+  }, [blockBoardExitForDirtyNotes])
 
   const openRenameBoard = useCallback(() => {
     const current = boardRef.current
@@ -603,10 +628,11 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   }, [])
 
   const openDeleteBoard = useCallback(() => {
+    if (blockBoardExitForDirtyNotes()) return
     const current = boardRef.current
     if (!current) return
     setBoardDialog({ mode: 'delete', title: current.title, saving: false, error: '' })
-  }, [])
+  }, [blockBoardExitForDirtyNotes])
 
   const saveBoardName = useCallback(async () => {
     if (!boardDialog || boardDialog.mode === 'delete') return
@@ -2102,7 +2128,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       <div className="topbar">
         <div className="boardpick">
           board
-          <select value={selectedSlug} onChange={event => setSelectedSlug(event.target.value)} data-testid="board-picker" disabled={boards.length === 0}>
+          <select value={selectedSlug} onChange={event => selectBoard(event.target.value)} data-testid="board-picker" disabled={boards.length === 0}>
             {boards.length === 0 ? <option value="">No boards</option> : null}
             {boards.map(summary => <option key={summary.slug} value={summary.slug}>{summary.title || summary.slug}</option>)}
           </select>
@@ -2605,6 +2631,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
         <div
           className="pop agent-dialog"
           role="dialog"
+          aria-modal="true"
           aria-label={agentEditor.preset ? 'Edit agent preset' : 'Edit agent'}
           onPointerDown={event => event.stopPropagation()}
         >
@@ -2618,7 +2645,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
               <div className="agent-dialog-fields">
                 <label>
                   <span>Display name</span>
-                  <input aria-label="Agent display name" value={agentEditor.displayName} onChange={event => setAgentEditor(current => current ? { ...current, displayName: event.target.value } : current)} />
+                  <input autoFocus aria-label="Agent display name" value={agentEditor.displayName} onChange={event => setAgentEditor(current => current ? { ...current, displayName: event.target.value } : current)} />
                 </label>
                 <label>
                   <span>Role</span>
@@ -2656,6 +2683,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
         <div
           className="pop board-dialog"
           role="dialog"
+          aria-modal="true"
           aria-label={boardDialog.mode === 'create' ? 'Create board' : boardDialog.mode === 'rename' ? 'Rename board' : 'Delete board'}
           onPointerDown={event => event.stopPropagation()}
         >

@@ -491,6 +491,24 @@ describe('FormationsCockpit reference parity', () => {
     await waitFor(() => expect(judge).toHaveClass('has-note'))
   })
 
+  it('protects unsaved notes from board switches, creation, and deletion', async () => {
+    const second = { ...makeBoard(), id: 'board-2', slug: 'second-board', title: 'Second board', etag: 'board-2-etag' }
+    patches = installFetchMock({ boards: [makeBoard(), second] })
+    await renderCockpit()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand shared notepad' }))
+    const boardNote = await screen.findByRole('textbox', { name: 'Board note' })
+    fireEvent.change(boardNote, { target: { value: 'Unsaved local context' } })
+    fireEvent.change(screen.getByTestId('board-picker'), { target: { value: 'second-board' } })
+
+    expect(screen.getByTestId('board-picker')).toHaveValue('test-board')
+    expect(screen.getByRole('alert')).toHaveTextContent('Save the current notes before leaving this board')
+    fireEvent.click(screen.getByRole('button', { name: 'Delete board' }))
+    expect(screen.queryByRole('dialog', { name: 'Delete board' })).toBeNull()
+    fireEvent.click(screen.getByTestId('new-board'))
+    expect(screen.queryByRole('dialog', { name: 'Create board' })).toBeNull()
+  })
+
   it('shows Codex role presets beside Claude personas and persists UI overrides', async () => {
     const presetAgents: AgentProjection[] = [
       { id: 'claude-existing', displayName: 'Claude Existing', kind: 'builder', harnessDefault: 'claude-code', liveness: 'offline', assignable: true },
