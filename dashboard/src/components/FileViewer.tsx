@@ -254,10 +254,11 @@ function FileViewer({
 }: FileViewerProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [loadedContent, setLoadedContent] = useState(controlledContent || '')
-  const [probedContent, setProbedContent] = useState<string | null>(null)
+  const [probedFile, setProbedFile] = useState<{ path: string; content: string } | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const declaredKind = getPreviewKind(item)
+  const probedContent = probedFile?.path === item.path ? probedFile.content : null
   const kind = declaredKind === 'download' && probedContent !== null ? 'text' : declaredKind
   const content = controlledContent === undefined ? probedContent ?? loadedContent : controlledContent
 
@@ -269,7 +270,7 @@ function FileViewer({
     let cancelled = false
     setLoading(false)
     setError(null)
-    setProbedContent(null)
+    setProbedFile(null)
     if (controlledContent !== undefined || (declaredKind !== 'text' && declaredKind !== 'download')) return
     if (item.size > MAX_TEXT_PREVIEW_BYTES) {
       if (declaredKind === 'text') setError('File is too large for inline viewing')
@@ -283,7 +284,7 @@ function FileViewer({
       .then(next => {
         if (cancelled || next === null) return
         if (declaredKind === 'text') setLoadedContent(next)
-        else setProbedContent(next)
+        else setProbedFile({ path: item.path, content: next })
       })
       .catch(readError => {
         if (!cancelled) setError(getErrorMessage(readError, 'read'))

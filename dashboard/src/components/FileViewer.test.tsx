@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from 'react'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { probeTextFile, readTextFile } from './FilesView/fileService'
@@ -23,6 +24,28 @@ const markdownFile = {
   size: 40,
   modified: '2026-01-01T00:00:00Z',
   type: 'text/markdown',
+}
+
+function LayoutSnapshotViewer({
+  item,
+  onLayout,
+}: {
+  item: typeof markdownFile
+  onLayout: (text: string) => void
+}) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    onLayout(containerRef.current?.textContent || '')
+  }, [item.path, onLayout])
+  return (
+    <div ref={containerRef}>
+      <FileViewer
+        item={item}
+        viewState={DEFAULT_FILE_VIEW_STATE}
+        onViewStateChange={vi.fn()}
+      />
+    </div>
+  )
 }
 
 describe('FileViewer', () => {
@@ -86,6 +109,31 @@ describe('FileViewer', () => {
 
     expect(await screen.findByText('custom format content')).toBeInTheDocument()
     expect(mockedProbeTextFile).toHaveBeenCalledWith('/events.records', MAX_TEXT_PREVIEW_BYTES)
+  })
+
+  it('never renders probed content under a different file path', async () => {
+    mockedProbeTextFile
+      .mockResolvedValueOnce('first file content')
+      .mockReturnValueOnce(new Promise(() => {}))
+    const onLayout = vi.fn()
+    const { rerender } = render(
+      <LayoutSnapshotViewer
+        item={{ ...markdownFile, path: '/first.records', name: 'first.records', type: 'records' }}
+        onLayout={onLayout}
+      />,
+    )
+    expect(await screen.findByText('first file content')).toBeInTheDocument()
+
+    onLayout.mockClear()
+    rerender(
+      <LayoutSnapshotViewer
+        item={{ ...markdownFile, path: '/second.records', name: 'second.records', type: 'records' }}
+        onLayout={onLayout}
+      />,
+    )
+
+    const pathSwitchSnapshot = onLayout.mock.calls[onLayout.mock.calls.length - 1]?.[0]
+    expect(pathSwitchSnapshot).not.toContain('first file content')
   })
 
   it('keeps a probed binary file download-only', async () => {
