@@ -136,7 +136,14 @@ updatedAt = "2026-06-03T16:00:00Z"
 	if err != nil {
 		t.Fatalf("read board: %v", err)
 	}
-	store.archiveDirectorySyncForTest = func() error { return errors.New("injected directory sync fault") }
+	syncCalls := 0
+	store.archiveDirectorySyncForTest = func() error {
+		syncCalls++
+		if syncCalls == 1 {
+			return errors.New("injected directory sync fault")
+		}
+		return nil
+	}
 	if _, err := store.DeleteBoard("poems", WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev}); !errors.Is(err, ErrDefinitionPublicationUncertain) {
 		t.Fatalf("delete error = %v, want ErrDefinitionPublicationUncertain", err)
 	}
