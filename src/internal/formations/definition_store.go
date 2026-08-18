@@ -358,6 +358,10 @@ func (f *definitionFile) writeAtomic(raw []byte) error {
 }
 
 func (f *definitionFile) archive(marker string) (string, error) {
+	return f.archiveWithSync(marker, nil)
+}
+
+func (f *definitionFile) archiveWithSync(marker string, syncDirectory func() error) (string, error) {
 	file, err := openDefinitionRegularFileAt(f.directory, f.name, syscall.O_RDONLY, false)
 	if err != nil {
 		return "", definitionPathError(err)
@@ -377,7 +381,10 @@ func (f *definitionFile) archive(marker string) (string, error) {
 	if err := syscall.Renameat(int(f.directory.Fd()), f.name, int(f.directory.Fd()), archiveName); err != nil {
 		return "", definitionPathError(&os.PathError{Op: "renameat", Path: f.name, Err: err})
 	}
-	if err := f.directory.Sync(); err != nil {
+	if syncDirectory == nil {
+		syncDirectory = f.directory.Sync
+	}
+	if err := syncDirectory(); err != nil {
 		return archiveName, fmt.Errorf("%w: archive %q directory sync failed: %v", ErrDefinitionPublicationUncertain, f.name, definitionPathError(err))
 	}
 	return archiveName, nil

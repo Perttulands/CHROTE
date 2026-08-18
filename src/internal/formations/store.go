@@ -39,6 +39,7 @@ type Store struct {
 	runtimeAuthority                     *runtimeAuthorityBoundary
 	newToolDefinitionID                  func(string) string
 	deleteBoardAfterLayoutArchiveForTest func()
+	archiveDirectorySyncForTest          func() error
 }
 
 type BoardDocument struct {
@@ -239,7 +240,7 @@ func (s *Store) DeleteBoard(slug string, opts WriteOptions) (*BoardDeletion, err
 				return err
 			}
 			if exists {
-				layoutArchive, err = layoutDefinition.archive(archiveID)
+				layoutArchive, err = layoutDefinition.archiveWithSync(archiveID, s.archiveDirectorySyncForTest)
 				if err != nil {
 					return err
 				}
@@ -248,7 +249,7 @@ func (s *Store) DeleteBoard(slug string, opts WriteOptions) (*BoardDeletion, err
 				s.deleteBoardAfterLayoutArchiveForTest()
 			}
 
-			boardArchive, err := boardDefinition.archive(archiveID)
+			boardArchive, err := boardDefinition.archiveWithSync(archiveID, s.archiveDirectorySyncForTest)
 			if err != nil {
 				// A non-empty archive name means rename committed but directory
 				// durability is uncertain. Do not invent a rollback outcome.

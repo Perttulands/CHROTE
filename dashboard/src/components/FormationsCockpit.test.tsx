@@ -447,14 +447,26 @@ describe('FormationsCockpit reference parity', () => {
 
   it('archives a board only after explicit confirmation', async () => {
     await renderCockpit()
-    fireEvent.click(screen.getByRole('button', { name: 'Delete board' }))
+    const trigger = screen.getByRole('button', { name: 'Delete board' })
+    fireEvent.click(trigger)
     const dialog = await screen.findByRole('dialog', { name: 'Delete board' })
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus()
     expect(dialog).toHaveTextContent('archived')
     expect(recordedMutations.some(mutation => mutation.method === 'DELETE')).toBe(false)
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Archive board' }))
     await waitFor(() => expect(screen.getByTestId('board-picker')).toHaveTextContent('No boards'))
     expect(recordedMutations).toContainEqual({ method: 'DELETE', url: '/api/formations/boards/test-board' })
+  })
+
+  it('restores board-dialog trigger focus after Escape', async () => {
+    await renderCockpit()
+    const trigger = screen.getByTestId('new-board')
+    fireEvent.click(trigger)
+    expect(await screen.findByLabelText('Board name')).toHaveFocus()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Create board' })).toBeNull())
+    await waitFor(() => expect(trigger).toHaveFocus())
   })
 
   it('shares board and element notes through a collapsible right-side notepad', async () => {
@@ -495,6 +507,8 @@ describe('FormationsCockpit reference parity', () => {
     fireEvent.click(within(judge).getByRole('button', { name: 'Add note for Judge' }))
     const elementNote = screen.getByLabelText('Element note')
     fireEvent.change(elementNote, { target: { value: 'Use this as the release judge.' } })
+    fireEvent.click(within(judge).getByRole('button', { name: 'Add note for Judge' }))
+    expect(elementNote).toHaveValue('Use this as the release judge.')
     const saveElementNote = screen.getByRole('button', { name: 'Save element note' })
     await waitFor(() => expect(saveElementNote).toBeEnabled())
     fireEvent.click(saveElementNote)
@@ -557,13 +571,16 @@ describe('FormationsCockpit reference parity', () => {
       expect(within(roster).getByText(`Codex ${role}`)).toBeInTheDocument()
     }
 
-    fireEvent.click(within(roster).getByRole('button', { name: 'Edit Codex Builder' }))
+    const editTrigger = within(roster).getByRole('button', { name: 'Edit Codex Builder' })
+    fireEvent.click(editTrigger)
     const dialog = await screen.findByRole('dialog', { name: 'Edit agent preset' })
+    expect(await within(dialog).findByLabelText('Agent display name')).toHaveFocus()
     fireEvent.change(within(dialog).getByLabelText('Agent display name'), { target: { value: 'Repository Builder' } })
     fireEvent.change(within(dialog).getByLabelText('Agent capabilities'), { target: { value: 'implement, test, refactor' } })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save agent override' }))
 
     await waitFor(() => expect(within(roster).getByText('Repository Builder')).toBeInTheDocument())
+    await waitFor(() => expect(editTrigger).toHaveFocus())
     expect(recordedMutations).toContainEqual({ method: 'PATCH', url: '/api/agents/codex-builder' })
   })
 

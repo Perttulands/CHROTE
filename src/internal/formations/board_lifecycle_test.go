@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -119,6 +120,81 @@ updatedAt = "2026-06-03T16:00:00Z"
 	if _, err := store.ReadLayout("poems"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("read deleted layout error = %v", err)
 	}
+}
+
+func TestDeleteBoardReportsLayoutArchiveSyncUncertaintyAndRemainsRetryable(t *testing.T) {
+	store := NewStore(t.TempDir())
+	boardRaw := minimalBoard("poems", 7)
+	layoutRaw := `schema = 1
+boardId = "brd_01J9_sesssearch"
+boardRev = 7
+updatedAt = "2026-06-03T16:00:00Z"
+`
+	writeFixture(t, store.BoardPath("poems"), boardRaw)
+	writeFixture(t, store.LayoutPath("poems"), layoutRaw)
+	board, err := store.ReadBoard("poems")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	store.archiveDirectorySyncForTest = func() error { return errors.New("injected directory sync fault") }
+	if _, err := store.DeleteBoard("poems", WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev}); !errors.Is(err, ErrDefinitionPublicationUncertain) {
+		t.Fatalf("delete error = %v, want ErrDefinitionPublicationUncertain", err)
+	}
+	if got := readFile(t, store.BoardPath("poems")); got != boardRaw {
+		t.Fatalf("uncertain layout archive changed board:\n%s", got)
+	}
+	if _, err := store.ReadLayout("poems"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("layout after uncertain archive error = %v, want ErrNotFound", err)
+	}
+	layoutArchive := findArchivedByPrefix(t, store.LayoutPath("poems"))
+	if got := readFile(t, layoutArchive); got != layoutRaw {
+		t.Fatalf("archived layout bytes changed:\n%s", got)
+	}
+
+	store.archiveDirectorySyncForTest = nil
+	if _, err := store.DeleteBoard("poems", WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev}); err != nil {
+		t.Fatalf("retry delete after reload: %v", err)
+	}
+	if _, err := store.ReadBoard("poems"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("board after retry error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestDeleteBoardReportsBoardArchiveSyncUncertaintyWithoutLosingBytes(t *testing.T) {
+	store := NewStore(t.TempDir())
+	boardRaw := minimalBoard("poems", 7)
+	writeFixture(t, store.BoardPath("poems"), boardRaw)
+	board, err := store.ReadBoard("poems")
+	if err != nil {
+		t.Fatalf("read board: %v", err)
+	}
+	store.archiveDirectorySyncForTest = func() error { return errors.New("injected directory sync fault") }
+	if _, err := store.DeleteBoard("poems", WriteOptions{ExpectedETag: board.ETag, ExpectedRev: board.Rev}); !errors.Is(err, ErrDefinitionPublicationUncertain) {
+		t.Fatalf("delete error = %v, want ErrDefinitionPublicationUncertain", err)
+	}
+	if _, err := store.ReadBoard("poems"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("board after uncertain archive error = %v, want ErrNotFound", err)
+	}
+	boardArchive := findArchivedByPrefix(t, store.BoardPath("poems"))
+	if got := readFile(t, boardArchive); got != boardRaw {
+		t.Fatalf("archived board bytes changed:\n%s", got)
+	}
+}
+
+func findArchivedByPrefix(t *testing.T, livePath string) string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Dir(livePath))
+	if err != nil {
+		t.Fatalf("read archive directory: %v", err)
+	}
+	prefix := filepath.Base(livePath) + ".deleted-"
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), prefix) {
+			return filepath.Join(filepath.Dir(livePath), entry.Name())
+		}
+	}
+	t.Fatalf("archive prefix %q not found", prefix)
+	return ""
 }
 
 func findArchivedDefinition(t *testing.T, livePath, archiveID string) string {

@@ -92,7 +92,13 @@ func TestStaleCodexPresetEditDoesNotMaterializeOverride(t *testing.T) {
 func TestPersonaStoreRejectsSymlinkAndFIFOCardSubstitution(t *testing.T) {
 	dir := t.TempDir()
 	external := filepath.Join(t.TempDir(), "external.toml")
-	if err := os.WriteFile(external, []byte("external secret"), 0o600); err != nil {
+	externalRaw := renderPersona(CreatePersonaRequest{
+		ID:          "codex-builder",
+		DisplayName: "Substituted Builder",
+		Kind:        "builder",
+		Summary:     "external secret",
+	}, "openai-codex", "codex-builder", []string{"implement"})
+	if err := os.WriteFile(external, []byte(externalRaw), 0o600); err != nil {
 		t.Fatalf("write external file: %v", err)
 	}
 	if err := os.Symlink(external, filepath.Join(dir, "codex-builder.toml")); err != nil {
@@ -102,7 +108,7 @@ func TestPersonaStoreRejectsSymlinkAndFIFOCardSubstitution(t *testing.T) {
 	if _, err := store.ReadPersona("codex-builder"); err == nil {
 		t.Fatal("ReadPersona followed substituted symlink")
 	}
-	if got, err := os.ReadFile(external); err != nil || string(got) != "external secret" {
+	if got, err := os.ReadFile(external); err != nil || string(got) != externalRaw {
 		t.Fatalf("external file changed: %q, err=%v", got, err)
 	}
 
@@ -145,6 +151,20 @@ func TestPersonaStoreRejectsSymlinkLockWithoutChangingExternalMode(t *testing.T)
 	}
 	if _, err := os.Stat(store.PersonaPath("codex-scout")); !os.IsNotExist(err) {
 		t.Fatalf("unsafe edit materialized card: %v", err)
+	}
+
+	lockPath := filepath.Join(dir, "codex-scout.toml.lock")
+	if err := os.Remove(lockPath); err != nil {
+		t.Fatalf("remove lock symlink: %v", err)
+	}
+	if err := syscall.Mkfifo(lockPath, 0o600); err != nil {
+		t.Fatalf("mkfifo lock: %v", err)
+	}
+	if _, err := store.EditPersona("codex-scout", EditPersonaRequest{SetDisplayName: &name, ExpectedETag: builtin.ETag}); err == nil {
+		t.Fatal("EditPersona accepted FIFO lock")
+	}
+	if _, err := os.Stat(store.PersonaPath("codex-scout")); !os.IsNotExist(err) {
+		t.Fatalf("FIFO lock edit materialized card: %v", err)
 	}
 }
 

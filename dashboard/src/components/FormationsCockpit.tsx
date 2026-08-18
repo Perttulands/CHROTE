@@ -235,6 +235,22 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const legacyVerificationWasOpenRef = useRef(false)
   const legacyVerificationPendingRef = useRef(false)
   const legacyVerificationRequestRef = useRef<symbol | null>(null)
+  const boardDialogReturnFocusRef = useRef<HTMLElement | null>(null)
+  const agentEditorReturnFocusRef = useRef<HTMLElement | null>(null)
+
+  const closeBoardDialog = useCallback(() => {
+    const trigger = boardDialogReturnFocusRef.current
+    boardDialogReturnFocusRef.current = null
+    setBoardDialog(null)
+    window.setTimeout(() => { if (trigger?.isConnected) trigger.focus() }, 0)
+  }, [])
+
+  const closeAgentEditor = useCallback(() => {
+    const trigger = agentEditorReturnFocusRef.current
+    agentEditorReturnFocusRef.current = null
+    setAgentEditor(null)
+    window.setTimeout(() => { if (trigger?.isConnected) trigger.focus() }, 0)
+  }, [])
 
   viewRef.current = view
   useEffect(() => { boardRef.current = board }, [board])
@@ -250,12 +266,12 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     const closeDialog = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || boardDialog?.saving || agentEditor?.saving) return
       event.preventDefault()
-      setBoardDialog(null)
-      setAgentEditor(null)
+      if (boardDialog) closeBoardDialog()
+      if (agentEditor) closeAgentEditor()
     }
     window.addEventListener('keydown', closeDialog)
     return () => window.removeEventListener('keydown', closeDialog)
-  }, [agentEditor, boardDialog])
+  }, [agentEditor, boardDialog, closeAgentEditor, closeBoardDialog])
 
   useEffect(() => {
     legacyVerificationRequestRef.current = null
@@ -627,21 +643,24 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     setSelectedSlug(slug)
   }, [blockBoardExitForDirtyNotes, boardDialog])
 
-  const openCreateBoard = useCallback(() => {
+  const openCreateBoard = useCallback((trigger?: HTMLElement) => {
     if (blockBoardExitForDirtyNotes()) return
+    boardDialogReturnFocusRef.current = trigger || null
     setBoardDialog({ mode: 'create', title: '', saving: false, error: '' })
   }, [blockBoardExitForDirtyNotes])
 
-  const openRenameBoard = useCallback(() => {
+  const openRenameBoard = useCallback((trigger?: HTMLElement) => {
     const current = boardRef.current
     if (!current) return
+    boardDialogReturnFocusRef.current = trigger || null
     setBoardDialog({ mode: 'rename', title: current.title, target: { id: current.id, slug: current.slug, etag: current.etag, rev: current.rev }, saving: false, error: '' })
   }, [])
 
-  const openDeleteBoard = useCallback(() => {
+  const openDeleteBoard = useCallback((trigger?: HTMLElement) => {
     if (blockBoardExitForDirtyNotes()) return
     const current = boardRef.current
     if (!current) return
+    boardDialogReturnFocusRef.current = trigger || null
     setBoardDialog({ mode: 'delete', title: current.title, target: { id: current.id, slug: current.slug, etag: current.etag, rev: current.rev }, saving: false, error: '' })
   }, [blockBoardExitForDirtyNotes])
 
@@ -684,7 +703,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
           etag: result.board.etag,
         } : item))
       }
-      setBoardDialog(null)
+      closeBoardDialog()
       setError('')
     } catch (err) {
       setBoardDialog(current => current ? {
@@ -693,7 +712,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
         error: err instanceof Error ? err.message : 'Board update failed',
       } : current)
     }
-  }, [boardDialog])
+  }, [boardDialog, closeBoardDialog])
 
   const archiveSelectedBoard = useCallback(async () => {
     const target = boardDialog?.target
@@ -713,7 +732,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
         setRunEvents([])
         setEscalations([])
       }
-      setBoardDialog(null)
+      closeBoardDialog()
       setError('')
     } catch (err) {
       setBoardDialog(dialog => dialog ? {
@@ -722,7 +741,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
         error: err instanceof Error ? err.message : 'Board deletion failed',
       } : dialog)
     }
-  }, [boardDialog])
+  }, [boardDialog, closeBoardDialog])
 
   const patchLayoutEdge = useCallback(async (edgeId: string, lane: string) => {
     const currentBoard = boardRef.current
@@ -1936,7 +1955,11 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   }, [board])
 
   const selectElementNote = useCallback((target: string) => {
-    if (elementNoteDirtyRef.current && target !== elementNoteTargetRef.current) {
+    if (elementNoteDirtyRef.current) {
+      if (target === elementNoteTargetRef.current) {
+        setNotesOpen(true)
+        return
+      }
       setNoteError('Save or revert the current element note before switching.')
       return
     }
@@ -2041,7 +2064,8 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     )
   }
 
-  const openAgentEditor = useCallback(async (agent: AgentProjection) => {
+  const openAgentEditor = useCallback(async (agent: AgentProjection, trigger?: HTMLElement) => {
+    agentEditorReturnFocusRef.current = trigger || null
     setAgentEditor({
       id: agent.id,
       preset: Boolean(agent.preset),
@@ -2099,7 +2123,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
         launch: agentEditor.launch.trim(),
       })
       setAgents(await fetchAgents())
-      setAgentEditor(null)
+      closeAgentEditor()
     } catch (err) {
       setAgentEditor(current => current ? {
         ...current,
@@ -2107,7 +2131,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
         error: err instanceof Error ? err.message : 'Failed to save agent override',
       } : current)
     }
-  }, [agentEditor])
+  }, [agentEditor, closeAgentEditor])
 
   const rosterAgents = useMemo(() => agents.filter(agent => agent.assignable && !agent.unbound), [agents])
   const rosterSections = useMemo(() => {
@@ -2180,12 +2204,12 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
           </select>
           {board ? <span className="rev">rev {board.rev}</span> : null}
         </div>
-        <button className="newbtn board-new" type="button" onClick={openCreateBoard} data-testid="new-board" disabled={Boolean(boardDialog)}>
+        <button className="newbtn board-new" type="button" onClick={event => openCreateBoard(event.currentTarget)} data-testid="new-board" disabled={Boolean(boardDialog)}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
           New board
         </button>
-        <button className="board-action" type="button" aria-label="Rename board" disabled={!board || Boolean(boardDialog)} onClick={openRenameBoard}>Rename</button>
-        <button className="board-action danger" type="button" aria-label="Delete board" disabled={!board || Boolean(boardDialog)} onClick={openDeleteBoard}>Delete</button>
+        <button className="board-action" type="button" aria-label="Rename board" disabled={!board || Boolean(boardDialog)} onClick={event => openRenameBoard(event.currentTarget)}>Rename</button>
+        <button className="board-action danger" type="button" aria-label="Delete board" disabled={!board || Boolean(boardDialog)} onClick={event => openDeleteBoard(event.currentTarget)}>Delete</button>
         <div className="sep" />
         <button className="newbtn" onClick={createSolo} data-testid="new-formation" disabled={!board}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
@@ -2233,7 +2257,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
                           aria-label={`Edit ${agent.displayName || agent.id}`}
                           title="Edit persona override"
                           onPointerDown={event => event.stopPropagation()}
-                          onClick={event => { event.stopPropagation(); void openAgentEditor(agent) }}
+                          onClick={event => { event.stopPropagation(); void openAgentEditor(agent, event.currentTarget) }}
                         >•••</button>
                       </div>
                     )
@@ -2689,7 +2713,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
           <form onSubmit={event => { event.preventDefault(); void saveAgentOverride() }}>
             <div className="phd">
               <span>{agentEditor.preset ? 'Codex preset override' : 'Agent override'}</span>
-              <button type="button" className="x" aria-label="Close agent editor" disabled={agentEditor.saving} onClick={() => setAgentEditor(null)}>×</button>
+              <button type="button" className="x" aria-label="Close agent editor" disabled={agentEditor.saving} onClick={closeAgentEditor}>×</button>
             </div>
             <div className="agent-dialog-id">{agentEditor.id}{agentEditor.customized ? ' · customized' : ' · built-in default'}</div>
             {agentEditor.loading ? <div className="agent-dialog-loading">Loading persona card…</div> : (
@@ -2723,7 +2747,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
             {agentEditor.preset ? <div className="agent-dialog-note">Saving materializes a local persona TOML override; the built-in default remains the fallback.</div> : null}
             {agentEditor.error ? <div className="dialog-error" role="alert">{agentEditor.error}</div> : null}
             <div className="board-dialog-actions">
-              <button type="button" disabled={agentEditor.saving} onClick={() => setAgentEditor(null)}>Cancel</button>
+              <button type="button" disabled={agentEditor.saving} onClick={closeAgentEditor}>Cancel</button>
               <button className="primary" type="submit" aria-label="Save agent override" disabled={agentEditor.loading || agentEditor.saving || !agentEditor.etag}>{agentEditor.saving ? 'Saving…' : 'Save override'}</button>
             </div>
           </form>
@@ -2740,7 +2764,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
         >
           <div className="pop-head">
             <span className="pt">{boardDialog.mode === 'create' ? 'Create board' : boardDialog.mode === 'rename' ? 'Rename board' : 'Delete board'}</span>
-            <button className="x" type="button" aria-label="Close board dialog" disabled={boardDialog.saving} onClick={() => setBoardDialog(null)}>x</button>
+            <button className="x" type="button" aria-label="Close board dialog" disabled={boardDialog.saving} onClick={closeBoardDialog}>x</button>
           </div>
           {boardDialog.mode === 'delete' ? (
             <div className="pop-body">
@@ -2749,7 +2773,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
               </p>
               {boardDialog.error ? <p className="field-note error">{boardDialog.error}</p> : null}
               <div className="pop-actions">
-                <button className="cancel" type="button" disabled={boardDialog.saving} onClick={() => setBoardDialog(null)}>Cancel</button>
+                <button autoFocus className="cancel" type="button" disabled={boardDialog.saving} onClick={closeBoardDialog}>Cancel</button>
                 <button className="retire" type="button" disabled={boardDialog.saving} onClick={() => void archiveSelectedBoard()}>
                   {boardDialog.saving ? 'Archiving…' : 'Archive board'}
                 </button>
@@ -2776,7 +2800,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
               <p className="field-note">The board slug is derived from this name and remains stable after renaming.</p>
               {boardDialog.error ? <p className="field-note error">{boardDialog.error}</p> : null}
               <div className="pop-actions">
-                <button className="cancel" type="button" disabled={boardDialog.saving} onClick={() => setBoardDialog(null)}>Cancel</button>
+                <button className="cancel" type="button" disabled={boardDialog.saving} onClick={closeBoardDialog}>Cancel</button>
                 <button className="save" type="submit" disabled={boardDialog.saving || !boardDialog.title.trim()}>
                   {boardDialog.saving ? 'Saving…' : boardDialog.mode === 'create' ? 'Create board' : 'Save board name'}
                 </button>
