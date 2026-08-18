@@ -1,5 +1,6 @@
 import type {
   AgentProjection,
+  BoardDeletion,
   BoardDocument,
   BoardSummary,
   CodeGateProfileDescriptor,
@@ -98,12 +99,36 @@ export async function fetchBoardLayout(slug: string): Promise<LayoutDocument> {
   return normalizeLayout(result.data.layout, result.etag)
 }
 
-export async function createBoard(title: string, template: string): Promise<BoardDocument> {
+export async function fetchBoardWithLayout(slug: string): Promise<{ board: BoardDocument; layout: LayoutDocument }> {
+  const board = await fetchBoardDocument(slug)
+  try {
+    return { board, layout: await fetchBoardLayout(slug) }
+  } catch (error) {
+    if (error instanceof ApiRequestError && error.status === 404) {
+      return { board, layout: missingLayoutForBoard(board) }
+    }
+    throw error
+  }
+}
+
+export async function createBoard(title: string): Promise<BoardDocument> {
   const result = await fetchApi<{ board: BoardDocument }>('/api/formations/boards', {
     method: 'POST',
-    body: JSON.stringify({ title, template }),
+    body: JSON.stringify({ title }),
   })
   return normalizeBoard(result.data.board, result.etag)
+}
+
+export async function deleteBoard(slug: string, etag: string, rev: number): Promise<BoardDeletion> {
+  const result = await fetchApi<{ deletion: BoardDeletion }>(
+    `/api/formations/boards/${encodeURIComponent(slug)}`,
+    {
+      method: 'DELETE',
+      headers: { 'If-Match': etag },
+      body: JSON.stringify({ expectedRev: rev }),
+    },
+  )
+  return result.data.deletion
 }
 
 export async function fetchAgents(): Promise<AgentProjection[]> {

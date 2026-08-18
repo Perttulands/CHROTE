@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/chrote/server/internal/core"
 	"github.com/chrote/server/internal/formations"
@@ -502,6 +503,7 @@ func (h *FormationsHandler) newRunEngine(boundary string) *formations.RunEngine 
 
 func (h *FormationsHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/formations/boards", h.ListBoards)
+	mux.HandleFunc("POST /api/formations/boards", h.CreateBoard)
 	mux.HandleFunc("GET /api/formations/gate-profiles", h.ListGateProfiles)
 	mux.HandleFunc("POST /api/formations/runs", h.StartRun)
 	mux.HandleFunc("GET /api/formations/runs/{runId}", h.GetRun)
@@ -514,6 +516,7 @@ func (h *FormationsHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/formations/boards/{board}/changes", h.GetBoardChanges)
 	mux.HandleFunc("GET /api/formations/boards/{board}", h.GetBoard)
 	mux.HandleFunc("PATCH /api/formations/boards/{board}", h.PatchBoard)
+	mux.HandleFunc("DELETE /api/formations/boards/{board}", h.DeleteBoard)
 	mux.HandleFunc("GET /api/formations/boards/{board}/layout", h.GetLayout)
 	mux.HandleFunc("PATCH /api/formations/boards/{board}/layout", h.PatchLayout)
 }
@@ -730,6 +733,64 @@ func (h *FormationsHandler) ListBoards(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	core.WriteSuccess(w, map[string]interface{}{"boards": boards})
+}
+
+func (h *FormationsHandler) CreateBoard(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		Title string `json:"title"`
+		Slug  string `json:"slug"`
+	}
+	if !decodeJSONBody(w, r, &request) {
+		return
+	}
+	title := strings.TrimSpace(request.Title)
+	if title == "" {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Board name is required")
+		return
+	}
+	slug := strings.TrimSpace(request.Slug)
+	if slug == "" {
+		slug = boardSlugFromTitle(title)
+	}
+	if slug == "" {
+		core.WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Board name must contain a letter or number")
+		return
+	}
+	board, err := h.store.CreateBoard(formations.BoardCreateRequest{
+		Slug:      slug,
+		Title:     title,
+		UpdatedBy: "agent:ui",
+	})
+	if err != nil {
+		writeFormationsError(w, err)
+		return
+	}
+	board.TOML = ""
+	w.Header().Set("ETag", board.ETag)
+	core.WriteJSON(w, http.StatusCreated, core.NewSuccessResponse(map[string]interface{}{"board": board}))
+}
+
+func (h *FormationsHandler) DeleteBoard(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		ExpectedRev int `json:"expectedRev"`
+	}
+	if !decodeJSONBody(w, r, &request) {
+		return
+	}
+	slug, err := h.store.ResolveBoardSelector(r.PathValue("board"))
+	if err != nil {
+		writeFormationsError(w, err)
+		return
+	}
+	deleted, err := h.store.DeleteBoard(slug, formations.WriteOptions{
+		ExpectedETag: r.Header.Get("If-Match"),
+		ExpectedRev:  request.ExpectedRev,
+	})
+	if err != nil {
+		writeFormationsError(w, err)
+		return
+	}
+	core.WriteSuccess(w, map[string]interface{}{"deletion": deleted})
 }
 
 func (h *FormationsHandler) GetBoard(w http.ResponseWriter, r *http.Request) {
@@ -1272,6 +1333,24 @@ func patchExpectedRev(parent, child int) int {
 	return child
 }
 
+func boardSlugFromTitle(title string) string {
+	var b strings.Builder
+	lastDash := false
+	for _, r := range strings.ToLower(strings.TrimSpace(title)) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+			lastDash = false
+		} else if b.Len() > 0 && !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+		if b.Len() >= 64 {
+			break
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
 func patchUpdatedBy(parent, child string) string {
 	if parent != "" {
 		return parent
@@ -1295,6 +1374,8 @@ func writeFormationsError(w http.ResponseWriter, err error) {
 		core.WriteError(w, http.StatusServiceUnavailable, "RUNTIME_AUTHORITY_NON_AUTHORIZING", "Formations runtime authority is unavailable")
 	case errors.Is(err, formations.ErrConflict):
 		core.WriteError(w, http.StatusConflict, "CONFLICT", "Formation definition changed; reload and retry")
+	case errors.Is(err, formations.ErrAlreadyExists):
+		core.WriteError(w, http.StatusConflict, "BOARD_EXISTS", "A board with that name already exists")
 	case errors.Is(err, formations.ErrAmbiguousSelector):
 		core.WriteError(w, http.StatusBadRequest, "AMBIGUOUS_SELECTOR", err.Error())
 	case errors.Is(err, formations.ErrNotFound):

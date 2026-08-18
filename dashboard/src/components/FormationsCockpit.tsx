@@ -15,15 +15,17 @@
 import { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   abortRunRequest,
+  createBoard,
+  deleteBoard,
   fetchAgents,
   fetchBoardChanged,
-  fetchBoardDocument,
-  fetchBoardLayout,
   fetchBoardSummaries,
+  fetchBoardWithLayout,
   fetchCodeGateProfiles,
   fetchRunEscalations,
   fetchRunEvents,
   fetchRunStatus,
+  missingLayoutForBoard,
   patchBoardDocument,
   patchBoardLayout,
   recordGateVerdict,
@@ -117,6 +119,12 @@ type BriefEditorState = {
   files: string
   links: string
 }
+type BoardDialogState = {
+  mode: 'create' | 'rename' | 'delete'
+  title: string
+  saving: boolean
+  error: string
+}
 type CockpitUndo =
   | { kind: 'clearBrief'; formationId: string }
   | { kind: 'setBrief'; formationId: string; brief: FormationBrief }
@@ -165,6 +173,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const [gateProfiles, setGateProfiles] = useState<CodeGateProfileDescriptor[]>([])
   const [gateEditor, setGateEditor] = useState<GateEditorState | null>(null)
   const [briefEditor, setBriefEditor] = useState<BriefEditorState | null>(null)
+  const [boardDialog, setBoardDialog] = useState<BoardDialogState | null>(null)
   const [legacyVerification, setLegacyVerification] = useState<LegacyVerificationState | null>(null)
   const legacyVerificationOpen = legacyVerification !== null
   const [inspectedToolId, setInspectedToolId] = useState<string | null>(null)
@@ -255,8 +264,8 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   useEffect(() => {
     if (!selectedSlug) return
     let cancelled = false
-    Promise.all([fetchBoardDocument(selectedSlug), fetchBoardLayout(selectedSlug)])
-      .then(([nextBoard, nextLayout]) => {
+    fetchBoardWithLayout(selectedSlug)
+      .then(({ board: nextBoard, layout: nextLayout }) => {
         if (cancelled) return
         setBoard(nextBoard)
         setLayout(nextLayout)
@@ -275,7 +284,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       try {
         const changed = await fetchBoardChanged(selectedSlug, board.etag)
         if (cancelled || !changed) return
-        const [nextBoard, nextLayout] = await Promise.all([fetchBoardDocument(selectedSlug), fetchBoardLayout(selectedSlug)])
+        const { board: nextBoard, layout: nextLayout } = await fetchBoardWithLayout(selectedSlug)
         if (cancelled) return
         setBoard(nextBoard)
         setLayout(nextLayout)
@@ -504,6 +513,97 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       return null
     }
   }, [])
+
+  const openCreateBoard = useCallback(() => {
+    setBoardDialog({ mode: 'create', title: '', saving: false, error: '' })
+  }, [])
+
+  const openRenameBoard = useCallback(() => {
+    const current = boardRef.current
+    if (!current) return
+    setBoardDialog({ mode: 'rename', title: current.title, saving: false, error: '' })
+  }, [])
+
+  const openDeleteBoard = useCallback(() => {
+    const current = boardRef.current
+    if (!current) return
+    setBoardDialog({ mode: 'delete', title: current.title, saving: false, error: '' })
+  }, [])
+
+  const saveBoardName = useCallback(async () => {
+    if (!boardDialog || boardDialog.mode === 'delete') return
+    const title = boardDialog.title.trim()
+    if (!title) {
+      setBoardDialog(current => current ? { ...current, error: 'Board name is required.' } : current)
+      return
+    }
+    setBoardDialog(current => current ? { ...current, saving: true, error: '' } : current)
+    try {
+      if (boardDialog.mode === 'create') {
+        const created = await createBoard(title)
+        const createdLayout = missingLayoutForBoard(created)
+        boardRef.current = created
+        layoutRef.current = createdLayout
+        setBoard(created)
+        setLayout(createdLayout)
+        setBoards(current => [...current.filter(item => item.slug !== created.slug), {
+          id: created.id,
+          slug: created.slug,
+          title: created.title,
+          rev: created.rev,
+          etag: created.etag,
+        }].sort((a, b) => a.slug.localeCompare(b.slug)))
+        setSelectedSlug(created.slug)
+      } else {
+        const current = boardRef.current
+        if (!current) throw new Error('No board is selected')
+        const result = await patchBoardDocument(current.slug, current.etag, current.rev, { title })
+        boardRef.current = result.board
+        setBoard(result.board)
+        setBoards(items => items.map(item => item.slug === result.board.slug ? {
+          ...item,
+          title: result.board.title,
+          rev: result.board.rev,
+          etag: result.board.etag,
+        } : item))
+      }
+      setBoardDialog(null)
+      setError('')
+    } catch (err) {
+      setBoardDialog(current => current ? {
+        ...current,
+        saving: false,
+        error: err instanceof Error ? err.message : 'Board update failed',
+      } : current)
+    }
+  }, [boardDialog])
+
+  const archiveSelectedBoard = useCallback(async () => {
+    const current = boardRef.current
+    if (!current || boardDialog?.mode !== 'delete') return
+    setBoardDialog(dialog => dialog ? { ...dialog, saving: true, error: '' } : dialog)
+    try {
+      await deleteBoard(current.slug, current.etag, current.rev)
+      const remaining = await fetchBoardSummaries()
+      boardRef.current = null
+      layoutRef.current = null
+      setBoard(null)
+      setLayout(null)
+      setBoards(remaining)
+      setSelectedSlug(remaining[0]?.slug || '')
+      setActiveRun(null)
+      setRunEvents([])
+      setEscalations([])
+      setBoardDialog(null)
+      setError('')
+    } catch (err) {
+      setBoardDialog(dialog => dialog ? {
+        ...dialog,
+        saving: false,
+        error: err instanceof Error ? err.message : 'Board deletion failed',
+      } : dialog)
+    }
+  }, [boardDialog?.mode])
 
   const patchLayoutEdge = useCallback(async (edgeId: string, lane: string) => {
     const currentBoard = boardRef.current
@@ -1763,6 +1863,12 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
           </select>
           {board ? <span className="rev">rev {board.rev}</span> : null}
         </div>
+        <button className="newbtn board-new" type="button" onClick={openCreateBoard} data-testid="new-board">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
+          New board
+        </button>
+        <button className="board-action" type="button" aria-label="Rename board" disabled={!board} onClick={openRenameBoard}>Rename</button>
+        <button className="board-action danger" type="button" aria-label="Delete board" disabled={!board} onClick={openDeleteBoard}>Delete</button>
         <div className="sep" />
         <button className="newbtn" onClick={createSolo} data-testid="new-formation" disabled={!board}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14" /></svg>
@@ -1842,7 +1948,12 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
             {!board ? (
               <div className="empty-board" data-testid="formations-empty-board">
                 <div className="empty-title">No persisted formation boards</div>
-                <div className="empty-copy">Seed a real board with Archon or create one through the API. The cockpit no longer shows fake starter missions.</div>
+                <div className="empty-copy">Create a board from the top bar to start sketching a mission.</div>
+              </div>
+            ) : (board.missions || []).length + board.formations.length + (board.gates || []).length + (board.tools || []).length === 0 ? (
+              <div className="empty-board" data-testid="formations-empty-board">
+                <div className="empty-title">This board is empty</div>
+                <div className="empty-copy">Add a formation, Gate, Mission, or Tool to sketch the workflow.</div>
               </div>
             ) : null}
 
@@ -2143,6 +2254,61 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
           {error ? <div className="errbar" data-testid="formations-error">{error}</div> : null}
         </div>
       </div>
+
+      {boardDialog ? (
+        <div
+          className="pop board-dialog"
+          role="dialog"
+          aria-label={boardDialog.mode === 'create' ? 'Create board' : boardDialog.mode === 'rename' ? 'Rename board' : 'Delete board'}
+          onPointerDown={event => event.stopPropagation()}
+        >
+          <div className="pop-head">
+            <span className="pt">{boardDialog.mode === 'create' ? 'Create board' : boardDialog.mode === 'rename' ? 'Rename board' : 'Delete board'}</span>
+            <button className="x" type="button" aria-label="Close board dialog" disabled={boardDialog.saving} onClick={() => setBoardDialog(null)}>x</button>
+          </div>
+          {boardDialog.mode === 'delete' ? (
+            <div className="pop-body">
+              <p className="board-delete-warning">
+                <strong>{boardDialog.title}</strong> will be removed from the live board list. Its definition and layout are archived, not destroyed; run history is untouched.
+              </p>
+              {boardDialog.error ? <p className="field-note error">{boardDialog.error}</p> : null}
+              <div className="pop-actions">
+                <button className="cancel" type="button" disabled={boardDialog.saving} onClick={() => setBoardDialog(null)}>Cancel</button>
+                <button className="retire" type="button" disabled={boardDialog.saving} onClick={() => void archiveSelectedBoard()}>
+                  {boardDialog.saving ? 'Archiving…' : 'Archive board'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <form
+              className="pop-body"
+              onSubmit={event => {
+                event.preventDefault()
+                void saveBoardName()
+              }}
+            >
+              <label htmlFor="formations-board-name">Board name</label>
+              <input
+                id="formations-board-name"
+                className="f"
+                autoFocus
+                value={boardDialog.title}
+                aria-invalid={boardDialog.error ? 'true' : undefined}
+                disabled={boardDialog.saving}
+                onChange={event => setBoardDialog(current => current ? { ...current, title: event.target.value, error: '' } : current)}
+              />
+              <p className="field-note">The board slug is derived from this name and remains stable after renaming.</p>
+              {boardDialog.error ? <p className="field-note error">{boardDialog.error}</p> : null}
+              <div className="pop-actions">
+                <button className="cancel" type="button" disabled={boardDialog.saving} onClick={() => setBoardDialog(null)}>Cancel</button>
+                <button className="save" type="submit" disabled={boardDialog.saving || !boardDialog.title.trim()}>
+                  {boardDialog.saving ? 'Saving…' : boardDialog.mode === 'create' ? 'Create board' : 'Save board name'}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      ) : null}
 
       {inspectedTool ? (
         <div

@@ -6,6 +6,13 @@ export interface BoardSummary {
   etag: string
 }
 
+export interface BoardDeletion {
+  id: string
+  slug: string
+  title: string
+  archiveId: string
+}
+
 export interface FormationPort {
   id: string
   label: string

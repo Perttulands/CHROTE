@@ -95,6 +95,13 @@ type BoardCreateRequest struct {
 	UpdatedBy string
 }
 
+type BoardDeletion struct {
+	ID        string `json:"id"`
+	Slug      string `json:"slug"`
+	Title     string `json:"title"`
+	ArchiveID string `json:"archiveId"`
+}
+
 type LayoutMetadataPatch struct {
 	UpdatedAt time.Time
 }
@@ -199,6 +206,61 @@ func (s *Store) CreateBoard(req BoardCreateRequest) (*BoardDocument, error) {
 		return nil, err
 	}
 	return created, nil
+}
+
+func (s *Store) DeleteBoard(slug string, opts WriteOptions) (*BoardDeletion, error) {
+	if err := validateSlug(slug); err != nil {
+		return nil, err
+	}
+	if opts.ExpectedETag == "" || opts.ExpectedRev == 0 {
+		return nil, ErrPreconditionRequired
+	}
+
+	var deleted *BoardDeletion
+	err := s.withBoardDefinitionLock(slug, func(boardDefinition *definitionFile) error {
+		raw, err := boardDefinition.readBytes()
+		if err != nil {
+			return err
+		}
+		board, err := parseBoardForWrite(raw)
+		if err != nil {
+			return err
+		}
+		if board.ETag != opts.ExpectedETag || board.Rev != opts.ExpectedRev {
+			return ErrConflict
+		}
+
+		archiveID := newPrefixedID("archive")
+		layoutArchive := ""
+		if err := s.withLayoutDefinitionLock(slug, func(layoutDefinition *definitionFile) error {
+			exists, err := layoutDefinition.exists()
+			if err != nil || !exists {
+				return err
+			}
+			layoutArchive, err = layoutDefinition.archive(archiveID)
+			return err
+		}); err != nil {
+			return err
+		}
+
+		if _, err := boardDefinition.archive(archiveID); err != nil {
+			if layoutArchive != "" {
+				restoreErr := s.withLayoutDefinitionLock(slug, func(layoutDefinition *definitionFile) error {
+					return layoutDefinition.restoreArchived(layoutArchive)
+				})
+				if restoreErr != nil {
+					return fmt.Errorf("archive board: %v; restore layout: %w", err, restoreErr)
+				}
+			}
+			return err
+		}
+		deleted = &BoardDeletion{ID: board.ID, Slug: board.Slug, Title: board.Title, ArchiveID: archiveID}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return deleted, nil
 }
 
 func (s *Store) BoardChangeSince(slug, previousETag string) (*BoardChangeSignal, error) {

@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ApiRequestError,
+  createBoard,
+  deleteBoard,
   fetchApi,
   fetchBoardChanged,
   fetchBoardDocument,
+  fetchBoardWithLayout,
   normalizeBoard,
   normalizeLayout,
   patchBoardDocument,
@@ -165,6 +168,61 @@ describe('formations API helpers', () => {
       formations: [],
       connections: [],
     })
+  })
+
+  it('creates a board from its human name', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init })
+      return Promise.resolve(jsonResponse({
+        success: true,
+        data: { board: { id: 'brd_new', slug: 'release-plan', title: 'Release Plan', rev: 1, etag: 'created-etag' } },
+      }, { status: 201, etag: 'created-etag' }))
+    }) as unknown as typeof fetch)
+
+    await expect(createBoard('Release Plan')).resolves.toMatchObject({
+      slug: 'release-plan',
+      etag: 'created-etag',
+      formations: [],
+    })
+    expect(calls[0].url).toBe('/api/formations/boards')
+    expect(calls[0].init?.method).toBe('POST')
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ title: 'Release Plan' })
+  })
+
+  it('loads a fresh board with a synthetic empty layout when no sidecar exists yet', async () => {
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/layout')) {
+        return Promise.resolve(jsonResponse({ success: false, error: { code: 'NOT_FOUND', message: 'layout missing' } }, { ok: false, status: 404 }))
+      }
+      return Promise.resolve(jsonResponse({
+        success: true,
+        data: { board: { id: 'brd_new', slug: 'release-plan', title: 'Release Plan', rev: 1, etag: 'created-etag' } },
+      }, { etag: 'created-etag' }))
+    }) as unknown as typeof fetch)
+
+    await expect(fetchBoardWithLayout('release-plan')).resolves.toEqual({
+      board: expect.objectContaining({ id: 'brd_new', formations: [] }),
+      layout: { boardId: 'brd_new', boardRev: 1, etag: '*', nodes: [], edges: [] },
+    })
+  })
+
+  it('deletes a board with exact optimistic concurrency inputs', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), init })
+      return Promise.resolve(jsonResponse({
+        success: true,
+        data: { deletion: { id: 'brd_1', slug: 'session-search', title: 'Session search', archiveId: 'archive_1' } },
+      }))
+    }) as unknown as typeof fetch)
+
+    await expect(deleteBoard('session-search', 'board-etag', 7)).resolves.toMatchObject({ archiveId: 'archive_1' })
+    expect(calls[0].url).toBe('/api/formations/boards/session-search')
+    expect(calls[0].init?.method).toBe('DELETE')
+    expect(calls[0].init?.headers).toMatchObject({ 'If-Match': 'board-etag' })
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ expectedRev: 7 })
   })
 
   it('checks board changes against the current ETag', async () => {

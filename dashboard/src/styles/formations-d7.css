@@ -36,6 +36,10 @@
 .fmx .newbtn:hover:not(:disabled){border-color:var(--terra);color:var(--terra);}
 .fmx .newbtn:disabled{opacity:.45;cursor:not-allowed;}
 .fmx .newbtn svg{width:13px;height:13px;}
+.fmx .board-action{border:0;background:transparent;color:var(--dim);padding:6px 2px;font:inherit;font-size:9px;letter-spacing:.08em;text-transform:uppercase;cursor:pointer;}
+.fmx .board-action:hover:not(:disabled){color:var(--terra);}
+.fmx .board-action.danger:hover:not(:disabled){color:var(--terra-d);}
+.fmx .board-action:disabled{opacity:.35;cursor:not-allowed;}
 
 .fmx .main{flex:1;display:flex;overflow:hidden;min-height:0;}
 
@@ -290,6 +294,8 @@
 .fmx .pop .pop-actions .save{flex:1;width:auto;margin-top:0;}
 .fmx .pop button:disabled{opacity:.55;cursor:not-allowed;}
 .fmx .pop .save:hover{background:color-mix(in srgb,var(--terra) 75%,#fff);}
+.fmx .board-delete-warning{margin:0;color:var(--ink2);font-size:12px;line-height:1.55;}
+.fmx .board-delete-warning strong{color:var(--ink);}
 
 /* drag ghost (agent being dragged from roster/slot) */
 .fmx-ghost{position:fixed;z-index:300;width:52px;height:52px;border-radius:50%;pointer-events:none;box-shadow:0 4px 16px rgba(0,0,0,.5);transform:translate(-50%,-50%) scale(1.05);opacity:.95;display:flex;align-items:center;justify-content:center;font-family:'Courier Prime',monospace;font-weight:700;font-size:17px;color:var(--text-primary);text-transform:uppercase;border:2px solid var(--text-dim);background:var(--surface-primary);}
@@ -357,6 +363,7 @@
   .fmx .gatetoken svg{width:15px;height:15px;}
   .fmx .newbtn{width:auto;min-width:110px;height:36px;padding:0 11px;gap:7px;font-size:11px;justify-content:center;flex-shrink:0;}
   .fmx .newbtn svg{width:16px;height:16px;}
+  .fmx .board-action{min-height:36px;padding:0 8px;}
   .fmx .main{flex-direction:column;}
   .fmx .roster{width:100%;height:84px;flex-direction:row;border-right:0;border-bottom:1px solid var(--line);}
   .fmx .roster-hd{width:96px;min-height:0;padding:9px;flex-direction:column;align-items:flex-start;justify-content:center;border-bottom:0;border-right:1px solid var(--line);}

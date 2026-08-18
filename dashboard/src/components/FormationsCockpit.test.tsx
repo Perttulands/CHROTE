@@ -141,8 +141,8 @@ function installFetchMock(options: {
 } = {}) {
   const patches: RecordedPatch[] = []
   recordedMutations = []
-  const availableBoards = options.boards?.length ? options.boards : [makeBoard()]
-  let board = availableBoards[0]
+  let availableBoards = options.emptyBoards ? [] : (options.boards?.length ? options.boards : [makeBoard()])
+  let board = availableBoards[0] || makeBoard()
   let currentLayout = layout
   ;(globalThis as Record<string, unknown>).fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
@@ -161,9 +161,37 @@ function installFetchMock(options: {
       json: () => Promise.resolve({ success: false, error: { code: 'BAD_REQUEST', message } }),
       text: () => Promise.resolve(message),
     })
+    if (method === 'POST' && url === '/api/formations/boards') {
+      const body = JSON.parse(String(init?.body)) as { title: string }
+      const created = {
+        ...makeBoard(),
+        id: 'brd_created',
+        slug: 'release-plan',
+        title: body.title,
+        rev: 1,
+        etag: 'created-board-etag',
+        missions: [],
+        formations: [],
+        gates: [],
+        connections: [],
+      }
+      availableBoards = [...availableBoards, created]
+      board = created
+      currentLayout = { schema: 1, boardId: created.id, boardRev: created.rev, etag: '*', nodes: [], edges: [] }
+      return respond({ board: created }, created.etag)
+    }
+    if (method === 'DELETE' && url.includes('/api/formations/boards/')) {
+      availableBoards = availableBoards.filter(item => item.slug !== board.slug)
+      return respond({ deletion: { id: board.id, slug: board.slug, title: board.title, archiveId: 'archive_test' } })
+    }
     if (init?.method === 'PATCH') {
       const body = JSON.parse(String(init.body)) as Record<string, unknown>
       patches.push({ url, body })
+      if (!url.endsWith('/layout') && typeof body.title === 'string') {
+        board = { ...board, title: body.title, rev: board.rev + 1, etag: 'board-etag-2' }
+        availableBoards = availableBoards.map(item => item.slug === board.slug ? board : item)
+        return respond({ board }, board.etag)
+      }
       if (!url.endsWith('/layout') && body.createMission) {
         if (options.missionCreateFailure) return reject('Mission create failed')
         const requested = body.createMission as { title: string; goal: string; beadId: string; x: number; y: number }
@@ -238,7 +266,7 @@ function installFetchMock(options: {
         },
       ] })
     }
-    if (url === '/api/formations/boards') return respond({ boards: options.emptyBoards ? [] : availableBoards.map(item => ({ slug: item.slug, title: item.title })) })
+    if (url === '/api/formations/boards') return respond({ boards: availableBoards.map(item => ({ id: item.id, slug: item.slug, title: item.title, rev: item.rev, etag: item.etag })) })
     if (url.includes('/changes')) {
       const refreshedBoard = options.sameBoardRefreshes?.shift()
       if (!refreshedBoard) return respond({ signal: { changed: false } })
@@ -296,8 +324,50 @@ describe('FormationsCockpit reference parity', () => {
     expect(await screen.findByTestId('formations-empty-board')).toHaveTextContent('No persisted formation boards')
     expect(screen.getByTestId('board-picker')).toHaveTextContent('No boards')
     expect(screen.queryByText('Improve session search')).toBeNull()
+    expect(screen.getByTestId('new-board')).toBeEnabled()
     expect(screen.getByTestId('new-formation')).toBeDisabled()
     expect(patches).toEqual([])
+  })
+
+  it('creates and selects a named blank board from the Formations top bar', async () => {
+    patches = installFetchMock({ emptyBoards: true })
+    render(<FormationsCockpit />)
+    await screen.findByTestId('formations-empty-board')
+
+    fireEvent.click(screen.getByTestId('new-board'))
+    const dialog = await screen.findByRole('dialog', { name: 'Create board' })
+    fireEvent.change(within(dialog).getByLabelText('Board name'), { target: { value: 'Release Plan' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create board' }))
+
+    await waitFor(() => expect(screen.getByTestId('board-picker')).toHaveValue('release-plan'))
+    expect(screen.getByTestId('board-picker')).toHaveTextContent('Release Plan')
+    expect(screen.getByTestId('formations-empty-board')).toHaveTextContent('This board is empty')
+    expect(recordedMutations).toContainEqual({ method: 'POST', url: '/api/formations/boards' })
+  })
+
+  it('renames the selected board through the top-bar board controls', async () => {
+    await renderCockpit()
+    fireEvent.click(screen.getByRole('button', { name: 'Rename board' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Rename board' })
+    const input = within(dialog).getByLabelText('Board name')
+    expect(input).toHaveValue('Test board')
+    fireEvent.change(input, { target: { value: 'Delivery map' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save board name' }))
+
+    await waitFor(() => expect(screen.getByTestId('board-picker')).toHaveTextContent('Delivery map'))
+    expect(patches.some(patch => patch.body.title === 'Delivery map')).toBe(true)
+  })
+
+  it('archives a board only after explicit confirmation', async () => {
+    await renderCockpit()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete board' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Delete board' })
+    expect(dialog).toHaveTextContent('archived')
+    expect(recordedMutations.some(mutation => mutation.method === 'DELETE')).toBe(false)
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Archive board' }))
+    await waitFor(() => expect(screen.getByTestId('board-picker')).toHaveTextContent('No boards'))
+    expect(recordedMutations).toContainEqual({ method: 'DELETE', url: '/api/formations/boards/test-board' })
   })
 
   it('shows only assignable persona cards in the formation staffing roster', async () => {
