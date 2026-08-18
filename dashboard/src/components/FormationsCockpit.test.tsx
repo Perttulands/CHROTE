@@ -142,6 +142,7 @@ function installFetchMock(options: {
   boardNotes?: { board?: string; elements?: Array<{ nodeId: string; text: string }> }
   notePatchConflict?: boolean
   agents?: typeof agents
+  agentDetailGate?: Promise<void>
 } = {}) {
   const patches: RecordedPatch[] = []
   recordedMutations = []
@@ -261,14 +262,15 @@ function installFetchMock(options: {
           etag: `${id}-etag-2`,
         }, `${id}-etag-2`)
       }
-      return respond({
-        ...agent,
-        kind: agent.kind || 'specialist',
-        summary: `${agent.displayName || agent.id} summary`,
-        tags: agent.tags || [],
-        harnessVariants: [defaultVariant],
-        etag: `${id}-etag`,
-      }, `${id}-etag`)
+      const respondWithAgent = () => respond({
+          ...agent,
+          kind: agent.kind || 'specialist',
+          summary: `${agent.displayName || agent.id} summary`,
+          tags: agent.tags || [],
+          harnessVariants: [defaultVariant],
+          etag: `${id}-etag`,
+        }, `${id}-etag`)
+      return options.agentDetailGate ? options.agentDetailGate.then(respondWithAgent) : respondWithAgent()
     }
     if (init?.method === 'PATCH') {
       const body = JSON.parse(String(init.body)) as Record<string, unknown>
@@ -469,6 +471,35 @@ describe('FormationsCockpit reference parity', () => {
     await waitFor(() => expect(trigger).toHaveFocus())
   })
 
+  it('rechecks note drafts before creating a board from an open dialog', async () => {
+    await renderCockpit()
+    fireEvent.click(screen.getByRole('button', { name: 'Expand shared notepad' }))
+    const boardNote = await screen.findByRole('textbox', { name: 'Board note' })
+    fireEvent.click(screen.getByTestId('new-board'))
+    const dialog = await screen.findByRole('dialog', { name: 'Create board' })
+    fireEvent.change(within(dialog).getByLabelText('Board name'), { target: { value: 'Should not create' } })
+    fireEvent.change(boardNote, { target: { value: 'Draft made after dialog opened' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create board' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Create board' })).toBeNull())
+    expect(boardNote).toHaveValue('Draft made after dialog opened')
+    expect(recordedMutations.some(mutation => mutation.method === 'POST' && mutation.url === '/api/formations/boards')).toBe(false)
+  })
+
+  it('rechecks note drafts before archiving from an open dialog', async () => {
+    await renderCockpit()
+    fireEvent.click(screen.getByRole('button', { name: 'Expand shared notepad' }))
+    const boardNote = await screen.findByRole('textbox', { name: 'Board note' })
+    fireEvent.click(screen.getByRole('button', { name: 'Delete board' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Delete board' })
+    fireEvent.change(boardNote, { target: { value: 'Draft made after delete opened' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Archive board' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete board' })).toBeNull())
+    expect(boardNote).toHaveValue('Draft made after delete opened')
+    expect(recordedMutations.some(mutation => mutation.method === 'DELETE')).toBe(false)
+  })
+
   it('shares board and element notes through a collapsible right-side notepad', async () => {
     patches = installFetchMock({
       boardNotes: {
@@ -545,6 +576,21 @@ describe('FormationsCockpit reference parity', () => {
     expect(screen.queryByRole('dialog', { name: 'Delete board' })).toBeNull()
     fireEvent.click(screen.getByTestId('new-board'))
     expect(screen.queryByRole('dialog', { name: 'Create board' })).toBeNull()
+  })
+
+  it('keeps loading agent dialogs focused and restores their trigger on Escape', async () => {
+    let releaseDetail: (() => void) | undefined
+    const detailGate = new Promise<void>(resolve => { releaseDetail = resolve })
+    patches = installFetchMock({ agentDetailGate: detailGate })
+    await renderCockpit()
+    const trigger = screen.getByRole('button', { name: 'Edit Mason' })
+    fireEvent.click(trigger)
+    const dialog = await screen.findByRole('dialog', { name: 'Edit agent' })
+    expect(within(dialog).getByRole('button', { name: 'Close agent editor' })).toHaveFocus()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit agent' })).toBeNull())
+    await waitFor(() => expect(trigger).toHaveFocus())
+    await act(async () => { releaseDetail?.(); await detailGate })
   })
 
   it('shows Codex role presets beside Claude personas and persists UI overrides', async () => {

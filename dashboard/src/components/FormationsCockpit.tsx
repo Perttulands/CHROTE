@@ -671,6 +671,10 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       setBoardDialog(current => current ? { ...current, error: 'Board name is required.' } : current)
       return
     }
+    if (boardDialog.mode === 'create' && blockBoardExitForDirtyNotes()) {
+      closeBoardDialog()
+      return
+    }
     setBoardDialog(current => current ? { ...current, saving: true, error: '' } : current)
     try {
       if (boardDialog.mode === 'create') {
@@ -712,11 +716,15 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
         error: err instanceof Error ? err.message : 'Board update failed',
       } : current)
     }
-  }, [boardDialog, closeBoardDialog])
+  }, [blockBoardExitForDirtyNotes, boardDialog, closeBoardDialog])
 
   const archiveSelectedBoard = useCallback(async () => {
     const target = boardDialog?.target
     if (!target || boardDialog?.mode !== 'delete') return
+    if (blockBoardExitForDirtyNotes()) {
+      closeBoardDialog()
+      return
+    }
     setBoardDialog(dialog => dialog ? { ...dialog, saving: true, error: '' } : dialog)
     try {
       await deleteBoard(target.slug, target.etag, target.rev)
@@ -741,7 +749,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
         error: err instanceof Error ? err.message : 'Board deletion failed',
       } : dialog)
     }
-  }, [boardDialog, closeBoardDialog])
+  }, [blockBoardExitForDirtyNotes, boardDialog, closeBoardDialog])
 
   const patchLayoutEdge = useCallback(async (edgeId: string, lane: string) => {
     const currentBoard = boardRef.current
@@ -2713,7 +2721,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
           <form onSubmit={event => { event.preventDefault(); void saveAgentOverride() }}>
             <div className="phd">
               <span>{agentEditor.preset ? 'Codex preset override' : 'Agent override'}</span>
-              <button type="button" className="x" aria-label="Close agent editor" disabled={agentEditor.saving} onClick={closeAgentEditor}>×</button>
+              <button autoFocus={agentEditor.loading} type="button" className="x" aria-label="Close agent editor" disabled={agentEditor.saving} onClick={closeAgentEditor}>×</button>
             </div>
             <div className="agent-dialog-id">{agentEditor.id}{agentEditor.customized ? ' · customized' : ' · built-in default'}</div>
             {agentEditor.loading ? <div className="agent-dialog-loading">Loading persona card…</div> : (
