@@ -119,6 +119,14 @@ func TestPersonaStoreRejectsSymlinkAndFIFOCardSubstitution(t *testing.T) {
 	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
 		t.Fatalf("mkfifo: %v", err)
 	}
+	fifoHandle, err := os.OpenFile(fifo, os.O_RDWR|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		t.Fatalf("open FIFO keeper: %v", err)
+	}
+	defer fifoHandle.Close()
+	if _, err := fifoHandle.Write([]byte(externalRaw)); err != nil {
+		t.Fatalf("prime FIFO with valid persona: %v", err)
+	}
 	if _, err := store.ReadPersona("codex-builder"); err == nil {
 		t.Fatal("ReadPersona accepted FIFO card")
 	}
