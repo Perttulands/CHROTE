@@ -135,6 +135,47 @@ func TestArchonAgentNewListInspectAndEditUsePersonaStore(t *testing.T) {
 	}
 }
 
+func TestArchonAgentEditOverridesBuiltInCodexPreset(t *testing.T) {
+	agentsDir := t.TempDir()
+	t.Setenv("CHROTE_AGENTS_DIR", agentsDir)
+	runner := &fakeTmux{live: map[string]bool{}}
+
+	stdout, stderr, code := runArchon(t, runner, "agent", "list", "--json")
+	if code != 0 || stderr != "" {
+		t.Fatalf("list presets code=%d stderr=%q", code, stderr)
+	}
+	for _, id := range []string{"codex-scout", "codex-planner", "codex-builder", "codex-judge", "codex-orchestrator", "codex-debugger", "codex-reviewer"} {
+		if !strings.Contains(stdout, `"id": "`+id+`"`) {
+			t.Fatalf("preset list missing %s: %s", id, stdout)
+		}
+	}
+
+	stdout, stderr, code = runArchon(t, runner, "agent", "edit", "codex-builder",
+		"--display-name", "Repository Builder",
+		"--kind", "implementer",
+		"--summary", "Builds this repository",
+		"--capable", "implement,test,refactor",
+		"--session-stem", "builder-main",
+		"--launch", "codex --yolo --model gpt-5.6-codex",
+		"--json")
+	if code != 0 || stderr != "" {
+		t.Fatalf("override preset code=%d stderr=%q stdout=%q", code, stderr, stdout)
+	}
+	if !strings.Contains(stdout, `"displayName": "Repository Builder"`) || !strings.Contains(stdout, `"customized": true`) {
+		t.Fatalf("override output = %s", stdout)
+	}
+	raw, err := os.ReadFile(filepath.Join(agentsDir, "codex-builder.toml"))
+	if err != nil {
+		t.Fatalf("read materialized preset: %v", err)
+	}
+	text := string(raw)
+	for _, want := range []string{`kind = "implementer"`, `summary = "Builds this repository"`, `session_stem = "builder-main"`, `launch = "codex --yolo --model gpt-5.6-codex"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("materialized preset missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestArchonAgentNewDuplicateFailsWithoutChangingCard(t *testing.T) {
 	agentsDir := t.TempDir()
 	t.Setenv("CHROTE_AGENTS_DIR", agentsDir)

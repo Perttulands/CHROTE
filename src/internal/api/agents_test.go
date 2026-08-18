@@ -63,17 +63,23 @@ source = "/tmp/CLAUDE.md"
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if !body.Success || body.Data.Count != 2 {
+	if !body.Success || body.Data.Count != 9 {
 		t.Fatalf("response = %#v", body)
 	}
-	if body.Data.Agents[0].ID != "susie" || body.Data.Agents[0].Liveness != formations.AgentLivenessLive {
-		t.Fatalf("first agent = %#v, want live susie", body.Data.Agents[0])
+	var susie, scratch *formations.AgentProjection
+	for index := range body.Data.Agents {
+		switch body.Data.Agents[index].ID {
+		case "susie":
+			susie = &body.Data.Agents[index]
+		case "scratch":
+			scratch = &body.Data.Agents[index]
+		}
 	}
-	if body.Data.Agents[0].HarnessDefault != "claude-code" {
-		t.Fatalf("first agent harnessDefault = %q, want claude-code", body.Data.Agents[0].HarnessDefault)
+	if susie == nil || susie.Liveness != formations.AgentLivenessLive || susie.HarnessDefault != "claude-code" {
+		t.Fatalf("susie projection = %#v, want live claude-code persona", susie)
 	}
-	if body.Data.Agents[1].ID != "scratch" || !body.Data.Agents[1].Unbound || body.Data.Agents[1].Assignable {
-		t.Fatalf("second agent = %#v, want unbound scratch", body.Data.Agents[1])
+	if scratch == nil || !scratch.Unbound || scratch.Assignable {
+		t.Fatalf("scratch projection = %#v, want unbound session", scratch)
 	}
 	if strings.Contains(rec.Body.String(), "CLAUDE.md contents") ||
 		strings.Contains(rec.Body.String(), "/tmp/CLAUDE.md") ||
@@ -165,6 +171,40 @@ func TestAgentsHandlerCreatesAndEditsThroughSharedWriter(t *testing.T) {
 	raw := readAgentFixture(t, agentsDir, "writer")
 	if !strings.Contains(raw, `"react"`) || !strings.Contains(raw, `text = "ready for UI copy"`) {
 		t.Fatalf("shared writer did not persist edit:\n%s", raw)
+	}
+}
+
+func TestAgentsHandlerOverridesBuiltInCodexPresetThroughSharedWriter(t *testing.T) {
+	agentsDir := t.TempDir()
+	handler := NewAgentsHandler(agentsDir, fakeAgentLiveness{})
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/agents/codex-planner", nil)
+	getReq.SetPathValue("agentId", "codex-planner")
+	getRec := httptest.NewRecorder()
+	handler.GetAgent(getRec, getReq)
+	if getRec.Code != http.StatusOK || getRec.Header().Get("ETag") == "" || !strings.Contains(getRec.Body.String(), `"preset":true`) {
+		t.Fatalf("get preset = %d %s", getRec.Code, getRec.Body.String())
+	}
+
+	patchReq := httptest.NewRequest(http.MethodPatch, "/api/agents/codex-planner", bytes.NewBufferString(`{"displayName":"Delivery Planner","summary":"Plans the selected delivery","capabilities":["planning","tickets"],"sessionStem":"planner-main","launch":"codex --yolo --model gpt-5.6-codex"}`))
+	patchReq.SetPathValue("agentId", "codex-planner")
+	patchReq.Header.Set("If-Match", getRec.Header().Get("ETag"))
+	patchRec := httptest.NewRecorder()
+	handler.UpdateAgent(patchRec, patchReq)
+	if patchRec.Code != http.StatusOK {
+		t.Fatalf("patch preset = %d %s", patchRec.Code, patchRec.Body.String())
+	}
+	var response struct {
+		Data formations.PersonaCard `json:"data"`
+	}
+	if err := json.Unmarshal(patchRec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode preset override: %v", err)
+	}
+	if response.Data.DisplayName != "Delivery Planner" || !response.Data.Customized || response.Data.DefaultVariant().SessionStem != "planner-main" {
+		t.Fatalf("preset override = %+v", response.Data)
+	}
+	if _, err := os.Stat(filepath.Join(agentsDir, "codex-planner.toml")); err != nil {
+		t.Fatalf("materialized API override: %v", err)
 	}
 }
 

@@ -18,6 +18,7 @@ import {
   createBoard,
   deleteBoard,
   fetchAgents,
+  fetchAgentCard,
   fetchBoardChanged,
   fetchBoardNotes,
   fetchBoardSummaries,
@@ -27,6 +28,7 @@ import {
   fetchRunEvents,
   fetchRunStatus,
   missingLayoutForBoard,
+  overrideAgentCard,
   patchBoardNote,
   patchBoardDocument,
   patchBoardLayout,
@@ -128,6 +130,21 @@ type BoardDialogState = {
   saving: boolean
   error: string
 }
+type AgentEditorState = {
+  id: string
+  preset: boolean
+  customized: boolean
+  displayName: string
+  kind: string
+  summary: string
+  capabilities: string
+  sessionStem: string
+  launch: string
+  etag: string
+  loading: boolean
+  saving: boolean
+  error: string
+}
 type CockpitUndo =
   | { kind: 'clearBrief'; formationId: string }
   | { kind: 'setBrief'; formationId: string; brief: FormationBrief }
@@ -177,6 +194,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const [gateEditor, setGateEditor] = useState<GateEditorState | null>(null)
   const [briefEditor, setBriefEditor] = useState<BriefEditorState | null>(null)
   const [boardDialog, setBoardDialog] = useState<BoardDialogState | null>(null)
+  const [agentEditor, setAgentEditor] = useState<AgentEditorState | null>(null)
   const [notesOpen, setNotesOpen] = useState(true)
   const [notes, setNotes] = useState<BoardNotesDocument | null>(null)
   const [boardNoteDraft, setBoardNoteDraft] = useState('')
@@ -1951,7 +1969,85 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
     )
   }
 
+  const openAgentEditor = useCallback(async (agent: AgentProjection) => {
+    setAgentEditor({
+      id: agent.id,
+      preset: Boolean(agent.preset),
+      customized: Boolean(agent.customized),
+      displayName: agent.displayName || agent.id,
+      kind: agent.kind || agentRole(agent),
+      summary: '',
+      capabilities: (agent.tags || []).filter(tag => !tag.includes(':')).join(', '),
+      sessionStem: agent.id,
+      launch: '',
+      etag: '',
+      loading: true,
+      saving: false,
+      error: '',
+    })
+    try {
+      const card = await fetchAgentCard(agent.id)
+      const variant = card.harnessVariants.find(candidate => candidate.id === card.harnessDefault) || card.harnessVariants[0]
+      setAgentEditor(current => current?.id === agent.id ? {
+        ...current,
+        preset: Boolean(card.preset),
+        customized: Boolean(card.customized),
+        displayName: card.displayName || card.id,
+        kind: card.kind,
+        summary: card.summary || '',
+        capabilities: (card.tags || []).filter(tag => !tag.includes(':')).join(', '),
+        sessionStem: variant?.sessionStem || card.id,
+        launch: variant?.launch || '',
+        etag: card.etag,
+        loading: false,
+      } : current)
+    } catch (err) {
+      setAgentEditor(current => current?.id === agent.id ? {
+        ...current,
+        loading: false,
+        error: err instanceof Error ? err.message : 'Failed to load agent card',
+      } : current)
+    }
+  }, [])
+
+  const saveAgentOverride = useCallback(async () => {
+    if (!agentEditor || agentEditor.loading || !agentEditor.etag) return
+    if (!agentEditor.displayName.trim() || !agentEditor.kind.trim()) {
+      setAgentEditor(current => current ? { ...current, error: 'Display name and role are required.' } : current)
+      return
+    }
+    setAgentEditor(current => current ? { ...current, saving: true, error: '' } : current)
+    try {
+      await overrideAgentCard(agentEditor.id, agentEditor.etag, {
+        displayName: agentEditor.displayName.trim(),
+        kind: agentEditor.kind.trim(),
+        summary: agentEditor.summary.trim(),
+        capabilities: agentEditor.capabilities.split(',').map(value => value.trim()).filter(Boolean),
+        sessionStem: agentEditor.sessionStem.trim(),
+        launch: agentEditor.launch.trim(),
+      })
+      setAgents(await fetchAgents())
+      setAgentEditor(null)
+    } catch (err) {
+      setAgentEditor(current => current ? {
+        ...current,
+        saving: false,
+        error: err instanceof Error ? err.message : 'Failed to save agent override',
+      } : current)
+    }
+  }, [agentEditor])
+
   const rosterAgents = useMemo(() => agents.filter(agent => agent.assignable && !agent.unbound), [agents])
+  const rosterSections = useMemo(() => {
+    const codex = rosterAgents.filter(agent => (agent.harnessDefault || '').toLowerCase().includes('codex'))
+    const claude = rosterAgents.filter(agent => (agent.harnessDefault || '').toLowerCase().includes('claude'))
+    const other = rosterAgents.filter(agent => !codex.includes(agent) && !claude.includes(agent))
+    return [
+      { id: 'codex', label: 'Codex', agents: codex },
+      { id: 'claude', label: 'Claude', agents: claude },
+      { id: 'other', label: 'Other', agents: other },
+    ].filter(section => section.agents.length > 0)
+  }, [rosterAgents])
   const deployedAgentCount = useMemo(
     () => new Set((board?.formations || []).flatMap(f => f.slots.map(s => s.agentId).filter(Boolean))).size,
     [board?.formations],
@@ -2031,7 +2127,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       </div>
 
       <div className="main">
-        <aside className="roster" data-testid="agent-roster">
+        <aside className="roster" data-testid="agent-roster" aria-label="Agent roster">
           <div className="roster-hd">
             <div className="t">Agents</div>
             <span className="s" data-testid="roster-count" title={`${rosterAgents.length} catalog agents · ${deployedAgentCount} deployed on this board`}>
@@ -2041,24 +2137,37 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
           <div className="roster-list">
             {rosterAgents.length === 0
               ? <div className="roster-empty">No assignable catalog agents. Add persona cards in ~/agents to staff formations.</div>
-              : rosterAgents.map(agent => {
-                const deployed = (board?.formations || []).some(f => f.slots.some(s => s.agentId === agent.id))
-                return (
-                  <div
-                    key={agent.id}
-                    className={`ragent${deployed ? ' deployed' : ''}${agent.unbound ? ' unbound' : ''}`}
-                    data-agent={agent.id}
-                    data-testid={`roster-agent-${agent.id}`}
-                    onPointerDown={event => beginStaff(event, agent.id, agent.harnessDefault || '')}
-                  >
-                    <span className="av">{harnessGlyph(agent.harnessDefault) ?? initials(agent.id)}</span>
-                    <div className="ri">
-                      <div className="n">{agent.displayName || agent.id}</div>
-                      <div className="r">{agentRole(agent)}{agentState(agent) === 'idle' ? ' · idle' : ''}</div>
-                    </div>
-                  </div>
-                )
-              })}
+              : rosterSections.map(section => (
+                <section className="roster-group" key={section.id} data-provider={section.id}>
+                  <div className="roster-group-label">{section.label}</div>
+                  {section.agents.map(agent => {
+                    const deployed = (board?.formations || []).some(f => f.slots.some(s => s.agentId === agent.id))
+                    return (
+                      <div
+                        key={agent.id}
+                        className={`ragent${deployed ? ' deployed' : ''}${agent.unbound ? ' unbound' : ''}`}
+                        data-agent={agent.id}
+                        data-testid={`roster-agent-${agent.id}`}
+                        onPointerDown={event => beginStaff(event, agent.id, agent.harnessDefault || '')}
+                      >
+                        <span className="av">{harnessGlyph(agent.harnessDefault) ?? initials(agent.id)}</span>
+                        <div className="ri">
+                          <div className="n">{agent.displayName || agent.id}</div>
+                          <div className="r">{agentRole(agent)}{agent.preset ? ` · ${agent.customized ? 'custom' : 'preset'}` : ''}{agentState(agent) === 'idle' ? ' · idle' : ''}</div>
+                        </div>
+                        <button
+                          type="button"
+                          className="agent-edit"
+                          aria-label={`Edit ${agent.displayName || agent.id}`}
+                          title="Edit persona override"
+                          onPointerDown={event => event.stopPropagation()}
+                          onClick={event => { event.stopPropagation(); void openAgentEditor(agent) }}
+                        >•••</button>
+                      </div>
+                    )
+                  })}
+                </section>
+              ))}
           </div>
         </aside>
 
@@ -2491,6 +2600,57 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
           ) : null}
         </aside>
       </div>
+
+      {agentEditor ? (
+        <div
+          className="pop agent-dialog"
+          role="dialog"
+          aria-label={agentEditor.preset ? 'Edit agent preset' : 'Edit agent'}
+          onPointerDown={event => event.stopPropagation()}
+        >
+          <form onSubmit={event => { event.preventDefault(); void saveAgentOverride() }}>
+            <div className="phd">
+              <span>{agentEditor.preset ? 'Codex preset override' : 'Agent override'}</span>
+              <button type="button" className="x" aria-label="Close agent editor" disabled={agentEditor.saving} onClick={() => setAgentEditor(null)}>×</button>
+            </div>
+            <div className="agent-dialog-id">{agentEditor.id}{agentEditor.customized ? ' · customized' : ' · built-in default'}</div>
+            {agentEditor.loading ? <div className="agent-dialog-loading">Loading persona card…</div> : (
+              <div className="agent-dialog-fields">
+                <label>
+                  <span>Display name</span>
+                  <input aria-label="Agent display name" value={agentEditor.displayName} onChange={event => setAgentEditor(current => current ? { ...current, displayName: event.target.value } : current)} />
+                </label>
+                <label>
+                  <span>Role</span>
+                  <input aria-label="Agent role" value={agentEditor.kind} onChange={event => setAgentEditor(current => current ? { ...current, kind: event.target.value } : current)} />
+                </label>
+                <label className="wide">
+                  <span>Summary</span>
+                  <textarea aria-label="Agent summary" value={agentEditor.summary} onChange={event => setAgentEditor(current => current ? { ...current, summary: event.target.value } : current)} />
+                </label>
+                <label className="wide">
+                  <span>Capabilities</span>
+                  <input aria-label="Agent capabilities" value={agentEditor.capabilities} placeholder="implement, test, review" onChange={event => setAgentEditor(current => current ? { ...current, capabilities: event.target.value } : current)} />
+                </label>
+                <label>
+                  <span>Session stem</span>
+                  <input aria-label="Agent session stem" value={agentEditor.sessionStem} onChange={event => setAgentEditor(current => current ? { ...current, sessionStem: event.target.value } : current)} />
+                </label>
+                <label className="wide">
+                  <span>Launch command</span>
+                  <input aria-label="Agent launch command" value={agentEditor.launch} onChange={event => setAgentEditor(current => current ? { ...current, launch: event.target.value } : current)} />
+                </label>
+              </div>
+            )}
+            {agentEditor.preset ? <div className="agent-dialog-note">Saving materializes a local persona TOML override; the built-in default remains the fallback.</div> : null}
+            {agentEditor.error ? <div className="dialog-error" role="alert">{agentEditor.error}</div> : null}
+            <div className="board-dialog-actions">
+              <button type="button" disabled={agentEditor.saving} onClick={() => setAgentEditor(null)}>Cancel</button>
+              <button className="primary" type="submit" aria-label="Save agent override" disabled={agentEditor.loading || agentEditor.saving || !agentEditor.etag}>{agentEditor.saving ? 'Saving…' : 'Save override'}</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
 
       {boardDialog ? (
         <div

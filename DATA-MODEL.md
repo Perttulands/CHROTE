@@ -1420,6 +1420,16 @@ A persona card contains stable assignment identity:
 - default cwd/root constraints;
 - optional safety notes.
 
+CHROTE also projects seven immutable built-in OpenAI Codex persona defaults:
+`codex-scout`, `codex-planner`, `codex-builder`, `codex-judge`,
+`codex-orchestrator`, `codex-debugger`, and `codex-reviewer`. They use the
+canonical `openai-codex` harness and are available even when the configured
+persona root is empty. A persisted card with the same exact id is a local
+override and replaces that default in reads and roster projection. The first
+ETag-fenced edit materializes such a card through the normal atomic persona
+writer; a stale edit creates no file. Existing non-preset cards, including
+Claude cards, are never rewritten or shadowed.
+
 ### Run binding authority and safe projection
 
 Board slots store only staffing intent (`agentId` and optional `harness`). At

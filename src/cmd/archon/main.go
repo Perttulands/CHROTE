@@ -406,27 +406,58 @@ func runAgentEdit(store *formations.PersonaStore, args []string, stdout, stderr 
 	removeCapability := fs.String("remove-capability", "", "remove bare capability")
 	addHarness := fs.String("add-harness", "", "add harness variant")
 	sessionStem := fs.String("session-stem", "", "session stem for added harness")
+	launch := fs.String("launch", "", "default or added-harness launch command")
+	displayName := fs.String("display-name", "", "replace display name")
+	kind := fs.String("kind", "", "replace role kind")
+	summary := fs.String("summary", "", "replace summary")
+	capable := fs.String("capable", "", "replace comma-separated bare capabilities")
 	note := fs.String("note", "", "append note")
 	jsonOut := fs.Bool("json", false, "write JSON")
 	if err := fs.Parse(reorderFlags(args, map[string]bool{"json": true})); err != nil {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: archon agent edit <id> [--add-capability t|--remove-capability t|--add-harness h --session-stem s|--note text]")
+		fmt.Fprintln(stderr, "usage: archon agent edit <id> [--display-name n] [--kind k] [--summary s] [--capable a,b] [--session-stem s] [--launch command] [--add-capability t|--remove-capability t|--add-harness h|--note text]")
 		return 2
 	}
 	before, err := store.ReadPersona(fs.Arg(0))
 	if err != nil {
 		return fail(stderr, err)
 	}
-	card, err := store.EditPersona(fs.Arg(0), formations.EditPersonaRequest{
+	edit := formations.EditPersonaRequest{
 		AddCapability:    *addCapability,
 		RemoveCapability: *removeCapability,
 		AddHarness:       *addHarness,
-		SessionStem:      *sessionStem,
 		Note:             *note,
 		ExpectedETag:     before.ETag,
-	})
+	}
+	setFlags := map[string]bool{}
+	fs.Visit(func(current *flag.Flag) { setFlags[current.Name] = true })
+	if setFlags["display-name"] {
+		edit.SetDisplayName = displayName
+	}
+	if setFlags["kind"] {
+		edit.SetKind = kind
+	}
+	if setFlags["summary"] {
+		edit.SetSummary = summary
+	}
+	if setFlags["capable"] {
+		capabilities := splitCSV(*capable)
+		edit.SetCapabilities = &capabilities
+	}
+	if *addHarness != "" {
+		edit.SessionStem = *sessionStem
+		edit.Launch = *launch
+	} else {
+		if setFlags["session-stem"] {
+			edit.SetSessionStem = sessionStem
+		}
+		if setFlags["launch"] {
+			edit.SetLaunch = launch
+		}
+	}
+	card, err := store.EditPersona(fs.Arg(0), edit)
 	if err != nil {
 		return fail(stderr, err)
 	}

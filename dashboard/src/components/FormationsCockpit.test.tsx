@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import FormationsCockpit from './FormationsCockpit'
+import type { AgentProjection } from './formationsTypes'
 
 /* First direct cockpit coverage: pins the reference-parity behaviors that the
    prototype (03-formations.js) defines — judge wires render, the right-click
@@ -113,7 +114,7 @@ const layout = {
   edges: [],
 }
 
-const agents = [
+const agents: AgentProjection[] = [
   { id: 'mason', displayName: 'Mason', harnessDefault: 'codex', liveness: 'live', assignable: true, unbound: false },
   { id: 'hazel', displayName: 'Hazel', harnessDefault: 'claude', liveness: 'live', assignable: true, unbound: false },
   { id: 'scratch', displayName: 'scratch', liveness: 'live', assignable: false, unbound: true },
@@ -139,11 +140,13 @@ function installFetchMock(options: {
   escalations?: TestEscalation[]
   runStatus?: TestRunStatus
   boardNotes?: { board?: string; elements?: Array<{ nodeId: string; text: string }> }
+  agents?: typeof agents
 } = {}) {
   const patches: RecordedPatch[] = []
   recordedMutations = []
   let availableBoards = options.emptyBoards ? [] : (options.boards?.length ? options.boards : [makeBoard()])
   let board = availableBoards[0] || makeBoard()
+  let availableAgents = options.agents || agents
   let currentLayout = layout
   let boardNotes = {
     schema: 1,
@@ -214,6 +217,49 @@ function installFetchMock(options: {
             : boardNotes.elements.filter(note => note.nodeId !== body.target),
       }
       return respond({ notes: boardNotes }, boardNotes.etag)
+    }
+    const agentMatch = url.match(/^\/api\/agents\/([^/]+)$/)
+    if (agentMatch) {
+      const id = decodeURIComponent(agentMatch[1])
+      const agent = availableAgents.find(candidate => candidate.id === id)
+      if (!agent) return reject('Agent not found')
+      const harness = agent.harnessDefault || 'claude-code'
+      const defaultVariant = {
+        id: harness,
+        sessionStem: agent.id,
+        launch: harness === 'openai-codex'
+          ? 'codex --yolo -c check_for_update_on_startup=false'
+          : 'claude --dangerously-skip-permissions --effort="max"',
+      }
+      if (method === 'PATCH') {
+        const payload = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>
+        const updated = {
+          ...agent,
+          displayName: String(payload.displayName || agent.displayName || agent.id),
+          kind: String(payload.kind || agent.kind || 'specialist'),
+          tags: Array.isArray(payload.capabilities) ? payload.capabilities.map(String) : (agent.tags || []),
+          customized: true,
+        }
+        availableAgents = availableAgents.map(candidate => candidate.id === id ? updated : candidate)
+        return respond({
+          ...updated,
+          summary: String(payload.summary || ''),
+          harnessVariants: [{
+            ...defaultVariant,
+            sessionStem: String(payload.sessionStem || defaultVariant.sessionStem),
+            launch: String(payload.launch || defaultVariant.launch),
+          }],
+          etag: `${id}-etag-2`,
+        }, `${id}-etag-2`)
+      }
+      return respond({
+        ...agent,
+        kind: agent.kind || 'specialist',
+        summary: `${agent.displayName || agent.id} summary`,
+        tags: agent.tags || [],
+        harnessVariants: [defaultVariant],
+        etag: `${id}-etag`,
+      }, `${id}-etag`)
     }
     if (init?.method === 'PATCH') {
       const body = JSON.parse(String(init.body)) as Record<string, unknown>
@@ -319,7 +365,7 @@ function installFetchMock(options: {
         : availableBoards.find(item => url.includes(`/boards/${item.slug}`)) || board
       return respond({ board: requested }, requested.etag)
     }
-    if (url === '/api/agents') return respond({ agents })
+    if (url === '/api/agents') return respond({ agents: availableAgents })
     return respond({})
   }) as unknown as typeof fetch
   return patches
@@ -440,6 +486,40 @@ describe('FormationsCockpit reference parity', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save element note' }))
 
     await waitFor(() => expect(judge).toHaveClass('has-note'))
+  })
+
+  it('shows Codex role presets beside Claude personas and persists UI overrides', async () => {
+    const presetAgents: AgentProjection[] = [
+      { id: 'claude-existing', displayName: 'Claude Existing', kind: 'builder', harnessDefault: 'claude-code', liveness: 'offline', assignable: true },
+      ...['scout', 'planner', 'builder', 'judge', 'orchestrator', 'debugger', 'reviewer'].map(role => ({
+        id: `codex-${role}`,
+        displayName: `Codex ${role[0].toUpperCase()}${role.slice(1)}`,
+        kind: role,
+        tags: [`role:${role}`],
+        harnessDefault: 'openai-codex',
+        liveness: 'offline',
+        assignable: true,
+        preset: true,
+      })),
+    ]
+    patches = installFetchMock({ agents: presetAgents })
+    await renderCockpit()
+
+    const roster = screen.getByLabelText('Agent roster')
+    expect(within(roster).getByText('Codex')).toBeInTheDocument()
+    expect(within(roster).getByText('Claude')).toBeInTheDocument()
+    for (const role of ['Scout', 'Planner', 'Builder', 'Judge', 'Orchestrator', 'Debugger', 'Reviewer']) {
+      expect(within(roster).getByText(`Codex ${role}`)).toBeInTheDocument()
+    }
+
+    fireEvent.click(within(roster).getByRole('button', { name: 'Edit Codex Builder' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Edit agent preset' })
+    fireEvent.change(within(dialog).getByLabelText('Agent display name'), { target: { value: 'Repository Builder' } })
+    fireEvent.change(within(dialog).getByLabelText('Agent capabilities'), { target: { value: 'implement, test, refactor' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save agent override' }))
+
+    await waitFor(() => expect(within(roster).getByText('Repository Builder')).toBeInTheDocument())
+    expect(recordedMutations).toContainEqual({ method: 'PATCH', url: '/api/agents/codex-builder' })
   })
 
   it('shows only assignable persona cards in the formation staffing roster', async () => {
