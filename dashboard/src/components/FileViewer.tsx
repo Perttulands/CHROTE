@@ -1,21 +1,35 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { CSSProperties, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react'
-import { getDownloadUrl, getErrorMessage, readTextFile } from './FilesView/fileService'
+import { MAX_TEXT_PREVIEW_BYTES, getDownloadUrl, getErrorMessage, probeTextFile, readTextFile } from './FilesView/fileService'
 import type { FileItem } from './FilesView/types'
 import type { FileViewState, MarkdownMode } from './workspaceFilesState'
 
 export type PreviewKind = 'text' | 'image' | 'audio' | 'video' | 'pdf' | 'download'
+export { MAX_TEXT_PREVIEW_BYTES } from './FilesView/fileService'
 
 const TEXT_EXTENSIONS = new Set([
-  'bash', 'c', 'conf', 'cpp', 'css', 'csv', 'dockerfile', 'env', 'go', 'h', 'html', 'ini',
-  'java', 'js', 'json', 'jsx', 'log', 'md', 'markdown', 'py', 'rb', 'rs', 'sh', 'sql',
-  'toml', 'ts', 'tsx', 'txt', 'xml', 'yaml', 'yml',
+  'adoc', 'asm', 'bash', 'bat', 'c', 'cc', 'cfg', 'clj', 'cljs', 'cljc', 'cmake', 'cnf',
+  'conf', 'cpp', 'cs', 'css', 'csv', 'cts', 'cue', 'dart', 'desktop', 'diff',
+  'dockerfile', 'dockerignore', 'editorconfig', 'eml', 'env', 'erl', 'ex', 'exs', 'fish',
+  'fs', 'fsx', 'geojson', 'gitattributes', 'gitconfig', 'gitignore', 'gitmodules', 'go',
+  'gql', 'gradle', 'graphql', 'groovy', 'h', 'har', 'hcl', 'hpp', 'hs', 'htm', 'html',
+  'ics', 'ignore', 'ini', 'ipynb', 'java', 'jl', 'js', 'json', 'json5', 'jsonc', 'jsonl',
+  'jsx', 'kt', 'kts', 'less',
+  'lock', 'log', 'lua', 'm', 'markdown', 'md', 'mjs', 'mount',
+  'ndjson', 'nim', 'nix', 'npmrc', 'patch', 'path', 'pem', 'php', 'pl',
+  'properties', 'proto', 'ps1', 'psv', 'py', 'r', 'rb', 'rego', 'rs', 'rst', 's', 'sass',
+  'scala', 'scss', 'service', 'sh', 'socket', 'sql', 'svelte',
+  'swift', 'target', 'tex', 'tf', 'tfstate', 'tfvars', 'timer', 'toml', 'ts',
+  'tsbuildinfo', 'tsv', 'tsx', 'txt', 'vcf', 'vue', 'webmanifest', 'xml',
+  'yaml', 'yml', 'zsh',
 ])
-const IMAGE_EXTENSIONS = new Set(['bmp', 'gif', 'jpeg', 'jpg', 'png', 'svg', 'webp'])
-const AUDIO_EXTENSIONS = new Set(['flac', 'm4a', 'mp3', 'ogg', 'wav'])
-const VIDEO_EXTENSIONS = new Set(['avi', 'mkv', 'mov', 'mp4', 'webm'])
-export const MAX_TEXT_PREVIEW_BYTES = 1024 * 1024
-
+const TEXT_FILE_NAMES = new Set([
+  'brewfile', 'gemfile', 'go.mod', 'go.sum', 'go.work', 'jenkinsfile', 'justfile', 'license',
+  'makefile', 'pipfile', 'procfile', 'rakefile', 'readme', 'vagrantfile',
+])
+const IMAGE_EXTENSIONS = new Set(['avif', 'bmp', 'gif', 'ico', 'jpeg', 'jpg', 'png', 'svg', 'webp'])
+const AUDIO_EXTENSIONS = new Set(['aac', 'flac', 'm4a', 'mp3', 'oga', 'ogg', 'opus', 'wav'])
+const VIDEO_EXTENSIONS = new Set(['avi', 'm4v', 'mkv', 'mov', 'mp4', 'mpeg', 'mpg', 'ogv', 'webm'])
 export function normalizeFilePath(path: string): string {
   const trimmed = path.trim()
   if (!trimmed || trimmed === '.') return '/'
@@ -45,7 +59,7 @@ export function isMarkdownFileName(name: string): boolean {
 export function getPreviewKind(item: FileItem): PreviewKind {
   const extension = getFileExtension(item.name)
   const lower = item.name.toLowerCase()
-  if (TEXT_EXTENSIONS.has(extension) || lower === 'readme' || lower === 'license' || lower === 'makefile') return 'text'
+  if (TEXT_EXTENSIONS.has(extension) || TEXT_FILE_NAMES.has(lower)) return 'text'
   if (IMAGE_EXTENSIONS.has(extension)) return 'image'
   if (AUDIO_EXTENSIONS.has(extension)) return 'audio'
   if (VIDEO_EXTENSIONS.has(extension)) return 'video'
@@ -240,10 +254,12 @@ function FileViewer({
 }: FileViewerProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [loadedContent, setLoadedContent] = useState(controlledContent || '')
+  const [probedContent, setProbedContent] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const kind = getPreviewKind(item)
-  const content = controlledContent === undefined ? loadedContent : controlledContent
+  const declaredKind = getPreviewKind(item)
+  const kind = declaredKind === 'download' && probedContent !== null ? 'text' : declaredKind
+  const content = controlledContent === undefined ? probedContent ?? loadedContent : controlledContent
 
   const patchViewState = useCallback((patch: Partial<FileViewState>) => {
     onViewStateChange({ ...viewState, ...patch })
@@ -253,15 +269,21 @@ function FileViewer({
     let cancelled = false
     setLoading(false)
     setError(null)
-    if (controlledContent !== undefined || kind !== 'text') return
+    setProbedContent(null)
+    if (controlledContent !== undefined || (declaredKind !== 'text' && declaredKind !== 'download')) return
     if (item.size > MAX_TEXT_PREVIEW_BYTES) {
-      setError('File is too large for inline viewing')
+      if (declaredKind === 'text') setError('File is too large for inline viewing')
       return
     }
     setLoading(true)
-    void readTextFile(item.path)
+    const read = declaredKind === 'text'
+      ? readTextFile(item.path, MAX_TEXT_PREVIEW_BYTES)
+      : probeTextFile(item.path, MAX_TEXT_PREVIEW_BYTES)
+    void read
       .then(next => {
-        if (!cancelled) setLoadedContent(next)
+        if (cancelled || next === null) return
+        if (declaredKind === 'text') setLoadedContent(next)
+        else setProbedContent(next)
       })
       .catch(readError => {
         if (!cancelled) setError(getErrorMessage(readError, 'read'))
@@ -270,7 +292,7 @@ function FileViewer({
         if (!cancelled) setLoading(false)
       })
     return () => { cancelled = true }
-  }, [controlledContent, item.path, item.size, kind])
+  }, [controlledContent, declaredKind, item.path, item.size])
 
   useLayoutEffect(() => {
     if (!loading && scrollRef.current) scrollRef.current.scrollTop = viewState.scrollTop

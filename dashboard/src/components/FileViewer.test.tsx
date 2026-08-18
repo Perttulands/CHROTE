@@ -1,19 +1,21 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { readTextFile } from './FilesView/fileService'
-import FileViewer from './FileViewer'
+import { probeTextFile, readTextFile } from './FilesView/fileService'
+import FileViewer, { MAX_TEXT_PREVIEW_BYTES, getPreviewKind } from './FileViewer'
 import { DEFAULT_FILE_VIEW_STATE } from './workspaceFilesState'
 
 vi.mock('./FilesView/fileService', async () => {
   const actual = await vi.importActual<typeof import('./FilesView/fileService')>('./FilesView/fileService')
   return {
     ...actual,
+    probeTextFile: vi.fn(),
     readTextFile: vi.fn(),
     getDownloadUrl: (path: string) => `/api/files/raw${path}`,
   }
 })
 
 const mockedReadTextFile = vi.mocked(readTextFile)
+const mockedProbeTextFile = vi.mocked(probeTextFile)
 const markdownFile = {
   path: '/README.md',
   name: 'README.md',
@@ -26,7 +28,96 @@ const markdownFile = {
 describe('FileViewer', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockedProbeTextFile.mockResolvedValue(null)
     mockedReadTextFile.mockResolvedValue('# Hello\n\nUseful text')
+  })
+
+  it.each([
+    'events.jsonl',
+    'records.ndjson',
+    'settings.jsonc',
+    'schema.graphql',
+    'messages.proto',
+    'changes.patch',
+    'notebook.ipynb',
+    'network.har',
+    'map.geojson',
+    'state.tfstate',
+    '.gitignore',
+    'service.timer',
+  ])('recognizes %s as previewable text', name => {
+    expect(getPreviewKind({ ...markdownFile, path: `/${name}`, name, type: name.split('.').pop() || '' })).toBe('text')
+  })
+
+  it.each([
+    ['photo.avif', 'image'],
+    ['favicon.ico', 'image'],
+    ['voice.opus', 'audio'],
+    ['clip.m4v', 'video'],
+    ['movie.ogv', 'video'],
+  ] as const)('recognizes %s as a browser-native %s preview', (name, expected) => {
+    expect(getPreviewKind({ ...markdownFile, path: `/${name}`, name, type: name.split('.').pop() || '' })).toBe(expected)
+  })
+
+  it.each([
+    ['go.mod', 'text'],
+    ['go.sum', 'text'],
+    ['go.work', 'text'],
+    ['music.mod', 'download'],
+    ['publisher.pub', 'download'],
+    ['tiles.map', 'download'],
+    ['transport.mts', 'download'],
+    ['game.vb', 'download'],
+    ['flash-cookie.sol', 'download'],
+    ['notability.note', 'download'],
+  ] as const)('classifies ambiguous format %s as %s before content probing', (name, expected) => {
+    expect(getPreviewKind({ ...markdownFile, path: `/${name}`, name, type: name.split('.').pop() || '' })).toBe(expected)
+  })
+
+  it('probes and previews a small UTF-8 file with an unknown extension', async () => {
+    mockedProbeTextFile.mockResolvedValueOnce('custom format content')
+    render(
+      <FileViewer
+        item={{ ...markdownFile, path: '/events.records', name: 'events.records', type: 'records' }}
+        viewState={DEFAULT_FILE_VIEW_STATE}
+        onViewStateChange={vi.fn()}
+      />,
+    )
+
+    expect(await screen.findByText('custom format content')).toBeInTheDocument()
+    expect(mockedProbeTextFile).toHaveBeenCalledWith('/events.records', MAX_TEXT_PREVIEW_BYTES)
+  })
+
+  it('keeps a probed binary file download-only', async () => {
+    render(
+      <FileViewer
+        item={{ ...markdownFile, path: '/artifact.unknown', name: 'artifact.unknown', type: 'unknown' }}
+        viewState={DEFAULT_FILE_VIEW_STATE}
+        onViewStateChange={vi.fn()}
+      />,
+    )
+
+    expect(await screen.findByText('No inline preview is available for this file type.')).toBeInTheDocument()
+    expect(mockedProbeTextFile).toHaveBeenCalledWith('/artifact.unknown', MAX_TEXT_PREVIEW_BYTES)
+  })
+
+  it('does not probe an unknown file beyond the text preview limit', async () => {
+    render(
+      <FileViewer
+        item={{
+          ...markdownFile,
+          path: '/archive.payload',
+          name: 'archive.payload',
+          type: 'payload',
+          size: MAX_TEXT_PREVIEW_BYTES + 1,
+        }}
+        viewState={DEFAULT_FILE_VIEW_STATE}
+        onViewStateChange={vi.fn()}
+      />,
+    )
+
+    expect(await screen.findByText('No inline preview is available for this file type.')).toBeInTheDocument()
+    expect(mockedProbeTextFile).not.toHaveBeenCalled()
   })
 
   it('loads a read-only Markdown file and offers Preview, Source, and Split modes', async () => {
