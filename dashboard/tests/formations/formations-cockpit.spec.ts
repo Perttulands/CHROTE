@@ -33,6 +33,19 @@ function apiBody(data: object) {
   })
 }
 
+function emptyBoardNotes(boardId: string) {
+  return {
+    schema: 1,
+    boardId,
+    rev: 0,
+    updatedAt: '2026-08-18T14:00:00Z',
+    updatedBy: 'human:playwright',
+    board: '',
+    elements: [],
+    etag: '*',
+  }
+}
+
 async function requiredBox(locator: Locator, label: string) {
   const box = await locator.boundingBox()
   expect(box, `${label} should have a rendered box`).not.toBeNull()
@@ -101,6 +114,10 @@ async function installArchonRunLifecycleHarness(page: Page, fixture: ReturnType<
     }
     if (request.method() === 'GET' && path === `/api/formations/boards/${board.slug}/layout`) {
       await fulfillApi(route, { layout }, { ETag: layout.etag })
+      return
+    }
+    if (request.method() === 'GET' && path === `/api/formations/boards/${board.slug}/notes`) {
+      await fulfillApi(route, { notes: emptyBoardNotes(board.id) }, { ETag: '*' })
       return
     }
     if (request.method() === 'GET' && path === `/api/formations/boards/${board.slug}/changes`) {
@@ -221,6 +238,10 @@ async function installReloadRecoveryHarness(page: Page) {
     }
     if (request.method() === 'GET' && path === `/api/formations/boards/${board.slug}/layout`) {
       await fulfillApi(route, { layout }, { ETag: layout.etag })
+      return
+    }
+    if (request.method() === 'GET' && path === `/api/formations/boards/${board.slug}/notes`) {
+      await fulfillApi(route, { notes: emptyBoardNotes(board.id) }, { ETag: '*' })
       return
     }
     if (request.method() === 'GET' && path === `/api/formations/boards/${board.slug}/changes`) {
@@ -420,6 +441,10 @@ test.describe('Formations cockpit — D7 reference parity', () => {
       }
       if (request.method() === 'GET' && path === `/api/formations/boards/${secondBoard.slug}/layout`) {
         await fulfillApi(route, { layout: secondLayout }, { ETag: secondLayout.etag })
+        return
+      }
+      if (request.method() === 'GET' && path === `/api/formations/boards/${secondBoard.slug}/notes`) {
+        await fulfillApi(route, { notes: emptyBoardNotes(secondBoard.id) }, { ETag: '*' })
         return
       }
       if (request.method() === 'GET' && path === `/api/formations/boards/${secondBoard.slug}/changes`) {

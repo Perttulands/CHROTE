@@ -340,7 +340,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   }, [selectedSlug])
 
   useEffect(() => {
-    if (!selectedSlug || !notesOpen) return
+    if (!selectedSlug) return
     let cancelled = false
     const loadNotes = async () => {
       try {
@@ -357,8 +357,8 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
         if (!cancelled) setNoteError(err instanceof Error ? err.message : 'Failed to load board notes')
       }
     }
-    void loadNotes()
-    const timer = active ? window.setInterval(() => { void loadNotes() }, 3000) : 0
+    if (!notesRef.current) void loadNotes()
+    const timer = active && notesOpen ? window.setInterval(() => { void loadNotes() }, 3000) : 0
     return () => {
       cancelled = true
       if (timer) window.clearInterval(timer)

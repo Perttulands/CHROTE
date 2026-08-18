@@ -159,6 +159,15 @@ test.describe('Formations Playwright stack smoke', () => {
         })
         return
       }
+      if (request.method() === 'GET' && path === `/api/formations/boards/${createdBoard.slug}/notes`) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          headers: { ETag: '*' },
+          body: JSON.stringify({ success: true, data: { notes: { schema: 1, boardId: createdBoard.id, rev: 0, board: '', elements: [], etag: '*' } } }),
+        })
+        return
+      }
       if (request.method() === 'GET' && path === `/api/formations/boards/${createdBoard.slug}/changes`) {
         await route.fulfill({
           status: 200,
