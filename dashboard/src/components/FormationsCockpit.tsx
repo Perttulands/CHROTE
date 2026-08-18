@@ -195,7 +195,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   const [briefEditor, setBriefEditor] = useState<BriefEditorState | null>(null)
   const [boardDialog, setBoardDialog] = useState<BoardDialogState | null>(null)
   const [agentEditor, setAgentEditor] = useState<AgentEditorState | null>(null)
-  const [notesOpen, setNotesOpen] = useState(true)
+  const [notesOpen, setNotesOpen] = useState(false)
   const [notes, setNotes] = useState<BoardNotesDocument | null>(null)
   const [boardNoteDraft, setBoardNoteDraft] = useState('')
   const [elementNoteTarget, setElementNoteTarget] = useState('')
@@ -314,22 +314,22 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
   }, [selectedSlug])
 
   useEffect(() => {
-    if (!selectedSlug) {
-      notesRef.current = null
-      setNotes(null)
-      setBoardNoteDraft('')
-      setElementNoteTarget('')
-      setElementNoteDraft('')
-      return
-    }
-    let cancelled = false
+    notesRef.current = null
     boardNoteDirtyRef.current = false
     elementNoteDirtyRef.current = false
     elementNoteTargetRef.current = ''
+    setNotes(null)
+    setBoardNoteDraft('')
+    setElementNoteTarget('')
+    setElementNoteDraft('')
     setBoardNoteDirty(false)
     setElementNoteDirty(false)
-    setElementNoteTarget('')
     setNoteError('')
+  }, [selectedSlug])
+
+  useEffect(() => {
+    if (!selectedSlug || !notesOpen) return
+    let cancelled = false
     const loadNotes = async () => {
       try {
         const next = await fetchBoardNotes(selectedSlug)
@@ -351,7 +351,7 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       cancelled = true
       if (timer) window.clearInterval(timer)
     }
-  }, [active, selectedSlug])
+  }, [active, notesOpen, selectedSlug])
 
   useEffect(() => {
     // Paused while the tab is hidden (keep-alive); reactivation re-runs this

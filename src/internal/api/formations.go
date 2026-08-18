@@ -1286,8 +1286,23 @@ func (h *FormationsHandler) GetLayout(w http.ResponseWriter, r *http.Request) {
 	}
 	layout, err := h.store.ReadLayout(slug)
 	if err != nil {
-		writeFormationsError(w, err)
-		return
+		if !errors.Is(err, formations.ErrNotFound) {
+			writeFormationsError(w, err)
+			return
+		}
+		board, boardErr := h.store.ReadBoard(slug)
+		if boardErr != nil {
+			writeFormationsError(w, boardErr)
+			return
+		}
+		layout = &formations.LayoutDocument{
+			Schema:   1,
+			BoardID:  board.ID,
+			BoardRev: board.Rev,
+			Nodes:    []formations.LayoutNode{},
+			Edges:    []formations.LayoutEdge{},
+			ETag:     "*",
+		}
 	}
 	w.Header().Set("ETag", layout.ETag)
 	core.WriteSuccess(w, map[string]interface{}{"layout": layout})

@@ -102,3 +102,32 @@ func TestFormationsHandlerDeletesBoardIntoArchive(t *testing.T) {
 		t.Fatalf("live boards after delete = %+v, err=%v", boards, err)
 	}
 }
+
+func TestFormationsHandlerReturnsSyntheticEmptyLayoutForFreshBoard(t *testing.T) {
+	store := formations.NewStore(t.TempDir())
+	created, err := store.CreateBoard(formations.BoardCreateRequest{Slug: "fresh", Title: "Fresh", UpdatedBy: "human:test"})
+	if err != nil {
+		t.Fatalf("create board: %v", err)
+	}
+	handler := NewFormationsHandlerWithStore(store)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodGet, "/api/formations/boards/fresh/layout", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("layout status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Data struct {
+			Layout formations.LayoutDocument `json:"layout"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode layout: %v", err)
+	}
+	layout := response.Data.Layout
+	if layout.BoardID != created.ID || layout.BoardRev != created.Rev || layout.ETag != "*" || len(layout.Nodes) != 0 || len(layout.Edges) != 0 {
+		t.Fatalf("fresh layout = %+v", layout)
+	}
+}

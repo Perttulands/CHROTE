@@ -457,7 +457,8 @@ describe('FormationsCockpit reference parity', () => {
     await renderCockpit()
 
     const notepad = await screen.findByRole('complementary', { name: 'Shared board notepad' })
-    expect(within(notepad).getByLabelText('Board note')).toHaveValue('Preserve the API contract.')
+    fireEvent.click(within(notepad).getByRole('button', { name: 'Expand shared notepad' }))
+    expect(await within(notepad).findByLabelText('Board note')).toHaveValue('Preserve the API contract.')
     expect(screen.getByTestId('formation-node-fmn_frame')).toHaveClass('has-note')
 
     fireEvent.click(within(screen.getByTestId('formation-node-fmn_frame')).getByRole('button', { name: 'Edit note for Frame' }))
@@ -483,7 +484,9 @@ describe('FormationsCockpit reference parity', () => {
     fireEvent.click(within(judge).getByRole('button', { name: 'Add note for Judge' }))
     const elementNote = screen.getByLabelText('Element note')
     fireEvent.change(elementNote, { target: { value: 'Use this as the release judge.' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save element note' }))
+    const saveElementNote = screen.getByRole('button', { name: 'Save element note' })
+    await waitFor(() => expect(saveElementNote).toBeEnabled())
+    fireEvent.click(saveElementNote)
 
     await waitFor(() => expect(judge).toHaveClass('has-note'))
   })
