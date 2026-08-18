@@ -143,7 +143,7 @@ describe('TerminalWindow launch user', () => {
   })
 
   it('does not intercept right-click on the empty-window new-session button', async () => {
-    const { container } = render(
+    render(
       <TerminalWindow
         workspaceId="terminal3"
         window={{ id: 'terminal3-window-0', boundSessions: [], activeSession: null, colorIndex: 0 }}
@@ -153,7 +153,7 @@ describe('TerminalWindow launch user', () => {
     const event = dispatchContextMenu(screen.getByRole('button', { name: /New Session/i }))
 
     expect(event.defaultPrevented).toBe(false)
-    expect(container.querySelector('.session-context-menu')).toBeNull()
+    expect(document.querySelector('.session-context-menu')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /New Session/i }))
     await waitFor(() => expect(createSession).toHaveBeenCalled())
   })
@@ -255,7 +255,7 @@ describe('TerminalWindow launch user', () => {
   })
 
   it('does not expose session actions for the INIT-PENDING placeholder', () => {
-    const { container } = render(
+    render(
       <TerminalWindow
         workspaceId="terminal3"
         window={{ id: 'terminal3-window-0', boundSessions: ['INIT-PENDING'], activeSession: 'INIT-PENDING', colorIndex: 0 }}
@@ -265,7 +265,7 @@ describe('TerminalWindow launch user', () => {
     const event = dispatchContextMenu(screen.getByText('INIT-PENDING'))
 
     expect(event.defaultPrevented).toBe(false)
-    expect(container.querySelector('.session-context-menu')).toBeNull()
+    expect(document.querySelector('.session-context-menu')).toBeNull()
   })
 
   it('does not open tag actions from Shift+F10 on the nested remove control', () => {
@@ -286,7 +286,7 @@ describe('TerminalWindow launch user', () => {
     act(() => remove.dispatchEvent(event))
 
     expect(event.defaultPrevented).toBe(false)
-    expect(container.querySelector('.session-context-menu')).toBeNull()
+    expect(document.querySelector('.session-context-menu')).toBeNull()
   })
 
   it('clears an open tag menu when its keep-alive workspace becomes inactive', () => {
@@ -357,7 +357,7 @@ describe('TerminalWindow launch user', () => {
     const event = dispatchContextMenu(container.querySelector('.terminal-window-header') as HTMLElement)
 
     expect(event.defaultPrevented).toBe(false)
-    expect(container.querySelector('.session-context-menu')).toBeNull()
+    expect(document.querySelector('.session-context-menu')).toBeNull()
   })
 
   it('uses the whole mounted session tag as the drag surface and keeps a stationary invisible placeholder', () => {

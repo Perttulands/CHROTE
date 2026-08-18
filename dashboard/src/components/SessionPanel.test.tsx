@@ -101,7 +101,7 @@ describe('SessionPanel new-session context menu', () => {
     expect(popup).toHaveClass('session-named-popup')
     const layers = document.querySelectorAll('.floating-panel-dismiss-layer')
     expect(layers).toHaveLength(1)
-    expect(container.querySelectorAll('.session-context-menu')).toHaveLength(1)
+    expect(document.querySelectorAll('.session-context-menu')).toHaveLength(1)
     expect(Number(popup.style.zIndex)).toBeGreaterThan(Number((layers[0] as HTMLElement).style.zIndex))
     expect(container.querySelector('.session-panel-content .session-named-create')).not.toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('New session name'), { target: { value: 'research-agent' } })

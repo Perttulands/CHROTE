@@ -275,22 +275,22 @@ describe('SessionItem user badge and context actions', () => {
       fireEvent.touchStart(row, { touches: [rowTouch], changedTouches: [rowTouch] })
       fireEvent.touchMove(row, { touches: [rowTouch], changedTouches: [rowTouch] })
       act(() => vi.advanceTimersByTime(600))
-      expect(container.querySelector('.session-context-menu')).toBeNull()
+      expect(document.querySelector('.session-context-menu')).toBeNull()
 
       fireEvent.touchStart(row, { touches: [rowTouch], changedTouches: [rowTouch] })
       fireEvent.touchEnd(row, { touches: [], changedTouches: [rowTouch] })
       act(() => vi.advanceTimersByTime(600))
-      expect(container.querySelector('.session-context-menu')).toBeNull()
+      expect(document.querySelector('.session-context-menu')).toBeNull()
 
       fireEvent.touchStart(row, { touches: [rowTouch], changedTouches: [rowTouch] })
       fireEvent.touchCancel(row, { touches: [], changedTouches: [rowTouch] })
       fireEvent.pointerDown(row, { pointerType: 'touch' })
       act(() => vi.advanceTimersByTime(600))
-      expect(container.querySelector('.session-context-menu')).toBeNull()
+      expect(document.querySelector('.session-context-menu')).toBeNull()
 
       fireEvent.touchStart(row, { touches: [rowTouch], changedTouches: [rowTouch] })
       act(() => vi.advanceTimersByTime(600))
-      expect(container.querySelector('.session-context-menu')).toBeInTheDocument()
+      expect(document.querySelector('.session-context-menu')).toBeInTheDocument()
     } finally {
       vi.clearAllTimers()
       vi.useRealTimers()
@@ -328,7 +328,7 @@ describe('SessionItem user badge and context actions', () => {
 
       act(() => vi.advanceTimersByTime(500))
 
-      expect(container.querySelector('.session-context-menu')).toBeInTheDocument()
+      expect(document.querySelector('.session-context-menu')).toBeInTheDocument()
       expect(pointerCancels).toHaveLength(1)
       expect((pointerCancels[0] as PointerEvent).pointerId).toBe(41)
       expect((pointerCancels[0] as PointerEvent).pointerType).toBe('touch')

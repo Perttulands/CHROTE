@@ -255,13 +255,13 @@
 .fmx [data-gate].pass .gico,.fmx [data-gate].pass .vico{border-color:var(--sage);background:color-mix(in srgb,var(--sage) 16%,transparent);color:var(--sage);border-style:solid;}
 .fmx [data-gate].fail .gico,.fmx [data-gate].fail .vico{border-color:var(--terra-d);background:var(--color-error-light);color:var(--terra-d);border-style:solid;}
 
-/* local menus and editor popovers */
-.fmx .ctxmenu{position:fixed;z-index:200;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:5px;box-shadow:0 4px 16px rgba(0,0,0,.4);min-width:178px;}
-.fmx .ctxmenu .mhead{font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--dimmer);padding:7px 10px 5px;}
-.fmx .ctxmenu button{display:flex;width:100%;align-items:center;gap:10px;padding:8px 11px;border:0;border-radius:5px;background:transparent;color:var(--ink);cursor:pointer;font:inherit;font-size:13px;text-align:left;transition:background .1s;}
-.fmx .ctxmenu button:hover{background:rgba(var(--accent-rgb),.1);}
-.fmx .ctxmenu button.danger{color:var(--terra-d);}
-.fmx .ctxmenu button:disabled{opacity:.45;cursor:not-allowed;}
+/* Root-level context menus and local editor popovers. */
+.formations-context-menu{position:fixed;background:var(--surface-primary);border:1px solid var(--divider);border-radius:6px;padding:5px;box-shadow:0 4px 16px rgba(0,0,0,.4);min-width:178px;color:var(--text-primary);font-family:'Courier Prime','Courier New',monospace;}
+.formations-context-menu .mhead{font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--text-dim);padding:7px 10px 5px;}
+.formations-context-menu button{display:flex;width:100%;align-items:center;gap:10px;padding:8px 11px;border:0;border-radius:5px;background:transparent;color:var(--text-primary);cursor:pointer;font:inherit;font-size:13px;text-align:left;transition:background .1s;}
+.formations-context-menu button:hover{background:rgba(var(--accent-rgb),.1);}
+.formations-context-menu button.danger{color:var(--color-error);}
+.formations-context-menu button:disabled{opacity:.45;cursor:not-allowed;}
 .fmx .pop{position:fixed;z-index:170;width:360px;left:calc(50% - 180px);top:110px;background:var(--card);border:1px solid var(--line);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.4);overflow:hidden;display:flex;flex-direction:column;}
 .fmx .pop-head{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--line2);cursor:grab;}
 .fmx .pop-head .pt{flex:1;font-weight:700;font-size:16px;letter-spacing:.02em;}

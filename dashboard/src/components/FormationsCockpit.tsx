@@ -41,6 +41,7 @@ import {
 } from './formationsRunState'
 import { clampScale, displayLayoutFor, fallbackNodePosition, freeGridPosition, snapToGrid, zoomTransform } from './formationsCanvas'
 import { GATE_SVG, PLAY_SVG, TYPE_TAG, agentRole, agentState, harnessGlyph, initials } from './formationsCockpitVisuals'
+import DismissiblePanel from './DismissiblePanel'
 import { useSessionOptional } from '../context/SessionContext'
 import { resolveFormationsTextSize } from '../types'
 import { connectionKind, findInputPortAt, findOutputPortAt, isTextEditingTarget, laneYFrom, splitList } from './formationsCockpitDom'
@@ -2589,32 +2590,34 @@ export default function FormationsCockpit({ active = true }: { active?: boolean 
       ) : null}
 
       {menu ? (
-        <div
-          className="ctxmenu"
-          role="menu"
-          aria-label={menu.label}
-          style={{ left: Math.min(menu.x, window.innerWidth - 220), top: Math.min(menu.y, window.innerHeight - 80) }}
-          onPointerDown={event => event.stopPropagation()}
-        >
-          <div className="mhead">{menu.label}</div>
-          {menu.items.map((item, itemIndex) => item.head ? (
-            <div key={`${item.label}-${itemIndex}`} className="msection">{item.label}</div>
-          ) : (
-            <button
-              key={`${item.label}-${itemIndex}`}
-              type="button"
-              role="menuitem"
-              disabled={item.disabled}
-              className={item.destructive ? 'danger' : undefined}
-              onClick={() => {
-                closeMenu()
-                item.action?.()
-              }}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
+        <DismissiblePanel onDismiss={closeMenu} panelPosition="fixed">
+          <div
+            className="formations-context-menu ctxmenu"
+            role="menu"
+            aria-label={menu.label}
+            style={{ left: Math.min(menu.x, window.innerWidth - 220), top: Math.min(menu.y, window.innerHeight - 80) }}
+            onPointerDown={event => event.stopPropagation()}
+          >
+            <div className="mhead">{menu.label}</div>
+            {menu.items.map((item, itemIndex) => item.head ? (
+              <div key={`${item.label}-${itemIndex}`} className="msection">{item.label}</div>
+            ) : (
+              <button
+                key={`${item.label}-${itemIndex}`}
+                type="button"
+                role="menuitem"
+                disabled={item.disabled}
+                className={item.destructive ? 'danger' : undefined}
+                onClick={() => {
+                  closeMenu()
+                  item.action?.()
+                }}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </DismissiblePanel>
       ) : null}
 
       {ghost ? (

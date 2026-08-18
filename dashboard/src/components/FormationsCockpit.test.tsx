@@ -673,7 +673,8 @@ describe('FormationsCockpit reference parity', () => {
     const { container } = await renderCockpit()
     const viewport = container.querySelector('.viewport') as HTMLElement
     fireEvent.contextMenu(viewport, { clientX: 300, clientY: 300 })
-    await screen.findByRole('menu', { name: 'New' })
+    const menu = await screen.findByRole('menu', { name: 'New' })
+    expect(menu.parentElement).toBe(document.body)
     fireEvent.keyDown(window, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('menu', { name: 'New' })).toBeNull())
 
