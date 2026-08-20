@@ -178,12 +178,13 @@ describe('TerminalWindow launch user', () => {
     const sendEvent = openInactiveMenu()
     expect(sendEvent.defaultPrevented).toBe(true)
     const menuButtons = screen.getAllByRole('menuitem')
-    expect(menuButtons).toHaveLength(5)
+    expect(menuButtons).toHaveLength(6)
     for (const label of [
       'Send to session',
       'Reconnect frame',
       'Refit frame',
       'Open files in working directory',
+      'Rename session',
       'Kill session',
     ]) {
       expect(screen.getByRole('menuitem', { name: label })).toBeInTheDocument()
@@ -207,8 +208,45 @@ describe('TerminalWindow launch user', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Kill session' }))
     expect(deleteSession).toHaveBeenCalledWith('shell-existing', 'alice')
 
-    expect(screen.queryByRole('button', { name: /Rename/i })).not.toBeInTheDocument()
     expect(setActiveSession).not.toHaveBeenCalled()
+  })
+
+  it('renames the exact qualified session from its attached tag menu and cancels with Escape', async () => {
+    render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{
+          id: 'terminal3-window-0',
+          boundSessions: ['build:forge-existing', 'alice:shell-existing'],
+          activeSession: 'build:forge-existing',
+          colorIndex: 0,
+        }}
+      />
+    )
+
+    const openMenu = () => dispatchContextMenu(screen.getByText('shell-existing'))
+
+    openMenu()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename session' }))
+    const renameInput = screen.getByRole('textbox', { name: 'Rename session shell-existing' })
+    expect(renameInput).toHaveFocus()
+    expect(renameInput).toHaveValue('shell-existing')
+    fireEvent.change(renameInput, { target: { value: 'shell-renamed' } })
+    fireEvent.keyDown(renameInput, { key: 'Enter' })
+
+    await waitFor(() => expect(renameSession).toHaveBeenCalledWith('shell-existing', 'shell-renamed', 'alice'))
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Rename session shell-existing' })).not.toBeInTheDocument())
+
+    renameSession.mockClear()
+    openMenu()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename session' }))
+    const cancelledInput = screen.getByRole('textbox', { name: 'Rename session shell-existing' })
+    fireEvent.change(cancelledInput, { target: { value: 'discard-this' } })
+    fireEvent.keyDown(cancelledInput, { key: 'Escape' })
+
+    expect(renameSession).not.toHaveBeenCalled()
+    expect(screen.queryByRole('textbox', { name: 'Rename session shell-existing' })).not.toBeInTheDocument()
+    expect(screen.getByText('shell-existing')).toBeInTheDocument()
   })
 
   it('uses the original bound key for iframe actions on supported bare legacy tags', () => {
