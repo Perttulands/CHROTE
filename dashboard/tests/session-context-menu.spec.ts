@@ -175,6 +175,8 @@ test.describe('Session Context Menu', () => {
 
     const input = window.getByRole('textbox', { name: 'Rename session hq-mayor' })
     await expect(input).toBeFocused()
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+    await expect(input).toBeFocused()
     await expect(input).toHaveValue('hq-mayor')
     await input.fill('hq-commander')
     await input.press('Enter')

@@ -235,6 +235,7 @@ describe('TerminalWindow launch user', () => {
     fireEvent.keyDown(renameInput, { key: 'Enter' })
 
     await waitFor(() => expect(renameSession).toHaveBeenCalledWith('shell-existing', 'shell-renamed', 'alice'))
+    expect(renameSession).toHaveBeenCalledTimes(1)
     await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Rename session shell-existing' })).not.toBeInTheDocument())
 
     renameSession.mockClear()

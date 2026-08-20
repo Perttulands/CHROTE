@@ -125,8 +125,8 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
   const openContextMenu = useCallback((x: number, y: number) => {
     setContextMenu({ x, y })
   }, [])
-  const runContextAction = (action: () => void) => {
-    closeContextMenu()
+  const runContextAction = (action: () => void, restoreFocus = true) => {
+    closeContextMenu(restoreFocus)
     action()
   }
   const startRename = () => {
@@ -262,7 +262,7 @@ function SessionTag({ sessionName, isActive, workspaceId, windowId, onRemove, on
               <span className="session-context-icon" aria-hidden="true">▣</span>
               Open files in working directory
             </button>
-            <button role="menuitem" className="session-context-item" onClick={() => runContextAction(startRename)}>
+            <button role="menuitem" className="session-context-item" onClick={() => runContextAction(startRename, false)}>
               <span className="session-context-icon" aria-hidden="true">✎</span>
               Rename session
             </button>
