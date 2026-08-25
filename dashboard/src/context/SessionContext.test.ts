@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { createElement, StrictMode } from 'react'
-import { SessionProvider, useSession } from './SessionContext'
+import { SessionProvider, liveSessionKeys, offlineSessionKeys, useSession } from './SessionContext'
 import { ToastProvider, useToast } from './ToastContext'
 import { featureFlagKey } from '../featureFlags'
 import { DEFAULT_SETTINGS, DEFAULT_TMUX_APPEARANCE, resolveLaunchUser } from '../types'
@@ -42,6 +42,30 @@ vi.stubGlobal('localStorage', {
 beforeEach(() => {
   vi.stubGlobal('fetch', defaultFetch)
   defaultFetch.mockClear()
+})
+
+describe('qualified recovery identity sets', () => {
+  it('does not treat an ambiguous bare live name as reconnectable', () => {
+    const keys = liveSessionKeys([
+      { name: 'shared', unixUser: 'alice' },
+      { name: 'shared', unixUser: 'build' },
+    ] as any)
+    expect(keys.has('shared')).toBe(false)
+    expect(keys.has('alice:shared')).toBe(true)
+    expect(keys.has('build:shared')).toBe(true)
+  })
+
+  it('clears only authoritative offline identities and preserves failed-source ambiguity', () => {
+    const keys = offlineSessionKeys([
+      { sourceId: 'tmux:alice', name: 'shared', unixUser: 'alice', state: 'offline' },
+      { sourceId: 'tmux:build', name: 'shared', unixUser: 'build', state: 'stale' },
+      { sourceId: 'tmux:alice', name: 'unique', unixUser: 'alice', state: 'offline' },
+    ] as any)
+    expect(keys.has('shared')).toBe(false)
+    expect(keys.has('alice:shared')).toBe(true)
+    expect(keys.has('build:shared')).toBe(false)
+    expect(keys.has('unique')).toBe(true)
+  })
 })
 
 function Wrapper({ children }: { children: React.ReactNode }) {

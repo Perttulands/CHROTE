@@ -12,12 +12,28 @@ const sessionState = vi.hoisted(() => ({
   sessions: [
     { name: 'alpha', windows: 1, attached: false, group: 'shell', unixUser: 'alice' },
   ],
+  recoveryEvidence: [
+    { sourceId: 'tmux:alice', name: 'bare-session', unixUser: 'alice', state: 'offline' },
+    { sourceId: 'tmux:bob', name: 'beta', unixUser: 'bob', state: 'offline' },
+  ],
   firstBindings: ['alice:alpha', 'bare-session'],
 }))
 
 vi.mock('../context/SessionContext', () => ({
+  offlineSessionKeys: (evidence: Array<{ name: string; unixUser?: string; state: string }>) => {
+    const counts = new Map<string, number>()
+    const keys = new Set<string>()
+    evidence.forEach(item => counts.set(item.name, (counts.get(item.name) ?? 0) + 1))
+    evidence.forEach(item => {
+      if (item.state !== 'offline') return
+      if (item.unixUser) keys.add(`${item.unixUser}:${item.name}`)
+      if ((counts.get(item.name) ?? 0) === 1) keys.add(item.name)
+    })
+    return keys
+  },
   useSession: () => ({
     sessions: sessionState.sessions,
+    recoveryEvidence: sessionState.recoveryEvidence,
     workspaces: {
       terminal1: {
         windowCount: sessionState.windowCount,
@@ -59,6 +75,10 @@ describe('TerminalArea layout controls', () => {
     sessionState.windowRevealRequest = null
     sessionState.sessions = [
       { name: 'alpha', windows: 1, attached: false, group: 'shell', unixUser: 'alice' },
+    ]
+    sessionState.recoveryEvidence = [
+      { sourceId: 'tmux:alice', name: 'bare-session', unixUser: 'alice', state: 'offline' },
+      { sourceId: 'tmux:bob', name: 'beta', unixUser: 'bob', state: 'offline' },
     ]
     sessionState.firstBindings = ['alice:alpha', 'bare-session']
   })

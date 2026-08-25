@@ -315,13 +315,30 @@ function nextSessionNameForPrefix(sessions: TmuxSession[], prefix: string): stri
   return `${prefix}${nextNum}`
 }
 
-function liveSessionKeys(sessions: TmuxSession[]): Set<string> {
+export function liveSessionKeys(sessions: TmuxSession[]): Set<string> {
   const live = new Set<string>()
-  sessions.forEach(s => {
-    live.add(getSessionKey(s.name, s.unixUser))
-    live.add(s.name) // backward compatibility for layouts saved before user-qualified keys
+  const nameCounts = new Map<string, number>()
+  sessions.forEach(session => {
+    nameCounts.set(session.name, (nameCounts.get(session.name) ?? 0) + 1)
+    live.add(getSessionKey(session.name, session.unixUser))
+  })
+  nameCounts.forEach((count, name) => {
+    if (count === 1) live.add(name)
   })
   return live
+}
+
+export function offlineSessionKeys(evidence: RecoverySessionEvidence[]): Set<string> {
+  const offline = new Set<string>()
+  const nameCounts = new Map<string, number>()
+  evidence.forEach(session => {
+    nameCounts.set(session.name, (nameCounts.get(session.name) ?? 0) + 1)
+    if (session.state === 'offline') offline.add(getSessionKey(session.name, session.unixUser))
+  })
+  evidence.forEach(session => {
+    if (session.state === 'offline' && (nameCounts.get(session.name) ?? 0) === 1) offline.add(session.name)
+  })
+  return offline
 }
 
 function pruneWindowToLiveSessions(window: TerminalWindow, live: Set<string>): TerminalWindow {
@@ -898,7 +915,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const clearStaleSessionsFromWindow = useCallback((workspaceId: WorkspaceId, windowId: string) => {
-    const liveSessions = liveSessionKeys(sessions)
+    const clearableSessions = offlineSessionKeys(recoveryEvidence)
     setWorkspaces(prev => {
       const ws = prev[workspaceId]
       if (!ws) return prev
@@ -906,11 +923,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         ...prev,
         [workspaceId]: {
           ...ws,
-          windows: ws.windows.map(w => w.id === windowId ? pruneWindowToLiveSessions(w, liveSessions) : w),
+          windows: ws.windows.map(window => {
+            if (window.id !== windowId) return window
+            const retained = new Set(window.boundSessions.filter(session => !clearableSessions.has(session)))
+            return pruneWindowToLiveSessions(window, retained)
+          }),
         },
       }
     })
-  }, [sessions])
+  }, [recoveryEvidence])
 
   const addSessionToWindow = useCallback((workspaceId: WorkspaceId, windowId: string, sessionName: string, unixUser?: LaunchUser) => {
     const sessionKey = getSessionKey(sessionName, unixUser)

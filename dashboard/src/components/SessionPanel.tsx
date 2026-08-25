@@ -108,6 +108,10 @@ function SessionPanel({
       evidence.cwd?.toLowerCase().includes(searchTerm.toLowerCase())
     )
   )), [recoveryEvidence, searchTerm])
+  const evidenceNameCounts = useMemo(() => recoveryEvidence.reduce((counts, evidence) => {
+    counts.set(evidence.name, (counts.get(evidence.name) ?? 0) + 1)
+    return counts
+  }, new Map<string, number>()), [recoveryEvidence])
 
   const closeNewSessionMenu = () => setNewSessionMenu({ show: false, x: 0, y: 0 })
 
@@ -383,8 +387,9 @@ function SessionPanel({
             <section className="offline-session-group" aria-labelledby="offline-session-heading">
               <h3 id="offline-session-heading" className="offline-session-heading">Offline work</h3>
               {offlineEvidence.map(evidence => {
-                const location = assignedSessions.get(getSessionKey(evidence.name, evidence.unixUser))
-                  ?? assignedSessions.get(evidence.name)
+                const qualifiedLocation = assignedSessions.get(getSessionKey(evidence.name, evidence.unixUser))
+                const location = qualifiedLocation
+                  ?? ((evidenceNameCounts.get(evidence.name) ?? 0) === 1 ? assignedSessions.get(evidence.name) : undefined)
                 return (
                   <div className="offline-session-evidence" key={`${evidence.sourceId}:${evidence.unixUser ?? ''}:${evidence.name}`}>
                     <div className="offline-session-title-row">
