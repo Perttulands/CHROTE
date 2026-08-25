@@ -72,13 +72,15 @@ type sessionsCache struct {
 
 // SessionsResponse is the response for listing sessions
 type SessionsResponse struct {
-	Sessions      []core.Session               `json:"sessions"`
-	Grouped       map[string][]core.Session    `json:"grouped"`
-	Banked        []SessionBankEntry           `json:"banked"`
-	Managed       []ManagedRecoveryStatusEntry `json:"managed"`
-	TerminalUsers []string                     `json:"terminalUsers"`
-	Timestamp     string                       `json:"timestamp"`
-	Error         string                       `json:"error,omitempty"`
+	Sessions         []core.Session               `json:"sessions"`
+	Grouped          map[string][]core.Session    `json:"grouped"`
+	Banked           []SessionBankEntry           `json:"banked"`
+	Managed          []ManagedRecoveryStatusEntry `json:"managed"`
+	Sources          []TmuxSourceEvidence         `json:"sources"`
+	RecoveryEvidence []RecoverySessionEvidence    `json:"recoveryEvidence"`
+	TerminalUsers    []string                     `json:"terminalUsers"`
+	Timestamp        string                       `json:"timestamp"`
+	Error            string                       `json:"error,omitempty"`
 	// Partial is true only when configured-user tmux collection is the sole
 	// source of errors and at least one configured user succeeded.
 	Partial bool `json:"partial,omitempty"`
@@ -1308,6 +1310,10 @@ func (s *sessionBankStore) UpsertRecovery(name, unixUser string, req UpdateBanke
 }
 
 func (s *sessionBankStore) Snapshot(liveSessions []core.Session) ([]SessionBankEntry, error) {
+	return s.snapshotForUsers(liveSessions, nil)
+}
+
+func (s *sessionBankStore) snapshotForUsers(liveSessions []core.Session, authoritativeUsers map[string]bool) ([]SessionBankEntry, error) {
 	if s == nil {
 		return []SessionBankEntry{}, nil
 	}
@@ -1328,10 +1334,13 @@ func (s *sessionBankStore) Snapshot(liveSessions []core.Session) ([]SessionBankE
 		}
 		byKey[sessionBankKey(entry.Name, entry.UnixUser)] = entry
 	}
+	isAuthoritative := func(unixUser string) bool {
+		return authoritativeUsers == nil || authoritativeUsers[strings.TrimSpace(unixUser)]
+	}
 
 	liveKeys := map[string]bool{}
 	for _, session := range liveSessions {
-		if session.Name == "" {
+		if session.Name == "" || !isAuthoritative(session.UnixUser) {
 			continue
 		}
 		key := sessionBankKey(session.Name, session.UnixUser)
@@ -1357,7 +1366,9 @@ func (s *sessionBankStore) Snapshot(liveSessions []core.Session) ([]SessionBankE
 
 	result := make([]SessionBankEntry, 0, len(byKey))
 	for key, entry := range byKey {
-		entry.Live = liveKeys[key]
+		if isAuthoritative(entry.UnixUser) {
+			entry.Live = liveKeys[key]
+		}
 		result = append(result, entry)
 	}
 	sort.Slice(result, func(i, j int) bool {
@@ -1372,6 +1383,9 @@ func (s *sessionBankStore) Snapshot(liveSessions []core.Session) ([]SessionBankE
 		}
 		return result[i].Name < result[j].Name
 	})
+	if authoritativeUsers != nil && len(authoritativeUsers) == 0 {
+		return result, nil
+	}
 	if err := s.saveLocked(result); err != nil {
 		return nil, err
 	}
@@ -1582,18 +1596,22 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		h.cache.mu.RUnlock()
 	}
 
+	observedAt := time.Now().UTC().Format(time.RFC3339)
 	response := &SessionsResponse{
-		Sessions:      []core.Session{},
-		Grouped:       make(map[string][]core.Session),
-		Banked:        []SessionBankEntry{},
-		Managed:       []ManagedRecoveryStatusEntry{},
-		TerminalUsers: advertisedTerminalUsers(),
-		Timestamp:     time.Now().UTC().Format(time.RFC3339),
+		Sessions:         []core.Session{},
+		Grouped:          make(map[string][]core.Session),
+		Banked:           []SessionBankEntry{},
+		Managed:          []ManagedRecoveryStatusEntry{},
+		Sources:          []TmuxSourceEvidence{},
+		RecoveryEvidence: []RecoverySessionEvidence{},
+		TerminalUsers:    advertisedTerminalUsers(),
+		Timestamp:        observedAt,
 	}
 	var managedEntries []ManagedRecoveryStatusEntry
 	var managedErr error
 	var multiUserError string
 	multiUserPartialCandidate := false
+	authoritativeUsers := map[string]bool{}
 	if h.managed != nil {
 		managedEntries, managedErr = h.managed.Read()
 		if managedErr != nil {
@@ -1610,14 +1628,18 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 			target, targetErr := h.targetForUnixUser(unixUser)
 			if targetErr != nil {
 				errors = append(errors, targetErr.Error())
+				response.Sources = append(response.Sources, failedTmuxSource(unixUser, observedAt, targetErr.Error()))
 				continue
 			}
 			sessions, errStr := h.listSessionsForTarget(target)
 			if errStr != "" {
 				errors = append(errors, fmt.Sprintf("%s: %s", unixUser, errStr))
+				response.Sources = append(response.Sources, failedTmuxSource(unixUser, observedAt, errStr))
 				continue
 			}
 			successfulUsers++
+			authoritativeUsers[unixUser] = true
+			response.Sources = append(response.Sources, completeTmuxSource(unixUser, observedAt, sessions))
 			response.Sessions = append(response.Sessions, sessions...)
 		}
 		if len(errors) > 0 {
@@ -1635,6 +1657,10 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 		response.Sessions = append(response.Sessions, sessions...)
 		if errStr != "" {
 			response.Error = errStr
+			response.Sources = append(response.Sources, failedTmuxSource(target.unixUser, observedAt, errStr))
+		} else {
+			authoritativeUsers[target.unixUser] = true
+			response.Sources = append(response.Sources, completeTmuxSource(target.unixUser, observedAt, sessions))
 		}
 	}
 
@@ -1646,7 +1672,11 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	if h.bank != nil {
 		var banked []SessionBankEntry
 		var bankErr error
-		if queryUnixUser == "" && response.Error == "" {
+		if queryUnixUser == "" && managedErr == nil && useConfiguredUsers && len(authoritativeUsers) > 0 {
+			liveForBank := response.Sessions
+			liveForBank = filterLiveSessionsForManagedStatus(liveForBank, managedEntries)
+			banked, bankErr = h.bank.SnapshotForUsers(liveForBank, authoritativeUsers)
+		} else if queryUnixUser == "" && response.Error == "" {
 			liveForBank := response.Sessions
 			if managedErr == nil {
 				liveForBank = filterLiveSessionsForManagedStatus(liveForBank, managedEntries)
@@ -1662,6 +1692,7 @@ func (h *TmuxHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 				banked = filterBankedForManagedStatus(banked, managedEntries)
 			}
 			response.Banked = banked
+			response.RecoveryEvidence = projectRecoveryEvidence(response.Sources, response.Sessions, banked)
 		}
 	}
 	response.Partial = multiUserPartialCandidate && response.Error == multiUserError

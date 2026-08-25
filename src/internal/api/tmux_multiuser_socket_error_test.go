@@ -211,3 +211,96 @@ func TestTmuxHandler_ListSessionsMultiUserNoServerIsNotAnError(t *testing.T) {
 		t.Fatalf("sessions = empty, want the running user's sessions listed")
 	}
 }
+
+func TestTmuxHandler_ListSessionsPublishesQualifiedRecoverySources(t *testing.T) {
+	installSelectiveTmux(t, "denied", "error connecting to /tmp/chrote-tmux-test/build.sock (Permission denied)")
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice,build")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/fixture-alice/ok.sock,build=/tmp/fixture-build/denied.sock")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/workspaces/alice,build=/workspaces/build")
+
+	rec := httptest.NewRecorder()
+	NewTmuxHandler().ListSessions(rec, httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil))
+	payload := decodeJSONMap(t, rec)
+	sources, ok := payload["sources"].([]interface{})
+	if !ok || len(sources) != 2 {
+		t.Fatalf("sources = %#v, want one qualified result per configured Unix user", payload["sources"])
+	}
+	byUser := map[string]map[string]interface{}{}
+	for _, raw := range sources {
+		source, ok := raw.(map[string]interface{})
+		if !ok {
+			t.Fatalf("source = %T, want object", raw)
+		}
+		byUser[source["unixUser"].(string)] = source
+	}
+	if got := byUser["alice"]["status"]; got != "complete" {
+		t.Fatalf("alice status = %#v, want complete", got)
+	}
+	if generation, _ := byUser["alice"]["generation"].(string); generation == "" {
+		t.Fatalf("alice generation = %#v, want a stale-precondition token", byUser["alice"]["generation"])
+	}
+	if got := byUser["build"]["status"]; got != "failed" {
+		t.Fatalf("build status = %#v, want failed", got)
+	}
+	if got := byUser["build"]["errorCode"]; got != "TMUX_SOURCE_UNAVAILABLE" {
+		t.Fatalf("build errorCode = %#v, want TMUX_SOURCE_UNAVAILABLE", got)
+	}
+
+	evidence, ok := payload["recoveryEvidence"].([]interface{})
+	if !ok || len(evidence) == 0 {
+		t.Fatalf("recoveryEvidence = %#v, want bounded live/offline evidence", payload["recoveryEvidence"])
+	}
+}
+
+func TestTmuxHandler_ListSessionsPartialFailurePreservesFailedSourceEvidence(t *testing.T) {
+	installSelectiveTmux(t, "denied", "error connecting to /tmp/chrote-tmux-test/build.sock (Permission denied)")
+	t.Setenv("CHROTE_TERMINAL_USERS", "alice,build")
+	t.Setenv("CHROTE_TERMINAL_USER_SOCKETS", "alice=/tmp/fixture-alice/ok.sock,build=/tmp/fixture-build/denied.sock")
+	t.Setenv("CHROTE_TERMINAL_USER_WORKDIRS", "alice=/workspaces/alice,build=/workspaces/build")
+
+	bankPath := os.Getenv("CHROTE_SESSION_BANK_PATH")
+	seed := []SessionBankEntry{
+		{Name: "alice-old", UnixUser: "alice", Group: "shell", Live: true, FirstSeen: "2026-08-25T10:00:00Z", LastSeen: "2026-08-25T11:00:00Z", CWD: "/workspaces/alice"},
+		{Name: "build-agent", UnixUser: "build", Group: "agents", Live: true, FirstSeen: "2026-08-25T09:00:00Z", LastSeen: "2026-08-25T11:30:00Z", AgentKind: "codex", AgentSessionID: "019f4baa-e368-7ea0-8912-fb2c6f99785c", CWD: "/workspaces/build"},
+	}
+	raw, err := json.Marshal(seed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bankPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	NewTmuxHandler().ListSessions(rec, httptest.NewRequest(http.MethodGet, "/api/tmux/sessions", nil))
+	payload := decodeJSONMap(t, rec)
+	evidence, ok := payload["recoveryEvidence"].([]interface{})
+	if !ok {
+		t.Fatalf("recoveryEvidence = %#v, want array", payload["recoveryEvidence"])
+	}
+	stateByKey := map[string]string{}
+	for _, raw := range evidence {
+		entry := raw.(map[string]interface{})
+		stateByKey[entry["unixUser"].(string)+"/"+entry["name"].(string)] = entry["state"].(string)
+	}
+	if got := stateByKey["alice/alice-old"]; got != "offline" {
+		t.Fatalf("alice/alice-old state = %q, want offline from its complete source", got)
+	}
+	if got := stateByKey["build/build-agent"]; got != "stale" {
+		t.Fatalf("build/build-agent state = %q, want stale from its failed source", got)
+	}
+
+	persisted, err := newSessionBankStore(bankPath).Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range persisted {
+		if entry.UnixUser == "build" && entry.Name == "build-agent" {
+			if !entry.Live || entry.LastSeen != "2026-08-25T11:30:00Z" {
+				t.Fatalf("failed-source entry mutated = %+v, want last-known-good fields preserved", entry)
+			}
+			return
+		}
+	}
+	t.Fatal("missing persisted build/build-agent evidence")
+}
