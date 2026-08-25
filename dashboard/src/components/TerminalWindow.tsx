@@ -318,7 +318,6 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
     setActiveSession,
     cycleSession,
     recoveryEvidence = [],
-    clearStaleSessionsFromWindow = () => {},
     focusedWindowKey,
     setFocusedWindowKey,
     openSendToSession,
@@ -330,23 +329,21 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
 
   const activeSession = windowConfig.activeSession
 
-  const unavailableSessions = useMemo(() => {
-    const unavailable = new Set<string>()
+  const unavailableEvidenceBySession = useMemo(() => {
+    const unavailable = new Map<string, (typeof recoveryEvidence)[number]>()
+    const counts = new Map<string, number>()
+    recoveryEvidence.forEach(evidence => {
+      if (evidence.state !== 'live') counts.set(evidence.name, (counts.get(evidence.name) ?? 0) + 1)
+    })
     recoveryEvidence.forEach(evidence => {
       if (evidence.state === 'live') return
-      unavailable.add(getSessionKey(evidence.name, evidence.unixUser))
-      if (!evidence.unixUser) unavailable.add(evidence.name)
+      unavailable.set(getSessionKey(evidence.name, evidence.unixUser), evidence)
+      if ((counts.get(evidence.name) ?? 0) === 1) unavailable.set(evidence.name, evidence)
     })
     return unavailable
   }, [recoveryEvidence])
-  const activeSessionEvidence = activeSession
-    ? recoveryEvidence.find(evidence => (
-        evidence.state !== 'live' && (
-          getSessionKey(evidence.name, evidence.unixUser) === activeSession ||
-          (!evidence.unixUser && evidence.name === activeSession)
-        )
-      ))
-    : undefined
+  const unavailableSessions = useMemo(() => new Set(unavailableEvidenceBySession.keys()), [unavailableEvidenceBySession])
+  const activeSessionEvidence = activeSession ? unavailableEvidenceBySession.get(activeSession) : undefined
 
   // Check if active session is loaded via pool
   const activeSessionLoaded = activeSession ? pool.loadedSessions.has(activeSession) : false
@@ -523,7 +520,7 @@ function TerminalWindow({ workspaceId, window: windowConfig, refitNonce = 0, sty
             <strong>{activeSessionEvidence.state === 'stale' ? 'Session state unavailable' : 'Session is offline'}</strong>
             <span>This placement is preserved until you resolve it.</span>
             {activeSessionEvidence.cwd && <code>{activeSessionEvidence.cwd}</code>}
-            <button type="button" onClick={() => clearStaleSessionsFromWindow(workspaceId, windowConfig.id)}>
+            <button type="button" onClick={() => removeSessionFromWindow(workspaceId, windowConfig.id, activeSession!)}>
               Clear offline placement
             </button>
           </div>

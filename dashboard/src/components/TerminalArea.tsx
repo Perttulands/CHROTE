@@ -71,7 +71,7 @@ function TerminalArea({ workspaceId, sidecarControls, onOpenFilesAtPath, workspa
   const reconnectFrames = () => {
     const sessionNames = new Set<string>()
     visibleWindows.forEach(window => window.boundSessions.forEach(sessionName => {
-      if (sessionName && sessionName !== 'INIT-PENDING') sessionNames.add(sessionName)
+      if (sessionName && sessionName !== 'INIT-PENDING' && liveSessions.has(sessionName)) sessionNames.add(sessionName)
     }))
     sessionNames.forEach(sessionName => pool.reconnectIframe(sessionName))
     closeControlsMenu()

@@ -57,15 +57,15 @@ describe('TerminalArea layout controls', () => {
     sessionState.windowRevealRequest = null
   })
 
-  it('reconnects all visible session frames from the layout controls menu', () => {
+  it('reconnects only visible live session frames from the layout controls menu', () => {
     render(<TerminalArea workspaceId="terminal1" />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Terminal recovery actions' }))
     fireEvent.click(screen.getByRole('button', { name: /Reconnect frames/i }))
 
     expect(reconnectIframe).toHaveBeenCalledWith('alice:alpha')
-    expect(reconnectIframe).toHaveBeenCalledWith('bare-session')
-    expect(reconnectIframe).toHaveBeenCalledWith('bob:beta')
+    expect(reconnectIframe).not.toHaveBeenCalledWith('bare-session')
+    expect(reconnectIframe).not.toHaveBeenCalledWith('bob:beta')
   })
 
   it('keeps Refit directly visible while stale cleanup remains in the recovery menu', () => {

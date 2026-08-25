@@ -600,7 +600,28 @@ describe('TerminalWindow launch user', () => {
     expect(claimIframe).not.toHaveBeenCalledWith('alice:offline-agent', expect.anything())
 
     fireEvent.click(screen.getByRole('button', { name: 'Clear offline placement' }))
-    expect(clearStaleSessionsFromWindow).toHaveBeenCalledWith('terminal3', 'terminal3-window-0')
+    expect(removeSessionFromWindow).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'alice:offline-agent')
+  })
+
+  it('matches one unambiguous qualified offline identity to a legacy bare binding', () => {
+    recoveryState.evidence = [{
+      sourceId: 'tmux:alice',
+      unixUser: 'alice',
+      name: 'offline-agent',
+      state: 'offline',
+      cwd: '/srv/offline-agent',
+    }]
+
+    render(
+      <TerminalWindow
+        workspaceId="terminal3"
+        window={{ id: 'terminal3-window-0', boundSessions: ['offline-agent'], activeSession: 'offline-agent', colorIndex: 0 }}
+      />
+    )
+
+    expect(screen.getByText('Session is offline')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Clear offline placement' }))
+    expect(removeSessionFromWindow).toHaveBeenCalledWith('terminal3', 'terminal3-window-0', 'offline-agent')
   })
 
   it('keeps terminal panes on the per-window opaque background palette', () => {
